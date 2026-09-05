@@ -65,6 +65,7 @@ function machine(runtimes: AgentRuntime[]): RuntimeMachine {
     runningCount: 0,
     queuedCount: 0,
     providerNames: runtimes.map((item) => item.provider),
+    quotaChips: [],
     lastSeenAt: "2026-07-15T00:00:00Z",
   };
 }

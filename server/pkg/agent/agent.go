@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // Backend is the unified interface for executing prompts via coding agents.
@@ -251,6 +253,13 @@ type Result struct {
 	// its model catalog, and that the process tree was reaped afterwards.
 	// Like codexInitializeRetrySafe it is not part of the public contract.
 	codexStartupRefreshRetrySafe bool
+	// PlanQuota is the provider's latest plan/rate-limit snapshot observed
+	// during this run (today: Codex's 5h/weekly token-count windows), in the
+	// daemon-to-server wire shape. Nil when the provider reported nothing.
+	// The daemon caches it per runtime and forwards it on the next heartbeat;
+	// it carries percentages and window metadata only — never account ids,
+	// plan names, credits, or credentials.
+	PlanQuota *protocol.RuntimePlanQuota
 }
 
 // Config configures a Backend instance.

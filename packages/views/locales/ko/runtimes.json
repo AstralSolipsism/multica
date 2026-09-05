@@ -71,7 +71,8 @@
       "workload_hint": "실행 중 {{running}}개 · 대기 중 {{queued}}개",
       "cli": "CLI",
       "cloud_worker": "클라우드 워커",
-      "local_daemon": "로컬 데몬"
+      "local_daemon": "로컬 데몬",
+      "unavailable": "--"
     },
     "rename": "기기 이름 변경",
     "rename_dialog": {
@@ -289,6 +290,7 @@
     "col_owner": "소유자",
     "col_agents": "에이전트",
     "col_cost": "비용 · 7일",
+    "col_quota": "할당량",
     "col_cli": "CLI",
     "cost_delta_flat": "변화 없음",
     "cli_managed_badge": "데스크톱",
@@ -307,6 +309,22 @@
     "pending_health_error": "등록 오류",
     "pending_health_disabled": "비활성화됨",
     "pending_cli_unknown": "대기 중"
+  },
+  "quota": {
+    "title": "플랜 할당량",
+    "window_short_minutes": "{{value}}m",
+    "window_short_hours": "{{value}}h",
+    "window_short_days": "{{value}}d",
+    "window_weekly": "주",
+    "remaining": "{{percent}}% 남음",
+    "resets_in": "{{time}} 후 재설정",
+    "exhausted": "속도 제한됨",
+    "not_reported": "보고되지 않음",
+    "stale": "오래된 데이터",
+    "stale_hint": "{{time}} 전 스냅샷",
+    "observed_ago": "{{time}} 전 업데이트됨",
+    "source_daemon": "데몬 경유",
+    "source_external": "외부 푸시 경유"
   },
   "profiles": {
     "cta": "런타임 추가",

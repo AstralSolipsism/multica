@@ -29,6 +29,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/multica-ai/multica/server/pkg/skillbundle"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
@@ -476,6 +477,12 @@ type Daemon struct {
 
 	wsHBMu      sync.RWMutex         // guards wsHBLastAck
 	wsHBLastAck map[string]time.Time // runtime_id -> last successful WS heartbeat ack timestamp
+
+	// planQuotaCache holds each runtime's latest observed provider
+	// plan/rate-limit snapshot (runtimeID -> *protocol.RuntimePlanQuota),
+	// recorded at task completion and attached to that runtime's next
+	// heartbeat. Entries are deleted when the runtime leaves the local set.
+	planQuotaCache sync.Map
 
 	// reconcile fans out a "re-check server state now" signal to subscribers
 	// (watchTaskCancellation, workspaceSyncLoop) so the WS connect/reconnect
@@ -1158,6 +1165,31 @@ func (d *Daemon) notifyRuntimeSetChanged() {
 	d.runtimeSet.notify()
 }
 
+// recordRuntimePlanQuota caches a runtime's latest plan/rate-limit snapshot
+// (reported by an agent backend at task completion) so the next heartbeat
+// for that runtime carries it. The entry lives until the runtime leaves the
+// local set — a snapshot stays the "latest known" even across daemon-side
+// quiet periods, matching the server column's last-write-wins semantics.
+func (d *Daemon) recordRuntimePlanQuota(runtimeID string, quota *protocol.RuntimePlanQuota) {
+	if runtimeID == "" || quota == nil {
+		return
+	}
+	d.planQuotaCache.Store(runtimeID, quota)
+}
+
+// heartbeatExtrasFor assembles the optional heartbeat attachment for one
+// runtime: its cached plan-quota snapshot (nil when the provider reported
+// nothing).
+func (d *Daemon) heartbeatExtrasFor(runtimeID string) HeartbeatExtras {
+	var extras HeartbeatExtras
+	if cached, ok := d.planQuotaCache.Load(runtimeID); ok {
+		if quota, ok := cached.(*protocol.RuntimePlanQuota); ok {
+			extras.PlanQuota = quota
+		}
+	}
+	return extras
+}
+
 // reregisterCoalesceWindow caps how often the daemon re-registers a workspace
 // after detecting a runtime_not_found response. Many stale runtime IDs may be
 // reported within seconds of each other (one delete clears all of a daemon's
@@ -1354,6 +1386,11 @@ func (d *Daemon) removeStaleRuntime(runtimeID string) (string, bool) {
 	delete(d.wsHBLastAck, runtimeID)
 	d.wsHBMu.Unlock()
 
+	// The quota snapshot belongs to the runtime row, not to the machine: a
+	// re-registered runtime starts with no cached quota until its next
+	// task completion reports one.
+	d.planQuotaCache.Delete(runtimeID)
+
 	return workspaceID, true
 }
 
@@ -1465,6 +1502,7 @@ func (d *Daemon) applyRegisterResponseInPlace(workspaceID string, resp *Register
 			// already in droppedIDs; drop the index entry without recording it
 			// a second time.
 			delete(d.runtimeIndex, oldID)
+			d.planQuotaCache.Delete(oldID)
 			continue
 		}
 		if rt, tracked := d.runtimeIndex[oldID]; tracked && rt.ProfileID == "" {
@@ -1474,6 +1512,7 @@ func (d *Daemon) applyRegisterResponseInPlace(workspaceID string, resp *Register
 			}
 		}
 		delete(d.runtimeIndex, oldID)
+		d.planQuotaCache.Delete(oldID)
 		droppedIDs = append(droppedIDs, oldID)
 	}
 	for _, rt := range resp.Runtimes {
@@ -4183,7 +4222,7 @@ func (d *Daemon) runHeartbeatTick(ctx context.Context, rid string) bool {
 		return false
 	}
 	d.logger.Debug("heartbeat: HTTP tick", "runtime_id", rid)
-	resp, err := d.client.SendHeartbeat(ctx, rid)
+	resp, err := d.client.SendHeartbeat(ctx, rid, d.heartbeatExtrasFor(rid))
 	if err != nil {
 		if ctx.Err() == nil {
 			if isRuntimeNotFoundError(err) {
@@ -4328,7 +4367,7 @@ func (d *Daemon) handlePendingWorkHint(runtimeID, kind string) {
 		return
 	}
 	hbCtx, cancel := context.WithTimeout(ctx, pendingWorkHeartbeatTimeout)
-	resp, err := d.client.SendHeartbeat(hbCtx, runtimeID)
+	resp, err := d.client.SendHeartbeat(hbCtx, runtimeID, d.heartbeatExtrasFor(runtimeID))
 	cancel()
 	if err != nil {
 		if isRuntimeNotFoundError(err) {
@@ -8240,6 +8279,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"models_with_usage", len(result.Usage),
 		"agent_error", result.Error,
 	)
+
+	// Cache the provider's plan/rate-limit snapshot for this runtime so the
+	// next heartbeat forwards it to the server. Kept independent of the
+	// terminal status below: a rate-limited failure is exactly when the
+	// "limited" snapshot matters most.
+	if result.PlanQuota != nil {
+		d.recordRuntimePlanQuota(task.RuntimeID, result.PlanQuota)
+	}
 
 	// Convert agent usage map to task usage entries.
 	var usageEntries []TaskUsageEntry

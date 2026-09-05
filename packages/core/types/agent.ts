@@ -56,6 +56,33 @@ export interface AgentInvocationTargetInput {
 // the fallback.
 export type RuntimeVisibility = "private" | "public";
 
+/**
+ * One plan-quota window reported for a runtime (e.g. a provider's 5h or
+ * weekly rate-limit window). `used_percent` is null when the provider only
+ * signals exhaustion without a percentage; `resets_at` is unix seconds.
+ */
+export interface RuntimePlanQuotaWindow {
+  name: string;
+  used_percent: number | null;
+  window_minutes: number | null;
+  resets_at: number | null;
+}
+
+/**
+ * A point-in-time snapshot of a runtime's plan quota (`observed_at` is unix
+ * seconds). `status: "limited"` means the provider rate-limited / exhausted
+ * the plan; `source` records where the snapshot came from ("daemon" |
+ * "external"). The wire shape deliberately carries no account identifiers,
+ * plan names, or credentials.
+ */
+export interface RuntimePlanQuota {
+  provider: string;
+  status: "ok" | "limited";
+  windows: RuntimePlanQuotaWindow[];
+  observed_at: number;
+  source: string;
+}
+
 export interface RuntimeDevice {
   id: string;
   workspace_id: string;
@@ -85,6 +112,13 @@ export interface RuntimeDevice {
    * a missing value as `null` (built-in).
    */
   profile_id?: string | null;
+  /**
+   * Latest plan-quota snapshot for this runtime (5h / weekly windows).
+   * Older backends omit the field — consumers must treat a missing or
+   * malformed value as "no data" and render the not-reported state instead
+   * of inventing numbers (see parsePlanQuota in core/runtimes/plan-quota).
+   */
+  plan_quota?: RuntimePlanQuota | null;
   last_seen_at: string | null;
   created_at: string;
   updated_at: string;

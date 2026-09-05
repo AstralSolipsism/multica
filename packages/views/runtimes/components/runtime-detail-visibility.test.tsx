@@ -77,25 +77,35 @@ vi.mock("@multica/core/auth", () => ({
 // isRuntimeUsableForUser is the shared owner/public rule the component reads
 // runtime access from, so the real implementation is kept rather than stubbed —
 // a stub here would just re-derive the rule this test is meant to pin down.
-vi.mock("@multica/core/runtimes", async () => ({
-  isRuntimeUsableForUser: (
-    await vi.importActual<typeof import("@multica/core/runtimes")>(
-      "@multica/core/runtimes",
-    )
-  ).isRuntimeUsableForUser,
-  deriveRuntimeHealth: () => "online",
+vi.mock("@multica/core/runtimes", async () => {
+  const actual = await vi.importActual<typeof import("@multica/core/runtimes")>(
+    "@multica/core/runtimes",
+  );
+  return {
+    isRuntimeUsableForUser: actual.isRuntimeUsableForUser,
+    // RuntimeDetail renders the quota card, whose helpers must exist on the
+    // mock — run them for real (pure functions over the runtime fixture).
+    activeQuotaWindows: actual.activeQuotaWindows,
+    formatCompactDuration: actual.formatCompactDuration,
+    isQuotaStale: actual.isQuotaStale,
+    quotaWindowLabel: actual.quotaWindowLabel,
+    parsePlanQuota: actual.parsePlanQuota,
+    quotaTone: actual.quotaTone,
+    windowRemainingPercent: actual.windowRemainingPercent,
+    deriveRuntimeHealth: () => "online",
   runtimeDisplayName: (rt: { name: string; custom_name?: string | null }) =>
     rt.custom_name?.trim() || rt.name,
   runtimeProfileListOptions: (wsId: string) => ({
     queryKey: ["runtime-profiles", wsId],
   }),
   parseRuntimeProfileBoundConflict: () => null,
-  useDeleteRuntimeProfile: () => ({
-    mutate: vi.fn(),
-    isPending: false,
-    mutateAsync: (...args: unknown[]) => mockDeleteRuntimeProfile(...args),
-  }),
-}));
+    useDeleteRuntimeProfile: () => ({
+      mutate: vi.fn(),
+      isPending: false,
+      mutateAsync: (...args: unknown[]) => mockDeleteRuntimeProfile(...args),
+    }),
+  };
+});
 
 vi.mock("@multica/core/agents", () => ({
   useWorkspacePresenceMap: () => ({ byAgent: new Map() }),

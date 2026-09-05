@@ -844,6 +844,17 @@ export function useRealtimeSync(
           invalidateSquadMemberStatusQueries(qc, wsId);
         }
       },
+      // runtime:telemetry_updated (today: a runtime's plan-quota snapshot
+      // changed) refetches runtime state only — it must NOT go through the
+      // daemon prefix, because daemon:register doubles as the
+      // connect-remote dialog's "a new daemon just connected" signal, and
+      // daemon:heartbeat is deliberately skipped to avoid a refetch storm.
+      // The server publishes it only on real content changes, so the
+      // per-prefix debounce keeps this cheap.
+      runtime: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
+      },
       autopilot: () => {
         const wsId = getCurrentWsId();
         if (wsId) qc.invalidateQueries({ queryKey: autopilotKeys.all(wsId) });

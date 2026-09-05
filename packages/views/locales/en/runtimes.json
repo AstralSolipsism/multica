@@ -75,7 +75,8 @@
       "workload_hint": "{{running}} running · {{queued}} queued",
       "cli": "CLI",
       "cloud_worker": "Cloud worker",
-      "local_daemon": "Local daemon"
+      "local_daemon": "Local daemon",
+      "unavailable": "--"
     },
     "rename": "Rename machine",
     "rename_dialog": {
@@ -302,6 +303,7 @@
     "col_owner": "Owner",
     "col_agents": "Agents",
     "col_cost": "Cost · 7d",
+    "col_quota": "Quota",
     "col_cli": "CLI",
     "cost_delta_flat": "flat",
     "cli_managed_badge": "Desktop",
@@ -320,6 +322,22 @@
     "pending_health_error": "Registration error",
     "pending_health_disabled": "Disabled",
     "pending_cli_unknown": "waiting"
+  },
+  "quota": {
+    "title": "Plan quota",
+    "window_short_minutes": "{{value}}m",
+    "window_short_hours": "{{value}}h",
+    "window_short_days": "{{value}}d",
+    "window_weekly": "wk",
+    "remaining": "{{percent}}% left",
+    "resets_in": "resets in {{time}}",
+    "exhausted": "Rate limited",
+    "not_reported": "Not reported",
+    "stale": "Stale data",
+    "stale_hint": "snapshot {{time}} ago",
+    "observed_ago": "updated {{time}} ago",
+    "source_daemon": "via daemon",
+    "source_external": "via external push"
   },
   "profiles": {
     "cta": "Add runtime",

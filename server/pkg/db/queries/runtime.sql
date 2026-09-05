@@ -147,6 +147,30 @@ SET custom_name = @custom_name, updated_at = now()
 WHERE id = @id
 RETURNING *;
 
+-- name: UpdateAgentRuntimePlanQuota :execrows
+-- Conditional atomic write for the plan/rate-limit snapshot (migration 451).
+-- Two independent reporters (daemon heartbeat, external push endpoint) write
+-- the same column, so the update applies only when the stored row is absent,
+-- carries no observed_at, or is not newer than the incoming observed_at
+-- ("newer observed_at wins"). A row whose CONTENT changed rewrites
+-- immediately; a snapshot that merely re-observed the same content (only
+-- observed_at moved, e.g. an external poller) refreshes the row at most
+-- once per freshness window: @content is the incoming payload WITHOUT its
+-- observed_at key (content comparison), and @freshness_before is
+-- observed_at minus the caller's freshness throttle. rows=0 therefore
+-- means "stale, unchanged, or throttled" and the caller skips the change
+-- broadcast. Deliberately does NOT touch updated_at: quota churn is
+-- observational, not a user-visible row edit.
+UPDATE agent_runtime SET plan_quota = @plan_quota::jsonb
+WHERE id = @id
+  AND (plan_quota IS NULL
+       OR plan_quota->>'observed_at' IS NULL
+       OR (plan_quota->>'observed_at')::bigint <= @observed_at::bigint)
+  AND (plan_quota IS NULL
+       OR plan_quota->>'observed_at' IS NULL
+       OR (plan_quota - 'observed_at') IS DISTINCT FROM @content::jsonb
+       OR (plan_quota->>'observed_at')::bigint <= @freshness_before::bigint);
+
 -- name: UpdateAgentRuntimeCustomNameByDaemon :many
 -- Machine-level rename (MUL-4217): applies one custom name to every runtime
 -- sharing a daemon_id in the workspace, since a single machine hosts one
