@@ -586,6 +586,8 @@ func TestClient_SendHeartbeatBody(t *testing.T) {
 		used := 42.5
 		minutes := int64(300)
 		resets := int64(1757000000)
+		cpuPercent := 42.0
+		memPercent := 68.0
 		extras := HeartbeatExtras{
 			PlanQuota: &protocol.RuntimePlanQuota{
 				Provider: "codex",
@@ -595,6 +597,11 @@ func TestClient_SendHeartbeatBody(t *testing.T) {
 				},
 				ObservedAt: 1757000100,
 				Source:     protocol.PlanQuotaSourceDaemon,
+			},
+			Metrics: &protocol.HostMetrics{
+				CPUPercent:    &cpuPercent,
+				MemoryPercent: &memPercent,
+				CapturedAt:    1757000100,
 			},
 		}
 
@@ -630,6 +637,14 @@ func TestClient_SendHeartbeatBody(t *testing.T) {
 			window["window_minutes"] != float64(300) || window["resets_at"] != float64(1757000000) {
 			t.Fatalf("window = %v", window)
 		}
+		metrics, ok := body["metrics"].(map[string]any)
+		if !ok {
+			t.Fatalf("metrics missing or wrong type: %v", body)
+		}
+		if metrics["cpu_percent"] != 42.0 || metrics["memory_percent"] != 68.0 ||
+			metrics["captured_at"] != float64(1757000100) {
+			t.Fatalf("metrics = %v", metrics)
+		}
 	})
 
 	t.Run("zero extras omit the field", func(t *testing.T) {
@@ -649,6 +664,9 @@ func TestClient_SendHeartbeatBody(t *testing.T) {
 		}
 		if _, present := body["plan_quota"]; present {
 			t.Fatalf("plan_quota present with zero extras: %v", body)
+		}
+		if _, present := body["metrics"]; present {
+			t.Fatalf("metrics present with zero extras: %v", body)
 		}
 	})
 }

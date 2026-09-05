@@ -72,6 +72,9 @@
       "cli": "CLI",
       "cloud_worker": "云端 worker",
       "local_daemon": "本地守护进程",
+      "cpu": "CPU",
+      "memory": "内存",
+      "stale": "数据过期",
       "unavailable": "--"
     },
     "rename": "重命名机器",

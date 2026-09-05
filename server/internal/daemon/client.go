@@ -602,12 +602,14 @@ type (
 	PendingLocalSkillImport = protocol.DaemonHeartbeatPendingLocalSkillImport
 )
 
-// HeartbeatExtras carries the optional observational attachment of one
-// heartbeat: the runtime's latest plan-quota snapshot. A nil field is
-// omitted from the wire body, and old servers ignore unknown keys, so a
-// zero HeartbeatExtras reproduces the pre-feature request exactly.
+// HeartbeatExtras carries the optional observational attachments of one
+// heartbeat: the runtime's latest plan-quota snapshot and the daemon host's
+// latest metrics sample. Nil fields are omitted from the wire body, and old
+// servers ignore unknown keys, so a zero HeartbeatExtras reproduces the
+// pre-feature request exactly.
 type HeartbeatExtras struct {
 	PlanQuota *protocol.RuntimePlanQuota
+	Metrics   *protocol.HostMetrics
 }
 
 func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, extras HeartbeatExtras) (*HeartbeatResponse, error) {
@@ -617,6 +619,9 @@ func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, extras Hea
 	}
 	if extras.PlanQuota != nil {
 		body["plan_quota"] = extras.PlanQuota
+	}
+	if extras.Metrics != nil {
+		body["metrics"] = extras.Metrics
 	}
 	var resp HeartbeatResponse
 	if err := c.postJSON(ctx, "/api/daemon/heartbeat", body, &resp); err != nil {

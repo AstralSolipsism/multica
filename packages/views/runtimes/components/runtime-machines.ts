@@ -3,6 +3,7 @@ import {
   deriveRuntimeHealth,
   isQuotaStale,
   parsePlanQuota,
+  pickMachineSystemStats,
   quotaTone,
   windowRemainingPercent,
   worstQuotaWindow,
@@ -49,6 +50,10 @@ export interface RuntimeMachine {
   queuedCount: number;
   providerNames: string[];
   quotaChips: MachineQuotaChip[];
+  cpuPercent: number | null;
+  memoryPercent: number | null;
+  systemStatsCapturedAt: number | null;
+  systemStatsStale: boolean;
   lastSeenAt: string | null;
 }
 
@@ -167,6 +172,10 @@ function placeholderLocalMachine(
     queuedCount: 0,
     providerNames: [],
     quotaChips: [],
+    cpuPercent: null,
+    memoryPercent: null,
+    systemStatsCapturedAt: null,
+    systemStatsStale: false,
     lastSeenAt: null,
   };
 }
@@ -270,6 +279,7 @@ function finalizeRuntimeMachine(
     { runningCount: 0, queuedCount: 0 },
   );
   const quotaChips = onlineCount > 0 ? machineQuotaChips(runtimes, options.now) : [];
+  const systemStats = pickMachineSystemStats(runtimes);
 
   return {
     id: draft.id,
@@ -290,6 +300,10 @@ function finalizeRuntimeMachine(
     queuedCount: workload.queuedCount,
     providerNames,
     quotaChips,
+    cpuPercent: systemStats?.cpu_percent ?? null,
+    memoryPercent: systemStats?.memory_percent ?? null,
+    systemStatsCapturedAt: systemStats?.captured_at ?? null,
+    systemStatsStale: systemStats?.stale ?? false,
     lastSeenAt: latestLastSeenAt(runtimes),
   };
 }

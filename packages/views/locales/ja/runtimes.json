@@ -72,6 +72,9 @@
       "cli": "CLI",
       "cloud_worker": "クラウドワーカー",
       "local_daemon": "ローカルデーモン",
+      "cpu": "CPU",
+      "memory": "メモリ",
+      "stale": "期限切れ",
       "unavailable": "--"
     },
     "rename": "マシンの名前を変更",

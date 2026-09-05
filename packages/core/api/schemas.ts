@@ -1714,6 +1714,17 @@ export const RuntimePlanQuotaSchema = z.object({
   source: z.string().default(""),
 }).loose();
 
+// Machine-level CPU/memory sample. Same sanitization contract as the quota
+// schemas: parsed per runtime by the views layer (see parseSystemStats in
+// core/runtimes/host-metrics), never at the endpoint. `stale` is computed by
+// the server at read time and defaults to false for older backends.
+export const RuntimeSystemStatsSchema = z.object({
+  cpu_percent: z.number().nullable().default(null),
+  memory_percent: z.number().nullable().default(null),
+  captured_at: z.number().default(0),
+  stale: z.boolean().default(false),
+}).loose();
+
 // ---------------------------------------------------------------------------
 // Agent task responses. The base object stays loose so daemon/runtime fields
 // can drift while task-list consumers still validate the fields they render.
