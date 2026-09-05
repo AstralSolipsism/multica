@@ -984,6 +984,14 @@ func (h *Handler) DaemonDeregister(w http.ResponseWriter, r *http.Request) {
 type DaemonHeartbeatRequest struct {
 	RuntimeID           string `json:"runtime_id"`
 	SupportsBatchImport bool   `json:"supports_batch_import,omitempty"`
+	// PlanLimits mirrors protocol.DaemonHeartbeatRequestPayload.PlanLimits:
+	// the daemon's latest provider plan/rate-limit snapshot for this
+	// runtime. Optional; a bad payload drops the field, never the beat.
+	PlanLimits *protocol.RuntimePlanQuota `json:"plan_limits,omitempty"`
+	// Metrics mirrors protocol.DaemonHeartbeatRequestPayload.Metrics: the
+	// daemon host's latest CPU/memory sample. Optional, same non-fatal
+	// contract as PlanLimits.
+	Metrics *protocol.HostMetrics `json:"metrics,omitempty"`
 }
 
 // heartbeatHasPendingTimeout bounds the cheap HasPending probe on the
@@ -1123,6 +1131,11 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	updateMs = time.Since(updateStart).Milliseconds()
 
+	// Observational extras ride the beat but must never affect its outcome:
+	// both helpers swallow validation/persistence failures internally.
+	h.storeHeartbeatPlanLimits(r.Context(), rt, req.PlanLimits)
+	h.storeHeartbeatMetrics(r.Context(), req.RuntimeID, rt.DaemonID.String, req.Metrics)
+
 	ack, m, err := h.processHeartbeat(r.Context(), runtimeID, req.SupportsBatchImport)
 	probeModelMs = m.ProbeModelMs
 	popModelMs = m.PopModelMs
@@ -1167,14 +1180,20 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 // captured each runtime's liveness state in a connection lease, so the hot
 // path never reads agent_runtime. HTTP heartbeat remains the stateless lookup
 // fallback for a daemon that stops receiving WebSocket acknowledgements.
-func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws.ClientIdentity, runtimeID string, supportsBatchImport bool) (*protocol.DaemonHeartbeatAckPayload, error) {
+//
+// The plan_limits write needs the runtime row id (already in scope) and the
+// workspace id (carried by the lease); host metrics key off the lease's
+// daemon id. Both extras are best-effort, exactly like the HTTP path.
+func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws.ClientIdentity, payload protocol.DaemonHeartbeatRequestPayload) (*protocol.DaemonHeartbeatAckPayload, error) {
+	runtimeID := payload.RuntimeID
 	lease := identity.RuntimeLeases[runtimeID]
 	if lease == nil {
 		return nil, fmt.Errorf("runtime not in connection lease")
 	}
 	// Defensive consistency assertion only: the workspace scope and lease came
 	// from the same connection-time query. This does not re-authorize against DB.
-	if !identity.AllowsWorkspace(lease.Snapshot().WorkspaceID) {
+	leaseState := lease.Snapshot()
+	if !identity.AllowsWorkspace(leaseState.WorkspaceID) {
 		return nil, fmt.Errorf("runtime not in connection workspace")
 	}
 	if err := h.recordHeartbeatLease(ctx, runtimeID, lease); err != nil {
@@ -1187,7 +1206,24 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 		}
 		return nil, err
 	}
-	ack, _, err := h.processHeartbeat(ctx, runtimeID, supportsBatchImport)
+
+	if payload.PlanLimits != nil || payload.Metrics != nil {
+		// The conditional plan_quota update needs only the row id plus the
+		// workspace id for the change broadcast; both are already known from
+		// the connection lease, so no agent_runtime reload is needed.
+		if payload.PlanLimits != nil {
+			runtimeUUID, parseErr := util.ParseUUID(runtimeID)
+			if parseErr == nil {
+				h.storeHeartbeatPlanLimits(ctx, db.AgentRuntime{
+					ID:          runtimeUUID,
+					WorkspaceID: parseUUID(leaseState.WorkspaceID),
+				}, payload.PlanLimits)
+			}
+		}
+		h.storeHeartbeatMetrics(ctx, runtimeID, leaseState.DaemonID, payload.Metrics)
+	}
+
+	ack, _, err := h.processHeartbeat(ctx, runtimeID, payload.SupportsBatchImport)
 	return ack, err
 }
 

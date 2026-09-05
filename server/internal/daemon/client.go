@@ -602,12 +602,29 @@ type (
 	PendingLocalSkillImport = protocol.DaemonHeartbeatPendingLocalSkillImport
 )
 
-func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string) (*HeartbeatResponse, error) {
-	var resp HeartbeatResponse
-	if err := c.postJSON(ctx, "/api/daemon/heartbeat", map[string]any{
+// HeartbeatExtras carries the optional observational attachments of one
+// heartbeat: the runtime's latest plan-quota snapshot and the daemon host's
+// latest metrics sample. Nil fields are omitted from the wire body, and old
+// servers ignore unknown keys, so a zero HeartbeatExtras reproduces the
+// pre-feature request exactly.
+type HeartbeatExtras struct {
+	PlanLimits *protocol.RuntimePlanQuota
+	Metrics    *protocol.HostMetrics
+}
+
+func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, extras HeartbeatExtras) (*HeartbeatResponse, error) {
+	body := map[string]any{
 		"runtime_id":            runtimeID,
 		"supports_batch_import": true,
-	}, &resp); err != nil {
+	}
+	if extras.PlanLimits != nil {
+		body["plan_limits"] = extras.PlanLimits
+	}
+	if extras.Metrics != nil {
+		body["metrics"] = extras.Metrics
+	}
+	var resp HeartbeatResponse
+	if err := c.postJSON(ctx, "/api/daemon/heartbeat", body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

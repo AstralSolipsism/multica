@@ -385,6 +385,147 @@ describe("runtime machine grouping", () => {
   });
 });
 
+describe("runtime machine quota chips and system stats", () => {
+  const NOW_SEC = Math.floor(NOW / 1000);
+
+  function makeQuota(overrides: Record<string, unknown> = {}) {
+    return {
+      provider: "codex",
+      status: "ok",
+      windows: [
+        {
+          name: "primary",
+          used_percent: 38,
+          window_minutes: 300,
+          resets_at: NOW_SEC + 3600,
+        },
+      ],
+      observed_at: NOW_SEC - 60,
+      source: "daemon",
+      ...overrides,
+    };
+  }
+
+  it("builds one chip per runtime from the worst active window", () => {
+    const machines = buildRuntimeMachines(
+      [
+        makeRuntime({
+          id: "rt-codex",
+          provider: "codex",
+          plan_quota: makeQuota({
+            windows: [
+              { name: "primary", used_percent: 38, window_minutes: 300, resets_at: NOW_SEC + 3600 },
+              { name: "secondary", used_percent: 88, window_minutes: 10080, resets_at: NOW_SEC + 86400 },
+            ],
+          }),
+        }),
+        makeRuntime({
+          id: "rt-claude",
+          provider: "claude",
+          plan_quota: makeQuota({ provider: "claude", status: "limited" }),
+        }),
+      ],
+      { now: NOW },
+    );
+
+    expect(machines[0]?.quotaChips).toEqual([
+      {
+        runtimeId: "rt-claude",
+        provider: "claude",
+        remainingPercent: 62,
+        status: "limited",
+        tone: "destructive",
+      },
+      {
+        runtimeId: "rt-codex",
+        provider: "codex",
+        remainingPercent: 12,
+        status: "ok",
+        tone: "warning",
+      },
+    ]);
+  });
+
+  it("excludes stale, malformed, and fully expired snapshots", () => {
+    const machines = buildRuntimeMachines(
+      [
+        makeRuntime({
+          id: "rt-stale",
+          provider: "codex",
+          plan_quota: makeQuota({ observed_at: NOW_SEC - 25 * 3600 }),
+        }),
+        makeRuntime({
+          id: "rt-malformed",
+          provider: "kimi",
+          plan_quota: "not-a-snapshot" as unknown as AgentRuntime["plan_quota"],
+        }),
+        makeRuntime({
+          id: "rt-expired",
+          provider: "copilot",
+          plan_quota: makeQuota({
+            windows: [
+              { name: "primary", used_percent: 10, window_minutes: 300, resets_at: NOW_SEC - 5 },
+            ],
+          }),
+        }),
+        makeRuntime({ id: "rt-fresh", provider: "claude", plan_quota: makeQuota() }),
+      ],
+      { now: NOW },
+    );
+
+    expect(machines[0]?.quotaChips).toHaveLength(1);
+    expect(machines[0]?.quotaChips[0]?.runtimeId).toBe("rt-fresh");
+  });
+
+  it("leaves chips empty for an offline machine", () => {
+    const machines = buildRuntimeMachines(
+      [
+        makeRuntime({
+          status: "offline",
+          last_seen_at: new Date(NOW - 10 * 60_000).toISOString(),
+          plan_quota: makeQuota(),
+        }),
+      ],
+      { now: NOW },
+    );
+
+    expect(machines[0]?.quotaChips).toEqual([]);
+  });
+
+  it("picks the latest system-stats sample and tolerates none", () => {
+    const machines = buildRuntimeMachines(
+      [
+        makeRuntime({
+          id: "rt-old",
+          provider: "codex",
+          system_stats: { cpu_percent: 10, memory_percent: 20, captured_at: NOW_SEC - 60 },
+        }),
+        makeRuntime({
+          id: "rt-new",
+          provider: "claude",
+          system_stats: { cpu_percent: 42, memory_percent: 68, captured_at: NOW_SEC - 5 },
+        }),
+      ],
+      { now: NOW },
+    );
+
+    expect(machines[0]).toMatchObject({
+      cpuPercent: 42,
+      memoryPercent: 68,
+      systemStatsCapturedAt: NOW_SEC - 5,
+    });
+
+    const empty = buildRuntimeMachines([makeRuntime({ id: "rt-none" })], {
+      now: NOW,
+    });
+    expect(empty[0]).toMatchObject({
+      cpuPercent: null,
+      memoryPercent: null,
+      systemStatsCapturedAt: null,
+    });
+  });
+});
+
 describe("splitRuntimeName", () => {
   it("separates daemon host suffix from provider name", () => {
     expect(splitRuntimeName("Claude (build-server-01)")).toEqual({

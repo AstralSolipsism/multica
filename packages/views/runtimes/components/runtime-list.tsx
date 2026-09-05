@@ -66,6 +66,7 @@ import {
   pctChange,
 } from "../utils";
 import { runtimeRowLabel } from "./runtime-machines";
+import { RuntimeQuotaCell } from "./runtime-quota-cell";
 import {
   customRuntimeRegistrationFailure,
   isDisabledCustomRuntime,
@@ -85,7 +86,7 @@ import { useT, useTimeAgo } from "../../i18n";
 // operation) is deliberately not offered.
 const GRID_COLS =
   "grid-cols-[0.75rem_minmax(120px,1fr)_var(--rtc-health)_var(--rtc-kebab)_0.75rem] " +
-  "@2xl:grid-cols-[0.75rem_minmax(140px,1fr)_var(--rtc-health)_var(--rtc-owner)_var(--rtc-agents)_var(--rtc-cost)_var(--rtc-cli)_var(--rtc-kebab)_0.75rem]";
+  "@2xl:grid-cols-[0.75rem_minmax(140px,1fr)_var(--rtc-health)_var(--rtc-owner)_var(--rtc-agents)_var(--rtc-cost)_var(--rtc-quota)_var(--rtc-cli)_var(--rtc-kebab)_0.75rem]";
 
 const COLUMN_WIDTHS = {
   // Health folds the workload in as a suffix ("Healthy · 2 running") —
@@ -94,13 +95,14 @@ const COLUMN_WIDTHS = {
   owner: 96,
   agents: 92,
   cost: 96,
+  quota: 120,
   cli: 112,
 } as const;
 
-// Fixed tracks (edges 12+12, name min 140) plus the 8 gap-x-3 gaps
-// between the wide template's 9 tracks (zero-width tracks still carry
+// Fixed tracks (edges 12+12, name min 140) plus the 9 gap-x-3 gaps
+// between the wide template's 10 tracks (zero-width tracks still carry
 // gaps).
-const FIXED_TRACKS_WIDTH = 164 + 8 * 12;
+const FIXED_TRACKS_WIDTH = 164 + 9 * 12;
 
 // The kebab track is conditional like the owner column: on a list where
 // no row carries a delete-permission, EVERY row's only action is hidden,
@@ -116,6 +118,7 @@ function columnTrackVars(
     (showOwner ? COLUMN_WIDTHS.owner : 0) +
     COLUMN_WIDTHS.agents +
     COLUMN_WIDTHS.cost +
+    COLUMN_WIDTHS.quota +
     COLUMN_WIDTHS.cli +
     (showActions ? 28 : 0);
   return {
@@ -123,6 +126,7 @@ function columnTrackVars(
     "--rtc-owner": showOwner ? `${COLUMN_WIDTHS.owner}px` : "0px",
     "--rtc-agents": `${COLUMN_WIDTHS.agents}px`,
     "--rtc-cost": `${COLUMN_WIDTHS.cost}px`,
+    "--rtc-quota": `${COLUMN_WIDTHS.quota}px`,
     "--rtc-cli": `${COLUMN_WIDTHS.cli}px`,
     "--rtc-kebab": showActions ? "1.75rem" : "0px",
     "--rtc-minw": `${minWidth}px`,
@@ -773,6 +777,9 @@ export function RuntimeList({
             {t(($) => $.list.col_cost)}
           </ListGridHeaderCell>
           <ListGridHeaderCell className="hidden @2xl:flex">
+            {t(($) => $.list.col_quota)}
+          </ListGridHeaderCell>
+          <ListGridHeaderCell className="hidden @2xl:flex">
             {t(($) => $.list.col_cli)}
           </ListGridHeaderCell>
           <span aria-hidden="true" />
@@ -828,6 +835,13 @@ export function RuntimeList({
                     runtimeId={row.runtime.id}
                     enabled={canReadRuntimeUsage(row.runtime, user?.id ?? null)}
                   />
+                )}
+              </ListGridCell>
+              <ListGridCell className="hidden @2xl:flex">
+                {pending ? (
+                  <span className="text-caption text-faint-foreground">—</span>
+                ) : (
+                  <RuntimeQuotaCell runtime={row.runtime} now={now} />
                 )}
               </ListGridCell>
               <ListGridCell className="hidden @2xl:flex">

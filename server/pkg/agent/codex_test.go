@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
@@ -5881,4 +5882,159 @@ func TestCodexResumeOverflowErrorMatchesLiveFailureText(t *testing.T) {
 	if !CodexResumeOverflowError(result.Error) {
 		t.Fatalf("predicate missed the error the backend actually produced: %q", result.Error)
 	}
+}
+
+// TestScanCodexSessionUsageCapturesRateLimits pins the JSONL fallback: the
+// newest token_count event's rate_limits object rides the scan result out,
+// and an older event without rate_limits must not erase it.
+func TestScanCodexSessionUsageCapturesRateLimits(t *testing.T) {
+	t.Parallel()
+	taskHome := t.TempDir()
+	threadID := "rate-limits-thread"
+	startTime := time.Now().Add(-time.Minute)
+	dateDir := filepath.Join(taskHome, "sessions",
+		fmt.Sprintf("%04d", startTime.Year()),
+		fmt.Sprintf("%02d", int(startTime.Month())),
+		fmt.Sprintf("%02d", startTime.Day()),
+	)
+	if err := os.MkdirAll(dateDir, 0o755); err != nil {
+		t.Fatalf("mkdir date dir: %v", err)
+	}
+	content := strings.Join([]string{
+		fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"output_tokens":20},"rate_limits":{"primary":{"used_percent":42.5,"window_minutes":300,"resets_at":1757000000},"secondary":{"used_percent":10,"window_minutes":10080,"resets_at":1757600000}}}}}`, startTime.Add(time.Second).UTC().Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":600,"output_tokens":30},"rate_limits":{"primary":{"used_percent":55,"window_minutes":300,"resets_at":1757000000},"secondary":{"used_percent":11,"window_minutes":10080,"resets_at":1757600000}}}}}`, startTime.Add(2*time.Second).UTC().Format(time.RFC3339Nano)),
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(dateDir, "rollout-2026-07-13T00-00-00-"+threadID+".jsonl"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	got := scanCodexSessionUsage(startTime, taskHome, threadID, false)
+	if got == nil {
+		t.Fatal("expected usage scanned from the per-task home")
+	}
+	if got.rateLimits == nil {
+		t.Fatal("expected rate limits captured from the rollout")
+	}
+	// The scan keeps the NEWEST non-nil snapshot (file order is chronological).
+	primary := got.rateLimits.Primary
+	if primary == nil || primary.UsedPercent == nil || *primary.UsedPercent != 55 {
+		t.Fatalf("primary = %+v, want used_percent 55", primary)
+	}
+	if primary.WindowMinutes == nil || *primary.WindowMinutes != 300 {
+		t.Fatalf("primary window_minutes = %v, want 300", primary.WindowMinutes)
+	}
+	secondary := got.rateLimits.Secondary
+	if secondary == nil || secondary.WindowMinutes == nil || *secondary.WindowMinutes != 10080 {
+		t.Fatalf("secondary = %+v, want window_minutes 10080", secondary)
+	}
+}
+
+// TestHandleEventTokenCountCapturesRateLimits pins the live capture path: a
+// legacy token_count event stores info.rate_limits under usageMu, and a
+// malformed object leaves the previous snapshot untouched.
+func TestHandleEventTokenCountCapturesRateLimits(t *testing.T) {
+	t.Parallel()
+	c, _, _ := newTestCodexClient(t)
+
+	c.handleEvent(map[string]any{
+		"type": "token_count",
+		"info": map[string]any{
+			"rate_limits": map[string]any{
+				"primary":   map[string]any{"used_percent": 42.5, "window_minutes": 300, "resets_at": 1757000000},
+				"secondary": map[string]any{"used_percent": 100, "window_minutes": 10080},
+			},
+		},
+	})
+
+	c.usageMu.Lock()
+	limits := c.rateLimits
+	c.usageMu.Unlock()
+	if limits == nil {
+		t.Fatal("expected live rate limits captured")
+	}
+	if limits.Primary == nil || limits.Primary.UsedPercent == nil || *limits.Primary.UsedPercent != 42.5 {
+		t.Fatalf("primary = %+v, want used_percent 42.5", limits.Primary)
+	}
+	if limits.Secondary == nil || limits.Secondary.UsedPercent == nil || *limits.Secondary.UsedPercent != 100 {
+		t.Fatalf("secondary = %+v, want used_percent 100", limits.Secondary)
+	}
+	if limits.Secondary.ResetsAt != nil {
+		t.Fatalf("secondary resets_at = %v, want nil (not reported)", *limits.Secondary.ResetsAt)
+	}
+
+	// A token_count without rate_limits must not clear the stored snapshot.
+	c.handleEvent(map[string]any{"type": "token_count", "info": map[string]any{}})
+	c.usageMu.Lock()
+	kept := c.rateLimits
+	c.usageMu.Unlock()
+	if kept == nil || kept.Primary == nil || kept.Primary.UsedPercent == nil || *kept.Primary.UsedPercent != 42.5 {
+		t.Fatalf("rate limits after empty token_count = %+v, want previous snapshot kept", kept)
+	}
+}
+
+// TestCodexRateLimitsToPlanQuota pins the wire-shape conversion: provider,
+// window naming, pointer passthrough, the limited-at-100% rule, and the nil
+// cases.
+func TestCodexRateLimitsToPlanQuota(t *testing.T) {
+	t.Parallel()
+	observedAt := time.Unix(1757000100, 0)
+
+	t.Run("nil input", func(t *testing.T) {
+		if got := codexRateLimitsToPlanQuota(nil, observedAt); got != nil {
+			t.Fatalf("got %+v, want nil", got)
+		}
+	})
+
+	t.Run("empty snapshot", func(t *testing.T) {
+		if got := codexRateLimitsToPlanQuota(&codexRawRateLimits{}, observedAt); got != nil {
+			t.Fatalf("got %+v, want nil for snapshot without windows", got)
+		}
+	})
+
+	t.Run("ok below 100 percent", func(t *testing.T) {
+		used := 42.5
+		minutes := int64(300)
+		resets := int64(1757000000)
+		got := codexRateLimitsToPlanQuota(&codexRawRateLimits{
+			Primary:   &codexRawRateLimitWindow{UsedPercent: &used, WindowMinutes: &minutes, ResetsAt: &resets},
+			Secondary: &codexRawRateLimitWindow{UsedPercent: &used},
+		}, observedAt)
+		if got == nil {
+			t.Fatal("expected quota")
+		}
+		if got.Provider != "codex" || got.Source != protocol.PlanQuotaSourceDaemon {
+			t.Fatalf("provider/source = %q/%q", got.Provider, got.Source)
+		}
+		if got.Status != protocol.PlanQuotaStatusOK {
+			t.Fatalf("status = %q, want ok", got.Status)
+		}
+		if got.ObservedAt != observedAt.Unix() {
+			t.Fatalf("observed_at = %d, want %d", got.ObservedAt, observedAt.Unix())
+		}
+		if len(got.Windows) != 2 || got.Windows[0].Name != "primary" || got.Windows[1].Name != "secondary" {
+			t.Fatalf("windows = %+v", got.Windows)
+		}
+		if got.Windows[0].UsedPercent != &used || got.Windows[0].WindowMinutes != &minutes || got.Windows[0].ResetsAt != &resets {
+			t.Fatal("primary window fields must pass through by pointer (no fabricated values)")
+		}
+		if got.Windows[1].WindowMinutes != nil || got.Windows[1].ResetsAt != nil {
+			t.Fatal("unreported secondary fields must stay nil")
+		}
+	})
+
+	t.Run("limited at exactly 100 percent", func(t *testing.T) {
+		full := 100.0
+		half := 50.0
+		got := codexRateLimitsToPlanQuota(&codexRawRateLimits{
+			Primary:   &codexRawRateLimitWindow{UsedPercent: &half},
+			Secondary: &codexRawRateLimitWindow{UsedPercent: &full},
+		}, observedAt)
+		if got == nil {
+			t.Fatal("expected quota")
+		}
+		if got.Status != protocol.PlanQuotaStatusLimited {
+			t.Fatalf("status = %q, want limited when any window hits 100%%", got.Status)
+		}
+	})
 }

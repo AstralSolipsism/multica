@@ -45,8 +45,17 @@ type AgentRuntimeResponse struct {
 	// runtime_profile (MUL-3284); null for built-in runtimes.
 	ProfileID  *string `json:"profile_id"`
 	LastSeenAt *string `json:"last_seen_at"`
-	CreatedAt  string  `json:"created_at"`
-	UpdatedAt  string  `json:"updated_at"`
+	// PlanQuota is the latest provider plan/rate-limit snapshot reported for
+	// this runtime (agent_runtime.plan_quota, protocol.RuntimePlanQuota on
+	// the wire); null when nothing was ever reported. Handled as opaque JSON
+	// like Metadata — the server validates on write, not on read.
+	PlanQuota any `json:"plan_quota"`
+	// SystemStats is the runtime host's latest CPU/memory sample, joined
+	// from the daemon-keyed metrics cache at list time; null when the daemon
+	// never sampled or the sample expired.
+	SystemStats *protocol.HostMetrics `json:"system_stats"`
+	CreatedAt   string                `json:"created_at"`
+	UpdatedAt   string                `json:"updated_at"`
 }
 
 func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
@@ -56,6 +65,11 @@ func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 	}
 	if metadata == nil {
 		metadata = map[string]any{}
+	}
+
+	var planQuota any
+	if rt.PlanQuota != nil {
+		json.Unmarshal(rt.PlanQuota, &planQuota)
 	}
 
 	return AgentRuntimeResponse{
@@ -74,6 +88,7 @@ func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 		Visibility:   rt.Visibility,
 		ProfileID:    uuidToPtr(rt.ProfileID),
 		LastSeenAt:   timestampToPtr(rt.LastSeenAt),
+		PlanQuota:    planQuota,
 		CreatedAt:    timestampToString(rt.CreatedAt),
 		UpdatedAt:    timestampToString(rt.UpdatedAt),
 	}
@@ -774,6 +789,35 @@ func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 	resp := make([]AgentRuntimeResponse, len(runtimes))
 	for i, rt := range runtimes {
 		resp[i] = runtimeToResponse(rt)
+	}
+
+	// Attach host metrics for the daemons behind these runtimes. One MGet for
+	// the distinct daemon id set; runtimes without a live sample keep a nil
+	// SystemStats.
+	if h.MachineMetricsStore.Available() {
+		daemonIDs := make([]string, 0, len(runtimes))
+		seen := make(map[string]struct{}, len(runtimes))
+		for _, rt := range runtimes {
+			if !rt.DaemonID.Valid || rt.DaemonID.String == "" {
+				continue
+			}
+			if _, ok := seen[rt.DaemonID.String]; ok {
+				continue
+			}
+			seen[rt.DaemonID.String] = struct{}{}
+			daemonIDs = append(daemonIDs, rt.DaemonID.String)
+		}
+		if len(daemonIDs) > 0 {
+			samples := h.MachineMetricsStore.GetBatch(r.Context(), daemonIDs)
+			for i := range resp {
+				if resp[i].DaemonID == nil {
+					continue
+				}
+				if sample, ok := samples[*resp[i].DaemonID]; ok {
+					resp[i].SystemStats = sample
+				}
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)

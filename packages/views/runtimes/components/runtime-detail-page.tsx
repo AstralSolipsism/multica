@@ -22,6 +22,7 @@ import {
   buildRuntimeMachines,
   sharedCustomName,
 } from "./runtime-machines";
+import { HostMetricsInline } from "./host-metrics-bars";
 import { RenameMachineDialog } from "./rename-machine-dialog";
 import { RuntimeProfilesDialog } from "./runtime-profiles-dialog";
 import { pendingRuntimesForProfiles } from "./pending-runtime";
@@ -204,6 +205,11 @@ export function RuntimeDetailPage({
 
   const Icon = machine.section === "cloud" ? Cloud : Monitor;
   const busyCount = machine.runningCount + machine.queuedCount;
+  // Same liveness rule as the machine row: host metrics are only worth
+  // showing while the machine is (recently) reachable; otherwise the
+  // header's offline state speaks for itself and the chips are omitted.
+  const statsLive =
+    machine.health === "online" || machine.health === "recently_lost";
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="shrink-0 border-b bg-background px-4 pb-5 pt-3 sm:px-6">
@@ -261,6 +267,12 @@ export function RuntimeDetailPage({
                         })
                       : t(($) => $.machine.metrics.workload_idle)}
                   </span>
+                  {statsLive && (
+                    <HostMetricsInline
+                      cpuPercent={machine.cpuPercent}
+                      memoryPercent={machine.memoryPercent}
+                    />
+                  )}
                   <MachineCliSection
                     machine={machine}
                     currentUserId={currentUserId}

@@ -1,5 +1,16 @@
-import { deriveRuntimeHealth, type RuntimeHealth } from "@multica/core/runtimes";
-import type { AgentRuntime } from "@multica/core/types";
+import {
+  activeQuotaWindows,
+  deriveRuntimeHealth,
+  isQuotaStale,
+  parsePlanQuota,
+  pickMachineSystemStats,
+  quotaTone,
+  windowRemainingPercent,
+  worstQuotaWindow,
+  type QuotaTone,
+  type RuntimeHealth,
+} from "@multica/core/runtimes";
+import type { AgentRuntime, RuntimePlanQuota } from "@multica/core/types";
 import { formatDeviceInfo } from "../utils";
 
 export type RuntimeMachineSection = "local" | "remote" | "cloud";
@@ -8,6 +19,16 @@ export type RuntimeMachineFilter = "all" | "online" | "issues";
 export interface RuntimeWorkloadSummary {
   runningCount: number;
   queuedCount: number;
+}
+
+/** One runtime's plan-quota summary as rendered on the machine row: the
+ *  worst active window's remaining percent plus the tone to render it in. */
+export interface MachineQuotaChip {
+  runtimeId: string;
+  provider: string;
+  remainingPercent: number | null;
+  status: RuntimePlanQuota["status"];
+  tone: QuotaTone;
 }
 
 export interface RuntimeMachine {
@@ -28,6 +49,10 @@ export interface RuntimeMachine {
   runningCount: number;
   queuedCount: number;
   providerNames: string[];
+  cpuPercent: number | null;
+  memoryPercent: number | null;
+  systemStatsCapturedAt: number | null;
+  quotaChips: MachineQuotaChip[];
   lastSeenAt: string | null;
 }
 
@@ -145,6 +170,10 @@ function placeholderLocalMachine(
     runningCount: 0,
     queuedCount: 0,
     providerNames: [],
+    cpuPercent: null,
+    memoryPercent: null,
+    systemStatsCapturedAt: null,
+    quotaChips: [],
     lastSeenAt: null,
   };
 }
@@ -247,6 +276,8 @@ function finalizeRuntimeMachine(
     },
     { runningCount: 0, queuedCount: 0 },
   );
+  const systemStats = pickMachineSystemStats(runtimes);
+  const quotaChips = onlineCount > 0 ? machineQuotaChips(runtimes, options.now) : [];
 
   return {
     id: draft.id,
@@ -266,8 +297,40 @@ function finalizeRuntimeMachine(
     runningCount: workload.runningCount,
     queuedCount: workload.queuedCount,
     providerNames,
+    cpuPercent: systemStats?.cpu_percent ?? null,
+    memoryPercent: systemStats?.memory_percent ?? null,
+    systemStatsCapturedAt: systemStats?.captured_at ?? null,
+    quotaChips,
     lastSeenAt: latestLastSeenAt(runtimes),
   };
+}
+
+// Per-runtime quota chips for an online machine. A runtime contributes a
+// chip only when its snapshot parsed, is fresh (<=24h), and still has an
+// active (unexpired) window; the chip's percent is the worst active
+// window's remaining, so the chip shows whichever window throttles first.
+function machineQuotaChips(
+  runtimes: AgentRuntime[],
+  now: number,
+): MachineQuotaChip[] {
+  const nowSec = Math.floor(now / 1000);
+  const chips: MachineQuotaChip[] = [];
+  for (const runtime of runtimes) {
+    const quota = parsePlanQuota(runtime.plan_quota);
+    if (!quota) continue;
+    if (isQuotaStale(quota, now)) continue;
+    if (activeQuotaWindows(quota, nowSec).length === 0) continue;
+    const worst = worstQuotaWindow(quota, nowSec);
+    const remaining = worst ? windowRemainingPercent(worst) : null;
+    chips.push({
+      runtimeId: runtime.id,
+      provider: quota.provider || runtime.provider,
+      remainingPercent: remaining,
+      status: quota.status,
+      tone: quotaTone(remaining, quota.status),
+    });
+  }
+  return chips;
 }
 
 function runtimeMachineId(runtime: AgentRuntime): string {

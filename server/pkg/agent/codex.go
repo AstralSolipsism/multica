@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
@@ -1727,16 +1728,19 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		var usageMap map[string]TokenUsage
 		c.usageMu.Lock()
 		u := c.usage
+		liveRateLimits := c.rateLimits
 		c.usageMu.Unlock()
 
 		// Fallback: if no usage from JSON-RPC, scan Codex session JSONL logs.
 		// Codex writes token_count events to $CODEX_HOME/sessions/YYYY/MM/DD/*.jsonl;
 		// scan this backend's per-task CODEX_HOME, since sessions are isolated
 		// there rather than in the shared ~/.codex/sessions (MUL-4424).
+		var scannedRateLimits *codexRawRateLimits
 		if u.InputTokens == 0 && u.OutputTokens == 0 {
 			taskCodexHome := strings.TrimSpace(b.cfg.Env["CODEX_HOME"])
 			if scanned := scanCodexSessionUsage(startTime, taskCodexHome, threadID, resumed); scanned != nil {
 				u = scanned.usage
+				scannedRateLimits = scanned.rateLimits
 				if scanned.model != "" && opts.Model == "" {
 					opts.Model = scanned.model
 				}
@@ -1751,6 +1755,15 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			usageMap = map[string]TokenUsage{model: u}
 		}
 
+		// Plan quota: the live token_count capture is fresher than anything
+		// the JSONL scan can recover, so it wins; the scan covers runs whose
+		// events never reached the notification stream.
+		rateLimits := liveRateLimits
+		if rateLimits == nil {
+			rateLimits = scannedRateLimits
+		}
+		planLimits := codexRateLimitsToPlanQuota(rateLimits, time.Now())
+
 		resCh <- Result{
 			Status:                       finalStatus,
 			Output:                       finalOutput,
@@ -1758,6 +1771,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			SessionID:                    threadID,
 			DurationMs:                   duration.Milliseconds(),
 			Usage:                        usageMap,
+			PlanLimits:                   planLimits,
 			codexStartupRefreshRetrySafe: startupRefreshRetrySafe,
 		}
 	}()
@@ -2218,6 +2232,10 @@ type codexClient struct {
 
 	usageMu sync.Mutex
 	usage   TokenUsage // accumulated from turn events
+	// rateLimits is the newest rate_limits snapshot captured from live
+	// token_count events (legacy protocol). Guarded by usageMu; nil until a
+	// token_count event carrying rate_limits arrives.
+	rateLimits *codexRawRateLimits
 
 	turnErrorMu sync.Mutex
 	turnError   string // captured from turn/completed status=failed or terminal error notifications
@@ -3146,6 +3164,23 @@ func (c *codexClient) handleEvent(msg map[string]any) {
 		if c.onTurnDone != nil {
 			c.onTurnDone(false)
 		}
+	case "token_count":
+		// Legacy token_count events carry the account rate-limit snapshot at
+		// info.rate_limits. The shape crosses a map[string]any boundary, so a
+		// JSON round-trip into the typed struct is the cheap safe parse; a
+		// missing or malformed object leaves the previous snapshot in place.
+		if info, ok := msg["info"].(map[string]any); ok {
+			if raw, ok := info["rate_limits"]; ok {
+				var limits codexRawRateLimits
+				if data, err := json.Marshal(raw); err == nil {
+					if err := json.Unmarshal(data, &limits); err == nil {
+						c.usageMu.Lock()
+						c.rateLimits = &limits
+						c.usageMu.Unlock()
+					}
+				}
+			}
+		}
 	case "turn_aborted":
 		if c.onTurnDone != nil {
 			c.onTurnDone(true)
@@ -3396,6 +3431,53 @@ func codexUncachedInputTokens(inputTokens, cachedInputTokens int64) int64 {
 	return uncached
 }
 
+// codexRateLimitsToPlanQuota converts Codex's raw rate-limit snapshot into
+// the daemon-to-server plan-quota wire shape. Windows the snapshot does not
+// carry are skipped (never zero-filled); the status flips to "limited" as
+// soon as any window reports full utilization. Nil in, nil out — and a
+// snapshot with no usable windows is also nil, so Result.PlanLimits stays
+// absent when Codex reported nothing meaningful.
+func codexRateLimitsToPlanQuota(raw *codexRawRateLimits, observedAt time.Time) *protocol.RuntimePlanQuota {
+	if raw == nil {
+		return nil
+	}
+	quota := &protocol.RuntimePlanQuota{
+		Provider:   "codex",
+		Status:     protocol.PlanQuotaStatusOK,
+		ObservedAt: observedAt.Unix(),
+		Source:     protocol.PlanQuotaSourceDaemon,
+	}
+	limited := false
+	appendWindow := func(name string, w *codexRawRateLimitWindow) {
+		if w == nil {
+			return
+		}
+		if w.UsedPercent == nil && w.WindowMinutes == nil && w.ResetsAt == nil {
+			// An all-empty window carries no information; adding it would
+			// render as a real-but-blank window downstream.
+			return
+		}
+		if w.UsedPercent != nil && *w.UsedPercent >= 100 {
+			limited = true
+		}
+		quota.Windows = append(quota.Windows, protocol.RuntimePlanQuotaWindow{
+			Name:          name,
+			UsedPercent:   w.UsedPercent,
+			WindowMinutes: w.WindowMinutes,
+			ResetsAt:      w.ResetsAt,
+		})
+	}
+	appendWindow("primary", raw.Primary)
+	appendWindow("secondary", raw.Secondary)
+	if len(quota.Windows) == 0 {
+		return nil
+	}
+	if limited {
+		quota.Status = protocol.PlanQuotaStatusLimited
+	}
+	return quota
+}
+
 // codexInt64 returns the first non-zero int64 value from the map for the given keys.
 func codexInt64(m map[string]any, keys ...string) int64 {
 	for _, key := range keys {
@@ -3419,6 +3501,10 @@ func codexInt64(m map[string]any, keys ...string) int64 {
 type codexSessionUsage struct {
 	usage TokenUsage
 	model string
+	// rateLimits is the newest non-nil rate_limits object seen in the file
+	// (events are chronological, so the last one wins). Nil when the session
+	// never reported account rate limits.
+	rateLimits *codexRawRateLimits
 }
 
 // scanCodexSessionUsage extracts usage for threadID from its Codex rollout.
@@ -3592,6 +3678,23 @@ type codexRawTokenUsage struct {
 	ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
 }
 
+// codexRawRateLimitWindow mirrors one window of Codex's
+// info.rate_limits.{primary,secondary} object (5h and weekly account rate
+// limits). Every field is a pointer so "not reported" survives the trip to
+// the server as an absent key instead of a fabricated 0.
+type codexRawRateLimitWindow struct {
+	UsedPercent   *float64 `json:"used_percent"`
+	WindowMinutes *int64   `json:"window_minutes"`
+	ResetsAt      *int64   `json:"resets_at"`
+}
+
+// codexRawRateLimits mirrors the info.rate_limits object Codex emits on
+// token_count events (primary: ~5h window, secondary: ~weekly window).
+type codexRawRateLimits struct {
+	Primary   *codexRawRateLimitWindow `json:"primary"`
+	Secondary *codexRawRateLimitWindow `json:"secondary"`
+}
+
 // codexSessionTokenCount represents a token_count event in Codex JSONL.
 type codexSessionTokenCount struct {
 	Timestamp time.Time `json:"timestamp"`
@@ -3602,6 +3705,7 @@ type codexSessionTokenCount struct {
 			TotalTokenUsage *codexRawTokenUsage `json:"total_token_usage"`
 			LastTokenUsage  *codexRawTokenUsage `json:"last_token_usage"`
 			Model           string              `json:"model"`
+			RateLimits      *codexRawRateLimits `json:"rate_limits"`
 		} `json:"info"`
 		Model string `json:"model"`
 	} `json:"payload"`
@@ -3679,6 +3783,12 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 				// fallback the old whole-file parser would have selected.
 				finalUsage = normalizeCodexRawTokenUsage(*usage)
 				finalUsageFound = true
+			}
+			// Rate limits are account-level snapshots, not deltas: the newest
+			// non-nil report in the file is the best answer regardless of the
+			// resume boundary arithmetic above.
+			if evt.Payload.Info.RateLimits != nil {
+				result.rateLimits = evt.Payload.Info.RateLimits
 			}
 			if evt.Payload.Info.Model != "" {
 				result.model = evt.Payload.Info.Model

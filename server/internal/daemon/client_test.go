@@ -564,3 +564,109 @@ func TestTerminalReportsCarryDurableWorkDir(t *testing.T) {
 		})
 	}
 }
+
+// TestClient_SendHeartbeatBody pins the heartbeat wire body: the optional
+// plan_limits / metrics attachments appear only when present, and the
+// pre-feature fields are unchanged.
+func TestClient_SendHeartbeatBody(t *testing.T) {
+	t.Run("with extras", func(t *testing.T) {
+		var body map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/daemon/heartbeat" {
+				t.Errorf("path = %q, want /api/daemon/heartbeat", r.URL.Path)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		}))
+		defer srv.Close()
+
+		used := 42.5
+		minutes := int64(300)
+		resets := int64(1757000000)
+		cpuPercent := 42.0
+		memPercent := 68.0
+		extras := HeartbeatExtras{
+			PlanLimits: &protocol.RuntimePlanQuota{
+				Provider: "codex",
+				Status:   protocol.PlanQuotaStatusOK,
+				Windows: []protocol.RuntimePlanQuotaWindow{
+					{Name: "primary", UsedPercent: &used, WindowMinutes: &minutes, ResetsAt: &resets},
+				},
+				ObservedAt: 1757000100,
+				Source:     protocol.PlanQuotaSourceDaemon,
+			},
+			Metrics: &protocol.HostMetrics{
+				CPUPercent:    &cpuPercent,
+				MemoryPercent: &memPercent,
+				CapturedAt:    1757000100,
+			},
+		}
+
+		c := NewClient(srv.URL)
+		c.SetToken("tok")
+		resp, err := c.SendHeartbeat(context.Background(), "runtime-1", extras)
+		if err != nil {
+			t.Fatalf("SendHeartbeat: %v", err)
+		}
+		if resp == nil || resp.Status != "ok" {
+			t.Fatalf("resp = %+v, want status ok", resp)
+		}
+
+		if body["runtime_id"] != "runtime-1" || body["supports_batch_import"] != true {
+			t.Fatalf("base fields = %v", body)
+		}
+		planLimits, ok := body["plan_limits"].(map[string]any)
+		if !ok {
+			t.Fatalf("plan_limits missing or wrong type: %v", body)
+		}
+		if planLimits["provider"] != "codex" || planLimits["status"] != "ok" || planLimits["source"] != "daemon" {
+			t.Fatalf("plan_limits identity fields = %v", planLimits)
+		}
+		if planLimits["observed_at"] != float64(1757000100) {
+			t.Fatalf("plan_limits.observed_at = %v", planLimits["observed_at"])
+		}
+		windows, ok := planLimits["windows"].([]any)
+		if !ok || len(windows) != 1 {
+			t.Fatalf("plan_limits.windows = %v", planLimits["windows"])
+		}
+		window := windows[0].(map[string]any)
+		if window["name"] != "primary" || window["used_percent"] != 42.5 ||
+			window["window_minutes"] != float64(300) || window["resets_at"] != float64(1757000000) {
+			t.Fatalf("window = %v", window)
+		}
+		metrics, ok := body["metrics"].(map[string]any)
+		if !ok {
+			t.Fatalf("metrics missing or wrong type: %v", body)
+		}
+		if metrics["cpu_percent"] != 42.0 || metrics["memory_percent"] != 68.0 ||
+			metrics["captured_at"] != float64(1757000100) {
+			t.Fatalf("metrics = %v", metrics)
+		}
+	})
+
+	t.Run("zero extras omit the fields", func(t *testing.T) {
+		var body map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		}))
+		defer srv.Close()
+
+		c := NewClient(srv.URL)
+		if _, err := c.SendHeartbeat(context.Background(), "runtime-1", HeartbeatExtras{}); err != nil {
+			t.Fatalf("SendHeartbeat: %v", err)
+		}
+		if _, present := body["plan_limits"]; present {
+			t.Fatalf("plan_limits present with zero extras: %v", body)
+		}
+		if _, present := body["metrics"]; present {
+			t.Fatalf("metrics present with zero extras: %v", body)
+		}
+	})
+}

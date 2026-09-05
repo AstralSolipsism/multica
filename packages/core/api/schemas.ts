@@ -1687,6 +1687,40 @@ const RuntimeUsageByHourSchema = z.object({
 export const RuntimeUsageByHourListSchema = z.array(RuntimeUsageByHourSchema);
 
 // ---------------------------------------------------------------------------
+// Runtime plan-quota / system-stats schemas. These ride along on each runtime
+// object from `GET /api/runtimes` as optional fields. They are NOT wired
+// through parseWithFallback at the endpoint — one malformed snapshot must not
+// take down the whole runtime list — so the views layer sanitizes each
+// runtime individually (see parsePlanQuota in core/runtimes/plan-quota).
+// ---------------------------------------------------------------------------
+
+// Strict per-window shape: a window whose fields fail to parse is dropped by
+// the sanitizer, so the schema itself does not tolerate drift.
+export const RuntimePlanQuotaWindowSchema = z.object({
+  name: z.string().default(""),
+  used_percent: z.number().nullable().default(null),
+  window_minutes: z.number().nullable().default(null),
+  resets_at: z.number().nullable().default(null),
+}).loose();
+
+// `windows` stays `unknown[]` here on purpose: the sanitizer re-parses each
+// window with RuntimePlanQuotaWindowSchema and drops the malformed ones
+// instead of failing the whole snapshot.
+export const RuntimePlanQuotaSchema = z.object({
+  provider: z.string().default(""),
+  status: z.string().default("ok"),
+  windows: z.array(z.unknown()).default([]),
+  observed_at: z.number().default(0),
+  source: z.string().default(""),
+}).loose();
+
+export const RuntimeSystemStatsSchema = z.object({
+  cpu_percent: z.number().nullable().default(null),
+  memory_percent: z.number().nullable().default(null),
+  captured_at: z.number().default(0),
+}).loose();
+
+// ---------------------------------------------------------------------------
 // Agent task responses. The base object stays loose so daemon/runtime fields
 // can drift while task-list consumers still validate the fields they render.
 // ---------------------------------------------------------------------------

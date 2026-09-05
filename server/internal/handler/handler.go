@@ -214,12 +214,13 @@ type Handler struct {
 	// catalog reads a request performs, which is the only property that
 	// distinguishes the current one-read derivation from the N+1 it replaced.
 	// (MUL-6243)
-	IssueStatusCatalog issuestatus.Querier
-	LivenessStore      LivenessStore
-	HeartbeatScheduler HeartbeatScheduler
-	Storage            storage.Storage
-	CFSigner           *auth.CloudFrontSigner
-	Analytics          analytics.Client
+	IssueStatusCatalog  issuestatus.Querier
+	LivenessStore       LivenessStore
+	MachineMetricsStore MachineMetricsStore
+	HeartbeatScheduler  HeartbeatScheduler
+	Storage             storage.Storage
+	CFSigner            *auth.CloudFrontSigner
+	Analytics           analytics.Client
 	// DaemonPendingWork pushes "heartbeat now" hints for queued
 	// heartbeat-carried requests (MUL-5444). Optional: when nil,
 	// requestDaemonPendingWork falls back to the local DaemonHub, which is the
@@ -477,6 +478,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		LocalSkillListStore:          NewInMemoryLocalSkillListStore(),
 		LocalSkillImportStore:        NewInMemoryLocalSkillImportStore(),
 		LivenessStore:                NewNoopLivenessStore(),
+		MachineMetricsStore:          NewNoopMachineMetricsStore(),
 		HeartbeatScheduler:           NewPassthroughHeartbeatScheduler(queries),
 		Storage:                      store,
 		CFSigner:                     cfSigner,
