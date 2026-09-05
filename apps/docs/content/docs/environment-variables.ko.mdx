@@ -243,6 +243,10 @@ API key와 base URL이 모두 비어 있으면 이 레이어가 꺼지고 업스
 | `MULTICA_WORKSPACES_ROOT` | `~/multica_workspaces` | 작업 작업 디렉터리의 루트 |
 | `MULTICA_AGENT_TEMP_BASE` | `/tmp`(Linux/macOS) | Linux/macOS 전용. 작업별 비공개 임시 디렉터리의 상위 디렉터리입니다. 기존의 쓰기 가능한 절대 경로여야 하며, 값이 잘못되면 `/tmp`로 대체하지 않고 작업 시작에 실패합니다. 짧은 경로를 선택하세요. 하위 도구가 그 아래에 AF_UNIX 소켓을 만들 수 있으며 `sun_path` 제한은 Linux에서 108바이트, macOS에서 104바이트입니다 |
 | `MULTICA_KEEP_ENV_AFTER_TASK` | `false` | 디버깅을 위해 작업 디렉터리 유지 |
+| `MULTICA_ZENMUX_MANAGEMENT_API_KEY` | 비어 있음(수집기 비활성) | ZenMux Management API 키(콘솔 발급, 추론 키와 별개). 이 머신의 hermes 런타임을 ZenMux 계정에 연결하고 구독 쿼터 수집기를 활성화합니다. 키는 이 머신을 벗어나지 않습니다 |
+| `MULTICA_KIMI_QUOTA_POLL_INTERVAL` | `2m` | Kimi 플랜 쿼터 수집기의 폴 간격. 이 머신의 Kimi Code 로컬 Server API를 탐색하며 `kimi web`이 실행 중이 아니면 조용히 "미보고" 상태를 유지합니다 |
+| `MULTICA_ZENMUX_QUOTA_POLL_INTERVAL` | `2m` | ZenMux 플랜 쿼터 수집기의 폴 간격. 422 레이트 리밋 응답 시 지연을 지수적으로 늘립니다 |
+| `MULTICA_ZENMUX_API_BASE_URL` | 공식 엔드포인트 | ZenMux subscription-detail 엔드포인트 재정의. 테스트 및 스테이징 프록시용 |
 
 데몬이 에이전트 작업에 주입하는 내부 컨텍스트는 [작업 런타임 환경](/daemon-runtimes#작업-런타임-환경)을 참고하세요.
 

@@ -243,6 +243,10 @@ API key 与 base URL 都为空时，这一层关闭，不会发出任何上游�
 | `MULTICA_WORKSPACES_ROOT` | `~/multica_workspaces` | task 工作目录的根目录 |
 | `MULTICA_AGENT_TEMP_BASE` | `/tmp`（Linux/macOS） | 仅适用于 Linux/macOS。私有 task 临时目录的父目录；必须是现有、可写的绝对路径，无效值会使 task 启动失败，不会回退到 `/tmp`。请选择较短的路径——子工具可能会在其中绑定 AF_UNIX socket；Linux 的 `sun_path` 上限为 108 字节，macOS 为 104 字节 |
 | `MULTICA_KEEP_ENV_AFTER_TASK` | `false` | 保留 task 目录用于调试 |
+| `MULTICA_ZENMUX_MANAGEMENT_API_KEY` | 空（不启用采集） | ZenMux Management API Key（控制台签发，与推理 Key 不同），用于将本机 hermes runtime 关联到 ZenMux 账户并启用订阅配额采集；该 Key 不会离开本机 |
+| `MULTICA_KIMI_QUOTA_POLL_INTERVAL` | `2m` | Kimi 套餐配额采集器的轮询间隔；采集器探测本机 Kimi Code 本地 Server API，`kimi web` 未运行时静默保持「未上报」 |
+| `MULTICA_ZENMUX_QUOTA_POLL_INTERVAL` | `2m` | ZenMux 套餐配额采集器的轮询间隔；遇到 422 限流应答时按指数退避拉长间隔 |
+| `MULTICA_ZENMUX_API_BASE_URL` | 官方端点 | 覆盖 ZenMux subscription-detail 端点；用于测试与预发代理 |
 
 守护进程注入智能体 task 的内部上下文见 [Task 运行时环境](/daemon-runtimes#task-运行时环境)。
 

@@ -2090,6 +2090,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.autoUpdateLoop(ctx)
 	go d.tokenRenewalLoop(ctx)
 
+	// Plan-quota collectors feed the heartbeat plan_quota channel for
+	// providers whose quota lives behind an official programmatic API rather
+	// than inside the agent session. Kimi probes its local Server API and
+	// self-gates on the token file and a registered kimi runtime; ZenMux
+	// polls the Management API only when the operator configured a key.
+	go d.kimiPlanQuotaLoop(ctx)
+	if d.cfg.ZenMuxManagementAPIKey != "" {
+		go d.zenmuxPlanQuotaLoop(ctx)
+	}
+
 	// Preflight succeeded and the background loops are up: the daemon has
 	// registered its runtimes and can now claim and run tasks. Flip /health
 	// from "starting" to "running" — this is the signal `daemon start`'s
