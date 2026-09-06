@@ -484,6 +484,11 @@ type Daemon struct {
 	// heartbeat. Entries are deleted when the runtime leaves the local set.
 	planQuotaCache sync.Map
 
+	// hostMetrics samples the daemon host's CPU/memory on a timer; every
+	// runtime heartbeat attaches the same latest sample when it is fresh.
+	// Started by Run.
+	hostMetrics *hostMetricsSampler
+
 	// reconcile fans out a "re-check server state now" signal to subscribers
 	// (watchTaskCancellation, workspaceSyncLoop) so the WS connect/reconnect
 	// path can shrink coarse fallback reconciliation gaps to sub-second. See
@@ -676,6 +681,11 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		reconcile:                 newReconcileBroadcaster(),
 		workspaceChanges:          newWorkspaceChangeSignal(),
 		wsRPC:                     newWSRPCClient(wsRPCResponseGrace),
+		// The host metrics sampler is constructed here — before Run launches
+		// any heartbeat reader — so the field is safely published and readers
+		// can never race a late assignment (the sampler goroutine itself only
+		// starts in Run).
+		hostMetrics: newHostMetricsSampler(logger),
 	}
 	d.activeEnvRootsCond = sync.NewCond(&d.activeEnvRootsMu)
 	d.activeStoresCond = sync.NewCond(&d.activeStoresMu)
@@ -1177,11 +1187,12 @@ func (d *Daemon) recordRuntimePlanQuota(runtimeID string, quota *protocol.Runtim
 	d.planQuotaCache.Store(runtimeID, quota)
 }
 
-// heartbeatExtrasFor assembles the optional heartbeat attachment for one
+// heartbeatExtrasFor assembles the optional heartbeat attachments for one
 // runtime: its cached plan-quota snapshot (nil when the provider reported
-// nothing).
+// nothing) and the latest fresh host metrics sample (nil when the sampler
+// has none).
 func (d *Daemon) heartbeatExtrasFor(runtimeID string) HeartbeatExtras {
-	var extras HeartbeatExtras
+	extras := HeartbeatExtras{Metrics: d.latestHostMetrics()}
 	if cached, ok := d.planQuotaCache.Load(runtimeID); ok {
 		if quota, ok := cached.(*protocol.RuntimePlanQuota); ok {
 			extras.PlanQuota = quota
@@ -2089,6 +2100,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.gcLoop(ctx)
 	go d.autoUpdateLoop(ctx)
 	go d.tokenRenewalLoop(ctx)
+
+	// Host CPU/memory sampler feeding the heartbeat's metrics attachment.
+	// The sampler was constructed in New, before any heartbeat reader could
+	// start; only its goroutine launches here, so heartbeats simply omit the
+	// field until the first sample lands.
+	go d.hostMetrics.run(ctx)
 
 	// Preflight succeeded and the background loops are up: the daemon has
 	// registered its runtimes and can now claim and run tasks. Flip /health

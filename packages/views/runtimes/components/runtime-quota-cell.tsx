@@ -41,22 +41,22 @@ export function formatQuotaWindowLabel(
 }
 
 // Tone → semantic classes for the quota bars (a small fill meter + a
-// tone-colored percent).
-const TONE_BAR_CLASS: Record<QuotaTone, string> = {
+// tone-colored percent). Shared with the host-metrics bars.
+export const TONE_BAR_CLASS: Record<QuotaTone, string> = {
   ok: "bg-foreground/70",
   warning: "bg-warning",
   destructive: "bg-destructive",
 };
 
-const TONE_TEXT_CLASS: Record<QuotaTone, string> = {
+export const TONE_TEXT_CLASS: Record<QuotaTone, string> = {
   ok: "text-foreground",
   warning: "text-warning",
   destructive: "text-destructive",
 };
 
-// Thin fill meter for the quota-remaining bars. The caller owns the null
-// state ("--" / omit) — the bar itself never renders one.
-function MiniMeterBar({
+// Thin fill meter for the quota-remaining and host-metrics bars. The caller
+// owns the null state ("--" / omit) — the bar itself never renders one.
+export function MiniMeterBar({
   percent,
   tone,
   ariaLabel,

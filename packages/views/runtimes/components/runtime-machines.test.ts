@@ -495,6 +495,95 @@ describe("runtime machine quota chips", () => {
   });
 });
 
+describe("runtime machine system stats", () => {
+  const NOW_SEC = Math.floor(NOW / 1000);
+
+  it("picks the latest sample across the machine's runtimes", () => {
+    const machines = buildRuntimeMachines(
+      [
+        makeRuntime({
+          id: "rt-old",
+          provider: "codex",
+          system_stats: { cpu_percent: 10, memory_percent: 20, captured_at: NOW_SEC - 60, stale: false },
+        }),
+        makeRuntime({
+          id: "rt-new",
+          provider: "claude",
+          system_stats: { cpu_percent: 42, memory_percent: 68, captured_at: NOW_SEC - 5, stale: false },
+        }),
+      ],
+      { now: NOW },
+    );
+
+    expect(machines[0]).toMatchObject({
+      cpuPercent: 42,
+      memoryPercent: 68,
+      systemStatsCapturedAt: NOW_SEC - 5,
+      systemStatsStale: false,
+    });
+  });
+
+  it("propagates the server-computed stale flag and tolerates no data", () => {
+    const machines = buildRuntimeMachines(
+      [
+        makeRuntime({
+          id: "rt-stale",
+          system_stats: { cpu_percent: 42, memory_percent: null, captured_at: NOW_SEC - 45, stale: true },
+        }),
+      ],
+      { now: NOW },
+    );
+    expect(machines[0]).toMatchObject({
+      cpuPercent: 42,
+      memoryPercent: null,
+      systemStatsStale: true,
+    });
+
+    const empty = buildRuntimeMachines([makeRuntime({ id: "rt-none" })], {
+      now: NOW,
+    });
+    expect(empty[0]).toMatchObject({
+      cpuPercent: null,
+      memoryPercent: null,
+      systemStatsCapturedAt: null,
+      systemStatsStale: false,
+    });
+  });
+
+  it("advances freshness on the ticking clock when refetches stop arriving", () => {
+    // The daemon's sampler stopped (or the network did) right after this
+    // sample: the server response said fresh. Within the bounded-poll window
+    // the machine must NOT flicker stale; once no refetch has delivered for
+    // 2x the SLA, the ticking clock alone flips it to stale.
+    const runtime = makeRuntime({
+      id: "rt-aging",
+      system_stats: { cpu_percent: 42, memory_percent: 68, captured_at: NOW_SEC, stale: false },
+    });
+
+    const fresh = buildRuntimeMachines([runtime], { now: NOW });
+    expect(fresh[0]?.systemStatsStale).toBe(false);
+
+    const withinPollWindow = buildRuntimeMachines([runtime], { now: NOW + 31_000 });
+    expect(withinPollWindow[0]?.systemStatsStale).toBe(false);
+
+    const aged = buildRuntimeMachines([runtime], { now: NOW + 61_000 });
+    expect(aged[0]?.systemStatsStale).toBe(true);
+  });
+
+  it("ignores malformed samples instead of failing the row", () => {
+    const machines = buildRuntimeMachines(
+      [
+        makeRuntime({
+          id: "rt-junk",
+          system_stats: "junk" as unknown as AgentRuntime["system_stats"],
+        }),
+      ],
+      { now: NOW },
+    );
+    expect(machines[0]?.cpuPercent).toBeNull();
+  });
+});
+
 describe("splitRuntimeName", () => {
   it("separates daemon host suffix from provider name", () => {
     expect(splitRuntimeName("Claude (build-server-01)")).toEqual({

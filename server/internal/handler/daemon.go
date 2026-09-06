@@ -988,6 +988,10 @@ type DaemonHeartbeatRequest struct {
 	// the daemon's latest provider plan/rate-limit snapshot for this
 	// runtime. Optional; a bad payload drops the field, never the beat.
 	PlanQuota *protocol.RuntimePlanQuota `json:"plan_quota,omitempty"`
+	// Metrics mirrors protocol.DaemonHeartbeatRequestPayload.Metrics: the
+	// daemon host's latest CPU/memory sample. Optional; a bad payload drops
+	// the field, never the beat.
+	Metrics *protocol.HostMetrics `json:"metrics,omitempty"`
 }
 
 // heartbeatHasPendingTimeout bounds the cheap HasPending probe on the
@@ -1128,8 +1132,9 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	updateMs = time.Since(updateStart).Milliseconds()
 
 	// Observational extras ride the beat but must never affect its outcome:
-	// the helper swallows validation/persistence failures internally.
+	// the helpers swallow validation/persistence failures internally.
 	h.storeHeartbeatPlanQuota(r.Context(), rt, req.PlanQuota)
+	h.storeHeartbeatMetrics(r.Context(), uuidToString(rt.WorkspaceID), rt.DaemonID.String, req.Metrics)
 
 	ack, m, err := h.processHeartbeat(r.Context(), runtimeID, req.SupportsBatchImport)
 	probeModelMs = m.ProbeModelMs
@@ -1212,6 +1217,13 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 			}, payload.PlanQuota)
 		}
 	}
+
+	// Host metrics need no runtime row reload: the machine is identified by
+	// the lease's workspace plus the lease's daemon id (captured from the
+	// runtime row at connection time — the authenticated identity carries no
+	// daemon id when the daemon heartbeats with a user PAT).
+	leaseState := lease.Snapshot()
+	h.storeHeartbeatMetrics(ctx, leaseState.WorkspaceID, leaseState.DaemonID, payload.Metrics)
 
 	ack, _, err := h.processHeartbeat(ctx, runtimeID, payload.SupportsBatchImport)
 	return ack, err
