@@ -6,7 +6,6 @@ import (
 	"context"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -31,27 +30,15 @@ func antigravityQuotaProcessesImpl(execPath string) []int {
 	if err != nil {
 		return nil
 	}
-	var pids []int
-	for _, record := range csvRecords(string(out)) {
-		// CSV columns: "image","pid","session name","session #","mem usage".
-		if len(record) < 2 {
-			continue
-		}
-		pid, err := strconv.Atoi(strings.TrimSpace(record[1]))
-		if err != nil {
-			continue
-		}
-		pids = append(pids, pid)
-	}
-	return pids
+	// The image filter already scoped the rows; the shared CSV parser turns
+	// them into PIDs (one record per running instance).
+	return parseAntigravityTasklistPIDs(string(out))
 }
 
 // listeningLoopbackPorts returns the TCP ports one process owns, from netstat
 // -ano (built into every supported Windows release). Both listeners and
 // established sockets are collected — the caller's dial decides reachability,
-// and a non-listening port simply fails its RPC attempt. Column positions are
-// stable across locales; the state TEXT is not, so the parse is structural:
-// proto=TCP, local address second-to... last-but-one, owning PID last.
+// and a non-listening port simply fails its RPC attempt.
 func listeningLoopbackPorts(pid int) []int {
 	ctx, cancel := context.WithTimeout(context.Background(), antigravityQuotaPSBudget)
 	defer cancel()
@@ -59,77 +46,7 @@ func listeningLoopbackPorts(pid int) []int {
 	if err != nil {
 		return nil
 	}
-	want := strconv.Itoa(pid)
-	seen := make(map[int]bool)
-	var ports []int
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		// Active Connections rows: Proto Local Foreign State PID. The header
-		// line has four fields and no PID, so the count check drops it.
-		if len(fields) != 5 || !strings.EqualFold(fields[0], "TCP") {
-			continue
-		}
-		if fields[4] != want {
-			continue
-		}
-		// Local address carries the port after its last colon.
-		idx := strings.LastIndex(fields[1], ":")
-		if idx < 0 {
-			continue
-		}
-		port, err := strconv.ParseUint(fields[1][idx+1:], 10, 16)
-		if err != nil || port == 0 || seen[int(port)] {
-			continue
-		}
-		seen[int(port)] = true
-		ports = append(ports, int(port))
-	}
-	return ports
-}
-
-// csvRecords splits the RFC-4180-ish single-line records tasklist emits,
-// honoring its doubled-quote escaping. tasklist only ever prints plain
-// cells, so a minimal splitter is enough — a malformed line yields no record
-// rather than a wrong pid.
-func csvRecords(data string) [][]string {
-	var records [][]string
-	for _, line := range strings.Split(strings.ReplaceAll(data, "\r\n", "\n"), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || !strings.HasPrefix(line, "\"") {
-			continue
-		}
-		var (
-			record []string
-			cell   strings.Builder
-			inCell bool
-		)
-		for i := 0; i < len(line); i++ {
-			switch line[i] {
-			case '"':
-				if inCell && i+1 < len(line) && line[i+1] == '"' {
-					cell.WriteByte('"')
-					i++
-					continue
-				}
-				if inCell {
-					records = append(records, append(record, cell.String()))
-					record = nil
-					cell.Reset()
-					inCell = false
-					continue
-				}
-				inCell = true
-			default:
-				if inCell {
-					cell.WriteByte(line[i])
-				}
-			}
-		}
-		if inCell && cell.Len() > 0 {
-			records = append(records, append(record, cell.String()))
-		}
-	}
-	return records
+	return parseAntigravityNetstatPorts(string(out), pid)
 }
 
 // antigravityQuotaPSBudget bounds each tasklist/netstat call inside a probe

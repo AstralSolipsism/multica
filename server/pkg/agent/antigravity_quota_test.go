@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -434,5 +436,239 @@ func TestAntigravityExecutableMatches(t *testing.T) {
 				t.Errorf("match = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// --- R2 regression: the Windows discovery parsers must consume whole
+// records. The replaced hand-rolled splitter flushed a record at every
+// closing quote, so `"agy.exe","1234","Console","1","12,345 K"` came back as
+// five single-field records and the PID column was unreachable.
+
+func TestParseAntigravityTasklistPIDs(t *testing.T) {
+	cases := []struct {
+		name string
+		data string
+		want []int
+	}{
+		{
+			// The exact shape the review flagged: a quoted memory cell with
+			// an embedded comma must not split the record.
+			name: "review case with comma in memory cell",
+			data: "\"agy.exe\",\"1234\",\"Console\",\"1\",\"12,345 K\"\r\n",
+			want: []int{1234},
+		},
+		{
+			name: "multiple processes with CRLF endings",
+			data: "\"agy.exe\",\"1234\",\"Console\",\"1\",\"12,345 K\"\r\n" +
+				"\"agy.exe\",\"5678\",\"Console\",\"1\",\"98,765 K\"\r\n",
+			want: []int{1234, 5678},
+		},
+		{
+			name: "escaped quotes inside a cell survive the record",
+			data: "\"agy \"\"pro\"\".exe\",\"99\",\"Console\",\"1\",\"1,000 K\"\r\n",
+			want: []int{99},
+		},
+		{
+			name: "info line parses as a single-column record and is dropped",
+			data: "\"INFO: No tasks are running which match the specified criteria.\"\r\n",
+			want: nil,
+		},
+		{
+			name: "empty output",
+			data: "",
+			want: nil,
+		},
+		{
+			name: "utf8 bom prefix",
+			data: "\uFEFF\"agy.exe\",\"5\",\"Console\",\"1\",\"12,345 K\"\r\n",
+			want: []int{5},
+		},
+		{
+			name: "non-numeric and non-positive pids are skipped",
+			data: "\"agy.exe\",\"abc\",\"Console\",\"1\",\"1 K\"\r\n" +
+				"\"agy.exe\",\"0\",\"Console\",\"1\",\"1 K\"\r\n" +
+				"\"agy.exe\",\"42\",\"Console\",\"1\",\"1 K\"\r\n",
+			want: []int{42},
+		},
+		{
+			name: "duplicate pids collapse",
+			data: "\"agy.exe\",\"7\",\"Console\",\"1\",\"1 K\"\r\n" +
+				"\"agy.exe\",\"7\",\"Console\",\"1\",\"1 K\"\r\n",
+			want: []int{7},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseAntigravityTasklistPIDs(tc.data)
+			if len(got) != len(tc.want) {
+				t.Fatalf("pids = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("pids = %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestParseAntigravityNetstatPorts(t *testing.T) {
+	// Header row, an IPv4 and an IPv6 listener of pid 99, an established
+	// row of pid 99 (also collected — the dial decides reachability), a row
+	// of another pid, and a UDP-style short row that must be ignored.
+	data := "\n" +
+		"  Proto  Local Address      Foreign Address    State          PID\r\n" +
+		"  TCP    127.0.0.1:5252     0.0.0.0:0          LISTENING      99\r\n" +
+		"  TCP    [::]:5253          [::]:0             LISTENING      99\r\n" +
+		"  TCP    127.0.0.1:5252     127.0.0.1:5253     ESTABLISHED    99\r\n" +
+		"  TCP    127.0.0.1:6000     0.0.0.0:0          LISTENING      100\r\n"
+	got := parseAntigravityNetstatPorts(data, 99)
+	if len(got) != 2 || got[0] != 5252 || got[1] != 5253 {
+		t.Fatalf("ports = %v, want [5252 5253]", got)
+	}
+	if got := parseAntigravityNetstatPorts(data, 100); len(got) != 1 || got[0] != 6000 {
+		t.Fatalf("ports for pid 100 = %v, want [6000]", got)
+	}
+}
+
+// --- R4 regression: the probe must refuse redirects and never complete a
+// dial to a non-loopback destination.
+
+func TestAntigravityQuotaDialGuardRejectsNonLoopback(t *testing.T) {
+	// RFC 5737 documentation IP: nothing routable, nothing listening — a
+	// pass would surface as a dial error, not the guard error.
+	for _, addr := range []string{"203.0.113.1:9", "example.com:443", "[::ffff:203.0.113.1]:9", "127.0.0.1"} {
+		conn, err := antigravityQuotaDialGuard(context.Background(), "tcp", addr)
+		if err == nil {
+			conn.Close()
+			t.Fatalf("dial guard accepted %q", addr)
+		}
+		if !strings.Contains(err.Error(), "refusing non-loopback") && !strings.Contains(err.Error(), "not host:port") {
+			t.Fatalf("dial guard rejected %q with an unexpected error: %v", addr, err)
+		}
+	}
+	// The accept path: a real loopback listener dials cleanly.
+	srv, _, _ := newQuotaProbeServer(t, http.StatusOK, "{}")
+	_, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	conn, err := antigravityQuotaDialGuard(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", port))
+	if err != nil {
+		t.Fatalf("dial guard refused loopback: %v", err)
+	}
+	conn.Close()
+}
+
+// stubProbeClientDialLog instruments the probe's real HTTP client so tests
+// can observe every dial target the transport attempts.
+func stubProbeClientDialLog(t *testing.T) *[]string {
+	t.Helper()
+	orig := newProbeQuotaClient
+	var mu sync.Mutex
+	dialed := &[]string{}
+	newProbeQuotaClient = func() *http.Client {
+		client := newLoopbackQuotaClient()
+		transport := client.Transport.(*http.Transport)
+		base := transport.DialContext
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			mu.Lock()
+			*dialed = append(*dialed, addr)
+			mu.Unlock()
+			return base(ctx, network, addr)
+		}
+		return client
+	}
+	t.Cleanup(func() { newProbeQuotaClient = orig })
+	return dialed
+}
+
+func TestProbeAntigravityQuotaRefusesRedirectOffMachine(t *testing.T) {
+	// A hijacked loopback listener answering 307 -> an outside host: the
+	// probe must fail the round WITHOUT following the redirect. No dial to
+	// the external target may ever be attempted (and RFC 5737 keeps this
+	// test off the real internet either way).
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A hijacked listener bouncing the probe at an outside host.
+		w.Header().Set("Location", "https://203.0.113.1:9/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
+	dialed := stubProbeClientDialLog(t)
+	stubDiscovery(t, []int{7}, func(int) []int { return []int{port} })
+
+	if _, err := ProbeAntigravityQuota(context.Background(), "agy", "1.1.11", antigravityQuotaFixtureNow); err == nil {
+		t.Fatal("expected the redirecting listener to fail the probe round")
+	}
+	want := []string{net.JoinHostPort("127.0.0.1", strconv.Itoa(port))}
+	if len(*dialed) != 1 || (*dialed)[0] != want[0] {
+		t.Fatalf("dialed = %v, want exactly %v (redirect must die before dialing)", *dialed, want)
+	}
+}
+
+// --- R5 regression: repeated rounds must not leak pooled connections.
+
+// countedListener tracks how many connections the probe leaves open against
+// the isolated server.
+type countedConn struct {
+	net.Conn
+	once sync.Once
+	onFn func()
+}
+
+func (c *countedConn) Close() error {
+	c.once.Do(c.onFn)
+	return c.Conn.Close()
+}
+
+type countedListener struct {
+	net.Listener
+	opened int32
+	open   int32
+}
+
+func (l *countedListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	atomic.AddInt32(&l.opened, 1)
+	atomic.AddInt32(&l.open, 1)
+	return &countedConn{Conn: conn, onFn: func() { atomic.AddInt32(&l.open, -1) }}, nil
+}
+
+func TestProbeAntigravityQuotaClosesIdleConnectionsBetweenRounds(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		_, _ = w.Write([]byte(antigravityQuotaFourBuckets))
+	}))
+	// Wrap the listener BEFORE Start so every accepted connection is counted.
+	listener := &countedListener{Listener: srv.Listener}
+	srv.Listener = listener
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	port := listener.Addr().(*net.TCPAddr).Port
+	stubProbeClientDialLog(t)
+	stubDiscovery(t, []int{7}, func(int) []int { return []int{port} })
+
+	rounds := 3
+	for i := 0; i < rounds; i++ {
+		if _, err := ProbeAntigravityQuota(context.Background(), "agy", "1.1.11", antigravityQuotaFixtureNow); err != nil {
+			t.Fatalf("round %d: %v", i+1, err)
+		}
+	}
+
+	// Each round runs on a fresh transport, so exactly one connection per
+	// round was opened — the resource count is bounded by the round count.
+	if opened := atomic.LoadInt32(&listener.opened); opened != int32(rounds) {
+		t.Fatalf("server saw %d connections over %d rounds, want %d", opened, rounds, rounds)
+	}
+	// And none of them may outlive the round that used them: the server
+	// observes every client-side close within a bounded wait.
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&listener.open) != 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if open := atomic.LoadInt32(&listener.open); open != 0 {
+		t.Fatalf("%d connection(s) still open after the rounds returned; idle connections are leaking", open)
 	}
 }

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/tls"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,6 +72,11 @@ const (
 	antigravityQuotaProbeBudget = 6 * time.Second
 	// antigravityQuotaRequestTimeout bounds one Connect-RPC call.
 	antigravityQuotaRequestTimeout = 2500 * time.Millisecond
+	// antigravityQuotaIdleConnTimeout is the transport's idle-connection
+	// lifetime. The probe closes pooled connections at the end of every round
+	// anyway; this is the backstop that bounds any connection a panic or
+	// future code path leaves behind.
+	antigravityQuotaIdleConnTimeout = time.Minute
 	// antigravityQuotaResponseLimit caps how much of a response body is read.
 	// The quota summary with its two groups is a few KB; 1 MiB is generous.
 	antigravityQuotaResponseLimit = 1 << 20
@@ -148,7 +154,12 @@ func ProbeAntigravityQuota(ctx context.Context, execPath, version string, now ti
 		pids = pids[:antigravityQuotaMaxProcesses]
 	}
 
-	client := newLoopbackQuotaClient()
+	client := newProbeQuotaClient()
+	// Round-scoped connection lifecycle: whatever connections the round
+	// pooled are closed when it returns, so a daemon probing every few
+	// minutes never leaves idle sockets with the dead agy of a previous
+	// round (R5).
+	defer client.CloseIdleConnections()
 	for _, pid := range pids {
 		ports := antigravityQuotaListeningPorts(pid)
 		if len(ports) > antigravityQuotaMaxPorts {
@@ -169,22 +180,142 @@ func ProbeAntigravityQuota(ctx context.Context, execPath, version string, now ti
 	return nil, errors.New("antigravity quota probe: no agy listener answered with a quota summary")
 }
 
-// newLoopbackQuotaClient builds the HTTP client used for probe calls. agy's
-// language server presents a self-signed certificate, so verification is
-// disabled — this client is only ever handed URLs built by
-// antigravityQuotaURL, which hardcodes a loopback host, and antigravityQuotaURL
-// re-checks that so nothing else can widen it.
+// newProbeQuotaClient is the probe's HTTP client constructor, indirected so
+// tests can instrument dialing (the default is newLoopbackQuotaClient).
+var newProbeQuotaClient = newLoopbackQuotaClient
+
+// newLoopbackQuotaClient builds the HTTP client used for probe calls. Three
+// hard walls (R4):
+//
+//   - redirects are refused before any second request is sent — a compromised
+//     or hijacked listener cannot bounce the probe at an outside host;
+//   - the transport's dialer only completes connections whose destination is
+//     a LITERAL loopback IP address, so even a bug elsewhere in the request
+//     path cannot produce an off-machine dial;
+//   - the self-signed-certificate allowance therefore only ever applies to
+//     loopback connections: with the dialer refusing every non-loopback
+//     literal (and every hostname — no DNS resolution to hijack), there is no
+//     reachable target the relaxed verification could be stretched to.
 func newLoopbackQuotaClient() *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // self-signed loopback cert, see above
-			Proxy:           nil,                                   // never route a loopback probe through a configured proxy
-			DialContext: (&net.Dialer{
-				Timeout: antigravityQuotaRequestTimeout,
-			}).DialContext,
+			Proxy:       nil, // never route a loopback probe through a configured proxy
+			DialContext: antigravityQuotaDialGuard,
+			// Belt and braces for the round-scoped CloseIdleConnections: a
+			// pooled connection that somehow outlives the probe still dies
+			// far before the next 5-minute round.
+			IdleConnTimeout: antigravityQuotaIdleConnTimeout,
+			TLSClientConfig: &tls.Config{
+				// Self-signed loopback cert, see above: reachable only for
+				// connections the loopback dial guard already vetted.
+				InsecureSkipVerify: true,
+			},
 		},
 		Timeout: antigravityQuotaRequestTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// ErrUseLastResponse: client.Do returns the 3xx itself (which
+			// then fails the status check) without following it.
+			return http.ErrUseLastResponse
+		},
 	}
+}
+
+// antigravityQuotaDialGuard is the transport's dial hook: it verifies the
+// destination before any bytes leave the process. Only literal loopback IP
+// literals pass — hostnames are rejected without resolution so a redirected
+// or future-bugged URL can only ever fail, never resolve somewhere.
+func antigravityQuotaDialGuard(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("antigravity quota probe: dial target %q is not host:port", addr)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return nil, fmt.Errorf("antigravity quota probe: refusing non-loopback dial target %q", addr)
+	}
+	var dialer net.Dialer
+	dialer.Timeout = antigravityQuotaRequestTimeout
+	return dialer.DialContext(ctx, network, addr)
+}
+
+// parseAntigravityTasklistPIDs extracts the PIDs from `tasklist /FO CSV /NH`
+// output. Real tasklist rows look like
+//
+//	"agy.exe","1234","Console","1","12,345 K"
+//
+// — five quoted columns where the memory cell legitimately contains a comma —
+// so the parse goes through encoding/csv (whole records, RFC-4180 quoting,
+// CRLF) rather than any per-line shortcut. Lives in the shared file because
+// it is pure text handling; the Windows scanner is its only caller. The
+// `INFO: no tasks…` line tasklist prints when nothing matches parses as a
+// single-column record and is dropped by the column check.
+func parseAntigravityTasklistPIDs(data string) []int {
+	// Some tool hosts prefix output with a UTF-8 BOM; strip it so the first
+	// record's image cell compares clean.
+	data = strings.TrimPrefix(data, "\uFEFF")
+	reader := csv.NewReader(strings.NewReader(data))
+	// Tolerate ragged rows: a malformed trailing line should cost its own
+	// record, not the whole batch (SetFieldsPerRecord(0) would enforce equal
+	// widths and ReadAll would drop everything on the first deviation).
+	reader.FieldsPerRecord = -1
+	// tasklist quotes fields consistently, but accept lazy quotes so one odd
+	// cell cannot abort the scan of every running instance.
+	reader.LazyQuotes = true
+	records, err := reader.ReadAll()
+	if err != nil && len(records) == 0 {
+		return nil
+	}
+	seen := make(map[int]bool)
+	var pids []int
+	for _, record := range records {
+		// CSV columns: "image","pid","session name","session #","mem usage".
+		if len(record) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(record[1]))
+		if err != nil || pid <= 0 || seen[pid] {
+			continue
+		}
+		seen[pid] = true
+		pids = append(pids, pid)
+	}
+	return pids
+}
+
+// parseAntigravityNetstatPorts extracts the TCP ports one PID owns from
+// `netstat -ano -p tcp` output (the Windows scanner's second parser, kept in
+// the shared file so the cross-platform suite can regression-test it).
+// Column positions are stable across locales; the state TEXT is not, so the
+// parse is structural: proto=TCP, local address second, owning PID last.
+// Both listening and established sockets count — the caller's dial decides
+// reachability, and a non-listening port simply fails its RPC attempt.
+func parseAntigravityNetstatPorts(data string, pid int) []int {
+	want := strconv.Itoa(pid)
+	seen := make(map[int]bool)
+	var ports []int
+	for _, line := range strings.Split(data, "\n") {
+		fields := strings.Fields(line)
+		// Active Connections rows: Proto Local Foreign State PID. The header
+		// line has four fields and no PID, so the count check drops it.
+		if len(fields) != 5 || !strings.EqualFold(fields[0], "TCP") {
+			continue
+		}
+		if fields[4] != want {
+			continue
+		}
+		// Local address carries the port after its last colon.
+		idx := strings.LastIndex(fields[1], ":")
+		if idx < 0 {
+			continue
+		}
+		port, err := strconv.ParseUint(fields[1][idx+1:], 10, 16)
+		if err != nil || port == 0 || seen[int(port)] {
+			continue
+		}
+		seen[int(port)] = true
+		ports = append(ports, int(port))
+	}
+	return ports
 }
 
 // antigravityQuotaURL builds the Connect-RPC endpoint for one method. The
