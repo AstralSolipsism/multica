@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"math"
-	"strconv"
 	"sync"
 	"time"
 
@@ -49,22 +47,7 @@ func newHostMetricsPublishTracker() *hostMetricsPublishTracker {
 	return &hostMetricsPublishTracker{machines: map[string]hostMetricsMachinePublication{}}
 }
 
-// hostMetricsContentKey identifies the rounded percentage content of one
-// sample — the same comparison the store's set-if-newer script applies when
-// it reports Changed vs Refreshed. Nil and a real 0 are deliberately
-// distinct ("-" vs "0").
-func hostMetricsContentKey(m *protocol.HostMetrics) string {
-	return hostMetricsRounded(m.CPUPercent) + "|" + hostMetricsRounded(m.MemoryPercent)
-}
-
-func hostMetricsRounded(p *float64) string {
-	if p == nil {
-		return "-"
-	}
-	return strconv.Itoa(int(math.Floor(*p + 0.5)))
-}
-
-// shouldPublish reports whether a just-stored sample warrants a telemetry
+// shouldPublish reports whether the just-stored sample warrants a telemetry
 // broadcast now, recording the broadcast when allowed. A sample whose
 // rounded content equals the last announced one is never re-announced; a
 // changed sample arriving inside the throttle window is deferred, not
@@ -144,23 +127,27 @@ func (h *Handler) storeHeartbeatMetricsAt(ctx context.Context, workspaceID, daem
 			"workspace_id", workspaceID, "daemon_id", daemonID, "error", err)
 		return
 	}
-	result, err := h.MachineMetricsStore.PutIfNewer(ctx, MachineRef{WorkspaceID: workspaceID, DaemonID: daemonID}, metrics)
+	// The publish decision runs off the STORED content key on every accepted
+	// beat — including no-op (same/older captured_at) ones — so a
+	// throttle-deferred change is re-offered by the next heartbeat even when
+	// the daemon's sampler has stopped producing new samples and beats keep
+	// re-sending the last sample. The write outcome itself is the store
+	// contract's concern and is pinned by the store tests.
+	_, storedKey, err := h.MachineMetricsStore.PutIfNewer(ctx, MachineRef{WorkspaceID: workspaceID, DaemonID: daemonID}, metrics)
 	if err != nil {
 		slog.Warn("heartbeat metrics store failed",
 			"workspace_id", workspaceID, "daemon_id", daemonID, "error", err)
 		return
 	}
-	if result == MachineMetricsDropped {
-		// An out-of-order beat older than the stored sample: the store holds
-		// something newer than this payload, so the payload must not drive
-		// the broadcast bookkeeping.
+	if storedKey == "" {
 		return
 	}
-	// Changed or Refreshed: the store now holds this sample. A change that
-	// lands inside the throttle window is deferred — the next beat re-offers
-	// it and shouldPublish fires once the window has passed, so the latest
-	// content is never lost, only delayed by one heartbeat cadence.
-	if h.hostMetricsPublish == nil || !h.hostMetricsPublish.shouldPublish(workspaceID+":"+daemonID, hostMetricsContentKey(metrics), now) {
+	// Announce when the stored rounded content differs from the last
+	// broadcast and the per-machine throttle window has passed. A change
+	// landing inside the window is deferred, not dropped: each subsequent
+	// beat re-offers the stored content, so the latest change reaches
+	// clients at most one heartbeat cadence past the window.
+	if h.hostMetricsPublish == nil || !h.hostMetricsPublish.shouldPublish(workspaceID+":"+daemonID, storedKey, now) {
 		return
 	}
 	h.publish(protocol.EventRuntimeTelemetryUpdated, workspaceID, "system", "", map[string]any{

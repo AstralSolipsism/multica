@@ -550,10 +550,11 @@ describe("runtime machine system stats", () => {
     });
   });
 
-  it("advances freshness on the ticking clock without a refetch", () => {
+  it("advances freshness on the ticking clock when refetches stop arriving", () => {
     // The daemon's sampler stopped (or the network did) right after this
-    // sample: the server response said fresh, and no new response ever
-    // arrives. Rebuilding with a later `now` must flip the machine to stale.
+    // sample: the server response said fresh. Within the bounded-poll window
+    // the machine must NOT flicker stale; once no refetch has delivered for
+    // 2x the SLA, the ticking clock alone flips it to stale.
     const runtime = makeRuntime({
       id: "rt-aging",
       system_stats: { cpu_percent: 42, memory_percent: 68, captured_at: NOW_SEC, stale: false },
@@ -562,7 +563,10 @@ describe("runtime machine system stats", () => {
     const fresh = buildRuntimeMachines([runtime], { now: NOW });
     expect(fresh[0]?.systemStatsStale).toBe(false);
 
-    const aged = buildRuntimeMachines([runtime], { now: NOW + 31_000 });
+    const withinPollWindow = buildRuntimeMachines([runtime], { now: NOW + 31_000 });
+    expect(withinPollWindow[0]?.systemStatsStale).toBe(false);
+
+    const aged = buildRuntimeMachines([runtime], { now: NOW + 61_000 });
     expect(aged[0]?.systemStatsStale).toBe(true);
   });
 

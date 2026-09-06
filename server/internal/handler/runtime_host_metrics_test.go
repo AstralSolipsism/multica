@@ -98,22 +98,43 @@ type fakeMachineMetricsStore struct {
 	available bool
 	calls     []MachineRef
 	results   []MachineMetricsPutResult
-	err       error
+	// keys carries the stored-content key returned alongside each result;
+	// when shorter than results (or empty), the key is derived from the
+	// beat's own sample, mirroring the real store's contract.
+	keys []string
+	err  error
 }
 
 func (f *fakeMachineMetricsStore) Available() bool { return f.available }
 
-func (f *fakeMachineMetricsStore) PutIfNewer(_ context.Context, ref MachineRef, _ *protocol.HostMetrics) (MachineMetricsPutResult, error) {
+func (f *fakeMachineMetricsStore) PutIfNewer(_ context.Context, ref MachineRef, m *protocol.HostMetrics) (MachineMetricsPutResult, string, error) {
 	f.calls = append(f.calls, ref)
 	if f.err != nil {
-		return MachineMetricsDropped, f.err
+		return MachineMetricsDropped, "", f.err
+	}
+	key := fakeStoreContentKey(m)
+	if len(f.keys) > 0 {
+		key = f.keys[0]
+		f.keys = f.keys[1:]
 	}
 	if len(f.results) == 0 {
-		return MachineMetricsChanged, nil
+		return MachineMetricsChanged, key, nil
 	}
 	result := f.results[0]
 	f.results = f.results[1:]
-	return result, nil
+	return result, key, nil
+}
+
+// fakeStoreContentKey derives the rounded content key the real store would
+// report for a sample it holds.
+func fakeStoreContentKey(m *protocol.HostMetrics) string {
+	round := func(p *float64) string {
+		if p == nil {
+			return "-"
+		}
+		return fmt.Sprintf("%d", int(*p+0.5))
+	}
+	return round(m.CPUPercent) + "|" + round(m.MemoryPercent)
 }
 
 func (f *fakeMachineMetricsStore) GetBatch(_ context.Context, _ []MachineRef) map[MachineRef]*protocol.HostMetrics {
@@ -170,39 +191,62 @@ func TestStoreHeartbeatMetrics(t *testing.T) {
 		}
 	})
 
-	// The S1 regression: CPU 10% publishes at t0; CPU 95% lands at t0+14.9s
-	// (inside the throttle window) and must NOT be lost — the next beat at
-	// t0+15.1s re-offers the now-stable 95% and delivers it. Dropped beats
-	// (out-of-order) never drive the broadcast bookkeeping.
-	t.Run("throttled change is redelivered once stable", func(t *testing.T) {
+	// The S1a regression: CPU 10% publishes at t0; CPU 95% lands at t0+14.9s
+	// (inside the throttle window) and must NOT be lost — and the sampler
+	// then stops, so the beats at t0+30s / t0+45s re-send the SAME last
+	// sample (same captured_at; the store reports Dropped with the stored
+	// key). The deferred change must be delivered on the first of those
+	// re-send beats, without any new sample ever being produced.
+	t.Run("throttled change is redelivered on re-sent last sample", func(t *testing.T) {
+		last := hostMetricsSample(f64(95), f64(68), now.Unix()+14) // the final sample, captured at t0+14.9s
 		store := &fakeMachineMetricsStore{available: true, results: []MachineMetricsPutResult{
-			MachineMetricsChanged,   // t0: 10% stored
-			MachineMetricsChanged,   // t0+14.9s: 95% stored
-			MachineMetricsRefreshed, // t0+15.1s: 95% stable
-			MachineMetricsRefreshed, // t0+16s: 95% stable
-			MachineMetricsDropped,   // out-of-order old beat
+			MachineMetricsChanged, // t0: 10% stored
+			MachineMetricsChanged, // t0+14.9s: 95% stored, publish throttled
+			MachineMetricsDropped, // t0+30s: same captured_at re-send — no write
+			MachineMetricsDropped, // t0+45s: same again
 		}}
 		h, published := newHandler(store)
 		ctx := context.Background()
 
 		h.storeHeartbeatMetricsAt(ctx, "ws", "d", hostMetricsSample(f64(10), f64(68), now.Unix()), now)
-		h.storeHeartbeatMetricsAt(ctx, "ws", "d", hostMetricsSample(f64(95), f64(68), now.Unix()), now.Add(14*time.Second+900*time.Millisecond))
+		h.storeHeartbeatMetricsAt(ctx, "ws", "d", last, now.Add(14*time.Second+900*time.Millisecond))
 		if len(*published) != 1 {
 			t.Fatalf("published after throttled change = %v, want only the first", *published)
 		}
-		h.storeHeartbeatMetricsAt(ctx, "ws", "d", hostMetricsSample(f64(95), f64(68), now.Unix()), now.Add(15*time.Second+100*time.Millisecond))
+		// The sampler has stopped: the same last sample rides the next beats.
+		h.storeHeartbeatMetricsAt(ctx, "ws", "d", last, now.Add(30*time.Second))
 		if len(*published) != 2 {
-			t.Fatalf("deferred change not redelivered after the window: published = %v", *published)
+			t.Fatalf("deferred change not redelivered on the re-sent beat: published = %v", *published)
 		}
-		h.storeHeartbeatMetricsAt(ctx, "ws", "d", hostMetricsSample(f64(95), f64(68), now.Unix()), now.Add(16*time.Second))
-		h.storeHeartbeatMetricsAt(ctx, "ws", "d", hostMetricsSample(f64(10), f64(68), now.Unix()-60), now.Add(16*time.Second))
+		h.storeHeartbeatMetricsAt(ctx, "ws", "d", last, now.Add(45*time.Second))
 		if len(*published) != 2 {
-			t.Fatalf("published after stable/dropped beats = %v, want still two", *published)
+			t.Fatalf("published after second re-send = %v, want still two", *published)
 		}
 		for _, eventType := range *published {
 			if eventType != protocol.EventRuntimeTelemetryUpdated {
 				t.Fatalf("published event = %v, want %s", eventType, protocol.EventRuntimeTelemetryUpdated)
 			}
+		}
+	})
+
+	// Out-of-order protection: an older beat arriving after a newer sample
+	// was stored and announced must not re-announce the stored content (it
+	// equals the last broadcast) nor publish the beat's own stale content.
+	t.Run("out-of-order beat never drives the broadcast", func(t *testing.T) {
+		store := &fakeMachineMetricsStore{available: true, results: []MachineMetricsPutResult{
+			MachineMetricsChanged, // t0: 95% stored and published
+			MachineMetricsDropped, // t0+20s: delayed 10% beat (older captured_at)
+		}, keys: []string{
+			"", // first call derives the key from the sample itself: 95|68
+			"95|68", // Dropped beat reports the stored (newer) content
+		}}
+		h, published := newHandler(store)
+		ctx := context.Background()
+
+		h.storeHeartbeatMetricsAt(ctx, "ws", "d", hostMetricsSample(f64(95), f64(68), now.Unix()), now)
+		h.storeHeartbeatMetricsAt(ctx, "ws", "d", hostMetricsSample(f64(10), f64(68), now.Unix()-60), now.Add(20*time.Second))
+		if len(*published) != 1 {
+			t.Fatalf("published = %v, want only the initial broadcast", *published)
 		}
 	})
 
@@ -404,17 +448,17 @@ func TestListAgentRuntimesSystemStats(t *testing.T) {
 
 	// Fresh and stale samples land directly in the store; a foreign
 	// workspace's sample on a colliding daemon id must not leak in.
-	if _, err := h.MachineMetricsStore.PutIfNewer(context.Background(),
+	if _, _, err := h.MachineMetricsStore.PutIfNewer(context.Background(),
 		MachineRef{WorkspaceID: testWorkspaceID, DaemonID: freshDaemon},
 		hostMetricsSample(f64(42), f64(68), now.Unix())); err != nil {
 		t.Fatalf("seed fresh: %v", err)
 	}
-	if _, err := h.MachineMetricsStore.PutIfNewer(context.Background(),
+	if _, _, err := h.MachineMetricsStore.PutIfNewer(context.Background(),
 		MachineRef{WorkspaceID: testWorkspaceID, DaemonID: staleDaemon},
 		hostMetricsSample(f64(7), nil, now.Add(-time.Minute).Unix())); err != nil {
 		t.Fatalf("seed stale: %v", err)
 	}
-	if _, err := h.MachineMetricsStore.PutIfNewer(context.Background(),
+	if _, _, err := h.MachineMetricsStore.PutIfNewer(context.Background(),
 		MachineRef{WorkspaceID: "00000000-0000-0000-0000-000000000000", DaemonID: quietDaemon},
 		hostMetricsSample(f64(99), nil, now.Unix())); err != nil {
 		t.Fatalf("seed foreign: %v", err)

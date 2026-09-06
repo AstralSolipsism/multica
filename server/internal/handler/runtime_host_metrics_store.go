@@ -32,15 +32,19 @@ type MachineMetricsStore interface {
 	// methods on a non-available store are no-ops.
 	Available() bool
 
-	// PutIfNewer atomically records metrics when its CapturedAt is newer
-	// than the stored sample's, and reports whether the rounded percentage
-	// content actually changed. Every runtime heartbeat of one daemon
-	// carries the same sample (one sampler, one captured_at per cycle), so
-	// the first beat of a cycle writes and the remaining N-1 beats are
-	// no-ops — one Redis write per (workspace, daemon) per sampling cycle.
+// PutIfNewer atomically records metrics when its CapturedAt is newer
+	// than the stored sample's. It returns the put outcome and, crucially,
+	// the STORED sample's rounded content key after the call — including
+	// when nothing was written (same/older captured_at) — so the caller can
+	// re-offer a throttle-deferred broadcast for the stored truth rather
+	// than for whatever this beat happened to carry. Every runtime
+	// heartbeat of one daemon carries the same sample (one sampler, one
+	// captured_at per cycle), so the first beat of a cycle writes and the
+	// remaining N-1 beats are no-ops — one Redis write per (workspace,
+	// daemon) per sampling cycle.
 	// Errors are returned so callers can log them; they must never be
 	// propagated into a heartbeat failure.
-	PutIfNewer(ctx context.Context, ref MachineRef, metrics *protocol.HostMetrics) (MachineMetricsPutResult, error)
+	PutIfNewer(ctx context.Context, ref MachineRef, metrics *protocol.HostMetrics) (MachineMetricsPutResult, string, error)
 
 	// GetBatch fetches the latest sample for many (workspace, daemon) refs
 	// at once. The returned map contains an entry only for refs with a live
@@ -84,8 +88,8 @@ func NewNoopMachineMetricsStore() MachineMetricsStore { return noopMachineMetric
 
 func (noopMachineMetricsStore) Available() bool { return false }
 
-func (noopMachineMetricsStore) PutIfNewer(_ context.Context, _ MachineRef, _ *protocol.HostMetrics) (MachineMetricsPutResult, error) {
-	return MachineMetricsDropped, nil
+func (noopMachineMetricsStore) PutIfNewer(_ context.Context, _ MachineRef, _ *protocol.HostMetrics) (MachineMetricsPutResult, string, error) {
+	return MachineMetricsDropped, "", nil
 }
 
 func (noopMachineMetricsStore) GetBatch(_ context.Context, _ []MachineRef) map[MachineRef]*protocol.HostMetrics {
@@ -108,41 +112,52 @@ func machineMetricsKey(ref MachineRef) string {
 const machineMetricsTTL = 90 * time.Second
 
 // machineMetricsPutScript atomically implements set-if-newer plus
-// content-change detection:
+// content-key reporting:
 //
-//	return 0  the stored sample's captured_at is >= the incoming one — no write
-//	return 1  stored, but the rounded cpu/memory percentages are unchanged
-//	return 2  stored, and the rounded content changed (first write included)
+//	return {0, storedKey}  the stored sample's captured_at is >= the incoming
+//	                       one — no write; storedKey still names the stored
+//	                       content so the caller can re-offer a deferred
+//	                       broadcast for it
+//	return {1, newKey}     stored, rounded content unchanged (freshness only)
+//	return {2, newKey}     stored, rounded content changed (first write too)
 //
+// The content key is "round(cpu)|round(mem)" with "-" for a nil metric —
+// the same rounded-percentage comparison the publish tracker applies.
 // KEYS[1] = the machine key; ARGV[1] = incoming captured_at (unix seconds),
 // ARGV[2] = incoming sample JSON, ARGV[3] = TTL seconds.
 // A corrupt stored value is treated as absent so one bad payload cannot
 // wedge the key until TTL.
 var machineMetricsPutScript = redis.NewScript(`
+local function keyof(cpu, mem)
+  local function r(v)
+    if v == nil then return "-" end
+    return tostring(math.floor(tonumber(v) + 0.5))
+  end
+  return r(cpu) .. "|" .. r(mem)
+end
 local cur = redis.call('GET', KEYS[1])
-local oldCpu, oldMem
+local oldCpu, oldMem, oldCap
 if cur then
   local ok, dec = pcall(cjson.decode, cur)
   if ok and type(dec) == 'table' then
-    local oldCap = tonumber(dec.captured_at)
-    if oldCap ~= nil and tonumber(ARGV[1]) <= oldCap then
-      return 0
-    end
+    oldCap = tonumber(dec.captured_at)
     oldCpu = dec.cpu_percent
     oldMem = dec.memory_percent
   end
 end
+if oldCap ~= nil and tonumber(ARGV[1]) <= oldCap then
+  return {0, keyof(oldCpu, oldMem)}
+end
 redis.call('SET', KEYS[1], ARGV[2], 'EX', tonumber(ARGV[3]))
 local dec = cjson.decode(ARGV[2])
-local function changed(a, b)
-  if a == nil and b == nil then return false end
-  if a == nil or b == nil then return true end
-  return math.floor(tonumber(a) + 0.5) ~= math.floor(tonumber(b) + 0.5)
+local newKey = keyof(dec.cpu_percent, dec.memory_percent)
+if oldCap == nil then
+  return {2, newKey}
 end
-if changed(oldCpu, dec.cpu_percent) or changed(oldMem, dec.memory_percent) then
-  return 2
+if newKey ~= keyof(oldCpu, oldMem) then
+  return {2, newKey}
 end
-return 1
+return {1, newKey}
 `)
 
 // RedisMachineMetricsStore stores one TTL'd JSON key per (workspace,
@@ -157,34 +172,36 @@ func NewRedisMachineMetricsStore(rdb *redis.Client) *RedisMachineMetricsStore {
 
 func (s *RedisMachineMetricsStore) Available() bool { return s != nil && s.rdb != nil }
 
-func (s *RedisMachineMetricsStore) PutIfNewer(ctx context.Context, ref MachineRef, metrics *protocol.HostMetrics) (MachineMetricsPutResult, error) {
+func (s *RedisMachineMetricsStore) PutIfNewer(ctx context.Context, ref MachineRef, metrics *protocol.HostMetrics) (MachineMetricsPutResult, string, error) {
 	if !s.Available() {
-		return MachineMetricsDropped, errors.New("redis machine metrics store: unavailable")
+		return MachineMetricsDropped, "", errors.New("redis machine metrics store: unavailable")
 	}
 	if ref.WorkspaceID == "" || ref.DaemonID == "" {
-		return MachineMetricsDropped, errors.New("redis machine metrics store: empty workspace or daemon id")
+		return MachineMetricsDropped, "", errors.New("redis machine metrics store: empty workspace or daemon id")
 	}
 	if metrics == nil {
-		return MachineMetricsDropped, errors.New("redis machine metrics store: nil metrics")
+		return MachineMetricsDropped, "", errors.New("redis machine metrics store: nil metrics")
 	}
 	body, err := json.Marshal(metrics)
 	if err != nil {
-		return MachineMetricsDropped, fmt.Errorf("machine metrics marshal: %w", err)
+		return MachineMetricsDropped, "", fmt.Errorf("machine metrics marshal: %w", err)
 	}
-	result, err := machineMetricsPutScript.Run(ctx, s.rdb,
+	out, err := machineMetricsPutScript.Run(ctx, s.rdb,
 		[]string{machineMetricsKey(ref)},
 		metrics.CapturedAt, string(body), int(machineMetricsTTL/time.Second),
-	).Int()
+	).Slice()
 	if err != nil {
-		return MachineMetricsDropped, fmt.Errorf("machine metrics put: %w", err)
+		return MachineMetricsDropped, "", fmt.Errorf("machine metrics put: %w", err)
 	}
-	switch result {
+	code, _ := out[0].(int64)
+	storedKey, _ := out[1].(string)
+	switch code {
 	case 1:
-		return MachineMetricsRefreshed, nil
+		return MachineMetricsRefreshed, storedKey, nil
 	case 2:
-		return MachineMetricsChanged, nil
+		return MachineMetricsChanged, storedKey, nil
 	default:
-		return MachineMetricsDropped, nil
+		return MachineMetricsDropped, storedKey, nil
 	}
 }
 

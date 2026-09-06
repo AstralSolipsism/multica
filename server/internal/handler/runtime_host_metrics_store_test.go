@@ -27,39 +27,60 @@ func TestRedisMachineMetricsStorePutIfNewer(t *testing.T) {
 	}
 
 	// First write lands and counts as a content change.
-	result, err := store.PutIfNewer(ctx, ref, hostMetricsSample(f64(42.1), f64(68), 1000))
+	result, key, err := store.PutIfNewer(ctx, ref, hostMetricsSample(f64(42.1), f64(68), 1000))
 	if err != nil || result != MachineMetricsChanged {
 		t.Fatalf("first put = %v, %v; want changed", result, err)
 	}
+	if key != "42|68" {
+		t.Fatalf("first put key = %q, want 42|68", key)
+	}
 
 	// Same captured_at (the other N-1 heartbeats of the cycle): no write.
-	result, err = store.PutIfNewer(ctx, ref, hostMetricsSample(f64(42.1), f64(68), 1000))
+	result, key, err = store.PutIfNewer(ctx, ref, hostMetricsSample(f64(42.1), f64(68), 1000))
 	if err != nil || result != MachineMetricsDropped {
 		t.Fatalf("same captured_at put = %v, %v; want dropped", result, err)
 	}
+	// A no-op beat still reports the stored content key so a deferred
+	// broadcast can be re-offered against the stored truth.
+	if key != "42|68" {
+		t.Fatalf("dropped put key = %q, want stored 42|68", key)
+	}
 
 	// Older captured_at (out-of-order beat): no write.
-	result, err = store.PutIfNewer(ctx, ref, hostMetricsSample(f64(99), f64(99), 999))
+	result, key, err = store.PutIfNewer(ctx, ref, hostMetricsSample(f64(99), f64(99), 999))
 	if err != nil || result != MachineMetricsDropped {
 		t.Fatalf("older put = %v, %v; want dropped", result, err)
 	}
+	// An out-of-order beat must not report its own (older) content.
+	if key != "42|68" {
+		t.Fatalf("out-of-order put key = %q, want stored 42|68", key)
+	}
 
 	// Newer sample whose rounded content matches: freshness refresh only.
-	result, err = store.PutIfNewer(ctx, ref, hostMetricsSample(f64(42.4), f64(68.2), 1015))
+	result, key, err = store.PutIfNewer(ctx, ref, hostMetricsSample(f64(42.4), f64(68.2), 1015))
 	if err != nil || result != MachineMetricsRefreshed {
 		t.Fatalf("same-content put = %v, %v; want refreshed", result, err)
 	}
+	if key != "42|68" {
+		t.Fatalf("refreshed put key = %q, want 42|68", key)
+	}
 
 	// Newer sample with a changed rounded percentage: content change.
-	result, err = store.PutIfNewer(ctx, ref, hostMetricsSample(f64(43.6), f64(68.2), 1030))
+	result, key, err = store.PutIfNewer(ctx, ref, hostMetricsSample(f64(43.6), f64(68.2), 1030))
 	if err != nil || result != MachineMetricsChanged {
 		t.Fatalf("changed put = %v, %v; want changed", result, err)
 	}
+	if key != "44|68" {
+		t.Fatalf("changed put key = %q, want 44|68", key)
+	}
 
 	// A metric appearing/disappearing (nil <-> value) is a content change.
-	result, err = store.PutIfNewer(ctx, ref, hostMetricsSample(nil, f64(68), 1045))
+	result, key, err = store.PutIfNewer(ctx, ref, hostMetricsSample(nil, f64(68), 1045))
 	if err != nil || result != MachineMetricsChanged {
 		t.Fatalf("cpu->nil put = %v, %v; want changed", result, err)
+	}
+	if key != "-|68" {
+		t.Fatalf("cpu->nil put key = %q, want -|68", key)
 	}
 
 	// The stored value is the newest sample, with a real TTL.
@@ -87,10 +108,10 @@ func TestRedisMachineMetricsStoreWorkspaceIsolation(t *testing.T) {
 	ws1 := MachineRef{WorkspaceID: "ws-1", DaemonID: "shared-daemon-id"}
 	ws2 := MachineRef{WorkspaceID: "ws-2", DaemonID: "shared-daemon-id"}
 
-	if _, err := store.PutIfNewer(ctx, ws1, hostMetricsSample(f64(42), nil, 1000)); err != nil {
+	if _, _, err := store.PutIfNewer(ctx, ws1, hostMetricsSample(f64(42), nil, 1000)); err != nil {
 		t.Fatalf("put ws1: %v", err)
 	}
-	if _, err := store.PutIfNewer(ctx, ws2, hostMetricsSample(f64(7), nil, 1000)); err != nil {
+	if _, _, err := store.PutIfNewer(ctx, ws2, hostMetricsSample(f64(7), nil, 1000)); err != nil {
 		t.Fatalf("put ws2: %v", err)
 	}
 
@@ -106,7 +127,7 @@ func TestRedisMachineMetricsStoreWorkspaceIsolation(t *testing.T) {
 	}
 
 	// A newer sample in ws2 must not disturb ws1's value.
-	if _, err := store.PutIfNewer(ctx, ws2, hostMetricsSample(f64(8), nil, 1015)); err != nil {
+	if _, _, err := store.PutIfNewer(ctx, ws2, hostMetricsSample(f64(8), nil, 1015)); err != nil {
 		t.Fatalf("put ws2 newer: %v", err)
 	}
 	got = store.GetBatch(ctx, []MachineRef{ws1})
@@ -126,9 +147,13 @@ func TestRedisMachineMetricsStoreCorruptValue(t *testing.T) {
 	if err := rdb.Set(ctx, machineMetricsKey(ref), "not-json", machineMetricsTTL).Err(); err != nil {
 		t.Fatalf("seed corrupt value: %v", err)
 	}
-	result, err := store.PutIfNewer(ctx, ref, hostMetricsSample(f64(42), nil, 1000))
+	result, key, err := store.PutIfNewer(ctx, ref, hostMetricsSample(f64(42), nil, 1000))
 	if err != nil || result != MachineMetricsChanged {
 		t.Fatalf("put over corrupt = %v, %v; want changed", result, err)
+	}
+	// A corrupt stored value is treated as absent and overwritten.
+	if key != "42|-" {
+		t.Fatalf("put over corrupt key = %q, want 42|-", key)
 	}
 	if got := store.GetBatch(ctx, []MachineRef{ref})[ref]; got == nil || got.CapturedAt != 1000 {
 		t.Fatalf("sample after overwrite = %+v", got)
@@ -141,7 +166,7 @@ func TestRedisMachineMetricsStoreDegradesOnError(t *testing.T) {
 	rdb := newRedisTestClient(t)
 	store := NewRedisMachineMetricsStore(rdb)
 	ref := MachineRef{WorkspaceID: "ws-1", DaemonID: "daemon-a"}
-	if _, err := store.PutIfNewer(context.Background(), ref, hostMetricsSample(f64(42), nil, 1000)); err != nil {
+	if _, _, err := store.PutIfNewer(context.Background(), ref, hostMetricsSample(f64(42), nil, 1000)); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 	rdb.Close()
@@ -156,13 +181,13 @@ func TestMachineMetricsStoreInputValidation(t *testing.T) {
 	store := NewRedisMachineMetricsStore(rdb)
 	ctx := context.Background()
 
-	if _, err := store.PutIfNewer(ctx, MachineRef{WorkspaceID: "", DaemonID: "d"}, hostMetricsSample(nil, nil, 1)); err == nil {
+	if _, _, err := store.PutIfNewer(ctx, MachineRef{WorkspaceID: "", DaemonID: "d"}, hostMetricsSample(nil, nil, 1)); err == nil {
 		t.Fatal("empty workspace id accepted")
 	}
-	if _, err := store.PutIfNewer(ctx, MachineRef{WorkspaceID: "w", DaemonID: ""}, hostMetricsSample(nil, nil, 1)); err == nil {
+	if _, _, err := store.PutIfNewer(ctx, MachineRef{WorkspaceID: "w", DaemonID: ""}, hostMetricsSample(nil, nil, 1)); err == nil {
 		t.Fatal("empty daemon id accepted")
 	}
-	if _, err := store.PutIfNewer(ctx, MachineRef{WorkspaceID: "w", DaemonID: "d"}, nil); err == nil {
+	if _, _, err := store.PutIfNewer(ctx, MachineRef{WorkspaceID: "w", DaemonID: "d"}, nil); err == nil {
 		t.Fatal("nil metrics accepted")
 	}
 }
@@ -173,9 +198,9 @@ func TestNoopMachineMetricsStore(t *testing.T) {
 	if store.Available() {
 		t.Fatal("noop store reports available")
 	}
-	result, err := store.PutIfNewer(context.Background(), MachineRef{WorkspaceID: "w", DaemonID: "d"}, hostMetricsSample(f64(1), nil, 1))
-	if err != nil || result != MachineMetricsDropped {
-		t.Fatalf("noop put = %v, %v; want dropped, nil", result, err)
+	result, key, err := store.PutIfNewer(context.Background(), MachineRef{WorkspaceID: "w", DaemonID: "d"}, hostMetricsSample(f64(1), nil, 1))
+	if err != nil || result != MachineMetricsDropped || key != "" {
+		t.Fatalf("noop put = %v, %q, %v; want dropped, \"\", nil", result, key, err)
 	}
 	if got := store.GetBatch(context.Background(), []MachineRef{{WorkspaceID: "w", DaemonID: "d"}}); got != nil {
 		t.Fatalf("noop get = %v, want nil", got)

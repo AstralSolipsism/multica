@@ -51,20 +51,41 @@ export function metricsTone(percent: number | null): QuotaTone {
 }
 
 /** Freshness SLA for online host metrics: the daemon samples every 15s, so
- *  30s covers one missed cycle. Mirrors the server's hostMetricsFreshnessSLA. */
+ *  30s covers one missed cycle. Mirrors the server's hostMetricsFreshnessSLA —
+ *  the server's `stale` flag at response time is the authoritative signal. */
 export const SYSTEM_STATS_STALE_MS = 30_000;
 
-/** Client-side freshness advancement: the server's `stale` flag is computed
- *  once at response time, but the sample keeps aging while the page sits
- *  open. Recompute from the sample age on the page's ticking clock so an
- *  open page reliably transitions to the stale state even when nothing
- *  triggers a refetch (e.g. the daemon's sampler stopped while heartbeats
- *  continue). Skew note: captured_at is the daemon's clock; the server
- *  already rejects samples more than 2min ahead, and a modestly-behind
- *  daemon clock only marks stale slightly early — the honest failure mode. */
+/** Bounded freshness re-sync: while an open runtime list view holds at least
+ *  one system_stats sample, refetch the list at this cadence so the server's
+ *  authoritative freshness (stale flag / dropped field after TTL expiry)
+ *  keeps reaching the page even though unchanged content deliberately
+ *  broadcasts nothing. When no runtime carries a sample the poll switches
+ *  off entirely. */
+export const SYSTEM_STATS_REFRESH_MS = 30_000;
+
+/** True when any runtime in the list currently carries a host metrics
+ *  sample — the condition under which the bounded freshness poll runs. */
+export function runtimeListHasSystemStats(
+  runtimes: AgentRuntime[] | undefined,
+): boolean {
+  return runtimes?.some((runtime) => runtime.system_stats != null) === true;
+}
+
+/** Client-side staleness backstop BETWEEN the bounded refetches: the local
+ *  threshold is deliberately 2× the server SLA so a healthy daemon (the
+ *  server refreshes captured_at every cycle and the poll delivers it within
+ *  30s) never flickers stale, while a page that somehow misses its polls
+ *  still ages out on its ticking clock. Server-flagged stale is always
+ *  honored. Skew note: captured_at is the daemon's clock; the server already
+ *  rejects samples more than 2min ahead of its own clock, and a
+ *  modestly-behind daemon clock only ages the local backstop slightly
+ *  early — the honest failure mode. */
 export function isSystemStatsStale(
   stats: RuntimeSystemStats,
   nowMs: number,
 ): boolean {
-  return stats.stale || nowMs - stats.captured_at * 1000 > SYSTEM_STATS_STALE_MS;
+  return (
+    stats.stale ||
+    nowMs - stats.captured_at * 1000 > 2 * SYSTEM_STATS_STALE_MS
+  );
 }

@@ -6,6 +6,7 @@ import {
   metricsTone,
   parseSystemStats,
   pickMachineSystemStats,
+  runtimeListHasSystemStats,
 } from "./host-metrics";
 
 function makeRuntime(
@@ -97,11 +98,30 @@ describe("metricsTone", () => {
 describe("isSystemStatsStale", () => {
   const sample = { cpu_percent: 42, memory_percent: 68, captured_at: 1000, stale: false };
 
-  it("honors the server flag and advances with the clock", () => {
+  it("honors the server flag and ages out only past the 2x backstop", () => {
     expect(isSystemStatsStale({ ...sample, stale: true }, 1000_000)).toBe(true);
-    // 30s old at the boundary: still fresh.
+    // The bounded poll refreshes a healthy sample within 30s, so at 30s the
+    // local backstop must NOT yet fire (no steady-state flicker).
     expect(isSystemStatsStale(sample, 1000_000 + 30_000)).toBe(false);
-    // Past the SLA the open page marks stale without waiting for a refetch.
-    expect(isSystemStatsStale(sample, 1000_000 + 30_001)).toBe(true);
+    expect(isSystemStatsStale(sample, 1000_000 + 60_000)).toBe(false);
+    // Past 2x SLA with no refetch delivered, the open page ages out on its own.
+    expect(isSystemStatsStale(sample, 1000_000 + 60_001)).toBe(true);
+  });
+});
+
+describe("runtimeListHasSystemStats", () => {
+  it("detects any carried sample", () => {
+    expect(runtimeListHasSystemStats(undefined)).toBe(false);
+    expect(runtimeListHasSystemStats([])).toBe(false);
+    expect(runtimeListHasSystemStats([makeRuntime({ id: "rt-1" })])).toBe(false);
+    expect(
+      runtimeListHasSystemStats([
+        makeRuntime({ id: "rt-1" }),
+        makeRuntime({
+          id: "rt-2",
+          system_stats: { cpu_percent: 1, memory_percent: null, captured_at: 5, stale: false },
+        }),
+      ]),
+    ).toBe(true);
   });
 });
