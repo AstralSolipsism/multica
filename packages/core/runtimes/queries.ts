@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 import {
   runtimeListHasSystemStats,
+  SYSTEM_STATS_RECOVERY_MS,
   SYSTEM_STATS_REFRESH_MS,
 } from "./host-metrics";
 
@@ -62,12 +63,15 @@ export function runtimeListOptions(wsId: string, owner?: "me", wsSlug?: string) 
     queryKey: owner === "me" ? runtimeKeys.listMine(wsId) : runtimeKeys.list(wsId),
     queryFn: () => api.listRuntimes({ workspace_id: wsId, owner }, wsSlug),
     // Bounded freshness re-sync for machine host metrics: unchanged content
-    // broadcasts nothing by design, so while any runtime carries a
-    // system_stats sample the open view re-reads the list every 30s and the
-    // server's authoritative freshness (stale flag / field dropped after
-    // Redis TTL expiry) keeps flowing. Polls stop entirely when no sample is
-    // present, and React Query only runs them for the focused window.
+    // broadcasts nothing by design, so an open view re-reads the list every
+    // 30s while any runtime carries a system_stats sample, and every 60s
+    // while none does — the slower cadence is the bounded recovery path back
+    // after samples vanish (Redis TTL expiry during a sampler pause, a
+    // transient read failure). React Query only runs these for the focused
+    // window.
     refetchInterval: (query) =>
-      runtimeListHasSystemStats(query.state.data) ? SYSTEM_STATS_REFRESH_MS : false,
+      runtimeListHasSystemStats(query.state.data)
+        ? SYSTEM_STATS_REFRESH_MS
+        : SYSTEM_STATS_RECOVERY_MS,
   });
 }

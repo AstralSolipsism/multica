@@ -59,9 +59,14 @@ export const SYSTEM_STATS_STALE_MS = 30_000;
  *  one system_stats sample, refetch the list at this cadence so the server's
  *  authoritative freshness (stale flag / dropped field after TTL expiry)
  *  keeps reaching the page even though unchanged content deliberately
- *  broadcasts nothing. When no runtime carries a sample the poll switches
- *  off entirely. */
+ *  broadcasts nothing. */
 export const SYSTEM_STATS_REFRESH_MS = 30_000;
+
+/** Slower recovery cadence while NO runtime carries a sample: the bounded
+ *  path back to live data after samples vanished (Redis TTL expiry during a
+ *  sampler pause, a transient read failure) — the server announces a resumed
+ *  machine via the telemetry event too, but the poll does not depend on it. */
+export const SYSTEM_STATS_RECOVERY_MS = 60_000;
 
 /** True when any runtime in the list currently carries a host metrics
  *  sample — the condition under which the bounded freshness poll runs. */

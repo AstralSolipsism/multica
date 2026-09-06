@@ -32,7 +32,7 @@ type MachineMetricsStore interface {
 	// methods on a non-available store are no-ops.
 	Available() bool
 
-// PutIfNewer atomically records metrics when its CapturedAt is newer
+	// PutIfNewer atomically records metrics when its CapturedAt is newer
 	// than the stored sample's. It returns the put outcome and, crucially,
 	// the STORED sample's rounded content key after the call — including
 	// when nothing was written (same/older captured_at) — so the caller can

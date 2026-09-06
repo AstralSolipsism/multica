@@ -30,11 +30,12 @@ const hostMetricsMaxFutureSkew = 2 * time.Minute
 const hostMetricsPublishMinInterval = 15 * time.Second
 
 // hostMetricsMachinePublication is one machine's broadcast bookkeeping: when
-// the last telemetry broadcast went out and which rounded content it
-// announced.
+// the last telemetry broadcast went out, which rounded content it announced,
+// and when the last metrics-carrying beat was accepted.
 type hostMetricsMachinePublication struct {
 	publishedAt  time.Time
 	publishedKey string
+	lastBeatAt   time.Time
 }
 
 // hostMetricsPublishTracker coalesces telemetry broadcasts per machine.
@@ -52,25 +53,41 @@ func newHostMetricsPublishTracker() *hostMetricsPublishTracker {
 // rounded content equals the last announced one is never re-announced; a
 // changed sample arriving inside the throttle window is deferred, not
 // dropped — the next beat re-offers it, so the latest change reaches
-// clients at most one heartbeat cadence past the window. Entries idle
-// longer than an hour are swept on use so the map stays bounded by the
-// number of recently-active machines.
+// clients at most one heartbeat cadence past the window.
+//
+// Recovery: the Redis entry lives machineMetricsTTL (90s) past the last
+// accepted beat. When no metrics-carrying beat has arrived for longer than
+// that, the stored sample — and with it the clients' knowledge — has
+// expired, so the first resumed sample is announced even if its content
+// equals what was last broadcast: clients currently render "not reported"
+// and must be told the machine's metrics are back.
+//
+// Entries idle longer than an hour are swept on use so the map stays
+// bounded by the number of recently-active machines.
 func (t *hostMetricsPublishTracker) shouldPublish(machineKey, contentKey string, now time.Time) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for k, state := range t.machines {
-		if now.Sub(state.publishedAt) > time.Hour {
+		if now.Sub(state.publishedAt) > time.Hour && now.Sub(state.lastBeatAt) > time.Hour {
 			delete(t.machines, k)
 		}
 	}
 	state := t.machines[machineKey]
-	if state.publishedKey == contentKey {
+	// Expiry is judged against the PREVIOUS accepted beat: the Redis entry
+	// lives machineMetricsTTL past it, so a longer gap means the stored
+	// sample is gone and clients currently render "not reported".
+	expired := !state.lastBeatAt.IsZero() && now.Sub(state.lastBeatAt) > machineMetricsTTL
+	if state.publishedKey == contentKey && !expired {
+		state.lastBeatAt = now
+		t.machines[machineKey] = state
 		return false
 	}
-	if !state.publishedAt.IsZero() && now.Sub(state.publishedAt) < hostMetricsPublishMinInterval {
+	if !expired && !state.publishedAt.IsZero() && now.Sub(state.publishedAt) < hostMetricsPublishMinInterval {
+		state.lastBeatAt = now
+		t.machines[machineKey] = state
 		return false
 	}
-	t.machines[machineKey] = hostMetricsMachinePublication{publishedAt: now, publishedKey: contentKey}
+	t.machines[machineKey] = hostMetricsMachinePublication{publishedAt: now, publishedKey: contentKey, lastBeatAt: now}
 	return true
 }
 

@@ -60,10 +60,6 @@ func TestHostMetricsPublishTracker(t *testing.T) {
 	if !tracker.shouldPublish("ws:d", "10|68", now) {
 		t.Fatal("first publish suppressed")
 	}
-	// Same content is never re-announced.
-	if tracker.shouldPublish("ws:d", "10|68", now.Add(time.Hour)) {
-		t.Fatal("unchanged content re-announced")
-	}
 	// A change inside the window is deferred (not dropped — see below).
 	if tracker.shouldPublish("ws:d", "95|68", now.Add(hostMetricsPublishMinInterval-time.Second)) {
 		t.Fatal("change inside the interval allowed")
@@ -79,13 +75,40 @@ func TestHostMetricsPublishTracker(t *testing.T) {
 		t.Fatal("deferred change not re-published at the window boundary")
 	}
 	// After the re-publish, the tracker holds the new content.
-	if tracker.shouldPublish("ws:d", "95|68", now.Add(time.Hour)) {
+	if tracker.shouldPublish("ws:d", "95|68", now.Add(hostMetricsPublishMinInterval+time.Second)) {
 		t.Fatal("content re-announced after the deferred publish")
+	}
+
+	// Steady machine: beats every 15s with unchanged content stay silent
+	// indefinitely.
+	if !tracker.shouldPublish("ws:steady", "10|68", now) {
+		t.Fatal("steady machine: first publish suppressed")
+	}
+	for i := 1; i <= 8; i++ {
+		if tracker.shouldPublish("ws:steady", "10|68", now.Add(time.Duration(i)*15*time.Second)) {
+			t.Fatalf("steady machine re-announced unchanged content at beat %d", i)
+		}
+	}
+
+	// Recovery: the same content after a beat gap beyond the store TTL must
+	// re-announce — the stored sample expired, so clients currently render
+	// "not reported" and need the event when sampling resumes.
+	if !tracker.shouldPublish("ws:gap", "10|68", now) {
+		t.Fatal("gap machine: first publish suppressed")
+	}
+	if tracker.shouldPublish("ws:gap", "10|68", now.Add(15*time.Second)) {
+		t.Fatal("gap machine re-announced unchanged content")
+	}
+	if !tracker.shouldPublish("ws:gap", "10|68", now.Add(15*time.Second+machineMetricsTTL+time.Second)) {
+		t.Fatal("resumed sample after a TTL-expiry gap not announced")
+	}
+	if tracker.shouldPublish("ws:gap", "10|68", now.Add(30*time.Second+machineMetricsTTL+time.Second)) {
+		t.Fatal("post-recovery steady beat re-announced")
 	}
 
 	// Idle entries are swept on use so the map stays bounded.
 	tracker.machines["ws:ancient"] = hostMetricsMachinePublication{publishedAt: now.Add(-2 * time.Hour), publishedKey: "1|1"}
-	tracker.shouldPublish("ws:d", "95|68", now.Add(time.Hour))
+	tracker.shouldPublish("ws:sweep", "1|1", now.Add(time.Hour))
 	if _, ok := tracker.machines["ws:ancient"]; ok {
 		t.Fatal("idle entry survived a sweep")
 	}
@@ -237,16 +260,21 @@ func TestStoreHeartbeatMetrics(t *testing.T) {
 			MachineMetricsChanged, // t0: 95% stored and published
 			MachineMetricsDropped, // t0+20s: delayed 10% beat (older captured_at)
 		}, keys: []string{
-			"", // first call derives the key from the sample itself: 95|68
-			"95|68", // Dropped beat reports the stored (newer) content
+			"95|68", // first beat stores and announces 95%
+			"95|68", // the Dropped beat reports the stored (newer) content
 		}}
 		h, published := newHandler(store)
 		ctx := context.Background()
 
+		// First beat publishes exactly once, immediately.
 		h.storeHeartbeatMetricsAt(ctx, "ws", "d", hostMetricsSample(f64(95), f64(68), now.Unix()), now)
+		if len(*published) != 1 || (*published)[0] != protocol.EventRuntimeTelemetryUpdated {
+			t.Fatalf("published after first beat = %v, want one %s", *published, protocol.EventRuntimeTelemetryUpdated)
+		}
+		// The delayed older beat adds nothing.
 		h.storeHeartbeatMetricsAt(ctx, "ws", "d", hostMetricsSample(f64(10), f64(68), now.Unix()-60), now.Add(20*time.Second))
 		if len(*published) != 1 {
-			t.Fatalf("published = %v, want only the initial broadcast", *published)
+			t.Fatalf("published after out-of-order beat = %v, want still one", *published)
 		}
 	})
 
@@ -258,6 +286,64 @@ func TestStoreHeartbeatMetrics(t *testing.T) {
 			t.Fatalf("published = %v, want none", *published)
 		}
 	})
+}
+
+// TestStoreHeartbeatMetricsRecoveryAfterExpiry drives the round-3 review
+// scenario against a REAL Redis store: a machine publishes its sample, beats
+// keep flowing with unchanged content (silent), the sampler then pauses so
+// the store entry expires, and when sampling resumes with the SAME load the
+// server must announce again — clients have been rendering "not reported"
+// since the expiry and no content change will ever come. The TTL expiry is
+// simulated by deleting the key (the tracker side uses the injected clock).
+func TestStoreHeartbeatMetricsRecoveryAfterExpiry(t *testing.T) {
+	rdb := newRedisTestClient(t)
+	bus := events.New()
+	var published []string
+	bus.SubscribeAll(func(event events.Event) { published = append(published, event.Type) })
+	h := &Handler{
+		Bus:                 bus,
+		MachineMetricsStore: NewRedisMachineMetricsStore(rdb),
+		hostMetricsPublish:  newHostMetricsPublishTracker(),
+	}
+	ctx := context.Background()
+	now := time.Now()
+	ref := MachineRef{WorkspaceID: "ws-recovery", DaemonID: "daemon-recovery"}
+	sample := hostMetricsSample(f64(42), f64(68), now.Unix())
+
+	// t0: first sample publishes; steady beats re-announce nothing.
+	h.storeHeartbeatMetricsAt(ctx, ref.WorkspaceID, ref.DaemonID, sample, now)
+	if len(published) != 1 || published[0] != protocol.EventRuntimeTelemetryUpdated {
+		t.Fatalf("published = %v, want one %s", published, protocol.EventRuntimeTelemetryUpdated)
+	}
+	for _, delta := range []time.Duration{15 * time.Second, 30 * time.Second, 45 * time.Second} {
+		steady := hostMetricsSample(f64(42), f64(68), now.Add(delta).Unix())
+		h.storeHeartbeatMetricsAt(ctx, ref.WorkspaceID, ref.DaemonID, steady, now.Add(delta))
+	}
+	if len(published) != 1 {
+		t.Fatalf("steady beats re-announced: published = %v", published)
+	}
+
+	// The sampler pauses: no metrics-carrying beats, and the store entry
+	// expires (as its TTL would do 90s past the last write).
+	if err := rdb.Del(ctx, machineMetricsKey(ref)).Err(); err != nil {
+		t.Fatalf("del: %v", err)
+	}
+
+	// Sampling resumes 150s later with the SAME load: the last accepted beat
+	// was 105s ago — beyond the store TTL — so the backend must announce
+	// again even though the content is unchanged.
+	resumed := hostMetricsSample(f64(42), f64(68), now.Add(150*time.Second).Unix())
+	h.storeHeartbeatMetricsAt(ctx, ref.WorkspaceID, ref.DaemonID, resumed, now.Add(150*time.Second))
+	if len(published) != 2 {
+		t.Fatalf("recovery after TTL expiry not announced: published = %v", published)
+	}
+
+	// And the recovered machine is steady-silent again afterwards.
+	steady := hostMetricsSample(f64(42), f64(68), now.Add(165*time.Second).Unix())
+	h.storeHeartbeatMetricsAt(ctx, ref.WorkspaceID, ref.DaemonID, steady, now.Add(165*time.Second))
+	if len(published) != 2 {
+		t.Fatalf("post-recovery beat re-announced: published = %v", published)
+	}
 }
 
 // hostMetricsRuntime inserts a runtime row on a specific daemon id so one
