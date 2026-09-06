@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -487,17 +488,35 @@ func TestKimiCollect_RedirectNotFollowed(t *testing.T) {
 }
 
 // The dial constraint itself: non-loopback targets are refused at the
-// connection point.
-func TestLoopbackOnlyDialContext(t *testing.T) {
-	if _, err := loopbackOnlyDialContext(context.Background(), "tcp", "203.0.113.10:443"); err == nil {
-		t.Fatal("expected non-loopback dial to be refused")
+// connection point, and the ownership probe is consulted on every dial.
+func TestLoopbackOwnedDialContext(t *testing.T) {
+	for _, addr := range []string{"203.0.113.10:443", "192.168.1.5:8080", "[::1]:58627"} {
+		if _, err := loopbackOwnedDialContext(context.Background(), "tcp", addr, nil); err == nil {
+			t.Fatalf("expected %s to be refused", addr)
+		}
 	}
-	if _, err := loopbackOnlyDialContext(context.Background(), "tcp", "192.168.1.5:8080"); err == nil {
-		t.Fatal("expected LAN dial to be refused")
+
+	// Ownership probe consulted per dial: first dial passes, second (after
+	// the listener changed hands) is refused.
+	var owned atomic.Bool
+	owned.Store(true)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := loopbackOnlyDialContext(context.Background(), "tcp", "[::1]:58627"); err == nil {
-		t.Fatal("expected IPv6 loopback dial to be refused (v4-only proof boundary)")
+	defer func() { _ = ln.Close() }()
+	port := ln.Addr().(*net.TCPAddr).Port
+	check := func(int) bool { return owned.Load() }
+	conn, err := loopbackOwnedDialContext(context.Background(), "tcp", ln.Addr().String(), check)
+	if err != nil {
+		t.Fatalf("first dial: %v", err)
 	}
+	_ = conn.Close()
+	owned.Store(false)
+	if _, err := loopbackOwnedDialContext(context.Background(), "tcp", ln.Addr().String(), check); err == nil {
+		t.Fatal("second dial not refused after ownership flip")
+	}
+	_ = port
 }
 
 // Socket-ownership table parsing, address-aware: the listener must be able
@@ -601,5 +620,79 @@ func TestKimiCollect_RegistryPathRequiresSocketOwnership(t *testing.T) {
 	}
 	if gotAuth != "" {
 		t.Fatalf("registry path delivered credentials without socket proof: %q", gotAuth)
+	}
+}
+
+// Round-4 R1 regression: probe passes, the server releases the port, a
+// different-owner process claims it, and the credential-carrying request —
+// which must re-dial because the probe connection closed — is refused at
+// dial time. The ownership flip is sequenced deterministically: A flips it
+// inside the probe handler, which happens-before the client reads the
+// response and dials again.
+func TestKimiCollect_ReconnectionRevalidatesListener(t *testing.T) {
+	lnA, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := lnA.Addr().(*net.TCPAddr).Port
+
+	var owned atomic.Bool
+	owned.Store(true)
+	var probeServed atomic.Int64
+
+	srvA := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Error("server A received a credential") // A is same-owner, but the point is zero delivery after the flip
+		}
+		w.Header().Set("Connection", "close") // force a NEW dial for the usage request
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"code":40101,"msg":"missing bearer token"}`))
+		probeServed.Add(1)
+		// The listener changes hands as the probe answer goes out.
+		owned.Store(false)
+	})}
+	go func() { _ = srvA.Serve(lnA) }()
+
+	// B claims the same port once A lets go — the foreign new owner.
+	var hitsB atomic.Int64
+	var authB atomic.Int64
+	go func() {
+		for i := 0; i < 200; i++ {
+			if probeServed.Load() > 0 {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		_ = srvA.Close()
+		lnB, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			return // port still settling; the dial-time refusal must hold regardless
+		}
+		srvB := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hitsB.Add(1)
+			if r.Header.Get("Authorization") != "" {
+				authB.Add(1)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"code":40101,"msg":"missing bearer token"}`))
+		})}
+		_ = srvB.Serve(lnB)
+		t.Cleanup(func() { _ = srvB.Close() })
+	}()
+	t.Cleanup(func() { _ = srvA.Close() })
+
+	collector := newKimiTestCollector(kimiTestHomeNoRegistry(t), port)
+	collector.socketOwnedByUser = func(int) bool { return owned.Load() }
+
+	if _, err := collector.collect(context.Background()); err == nil {
+		t.Fatal("expected collection to fail after the listener changed hands")
+	}
+	if probeServed.Load() == 0 {
+		t.Fatal("probe never reached A — test setup broken")
+	}
+	if hitsB.Load() != 0 || authB.Load() != 0 {
+		t.Fatalf("new owner received %d requests (%d authed)", hitsB.Load(), authB.Load())
 	}
 }

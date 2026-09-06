@@ -47,8 +47,13 @@ import (
 // A same-user process could read ~/.kimi-code/server.token directly (it is
 // the user's own 0600 file), so protocol mimicry by the same user grants no
 // new privilege; the binding above exists to stop delivery to unrelated or
-// foreign-owned services. The HTTP client additionally refuses redirects and
-// dials loopback literals only, so the token cannot be bounced off-box.
+// foreign-owned services. The ownership proof is bound to the actual
+// connection: the dialer re-proves the listener on every new connection,
+// reconnection and transport-level retry, immediately before anything is
+// written to it — a port that changed hands between the probe and the
+// credential-carrying request fails closed. The client additionally refuses
+// redirects and dials IPv4 loopback only, so the token cannot be bounced
+// off-box.
 //
 // The API is marked experimental, so every step is fail-soft: a missing
 // token file, a dead local server, or a drifted response shape ends the
@@ -96,8 +101,7 @@ type kimiPlanQuotaCollector struct {
 }
 
 func newKimiPlanQuotaCollector(homeDir string) *kimiPlanQuotaCollector {
-	return &kimiPlanQuotaCollector{
-		client:            newKimiHTTPClient(),
+	c := &kimiPlanQuotaCollector{
 		homeDir:           homeDir,
 		scanBase:          kimiServerDefaultPort,
 		scanCount:         kimiServerMaxPorts,
@@ -105,39 +109,69 @@ func newKimiPlanQuotaCollector(homeDir string) *kimiPlanQuotaCollector {
 		socketOwnedByUser: kimiSocketOwnedByUser,
 		verifyProcess:     kimiVerifyInstanceProcess,
 	}
+	// The indirection matters: tests swap c.socketOwnedByUser after
+	// construction, and the dialer must consult the current value.
+	c.client = newKimiHTTPClient(func(port int) bool { return c.socketOwnedByUser(port) })
+	return c
 }
 
 // newKimiHTTPClient builds the credential-carrying client: no redirects (a
 // 30x would otherwise bounce the bearer to an arbitrary target) and a dialer
-// that accepts loopback literals only.
-func newKimiHTTPClient() *http.Client {
+// that proves peer ownership on every connection (see
+// loopbackOwnedDialContext).
+func newKimiHTTPClient(socketOwnedByUser func(port int) bool) *http.Client {
 	return &http.Client{
 		Timeout: 5 * time.Second,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 		Transport: &http.Transport{
-			DialContext:           loopbackOnlyDialContext,
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return loopbackOwnedDialContext(ctx, network, addr, socketOwnedByUser)
+			},
 			ResponseHeaderTimeout: 4 * time.Second,
 		},
 	}
 }
 
-// loopbackOnlyDialContext refuses to dial anything but a loopback literal.
-// The collector constructs URLs as http://127.0.0.1:<port> itself; this is
-// the belt-and-braces guarantee at the actual connection point.
-func loopbackOnlyDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, _, err := net.SplitHostPort(addr)
+// loopbackOwnedDialContext dials IPv4 loopback only, and — this is the OL-5
+// R1 reconnection fix — proves listener ownership on EVERY connection:
+// before dialing and again after the connection is established, binding the
+// proof to the actual connection the request (and its bearer) travels on.
+// Go's transport opens a new connection for every reconnect and every
+// automatic retry of an idempotent request, so each of those re-proves here.
+// A connection that can no longer be proven is closed before a single byte —
+// credential or otherwise — is written to it.
+func loopbackOwnedDialContext(ctx context.Context, network, addr string, socketOwnedByUser func(port int) bool) (net.Conn, error) {
+	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
 	}
 	if host != "127.0.0.1" {
 		// IPv4 loopback only: the collector constructs 127.0.0.1 URLs itself,
-		// and identity proof (socket ownership) is evaluated for exactly the
-		// dialed family — an ::1 socket cannot serve this dial.
+		// and the ownership proof is evaluated for exactly the dialed family —
+		// an ::1 socket cannot serve this dial.
 		return nil, fmt.Errorf("plan quota: refusing to dial non-IPv4-loopback target %q", host)
 	}
-	return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, network, addr)
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return nil, fmt.Errorf("plan quota: bad port in %q: %w", addr, err)
+	}
+	if socketOwnedByUser != nil && !socketOwnedByUser(port) {
+		return nil, fmt.Errorf("plan quota: no listener owned by this user on port %d", port)
+	}
+	conn, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, network, addr)
+	if err != nil {
+		return nil, err
+	}
+	if socketOwnedByUser != nil && !socketOwnedByUser(port) {
+		// The listener changed hands while connecting (the original server
+		// released the port and a different process claimed it): this new
+		// connection must not carry anything.
+		_ = conn.Close()
+		return nil, fmt.Errorf("plan quota: listener on port %d changed ownership while connecting", port)
+	}
+	return conn, nil
 }
 
 // collect runs one observation round: read the local token, find the live

@@ -164,8 +164,8 @@ func TestZenmuxLinkedRuntimes(t *testing.T) {
 	}
 
 	// S2a: built-in-only selection picks exactly the built-in runtime out of
-	// a workspace that also has a custom profile — "内置用 ZenMux、自定义用
-	// 其他来源" is expressible.
+	// a workspace that also has a custom profile — "the built-in uses
+	// ZenMux, the profile uses another source" is expressible.
 	builtin, _ := parseZenMuxLink("hermes:builtin@ws-2")
 	if got := d.zenmuxLinkedRuntimes(builtin); len(got) != 1 || got[0].ID != "rt-h2" {
 		t.Fatalf("builtin@ws-2 targets = %v", got)
