@@ -73,10 +73,10 @@ export type UseCase =
  * so future re-prompts can avoid nagging users who already declined.
  *
  * Backward compat: prior versions of this app wrote `source` and
- * `use_case` as a single string. `mergeQuestionnaire` in
- * `onboarding-flow.tsx` upgrades those rows to single-element arrays
- * on read; the server's `questionnaireAnswers.UnmarshalJSON` does the
- * same. `version` stays at 2 — the JSONB column is schema-less so a
+ * `use_case` as a single string. The server's
+ * `questionnaireAnswers.UnmarshalJSON` upgrades those rows to
+ * single-element arrays on read. `version` stays at 2 — the JSONB
+ * column is schema-less so a
  * mechanical bump would only show up in analytics, not in storage,
  * and we keep one funnel cohort.
  */

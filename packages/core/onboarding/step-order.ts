@@ -17,15 +17,18 @@ import type { OnboardingStep } from "./types";
  * Questions that are intentionally NOT steps:
  *
  *   - "source" (How did you hear about Multica?) is pure attribution
- *     data with zero user-facing payoff, so it no longer taxes the
- *     critical path. It is collected post-onboarding by the workspace
- *     source-backfill prompt, and only after agents have completed
- *     work for the user — see `needs-backfill.ts`.
+ *     data, so it never taxes the critical path. Upstream it was
+ *     collected post-onboarding by the workspace source-backfill prompt
+ *     (`needs-backfill.ts`); this deployment's fork also unmounted that
+ *     prompt — the modal component is kept for reference but nothing
+ *     collects source today.
  *   - "about_you" (the role / use_case questionnaire) was removed: it
- *     is marketing-style persona capture with no product payoff. The
- *     `role` / `use_case` slots in `QuestionnaireAnswers` stay — they
- *     share one JSONB column and PATCH endpoint with `source`, and
- *     simply remain unset.
+ *     is marketing-style persona capture this deployment does not want
+ *     at first entry. The `role` / `use_case` slots in
+ *     `QuestionnaireAnswers` stay — they share one JSONB column and
+ *     PATCH endpoint with `source` — and the server still reads any
+ *     historically recorded values for personalization; they simply
+ *     stay unset for new users.
  *
  * Runtime is the final form step. A connected path provisions Mika and opens
  * the interactive onboarding chat as part of the runtime step's submit action;
