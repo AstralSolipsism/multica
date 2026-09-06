@@ -6,10 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,10 +29,27 @@ import (
 //     ~/.kimi-code/server/instances/.
 //   - The bearer token is generated on first server boot and persisted at
 //     ~/.kimi-code/server.token (mode 0600). It never leaves this machine.
-//   - GET /api/v1/healthz is unauthenticated; every other /api/* path needs
-//     the bearer. GET /api/v1/oauth/usage answers the envelope
+//   - Failed authentication returns HTTP 401 with envelope code 40101;
+//     GET /api/v1/oauth/usage answers the envelope
 //     {code, msg, data:{kind:"ok", limits:[...]}} and reports upstream
 //     failures in-band as data.kind:"error".
+//
+// Credential safety (OL-5 R1): the token is sent only to a peer that proves
+// itself BEFORE receiving any credential —
+//  1. the candidate port's LISTEN socket must belong to this process's own
+//     user (Linux /proc/net/tcp{,6} uid check; skipped where /proc is
+//     unavailable), which rules out ports claimed by other users' processes;
+//  2. the peer must answer an UNAUTHENTICATED /api/v1/oauth/usage probe with
+//     exactly HTTP 401 and envelope code 40101 — Kimi's auth-middleware
+//     signature. An unrelated service returning a public 200 (or anything
+//     else) never sees the token. A healthz-style liveness 200 is
+//     deliberately NOT used: it proves liveness, not identity.
+//
+// A same-user process could read ~/.kimi-code/server.token directly (it is
+// the user's own 0600 file), so protocol mimicry by the same user grants no
+// new privilege; the binding above exists to stop delivery to unrelated or
+// foreign-owned services. The HTTP client additionally refuses redirects and
+// dials loopback literals only, so the token cannot be bounced off-box.
 //
 // The API is marked experimental, so every step is fail-soft: a missing
 // token file, a dead local server, or a drifted response shape ends the
@@ -44,6 +62,9 @@ const (
 	kimiServerHomeDir     = ".kimi-code"
 	kimiServerTokenFile   = "server.token"
 	kimiServerInstances   = "server/instances"
+	// kimiAuthRequiredCode is the envelope code Kimi's auth middleware returns
+	// with HTTP 401 when the bearer is missing or invalid.
+	kimiAuthRequiredCode = 40101
 )
 
 // kimiPlanQuotaCollector holds the loop-round state: an HTTP client, the
@@ -53,13 +74,48 @@ type kimiPlanQuotaCollector struct {
 	client  *http.Client
 	homeDir string
 	port    int
+	// portOwnedByUser reports whether the port's LISTEN socket belongs to
+	// this process's user. A field so tests can simulate foreign-owned
+	// sockets; production wires it to the /proc/net/tcp implementation.
+	portOwnedByUser func(port int) bool
 }
 
 func newKimiPlanQuotaCollector(homeDir string) *kimiPlanQuotaCollector {
 	return &kimiPlanQuotaCollector{
-		client:  &http.Client{Timeout: 5 * time.Second},
-		homeDir: homeDir,
+		client:          newKimiHTTPClient(),
+		homeDir:         homeDir,
+		portOwnedByUser: kimiPortOwnedByUser,
 	}
+}
+
+// newKimiHTTPClient builds the credential-carrying client: no redirects (a
+// 30x would otherwise bounce the bearer to an arbitrary target) and a dialer
+// that accepts loopback literals only.
+func newKimiHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: &http.Transport{
+			DialContext:           loopbackOnlyDialContext,
+			ResponseHeaderTimeout: 4 * time.Second,
+		},
+	}
+}
+
+// loopbackOnlyDialContext refuses to dial anything but a loopback literal.
+// The collector constructs URLs as http://127.0.0.1:<port> itself; this is
+// the belt-and-braces guarantee at the actual connection point.
+func loopbackOnlyDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	if host != "127.0.0.1" && host != "::1" {
+		return nil, fmt.Errorf("plan quota: refusing to dial non-loopback target %q", host)
+	}
+	return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, network, addr)
 }
 
 // collect runs one observation round: read the local token, find the live
@@ -150,14 +206,21 @@ func (c *kimiPlanQuotaCollector) instancePorts() []int {
 	return ports
 }
 
-// fetchUsage probes candidate ports with the unauthenticated healthz
-// endpoint, then queries the usage endpoint on the first live one. A port
-// that answers usage is remembered for the next round.
+// fetchUsage walks the candidate ports and returns the first usable usage
+// payload. A port earns the bearer only after passing the ownership check
+// and the unauthenticated 40101 handshake; a port that answers usage is
+// remembered for the next round.
 func (c *kimiPlanQuotaCollector) fetchUsage(ctx context.Context, token string) (*kimiUsageData, error) {
 	var lastErr error
 	for _, port := range c.candidatePorts() {
+		if !c.portOwnedByUser(port) {
+			// No listener, or the listener belongs to another user — never
+			// dial it with credentials.
+			continue
+		}
 		base := fmt.Sprintf("http://127.0.0.1:%d", port)
-		if !c.healthz(ctx, base) {
+		if err := c.checkKimiAuthSurface(ctx, base); err != nil {
+			lastErr = err
 			continue
 		}
 		data, err := c.getUsage(ctx, base, token)
@@ -174,20 +237,35 @@ func (c *kimiPlanQuotaCollector) fetchUsage(ctx context.Context, token string) (
 	return nil, errors.New("kimi local server not reachable (kimi web not running?)")
 }
 
-func (c *kimiPlanQuotaCollector) healthz(ctx context.Context, base string) bool {
+// checkKimiAuthSurface proves the peer is Kimi Code's local server WITHOUT
+// sending the token: an unauthenticated call to a protected /api/* path must
+// come back as HTTP 401 with envelope code 40101. Anything else — a public
+// 200, a redirect, a foreign 401 shape — is not Kimi and gets no credential.
+func (c *kimiPlanQuotaCollector) checkKimiAuthSurface(ctx context.Context, base string) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/v1/healthz", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/v1/oauth/usage", nil)
 	if err != nil {
-		return false
+		return err
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return false
+		return fmt.Errorf("kimi auth probe: %w", err)
 	}
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<10))
-	_ = resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnauthorized {
+		return fmt.Errorf("kimi auth probe: expected 401, got %d", resp.StatusCode)
+	}
+	var envelope struct {
+		Code int `json:"code"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&envelope); err != nil {
+		return fmt.Errorf("kimi auth probe: decode: %w", err)
+	}
+	if envelope.Code != kimiAuthRequiredCode {
+		return fmt.Errorf("kimi auth probe: expected envelope code %d, got %d", kimiAuthRequiredCode, envelope.Code)
+	}
+	return nil
 }
 
 // kimiUsageData is the `data` payload of GET /api/v1/oauth/usage. Only the
@@ -256,6 +334,59 @@ func (c *kimiPlanQuotaCollector) getUsage(ctx context.Context, base, token strin
 	return envelope.Data, nil
 }
 
+// kimiPortOwnedByUser reports whether the port's LISTEN socket belongs to
+// this process's effective user, parsed from /proc/net/tcp{,6}. Platforms
+// without /proc cannot prove socket ownership and answer true — the 40101
+// auth-surface handshake still gates credential delivery there.
+func kimiPortOwnedByUser(port int) bool {
+	if runtime.GOOS != "linux" {
+		return true
+	}
+	var tables [][]byte
+	for _, name := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		if raw, err := os.ReadFile(name); err == nil {
+			tables = append(tables, raw)
+		}
+	}
+	return portListenOwnedByUID(port, os.Geteuid(), tables)
+}
+
+// portListenOwnedByUID scans kernel TCP tables for LISTEN sockets bound to
+// the port. It answers false when nothing listens (a cheap pre-dial filter)
+// or when ANY listener on the port belongs to a different uid.
+func portListenOwnedByUID(port, uid int, tables [][]byte) bool {
+	found := false
+	for _, table := range tables {
+		for i, line := range strings.Split(string(table), "\n") {
+			if i == 0 { // header row
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) < 8 {
+				continue
+			}
+			// local_address is hex ip:hex port; st 0A is LISTEN; uid is field 7.
+			_, hexPort, ok := strings.Cut(fields[1], ":")
+			if !ok {
+				continue
+			}
+			p, err := strconv.ParseUint(hexPort, 16, 32)
+			if err != nil || int(p) != port {
+				continue
+			}
+			if fields[3] != "0A" {
+				continue
+			}
+			found = true
+			socketUID, err := strconv.Atoi(fields[7])
+			if err != nil || socketUID != uid {
+				return false
+			}
+		}
+	}
+	return found
+}
+
 // kimiUsageToPlanQuota normalizes the usage rows. Windows are sorted by
 // duration ascending and the two canonical ones renamed to the cross-provider
 // window ids ("primary" = shortest, "secondary" = next), matching the codex
@@ -272,7 +403,7 @@ func kimiUsageToPlanQuota(data *kimiUsageData, observedAt time.Time) *protocol.R
 		if m := kimiWindowMinutes(w); m != nil {
 			return *m
 		}
-		return math.MaxInt64 // unknown durations sort after known ones
+		return 1<<63 - 1 // unknown durations sort after known ones
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		return minutesOrMax(rows[i].Window) < minutesOrMax(rows[j].Window)
@@ -287,7 +418,7 @@ func kimiUsageToPlanQuota(data *kimiUsageData, observedAt time.Time) *protocol.R
 	limited := false
 	for i, row := range rows {
 		window := protocol.RuntimePlanQuotaWindow{
-			Name:          planQuotaWindowName(row.Name, canonical, i, len(rows)),
+			Name:          planQuotaWindowName(row.Name, canonical, i),
 			WindowMinutes: kimiWindowMinutes(row.Window),
 			ResetsAt:      unixSecondsPtr(row.ResetAt),
 		}
@@ -315,7 +446,7 @@ func kimiUsageToPlanQuota(data *kimiUsageData, observedAt time.Time) *protocol.R
 // planQuotaWindowName picks the window id: the canonical slot name for the
 // two shortest windows, otherwise the provider's own name (bounded to the
 // wire limit), otherwise a positional fallback so validation never rejects.
-func planQuotaWindowName(providerName string, canonical []string, index, total int) string {
+func planQuotaWindowName(providerName string, canonical []string, index int) string {
 	if index < len(canonical) {
 		return canonical[index]
 	}
@@ -395,5 +526,6 @@ func (d *Daemon) kimiPlanQuotaLoop(ctx context.Context) {
 		return
 	}
 	collector := newKimiPlanQuotaCollector(filepath.Join(homeDir, kimiServerHomeDir))
-	d.runPlanQuotaCollector(ctx, "kimi", d.cfg.PlanQuotaKimiInterval, []string{"kimi"}, collector.collect)
+	d.runPlanQuotaCollector(ctx, "kimi", d.cfg.PlanQuotaKimiInterval,
+		func() []string { return d.runtimeIDsForProvider("kimi") }, collector.collect)
 }

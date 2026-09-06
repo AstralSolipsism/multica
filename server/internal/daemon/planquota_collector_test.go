@@ -66,7 +66,8 @@ func TestRunPlanQuotaCollector_RecordsMatchingRuntimes(t *testing.T) {
 			Windows:    []protocol.RuntimePlanQuotaWindow{{Name: "primary"}},
 		}, nil
 	}
-	go d.runPlanQuotaCollector(ctx, "kimi", 10*time.Millisecond, []string{"kimi"}, collect)
+	go d.runPlanQuotaCollector(ctx, "kimi", 10*time.Millisecond,
+		func() []string { return d.runtimeIDsForProvider("kimi") }, collect)
 
 	waitForQuotaCondition(t, "snapshot cached", func() bool {
 		_, ok := d.planQuotaCache.Load("rt-kimi")
@@ -90,7 +91,8 @@ func TestRunPlanQuotaCollector_NoTargetsSkipsCollection(t *testing.T) {
 	}
 	done := make(chan struct{})
 	go func() {
-		d.runPlanQuotaCollector(ctx, "zenmux", 10*time.Millisecond, []string{"hermes"}, collect)
+		d.runPlanQuotaCollector(ctx, "zenmux", 10*time.Millisecond,
+			func() []string { return d.runtimeIDsForProvider("hermes") }, collect)
 		close(done)
 	}()
 
@@ -113,7 +115,8 @@ func TestRunPlanQuotaCollector_FailureKeepsCache(t *testing.T) {
 	}
 	done := make(chan struct{})
 	go func() {
-		d.runPlanQuotaCollector(ctx, "kimi", 10*time.Millisecond, []string{"kimi"}, fail)
+		d.runPlanQuotaCollector(ctx, "kimi", 10*time.Millisecond,
+			func() []string { return d.runtimeIDsForProvider("kimi") }, fail)
 		close(done)
 	}()
 	time.Sleep(100 * time.Millisecond)

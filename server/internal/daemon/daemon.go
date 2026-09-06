@@ -2094,9 +2094,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// providers whose quota lives behind an official programmatic API rather
 	// than inside the agent session. Kimi probes its local Server API and
 	// self-gates on the token file and a registered kimi runtime; ZenMux
-	// polls the Management API only when the operator configured a key.
+	// polls the Management API only when the operator configured a key, and
+	// reports only to runtimes explicitly linked via MULTICA_ZENMUX_LINK (the
+	// loop also runs link-only so a removed association is actively cleared).
 	go d.kimiPlanQuotaLoop(ctx)
-	if d.cfg.ZenMuxManagementAPIKey != "" {
+	if d.cfg.ZenMuxManagementAPIKey != "" || !d.cfg.ZenMuxLink.empty() {
 		go d.zenmuxPlanQuotaLoop(ctx)
 	}
 

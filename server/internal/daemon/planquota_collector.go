@@ -42,6 +42,11 @@ const (
 // snapshot, or an error when the source is unreachable / drifted / unhappy.
 type planQuotaCollectFunc func(ctx context.Context) (*protocol.RuntimePlanQuota, error)
 
+// planQuotaTargetFunc resolves the runtime ids a snapshot applies to at each
+// tick. Kimi targets every local kimi runtime; ZenMux targets only the
+// hermes runtimes the operator explicitly linked to the configured account.
+type planQuotaTargetFunc func() []string
+
 // rateLimitError marks "the source asked us to back off" (HTTP 422/429) so
 // the loop can stretch its next delay instead of keeping the base cadence.
 type rateLimitError struct{ err error }
@@ -77,7 +82,7 @@ func (d *Daemon) runPlanQuotaCollector(
 	ctx context.Context,
 	name string,
 	interval time.Duration,
-	providers []string,
+	targetsOf planQuotaTargetFunc,
 	collect planQuotaCollectFunc,
 ) {
 	if interval <= 0 {
@@ -94,7 +99,7 @@ func (d *Daemon) runPlanQuotaCollector(
 		}
 		delay = interval
 
-		targets := d.runtimeIDsForProvider(providers...)
+		targets := targetsOf()
 		if len(targets) == 0 {
 			// No runtime on this daemon is backed by this source — skip the
 			// observation entirely (also keeps unused sources off their rate

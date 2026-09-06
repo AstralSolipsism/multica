@@ -155,11 +155,17 @@ type Config struct {
 
 	// ZenMuxManagementAPIKey is the ZenMux Management API key (console-issued,
 	// distinct from the inference key) used by the hermes subscription quota
-	// collector (MULTICA_ZENMUX_MANAGEMENT_API_KEY). Empty disables the
-	// collector — hermes runtimes then carry no quota source, since the key
-	// is what ties this machine's hermes usage to a ZenMux account. The value
-	// never leaves this machine and never appears in payloads or logs.
+	// collector (MULTICA_ZENMUX_MANAGEMENT_API_KEY). The value never leaves
+	// this machine and never appears in payloads or logs.
 	ZenMuxManagementAPIKey string
+	// ZenMuxLink is the explicit, operator-maintained association between the
+	// configured ZenMux account and the runtimes it backs
+	// (MULTICA_ZENMUX_LINK: "hermes" or "hermes@<workspace-id>",
+	// comma-separated). Empty means NO runtime reports this account —
+	// configuring the key alone never links every hermes runtime (S2: the
+	// association is manual by product decision; the daemon never infers a
+	// runtime's LLM gateway).
+	ZenMuxLink zenmuxLinkSet
 	// ZenMuxAPIBaseURL overrides the subscription-detail endpoint
 	// (MULTICA_ZENMUX_API_BASE_URL); empty uses the official
 	// https://zenmux.ai/api/v1/management/subscription/detail. Exists so
@@ -607,6 +613,10 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	// environment only, never log it, never serialize it.
 	zenmuxKey := strings.TrimSpace(os.Getenv("MULTICA_ZENMUX_MANAGEMENT_API_KEY"))
 	zenmuxBaseURL := strings.TrimSpace(os.Getenv("MULTICA_ZENMUX_API_BASE_URL"))
+	zenmuxLink, err := parseZenMuxLink(os.Getenv("MULTICA_ZENMUX_LINK"))
+	if err != nil {
+		return Config{}, err
+	}
 	kimiQuotaInterval, err := durationFromEnv("MULTICA_KIMI_QUOTA_POLL_INTERVAL", defaultPlanQuotaPollInterval)
 	if err != nil {
 		return Config{}, err
@@ -661,6 +671,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		QwenpawArgs:                     qwenpawArgs,
 		ProfileCommandOverrides:         profileCommandOverrides,
 		ZenMuxManagementAPIKey:          zenmuxKey,
+		ZenMuxLink:                      zenmuxLink,
 		ZenMuxAPIBaseURL:                zenmuxBaseURL,
 		PlanQuotaKimiInterval:           kimiQuotaInterval,
 		PlanQuotaZenMuxInterval:         zenmuxQuotaInterval,

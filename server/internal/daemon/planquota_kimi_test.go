@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,24 +34,29 @@ func kimiLimitsJSON() string {
 	}`
 }
 
-// newKimiTestServer serves healthz and the usage envelope, recording the
-// bearer it was called with.
+// newKimiTestServer emulates Kimi's auth surface: unauthenticated /api/*
+// calls get HTTP 401 with envelope code 40101; authenticated ones get the
+// usage payload. Every Authorization header seen is recorded.
 func newKimiTestServer(t *testing.T, usageBody string, usageStatus int, gotAuth *string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/healthz":
-			w.WriteHeader(http.StatusOK)
-		case "/api/v1/oauth/usage":
-			*gotAuth = r.Header.Get("Authorization")
-			w.Header().Set("Content-Type", "application/json")
-			if usageStatus != 0 {
-				w.WriteHeader(usageStatus)
-			}
-			_, _ = w.Write([]byte(usageBody))
-		default:
+		if r.URL.Path != "/api/v1/oauth/usage" {
 			http.NotFound(w, r)
+			return
 		}
+		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"code":40101,"msg":"missing bearer token"}`))
+			return
+		}
+		*gotAuth = auth
+		w.Header().Set("Content-Type", "application/json")
+		if usageStatus != 0 {
+			w.WriteHeader(usageStatus)
+		}
+		_, _ = w.Write([]byte(usageBody))
 	}))
 }
 
@@ -286,5 +292,133 @@ func TestUnixSecondsPtr(t *testing.T) {
 		if got := unixSecondsPtr(bad); got != nil {
 			t.Fatalf("%v = %v, want nil", bad, *got)
 		}
+	}
+}
+
+// --- OL-5 R1 regressions: the bearer must never reach an unverified peer ---
+
+// The reviewer's repro: an unrelated local service answering 200 on any path
+// must never receive the token. The unauthenticated handshake (401 +
+// envelope 40101) is what gates credential delivery.
+func TestKimiCollect_UnrelatedServiceGetsNoToken(t *testing.T) {
+	var sawAuth atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			sawAuth.Add(1)
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("unrelated local HTTP service"))
+	}))
+	defer srv.Close()
+
+	collector := newKimiPlanQuotaCollector(kimiTestHome(t, serverPort(t, srv)))
+	if _, err := collector.collect(context.Background()); err == nil {
+		t.Fatal("expected collection to fail against an unrelated service")
+	}
+	if sawAuth.Load() != 0 {
+		t.Fatalf("unrelated service received %d authenticated requests", sawAuth.Load())
+	}
+}
+
+// A peer that mimics the 401/40101 handshake still gets no token when the
+// listening socket belongs to another user (e.g. a port claimed by a
+// foreign process on a shared machine).
+func TestKimiCollect_ForeignOwnedSocketGetsNoToken(t *testing.T) {
+	var gotAuth string
+	srv := newKimiTestServer(t, kimiLimitsJSON(), 0, &gotAuth)
+	defer srv.Close()
+
+	collector := newKimiPlanQuotaCollector(kimiTestHome(t, serverPort(t, srv)))
+	collector.portOwnedByUser = func(int) bool { return false } // foreign-owned socket
+	if _, err := collector.collect(context.Background()); err == nil {
+		t.Fatal("expected collection to fail when the socket is foreign-owned")
+	}
+	if gotAuth != "" {
+		t.Fatalf("foreign-owned service received credentials: %q", gotAuth)
+	}
+}
+
+// Redirects are never followed: a verified-shape peer that answers the usage
+// call with a 307 must not bounce the bearer anywhere — not even to another
+// loopback port, let alone off-box (the dialer also refuses non-loopback
+// targets outright).
+func TestKimiCollect_RedirectNotFollowed(t *testing.T) {
+	var redirectHits atomic.Int64
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"code":40101,"msg":"missing bearer token"}`))
+			return
+		}
+		gotAuth = auth
+		w.Header().Set("Location", target.URL+"/api/v1/oauth/usage")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+
+	collector := newKimiPlanQuotaCollector(kimiTestHome(t, serverPort(t, srv)))
+	if _, err := collector.collect(context.Background()); err == nil {
+		t.Fatal("expected collection to fail on a redirecting peer")
+	}
+	if redirectHits.Load() != 0 {
+		t.Fatalf("redirect target received %d requests", redirectHits.Load())
+	}
+	// The first peer passed the handshake, so IT may hold the token; the
+	// regression being pinned is that the redirect target never does.
+	if gotAuth != "Bearer test-kimi-token" {
+		t.Fatalf("first peer auth = %q", gotAuth)
+	}
+}
+
+// The dial constraint itself: non-loopback targets are refused at the
+// connection point.
+func TestLoopbackOnlyDialContext(t *testing.T) {
+	if _, err := loopbackOnlyDialContext(context.Background(), "tcp", "203.0.113.10:443"); err == nil {
+		t.Fatal("expected non-loopback dial to be refused")
+	}
+	if _, err := loopbackOnlyDialContext(context.Background(), "tcp", "192.168.1.5:8080"); err == nil {
+		t.Fatal("expected LAN dial to be refused")
+	}
+}
+
+// Socket-ownership table parsing: same-uid LISTEN passes; foreign uid,
+// non-LISTEN states and missing entries all fail.
+func TestPortListenOwnedByUID(t *testing.T) {
+	header := "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode"
+	listen := func(hexPort string, uid int) string {
+		return fmt.Sprintf("   0: 0100007F:%s 00000000:0000 0A 00000000:00000000 00:00000000 00000000 %5d        0 12345 1 0000000000000000 100 0 0 10 0", hexPort, uid)
+	}
+	// 58627 = 0xE503
+	if !portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header + "\n" + listen("E503", 1000))}) {
+		t.Fatal("same-uid LISTEN socket rejected")
+	}
+	if portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header + "\n" + listen("E503", 1001))}) {
+		t.Fatal("foreign-uid LISTEN socket accepted")
+	}
+	// A different port's socket must not count.
+	if portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header + "\n" + listen("E504", 1000))}) {
+		t.Fatal("accepted a socket on a different port")
+	}
+	// st 08 (CLOSE_WAIT-ish non-LISTEN) must not count.
+	nonListen := strings.Replace(listen("E503", 1000), " 0A ", " 08 ", 1)
+	if portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header + "\n" + nonListen)}) {
+		t.Fatal("accepted a non-LISTEN socket")
+	}
+	if portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header)}) {
+		t.Fatal("accepted with no socket entry at all")
+	}
+	// Dual-stack: tcp4 + tcp6 both owned by us passes; one foreign fails all.
+	v6 := strings.Replace(listen("E503", 1000), "0100007F", "00000000000000000000000001000000", 1)
+	if !portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header + "\n" + listen("E503", 1000)), []byte(header + "\n" + v6)}) {
+		t.Fatal("dual-table same-uid rejected")
 	}
 }

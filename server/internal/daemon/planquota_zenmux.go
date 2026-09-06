@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -145,15 +146,141 @@ func zenmuxDetailToPlanQuota(data *zenmuxSubscriptionData, observedAt time.Time)
 	return quota
 }
 
+// zenmuxLinkSet is the explicit, operator-maintained association between the
+// ZenMux account behind the configured Management API key and the runtimes
+// whose quota that account backs. S2 (product decision by the project
+// owner): the association is MANUAL — the daemon never scans, infers, or
+// guesses a runtime's real LLM gateway. Configuring a key alone links
+// nothing; an empty link set means "no runtime reports this account".
+type zenmuxLinkSet struct {
+	allHermes  bool                // "hermes" entry: every hermes runtime on this daemon
+	workspaces map[string]struct{} // "hermes@<workspace-id>" entries
+}
+
+// parseZenMuxLink parses MULTICA_ZENMUX_LINK: a comma-separated list of
+// `hermes` (all workspaces on this daemon) or `hermes@<workspace-id>`
+// (only that workspace's hermes runtimes). Any other provider or a malformed
+// entry is a hard config error — a typo must surface at startup, not
+// silently misreport quota.
+func parseZenMuxLink(raw string) (zenmuxLinkSet, error) {
+	set := zenmuxLinkSet{}
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		provider, workspaceID, hasWorkspace := strings.Cut(entry, "@")
+		if provider != "hermes" {
+			return zenmuxLinkSet{}, fmt.Errorf("MULTICA_ZENMUX_LINK: unsupported provider %q (only \"hermes\" is backed by ZenMux)", provider)
+		}
+		if !hasWorkspace {
+			set.allHermes = true
+			continue
+		}
+		workspaceID = strings.TrimSpace(workspaceID)
+		if workspaceID == "" {
+			return zenmuxLinkSet{}, fmt.Errorf("MULTICA_ZENMUX_LINK: entry %q is missing a workspace id after \"@\"", entry)
+		}
+		if set.workspaces == nil {
+			set.workspaces = make(map[string]struct{})
+		}
+		set.workspaces[workspaceID] = struct{}{}
+	}
+	return set, nil
+}
+
+func (s zenmuxLinkSet) empty() bool {
+	return !s.allHermes && len(s.workspaces) == 0
+}
+
+// linked reports whether a runtime (provider, workspace) is in the
+// association. Only hermes runtimes can ever be linked.
+func (s zenmuxLinkSet) linked(provider, workspaceID string) bool {
+	if provider != "hermes" {
+		return false
+	}
+	if s.allHermes {
+		return true
+	}
+	_, ok := s.workspaces[workspaceID]
+	return ok
+}
+
+// zenmuxLinkedRuntimeIDs resolves the current hermes runtimes in the link
+// set. Runtimes are per-workspace rows sharing the machine's account, so the
+// link speaks provider + workspace id, both stable across re-registration
+// (server runtime ids are not).
+func (d *Daemon) zenmuxLinkedRuntimeIDs(link zenmuxLinkSet) []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var ids []string
+	for wsID, ws := range d.workspaces {
+		for _, rid := range ws.runtimeIDs {
+			rt, ok := d.runtimeIndex[rid]
+			if !ok || !link.linked(rt.Provider, wsID) {
+				continue
+			}
+			ids = append(ids, rid)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// clearUnlinkedZenMuxQuotas records an explicit empty snapshot (provider
+// "zenmux", no windows) for every hermes runtime outside the link set, so a
+// runtime whose association was REMOVED stops displaying this account's
+// quota on its next heartbeat — instead of showing a mismatched source until
+// the 24h staleness window. The empty snapshot renders as "not reported" on
+// the frontend, identical to a runtime that never had the association, and
+// the server's conditional write throttles repeats of unchanged content.
+func (d *Daemon) clearUnlinkedZenMuxQuotas(link zenmuxLinkSet) {
+	d.mu.Lock()
+	var ids []string
+	for wsID, ws := range d.workspaces {
+		for _, rid := range ws.runtimeIDs {
+			rt, ok := d.runtimeIndex[rid]
+			if !ok || rt.Provider != "hermes" || link.linked(rt.Provider, wsID) {
+				continue
+			}
+			ids = append(ids, rid)
+		}
+	}
+	d.mu.Unlock()
+	if len(ids) == 0 {
+		return
+	}
+	cleared := &protocol.RuntimePlanQuota{
+		Provider:   "zenmux",
+		Status:     protocol.PlanQuotaStatusOK,
+		ObservedAt: time.Now().Unix(),
+		Source:     protocol.PlanQuotaSourceDaemon,
+	}
+	for _, rid := range ids {
+		d.recordRuntimePlanQuota(rid, cleared)
+	}
+	d.logger.Info("zenmux plan quota: cleared quota display for unlinked hermes runtimes", "runtimes", len(ids))
+}
+
 // zenmuxPlanQuotaLoop is the daemon-loop entry point for the ZenMux
-// collector. It only runs when the operator configured a Management API key
-// for this daemon; the key stays in daemon-local config and never appears in
-// any payload or log.
+// collector. The key stays in daemon-local config and never appears in any
+// payload or log. Collection targets only the explicitly linked runtimes;
+// with a key but an empty link set the collector stays idle by design.
 func (d *Daemon) zenmuxPlanQuotaLoop(ctx context.Context) {
+	link := d.cfg.ZenMuxLink
+	d.clearUnlinkedZenMuxQuotas(link)
+	if d.cfg.ZenMuxManagementAPIKey == "" {
+		return // link-only configuration: cleared above, nothing to poll
+	}
+	if link.empty() {
+		d.logger.Warn("zenmux plan quota: MULTICA_ZENMUX_MANAGEMENT_API_KEY is set but MULTICA_ZENMUX_LINK is empty; " +
+			"no runtime is linked to this account, so nothing will be reported")
+	}
 	baseURL := d.cfg.ZenMuxAPIBaseURL
 	if baseURL == "" {
 		baseURL = zenmuxSubscriptionDetailURL
 	}
 	collector := newZenmuxPlanQuotaCollector(baseURL, d.cfg.ZenMuxManagementAPIKey)
-	d.runPlanQuotaCollector(ctx, "zenmux", d.cfg.PlanQuotaZenMuxInterval, []string{"hermes"}, collector.collect)
+	d.runPlanQuotaCollector(ctx, "zenmux", d.cfg.PlanQuotaZenMuxInterval,
+		func() []string { return d.zenmuxLinkedRuntimeIDs(link) }, collector.collect)
 }
