@@ -350,23 +350,25 @@ func establishedPeerOwnedByUID(serverPort, ephemeralPort, uid int, tables [][]by
 
 // addrIsLoopbackV4OrMapped reports whether a hex table address is exactly
 // 127.0.0.1 (v4 or v4-mapped-in-v6) — no wildcards: an ESTABLISHED row
-// always has concrete addresses.
+// always has concrete addresses. The v6 table prints each 32-bit word in
+// host byte order, so ::ffff:127.0.0.1 shows as ...FFFF0000 0100007F
+// (verified against a live dual-stack listener; /proc/net/tcp6 is not
+// plain network byte order).
 func addrIsLoopbackV4OrMapped(hexAddr string) bool {
 	switch strings.ToUpper(hexAddr) {
-	case "0100007F", "00000000000000000000FFFF0100007F":
+	case "0100007F", "0000000000000000FFFF00000100007F":
 		return true
 	}
 	return false
 }
 
 // lsofEstablishedPeerOwnedBy parses `lsof -F pun` output (macOS): process
-// blocks carry p<pid> and u<uid>; file lines carry n<name>. The proof looks
-// for the server-direction tuple
-// `127.0.0.1:<serverPort>->127.0.0.1:<ephemeralPort>` and requires the
-// owning process block's uid to match. Client-direction rows are our own
-// and ignored.
+// blocks carry p<pid> and u<uid>; file lines carry n<name>. The proof finds
+// the server-direction tuple `127.0.0.1:<serverPort>->127.0.0.1:<eph>` and
+// requires the owning process block's uid to match. Endpoints are compared
+// EXACTLY (parsed addr + port), never by prefix — "5000" must not match
+// "50001". Client-direction rows are our own and ignored.
 func lsofEstablishedPeerOwnedBy(out string, serverPort, ephemeralPort, uid int) bool {
-	serverPrefix := fmt.Sprintf("127.0.0.1:%d->127.0.0.1:%d", serverPort, ephemeralPort)
 	blockUID := -1
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
@@ -381,12 +383,46 @@ func lsofEstablishedPeerOwnedBy(out string, serverPort, ephemeralPort, uid int) 
 				blockUID = u
 			}
 		case 'n':
-			if strings.HasPrefix(line[1:], serverPrefix) {
+			if lsofNameMatchesEstablishedPeer(line[1:], serverPort, ephemeralPort) {
 				return blockUID >= 0 && blockUID == uid
 			}
 		}
 	}
 	return false
+}
+
+// lsofNameMatchesEstablishedPeer reports whether an lsof socket name like
+// "127.0.0.1:58627->127.0.0.1:40000 (ESTABLISHED)" is exactly the
+// server-direction tuple of this connection.
+func lsofNameMatchesEstablishedPeer(name string, serverPort, ephemeralPort int) bool {
+	fields := strings.Fields(name)
+	if len(fields) == 0 {
+		return false
+	}
+	tuple := fields[0]
+	local, remote, ok := strings.Cut(tuple, "->")
+	if !ok {
+		return false
+	}
+	laddr, lport, lok := splitAddrPort(local)
+	raddr, rport, rok := splitAddrPort(remote)
+	if !lok || !rok {
+		return false
+	}
+	return laddr == "127.0.0.1" && lport == serverPort &&
+		raddr == "127.0.0.1" && rport == ephemeralPort
+}
+
+func splitAddrPort(s string) (string, int, bool) {
+	i := strings.LastIndex(s, ":")
+	if i < 0 {
+		return "", 0, false
+	}
+	port, err := strconv.Atoi(s[i+1:])
+	if err != nil {
+		return "", 0, false
+	}
+	return s[:i], port, true
 }
 
 // addrServesLoopbackV4Dial reports whether a hex-encoded listener address
@@ -396,8 +432,8 @@ func addrServesLoopbackV4Dial(hexAddr string) bool {
 	case "0100007F", // 127.0.0.1
 		"00000000",                         // 0.0.0.0 (v4 wildcard)
 		"00000000000000000000000000000000", // :: (dual-stack wildcard)
-		"00000000000000000000FFFF0100007F", // ::ffff:127.0.0.1
-		"00000000000000000000FFFF00000000": // ::ffff:0.0.0.0
+		"0000000000000000FFFF00000100007F", // ::ffff:127.0.0.1 (host-order words)
+		"0000000000000000FFFF000000000000": // ::ffff:0.0.0.0
 		return true
 	}
 	return false

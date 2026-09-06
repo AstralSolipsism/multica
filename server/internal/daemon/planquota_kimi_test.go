@@ -540,8 +540,8 @@ func TestLoopbackListenOwnedByUID(t *testing.T) {
 		v4Wildcard = "00000000"
 		v4Lan      = "AC150005" // 172.21.0.5
 		v6Wildcard = "00000000000000000000000000000000"
-		v6Loopback = "00000000000000000000000000000001" // ::1 — cannot serve a v4 dial
-		v6MappedV4 = "00000000000000000000FFFF0100007F" // ::ffff:127.0.0.1
+		v6Loopback = "00000000000000000000000001000000" // ::1, host-order words — cannot serve a v4 dial
+		v6MappedV4 = "0000000000000000FFFF00000100007F" // ::ffff:127.0.0.1, host-order words
 	)
 
 	t.Run("v4 loopback same uid passes", func(t *testing.T) {
@@ -714,7 +714,7 @@ func TestEstablishedPeerOwnedByUID(t *testing.T) {
 	// server 58627 = E503, client ephemeral 40000 = 9C40
 	const (
 		v4lo     = "0100007F"
-		v6Mapped = "00000000000000000000FFFF0100007F"
+		v6Mapped = "0000000000000000FFFF00000100007F"
 	)
 	table := func(lines ...string) [][]byte { return [][]byte{[]byte(header + "\n" + strings.Join(lines, "\n"))} }
 
@@ -779,6 +779,20 @@ func TestLsofEstablishedPeerOwnedBy(t *testing.T) {
 	}
 	if lsofEstablishedPeerOwnedBy("", 58627, 40000, 501) {
 		t.Fatal("empty output accepted")
+	}
+	// Port prefix must not collide: asking for 5000 must not match 50001,
+	// and the ephemeral side is exact too.
+	collision := "p100\nu501\nf3\nn127.0.0.1:50001->127.0.0.1:40000 (ESTABLISHED)\n"
+	if lsofEstablishedPeerOwnedBy(collision, 5000, 40000, 501) {
+		t.Fatal("port 50001 accepted for a 5000 query (prefix collision)")
+	}
+	collisionEph := "p100\nu501\nf3\nn127.0.0.1:58627->127.0.0.1:400001 (ESTABLISHED)\n"
+	if lsofEstablishedPeerOwnedBy(collisionEph, 58627, 40000, 501) {
+		t.Fatal("ephemeral 400001 accepted for a 40000 query (prefix collision)")
+	}
+	nonLoopback := "p100\nu501\nf3\nn192.168.1.5:58627->127.0.0.1:40000 (ESTABLISHED)\n"
+	if lsofEstablishedPeerOwnedBy(nonLoopback, 58627, 40000, 501) {
+		t.Fatal("non-loopback server endpoint accepted")
 	}
 }
 

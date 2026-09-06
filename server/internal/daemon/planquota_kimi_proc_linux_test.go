@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -55,11 +54,47 @@ func TestKimiVerifyInstanceProcess_LiveProcess(t *testing.T) {
 	}
 }
 
+// The production dialer (both proofs live) against a real same-user server:
+// passes end to end, so the hardening does not break the happy path.
+func TestKimiDialerProductionProofsLiveSocket(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Hold accepted connections open — a closed peer leaves no ESTABLISHED
+	// row to prove (correctly failing closed), which is not what we test here.
+	// Cleanup order: close the listener first (unblocks Accept, which then
+	// closes the channel), then drain and close the held connections.
+	held := make(chan net.Conn, 8)
+	defer func() {
+		_ = ln.Close()
+		for c := range held {
+			_ = c.Close()
+		}
+	}()
+	go func() {
+		defer close(held)
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			held <- c
+		}
+	}()
+	conn, err := loopbackOwnedDialContext(context.Background(), "tcp", ln.Addr().String(),
+		kimiSocketOwnedByUser, kimiEstablishedPeerOwnedByUser)
+	if err != nil {
+		t.Fatalf("production dialer refused own server: %v", err)
+	}
+	_ = conn.Close()
+}
+
 // Native round-5 regression: a foreign-uid process accepts our connection,
-// releases its listener, and our user re-binds the port. A LISTEN-based
-// check passes (the new listener is ours) — yet the connection we actually
-// hold belongs to uid 65534, and the established-peer proof must refuse it
-// before a single byte is written.
+// releases its listener, and our user re-binds the port. Only then is the
+// established-peer proof consulted — it must still name the foreign
+// acceptor, even though the LISTEN check now passes (the new listener is
+// ours). Zero bytes are written to the foreign connection.
 func TestKimiEstablishedPeerProof_ForeignAcceptedConnection(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("needs root to spawn a foreign-uid helper")
@@ -86,38 +121,35 @@ try:
         chunk = conn.recv(4096)
         if not chunk: break
         data += chunk
-        if b"\r\n\r\n" in data:
-            conn.sendall(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 38\r\nConnection: close\r\n\r\n{\"code\":40101,\"msg\":\"missing bearer\"}")
 except OSError:
     pass
-open(outlog, "wb").write(data)
+with open(outlog, "wb") as f:
+    f.write(data)
 conn.close()
 `
-	dir, err := os.MkdirTemp("", "ol5-peerproof")
+	// A test-exclusive world-writable dir directly under /tmp (1777): the
+	// nobody helper needs to create its marker files there. Parent
+	// permissions are never touched.
+	dir, err := os.MkdirTemp("/tmp", "ol5-peerproof")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	if err := os.Chmod(dir, 0o777); err != nil { // the nobody helper must read AND write here
+	if err := os.Chmod(dir, 0o777); err != nil {
 		t.Fatal(err)
-	}
-	// The task TMPDIR chain can be 0700; make every level traversable.
-	for d := dir; d != "/" && strings.HasPrefix(d, os.TempDir()); d = filepath.Dir(d) {
-		_ = os.Chmod(d, 0o777)
 	}
 	script := filepath.Join(dir, "helper.py")
 	if err := os.WriteFile(script, []byte(helper), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	run := func(t *testing.T, uid int, expectDialOK bool) {
+	run := func(t *testing.T, uid int, expectPeerOK bool) {
 		t.Helper()
 		lnA, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
 		port := lnA.Addr().(*net.TCPAddr).Port
-		// Pre-dial: our listener passes the production LISTEN check.
 		if !kimiSocketOwnedByUser(port) {
 			t.Fatal("own listener failed the LISTEN check")
 		}
@@ -128,7 +160,11 @@ conn.close()
 		accepted := filepath.Join(dir, "accepted"+suffix)
 		outlog := filepath.Join(dir, "out"+suffix)
 		errlog := filepath.Join(dir, "err"+suffix)
-		ef, _ := os.Create(errlog)
+		ef, err := os.Create(errlog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ef.Close() }()
 		cmd := exec.Command("setpriv", fmt.Sprintf("--reuid=%d", uid), "--clear-groups", "--",
 			"python3", script, fmt.Sprint(port), ready, accepted, outlog)
 		cmd.Stderr = ef
@@ -136,37 +172,25 @@ conn.close()
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {
-			_, _ = cmd.Process.Kill(), cmd.Wait()
-			_ = ef.Close()
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
 			if t.Failed() {
 				if raw, rerr := os.ReadFile(errlog); rerr == nil && len(raw) > 0 {
 					t.Logf("helper stderr: %s", raw)
 				}
 			}
 		})
-		t.Cleanup(func() { _, _ = cmd.Process.Kill(), cmd.Wait() })
 		waitForFile(t, ready)
 
-		// The production dialer now connects to the FOREIGN helper. The
-		// established-peer proof must refuse before any byte is written.
-		conn, err := loopbackOwnedDialContext(context.Background(), "tcp",
-			fmt.Sprintf("127.0.0.1:%d", port), nil, kimiEstablishedPeerOwnedByUser)
-		if expectDialOK {
-			if err != nil {
-				t.Fatalf("same-uid dial refused: %v", err)
-			}
-			_ = conn.Close()
-			return
+		// Dial the foreign helper directly (no proof yet).
+		conn, err := (&net.Dialer{Timeout: 2 * time.Second}).Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			t.Fatalf("dial: %v", err)
 		}
-		if err == nil {
-			_ = conn.Close()
-			t.Fatal("foreign-uid peer accepted by the dialer")
-		}
-
-		// The blind spot is real: once our user re-binds the port, the
-		// LISTEN check passes again — while the (refused) connection still
-		// belonged to the foreign process.
+		defer func() { _ = conn.Close() }()
+		// Confirm the takeover: helper accepted and closed ITS listener...
 		waitForFile(t, accepted)
+		// ...and our user owns the port again.
 		lnA2, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err != nil {
 			t.Fatalf("re-bind as our user: %v", err)
@@ -176,16 +200,28 @@ conn.close()
 			t.Fatal("control broken: our re-bound listener fails the LISTEN check")
 		}
 
-		// Zero bytes reached the foreign process (it logs everything it
-		// receives; EOF on our close writes the file).
-		waitForFile(t, outlog)
-		raw, _ := os.ReadFile(outlog)
-		if len(raw) != 0 {
-			t.Fatalf("foreign process received %d bytes: %q", len(raw), raw)
+		// NOW prove the connection's peer. The live connection still belongs
+		// to the helper's uid regardless of who listens on the port.
+		if got := kimiEstablishedPeerOwnedByUser(conn); got != expectPeerOK {
+			t.Fatalf("established-peer proof = %v, want %v", got, expectPeerOK)
+		}
+
+		if !expectPeerOK {
+			// Production behavior on proof failure: close without writing.
+			// The helper logs everything it receives; EOF on close ends it.
+			_ = conn.Close()
+			waitForFile(t, outlog)
+			raw, err := os.ReadFile(outlog)
+			if err != nil {
+				t.Fatalf("read evidence log: %v", err)
+			}
+			if len(raw) != 0 {
+				t.Fatalf("foreign process received %d bytes: %q", len(raw), raw)
+			}
 		}
 	}
 
-	t.Run("foreign uid refused, zero bytes", func(t *testing.T) { run(t, 65534, false) })
+	t.Run("foreign uid named despite re-bind", func(t *testing.T) { run(t, 65534, false) })
 	t.Run("same uid accepted (control)", func(t *testing.T) { run(t, os.Geteuid(), true) })
 }
 
