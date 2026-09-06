@@ -154,9 +154,9 @@ func TestHeartbeatExtrasFor_ClearMarkerReStamped(t *testing.T) {
 	d.recordZenMuxPlanQuotaClearMarker("rt-kimi")
 	// Age the cached marker 25h, as if the daemon cleared long ago.
 	cached, _ := d.planQuotaCache.Load("rt-kimi")
-	aged := *cached.(*protocol.RuntimePlanQuota)
+	aged := *cached.(planQuotaCacheEntry).quota
 	aged.ObservedAt = time.Now().Add(-25 * time.Hour).Unix()
-	d.planQuotaCache.Store("rt-kimi", &aged)
+	d.planQuotaCache.Store("rt-kimi", planQuotaCacheEntry{quota: &aged, clearMarker: true})
 
 	extras := d.heartbeatExtrasFor("rt-kimi")
 	if extras.PlanQuota == nil {
@@ -169,7 +169,7 @@ func TestHeartbeatExtrasFor_ClearMarkerReStamped(t *testing.T) {
 		t.Fatalf("marker carries windows: %+v", extras.PlanQuota.Windows)
 	}
 	// The cached original keeps its age — the re-stamp is per-heartbeat.
-	if got, _ := d.planQuotaCache.Load("rt-kimi"); got.(*protocol.RuntimePlanQuota).ObservedAt != aged.ObservedAt {
+	if got, _ := d.planQuotaCache.Load("rt-kimi"); got.(planQuotaCacheEntry).quota.ObservedAt != aged.ObservedAt {
 		t.Fatal("cached marker mutated in place")
 	}
 
@@ -186,7 +186,7 @@ func TestHeartbeatExtrasFor_ClearMarkerReStamped(t *testing.T) {
 	if extras.PlanQuota.ObservedAt != real.ObservedAt {
 		t.Fatal("real snapshot re-stamped — collector failure would be masked")
 	}
-	if _, ok := d.planQuotaClearMarkers.Load("rt-codex"); ok {
+	if got, _ := d.planQuotaCache.Load("rt-codex"); got.(planQuotaCacheEntry).clearMarker {
 		t.Fatal("real snapshot left a clear marker behind")
 	}
 }

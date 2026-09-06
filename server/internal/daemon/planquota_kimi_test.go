@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -35,9 +36,8 @@ func kimiLimitsJSON() string {
 	}`
 }
 
-// newKimiTestServer emulates Kimi's auth surface: unauthenticated /api/*
-// calls get HTTP 401 with envelope code 40101; authenticated ones get the
-// usage payload. Every request (and every Authorization header) is recorded.
+// newKimiTestServer serves the usage payload and records every request and
+// Authorization header.
 func newKimiTestServer(t *testing.T, usageBody string, usageStatus int, gotAuth *string) *httptest.Server {
 	t.Helper()
 	return newKimiTestServerCounted(t, usageBody, usageStatus, gotAuth, nil)
@@ -49,18 +49,11 @@ func newKimiTestServerCounted(t *testing.T, usageBody string, usageStatus int, g
 		if hits != nil {
 			hits.Add(1)
 		}
-		if r.URL.Path != "/api/v1/oauth/usage" {
-			http.NotFound(w, r)
-			return
+		if gotAuth != nil {
+			if auth := r.Header.Get("Authorization"); auth != "" {
+				*gotAuth = auth
+			}
 		}
-		auth := r.Header.Get("Authorization")
-		if auth == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"code":40101,"msg":"missing bearer token"}`))
-			return
-		}
-		*gotAuth = auth
 		w.Header().Set("Content-Type", "application/json")
 		if usageStatus != 0 {
 			w.WriteHeader(usageStatus)
@@ -70,14 +63,10 @@ func newKimiTestServerCounted(t *testing.T, usageBody string, usageStatus int, g
 }
 
 // kimiTestHome builds a fake ~/.kimi-code: the token file and an instance
-// registry entry pinning the test server's port, claiming THIS test process
-// as the server pid (tests stub verifyProcess around it).
+// registry entry pointing at the test server's port (discovery only).
 func kimiTestHome(t *testing.T, port int) string {
 	t.Helper()
-	home := t.TempDir()
-	if err := os.WriteFile(filepath.Join(home, kimiServerTokenFile), []byte("test-kimi-token\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	home := kimiTestHomeNoRegistry(t)
 	instances := filepath.Join(home, kimiServerInstances)
 	if err := os.MkdirAll(instances, 0o755); err != nil {
 		t.Fatal(err)
@@ -100,14 +89,13 @@ func kimiTestHomeNoRegistry(t *testing.T) string {
 	return home
 }
 
-// newKimiTestCollector builds a collector for tests: identity checks stubbed
-// to pass, scan fallback pointed at the test server's port. Tests override
-// individual probes to pin the failure modes.
+// newKimiTestCollector builds a collector with all platform probes stubbed
+// to pass (real probes are covered by the linux live tests) and the scan
+// pointed at the test server's port.
 func newKimiTestCollector(home string, port int) *kimiPlanQuotaCollector {
 	c := newKimiPlanQuotaCollector(home)
-	c.verifyProcess = func(int) error { return nil }
-	c.identitySupported = func() bool { return true }    // fixtures isolate from the platform gate
-	c.socketOwnedByUser = func(int) bool { return true } // real probes are covered by the linux live test
+	c.identitySupported = func() bool { return true }
+	c.enumerateOwnedListenPorts = func() map[int]struct{} { return map[int]struct{}{port: {}} }
 	c.verifyConnPeer = func(net.Conn) bool { return true }
 	c.scanBase = port
 	c.scanCount = 1
@@ -159,7 +147,7 @@ func TestKimiCollect_Success(t *testing.T) {
 }
 
 // The scan fallback serves registries that are absent or empty (older
-// servers): the port is bound via socket ownership instead of a pid.
+// servers): candidates come from the documented 58627+0..99 range.
 func TestKimiCollect_ScanFallback(t *testing.T) {
 	var gotAuth string
 	srv := newKimiTestServer(t, kimiLimitsJSON(), 0, &gotAuth)
@@ -204,14 +192,13 @@ func TestKimiCollect_RedLine(t *testing.T) {
 }
 
 func TestKimiCollect_ServerDown(t *testing.T) {
-	// Token file exists but nothing listens anywhere: silent-degrade path —
-	// an error for the loop to log, never a panic.
+	// Token file exists but nothing listens: silent-degrade path — an error
+	// for the loop to log, never a panic.
 	home := t.TempDir()
 	if err := os.WriteFile(filepath.Join(home, kimiServerTokenFile), []byte("tok"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	collector := newKimiTestCollector(home, 59870) // nothing listens here
-	collector.scanCount = 2
 	if _, err := collector.collect(context.Background()); err == nil {
 		t.Fatal("expected error when no server is running")
 	}
@@ -219,6 +206,7 @@ func TestKimiCollect_ServerDown(t *testing.T) {
 
 func TestKimiCollect_MissingToken(t *testing.T) {
 	collector := newKimiPlanQuotaCollector(t.TempDir())
+	collector.identitySupported = func() bool { return true }
 	if _, err := collector.collect(context.Background()); err == nil {
 		t.Fatal("expected error when server.token is absent")
 	}
@@ -248,8 +236,23 @@ func TestKimiCollect_EnvelopeError(t *testing.T) {
 	}
 }
 
+// Rate limiting maps to the shared backoff signal.
+func TestKimiCollect_RateLimited(t *testing.T) {
+	var gotAuth string
+	srv := newKimiTestServer(t, `{"code":42901,"msg":"banned"}`, http.StatusTooManyRequests, &gotAuth)
+	defer srv.Close()
+	port := serverPort(t, srv)
+
+	collector := newKimiTestCollector(kimiTestHome(t, port), port)
+	_, err := collector.collect(context.Background())
+	var rl *rateLimitError
+	if err == nil || !errors.As(err, &rl) {
+		t.Fatalf("err = %v, want *rateLimitError", err)
+	}
+}
+
 // A drifted (experimental-API-changed) response must fail the round, not
-// crash the daemon.
+// crash the daemon. The usage response itself is the drift guard.
 func TestKimiCollect_DriftedShape(t *testing.T) {
 	var gotAuth string
 	srv := newKimiTestServer(t, `{"code":0,"data":{"totally":"different"}}`, 0, &gotAuth)
@@ -258,7 +261,6 @@ func TestKimiCollect_DriftedShape(t *testing.T) {
 
 	collector := newKimiTestCollector(kimiTestHome(t, port), port)
 	quota, err := collector.collect(context.Background())
-	// kind is absent (≠ "ok") → treated as an in-band failure.
 	if err == nil {
 		t.Fatalf("expected error for drifted shape, got quota %+v", quota)
 	}
@@ -357,17 +359,66 @@ func TestUnixSecondsPtr(t *testing.T) {
 	}
 }
 
-// --- OL-5 R1 regressions: the bearer must never reach an unverified peer ---
+// --- R1 regressions (converged design: one per-connection gate) ---
 
-// The reviewer's repro: an unrelated local service answering 200 on any path
-// must never receive the token. The unauthenticated handshake (401 +
-// envelope 40101) is what gates credential delivery on the scan path.
-func TestKimiCollect_UnrelatedServiceGetsNoToken(t *testing.T) {
-	var sawAuth atomic.Int64
+// A port with no listener owned by this user is never even dialed (the
+// round's owned-set fast-fail), let alone sent credentials.
+func TestKimiCollect_PortNotOwnedByUserGetsNoToken(t *testing.T) {
+	var hits atomic.Int64
+	srv := newKimiTestServerCounted(t, kimiLimitsJSON(), 0, nil, &hits)
+	defer srv.Close()
+	port := serverPort(t, srv)
+
+	collector := newKimiTestCollector(kimiTestHomeNoRegistry(t), port)
+	collector.enumerateOwnedListenPorts = func() map[int]struct{} { return map[int]struct{}{} }
+	if _, err := collector.collect(context.Background()); err == nil {
+		t.Fatal("expected collection to fail with no owned listener")
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("foreign-owned port received %d requests", hits.Load())
+	}
+}
+
+// The credential gate: a connection whose accepting process cannot be proven
+// to be this user's is closed before a byte is written.
+func TestKimiCollect_EstablishedPeerMustMatchProof(t *testing.T) {
+	var gotAuth string
+	srv := newKimiTestServer(t, kimiLimitsJSON(), 0, &gotAuth)
+	defer srv.Close()
+	port := serverPort(t, srv)
+
+	collector := newKimiTestCollector(kimiTestHomeNoRegistry(t), port)
+	collector.verifyConnPeer = func(net.Conn) bool { return false }
+	if _, err := collector.collect(context.Background()); err == nil {
+		t.Fatal("expected collection to fail when the established peer is unprovable")
+	}
+	if gotAuth != "" {
+		t.Fatalf("credential delivered to unproven peer: %q", gotAuth)
+	}
+}
+
+// Same for a registry-discovered port: discovery is not identity.
+func TestKimiCollect_RegistryPortForeignPeerGetsNoToken(t *testing.T) {
+	var gotAuth string
+	srv := newKimiTestServer(t, kimiLimitsJSON(), 0, &gotAuth)
+	defer srv.Close()
+	port := serverPort(t, srv)
+
+	collector := newKimiTestCollector(kimiTestHome(t, port), port)
+	collector.verifyConnPeer = func(net.Conn) bool { return false }
+	if _, err := collector.collect(context.Background()); err == nil {
+		t.Fatal("expected collection to fail for a registry port with foreign peer")
+	}
+	if gotAuth != "" {
+		t.Fatalf("registry-discovered port got credentials without peer proof: %q", gotAuth)
+	}
+}
+
+// The trust boundary is the local user account: a SAME-user unrelated
+// service may receive the token (it could read the 0600 file anyway) — but
+// its non-Kimi payload fails parsing, so nothing is reported.
+func TestKimiCollect_SameUserUnrelatedService(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "" {
-			sawAuth.Add(1)
-		}
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("unrelated local HTTP service"))
 	}))
@@ -375,81 +426,70 @@ func TestKimiCollect_UnrelatedServiceGetsNoToken(t *testing.T) {
 	port := serverPort(t, srv)
 
 	collector := newKimiTestCollector(kimiTestHomeNoRegistry(t), port)
-	if _, err := collector.collect(context.Background()); err == nil {
-		t.Fatal("expected collection to fail against an unrelated service")
-	}
-	if sawAuth.Load() != 0 {
-		t.Fatalf("unrelated service received %d authenticated requests", sawAuth.Load())
+	quota, err := collector.collect(context.Background())
+	if err == nil || quota != nil {
+		t.Fatalf("unrelated service produced quota %+v, err %v", quota, err)
 	}
 }
 
-// A peer that mimics the 401/40101 handshake still gets no token when the
-// listening socket belongs to another user (e.g. a port claimed by a
-// foreign process on a shared machine).
-func TestKimiCollect_ForeignOwnedSocketGetsNoToken(t *testing.T) {
+// Reconnection re-proves the peer: round 1 succeeds over a keep-alive
+// connection; the server then dies, releases the port, and a different owner
+// claims it. Round 2's request must re-dial (the pooled connection is dead)
+// and the new connection's peer fails the proof — zero requests reach the
+// new owner.
+func TestKimiCollect_ReconnectRevalidatesPeer(t *testing.T) {
 	var gotAuth string
 	srv := newKimiTestServer(t, kimiLimitsJSON(), 0, &gotAuth)
-	defer srv.Close()
 	port := serverPort(t, srv)
 
+	var peerOK atomic.Bool
+	peerOK.Store(true)
 	collector := newKimiTestCollector(kimiTestHomeNoRegistry(t), port)
-	collector.socketOwnedByUser = func(int) bool { return false } // foreign-owned socket
-	if _, err := collector.collect(context.Background()); err == nil {
-		t.Fatal("expected collection to fail when the socket is foreign-owned")
+	var proofs atomic.Int64
+	collector.verifyConnPeer = func(net.Conn) bool { proofs.Add(1); return peerOK.Load() }
+
+	// Round 1 succeeds (same-user peer).
+	if _, err := collector.collect(context.Background()); err != nil {
+		t.Fatalf("round 1: %v", err)
 	}
-	if gotAuth != "" {
-		t.Fatalf("foreign-owned service received credentials: %q", gotAuth)
+	proofsAfterRound1 := proofs.Load()
+	if proofsAfterRound1 == 0 {
+		t.Fatal("proof never consulted in round 1")
+	}
+
+	// The original server dies; a "different owner" claims the port. Bind
+	// manually: httptest cannot pick a fixed port, and a drifted bind would
+	// silently invalidate the scenario (round-4 test-hygiene review).
+	srv.Close()
+	lnB, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("re-bind on %d: %v", port, err)
+	}
+	var hitsB atomic.Int64
+	srvB := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsB.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"data":{"kind":"ok","limits":[]}}`))
+	})}
+	go func() { _ = srvB.Serve(lnB) }()
+	defer func() { _ = srvB.Close() }()
+	peerOK.Store(false)
+
+	// Round 2: the transport must re-dial (the pooled connection is dead),
+	// and the new peer is unprovable → refused before a byte is written.
+	if _, err := collector.collect(context.Background()); err == nil {
+		t.Fatal("round 2 succeeded against an unproven peer")
+	}
+	if hitsB.Load() != 0 {
+		t.Fatalf("new owner received %d requests", hitsB.Load())
+	}
+	if proofs.Load() <= proofsAfterRound1 {
+		t.Fatal("round 2 never re-proved the peer")
 	}
 }
 
-// A registry entry whose pid is dead, foreign-owned, or a non-kimi image is
-// skipped before any packet is sent — and a present-but-unverifiable
-// registry does NOT fall back to scanning (a live squatting server on a
-// scanned port must not rescue a stale or forged entry).
-func TestKimiCollect_UnverifiableInstanceGetsNoToken(t *testing.T) {
-	var hits atomic.Int64
-	var gotAuth string
-	srv := newKimiTestServerCounted(t, kimiLimitsJSON(), 0, &gotAuth, &hits)
-	defer srv.Close()
-	port := serverPort(t, srv)
-
-	// Registry points at the live squatting server but with a pid the
-	// verifier rejects; scan would find the same server, and must not run.
-	collector := newKimiPlanQuotaCollector(kimiTestHome(t, port))
-	collector.verifyProcess = func(pid int) error { return fmt.Errorf("pid %d owned by another user", pid) }
-	collector.socketOwnedByUser = func(int) bool { return true }
-	collector.scanBase = port
-	collector.scanCount = 1
-	if _, err := collector.collect(context.Background()); err == nil {
-		t.Fatal("expected collection to fail for an unverifiable instance")
-	}
-	if hits.Load() != 0 {
-		t.Fatalf("squatting server received %d requests (auth %q)", hits.Load(), gotAuth)
-	}
-}
-
-// Platforms that cannot prove ownership fail closed: no request at all.
-func TestKimiCollect_UnsupportedPlatformSendsNothing(t *testing.T) {
-	var hits atomic.Int64
-	var gotAuth string
-	srv := newKimiTestServerCounted(t, kimiLimitsJSON(), 0, &gotAuth, &hits)
-	defer srv.Close()
-	port := serverPort(t, srv)
-
-	collector := newKimiTestCollector(kimiTestHome(t, port), port)
-	collector.identitySupported = func() bool { return false }
-	if _, err := collector.collect(context.Background()); err == nil {
-		t.Fatal("expected fail-closed error on unsupported platform")
-	}
-	if hits.Load() != 0 {
-		t.Fatalf("unsupported platform still sent %d requests", hits.Load())
-	}
-}
-
-// Redirects are never followed: a verified-shape peer that answers the usage
-// call with a 307 must not bounce the bearer anywhere — not even to another
-// loopback port, let alone off-box (the dialer also refuses non-loopback
-// targets outright).
+// Redirects are never followed: a 307 must not bounce the bearer anywhere —
+// not even to another loopback port, let alone off-box.
 func TestKimiCollect_RedirectNotFollowed(t *testing.T) {
 	var redirectHits atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -458,16 +498,7 @@ func TestKimiCollect_RedirectNotFollowed(t *testing.T) {
 	}))
 	defer target.Close()
 
-	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		if auth == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"code":40101,"msg":"missing bearer token"}`))
-			return
-		}
-		gotAuth = auth
 		w.Header().Set("Location", target.URL+"/api/v1/oauth/usage")
 		w.WriteHeader(http.StatusTemporaryRedirect)
 	}))
@@ -481,58 +512,82 @@ func TestKimiCollect_RedirectNotFollowed(t *testing.T) {
 	if redirectHits.Load() != 0 {
 		t.Fatalf("redirect target received %d requests", redirectHits.Load())
 	}
-	// The first peer passed the handshake, so IT may hold the token; the
-	// regression being pinned is that the redirect target never does.
-	if gotAuth != "Bearer test-kimi-token" {
-		t.Fatalf("first peer auth = %q", gotAuth)
+}
+
+// Platforms that cannot prove the peer fail closed: no request at all.
+func TestKimiCollect_UnsupportedPlatformSendsNothing(t *testing.T) {
+	var hits atomic.Int64
+	srv := newKimiTestServerCounted(t, kimiLimitsJSON(), 0, nil, &hits)
+	defer srv.Close()
+	port := serverPort(t, srv)
+
+	collector := newKimiTestCollector(kimiTestHome(t, port), port)
+	collector.identitySupported = func() bool { return false }
+	if _, err := collector.collect(context.Background()); err == nil {
+		t.Fatal("expected fail-closed error on unsupported platform")
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("unsupported platform still sent %d requests", hits.Load())
 	}
 }
 
-// The dial constraint itself: non-loopback targets are refused at the
-// connection point, and both proofs are consulted on every dial.
-func TestLoopbackOwnedDialContext(t *testing.T) {
+// The dialer itself: non-loopback targets refused, the round's owned set
+// fast-fails, and the peer proof is consulted after connecting.
+func TestKimiDialer(t *testing.T) {
+	collector := newKimiTestCollector(t.TempDir(), 0)
 	for _, addr := range []string{"203.0.113.10:443", "192.168.1.5:8080", "[::1]:58627"} {
-		if _, err := loopbackOwnedDialContext(context.Background(), "tcp", addr, nil, nil); err == nil {
+		if _, err := collector.dial(context.Background(), "tcp", addr); err == nil {
 			t.Fatalf("expected %s to be refused", addr)
 		}
 	}
 
-	// Pre-dial probe consulted per dial: first dial passes, second (after
-	// the listener changed hands) is refused.
-	var owned atomic.Bool
-	owned.Store(true)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = ln.Close() }()
-	check := func(int) bool { return owned.Load() }
-	conn, err := loopbackOwnedDialContext(context.Background(), "tcp", ln.Addr().String(), check, nil)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	// Fast-fail: port not in the round's owned set.
+	collector.roundOwned = map[int]struct{}{}
+	if _, err := collector.dial(context.Background(), "tcp", ln.Addr().String()); err == nil {
+		t.Fatal("dial not fast-failed for an unowned port")
+	}
+
+	// Peer proof consulted per dial: pass first, flip, refuse second.
+	var peerOK atomic.Bool
+	peerOK.Store(true)
+	collector.roundOwned = map[int]struct{}{port: {}}
+	collector.verifyConnPeer = func(net.Conn) bool { return peerOK.Load() }
+	conn, err := collector.dial(context.Background(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("first dial: %v", err)
 	}
 	_ = conn.Close()
-	owned.Store(false)
-	if _, err := loopbackOwnedDialContext(context.Background(), "tcp", ln.Addr().String(), check, nil); err == nil {
-		t.Fatal("second dial not refused after ownership flip")
-	}
-
-	// The established-peer proof is consulted after connecting, with the
-	// actual connection: LISTEN fine, peer unprovable → connection closed.
-	peerOK := func(net.Conn) bool { return false }
-	if _, err := loopbackOwnedDialContext(context.Background(), "tcp", ln.Addr().String(), nil, peerOK); err == nil {
-		t.Fatal("dial not refused when the established peer is unprovable")
+	peerOK.Store(false)
+	if _, err := collector.dial(context.Background(), "tcp", ln.Addr().String()); err == nil {
+		t.Fatal("second dial not refused after the peer proof flipped")
 	}
 }
 
-// Socket-ownership table parsing, address-aware: the listener must be able
-// to serve a 127.0.0.1 dial AND belong to our uid.
-func TestLoopbackListenOwnedByUID(t *testing.T) {
+// --- Parser fixtures ---
+
+// The owned-listen set builder: address-aware, same-uid only. Includes the
+// round-3 shape (a foreign listener on the port never enters the set).
+func TestOwnedLoopbackListenPorts(t *testing.T) {
 	header := "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode"
-	entry := func(hexAddr, hexPort string, st string, uid int) string {
+	entry := func(hexAddr, hexPort, st string, uid int) string {
 		return fmt.Sprintf("   0: %s:%s 00000000:0000 %s 00000000:00000000 00:00000000 00000000 %5d        0 12345 1 0000000000000000 100 0 0 10 0", hexAddr, hexPort, st, uid)
 	}
-	// 58627 = 0xE503
 	table := func(lines ...string) [][]byte { return [][]byte{[]byte(header + "\n" + strings.Join(lines, "\n"))} }
 
 	const (
@@ -540,166 +595,26 @@ func TestLoopbackListenOwnedByUID(t *testing.T) {
 		v4Wildcard = "00000000"
 		v4Lan      = "AC150005" // 172.21.0.5
 		v6Wildcard = "00000000000000000000000000000000"
-		v6Loopback = "00000000000000000000000001000000" // ::1, host-order words — cannot serve a v4 dial
+		v6Loopback = "00000000000000000000000001000000" // ::1, host-order words
 		v6MappedV4 = "0000000000000000FFFF00000100007F" // ::ffff:127.0.0.1, host-order words
 	)
 
-	t.Run("v4 loopback same uid passes", func(t *testing.T) {
-		if !loopbackListenOwnedByUID(58627, 1000, table(entry(v4Loopback, "E503", "0A", 1000))) {
-			t.Fatal("rejected")
+	got := ownedLoopbackListenPorts(1000, table(
+		entry(v4Loopback, "E503", "0A", 1000),  // ours
+		entry(v4Loopback, "E504", "0A", 65534), // foreign: excluded
+		entry(v4Wildcard, "E505", "0A", 1000),  // v4 wildcard: serves loopback
+		entry(v6Wildcard, "E506", "0A", 1000),  // dual-stack wildcard
+		entry(v6MappedV4, "E507", "0A", 1000),  // v4-mapped loopback
+		entry(v6Loopback, "E508", "0A", 1000),  // ::1-only: cannot serve v4 dial
+		entry(v4Lan, "E509", "0A", 1000),       // LAN: cannot serve loopback
+		entry(v4Loopback, "E50A", "08", 1000),  // non-LISTEN
+	))
+	want := map[int]bool{58627: true, 58628: false, 58629: true, 58630: true, 58631: true, 58632: false, 58633: false, 58634: false}
+	for port, in := range want {
+		_, has := got[port]
+		if has != in {
+			t.Fatalf("port %d in set = %v, want %v (set %v)", port, has, in, got)
 		}
-	})
-	t.Run("v4 loopback foreign uid fails", func(t *testing.T) {
-		if loopbackListenOwnedByUID(58627, 1000, table(entry(v4Loopback, "E503", "0A", 65534))) {
-			t.Fatal("accepted foreign listener")
-		}
-	})
-	t.Run("wildcards serving 127.0.0.1 pass when ours", func(t *testing.T) {
-		if !loopbackListenOwnedByUID(58627, 1000, table(entry(v4Wildcard, "E503", "0A", 1000))) {
-			t.Fatal("v4 wildcard rejected")
-		}
-		if !loopbackListenOwnedByUID(58627, 1000, table(entry(v6Wildcard, "E503", "0A", 1000))) {
-			t.Fatal("v6 dual-stack wildcard rejected")
-		}
-		if !loopbackListenOwnedByUID(58627, 1000, table(entry(v6MappedV4, "E503", "0A", 1000))) {
-			t.Fatal("v4-mapped loopback rejected")
-		}
-	})
-	t.Run("v6-only loopback cannot serve a v4 dial", func(t *testing.T) {
-		if loopbackListenOwnedByUID(58627, 1000, table(entry(v6Loopback, "E503", "0A", 1000))) {
-			t.Fatal("::1-only listener accepted for a 127.0.0.1 dial")
-		}
-	})
-	t.Run("LAN-bound listener cannot serve loopback", func(t *testing.T) {
-		if loopbackListenOwnedByUID(58627, 1000, table(entry(v4Lan, "E503", "0A", 1000))) {
-			t.Fatal("LAN listener accepted")
-		}
-	})
-	t.Run("non-listen and missing entries fail", func(t *testing.T) {
-		if loopbackListenOwnedByUID(58627, 1000, table(entry(v4Loopback, "E503", "08", 1000))) {
-			t.Fatal("accepted a non-LISTEN socket")
-		}
-		if loopbackListenOwnedByUID(58627, 1000, table()) {
-			t.Fatal("accepted with no socket entry at all")
-		}
-		if loopbackListenOwnedByUID(58627, 1000, table(entry(v4Loopback, "E504", "0A", 1000))) {
-			t.Fatal("accepted a socket on a different port")
-		}
-	})
-	// The round-3 review repro: a same-user ::1 registry fixture passes pid
-	// verification, while a FOREIGN user serves the fake 40101 on the same
-	// port over IPv4 — the actual dial target. The check must fail.
-	t.Run("foreign v4 listener on same port defeats a same-user v6 fixture", func(t *testing.T) {
-		tables := [][]byte{
-			[]byte(header + "\n" + entry(v4Loopback, "E503", "0A", 65534)),
-			[]byte(header + "\n" + entry(v6Loopback, "E503", "0A", 1000)),
-		}
-		if loopbackListenOwnedByUID(58627, 1000, tables) {
-			t.Fatal("foreign v4 listener accepted behind a same-user v6 fixture")
-		}
-	})
-	t.Run("dual-stack split ownership fails closed", func(t *testing.T) {
-		tables := [][]byte{
-			[]byte(header + "\n" + entry(v4Loopback, "E503", "0A", 1000)),
-			[]byte(header + "\n" + entry(v6Wildcard, "E503", "0A", 65534)),
-		}
-		if loopbackListenOwnedByUID(58627, 1000, tables) {
-			t.Fatal("mixed-ownership dual-stack accepted")
-		}
-	})
-}
-
-// The registry path must not bypass the socket proof: a pid-verified entry
-// whose actual 127.0.0.1:<port> listener belongs to another user still gets
-// no credential (round-3 review repro shape).
-func TestKimiCollect_RegistryPathRequiresSocketOwnership(t *testing.T) {
-	var hits atomic.Int64
-	var gotAuth string
-	srv := newKimiTestServerCounted(t, kimiLimitsJSON(), 0, &gotAuth, &hits)
-	defer srv.Close()
-	port := serverPort(t, srv)
-
-	collector := newKimiTestCollector(kimiTestHome(t, port), port)
-	collector.socketOwnedByUser = func(int) bool { return false } // foreign listener on the dialed target
-	if _, err := collector.collect(context.Background()); err == nil {
-		t.Fatal("expected collection to fail when the dialed socket is foreign-owned")
-	}
-	if gotAuth != "" {
-		t.Fatalf("registry path delivered credentials without socket proof: %q", gotAuth)
-	}
-}
-
-// Round-4 R1 regression: probe passes, the server releases the port, a
-// different-owner process claims it, and the credential-carrying request —
-// which must re-dial because the probe connection closed — is refused at
-// dial time. The ownership flip is sequenced deterministically: A flips it
-// inside the probe handler, which happens-before the client reads the
-// response and dials again.
-func TestKimiCollect_ReconnectionRevalidatesListener(t *testing.T) {
-	lnA, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := lnA.Addr().(*net.TCPAddr).Port
-
-	var owned atomic.Bool
-	owned.Store(true)
-	var probeServed atomic.Int64
-
-	srvA := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "" {
-			t.Error("server A received a credential") // A is same-owner, but the point is zero delivery after the flip
-		}
-		w.Header().Set("Connection", "close") // force a NEW dial for the usage request
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"code":40101,"msg":"missing bearer token"}`))
-		probeServed.Add(1)
-		// The listener changes hands as the probe answer goes out.
-		owned.Store(false)
-	})}
-	go func() { _ = srvA.Serve(lnA) }()
-
-	// B claims the same port once A lets go — the foreign new owner.
-	var hitsB atomic.Int64
-	var authB atomic.Int64
-	go func() {
-		for i := 0; i < 200; i++ {
-			if probeServed.Load() > 0 {
-				break
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
-		_ = srvA.Close()
-		lnB, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err != nil {
-			return // port still settling; the dial-time refusal must hold regardless
-		}
-		srvB := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			hitsB.Add(1)
-			if r.Header.Get("Authorization") != "" {
-				authB.Add(1)
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"code":40101,"msg":"missing bearer token"}`))
-		})}
-		_ = srvB.Serve(lnB)
-		t.Cleanup(func() { _ = srvB.Close() })
-	}()
-	t.Cleanup(func() { _ = srvA.Close() })
-
-	collector := newKimiTestCollector(kimiTestHomeNoRegistry(t), port)
-	collector.socketOwnedByUser = func(int) bool { return owned.Load() }
-
-	if _, err := collector.collect(context.Background()); err == nil {
-		t.Fatal("expected collection to fail after the listener changed hands")
-	}
-	if probeServed.Load() == 0 {
-		t.Fatal("probe never reached A — test setup broken")
-	}
-	if hitsB.Load() != 0 || authB.Load() != 0 {
-		t.Fatalf("new owner received %d requests (%d authed)", hitsB.Load(), authB.Load())
 	}
 }
 
@@ -728,7 +643,7 @@ func TestEstablishedPeerOwnedByUID(t *testing.T) {
 			t.Fatal("foreign established peer accepted")
 		}
 	})
-	t.Run("round-5 shape: our LISTEN plus foreign ESTABLISHED fails", func(t *testing.T) {
+	t.Run("our re-bound LISTEN plus foreign ESTABLISHED fails", func(t *testing.T) {
 		tables := table(
 			row(v4lo+":E503", "00000000:0000", "0A", 1000), // our re-bound listener
 			row(v4lo+":E503", v4lo+":9C40", "01", 65534),   // foreign accepted conn
@@ -762,7 +677,7 @@ func TestEstablishedPeerOwnedByUID(t *testing.T) {
 	})
 }
 
-// The macOS lsof -F pun parser: process blocks (p/u) then per-fd name lines.
+// macOS lsof -F pun parsers: process blocks (p/u) then per-fd name lines.
 func TestLsofEstablishedPeerOwnedBy(t *testing.T) {
 	out := "p100\nu501\nf3\nn127.0.0.1:58627->127.0.0.1:40000 (ESTABLISHED)\n"
 	if !lsofEstablishedPeerOwnedBy(out, 58627, 40000, 501) {
@@ -796,20 +711,20 @@ func TestLsofEstablishedPeerOwnedBy(t *testing.T) {
 	}
 }
 
-// Collector level: LISTEN proof fine, established-peer proof fails → zero
-// credential delivery (deterministic, platform-independent).
-func TestKimiCollect_EstablishedPeerMustMatchProof(t *testing.T) {
-	var gotAuth string
-	srv := newKimiTestServer(t, kimiLimitsJSON(), 0, &gotAuth)
-	defer srv.Close()
-	port := serverPort(t, srv)
-
-	collector := newKimiTestCollector(kimiTestHomeNoRegistry(t), port)
-	collector.verifyConnPeer = func(net.Conn) bool { return false }
-	if _, err := collector.collect(context.Background()); err == nil {
-		t.Fatal("expected collection to fail when the established peer is unprovable")
+func TestLsofOwnedListenPorts(t *testing.T) {
+	out := "p100\nu501\nf3\nn127.0.0.1:58627 (LISTEN)\n" +
+		"p101\nu501\nf4\nn*:59000 (LISTEN)\n" + // wildcard serves loopback
+		"p102\nu501\nf5\nn[::]:59001 (LISTEN)\n" + // dual-stack
+		"p103\nu501\nf6\nn[::1]:59002 (LISTEN)\n" + // ::1-only cannot serve v4
+		"p104\nu65534\nf7\nn127.0.0.1:59003 (LISTEN)\n" // foreign uid
+	got := lsofOwnedListenPorts(out, 501)
+	for port, in := range map[int]bool{58627: true, 59000: true, 59001: true, 59002: false, 59003: false} {
+		_, has := got[port]
+		if has != in {
+			t.Fatalf("port %d = %v, want %v (set %v)", port, has, in, got)
+		}
 	}
-	if gotAuth != "" {
-		t.Fatalf("credential delivered to unproven peer: %q", gotAuth)
+	if len(lsofOwnedListenPorts("", 501)) != 0 {
+		t.Fatal("empty output produced ports")
 	}
 }

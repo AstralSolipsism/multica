@@ -203,7 +203,7 @@ func TestReconcileZenMuxClears(t *testing.T) {
 		if !ok {
 			t.Fatalf("previously-reported unlinked runtime %s not cleared", rid)
 		}
-		quota := cached.(*protocol.RuntimePlanQuota)
+		quota := cached.(planQuotaCacheEntry).quota
 		if quota.Provider != "zenmux" || len(quota.Windows) != 0 || quota.Source != protocol.PlanQuotaSourceDaemon {
 			t.Fatalf("clear marker for %s = %+v", rid, quota)
 		}
@@ -254,7 +254,7 @@ func TestZenmuxLoop_MixedSources(t *testing.T) {
 
 	waitForQuotaCondition(t, "linked runtime snapshot", func() bool {
 		cached, ok := d.planQuotaCache.Load("rt-h1")
-		return ok && len(cached.(*protocol.RuntimePlanQuota).Windows) == 2
+		return ok && len(cached.(planQuotaCacheEntry).quota.Windows) == 2
 	})
 	waitForQuotaCondition(t, "linked key persisted", func() bool {
 		for _, k := range readZenmuxStateKeys(t, home) {
@@ -267,14 +267,14 @@ func TestZenmuxLoop_MixedSources(t *testing.T) {
 	cancel()
 
 	h1, _ := d.planQuotaCache.Load("rt-h1")
-	if q := h1.(*protocol.RuntimePlanQuota); q.Provider != "zenmux" || len(q.Windows) != 2 {
+	if q := h1.(planQuotaCacheEntry).quota; q.Provider != "zenmux" || len(q.Windows) != 2 {
 		t.Fatalf("linked snapshot = %+v", q)
 	}
 	h2, ok := d.planQuotaCache.Load("rt-h2")
 	if !ok {
 		t.Fatal("removed-link runtime not cleared")
 	}
-	if q := h2.(*protocol.RuntimePlanQuota); len(q.Windows) != 0 {
+	if q := h2.(planQuotaCacheEntry).quota; len(q.Windows) != 0 {
 		t.Fatalf("removed-link runtime carries windows: %+v", q)
 	}
 	// The custom profile runtime was never reported and is not linked:
@@ -324,7 +324,7 @@ func TestZenmuxLoop_KeyWithoutLinkCollectsNothing(t *testing.T) {
 		t.Fatalf("management api polled %d times with an empty link set", hits.Load())
 	}
 	h1, _ := d.planQuotaCache.Load("rt-h1")
-	if q := h1.(*protocol.RuntimePlanQuota); len(q.Windows) != 0 {
+	if q := h1.(planQuotaCacheEntry).quota; len(q.Windows) != 0 {
 		t.Fatalf("cleared runtime carries windows: %+v", q)
 	}
 	if _, ok := d.planQuotaCache.Load("rt-h2"); ok {

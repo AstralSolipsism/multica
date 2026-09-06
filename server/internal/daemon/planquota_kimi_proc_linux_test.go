@@ -13,9 +13,9 @@ import (
 	"time"
 )
 
-// Real /proc integration for the socket-ownership probe (the fixture matrix
+// Real /proc integration for the per-round enumeration (the fixture matrix
 // in planquota_kimi_test.go covers parsing; this proves the live path).
-func TestKimiSocketOwnedByUser_LiveSocket(t *testing.T) {
+func TestKimiEnumerateOwnedListenPorts_LiveSocket(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -23,48 +23,27 @@ func TestKimiSocketOwnedByUser_LiveSocket(t *testing.T) {
 	defer func() { _ = ln.Close() }()
 	port := ln.Addr().(*net.TCPAddr).Port
 
-	if !kimiSocketOwnedByUser(port) {
-		t.Fatal("own listener not recognized as owned by this user")
+	owned := kimiEnumerateOwnedListenPorts()
+	if _, ok := owned[port]; !ok {
+		t.Fatal("own listener missing from the owned set")
 	}
-	if kimiSocketOwnedByUser(port + 1) {
+	if _, ok := owned[port+1]; ok {
 		t.Fatal("unused port reported as owned")
 	}
-
-	// The probe must consult the SAME uid the kernel records for us.
-	if !loopbackListenOwnedByUID(port, os.Geteuid(), nil) == true {
-		// nil tables: nothing found — sanity for the fail direction
-	}
-	if loopbackListenOwnedByUID(port, os.Geteuid(), nil) {
-		t.Fatal("empty tables reported ownership")
-	}
 }
 
-// The process verifier accepts this very test process only if it looks like
-// kimi (it does not) — proving the image check rejects unrelated same-user
-// processes, and accepts a synthetic kimi-looking cmdline.
-func TestKimiVerifyInstanceProcess_LiveProcess(t *testing.T) {
-	if err := kimiVerifyInstanceProcess(os.Getpid()); err == nil {
-		t.Fatal("test binary accepted as kimi")
-	}
-	if err := kimiVerifyInstanceProcess(0); err == nil {
-		t.Fatal("pid 0 accepted")
-	}
-	if err := kimiVerifyInstanceProcess(4194303); err == nil {
-		t.Fatal("implausible pid accepted")
-	}
-}
-
-// The production dialer (both proofs live) against a real same-user server:
-// passes end to end, so the hardening does not break the happy path.
+// The production dialer (round enumeration + established-peer proof live)
+// against a real same-user server passes end to end, so the hardening does
+// not break the happy path.
 func TestKimiDialerProductionProofsLiveSocket(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Hold accepted connections open — a closed peer leaves no ESTABLISHED
-	// row to prove (correctly failing closed), which is not what we test here.
-	// Cleanup order: close the listener first (unblocks Accept, which then
-	// closes the channel), then drain and close the held connections.
+	// row to prove (correctly failing closed), which is not what we test
+	// here. Cleanup order: close the listener first (unblocks Accept, which
+	// then closes the channel), then drain and close held connections.
 	held := make(chan net.Conn, 8)
 	defer func() {
 		_ = ln.Close()
@@ -82,22 +61,25 @@ func TestKimiDialerProductionProofsLiveSocket(t *testing.T) {
 			held <- c
 		}
 	}()
-	conn, err := loopbackOwnedDialContext(context.Background(), "tcp", ln.Addr().String(),
-		kimiSocketOwnedByUser, kimiEstablishedPeerOwnedByUser)
+
+	collector := newKimiPlanQuotaCollector(t.TempDir())
+	collector.roundOwned = kimiEnumerateOwnedListenPorts()
+	conn, err := collector.dial(context.Background(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("production dialer refused own server: %v", err)
 	}
 	_ = conn.Close()
 }
 
-// Native round-5 regression: a foreign-uid process accepts our connection,
-// releases its listener, and our user re-binds the port. Only then is the
-// established-peer proof consulted — it must still name the foreign
-// acceptor, even though the LISTEN check now passes (the new listener is
-// ours). Zero bytes are written to the foreign connection.
+// Native uid-handover regression: a foreign-uid process accepts our
+// connection, releases its listener, and our user re-binds the port. Only
+// then is the established-peer proof consulted — it must still name the
+// foreign acceptor, even though the LISTEN set now contains the port again
+// (the new listener is ours). Zero bytes are written to the foreign
+// connection.
 func TestKimiEstablishedPeerProof_ForeignAcceptedConnection(t *testing.T) {
 	// Acceptance guard: this test must never alter shared directory
-	// permissions (round-6 review). Assert /tmp's mode is untouched.
+	// permissions. Assert /tmp's mode is untouched.
 	tmpStat, err := os.Stat("/tmp")
 	if err != nil {
 		t.Fatal(err)
@@ -167,8 +149,8 @@ conn.close()
 			t.Fatal(err)
 		}
 		port := lnA.Addr().(*net.TCPAddr).Port
-		if !kimiSocketOwnedByUser(port) {
-			t.Fatal("own listener failed the LISTEN check")
+		if _, ok := kimiEnumerateOwnedListenPorts()[port]; !ok {
+			t.Fatal("own listener missing from the owned set")
 		}
 		_ = lnA.Close()
 
@@ -199,7 +181,7 @@ conn.close()
 		})
 		waitForFile(t, ready)
 
-		// Dial the foreign helper directly (no proof yet).
+		// Dial the helper directly (no proof yet).
 		conn, err := (&net.Dialer{Timeout: 2 * time.Second}).Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err != nil {
 			t.Fatalf("dial: %v", err)
@@ -213,8 +195,8 @@ conn.close()
 			t.Fatalf("re-bind as our user: %v", err)
 		}
 		defer func() { _ = lnA2.Close() }()
-		if !kimiSocketOwnedByUser(port) {
-			t.Fatal("control broken: our re-bound listener fails the LISTEN check")
+		if _, ok := kimiEnumerateOwnedListenPorts()[port]; !ok {
+			t.Fatal("control broken: our re-bound listener missing from the owned set")
 		}
 
 		// NOW prove the connection's peer. The live connection still belongs

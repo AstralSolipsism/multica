@@ -479,17 +479,11 @@ type Daemon struct {
 	wsHBLastAck map[string]time.Time // runtime_id -> last successful WS heartbeat ack timestamp
 
 	// planQuotaCache holds each runtime's latest observed provider
-	// plan/rate-limit snapshot (runtimeID -> *protocol.RuntimePlanQuota),
-	// recorded at task completion and attached to that runtime's next
-	// heartbeat. Entries are deleted when the runtime leaves the local set.
+	// plan/rate-limit snapshot (runtimeID -> planQuotaCacheEntry), recorded
+	// at task completion or by a quota collector, and attached to that
+	// runtime's next heartbeat. Entries are deleted when the runtime leaves
+	// the local set.
 	planQuotaCache sync.Map
-	// planQuotaClearMarkers marks which cached entries are zenmux clear
-	// markers (a deliberate "not reported" state after a manual unlink) as
-	// opposed to real observations. Markers are re-stamped with a fresh
-	// observed_at on every heartbeat so the cleared state never ages into
-	// "stale"; real snapshots are never re-stamped, since refreshing them
-	// would mask a silently failing collector (OL-5 S2b).
-	planQuotaClearMarkers sync.Map
 
 	// reconcile fans out a "re-check server state now" signal to subscribers
 	// (watchTaskCancellation, workspaceSyncLoop) so the WS connect/reconnect
@@ -1172,6 +1166,16 @@ func (d *Daemon) notifyRuntimeSetChanged() {
 	d.runtimeSet.notify()
 }
 
+// planQuotaCacheEntry is one cached plan-quota value: either a real
+// observation or a zenmux clear marker (a deliberate "not reported" state
+// after a manual unlink). One map entry per runtime — the marker flag can
+// never disagree with the payload because they are stored together (OL-5
+// convergence: this replaces a parallel marker map).
+type planQuotaCacheEntry struct {
+	quota       *protocol.RuntimePlanQuota
+	clearMarker bool
+}
+
 // recordRuntimePlanQuota caches a runtime's latest plan/rate-limit snapshot
 // (reported by an agent backend at task completion) so the next heartbeat
 // for that runtime carries it. The entry lives until the runtime leaves the
@@ -1181,8 +1185,7 @@ func (d *Daemon) recordRuntimePlanQuota(runtimeID string, quota *protocol.Runtim
 	if runtimeID == "" || quota == nil {
 		return
 	}
-	d.planQuotaClearMarkers.Delete(runtimeID)
-	d.planQuotaCache.Store(runtimeID, quota)
+	d.planQuotaCache.Store(runtimeID, planQuotaCacheEntry{quota: quota})
 }
 
 // recordZenMuxPlanQuotaClearMarker stores a windowless zenmux snapshot — the
@@ -1194,12 +1197,14 @@ func (d *Daemon) recordZenMuxPlanQuotaClearMarker(runtimeID string) {
 	if runtimeID == "" {
 		return
 	}
-	d.planQuotaClearMarkers.Store(runtimeID, struct{}{})
-	d.planQuotaCache.Store(runtimeID, &protocol.RuntimePlanQuota{
-		Provider:   "zenmux",
-		Status:     protocol.PlanQuotaStatusOK,
-		ObservedAt: time.Now().Unix(),
-		Source:     protocol.PlanQuotaSourceDaemon,
+	d.planQuotaCache.Store(runtimeID, planQuotaCacheEntry{
+		clearMarker: true,
+		quota: &protocol.RuntimePlanQuota{
+			Provider:   "zenmux",
+			Status:     protocol.PlanQuotaStatusOK,
+			ObservedAt: time.Now().Unix(),
+			Source:     protocol.PlanQuotaSourceDaemon,
+		},
 	})
 }
 
@@ -1209,17 +1214,17 @@ func (d *Daemon) recordZenMuxPlanQuotaClearMarker(runtimeID string) {
 func (d *Daemon) heartbeatExtrasFor(runtimeID string) HeartbeatExtras {
 	var extras HeartbeatExtras
 	if cached, ok := d.planQuotaCache.Load(runtimeID); ok {
-		if quota, ok := cached.(*protocol.RuntimePlanQuota); ok {
-			if _, isMarker := d.planQuotaClearMarkers.Load(runtimeID); isMarker {
+		if entry, ok := cached.(planQuotaCacheEntry); ok {
+			if entry.clearMarker {
 				// Clear markers represent a deliberate state, not an
 				// observation: re-stamp so "not reported" never goes stale.
 				// Real snapshots keep their observed_at — re-stamping them
 				// would mask a collector that stopped producing data.
-				clone := *quota
+				clone := *entry.quota
 				clone.ObservedAt = time.Now().Unix()
 				extras.PlanQuota = &clone
 			} else {
-				extras.PlanQuota = quota
+				extras.PlanQuota = entry.quota
 			}
 		}
 	}
@@ -1426,7 +1431,6 @@ func (d *Daemon) removeStaleRuntime(runtimeID string) (string, bool) {
 	// re-registered runtime starts with no cached quota until its next
 	// task completion reports one.
 	d.planQuotaCache.Delete(runtimeID)
-	d.planQuotaClearMarkers.Delete(runtimeID)
 
 	return workspaceID, true
 }
@@ -1540,7 +1544,6 @@ func (d *Daemon) applyRegisterResponseInPlace(workspaceID string, resp *Register
 			// a second time.
 			delete(d.runtimeIndex, oldID)
 			d.planQuotaCache.Delete(oldID)
-			d.planQuotaClearMarkers.Delete(oldID)
 			continue
 		}
 		if rt, tracked := d.runtimeIndex[oldID]; tracked && rt.ProfileID == "" {
@@ -1551,7 +1554,6 @@ func (d *Daemon) applyRegisterResponseInPlace(workspaceID string, resp *Register
 		}
 		delete(d.runtimeIndex, oldID)
 		d.planQuotaCache.Delete(oldID)
-		d.planQuotaClearMarkers.Delete(oldID)
 		droppedIDs = append(droppedIDs, oldID)
 	}
 	for _, rt := range resp.Runtimes {
