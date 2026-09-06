@@ -1701,6 +1701,11 @@ export const RuntimePlanQuotaWindowSchema = z.object({
   used_percent: z.number().nullable().default(null),
   window_minutes: z.number().nullable().default(null),
   resets_at: z.number().nullable().default(null),
+  // Optional quota-pool label for providers that keep several independent
+  // pools per account (antigravity reports a gemini pool and a claude_gpt
+  // pool, each with 5h and weekly windows). Reporters with a single pool
+  // omit it.
+  group: z.string().nullish().default(null),
 }).loose();
 
 // `windows` stays `unknown[]` here on purpose: the sanitizer re-parses each

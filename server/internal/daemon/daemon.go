@@ -480,8 +480,10 @@ type Daemon struct {
 
 	// planQuotaCache holds each runtime's latest observed provider
 	// plan/rate-limit snapshot (runtimeID -> *protocol.RuntimePlanQuota),
-	// recorded at task completion and attached to that runtime's next
-	// heartbeat. Entries are deleted when the runtime leaves the local set.
+	// recorded at task completion (agent backends that report one) and by the
+	// antigravity quota probe (antigravityQuotaLoop), and attached to that
+	// runtime's next heartbeat. Entries are deleted when the runtime leaves
+	// the local set.
 	planQuotaCache sync.Map
 
 	// reconcile fans out a "re-check server state now" signal to subscribers
@@ -2089,6 +2091,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.gcLoop(ctx)
 	go d.autoUpdateLoop(ctx)
 	go d.tokenRenewalLoop(ctx)
+	go d.antigravityQuotaLoop(ctx)
 
 	// Preflight succeeded and the background loops are up: the daemon has
 	// registered its runtimes and can now claim and run tasks. Flip /health

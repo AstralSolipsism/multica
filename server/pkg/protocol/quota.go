@@ -31,6 +31,9 @@ const (
 	PlanQuotaMaxWindows = 8
 	// PlanQuotaMaxWindowName bounds window names ("primary", "secondary").
 	PlanQuotaMaxWindowName = 32
+	// PlanQuotaMaxGroupName bounds the optional quota-group label a window
+	// may carry (antigravity's "gemini" / "claude_gpt" pools).
+	PlanQuotaMaxGroupName = 32
 	// PlanQuotaMaxWindowMinutes is one year in minutes — a generous upper
 	// bound that still rejects nonsense values.
 	PlanQuotaMaxWindowMinutes = 525600
@@ -45,11 +48,18 @@ const (
 // "not reported" — the server must never fabricate a 0 the provider did
 // not send.
 type RuntimePlanQuotaWindow struct {
-	Name         string   `json:"name"`
-	UsedPercent  *float64 `json:"used_percent,omitempty"`
-	WindowMinutes *int64  `json:"window_minutes,omitempty"`
+	Name          string   `json:"name"`
+	UsedPercent   *float64 `json:"used_percent,omitempty"`
+	WindowMinutes *int64   `json:"window_minutes,omitempty"`
 	// ResetsAt is unix seconds; nil when the provider did not disclose it.
 	ResetsAt *int64 `json:"resets_at,omitempty"`
+	// Group is the optional quota pool the window belongs to, for providers
+	// that keep several independent pools per account (antigravity reports a
+	// Gemini pool and a Claude/GPT pool, each with its own 5h and weekly
+	// windows — four buckets that a flat window list would collapse).
+	// Optional and free-form: reporters whose provider has a single pool
+	// omit it, and the UI falls back to rendering ungrouped rows.
+	Group string `json:"group,omitempty"`
 }
 
 // RuntimePlanQuota is the account-level plan/rate-limit snapshot for one
@@ -63,5 +73,5 @@ type RuntimePlanQuota struct {
 	// ObservedAt is unix seconds; required, and the freshness arbiter when
 	// daemon and external reporters write the same row (newer wins).
 	ObservedAt int64  `json:"observed_at"`
-	Source   string `json:"source"`
+	Source     string `json:"source"`
 }

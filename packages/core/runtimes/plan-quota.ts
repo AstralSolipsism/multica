@@ -28,7 +28,15 @@ export function parsePlanQuota(raw: unknown): RuntimePlanQuota | null {
   const windows: RuntimePlanQuotaWindow[] = [];
   for (const candidate of parsed.data.windows) {
     const result = RuntimePlanQuotaWindowSchema.safeParse(candidate);
-    if (result.success) windows.push(result.data);
+    if (result.success) {
+      windows.push({
+        name: result.data.name,
+        used_percent: result.data.used_percent,
+        window_minutes: result.data.window_minutes,
+        resets_at: result.data.resets_at,
+        group: result.data.group,
+      });
+    }
   }
   return {
     provider: parsed.data.provider,
@@ -37,6 +45,52 @@ export function parsePlanQuota(raw: unknown): RuntimePlanQuota | null {
     observed_at: parsed.data.observed_at,
     source: parsed.data.source,
   };
+}
+
+/**
+ * A quota window's quota pool, normalized to null for ungrouped reporters.
+ * Generic over the window shape so both raw wire windows and view models
+ * group identically.
+ */
+export function quotaWindowGroup(
+  window: { name: string; group?: string | null },
+): string | null {
+  const group = window.group?.trim();
+  return group ? group : null;
+}
+
+/**
+ * Windows grouped by quota pool for grouped display (the antigravity detail /
+ * settings cards show every pool under its own label). Order is stable: the
+ * documented antigravity pools first (gemini, then claude_gpt), unknown pools
+ * after them in first-seen order, and ungrouped windows trailing as a null
+ * group so a reporter without groups renders exactly as it did before the
+ * field existed.
+ */
+export function groupQuotaWindows<T extends { name: string; group?: string | null }>(
+  windows: T[],
+): { group: string | null; windows: T[] }[] {
+  const DOCUMENTED_ORDER = ["gemini", "claude_gpt"];
+  const groups: { group: string | null; windows: T[] }[] = [];
+  const firstSeen = new Map<string, { group: string | null; windows: T[] }>();
+  for (const window of windows) {
+    const group = quotaWindowGroup(window);
+    const key = group ?? "\0ungrouped";
+    let bucket = firstSeen.get(key);
+    if (bucket == null) {
+      bucket = { group, windows: [] };
+      firstSeen.set(key, bucket);
+      groups.push(bucket);
+    }
+    bucket.windows.push(window);
+  }
+  const rank = (group: string | null): number => {
+    if (group == null) return DOCUMENTED_ORDER.length + 1;
+    const at = DOCUMENTED_ORDER.indexOf(group);
+    return at === -1 ? DOCUMENTED_ORDER.length : at;
+  };
+  // Array#sort is stable, so equal ranks keep first-seen order.
+  return groups.sort((a, b) => rank(a.group) - rank(b.group));
 }
 
 /** Remaining percentage of a quota window; null when the provider only

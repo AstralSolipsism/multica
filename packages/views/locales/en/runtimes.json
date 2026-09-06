@@ -329,6 +329,8 @@
     "window_short_hours": "{{value}}h",
     "window_short_days": "{{value}}d",
     "window_weekly": "wk",
+    "group_gemini": "Gemini",
+    "group_claude_gpt": "Claude + GPT",
     "remaining": "{{percent}}% left",
     "resets_in": "resets in {{time}}",
     "exhausted": "Rate limited",

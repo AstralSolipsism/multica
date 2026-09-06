@@ -316,6 +316,8 @@
     "window_short_hours": "{{value}}h",
     "window_short_days": "{{value}}d",
     "window_weekly": "周",
+    "group_gemini": "Gemini",
+    "group_claude_gpt": "Claude + GPT",
     "remaining": "剩 {{percent}}%",
     "resets_in": "{{time}} 后重置",
     "exhausted": "已限流",

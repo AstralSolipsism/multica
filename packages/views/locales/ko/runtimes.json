@@ -316,6 +316,8 @@
     "window_short_hours": "{{value}}h",
     "window_short_days": "{{value}}d",
     "window_weekly": "주",
+    "group_gemini": "Gemini",
+    "group_claude_gpt": "Claude + GPT",
     "remaining": "{{percent}}% 남음",
     "resets_in": "{{time}} 후 재설정",
     "exhausted": "속도 제한됨",
