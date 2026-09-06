@@ -162,6 +162,22 @@ func TestValidateRuntimePlanQuota(t *testing.T) {
 		}
 	})
 
+	t.Run("group label bounds", func(t *testing.T) {
+		t.Parallel()
+		// The optional group labels providers with several quota pools
+		// (antigravity's gemini / claude_gpt) are free-form but bounded, and
+		// omission stays legal for single-pool providers.
+		q := validPlanQuotaPayload(now.Unix())
+		q.Windows[0].Group = "gemini"
+		if err := validateRuntimePlanQuota(q, now); err != nil {
+			t.Fatalf("validate with group: %v", err)
+		}
+		q.Windows[0].Group = strings.Repeat("x", protocol.PlanQuotaMaxGroupName+1)
+		if err := validateRuntimePlanQuota(q, now); err == nil {
+			t.Fatal("expected error for oversized group")
+		}
+	})
+
 	t.Run("real zero values are accepted", func(t *testing.T) {
 		t.Parallel()
 		q := validPlanQuotaPayload(now.Unix())

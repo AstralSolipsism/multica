@@ -60,12 +60,17 @@ export type RuntimeVisibility = "private" | "public";
  * One plan-quota window reported for a runtime (e.g. a provider's 5h or
  * weekly rate-limit window). `used_percent` is null when the provider only
  * signals exhaustion without a percentage; `resets_at` is unix seconds.
+ * `group` is the optional quota pool the window belongs to — providers with
+ * several independent pools per account (antigravity: gemini, claude_gpt)
+ * label their windows so the UI can show every pool; single-pool providers
+ * omit it.
  */
 export interface RuntimePlanQuotaWindow {
   name: string;
   used_percent: number | null;
   window_minutes: number | null;
   resets_at: number | null;
+  group?: string | null;
 }
 
 /**

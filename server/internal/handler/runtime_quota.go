@@ -73,6 +73,9 @@ func validateRuntimePlanQuota(q *protocol.RuntimePlanQuota, now time.Time) error
 		if w.UsedPercent != nil && (*w.UsedPercent < 0 || *w.UsedPercent > protocol.PlanQuotaMaxUsedPercent) {
 			return fmt.Errorf("plan quota: window %q used_percent out of range", w.Name)
 		}
+		if len(w.Group) > protocol.PlanQuotaMaxGroupName {
+			return fmt.Errorf("plan quota: window %q group must be at most %d chars", w.Name, protocol.PlanQuotaMaxGroupName)
+		}
 	}
 	return nil
 }

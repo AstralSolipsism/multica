@@ -319,6 +319,8 @@
     "window_short_hours": "{{value}}h",
     "window_short_days": "{{value}}d",
     "window_weekly": "週",
+    "group_gemini": "Gemini",
+    "group_claude_gpt": "Claude + GPT",
     "remaining": "残り {{percent}}%",
     "resets_in": "{{time}}後にリセット",
     "exhausted": "レート制限中",

@@ -4,6 +4,7 @@ import {
   activeQuotaWindows,
   formatCompactDuration,
   parsePlanQuota,
+  quotaWindowGroup,
   windowRemainingPercent,
   type QuotaTone,
 } from "@multica/core/runtimes";
@@ -14,7 +15,7 @@ import {
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
 import { runtimeRowLabel, type MachineQuotaChip, type RuntimeMachine } from "./runtime-machines";
-import { formatQuotaWindowLabel } from "./runtime-quota-cell";
+import { formatQuotaWindowLabel, quotaGroupLabel } from "./runtime-quota-cell";
 import { ProviderLogo } from "./provider-logo";
 import { useT } from "../../i18n";
 
@@ -124,12 +125,17 @@ function QuotaChipTooltip({
           formatQuotaWindowLabel(window.window_minutes, t) ?? window.name;
         const resetsInMs =
           window.resets_at != null ? window.resets_at * 1000 - now : null;
+        // Reporters with several quota pools (antigravity) label each row so
+        // the four buckets don't read as two duplicated window pairs.
+        const group = quotaWindowGroup(window);
         return (
           <span
             key={`${window.name}-${index}`}
             className="flex items-center gap-2 whitespace-nowrap"
           >
-            <span className="text-muted-foreground">{windowLabel}</span>
+            <span className="text-muted-foreground">
+              {group != null ? `${quotaGroupLabel(group, t)} · ${windowLabel}` : windowLabel}
+            </span>
             <span className="tabular-nums">
               {remaining == null
                 ? t(($) => $.machine.metrics.unavailable)
