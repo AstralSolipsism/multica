@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -76,4 +77,25 @@ func kimiVerifyInstanceProcess(pid int) error {
 		return fmt.Errorf("process %d image is not kimi", pid)
 	}
 	return nil
+}
+
+// kimiEstablishedPeerOwnedByUser proves the accepting process of an
+// established connection belongs to this user via lsof: the server-direction
+// tuple 127.0.0.1:<port>->127.0.0.1:<ephemeral> must be owned by our uid.
+func kimiEstablishedPeerOwnedByUser(conn net.Conn) bool {
+	tcp, ok := conn.(*net.TCPConn)
+	if !ok {
+		return false
+	}
+	local, ok1 := tcp.LocalAddr().(*net.TCPAddr)
+	remote, ok2 := tcp.RemoteAddr().(*net.TCPAddr)
+	if !ok1 || !ok2 {
+		return false
+	}
+	out, err := exec.Command("lsof", "-nP", "-F", "pun",
+		fmt.Sprintf("-iTCP:%d", remote.Port), "-sTCP:ESTABLISHED").Output()
+	if err != nil {
+		return false
+	}
+	return lsofEstablishedPeerOwnedBy(string(out), remote.Port, local.Port, os.Geteuid())
 }

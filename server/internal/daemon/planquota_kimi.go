@@ -98,6 +98,10 @@ type kimiPlanQuotaCollector struct {
 	// verifyProcess binds a registry-claimed pid to a live same-user
 	// kimi-image process.
 	verifyProcess func(pid int) error
+	// verifyConnPeer proves the accepting process of an established
+	// connection belongs to this user (per-connection proof; see
+	// loopbackOwnedDialContext).
+	verifyConnPeer func(conn net.Conn) bool
 }
 
 func newKimiPlanQuotaCollector(homeDir string) *kimiPlanQuotaCollector {
@@ -108,18 +112,22 @@ func newKimiPlanQuotaCollector(homeDir string) *kimiPlanQuotaCollector {
 		identitySupported: kimiIdentitySupported,
 		socketOwnedByUser: kimiSocketOwnedByUser,
 		verifyProcess:     kimiVerifyInstanceProcess,
+		verifyConnPeer:    kimiEstablishedPeerOwnedByUser,
 	}
-	// The indirection matters: tests swap c.socketOwnedByUser after
-	// construction, and the dialer must consult the current value.
-	c.client = newKimiHTTPClient(func(port int) bool { return c.socketOwnedByUser(port) })
+	// The indirection matters: tests swap the probe fields after
+	// construction, and the dialer must consult the current values.
+	c.client = newKimiHTTPClient(
+		func(port int) bool { return c.socketOwnedByUser(port) },
+		func(conn net.Conn) bool { return c.verifyConnPeer(conn) },
+	)
 	return c
 }
 
 // newKimiHTTPClient builds the credential-carrying client: no redirects (a
 // 30x would otherwise bounce the bearer to an arbitrary target) and a dialer
-// that proves peer ownership on every connection (see
+// that proves the connection's peer on every connection (see
 // loopbackOwnedDialContext).
-func newKimiHTTPClient(socketOwnedByUser func(port int) bool) *http.Client {
+func newKimiHTTPClient(socketOwnedByUser func(port int) bool, verifyConnPeer func(conn net.Conn) bool) *http.Client {
 	return &http.Client{
 		Timeout: 5 * time.Second,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
@@ -127,7 +135,7 @@ func newKimiHTTPClient(socketOwnedByUser func(port int) bool) *http.Client {
 		},
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return loopbackOwnedDialContext(ctx, network, addr, socketOwnedByUser)
+				return loopbackOwnedDialContext(ctx, network, addr, socketOwnedByUser, verifyConnPeer)
 			},
 			ResponseHeaderTimeout: 4 * time.Second,
 		},
@@ -135,14 +143,17 @@ func newKimiHTTPClient(socketOwnedByUser func(port int) bool) *http.Client {
 }
 
 // loopbackOwnedDialContext dials IPv4 loopback only, and — this is the OL-5
-// R1 reconnection fix — proves listener ownership on EVERY connection:
-// before dialing and again after the connection is established, binding the
-// proof to the actual connection the request (and its bearer) travels on.
+// R1 fix — binds the ownership proof to the ACTUAL connection, not to the
+// port: after the connection is established it locates the server side of
+// this exact 4-tuple (an ESTABLISHED record, which names the accepting
+// process's uid) and requires it to belong to this user. A listener that
+// released the port after accepting our connection — while another same-user
+// listener re-bound it — is invisible to LISTEN checks but not to this one.
 // Go's transport opens a new connection for every reconnect and every
 // automatic retry of an idempotent request, so each of those re-proves here.
-// A connection that can no longer be proven is closed before a single byte —
+// A connection that cannot be proven is closed before a single byte —
 // credential or otherwise — is written to it.
-func loopbackOwnedDialContext(ctx context.Context, network, addr string, socketOwnedByUser func(port int) bool) (net.Conn, error) {
+func loopbackOwnedDialContext(ctx context.Context, network, addr string, socketOwnedByUser func(port int) bool, verifyConnPeer func(conn net.Conn) bool) (net.Conn, error) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
@@ -164,12 +175,9 @@ func loopbackOwnedDialContext(ctx context.Context, network, addr string, socketO
 	if err != nil {
 		return nil, err
 	}
-	if socketOwnedByUser != nil && !socketOwnedByUser(port) {
-		// The listener changed hands while connecting (the original server
-		// released the port and a different process claimed it): this new
-		// connection must not carry anything.
+	if verifyConnPeer != nil && !verifyConnPeer(conn) {
 		_ = conn.Close()
-		return nil, fmt.Errorf("plan quota: listener on port %d changed ownership while connecting", port)
+		return nil, fmt.Errorf("plan quota: cannot prove the peer of the connection to %s belongs to this user", addr)
 	}
 	return conn, nil
 }
@@ -292,6 +300,93 @@ func loopbackListenOwnedByUID(port, uid int, tables [][]byte) bool {
 		}
 	}
 	return found
+}
+
+// establishedPeerOwnedByUID locates the SERVER side of one exact loopback
+// connection in kernel TCP tables: st 01 (ESTABLISHED), local
+// 127.0.0.1:<serverPort> (or v4-mapped), remote 127.0.0.1:<ephemeralPort>.
+// That row's uid is the process that ACCEPTED the connection — the actual
+// peer — and it must equal uid. A row owned by another uid fails; no row at
+// all means the peer cannot be proven (fail closed). LISTEN rows are
+// deliberately ignored: they say nothing about who accepted THIS connection.
+func establishedPeerOwnedByUID(serverPort, ephemeralPort, uid int, tables [][]byte) bool {
+	for _, table := range tables {
+		for i, line := range strings.Split(string(table), "\n") {
+			if i == 0 { // header row
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) < 8 || fields[3] != "01" { // 01 = ESTABLISHED
+				continue
+			}
+			localAddr, localPort, ok := strings.Cut(fields[1], ":")
+			if !ok {
+				continue
+			}
+			remAddr, remPort, ok := strings.Cut(fields[2], ":")
+			if !ok {
+				continue
+			}
+			lp, err := strconv.ParseUint(localPort, 16, 32)
+			if err != nil || int(lp) != serverPort {
+				continue
+			}
+			rp, err := strconv.ParseUint(remPort, 16, 32)
+			if err != nil || int(rp) != ephemeralPort {
+				continue
+			}
+			if !addrIsLoopbackV4OrMapped(localAddr) || !addrIsLoopbackV4OrMapped(remAddr) {
+				continue
+			}
+			peerUID, err := strconv.Atoi(fields[7])
+			if err != nil {
+				return false
+			}
+			return peerUID == uid
+		}
+	}
+	return false
+}
+
+// addrIsLoopbackV4OrMapped reports whether a hex table address is exactly
+// 127.0.0.1 (v4 or v4-mapped-in-v6) — no wildcards: an ESTABLISHED row
+// always has concrete addresses.
+func addrIsLoopbackV4OrMapped(hexAddr string) bool {
+	switch strings.ToUpper(hexAddr) {
+	case "0100007F", "00000000000000000000FFFF0100007F":
+		return true
+	}
+	return false
+}
+
+// lsofEstablishedPeerOwnedBy parses `lsof -F pun` output (macOS): process
+// blocks carry p<pid> and u<uid>; file lines carry n<name>. The proof looks
+// for the server-direction tuple
+// `127.0.0.1:<serverPort>->127.0.0.1:<ephemeralPort>` and requires the
+// owning process block's uid to match. Client-direction rows are our own
+// and ignored.
+func lsofEstablishedPeerOwnedBy(out string, serverPort, ephemeralPort, uid int) bool {
+	serverPrefix := fmt.Sprintf("127.0.0.1:%d->127.0.0.1:%d", serverPort, ephemeralPort)
+	blockUID := -1
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		switch line[0] {
+		case 'p':
+			blockUID = -1
+		case 'u':
+			if u, err := strconv.Atoi(line[1:]); err == nil {
+				blockUID = u
+			}
+		case 'n':
+			if strings.HasPrefix(line[1:], serverPrefix) {
+				return blockUID >= 0 && blockUID == uid
+			}
+		}
+	}
+	return false
 }
 
 // addrServesLoopbackV4Dial reports whether a hex-encoded listener address

@@ -5,6 +5,7 @@ package daemon
 import (
 	"errors"
 	"fmt"
+	"net"
 )
 
 // Platforms without a cheap, reliable way to prove that a loopback listener
@@ -23,3 +24,7 @@ func kimiSocketOwnedByUser(port int) bool { return false }
 func kimiVerifyInstanceProcess(pid int) error {
 	return fmt.Errorf("pid %d: %w", pid, errKimiIdentityUnsupported)
 }
+
+// kimiEstablishedPeerOwnedByUser fails closed on platforms without a way to
+// prove the accepting process of a loopback connection.
+func kimiEstablishedPeerOwnedByUser(conn net.Conn) bool { return false }

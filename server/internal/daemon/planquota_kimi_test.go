@@ -108,6 +108,7 @@ func newKimiTestCollector(home string, port int) *kimiPlanQuotaCollector {
 	c.verifyProcess = func(int) error { return nil }
 	c.identitySupported = func() bool { return true }    // fixtures isolate from the platform gate
 	c.socketOwnedByUser = func(int) bool { return true } // real probes are covered by the linux live test
+	c.verifyConnPeer = func(net.Conn) bool { return true }
 	c.scanBase = port
 	c.scanCount = 1
 	return c
@@ -488,15 +489,15 @@ func TestKimiCollect_RedirectNotFollowed(t *testing.T) {
 }
 
 // The dial constraint itself: non-loopback targets are refused at the
-// connection point, and the ownership probe is consulted on every dial.
+// connection point, and both proofs are consulted on every dial.
 func TestLoopbackOwnedDialContext(t *testing.T) {
 	for _, addr := range []string{"203.0.113.10:443", "192.168.1.5:8080", "[::1]:58627"} {
-		if _, err := loopbackOwnedDialContext(context.Background(), "tcp", addr, nil); err == nil {
+		if _, err := loopbackOwnedDialContext(context.Background(), "tcp", addr, nil, nil); err == nil {
 			t.Fatalf("expected %s to be refused", addr)
 		}
 	}
 
-	// Ownership probe consulted per dial: first dial passes, second (after
+	// Pre-dial probe consulted per dial: first dial passes, second (after
 	// the listener changed hands) is refused.
 	var owned atomic.Bool
 	owned.Store(true)
@@ -505,18 +506,23 @@ func TestLoopbackOwnedDialContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = ln.Close() }()
-	port := ln.Addr().(*net.TCPAddr).Port
 	check := func(int) bool { return owned.Load() }
-	conn, err := loopbackOwnedDialContext(context.Background(), "tcp", ln.Addr().String(), check)
+	conn, err := loopbackOwnedDialContext(context.Background(), "tcp", ln.Addr().String(), check, nil)
 	if err != nil {
 		t.Fatalf("first dial: %v", err)
 	}
 	_ = conn.Close()
 	owned.Store(false)
-	if _, err := loopbackOwnedDialContext(context.Background(), "tcp", ln.Addr().String(), check); err == nil {
+	if _, err := loopbackOwnedDialContext(context.Background(), "tcp", ln.Addr().String(), check, nil); err == nil {
 		t.Fatal("second dial not refused after ownership flip")
 	}
-	_ = port
+
+	// The established-peer proof is consulted after connecting, with the
+	// actual connection: LISTEN fine, peer unprovable → connection closed.
+	peerOK := func(net.Conn) bool { return false }
+	if _, err := loopbackOwnedDialContext(context.Background(), "tcp", ln.Addr().String(), nil, peerOK); err == nil {
+		t.Fatal("dial not refused when the established peer is unprovable")
+	}
 }
 
 // Socket-ownership table parsing, address-aware: the listener must be able
@@ -694,5 +700,102 @@ func TestKimiCollect_ReconnectionRevalidatesListener(t *testing.T) {
 	}
 	if hitsB.Load() != 0 || authB.Load() != 0 {
 		t.Fatalf("new owner received %d requests (%d authed)", hitsB.Load(), authB.Load())
+	}
+}
+
+// The established-peer proof parses the SERVER side of the exact 4-tuple.
+// Matrix includes the round-5 shape: our LISTEN on the port while the
+// ESTABLISHED row (the connection we actually hold) belongs to uid 65534.
+func TestEstablishedPeerOwnedByUID(t *testing.T) {
+	header := "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode"
+	row := func(local, rem, st string, uid int) string {
+		return fmt.Sprintf("   0: %s %s %s 00000000:00000000 00:00000000 00000000 %5d        0 12345 1 0000000000000000 100 0 0 10 0", local, rem, st, uid)
+	}
+	// server 58627 = E503, client ephemeral 40000 = 9C40
+	const (
+		v4lo     = "0100007F"
+		v6Mapped = "00000000000000000000FFFF0100007F"
+	)
+	table := func(lines ...string) [][]byte { return [][]byte{[]byte(header + "\n" + strings.Join(lines, "\n"))} }
+
+	t.Run("ours", func(t *testing.T) {
+		if !establishedPeerOwnedByUID(58627, 40000, 1000, table(row(v4lo+":E503", v4lo+":9C40", "01", 1000))) {
+			t.Fatal("own established peer rejected")
+		}
+	})
+	t.Run("foreign established row fails", func(t *testing.T) {
+		if establishedPeerOwnedByUID(58627, 40000, 1000, table(row(v4lo+":E503", v4lo+":9C40", "01", 65534))) {
+			t.Fatal("foreign established peer accepted")
+		}
+	})
+	t.Run("round-5 shape: our LISTEN plus foreign ESTABLISHED fails", func(t *testing.T) {
+		tables := table(
+			row(v4lo+":E503", "00000000:0000", "0A", 1000), // our re-bound listener
+			row(v4lo+":E503", v4lo+":9C40", "01", 65534),   // foreign accepted conn
+		)
+		if establishedPeerOwnedByUID(58627, 40000, 1000, tables) {
+			t.Fatal("foreign accepted connection hidden behind our listener")
+		}
+	})
+	t.Run("no established row fails closed", func(t *testing.T) {
+		if establishedPeerOwnedByUID(58627, 40000, 1000, table(row(v4lo+":E503", "00000000:0000", "0A", 1000))) {
+			t.Fatal("LISTEN-only accepted as peer proof")
+		}
+	})
+	t.Run("wrong ephemeral or wrong port does not match", func(t *testing.T) {
+		if establishedPeerOwnedByUID(58627, 40000, 1000, table(row(v4lo+":E503", v4lo+":9C41", "01", 1000))) {
+			t.Fatal("wrong ephemeral accepted")
+		}
+		if establishedPeerOwnedByUID(58627, 40000, 1000, table(row(v4lo+":E504", v4lo+":9C40", "01", 1000))) {
+			t.Fatal("wrong server port accepted")
+		}
+	})
+	t.Run("non-established states ignored", func(t *testing.T) {
+		if establishedPeerOwnedByUID(58627, 40000, 1000, table(row(v4lo+":E503", v4lo+":9C40", "06", 1000))) { // TIME_WAIT
+			t.Fatal("TIME_WAIT row accepted")
+		}
+	})
+	t.Run("v4-mapped dual-stack row matches", func(t *testing.T) {
+		if !establishedPeerOwnedByUID(58627, 40000, 1000, table(row(v6Mapped+":E503", v6Mapped+":9C40", "01", 1000))) {
+			t.Fatal("v4-mapped established row rejected")
+		}
+	})
+}
+
+// The macOS lsof -F pun parser: process blocks (p/u) then per-fd name lines.
+func TestLsofEstablishedPeerOwnedBy(t *testing.T) {
+	out := "p100\nu501\nf3\nn127.0.0.1:58627->127.0.0.1:40000 (ESTABLISHED)\n"
+	if !lsofEstablishedPeerOwnedBy(out, 58627, 40000, 501) {
+		t.Fatal("own server-direction row rejected")
+	}
+	foreign := "p100\nu65534\nf3\nn127.0.0.1:58627->127.0.0.1:40000 (ESTABLISHED)\n"
+	if lsofEstablishedPeerOwnedBy(foreign, 58627, 40000, 501) {
+		t.Fatal("foreign server-direction row accepted")
+	}
+	// Client-direction row (our own) must not count as the peer.
+	clientOnly := "p99\nu501\nf5\nn127.0.0.1:40000->127.0.0.1:58627 (ESTABLISHED)\n"
+	if lsofEstablishedPeerOwnedBy(clientOnly, 58627, 40000, 501) {
+		t.Fatal("client-direction row accepted as peer proof")
+	}
+	if lsofEstablishedPeerOwnedBy("", 58627, 40000, 501) {
+		t.Fatal("empty output accepted")
+	}
+}
+
+// Collector level: LISTEN proof fine, established-peer proof fails → zero
+// credential delivery (deterministic, platform-independent).
+func TestKimiCollect_EstablishedPeerMustMatchProof(t *testing.T) {
+	var gotAuth string
+	srv := newKimiTestServer(t, kimiLimitsJSON(), 0, &gotAuth)
+	defer srv.Close()
+	port := serverPort(t, srv)
+
+	collector := newKimiTestCollector(kimiTestHomeNoRegistry(t), port)
+	collector.verifyConnPeer = func(net.Conn) bool { return false }
+	if _, err := collector.collect(context.Background()); err == nil {
+		t.Fatal("expected collection to fail when the established peer is unprovable")
+	}
+	if gotAuth != "" {
+		t.Fatalf("credential delivered to unproven peer: %q", gotAuth)
 	}
 }
