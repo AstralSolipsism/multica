@@ -62,10 +62,11 @@ export type UseCase =
  * `role` / `use_case` were collected in-flow on the About-you step,
  * which has been removed; the slots stay in this one shape (they share
  * the same JSONB column and PATCH endpoint as `source`) and simply
- * remain unset for users who onboard without them. `source` is no
- * longer asked during onboarding — it is collected after the user has
- * seen agents complete work, via the workspace source-backfill prompt
- * (see `needs-backfill.ts`).
+ * remain unset for users who onboard without them. `source` is not
+ * asked during onboarding. Upstream it was collected post-onboarding
+ * by the workspace source-backfill prompt (`needs-backfill.ts`); this
+ * deployment's fork also unmounted that prompt, so nothing collects it
+ * today — historical values remain readable for personalization.
  *
  * `*_skipped: true` distinguishes an explicit Skip / decline from a
  * slot the user never reached. Both states are "unknown" for
