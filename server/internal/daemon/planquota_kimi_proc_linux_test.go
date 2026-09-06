@@ -96,6 +96,23 @@ func TestKimiDialerProductionProofsLiveSocket(t *testing.T) {
 // acceptor, even though the LISTEN check now passes (the new listener is
 // ours). Zero bytes are written to the foreign connection.
 func TestKimiEstablishedPeerProof_ForeignAcceptedConnection(t *testing.T) {
+	// Acceptance guard: this test must never alter shared directory
+	// permissions (round-6 review). Assert /tmp's mode is untouched.
+	tmpStat, err := os.Stat("/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpModeBefore := tmpStat.Mode()
+	t.Cleanup(func() {
+		st, err := os.Stat("/tmp")
+		if err != nil {
+			t.Errorf("stat /tmp after test: %v", err)
+			return
+		}
+		if st.Mode() != tmpModeBefore {
+			t.Errorf("/tmp mode changed: %v -> %v", tmpModeBefore, st.Mode())
+		}
+	})
 	if os.Geteuid() != 0 {
 		t.Skip("needs root to spawn a foreign-uid helper")
 	}
