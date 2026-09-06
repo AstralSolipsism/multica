@@ -28,9 +28,7 @@
     "toast_sent": "フィードバックをありがとうございます！",
     "toast_failed": "フィードバックを送信できませんでした",
     "send": "フィードバックを送信",
-    "sending": "送信中…",
-    "github_hint_prefix": "より迅速な対応とオープンな議論をご希望ですか？こちらへ ",
-    "github_hint_link": "GitHub"
+    "sending": "送信中…"
   },
   "issue_picker": {
     "search_placeholder": "タスクを検索...",

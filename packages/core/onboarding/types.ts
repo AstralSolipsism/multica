@@ -1,8 +1,4 @@
-export type OnboardingStep =
-  | "welcome"
-  | "about_you"
-  | "workspace"
-  | "runtime";
+export type OnboardingStep = "welcome" | "workspace" | "runtime";
 
 /**
  * Exit path from the onboarding flow. Sent to
@@ -63,12 +59,13 @@ export type UseCase =
  * now always commits a one-element array), and `role` stays single
  * because downstream personalization wants a primary identity.
  *
- * `role` / `use_case` are collected in-flow on the About-you step;
- * `source` is no longer asked during onboarding — it is collected
- * after the user has seen agents complete work, via the workspace
- * source-backfill prompt (see `needs-backfill.ts`). The slots stay in
- * this one shape because they share the same JSONB column and PATCH
- * endpoint.
+ * `role` / `use_case` were collected in-flow on the About-you step,
+ * which has been removed; the slots stay in this one shape (they share
+ * the same JSONB column and PATCH endpoint as `source`) and simply
+ * remain unset for users who onboard without them. `source` is no
+ * longer asked during onboarding — it is collected after the user has
+ * seen agents complete work, via the workspace source-backfill prompt
+ * (see `needs-backfill.ts`).
  *
  * `*_skipped: true` distinguishes an explicit Skip / decline from a
  * slot the user never reached. Both states are "unknown" for

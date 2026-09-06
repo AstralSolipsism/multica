@@ -6,7 +6,7 @@ import {
   type ColumnSizingState,
 } from "@tanstack/react-table";
 import * as React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DataTable } from "@multica/ui/components/ui/data-table";
 
 type Row = { status: string; owner: string };
@@ -88,6 +88,23 @@ function setup() {
 }
 
 describe("DataTable column resize", () => {
+  // The row virtualizer's scroll-reset debounce schedules a real 150ms
+  // timeout per drag frame and never cancels it on unmount (react-virtual
+  // clears listeners only). A timer left pending when the last test finishes
+  // fires after this file's jsdom environment is gone, and react-dom's
+  // update path dereferences the dead `window` — an uncaught exception that
+  // fails the whole suite nondeterministically depending on scheduling. Fake
+  // the clock for this file and drop pending timers between tests; no
+  // assertion here depends on real time.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
   it("commits nothing when the handle is clicked without dragging", () => {
     const { onSizingChange, handle } = setup();
 
