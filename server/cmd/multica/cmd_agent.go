@@ -412,9 +412,9 @@ func requireTaskLocalConfigRoot() error {
 		// is as stuck as one hitting the others, and "which command did you
 		// happen to run first" must not decide whether the error is actionable.
 		if markerPath := leftoverDaemonTaskMarkerPath(); markerPath != "" {
-			return fmt.Errorf("daemon-managed task requires a task-local Multica config root in %s%s", cli.TaskConfigRootEnv, leftoverMarkerSuffix(markerPath))
+			return fmt.Errorf("daemon-managed task requires a task-local Labrastro config root in %s%s", cli.TaskConfigRootEnv, leftoverMarkerSuffix(markerPath))
 		}
-		return fmt.Errorf("daemon-managed task requires a task-local Multica config root in %s%s", cli.TaskConfigRootEnv, daemonPortOnlyContextHint())
+		return fmt.Errorf("daemon-managed task requires a task-local Labrastro config root in %s%s", cli.TaskConfigRootEnv, daemonPortOnlyContextHint())
 	}
 	return nil
 }

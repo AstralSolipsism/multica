@@ -40,8 +40,8 @@ import (
 
 // writeHeader emits the brief's leading title and one-line elevator pitch.
 func writeHeader(b *strings.Builder) {
-	b.WriteString("# Multica Agent Runtime\n\n")
-	b.WriteString("You are a coding agent in the Multica platform. Use the `multica` CLI to interact with the platform.\n\n")
+	b.WriteString("# Labrastro Agent Runtime\n\n")
+	b.WriteString("You are a coding agent in the Labrastro platform. Use the `multica` CLI to interact with the platform.\n\n")
 }
 
 // writeBackgroundTaskSafetySlim emits the Background Task Safety section

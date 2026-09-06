@@ -109,6 +109,6 @@ describe("HelpLauncher", () => {
     render(<HelpLauncher />);
     expect(screen.queryByText("Desktop app")).not.toBeInTheDocument();
     // The rest of the menu is unaffected by the gate.
-    expect(screen.getByText("Docs")).toBeInTheDocument();
+    expect(screen.getByText("Feedback")).toBeInTheDocument();
   });
 });

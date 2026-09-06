@@ -2,10 +2,8 @@
 
 import {
   ArrowUpRight,
-  BookOpen,
   CircleHelp,
   Download,
-  History,
   MessageCircle,
 } from "lucide-react";
 import {
@@ -23,8 +21,6 @@ import { isDesktopShell } from "../platform/local-directory";
 import { DISCORD_URL, DiscordIcon } from "./discord";
 import { useT } from "../i18n";
 
-const DOCS_URL = "https://multica.ai/docs";
-const CHANGELOG_URL = "https://multica.ai/changelog";
 // Absolute, including on self-hosted deployments: the installers we ship are
 // the same binaries either way, and the desktop client can point at a
 // self-hosted backend once installed. A self-host-relative /download would
@@ -77,28 +73,6 @@ export function HelpLauncher() {
             <DropdownMenuSeparator />
           </>
         )}
-        <DropdownMenuItem
-          render={
-            <a href={DOCS_URL} target="_blank" rel="noopener noreferrer" />
-          }
-        >
-          <BookOpen className="h-3.5 w-3.5" />
-          {t(($) => $.help.docs)}
-          <ArrowUpRight className="size-3 translate-y-px text-faint-foreground" />
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          render={
-            <a
-              href={CHANGELOG_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-            />
-          }
-        >
-          <History className="h-3.5 w-3.5" />
-          {t(($) => $.help.changelog)}
-          <ArrowUpRight className="size-3 translate-y-px text-faint-foreground" />
-        </DropdownMenuItem>
         <DropdownMenuItem
           render={
             <a href={DISCORD_URL} target="_blank" rel="noopener noreferrer" />

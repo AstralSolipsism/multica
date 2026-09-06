@@ -222,7 +222,7 @@ func writeWecomInstallError(w http.ResponseWriter, err error, wsUUID, agentUUID 
 			"this bot is connected to an archived agent in this workspace — restore that agent, or disconnect its bot, before connecting it here")
 	case errors.Is(err, wecom.ErrBotOwnedByAnotherWorkspace):
 		writeErrorCode(w, http.StatusConflict, "wecom_bot_owned_by_another_workspace",
-			"this bot is already connected to a different Multica workspace — disconnect it there before connecting it here")
+			"this bot is already connected to a different Labrastro workspace — disconnect it there before connecting it here")
 	case errors.Is(err, wecom.ErrInvalidInstallationParams):
 		// Something the admin left out. Their input, their fix. This code means
 		// exactly that and nothing else — the two credential outcomes below get
@@ -385,7 +385,7 @@ func (h *Handler) RedeemWecomBindingToken(w http.ResponseWriter, r *http.Request
 		case errors.Is(err, wecom.ErrBindingTokenInvalid):
 			writeError(w, http.StatusGone, "binding token invalid or expired")
 		case errors.Is(err, wecom.ErrBindingAlreadyAssigned):
-			writeError(w, http.StatusConflict, "this WeCom user is already bound to a different Multica user")
+			writeError(w, http.StatusConflict, "this WeCom user is already bound to a different Labrastro user")
 		case errors.Is(err, wecom.ErrBindingNotWorkspaceMember):
 			writeError(w, http.StatusForbidden, "binding refused (are you a workspace member?)")
 		default:

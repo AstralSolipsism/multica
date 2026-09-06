@@ -3238,8 +3238,8 @@ func worktreeClaimBlockReason(resources []ProjectResourceData, runtime db.AgentR
 			continue
 		}
 		return fmt.Sprintf(
-			"This machine's Multica runtime does not support parallel (worktree) mode, which %q is set to use. "+
-				"Update the Multica app on that machine to the latest version, then re-run this task. "+
+			"This machine's Labrastro runtime does not support parallel (worktree) mode, which %q is set to use. "+
+				"Update the Labrastro app on that machine to the latest version, then re-run this task. "+
 				"Refusing to run rather than falling back to editing the directory directly, which is what this mode exists to prevent.",
 			ref.LocalPath)
 	}

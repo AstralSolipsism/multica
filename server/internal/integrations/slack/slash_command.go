@@ -48,16 +48,16 @@ const clearSlashCommand = "/clear"
 // User-facing ephemeral replies. Kept terse; only the invoker sees them.
 const (
 	slashUsageText            = "Tell me what to file, e.g. `/issue the login button does nothing on Safari`."
-	slashQueuedText           = "✅ On it — I'm turning that into an issue. You'll get a Multica notification when it's ready."
-	slashNotMemberText        = "You're not a member of this Multica workspace, so I can't file an issue for you."
-	slashLinkAccountFallback  = "Link your Slack account to Multica first, then try `/issue` again."
-	slashIssueLimitText       = "⚠️ This workspace has reached its issue limit. Open Multica to view the available recovery options."
+	slashQueuedText           = "✅ On it — I'm turning that into an issue. You'll get a Labrastro notification when it's ready."
+	slashNotMemberText        = "You're not a member of this Labrastro workspace, so I can't file an issue for you."
+	slashLinkAccountFallback  = "Link your Slack account to Labrastro first, then try `/issue` again."
+	slashIssueLimitText       = "⚠️ This workspace has reached its issue limit. Open Labrastro to view the available recovery options."
 	slashInternalErrorText    = "⚠️ Something went wrong creating the issue. Please try again."
-	slashDisabledText         = "This Slack app isn't connected to Multica (or was disconnected). Ask a workspace admin to reconnect it."
-	slashNewStartedText       = "✅ Started a new Multica chat."
-	slashNewThreadGuideText   = "In a channel, start the new chat from the target thread with `@Multica /new`."
-	slashClearStartedText     = "✅ Cleared the agent context in this Multica chat."
-	slashClearThreadGuideText = "In a channel, clear the target thread's context with `@Multica /clear`."
+	slashDisabledText         = "This Slack app isn't connected to Labrastro (or was disconnected). Ask a workspace admin to reconnect it."
+	slashNewStartedText       = "✅ Started a new Labrastro chat."
+	slashNewThreadGuideText   = "In a channel, start the new chat from the target thread with `@Labrastro /new`."
+	slashClearStartedText     = "✅ Cleared the agent context in this Labrastro chat."
+	slashClearThreadGuideText = "In a channel, clear the target thread's context with `@Labrastro /clear`."
 )
 
 // slashQueries is the narrow slice of generated queries the slash-command
@@ -363,6 +363,6 @@ func (p *SlashCommandProcessor) bindingText(ctx context.Context, inst engine.Res
 	bindURL := p.appURL + p.bindingPath + "?token=" + url.QueryEscape(token.Raw)
 	// Wrap the URL as an explicit Slack link so the base64url token's `_`/`-`
 	// are not mangled by mrkdwn (same reasoning as the replier).
-	return "👋 To file issues, link your Slack account to Multica: <" +
+	return "👋 To file issues, link your Slack account to Labrastro: <" +
 		bindURL + "|link your account>\n(This link expires in 15 minutes.)"
 }

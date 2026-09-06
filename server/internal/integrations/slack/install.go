@@ -32,7 +32,7 @@ var (
 	// would collide with the (channel_type, app_id) routing index. A Slack app is
 	// one bot identity and maps to one agent; reusing it here requires
 	// disconnecting it in the other workspace first.
-	ErrTeamOwnedByAnotherWorkspace = errors.New("slack: this Slack app is already connected to a different Multica workspace")
+	ErrTeamOwnedByAnotherWorkspace = errors.New("slack: this Slack app is already connected to a different Labrastro workspace")
 	// ErrTeamOwnedBySameWorkspace is returned when the app is already connected to
 	// a DIFFERENT (live, non-archived) agent in the SAME workspace. The old
 	// catch-all wrongly blamed "another workspace"; naming the same-workspace case

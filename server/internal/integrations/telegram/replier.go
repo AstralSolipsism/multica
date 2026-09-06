@@ -29,10 +29,10 @@ import (
 
 const (
 	msgFreshPending   = "✅ Fresh start ready. Your next chat message will run without previous context."
-	msgChatStarted    = "✅ Started a new Multica chat. Your next message will enter it."
+	msgChatStarted    = "✅ Started a new Labrastro chat. Your next message will enter it."
 	msgIssueUsage     = "Please include an issue title. Use:\n\n/issue <title>\n[description] (optional)"
-	msgIssueNotMember = "You're not a member of this Multica workspace, so I can't file an issue for you. Ask a workspace admin to invite you, then send the command again."
-	msgIssueDisabled  = "This Telegram bot isn't connected to Multica (or was disconnected). Ask a workspace admin to reconnect it."
+	msgIssueNotMember = "You're not a member of this Labrastro workspace, so I can't file an issue for you. Ask a workspace admin to invite you, then send the command again."
+	msgIssueDisabled  = "This Telegram bot isn't connected to Labrastro (or was disconnected). Ask a workspace admin to reconnect it."
 )
 
 // bindingMinter is the binding-token surface the replier needs.
@@ -174,7 +174,7 @@ func (r *OutboundReplier) sendBindingPrompt(ctx context.Context, inst engine.Res
 		return fmt.Errorf("mint binding token: %w", err)
 	}
 	bindURL := r.appURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
-	text := "👋 To start chatting with me, link your Telegram account to Multica:\n" + bindURL + "\n(This link expires in 15 minutes.)"
+	text := "👋 To start chatting with me, link your Telegram account to Labrastro:\n" + bindURL + "\n(This link expires in 15 minutes.)"
 	return r.post(ctx, inst, msg, text)
 }
 

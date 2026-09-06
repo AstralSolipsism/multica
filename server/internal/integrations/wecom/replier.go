@@ -25,7 +25,7 @@ const (
 	agentOfflineText  = "⚠️ 智能体当前不在线，你的消息已收到，等它上线后会处理。"
 	agentArchivedText = "⚠️ 该智能体已归档，无法回复。请联系工作区管理员。"
 	freshPendingText  = "✅ 已准备从空上下文运行。你的下一条聊天消息仍会进入当前对话，但不会带上之前的上下文。"
-	chatStartedText   = "✅ 已新建 Multica 对话。你的下一条消息会进入该对话。"
+	chatStartedText   = "✅ 已新建 Labrastro 对话。你的下一条消息会进入该对话。"
 	issueUsageText    = "请填写任务标题，格式如下：\n\n`/issue <标题>`\n`[描述]`（可选）"
 )
 
@@ -188,7 +188,7 @@ func (r *OutboundReplier) sendBindingPrompt(ctx context.Context, inst engine.Res
 	text := "👋 绑定链接刚才已经发给你了，就在上方，请直接点击完成绑定。"
 	if !token.Reused {
 		bindURL := r.appURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
-		text = "👋 请先绑定你的 Multica 账号，才能与我对话：\n" + bindURL + "\n（链接 15 分钟内有效）"
+		text = "👋 请先绑定你的 Labrastro 账号，才能与我对话：\n" + bindURL + "\n（链接 15 分钟内有效）"
 	}
 	// A binding token is a bearer credential: binding.Redeem only checks that
 	// the redeemer belongs to the token's workspace, and the bind page redeems

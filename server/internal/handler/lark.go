@@ -236,7 +236,7 @@ func (h *Handler) RedeemLarkBindingToken(w http.ResponseWriter, r *http.Request)
 		case errors.Is(err, lark.ErrBindingTokenInvalid):
 			writeError(w, http.StatusGone, "binding token invalid or expired")
 		case errors.Is(err, lark.ErrBindingAlreadyAssigned):
-			writeError(w, http.StatusConflict, "this Lark account is already bound to a different Multica user")
+			writeError(w, http.StatusConflict, "this Lark account is already bound to a different Labrastro user")
 		case errors.Is(err, lark.ErrBindingNotWorkspaceMember):
 			writeError(w, http.StatusForbidden, "binding refused (are you a workspace member?)")
 		default:

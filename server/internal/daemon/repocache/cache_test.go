@@ -1822,7 +1822,7 @@ func TestCreateWorktreeInstallsCoAuthoredByHook(t *testing.T) {
 		t.Fatalf("git log failed: %v", err)
 	}
 	commitMsg := string(out)
-	expectedTrailer := "Co-authored-by: multica-agent <github@multica.ai>"
+	expectedTrailer := "Co-authored-by: Labrastro Agent <agent@labrastro.local>"
 	if !strings.Contains(commitMsg, expectedTrailer) {
 		t.Errorf("commit message missing Co-authored-by trailer.\ngot:\n%s", commitMsg)
 	}
@@ -1854,7 +1854,7 @@ func TestCoAuthoredByHookIdempotent(t *testing.T) {
 	}
 
 	// Commit with the trailer already in the message.
-	trailer := "Co-authored-by: multica-agent <github@multica.ai>"
+	trailer := "Co-authored-by: Labrastro Agent <agent@labrastro.local>"
 	if err := os.WriteFile(filepath.Join(result.Path, "test.txt"), []byte("hello\n"), 0o644); err != nil {
 		t.Fatalf("write test file: %v", err)
 	}
@@ -1941,7 +1941,7 @@ func TestCreateWorktreeRemovesCoAuthoredByHookWhenDisabled(t *testing.T) {
 		t.Fatalf("git log failed: %v", err)
 	}
 	commitMsg := string(out)
-	if strings.Contains(commitMsg, "Co-authored-by: multica-agent") {
+	if strings.Contains(commitMsg, "Co-authored-by: Labrastro Agent") {
 		t.Errorf("commit unexpectedly carries the Co-authored-by trailer with setting disabled.\ngot:\n%s", commitMsg)
 	}
 }
@@ -2027,7 +2027,7 @@ git interpret-trailers --in-place --trailer "$TRAILER" "$COMMIT_MSG_FILE"
 	if err != nil {
 		t.Fatalf("git log failed: %v", err)
 	}
-	if commitMsg := string(out); strings.Contains(commitMsg, "Co-authored-by: multica-agent") {
+	if commitMsg := string(out); strings.Contains(commitMsg, "Co-authored-by: Labrastro Agent") {
 		t.Errorf("commit unexpectedly carries the Co-authored-by trailer after legacy hook removal.\ngot:\n%s", commitMsg)
 	}
 }
@@ -2294,7 +2294,7 @@ func TestCoAuthoredByStateStopsTrailerInExistingCheckout(t *testing.T) {
 		return string(out)
 	}
 
-	if msg := commit("a.txt", "enabled commit"); !strings.Contains(msg, "Co-authored-by: multica-agent") {
+	if msg := commit("a.txt", "enabled commit"); !strings.Contains(msg, "Co-authored-by: Labrastro Agent") {
 		t.Fatalf("precondition: commit made with the setting on lacks the trailer.\ngot:\n%s", msg)
 	}
 
@@ -2315,7 +2315,7 @@ func TestCoAuthoredByStateStopsTrailerInExistingCheckout(t *testing.T) {
 	if err := cache.WriteCoAuthoredByState("ws-1", true); err != nil {
 		t.Fatalf("WriteCoAuthoredByState(true) failed: %v", err)
 	}
-	if msg := commit("d.txt", "re-enabled commit"); !strings.Contains(msg, "Co-authored-by: multica-agent") {
+	if msg := commit("d.txt", "re-enabled commit"); !strings.Contains(msg, "Co-authored-by: Labrastro Agent") {
 		t.Errorf("commit missing the trailer after the toggle was turned back on.\ngot:\n%s", msg)
 	}
 }
@@ -2520,7 +2520,7 @@ func TestReconcileCoAuthoredByHooksUpgradesReleasedHookInPlace(t *testing.T) {
 	if !strings.Contains(string(hook), filepath.ToSlash(cache.CoAuthoredByStatePath("ws-1"))) {
 		t.Fatalf("hook was not upgraded to read the state file.\ngot:\n%s", hook)
 	}
-	if msg := commitInWorktree(t, worktreePath, "a.txt", "still enabled"); !strings.Contains(msg, "Co-authored-by: multica-agent") {
+	if msg := commitInWorktree(t, worktreePath, "a.txt", "still enabled"); !strings.Contains(msg, "Co-authored-by: Labrastro Agent") {
 		t.Errorf("upgraded hook dropped the trailer while the setting is on.\ngot:\n%s", msg)
 	}
 
