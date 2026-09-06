@@ -1,6 +1,9 @@
 package daemon
 
 import (
+	"context"
+	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -146,4 +149,35 @@ func TestPlanQuotaCacheLifecycle(t *testing.T) {
 	if got := d.heartbeatExtrasFor("runtime-1").PlanQuota; got != nil {
 		t.Fatalf("deleted runtime PlanQuota = %+v, want nil", got)
 	}
+}
+
+// TestHostMetricsSamplerConstructedBeforeReaders pins the R3 regression: the
+// sampler must exist the moment New returns — before Run launches the
+// heartbeat readers that call heartbeatExtrasFor — so no reader can ever
+// observe an unassigned d.hostMetrics. The concurrent read loop below is the
+// part that trips `go test -race` if the field ever moves back to a late
+// assignment inside Run.
+func TestHostMetricsSamplerConstructedBeforeReaders(t *testing.T) {
+	t.Parallel()
+
+	d := New(Config{WorkspacesRoot: t.TempDir()}, slog.Default())
+	if d.hostMetrics == nil {
+		t.Fatal("New returned a daemon without a host metrics sampler")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.hostMetrics.run(ctx)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				_ = d.heartbeatExtrasFor("runtime-x")
+			}
+		}()
+	}
+	wg.Wait()
 }

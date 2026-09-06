@@ -51,30 +51,42 @@ func TestValidateHostMetrics(t *testing.T) {
 	})
 }
 
-func TestHostMetricsPublishThrottle(t *testing.T) {
+func TestHostMetricsPublishTracker(t *testing.T) {
 	t.Parallel()
-	throttle := newHostMetricsPublishThrottle()
+	tracker := newHostMetricsPublishTracker()
 	now := time.Now()
 
-	if !throttle.allow("ws:d", now) {
+	// First content for a machine publishes immediately.
+	if !tracker.shouldPublish("ws:d", "10|68", now) {
 		t.Fatal("first publish suppressed")
 	}
-	if throttle.allow("ws:d", now.Add(hostMetricsPublishMinInterval-time.Second)) {
-		t.Fatal("second publish inside the interval allowed")
+	// Same content is never re-announced.
+	if tracker.shouldPublish("ws:d", "10|68", now.Add(time.Hour)) {
+		t.Fatal("unchanged content re-announced")
 	}
-	if throttle.allow("ws:other", now.Add(time.Second)) {
-		// different machine is independent
-	} else {
+	// A change inside the window is deferred (not dropped — see below).
+	if tracker.shouldPublish("ws:d", "95|68", now.Add(hostMetricsPublishMinInterval-time.Second)) {
+		t.Fatal("change inside the interval allowed")
+	}
+	// A different machine is independent.
+	if !tracker.shouldPublish("ws:other", "95|68", now.Add(time.Second)) {
 		t.Fatal("other machine suppressed by first machine's publish")
 	}
-	if !throttle.allow("ws:d", now.Add(hostMetricsPublishMinInterval)) {
-		t.Fatal("publish after the interval suppressed")
+	// The deferred change is re-offered by the next beat after the window
+	// and publishes then — the latest content is never lost. The boundary
+	// itself counts as past the window (jitter at exactly 15s must fire).
+	if !tracker.shouldPublish("ws:d", "95|68", now.Add(hostMetricsPublishMinInterval)) {
+		t.Fatal("deferred change not re-published at the window boundary")
+	}
+	// After the re-publish, the tracker holds the new content.
+	if tracker.shouldPublish("ws:d", "95|68", now.Add(time.Hour)) {
+		t.Fatal("content re-announced after the deferred publish")
 	}
 
 	// Idle entries are swept on use so the map stays bounded.
-	throttle.last["ws:ancient"] = now.Add(-2 * time.Hour)
-	throttle.allow("ws:d", now.Add(hostMetricsPublishMinInterval+time.Second))
-	if _, ok := throttle.last["ws:ancient"]; ok {
+	tracker.machines["ws:ancient"] = hostMetricsMachinePublication{publishedAt: now.Add(-2 * time.Hour), publishedKey: "1|1"}
+	tracker.shouldPublish("ws:d", "95|68", now.Add(time.Hour))
+	if _, ok := tracker.machines["ws:ancient"]; ok {
 		t.Fatal("idle entry survived a sweep")
 	}
 }
@@ -110,8 +122,9 @@ func (f *fakeMachineMetricsStore) GetBatch(_ context.Context, _ []MachineRef) ma
 
 // TestStoreHeartbeatMetrics pins the non-fatal contract and the broadcast
 // rule: invalid input, missing daemon id, unavailable store, and backend
-// errors are all swallowed; a broadcast fires only on a content change and
-// is throttled per machine.
+// errors are all swallowed; a broadcast fires when the machine's rounded
+// content differs from the last announcement, throttled per machine with
+// deferred re-delivery of the latest change.
 func TestStoreHeartbeatMetrics(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
@@ -123,7 +136,7 @@ func TestStoreHeartbeatMetrics(t *testing.T) {
 		return &Handler{
 			Bus:                 bus,
 			MachineMetricsStore: store,
-			hostMetricsPublish:  newHostMetricsPublishThrottle(),
+			hostMetricsPublish:  newHostMetricsPublishTracker(),
 		}, &published
 	}
 
@@ -157,19 +170,39 @@ func TestStoreHeartbeatMetrics(t *testing.T) {
 		}
 	})
 
-	t.Run("content change broadcasts once per interval", func(t *testing.T) {
+	// The S1 regression: CPU 10% publishes at t0; CPU 95% lands at t0+14.9s
+	// (inside the throttle window) and must NOT be lost — the next beat at
+	// t0+15.1s re-offers the now-stable 95% and delivers it. Dropped beats
+	// (out-of-order) never drive the broadcast bookkeeping.
+	t.Run("throttled change is redelivered once stable", func(t *testing.T) {
 		store := &fakeMachineMetricsStore{available: true, results: []MachineMetricsPutResult{
-			MachineMetricsChanged, MachineMetricsChanged, MachineMetricsRefreshed, MachineMetricsDropped,
+			MachineMetricsChanged,   // t0: 10% stored
+			MachineMetricsChanged,   // t0+14.9s: 95% stored
+			MachineMetricsRefreshed, // t0+15.1s: 95% stable
+			MachineMetricsRefreshed, // t0+16s: 95% stable
+			MachineMetricsDropped,   // out-of-order old beat
 		}}
 		h, published := newHandler(store)
-		for i := 0; i < 4; i++ {
-			h.storeHeartbeatMetrics(context.Background(), "ws", "d", hostMetricsSample(f64(float64(i)), nil, now.Unix()+int64(i)))
+		ctx := context.Background()
+
+		h.storeHeartbeatMetricsAt(ctx, "ws", "d", hostMetricsSample(f64(10), f64(68), now.Unix()), now)
+		h.storeHeartbeatMetricsAt(ctx, "ws", "d", hostMetricsSample(f64(95), f64(68), now.Unix()), now.Add(14*time.Second+900*time.Millisecond))
+		if len(*published) != 1 {
+			t.Fatalf("published after throttled change = %v, want only the first", *published)
 		}
-		if len(store.calls) != 4 {
-			t.Fatalf("store calls = %v, want 4", store.calls)
+		h.storeHeartbeatMetricsAt(ctx, "ws", "d", hostMetricsSample(f64(95), f64(68), now.Unix()), now.Add(15*time.Second+100*time.Millisecond))
+		if len(*published) != 2 {
+			t.Fatalf("deferred change not redelivered after the window: published = %v", *published)
 		}
-		if len(*published) != 1 || (*published)[0] != protocol.EventRuntimeTelemetryUpdated {
-			t.Fatalf("published = %v, want one %s", *published, protocol.EventRuntimeTelemetryUpdated)
+		h.storeHeartbeatMetricsAt(ctx, "ws", "d", hostMetricsSample(f64(95), f64(68), now.Unix()), now.Add(16*time.Second))
+		h.storeHeartbeatMetricsAt(ctx, "ws", "d", hostMetricsSample(f64(10), f64(68), now.Unix()-60), now.Add(16*time.Second))
+		if len(*published) != 2 {
+			t.Fatalf("published after stable/dropped beats = %v, want still two", *published)
+		}
+		for _, eventType := range *published {
+			if eventType != protocol.EventRuntimeTelemetryUpdated {
+				t.Fatalf("published event = %v, want %s", eventType, protocol.EventRuntimeTelemetryUpdated)
+			}
 		}
 	})
 
@@ -183,25 +216,17 @@ func TestStoreHeartbeatMetrics(t *testing.T) {
 	})
 }
 
-// createHostMetricsTestRuntime inserts a runtime row on a specific daemon id
-// so one daemon can host several runtimes in a test. The provider varies per
-// call because (workspace_id, daemon_id, provider) is unique.
-func createHostMetricsTestRuntime(t *testing.T, ownerID, daemonID, name string) string {
+// hostMetricsRuntime inserts a runtime row on a specific daemon id so one
+// daemon can host several runtimes in a test. The provider varies per call
+// because (workspace_id, daemon_id, provider) is unique.
+func hostMetricsRuntime(t *testing.T, daemonID, name string) string {
 	t.Helper()
-	var runtimeID string
-	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO agent_runtime (
-			workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, last_seen_at
-		)
-		VALUES ($1, $2, $3, 'local', $5, 'online', 'Host Metrics Test', '{}'::jsonb, $4, now())
-		RETURNING id
-	`, testWorkspaceID, daemonID, name, ownerID, fmt.Sprintf("provider-%d", time.Now().UnixNano())).Scan(&runtimeID); err != nil {
-		t.Fatalf("create host metrics runtime: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+	return dbfx.Runtime(t, name, testutil.Cols{
+		"daemon_id":    daemonID,
+		"runtime_mode": "local",
+		"provider":     fmt.Sprintf("metrics-provider-%d", time.Now().UnixNano()),
+		"device_info":  "Host Metrics Test",
 	})
-	return runtimeID
 }
 
 // newHostMetricsTestHandler returns a shallow copy of the shared test
@@ -211,7 +236,7 @@ func newHostMetricsTestHandler(t *testing.T) (*Handler, *[]string) {
 	rdb := newRedisTestClient(t)
 	h := *testHandler
 	h.MachineMetricsStore = NewRedisMachineMetricsStore(rdb)
-	h.hostMetricsPublish = newHostMetricsPublishThrottle()
+	h.hostMetricsPublish = newHostMetricsPublishTracker()
 	bus := events.New()
 	var published []string
 	bus.SubscribeAll(func(event events.Event) { published = append(published, event.Type) })
@@ -243,7 +268,7 @@ func TestDaemonHeartbeatMetrics(t *testing.T) {
 	t.Run("stored under the runtime row's workspace and daemon", func(t *testing.T) {
 		h, published := newHostMetricsTestHandler(t)
 		daemonID := fmt.Sprintf("metrics-daemon-%d", time.Now().UnixNano())
-		runtimeID := createHostMetricsTestRuntime(t, testUserID, daemonID, "metrics-runtime-a")
+		runtimeID := hostMetricsRuntime(t, daemonID, "metrics-runtime-a")
 
 		req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat",
 			heartbeatMetricsBody(runtimeID, 42, now), testWorkspaceID, daemonID)
@@ -265,7 +290,7 @@ func TestDaemonHeartbeatMetrics(t *testing.T) {
 		daemonID := fmt.Sprintf("metrics-daemon-%d", time.Now().UnixNano())
 		runtimeIDs := make([]string, 3)
 		for i := range runtimeIDs {
-			runtimeIDs[i] = createHostMetricsTestRuntime(t, testUserID, daemonID, fmt.Sprintf("metrics-runtime-%c", 'a'+i))
+			runtimeIDs[i] = hostMetricsRuntime(t, daemonID, fmt.Sprintf("metrics-runtime-%c", 'a'+i))
 		}
 
 		// Every runtime heartbeats with the same sampler output (same
@@ -298,7 +323,7 @@ func TestDaemonHeartbeatMetrics(t *testing.T) {
 	t.Run("invalid metrics dropped, beat still acked", func(t *testing.T) {
 		h, _ := newHostMetricsTestHandler(t)
 		daemonID := fmt.Sprintf("metrics-daemon-%d", time.Now().UnixNano())
-		runtimeID := createHostMetricsTestRuntime(t, testUserID, daemonID, "metrics-runtime-bad")
+		runtimeID := hostMetricsRuntime(t, daemonID, "metrics-runtime-bad")
 
 		for _, metrics := range []map[string]any{
 			{"cpu_percent": 101, "captured_at": now},
@@ -328,7 +353,7 @@ func TestHandleDaemonWSHeartbeatMetrics(t *testing.T) {
 	h, published := newHostMetricsTestHandler(t)
 
 	daemonID := fmt.Sprintf("metrics-ws-daemon-%d", time.Now().UnixNano())
-	runtimeID := createHostMetricsTestRuntime(t, testUserID, daemonID, "metrics-ws-runtime")
+	runtimeID := hostMetricsRuntime(t, daemonID, "metrics-ws-runtime")
 	identity := daemonws.ClientIdentity{
 		WorkspaceID: testWorkspaceID,
 		// DaemonID intentionally empty: user-PAT daemon connections.
@@ -373,9 +398,9 @@ func TestListAgentRuntimesSystemStats(t *testing.T) {
 	freshDaemon := fmt.Sprintf("metrics-list-fresh-%d", now.UnixNano())
 	staleDaemon := fmt.Sprintf("metrics-list-stale-%d", now.UnixNano())
 	quietDaemon := fmt.Sprintf("metrics-list-quiet-%d", now.UnixNano())
-	freshRuntime := createHostMetricsTestRuntime(t, testUserID, freshDaemon, "metrics-list-fresh")
-	staleRuntime := createHostMetricsTestRuntime(t, testUserID, staleDaemon, "metrics-list-stale")
-	quietRuntime := createHostMetricsTestRuntime(t, testUserID, quietDaemon, "metrics-list-quiet")
+	freshRuntime := hostMetricsRuntime(t, freshDaemon, "metrics-list-fresh")
+	staleRuntime := hostMetricsRuntime(t, staleDaemon, "metrics-list-stale")
+	quietRuntime := hostMetricsRuntime(t, quietDaemon, "metrics-list-quiet")
 
 	// Fresh and stale samples land directly in the store; a foreign
 	// workspace's sample on a colliding daemon id must not leak in.

@@ -2,6 +2,7 @@ import {
   activeQuotaWindows,
   deriveRuntimeHealth,
   isQuotaStale,
+  isSystemStatsStale,
   parsePlanQuota,
   pickMachineSystemStats,
   quotaTone,
@@ -280,6 +281,10 @@ function finalizeRuntimeMachine(
   );
   const quotaChips = onlineCount > 0 ? machineQuotaChips(runtimes, options.now) : [];
   const systemStats = pickMachineSystemStats(runtimes);
+  // The server's stale flag is the base; the sample's own age advances it on
+  // the page's ticking clock so an open page goes stale without a refetch.
+  const systemStatsStale =
+    systemStats != null && isSystemStatsStale(systemStats, options.now);
 
   return {
     id: draft.id,
@@ -303,7 +308,7 @@ function finalizeRuntimeMachine(
     cpuPercent: systemStats?.cpu_percent ?? null,
     memoryPercent: systemStats?.memory_percent ?? null,
     systemStatsCapturedAt: systemStats?.captured_at ?? null,
-    systemStatsStale: systemStats?.stale ?? false,
+    systemStatsStale,
     lastSeenAt: latestLastSeenAt(runtimes),
   };
 }

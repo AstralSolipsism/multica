@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRuntime } from "../types";
 import {
+  isSystemStatsStale,
   metricsTone,
   parseSystemStats,
   pickMachineSystemStats,
@@ -90,5 +91,17 @@ describe("metricsTone", () => {
     expect(metricsTone(89.9)).toBe("warning");
     expect(metricsTone(90)).toBe("destructive");
     expect(metricsTone(100)).toBe("destructive");
+  });
+});
+
+describe("isSystemStatsStale", () => {
+  const sample = { cpu_percent: 42, memory_percent: 68, captured_at: 1000, stale: false };
+
+  it("honors the server flag and advances with the clock", () => {
+    expect(isSystemStatsStale({ ...sample, stale: true }, 1000_000)).toBe(true);
+    // 30s old at the boundary: still fresh.
+    expect(isSystemStatsStale(sample, 1000_000 + 30_000)).toBe(false);
+    // Past the SLA the open page marks stale without waiting for a refetch.
+    expect(isSystemStatsStale(sample, 1000_000 + 30_001)).toBe(true);
   });
 });

@@ -550,6 +550,22 @@ describe("runtime machine system stats", () => {
     });
   });
 
+  it("advances freshness on the ticking clock without a refetch", () => {
+    // The daemon's sampler stopped (or the network did) right after this
+    // sample: the server response said fresh, and no new response ever
+    // arrives. Rebuilding with a later `now` must flip the machine to stale.
+    const runtime = makeRuntime({
+      id: "rt-aging",
+      system_stats: { cpu_percent: 42, memory_percent: 68, captured_at: NOW_SEC, stale: false },
+    });
+
+    const fresh = buildRuntimeMachines([runtime], { now: NOW });
+    expect(fresh[0]?.systemStatsStale).toBe(false);
+
+    const aged = buildRuntimeMachines([runtime], { now: NOW + 31_000 });
+    expect(aged[0]?.systemStatsStale).toBe(true);
+  });
+
   it("ignores malformed samples instead of failing the row", () => {
     const machines = buildRuntimeMachines(
       [

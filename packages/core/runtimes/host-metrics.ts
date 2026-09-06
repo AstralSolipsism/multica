@@ -49,3 +49,22 @@ export function metricsTone(percent: number | null): QuotaTone {
   if (percent >= 80) return "warning";
   return "ok";
 }
+
+/** Freshness SLA for online host metrics: the daemon samples every 15s, so
+ *  30s covers one missed cycle. Mirrors the server's hostMetricsFreshnessSLA. */
+export const SYSTEM_STATS_STALE_MS = 30_000;
+
+/** Client-side freshness advancement: the server's `stale` flag is computed
+ *  once at response time, but the sample keeps aging while the page sits
+ *  open. Recompute from the sample age on the page's ticking clock so an
+ *  open page reliably transitions to the stale state even when nothing
+ *  triggers a refetch (e.g. the daemon's sampler stopped while heartbeats
+ *  continue). Skew note: captured_at is the daemon's clock; the server
+ *  already rejects samples more than 2min ahead, and a modestly-behind
+ *  daemon clock only marks stale slightly early — the honest failure mode. */
+export function isSystemStatsStale(
+  stats: RuntimeSystemStats,
+  nowMs: number,
+): boolean {
+  return stats.stale || nowMs - stats.captured_at * 1000 > SYSTEM_STATS_STALE_MS;
+}

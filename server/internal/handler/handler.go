@@ -220,9 +220,9 @@ type Handler struct {
 	// (workspace, daemon); defaults to the noop store and swaps to Redis at
 	// wire time. See runtime_host_metrics_store.go.
 	MachineMetricsStore MachineMetricsStore
-	// hostMetricsPublish throttles the per-machine telemetry broadcast
-	// fired when a stored host-metrics sample's content changes.
-	hostMetricsPublish *hostMetricsPublishThrottle
+	// hostMetricsPublish coalesces and throttles the per-machine telemetry
+	// broadcast fired when a stored host-metrics sample's content changes.
+	hostMetricsPublish *hostMetricsPublishTracker
 	HeartbeatScheduler HeartbeatScheduler
 	Storage            storage.Storage
 	CFSigner           *auth.CloudFrontSigner
@@ -501,7 +501,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		cfg: cfg,
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
-	h.hostMetricsPublish = newHostMetricsPublishThrottle()
+	h.hostMetricsPublish = newHostMetricsPublishTracker()
 
 	// GitHub API snapshot pipeline for PR cards (MUL-5265). Built
 	// unconditionally but inert (every trigger no-ops) when the App private key
