@@ -72,6 +72,9 @@
       "cli": "CLI",
       "cloud_worker": "클라우드 워커",
       "local_daemon": "로컬 데몬",
+      "cpu": "CPU",
+      "memory": "메모리",
+      "stale": "오래된 데이터",
       "unavailable": "--"
     },
     "rename": "기기 이름 변경",

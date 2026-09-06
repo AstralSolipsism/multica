@@ -66,6 +66,10 @@ function machine(runtimes: AgentRuntime[]): RuntimeMachine {
     queuedCount: 0,
     providerNames: runtimes.map((item) => item.provider),
     quotaChips: [],
+    cpuPercent: null,
+    memoryPercent: null,
+    systemStatsCapturedAt: null,
+    systemStatsStale: false,
     lastSeenAt: "2026-07-15T00:00:00Z",
   };
 }

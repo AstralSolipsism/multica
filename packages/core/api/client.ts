@@ -257,6 +257,7 @@ import {
   IssueTriggerPreviewSchema,
   CloudRuntimeNodeListSchema,
   CloudRuntimeNodeSchema,
+  RuntimeListSchema,
   AgentBuilderRuntimeSwitchSchema,
   AgentBuilderSessionSchema,
   AgentBuilderSessionListSchema,
@@ -277,6 +278,7 @@ import {
   EMPTY_PRIORITIZE_QUEUED_CHAT_TASK_RESPONSE,
   EMPTY_CLOUD_RUNTIME_NODE,
   EMPTY_CLOUD_RUNTIME_NODE_LIST,
+  EMPTY_RUNTIME_LIST,
   EMPTY_AGENT_BUILDER_SESSION,
   EMPTY_GROUPED_ISSUES_RESPONSE,
   EMPTY_ISSUE_TABLE_FACETS_RESPONSE,
@@ -834,19 +836,6 @@ export class ApiClient {
     });
     return parseWithFallback(raw, UserSchema, EMPTY_USER, {
       endpoint: "POST /api/me/onboarding/complete",
-    });
-  }
-
-  async joinCloudWaitlist(payload: {
-    email: string;
-    reason?: string;
-  }): Promise<User> {
-    const raw = await this.fetch<unknown>("/api/me/onboarding/cloud-waitlist", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    return parseWithFallback(raw, UserSchema, EMPTY_USER, {
-      endpoint: "POST /api/me/onboarding/cloud-waitlist",
     });
   }
 
@@ -1639,8 +1628,15 @@ export class ApiClient {
     // workspace_id alone is not enough: the server resolves the workspace from
     // the slug header first, so a caller listing another workspace's runtimes
     // must override the header too.
-    return this.fetch(`/api/runtimes?${search}`, {
+    const raw = await this.fetch<unknown>(`/api/runtimes?${search}`, {
       headers: workspaceHeader(workspaceSlug),
+    });
+    // Boundary parse is deliberately shallow: RuntimeListSchema validates
+    // only the additive system_stats field per row (malformed → null) and
+    // passes everything else through, so a new server field never breaks
+    // older clients and one bad row cannot sink the list.
+    return parseWithFallback(raw, RuntimeListSchema, EMPTY_RUNTIME_LIST, {
+      endpoint: "GET /api/runtimes",
     });
   }
 

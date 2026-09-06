@@ -49,9 +49,29 @@ type AgentRuntimeResponse struct {
 	// this runtime (agent_runtime.plan_quota, protocol.RuntimePlanQuota on
 	// the wire); null when nothing was ever reported. Handled as opaque JSON
 	// like Metadata — the server validates on write, not on read.
-	PlanQuota any    `json:"plan_quota"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	PlanQuota any `json:"plan_quota"`
+	// SystemStats is the latest host CPU/memory sample reported by this
+	// runtime's daemon, served from the Redis hot cache keyed by
+	// (workspace, daemon); null when nothing was ever (or is no longer)
+	// reported. Stale marks samples past the freshness SLA so the UI can
+	// tell "stale data" apart from "never reported".
+	SystemStats *RuntimeSystemStatsResponse `json:"system_stats"`
+	CreatedAt   string                      `json:"created_at"`
+	UpdatedAt   string                      `json:"updated_at"`
+}
+
+// RuntimeSystemStatsResponse is the API projection of one machine-level
+// host metrics sample (protocol.HostMetrics on the daemon heartbeat wire)
+// plus the server-computed staleness flag. Pointer percents distinguish a
+// real 0% from "not sampled".
+type RuntimeSystemStatsResponse struct {
+	CPUPercent    *float64 `json:"cpu_percent"`
+	MemoryPercent *float64 `json:"memory_percent"`
+	// CapturedAt is unix seconds stamped by the daemon's sampler.
+	CapturedAt int64 `json:"captured_at"`
+	// Stale is computed at read time against the server clock: the sample is
+	// older than the 30s freshness SLA and no longer describes current load.
+	Stale bool `json:"stale"`
 }
 
 func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
@@ -785,6 +805,21 @@ func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 	resp := make([]AgentRuntimeResponse, len(runtimes))
 	for i, rt := range runtimes {
 		resp[i] = runtimeToResponse(rt)
+	}
+
+	// Host metrics ride along on the rows that share a daemon: one Redis
+	// MGET for the workspace's distinct machines, then per-row assembly.
+	// Store failure or a missing key leaves SystemStats nil — the UI renders
+	// its "not reported" state; there is deliberately no DB fallback.
+	statsByDaemon := h.systemStatsForRuntimes(r.Context(), workspaceID, runtimes)
+	statsNow := time.Now()
+	for i := range resp {
+		if resp[i].DaemonID == nil {
+			continue
+		}
+		if sample, ok := statsByDaemon[*resp[i].DaemonID]; ok {
+			resp[i].SystemStats = formatSystemStats(sample, statsNow)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)

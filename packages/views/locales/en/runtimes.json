@@ -76,6 +76,9 @@
       "cli": "CLI",
       "cloud_worker": "Cloud worker",
       "local_daemon": "Local daemon",
+      "cpu": "CPU",
+      "memory": "Memory",
+      "stale": "Stale",
       "unavailable": "--"
     },
     "rename": "Rename machine",

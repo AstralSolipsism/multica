@@ -88,6 +88,21 @@ export interface RuntimePlanQuota {
   source: string;
 }
 
+/**
+ * Host-level CPU / memory sample reported by the machine's daemon
+ * (`captured_at` is unix seconds). Null percents mean the sampler could not
+ * read that metric — consumers must render "no data", never 0. `stale` is
+ * computed by the server at read time: true means the sample is older than
+ * the freshness SLA and no longer describes current load, which the UI must
+ * render distinctly from "never reported".
+ */
+export interface RuntimeSystemStats {
+  cpu_percent: number | null;
+  memory_percent: number | null;
+  captured_at: number;
+  stale: boolean;
+}
+
 export interface RuntimeDevice {
   id: string;
   workspace_id: string;
@@ -124,6 +139,12 @@ export interface RuntimeDevice {
    * of inventing numbers (see parsePlanQuota in core/runtimes/plan-quota).
    */
   plan_quota?: RuntimePlanQuota | null;
+  /**
+   * Last host-level CPU / memory sample reported by this runtime's daemon.
+   * Older backends omit the field — consumers must treat a missing value as
+   * "no data" (render `--`), never as 0.
+   */
+  system_stats?: RuntimeSystemStats | null;
   last_seen_at: string | null;
   created_at: string;
   updated_at: string;

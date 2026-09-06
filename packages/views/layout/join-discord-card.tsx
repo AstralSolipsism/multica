@@ -1,15 +1,18 @@
 "use client";
 
-import { X } from "lucide-react";
+import { useState } from "react";
+import { QrCode, X } from "lucide-react";
 import { useAuthStore } from "@multica/core/auth";
-import { DISCORD_URL, DiscordIcon } from "./discord";
+import { FeishuQrDialog } from "./feishu-group-qr-dialog";
 import { useDiscordCardDismissed } from "./use-discord-card-dismissed";
 import { useT } from "../i18n";
 
 /**
- * Dismissible "Join our Discord" entry sharing the sidebar footer strip with
- * the help launcher. Once dismissed it stays hidden for that user on this
- * browser — see {@link useDiscordCardDismissed}.
+ * Dismissible community entry sharing the sidebar footer strip with the
+ * help launcher. Clicking opens the group QR code dialog instead of
+ * navigating anywhere — see {@link FeishuQrDialog}. Once dismissed it
+ * stays hidden for that user on this browser — see
+ * {@link useDiscordCardDismissed}.
  *
  * Deliberately shaped as a sidebar row, not a bordered card: it matches
  * SidebarMenuButton metrics (h-8 / rounded-md / gap-2 / text-body) and
@@ -21,7 +24,7 @@ import { useT } from "../i18n";
  * 224px strip with the help trigger leaves 128px for the label, and the arrow
  * plus the dismiss button together overflow that in the widest locale (en,
  * 109px). The dismiss affordance wins because it is a user-facing capability
- * and the arrow is only a hint — the Discord mark already signals the
+ * and the arrow is only a hint — the QR mark already signals the
  * destination. `flex-1 min-w-0` makes the label truncate rather than push the
  * trigger off.
  *
@@ -35,22 +38,22 @@ export function JoinDiscordCard() {
   const { t } = useT("layout");
   const userId = useAuthStore((s) => s.user?.id);
   const [dismissed, dismiss] = useDiscordCardDismissed(userId);
+  const [qrOpen, setQrOpen] = useState(false);
 
   if (dismissed) return null;
 
   return (
     <div className="group/discord relative min-w-0 flex-1">
-      <a
-        href={DISCORD_URL}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="flex h-8 items-center gap-2 rounded-md px-2 pr-8 text-body text-muted-foreground ring-sidebar-ring outline-hidden transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2"
+      <button
+        type="button"
+        onClick={() => setQrOpen(true)}
+        className="flex h-8 w-full items-center gap-2 rounded-md px-2 pr-8 text-left text-body text-muted-foreground ring-sidebar-ring outline-hidden transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2"
       >
-        <DiscordIcon className="size-4 shrink-0" />
+        <QrCode className="size-4 shrink-0" />
         <span className="truncate">
           {t(($) => $.sidebar.discord_card.title)}
         </span>
-      </a>
+      </button>
       {/* Revealed on hover/focus so the resting row stays quiet. Coarse
           pointers get no hover, so keep it permanently visible there. */}
       <button
@@ -61,6 +64,7 @@ export function JoinDiscordCard() {
       >
         <X className="size-3.5" />
       </button>
+      <FeishuQrDialog open={qrOpen} onOpenChange={setQrOpen} />
     </div>
   );
 }

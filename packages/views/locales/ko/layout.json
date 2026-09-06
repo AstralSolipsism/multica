@@ -32,7 +32,7 @@
     "download_desktop": "데스크톱 앱",
     "docs": "문서",
     "changelog": "변경 로그",
-    "discord": "Discord",
+    "discord": "Feishu 그룹",
     "feedback": "피드백",
     "server_version": "서버 버전 {{version}}"
   },
@@ -56,8 +56,12 @@
     "configure_group": "설정",
     "unread_overflow": "99+",
     "discord_card": {
-      "title": "Discord 참여하기",
+      "title": "Feishu 그룹",
       "dismiss": "닫기"
     }
+  },
+  "feishu_qr": {
+    "title": "Feishu 그룹 QR 코드",
+    "hint": "Feishu로 스캔하여 그룹에 참여하세요"
   }
 }

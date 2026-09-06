@@ -1,21 +1,16 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import enLayout from "../locales/en/layout.json";
 import { JoinDiscordCard } from "./join-discord-card";
 
 // react-i18next isn't initialised in the views test env, so resolve the
-// selector against the real en/layout.json to assert on actual copy.
+// selector against the real en/layout.json to assert on actual copy. The
+// enLayout import must precede the component import: the factory below runs
+// while ./join-discord-card pulls in ../i18n.
 vi.mock("../i18n", () => ({
   useT: () => ({
-    t: (sel: (r: { sidebar: { discord_card: Record<string, string> } }) => string) =>
-      sel({
-        sidebar: {
-          discord_card: {
-            title: "Join our Discord",
-            dismiss: "Dismiss",
-          },
-        },
-      }),
+    t: (sel: (r: typeof enLayout) => string) => sel(enLayout),
   }),
 }));
 
@@ -31,11 +26,21 @@ afterEach(() => {
 });
 
 describe("JoinDiscordCard", () => {
-  it("links to the Discord invite", () => {
+  // The entry is a button that opens the in-app QR dialog — never an
+  // outbound anchor, so joining the community neither navigates away nor
+  // contacts a third-party host.
+  it("opens the group QR dialog instead of navigating", async () => {
+    const user = userEvent.setup();
     render(<JoinDiscordCard />);
-    const link = screen.getByRole("link", { name: /join our discord/i });
-    expect(link).toHaveAttribute("href", "https://discord.gg/W8gYBn226t");
-    expect(link).toHaveAttribute("target", "_blank");
+
+    expect(
+      screen.queryByRole("link", { name: /Feishu group/i }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Feishu group/i }));
+
+    const qr = screen.getByRole("img", { name: /Feishu group QR code/i });
+    expect(qr).toHaveAttribute("src", "/feishu-group-qr.png");
   });
 
   it("hides and stays hidden after dismiss, persisting per user", async () => {
@@ -43,12 +48,12 @@ describe("JoinDiscordCard", () => {
     const { unmount } = render(<JoinDiscordCard />);
 
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
-    expect(screen.queryByText("Join our Discord")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Feishu group/i)).not.toBeInTheDocument();
 
     // A fresh mount for the same user keeps the card hidden.
     unmount();
     render(<JoinDiscordCard />);
-    expect(screen.queryByText("Join our Discord")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Feishu group/i)).not.toBeInTheDocument();
   });
 
   it("keeps the card visible for a different user", async () => {
@@ -59,6 +64,8 @@ describe("JoinDiscordCard", () => {
 
     userId.current = "user-2";
     render(<JoinDiscordCard />);
-    expect(screen.getByText("Join our Discord")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Feishu group/i }),
+    ).toBeInTheDocument();
   });
 });

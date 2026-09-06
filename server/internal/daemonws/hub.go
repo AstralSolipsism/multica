@@ -48,6 +48,7 @@ type RuntimeLease struct {
 	mu sync.Mutex
 
 	workspaceID     string
+	daemonID        string
 	status          string
 	lastSeenAt      time.Time
 	lastSeenAtValid bool
@@ -56,6 +57,7 @@ type RuntimeLease struct {
 // RuntimeLeaseState is an atomic snapshot used by the heartbeat handler.
 type RuntimeLeaseState struct {
 	WorkspaceID     string
+	DaemonID        string
 	Status          string
 	LastSeenAt      time.Time
 	LastSeenAtValid bool
@@ -70,6 +72,17 @@ func NewRuntimeLease(workspaceID, status string, lastSeenAt time.Time, lastSeenA
 	}
 }
 
+// WithDaemonID records the runtime row's owning daemon id on the lease. The
+// heartbeat path keys machine-level state (host metrics samples) by it; the
+// row value is authoritative because the connection's authenticated identity
+// carries no daemon id when the daemon heartbeats with a user PAT.
+func (l *RuntimeLease) WithDaemonID(daemonID string) *RuntimeLease {
+	l.mu.Lock()
+	l.daemonID = daemonID
+	l.mu.Unlock()
+	return l
+}
+
 func (l *RuntimeLease) Snapshot() RuntimeLeaseState {
 	if l == nil {
 		return RuntimeLeaseState{}
@@ -78,6 +91,7 @@ func (l *RuntimeLease) Snapshot() RuntimeLeaseState {
 	defer l.mu.Unlock()
 	return RuntimeLeaseState{
 		WorkspaceID:     l.workspaceID,
+		DaemonID:        l.daemonID,
 		Status:          l.status,
 		LastSeenAt:      l.lastSeenAt,
 		LastSeenAtValid: l.lastSeenAtValid,
