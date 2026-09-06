@@ -519,3 +519,133 @@ func TestReportRuntimeQuota(t *testing.T) {
 		testutil.Call(t, testHandler.ReportRuntimeQuota, req).Want(http.StatusNotFound)
 	})
 }
+
+// TestApplyRuntimePlanQuotaClearMarkerGuard pins the S2b rule: a windowless
+// snapshot is a clear marker ("back to not reported") and may only overwrite
+// a row that is empty or already belongs to the same provider+source — never
+// another source's live data.
+func TestApplyRuntimePlanQuotaClearMarkerGuard(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	clearMarker := func(provider, source string, observedAt int64) *protocol.RuntimePlanQuota {
+		return &protocol.RuntimePlanQuota{
+			Provider:   provider,
+			Status:     protocol.PlanQuotaStatusOK,
+			ObservedAt: observedAt,
+			Source:     source,
+		}
+	}
+
+	t.Run("clear lands on an empty row", func(t *testing.T) {
+		runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+		rt := loadRuntime(t, runtimeID)
+		updated, err := testHandler.applyRuntimePlanQuota(ctx, rt, clearMarker("zenmux", protocol.PlanQuotaSourceDaemon, 1000))
+		if err != nil || !updated {
+			t.Fatalf("clear on empty row: updated=%v err=%v", updated, err)
+		}
+		stored := readPlanQuotaColumn(t, runtimeID)
+		if stored["provider"] != "zenmux" || stored["windows"] != nil {
+			t.Fatalf("stored = %v", stored)
+		}
+	})
+
+	t.Run("clear overwrites the same source's snapshot", func(t *testing.T) {
+		runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+		rt := loadRuntime(t, runtimeID)
+		if _, err := testHandler.applyRuntimePlanQuota(ctx, rt, &protocol.RuntimePlanQuota{
+			Provider: "zenmux", Status: protocol.PlanQuotaStatusOK, ObservedAt: 1000, Source: protocol.PlanQuotaSourceDaemon,
+			Windows: []protocol.RuntimePlanQuotaWindow{{Name: "primary"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		updated, err := testHandler.applyRuntimePlanQuota(ctx, rt, clearMarker("zenmux", protocol.PlanQuotaSourceDaemon, 2000))
+		if err != nil || !updated {
+			t.Fatalf("clear on own row: updated=%v err=%v", updated, err)
+		}
+		if stored := readPlanQuotaColumn(t, runtimeID); stored["windows"] != nil || stored["observed_at"] != float64(2000) {
+			t.Fatalf("stored = %v", stored)
+		}
+	})
+
+	t.Run("clear cannot erase an external BYO snapshot", func(t *testing.T) {
+		runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+		rt := loadRuntime(t, runtimeID)
+		if _, err := testHandler.applyRuntimePlanQuota(ctx, rt, &protocol.RuntimePlanQuota{
+			Provider: "zenmux", Status: protocol.PlanQuotaStatusOK, ObservedAt: 1000, Source: protocol.PlanQuotaSourceExternal,
+			Windows: []protocol.RuntimePlanQuotaWindow{{Name: "primary"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		updated, err := testHandler.applyRuntimePlanQuota(ctx, rt, clearMarker("zenmux", protocol.PlanQuotaSourceDaemon, 2000))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updated {
+			t.Fatal("daemon clear overwrote an external snapshot")
+		}
+		stored := readPlanQuotaColumn(t, runtimeID)
+		if stored["source"] != "external" || stored["windows"] == nil {
+			t.Fatalf("external snapshot clobbered: %v", stored)
+		}
+	})
+
+	t.Run("clear cannot erase another provider's snapshot", func(t *testing.T) {
+		runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+		rt := loadRuntime(t, runtimeID)
+		if _, err := testHandler.applyRuntimePlanQuota(ctx, rt, validPlanQuotaPayload(1000)); err != nil { // codex/daemon
+			t.Fatal(err)
+		}
+		updated, err := testHandler.applyRuntimePlanQuota(ctx, rt, clearMarker("zenmux", protocol.PlanQuotaSourceDaemon, 2000))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updated {
+			t.Fatal("zenmux clear overwrote a codex snapshot")
+		}
+		if stored := readPlanQuotaColumn(t, runtimeID); stored["provider"] != "codex" || stored["windows"] == nil {
+			t.Fatalf("codex snapshot clobbered: %v", stored)
+		}
+	})
+
+	t.Run("normal reports still supersede other sources", func(t *testing.T) {
+		runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+		rt := loadRuntime(t, runtimeID)
+		if _, err := testHandler.applyRuntimePlanQuota(ctx, rt, &protocol.RuntimePlanQuota{
+			Provider: "kimi", Status: protocol.PlanQuotaStatusOK, ObservedAt: 1000, Source: protocol.PlanQuotaSourceExternal,
+			Windows: []protocol.RuntimePlanQuotaWindow{{Name: "primary"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		// A real daemon report (with windows) at a newer observed_at still
+		// wins — the guard only constrains windowless clear markers.
+		updated, err := testHandler.applyRuntimePlanQuota(ctx, rt, validPlanQuotaPayload(2000))
+		if err != nil || !updated {
+			t.Fatalf("normal write over external row: updated=%v err=%v", updated, err)
+		}
+	})
+
+	t.Run("clear refresh stays throttleable", func(t *testing.T) {
+		runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+		rt := loadRuntime(t, runtimeID)
+		if _, err := testHandler.applyRuntimePlanQuota(ctx, rt, clearMarker("zenmux", protocol.PlanQuotaSourceDaemon, 1000)); err != nil {
+			t.Fatal(err)
+		}
+		// Same empty content within the freshness window: no write.
+		updated, err := testHandler.applyRuntimePlanQuota(ctx, rt, clearMarker("zenmux", protocol.PlanQuotaSourceDaemon, 1000+60))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updated {
+			t.Fatal("clear refresh inside throttle window reported updated=true")
+		}
+		// Past the window the freshness refresh lands, so a held clear marker
+		// never ages into the stale UI state while the daemon keeps sending it.
+		updated, err = testHandler.applyRuntimePlanQuota(ctx, rt, clearMarker("zenmux", protocol.PlanQuotaSourceDaemon, 1000+planQuotaFreshnessThrottleSeconds+60))
+		if err != nil || !updated {
+			t.Fatalf("clear refresh past throttle: updated=%v err=%v", updated, err)
+		}
+	})
+}

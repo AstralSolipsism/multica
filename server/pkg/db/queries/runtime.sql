@@ -161,6 +161,12 @@ RETURNING *;
 -- means "stale, unchanged, or throttled" and the caller skips the change
 -- broadcast. Deliberately does NOT touch updated_at: quota churn is
 -- observational, not a user-visible row edit.
+--
+-- A snapshot WITHOUT windows is a clear marker ("back to not reported"): it
+-- may only land on a row that is empty or already belongs to the SAME
+-- provider+source, so one reporter's clear can never erase another source's
+-- live snapshot (OL-5 S2b). Normal reports always carry windows and are
+-- unaffected by this guard.
 UPDATE agent_runtime SET plan_quota = @plan_quota::jsonb
 WHERE id = @id
   AND (plan_quota IS NULL
@@ -169,7 +175,11 @@ WHERE id = @id
   AND (plan_quota IS NULL
        OR plan_quota->>'observed_at' IS NULL
        OR (plan_quota - 'observed_at') IS DISTINCT FROM @content::jsonb
-       OR (plan_quota->>'observed_at')::bigint <= @freshness_before::bigint);
+       OR (plan_quota->>'observed_at')::bigint <= @freshness_before::bigint)
+  AND (@content::jsonb ? 'windows'
+       OR plan_quota IS NULL
+       OR (plan_quota->>'provider' = @content::jsonb->>'provider'
+           AND plan_quota->>'source' = @content::jsonb->>'source'));
 
 -- name: UpdateAgentRuntimeCustomNameByDaemon :many
 -- Machine-level rename (MUL-4217): applies one custom name to every runtime

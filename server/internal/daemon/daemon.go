@@ -2098,9 +2098,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// reports only to runtimes explicitly linked via MULTICA_ZENMUX_LINK (the
 	// loop also runs link-only so a removed association is actively cleared).
 	go d.kimiPlanQuotaLoop(ctx)
-	if d.cfg.ZenMuxManagementAPIKey != "" || !d.cfg.ZenMuxLink.empty() {
-		go d.zenmuxPlanQuotaLoop(ctx)
-	}
+	// ZenMux self-gates like Kimi: it always starts so removed associations
+	// are actively cleared, and polls only with key + link configured.
+	go d.zenmuxPlanQuotaLoop(ctx)
 
 	// Preflight succeeded and the background loops are up: the daemon has
 	// registered its runtimes and can now claim and run tasks. Flip /health

@@ -36,10 +36,18 @@ func kimiLimitsJSON() string {
 
 // newKimiTestServer emulates Kimi's auth surface: unauthenticated /api/*
 // calls get HTTP 401 with envelope code 40101; authenticated ones get the
-// usage payload. Every Authorization header seen is recorded.
+// usage payload. Every request (and every Authorization header) is recorded.
 func newKimiTestServer(t *testing.T, usageBody string, usageStatus int, gotAuth *string) *httptest.Server {
 	t.Helper()
+	return newKimiTestServerCounted(t, usageBody, usageStatus, gotAuth, nil)
+}
+
+func newKimiTestServerCounted(t *testing.T, usageBody string, usageStatus int, gotAuth *string, hits *atomic.Int64) *httptest.Server {
+	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hits != nil {
+			hits.Add(1)
+		}
 		if r.URL.Path != "/api/v1/oauth/usage" {
 			http.NotFound(w, r)
 			return
@@ -61,7 +69,8 @@ func newKimiTestServer(t *testing.T, usageBody string, usageStatus int, gotAuth 
 }
 
 // kimiTestHome builds a fake ~/.kimi-code: the token file and an instance
-// registry entry pinning the test server's port.
+// registry entry pinning the test server's port, claiming THIS test process
+// as the server pid (tests stub verifyProcess around it).
 func kimiTestHome(t *testing.T, port int) string {
 	t.Helper()
 	home := t.TempDir()
@@ -72,10 +81,33 @@ func kimiTestHome(t *testing.T, port int) string {
 	if err := os.MkdirAll(instances, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(instances, "inst-1.json"), []byte(fmt.Sprintf(`{"port": %d}`, port)), 0o600); err != nil {
+	entry := fmt.Sprintf(`{"server_id":"01TEST","pid":%d,"host":"127.0.0.1","port":%d}`, os.Getpid(), port)
+	if err := os.WriteFile(filepath.Join(instances, "01TEST.json"), []byte(entry), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return home
+}
+
+// kimiTestHomeNoRegistry builds the home with the token but NO instance
+// registry, forcing the scan-fallback path.
+func kimiTestHomeNoRegistry(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, kimiServerTokenFile), []byte("test-kimi-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
+// newKimiTestCollector builds a collector for tests: identity checks stubbed
+// to pass, scan fallback pointed at the test server's port. Tests override
+// individual probes to pin the failure modes.
+func newKimiTestCollector(home string, port int) *kimiPlanQuotaCollector {
+	c := newKimiPlanQuotaCollector(home)
+	c.verifyProcess = func(int) error { return nil }
+	c.scanBase = port
+	c.scanCount = 1
+	return c
 }
 
 func serverPort(t *testing.T, srv *httptest.Server) int {
@@ -91,8 +123,9 @@ func TestKimiCollect_Success(t *testing.T) {
 	var gotAuth string
 	srv := newKimiTestServer(t, kimiLimitsJSON(), 0, &gotAuth)
 	defer srv.Close()
+	port := serverPort(t, srv)
 
-	collector := newKimiPlanQuotaCollector(kimiTestHome(t, serverPort(t, srv)))
+	collector := newKimiTestCollector(kimiTestHome(t, port), port)
 	quota, err := collector.collect(context.Background())
 	if err != nil {
 		t.Fatalf("collect: %v", err)
@@ -116,8 +149,31 @@ func TestKimiCollect_Success(t *testing.T) {
 	if secondary.Name != "secondary" || *secondary.WindowMinutes != 10080 || *secondary.UsedPercent != 9 || *secondary.ResetsAt != 1741700000 {
 		t.Fatalf("secondary window = %+v", secondary)
 	}
-	if collector.port != serverPort(t, srv) {
+	if collector.port != port {
 		t.Fatalf("remembered port = %d", collector.port)
+	}
+}
+
+// The scan fallback serves registries that are absent or empty (older
+// servers): the port is bound via socket ownership instead of a pid.
+func TestKimiCollect_ScanFallback(t *testing.T) {
+	var gotAuth string
+	srv := newKimiTestServer(t, kimiLimitsJSON(), 0, &gotAuth)
+	defer srv.Close()
+	port := serverPort(t, srv)
+
+	collector := newKimiPlanQuotaCollector(kimiTestHomeNoRegistry(t))
+	collector.scanBase = port
+	collector.scanCount = 1
+	quota, err := collector.collect(context.Background())
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	if gotAuth != "Bearer test-kimi-token" {
+		t.Fatalf("authorization header = %q", gotAuth)
+	}
+	if len(quota.Windows) != 2 {
+		t.Fatalf("windows = %+v", quota.Windows)
 	}
 }
 
@@ -127,8 +183,9 @@ func TestKimiCollect_RedLine(t *testing.T) {
 	var gotAuth string
 	srv := newKimiTestServer(t, kimiLimitsJSON(), 0, &gotAuth)
 	defer srv.Close()
+	port := serverPort(t, srv)
 
-	collector := newKimiPlanQuotaCollector(kimiTestHome(t, serverPort(t, srv)))
+	collector := newKimiTestCollector(kimiTestHome(t, port), port)
 	quota, err := collector.collect(context.Background())
 	if err != nil {
 		t.Fatalf("collect: %v", err)
@@ -152,7 +209,8 @@ func TestKimiCollect_ServerDown(t *testing.T) {
 		t.Fatal(err)
 	}
 	collector := newKimiPlanQuotaCollector(home)
-	collector.client.Timeout = 200 * time.Millisecond
+	collector.scanBase = 59870 // nothing listens here
+	collector.scanCount = 2
 	if _, err := collector.collect(context.Background()); err == nil {
 		t.Fatal("expected error when no server is running")
 	}
@@ -169,8 +227,9 @@ func TestKimiCollect_InBandError(t *testing.T) {
 	var gotAuth string
 	srv := newKimiTestServer(t, `{"code":0,"data":{"kind":"error","message":"upstream unavailable","status":502}}`, 0, &gotAuth)
 	defer srv.Close()
+	port := serverPort(t, srv)
 
-	collector := newKimiPlanQuotaCollector(kimiTestHome(t, serverPort(t, srv)))
+	collector := newKimiTestCollector(kimiTestHome(t, port), port)
 	if _, err := collector.collect(context.Background()); err == nil || !strings.Contains(err.Error(), "upstream unavailable") {
 		t.Fatalf("err = %v", err)
 	}
@@ -180,8 +239,9 @@ func TestKimiCollect_EnvelopeError(t *testing.T) {
 	var gotAuth string
 	srv := newKimiTestServer(t, `{"code":40101,"msg":"unauthorized"}`, 0, &gotAuth)
 	defer srv.Close()
+	port := serverPort(t, srv)
 
-	collector := newKimiPlanQuotaCollector(kimiTestHome(t, serverPort(t, srv)))
+	collector := newKimiTestCollector(kimiTestHome(t, port), port)
 	if _, err := collector.collect(context.Background()); err == nil {
 		t.Fatal("expected envelope-code error")
 	}
@@ -193,8 +253,9 @@ func TestKimiCollect_DriftedShape(t *testing.T) {
 	var gotAuth string
 	srv := newKimiTestServer(t, `{"code":0,"data":{"totally":"different"}}`, 0, &gotAuth)
 	defer srv.Close()
+	port := serverPort(t, srv)
 
-	collector := newKimiPlanQuotaCollector(kimiTestHome(t, serverPort(t, srv)))
+	collector := newKimiTestCollector(kimiTestHome(t, port), port)
 	quota, err := collector.collect(context.Background())
 	// kind is absent (≠ "ok") → treated as an in-band failure.
 	if err == nil {
@@ -299,7 +360,7 @@ func TestUnixSecondsPtr(t *testing.T) {
 
 // The reviewer's repro: an unrelated local service answering 200 on any path
 // must never receive the token. The unauthenticated handshake (401 +
-// envelope 40101) is what gates credential delivery.
+// envelope 40101) is what gates credential delivery on the scan path.
 func TestKimiCollect_UnrelatedServiceGetsNoToken(t *testing.T) {
 	var sawAuth atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -310,8 +371,11 @@ func TestKimiCollect_UnrelatedServiceGetsNoToken(t *testing.T) {
 		_, _ = w.Write([]byte("unrelated local HTTP service"))
 	}))
 	defer srv.Close()
+	port := serverPort(t, srv)
 
-	collector := newKimiPlanQuotaCollector(kimiTestHome(t, serverPort(t, srv)))
+	collector := newKimiPlanQuotaCollector(kimiTestHomeNoRegistry(t))
+	collector.scanBase = port
+	collector.scanCount = 1
 	if _, err := collector.collect(context.Background()); err == nil {
 		t.Fatal("expected collection to fail against an unrelated service")
 	}
@@ -327,14 +391,61 @@ func TestKimiCollect_ForeignOwnedSocketGetsNoToken(t *testing.T) {
 	var gotAuth string
 	srv := newKimiTestServer(t, kimiLimitsJSON(), 0, &gotAuth)
 	defer srv.Close()
+	port := serverPort(t, srv)
 
-	collector := newKimiPlanQuotaCollector(kimiTestHome(t, serverPort(t, srv)))
-	collector.portOwnedByUser = func(int) bool { return false } // foreign-owned socket
+	collector := newKimiPlanQuotaCollector(kimiTestHomeNoRegistry(t))
+	collector.scanBase = port
+	collector.scanCount = 1
+	collector.socketOwnedByUser = func(int) bool { return false } // foreign-owned socket
 	if _, err := collector.collect(context.Background()); err == nil {
 		t.Fatal("expected collection to fail when the socket is foreign-owned")
 	}
 	if gotAuth != "" {
 		t.Fatalf("foreign-owned service received credentials: %q", gotAuth)
+	}
+}
+
+// A registry entry whose pid is dead, foreign-owned, or a non-kimi image is
+// skipped before any packet is sent — and a present-but-unverifiable
+// registry does NOT fall back to scanning (a live squatting server on a
+// scanned port must not rescue a stale or forged entry).
+func TestKimiCollect_UnverifiableInstanceGetsNoToken(t *testing.T) {
+	var hits atomic.Int64
+	var gotAuth string
+	srv := newKimiTestServerCounted(t, kimiLimitsJSON(), 0, &gotAuth, &hits)
+	defer srv.Close()
+	port := serverPort(t, srv)
+
+	// Registry points at the live squatting server but with a pid the
+	// verifier rejects; scan would find the same server, and must not run.
+	collector := newKimiPlanQuotaCollector(kimiTestHome(t, port))
+	collector.verifyProcess = func(pid int) error { return fmt.Errorf("pid %d owned by another user", pid) }
+	collector.socketOwnedByUser = func(int) bool { return true }
+	collector.scanBase = port
+	collector.scanCount = 1
+	if _, err := collector.collect(context.Background()); err == nil {
+		t.Fatal("expected collection to fail for an unverifiable instance")
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("squatting server received %d requests (auth %q)", hits.Load(), gotAuth)
+	}
+}
+
+// Platforms that cannot prove ownership fail closed: no request at all.
+func TestKimiCollect_UnsupportedPlatformSendsNothing(t *testing.T) {
+	var hits atomic.Int64
+	var gotAuth string
+	srv := newKimiTestServerCounted(t, kimiLimitsJSON(), 0, &gotAuth, &hits)
+	defer srv.Close()
+	port := serverPort(t, srv)
+
+	collector := newKimiTestCollector(kimiTestHome(t, port), port)
+	collector.identitySupported = func() bool { return false }
+	if _, err := collector.collect(context.Background()); err == nil {
+		t.Fatal("expected fail-closed error on unsupported platform")
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("unsupported platform still sent %d requests", hits.Load())
 	}
 }
 
@@ -364,8 +475,11 @@ func TestKimiCollect_RedirectNotFollowed(t *testing.T) {
 		w.WriteHeader(http.StatusTemporaryRedirect)
 	}))
 	defer srv.Close()
+	port := serverPort(t, srv)
 
-	collector := newKimiPlanQuotaCollector(kimiTestHome(t, serverPort(t, srv)))
+	collector := newKimiPlanQuotaCollector(kimiTestHomeNoRegistry(t))
+	collector.scanBase = port
+	collector.scanCount = 1
 	if _, err := collector.collect(context.Background()); err == nil {
 		t.Fatal("expected collection to fail on a redirecting peer")
 	}
@@ -408,7 +522,7 @@ func TestPortListenOwnedByUID(t *testing.T) {
 	if portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header + "\n" + listen("E504", 1000))}) {
 		t.Fatal("accepted a socket on a different port")
 	}
-	// st 08 (CLOSE_WAIT-ish non-LISTEN) must not count.
+	// st 08 (non-LISTEN) must not count.
 	nonListen := strings.Replace(listen("E503", 1000), " 0A ", " 08 ", 1)
 	if portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header + "\n" + nonListen)}) {
 		t.Fatal("accepted a non-LISTEN socket")
@@ -416,7 +530,7 @@ func TestPortListenOwnedByUID(t *testing.T) {
 	if portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header)}) {
 		t.Fatal("accepted with no socket entry at all")
 	}
-	// Dual-stack: tcp4 + tcp6 both owned by us passes; one foreign fails all.
+	// Dual-stack: tcp4 + tcp6 both owned by us passes.
 	v6 := strings.Replace(listen("E503", 1000), "0100007F", "00000000000000000000000001000000", 1)
 	if !portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header + "\n" + listen("E503", 1000)), []byte(header + "\n" + v6)}) {
 		t.Fatal("dual-table same-uid rejected")

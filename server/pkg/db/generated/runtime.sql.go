@@ -1518,6 +1518,10 @@ WHERE id = $2
        OR plan_quota->>'observed_at' IS NULL
        OR (plan_quota - 'observed_at') IS DISTINCT FROM $4::jsonb
        OR (plan_quota->>'observed_at')::bigint <= $5::bigint)
+  AND ($4::jsonb ? 'windows'
+       OR plan_quota IS NULL
+       OR (plan_quota->>'provider' = $4::jsonb->>'provider'
+           AND plan_quota->>'source' = $4::jsonb->>'source'))
 `
 
 type UpdateAgentRuntimePlanQuotaParams struct {
@@ -1541,6 +1545,12 @@ type UpdateAgentRuntimePlanQuotaParams struct {
 // means "stale, unchanged, or throttled" and the caller skips the change
 // broadcast. Deliberately does NOT touch updated_at: quota churn is
 // observational, not a user-visible row edit.
+//
+// A snapshot WITHOUT windows is a clear marker ("back to not reported"): it
+// may only land on a row that is empty or already belongs to the SAME
+// provider+source, so one reporter's clear can never erase another source's
+// live snapshot (OL-5 S2b). Normal reports always carry windows and are
+// unaffected by this guard.
 func (q *Queries) UpdateAgentRuntimePlanQuota(ctx context.Context, arg UpdateAgentRuntimePlanQuotaParams) (int64, error) {
 	result, err := q.db.Exec(ctx, updateAgentRuntimePlanQuota,
 		arg.PlanQuota,

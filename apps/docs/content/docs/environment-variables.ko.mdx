@@ -244,8 +244,8 @@ API key와 base URL이 모두 비어 있으면 이 레이어가 꺼지고 업스
 | `MULTICA_AGENT_TEMP_BASE` | `/tmp`(Linux/macOS) | Linux/macOS 전용. 작업별 비공개 임시 디렉터리의 상위 디렉터리입니다. 기존의 쓰기 가능한 절대 경로여야 하며, 값이 잘못되면 `/tmp`로 대체하지 않고 작업 시작에 실패합니다. 짧은 경로를 선택하세요. 하위 도구가 그 아래에 AF_UNIX 소켓을 만들 수 있으며 `sun_path` 제한은 Linux에서 108바이트, macOS에서 104바이트입니다 |
 | `MULTICA_KEEP_ENV_AFTER_TASK` | `false` | 디버깅을 위해 작업 디렉터리 유지 |
 | `MULTICA_ZENMUX_MANAGEMENT_API_KEY` | 비어 있음 | ZenMux Management API 키(콘솔 발급, 추론 키와 별개). 구독 쿼터 수집기용이며 이 머신을 벗어나지 않습니다. `MULTICA_ZENMUX_LINK`로 런타임을 연결하기 전까지는 아무것도 보고되지 않습니다 |
-| `MULTICA_ZENMUX_LINK` | 비어 있음(연결된 런타임 없음) | ZenMux 계정과 런타임의 명시적 수동 연결: `hermes`는 이 daemon의 모든 hermes 런타임, `hermes@<workspace-id>`는 지정 워크스페이스의 hermes 런타임만 연결하며 여러 개는 쉼표로 구분합니다. daemon은 런타임이 실제로 사용하는 LLM 게이트웨이를 추론하지 않으며 연결되지 않은 런타임은 "미보고" 상태를 유지합니다. daemon 시작 시 적용됩니다. 항목을 추가·수정·삭제한 후 daemon을 재시작하면 반영되며, 삭제된 연결은 다음 하트비트에서 해당 런타임의 쿼터 표시를 즉시 지웁니다(24시간 신선도 만료를 기다리지 않습니다) |
-| `MULTICA_KIMI_QUOTA_POLL_INTERVAL` | `2m` | Kimi 플랜 쿼터 수집기의 폴 간격. 이 머신의 Kimi Code 로컬 Server API를 탐색하며 `kimi web`이 실행 중이 아니면 조용히 "미보고" 상태를 유지합니다 |
+| `MULTICA_ZENMUX_LINK` | 비어 있음(연결된 런타임 없음) | ZenMux 계정과 런타임의 명시적 수동 연결: `hermes`는 이 daemon의 모든 hermes 런타임, `hermes@<workspace-id>`는 지정 워크스페이스의 hermes 런타임, `hermes:profile:<profile-id>`는 특정 커스텀 런타임 프로필만 연결합니다(내장 hermes와 커스텀 hermes 프로필이 한 워크스페이스에 공존할 때 구분용). 여러 개는 쉼표로 구분합니다. daemon은 런타임이 실제로 사용하는 LLM 게이트웨이를 추론하지 않으며 연결되지 않은 런타임은 "미보고" 상태를 유지합니다. daemon 시작 시 적용됩니다. 항목을 추가·수정·삭제한 후 daemon을 재시작하면 반영되며, 삭제된 연결은 다음 하트비트에서 해당 런타임의 쿼터 표시를 즉시 지웁니다(24시간 신선도 만료를 기다리지 않습니다) |
+| `MULTICA_KIMI_QUOTA_POLL_INTERVAL` | `2m` | Kimi 플랜 쿼터 수집기의 폴 간격. 이 머신의 Kimi Code 로컬 Server API를 탐색하며 `kimi web`이 실행 중이 아니면 조용히 "미보고" 상태를 유지합니다. Bearer 토큰은 로컬 서버가 현재 사용자 소유임을 증명한 후에만 전송됩니다(Linux/macOS 지원, 다른 플랫폼에서는 수집기가 동작하지 않고 "미보고"를 유지합니다) |
 | `MULTICA_ZENMUX_QUOTA_POLL_INTERVAL` | `2m` | ZenMux 플랜 쿼터 수집기의 폴 간격. 422 레이트 리밋 응답 시 지연을 지수적으로 늘립니다 |
 | `MULTICA_ZENMUX_API_BASE_URL` | 공식 엔드포인트 | ZenMux subscription-detail 엔드포인트 재정의. 테스트 및 스테이징 프록시용 |
 

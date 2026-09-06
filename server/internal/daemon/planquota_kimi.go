@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,24 +66,44 @@ const (
 	kimiAuthRequiredCode = 40101
 )
 
+// errKimiIdentityUnsupportedForCollection fails a collect round on platforms
+// where local server ownership cannot be proven (the loop normally gates on
+// this at startup; collect double-checks so no path can bypass it).
+var errKimiIdentityUnsupportedForCollection = errors.New("kimi plan quota: platform cannot verify local server identity")
+
 // kimiPlanQuotaCollector holds the loop-round state: an HTTP client, the
 // kimi home directory, and the last port that answered (re-tried first next
-// round so the common case is a single probe).
+// round so the common case is a single probe). The identity probes are
+// fields so tests can simulate foreign-owned sockets/processes and
+// unsupported platforms; production wires them to the per-platform
+// implementations in planquota_kimi_proc_*.go.
 type kimiPlanQuotaCollector struct {
 	client  *http.Client
 	homeDir string
 	port    int
-	// portOwnedByUser reports whether the port's LISTEN socket belongs to
-	// this process's user. A field so tests can simulate foreign-owned
-	// sockets; production wires it to the /proc/net/tcp implementation.
-	portOwnedByUser func(port int) bool
+	// scanBase/scanCount bound the port-scan fallback (default 58627 +0..99);
+	// fields so tests can point the scan at an httptest port.
+	scanBase  int
+	scanCount int
+	// identitySupported reports whether this platform can prove local server
+	// ownership at all. When false the collector fails closed.
+	identitySupported func() bool
+	// socketOwnedByUser binds a scanned port's LISTEN socket to this user.
+	socketOwnedByUser func(port int) bool
+	// verifyProcess binds a registry-claimed pid to a live same-user
+	// kimi-image process.
+	verifyProcess func(pid int) error
 }
 
 func newKimiPlanQuotaCollector(homeDir string) *kimiPlanQuotaCollector {
 	return &kimiPlanQuotaCollector{
-		client:          newKimiHTTPClient(),
-		homeDir:         homeDir,
-		portOwnedByUser: kimiPortOwnedByUser,
+		client:            newKimiHTTPClient(),
+		homeDir:           homeDir,
+		scanBase:          kimiServerDefaultPort,
+		scanCount:         kimiServerMaxPorts,
+		identitySupported: kimiIdentitySupported,
+		socketOwnedByUser: kimiSocketOwnedByUser,
+		verifyProcess:     kimiVerifyInstanceProcess,
 	}
 }
 
@@ -121,6 +140,9 @@ func loopbackOnlyDialContext(ctx context.Context, network, addr string) (net.Con
 // collect runs one observation round: read the local token, find the live
 // server port, fetch usage, normalize. Any failure abandons the round.
 func (c *kimiPlanQuotaCollector) collect(ctx context.Context) (*protocol.RuntimePlanQuota, error) {
+	if !c.identitySupported() {
+		return nil, errKimiIdentityUnsupportedForCollection
+	}
 	token, err := c.readToken()
 	if err != nil {
 		return nil, err
@@ -147,8 +169,10 @@ func (c *kimiPlanQuotaCollector) readToken() (string, error) {
 	return token, nil
 }
 
-// candidatePorts orders the probe list: the last good port, then ports from
-// the instance registry, then the documented 58627..+100 scan range.
+// candidatePorts is the scan fallback used when the instance registry has no
+// usable entries (e.g. a server too old to register): the last good port,
+// then the documented 58627..+100 range. Scanned ports carry no pid, so they
+// are bound via socket ownership instead.
 func (c *kimiPlanQuotaCollector) candidatePorts() []int {
 	seen := make(map[int]struct{})
 	var ports []int
@@ -163,78 +187,116 @@ func (c *kimiPlanQuotaCollector) candidatePorts() []int {
 		ports = append(ports, p)
 	}
 	add(c.port)
-	for _, p := range c.instancePorts() {
-		add(p)
+	base, count := c.scanBase, c.scanCount
+	if base <= 0 {
+		base = kimiServerDefaultPort
 	}
-	for i := 0; i < kimiServerMaxPorts; i++ {
-		add(kimiServerDefaultPort + i)
+	if count <= 0 {
+		count = kimiServerMaxPorts
+	}
+	for i := 0; i < count; i++ {
+		add(base + i)
 	}
 	return ports
 }
 
-// instancePorts best-effort extracts listening ports from the instance
-// registry. The registry file format is undocumented, so extraction is
-// generous — a numeric "port" field in a JSON object, or a numeric filename
-// stem — and skips anything it cannot understand.
-func (c *kimiPlanQuotaCollector) instancePorts() []int {
+// kimiInstance is one entry of the Kimi local server's instance registry
+// (~/.kimi-code/server/instances/<server-id>.json). The registry lives under
+// the user's private home, so only this user's processes can plant entries —
+// that is what makes the pid/port pair a trustworthy starting point.
+type kimiInstance struct {
+	ServerID string `json:"server_id"`
+	PID      int    `json:"pid"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+}
+
+// instances reads the instance registry, keeping only well-formed loopback
+// entries (pid > 0, valid port). Files that fail to parse are skipped — a
+// corrupt entry must not take the collector down with it.
+func (c *kimiPlanQuotaCollector) instances() []kimiInstance {
 	dir := filepath.Join(c.homeDir, kimiServerInstances)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
-	var ports []int
+	var out []kimiInstance
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
-		}
-		if stem, ok := strings.CutSuffix(entry.Name(), ".json"); ok {
-			if p, convErr := strconv.Atoi(stem); convErr == nil {
-				ports = append(ports, p)
-			}
 		}
 		raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			continue
 		}
-		var doc struct {
-			Port int `json:"port"`
+		var inst kimiInstance
+		if err := json.Unmarshal(raw, &inst); err != nil {
+			continue
 		}
-		if err := json.Unmarshal(raw, &doc); err == nil && doc.Port > 0 {
-			ports = append(ports, doc.Port)
+		if inst.PID <= 0 || inst.Port <= 0 || inst.Port > 65535 {
+			continue
 		}
+		if inst.Host != "127.0.0.1" && inst.Host != "::1" && inst.Host != "" {
+			continue
+		}
+		out = append(out, inst)
 	}
-	return ports
+	return out
 }
 
-// fetchUsage walks the candidate ports and returns the first usable usage
-// payload. A port earns the bearer only after passing the ownership check
-// and the unauthenticated 40101 handshake; a port that answers usage is
-// remembered for the next round.
+// fetchUsage returns the first usable usage payload. Registry instances are
+// tried first: their pid must verify as a live same-user kimi process before
+// any request is made. When the registry has no usable entries, the scan
+// fallback binds each candidate port via socket ownership. Both paths then
+// run the unauthenticated 40101 handshake; only a peer passing every gate
+// receives the bearer. A port that answers usage is remembered for the next
+// round.
 func (c *kimiPlanQuotaCollector) fetchUsage(ctx context.Context, token string) (*kimiUsageData, error) {
 	var lastErr error
+	if instances := c.instances(); len(instances) > 0 {
+		for _, inst := range instances {
+			if err := c.verifyProcess(inst.PID); err != nil {
+				lastErr = fmt.Errorf("kimi instance %s (pid %d): %w", inst.ServerID, inst.PID, err)
+				continue
+			}
+			if data, err := c.tryPort(ctx, inst.Port, token); err == nil {
+				return data, nil
+			} else {
+				lastErr = err
+			}
+		}
+		return nil, lastErr
+	}
 	for _, port := range c.candidatePorts() {
-		if !c.portOwnedByUser(port) {
+		if !c.socketOwnedByUser(port) {
 			// No listener, or the listener belongs to another user — never
 			// dial it with credentials.
 			continue
 		}
-		base := fmt.Sprintf("http://127.0.0.1:%d", port)
-		if err := c.checkKimiAuthSurface(ctx, base); err != nil {
+		if data, err := c.tryPort(ctx, port, token); err == nil {
+			return data, nil
+		} else {
 			lastErr = err
-			continue
 		}
-		data, err := c.getUsage(ctx, base, token)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		c.port = port
-		return data, nil
 	}
 	if lastErr != nil {
 		return nil, lastErr
 	}
 	return nil, errors.New("kimi local server not reachable (kimi web not running?)")
+}
+
+// tryPort runs the identity handshake and the usage call against one port.
+func (c *kimiPlanQuotaCollector) tryPort(ctx context.Context, port int, token string) (*kimiUsageData, error) {
+	base := fmt.Sprintf("http://127.0.0.1:%d", port)
+	if err := c.checkKimiAuthSurface(ctx, base); err != nil {
+		return nil, err
+	}
+	data, err := c.getUsage(ctx, base, token)
+	if err != nil {
+		return nil, err
+	}
+	c.port = port
+	return data, nil
 }
 
 // checkKimiAuthSurface proves the peer is Kimi Code's local server WITHOUT
@@ -332,59 +394,6 @@ func (c *kimiPlanQuotaCollector) getUsage(ctx context.Context, base, token strin
 		return nil, fmt.Errorf("kimi usage: %s", msg)
 	}
 	return envelope.Data, nil
-}
-
-// kimiPortOwnedByUser reports whether the port's LISTEN socket belongs to
-// this process's effective user, parsed from /proc/net/tcp{,6}. Platforms
-// without /proc cannot prove socket ownership and answer true — the 40101
-// auth-surface handshake still gates credential delivery there.
-func kimiPortOwnedByUser(port int) bool {
-	if runtime.GOOS != "linux" {
-		return true
-	}
-	var tables [][]byte
-	for _, name := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
-		if raw, err := os.ReadFile(name); err == nil {
-			tables = append(tables, raw)
-		}
-	}
-	return portListenOwnedByUID(port, os.Geteuid(), tables)
-}
-
-// portListenOwnedByUID scans kernel TCP tables for LISTEN sockets bound to
-// the port. It answers false when nothing listens (a cheap pre-dial filter)
-// or when ANY listener on the port belongs to a different uid.
-func portListenOwnedByUID(port, uid int, tables [][]byte) bool {
-	found := false
-	for _, table := range tables {
-		for i, line := range strings.Split(string(table), "\n") {
-			if i == 0 { // header row
-				continue
-			}
-			fields := strings.Fields(line)
-			if len(fields) < 8 {
-				continue
-			}
-			// local_address is hex ip:hex port; st 0A is LISTEN; uid is field 7.
-			_, hexPort, ok := strings.Cut(fields[1], ":")
-			if !ok {
-				continue
-			}
-			p, err := strconv.ParseUint(hexPort, 16, 32)
-			if err != nil || int(p) != port {
-				continue
-			}
-			if fields[3] != "0A" {
-				continue
-			}
-			found = true
-			socketUID, err := strconv.Atoi(fields[7])
-			if err != nil || socketUID != uid {
-				return false
-			}
-		}
-	}
-	return found
 }
 
 // kimiUsageToPlanQuota normalizes the usage rows. Windows are sorted by
@@ -519,7 +528,13 @@ func unixSecondsPtr(v any) *int64 {
 }
 
 // kimiPlanQuotaLoop is the daemon-loop entry point for the Kimi collector.
+// Platforms that cannot prove local server ownership run no loop at all —
+// fail closed, with one startup log.
 func (d *Daemon) kimiPlanQuotaLoop(ctx context.Context) {
+	if !kimiIdentitySupported() {
+		d.logger.Warn("kimi plan quota collector disabled: this platform cannot verify local server ownership; runtimes stay not reported")
+		return
+	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		d.logger.Debug("kimi plan quota collector disabled: no home directory", "error", err)
