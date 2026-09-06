@@ -28,6 +28,8 @@ export type {
   TaskFailureReason,
   AgentRuntime,
   RuntimeDevice,
+  RuntimePlanQuota,
+  RuntimePlanQuotaWindow,
   RuntimeProfile,
   RuntimeProtocolFamily,
   RuntimeProfileVisibility,

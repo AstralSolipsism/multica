@@ -1458,6 +1458,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/skill-bundles/resolve", h.ResolveTaskSkillBundles)
 		r.Get("/runtimes/{runtimeId}/tasks/pending", h.ListPendingTasksByRuntime)
 		r.Post("/runtimes/{runtimeId}/update/{updateId}/result", h.ReportUpdateResult)
+		// External plan-quota push (BYO reporter extension surface): a
+		// reporter outside the daemon publishes a runtime's provider
+		// rate-limit snapshot here; daemon heartbeats carry the same shape
+		// as plan_quota. Newer observed_at wins across both sources. Write
+		// access is restricted to the runtime's own daemon token or the
+		// runtime owner's user token, and the route is per-IP rate limited
+		// on top of DaemonAuth.
+		r.With(middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_RUNTIME_QUOTA_PUSH", 60), time.Minute, trustedProxies)).
+			Post("/runtimes/{runtimeId}/quota", h.ReportRuntimeQuota)
 		r.Post("/runtimes/{runtimeId}/models/{requestId}/result", h.ReportModelListResult)
 		r.Post("/runtimes/{runtimeId}/local-skills/{requestId}/result", h.ReportLocalSkillListResult)
 		r.Post("/runtimes/{runtimeId}/local-skills/import/{requestId}/result", h.ReportLocalSkillImportResult)

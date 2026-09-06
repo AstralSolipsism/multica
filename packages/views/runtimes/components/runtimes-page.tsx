@@ -54,6 +54,7 @@ import { ProviderLogo } from "./provider-logo";
 import { buildWorkloadIndex, RuntimeList } from "./runtime-list";
 import { pendingRuntimeFromProfile } from "./pending-runtime";
 import { buildRuntimeMachines, type RuntimeMachine } from "./runtime-machines";
+import { MachineQuotaChips } from "./machine-quota-chips";
 import { HealthDot, HealthIcon, useHealthLabel } from "./shared";
 import { useT, useTimeAgo } from "../../i18n";
 import { daemonRuntimesDocsHref } from "./runtime-docs";
@@ -194,6 +195,7 @@ export function RuntimesPage({
               <MachineList
                 machines={machines}
                 bootstrapping={bootstrapping}
+                now={now}
               />
             )}
             {orphanProfileRuntimes.length > 0 && (
@@ -417,9 +419,11 @@ function PageHeaderBar({
 function MachineList({
   machines,
   bootstrapping,
+  now,
 }: {
   machines: RuntimeMachine[];
   bootstrapping?: boolean;
+  now: number;
 }) {
   const { t } = useT("runtimes");
   if (machines.length === 0) {
@@ -444,14 +448,14 @@ function MachineList({
     <div className="overflow-hidden rounded-lg border bg-card">
       <div className="divide-y">
         {machines.map((machine) => (
-          <MachineRow key={machine.id} machine={machine} />
+          <MachineRow key={machine.id} machine={machine} now={now} />
         ))}
       </div>
     </div>
   );
 }
 
-function MachineRow({ machine }: { machine: RuntimeMachine }) {
+function MachineRow({ machine, now }: { machine: RuntimeMachine; now: number }) {
   const { t } = useT("runtimes");
   const healthLabel = useHealthLabel();
   const timeAgo = useTimeAgo();
@@ -487,11 +491,14 @@ function MachineRow({ machine }: { machine: RuntimeMachine }) {
         </span>
       </span>
 
-      <span className="hidden w-36 shrink-0 items-center gap-1.5 text-caption md:flex">
+      <span className="hidden w-44 shrink-0 items-center xl:flex">
+        <MachineQuotaChips machine={machine} now={now} />
+      </span>
+      <span className="hidden w-28 shrink-0 items-center gap-1.5 text-caption md:flex">
         <HealthIcon health={machine.health} />
         <span>{healthLabel(machine.health)}</span>
       </span>
-      <span className="hidden w-40 shrink-0 flex-col gap-1 lg:flex">
+      <span className="hidden w-36 shrink-0 flex-col gap-1 lg:flex">
         <span className="text-caption text-muted-foreground">
           {t(($) => $.machine.runtime_count, {
             count: machine.runtimes.length,
@@ -507,7 +514,7 @@ function MachineRow({ machine }: { machine: RuntimeMachine }) {
             })
           : t(($) => $.machine.metrics.workload_idle)}
       </span>
-      <span className="hidden w-28 shrink-0 text-right text-caption text-muted-foreground lg:block">
+      <span className="hidden w-24 shrink-0 text-right text-caption text-muted-foreground lg:block">
         {machine.lastSeenAt ? timeAgo(machine.lastSeenAt) : "—"}
       </span>
       {locator && (

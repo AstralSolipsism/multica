@@ -45,8 +45,13 @@ type AgentRuntimeResponse struct {
 	// runtime_profile (MUL-3284); null for built-in runtimes.
 	ProfileID  *string `json:"profile_id"`
 	LastSeenAt *string `json:"last_seen_at"`
-	CreatedAt  string  `json:"created_at"`
-	UpdatedAt  string  `json:"updated_at"`
+	// PlanQuota is the latest provider plan/rate-limit snapshot reported for
+	// this runtime (agent_runtime.plan_quota, protocol.RuntimePlanQuota on
+	// the wire); null when nothing was ever reported. Handled as opaque JSON
+	// like Metadata — the server validates on write, not on read.
+	PlanQuota any    `json:"plan_quota"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
@@ -56,6 +61,11 @@ func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 	}
 	if metadata == nil {
 		metadata = map[string]any{}
+	}
+
+	var planQuota any
+	if rt.PlanQuota != nil {
+		json.Unmarshal(rt.PlanQuota, &planQuota)
 	}
 
 	return AgentRuntimeResponse{
@@ -74,6 +84,7 @@ func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 		Visibility:   rt.Visibility,
 		ProfileID:    uuidToPtr(rt.ProfileID),
 		LastSeenAt:   timestampToPtr(rt.LastSeenAt),
+		PlanQuota:    planQuota,
 		CreatedAt:    timestampToString(rt.CreatedAt),
 		UpdatedAt:    timestampToString(rt.UpdatedAt),
 	}

@@ -46,6 +46,7 @@ export type WSEventType =
   | "member:removed"
   | "daemon:heartbeat"
   | "daemon:register"
+  | "runtime:telemetry_updated"
   | "skill:created"
   | "skill:updated"
   | "skill:deleted"
@@ -616,6 +617,9 @@ export interface WSEventPayloadMap {
   // currently consume as opaque triggers (refetch on receipt).
   "daemon:heartbeat": unknown;
   "daemon:register": unknown;
+  // Server publishes this when a runtime's plan-quota snapshot changes;
+  // clients treat it as an opaque "refetch runtime queries" trigger.
+  "runtime:telemetry_updated": unknown;
   "skill:created": unknown;
   "skill:updated": unknown;
   "skill:deleted": unknown;
