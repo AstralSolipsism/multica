@@ -483,6 +483,13 @@ type Daemon struct {
 	// recorded at task completion and attached to that runtime's next
 	// heartbeat. Entries are deleted when the runtime leaves the local set.
 	planQuotaCache sync.Map
+	// planQuotaClearMarkers marks which cached entries are zenmux clear
+	// markers (a deliberate "not reported" state after a manual unlink) as
+	// opposed to real observations. Markers are re-stamped with a fresh
+	// observed_at on every heartbeat so the cleared state never ages into
+	// "stale"; real snapshots are never re-stamped, since refreshing them
+	// would mask a silently failing collector (OL-5 S2b).
+	planQuotaClearMarkers sync.Map
 
 	// reconcile fans out a "re-check server state now" signal to subscribers
 	// (watchTaskCancellation, workspaceSyncLoop) so the WS connect/reconnect
@@ -1174,7 +1181,26 @@ func (d *Daemon) recordRuntimePlanQuota(runtimeID string, quota *protocol.Runtim
 	if runtimeID == "" || quota == nil {
 		return
 	}
+	d.planQuotaClearMarkers.Delete(runtimeID)
 	d.planQuotaCache.Store(runtimeID, quota)
+}
+
+// recordZenMuxPlanQuotaClearMarker stores a windowless zenmux snapshot — the
+// deliberate "not reported" state for a runtime whose manual association was
+// removed — and marks it for per-heartbeat re-stamping (see
+// heartbeatExtrasFor) so the cleared state never ages into "stale" while
+// this daemon runs.
+func (d *Daemon) recordZenMuxPlanQuotaClearMarker(runtimeID string) {
+	if runtimeID == "" {
+		return
+	}
+	d.planQuotaClearMarkers.Store(runtimeID, struct{}{})
+	d.planQuotaCache.Store(runtimeID, &protocol.RuntimePlanQuota{
+		Provider:   "zenmux",
+		Status:     protocol.PlanQuotaStatusOK,
+		ObservedAt: time.Now().Unix(),
+		Source:     protocol.PlanQuotaSourceDaemon,
+	})
 }
 
 // heartbeatExtrasFor assembles the optional heartbeat attachment for one
@@ -1184,7 +1210,17 @@ func (d *Daemon) heartbeatExtrasFor(runtimeID string) HeartbeatExtras {
 	var extras HeartbeatExtras
 	if cached, ok := d.planQuotaCache.Load(runtimeID); ok {
 		if quota, ok := cached.(*protocol.RuntimePlanQuota); ok {
-			extras.PlanQuota = quota
+			if _, isMarker := d.planQuotaClearMarkers.Load(runtimeID); isMarker {
+				// Clear markers represent a deliberate state, not an
+				// observation: re-stamp so "not reported" never goes stale.
+				// Real snapshots keep their observed_at — re-stamping them
+				// would mask a collector that stopped producing data.
+				clone := *quota
+				clone.ObservedAt = time.Now().Unix()
+				extras.PlanQuota = &clone
+			} else {
+				extras.PlanQuota = quota
+			}
 		}
 	}
 	return extras
@@ -1390,6 +1426,7 @@ func (d *Daemon) removeStaleRuntime(runtimeID string) (string, bool) {
 	// re-registered runtime starts with no cached quota until its next
 	// task completion reports one.
 	d.planQuotaCache.Delete(runtimeID)
+	d.planQuotaClearMarkers.Delete(runtimeID)
 
 	return workspaceID, true
 }
@@ -1503,6 +1540,7 @@ func (d *Daemon) applyRegisterResponseInPlace(workspaceID string, resp *Register
 			// a second time.
 			delete(d.runtimeIndex, oldID)
 			d.planQuotaCache.Delete(oldID)
+			d.planQuotaClearMarkers.Delete(oldID)
 			continue
 		}
 		if rt, tracked := d.runtimeIndex[oldID]; tracked && rt.ProfileID == "" {
@@ -1513,6 +1551,7 @@ func (d *Daemon) applyRegisterResponseInPlace(workspaceID string, resp *Register
 		}
 		delete(d.runtimeIndex, oldID)
 		d.planQuotaCache.Delete(oldID)
+		d.planQuotaClearMarkers.Delete(oldID)
 		droppedIDs = append(droppedIDs, oldID)
 	}
 	for _, rt := range resp.Runtimes {

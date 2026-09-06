@@ -100,6 +100,28 @@ func TestParseZenMuxLink(t *testing.T) {
 			t.Fatal("workspace entry should cover its custom profiles")
 		}
 	})
+	t.Run("builtin entries exclude custom profiles", func(t *testing.T) {
+		set, err := parseZenMuxLink("hermes:builtin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !set.linked("hermes", "ws-1", "") || !set.linked("hermes", "ws-9", "") {
+			t.Fatal("builtin-all did not match built-in runtimes")
+		}
+		if set.linked("hermes", "ws-2", "prof-zen") {
+			t.Fatal("builtin-all leaked to a custom profile")
+		}
+		scoped, err := parseZenMuxLink("hermes:builtin@ws-2")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !scoped.linked("hermes", "ws-2", "") || scoped.linked("hermes", "ws-1", "") {
+			t.Fatal("builtin@ws scoping wrong")
+		}
+		if scoped.linked("hermes", "ws-2", "prof-zen") {
+			t.Fatal("builtin@ws leaked to a custom profile")
+		}
+	})
 	t.Run("profile entries select one profile across workspaces", func(t *testing.T) {
 		set, err := parseZenMuxLink("hermes:profile:prof-zen")
 		if err != nil {
@@ -113,7 +135,7 @@ func TestParseZenMuxLink(t *testing.T) {
 		}
 	})
 	t.Run("rejects non-hermes providers and malformed entries", func(t *testing.T) {
-		for _, bad := range []string{"codex", "kimi@ws-1", "hermes@", "@ws-1", "her", "hermesx", "hermes:profile:", "hermes:profile"} {
+		for _, bad := range []string{"codex", "kimi@ws-1", "hermes@", "@ws-1", "her", "hermesx", "hermes:profile:", "hermes:profile", "hermes:builtin@", "hermes:builtinx"} {
 			if _, err := parseZenMuxLink(bad); err == nil {
 				t.Fatalf("%q parsed without error", bad)
 			}
@@ -139,6 +161,18 @@ func TestZenmuxLinkedRuntimes(t *testing.T) {
 	prof, _ := parseZenMuxLink("hermes:profile:prof-zen")
 	if got := d.zenmuxLinkedRuntimes(prof); len(got) != 1 || got[0].ID != "rt-h2p" {
 		t.Fatalf("profile targets = %v", got)
+	}
+
+	// S2a: built-in-only selection picks exactly the built-in runtime out of
+	// a workspace that also has a custom profile — "内置用 ZenMux、自定义用
+	// 其他来源" is expressible.
+	builtin, _ := parseZenMuxLink("hermes:builtin@ws-2")
+	if got := d.zenmuxLinkedRuntimes(builtin); len(got) != 1 || got[0].ID != "rt-h2" {
+		t.Fatalf("builtin@ws-2 targets = %v", got)
+	}
+	builtinAll, _ := parseZenMuxLink("hermes:builtin")
+	if got := d.zenmuxLinkedRuntimes(builtinAll); len(got) != 2 {
+		t.Fatalf("builtin-all targets = %v", got)
 	}
 
 	none, _ := parseZenMuxLink("")

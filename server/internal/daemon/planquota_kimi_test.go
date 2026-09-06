@@ -105,6 +105,8 @@ func kimiTestHomeNoRegistry(t *testing.T) string {
 func newKimiTestCollector(home string, port int) *kimiPlanQuotaCollector {
 	c := newKimiPlanQuotaCollector(home)
 	c.verifyProcess = func(int) error { return nil }
+	c.identitySupported = func() bool { return true }    // fixtures isolate from the platform gate
+	c.socketOwnedByUser = func(int) bool { return true } // real probes are covered by the linux live test
 	c.scanBase = port
 	c.scanCount = 1
 	return c
@@ -162,9 +164,7 @@ func TestKimiCollect_ScanFallback(t *testing.T) {
 	defer srv.Close()
 	port := serverPort(t, srv)
 
-	collector := newKimiPlanQuotaCollector(kimiTestHomeNoRegistry(t))
-	collector.scanBase = port
-	collector.scanCount = 1
+	collector := newKimiTestCollector(kimiTestHomeNoRegistry(t), port)
 	quota, err := collector.collect(context.Background())
 	if err != nil {
 		t.Fatalf("collect: %v", err)
@@ -208,8 +208,7 @@ func TestKimiCollect_ServerDown(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, kimiServerTokenFile), []byte("tok"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	collector := newKimiPlanQuotaCollector(home)
-	collector.scanBase = 59870 // nothing listens here
+	collector := newKimiTestCollector(home, 59870) // nothing listens here
 	collector.scanCount = 2
 	if _, err := collector.collect(context.Background()); err == nil {
 		t.Fatal("expected error when no server is running")
@@ -373,9 +372,7 @@ func TestKimiCollect_UnrelatedServiceGetsNoToken(t *testing.T) {
 	defer srv.Close()
 	port := serverPort(t, srv)
 
-	collector := newKimiPlanQuotaCollector(kimiTestHomeNoRegistry(t))
-	collector.scanBase = port
-	collector.scanCount = 1
+	collector := newKimiTestCollector(kimiTestHomeNoRegistry(t), port)
 	if _, err := collector.collect(context.Background()); err == nil {
 		t.Fatal("expected collection to fail against an unrelated service")
 	}
@@ -393,9 +390,7 @@ func TestKimiCollect_ForeignOwnedSocketGetsNoToken(t *testing.T) {
 	defer srv.Close()
 	port := serverPort(t, srv)
 
-	collector := newKimiPlanQuotaCollector(kimiTestHomeNoRegistry(t))
-	collector.scanBase = port
-	collector.scanCount = 1
+	collector := newKimiTestCollector(kimiTestHomeNoRegistry(t), port)
 	collector.socketOwnedByUser = func(int) bool { return false } // foreign-owned socket
 	if _, err := collector.collect(context.Background()); err == nil {
 		t.Fatal("expected collection to fail when the socket is foreign-owned")
@@ -477,9 +472,7 @@ func TestKimiCollect_RedirectNotFollowed(t *testing.T) {
 	defer srv.Close()
 	port := serverPort(t, srv)
 
-	collector := newKimiPlanQuotaCollector(kimiTestHomeNoRegistry(t))
-	collector.scanBase = port
-	collector.scanCount = 1
+	collector := newKimiTestCollector(kimiTestHomeNoRegistry(t), port)
 	if _, err := collector.collect(context.Background()); err == nil {
 		t.Fatal("expected collection to fail on a redirecting peer")
 	}
@@ -502,37 +495,111 @@ func TestLoopbackOnlyDialContext(t *testing.T) {
 	if _, err := loopbackOnlyDialContext(context.Background(), "tcp", "192.168.1.5:8080"); err == nil {
 		t.Fatal("expected LAN dial to be refused")
 	}
+	if _, err := loopbackOnlyDialContext(context.Background(), "tcp", "[::1]:58627"); err == nil {
+		t.Fatal("expected IPv6 loopback dial to be refused (v4-only proof boundary)")
+	}
 }
 
-// Socket-ownership table parsing: same-uid LISTEN passes; foreign uid,
-// non-LISTEN states and missing entries all fail.
-func TestPortListenOwnedByUID(t *testing.T) {
+// Socket-ownership table parsing, address-aware: the listener must be able
+// to serve a 127.0.0.1 dial AND belong to our uid.
+func TestLoopbackListenOwnedByUID(t *testing.T) {
 	header := "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode"
-	listen := func(hexPort string, uid int) string {
-		return fmt.Sprintf("   0: 0100007F:%s 00000000:0000 0A 00000000:00000000 00:00000000 00000000 %5d        0 12345 1 0000000000000000 100 0 0 10 0", hexPort, uid)
+	entry := func(hexAddr, hexPort string, st string, uid int) string {
+		return fmt.Sprintf("   0: %s:%s 00000000:0000 %s 00000000:00000000 00:00000000 00000000 %5d        0 12345 1 0000000000000000 100 0 0 10 0", hexAddr, hexPort, st, uid)
 	}
 	// 58627 = 0xE503
-	if !portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header + "\n" + listen("E503", 1000))}) {
-		t.Fatal("same-uid LISTEN socket rejected")
+	table := func(lines ...string) [][]byte { return [][]byte{[]byte(header + "\n" + strings.Join(lines, "\n"))} }
+
+	const (
+		v4Loopback = "0100007F"
+		v4Wildcard = "00000000"
+		v4Lan      = "AC150005" // 172.21.0.5
+		v6Wildcard = "00000000000000000000000000000000"
+		v6Loopback = "00000000000000000000000000000001" // ::1 — cannot serve a v4 dial
+		v6MappedV4 = "00000000000000000000FFFF0100007F" // ::ffff:127.0.0.1
+	)
+
+	t.Run("v4 loopback same uid passes", func(t *testing.T) {
+		if !loopbackListenOwnedByUID(58627, 1000, table(entry(v4Loopback, "E503", "0A", 1000))) {
+			t.Fatal("rejected")
+		}
+	})
+	t.Run("v4 loopback foreign uid fails", func(t *testing.T) {
+		if loopbackListenOwnedByUID(58627, 1000, table(entry(v4Loopback, "E503", "0A", 65534))) {
+			t.Fatal("accepted foreign listener")
+		}
+	})
+	t.Run("wildcards serving 127.0.0.1 pass when ours", func(t *testing.T) {
+		if !loopbackListenOwnedByUID(58627, 1000, table(entry(v4Wildcard, "E503", "0A", 1000))) {
+			t.Fatal("v4 wildcard rejected")
+		}
+		if !loopbackListenOwnedByUID(58627, 1000, table(entry(v6Wildcard, "E503", "0A", 1000))) {
+			t.Fatal("v6 dual-stack wildcard rejected")
+		}
+		if !loopbackListenOwnedByUID(58627, 1000, table(entry(v6MappedV4, "E503", "0A", 1000))) {
+			t.Fatal("v4-mapped loopback rejected")
+		}
+	})
+	t.Run("v6-only loopback cannot serve a v4 dial", func(t *testing.T) {
+		if loopbackListenOwnedByUID(58627, 1000, table(entry(v6Loopback, "E503", "0A", 1000))) {
+			t.Fatal("::1-only listener accepted for a 127.0.0.1 dial")
+		}
+	})
+	t.Run("LAN-bound listener cannot serve loopback", func(t *testing.T) {
+		if loopbackListenOwnedByUID(58627, 1000, table(entry(v4Lan, "E503", "0A", 1000))) {
+			t.Fatal("LAN listener accepted")
+		}
+	})
+	t.Run("non-listen and missing entries fail", func(t *testing.T) {
+		if loopbackListenOwnedByUID(58627, 1000, table(entry(v4Loopback, "E503", "08", 1000))) {
+			t.Fatal("accepted a non-LISTEN socket")
+		}
+		if loopbackListenOwnedByUID(58627, 1000, table()) {
+			t.Fatal("accepted with no socket entry at all")
+		}
+		if loopbackListenOwnedByUID(58627, 1000, table(entry(v4Loopback, "E504", "0A", 1000))) {
+			t.Fatal("accepted a socket on a different port")
+		}
+	})
+	// The round-3 review repro: a same-user ::1 registry fixture passes pid
+	// verification, while a FOREIGN user serves the fake 40101 on the same
+	// port over IPv4 — the actual dial target. The check must fail.
+	t.Run("foreign v4 listener on same port defeats a same-user v6 fixture", func(t *testing.T) {
+		tables := [][]byte{
+			[]byte(header + "\n" + entry(v4Loopback, "E503", "0A", 65534)),
+			[]byte(header + "\n" + entry(v6Loopback, "E503", "0A", 1000)),
+		}
+		if loopbackListenOwnedByUID(58627, 1000, tables) {
+			t.Fatal("foreign v4 listener accepted behind a same-user v6 fixture")
+		}
+	})
+	t.Run("dual-stack split ownership fails closed", func(t *testing.T) {
+		tables := [][]byte{
+			[]byte(header + "\n" + entry(v4Loopback, "E503", "0A", 1000)),
+			[]byte(header + "\n" + entry(v6Wildcard, "E503", "0A", 65534)),
+		}
+		if loopbackListenOwnedByUID(58627, 1000, tables) {
+			t.Fatal("mixed-ownership dual-stack accepted")
+		}
+	})
+}
+
+// The registry path must not bypass the socket proof: a pid-verified entry
+// whose actual 127.0.0.1:<port> listener belongs to another user still gets
+// no credential (round-3 review repro shape).
+func TestKimiCollect_RegistryPathRequiresSocketOwnership(t *testing.T) {
+	var hits atomic.Int64
+	var gotAuth string
+	srv := newKimiTestServerCounted(t, kimiLimitsJSON(), 0, &gotAuth, &hits)
+	defer srv.Close()
+	port := serverPort(t, srv)
+
+	collector := newKimiTestCollector(kimiTestHome(t, port), port)
+	collector.socketOwnedByUser = func(int) bool { return false } // foreign listener on the dialed target
+	if _, err := collector.collect(context.Background()); err == nil {
+		t.Fatal("expected collection to fail when the dialed socket is foreign-owned")
 	}
-	if portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header + "\n" + listen("E503", 1001))}) {
-		t.Fatal("foreign-uid LISTEN socket accepted")
-	}
-	// A different port's socket must not count.
-	if portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header + "\n" + listen("E504", 1000))}) {
-		t.Fatal("accepted a socket on a different port")
-	}
-	// st 08 (non-LISTEN) must not count.
-	nonListen := strings.Replace(listen("E503", 1000), " 0A ", " 08 ", 1)
-	if portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header + "\n" + nonListen)}) {
-		t.Fatal("accepted a non-LISTEN socket")
-	}
-	if portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header)}) {
-		t.Fatal("accepted with no socket entry at all")
-	}
-	// Dual-stack: tcp4 + tcp6 both owned by us passes.
-	v6 := strings.Replace(listen("E503", 1000), "0100007F", "00000000000000000000000001000000", 1)
-	if !portListenOwnedByUID(58627, 1000, [][]byte{[]byte(header + "\n" + listen("E503", 1000)), []byte(header + "\n" + v6)}) {
-		t.Fatal("dual-table same-uid rejected")
+	if gotAuth != "" {
+		t.Fatalf("registry path delivered credentials without socket proof: %q", gotAuth)
 	}
 }

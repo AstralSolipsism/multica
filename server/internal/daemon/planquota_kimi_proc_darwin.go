@@ -72,9 +72,8 @@ func kimiVerifyInstanceProcess(pid int) error {
 	if uid != os.Geteuid() {
 		return fmt.Errorf("process %d owned by uid %d, want %d", pid, uid, os.Geteuid())
 	}
-	image := strings.ToLower(strings.Join(fields[1:], " "))
-	if !strings.Contains(image, "kimi") {
-		return fmt.Errorf("process %d image %q is not kimi", pid, image)
+	if !kimiProcessTokensMatch(fields[1:]) {
+		return fmt.Errorf("process %d image is not kimi", pid)
 	}
 	return nil
 }

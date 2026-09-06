@@ -418,6 +418,7 @@ func (d *Daemon) demoteUnusableRuntimes(ctx context.Context, causes map[string]r
 			}
 			delete(d.runtimeIndex, rid)
 			d.planQuotaCache.Delete(rid)
+			d.planQuotaClearMarkers.Delete(rid)
 			demoted = append(demoted, rid)
 			demotedByWorkspace[workspaceID] = append(demotedByWorkspace[workspaceID], rid)
 			demotedProviders[rt.Provider] = cause.reason

@@ -164,9 +164,11 @@ func zenmuxDetailToPlanQuota(data *zenmuxSubscriptionData, observedAt time.Time)
 //	                            "hermes", so workspace-wide selection cannot
 //	                            tell them apart)
 type zenmuxLinkSet struct {
-	allHermes  bool
-	workspaces map[string]struct{}
-	profiles   map[string]struct{}
+	allHermes         bool
+	workspaces        map[string]struct{}
+	profiles          map[string]struct{}
+	builtinAll        bool
+	builtinWorkspaces map[string]struct{}
 }
 
 // parseZenMuxLink parses MULTICA_ZENMUX_LINK. Any other provider or a
@@ -190,6 +192,21 @@ func parseZenMuxLink(raw string) (zenmuxLinkSet, error) {
 			set.profiles[id] = struct{}{}
 			continue
 		}
+		if rest, ok := strings.CutPrefix(entry, "hermes:builtin"); ok {
+			if rest == "" {
+				set.builtinAll = true
+				continue
+			}
+			wsID, found := strings.CutPrefix(rest, "@")
+			if !found || strings.TrimSpace(wsID) == "" {
+				return zenmuxLinkSet{}, fmt.Errorf("MULTICA_ZENMUX_LINK: malformed entry %q (want hermes:builtin[@<workspace-id>])", entry)
+			}
+			if set.builtinWorkspaces == nil {
+				set.builtinWorkspaces = make(map[string]struct{})
+			}
+			set.builtinWorkspaces[strings.TrimSpace(wsID)] = struct{}{}
+			continue
+		}
 		provider, workspaceID, hasWorkspace := strings.Cut(entry, "@")
 		if provider != "hermes" {
 			return zenmuxLinkSet{}, fmt.Errorf("MULTICA_ZENMUX_LINK: unsupported provider %q (only \"hermes\" is backed by ZenMux)", provider)
@@ -211,7 +228,8 @@ func parseZenMuxLink(raw string) (zenmuxLinkSet, error) {
 }
 
 func (s zenmuxLinkSet) empty() bool {
-	return !s.allHermes && len(s.workspaces) == 0 && len(s.profiles) == 0
+	return !s.allHermes && !s.builtinAll &&
+		len(s.workspaces) == 0 && len(s.profiles) == 0 && len(s.builtinWorkspaces) == 0
 }
 
 // linked reports whether a runtime (provider, workspace, custom profile) is
@@ -230,7 +248,13 @@ func (s zenmuxLinkSet) linked(provider, workspaceID, profileID string) bool {
 		_, ok := s.profiles[profileID]
 		return ok
 	}
-	return false
+	// Built-in runtimes (no profile) are selectable without dragging custom
+	// profiles along.
+	if s.builtinAll {
+		return true
+	}
+	_, ok := s.builtinWorkspaces[workspaceID]
+	return ok
 }
 
 // zenmuxRuntimeKey is the stable per-runtime identity used for the persisted
@@ -304,12 +328,7 @@ func (d *Daemon) reconcileZenMuxClears(link zenmuxLinkSet, state *zenmuxQuotaSta
 		if !state.has(rt.Key) {
 			continue // never reported by this daemon — leave its row alone
 		}
-		d.recordRuntimePlanQuota(rt.ID, &protocol.RuntimePlanQuota{
-			Provider:   "zenmux",
-			Status:     protocol.PlanQuotaStatusOK,
-			ObservedAt: time.Now().Unix(),
-			Source:     protocol.PlanQuotaSourceDaemon,
-		})
+		d.recordZenMuxPlanQuotaClearMarker(rt.ID)
 		cleared = append(cleared, rt.Key)
 	}
 	if len(cleared) > 0 {

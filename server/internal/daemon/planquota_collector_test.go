@@ -143,3 +143,50 @@ func TestRateLimitBackoff(t *testing.T) {
 		t.Fatalf("streak 0 = %v", got)
 	}
 }
+
+// S2b: a clear marker is a deliberate state, not an observation — it is
+// re-stamped on every heartbeat so "not reported" never ages into "stale",
+// while real snapshots keep their observed_at (staleness must keep signaling
+// a silently failing collector).
+func TestHeartbeatExtrasFor_ClearMarkerReStamped(t *testing.T) {
+	d := newQuotaLoopTestDaemon()
+
+	d.recordZenMuxPlanQuotaClearMarker("rt-kimi")
+	// Age the cached marker 25h, as if the daemon cleared long ago.
+	cached, _ := d.planQuotaCache.Load("rt-kimi")
+	aged := *cached.(*protocol.RuntimePlanQuota)
+	aged.ObservedAt = time.Now().Add(-25 * time.Hour).Unix()
+	d.planQuotaCache.Store("rt-kimi", &aged)
+
+	extras := d.heartbeatExtrasFor("rt-kimi")
+	if extras.PlanQuota == nil {
+		t.Fatal("marker not attached to heartbeat")
+	}
+	if age := time.Now().Unix() - extras.PlanQuota.ObservedAt; age > 5 {
+		t.Fatalf("marker observed_at not re-stamped: age %ds", age)
+	}
+	if len(extras.PlanQuota.Windows) != 0 {
+		t.Fatalf("marker carries windows: %+v", extras.PlanQuota.Windows)
+	}
+	// The cached original keeps its age — the re-stamp is per-heartbeat.
+	if got, _ := d.planQuotaCache.Load("rt-kimi"); got.(*protocol.RuntimePlanQuota).ObservedAt != aged.ObservedAt {
+		t.Fatal("cached marker mutated in place")
+	}
+
+	// A real snapshot replaces the marker and is never re-stamped.
+	real := &protocol.RuntimePlanQuota{
+		Provider:   "zenmux",
+		Status:     protocol.PlanQuotaStatusOK,
+		ObservedAt: time.Now().Add(-time.Hour).Unix(),
+		Source:     protocol.PlanQuotaSourceDaemon,
+		Windows:    []protocol.RuntimePlanQuotaWindow{{Name: "primary"}},
+	}
+	d.recordRuntimePlanQuota("rt-codex", real)
+	extras = d.heartbeatExtrasFor("rt-codex")
+	if extras.PlanQuota.ObservedAt != real.ObservedAt {
+		t.Fatal("real snapshot re-stamped — collector failure would be masked")
+	}
+	if _, ok := d.planQuotaClearMarkers.Load("rt-codex"); ok {
+		t.Fatal("real snapshot left a clear marker behind")
+	}
+}

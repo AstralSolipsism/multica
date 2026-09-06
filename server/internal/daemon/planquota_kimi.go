@@ -131,8 +131,11 @@ func loopbackOnlyDialContext(ctx context.Context, network, addr string) (net.Con
 	if err != nil {
 		return nil, err
 	}
-	if host != "127.0.0.1" && host != "::1" {
-		return nil, fmt.Errorf("plan quota: refusing to dial non-loopback target %q", host)
+	if host != "127.0.0.1" {
+		// IPv4 loopback only: the collector constructs 127.0.0.1 URLs itself,
+		// and identity proof (socket ownership) is evaluated for exactly the
+		// dialed family — an ::1 socket cannot serve this dial.
+		return nil, fmt.Errorf("plan quota: refusing to dial non-IPv4-loopback target %q", host)
 	}
 	return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, network, addr)
 }
@@ -200,6 +203,77 @@ func (c *kimiPlanQuotaCollector) candidatePorts() []int {
 	return ports
 }
 
+// kimiProcessTokensMatch reports whether any token looks like the Kimi CLI:
+// its basename (lowercased) is kimi / kimi-code / kimi.exe, or the token is
+// a path inside a kimi-code installation. Basename-prefix matching keeps
+// unrelated processes that merely mention kimi in a flag from passing.
+func kimiProcessTokensMatch(tokens []string) bool {
+	for _, tok := range tokens {
+		base := strings.ToLower(filepath.Base(strings.TrimSpace(tok)))
+		if base == "kimi" || base == "kimi.exe" || strings.HasPrefix(base, "kimi-code") {
+			return true
+		}
+		if strings.Contains(strings.ToLower(tok), "kimi-code") {
+			return true
+		}
+	}
+	return false
+}
+
+// loopbackListenOwnedByUID scans kernel TCP tables (Linux /proc/net/tcp{,6},
+// or fixtures) for LISTEN sockets that can actually serve a 127.0.0.1:<port>
+// dial: v4 loopback or wildcard, and dual-stack v6 wildcard / v4-mapped
+// loopback. An ::1-only or LAN-bound socket can never serve that dial and is
+// ignored. The check passes only when at least one such socket exists AND
+// every socket that could serve the dial belongs to uid — a foreign listener
+// on the same port (any family) fails closed.
+func loopbackListenOwnedByUID(port, uid int, tables [][]byte) bool {
+	found := false
+	for _, table := range tables {
+		for i, line := range strings.Split(string(table), "\n") {
+			if i == 0 { // header row
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) < 8 {
+				continue
+			}
+			// local_address is hex ip:hex port; st 0A is LISTEN; uid is field 7.
+			hexAddr, hexPort, ok := strings.Cut(fields[1], ":")
+			if !ok {
+				continue
+			}
+			p, err := strconv.ParseUint(hexPort, 16, 32)
+			if err != nil || int(p) != port {
+				continue
+			}
+			if fields[3] != "0A" || !addrServesLoopbackV4Dial(hexAddr) {
+				continue
+			}
+			found = true
+			socketUID, err := strconv.Atoi(fields[7])
+			if err != nil || socketUID != uid {
+				return false
+			}
+		}
+	}
+	return found
+}
+
+// addrServesLoopbackV4Dial reports whether a hex-encoded listener address
+// from the kernel TCP table can serve a dial to 127.0.0.1.
+func addrServesLoopbackV4Dial(hexAddr string) bool {
+	switch strings.ToUpper(hexAddr) {
+	case "0100007F", // 127.0.0.1
+		"00000000",                         // 0.0.0.0 (v4 wildcard)
+		"00000000000000000000000000000000", // :: (dual-stack wildcard)
+		"00000000000000000000FFFF0100007F", // ::ffff:127.0.0.1
+		"00000000000000000000FFFF00000000": // ::ffff:0.0.0.0
+		return true
+	}
+	return false
+}
+
 // kimiInstance is one entry of the Kimi local server's instance registry
 // (~/.kimi-code/server/instances/<server-id>.json). The registry lives under
 // the user's private home, so only this user's processes can plant entries —
@@ -236,7 +310,11 @@ func (c *kimiPlanQuotaCollector) instances() []kimiInstance {
 		if inst.PID <= 0 || inst.Port <= 0 || inst.Port > 65535 {
 			continue
 		}
-		if inst.Host != "127.0.0.1" && inst.Host != "::1" && inst.Host != "" {
+		// Only IPv4-loopback binds are usable: the collector dials 127.0.0.1
+		// and the socket-ownership proof is evaluated for exactly that target,
+		// so an entry claiming any other host (including ::1) is refused
+		// rather than silently dialed at a different address than proven.
+		if inst.Host != "" && inst.Host != "127.0.0.1" {
 			continue
 		}
 		out = append(out, inst)
@@ -257,6 +335,15 @@ func (c *kimiPlanQuotaCollector) fetchUsage(ctx context.Context, token string) (
 		for _, inst := range instances {
 			if err := c.verifyProcess(inst.PID); err != nil {
 				lastErr = fmt.Errorf("kimi instance %s (pid %d): %w", inst.ServerID, inst.PID, err)
+				continue
+			}
+			// The pid proves the registry writer; the socket check proves the
+			// process actually serving 127.0.0.1:<port> — the target the
+			// bearer is about to be sent to — belongs to this user. Both are
+			// required: neither a stale/forged registry entry nor a foreign
+			// port squatter alone can pass.
+			if !c.socketOwnedByUser(inst.Port) {
+				lastErr = fmt.Errorf("kimi instance %s (pid %d): listener on port %d not owned by this user", inst.ServerID, inst.PID, inst.Port)
 				continue
 			}
 			if data, err := c.tryPort(ctx, inst.Port, token); err == nil {

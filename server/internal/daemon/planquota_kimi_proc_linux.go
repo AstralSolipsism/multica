@@ -17,8 +17,8 @@ import (
 
 func kimiIdentitySupported() bool { return true }
 
-// kimiSocketOwnedByUser reports whether the port's LISTEN socket belongs to
-// this process's effective user.
+// kimiSocketOwnedByUser reports whether every LISTEN socket that could serve
+// a 127.0.0.1 dial on the port belongs to this process's effective user.
 func kimiSocketOwnedByUser(port int) bool {
 	var tables [][]byte
 	for _, name := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
@@ -26,43 +26,7 @@ func kimiSocketOwnedByUser(port int) bool {
 			tables = append(tables, raw)
 		}
 	}
-	return portListenOwnedByUID(port, os.Geteuid(), tables)
-}
-
-// portListenOwnedByUID scans kernel TCP tables for LISTEN sockets bound to
-// the port. It answers false when nothing listens (a cheap pre-dial filter)
-// or when ANY listener on the port belongs to a different uid.
-func portListenOwnedByUID(port, uid int, tables [][]byte) bool {
-	found := false
-	for _, table := range tables {
-		for i, line := range strings.Split(string(table), "\n") {
-			if i == 0 { // header row
-				continue
-			}
-			fields := strings.Fields(line)
-			if len(fields) < 8 {
-				continue
-			}
-			// local_address is hex ip:hex port; st 0A is LISTEN; uid is field 7.
-			_, hexPort, ok := strings.Cut(fields[1], ":")
-			if !ok {
-				continue
-			}
-			p, err := strconv.ParseUint(hexPort, 16, 32)
-			if err != nil || int(p) != port {
-				continue
-			}
-			if fields[3] != "0A" {
-				continue
-			}
-			found = true
-			socketUID, err := strconv.Atoi(fields[7])
-			if err != nil || socketUID != uid {
-				return false
-			}
-		}
-	}
-	return found
+	return loopbackListenOwnedByUID(port, os.Geteuid(), tables)
 }
 
 // kimiVerifyInstanceProcess binds a registry-claimed pid to a live, same-user
@@ -94,12 +58,13 @@ func kimiVerifyInstanceProcess(pid int) error {
 		return fmt.Errorf("process %d owned by uid %d, want %d", pid, uid, os.Geteuid())
 	}
 	// The CLI may be a native binary or a Node script (whose exe is "node"),
-	// so accept a kimi-ish image OR a kimi-ish command line.
+	// so accept when the image or any argv token's basename is kimi-ish
+	// ("kimi", "kimi-code", "kimi.exe", a kimi-code install path member).
 	exe, _ := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	cmdline, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-	haystack := strings.ToLower(exe + " " + strings.ReplaceAll(string(cmdline), "\x00", " "))
-	if !strings.Contains(haystack, "kimi") {
-		return fmt.Errorf("process %d image %q is not kimi", pid, strings.TrimSpace(haystack))
+	tokens := append([]string{exe}, strings.Split(string(cmdline), "\x00")...)
+	if !kimiProcessTokensMatch(tokens) {
+		return fmt.Errorf("process %d image is not kimi", pid)
 	}
 	return nil
 }
