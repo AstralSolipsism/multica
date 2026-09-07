@@ -45,13 +45,13 @@ export function formatQuotaWindowLabel(
 // Tone → semantic classes for the quota bars (a small fill meter + a
 // tone-colored percent). Shared with the host-metrics bars.
 export const TONE_BAR_CLASS: Record<QuotaTone, string> = {
-  ok: "bg-foreground/70",
+  ok: "bg-success",
   warning: "bg-warning",
   destructive: "bg-destructive",
 };
 
 export const TONE_TEXT_CLASS: Record<QuotaTone, string> = {
-  ok: "text-foreground",
+  ok: "text-success",
   warning: "text-warning",
   destructive: "text-destructive",
 };

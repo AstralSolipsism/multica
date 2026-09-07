@@ -20,12 +20,14 @@ import { ProviderLogo } from "./provider-logo";
 import { useT } from "../../i18n";
 
 const CHIP_TONE_CLASS: Record<QuotaTone, string> = {
-  ok: "bg-muted text-foreground",
+  ok: "bg-success/10 text-success",
   warning: "bg-warning/10 text-warning",
   destructive: "bg-destructive/10 text-destructive",
 };
 
-const MAX_VISIBLE_CHIPS = 4;
+// Two chips plus the "+N" overflow pill fit the machine row's chip column
+// (w-56) in every locale; more would clip mid-pill.
+const MAX_VISIBLE_CHIPS = 2;
 
 // The machine row's per-runtime quota string: one pill per runtime carrying
 // a fresh plan-quota snapshot, then a "+N" overflow pill. Each pill shows
@@ -45,7 +47,7 @@ export function MachineQuotaChips({
   const visible = chips.slice(0, MAX_VISIBLE_CHIPS);
   const extra = chips.length - visible.length;
   return (
-    <span className="flex min-w-0 items-center gap-1.5">
+    <span className="flex min-w-0 items-center gap-1.5 overflow-hidden">
       {visible.map((chip) => (
         <QuotaChip key={chip.runtimeId} chip={chip} machine={machine} now={now} />
       ))}
@@ -70,12 +72,17 @@ function QuotaChip({
   const { t } = useT("runtimes");
   const runtime = machine.runtimes.find((r) => r.id === chip.runtimeId);
   const label = runtime ? runtimeRowLabel(runtime, machine.title) : chip.provider;
+  // The number is the REMAINING percent of the worst active window — say so
+  // on the chip ("剩 62%" / "62% left"), not just in the tooltip: a bare
+  // percent next to a logo reads as used-vs-remaining ambiguous.
   const text =
     chip.status === "limited"
       ? t(($) => $.quota.exhausted)
       : chip.remainingPercent == null
         ? t(($) => $.machine.metrics.unavailable)
-        : `${Math.round(chip.remainingPercent)}%`;
+        : t(($) => $.quota.remaining, {
+            percent: Math.round(chip.remainingPercent),
+          });
   return (
     <Tooltip>
       <TooltipTrigger

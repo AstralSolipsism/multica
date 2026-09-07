@@ -491,7 +491,7 @@ function MachineRow({ machine, now }: { machine: RuntimeMachine; now: number }) 
         </span>
       </span>
 
-      <span className="hidden w-44 shrink-0 items-center xl:flex">
+      <span className="hidden w-56 shrink-0 items-center xl:flex">
         <MachineQuotaChips machine={machine} now={now} />
       </span>
       <span className="hidden w-28 shrink-0 items-center gap-1.5 text-caption md:flex">
