@@ -1,9 +1,7 @@
-// CLI surface for the Phase-0 cross-container exercise (item 4): the same
-// store, driven from two different agent containers over the network.
-//
-// Content is only produced by explicit `read`/`candidates` — `list` returns
-// paths and revisions only, which is the structural argument that this design
-// never amounts to full prompt injection.
+// CLI surface, v2 (post-review): authors never come from the command line
+// (the grant defines the actor), CONFLICT exits non-zero with a structured
+// result line, argument boundaries are exact. Commands beyond v1: adopt,
+// grant (test-only), expire (test-only).
 package main
 
 import (
@@ -13,6 +11,9 @@ import (
 	"os"
 	"time"
 )
+
+// Exit codes: 0 success (incl. replay), 1 error, 3 conflict preserved.
+const exitConflict = 3
 
 func main() {
 	pg := flag.String("pg", os.Getenv("OL20_PG"), "postgres URL")
@@ -25,8 +26,7 @@ func main() {
 
 	args := flag.Args()
 	if len(args) == 0 {
-		fmt.Println("usage: ol20 <init|grant|list|read|save|candidates|orphans> ...")
-		os.Exit(2)
+		usage()
 	}
 
 	ctx := context.Background()
@@ -42,29 +42,30 @@ func main() {
 		fmt.Println("schema ready")
 
 	case "grant":
-		// grant <token> <project> <user|run> [ttlSeconds]
-		needArgs(len(args) >= 4, "grant token project kind [ttl]")
+		// grant <token> <project> <user|run> <actorID> [ttlSeconds]  (test-only)
+		needArgs(len(args) >= 5, "grant token project kind actorID [ttl]")
 		var exp *time.Time
-		if len(args) >= 5 {
-			t := time.Now().Add(time.Duration(atoi(args[4])) * time.Second)
+		if len(args) >= 6 {
+			t := time.Now().Add(time.Duration(atoi(args[5])) * time.Second)
 			exp = &t
 		}
-		must(st.Grant(ctx, args[1], args[2], args[3], exp))
+		must(st.Grant(ctx, args[1], args[2], args[3], args[4], exp))
 		fmt.Println("granted")
 
 	case "save":
-		// save <token> <project> <path> <baseRev> <opID> <authorID> <content>
-		needArgs(len(args) >= 7, "save token project path base op author content")
+		// save <token> <project> <path> <baseRev> <opID> <content>
+		needArgs(len(args) >= 7, "save token project path base op content")
 		res, err := st.Save(ctx, SaveRequest{
 			Token: args[1], ProjectID: args[2], Path: args[3],
-			BaseRevision: int64(atoi(args[4])), OpID: args[5],
-			AuthorKind: "run", AuthorID: args[6], Content: []byte(args[7]),
+			BaseRevision: int64(atoi(args[4])), OpID: args[5], Content: []byte(args[6]),
 		})
 		must(err)
-		fmt.Printf("status=%s revision=%d replayed=%v\n", res.Status, res.Revision, res.Replayed)
+		fmt.Println(res.String())
+		if res.Status == StatusConflict {
+			os.Exit(exitConflict)
+		}
 
 	case "read":
-		// read <token> <project> <path>
 		needArgs(len(args) >= 4, "read token project path")
 		res, err := st.Read(ctx, args[1], args[2], args[3])
 		must(err)
@@ -87,6 +88,13 @@ func main() {
 				c.ID[:8], c.BaseRevision, c.AuthorID, c.SHA256[:12], c.Content)
 		}
 
+	case "adopt":
+		// adopt <token> <project> <path> <candidateID> <opID>
+		needArgs(len(args) >= 6, "adopt token project path candidateID opID")
+		res, err := st.AdoptCandidate(ctx, args[1], args[2], args[3], args[4], args[5])
+		must(err)
+		fmt.Println(res.String())
+
 	case "orphans":
 		ks, err := st.Orphans(ctx)
 		must(err)
@@ -96,23 +104,24 @@ func main() {
 		fmt.Printf("total=%d\n", len(ks))
 
 	default:
-		fmt.Println("unknown command", args[0])
-		os.Exit(2)
+		usage()
 	}
 }
 
-func needArgs(cond bool, usage string) {
+func usage() {
+	fmt.Println("usage: ol20 <init|grant|list|read|save|candidates|adopt|orphans> ...")
+	os.Exit(2)
+}
+
+func needArgs(cond bool, usageLine string) {
 	if !cond {
-		fmt.Fprintln(os.Stderr, usage)
+		fmt.Fprintln(os.Stderr, "usage:", usageLine)
 		os.Exit(2)
 	}
 }
 
-func must(err error, msgs ...string) {
+func must(err error) {
 	if err != nil {
-		if len(msgs) > 0 {
-			fmt.Fprintln(os.Stderr, msgs[0])
-		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}

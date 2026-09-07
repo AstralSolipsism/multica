@@ -1,5 +1,8 @@
--- OL-20 shared-resource-zone Phase-0 prototype schema.
--- Isolated database (labrastro_filetest); production tables are not touched.
+-- OL-20 shared-resource-zone Phase-0 prototype schema (v2, post-review).
+-- Idempotency ledger is scoped to (project, actor, op_id) and stores the
+-- full request binding: target path, base revision, content digest, and the
+-- complete outcome including conflict details. Grants carry the authoritative
+-- actor identity; saves never trust client-supplied authors.
 CREATE TABLE IF NOT EXISTS files (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id       uuid NOT NULL,
@@ -9,8 +12,6 @@ CREATE TABLE IF NOT EXISTS files (
   UNIQUE (project_id, path)
 );
 
--- Current-version history: one row per accepted save. op_id is globally
--- unique, making retries idempotent at the database level.
 CREATE TABLE IF NOT EXISTS revisions (
   file_id     uuid NOT NULL REFERENCES files(id) ON DELETE CASCADE,
   revision    bigint NOT NULL CHECK (revision > 0),
@@ -21,12 +22,11 @@ CREATE TABLE IF NOT EXISTS revisions (
   author_id   text NOT NULL,
   op_id       text NOT NULL,
   created_at  timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (file_id, revision),
-  UNIQUE (op_id)
+  PRIMARY KEY (file_id, revision)
 );
 
--- Divergent saves: content preserved verbatim, never becomes current on its
--- own. base_revision records what the losing writer thought was current.
+-- Conflict content keys are random UUIDs: two racing writers reusing one
+-- operation id must never be able to overwrite referenced candidate content.
 CREATE TABLE IF NOT EXISTS conflict_candidates (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   file_id        uuid NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -37,24 +37,32 @@ CREATE TABLE IF NOT EXISTS conflict_candidates (
   author_kind    text NOT NULL,
   author_id      text NOT NULL,
   op_id          text NOT NULL,
-  created_at     timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (op_id)
+  created_at     timestamptz NOT NULL DEFAULT now()
 );
 
--- Recorded outcome per operation id: the idempotency ledger. A retry reads
--- the outcome instead of re-applying the write.
+-- Idempotency ledger, scoped and request-bound (review P1-1). A hit replays
+-- only when every bound field matches; any mismatch is an explicit error.
 CREATE TABLE IF NOT EXISTS op_results (
-  op_id    text PRIMARY KEY,
-  outcome  text NOT NULL CHECK (outcome IN ('SAVED','CONFLICT')),
-  revision bigint,
-  note     text NOT NULL DEFAULT ''
+  project_id       uuid NOT NULL,
+  actor_id         text NOT NULL,
+  op_id            text NOT NULL,
+  outcome          text NOT NULL CHECK (outcome IN ('SAVED','CONFLICT')),
+  revision         bigint,          -- SAVED: the new current revision
+  candidate_id     uuid,            -- CONFLICT: preserved candidate
+  conflict_current bigint,          -- CONFLICT: current revision at the time
+  path             text NOT NULL,
+  base_revision    bigint NOT NULL,
+  content_sha256   text NOT NULL,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (project_id, actor_id, op_id)
 );
 
--- Minimal identity/permission model for the Phase-0 boundary tests.
+-- Identity model (review P1-2): grants carry the authoritative actor.
 CREATE TABLE IF NOT EXISTS grants (
   token           text PRIMARY KEY,
   project_id      uuid NOT NULL,
   kind            text NOT NULL CHECK (kind IN ('user','run')),
+  actor_id        text NOT NULL,
   run_expires_at  timestamptz,
   revoked_at      timestamptz,
   created_at      timestamptz NOT NULL DEFAULT now()
