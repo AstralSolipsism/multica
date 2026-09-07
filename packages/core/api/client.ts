@@ -451,6 +451,7 @@ import {
   type IssueView,
   type IssueViewPreference,
   type CreateIssueViewRequest,
+  GlmQuotaStatus,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -2534,6 +2535,12 @@ export class ApiClient {
     return parseWithFallback<AppConfigResponse>(raw, AppConfigSchema, EMPTY_APP_CONFIG, {
       endpoint: "GET /api/config",
     });
+  }
+
+  // GLM (Zhipu) Coding Plan balance — account-level, deployment-scoped.
+  // The server answers enabled=false when no key is configured.
+  async getGlmQuota(): Promise<GlmQuotaStatus> {
+    return this.fetch("/api/glm-quota");
   }
 
   // Workspaces

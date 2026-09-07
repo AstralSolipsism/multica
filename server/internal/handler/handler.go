@@ -408,6 +408,10 @@ type Handler struct {
 	// so the feature degrades cleanly on deployments without a private key.
 	// Wired in cmd/server/router.go after New.
 	PRRefresh *ghsnapshot.Manager
+
+	// GlmQuota polls the Zhipu/GLM Coding Plan balance (account-level, shared
+	// by every GLM-backed runtime). Nil when GLM_QUOTA_API_KEY is unset.
+	GlmQuota *GlmQuotaMonitor
 	cfg       Config
 }
 
@@ -527,6 +531,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		slog.Warn("github: PR snapshot pipeline disabled (invalid App private key)", "err", err)
 	}
 	h.PRRefresh = ghsnapshot.NewManager(ghClient, queries, txStarter, h.broadcastPRSnapshotApplied)
+	h.GlmQuota = NewGlmQuotaMonitorFromEnv()
 
 	return h
 }
