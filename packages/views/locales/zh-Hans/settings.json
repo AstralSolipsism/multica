@@ -128,7 +128,7 @@
       "title": "固定评论栏",
       "hint": "滚动任务页面时，评论栏始终固定在底部。"
     },
-    "description": "调整你在 Multica 中的使用偏好。",
+    "description": "调整你在 Labrastro 中的使用偏好。",
     "issue_title": "任务创建",
     "comments_title": "评论",
     "device_hint": "保存在当前设备上。",

@@ -128,7 +128,7 @@
       "title": "コメントバーを固定",
       "hint": "タスクのページをスクロールしても、コメントバーを常に下部に固定します。"
     },
-    "description": "Multica の使い方をカスタマイズします。",
+    "description": "Labrastro の使い方をカスタマイズします。",
     "issue_title": "タスク作成",
     "comments_title": "コメント",
     "device_hint": "このデバイスに保存されます。",

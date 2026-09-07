@@ -128,7 +128,7 @@
       "title": "댓글 입력창 고정",
       "hint": "태스크 페이지를 스크롤할 때 댓글 입력창을 항상 하단에 고정합니다."
     },
-    "description": "Multica 사용 환경을 맞춤 설정합니다.",
+    "description": "Labrastro 사용 환경을 맞춤 설정합니다.",
     "issue_title": "태스크 생성",
     "comments_title": "댓글",
     "device_hint": "현재 기기에 저장됩니다.",
