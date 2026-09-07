@@ -48,6 +48,7 @@ func (d *Daemon) antigravityQuotaLoop(ctx context.Context) {
 func (d *Daemon) runAntigravityQuotaProbe(ctx context.Context) {
 	entry, ok := d.agents()[antigravityQuotaProvider]
 	if !ok || entry.Path == "" {
+		d.recordAntigravityQuotaSkip(antigravityQuotaSkipNotRegistered)
 		return
 	}
 	version := d.agentVersion(antigravityQuotaProvider)
@@ -56,6 +57,7 @@ func (d *Daemon) runAntigravityQuotaProbe(ctx context.Context) {
 		// the version for every provider it registers, so an empty string
 		// means "never verified this binary" — exactly what the probe must
 		// not question on its own.
+		d.recordAntigravityQuotaSkip(antigravityQuotaSkipNoVersion)
 		return
 	}
 	runtimeIDs := d.providerRuntimeIDs(antigravityQuotaProvider)
@@ -66,13 +68,17 @@ func (d *Daemon) runAntigravityQuotaProbe(ctx context.Context) {
 	if err != nil {
 		// agy not running, version outside the probed range, no reachable
 		// listener, unrecognized payload: all the same "not reported" the
-		// issue's acceptance criteria demand — logged quietly, nothing written.
+		// issue's acceptance criteria demand — logged quietly, nothing
+		// written. The reason is still surfaced on /health, since these
+		// logs are the only other trace of a silent degradation.
 		d.logger.Debug("antigravity quota probe skipped", "error", err)
+		d.recordAntigravityQuotaSkip(antigravityQuotaSkipReasonFor(err))
 		return
 	}
 	for _, runtimeID := range runtimeIDs {
 		d.recordRuntimePlanQuota(runtimeID, quota)
 	}
+	d.recordAntigravityQuotaSuccess()
 }
 
 // antigravityQuotaProvider names the builtin provider whose runtime pages the

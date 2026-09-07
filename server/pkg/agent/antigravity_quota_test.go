@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -359,6 +360,21 @@ func TestProbeAntigravityQuotaNoRunningAgy(t *testing.T) {
 	stubDiscovery(t, nil, func(int) []int { return nil })
 	if _, err := ProbeAntigravityQuota(context.Background(), "agy", "1.1.11", antigravityQuotaFixtureNow); err == nil {
 		t.Fatal("expected error when agy is not running")
+	}
+}
+
+func TestProbeAntigravityQuotaClassifiesFailuresWithSentinels(t *testing.T) {
+	// The daemon's per-task sampler and /health diagnostics classify probe
+	// failures with errors.Is — "no process" is the one failure that can
+	// resolve itself by retrying while a task runs, so it must be told apart
+	// from the terminal ones without string-matching.
+	if _, err := ProbeAntigravityQuota(context.Background(), "agy", "2.0.0", antigravityQuotaFixtureNow); !errors.Is(err, ErrAntigravityVersionUnsupported) {
+		t.Fatalf("version-gate failure = %v, want ErrAntigravityVersionUnsupported", err)
+	}
+
+	stubDiscovery(t, nil, func(int) []int { return nil })
+	if _, err := ProbeAntigravityQuota(context.Background(), "agy", "1.1.11", antigravityQuotaFixtureNow); !errors.Is(err, ErrAntigravityNotRunning) {
+		t.Fatalf("no-process failure = %v, want ErrAntigravityNotRunning", err)
 	}
 }
 

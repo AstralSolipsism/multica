@@ -99,6 +99,20 @@ var (
 	antigravityQuotaListeningPorts = listeningLoopbackPorts
 )
 
+// Sentinel probe failures. They add no behavior — every failure still
+// degrades to the same silent "not reported" — but they let the daemon tell
+// the one failure that can resolve itself by retrying while a task runs
+// (no live agy process: not spawned yet, or already exited) apart from the
+// terminal ones, and name a stable reason on /health without string-matching
+// error text.
+var (
+	// ErrAntigravityNotRunning: the process scan found no live agy process.
+	ErrAntigravityNotRunning = errors.New("antigravity quota probe: no running agy process")
+	// ErrAntigravityVersionUnsupported: the detected version sits outside the
+	// range the response parser was written against.
+	ErrAntigravityVersionUnsupported = errors.New("antigravity quota probe: agy version")
+)
+
 // antigravityQuotaWindowMinutes maps the two documented window kinds onto
 // the minute counts the plan-quota wire shape (and the UI's "5h"/"wk"
 // labels) understand.
@@ -141,14 +155,14 @@ func AntigravityQuotaProbeSupported(version string) bool {
 // least one understood bucket.
 func ProbeAntigravityQuota(ctx context.Context, execPath, version string, now time.Time) (*protocol.RuntimePlanQuota, error) {
 	if !AntigravityQuotaProbeSupported(version) {
-		return nil, fmt.Errorf("antigravity quota probe: agy version %q outside the probed range", version)
+		return nil, fmt.Errorf("%w %q outside the probed range", ErrAntigravityVersionUnsupported, version)
 	}
 	ctx, cancel := context.WithTimeout(ctx, antigravityQuotaProbeBudget)
 	defer cancel()
 
 	pids := antigravityQuotaProcesses(execPath)
 	if len(pids) == 0 {
-		return nil, errors.New("antigravity quota probe: no running agy process")
+		return nil, ErrAntigravityNotRunning
 	}
 	if len(pids) > antigravityQuotaMaxProcesses {
 		pids = pids[:antigravityQuotaMaxProcesses]
