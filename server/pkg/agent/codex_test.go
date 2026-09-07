@@ -5934,6 +5934,132 @@ func TestScanCodexSessionUsageCapturesRateLimits(t *testing.T) {
 	}
 }
 
+// TestScanCodexSessionMalformedQuotaKeepsUsage pins the decode isolation of
+// the rollout scanner: a type error inside the optional quota report must not
+// fail the event's usage decode — token accounting survives with the quota
+// degrading to "not reported", never the other way around. Both orders are
+// pinned: the malformed event being the only usage event, and a clean event
+// following it.
+func TestScanCodexSessionMalformedQuotaKeepsUsage(t *testing.T) {
+	t.Parallel()
+	malformedOnly := `{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":600,"output_tokens":30}},"rate_limits":{"primary":{"used_percent":"bad","window_minutes":300}}}}`
+	cases := []struct {
+		name            string
+		lines           []string
+		wantIn, wantOut int64
+	}{
+		{
+			name:    "malformed event is the only usage event",
+			lines:   []string{malformedOnly, ""},
+			wantIn:  600,
+			wantOut: 30,
+		},
+		{
+			name: "clean event after the malformed one still decodes",
+			lines: []string{
+				malformedOnly,
+				`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":700,"output_tokens":40}}}}`,
+				"",
+			},
+			wantIn:  700,
+			wantOut: 40,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "rollout.jsonl")
+			if err := os.WriteFile(file, []byte(strings.Join(tc.lines, "\n")), 0o644); err != nil {
+				t.Fatalf("write session file: %v", err)
+			}
+
+			got := parseCodexSessionFile(file)
+			if got == nil {
+				t.Fatal("expected usage from the malformed-quota rollout")
+			}
+			if got.usage.InputTokens != tc.wantIn || got.usage.OutputTokens != tc.wantOut {
+				t.Fatalf("usage = %+v, want input=%d output=%d (usage decoded despite malformed quota)",
+					got.usage, tc.wantIn, tc.wantOut)
+			}
+			if got.rateLimits != nil {
+				t.Fatalf("rate limits = %+v, want nil (malformed report degrades, no fabricated snapshot)", got.rateLimits)
+			}
+		})
+	}
+}
+
+// TestScanCodexSessionQuotaOnlyRollout pins the quota-only path end to end:
+// a rollout that reports rate limits but no usable token accounting (info
+// absent, null, or counters that never left zero) must deliver its quota
+// snapshot through scanCodexSessionUsage — the exhausted-before-first-turn
+// shape. No quota AND no usage still discards the scan.
+func TestScanCodexSessionQuotaOnlyRollout(t *testing.T) {
+	t.Parallel()
+	quota := `"rate_limits":{"primary":{"used_percent":100,"window_minutes":300}}`
+	cases := []struct {
+		name      string
+		payload   string
+		wantQuota bool
+	}{
+		{"info null", `{"info":null,` + quota + `}`, true},
+		{"info zeroed", `{"info":{"total_token_usage":{"input_tokens":0,"output_tokens":0}},` + quota + `}`, true},
+		{"info absent", `{` + quota + `}`, true},
+		{"nothing reported", `{"info":{}}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			taskHome := t.TempDir()
+			threadID := "quota-only-thread"
+			startTime := time.Now().Add(-time.Minute)
+			line := `{"type":"event_msg","payload":{"type":"token_count",` + strings.TrimPrefix(tc.payload, "{") + "}\n"
+			file := filepath.Join(taskHome, "sessions", "rollout-2026-07-13T00-00-00-"+threadID+".jsonl")
+			if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+				t.Fatalf("mkdir sessions dir: %v", err)
+			}
+			if err := os.WriteFile(file, []byte(line), 0o644); err != nil {
+				t.Fatalf("write session file: %v", err)
+			}
+
+			got := scanCodexSessionUsage(startTime, taskHome, threadID, false)
+			if !tc.wantQuota {
+				if got != nil {
+					t.Fatalf("scan without usage or quota = %+v, want nil", got)
+				}
+				return
+			}
+			if got == nil || got.rateLimits == nil {
+				t.Fatalf("quota-only scan = %+v, want a snapshot even without token usage", got)
+			}
+			if got.rateLimits.Primary == nil || got.rateLimits.Primary.UsedPercent == nil || *got.rateLimits.Primary.UsedPercent != 100 {
+				t.Fatalf("primary = %+v, want used_percent 100 (exhausted state preserved)", got.rateLimits.Primary)
+			}
+		})
+	}
+}
+
+// TestScanCodexSessionNullQuotaKeepsEarlierSnapshot pins scan-side snapshot
+// retention: a later token_count whose rate_limits is null must not erase the
+// usable snapshot an earlier event in the same rollout captured.
+func TestScanCodexSessionNullQuotaKeepsEarlierSnapshot(t *testing.T) {
+	t.Parallel()
+	file := filepath.Join(t.TempDir(), "rollout.jsonl")
+	content := strings.Join([]string{
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":600,"output_tokens":30}},"rate_limits":{"primary":{"used_percent":55,"window_minutes":300}}}}`,
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":700,"output_tokens":40}},"rate_limits":null}}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	got := parseCodexSessionFile(file)
+	if got == nil {
+		t.Fatal("expected usage from the rollout")
+	}
+	if got.rateLimits == nil || got.rateLimits.Primary == nil || got.rateLimits.Primary.UsedPercent == nil || *got.rateLimits.Primary.UsedPercent != 55 {
+		t.Fatalf("rate limits = %+v, want the earlier 55 snapshot kept", got.rateLimits)
+	}
+}
+
 // TestHandleEventTokenCountCapturesRateLimits pins the live capture path: a
 // token_count event stores rate_limits (payload-level in current codex,
 // info-nested in older builds) under usageMu, and a missing object leaves
@@ -5992,6 +6118,67 @@ func TestHandleEventTokenCountCapturesRateLimits(t *testing.T) {
 	c2.usageMu.Unlock()
 	if nested == nil || nested.Primary == nil || nested.Primary.UsedPercent == nil || *nested.Primary.UsedPercent != 12.5 {
 		t.Fatalf("legacy nested rate limits = %+v, want primary 12.5", nested)
+	}
+}
+
+// TestHandleEventTokenCountInvalidQuotaKeepsSnapshot pins the capture-side
+// validity judgment: a rate_limits entry that decodes but reports nothing —
+// JSON null, an empty object, or a malformed one — is "not reported this
+// event", never a retraction, so the last usable snapshot of the run stays.
+func TestHandleEventTokenCountInvalidQuotaKeepsSnapshot(t *testing.T) {
+	t.Parallel()
+	for name, event := range map[string]map[string]any{
+		"null payload key":     {"type": "token_count", "rate_limits": nil, "info": map[string]any{}},
+		"empty object":         {"type": "token_count", "rate_limits": map[string]any{}, "info": map[string]any{}},
+		"windows all empty":    {"type": "token_count", "rate_limits": map[string]any{"primary": map[string]any{}, "secondary": nil}, "info": map[string]any{}},
+		"malformed object":     {"type": "token_count", "rate_limits": map[string]any{"primary": map[string]any{"used_percent": "bad"}}, "info": map[string]any{}},
+		"null nested position": {"type": "token_count", "info": map[string]any{"rate_limits": nil}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, _, _ := newTestCodexClient(t)
+			c.handleEvent(map[string]any{
+				"type": "token_count",
+				"rate_limits": map[string]any{
+					"primary":   map[string]any{"used_percent": 42.5, "window_minutes": 300},
+					"secondary": map[string]any{"used_percent": 7.5, "window_minutes": 10080},
+				},
+			})
+			c.handleEvent(event)
+			c.usageMu.Lock()
+			kept := c.rateLimits
+			c.usageMu.Unlock()
+			if kept == nil || kept.Primary == nil || kept.Primary.UsedPercent == nil || *kept.Primary.UsedPercent != 42.5 {
+				t.Fatalf("rate limits after invalid report = %+v, want previous 42.5 snapshot kept", kept)
+			}
+			if kept.Secondary == nil || kept.Secondary.UsedPercent == nil || *kept.Secondary.UsedPercent != 7.5 {
+				t.Fatalf("secondary after invalid report = %+v, want previous 7.5 snapshot kept", kept)
+			}
+		})
+	}
+}
+
+// TestCodexRateLimitsUsable pins the shared validity predicate: only a
+// snapshot with at least one reported window qualifies, and JSON null's
+// decode result (non-nil pointer to the zero struct) is NOT usable.
+func TestCodexRateLimitsUsable(t *testing.T) {
+	t.Parallel()
+	used := 42.5
+	if codexRateLimitsUsable(nil) {
+		t.Fatal("nil snapshot must not be usable")
+	}
+	if codexRateLimitsUsable(&codexRawRateLimits{}) {
+		t.Fatal("empty snapshot must not be usable")
+	}
+	if codexRateLimitsUsable(&codexRawRateLimits{Primary: &codexRawRateLimitWindow{}}) {
+		t.Fatal("all-empty window must not make a snapshot usable")
+	}
+	if !codexRateLimitsUsable(&codexRawRateLimits{Primary: &codexRawRateLimitWindow{UsedPercent: &used}}) {
+		t.Fatal("snapshot with a reported window must be usable")
+	}
+	// resets_at alone still reports something real about the window.
+	resets := int64(1757000000)
+	if !codexRateLimitsUsable(&codexRawRateLimits{Secondary: &codexRawRateLimitWindow{ResetsAt: &resets}}) {
+		t.Fatal("window with only resets_at must be usable")
 	}
 }
 

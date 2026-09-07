@@ -1766,9 +1766,11 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 
 		// Plan quota: the live token_count capture is fresher than anything
 		// the JSONL scan can recover, so it wins; the scan covers runs whose
-		// events never reached the notification stream.
+		// events never reached the notification stream. Only a usable live
+		// snapshot wins: an empty one (null/{} round-trip) must let the scan
+		// result through instead of masking it with "nothing".
 		rateLimits := liveRateLimits
-		if rateLimits == nil {
+		if !codexRateLimitsUsable(rateLimits) {
 			rateLimits = scannedRateLimits
 		}
 		planQuota := codexRateLimitsToPlanQuota(rateLimits, time.Now())
@@ -3180,16 +3182,20 @@ func (c *codexClient) handleEvent(msg map[string]any) {
 		// nested position. The shape crosses a map[string]any boundary, so a
 		// JSON round-trip into the typed struct is the cheap safe parse; a
 		// missing or malformed object leaves the previous snapshot in place.
+		// So does a snapshot that decodes but reports no window (JSON null
+		// included): codex emits rate_limits:null when it has nothing to
+		// report, which is "not reported this event", not a retraction of the
+		// quota state captured earlier in the run.
 		raw, ok := msg["rate_limits"]
-		if !ok {
+		if !ok || raw == nil {
 			if info, isMap := msg["info"].(map[string]any); isMap {
 				raw, ok = info["rate_limits"]
 			}
 		}
-		if ok {
+		if ok && raw != nil {
 			var limits codexRawRateLimits
 			if data, err := json.Marshal(raw); err == nil {
-				if err := json.Unmarshal(data, &limits); err == nil {
+				if err := json.Unmarshal(data, &limits); err == nil && codexRateLimitsUsable(&limits) {
 					c.usageMu.Lock()
 					c.rateLimits = &limits
 					c.usageMu.Unlock()
@@ -3464,10 +3470,7 @@ func codexRateLimitsToPlanQuota(raw *codexRawRateLimits, observedAt time.Time) *
 	}
 	limited := false
 	appendWindow := func(name string, w *codexRawRateLimitWindow) {
-		if w == nil {
-			return
-		}
-		if w.UsedPercent == nil && w.WindowMinutes == nil && w.ResetsAt == nil {
+		if !codexRateLimitWindowReported(w) {
 			// An all-empty window carries no information; adding it would
 			// render as a real-but-blank window downstream.
 			return
@@ -3560,8 +3563,15 @@ func scanCodexSessionUsage(startTime time.Time, codexHome, threadID string, resu
 	// They have the same owner, so prefer the latest deterministically without ever
 	// crossing into a different thread's rollout.
 	result := parseCodexSessionFileSince(files[len(files)-1].path, startTime, resumed)
-	if result == nil || (result.usage.InputTokens == 0 && result.usage.OutputTokens == 0 &&
-		result.usage.CacheReadTokens == 0 && result.usage.CacheWriteTokens == 0) {
+	if result == nil {
+		return nil
+	}
+	// Zero usage alone still discards the scan, but zero usage with a quota
+	// snapshot does not: a task rate-limited before its first completed turn
+	// has exactly that shape, and dropping it would hide the exhausted state.
+	hasUsage := result.usage.InputTokens > 0 || result.usage.OutputTokens > 0 ||
+		result.usage.CacheReadTokens > 0 || result.usage.CacheWriteTokens > 0
+	if !hasUsage && result.rateLimits == nil {
 		return nil
 	}
 	return result
@@ -3710,36 +3720,68 @@ type codexRawRateLimits struct {
 	Secondary *codexRawRateLimitWindow `json:"secondary"`
 }
 
+// codexRateLimitWindowReported reports whether one rate-limit window object
+// carries any information. Codex omits unreported fields instead of
+// zero-filling them, so an all-empty window is "not reported", never a real 0.
+func codexRateLimitWindowReported(w *codexRawRateLimitWindow) bool {
+	return w != nil && (w.UsedPercent != nil || w.WindowMinutes != nil || w.ResetsAt != nil)
+}
+
+// codexRateLimitsUsable is the single validity judgment for a rate_limits
+// snapshot: it is usable only when at least one window is reported. Every
+// entry point — live token_count capture, rollout scan, result assembly —
+// gates through this predicate, because JSON null and empty objects decode
+// into a non-nil pointer to the zero struct. Treating pointer non-nilness as
+// "Codex reported quota" would let a not-reported-this-event marker wipe the
+// last usable snapshot or shadow the rollout-scan fallback.
+func codexRateLimitsUsable(raw *codexRawRateLimits) bool {
+	return raw != nil && (codexRateLimitWindowReported(raw.Primary) || codexRateLimitWindowReported(raw.Secondary))
+}
+
 // codexSessionTokenCount represents a token_count event in Codex JSONL.
 // rate_limits sits at payload level, next to info, in codex >= 0.153;
-// older builds nested it inside info — both positions are read.
+// older builds nested it inside info — both positions are read. The quota
+// positions stay json.RawMessage so a type error inside an optional quota
+// report cannot fail the event's usage decode: a malformed quota must
+// degrade to "not reported" without taking the token accounting down with it.
 type codexSessionTokenCount struct {
 	Timestamp time.Time `json:"timestamp"`
 	Type      string    `json:"type"`
 	Payload   *struct {
-		Type       string              `json:"type"`
-		RateLimits *codexRawRateLimits `json:"rate_limits"`
+		Type       string          `json:"type"`
+		RateLimits json.RawMessage `json:"rate_limits"`
 		Info       *struct {
 			TotalTokenUsage *codexRawTokenUsage `json:"total_token_usage"`
 			LastTokenUsage  *codexRawTokenUsage `json:"last_token_usage"`
 			Model           string              `json:"model"`
-			RateLimits      *codexRawRateLimits `json:"rate_limits"`
+			RateLimits      json.RawMessage     `json:"rate_limits"`
 		} `json:"info"`
 		Model string `json:"model"`
 	} `json:"payload"`
 }
 
 // payloadRateLimits returns the event's rate-limit snapshot, preferring the
-// current payload-level position over the legacy info-nested one.
+// current payload-level position over the legacy info-nested one. The first
+// usable snapshot wins; a snapshot that fails to decode or reports no window
+// (JSON null included) yields nil so the caller keeps the previous usable
+// snapshot instead of erasing it.
 func (evt *codexSessionTokenCount) payloadRateLimits() *codexRawRateLimits {
 	if evt == nil || evt.Payload == nil {
 		return nil
 	}
-	if evt.Payload.RateLimits != nil {
-		return evt.Payload.RateLimits
-	}
+	positions := []json.RawMessage{evt.Payload.RateLimits}
 	if evt.Payload.Info != nil {
-		return evt.Payload.Info.RateLimits
+		positions = append(positions, evt.Payload.Info.RateLimits)
+	}
+	for _, raw := range positions {
+		if len(raw) == 0 {
+			continue
+		}
+		var limits codexRawRateLimits
+		if err := json.Unmarshal(raw, &limits); err != nil || !codexRateLimitsUsable(&limits) {
+			continue
+		}
+		return &limits
 	}
 	return nil
 }
@@ -3830,14 +3872,20 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 		}
 	}
 
-	if !finalUsageFound {
+	// A rollout can report quota without usable token accounting — Codex was
+	// rate-limited before the first turn finished, or every counter stayed at
+	// zero. The quota snapshot must survive that: usage stays zero and the
+	// caller decides per field, mirroring the "never fabricate a value" rule.
+	if !finalUsageFound && result.rateLimits == nil {
 		return nil
 	}
-	cachedTokens := finalUsage.CachedInputTokens
-	result.usage = TokenUsage{
-		InputTokens:     codexUncachedInputTokens(finalUsage.InputTokens, cachedTokens),
-		OutputTokens:    finalUsage.OutputTokens + finalUsage.ReasoningOutputTokens,
-		CacheReadTokens: cachedTokens,
+	if finalUsageFound {
+		cachedTokens := finalUsage.CachedInputTokens
+		result.usage = TokenUsage{
+			InputTokens:     codexUncachedInputTokens(finalUsage.InputTokens, cachedTokens),
+			OutputTokens:    finalUsage.OutputTokens + finalUsage.ReasoningOutputTokens,
+			CacheReadTokens: cachedTokens,
+		}
 	}
 	return &result
 }
