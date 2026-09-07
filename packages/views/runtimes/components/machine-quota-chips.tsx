@@ -15,7 +15,7 @@ import {
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
 import { runtimeRowLabel, type MachineQuotaChip, type RuntimeMachine } from "./runtime-machines";
-import { formatQuotaWindowLabel, quotaGroupLabel } from "./runtime-quota-cell";
+import { formatQuotaWindowLabel, MiniMeterBar, quotaGroupLabel } from "./runtime-quota-cell";
 import { ProviderLogo } from "./provider-logo";
 import { useT } from "../../i18n";
 
@@ -72,26 +72,39 @@ function QuotaChip({
   const { t } = useT("runtimes");
   const runtime = machine.runtimes.find((r) => r.id === chip.runtimeId);
   const label = runtime ? runtimeRowLabel(runtime, machine.title) : chip.provider;
-  // The number is the REMAINING percent of the worst active window — say so
-  // on the chip ("剩 62%" / "62% left"), not just in the tooltip: a bare
-  // percent next to a logo reads as used-vs-remaining ambiguous.
+  // The chip reads as [logo] [remaining bar] [remaining %]: the fixed-width
+  // bar fills with what is LEFT of the worst active window (fill drains as
+  // the quota drains), so the percent is unambiguous without a "left"
+  // wordmark; the tone colors both bar and number (green/amber/red).
   const text =
     chip.status === "limited"
       ? t(($) => $.quota.exhausted)
       : chip.remainingPercent == null
         ? t(($) => $.machine.metrics.unavailable)
-        : t(($) => $.quota.remaining, {
-            percent: Math.round(chip.remainingPercent),
-          });
+        : `${Math.round(chip.remainingPercent)}%`;
+  const ariaText =
+    chip.remainingPercent == null
+      ? text
+      : t(($) => $.quota.remaining, {
+          percent: Math.round(chip.remainingPercent),
+        });
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <span
-            aria-label={`${label}: ${text}`}
+            aria-label={`${label}: ${ariaText}`}
             className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-micro font-medium tabular-nums ${CHIP_TONE_CLASS[chip.tone]}`}
           >
             <ProviderLogo provider={chip.provider} className="h-3.5 w-3.5" />
+            {chip.remainingPercent != null && chip.status !== "limited" && (
+              <MiniMeterBar
+                percent={chip.remainingPercent}
+                tone={chip.tone}
+                ariaLabel={label}
+                className="w-6 shrink-0"
+              />
+            )}
             {text}
           </span>
         }
