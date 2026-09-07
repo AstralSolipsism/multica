@@ -243,6 +243,11 @@ API key 与 base URL 都为空时，这一层关闭，不会发出任何上游�
 | `MULTICA_WORKSPACES_ROOT` | `~/multica_workspaces` | task 工作目录的根目录 |
 | `MULTICA_AGENT_TEMP_BASE` | `/tmp`（Linux/macOS） | 仅适用于 Linux/macOS。私有 task 临时目录的父目录；必须是现有、可写的绝对路径，无效值会使 task 启动失败，不会回退到 `/tmp`。请选择较短的路径——子工具可能会在其中绑定 AF_UNIX socket；Linux 的 `sun_path` 上限为 108 字节，macOS 为 104 字节 |
 | `MULTICA_KEEP_ENV_AFTER_TASK` | `false` | 保留 task 目录用于调试 |
+| `MULTICA_ZENMUX_MANAGEMENT_API_KEY` | 空 | ZenMux Management API Key（控制台签发，与推理 Key 不同），供订阅配额采集器使用；该 Key 不会离开本机。在用 `MULTICA_ZENMUX_LINK` 关联运行时之前不会上报任何数据 |
+| `MULTICA_ZENMUX_LINK` | 空（不关联任何运行时） | ZenMux 账户与运行时的显式人工关联：`hermes` 关联本守护进程上的所有 hermes 运行时，`hermes@<workspace-id>` 只关联指定工作区的 hermes 运行时，`hermes:profile:<profile-id>` 只关联某个自定义运行时 profile，`hermes:builtin[@<workspace-id>]` 只关联内置 hermes 运行时（用于内置与自定义 profile 同工作区共存时的精确区分），多个条目用逗号分隔。守护进程不会推断运行时真实使用的 LLM 网关，未关联的运行时保持 "未上报"。配置在守护进程启动时生效：新增、修改或删除条目后重启守护进程；被删除的关联会在下一次心跳时主动清除该运行时的配额展示，而不必等待 24 小时过期窗口 |
+| `MULTICA_KIMI_QUOTA_POLL_INTERVAL` | `2m` | Kimi 套餐配额采集器的轮询间隔；采集器探测本机 Kimi Code 本地 Server API，`kimi web` 未运行时静默保持 "未上报"。Bearer 凭据只在本地服务证明属于当前用户后才发送（支持 Linux/macOS；其他平台采集器不启动，运行时保持 "未上报"） |
+| `MULTICA_ZENMUX_QUOTA_POLL_INTERVAL` | `2m` | ZenMux 套餐配额采集器的轮询间隔；遇到 422 限流应答时按指数退避拉长间隔 |
+| `MULTICA_ZENMUX_API_BASE_URL` | 官方端点 | 覆盖 ZenMux subscription-detail 端点；用于测试与预发代理 |
 
 守护进程注入智能体 task 的内部上下文见 [Task 运行时环境](/daemon-runtimes#task-运行时环境)。
 

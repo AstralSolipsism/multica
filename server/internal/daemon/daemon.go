@@ -479,9 +479,10 @@ type Daemon struct {
 	wsHBLastAck map[string]time.Time // runtime_id -> last successful WS heartbeat ack timestamp
 
 	// planQuotaCache holds each runtime's latest observed provider
-	// plan/rate-limit snapshot (runtimeID -> *protocol.RuntimePlanQuota),
-	// recorded at task completion (agent backends that report one) and by the
-	// antigravity quota probe (antigravityQuotaLoop), and attached to that
+	// plan/rate-limit snapshot (runtimeID -> planQuotaCacheEntry), recorded
+	// at task completion (agent backends that report one), by the
+	// antigravity quota probe (antigravityQuotaLoop), or by a quota
+	// collector, and attached to that
 	// runtime's next heartbeat. Entries are deleted when the runtime leaves
 	// the local set.
 	planQuotaCache sync.Map
@@ -1177,6 +1178,16 @@ func (d *Daemon) notifyRuntimeSetChanged() {
 	d.runtimeSet.notify()
 }
 
+// planQuotaCacheEntry is one cached plan-quota value: either a real
+// observation or a zenmux clear marker (a deliberate "not reported" state
+// after a manual unlink). One map entry per runtime — the marker flag can
+// never disagree with the payload because they are stored together (OL-5
+// convergence: this replaces a parallel marker map).
+type planQuotaCacheEntry struct {
+	quota       *protocol.RuntimePlanQuota
+	clearMarker bool
+}
+
 // recordRuntimePlanQuota caches a runtime's latest plan/rate-limit snapshot
 // (reported by an agent backend at task completion) so the next heartbeat
 // for that runtime carries it. The entry lives until the runtime leaves the
@@ -1186,7 +1197,27 @@ func (d *Daemon) recordRuntimePlanQuota(runtimeID string, quota *protocol.Runtim
 	if runtimeID == "" || quota == nil {
 		return
 	}
-	d.planQuotaCache.Store(runtimeID, quota)
+	d.planQuotaCache.Store(runtimeID, planQuotaCacheEntry{quota: quota})
+}
+
+// recordZenMuxPlanQuotaClearMarker stores a windowless zenmux snapshot — the
+// deliberate "not reported" state for a runtime whose manual association was
+// removed — and marks it for per-heartbeat re-stamping (see
+// heartbeatExtrasFor) so the cleared state never ages into "stale" while
+// this daemon runs.
+func (d *Daemon) recordZenMuxPlanQuotaClearMarker(runtimeID string) {
+	if runtimeID == "" {
+		return
+	}
+	d.planQuotaCache.Store(runtimeID, planQuotaCacheEntry{
+		clearMarker: true,
+		quota: &protocol.RuntimePlanQuota{
+			Provider:   "zenmux",
+			Status:     protocol.PlanQuotaStatusOK,
+			ObservedAt: time.Now().Unix(),
+			Source:     protocol.PlanQuotaSourceDaemon,
+		},
+	})
 }
 
 // heartbeatExtrasFor assembles the optional heartbeat attachments for one
@@ -1196,8 +1227,18 @@ func (d *Daemon) recordRuntimePlanQuota(runtimeID string, quota *protocol.Runtim
 func (d *Daemon) heartbeatExtrasFor(runtimeID string) HeartbeatExtras {
 	extras := HeartbeatExtras{Metrics: d.latestHostMetrics()}
 	if cached, ok := d.planQuotaCache.Load(runtimeID); ok {
-		if quota, ok := cached.(*protocol.RuntimePlanQuota); ok {
-			extras.PlanQuota = quota
+		if entry, ok := cached.(planQuotaCacheEntry); ok {
+			if entry.clearMarker {
+				// Clear markers represent a deliberate state, not an
+				// observation: re-stamp so "not reported" never goes stale.
+				// Real snapshots keep their observed_at — re-stamping them
+				// would mask a collector that stopped producing data.
+				clone := *entry.quota
+				clone.ObservedAt = time.Now().Unix()
+				extras.PlanQuota = &clone
+			} else {
+				extras.PlanQuota = entry.quota
+			}
 		}
 	}
 	return extras
@@ -2109,6 +2150,18 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// start; only its goroutine launches here, so heartbeats simply omit the
 	// field until the first sample lands.
 	go d.hostMetrics.run(ctx)
+
+	// Plan-quota collectors feed the heartbeat plan_quota channel for
+	// providers whose quota lives behind an official programmatic API rather
+	// than inside the agent session. Kimi probes its local Server API and
+	// self-gates on the token file and a registered kimi runtime; ZenMux
+	// polls the Management API only when the operator configured a key, and
+	// reports only to runtimes explicitly linked via MULTICA_ZENMUX_LINK (the
+	// loop also runs link-only so a removed association is actively cleared).
+	go d.kimiPlanQuotaLoop(ctx)
+	// ZenMux self-gates like Kimi: it always starts so removed associations
+	// are actively cleared, and polls only with key + link configured.
+	go d.zenmuxPlanQuotaLoop(ctx)
 
 	// Preflight succeeded and the background loops are up: the daemon has
 	// registered its runtimes and can now claim and run tasks. Flip /health

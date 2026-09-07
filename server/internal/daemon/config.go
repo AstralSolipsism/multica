@@ -152,6 +152,32 @@ type Config struct {
 	// prefers a matching, executable override over resolving the profile's
 	// command_name on PATH. nil/empty means "always resolve via PATH".
 	ProfileCommandOverrides map[string]string
+
+	// ZenMuxManagementAPIKey is the ZenMux Management API key (console-issued,
+	// distinct from the inference key) used by the hermes subscription quota
+	// collector (MULTICA_ZENMUX_MANAGEMENT_API_KEY). The value never leaves
+	// this machine and never appears in payloads or logs.
+	ZenMuxManagementAPIKey string
+	// ZenMuxLink is the explicit, operator-maintained association between the
+	// configured ZenMux account and the runtimes it backs
+	// (MULTICA_ZENMUX_LINK: "hermes" or "hermes@<workspace-id>",
+	// comma-separated). Empty means NO runtime reports this account —
+	// configuring the key alone never links every hermes runtime (S2: the
+	// association is manual by product decision; the daemon never infers a
+	// runtime's LLM gateway).
+	ZenMuxLink zenmuxLinkSet
+	// ZenMuxAPIBaseURL overrides the subscription-detail endpoint
+	// (MULTICA_ZENMUX_API_BASE_URL); empty uses the official
+	// https://zenmux.ai/api/v1/management/subscription/detail. Exists so
+	// tests and staging proxies can point the collector elsewhere.
+	ZenMuxAPIBaseURL string
+	// PlanQuotaKimiInterval / PlanQuotaZenMuxInterval pace the two plan-quota
+	// collectors (MULTICA_KIMI_QUOTA_POLL_INTERVAL /
+	// MULTICA_ZENMUX_QUOTA_POLL_INTERVAL, default 2m). ZenMux rate-limits its
+	// Management API per endpoint, so the default stays inside the documented
+	// 1-3 minute band and 422 answers stretch the delay exponentially.
+	PlanQuotaKimiInterval   time.Duration
+	PlanQuotaZenMuxInterval time.Duration
 }
 
 // Overrides allows CLI flags to override environment variables and defaults.
@@ -583,6 +609,23 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		autoReloadEnabled = false
 	}
 
+	// Plan-quota collectors. The ZenMux key is a secret: read it from the
+	// environment only, never log it, never serialize it.
+	zenmuxKey := strings.TrimSpace(os.Getenv("MULTICA_ZENMUX_MANAGEMENT_API_KEY"))
+	zenmuxBaseURL := strings.TrimSpace(os.Getenv("MULTICA_ZENMUX_API_BASE_URL"))
+	zenmuxLink, err := parseZenMuxLink(os.Getenv("MULTICA_ZENMUX_LINK"))
+	if err != nil {
+		return Config{}, err
+	}
+	kimiQuotaInterval, err := durationFromEnv("MULTICA_KIMI_QUOTA_POLL_INTERVAL", defaultPlanQuotaPollInterval)
+	if err != nil {
+		return Config{}, err
+	}
+	zenmuxQuotaInterval, err := durationFromEnv("MULTICA_ZENMUX_QUOTA_POLL_INTERVAL", defaultPlanQuotaPollInterval)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		ServerBaseURL:                   serverBaseURL,
 		DaemonID:                        daemonID,
@@ -627,6 +670,11 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		QwenArgs:                        qwenArgs,
 		QwenpawArgs:                     qwenpawArgs,
 		ProfileCommandOverrides:         profileCommandOverrides,
+		ZenMuxManagementAPIKey:          zenmuxKey,
+		ZenMuxLink:                      zenmuxLink,
+		ZenMuxAPIBaseURL:                zenmuxBaseURL,
+		PlanQuotaKimiInterval:           kimiQuotaInterval,
+		PlanQuotaZenMuxInterval:         zenmuxQuotaInterval,
 	}, nil
 }
 
