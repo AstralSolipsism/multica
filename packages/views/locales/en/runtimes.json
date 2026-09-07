@@ -341,7 +341,13 @@
     "stale_hint": "snapshot {{time}} ago",
     "observed_ago": "updated {{time}} ago",
     "source_daemon": "via daemon",
-    "source_external": "via external push"
+    "source_external": "via external push",
+    "glm_title": "GLM plan balance",
+    "glm_window_tokens": "5-hour tokens",
+    "glm_window_time": "Monthly tool credits",
+    "glm_window_credit": "Credit window",
+    "glm_unknown": "balance unknown",
+    "glm_window_fallback": "{{type}}"
   },
   "profiles": {
     "cta": "Add runtime",

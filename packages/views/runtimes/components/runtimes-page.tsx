@@ -55,6 +55,7 @@ import { buildWorkloadIndex, RuntimeList } from "./runtime-list";
 import { pendingRuntimeFromProfile } from "./pending-runtime";
 import { buildRuntimeMachines, type RuntimeMachine } from "./runtime-machines";
 import { MachineQuotaChips } from "./machine-quota-chips";
+import { GlmQuotaCard } from "./glm-quota-card";
 import { HostMetricsBars } from "./host-metrics-bars";
 import { HealthDot, HealthIcon, useHealthLabel } from "./shared";
 import { useT, useTimeAgo } from "../../i18n";
@@ -191,6 +192,7 @@ export function RuntimesPage({
                 currentUserId={currentUserId ?? null}
               />
             )}
+            <GlmQuotaCard now={now} />
             {(machines.length > 0 || bootstrapping) && (
               <MachineList
                 machines={machines}

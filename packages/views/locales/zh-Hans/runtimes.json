@@ -328,7 +328,13 @@
     "stale_hint": "{{time}} 前快照",
     "observed_ago": "更新于 {{time}} 前",
     "source_daemon": "来自 daemon",
-    "source_external": "来自外部推送"
+    "source_external": "来自外部推送",
+    "glm_title": "GLM 套餐余量",
+    "glm_window_tokens": "5 小时 token",
+    "glm_window_time": "月度工具积分",
+    "glm_window_credit": "积分窗",
+    "glm_unknown": "余量未知",
+    "glm_window_fallback": "{{type}}"
   },
   "profiles": {
     "cta": "添加运行时",

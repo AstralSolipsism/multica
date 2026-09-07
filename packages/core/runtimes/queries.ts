@@ -75,3 +75,14 @@ export function runtimeListOptions(wsId: string, owner?: "me", wsSlug?: string) 
         : SYSTEM_STATS_RECOVERY_MS,
   });
 }
+
+// The GLM (Zhipu) Coding Plan balance is account-level, not workspace- or
+// runtime-scoped: one entry for the whole deployment, refreshed server-side
+// every few minutes — a 2-minute staleTime avoids hammering it on navigation.
+export function glmQuotaOptions() {
+  return queryOptions({
+    queryKey: ["glm-quota"] as const,
+    queryFn: () => api.getGlmQuota(),
+    staleTime: 2 * 60 * 1000,
+  });
+}
