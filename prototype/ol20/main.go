@@ -43,7 +43,7 @@ func main() {
 
 	case "grant":
 		// grant <token> <project> <user|run> [ttlSeconds]
-		must(len(args) >= 4, "grant token project kind [ttl]")
+		needArgs(len(args) >= 4, "grant token project kind [ttl]")
 		var exp *time.Time
 		if len(args) >= 5 {
 			t := time.Now().Add(time.Duration(atoi(args[4])) * time.Second)
@@ -54,7 +54,7 @@ func main() {
 
 	case "save":
 		// save <token> <project> <path> <baseRev> <opID> <authorID> <content>
-		must(len(args) >= 7, "save token project path base op author content")
+		needArgs(len(args) >= 7, "save token project path base op author content")
 		res, err := st.Save(ctx, SaveRequest{
 			Token: args[1], ProjectID: args[2], Path: args[3],
 			BaseRevision: int64(atoi(args[4])), OpID: args[5],
@@ -65,13 +65,13 @@ func main() {
 
 	case "read":
 		// read <token> <project> <path>
-		must(len(args) >= 4, "read token project path")
+		needArgs(len(args) >= 4, "read token project path")
 		res, err := st.Read(ctx, args[1], args[2], args[3])
 		must(err)
 		fmt.Printf("revision=%d sha256=%s\ncontent=%s\n", res.Revision, res.SHA256[:12], res.Content)
 
 	case "list":
-		must(len(args) >= 4, "list token project prefix")
+		needArgs(len(args) >= 4, "list token project prefix")
 		paths, err := st.List(ctx, args[1], args[2], args[3])
 		must(err)
 		for _, p := range paths {
@@ -79,7 +79,7 @@ func main() {
 		}
 
 	case "candidates":
-		must(len(args) >= 4, "candidates token project path")
+		needArgs(len(args) >= 4, "candidates token project path")
 		cs, err := st.Candidates(ctx, args[1], args[2], args[3])
 		must(err)
 		for _, c := range cs {
@@ -97,6 +97,13 @@ func main() {
 
 	default:
 		fmt.Println("unknown command", args[0])
+		os.Exit(2)
+	}
+}
+
+func needArgs(cond bool, usage string) {
+	if !cond {
+		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
 }
