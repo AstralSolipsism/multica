@@ -38,9 +38,11 @@ describe("cli-bootstrap internal release source", () => {
   });
 });
 
-// The manifest is network input and must never be trusted by shape: a
-// mirrored, truncated, or error-page response has to fail with a clear
-// manifest error instead of a TypeError from reading a field that isn't there.
+// The manifest is network input and must never be trusted by shape: it is
+// parsed through parseWithFallback + a strict zod schema, so any schema miss
+// (mirrored, truncated, or error-page response) falls back to null and is
+// rejected with the same clear manifest error instead of a TypeError from
+// reading a field that isn't there.
 describe("parseLatestManifestVersion", () => {
   it("returns the trimmed version from a well-formed manifest", () => {
     expect(
@@ -50,14 +52,14 @@ describe("parseLatestManifestVersion", () => {
 
   it("rejects a JSON null body", () => {
     expect(() => parseLatestManifestVersion(null)).toThrow(
-      "latest.json is not a JSON object",
+      "latest.json did not contain a version string",
     );
   });
 
   it("rejects non-object bodies (arrays, strings, numbers)", () => {
-    for (const body of [["v0.4.40"], "v0.4.40", 42]) {
+    for (const body of [["v0.4.40-labrastro.2"], "v0.4.40-labrastro.2", 42]) {
       expect(() => parseLatestManifestVersion(body)).toThrow(
-        "latest.json is not a JSON object",
+        "latest.json did not contain a version string",
       );
     }
   });

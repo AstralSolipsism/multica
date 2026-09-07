@@ -7,7 +7,9 @@ import { join, dirname } from "path";
 import { pipeline } from "stream/promises";
 import { tmpdir } from "os";
 import { Readable } from "stream";
+import { z } from "zod";
 
+import { parseWithFallback } from "@multica/core/api/schema";
 import { selectPlatformReleaseAssetName } from "./cli-release-asset";
 
 // Desktop prefers the bundled `multica` CLI shipped inside the app for
@@ -35,26 +37,32 @@ export function releaseBaseFor(downloadBase: string, version: string): string {
   return `${downloadBase}/cli/${version}`;
 }
 
-/**
- * Validates the release manifest's shape before any field is read. The
- * manifest is network input — a mirrored, truncated, or error-page response
- * (JSON `null`, a missing field, a wrong-typed field) must fail with a clear
- * manifest error rather than a TypeError from property access on whatever
- * shape actually arrived.
- */
+// The manifest is network input — a mirrored, truncated, or error-page
+// response (JSON `null`, a missing field, a wrong-typed field) must fail with
+// a clear manifest error rather than a TypeError from property access on
+// whatever shape actually arrived. Parsed through the standard
+// parseWithFallback + zod boundary: any schema miss falls back to null and is
+// rejected as an unusable manifest, never surfaced as a runtime TypeError.
+const latestManifestSchema = z.object({
+  version: z.string().trim().min(1),
+});
+
+type LatestManifest = z.infer<typeof latestManifestSchema>;
+
 export function parseLatestManifestVersion(manifest: unknown): string {
-  if (
-    typeof manifest !== "object" ||
-    manifest === null ||
-    Array.isArray(manifest)
-  ) {
-    throw new Error("latest.json is not a JSON object");
-  }
-  const version = (manifest as { version?: unknown }).version;
-  if (typeof version !== "string" || !version.trim()) {
+  // Fallback is null so any schema miss is detectable; the explicit generic
+  // keeps the success path typed as the manifest instead of collapsing to
+  // null (parseWithFallback anchors its return type to the fallback's type).
+  const parsed = parseWithFallback<LatestManifest | null>(
+    manifest,
+    latestManifestSchema,
+    null,
+    { endpoint: "downloads/latest.json" },
+  );
+  if (parsed === null) {
     throw new Error("latest.json did not contain a version string");
   }
-  return version.trim();
+  return parsed.version;
 }
 
 async function fetchLatestVersion(): Promise<string> {
