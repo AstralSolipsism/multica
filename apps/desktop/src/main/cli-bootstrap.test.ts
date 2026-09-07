@@ -8,6 +8,7 @@ vi.mock("electron", () => ({
 import {
   INTERNAL_DOWNLOAD_BASE,
   latestManifestUrl,
+  parseLatestManifestVersion,
   releaseBaseFor,
 } from "./cli-bootstrap";
 
@@ -34,5 +35,44 @@ describe("cli-bootstrap internal release source", () => {
     ).toBe(
       "https://multica.outlune.com/downloads/cli/v0.4.40-labrastro.2",
     );
+  });
+});
+
+// The manifest is network input and must never be trusted by shape: a
+// mirrored, truncated, or error-page response has to fail with a clear
+// manifest error instead of a TypeError from reading a field that isn't there.
+describe("parseLatestManifestVersion", () => {
+  it("returns the trimmed version from a well-formed manifest", () => {
+    expect(
+      parseLatestManifestVersion({ version: "  v0.4.40-labrastro.2  " }),
+    ).toBe("v0.4.40-labrastro.2");
+  });
+
+  it("rejects a JSON null body", () => {
+    expect(() => parseLatestManifestVersion(null)).toThrow(
+      "latest.json is not a JSON object",
+    );
+  });
+
+  it("rejects non-object bodies (arrays, strings, numbers)", () => {
+    for (const body of [["v0.4.40"], "v0.4.40", 42]) {
+      expect(() => parseLatestManifestVersion(body)).toThrow(
+        "latest.json is not a JSON object",
+      );
+    }
+  });
+
+  it("rejects a manifest missing the version field", () => {
+    expect(() => parseLatestManifestVersion({ channel: "internal" })).toThrow(
+      "latest.json did not contain a version string",
+    );
+  });
+
+  it("rejects a wrong-typed or blank version field", () => {
+    for (const body of [{ version: 42 }, { version: "" }, { version: "   " }]) {
+      expect(() => parseLatestManifestVersion(body)).toThrow(
+        "latest.json did not contain a version string",
+      );
+    }
   });
 });

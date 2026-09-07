@@ -35,8 +35,26 @@ export function releaseBaseFor(downloadBase: string, version: string): string {
   return `${downloadBase}/cli/${version}`;
 }
 
-interface LatestManifest {
-  version?: unknown;
+/**
+ * Validates the release manifest's shape before any field is read. The
+ * manifest is network input — a mirrored, truncated, or error-page response
+ * (JSON `null`, a missing field, a wrong-typed field) must fail with a clear
+ * manifest error rather than a TypeError from property access on whatever
+ * shape actually arrived.
+ */
+export function parseLatestManifestVersion(manifest: unknown): string {
+  if (
+    typeof manifest !== "object" ||
+    manifest === null ||
+    Array.isArray(manifest)
+  ) {
+    throw new Error("latest.json is not a JSON object");
+  }
+  const version = (manifest as { version?: unknown }).version;
+  if (typeof version !== "string" || !version.trim()) {
+    throw new Error("latest.json did not contain a version string");
+  }
+  return version.trim();
 }
 
 async function fetchLatestVersion(): Promise<string> {
@@ -48,11 +66,7 @@ async function fetchLatestVersion(): Promise<string> {
       `latest.json fetch failed: ${res.status} ${res.statusText}`,
     );
   }
-  const manifest = (await res.json()) as LatestManifest;
-  if (typeof manifest.version !== "string" || !manifest.version.trim()) {
-    throw new Error("latest.json did not contain a version string");
-  }
-  return manifest.version.trim();
+  return parseLatestManifestVersion(await res.json());
 }
 
 function binaryName(): string {
