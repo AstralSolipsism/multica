@@ -451,7 +451,7 @@ import {
   type IssueView,
   type IssueViewPreference,
   type CreateIssueViewRequest,
-  GlmQuotaStatus,
+  type GlmQuotaStatus,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
