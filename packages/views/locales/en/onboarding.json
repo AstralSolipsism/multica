@@ -170,7 +170,7 @@
     "empty_lede_prefix": "An agent runtime is an AI coding tool we connect to — like ",
     "empty_lede_suffix": ". Install one and refresh, or pick a path below.",
     "empty_skip_title": "Skip for now",
-    "empty_skip_subtitle": "Enter your workspace now. Your agent can't run tasks until an agent runtime is connected on this computer — but you can still browse, plan, and invite teammates.",
+    "empty_skip_subtitle": "Enter your workspace now. Your agent can't start runs until an agent runtime is connected on this computer — but you can still browse, plan, and invite teammates.",
     "empty_skip_action": "Skip",
     "skip": "Skip for now",
     "refresh": "Refresh",
