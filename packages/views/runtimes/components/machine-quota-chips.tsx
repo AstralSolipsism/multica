@@ -15,17 +15,19 @@ import {
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
 import { runtimeRowLabel, type MachineQuotaChip, type RuntimeMachine } from "./runtime-machines";
-import { formatQuotaWindowLabel, quotaGroupLabel } from "./runtime-quota-cell";
+import { formatQuotaWindowLabel, MiniMeterBar, quotaGroupLabel } from "./runtime-quota-cell";
 import { ProviderLogo } from "./provider-logo";
 import { useT } from "../../i18n";
 
 const CHIP_TONE_CLASS: Record<QuotaTone, string> = {
-  ok: "bg-muted text-foreground",
+  ok: "bg-success/10 text-success",
   warning: "bg-warning/10 text-warning",
   destructive: "bg-destructive/10 text-destructive",
 };
 
-const MAX_VISIBLE_CHIPS = 4;
+// Two chips plus the "+N" overflow pill fit the machine row's chip column
+// (w-56) in every locale; more would clip mid-pill.
+const MAX_VISIBLE_CHIPS = 2;
 
 // The machine row's per-runtime quota string: one pill per runtime carrying
 // a fresh plan-quota snapshot, then a "+N" overflow pill. Each pill shows
@@ -45,7 +47,7 @@ export function MachineQuotaChips({
   const visible = chips.slice(0, MAX_VISIBLE_CHIPS);
   const extra = chips.length - visible.length;
   return (
-    <span className="flex min-w-0 items-center gap-1.5">
+    <span className="flex min-w-0 items-center gap-1.5 overflow-hidden">
       {visible.map((chip) => (
         <QuotaChip key={chip.runtimeId} chip={chip} machine={machine} now={now} />
       ))}
@@ -56,6 +58,18 @@ export function MachineQuotaChips({
       )}
     </span>
   );
+}
+
+// The single precedence decision behind a chip's visible text AND its
+// aria-label: limited beats percent beats unavailable (a limited runtime
+// can still carry a percentage — codex reports 100% used when limited).
+export function quotaChipState(chip: MachineQuotaChip):
+  | { kind: "limited" }
+  | { kind: "unavailable" }
+  | { kind: "percent"; percent: number } {
+  if (chip.status === "limited") return { kind: "limited" };
+  if (chip.remainingPercent == null) return { kind: "unavailable" };
+  return { kind: "percent", percent: chip.remainingPercent };
 }
 
 function QuotaChip({
@@ -70,21 +84,41 @@ function QuotaChip({
   const { t } = useT("runtimes");
   const runtime = machine.runtimes.find((r) => r.id === chip.runtimeId);
   const label = runtime ? runtimeRowLabel(runtime, machine.title) : chip.provider;
+  // The chip reads as [logo] [remaining bar] [remaining %]: the fixed-width
+  // bar fills with what is LEFT of the worst active window (fill drains as
+  // the quota drains), so the percent is unambiguous without a "left"
+  // wordmark; the tone colors both bar and number (green/amber/red).
+  // The aria-label follows the SAME precedence as the visible text: a
+  // limited runtime that still reports a percentage reads as rate-limited
+  // to screen readers too, not as "0% left".
+  const state = quotaChipState(chip);
   const text =
-    chip.status === "limited"
+    state.kind === "limited"
       ? t(($) => $.quota.exhausted)
-      : chip.remainingPercent == null
+      : state.kind === "unavailable"
         ? t(($) => $.machine.metrics.unavailable)
-        : `${Math.round(chip.remainingPercent)}%`;
+        : `${Math.round(state.percent)}%`;
+  const ariaText =
+    state.kind === "percent"
+      ? t(($) => $.quota.remaining, { percent: Math.round(state.percent) })
+      : text;
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <span
-            aria-label={`${label}: ${text}`}
+            aria-label={`${label}: ${ariaText}`}
             className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-micro font-medium tabular-nums ${CHIP_TONE_CLASS[chip.tone]}`}
           >
             <ProviderLogo provider={chip.provider} className="h-3.5 w-3.5" />
+            {state.kind === "percent" && (
+              <MiniMeterBar
+                percent={state.percent}
+                tone={chip.tone}
+                ariaLabel={label}
+                className="w-6 shrink-0"
+              />
+            )}
             {text}
           </span>
         }

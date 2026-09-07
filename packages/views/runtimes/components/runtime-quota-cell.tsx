@@ -45,29 +45,34 @@ export function formatQuotaWindowLabel(
 // Tone → semantic classes for the quota bars (a small fill meter + a
 // tone-colored percent). Shared with the host-metrics bars.
 export const TONE_BAR_CLASS: Record<QuotaTone, string> = {
-  ok: "bg-foreground/70",
+  ok: "bg-success",
   warning: "bg-warning",
   destructive: "bg-destructive",
 };
 
 export const TONE_TEXT_CLASS: Record<QuotaTone, string> = {
-  ok: "text-foreground",
+  ok: "text-success",
   warning: "text-warning",
   destructive: "text-destructive",
 };
 
 // Thin fill meter for the quota-remaining and host-metrics bars. The caller
 // owns the null state ("--" / omit) — the bar itself never renders one.
+// barClassName overrides the tone's fill color for states that are not
+// health judgments (e.g. a stale host-metrics sample must stay neutral
+// gray even when its last value would tone "ok" — which is health-green).
 export function MiniMeterBar({
   percent,
   tone,
   ariaLabel,
   className,
+  barClassName,
 }: {
   percent: number;
   tone: QuotaTone;
   ariaLabel: string;
   className?: string;
+  barClassName?: string;
 }) {
   const value = Math.max(0, Math.min(100, percent));
   return (
@@ -77,7 +82,7 @@ export function MiniMeterBar({
       className={cn("block", className)}
     >
       <ProgressTrack className="h-1">
-        <ProgressIndicator className={TONE_BAR_CLASS[tone]} />
+        <ProgressIndicator className={barClassName ?? TONE_BAR_CLASS[tone]} />
       </ProgressTrack>
     </ProgressPrimitive.Root>
   );
