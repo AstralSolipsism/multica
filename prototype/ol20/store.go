@@ -69,6 +69,9 @@ type Store struct {
 	// re-check — the deterministic hook for "grant revoked / run expired
 	// while the upload was in flight" (review P1-2 test).
 	InterludeDuringUpload func()
+	// InterludeDuringAdopt is the same deterministic hook for the adopt path,
+	// firing between the candidate object read and the commit re-check.
+	InterludeDuringAdopt func()
 }
 
 type SaveRequest struct {
@@ -324,8 +327,8 @@ func (s *Store) Save(ctx context.Context, req SaveRequest) (SaveResult, error) {
 			return SaveResult{}, err
 		}
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO op_results (project_id, actor_id, op_id, outcome, revision, path, base_revision, content_sha256)
-			 VALUES ($1,$2,$3,'SAVED',$4,$5,$6,$7)`,
+			`INSERT INTO op_results (project_id, actor_id, op_id, outcome, revision, path, base_revision, content_sha256, op_kind)
+			 VALUES ($1,$2,$3,'SAVED',$4,$5,$6,$7,'save')`,
 			req.ProjectID, actor.ID, req.OpID, newRev, req.Path, req.BaseRevision, digest); err != nil {
 			return SaveResult{}, err
 		}
@@ -363,9 +366,9 @@ func (s *Store) Save(ctx context.Context, req SaveRequest) (SaveResult, error) {
 		return SaveResult{}, err
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO op_results (project_id, actor_id, op_id, outcome, candidate_id, conflict_current, path, base_revision, content_sha256)
-		 VALUES ($1,$2,$3,'CONFLICT',$4,$5,$6,$7,$8)`,
-		req.ProjectID, actor.ID, req.OpID, candID, current, req.Path, req.BaseRevision, digest); err != nil {
+		`INSERT INTO op_results (project_id, actor_id, op_id, outcome, revision, candidate_id, conflict_current, path, base_revision, content_sha256, op_kind)
+		 VALUES ($1,$2,$3,'CONFLICT',$4,$5,$6,$7,$8,$9,'save')`,
+		req.ProjectID, actor.ID, req.OpID, current, candID, current, req.Path, req.BaseRevision, digest); err != nil {
 		return SaveResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -481,13 +484,20 @@ func (s *Store) Candidates(ctx context.Context, token, projectID, path string) (
 	return out, rows.Err()
 }
 
-// AdoptCandidate re-applies a preserved candidate's content as a NEW save on
-// top of whatever is current at adopt time. Adoption never overwrites: the
-// third party's newer revisions stay in history (review's third-party test).
-// Its idempotency binding is (project, actor, op, path, content digest) —
-// deliberately without a base revision, because adopting "on top of current"
-// is base-independent by definition.
-func (s *Store) AdoptCandidate(ctx context.Context, token, projectID, path, candidateID, opID string) (SaveResult, error) {
+// AdoptCandidate re-applies a preserved candidate's content as a NEW save,
+// carried by the revision the adoption DECISION was made against
+// (expectedRevision, review P1-4). If the head moved since the decision the
+// adopt returns a conflict and consumes nothing — the caller re-reviews at
+// the new head and re-decides (a fresh operation id).
+//
+// Its replay binding is (project, actor, op, kind=adopt, path, candidate id,
+// expected revision): a key that ever served a different request — another
+// candidate, another expected revision, or a Save — is ErrOpKeyReused, never
+// a replay of someone else's success. The ledger is re-checked inside the
+// file lock (concurrent identical adopts: one applies, the other replays),
+// and authorization is re-confirmed right before commit, covering lock wait
+// and object read windows.
+func (s *Store) AdoptCandidate(ctx context.Context, token, projectID, path, candidateID, opID string, expectedRevision int64) (SaveResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return SaveResult{}, err
@@ -499,19 +509,35 @@ func (s *Store) AdoptCandidate(ctx context.Context, token, projectID, path, cand
 		return SaveResult{}, err
 	}
 
-	// Adopt replay check FIRST — the adopted candidate row is deleted by a
-	// successful adoption, so a retry must replay from the ledger before it
-	// ever looks for the (now consumed) candidate. Adoption content is
-	// server-held, so (project, actor, op, path) fully identifies the replay.
-	var doneRev int64
-	err = tx.QueryRow(ctx,
-		`SELECT revision FROM op_results WHERE project_id=$1 AND actor_id=$2 AND op_id=$3 AND path=$4`,
-		projectID, actor.ID, opID, path).Scan(&doneRev)
-	if err == nil {
-		return SaveResult{Status: StatusSaved, Revision: doneRev, Replayed: true}, nil
+	lookup := func() (SaveResult, bool, error) {
+		var (
+			kind         string
+			outcome      string
+			doneRev      int64
+			doneCand     *string
+			donePath     string
+			doneExpected int64
+		)
+		err := tx.QueryRow(ctx,
+			`SELECT op_kind, outcome, COALESCE(revision,0), candidate_id, path, base_revision
+			 FROM op_results WHERE project_id=$1 AND actor_id=$2 AND op_id=$3`,
+			projectID, actor.ID, opID).
+			Scan(&kind, &outcome, &doneRev, &doneCand, &donePath, &doneExpected)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return SaveResult{}, false, nil
+		}
+		if err != nil {
+			return SaveResult{}, true, err
+		}
+		if kind != "adopt" || donePath != path || doneCand == nil || *doneCand != candidateID || doneExpected != expectedRevision {
+			return SaveResult{}, true, ErrOpKeyReused
+		}
+		return SaveResult{Status: SaveStatus(outcome), Revision: doneRev, Replayed: true}, true, nil
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return SaveResult{}, err
+
+	// Pre-lock replay + cross-type key check.
+	if res, hit, err := lookup(); hit {
+		return res, err
 	}
 
 	var fileID string
@@ -520,6 +546,11 @@ func (s *Store) AdoptCandidate(ctx context.Context, token, projectID, path, cand
 		`SELECT f.id, f.current_revision FROM files f WHERE f.project_id=$1 AND f.path=$2 FOR UPDATE`,
 		projectID, path).Scan(&fileID, &current); err != nil {
 		return SaveResult{}, err
+	}
+
+	// In-lock replay re-check (concurrent identical adopt).
+	if res, hit, err := lookup(); hit {
+		return res, err
 	}
 
 	var contentKey string
@@ -536,6 +567,25 @@ func (s *Store) AdoptCandidate(ctx context.Context, token, projectID, path, cand
 		return SaveResult{}, err
 	}
 	sum := fmt.Sprintf("%x", sha256.Sum256(content))
+
+	// Commit-window authorization re-check (same contract as Save).
+	if s.InterludeDuringAdopt != nil {
+		s.InterludeDuringAdopt()
+	}
+	if _, err := s.authorize(ctx, tx, token, projectID); err != nil {
+		return SaveResult{}, err
+	}
+
+	// The decision is stale: the head moved after the user chose to adopt.
+	// Keep the head AND the candidate; the caller re-decides at the new head.
+	if current != expectedRevision {
+		return SaveResult{
+			Status:          StatusConflict,
+			Revision:        current,
+			ConflictCurrent: current,
+			CandidateID:     candidateID,
+		}, nil
+	}
 
 	newRev := current + 1
 	// Reference the candidate's existing object key: no re-upload, and the
@@ -554,9 +604,9 @@ func (s *Store) AdoptCandidate(ctx context.Context, token, projectID, path, cand
 		return SaveResult{}, err
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO op_results (project_id, actor_id, op_id, outcome, revision, path, base_revision, content_sha256)
-		 VALUES ($1,$2,$3,'SAVED',$4,$5,$6,$7)`,
-		projectID, actor.ID, opID, newRev, path, current, sum); err != nil {
+		`INSERT INTO op_results (project_id, actor_id, op_id, outcome, revision, candidate_id, base_revision, path, content_sha256, op_kind)
+		 VALUES ($1,$2,$3,'SAVED',$4,$5,$6,$7,$8,'adopt')`,
+		projectID, actor.ID, opID, newRev, candidateID, expectedRevision, path, sum); err != nil {
 		return SaveResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

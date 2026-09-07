@@ -89,11 +89,14 @@ func main() {
 		}
 
 	case "adopt":
-		// adopt <token> <project> <path> <candidateID> <opID>
-		needArgs(len(args) >= 6, "adopt token project path candidateID opID")
-		res, err := st.AdoptCandidate(ctx, args[1], args[2], args[3], args[4], args[5])
+		// adopt <token> <project> <path> <candidateID> <opID> <expectedRevision>
+		needArgs(len(args) >= 7, "adopt token project path candidateID opID expectedRevision")
+		res, err := st.AdoptCandidate(ctx, args[1], args[2], args[3], args[4], args[5], int64(atoi(args[6])))
 		must(err)
 		fmt.Println(res.String())
+		if res.Status == StatusConflict {
+			os.Exit(exitConflict)
+		}
 
 	case "orphans":
 		ks, err := st.Orphans(ctx)

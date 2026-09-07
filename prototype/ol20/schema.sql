@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS op_results (
   path             text NOT NULL,
   base_revision    bigint NOT NULL,
   content_sha256   text NOT NULL,
+  op_kind          text NOT NULL DEFAULT 'save' CHECK (op_kind IN ('save','adopt')),
   created_at       timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (project_id, actor_id, op_id)
 );

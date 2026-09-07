@@ -564,13 +564,13 @@ func TestR5ConflictReplayComplete(t *testing.T) {
 
 	retry := save(t, st, SaveRequest{Token: runID + "-r5b", ProjectID: projA, Path: path,
 		BaseRevision: 1, OpID: runID + "-r5-b1", Content: []byte("stale save by B")})
-	if !retry.Replayed || retry.Status != StatusConflict || retry.CandidateID != res.CandidateID || retry.ConflictCurrent != 2 {
+	if !retry.Replayed || retry.Status != StatusConflict || retry.CandidateID != res.CandidateID || retry.ConflictCurrent != 2 || retry.Revision != res.Revision {
 		t.Fatalf("conflict replay incomplete: first=%+v retry=%+v", res, retry)
 	}
 	if n := countRows(t, st, `SELECT count(*) FROM conflict_candidates WHERE id=$1`, res.CandidateID); n != 1 {
 		t.Fatalf("%d candidate rows", n)
 	}
-	t.Logf("R5: conflict replay identical (candidate=%s, conflict_current=2)", res.CandidateID[:8])
+	t.Logf("R5: conflict replay identical incl. Revision=%d (candidate=%s)", res.Revision, res.CandidateID[:8])
 }
 
 // R6: grant revoked / run expired DURING the upload -> the commit-time
@@ -648,9 +648,9 @@ func TestR7AdoptAfterThirdPartyUpdate(t *testing.T) {
 		t.Fatalf("stale save = %+v", res)
 	}
 
-	// Adopt A's candidate now (current is already 3).
+	// Adopt A's candidate now, decided against the head it reviewed (rev 3).
 	adopt := save2(t, st, func() (SaveResult, error) {
-		return st.AdoptCandidate(context.Background(), runID+"-r7a", projA, path, res.CandidateID, runID+"-r7-adopt")
+		return st.AdoptCandidate(context.Background(), runID+"-r7a", projA, path, res.CandidateID, runID+"-r7-adopt", 3)
 	})
 	if adopt.Status != StatusSaved || adopt.Revision != 4 {
 		t.Fatalf("adopt = %+v, want SAVED rev4", adopt)
@@ -671,7 +671,7 @@ func TestR7AdoptAfterThirdPartyUpdate(t *testing.T) {
 	}
 	// Adopt replay (same op) returns the same revision without a new row.
 	adopt2 := save2(t, st, func() (SaveResult, error) {
-		return st.AdoptCandidate(context.Background(), runID+"-r7a", projA, path, res.CandidateID, runID+"-r7-adopt")
+		return st.AdoptCandidate(context.Background(), runID+"-r7a", projA, path, res.CandidateID, runID+"-r7-adopt", 3)
 	})
 	// The candidate row is gone; replay must NOT fail with not-found — it
 	// replays from the ledger.
@@ -682,6 +682,160 @@ func TestR7AdoptAfterThirdPartyUpdate(t *testing.T) {
 		t.Fatalf("adopt rows = %d", n)
 	}
 	t.Log("R7: adopt after third-party update appends rev4, v3 preserved in history, candidate consumed, adopt idempotent")
+}
+
+// R8: adoption decided against a stale head -> conflict, head and candidate
+// both preserved, nothing consumed (architect P1 window).
+func TestR8AdoptStaleExpectedRevisionConflicts(t *testing.T) {
+	st := open(t)
+	grant(t, st, runID+"-r8a", projA, "actor-r8a")
+	grant(t, st, runID+"-r8b", projA, "actor-r8b")
+	path := runID + "/r8.md"
+	save(t, st, SaveRequest{Token: runID + "-r8a", ProjectID: projA, Path: path, BaseRevision: 0, OpID: runID + "-r8-v1", Content: []byte("v1")})
+	// Head moves to rev 2; A's write based on rev 1 becomes a candidate.
+	save(t, st, SaveRequest{Token: runID + "-r8b", ProjectID: projA, Path: path, BaseRevision: 1, OpID: runID + "-r8-v2", Content: []byte("v2 by B")})
+	res := save(t, st, SaveRequest{Token: runID + "-r8a", ProjectID: projA, Path: path, BaseRevision: 1, OpID: runID + "-r8-stale", Content: []byte("A on v1")})
+	if res.Status != StatusConflict {
+		t.Fatalf("setup = %+v", res)
+	}
+	// Adoption decided against the reviewed head (rev 2); a third party
+	// commits rev 3 inside the decision window.
+	save(t, st, SaveRequest{Token: runID + "-r8b", ProjectID: projA, Path: path, BaseRevision: 2, OpID: runID + "-r8-v3", Content: []byte("v3 by B")})
+
+	adopt := save2(t, st, func() (SaveResult, error) {
+		return st.AdoptCandidate(context.Background(), runID+"-r8a", projA, path, res.CandidateID, runID+"-r8-adopt", 2)
+	})
+	if adopt.Status != StatusConflict || adopt.Revision != 3 {
+		t.Fatalf("stale adopt = %+v, want CONFLICT at head 3", adopt)
+	}
+	cur, err := st.Read(context.Background(), runID+"-r8a", projA, path)
+	if err != nil || cur.Revision != 3 || !bytes.Equal(cur.Content, []byte("v3 by B")) {
+		t.Fatalf("head changed by stale adopt: rev=%d err=%v", cur.Revision, err)
+	}
+	if n := countRows(t, st, `SELECT count(*) FROM conflict_candidates WHERE id=$1`, res.CandidateID); n != 1 {
+		t.Fatalf("candidate consumed by stale adopt (n=%d)", n)
+	}
+	if n := countRows(t, st, `SELECT count(*) FROM op_results WHERE op_id=$1`, runID+"-r8-adopt"); n != 0 {
+		t.Fatalf("stale adopt left %d ledger rows", n)
+	}
+	// Re-decide at the real head (fresh op id): adoption succeeds as rev 4.
+	adopt2 := save2(t, st, func() (SaveResult, error) {
+		return st.AdoptCandidate(context.Background(), runID+"-r8a", projA, path, res.CandidateID, runID+"-r8-adopt2", 3)
+	})
+	if adopt2.Status != StatusSaved || adopt2.Revision != 4 {
+		t.Fatalf("re-decided adopt = %+v", adopt2)
+	}
+	t.Log("R8: stale expectedRevision -> conflict, head+candidate preserved, re-decide at real head succeeds")
+}
+
+// R9: adopt replay binding — same key with a different candidate or expected
+// revision, or a key that served a Save, is ErrOpKeyReused; concurrent
+// identical adopts resolve to apply+replay, never NotFound.
+func TestR9AdoptReplayBindingAndConcurrency(t *testing.T) {
+	st := open(t)
+	grant(t, st, runID+"-r9a", projA, "actor-r9a")
+	grant(t, st, runID+"-r9b", projA, "actor-r9b")
+	path := runID + "/r9.md"
+	save(t, st, SaveRequest{Token: runID + "-r9a", ProjectID: projA, Path: path, BaseRevision: 0, OpID: runID + "-r9-v1", Content: []byte("v1")})
+	// Head to rev 2, then two stale writers produce two candidates.
+	save(t, st, SaveRequest{Token: runID + "-r9b", ProjectID: projA, Path: path, BaseRevision: 1, OpID: runID + "-r9-v2", Content: []byte("v2")})
+	c1 := save(t, st, SaveRequest{Token: runID + "-r9a", ProjectID: projA, Path: path, BaseRevision: 1, OpID: runID + "-r9-c1", Content: []byte("cand one")})
+	c2 := save(t, st, SaveRequest{Token: runID + "-r9b", ProjectID: projA, Path: path, BaseRevision: 1, OpID: runID + "-r9-c2", Content: []byte("cand two")})
+	if c1.Status != StatusConflict || c2.Status != StatusConflict {
+		t.Fatalf("setup: %+v %+v", c1, c2)
+	}
+
+	if _, err := st.AdoptCandidate(context.Background(), runID+"-r9a", projA, path, c1.CandidateID, runID+"-r9-op", 2); err != nil {
+		t.Fatalf("first adopt: %v", err)
+	}
+	_, err := st.AdoptCandidate(context.Background(), runID+"-r9a", projA, path, c2.CandidateID, runID+"-r9-op", 2)
+	if !errors.Is(err, ErrOpKeyReused) {
+		t.Fatalf("same key + different candidate: err=%v want ErrOpKeyReused", err)
+	}
+	_, err = st.AdoptCandidate(context.Background(), runID+"-r9a", projA, path, c1.CandidateID, runID+"-r9-op", 3)
+	if !errors.Is(err, ErrOpKeyReused) {
+		t.Fatalf("same key + different expected: err=%v want ErrOpKeyReused", err)
+	}
+	// A key that previously served a Save must never replay as adopt success.
+	_, err = st.AdoptCandidate(context.Background(), runID+"-r9a", projA, path, c2.CandidateID, runID+"-r9-v1", 3)
+	if !errors.Is(err, ErrOpKeyReused) {
+		t.Fatalf("Save key reused by adopt: err=%v want ErrOpKeyReused", err)
+	}
+
+	// Concurrent identical adopts: exactly one applies, the other replays
+	// (not NotFound — the winner already consumed the candidate).
+	path2 := runID + "/r9b.md"
+	save(t, st, SaveRequest{Token: runID + "-r9a", ProjectID: projA, Path: path2, BaseRevision: 0, OpID: runID + "-r9-s2", Content: []byte("v1")})
+	save(t, st, SaveRequest{Token: runID + "-r9b", ProjectID: projA, Path: path2, BaseRevision: 1, OpID: runID + "-r9-s2v2", Content: []byte("v2")})
+	c3 := save(t, st, SaveRequest{Token: runID + "-r9b", ProjectID: projA, Path: path2, BaseRevision: 1, OpID: runID + "-r9-c3", Content: []byte("cand three")})
+	if c3.Status != StatusConflict {
+		t.Fatalf("setup2: %+v", c3)
+	}
+	ctx := context.Background()
+	stA, _ := OpenStore(ctx, pgURL, s3EP, s3Key, s3Sec, bkt, "us-east-1")
+	defer stA.Close()
+	stB, _ := OpenStore(ctx, pgURL, s3EP, s3Key, s3Sec, bkt, "us-east-1")
+	defer stB.Close()
+	start := make(chan struct{})
+	var out [2]SaveResult
+	var errs [2]error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); <-start; out[0], errs[0] = stA.AdoptCandidate(ctx, runID+"-r9a", projA, path2, c3.CandidateID, runID+"-r9-adopt-par", 2) }()
+	go func() { defer wg.Done(); <-start; out[1], errs[1] = stB.AdoptCandidate(ctx, runID+"-r9a", projA, path2, c3.CandidateID, runID+"-r9-adopt-par", 2) }()
+	close(start)
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("racer %d: %v (must be apply or replay, never NotFound)", i, err)
+		}
+	}
+	applied, replayed := 0, 0
+	for _, r := range out {
+		if r.Status != StatusSaved || r.Revision != 3 {
+			t.Fatalf("outcome = %+v", r)
+		}
+		if r.Replayed {
+			replayed++
+		} else {
+			applied++
+		}
+	}
+	if applied != 1 || replayed != 1 {
+		t.Fatalf("applied=%d replayed=%d", applied, replayed)
+	}
+	t.Log("R9: adopt replay bound to kind+candidate+expected; Save keys not hijackable; concurrent adopt = apply+replay")
+}
+
+// R10: grant revoked during the adopt window (lock wait / object read) ->
+// commit re-check denies, nothing persists, candidate intact.
+func TestR10RevokedDuringAdopt(t *testing.T) {
+	st := open(t)
+	grant(t, st, runID+"-r10", projA, "actor-r10")
+	path := runID + "/r10.md"
+	save(t, st, SaveRequest{Token: runID + "-r10", ProjectID: projA, Path: path, BaseRevision: 0, OpID: runID + "-r10-v1", Content: []byte("v1")})
+	save(t, st, SaveRequest{Token: runID + "-r10", ProjectID: projA, Path: path, BaseRevision: 1, OpID: runID + "-r10-v2", Content: []byte("v2")})
+	res := save(t, st, SaveRequest{Token: runID + "-r10", ProjectID: projA, Path: path, BaseRevision: 1, OpID: runID + "-r10-stale", Content: []byte("stale")})
+	if res.Status != StatusConflict {
+		t.Fatalf("setup = %+v", res)
+	}
+	st.InterludeDuringAdopt = func() {
+		if err := st.Revoke(context.Background(), runID + "-r10"); err != nil {
+			t.Errorf("revoke: %v", err)
+		}
+	}
+	_, err := st.AdoptCandidate(context.Background(), runID+"-r10", projA, path, res.CandidateID, runID + "-r10-adopt", 2)
+	st.InterludeDuringAdopt = nil
+	if !errors.Is(err, ErrRevoked) {
+		t.Fatalf("revoked mid-adopt: err=%v want ErrRevoked", err)
+	}
+	if n := countRows(t, st, `SELECT (SELECT count(*) FROM revisions WHERE op_id=$1)+(SELECT count(*) FROM op_results WHERE op_id=$1)`, runID+"-r10-adopt"); n != 0 {
+		t.Fatalf("mid-adopt revocation left %d rows", n)
+	}
+	if n := countRows(t, st, `SELECT count(*) FROM conflict_candidates WHERE id=$1`, res.CandidateID); n != 1 {
+		t.Fatalf("candidate consumed despite revocation (n=%d)", n)
+	}
+	t.Log("R10: revoked during adopt -> commit re-check denies, zero rows, candidate intact")
 }
 
 func save2(t *testing.T, st *Store, f func() (SaveResult, error)) SaveResult {
