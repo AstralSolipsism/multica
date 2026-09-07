@@ -64,11 +64,16 @@ type GlmQuotaSnapshot struct {
 
 // GlmQuotaStatus is the API payload: enabled=false when no key is
 // configured, quota omitted when no successful poll ever happened.
+// AnchorDevice optionally names the machine whose row should carry the GLM
+// chip on the runtimes page — the balance is account-level, but operators
+// typically burn it on one device, and the chip must sit visually with that
+// machine's other quota pills instead of a detached card.
 type GlmQuotaStatus struct {
-	Enabled   bool              `json:"enabled"`
-	Quota     *GlmQuotaSnapshot `json:"quota,omitempty"`
-	Stale     bool              `json:"stale,omitempty"`
-	LastError string            `json:"last_error,omitempty"`
+	Enabled      bool              `json:"enabled"`
+	Quota        *GlmQuotaSnapshot `json:"quota,omitempty"`
+	Stale        bool              `json:"stale,omitempty"`
+	LastError    string            `json:"last_error,omitempty"`
+	AnchorDevice string            `json:"anchor_device,omitempty"`
 }
 
 // glmQuotaRaw mirrors the provider wire shape. Only the fields we surface
@@ -127,10 +132,11 @@ func parseGlmQuotaBody(body []byte, observedAt time.Time) (*GlmQuotaSnapshot, er
 
 // GlmQuotaMonitor polls the provider and holds the latest snapshot.
 type GlmQuotaMonitor struct {
-	apiKey   string
-	baseURL  string
-	interval time.Duration
-	client   *http.Client
+	apiKey       string
+	baseURL      string
+	interval     time.Duration
+	anchorDevice string
+	client       *http.Client
 
 	mu        sync.RWMutex
 	snapshot  *GlmQuotaSnapshot
@@ -155,10 +161,11 @@ func NewGlmQuotaMonitorFromEnv() *GlmQuotaMonitor {
 		base = glmQuotaDefaultBaseURL
 	}
 	return &GlmQuotaMonitor{
-		apiKey:   key,
-		baseURL:  base,
-		interval: interval,
-		client:   &http.Client{Timeout: glmQuotaRequestTimeout},
+		apiKey:       key,
+		baseURL:      base,
+		interval:     interval,
+		anchorDevice: os.Getenv("GLM_QUOTA_ANCHOR_DEVICE"),
+		client:       &http.Client{Timeout: glmQuotaRequestTimeout},
 	}
 }
 
@@ -226,7 +233,7 @@ func (m *GlmQuotaMonitor) fetch(ctx context.Context) (*GlmQuotaSnapshot, error) 
 func (m *GlmQuotaMonitor) Status() GlmQuotaStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	st := GlmQuotaStatus{Enabled: true, Quota: m.snapshot, LastError: m.lastError}
+	st := GlmQuotaStatus{Enabled: true, Quota: m.snapshot, LastError: m.lastError, AnchorDevice: m.anchorDevice}
 	if m.snapshot != nil && time.Since(time.Unix(m.snapshot.ObservedAt, 0)) > glmQuotaStaleAfter {
 		st.Stale = true
 	}

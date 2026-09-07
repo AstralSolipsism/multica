@@ -19,7 +19,7 @@ import { useRequiredWorkspaceSlug, useWorkspacePaths } from "@multica/core/paths
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { chatSessionsOptions } from "@multica/core/chat/queries";
 import { runtimeProfileListOptions } from "@multica/core/runtimes";
-import { runtimeListOptions, runtimeKeys } from "@multica/core/runtimes/queries";
+import { runtimeListOptions, runtimeKeys, glmQuotaOptions } from "@multica/core/runtimes/queries";
 import { useWSEvent } from "@multica/core/realtime";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import type { AgentRuntime } from "@multica/core/types";
@@ -55,7 +55,7 @@ import { buildWorkloadIndex, RuntimeList } from "./runtime-list";
 import { pendingRuntimeFromProfile } from "./pending-runtime";
 import { buildRuntimeMachines, type RuntimeMachine } from "./runtime-machines";
 import { MachineQuotaChips } from "./machine-quota-chips";
-import { GlmQuotaCard } from "./glm-quota-card";
+import { GlmQuotaCard, GlmQuotaChip } from "./glm-quota-card";
 import { HostMetricsBars } from "./host-metrics-bars";
 import { HealthDot, HealthIcon, useHealthLabel } from "./shared";
 import { useT, useTimeAgo } from "../../i18n";
@@ -105,6 +105,7 @@ export function RuntimesPage({
   const { data: agents = [], isLoading: agentsLoading } = useQuery(
     agentListOptions(wsId),
   );
+  const { data: glmQuota } = useQuery(glmQuotaOptions());
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
   // The Mika entrypoint is per member, not per workspace: the agent alone does
   // not say whether *this* member's conversation was ever opened and kicked
@@ -192,12 +193,15 @@ export function RuntimesPage({
                 currentUserId={currentUserId ?? null}
               />
             )}
-            <GlmQuotaCard now={now} />
+            {glmQuota?.enabled === true && !glmQuota.anchor_device && (
+              <GlmQuotaCard now={now} />
+            )}
             {(machines.length > 0 || bootstrapping) && (
               <MachineList
                 machines={machines}
                 bootstrapping={bootstrapping}
                 now={now}
+                glmQuota={glmQuota}
               />
             )}
             {orphanProfileRuntimes.length > 0 && (
@@ -418,10 +422,12 @@ function MachineList({
   machines,
   bootstrapping,
   now,
+  glmQuota,
 }: {
   machines: RuntimeMachine[];
   bootstrapping?: boolean;
   now: number;
+  glmQuota?: import("@multica/core/api").GlmQuotaStatus;
 }) {
   const { t } = useT("runtimes");
   if (machines.length === 0) {
@@ -446,14 +452,27 @@ function MachineList({
     <div className="overflow-hidden rounded-lg border bg-card">
       <div className="divide-y">
         {machines.map((machine) => (
-          <MachineRow key={machine.id} machine={machine} now={now} />
+          <MachineRow
+            key={machine.id}
+            machine={machine}
+            now={now}
+            glmQuota={glmQuota}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function MachineRow({ machine, now }: { machine: RuntimeMachine; now: number }) {
+function MachineRow({
+  machine,
+  now,
+  glmQuota,
+}: {
+  machine: RuntimeMachine;
+  now: number;
+  glmQuota?: import("@multica/core/api").GlmQuotaStatus;
+}) {
   const { t } = useT("runtimes");
   const healthLabel = useHealthLabel();
   const timeAgo = useTimeAgo();
@@ -497,7 +516,12 @@ function MachineRow({ machine, now }: { machine: RuntimeMachine; now: number }) 
           fixed-width, so at ~1366px a visible-but-wide chips column would
           squeeze the name to zero. Quota detail stays one click away on the
           machine page. */}
-      <span className="hidden w-56 shrink-0 items-center 2xl:flex">
+      <span className="hidden w-56 shrink-0 items-center gap-1.5 2xl:flex">
+        {glmQuota?.enabled === true &&
+          glmQuota.anchor_device != null &&
+          machine.deviceName === glmQuota.anchor_device && (
+            <GlmQuotaChip data={glmQuota} now={now} />
+          )}
         <MachineQuotaChips machine={machine} now={now} />
       </span>
       <span className="hidden w-28 shrink-0 items-center gap-1.5 text-caption md:flex">
