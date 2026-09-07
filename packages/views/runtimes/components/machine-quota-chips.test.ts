@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from "vitest";
 import { quotaChipState } from "./machine-quota-chips";
 import type { MachineQuotaChip } from "./runtime-machines";
