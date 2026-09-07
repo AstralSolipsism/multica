@@ -491,7 +491,11 @@ function MachineRow({ machine, now }: { machine: RuntimeMachine; now: number }) 
         </span>
       </span>
 
-      <span className="hidden w-56 shrink-0 items-center xl:flex">
+      {/* Chips yield to the machine name below 2xl: every other column is
+          fixed-width, so at ~1366px a visible-but-wide chips column would
+          squeeze the name to zero. Quota detail stays one click away on the
+          machine page. */}
+      <span className="hidden w-56 shrink-0 items-center 2xl:flex">
         <MachineQuotaChips machine={machine} now={now} />
       </span>
       <span className="hidden w-28 shrink-0 items-center gap-1.5 text-caption md:flex">

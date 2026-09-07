@@ -74,9 +74,10 @@ function MetricBar({
       {percent != null && (
         <MiniMeterBar
           percent={percent}
-          tone={stale ? "ok" : tone}
+          tone={tone}
           ariaLabel={label}
           className={stale ? "opacity-40" : undefined}
+          barClassName={stale ? "bg-muted-foreground/50" : undefined}
         />
       )}
     </span>
@@ -130,7 +131,7 @@ function MetricInline({
   stale: boolean;
   staleLabel: string;
 }) {
-  const tone: QuotaTone = stale ? "ok" : metricsTone(percent);
+  const tone: QuotaTone = metricsTone(percent);
   return (
     <span
       className="flex items-center gap-1.5"
@@ -142,6 +143,7 @@ function MetricInline({
         tone={tone}
         ariaLabel={label}
         className={stale ? "w-8 shrink-0 opacity-40" : "w-8 shrink-0"}
+        barClassName={stale ? "bg-muted-foreground/50" : undefined}
       />
       <span
         className={`tabular-nums ${stale ? "text-faint-foreground" : TONE_TEXT_CLASS[tone]}`}
