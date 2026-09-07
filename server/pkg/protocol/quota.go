@@ -1,12 +1,16 @@
 package protocol
 
-// Runtime plan quota wire types.
+// Runtime plan quota and host metrics wire types.
 //
-// The shape crosses the daemon -> server heartbeat boundary, the server ->
-// client API boundary, the external push endpoint, and the
+// The plan-quota shape crosses the daemon -> server heartbeat boundary, the
+// server -> client API boundary, the external push endpoint, and the
 // agent_runtime.plan_quota JSONB column. Privacy red line: it must never
 // carry account ids, plan names, credit balances, tokens, or credentials —
 // only coarse percentages and window metadata.
+//
+// HostMetrics crosses the daemon -> server heartbeat boundary and the
+// server -> client runtime list API, and is cached in Redis keyed by
+// (workspace id, daemon id).
 
 // Plan quota status values. PlanQuotaStatusLimited means the provider is
 // rate limiting the account or the quota window is exhausted.
@@ -31,6 +35,9 @@ const (
 	PlanQuotaMaxWindows = 8
 	// PlanQuotaMaxWindowName bounds window names ("primary", "secondary").
 	PlanQuotaMaxWindowName = 32
+	// PlanQuotaMaxGroupName bounds the optional quota-group label a window
+	// may carry (antigravity's "gemini" / "claude_gpt" pools).
+	PlanQuotaMaxGroupName = 32
 	// PlanQuotaMaxWindowMinutes is one year in minutes — a generous upper
 	// bound that still rejects nonsense values.
 	PlanQuotaMaxWindowMinutes = 525600
@@ -45,11 +52,18 @@ const (
 // "not reported" — the server must never fabricate a 0 the provider did
 // not send.
 type RuntimePlanQuotaWindow struct {
-	Name         string   `json:"name"`
-	UsedPercent  *float64 `json:"used_percent,omitempty"`
-	WindowMinutes *int64  `json:"window_minutes,omitempty"`
+	Name          string   `json:"name"`
+	UsedPercent   *float64 `json:"used_percent,omitempty"`
+	WindowMinutes *int64   `json:"window_minutes,omitempty"`
 	// ResetsAt is unix seconds; nil when the provider did not disclose it.
 	ResetsAt *int64 `json:"resets_at,omitempty"`
+	// Group is the optional quota pool the window belongs to, for providers
+	// that keep several independent pools per account (antigravity reports a
+	// Gemini pool and a Claude/GPT pool, each with its own 5h and weekly
+	// windows — four buckets that a flat window list would collapse).
+	// Optional and free-form: reporters whose provider has a single pool
+	// omit it, and the UI falls back to rendering ungrouped rows.
+	Group string `json:"group,omitempty"`
 }
 
 // RuntimePlanQuota is the account-level plan/rate-limit snapshot for one
@@ -63,5 +77,19 @@ type RuntimePlanQuota struct {
 	// ObservedAt is unix seconds; required, and the freshness arbiter when
 	// daemon and external reporters write the same row (newer wins).
 	ObservedAt int64  `json:"observed_at"`
-	Source   string `json:"source"`
+	Source     string `json:"source"`
+}
+
+// HostMetrics is one machine-level resource sample from the daemon host.
+// It travels as "metrics" on daemon heartbeats, is cached in Redis keyed by
+// (workspace id, daemon id), and is exposed on the runtime list API as
+// "system_stats". Pointer fields distinguish a real 0% from "not sampled".
+type HostMetrics struct {
+	CPUPercent    *float64 `json:"cpu_percent,omitempty"`
+	MemoryPercent *float64 `json:"memory_percent,omitempty"`
+	// CapturedAt is unix seconds. The daemon's single host sampler stamps
+	// one capture time per sampling cycle, so every runtime heartbeat of
+	// the same daemon carries the same CapturedAt; the server stores only
+	// the first (set-if-newer) and consumers treat stale samples as absent.
+	CapturedAt int64 `json:"captured_at"`
 }

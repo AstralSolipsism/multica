@@ -1,9 +1,9 @@
 {
   "name": "@multica/desktop",
-  "productName": "Multica",
+  "productName": "Labrastro",
   "version": "0.1.0",
   "private": true,
-  "description": "Multica Desktop — native desktop client for the Multica platform.",
+  "description": "Labrastro Desktop — native desktop client for the Labrastro platform.",
   "homepage": "https://multica.ai",
   "repository": {
     "type": "git",

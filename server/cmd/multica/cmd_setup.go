@@ -38,7 +38,7 @@ Use --profile to create an isolated configuration for a separate environment:
 
 var setupCloudCmd = &cobra.Command{
 	Use:   "cloud",
-	Short: "Configure the CLI for Multica Cloud (multica.ai)",
+	Short: "Configure the CLI for Labrastro Cloud (multica.ai)",
 	Long: `Explicitly configures the CLI to connect to Multica Cloud (multica.ai).
 
 If you run this command over SSH on a remote machine, keep the localhost
@@ -52,8 +52,8 @@ This is equivalent to running 'multica setup' without a subcommand.`,
 
 var setupSelfHostCmd = &cobra.Command{
 	Use:   "self-host",
-	Short: "Configure the CLI for a self-hosted Multica server",
-	Long: `Configures the CLI to connect to a self-hosted Multica server.
+	Short: "Configure the CLI for a self-hosted Labrastro server",
+	Long: `Configures the CLI to connect to a self-hosted Labrastro server.
 
 By default, connects to http://localhost:8080 (backend) and http://localhost:3000 (frontend).
 Use --server-url and --app-url to specify a custom server (e.g. an on-premise deployment).
@@ -161,7 +161,7 @@ func runSetupCloud(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	fmt.Fprintln(os.Stderr, "Configured for Multica Cloud (https://multica.ai).")
+	fmt.Fprintln(os.Stderr, "Configured for Labrastro Cloud (https://multica.ai).")
 	fmt.Fprintf(os.Stderr, "  server_url: %s\n", cfg.ServerURL)
 	fmt.Fprintf(os.Stderr, "  app_url:    %s\n", cfg.AppURL)
 	printConfigLocation(profile)
@@ -175,7 +175,7 @@ func runSetupCloud(cmd *cobra.Command, args []string) error {
 	if err := runDaemonAfterSetup(cmd, args); err != nil {
 		return fmt.Errorf("start or restart daemon: %w", err)
 	}
-	fmt.Fprintln(os.Stderr, "\n✓ Setup complete! Your machine is now connected to Multica.")
+	fmt.Fprintln(os.Stderr, "\n✓ Setup complete! Your machine is now connected to Labrastro.")
 
 	return nil
 }
@@ -256,7 +256,7 @@ func runSetupSelfHost(cmd *cobra.Command, args []string) error {
 	if err := runDaemonAfterSetup(cmd, args); err != nil {
 		return fmt.Errorf("start or restart daemon: %w", err)
 	}
-	fmt.Fprintln(os.Stderr, "\n✓ Setup complete! Your machine is now connected to Multica.")
+	fmt.Fprintln(os.Stderr, "\n✓ Setup complete! Your machine is now connected to Labrastro.")
 
 	return nil
 }

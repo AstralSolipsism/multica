@@ -98,6 +98,9 @@ vi.mock("../issues/components/status-icon", () => ({ StatusIcon: () => <span /> 
 vi.mock("../navigation", () => ({
   AppLink: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a>,
   useNavigation: () => ({ pathname: navigation.current.pathname, push: vi.fn() }),
+  // The community QR dialog reads the adapter through the optional form and
+  // falls back to the site-relative path when it resolves to null.
+  useOptionalNavigation: () => null,
 }));
 vi.mock("../projects/components/project-icon", () => ({ ProjectIcon: () => <span /> }));
 vi.mock("../workspace/workspace-avatar", () => ({ WorkspaceAvatar: () => <span /> }));

@@ -2070,6 +2070,27 @@ describe("ApiClient explicit workspace targeting", () => {
     });
     expect(slugHeaderOf(fetchMock)).toBeUndefined();
   });
+
+  // Boundary parsing of the additive system_stats field: a malformed sample
+  // degrades to null for that row only — every other field and row must
+  // survive untouched. A wholly malformed response yields the empty list.
+  it("degrades a malformed system_stats row without losing the others", async () => {
+    stubOk([
+      { id: "rt-1", name: "Kimi (box)", system_stats: { cpu_percent: 42, memory_percent: 68, captured_at: 1000, stale: false } },
+      { id: "rt-2", name: "Claude (box)", system_stats: "not-a-sample" },
+      { id: "rt-3", name: "Codex (box)" },
+    ]);
+    const runtimes = await new ApiClient("https://api.example.test").listRuntimes();
+    expect(runtimes.map((r) => r.id)).toEqual(["rt-1", "rt-2", "rt-3"]);
+    expect(runtimes[0]?.system_stats).toMatchObject({ cpu_percent: 42, captured_at: 1000 });
+    expect(runtimes[1]?.system_stats).toBeNull();
+    expect(runtimes[2]?.system_stats).toBeNull();
+  });
+
+  it("falls back to an empty list for a wholly malformed response", async () => {
+    stubOk({ not: "a list" });
+    await expect(new ApiClient("https://api.example.test").listRuntimes()).resolves.toEqual([]);
+  });
 });
 
 describe("ApiClient model discovery response schema", () => {

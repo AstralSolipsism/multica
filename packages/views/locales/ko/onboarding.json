@@ -1,22 +1,18 @@
 {
   "step_nav": {
-    "wordmark": "Multica",
+    "wordmark": "Labrastro",
     "label": "온보딩 단계",
-    "about_you": {
-      "label": "당신에 대해",
-      "description": "역할과 하고 싶은 일."
-    },
     "workspace": {
       "label": "워크스페이스",
       "description": "이름과 URL 정하기."
     },
     "runtime": {
-      "label": "Mika 소개",
+      "label": "Mizuki 소개",
       "description": "첫 번째 에이전트 팀원과 실행 환경."
     }
   },
   "welcome": {
-    "wordmark": "Multica에 오신 것을 환영합니다",
+    "wordmark": "Labrastro에 오신 것을 환영합니다",
     "headline_line1": "AI 팀원과",
     "headline_line2": "하나의",
     "headline_emphasis": "워크스페이스에서.",
@@ -59,17 +55,14 @@
   },
   "source_backfill": {
     "eyebrow": "간단한 질문 하나",
-    "lede": "간단한 질문 하나예요. 어떤 사용자에게 Multica가 유용한지 파악하는 데 도움이 됩니다. 답하시면 바로 작업으로 돌아가실 수 있어요.",
+    "lede": "간단한 질문 하나예요. 어떤 사용자에게 Labrastro가 유용한지 파악하는 데 도움이 됩니다. 답하시면 바로 작업으로 돌아가실 수 있어요.",
     "submit": "제출",
     "hint_ready": "좋습니다. 준비되면 제출을 눌러주세요.",
     "save_failed_toast": "저장하지 못했습니다"
   },
   "questions": {
-    "about_you": {
-      "question": "당신에 대해 간단히 알려주세요."
-    },
     "source": {
-      "question": "Multica를 어디서 알게 되셨나요?",
+      "question": "Labrastro를 어디서 알게 되셨나요?",
       "friends_colleagues": "친구 또는 동료",
       "search": "Google / 검색",
       "social_x": "X / Twitter",
@@ -84,32 +77,6 @@
       "dont_remember": "기억나지 않음",
       "other": "기타",
       "other_placeholder": "예: 자주 듣는 팟캐스트"
-    },
-    "role": {
-      "question": "어떤 역할에 가장 가까우신가요?",
-      "engineer": "엔지니어 / 개발자",
-      "product": "프로덕트 매니저",
-      "designer": "디자이너",
-      "founder": "창업자 / 임원",
-      "marketing": "마케팅 / 그로스",
-      "writer": "작가 / 콘텐츠",
-      "research": "리서처 / 애널리스트",
-      "ops": "운영 / 프로젝트 관리",
-      "student": "학생 / 개인 사용",
-      "other": "기타",
-      "other_placeholder": "예: 교사, 지원팀 리드"
-    },
-    "use_case": {
-      "question": "Multica를 무엇에 쓰고 싶으신가요?",
-      "ship_code": "AI 에이전트와 코드 배포",
-      "manage_team": "팀 태스크 관리",
-      "personal_tasks": "개인 태스크 정리",
-      "plan_research": "기획, 브레인스토밍, 리서치",
-      "write_publish": "작성, 편집, 게시",
-      "automate_ops": "운영 및 워크플로 자동화",
-      "evaluate": "일단 둘러보기",
-      "other": "기타",
-      "other_placeholder": "예: 스터디 그룹 운영"
     }
   },
   "option_card": {
@@ -123,27 +90,14 @@
   "cli_install": {
     "copy_aria": "복사",
     "intro": "이 컴퓨터에서 에이전트를 실행하려면 에이전트 런타임(Claude Code, Codex, Cursor 등)이 필요합니다. 서버와 원격 개발 환경에서도 사용할 수 있습니다.",
-    "step1_label": "Multica CLI 설치",
+    "step1_label": "Labrastro CLI 설치",
     "step2_label": "데몬 시작"
-  },
-  "cloud_waitlist": {
-    "intro_main": "클라우드 런타임은 아직 제공되지 않습니다. 이메일을 남겨주시면 준비되는 대로 연락드리겠습니다.",
-    "intro_warning": "주의: 런타임이 없으면 에이전트가 작업을 실행할 수 없습니다. 지금 건너뛰면 다시 돌아와 설치하기 전까지 아무것도 실행되지 않습니다.",
-    "email_label": "이메일",
-    "email_placeholder": "you@work.com",
-    "reason_label": "클라우드를 원하는 이유",
-    "optional": "선택 사항",
-    "reason_placeholder": "예: 에이전트가 24시간 실행되면 좋겠어요. 팀이 여러 기기에서 작업합니다.",
-    "join": "대기자 명단 등록",
-    "on_list": "대기자 명단에 등록됨",
-    "success_toast": "대기자 명단에 등록했습니다. 클라우드 런타임이 준비되면 이메일로 알려드릴게요.",
-    "failed_toast": "대기자 명단에 등록하지 못했습니다"
   },
   "welcome_after_onboarding": {
     "skip": {
       "loading": "워크스페이스 설정 중...",
-      "title": "Multica에 오신 것을 환영합니다!",
-      "subtitle": "런타임 연결을 돕는 태스크 하나를 추가했습니다. 준비되면 Runtimes에서 Mika와 시작하세요.",
+      "title": "Labrastro에 오신 것을 환영합니다!",
+      "subtitle": "런타임 연결을 돕는 태스크 하나를 추가했습니다. 준비되면 Runtimes에서 Mizuki와 시작하세요.",
       "got_it": "알겠습니다",
       "status_in_progress": "진행 중",
       "error_title": "준비하지 못했습니다",
@@ -153,7 +107,7 @@
       "cards": {
         "install_runtime": {
           "title": "런타임 연결",
-          "subtitle": "Codex 또는 Kimi를 설치한 뒤 Runtimes에서 Mika 안내 채팅을 시작하세요."
+          "subtitle": "Codex 또는 Kimi를 설치한 뒤 Runtimes에서 Mizuki 안내 채팅을 시작하세요."
         }
       }
     }
@@ -193,7 +147,7 @@
     "create_failed_toast": "워크스페이스를 만들지 못했습니다",
     "creation_disabled_eyebrow": "워크스페이스 생성이 비활성화되었습니다",
     "creation_disabled_headline": "관리자에게 초대를 요청하세요.",
-    "creation_disabled_lede": "이 Multica instance에서는 새 워크스페이스를 만들 수 없습니다. 관리자가 기존 워크스페이스로 초대하면 초대를 수락한 뒤 새로고침해 계속하세요.",
+    "creation_disabled_lede": "이 Labrastro instance에서는 새 워크스페이스를 만들 수 없습니다. 관리자가 기존 워크스페이스로 초대하면 초대를 수락한 뒤 새로고침해 계속하세요.",
     "creation_disabled_logout": "로그아웃",
     "creation_disabled_eyebrow_resume": "내 워크스페이스",
     "creation_disabled_headline_resume": "{{name}}에서 계속하세요.",
@@ -203,7 +157,7 @@
     "scanning_headline": "이 컴퓨터 연결 중...",
     "scanning_lede_prefix": "에이전트는 이미 사용하는 AI 코딩 도구를 통해 작업합니다. 예: ",
     "scanning_lede_suffix": " 등. 이 컴퓨터에 설치된 도구를 확인하는 중입니다.",
-    "found_headline": "Mika를 어디서 실행할까요?",
+    "found_headline": "Mizuki를 어디서 실행할까요?",
     "found_lede": "이 컴퓨터에서 찾은 에이전트 런타임입니다. 나중에 바꾸거나 더 추가할 수 있습니다.",
     "runtime_count_other": "에이전트 런타임 {{count}}개",
     "status_all_online": "모두 온라인",
@@ -217,22 +171,19 @@
     "empty_skip_title": "지금은 건너뛰기",
     "empty_skip_subtitle": "먼저 워크스페이스에 들어갑니다. 이 컴퓨터에 에이전트 런타임을 연결하기 전까지 에이전트는 작업을 실행할 수 없지만, 탐색하고 계획하고 팀원을 초대할 수는 있습니다.",
     "empty_skip_action": "건너뛰기",
-    "empty_waitlist_title": "클라우드 컴퓨터 사용",
-    "empty_waitlist_subtitle": "클라우드에서 컴퓨터를 실행해 드립니다. 아직 제공되지 않습니다.",
-    "empty_waitlist_action": "준비 중",
     "skip": "지금은 건너뛰기",
     "refresh": "새로고침",
     "refreshing": "새로고침 중...",
     "hint_selected": "선택됨: {{name}}",
-    "hint_pick": "Mika와 시작하려면 위에서 에이전트 런타임을 선택하세요.",
+    "hint_pick": "Mizuki와 시작하려면 위에서 에이전트 런타임을 선택하세요.",
     "hint_waiting": "첫 결과를 기다리는 중...",
     "hint_skip_or_refresh": "설치 후 새로고침하거나 건너뛰고 워크스페이스로 들어가세요.",
-    "continue": "Mika와 시작"
+    "continue": "Mizuki와 시작"
   },
   "step_platform": {
     "eyebrow": "컴퓨터 연결",
     "headline": "에이전트를 실행할 컴퓨터를 연결하세요.",
-    "lede": "이 워크스페이스의 참모장인 Mika는 Multica에 연결한 실제 컴퓨터에서 실행됩니다. 연결 방법을 선택하세요.",
+    "lede": "이 워크스페이스의 참모장인 Mizuki는 Labrastro에 연결한 실제 컴퓨터에서 실행됩니다. 연결 방법을 선택하세요.",
     "hint_default": "연결 방법을 선택하세요. 건너뛰고 나중에 연결할 수도 있습니다.",
     "download_title": "이 컴퓨터 사용",
     "download_subtitle": "데스크톱 앱을 설치해 이 컴퓨터를 연결하세요. 새 탭에서 열리며, 거기서 플랫폼을 고르면 됩니다.",
@@ -240,9 +191,6 @@
     "cli_title": "터미널에서 연결",
     "cli_subtitle": "서버, 원격 개발 환경, headless 컴퓨터를 연결합니다. 터미널이 필요합니다.",
     "cli_action": "단계 보기",
-    "cloud_title": "클라우드 컴퓨터 사용",
-    "cloud_subtitle": "클라우드에서 컴퓨터를 실행해 드립니다. 아직 제공되지 않습니다.",
-    "cloud_action": "준비 중",
     "cli_dialog_title": "터미널에서 연결",
     "cli_dialog_description": "데스크톱과 같은 연결을 터미널에서 설정합니다. 서버, 원격 개발 환경, headless 컴퓨터에 사용하세요.",
     "cli_dialog_pick_hint": "위에서 컴퓨터를 선택하세요.",
@@ -261,12 +209,12 @@
   },
   "errors": {
     "skip_failed": "온보딩을 마치지 못했습니다",
-    "mika_setup_failed": "Mika 워크스페이스를 시작하지 못했습니다"
+    "mika_setup_failed": "Mizuki 워크스페이스를 시작하지 못했습니다"
   },
   "mika_intro": {
-    "headline": "첫 번째 에이전트 팀원 Mika를 소개합니다.",
-    "name": "Mika",
+    "headline": "첫 번째 에이전트 팀원 Mizuki를 소개합니다.",
+    "name": "Mizuki",
     "role": "참모장",
-    "blurb": "하고 싶은 일을 Mika에게 알려주면 태스크가 되고, 알맞은 에이전트가 맡습니다."
+    "blurb": "하고 싶은 일을 Mizuki에게 알려주면 태스크가 되고, 알맞은 에이전트가 맡습니다."
   }
 }

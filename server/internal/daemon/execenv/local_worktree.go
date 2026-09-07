@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -71,6 +72,11 @@ const (
 	// repo cannot reclaim a snapshot between two turns.
 	localStateRefPrefix = "refs/multica/local-state/"
 )
+
+// stateRefFingerprintRe matches the owner-fingerprint segment of a state ref
+// written by the current format: <prefix><12-hex>/<branch>. Refs without it
+// were written by older daemons and are pruned by their legacy flat name.
+var stateRefFingerprintRe = regexp.MustCompile(`^[0-9a-f]{12}/`)
 
 // LocalWorktreeParams describes the worktree Prepare should build for a
 // local_directory task running in worktree mode.
@@ -410,7 +416,7 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 	rollback := func() {
 		removeLocalWorktreeDir(gitRoot, worktreePath, logger)
 		if createdBranch {
-			dropBranch(gitRoot, actualBranch, logger)
+			dropBranch(gitRoot, plan.owner, actualBranch, logger)
 		}
 	}
 
@@ -688,7 +694,7 @@ func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, err
 	}
 
 	if dropped {
-		dropBranch(w.GitRoot, w.Branch, logger)
+		dropBranch(w.GitRoot, w.owner, w.Branch, logger)
 		outcome.Branch = ""
 	}
 
@@ -730,7 +736,7 @@ func (w *LocalWorktree) Discard(logger *slog.Logger) {
 	// Same rule as every other teardown: a branch this prepare did not create
 	// belongs to the turns before it and outlives this task.
 	if w.createdBranch {
-		dropBranch(w.GitRoot, w.Branch, logger)
+		dropBranch(w.GitRoot, w.owner, w.Branch, logger)
 	}
 	if logger != nil {
 		logger.Info("execenv: local worktree discarded before the agent ran",
@@ -822,8 +828,8 @@ func commitIdentityArgs(dir string) []string {
 		return nil
 	}
 	return []string{
-		"-c", "user.name=Multica Agent",
-		"-c", "user.email=agent@multica.local",
+		"-c", "user.name=Labrastro Agent",
+		"-c", "user.email=agent@labrastro.local",
 	}
 }
 
@@ -1001,11 +1007,13 @@ func snapshotExcludes() []string {
 	return specs
 }
 
-// branchOwner is the conversation a task branch belongs to. Recorded with the
-// branch's snapshot and compared before any later task continues it: the branch
-// NAME carries a human-readable issue key, which the user can also type and
-// which two workspaces can mint identically, so the name alone can never
-// establish that a branch is ours to append to (MUL-6881 review).
+// branchOwner is the conversation a task branch belongs to. It scopes the
+// branch's snapshot ref and is matched before any later task continues the
+// branch: the branch NAME carries a human-readable issue key, which the user
+// can also type and which two workspaces can mint identically, so the name
+// alone can never establish that a branch is ours to append to (MUL-6881
+// review). The owner never enters commit messages — commits in the user's
+// repository carry no workspace/agent/conversation identifiers.
 type branchOwner struct {
 	WorkspaceID    string
 	AgentID        string
@@ -1016,27 +1024,23 @@ func (o branchOwner) valid() bool {
 	return o.WorkspaceID != "" && o.AgentID != "" && o.ConversationID != ""
 }
 
-// fingerprint is the stable, collision-resistant form of the same identity,
-// used to name a branch when the readable name is already taken by someone
-// else's. Stable across turns, so the fallback branch is continued too.
+// fingerprint is the stable, collision-resistant form of the same identity.
+// It namespaces the branch's snapshot ref, and names a branch when the
+// readable name is already taken by someone else's. Stable across turns, so
+// the fallback branch is continued too.
 func (o branchOwner) fingerprint() string {
 	sum := sha256.Sum256([]byte(o.WorkspaceID + "\x00" + o.AgentID + "\x00" + o.ConversationID))
 	return hex.EncodeToString(sum[:])[:12]
 }
 
-const (
-	ownerTrailerWorkspace    = "Multica-Workspace"
-	ownerTrailerAgent        = "Multica-Agent"
-	ownerTrailerConversation = "Multica-Conversation"
-)
-
-// branchRecord is what refs/multica/local-state/<branch> holds: a commit whose
-// TREE is the user's directory as the branch last carried it, whose SECOND
-// PARENT is the branch tip at that moment, and whose message names the owner.
+// branchRecord is what refs/multica/local-state/<fingerprint>/<branch> holds:
+// a commit whose TREE is the user's directory as the branch last carried it
+// and whose SECOND PARENT is the branch tip at that moment. The ref path
+// names the owner — see branchOwner.
 //
 // The checkpoint is what makes the record about this BRANCH rather than merely
-// about its name. Owner alone proved only that Multica once wrote a branch
-// called this, and that stayed true after the user deleted it and created their
+// about its name. The owner ref alone proved only that this daemon once wrote
+// a branch called this, and that stayed true after the user deleted it and created their
 // own under the same name — the next task then continued into their work
 // (MUL-6881 review). Requiring the checkpoint to still be an ancestor of the
 // tip is the continuity proof: a branch deleted and recreated, force-moved onto
@@ -1046,11 +1050,15 @@ type branchRecord struct {
 	state string
 	// checkpoint is the branch tip this record was written against.
 	checkpoint string
-	owner      branchOwner
 }
 
 // writeBranchRecord records the branch as carrying userState at checkpoint, and
-// points the branch's ref at that record.
+// points the branch's owner-scoped ref at that record.
+//
+// The commit message is fixed prose and carries no owner identifiers: commits
+// written into the user's repository carry no workspace/agent/conversation
+// data. The owner scopes the REF instead — only this conversation's writes
+// land under its fingerprint, so the ref path is the ownership proof.
 //
 // The checkpoint is passed in, never re-read from the branch ref here: the
 // caller knows which commit it actually delivered, while the ref is the user's
@@ -1062,55 +1070,35 @@ func writeBranchRecord(gitRoot, branch, userState, checkpoint string, owner bran
 		return "", fmt.Errorf("no checkpoint to record for branch %s", branch)
 	}
 	args := append(commitIdentityArgs(gitRoot), "commit-tree", userState+"^{tree}",
-		"-p", userState, "-p", checkpoint, "-m", branchRecordMessage(owner))
+		"-p", userState, "-p", checkpoint, "-m", branchRecordMessage())
 	record, err := runGitTrimmed(gitRoot, args...)
 	if err != nil {
 		return "", fmt.Errorf("git commit-tree: %w", err)
 	}
-	if out, err := runGit(gitRoot, "update-ref", userStateRef(branch), record); err != nil {
+	if out, err := runGit(gitRoot, "update-ref", userStateRef(owner, branch), record); err != nil {
 		return "", fmt.Errorf("git update-ref: %s: %w", strings.TrimSpace(out), err)
 	}
 	return record, nil
 }
 
-func branchRecordMessage(owner branchOwner) string {
+func branchRecordMessage() string {
 	var b strings.Builder
 	b.WriteString("multica: task branch record\n\n")
-	b.WriteString("Written by Multica for a local_directory task running in worktree mode. Its\n")
-	b.WriteString("tree is the user's working directory as this branch last carried it, and its\n")
+	b.WriteString("Written by the agent runtime for a local_directory task running in worktree mode.\n")
+	b.WriteString("Its tree is the user's working directory as this branch last carried it, and its\n")
 	b.WriteString("second parent is the branch tip at that moment — together they let the next\n")
 	b.WriteString("turn replay only what changed since, and prove the branch is still the one\n")
-	b.WriteString("recorded here. Safe to delete along with the branch.\n\n")
-	fmt.Fprintf(&b, "%s: %s\n", ownerTrailerWorkspace, owner.WorkspaceID)
-	fmt.Fprintf(&b, "%s: %s\n", ownerTrailerAgent, owner.AgentID)
-	fmt.Fprintf(&b, "%s: %s\n", ownerTrailerConversation, owner.ConversationID)
+	b.WriteString("recorded here. Safe to delete along with the branch.\n")
 	return b.String()
 }
 
-// readBranchRecord reads back what a branch is recorded as carrying. A commit
-// without all three trailers or without a second parent — anything not written
-// by writeBranchRecord — yields a record that can never match a valid owner.
+// readBranchRecord reads back what a branch is recorded as carrying. Only
+// writeBranchRecord writes these refs, so the caller scopes the lookup by
+// owner and a hit already proves the branch is that conversation's; a commit
+// without a second parent yields a record that can never pass the ancestor
+// test downstream.
 func readBranchRecord(gitRoot, commit string) (branchRecord, error) {
-	body, err := runGitTrimmed(gitRoot, "log", "-1", "--format=%B", commit)
-	if err != nil {
-		return branchRecord{}, err
-	}
 	record := branchRecord{state: commit}
-	for _, line := range strings.Split(body, "\n") {
-		key, value, found := strings.Cut(strings.TrimSpace(line), ":")
-		if !found {
-			continue
-		}
-		value = strings.TrimSpace(value)
-		switch key {
-		case ownerTrailerWorkspace:
-			record.owner.WorkspaceID = value
-		case ownerTrailerAgent:
-			record.owner.AgentID = value
-		case ownerTrailerConversation:
-			record.owner.ConversationID = value
-		}
-	}
 	if checkpoint, err := runGitTrimmed(gitRoot, "rev-parse", "--verify", "--quiet", commit+"^2"); err == nil {
 		record.checkpoint = checkpoint
 	}
@@ -1243,22 +1231,23 @@ func planForConversationBranch(gitRoot, name, headSHA string, owner branchOwner,
 // branchOwnedBy reports whether a branch is still the one this conversation
 // recorded, returning the user snapshot it carries.
 //
-// Two questions, and both have to hold. Is the record ours — workspace, agent
-// and conversation ids. And is the branch still the one it was written against
-// — the recorded checkpoint has to be an ancestor of the current tip. The
-// second is not pedantry: a branch the user deleted and recreated under the
-// same name still satisfies the first, and continuing it would append this
+// Two questions, and both have to hold. Is the record ours — the snapshot ref
+// is namespaced by the conversation's fingerprint, so only this conversation's
+// writes can be found under it. And is the branch still the one it was written
+// against — the recorded checkpoint has to be an ancestor of the current tip.
+// The second is not pedantry: a branch the user deleted and recreated under
+// the same name still satisfies the first, and continuing it would append this
 // conversation onto their unrelated work.
 //
 // A branch with no record is not ours by definition: every branch this code
 // creates writes one before its task is allowed to run.
 func branchOwnedBy(gitRoot, branch string, owner branchOwner, logger *slog.Logger) (branchRecord, bool) {
-	ref, err := readUserStateRef(gitRoot, branch)
+	ref, err := readUserStateRef(gitRoot, owner, branch)
 	if err != nil || ref == "" {
 		return branchRecord{}, false
 	}
 	record, err := readBranchRecord(gitRoot, ref)
-	if err != nil || record.owner != owner || record.checkpoint == "" {
+	if err != nil || record.checkpoint == "" {
 		return branchRecord{}, false
 	}
 	if _, err := runGit(gitRoot, "merge-base", "--is-ancestor", record.checkpoint, "refs/heads/"+branch); err != nil {
@@ -1484,16 +1473,18 @@ func abortCherryPick(worktreePath string, logger *slog.Logger) {
 }
 
 // userStateRef is where a branch's record lives: the snapshot of the user's
-// directory it already carries, the conversation it belongs to, and the tip it
-// was recorded at.
-func userStateRef(branch string) string {
-	return localStateRefPrefix + branch
+// directory it already carries, the tip it was recorded at, and — in the path
+// itself — the conversation it belongs to. Scoping by the owner's fingerprint
+// keeps the ownership proof out of commit messages while still separating two
+// conversations that minted the same branch name.
+func userStateRef(owner branchOwner, branch string) string {
+	return localStateRefPrefix + owner.fingerprint() + "/" + branch
 }
 
-// readUserStateRef returns the recorded snapshot, or "" when the branch has
-// none.
-func readUserStateRef(gitRoot, branch string) (string, error) {
-	return runGitTrimmed(gitRoot, "rev-parse", "--verify", "--quiet", userStateRef(branch))
+// readUserStateRef returns the recorded snapshot, or "" when this conversation
+// has no record for the branch.
+func readUserStateRef(gitRoot string, owner branchOwner, branch string) (string, error) {
+	return runGitTrimmed(gitRoot, "rev-parse", "--verify", "--quiet", userStateRef(owner, branch))
 }
 
 // recordState pins the user's directory as this task saw it together with the
@@ -1523,13 +1514,15 @@ func (w *LocalWorktree) recordState(checkpoint string, logger *slog.Logger) erro
 }
 
 // dropBranch deletes a task branch that carries nothing worth keeping, together
-// with its recorded snapshot — the two are meaningless apart.
-func dropBranch(gitRoot, branch string, logger *slog.Logger) {
+// with its recorded snapshot — the two are meaningless apart. (The daemon
+// deletes both together; the branch itself remains the user's to delete, which
+// pruneOrphanedStateRefs handles.)
+func dropBranch(gitRoot string, owner branchOwner, branch string, logger *slog.Logger) {
 	if branch == "" {
 		return
 	}
 	deleteBranch(gitRoot, branch, logger)
-	if out, err := runGit(gitRoot, "update-ref", "-d", userStateRef(branch)); err != nil && logger != nil {
+	if out, err := runGit(gitRoot, "update-ref", "-d", userStateRef(owner, branch)); err != nil && logger != nil {
 		logger.Debug("execenv: no local-directory snapshot to drop for task branch",
 			"branch", branch, "output", strings.TrimSpace(out))
 	}
@@ -1555,9 +1548,16 @@ func pruneOrphanedStateRefs(gitRoot string, logger *slog.Logger) {
 		if ref == "" {
 			continue
 		}
-		branch := strings.TrimPrefix(ref, localStateRefPrefix)
-		if branch == ref {
+		rest := strings.TrimPrefix(ref, localStateRefPrefix)
+		if rest == ref {
 			continue
+		}
+		// Current refs are <fingerprint>/<branch>; refs written before the
+		// fingerprint segment exist only in repositories an older daemon
+		// touched. Both forms name the branch for the existence check.
+		branch := rest
+		if m := stateRefFingerprintRe.FindStringSubmatch(rest); m != nil {
+			branch = rest[len(m[0]):]
 		}
 		if _, headErr := runGit(gitRoot, "show-ref", "--verify", "--quiet", "refs/heads/"+branch); headErr == nil {
 			continue

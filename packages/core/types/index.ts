@@ -74,6 +74,7 @@ export type {
   RuntimeModelListRequest,
   RuntimeModelListStatus,
   RuntimeModelsResult,
+  RuntimeSystemStats,
   RuntimeLocalSkillStatus,
   RuntimeLocalSkillImportAction,
   RuntimeLocalSkillImportConflict,

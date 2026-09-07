@@ -936,7 +936,7 @@ func TestFinalizeRefusesToDeliverAnUnresolvedMerge(t *testing.T) {
 	first := prepareTurn(t, repo, "MUL-6881", turnOneTask)
 	writeFile(t, filepath.Join(first.WorkDir, "tracked.txt"), "rewritten by the agent\n")
 	finalizeOK(t, first)
-	recordedAfterFirst := gitRun(t, repo, "rev-parse", userStateRef("agent/j/mul-6881"))
+	recordedAfterFirst := gitRun(t, repo, "rev-parse", userStateRef(testBranchOwner, "agent/j/mul-6881"))
 
 	writeFile(t, filepath.Join(repo, "tracked.txt"), "rewritten by the user instead\n")
 	second := prepareTurn(t, repo, "MUL-6881", turnTwoTask)
@@ -957,7 +957,7 @@ func TestFinalizeRefusesToDeliverAnUnresolvedMerge(t *testing.T) {
 	if _, statErr := os.Stat(second.Path); statErr != nil {
 		t.Errorf("worktree removed despite an unresolved merge: %v", statErr)
 	}
-	if got := gitRun(t, repo, "rev-parse", userStateRef("agent/j/mul-6881")); got != recordedAfterFirst {
+	if got := gitRun(t, repo, "rev-parse", userStateRef(testBranchOwner, "agent/j/mul-6881")); got != recordedAfterFirst {
 		t.Error("the snapshot advanced past an edit the branch never took")
 	}
 	if got := gitRun(t, repo, "show", "agent/j/mul-6881:tracked.txt"); got != "rewritten by the agent" {
@@ -1332,7 +1332,7 @@ func TestPrepareLocalWorktreePrunesSnapshotsOfDeletedBranches(t *testing.T) {
 	first := prepareTurn(t, repo, "MUL-6881", turnOneTask)
 	writeFile(t, filepath.Join(first.WorkDir, "agent.txt"), "turn one\n")
 	finalizeOK(t, first)
-	ref := userStateRef("agent/j/mul-6881")
+	ref := userStateRef(testBranchOwner, "agent/j/mul-6881")
 	if _, err := gitTry(t, repo, "rev-parse", "--verify", ref); err != nil {
 		t.Fatal("turn one recorded no snapshot")
 	}
@@ -1393,8 +1393,8 @@ func TestCaptureUserSnapshotExcludesMulticaSidecars(t *testing.T) {
 	}
 }
 
-// The record is what proves a branch is this conversation's: an owner AND the
-// tip it was written at.
+// The record is what proves a branch is this conversation's: the owner-scoped
+// ref AND the tip it was written at.
 func TestBranchRecordRoundTrips(t *testing.T) {
 	repo := newTestRepo(t)
 	head := gitRun(t, repo, "rev-parse", "HEAD")
@@ -1409,12 +1409,19 @@ func TestBranchRecordRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writeBranchRecord: %v", err)
 	}
+	// The ref is namespaced by the conversation's fingerprint — the ownership
+	// proof that used to ride in the commit message — and the message itself
+	// carries no owner identifiers.
+	wantRef := "refs/multica/local-state/" + testBranchOwner.fingerprint() + "/agent/j/mul-6881"
+	if gitRun(t, repo, "rev-parse", "--verify", "--quiet", wantRef) != recorded {
+		t.Errorf("record ref = %q, want the fingerprint-scoped %q", recorded, wantRef)
+	}
+	if msg := gitRun(t, repo, "log", "-1", "--format=%B", recorded); strings.Contains(msg, "11112222") {
+		t.Errorf("record message leaks owner identifiers:\n%s", msg)
+	}
 	record, err := readBranchRecord(repo, recorded)
 	if err != nil {
 		t.Fatalf("readBranchRecord: %v", err)
-	}
-	if record.owner != testBranchOwner {
-		t.Errorf("owner = %+v, want %+v", record.owner, testBranchOwner)
 	}
 	if record.checkpoint != head {
 		t.Errorf("checkpoint = %s, want the branch tip %s", record.checkpoint, head)
@@ -1429,12 +1436,12 @@ func TestBranchRecordRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readBranchRecord(HEAD): %v", err)
 	}
-	if plain.owner != (branchOwner{}) || plain.checkpoint != "" {
+	if plain.checkpoint != "" {
 		t.Errorf("a plain commit reported %+v", plain)
 	}
 }
 
-// Ownership is not a property of the NAME. A branch Multica delivered, that the
+// Ownership is not a property of the NAME. A branch this runtime delivered, that the
 // user then deleted and recreated for something of their own, keeps matching
 // the recorded owner — and there is no prepare in between for the orphan sweep
 // to notice the gap. Only the recorded checkpoint distinguishes them.
@@ -1547,7 +1554,7 @@ func TestFinalizeFailsWhenTheBranchRecordCannotBeWritten(t *testing.T) {
 
 	// Hold the ref's lock so only the final update-ref fails, the way a crashed
 	// git or a concurrent writer would leave it.
-	lock := filepath.Join(repo, ".git", filepath.FromSlash(userStateRef("agent/j/mul-6881"))+".lock")
+	lock := filepath.Join(repo, ".git", filepath.FromSlash(userStateRef(testBranchOwner, "agent/j/mul-6881"))+".lock")
 	if err := os.MkdirAll(filepath.Dir(lock), 0o755); err != nil {
 		t.Fatalf("prepare ref lock dir: %v", err)
 	}
@@ -1608,7 +1615,7 @@ func TestBranchRecordPinsTheDeliveredCommitNotTheLiveRef(t *testing.T) {
 	finalizeOK(t, first)
 	delivered := gitRun(t, repo, "rev-parse", "agent/j/mul-6881")
 
-	ref, err := readUserStateRef(repo, "agent/j/mul-6881")
+	ref, err := readUserStateRef(repo, testBranchOwner, "agent/j/mul-6881")
 	if err != nil {
 		t.Fatalf("readUserStateRef: %v", err)
 	}
@@ -1729,7 +1736,7 @@ func TestFinalizeRefusesToRecordADeliveryFromOffTheBranch(t *testing.T) {
 	if got := gitRun(t, repo, "rev-parse", "agent/j/mul-6881"); got != delivered {
 		t.Errorf("branch moved to %s, want %s", got, delivered)
 	}
-	ref, err := readUserStateRef(repo, "agent/j/mul-6881")
+	ref, err := readUserStateRef(repo, testBranchOwner, "agent/j/mul-6881")
 	if err != nil {
 		t.Fatalf("readUserStateRef: %v", err)
 	}
@@ -1863,7 +1870,7 @@ func TestConflictAfterAUserCommitOnTheBranchStillOffersTheEditAgain(t *testing.T
 	first := prepareTurn(t, repo, "MUL-6881", turnOneTask)
 	writeFile(t, filepath.Join(first.WorkDir, "tracked.txt"), "rewritten by the agent\n")
 	finalizeOK(t, first)
-	recordedAfterFirst := gitRun(t, repo, "rev-parse", userStateRef("agent/j/mul-6881"))
+	recordedAfterFirst := gitRun(t, repo, "rev-parse", userStateRef(testBranchOwner, "agent/j/mul-6881"))
 
 	// The user reviews the branch and commits on top of it — the documented,
 	// supported case. The branch tip now sits past the recorded checkpoint.
@@ -1897,7 +1904,7 @@ func TestConflictAfterAUserCommitOnTheBranchStillOffersTheEditAgain(t *testing.T
 	if got := gitRun(t, repo, "rev-parse", "agent/j/mul-6881"); got != movedTip {
 		t.Fatalf("branch moved to %s, want %s — the turn committed nothing", got, movedTip)
 	}
-	if got := gitRun(t, repo, "rev-parse", userStateRef("agent/j/mul-6881")); got == recordedAfterFirst {
+	if got := gitRun(t, repo, "rev-parse", userStateRef(testBranchOwner, "agent/j/mul-6881")); got == recordedAfterFirst {
 		t.Error("the turn recorded nothing at all; it should have re-recorded the state the branch carries")
 	}
 
@@ -2023,7 +2030,7 @@ func TestIsolatedPrepareCarriesTheStateFinalizeNeeds(t *testing.T) {
 	// Finalize's record is the observable proof it had the state: the checkpoint
 	// must be the tip it delivered, not the baseline Prepare recorded.
 	delivered := gitRun(t, repo, "rev-parse", "agent/j/mul-6881")
-	ref, err := readUserStateRef(repo, "agent/j/mul-6881")
+	ref, err := readUserStateRef(repo, testBranchOwner, "agent/j/mul-6881")
 	if err != nil {
 		t.Fatalf("readUserStateRef: %v", err)
 	}
@@ -2033,9 +2040,6 @@ func TestIsolatedPrepareCarriesTheStateFinalizeNeeds(t *testing.T) {
 	}
 	if record.checkpoint != delivered {
 		t.Errorf("checkpoint = %s, want the delivered tip %s", record.checkpoint, delivered)
-	}
-	if record.owner != testBranchOwner {
-		t.Errorf("record owner = %+v, want %+v", record.owner, testBranchOwner)
 	}
 
 	// And the continuation the whole feature is for still holds across it.

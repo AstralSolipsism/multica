@@ -42,7 +42,7 @@ var (
 	ErrCredentialsUnverifiable = errors.New("telegram: could not reach Telegram to verify this bot")
 	// ErrBotOwnedByAnotherWorkspace: the pasted bot is already connected to a
 	// live owner in a DIFFERENT Multica workspace.
-	ErrBotOwnedByAnotherWorkspace = errors.New("telegram: this bot is already connected to a different Multica workspace")
+	ErrBotOwnedByAnotherWorkspace = errors.New("telegram: this bot is already connected to a different Labrastro workspace")
 	// ErrBotOwnedBySameWorkspace: the bot is already connected to a different
 	// live agent in the SAME workspace.
 	ErrBotOwnedBySameWorkspace = errors.New("telegram: this bot is already connected to another agent in this workspace")

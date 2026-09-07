@@ -146,7 +146,7 @@ func (h *Handler) RegisterTelegramBot(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, telegram.ErrBotOwnedByArchivedAgent):
 			writeError(w, http.StatusConflict, "this Telegram bot is connected to an archived agent in this workspace — restore that agent, or disconnect its bot, before connecting it here")
 		case errors.Is(err, telegram.ErrBotOwnedByAnotherWorkspace):
-			writeError(w, http.StatusConflict, "this Telegram bot is already connected to a different Multica workspace — disconnect it there before connecting it here")
+			writeError(w, http.StatusConflict, "this Telegram bot is already connected to a different Labrastro workspace — disconnect it there before connecting it here")
 		case errors.Is(err, telegram.ErrWebhookConfigured):
 			writeError(w, http.StatusBadRequest, "this Telegram bot has a webhook configured — remove the webhook before connecting it with long polling")
 		default:
@@ -249,7 +249,7 @@ func (h *Handler) RedeemTelegramBindingToken(w http.ResponseWriter, r *http.Requ
 		case errors.Is(err, telegram.ErrBindingTokenInvalid):
 			writeError(w, http.StatusGone, "binding token invalid or expired")
 		case errors.Is(err, telegram.ErrBindingAlreadyAssigned):
-			writeError(w, http.StatusConflict, "this Telegram account is already bound to a different Multica user")
+			writeError(w, http.StatusConflict, "this Telegram account is already bound to a different Labrastro user")
 		case errors.Is(err, telegram.ErrBindingNotWorkspaceMember):
 			writeError(w, http.StatusForbidden, "binding refused (are you a workspace member?)")
 		default:

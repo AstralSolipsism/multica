@@ -55,9 +55,9 @@ import { buildWorkloadIndex, RuntimeList } from "./runtime-list";
 import { pendingRuntimeFromProfile } from "./pending-runtime";
 import { buildRuntimeMachines, type RuntimeMachine } from "./runtime-machines";
 import { MachineQuotaChips } from "./machine-quota-chips";
+import { HostMetricsBars } from "./host-metrics-bars";
 import { HealthDot, HealthIcon, useHealthLabel } from "./shared";
 import { useT, useTimeAgo } from "../../i18n";
-import { daemonRuntimesDocsHref } from "./runtime-docs";
 
 export interface RuntimesPageProps {
   /** Desktop-only daemon id used to identify this device. */
@@ -385,17 +385,13 @@ function PageHeaderBar({
   cloudRuntimeEnabled: boolean;
   onOpenCloudRuntime: () => void;
 }) {
-  const { t, i18n } = useT("runtimes");
+  const { t } = useT("runtimes");
   return (
     <CollectionPageHeader
       icon={Server}
       title={t(($) => $.page.title)}
       count={totalCount}
       description={t(($) => $.page.tagline)}
-      learnMore={{
-        href: daemonRuntimesDocsHref(i18n.language),
-        label: t(($) => $.page.learn_more),
-      }}
       actions={
         <>
           {cloudRuntimeEnabled && (
@@ -463,6 +459,10 @@ function MachineRow({ machine, now }: { machine: RuntimeMachine; now: number }) 
   const Icon = machine.section === "cloud" ? Cloud : Monitor;
   const locator = machine.id;
   const busyCount = machine.runningCount + machine.queuedCount;
+  // CPU/memory only read live while the machine is (recently) reachable —
+  // an offline machine shows "--" rather than a stale sample.
+  const statsLive =
+    machine.health === "online" || machine.health === "recently_lost";
   const body = (
     <>
       <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border bg-background">
@@ -505,6 +505,13 @@ function MachineRow({ machine, now }: { machine: RuntimeMachine; now: number }) 
           })}
         </span>
         <ProviderIconStack providers={machine.providerNames} />
+      </span>
+      <span className="hidden w-40 shrink-0 lg:flex">
+        <HostMetricsBars
+          cpuPercent={statsLive ? machine.cpuPercent : null}
+          memoryPercent={statsLive ? machine.memoryPercent : null}
+          stale={machine.systemStatsStale}
+        />
       </span>
       <span className="hidden w-36 shrink-0 text-caption text-muted-foreground xl:block">
         {busyCount > 0

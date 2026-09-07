@@ -1,5 +1,6 @@
 import { cloneElement, type ReactElement, type ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configStore } from "@multica/core/config";
 import enLayout from "../locales/en/layout.json";
@@ -49,14 +50,33 @@ vi.mock("@multica/ui/components/ui/dropdown-menu", async () => {
     // Base UI's `render` prop swaps in a caller-supplied element (here the
     // <a>) and adopts the item's children. Flattening it to a bare fragment —
     // as this mock originally did — would drop the anchor entirely and make an
-    // href assertion silently unfalsifiable.
+    // href assertion silently unfalsifiable. Items without `render` carry
+    // their onClick (community QR entry, feedback) — forward it so item
+    // activation stays testable.
     DropdownMenuItem: ({
       children,
       render,
+      onClick,
     }: {
       children: ReactNode;
-      render?: ReactElement;
-    }) => (render ? cloneElement(render, undefined, children) : <>{children}</>),
+      render?: ReactElement<{ onClick?: () => void }>;
+      onClick?: () => void;
+    }) => {
+      if (render) {
+        return cloneElement(
+          render,
+          onClick ? { onClick } : undefined,
+          children,
+        );
+      }
+      return onClick ? (
+        <button type="button" onClick={onClick}>
+          {children}
+        </button>
+      ) : (
+        <>{children}</>
+      );
+    },
     DropdownMenuGroup: ({ children }: { children: ReactNode }) => (
       <GroupContext.Provider value={true}>{children}</GroupContext.Provider>
     ),
@@ -96,10 +116,32 @@ describe("HelpLauncher", () => {
   // MUL-6462: after web onboarding the desktop download CTA was unreachable —
   // no entry anywhere in the app, so users had to remember the URL or detour
   // through the marketing site. The Help menu is the persistent home for it.
-  it("links to the download page on web", () => {
+  // The instance serves its own /download page (internal release artifacts),
+  // so the entry stays in-app instead of pointing at the upstream site.
+  it("links to the in-app download page on web", () => {
     render(<HelpLauncher />);
     const link = screen.getByRole("link", { name: /Desktop app/ });
-    expect(link).toHaveAttribute("href", "https://multica.ai/download");
+    expect(link).toHaveAttribute("href", "/download");
+  });
+
+  // The community entry opens the group QR dialog in place — it must not be
+  // an outbound anchor, so joining never leaves the app or hits a
+  // third-party host.
+  it("opens the group QR dialog from the community entry", async () => {
+    const user = userEvent.setup();
+    render(<HelpLauncher />);
+
+    expect(
+      screen.queryByRole("img", { name: /Feishu group QR code/ }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Feishu group" }));
+
+    const qr = screen.getByRole("img", { name: /Feishu group QR code/ });
+    expect(qr).toHaveAttribute("src", "/feishu-group-qr.png");
+    expect(
+      screen.queryByRole("link", { name: /Feishu group/ }),
+    ).not.toBeInTheDocument();
   });
 
   // AppSidebar is shared: apps/desktop renders the same component tree. Without
@@ -109,6 +151,6 @@ describe("HelpLauncher", () => {
     render(<HelpLauncher />);
     expect(screen.queryByText("Desktop app")).not.toBeInTheDocument();
     // The rest of the menu is unaffected by the gate.
-    expect(screen.getByText("Docs")).toBeInTheDocument();
+    expect(screen.getByText("Feedback")).toBeInTheDocument();
   });
 });

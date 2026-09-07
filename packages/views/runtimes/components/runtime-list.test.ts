@@ -187,6 +187,7 @@ describe("buildRuntimeQuotaView", () => {
           remainingPercent: 62,
           tone: "ok",
           resetInMs: 3600 * 1000,
+          group: null,
         },
         {
           name: "secondary",
@@ -194,6 +195,7 @@ describe("buildRuntimeQuotaView", () => {
           remainingPercent: 12,
           tone: "warning",
           resetInMs: 3 * 24 * 3600 * 1000,
+          group: null,
         },
       ],
       resetInMs: 3600 * 1000,
@@ -230,6 +232,39 @@ describe("buildRuntimeQuotaView", () => {
     expect(view.kind).toBe("ok");
     if (view.kind === "ok") {
       expect(view.windows[0]?.tone).toBe("destructive");
+    }
+  });
+
+  it("exposes every antigravity bucket with its quota group", () => {
+    // The probe reports two pools (gemini, claude_gpt) × (5h, weekly). The
+    // detail / settings pages must be able to show all four under group
+    // labels, and ungrouped providers must still read as one unlabeled list.
+    const antigravityQuota = makeQuota({
+      provider: "antigravity",
+      windows: [
+        { name: "gemini_weekly", used_percent: 50, window_minutes: 10080, resets_at: null, group: "gemini" },
+        { name: "gemini_5h", used_percent: 75, window_minutes: 300, resets_at: null, group: "gemini" },
+        { name: "claude_gpt_weekly", used_percent: 25, window_minutes: 10080, resets_at: null, group: "claude_gpt" },
+        { name: "claude_gpt_5h", used_percent: 60, window_minutes: 300, resets_at: null, group: "claude_gpt" },
+      ],
+    });
+    const view = buildRuntimeQuotaView(makeRuntime({ plan_quota: antigravityQuota }), NOW);
+    expect(view.kind).toBe("ok");
+    if (view.kind === "ok") {
+      expect(view.windows).toHaveLength(4);
+      expect(view.windows.map((window) => window.group)).toEqual([
+        "gemini",
+        "gemini",
+        "claude_gpt",
+        "claude_gpt",
+      ]);
+    }
+
+    // Ungrouped reporter: the new field stays null instead of inventing a
+    // pool, so the cell renders exactly as it did before the field existed.
+    const ungrouped = buildRuntimeQuotaView(makeRuntime({ plan_quota: makeQuota() }), NOW);
+    if (ungrouped.kind === "ok") {
+      expect(ungrouped.windows.every((window) => window.group === null)).toBe(true);
     }
   });
 });

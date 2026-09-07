@@ -150,7 +150,7 @@ func (h *Handler) RegisterSlackBYO(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, slack.ErrTeamOwnedByArchivedAgent):
 			writeError(w, http.StatusConflict, "this Slack app is connected to an archived agent in this workspace — restore that agent, or disconnect its bot, before connecting it here")
 		case errors.Is(err, slack.ErrTeamOwnedByAnotherWorkspace):
-			writeError(w, http.StatusConflict, "this Slack app is already connected to a different Multica workspace — disconnect it there before connecting it here")
+			writeError(w, http.StatusConflict, "this Slack app is already connected to a different Labrastro workspace — disconnect it there before connecting it here")
 		default:
 			// The dominant non-sentinel failure here is auth.test rejecting the
 			// pasted bot token (a user error), so guide the user to recheck the
@@ -266,7 +266,7 @@ func (h *Handler) RedeemSlackBindingToken(w http.ResponseWriter, r *http.Request
 		case errors.Is(err, slack.ErrBindingTokenInvalid):
 			writeError(w, http.StatusGone, "binding token invalid or expired")
 		case errors.Is(err, slack.ErrBindingAlreadyAssigned):
-			writeError(w, http.StatusConflict, "this Slack account is already bound to a different Multica user")
+			writeError(w, http.StatusConflict, "this Slack account is already bound to a different Labrastro user")
 		case errors.Is(err, slack.ErrBindingNotWorkspaceMember):
 			writeError(w, http.StatusForbidden, "binding refused (are you a workspace member?)")
 		default:

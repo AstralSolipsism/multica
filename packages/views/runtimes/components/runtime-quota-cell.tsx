@@ -9,9 +9,11 @@ import { cn } from "@multica/ui/lib/utils";
 import {
   activeQuotaWindows,
   formatCompactDuration,
+  groupQuotaWindows,
   isQuotaStale,
   parsePlanQuota,
   quotaTone,
+  quotaWindowGroup,
   quotaWindowLabel,
   windowRemainingPercent,
   type QuotaTone,
@@ -41,22 +43,22 @@ export function formatQuotaWindowLabel(
 }
 
 // Tone → semantic classes for the quota bars (a small fill meter + a
-// tone-colored percent).
-const TONE_BAR_CLASS: Record<QuotaTone, string> = {
+// tone-colored percent). Shared with the host-metrics bars.
+export const TONE_BAR_CLASS: Record<QuotaTone, string> = {
   ok: "bg-foreground/70",
   warning: "bg-warning",
   destructive: "bg-destructive",
 };
 
-const TONE_TEXT_CLASS: Record<QuotaTone, string> = {
+export const TONE_TEXT_CLASS: Record<QuotaTone, string> = {
   ok: "text-foreground",
   warning: "text-warning",
   destructive: "text-destructive",
 };
 
-// Thin fill meter for the quota-remaining bars. The caller owns the null
-// state ("--" / omit) — the bar itself never renders one.
-function MiniMeterBar({
+// Thin fill meter for the quota-remaining and host-metrics bars. The caller
+// owns the null state ("--" / omit) — the bar itself never renders one.
+export function MiniMeterBar({
   percent,
   tone,
   ariaLabel,
@@ -87,6 +89,16 @@ export interface QuotaWindowView {
   remainingPercent: number | null;
   tone: QuotaTone;
   resetInMs: number | null;
+  group: string | null;
+}
+
+// The translated label for a quota pool ("Gemini" / "Claude + GPT"). Pools
+// the i18n layer has no translation for fall back to the raw group key so a
+// future third pool stays readable instead of disappearing.
+export function quotaGroupLabel(group: string, t: RuntimesT): string {
+  if (group === "gemini") return t(($) => $.quota.group_gemini);
+  if (group === "claude_gpt") return t(($) => $.quota.group_claude_gpt);
+  return group;
 }
 
 export type RuntimeQuotaView =
@@ -127,6 +139,7 @@ export function buildRuntimeQuotaView(
       tone: quotaTone(remaining, quota.status),
       resetInMs:
         window.resets_at != null ? window.resets_at * 1000 - now : null,
+      group: quotaWindowGroup(window),
     };
   });
   const resetInMs = soonestResetMs(windows);
@@ -205,8 +218,20 @@ export function RuntimeQuotaCell({
   }
   return (
     <div className="flex w-full flex-col gap-0.5 leading-tight">
-      {view.windows.map((window, index) => (
-        <QuotaWindowRow key={`${window.name}-${index}`} window={window} />
+      {/* Grouped rendering kicks in only for reporters that label pools
+          (antigravity's two quota groups); ungrouped snapshots fall into one
+          unlabeled bucket and render exactly as before. */}
+      {groupQuotaWindows(view.windows).map(({ group, windows: groupWindows }) => (
+        <span key={group ?? "ungrouped"} className="flex flex-col gap-0.5">
+          {group != null && (
+            <span className="truncate text-micro text-faint-foreground">
+              {quotaGroupLabel(group, t)}
+            </span>
+          )}
+          {groupWindows.map((window, index) => (
+            <QuotaWindowRow key={`${window.name}-${index}`} window={window} />
+          ))}
+        </span>
       ))}
       {view.resetInMs != null && (
         <span className="text-micro tabular-nums text-faint-foreground">
@@ -301,8 +326,25 @@ export function RuntimeQuotaCard({
         )}
         {view.kind === "ok" && (
           <>
-            {view.windows.map((window, index) => (
-              <QuotaCardWindow key={`${window.name}-${index}`} window={window} />
+            {/* Every pool gets its own labeled section (the four antigravity
+                buckets read as Gemini 5h/weekly and Claude + GPT 5h/weekly);
+                ungrouped reporters keep the flat single list. */}
+            {groupQuotaWindows(view.windows).map(({ group, windows: groupWindows }) => (
+              <div key={group ?? "ungrouped"} className="space-y-3">
+                {group != null && (
+                  <p className="text-micro font-medium text-muted-foreground">
+                    {quotaGroupLabel(group, t)}
+                  </p>
+                )}
+                <div className="space-y-3">
+                  {groupWindows.map((window, index) => (
+                    <QuotaCardWindow
+                      key={`${window.name}-${index}`}
+                      window={window}
+                    />
+                  ))}
+                </div>
+              </div>
             ))}
             <p className="text-micro tabular-nums text-faint-foreground">
               {t(($) => $.quota.observed_ago, {

@@ -480,10 +480,17 @@ type Daemon struct {
 
 	// planQuotaCache holds each runtime's latest observed provider
 	// plan/rate-limit snapshot (runtimeID -> planQuotaCacheEntry), recorded
-	// at task completion or by a quota collector, and attached to that
+	// at task completion (agent backends that report one), by the
+	// antigravity quota probe (antigravityQuotaLoop), or by a quota
+	// collector, and attached to that
 	// runtime's next heartbeat. Entries are deleted when the runtime leaves
 	// the local set.
 	planQuotaCache sync.Map
+
+	// hostMetrics samples the daemon host's CPU/memory on a timer; every
+	// runtime heartbeat attaches the same latest sample when it is fresh.
+	// Started by Run.
+	hostMetrics *hostMetricsSampler
 
 	// reconcile fans out a "re-check server state now" signal to subscribers
 	// (watchTaskCancellation, workspaceSyncLoop) so the WS connect/reconnect
@@ -677,6 +684,11 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		reconcile:                 newReconcileBroadcaster(),
 		workspaceChanges:          newWorkspaceChangeSignal(),
 		wsRPC:                     newWSRPCClient(wsRPCResponseGrace),
+		// The host metrics sampler is constructed here — before Run launches
+		// any heartbeat reader — so the field is safely published and readers
+		// can never race a late assignment (the sampler goroutine itself only
+		// starts in Run).
+		hostMetrics: newHostMetricsSampler(logger),
 	}
 	d.activeEnvRootsCond = sync.NewCond(&d.activeEnvRootsMu)
 	d.activeStoresCond = sync.NewCond(&d.activeStoresMu)
@@ -1208,11 +1220,12 @@ func (d *Daemon) recordZenMuxPlanQuotaClearMarker(runtimeID string) {
 	})
 }
 
-// heartbeatExtrasFor assembles the optional heartbeat attachment for one
+// heartbeatExtrasFor assembles the optional heartbeat attachments for one
 // runtime: its cached plan-quota snapshot (nil when the provider reported
-// nothing).
+// nothing) and the latest fresh host metrics sample (nil when the sampler
+// has none).
 func (d *Daemon) heartbeatExtrasFor(runtimeID string) HeartbeatExtras {
-	var extras HeartbeatExtras
+	extras := HeartbeatExtras{Metrics: d.latestHostMetrics()}
 	if cached, ok := d.planQuotaCache.Load(runtimeID); ok {
 		if entry, ok := cached.(planQuotaCacheEntry); ok {
 			if entry.clearMarker {
@@ -2130,6 +2143,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.gcLoop(ctx)
 	go d.autoUpdateLoop(ctx)
 	go d.tokenRenewalLoop(ctx)
+	go d.antigravityQuotaLoop(ctx)
+
+	// Host CPU/memory sampler feeding the heartbeat's metrics attachment.
+	// The sampler was constructed in New, before any heartbeat reader could
+	// start; only its goroutine launches here, so heartbeats simply omit the
+	// field until the first sample lands.
+	go d.hostMetrics.run(ctx)
 
 	// Plan-quota collectors feed the heartbeat plan_quota channel for
 	// providers whose quota lives behind an official programmatic API rather
@@ -3112,8 +3132,10 @@ func (d *Daemon) workspaceLastRepoSyncErr(workspaceID string) string {
 }
 
 // workspaceCoAuthoredByEnabled returns whether the Co-authored-by hook should
-// be installed for the given workspace. Defaults to true when either setting
-// is absent (new workspaces, older servers that don't send settings).
+// be installed for the given workspace. Defaults to FALSE when either setting
+// is absent (new workspaces, older servers that don't send settings): the
+// product decision for this deployment is that agent commits carry no added
+// trailers unless a workspace explicitly opts back in.
 //
 // The hook is gated by BOTH the GitHub master switch (`github_enabled`) and
 // the dedicated co-author switch (`co_authored_by_enabled`) so flipping the
@@ -3124,20 +3146,20 @@ func (d *Daemon) workspaceCoAuthoredByEnabled(workspaceID string) bool {
 	defer d.mu.Unlock()
 	ws, ok := d.workspaces[workspaceID]
 	if !ok || len(ws.settings) == 0 {
-		return true // default: enabled
+		return false // default: disabled — commits stay untouched
 	}
 	var s struct {
 		GitHubEnabled       *bool `json:"github_enabled"`
 		CoAuthoredByEnabled *bool `json:"co_authored_by_enabled"`
 	}
 	if err := json.Unmarshal(ws.settings, &s); err != nil {
-		return true // default: enabled when payload is malformed
+		return false // default: disabled when payload is malformed
 	}
 	if s.GitHubEnabled != nil && !*s.GitHubEnabled {
 		return false
 	}
 	if s.CoAuthoredByEnabled == nil {
-		return true // default: enabled
+		return false // default: disabled
 	}
 	return *s.CoAuthoredByEnabled
 }
@@ -4756,7 +4778,7 @@ func (d *Daemon) handleUpdate(ctx context.Context, runtimeID string, update *Pen
 		d.logger.Info("refusing CLI self-update: daemon is managed by Desktop", "runtime_id", runtimeID, "update_id", update.ID)
 		d.reportUpdateResult(ctx, runtimeID, update.ID, map[string]any{
 			"status": "failed",
-			"error":  "CLI is managed by Multica Desktop — update the Desktop app to upgrade the CLI",
+			"error":  "CLI is managed by Labrastro Desktop — update the Desktop app to upgrade the CLI",
 		})
 		return
 	}

@@ -673,7 +673,7 @@ func (s *RegistrationService) liveOwnerConflictMessage(ctx context.Context, requ
 	}
 	switch {
 	case owner.WorkspaceID != requestingWorkspaceID:
-		return "This Feishu app is already connected to a different Multica workspace. Disconnect it there before connecting it here."
+		return "This Feishu app is already connected to a different Labrastro workspace. Disconnect it there before connecting it here."
 	case owner.AgentArchivedAt.Valid:
 		return "This Feishu app is connected to an archived agent in this workspace. Restore that agent, or disconnect its bot, before connecting it here."
 	default:
@@ -724,17 +724,17 @@ func uuidEqual(a, b pgtype.UUID) bool {
 
 // botNamePreset builds the display name we pre-fill on Lark's
 // PersonalAgent creation form so the installed bot reads
-// "<agent> - Multica" instead of Lark's auto-generated
+// "<agent> - Labrastro" instead of Lark's auto-generated
 // "{用户姓名}的智能助手". Lark treats this as a default the installer can
 // still edit; we never get to lock the final name. A blank agent name
 // (defensive — Agent.Name is NOT NULL in schema) degrades to plain
-// "Multica" rather than a dangling " - Multica".
+// "Labrastro" rather than a dangling " - Labrastro".
 func botNamePreset(agentName string) string {
 	name := strings.TrimSpace(agentName)
 	if name == "" {
-		return "Multica"
+		return "Labrastro"
 	}
-	return name + " - Multica"
+	return name + " - Labrastro"
 }
 
 // uuidString is the package-local UUID-to-string helper defined in

@@ -1,22 +1,18 @@
 {
   "step_nav": {
-    "wordmark": "Multica",
+    "wordmark": "Labrastro",
     "label": "Onboarding steps",
-    "about_you": {
-      "label": "About you",
-      "description": "Your role, and what you want done."
-    },
     "workspace": {
       "label": "Workspace",
       "description": "Name it and pick its URL."
     },
     "runtime": {
-      "label": "Meet Mika",
+      "label": "Meet Mizuki",
       "description": "Your first agent teammate, and where it runs."
     }
   },
   "welcome": {
-    "wordmark": "Welcome to Multica",
+    "wordmark": "Welcome to Labrastro",
     "headline_line1": "Your AI teammates,",
     "headline_line2": "in",
     "headline_emphasis": "one workspace.",
@@ -59,17 +55,14 @@
   },
   "source_backfill": {
     "eyebrow": "Quick question",
-    "lede": "One quick question — it helps us understand who finds Multica useful. Answer once and you're back to your work.",
+    "lede": "One quick question — it helps us understand who finds Labrastro useful. Answer once and you're back to your work.",
     "submit": "Submit",
     "hint_ready": "Looks good. Hit Submit when you're ready.",
     "save_failed_toast": "Failed to save"
   },
   "questions": {
-    "about_you": {
-      "question": "Tell us a bit about you."
-    },
     "source": {
-      "question": "How did you hear about Multica?",
+      "question": "How did you hear about Labrastro?",
       "friends_colleagues": "Friends or colleagues",
       "search": "Google / search",
       "social_x": "X / Twitter",
@@ -84,32 +77,6 @@
       "dont_remember": "Don't remember",
       "other": "Other",
       "other_placeholder": "e.g. a podcast I listen to"
-    },
-    "role": {
-      "question": "Which best describes you?",
-      "engineer": "Engineer / developer",
-      "product": "Product manager",
-      "designer": "Designer",
-      "founder": "Founder / exec",
-      "marketing": "Marketing / growth",
-      "writer": "Writer / content",
-      "research": "Researcher / analyst",
-      "ops": "Operations / project mgmt",
-      "student": "Student / personal use",
-      "other": "Other",
-      "other_placeholder": "e.g. teacher, support lead"
-    },
-    "use_case": {
-      "question": "What do you want to use Multica for?",
-      "ship_code": "Ship code with AI agents",
-      "manage_team": "Manage tasks for my team",
-      "personal_tasks": "Organize my own tasks",
-      "plan_research": "Plan, brainstorm, research",
-      "write_publish": "Write, edit, publish",
-      "automate_ops": "Automate ops & workflows",
-      "evaluate": "Just exploring",
-      "other": "Other",
-      "other_placeholder": "e.g. study group coordination"
     }
   },
   "option_card": {
@@ -123,27 +90,14 @@
   "cli_install": {
     "copy_aria": "Copy",
     "intro": "You'll need an agent runtime on this computer (Claude Code, Codex, Cursor, …) for it to run your agent. Also works on servers and remote dev boxes.",
-    "step1_label": "Install the Multica CLI",
+    "step1_label": "Install the Labrastro CLI",
     "step2_label": "Start the daemon"
-  },
-  "cloud_waitlist": {
-    "intro_main": "Cloud runtimes aren't live yet. Leave your email and we'll reach out when they are.",
-    "intro_warning": "Heads-up: agents can't execute tasks without a runtime — if you hit Skip now, nothing will run until you come back and install one.",
-    "email_label": "Email",
-    "email_placeholder": "you@work.com",
-    "reason_label": "Why cloud?",
-    "optional": "Optional",
-    "reason_placeholder": "e.g. we want agents running 24/7, or my team works across different devices.",
-    "join": "Join waitlist",
-    "on_list": "You're on the list",
-    "success_toast": "You're on the list. We'll email when cloud runtimes are live.",
-    "failed_toast": "Failed to join waitlist"
   },
   "welcome_after_onboarding": {
     "skip": {
       "loading": "Setting up your workspace…",
-      "title": "Welcome to Multica!",
-      "subtitle": "We've added one issue to help you connect a runtime. When it's ready, start with Mika from Runtimes.",
+      "title": "Welcome to Labrastro!",
+      "subtitle": "We've added one issue to help you connect a runtime. When it's ready, start with Mizuki from Runtimes.",
       "got_it": "Got it",
       "status_in_progress": "In progress",
       "error_title": "We couldn't set that up",
@@ -153,7 +107,7 @@
       "cards": {
         "install_runtime": {
           "title": "Connect a runtime",
-          "subtitle": "Install Codex or Kimi, then start the guided Mika chat from Runtimes."
+          "subtitle": "Install Codex or Kimi, then start the guided Mizuki chat from Runtimes."
         }
       }
     }
@@ -193,7 +147,7 @@
     "create_failed_toast": "Failed to create workspace",
     "creation_disabled_eyebrow": "Workspace creation is disabled",
     "creation_disabled_headline": "Ask your administrator for an invitation.",
-    "creation_disabled_lede": "This Multica instance does not allow new workspaces to be created. Once an administrator invites you to a workspace, accept the invitation and refresh to continue.",
+    "creation_disabled_lede": "This Labrastro instance does not allow new workspaces to be created. Once an administrator invites you to a workspace, accept the invitation and refresh to continue.",
     "creation_disabled_logout": "Log out",
     "creation_disabled_eyebrow_resume": "Your workspace",
     "creation_disabled_headline_resume": "Continue with {{name}}.",
@@ -203,7 +157,7 @@
     "scanning_headline": "Connecting this computer…",
     "scanning_lede_prefix": "Your agent works through an AI coding tool you already have — like ",
     "scanning_lede_suffix": ", and others. We're checking this computer for ones you've installed.",
-    "found_headline": "Where should Mika run?",
+    "found_headline": "Where should Mizuki run?",
     "found_lede": "These are the agent runtimes we found on this computer. You can switch it or add more later.",
     "runtime_count_one": "{{count}} agent runtime",
     "runtime_count_other": "{{count}} agent runtimes",
@@ -218,22 +172,19 @@
     "empty_skip_title": "Skip for now",
     "empty_skip_subtitle": "Enter your workspace now. Your agent can't run tasks until an agent runtime is connected on this computer — but you can still browse, plan, and invite teammates.",
     "empty_skip_action": "Skip",
-    "empty_waitlist_title": "Use a cloud computer",
-    "empty_waitlist_subtitle": "We'll run a computer for you in the cloud. Not live yet.",
-    "empty_waitlist_action": "Coming soon",
     "skip": "Skip for now",
     "refresh": "Refresh",
     "refreshing": "Refreshing…",
     "hint_selected": "Selected: {{name}}",
-    "hint_pick": "Pick an agent runtime above to start with Mika.",
+    "hint_pick": "Pick an agent runtime above to start with Mizuki.",
     "hint_waiting": "Waiting for the first result…",
     "hint_skip_or_refresh": "Refresh after installing one, or skip to enter your workspace.",
-    "continue": "Start with Mika"
+    "continue": "Start with Mizuki"
   },
   "step_platform": {
     "eyebrow": "Connect a computer",
     "headline": "Connect a computer to run your agent.",
-    "lede": "Mika, your workspace's Chief of Staff, runs on a real computer that you connect to Multica. Pick how you want to connect one.",
+    "lede": "Mizuki, your workspace's Chief of Staff, runs on a real computer that you connect to Labrastro. Pick how you want to connect one.",
     "hint_default": "Pick a way to connect — or skip and connect a computer later.",
     "download_title": "Use this computer",
     "download_subtitle": "Install our desktop app to connect this computer. Opens in a new tab — pick your platform there.",
@@ -241,9 +192,6 @@
     "cli_title": "Connect from the terminal",
     "cli_subtitle": "Connect a server, remote dev box, or any headless computer. Terminal required.",
     "cli_action": "Show steps",
-    "cloud_title": "Use a cloud computer",
-    "cloud_subtitle": "We'll run a computer for you in the cloud. Not live yet.",
-    "cloud_action": "Coming soon",
     "cli_dialog_title": "Connect from the terminal",
     "cli_dialog_description": "Same connection as Desktop, set up from the terminal. Use it for servers, remote dev boxes, or any headless computer.",
     "cli_dialog_pick_hint": "Pick a computer above.",
@@ -263,12 +211,12 @@
   },
   "errors": {
     "skip_failed": "Failed to finish onboarding",
-    "mika_setup_failed": "Couldn't start your Mika workspace"
+    "mika_setup_failed": "Couldn't start your Mizuki workspace"
   },
   "mika_intro": {
-    "headline": "Meet Mika, your first agent teammate.",
-    "name": "Mika",
+    "headline": "Meet Mizuki, your first agent teammate.",
+    "name": "Mizuki",
     "role": "Chief of Staff",
-    "blurb": "Tell Mika what you want done. It becomes an issue, with the right agent on it."
+    "blurb": "Tell Mizuki what you want done. It becomes an issue, with the right agent on it."
   }
 }

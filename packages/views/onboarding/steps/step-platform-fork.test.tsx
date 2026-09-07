@@ -84,16 +84,13 @@ describe("StepPlatformFork", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders the three fork options at rest", () => {
+  it("renders the two fork options at rest", () => {
     renderFork();
     expect(screen.getByText(/^use this computer$/i)).toBeInTheDocument();
     expect(screen.getByText(/^connect from the terminal$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^use a cloud computer$/i)).toBeInTheDocument();
-    // Cloud option is a "Coming soon" preview — not yet wired up.
-    expect(screen.getByText(/^coming soon$/i)).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /^coming soon$/i }),
-    ).not.toBeInTheDocument();
+    // The cloud-waitlist card was removed — no "Coming soon" preview.
+    expect(screen.queryByText(/^use a cloud computer$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^coming soon$/i)).not.toBeInTheDocument();
     // CLI dialog closed at rest → no CLI instructions.
     expect(screen.queryByTestId("cli-instructions")).not.toBeInTheDocument();
   });
@@ -159,7 +156,7 @@ describe("StepPlatformFork", () => {
     ).toBeInTheDocument();
     // Starting with Mika stays disabled while no runtime is selected.
     expect(
-      within(dialog).getByRole("button", { name: /start with mika/i }),
+      within(dialog).getByRole("button", { name: /start with mizuki/i }),
     ).toBeDisabled();
   });
 
@@ -183,7 +180,7 @@ describe("StepPlatformFork", () => {
     ).toBeInTheDocument();
 
     const connect = within(dialog).getByRole("button", {
-      name: /start with mika/i,
+      name: /start with mizuki/i,
     });
     expect(connect).toBeEnabled();
     await user.click(connect);

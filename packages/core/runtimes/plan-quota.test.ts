@@ -1,12 +1,15 @@
 // @vitest-environment node
 
 import { describe, expect, it } from "vitest";
+import type { RuntimePlanQuotaWindow } from "../types";
 import {
   activeQuotaWindows,
   formatCompactDuration,
+  groupQuotaWindows,
   isQuotaStale,
   parsePlanQuota,
   quotaTone,
+  quotaWindowGroup,
   quotaWindowLabel,
   windowRemainingPercent,
   worstQuotaWindow,
@@ -221,5 +224,87 @@ describe("formatCompactDuration", () => {
   it("clamps negative and non-finite input to zero", () => {
     expect(formatCompactDuration(-5)).toBe("00:00");
     expect(formatCompactDuration(Number.NaN)).toBe("00:00");
+  });
+});
+
+// The antigravity probe reports two quota pools (gemini, claude_gpt), each
+// with a 5h and a weekly window — four buckets a flat list would leave
+// ambiguous once the short "5h"/"wk" labels repeat.
+describe("quota window groups", () => {
+  const antigravityWindows: RuntimePlanQuotaWindow[] = [
+    { name: "gemini_weekly", used_percent: 50, window_minutes: 10080, resets_at: null, group: "gemini" },
+    { name: "gemini_5h", used_percent: 75, window_minutes: 300, resets_at: null, group: "gemini" },
+    { name: "claude_gpt_weekly", used_percent: 25, window_minutes: 10080, resets_at: null, group: "claude_gpt" },
+    { name: "claude_gpt_5h", used_percent: 50, window_minutes: 300, resets_at: null, group: "claude_gpt" },
+  ];
+  const geminiWindow = (group: RuntimePlanQuotaWindow["group"]): RuntimePlanQuotaWindow => ({
+    name: "gemini_5h",
+    used_percent: 75,
+    window_minutes: 300,
+    resets_at: null,
+    group,
+  });
+
+  it("keeps the window group through parsePlanQuota", () => {
+    const quota = parsePlanQuota(makeQuota({ windows: antigravityWindows }));
+    expect(quota?.windows.map((window) => window.group)).toEqual([
+      "gemini",
+      "gemini",
+      "claude_gpt",
+      "claude_gpt",
+    ]);
+  });
+
+  it("normalizes blank groups to null", () => {
+    expect(quotaWindowGroup(geminiWindow("  "))).toBeNull();
+    expect(quotaWindowGroup(geminiWindow(null))).toBeNull();
+    expect(quotaWindowGroup(geminiWindow(undefined))).toBeNull();
+    expect(quotaWindowGroup(geminiWindow("gemini"))).toBe("gemini");
+  });
+
+  it("groups windows by pool in documented-first order", () => {
+    const groups = groupQuotaWindows(antigravityWindows);
+    expect(groups.map((entry) => entry.group)).toEqual(["gemini", "claude_gpt"]);
+    const [gemini, claudeGpt] = groups;
+    expect(gemini?.windows.map((window) => window.name)).toEqual([
+      "gemini_weekly",
+      "gemini_5h",
+    ]);
+    expect(claudeGpt?.windows.map((window) => window.name)).toEqual([
+      "claude_gpt_weekly",
+      "claude_gpt_5h",
+    ]);
+  });
+
+  it("renders ungrouped reporters as a single trailing unlabeled group", () => {
+    const groups = groupQuotaWindows(makeQuota().windows);
+    expect(groups).toHaveLength(1);
+    expect(groups.map((entry) => entry.group)).toEqual([null]);
+  });
+
+  it("keeps unknown pools readable after the documented ones", () => {
+    const groups = groupQuotaWindows([
+      { name: "codex_weekly", used_percent: 10, window_minutes: 10080, resets_at: null, group: "codex" },
+      { name: "gemini_5h", used_percent: 20, window_minutes: 300, resets_at: null, group: "gemini" },
+    ]);
+    expect(groups.map((entry) => entry.group)).toEqual(["gemini", "codex"]);
+  });
+
+  it("trails ungrouped windows after every labeled pool", () => {
+    const groups = groupQuotaWindows([
+      { name: "legacy_5h", used_percent: 20, window_minutes: 300, resets_at: null, group: null },
+      { name: "gemini_5h", used_percent: 20, window_minutes: 300, resets_at: null, group: "gemini" },
+    ]);
+    expect(groups.map((entry) => entry.group)).toEqual(["gemini", null]);
+  });
+
+  it("never ranks the most-constrained bucket by group", () => {
+    // The chip's "worst bucket" metric stays group-blind: whichever pool is
+    // closest to exhausting throttles first, regardless of its label.
+    const quota = parsePlanQuota(makeQuota({
+      status: "ok",
+      windows: [...antigravityWindows, { name: "x", used_percent: 99, window_minutes: 300, resets_at: null, group: "claude_gpt" }],
+    }));
+    expect(quota && worstQuotaWindow(quota, NOW_SEC)?.name).toBe("x");
   });
 });
