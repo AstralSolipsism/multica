@@ -80,6 +80,79 @@ export function glmFormatResetIn(seconds: number): string {
   return `${Math.floor(h / 24)}d`;
 }
 
+// The compact in-row pill for the anchored machine: same visual language as
+// the per-runtime MachineQuotaChips pills, so the account-level GLM balance
+// reads as "one more quota on this server" rather than a detached banner.
+export function GlmQuotaChip({
+  data,
+  now,
+}: {
+  data: GlmQuotaStatusResponse;
+  now: number;
+}) {
+  const { t } = useT("runtimes");
+  const timeAgo = useTimeAgo();
+  if (!data.enabled || !data.quota) return null;
+  const windows = glmWorstFirst(data.quota.windows ?? []);
+  const worst = windows[0];
+  if (!worst) return null;
+  const remaining = glmWindowRemainingPercent(worst);
+  const tone = quotaTone(remaining, "ok");
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            aria-label={`GLM: ${t(($) => $.quota.glm_title)}`}
+            className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-micro font-medium tabular-nums ${CHIP_TONE_CLASS[tone]}`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={staticAssetSrc(zhipuLogo)} alt="" className="h-3.5 w-3.5" />
+            {remaining != null
+              ? t(($) => $.quota.remaining, { percent: remaining })
+              : t(($) => $.quota.glm_unknown)}
+          </span>
+        }
+      />
+      <TooltipContent>
+        <div className="space-y-0.5 text-xs">
+          <div className="font-medium">{t(($) => $.quota.glm_title)}</div>
+          {windows.map((w, i) => {
+            const rem = glmWindowRemainingPercent(w);
+            const label =
+              w.type === "TOKENS_LIMIT"
+                ? t(($) => $.quota.glm_window_tokens)
+                : w.type === "TIME_LIMIT"
+                  ? t(($) => $.quota.glm_window_time)
+                  : w.type === "CREDIT_LIMIT"
+                    ? t(($) => $.quota.glm_window_credit)
+                    : t(($) => $.quota.glm_window_fallback, { type: w.type });
+            const reset =
+              w.resets_at && w.resets_at > now
+                ? ` · ${t(($) => $.quota.resets_in, { time: glmFormatResetIn(w.resets_at - now) })}`
+                : "";
+            return (
+              <div key={`${w.type}-${i}`}>
+                {label}:{" "}
+                {rem != null
+                  ? t(($) => $.quota.remaining, { percent: rem })
+                  : t(($) => $.quota.glm_unknown)}
+                {reset}
+              </div>
+            );
+          })}
+          <div className="text-muted-foreground">
+            {t(($) => $.quota.observed_ago, {
+              time: timeAgo(new Date(data.quota!.observed_at * 1000).toISOString()),
+            })}
+            {data.stale ? ` · ${t(($) => $.quota.stale)}` : ""}
+          </div>
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function GlmQuotaCard({ now }: { now: number }) {
   const { t } = useT("runtimes");
   const timeAgo = useTimeAgo();

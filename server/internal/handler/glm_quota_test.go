@@ -150,6 +150,13 @@ func TestGlmQuotaMonitorStaleAging(t *testing.T) {
 	}
 }
 
+func TestGlmQuotaStatusAnchorPassthrough(t *testing.T) {
+	m := &GlmQuotaMonitor{apiKey: "k", anchorDevice: "agent-main-01"}
+	if got := m.Status().AnchorDevice; got != "agent-main-01" {
+		t.Fatalf("anchor = %q, want agent-main-01", got)
+	}
+}
+
 func TestGlmQuotaStatusJSONShape(t *testing.T) {
 	b, err := json.Marshal(GlmQuotaStatus{Enabled: false})
 	if err != nil {

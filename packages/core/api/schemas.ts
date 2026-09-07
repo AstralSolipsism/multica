@@ -780,6 +780,7 @@ export interface GlmQuotaStatus {
   quota?: GlmQuotaSnapshot | null;
   stale?: boolean;
   last_error?: string;
+  anchor_device?: string;
 }
 
 // ---------------------------------------------------------------------------
