@@ -54,6 +54,8 @@ import { ProviderLogo } from "./provider-logo";
 import { buildWorkloadIndex, RuntimeList } from "./runtime-list";
 import { pendingRuntimeFromProfile } from "./pending-runtime";
 import { buildRuntimeMachines, type RuntimeMachine } from "./runtime-machines";
+import { MachineQuotaChips } from "./machine-quota-chips";
+import { HostMetricsBars } from "./host-metrics-bars";
 import { HealthDot, HealthIcon, useHealthLabel } from "./shared";
 import { useT, useTimeAgo } from "../../i18n";
 
@@ -193,6 +195,7 @@ export function RuntimesPage({
               <MachineList
                 machines={machines}
                 bootstrapping={bootstrapping}
+                now={now}
               />
             )}
             {orphanProfileRuntimes.length > 0 && (
@@ -412,9 +415,11 @@ function PageHeaderBar({
 function MachineList({
   machines,
   bootstrapping,
+  now,
 }: {
   machines: RuntimeMachine[];
   bootstrapping?: boolean;
+  now: number;
 }) {
   const { t } = useT("runtimes");
   if (machines.length === 0) {
@@ -439,14 +444,14 @@ function MachineList({
     <div className="overflow-hidden rounded-lg border bg-card">
       <div className="divide-y">
         {machines.map((machine) => (
-          <MachineRow key={machine.id} machine={machine} />
+          <MachineRow key={machine.id} machine={machine} now={now} />
         ))}
       </div>
     </div>
   );
 }
 
-function MachineRow({ machine }: { machine: RuntimeMachine }) {
+function MachineRow({ machine, now }: { machine: RuntimeMachine; now: number }) {
   const { t } = useT("runtimes");
   const healthLabel = useHealthLabel();
   const timeAgo = useTimeAgo();
@@ -454,6 +459,10 @@ function MachineRow({ machine }: { machine: RuntimeMachine }) {
   const Icon = machine.section === "cloud" ? Cloud : Monitor;
   const locator = machine.id;
   const busyCount = machine.runningCount + machine.queuedCount;
+  // CPU/memory only read live while the machine is (recently) reachable —
+  // an offline machine shows "--" rather than a stale sample.
+  const statsLive =
+    machine.health === "online" || machine.health === "recently_lost";
   const body = (
     <>
       <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border bg-background">
@@ -482,17 +491,27 @@ function MachineRow({ machine }: { machine: RuntimeMachine }) {
         </span>
       </span>
 
-      <span className="hidden w-36 shrink-0 items-center gap-1.5 text-caption md:flex">
+      <span className="hidden w-44 shrink-0 items-center xl:flex">
+        <MachineQuotaChips machine={machine} now={now} />
+      </span>
+      <span className="hidden w-28 shrink-0 items-center gap-1.5 text-caption md:flex">
         <HealthIcon health={machine.health} />
         <span>{healthLabel(machine.health)}</span>
       </span>
-      <span className="hidden w-40 shrink-0 flex-col gap-1 lg:flex">
+      <span className="hidden w-36 shrink-0 flex-col gap-1 lg:flex">
         <span className="text-caption text-muted-foreground">
           {t(($) => $.machine.runtime_count, {
             count: machine.runtimes.length,
           })}
         </span>
         <ProviderIconStack providers={machine.providerNames} />
+      </span>
+      <span className="hidden w-40 shrink-0 lg:flex">
+        <HostMetricsBars
+          cpuPercent={statsLive ? machine.cpuPercent : null}
+          memoryPercent={statsLive ? machine.memoryPercent : null}
+          stale={machine.systemStatsStale}
+        />
       </span>
       <span className="hidden w-36 shrink-0 text-caption text-muted-foreground xl:block">
         {busyCount > 0
@@ -502,7 +521,7 @@ function MachineRow({ machine }: { machine: RuntimeMachine }) {
             })
           : t(($) => $.machine.metrics.workload_idle)}
       </span>
-      <span className="hidden w-28 shrink-0 text-right text-caption text-muted-foreground lg:block">
+      <span className="hidden w-24 shrink-0 text-right text-caption text-muted-foreground lg:block">
         {machine.lastSeenAt ? timeAgo(machine.lastSeenAt) : "—"}
       </span>
       {locator && (

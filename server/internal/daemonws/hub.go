@@ -48,6 +48,7 @@ type RuntimeLease struct {
 	mu sync.Mutex
 
 	workspaceID     string
+	daemonID        string
 	status          string
 	lastSeenAt      time.Time
 	lastSeenAtValid bool
@@ -56,6 +57,7 @@ type RuntimeLease struct {
 // RuntimeLeaseState is an atomic snapshot used by the heartbeat handler.
 type RuntimeLeaseState struct {
 	WorkspaceID     string
+	DaemonID        string
 	Status          string
 	LastSeenAt      time.Time
 	LastSeenAtValid bool
@@ -70,6 +72,17 @@ func NewRuntimeLease(workspaceID, status string, lastSeenAt time.Time, lastSeenA
 	}
 }
 
+// WithDaemonID records the runtime row's owning daemon id on the lease. The
+// heartbeat path keys machine-level state (host metrics samples) by it; the
+// row value is authoritative because the connection's authenticated identity
+// carries no daemon id when the daemon heartbeats with a user PAT.
+func (l *RuntimeLease) WithDaemonID(daemonID string) *RuntimeLease {
+	l.mu.Lock()
+	l.daemonID = daemonID
+	l.mu.Unlock()
+	return l
+}
+
 func (l *RuntimeLease) Snapshot() RuntimeLeaseState {
 	if l == nil {
 		return RuntimeLeaseState{}
@@ -78,6 +91,7 @@ func (l *RuntimeLease) Snapshot() RuntimeLeaseState {
 	defer l.mu.Unlock()
 	return RuntimeLeaseState{
 		WorkspaceID:     l.workspaceID,
+		DaemonID:        l.daemonID,
 		Status:          l.status,
 		LastSeenAt:      l.lastSeenAt,
 		LastSeenAtValid: l.lastSeenAtValid,
@@ -282,10 +296,12 @@ func (h *Hub) forgetRuntimeGoneSeen(eventID string) {
 }
 
 // HeartbeatHandler processes a daemon:heartbeat frame. It must verify that
-// runtimeID is one of identity.RuntimeIDs (the connection's authenticated
-// scope) and return the ack payload to send back. Returning an error skips
-// the ack and is logged at debug level.
-type HeartbeatHandler func(ctx context.Context, identity ClientIdentity, runtimeID string, supportsBatchImport bool) (*protocol.DaemonHeartbeatAckPayload, error)
+// payload.RuntimeID is one of identity.RuntimeIDs (the connection's
+// authenticated scope) and return the ack payload to send back. Returning an
+// error skips the ack and is logged at debug level. The full payload is
+// passed (not just the runtime id) so the optional observational field
+// (plan_quota) reaches the handler.
+type HeartbeatHandler func(ctx context.Context, identity ClientIdentity, payload protocol.DaemonHeartbeatRequestPayload) (*protocol.DaemonHeartbeatAckPayload, error)
 
 // RPCHandler processes a generic daemon:rpc_request (MUL-4257). It dispatches
 // on method (e.g. "tasks.claim"), scoping work to identity (DaemonID +
@@ -1098,7 +1114,7 @@ func (c *client) handleHeartbeatFrame(raw json.RawMessage) {
 	// that keeps the HTTP heartbeat from putting a per-call timeout on
 	// PopPending. The natural bound is the read pump's lifetime (the conn
 	// closes if the daemon goes away) plus Redis's own server-side limits.
-	ack, err := handler(context.Background(), c.identity, payload.RuntimeID, payload.SupportsBatchImport)
+	ack, err := handler(context.Background(), c.identity, payload)
 	if err != nil {
 		slog.Warn("daemon websocket heartbeat handler failed",
 			"error", err,

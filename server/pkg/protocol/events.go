@@ -166,6 +166,15 @@ const (
 	EventDaemonRPCRequest  = "daemon:rpc_request"
 	EventDaemonRPCResponse = "daemon:rpc_response"
 
+	// EventRuntimeTelemetryUpdated tells workspace clients that a runtime's
+	// observational data (today: its plan-quota snapshot) changed and the
+	// runtime queries should be refetched. A dedicated event — NOT
+	// daemon:register, which the connect-remote dialog treats as "a new
+	// daemon just connected" — and NOT daemon:heartbeat, which clients
+	// deliberately skip to avoid a refetch storm. Published only when the
+	// stored snapshot actually changed (write-on-change).
+	EventRuntimeTelemetryUpdated = "runtime:telemetry_updated"
+
 	// GitHub integration events
 	EventGitHubInstallationCreated = "github_installation:created"
 	EventGitHubInstallationDeleted = "github_installation:deleted"

@@ -28,9 +28,7 @@
     "toast_sent": "피드백을 보내주셔서 감사합니다!",
     "toast_failed": "피드백을 보내지 못했습니다",
     "send": "피드백 보내기",
-    "sending": "보내는 중...",
-    "github_hint_prefix": "더 빠른 처리와 공개 논의를 원하시면 ",
-    "github_hint_link": "GitHub"
+    "sending": "보내는 중..."
   },
   "issue_picker": {
     "search_placeholder": "태스크 검색...",

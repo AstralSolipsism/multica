@@ -346,6 +346,15 @@ type ChatSessionUpdatedPayload struct {
 type DaemonHeartbeatRequestPayload struct {
 	RuntimeID           string `json:"runtime_id"`
 	SupportsBatchImport bool   `json:"supports_batch_import,omitempty"`
+	// PlanQuota carries the runtime's latest provider plan/rate-limit
+	// snapshot. Old daemons omit it; old servers ignore unknown fields, so
+	// the field is safe to add without a capability negotiation.
+	PlanQuota *RuntimePlanQuota `json:"plan_quota,omitempty"`
+	// Metrics carries the daemon host's latest CPU/memory sample — the same
+	// machine-level sample for every runtime of the daemon, stamped with
+	// the sampler's shared CapturedAt. Same backward-compat story as
+	// PlanQuota.
+	Metrics *HostMetrics `json:"metrics,omitempty"`
 }
 
 // DaemonHeartbeatAckPayload is the server's reply to DaemonHeartbeatRequestPayload.

@@ -70,7 +70,11 @@
       "workload_hint": "実行中 {{running}} 件 · キュー待ち {{queued}} 件",
       "cli": "CLI",
       "cloud_worker": "クラウドワーカー",
-      "local_daemon": "ローカルデーモン"
+      "local_daemon": "ローカルデーモン",
+      "cpu": "CPU",
+      "memory": "メモリ",
+      "stale": "期限切れ",
+      "unavailable": "--"
     },
     "rename": "マシンの名前を変更",
     "rename_dialog": {
@@ -288,6 +292,7 @@
     "col_owner": "所有者",
     "col_agents": "エージェント",
     "col_cost": "コスト · 7 日",
+    "col_quota": "クォータ",
     "col_cli": "CLI",
     "cost_delta_flat": "変化なし",
     "cli_managed_badge": "デスクトップ",
@@ -306,6 +311,24 @@
     "pending_health_error": "登録エラー",
     "pending_health_disabled": "無効",
     "pending_cli_unknown": "待機中"
+  },
+  "quota": {
+    "title": "プランのクォータ",
+    "window_short_minutes": "{{value}}m",
+    "window_short_hours": "{{value}}h",
+    "window_short_days": "{{value}}d",
+    "window_weekly": "週",
+    "group_gemini": "Gemini",
+    "group_claude_gpt": "Claude + GPT",
+    "remaining": "残り {{percent}}%",
+    "resets_in": "{{time}}後にリセット",
+    "exhausted": "レート制限中",
+    "not_reported": "未報告",
+    "stale": "期限切れデータ",
+    "stale_hint": "{{time}}前のスナップショット",
+    "observed_ago": "{{time}}前に更新",
+    "source_daemon": "デーモン経由",
+    "source_external": "外部プッシュ経由"
   },
   "profiles": {
     "cta": "ランタイムを追加",

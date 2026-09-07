@@ -6,6 +6,8 @@ export * from "./models";
 export * from "./local-skills";
 export * from "./types";
 export * from "./derive-health";
+export * from "./plan-quota";
+export * from "./host-metrics";
 export * from "./display";
 export * from "./use-runtime-health";
 export * from "./cli-version";

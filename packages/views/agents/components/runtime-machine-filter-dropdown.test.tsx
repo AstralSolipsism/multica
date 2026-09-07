@@ -32,6 +32,11 @@ function makeMachine(
     runningCount: 0,
     queuedCount: 0,
     providerNames: ["claude"],
+    quotaChips: [],
+    cpuPercent: null,
+    memoryPercent: null,
+    systemStatsCapturedAt: null,
+    systemStatsStale: false,
     lastSeenAt: "2026-05-17T11:59:50Z",
     ...overrides,
   };
