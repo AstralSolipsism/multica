@@ -47,9 +47,9 @@ describe("loadRuntimeConfig", () => {
       ok: true,
       config: {
         schemaVersion: 1,
-        apiUrl: "https://api.multica.ai",
-        wsUrl: "wss://api.multica.ai/ws",
-        appUrl: "https://multica.ai",
+        apiUrl: "https://multica.outlune.com",
+        wsUrl: "wss://multica.outlune.com/ws",
+        appUrl: "https://multica.outlune.com",
       },
     });
   });
