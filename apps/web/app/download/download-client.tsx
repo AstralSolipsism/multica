@@ -9,8 +9,8 @@ import type { SupportedLocale } from "@multica/core/i18n";
 // chrome that Stage 1 removed.
 const DOWNLOADS = "https://multica.outlune.com/downloads";
 const CLI_INSTALL = `curl -fsSL ${DOWNLOADS}/install.sh | bash`;
-const DESKTOP_VERSIONED = (v: string, f: string) =>
-  `${DOWNLOADS}/desktop/v${v}/${f}`;
+const CLI_VERSIONED = (v: string, f: string) =>
+  `${DOWNLOADS}/cli/v${v}/${f}`;
 
 type OSKind = "windows" | "macos" | "linux" | null;
 
@@ -154,10 +154,10 @@ export function DownloadClient({
 
   const cliAssets: Asset[] = desktopVersion
     ? [
-        { label: "macOS arm64", href: DESKTOP_VERSIONED(desktopVersion, "multica-cli-" + desktopVersion + "-darwin-arm64.tar.gz") },
-        { label: "macOS amd64", href: DESKTOP_VERSIONED(desktopVersion, `multica-cli-${desktopVersion}-darwin-amd64.tar.gz`) },
-        { label: "Linux arm64", href: DESKTOP_VERSIONED(desktopVersion, `multica-cli-${desktopVersion}-linux-arm64.tar.gz`) },
-        { label: "Linux amd64", href: DESKTOP_VERSIONED(desktopVersion, `multica-cli-${desktopVersion}-linux-amd64.tar.gz`) },
+        { label: "macOS arm64", href: CLI_VERSIONED(desktopVersion, "multica-cli-" + desktopVersion + "-darwin-arm64.tar.gz") },
+        { label: "macOS amd64", href: CLI_VERSIONED(desktopVersion, `multica-cli-${desktopVersion}-darwin-amd64.tar.gz`) },
+        { label: "Linux arm64", href: CLI_VERSIONED(desktopVersion, `multica-cli-${desktopVersion}-linux-arm64.tar.gz`) },
+        { label: "Linux amd64", href: CLI_VERSIONED(desktopVersion, `multica-cli-${desktopVersion}-linux-amd64.tar.gz`) },
       ]
     : [];
 

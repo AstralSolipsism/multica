@@ -12,6 +12,7 @@ export const metadata: Metadata = {
 // a version-less page (the internal source being briefly unreachable must not
 // take /download down), so no revalidate bomb and no throw.
 const DESKTOP_FEED_PATH = "/downloads/desktop/labrastro.yml";
+const DESKTOP_ASSET_DIR = "/downloads/desktop";
 
 type DesktopFeed = { version: string | null; url: string | null };
 
@@ -39,7 +40,7 @@ export default async function DownloadPage() {
     <DownloadClient
       locale={locale}
       desktopVersion={feed.version}
-      desktopPath={feed.url ? `${DESKTOP_FEED_PATH}/${feed.url}` : null}
+      desktopPath={feed.url ? `${DESKTOP_ASSET_DIR}/${feed.url}` : null}
     />
   );
 }
