@@ -1,18 +1,18 @@
 {
   "step_nav": {
-    "wordmark": "Multica",
+    "wordmark": "Labrastro",
     "label": "オンボーディングの手順",
     "workspace": {
       "label": "ワークスペース",
       "description": "名前と URL を決める。"
     },
     "runtime": {
-      "label": "Mika を知る",
+      "label": "Mizuki を知る",
       "description": "最初のエージェント仲間と、その実行環境。"
     }
   },
   "welcome": {
-    "wordmark": "Multica へようこそ",
+    "wordmark": "Labrastro へようこそ",
     "headline_line1": "あなたの AI チームメイトを、",
     "headline_line2": "ひとつの",
     "headline_emphasis": "ワークスペースに。",
@@ -55,14 +55,14 @@
   },
   "source_backfill": {
     "eyebrow": "ちょっと質問",
-    "lede": "ひとつだけ質問です。Multica がどんな方に役立っているかを把握するのに役立ちます。答えたらすぐ作業に戻れます。",
+    "lede": "ひとつだけ質問です。Labrastro がどんな方に役立っているかを把握するのに役立ちます。答えたらすぐ作業に戻れます。",
     "submit": "送信",
     "hint_ready": "OK です。準備ができたら送信を押してください。",
     "save_failed_toast": "保存できませんでした"
   },
   "questions": {
     "source": {
-      "question": "Multica をどこで知りましたか?",
+      "question": "Labrastro をどこで知りましたか?",
       "friends_colleagues": "友人または同僚",
       "search": "Google / 検索",
       "social_x": "X / Twitter",
@@ -90,14 +90,14 @@
   "cli_install": {
     "copy_aria": "コピー",
     "intro": "エージェントを実行するには、このコンピュータにエージェントランタイム(Claude Code、Codex、Cursor など)が必要です。サーバーやリモート開発環境でも動作します。",
-    "step1_label": "Multica CLI をインストール",
+    "step1_label": "Labrastro CLI をインストール",
     "step2_label": "デーモンを起動"
   },
   "welcome_after_onboarding": {
     "skip": {
       "loading": "ワークスペースを準備中…",
-      "title": "Multica へようこそ!",
-      "subtitle": "ランタイム接続を案内するタスクを 1 つ追加しました。準備できたら Runtimes から Mika と始められます。",
+      "title": "Labrastro へようこそ!",
+      "subtitle": "ランタイム接続を案内するタスクを 1 つ追加しました。準備できたら Runtimes から Mizuki と始められます。",
       "got_it": "了解",
       "status_in_progress": "進行中",
       "error_title": "準備できませんでした",
@@ -107,7 +107,7 @@
       "cards": {
         "install_runtime": {
           "title": "ランタイムを接続",
-          "subtitle": "Codex または Kimi をインストールし、Runtimes から Mika の案内チャットを始めてください。"
+          "subtitle": "Codex または Kimi をインストールし、Runtimes から Mizuki の案内チャットを始めてください。"
         }
       }
     }
@@ -147,7 +147,7 @@
     "create_failed_toast": "ワークスペースを作成できませんでした",
     "creation_disabled_eyebrow": "ワークスペースの作成は無効です",
     "creation_disabled_headline": "管理者に招待を依頼してください。",
-    "creation_disabled_lede": "この Multica インスタンスでは新しいワークスペースを作成できません。管理者からワークスペースに招待されたら、招待を承諾して更新し、続けてください。",
+    "creation_disabled_lede": "この Labrastro インスタンスでは新しいワークスペースを作成できません。管理者からワークスペースに招待されたら、招待を承諾して更新し、続けてください。",
     "creation_disabled_logout": "ログアウト",
     "creation_disabled_eyebrow_resume": "あなたのワークスペース",
     "creation_disabled_headline_resume": "{{name}} で続けましょう。",
@@ -157,7 +157,7 @@
     "scanning_headline": "このコンピュータを接続中…",
     "scanning_lede_prefix": "エージェントは、あなたがすでに持っている AI コーディングツールを通じて作業します — たとえば ",
     "scanning_lede_suffix": " など。このコンピュータにインストール済みのものを確認しています。",
-    "found_headline": "Mika はどこで動かしますか？",
+    "found_headline": "Mizuki はどこで動かしますか？",
     "found_lede": "このコンピュータで見つかったエージェントランタイムです。あとで切り替えたり追加したりできます。",
     "runtime_count_other": "エージェントランタイム {{count}} 個",
     "status_all_online": "すべてオンライン",
@@ -175,15 +175,15 @@
     "refresh": "更新",
     "refreshing": "更新中…",
     "hint_selected": "選択中: {{name}}",
-    "hint_pick": "Mika と始めるには、上でエージェントランタイムを選んでください。",
+    "hint_pick": "Mizuki と始めるには、上でエージェントランタイムを選んでください。",
     "hint_waiting": "最初の結果を待っています…",
     "hint_skip_or_refresh": "インストール後に更新するか、スキップしてワークスペースに入ってください。",
-    "continue": "Mika と始める"
+    "continue": "Mizuki と始める"
   },
   "step_platform": {
     "eyebrow": "コンピュータを接続",
     "headline": "エージェントを実行するコンピュータを接続しましょう。",
-    "lede": "このワークスペースの参謀長である Mika は、Multica に接続した実際のコンピュータで動きます。どう接続するかを選んでください。",
+    "lede": "このワークスペースの参謀長である Mizuki は、Labrastro に接続した実際のコンピュータで動きます。どう接続するかを選んでください。",
     "hint_default": "接続方法を選んでください。スキップしてあとでコンピュータを接続することもできます。",
     "download_title": "このコンピュータを使う",
     "download_subtitle": "デスクトップアプリをインストールして、このコンピュータを接続します。新しいタブで開くので、そこでプラットフォームを選んでください。",
@@ -209,12 +209,12 @@
   },
   "errors": {
     "skip_failed": "オンボーディングを完了できませんでした",
-    "mika_setup_failed": "Mika ワークスペースを開始できませんでした"
+    "mika_setup_failed": "Mizuki ワークスペースを開始できませんでした"
   },
   "mika_intro": {
-    "headline": "最初のエージェント仲間、Mika を紹介します。",
-    "name": "Mika",
+    "headline": "最初のエージェント仲間、Mizuki を紹介します。",
+    "name": "Mizuki",
     "role": "参謀長",
-    "blurb": "やりたいことを Mika に伝えると、タスクになり、適したエージェントが担当します。"
+    "blurb": "やりたいことを Mizuki に伝えると、タスクになり、適したエージェントが担当します。"
   }
 }

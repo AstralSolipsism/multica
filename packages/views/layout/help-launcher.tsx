@@ -3,10 +3,8 @@
 import { useState } from "react";
 import {
   ArrowUpRight,
-  BookOpen,
   CircleHelp,
   Download,
-  History,
   MessageCircle,
   QrCode,
 } from "lucide-react";
@@ -25,8 +23,6 @@ import { isDesktopShell } from "../platform/local-directory";
 import { FeishuQrDialog } from "./feishu-group-qr-dialog";
 import { useT } from "../i18n";
 
-const DOCS_URL = "https://multica.ai/docs";
-const CHANGELOG_URL = "https://multica.ai/changelog";
 // In-app route: this instance serves its own minimal download page listing
 // the internal release artifacts, so the entry works without leaving the app.
 const DOWNLOAD_URL = "/download";
@@ -79,28 +75,6 @@ export function HelpLauncher() {
               <DropdownMenuSeparator />
             </>
           )}
-          <DropdownMenuItem
-            render={
-              <a href={DOCS_URL} target="_blank" rel="noopener noreferrer" />
-            }
-          >
-            <BookOpen className="h-3.5 w-3.5" />
-            {t(($) => $.help.docs)}
-            <ArrowUpRight className="size-3 translate-y-px text-faint-foreground" />
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            render={
-              <a
-                href={CHANGELOG_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-              />
-            }
-          >
-            <History className="h-3.5 w-3.5" />
-            {t(($) => $.help.changelog)}
-            <ArrowUpRight className="size-3 translate-y-px text-faint-foreground" />
-          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setQrOpen(true)}>
             <QrCode className="h-3.5 w-3.5" />
             {t(($) => $.help.discord)}

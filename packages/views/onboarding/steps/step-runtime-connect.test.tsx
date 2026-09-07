@@ -72,7 +72,7 @@ describe("StepRuntimeConnect", () => {
   it("does not render a permanently-disabled Mika action while scanning", () => {
     renderStep();
     expect(
-      screen.queryByRole("button", { name: /start with mika/i }),
+      screen.queryByRole("button", { name: /start with mizuki/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -123,7 +123,7 @@ describe("StepRuntimeConnect", () => {
     ).not.toBeInTheDocument();
     // Starting with Mika is actionable in the found phase.
     expect(
-      screen.getByRole("button", { name: /start with mika/i }),
+      screen.getByRole("button", { name: /start with mizuki/i }),
     ).toBeInTheDocument();
   });
 

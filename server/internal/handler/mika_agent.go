@@ -38,10 +38,10 @@ const (
 // instructions it is stored on the row: description is an owner-editable field
 // and the product does not reclaim it after creation.
 var mikaAgentDescriptions = map[string]string{
-	"en": "Your workspace Chief of Staff. Mika turns goals into issues, coordinates agents, and helps build reusable workflows.",
-	"zh": "你的工作区 Chief of Staff。Mika 会把目标转化为任务、协调智能体，并帮你建立可复用的工作流。",
-	"ko": "워크스페이스의 Chief of Staff입니다. Mika가 목표를 태스크로 구체화하고 에이전트를 조율하며 재사용 가능한 워크플로 구성을 돕습니다.",
-	"ja": "ワークスペースの Chief of Staff。Mika は目標をタスクに落とし込み、エージェントを調整し、再利用できるワークフローづくりを支援します。",
+	"en": "Your workspace Chief of Staff. Mizuki turns goals into issues, coordinates agents, and helps build reusable workflows.",
+	"zh": "你的工作区 Chief of Staff。Mizuki 会把目标转化为任务、协调智能体，并帮你建立可复用的工作流。",
+	"ko": "워크스페이스의 Chief of Staff입니다. Mizuki가 목표를 태스크로 구체화하고 에이전트를 조율하며 재사용 가능한 워크플로 구성을 돕습니다.",
+	"ja": "ワークスペースの Chief of Staff。Mizuki は目標をタスクに落とし込み、エージェントを調整し、再利用できるワークフローづくりを支援します。",
 }
 
 type createMikaAgentRequest struct {
@@ -238,7 +238,7 @@ func (h *Handler) writeMikaAgentResponse(w http.ResponseWriter, r *http.Request,
 		// exists. Every step here is idempotent, so a retry converges — say so
 		// with an error rather than handing back a half-built flow.
 		slog.Warn("mika agent: get-or-create onboarding session failed", append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(agent.ID))...)
-		writeError(w, http.StatusInternalServerError, "failed to open the Mika conversation")
+		writeError(w, http.StatusInternalServerError, "failed to open the Mizuki conversation")
 		return
 	}
 	sessionResp := chatSessionToResponse(session)

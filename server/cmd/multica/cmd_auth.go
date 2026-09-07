@@ -43,7 +43,7 @@ func validateLoginTokenPrefix(token string) error {
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
-	Short: "Authenticate multica with Multica",
+	Short: "Authenticate multica with Labrastro",
 }
 
 var authStatusCmd = &cobra.Command{
@@ -511,7 +511,7 @@ const callbackSuccessHTML = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Multica — Authenticated</title>
+<title>Labrastro — Authenticated</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   @media (prefers-color-scheme: dark) {

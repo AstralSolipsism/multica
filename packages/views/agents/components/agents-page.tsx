@@ -262,10 +262,6 @@ function PageHeaderBar({
       title={t(($) => $.page.title)}
       count={totalCount}
       description={t(($) => $.page.tagline)}
-      learnMore={{
-        href: "https://multica.ai/docs/agents",
-        label: t(($) => $.page.learn_more),
-      }}
       actions={
         <CollectionPageHeaderAction
           icon={Plus}

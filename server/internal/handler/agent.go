@@ -2322,7 +2322,7 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 	// the bootstrap endpoint, since its lookup skips archived rows but the
 	// unique index does not.
 	if agent.SystemKey.Valid && agent.SystemKey.String != "" {
-		writeError(w, http.StatusBadRequest, "this agent is built into Multica and cannot be archived")
+		writeError(w, http.StatusBadRequest, "this agent is built into Labrastro and cannot be archived")
 		return
 	}
 

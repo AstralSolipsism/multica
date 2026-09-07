@@ -170,7 +170,7 @@ func (h *Handler) StartMikaOnboarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start Mika onboarding: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to start Mizuki onboarding: "+err.Error())
 		return
 	}
 
@@ -317,7 +317,7 @@ func mikaOnboardingProfileBlock(
 	}
 	if len(useCases) > 0 {
 		// Joined with "; " because several labels contain their own commas.
-		fmt.Fprintf(&b, "- Wants to use Multica to: %s\n", strings.Join(useCases, "; "))
+		fmt.Fprintf(&b, "- Wants to use Labrastro to: %s\n", strings.Join(useCases, "; "))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

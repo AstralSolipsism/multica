@@ -138,15 +138,6 @@ describe("TelegramAgentBindButton", () => {
     expect(mockOpenExternal).not.toHaveBeenCalled();
   });
 
-  it("opens the localized Telegram setup guide", async () => {
-    renderUI(<TelegramAgentBindButton agentId="agent-1" agentName="Bot" />);
-    await userEvent.click(screen.getByTestId("telegram-agent-connect"));
-    await userEvent.click(await screen.findByTestId("telegram-docs-link"));
-    expect(mockOpenExternal).toHaveBeenCalledWith(
-      "https://multica.ai/docs/telegram-bot-integration",
-    );
-  });
-
   it("does not report success for a malformed install response", async () => {
     mockRegister.mockResolvedValue({});
     renderUI(<TelegramAgentBindButton agentId="agent-1" agentName="Bot" />);

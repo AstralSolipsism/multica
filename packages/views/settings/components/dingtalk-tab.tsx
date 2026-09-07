@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, ExternalLink, Info, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Info, Trash2 } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
@@ -51,7 +51,6 @@ import type {
   DingTalkInstallation,
 } from "@multica/core/types";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { openExternal } from "../../platform";
 import { useT, useTimeAgo } from "../../i18n";
 
 const dingTalkChatManagePermission = "qyapi_chat_manage";
@@ -800,21 +799,6 @@ function InstallationRow({
   );
 }
 
-// dingtalkDocsUrl points at the DingTalk integration guide on the docs site,
-// localized to the viewer's language. The docs site uses /<lang>/ path
-// prefixes (English has none), matching the convention used elsewhere in the
-// app for doc links.
-function dingtalkDocsUrl(lang: string | undefined): string {
-  const prefix = lang?.startsWith("zh")
-    ? "/zh"
-    : lang?.startsWith("ja")
-      ? "/ja"
-      : lang?.startsWith("ko")
-        ? "/ko"
-        : "";
-  return `https://multica.ai/docs${prefix}/dingtalk-bot-integration`;
-}
-
 // DingTalkAgentBindButton is the per-agent CTA exposed from the agent detail
 // page. DingTalk uses the bring-your-own-app model: the button opens a dialog
 // where an authorized manager pastes the AppKey (client id) + AppSecret (client
@@ -848,7 +832,7 @@ export function DingTalkAgentBindButton({
    */
   onShowConnectedDetails?: () => void;
 }) {
-  const { t, i18n } = useT("settings");
+  const { t } = useT("settings");
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
   const user = useAuthStore((s) => s.user);
@@ -966,16 +950,6 @@ export function DingTalkAgentBindButton({
             <DialogTitle className="text-title-sm font-semibold">
               {t(($) => $.dingtalk.byo_dialog_title)}
             </DialogTitle>
-
-            <button
-              type="button"
-              onClick={() => openExternal(dingtalkDocsUrl(i18n.language))}
-              className="inline-flex w-fit items-center gap-1.5 text-caption text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
-              data-testid="dingtalk-byo-docs-link"
-            >
-              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-              {t(($) => $.dingtalk.byo_docs_link)}
-            </button>
           </DialogHeader>
 
           <div className="space-y-4 p-5">

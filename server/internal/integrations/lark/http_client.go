@@ -1334,14 +1334,14 @@ func bindingPromptTemplate(bindURL string) (string, error) {
 		"config": map[string]any{"wide_screen_mode": true},
 		"header": map[string]any{
 			"template": "blue",
-			"title":    map[string]any{"tag": "plain_text", "content": "Multica"},
+			"title":    map[string]any{"tag": "plain_text", "content": "Labrastro"},
 		},
 		"elements": []any{
 			map[string]any{
 				"tag": "div",
 				"text": map[string]any{
 					"tag":     "lark_md",
-					"content": "你还没有绑定 Multica 账户。点击下方按钮完成绑定后即可使用此 Agent。",
+					"content": "你还没有绑定 Labrastro 账户。点击下方按钮完成绑定后即可使用此 Agent。",
 				},
 			},
 			map[string]any{

@@ -41,7 +41,7 @@ test("onboarding — welcome → workspace → runtime", async ({ page }) => {
   // counter it replaced is gone.
   await expect(page.locator('[data-slot="stepper-title"]')).toHaveText([
     "Workspace",
-    "Meet Mika",
+    "Meet Mizuki",
   ]);
   await expect(
     page.locator('[aria-current="step"]').filter({ hasText: "Workspace" }),
@@ -49,11 +49,11 @@ test("onboarding — welcome → workspace → runtime", async ({ page }) => {
   await page.waitForTimeout(500);
   await page.screenshot({ path: `${SHOTS_DIR}/02-workspace.png` });
 
-  // 3. Runtime step — the rail marks "Meet Mika" current.
+  // 3. Runtime step — the rail marks "Meet Mizuki" current.
   await page.getByRole("textbox").first().fill(`Rail QA ${Date.now()}`);
   await page.getByRole("button", { name: /^Create /i }).click();
   await expect(
-    page.locator('[aria-current="step"]').filter({ hasText: "Meet Mika" }),
+    page.locator('[aria-current="step"]').filter({ hasText: "Meet Mizuki" }),
   ).toBeVisible({ timeout: 20000 });
   await page.waitForTimeout(800);
   await page.screenshot({ path: `${SHOTS_DIR}/03-runtime.png` });

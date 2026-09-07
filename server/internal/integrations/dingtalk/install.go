@@ -33,7 +33,7 @@ var (
 	// would collide with the (channel_type, app_id) routing index. A DingTalk
 	// robot is one bot identity and maps to one agent; reusing it here requires
 	// disconnecting it in the other workspace first.
-	ErrRobotOwnedByAnotherWorkspace = errors.New("dingtalk: this DingTalk robot is already connected to a different Multica workspace")
+	ErrRobotOwnedByAnotherWorkspace = errors.New("dingtalk: this DingTalk robot is already connected to a different Labrastro workspace")
 	// ErrRobotOwnedBySameWorkspace is returned when the robot is already connected
 	// to a DIFFERENT (live, non-archived) agent in the SAME workspace, pointing
 	// the user at the Disconnect they can actually reach (#4810).

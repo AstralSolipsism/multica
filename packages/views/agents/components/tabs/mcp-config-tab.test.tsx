@@ -185,7 +185,7 @@ describe("McpConfigTab", () => {
 
     expect(screen.getByText("fetch")).toBeInTheDocument();
     expect(screen.getByText("docs")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /managed by multica/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /managed by labrastro/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /inherited from runtime/i })).toBeInTheDocument();
     expect(screen.queryByLabelText(/MCP config JSON editor/i)).not.toBeInTheDocument();
   });
@@ -490,7 +490,7 @@ describe("McpConfigTab effective set", () => {
     renderTab({ mcp_config: null }, vi.fn(), onlineRuntime);
 
     expect(
-      await screen.findByText("Overridden by Multica"),
+      await screen.findByText("Overridden by Labrastro"),
     ).toBeInTheDocument();
   });
 
@@ -506,7 +506,7 @@ describe("McpConfigTab effective set", () => {
     // "fetch" renders twice — once as the (disabled) assignment, once as the
     // runtime's own server — which is exactly the state under test.
     await waitFor(() => expect(screen.getAllByText("fetch")).toHaveLength(2));
-    expect(screen.queryByText("Overridden by Multica")).toBeNull();
+    expect(screen.queryByText("Overridden by Labrastro")).toBeNull();
   });
 
   // Same transport hazard as before, reached through the SAVED config: the

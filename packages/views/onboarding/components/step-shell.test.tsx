@@ -70,7 +70,7 @@ describe("onboarding step shell", () => {
 
     const compact = container.querySelector("main .md\\:hidden")!;
     expect(compact).not.toBeNull();
-    expect(compact.textContent).toContain("Meet Mika");
+    expect(compact.textContent).toContain("Meet Mizuki");
     expect(compact.querySelector("button")).not.toBeNull();
   });
 

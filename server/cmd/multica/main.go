@@ -25,8 +25,8 @@ var debugFlag bool
 
 var rootCmd = &cobra.Command{
 	Use:           "multica",
-	Short:         "Multica CLI — local agent runtime and management tool",
-	Long:          "Work seamlessly with Multica from the command line.",
+	Short:         "Labrastro CLI — local agent runtime and management tool",
+	Long:          "Work seamlessly with Labrastro from the command line.",
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }

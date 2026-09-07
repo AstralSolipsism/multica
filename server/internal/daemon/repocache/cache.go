@@ -1574,7 +1574,11 @@ const multicaHookMarker = "# multica:prepare-commit-msg:co-authored-by"
 // prepareCommitMsgHook keep recognizing every previously-shipped variant.
 var daemonInstalledHookSignatures = []string{
 	multicaHookMarker,
+	// Legacy comment shipped before the marker existed, and the branding the
+	// hook carried before the stage-2 rebrand — both kept so disabling still
+	// recognizes hooks seeded by every previously-released daemon version.
 	"# Installed by the Multica daemon.",
+	"# Installed by the Labrastro daemon.",
 }
 
 // coAuthoredByStateFile records the workspace's current Co-authored-by setting
@@ -1825,8 +1829,8 @@ fi
 	}
 	return `#!/bin/sh
 # multica:prepare-commit-msg:co-authored-by
-# Multica: add Co-authored-by trailer for the Multica Agent.
-# Installed by the Multica daemon. Do not edit — it will be overwritten.
+# Labrastro: add the Co-authored-by trailer for the agent identity below.
+# Installed by the Labrastro daemon. Do not edit — it will be overwritten.
 
 COMMIT_MSG_FILE="$1"
 COMMIT_SOURCE="$2"
@@ -1836,7 +1840,7 @@ case "$COMMIT_SOURCE" in
   merge|squash) exit 0 ;;
 esac
 
-` + gate + `TRAILER="Co-authored-by: multica-agent <github@multica.ai>"
+` + gate + `TRAILER="Co-authored-by: Labrastro Agent <agent@labrastro.local>"
 
 # Don't add if already present.
 if grep -qF "$TRAILER" "$COMMIT_MSG_FILE"; then
