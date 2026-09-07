@@ -1741,12 +1741,18 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		// usage DID arrive over JSON-RPC (the live notification stream can
 		// drop the legacy token_count event entirely), so the scan runs
 		// whenever usage OR rate limits are still missing.
-		needUsage := u.InputTokens == 0 && u.OutputTokens == 0
+		needUsage := u.InputTokens == 0 && u.OutputTokens == 0 &&
+			u.CacheReadTokens == 0 && u.CacheWriteTokens == 0
 		var scannedRateLimits *codexRawRateLimits
-		if needUsage || liveRateLimits == nil {
+		if needUsage || !codexRateLimitsUsable(liveRateLimits) {
 			taskCodexHome := strings.TrimSpace(b.cfg.Env["CODEX_HOME"])
 			if scanned := scanCodexSessionUsage(startTime, taskCodexHome, threadID, resumed); scanned != nil {
-				if needUsage {
+				// A quota-only scan result (rate-limited before the first
+				// completed turn) carries zero usage; adopting it wholesale
+				// would wipe usage the live stream already reported.
+				scannedHasUsage := scanned.usage.InputTokens > 0 || scanned.usage.OutputTokens > 0 ||
+					scanned.usage.CacheReadTokens > 0 || scanned.usage.CacheWriteTokens > 0
+				if needUsage && scannedHasUsage {
 					u = scanned.usage
 					if scanned.model != "" && opts.Model == "" {
 						opts.Model = scanned.model
@@ -3836,17 +3842,23 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 			continue
 		}
 
-		// Extract token usage from token_count events. Rate limits are read
-		// regardless of the info guard: a payload-level rate_limits report
-		// counts even when the event carries no usage info at all.
+		// Extract token usage from token_count events.
 		if evt.Payload.Type == "token_count" {
-			if rl := evt.payloadRateLimits(); rl != nil {
-				result.rateLimits = rl
-			}
-		}
-		if evt.Payload.Type == "token_count" && evt.Payload.Info != nil {
 			afterStart := startTime.IsZero() || timestampAfterStart ||
 				(evt.Timestamp.IsZero() && (!resumed || afterStartBoundary))
+			// Rate limits are read regardless of the info guard (a
+			// payload-level report counts even without usage info), but only
+			// from THIS task's window: on a resume with no new activity, a
+			// pre-boundary snapshot must not be re-emitted as fresh data —
+			// the server keeps the previous snapshot with its true age.
+			if afterStart {
+				if rl := evt.payloadRateLimits(); rl != nil {
+					result.rateLimits = rl
+				}
+			}
+			if evt.Payload.Info == nil {
+				continue
+			}
 			if usage := evt.Payload.Info.TotalTokenUsage; usage != nil {
 				current := normalizeCodexRawTokenUsage(*usage)
 				if afterStart {

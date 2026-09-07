@@ -6247,3 +6247,116 @@ func TestCodexRateLimitsToPlanQuota(t *testing.T) {
 		}
 	})
 }
+
+// TestParseCodexSessionRateLimitsRespectTaskBoundary pins the resume fix: a
+// pre-task quota snapshot must NOT be re-emitted (and re-stamped fresh) when
+// a resumed task produced no new activity — the server keeps the previous
+// snapshot with its true age and the 24h staleness rule stays honest.
+func TestParseCodexSessionRateLimitsRespectTaskBoundary(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rollout.jsonl")
+	old := time.Now().Add(-48 * time.Hour)
+	now := time.Now()
+
+	t.Run("resume with no new activity drops the historical snapshot", func(t *testing.T) {
+		t.Parallel()
+		content := strings.Join([]string{
+			fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":7,"window_minutes":300,"resets_at":%d}},"info":{"total_token_usage":{"input_tokens":500,"output_tokens":20}}}}`, old.UTC().Format(time.RFC3339Nano), now.Add(72*time.Hour).Unix()),
+			fmt.Sprintf(`{"timestamp":%q,"type":"turn_context","payload":{"model":"gpt-5"}}`, now.UTC().Format(time.RFC3339Nano)),
+			"",
+		}, "\n")
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		// Resumed task whose window starts now: nothing after the boundary.
+		if got := parseCodexSessionFileSince(path, now.Add(time.Second), true); got != nil {
+			t.Fatalf("got %+v, want nil (no in-window usage or quota)", got)
+		}
+	})
+
+	t.Run("in-window quota-only event survives", func(t *testing.T) {
+		t.Parallel()
+		// Rate-limited before the first completed turn: quota arrives, usage
+		// never does. The snapshot must survive (member's hardening intent).
+		content := strings.Join([]string{
+			fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":100,"window_minutes":300,"resets_at":%d}}}}`, now.Add(time.Second).UTC().Format(time.RFC3339Nano), now.Add(2*time.Hour).Unix()),
+			"",
+		}, "\n")
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		got := parseCodexSessionFileSince(path, now, false)
+		if got == nil || got.rateLimits == nil || got.rateLimits.Primary == nil ||
+			got.rateLimits.Primary.UsedPercent == nil || *got.rateLimits.Primary.UsedPercent != 100 {
+			t.Fatalf("got %+v, want the in-window quota snapshot", got)
+		}
+	})
+}
+
+// TestCodexExecuteQuotaOnlyScanKeepsLiveUsage pins the field-position fix's
+// composition rule: when live events already reported usage (here: fully
+// cached input) and the rollout scan finds only a quota snapshot, the scan
+// must NOT overwrite the live usage with its zero counters.
+func TestCodexExecuteQuotaOnlyScanKeepsLiveUsage(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fixture is POSIX-only")
+	}
+
+	// Rollout fixture: one quota-only token_count at payload level, in-window.
+	taskHome := t.TempDir()
+	now := time.Now()
+	dateDir := filepath.Join(taskHome, "sessions",
+		fmt.Sprintf("%04d", now.Year()), fmt.Sprintf("%02d", int(now.Month())), fmt.Sprintf("%02d", now.Day()))
+	if err := os.MkdirAll(dateDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	rollout := filepath.Join(dateDir, "rollout-2026-09-07T00-00-00-thr-quota-wipe.jsonl")
+	content := fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":42.5,"window_minutes":300,"resets_at":%d},"secondary":{"used_percent":10,"window_minutes":10080,"resets_at":%d}}}}`,
+		now.Add(2*time.Second).UTC().Format(time.RFC3339Nano), now.Add(time.Hour).Unix(), now.Add(3*24*time.Hour).Unix()) + "\n"
+	if err := os.WriteFile(rollout, []byte(content), 0o644); err != nil {
+		t.Fatalf("write rollout: %v", err)
+	}
+	// The scan rejects files older than the task start; the fixture is
+	// written before Execute begins, so future-date it.
+	future := now.Add(10 * time.Minute)
+	if err := os.Chtimes(rollout, future, future); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	fakePath := writeFakeCodexAppServer(t, ""+
+		`read line`+"\n"+
+		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
+		`read line`+"\n"+
+		`read line`+"\n"+
+		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-quota-wipe"}}}'`+"\n"+
+		`read line`+"\n"+
+		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
+		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-quota-wipe","turn":{"id":"turn-quota-wipe"}}}'`+"\n"+
+		`sleep 0.03`+"\n"+
+		// Live usage: fully cached input (uncached 0), zero output — the
+		// "no usage" predicate must look at cache counters too.
+		`echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thr-quota-wipe","turn":{"id":"turn-quota-wipe","status":"completed","usage":{"input_tokens":500,"cached_input_tokens":500,"output_tokens":0}}}}'`+"\n")
+
+	result, _ := executeFakeCodexCollectingMessagesWithConfig(t, fakePath, Config{
+		Logger: slog.Default(),
+		Env:    map[string]string{"CODEX_HOME": taskHome},
+	}, ExecOptions{
+		Timeout:                   5 * time.Second,
+		SemanticInactivityTimeout: 5 * time.Second,
+	}, 10*time.Second)
+	if result.Status != "completed" {
+		t.Fatalf("expected completed, got %+v", result)
+	}
+	var usage TokenUsage
+	for _, u := range result.Usage {
+		usage = u
+	}
+	if usage.CacheReadTokens != 500 {
+		t.Fatalf("cached usage = %+v, want 500 cache-read tokens preserved (quota-only scan must not wipe live usage)", result.Usage)
+	}
+	if result.PlanQuota == nil || len(result.PlanQuota.Windows) != 2 {
+		t.Fatalf("PlanQuota = %+v, want the scanned 2-window snapshot", result.PlanQuota)
+	}
+}
