@@ -36,16 +36,15 @@ describe("UpdateNotification", () => {
     });
   });
 
-  it("opens the downloaded version's changelog from the update prompt", () => {
+  it("offers no changelog link — there is no internal changelog to open", () => {
     render(<UpdateNotification />);
     act(() => updateDownloaded({ version: "0.4.27" }));
 
     expect(screen.queryByRole("button", { name: "Later" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "See changelog" }));
-
-    expect(mocks.openExternal).toHaveBeenCalledWith(
-      "https://multica.ai/changelog#release-0-4-27",
-    );
+    expect(
+      screen.queryByRole("button", { name: "See changelog" }),
+    ).not.toBeInTheDocument();
+    expect(mocks.openExternal).not.toHaveBeenCalled();
   });
 
   it("still installs the update immediately from the primary action", () => {

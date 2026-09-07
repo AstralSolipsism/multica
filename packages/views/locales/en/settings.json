@@ -1177,6 +1177,8 @@
       "cli_installed": "multica CLI is installed and available in PATH.",
       "cli_missing": "multica CLI not found. Install it to enable daemon management.",
       "installation_guide": "Installation Guide",
+      "cli_install_windows_help": "Windows has no script installer. Ask your workspace administrator, or download the multica-cli-<version>-windows-<arch>.zip archive for the release you want from the internal release source (https://multica.outlune.com/downloads/cli/v<version>/ — the current version is in https://multica.outlune.com/downloads/latest.json) and extract multica.exe onto your PATH.",
+      "cli_install_windows_label": "Manual install required on Windows",
       "diagnostics_title": "Diagnostics",
       "diagnostics_description": "Identification and connection details. Useful when filing a bug report or investigating why a runtime isn't showing up.",
       "state": "State",

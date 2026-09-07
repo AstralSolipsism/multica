@@ -12,8 +12,13 @@ import { api } from "@multica/core/api";
 import type { RuntimeUpdateStatus } from "@multica/core/types";
 import { useT } from "../../i18n";
 
-const GITHUB_RELEASES_URL =
-  "https://api.github.com/repos/multica-ai/multica/releases/latest";
+// Version checks read the internal Labrastro release manifest. This used to
+// poll the upstream GitHub Releases API, which would flag upstream builds as
+// "updates" and invite replacing this customized install with an
+// uncustomized binary — so clients only ever compare against the feed this
+// deployment actually ships from.
+const INTERNAL_LATEST_MANIFEST_URL =
+  "https://multica.outlune.com/downloads/latest.json";
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 let cachedLatestVersion: string | null = null;
@@ -24,12 +29,11 @@ async function fetchLatestVersion(): Promise<string | null> {
     return cachedLatestVersion;
   }
   try {
-    const resp = await fetch(GITHUB_RELEASES_URL, {
-      headers: { Accept: "application/vnd.github+json" },
-    });
+    const resp = await fetch(INTERNAL_LATEST_MANIFEST_URL);
     if (!resp.ok) return null;
     const data = await resp.json();
-    cachedLatestVersion = data.tag_name ?? null;
+    cachedLatestVersion =
+      typeof data?.version === "string" ? data.version : null;
     cachedAt = Date.now();
     return cachedLatestVersion;
   } catch {
@@ -244,6 +248,11 @@ export function UpdateSection({
               !hasUpdate &&
               currentVersion &&
               latestVersion &&
+              // "Latest" claims the current version matches the feed, which
+              // requires parsing BOTH sides. An unparseable latest (the feed
+              // itself serving a tag this parser cannot order) is "no claim",
+              // same as the local-build case above.
+              parseReleaseVersion(latestVersion) !== null &&
               !status && (
                 <span className="inline-flex items-center gap-1 text-caption text-success">
                   <Check className="h-3 w-3" />

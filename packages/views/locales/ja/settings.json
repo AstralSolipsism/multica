@@ -1174,6 +1174,8 @@
       "cli_installed": "multica CLI はインストール済みで PATH から利用できます。",
       "cli_missing": "multica CLI が見つかりません。デーモンを管理するにはインストールしてください。",
       "installation_guide": "インストールガイド",
+      "cli_install_windows_help": "Windows にはスクリプトインストーラーがありません。ワークスペース管理者に問い合わせるか、内部リリースソース（https://multica.outlune.com/downloads/cli/v<バージョン>/、現在のバージョンは https://multica.outlune.com/downloads/latest.json を参照）から該当バージョンの multica-cli-<バージョン>-windows-<アーキテクチャ>.zip をダウンロードし、multica.exe を PATH の通った場所に展開してください。",
+      "cli_install_windows_label": "Windows では手動インストールが必要です",
       "diagnostics_title": "診断情報",
       "diagnostics_description": "識別情報と接続の詳細です。バグ報告やランタイムが表示されない問題の調査に役立ちます。",
       "state": "状態",

@@ -22,7 +22,7 @@ Multica Desktop은 macOS, Windows, Linux에서 사용할 수 있습니다. Web �
 
 ## 설치
 
-[Multica 다운로드 페이지](https://multica.ai/download)에서 운영체제와 프로세서 아키텍처에 맞는 설치 패키지를 선택합니다.
+내부 릴리스 소스 `https://multica.outlune.com/downloads/desktop/`에서 운영체제와 프로세서 아키텍처에 맞는 설치 패키지를 선택합니다.
 
 | 플랫폼 | 설치 패키지 |
 | --- | --- |
@@ -58,7 +58,7 @@ Desktop 설정에서 실행 상태와 로그를 확인할 수 있습니다. 도�
 
 ## Desktop 업데이트
 
-자동 업데이트는 기본으로 켜져 있습니다. 앱이 백그라운드에서 새 버전을 확인하고 다운로드합니다. 다운로드가 끝나면 즉시 다시 시작해 설치하거나 다음 종료 시 설치할 수 있습니다. **설정 → 업데이트**에서 자동 확인을 끄거나 새 버전을 직접 확인할 수도 있습니다.
+새로 설치한 경우 자동 업데이트는 기본으로 꺼져 있습니다. 백그라운드 확인을 원하면 **설정 → 업데이트**에서 켜세요. 이미 켜 둔 설치는 그 선택이 그대로 유지됩니다. 켜면 앱이 백그라운드에서 새 버전을 확인하고 다운로드합니다. 다운로드가 끝나면 즉시 다시 시작해 설치하거나 다음 종료 시 설치할 수 있습니다. **설정 → 업데이트**에서 언제든 새 버전을 직접 확인할 수도 있습니다.
 
 업데이트는 운영체제와 프로세서 아키텍처에 따라 배포됩니다.
 
@@ -159,7 +159,7 @@ C:\Users\<사용자>\AppData\Local\Programs\@multicadesktop\resources\app.asar.u
 Get-FileHash .\multica-cli-<version>-windows-amd64.zip -Algorithm SHA256
 ```
 
-출력된 해시를 [최신 릴리스](https://github.com/multica-ai/multica/releases/latest)의 `checksums.txt` 해당 줄과 비교하세요.
+출력된 해시를 내부 릴리스 소스가 CLI 아카이브와 함께 게시하는 `checksums.txt`(`https://multica.outlune.com/downloads/cli/v<version>/checksums.txt`)의 해당 줄과 비교하세요.
 
 **해결 방법**:
 
@@ -172,7 +172,7 @@ Get-FileHash .\multica-cli-<version>-windows-amd64.zip -Algorithm SHA256
 3. **오탐을 Microsoft에 신고** — [Microsoft Security Intelligence 파일 제출 페이지](https://www.microsoft.com/en-us/wdsi/filesubmission)에서 *Software developer*와 *Incorrectly detected as malware*를 선택하세요. 모든 사용자에 대해 탐지를 철회시키는 방법은 이것이며, 보통 며칠 안에 반영됩니다.
 
 <Callout type="warning">
-이 제외 항목은 [다운로드 페이지](https://multica.ai/download) 또는 [GitHub 릴리스](https://github.com/multica-ai/multica/releases)에서 설치했고 체크섬이 일치하는 경우에만 추가하세요. 제외를 설정하면 해당 폴더 안의 모든 파일에 대해 실시간 보호가 꺼집니다.
+이 제외 항목은 내부 릴리스 소스(`https://multica.outlune.com/downloads/`)에서 설치했고 체크섬이 일치하는 경우에만 추가하세요. 제외를 설정하면 해당 폴더 안의 모든 파일에 대해 실시간 보호가 꺼집니다.
 </Callout>
 
 ## 다음 단계

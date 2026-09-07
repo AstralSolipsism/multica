@@ -55,14 +55,14 @@ multica login --token
 ```bash
 export MULTICA_TOKEN='mul_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
 
-curl https://api.multica.ai/api/me \
+curl https://multica.outlune.com/api/me \
  -H "Authorization: Bearer $MULTICA_TOKEN"
 ```
 
 调用工作区级 API 时，还需要按接口要求提供工作区：
 
 ```bash
-curl https://api.multica.ai/api/issues \
+curl https://multica.outlune.com/api/issues \
  -H "Authorization: Bearer $MULTICA_TOKEN" \
  -H "X-Workspace-ID: $MULTICA_WORKSPACE_ID"
 ```

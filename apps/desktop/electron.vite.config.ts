@@ -5,7 +5,12 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // `@multica/core` must be bundled INTO the main bundle: it is a raw-TS
+    // workspace package, so an externalized `require("@multica/core/…")`
+    // would try to load TypeScript at runtime and crash the main process.
+    // Only the imported subgraph (api/schema + logger for the release-manifest
+    // parse) is pulled in; everything else stays externalized.
+    plugins: [externalizeDepsPlugin({ exclude: ["@multica/core"] })],
   },
   preload: {
     // `@electron-toolkit/preload` must be bundled INTO the preload script:

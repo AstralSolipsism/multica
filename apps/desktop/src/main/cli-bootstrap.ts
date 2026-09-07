@@ -7,15 +7,75 @@ import { join, dirname } from "path";
 import { pipeline } from "stream/promises";
 import { tmpdir } from "os";
 import { Readable } from "stream";
+import { z } from "zod";
 
+import { parseWithFallback } from "@multica/core/api/schema";
 import { selectPlatformReleaseAssetName } from "./cli-release-asset";
 
 // Desktop prefers the bundled `multica` CLI shipped inside the app for
 // same-repo builds, but it can also repair or bootstrap a managed copy in
 // userData on first launch when the bundled binary is missing or unusable.
 
-const GITHUB_LATEST_BASE =
-  "https://github.com/multica-ai/multica/releases/latest/download";
+// The internal Labrastro release source. Bootstrap downloads must never fall
+// back to the upstream multica-ai/multica GitHub Releases: the first silent
+// install would replace this managed CLI with an uncustomized upstream
+// binary. A failed bootstrap surfaces to daemon-manager, which falls back to
+// whatever `multica` is already on PATH — never to a remote copy.
+export const INTERNAL_DOWNLOAD_BASE = "https://multica.outlune.com/downloads";
+
+/** URL of the version manifest the internal release source publishes. */
+export function latestManifestUrl(downloadBase: string): string {
+  return `${downloadBase}/latest.json`;
+}
+
+/**
+ * Directory holding one release's archives and checksums.txt. `version` is
+ * the tag exactly as the manifest publishes it ("v0.4.40-labrastro.2"),
+ * matching the layout install.sh and the Go updater read.
+ */
+export function releaseBaseFor(downloadBase: string, version: string): string {
+  return `${downloadBase}/cli/${version}`;
+}
+
+// The manifest is network input — a mirrored, truncated, or error-page
+// response (JSON `null`, a missing field, a wrong-typed field) must fail with
+// a clear manifest error rather than a TypeError from property access on
+// whatever shape actually arrived. Parsed through the standard
+// parseWithFallback + zod boundary: any schema miss falls back to null and is
+// rejected as an unusable manifest, never surfaced as a runtime TypeError.
+const latestManifestSchema = z.object({
+  version: z.string().trim().min(1),
+});
+
+type LatestManifest = z.infer<typeof latestManifestSchema>;
+
+export function parseLatestManifestVersion(manifest: unknown): string {
+  // Fallback is null so any schema miss is detectable; the explicit generic
+  // keeps the success path typed as the manifest instead of collapsing to
+  // null (parseWithFallback anchors its return type to the fallback's type).
+  const parsed = parseWithFallback<LatestManifest | null>(
+    manifest,
+    latestManifestSchema,
+    null,
+    { endpoint: "downloads/latest.json" },
+  );
+  if (parsed === null) {
+    throw new Error("latest.json did not contain a version string");
+  }
+  return parsed.version;
+}
+
+async function fetchLatestVersion(): Promise<string> {
+  const res = await fetch(latestManifestUrl(INTERNAL_DOWNLOAD_BASE), {
+    redirect: "follow",
+  });
+  if (!res.ok) {
+    throw new Error(
+      `latest.json fetch failed: ${res.status} ${res.statusText}`,
+    );
+  }
+  return parseLatestManifestVersion(await res.json());
+}
 
 function binaryName(): string {
   return process.platform === "win32" ? "multica.exe" : "multica";
@@ -42,10 +102,10 @@ async function downloadToFile(url: string, dest: string): Promise<void> {
   await pipeline(nodeStream, createWriteStream(dest));
 }
 
-// Fetch goreleaser's published checksums.txt and parse it into a
+// Fetch the release's published checksums.txt and parse it into a
 // filename → sha256 lookup. Format is `<hex>  <filename>` per line.
-async function fetchChecksums(): Promise<Map<string, string>> {
-  const url = `${GITHUB_LATEST_BASE}/checksums.txt`;
+async function fetchChecksums(releaseBase: string): Promise<Map<string, string>> {
+  const url = `${releaseBase}/checksums.txt`;
   const res = await fetch(url, { redirect: "follow" });
   if (!res.ok) {
     throw new Error(
@@ -92,7 +152,9 @@ async function extractArchive(archive: string, dest: string): Promise<void> {
 
 async function installFresh(): Promise<string> {
   const target = managedCliPath();
-  const checksums = await fetchChecksums();
+  const version = await fetchLatestVersion();
+  const releaseBase = releaseBaseFor(INTERNAL_DOWNLOAD_BASE, version);
+  const checksums = await fetchChecksums(releaseBase);
   const assetName = selectPlatformReleaseAssetName(checksums.keys());
   const expectedChecksum = checksums.get(assetName);
   if (!expectedChecksum) {
@@ -100,7 +162,7 @@ async function installFresh(): Promise<string> {
       `no checksum for ${assetName} in checksums.txt — refusing to install unverified binary`,
     );
   }
-  const url = `${GITHUB_LATEST_BASE}/${assetName}`;
+  const url = `${releaseBase}/${assetName}`;
 
   const workDir = join(tmpdir(), `multica-cli-${Date.now()}`);
   await mkdir(workDir, { recursive: true });
@@ -146,7 +208,8 @@ async function installFresh(): Promise<string> {
 /**
  * Returns the path to a usable `multica` binary. If one is already present at
  * the managed userData location, returns it immediately. Otherwise downloads
- * the latest release asset for the current platform and installs it.
+ * the latest release asset for the current platform from the internal
+ * release source and installs it.
  */
 export async function ensureManagedCli(
   options: { forceInstall?: boolean } = {},

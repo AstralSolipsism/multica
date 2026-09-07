@@ -11,11 +11,11 @@ import (
 )
 
 // Indirections over the real release / version helpers so tests can run the
-// auto-update loop deterministically without reaching out to GitHub or
-// shelling out to brew/curl. Mirrors the pattern used at the top of daemon.go
-// for `isBrewInstall` / `getBrewPrefix` / `matchKnownBrewPrefix`.
+// auto-update loop deterministically without reaching out to the release
+// source or shelling out to brew/curl. Mirrors the pattern used at the top of
+// daemon.go for `isBrewInstall` / `getBrewPrefix` / `matchKnownBrewPrefix`.
 var (
-	fetchLatestRelease = cli.FetchLatestRelease
+	fetchLatestVersion = cli.FetchLatestVersion
 	isReleaseVersion   = cli.IsReleaseVersion
 	isNewerVersion     = cli.IsNewerVersion
 )
@@ -63,9 +63,10 @@ func ParseSelfVersion(raw string) string {
 // autoUpdateInitialDelay is how long the loop waits after Run() returns before
 // performing its first version check. The daemon has plenty to do at startup
 // (auth, register, sync workspaces, kick off heartbeats); we don't want to add
-// an outbound HTTPS call to GitHub on top of that. The delay is also short
-// enough that a brand-new install with an available update still self-updates
-// within a couple of minutes rather than after the full check interval.
+// an outbound HTTPS call to the release source on top of that. The delay is
+// also short enough that a brand-new install with an available update still
+// self-updates within a couple of minutes rather than after the full check
+// interval.
 var autoUpdateInitialDelay = 2 * time.Minute
 
 // selfReloadCheckInterval is how often the loop compares the version compiled
@@ -94,8 +95,9 @@ var selfReloadProbeTimeout = 10 * time.Second
 // different multica binary". It runs two independent checks on one goroutine,
 // which is what keeps them from racing each other into triggerRestart:
 //
-//   - tryAutoUpdate: poll GitHub for a newer release and, when the daemon is
-//     idle, run the same brew-or-download upgrade as the server-triggered path.
+//   - tryAutoUpdate: poll the internal release source for a newer release and,
+//     when the daemon is idle, run the same download upgrade as the
+//     server-triggered path.
 //   - trySelfReload: notice that the binary on disk was replaced out of band
 //     and re-exec into it.
 //
@@ -103,13 +105,13 @@ var selfReloadProbeTimeout = 10 * time.Second
 // and replaces the CLI binary itself, so self-updating would be clobbered on
 // the next launch and re-execing would fight the app's own lifecycle.
 //
-// The GitHub half is additionally skipped when the operator opted out
+// The release-poll half is additionally skipped when the operator opted out
 // (--no-auto-update / MULTICA_DAEMON_AUTO_UPDATE=false), when the server is
 // self-hosted (default-off, MUL-2381), or when the running version isn't a
 // tagged release — source builds (`make daemon`) report a `git describe`-style
-// version and upgrading them to a public release would silently discard the dev
-// work on the machine. None of those apply to the on-disk half, which follows a
-// binary the operator installed themselves; see trySelfReload.
+// version and upgrading them to a published release would silently discard the
+// dev work on the machine. None of those apply to the on-disk half, which
+// follows a binary the operator installed themselves; see trySelfReload.
 //
 // Each tick is silent on the happy path so the log stays uncluttered for users
 // who run the daemon for weeks at a time.
@@ -207,24 +209,24 @@ func (d *Daemon) tryAutoUpdate(ctx context.Context) {
 		return
 	}
 	// Cheap pre-fetch idle check: the release-metadata fetch below makes an
-	// HTTPS call to GitHub, and there is no point paying that cost (or the
-	// rate-limit budget) when we already know we are going to defer. A task
-	// that starts between this load and the barrier check below is caught
-	// by the strict re-check under claimMu inside trySetClaimBarrier.
+	// HTTPS call to the release source, and there is no point paying that cost
+	// when we already know we are going to defer. A task that starts between
+	// this load and the barrier check below is caught by the strict re-check
+	// under claimMu inside trySetClaimBarrier.
 	if running := d.activeTasks.Load(); running > 0 {
 		d.logger.Debug("auto-update: skip — tasks running", "active", running)
 		return
 	}
 
-	release, err := fetchLatestRelease()
+	latestTag, err := fetchLatestVersion()
 	if err != nil {
 		d.logger.Warn("auto-update: fetch latest release failed — will retry", "error", err)
 		return
 	}
-	if release == nil || release.TagName == "" {
+	if latestTag == "" {
 		return
 	}
-	if !isNewerVersion(release.TagName, d.cfg.CLIVersion) {
+	if !isNewerVersion(latestTag, d.cfg.CLIVersion) {
 		return
 	}
 
@@ -262,15 +264,15 @@ func (d *Daemon) tryAutoUpdate(ctx context.Context) {
 	}()
 
 	d.logger.Info("auto-update: newer release available, upgrading",
-		"current", d.cfg.CLIVersion, "target", release.TagName)
+		"current", d.cfg.CLIVersion, "target", latestTag)
 
-	output, err := d.runUpdateFn(release.TagName)
+	output, err := d.runUpdateFn(latestTag)
 	if err != nil {
 		d.logger.Warn("auto-update: upgrade failed — will retry", "error", err, "output", output)
 		return
 	}
 
-	d.logger.Info("auto-update: upgrade completed, restarting", "target", release.TagName, "output", output)
+	d.logger.Info("auto-update: upgrade completed, restarting", "target", latestTag, "output", output)
 	if !d.triggerRestart() {
 		// The upgrade landed but the handoff target could not be resolved, so
 		// no process exit is coming. Fall through to both deferred restores:
@@ -293,7 +295,7 @@ func (d *Daemon) tryAutoUpdate(ctx context.Context) {
 // trySelfReload restarts the daemon when the multica binary on disk no longer
 // reports the version compiled into this process.
 //
-// This is the out-of-band half of self-update. `brew upgrade multica`, a
+// This is the out-of-band half of self-update. A manual reinstall, a
 // re-download, or a developer's `make build` all replace the binary at the same
 // path, and the daemon then keeps serving the version it booted with: its own
 // version string is frozen at compile time, and the pinned-path self-heal in
@@ -302,10 +304,11 @@ func (d *Daemon) tryAutoUpdate(ctx context.Context) {
 //
 // tryAutoUpdate does eventually recover the most common shape of this — the
 // running version is older than the latest release, so it re-runs the upgrade
-// (a no-op under brew) and restarts. What it cannot recover is the rest:
-// self-hosted daemons where auto-update is default-off (MUL-2381), dev builds
-// skipped by isReleaseVersion, and installing something GitHub doesn't consider
-// newer (a deliberate downgrade, or an intermediate version). It is also up to
+// (a no-op when the target equals the on-disk version) and restarts. What it
+// cannot recover is the rest: self-hosted daemons where auto-update is
+// default-off (MUL-2381), dev builds skipped by isReleaseVersion, and
+// installing something the version comparison doesn't rank newer (a deliberate
+// downgrade, or an intermediate version). It is also up to
 // a full check interval slow. This check closes all of that, which is why it
 // has its own switch (--no-auto-reload / MULTICA_DAEMON_AUTO_RELOAD=false /
 // disable_auto_reload) rather than riding on MULTICA_DAEMON_AUTO_UPDATE.

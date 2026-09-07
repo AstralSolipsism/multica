@@ -169,19 +169,35 @@ export function DaemonSettingsTab() {
                 : t(($) => $.desktop.daemon.cli_missing)
           }
         >
-          {cliInstalled === false && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                window.desktopAPI.openExternal(
-                  "https://github.com/multica-ai/multica#cli-installation",
-                )
-              }
-            >
-              {t(($) => $.desktop.daemon.installation_guide)}
-            </Button>
-          )}
+          {cliInstalled === false &&
+            (window.desktopAPI.appInfo.os === "windows" ? (
+              // The internal install.sh script is macOS/Linux only, so on
+              // Windows a button opening it would lead nowhere. Point at the
+              // manual archive steps instead — never at the upstream repo's
+              // install guide, which would install an uncustomized CLI.
+              <span
+                className="inline-flex items-center text-caption text-muted-foreground"
+                title={t(($) => $.desktop.daemon.cli_install_windows_help)}
+              >
+                {t(($) => $.desktop.daemon.cli_install_windows_label)}
+              </span>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  // The internal release source's installer — the same script
+                  // the CLI install instructions show. Never point users at
+                  // the upstream repo's install guide: installing that CLI
+                  // would replace this customized deployment's binary.
+                  window.desktopAPI.openExternal(
+                    "https://multica.outlune.com/downloads/install.sh",
+                  )
+                }
+              >
+                {t(($) => $.desktop.daemon.installation_guide)}
+              </Button>
+            ))}
           {cliInstalled !== false && <span />}
         </SettingsRow>
       </SettingsCard>

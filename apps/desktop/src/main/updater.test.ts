@@ -175,12 +175,27 @@ describe("setupAutoUpdater", () => {
     rmSync(ctx.userDataPath, { recursive: true, force: true });
   });
 
-  it("enables automatic background updates by default", async () => {
+  it("keeps automatic background updates off by default", async () => {
     setupAutoUpdater(() => null);
 
     await expect(invokeIpc("updater:get-preferences")).resolves.toEqual({
-      automaticUpdates: true,
+      automaticUpdates: false,
     });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(ctx.checkForUpdates).not.toHaveBeenCalled();
+  });
+
+  it("runs the startup check when an existing install opted in", async () => {
+    writeFileSync(
+      updaterPreferencesPath(ctx.userDataPath),
+      JSON.stringify({ automaticUpdates: true }),
+    );
+    setupAutoUpdater(() => null);
+
+    // Let the async preference load settle before advancing timers so the
+    // check runs against the persisted opt-in, not the default.
+    await invokeIpc("updater:get-preferences");
 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(ctx.checkForUpdates).toHaveBeenCalledTimes(1);

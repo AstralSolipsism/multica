@@ -40,17 +40,22 @@ afterEach(() => {
 
 describe("UpdateSection read-only status", () => {
   it("shows Latest without a redundant read-only label or update action", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ tag_name: "v0.4.0" }),
-      }),
-    );
+    // Module-scope caching (see the non-release suite below) means this is
+    // the only case in this describe block that actually fires the fetch, so
+    // it also pins WHERE the version check goes: the internal release
+    // manifest, never the upstream GitHub API.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ version: "v0.4.0" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
     renderSection({ runtimeId: null });
 
     expect(await screen.findByText("Latest")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://multica.outlune.com/downloads/latest.json",
+    );
     expect(screen.queryByText("Read-only")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Update" }),
@@ -62,7 +67,7 @@ describe("UpdateSection read-only status", () => {
       "fetch",
       vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ tag_name: "v0.4.0" }),
+        json: async () => ({ version: "v0.4.0" }),
       }),
     );
 
@@ -80,7 +85,7 @@ describe("UpdateSection read-only status", () => {
       "fetch",
       vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ tag_name: "v0.4.0" }),
+        json: async () => ({ version: "v0.4.0" }),
       }),
     );
 
@@ -107,9 +112,9 @@ describe("UpdateSection read-only status", () => {
 describe("UpdateSection non-release versions", () => {
   const LATEST = "v0.4.20";
 
-  // fetchLatestVersion memoizes the GitHub tag in module scope for 10 minutes,
-  // so without advancing the clock every case here would silently reuse the tag
-  // an earlier test cached rather than its own.
+  // fetchLatestVersion memoizes the manifest version in module scope for 10
+  // minutes, so without advancing the clock every case here would silently
+  // reuse the version an earlier test cached rather than its own.
   let clock = Date.now();
 
   beforeEach(() => {
@@ -119,7 +124,7 @@ describe("UpdateSection non-release versions", () => {
       "fetch",
       vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ tag_name: LATEST }),
+        json: async () => ({ version: LATEST }),
       }),
     );
   });
@@ -168,5 +173,29 @@ describe("UpdateSection non-release versions", () => {
       screen.queryByRole("button", { name: "Update" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Local build")).not.toBeInTheDocument();
+  });
+
+  it("claims no state when the feed's latest version is itself unparseable", async () => {
+    // The internal feed serves labrastro tags ("v0.4.40-labrastro.2") that
+    // the strict parser cannot order against a release. Against a parseable
+    // current version that must be "no claim" — showing "Latest" would
+    // vouch for a comparison we never actually made.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ version: "v0.4.40-labrastro.2" }),
+      }),
+    );
+
+    renderSection({ runtimeId: "runtime-1", currentVersion: "v0.4.17" });
+
+    expect(await screen.findByText("v0.4.17")).toBeInTheDocument();
+    expect(screen.queryByText("Latest")).not.toBeInTheDocument();
+    expect(screen.queryByText("available")).not.toBeInTheDocument();
+    expect(screen.queryByText("Local build")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Update" }),
+    ).not.toBeInTheDocument();
   });
 });

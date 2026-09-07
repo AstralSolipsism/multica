@@ -121,14 +121,20 @@ win:
   target:
     - nsis
   artifactName: labrastro-desktop-${version}-windows-${arch}.${ext}
+# Update feed for electron-updater. Points at the internal Labrastro release
+# source — never the upstream multica-ai/multica GitHub Releases, which would
+# let the next update overwrite this customized build with the upstream
+# binary. The internal release process must upload the electron-builder
+# output (installers, blockmaps, latest*.yml) to this directory before
+# clients can update; until then a manual "check for updates" fails cleanly
+# and automatic checks stay off (see DEFAULT_UPDATER_PREFERENCES).
+#
+# This section must stay present even while the feed is empty:
+# scripts/package.mjs (builderArgsForTarget) unconditionally appends
+# `-c.publish.channel=…` overrides for the Windows arm64 and macOS x64
+# targets, and electron-updater resolves those channels against this feed URL
+# at runtime (updater.ts pins the matching channel).
 publish:
-  provider: github
-  owner: multica-ai
-  repo: multica
-  # Align with our CLI release flow which pre-creates a *published* GitHub
-  # Release via `gh release create`. The electron-builder default of
-  # `releaseType: draft` conflicts with `existingType=release` and causes
-  # uploads of the DMG/ZIP/blockmaps/latest-mac.yml to be silently skipped,
-  # which breaks electron-updater auto-update on installed clients.
-  releaseType: release
+  provider: generic
+  url: https://multica.outlune.com/downloads/desktop
 npmRebuild: false
