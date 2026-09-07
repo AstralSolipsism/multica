@@ -6254,13 +6254,14 @@ func TestCodexRateLimitsToPlanQuota(t *testing.T) {
 // snapshot with its true age and the 24h staleness rule stays honest.
 func TestParseCodexSessionRateLimitsRespectTaskBoundary(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "rollout.jsonl")
 	old := time.Now().Add(-48 * time.Hour)
 	now := time.Now()
 
 	t.Run("resume with no new activity drops the historical snapshot", func(t *testing.T) {
 		t.Parallel()
+		// Each subtest owns its TempDir and file: parallel subtests sharing
+		// one rollout file raced writes against reads (12% flake).
+		path := filepath.Join(t.TempDir(), "rollout.jsonl")
 		content := strings.Join([]string{
 			fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":7,"window_minutes":300,"resets_at":%d}},"info":{"total_token_usage":{"input_tokens":500,"output_tokens":20}}}}`, old.UTC().Format(time.RFC3339Nano), now.Add(72*time.Hour).Unix()),
 			fmt.Sprintf(`{"timestamp":%q,"type":"turn_context","payload":{"model":"gpt-5"}}`, now.UTC().Format(time.RFC3339Nano)),
@@ -6279,6 +6280,7 @@ func TestParseCodexSessionRateLimitsRespectTaskBoundary(t *testing.T) {
 		t.Parallel()
 		// Rate-limited before the first completed turn: quota arrives, usage
 		// never does. The snapshot must survive (member's hardening intent).
+		path := filepath.Join(t.TempDir(), "rollout.jsonl")
 		content := strings.Join([]string{
 			fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":100,"window_minutes":300,"resets_at":%d}}}}`, now.Add(time.Second).UTC().Format(time.RFC3339Nano), now.Add(2*time.Hour).Unix()),
 			"",
