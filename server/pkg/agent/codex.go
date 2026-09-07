@@ -3175,18 +3175,24 @@ func (c *codexClient) handleEvent(msg map[string]any) {
 		}
 	case "token_count":
 		// Legacy token_count events carry the account rate-limit snapshot at
-		// info.rate_limits. The shape crosses a map[string]any boundary, so a
+		// payload level, NEXT TO info (codex >= 0.153); older builds nested
+		// it at info.rate_limits. Check the sibling first, fall back to the
+		// nested position. The shape crosses a map[string]any boundary, so a
 		// JSON round-trip into the typed struct is the cheap safe parse; a
 		// missing or malformed object leaves the previous snapshot in place.
-		if info, ok := msg["info"].(map[string]any); ok {
-			if raw, ok := info["rate_limits"]; ok {
-				var limits codexRawRateLimits
-				if data, err := json.Marshal(raw); err == nil {
-					if err := json.Unmarshal(data, &limits); err == nil {
-						c.usageMu.Lock()
-						c.rateLimits = &limits
-						c.usageMu.Unlock()
-					}
+		raw, ok := msg["rate_limits"]
+		if !ok {
+			if info, isMap := msg["info"].(map[string]any); isMap {
+				raw, ok = info["rate_limits"]
+			}
+		}
+		if ok {
+			var limits codexRawRateLimits
+			if data, err := json.Marshal(raw); err == nil {
+				if err := json.Unmarshal(data, &limits); err == nil {
+					c.usageMu.Lock()
+					c.rateLimits = &limits
+					c.usageMu.Unlock()
 				}
 			}
 		}
@@ -3705,12 +3711,15 @@ type codexRawRateLimits struct {
 }
 
 // codexSessionTokenCount represents a token_count event in Codex JSONL.
+// rate_limits sits at payload level, next to info, in codex >= 0.153;
+// older builds nested it inside info — both positions are read.
 type codexSessionTokenCount struct {
 	Timestamp time.Time `json:"timestamp"`
 	Type      string    `json:"type"`
 	Payload   *struct {
-		Type string `json:"type"`
-		Info *struct {
+		Type       string              `json:"type"`
+		RateLimits *codexRawRateLimits `json:"rate_limits"`
+		Info       *struct {
 			TotalTokenUsage *codexRawTokenUsage `json:"total_token_usage"`
 			LastTokenUsage  *codexRawTokenUsage `json:"last_token_usage"`
 			Model           string              `json:"model"`
@@ -3718,6 +3727,21 @@ type codexSessionTokenCount struct {
 		} `json:"info"`
 		Model string `json:"model"`
 	} `json:"payload"`
+}
+
+// payloadRateLimits returns the event's rate-limit snapshot, preferring the
+// current payload-level position over the legacy info-nested one.
+func (evt *codexSessionTokenCount) payloadRateLimits() *codexRawRateLimits {
+	if evt == nil || evt.Payload == nil {
+		return nil
+	}
+	if evt.Payload.RateLimits != nil {
+		return evt.Payload.RateLimits
+	}
+	if evt.Payload.Info != nil {
+		return evt.Payload.Info.RateLimits
+	}
+	return nil
 }
 
 // parseCodexSessionFile extracts the final token_count from a Codex session file.
@@ -3770,7 +3794,14 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 			continue
 		}
 
-		// Extract token usage from token_count events.
+		// Extract token usage from token_count events. Rate limits are read
+		// regardless of the info guard: a payload-level rate_limits report
+		// counts even when the event carries no usage info at all.
+		if evt.Payload.Type == "token_count" {
+			if rl := evt.payloadRateLimits(); rl != nil {
+				result.rateLimits = rl
+			}
+		}
 		if evt.Payload.Type == "token_count" && evt.Payload.Info != nil {
 			afterStart := startTime.IsZero() || timestampAfterStart ||
 				(evt.Timestamp.IsZero() && (!resumed || afterStartBoundary))
@@ -3792,12 +3823,6 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 				// fallback the old whole-file parser would have selected.
 				finalUsage = normalizeCodexRawTokenUsage(*usage)
 				finalUsageFound = true
-			}
-			// Rate limits are account-level snapshots, not deltas: the newest
-			// non-nil report in the file is the best answer regardless of the
-			// resume boundary arithmetic above.
-			if evt.Payload.Info.RateLimits != nil {
-				result.rateLimits = evt.Payload.Info.RateLimits
 			}
 			if evt.Payload.Info.Model != "" {
 				result.model = evt.Payload.Info.Model

@@ -5885,8 +5885,9 @@ func TestCodexResumeOverflowErrorMatchesLiveFailureText(t *testing.T) {
 }
 
 // TestScanCodexSessionUsageCapturesRateLimits pins the JSONL fallback: the
-// newest token_count event's rate_limits object rides the scan result out,
-// and an older event without rate_limits must not erase it.
+// newest token_count event's rate_limits object rides the scan result out
+// whether it sits next to info (codex >= 0.153) or nested inside it (older
+// builds), and an older event without rate_limits must not erase it.
 func TestScanCodexSessionUsageCapturesRateLimits(t *testing.T) {
 	t.Parallel()
 	taskHome := t.TempDir()
@@ -5900,9 +5901,12 @@ func TestScanCodexSessionUsageCapturesRateLimits(t *testing.T) {
 	if err := os.MkdirAll(dateDir, 0o755); err != nil {
 		t.Fatalf("mkdir date dir: %v", err)
 	}
+	// Real codex >= 0.153 shape: rate_limits is a SIBLING of info in the
+	// token_count payload (verified against a live rollout file). The first
+	// line keeps the legacy info-nested position to pin the fallback.
 	content := strings.Join([]string{
 		fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"output_tokens":20},"rate_limits":{"primary":{"used_percent":42.5,"window_minutes":300,"resets_at":1757000000},"secondary":{"used_percent":10,"window_minutes":10080,"resets_at":1757600000}}}}}`, startTime.Add(time.Second).UTC().Format(time.RFC3339Nano)),
-		fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":600,"output_tokens":30},"rate_limits":{"primary":{"used_percent":55,"window_minutes":300,"resets_at":1757000000},"secondary":{"used_percent":11,"window_minutes":10080,"resets_at":1757600000}}}}}`, startTime.Add(2*time.Second).UTC().Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":55,"window_minutes":300,"resets_at":1757000000},"secondary":{"used_percent":11,"window_minutes":10080,"resets_at":1757600000}},"info":{"total_token_usage":{"input_tokens":600,"output_tokens":30}}}}`, startTime.Add(2*time.Second).UTC().Format(time.RFC3339Nano)),
 		"",
 	}, "\n")
 	if err := os.WriteFile(filepath.Join(dateDir, "rollout-2026-07-13T00-00-00-"+threadID+".jsonl"), []byte(content), 0o644); err != nil {
@@ -5931,19 +5935,20 @@ func TestScanCodexSessionUsageCapturesRateLimits(t *testing.T) {
 }
 
 // TestHandleEventTokenCountCapturesRateLimits pins the live capture path: a
-// legacy token_count event stores info.rate_limits under usageMu, and a
-// malformed object leaves the previous snapshot untouched.
+// token_count event stores rate_limits (payload-level in current codex,
+// info-nested in older builds) under usageMu, and a missing object leaves
+// the previous snapshot untouched.
 func TestHandleEventTokenCountCapturesRateLimits(t *testing.T) {
 	t.Parallel()
 	c, _, _ := newTestCodexClient(t)
 
+	// Current codex shape: rate_limits next to info.
 	c.handleEvent(map[string]any{
 		"type": "token_count",
-		"info": map[string]any{
-			"rate_limits": map[string]any{
-				"primary":   map[string]any{"used_percent": 42.5, "window_minutes": 300, "resets_at": 1757000000},
-				"secondary": map[string]any{"used_percent": 100, "window_minutes": 10080},
-			},
+		"info": map[string]any{},
+		"rate_limits": map[string]any{
+			"primary":   map[string]any{"used_percent": 42.5, "window_minutes": 300, "resets_at": 1757000000},
+			"secondary": map[string]any{"used_percent": 100, "window_minutes": 10080},
 		},
 	})
 
@@ -5970,6 +5975,23 @@ func TestHandleEventTokenCountCapturesRateLimits(t *testing.T) {
 	c.usageMu.Unlock()
 	if kept == nil || kept.Primary == nil || kept.Primary.UsedPercent == nil || *kept.Primary.UsedPercent != 42.5 {
 		t.Fatalf("rate limits after empty token_count = %+v, want previous snapshot kept", kept)
+	}
+
+	// Legacy nested position (info.rate_limits) still works.
+	c2, _, _ := newTestCodexClient(t)
+	c2.handleEvent(map[string]any{
+		"type": "token_count",
+		"info": map[string]any{
+			"rate_limits": map[string]any{
+				"primary": map[string]any{"used_percent": 12.5, "window_minutes": 300},
+			},
+		},
+	})
+	c2.usageMu.Lock()
+	nested := c2.rateLimits
+	c2.usageMu.Unlock()
+	if nested == nil || nested.Primary == nil || nested.Primary.UsedPercent == nil || *nested.Primary.UsedPercent != 12.5 {
+		t.Fatalf("legacy nested rate limits = %+v, want primary 12.5", nested)
 	}
 }
 
