@@ -328,7 +328,13 @@
     "stale_hint": "{{time}} 전 스냅샷",
     "observed_ago": "{{time}} 전 업데이트됨",
     "source_daemon": "데몬 경유",
-    "source_external": "외부 푸시 경유"
+    "source_external": "외부 푸시 경유",
+    "glm_title": "GLM 플랜 잔여량",
+    "glm_window_tokens": "5시간 토큰",
+    "glm_window_time": "월간 도구 크레딧",
+    "glm_window_credit": "크레딧 윈도우",
+    "glm_unknown": "잔여량 미상",
+    "glm_window_fallback": "{{type}}"
   },
   "profiles": {
     "cta": "런타임 추가",

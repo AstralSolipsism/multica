@@ -328,7 +328,13 @@
     "stale_hint": "{{time}}前のスナップショット",
     "observed_ago": "{{time}}前に更新",
     "source_daemon": "デーモン経由",
-    "source_external": "外部プッシュ経由"
+    "source_external": "外部プッシュ経由",
+    "glm_title": "GLM プラン残量",
+    "glm_window_tokens": "5時間トークン",
+    "glm_window_time": "月間ツールクレジット",
+    "glm_window_credit": "クレジット枠",
+    "glm_unknown": "残量不明",
+    "glm_window_fallback": "{{type}}"
   },
   "profiles": {
     "cta": "ランタイムを追加",
