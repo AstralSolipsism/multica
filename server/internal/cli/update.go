@@ -30,13 +30,34 @@ import (
 // changes one place.
 const ChecksumManifestName = "checksums.txt"
 
+// DefaultDownloadBase is the internal Labrastro release source. Every update
+// channel — `multica update`, the daemon auto-update poller, and the
+// server-triggered runtime update — resolves versions and archives from here.
+// The upstream multica-ai/multica GitHub Releases are never consulted: this
+// fork carries internal customizations, and an upstream pull would overwrite
+// them with an uncustomized binary.
+//
+// Layout (same source scripts/install.sh reads):
+//
+//	<base>/latest.json                      → {"version": "v0.4.40-labrastro.2", ...}
+//	<base>/cli/<tag>/checksums.txt          → "<sha256>  <archive>" per line
+//	<base>/cli/<tag>/<archive>              → multica-cli-<ver>-<goos>-<goarch>.<ext>
+const DefaultDownloadBase = "https://multica.outlune.com/downloads"
+
 const DefaultUpdateDownloadTimeout = 120 * time.Second
 
-// GitHubRelease is the subset of the GitHub releases API response we need.
-type GitHubRelease struct {
-	TagName string               `json:"tag_name"`
-	HTMLURL string               `json:"html_url"`
-	Assets  []GitHubReleaseAsset `json:"assets"`
+// downloadBase is the mutable view of DefaultDownloadBase: a package var so
+// tests can point the whole update flow at an httptest server.
+var downloadBase = DefaultDownloadBase
+
+// latestManifestURL and releaseAssetsBase name the two lookup points on the
+// release source: the version manifest and one release's asset directory.
+func latestManifestURL() string {
+	return downloadBase + "/latest.json"
+}
+
+func releaseAssetsBase(tag string) string {
+	return downloadBase + "/cli/" + tag
 }
 
 // IsReleaseVersion reports whether v looks like a tagged release version
@@ -122,9 +143,34 @@ func parseReleaseVersion(v string) ([3]int, bool) {
 	return out, true
 }
 
-type GitHubReleaseAsset struct {
-	Name               string `json:"name"`
-	BrowserDownloadURL string `json:"browser_download_url"`
+// latestManifest is the subset of the release source's latest.json we need.
+type latestManifest struct {
+	Version string `json:"version"`
+}
+
+// FetchLatestVersion returns the latest release tag published on the internal
+// release source (e.g. "v0.4.40-labrastro.2").
+func FetchLatestVersion() (string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(latestManifestURL())
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("release manifest returned %d", resp.StatusCode)
+	}
+
+	var manifest latestManifest
+	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+		return "", err
+	}
+	tag := strings.TrimSpace(manifest.Version)
+	if tag == "" {
+		return "", fmt.Errorf("release manifest has no version")
+	}
+	return tag, nil
 }
 
 func releaseArchiveExtension(goos string) string {
@@ -154,31 +200,20 @@ func releaseAssetCandidates(targetVersion, goos, goarch string) []string {
 	}
 }
 
-func findReleaseAsset(assets []GitHubReleaseAsset, targetVersion, goos, goarch string) (*GitHubReleaseAsset, error) {
-	for _, candidate := range releaseAssetCandidates(targetVersion, goos, goarch) {
-		for i := range assets {
-			if assets[i].Name == candidate {
-				return &assets[i], nil
-			}
+// resolveReleaseAsset picks the archive for goos/goarch out of a release's
+// checksum manifest and returns its name and expected SHA-256. The manifest is
+// authoritative: an archive absent from checksums.txt is never downloaded, so
+// a half-published release fails closed instead of installing unverified
+// bytes — the auto-update poller runs unattended and an unverified binary
+// swap is a supply-chain risk.
+func resolveReleaseAsset(manifest []byte, tag, goos, goarch string) (string, string, error) {
+	for _, candidate := range releaseAssetCandidates(tag, goos, goarch) {
+		if sum, err := parseChecksumManifest(manifest, candidate); err == nil {
+			return candidate, sum, nil
 		}
 	}
-
-	candidates := strings.Join(releaseAssetCandidates(targetVersion, goos, goarch), ", ")
-	return nil, fmt.Errorf("no matching release asset for %s/%s (tried: %s)", goos, goarch, candidates)
-}
-
-// findChecksumManifestAsset locates the GoReleaser-generated checksums.txt
-// among a release's assets. Required for the direct-download path's SHA-256
-// verification — if it is missing we refuse to replace the binary rather
-// than fall back to unverified install, because the auto-update poller runs
-// unattended and an unverified binary swap is a supply-chain risk.
-func findChecksumManifestAsset(assets []GitHubReleaseAsset) (*GitHubReleaseAsset, error) {
-	for i := range assets {
-		if assets[i].Name == ChecksumManifestName {
-			return &assets[i], nil
-		}
-	}
-	return nil, fmt.Errorf("checksum manifest %q not present in release", ChecksumManifestName)
+	candidates := strings.Join(releaseAssetCandidates(tag, goos, goarch), ", ")
+	return "", "", fmt.Errorf("no checksummed release asset for %s/%s (tried: %s)", goos, goarch, candidates)
 }
 
 // parseChecksumManifest reads a GoReleaser-style "<sha256>  <filename>"
@@ -222,57 +257,6 @@ func verifyAssetSHA256(data []byte, expectedHex, assetName string) error {
 		return fmt.Errorf("checksum mismatch for %q: expected %s, got %s", assetName, expectedHex, actual)
 	}
 	return nil
-}
-
-func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/multica-ai/multica/releases/tags/"+tag, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
-	}
-
-	var release GitHubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, err
-	}
-	return &release, nil
-}
-
-// FetchLatestRelease fetches the latest release tag from the multica GitHub repo.
-func FetchLatestRelease() (*GitHubRelease, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/multica-ai/multica/releases/latest", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
-	}
-
-	var release GitHubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, err
-	}
-	return &release, nil
 }
 
 // knownBrewPrefixes lists the install roots Homebrew uses on each platform.
@@ -326,17 +310,6 @@ func GetBrewPrefix() string {
 	return strings.TrimSpace(string(out))
 }
 
-// UpdateViaBrew runs `brew upgrade multica-ai/tap/multica`.
-// Returns the combined output and any error.
-func UpdateViaBrew() (string, error) {
-	cmd := exec.Command("brew", "upgrade", "multica-ai/tap/multica")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf("brew upgrade failed: %w", err)
-	}
-	return string(out), nil
-}
-
 func updateDownloadTimeoutOrDefault(timeout time.Duration) time.Duration {
 	if timeout <= 0 {
 		return DefaultUpdateDownloadTimeout
@@ -361,13 +334,15 @@ func fetchURLBytes(url string, timeout time.Duration) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// UpdateViaDownload downloads the latest release binary from GitHub and replaces
-// the current executable in-place. Returns the combined output message and any error.
+// UpdateViaDownload downloads the target release archive from the internal
+// release source and replaces the current executable in-place. Returns the
+// combined output message and any error.
 func UpdateViaDownload(targetVersion string) (string, error) {
 	return UpdateViaDownloadWithTimeout(targetVersion, DefaultUpdateDownloadTimeout)
 }
 
-// UpdateViaDownloadWithTimeout downloads the latest release binary with a caller-selected timeout.
+// UpdateViaDownloadWithTimeout downloads the target release archive with a
+// caller-selected timeout.
 func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Duration) (string, error) {
 	// Determine current binary path.
 	exePath, err := selfexec.Resolve()
@@ -380,33 +355,22 @@ func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Dur
 	}
 
 	tag := normalizeReleaseTag(targetVersion)
-	release, err := fetchReleaseByTag(tag)
-	if err != nil {
-		return "", fmt.Errorf("fetch release metadata: %w", err)
-	}
-	asset, err := findReleaseAsset(release.Assets, tag, runtime.GOOS, runtime.GOARCH)
-	if err != nil {
-		return "", err
-	}
-	manifestAsset, err := findChecksumManifestAsset(release.Assets)
-	if err != nil {
-		return "", err
-	}
-	downloadURL := asset.BrowserDownloadURL
-	assetName := asset.Name
+	assetBase := releaseAssetsBase(tag)
 
-	// Pull the checksum manifest first so a release that is half-published
-	// (archives uploaded but checksums.txt not yet) fails before we eat the
-	// archive's bandwidth.
+	// Pull the checksum manifest first: it is both the asset directory listing
+	// and the integrity source, so a release that is half-published (archives
+	// uploaded but checksums.txt not yet, or the requested archive missing)
+	// fails before we eat the archive's bandwidth.
 	timeout := updateDownloadTimeoutOrDefault(downloadTimeout)
-	manifestData, err := fetchURLBytes(manifestAsset.BrowserDownloadURL, timeout)
+	manifestData, err := fetchURLBytes(assetBase+"/"+ChecksumManifestName, timeout)
 	if err != nil {
 		return "", fmt.Errorf("download checksum manifest: %w", err)
 	}
-	expectedSum, err := parseChecksumManifest(manifestData, assetName)
+	assetName, expectedSum, err := resolveReleaseAsset(manifestData, tag, runtime.GOOS, runtime.GOARCH)
 	if err != nil {
-		return "", fmt.Errorf("parse checksum manifest: %w", err)
+		return "", err
 	}
+	downloadURL := assetBase + "/" + assetName
 
 	// Buffer the archive into memory so we can verify the full SHA-256
 	// before writing anything to disk. Release archives are ~10–30 MB; the

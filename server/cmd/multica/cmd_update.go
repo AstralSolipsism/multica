@@ -30,39 +30,23 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 
 	fmt.Fprintf(os.Stderr, "Current version: %s (commit: %s, built: %s)\n", version, commit, date)
 
-	// Check latest version from GitHub.
-	latest, err := cli.FetchLatestRelease()
+	// Check the latest version on the internal release source. There is no
+	// upstream fallback: this build carries internal customizations, and an
+	// update from the upstream GitHub Releases would overwrite them.
+	latest, err := cli.FetchLatestVersion()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not check latest version: %v\n", err)
-	} else {
-		latestVer := strings.TrimPrefix(latest.TagName, "v")
-		currentVer := strings.TrimPrefix(version, "v")
-		if currentVer == latestVer {
-			fmt.Fprintln(os.Stderr, "Already up to date.")
-			return nil
-		}
-		fmt.Fprintf(os.Stderr, "Latest version:  %s\n\n", latest.TagName)
+		return fmt.Errorf("could not check the latest version on the internal release source (%s): %w", cli.DefaultDownloadBase, err)
 	}
-
-	// Detect installation method and update accordingly.
-	if cli.IsBrewInstall() {
-		fmt.Fprintln(os.Stderr, "Updating via Homebrew...")
-		output, err := cli.UpdateViaBrew()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s\n", output)
-			return fmt.Errorf("brew upgrade failed: %w\nYou can try manually: brew upgrade multica-ai/tap/multica", err)
-		}
-		fmt.Fprintln(os.Stderr, "Update complete.")
+	latestVer := strings.TrimPrefix(latest, "v")
+	currentVer := strings.TrimPrefix(version, "v")
+	if currentVer == latestVer {
+		fmt.Fprintln(os.Stderr, "Already up to date.")
 		return nil
 	}
+	fmt.Fprintf(os.Stderr, "Latest version:  %s\n\n", latest)
 
-	// Not installed via brew — download binary directly from GitHub Releases.
-	if latest == nil {
-		return fmt.Errorf("could not determine latest version; check https://github.com/multica-ai/multica/releases/latest")
-	}
-	targetVersion := latest.TagName
-	fmt.Fprintf(os.Stderr, "Downloading %s from GitHub Releases...\n", targetVersion)
-	output, err := cli.UpdateViaDownloadWithTimeout(targetVersion, updateDownloadTimeout)
+	fmt.Fprintf(os.Stderr, "Downloading %s from the internal release source...\n", latest)
+	output, err := cli.UpdateViaDownloadWithTimeout(latest, updateDownloadTimeout)
 	if err != nil {
 		return fmt.Errorf("update failed: %w", err)
 	}

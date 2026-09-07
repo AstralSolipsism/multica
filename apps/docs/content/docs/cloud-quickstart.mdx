@@ -11,7 +11,7 @@ Before an agent can execute, the computer that runs it needs at least one [suppo
 
 ## 1. Sign in and open your workspace
 
-Sign in on the web ([multica.ai](https://multica.ai)) or with [Multica Desktop](https://multica.ai/download). Email verification codes and Google are both supported.
+Sign in on the web (https://multica.outlune.com) or with Multica Desktop. Email verification codes and Google are both supported.
 
 - **Desktop**: can connect this computer automatically.
 - **Web**: connect from the command line in the next step.
@@ -26,16 +26,13 @@ Agents execute work on the computers you connect. Open **Configure → Runtimes*
   **macOS / Linux**
 
   ```bash
-  curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+  curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
   multica setup
   ```
 
-  **Windows PowerShell**
-
-  ```powershell
-  irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
-  multica setup
-  ```
+  **Windows**: download the `multica-cli-<version>-windows-<arch>.zip`
+  archive from `https://multica.outlune.com/downloads/cli/v<version>/` and
+  extract `multica.exe` onto your `PATH`, then run `multica setup`.
 
   `multica setup` opens a browser to complete sign-in, then leaves the daemon running in the background. Once the daemon is online, the dialog usually detects the computer within a minute.
 

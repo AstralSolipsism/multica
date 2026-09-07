@@ -174,8 +174,12 @@ export function DaemonSettingsTab() {
               variant="outline"
               size="sm"
               onClick={() =>
+                // The internal release source's installer — the same script
+                // the CLI install instructions show. Never point users at the
+                // upstream repo's install guide: installing that CLI would
+                // replace this customized deployment's binary.
                 window.desktopAPI.openExternal(
-                  "https://github.com/multica-ai/multica#cli-installation",
+                  "https://multica.outlune.com/downloads/install.sh",
                 )
               }
             >

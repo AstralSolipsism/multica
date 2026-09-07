@@ -9,8 +9,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/multica-ai/multica/server/internal/cli"
 )
 
 // newSelfReloadTestDaemon returns a Daemon wired for trySelfReload: a stubbed
@@ -270,7 +268,7 @@ func TestAutoUpdateLoop_WatchesTheBinaryWhenAutoUpdateIsOff(t *testing.T) {
 	d, restartCalls := newSelfReloadTestDaemon(t, "0.3.7")
 	d.cfg.AutoUpdateEnabled = false
 	stubSelfVersion(t, "0.3.8", nil)
-	withStubRelease(t, &cli.GitHubRelease{TagName: "v9.9.9"}, errors.New("fetchLatestRelease must not be called"))
+	withStubLatestVersion(t, "v9.9.9", errors.New("fetchLatestVersion must not be called"))
 	d.runUpdateFn = func(string) (string, error) {
 		t.Fatal("runUpdateFn called with auto-update disabled")
 		return "", nil
@@ -298,7 +296,7 @@ func TestAutoUpdateLoop_AlsoWatchesTheBinaryForDevBuilds(t *testing.T) {
 	d, restartCalls := newSelfReloadTestDaemon(t, "v0.3.7-42-gabcdef0")
 	d.cfg.AutoUpdateEnabled = true
 	stubSelfVersion(t, "v0.3.7-43-gbcdef01", nil)
-	withStubRelease(t, nil, errors.New("fetchLatestRelease must not be called for a dev build"))
+	withStubLatestVersion(t, "", errors.New("fetchLatestVersion must not be called for a dev build"))
 	shortenLoopTimers(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -323,7 +321,7 @@ func TestAutoUpdateLoop_SkipsBothHalvesForDesktop(t *testing.T) {
 	d.cfg.AutoUpdateEnabled = true
 	d.cfg.LaunchedBy = "desktop"
 	probes := stubSelfVersion(t, "0.3.8", nil)
-	withStubRelease(t, nil, errors.New("fetchLatestRelease must not be called on Desktop"))
+	withStubLatestVersion(t, "", errors.New("fetchLatestVersion must not be called on Desktop"))
 	shortenLoopTimers(t)
 
 	// Returns immediately rather than looping, so no cancel is needed.
@@ -438,7 +436,7 @@ func claimsPaused(t *testing.T, d *Daemon) bool {
 // halves of one loop must not disagree about it.
 func TestTryAutoUpdate_ResumesClaimingWhenRestartCannotBeScheduled(t *testing.T) {
 	d, restartCalls := newAutoUpdateTestDaemon(t, "v0.1.13")
-	withStubRelease(t, &cli.GitHubRelease{TagName: "v0.1.14"}, nil)
+	withStubLatestVersion(t, "v0.1.14", nil)
 	d.runUpdateFn = func(string) (string, error) { return "upgraded", nil }
 
 	origResolve := resolveSelfExecutable

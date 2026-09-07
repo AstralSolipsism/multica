@@ -222,14 +222,14 @@ docker compose -f docker-compose.selfhost.yml logs backend \
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
 ```
 
-**Windows PowerShell**
+**Windows**
 
-```powershell
-irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
-```
+内部リリースソース `https://multica.outlune.com/downloads/cli/v<version>/` から
+該当リリースの `multica-cli-<version>-windows-<arch>.zip` をダウンロードし、
+`multica.exe` を `PATH` の通った場所に展開してください。
 
 Multica サービスがこのコンピュータでも動いている場合は、次を実行します。
 

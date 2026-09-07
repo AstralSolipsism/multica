@@ -2,8 +2,13 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { UpdaterPreferences } from "../shared/updater-types";
 
+// Fresh installs ship with automatic updates off. The desktop app is an
+// internal-lab build: silent background updates would pull whatever installer
+// sits on the update feed without the operator choosing to move. An existing
+// install's persisted preference always wins over this default — this only
+// changes the value used when updater-preferences.json is missing or invalid.
 export const DEFAULT_UPDATER_PREFERENCES: UpdaterPreferences = {
-  automaticUpdates: true,
+  automaticUpdates: false,
 };
 
 export function updaterPreferencesPath(userDataPath: string): string {

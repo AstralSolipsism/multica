@@ -222,14 +222,14 @@ docker compose -f docker-compose.selfhost.yml logs backend \
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
 ```
 
-**Windows PowerShell**
+**Windows**
 
-```powershell
-irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
-```
+从内部发布源 `https://multica.outlune.com/downloads/cli/v<version>/` 下载对应
+release 的 `multica-cli-<version>-windows-<arch>.zip` 压缩包，解压出
+`multica.exe` 并放入 `PATH`。
 
 如果 Multica 服务也在这台电脑上，运行：
 

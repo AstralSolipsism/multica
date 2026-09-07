@@ -222,14 +222,14 @@ docker compose -f docker-compose.selfhost.yml logs backend \
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
 ```
 
-**Windows PowerShell**
+**Windows**
 
-```powershell
-irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
-```
+내부 릴리스 소스 `https://multica.outlune.com/downloads/cli/v<version>/`에서
+해당 릴리스의 `multica-cli-<version>-windows-<arch>.zip` 아카이브를 받아
+`multica.exe`를 `PATH`에 놓습니다.
 
 Multica 서비스가 같은 컴퓨터에 있다면 다음을 실행합니다.
 

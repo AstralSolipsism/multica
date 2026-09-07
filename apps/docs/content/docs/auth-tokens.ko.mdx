@@ -55,14 +55,14 @@ PAT를 `Authorization` header에 넣습니다.
 ```bash
 export MULTICA_TOKEN='mul_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
 
-curl https://api.multica.ai/api/me \
+curl https://multica.outlune.com/api/me \
   -H "Authorization: Bearer $MULTICA_TOKEN"
 ```
 
 워크스페이스 수준 API를 호출할 때는 인터페이스 요구 사항에 따라 워크스페이스도 제공해야 합니다.
 
 ```bash
-curl https://api.multica.ai/api/issues \
+curl https://multica.outlune.com/api/issues \
   -H "Authorization: Bearer $MULTICA_TOKEN" \
   -H "X-Workspace-ID: $MULTICA_WORKSPACE_ID"
 ```

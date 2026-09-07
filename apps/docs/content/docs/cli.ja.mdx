@@ -12,20 +12,15 @@ Multica CLI は、ローカルのランタイムを接続する役割と、タ�
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
 ```
 
-Homebrew がインストールされていれば、次のコマンドでもインストールできます:
+**Windows**
 
-```bash
-brew install multica-ai/tap/multica
-```
-
-**Windows PowerShell**
-
-```powershell
-irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
-```
+内部リリースソース `https://multica.outlune.com/downloads/cli/v<version>/`
+（バージョンは `https://multica.outlune.com/downloads/latest.json` を参照）から
+該当リリースの `multica-cli-<version>-windows-<arch>.zip` をダウンロードし、
+`multica.exe` を `PATH` の通った場所に展開してください。
 
 インストールを確認します:
 

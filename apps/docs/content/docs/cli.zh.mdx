@@ -12,20 +12,15 @@ Multica CLI 既负责连接本机运行时，也可以在终端中管理工作�
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
 ```
 
-安装了 Homebrew 时也可以运行：
+**Windows**
 
-```bash
-brew install multica-ai/tap/multica
-```
-
-**Windows PowerShell**
-
-```powershell
-irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
-```
+从内部发布源 `https://multica.outlune.com/downloads/cli/v<version>/`（版本号见
+`https://multica.outlune.com/downloads/latest.json`）下载对应 release 的
+`multica-cli-<version>-windows-<arch>.zip` 压缩包，解压出 `multica.exe` 并放入
+`PATH`。
 
 确认安装成功：
 

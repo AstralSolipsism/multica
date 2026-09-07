@@ -12,20 +12,15 @@ Multica CLI는 로컬 런타임을 연결할 뿐 아니라 터미널에서 워�
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
 ```
 
-Homebrew가 설치되어 있다면 다음 명령도 사용할 수 있습니다.
+**Windows**
 
-```bash
-brew install multica-ai/tap/multica
-```
-
-**Windows PowerShell**
-
-```powershell
-irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
-```
+내부 릴리스 소스 `https://multica.outlune.com/downloads/cli/v<version>/`(버전은
+`https://multica.outlune.com/downloads/latest.json`에서 확인)에서 해당 릴리스의
+`multica-cli-<version>-windows-<arch>.zip` 아카이브를 받아 `multica.exe`를
+`PATH`에 놓습니다.
 
 설치 성공 여부를 확인합니다.
 

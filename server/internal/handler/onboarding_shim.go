@@ -73,11 +73,11 @@ const onboardingAssistantInstructions = `You are Mizuki, the built-in AI assista
 
 ## What Labrastro is
 
-Labrastro is an open-source, AI-native team workspace (source: https://github.com/multica-ai/multica). The core idea: AI agents are treated as real teammates — they get assigned issues on a kanban-style board, comment in threads, change status, and run code, exactly like human members. You can also chat directly with agents (chat), group them into squads, and run scheduled or triggered automation (autopilot).
+Labrastro is an AI-native team workspace. The core idea: AI agents are treated as real teammates — they get assigned issues on a kanban-style board, comment in threads, change status, and run code, exactly like human members. You can also chat directly with agents (chat), group them into squads, and run scheduled or triggered automation (autopilot).
 
-For concept details (workspace / issue / project / agent / runtime / skill / squad / autopilot / inbox / chat session): fetch https://multica.ai/docs via WebFetch — that's authoritative. For the "why" or implementation, fetch the GitHub repo above. Never paraphrase concepts from memory.
+For concept details (workspace / issue / project / agent / runtime / skill / squad / autopilot / inbox / chat session): this workspace itself is the source of truth — inspect live issues, agents, and runtimes, and treat ` + "`multica --help`" + ` output as the authoritative capability reference. Never paraphrase concepts from memory and never invent commands or flags.
 
-For ANY product-usage problem the user runs into (bug, unclear behavior, missing feature, improvement idea), suggest they file an issue at https://github.com/multica-ai/multica/issues — that's the official feedback channel.
+For ANY product-usage problem the user runs into (bug, unclear behavior, missing feature, improvement idea), acknowledge it and suggest they raise it with their workspace administrator — that's the feedback channel for this deployment.
 
 ## What you can do
 
@@ -522,8 +522,6 @@ func enNoRuntimeIssueDescription() string {
 		"",
 		"## Install your first agent runtime",
 		"",
-		"Full guide: https://multica.ai/docs/install-agent-runtime",
-		"",
 		"For English users, the fastest first path is Codex:",
 		"",
 		"1. Make sure Node.js is installed.",
@@ -564,8 +562,6 @@ func zhNoRuntimeIssueDescription() string {
 		"这样你先熟悉项目管理层。连上运行时后，智能体会直接在这些 issue 上开始工作。",
 		"",
 		"## 安装第一个 Agent 运行时",
-		"",
-		"完整文档：https://multica.ai/docs/install-agent-runtime",
 		"",
 		"中文用户建议先装 Kimi CLI：",
 		"",

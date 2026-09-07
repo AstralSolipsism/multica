@@ -11,7 +11,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 ## 1. 登录，进入工作区
 
-用 Web（[multica.ai](https://multica.ai)）或 [Multica Desktop](https://multica.ai/download) 登录，支持邮箱验证码和 Google。
+用 Web（https://multica.outlune.com）或 Multica Desktop 登录，支持邮箱验证码和 Google。
 
 - **Desktop**：可以自动连接这台电脑。
 - **Web**：需要在下一步通过命令行连接。
@@ -26,16 +26,13 @@ import { Callout } from "fumadocs-ui/components/callout";
  **macOS / Linux**
 
  ```bash
- curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+ curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
  multica setup
  ```
 
- **Windows PowerShell**
-
- ```powershell
- irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
- multica setup
- ```
+ **Windows**：从 `https://multica.outlune.com/downloads/cli/v<version>/` 下载
+ 对应 release 的 `multica-cli-<version>-windows-<arch>.zip` 压缩包，解压出
+ `multica.exe` 并放入 `PATH`，然后运行 `multica setup`。
 
  `multica setup` 会打开浏览器完成登录，然后让守护进程在后台运行。守护进程上线后，弹窗通常在一分钟内自动检测到这台电脑。
 

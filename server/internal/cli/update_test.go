@@ -3,6 +3,9 @@ package cli
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -63,40 +66,103 @@ func TestReleaseAssetCandidates(t *testing.T) {
 	}
 }
 
-func TestFindReleaseAsset(t *testing.T) {
-	t.Run("prefers versioned asset when both names exist", func(t *testing.T) {
-		assets := []GitHubReleaseAsset{
-			{Name: "multica_darwin_amd64.tar.gz", BrowserDownloadURL: "old"},
-			{Name: "multica-cli-1.2.3-darwin-amd64.tar.gz", BrowserDownloadURL: "new"},
-		}
+func TestResolveReleaseAsset(t *testing.T) {
+	t.Run("prefers the versioned asset when both names are checksummed", func(t *testing.T) {
+		manifest := []byte(strings.Join([]string{
+			"aaaa1111  multica_linux_amd64.tar.gz",
+			"bbbb2222  multica-cli-1.2.3-linux-amd64.tar.gz",
+		}, "\n"))
 
-		got, err := findReleaseAsset(assets, "v1.2.3", "darwin", "amd64")
+		name, sum, err := resolveReleaseAsset(manifest, "v1.2.3", "linux", "amd64")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got.Name != "multica-cli-1.2.3-darwin-amd64.tar.gz" {
-			t.Fatalf("asset mismatch: got %q", got.Name)
+		if name != "multica-cli-1.2.3-linux-amd64.tar.gz" {
+			t.Fatalf("asset mismatch: got %q", name)
+		}
+		if sum != "bbbb2222" {
+			t.Fatalf("checksum mismatch: got %q", sum)
 		}
 	})
 
-	t.Run("falls back to legacy asset when versioned is absent", func(t *testing.T) {
-		assets := []GitHubReleaseAsset{
-			{Name: "multica_linux_amd64.tar.gz", BrowserDownloadURL: "old"},
-		}
+	t.Run("falls back to the legacy asset when only it is checksummed", func(t *testing.T) {
+		manifest := []byte("aaaa1111  multica_linux_amd64.tar.gz\n")
 
-		got, err := findReleaseAsset(assets, "1.2.3", "linux", "amd64")
+		name, sum, err := resolveReleaseAsset(manifest, "1.2.3", "linux", "amd64")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got.Name != "multica_linux_amd64.tar.gz" {
-			t.Fatalf("asset mismatch: got %q", got.Name)
+		if name != "multica_linux_amd64.tar.gz" {
+			t.Fatalf("asset mismatch: got %q", name)
+		}
+		if sum != "aaaa1111" {
+			t.Fatalf("checksum mismatch: got %q", sum)
 		}
 	})
 
-	t.Run("returns error when no candidate matches", func(t *testing.T) {
-		_, err := findReleaseAsset([]GitHubReleaseAsset{{Name: "checksums.txt"}}, "1.2.3", "linux", "amd64")
+	t.Run("fails closed when no candidate is checksummed", func(t *testing.T) {
+		// An archive missing from checksums.txt must never be downloaded —
+		// the manifest is the only thing standing between the release source
+		// and an unverified binary swap.
+		manifest := []byte("aaaa1111  some-other-archive.tar.gz\n")
+
+		_, _, err := resolveReleaseAsset(manifest, "1.2.3", "linux", "amd64")
 		if err == nil {
-			t.Fatal("expected error, got nil")
+			t.Fatal("expected error when no candidate is checksummed")
+		}
+		if !strings.Contains(err.Error(), "multica-cli-1.2.3-linux-amd64.tar.gz") {
+			t.Fatalf("error should name the tried candidates: %v", err)
+		}
+	})
+}
+
+func TestFetchLatestVersion(t *testing.T) {
+	t.Run("returns the manifest version", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			fmt.Fprint(w, `{"version":"v0.4.40-labrastro.2","commit":"882ab068c"}`)
+		}))
+		defer srv.Close()
+
+		prevBase := downloadBase
+		downloadBase = srv.URL
+		t.Cleanup(func() { downloadBase = prevBase })
+
+		got, err := FetchLatestVersion()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "v0.4.40-labrastro.2" {
+			t.Fatalf("FetchLatestVersion() = %q, want v0.4.40-labrastro.2", got)
+		}
+	})
+
+	t.Run("fails on a manifest without a version", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			fmt.Fprint(w, `{"channel":"internal"}`)
+		}))
+		defer srv.Close()
+
+		prevBase := downloadBase
+		downloadBase = srv.URL
+		t.Cleanup(func() { downloadBase = prevBase })
+
+		if _, err := FetchLatestVersion(); err == nil {
+			t.Fatal("expected error for manifest without version")
+		}
+	})
+
+	t.Run("fails on a non-200 manifest", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		prevBase := downloadBase
+		downloadBase = srv.URL
+		t.Cleanup(func() { downloadBase = prevBase })
+
+		if _, err := FetchLatestVersion(); err == nil {
+			t.Fatal("expected error for missing manifest")
 		}
 	})
 }
@@ -152,32 +218,6 @@ func TestIsNewerVersion(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFindChecksumManifestAsset(t *testing.T) {
-	t.Run("finds checksums.txt among assets", func(t *testing.T) {
-		assets := []GitHubReleaseAsset{
-			{Name: "multica-cli-1.2.3-darwin-arm64.tar.gz"},
-			{Name: "checksums.txt", BrowserDownloadURL: "https://example/checksums.txt"},
-			{Name: "multica-cli-1.2.3-linux-amd64.tar.gz"},
-		}
-		got, err := findChecksumManifestAsset(assets)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got.Name != "checksums.txt" || got.BrowserDownloadURL != "https://example/checksums.txt" {
-			t.Fatalf("got %+v", got)
-		}
-	})
-
-	t.Run("returns error when manifest missing", func(t *testing.T) {
-		_, err := findChecksumManifestAsset([]GitHubReleaseAsset{
-			{Name: "multica-cli-1.2.3-darwin-arm64.tar.gz"},
-		})
-		if err == nil {
-			t.Fatal("expected error when checksums.txt is absent")
-		}
-	})
 }
 
 func TestParseChecksumManifest(t *testing.T) {
