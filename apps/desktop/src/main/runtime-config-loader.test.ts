@@ -47,8 +47,8 @@ describe("loadRuntimeConfig", () => {
       ok: true,
       config: {
         schemaVersion: 1,
-        apiUrl: "https://api.multica.outlune.com",
-        wsUrl: "wss://api.multica.outlune.com/ws",
+        apiUrl: "https://multica.outlune.com",
+        wsUrl: "wss://multica.outlune.com/ws",
         appUrl: "https://multica.outlune.com",
       },
     });

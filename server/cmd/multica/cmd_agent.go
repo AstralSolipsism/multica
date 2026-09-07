@@ -285,7 +285,7 @@ func newAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
 }
 
 const (
-	defaultCloudServerURL = "https://api.multica.outlune.com"
+	defaultCloudServerURL = "https://multica.outlune.com"
 	defaultCloudAppURL    = "https://multica.outlune.com"
 )
 
