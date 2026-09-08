@@ -22,27 +22,9 @@ import (
 // The client bounds local snapshots independently of the server's upload limit.
 const ProjectFileMaxBytes int64 = 64 << 20
 const ProjectFileMaxRevision int64 = 1<<53 - 2
-const ExitFileConflict = 6
-const ExitFileUnconfirmed = 7
 
 var fileOperationKey = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 var fileDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
-// ProjectFileError preserves feature-specific semantics through main's error
-// formatter without changing the exit contract of unrelated CLI commands.
-type ProjectFileError struct {
-	Code    string
-	Message string
-	Exit    int
-	Err     error
-}
-
-func (e *ProjectFileError) Error() string { return e.Message }
-func (e *ProjectFileError) Unwrap() error { return e.Err }
-
-func fileInvalid(message string) error {
-	return &ProjectFileError{Code: "INVALID_REQUEST", Message: message, Exit: ExitValidation}
-}
 
 func fileUnconfirmed(message string) error {
 	return &ProjectFileError{Code: "UNCONFIRMED_RESPONSE", Message: message + "; keep the original request and query its operation before retrying unchanged", Exit: ExitFileUnconfirmed}
@@ -50,16 +32,16 @@ func fileUnconfirmed(message string) error {
 
 func ValidateProjectFilePath(path string) error {
 	if path == "" || len(path) > 1024 || !utf8.ValidString(path) || strings.Contains(path, `\`) {
-		return fileInvalid("path must be a relative UTF-8 logical file path (up to 1024 bytes)")
+		return NewProjectFileValidationError("path must be a relative UTF-8 logical file path (up to 1024 bytes)")
 	}
 	for _, r := range path {
 		if unicode.IsControl(r) {
-			return fileInvalid("file paths cannot contain control characters")
+			return NewProjectFileValidationError("file paths cannot contain control characters")
 		}
 	}
 	for _, part := range strings.Split(path, "/") {
 		if part == "" || part == "." || part == ".." || len(part) > 255 {
-			return fileInvalid("file paths cannot contain empty, dot, parent, or oversized segments")
+			return NewProjectFileValidationError("file paths cannot contain empty, dot, parent, or oversized segments")
 		}
 	}
 	return nil
@@ -68,14 +50,14 @@ func ValidateProjectFilePath(path string) error {
 func ProjectFilesPath(project string) (string, error) {
 	id, err := uuid.Parse(project)
 	if err != nil {
-		return "", fileInvalid("project-id must be a UUID from the task brief or project list")
+		return "", NewProjectFileValidationError("project-id must be a UUID from the task brief or project list")
 	}
 	return "/api/projects/" + id.String() + "/files", nil
 }
 
 func ValidateProjectFileOperationID(id string) error {
 	if !fileOperationKey.MatchString(id) {
-		return fileInvalid("operation-id must contain 1–128 ASCII letters, digits, dots, underscores, colons or hyphens")
+		return NewProjectFileValidationError("operation-id must contain 1–128 ASCII letters, digits, dots, underscores, colons or hyphens")
 	}
 	return nil
 }
@@ -105,25 +87,25 @@ func (r ProjectFileRequest) Validate() error {
 		return err
 	}
 	if r.BaseRevision < 0 || r.BaseRevision > ProjectFileMaxRevision {
-		return fileInvalid("base/expected revision is out of range")
+		return NewProjectFileValidationError("base/expected revision is out of range")
 	}
 	switch r.Kind {
 	case "save":
 		if int64(len(r.Data)) > ProjectFileMaxBytes {
-			return fileInvalid("CLI file limit is 64 MiB")
+			return NewProjectFileValidationError("CLI file limit is 64 MiB")
 		}
 		if r.CandidateID != "" || !fileDigest.MatchString(r.SHA256) || r.SHA256 != fmt.Sprintf("%x", sha256.Sum256(r.Data)) {
-			return fileInvalid("request snapshot content digest does not match")
+			return NewProjectFileValidationError("request snapshot content digest does not match")
 		}
 		if _, _, err := mime.ParseMediaType(r.ContentType); err != nil || len(r.ContentType) > 255 || strings.ContainsAny(r.ContentType, "\r\n") {
-			return fileInvalid("invalid content-type")
+			return NewProjectFileValidationError("invalid content-type")
 		}
 	case "adopt":
 		if _, err := uuid.Parse(r.CandidateID); err != nil || len(r.Data) != 0 || r.ContentType != "" || r.SHA256 != "" {
-			return fileInvalid("invalid candidate adoption request")
+			return NewProjectFileValidationError("invalid candidate adoption request")
 		}
 	default:
-		return fileInvalid("unknown project file operation kind")
+		return NewProjectFileValidationError("unknown project file operation kind")
 	}
 	return nil
 }
@@ -335,7 +317,7 @@ func (c *APIClient) ProjectFileJSON(ctx context.Context, path, kind, operationID
 			}
 		}
 	default:
-		return nil, fileInvalid("unknown file query")
+		return nil, NewProjectFileValidationError("unknown file query")
 	}
 	return raw, nil
 }
