@@ -66,14 +66,23 @@ Start in a clean dedicated repository checkout. The operator sets
 `OL33_REVIEWED_SHA` to the reviewed full SHA, injects `DATABASE_URL` for the
 approved isolated target, and sets `PGSERVICE` to the equivalent psql connection
 in a private service file. Do not copy the local development database URL.
+The migrator and some existing tests otherwise fall back to a local development
+database when `DATABASE_URL` is absent. The guards below stop that fallback;
+the operator must also confirm that the selected database and role match the
+approved target before migrating.
 
 ```bash
+set -e
+: "${OL33_REVIEWED_SHA:?Set the reviewed full commit SHA}"
+: "${DATABASE_URL:?Inject the approved isolated database connection}"
+: "${PGSERVICE:?Select the equivalent approved psql service}"
 git fetch origin
 git switch --detach "$OL33_REVIEWED_SHA"
 git rev-parse HEAD
 cd server
 go build -o bin/migrate ./cmd/migrate
 go build -o bin/server ./cmd/server
+psql -X -v ON_ERROR_STOP=1 -c 'SELECT current_database() AS database, current_user AS role;'
 ./bin/migrate up
 psql -X -v ON_ERROR_STOP=1 -f scripts/project-files-verify.sql
 ```
@@ -109,12 +118,38 @@ For repository handler/middleware tests, set `DATABASE_URL` to that same isolate
 database. The suite creates disposable workspaces/projects; never use production.
 
 ```bash
+set -e
+: "${DATABASE_URL:?Inject the isolated test database connection}"
+: "${PROJECT_FILE_TEST_DATABASE_URL:?Explicitly select the same isolated test database}"
 go test -race ./internal/projectfile -count=1 -v
 go test -race ./internal/handler -run '^TestProjectFile' -count=1 -v
-go test -race ./internal/auth ./internal/middleware ./internal/storage ./internal/migrations ./cmd/migrate -count=1
+go test -race ./internal/auth ./internal/middleware ./internal/storage ./internal/migrations -count=1
 go test ./cmd/server -run '^TestProjectFileConfiguration$' -count=1
 go vet ./internal/projectfile ./internal/handler ./internal/storage ./internal/middleware ./cmd/server ./cmd/migrate
 ```
+
+The full `cmd/migrate` test package is a separate **administrator-only regression
+suite on a disposable database**, not a minimum-privilege application or
+deployment-role acceptance check. Its existing
+`TestIssuePropertiesBigramIndexBuildsOnlyWherePGBigmExists` reads `pg_statistic`
+in `cmd/migrate/migrate_issue_properties_bigm_index_test.go`; the default
+PostgreSQL grants deny that read to an ordinary role. Run it with a separately
+injected disposable-database superuser connection. Do not elevate the deployed
+application role or grant it catalog access to make this test pass. A permission
+failure here does not demonstrate a project-file migration failure.
+
+```bash
+# Separate test shell with DATABASE_URL injected for the disposable admin role.
+set -e
+: "${DATABASE_URL:?Inject the disposable admin test database connection}"
+go test -race ./cmd/migrate -count=1
+```
+
+Record this admin suite as SKIP if that isolated connection is unavailable.
+OL-36 still verifies the reviewed migrations with the migration-owner role and
+`scripts/project-files-verify.sql`, and OL-37 tests application access with the
+normal role. Prior author validation of the full migrator suite used the
+isolated cluster's administrator role; it was not evidence of minimum privileges.
 
 From the repository root:
 
@@ -135,6 +170,10 @@ Real PG + MinIO roundtrip suite, after OL-35 explicitly provisions the private
 **disposable test bucket** and injects the S3 settings above:
 
 ```bash
+set -e
+: "${DATABASE_URL:?Inject the isolated test database connection}"
+: "${PROJECT_FILE_TEST_DATABASE_URL:?Explicitly select the same isolated test database}"
+: "${PGSERVICE:?Select the equivalent isolated psql service}"
 PROJECT_FILE_TEST_S3=1 go test -race ./internal/projectfile -run '^TestProjectFileS3Integration$' -count=1 -v
 psql -X -v ON_ERROR_STOP=1 -f scripts/project-files-verify.sql
 ```
@@ -160,9 +199,14 @@ Deployed API and OL-37 acceptance (use clients with environment-injected auth):
 5. Interrupt a response after commit, query its operation, retry unchanged and
    confirm no second version. On 202, preserve local content; no background
    worker finishes the intent automatically.
-6. Revoke membership/end a real run during upload, then verify final commit is
-   denied. Test expired tokens, project reassignment, cross-workspace IDs and
-   every read/candidate/replay entry. Verify recorded author and task IDs.
+6. Use a **local PAT or task token** for upload-window token revocation/expiry
+   tests; also revoke membership/end a real run and verify final commit is
+   denied. A JWT's authenticated `exp` is rechecked before commit, so test JWT
+   expiry separately. JWT session revocation at its provider and cloud-PAT
+   revocation after request-entry authentication are not rechecked during this
+   request; do not use them as substitutes for the local-token cases. Test
+   project reassignment, cross-workspace IDs and every read/candidate/replay
+   entry. Verify recorded author and task IDs.
 7. Repeat through the real proxy with 1 KiB/1 MiB/100 MiB data after explicitly
    increasing the configured file limit for 100 MiB. Record latency, memory and
    digest evidence; no production capacity promise is inferred from unit tests.
@@ -190,7 +234,14 @@ tables and do not delete/expire objects. The down migrations are for reversing
 an unused installation, not for production data rollback.
 
 Project deletion makes retained files inaccessible; retained metadata/objects
-are deliberately not cascaded or garbage-collected in this batch. Before storing
-real project facts, a later batch must define capacity/retention limits and prove
-paired PostgreSQL/object backup restoration. GC, full recovery drills, directory
-UI and edit leases remain outside OL-33.
+are deliberately not cascaded or garbage-collected in this batch. Disposable
+acceptance writes may proceed under the environment owner's control. Before
+enabling writes for real project resources, a later batch must implement and
+verify limits per project and actor (member/run): total retained bytes and
+versions/candidates, pending upload attempts and concurrent uploads. Accounting
+must include failed-upload intents and unreferenced objects, with concurrent
+limit enforcement and a documented recovery path for rejected writes. Owners
+must choose the limits from capacity evidence; this PR sets no quota or GC.
+Retention policy and paired PostgreSQL/object backup restoration are also
+required before that rollout. GC, full recovery drills, directory UI and edit
+leases remain outside OL-33.

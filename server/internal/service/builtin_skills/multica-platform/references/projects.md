@@ -56,6 +56,13 @@ expected revision. A task token is limited to its current server-associated
 project; operation keys are isolated per run. Listings contain no file contents,
 and shared documents do not acquire instruction priority from being stored here.
 
+For an uncertain save/adopt result, query its operation before resending content;
+that lookup avoids the project write lock taken by mutation retries. In candidate
+lists, `updated_at` means candidate creation time, not a later edit or resolution.
+Use revision/version IDs for concurrency. Local PAT/task-token validity is
+rechecked before commit; JWT expiry is rechecked when present, but remote JWT
+session or cloud-PAT revocation during an authenticated request is not.
+
 ## CLI
 
 ```bash

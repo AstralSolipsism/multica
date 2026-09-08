@@ -81,8 +81,31 @@ patch; preliminary checks also ran on the available Go 1.27.1.
 Commands, exact configuration and operator actions are in
 [project-files-operations.md](project-files-operations.md). The test harness uses
 the repository fixture/HTTP helpers and cleans only its own test rows. No
-production benchmark, full-repository test pass or independent code review is
-claimed.
+production benchmark or full-repository test pass is claimed. The rows above
+are the author's results; the independent review is attributed below.
+
+## Independent review suggestions and disposition
+
+The independent OL-33 review on 2026-09-08 (comment
+`01a07f32-96d1-721e-9c6f-ce4c7ed6026a`) approved implementation
+`1bfaeadb85b543cc43cd60fd984ed7f899bb7720` without a P0/P1 finding.
+The following disposition addresses all five non-blocking suggestions. It
+clarifies the existing behavior and operator prerequisites; it does not add
+new runtime behavior or claim additional environment testing.
+
+| Suggestion | Disposition and source evidence |
+| --- | --- |
+| Credential revalidation boundary | Contract now distinguishes local PAT/task-token row revalidation from JWT/cloud-PAT authentication. JWT `exp` **is** copied by `internal/middleware/auth.go` and rechecked by `resolveActor` on final authorization in `internal/projectfile/service.go`; remote session revocation is not. Cloud-PAT identity carries no expiry and Fleet is not called again at commit. OL-37's upload-window revocation cases explicitly use local PAT/task tokens |
+| Migrator test permissions | Operator commands separate the full admin-only `cmd/migrate` regression suite from application-role validation. The pre-existing statistics test reads `pg_statistic`; its default permissions require a privileged test role. Prior author runs used an isolated administrator role. Added explicit database guards because the migrator and existing tests otherwise select a default local database |
+| Replay contention | Retain the v1 project lock on save/adopt retries. Correct the scope: `Service.Operation` already performs a scoped read after authorization and does not call `write()` or take the project write lock. Document lookup-first recovery. Measure project-lock wait time and retry-related timeouts in later load testing before changing mutation replay; any optimization must preserve binding, body validation, expiry and full-result replay |
+| Unbounded candidates/intents | Record enforcement of project/actor limits as a prerequisite before real-resource writes: retained bytes, versions/candidates, pending attempts and concurrent uploads, including failed/unreferenced content. Concurrent accounting and rejection/recovery tests belong to the later quota/retention batch. Disposable C/D/E acceptance remains permitted; no GC or quota is claimed in v1 |
+| Candidate timestamp | Contract and built-in project reference now state that candidate-list `updated_at` is its immutable creation time from `project_file_candidate.created_at` (`internal/projectfile/read.go`). Resolution removes it from the unresolved list. Keep the v1 field name; clients use revision/version IDs for working-copy concurrency |
+
+The independent reviewer also disclosed that an initial migrator command without
+an explicit `DATABASE_URL` advanced that reviewer's local development database.
+That is separate from the author's isolated validation recorded above. This
+follow-up does not connect to or roll back that database; the command guards and
+target-selection instructions address the reported invocation hazard.
 
 ## Explicit pending acceptance
 

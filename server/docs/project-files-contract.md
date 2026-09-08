@@ -16,10 +16,23 @@ The service takes typed identity from authentication middleware, checks current
 membership, and derives a run's project from its issue (or chat session for a
 chat run). A live run requires a non-archived agent, an unexpired task token and
 `running`/`dispatched` status without `completed_at`. No-project runs, a changed
-project association, ended runs, removed membership and revoked/expired
-credentials are rejected. Final commit repeats these checks under locks. A
-member's valid workspace membership grants access to that workspace's projects;
-this feature does not create private-project ACLs.
+project association, ended runs and removed membership are rejected. Final
+commit repeats the database-backed authorization checks under locks. Credential
+validation has the following boundaries:
+
+| Credential | Validation at the final metadata commit |
+| --- | --- |
+| Local PAT | Re-read its local row under lock: token must still exist, belong to the authenticated user, be unrevoked and unexpired |
+| Task token (`mat_`) | Re-read token/run/agent and issue or chat association under locks: token must still exist and be unexpired, and the run must remain active and in this project |
+| JWT | Recheck the authenticated `exp`, when present, against the current time; signature validation happens at request entry. No auth-provider session/token revocation lookup is performed during the upload or commit |
+| Cloud PAT (`mcn_`) | Fleet validation happens at request entry using the existing verifier/cache (up to 60 seconds). Its authenticated identity carries no expiry; commit does not call Fleet again or recheck remote revocation |
+
+All credential types still require live local user/workspace membership and
+project access. A member's valid workspace membership grants access to that
+workspace's projects; this feature does not create private-project ACLs. OL-37
+must use a local PAT or task token to test token revocation during upload. JWT
+expiry is testable separately; remote JWT session or cloud-PAT revocation during
+an already authenticated request is outside this guarantee.
 
 Idempotency scope: `(workspace, project, actor_type, actor_id, key)`. Member actor
 IDs are user IDs; run actor IDs are task IDs. Author attribution is separately
@@ -55,8 +68,12 @@ the first page to discover new entries sorted before a cursor. No listing reads
 object contents. File metadata includes `file_id`, `path`, `revision`,
 `base_revision`, `version_id`, `size_bytes`, `sha256`, `content_type`,
 `author_type`, `author_id`, optional `source_task_id`/`candidate_id`, `updated_at`.
-Candidate `revision` is 0: it has not become a current revision. Use the content
-headers to bind a downloaded working copy to the exact version read.
+Candidate `revision` is 0: it has not become a current revision. In the candidate
+list, `updated_at` is the candidate's creation time (`project_file_candidate.created_at`),
+not a last-edit or resolution timestamp. Candidate content is immutable; resolved
+candidates leave this list. For a file list entry, `updated_at` is when its
+current head last advanced. Use the content headers to bind a downloaded working
+copy to the exact version read, rather than using timestamps as revision tokens.
 
 ## Save and replay
 
@@ -115,6 +132,13 @@ HTTP 2xx alone: `202 PENDING` is not a save confirmation. Unknown future statuse
 must not be treated as SAVED. Shared response schemas live in
 `packages/core/api/project-file-schemas.ts`; malformed save/adopt responses parse
 as null instead of an invented success.
+
+Save/adopt retries, including completed-result replays, acquire the project's
+write lock for their short metadata transactions. `GET /operations/{key}` uses
+live authorization and a scoped ledger read without that project write lock.
+For an uncertain result, use this lookup before resending a large save body.
+Concurrent requests can still observe PENDING; preserve the original request
+and key until a complete result is known.
 
 ## Streaming reads
 
