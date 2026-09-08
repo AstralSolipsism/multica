@@ -53,13 +53,13 @@ Candidate downloads have revision 0 and are not a current working copy.
 | Exit | Meaning |
 | --- | --- |
 | 0 | Validated read/query, or a SAVED mutation |
-| 1 | Other error, including OPERATION_KEY_REUSED, PATH_COLLISION or local publication failure |
-| 2 | Transport failure, including truncated transfer; mutation outcome unconfirmed |
+| 1 | Other error, including OPERATION_KEY_REUSED, PATH_COLLISION, PROJECT_FILES_DISABLED or local publication failure |
+| 2 | Transport failure, including truncated transfer; a mutation that was attempted has an unconfirmed outcome |
 | 3 | 401/403; stop and keep draft/snapshot; no member/profile fallback |
 | 4 | Not found; operation absence does not prove an in-flight mutation cannot commit |
-| 5 | Invalid input/metadata, including locally rejected flags/paths/revisions |
+| 5 | Invalid input, including locally rejected flags/paths/revisions or a draft exceeding the advertised server limit |
 | 6 | Durably preserved CONFLICT; current file unchanged |
-| 7 | Pending/unconfirmed response, malformed/unknown result, or 5xx mutation failure |
+| 7 | Pending/unconfirmed response, malformed/unknown result, or 5xx mutation failure other than PROJECT_FILES_DISABLED |
 
 Successful and conflict responses retain the complete API fields, including
 future extra fields, without mixing diagnostics into stdout. An operation lookup
@@ -69,6 +69,17 @@ inconsistent revision is rejected. PENDING and unknown statuses never count as
 successful writes. Failures emit JSON with the API `code` when available plus
 `operation_id`/`request_file` for a preserved mutation; stderr supplies guidance.
 Shell flag-parser errors use Cobra's existing diagnostic path.
+
+The error envelope's `state` describes this attempt: `FAILED` for local or
+preflight failures and terminal API rejections (including 400/401/403/404,
+operation-key/path errors, 413 and 503 `PROJECT_FILES_DISABLED`). `UNCONFIRMED`
+is reserved for a mutation attempt or operation lookup with a transport failure,
+unverifiable result, or nonterminal 5xx response. Drafts and snapshots remain in
+both cases. A rejected retry or failed lookup does **not** settle any earlier
+uncertain mutation; retain its original request. `FAILED` on a preflight network
+error means no mutation was sent, even though the exit code is still 2. A malformed
+preflight response similarly exits 7 with `FAILED`. Do not infer outcome from the
+exit code alone or automatically retry terminal authorization/configuration errors.
 
 For an uncertain result, query `operation` first. If appropriate, wait at least
 one second after a 202/503 and `retry` the original snapshot. PENDING has no worker
@@ -103,9 +114,15 @@ machine loss. Snapshots remain after success/conflict/error; there is no automat
 cleanup. Keep them in the task workdir until results are resolved and evidence is
 captured. Do not commit or attach request snapshots containing real resource data.
 
-The client caps content at 64 MiB even if a server advertises a larger limit;
-a lower server limit still applies. Snapshot base64 adds about one third to disk
-size, and operations buffer bounded content/JSON in memory. Larger-file streaming
+The client caps content at 64 MiB even if a server advertises a larger limit.
+After preserving the snapshot, each new `save` fetches validated capabilities
+once and checks `max_file_bytes` before uploading. An oversized draft exits 5
+with `FILE_TOO_LARGE`/`FAILED`, retaining the snapshot and sending no mutation.
+A capability failure also stops before upload. Limits can change after preflight;
+the server remains authoritative and may still reject with 413. `retry` bypasses
+this preflight so capability changes cannot hide an already committed operation;
+it sends the original request/key unchanged. Snapshot base64 adds about one third
+to disk size, and operations buffer bounded content/JSON in memory. Larger-file streaming
 and retry across credential rotation are deferred until required by measured use.
 
 ## Runtime path and D build/configuration handoff

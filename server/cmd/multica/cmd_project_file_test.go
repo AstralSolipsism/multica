@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -317,7 +318,7 @@ func TestProjectFileCLILostAcknowledgementPreservesOriginalRequest(t *testing.T)
 	source, snapshot := filepath.Join(dir, "draft"), filepath.Join(dir, "request.json")
 	writeFileTest(t, source, "bytes before connection loss")
 	out := runFileCLI(t, 2, "save", pfProject, "notes.md", "--base-revision", "0", "--from-file", source, "--request-file", snapshot)
-	if out["state"] != "UNCONFIRMED" || out["operation_id"] == "" || peer.callCount() != 1 {
+	if out["state"] != "UNCONFIRMED" || out["operation_id"] == "" || peer.callCount() != 2 {
 		t.Fatal(out, peer.callCount())
 	}
 	writeFileTest(t, source, "new editing must not alter a retry")
@@ -350,17 +351,23 @@ func TestProjectFileCLIHTTPFailuresKeepSnapshot(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		status, exit int
-		code         string
+		code, state  string
 	}{
-		{"unauthorized", 401, 3, ""}, {"denied", 403, 3, "ACCESS_DENIED"}, {"read-only", 403, 3, "READ_ONLY"},
-		{"parameters", 400, 5, "INVALID_REQUEST"}, {"content", 400, 5, "CONTENT_MISMATCH"}, {"size", 413, 1, "FILE_TOO_LARGE"},
-		{"collision", 409, 1, "PATH_COLLISION"}, {"disabled", 503, 7, "PROJECT_FILES_DISABLED"},
-		{"storage", 503, 7, "STORAGE_UNAVAILABLE"}, {"unknown", 503, 7, "OUTCOME_UNKNOWN"}, {"timeout", 503, 7, "TEMPORARILY_UNAVAILABLE"},
+		{"unauthorized", 401, 3, "", "FAILED"}, {"denied", 403, 3, "ACCESS_DENIED", "FAILED"}, {"read-only", 403, 3, "READ_ONLY", "FAILED"},
+		{"parameters", 400, 5, "INVALID_REQUEST", "FAILED"}, {"content", 400, 5, "CONTENT_MISMATCH", "FAILED"}, {"size", 413, 1, "FILE_TOO_LARGE", "FAILED"},
+		{"not-found", 404, 4, "NOT_FOUND", "FAILED"}, {"collision", 409, 1, "PATH_COLLISION", "FAILED"}, {"disabled", 503, 1, "PROJECT_FILES_DISABLED", "FAILED"},
+		{"storage", 503, 7, "STORAGE_UNAVAILABLE", "UNCONFIRMED"}, {"unknown", 503, 7, "OUTCOME_UNKNOWN", "UNCONFIRMED"}, {"timeout", 503, 7, "TEMPORARILY_UNAVAILABLE", "UNCONFIRMED"},
+		{"unrecognized-server-error", 500, 7, "", "UNCONFIRMED"},
+		{"unexpected-disabled-status", 500, 7, "PROJECT_FILES_DISABLED", "UNCONFIRMED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			calls := 0
+			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls++
+				if r.URL.Path == "/api/projects/"+pfProject+"/files/capabilities" {
+					writeProjectFileTestCapabilities(w, cli.ProjectFileMaxBytes)
+					return
+				}
+				calls.Add(1)
 				w.WriteHeader(tc.status)
 				_ = json.NewEncoder(w).Encode(map[string]any{"code": tc.code, "error": tc.name})
 			}))
@@ -370,8 +377,14 @@ func TestProjectFileCLIHTTPFailuresKeepSnapshot(t *testing.T) {
 			source, snapshot := filepath.Join(dir, "draft"), filepath.Join(dir, "request.json")
 			writeFileTest(t, source, "keep this draft")
 			out := runFileCLI(t, tc.exit, "save", pfProject, "notes.md", "--base-revision", "0", "--from-file", source, "--request-file", snapshot)
-			if calls != 1 || out["status"] != nil || out["candidate_id"] != nil {
-				t.Fatal("failure became a confirmed write", out, calls)
+			if calls.Load() != 1 || out["status"] != nil || out["candidate_id"] != nil {
+				t.Fatal("failure became a confirmed write", out, calls.Load())
+			}
+			if out["state"] != tc.state {
+				t.Fatalf("failure state = %v, want %s", out, tc.state)
+			}
+			if tc.state == "FAILED" && strings.Contains(out["error"].(string), "Query this operation before retrying") {
+				t.Fatal("terminal rejection instructed an uncertain-outcome retry", out)
 			}
 			saved, err := readProjectFileSnapshot(snapshot)
 			if err != nil || string(saved.Request.Data) != "keep this draft" || saved.Request.BaseRevision != 0 {
@@ -407,6 +420,10 @@ func TestProjectFileCLIUntrustedResponsesNeverConfirm(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/projects/"+pfProject+"/files/capabilities" {
+					writeProjectFileTestCapabilities(w, cli.ProjectFileMaxBytes)
+					return
+				}
 				result := valid()
 				tc.edit(result)
 				w.WriteHeader(tc.status)
@@ -633,10 +650,85 @@ func TestProjectFileCLIConcurrentSnapshotPublication(t *testing.T) {
 	if !((first == 0 && second == 1) || (first == 1 && second == 0)) {
 		t.Fatalf("publication did not choose exactly one writer: %d, %d", first, second)
 	}
-	if peer.callCount() != 1 {
+	if peer.callCount() != 2 {
 		t.Fatal("unpreserved losing request reached API")
 	}
 	if _, err := readProjectFileSnapshot(snapshot); err != nil {
 		t.Fatal("winner's snapshot was damaged", err)
+	}
+}
+
+func writeProjectFileTestCapabilities(w http.ResponseWriter, maxBytes int64) {
+	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "api_version": 1, "read_only": false, "max_file_bytes": maxBytes, "max_page_size": 200})
+}
+
+func TestProjectFileCLISaveCapabilityPreflight(t *testing.T) {
+	for _, tc := range []struct {
+		name, code string
+		limit      int64
+		status     int
+		exit       int
+	}{
+		{"below-limit", "", 5, 200, 0},
+		{"at-limit", "", 4, 200, 0},
+		{"over-limit", "FILE_TOO_LARGE", 3, 200, 5},
+		{"denied", "ACCESS_DENIED", 0, 403, 3},
+		{"disabled", "PROJECT_FILES_DISABLED", 0, 503, 1},
+		{"malformed", "UNCONFIRMED_RESPONSE", 0, 200, 7},
+		{"lost-capabilities", "CLIENT_ERROR", 0, 0, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			peer := newProjectFilePeer(t)
+			var capabilityCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/api/projects/"+pfProject+"/files/capabilities" {
+					peer.ServeHTTP(w, r)
+					return
+				}
+				capabilityCalls.Add(1)
+				if tc.status == 0 {
+					conn, _, err := w.(http.Hijacker).Hijack()
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					_ = conn.Close()
+					return
+				}
+				w.WriteHeader(tc.status)
+				if tc.status == 200 {
+					writeProjectFileTestCapabilities(w, tc.limit)
+				} else {
+					_ = json.NewEncoder(w).Encode(map[string]any{"code": tc.code})
+				}
+			}))
+			defer server.Close()
+			projectFileTestEnv(t, server.URL)
+			dir := t.TempDir()
+			source, snapshot := filepath.Join(dir, "draft"), filepath.Join(dir, "request.json")
+			writeFileTest(t, source, "data")
+			out := runFileCLI(t, tc.exit, "save", pfProject, "notes.md", "--base-revision", "0", "--from-file", source, "--request-file", snapshot)
+			saved, err := readProjectFileSnapshot(snapshot)
+			if err != nil || string(saved.Request.Data) != "data" {
+				t.Fatal("preflight did not preserve the request", saved, err)
+			}
+			if capabilityCalls.Load() != 1 {
+				t.Fatalf("capability calls = %d", capabilityCalls.Load())
+			}
+			if tc.exit != 0 {
+				if peer.callCount() != 0 || out["state"] != "FAILED" || out["code"] != tc.code || out["request_file"] != snapshot {
+					t.Fatal("preflight failure sent a mutation or implied an unknown write", out, peer.callCount())
+				}
+				return
+			}
+			if peer.callCount() != 1 || out["status"] != "SAVED" {
+				t.Fatal("valid-size draft was not saved", out)
+			}
+			// Retry must reach the original ledger even if capabilities changed.
+			runFileCLI(t, 0, "retry", snapshot)
+			if capabilityCalls.Load() != 1 {
+				t.Fatal("retry fetched capabilities instead of replaying unchanged")
+			}
+		})
 	}
 }

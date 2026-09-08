@@ -87,17 +87,29 @@ Exit codes: **0** confirms a validated successful read/query or SAVED mutation;
 **6** is a committed CONFLICT (candidate preserved, current file unchanged);
 **7** means pending/unconfirmed or malformed response. Existing codes remain
 **2** transport failure, **3** auth rejection, **4** not found, **5** invalid
-parameters, **1** other errors (including operation-key reuse/path collision).
-On mutation failures stdout preserves `code`, `operation_id`, `request_file` and
-an UNCONFIRMED state; it never invents a candidate or a successful save. Stop on
+parameters, **1** other errors (including operation-key reuse/path collision and
+503 `PROJECT_FILES_DISABLED`). On mutation failures stdout preserves `code`,
+`operation_id` and `request_file`. Its `state` is `FAILED` for local/preflight
+failures and terminal API rejections, including 400/401/403/404/413 and
+`PROJECT_FILES_DISABLED`. `UNCONFIRMED` is reserved for mutation attempts or
+operation lookups with transport failures, unverifiable results or other 5xx
+responses. A preflight network/malformed-response failure exits 2/7 but has
+`FAILED` state because no mutation was sent. A rejected retry or failed lookup
+does not settle an earlier uncertain attempt; retain its original request.
+The CLI never invents a candidate or a successful save. Stop on
 401/403; never fall back from the run's token to a member/profile credential.
 PENDING does not schedule a worker, and operation 404 is not proof an in-flight
 write cannot commit. Wait at least one second after 202/503; query first, then
 retry unchanged when appropriate. There is no automatic retry or polling loop.
 
 Snapshots/downloads are capped at 64 MiB of content by this CLI; a lower server
-capability limit still applies. JSON snapshots include base64 content and need
-additional local disk/memory. Keep them in the task workdir; the CLI retains them
+capability limit still applies. Each new `save` preserves its snapshot, fetches
+capabilities once and prechecks `max_file_bytes` before uploading. Over-limit
+drafts return `FILE_TOO_LARGE`/`FAILED` with exit 5; capability failures also send
+no mutation and retain the snapshot. The server can still reject with 413 if its
+limit changes. `retry` skips preflight to reach the original operation ledger
+under changed capabilities, using the original bytes/key. JSON snapshots include
+base64 content and need additional local disk/memory. Keep them in the task workdir; the CLI retains them
 after success too, until the caller explicitly cleans up. The filesystem must
 support private files and hard links (atomic publication without overwrite).
 
