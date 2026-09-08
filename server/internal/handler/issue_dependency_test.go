@@ -442,10 +442,8 @@ func TestDependencyLegacyOperationsStillProtectCanonicalConstraints(t *testing.T
 	// Human preassignment and the existing completion policy still work.
 	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, b, assignment, "jwt")).Want(http.StatusOK)
 	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, a, map[string]any{"status": "done"}, "task")).Want(http.StatusOK)
-	out = testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, b, map[string]any{"status": "todo"}, "task")).Want(http.StatusConflict).Map()
-	if out["reason_code"] != "dependency_dispatch_unavailable" {
-		t.Fatalf("ready canonical prerequisites bypassed the Stage 2 dispatch gate: %v", out)
-	}
+	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, b, map[string]any{"status": "todo"}, "task")).Want(http.StatusOK)
+	t.Cleanup(func() { fx.Exec(t, "DELETE FROM agent_task_queue WHERE issue_id=$1", b) })
 
 	foreign := dbfx.Issue(t, "foreign prerequisite")
 	bad := dependencyIssue(t, fx, "invalid canonical reference")

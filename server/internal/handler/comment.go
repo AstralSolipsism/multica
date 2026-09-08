@@ -1651,7 +1651,19 @@ func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request)
 		Agents:  make([]CommentTriggerAgentResponse, 0, len(triggers)),
 		Blocked: commentBlockedTargetOutcomes(targets),
 	}
+	snapshot, admissionErr := h.IssueService.Dependencies.ReadWorkspace(r.Context(), issue.WorkspaceID)
+	if admissionErr == nil {
+		admissionErr = snapshot.CheckRun(r.Context(), issue.ID)
+	}
 	for _, trigger := range triggers {
+		if admissionErr != nil {
+			targetType, targetID := "agent", uuidToString(trigger.Agent.ID)
+			if trigger.Squad != nil {
+				targetType, targetID = "squad", uuidToString(trigger.Squad.ID)
+			}
+			resp.Blocked = append(resp.Blocked, CommentTriggerOutcome{TargetType: targetType, TargetID: targetID, Status: DispatchBlocked, ReasonCode: commentEnqueueFailureReason(admissionErr)})
+			continue
+		}
 		resp.Agents = append(resp.Agents, h.commentAgentTriggerToResponse(trigger))
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -2210,8 +2222,15 @@ func (h *Handler) resolveCommentTriggerEnqueue(ctx context.Context, issue db.Iss
 // out deliberately.
 func commentTriggerOutcomes(targets []commentMentionTarget, enqueued map[string]commentEnqueueResult) []CommentTriggerOutcome {
 	if len(targets) == 0 {
-		return nil
+		var outcomes []CommentTriggerOutcome
+		for agent, res := range enqueued {
+			if res.status == DispatchBlocked && strings.HasPrefix(string(res.reason), "dependency_") {
+				outcomes = append(outcomes, CommentTriggerOutcome{TargetType: "agent", TargetID: agent, Status: res.status, ReasonCode: res.reason})
+			}
+		}
+		return outcomes
 	}
+
 	outcomes := make([]CommentTriggerOutcome, 0, len(targets))
 	for _, t := range targets {
 		if t.ExecAgentID != "" {
@@ -2257,6 +2276,10 @@ func commentBlockedTargetOutcomes(targets []commentMentionTarget) []CommentTrigg
 // infrastructure error that stays an unclassified internal error rather than
 // leaking the raw message.
 func commentEnqueueFailureReason(err error) DispatchReasonCode {
+	var dep *service.DependencyError
+	if errors.As(err, &dep) {
+		return DispatchReasonCode(dep.Code)
+	}
 	if errors.Is(err, service.ErrAttributionFailClosed) {
 		return ReasonAttributionBlocked
 	}
@@ -2338,6 +2361,8 @@ const (
 	// task, no duplicate enqueue), but the merge did not complete → outcome
 	// internal_error, not success.
 	commentMergeError
+	commentMergeDependencyBlocked
+	commentMergeDependencyUnverified
 )
 
 // commentMergeTerminalOutcome maps a merge result that carries its own final
@@ -2350,6 +2375,10 @@ func commentMergeTerminalOutcome(result commentMergeResult) (status DispatchStat
 		return DispatchCoalesced, ReasonCoalesced, true
 	case commentMergeAttributionBlocked:
 		return DispatchBlocked, ReasonAttributionBlocked, true
+	case commentMergeDependencyBlocked:
+		return DispatchBlocked, DispatchReasonCode("dependency_unsatisfied"), true
+	case commentMergeDependencyUnverified:
+		return DispatchBlocked, DispatchReasonCode("dependency_data_unverified"), true
 	case commentMergeError:
 		return DispatchBlocked, ReasonInternalError, true
 	default: // commentMergeNoPendingTask
@@ -2395,22 +2424,34 @@ func (h *Handler) mergeCommentIntoPendingTask(ctx context.Context, issue db.Issu
 		return commentMergeError
 	}
 	overlay, connectedApps := h.TaskService.BuildRuntimeMCPOverlayForMerge(ctx, attr.UserID, trigger.Agent)
-	row, err := h.Queries.MergeCommentIntoPendingTask(ctx, db.MergeCommentIntoPendingTaskParams{
-		IssueID:                 issue.ID,
-		AgentID:                 trigger.Agent.ID,
-		NewTriggerCommentID:     newTriggerCommentID,
-		NewOriginatorUserID:     attr.UserID,
-		NewAccountableUserID:    attr.AccountableUserID,
-		NewOriginatorSource:     pgtype.Text{String: attr.Source.String(), Valid: true},
-		NewDelegatedFromTaskID:  attr.DelegatedFromTaskID,
-		NewRuleVersionID:        attr.RuleVersionID,
-		NewTriggerEvidenceKind:  pgtype.Text{String: string(attr.EvidenceKind), Valid: attr.EvidenceKind != ""},
-		NewTriggerEvidenceRefID: attr.EvidenceRefID,
-		NewTriggerSummary:       h.TaskService.BuildCommentTriggerSummary(ctx, issue.WorkspaceID, newTriggerCommentID),
-		NewRuntimeMcpOverlay:    overlay,
-		NewRuntimeConnectedApps: connectedApps,
-		HeadSha:                 headSha,
+	var row db.MergeCommentIntoPendingTaskRow
+	err = h.TaskService.WithPendingIssueAdmission(ctx, issue.WorkspaceID, issue.ID, trigger.Agent.ID, headSha, func(q *db.Queries) error {
+		row, err = q.MergeCommentIntoPendingTask(ctx, db.MergeCommentIntoPendingTaskParams{
+			IssueID:                 issue.ID,
+			AgentID:                 trigger.Agent.ID,
+			NewTriggerCommentID:     newTriggerCommentID,
+			NewOriginatorUserID:     attr.UserID,
+			NewAccountableUserID:    attr.AccountableUserID,
+			NewOriginatorSource:     pgtype.Text{String: attr.Source.String(), Valid: true},
+			NewDelegatedFromTaskID:  attr.DelegatedFromTaskID,
+			NewRuleVersionID:        attr.RuleVersionID,
+			NewTriggerEvidenceKind:  pgtype.Text{String: string(attr.EvidenceKind), Valid: attr.EvidenceKind != ""},
+			NewTriggerEvidenceRefID: attr.EvidenceRefID,
+			NewTriggerSummary:       h.TaskService.BuildCommentTriggerSummary(ctx, issue.WorkspaceID, newTriggerCommentID),
+			NewRuntimeMcpOverlay:    overlay,
+			NewRuntimeConnectedApps: connectedApps,
+			HeadSha:                 headSha,
+		})
+		return err
 	})
+	var dep *service.DependencyError
+	if errors.As(err, &dep) {
+		if dep.Code == "dependency_unsatisfied" {
+			return commentMergeDependencyBlocked
+		}
+		return commentMergeDependencyUnverified
+	}
+
 	if err != nil {
 		if isNotFound(err) {
 			// No pre-claim (queued/deferred) task to merge into. The caller

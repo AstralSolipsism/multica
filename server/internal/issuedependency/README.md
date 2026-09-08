@@ -1,4 +1,4 @@
-# Issue prerequisites (OL-39, DAG Stage 2)
+# Issue prerequisites and execution admission (OL-39 / OL-41)
 
 This implements the persistence boundary frozen by OL-38 contract v2 on
 baseline `aa5d5a17dc821d88dfdace7a49726df55d49dd31`. It reuses
@@ -116,7 +116,7 @@ Structural/create/delete and status/assignment updates use:
 Issue rows are locked before reading prerequisite status. This stabilizes
 status and revisions even for existing status producers outside HTTP. Ordinary
 text/date/position edits use only their existing attachment/target locks;
-top-level creates without prerequisites do not load the workspace graph.
+top-level creates load the workspace graph when they also enqueue execution.
 Updates refresh untouched nullable fields under their target lock to avoid
 overwriting a concurrent reparent or assignment with stale preloaded values.
 Compound responses retain the committed transaction's snapshot rather than
@@ -127,42 +127,69 @@ database changes share the deletion transaction; runtime notifications occur
 only after commit. Existing deletion cleanup and source-context retention are
 preserved. Rejected creates/updates/deletes emit no task-start/cancel effects.
 
-This first implementation serializes structural writes per workspace and locks
-all its issue rows. It deliberately trades write concurrency for a simple
-correctness boundary. Reads use MVCC. Reassess the lock scope with measurements
-of realistic workspace size and contention before wide write enablement;
-`LockIssueDependencyStructureShared` is available for the OL-41 integration.
+Admission transactions take workspace `FOR SHARE`, the shared catalog and
+structure locks, then all workspace issue rows `FOR SHARE` in UUID order.
+Capacity locks precede queue locks. Machine recovery locks multiple workspaces
+in UUID order. This makes status producers, reparenting and graph edits serialize
+against the dependency decision without changing completion permissions.
+External attribution/connected-app preparation precedes the transaction;
+queue insertion, confirmation audit and the compound issue mutation commit
+before task events or runtime wakeups. Manual rerun retries its entire transaction
+once if a concurrent provider retry acquires the pending slot.
 
-## Stage boundary and follow-up
+The initial scope deliberately locks/loads the complete workspace rather than
+introducing a second graph/cache or a partial-page approximation. This costs
+O(V+E+H) data per admission and can delay unrelated issue edits in a large
+workspace. Measure claim latency and lock waits against realistic size and
+contention before a wide rollout; narrow locks only with an equivalent closure
+proof and the concurrency tests intact.
 
-**Production compound writes return 404.** `WritesEnabled` defaults to false
-and has no environment/configuration switch in this stage. Only an isolated
-test's copied service enables it. GET and model/transaction helpers are
-available for OL-40 and OL-41 development.
+## Execution and one-shot confirmation
 
-`CheckWriteAdmission` rejects a new machine assignment with unfinished
-prerequisites even on backlog or with `suppress_run`. Unassigned backlog
-planning remains valid. Before OL-41, any dependency-bearing run intent also
-fails closed with 409 `dependency_dispatch_unavailable`, including when its
-prerequisites are ready; `dependency_override` remains disabled. This prevents
-the existing post-commit enqueue paths from advertising an atomic dispatch
-guarantee they do not yet provide.
+Compound writes are enabled after integration of the shared enqueue, claim,
+retry and recovery gates. A workspace with unverified historical data still
+fails strict dependency operations with 422; audit and repair the data using
+[the historical audit procedure](../../cmd/audit_issue_dependencies/README.md).
+Disabling compound writes must never disable canonical execution admission.
 
-This protection also applies to canonical historical `blocked_by` rows while
-compound writes are disabled. Such tasks can be planned, preassigned by a human
-without a run, and have their status reported under the existing policy; run
-requests wait for OL-41. Unknown historical `blocks` rows are not converted into
-execution constraints. Even when legacy operations succeed, unverified workspace
-data continues to produce 422 on dependency GET/compound writes (404 takes
-precedence while writes are disabled). A future enablement path must audit each
-workspace and integrate dispatch admission; the Stage 2 test switch is not an
-operator-facing per-workspace enablement mechanism.
+A new machine assignment with unfinished direct/inherited prerequisites fails
+even on backlog or with `suppress_run`. A human may preassign without execution.
+Only the existing assign/create/backlog-promotion predicate creates an automatic
+run; completion/reporting does not become a new trigger. No arbitrary DAG-edge
+auto-dispatch is introduced. Ordinary comments persist independently and report
+blocked dispatch; they are never a confirmation, even from a human.
 
-OL-41 must integrate the same validated snapshot and lock order with all
-enqueue/claim producers, capacity/queue transactions, human override and
-claim-time rechecks. Recheck lock interactions with existing task, comment,
-attachment and automation writers during that integration. No arbitrary-edge
-auto-dispatch is added (D2). OL-42 owns CLI `--blocked-by`; no CLI parameter or
-dependency UI is enabled here. Follow the
-[historical audit and recovery procedure](../../cmd/audit_issue_dependencies/README.md)
-before enabling writes on an existing database.
+Enqueue and first claim use the same complete snapshot. A failed first claim is
+quarantined as `failed` with a stable `dependency_*` reason, without credentials,
+issue rollback or automatic retries, and scanning continues to the next row.
+Corrupt/missing workspace bindings are rejected at this boundary as well.
+Fresh provider retries, manual reruns, member/child tasks and recovery comments
+never copy early-execution permission. A server-owned autopilot issue association
+also gates legacy `run_only` rows with NULL `issue_id`; issue-less chat and planning
+retain their existing behavior.
+
+Only authenticated human JWT sessions may explicitly confirm. Task tokens,
+PATs/cloud PATs, owner/originator attribution and forged headers cannot authorize
+it. Preview signs a five-minute challenge over the user, workspace, issue,
+executing agent/Squad leader, complete proposed mutation digest and dependency
+version. Confirmation is rechecked in the mutation transaction and stores a
+record on exactly one new queue row; its initial claim must occur within fifteen
+minutes and rechecks dependencies, membership, invoke permission and leader.
+If all prerequisites are now done, ordinary admission is sufficient.
+
+`request_id` has a unique queue index. An identical signed replay is read-only
+and returns the same task/run even after it finishes; changed input/target is
+rejected. A small existing dependency-audit record prevents resurrection after
+queue/issue deletion. Audit retention must preserve `dispatch_confirmation`
+records for at least the challenge lifetime. Claim stamps `consumed_at` in the
+same transaction as dispatch; lost-response/claim-finalization recovery of that
+same row is safe and does not mint another permit. Historical dispatched rows
+without proof are validated before recovery delivery.
+
+The transport and frontend contract, request examples and test map live in
+[`docs/issue-dependency-dispatch.md`](../../../docs/issue-dependency-dispatch.md).
+OL-42 owns CLI `--blocked-by` and confirmation UX; this PR adds no UI or CLI flags.
+Migrations 467/468 add nullable queue metadata and its concurrent unique index.
+Deploy schema before the upgraded server. Rolling back the server to a version
+without admission while canonical edges exist is unsafe; first drain/stop new
+execution or keep admission enabled. Never drop the column to revoke one task.

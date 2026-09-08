@@ -235,7 +235,7 @@ writes the literal `done` key.
   `todo` when no active task / retry remains — that is the main server-owned
   status write on the agent-run path.
 
-## Explicit prerequisites: Stage 2 API contract
+## Explicit prerequisites and execution admission
 
 `GET /api/issues/{id}/dependencies` returns direct and inherited prerequisites,
 direct successors, unfinished prerequisites, a restricted-blocker flag and an
@@ -245,14 +245,14 @@ own current effective `done` category satisfies it. Existing status-write
 permissions remain unchanged; `in_review` and `cancelled` are not satisfaction.
 
 The future CLI parameter is `--blocked-by`. It is **not available in this
-stage**. Do not simulate it with `--parent`, `--stage`, metadata, or a second
+stage**. Do not simulate it with `--parent`, `--stage`, free-form fields, or a second
 post-create write. The compound API paths are
 `POST /api/issues/with-dependencies` and
-`PATCH /api/issues/{id}/with-dependencies`; both currently return 404 because
-production writes stay disabled until full dispatch admission is integrated.
+`PATCH /api/issues/{id}/with-dependencies`; writes use the same dependency
+admission as enqueue, claim and retry.
 Do not fall back to ordinary create/update after 404/405.
 
-In isolated integration tests, `blocked_by` is an array of UUIDs/identifiers:
+`blocked_by` is an array of UUIDs/identifiers:
 omission preserves direct relations, `[]` clears them, and `null` is invalid.
 PATCH replacement requires `expected_dependency_version`; a stale version
 returns 409. New machine assignments with unfinished prerequisites reject the
@@ -264,9 +264,8 @@ credential is not a human override. This is not a new completion policy.
 Errors expose `reason_code`: `dependency_unsatisfied`, `dependency_cycle`,
 `dependency_ancestor_conflict`, `dependency_version_conflict`,
 `dependency_change_not_allowed`, `dependency_override_not_allowed`,
-`dependency_data_unverified`, or `not_found`. Until dispatch integration,
-dependency-bearing run requests also reject with
-`dependency_dispatch_unavailable`. Missing/malformed dependency data or hidden
+`dependency_override_stale`, `dependency_override_expired`,
+`dependency_data_unverified`, or `not_found`. Missing/malformed dependency data or hidden
 unfinished prerequisites must never be interpreted as ready. No automatic
 dispatch along arbitrary dependency edges is added.
 
@@ -276,7 +275,26 @@ parent/`blocked_by` component, so unrelated historical anomalies do not block
 assignment, reparenting or deletion workspace-wide. `blocks` is not interpreted
 as a prerequisite. Canonical constraints still apply with compound writes off;
 an affected invalid canonical reference fails closed. A successful ordinary
-operation does not mean the workspace is verified or dependency dispatch is ready.
+operation does not mean the workspace is verified.
+
+A human may preassign a blocked issue without starting it. To intentionally start
+one execution early, a human JWT client must preview the exact complete mutation
+with `POST /api/issues/preview-trigger` (`mutation`, plus `issue_ids` or
+`is_create`), display every blocker, and submit the returned `request_id` and
+`challenge` as `dependency_override` on the compound write. The challenge expires
+in five minutes; first claim expires fifteen minutes after confirmation. Never
+invent or infer confirmation from a comment, a PAT, an owner, or an originator.
+Agents should report `dependency_unsatisfied` and propose backlog work or ask the
+human for help. They must not replay a human session or confirmation themselves.
+
+The committed response includes `dispatch`: `queued`, `coalesced`, `deferred`,
+or `blocked`, with `reason_code` and task/run IDs when available. Identical
+confirmation retries return the same execution. Modified input, later reruns,
+provider retries, Squad members/children and ordinary comments need their own
+normal admission. Comment saves remain successful when dispatch is blocked;
+inspect `trigger_outcomes` rather than assuming a mention ran. Batch updates use
+`dependency_overrides` keyed by issue ID and retain per-item results. Missing or
+malformed outcome fields mean unknown, never permission to retry a write.
 
 ## Complete issue graph: Stage 3 API contract
 
@@ -312,10 +330,8 @@ Query helpers own this cache and existing committed events/reconnects
 invalidate it. The shared invalidation helper cancels graph reads before
 refetching, including an initial request with no cached snapshot, so a late
 pre-event response cannot erase a committed change's refresh signal.
-There is no graph CLI command or new navigation in this stage,
-and compound dependency writes remain gated as described above. The frontend
-integration contract and synthetic mock are in `docs/issue-graph-api.md` and
-`packages/core/api/testdata/issue-graph.json`.
+There is no graph CLI command or new navigation in this stage. Use the
+complete graph endpoint for topology and the dependency endpoint for decisions.
 
 ## Claim ownership without duplicating a run
 

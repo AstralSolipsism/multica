@@ -63,7 +63,7 @@ func (f candidateFailDBTX) QueryRow(ctx context.Context, sql string, args ...int
 func TestClaimTasksForRuntimes_PartialSuccessOnSecondAgentClaimFailure(t *testing.T) {
 	ctx := context.Background()
 	pool := newTaskClaimRacePool(t)
-	tx := &failNthBeginTxStarter{inner: pool, failOn: 2} // 1st agent claims, 2nd errors
+	tx := &failNthBeginTxStarter{inner: pool, failOn: 3} // recovery tx, first agent claims, second agent errors
 	svc := NewTaskService(db.New(pool), tx, nil, events.New())
 
 	rt1, rt2 := batchClaimFixture(t, ctx, pool)

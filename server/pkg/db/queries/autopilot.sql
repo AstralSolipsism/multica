@@ -607,7 +607,7 @@ INSERT INTO agent_task_queue (
     id
 )
 SELECT
-    $1, $2, NULL, 'queued', $3, $4, sqlc.narg(trigger_summary),
+    $1, $2, (SELECT issue_id FROM autopilot_run WHERE id=$4), 'queued', $3, $4, sqlc.narg(trigger_summary),
     sqlc.narg(originator_user_id),
     sqlc.narg(accountable_user_id),
     sqlc.narg(rule_version_id),

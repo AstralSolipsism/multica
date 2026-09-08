@@ -323,6 +323,7 @@ var concurrentIndexCleanups = map[string]string{
 	"462_project_file_upload_operation_index":            "idx_project_file_upload_operation",
 	"464_issue_dependency_audit_id_index":                "idx_issue_dependency_audit_id",
 	"465_issue_dependency_audit_workspace_index":         "idx_issue_dependency_audit_workspace",
+	"468_task_dependency_request_index":                  "idx_task_dependency_request",
 	"466_issue_dependency_blocked_by_index":              "idx_issue_dependency_blocked_by",
 }
 

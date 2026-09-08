@@ -102,6 +102,7 @@ type IssueResponse struct {
 	// deliberately omit the potentially large immutable snapshot.
 	SourceContext *sourceContextDetailResponse `json:"source_context,omitempty"`
 	Dependencies  *service.DependencyView      `json:"dependencies,omitempty"`
+	Dispatch      *DispatchOutcome             `json:"dispatch,omitempty"`
 }
 
 // validIssuePriorities mirrors the CHECK constraint on the issue table. Write
@@ -2774,8 +2775,14 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound bool) {
+
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 	var req CreateIssueRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -2800,6 +2807,8 @@ func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound b
 	if !ok {
 		return
 	}
+
+	dependencyWrite.PayloadDigest, _ = service.DependencyPayloadDigest(bodyBytes)
 
 	status := req.Status
 	if status == "" {
@@ -2993,26 +3002,27 @@ func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound b
 	}
 
 	res, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
-		WorkspaceID:    wsUUID,
-		Title:          req.Title,
-		Description:    ptrToText(req.Description),
-		Status:         status,
-		Priority:       priority,
-		AssigneeType:   assigneeType,
-		AssigneeID:     assigneeID,
-		CreatorType:    creatorType,
-		CreatorID:      parseUUID(actualCreatorID),
-		ParentIssueID:  parentIssueID,
-		ProjectID:      projectID,
-		StartDate:      startDate,
-		DueDate:        dueDate,
-		OriginType:     originType,
-		OriginID:       originID,
-		Stage:          ptrToInt4(req.Stage),
-		AttachmentIDs:  attachmentIDs,
-		LabelIDs:       labelIDs,
-		AllowDuplicate: req.AllowDuplicate,
-		BlockedBy:      dependencyWrite.BlockedBy,
+		WorkspaceID:        wsUUID,
+		Title:              req.Title,
+		Description:        ptrToText(req.Description),
+		Status:             status,
+		Priority:           priority,
+		AssigneeType:       assigneeType,
+		AssigneeID:         assigneeID,
+		CreatorType:        creatorType,
+		CreatorID:          parseUUID(actualCreatorID),
+		ParentIssueID:      parentIssueID,
+		ProjectID:          projectID,
+		StartDate:          startDate,
+		DueDate:            dueDate,
+		OriginType:         originType,
+		OriginID:           originID,
+		Stage:              ptrToInt4(req.Stage),
+		AttachmentIDs:      attachmentIDs,
+		LabelIDs:           labelIDs,
+		AllowDuplicate:     req.AllowDuplicate,
+		BlockedBy:          dependencyWrite.BlockedBy,
+		DependencyOverride: dependencyWrite.Override, DependencyPayloadDigest: dependencyWrite.PayloadDigest,
 	}, service.IssueCreateOpts{
 		ActorID:          actualCreatorID,
 		AnalyticsAgentID: analyticsAgentID,
@@ -3082,6 +3092,7 @@ func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound b
 	resp := issueToResponse(issue, prefix)
 	fillCreated(&resp)
 	resp.Attachments = buildAttachmentResponses(res.Attachments)
+	resp.Dispatch = issueRunOutcome(res.AssignedTask, res.Replayed)
 	// Echo the authoritative labels attached in the create transaction. Always
 	// non-nil (empty slice when none) so a newer client can tell the backend
 	// understood label_ids and skip its legacy post-create attach fallback.
@@ -3219,12 +3230,40 @@ type atomicIssueUpdateResult struct {
 	Previous           db.Issue
 	AttachmentsChanged bool
 	Dependencies       *service.DependencySnapshot
+	Task               db.AgentTaskQueue
+	Replayed           bool
+	Coalesced          bool
 }
 
 func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.UUID, params db.UpdateIssueParams, rawFields map[string]json.RawMessage, titleBase, descriptionBase *string, attachmentIDs []pgtype.UUID, statusKey string, dependencyWrite service.DependencyWrite) (result atomicIssueUpdateResult, err error) {
 	if h.TxStarter == nil {
 		return result, errors.New("atomic issue update requires transaction starter")
 	}
+	var prepared *service.PreparedIssueRun
+	if !dependencyWrite.SuppressRun {
+		current, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: params.ID, WorkspaceID: workspaceID})
+		if err != nil {
+			return result, err
+		}
+		post := current
+		if params.Status.Valid {
+			post.Status = params.Status.String
+		}
+		if _, ok := rawFields["assignee_type"]; ok {
+			post.AssigneeType = params.AssigneeType
+		}
+		if _, ok := rawFields["assignee_id"]; ok {
+			post.AssigneeID = params.AssigneeID
+		}
+		trigger, ok := h.IssueService.WillEnqueueRun(ctx, service.IssueTriggerInput{Issue: post, PrevStatus: current.Status, AssigneeChanged: post.AssigneeID != current.AssigneeID || post.AssigneeType != current.AssigneeType, StatusChanged: post.Status != current.Status}, dependencyWrite.Probe)
+		if ok {
+			prepared, err = h.TaskService.PrepareIssueRun(ctx, post, trigger, dependencyWrite.ActorUserID, dependencyWrite.HandoffNote)
+			if err != nil {
+				return result, err
+			}
+		}
+	}
+
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
 		return result, fmt.Errorf("begin atomic issue update: %w", err)
@@ -3262,6 +3301,20 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 			return result, err
 		}
 	}
+	if replay, replayErr := h.IssueService.Dependencies.Replay(ctx, qtx, workspaceID, params.ID, dependencyWrite.Override, dependencyWrite.PayloadDigest); replayErr != nil {
+		return result, replayErr
+	} else if replay != nil {
+		result.Issue, err = qtx.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: params.ID, WorkspaceID: workspaceID})
+		if err != nil {
+			return result, err
+		}
+		result.Previous = result.Issue
+		result.Task = *replay
+		result.Dependencies = dependencyBefore
+		result.Replayed = true
+		return result, nil
+	}
+
 	current, err := qtx.LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{
 		ID:          params.ID,
 		WorkspaceID: workspaceID,
@@ -3314,6 +3367,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 	if err != nil {
 		return result, fmt.Errorf("update locked issue: %w", err)
 	}
+	var confirmation []byte
 	var dependencyAfter *service.DependencySnapshot
 	if guardDependencies {
 		var dependencyChanged bool
@@ -3321,8 +3375,19 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 		if err != nil {
 			return result, err
 		}
+		if dependencyWrite.Override != nil {
+			if prepared == nil || dependencyWrite.SuppressRun {
+				return result, &service.DependencyError{Code: "dependency_override_stale", Message: "confirmation requires an execution"}
+			}
+			trigger := service.IssueRunTrigger{AgentID: prepared.Params.AgentID, AssigneeType: issue.AssigneeType.String}
+			confirmation, err = h.IssueService.Dependencies.Confirm(ctx, qtx, dependencyBefore, issue, trigger, dependencyWrite)
+			if err != nil {
+				return result, err
+			}
+		}
+
 		assigned, run := service.DependencyWriteIntent(ctx, qtx, &current, issue, dependencyWrite.SuppressRun)
-		if err := dependencyAfter.CheckWriteAdmission(ctx, issue, assigned, run); err != nil {
+		if err := dependencyAfter.CheckWriteAdmission(ctx, issue, assigned, run); err != nil && confirmation == nil {
 			return result, err
 		}
 		if dependencyChanged && issue.Revision == current.Revision {
@@ -3356,6 +3421,33 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 			}
 		}
 	}
+	if guardDependencies && !dependencyWrite.SuppressRun {
+		txIssues := *h.IssueService
+		txIssues.Queries = qtx
+		txIssues.TaskService = &service.TaskService{Queries: qtx}
+		trigger, ok := txIssues.WillEnqueueRun(ctx, service.IssueTriggerInput{Issue: issue, PrevStatus: current.Status, AssigneeChanged: issue.AssigneeID != current.AssigneeID || issue.AssigneeType != current.AssigneeType, StatusChanged: issue.Status != current.Status}, dependencyWrite.Probe)
+		if ok {
+			result.Task, err = h.TaskService.EnqueueIssueRunTx(ctx, qtx, issue, trigger, prepared, dependencyAfter, confirmation)
+			if err != nil {
+				return result, err
+			}
+		}
+	}
+
+	result.Coalesced = result.Task.ID.Valid && prepared != nil && result.Task.ID != prepared.Params.ID
+	if confirmation != nil {
+		if !result.Task.ID.Valid || result.Task.ID != prepared.Params.ID {
+			return result, &service.DependencyError{Code: "dependency_override_stale", Message: "confirmation requires a new execution"}
+		}
+		node := dependencyAfter.Model.Issues[uuidToString(issue.ID)]
+		node.Revision = issue.Revision
+		dependencyAfter.Model.Issues[node.ID] = node
+		result.Task, err = dependencyAfter.RecordConfirmation(ctx, qtx, result.Task, confirmation)
+		if err != nil {
+			return result, err
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return result, fmt.Errorf("commit atomic issue update: %w", err)
 	}
@@ -3407,6 +3499,8 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 	if !ok {
 		return
 	}
+	dependencyWrite.PayloadDigest, _ = service.DependencyPayloadDigest(bodyBytes)
+
 	dependencyWrite.SuppressRun = req.SuppressRun
 
 	// Pre-fill nullable fields (bare sqlc.narg) with current values
@@ -3588,6 +3682,11 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 		return
 	}
 
+	preActorType, preActorID := h.resolveActor(r, userID, workspaceID)
+	dependencyWrite.Probe = h.issueTriggerWriteProbe(r, preActorType, preActorID, prevIssue)
+	dependencyWrite.ActorUserID = memberActorUserID(preActorType, preActorID)
+	dependencyWrite.HandoffNote = req.HandoffNote
+
 	updateResult, err := h.updateIssueAtomically(
 		r.Context(), prevIssue.WorkspaceID, params, rawFields, req.TitleBase, req.DescriptionBase, attachmentIDs, statusKeyForGuard, dependencyWrite,
 	)
@@ -3616,6 +3715,18 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 		}
 		slog.Warn("update issue failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to update issue: "+err.Error())
+		return
+	}
+
+	if updateResult.Replayed {
+		resp := issueToResponse(issue, h.getIssuePrefix(r.Context(), issue.WorkspaceID))
+		h.fillStatusCategory(r.Context(), issue.WorkspaceID, &resp)
+		view := h.dependencyView(r, updateResult.Dependencies, issue.ID)
+		resp.Dependencies = &view
+		resp.Dispatch = issueRunOutcome(updateResult.Task, updateResult.Replayed || updateResult.Coalesced)
+		resp.Dispatch.Status = DispatchCoalesced
+		resp.Dispatch.ReasonCode = ReasonCoalesced
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
@@ -3697,17 +3808,10 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 	// it stops in-flight agent runs, so that implicit coupling is gone
 	// (MUL-4465). Deleting an issue still cancels its tasks (see DeleteIssue),
 	// because the tasks' owning issue ceases to exist.
-	if trigger, ok := h.IssueService.WillEnqueueRun(r.Context(),
-		service.IssueTriggerInput{
-			Issue:           issue,
-			PrevStatus:      prevIssue.Status,
-			AssigneeChanged: assigneeChanged,
-			StatusChanged:   statusChanged,
-		},
-		h.issueTriggerWriteProbe(r, actorType, actorID, issue),
-	); ok && !req.SuppressRun {
-		h.dispatchIssueRun(r.Context(), issue, trigger, actorType, actorID, req.HandoffNote)
+	if !updateResult.Coalesced {
+		h.TaskService.PublishIssueTask(r.Context(), updateResult.Task)
 	}
+	resp.Dispatch = issueRunOutcome(updateResult.Task, updateResult.Replayed || updateResult.Coalesced)
 
 	// Platform-driven parent notification: when this issue transitions into
 	// `done` and has a parent, post a top-level system comment on the parent
@@ -4088,8 +4192,9 @@ func (h *Handler) publishDetachedChildren(ctx context.Context, children []db.Iss
 // ---------------------------------------------------------------------------
 
 type BatchUpdateIssuesRequest struct {
-	IssueIDs []string           `json:"issue_ids"`
-	Updates  UpdateIssueRequest `json:"updates"`
+	IssueIDs            []string                              `json:"issue_ids"`
+	Updates             UpdateIssueRequest                    `json:"updates"`
+	DependencyOverrides map[string]service.DependencyOverride `json:"dependency_overrides,omitempty"`
 }
 
 func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
@@ -4124,6 +4229,14 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, ok := h.parseDependencyWrite(w, r, req.Updates.dependencyWriteFields, false, false); !ok {
 		return
+	}
+
+	// Validate the confirmation envelope for every item before the first write.
+	for _, override := range req.DependencyOverrides {
+		raw, _ := json.Marshal(override)
+		if _, ok := h.parseDependencyWrite(w, r, dependencyWriteFields{DependencyOverride: raw}, true, false); !ok {
+			return
+		}
 	}
 
 	// Short-circuit when no mutation field is present in `updates`. Without
@@ -4346,8 +4459,18 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 
 		// Each item uses the same transaction and preserves channel media.
 		itemResult["reason_code"] = "update_failed"
+		preActorType, preActorID := h.resolveActor(r, userID, workspaceID)
+
+		itemWrite := service.DependencyWrite{SuppressRun: req.Updates.SuppressRun, Probe: h.issueTriggerWriteProbe(r, preActorType, preActorID, prevIssue), ActorUserID: memberActorUserID(preActorType, preActorID), HandoffNote: req.Updates.HandoffNote}
+		if override, exists := req.DependencyOverrides[issueID]; exists {
+			itemWrite.Override = &override
+			itemWrite.IncludeView = true
+			raw, _ := json.Marshal(rawUpdates)
+			itemWrite.PayloadDigest, _ = service.DependencyPayloadDigest(raw)
+		}
+
 		updateResult, err := h.updateIssueAtomically(
-			r.Context(), prevIssue.WorkspaceID, params, rawUpdates, nil, nil, nil, batchStatusKey, service.DependencyWrite{SuppressRun: req.Updates.SuppressRun},
+			r.Context(), prevIssue.WorkspaceID, params, rawUpdates, nil, nil, nil, batchStatusKey, itemWrite,
 		)
 		issue := updateResult.Issue
 		if updateResult.Previous.ID.Valid {
@@ -4368,6 +4491,14 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 				itemResult["error"] = dependencyErr.Message
 				itemResult["dependencies"] = dependencyErr.View
 			}
+			continue
+		}
+
+		if updateResult.Replayed {
+			itemResult["updated"] = true
+			itemResult["dispatch"] = issueRunOutcome(updateResult.Task, updateResult.Replayed || updateResult.Coalesced)
+			delete(itemResult, "reason_code")
+			updated++
 			continue
 		}
 
@@ -4396,17 +4527,10 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		// Same single predicate as UpdateIssue — batch must not grow its own
 		// copy of the enqueue rule (the historical source of four-entry-point
 		// drift, MUL-3375). suppress_run applies batch-wide.
-		if trigger, ok := h.IssueService.WillEnqueueRun(r.Context(),
-			service.IssueTriggerInput{
-				Issue:           issue,
-				PrevStatus:      prevIssue.Status,
-				AssigneeChanged: assigneeChanged,
-				StatusChanged:   statusChanged,
-			},
-			h.issueTriggerWriteProbe(r, actorType, actorID, issue),
-		); ok && !req.Updates.SuppressRun {
-			h.dispatchIssueRun(r.Context(), issue, trigger, actorType, actorID, req.Updates.HandoffNote)
+		if !updateResult.Coalesced {
+			h.TaskService.PublishIssueTask(r.Context(), updateResult.Task)
 		}
+		itemResult["dispatch"] = issueRunOutcome(updateResult.Task, updateResult.Replayed || updateResult.Coalesced)
 
 		// No status change — not even → cancelled — cancels active tasks here,
 		// mirroring UpdateIssue (MUL-4465). See that handler for the rationale.

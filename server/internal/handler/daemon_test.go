@@ -2327,7 +2327,7 @@ func TestClaimTask_AutopilotRunOnly_PopulatesWorkspaceAndProjectContext(t *testi
 // must 500 AND cancel the dispatched task so it doesn't sit in
 // 'dispatched' until the 5-minute sweeper — which would also leave the
 // agent stuck reporting 'working' in the UI.
-func TestClaimTaskByRuntime_TaskWorkspaceMismatch_CancelsAndRejects(t *testing.T) {
+func TestClaimTaskByRuntime_TaskWorkspaceMismatch_RejectsBeforeDispatch(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -2371,18 +2371,18 @@ func TestClaimTaskByRuntime_TaskWorkspaceMismatch_CancelsAndRejects(t *testing.T
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	testHandler.ClaimTaskByRuntime(w, req)
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("ClaimTaskByRuntime (mismatch): expected 500, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"task":null}` {
+		t.Fatalf("ClaimTaskByRuntime (mismatch): expected no delivered task, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Task must NOT remain dispatched — it has to be cancelled so the agent
-	// is released immediately rather than stuck until the sweeper fires.
-	var status string
+	// Dependency admission now rejects corrupt target bindings before the
+	// handler constructs credentials. The row must leave the runnable queue.
+	var status, reason string
 	dbfx.QueryRow(t,
-		`SELECT status FROM agent_task_queue WHERE id = $1`, taskID,
-	).Scan(&status)
-	if status != "cancelled" {
-		t.Fatalf("ClaimTaskByRuntime (mismatch): expected task status=cancelled, got %q", status)
+		`SELECT status, failure_reason FROM agent_task_queue WHERE id = $1`, taskID,
+	).Scan(&status, &reason)
+	if status != "failed" || reason != "dependency_data_unverified" {
+		t.Fatalf("ClaimTaskByRuntime (mismatch): expected dependency refusal, got %q %q", status, reason)
 	}
 }
 

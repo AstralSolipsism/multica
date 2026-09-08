@@ -1,3 +1,4 @@
+import type { CreateIssueWithDependenciesRequest, UpdateIssueWithDependenciesRequest, IssueDependencyPreview } from "../api/dependency-schemas";
 import type { Issue, IssueMetadata, IssueStatus, IssueStatusCategory, IssuePriority, IssueAssigneeType } from "./issue";
 import type { PropertyFilterValue } from "./property";
 import type { MemberRole } from "./workspace";
@@ -100,6 +101,7 @@ export interface MoveIssueRequest
 /** Inputs to `POST /api/issues/preview-trigger`. A nil prospective field means
  *  "leave unchanged"; `isCreate` previews a not-yet-persisted issue. */
 export interface IssueTriggerPreviewParams {
+ mutation?: CreateIssueWithDependenciesRequest | UpdateIssueWithDependenciesRequest;
   issueIds?: string[];
   isCreate?: boolean;
   assigneeType?: IssueAssigneeType | null;
@@ -116,6 +118,7 @@ export interface IssueTriggerPreviewItem {
 }
 
 export interface IssueTriggerPreview {
+ blocked?: IssueDependencyPreview[] | null;
   triggers: IssueTriggerPreviewItem[];
   total_count: number;
 }

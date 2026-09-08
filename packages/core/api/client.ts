@@ -2,6 +2,9 @@ import { configStore } from "../config";
 import { IssueGraphSchema, type IssueGraph, type IssueGraphRequest } from "./issue-graph-schemas";
 import {
   DependencyViewSchema,
+  DependencyTriggerPreviewSchema,
+  dependencyMutationToWire,
+  type DependencyOverride,
   IssueWithDependenciesSchema,
   IssueBatchUpdateSchema,
   type DependencyView,
@@ -265,7 +268,6 @@ import {
   ChildIssueProgressResponseSchema,
   CommentsListSchema,
   CommentTriggerPreviewSchema,
-  IssueTriggerPreviewSchema,
   CloudRuntimeNodeListSchema,
   CloudRuntimeNodeSchema,
   RuntimeListSchema,
@@ -1123,10 +1125,9 @@ export class ApiClient {
   }
 
   async createIssueWithDependencies(data: CreateIssueWithDependenciesRequest): Promise<IssueWithDependencies> {
-    const { blockedBy, ...issue } = data;
     const raw = await this.fetch<unknown>("/api/issues/with-dependencies", {
       method: "POST",
-      body: JSON.stringify({ ...issue, blocked_by: blockedBy }),
+      body: JSON.stringify(dependencyMutationToWire(data)),
     });
     const result = parseWithFallback<IssueWithDependencies | null>(raw, IssueWithDependenciesSchema, null, {
       endpoint: "POST /api/issues/with-dependencies",
@@ -1136,10 +1137,9 @@ export class ApiClient {
   }
 
   async updateIssueWithDependencies(id: string, data: UpdateIssueWithDependenciesRequest): Promise<IssueWithDependencies> {
-    const { blockedBy, expectedDependencyVersion, ...issue } = data;
     const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(id)}/with-dependencies`, {
       method: "PATCH",
-      body: JSON.stringify({ ...issue, blocked_by: blockedBy, expected_dependency_version: expectedDependencyVersion }),
+      body: JSON.stringify(dependencyMutationToWire(data)),
     });
     const result = parseWithFallback<IssueWithDependencies | null>(raw, IssueWithDependenciesSchema, null, {
       endpoint: "PATCH /api/issues/:id/with-dependencies",
@@ -1305,10 +1305,10 @@ export class ApiClient {
     await this.fetch(`/api/issues/${id}`, { method: "DELETE" });
   }
 
-  async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest): Promise<IssueBatchUpdateResult> {
+  async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest, dependencyOverrides?: Record<string, DependencyOverride>): Promise<IssueBatchUpdateResult> {
     const raw = await this.fetch<unknown>("/api/issues/batch-update", {
       method: "POST",
-      body: JSON.stringify({ issue_ids: issueIds, updates }),
+      body: JSON.stringify({ issue_ids: issueIds, updates, dependency_overrides: dependencyOverrides ? Object.fromEntries(Object.entries(dependencyOverrides).map(([id, v]) => [id, { request_id: v.requestId, challenge: v.challenge }])) : undefined }),
     });
     const result = parseWithFallback<IssueBatchUpdateResult | null>(raw, IssueBatchUpdateSchema, null, {
       endpoint: "POST /api/issues/batch-update",
@@ -1379,9 +1379,10 @@ export class ApiClient {
         ...(params.assigneeType ? { assignee_type: params.assigneeType } : {}),
         ...(params.assigneeId ? { assignee_id: params.assigneeId } : {}),
         ...(params.status ? { status: params.status } : {}),
+        ...(params.mutation ? { mutation: dependencyMutationToWire(params.mutation) } : {}),
       }),
     });
-    return parseWithFallback(raw, IssueTriggerPreviewSchema, { triggers: [], total_count: 0 }, {
+    return parseWithFallback(raw, DependencyTriggerPreviewSchema, { triggers: [], total_count: 0, blocked: null }, {
       endpoint: "POST /api/issues/preview-trigger",
     });
   }

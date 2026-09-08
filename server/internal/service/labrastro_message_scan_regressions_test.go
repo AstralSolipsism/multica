@@ -89,8 +89,7 @@ func (f v1ReviewScanFixture) scan(t *testing.T, ctx context.Context) {
 	}
 }
 
-// Fail exactly the reverse-link update after CreateAutopilotTask committed.
-// This models the production failure window without inventing a malformed row.
+// Fail the reverse-link update inside the dispatch transaction.
 type v1ReviewMissingReverseLinkDB struct {
 	*pgxpool.Pool
 	failed bool
@@ -108,19 +107,57 @@ func (p *v1ReviewMissingReverseLinkDB) QueryRow(ctx context.Context, sql string,
 	return p.Pool.QueryRow(ctx, sql, args...)
 }
 
+type v1ReviewMissingReverseLinkTx struct {
+	pgx.Tx
+	owner *v1ReviewMissingReverseLinkDB
+}
+
+func (p *v1ReviewMissingReverseLinkDB) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := p.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &v1ReviewMissingReverseLinkTx{Tx: tx, owner: p}, nil
+}
+
+func (tx *v1ReviewMissingReverseLinkTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if strings.Contains(sql, "-- name: UpdateAutopilotRunRunning") {
+		tx.owner.failed = true
+		return v1ReviewRowError{errors.New("synthetic reverse-link write unavailable")}
+	}
+	return tx.Tx.QueryRow(ctx, sql, args...)
+}
+
+func TestAutopilotDispatchRollsBackWhenReverseLinkFails(t *testing.T) {
+	f := v1ReviewScanSetup(t, "run_only")
+	broken := &v1ReviewMissingReverseLinkDB{Pool: f.pool}
+	tasks := NewTaskService(f.q, broken, nil, events.New())
+	dispatcher := NewAutopilotService(f.q, broken, events.New(), tasks)
+	err := dispatcher.dispatchRunOnly(context.Background(), f.ap, &f.run, f.userID)
+	if err == nil || !broken.failed {
+		t.Fatalf("dispatch did not exercise the transaction failure: %v", err)
+	}
+	if _, err := f.q.GetAutopilotTaskByRun(context.Background(), f.run.ID); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("failed dispatch left a task: %v", err)
+	}
+	if f.run.TaskID.Valid {
+		t.Fatal("failed dispatch exposed an uncommitted task")
+	}
+}
+
 func TestV1ReviewScannerRecoversCommittedTaskWithoutRunReverseLink(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	f := v1ReviewScanSetup(t, "run_only")
-	brokenLink := &v1ReviewMissingReverseLinkDB{Pool: f.pool}
 	taskService := &TaskService{Queries: f.q, TxStarter: f.pool, Bus: events.New()}
-	dispatcher := NewAutopilotService(db.New(brokenLink), f.pool, events.New(), taskService)
+	dispatcher := NewAutopilotService(f.q, f.pool, events.New(), taskService)
 	if err := dispatcher.dispatchRunOnly(ctx, f.ap, &f.run, f.userID); err != nil {
-		t.Fatalf("real dispatch failed before the injected reverse-link write: %v", err)
+		t.Fatalf("real dispatch failed: %v", err)
 	}
-	if !brokenLink.failed {
-		t.Fatal("real dispatch did not reach the reverse-link failure injection")
-	}
+	// Reproduce the historical row shape left by pre-OL-41 servers, whose
+	// reverse-link write followed the task commit. New dispatch is atomic, but
+	// the scanner must continue recovering records created by older producers.
+	f.fx.Exec(t, `UPDATE autopilot_run SET task_id = NULL WHERE id = $1`, f.run.ID)
 	t.Cleanup(func() {
 		f.fx.Exec(t, `DELETE FROM agent_task_queue WHERE autopilot_run_id = $1`, f.run.ID)
 	})

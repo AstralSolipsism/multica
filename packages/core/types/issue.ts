@@ -1,3 +1,4 @@
+import type { DispatchOutcome } from "../api/dispatch-schemas";
 import type { Label } from "./label";
 import type { IssuePropertyValues } from "./property";
 
@@ -158,6 +159,7 @@ export interface IssueSourceContext {
 }
 
 export interface Issue {
+ dispatch?: DispatchOutcome | null;
   id: string;
   workspace_id: string;
   number: number;
