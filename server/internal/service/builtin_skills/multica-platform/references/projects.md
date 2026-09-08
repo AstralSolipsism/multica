@@ -40,6 +40,22 @@ Common resource types:
   `daemon_id`, optional label, and optional `execution_mode` (`in_place`, the
   default, or `worktree`).
 
+## Shared project files
+
+An opt-in backend file API exists at `/api/projects/{project_uuid}/files`,
+separate from resource pointers. It offers capabilities, bounded metadata lists,
+authorized content reads, revision-checked saves, candidates and operation lookup.
+The full wire contract is `server/docs/project-files-contract.md` in the source
+repository. CLI/runtime discovery commands are a separate integration; do not
+invent `multica project file` commands on versions that do not advertise them.
+
+An enabled client must retain the revision read before editing, acknowledge only
+`SAVED`, keep drafts on `CONFLICT` or unknown outcomes, and retry the same request
+with its original operation key. Conflict adoption also requires an explicit
+expected revision. A task token is limited to its current server-associated
+project; operation keys are isolated per run. Listings contain no file contents,
+and shared documents do not acquire instruction priority from being stored here.
+
 ## CLI
 
 ```bash

@@ -36,6 +36,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/projectfile"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -189,6 +190,7 @@ type RuntimeRecoveryNotifier interface {
 }
 
 type Handler struct {
+	ProjectFiles           *projectfile.Service
 	Queries                *db.Queries
 	ReadSelector           *dbreader.Selector
 	DB                     dbExecutor
@@ -412,7 +414,7 @@ type Handler struct {
 	// GlmQuota polls the Zhipu/GLM Coding Plan balance (account-level, shared
 	// by every GLM-backed runtime). Nil when GLM_QUOTA_API_KEY is unset.
 	GlmQuota *GlmQuotaMonitor
-	cfg       Config
+	cfg      Config
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {

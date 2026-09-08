@@ -125,6 +125,10 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				// this header is allowed to carry — strip anything else a
 				// client tried to send.
 				r.Header.Set("X-Actor-Source", "task_token")
+				r = r.WithContext(auth.WithIdentity(r.Context(), auth.Identity{
+					UserID: userID, AgentID: uuidToString(tt.AgentID), TaskID: uuidToString(tt.TaskID),
+					WorkspaceID: uuidToString(tt.WorkspaceID), CredentialKind: "task", CredentialHash: hash, ExpiresAt: tt.ExpiresAt.Time,
+				}))
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -185,6 +189,7 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				// treated as the owner having approved an account-
 				// level action.
 				r.Header.Set("X-Actor-Source", "cloud_pat")
+				r = r.WithContext(auth.WithIdentity(r.Context(), auth.Identity{UserID: identity.OwnerID, CredentialKind: "cloud_pat"}))
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -202,6 +207,7 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 						return
 					}
 					r.Header.Set("X-User-ID", userID)
+					r = r.WithContext(auth.WithIdentity(r.Context(), auth.Identity{UserID: userID, CredentialKind: "pat", CredentialHash: hash}))
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -237,6 +243,7 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				// within the TTL window skip this write entirely.
 				go queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID)
 
+				r = r.WithContext(auth.WithIdentity(r.Context(), auth.Identity{UserID: userID, CredentialKind: "pat", CredentialHash: hash, ExpiresAt: expiresAt}))
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -276,6 +283,11 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				r.Header.Set("X-User-Email", email)
 			}
 
+			identity := auth.Identity{UserID: sub, CredentialKind: "jwt"}
+			if expiry, err := claims.GetExpirationTime(); err == nil && expiry != nil {
+				identity.ExpiresAt = expiry.Time
+			}
+			r = r.WithContext(auth.WithIdentity(r.Context(), identity))
 			next.ServeHTTP(w, r)
 		})
 	}

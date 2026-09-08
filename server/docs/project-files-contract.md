@@ -55,8 +55,8 @@ the first page to discover new entries sorted before a cursor. No listing reads
 object contents. File metadata includes `file_id`, `path`, `revision`,
 `base_revision`, `version_id`, `size_bytes`, `sha256`, `content_type`,
 `author_type`, `author_id`, optional `source_task_id`/`candidate_id`, `updated_at`.
-Candidate `revision` is 0: it has not become a current revision. The general file
-list's `base_revision` is 0; use content headers for a historical edit base.
+Candidate `revision` is 0: it has not become a current revision. Use the content
+headers to bind a downloaded working copy to the exact version read.
 
 ## Save and replay
 
