@@ -3,6 +3,7 @@ package issuedependency
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 )
 
@@ -68,6 +69,51 @@ func TestDependencyInheritedCycleAndReparent(t *testing.T) {
 	parentCycle := model(map[string]string{"A": "B", "B": "A"})
 	if parentCycle.Validate() == nil {
 		t.Fatal("parent forest must be acyclic")
+	}
+}
+
+func TestDependencyExecutionComponentPreservesCanonicalEvidence(t *testing.T) {
+	for _, kind := range []string{"dangling", "duplicate", "missing_parent"} {
+		t.Run(kind, func(t *testing.T) {
+			m := model(map[string]string{"A": "", "A1": "A", "B": "", "B1": "B", "C": "", "D": "", "bad": "", "other": ""},
+				[2]string{"A1", "B"}, [2]string{"C", "B1"}, [2]string{"B1", "D"})
+			m.Edges = append(m.Edges,
+				Edge{ID: "unknown", IssueID: "B", DependsOnID: "bad", Type: "blocks"},
+				Edge{ID: "inert", IssueID: "B1", DependsOnID: "bad", Type: "related"})
+			switch kind {
+			case "dangling":
+				m.Edges = append(m.Edges, Edge{ID: "dangling", IssueID: "bad", DependsOnID: "missing", Type: "blocked_by"})
+			case "duplicate":
+				m.Edges = append(m.Edges,
+					Edge{ID: "first", IssueID: "bad", DependsOnID: "other", Type: "blocked_by"},
+					Edge{ID: "second", IssueID: "bad", DependsOnID: "other", Type: "blocked_by"})
+			case "missing_parent":
+				n := m.Issues["bad"]
+				n.ParentID = "missing"
+				m.Issues["bad"] = n
+			}
+			original := m.Clone()
+			if m.Validate() == nil {
+				t.Fatal("the complete workspace must remain unverified")
+			}
+			component := m.ExecutionComponent("B1")
+			if err := component.Validate(); err != nil {
+				t.Fatalf("unrelated history blocked the valid component: %v", err)
+			}
+			if !reflect.DeepEqual(component.IDs(), []string{"A", "A1", "B", "B1", "C", "D"}) || len(component.Edges) != 3 {
+				t.Fatalf("lost an ancestor, prerequisite, or downstream task: %+v", component)
+			}
+			ps := component.Prerequisites("B1")
+			if len(ps) != 2 || ps[0].IssueID != "A1" || ps[1].IssueID != "C" {
+				t.Fatalf("component changed inherited readiness: %+v", ps)
+			}
+			if m.ExecutionComponent("bad").Validate() == nil || m.ExecutionComponent("B1", "bad").Validate() == nil {
+				t.Fatal("affected canonical corruption was hidden or normalized")
+			}
+			if !reflect.DeepEqual(m, original) {
+				t.Fatal("component selection changed the original audit evidence")
+			}
+		})
 	}
 }
 

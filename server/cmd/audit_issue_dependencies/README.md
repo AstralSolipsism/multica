@@ -15,6 +15,13 @@ IDs, workspace graph violations and a proposed normalized row set. It audits
 all issues and relations, including dangling or cross-workspace endpoints.
 It does not infer that an empty development database represents production.
 
+Unverified data blocks that workspace's dependency API/enablement, not unrelated
+ordinary issue operations. Legacy operations check the affected parent/canonical
+dependency component; unknown `blocks` and `related` rows stay inert and remain
+available to this audit. Invalid canonical data in the affected component still
+requires repair before changing its structure or admitting execution. Do not
+interpret a successful ordinary assignment or deletion as a clean audit.
+
 ## Normalization and migration
 
 Review every `unverified_ids` and `workspace_violations` entry first. Historical
@@ -44,6 +51,11 @@ the migration runner's registered hook removes an INVALID leftover index before
 retry, avoiding an `IF NOT EXISTS` false success. The index only covers
 `type='blocked_by'`; a successful index build does not verify historical
 `blocks` semantics or the graph. Audit remains required.
+
+Check for canonical duplicates **before deploying migration 466**, not only
+before enabling compound writes: they prevent the unique index from building.
+Other unverified rows are preserved by these migrations. Deployment does not
+enable dependency writes or provide OL-41's atomic enqueue/claim integration.
 
 The integration sample contains two identical canonical rows and one `related`
 row: 3 original rows → 2 normalized rows, exactly 1 removed duplicate; recovery

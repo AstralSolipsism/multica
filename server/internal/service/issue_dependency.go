@@ -291,11 +291,17 @@ func (s *DependencyService) Apply(ctx context.Context, q *db.Queries, before *De
 		}
 		next.Model.Edges = kept
 	}
+	previousModel, nextModel := before.Model, next.Model
+	if structureChanged && !write.IncludeView && write.BlockedBy == nil && write.ExpectedVersion == "" {
+		// Reparent/create can join previously separate components. Keep the old
+		// component in the proposed model even after a subtree is detached.
+		previousModel, nextModel = legacyDependencyModels(before.Model, next.Model, id, next.Model.Issues[id].ParentID)
+	}
 	if structureChanged || write.IncludeView {
-		if err := before.Model.Validate(); err != nil {
+		if err := previousModel.Validate(); err != nil {
 			return nil, false, dependencyError("dependency_data_unverified", "dependency data must be audited before use")
 		}
-		if err := next.Model.Validate(); err != nil {
+		if err := nextModel.Validate(); err != nil {
 			var violation *issuedependency.Violation
 			if errors.As(err, &violation) {
 				return nil, false, &DependencyError{Code: violation.Code, Message: "the proposed dependency structure is invalid", Violation: violation}
@@ -303,11 +309,13 @@ func (s *DependencyService) Apply(ctx context.Context, q *db.Queries, before *De
 			return nil, false, err
 		}
 	}
-	if structureChanged && !isDependencyHuman(ctx) && before.Model.Weakened(next.Model) {
+	if structureChanged && !isDependencyHuman(ctx) && previousModel.Weakened(nextModel) {
 		return nil, false, dependencyError("dependency_change_not_allowed", "only an authenticated human can remove unfinished constraints")
 	}
-	changed := relationState(before.Model, id) != relationState(next.Model, id)
-	if changed {
+	beforeState, afterState := relationState(before.Model, id), relationState(next.Model, id)
+	changed := beforeState != afterState
+	// Ordinary reparenting must never rewrite or normalize historical rows.
+	if changed && write.BlockedBy != nil {
 		retained := []pgtype.UUID{}
 		for _, e := range next.Model.Edges {
 			if e.Type != "blocked_by" || e.IssueID != id {
@@ -338,7 +346,9 @@ func (s *DependencyService) Apply(ctx context.Context, q *db.Queries, before *De
 				return nil, false, err
 			}
 		}
-		if err := s.audit(ctx, q, issue.WorkspaceID, issue.ID, "write", relationState(before.Model, id), relationState(next.Model, id)); err != nil {
+	}
+	if changed {
+		if err := s.audit(ctx, q, issue.WorkspaceID, issue.ID, "write", beforeState, afterState); err != nil {
 			return nil, false, err
 		}
 	}
@@ -352,17 +362,19 @@ func (s *DependencySnapshot) CheckWriteAdmission(ctx context.Context, issue db.I
 	if !assignedChanged && !runIntent {
 		return nil
 	}
-	if err := s.Model.Validate(); err != nil {
+	id := util.UUIDToString(issue.ID)
+	execution := *s
+	execution.Model = s.Model.ExecutionComponent(id)
+	if err := execution.Model.Validate(); err != nil {
 		return dependencyError("dependency_data_unverified", "dependency data must be audited before execution")
 	}
-	id := util.UUIDToString(issue.ID)
-	ps := s.Model.Prerequisites(id)
+	ps := execution.Model.Prerequisites(id)
 	if len(ps) == 0 {
 		return nil
 	}
 	for _, p := range ps {
 		if !p.Satisfied && ((!isDependencyHuman(ctx) && assignedChanged) || runIntent) {
-			v := s.View(id, func(string) bool { return true })
+			v := execution.View(id, func(string) bool { return true })
 			return &DependencyError{Code: "dependency_unsatisfied", Message: "prerequisites are unfinished; propose a plan or request human help", View: &v}
 		}
 	}
@@ -370,6 +382,11 @@ func (s *DependencySnapshot) CheckWriteAdmission(ctx context.Context, issue db.I
 		return dependencyError("dependency_dispatch_unavailable", "dependency execution admission is not enabled yet")
 	}
 	return nil
+}
+
+func legacyDependencyModels(before, next issuedependency.Model, seeds ...string) (issuedependency.Model, issuedependency.Model) {
+	previous := before.ExecutionComponent(seeds...)
+	return previous, next.ExecutionComponent(append(previous.IDs(), seeds...)...)
 }
 
 // DependencyWriteIntent is conservative before runtime availability checks:
@@ -438,10 +455,18 @@ func (s *DependencyService) Delete(ctx context.Context, q *db.Queries, before *D
 		}
 	}
 	next.Edges = kept
-	if err := before.Model.Validate(); err != nil {
+	seeds := make([]string, 0, len(ids))
+	for _, id := range ids {
+		seeds = append(seeds, util.UUIDToString(id))
+	}
+	previousModel, nextModel := legacyDependencyModels(before.Model, next, seeds...)
+	if err := previousModel.Validate(); err != nil {
 		return dependencyError("dependency_data_unverified", "dependency data must be audited before deletion")
 	}
-	if !isDependencyHuman(ctx) && before.Model.Weakened(next) {
+	if err := nextModel.Validate(); err != nil {
+		return dependencyError("dependency_data_unverified", "the proposed deletion leaves invalid dependency data")
+	}
+	if !isDependencyHuman(ctx) && previousModel.Weakened(nextModel) {
 		return dependencyError("dependency_change_not_allowed", "only an authenticated human can remove unfinished constraints")
 	}
 	for _, id := range next.IDs() {

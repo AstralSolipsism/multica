@@ -270,6 +270,14 @@ dependency-bearing run requests also reject with
 unfinished prerequisites must never be interpreted as ready. No automatic
 dispatch along arbitrary dependency edges is added.
 
+Unverified historical relations keep dependency GET/compound writes unavailable
+until the workspace is audited. Ordinary issue operations check their affected
+parent/`blocked_by` component, so unrelated historical anomalies do not block
+assignment, reparenting or deletion workspace-wide. `blocks` is not interpreted
+as a prerequisite. Canonical constraints still apply with compound writes off;
+an affected invalid canonical reference fails closed. A successful ordinary
+operation does not mean the workspace is verified or dependency dispatch is ready.
+
 ## Claim ownership without duplicating a run
 
 Assigning an active issue to an agent normally starts a run. When the work is

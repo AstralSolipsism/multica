@@ -57,6 +57,56 @@ func (m Model) IDs() []string {
 	return ids
 }
 
+// ExecutionComponent selects the complete undirected parent/blocked_by closure
+// of seeds for legacy issue operations. Unknown relation types have no verified
+// execution meaning. They remain in storage and must still fail the full-model
+// audit used by dependency APIs. Missing endpoints and duplicate canonical rows
+// are retained here so Validate fails closed when they affect this component.
+func (m Model) ExecutionComponent(seeds ...string) Model {
+	adj := make(map[string][]string)
+	connect := func(a, b string) {
+		adj[a] = append(adj[a], b)
+		adj[b] = append(adj[b], a)
+	}
+	for id, n := range m.Issues {
+		if n.ParentID != "" {
+			connect(id, n.ParentID)
+		}
+	}
+	for _, e := range m.Edges {
+		if e.Type == "blocked_by" {
+			connect(e.IssueID, e.DependsOnID)
+		}
+	}
+	seen := make(map[string]bool)
+	queue := make([]string, 0, len(seeds))
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			queue = append(queue, id)
+		}
+	}
+	for _, id := range seeds {
+		add(id)
+	}
+	component := Model{Issues: make(map[string]Issue)}
+	for i := 0; i < len(queue); i++ {
+		id := queue[i]
+		if n, ok := m.Issues[id]; ok {
+			component.Issues[id] = n
+		}
+		for _, neighbor := range adj[id] {
+			add(neighbor)
+		}
+	}
+	for _, e := range m.Edges {
+		if e.Type == "blocked_by" && (seen[e.IssueID] || seen[e.DependsOnID]) {
+			component.Edges = append(component.Edges, e)
+		}
+	}
+	return component
+}
+
 // Validate checks the proposed final structure regardless of completion status.
 // g(v)->d(v), g(parent)->g(child), d(prerequisite)->g(dependent) is a linear
 // representation of the fully inherited execution graph (OL-38 contract v2).

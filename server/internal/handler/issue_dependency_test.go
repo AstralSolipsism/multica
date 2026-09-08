@@ -352,3 +352,113 @@ func TestDependencyAuditIsOwnedByWorkspaceDeletion(t *testing.T) {
 		t.Fatal("workspace deletion orphaned the dependency audit")
 	}
 }
+
+func TestDependencyLegacyOperationsIgnoreUnrelatedUnverifiedData(t *testing.T) {
+	for _, kind := range []string{"blocks", "related_foreign", "blocked_by_foreign", "canonical_cycle"} {
+		t.Run(kind, func(t *testing.T) {
+			h, fx := dependencyFixture(t)
+			h.IssueService.Dependencies.WritesEnabled = false
+			bad := dependencyIssue(t, fx, "historical relation")
+			other := dependencyIssue(t, fx, "historical endpoint")
+			edgeType := kind
+			if strings.HasSuffix(kind, "_foreign") {
+				edgeType = strings.TrimSuffix(kind, "_foreign")
+				other = dbfx.Issue(t, "foreign historical endpoint")
+			}
+			if kind == "canonical_cycle" {
+				edgeType = "blocked_by"
+				fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": other, "depends_on_issue_id": bad, "type": edgeType})
+			}
+			edge := fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": bad, "depends_on_issue_id": other, "type": edgeType})
+			parent := dependencyIssue(t, fx, "unrelated parent")
+			free := dependencyIssue(t, fx, "unrelated task", testutil.Cols{"status": "backlog"})
+			agent := fx.Agent(t, "Fake assignee", fx.Runtime(t, "Fake runtime"))
+
+			testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, free, map[string]any{"assignee_type": "agent", "assignee_id": agent, "suppress_run": true}, "task")).Want(http.StatusOK)
+			testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, free, map[string]any{"parent_issue_id": parent}, "jwt")).Want(http.StatusOK)
+			testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, free, map[string]any{"parent_issue_id": nil}, "task")).Want(http.StatusOK)
+			var created IssueResponse
+			testutil.Call(t, h.CreateIssue, dependencyRequest(fx, http.MethodPost, "", map[string]any{"title": "ordinary child", "parent_issue_id": parent, "status": "backlog", "assignee_type": "agent", "assignee_id": agent}, "task")).Want(http.StatusCreated).JSON(&created)
+			t.Cleanup(func() { fx.Exec(t, "DELETE FROM issue WHERE id=$1", created.ID) })
+			testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, free, nil, "task")).Want(http.StatusNoContent)
+			testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, parent, nil, "jwt")).Want(http.StatusNoContent)
+			var detached bool
+			fx.QueryRow(t, "SELECT parent_issue_id IS NULL FROM issue WHERE id=$1", created.ID).Scan(&detached)
+			if !detached {
+				t.Fatal("ordinary parent deletion did not detach the surviving child")
+			}
+
+			// Legacy compatibility must not advertise a verified dependency view
+			// or make the workspace eligible for explicit dependency writes.
+			out := testutil.Call(t, h.GetIssueDependencies, dependencyRequest(fx, http.MethodGet, created.ID, nil, "jwt")).Want(http.StatusUnprocessableEntity).Map()
+			if out["reason_code"] != "dependency_data_unverified" {
+				t.Fatalf("unverified workspace appeared ready: %v", out)
+			}
+			testutil.Call(t, h.UpdateIssueWithDependencies, dependencyRequest(fx, http.MethodPatch, created.ID, map[string]any{"title": "must roll back"}, "jwt")).Want(http.StatusNotFound)
+			h.IssueService.Dependencies.WritesEnabled = true
+			testutil.Call(t, h.UpdateIssueWithDependencies, dependencyRequest(fx, http.MethodPatch, created.ID, map[string]any{"title": "must roll back"}, "jwt")).Want(http.StatusUnprocessableEntity)
+			var title string
+			fx.QueryRow(t, "SELECT title FROM issue WHERE id=$1", created.ID).Scan(&title)
+			if title != "ordinary child" {
+				t.Fatal("unverified compound write partially committed")
+			}
+			var unchanged bool
+			fx.QueryRow(t, "SELECT issue_id=$2 AND depends_on_issue_id=$3 AND type=$4 FROM issue_dependency WHERE id=$1", edge, bad, other, edgeType).Scan(&unchanged)
+			if !unchanged {
+				t.Fatal("ordinary operations rewrote an unverified historical row")
+			}
+		})
+	}
+}
+
+func TestDependencyLegacyOperationsStillProtectCanonicalConstraints(t *testing.T) {
+	h, fx := dependencyFixture(t)
+	h.IssueService.Dependencies.WritesEnabled = false
+	a := dependencyIssue(t, fx, "prerequisite")
+	b := dependencyIssue(t, fx, "dependent", testutil.Cols{"status": "backlog"})
+	child := dependencyIssue(t, fx, "child", testutil.Cols{"parent_issue_id": b})
+	parent := dependencyIssue(t, fx, "new parent")
+	canonical := fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": b, "depends_on_issue_id": a, "type": "blocked_by"})
+	unknown := fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": b, "depends_on_issue_id": parent, "type": "blocks"})
+	agent := fx.Agent(t, "Fake assignee", fx.Runtime(t, "Fake runtime"))
+	assignment := map[string]any{"assignee_type": "agent", "assignee_id": agent, "suppress_run": true}
+	out := testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, b, assignment, "task")).Want(http.StatusConflict).Map()
+	if out["reason_code"] != "dependency_unsatisfied" {
+		t.Fatalf("unknown rows disabled canonical admission: %v", out)
+	}
+	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, child, map[string]any{"parent_issue_id": nil}, "task")).Want(http.StatusForbidden)
+	testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, a, nil, "task")).Want(http.StatusForbidden)
+	testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, b, nil, "task")).Want(http.StatusForbidden)
+	// The new parent is in a previously disconnected execution component.
+	// Both components must be considered without interpreting the blocks row.
+	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, b, map[string]any{"parent_issue_id": parent}, "jwt")).Want(http.StatusOK)
+	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, parent, map[string]any{"parent_issue_id": child}, "jwt")).Want(http.StatusConflict)
+	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, a, map[string]any{"parent_issue_id": child}, "jwt")).Want(http.StatusConflict)
+	var retained int
+	fx.QueryRow(t, "SELECT count(*) FROM issue_dependency WHERE id IN ($1,$2)", canonical, unknown).Scan(&retained)
+	if retained != 2 {
+		t.Fatal("reparent rewrote historical relations")
+	}
+	// Human preassignment and the existing completion policy still work.
+	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, b, assignment, "jwt")).Want(http.StatusOK)
+	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, a, map[string]any{"status": "done"}, "task")).Want(http.StatusOK)
+	out = testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, b, map[string]any{"status": "todo"}, "task")).Want(http.StatusConflict).Map()
+	if out["reason_code"] != "dependency_dispatch_unavailable" {
+		t.Fatalf("ready canonical prerequisites bypassed the Stage 2 dispatch gate: %v", out)
+	}
+
+	foreign := dbfx.Issue(t, "foreign prerequisite")
+	bad := dependencyIssue(t, fx, "invalid canonical reference")
+	fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": bad, "depends_on_issue_id": foreign, "type": "blocked_by"})
+	for _, request := range []*http.Request{
+		dependencyRequest(fx, http.MethodPut, bad, assignment, "task"),
+		dependencyRequest(fx, http.MethodPut, b, map[string]any{"parent_issue_id": bad}, "jwt"),
+	} {
+		out := testutil.Call(t, h.UpdateIssue, request).Want(http.StatusUnprocessableEntity).Map()
+		encoded, _ := json.Marshal(out)
+		if out["reason_code"] != "dependency_data_unverified" || strings.Contains(string(encoded), foreign) {
+			t.Fatalf("affected invalid canonical data was ignored or disclosed: %v", out)
+		}
+	}
+	testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, bad, nil, "jwt")).Want(http.StatusUnprocessableEntity)
+}

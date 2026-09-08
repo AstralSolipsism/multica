@@ -27,6 +27,21 @@ cycles; ancestor intervals reject self and ancestor/descendant prerequisites.
 The graph representation is O(V+E+H), with deterministic O(V log V) ID ordering.
 Cycle diagnostics contain original issue/edge IDs, never compression nodes.
 
+Dependency GET and compound writes strictly validate the entire workspace.
+Legacy create/reparent/delete/admission checks instead validate the complete
+connected component formed by parent links and canonical `blocked_by` edges,
+in both directions. A reparent includes the old and proposed parent's components;
+deletion also validates the surviving structure. This includes every potentially
+affected ancestor, descendant, prerequisite and successor, without pagination.
+Unrelated malformed history cannot disable ordinary issue operations across a
+workspace. Unknown `blocks` and inert `related` rows are excluded only from this
+execution check, not from storage or the strict workspace audit. Missing/foreign
+endpoints, duplicate canonical rows and cycles **inside** the affected component
+still fail closed; the service never treats a missing prerequisite as ready.
+Ordinary reparenting does not rewrite relation rows. Explicit issue deletion
+removes incident rows through the existing cleanup policy and records their
+original contents in the same transaction's audit.
+
 Machine callers may add constraints. Removing an unfinished direct relation,
 losing inherited constraints on reparent, or deleting a prerequisite/parent so
 surviving tasks lose unfinished constraints requires a trusted human JWT.
@@ -132,6 +147,16 @@ fails closed with 409 `dependency_dispatch_unavailable`, including when its
 prerequisites are ready; `dependency_override` remains disabled. This prevents
 the existing post-commit enqueue paths from advertising an atomic dispatch
 guarantee they do not yet provide.
+
+This protection also applies to canonical historical `blocked_by` rows while
+compound writes are disabled. Such tasks can be planned, preassigned by a human
+without a run, and have their status reported under the existing policy; run
+requests wait for OL-41. Unknown historical `blocks` rows are not converted into
+execution constraints. Even when legacy operations succeed, unverified workspace
+data continues to produce 422 on dependency GET/compound writes (404 takes
+precedence while writes are disabled). A future enablement path must audit each
+workspace and integrate dispatch admission; the Stage 2 test switch is not an
+operator-facing per-workspace enablement mechanism.
 
 OL-41 must integrate the same validated snapshot and lock order with all
 enqueue/claim producers, capacity/queue transactions, human override and
