@@ -14,11 +14,16 @@ import (
 // antigravityQuotaProcessesImpl lists the pids of running agy processes whose
 // command line matches the daemon's resolved executable (absolute path or
 // basename), via one `ps` scan. Best-effort: a failing ps yields no
-// candidates, which the caller reports as "no running agy process".
-func antigravityQuotaProcessesImpl(execPath string) []int {
+// candidates, which the caller reports as "no running agy process". The scan
+// derives its budget from the caller's context, so a caller deadline cancels
+// the subprocess instead of outliving it.
+func antigravityQuotaProcessesImpl(ctx context.Context, execPath string) []int {
+	if ctx.Err() != nil {
+		return nil
+	}
 	// `-ax -o pid=,command=` works on both BSD ps (macOS) and procps: every
 	// process, no header, pid first and the full command line after.
-	ctx, cancel := context.WithTimeout(context.Background(), antigravityQuotaPSBudget)
+	ctx, cancel := context.WithTimeout(ctx, antigravityQuotaPSBudget)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "ps", "-ax", "-o", "pid=,command=").Output()
 	if err != nil {
@@ -49,9 +54,14 @@ func antigravityQuotaProcessesImpl(execPath string) []int {
 // listeningLoopbackPorts returns the TCP ports one process is listening on,
 // discovered with lsof (shipped with macOS and the BSDs). -nP skips name
 // resolution so the parse sees raw addresses/ports; the NAME column is the
-// last field, so trailing whitespace never breaks it.
-func listeningLoopbackPorts(pid int) []int {
-	ctx, cancel := context.WithTimeout(context.Background(), antigravityQuotaPSBudget)
+// last field, so trailing whitespace never breaks it. The scan derives its
+// budget from the caller's context, so a caller deadline cancels the
+// subprocess instead of outliving it.
+func listeningLoopbackPorts(ctx context.Context, pid int) []int {
+	if ctx.Err() != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, antigravityQuotaPSBudget)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p",
 		strconv.Itoa(pid)).Output()

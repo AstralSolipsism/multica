@@ -94,6 +94,9 @@ const (
 // per-platform discovery steps, indirected so tests can pin them to a fake
 // process landscape. The vars hold the platform implementations by default
 // (antigravity_quota_{linux,unix,windows}.go define the real functions).
+// Both take the probe's context: a caller deadline (the per-task sampler's
+// discovery window) must cancel a scan in flight and stop the ones not yet
+// started, not merely be checked between rounds.
 var (
 	antigravityQuotaProcesses      = antigravityQuotaProcessesImpl
 	antigravityQuotaListeningPorts = listeningLoopbackPorts
@@ -159,8 +162,14 @@ func ProbeAntigravityQuota(ctx context.Context, execPath, version string, now ti
 	}
 	ctx, cancel := context.WithTimeout(ctx, antigravityQuotaProbeBudget)
 	defer cancel()
+	if err := ctx.Err(); err != nil {
+		// A caller that already spent its window (or cancelled) gets a
+		// cancellation, not a misleading "agy not running" from a scan that
+		// would answer nothing.
+		return nil, fmt.Errorf("antigravity quota probe: %w", err)
+	}
 
-	pids := antigravityQuotaProcesses(execPath)
+	pids := antigravityQuotaProcesses(ctx, execPath)
 	if len(pids) == 0 {
 		return nil, ErrAntigravityNotRunning
 	}
@@ -175,11 +184,17 @@ func ProbeAntigravityQuota(ctx context.Context, execPath, version string, now ti
 	// round (R5).
 	defer client.CloseIdleConnections()
 	for _, pid := range pids {
-		ports := antigravityQuotaListeningPorts(pid)
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("antigravity quota probe: %w", err)
+		}
+		ports := antigravityQuotaListeningPorts(ctx, pid)
 		if len(ports) > antigravityQuotaMaxPorts {
 			ports = ports[:antigravityQuotaMaxPorts]
 		}
 		for _, port := range ports {
+			if err := ctx.Err(); err != nil {
+				return nil, fmt.Errorf("antigravity quota probe: %w", err)
+			}
 			body, err := antigravityQuotaRPC(ctx, client, port)
 			if err != nil {
 				continue

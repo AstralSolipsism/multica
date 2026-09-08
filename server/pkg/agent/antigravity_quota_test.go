@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -288,17 +289,21 @@ func newQuotaProbeServer(t *testing.T, status int, body string) (*httptest.Serve
 }
 
 // stubDiscovery pins the probe's process/port discovery to the given values
-// and counts process-scan invocations.
+// and counts process-scan invocations. The ports stub keeps the pid-only
+// shape (contexts are irrelevant to canned values); the vars themselves are
+// context-taking, matching the real discovery implementations.
 func stubDiscovery(t *testing.T, pids []int, ports func(pid int) []int) *int {
 	t.Helper()
 	origProcesses := antigravityQuotaProcesses
 	origPorts := antigravityQuotaListeningPorts
 	scans := 0
-	antigravityQuotaProcesses = func(execPath string) []int {
+	antigravityQuotaProcesses = func(_ context.Context, _ string) []int {
 		scans++
 		return pids
 	}
-	antigravityQuotaListeningPorts = ports
+	antigravityQuotaListeningPorts = func(_ context.Context, pid int) []int {
+		return ports(pid)
+	}
 	t.Cleanup(func() {
 		antigravityQuotaProcesses = origProcesses
 		antigravityQuotaListeningPorts = origPorts
@@ -429,6 +434,72 @@ func TestProbeAntigravityQuotaSecondPortAnswers(t *testing.T) {
 	}
 	if len(quota.Windows) != 4 {
 		t.Fatalf("windows = %d, want 4", len(quota.Windows))
+	}
+}
+
+// The UNSTUBBED discovery chain must honor the caller's context end to end:
+// this process really owns the quota server's listening socket, so the real
+// port discovery finds it the same way it finds agy's, and a context that is
+// already dead must produce no discovery work and no RPC at all.
+func TestProbeAntigravityQuotaRealDiscoveryHonoursContext(t *testing.T) {
+	// The helper pins the server's Close to test cleanup; the local binding
+	// is not needed.
+	_, headers, _ := newQuotaProbeServer(t, http.StatusOK, antigravityQuotaFourBuckets)
+
+	// Point the process scan at this test process; port discovery below runs
+	// for real (no stub).
+	origProcesses := antigravityQuotaProcesses
+	antigravityQuotaProcesses = func(_ context.Context, _ string) []int { return []int{os.Getpid()} }
+	t.Cleanup(func() { antigravityQuotaProcesses = origProcesses })
+
+	quota, err := ProbeAntigravityQuota(context.Background(), "agy", "1.1.11", antigravityQuotaFixtureNow)
+	if err != nil {
+		t.Fatalf("real discovery chain failed: %v", err)
+	}
+	if len(quota.Windows) != 4 {
+		t.Fatalf("windows = %d, want 4", len(quota.Windows))
+	}
+
+	before := len(*headers)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = ProbeAntigravityQuota(ctx, "agy", "1.1.11", antigravityQuotaFixtureNow)
+	if err == nil {
+		t.Fatal("expected error from a dead context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("dead-context failure = %v, want the context error surfaced", err)
+	}
+	if len(*headers) != before {
+		t.Errorf("dead context produced %d RPC call(s); discovery must not reach the dial", len(*headers)-before)
+	}
+}
+
+// The real port discovery must honor cancellation directly: a live context
+// finds a socket this process owns, a dead one reports nothing.
+func TestListeningLoopbackPortsHonoursContext(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	want := ln.Addr().(*net.TCPAddr).Port
+
+	ports := listeningLoopbackPorts(context.Background(), os.Getpid())
+	found := false
+	for _, port := range ports {
+		if port == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("real discovery missed the live listener %d; found %v", want, ports)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := listeningLoopbackPorts(ctx, os.Getpid()); len(got) != 0 {
+		t.Fatalf("cancelled context still reported ports %v", got)
 	}
 }
 
