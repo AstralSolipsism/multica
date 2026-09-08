@@ -933,6 +933,70 @@ type IssueViewPreference struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type LabrastroMessageDelivery struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	RouteID         pgtype.UUID        `json:"route_id"`
+	RouteRevision   pgtype.Int4        `json:"route_revision"`
+	AutopilotID     pgtype.UUID        `json:"autopilot_id"`
+	RunID           pgtype.UUID        `json:"run_id"`
+	DedupKey        string             `json:"dedup_key"`
+	SourceKind      string             `json:"source_kind"`
+	Status          string             `json:"status"`
+	Attempts        int32              `json:"attempts"`
+	NextAttemptAt   pgtype.Timestamptz `json:"next_attempt_at"`
+	LeaseToken      pgtype.UUID        `json:"lease_token"`
+	LeaseExpiresAt  pgtype.Timestamptz `json:"lease_expires_at"`
+	ErrorCode       pgtype.Text        `json:"error_code"`
+	LastError       pgtype.Text        `json:"last_error"`
+	ContentSnapshot []byte             `json:"content_snapshot"`
+	TargetSnapshot  []byte             `json:"target_snapshot"`
+	InstallationID  pgtype.UUID        `json:"installation_id"`
+	TargetKey       string             `json:"target_key"`
+	ShardTotal      int32              `json:"shard_total"`
+	SourceRef       []byte             `json:"source_ref"`
+	DeliveredAt     pgtype.Timestamptz `json:"delivered_at"`
+	FirstAttemptAt  pgtype.Timestamptz `json:"first_attempt_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LabrastroMessageReceipt struct {
+	ID                pgtype.UUID        `json:"id"`
+	DeliveryID        pgtype.UUID        `json:"delivery_id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	InstallationID    pgtype.UUID        `json:"installation_id"`
+	ShardIndex        int32              `json:"shard_index"`
+	ShardTotal        int32              `json:"shard_total"`
+	SendUuid          string             `json:"send_uuid"`
+	ExternalMessageID pgtype.Text        `json:"external_message_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LabrastroMessageRoute struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	AutopilotID     pgtype.UUID        `json:"autopilot_id"`
+	InstallationID  pgtype.UUID        `json:"installation_id"`
+	ChannelType     string             `json:"channel_type"`
+	TargetType      string             `json:"target_type"`
+	TargetUserID    pgtype.UUID        `json:"target_user_id"`
+	TargetChatID    pgtype.Text        `json:"target_chat_id"`
+	TargetMessageID pgtype.Text        `json:"target_message_id"`
+	TargetThreadID  pgtype.Text        `json:"target_thread_id"`
+	TargetKey       string             `json:"target_key"`
+	Conditions      string             `json:"conditions"`
+	ContentMode     string             `json:"content_mode"`
+	Enabled         bool               `json:"enabled"`
+	Revision        int32              `json:"revision"`
+	CreatedBy       pgtype.UUID        `json:"created_by"`
+	UpdatedBy       pgtype.UUID        `json:"updated_by"`
+	EffectiveFrom   pgtype.Timestamptz `json:"effective_from"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type LarkBindingToken struct {
 	TokenHash      string             `json:"token_hash"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
