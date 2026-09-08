@@ -56,7 +56,7 @@ import { buildWorkloadIndex, RuntimeList } from "./runtime-list";
 import { pendingRuntimeFromProfile } from "./pending-runtime";
 import { buildRuntimeMachines, type RuntimeMachine } from "./runtime-machines";
 import { MachineQuotaChips } from "./machine-quota-chips";
-import { GlmQuotaCard, GlmQuotaChip } from "./glm-quota-card";
+import { GlmQuotaCard } from "./glm-quota-card";
 import { HostMetricsBars } from "./host-metrics-bars";
 import { HealthDot, HealthIcon, useHealthLabel } from "./shared";
 import { useT, useTimeAgo } from "../../i18n";
@@ -182,7 +182,9 @@ export function RuntimesPage({
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className={cn(PAGE_RAIL, PAGE_GUTTER, "flex flex-col py-4 sm:py-6")}>
+          {/* Fork deviation from the shared rail: relax the 1440px cap at 2xl
+              so 4K viewports use the full width (kept through upstream syncs). */}
+          <div className={cn(PAGE_RAIL, PAGE_GUTTER, "flex flex-col py-4 sm:py-6", "2xl:max-w-[1920px]")}>
             {!agentsLoading &&
               !chatSessionsLoading &&
               memberNeedsMikaSetup(agents, chatSessions) &&
@@ -518,12 +520,17 @@ function MachineRow({
           squeeze the name to zero. Quota detail stays one click away on the
           machine page. */}
       <span className="hidden w-56 shrink-0 items-center gap-1.5 2xl:flex">
-        {glmQuota?.enabled === true &&
-          glmQuota.anchor_device != null &&
-          machine.deviceName === glmQuota.anchor_device && (
-            <GlmQuotaChip data={glmQuota} now={now} />
-          )}
-        <MachineQuotaChips machine={machine} now={now} />
+        <MachineQuotaChips
+          machine={machine}
+          now={now}
+          glm={
+            glmQuota?.enabled === true &&
+            glmQuota.anchor_device != null &&
+            machine.deviceName === glmQuota.anchor_device
+              ? glmQuota
+              : undefined
+          }
+        />
       </span>
       <span className="hidden w-28 shrink-0 items-center gap-1.5 text-caption md:flex">
         <HealthIcon health={machine.health} />
@@ -620,7 +627,7 @@ function RuntimesPageSkeleton() {
       <PageHeader>
         <Skeleton className="h-4 w-24" />
       </PageHeader>
-      <div className={cn(PAGE_RAIL, PAGE_GUTTER, "py-6")}>
+      <div className={cn(PAGE_RAIL, PAGE_GUTTER, "py-6", "2xl:max-w-[1920px]")}>
         <div className="overflow-hidden rounded-lg border">
           {Array.from({ length: 5 }).map((_, index) => (
             <div key={index} className="flex h-[76px] items-center gap-3 border-b px-4 last:border-b-0">
