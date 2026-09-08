@@ -1,0 +1,38 @@
+{
+  "description": "Synthetic fixture; logical IDs must be mapped to fixture UUIDs in integration tests. Not imported into the workspace.",
+  "projects": [{"id":"P1","name":"Account"},{"id":"P2","name":"Orders"}],
+  "nodes": [
+    {"id":"FA","title":"Account feature","project_id":"P1","parent_issue_id":null,"status":"in_progress"},
+    {"id":"FAUTH","title":"Authentication feature","project_id":"P1","parent_issue_id":"FA","status":"in_review"},
+    {"id":"A_MODEL","title":"Account model","project_id":"P1","parent_issue_id":"FAUTH","status":"done","stage":1},
+    {"id":"A_API","title":"Authentication API","project_id":"P1","parent_issue_id":"FAUTH","status":"done","stage":2},
+    {"id":"A_TEST","title":"Authentication tests","project_id":"P1","parent_issue_id":"A_API","status":"todo","stage":1},
+    {"id":"A_UI","title":"Account UI","project_id":"P1","parent_issue_id":"FA","status":"backlog","stage":2},
+    {"id":"FB","title":"Order feature","project_id":"P2","parent_issue_id":null,"status":"todo"},
+    {"id":"FCHECKOUT","title":"Checkout feature","project_id":"P2","parent_issue_id":"FB","status":"backlog"},
+    {"id":"B_MODEL","title":"Order model","project_id":"P2","parent_issue_id":"FCHECKOUT","status":"backlog","stage":1},
+    {"id":"B_API","title":"Checkout API","project_id":"P2","parent_issue_id":"FCHECKOUT","status":"backlog","stage":2},
+    {"id":"B_UI","title":"Checkout UI","project_id":"P2","parent_issue_id":"FCHECKOUT","status":"backlog","stage":3},
+    {"id":"B_REPORT","title":"Order report","project_id":"P2","parent_issue_id":"FB","status":"done","stage":1},
+    {"id":"U","title":"Shared specification","project_id":null,"parent_issue_id":null,"status":"done"},
+    {"id":"UNDATED","title":"Unscheduled investigation","project_id":null,"parent_issue_id":null,"status":"backlog"}
+  ],
+  "defaults": {"start_date":null,"due_date":null,"assignee_type":null,"assignee_id":null},
+  "dependencies": [
+    {"id":"E1","issue_id":"A_MODEL","depends_on_issue_id":"U","type":"blocked_by"},
+    {"id":"E2","issue_id":"A_API","depends_on_issue_id":"A_MODEL","type":"blocked_by"},
+    {"id":"E3","issue_id":"FCHECKOUT","depends_on_issue_id":"FAUTH","type":"blocked_by"},
+    {"id":"E4","issue_id":"B_API","depends_on_issue_id":"A_API","type":"blocked_by"},
+    {"id":"E5","issue_id":"B_API","depends_on_issue_id":"B_MODEL","type":"blocked_by"},
+    {"id":"E6","issue_id":"B_UI","depends_on_issue_id":"B_API","type":"blocked_by"},
+    {"id":"E7","issue_id":"A_UI","depends_on_issue_id":"B_REPORT","type":"blocked_by"}
+  ],
+  "expectations": {
+    "B_API": {"direct":["A_API","B_MODEL"],"inherited":["FAUTH"],"blocked":["B_MODEL","FAUTH"]},
+    "B_MODEL": {"direct":[],"inherited":["FAUTH"],"blocked":["FAUTH"]},
+    "A_TEST": {"direct":[],"inherited":["A_MODEL"],"blocked":[]},
+    "project_aggregate": "Both P1->P2 and P2->P1 exist, with no issue dependency cycle.",
+    "completion": "Changing FAUTH to done satisfies its edges regardless of A_TEST; parent status is authoritative.",
+    "scheduling": "Changing FAUTH to done does not create a new run solely from E3."
+  }
+}

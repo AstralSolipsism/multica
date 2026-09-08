@@ -84,6 +84,7 @@ function useIssueCreateMutation<TVariables>(
   return useMutation({
     mutationFn,
     onSuccess: (newIssue) => {
+      qc.invalidateQueries({ queryKey: issueKeys.graphAll(wsId) });
       for (const [key, data] of qc.getQueriesData<ListIssuesCache>({ queryKey: issueKeys.list(wsId) })) {
         if (data) qc.setQueryData<ListIssuesCache>(key, addIssueToBuckets(data, newIssue));
       }

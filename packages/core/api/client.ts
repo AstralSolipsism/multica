@@ -1,4 +1,5 @@
 import { configStore } from "../config";
+import { IssueGraphSchema, type IssueGraph, type IssueGraphRequest } from "./issue-graph-schemas";
 import {
   DependencyViewSchema,
   IssueWithDependenciesSchema,
@@ -976,6 +977,19 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(`/api/issues/grouped?${search}`);
     return parseWithFallback(raw, GroupedIssuesResponseSchema, EMPTY_GROUPED_ISSUES_RESPONSE, {
       endpoint: "GET /api/issues/grouped",
+    });
+  }
+
+  async getIssueGraph(wsId: string, request: IssueGraphRequest, options?: { signal?: AbortSignal }): Promise<IssueGraph | null> {
+    const search = new URLSearchParams({ query: JSON.stringify(request.query) });
+    if (request.focusIssueId) search.set("focus_issue_id", request.focusIssueId);
+    const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(wsId)}/issues/graph?${search}`, {
+      signal: options?.signal,
+      // Pin both transport scope and cache identity, even across a route switch.
+      headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" },
+    });
+    return parseWithFallback<IssueGraph | null>(raw, IssueGraphSchema, null, {
+      endpoint: "GET /api/workspaces/:workspaceId/issues/graph",
     });
   }
 

@@ -136,6 +136,10 @@ func (s *DependencyService) Read(ctx context.Context, ws pgtype.UUID, issueID st
 }
 
 func (s *DependencySnapshot) Version(id string) string {
+	return s.version(id, s.Model.Prerequisites(id))
+}
+
+func (s *DependencySnapshot) version(id string, ps []issuedependency.Prerequisite) string {
 	type catalogEntry struct {
 		Key      string
 		Category string
@@ -149,7 +153,6 @@ func (s *DependencySnapshot) Version(id string) string {
 	for _, a := range s.Model.Ancestors(id) {
 		ancestors = append(ancestors, s.Model.Issues[a])
 	}
-	ps := s.Model.Prerequisites(id)
 	for _, p := range ps {
 		prerequisites = append(prerequisites, s.Model.Issues[p.IssueID])
 	}

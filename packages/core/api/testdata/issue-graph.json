@@ -1,0 +1,449 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "58dc59045359477e1948dc708335a9f6fd9934cbc7cf7623efd81ce9d0305674",
+  "topology_id": "356763780778343be797717ac6f046c43f38afd65de2e9e3c77fc1d21c88c95d",
+  "captured_at": "2026-09-08T11:28:21.775258Z",
+  "complete": true,
+  "scope": {
+    "type": "workspace",
+    "project_id": null
+  },
+  "focus_issue_id": null,
+  "matched_count": 14,
+  "context_count": 0,
+  "nodes": [
+    {
+      "id": "027567ac-4bae-4a59-a966-78c063223c4d",
+      "identifier": "DEP-12",
+      "title": "Order report",
+      "status": "done",
+      "status_category": "done",
+      "revision": 1,
+      "parent_issue_id": "c13a615b-aa60-4bb4-a91b-c09fabdf083e",
+      "has_restricted_parent": false,
+      "project_id": "65704669-d39d-43c1-8085-4d99ffae458b",
+      "stage": 1,
+      "priority": "none",
+      "assignee": null,
+      "role": "match",
+      "run_summary": {
+        "queued": 0,
+        "dispatched": 0,
+        "running": 0,
+        "waiting_local_directory": 0,
+        "captured_at": "2026-09-08T11:28:21.775258Z"
+      },
+      "dependency_summary": {
+        "visible_unsatisfied_count": 0,
+        "has_restricted_blockers": false,
+        "dependency_version": "4ac79fc3a3bfb0dd56794f4c689d60eb2cd66e6d318f2d3aedc9ad62fbbd3347"
+      }
+    },
+    {
+      "id": "1768a673-2195-46ad-8383-b6a3b1309215",
+      "identifier": "DEP-11",
+      "title": "Checkout UI",
+      "status": "backlog",
+      "status_category": "backlog",
+      "revision": 1,
+      "parent_issue_id": "c634b2e6-9dc9-4a02-bfab-1a41a459abfc",
+      "has_restricted_parent": false,
+      "project_id": "65704669-d39d-43c1-8085-4d99ffae458b",
+      "stage": 3,
+      "priority": "none",
+      "assignee": null,
+      "role": "match",
+      "run_summary": {
+        "queued": 0,
+        "dispatched": 0,
+        "running": 0,
+        "waiting_local_directory": 0,
+        "captured_at": "2026-09-08T11:28:21.775258Z"
+      },
+      "dependency_summary": {
+        "visible_unsatisfied_count": 2,
+        "has_restricted_blockers": false,
+        "dependency_version": "731662d66bd32434f1b414cc11156c7ce56803125702f83d78d3faf451292009"
+      }
+    },
+    {
+      "id": "1ece5083-5a0d-4adb-97be-29073e9b08c3",
+      "identifier": "DEP-2",
+      "title": "Authentication feature",
+      "status": "in_review",
+      "status_category": "in_review",
+      "revision": 1,
+      "parent_issue_id": "74e68d34-6ad3-4b31-8ca9-9870150ea793",
+      "has_restricted_parent": false,
+      "project_id": "41320cfb-1c82-4101-b1fa-2f14fb4e4a0f",
+      "stage": null,
+      "priority": "none",
+      "assignee": null,
+      "role": "match",
+      "run_summary": {
+        "queued": 0,
+        "dispatched": 0,
+        "running": 0,
+        "waiting_local_directory": 0,
+        "captured_at": "2026-09-08T11:28:21.775258Z"
+      },
+      "dependency_summary": {
+        "visible_unsatisfied_count": 0,
+        "has_restricted_blockers": false,
+        "dependency_version": "97f2b8dda091f15b7080ff3b93cf3f0701537ee761328f86f88639bcb817730e"
+      }
+    },
+    {
+      "id": "2fdaa440-df5a-4bd3-ada7-3aa16bf6fdf7",
+      "identifier": "DEP-4",
+      "title": "Authentication API",
+      "status": "done",
+      "status_category": "done",
+      "revision": 1,
+      "parent_issue_id": "1ece5083-5a0d-4adb-97be-29073e9b08c3",
+      "has_restricted_parent": false,
+      "project_id": "41320cfb-1c82-4101-b1fa-2f14fb4e4a0f",
+      "stage": 2,
+      "priority": "none",
+      "assignee": null,
+      "role": "match",
+      "run_summary": {
+        "queued": 0,
+        "dispatched": 0,
+        "running": 0,
+        "waiting_local_directory": 0,
+        "captured_at": "2026-09-08T11:28:21.775258Z"
+      },
+      "dependency_summary": {
+        "visible_unsatisfied_count": 0,
+        "has_restricted_blockers": false,
+        "dependency_version": "928bd0d5dfc416102eb6ba14e9cbf6f7dd57f0292ba95d7ca44979c11a074718"
+      }
+    },
+    {
+      "id": "32be24ce-ea78-4609-92cc-f94c183dce65",
+      "identifier": "DEP-13",
+      "title": "Shared specification",
+      "status": "done",
+      "status_category": "done",
+      "revision": 1,
+      "parent_issue_id": null,
+      "has_restricted_parent": false,
+      "project_id": null,
+      "stage": null,
+      "priority": "none",
+      "assignee": null,
+      "role": "match",
+      "run_summary": {
+        "queued": 0,
+        "dispatched": 0,
+        "running": 0,
+        "waiting_local_directory": 0,
+        "captured_at": "2026-09-08T11:28:21.775258Z"
+      },
+      "dependency_summary": {
+        "visible_unsatisfied_count": 0,
+        "has_restricted_blockers": false,
+        "dependency_version": "e4d49ff73fd50a98d9542bf8725c29a6c9a8c3e1c58acbc1b71e82b5a19be6ea"
+      }
+    },
+    {
+      "id": "4573d6e3-d275-4b1e-b53f-88c07c8dd10f",
+      "identifier": "DEP-14",
+      "title": "Unscheduled investigation",
+      "status": "backlog",
+      "status_category": "backlog",
+      "revision": 1,
+      "parent_issue_id": null,
+      "has_restricted_parent": false,
+      "project_id": null,
+      "stage": null,
+      "priority": "none",
+      "assignee": null,
+      "role": "match",
+      "run_summary": {
+        "queued": 0,
+        "dispatched": 0,
+        "running": 0,
+        "waiting_local_directory": 0,
+        "captured_at": "2026-09-08T11:28:21.775258Z"
+      },
+      "dependency_summary": {
+        "visible_unsatisfied_count": 0,
+        "has_restricted_blockers": false,
+        "dependency_version": "55078e48c34df96011cebd01e30eca85d91b452e764cb0b9cd9c55876d5bdf99"
+      }
+    },
+    {
+      "id": "74e68d34-6ad3-4b31-8ca9-9870150ea793",
+      "identifier": "DEP-1",
+      "title": "Account feature",
+      "status": "in_progress",
+      "status_category": "in_progress",
+      "revision": 1,
+      "parent_issue_id": null,
+      "has_restricted_parent": false,
+      "project_id": "41320cfb-1c82-4101-b1fa-2f14fb4e4a0f",
+      "stage": null,
+      "priority": "none",
+      "assignee": null,
+      "role": "match",
+      "run_summary": {
+        "queued": 0,
+        "dispatched": 0,
+        "running": 0,
+        "waiting_local_directory": 0,
+        "captured_at": "2026-09-08T11:28:21.775258Z"
+      },
+      "dependency_summary": {
+        "visible_unsatisfied_count": 0,
+        "has_restricted_blockers": false,
+        "dependency_version": "204298e58d278191c41a239287f038391a0fac679a50849ad0e547ce40f8a141"
+      }
+    },
+    {
+      "id": "75ce3333-110e-4244-985f-c0b4abf36721",
+      "identifier": "DEP-10",
+      "title": "Checkout API",
+      "status": "backlog",
+      "status_category": "backlog",
+      "revision": 1,
+      "parent_issue_id": "c634b2e6-9dc9-4a02-bfab-1a41a459abfc",
+      "has_restricted_parent": false,
+      "project_id": "65704669-d39d-43c1-8085-4d99ffae458b",
+      "stage": 2,
+      "priority": "none",
+      "assignee": null,
+      "role": "match",
+      "run_summary": {
+        "queued": 0,
+        "dispatched": 0,
+        "running": 0,
+        "waiting_local_directory": 0,
+        "captured_at": "2026-09-08T11:28:21.775258Z"
+      },
+      "dependency_summary": {
+        "visible_unsatisfied_count": 2,
+        "has_restricted_blockers": false,
+        "dependency_version": "536bcc2a8b5551117e96cb60c03f05343a72fb007e081ad84486abc5fb24fa66"
+      }
+    },
+    {
+      "id": "98d50dae-258c-4ca1-ac50-3395f0905ab2",
+      "identifier": "DEP-3",
+      "title": "Account model",
+      "status": "done",
+      "status_category": "done",
+      "revision": 1,
+      "parent_issue_id": "1ece5083-5a0d-4adb-97be-29073e9b08c3",
+      "has_restricted_parent": false,
+      "project_id": "41320cfb-1c82-4101-b1fa-2f14fb4e4a0f",
+      "stage": 1,
+      "priority": "none",
+      "assignee": null,
+      "role": "match",
+      "run_summary": {
+        "queued": 0,
+        "dispatched": 0,
+        "running": 0,
+        "waiting_local_directory": 0,
+        "captured_at": "2026-09-08T11:28:21.775258Z"
+      },
+      "dependency_summary": {
+        "visible_unsatisfied_count": 0,
+        "has_restricted_blockers": false,
+        "dependency_version": "fec780e4c56253d66f5bb3d5828203d5d0b69829ac9755c907c5ab5195610616"
+      }
+    },
+    {
+      "id": "b656d1f7-a384-4ddc-82b5-9925f507b634",
+      "identifier": "DEP-6",
+      "title": "Account UI",
+      "status": "backlog",
+      "status_category": "backlog",
+      "revision": 1,
+      "parent_issue_id": "74e68d34-6ad3-4b31-8ca9-9870150ea793",
+      "has_restricted_parent": false,
+      "project_id": "41320cfb-1c82-4101-b1fa-2f14fb4e4a0f",
+      "stage": 2,
+      "priority": "none",
+      "assignee": null,
+      "role": "match",
+      "run_summary": {
+        "queued": 0,
+        "dispatched": 0,
+        "running": 0,
+        "waiting_local_directory": 0,
+        "captured_at": "2026-09-08T11:28:21.775258Z"
+      },
+      "dependency_summary": {
+        "visible_unsatisfied_count": 0,
+        "has_restricted_blockers": false,
+        "dependency_version": "bf4c6012ff9c02efb8cb8e83b616c523056565c6c5dcf4f9106e6b69d01141f4"
+      }
+    },
+    {
+      "id": "c13a615b-aa60-4bb4-a91b-c09fabdf083e",
+      "identifier": "DEP-7",
+      "title": "Order feature",
+      "status": "todo",
+      "status_category": "todo",
+      "revision": 1,
+      "parent_issue_id": null,
+      "has_restricted_parent": false,
+      "project_id": "65704669-d39d-43c1-8085-4d99ffae458b",
+      "stage": null,
+      "priority": "none",
+      "assignee": null,
+      "role": "match",
+      "run_summary": {
+        "queued": 0,
+        "dispatched": 0,
+        "running": 0,
+        "waiting_local_directory": 0,
+        "captured_at": "2026-09-08T11:28:21.775258Z"
+      },
+      "dependency_summary": {
+        "visible_unsatisfied_count": 0,
+        "has_restricted_blockers": false,
+        "dependency_version": "2b0d0afdc5694f4addcae18134fa242615d196d627442431949b2ad440848895"
+      }
+    },
+    {
+      "id": "c1a0410c-d7ce-4d29-bd22-a187634f0ec3",
+      "identifier": "DEP-9",
+      "title": "Order model",
+      "status": "backlog",
+      "status_category": "backlog",
+      "revision": 1,
+      "parent_issue_id": "c634b2e6-9dc9-4a02-bfab-1a41a459abfc",
+      "has_restricted_parent": false,
+      "project_id": "65704669-d39d-43c1-8085-4d99ffae458b",
+      "stage": 1,
+      "priority": "none",
+      "assignee": null,
+      "role": "match",
+      "run_summary": {
+        "queued": 0,
+        "dispatched": 0,
+        "running": 0,
+        "waiting_local_directory": 0,
+        "captured_at": "2026-09-08T11:28:21.775258Z"
+      },
+      "dependency_summary": {
+        "visible_unsatisfied_count": 1,
+        "has_restricted_blockers": false,
+        "dependency_version": "ef9317a22c47b1c3f3a90bc036876a3c1dedf8dccb6c03dd8b4e8a202fb5c62a"
+      }
+    },
+    {
+      "id": "c634b2e6-9dc9-4a02-bfab-1a41a459abfc",
+      "identifier": "DEP-8",
+      "title": "Checkout feature",
+      "status": "backlog",
+      "status_category": "backlog",
+      "revision": 1,
+      "parent_issue_id": "c13a615b-aa60-4bb4-a91b-c09fabdf083e",
+      "has_restricted_parent": false,
+      "project_id": "65704669-d39d-43c1-8085-4d99ffae458b",
+      "stage": null,
+      "priority": "none",
+      "assignee": null,
+      "role": "match",
+      "run_summary": {
+        "queued": 0,
+        "dispatched": 0,
+        "running": 0,
+        "waiting_local_directory": 0,
+        "captured_at": "2026-09-08T11:28:21.775258Z"
+      },
+      "dependency_summary": {
+        "visible_unsatisfied_count": 1,
+        "has_restricted_blockers": false,
+        "dependency_version": "5d560fdffbbf50ae4b386f6906e7000bb236198037d0f2e8f31550de8a7a61c5"
+      }
+    },
+    {
+      "id": "e3c09eca-0431-4dd3-a2b4-1b936d0d1901",
+      "identifier": "DEP-5",
+      "title": "Authentication tests",
+      "status": "todo",
+      "status_category": "todo",
+      "revision": 1,
+      "parent_issue_id": "2fdaa440-df5a-4bd3-ada7-3aa16bf6fdf7",
+      "has_restricted_parent": false,
+      "project_id": "41320cfb-1c82-4101-b1fa-2f14fb4e4a0f",
+      "stage": 1,
+      "priority": "none",
+      "assignee": null,
+      "role": "match",
+      "run_summary": {
+        "queued": 0,
+        "dispatched": 0,
+        "running": 0,
+        "waiting_local_directory": 0,
+        "captured_at": "2026-09-08T11:28:21.775258Z"
+      },
+      "dependency_summary": {
+        "visible_unsatisfied_count": 0,
+        "has_restricted_blockers": false,
+        "dependency_version": "2aede216d05b5e5aeedfbe9cda814c9265d3efd0b207aa2af8ba7e8b0e69fc95"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source_edge_id": "1314685b-7f2f-4c3a-8008-7633bb646bf9",
+      "source": "98d50dae-258c-4ca1-ac50-3395f0905ab2",
+      "target": "2fdaa440-df5a-4bd3-ada7-3aa16bf6fdf7",
+      "type": "blocked_by"
+    },
+    {
+      "source_edge_id": "3bb783af-6044-41c2-bcf5-0e4a485cdef8",
+      "source": "2fdaa440-df5a-4bd3-ada7-3aa16bf6fdf7",
+      "target": "75ce3333-110e-4244-985f-c0b4abf36721",
+      "type": "blocked_by"
+    },
+    {
+      "source_edge_id": "460c46de-d09e-41c3-bb3b-0540913f5617",
+      "source": "1ece5083-5a0d-4adb-97be-29073e9b08c3",
+      "target": "c634b2e6-9dc9-4a02-bfab-1a41a459abfc",
+      "type": "blocked_by"
+    },
+    {
+      "source_edge_id": "4e916878-18da-452b-85d2-cf7d9cf953f8",
+      "source": "75ce3333-110e-4244-985f-c0b4abf36721",
+      "target": "1768a673-2195-46ad-8383-b6a3b1309215",
+      "type": "blocked_by"
+    },
+    {
+      "source_edge_id": "4f677383-ef72-4bda-b954-8ffd7068c336",
+      "source": "c1a0410c-d7ce-4d29-bd22-a187634f0ec3",
+      "target": "75ce3333-110e-4244-985f-c0b4abf36721",
+      "type": "blocked_by"
+    },
+    {
+      "source_edge_id": "77cd6f76-46d4-432c-88bc-a6e1df75c0b1",
+      "source": "32be24ce-ea78-4609-92cc-f94c183dce65",
+      "target": "98d50dae-258c-4ca1-ac50-3395f0905ab2",
+      "type": "blocked_by"
+    },
+    {
+      "source_edge_id": "8ef0d38e-6884-48a4-8eb9-862ed8364d39",
+      "source": "027567ac-4bae-4a59-a966-78c063223c4d",
+      "target": "b656d1f7-a384-4ddc-82b5-9925f507b634",
+      "type": "blocked_by"
+    }
+  ],
+  "projects": [
+    {
+      "id": "41320cfb-1c82-4101-b1fa-2f14fb4e4a0f",
+      "title": "Account"
+    },
+    {
+      "id": "65704669-d39d-43c1-8085-4d99ffae458b",
+      "title": "Orders"
+    }
+  ],
+  "has_restricted_context": false
+}

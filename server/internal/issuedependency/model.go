@@ -326,6 +326,25 @@ func (m Model) Prerequisites(id string) []Prerequisite {
 	return out
 }
 
+// IndexedPrerequisites amortizes the edge scan across a full graph read. The
+// returned reader is valid only while this model is immutable. It keeps original
+// source edges and delegates semantics to Prerequisites; no inherited E* is stored.
+func (m Model) IndexedPrerequisites() func(string) []Prerequisite {
+	byDependent := make(map[string][]Edge)
+	for _, e := range m.Edges {
+		if e.Type == "blocked_by" {
+			byDependent[e.IssueID] = append(byDependent[e.IssueID], e)
+		}
+	}
+	return func(id string) []Prerequisite {
+		var relevant []Edge
+		for _, a := range m.Ancestors(id) {
+			relevant = append(relevant, byDependent[a]...)
+		}
+		return (Model{Issues: m.Issues, Edges: relevant}).Prerequisites(id)
+	}
+}
+
 // Weakened reports removal of an unfinished direct edge or loss of any
 // inherited unfinished prerequisite on a surviving issue. Completion writes
 // themselves remain governed by the existing status policy.

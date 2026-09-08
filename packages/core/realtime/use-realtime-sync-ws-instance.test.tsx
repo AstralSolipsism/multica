@@ -411,6 +411,55 @@ describe("useRealtimeSync — Table server membership invalidation", () => {
   });
 });
 
+describe("useRealtimeSync — graph snapshot invalidation", () => {
+  it("refreshes committed changes and reconnects without patching topology", () => {
+    vi.useFakeTimers();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ws = createMockWs();
+    const { unmount } = renderHook(() => useRealtimeSync(ws, createStores()), {
+      wrapper: createWrapper(qc),
+    });
+    const key = [...issueKeys.graphAll("ws-1"), "reference"];
+    const otherKey = [...issueKeys.graphAll("ws-2"), "reference"];
+    const snapshot = { snapshotId: "before", nodes: [{ id: "issue-1" }] };
+    const onAny = vi.mocked(ws.onAny).mock.calls[0]![0];
+    const emit = (event: string, payload: unknown) => {
+      const handler = vi.mocked(ws.on).mock.calls.find(([name]) => name === event)?.[1];
+      expect(handler).toBeDefined();
+      (handler as (payload: unknown) => void)(payload);
+    };
+    try {
+      const changes = [
+        // Compound dependency writes also publish issue:updated.
+        () => emit("issue:updated", { issue: { id: "issue-1", revision: 9, parent_issue_id: "new-parent", project_id: "new-project" } }),
+        () => emit("property:updated", {}),
+        () => emit("issue_attachments:changed", { issue_id: "issue-1", issue_revision: 10 }),
+        () => emit("comment:created", { comment: { issue_id: "issue-1" }, issue_revision: 11 }),
+        ...["project:updated", "issue_status:changed", "member:removed", "task:dispatch", "task:completed"].map(
+          (type) => () => { onAny({ type, payload: {} } as never); vi.advanceTimersByTime(100); },
+        ),
+        () => { void vi.mocked(ws.onReconnect).mock.calls[0]![0](); },
+      ];
+      for (const change of changes) {
+        qc.setQueryData(key, snapshot);
+        qc.setQueryData(otherKey, snapshot);
+        change();
+        expect(qc.getQueryState(key)?.isInvalidated).toBe(true);
+        expect(qc.getQueryData(key)).toBe(snapshot);
+        expect(qc.getQueryState(otherKey)?.isInvalidated).toBe(false);
+      }
+      qc.setQueryData(key, snapshot);
+      onAny({ type: "task:message", payload: {} } as never);
+      vi.advanceTimersByTime(100);
+      expect(qc.getQueryState(key)?.isInvalidated).toBe(false);
+    } finally {
+      unmount();
+      qc.clear();
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("useRealtimeSync — workspace:deleted self-initiated suppression", () => {
   let qc: QueryClient;
   let stores: RealtimeSyncStores;

@@ -775,7 +775,10 @@ export function useRealtimeSync(
       },
       member: () => {
         const wsId = getCurrentWsId();
-        if (wsId) qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
+        if (wsId) {
+          qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
+          qc.invalidateQueries({ queryKey: issueKeys.graphAll(wsId) });
+        }
       },
       // workspace:updated is handled by the specific handler below
       // (compares prefixes to decide whether to also invalidate issues).
@@ -791,7 +794,10 @@ export function useRealtimeSync(
       },
       project: () => {
         const wsId = getCurrentWsId();
-        if (wsId) qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
+        if (wsId) {
+          qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
+          qc.invalidateQueries({ queryKey: issueKeys.graphAll(wsId) });
+        }
       },
       squad: () => {
         const wsId = getCurrentWsId();
@@ -827,7 +833,11 @@ export function useRealtimeSync(
       // client. (MUL-6458)
       issue_status: () => {
         const wsId = getCurrentWsId();
-        if (wsId) qc.invalidateQueries({ queryKey: issueStatusKeys.all(wsId) });
+        if (wsId) {
+          qc.invalidateQueries({ queryKey: issueStatusKeys.all(wsId) });
+          // Graph summaries contain server-resolved dependency categories.
+          qc.invalidateQueries({ queryKey: issueKeys.graphAll(wsId) });
+        }
       },
       pin: () => {
         const wsId = getCurrentWsId();
@@ -911,6 +921,7 @@ export function useRealtimeSync(
         // so rows/groups/facets cannot remain on an old task transition while
         // the projection refetches (global staleTime is Infinity).
         qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
+        qc.invalidateQueries({ queryKey: issueKeys.graphAll(wsId) });
         // 30d activity series shares the same lifecycle signal — any task
         // completion / failure shifts the histogram. (Dispatch alone
         // doesn't change a completed_at-anchored series, but invalidating
@@ -1084,6 +1095,7 @@ export function useRealtimeSync(
           // Group order, supported group types, and unavailable option values
           // are derived from the property definition, not just issue rows.
           qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
+          qc.invalidateQueries({ queryKey: issueKeys.graphAll(wsId) });
         }
       }),
     );
