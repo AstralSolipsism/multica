@@ -170,6 +170,12 @@ func (h *Handler) RevokeLarkInstallation(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to revoke installation")
 		return
 	}
+	// Best-effort: stop every message delivery this bot had not started
+	// (OL-25). The delivery worker separately re-checks installation state
+	// before each send, so a claim racing this sweep still fails cleanly.
+	if h.MessageDelivery != nil {
+		h.MessageDelivery.CancelInstallationDeliveries(r.Context(), wsUUID, instUUID)
+	}
 	h.publish(protocol.EventLarkInstallationRevoked, uuidToString(wsUUID), "user", userID, map[string]any{
 		"id": uuidToString(instUUID),
 	})
