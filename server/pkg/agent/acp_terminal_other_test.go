@@ -5,7 +5,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -125,8 +124,8 @@ func TestACPManagedTerminalReleaseTerminatesProcessTreeAfterParentExit(t *testin
 		t.Fatalf("terminal child process %d still exists after terminal/release returned", childPID)
 	}
 	childNeedsCleanup = false
-	if err := syscall.Kill(-processGroupID, 0); !errors.Is(err, syscall.ESRCH) {
-		t.Fatalf("process group %d still exists after terminal/release: %v", processGroupID, err)
+	if processGroupAlive(processGroupID) {
+		t.Fatalf("process group %d still exists after terminal/release", processGroupID)
 	}
 	if _, ok := c.acpTerminalFor(id); ok {
 		t.Fatalf("terminal %q remained registered after terminal/release", id)
@@ -151,5 +150,7 @@ func waitForACPChildPID(t *testing.T, path string, timeout time.Duration) int {
 }
 
 func processExists(pid int) bool {
-	return syscall.Kill(pid, 0) == nil
+	// Zombie-aware (see processAlive): after terminal/kill the child is a
+	// zombie until its reparented owner reaps it, and that owner may never.
+	return processAlive(pid)
 }

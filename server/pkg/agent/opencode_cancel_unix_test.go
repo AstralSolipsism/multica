@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -142,13 +141,14 @@ func waitForPids(t *testing.T, pidFile string) []int {
 	return nil
 }
 
-// waitProcessGone polls until signal 0 to pid reports the process no longer
-// exists (ESRCH), failing if it is still alive after the deadline.
+// waitProcessGone polls until pid reports no longer running, failing if it
+// is still alive after the deadline. Zombies count as gone (see
+// processAlive): after a group SIGKILL they are the only possible residue.
 func waitProcessGone(t *testing.T, pid int) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if err := syscall.Kill(pid, 0); err == syscall.ESRCH {
+		if !processAlive(pid) {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
