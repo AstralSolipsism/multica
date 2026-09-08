@@ -46,8 +46,20 @@ func (d *Daemon) antigravityQuotaLoop(ctx context.Context) {
 // Rounds with nothing to do (no antigravity runtime registered, undetected
 // version) exit before any process scan.
 func (d *Daemon) runAntigravityQuotaProbe(ctx context.Context) {
+	runtimeIDs := d.providerRuntimeIDs(antigravityQuotaProvider)
+	if len(runtimeIDs) == 0 {
+		// No local antigravity runtime to feed: there is no sampling need
+		// here, and this must stay invisible — recording a skip reason from
+		// the periodic loop would put the /health field on every machine that
+		// merely lacks the CLI. Gate first, record after.
+		return
+	}
 	entry, ok := d.agents()[antigravityQuotaProvider]
 	if !ok || entry.Path == "" {
+		// A runtime exists but its CLI is gone (undiscovered or demoted):
+		// this machine DOES have an antigravity page, so the reason the
+		// probe cannot feed it is worth surfacing.
+		d.recordAntigravityQuotaSkip(antigravityQuotaSkipNotRegistered)
 		return
 	}
 	version := d.agentVersion(antigravityQuotaProvider)
@@ -56,23 +68,24 @@ func (d *Daemon) runAntigravityQuotaProbe(ctx context.Context) {
 		// the version for every provider it registers, so an empty string
 		// means "never verified this binary" — exactly what the probe must
 		// not question on its own.
-		return
-	}
-	runtimeIDs := d.providerRuntimeIDs(antigravityQuotaProvider)
-	if len(runtimeIDs) == 0 {
+		d.recordAntigravityQuotaSkip(antigravityQuotaSkipNoVersion)
 		return
 	}
 	quota, err := antigravityQuotaProbe(ctx, entry.Path, version, time.Now())
 	if err != nil {
 		// agy not running, version outside the probed range, no reachable
 		// listener, unrecognized payload: all the same "not reported" the
-		// issue's acceptance criteria demand — logged quietly, nothing written.
+		// issue's acceptance criteria demand — logged quietly, nothing
+		// written. The reason is still surfaced on /health, since these
+		// logs are the only other trace of a silent degradation.
 		d.logger.Debug("antigravity quota probe skipped", "error", err)
+		d.recordAntigravityQuotaSkip(antigravityQuotaSkipReasonFor(err))
 		return
 	}
 	for _, runtimeID := range runtimeIDs {
 		d.recordRuntimePlanQuota(runtimeID, quota)
 	}
+	d.recordAntigravityQuotaSuccess()
 }
 
 // antigravityQuotaProvider names the builtin provider whose runtime pages the

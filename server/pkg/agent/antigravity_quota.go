@@ -94,9 +94,26 @@ const (
 // per-platform discovery steps, indirected so tests can pin them to a fake
 // process landscape. The vars hold the platform implementations by default
 // (antigravity_quota_{linux,unix,windows}.go define the real functions).
+// Both take the probe's context: a caller deadline (the per-task sampler's
+// discovery window) must cancel a scan in flight and stop the ones not yet
+// started, not merely be checked between rounds.
 var (
 	antigravityQuotaProcesses      = antigravityQuotaProcessesImpl
 	antigravityQuotaListeningPorts = listeningLoopbackPorts
+)
+
+// Sentinel probe failures. They add no behavior — every failure still
+// degrades to the same silent "not reported" — but they let the daemon tell
+// the one failure that can resolve itself by retrying while a task runs
+// (no live agy process: not spawned yet, or already exited) apart from the
+// terminal ones, and name a stable reason on /health without string-matching
+// error text.
+var (
+	// ErrAntigravityNotRunning: the process scan found no live agy process.
+	ErrAntigravityNotRunning = errors.New("antigravity quota probe: no running agy process")
+	// ErrAntigravityVersionUnsupported: the detected version sits outside the
+	// range the response parser was written against.
+	ErrAntigravityVersionUnsupported = errors.New("antigravity quota probe: agy version")
 )
 
 // antigravityQuotaWindowMinutes maps the two documented window kinds onto
@@ -141,14 +158,20 @@ func AntigravityQuotaProbeSupported(version string) bool {
 // least one understood bucket.
 func ProbeAntigravityQuota(ctx context.Context, execPath, version string, now time.Time) (*protocol.RuntimePlanQuota, error) {
 	if !AntigravityQuotaProbeSupported(version) {
-		return nil, fmt.Errorf("antigravity quota probe: agy version %q outside the probed range", version)
+		return nil, fmt.Errorf("%w %q outside the probed range", ErrAntigravityVersionUnsupported, version)
 	}
 	ctx, cancel := context.WithTimeout(ctx, antigravityQuotaProbeBudget)
 	defer cancel()
+	if err := ctx.Err(); err != nil {
+		// A caller that already spent its window (or cancelled) gets a
+		// cancellation, not a misleading "agy not running" from a scan that
+		// would answer nothing.
+		return nil, fmt.Errorf("antigravity quota probe: %w", err)
+	}
 
-	pids := antigravityQuotaProcesses(execPath)
+	pids := antigravityQuotaProcesses(ctx, execPath)
 	if len(pids) == 0 {
-		return nil, errors.New("antigravity quota probe: no running agy process")
+		return nil, ErrAntigravityNotRunning
 	}
 	if len(pids) > antigravityQuotaMaxProcesses {
 		pids = pids[:antigravityQuotaMaxProcesses]
@@ -161,11 +184,17 @@ func ProbeAntigravityQuota(ctx context.Context, execPath, version string, now ti
 	// round (R5).
 	defer client.CloseIdleConnections()
 	for _, pid := range pids {
-		ports := antigravityQuotaListeningPorts(pid)
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("antigravity quota probe: %w", err)
+		}
+		ports := antigravityQuotaListeningPorts(ctx, pid)
 		if len(ports) > antigravityQuotaMaxPorts {
 			ports = ports[:antigravityQuotaMaxPorts]
 		}
 		for _, port := range ports {
+			if err := ctx.Err(); err != nil {
+				return nil, fmt.Errorf("antigravity quota probe: %w", err)
+			}
 			body, err := antigravityQuotaRPC(ctx, client, port)
 			if err != nil {
 				continue
