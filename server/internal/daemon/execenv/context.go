@@ -242,6 +242,25 @@ type projectResourceFile struct {
 	ProjectTitle       string                  `json:"project_title,omitempty"`
 	ProjectDescription string                  `json:"project_description,omitempty"`
 	Resources          []ProjectResourceForEnv `json:"resources"`
+	SharedFiles        *projectFileEntry       `json:"shared_files,omitempty"`
+}
+
+// Discovery is a pointer, not an availability claim or a content preload.
+type projectFileEntry struct {
+	CapabilitiesCommand string `json:"capabilities_command"`
+	ListCommand         string `json:"list_command"`
+	HelpCommand         string `json:"help_command"`
+}
+
+func sharedProjectFileEntry(projectID string) *projectFileEntry {
+	if projectID == "" {
+		return nil
+	}
+	return &projectFileEntry{
+		CapabilitiesCommand: fmt.Sprintf("multica project file capabilities %s --output json", projectID),
+		ListCommand:         fmt.Sprintf("multica project file list %s --output json", projectID),
+		HelpCommand:         "multica project file --help",
+	}
 }
 
 // MarshalJSON renders the resource_ref field as raw JSON instead of a base64
@@ -290,6 +309,7 @@ func writeProjectResources(workDir string, ctx TaskContextForEnv, manifest *side
 		ProjectTitle:       ctx.ProjectTitle,
 		ProjectDescription: ctx.ProjectDescription,
 		Resources:          resources,
+		SharedFiles:        sharedProjectFileEntry(ctx.ProjectID),
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {

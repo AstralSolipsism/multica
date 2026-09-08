@@ -634,6 +634,10 @@ func ExitCodeFor(err error) int {
 	if err == nil {
 		return 0
 	}
+	var fileErr *ProjectFileError
+	if errors.As(err, &fileErr) {
+		return fileErr.Exit
+	}
 
 	var netErr *NetworkError
 	if errors.As(err, &netErr) {
