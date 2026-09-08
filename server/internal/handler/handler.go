@@ -34,6 +34,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/telegram"
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
+	"github.com/multica-ai/multica/server/internal/messagedelivery"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
@@ -283,6 +284,14 @@ type Handler struct {
 	// UI consults IsConfigured() to decide whether to surface install
 	// entry points.
 	LarkAPIClient lark.APIClient
+	// MessageDelivery is the Labrastro result-delivery module (OL-25):
+	// route configuration, delivery records, the send worker and the
+	// compensation scanner. Nil in tests that did not wire it — the
+	// message-delivery HTTP endpoints are registered only when non-nil.
+	// Wired in cmd/server (labrastro_messaging.go), which assembles the
+	// module from the lark transport + the autopilot service; main.go
+	// starts and joins it like the other long-running workers.
+	MessageDelivery *messagedelivery.Service
 	// Composio integration (MUL-3720). Nil when COMPOSIO_API_KEY is unset;
 	// the composio HTTP handlers return 503 in that case. Wired in
 	// cmd/server/router.go after handler.New.
@@ -412,7 +421,7 @@ type Handler struct {
 	// GlmQuota polls the Zhipu/GLM Coding Plan balance (account-level, shared
 	// by every GLM-backed runtime). Nil when GLM_QUOTA_API_KEY is unset.
 	GlmQuota *GlmQuotaMonitor
-	cfg       Config
+	cfg      Config
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {

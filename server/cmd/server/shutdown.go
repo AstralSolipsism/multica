@@ -44,6 +44,11 @@ type shutdownSequence struct {
 	JoinWebhookWorker func()
 	JoinTelegram      func()
 
+	// JoinMessageDelivery waits for the Labrastro message-delivery send
+	// workers (OL-25) so an in-flight Feishu shard lands with its receipt
+	// instead of resolving to uncertain on the lease sweep.
+	JoinMessageDelivery func()
+
 	// JoinChannelSupervisor waits for the per-installation goroutines so the
 	// lease renewer can issue a final release before exit; without it the next
 	// replica waits out the whole LeaseTTL after a redeploy.
@@ -67,6 +72,7 @@ func (s shutdownSequence) run() {
 		s.StopHeartbeats,
 		s.JoinWebhookWorker,
 		s.JoinTelegram,
+		s.JoinMessageDelivery,
 		s.JoinChannelSupervisor,
 		s.DrainChannelRouter,
 		s.StopMetricsServer,

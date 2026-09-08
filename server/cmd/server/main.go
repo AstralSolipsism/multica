@@ -709,6 +709,12 @@ func main() {
 	if h.WebhookDeliveryWorker != nil {
 		go h.WebhookDeliveryWorker.Run(sweepCtx)
 	}
+	// Labrastro message-delivery workers + compensation scanner (OL-25).
+	// Assembled in NewRouterWithOptions (labrastro_messaging.go); always
+	// non-nil on this path, kept nil-safe like its neighbors.
+	if h.MessageDelivery != nil {
+		go h.MessageDelivery.Run(sweepCtx)
+	}
 	if h.SeatCapacityWorker != nil {
 		go h.SeatCapacityWorker.Run(sweepCtx)
 	}
@@ -836,6 +842,14 @@ func main() {
 		JoinWebhookWorker: func() {
 			if h.WebhookDeliveryWorker != nil && !h.WebhookDeliveryWorker.WaitWithTimeout(5*time.Second) {
 				slog.Warn("webhook delivery worker did not exit within shutdown timeout")
+			}
+		},
+		// Joined so an in-flight Feishu send finishes and its receipt
+		// lands before exit; otherwise the delivery waits out the lease
+		// and resolves to uncertain. Bounded like the webhook worker.
+		JoinMessageDelivery: func() {
+			if h.MessageDelivery != nil && !h.MessageDelivery.WaitWithTimeout(5*time.Second) {
+				slog.Warn("message delivery worker did not exit within shutdown timeout")
 			}
 		},
 		JoinTelegram: func() {
