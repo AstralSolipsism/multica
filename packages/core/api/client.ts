@@ -1,4 +1,14 @@
 import { configStore } from "../config";
+import {
+  DependencyViewSchema,
+  IssueWithDependenciesSchema,
+  IssueBatchUpdateSchema,
+  type DependencyView,
+  type IssueWithDependencies,
+  type CreateIssueWithDependenciesRequest,
+  type UpdateIssueWithDependenciesRequest,
+  type IssueBatchUpdateResult,
+} from "./dependency-schemas";
 import type {
   Issue,
   IssuePriority,
@@ -1091,6 +1101,39 @@ export class ApiClient {
     return issue;
   }
 
+  async getIssueDependencies(id: string): Promise<DependencyView | null> {
+    const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(id)}/dependencies`);
+    return parseWithFallback<DependencyView | null>(raw, DependencyViewSchema, null, {
+      endpoint: "GET /api/issues/:id/dependencies",
+    });
+  }
+
+  async createIssueWithDependencies(data: CreateIssueWithDependenciesRequest): Promise<IssueWithDependencies> {
+    const { blockedBy, ...issue } = data;
+    const raw = await this.fetch<unknown>("/api/issues/with-dependencies", {
+      method: "POST",
+      body: JSON.stringify({ ...issue, blocked_by: blockedBy }),
+    });
+    const result = parseWithFallback<IssueWithDependencies | null>(raw, IssueWithDependenciesSchema, null, {
+      endpoint: "POST /api/issues/with-dependencies",
+    });
+    if (!result) throw new Error("Invalid issue response");
+    return result;
+  }
+
+  async updateIssueWithDependencies(id: string, data: UpdateIssueWithDependenciesRequest): Promise<IssueWithDependencies> {
+    const { blockedBy, expectedDependencyVersion, ...issue } = data;
+    const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(id)}/with-dependencies`, {
+      method: "PATCH",
+      body: JSON.stringify({ ...issue, blocked_by: blockedBy, expected_dependency_version: expectedDependencyVersion }),
+    });
+    const result = parseWithFallback<IssueWithDependencies | null>(raw, IssueWithDependenciesSchema, null, {
+      endpoint: "PATCH /api/issues/:id/with-dependencies",
+    });
+    if (!result) throw new Error("Invalid issue response");
+    return result;
+  }
+
   async quickCreateIssue(data: {
     agent_id?: string;
     squad_id?: string;
@@ -1248,11 +1291,16 @@ export class ApiClient {
     await this.fetch(`/api/issues/${id}`, { method: "DELETE" });
   }
 
-  async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest): Promise<{ updated: number }> {
-    return this.fetch("/api/issues/batch-update", {
+  async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest): Promise<IssueBatchUpdateResult> {
+    const raw = await this.fetch<unknown>("/api/issues/batch-update", {
       method: "POST",
       body: JSON.stringify({ issue_ids: issueIds, updates }),
     });
+    const result = parseWithFallback<IssueBatchUpdateResult | null>(raw, IssueBatchUpdateSchema, null, {
+      endpoint: "POST /api/issues/batch-update",
+    });
+    if (!result) throw new Error("Invalid batch update response");
+    return result;
   }
 
   async batchDeleteIssues(issueIds: string[]): Promise<{ deleted: number }> {

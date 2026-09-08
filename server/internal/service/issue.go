@@ -39,8 +39,9 @@ type IssueService struct {
 	// cmd/server/router.go after construction; nil in tests / self-hosted
 	// without the metrics listener — obsmetrics.RecordEvent treats a nil
 	// Metrics as "PostHog only", so leaving it unset is safe.
-	Metrics     *obsmetrics.BusinessMetrics
-	TaskService *TaskService
+	Metrics      *obsmetrics.BusinessMetrics
+	TaskService  *TaskService
+	Dependencies *DependencyService
 	// Entitlements supplies Cloud's effective issue-count instruction. Nil is
 	// the self-hosted unlimited path.
 	Entitlements entitlement.Provider
@@ -48,11 +49,12 @@ type IssueService struct {
 
 func NewIssueService(q *db.Queries, tx TxStarter, bus *events.Bus, ac analytics.Client, ts *TaskService) *IssueService {
 	return &IssueService{
-		Queries:     q,
-		TxStarter:   tx,
-		Bus:         bus,
-		Analytics:   ac,
-		TaskService: ts,
+		Queries:      q,
+		TxStarter:    tx,
+		Bus:          bus,
+		Analytics:    ac,
+		TaskService:  ts,
+		Dependencies: NewDependencyService(q, tx),
 	}
 }
 
@@ -90,6 +92,8 @@ type IssueCreateParams struct {
 	// Its immutable snapshot and cloned attachment rows commit in the same
 	// transaction as the new issue.
 	SourceContext *SourceContextCapture
+	// BlockedBy is nil when the legacy path does not edit prerequisites.
+	BlockedBy *[]pgtype.UUID
 }
 
 // IssueCreateOpts groups optional knobs for IssueService.Create. Most
@@ -186,6 +190,7 @@ type IssueCreateResult struct {
 	// understood label_ids (see the create handler's compatibility contract).
 	Labels         []db.IssueLabel
 	DuplicateIssue *db.Issue
+	Dependencies   *DependencySnapshot
 }
 
 // Create runs the full issue-creation pipeline atomically end-to-end:
@@ -219,6 +224,16 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	}
 	defer tx.Rollback(ctx)
 	qtx := s.Queries.WithTx(tx)
+	if err := s.Dependencies.LockWrite(ctx, qtx, p.WorkspaceID); err != nil {
+		return IssueCreateResult{}, err
+	}
+	var dependencyBefore *DependencySnapshot
+	if p.ParentIssueID.Valid || p.BlockedBy != nil {
+		dependencyBefore, err = s.Dependencies.LoadForWrite(ctx, qtx, p.WorkspaceID)
+		if err != nil {
+			return IssueCreateResult{}, err
+		}
+	}
 
 	if p.SourceContext != nil {
 		if _, err := qtx.LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{
@@ -382,6 +397,18 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("create issue: %w", err)
 	}
+	var dependencyAfter *DependencySnapshot
+	if dependencyBefore != nil {
+		dependencyAfter, _, err = s.Dependencies.Apply(ctx, qtx, dependencyBefore, issue, DependencyWrite{Creating: true, BlockedBy: p.BlockedBy})
+		if err != nil {
+			return IssueCreateResult{}, err
+		}
+		assigned, run := DependencyWriteIntent(ctx, qtx, nil, issue, false)
+		if err := dependencyAfter.CheckWriteAdmission(ctx, issue, assigned, run); err != nil {
+			return IssueCreateResult{}, err
+		}
+
+	}
 
 	if p.SourceContext != nil {
 		if _, err := PersistSourceContext(ctx, qtx, *p.SourceContext, issue.ID, pgtype.UUID{}); err != nil {
@@ -508,7 +535,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		assignedTaskID = s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, opts.AssignedAgentRunFireAt)
 	}
 
-	return IssueCreateResult{Issue: issue, Attachments: attachments, Labels: labels, AssignedTaskID: assignedTaskID}, nil
+	return IssueCreateResult{Issue: issue, Attachments: attachments, Labels: labels, AssignedTaskID: assignedTaskID, Dependencies: dependencyAfter}, nil
 }
 
 // validateIssueLabels checks that every requested label exists in the

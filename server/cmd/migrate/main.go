@@ -308,6 +308,9 @@ var concurrentIndexCleanups = map[string]string{
 	"460_project_file_candidate_list_index":                     "idx_project_file_candidate_list",
 	"461_project_file_upload_id_index":                          "idx_project_file_upload_id",
 	"462_project_file_upload_operation_index":                   "idx_project_file_upload_operation",
+	"464_issue_dependency_audit_id_index":                       "idx_issue_dependency_audit_id",
+	"465_issue_dependency_audit_workspace_index":                "idx_issue_dependency_audit_workspace",
+	"466_issue_dependency_blocked_by_index":                     "idx_issue_dependency_blocked_by",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction
