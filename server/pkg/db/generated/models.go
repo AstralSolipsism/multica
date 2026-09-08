@@ -1168,6 +1168,70 @@ type Project struct {
 	DueDate     pgtype.Date        `json:"due_date"`
 }
 
+type ProjectFile struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	Path             string             `json:"path"`
+	Revision         int64              `json:"revision"`
+	CurrentVersionID pgtype.UUID        `json:"current_version_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProjectFileCandidate struct {
+	ID                    pgtype.UUID        `json:"id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	ProjectID             pgtype.UUID        `json:"project_id"`
+	FileID                pgtype.UUID        `json:"file_id"`
+	VersionID             pgtype.UUID        `json:"version_id"`
+	ResolvedAt            pgtype.Timestamptz `json:"resolved_at"`
+	ResolvedByOperationID pgtype.UUID        `json:"resolved_by_operation_id"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+}
+
+type ProjectFileOperation struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	ProjectID    pgtype.UUID        `json:"project_id"`
+	ActorType    string             `json:"actor_type"`
+	ActorID      pgtype.UUID        `json:"actor_id"`
+	OperationKey string             `json:"operation_key"`
+	Request      []byte             `json:"request"`
+	Result       []byte             `json:"result"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
+}
+
+type ProjectFileUpload struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	OperationID pgtype.UUID        `json:"operation_id"`
+	ObjectKey   string             `json:"object_key"`
+	State       string             `json:"state"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProjectFileVersion struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	ProjectID    pgtype.UUID        `json:"project_id"`
+	FileID       pgtype.UUID        `json:"file_id"`
+	Revision     pgtype.Int8        `json:"revision"`
+	BaseRevision int64              `json:"base_revision"`
+	ObjectKey    string             `json:"object_key"`
+	SizeBytes    int64              `json:"size_bytes"`
+	Sha256       string             `json:"sha256"`
+	ContentType  string             `json:"content_type"`
+	AuthorType   string             `json:"author_type"`
+	AuthorID     pgtype.UUID        `json:"author_id"`
+	SourceTaskID pgtype.UUID        `json:"source_task_id"`
+	OperationID  pgtype.UUID        `json:"operation_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type ProjectResource struct {
 	ID           pgtype.UUID        `json:"id"`
 	ProjectID    pgtype.UUID        `json:"project_id"`
