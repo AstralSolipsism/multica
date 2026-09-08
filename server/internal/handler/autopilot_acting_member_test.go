@@ -232,6 +232,36 @@ func autopilotWriteEndpoints() []autopilotWriteEndpoint {
 					"id", fx.autopilotID, "userId", fx.grantTarget)
 			},
 		},
+		{
+			// OL-25 result-push rule. Admission lands on route_invalid (400):
+			// the body carries a valid conditions enum but no target, so the
+			// refusal comes from the module's validation AFTER the shared
+			// write gate — a refused caller never reaches it.
+			name:         "create-message-route",
+			wantAdmitted: http.StatusBadRequest,
+			handler:      testHandler.CreateMessageRoute,
+			send: func(fx actingFixture, c actingCaller) *http.Request {
+				return withURLParams(c.request("POST",
+					"/api/autopilots/"+fx.autopilotID+"/message-routes"+ws,
+					map[string]any{"conditions": "success", "content_mode": "summary"}),
+					"id", fx.autopilotID)
+			},
+		},
+		{
+			// Admission lands on route_not_found for a route id that never
+			// existed: the gate ran, and building a real route row would test
+			// the route path rather than the gate.
+			name:         "enable-message-route",
+			wantAdmitted: http.StatusNotFound,
+			handler:      testHandler.SetMessageRouteEnabled,
+			send: func(fx actingFixture, c actingCaller) *http.Request {
+				routeID := uuid.NewString()
+				return withURLParams(c.request("POST",
+					"/api/autopilots/"+fx.autopilotID+"/message-routes/"+routeID+"/enable"+ws,
+					map[string]any{"enabled": true, "expected_revision": 1}),
+					"id", fx.autopilotID, "routeId", routeID)
+			},
+		},
 	}
 }
 

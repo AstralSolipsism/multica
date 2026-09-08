@@ -245,34 +245,63 @@ func settleAutopilotQuota(ctx context.Context, q *db.Queries, reservationID pgty
 	return err == nil, err
 }
 
+// errRunAlreadyTerminal: another syncer won the first-terminal race — the
+// terminal query's non-terminal guard updated zero rows (OL-25 repair
+// contract §3, review R6). Callers must treat this as an idempotent no-op:
+// no run-done republish, no analytics, no quota settlement. Real database
+// errors stay errors.
+var errRunAlreadyTerminal = errors.New("autopilot run already terminal")
+
+// settleAutopilotRunTerminal runs the guarded terminal write and translates
+// the lost race into errRunAlreadyTerminal, re-fetching the current row so
+// callers that only log can do so without a second query.
+func (s *AutopilotService) settleAutopilotRunTerminal(ctx context.Context, params db.UpdateAutopilotRunTerminalWithQuotaParams) (db.AutopilotRun, error) {
+	row, err := s.Queries.UpdateAutopilotRunTerminalWithQuota(ctx, params)
+	if errors.Is(err, pgx.ErrNoRows) {
+		current, fetchErr := s.Queries.GetAutopilotRun(ctx, params.RunID)
+		if fetchErr != nil {
+			return db.AutopilotRun{}, fmt.Errorf("%w (and current row unavailable: %v)", errRunAlreadyTerminal, fetchErr)
+		}
+		return autopilotRunFromTerminalRow(db.UpdateAutopilotRunTerminalWithQuotaRow(current)), errRunAlreadyTerminal
+	}
+	return autopilotRunFromTerminalRow(row), err
+}
+
 func (s *AutopilotService) completeAutopilotRun(ctx context.Context, params db.UpdateAutopilotRunCompletedParams) (db.AutopilotRun, error) {
-	row, err := s.Queries.UpdateAutopilotRunTerminalWithQuota(ctx, db.UpdateAutopilotRunTerminalWithQuotaParams{
+	return s.settleAutopilotRunTerminal(ctx, db.UpdateAutopilotRunTerminalWithQuotaParams{
 		TerminalStatus: "completed",
 		Result:         params.Result,
 		RunID:          params.ID,
 		Consume:        true,
 	})
-	return autopilotRunFromTerminalRow(row), err
 }
 
 func (s *AutopilotService) failAutopilotRun(ctx context.Context, params db.UpdateAutopilotRunFailedParams) (db.AutopilotRun, error) {
-	row, err := s.Queries.UpdateAutopilotRunTerminalWithQuota(ctx, db.UpdateAutopilotRunTerminalWithQuotaParams{
+	return s.failAutopilotRunWithResult(ctx, params, nil)
+}
+
+// failAutopilotRunWithResult records a failed terminal AND an optional
+// structured first-terminal payload (OL-25 review R11: the issue-sync
+// boundary persists the status it observed; the shared SQL only overwrites
+// result when a non-null value arrives, so ordinary task failures without a
+// structured payload never erase existing evidence).
+func (s *AutopilotService) failAutopilotRunWithResult(ctx context.Context, params db.UpdateAutopilotRunFailedParams, result []byte) (db.AutopilotRun, error) {
+	return s.settleAutopilotRunTerminal(ctx, db.UpdateAutopilotRunTerminalWithQuotaParams{
 		TerminalStatus: "failed",
 		FailureReason:  params.FailureReason,
 		ReasonCode:     params.ReasonCode,
+		Result:         result,
 		RunID:          params.ID,
 	})
-	return autopilotRunFromTerminalRow(row), err
 }
 
 func (s *AutopilotService) skipAutopilotRun(ctx context.Context, params db.UpdateAutopilotRunSkippedParams) (db.AutopilotRun, error) {
-	row, err := s.Queries.UpdateAutopilotRunTerminalWithQuota(ctx, db.UpdateAutopilotRunTerminalWithQuotaParams{
+	return s.settleAutopilotRunTerminal(ctx, db.UpdateAutopilotRunTerminalWithQuotaParams{
 		TerminalStatus: "skipped",
 		FailureReason:  params.FailureReason,
 		ReasonCode:     params.ReasonCode,
 		RunID:          params.ID,
 	})
-	return autopilotRunFromTerminalRow(row), err
 }
 
 func autopilotRunFromTerminalRow(row db.UpdateAutopilotRunTerminalWithQuotaRow) db.AutopilotRun {

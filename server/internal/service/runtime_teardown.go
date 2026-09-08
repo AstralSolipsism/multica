@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/messagedelivery/lifecycle"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -132,6 +133,15 @@ func TeardownRuntime(ctx context.Context, qtx *db.Queries, runtimeID pgtype.UUID
 	// pruned before the system-agent rows disappear.
 	if err := qtx.DeleteAgentInvocationTargetsBySystemRuntimeAgents(ctx, runtimeID); err != nil {
 		return out, fmt.Errorf("clean up agent invocation targets: %w", err)
+	}
+	installations, err := qtx.LockLabrastroMessageRuntimeInstallations(ctx, runtimeID)
+	if err != nil {
+		return out, fmt.Errorf("lock delivery installations: %w", err)
+	}
+	for _, inst := range installations {
+		if err := lifecycle.StopInstallation(ctx, qtx, inst.WorkspaceID, inst.ID); err != nil {
+			return out, fmt.Errorf("stop installation deliveries: %w", err)
+		}
 	}
 	if err := qtx.DeleteChannelInstallationsBySystemRuntimeAgents(ctx, runtimeID); err != nil {
 		return out, fmt.Errorf("clean up channel installations: %w", err)

@@ -1079,9 +1079,26 @@ func (s *AutopilotService) SyncRunFromIssue(ctx context.Context, issue db.Issue)
 
 	switch effectiveStatus {
 	case "done", "in_review":
+		// Freeze the FIRST terminal status on the run (OL-25 review R6,
+		// repair contract §3): this terminal sync is the only moment that
+		// status is knowable — the issue may move on again afterwards, and
+		// a later delivery reading the live issue would present a later
+		// status as the first terminal one. Stored in run.result, which
+		// create_issue runs leave NULL upstream; the message-delivery
+		// module reads it from there.
+		firstTerminal, mErr := json.Marshal(map[string]string{"first_terminal_status": effectiveStatus})
+		if mErr != nil {
+			slog.Warn("marshal first terminal status", "run_id", util.UUIDToString(run.ID), "error", mErr)
+		}
 		updatedRun, err := s.completeAutopilotRun(ctx, db.UpdateAutopilotRunCompletedParams{
-			ID: run.ID,
+			ID:     run.ID,
+			Result: firstTerminal,
 		})
+		if errors.Is(err, errRunAlreadyTerminal) {
+			// Another syncer already finalized this run at its FIRST
+			// terminal moment; that write's structured status stands.
+			return
+		}
 		if err != nil {
 			slog.Warn("failed to complete autopilot run", "run_id", util.UUIDToString(run.ID), "error", err)
 			return
@@ -1089,11 +1106,21 @@ func (s *AutopilotService) SyncRunFromIssue(ctx context.Context, issue db.Issue)
 		s.captureAutopilotRunCompleted(autopilot, updatedRun)
 		s.publishRunDone(wsID, updatedRun, "completed")
 	case "cancelled", "blocked":
+		// The failure path carries the SAME structured first-terminal
+		// payload (review R11): the status card reads the structured
+		// field; the human-readable reason stays audit-only.
+		firstTerminal, mErr := json.Marshal(map[string]string{"first_terminal_status": effectiveStatus})
+		if mErr != nil {
+			slog.Warn("marshal first terminal status", "run_id", util.UUIDToString(run.ID), "error", mErr)
+		}
 		reason := "issue " + issue.Status
-		updatedRun, err := s.failAutopilotRun(ctx, db.UpdateAutopilotRunFailedParams{
+		updatedRun, err := s.failAutopilotRunWithResult(ctx, db.UpdateAutopilotRunFailedParams{
 			ID:            run.ID,
 			FailureReason: pgtype.Text{String: reason, Valid: true},
-		})
+		}, firstTerminal)
+		if errors.Is(err, errRunAlreadyTerminal) {
+			return
+		}
 		if err != nil {
 			slog.Warn("failed to fail autopilot run", "run_id", util.UUIDToString(run.ID), "error", err)
 			return
@@ -1105,12 +1132,18 @@ func (s *AutopilotService) SyncRunFromIssue(ctx context.Context, issue db.Issue)
 
 // SyncRunFromTask updates the autopilot run when a run_only task completes or fails.
 func (s *AutopilotService) SyncRunFromTask(ctx context.Context, task db.AgentTaskQueue) {
-	if !task.AutopilotRunID.Valid {
+	var run db.AutopilotRun
+	var err error
+	if task.AutopilotRunID.Valid {
+		run, err = s.Queries.GetAutopilotRun(ctx, task.AutopilotRunID)
+	} else {
+		run, err = s.Queries.GetAutopilotRunByTaskLink(ctx, task.ID)
+	}
+	if err != nil || run.IssueID.Valid {
 		return
 	}
-
-	run, err := s.Queries.GetAutopilotRun(ctx, task.AutopilotRunID)
-	if err != nil {
+	if err := s.Queries.PreserveAutopilotRunTaskLink(ctx, db.PreserveAutopilotRunTaskLinkParams{ID: run.ID, TaskID: task.ID}); err != nil {
+		slog.Warn("failed to preserve autopilot task link", "run_id", util.UUIDToString(run.ID), "error", err)
 		return
 	}
 
@@ -1126,6 +1159,9 @@ func (s *AutopilotService) SyncRunFromTask(ctx context.Context, task db.AgentTas
 			ID:     run.ID,
 			Result: task.Result,
 		})
+		if errors.Is(err, errRunAlreadyTerminal) {
+			return
+		}
 		if err != nil {
 			slog.Warn("failed to complete autopilot run from task", "run_id", util.UUIDToString(run.ID), "error", err)
 			return
@@ -1141,6 +1177,9 @@ func (s *AutopilotService) SyncRunFromTask(ctx context.Context, task db.AgentTas
 			ID:            run.ID,
 			FailureReason: pgtype.Text{String: reason, Valid: true},
 		})
+		if errors.Is(err, errRunAlreadyTerminal) {
+			return
+		}
 		if err != nil {
 			slog.Warn("failed to fail autopilot run from task", "run_id", util.UUIDToString(run.ID), "error", err)
 			return
@@ -1176,6 +1215,17 @@ func (s *AutopilotService) SyncRunFromLinkedIssueTask(ctx context.Context, task 
 	if err != nil {
 		return // no active run linked to this issue
 	}
+	// A replayed task failure must not outrun a persisted terminal issue whose
+	// own event was lost. Reuse its normal sync path regardless of scanner order.
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		return
+	}
+	switch issuestatus.Effective(ctx, s.Queries, issue.WorkspaceID, issue.Status) {
+	case "done", "in_review", "blocked", "cancelled":
+		s.SyncRunFromIssue(ctx, issue)
+		return
+	}
 	// A still-active task — typically the auto-retry FailTask just enqueued —
 	// means the dispatch isn't terminal yet; wait for the final attempt.
 	hasActive, err := s.Queries.HasActiveTaskForIssue(ctx, task.IssueID)
@@ -1190,6 +1240,14 @@ func (s *AutopilotService) SyncRunFromLinkedIssueTask(ctx context.Context, task 
 	if hasActive {
 		return
 	}
+	latest, err := s.Queries.IsLatestFailedAutopilotIssueTask(ctx, db.IsLatestFailedAutopilotIssueTaskParams{ID: task.ID, IssueID: task.IssueID})
+	if err != nil {
+		slog.Warn("failed to check latest autopilot issue attempt", "task_id", util.UUIDToString(task.ID), "error", err)
+		return
+	}
+	if !latest {
+		return
+	}
 	autopilot, err := s.Queries.GetAutopilot(ctx, run.AutopilotID)
 	if err != nil {
 		return
@@ -1200,6 +1258,9 @@ func (s *AutopilotService) SyncRunFromLinkedIssueTask(ctx context.Context, task 
 		ID:            run.ID,
 		FailureReason: pgtype.Text{String: reason, Valid: reason != ""},
 	})
+	if errors.Is(err, errRunAlreadyTerminal) {
+		return
+	}
 	if err != nil {
 		slog.Warn("failed to fail autopilot run from linked issue task",
 			"run_id", util.UUIDToString(run.ID),
@@ -1242,6 +1303,11 @@ func (s *AutopilotService) handleDispatchSkip(ctx context.Context, ap db.Autopil
 		FailureReason: pgtype.Text{String: skipErr.reason, Valid: true},
 		ReasonCode:    pgtype.Text{String: string(skipErr.code), Valid: skipErr.code != ""},
 	})
+	if errors.Is(uerr, errRunAlreadyTerminal) {
+		// Another syncer already finalized the run at its first terminal;
+		// the skip is moot and the winner owns the run-done publication.
+		return run, skipErr.code
+	}
 	if uerr != nil {
 		slog.Warn("failed to mark dispatch as skipped",
 			"run_id", util.UUIDToString(run.ID), "error", uerr)
@@ -1261,7 +1327,9 @@ func (s *AutopilotService) handleDispatchSkip(ctx context.Context, ap db.Autopil
 	// evaluate the trigger this tick, even though the post-admission gate
 	// caught a late readiness regression.
 	s.Queries.UpdateAutopilotLastRunAt(ctx, ap.ID)
-	s.publishRunDone(util.UUIDToString(ap.WorkspaceID), updated, "skipped")
+	if !errors.Is(uerr, errRunAlreadyTerminal) {
+		s.publishRunDone(util.UUIDToString(ap.WorkspaceID), updated, "skipped")
+	}
 	return run, skipErr.code
 }
 

@@ -2058,6 +2058,31 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					})
 					r.Post("/collaborators", h.AddAutopilotCollaborator)
 					r.Delete("/collaborators/{userId}", h.RemoveAutopilotCollaborator)
+
+					// Labrastro result-push routes + delivery records
+					// (OL-25). Authorization is per-handler through the same
+					// autopilot write gate; see
+					// internal/handler/labrastro_message_delivery.go.
+					r.Get("/message-routes", h.ListMessageRoutes)
+					r.Post("/message-routes", h.CreateMessageRoute)
+					r.Route("/message-routes/{routeId}", func(r chi.Router) {
+						r.Put("/", h.UpdateMessageRoute)
+						r.Delete("/", h.DeleteMessageRoute)
+						r.Post("/enable", h.SetMessageRouteEnabled)
+						r.Post("/test-send", h.TestMessageRoute)
+					})
+					// Approved external targets: workspace-admin consent per
+					// (automation, bot, target). Approval is categorically
+					// above automation write permission; the handler
+					// re-checks owner/admin inside.
+					r.Get("/message-approved-targets", h.ListMessageApprovedTargets)
+					r.Post("/message-approved-targets", h.ApproveMessageTarget)
+					r.Delete("/message-approved-targets/{targetId}", h.RevokeMessageTarget)
+					r.Get("/message-deliveries", h.ListMessageDeliveries)
+					r.Route("/message-deliveries/{deliveryId}", func(r chi.Router) {
+						r.Get("/", h.GetMessageDelivery)
+						r.Post("/retry", h.RetryMessageDelivery)
+					})
 				})
 			})
 
@@ -2331,6 +2356,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 		})
 	})
+
+	// Labrastro message-delivery module (OL-25). Assembled here, after the
+	// lark transport is wired, so the sender sees the real availability of
+	// the Feishu integration; see labrastro_messaging.go.
+	assembleMessageDelivery(h, bus)
 
 	return r, h
 }

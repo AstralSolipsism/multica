@@ -1276,6 +1276,26 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return qtx.DeleteWorkspaceAutopilots(ctx, requester.WorkspaceID) },
 		},
 		{
+			// OL-25 message-delivery data. After the autopilot sweep so a
+			// route can never name an automation that outlived it, before
+			// the workspace row. Receipts → deliveries → routes keeps the
+			// documented dependency order readable; there are no FKs to
+			// enforce it.
+			name: "delete labrastro message delivery data",
+			run: func() error {
+				if err := qtx.DeleteLabrastroMessageApprovedTargetsByWorkspace(ctx, requester.WorkspaceID); err != nil {
+					return err
+				}
+				if err := qtx.DeleteLabrastroMessageReceiptsByWorkspace(ctx, requester.WorkspaceID); err != nil {
+					return err
+				}
+				if err := qtx.DeleteLabrastroMessageDeliveriesByWorkspace(ctx, requester.WorkspaceID); err != nil {
+					return err
+				}
+				return qtx.DeleteLabrastroMessageRoutesByWorkspace(ctx, requester.WorkspaceID)
+			},
+		},
+		{
 			name: "delete pull requests",
 			run:  func() error { return qtx.DeleteWorkspacePullRequests(ctx, requester.WorkspaceID) },
 		},

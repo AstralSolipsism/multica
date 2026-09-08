@@ -473,12 +473,22 @@ RETURNING *;
 -- The CTE sequence is: update the run, lock a still-reserved slot, finalize
 -- that slot exactly once, then move one unit from reserved_count to either
 -- used_count (consume) or nowhere (release). used_count never decreases.
+--
+-- FIRST TERMINAL WINS (OL-25 repair contract §3, review R6): only a
+-- non-terminal run may transition. Two syncers that both observed the run
+-- active (e.g. an issue went in_review then done) race here; the loser
+-- updates zero rows and the caller treats that as an idempotent no-op — it
+-- must not re-publish run-done, re-settle quota, or overwrite the FIRST
+-- terminal's structured result with a later one. The result column now
+-- records the structured first-terminal payload for BOTH completed and
+-- failed runs; skipped keeps whatever the row already held.
 WITH updated_run AS (
     UPDATE autopilot_run AS ar
     SET status = @terminal_status::text,
         completed_at = now(),
         result = CASE
             WHEN @terminal_status::text = 'completed' THEN sqlc.narg('result')::jsonb
+            WHEN @terminal_status::text = 'failed' THEN COALESCE(sqlc.narg('result')::jsonb, ar.result)
             ELSE ar.result
         END,
         failure_reason = CASE
@@ -490,6 +500,7 @@ WITH updated_run AS (
             ELSE ar.reason_code
         END
     WHERE ar.id = @run_id
+      AND ar.status IN ('pending', 'issue_created', 'running')
     RETURNING ar.*
 ), locked_reservation AS MATERIALIZED (
     SELECT qr.*
@@ -808,3 +819,26 @@ SELECT EXISTS (
 -- Powers the per-row can_write flag on the list endpoint without an N+1.
 SELECT autopilot_id FROM autopilot_collaborator
 WHERE user_type = 'member' AND user_id = $1;
+
+-- name: GetAutopilotRunByTaskLink :one
+-- The run-side link also proves run_only when the task-side write is absent.
+SELECT * FROM autopilot_run WHERE task_id = $1 AND issue_id IS NULL LIMIT 1;
+
+-- name: PreserveAutopilotRunTaskLink :exec
+-- Repair a one-sided committed dispatch link before persisting its terminal result.
+UPDATE autopilot_run SET task_id = $2
+WHERE id = $1 AND task_id IS NULL AND issue_id IS NULL;
+
+-- name: IsLatestFailedAutopilotIssueTask :one
+-- A historical failure is not a new terminal event after a later attempt.
+-- Re-read the durable task rather than trusting an old event payload.
+SELECT EXISTS (
+    SELECT 1 FROM agent_task_queue t
+    WHERE t.id = $1 AND t.issue_id = $2 AND t.status = 'failed'
+      AND NOT EXISTS (
+          SELECT 1 FROM agent_task_queue successor
+          WHERE successor.issue_id = t.issue_id
+            AND ((successor.created_at, successor.id) > (t.created_at, t.id)
+                 OR successor.retry_of_task_id = t.id)
+      )
+)::boolean AS is_latest;

@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
+	"github.com/multica-ai/multica/server/internal/messagedelivery/lifecycle"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -166,10 +167,26 @@ func (h *Handler) RevokeLarkInstallation(w http.ResponseWriter, r *http.Request)
 	} else if !h.canManageAgent(w, r, agent) {
 		return
 	}
-	if err := h.LarkInstallations.Revoke(r.Context(), instUUID); err != nil {
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to revoke installation")
 		return
 	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if err := qtx.SetChannelInstallationStatus(r.Context(), db.SetChannelInstallationStatusParams{ID: instUUID, Status: "revoked"}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to revoke installation")
+		return
+	}
+	if err := lifecycle.StopInstallation(r.Context(), qtx, wsUUID, instUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to stop installation deliveries")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to revoke installation")
+		return
+	}
+
 	h.publish(protocol.EventLarkInstallationRevoked, uuidToString(wsUUID), "user", userID, map[string]any{
 		"id": uuidToString(instUUID),
 	})

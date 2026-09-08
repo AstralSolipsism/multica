@@ -298,19 +298,32 @@ var concurrentIndexCleanups = map[string]string{
 	"443_issue_project_status_index":                            "idx_issue_project_status",
 	"445_comment_delegated_failure_unsettled_index":             "idx_comment_delegated_failure_unsettled",
 	"446_issue_properties_bigm_index":                           "idx_issue_properties_bigm",
-	"453_project_file_id_index":                                 "idx_project_file_id",
-	"454_project_file_path_index":                               "idx_project_file_path",
-	"455_project_file_version_id_index":                         "idx_project_file_version_id",
-	"456_project_file_version_revision_index":                   "idx_project_file_version_revision",
-	"457_project_file_operation_id_index":                       "idx_project_file_operation_id",
-	"458_project_file_operation_scope_index":                    "idx_project_file_operation_scope",
-	"459_project_file_candidate_id_index":                       "idx_project_file_candidate_id",
-	"460_project_file_candidate_list_index":                     "idx_project_file_candidate_list",
-	"461_project_file_upload_id_index":                          "idx_project_file_upload_id",
-	"462_project_file_upload_operation_index":                   "idx_project_file_upload_operation",
-	"464_issue_dependency_audit_id_index":                       "idx_issue_dependency_audit_id",
-	"465_issue_dependency_audit_workspace_index":                "idx_issue_dependency_audit_workspace",
-	"466_issue_dependency_blocked_by_index":                     "idx_issue_dependency_blocked_by",
+	// OL-25 message-delivery module (labrastro_* tables) and the project-file
+	// + issue-dependency index batches: three feature branches numbered the
+	// 453+ range in parallel. Each migration's FULL filename is unique, so
+	// every entry below executes exactly once per database; the runner orders
+	// by full version name. Each builds exactly one index concurrently, per
+	// the repo migration contract.
+	"453_labrastro_message_route_identity_index":         "uq_labrastro_message_route_identity",
+	"454_labrastro_message_delivery_dedup_index":         "uq_labrastro_message_delivery_dedup",
+	"455_labrastro_message_delivery_queue_index":         "idx_labrastro_message_delivery_queue",
+	"456_labrastro_message_delivery_listing_index":       "idx_labrastro_message_delivery_listing",
+	"457_labrastro_message_receipt_shard_index":          "uq_labrastro_message_receipt_shard",
+	"458_labrastro_message_receipt_external_index":       "uq_labrastro_message_receipt_external",
+	"460_labrastro_message_approved_target_active_index": "uq_labrastro_message_approved_target_active",
+	"453_project_file_id_index":                          "idx_project_file_id",
+	"454_project_file_path_index":                        "idx_project_file_path",
+	"455_project_file_version_id_index":                  "idx_project_file_version_id",
+	"456_project_file_version_revision_index":            "idx_project_file_version_revision",
+	"457_project_file_operation_id_index":                "idx_project_file_operation_id",
+	"458_project_file_operation_scope_index":             "idx_project_file_operation_scope",
+	"459_project_file_candidate_id_index":                "idx_project_file_candidate_id",
+	"460_project_file_candidate_list_index":              "idx_project_file_candidate_list",
+	"461_project_file_upload_id_index":                   "idx_project_file_upload_id",
+	"462_project_file_upload_operation_index":            "idx_project_file_upload_operation",
+	"464_issue_dependency_audit_id_index":                "idx_issue_dependency_audit_id",
+	"465_issue_dependency_audit_workspace_index":         "idx_issue_dependency_audit_workspace",
+	"466_issue_dependency_blocked_by_index":              "idx_issue_dependency_blocked_by",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction

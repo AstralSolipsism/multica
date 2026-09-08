@@ -854,6 +854,37 @@ func (q *Queries) GetAutopilotRunByQuotaReservation(ctx context.Context, quotaRe
 	return i, err
 }
 
+const getAutopilotRunByTaskLink = `-- name: GetAutopilotRunByTaskLink :one
+SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code FROM autopilot_run WHERE task_id = $1 AND issue_id IS NULL LIMIT 1
+`
+
+// The run-side link also proves run_only when the task-side write is absent.
+func (q *Queries) GetAutopilotRunByTaskLink(ctx context.Context, taskID pgtype.UUID) (AutopilotRun, error) {
+	row := q.db.QueryRow(ctx, getAutopilotRunByTaskLink, taskID)
+	var i AutopilotRun
+	err := row.Scan(
+		&i.ID,
+		&i.AutopilotID,
+		&i.TriggerID,
+		&i.Source,
+		&i.Status,
+		&i.IssueID,
+		&i.TaskID,
+		&i.TriggeredAt,
+		&i.CompletedAt,
+		&i.FailureReason,
+		&i.TriggerPayload,
+		&i.Result,
+		&i.CreatedAt,
+		&i.SquadID,
+		&i.PlannedAt,
+		&i.WebhookDeliveryID,
+		&i.QuotaReservationID,
+		&i.ReasonCode,
+	)
+	return i, err
+}
+
 const getAutopilotRunByTriggerAndPlanned = `-- name: GetAutopilotRunByTriggerAndPlanned :one
 SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code FROM autopilot_run
 WHERE trigger_id = $1
@@ -1163,6 +1194,33 @@ func (q *Queries) IsAutopilotCollaborator(ctx context.Context, arg IsAutopilotCo
 	var is_collaborator bool
 	err := row.Scan(&is_collaborator)
 	return is_collaborator, err
+}
+
+const isLatestFailedAutopilotIssueTask = `-- name: IsLatestFailedAutopilotIssueTask :one
+SELECT EXISTS (
+    SELECT 1 FROM agent_task_queue t
+    WHERE t.id = $1 AND t.issue_id = $2 AND t.status = 'failed'
+      AND NOT EXISTS (
+          SELECT 1 FROM agent_task_queue successor
+          WHERE successor.issue_id = t.issue_id
+            AND ((successor.created_at, successor.id) > (t.created_at, t.id)
+                 OR successor.retry_of_task_id = t.id)
+      )
+)::boolean AS is_latest
+`
+
+type IsLatestFailedAutopilotIssueTaskParams struct {
+	ID      pgtype.UUID `json:"id"`
+	IssueID pgtype.UUID `json:"issue_id"`
+}
+
+// A historical failure is not a new terminal event after a later attempt.
+// Re-read the durable task rather than trusting an old event payload.
+func (q *Queries) IsLatestFailedAutopilotIssueTask(ctx context.Context, arg IsLatestFailedAutopilotIssueTaskParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isLatestFailedAutopilotIssueTask, arg.ID, arg.IssueID)
+	var is_latest bool
+	err := row.Scan(&is_latest)
+	return is_latest, err
 }
 
 const listAutopilotCollaborators = `-- name: ListAutopilotCollaborators :many
@@ -1729,6 +1787,22 @@ func (q *Queries) PauseAutopilotsByUnrunnableSquad(ctx context.Context, squadID 
 		return nil, err
 	}
 	return items, nil
+}
+
+const preserveAutopilotRunTaskLink = `-- name: PreserveAutopilotRunTaskLink :exec
+UPDATE autopilot_run SET task_id = $2
+WHERE id = $1 AND task_id IS NULL AND issue_id IS NULL
+`
+
+type PreserveAutopilotRunTaskLinkParams struct {
+	ID     pgtype.UUID `json:"id"`
+	TaskID pgtype.UUID `json:"task_id"`
+}
+
+// Repair a one-sided committed dispatch link before persisting its terminal result.
+func (q *Queries) PreserveAutopilotRunTaskLink(ctx context.Context, arg PreserveAutopilotRunTaskLinkParams) error {
+	_, err := q.db.Exec(ctx, preserveAutopilotRunTaskLink, arg.ID, arg.TaskID)
+	return err
 }
 
 const recoverPartialAutopilotRun = `-- name: RecoverPartialAutopilotRun :one
@@ -2447,6 +2521,7 @@ WITH updated_run AS (
         completed_at = now(),
         result = CASE
             WHEN $1::text = 'completed' THEN $2::jsonb
+            WHEN $1::text = 'failed' THEN COALESCE($2::jsonb, ar.result)
             ELSE ar.result
         END,
         failure_reason = CASE
@@ -2458,6 +2533,7 @@ WITH updated_run AS (
             ELSE ar.reason_code
         END
     WHERE ar.id = $5
+      AND ar.status IN ('pending', 'issue_created', 'running')
     RETURNING ar.id, ar.autopilot_id, ar.trigger_id, ar.source, ar.status, ar.issue_id, ar.task_id, ar.triggered_at, ar.completed_at, ar.failure_reason, ar.trigger_payload, ar.result, ar.created_at, ar.squad_id, ar.planned_at, ar.webhook_delivery_id, ar.quota_reservation_id, ar.reason_code
 ), locked_reservation AS MATERIALIZED (
     SELECT qr.id, qr.workspace_id, qr.period_start, qr.period_end, qr.policy_revision, qr.subscription_version, qr.source, qr.idempotency_key, qr.state, qr.created_at, qr.finalized_at
@@ -2530,6 +2606,15 @@ type UpdateAutopilotRunTerminalWithQuotaRow struct {
 // The CTE sequence is: update the run, lock a still-reserved slot, finalize
 // that slot exactly once, then move one unit from reserved_count to either
 // used_count (consume) or nowhere (release). used_count never decreases.
+//
+// FIRST TERMINAL WINS (OL-25 repair contract §3, review R6): only a
+// non-terminal run may transition. Two syncers that both observed the run
+// active (e.g. an issue went in_review then done) race here; the loser
+// updates zero rows and the caller treats that as an idempotent no-op — it
+// must not re-publish run-done, re-settle quota, or overwrite the FIRST
+// terminal's structured result with a later one. The result column now
+// records the structured first-terminal payload for BOTH completed and
+// failed runs; skipped keeps whatever the row already held.
 func (q *Queries) UpdateAutopilotRunTerminalWithQuota(ctx context.Context, arg UpdateAutopilotRunTerminalWithQuotaParams) (UpdateAutopilotRunTerminalWithQuotaRow, error) {
 	row := q.db.QueryRow(ctx, updateAutopilotRunTerminalWithQuota,
 		arg.TerminalStatus,

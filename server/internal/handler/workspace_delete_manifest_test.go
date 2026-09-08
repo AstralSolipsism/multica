@@ -13,6 +13,7 @@ const (
 	workspaceDeleteDetach workspaceDeleteAction = "detach"
 	workspaceDeleteKeep   workspaceDeleteAction = "keep"
 	workspaceDeleteSettle workspaceDeleteAction = "settle"
+	workspaceDeleteRetain workspaceDeleteAction = "retain_inaccessible"
 )
 
 // workspaceDeletionManifest is the schema coverage contract for workspace
@@ -83,55 +84,74 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"issue_subscriber":                   workspaceDelete,
 	"issue_to_label":                     workspaceDelete,
 	"issue_vcs_pull_request":             workspaceDelete,
-	"lark_binding_token":                 workspaceDelete,
-	"lark_chat_session_binding":          workspaceDelete,
-	"lark_inbound_audit":                 workspaceDelete,
-	"lark_inbound_message_dedup":         workspaceDelete,
-	"lark_installation":                  workspaceDelete,
-	"lark_outbound_card_message":         workspaceDelete,
-	"lark_user_binding":                  workspaceDelete,
-	"member":                             workspaceDelete,
-	"agent_mcp_server":                   workspaceDelete,
-	"workspace_mcp_server":               workspaceDelete,
-	"notification_preference":            workspaceDelete,
-	"personal_access_token":              workspaceDeleteKeep,
-	"pinned_item":                        workspaceDelete,
-	"plugin_installation":                workspaceDelete,
-	"plugin_hook_schedule":               workspaceDelete,
-	"plugin_invocation":                  workspaceDelete,
-	"plugin_storage":                     workspaceDelete,
-	"plugin_secret":                      workspaceDelete,
-	"plugin_package":                     workspaceDelete,
-	"plugin_package_version":             workspaceDelete,
-	"plugin_package_file":                workspaceDelete,
-	"project":                            workspaceDelete,
-	"project_resource":                   workspaceDelete,
-	"quick_action":                       workspaceDelete,
-	"runtime_profile":                    workspaceDelete,
-	"schema_migrations":                  workspaceDeleteKeep,
-	"seat_capacity_outbox":               workspaceDeleteSettle,
-	"skill":                              workspaceDelete,
-	"skill_file":                         workspaceDelete,
-	"skill_to_label":                     workspaceDelete,
-	"squad":                              workspaceDelete,
-	"squad_member":                       workspaceDelete,
-	"sys_cron_executions":                workspaceDeleteKeep,
-	"task_message":                       workspaceDelete,
-	"task_token":                         workspaceDelete,
-	"task_usage":                         workspaceDelete,
-	"task_usage_hourly":                  workspaceDelete,
-	"task_usage_hourly_dirty":            workspaceDelete,
-	"task_usage_hourly_rollup_state":     workspaceDeleteKeep,
-	"user":                               workspaceDeleteKeep,
-	"user_composio_connection":           workspaceDeleteKeep,
-	"vcs_commit_status":                  workspaceDelete,
-	"vcs_connection":                     workspaceDelete,
-	"vcs_pull_request":                   workspaceDelete,
-	"verification_code":                  workspaceDeleteKeep,
-	"webhook_delivery":                   workspaceDelete,
-	"workspace":                          workspaceDelete,
-	"workspace_invitation":               workspaceDelete,
-	"workspace_share_link":               workspaceDelete,
+	// OL-25 message-delivery module. All three are swept explicitly in
+	// DeleteWorkspace ("delete labrastro message delivery data" step):
+	// receipts, then deliveries, then routes.
+	"labrastro_message_receipt":  workspaceDelete,
+	"labrastro_message_delivery": workspaceDelete,
+	"labrastro_message_route":    workspaceDelete,
+	// OL-25 repair contract §2/§4. Approved targets are workspace-scoped
+	// and swept with the workspace; the scan-cursor table is cross-workspace
+	// shared state owned by the scanner loop — kept, rebuilt if lost.
+	"labrastro_message_approved_target": workspaceDelete,
+	"labrastro_message_scan_cursor":     workspaceDeleteKeep,
+	"lark_binding_token":                workspaceDelete,
+	"lark_chat_session_binding":         workspaceDelete,
+	"lark_inbound_audit":                workspaceDelete,
+	"lark_inbound_message_dedup":        workspaceDelete,
+	"lark_installation":                 workspaceDelete,
+	"lark_outbound_card_message":        workspaceDelete,
+	"lark_user_binding":                 workspaceDelete,
+	"member":                            workspaceDelete,
+	"agent_mcp_server":                  workspaceDelete,
+	"workspace_mcp_server":              workspaceDelete,
+	"notification_preference":           workspaceDelete,
+	"personal_access_token":             workspaceDeleteKeep,
+	"pinned_item":                       workspaceDelete,
+	"plugin_installation":               workspaceDelete,
+	"plugin_hook_schedule":              workspaceDelete,
+	"plugin_invocation":                 workspaceDelete,
+	"plugin_storage":                    workspaceDelete,
+	"plugin_secret":                     workspaceDelete,
+	"plugin_package":                    workspaceDelete,
+	"plugin_package_version":            workspaceDelete,
+	"plugin_package_file":               workspaceDelete,
+	"project":                           workspaceDelete,
+	// Project-file rollout retains metadata and private objects for recovery
+	// after parent deletion (server/docs/project-files-operations.md). This is
+	// workspace-owned retention, not global KEEP state or a cascading delete.
+	"project_file":                   workspaceDeleteRetain,
+	"project_file_version":           workspaceDeleteRetain,
+	"project_file_candidate":         workspaceDeleteRetain,
+	"project_file_operation":         workspaceDeleteRetain,
+	"project_file_upload":            workspaceDeleteRetain,
+	"project_resource":               workspaceDelete,
+	"quick_action":                   workspaceDelete,
+	"runtime_profile":                workspaceDelete,
+	"schema_migrations":              workspaceDeleteKeep,
+	"seat_capacity_outbox":           workspaceDeleteSettle,
+	"skill":                          workspaceDelete,
+	"skill_file":                     workspaceDelete,
+	"skill_to_label":                 workspaceDelete,
+	"squad":                          workspaceDelete,
+	"squad_member":                   workspaceDelete,
+	"sys_cron_executions":            workspaceDeleteKeep,
+	"task_message":                   workspaceDelete,
+	"task_token":                     workspaceDelete,
+	"task_usage":                     workspaceDelete,
+	"task_usage_hourly":              workspaceDelete,
+	"task_usage_hourly_dirty":        workspaceDelete,
+	"task_usage_hourly_rollup_state": workspaceDeleteKeep,
+	"user":                           workspaceDeleteKeep,
+	"user_composio_connection":       workspaceDeleteKeep,
+	"vcs_commit_status":              workspaceDelete,
+	"vcs_connection":                 workspaceDelete,
+	"vcs_pull_request":               workspaceDelete,
+	"verification_code":              workspaceDeleteKeep,
+	"webhook_delivery":               workspaceDelete,
+	"workspace":                      workspaceDelete,
+	"workspace_invitation":           workspaceDelete,
+	"workspace_share_link":           workspaceDelete,
 }
 
 func TestWorkspaceDeletionManifestCoversPublicSchema(t *testing.T) {
@@ -209,7 +229,7 @@ WHERE table_schema = 'public'
 			if hasWorkspaceID {
 				t.Errorf("KEEP table %s gained workspace_id; classify its teardown behavior", table)
 			}
-		case workspaceDeleteDetach, workspaceDeleteSettle:
+		case workspaceDeleteDetach, workspaceDeleteSettle, workspaceDeleteRetain:
 			if !hasWorkspaceID {
 				t.Errorf("%s table %s lost workspace_id; update its teardown selector", action, table)
 			}
