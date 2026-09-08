@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,8 +14,13 @@ import (
 // antigravityQuotaProcessesImpl lists the pids of running agy processes whose
 // command line matches the daemon's resolved executable (absolute path or
 // basename). Best-effort: a missing or unreadable /proc yields no candidates,
-// which the caller reports as "no running agy process".
-func antigravityQuotaProcessesImpl(execPath string) []int {
+// which the caller reports as "no running agy process". A cancelled context
+// stops the walk; whatever was matched up to that point is returned and the
+// caller's own context check ends the round.
+func antigravityQuotaProcessesImpl(ctx context.Context, execPath string) []int {
+	if ctx.Err() != nil {
+		return nil
+	}
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil
@@ -22,6 +28,9 @@ func antigravityQuotaProcessesImpl(execPath string) []int {
 	base := filepath.Base(execPath)
 	var pids []int
 	for _, entry := range entries {
+		if ctx.Err() != nil {
+			return pids
+		}
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil {
 			// Not a numeric /proc entry (boot cpuinfo, sys, ...) — skip.
@@ -49,8 +58,11 @@ func antigravityQuotaProcessesImpl(execPath string) []int {
 // straight from /proc (no external tools): the process's socket inodes are
 // matched against the system-wide LISTEN tables for IPv4 and IPv6. The caller
 // only ever dials 127.0.0.1, so a listener bound to a wider address is still
-// reached over loopback.
-func listeningLoopbackPorts(pid int) []int {
+// reached over loopback. A cancelled context returns whatever was read so far.
+func listeningLoopbackPorts(ctx context.Context, pid int) []int {
+	if ctx.Err() != nil {
+		return nil
+	}
 	inodes := procSocketInodes(pid)
 	if len(inodes) == 0 {
 		return nil
@@ -58,6 +70,9 @@ func listeningLoopbackPorts(pid int) []int {
 	seen := make(map[int]bool)
 	var ports []int
 	for _, table := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		if ctx.Err() != nil {
+			return ports
+		}
 		data, err := os.ReadFile(table)
 		if err != nil {
 			continue

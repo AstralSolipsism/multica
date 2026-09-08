@@ -69,6 +69,8 @@ var corsAllowedHeaders = []string{
 	"Content-Type",
 	"Idempotency-Key",
 	"If-Match",
+	"X-Base-Revision",
+	"X-Content-SHA256",
 	"X-Workspace-ID",
 	"X-Workspace-Slug",
 	"X-Request-ID",
@@ -92,6 +94,13 @@ var corsAllowedHeaders = []string{
 // Referencing the handler constant rather than re-typing the string keeps a
 // rename from quietly switching the signal off (MUL-5492).
 var corsExposedHeaders = []string{
+	"Content-Disposition",
+	"X-File-ID",
+	"X-Revision",
+	"X-Base-Revision",
+	"X-Version-ID",
+	"X-Content-SHA256",
+	"X-Candidate-ID",
 	"ETag",
 	"X-Request-ID",
 	handler.HeaderCommentsTruncated,
@@ -439,6 +448,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		ServerVersion:            normalizeServerVersion(version),
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	h.ProjectFiles = configureProjectFiles(queries, pool, s3)
 	invitationRateLimits := handler.DefaultInvitationRateLimits()
 	invitationRateLimits.Actor.Limit = envNonNegativeInt("RATE_LIMIT_INVITATION_ACTOR_10M", invitationRateLimits.Actor.Limit)
 	invitationRateLimits.Workspace.Limit = envNonNegativeInt("RATE_LIMIT_INVITATION_WORKSPACE_24H", invitationRateLimits.Workspace.Limit)
@@ -1986,6 +1996,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/", h.GetProject)
 					r.Put("/", h.UpdateProject)
 					r.Delete("/", h.DeleteProject)
+					r.Get("/files/capabilities", h.ProjectFileCapabilities)
+					r.Get("/files", h.ListProjectFiles)
+					r.Get("/files/content", h.ReadProjectFile)
+					r.Put("/files/content", h.SaveProjectFile)
+					r.Get("/files/candidates", h.ListProjectFileCandidates)
+					r.Get("/files/candidates/{candidateId}/content", h.ReadProjectFileCandidate)
+					r.Post("/files/candidates/{candidateId}/adopt", h.AdoptProjectFileCandidate)
+					r.Get("/files/operations/{operationId}", h.GetProjectFileOperation)
 					r.Get("/resources", h.ListProjectResources)
 					r.Post("/resources", h.CreateProjectResource)
 					r.Put("/resources/{resourceId}", h.UpdateProjectResource)

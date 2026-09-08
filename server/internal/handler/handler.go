@@ -37,6 +37,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/messagedelivery"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/projectfile"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -190,6 +191,7 @@ type RuntimeRecoveryNotifier interface {
 }
 
 type Handler struct {
+	ProjectFiles           *projectfile.Service
 	Queries                *db.Queries
 	ReadSelector           *dbreader.Selector
 	DB                     dbExecutor

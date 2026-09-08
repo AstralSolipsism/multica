@@ -482,11 +482,18 @@ type Daemon struct {
 	// planQuotaCache holds each runtime's latest observed provider
 	// plan/rate-limit snapshot (runtimeID -> planQuotaCacheEntry), recorded
 	// at task completion (agent backends that report one), by the
-	// antigravity quota probe (antigravityQuotaLoop), or by a quota
+	// antigravity quota probe (antigravityQuotaLoop), by the per-task
+	// antigravity sampler (antigravity_task_sample.go), or by a quota
 	// collector, and attached to that
 	// runtime's next heartbeat. Entries are deleted when the runtime leaves
 	// the local set.
 	planQuotaCache sync.Map
+
+	// antigravityQuotaDiagMu guards antigravityQuotaDiag, the plan-quota
+	// probe's last-attempt record surfaced on /health — the one visible trace
+	// of a probe degradation that is silent everywhere else.
+	antigravityQuotaDiagMu sync.Mutex
+	antigravityQuotaDiag   antigravityQuotaDiagnostics
 
 	// hostMetrics samples the daemon host's CPU/memory on a timer; every
 	// runtime heartbeat attaches the same latest sample when it is fresh.
@@ -8442,6 +8449,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Shared across the resume-retry below so the retry's transcript rows
 	// keep ascending seq values for the same task.
 	var msgSeq atomic.Int32
+	// Sample the antigravity quota service while this task's agy process is
+	// alive (antigravity_task_sample.go): the periodic loop only records a
+	// snapshot when its 5-minute tick lands inside a process lifetime, which
+	// short one-shot turns routinely fall between. The sampler stops itself
+	// on the first success, when the process exits for good, and at its
+	// discovery window; this cancel covers the task ending first.
+	stopAntigravityQuotaSampler := d.maybeStartAntigravityTaskSampler(ctx, provider)
+	defer stopAntigravityQuotaSampler()
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
 	if err != nil {
 		return TaskResult{}, err

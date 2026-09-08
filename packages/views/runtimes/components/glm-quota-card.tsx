@@ -8,6 +8,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
+import { MiniMeterBar } from "./runtime-quota-cell";
 import { useT, useTimeAgo } from "../../i18n";
 import zhipuLogo from "./zhipu-logo.svg";
 
@@ -100,16 +101,29 @@ export function GlmQuotaChip({
   if (!worst) return null;
   const remaining = glmWindowRemainingPercent(worst);
   const tone = quotaTone(remaining, "ok");
+  // Same pill form as QuotaChip: [logo] [draining bar of what is LEFT]
+  // [bare percent]. The spoken aria-label keeps the "剩 X%" phrasing so
+  // screen readers still hear the unit; sighted readers get the bar.
+  const ariaText =
+    remaining != null
+      ? t(($) => $.quota.remaining, { percent: Math.round(remaining) })
+      : t(($) => $.quota.glm_unknown);
   const pill = (
     <span
-      aria-label={`GLM: ${t(($) => $.quota.glm_title)}`}
+      aria-label={`GLM: ${ariaText}`}
       className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-micro font-medium tabular-nums ${CHIP_TONE_CLASS[tone]}`}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={staticAssetSrc(zhipuLogo)} alt="" className="h-3.5 w-3.5" />
-      {remaining != null
-        ? t(($) => $.quota.remaining, { percent: remaining })
-        : t(($) => $.quota.glm_unknown)}
+      {remaining != null && (
+        <MiniMeterBar
+          percent={remaining}
+          tone={tone}
+          ariaLabel="GLM"
+          className="w-6 shrink-0"
+        />
+      )}
+      {remaining != null ? `${Math.round(remaining)}%` : ariaText}
     </span>
   );
   if (!interactive) return pill;
