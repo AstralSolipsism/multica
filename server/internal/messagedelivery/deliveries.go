@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -157,6 +158,11 @@ func (s *Service) TestSend(ctx context.Context, route db.LabrastroMessageRoute, 
 	}
 
 	sendID := util.UUIDToString(dbid.NewV7())
+	// The test-send row carries a BOUNDED lease like a claimed queue row
+	// (review R10): if this process dies or the caller disconnects
+	// mid-send, the expiry sweep parks the row as uncertain and the retry
+	// path can resolve it — it can never strand in 'sending' forever.
+	leaseToken := dbid.NewV7()
 	rows, err := s.Queries.CreateLabrastroMessageDelivery(ctx, db.CreateLabrastroMessageDeliveryParams{
 		ID:              dbid.NewV7(),
 		WorkspaceID:     route.WorkspaceID,
@@ -172,6 +178,8 @@ func (s *Service) TestSend(ctx context.Context, route db.LabrastroMessageRoute, 
 		SourceRef:       refJSON,
 		TargetKey:       route.TargetKey,
 		InstallationID:  route.InstallationID,
+		LeaseToken:      leaseToken,
+		LeaseExpiresAt:  pgtype.Timestamptz{Time: s.now().Add(testSendLeaseTTL), Valid: true},
 	})
 	if err != nil {
 		return db.LabrastroMessageDelivery{}, fmt.Errorf("record test send: %w", err)
@@ -179,7 +187,17 @@ func (s *Service) TestSend(ctx context.Context, route db.LabrastroMessageRoute, 
 	d := rows[0]
 
 	out := s.sendDelivery(ctx, d)
-	updated, err := s.Queries.SetLabrastroMessageDeliveryOutcome(ctx, db.SetLabrastroMessageDeliveryOutcomeParams{
+	if out.lost {
+		// Lost ownership mid-pass (workspace deleted, lease expired): the
+		// recovery protocol owns the row now.
+		return d, fmt.Errorf("test send lost ownership mid-flight; the delivery recovers via lease expiry")
+	}
+	// The final write runs on a detached bounded context: the caller
+	// disconnecting must not prevent the outcome from being recorded
+	// (review R10).
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	updated, err := s.Queries.SetLabrastroMessageDeliveryOutcome(writeCtx, db.SetLabrastroMessageDeliveryOutcomeParams{
 		ID:        d.ID,
 		Status:    out.status,
 		ErrorCode: pgtype.Text{String: out.errorCode, Valid: out.errorCode != ""},
@@ -187,6 +205,11 @@ func (s *Service) TestSend(ctx context.Context, route db.LabrastroMessageRoute, 
 	})
 	if err != nil {
 		return d, fmt.Errorf("record test send outcome: %w", err)
+	}
+	// The caller's interruption surfaces as an error even though the
+	// outcome was recorded on the detached context.
+	if cErr := ctx.Err(); cErr != nil {
+		return updated, cErr
 	}
 	s.logger().Info("messagedelivery: test send finished",
 		"delivery_id", util.UUIDToString(d.ID),
@@ -203,6 +226,10 @@ type sendOutcome struct {
 	status    string // sent | failed | uncertain
 	errorCode string
 	detail    string
+	// lost: lease ownership was lost mid-pass (review R9). Nothing is
+	// sent or written after this point; the row's new owner owns the
+	// outcome and the final lease-guarded write would fail anyway.
+	lost bool
 }
 
 // sendDelivery performs one complete send pass for a claimed delivery:
@@ -259,16 +286,28 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 	for i, shard := range shards {
 		// Claim (or re-read) the shard's receipt row. The send UUID is
 		// written once and never changes, so a retry replays the SAME
-		// idempotency key.
-		receipt, err := s.Queries.ClaimLabrastroMessageReceipt(ctx, db.ClaimLabrastroMessageReceiptParams{
-			DeliveryID:     d.ID,
-			WorkspaceID:    d.WorkspaceID,
-			InstallationID: d.InstallationID,
-			ShardIndex:     int32(i),
-			ShardTotal:     int32(len(shards)),
-			SendUuid:       util.UUIDToString(dbid.NewV7()),
+		// idempotency key. The insert shares a transaction with the
+		// workspace parent lock (review R3), so a teardown that committed
+		// meanwhile refuses the receipt instead of landing in a deleted
+		// workspace.
+		var receipt db.LabrastroMessageReceipt
+		err := s.withParentLock(ctx, d.WorkspaceID, func(qtx *db.Queries) error {
+			var cErr error
+			receipt, cErr = qtx.ClaimLabrastroMessageReceipt(ctx, db.ClaimLabrastroMessageReceiptParams{
+				DeliveryID:     d.ID,
+				WorkspaceID:    d.WorkspaceID,
+				InstallationID: d.InstallationID,
+				ShardIndex:     int32(i),
+				ShardTotal:     int32(len(shards)),
+				SendUuid:       util.UUIDToString(dbid.NewV7()),
+			})
+			return cErr
 		})
 		if err != nil {
+			if errors.Is(err, errParentGone) {
+				return sendOutcome{lost: true,
+					detail: "workspace deleted before shard receipt"}
+			}
 			return sendOutcome{status: DeliveryStatusUncertain, errorCode: ErrorCodeSendAmbiguous,
 				detail: fmt.Sprintf("claim receipt for shard %d: %v", i, err)}
 		}
@@ -276,6 +315,14 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 		// a resumed multi-shard send safe after a partial pass.
 		if receipt.ExternalMessageID.Valid && strings.TrimSpace(receipt.ExternalMessageID.String) != "" {
 			continue
+		}
+		// Lease ownership re-check BEFORE dialing a new shard (review
+		// R9): a worker whose claim expired — or whose row another
+		// replica already parked as uncertain — must not start sends its
+		// final lease-guarded write could never account for.
+		if !s.holdsLease(ctx, d) {
+			return sendOutcome{lost: true,
+				detail: fmt.Sprintf("lease lost before shard %d", i)}
 		}
 		res, err := s.Sender.Send(ctx, SendRequest{
 			WorkspaceID:    util.UUIDToString(d.WorkspaceID),
@@ -301,6 +348,53 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 		}
 	}
 	return sendOutcome{status: DeliveryStatusSent}
+}
+
+// testSendLeaseTTL bounds a synchronous test send; it matches the claim
+// lease window so the expiry sweep's recovery contract applies uniformly.
+const testSendLeaseTTL = 2 * time.Minute
+
+// errParentGone reports that the workspace a guarded write depends on no
+// longer exists (the delete transaction committed first).
+var errParentGone = errors.New("workspace parent gone")
+
+// withParentLock runs fn inside a transaction holding a FOR SHARE lock on
+// the workspace row (review R3). The DeleteWorkspace flow takes the same
+// row FOR UPDATE before sweeping, so a write racing a committed delete is
+// refused with errParentGone instead of landing in a deleted workspace.
+func (s *Service) withParentLock(ctx context.Context, workspaceID pgtype.UUID, fn func(qtx *db.Queries) error) error {
+	tx, err := s.Tx.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin parent-lock tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.Queries.WithTx(tx)
+	if _, err := qtx.LockWorkspaceForMessageDecision(ctx, workspaceID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errParentGone
+		}
+		return fmt.Errorf("lock workspace parent: %w", err)
+	}
+	if err := fn(qtx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// holdsLease re-reads the delivery's live lease and reports whether the
+// calling worker still owns it: same token, still 'sending', not expired.
+func (s *Service) holdsLease(ctx context.Context, d db.LabrastroMessageDelivery) bool {
+	if !d.LeaseToken.Valid {
+		return true
+	}
+	row, err := s.Queries.GetLabrastroMessageDeliveryLease(ctx, d.ID)
+	if err != nil {
+		return false
+	}
+	if row.Status != DeliveryStatusSending || row.LeaseToken != d.LeaseToken {
+		return false
+	}
+	return !row.LeaseExpiresAt.Valid || row.LeaseExpiresAt.Time.After(s.now())
 }
 
 // classifySendError maps a Sender error onto the delivery outcome.

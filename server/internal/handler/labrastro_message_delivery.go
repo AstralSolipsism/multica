@@ -54,24 +54,11 @@ func (r messageRouteRequest) toInput() messagedelivery.RouteInput {
 	}
 }
 
-// requireMessageRouteAccess loads the source automation and enforces the
-// autopilot write gate. On failure the response is already written and ok
-// is false.
-func (h *Handler) requireMessageRouteAccess(w http.ResponseWriter, r *http.Request) (db.Autopilot, bool) {
-	id := chi.URLParam(r, "id")
-	workspaceID := h.resolveWorkspaceID(r)
-	ap, ok := h.loadAutopilotInWorkspace(w, r, id, workspaceID)
-	if !ok {
-		return db.Autopilot{}, false
-	}
-	if _, ok := h.requireAutopilotWrite(w, r, ap, workspaceID); !ok {
-		return db.Autopilot{}, false
-	}
-	return ap, true
-}
-
-// requireMessageRouteAccessWithMember is requireMessageRouteAccess plus the
-// acting member the gate judged, for handlers that must stamp it.
+// requireMessageRouteAccessWithMember loads the source automation, enforces
+// the autopilot write gate, and returns the acting member the gate judged
+// (handlers stamp that member as creator/updater). The single seam is
+// deliberate (review S3): every endpoint on this surface judges identity in
+// exactly one place.
 func (h *Handler) requireMessageRouteAccessWithMember(w http.ResponseWriter, r *http.Request) (db.Autopilot, db.Member, bool) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
@@ -84,6 +71,13 @@ func (h *Handler) requireMessageRouteAccessWithMember(w http.ResponseWriter, r *
 		return db.Autopilot{}, db.Member{}, false
 	}
 	return ap, member, true
+}
+
+// requireMessageRouteAccess is the read/list variant that ignores the
+// acting member.
+func (h *Handler) requireMessageRouteAccess(w http.ResponseWriter, r *http.Request) (db.Autopilot, bool) {
+	ap, _, ok := h.requireMessageRouteAccessWithMember(w, r)
+	return ap, ok
 }
 
 func (h *Handler) decodeMessageRouteRequest(w http.ResponseWriter, r *http.Request) (messageRouteRequest, bool) {
@@ -103,6 +97,9 @@ func writeMessageDeliveryError(w http.ResponseWriter, err error) {
 	var invalidInst *messagedelivery.InstallationInvalidError
 	var unbound *messagedelivery.MemberNotBoundError
 	var notMember *messagedelivery.TargetNotMemberError
+	var unverifiable *messagedelivery.TargetUnverifiableError
+	var unreachable *messagedelivery.TargetUnreachableError
+	var mismatch *messagedelivery.TargetAnchorMismatchError
 
 	switch {
 	case errors.As(err, &invalidRoute):
@@ -115,6 +112,15 @@ func writeMessageDeliveryError(w http.ResponseWriter, err error) {
 	case errors.As(err, &notMember):
 		writeErrorCode(w, http.StatusBadRequest, "route_target_not_member",
 			"the target user is not a member of this workspace")
+	case errors.As(err, &unverifiable):
+		writeErrorCode(w, http.StatusBadRequest, "route_target_unverifiable",
+			"the target could not be verified against the channel; nothing was saved")
+	case errors.As(err, &unreachable):
+		writeErrorCode(w, http.StatusBadRequest, "route_target_unreachable",
+			"the bot cannot reach this target; nothing was saved")
+	case errors.As(err, &mismatch):
+		writeErrorCode(w, http.StatusBadRequest, "route_topic_anchor_mismatch",
+			"the topic anchor belongs to a different chat; nothing was saved")
 	case errors.Is(err, messagedelivery.ErrRouteNotFound):
 		writeErrorCode(w, http.StatusNotFound, "route_not_found", "message route not found")
 	case errors.Is(err, messagedelivery.ErrRouteRevisionConflict):

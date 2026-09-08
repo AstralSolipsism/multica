@@ -1079,8 +1079,20 @@ func (s *AutopilotService) SyncRunFromIssue(ctx context.Context, issue db.Issue)
 
 	switch effectiveStatus {
 	case "done", "in_review":
+		// Freeze the FIRST terminal status on the run (OL-25 review R6):
+		// this terminal sync is the only moment that status is knowable —
+		// the issue may move on again afterwards, and a later delivery
+		// reading the live issue would present a later status as the
+		// first terminal one. Stored in run.result, which create_issue
+		// runs leave NULL upstream; the message-delivery module reads it
+		// from there.
+		firstTerminal, mErr := json.Marshal(map[string]string{"first_terminal_status": effectiveStatus})
+		if mErr != nil {
+			slog.Warn("marshal first terminal status", "run_id", util.UUIDToString(run.ID), "error", mErr)
+		}
 		updatedRun, err := s.completeAutopilotRun(ctx, db.UpdateAutopilotRunCompletedParams{
-			ID: run.ID,
+			ID:     run.ID,
+			Result: firstTerminal,
 		})
 		if err != nil {
 			slog.Warn("failed to complete autopilot run", "run_id", util.UUIDToString(run.ID), "error", err)

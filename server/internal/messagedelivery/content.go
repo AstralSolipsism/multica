@@ -113,21 +113,30 @@ func buildRunOnlyContent(autopilotTitle, runStatus, reasonCode, failureReason, o
 // terminal state ships the status and the task link; the report body is
 // never attached because this module has no verified delivery-comment
 // anchor for the issue yet (OL-23: "只有明确的交付评论锚点才能附正文").
-func buildCreateIssueContent(autopilotTitle, runStatus, issueIdent, issueStatus, appURL string) contentSnapshot {
+//
+// issueStatus may be empty when the first terminal status is unrecoverable
+// (review R6); the wording then states completion without naming a possibly
+// later status.
+//
+// The link carries the SOURCE WORKSPACE slug (conventions: app routes
+// always live under /{slug}/{section}) — a multi-workspace recipient must
+// land in the workspace that owns the task, and the link is omitted when
+// either the app origin or the slug is unknown.
+func buildCreateIssueContent(autopilotTitle, runStatus, issueIdent, issueStatus, appURL, workspaceSlug string) contentSnapshot {
 	snap := contentSnapshot{RunStatus: runStatus}
 	var b strings.Builder
 	b.WriteString(autopilotTitle)
-	switch runStatus {
-	case "completed":
-		b.WriteString(" — task " + issueIdent + " is " + issueStatus)
-	case "failed":
-		b.WriteString(" — task " + issueIdent + " was moved to " + issueStatus)
+	switch {
+	case issueIdent == "":
+		b.WriteString(" — task reached its first terminal state")
+	case issueStatus != "":
+		b.WriteString(" — task " + issueIdent + " reached its first terminal state as " + issueStatus)
 	default:
-		b.WriteString(" — task " + issueIdent + " (" + issueStatus + ")")
+		b.WriteString(" — task " + issueIdent + " reached its first terminal state (current status: see the task page)")
 	}
 	snap.Summary = b.String()
-	if appURL != "" && issueIdent != "" {
-		snap.Link = strings.TrimRight(appURL, "/") + "/issues/" + issueIdent
+	if appURL != "" && workspaceSlug != "" && issueIdent != "" {
+		snap.Link = strings.TrimRight(appURL, "/") + "/" + workspaceSlug + "/issues/" + issueIdent
 		b.WriteString("\n")
 		b.WriteString(snap.Link)
 	}

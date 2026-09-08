@@ -86,6 +86,12 @@ const (
 	ErrorCodeAttemptsExhausted   = "attempts_exhausted"
 	ErrorCodeLeaseExpired        = "lease_expired"
 	ErrorCodeSendAmbiguous       = "send_ambiguous"
+	// Target-verification verdicts (review R1) and authorization-loss
+	// handling (review R2).
+	ErrorCodeTargetUnverifiable  = "route_target_unverifiable"
+	ErrorCodeTargetUnreachable   = "route_target_unreachable"
+	ErrorCodeTopicAnchorMismatch = "route_topic_anchor_mismatch"
+	ErrorCodeAuthorizationLost   = "route_authorization_lost"
 )
 
 // ValidRouteConditions / ValidContentModes are the accepted API values.
@@ -154,10 +160,25 @@ func routeMatchesRun(conditions, runStatus string) bool {
 	return false
 }
 
-// executionModeSourceKind maps the autopilot's execution mode to the source
-// kind recorded on its deliveries.
-func executionModeSourceKind(executionMode string) string {
-	if executionMode == SourceKindRunOnly {
+// sourceKindFromRun derives the source kind from the run's PERSISTED
+// evidence, never from the autopilot's current configuration (review R7): a
+// run_only run keeps its task link and its output even if the rule is later
+// switched to create_issue. issue_id implies create_issue (the run owns
+// that issue); otherwise a task link implies run_only; otherwise a result
+// payload carrying `output` is by definition a run_only completion; the
+// current configuration is only the last resort for rows predating both
+// links.
+func sourceKindFromRun(runIssueIDValid, runTaskIDValid bool, runResult []byte, currentMode string) string {
+	switch {
+	case runIssueIDValid:
+		return SourceKindCreateIssue
+	case runTaskIDValid:
+		return SourceKindRunOnly
+	}
+	if _, hasOutput := extractRunOnlyOutput(runResult); hasOutput {
+		return SourceKindRunOnly
+	}
+	if currentMode == SourceKindRunOnly {
 		return SourceKindRunOnly
 	}
 	return SourceKindCreateIssue
@@ -266,6 +287,36 @@ func (e *TargetNotMemberError) Error() string {
 	return "target user is not a member of this workspace"
 }
 
+// TargetUnverifiableError: the deployment has no transport wired to verify
+// an external target, so the save fails closed (review R1: a group/topic
+// target must be verifiable, and a later test-send cannot substitute for
+// save-time verification).
+type TargetUnverifiableError struct{ Detail string }
+
+func (e *TargetUnverifiableError) Error() string {
+	msg := "external targets cannot be verified without a configured channel transport"
+	if e.Detail != "" {
+		return msg + ": " + e.Detail
+	}
+	return msg
+}
+
+// TargetUnreachableError: the platform definitively refused the target
+// (unknown chat, bot not a member, outside visibility).
+type TargetUnreachableError struct{ Detail string }
+
+func (e *TargetUnreachableError) Error() string {
+	return "target is not reachable by this bot: " + e.Detail
+}
+
+// TargetAnchorMismatchError: the topic anchor lives in a different chat
+// than the route declared. The verified chat wins; the save is refused.
+type TargetAnchorMismatchError struct{ Detail string }
+
+func (e *TargetAnchorMismatchError) Error() string {
+	return "topic anchor belongs to a different chat: " + e.Detail
+}
+
 // decisionInput carries everything one delivery decision is built from. The
 // event path and the compensator both end here, so the two can never drift.
 type decisionInput struct {
@@ -278,6 +329,8 @@ type decisionInput struct {
 	// eligibility window only applies to runs that have one.
 	RunCompletedAtValid bool
 	ExecutionMode       string
+	RunTaskID           string
+	RunTaskIDValid      bool
 	Route               db.LabrastroMessageRoute
 	Run                 runFields
 }

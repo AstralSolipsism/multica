@@ -390,33 +390,37 @@ const createLabrastroMessageDelivery = `-- name: CreateLabrastroMessageDelivery 
 INSERT INTO labrastro_message_delivery (
     id, workspace_id, route_id, route_revision, autopilot_id, run_id,
     dedup_key, source_kind, status, content_snapshot, target_snapshot,
-    shard_total, source_ref, target_key, installation_id, error_code
+    shard_total, source_ref, target_key, installation_id, error_code,
+    lease_token, lease_expires_at
 ) VALUES (
     $1, $2, $12, $13, $3,
     $14, $4, $5, $6, $7, $8, $9, $15,
-    $10, $11, $16
+    $10, $11, $16,
+    $17, $18
 )
 ON CONFLICT (dedup_key) DO NOTHING
 RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
 `
 
 type CreateLabrastroMessageDeliveryParams struct {
-	ID              pgtype.UUID `json:"id"`
-	WorkspaceID     pgtype.UUID `json:"workspace_id"`
-	AutopilotID     pgtype.UUID `json:"autopilot_id"`
-	DedupKey        string      `json:"dedup_key"`
-	SourceKind      string      `json:"source_kind"`
-	Status          string      `json:"status"`
-	ContentSnapshot []byte      `json:"content_snapshot"`
-	TargetSnapshot  []byte      `json:"target_snapshot"`
-	ShardTotal      int32       `json:"shard_total"`
-	TargetKey       string      `json:"target_key"`
-	InstallationID  pgtype.UUID `json:"installation_id"`
-	RouteID         pgtype.UUID `json:"route_id"`
-	RouteRevision   pgtype.Int4 `json:"route_revision"`
-	RunID           pgtype.UUID `json:"run_id"`
-	SourceRef       []byte      `json:"source_ref"`
-	ErrorCode       pgtype.Text `json:"error_code"`
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	AutopilotID     pgtype.UUID        `json:"autopilot_id"`
+	DedupKey        string             `json:"dedup_key"`
+	SourceKind      string             `json:"source_kind"`
+	Status          string             `json:"status"`
+	ContentSnapshot []byte             `json:"content_snapshot"`
+	TargetSnapshot  []byte             `json:"target_snapshot"`
+	ShardTotal      int32              `json:"shard_total"`
+	TargetKey       string             `json:"target_key"`
+	InstallationID  pgtype.UUID        `json:"installation_id"`
+	RouteID         pgtype.UUID        `json:"route_id"`
+	RouteRevision   pgtype.Int4        `json:"route_revision"`
+	RunID           pgtype.UUID        `json:"run_id"`
+	SourceRef       []byte             `json:"source_ref"`
+	ErrorCode       pgtype.Text        `json:"error_code"`
+	LeaseToken      pgtype.UUID        `json:"lease_token"`
+	LeaseExpiresAt  pgtype.Timestamptz `json:"lease_expires_at"`
 }
 
 // =====================
@@ -444,6 +448,8 @@ func (q *Queries) CreateLabrastroMessageDelivery(ctx context.Context, arg Create
 		arg.RunID,
 		arg.SourceRef,
 		arg.ErrorCode,
+		arg.LeaseToken,
+		arg.LeaseExpiresAt,
 	)
 	if err != nil {
 		return nil, err
@@ -769,6 +775,29 @@ func (q *Queries) GetLabrastroMessageDelivery(ctx context.Context, arg GetLabras
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
+	return i, err
+}
+
+const getLabrastroMessageDeliveryLease = `-- name: GetLabrastroMessageDeliveryLease :one
+SELECT lease_token, lease_expires_at, status
+FROM labrastro_message_delivery
+WHERE id = $1
+`
+
+type GetLabrastroMessageDeliveryLeaseRow struct {
+	LeaseToken     pgtype.UUID        `json:"lease_token"`
+	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
+	Status         string             `json:"status"`
+}
+
+// Fresh lease ownership read. A worker validates this before starting each
+// NEW shard send: once its claim is lost (lease expired, another owner,
+// state moved on), it must stop dialing even though its in-memory snapshot
+// still looks claimed.
+func (q *Queries) GetLabrastroMessageDeliveryLease(ctx context.Context, id pgtype.UUID) (GetLabrastroMessageDeliveryLeaseRow, error) {
+	row := q.db.QueryRow(ctx, getLabrastroMessageDeliveryLease, id)
+	var i GetLabrastroMessageDeliveryLeaseRow
+	err := row.Scan(&i.LeaseToken, &i.LeaseExpiresAt, &i.Status)
 	return i, err
 }
 
@@ -1175,17 +1204,24 @@ JOIN autopilot_run r ON r.issue_id = i.id
 JOIN autopilot a ON a.id = r.autopilot_id
 WHERE a.execution_mode = 'create_issue'
   AND r.status IN ('pending', 'issue_created', 'running')
+  AND (i.updated_at, i.id) > ($1::timestamptz, $2::uuid)
 ORDER BY i.updated_at, i.id
-LIMIT $1
+LIMIT $3
 `
+
+type ListStaleCreateIssueAutopilotIssuesParams struct {
+	AfterTs pgtype.Timestamptz `json:"after_ts"`
+	AfterID pgtype.UUID        `json:"after_id"`
+	Limit   int32              `json:"limit"`
+}
 
 // Issues whose create_issue automation run never saw the terminal
 // transition. No status filter here on purpose: custom statuses inherit
 // canonical terminal states through Effective() inside SyncRunFromIssue,
 // and this query cannot see that mapping. The non-terminal run join keeps
 // the candidate set small; a non-terminal issue is a harmless no-op sync.
-func (q *Queries) ListStaleCreateIssueAutopilotIssues(ctx context.Context, limit int32) ([]Issue, error) {
-	rows, err := q.db.Query(ctx, listStaleCreateIssueAutopilotIssues, limit)
+func (q *Queries) ListStaleCreateIssueAutopilotIssues(ctx context.Context, arg ListStaleCreateIssueAutopilotIssuesParams) ([]Issue, error) {
+	rows, err := q.db.Query(ctx, listStaleCreateIssueAutopilotIssues, arg.AfterTs, arg.AfterID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1240,16 +1276,23 @@ JOIN autopilot a ON a.id = r.autopilot_id
 WHERE a.execution_mode = 'run_only'
   AND r.status IN ('pending', 'issue_created', 'running')
   AND t.status IN ('completed', 'failed', 'cancelled')
-ORDER BY t.completed_at NULLS LAST, t.id
-LIMIT $1
+  AND (COALESCE(t.completed_at, t.created_at), t.id) > ($1::timestamptz, $2::uuid)
+ORDER BY COALESCE(t.completed_at, t.created_at), t.id
+LIMIT $3
 `
+
+type ListStaleRunOnlyAutopilotTasksParams struct {
+	AfterTs pgtype.Timestamptz `json:"after_ts"`
+	AfterID pgtype.UUID        `json:"after_id"`
+	Limit   int32              `json:"limit"`
+}
 
 // Tasks whose run_only automation has not reached a terminal run state even
 // though the task itself is terminal — the event the run sync listens for
 // was lost. The scanner feeds these to the EXISTING SyncRunFromTask logic;
 // this module runs no state machine of its own.
-func (q *Queries) ListStaleRunOnlyAutopilotTasks(ctx context.Context, limit int32) ([]AgentTaskQueue, error) {
-	rows, err := q.db.Query(ctx, listStaleRunOnlyAutopilotTasks, limit)
+func (q *Queries) ListStaleRunOnlyAutopilotTasks(ctx context.Context, arg ListStaleRunOnlyAutopilotTasksParams) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, listStaleRunOnlyAutopilotTasks, arg.AfterTs, arg.AfterID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1321,6 +1364,29 @@ func (q *Queries) ListStaleRunOnlyAutopilotTasks(ctx context.Context, limit int3
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockWorkspaceForMessageDecision = `-- name: LockWorkspaceForMessageDecision :one
+
+SELECT id FROM workspace
+WHERE id = $1
+FOR SHARE
+`
+
+// =====================
+// Parent-integrity locks (workspace teardown race, R3)
+// =====================
+// Share-locks the workspace row a new delivery/receipt write depends on.
+// The DeleteWorkspace flow first takes the same row FOR UPDATE, so either
+// the delete commits first (this row is gone; the caller must refuse the
+// write) or this lock is granted first (the delete then sweeps the new
+// rows by workspace_id). Either order, no orphan containing message
+// content can outlive the workspace.
+func (q *Queries) LockWorkspaceForMessageDecision(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockWorkspaceForMessageDecision, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
 }
 
 const recordLabrastroMessageReceiptExternalID = `-- name: RecordLabrastroMessageReceiptExternalID :one

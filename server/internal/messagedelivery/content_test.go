@@ -81,20 +81,33 @@ func TestBuildRunOnlyContent(t *testing.T) {
 }
 
 func TestBuildCreateIssueContent(t *testing.T) {
-	done := buildCreateIssueContent("Fix bugs", "completed", "ENG-12", "in_review", "https://app.example.com")
-	want := "Fix bugs — task ENG-12 is in_review\nhttps://app.example.com/issues/ENG-12"
+	done := buildCreateIssueContent("Fix bugs", "completed", "ENG-12", "in_review", "https://app.example.com", "eng")
+	want := "Fix bugs — task ENG-12 reached its first terminal state as in_review\nhttps://app.example.com/eng/issues/ENG-12"
 	if done.Text != want {
 		t.Fatalf("text = %q, want %q", done.Text, want)
 	}
-	if done.Link != "https://app.example.com/issues/ENG-12" {
-		t.Fatalf("link = %q", done.Link)
+	if done.Link != "https://app.example.com/eng/issues/ENG-12" {
+		t.Fatalf("link = %q, want the workspace-scoped path", done.Link)
 	}
-	failed := buildCreateIssueContent("Fix bugs", "failed", "ENG-12", "cancelled", "")
+	// A known status is never dropped silently, but an unrecoverable
+	// first-terminal status degrades instead of presenting a later one.
+	degraded := buildCreateIssueContent("Fix bugs", "completed", "ENG-12", "", "https://app.example.com", "eng")
+	if strings.Contains(degraded.Text, " as ") {
+		t.Fatalf("degraded card must not name a status: %q", degraded.Text)
+	}
+	if !strings.Contains(degraded.Text, "ENG-12") || !strings.Contains(degraded.Text, "see the task page") {
+		t.Fatalf("degraded card = %q", degraded.Text)
+	}
+	failed := buildCreateIssueContent("Fix bugs", "failed", "ENG-12", "cancelled", "https://app.example.com", "eng")
 	if !strings.Contains(failed.Text, "task ENG-12") {
 		t.Fatalf("failed create_issue text = %q", failed.Text)
 	}
-	if failed.Link != "" {
-		t.Fatalf("empty app URL must omit the link, got %q", failed.Link)
+	if failed.Link != "https://app.example.com/eng/issues/ENG-12" {
+		t.Fatalf("failed link = %q", failed.Link)
+	}
+	noSlug := buildCreateIssueContent("Fix bugs", "completed", "ENG-12", "done", "https://app.example.com", "")
+	if noSlug.Link != "" {
+		t.Fatalf("unknown slug must omit the link, got %q", noSlug.Link)
 	}
 }
 

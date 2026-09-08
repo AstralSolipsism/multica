@@ -35,6 +35,16 @@ type DeliveryAPIClient interface {
 	// official SDK), so the caller still treats unclear outcomes as
 	// uncertain.
 	SendDeliveryMessage(ctx context.Context, creds InstallationCredentials, p DeliveryMessageParams) (string, error)
+
+	// GetDeliveryMessageChat resolves which chat a message lives in. The
+	// topic-target verifier uses it to prove an anchor message actually
+	// belongs to the chat a route declares.
+	GetDeliveryMessageChat(ctx context.Context, creds InstallationCredentials, messageID string) (string, error)
+
+	// GetDeliveryChatInfo fetches a chat's basic info. The group-target
+	// verifier uses it to prove the bot can see the chat before a route
+	// pointing at it may be saved or sent.
+	GetDeliveryChatInfo(ctx context.Context, creds InstallationCredentials, chatID string) error
 }
 
 // DeliveryMessageParams is one proactive send.
@@ -75,17 +85,20 @@ func (c *httpAPIClient) SendDeliveryMessage(ctx context.Context, creds Installat
 			"msg_type":        p.MsgType,
 			"content":         p.Content,
 			"reply_in_thread": p.ReplyTarget.InThread,
-			"uuid":            p.UUID,
+			// Lark's CreateMessageReqBody defines uuid as a JSON body
+			// field — the idempotency key MUST travel in the body, not
+			// the query string, or the dedup window never sees it.
+			"uuid": p.UUID,
 		}
 	} else {
 		q := url.Values{}
 		q.Set("receive_id_type", p.ReceiveIDType)
-		q.Set("uuid", p.UUID)
 		path = "/open-apis/im/v1/messages?" + q.Encode()
 		body = map[string]any{
 			"receive_id": p.ReceiveID,
 			"msg_type":   p.MsgType,
 			"content":    p.Content,
+			"uuid":       p.UUID,
 		}
 	}
 	var resp struct {
@@ -105,6 +118,163 @@ func (c *httpAPIClient) SendDeliveryMessage(ctx context.Context, creds Installat
 		return "", &APIError{Op: "delivery send", Code: resp.Code, Msg: resp.Msg}
 	}
 	return resp.Data.MessageID, nil
+}
+
+// GetDeliveryMessageChat resolves the owning chat of one message via
+// GET /open-apis/im/v1/messages/{id}. Only the chat id is read here; the
+// delivery module owns all content decisions.
+func (c *httpAPIClient) GetDeliveryMessageChat(ctx context.Context, creds InstallationCredentials, messageID string) (string, error) {
+	if messageID == "" {
+		return "", errors.New("lark delivery: missing message id")
+	}
+	path := "/open-apis/im/v1/messages/" + url.PathEscape(messageID)
+	var resp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			Items []struct {
+				ChatID string `json:"chat_id"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	if err := c.doAuthedJSON(ctx, creds, http.MethodGet, path, nil, &resp); err != nil {
+		return "", fmt.Errorf("lark delivery: get message chat: %w", err)
+	}
+	if resp.Code != 0 {
+		if isTokenError(resp.Code) {
+			c.invalidateToken(creds.AppID)
+		}
+		return "", &APIError{Op: "delivery message chat", Code: resp.Code, Msg: resp.Msg}
+	}
+	if len(resp.Data.Items) == 0 || resp.Data.Items[0].ChatID == "" {
+		return "", errors.New("lark delivery: message chat lookup returned no item")
+	}
+	return resp.Data.Items[0].ChatID, nil
+}
+
+// GetDeliveryChatInfo proves the bot can see one chat via
+// GET /open-apis/im/v1/chats/{chat_id}. A definitive "no such chat / bot
+// not a member" verdict maps to ErrDeliveryTargetUnreachable; anything
+// else (transport, scopes) surfaces as-is so the caller can fail closed.
+func (c *httpAPIClient) GetDeliveryChatInfo(ctx context.Context, creds InstallationCredentials, chatID string) error {
+	if chatID == "" {
+		return errors.New("lark delivery: missing chat id")
+	}
+	path := "/open-apis/im/v1/chats/" + url.PathEscape(chatID)
+	var resp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			ChatID string `json:"chat_id"`
+		} `json:"data"`
+	}
+	if err := c.doAuthedJSON(ctx, creds, http.MethodGet, path, nil, &resp); err != nil {
+		return fmt.Errorf("lark delivery: get chat info: %w", err)
+	}
+	if resp.Code != 0 {
+		if isTokenError(resp.Code) {
+			c.invalidateToken(creds.AppID)
+		}
+		err := &APIError{Op: "delivery chat info", Code: resp.Code, Msg: resp.Msg}
+		switch resp.Code {
+		case 230002, 230013, 230014: // unknown chat / bot outside visibility / bot not a member
+			return fmt.Errorf("%w: %v", messagedelivery.ErrTargetUnreachable, err)
+		}
+		return err
+	}
+	return nil
+}
+
+// VerifyGroupTarget implements the messagedelivery TargetVerifier port:
+// a group route may only be saved/sent when the pinned bot can see the chat.
+func (s *DeliverySender) VerifyGroupTarget(ctx context.Context, req messagedelivery.VerifyTargetRequest) error {
+	creds, inst, err := s.resolveInstallation(ctx, req.WorkspaceID, req.InstallationID)
+	if err != nil {
+		return err
+	}
+	if err := s.client.GetDeliveryChatInfo(ctx, creds, req.ChatID); err != nil {
+		return s.classifyVerifyError(err)
+	}
+	_ = inst
+	return nil
+}
+
+// VerifyTopicTarget proves the anchor message belongs to the declared chat
+// and returns the VERIFIED chat id — the value the route stores and sends
+// against, so a typo'd or foreign chat declaration can never redirect a
+// topic reply.
+func (s *DeliverySender) VerifyTopicTarget(ctx context.Context, req messagedelivery.VerifyTargetRequest) (string, error) {
+	creds, _, err := s.resolveInstallation(ctx, req.WorkspaceID, req.InstallationID)
+	if err != nil {
+		return "", err
+	}
+	anchorChat, err := s.client.GetDeliveryMessageChat(ctx, creds, req.MessageID)
+	if err != nil {
+		return "", s.classifyVerifyError(err)
+	}
+	if anchorChat != req.ChatID {
+		return "", fmt.Errorf("%w: anchor %s lives in chat %s, not declared %s",
+			messagedelivery.ErrTargetAnchorMismatch, req.MessageID, anchorChat, req.ChatID)
+	}
+	return anchorChat, nil
+}
+
+// classifyVerifyError sorts a verification failure into the three verdicts
+// the delivery module distinguishes: definitive unreachable (save/send
+// refused), definitive mismatch (handled by the caller), or unknown (the
+// caller must fail closed / go uncertain).
+func (s *DeliverySender) classifyVerifyError(err error) error {
+	if errors.Is(err, messagedelivery.ErrTargetUnreachable) {
+		return err
+	}
+	code, _, hasCode := larkErrorCodeMsg(err)
+	if hasCode {
+		switch code {
+		case 230002, 230011, 230013, 230014, 230019:
+			return fmt.Errorf("%w: %v", messagedelivery.ErrTargetUnreachable, err)
+		}
+	}
+	return err
+}
+
+// resolveInstallation centralizes the workspace-scoped installation lookup +
+// decrypt shared by Send and the verifier.
+func (s *DeliverySender) resolveInstallation(ctx context.Context, workspaceID, installationID string) (InstallationCredentials, Installation, error) {
+	if s == nil || s.client == nil {
+		return InstallationCredentials{}, Installation{}, &messagedelivery.SendError{
+			Class: messagedelivery.ClassPermanent,
+			Code:  messagedelivery.ErrorCodeSenderUnavailable,
+			Err:   ErrAPIClientNotConfigured,
+		}
+	}
+	instID, err := util.ParseUUID(installationID)
+	if err != nil {
+		return InstallationCredentials{}, Installation{}, fmt.Errorf("installation id is not a uuid")
+	}
+	wsID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return InstallationCredentials{}, Installation{}, fmt.Errorf("workspace id is not a uuid")
+	}
+	inst, err := s.installations.GetInWorkspace(ctx, instID, wsID)
+	if err != nil {
+		return InstallationCredentials{}, Installation{}, fmt.Errorf("load installation: %w", err)
+	}
+	if inst.Status != "active" {
+		return InstallationCredentials{}, Installation{}, fmt.Errorf("installation is revoked")
+	}
+	secret, err := s.installations.DecryptAppSecret(inst)
+	if err != nil {
+		return InstallationCredentials{}, Installation{}, fmt.Errorf("decrypt app_secret: %w", err)
+	}
+	creds := InstallationCredentials{
+		AppID:     inst.AppID,
+		AppSecret: secret,
+		Region:    RegionOrDefault(inst.Region),
+	}
+	if inst.TenantKey.Valid {
+		creds.TenantKey = inst.TenantKey.String
+	}
+	return creds, inst, nil
 }
 
 // DeliverySender implements messagedelivery.Sender over the Feishu Open
@@ -134,52 +304,16 @@ func (s *DeliverySender) Send(ctx context.Context, req messagedelivery.SendReque
 			Err:   ErrAPIClientNotConfigured,
 		}
 	}
-	instID, err := util.ParseUUID(req.InstallationID)
-	if err != nil {
-		return messagedelivery.SendResult{}, &messagedelivery.SendError{
-			Class: messagedelivery.ClassPermanent,
-			Err:   fmt.Errorf("installation id is not a uuid"),
-		}
-	}
-	wsID, err := util.ParseUUID(req.WorkspaceID)
-	if err != nil {
-		return messagedelivery.SendResult{}, &messagedelivery.SendError{
-			Class: messagedelivery.ClassPermanent,
-			Err:   fmt.Errorf("workspace id is not a uuid"),
-		}
-	}
 	// Workspace-scoped lookup: a forged or stale installation id from
 	// another workspace cannot be dialed.
-	inst, err := s.installations.GetInWorkspace(ctx, instID, wsID)
+	creds, inst, err := s.resolveInstallation(ctx, req.WorkspaceID, req.InstallationID)
 	if err != nil {
 		return messagedelivery.SendResult{}, &messagedelivery.SendError{
 			Class: messagedelivery.ClassPermanent,
-			Code:  messagedelivery.ErrorCodeInstallationMissing,
 			Err:   err,
 		}
 	}
-	if inst.Status != "active" {
-		return messagedelivery.SendResult{}, &messagedelivery.SendError{
-			Class: messagedelivery.ClassPermanent,
-			Code:  messagedelivery.ErrorCodeInstallationRevoked,
-			Err:   errors.New("installation is revoked"),
-		}
-	}
-	secret, err := s.installations.DecryptAppSecret(inst)
-	if err != nil {
-		return messagedelivery.SendResult{}, &messagedelivery.SendError{
-			Class: messagedelivery.ClassAmbiguous,
-			Err:   fmt.Errorf("decrypt app_secret: %w", err),
-		}
-	}
-	creds := InstallationCredentials{
-		AppID:     inst.AppID,
-		AppSecret: secret,
-		Region:    RegionOrDefault(inst.Region),
-	}
-	if inst.TenantKey.Valid {
-		creds.TenantKey = inst.TenantKey.String
-	}
+	_ = inst
 
 	params, err := deliveryParams(req, creds)
 	if err != nil {

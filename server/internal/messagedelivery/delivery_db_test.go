@@ -60,8 +60,25 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 	// No FKs: children were registered with t.Cleanup on their own tests;
-	// the suite-level rows go last.
-	testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, testWSID)
+	// the suite-level teardown below sweeps everything else this suite's
+	// workspace may still hold (member/agent included — the schema keeps
+	// no cascades, so each sweep is explicit).
+	for _, stmt := range []string{
+		`DELETE FROM labrastro_message_receipt WHERE workspace_id = $1`,
+		`DELETE FROM labrastro_message_delivery WHERE workspace_id = $1`,
+		`DELETE FROM labrastro_message_route WHERE workspace_id = $1`,
+		`DELETE FROM channel_user_binding WHERE workspace_id = $1`,
+		`DELETE FROM channel_installation WHERE workspace_id = $1`,
+		`DELETE FROM autopilot_run WHERE autopilot_id IN (SELECT id FROM autopilot WHERE workspace_id = $1)`,
+		`DELETE FROM autopilot WHERE workspace_id = $1`,
+		`DELETE FROM agent_task_queue WHERE agent_id IN (SELECT id FROM agent WHERE workspace_id = $1)`,
+		`DELETE FROM member WHERE workspace_id = $1`,
+		`DELETE FROM agent WHERE workspace_id = $1`,
+		`DELETE FROM workspace WHERE id = $1`,
+		`DELETE FROM "user" WHERE id = $1 AND id <> $2`,
+	} {
+		testPool.Exec(context.Background(), stmt, testWSID, testUID)
+	}
 	testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, testUID)
 	pool.Close()
 	os.Exit(code)
@@ -265,10 +282,42 @@ func mergeCols(base testutil.Cols, over testutil.Cols) testutil.Cols {
 
 func newTestService(sender Sender, syncer RunSyncer) *Service {
 	svc := New(db.New(testPool))
+	svc.Tx = testPool
 	svc.Sender = sender
 	svc.Syncer = syncer
+	svc.Verifier = &fakeVerifier{}
 	svc.AppURL = "https://app.example.com"
 	return svc
+}
+
+// fakeVerifier proves whatever the route declares, so DB tests can save
+// group/topic routes without a transport; tests of the verifier itself
+// swap it out.
+type fakeVerifier struct {
+	groupErr   error
+	topicErr   error
+	topicChat  string // defaults to echoing the declared chat
+	sawTopicID string
+}
+
+func (f *fakeVerifier) VerifyGroupTarget(ctx context.Context, req VerifyTargetRequest) error {
+	return f.groupErr
+}
+
+func (f *fakeVerifier) VerifyTopicTarget(ctx context.Context, req VerifyTargetRequest) (string, error) {
+	f.sawTopicID = req.MessageID
+	if f.topicErr != nil {
+		return "", f.topicErr
+	}
+	if f.topicChat != "" && f.topicChat != req.ChatID {
+		// Like the real adapter: the anchor provably lives elsewhere.
+		return "", fmt.Errorf("%w: anchor %s lives in chat %s, not declared %s",
+			ErrTargetAnchorMismatch, req.MessageID, f.topicChat, req.ChatID)
+	}
+	if f.topicChat != "" {
+		return f.topicChat, nil
+	}
+	return req.ChatID, nil
 }
 
 // deliveryStatus reads one delivery's lifecycle columns for assertions.
@@ -302,19 +351,12 @@ func countReceipts(t testing.TB, deliveryID string) int {
 	return n
 }
 
-// secondMember gives tests a non-owner member to target.
+// secondMember gives tests a non-owner member to target, built through the
+// shared fixtures so both rows are cleaned up with the test.
 func secondMember(t *testing.T, label string) string {
 	t.Helper()
 	suffix := time.Now().UnixNano()
-	userID := mustInsert(`INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id`,
-		label+fmt.Sprintf("-%d", suffix), label+fmt.Sprintf("%d@multica.ai", suffix))
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
-	})
-	testFx.Insert(t, "member", testutil.Cols{
-		"workspace_id": testWSID,
-		"user_id":      userID,
-		"role":         "member",
-	})
+	userID := testFx.User(t, label, fmt.Sprintf("%s-%d@multica.ai", label, suffix))
+	testFx.Member(t, testWSID, userID, "member")
 	return userID
 }

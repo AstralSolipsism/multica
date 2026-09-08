@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -17,6 +18,11 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
+// txStarter starts the transactions parent-integrity-guarded writes run in.
+type txStarter interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
 // Service owns the Labrastro message-delivery module: route configuration,
 // delivery decisions, the send worker and the compensation scanner. HTTP
 // handlers and the server assembly share ONE instance so a decision created
@@ -24,9 +30,18 @@ import (
 // queue the worker drains.
 type Service struct {
 	Queries *db.Queries
+	// Tx starts transactions for parent-integrity-guarded writes (the
+	// workspace FOR SHARE lock around decision/receipt inserts, review
+	// R3). The server assembly passes the pool; tests do the same.
+	Tx txStarter
 	// Sender performs the external send. nil (or a transport-less
 	// deployment) fails sends with ErrorCodeSenderUnavailable.
 	Sender Sender
+	// Verifier proves external group/topic targets against the live
+	// platform before a route referencing them may be saved or sent
+	// (review R1). nil fails such saves closed with
+	// TargetUnverifiableError — an unverifiable target is never stored.
+	Verifier TargetVerifier
 	// Syncer re-runs the EXISTING run-terminal sync for sources whose
 	// completion event was lost. nil disables that compensation half.
 	Syncer RunSyncer
@@ -182,9 +197,27 @@ func (s *Service) ResolveTarget(ctx context.Context, workspaceID pgtype.UUID, in
 			return resolvedTarget{}, fmt.Errorf("load member binding: %w", bindErr)
 		}
 		out.userID = userID
+		// Canonical UUID form in the target key (review R5): two textual
+		// spellings of one member id must be ONE target, or the dedup
+		// guarantee silently splits.
+		in.TargetUserID = util.UUIDToString(userID)
 	case TargetGroup:
 		if in.TargetChatID == "" {
 			return resolvedTarget{}, &InvalidRouteError{Field: "target_chat_id"}
+		}
+		// Fail-closed reachability check through the live platform
+		// (review R1): a group route is only saved when the pinned bot
+		// can actually see the chat.
+		if s.Verifier == nil {
+			return resolvedTarget{}, &TargetUnverifiableError{}
+		}
+		if err := s.Verifier.VerifyGroupTarget(ctx, VerifyTargetRequest{
+			WorkspaceID:    util.UUIDToString(workspaceID),
+			InstallationID: util.UUIDToString(instID),
+			ChannelType:    inst.ChannelType,
+			ChatID:         in.TargetChatID,
+		}); err != nil {
+			return resolvedTarget{}, classifyTargetVerifyError(err)
 		}
 	case TargetTopic:
 		if in.TargetChatID == "" {
@@ -193,10 +226,48 @@ func (s *Service) ResolveTarget(ctx context.Context, workspaceID pgtype.UUID, in
 		if in.TargetMessageID == "" {
 			return resolvedTarget{}, &InvalidRouteError{Field: "target_message_id"}
 		}
+		// Verify the anchor→chat relationship through the live platform
+		// (review R1): the reply endpoint addresses only the anchor, so a
+		// declared-but-foreign chat could silently redirect delivery.
+		// The VERIFIED chat id is what gets stored.
+		if s.Verifier == nil {
+			return resolvedTarget{}, &TargetUnverifiableError{}
+		}
+		verified, err := s.Verifier.VerifyTopicTarget(ctx, VerifyTargetRequest{
+			WorkspaceID:    util.UUIDToString(workspaceID),
+			InstallationID: util.UUIDToString(instID),
+			ChannelType:    inst.ChannelType,
+			ChatID:         in.TargetChatID,
+			MessageID:      in.TargetMessageID,
+		})
+		if err != nil {
+			return resolvedTarget{}, classifyTargetVerifyError(err)
+		}
+		out.chatID = pgtype.Text{String: verified, Valid: true}
+		in.TargetChatID = verified
 	}
 
 	out.targetKey = TargetKey(in.TargetType, in.TargetUserID, in.TargetChatID, in.TargetMessageID)
 	return out, nil
+}
+
+// classifyTargetVerifyError maps adapter verification failures onto the
+// module's typed errors. Anything unrecognized is treated as UNVERIFIABLE,
+// so a save never proceeds on an unknown verdict.
+func classifyTargetVerifyError(err error) error {
+	var mismatch *TargetAnchorMismatchError
+	var unreachable *TargetUnreachableError
+	switch {
+	case errors.Is(err, ErrTargetUnreachable):
+		return &TargetUnreachableError{Detail: err.Error()}
+	case errors.Is(err, ErrTargetAnchorMismatch):
+		return &TargetAnchorMismatchError{Detail: err.Error()}
+	case errors.As(err, &mismatch):
+		return mismatch
+	case errors.As(err, &unreachable):
+		return unreachable
+	}
+	return &TargetUnverifiableError{Detail: err.Error()}
 }
 
 func (s *Service) enabledOrDefault(in RouteInput, create bool, current bool) bool {
@@ -433,6 +504,8 @@ func (s *Service) EnqueueRunDeliveries(ctx context.Context, runID pgtype.UUID) (
 			RunCompletedAt:      run.CompletedAt.Time,
 			RunCompletedAtValid: run.CompletedAt.Valid,
 			ExecutionMode:       ap.ExecutionMode,
+			RunTaskID:           util.UUIDToString(run.TaskID),
+			RunTaskIDValid:      run.TaskID.Valid,
 			Route:               route,
 			Run: runFields{
 				Result:        run.Result,
@@ -493,7 +566,25 @@ func (s *Service) decideDelivery(ctx context.Context, ap db.Autopilot, in decisi
 		return 0, fmt.Errorf("encode source ref: %w", err)
 	}
 
-	rows, err := s.Queries.CreateLabrastroMessageDelivery(ctx, db.CreateLabrastroMessageDeliveryParams{
+	// Parent-integrity (review R3): the decision insert shares a short
+	// transaction with a FOR SHARE lock on the workspace row. The
+	// DeleteWorkspace flow takes that row FOR UPDATE before sweeping, so a
+	// stale compensator snapshot can never commit content-bearing rows
+	// into a deleted workspace: either the delete committed first (row
+	// gone, refuse) or this commit lands first (the delete sweeps it).
+	tx, err := s.Tx.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin decision tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.Queries.WithTx(tx)
+	if _, err := qtx.LockWorkspaceForMessageDecision(ctx, ap.WorkspaceID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, nil // workspace gone; the source no longer exists
+		}
+		return 0, fmt.Errorf("lock decision parent: %w", err)
+	}
+	rows, err := qtx.CreateLabrastroMessageDelivery(ctx, db.CreateLabrastroMessageDeliveryParams{
 		ID:              dbid.NewV7(),
 		WorkspaceID:     ap.WorkspaceID,
 		RouteID:         in.Route.ID,
@@ -501,7 +592,7 @@ func (s *Service) decideDelivery(ctx context.Context, ap db.Autopilot, in decisi
 		AutopilotID:     ap.ID,
 		RunID:           mustUUID(in.RunID),
 		DedupKey:        DeliveryDedupKey(in.RunID, util.UUIDToString(in.Route.InstallationID), in.Route.TargetKey),
-		SourceKind:      executionModeSourceKind(in.ExecutionMode),
+		SourceKind:      sourceKindFromRun(in.Run.IssueIDValid, in.RunTaskIDValid, in.Run.Result, in.ExecutionMode),
 		Status:          status,
 		ContentSnapshot: contentJSON,
 		TargetSnapshot:  targetJSON,
@@ -513,6 +604,9 @@ func (s *Service) decideDelivery(ctx context.Context, ap db.Autopilot, in decisi
 	})
 	if err != nil && !isUniqueViolation(err) {
 		return 0, fmt.Errorf("insert delivery decision: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit delivery decision: %w", err)
 	}
 	// ON CONFLICT DO NOTHING also returns zero rows on duplicate; both
 	// shapes mean "already decided by someone else".
@@ -570,14 +664,18 @@ func (s *Service) buildDecisionPayload(ctx context.Context, ap db.Autopilot, in 
 	target.MessageID = in.Route.TargetMessageID.String
 	target.ThreadID = in.Route.TargetThreadID.String
 
+	// The source kind comes from the run's persisted links (review R7);
+	// the frozen ref records that original mode, never the mutable
+	// autopilot configuration.
+	sourceKind := sourceKindFromRun(in.Run.IssueIDValid, in.RunTaskIDValid, in.Run.Result, in.ExecutionMode)
 	ref := sourceRef{
 		RunID:         in.RunID,
-		ExecutionMode: in.ExecutionMode,
+		ExecutionMode: sourceKind,
 		IssueID:       in.Run.IssueID,
 	}
 
 	var content contentSnapshot
-	switch executionModeSourceKind(in.ExecutionMode) {
+	switch sourceKind {
 	case SourceKindRunOnly:
 		output, hasOutput := extractRunOnlyOutput(in.Run.Result)
 		content = buildRunOnlyContent(
@@ -590,8 +688,8 @@ func (s *Service) buildDecisionPayload(ctx context.Context, ap db.Autopilot, in 
 			in.Route.ContentMode == ContentWithOutput,
 		)
 	default:
-		ident, issueStatus := s.issueRef(ctx, ap.WorkspaceID, in.Run)
-		content = buildCreateIssueContent(ap.Title, in.RunStatus, ident, issueStatus, s.AppURL)
+		ident, issueStatus, slug := s.issueRef(ctx, ap.WorkspaceID, in)
+		content = buildCreateIssueContent(ap.Title, in.RunStatus, ident, issueStatus, s.AppURL, slug)
 		ref.IssueIdentifier = ident
 		ref.IssueStatus = issueStatus
 	}
@@ -600,27 +698,66 @@ func (s *Service) buildDecisionPayload(ctx context.Context, ap db.Autopilot, in 
 	return target, content, ref, len(shards), nil
 }
 
-// issueRef resolves the linked issue's human-facing identifier and current
-// status for a create_issue card. A deleted issue degrades to no
-// identifier — the run still delivers, just without a link, instead of
-// failing the decision.
-func (s *Service) issueRef(ctx context.Context, workspaceID pgtype.UUID, run runFields) (string, string) {
-	if !run.IssueIDValid {
-		return "", ""
+// issueRef resolves the linked issue's human-facing identifier, its FIRST
+// terminal status, and the workspace slug for a create_issue card.
+//
+// The first-terminal status is the one the run completed against, read from
+// what the terminal-sync boundary persisted into run.result
+// (first_terminal_status — see service.SyncRunFromIssue). When that signal
+// is absent (runs completed before it existed) the CURRENT issue status is
+// used ONLY if the issue has provably not been touched since the run
+// completed; otherwise the status is reported as empty and the card wording
+// degrades instead of presenting a later status as the first terminal one
+// (review R6). A deleted issue degrades to no identifier — the run still
+// delivers, just without a link, instead of failing the decision.
+func (s *Service) issueRef(ctx context.Context, workspaceID pgtype.UUID, in decisionInput) (string, string, string) {
+	if !in.Run.IssueIDValid {
+		return "", "", ""
 	}
-	issueID, err := util.ParseUUID(run.IssueID)
+	issueID, err := util.ParseUUID(in.Run.IssueID)
 	if err != nil {
-		return "", ""
+		return "", "", ""
 	}
 	issue, err := s.Queries.GetIssue(ctx, issueID)
 	if err != nil {
-		return "", ""
+		return "", "", ""
 	}
 	prefix := ""
+	slug := ""
 	if ws, err := s.Queries.GetWorkspace(ctx, workspaceID); err == nil {
 		prefix = ws.IssuePrefix
+		slug = ws.Slug
 	}
-	return issueIdentifier(prefix, issue.Number), issue.Status
+	return issueIdentifier(prefix, issue.Number), s.firstTerminalIssueStatus(issue, in), slug
+}
+
+// firstTerminalIssueStatus reports the status to name on the card.
+//
+//   - Completed runs read the status frozen by the terminal sync
+//     (run.result.first_terminal_status — review R6).
+//   - Failed runs read it from the failure reason the SAME sync boundary
+//     wrote ("issue <status>" at the terminal moment — a single, stable
+//     producer).
+//   - Anything else degrades to "" — the card must never present the
+//     issue's CURRENT status as the first terminal one, and legacy rows
+//     carry no recoverable signal (issue.updated_at does not track writes
+//     reliably enough to prove "untouched since completion").
+func (s *Service) firstTerminalIssueStatus(issue db.Issue, in decisionInput) string {
+	if in.RunStatus == "completed" && len(in.Run.Result) > 0 {
+		var payload struct {
+			FirstTerminalStatus string `json:"first_terminal_status"`
+		}
+		if err := json.Unmarshal(in.Run.Result, &payload); err == nil && payload.FirstTerminalStatus != "" {
+			return payload.FirstTerminalStatus
+		}
+	}
+	if in.RunStatus == "failed" {
+		const marker = "issue "
+		if rest, ok := strings.CutPrefix(in.Run.FailureReason, marker); ok && rest != "" {
+			return rest
+		}
+	}
+	return ""
 }
 
 // issueIdentifier mirrors service.IssueIdentifier ("MUL-42", or "#42"

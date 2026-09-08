@@ -105,11 +105,13 @@ WHERE id = $1 AND workspace_id = $2;
 INSERT INTO labrastro_message_delivery (
     id, workspace_id, route_id, route_revision, autopilot_id, run_id,
     dedup_key, source_kind, status, content_snapshot, target_snapshot,
-    shard_total, source_ref, target_key, installation_id, error_code
+    shard_total, source_ref, target_key, installation_id, error_code,
+    lease_token, lease_expires_at
 ) VALUES (
     $1, $2, sqlc.narg('route_id'), sqlc.narg('route_revision'), $3,
     sqlc.narg('run_id'), $4, $5, $6, $7, $8, $9, sqlc.narg('source_ref'),
-    $10, $11, sqlc.narg('error_code')
+    $10, $11, sqlc.narg('error_code'),
+    sqlc.narg('lease_token'), sqlc.narg('lease_expires_at')
 )
 ON CONFLICT (dedup_key) DO NOTHING
 RETURNING *;
@@ -360,6 +362,30 @@ WHERE delivery_id = sqlc.arg('delivery_id')
 ORDER BY shard_index;
 
 -- =====================
+-- Parent-integrity locks (workspace teardown race, R3)
+-- =====================
+
+-- name: LockWorkspaceForMessageDecision :one
+-- Share-locks the workspace row a new delivery/receipt write depends on.
+-- The DeleteWorkspace flow first takes the same row FOR UPDATE, so either
+-- the delete commits first (this row is gone; the caller must refuse the
+-- write) or this lock is granted first (the delete then sweeps the new
+-- rows by workspace_id). Either order, no orphan containing message
+-- content can outlive the workspace.
+SELECT id FROM workspace
+WHERE id = $1
+FOR SHARE;
+
+-- name: GetLabrastroMessageDeliveryLease :one
+-- Fresh lease ownership read. A worker validates this before starting each
+-- NEW shard send: once its claim is lost (lease expired, another owner,
+-- state moved on), it must stop dialing even though its in-memory snapshot
+-- still looks claimed.
+SELECT lease_token, lease_expires_at, status
+FROM labrastro_message_delivery
+WHERE id = $1;
+
+-- =====================
 -- Compensation scan
 -- =====================
 
@@ -410,7 +436,8 @@ JOIN autopilot a ON a.id = r.autopilot_id
 WHERE a.execution_mode = 'run_only'
   AND r.status IN ('pending', 'issue_created', 'running')
   AND t.status IN ('completed', 'failed', 'cancelled')
-ORDER BY t.completed_at NULLS LAST, t.id
+  AND (COALESCE(t.completed_at, t.created_at), t.id) > (sqlc.arg('after_ts')::timestamptz, sqlc.arg('after_id')::uuid)
+ORDER BY COALESCE(t.completed_at, t.created_at), t.id
 LIMIT sqlc.arg('limit');
 
 -- name: ListStaleCreateIssueAutopilotIssues :many
@@ -424,6 +451,7 @@ JOIN autopilot_run r ON r.issue_id = i.id
 JOIN autopilot a ON a.id = r.autopilot_id
 WHERE a.execution_mode = 'create_issue'
   AND r.status IN ('pending', 'issue_created', 'running')
+  AND (i.updated_at, i.id) > (sqlc.arg('after_ts')::timestamptz, sqlc.arg('after_id')::uuid)
 ORDER BY i.updated_at, i.id
 LIMIT sqlc.arg('limit');
 

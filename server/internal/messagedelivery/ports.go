@@ -92,3 +92,39 @@ type RunSyncer interface {
 	SyncRunFromTask(ctx context.Context, task db.AgentTaskQueue)
 	SyncRunFromIssue(ctx context.Context, issue db.Issue)
 }
+
+// VerifyTargetRequest names one external target to verify against the live
+// platform, through one pinned installation.
+type VerifyTargetRequest struct {
+	WorkspaceID    string
+	InstallationID string
+	ChannelType    string
+	ChatID         string
+	MessageID      string
+}
+
+// Sentinel verdicts the adapter wraps its verification failures in
+// (errors.Is-compatible). ErrTargetUnreachable: a definitive platform
+// refusal — unknown chat, bot not a member, outside visibility.
+// ErrTargetAnchorMismatch: the anchor message provably lives in a different
+// chat than the route declared.
+var (
+	ErrTargetUnreachable    = errors.New("delivery target unreachable by this bot")
+	ErrTargetAnchorMismatch = errors.New("delivery topic anchor belongs to a different chat")
+)
+
+// TargetVerifier proves an external target is reachable by the pinned bot
+// BEFORE a route referencing it may be saved or sent (review R1). Group
+// verification answers "can the bot see this chat"; topic verification
+// answers "does this anchor message actually live in the declared chat"
+// and returns the VERIFIED chat id — the value the route stores, so a
+// declared chat can never redirect a topic reply.
+//
+// Implemented by the channel adapter (lark.DeliverySender). When nil — a
+// deployment without the channel transport — group/topic route saves fail
+// closed with TargetUnverifiableError instead of saving unverifiable
+// targets.
+type TargetVerifier interface {
+	VerifyGroupTarget(ctx context.Context, req VerifyTargetRequest) error
+	VerifyTopicTarget(ctx context.Context, req VerifyTargetRequest) (verifiedChatID string, err error)
+}

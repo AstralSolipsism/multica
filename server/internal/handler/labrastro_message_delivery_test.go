@@ -41,6 +41,31 @@ func (s *mdSender) Send(ctx context.Context, req messagedelivery.SendRequest) (m
 	return fn(req)
 }
 
+// mdVerifier is the HTTP suite's target verifier; tests flip unreachable to
+// exercise the save-time refusal contract (review R1).
+type mdVerifier struct {
+	unreachable bool
+	mismatch    bool
+}
+
+func (v *mdVerifier) VerifyGroupTarget(ctx context.Context, req messagedelivery.VerifyTargetRequest) error {
+	if v.unreachable {
+		return fmt.Errorf("%w: bot not in chat", messagedelivery.ErrTargetUnreachable)
+	}
+	return nil
+}
+
+func (v *mdVerifier) VerifyTopicTarget(ctx context.Context, req messagedelivery.VerifyTargetRequest) (string, error) {
+	if v.mismatch {
+		return "", fmt.Errorf("%w: anchor lives elsewhere", messagedelivery.ErrTargetAnchorMismatch)
+	}
+	return req.ChatID, nil
+}
+
+// httpVerifier is the single verifier instance the wired service holds;
+// tests mutate it (with cleanup) to exercise refusal paths.
+var httpVerifier = &mdVerifier{}
+
 var (
 	mdOnce     sync.Once
 	mdSvc      *messagedelivery.Service
@@ -55,7 +80,9 @@ func requireDeliveryService(t *testing.T) *messagedelivery.Service {
 	}
 	mdOnce.Do(func() {
 		mdSvc = messagedelivery.New(db.New(testPool))
+		mdSvc.Tx = testPool
 		mdSvc.Sender = &mdSender{}
+		mdSvc.Verifier = httpVerifier
 		testHandler.MessageDelivery = mdSvc
 		mdFxFamily = fmt.Sprintf("%d", time.Now().UnixNano())
 	})
@@ -359,4 +386,56 @@ func mustUUIDFrom(t *testing.T, s string) pgtype.UUID {
 		t.Fatalf("bad uuid %q: %v", s, err)
 	}
 	return u
+}
+
+// R1 through the API: group/topic saves are refused when the platform
+// cannot prove the target, with codes that name the gap.
+func TestMessageRoutes_TargetVerification(t *testing.T) {
+	fx := newMDFixture(t, "verify-api", "run_only")
+
+	// Unreachable group: 400 route_target_unreachable, nothing saved.
+	httpVerifier.unreachable = true
+	t.Cleanup(func() { httpVerifier.unreachable = false })
+	req := newRequest("POST", "/api/autopilots/"+fx.autopilotID+"/message-routes", map[string]any{
+		"installation_id": fx.installID,
+		"target_type":     "group",
+		"target_chat_id":  "oc_blocked",
+		"conditions":      "success",
+		"content_mode":    "summary",
+	})
+	req = withURLParams(req, "id", fx.autopilotID)
+	resp := testutil.Call(t, testHandler.CreateMessageRoute, req)
+	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "route_target_unreachable") {
+		t.Fatalf("unreachable group: got %d %s", resp.Code, resp.Body.String())
+	}
+
+	httpVerifier.unreachable = false
+
+	// Mismatched topic anchor: 400 route_topic_anchor_mismatch.
+	httpVerifier.mismatch = true
+	t.Cleanup(func() { httpVerifier.mismatch = false })
+	req = newRequest("POST", "/api/autopilots/"+fx.autopilotID+"/message-routes", map[string]any{
+		"installation_id":   fx.installID,
+		"target_type":       "topic",
+		"target_chat_id":    "oc_declared",
+		"target_message_id": "om_1",
+		"conditions":        "success",
+		"content_mode":      "summary",
+	})
+	req = withURLParams(req, "id", fx.autopilotID)
+	resp = testutil.Call(t, testHandler.CreateMessageRoute, req)
+	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "route_topic_anchor_mismatch") {
+		t.Fatalf("mismatched topic: got %d %s", resp.Code, resp.Body.String())
+	}
+
+	// Verifiable group: 201.
+	req = newRequest("POST", "/api/autopilots/"+fx.autopilotID+"/message-routes", map[string]any{
+		"installation_id": fx.installID,
+		"target_type":     "group",
+		"target_chat_id":  "oc_reachable",
+		"conditions":      "success",
+		"content_mode":    "summary",
+	})
+	req = withURLParams(req, "id", fx.autopilotID)
+	testutil.Call(t, testHandler.CreateMessageRoute, req).Want(http.StatusCreated)
 }

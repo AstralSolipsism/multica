@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	messagedelivery "github.com/multica-ai/multica/server/internal/messagedelivery"
 )
@@ -138,5 +139,53 @@ func TestDeliverySenderWithoutTransportIsPermanent(t *testing.T) {
 	}
 	if sendErr.Class != messagedelivery.ClassPermanent || sendErr.Code != messagedelivery.ErrorCodeSenderUnavailable {
 		t.Fatalf("class=%v code=%q", sendErr.Class, sendErr.Code)
+	}
+}
+
+// R8 regression: the official CreateMessageReqBody defines uuid as a JSON
+// body field. The chat-level send and the topic reply must both carry the
+// idempotency UUID in the body; the query keeps only receive_id_type.
+func TestReviewCreateDeliveryUUIDInBody(t *testing.T) {
+	for _, receiveType := range []string{"open_id", "chat_id"} {
+		t.Run(receiveType, func(t *testing.T) {
+			fake := newLarkFake(t)
+			fake.stubToken("review_fake_token", 3600)
+			fake.stubSend(map[string]any{"code": 0, "data": map[string]any{"message_id": "om_review"}}, func(r *http.Request, body map[string]string) {
+				if body["uuid"] != "review-stable-uuid" {
+					t.Errorf("body uuid=%q, query uuid=%q; idempotency UUID must be in JSON", body["uuid"], r.URL.Query().Get("uuid"))
+				}
+			})
+			client := newTestClient(fake, time.Now)
+			_, err := client.SendDeliveryMessage(context.Background(), testCreds(), DeliveryMessageParams{
+				ReceiveIDType: receiveType, ReceiveID: "review_target", MsgType: "text",
+				Content: `{"text":"synthetic review message"}`, UUID: "review-stable-uuid",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// The topic reply path carries the UUID in the reply request's body too.
+func TestReviewCreateDeliveryUUIDInReplyBody(t *testing.T) {
+	fake := newLarkFake(t)
+	fake.stubToken("review_fake_token", 3600)
+	fake.stubReply(map[string]any{"code": 0, "data": map[string]any{"message_id": "om_reply"}}, func(r *http.Request, id string, body map[string]any) {
+		if body["uuid"] != "review-reply-uuid" {
+			t.Errorf("reply body uuid=%v, query uuid=%q; idempotency UUID must be in JSON", body["uuid"], r.URL.Query().Get("uuid"))
+		}
+		if body["reply_in_thread"] != true {
+			t.Errorf("reply_in_thread = %v, want true for topic delivery", body["reply_in_thread"])
+		}
+	})
+	client := newTestClient(fake, time.Now)
+	_, err := client.SendDeliveryMessage(context.Background(), testCreds(), DeliveryMessageParams{
+		ReceiveIDType: "chat_id", ReceiveID: "oc_topic", MsgType: "text",
+		Content: `{"text":"synthetic review message"}`, UUID: "review-reply-uuid",
+		ReplyTarget: ReplyTarget{MessageID: "om_anchor", InThread: true},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

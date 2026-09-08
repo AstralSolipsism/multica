@@ -55,9 +55,15 @@ codes. Code lives in:
   returned. Empty output renders `(no report body)`. Failed runs show a
   curated `reason_code` when one exists, never the raw error text.
 - `create_issue` (`source_kind="create_issue"`): delivers the FIRST terminal
-  state and a task link (`{appURL}/issues/{IDENTIFIER}`). Later issue status
-  changes are not re-delivered by this module. No report body is attached —
-  attaching requires an explicit delivery-comment anchor (feedback stage).
+  state and a task link (`{appURL}/{workspaceSlug}/issues/{IDENTIFIER}` —
+  workspace-scoped per the frontend conventions). The first-terminal status
+  is frozen by the run terminal sync (`SyncRunFromIssue` persists it on the
+  run); a run without that frozen signal — completed before it existed —
+  degrades to wording that does NOT name a possibly-later status. Later
+  issue status changes are not re-delivered by this module. The source kind
+  comes from the run's persisted links, never the autopilot's current
+  configuration. No report body is attached — attaching requires an
+  explicit delivery-comment anchor (feedback stage).
 - Manual **test sends** (`source_kind="test_send"`) run the real send path
   synchronously with a synthetic message and are recorded like deliveries.
 - Send failures NEVER re-run or re-queue an automation; execution modes,
@@ -74,6 +80,34 @@ codes. Code lives in:
 Member binding is installation-precise. The legacy "most recent binding of
 the channel" query is deliberately NOT used: with multiple bots in one
 workspace it picks the wrong app.
+
+### Target verification (save-time AND send-time)
+
+External group/topic targets are verified against the live platform before
+a route referencing them may be SAVED and again before every send:
+
+- **group**: the pinned bot must be able to see the chat (chat-info probe).
+- **topic**: the anchor message must provably live in the declared chat; the
+  VERIFIED chat id is what the route stores and sends against, so a
+  declared-but-foreign chat can never redirect a topic reply. The
+  anchor→chat relationship is re-proved at send time and a moved anchor
+  fails the delivery with `route_topic_anchor_mismatch`.
+
+A deployment without the channel transport has no way to verify and FAILS
+CLOSED: group/topic saves return `route_target_unverifiable`. A
+definitive platform refusal fails the save with `route_target_unreachable`.
+An optional later test-send does not substitute for this check.
+
+### Continuous authorization
+
+A rule spends the authority of the member who LAST SAVED it (`updated_by`).
+The send gate re-checks on every claim that this member is still a
+workspace member AND still holds write on the source automation (owner/
+admin, creator, or granted collaborator — the same predicate the HTTP gate
+enforces at edit time). When authorization is lost, the delivery is
+recorded as `cancelled` with `route_authorization_lost` and the rule
+delivers nothing further until someone authorized edits it (which
+re-stamps `updated_by` and re-arms the rule).
 
 ## HTTP API
 
@@ -207,6 +241,9 @@ Detail adds `content_snapshot` (`{"text","summary","run_status","has_output","li
 | `route_not_found` | 404 | route id not in this workspace/automation |
 | `route_revision_conflict` | 409 | stale `expected_revision` |
 | `route_already_exists` | 409 | equivalent rule already exists |
+| `route_target_unverifiable` | 400 | no channel transport is wired to verify the external target; nothing was saved |
+| `route_target_unreachable` | 400 | the bot definitively cannot reach the declared chat; nothing was saved |
+| `route_topic_anchor_mismatch` | 400 | the anchor message provably lives in a different chat; nothing was saved |
 | `route_disabled` | 409 | test-send on a disabled rule |
 | `delivery_not_found` | 404 | delivery id not in this workspace/automation |
 | `delivery_not_retryable` | 409 | retry on a status other than `failed`/`uncertain` |
@@ -217,7 +254,8 @@ Delivery `error_code` values recorded by the pipeline:
 `condition_mismatch`, `member_unbound`, `installation_revoked`,
 `installation_missing`, `send_rejected`, `send_transient`,
 `sender_unavailable`, `attempts_exhausted`, `lease_expired`,
-`send_ambiguous`.
+`send_ambiguous`, `route_target_unreachable`, `route_topic_anchor_mismatch`,
+`route_authorization_lost`.
 
 ## Reliability guarantees and boundaries
 
@@ -229,12 +267,24 @@ Delivery `error_code` values recorded by the pipeline:
   logic — no second state machine — and (3) decides every persisted terminal
   run that still lacks a decision for an enabled rule target. The scan is a
   full missing-set sweep, not a monotonic cursor: a transaction that
-  committed late is never skipped.
+  committed late is never skipped, and the stale-source queries keyset-
+  paginate through the full candidate set each pass, so a page of
+  long-running rows cannot starve candidates behind it.
+- **Workspace deletion.** Decision and receipt inserts share a short
+  transaction with a `FOR SHARE` lock on the workspace row (the delete flow
+  takes the same row `FOR UPDATE` before sweeping), so a stale snapshot can
+  never commit content-bearing rows into a deleted workspace.
+- **Test sends.** A synchronous test send carries a bounded lease like a
+  claimed row and writes its outcome on a detached context: an interrupted
+  test send is recovered by the expiry sweep to `uncertain` and is then
+  retryable — it can never strand in `sending`.
 - **Exactly-once send is bounded, not absolute.** Retries replay the fixed
-  per-shard `send_uuid`; the platform's dedup window is finite (~1h on Lark).
+  per-shard `send_uuid`, carried in the request BODY per Lark's
+  `CreateMessageReqBody` (the platform's dedup window is finite, ~1h).
   Beyond the verifiable window the delivery stays `uncertain` until a human
   resolves it. Shards already carrying an `external_message_id` are never
-  re-sent.
+  re-sent, and a worker re-validates its lease before starting each new
+  shard — an expired claim stops dialing immediately.
 - **No side effects on execution.** Delivery never triggers runs, consumes
   quota or mutates the execution state machine.
 - **Cleanup hooks.** Rule disable/delete and bot revocation cancel queued
@@ -250,8 +300,10 @@ Delivery `error_code` values recorded by the pipeline:
 
 ## Known gaps (explicitly out of this stage)
 
-- Real-Feishu verification (member/group/topic) requires an authorized test
-  bot; the contract above is covered by DB-backed tests with a fake sender.
+- Real-Feishu verification (member/group/topic, service-side dedup window)
+  requires an authorized test bot; the contract above is covered by DB-backed
+  tests with fake senders/verifiers plus HTTP-contract tests on the real
+  client.
 - Personal inbox and team-event sources, and the frontend configuration UI,
   are later stages of the same parent plan.
 - Feedback (reply-to-deliver → comment) is a later stage; `source_ref` is

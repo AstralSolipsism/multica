@@ -30,12 +30,20 @@ func assembleMessageDelivery(h *handler.Handler, bus *events.Bus) {
 	}
 	svc := messagedelivery.New(h.Queries)
 	svc.AppURL = appURLFromEnv()
+	// Parent-integrity transactions guard decision/receipt inserts against
+	// a concurrently committed workspace deletion.
+	svc.Tx = h.TxStarter
 	// Terminal-state compensation reuses the EXISTING autopilot sync; the
 	// module runs no second state machine.
 	svc.Syncer = h.AutopilotService
 	if h.LarkInstallations != nil {
 		if client, ok := h.LarkAPIClient.(lark.DeliveryAPIClient); ok {
-			svc.Sender = lark.NewDeliverySender(h.LarkInstallations, client)
+			sender := lark.NewDeliverySender(h.LarkInstallations, client)
+			svc.Sender = sender
+			// The same adapter proves group/topic targets before a route
+			// referencing them may be saved or sent; without it those
+			// saves fail closed.
+			svc.Verifier = sender
 		} else {
 			slog.Warn("messagedelivery: lark client lacks the delivery capability; sends will fail as unavailable")
 		}
