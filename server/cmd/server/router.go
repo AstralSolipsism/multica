@@ -1535,6 +1535,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// no workspace in the path to gate on.
 		// --- User-scoped routes (no workspace context required) ---
 		r.Get("/api/me", h.GetMe)
+
+		// Account-level GLM (Zhipu) Coding Plan balance for the runtimes
+		// page's fixed provider card. enabled=false when no key configured.
+		r.Get("/api/glm-quota", h.GetGlmQuota)
 		r.Patch("/api/me", h.UpdateMe)
 		r.Patch("/api/me/onboarding", h.PatchOnboarding)
 		r.Post("/api/me/onboarding/complete", h.CompleteOnboarding)

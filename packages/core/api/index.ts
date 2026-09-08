@@ -12,6 +12,7 @@ export type {
   ClientRuntimeSnapshot,
   ClientUsageRequest,
 } from "./client";
+export type { GlmQuotaStatus, GlmQuotaSnapshot, GlmQuotaWindow } from "./schemas";
 export { parseWithFallback, setSchemaLogger } from "./schema";
 export type { ParseOptions } from "./schema";
 export { DuplicateIssueErrorBodySchema } from "./schemas";

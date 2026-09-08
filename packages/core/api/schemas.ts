@@ -757,6 +757,32 @@ export interface AppConfigResponse {
   server_version?: string;
 }
 
+// Account-level GLM (Zhipu) Coding Plan quota snapshot from the server-side
+// collector. Windows mirror the provider's limit entries (TOKENS_LIMIT 5h
+// token window, TIME_LIMIT monthly tool credits, CREDIT_LIMIT pools).
+export interface GlmQuotaWindow {
+  type: string;
+  used_percent?: number;
+  usage?: number;
+  current_value?: number;
+  remaining?: number;
+  resets_at?: number;
+}
+
+export interface GlmQuotaSnapshot {
+  level?: string;
+  windows: GlmQuotaWindow[];
+  observed_at: number;
+}
+
+export interface GlmQuotaStatus {
+  enabled: boolean;
+  quota?: GlmQuotaSnapshot | null;
+  stale?: boolean;
+  last_error?: string;
+  anchor_device?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Schemas for the highest-risk API endpoints — those whose responses drive
 // the issue detail page (timeline, comments, subscribers) and the issues

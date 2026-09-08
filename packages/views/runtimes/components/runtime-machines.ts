@@ -35,6 +35,10 @@ export interface MachineQuotaChip {
 export interface RuntimeMachine {
   id: string;
   daemonId: string | null;
+  /** The daemon's device name (e.g. agent-main-01), parsed from its
+   * runtimes' display names; absent for machines without one. Anchors the
+   * account-level GLM quota chip to the machine that burns the key. */
+  deviceName?: string | null;
   title: string;
   subtitle: string | null;
   deviceInfo: string | null;
@@ -157,6 +161,7 @@ function placeholderLocalMachine(
   return {
     id: daemonId ? `local:${daemonId}` : "local:placeholder",
     daemonId,
+    deviceName: null,
     title: options.localMachineName ?? "This machine",
     subtitle: null,
     deviceInfo: null,
@@ -297,6 +302,7 @@ function finalizeRuntimeMachine(
     mode: draft.mode,
     section: isCurrent ? "local" : draft.mode === "cloud" ? "cloud" : "remote",
     isCurrent,
+    deviceName: first ? runtimeDeviceName(first) : null,
     health,
     runtimes,
     onlineCount,
