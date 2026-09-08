@@ -55,6 +55,9 @@ func TestHermesMemoryStorePathLayout(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	// The store path is asserted under $HOME/.multica; a daemon-injected task
+	// config root would redirect cli.ProfileDir elsewhere.
+	t.Setenv("MULTICA_TASK_CONFIG_ROOT", "")
 
 	agent := "11111111-2222-3333-4444-555555555555"
 	got := HermesMemoryStorePath("", agent, filepath.Join(platformDefaultHermesHome(), "profiles", "research"))
@@ -232,6 +235,9 @@ func TestPrepareHermesHomeWithoutStoreKeepsTaskLocalMemories(t *testing.T) {
 // directory as soon as migration reports success.
 func TestMigrateHermesTaskMemoriesFailureKeepsSource(t *testing.T) {
 	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
 	taskDir := t.TempDir()
 	storeDir := t.TempDir()
 
@@ -546,6 +552,8 @@ func TestPruneHermesMemoryStores(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	// Pruned roots are staged under $HOME/.multica; scrub the task config root.
+	t.Setenv("MULTICA_TASK_CONFIG_ROOT", "")
 
 	root := filepath.Join(home, ".multica", hermesMemoryStoreRoot)
 	idle := filepath.Join(root, "agent-idle", "default")

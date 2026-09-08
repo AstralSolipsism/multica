@@ -1690,6 +1690,9 @@ func TestLoadConfig_BackendOverrides_BackwardCompat_NoConfigFile(t *testing.T) {
 
 	// Point HOME at an empty dir — no config.json present.
 	t.Setenv("HOME", t.TempDir())
+	// Keep the daemon's task-local config root out too: this test promises
+	// "no config file anywhere", and the loader prefers the task root.
+	t.Setenv("MULTICA_TASK_CONFIG_ROOT", "")
 	os.Unsetenv("MULTICA_OPENCLAW_PATH")
 	os.Unsetenv("OPENCLAW_STATE_DIR")
 	t.Cleanup(func() {

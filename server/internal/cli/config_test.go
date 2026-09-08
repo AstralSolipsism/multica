@@ -16,6 +16,9 @@ import (
 func TestCLIConfig_BackwardCompat_OldFileLoadsWithNilBackends(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	// This test exercises the on-disk $HOME layout directly; a daemon-injected
+	// task config root would redirect LoadCLIConfig elsewhere.
+	t.Setenv(TaskConfigRootEnv, "")
 
 	// Write a 4-field config exactly as the historical daemon would have.
 	cfgDir := filepath.Join(tmp, ".multica")
@@ -56,6 +59,8 @@ func TestCLIConfig_BackwardCompat_OldFileLoadsWithNilBackends(t *testing.T) {
 func TestCLIConfig_BackwardCompat_NilBackendsOmittedFromJSON(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	// Read the file back from $HOME below, so keep the task-local root out.
+	t.Setenv(TaskConfigRootEnv, "")
 
 	cfg := CLIConfig{
 		ServerURL: "https://api.multica.ai",
@@ -129,6 +134,8 @@ func TestCLIConfig_OpenClawOverride_RoundTrip(t *testing.T) {
 func TestCLIConfig_OpenClawOverride_PartialFieldsOmitted(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	// The file is read back from $HOME; scrub the daemon's task-local root.
+	t.Setenv(TaskConfigRootEnv, "")
 
 	cfg := CLIConfig{
 		ServerURL: "https://api.multica.ai",
@@ -233,6 +240,8 @@ func TestCLIConfig_ProfileCommandOverrides_RoundTrip(t *testing.T) {
 func TestCLIConfig_ProfileCommandOverrides_OmittedWhenEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	// The file is read back from $HOME; scrub the daemon's task-local root.
+	t.Setenv(TaskConfigRootEnv, "")
 
 	cfg := CLIConfig{ServerURL: "https://api.multica.ai", Token: "mul_xyz"}
 	if err := SaveCLIConfig(cfg); err != nil {

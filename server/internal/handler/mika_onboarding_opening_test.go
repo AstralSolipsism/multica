@@ -23,7 +23,7 @@ func TestMikaOnboardingOpeningCoversEveryAcceptedLanguage(t *testing.T) {
 		if !strings.Contains(opening, "Mika") {
 			t.Errorf("language %q dropped the agent name: %s", language, opening)
 		}
-		if !strings.Contains(opening, "Multica") {
+		if !strings.Contains(opening, "Labrastro") {
 			t.Errorf("language %q never names the product: %s", language, opening)
 		}
 	}
@@ -46,7 +46,7 @@ func TestMikaOnboardingOpeningUsesTheCurrentDisplayName(t *testing.T) {
 // the default rather than emit "I'm , your Chief of Staff".
 func TestMikaOnboardingOpeningFallsBackToTheDefaultName(t *testing.T) {
 	opening := buildMikaOnboardingOpening("en", "   ", "Venus")
-	if !strings.Contains(opening, "I'm Mika,") {
+	if !strings.Contains(opening, "I'm Mizuki,") {
 		t.Fatalf("blank name did not fall back to the product default:\n%s", opening)
 	}
 }

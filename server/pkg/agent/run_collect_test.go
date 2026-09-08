@@ -110,8 +110,6 @@ func waitForPidFile(t *testing.T, pidFile string) int {
 
 // processAlive reports whether pid still exists. Signal 0 only performs the
 // permission/existence check.
-func processAlive(pid int) bool { return syscall.Kill(pid, 0) == nil }
-
 // waitForFile polls until path exists, so a test can synchronize on something
 // the fake CLI did rather than on how long it took to get there.
 func waitForFile(t *testing.T, path string, within time.Duration) {

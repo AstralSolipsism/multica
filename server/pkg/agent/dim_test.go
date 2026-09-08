@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -359,17 +358,13 @@ func TestDimCleanupKillsHangingChild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invalid child PID %q: %v", pidStr, err)
 	}
-	// Verify the descendant is no longer alive. Poll briefly because the
+	// Verify the descendant is no longer running. Poll briefly because the
 	// group SIGKILL and the kernel's process-table reaping are asynchronous
 	// with respect to Result delivery.
-	proc, err := os.FindProcess(childPid)
-	if err != nil {
-		return // already reaped
-	}
 	goneDeadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(goneDeadline) {
-		if err := proc.Signal(syscall.Signal(0)); err != nil {
-			return // process is gone
+		if !processAlive(childPid) {
+			return // process is gone (a zombie counts: it runs nothing)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

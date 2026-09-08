@@ -3597,12 +3597,14 @@ func TestCodexExecuteCleansUpWhenScannerOverflowsOnResume(t *testing.T) {
 			result.Error)
 	}
 	// With the shrunken 500 ms grace, two bounded phases plus the SIGKILL
-	// round-trip should complete in ~1-2 s. Pre-fix this test would block
-	// until the executeFakeCodex 10 s outer timeout and fail with "timeout
-	// waiting for result". We assert a much tighter bound so a future
-	// regression cannot quietly slip back up to 10 s.
-	if elapsed > 5*time.Second {
-		t.Fatalf("cleanup took %s, expected < 5s with shrunken grace (bug regressed?)",
+	// round-trip should complete in ~1-2 s on normal hardware. Pre-fix this
+	// test would block until the executeFakeCodex 10 s outer timeout and
+	// fail with "timeout waiting for result". The bound below must stay
+	// strictly under that 10 s hang so a future regression cannot quietly
+	// slip back to it, while leaving headroom for slow environments where
+	// scanning the 33 MiB token itself costs several seconds.
+	if elapsed > 8*time.Second {
+		t.Fatalf("cleanup took %s, expected < 8s with shrunken grace (bug regressed?)",
 			elapsed)
 	}
 }

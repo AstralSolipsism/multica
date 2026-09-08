@@ -3,9 +3,13 @@
 package agent
 
 import (
-	"errors"
+	"bytes"
+	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -65,8 +69,7 @@ func waitProcessGroupGone(cmd *exec.Cmd, timeout time.Duration) bool {
 	}
 	deadline := time.Now().Add(timeout)
 	for {
-		err := syscall.Kill(-cmd.Process.Pid, 0)
-		if errors.Is(err, syscall.ESRCH) {
+		if !processGroupAlive(cmd.Process.Pid) {
 			return true
 		}
 		if time.Now().After(deadline) {
@@ -74,4 +77,57 @@ func waitProcessGroupGone(cmd *exec.Cmd, timeout time.Duration) bool {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// processGroupAlive reports whether the group led by pgid still has a live
+// member. A signal-0 probe on the group succeeds even when every remaining
+// member is a zombie — a process that has exited but whose new parent has not
+// reaped it. After a group SIGKILL the only possible residue is zombies,
+// because each orphan's new parent is init, and container inits that are
+// themselves daemons often never reap reparented orphans. Zombies hold no
+// pipes, no locks, and no CPU, so a group whose members are all zombies is
+// gone for every purpose of the callers (cleanup confirmation, repository and
+// terminal ownership). /proc is Linux-only; a kernel without it keeps the
+// conservative signal-probe answer, which is correct there because their init
+// reaps orphans promptly.
+func processGroupAlive(pgid int) bool {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return syscall.Kill(-pgid, 0) == nil
+	}
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue // not a process entry
+		}
+		if state, memberPgid, ok := procStatStateAndPgid(pid); ok && memberPgid == pgid && state != 'Z' {
+			return true
+		}
+	}
+	return false
+}
+
+// procStatStateAndPgid reads one process's state letter and process-group id
+// from /proc/<pid>/stat. ok is false when the process vanished mid-scan or
+// the kernel does not expose /proc.
+func procStatStateAndPgid(pid int) (state byte, pgid int, ok bool) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, 0, false
+	}
+	// comm is parenthesized and may itself contain parentheses; every field
+	// after it is fixed-position, so parse from the last ')'.
+	i := bytes.LastIndexByte(data, ')')
+	if i < 0 || i+2 >= len(data) {
+		return 0, 0, false
+	}
+	fields := strings.Fields(string(data[i+2:]))
+	if len(fields) < 3 {
+		return 0, 0, false
+	}
+	pgid, err = strconv.Atoi(fields[2])
+	if err != nil {
+		return 0, 0, false
+	}
+	return fields[0][0], pgid, true
 }
