@@ -41,11 +41,12 @@ const (
 
 // Sampler tunables are vars so tests can shrink them.
 var (
-	// antigravityTaskSampleWindow bounds one task's sampling. agy's loopback
-	// service is expected within seconds of spawn; a full window of failed
-	// rounds means this agy build does not serve the quota protocol in the
-	// mode the daemon launches, and more retrying within the task cannot
-	// change that.
+	// antigravityTaskSampleWindow bounds one task's sampling, enforced through
+	// the rounds' shared context deadline (see runAntigravityTaskSampler).
+	// agy's loopback service is expected within seconds of spawn; a full
+	// window of failed rounds means this agy build does not serve the quota
+	// protocol in the mode the daemon launches, and more retrying within the
+	// task cannot change that.
 	antigravityTaskSampleWindow = 60 * time.Second
 	// antigravityTaskSampleRetry is the gap between rounds. Early rounds are
 	// cheap — before agy spawns the process scan fails fast — and once the
@@ -160,12 +161,24 @@ func (d *Daemon) runAntigravityTaskSampler(ctx context.Context) {
 	}
 
 	startedAt := time.Now()
-	deadline := startedAt.Add(antigravityTaskSampleWindow)
+	// The discovery window is enforced by the CONTEXT, not by a check after
+	// each failed round: every round inherits the deadline, so an in-flight
+	// probe is cancelled when the window closes and neither a new round nor
+	// a retry wait can extend past it — and a snapshot can only be recorded
+	// by a round that completed inside the window.
+	ctx, cancel := context.WithDeadline(ctx, startedAt.Add(antigravityTaskSampleWindow))
+	defer cancel()
+
 	processSeen := false
 	processMisses := 0
 	var lastErr error
 loop:
 	for {
+		if ctx.Err() != nil {
+			// The window closed (or the task ended) before this round could
+			// start.
+			break
+		}
 		quota, err := antigravityQuotaProbe(ctx, entry.Path, version, time.Now())
 		if err == nil {
 			for _, runtimeID := range d.providerRuntimeIDs(antigravityQuotaProvider) {
@@ -191,9 +204,6 @@ loop:
 			processSeen = true
 			processMisses = 0
 		}
-		if ctx.Err() != nil || !time.Now().Before(deadline) {
-			break
-		}
 		timer := time.NewTimer(antigravityTaskSampleRetry)
 		select {
 		case <-ctx.Done():
@@ -202,5 +212,9 @@ loop:
 		case <-timer.C:
 		}
 	}
-	d.recordAntigravityQuotaSkip(antigravityQuotaSkipReasonFor(lastErr))
+	// Zero attempts (a window that was already expired) record nothing — the
+	// diagnostics describe attempts, not decisions not to attempt.
+	if lastErr != nil {
+		d.recordAntigravityQuotaSkip(antigravityQuotaSkipReasonFor(lastErr))
+	}
 }

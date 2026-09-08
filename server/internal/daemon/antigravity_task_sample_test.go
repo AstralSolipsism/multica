@@ -136,6 +136,61 @@ func TestAntigravityTaskSamplerStopsAtDiscoveryWindow(t *testing.T) {
 	assertAntigravitySkip(t, d, antigravityQuotaSkipNoListener)
 }
 
+// Regression for review P2-2: a retry timer longer than the remaining
+// discovery window must not let another round — let alone a successful one —
+// start after that window has expired.
+func TestAntigravityTaskSamplerDoesNotProbePastDiscoveryDeadline(t *testing.T) {
+	d := newQuotaProbeFixture(t)
+	setAntigravitySampleTunables(t, 100*time.Millisecond, 200*time.Millisecond, time.Hour)
+	rounds := stubAntigravityQuotaFunc(t, func(round int32) (*protocol.RuntimePlanQuota, error) {
+		if round == 1 {
+			return nil, errors.New("antigravity quota probe: no agy listener answered with a quota summary")
+		}
+		return &protocol.RuntimePlanQuota{Provider: "antigravity", ObservedAt: 9}, nil
+	})
+
+	d.runAntigravityTaskSampler(context.Background())
+
+	if got := atomic.LoadInt32(rounds); got != 1 {
+		t.Fatalf("sampler started %d round(s) with a 100ms window and a 200ms retry, want 1", got)
+	}
+	if _, cached := d.planQuotaCache.Load("rt-agy"); cached {
+		t.Error("snapshot recorded by a round started after the discovery window")
+	}
+}
+
+// Regression for review P2-2: the window deadline must cancel a probe that is
+// already in flight, even while the task itself is still live — like the real
+// RPC, this stub honors its context.
+func TestAntigravityTaskSamplerCancelsInFlightProbeAtDiscoveryDeadline(t *testing.T) {
+	d := newQuotaProbeFixture(t)
+	setAntigravitySampleTunables(t, 30*time.Millisecond, time.Millisecond, time.Hour)
+	orig := antigravityQuotaProbe
+	var rounds int32
+	antigravityQuotaProbe = func(ctx context.Context, _ string, _ string, _ time.Time) (*protocol.RuntimePlanQuota, error) {
+		atomic.AddInt32(&rounds, 1)
+		timer := time.NewTimer(300 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+			return &protocol.RuntimePlanQuota{Provider: "antigravity"}, nil
+		}
+	}
+	t.Cleanup(func() { antigravityQuotaProbe = orig })
+
+	startedAt := time.Now()
+	d.runAntigravityTaskSampler(context.Background())
+
+	if elapsed := time.Since(startedAt); elapsed >= 200*time.Millisecond {
+		t.Fatalf("30ms discovery window did not cancel the in-flight probe: elapsed=%s", elapsed)
+	}
+	if _, cached := d.planQuotaCache.Load("rt-agy"); cached {
+		t.Error("snapshot recorded by a probe that finished after the discovery window")
+	}
+}
+
 func TestAntigravityTaskSamplerExitsOnTaskContextCancel(t *testing.T) {
 	d := newQuotaProbeFixture(t)
 	setAntigravitySampleTunables(t, time.Hour, 50*time.Millisecond, time.Hour)
@@ -189,6 +244,36 @@ func TestAntigravityQuotaDiagnosticsStayNilUntilFirstAttempt(t *testing.T) {
 	d := newQuotaProbeFixture(t)
 	if diag := d.antigravityQuotaDiagSnapshot(); diag != nil {
 		t.Fatalf("diagnostics before any attempt = %+v, want nil", diag)
+	}
+}
+
+// Regression for review P2-1: a machine with no antigravity runtime must not
+// gain the /health field from a periodic tick — the sampling-need gate has to
+// come before anything records a skip reason.
+func TestAntigravityQuotaDiagnosticsStayNilWithoutProviderRuntime(t *testing.T) {
+	d := newQuotaProbeFixture(t)
+	delete(d.cfg.Agents, "antigravity")
+	delete(d.agentVersions, "antigravity")
+	delete(d.runtimeIndex, "rt-agy")
+	stub := stubAntigravityQuotaProbe(t, nil, nil)
+
+	d.runAntigravityQuotaProbe(context.Background())
+
+	if got := atomic.LoadInt32(&stub.calls); got != 0 {
+		t.Fatalf("probe scanned %d time(s) with no antigravity state; the need gate must precede discovery", got)
+	}
+	if diag := d.antigravityQuotaDiagSnapshot(); diag != nil {
+		t.Fatalf("diagnostics after a tick on a machine without antigravity = %+v, want nil", diag)
+	}
+
+	rec := httptest.NewRecorder()
+	d.healthHandler(time.Now()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
+	if value, ok := raw["antigravity_quota"]; ok {
+		t.Fatalf("machine without antigravity gained the health field after a periodic tick: %s", value)
 	}
 }
 

@@ -46,8 +46,19 @@ func (d *Daemon) antigravityQuotaLoop(ctx context.Context) {
 // Rounds with nothing to do (no antigravity runtime registered, undetected
 // version) exit before any process scan.
 func (d *Daemon) runAntigravityQuotaProbe(ctx context.Context) {
+	runtimeIDs := d.providerRuntimeIDs(antigravityQuotaProvider)
+	if len(runtimeIDs) == 0 {
+		// No local antigravity runtime to feed: there is no sampling need
+		// here, and this must stay invisible — recording a skip reason from
+		// the periodic loop would put the /health field on every machine that
+		// merely lacks the CLI. Gate first, record after.
+		return
+	}
 	entry, ok := d.agents()[antigravityQuotaProvider]
 	if !ok || entry.Path == "" {
+		// A runtime exists but its CLI is gone (undiscovered or demoted):
+		// this machine DOES have an antigravity page, so the reason the
+		// probe cannot feed it is worth surfacing.
 		d.recordAntigravityQuotaSkip(antigravityQuotaSkipNotRegistered)
 		return
 	}
@@ -58,10 +69,6 @@ func (d *Daemon) runAntigravityQuotaProbe(ctx context.Context) {
 		// means "never verified this binary" — exactly what the probe must
 		// not question on its own.
 		d.recordAntigravityQuotaSkip(antigravityQuotaSkipNoVersion)
-		return
-	}
-	runtimeIDs := d.providerRuntimeIDs(antigravityQuotaProvider)
-	if len(runtimeIDs) == 0 {
 		return
 	}
 	quota, err := antigravityQuotaProbe(ctx, entry.Path, version, time.Now())
