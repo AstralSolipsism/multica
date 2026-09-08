@@ -2637,14 +2637,29 @@ func (s *TaskService) CancelTasksForIssue(ctx context.Context, issueID pgtype.UU
 	// partial index forever.
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		var err error
-		cancelled, err = qtx.CancelAgentTasksByIssue(ctx, issueID)
-		if err != nil {
-			return err
-		}
-		return SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...)
+		cancelled, err = s.CancelTasksForIssueInTx(ctx, qtx, issueID)
+		return err
 	}); err != nil {
 		return err
 	}
+	s.PublishCancelledIssueTasks(ctx, cancelled)
+	return nil
+}
+
+// CancelTasksForIssueInTx keeps dependency validation, cancellation and issue
+// deletion atomic. Runtime notifications must be sent only after commit.
+func (s *TaskService) CancelTasksForIssueInTx(ctx context.Context, qtx *db.Queries, issueID pgtype.UUID) ([]db.AgentTaskQueue, error) {
+	cancelled, err := qtx.CancelAgentTasksByIssue(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+	if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...); err != nil {
+		return nil, err
+	}
+	return cancelled, nil
+}
+
+func (s *TaskService) PublishCancelledIssueTasks(ctx context.Context, cancelled []db.AgentTaskQueue) {
 	for _, t := range cancelled {
 		s.captureTaskCancelled(ctx, t)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
@@ -2657,7 +2672,6 @@ func (s *TaskService) CancelTasksForIssue(ctx context.Context, issueID pgtype.UU
 		s.ReconcileAgentStatus(ctx, agentID)
 	}
 	s.notifyTasksFinished(cancelled)
-	return nil
 }
 
 // distinctAgentIDs returns each agent id appearing in the cancelled rows once,

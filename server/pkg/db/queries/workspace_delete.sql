@@ -355,6 +355,9 @@ deleted_issue_dependencies AS (
     WHERE issue_id IN (SELECT id FROM ws_issues)
        OR depends_on_issue_id IN (SELECT id FROM ws_issues)
 ),
+deleted_issue_dependency_audit AS (
+    DELETE FROM issue_dependency_audit WHERE workspace_id = $1
+),
 deleted_issue_subscribers AS (
     DELETE FROM issue_subscriber
     WHERE issue_id IN (SELECT id FROM ws_issues)

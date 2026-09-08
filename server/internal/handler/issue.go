@@ -101,6 +101,7 @@ type IssueResponse struct {
 	// SourceContext is detail-only. List, board, search, and children responses
 	// deliberately omit the potentially large immutable snapshot.
 	SourceContext *sourceContextDetailResponse `json:"source_context,omitempty"`
+	Dependencies  *service.DependencyView      `json:"dependencies,omitempty"`
 }
 
 // validIssuePriorities mirrors the CHECK constraint on the issue table. Write
@@ -139,7 +140,7 @@ func (h *Handler) resolveIssueStatusKey(w http.ResponseWriter, r *http.Request, 
 
 // resolveIssueStatusKeyKind is resolveIssueStatusKey plus whether the target is
 // a CUSTOM status. Callers use that to decide whether the write needs the
-// shared catalog lock — see runWithIssueStatusGuard.
+// shared catalog lock — see updateIssueAtomically.
 func (h *Handler) resolveIssueStatusKeyKind(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, status string) (string, bool, bool) {
 	entry, err := issuestatus.Resolve(r.Context(), h.Queries, workspaceID, status)
 	if err != nil {
@@ -205,32 +206,6 @@ func assertIssueStatusStillActive(ctx context.Context, qtx *db.Queries, workspac
 	return nil
 }
 
-// runWithIssueStatusGuard runs an issue write that lands on a custom status
-// inside a transaction that re-verifies the status under the shared catalog
-// lock (see assertIssueStatusStillActive). A built-in target skips the
-// transaction entirely.
-func (h *Handler) runWithIssueStatusGuard(ctx context.Context, workspaceID pgtype.UUID, statusKey string, fn func(q *db.Queries) error) error {
-	if statusKey == "" || issuestatus.IsBuiltIn(statusKey) {
-		return fn(h.Queries)
-	}
-	tx, err := h.TxStarter.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	qtx := h.Queries.WithTx(tx)
-	if err := assertIssueStatusStillActive(ctx, qtx, workspaceID, statusKey); err != nil {
-		return err
-	}
-	if err := fn(qtx); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
-// writeIssueStatusRaceError renders errIssueStatusArchivedRace as a 409 and
-// reports whether it handled the error.
 func writeIssueStatusRaceError(w http.ResponseWriter, err error) bool {
 	if errors.Is(err, errIssueStatusArchivedRace) {
 		writeError(w, http.StatusConflict,
@@ -2762,6 +2737,7 @@ func readRuntimeCLIVersion(metadata []byte) string {
 }
 
 type CreateIssueRequest struct {
+	dependencyWriteFields
 	Title         string   `json:"title"`
 	Description   *string  `json:"description"`
 	Status        string   `json:"status"`
@@ -2794,6 +2770,10 @@ func duplicateIssueMessage(issue IssueResponse) string {
 }
 
 func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
+	h.createIssue(w, r, false)
+}
+
+func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound bool) {
 	var req CreateIssueRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -2813,6 +2793,10 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 
 	// Get creator from context (set by auth middleware)
 	creatorID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	dependencyWrite, ok := h.parseDependencyWrite(w, r, req.dependencyWriteFields, compound, true)
 	if !ok {
 		return
 	}
@@ -3028,6 +3012,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		AttachmentIDs:  attachmentIDs,
 		LabelIDs:       labelIDs,
 		AllowDuplicate: req.AllowDuplicate,
+		BlockedBy:      dependencyWrite.BlockedBy,
 	}, service.IssueCreateOpts{
 		ActorID:          actualCreatorID,
 		AnalyticsAgentID: analyticsAgentID,
@@ -3051,6 +3036,9 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 
+	if writeDependencyError(w, err) {
+		return
+	}
 	if errors.Is(err, service.ErrActiveDuplicate) {
 		dup := *res.DuplicateIssue
 		existing := issueToResponse(dup, h.getIssuePrefix(r.Context(), dup.WorkspaceID))
@@ -3099,10 +3087,15 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	// understood label_ids and skip its legacy post-create attach fallback.
 	labelResponses := labelsToResponse(res.Labels)
 	resp.Labels = &labelResponses
+	if compound {
+		v := h.dependencyView(r, res.Dependencies, issue.ID)
+		resp.Dependencies = &v
+	}
 	writeJSON(w, http.StatusCreated, resp)
 }
 
 type UpdateIssueRequest struct {
+	dependencyWriteFields
 	ExpectedRevision *int64  `json:"expected_revision,omitempty"`
 	Title            *string `json:"title"`
 	// TitleBase is the title adopted by the editor before producing Title. It
@@ -3221,29 +3214,52 @@ func refreshUntouchedNullableIssueParams(params *db.UpdateIssueParams, current d
 
 var errIssueFieldConflict = errors.New("issue text field conflict")
 
-func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.UUID, params db.UpdateIssueParams, rawFields map[string]json.RawMessage, titleBase, descriptionBase *string, attachmentIDs []pgtype.UUID, statusKey string) (db.Issue, db.Issue, bool, error) {
+type atomicIssueUpdateResult struct {
+	Issue              db.Issue
+	Previous           db.Issue
+	AttachmentsChanged bool
+	Dependencies       *service.DependencySnapshot
+}
+
+func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.UUID, params db.UpdateIssueParams, rawFields map[string]json.RawMessage, titleBase, descriptionBase *string, attachmentIDs []pgtype.UUID, statusKey string, dependencyWrite service.DependencyWrite) (result atomicIssueUpdateResult, err error) {
 	if h.TxStarter == nil {
-		return db.Issue{}, db.Issue{}, false, errors.New("atomic issue update requires transaction starter")
+		return result, errors.New("atomic issue update requires transaction starter")
 	}
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
-		return db.Issue{}, db.Issue{}, false, fmt.Errorf("begin atomic issue update: %w", err)
+		return result, fmt.Errorf("begin atomic issue update: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
 	qtx := h.Queries.WithTx(tx)
-	// This path opens its own transaction, so it carries the archive-race guard
-	// itself rather than going through runWithIssueStatusGuard. The catalog lock
-	// must precede both attachment and issue row locks everywhere. (MUL-6243)
+	guardDependencies := dependencyWrite.IncludeView || dependencyWrite.BlockedBy != nil || dependencyWrite.ExpectedVersion != ""
+	for _, field := range []string{"parent_issue_id", "assignee_type", "assignee_id", "status"} {
+		if _, touched := rawFields[field]; touched {
+			guardDependencies = true
+		}
+	}
+	if guardDependencies {
+		if err := h.IssueService.Dependencies.LockWrite(ctx, qtx, workspaceID); err != nil {
+			return result, err
+		}
+	}
+	// The catalog lock precedes attachment and issue row locks. (MUL-6243)
 	if err := assertIssueStatusStillActive(ctx, qtx, workspaceID, statusKey); err != nil {
-		return db.Issue{}, db.Issue{}, false, err
+		return result, err
 	}
 	if len(attachmentIDs) > 0 {
 		if _, err := qtx.LockAttachmentsForIssueLink(ctx, db.LockAttachmentsForIssueLinkParams{
 			WorkspaceID:   workspaceID,
 			AttachmentIds: attachmentIDs,
 		}); err != nil {
-			return db.Issue{}, db.Issue{}, false, fmt.Errorf("lock issue attachments: %w", err)
+			return result, fmt.Errorf("lock issue attachments: %w", err)
+		}
+	}
+	var dependencyBefore *service.DependencySnapshot
+	if guardDependencies {
+		dependencyBefore, err = h.IssueService.Dependencies.LoadForWrite(ctx, qtx, workspaceID)
+		if err != nil {
+			return result, err
 		}
 	}
 	current, err := qtx.LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{
@@ -3251,11 +3267,12 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
-		return db.Issue{}, db.Issue{}, false, fmt.Errorf("lock issue for update: %w", err)
+		return result, fmt.Errorf("lock issue for update: %w", err)
 	}
 
+	result.Previous = current
 	if params.Title.Valid && titleBase != nil && current.Title != *titleBase && current.Title != params.Title.String {
-		return db.Issue{}, current, false, errIssueFieldConflict
+		return result, errIssueFieldConflict
 	}
 
 	if params.Description.Valid {
@@ -3264,7 +3281,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 			WorkspaceID: current.WorkspaceID,
 		})
 		if listErr != nil {
-			return db.Issue{}, current, false, fmt.Errorf("list issue attachments for description merge: %w", listErr)
+			return result, fmt.Errorf("list issue attachments for description merge: %w", listErr)
 		}
 		currentDescription := ""
 		if current.Description.Valid {
@@ -3295,7 +3312,26 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 
 	issue, err := qtx.UpdateIssue(ctx, params)
 	if err != nil {
-		return db.Issue{}, current, false, fmt.Errorf("update locked issue: %w", err)
+		return result, fmt.Errorf("update locked issue: %w", err)
+	}
+	var dependencyAfter *service.DependencySnapshot
+	if guardDependencies {
+		var dependencyChanged bool
+		dependencyAfter, dependencyChanged, err = h.IssueService.Dependencies.Apply(ctx, qtx, dependencyBefore, issue, dependencyWrite)
+		if err != nil {
+			return result, err
+		}
+		assigned, run := service.DependencyWriteIntent(ctx, qtx, &current, issue, dependencyWrite.SuppressRun)
+		if err := dependencyAfter.CheckWriteAdmission(ctx, issue, assigned, run); err != nil {
+			return result, err
+		}
+		if dependencyChanged && issue.Revision == current.Revision {
+			issue, err = qtx.TouchIssueDependencyRevision(ctx, db.TouchIssueDependencyRevisionParams{WorkspaceID: workspaceID, ID: issue.ID})
+			if err != nil {
+				return result, err
+			}
+		}
+
 	}
 
 	attachmentsChanged := false
@@ -3307,7 +3343,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 			BumpRevision:  issue.Revision == current.Revision,
 		})
 		if linkErr != nil {
-			return db.Issue{}, current, false, fmt.Errorf("link issue attachments: %w", linkErr)
+			return result, fmt.Errorf("link issue attachments: %w", linkErr)
 		}
 		attachmentsChanged = linked.LinkedCount > 0
 		if linked.IssueRevision > 0 {
@@ -3316,19 +3352,35 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 				WorkspaceID: issue.WorkspaceID,
 			})
 			if err != nil {
-				return db.Issue{}, current, false, fmt.Errorf("reload issue after attachment link: %w", err)
+				return result, fmt.Errorf("reload issue after attachment link: %w", err)
 			}
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return db.Issue{}, current, false, fmt.Errorf("commit atomic issue update: %w", err)
+		return result, fmt.Errorf("commit atomic issue update: %w", err)
 	}
-	return issue, current, attachmentsChanged, nil
+	if dependencyAfter != nil {
+		node := dependencyAfter.Model.Issues[uuidToString(issue.ID)]
+		node.Revision = issue.Revision
+		dependencyAfter.Model.Issues[node.ID] = node
+	}
+	result.Issue = issue
+	result.AttachmentsChanged = attachmentsChanged
+	result.Dependencies = dependencyAfter
+	return result, nil
 }
 
 func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
+	h.updateIssue(w, r, false)
+}
+
+func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound bool) {
 	id := chi.URLParam(r, "id")
-	prevIssue, ok := h.loadIssueForUser(w, r, id)
+	loadIssue := h.loadIssueForUser
+	if compound {
+		loadIssue = h.loadDependencyIssue
+	}
+	prevIssue, ok := loadIssue(w, r, id)
 	if !ok {
 		return
 	}
@@ -3351,6 +3403,11 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	// Track which fields were explicitly present in JSON (even if null)
 	var rawFields map[string]json.RawMessage
 	json.Unmarshal(bodyBytes, &rawFields)
+	dependencyWrite, ok := h.parseDependencyWrite(w, r, req.dependencyWriteFields, compound, false)
+	if !ok {
+		return
+	}
+	dependencyWrite.SuppressRun = req.SuppressRun
 
 	// Pre-fill nullable fields (bare sqlc.narg) with current values
 	params := db.UpdateIssueParams{
@@ -3467,19 +3524,6 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
 				return
 			}
-			// Cycle detection: walk up from the new parent to ensure we don't reach this issue.
-			cursor := newParentID
-			for depth := 0; depth < 10; depth++ {
-				ancestor, err := h.Queries.GetIssue(r.Context(), cursor)
-				if err != nil || !ancestor.ParentIssueID.Valid {
-					break
-				}
-				if ancestor.ParentIssueID == prevIssue.ID {
-					writeError(w, http.StatusBadRequest, "circular parent relationship detected")
-					return
-				}
-				cursor = ancestor.ParentIssueID
-			}
 			params.ParentIssueID = newParentID
 		} else {
 			params.ParentIssueID = pgtype.UUID{Valid: false} // explicit null = remove parent
@@ -3544,24 +3588,18 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var issue db.Issue
-	attachmentsChanged := false
-	if req.Description != nil || req.TitleBase != nil || req.DescriptionBase != nil || len(attachmentIDs) > 0 {
-		var lockedPrev db.Issue
-		issue, lockedPrev, attachmentsChanged, err = h.updateIssueAtomically(
-			r.Context(), prevIssue.WorkspaceID, params, rawFields, req.TitleBase, req.DescriptionBase, attachmentIDs, statusKeyForGuard,
-		)
-		if lockedPrev.ID.Valid {
-			prevIssue = lockedPrev
-		}
-	} else {
-		err = h.runWithIssueStatusGuard(r.Context(), prevIssue.WorkspaceID, statusKeyForGuard, func(q *db.Queries) error {
-			var innerErr error
-			issue, innerErr = q.UpdateIssue(r.Context(), params)
-			return innerErr
-		})
+	updateResult, err := h.updateIssueAtomically(
+		r.Context(), prevIssue.WorkspaceID, params, rawFields, req.TitleBase, req.DescriptionBase, attachmentIDs, statusKeyForGuard, dependencyWrite,
+	)
+	issue, attachmentsChanged := updateResult.Issue, updateResult.AttachmentsChanged
+	if updateResult.Previous.ID.Valid {
+		prevIssue = updateResult.Previous
 	}
+
 	if err != nil {
+		if writeDependencyError(w, err) {
+			return
+		}
 		if writeIssueStatusRaceError(w, err) {
 			return
 		}
@@ -3587,6 +3625,10 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
 	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
+	if compound {
+		v := h.dependencyView(r, updateResult.Dependencies, issue.ID)
+		resp.Dependencies = &v
+	}
 
 	h.fillStatusCategory(r.Context(), issue.WorkspaceID, &resp)
 	assigneeChanged := (req.AssigneeType != nil || req.AssigneeID != nil) &&
@@ -3889,12 +3931,11 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
-	// Fail any linked autopilot runs before delete (ON DELETE SET NULL clears issue_id).
-	_ = h.AutopilotService.FailAutopilotRunsByIssue(r.Context(), issue.ID)
-
 	deleteResult, err := h.deleteIssueAndCollectAttachmentURLs(r.Context(), issue, nil)
 	if err != nil {
+		if writeDependencyError(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to delete issue")
 		return
 	}
@@ -3920,6 +3961,7 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 type issueDeleteResult struct {
 	AttachmentURLs   []string
 	DetachedChildren []db.Issue
+	CancelledTasks   []db.AgentTaskQueue
 }
 
 func (h *Handler) deleteIssueAndCollectAttachmentURLs(ctx context.Context, issue db.Issue, excludedIssueIDs []pgtype.UUID) (issueDeleteResult, error) {
@@ -3938,11 +3980,40 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLs(ctx context.Context, issu
 	qtx := h.Queries.WithTx(tx)
 
 	result := issueDeleteResult{}
+	if len(issues) == 0 {
+		return result, nil
+	}
+	ws := issues[0].WorkspaceID
+	ids := make([]pgtype.UUID, 0, len(issues))
+	for _, issue := range issues {
+		if issue.WorkspaceID != ws {
+			return result, errors.New("issue deletion must be workspace scoped")
+		}
+		ids = append(ids, issue.ID)
+	}
+	if err := h.IssueService.Dependencies.LockWrite(ctx, qtx, ws); err != nil {
+		return result, err
+	}
+	before, err := h.IssueService.Dependencies.LoadForWrite(ctx, qtx, ws)
+	if err != nil {
+		return result, err
+	}
+	if err := h.IssueService.Dependencies.Delete(ctx, qtx, before, ids); err != nil {
+		return result, err
+	}
 	for _, issue := range issues {
 		if _, err := qtx.LockIssueForDelete(ctx, db.LockIssueForDeleteParams{
 			ID: issue.ID, WorkspaceID: issue.WorkspaceID,
 		}); err != nil {
 			return issueDeleteResult{}, fmt.Errorf("lock issue for delete: %w", err)
+		}
+		cancelled, err := h.TaskService.CancelTasksForIssueInTx(ctx, qtx, issue.ID)
+		if err != nil {
+			return result, err
+		}
+		result.CancelledTasks = append(result.CancelledTasks, cancelled...)
+		if _, err := qtx.FailAutopilotRunsByIssue(ctx, issue.ID); err != nil {
+			return result, err
 		}
 		detached, err := qtx.DetachDirectChildIssues(ctx, db.DetachDirectChildIssuesParams{
 			WorkspaceID: issue.WorkspaceID, ParentIssueID: issue.ID, ExcludedIssueIds: excludedIssueIDs,
@@ -4000,6 +4071,7 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLs(ctx context.Context, issu
 	if err := tx.Commit(ctx); err != nil {
 		return issueDeleteResult{}, fmt.Errorf("commit issue delete: %w", err)
 	}
+	h.TaskService.PublishCancelledIssueTasks(ctx, result.CancelledTasks)
 	return result, nil
 }
 
@@ -4049,6 +4121,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	var rawUpdates map[string]json.RawMessage
 	if raw, exists := rawTop["updates"]; exists {
 		json.Unmarshal(raw, &rawUpdates)
+	}
+	if _, ok := h.parseDependencyWrite(w, r, req.Updates.dependencyWriteFields, false, false); !ok {
+		return
 	}
 
 	// Short-circuit when no mutation field is present in `updates`. Without
@@ -4124,6 +4199,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updated := 0
+	results := make([]map[string]any, 0, len(req.IssueIDs))
 	// One Resolver for the whole batch — a per-issue filler would query the
 	// catalog once per custom-status row. (MUL-6243)
 	fillBatch := h.newStatusCategoryFiller(r.Context(), wsUUID)
@@ -4132,6 +4208,8 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	// after the loop (MUL-4155) rather than per-child mid-batch.
 	var childDoneCompleted []db.Issue
 	for _, issueID := range req.IssueIDs {
+		itemResult := map[string]any{"issue_id": issueID, "updated": false, "reason_code": "not_found"}
+		results = append(results, itemResult)
 		issueUUID, err := util.ParseUUID(issueID)
 		if err != nil {
 			continue
@@ -4143,6 +4221,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
+		itemResult["reason_code"] = "invalid_request"
 
 		params := db.UpdateIssueParams{
 			ID:            prevIssue.ID,
@@ -4228,23 +4307,6 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 				}); err != nil {
 					continue
 				}
-				// Cycle detection: walk up from the new parent to ensure we don't reach this issue.
-				cycleDetected := false
-				cursor := newParentID
-				for depth := 0; depth < 10; depth++ {
-					ancestor, err := h.Queries.GetIssue(r.Context(), cursor)
-					if err != nil || !ancestor.ParentIssueID.Valid {
-						break
-					}
-					if ancestor.ParentIssueID == prevIssue.ID {
-						cycleDetected = true
-						break
-					}
-					cursor = ancestor.ParentIssueID
-				}
-				if cycleDetected {
-					continue
-				}
 				params.ParentIssueID = newParentID
 			} else {
 				params.ParentIssueID = pgtype.UUID{Valid: false}
@@ -4282,25 +4344,16 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		var issue db.Issue
-		if req.Updates.Description != nil {
-			// One batch-level base cannot describe multiple issue documents.
-			// Preserve every marked channel-media block conservatively, matching
-			// legacy single-update clients that omit description_base.
-			var lockedPrev db.Issue
-			issue, lockedPrev, _, err = h.updateIssueAtomically(
-				r.Context(), prevIssue.WorkspaceID, params, rawUpdates, nil, nil, nil, batchStatusKey,
-			)
-			if err == nil {
-				prevIssue = lockedPrev
-			}
-		} else {
-			err = h.runWithIssueStatusGuard(r.Context(), wsUUID, batchStatusKey, func(q *db.Queries) error {
-				var innerErr error
-				issue, innerErr = q.UpdateIssue(r.Context(), params)
-				return innerErr
-			})
+		// Each item uses the same transaction and preserves channel media.
+		itemResult["reason_code"] = "update_failed"
+		updateResult, err := h.updateIssueAtomically(
+			r.Context(), prevIssue.WorkspaceID, params, rawUpdates, nil, nil, nil, batchStatusKey, service.DependencyWrite{SuppressRun: req.Updates.SuppressRun},
+		)
+		issue := updateResult.Issue
+		if updateResult.Previous.ID.Valid {
+			prevIssue = updateResult.Previous
 		}
+
 		if err != nil {
 			// The archive race is a property of the batch's shared target
 			// status, not of one issue, so every remaining item would fail the
@@ -4309,6 +4362,12 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			slog.Warn("batch update issue failed", "issue_id", issueID, "error", err)
+			var dependencyErr *service.DependencyError
+			if errors.As(err, &dependencyErr) {
+				itemResult["reason_code"] = dependencyErr.Code
+				itemResult["error"] = dependencyErr.Message
+				itemResult["dependencies"] = dependencyErr.View
+			}
 			continue
 		}
 
@@ -4376,6 +4435,8 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 
 		updated++
+		itemResult["updated"] = true
+		delete(itemResult, "reason_code")
 	}
 
 	// Aggregate parent/stage notification over the whole batch's final state so
@@ -4385,7 +4446,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	h.notifyParentsOfBatchChildDone(r.Context(), childDoneCompleted)
 
 	slog.Info("batch update issues", append(logger.RequestAttrs(r), "count", updated)...)
-	writeJSON(w, http.StatusOK, map[string]any{"updated": updated})
+	writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "results": results})
 }
 
 type BatchDeleteIssuesRequest struct {
@@ -4436,11 +4497,12 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 		seenIssueIDs[issueUUID] = struct{}{}
 		issues = append(issues, issue)
 		excludedIDs = append(excludedIDs, issue.ID)
-		h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
-		_ = h.AutopilotService.FailAutopilotRunsByIssue(r.Context(), issue.ID)
 	}
 	deleteResult, err := h.deleteIssuesAndCollectAttachmentURLs(r.Context(), issues, excludedIDs)
 	if err != nil {
+		if writeDependencyError(w, err) {
+			return
+		}
 		slog.Warn("batch delete issues failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete issues")
 		return

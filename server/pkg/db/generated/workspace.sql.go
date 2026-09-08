@@ -136,6 +136,9 @@ cleared_installations AS (
 cleared_issue_properties AS (
     DELETE FROM issue_property WHERE workspace_id = $1
 ),
+cleared_issue_dependency_audit AS (
+    DELETE FROM issue_dependency_audit WHERE workspace_id = $1
+),
 cleared_quick_actions AS (
     DELETE FROM quick_action WHERE workspace_id = $1
 ),

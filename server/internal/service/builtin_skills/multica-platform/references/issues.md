@@ -6,6 +6,7 @@ Product contracts the runtime brief does not fully encode.
 - [Reading a linked PR's real state](#reading-a-linked-prs-real-state)
 - [Custom properties: typed workflow state](#custom-properties-typed-workflow-state)
 - [Status changes have server side effects](#status-changes-have-server-side-effects)
+- [Explicit prerequisites: Stage 2 API contract](#explicit-prerequisites-stage-2-api-contract)
 - [Claim ownership without duplicating a run](#claim-ownership-without-duplicating-a-run)
 - [Who else is running right now](#who-else-is-running-right-now)
 - [Sub-issues: todo starts work now, backlog parks it](#sub-issues-todo-starts-work-now-backlog-parks-it)
@@ -233,6 +234,41 @@ writes the literal `done` key.
 - **Failed issue-triggered tasks** may roll an issue from `in_progress` back to
   `todo` when no active task / retry remains — that is the main server-owned
   status write on the agent-run path.
+
+## Explicit prerequisites: Stage 2 API contract
+
+`GET /api/issues/{id}/dependencies` returns direct and inherited prerequisites,
+direct successors, unfinished prerequisites, a restricted-blocker flag and an
+opaque `dependency_version`. A task inherits the explicit prerequisites of its
+ancestors; parentage alone does not block execution. Only each prerequisite's
+own current effective `done` category satisfies it. Existing status-write
+permissions remain unchanged; `in_review` and `cancelled` are not satisfaction.
+
+The future CLI parameter is `--blocked-by`. It is **not available in this
+stage**. Do not simulate it with `--parent`, `--stage`, metadata, or a second
+post-create write. The compound API paths are
+`POST /api/issues/with-dependencies` and
+`PATCH /api/issues/{id}/with-dependencies`; both currently return 404 because
+production writes stay disabled until full dispatch admission is integrated.
+Do not fall back to ordinary create/update after 404/405.
+
+In isolated integration tests, `blocked_by` is an array of UUIDs/identifiers:
+omission preserves direct relations, `[]` clears them, and `null` is invalid.
+PATCH replacement requires `expected_dependency_version`; a stale version
+returns 409. New machine assignments with unfinished prerequisites reject the
+whole mutation, even for backlog or `suppress_run`. Unassigned backlog planning
+is valid. Removing unfinished constraints, reparenting away from them or
+deleting tasks to remove them requires a trusted human JWT; a PAT or task
+credential is not a human override. This is not a new completion policy.
+
+Errors expose `reason_code`: `dependency_unsatisfied`, `dependency_cycle`,
+`dependency_ancestor_conflict`, `dependency_version_conflict`,
+`dependency_change_not_allowed`, `dependency_override_not_allowed`,
+`dependency_data_unverified`, or `not_found`. Until dispatch integration,
+dependency-bearing run requests also reject with
+`dependency_dispatch_unavailable`. Missing/malformed dependency data or hidden
+unfinished prerequisites must never be interpreted as ready. No automatic
+dispatch along arbitrary dependency edges is added.
 
 ## Claim ownership without duplicating a run
 
