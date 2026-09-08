@@ -177,6 +177,7 @@ func (s *Service) TestSend(ctx context.Context, route db.LabrastroMessageRoute, 
 			AutopilotID:     route.AutopilotID,
 			DedupKey:        TestDeliveryDedupKey(util.UUIDToString(dbid.NewV7())),
 			SourceKind:      SourceKindTestSend,
+			RequestedBy:     member.UserID,
 			Status:          DeliveryStatusQueued,
 			ContentSnapshot: contentJSON,
 			TargetSnapshot:  targetJSON,
@@ -199,17 +200,17 @@ func (s *Service) TestSend(ctx context.Context, route db.LabrastroMessageRoute, 
 	}
 
 	out := s.sendDelivery(ctx, d)
-	if out.lost {
-		// Lost ownership mid-pass (workspace deleted, lease expired): the
-		// recovery protocol owns the row now.
-		return d, fmt.Errorf("test send lost ownership mid-flight; the delivery recovers via lease expiry")
-	}
 	// The final write runs on a detached bounded context (a disconnected
 	// caller must not prevent the outcome from being recorded) and under
 	// the SAME lease-ownership guard as every other result write: an
 	// expired-then-reclaimed row belongs to its new owner.
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	if out.lost {
+		// Recovery owns this row. Return its persisted state without claiming
+		// a transition or hiding an existing diagnostic ID behind a 500.
+		return s.Queries.GetLabrastroMessageDelivery(writeCtx, db.GetLabrastroMessageDeliveryParams{ID: d.ID, WorkspaceID: d.WorkspaceID})
+	}
 	updated, err := s.Queries.SetLabrastroMessageDeliveryOutcome(writeCtx, db.SetLabrastroMessageDeliveryOutcomeParams{
 		ID:         d.ID,
 		LeaseToken: d.LeaseToken,
@@ -223,7 +224,7 @@ func (s *Service) TestSend(ctx context.Context, route db.LabrastroMessageRoute, 
 		// the outcome; our rejected 'failed' write must not pollute it.
 		s.logger().Debug("messagedelivery: test send outcome write lost lease ownership",
 			"delivery_id", util.UUIDToString(d.ID))
-		return d, nil
+		return s.Queries.GetLabrastroMessageDelivery(writeCtx, db.GetLabrastroMessageDeliveryParams{ID: d.ID, WorkspaceID: d.WorkspaceID})
 	}
 	if err != nil {
 		return d, fmt.Errorf("record test send outcome: %w", err)
@@ -257,7 +258,7 @@ type sendOutcome struct {
 // sendDelivery performs one complete send pass for a claimed delivery:
 // resolve the live target, then push every shard in order, resuming after
 // partial progress from the receipt ledger. Pre-send gates (route, source,
-// installation state) are the caller's job; this function owns the wire.
+// installation state) are checked here before every new shard.
 func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDelivery) sendOutcome {
 	if s.Sender == nil {
 		return sendOutcome{
@@ -275,33 +276,6 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 	if err := json.Unmarshal(d.ContentSnapshot, &content); err != nil {
 		return sendOutcome{status: DeliveryStatusFailed, errorCode: ErrorCodeSendRejected,
 			detail: "corrupt content snapshot: " + err.Error()}
-	}
-
-	// Live member resolution: the frozen open_id is a decision-time
-	// observation, never an authority. The binding on THIS installation is
-	// re-read before dialing, so unbinding (or a revoke) between decision
-	// and send fails explainably instead of misdelivering.
-	address := targetFromSnapshot(snap)
-	if snap.TargetType == TargetMember {
-		userID, err := util.ParseUUID(snap.UserID)
-		instID, instErr := util.ParseUUID(snap.Installation)
-		if err != nil || instErr != nil {
-			return sendOutcome{status: DeliveryStatusFailed, errorCode: ErrorCodeMemberUnbound,
-				detail: "member target snapshot is not resolvable"}
-		}
-		binding, err := s.Queries.GetChannelUserBindingForDelivery(ctx, db.GetChannelUserBindingForDeliveryParams{
-			WorkspaceID:    d.WorkspaceID,
-			InstallationID: instID,
-			MulticaUserID:  userID,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return sendOutcome{status: DeliveryStatusFailed, errorCode: ErrorCodeMemberUnbound,
-				detail: "member has no binding on this installation"}
-		} else if err != nil {
-			return sendOutcome{status: DeliveryStatusUncertain, errorCode: ErrorCodeSendAmbiguous,
-				detail: "resolve member binding: " + err.Error()}
-		}
-		address.OpenID = binding.ChannelUserID
 	}
 
 	shards := splitShards(content.Text)
@@ -338,6 +312,36 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 		if receipt.ExternalMessageID.Valid && strings.TrimSpace(receipt.ExternalMessageID.String) != "" {
 			continue
 		}
+		if out := s.gateClaimed(ctx, d); out != nil {
+			return *out
+		}
+		// Live member resolution: the frozen open_id is a decision-time
+		// observation, never an authority. The binding on THIS installation is
+		// re-read before dialing, so unbinding (or a revoke) between decision
+		// and send fails explainably instead of misdelivering.
+		address := targetFromSnapshot(snap)
+		if snap.TargetType == TargetMember {
+			userID, err := util.ParseUUID(snap.UserID)
+			instID, instErr := util.ParseUUID(snap.Installation)
+			if err != nil || instErr != nil {
+				return sendOutcome{status: DeliveryStatusFailed, errorCode: ErrorCodeMemberUnbound,
+					detail: "member target snapshot is not resolvable"}
+			}
+			binding, err := s.Queries.GetChannelUserBindingForDelivery(ctx, db.GetChannelUserBindingForDeliveryParams{
+				WorkspaceID:    d.WorkspaceID,
+				InstallationID: instID,
+				MulticaUserID:  userID,
+			})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return sendOutcome{status: DeliveryStatusFailed, errorCode: ErrorCodeMemberUnbound,
+					detail: "member has no binding on this installation"}
+			} else if err != nil {
+				return sendOutcome{status: DeliveryStatusUncertain, errorCode: ErrorCodeSendAmbiguous,
+					detail: "resolve member binding: " + err.Error()}
+			}
+			address.OpenID = binding.ChannelUserID
+		}
+
 		// Lease ownership re-check BEFORE dialing a new shard (review
 		// R9): a worker whose claim expired — or whose row another
 		// replica already parked as uncertain — must not start sends its
@@ -359,14 +363,20 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 		if err != nil {
 			return classifySendError(i, err)
 		}
-		if _, err := s.Queries.RecordLabrastroMessageReceiptExternalID(ctx, db.RecordLabrastroMessageReceiptExternalIDParams{
+		if strings.TrimSpace(res.ExternalMessageID) == "" {
+			return sendOutcome{status: DeliveryStatusUncertain, errorCode: ErrorCodeSendAmbiguous, detail: "accepted shard has no external receipt id"}
+		}
+		receiptCtx, cancelReceipt := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		_, receiptErr := s.Queries.RecordLabrastroMessageReceiptExternalID(receiptCtx, db.RecordLabrastroMessageReceiptExternalIDParams{
 			ID:                receipt.ID,
-			ExternalMessageID: pgtype.Text{String: res.ExternalMessageID, Valid: res.ExternalMessageID != ""},
-		}); err != nil {
+			ExternalMessageID: pgtype.Text{String: res.ExternalMessageID, Valid: true},
+		})
+		cancelReceipt()
+		if receiptErr != nil {
 			// The platform ACCEPTED the shard but the receipt write
 			// failed — the delivery is now uncertain, not sent.
 			return sendOutcome{status: DeliveryStatusUncertain, errorCode: ErrorCodeSendAmbiguous,
-				detail: fmt.Sprintf("record receipt for shard %d: %v", i, err)}
+				detail: fmt.Sprintf("record receipt for shard %d: %v", i, receiptErr)}
 		}
 	}
 	return sendOutcome{status: DeliveryStatusSent}
@@ -407,7 +417,7 @@ func (s *Service) withParentLock(ctx context.Context, workspaceID pgtype.UUID, f
 // calling worker still owns it: same token, still 'sending', not expired.
 func (s *Service) holdsLease(ctx context.Context, d db.LabrastroMessageDelivery) bool {
 	if !d.LeaseToken.Valid {
-		return true
+		return false
 	}
 	row, err := s.Queries.GetLabrastroMessageDeliveryLease(ctx, d.ID)
 	if err != nil {
@@ -416,7 +426,7 @@ func (s *Service) holdsLease(ctx context.Context, d db.LabrastroMessageDelivery)
 	if row.Status != DeliveryStatusSending || row.LeaseToken != d.LeaseToken {
 		return false
 	}
-	return !row.LeaseExpiresAt.Valid || row.LeaseExpiresAt.Time.After(s.now())
+	return row.LeaseActive
 }
 
 // classifySendError maps a Sender error onto the delivery outcome.

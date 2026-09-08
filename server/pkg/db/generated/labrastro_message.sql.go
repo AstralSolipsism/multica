@@ -74,7 +74,8 @@ SET status = 'cancelled',
 WHERE id = $3
   AND lease_token = $4
   AND status = 'sending'
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
+  AND lease_expires_at > clock_timestamp()
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by
 `
 
 type CancelClaimedLabrastroMessageDeliveryParams struct {
@@ -120,8 +121,27 @@ func (q *Queries) CancelClaimedLabrastroMessageDelivery(ctx context.Context, arg
 		&i.FirstAttemptAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequestedBy,
 	)
 	return i, err
+}
+
+const cancelLabrastroMessageDeliveriesByAutopilot = `-- name: CancelLabrastroMessageDeliveriesByAutopilot :exec
+UPDATE labrastro_message_delivery
+SET status = 'cancelled', error_code = 'source_archived',
+    last_error = 'source automation archived', lease_token = NULL,
+    lease_expires_at = NULL, updated_at = now()
+WHERE autopilot_id = $1 AND workspace_id = $2 AND status = 'queued'
+`
+
+type CancelLabrastroMessageDeliveriesByAutopilotParams struct {
+	AutopilotID pgtype.UUID `json:"autopilot_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) CancelLabrastroMessageDeliveriesByAutopilot(ctx context.Context, arg CancelLabrastroMessageDeliveriesByAutopilotParams) error {
+	_, err := q.db.Exec(ctx, cancelLabrastroMessageDeliveriesByAutopilot, arg.AutopilotID, arg.WorkspaceID)
+	return err
 }
 
 const cancelLabrastroMessageDeliveriesByInstallation = `-- name: CancelLabrastroMessageDeliveriesByInstallation :many
@@ -135,7 +155,7 @@ SET status = 'cancelled',
 WHERE installation_id = $3
   AND workspace_id = $4
   AND status = 'queued'
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by
 `
 
 type CancelLabrastroMessageDeliveriesByInstallationParams struct {
@@ -188,6 +208,7 @@ func (q *Queries) CancelLabrastroMessageDeliveriesByInstallation(ctx context.Con
 			&i.FirstAttemptAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RequestedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -209,7 +230,7 @@ SET status = 'cancelled',
     updated_at = now()
 WHERE route_id = $3
   AND status = 'queued'
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by
 `
 
 type CancelLabrastroMessageDeliveriesByRouteParams struct {
@@ -255,6 +276,7 @@ func (q *Queries) CancelLabrastroMessageDeliveriesByRoute(ctx context.Context, a
 			&i.FirstAttemptAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RequestedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -279,7 +301,7 @@ WHERE workspace_id = $3
   AND installation_id = $5
   AND target_key = $6
   AND status = 'queued'
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by
 `
 
 type CancelLabrastroMessageDeliveriesByTargetParams struct {
@@ -336,6 +358,7 @@ func (q *Queries) CancelLabrastroMessageDeliveriesByTarget(ctx context.Context, 
 			&i.FirstAttemptAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RequestedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -366,7 +389,7 @@ SET status = 'sending',
     updated_at = now()
 FROM candidate
 WHERE d.id = candidate.id
-RETURNING d.id, d.workspace_id, d.route_id, d.route_revision, d.autopilot_id, d.run_id, d.dedup_key, d.source_kind, d.status, d.attempts, d.next_attempt_at, d.lease_token, d.lease_expires_at, d.error_code, d.last_error, d.content_snapshot, d.target_snapshot, d.installation_id, d.target_key, d.shard_total, d.source_ref, d.delivered_at, d.first_attempt_at, d.created_at, d.updated_at
+RETURNING d.id, d.workspace_id, d.route_id, d.route_revision, d.autopilot_id, d.run_id, d.dedup_key, d.source_kind, d.status, d.attempts, d.next_attempt_at, d.lease_token, d.lease_expires_at, d.error_code, d.last_error, d.content_snapshot, d.target_snapshot, d.installation_id, d.target_key, d.shard_total, d.source_ref, d.delivered_at, d.first_attempt_at, d.created_at, d.updated_at, d.requested_by
 `
 
 // Claims one due delivery. SKIP LOCKED distributes the queue across
@@ -403,6 +426,7 @@ func (q *Queries) ClaimDueLabrastroMessageDelivery(ctx context.Context) (Labrast
 		&i.FirstAttemptAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequestedBy,
 	)
 	return i, err
 }
@@ -416,7 +440,7 @@ SET status = 'sending',
     updated_at = now()
 WHERE id = $1
   AND status = 'queued'
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by
 `
 
 // Claims ONE known row for a synchronous sender (test-send): created queued
@@ -451,6 +475,7 @@ func (q *Queries) ClaimLabrastroMessageDeliveryByID(ctx context.Context, id pgty
 		&i.FirstAttemptAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequestedBy,
 	)
 	return i, err
 }
@@ -524,7 +549,8 @@ SET status = 'sent',
 WHERE id = $1
   AND lease_token = $2
   AND status = 'sending'
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
+  AND lease_expires_at > clock_timestamp()
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by
 `
 
 type CompleteClaimedLabrastroMessageDeliveryParams struct {
@@ -562,6 +588,7 @@ func (q *Queries) CompleteClaimedLabrastroMessageDelivery(ctx context.Context, a
 		&i.FirstAttemptAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequestedBy,
 	)
 	return i, err
 }
@@ -572,15 +599,15 @@ INSERT INTO labrastro_message_delivery (
     id, workspace_id, route_id, route_revision, autopilot_id, run_id,
     dedup_key, source_kind, status, content_snapshot, target_snapshot,
     shard_total, source_ref, target_key, installation_id, error_code,
-    lease_token, lease_expires_at
+    lease_token, lease_expires_at, requested_by
 ) VALUES (
     $1, $2, $12, $13, $3,
     $14, $4, $5, $6, $7, $8, $9, $15,
     $10, $11, $16,
-    $17, $18
+    $17, $18, $19
 )
 ON CONFLICT (dedup_key) DO NOTHING
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by
 `
 
 type CreateLabrastroMessageDeliveryParams struct {
@@ -602,6 +629,7 @@ type CreateLabrastroMessageDeliveryParams struct {
 	ErrorCode       pgtype.Text        `json:"error_code"`
 	LeaseToken      pgtype.UUID        `json:"lease_token"`
 	LeaseExpiresAt  pgtype.Timestamptz `json:"lease_expires_at"`
+	RequestedBy     pgtype.UUID        `json:"requested_by"`
 }
 
 // =====================
@@ -631,6 +659,7 @@ func (q *Queries) CreateLabrastroMessageDelivery(ctx context.Context, arg Create
 		arg.ErrorCode,
 		arg.LeaseToken,
 		arg.LeaseExpiresAt,
+		arg.RequestedBy,
 	)
 	if err != nil {
 		return nil, err
@@ -665,6 +694,7 @@ func (q *Queries) CreateLabrastroMessageDelivery(ctx context.Context, arg Create
 			&i.FirstAttemptAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RequestedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -852,6 +882,22 @@ func (q *Queries) DeleteLabrastroMessageRoutesByWorkspace(ctx context.Context, w
 	return err
 }
 
+const disableLabrastroMessageRoutesByInstallation = `-- name: DisableLabrastroMessageRoutesByInstallation :exec
+UPDATE labrastro_message_route
+SET enabled = false, revision = revision + 1, updated_at = now()
+WHERE workspace_id = $1 AND installation_id = $2 AND enabled
+`
+
+type DisableLabrastroMessageRoutesByInstallationParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	InstallationID pgtype.UUID `json:"installation_id"`
+}
+
+func (q *Queries) DisableLabrastroMessageRoutesByInstallation(ctx context.Context, arg DisableLabrastroMessageRoutesByInstallationParams) error {
+	_, err := q.db.Exec(ctx, disableLabrastroMessageRoutesByInstallation, arg.WorkspaceID, arg.InstallationID)
+	return err
+}
+
 const failClaimedLabrastroMessageDelivery = `-- name: FailClaimedLabrastroMessageDelivery :one
 UPDATE labrastro_message_delivery
 SET status = 'failed',
@@ -864,7 +910,8 @@ SET status = 'failed',
 WHERE id = $3
   AND lease_token = $4
   AND status = 'sending'
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
+  AND lease_expires_at > clock_timestamp()
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by
 `
 
 type FailClaimedLabrastroMessageDeliveryParams struct {
@@ -911,6 +958,7 @@ func (q *Queries) FailClaimedLabrastroMessageDelivery(ctx context.Context, arg F
 		&i.FirstAttemptAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequestedBy,
 	)
 	return i, err
 }
@@ -959,9 +1007,11 @@ const getChannelUserBindingForDelivery = `-- name: GetChannelUserBindingForDeliv
 
 SELECT b.id, b.workspace_id, b.multica_user_id, b.installation_id, b.channel_type, b.channel_user_id, b.config, b.bound_at FROM channel_user_binding b
 JOIN channel_installation ci ON ci.id = b.installation_id
+JOIN member m ON m.workspace_id = b.workspace_id AND m.user_id = b.multica_user_id
 WHERE b.workspace_id = $1
   AND b.installation_id = $2
   AND b.multica_user_id = $3
+  AND ci.workspace_id = b.workspace_id
   AND b.channel_type = ci.channel_type
   AND ci.status = 'active'
 `
@@ -997,7 +1047,7 @@ func (q *Queries) GetChannelUserBindingForDelivery(ctx context.Context, arg GetC
 }
 
 const getLabrastroMessageDelivery = `-- name: GetLabrastroMessageDelivery :one
-SELECT id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at FROM labrastro_message_delivery
+SELECT id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by FROM labrastro_message_delivery
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -1035,12 +1085,14 @@ func (q *Queries) GetLabrastroMessageDelivery(ctx context.Context, arg GetLabras
 		&i.FirstAttemptAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequestedBy,
 	)
 	return i, err
 }
 
 const getLabrastroMessageDeliveryLease = `-- name: GetLabrastroMessageDeliveryLease :one
-SELECT lease_token, lease_expires_at, status
+SELECT lease_token, lease_expires_at, status,
+    COALESCE(lease_expires_at > clock_timestamp(), false)::boolean AS lease_active
 FROM labrastro_message_delivery
 WHERE id = $1
 `
@@ -1049,6 +1101,7 @@ type GetLabrastroMessageDeliveryLeaseRow struct {
 	LeaseToken     pgtype.UUID        `json:"lease_token"`
 	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
 	Status         string             `json:"status"`
+	LeaseActive    bool               `json:"lease_active"`
 }
 
 // Fresh lease ownership read. A worker validates this before starting each
@@ -1058,7 +1111,12 @@ type GetLabrastroMessageDeliveryLeaseRow struct {
 func (q *Queries) GetLabrastroMessageDeliveryLease(ctx context.Context, id pgtype.UUID) (GetLabrastroMessageDeliveryLeaseRow, error) {
 	row := q.db.QueryRow(ctx, getLabrastroMessageDeliveryLease, id)
 	var i GetLabrastroMessageDeliveryLeaseRow
-	err := row.Scan(&i.LeaseToken, &i.LeaseExpiresAt, &i.Status)
+	err := row.Scan(
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.Status,
+		&i.LeaseActive,
+	)
 	return i, err
 }
 
@@ -1103,7 +1161,7 @@ func (q *Queries) GetLabrastroMessageRoute(ctx context.Context, arg GetLabrastro
 
 const getLabrastroMessageScanCursor = `-- name: GetLabrastroMessageScanCursor :one
 
-SELECT scanner, cursor_ts, cursor_id, cycle_started_at, generation, updated_at FROM labrastro_message_scan_cursor
+SELECT scanner, cursor_ts, cursor_id, cycle_started_at, generation, updated_at, cycle_upper_id FROM labrastro_message_scan_cursor
 WHERE scanner = $1
 `
 
@@ -1120,15 +1178,33 @@ func (q *Queries) GetLabrastroMessageScanCursor(ctx context.Context, scanner str
 		&i.CycleStartedAt,
 		&i.Generation,
 		&i.UpdatedAt,
+		&i.CycleUpperID,
 	)
 	return i, err
+}
+
+const getLabrastroMessageScanUpperBound = `-- name: GetLabrastroMessageScanUpperBound :one
+SELECT COALESCE(CASE WHEN $1::boolean THEN
+    (SELECT id FROM issue ORDER BY id DESC LIMIT 1)
+ELSE
+    (SELECT id FROM agent_task_queue ORDER BY id DESC LIMIT 1)
+END, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS upper_id
+`
+
+// Freeze an immutable ID bound over the source table, including non-candidates.
+// Old IDs that become eligible later are revisited in the next full cycle.
+func (q *Queries) GetLabrastroMessageScanUpperBound(ctx context.Context, scanIssues bool) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getLabrastroMessageScanUpperBound, scanIssues)
+	var upper_id pgtype.UUID
+	err := row.Scan(&upper_id)
+	return upper_id, err
 }
 
 const initLabrastroMessageScanCursor = `-- name: InitLabrastroMessageScanCursor :one
 INSERT INTO labrastro_message_scan_cursor (scanner)
 VALUES ($1)
 ON CONFLICT (scanner) DO NOTHING
-RETURNING scanner, cursor_ts, cursor_id, cycle_started_at, generation, updated_at
+RETURNING scanner, cursor_ts, cursor_id, cycle_started_at, generation, updated_at, cycle_upper_id
 `
 
 func (q *Queries) InitLabrastroMessageScanCursor(ctx context.Context, scanner string) (LabrastroMessageScanCursor, error) {
@@ -1141,6 +1217,7 @@ func (q *Queries) InitLabrastroMessageScanCursor(ctx context.Context, scanner st
 		&i.CycleStartedAt,
 		&i.Generation,
 		&i.UpdatedAt,
+		&i.CycleUpperID,
 	)
 	return i, err
 }
@@ -1248,7 +1325,7 @@ SELECT
     d.run_id, d.dedup_key, d.source_kind, d.status, d.attempts,
     d.next_attempt_at, d.error_code, d.last_error, d.shard_total,
     d.delivered_at, d.first_attempt_at, d.created_at, d.updated_at,
-    d.installation_id, d.target_key
+    d.installation_id, d.target_key, d.requested_by
 FROM labrastro_message_delivery d
 WHERE d.workspace_id = $1
   AND d.autopilot_id = $2
@@ -1286,6 +1363,7 @@ type ListLabrastroMessageDeliveriesByAutopilotRow struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 	InstallationID pgtype.UUID        `json:"installation_id"`
 	TargetKey      string             `json:"target_key"`
+	RequestedBy    pgtype.UUID        `json:"requested_by"`
 }
 
 // Records API projection. content_snapshot / target_snapshot / source_ref
@@ -1327,6 +1405,7 @@ func (q *Queries) ListLabrastroMessageDeliveriesByAutopilot(ctx context.Context,
 			&i.UpdatedAt,
 			&i.InstallationID,
 			&i.TargetKey,
+			&i.RequestedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -1359,6 +1438,7 @@ JOIN labrastro_message_route rt
  AND rt.workspace_id = a.workspace_id
  AND rt.enabled = true
 WHERE r.status IN ('completed', 'failed', 'skipped')
+  AND a.status <> 'archived'
   AND r.completed_at >= rt.effective_from
   AND NOT EXISTS (
       SELECT 1 FROM labrastro_message_delivery d
@@ -1552,12 +1632,14 @@ JOIN autopilot_run r ON r.issue_id = i.id
 WHERE r.issue_id IS NOT NULL
   AND r.status IN ('pending', 'issue_created', 'running')
   AND i.id > $1::uuid
+  AND i.id <= $2::uuid
 ORDER BY i.id
-LIMIT $2
+LIMIT $3
 `
 
 type ListStaleCreateIssueAutopilotIssuesParams struct {
 	AfterID pgtype.UUID `json:"after_id"`
+	UpperID pgtype.UUID `json:"upper_id"`
 	Limit   int32       `json:"limit"`
 }
 
@@ -1569,7 +1651,7 @@ type ListStaleCreateIssueAutopilotIssuesParams struct {
 // Same principle on the issue side: the run's own issue link identifies
 // create_issue sources.
 func (q *Queries) ListStaleCreateIssueAutopilotIssues(ctx context.Context, arg ListStaleCreateIssueAutopilotIssuesParams) ([]Issue, error) {
-	rows, err := q.db.Query(ctx, listStaleCreateIssueAutopilotIssues, arg.AfterID, arg.Limit)
+	rows, err := q.db.Query(ctx, listStaleCreateIssueAutopilotIssues, arg.AfterID, arg.UpperID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1626,12 +1708,14 @@ WHERE t.autopilot_run_id IS NULL
   AND t.status = 'failed'
   AND r.status IN ('pending', 'issue_created', 'running')
   AND t.id > $1::uuid
+  AND t.id <= $2::uuid
 ORDER BY t.id
-LIMIT $2
+LIMIT $3
 `
 
 type ListStaleLinkedIssueTaskFailuresParams struct {
 	AfterID pgtype.UUID `json:"after_id"`
+	UpperID pgtype.UUID `json:"upper_id"`
 	Limit   int32       `json:"limit"`
 }
 
@@ -1643,7 +1727,7 @@ type ListStaleLinkedIssueTaskFailuresParams struct {
 // contract §4, review R12). Tasks not linked to any issue, and unrelated
 // chat tasks, never enter this scan.
 func (q *Queries) ListStaleLinkedIssueTaskFailures(ctx context.Context, arg ListStaleLinkedIssueTaskFailuresParams) ([]AgentTaskQueue, error) {
-	rows, err := q.db.Query(ctx, listStaleLinkedIssueTaskFailures, arg.AfterID, arg.Limit)
+	rows, err := q.db.Query(ctx, listStaleLinkedIssueTaskFailures, arg.AfterID, arg.UpperID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1720,16 +1804,19 @@ func (q *Queries) ListStaleLinkedIssueTaskFailures(ctx context.Context, arg List
 const listStaleRunOnlyAutopilotTasks = `-- name: ListStaleRunOnlyAutopilotTasks :many
 SELECT t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing, t.retired_session_id, t.quick_actions_disabled, t.regenerate_quick_actions_for, t.branch_name, t.durable_work_dir, t.channel_context_revision FROM agent_task_queue t
 JOIN autopilot_run r ON r.id = t.autopilot_run_id
-WHERE r.task_id IS NOT NULL
+    OR (t.autopilot_run_id IS NULL AND r.task_id = t.id)
+WHERE r.issue_id IS NULL
   AND r.status IN ('pending', 'issue_created', 'running')
   AND t.status IN ('completed', 'failed', 'cancelled')
   AND t.id > $1::uuid
+  AND t.id <= $2::uuid
 ORDER BY t.id
-LIMIT $2
+LIMIT $3
 `
 
 type ListStaleRunOnlyAutopilotTasksParams struct {
 	AfterID pgtype.UUID `json:"after_id"`
+	UpperID pgtype.UUID `json:"upper_id"`
 	Limit   int32       `json:"limit"`
 }
 
@@ -1737,12 +1824,12 @@ type ListStaleRunOnlyAutopilotTasksParams struct {
 // though the task itself is terminal — the event the run sync listens for
 // was lost. The scanner feeds these to the EXISTING SyncRunFromTask logic;
 // this module runs no state machine of its own.
-// The source relation (r.task_id IS NOT NULL) is the run's OWN persisted
-// evidence of run_only execution (repair contract §3, review R7) — the
+// Either direction of the task/run link is persisted evidence of run_only
+// execution (repair contract §3, review R7), when there is no issue link. The
 // autopilot's current execution_mode is mutable and must never filter
 // historical sources.
 func (q *Queries) ListStaleRunOnlyAutopilotTasks(ctx context.Context, arg ListStaleRunOnlyAutopilotTasksParams) ([]AgentTaskQueue, error) {
-	rows, err := q.db.Query(ctx, listStaleRunOnlyAutopilotTasks, arg.AfterID, arg.Limit)
+	rows, err := q.db.Query(ctx, listStaleRunOnlyAutopilotTasks, arg.AfterID, arg.UpperID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1805,6 +1892,77 @@ func (q *Queries) ListStaleRunOnlyAutopilotTasks(ctx context.Context, arg ListSt
 			&i.BranchName,
 			&i.DurableWorkDir,
 			&i.ChannelContextRevision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockLabrastroMessageInstallation = `-- name: LockLabrastroMessageInstallation :one
+SELECT id, workspace_id, agent_id, channel_type, config, status, ws_lease_token, ws_lease_expires_at, installer_user_id, installed_at, created_at, updated_at FROM channel_installation
+WHERE id = $1 AND workspace_id = $2
+FOR SHARE
+`
+
+type LockLabrastroMessageInstallationParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockLabrastroMessageInstallation(ctx context.Context, arg LockLabrastroMessageInstallationParams) (ChannelInstallation, error) {
+	row := q.db.QueryRow(ctx, lockLabrastroMessageInstallation, arg.ID, arg.WorkspaceID)
+	var i ChannelInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Config,
+		&i.Status,
+		&i.WsLeaseToken,
+		&i.WsLeaseExpiresAt,
+		&i.InstallerUserID,
+		&i.InstalledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockLabrastroMessageRuntimeInstallations = `-- name: LockLabrastroMessageRuntimeInstallations :many
+SELECT ci.id, ci.workspace_id, ci.agent_id, ci.channel_type, ci.config, ci.status, ci.ws_lease_token, ci.ws_lease_expires_at, ci.installer_user_id, ci.installed_at, ci.created_at, ci.updated_at FROM channel_installation ci
+JOIN agent a ON a.id = ci.agent_id
+WHERE a.runtime_id = $1 AND a.kind = 'system'
+ORDER BY ci.id FOR UPDATE OF ci
+`
+
+func (q *Queries) LockLabrastroMessageRuntimeInstallations(ctx context.Context, runtimeID pgtype.UUID) ([]ChannelInstallation, error) {
+	rows, err := q.db.Query(ctx, lockLabrastroMessageRuntimeInstallations, runtimeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChannelInstallation{}
+	for rows.Next() {
+		var i ChannelInstallation
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AgentID,
+			&i.ChannelType,
+			&i.Config,
+			&i.Status,
+			&i.WsLeaseToken,
+			&i.WsLeaseExpiresAt,
+			&i.InstallerUserID,
+			&i.InstalledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1882,8 +2040,8 @@ SET status = 'uncertain',
     lease_expires_at = NULL,
     updated_at = now()
 WHERE status = 'sending'
-  AND lease_expires_at <= now()
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
+  AND (lease_expires_at IS NULL OR lease_expires_at <= now())
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by
 `
 
 type RequeueExpiredLabrastroMessageDeliveryClaimsParams struct {
@@ -1930,6 +2088,7 @@ func (q *Queries) RequeueExpiredLabrastroMessageDeliveryClaims(ctx context.Conte
 			&i.FirstAttemptAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RequestedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -1954,7 +2113,8 @@ SET status = 'queued',
 WHERE id = $4
   AND lease_token = $5
   AND status = 'sending'
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
+  AND lease_expires_at > clock_timestamp()
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by
 `
 
 type RetryClaimedLabrastroMessageDeliveryParams struct {
@@ -2001,6 +2161,7 @@ func (q *Queries) RetryClaimedLabrastroMessageDelivery(ctx context.Context, arg 
 		&i.FirstAttemptAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequestedBy,
 	)
 	return i, err
 }
@@ -2017,7 +2178,7 @@ SET status = 'queued',
 WHERE id = $3
   AND workspace_id = $4
   AND status IN ('failed', 'uncertain')
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by
 `
 
 type RetryLabrastroMessageDeliveryManuallyParams struct {
@@ -2065,6 +2226,7 @@ func (q *Queries) RetryLabrastroMessageDeliveryManually(ctx context.Context, arg
 		&i.FirstAttemptAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequestedBy,
 	)
 	return i, err
 }
@@ -2072,15 +2234,17 @@ func (q *Queries) RetryLabrastroMessageDeliveryManually(ctx context.Context, arg
 const revokeLabrastroMessageTarget = `-- name: RevokeLabrastroMessageTarget :many
 UPDATE labrastro_message_approved_target
 SET revoked_at = now()
-WHERE workspace_id = $1
-  AND autopilot_id = $2
-  AND installation_id = $3
-  AND target_key = $4
+WHERE id = $1
+  AND workspace_id = $2
+  AND autopilot_id = $3
+  AND installation_id = $4
+  AND target_key = $5
   AND revoked_at IS NULL
 RETURNING id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at
 `
 
 type RevokeLabrastroMessageTargetParams struct {
+	ID             pgtype.UUID `json:"id"`
 	WorkspaceID    pgtype.UUID `json:"workspace_id"`
 	AutopilotID    pgtype.UUID `json:"autopilot_id"`
 	InstallationID pgtype.UUID `json:"installation_id"`
@@ -2092,6 +2256,7 @@ type RevokeLabrastroMessageTargetParams struct {
 // cancelled by the service layer on this path.
 func (q *Queries) RevokeLabrastroMessageTarget(ctx context.Context, arg RevokeLabrastroMessageTargetParams) ([]LabrastroMessageApprovedTarget, error) {
 	rows, err := q.db.Query(ctx, revokeLabrastroMessageTarget,
+		arg.ID,
 		arg.WorkspaceID,
 		arg.AutopilotID,
 		arg.InstallationID,
@@ -2130,17 +2295,19 @@ UPDATE labrastro_message_scan_cursor
 SET cursor_ts = $1,
     cursor_id = $2,
     cycle_started_at = $3,
+    cycle_upper_id = $4,
     generation = generation + 1,
     updated_at = now()
-WHERE scanner = $4
-  AND generation = $5
-RETURNING scanner, cursor_ts, cursor_id, cycle_started_at, generation, updated_at
+WHERE scanner = $5
+  AND generation = $6
+RETURNING scanner, cursor_ts, cursor_id, cycle_started_at, generation, updated_at, cycle_upper_id
 `
 
 type SaveLabrastroMessageScanCursorParams struct {
 	CursorTs           pgtype.Timestamptz `json:"cursor_ts"`
 	CursorID           pgtype.UUID        `json:"cursor_id"`
 	CycleStartedAt     pgtype.Timestamptz `json:"cycle_started_at"`
+	CycleUpperID       pgtype.UUID        `json:"cycle_upper_id"`
 	Scanner            string             `json:"scanner"`
 	ExpectedGeneration int64              `json:"expected_generation"`
 }
@@ -2154,6 +2321,7 @@ func (q *Queries) SaveLabrastroMessageScanCursor(ctx context.Context, arg SaveLa
 		arg.CursorTs,
 		arg.CursorID,
 		arg.CycleStartedAt,
+		arg.CycleUpperID,
 		arg.Scanner,
 		arg.ExpectedGeneration,
 	)
@@ -2165,6 +2333,7 @@ func (q *Queries) SaveLabrastroMessageScanCursor(ctx context.Context, arg SaveLa
 		&i.CycleStartedAt,
 		&i.Generation,
 		&i.UpdatedAt,
+		&i.CycleUpperID,
 	)
 	return i, err
 }
@@ -2179,11 +2348,14 @@ SET status = $1,
     attempts = attempts + 1,
     error_code = $2,
     last_error = $3,
+    lease_token = NULL,
+    lease_expires_at = NULL,
     updated_at = now()
 WHERE id = $4
   AND lease_token = $5
   AND status = 'sending'
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
+  AND lease_expires_at > clock_timestamp()
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by
 `
 
 type SetLabrastroMessageDeliveryOutcomeParams struct {
@@ -2233,6 +2405,7 @@ func (q *Queries) SetLabrastroMessageDeliveryOutcome(ctx context.Context, arg Se
 		&i.FirstAttemptAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequestedBy,
 	)
 	return i, err
 }
@@ -2309,7 +2482,8 @@ SET status = 'uncertain',
 WHERE id = $3
   AND lease_token = $4
   AND status = 'sending'
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
+  AND lease_expires_at > clock_timestamp()
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by
 `
 
 type UncertainClaimedLabrastroMessageDeliveryParams struct {
@@ -2355,6 +2529,7 @@ func (q *Queries) UncertainClaimedLabrastroMessageDelivery(ctx context.Context, 
 		&i.FirstAttemptAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequestedBy,
 	)
 	return i, err
 }

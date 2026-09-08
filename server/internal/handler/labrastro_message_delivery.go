@@ -103,6 +103,12 @@ func writeMessageDeliveryError(w http.ResponseWriter, err error) {
 	var mismatch *messagedelivery.TargetAnchorMismatchError
 
 	switch {
+	case errors.Is(err, messagedelivery.ErrSourceUnavailable):
+		writeErrorCode(w, http.StatusConflict, "source_unavailable", "source automation is archived or missing")
+	case errors.Is(err, messagedelivery.ErrAuthorizationLost):
+		writeErrorCode(w, http.StatusForbidden, "authorization_lost", "the acting member no longer holds permission")
+	case errors.Is(err, messagedelivery.ErrApprovedTargetNotFound):
+		writeErrorCode(w, http.StatusNotFound, "route_not_found", "approved target not found")
 	case errors.As(err, &invalidRoute):
 		writeErrorCode(w, http.StatusBadRequest, "route_invalid", err.Error())
 	case errors.As(err, &invalidInst):
@@ -414,31 +420,24 @@ type messageApprovedTargetRequest struct {
 // owners/admins. Approving an outbound target is a workspace consent act
 // (OL-23: "群聊使用工作区批准的目标"), categorically above automation write
 // permission — a collaborator can never approve their own target.
-func (h *Handler) requireMessageTargetAdmin(w http.ResponseWriter, r *http.Request) (db.Autopilot, bool) {
-	id := chi.URLParam(r, "id")
-	workspaceID := h.resolveWorkspaceID(r)
-	ap, ok := h.loadAutopilotInWorkspace(w, r, id, workspaceID)
+func (h *Handler) requireMessageTargetAdmin(w http.ResponseWriter, r *http.Request) (db.Autopilot, db.Member, bool) {
+	ap, member, ok := h.requireMessageRouteAccessWithMember(w, r)
 	if !ok {
-		return db.Autopilot{}, false
+		return db.Autopilot{}, db.Member{}, false
 	}
-	if _, ok := h.requireAutopilotWrite(w, r, ap, workspaceID); !ok {
-		return db.Autopilot{}, false
+	if member.Role != "owner" && member.Role != "admin" {
+		writeErrorCode(w, http.StatusForbidden, "message_target_admin_required", "target approval requires a workspace owner or admin")
+		return db.Autopilot{}, db.Member{}, false
 	}
-	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
-		return db.Autopilot{}, false
-	}
-	return ap, true
+	return ap, member, true
 }
 
 // ApproveMessageTarget: POST /api/autopilots/{id}/message-approved-targets
 // Grants the (automation, bot, target) triple an active approval. The
 // resolved target key is stored, so the approval covers the VERIFIED chat.
 func (h *Handler) ApproveMessageTarget(w http.ResponseWriter, r *http.Request) {
-	ap, member, ok := h.requireMessageRouteAccessWithMember(w, r)
+	ap, member, ok := h.requireMessageTargetAdmin(w, r)
 	if !ok {
-		return
-	}
-	if _, ok := h.requireMessageTargetAdmin(w, r); !ok {
 		return
 	}
 	var req messageApprovedTargetRequest
@@ -460,7 +459,7 @@ func (h *Handler) ApproveMessageTarget(w http.ResponseWriter, r *http.Request) {
 	}
 	if target.Type() == messagedelivery.TargetMember {
 		writeErrorCode(w, http.StatusBadRequest, "route_invalid",
-			"member targets are authorized by their own binding and need no approval")
+			"member targets use source permissions and an installation-specific binding; no group approval is needed")
 		return
 	}
 	row, err := h.MessageDelivery.ApproveTarget(r.Context(), ap, member, target)
@@ -473,7 +472,7 @@ func (h *Handler) ApproveMessageTarget(w http.ResponseWriter, r *http.Request) {
 
 // ListMessageApprovedTargets: GET /api/autopilots/{id}/message-approved-targets
 func (h *Handler) ListMessageApprovedTargets(w http.ResponseWriter, r *http.Request) {
-	ap, ok := h.requireMessageTargetAdmin(w, r)
+	ap, _, ok := h.requireMessageTargetAdmin(w, r)
 	if !ok {
 		return
 	}
@@ -492,7 +491,7 @@ func (h *Handler) ListMessageApprovedTargets(w http.ResponseWriter, r *http.Requ
 // Soft-revokes the approval (audit history kept) and cancels the route's
 // not-yet-started sends against the frozen target.
 func (h *Handler) RevokeMessageTarget(w http.ResponseWriter, r *http.Request) {
-	ap, ok := h.requireMessageTargetAdmin(w, r)
+	ap, _, ok := h.requireMessageTargetAdmin(w, r)
 	if !ok {
 		return
 	}
@@ -517,7 +516,7 @@ func (h *Handler) RevokeMessageTarget(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusNotFound, "route_not_found", "approved target not found")
 		return
 	}
-	cancelled, err := h.MessageDelivery.RevokeTarget(r.Context(), ap, found.TargetKey)
+	cancelled, err := h.MessageDelivery.RevokeTarget(r.Context(), ap, *found)
 	if err != nil {
 		writeMessageDeliveryError(w, err)
 		return

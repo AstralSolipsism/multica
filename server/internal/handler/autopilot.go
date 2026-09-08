@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/autopilotauth"
+	"github.com/multica-ai/multica/server/internal/messagedelivery/lifecycle"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -1372,6 +1373,10 @@ func (h *Handler) DeleteAutopilot(w http.ResponseWriter, r *http.Request) {
 
 	if err := qtx.ArchiveAutopilot(r.Context(), idUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete autopilot")
+		return
+	}
+	if err := lifecycle.StopAutopilot(r.Context(), qtx, ap.WorkspaceID, ap.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to stop automation deliveries")
 		return
 	}
 	ap.Status = "archived" // reflect the post-archive state in the version snapshot

@@ -284,7 +284,11 @@ func (s *Service) resolveTarget(ctx context.Context, workspaceID, autopilotID pg
 // targetApproved reports whether the (source, bot, target) triple currently
 // holds an active workspace-admin approval (repair contract §2, review R1).
 func (s *Service) targetApproved(ctx context.Context, workspaceID, autopilotID, installationID pgtype.UUID, targetKey string) error {
-	_, err := s.Queries.GetActiveLabrastroMessageApprovedTarget(ctx, db.GetActiveLabrastroMessageApprovedTargetParams{
+	return targetApprovedWith(ctx, s.Queries, workspaceID, autopilotID, installationID, targetKey)
+}
+
+func targetApprovedWith(ctx context.Context, q *db.Queries, workspaceID, autopilotID, installationID pgtype.UUID, targetKey string) error {
+	_, err := q.GetActiveLabrastroMessageApprovedTarget(ctx, db.GetActiveLabrastroMessageApprovedTargetParams{
 		WorkspaceID:    workspaceID,
 		AutopilotID:    autopilotID,
 		InstallationID: installationID,
@@ -305,50 +309,48 @@ func (s *Service) targetApproved(ctx context.Context, workspaceID, autopilotID, 
 // triple. The caller resolves the target first so the approval covers the
 // VERIFIED chat id, mirroring what a route against it would store.
 func (s *Service) ApproveTarget(ctx context.Context, ap db.Autopilot, approver db.Member, target resolvedTarget) (db.LabrastroMessageApprovedTarget, error) {
-	row, err := s.Queries.ApproveLabrastroMessageTarget(ctx, db.ApproveLabrastroMessageTargetParams{
-		WorkspaceID:    ap.WorkspaceID,
-		AutopilotID:    ap.ID,
-		InstallationID: target.installation.ID,
-		TargetKey:      target.targetKey,
-		TargetType:     target.targetType,
-		ApprovedBy:     approver.UserID,
+	var row db.LabrastroMessageApprovedTarget
+	err := s.withTargetWrite(ctx, ap.WorkspaceID, ap.ID, approver, target, true, func(q *db.Queries) error {
+		var err error
+		row, err = q.ApproveLabrastroMessageTarget(ctx, db.ApproveLabrastroMessageTargetParams{
+			WorkspaceID: ap.WorkspaceID, AutopilotID: ap.ID, InstallationID: target.installation.ID,
+			TargetKey: target.targetKey, TargetType: target.targetType, ApprovedBy: approver.UserID,
+		})
+		return err
 	})
-	if err != nil {
-		return db.LabrastroMessageApprovedTarget{}, fmt.Errorf("approve target: %w", err)
+	if isUniqueViolation(err) {
+		return row, ErrRouteAlreadyExists
 	}
-	return row, nil
+	return row, err
 }
 
-// RevokeTarget soft-revokes one active approval and cancels the route's
-// not-yet-started sends against it. Platform-accepted requests are not
-// recallable; their receipts stay.
-func (s *Service) RevokeTarget(ctx context.Context, ap db.Autopilot, targetKey string) (int, error) {
-	revoked, err := s.Queries.RevokeLabrastroMessageTarget(ctx, db.RevokeLabrastroMessageTargetParams{
-		WorkspaceID: ap.WorkspaceID,
-		AutopilotID: ap.ID,
-		TargetKey:   targetKey,
-	})
-	if err != nil {
-		return 0, fmt.Errorf("revoke target: %w", err)
-	}
+// Revocation and queued cancellation commit together. The exact approval ID
+// prevents a stale request from revoking a newer approval of the same target.
+func (s *Service) RevokeTarget(ctx context.Context, ap db.Autopilot, target db.LabrastroMessageApprovedTarget) (int, error) {
 	cancelled := 0
-	for _, r := range revoked {
-		rows, err := s.Queries.CancelLabrastroMessageDeliveriesByTarget(ctx, db.CancelLabrastroMessageDeliveriesByTargetParams{
-			WorkspaceID:    ap.WorkspaceID,
-			AutopilotID:    ap.ID,
-			InstallationID: r.InstallationID,
-			TargetKey:      r.TargetKey,
-			ErrorCode:      pgtype.Text{String: ErrorCodeTargetNotApproved, Valid: true},
-			LastError:      pgtype.Text{String: "target approval revoked", Valid: true},
+	err := s.withParentLock(ctx, ap.WorkspaceID, func(q *db.Queries) error {
+		if _, err := q.LockAutopilotForUpdate(ctx, db.LockAutopilotForUpdateParams{ID: ap.ID, WorkspaceID: ap.WorkspaceID}); err != nil {
+			return err
+		}
+		revoked, err := q.RevokeLabrastroMessageTarget(ctx, db.RevokeLabrastroMessageTargetParams{
+			ID: target.ID, WorkspaceID: ap.WorkspaceID, AutopilotID: ap.ID,
+			InstallationID: target.InstallationID, TargetKey: target.TargetKey,
 		})
 		if err != nil {
-			s.logger().Warn("messagedelivery: cancel queued deliveries for revoked target",
-				"target_key", r.TargetKey, "error", err)
-			continue
+			return err
 		}
-		cancelled += len(rows)
-	}
-	return cancelled, nil
+		if len(revoked) == 0 {
+			return ErrApprovedTargetNotFound
+		}
+		rows, err := q.CancelLabrastroMessageDeliveriesByTarget(ctx, db.CancelLabrastroMessageDeliveriesByTargetParams{
+			WorkspaceID: ap.WorkspaceID, AutopilotID: ap.ID, InstallationID: target.InstallationID,
+			TargetKey: target.TargetKey, ErrorCode: pgtype.Text{String: ErrorCodeTargetNotApproved, Valid: true},
+			LastError: pgtype.Text{String: "target approval revoked", Valid: true},
+		})
+		cancelled = len(rows)
+		return err
+	})
+	return cancelled, err
 }
 
 // ListApprovedTargets returns the automation's active approvals.
@@ -397,22 +399,27 @@ func (s *Service) CreateRoute(ctx context.Context, ap db.Autopilot, member db.Me
 	if err != nil {
 		return db.LabrastroMessageRoute{}, err
 	}
-	route, err := s.Queries.CreateLabrastroMessageRoute(ctx, db.CreateLabrastroMessageRouteParams{
-		ID:              dbid.NewV7(),
-		WorkspaceID:     ap.WorkspaceID,
-		AutopilotID:     ap.ID,
-		InstallationID:  target.installation.ID,
-		ChannelType:     target.installation.ChannelType,
-		TargetType:      target.targetType,
-		TargetKey:       target.targetKey,
-		Conditions:      in.Conditions,
-		ContentMode:     in.ContentMode,
-		Enabled:         s.enabledOrDefault(in, true, false),
-		CreatedBy:       member.UserID,
-		TargetUserID:    target.userID,
-		TargetChatID:    target.chatID,
-		TargetMessageID: target.messageID,
-		TargetThreadID:  target.threadID,
+	var route db.LabrastroMessageRoute
+	err = s.withTargetWrite(ctx, ap.WorkspaceID, ap.ID, member, target, false, func(q *db.Queries) error {
+		var writeErr error
+		route, writeErr = q.CreateLabrastroMessageRoute(ctx, db.CreateLabrastroMessageRouteParams{
+			ID:              dbid.NewV7(),
+			WorkspaceID:     ap.WorkspaceID,
+			AutopilotID:     ap.ID,
+			InstallationID:  target.installation.ID,
+			ChannelType:     target.installation.ChannelType,
+			TargetType:      target.targetType,
+			TargetKey:       target.targetKey,
+			Conditions:      in.Conditions,
+			ContentMode:     in.ContentMode,
+			Enabled:         s.enabledOrDefault(in, true, false),
+			CreatedBy:       member.UserID,
+			TargetUserID:    target.userID,
+			TargetChatID:    target.chatID,
+			TargetMessageID: target.messageID,
+			TargetThreadID:  target.threadID,
+		})
+		return writeErr
 	})
 	if isUniqueViolation(err) {
 		return db.LabrastroMessageRoute{}, ErrRouteAlreadyExists
@@ -432,22 +439,27 @@ func (s *Service) UpdateRoute(ctx context.Context, route db.LabrastroMessageRout
 		return db.LabrastroMessageRoute{}, err
 	}
 	enabled := s.enabledOrDefault(in, false, route.Enabled)
-	updated, err := s.Queries.UpdateLabrastroMessageRoute(ctx, db.UpdateLabrastroMessageRouteParams{
-		ID:               route.ID,
-		WorkspaceID:      route.WorkspaceID,
-		ExpectedRevision: expectedRevision,
-		InstallationID:   target.installation.ID,
-		ChannelType:      target.installation.ChannelType,
-		TargetType:       target.targetType,
-		TargetUserID:     target.userID,
-		TargetChatID:     target.chatID,
-		TargetMessageID:  target.messageID,
-		TargetThreadID:   target.threadID,
-		TargetKey:        target.targetKey,
-		Conditions:       in.Conditions,
-		ContentMode:      in.ContentMode,
-		Enabled:          enabled,
-		UpdatedBy:        member.UserID,
+	var updated db.LabrastroMessageRoute
+	err = s.withTargetWrite(ctx, route.WorkspaceID, route.AutopilotID, member, target, false, func(q *db.Queries) error {
+		var writeErr error
+		updated, writeErr = q.UpdateLabrastroMessageRoute(ctx, db.UpdateLabrastroMessageRouteParams{
+			ID:               route.ID,
+			WorkspaceID:      route.WorkspaceID,
+			ExpectedRevision: expectedRevision,
+			InstallationID:   target.installation.ID,
+			ChannelType:      target.installation.ChannelType,
+			TargetType:       target.targetType,
+			TargetUserID:     target.userID,
+			TargetChatID:     target.chatID,
+			TargetMessageID:  target.messageID,
+			TargetThreadID:   target.threadID,
+			TargetKey:        target.targetKey,
+			Conditions:       in.Conditions,
+			ContentMode:      in.ContentMode,
+			Enabled:          enabled,
+			UpdatedBy:        member.UserID,
+		})
+		return writeErr
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Either the route vanished or the revision moved on; distinguish
@@ -477,13 +489,28 @@ func (s *Service) UpdateRoute(ctx context.Context, route db.LabrastroMessageRout
 // and cancels queued sends; enable resets the eligibility boundary so the
 // disabled window is never backfilled.
 func (s *Service) SetRouteEnabled(ctx context.Context, route db.LabrastroMessageRoute, member db.Member, enabled bool, expectedRevision int32) (db.LabrastroMessageRoute, error) {
-	updated, err := s.Queries.SetLabrastroMessageRouteEnabled(ctx, db.SetLabrastroMessageRouteEnabledParams{
-		ID:               route.ID,
-		WorkspaceID:      route.WorkspaceID,
-		ExpectedRevision: expectedRevision,
-		Enabled:          enabled,
-		UpdatedBy:        member.UserID,
-	})
+	var updated db.LabrastroMessageRoute
+	write := func(q *db.Queries) error {
+		var err error
+		updated, err = q.SetLabrastroMessageRouteEnabled(ctx, db.SetLabrastroMessageRouteEnabledParams{
+			ID:               route.ID,
+			WorkspaceID:      route.WorkspaceID,
+			ExpectedRevision: expectedRevision,
+			Enabled:          enabled,
+			UpdatedBy:        member.UserID,
+		})
+		return err
+	}
+	var err error
+	if enabled {
+		target, resolveErr := s.ResolveTarget(ctx, route.WorkspaceID, route.AutopilotID, routeInput(route))
+		if resolveErr != nil {
+			return updated, resolveErr
+		}
+		err = s.withTargetWrite(ctx, route.WorkspaceID, route.AutopilotID, member, target, false, write)
+	} else {
+		err = s.withParentLock(ctx, route.WorkspaceID, write)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		current, getErr := s.Queries.GetLabrastroMessageRoute(ctx, db.GetLabrastroMessageRouteParams{
 			ID: route.ID, WorkspaceID: route.WorkspaceID,
@@ -603,6 +630,14 @@ func (s *Service) EnqueueRunDeliveries(ctx context.Context, runID pgtype.UUID) (
 	}
 
 	source := sourceFactsFromRun(run)
+	if !source.IssueIDValid && !source.TaskIDValid {
+		task, taskErr := s.Queries.GetAutopilotTaskByRun(ctx, run.ID)
+		if taskErr == nil {
+			source.TaskID, source.TaskIDValid = util.UUIDToString(task.ID), true
+		} else if !errors.Is(taskErr, pgx.ErrNoRows) {
+			return 0, fmt.Errorf("resolve source task: %w", taskErr)
+		}
+	}
 	decided := 0
 	for _, route := range routes {
 		in := s.decisionInputFromSource(ap, route, source)
@@ -679,7 +714,10 @@ func (s *Service) decideDelivery(ctx context.Context, ap db.Autopilot, in decisi
 
 	status := DeliveryStatusQueued
 	var errorCode pgtype.Text
-	if !routeMatchesRun(in.Route.Conditions, in.RunStatus) {
+	if ref.ExecutionMode == SourceKindUnknown {
+		status = DeliveryStatusSuppressed
+		errorCode = pgtype.Text{String: "source_unresolved", Valid: true}
+	} else if !routeMatchesRun(in.Route.Conditions, in.RunStatus) {
 		// Condition mismatch (including skipped runs): record the
 		// decision so the compensator stops revisiting this source.
 		status = DeliveryStatusSuppressed
@@ -820,13 +858,16 @@ func (s *Service) buildDecisionPayload(ctx context.Context, ap db.Autopilot, in 
 			hasOutput,
 			in.Route.ContentMode == ContentWithOutput,
 		)
-	default:
+	case SourceKindCreateIssue:
 		ident, issueStatus, slug := s.issueRef(ctx, ap.WorkspaceID, in)
 		content = buildCreateIssueContent(ap.Title, in.RunStatus, ident, issueStatus, s.AppURL, slug)
 		ref.IssueIdentifier = ident
 		ref.IssueStatus = issueStatus
 	}
 
+	if sourceKind == SourceKindUnknown {
+		return target, content, ref, 0, nil
+	}
 	shards := splitShards(content.Text)
 	return target, content, ref, len(shards), nil
 }

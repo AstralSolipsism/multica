@@ -971,6 +971,7 @@ type LabrastroMessageDelivery struct {
 	FirstAttemptAt  pgtype.Timestamptz `json:"first_attempt_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	RequestedBy     pgtype.UUID        `json:"requested_by"`
 }
 
 type LabrastroMessageReceipt struct {
@@ -1016,6 +1017,7 @@ type LabrastroMessageScanCursor struct {
 	CycleStartedAt pgtype.Timestamptz `json:"cycle_started_at"`
 	Generation     int64              `json:"generation"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	CycleUpperID   pgtype.UUID        `json:"cycle_upper_id"`
 }
 
 type LarkBindingToken struct {

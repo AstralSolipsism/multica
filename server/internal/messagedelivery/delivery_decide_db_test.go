@@ -266,6 +266,7 @@ func TestWorker_PermanentFailureIsExplainable(t *testing.T) {
 	fx.memberTargetRoute(t, "route", testUID, testutil.Cols{"conditions": ConditionFailure})
 	fx.bindMember(t, testUID, "ou_gone")
 	run := fx.run(t, "failed", testutil.Cols{
+		"task_id":        testFx.Task(t, testAgent, testutil.Cols{"status": "failed", "completed_at": testutil.Raw("now()")}),
 		"result":         nil,
 		"failure_reason": testutil.Raw(`'internal error'`),
 		"reason_code":    testutil.Raw(`'quota_exceeded'`),
@@ -569,7 +570,8 @@ func TestRetryDelivery_Semantics(t *testing.T) {
 	}
 	fx := newMDFixture(t, "retry", nil)
 	fx.bindMember(t, testUID, "ou_retry")
-	deliveryID := fx.terminalRunDelivery(t, DeliveryStatusFailed, nil)
+	route := fx.memberTargetRoute(t, "retry route", testUID, nil)
+	deliveryID := fx.terminalRunDelivery(t, DeliveryStatusFailed, testutil.Cols{"route_id": route})
 
 	svc := newTestService(nil, nil)
 	// A failed row whose cause is unfixed stays failed (permanent class).
@@ -589,7 +591,7 @@ func TestRetryDelivery_Semantics(t *testing.T) {
 	}
 
 	// An uncertain row re-queues and then succeeds.
-	uncertain := fx.terminalRunDelivery(t, DeliveryStatusUncertain, nil)
+	uncertain := fx.terminalRunDelivery(t, DeliveryStatusUncertain, testutil.Cols{"route_id": route})
 	svc.Sender = &fakeSender{}
 	if _, err := svc.RetryDelivery(context.Background(), uuidOf(t, testWSID), uuidOf(t, fx.autopilot), uuidOf(t, uncertain)); err != nil {
 		t.Fatalf("retry uncertain row: %v", err)

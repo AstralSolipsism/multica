@@ -204,6 +204,18 @@ WITH dead AS (
       )
     RETURNING ci.id
 ),
+cleared_labrastro_approvals AS (
+    DELETE FROM labrastro_message_approved_target WHERE installation_id IN (SELECT id FROM dead)
+),
+cleared_labrastro_routes AS (
+    UPDATE labrastro_message_route SET enabled = false, revision = revision + 1, updated_at = now()
+    WHERE installation_id IN (SELECT id FROM dead) AND enabled
+),
+cleared_labrastro_pending AS (
+    UPDATE labrastro_message_delivery SET status = 'cancelled', error_code = 'installation_revoked',
+        lease_token = NULL, lease_expires_at = NULL, updated_at = now()
+    WHERE installation_id IN (SELECT id FROM dead) AND status = 'queued'
+),
 cleared_dingtalk_group_presence AS (
     DELETE FROM dingtalk_group_presence WHERE installation_id IN (SELECT id FROM dead)
 ),

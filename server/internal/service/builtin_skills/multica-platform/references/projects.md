@@ -45,9 +45,7 @@ Common resource types:
 An opt-in backend file API exists at `/api/projects/{project_uuid}/files`,
 separate from resource pointers. It offers capabilities, bounded metadata lists,
 authorized content reads, revision-checked saves, candidates and operation lookup.
-The full wire contract is `server/docs/project-files-contract.md` in the source
-repository. CLI/runtime discovery commands are a separate integration; do not
-invent `multica project file` commands on versions that do not advertise them.
+CLI/runtime discovery commands are a separate integration; do not invent `multica project file` commands on versions that do not advertise them.
 
 An enabled client must retain the revision read before editing, acknowledge only
 `SAVED`, keep drafts on `CONFLICT` or unknown outcomes, and retry the same request

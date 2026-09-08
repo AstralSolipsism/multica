@@ -106,12 +106,12 @@ INSERT INTO labrastro_message_delivery (
     id, workspace_id, route_id, route_revision, autopilot_id, run_id,
     dedup_key, source_kind, status, content_snapshot, target_snapshot,
     shard_total, source_ref, target_key, installation_id, error_code,
-    lease_token, lease_expires_at
+    lease_token, lease_expires_at, requested_by
 ) VALUES (
     $1, $2, sqlc.narg('route_id'), sqlc.narg('route_revision'), $3,
     sqlc.narg('run_id'), $4, $5, $6, $7, $8, $9, sqlc.narg('source_ref'),
     $10, $11, sqlc.narg('error_code'),
-    sqlc.narg('lease_token'), sqlc.narg('lease_expires_at')
+    sqlc.narg('lease_token'), sqlc.narg('lease_expires_at'), sqlc.narg('requested_by')
 )
 ON CONFLICT (dedup_key) DO NOTHING
 RETURNING *;
@@ -160,6 +160,7 @@ SET status = 'queued',
 WHERE id = sqlc.arg('id')
   AND lease_token = sqlc.arg('lease_token')
   AND status = 'sending'
+  AND lease_expires_at > clock_timestamp()
 RETURNING *;
 
 -- name: CompleteClaimedLabrastroMessageDelivery :one
@@ -176,6 +177,7 @@ SET status = 'sent',
 WHERE id = sqlc.arg('id')
   AND lease_token = sqlc.arg('lease_token')
   AND status = 'sending'
+  AND lease_expires_at > clock_timestamp()
 RETURNING *;
 
 -- name: FailClaimedLabrastroMessageDelivery :one
@@ -193,6 +195,7 @@ SET status = 'failed',
 WHERE id = sqlc.arg('id')
   AND lease_token = sqlc.arg('lease_token')
   AND status = 'sending'
+  AND lease_expires_at > clock_timestamp()
 RETURNING *;
 
 -- name: CancelClaimedLabrastroMessageDelivery :one
@@ -208,6 +211,7 @@ SET status = 'cancelled',
 WHERE id = sqlc.arg('id')
   AND lease_token = sqlc.arg('lease_token')
   AND status = 'sending'
+  AND lease_expires_at > clock_timestamp()
 RETURNING *;
 
 -- name: UncertainClaimedLabrastroMessageDelivery :one
@@ -223,6 +227,7 @@ SET status = 'uncertain',
 WHERE id = sqlc.arg('id')
   AND lease_token = sqlc.arg('lease_token')
   AND status = 'sending'
+  AND lease_expires_at > clock_timestamp()
 RETURNING *;
 
 -- name: RequeueExpiredLabrastroMessageDeliveryClaims :many
@@ -238,7 +243,7 @@ SET status = 'uncertain',
     lease_expires_at = NULL,
     updated_at = now()
 WHERE status = 'sending'
-  AND lease_expires_at <= now()
+  AND (lease_expires_at IS NULL OR lease_expires_at <= now())
 RETURNING *;
 
 -- name: SetLabrastroMessageDeliveryOutcome :one
@@ -255,10 +260,13 @@ SET status = sqlc.arg('status'),
     attempts = attempts + 1,
     error_code = sqlc.narg('error_code'),
     last_error = sqlc.narg('last_error'),
+    lease_token = NULL,
+    lease_expires_at = NULL,
     updated_at = now()
 WHERE id = sqlc.arg('id')
   AND lease_token = sqlc.arg('lease_token')
   AND status = 'sending'
+  AND lease_expires_at > clock_timestamp()
 RETURNING *;
 
 -- name: ClaimLabrastroMessageDeliveryByID :one
@@ -332,7 +340,7 @@ SELECT
     d.run_id, d.dedup_key, d.source_kind, d.status, d.attempts,
     d.next_attempt_at, d.error_code, d.last_error, d.shard_total,
     d.delivered_at, d.first_attempt_at, d.created_at, d.updated_at,
-    d.installation_id, d.target_key
+    d.installation_id, d.target_key, d.requested_by
 FROM labrastro_message_delivery d
 WHERE d.workspace_id = sqlc.arg('workspace_id')
   AND d.autopilot_id = sqlc.arg('autopilot_id')
@@ -397,7 +405,8 @@ FOR SHARE;
 -- NEW shard send: once its claim is lost (lease expired, another owner,
 -- state moved on), it must stop dialing even though its in-memory snapshot
 -- still looks claimed.
-SELECT lease_token, lease_expires_at, status
+SELECT lease_token, lease_expires_at, status,
+    COALESCE(lease_expires_at > clock_timestamp(), false)::boolean AS lease_active
 FROM labrastro_message_delivery
 WHERE id = $1;
 
@@ -431,6 +440,7 @@ JOIN labrastro_message_route rt
  AND rt.workspace_id = a.workspace_id
  AND rt.enabled = true
 WHERE r.status IN ('completed', 'failed', 'skipped')
+  AND a.status <> 'archived'
   AND r.completed_at >= rt.effective_from
   AND NOT EXISTS (
       SELECT 1 FROM labrastro_message_delivery d
@@ -446,16 +456,18 @@ LIMIT sqlc.arg('limit');
 -- though the task itself is terminal — the event the run sync listens for
 -- was lost. The scanner feeds these to the EXISTING SyncRunFromTask logic;
 -- this module runs no state machine of its own.
--- The source relation (r.task_id IS NOT NULL) is the run's OWN persisted
--- evidence of run_only execution (repair contract §3, review R7) — the
+-- Either direction of the task/run link is persisted evidence of run_only
+-- execution (repair contract §3, review R7), when there is no issue link. The
 -- autopilot's current execution_mode is mutable and must never filter
 -- historical sources.
 SELECT t.* FROM agent_task_queue t
 JOIN autopilot_run r ON r.id = t.autopilot_run_id
-WHERE r.task_id IS NOT NULL
+    OR (t.autopilot_run_id IS NULL AND r.task_id = t.id)
+WHERE r.issue_id IS NULL
   AND r.status IN ('pending', 'issue_created', 'running')
   AND t.status IN ('completed', 'failed', 'cancelled')
   AND t.id > sqlc.arg('after_id')::uuid
+  AND t.id <= sqlc.arg('upper_id')::uuid
 ORDER BY t.id
 LIMIT sqlc.arg('limit');
 
@@ -472,6 +484,7 @@ JOIN autopilot_run r ON r.issue_id = i.id
 WHERE r.issue_id IS NOT NULL
   AND r.status IN ('pending', 'issue_created', 'running')
   AND i.id > sqlc.arg('after_id')::uuid
+  AND i.id <= sqlc.arg('upper_id')::uuid
 ORDER BY i.id
 LIMIT sqlc.arg('limit');
 
@@ -487,9 +500,11 @@ LIMIT sqlc.arg('limit');
 -- the installation row is still active so a revoked bot never resolves.
 SELECT b.* FROM channel_user_binding b
 JOIN channel_installation ci ON ci.id = b.installation_id
+JOIN member m ON m.workspace_id = b.workspace_id AND m.user_id = b.multica_user_id
 WHERE b.workspace_id = sqlc.arg('workspace_id')
   AND b.installation_id = sqlc.arg('installation_id')
   AND b.multica_user_id = sqlc.arg('multica_user_id')
+  AND ci.workspace_id = b.workspace_id
   AND b.channel_type = ci.channel_type
   AND ci.status = 'active';
 
@@ -533,7 +548,8 @@ RETURNING *;
 -- cancelled by the service layer on this path.
 UPDATE labrastro_message_approved_target
 SET revoked_at = now()
-WHERE workspace_id = sqlc.arg('workspace_id')
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
   AND autopilot_id = sqlc.arg('autopilot_id')
   AND installation_id = sqlc.arg('installation_id')
   AND target_key = sqlc.arg('target_key')
@@ -585,7 +601,8 @@ WHERE scanner = $1;
 UPDATE labrastro_message_scan_cursor
 SET cursor_ts = sqlc.arg('cursor_ts'),
     cursor_id = sqlc.arg('cursor_id'),
-    cycle_started_at = sqlc.narg('cycle_started_at'),
+    cycle_started_at = sqlc.arg('cycle_started_at'),
+    cycle_upper_id = sqlc.narg('cycle_upper_id'),
     generation = generation + 1,
     updated_at = now()
 WHERE scanner = sqlc.arg('scanner')
@@ -614,6 +631,7 @@ WHERE t.autopilot_run_id IS NULL
   AND t.status = 'failed'
   AND r.status IN ('pending', 'issue_created', 'running')
   AND t.id > sqlc.arg('after_id')::uuid
+  AND t.id <= sqlc.arg('upper_id')::uuid
 ORDER BY t.id
 LIMIT sqlc.arg('limit');
 
@@ -634,3 +652,35 @@ WHERE workspace_id = sqlc.arg('workspace_id')
   AND target_key = sqlc.arg('target_key')
   AND status = 'queued'
 RETURNING *;
+
+-- name: GetLabrastroMessageScanUpperBound :one
+-- Freeze an immutable ID bound over the source table, including non-candidates.
+-- Old IDs that become eligible later are revisited in the next full cycle.
+SELECT COALESCE(CASE WHEN sqlc.arg('scan_issues')::boolean THEN
+    (SELECT id FROM issue ORDER BY id DESC LIMIT 1)
+ELSE
+    (SELECT id FROM agent_task_queue ORDER BY id DESC LIMIT 1)
+END, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS upper_id;
+
+-- name: LockLabrastroMessageInstallation :one
+SELECT * FROM channel_installation
+WHERE id = $1 AND workspace_id = $2
+FOR SHARE;
+
+-- name: CancelLabrastroMessageDeliveriesByAutopilot :exec
+UPDATE labrastro_message_delivery
+SET status = 'cancelled', error_code = 'source_archived',
+    last_error = 'source automation archived', lease_token = NULL,
+    lease_expires_at = NULL, updated_at = now()
+WHERE autopilot_id = $1 AND workspace_id = $2 AND status = 'queued';
+
+-- name: DisableLabrastroMessageRoutesByInstallation :exec
+UPDATE labrastro_message_route
+SET enabled = false, revision = revision + 1, updated_at = now()
+WHERE workspace_id = $1 AND installation_id = $2 AND enabled;
+
+-- name: LockLabrastroMessageRuntimeInstallations :many
+SELECT ci.* FROM channel_installation ci
+JOIN agent a ON a.id = ci.agent_id
+WHERE a.runtime_id = $1 AND a.kind = 'system'
+ORDER BY ci.id FOR UPDATE OF ci;

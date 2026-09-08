@@ -44,7 +44,7 @@ codes. Code lives in:
 | `failed` | definitive failure; `error_code` says why |
 | `uncertain` | the send may have landed (lost response / lost receipt / crashed claim); only manual verify-and-retry resolves it |
 | `cancelled` | route disabled/deleted, source archived/deleted, or installation revoked before the send started |
-| `suppressed` | condition mismatch (incl. skipped runs); recorded so the source is not rescanned |
+| `suppressed` | condition mismatch (incl. skipped runs) or unknown historical origin; recorded so the source is not rescanned |
 
 ### Source semantics
 
@@ -64,8 +64,16 @@ codes. Code lives in:
   comes from the run's persisted links, never the autopilot's current
   configuration. No report body is attached — attaching requires an
   explicit delivery-comment anchor (feedback stage).
+- `unknown`: no issue link, task link (in either direction), or output evidence
+  proves the historical mode. The decision is `suppressed`, with
+  `error_code="source_unresolved"`, empty content and `shard_total=0`. Editing
+  the current automation mode cannot change that historical decision.
 - Manual **test sends** (`source_kind="test_send"`) run the real send path
   synchronously with a synthetic message and are recorded like deliveries.
+  Their resolved human actor is stored in `requested_by` and reauthorized
+  before sending, including after recovery. `source_ref` remains a locator,
+  never a grant. Pre-upgrade diagnostic rows without an actor are cancelled
+  on recovery; create a new test send to authorize a new diagnostic request.
 - Send failures NEVER re-run or re-queue an automation; execution modes,
   quotas and the execution state machine are untouched.
 
@@ -84,15 +92,19 @@ workspace it picks the wrong app.
 ### Approved external targets (workspace-admin consent)
 
 Group and topic targets additionally require an ACTIVE approval scoped to
-the exact **(workspace, automation, bot, target)** triple — approving
+the exact **(workspace, automation, bot, target)** scope — approving
 automation A's outbound target is never borrowed by automation B. Approval
-and revocation are workspace owner/admin acts
-(`POST|DELETE /api/autopilots/{id}/message-approved-targets`); approving
+and revocation are workspace owner/admin acts. All three approval endpoints
+judge the already-resolved acting human, including when a task runs on someone
+else's machine; `approved_by` records that same human. Approving
 consents to sharing that automation's rule-permitted result content with
 that target, nothing more. The route save and EVERY execution path (enable,
 test-send, worker send, retry) check the approval — send-time checks key on
 the delivery's FROZEN target identity. Revocation cancels queued sends;
-platform-accepted requests are not recallable. Member targets stay out of
+platform-accepted requests are not recallable. Revocation identifies the exact
+approval ID and its installation, and commits queued cancellation in the same
+transaction. A missing/already-revoked approval returns 404; cancellation
+failure rolls back the revoke instead of claiming success. Member targets stay out of
 the approval table: their binding proves address ownership and the route
 authorizer's source permission covers the sharing decision.
 
@@ -138,6 +150,9 @@ authorizer and message recipient are distinct identities; `created_by` /
 
 | Method & path | purpose |
 | --- | --- |
+| `POST /api/autopilots/{id}/message-approved-targets` | owner/admin approves one verified external target for this source |
+| `GET /api/autopilots/{id}/message-approved-targets` | owner/admin lists active approvals |
+| `DELETE /api/autopilots/{id}/message-approved-targets/{targetId}` | owner/admin revokes exactly one approval; stops queued sends |
 | `GET /api/autopilots/{id}/message-routes` | list rules |
 | `POST /api/autopilots/{id}/message-routes` | create rule (revision 1) |
 | `PUT /api/autopilots/{id}/message-routes/{routeId}` | update rule, `expected_revision` required |
@@ -147,6 +162,22 @@ authorizer and message recipient are distinct identities; `created_by` /
 | `GET /api/autopilots/{id}/message-deliveries?status=&limit=&offset=` | records page (projection, no snapshots) |
 | `GET /api/autopilots/{id}/message-deliveries/{deliveryId}` | detail incl. snapshots + receipts |
 | `POST /api/autopilots/{id}/message-deliveries/{deliveryId}/retry` | re-queue a `failed`/`uncertain` delivery |
+
+### Approval — request / response
+
+`POST /api/autopilots/{id}/message-approved-targets`:
+
+```json
+{"installation_id":"<uuid>","target_type":"group","target_chat_id":"oc_test"}
+```
+
+201 returns `{"approved_target":{...}}`. The row fields are `id`, `workspace_id`,
+`autopilot_id`, `installation_id`, `target_key`, `target_type`, `approved_by`,
+`approved_at`, `revoked_at` (null while active). Topic approval additionally
+requires `target_message_id` and verifies its chat. GET returns
+`{"approved_targets":[]}`. DELETE returns
+`{"revoked":true,"cancelled_deliveries":1}` only after commit. This does not
+recall an already-accepted shard.
 
 ### Create rule — request / response example
 
@@ -265,6 +296,9 @@ Detail adds `content_snapshot` (`{"text","summary","run_status","has_output","li
 | `route_disabled` | 409 | test-send on a disabled rule |
 | `delivery_not_found` | 404 | delivery id not in this workspace/automation |
 | `delivery_not_retryable` | 409 | retry on a status other than `failed`/`uncertain` |
+| `message_target_admin_required` | 403 | the acting human is not an owner/admin (approval APIs) |
+| `authorization_lost` | 403 | the acting human lost source permission before configuration commit |
+| `source_unavailable` | 409 | the source was archived or removed before configuration commit |
 | `autopilot_no_originator` / `autopilot_forbidden` | 403 | from the shared autopilot gate (see its docs) |
 
 Delivery `error_code` values recorded by the pipeline:
@@ -273,7 +307,7 @@ Delivery `error_code` values recorded by the pipeline:
 `installation_missing`, `send_rejected`, `send_transient`,
 `sender_unavailable`, `attempts_exhausted`, `lease_expired`,
 `send_ambiguous`, `route_target_unreachable`, `route_topic_anchor_mismatch`,
-`route_authorization_lost`.
+`route_authorization_lost`, `route_target_not_approved`, `source_unresolved`.
 
 ## Reliability guarantees and boundaries
 
@@ -288,9 +322,14 @@ Delivery `error_code` values recorded by the pipeline:
   persistent per-scanner cursor (compare-and-set generation, immutable-id
   keyset, fixed per-cycle bound and per-tick row budget): a tick resumes
   where the last stopped, a completed cycle restarts from the set's
-  beginning, so late-committing sources and pages of long-running candidates
+  beginning. `cycle_upper_id` is frozen once; downtime does not change it.
+  Each fully processed page advances with a generation CAS. Either direction
+  of a committed task/run link is sufficient. Historical linked-task failures
+  are rechecked against the latest persisted attempt; a completed successor
+  is never replayed as an old failure. A persisted terminal issue is handled
+  by its normal sync path before any historical task failure. Thus late-committing sources and pages of long-running candidates
   can never permanently starve anyone.
-- **Workspace deletion.** Decision and receipt inserts share a short
+- **Workspace deletion.** Approval, configuration, decision and receipt inserts share a short
   transaction with a `FOR SHARE` lock on the workspace row (the delete flow
   takes the same row `FOR UPDATE` before sweeping), so a stale snapshot can
   never commit content-bearing rows into a deleted workspace.
@@ -303,8 +342,10 @@ Delivery `error_code` values recorded by the pipeline:
   `CreateMessageReqBody` (the platform's dedup window is finite, ~1h).
   Beyond the verifiable window the delivery stays `uncertain` until a human
   resolves it. Shards already carrying an `external_message_id` are never
-  re-sent, and a worker re-validates its lease before starting each new
-  shard — an expired claim stops dialing immediately.
+  re-sent, and a worker re-validates its lease against the database clock before starting
+  each new shard. All result writes require the same live token and expiry.
+  Accepted late receipts can be recorded on a bounded detached context, but
+  cannot renew a lease, overwrite a new owner or create an automatic retry.
 - **No side effects on execution.** Delivery never triggers runs, consumes
   quota or mutates the execution state machine.
 - **Cleanup hooks.** Rule disable/delete and bot revocation cancel queued

@@ -1132,12 +1132,18 @@ func (s *AutopilotService) SyncRunFromIssue(ctx context.Context, issue db.Issue)
 
 // SyncRunFromTask updates the autopilot run when a run_only task completes or fails.
 func (s *AutopilotService) SyncRunFromTask(ctx context.Context, task db.AgentTaskQueue) {
-	if !task.AutopilotRunID.Valid {
+	var run db.AutopilotRun
+	var err error
+	if task.AutopilotRunID.Valid {
+		run, err = s.Queries.GetAutopilotRun(ctx, task.AutopilotRunID)
+	} else {
+		run, err = s.Queries.GetAutopilotRunByTaskLink(ctx, task.ID)
+	}
+	if err != nil || run.IssueID.Valid {
 		return
 	}
-
-	run, err := s.Queries.GetAutopilotRun(ctx, task.AutopilotRunID)
-	if err != nil {
+	if err := s.Queries.PreserveAutopilotRunTaskLink(ctx, db.PreserveAutopilotRunTaskLinkParams{ID: run.ID, TaskID: task.ID}); err != nil {
+		slog.Warn("failed to preserve autopilot task link", "run_id", util.UUIDToString(run.ID), "error", err)
 		return
 	}
 
@@ -1209,6 +1215,17 @@ func (s *AutopilotService) SyncRunFromLinkedIssueTask(ctx context.Context, task 
 	if err != nil {
 		return // no active run linked to this issue
 	}
+	// A replayed task failure must not outrun a persisted terminal issue whose
+	// own event was lost. Reuse its normal sync path regardless of scanner order.
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		return
+	}
+	switch issuestatus.Effective(ctx, s.Queries, issue.WorkspaceID, issue.Status) {
+	case "done", "in_review", "blocked", "cancelled":
+		s.SyncRunFromIssue(ctx, issue)
+		return
+	}
 	// A still-active task — typically the auto-retry FailTask just enqueued —
 	// means the dispatch isn't terminal yet; wait for the final attempt.
 	hasActive, err := s.Queries.HasActiveTaskForIssue(ctx, task.IssueID)
@@ -1221,6 +1238,14 @@ func (s *AutopilotService) SyncRunFromLinkedIssueTask(ctx context.Context, task 
 		return
 	}
 	if hasActive {
+		return
+	}
+	latest, err := s.Queries.IsLatestFailedAutopilotIssueTask(ctx, db.IsLatestFailedAutopilotIssueTaskParams{ID: task.ID, IssueID: task.IssueID})
+	if err != nil {
+		slog.Warn("failed to check latest autopilot issue attempt", "task_id", util.UUIDToString(task.ID), "error", err)
+		return
+	}
+	if !latest {
 		return
 	}
 	autopilot, err := s.Queries.GetAutopilot(ctx, run.AutopilotID)

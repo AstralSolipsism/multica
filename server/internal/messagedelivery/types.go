@@ -46,6 +46,7 @@ const (
 	SourceKindRunOnly     = "run_only"
 	SourceKindCreateIssue = "create_issue"
 	SourceKindTestSend    = "test_send"
+	SourceKindUnknown     = "unknown"
 )
 
 // Route target types.
@@ -167,9 +168,8 @@ func routeMatchesRun(conditions, runStatus string) bool {
 // switched to create_issue. issue_id implies create_issue (the run owns
 // that issue); otherwise a task link implies run_only; otherwise a result
 // payload carrying `output` is by definition a run_only completion; the
-// current configuration is only the last resort for rows predating both
-// links.
-func sourceKindFromRun(runIssueIDValid, runTaskIDValid bool, runResult []byte, currentMode string) string {
+// absence of evidence is explicit and never follows mutable configuration.
+func sourceKindFromRun(runIssueIDValid, runTaskIDValid bool, runResult []byte, _ string) string {
 	switch {
 	case runIssueIDValid:
 		return SourceKindCreateIssue
@@ -179,10 +179,7 @@ func sourceKindFromRun(runIssueIDValid, runTaskIDValid bool, runResult []byte, c
 	if _, hasOutput := extractRunOnlyOutput(runResult); hasOutput {
 		return SourceKindRunOnly
 	}
-	if currentMode == SourceKindRunOnly {
-		return SourceKindRunOnly
-	}
-	return SourceKindCreateIssue
+	return SourceKindUnknown
 }
 
 // Target is the resolved wire-level destination the Sender dials.
@@ -255,6 +252,10 @@ type sourceRef struct {
 // ---- errors the HTTP layer maps to stable codes ----
 
 var (
+	// Refusals after re-reading the source and its acting human.
+	ErrSourceUnavailable      = errors.New("message source is unavailable")
+	ErrAuthorizationLost      = errors.New("message authorization lost")
+	ErrApprovedTargetNotFound = errors.New("approved target not found")
 	// ErrRouteNotFound: the route id does not exist in this workspace.
 	ErrRouteNotFound = errors.New("message route not found")
 	// ErrRouteRevisionConflict: the caller's revision is stale.

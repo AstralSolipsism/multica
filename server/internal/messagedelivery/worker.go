@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/multica-ai/multica/server/internal/autopilotauth"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -123,11 +122,8 @@ func (s *Service) ProcessNext(ctx context.Context) (bool, error) {
 // stable reason — never a silent drop and never a source the compensator
 // will see again.
 func (s *Service) processClaimed(ctx context.Context, d db.LabrastroMessageDelivery) {
-	out := s.gateClaimed(ctx, d)
-	if out == nil {
-		v := s.sendDelivery(ctx, d)
-		out = &v
-	}
+	v := s.sendDelivery(ctx, d)
+	out := &v
 	if out.lost {
 		// Lease ownership was lost mid-pass (review R9): the row's new
 		// owner owns the outcome; this worker writes nothing.
@@ -138,6 +134,9 @@ func (s *Service) processClaimed(ctx context.Context, d db.LabrastroMessageDeliv
 		return
 	}
 
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	ctx = writeCtx
 	switch out.status {
 	case DeliveryStatusSent:
 		s.completeClaimed(ctx, d, *out)
@@ -173,99 +172,64 @@ func (s *Service) gateClaimed(ctx context.Context, d db.LabrastroMessageDelivery
 	refuse := func(status, code, detail string) *sendOutcome {
 		return &sendOutcome{status: status, errorCode: code, detail: detail}
 	}
-
-	// Test sends pass through the SAME gates (repair contract §5): no
-	// early bypass. A recovered test-send row whose route vanished is
-	// cancelled like any other delivery — the audit record of the ORIGINAL
-	// synchronous attempt already landed when it ran.
-
-	var route db.LabrastroMessageRoute
-	if d.RouteID.Valid {
-		loaded, err := s.Queries.GetLabrastroMessageRoute(ctx, db.GetLabrastroMessageRouteParams{
-			ID: d.RouteID, WorkspaceID: d.WorkspaceID,
-		})
-		switch {
-		case errors.Is(err, pgx.ErrNoRows):
-			return refuse(DeliveryStatusCancelled, ErrorCodeRouteDeleted, "route deleted before send")
-		case err != nil:
-			return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load route: "+err.Error())
-		case !loaded.Enabled:
-			return refuse(DeliveryStatusCancelled, ErrorCodeRouteDisabled, "route disabled before send")
-		}
-		route = loaded
-	}
-	ap, err := s.Queries.GetAutopilot(ctx, d.AutopilotID)
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "source automation deleted before send")
-	case err != nil:
-		return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load autopilot: "+err.Error())
-	case ap.Status == "archived":
-		return refuse(DeliveryStatusCancelled, ErrorCodeSourceArchived, "source automation archived before send")
-	}
-	// Continuous authorization (review R2): a rule spends the authority of
-	// the member who last saved it. If that member has left the workspace
-	// — or no longer holds write on the source automation (revoked
-	// collaborator, role change) — the rule stops delivering, and the
-	// claimed send is recorded as an explainable cancellation. An
-	// authorized edit re-stamps the rule's editor, which re-arms it.
-	if d.RouteID.Valid {
-		if !s.routeStillAuthorized(ctx, ap, route) {
-			return refuse(DeliveryStatusCancelled, ErrorCodeAuthorizationLost,
-				"route's authorizing member no longer holds write on this automation")
-		}
-	}
 	var snap targetSnapshot
 	if err := json.Unmarshal(d.TargetSnapshot, &snap); err != nil {
-		return refuse(DeliveryStatusFailed, ErrorCodeSendRejected, "corrupt target snapshot: "+err.Error())
+		return refuse(DeliveryStatusFailed, ErrorCodeSendRejected, "corrupt target snapshot")
 	}
-	// Send-time target re-verification (review R1): group reachability and
-	// the topic anchor→chat relationship are re-proved against the live
-	// platform before dialing, not just at save time. Unknown verdicts go
-	// uncertain; definitive refusals fail explainably.
-	if s.Verifier != nil {
-		if out := s.reverifyTarget(ctx, d, snap); out != nil {
-			return out
-		}
+	// Verify remotely first; local consent/source checks below observe changes
+	// committed during that call. A missing verifier never bypasses approval.
+	if out := s.reverifyTarget(ctx, d, snap); out != nil {
+		return out
+	}
+	route, err := s.Queries.GetLabrastroMessageRoute(ctx, db.GetLabrastroMessageRouteParams{ID: d.RouteID, WorkspaceID: d.WorkspaceID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return refuse(DeliveryStatusCancelled, ErrorCodeRouteDeleted, "route deleted before send")
+	}
+	if err != nil {
+		return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load route failed")
+	}
+	if !route.Enabled {
+		return refuse(DeliveryStatusCancelled, ErrorCodeRouteDisabled, "route disabled before send")
+	}
+	if route.AutopilotID != d.AutopilotID {
+		return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "source mismatch")
+	}
+	ap, err := s.Queries.GetAutopilotInWorkspace(ctx, db.GetAutopilotInWorkspaceParams{ID: d.AutopilotID, WorkspaceID: d.WorkspaceID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "source automation deleted")
+	}
+	if err != nil {
+		return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load source failed")
+	}
+	if ap.Status == "archived" {
+		return refuse(DeliveryStatusCancelled, ErrorCodeSourceArchived, "source automation archived")
+	}
+	actor := route.UpdatedBy
+	if d.SourceKind == SourceKindTestSend {
+		actor = d.RequestedBy
+	}
+
+	if err := sourceAuthority(ctx, s.Queries, ap, actor, false); err != nil {
+		return refuse(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member no longer holds source write permission")
+	}
+	if _, err := s.Queries.GetWorkspace(ctx, d.WorkspaceID); err != nil {
+		return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "source workspace unavailable")
 	}
 	instID, err := util.ParseUUID(snap.Installation)
-	if err != nil {
-		return refuse(DeliveryStatusFailed, ErrorCodeInstallationMissing, "target snapshot has no usable installation")
+	if err != nil || instID != d.InstallationID {
+		return refuse(DeliveryStatusFailed, ErrorCodeInstallationMissing, "invalid installation snapshot")
 	}
-	inst, err := s.Queries.GetChannelInstallationInWorkspace(ctx, db.GetChannelInstallationInWorkspaceParams{
-		ID:          instID,
-		WorkspaceID: d.WorkspaceID,
-		ChannelType: snap.ChannelType,
-	})
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
+	inst, err := s.Queries.GetChannelInstallationInWorkspace(ctx, db.GetChannelInstallationInWorkspaceParams{ID: instID, WorkspaceID: d.WorkspaceID, ChannelType: snap.ChannelType})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return refuse(DeliveryStatusFailed, ErrorCodeInstallationMissing, "installation no longer exists")
-	case err != nil:
-		return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load installation: "+err.Error())
-	case inst.Status != "active":
-		return refuse(DeliveryStatusFailed, ErrorCodeInstallationRevoked, "installation is revoked")
+	}
+	if err != nil {
+		return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load installation failed")
+	}
+	if inst.Status != "active" {
+		return refuse(DeliveryStatusFailed, ErrorCodeInstallationRevoked, "installation revoked")
 	}
 	return nil
-}
-
-// routeStillAuthorized re-checks the rule's continuous authorization: the
-// member who last saved it must still be a workspace member AND still hold
-// write on the source automation, through the ONE shared predicate
-// (repair contract §2, review S4) the HTTP gate also uses. The HTTP layer
-// enforces the same predicate at edit time; this gate covers the time in
-// between.
-func (s *Service) routeStillAuthorized(ctx context.Context, ap db.Autopilot, route db.LabrastroMessageRoute) bool {
-	if !route.UpdatedBy.Valid {
-		return false
-	}
-	member, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
-		UserID:      route.UpdatedBy,
-		WorkspaceID: ap.WorkspaceID,
-	})
-	if err != nil {
-		return false
-	}
-	return autopilotauth.CanWriteAutopilot(ctx, s.Queries, ap, member)
 }
 
 // reverifyTarget re-proves an external target against the live platform
@@ -285,6 +249,9 @@ func (s *Service) reverifyTarget(ctx context.Context, d db.LabrastroMessageDeliv
 	// Approval is checked against the FROZEN target (delivery rows pin
 	// installation + target_key at decision time), never against the
 	// route's current configuration (repair contract §2).
+	if (snap.TargetType == TargetGroup || snap.TargetType == TargetTopic) && s.Verifier == nil {
+		return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "target verifier unavailable")
+	}
 	switch snap.TargetType {
 	case TargetGroup:
 		if err := s.Verifier.VerifyGroupTarget(ctx, req); err != nil {
@@ -355,6 +322,7 @@ func (s *Service) completeClaimed(ctx context.Context, d db.LabrastroMessageDeli
 		LeaseToken: d.LeaseToken,
 	}); err != nil {
 		s.logLeaseLoss("complete", d, err)
+		return
 	}
 	s.logger().Info("messagedelivery: delivery sent",
 		"delivery_id", util.UUIDToString(d.ID),
@@ -475,8 +443,9 @@ func (s *Service) scanLoop(ctx context.Context) {
 // scanner's failure is contained: one class failing must not permanently
 // block the others (repair contract §4).
 func (s *Service) ScanOnce(ctx context.Context) error {
+	var failures []error
 	if err := s.requeueExpiredClaims(ctx); err != nil {
-		s.logger().Error("messagedelivery: expire claims", "error", err)
+		failures = append(failures, err)
 	}
 	if s.Syncer != nil {
 		for scanner, run := range map[string]func(context.Context, scanCursor) (scanCursor, error){
@@ -484,13 +453,15 @@ func (s *Service) ScanOnce(ctx context.Context) error {
 			scannerIssueStatus:   s.syncStaleCreateIssueIssues,
 			scannerLinkedFailure: s.syncStaleLinkedTaskFailures,
 		} {
-			if _, err := s.advanceScanner(ctx, scanner, run); err != nil {
-				s.logger().Error("messagedelivery: stale-source scan",
-					"scanner", scanner, "error", err)
+			if _, err := s.advanceScanner(ctx, scanner, run); err != nil && !errors.Is(err, errScanCursorMoved) {
+				failures = append(failures, err)
 			}
 		}
 	}
-	return s.decideMissing(ctx)
+	if err := s.decideMissing(ctx); err != nil {
+		failures = append(failures, err)
+	}
+	return errors.Join(failures...)
 }
 
 // ---- persistent per-scanner cursors (repair contract §4, review R4) ----
@@ -510,11 +481,6 @@ const (
 	// scanRowBudgetPerTick is the per-tick work budget in ROWS; when it
 	// runs out the position is saved and the NEXT tick continues from it.
 	scanRowBudgetPerTick = 20_000
-	// scanCycleMaxAge forces a cycle to end even if pages keep coming (a
-	// continuously growing candidate set must not trap a cycle forever);
-	// after a cycle ends the next tick restarts from the beginning of the
-	// candidate set, which is how late-committing sources are recovered.
-	scanCycleMaxAge = 10 * time.Minute
 )
 
 // requeueExpiredClaims moves crashed claims to uncertain. The send may
@@ -537,141 +503,86 @@ func (s *Service) requeueExpiredClaims(ctx context.Context) error {
 	return nil
 }
 
-// scanCursor is the page-loop position a scanner advances: the keyset
-// boundary plus the concurrency metadata carried through the loop.
+// scanCursor carries one bounded cycle. The generation guards every completed
+// page; a stale replica must reload instead of advancing or resetting it.
 type scanCursor struct {
 	ts           time.Time
 	id           pgtype.UUID
+	upperID      pgtype.UUID
 	generation   int64
 	cycleStarted time.Time
 }
 
-// scanCursorStart positions a fresh cycle before every candidate id. The
-// UUID must be a VALID all-zero value: an invalid pgtype.UUID binds as
-// NULL, and `id > NULL` matches nothing.
 var scanCursorStart = scanCursor{id: pgtype.UUID{Valid: true}}
+var errScanCursorMoved = errors.New("scan cursor advanced by another replica")
 
-// scanCursorState is the persisted position plus the concurrency guard.
-type scanCursorState struct {
-	ts           time.Time
-	id           pgtype.UUID
-	generation   int64
-	cycleStarted time.Time
+func cursorFromRow(row db.LabrastroMessageScanCursor) scanCursor {
+	return scanCursor{ts: row.CursorTs.Time, id: row.CursorID, upperID: row.CycleUpperID,
+		generation: row.Generation, cycleStarted: row.CycleStartedAt.Time}
 }
 
-// cursor converts the persisted state into the page-loop cursor.
-func (s scanCursorState) cursor() scanCursor {
-	return scanCursor{ts: s.ts, id: s.id, generation: s.generation, cycleStarted: s.cycleStarted}
-}
-
-// advanceScanner runs one tick's bounded budget of pages for one scanner
-// and persists the resulting position under a compare-and-set on the
-// generation, so a stale replica cannot write back a position from an
-// older cycle. A short page (or the cycle's age bound) ENDS the cycle and
-// resets the position to the start of the candidate set: rows that synced
-// left the set; late-committed sources are picked up on the next cycle.
+// Each page is persisted only AFTER its sync calls finish. Crashes replay at
+// most the unfinished page; shutdown never resets a partially scanned cycle.
 func (s *Service) advanceScanner(ctx context.Context, scanner string, page func(context.Context, scanCursor) (scanCursor, error)) (scanCursor, error) {
 	cur, err := s.loadCursor(ctx, scanner)
 	if err != nil {
 		return cur, err
 	}
-	if time.Since(cur.cycleStarted) > scanCycleMaxAge {
-		// The cycle expired without a natural short page: end it now so a
-		// growing candidate set cannot trap the scanner forever, and let
-		// this tick start the next cycle from the beginning.
-		if err := s.resetCursor(ctx, scanner, cur); err != nil {
+	for budget := scanRowBudgetPerTick; budget > 0; budget -= scanPageLimit {
+		last, err := page(ctx, cur)
+		if err != nil {
 			return cur, err
 		}
-		cur, err = s.loadCursor(ctx, scanner)
+		if last.id == cur.id {
+			// Exhausted this fixed bound. The next tick freezes a new bound.
+			cur.id, cur.upperID = scanCursorStart.id, pgtype.UUID{}
+			return s.saveCursor(ctx, scanner, cur)
+		}
+		cur, err = s.saveCursor(ctx, scanner, last)
 		if err != nil {
 			return cur, err
 		}
 	}
-	budget := scanRowBudgetPerTick
-	var last scanCursor
-	for budget > 0 {
-		last, err = page(ctx, cur)
-		if err != nil {
-			return cur, err
-		}
-		if last == cur {
-			// Short page: the cycle completed. Reset to the set's start;
-			// the next tick begins a fresh cycle.
-			return cur, s.resetCursor(ctx, scanner, cur)
-		}
-		cur = last
-		budget -= scanPageLimit
-	}
-	// Budget spent: persist the position; the next tick resumes here.
-	return cur, s.saveCursor(ctx, scanner, cur)
+	return cur, nil
 }
 
-// loadCursor returns the scanner's persisted position, rebuilding from the
-// set's start when the row is missing or unreadable — never skipping
-// sources to recover.
 func (s *Service) loadCursor(ctx context.Context, scanner string) (scanCursor, error) {
 	row, err := s.Queries.GetLabrastroMessageScanCursor(ctx, scanner)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, ierr := s.Queries.InitLabrastroMessageScanCursor(ctx, scanner); ierr != nil && !errors.Is(ierr, pgx.ErrNoRows) {
-			return scanCursorStart, ierr
+		row, err = s.Queries.InitLabrastroMessageScanCursor(ctx, scanner)
+		if errors.Is(err, pgx.ErrNoRows) {
+			row, err = s.Queries.GetLabrastroMessageScanCursor(ctx, scanner)
 		}
-		return scanCursorStart, nil
 	}
 	if err != nil {
 		return scanCursorStart, err
 	}
-	return scanCursorState{
-		ts:           row.CursorTs.Time,
-		id:           row.CursorID,
-		generation:   row.Generation,
-		cycleStarted: row.CycleStartedAt.Time,
-	}.cursor(), nil
+	cur := cursorFromRow(row)
+	if cur.upperID.Valid && cur.id.Valid {
+		return cur, nil
+	}
+	upper, err := s.Queries.GetLabrastroMessageScanUpperBound(ctx, scanner == scannerIssueStatus)
+	if err != nil {
+		return cur, err
+	}
+	cur.id, cur.upperID, cur.cycleStarted = scanCursorStart.id, upper, s.now()
+	return s.saveCursor(ctx, scanner, cur)
 }
 
-func (s *Service) saveCursor(ctx context.Context, scanner string, cur scanCursor) error {
-	_, err := s.Queries.SaveLabrastroMessageScanCursor(ctx, db.SaveLabrastroMessageScanCursorParams{
-		Scanner:            scanner,
-		CursorTs:           pgtype.Timestamptz{Time: cur.ts, Valid: true},
-		CursorID:           cur.id,
+func (s *Service) saveCursor(ctx context.Context, scanner string, cur scanCursor) (scanCursor, error) {
+	row, err := s.Queries.SaveLabrastroMessageScanCursor(ctx, db.SaveLabrastroMessageScanCursorParams{
+		Scanner: scanner, CursorTs: pgtype.Timestamptz{Time: cur.ts, Valid: true},
+		CursorID: cur.id, CycleUpperID: cur.upperID,
 		CycleStartedAt:     pgtype.Timestamptz{Time: cur.cycleStarted, Valid: true},
 		ExpectedGeneration: cur.generation,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		// CAS lost: a newer replica already advanced (or reset) the
-		// cursor. Its position is at least as fresh as ours; drop ours.
-		s.logger().Debug("messagedelivery: scan cursor CAS lost",
-			"scanner", scanner)
-		return nil
+		return cur, errScanCursorMoved
 	}
-	return err
-}
-
-func (s *Service) resetCursor(ctx context.Context, scanner string, cur scanCursor) error {
-	err := s.saveCursorWith(ctx, scanner, scanCursor{
-		id:           scanCursorStart.id,
-		ts:           scanCursorStart.ts,
-		generation:   cur.generation,
-		cycleStarted: s.now(),
-	})
-	if err == nil {
-		s.logger().Debug("messagedelivery: scan cycle completed; restarting from set start",
-			"scanner", scanner)
+	if err != nil {
+		return cur, err
 	}
-	return err
-}
-
-func (s *Service) saveCursorWith(ctx context.Context, scanner string, cur scanCursor) error {
-	_, err := s.Queries.SaveLabrastroMessageScanCursor(ctx, db.SaveLabrastroMessageScanCursorParams{
-		Scanner:            scanner,
-		CursorTs:           pgtype.Timestamptz{Time: cur.ts, Valid: true},
-		CursorID:           cur.id,
-		CycleStartedAt:     pgtype.Timestamptz{Time: cur.cycleStarted, Valid: true},
-		ExpectedGeneration: cur.generation,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	return err
+	return cursorFromRow(row), nil
 }
 
 // syncStaleRunOnlyTasks finds run_only tasks whose run never heard about
@@ -680,6 +591,7 @@ func (s *Service) saveCursorWith(ctx context.Context, scanner string, cur scanCu
 func (s *Service) syncStaleRunOnlyTasks(ctx context.Context, cur scanCursor) (scanCursor, error) {
 	tasks, err := s.Queries.ListStaleRunOnlyAutopilotTasks(ctx, db.ListStaleRunOnlyAutopilotTasksParams{
 		AfterID: cur.id,
+		UpperID: cur.upperID,
 		Limit:   scanPageLimit,
 	})
 	if err != nil {
@@ -692,12 +604,14 @@ func (s *Service) syncStaleRunOnlyTasks(ctx context.Context, cur scanCursor) (sc
 		return cur, nil
 	}
 	last := tasks[len(tasks)-1]
-	return scanCursor{ts: cur.ts, id: last.ID, generation: cur.generation, cycleStarted: cur.cycleStarted}, nil
+	cur.id = last.ID
+	return cur, nil
 }
 
 func (s *Service) syncStaleCreateIssueIssues(ctx context.Context, cur scanCursor) (scanCursor, error) {
 	issues, err := s.Queries.ListStaleCreateIssueAutopilotIssues(ctx, db.ListStaleCreateIssueAutopilotIssuesParams{
 		AfterID: cur.id,
+		UpperID: cur.upperID,
 		Limit:   scanPageLimit,
 	})
 	if err != nil {
@@ -710,7 +624,8 @@ func (s *Service) syncStaleCreateIssueIssues(ctx context.Context, cur scanCursor
 		return cur, nil
 	}
 	last := issues[len(issues)-1]
-	return scanCursor{ts: cur.ts, id: last.ID, generation: cur.generation, cycleStarted: cur.cycleStarted}, nil
+	cur.id = last.ID
+	return cur, nil
 }
 
 // syncStaleLinkedTaskFailures covers the third persisted source class
@@ -721,6 +636,7 @@ func (s *Service) syncStaleCreateIssueIssues(ctx context.Context, cur scanCursor
 func (s *Service) syncStaleLinkedTaskFailures(ctx context.Context, cur scanCursor) (scanCursor, error) {
 	tasks, err := s.Queries.ListStaleLinkedIssueTaskFailures(ctx, db.ListStaleLinkedIssueTaskFailuresParams{
 		AfterID: cur.id,
+		UpperID: cur.upperID,
 		Limit:   scanPageLimit,
 	})
 	if err != nil {
@@ -733,7 +649,8 @@ func (s *Service) syncStaleLinkedTaskFailures(ctx context.Context, cur scanCurso
 		return cur, nil
 	}
 	last := tasks[len(tasks)-1]
-	return scanCursor{ts: cur.ts, id: last.ID, generation: cur.generation, cycleStarted: cur.cycleStarted}, nil
+	cur.id = last.ID
+	return cur, nil
 }
 
 // decideMissing freezes a decision for every (terminal run, enabled route
@@ -745,43 +662,13 @@ func (s *Service) decideMissing(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	visited := make(map[pgtype.UUID]bool)
 	for _, c := range candidates {
-		ap := db.Autopilot{
-			ID:            c.AutopilotID,
-			WorkspaceID:   c.RunWorkspaceID,
-			Title:         c.AutopilotTitle,
-			ExecutionMode: c.AutopilotExecutionMode,
+		if visited[c.RunID] {
+			continue
 		}
-		route := db.LabrastroMessageRoute{
-			ID:              c.RouteID,
-			WorkspaceID:     c.RunWorkspaceID,
-			AutopilotID:     c.AutopilotID,
-			InstallationID:  c.InstallationID,
-			ChannelType:     c.ChannelType,
-			TargetType:      c.TargetType,
-			TargetUserID:    c.TargetUserID,
-			TargetChatID:    c.TargetChatID,
-			TargetMessageID: c.TargetMessageID,
-			TargetThreadID:  c.TargetThreadID,
-			TargetKey:       c.TargetKey,
-			Conditions:      c.Conditions,
-			ContentMode:     c.ContentMode,
-			Revision:        c.RouteRevision,
-		}
-		in := s.decisionInputFromSource(ap, route, sourceFacts{
-			RunID:               util.UUIDToString(c.RunID),
-			RunStatus:           c.RunStatus,
-			RunCompletedAt:      c.RunCompletedAt.Time,
-			RunCompletedAtValid: c.RunCompletedAt.Valid,
-			TaskID:              util.UUIDToString(c.RunTaskID),
-			TaskIDValid:         c.RunTaskID.Valid,
-			IssueID:             util.UUIDToString(c.RunIssueID),
-			IssueIDValid:        c.RunIssueID.Valid,
-			Result:              c.RunResult,
-			FailureReason:       c.RunFailureReason.String,
-			ReasonCode:          c.RunReasonCode.String,
-		})
-		if _, err := s.decideDelivery(ctx, ap, in); err != nil {
+		visited[c.RunID] = true
+		if _, err := s.EnqueueRunDeliveries(ctx, c.RunID); err != nil {
 			return err
 		}
 	}

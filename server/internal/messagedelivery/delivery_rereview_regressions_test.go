@@ -149,7 +149,7 @@ func TestRereviewTestSendCannotRecreateDeletedWorkspace(t *testing.T) {
 		"name": "rereview test delete", "slug": "rereview-delete-" + fx.autopilot, "description": "", "issue_prefix": "RD",
 	})
 	testFx.Exec(t, `UPDATE autopilot SET workspace_id = $1 WHERE id = $2`, ws, fx.autopilot)
-	testFx.Exec(t, `UPDATE channel_installation SET workspace_id = $1 WHERE id = $2`, fx.install, ws)
+	testFx.Exec(t, `UPDATE channel_installation SET workspace_id = $1 WHERE id = $2`, ws, fx.install)
 	routeID := fx.groupRoute(t, "oc_rereview_test_delete")
 	testFx.Exec(t, `UPDATE labrastro_message_route SET workspace_id = $1 WHERE id = $2`, ws, routeID)
 	svc := newTestService(&fakeSender{}, nil)
@@ -159,7 +159,9 @@ func TestRereviewTestSendCannotRecreateDeletedWorkspace(t *testing.T) {
 	}
 	// ResolveTarget has loaded installation before it calls the remote verifier.
 	// Commit a deletion while that remote call is in progress, then return success.
+	called := false
 	svc.Verifier = rereviewVerifier{onGroup: func() error {
+		called = true
 		tx, err := testPool.Begin(ctx)
 		if err != nil {
 			return err
@@ -176,6 +178,9 @@ func TestRereviewTestSendCannotRecreateDeletedWorkspace(t *testing.T) {
 		return tx.Commit(ctx)
 	}}
 	_, sendErr := svc.TestSend(ctx, route, loadMember(t))
+	if !called {
+		t.Fatal("deletion callback was not reached")
+	}
 	if n := countDeliveries(t, `workspace_id = $1`, ws); n != 0 {
 		t.Fatalf("test-send recreated %d orphan delivery after deletion committed (returned error=%v)", n, sendErr)
 	}
@@ -337,6 +342,15 @@ func (g *rereviewGateDB) QueryRow(ctx context.Context, query string, args ...any
 // R6: the terminal boundary's first-write-wins guard — two concurrent real
 // syncers cannot overwrite the first terminal's structured status.
 func TestRereviewFirstTerminalStatusCannotBeOverwrittenConcurrently(t *testing.T) {
+	for _, secondStatus := range []string{"done", "blocked"} {
+		t.Run(secondStatus, func(t *testing.T) {
+			rereviewFirstTerminalRace(t, secondStatus)
+		})
+	}
+}
+
+func rereviewFirstTerminalRace(t *testing.T, secondStatus string) {
+	t.Helper()
 	if testPool == nil {
 		t.Skip("database not available")
 	}
@@ -364,7 +378,7 @@ func TestRereviewFirstTerminalStatusCannotBeOverwrittenConcurrently(t *testing.T
 	serviceA := service.NewAutopilotService(db.New(gateA), testPool, events.New(), nil)
 	serviceB := service.NewAutopilotService(db.New(gateB), testPool, events.New(), nil)
 	secondIssue := issue
-	secondIssue.Status = "done"
+	secondIssue.Status = secondStatus
 	go func() { defer close(doneA); serviceA.SyncRunFromIssue(ctx, issue) }()
 	go func() { defer close(doneB); serviceB.SyncRunFromIssue(ctx, secondIssue) }()
 	for _, ready := range []chan struct{}{gateA.ready, gateB.ready} {
@@ -391,5 +405,8 @@ func TestRereviewFirstTerminalStatusCannotBeOverwrittenConcurrently(t *testing.T
 	}
 	if !strings.Contains(string(last.Result), "in_review") {
 		t.Fatalf("second stale writer replaced first terminal: first=%s last=%s", first.Result, last.Result)
+	}
+	if last.Status != "completed" || !last.CompletedAt.Time.Equal(first.CompletedAt.Time) {
+		t.Fatalf("stale %s event overwrote the first terminal state: %+v", secondStatus, last)
 	}
 }
