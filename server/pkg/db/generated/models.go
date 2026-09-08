@@ -792,6 +792,18 @@ type IssueDependency struct {
 	Type             string      `json:"type"`
 }
 
+type IssueDependencyAudit struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	IssueID        pgtype.UUID        `json:"issue_id"`
+	ActorID        pgtype.UUID        `json:"actor_id"`
+	CredentialKind string             `json:"credential_kind"`
+	Action         string             `json:"action"`
+	BeforeState    []byte             `json:"before_state"`
+	AfterState     []byte             `json:"after_state"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type IssueLabel struct {
 	ID           pgtype.UUID        `json:"id"`
 	WorkspaceID  pgtype.UUID        `json:"workspace_id"`

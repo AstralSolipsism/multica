@@ -1046,6 +1046,12 @@ func (h *Handler) isWorkspaceEntity(ctx context.Context, userType, userID, works
 }
 
 func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issueID string) (db.Issue, bool) {
+	return h.loadIssueForUserWithNotFound(w, r, issueID, func() {
+		writeError(w, http.StatusNotFound, "issue not found")
+	})
+}
+
+func (h *Handler) loadIssueForUserWithNotFound(w http.ResponseWriter, r *http.Request, issueID string, notFound func()) (db.Issue, bool) {
 	if _, ok := requireUserID(w, r); !ok {
 		return db.Issue{}, false
 	}
@@ -1067,7 +1073,7 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 	if err != nil {
 		// Not a valid UUID and didn't match identifier format → 404 (consistent
 		// with previous silent-zero behavior, which would also have produced 404).
-		writeError(w, http.StatusNotFound, "issue not found")
+		notFound()
 		return db.Issue{}, false
 	}
 	wsUUID, err := util.ParseUUID(workspaceID)
@@ -1080,7 +1086,7 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "issue not found")
+		notFound()
 		return db.Issue{}, false
 	}
 	return issue, true

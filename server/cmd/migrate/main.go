@@ -298,8 +298,12 @@ var concurrentIndexCleanups = map[string]string{
 	"443_issue_project_status_index":                            "idx_issue_project_status",
 	"445_comment_delegated_failure_unsettled_index":             "idx_comment_delegated_failure_unsettled",
 	"446_issue_properties_bigm_index":                           "idx_issue_properties_bigm",
-	// OL-25 message-delivery module (labrastro_* tables). Each migration
-	// builds exactly one index concurrently, per the repo migration contract.
+	// OL-25 message-delivery module (labrastro_* tables) and the project-file
+	// + issue-dependency index batches: three feature branches numbered the
+	// 453+ range in parallel. Each migration's FULL filename is unique, so
+	// every entry below executes exactly once per database; the runner orders
+	// by full version name. Each builds exactly one index concurrently, per
+	// the repo migration contract.
 	"453_labrastro_message_route_identity_index":         "uq_labrastro_message_route_identity",
 	"454_labrastro_message_delivery_dedup_index":         "uq_labrastro_message_delivery_dedup",
 	"455_labrastro_message_delivery_queue_index":         "idx_labrastro_message_delivery_queue",
@@ -317,6 +321,9 @@ var concurrentIndexCleanups = map[string]string{
 	"460_project_file_candidate_list_index":              "idx_project_file_candidate_list",
 	"461_project_file_upload_id_index":                   "idx_project_file_upload_id",
 	"462_project_file_upload_operation_index":            "idx_project_file_upload_operation",
+	"464_issue_dependency_audit_id_index":                "idx_issue_dependency_audit_id",
+	"465_issue_dependency_audit_workspace_index":         "idx_issue_dependency_audit_workspace",
+	"466_issue_dependency_blocked_by_index":              "idx_issue_dependency_blocked_by",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction
