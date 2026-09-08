@@ -430,12 +430,12 @@ func TestR2SameOpKeyDifferentProjectAppliesIndependently(t *testing.T) {
 	grant(t, st, runID+"-r2a", projA, "actor-r2a")
 	grant(t, st, runID+"-r2b", projB, "actor-r2b")
 	op := runID + "-r2-op"
-	resA := save(t, st, SaveRequest{Token: runID + "-r2a", ProjectID: projA, Path: "/x.md",
+	resA := save(t, st, SaveRequest{Token: runID + "-r2a", ProjectID: projA, Path: runID + "/r2/x.md",
 		BaseRevision: 0, OpID: op, Content: []byte("A content")})
 	if !resA.Replayed && resA.Status != StatusSaved {
 		t.Fatalf("A save = %+v", resA)
 	}
-	resB := save(t, st, SaveRequest{Token: runID + "-r2b", ProjectID: projB, Path: "/x.md",
+	resB := save(t, st, SaveRequest{Token: runID + "-r2b", ProjectID: projB, Path: runID + "/r2/x.md",
 		BaseRevision: 0, OpID: op, Content: []byte("B content")})
 	if resB.Replayed {
 		t.Fatal("B must not replay A's outcome — its file was never saved")
@@ -443,7 +443,7 @@ func TestR2SameOpKeyDifferentProjectAppliesIndependently(t *testing.T) {
 	if resB.Status != StatusSaved || resB.Revision != 1 {
 		t.Fatalf("B save = %+v", resB)
 	}
-	curB, err := st.Read(context.Background(), runID+"-r2b", projB, "/x.md")
+	curB, err := st.Read(context.Background(), runID+"-r2b", projB, runID+"/r2/x.md")
 	if err != nil || !bytes.Equal(curB.Content, []byte("B content")) {
 		t.Fatalf("B file content wrong: %v", err)
 	}
@@ -455,7 +455,7 @@ func TestR3SameOpKeyDifferentActors(t *testing.T) {
 	st := open(t)
 	grant(t, st, runID+"-r3a", projA, "actor-r3a")
 	grant(t, st, runID+"-r3b", projA, "actor-r3b")
-	path := "/r3.md"
+	path := runID + "/r3.md"
 	op := runID + "-r3-op"
 	resA := save(t, st, SaveRequest{Token: runID + "-r3a", ProjectID: projA, Path: path,
 		BaseRevision: 0, OpID: op, Content: []byte("from A")})
@@ -715,8 +715,10 @@ func TestR8AdoptStaleExpectedRevisionConflicts(t *testing.T) {
 	if n := countRows(t, st, `SELECT count(*) FROM conflict_candidates WHERE id=$1`, res.CandidateID); n != 1 {
 		t.Fatalf("candidate consumed by stale adopt (n=%d)", n)
 	}
-	if n := countRows(t, st, `SELECT count(*) FROM op_results WHERE op_id=$1`, runID+"-r8-adopt"); n != 0 {
-		t.Fatalf("stale adopt left %d ledger rows", n)
+	// The conflict outcome is recorded (replayable), while head and
+	// candidate are preserved — see R12 for the replay semantics.
+	if n := countRows(t, st, `SELECT count(*) FROM op_results WHERE op_id=$1 AND outcome='CONFLICT' AND revision=3 AND op_kind='adopt'`, runID+"-r8-adopt"); n != 1 {
+		t.Fatalf("stale adopt must record exactly 1 CONFLICT ledger row, got %d", n)
 	}
 	// Re-decide at the real head (fresh op id): adoption succeeds as rev 4.
 	adopt2 := save2(t, st, func() (SaveResult, error) {
@@ -836,6 +838,147 @@ func TestR10RevokedDuringAdopt(t *testing.T) {
 		t.Fatalf("candidate consumed despite revocation (n=%d)", n)
 	}
 	t.Log("R10: revoked during adopt -> commit re-check denies, zero rows, candidate intact")
+}
+
+// R11: a key that served an ADOPT must not be hijacked by a Save with
+// matching binding fields (architect re-review #1, adopt->Save direction).
+func TestR11AdoptKeyNotReplayableBySave(t *testing.T) {
+	st := open(t)
+	grant(t, st, runID+"-r11a", projA, "actor-r11a")
+	grant(t, st, runID+"-r11b", projA, "actor-r11b")
+	path := runID + "/r11.md"
+	// v1, head to v2, a candidate, then an adopt (key K) creates v3.
+	save(t, st, SaveRequest{Token: runID + "-r11a", ProjectID: projA, Path: path, BaseRevision: 0, OpID: runID + "-r11-v1", Content: []byte("v1")})
+	save(t, st, SaveRequest{Token: runID + "-r11b", ProjectID: projA, Path: path, BaseRevision: 1, OpID: runID + "-r11-v2", Content: []byte("v2")})
+	c := save(t, st, SaveRequest{Token: runID + "-r11a", ProjectID: projA, Path: path, BaseRevision: 1, OpID: runID + "-r11-c1", Content: []byte("cand")})
+	if c.Status != StatusConflict {
+		t.Fatalf("setup: %+v", c)
+	}
+	adopt := save2(t, st, func() (SaveResult, error) {
+		return st.AdoptCandidate(context.Background(), runID+"-r11a", projA, path, c.CandidateID, runID+"-r11-K", 2)
+	})
+	if adopt.Status != StatusSaved || adopt.Revision != 3 {
+		t.Fatalf("adopt = %+v", adopt)
+	}
+	// Third party moves the head to v4.
+	save(t, st, SaveRequest{Token: runID + "-r11b", ProjectID: projA, Path: path, BaseRevision: 3, OpID: runID + "-r11-v4", Content: []byte("v4")})
+
+	// A Save reusing key K — even with binding fields matching the adopt's
+	// ledger row — must be ErrOpKeyReused, never a replay of SAVED v3.
+	_, err := st.Save(context.Background(), SaveRequest{Token: runID + "-r11a", ProjectID: projA, Path: path,
+		BaseRevision: 2, OpID: runID + "-r11-K", Content: []byte("cand")})
+	if !errors.Is(err, ErrOpKeyReused) {
+		t.Fatalf("Save hijacking adopt key: err=%v want ErrOpKeyReused", err)
+	}
+	// Nothing was applied by the rejected Save.
+	if n := countRows(t, st, `SELECT count(*) FROM revisions WHERE op_id=$1`, runID+"-r11-K"); n != 1 {
+		t.Fatalf("K revision rows = %d (adopt's only)", n)
+	}
+	cur, err := st.Read(context.Background(), runID+"-r11a", projA, path)
+	if err != nil || cur.Revision != 4 {
+		t.Fatalf("head after rejected save: rev=%d err=%v", cur.Revision, err)
+	}
+	t.Log("R11: adopt-owned key rejected for Save with matching binding — no replay, no side effects")
+}
+
+// R12: adopt conflicts are recorded and replay EXACTLY — retry returns the
+// first conflict's fields even if the head moved again; different expected
+// under the same key is a reuse; external candidate consumption still replays
+// instead of NotFound (architect re-review #2).
+func TestR12AdoptConflictReplayExact(t *testing.T) {
+	st := open(t)
+	grant(t, st, runID+"-r12a", projA, "actor-r12a")
+	grant(t, st, runID+"-r12b", projA, "actor-r12b")
+	path := runID + "/r12.md"
+	save(t, st, SaveRequest{Token: runID + "-r12a", ProjectID: projA, Path: path, BaseRevision: 0, OpID: runID + "-r12-v1", Content: []byte("v1")})
+	save(t, st, SaveRequest{Token: runID + "-r12b", ProjectID: projA, Path: path, BaseRevision: 1, OpID: runID + "-r12-v2", Content: []byte("v2")})
+	c := save(t, st, SaveRequest{Token: runID + "-r12a", ProjectID: projA, Path: path, BaseRevision: 1, OpID: runID + "-r12-c1", Content: []byte("cand")})
+	if c.Status != StatusConflict {
+		t.Fatalf("setup: %+v", c)
+	}
+	// Decision against rev 2, but the head is at v3 -> recorded conflict.
+	save(t, st, SaveRequest{Token: runID + "-r12b", ProjectID: projA, Path: path, BaseRevision: 2, OpID: runID + "-r12-v3", Content: []byte("v3")})
+	first := save2(t, st, func() (SaveResult, error) {
+		return st.AdoptCandidate(context.Background(), runID+"-r12a", projA, path, c.CandidateID, runID+"-r12-K", 2)
+	})
+	if first.Status != StatusConflict || first.Revision != 3 {
+		t.Fatalf("first adopt = %+v", first)
+	}
+	// Head moves again to v4 — the retry must still replay conflict at 3.
+	save(t, st, SaveRequest{Token: runID + "-r12b", ProjectID: projA, Path: path, BaseRevision: 3, OpID: runID + "-r12-v4", Content: []byte("v4")})
+	retry := save2(t, st, func() (SaveResult, error) {
+		return st.AdoptCandidate(context.Background(), runID+"-r12a", projA, path, c.CandidateID, runID+"-r12-K", 2)
+	})
+	if !retry.Replayed || retry.Status != StatusConflict || retry.Revision != 3 || retry.ConflictCurrent != 3 || retry.CandidateID != c.CandidateID {
+		t.Fatalf("conflict replay drifted: first=%+v retry=%+v", first, retry)
+	}
+	// Same key, different expected revision -> reuse, not accepted.
+	_, err := st.AdoptCandidate(context.Background(), runID+"-r12a", projA, path, c.CandidateID, runID+"-r12-K", 4)
+	if !errors.Is(err, ErrOpKeyReused) {
+		t.Fatalf("same key + new expected after conflict: err=%v want ErrOpKeyReused", err)
+	}
+	// The candidate is consumed by a fresh adopt op; the old key's retry
+	// still replays the recorded conflict (not NotFound).
+	fresh := save2(t, st, func() (SaveResult, error) {
+		return st.AdoptCandidate(context.Background(), runID+"-r12b", projA, path, c.CandidateID, runID+"-r12-K2", 4)
+	})
+	if fresh.Status != StatusSaved || fresh.Revision != 5 {
+		t.Fatalf("fresh adopt at head 4 = %+v", fresh)
+	}
+	after := save2(t, st, func() (SaveResult, error) {
+		return st.AdoptCandidate(context.Background(), runID+"-r12a", projA, path, c.CandidateID, runID+"-r12-K", 2)
+	})
+	if !after.Replayed || after.Status != StatusConflict || after.Revision != 3 {
+		t.Fatalf("replay after external consumption = %+v, want recorded conflict at 3", after)
+	}
+	t.Log("R12: adopt conflict recorded + exact replay across head moves and external consumption")
+}
+
+// R13: the same ledger key racing on DIFFERENT paths cannot be coordinated by
+// the file lock — the loser must get ErrOpKeyReused, never a raw 23505
+// (architect re-review #3).
+func TestR13CrossPathSameKeyConcurrent(t *testing.T) {
+	st := open(t)
+	grant(t, st, runID+"-r13", projA, "actor-r13")
+	key := runID + "-r13-K"
+	ctx := context.Background()
+	stA, _ := OpenStore(ctx, pgURL, s3EP, s3Key, s3Sec, bkt, "us-east-1")
+	defer stA.Close()
+	stB, _ := OpenStore(ctx, pgURL, s3EP, s3Key, s3Sec, bkt, "us-east-1")
+	defer stB.Close()
+	reqA := SaveRequest{Token: runID + "-r13", ProjectID: projA, Path: runID + "/r13/a.md", BaseRevision: 0, OpID: key, Content: []byte("path A")}
+	reqB := SaveRequest{Token: runID + "-r13", ProjectID: projA, Path: runID + "/r13/b.md", BaseRevision: 0, OpID: key, Content: []byte("path B")}
+
+	start := make(chan struct{})
+	var res [2]SaveResult
+	var errs [2]error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); <-start; res[0], errs[0] = stA.Save(ctx, reqA) }()
+	go func() { defer wg.Done(); <-start; res[1], errs[1] = stB.Save(ctx, reqB) }()
+	close(start)
+	wg.Wait()
+
+	saved, reused := 0, 0
+	for i := range res {
+		switch {
+		case errs[i] == nil && res[i].Status == StatusSaved:
+			saved++
+		case errors.Is(errs[i], ErrOpKeyReused):
+			reused++
+		default:
+			t.Fatalf("racer %d: err=%v res=%+v — raw DB error leaked (want SAVED or ErrOpKeyReused)", i, errs[i], res[i])
+		}
+	}
+	if saved != 1 || reused != 1 {
+		t.Fatalf("saved=%d reused=%d, want 1/1", saved, reused)
+	}
+	// Exactly one file was created; the loser left nothing on its path.
+	n := countRows(t, st, `SELECT count(*) FROM files WHERE path IN ($1,$2)`, runID+"/r13/a.md", runID+"/r13/b.md")
+	if n != 1 {
+		t.Fatalf("%d files created, want 1", n)
+	}
+	t.Log("R13: cross-path same-key race -> one SAVED, one ErrOpKeyReused, no raw 23505")
 }
 
 func save2(t *testing.T, st *Store, f func() (SaveResult, error)) SaveResult {

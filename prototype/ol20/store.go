@@ -33,6 +33,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -221,6 +222,7 @@ func randKey() string {
 
 // ledgerRow is the recorded request binding + outcome.
 type ledgerRow struct {
+	opKind           string
 	outcome          string
 	revision         int64
 	candidateID      *string
@@ -230,9 +232,11 @@ type ledgerRow struct {
 	contentSHA256    string
 }
 
-// checkLedger replays a hit only on an exact request match.
-func checkLedger(row *ledgerRow, req SaveRequest, digest string) (SaveResult, bool, error) {
-	if row.path != req.Path || row.baseRevision != req.BaseRevision || row.contentSHA256 != digest {
+// checkLedger replays a hit only on an exact request match — including the
+// operation kind: a key that served the other operation type is a reuse,
+// never a replay (architect re-review #1, both directions now).
+func checkLedger(row *ledgerRow, wantKind string, path string, baseRevision int64, digest string) (SaveResult, bool, error) {
+	if row.opKind != wantKind || row.path != path || row.baseRevision != baseRevision || row.contentSHA256 != digest {
 		return SaveResult{}, false, ErrOpKeyReused
 	}
 	res := SaveResult{Status: SaveStatus(row.outcome), Revision: row.revision, Replayed: true}
@@ -243,6 +247,31 @@ func checkLedger(row *ledgerRow, req SaveRequest, digest string) (SaveResult, bo
 		res.ConflictCurrent = *row.conflictCurrent
 	}
 	return res, true, nil
+}
+
+// rowQuerier abstracts QueryRow over transactions and the pool, so ledger
+// lookups can run on a fresh read after a poisoned transaction is rolled
+// back (a 23505 inside a tx aborts it; any further statement is 25P02).
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// reclaimLedgerAfterConflict rolls back the aborted transaction and re-reads
+// the ledger on a fresh connection: the winner's committed row is visible
+// there, giving a replay (identical request) or ErrOpKeyReused (different
+// request) instead of leaking the raw database error.
+func (s *Store) reclaimLedgerAfterConflict(ctx context.Context, tx pgx.Tx, req SaveRequest, actor Actor, digest string) (SaveResult, bool, error) {
+	_ = tx.Rollback(ctx)
+	return s.lookupLedger(ctx, s.pool, req, actor, digest)
+}
+
+// isUniqueViolation reports a Postgres unique-constraint failure (23505):
+// two requests claimed the same ledger key on paths the file lock cannot
+// coordinate. The contract is ErrOpKeyReused or a replay — never a raw DB
+// error (architect re-review #3).
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 func (s *Store) Save(ctx context.Context, req SaveRequest) (SaveResult, error) {
@@ -330,6 +359,14 @@ func (s *Store) Save(ctx context.Context, req SaveRequest) (SaveResult, error) {
 			`INSERT INTO op_results (project_id, actor_id, op_id, outcome, revision, path, base_revision, content_sha256, op_kind)
 			 VALUES ($1,$2,$3,'SAVED',$4,$5,$6,$7,'save')`,
 			req.ProjectID, actor.ID, req.OpID, newRev, req.Path, req.BaseRevision, digest); err != nil {
+			if isUniqueViolation(err) {
+				// Same ledger key claimed on another path: the tx is aborted
+				// (25P02 beyond this point); roll back and re-read fresh.
+				if res, hit, lerr := s.reclaimLedgerAfterConflict(ctx, tx, req, actor, digest); hit || lerr != nil {
+					return res, lerr
+				}
+				return SaveResult{}, ErrOpKeyReused
+			}
 			return SaveResult{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -369,6 +406,12 @@ func (s *Store) Save(ctx context.Context, req SaveRequest) (SaveResult, error) {
 		`INSERT INTO op_results (project_id, actor_id, op_id, outcome, revision, candidate_id, conflict_current, path, base_revision, content_sha256, op_kind)
 		 VALUES ($1,$2,$3,'CONFLICT',$4,$5,$6,$7,$8,$9,'save')`,
 		req.ProjectID, actor.ID, req.OpID, current, candID, current, req.Path, req.BaseRevision, digest); err != nil {
+		if isUniqueViolation(err) {
+			if res, hit, lerr := s.reclaimLedgerAfterConflict(ctx, tx, req, actor, digest); hit || lerr != nil {
+				return res, lerr
+			}
+			return SaveResult{}, ErrOpKeyReused
+		}
 		return SaveResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -381,20 +424,20 @@ func (s *Store) Save(ctx context.Context, req SaveRequest) (SaveResult, error) {
 	return res, nil
 }
 
-func (s *Store) lookupLedger(ctx context.Context, tx pgx.Tx, req SaveRequest, actor Actor, digest string) (SaveResult, bool, error) {
+func (s *Store) lookupLedger(ctx context.Context, q rowQuerier, req SaveRequest, actor Actor, digest string) (SaveResult, bool, error) {
 	row := ledgerRow{}
-	err := tx.QueryRow(ctx,
-		`SELECT outcome, COALESCE(revision,0), candidate_id, conflict_current, path, base_revision, content_sha256
+	err := q.QueryRow(ctx,
+		`SELECT op_kind, outcome, COALESCE(revision,0), candidate_id, conflict_current, path, base_revision, content_sha256
 		 FROM op_results WHERE project_id=$1 AND actor_id=$2 AND op_id=$3`,
 		req.ProjectID, actor.ID, req.OpID).
-		Scan(&row.outcome, &row.revision, &row.candidateID, &row.conflictCurrent, &row.path, &row.baseRevision, &row.contentSHA256)
+		Scan(&row.opKind, &row.outcome, &row.revision, &row.candidateID, &row.conflictCurrent, &row.path, &row.baseRevision, &row.contentSHA256)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SaveResult{}, false, nil
 	}
 	if err != nil {
 		return SaveResult{}, true, err
 	}
-	res, ok, err := checkLedger(&row, req, digest)
+	res, ok, err := checkLedger(&row, "save", req.Path, req.BaseRevision, digest)
 	return res, ok || err != nil, err
 }
 
@@ -509,20 +552,22 @@ func (s *Store) AdoptCandidate(ctx context.Context, token, projectID, path, cand
 		return SaveResult{}, err
 	}
 
-	lookup := func() (SaveResult, bool, error) {
+	lookupOn := func(q rowQuerier) (SaveResult, bool, error) {
 		var (
-			kind         string
-			outcome      string
-			doneRev      int64
-			doneCand     *string
-			donePath     string
-			doneExpected int64
+			kind          string
+			outcome       string
+			doneRev       int64
+			doneCand      *string
+			doneConflict  *int64
+			donePath      string
+			doneExpected  int64
+			doneSHA       string
 		)
-		err := tx.QueryRow(ctx,
-			`SELECT op_kind, outcome, COALESCE(revision,0), candidate_id, path, base_revision
+		err := q.QueryRow(ctx,
+			`SELECT op_kind, outcome, COALESCE(revision,0), candidate_id, conflict_current, path, base_revision, content_sha256
 			 FROM op_results WHERE project_id=$1 AND actor_id=$2 AND op_id=$3`,
 			projectID, actor.ID, opID).
-			Scan(&kind, &outcome, &doneRev, &doneCand, &donePath, &doneExpected)
+			Scan(&kind, &outcome, &doneRev, &doneCand, &doneConflict, &donePath, &doneExpected, &doneSHA)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return SaveResult{}, false, nil
 		}
@@ -532,7 +577,22 @@ func (s *Store) AdoptCandidate(ctx context.Context, token, projectID, path, cand
 		if kind != "adopt" || donePath != path || doneCand == nil || *doneCand != candidateID || doneExpected != expectedRevision {
 			return SaveResult{}, true, ErrOpKeyReused
 		}
-		return SaveResult{Status: SaveStatus(outcome), Revision: doneRev, Replayed: true}, true, nil
+		res := SaveResult{Status: SaveStatus(outcome), Revision: doneRev, Replayed: true, CandidateID: candidateID}
+		if doneConflict != nil {
+			res.ConflictCurrent = *doneConflict
+		}
+		return res, true, nil
+	}
+
+	lookup := func() (SaveResult, bool, error) { return lookupOn(tx) }
+	reclaim := func() (SaveResult, bool, error) {
+		_ = tx.Rollback(ctx)
+		fresh, ferr := s.pool.Begin(ctx)
+		if ferr != nil {
+			return SaveResult{}, true, ferr
+		}
+		defer fresh.Rollback(ctx)
+		return lookupOn(fresh)
 	}
 
 	// Pre-lock replay + cross-type key check.
@@ -577,8 +637,25 @@ func (s *Store) AdoptCandidate(ctx context.Context, token, projectID, path, cand
 	}
 
 	// The decision is stale: the head moved after the user chose to adopt.
-	// Keep the head AND the candidate; the caller re-decides at the new head.
+	// Keep the head AND the candidate, but RECORD the conflict outcome — a
+	// retry of the same request replays this exact result (architect
+	// re-review #2), it does not drift with a head that moved again.
 	if current != expectedRevision {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO op_results (project_id, actor_id, op_id, outcome, revision, candidate_id, conflict_current, path, base_revision, content_sha256, op_kind)
+			 VALUES ($1,$2,$3,'CONFLICT',$4,$5,$6,$7,$8,$9,'adopt')`,
+			projectID, actor.ID, opID, current, candidateID, current, path, expectedRevision, sum); err != nil {
+			if isUniqueViolation(err) {
+				if res, hit, lerr := reclaim(); hit || lerr != nil {
+					return res, lerr
+				}
+				return SaveResult{}, ErrOpKeyReused
+			}
+			return SaveResult{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return SaveResult{}, err
+		}
 		return SaveResult{
 			Status:          StatusConflict,
 			Revision:        current,
@@ -607,6 +684,12 @@ func (s *Store) AdoptCandidate(ctx context.Context, token, projectID, path, cand
 		`INSERT INTO op_results (project_id, actor_id, op_id, outcome, revision, candidate_id, base_revision, path, content_sha256, op_kind)
 		 VALUES ($1,$2,$3,'SAVED',$4,$5,$6,$7,$8,'adopt')`,
 		projectID, actor.ID, opID, newRev, candidateID, expectedRevision, path, sum); err != nil {
+		if isUniqueViolation(err) {
+			if res, hit, lerr := reclaim(); hit || lerr != nil {
+				return res, lerr
+			}
+			return SaveResult{}, ErrOpKeyReused
+		}
 		return SaveResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
