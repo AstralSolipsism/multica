@@ -1,5 +1,6 @@
 "use client";
 
+import type React from "react";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
   activeQuotaWindows,
@@ -65,7 +66,7 @@ export function MachineQuotaChips({
   return (
     <span
       ref={containerRef}
-      className="relative flex min-w-0 items-center gap-1.5"
+      className="relative flex w-full min-w-0 items-center gap-1.5"
     >
       {/* Measuring row: the same pills, never painted. The "+99" placeholder
           keeps the overflow pill's measured width stable against digit
@@ -136,6 +137,10 @@ export function MachineQuotaChips({
 // Measures real widths and decides how many pills fit. The initial state
 // shows everything; useLayoutEffect corrects before first paint on the
 // client, so there is no visible flicker and SSR stays simple.
+// The container span is w-full on purpose: its width must track the quota
+// COLUMN, never the collapsed content — otherwise every collapse shrinks
+// the container, the observer refires on the smaller budget, and the row
+// spirals down to "+N"-only.
 function useChipFlow(itemCount: number) {
   const containerRef = useRef<HTMLSpanElement | null>(null);
   const ghostRef = useRef<HTMLSpanElement | null>(null);
@@ -182,9 +187,16 @@ export function fitChipCount(
   return 0;
 }
 
-function OverflowPill({ count }: { count: number }) {
+function OverflowPill({
+  count,
+  className,
+  ...rest
+}: { count: number } & React.ComponentProps<"span">) {
   return (
-    <span className="inline-flex shrink-0 items-center rounded bg-muted px-1.5 py-0.5 text-micro font-medium text-muted-foreground">
+    <span
+      {...rest}
+      className={`inline-flex shrink-0 items-center rounded-full bg-muted px-2 py-0.5 text-micro font-medium tabular-nums text-muted-foreground ring-1 ring-inset ring-border ${className ?? ""}`}
+    >
       +{count}
     </span>
   );
