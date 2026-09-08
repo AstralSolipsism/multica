@@ -49,6 +49,20 @@ func (s *Service) ListDeliveries(ctx context.Context, workspaceID, autopilotID p
 // belong to the automation in the path — a delivery id from another
 // autopilot (or workspace) is not found.
 func (s *Service) GetDelivery(ctx context.Context, workspaceID, autopilotID, deliveryID pgtype.UUID) (db.LabrastroMessageDelivery, []db.LabrastroMessageReceipt, error) {
+	d, receipts, err := s.GetDeliveryRecords(ctx, workspaceID, deliveryID)
+	if err != nil {
+		return db.LabrastroMessageDelivery{}, nil, err
+	}
+	if util.UUIDToString(d.AutopilotID) != util.UUIDToString(autopilotID) {
+		return db.LabrastroMessageDelivery{}, nil, ErrDeliveryNotFound
+	}
+	return d, receipts, nil
+}
+
+// GetDeliveryRecords loads the delivery row + receipt ledger scoped to the
+// workspace. Path pinning (which automation or route owns it) is the
+// caller's concern.
+func (s *Service) GetDeliveryRecords(ctx context.Context, workspaceID, deliveryID pgtype.UUID) (db.LabrastroMessageDelivery, []db.LabrastroMessageReceipt, error) {
 	d, err := s.Queries.GetLabrastroMessageDelivery(ctx, db.GetLabrastroMessageDeliveryParams{
 		ID: deliveryID, WorkspaceID: workspaceID,
 	})
@@ -57,9 +71,6 @@ func (s *Service) GetDelivery(ctx context.Context, workspaceID, autopilotID, del
 	}
 	if err != nil {
 		return db.LabrastroMessageDelivery{}, nil, fmt.Errorf("load delivery: %w", err)
-	}
-	if util.UUIDToString(d.AutopilotID) != util.UUIDToString(autopilotID) {
-		return db.LabrastroMessageDelivery{}, nil, ErrDeliveryNotFound
 	}
 	receipts, err := s.Queries.ListLabrastroMessageReceiptsByDelivery(ctx, db.ListLabrastroMessageReceiptsByDeliveryParams{
 		DeliveryID:  d.ID,
@@ -136,7 +147,14 @@ func (s *Service) TestSend(ctx context.Context, route db.LabrastroMessageRoute, 
 	}); err != nil {
 		return db.LabrastroMessageDelivery{}, err
 	}
+	return s.executeTestSend(ctx, route, member)
+}
 
+// executeTestSend is the shared synchronous test-send protocol for both
+// route scopes (OL-25 automation and OL-27 personal/team): pre-validation
+// happened in the caller; everything from the frozen snapshot through the
+// lease-guarded outcome write is identical.
+func (s *Service) executeTestSend(ctx context.Context, route db.LabrastroMessageRoute, member db.Member) (db.LabrastroMessageDelivery, error) {
 	content := contentSnapshot{
 		Text:      "Labrastro test message: the bot can reach this target. No action is needed.",
 		Summary:   "Labrastro test message",

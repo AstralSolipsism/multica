@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
+	messagedelivery "github.com/multica-ai/multica/server/internal/messagedelivery"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -653,6 +654,26 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		ScopeID:     project.ID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete project views")
+		return
+	}
+	// Team notification routes scoped to this project stop with it (OL-27):
+	// the routes are disabled and their not-yet-started sends cancelled in
+	// the same transaction, so no queued message can outlive the filter it
+	// was decided under.
+	if _, err := qtx.DisableLabrastroMessageSourceRoutesByProject(r.Context(), db.DisableLabrastroMessageSourceRoutesByProjectParams{
+		WorkspaceID: project.WorkspaceID,
+		ProjectID:   project.ID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to stop project notification routes")
+		return
+	}
+	if _, err := qtx.CancelLabrastroMessageDeliveriesByProject(r.Context(), db.CancelLabrastroMessageDeliveriesByProjectParams{
+		WorkspaceID: project.WorkspaceID,
+		ProjectID:   project.ID,
+		ErrorCode:   pgtype.Text{String: messagedelivery.ErrorCodeRouteDisabled, Valid: true},
+		LastError:   pgtype.Text{String: "project deleted; team route disabled", Valid: true},
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to cancel project notification deliveries")
 		return
 	}
 	if err := qtx.DeleteProject(r.Context(), db.DeleteProjectParams{

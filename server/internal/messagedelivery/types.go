@@ -41,13 +41,51 @@ const (
 )
 
 // Source kinds. run_only / create_issue read terminal autopilot_run rows;
-// test_send records manual test sends for audit.
+// test_send records manual test sends for audit. OL-27 adds the three
+// persisted personal/team sources: an inbox item (forwarded to the
+// recipient's own DM), and the two canonical team records — an activity log
+// entry (status/assignee changes) and a plain comment. The route-level
+// source SCOPE uses the shorter vocabulary below (RouteSource*).
 const (
 	SourceKindRunOnly     = "run_only"
 	SourceKindCreateIssue = "create_issue"
 	SourceKindTestSend    = "test_send"
 	SourceKindUnknown     = "unknown"
+	SourceKindInbox       = "inbox"
+	SourceKindActivity    = "activity"
+	SourceKindComment     = "comment"
 )
+
+// Route source scopes stored in labrastro_message_route.source_kind.
+// 'run' is the OL-25 automation scope; the other three are the OL-27
+// persistent sources. Every non-run scope leaves autopilot_id NULL — a
+// personal or project id never impersonates an automation id.
+const (
+	RouteSourceRun      = "run"
+	RouteSourceInbox    = "inbox"
+	RouteSourceActivity = "activity"
+	RouteSourceComment  = "comment"
+)
+
+// IsSourceRouteScope reports whether a route source scope is one of the
+// OL-27 persistent sources.
+func IsSourceRouteScope(kind string) bool {
+	return kind == RouteSourceInbox || kind == RouteSourceActivity || kind == RouteSourceComment
+}
+
+// routeScopeSourceKind maps a route scope onto the delivery source_kind it
+// produces.
+func routeScopeSourceKind(scope string) string {
+	switch scope {
+	case RouteSourceInbox:
+		return SourceKindInbox
+	case RouteSourceActivity:
+		return SourceKindActivity
+	case RouteSourceComment:
+		return SourceKindComment
+	}
+	return SourceKindUnknown
+}
 
 // Route target types.
 const (
@@ -94,6 +132,9 @@ const (
 	ErrorCodeTopicAnchorMismatch = "route_topic_anchor_mismatch"
 	ErrorCodeAuthorizationLost   = "route_authorization_lost"
 	ErrorCodeTargetNotApproved   = "route_target_not_approved"
+	// OL-27: the recipient's preference mutes this notification (recorded
+	// on the suppressed decision, re-checked again at send time).
+	ErrorCodeRecipientMuted = "recipient_muted"
 )
 
 // ValidRouteConditions / ValidContentModes are the accepted API values.
@@ -148,6 +189,17 @@ func DeliveryDedupKey(runID, installationID, targetKey string) string {
 // collide with (or suppress) a real source event.
 func TestDeliveryDedupKey(sendID string) string {
 	return "test:" + sendID
+}
+
+// SourceDeliveryDedupKey identifies the (persisted source record,
+// normalized target) pair for the OL-27 sources. It carries workspace,
+// source kind, the ORIGINAL record id, the installation and the normalized
+// target — and deliberately NOT the individual subscriber list, the route
+// id, the route revision or any web-client state, so equivalent routes to
+// the same target collapse into one decision and a web read/archive can
+// never re-produce one. The run namespace ("run:…") above is unchanged.
+func SourceDeliveryDedupKey(scope, workspaceID, sourceRefID, installationID, targetKey string) string {
+	return scope + ":" + workspaceID + ":" + sourceRefID + ":" + installationID + ":" + targetKey
 }
 
 // routeMatchesRun reports whether the route's condition selects this run's
@@ -229,13 +281,26 @@ func (t targetSnapshot) TargetKeyFor() string {
 // contentSnapshot is the JSON shape frozen into
 // labrastro_message_delivery.content_snapshot at decision time. Text is the
 // fully rendered message; shards are a pure function of it, so a retry can
-// never re-split the body differently.
+// never re-split the body differently. The OL-27 fields below stay empty
+// for automation-run deliveries.
 type contentSnapshot struct {
 	Text      string `json:"text"`
 	Summary   string `json:"summary"`
 	RunStatus string `json:"run_status"`
 	HasOutput bool   `json:"has_output"`
 	Link      string `json:"link,omitempty"`
+	// OL-27 source snapshots.
+	SourceKind      string `json:"source_kind,omitempty"`
+	IssueIdentifier string `json:"issue_identifier,omitempty"`
+	IssueTitle      string `json:"issue_title,omitempty"`
+	ActorName       string `json:"actor_name,omitempty"`
+	// Change renders a team transition ("Todo → In Progress", or the
+	// assignee handover) for activity deliveries.
+	Change string `json:"change,omitempty"`
+	// Body is the forwarded inbox/comment excerpt (redaction boundary: the
+	// persisted title/body the recipient already sees in their own inbox,
+	// and plain comment content — nothing else from the record).
+	Body string `json:"body,omitempty"`
 }
 
 // sourceRef is the JSON shape frozen into
@@ -247,6 +312,12 @@ type sourceRef struct {
 	IssueID         string `json:"issue_id,omitempty"`
 	IssueIdentifier string `json:"issue_identifier,omitempty"`
 	IssueStatus     string `json:"issue_status,omitempty"`
+	// OL-27 source records: exactly one of the three ids below is set, and
+	// it matches the delivery's source_ref_id / source_kind columns.
+	SourceKind  string `json:"source_kind,omitempty"`
+	InboxItemID string `json:"inbox_item_id,omitempty"`
+	ActivityID  string `json:"activity_id,omitempty"`
+	CommentID   string `json:"comment_id,omitempty"`
 }
 
 // ---- errors the HTTP layer maps to stable codes ----
@@ -335,6 +406,15 @@ type TargetNotApprovedError struct{}
 
 func (e *TargetNotApprovedError) Error() string {
 	return "target has no active approval by a workspace admin"
+}
+
+// RouteNotSelfError: a personal (inbox) route must forward the acting
+// member's OWN inbox to their OWN DM. Configuring another user's inbox —
+// even as a workspace admin — is refused (OL-27 acceptance).
+type RouteNotSelfError struct{}
+
+func (e *RouteNotSelfError) Error() string {
+	return "a personal notification route can only deliver your own inbox to your own chat"
 }
 
 // sourceFacts is the persisted evidence of one terminal run, assembled in

@@ -60,17 +60,23 @@ type Service struct {
 	MaxSendAttempts int
 
 	notify chan struct{}
-	done   chan struct{}
+	// decideNotify is the OL-27 source wakeup: inbox:new /
+	// activity:created / comment:created land here as a latency hint and
+	// the scan loop runs a decide pass over the persisted sources. Lossy
+	// by design — the periodic compensator is the guarantee.
+	decideNotify chan struct{}
+	done         chan struct{}
 }
 
 // New builds the module. Call Run to start the worker and compensator.
 func New(queries *db.Queries) *Service {
 	return &Service{
-		Queries: queries,
-		Log:     slog.Default(),
-		Now:     time.Now,
-		notify:  make(chan struct{}, 1),
-		done:    make(chan struct{}),
+		Queries:      queries,
+		Log:          slog.Default(),
+		Now:          time.Now,
+		notify:       make(chan struct{}, 1),
+		decideNotify: make(chan struct{}, 1),
+		done:         make(chan struct{}),
 	}
 }
 
@@ -122,7 +128,8 @@ type resolvedTarget struct {
 	messageID    pgtype.Text
 	threadID     pgtype.Text
 	targetKey    string
-	openID       string // member targets: the live bound platform id
+	openID       string      // member targets: the live bound platform id
+	projectID    pgtype.UUID // team routes: the workspace project filter
 }
 
 // Type exposes the resolved target type to the HTTP surface (approval

@@ -684,3 +684,404 @@ SELECT ci.* FROM channel_installation ci
 JOIN agent a ON a.id = ci.agent_id
 WHERE a.runtime_id = $1 AND a.kind = 'system'
 ORDER BY ci.id FOR UPDATE OF ci;
+
+-- =====================
+-- OL-27: personal-inbox and team-event sources
+-- =====================
+-- The same route/delivery/receipt storage the automation source uses; these
+-- queries add the source-scoped configuration, the candidate scans over the
+-- three persisted source records, the team target approvals and the
+-- lifecycle stop paths. Legacy run queries above are untouched.
+
+-- name: CreateLabrastroMessageSourceRoute :one
+-- Personal/team route. autopilot_id stays NULL — a non-run route never
+-- impersonates an automation id. Revision 1, effective_from now (the same
+-- "only sources from enabling on" boundary the run routes use).
+INSERT INTO labrastro_message_route (
+    id, workspace_id, autopilot_id, installation_id, channel_type,
+    target_type, target_user_id, target_chat_id, target_message_id,
+    target_thread_id, target_key, source_kind, project_id, event_types,
+    enabled, revision, created_by, updated_by, effective_from
+) VALUES (
+    $1, $2, NULL, $3, $4,
+    $5, sqlc.narg('target_user_id'), sqlc.narg('target_chat_id'),
+    sqlc.narg('target_message_id'), sqlc.narg('target_thread_id'),
+    $6, $7, sqlc.narg('project_id'), $8,
+    $9, 1, $10, $10, now()
+) RETURNING *;
+
+-- name: UpdateLabrastroMessageSourceRoute :one
+-- Revision-guarded edit of a personal/team route. The source scope kind
+-- never changes through an edit — a route is created as one scope and dies
+-- as it. Enabling through an edit restarts the eligibility boundary with
+-- the same semantics as an explicit enable.
+UPDATE labrastro_message_route
+SET installation_id = sqlc.arg('installation_id'),
+    channel_type = sqlc.arg('channel_type'),
+    target_type = sqlc.arg('target_type'),
+    target_user_id = sqlc.narg('target_user_id'),
+    target_chat_id = sqlc.narg('target_chat_id'),
+    target_message_id = sqlc.narg('target_message_id'),
+    target_thread_id = sqlc.narg('target_thread_id'),
+    target_key = sqlc.arg('target_key'),
+    project_id = sqlc.narg('project_id'),
+    event_types = sqlc.arg('event_types'),
+    enabled = sqlc.arg('enabled'),
+    revision = revision + 1,
+    updated_by = sqlc.arg('updated_by'),
+    updated_at = now(),
+    effective_from = CASE
+        WHEN sqlc.arg('enabled')::boolean AND NOT enabled THEN now()
+        ELSE effective_from
+    END
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND source_kind = sqlc.arg('source_kind')
+  AND revision = sqlc.arg('expected_revision')
+RETURNING *;
+
+-- name: SetLabrastroMessageSourceRouteEnabled :one
+-- Same enable/disable contract as the run routes: disable keeps history and
+-- the service layer cancels queued sends; enable resets effective_from so
+-- the disabled window is never backfilled.
+UPDATE labrastro_message_route
+SET enabled = sqlc.arg('enabled'),
+    revision = revision + 1,
+    updated_by = sqlc.arg('updated_by'),
+    updated_at = now(),
+    effective_from = CASE
+        WHEN sqlc.arg('enabled')::boolean THEN now()
+        ELSE effective_from
+    END
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND source_kind = sqlc.arg('source_kind')
+  AND revision = sqlc.arg('expected_revision')
+RETURNING *;
+
+-- name: ListLabrastroMessageSourceRoutes :many
+-- Personal/team rules of one workspace, newest scope kind filterable.
+SELECT * FROM labrastro_message_route
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND source_kind <> 'run'
+  AND (sqlc.narg('source_kind')::text IS NULL OR source_kind = sqlc.narg('source_kind')::text)
+ORDER BY created_at, id;
+
+-- ---- candidate scans ----
+-- Each scan pairs one persisted source class with enabled routes and
+-- returns only (source, route) pairs that still lack a decision — the
+-- NOT EXISTS shrinking set is what makes a full cycle's cost decay. The
+-- keyset (after_id / upper_id) freezes one cycle's immutable bound, so a
+-- source that commits late is revisited when the next cycle restarts.
+-- Definitional filters (source class, target ownership) live in the JOIN;
+-- preference filters (project, event types, mutes) are judged by the
+-- service, which records a suppressed decision for the pair — that marker
+-- is what stops a later filter edit from replaying old events.
+
+-- name: ListLabrastroMessageInboxSourceCandidates :many
+SELECT
+    i.id AS item_id, i.workspace_id AS item_workspace_id,
+    i.recipient_id, i.type AS item_type, i.severity AS item_severity,
+    i.title AS item_title, i.body AS item_body,
+    i.created_at AS item_created_at, i.issue_id AS item_issue_id,
+    iss.number AS issue_number, iss.title AS issue_title,
+    w.slug AS workspace_slug, w.issue_prefix AS workspace_issue_prefix,
+    rt.id AS route_id, rt.revision AS route_revision,
+    rt.installation_id, rt.channel_type,
+    rt.target_type, rt.target_user_id, rt.target_chat_id,
+    rt.target_message_id, rt.target_thread_id, rt.target_key,
+    rt.event_types, rt.effective_from, rt.created_at AS route_created_at
+FROM inbox_item i
+JOIN labrastro_message_route rt
+  ON rt.workspace_id = i.workspace_id
+ AND rt.source_kind = 'inbox'
+ AND rt.enabled = true
+ AND rt.target_type = 'member'
+ AND rt.target_user_id = i.recipient_id
+JOIN workspace w ON w.id = i.workspace_id
+LEFT JOIN issue iss ON iss.id = i.issue_id
+WHERE i.recipient_type = 'member'
+  AND i.created_at >= rt.effective_from
+  AND i.id > sqlc.arg('after_id')::uuid
+  AND i.id <= sqlc.arg('upper_id')::uuid
+  AND NOT EXISTS (
+      SELECT 1 FROM labrastro_message_delivery d
+      WHERE d.source_ref_id = i.id
+        AND d.installation_id = rt.installation_id
+        AND d.target_key = rt.target_key
+  )
+ORDER BY i.id, rt.created_at, rt.id
+LIMIT sqlc.arg('limit');
+
+-- name: ListLabrastroMessageActivitySourceCandidates :many
+SELECT
+    al.id AS activity_id, al.workspace_id AS activity_workspace_id,
+    al.issue_id AS activity_issue_id,
+    al.actor_type AS activity_actor_type, al.actor_id AS activity_actor_id,
+    al.action AS activity_action, al.details AS activity_details,
+    al.created_at AS activity_created_at,
+    iss.number AS issue_number, iss.title AS issue_title,
+    iss.project_id AS issue_project_id, iss.status AS issue_status,
+    w.slug AS workspace_slug, w.issue_prefix AS workspace_issue_prefix,
+    au.name AS actor_member_name, ag.name AS actor_agent_name,
+    rt.id AS route_id, rt.revision AS route_revision,
+    rt.installation_id, rt.channel_type,
+    rt.target_type, rt.target_user_id, rt.target_chat_id,
+    rt.target_message_id, rt.target_thread_id, rt.target_key,
+    rt.project_id AS route_project_id, rt.effective_from,
+    rt.created_at AS route_created_at, rt.updated_by AS route_updated_by
+FROM activity_log al
+JOIN issue iss ON iss.id = al.issue_id
+JOIN workspace w ON w.id = al.workspace_id
+LEFT JOIN "user" au ON al.actor_type = 'member' AND au.id = al.actor_id
+LEFT JOIN agent ag ON al.actor_type = 'agent' AND ag.id = al.actor_id
+JOIN labrastro_message_route rt
+  ON rt.workspace_id = al.workspace_id
+ AND rt.source_kind = 'activity'
+ AND rt.enabled = true
+WHERE al.action IN ('status_changed', 'assignee_changed')
+  AND al.created_at >= rt.effective_from
+  AND al.id > sqlc.arg('after_id')::uuid
+  AND al.id <= sqlc.arg('upper_id')::uuid
+  AND NOT EXISTS (
+      SELECT 1 FROM labrastro_message_delivery d
+      WHERE d.source_ref_id = al.id
+        AND d.installation_id = rt.installation_id
+        AND d.target_key = rt.target_key
+  )
+ORDER BY al.id, rt.created_at, rt.id
+LIMIT sqlc.arg('limit');
+
+-- name: ListLabrastroMessageCommentSourceCandidates :many
+-- Only plain comments enter the source (the type whitelist is definitional
+-- SQL, not a service filter): status_change comments would double the
+-- activity status source, and progress/system entries are pipeline chatter.
+SELECT
+    c.id AS comment_id, c.workspace_id AS comment_workspace_id,
+    c.issue_id AS comment_issue_id,
+    c.author_type AS comment_author_type, c.author_id AS comment_author_id,
+    c.content AS comment_content, c.created_at AS comment_created_at,
+    iss.number AS issue_number, iss.title AS issue_title,
+    iss.project_id AS issue_project_id, iss.status AS issue_status,
+    w.slug AS workspace_slug, w.issue_prefix AS workspace_issue_prefix,
+    au.name AS author_member_name, ag.name AS author_agent_name,
+    rt.id AS route_id, rt.revision AS route_revision,
+    rt.installation_id, rt.channel_type,
+    rt.target_type, rt.target_user_id, rt.target_chat_id,
+    rt.target_message_id, rt.target_thread_id, rt.target_key,
+    rt.project_id AS route_project_id, rt.effective_from,
+    rt.created_at AS route_created_at, rt.updated_by AS route_updated_by
+FROM comment c
+JOIN issue iss ON iss.id = c.issue_id
+JOIN workspace w ON w.id = c.workspace_id
+LEFT JOIN "user" au ON c.author_type = 'member' AND au.id = c.author_id
+LEFT JOIN agent ag ON c.author_type = 'agent' AND ag.id = c.author_id
+JOIN labrastro_message_route rt
+  ON rt.workspace_id = c.workspace_id
+ AND rt.source_kind = 'comment'
+ AND rt.enabled = true
+WHERE c.type = 'comment'
+  AND c.created_at >= rt.effective_from
+  AND c.id > sqlc.arg('after_id')::uuid
+  AND c.id <= sqlc.arg('upper_id')::uuid
+  AND NOT EXISTS (
+      SELECT 1 FROM labrastro_message_delivery d
+      WHERE d.source_ref_id = c.id
+        AND d.installation_id = rt.installation_id
+        AND d.target_key = rt.target_key
+  )
+ORDER BY c.id, rt.created_at, rt.id
+LIMIT sqlc.arg('limit');
+
+-- name: GetLabrastroMessageSourceScanUpperBound :one
+-- Freezes one cycle's immutable ID bound over the source table, including
+-- non-candidates. Old IDs that become eligible later are revisited in the
+-- next full cycle.
+SELECT COALESCE(CASE sqlc.arg('source_kind')::text
+    WHEN 'inbox' THEN (SELECT id FROM inbox_item ORDER BY id DESC LIMIT 1)
+    WHEN 'activity' THEN (SELECT id FROM activity_log ORDER BY id DESC LIMIT 1)
+    WHEN 'comment' THEN (SELECT id FROM comment ORDER BY id DESC LIMIT 1)
+END, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS upper_id;
+
+-- ---- decision insert ----
+
+-- name: CreateLabrastroMessageSourceDelivery :many
+-- The exactly-once decision insert for a persisted source: ON CONFLICT DO
+-- NOTHING against the global dedup unique index; empty result means the
+-- (source, target) pair was already decided. The dedup key namespace is
+-- built by the service as
+--   <kind>:<workspace_id>:<source_ref_id>:<installation_id>:<target_key>
+-- so it carries workspace + source kind + original record id + installation
+-- + normalized target — and deliberately NOT the subscriber list, the route
+-- id, the revision or any web-client state.
+INSERT INTO labrastro_message_delivery (
+    id, workspace_id, route_id, route_revision, autopilot_id, run_id,
+    source_ref_id, dedup_key, source_kind, status, content_snapshot,
+    target_snapshot, shard_total, source_ref, target_key, installation_id,
+    error_code
+) VALUES (
+    $1, $2, $3, $4, NULL, NULL,
+    $5, $6, $7, $8, $9, $10, $11, $12,
+    $13, $14, sqlc.narg('error_code')
+)
+ON CONFLICT (dedup_key) DO NOTHING
+RETURNING *;
+
+-- ---- delivery records for source routes ----
+
+-- name: ListLabrastroMessageDeliveriesByRoute :many
+-- Records API projection for a personal/team route — same shape and
+-- exclusions as the automation listing (no message bodies in a page).
+SELECT
+    d.id, d.workspace_id, d.route_id, d.route_revision, d.autopilot_id,
+    d.run_id, d.source_ref_id, d.dedup_key, d.source_kind, d.status,
+    d.attempts, d.next_attempt_at, d.error_code, d.last_error,
+    d.shard_total, d.delivered_at, d.first_attempt_at, d.created_at,
+    d.updated_at, d.installation_id, d.target_key
+FROM labrastro_message_delivery d
+WHERE d.workspace_id = sqlc.arg('workspace_id')
+  AND d.route_id = sqlc.arg('route_id')
+  AND (sqlc.narg('status')::text IS NULL OR d.status = sqlc.narg('status')::text)
+ORDER BY d.created_at DESC
+LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
+
+-- name: RetryLabrastroMessageDeliveryManuallyByRoute :one
+-- Manual verify-and-retry inside ONE route. Same transition contract as
+-- the automation retry: failed/uncertain only, same per-shard send UUIDs.
+UPDATE labrastro_message_delivery
+SET status = 'queued',
+    next_attempt_at = now(),
+    error_code = sqlc.narg('error_code'),
+    last_error = sqlc.narg('last_error'),
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND route_id = sqlc.arg('route_id')
+  AND status IN ('failed', 'uncertain')
+RETURNING *;
+
+-- ---- team target approvals (workspace-admin consent, OL-27 scope) ----
+
+-- name: ApproveLabrastroMessageSourceTarget :one
+-- Active approval for one (workspace, source kind, bot, target) scope. A
+-- concurrent duplicate insert is a 23505 against
+-- uq_labrastro_message_approved_target_source_active, reported as
+-- already-approved.
+INSERT INTO labrastro_message_approved_target (
+    workspace_id, autopilot_id, installation_id, target_key, target_type,
+    source_kind, approved_by
+) VALUES (
+    sqlc.arg('workspace_id'), NULL, sqlc.arg('installation_id'),
+    sqlc.arg('target_key'), sqlc.arg('target_type'),
+    sqlc.arg('source_kind'), sqlc.arg('approved_by')
+)
+RETURNING *;
+
+-- name: GetActiveLabrastroMessageSourceApprovedTarget :one
+-- The single authorization lookup for team sends: is this exact
+-- (source kind, bot, target) triple currently approved? An automation's
+-- approval never satisfies it and vice versa.
+SELECT * FROM labrastro_message_approved_target
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND source_kind = sqlc.arg('source_kind')
+  AND autopilot_id IS NULL
+  AND installation_id = sqlc.arg('installation_id')
+  AND target_key = sqlc.arg('target_key')
+  AND revoked_at IS NULL;
+
+-- name: ListLabrastroMessageSourceApprovedTargets :many
+SELECT * FROM labrastro_message_approved_target
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND source_kind IN ('activity', 'comment')
+  AND revoked_at IS NULL
+ORDER BY approved_at DESC, id;
+
+-- name: RevokeLabrastroMessageSourceTarget :many
+-- Soft revoke with the same audit semantics as the automation approvals.
+UPDATE labrastro_message_approved_target
+SET revoked_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND source_kind = sqlc.arg('source_kind')
+  AND autopilot_id IS NULL
+  AND installation_id = sqlc.arg('installation_id')
+  AND target_key = sqlc.arg('target_key')
+  AND revoked_at IS NULL
+RETURNING *;
+
+-- name: CancelLabrastroMessageDeliveriesBySourceTarget :many
+-- An approval revocation stops the not-yet-started team sends against the
+-- FROZEN target. Matches the delivery's copied columns (source kind is
+-- derivable from source_kind), never the live route.
+UPDATE labrastro_message_delivery
+SET status = 'cancelled',
+    error_code = sqlc.narg('error_code'),
+    last_error = sqlc.narg('last_error'),
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    updated_at = now()
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND source_kind = sqlc.arg('source_kind')
+  AND installation_id = sqlc.arg('installation_id')
+  AND target_key = sqlc.arg('target_key')
+  AND status = 'queued'
+RETURNING *;
+
+-- ---- lifecycle stop paths ----
+
+-- name: DisableLabrastroMessageSourceRoutesByProject :many
+-- Project deletion stops the team routes scoped to it (the filter can
+-- never match again). Runs inside the project-delete transaction; the
+-- service layer cancels their queued sends in the same transaction.
+UPDATE labrastro_message_route
+SET enabled = false, revision = revision + 1, updated_at = now()
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND project_id = sqlc.arg('project_id')
+  AND source_kind IN ('activity', 'comment')
+  AND enabled
+RETURNING id;
+
+-- name: CancelLabrastroMessageDeliveriesByProject :many
+UPDATE labrastro_message_delivery d
+SET status = 'cancelled',
+    error_code = sqlc.narg('error_code'),
+    last_error = sqlc.narg('last_error'),
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    updated_at = now()
+WHERE d.workspace_id = sqlc.arg('workspace_id')
+  AND d.route_id IN (
+      SELECT r.id FROM labrastro_message_route r
+      WHERE r.workspace_id = sqlc.arg('workspace_id')
+        AND r.project_id = sqlc.arg('project_id')
+  )
+  AND status = 'queued'
+RETURNING id;
+
+-- name: DisableLabrastroMessagePersonalRoutesByUser :many
+-- Member removal stops the member's personal forwarding rules — the
+-- recipient can no longer hold a binding, and the rules are meaningless
+-- until re-invite + explicit re-enable.
+UPDATE labrastro_message_route
+SET enabled = false, revision = revision + 1, updated_at = now()
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND source_kind = 'inbox'
+  AND target_user_id = sqlc.arg('target_user_id')
+  AND enabled
+RETURNING id;
+
+-- name: CancelLabrastroMessageDeliveriesByPersonalRecipient :many
+UPDATE labrastro_message_delivery
+SET status = 'cancelled',
+    error_code = sqlc.narg('error_code'),
+    last_error = sqlc.narg('last_error'),
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    updated_at = now()
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND source_kind = 'inbox'
+  AND target_key = sqlc.arg('target_key')
+  AND status = 'queued'
+RETURNING id;

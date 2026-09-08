@@ -1,19 +1,22 @@
-# Labrastro Message Delivery — Backend Contract (OL-25)
+# Labrastro Message Delivery — Backend Contract (OL-25 + OL-27)
 
 This is the API/contract reference for the standalone result-delivery module
-("自动化结果投递"): automation runs finish → saved rules push the result to
-Feishu → deliveries and receipts are queryable and retryable. Frontend work
-MUST read this document and must not guess field names, statuses or error
-codes. Code lives in:
+("自动化结果投递" + "个人收件箱与团队事件投递"): automation runs finish,
+personal inbox items arrive and team events happen → saved rules push the
+content to Feishu → deliveries and receipts are queryable and retryable.
+Frontend work MUST read this document and must not guess field names,
+statuses or error codes. Code lives in:
 
 | Path | Responsibility |
 | --- | --- |
 | `server/internal/messagedelivery/` | decisions, content normalization, send worker, compensator |
-| `server/internal/handler/labrastro_message_delivery.go` | HTTP surface |
+| `server/internal/handler/labrastro_message_delivery.go` | HTTP surface (automation scope, OL-25) |
+| `server/internal/handler/labrastro_message_sources.go` | HTTP surface (personal/team scopes, OL-27) |
+| `server/internal/notify/` | shared notification taxonomy (inbox types, preference groups, team source whitelist) |
 | `server/internal/integrations/lark/labrastro_delivery.go` | Feishu proactive send (open_id / chat_id / topic reply + fixed UUID) |
 | `server/cmd/server/labrastro_messaging.go` | the single assembly point (sender selection, EventBus wakeup) |
 | `server/pkg/db/queries/labrastro_message.sql` | all SQL; generated code via `make sqlc` |
-| `server/migrations/452…458_labrastro_*` | tables + concurrent indexes |
+| `server/migrations/452…470_labrastro_*` | tables + concurrent indexes |
 
 ## Concepts
 
@@ -358,6 +361,299 @@ Delivery `error_code` values recorded by the pipeline:
   reply+thread, fixed uuid). No existing interface was widened; deployments
   without `MULTICA_LARK_SECRET_KEY` record deliveries that fail with
   `sender_unavailable`.
+
+## OL-27 sources: personal inbox and team events
+
+Stage 2 of the parent plan widens the pipeline's SOURCE SCOPE. The delivery
+machinery — frozen decisions, the lease worker, receipts, retries, the
+compensator — is the OL-25 code unchanged. What changed is what a route can
+point at.
+
+### Route source scopes (`labrastro_message_route.source_kind`)
+
+| scope | source record | target shape | who configures |
+| --- | --- | --- | --- |
+| `run` (default) | terminal `autopilot_run` | member / group / topic | automation write gate (OL-25 surface) |
+| `inbox` | the route owner's own `inbox_item` rows | member (their OWN DM), forced | the acting member themselves |
+| `activity` | `activity_log` with action `status_changed` / `assignee_changed` | group / topic only | workspace owner/admin |
+| `comment` | `comment` with type `comment` (plain comments only) | group / topic only | workspace owner/admin |
+
+Hard rules:
+
+- **No virtual autopilot.** Non-run routes leave `autopilot_id` NULL; a
+  personal or project id never impersonates an automation id (the
+  `labrastro_message_route_source_shape` check enforces this at the row
+  level). A team route to a member DM is unrepresentable — team events fan
+  out to shared destinations only, the personal inbox is the DM surface.
+- **Identity resolution.** Every endpoint on the OL-27 surface resolves the
+  ACTING member through the same seam as the automation surface (`MUL-7108`
+  path): a member acts for themselves, an agent for its run's originator,
+  no resolvable human → 403 `message_no_originator`.
+- **Self-only inbox.** An inbox route's recipient is ALWAYS the resolved
+  acting member; the caller's `target_user_id` is never consulted.
+  Managing another member's personal route → 403 `route_not_self`, admins
+  included.
+- **Team configuration is admin-only.** Team routes and team target
+  approvals require workspace owner/admin (403
+  `message_target_admin_required`). An ordinary member managing their own
+  notifications never gains team outbound permission.
+- **Continuous authorization.** Every send re-reads the world before
+  dialing: personal sends re-check the recipient's membership and CURRENT
+  mute state; team sends re-check the authorizing member (`updated_by`)
+  still holds owner/admin, the source record still exists, and the issue
+  still matches the route's project filter. Losing authorization cancels
+  the queued send (`route_authorization_lost` / `condition_mismatch` /
+  `recipient_muted`), never misdelivers.
+
+### Canonical sources and dedup
+
+| scope | source record identity | whitelist |
+| --- | --- | --- |
+| `inbox` | `inbox_item.id`, `recipient_type='member'` | filterable by the route's `event_types[]` (validated against the shared `notify` catalog) |
+| `activity` | `activity_log.id` | actions `status_changed`, `assignee_changed` only |
+| `comment` | `comment.id` | type `comment` only — `status_change` comments are NOT a source (they would double the activity status), and `progress_update` / `system` are pipeline chatter |
+
+Decision dedup keys:
+`<scope>:<workspace_id>:<source_ref_id>:<installation_id>:<target_key>` —
+workspace + source kind + the ORIGINAL record id + installation + normalized
+target. They deliberately EXCLUDE the subscriber list, the route id, the
+route revision and any web-client state, so:
+
+- the same persisted team event behind any number of equivalent routes and
+  personal subscriptions produces exactly ONE group delivery;
+- reading the web inbox, marking read/archived, comment edits, worker
+  restarts and repeated scans never re-produce a decision;
+- personal DMs stay per-recipient independent (each inbox item is its own
+  source record).
+
+When several enabled routes to the same target match one source, the
+decision is attributed to the first route in `(created_at, id)` order —
+content is route-independent (built from the source record), so only
+attribution is chosen. A concurrent replica may win the insert race; only
+one decision row ever exists either way.
+
+### Filters are decide-time and recorded
+
+The inbox `event_types` filter and the team `project_id` filter are judged
+at DECISION time against current state (the sources carry no historical
+project attribution). A pair that does not match is RECORDED as
+`suppressed` with `condition_mismatch` — which is what makes "editing a
+filter never replays old events" hold: the marker already exists, so a
+later edit cannot revive pre-edit sources. New sources after the edit flow
+normally. The eligibility window is the route's `effective_from`, reset at
+every enable exactly like the automation scope — disabling cancels queued
+sends and re-enabling never backfills the disabled window.
+
+Personal mute semantics reuse `notification_preference` through the shared
+`notify.IsMuted` mapping — the SAME grouping the inbox listeners apply when
+creating items. A muted item is decided as `suppressed/recipient_muted`;
+a preference that flips AFTER the decision stops the send at the gate. A
+preference lookup failure is NEVER read as "not muted": at decision time
+the page aborts and the cursor holds; at send time the delivery requeues as
+transient.
+
+### Team target approvals (separate scope)
+
+Group/topic team targets require an ACTIVE approval scoped to the exact
+**(workspace, source_kind, installation, target)** — an automation's
+approval is never borrowed by a team source, and `activity` and `comment`
+approvals do not cover each other. Approval, revocation, send-time checks
+and the revoke-cancels-queued-sends transaction mirror the OL-25 contract,
+keyed on the delivery's FROZEN target identity. `system_notifications` /
+OS-level notification settings are unrelated to this pipeline and never act
+as a Feishu master switch.
+
+### Compensation
+
+`inbox:new`, `activity:created` and `comment:created` are low-latency
+WAKEUPS only (a notify channel; the publisher's goroutine never does DB
+work). The guarantee comes from three persistent per-scanner cursors
+(`inbox_source_delivery`, `activity_source_delivery`, `comment_source_delivery`)
+with the same contract as the run-side scanners: fixed cycle upper bound
+per source table, per-tick row budget, compare-and-set generations, a
+completed cycle restarts from the beginning — so a source that commits
+after the cursor passed is decided in the next cycle, a failed page never
+advances the cursor, and one source class failing never starves the others.
+Suppressed markers are durable decisions, so their retention covers any
+rescan window by construction (decision rows are never pruned except by
+workspace deletion). Historical backfill beyond a route's `effective_from`
+is NOT supported and cannot be reached by disable/enable cycling.
+
+Boundary: `inbox_item` and `activity_log` generation itself depends on
+upstream in-memory events — this module guarantees compensable delivery of
+PERSISTED sources, not that every business change has a source record.
+Issues with no new events stay visible through the existing stuck-issue
+sweeper.
+
+### Lifecycle stop paths
+
+- Route disabled/deleted → queued sends cancelled (shared with OL-25).
+- Installation revoked → `lifecycle.StopInstallation` disables routes and
+  cancels queued sends for ALL scopes (installation-keyed).
+- **Member removal** → `revokeAndRemoveMember` disables the departing
+  member's personal routes and cancels their queued private deliveries in
+  the same transaction. Team routes authored by them keep their audit trail
+  but the continuous-authorization gate cancels their sends.
+- **Project deletion** → `DeleteProject` disables the project-scoped team
+  routes and cancels their queued sends inside the delete transaction, so
+  no queued message outlives the filter it was decided under.
+- Workspace deletion → the OL-25 sweep covers the new rows (all keyed by
+  `workspace_id`).
+
+## OL-27 HTTP API
+
+All endpoints live under the authenticated workspace-scoped group. Identity
+refusals: 403 `message_no_originator` (agent request with no resolvable
+human), 403 `message_forbidden`.
+
+| Method & path | purpose | gate |
+| --- | --- | --- |
+| `GET /api/message-event-catalog` | event/filter catalog for the config UI | member |
+| `GET /api/message-routes?source_kind=inbox\|activity\|comment` | list personal/team rules | member |
+| `POST /api/message-routes` | create rule | member (inbox) / owner-admin (team) |
+| `PUT /api/message-routes/{routeId}` | update rule, `expected_revision` required | recipient (inbox) / owner-admin (team) |
+| `POST /api/message-routes/{routeId}/enable` | enable/disable, `{"enabled":bool,"expected_revision":N}` | recipient (inbox) / owner-admin (team) |
+| `DELETE /api/message-routes/{routeId}` | delete rule (queued sends cancelled) | recipient (inbox) / owner-admin (team) |
+| `POST /api/message-routes/{routeId}/test-send` | real-path reachability check | recipient (inbox) / owner-admin (team) |
+| `GET /api/message-routes/{routeId}/message-deliveries?status=&limit=&offset=` | records page (projection) | recipient (inbox) / owner-admin (team) |
+| `GET /api/message-routes/{routeId}/message-deliveries/{deliveryId}` | detail incl. snapshots + receipts | recipient (inbox) / owner-admin (team) |
+| `POST /api/message-routes/{routeId}/message-deliveries/{deliveryId}/retry` | re-queue a `failed`/`uncertain` delivery | recipient (inbox) / owner-admin (team) |
+| `GET /api/message-approved-targets` | list active team approvals | owner-admin |
+| `POST /api/message-approved-targets` | approve one verified external target for a team scope | owner-admin |
+| `DELETE /api/message-approved-targets/{targetId}` | revoke; stops queued sends | owner-admin |
+
+### Create personal route — request / response
+
+`POST /api/message-routes` (acting member = the recipient, always):
+
+```json
+{
+  "source_kind": "inbox",
+  "installation_id": "9f1c…",
+  "target_type": "member",
+  "target_user_id": "0d4b…",
+  "event_types": ["issue_assigned", "new_comment"],
+  "enabled": true
+}
+```
+
+`target_user_id` is accepted but IGNORED — the resolved acting member is
+the recipient. `event_types` is optional (empty = every type) and validated
+against the catalog; an unknown type is 400 `route_invalid`. `201`:
+
+```json
+{
+  "route": {
+    "id": "c1ab…",
+    "workspace_id": "bc8c…",
+    "autopilot_id": null,
+    "source_kind": "inbox",
+    "installation_id": "9f1c…",
+    "channel_type": "feishu",
+    "target_type": "member",
+    "target_user_id": "55e0…",
+    "target_key": "member:55e0…",
+    "project_id": null,
+    "event_types": ["issue_assigned", "new_comment"],
+    "enabled": true,
+    "revision": 1,
+    "created_by": "55e0…",
+    "updated_by": "55e0…",
+    "effective_from": "2026-09-08T02:30:00Z"
+  }
+}
+```
+
+### Create team route — request
+
+`POST /api/message-routes` (workspace owner/admin):
+
+```json
+{
+  "source_kind": "activity",
+  "installation_id": "9f1c…",
+  "target_type": "group",
+  "target_chat_id": "oc_…",
+  "project_id": "aa31…",
+  "enabled": true
+}
+```
+
+`project_id` is optional (null = whole workspace). The target chat must
+already hold an ACTIVE approval for this exact scope. `comment` scope is
+the same shape with `"source_kind": "comment"`. There are no
+`conditions`/`content_mode` fields on this surface — every source record
+inside the window is forwarded or explicitly suppressed.
+
+### Event catalog — response
+
+`GET /api/message-event-catalog`:
+
+```json
+{
+  "personal": {
+    "source_kind": "inbox",
+    "target_type": "member",
+    "event_types": [
+      {"type": "status_changed", "group": "status_changes", "label": "Status changed"},
+      {"type": "issue_assigned", "group": "assignments", "label": "Issue assigned to you"}
+    ]
+  },
+  "team": [
+    {"source_kind": "activity", "events": [
+      {"event": "status_changed", "label": "Issue status changed"},
+      {"event": "assignee_changed", "label": "Issue assignee changed"}
+    ]},
+    {"source_kind": "comment", "events": [
+      {"event": "comment", "label": "New comment"}
+    ]}
+  ]
+}
+```
+
+### Delivery records
+
+The records API mirrors the automation surface exactly (same statuses,
+error-code strings, projection listing, retry semantics), keyed by route:
+
+```json
+{
+  "deliveries": [
+    {
+      "id": "e452…",
+      "workspace_id": "bc8c…",
+      "route_id": "c1ab…",
+      "route_revision": 1,
+      "autopilot_id": null,
+      "run_id": null,
+      "source_ref_id": "77bd…",
+      "source_kind": "activity",
+      "status": "sent",
+      "shard_total": 1,
+      "installation_id": "9f1c…",
+      "target_key": "group:oc_…",
+      "created_at": "2026-09-08T02:30:01Z"
+    }
+  ]
+}
+```
+
+Delivery detail adds `content_snapshot`
+(`{"text","summary","source_kind","issue_identifier","issue_title","actor_name","change","body","link"}`),
+`target_snapshot` and `receipts` — same shapes as OL-25. `source_ref`
+locates the record: `{"source_kind":"activity","activity_id":"…","issue_id":"…","issue_identifier":"MUL-42"}`.
+
+### New error codes (stable strings)
+
+| code | HTTP | when |
+| --- | --- | --- |
+| `route_not_self` | 403 | managing a personal route you are not the recipient of, or an inbox payload naming another user |
+| `message_no_originator` | 403 | agent request with no resolvable human originator |
+| `message_forbidden` | 403 | agent request whose originator is not a workspace member |
+| `message_target_admin_required` | 403 | team configuration/approval by a member below admin |
+
+Delivery `error_code` additions recorded by the pipeline:
+`recipient_muted` (suppressed at decision or cancelled at the send gate).
 
 ## Known gaps (explicitly out of this stage)
 

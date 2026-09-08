@@ -101,6 +101,7 @@ func writeMessageDeliveryError(w http.ResponseWriter, err error) {
 	var unverifiable *messagedelivery.TargetUnverifiableError
 	var unreachable *messagedelivery.TargetUnreachableError
 	var mismatch *messagedelivery.TargetAnchorMismatchError
+	var notSelf *messagedelivery.RouteNotSelfError
 
 	switch {
 	case errors.Is(err, messagedelivery.ErrSourceUnavailable):
@@ -109,6 +110,9 @@ func writeMessageDeliveryError(w http.ResponseWriter, err error) {
 		writeErrorCode(w, http.StatusForbidden, "authorization_lost", "the acting member no longer holds permission")
 	case errors.Is(err, messagedelivery.ErrApprovedTargetNotFound):
 		writeErrorCode(w, http.StatusNotFound, "route_not_found", "approved target not found")
+	case errors.As(err, &notSelf):
+		writeErrorCode(w, http.StatusForbidden, "route_not_self",
+			"a personal notification route can only deliver your own inbox to your own chat")
 	case errors.As(err, &invalidRoute):
 		writeErrorCode(w, http.StatusBadRequest, "route_invalid", err.Error())
 	case errors.As(err, &invalidInst):
