@@ -473,12 +473,21 @@ RETURNING *;
 -- The CTE sequence is: update the run, lock a still-reserved slot, finalize
 -- that slot exactly once, then move one unit from reserved_count to either
 -- used_count (consume) or nowhere (release). used_count never decreases.
+--
+-- FIRST TERMINAL WINS (OL-25 repair contract §3, review R6): only a
+-- non-terminal run may transition. Two syncers that both observed the run
+-- active (e.g. an issue went in_review then done) race here; the loser
+-- updates zero rows and the caller treats that as an idempotent no-op — it
+-- must not re-publish run-done, re-settle quota, or overwrite the FIRST
+-- terminal's structured result with a later one. The result column now
+-- records the structured first-terminal payload for BOTH completed and
+-- failed runs; skipped keeps whatever the row already held.
 WITH updated_run AS (
     UPDATE autopilot_run AS ar
     SET status = @terminal_status::text,
         completed_at = now(),
         result = CASE
-            WHEN @terminal_status::text = 'completed' THEN sqlc.narg('result')::jsonb
+            WHEN @terminal_status::text IN ('completed', 'failed') THEN sqlc.narg('result')::jsonb
             ELSE ar.result
         END,
         failure_reason = CASE
@@ -490,6 +499,7 @@ WITH updated_run AS (
             ELSE ar.reason_code
         END
     WHERE ar.id = @run_id
+      AND ar.status IN ('pending', 'issue_created', 'running')
     RETURNING ar.*
 ), locked_reservation AS MATERIALIZED (
     SELECT qr.*

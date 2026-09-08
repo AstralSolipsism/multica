@@ -2446,7 +2446,7 @@ WITH updated_run AS (
     SET status = $1::text,
         completed_at = now(),
         result = CASE
-            WHEN $1::text = 'completed' THEN $2::jsonb
+            WHEN $1::text IN ('completed', 'failed') THEN $2::jsonb
             ELSE ar.result
         END,
         failure_reason = CASE
@@ -2458,6 +2458,7 @@ WITH updated_run AS (
             ELSE ar.reason_code
         END
     WHERE ar.id = $5
+      AND ar.status IN ('pending', 'issue_created', 'running')
     RETURNING ar.id, ar.autopilot_id, ar.trigger_id, ar.source, ar.status, ar.issue_id, ar.task_id, ar.triggered_at, ar.completed_at, ar.failure_reason, ar.trigger_payload, ar.result, ar.created_at, ar.squad_id, ar.planned_at, ar.webhook_delivery_id, ar.quota_reservation_id, ar.reason_code
 ), locked_reservation AS MATERIALIZED (
     SELECT qr.id, qr.workspace_id, qr.period_start, qr.period_end, qr.policy_revision, qr.subscription_version, qr.source, qr.idempotency_key, qr.state, qr.created_at, qr.finalized_at
@@ -2530,6 +2531,15 @@ type UpdateAutopilotRunTerminalWithQuotaRow struct {
 // The CTE sequence is: update the run, lock a still-reserved slot, finalize
 // that slot exactly once, then move one unit from reserved_count to either
 // used_count (consume) or nowhere (release). used_count never decreases.
+//
+// FIRST TERMINAL WINS (OL-25 repair contract §3, review R6): only a
+// non-terminal run may transition. Two syncers that both observed the run
+// active (e.g. an issue went in_review then done) race here; the loser
+// updates zero rows and the caller treats that as an idempotent no-op — it
+// must not re-publish run-done, re-settle quota, or overwrite the FIRST
+// terminal's structured result with a later one. The result column now
+// records the structured first-terminal payload for BOTH completed and
+// failed runs; skipped keeps whatever the row already held.
 func (q *Queries) UpdateAutopilotRunTerminalWithQuota(ctx context.Context, arg UpdateAutopilotRunTerminalWithQuotaParams) (UpdateAutopilotRunTerminalWithQuotaRow, error) {
 	row := q.db.QueryRow(ctx, updateAutopilotRunTerminalWithQuota,
 		arg.TerminalStatus,

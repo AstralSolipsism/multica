@@ -483,15 +483,17 @@ func TestScanner_SyncsStaleRunOnlyTask(t *testing.T) {
 	if testPool == nil {
 		t.Skip("database not available")
 	}
+	resetScanCursor(t, scannerRunOnlyTask)
 	fx := newMDFixture(t, "stale-task", nil)
-	run := fx.run(t, "running", testutil.Cols{"completed_at": nil})
 	task := testFx.Insert(t, "agent_task_queue", testutil.Cols{
-		"agent_id":         testAgent,
-		"status":           "completed",
-		"completed_at":     testutil.Raw("now()"),
-		"priority":         0,
-		"autopilot_run_id": run,
+		"agent_id":     testAgent,
+		"status":       "completed",
+		"completed_at": testutil.Raw("now()"),
+		"priority":     0,
 	})
+	run := fx.run(t, "running", testutil.Cols{"completed_at": nil, "task_id": task})
+	// The real flow links BOTH directions (run.task_id + task.autopilot_run_id).
+	testFx.Exec(t, `UPDATE agent_task_queue SET autopilot_run_id = $1 WHERE id = $2`, run, task)
 
 	syncer := &fakeSyncer{}
 	svc := newTestService(nil, syncer)
@@ -509,6 +511,7 @@ func TestScanner_SyncsStaleCreateIssueRun(t *testing.T) {
 	if testPool == nil {
 		t.Skip("database not available")
 	}
+	resetScanCursor(t, scannerIssueStatus)
 	fx := newMDFixture(t, "stale-issue", testutil.Cols{
 		"execution_mode": "create_issue",
 	})
@@ -612,6 +615,7 @@ func TestTestSend_TargetAddressing(t *testing.T) {
 		t.Skip("database not available")
 	}
 	fx := newMDFixture(t, "testsend", nil)
+	fx.approveTopic(t, "oc_topic", "om_anchor")
 	topicRoute := testFx.Insert(t, "labrastro_message_route", testutil.Cols{
 		"id":                testutil.Raw("gen_random_uuid()"),
 		"workspace_id":      testWSID,

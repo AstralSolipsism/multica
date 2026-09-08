@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/autopilotauth"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -633,14 +634,7 @@ func autopilotWriteByOwnership(ap db.Autopilot, member db.Member) bool {
 // predicate also gates whether webhook secrets are exposed on the read path,
 // since seeing a webhook token is equivalent to being able to trigger.
 func (h *Handler) memberCanWriteAutopilot(ctx context.Context, ap db.Autopilot, member db.Member) bool {
-	if autopilotWriteByOwnership(ap, member) {
-		return true
-	}
-	granted, err := h.Queries.IsAutopilotCollaborator(ctx, db.IsAutopilotCollaboratorParams{
-		AutopilotID: ap.ID,
-		UserID:      member.UserID,
-	})
-	return err == nil && granted
+	return autopilotauth.CanWriteAutopilot(ctx, h.Queries, ap, member)
 }
 
 // Stable, machine-readable refusal codes for the autopilot write surface. The

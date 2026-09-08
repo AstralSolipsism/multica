@@ -2050,6 +2050,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 						r.Post("/enable", h.SetMessageRouteEnabled)
 						r.Post("/test-send", h.TestMessageRoute)
 					})
+					// Approved external targets: workspace-admin consent per
+					// (automation, bot, target). Approval is categorically
+					// above automation write permission; the handler
+					// re-checks owner/admin inside.
+					r.Get("/message-approved-targets", h.ListMessageApprovedTargets)
+					r.Post("/message-approved-targets", h.ApproveMessageTarget)
+					r.Delete("/message-approved-targets/{targetId}", h.RevokeMessageTarget)
 					r.Get("/message-deliveries", h.ListMessageDeliveries)
 					r.Route("/message-deliveries/{deliveryId}", func(r chi.Router) {
 						r.Get("/", h.GetMessageDelivery)

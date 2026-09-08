@@ -92,6 +92,7 @@ const (
 	ErrorCodeTargetUnreachable   = "route_target_unreachable"
 	ErrorCodeTopicAnchorMismatch = "route_topic_anchor_mismatch"
 	ErrorCodeAuthorizationLost   = "route_authorization_lost"
+	ErrorCodeTargetNotApproved   = "route_target_not_approved"
 )
 
 // ValidRouteConditions / ValidContentModes are the accepted API values.
@@ -220,6 +221,14 @@ type targetSnapshot struct {
 	ThreadID     string `json:"thread_id,omitempty"`
 }
 
+// TargetKeyFor re-derives the canonical target key from the frozen
+// snapshot — the identity send-time approval checks are keyed on (repair
+// contract §2: send-time checks match the FROZEN target, never the live
+// route).
+func (t targetSnapshot) TargetKeyFor() string {
+	return TargetKey(t.TargetType, t.UserID, t.ChatID, t.MessageID)
+}
+
 // contentSnapshot is the JSON shape frozen into
 // labrastro_message_delivery.content_snapshot at decision time. Text is the
 // fully rendered message; shards are a pure function of it, so a retry can
@@ -315,6 +324,34 @@ type TargetAnchorMismatchError struct{ Detail string }
 
 func (e *TargetAnchorMismatchError) Error() string {
 	return "topic anchor belongs to a different chat: " + e.Detail
+}
+
+// TargetNotApprovedError: the (source, bot, normalized target) triple has no
+// active workspace-admin approval (repair contract §2, review R1). Group and
+// topic targets require approval; member targets do not enter the approval
+// table.
+type TargetNotApprovedError struct{}
+
+func (e *TargetNotApprovedError) Error() string {
+	return "target has no active approval by a workspace admin"
+}
+
+// sourceFacts is the persisted evidence of one terminal run, assembled in
+// ONE place (decisionInputFromSource) for every enqueue path — direct event
+// wakeup and the compensator share it, so neither can forget a field the
+// other carries (repair contract §3, review R7).
+type sourceFacts struct {
+	RunID               string
+	RunStatus           string
+	RunCompletedAt      time.Time
+	RunCompletedAtValid bool
+	TaskID              string
+	TaskIDValid         bool
+	IssueID             string
+	IssueIDValid        bool
+	Result              []byte
+	FailureReason       string
+	ReasonCode          string
 }
 
 // decisionInput carries everything one delivery decision is built from. The

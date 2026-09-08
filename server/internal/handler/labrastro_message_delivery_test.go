@@ -408,8 +408,22 @@ func TestMessageRoutes_TargetVerification(t *testing.T) {
 	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "route_target_unreachable") {
 		t.Fatalf("unreachable group: got %d %s", resp.Code, resp.Body.String())
 	}
-
 	httpVerifier.unreachable = false
+
+	// Reachable but UNAPPROVED: 400 route_target_not_approved — a plain
+	// automation writer cannot grant itself a new outbound target.
+	req = newRequest("POST", "/api/autopilots/"+fx.autopilotID+"/message-routes", map[string]any{
+		"installation_id": fx.installID,
+		"target_type":     "group",
+		"target_chat_id":  "oc_unapproved",
+		"conditions":      "success",
+		"content_mode":    "summary",
+	})
+	req = withURLParams(req, "id", fx.autopilotID)
+	resp = testutil.Call(t, testHandler.CreateMessageRoute, req)
+	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "route_target_not_approved") {
+		t.Fatalf("unapproved group: got %d %s", resp.Code, resp.Body.String())
+	}
 
 	// Mismatched topic anchor: 400 route_topic_anchor_mismatch.
 	httpVerifier.mismatch = true
@@ -427,8 +441,17 @@ func TestMessageRoutes_TargetVerification(t *testing.T) {
 	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "route_topic_anchor_mismatch") {
 		t.Fatalf("mismatched topic: got %d %s", resp.Code, resp.Body.String())
 	}
+	httpVerifier.mismatch = false
 
-	// Verifiable group: 201.
+	// Admin approves the verified target, then the save succeeds.
+	req = newRequest("POST", "/api/autopilots/"+fx.autopilotID+"/message-approved-targets", map[string]any{
+		"installation_id": fx.installID,
+		"target_type":     "group",
+		"target_chat_id":  "oc_reachable",
+	})
+	req = withURLParams(req, "id", fx.autopilotID)
+	testutil.Call(t, testHandler.ApproveMessageTarget, req).Want(http.StatusCreated)
+
 	req = newRequest("POST", "/api/autopilots/"+fx.autopilotID+"/message-routes", map[string]any{
 		"installation_id": fx.installID,
 		"target_type":     "group",

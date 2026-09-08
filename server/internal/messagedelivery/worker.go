@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/autopilotauth"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -173,11 +174,10 @@ func (s *Service) gateClaimed(ctx context.Context, d db.LabrastroMessageDelivery
 		return &sendOutcome{status: status, errorCode: code, detail: detail}
 	}
 
-	// Test sends skip the source/route gates: their route may be deleted
-	// the moment after, and the audit record must still land.
-	if d.SourceKind == SourceKindTestSend {
-		return nil
-	}
+	// Test sends pass through the SAME gates (repair contract §5): no
+	// early bypass. A recovered test-send row whose route vanished is
+	// cancelled like any other delivery — the audit record of the ORIGINAL
+	// synchronous attempt already landed when it ran.
 
 	var route db.LabrastroMessageRoute
 	if d.RouteID.Valid {
@@ -223,7 +223,7 @@ func (s *Service) gateClaimed(ctx context.Context, d db.LabrastroMessageDelivery
 	// the topic anchor→chat relationship are re-proved against the live
 	// platform before dialing, not just at save time. Unknown verdicts go
 	// uncertain; definitive refusals fail explainably.
-	if s.Verifier != nil && d.SourceKind != SourceKindTestSend {
+	if s.Verifier != nil {
 		if out := s.reverifyTarget(ctx, d, snap); out != nil {
 			return out
 		}
@@ -248,12 +248,12 @@ func (s *Service) gateClaimed(ctx context.Context, d db.LabrastroMessageDelivery
 	return nil
 }
 
-// routeStillAuthorized mirrors the autopilot write predicate for the rule's
-// authorizing member (last editor): current workspace member AND (workspace
-// owner/admin, automation creator, or granted collaborator). Kept in lock-
-// step with the handler's memberCanWriteAutopilot on purpose — a drift here
-// would silently widen or narrow delivery authority. The HTTP layer enforces
-// the same predicate at edit time; this gate covers the time in between.
+// routeStillAuthorized re-checks the rule's continuous authorization: the
+// member who last saved it must still be a workspace member AND still hold
+// write on the source automation, through the ONE shared predicate
+// (repair contract §2, review S4) the HTTP gate also uses. The HTTP layer
+// enforces the same predicate at edit time; this gate covers the time in
+// between.
 func (s *Service) routeStillAuthorized(ctx context.Context, ap db.Autopilot, route db.LabrastroMessageRoute) bool {
 	if !route.UpdatedBy.Valid {
 		return false
@@ -265,17 +265,7 @@ func (s *Service) routeStillAuthorized(ctx context.Context, ap db.Autopilot, rou
 	if err != nil {
 		return false
 	}
-	if member.Role == "owner" || member.Role == "admin" {
-		return true
-	}
-	if ap.CreatedByType == "member" && ap.CreatedByID == route.UpdatedBy {
-		return true
-	}
-	allowed, err := s.Queries.IsAutopilotCollaborator(ctx, db.IsAutopilotCollaboratorParams{
-		AutopilotID: ap.ID,
-		UserID:      route.UpdatedBy,
-	})
-	return err == nil && allowed
+	return autopilotauth.CanWriteAutopilot(ctx, s.Queries, ap, member)
 }
 
 // reverifyTarget re-proves an external target against the live platform
@@ -292,10 +282,16 @@ func (s *Service) reverifyTarget(ctx context.Context, d db.LabrastroMessageDeliv
 		ChatID:         snap.ChatID,
 		MessageID:      snap.MessageID,
 	}
+	// Approval is checked against the FROZEN target (delivery rows pin
+	// installation + target_key at decision time), never against the
+	// route's current configuration (repair contract §2).
 	switch snap.TargetType {
 	case TargetGroup:
 		if err := s.Verifier.VerifyGroupTarget(ctx, req); err != nil {
 			return refuseVerification(err)
+		}
+		if err := s.targetApproved(ctx, d.WorkspaceID, d.AutopilotID, d.InstallationID, snap.TargetKeyFor()); err != nil {
+			return refuseApproval(err)
 		}
 	case TargetTopic:
 		verified, err := s.Verifier.VerifyTopicTarget(ctx, req)
@@ -308,8 +304,25 @@ func (s *Service) reverifyTarget(ctx context.Context, d db.LabrastroMessageDeliv
 			return refuse(DeliveryStatusFailed, ErrorCodeTopicAnchorMismatch,
 				"anchor now lives in chat "+verified+", route pinned "+snap.ChatID)
 		}
+		if err := s.targetApproved(ctx, d.WorkspaceID, d.AutopilotID, d.InstallationID, snap.TargetKeyFor()); err != nil {
+			return refuseApproval(err)
+		}
 	}
 	return nil
+}
+
+// refuseApproval maps the approval verdict to a send outcome: a revoked or
+// missing approval cancels the delivery — the workspace withdrew its
+// consent, and queued siblings are cancelled by the revoke path with the
+// same reason.
+func refuseApproval(err error) *sendOutcome {
+	var notApproved *TargetNotApprovedError
+	if errors.As(err, &notApproved) {
+		return &sendOutcome{status: DeliveryStatusCancelled,
+			errorCode: ErrorCodeTargetNotApproved, detail: err.Error()}
+	}
+	return &sendOutcome{status: DeliveryStatusUncertain,
+		errorCode: ErrorCodeSendAmbiguous, detail: "check approval: " + err.Error()}
 }
 
 // refuseVerification maps verification errors to send outcomes: a
@@ -458,18 +471,51 @@ func (s *Service) scanLoop(ctx context.Context) {
 	}
 }
 
-// ScanOnce runs one bounded compensator pass. Exported for tests.
+// ScanOnce runs one bounded compensator pass. Exported for tests. Each
+// scanner's failure is contained: one class failing must not permanently
+// block the others (repair contract §4).
 func (s *Service) ScanOnce(ctx context.Context) error {
 	if err := s.requeueExpiredClaims(ctx); err != nil {
-		return err
+		s.logger().Error("messagedelivery: expire claims", "error", err)
 	}
 	if s.Syncer != nil {
-		if err := s.syncStaleSources(ctx); err != nil {
-			return err
+		for scanner, run := range map[string]func(context.Context, scanCursor) (scanCursor, error){
+			scannerRunOnlyTask:   s.syncStaleRunOnlyTasks,
+			scannerIssueStatus:   s.syncStaleCreateIssueIssues,
+			scannerLinkedFailure: s.syncStaleLinkedTaskFailures,
+		} {
+			if _, err := s.advanceScanner(ctx, scanner, run); err != nil {
+				s.logger().Error("messagedelivery: stale-source scan",
+					"scanner", scanner, "error", err)
+			}
 		}
 	}
 	return s.decideMissing(ctx)
 }
+
+// ---- persistent per-scanner cursors (repair contract §4, review R4) ----
+
+// Scanner names. ONE cursor row per scanner: the three source classes
+// advance independently, so one class's backlog can never hold another's
+// position hostage.
+const (
+	scannerRunOnlyTask   = "run_only_terminal_task"
+	scannerIssueStatus   = "create_issue_issue_status"
+	scannerLinkedFailure = "create_issue_linked_task_failure"
+)
+
+const (
+	// scanPageLimit bounds one page.
+	scanPageLimit = 200
+	// scanRowBudgetPerTick is the per-tick work budget in ROWS; when it
+	// runs out the position is saved and the NEXT tick continues from it.
+	scanRowBudgetPerTick = 20_000
+	// scanCycleMaxAge forces a cycle to end even if pages keep coming (a
+	// continuously growing candidate set must not trap a cycle forever);
+	// after a cycle ends the next tick restarts from the beginning of the
+	// candidate set, which is how late-committing sources are recovered.
+	scanCycleMaxAge = 10 * time.Minute
+)
 
 // requeueExpiredClaims moves crashed claims to uncertain. The send may
 // have left the process, so "uncertain" is the only honest state; manual
@@ -491,98 +537,203 @@ func (s *Service) requeueExpiredClaims(ctx context.Context) error {
 	return nil
 }
 
-// syncStaleSources finds tasks/issues whose automation run never heard
-// about their terminal state and feeds them to the existing sync logic.
-// This module runs no second state machine — it reuses the upstream one.
-//
-// Both scans paginate through the FULL candidate set with a keyset cursor
-// (review R4): the candidate set contains rows a sync legitimately no-ops
-// on (issues that are not terminal yet, which SyncRunFromIssue decides via
-// the workspace's status catalog), so a fixed first page would let those
-// rows permanently starve every candidate behind them.
-func (s *Service) syncStaleSources(ctx context.Context) error {
-	if err := s.syncStaleRunOnlyTasks(ctx); err != nil {
-		return err
-	}
-	return s.syncStaleCreateIssueIssues(ctx)
-}
-
-// scanPageLimit bounds each page AND each full traversal, so a pathological
-// backlog is traversed over consecutive ticks instead of blocking one.
-const scanPageLimit = 200
-
-func (s *Service) syncStaleRunOnlyTasks(ctx context.Context) error {
-	cursor := scanCursorStart
-	for page := 0; page < maxScanPagesPerPass; page++ {
-		tasks, err := s.Queries.ListStaleRunOnlyAutopilotTasks(ctx, db.ListStaleRunOnlyAutopilotTasksParams{
-			AfterTs: pgtype.Timestamptz{Time: cursor.ts, Valid: true},
-			AfterID: cursor.id,
-			Limit:   scanPageLimit,
-		})
-		if err != nil {
-			return err
-		}
-		for _, task := range tasks {
-			s.Syncer.SyncRunFromTask(ctx, task)
-		}
-		if len(tasks) < scanPageLimit {
-			return nil
-		}
-		last := tasks[len(tasks)-1]
-		cursor = scanCursor{
-			ts: firstTime(last.CompletedAt, last.CreatedAt),
-			id: last.ID,
-		}
-	}
-	return nil
-}
-
-func (s *Service) syncStaleCreateIssueIssues(ctx context.Context) error {
-	cursor := scanCursorStart
-	for page := 0; page < maxScanPagesPerPass; page++ {
-		issues, err := s.Queries.ListStaleCreateIssueAutopilotIssues(ctx, db.ListStaleCreateIssueAutopilotIssuesParams{
-			AfterTs: pgtype.Timestamptz{Time: cursor.ts, Valid: true},
-			AfterID: cursor.id,
-			Limit:   scanPageLimit,
-		})
-		if err != nil {
-			return err
-		}
-		for _, issue := range issues {
-			s.Syncer.SyncRunFromIssue(ctx, issue)
-		}
-		if len(issues) < scanPageLimit {
-			return nil
-		}
-		last := issues[len(issues)-1]
-		cursor = scanCursor{ts: last.UpdatedAt.Time, id: last.ID}
-	}
-	return nil
-}
-
-// scanCursor is the keyset position of the last row a scan page synced.
+// scanCursor is the page-loop position a scanner advances: the keyset
+// boundary plus the concurrency metadata carried through the loop.
 type scanCursor struct {
-	ts time.Time
-	id pgtype.UUID
+	ts           time.Time
+	id           pgtype.UUID
+	generation   int64
+	cycleStarted time.Time
 }
 
-var scanCursorStart = scanCursor{}
+// scanCursorStart positions a fresh cycle before every candidate id. The
+// UUID must be a VALID all-zero value: an invalid pgtype.UUID binds as
+// NULL, and `id > NULL` matches nothing.
+var scanCursorStart = scanCursor{id: pgtype.UUID{Valid: true}}
 
-// maxScanPagesPerPass bounds one traversal; with the default 200-row page
-// this covers 20,000 candidates per pass and leaves the rest to the next
-// tick, resuming from the start of the keyset (rows that synced leave the
-// candidate set; rows that remain are re-traversed, which is the intended
-// full-missing-set sweep).
-const maxScanPagesPerPass = 100
+// scanCursorState is the persisted position plus the concurrency guard.
+type scanCursorState struct {
+	ts           time.Time
+	id           pgtype.UUID
+	generation   int64
+	cycleStarted time.Time
+}
 
-func firstTime(a, b pgtype.Timestamptz) time.Time {
-	if a.Valid {
-		return a.Time
+// cursor converts the persisted state into the page-loop cursor.
+func (s scanCursorState) cursor() scanCursor {
+	return scanCursor{ts: s.ts, id: s.id, generation: s.generation, cycleStarted: s.cycleStarted}
+}
+
+// advanceScanner runs one tick's bounded budget of pages for one scanner
+// and persists the resulting position under a compare-and-set on the
+// generation, so a stale replica cannot write back a position from an
+// older cycle. A short page (or the cycle's age bound) ENDS the cycle and
+// resets the position to the start of the candidate set: rows that synced
+// left the set; late-committed sources are picked up on the next cycle.
+func (s *Service) advanceScanner(ctx context.Context, scanner string, page func(context.Context, scanCursor) (scanCursor, error)) (scanCursor, error) {
+	cur, err := s.loadCursor(ctx, scanner)
+	if err != nil {
+		return cur, err
 	}
-	if b.Valid {
-		return b.Time
+	if time.Since(cur.cycleStarted) > scanCycleMaxAge {
+		// The cycle expired without a natural short page: end it now so a
+		// growing candidate set cannot trap the scanner forever, and let
+		// this tick start the next cycle from the beginning.
+		if err := s.resetCursor(ctx, scanner, cur); err != nil {
+			return cur, err
+		}
+		cur, err = s.loadCursor(ctx, scanner)
+		if err != nil {
+			return cur, err
+		}
 	}
-	return time.Time{}
+	budget := scanRowBudgetPerTick
+	var last scanCursor
+	for budget > 0 {
+		last, err = page(ctx, cur)
+		if err != nil {
+			return cur, err
+		}
+		if last == cur {
+			// Short page: the cycle completed. Reset to the set's start;
+			// the next tick begins a fresh cycle.
+			return cur, s.resetCursor(ctx, scanner, cur)
+		}
+		cur = last
+		budget -= scanPageLimit
+	}
+	// Budget spent: persist the position; the next tick resumes here.
+	return cur, s.saveCursor(ctx, scanner, cur)
+}
+
+// loadCursor returns the scanner's persisted position, rebuilding from the
+// set's start when the row is missing or unreadable — never skipping
+// sources to recover.
+func (s *Service) loadCursor(ctx context.Context, scanner string) (scanCursor, error) {
+	row, err := s.Queries.GetLabrastroMessageScanCursor(ctx, scanner)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, ierr := s.Queries.InitLabrastroMessageScanCursor(ctx, scanner); ierr != nil && !errors.Is(ierr, pgx.ErrNoRows) {
+			return scanCursorStart, ierr
+		}
+		return scanCursorStart, nil
+	}
+	if err != nil {
+		return scanCursorStart, err
+	}
+	return scanCursorState{
+		ts:           row.CursorTs.Time,
+		id:           row.CursorID,
+		generation:   row.Generation,
+		cycleStarted: row.CycleStartedAt.Time,
+	}.cursor(), nil
+}
+
+func (s *Service) saveCursor(ctx context.Context, scanner string, cur scanCursor) error {
+	_, err := s.Queries.SaveLabrastroMessageScanCursor(ctx, db.SaveLabrastroMessageScanCursorParams{
+		Scanner:            scanner,
+		CursorTs:           pgtype.Timestamptz{Time: cur.ts, Valid: true},
+		CursorID:           cur.id,
+		CycleStartedAt:     pgtype.Timestamptz{Time: cur.cycleStarted, Valid: true},
+		ExpectedGeneration: cur.generation,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// CAS lost: a newer replica already advanced (or reset) the
+		// cursor. Its position is at least as fresh as ours; drop ours.
+		s.logger().Debug("messagedelivery: scan cursor CAS lost",
+			"scanner", scanner)
+		return nil
+	}
+	return err
+}
+
+func (s *Service) resetCursor(ctx context.Context, scanner string, cur scanCursor) error {
+	err := s.saveCursorWith(ctx, scanner, scanCursor{
+		id:           scanCursorStart.id,
+		ts:           scanCursorStart.ts,
+		generation:   cur.generation,
+		cycleStarted: s.now(),
+	})
+	if err == nil {
+		s.logger().Debug("messagedelivery: scan cycle completed; restarting from set start",
+			"scanner", scanner)
+	}
+	return err
+}
+
+func (s *Service) saveCursorWith(ctx context.Context, scanner string, cur scanCursor) error {
+	_, err := s.Queries.SaveLabrastroMessageScanCursor(ctx, db.SaveLabrastroMessageScanCursorParams{
+		Scanner:            scanner,
+		CursorTs:           pgtype.Timestamptz{Time: cur.ts, Valid: true},
+		CursorID:           cur.id,
+		CycleStartedAt:     pgtype.Timestamptz{Time: cur.cycleStarted, Valid: true},
+		ExpectedGeneration: cur.generation,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
+// syncStaleRunOnlyTasks finds run_only tasks whose run never heard about
+// their terminal state and feeds them to the EXISTING sync logic. This
+// module runs no second state machine — it reuses the upstream one.
+func (s *Service) syncStaleRunOnlyTasks(ctx context.Context, cur scanCursor) (scanCursor, error) {
+	tasks, err := s.Queries.ListStaleRunOnlyAutopilotTasks(ctx, db.ListStaleRunOnlyAutopilotTasksParams{
+		AfterID: cur.id,
+		Limit:   scanPageLimit,
+	})
+	if err != nil {
+		return cur, err
+	}
+	for _, task := range tasks {
+		s.Syncer.SyncRunFromTask(ctx, task)
+	}
+	if len(tasks) == 0 {
+		return cur, nil
+	}
+	last := tasks[len(tasks)-1]
+	return scanCursor{ts: cur.ts, id: last.ID, generation: cur.generation, cycleStarted: cur.cycleStarted}, nil
+}
+
+func (s *Service) syncStaleCreateIssueIssues(ctx context.Context, cur scanCursor) (scanCursor, error) {
+	issues, err := s.Queries.ListStaleCreateIssueAutopilotIssues(ctx, db.ListStaleCreateIssueAutopilotIssuesParams{
+		AfterID: cur.id,
+		Limit:   scanPageLimit,
+	})
+	if err != nil {
+		return cur, err
+	}
+	for _, issue := range issues {
+		s.Syncer.SyncRunFromIssue(ctx, issue)
+	}
+	if len(issues) == 0 {
+		return cur, nil
+	}
+	last := issues[len(issues)-1]
+	return scanCursor{ts: cur.ts, id: last.ID, generation: cur.generation, cycleStarted: cur.cycleStarted}, nil
+}
+
+// syncStaleLinkedTaskFailures covers the third persisted source class
+// (review R12): create_issue tasks that reached terminal failure through
+// their ISSUE link while the run stayed active. SyncRunFromLinkedIssueTask
+// is the existing state machine — including its HasActiveTaskForIssue guard,
+// so an in-flight retry is never declared failed early.
+func (s *Service) syncStaleLinkedTaskFailures(ctx context.Context, cur scanCursor) (scanCursor, error) {
+	tasks, err := s.Queries.ListStaleLinkedIssueTaskFailures(ctx, db.ListStaleLinkedIssueTaskFailuresParams{
+		AfterID: cur.id,
+		Limit:   scanPageLimit,
+	})
+	if err != nil {
+		return cur, err
+	}
+	for _, task := range tasks {
+		s.Syncer.SyncRunFromLinkedIssueTask(ctx, task)
+	}
+	if len(tasks) == 0 {
+		return cur, nil
+	}
+	last := tasks[len(tasks)-1]
+	return scanCursor{ts: cur.ts, id: last.ID, generation: cur.generation, cycleStarted: cur.cycleStarted}, nil
 }
 
 // decideMissing freezes a decision for every (terminal run, enabled route
@@ -617,23 +768,19 @@ func (s *Service) decideMissing(ctx context.Context) error {
 			ContentMode:     c.ContentMode,
 			Revision:        c.RouteRevision,
 		}
-		in := decisionInput{
-			WorkspaceID:         util.UUIDToString(c.RunWorkspaceID),
-			AutopilotID:         util.UUIDToString(c.AutopilotID),
+		in := s.decisionInputFromSource(ap, route, sourceFacts{
 			RunID:               util.UUIDToString(c.RunID),
 			RunStatus:           c.RunStatus,
 			RunCompletedAt:      c.RunCompletedAt.Time,
 			RunCompletedAtValid: c.RunCompletedAt.Valid,
-			ExecutionMode:       c.AutopilotExecutionMode,
-			Route:               route,
-			Run: runFields{
-				Result:        c.RunResult,
-				FailureReason: c.RunFailureReason.String,
-				ReasonCode:    c.RunReasonCode.String,
-				IssueID:       util.UUIDToString(c.RunIssueID),
-				IssueIDValid:  c.RunIssueID.Valid,
-			},
-		}
+			TaskID:              util.UUIDToString(c.RunTaskID),
+			TaskIDValid:         c.RunTaskID.Valid,
+			IssueID:             util.UUIDToString(c.RunIssueID),
+			IssueIDValid:        c.RunIssueID.Valid,
+			Result:              c.RunResult,
+			FailureReason:       c.RunFailureReason.String,
+			ReasonCode:          c.RunReasonCode.String,
+		})
 		if _, err := s.decideDelivery(ctx, ap, in); err != nil {
 			return err
 		}

@@ -242,9 +242,10 @@ WHERE status = 'sending'
 RETURNING *;
 
 -- name: SetLabrastroMessageDeliveryOutcome :one
--- Terminal write for a SYNCHRONOUS send that never entered the lease queue
--- (manual test sends). Status-guarded on 'sending' so a row can never be
--- flipped twice by two racing writers.
+-- Terminal write for a SYNCHRONOUS send. Same ownership contract as every
+-- other result write (repair contract §5, review R13): ID + lease token +
+-- 'sending' must all match, so an old request whose lease expired and was
+-- re-claimed by someone else can never overwrite the new owner's state.
 UPDATE labrastro_message_delivery
 SET status = sqlc.arg('status'),
     delivered_at = CASE
@@ -256,7 +257,22 @@ SET status = sqlc.arg('status'),
     last_error = sqlc.narg('last_error'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
+  AND lease_token = sqlc.arg('lease_token')
   AND status = 'sending'
+RETURNING *;
+
+-- name: ClaimLabrastroMessageDeliveryByID :one
+-- Claims ONE known row for a synchronous sender (test-send): created queued
+-- and claimed inside the same parent-lock transaction, so the caller owns a
+-- bounded lease without ever touching the shared queue scan.
+UPDATE labrastro_message_delivery
+SET status = 'sending',
+    lease_token = gen_random_uuid(),
+    lease_expires_at = now() + interval '2 minutes',
+    first_attempt_at = COALESCE(first_attempt_at, now()),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND status = 'queued'
 RETURNING *;
 
 -- name: RetryLabrastroMessageDeliveryManually :one
@@ -430,14 +446,17 @@ LIMIT sqlc.arg('limit');
 -- though the task itself is terminal — the event the run sync listens for
 -- was lost. The scanner feeds these to the EXISTING SyncRunFromTask logic;
 -- this module runs no state machine of its own.
+-- The source relation (r.task_id IS NOT NULL) is the run's OWN persisted
+-- evidence of run_only execution (repair contract §3, review R7) — the
+-- autopilot's current execution_mode is mutable and must never filter
+-- historical sources.
 SELECT t.* FROM agent_task_queue t
 JOIN autopilot_run r ON r.id = t.autopilot_run_id
-JOIN autopilot a ON a.id = r.autopilot_id
-WHERE a.execution_mode = 'run_only'
+WHERE r.task_id IS NOT NULL
   AND r.status IN ('pending', 'issue_created', 'running')
   AND t.status IN ('completed', 'failed', 'cancelled')
-  AND (COALESCE(t.completed_at, t.created_at), t.id) > (sqlc.arg('after_ts')::timestamptz, sqlc.arg('after_id')::uuid)
-ORDER BY COALESCE(t.completed_at, t.created_at), t.id
+  AND t.id > sqlc.arg('after_id')::uuid
+ORDER BY t.id
 LIMIT sqlc.arg('limit');
 
 -- name: ListStaleCreateIssueAutopilotIssues :many
@@ -446,13 +465,14 @@ LIMIT sqlc.arg('limit');
 -- canonical terminal states through Effective() inside SyncRunFromIssue,
 -- and this query cannot see that mapping. The non-terminal run join keeps
 -- the candidate set small; a non-terminal issue is a harmless no-op sync.
+-- Same principle on the issue side: the run's own issue link identifies
+-- create_issue sources.
 SELECT i.* FROM issue i
 JOIN autopilot_run r ON r.issue_id = i.id
-JOIN autopilot a ON a.id = r.autopilot_id
-WHERE a.execution_mode = 'create_issue'
+WHERE r.issue_id IS NOT NULL
   AND r.status IN ('pending', 'issue_created', 'running')
-  AND (i.updated_at, i.id) > (sqlc.arg('after_ts')::timestamptz, sqlc.arg('after_id')::uuid)
-ORDER BY i.updated_at, i.id
+  AND i.id > sqlc.arg('after_id')::uuid
+ORDER BY i.id
 LIMIT sqlc.arg('limit');
 
 -- =====================
@@ -488,3 +508,129 @@ WHERE workspace_id = $1;
 -- name: DeleteLabrastroMessageRoutesByWorkspace :exec
 DELETE FROM labrastro_message_route
 WHERE workspace_id = $1;
+
+-- =====================
+-- Approved external targets (repair contract §2, review R1)
+-- =====================
+
+-- name: ApproveLabrastroMessageTarget :one
+-- Owner/admin approval of ONE (automation, bot, normalized target) triple.
+-- Re-approving a previously revoked target inserts a fresh active row; the
+-- revoked history stays queryable. The unique partial index
+-- uq_labrastro_message_approved_target_active makes a concurrent double
+-- approval a 23505, which the handler reports as already-approved.
+INSERT INTO labrastro_message_approved_target (
+    workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by
+) VALUES (
+    sqlc.arg('workspace_id'), sqlc.arg('autopilot_id'), sqlc.arg('installation_id'),
+    sqlc.arg('target_key'), sqlc.arg('target_type'), sqlc.arg('approved_by')
+)
+RETURNING *;
+
+-- name: RevokeLabrastroMessageTarget :many
+-- Revocation is soft: the row remains as audit history and the active check
+-- (revoked_at IS NULL) stops satisfying immediately. Queued deliveries are
+-- cancelled by the service layer on this path.
+UPDATE labrastro_message_approved_target
+SET revoked_at = now()
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND autopilot_id = sqlc.arg('autopilot_id')
+  AND installation_id = sqlc.arg('installation_id')
+  AND target_key = sqlc.arg('target_key')
+  AND revoked_at IS NULL
+RETURNING *;
+
+-- name: GetActiveLabrastroMessageApprovedTarget :one
+-- The single authorization lookup used by save/enable/test-send/worker/retry:
+-- is this exact (source, bot, target) triple currently approved?
+SELECT * FROM labrastro_message_approved_target
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND autopilot_id = sqlc.arg('autopilot_id')
+  AND installation_id = sqlc.arg('installation_id')
+  AND target_key = sqlc.arg('target_key')
+  AND revoked_at IS NULL;
+
+-- name: ListLabrastroMessageApprovedTargets :many
+SELECT * FROM labrastro_message_approved_target
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND autopilot_id = sqlc.arg('autopilot_id')
+  AND revoked_at IS NULL
+ORDER BY approved_at DESC, id;
+
+-- name: DeleteLabrastroMessageApprovedTargetsByAutopilot :exec
+DELETE FROM labrastro_message_approved_target
+WHERE workspace_id = $1 AND autopilot_id = $2;
+
+-- name: DeleteLabrastroMessageApprovedTargetsByInstallation :exec
+DELETE FROM labrastro_message_approved_target
+WHERE workspace_id = $1 AND installation_id = $2;
+
+-- name: DeleteLabrastroMessageApprovedTargetsByWorkspace :exec
+DELETE FROM labrastro_message_approved_target
+WHERE workspace_id = $1;
+
+-- =====================
+-- Compensation scan cursors (repair contract §4, review R4)
+-- =====================
+
+-- name: GetLabrastroMessageScanCursor :one
+SELECT * FROM labrastro_message_scan_cursor
+WHERE scanner = $1;
+
+-- name: SaveLabrastroMessageScanCursor :one
+-- Compare-and-set on the generation: a replica resuming from an older cycle
+-- loses the race (zero rows) and must reload before writing. Callers that
+-- finish a cycle bump the generation and reset the position in the same
+-- statement.
+UPDATE labrastro_message_scan_cursor
+SET cursor_ts = sqlc.arg('cursor_ts'),
+    cursor_id = sqlc.arg('cursor_id'),
+    cycle_started_at = sqlc.narg('cycle_started_at'),
+    generation = generation + 1,
+    updated_at = now()
+WHERE scanner = sqlc.arg('scanner')
+  AND generation = sqlc.arg('expected_generation')
+RETURNING *;
+
+-- name: InitLabrastroMessageScanCursor :one
+INSERT INTO labrastro_message_scan_cursor (scanner)
+VALUES (sqlc.arg('scanner'))
+ON CONFLICT (scanner) DO NOTHING
+RETURNING *;
+
+-- name: ListStaleLinkedIssueTaskFailures :many
+-- create_issue tasks reach the run through the ISSUE link (their own
+-- autopilot_run_id is NULL), and SyncRunFromLinkedIssueTask is the existing
+-- state machine that fails the run when the task's terminal failure has no
+-- active retry left. The scan feeds terminal linked-task failures whose run
+-- is still active — the compensation for a lost task-failed event (repair
+-- contract §4, review R12). Tasks not linked to any issue, and unrelated
+-- chat tasks, never enter this scan.
+SELECT t.* FROM agent_task_queue t
+JOIN issue i ON i.id = t.issue_id
+JOIN autopilot_run r ON r.issue_id = i.id
+WHERE t.autopilot_run_id IS NULL
+  AND t.issue_id IS NOT NULL
+  AND t.status = 'failed'
+  AND r.status IN ('pending', 'issue_created', 'running')
+  AND t.id > sqlc.arg('after_id')::uuid
+ORDER BY t.id
+LIMIT sqlc.arg('limit');
+
+-- name: CancelLabrastroMessageDeliveriesByTarget :many
+-- An approval revocation stops the route's not-yet-started sends against
+-- the FROZEN target (delivery rows pin installation + target_key at
+-- decision time, so this matches on those copies, never the live route).
+UPDATE labrastro_message_delivery
+SET status = 'cancelled',
+    error_code = sqlc.narg('error_code'),
+    last_error = sqlc.narg('last_error'),
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    updated_at = now()
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND autopilot_id = sqlc.arg('autopilot_id')
+  AND installation_id = sqlc.arg('installation_id')
+  AND target_key = sqlc.arg('target_key')
+  AND status = 'queued'
+RETURNING *;

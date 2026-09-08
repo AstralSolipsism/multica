@@ -62,26 +62,47 @@ func TestMain(m *testing.M) {
 	// No FKs: children were registered with t.Cleanup on their own tests;
 	// the suite-level teardown below sweeps everything else this suite's
 	// workspace may still hold (member/agent included — the schema keeps
-	// no cascades, so each sweep is explicit).
-	for _, stmt := range []string{
-		`DELETE FROM labrastro_message_receipt WHERE workspace_id = $1`,
-		`DELETE FROM labrastro_message_delivery WHERE workspace_id = $1`,
-		`DELETE FROM labrastro_message_route WHERE workspace_id = $1`,
-		`DELETE FROM channel_user_binding WHERE workspace_id = $1`,
-		`DELETE FROM channel_installation WHERE workspace_id = $1`,
-		`DELETE FROM autopilot_run WHERE autopilot_id IN (SELECT id FROM autopilot WHERE workspace_id = $1)`,
-		`DELETE FROM autopilot WHERE workspace_id = $1`,
-		`DELETE FROM agent_task_queue WHERE agent_id IN (SELECT id FROM agent WHERE workspace_id = $1)`,
-		`DELETE FROM member WHERE workspace_id = $1`,
-		`DELETE FROM agent WHERE workspace_id = $1`,
-		`DELETE FROM workspace WHERE id = $1`,
-		`DELETE FROM "user" WHERE id = $1 AND id <> $2`,
-	} {
-		testPool.Exec(context.Background(), stmt, testWSID, testUID)
+	// no cascades, so each sweep is explicit). Each statement carries its
+	// OWN argument list and a cleanup ERROR FAILS THE RUN (repair contract
+	// S2): leftover rows and swallowed exec errors have already masked real
+	// results once.
+	cleanups := []struct {
+		sql  string
+		args []any
+	}{
+		{`DELETE FROM labrastro_message_receipt WHERE workspace_id = $1`, []any{testWSID}},
+		{`DELETE FROM labrastro_message_delivery WHERE workspace_id = $1`, []any{testWSID}},
+		{`DELETE FROM labrastro_message_route WHERE workspace_id = $1`, []any{testWSID}},
+		{`DELETE FROM labrastro_message_approved_target WHERE workspace_id = $1`, []any{testWSID}},
+		{`DELETE FROM channel_user_binding WHERE workspace_id = $1`, []any{testWSID}},
+		{`DELETE FROM channel_installation WHERE workspace_id = $1`, []any{testWSID}},
+		{`DELETE FROM autopilot_run WHERE autopilot_id IN (SELECT id FROM autopilot WHERE workspace_id = $1)`, []any{testWSID}},
+		{`DELETE FROM autopilot WHERE workspace_id = $1`, []any{testWSID}},
+		{`DELETE FROM agent_task_queue WHERE agent_id IN (SELECT id FROM agent WHERE workspace_id = $1)`, []any{testWSID}},
+		{`DELETE FROM member WHERE workspace_id = $1`, []any{testWSID}},
+		{`DELETE FROM agent WHERE workspace_id = $1`, []any{testWSID}},
+		{`DELETE FROM workspace WHERE id = $1`, []any{testWSID}},
+		{`DELETE FROM "user" WHERE id = $1`, []any{testUID}},
 	}
-	testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, testUID)
+	for _, c := range cleanups {
+		if _, err := testPool.Exec(context.Background(), c.sql, c.args...); err != nil {
+			fmt.Printf("SUITE CLEANUP FAILED (test result is NOT trustworthy): %v\nSQL: %s\n", err, c.sql)
+			code = 1
+		}
+	}
 	pool.Close()
 	os.Exit(code)
+}
+
+// resetScanCursor deletes a scanner's persisted cursor before AND after a
+// test: the cursor table is global state shared across tests and suite runs,
+// so a stale position would silently hide candidates from the scan.
+func resetScanCursor(t *testing.T, scanner string) {
+	t.Helper()
+	testFx.Exec(t, `DELETE FROM labrastro_message_scan_cursor WHERE scanner = $1`, scanner)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM labrastro_message_scan_cursor WHERE scanner = $1`, scanner)
+	})
 }
 
 // mustInsert runs one RETURNING id statement during suite setup.
@@ -130,9 +151,10 @@ func (f *fakeSender) requests() []SendRequest {
 }
 
 type fakeSyncer struct {
-	mu     sync.Mutex
-	tasks  []db.AgentTaskQueue
-	issues []db.Issue
+	mu          sync.Mutex
+	tasks       []db.AgentTaskQueue
+	issues      []db.Issue
+	linkedTasks []db.AgentTaskQueue
 }
 
 func (f *fakeSyncer) SyncRunFromTask(ctx context.Context, task db.AgentTaskQueue) {
@@ -145,6 +167,12 @@ func (f *fakeSyncer) SyncRunFromIssue(ctx context.Context, issue db.Issue) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.issues = append(f.issues, issue)
+}
+
+func (f *fakeSyncer) SyncRunFromLinkedIssueTask(ctx context.Context, task db.AgentTaskQueue) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.linkedTasks = append(f.linkedTasks, task)
 }
 
 // ---- fixtures ----
@@ -218,8 +246,35 @@ func (f mdFixture) memberTargetRoute(t *testing.T, label, userID string, over te
 	}, over))
 }
 
+// approveGroup inserts an active admin approval for a group target — the
+// workspace consent the send-time authorization now requires.
+func (f mdFixture) approveGroup(t *testing.T, chatID string) {
+	t.Helper()
+	testFx.Insert(t, "labrastro_message_approved_target", testutil.Cols{
+		"workspace_id":    testWSID,
+		"autopilot_id":    f.autopilot,
+		"installation_id": f.install,
+		"target_key":      TargetKey(TargetGroup, "", chatID, ""),
+		"target_type":     TargetGroup,
+		"approved_by":     testUID,
+	})
+}
+
+func (f mdFixture) approveTopic(t *testing.T, chatID, messageID string) {
+	t.Helper()
+	testFx.Insert(t, "labrastro_message_approved_target", testutil.Cols{
+		"workspace_id":    testWSID,
+		"autopilot_id":    f.autopilot,
+		"installation_id": f.install,
+		"target_key":      TargetKey(TargetTopic, "", chatID, messageID),
+		"target_type":     TargetTopic,
+		"approved_by":     testUID,
+	})
+}
+
 func (f mdFixture) groupRoute(t *testing.T, chatID string) string {
 	t.Helper()
+	f.approveGroup(t, chatID)
 	return testFx.Insert(t, "labrastro_message_route", testutil.Cols{
 		"id":              testutil.Raw("gen_random_uuid()"),
 		"workspace_id":    testWSID,

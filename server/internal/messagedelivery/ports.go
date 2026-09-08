@@ -91,6 +91,10 @@ var ErrSenderUnavailable = errors.New("delivery sender not configured")
 type RunSyncer interface {
 	SyncRunFromTask(ctx context.Context, task db.AgentTaskQueue)
 	SyncRunFromIssue(ctx context.Context, issue db.Issue)
+	// SyncRunFromLinkedIssueTask fails the run of a create_issue automation
+	// when its linked issue's terminal task failure has no active retry —
+	// the third compensation source (review R12).
+	SyncRunFromLinkedIssueTask(ctx context.Context, task db.AgentTaskQueue)
 }
 
 // VerifyTargetRequest names one external target to verify against the live

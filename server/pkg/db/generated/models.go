@@ -933,6 +933,18 @@ type IssueViewPreference struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type LabrastroMessageApprovedTarget struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	AutopilotID    pgtype.UUID        `json:"autopilot_id"`
+	InstallationID pgtype.UUID        `json:"installation_id"`
+	TargetKey      string             `json:"target_key"`
+	TargetType     string             `json:"target_type"`
+	ApprovedBy     pgtype.UUID        `json:"approved_by"`
+	ApprovedAt     pgtype.Timestamptz `json:"approved_at"`
+	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
+}
+
 type LabrastroMessageDelivery struct {
 	ID              pgtype.UUID        `json:"id"`
 	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
@@ -995,6 +1007,15 @@ type LabrastroMessageRoute struct {
 	EffectiveFrom   pgtype.Timestamptz `json:"effective_from"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LabrastroMessageScanCursor struct {
+	Scanner        string             `json:"scanner"`
+	CursorTs       pgtype.Timestamptz `json:"cursor_ts"`
+	CursorID       pgtype.UUID        `json:"cursor_id"`
+	CycleStartedAt pgtype.Timestamptz `json:"cycle_started_at"`
+	Generation     int64              `json:"generation"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
 type LarkBindingToken struct {

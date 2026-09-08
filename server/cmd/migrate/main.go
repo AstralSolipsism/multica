@@ -300,12 +300,13 @@ var concurrentIndexCleanups = map[string]string{
 	"446_issue_properties_bigm_index":                           "idx_issue_properties_bigm",
 	// OL-25 message-delivery module (labrastro_* tables). Each migration
 	// builds exactly one index concurrently, per the repo migration contract.
-	"453_labrastro_message_route_identity_index":   "uq_labrastro_message_route_identity",
-	"454_labrastro_message_delivery_dedup_index":   "uq_labrastro_message_delivery_dedup",
-	"455_labrastro_message_delivery_queue_index":   "idx_labrastro_message_delivery_queue",
-	"456_labrastro_message_delivery_listing_index": "idx_labrastro_message_delivery_listing",
-	"457_labrastro_message_receipt_shard_index":    "uq_labrastro_message_receipt_shard",
-	"458_labrastro_message_receipt_external_index": "uq_labrastro_message_receipt_external",
+	"453_labrastro_message_route_identity_index":         "uq_labrastro_message_route_identity",
+	"454_labrastro_message_delivery_dedup_index":         "uq_labrastro_message_delivery_dedup",
+	"455_labrastro_message_delivery_queue_index":         "idx_labrastro_message_delivery_queue",
+	"456_labrastro_message_delivery_listing_index":       "idx_labrastro_message_delivery_listing",
+	"457_labrastro_message_receipt_shard_index":          "uq_labrastro_message_receipt_shard",
+	"458_labrastro_message_receipt_external_index":       "uq_labrastro_message_receipt_external",
+	"460_labrastro_message_approved_target_active_index": "uq_labrastro_message_approved_target_active",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction

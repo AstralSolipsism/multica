@@ -104,6 +104,7 @@ func TestReviewDepartedRouteAuthorCannotContinueDelivery(t *testing.T) {
 	if err != nil || !allowed {
 		t.Fatalf("initial writer authorization: %v %v", allowed, err)
 	}
+	fx.approveGroup(t, "oc_review_departed_author")
 	if _, err := svc.CreateRoute(ctx, ap, db.Member{UserID: uuidOf(t, writer), Role: "member"}, RouteInput{
 		InstallationID: fx.install, TargetType: TargetGroup, TargetChatID: "oc_review_departed_author",
 		Conditions: ConditionSuccess, ContentMode: ContentWithOutput,
@@ -385,7 +386,9 @@ func TestReviewExternalTargetsRequireVerification(t *testing.T) {
 	}
 
 	// A save whose declaration MATCHES the resolved anchor stores the
-	// verified chat and the verified identity key.
+	// verified chat and the verified identity key — and requires the
+	// workspace approval for that verified target.
+	fx.approveTopic(t, "oc_real_chat", "om_1")
 	honest := newTestService(nil, nil)
 	honest.Verifier = &fakeVerifier{topicChat: "oc_real_chat"}
 	honestIn := topicIn

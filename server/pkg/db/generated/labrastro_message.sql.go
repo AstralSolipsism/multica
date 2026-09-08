@@ -11,6 +11,58 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const approveLabrastroMessageTarget = `-- name: ApproveLabrastroMessageTarget :one
+
+INSERT INTO labrastro_message_approved_target (
+    workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by
+) VALUES (
+    $1, $2, $3,
+    $4, $5, $6
+)
+RETURNING id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at
+`
+
+type ApproveLabrastroMessageTargetParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	AutopilotID    pgtype.UUID `json:"autopilot_id"`
+	InstallationID pgtype.UUID `json:"installation_id"`
+	TargetKey      string      `json:"target_key"`
+	TargetType     string      `json:"target_type"`
+	ApprovedBy     pgtype.UUID `json:"approved_by"`
+}
+
+// =====================
+// Approved external targets (repair contract §2, review R1)
+// =====================
+// Owner/admin approval of ONE (automation, bot, normalized target) triple.
+// Re-approving a previously revoked target inserts a fresh active row; the
+// revoked history stays queryable. The unique partial index
+// uq_labrastro_message_approved_target_active makes a concurrent double
+// approval a 23505, which the handler reports as already-approved.
+func (q *Queries) ApproveLabrastroMessageTarget(ctx context.Context, arg ApproveLabrastroMessageTargetParams) (LabrastroMessageApprovedTarget, error) {
+	row := q.db.QueryRow(ctx, approveLabrastroMessageTarget,
+		arg.WorkspaceID,
+		arg.AutopilotID,
+		arg.InstallationID,
+		arg.TargetKey,
+		arg.TargetType,
+		arg.ApprovedBy,
+	)
+	var i LabrastroMessageApprovedTarget
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AutopilotID,
+		&i.InstallationID,
+		&i.TargetKey,
+		&i.TargetType,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const cancelClaimedLabrastroMessageDelivery = `-- name: CancelClaimedLabrastroMessageDelivery :one
 UPDATE labrastro_message_delivery
 SET status = 'cancelled',
@@ -214,6 +266,87 @@ func (q *Queries) CancelLabrastroMessageDeliveriesByRoute(ctx context.Context, a
 	return items, nil
 }
 
+const cancelLabrastroMessageDeliveriesByTarget = `-- name: CancelLabrastroMessageDeliveriesByTarget :many
+UPDATE labrastro_message_delivery
+SET status = 'cancelled',
+    error_code = $1,
+    last_error = $2,
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    updated_at = now()
+WHERE workspace_id = $3
+  AND autopilot_id = $4
+  AND installation_id = $5
+  AND target_key = $6
+  AND status = 'queued'
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
+`
+
+type CancelLabrastroMessageDeliveriesByTargetParams struct {
+	ErrorCode      pgtype.Text `json:"error_code"`
+	LastError      pgtype.Text `json:"last_error"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	AutopilotID    pgtype.UUID `json:"autopilot_id"`
+	InstallationID pgtype.UUID `json:"installation_id"`
+	TargetKey      string      `json:"target_key"`
+}
+
+// An approval revocation stops the route's not-yet-started sends against
+// the FROZEN target (delivery rows pin installation + target_key at
+// decision time, so this matches on those copies, never the live route).
+func (q *Queries) CancelLabrastroMessageDeliveriesByTarget(ctx context.Context, arg CancelLabrastroMessageDeliveriesByTargetParams) ([]LabrastroMessageDelivery, error) {
+	rows, err := q.db.Query(ctx, cancelLabrastroMessageDeliveriesByTarget,
+		arg.ErrorCode,
+		arg.LastError,
+		arg.WorkspaceID,
+		arg.AutopilotID,
+		arg.InstallationID,
+		arg.TargetKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LabrastroMessageDelivery{}
+	for rows.Next() {
+		var i LabrastroMessageDelivery
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.RouteID,
+			&i.RouteRevision,
+			&i.AutopilotID,
+			&i.RunID,
+			&i.DedupKey,
+			&i.SourceKind,
+			&i.Status,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.LeaseToken,
+			&i.LeaseExpiresAt,
+			&i.ErrorCode,
+			&i.LastError,
+			&i.ContentSnapshot,
+			&i.TargetSnapshot,
+			&i.InstallationID,
+			&i.TargetKey,
+			&i.ShardTotal,
+			&i.SourceRef,
+			&i.DeliveredAt,
+			&i.FirstAttemptAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const claimDueLabrastroMessageDelivery = `-- name: ClaimDueLabrastroMessageDelivery :one
 WITH candidate AS (
     SELECT id
@@ -243,6 +376,54 @@ RETURNING d.id, d.workspace_id, d.route_id, d.route_revision, d.autopilot_id, d.
 // ledger carry that.
 func (q *Queries) ClaimDueLabrastroMessageDelivery(ctx context.Context) (LabrastroMessageDelivery, error) {
 	row := q.db.QueryRow(ctx, claimDueLabrastroMessageDelivery)
+	var i LabrastroMessageDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RouteID,
+		&i.RouteRevision,
+		&i.AutopilotID,
+		&i.RunID,
+		&i.DedupKey,
+		&i.SourceKind,
+		&i.Status,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.ErrorCode,
+		&i.LastError,
+		&i.ContentSnapshot,
+		&i.TargetSnapshot,
+		&i.InstallationID,
+		&i.TargetKey,
+		&i.ShardTotal,
+		&i.SourceRef,
+		&i.DeliveredAt,
+		&i.FirstAttemptAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const claimLabrastroMessageDeliveryByID = `-- name: ClaimLabrastroMessageDeliveryByID :one
+UPDATE labrastro_message_delivery
+SET status = 'sending',
+    lease_token = gen_random_uuid(),
+    lease_expires_at = now() + interval '2 minutes',
+    first_attempt_at = COALESCE(first_attempt_at, now()),
+    updated_at = now()
+WHERE id = $1
+  AND status = 'queued'
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
+`
+
+// Claims ONE known row for a synchronous sender (test-send): created queued
+// and claimed inside the same parent-lock transaction, so the caller owns a
+// bounded lease without ever touching the shared queue scan.
+func (q *Queries) ClaimLabrastroMessageDeliveryByID(ctx context.Context, id pgtype.UUID) (LabrastroMessageDelivery, error) {
+	row := q.db.QueryRow(ctx, claimLabrastroMessageDeliveryByID, id)
 	var i LabrastroMessageDelivery
 	err := row.Scan(
 		&i.ID,
@@ -582,6 +763,46 @@ func (q *Queries) CreateLabrastroMessageRoute(ctx context.Context, arg CreateLab
 	return i, err
 }
 
+const deleteLabrastroMessageApprovedTargetsByAutopilot = `-- name: DeleteLabrastroMessageApprovedTargetsByAutopilot :exec
+DELETE FROM labrastro_message_approved_target
+WHERE workspace_id = $1 AND autopilot_id = $2
+`
+
+type DeleteLabrastroMessageApprovedTargetsByAutopilotParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AutopilotID pgtype.UUID `json:"autopilot_id"`
+}
+
+func (q *Queries) DeleteLabrastroMessageApprovedTargetsByAutopilot(ctx context.Context, arg DeleteLabrastroMessageApprovedTargetsByAutopilotParams) error {
+	_, err := q.db.Exec(ctx, deleteLabrastroMessageApprovedTargetsByAutopilot, arg.WorkspaceID, arg.AutopilotID)
+	return err
+}
+
+const deleteLabrastroMessageApprovedTargetsByInstallation = `-- name: DeleteLabrastroMessageApprovedTargetsByInstallation :exec
+DELETE FROM labrastro_message_approved_target
+WHERE workspace_id = $1 AND installation_id = $2
+`
+
+type DeleteLabrastroMessageApprovedTargetsByInstallationParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	InstallationID pgtype.UUID `json:"installation_id"`
+}
+
+func (q *Queries) DeleteLabrastroMessageApprovedTargetsByInstallation(ctx context.Context, arg DeleteLabrastroMessageApprovedTargetsByInstallationParams) error {
+	_, err := q.db.Exec(ctx, deleteLabrastroMessageApprovedTargetsByInstallation, arg.WorkspaceID, arg.InstallationID)
+	return err
+}
+
+const deleteLabrastroMessageApprovedTargetsByWorkspace = `-- name: DeleteLabrastroMessageApprovedTargetsByWorkspace :exec
+DELETE FROM labrastro_message_approved_target
+WHERE workspace_id = $1
+`
+
+func (q *Queries) DeleteLabrastroMessageApprovedTargetsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteLabrastroMessageApprovedTargetsByWorkspace, workspaceID)
+	return err
+}
+
 const deleteLabrastroMessageDeliveriesByWorkspace = `-- name: DeleteLabrastroMessageDeliveriesByWorkspace :exec
 DELETE FROM labrastro_message_delivery
 WHERE workspace_id = $1
@@ -690,6 +911,46 @@ func (q *Queries) FailClaimedLabrastroMessageDelivery(ctx context.Context, arg F
 		&i.FirstAttemptAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getActiveLabrastroMessageApprovedTarget = `-- name: GetActiveLabrastroMessageApprovedTarget :one
+SELECT id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at FROM labrastro_message_approved_target
+WHERE workspace_id = $1
+  AND autopilot_id = $2
+  AND installation_id = $3
+  AND target_key = $4
+  AND revoked_at IS NULL
+`
+
+type GetActiveLabrastroMessageApprovedTargetParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	AutopilotID    pgtype.UUID `json:"autopilot_id"`
+	InstallationID pgtype.UUID `json:"installation_id"`
+	TargetKey      string      `json:"target_key"`
+}
+
+// The single authorization lookup used by save/enable/test-send/worker/retry:
+// is this exact (source, bot, target) triple currently approved?
+func (q *Queries) GetActiveLabrastroMessageApprovedTarget(ctx context.Context, arg GetActiveLabrastroMessageApprovedTargetParams) (LabrastroMessageApprovedTarget, error) {
+	row := q.db.QueryRow(ctx, getActiveLabrastroMessageApprovedTarget,
+		arg.WorkspaceID,
+		arg.AutopilotID,
+		arg.InstallationID,
+		arg.TargetKey,
+	)
+	var i LabrastroMessageApprovedTarget
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AutopilotID,
+		&i.InstallationID,
+		&i.TargetKey,
+		&i.TargetType,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.RevokedAt,
 	)
 	return i, err
 }
@@ -840,6 +1101,50 @@ func (q *Queries) GetLabrastroMessageRoute(ctx context.Context, arg GetLabrastro
 	return i, err
 }
 
+const getLabrastroMessageScanCursor = `-- name: GetLabrastroMessageScanCursor :one
+
+SELECT scanner, cursor_ts, cursor_id, cycle_started_at, generation, updated_at FROM labrastro_message_scan_cursor
+WHERE scanner = $1
+`
+
+// =====================
+// Compensation scan cursors (repair contract §4, review R4)
+// =====================
+func (q *Queries) GetLabrastroMessageScanCursor(ctx context.Context, scanner string) (LabrastroMessageScanCursor, error) {
+	row := q.db.QueryRow(ctx, getLabrastroMessageScanCursor, scanner)
+	var i LabrastroMessageScanCursor
+	err := row.Scan(
+		&i.Scanner,
+		&i.CursorTs,
+		&i.CursorID,
+		&i.CycleStartedAt,
+		&i.Generation,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const initLabrastroMessageScanCursor = `-- name: InitLabrastroMessageScanCursor :one
+INSERT INTO labrastro_message_scan_cursor (scanner)
+VALUES ($1)
+ON CONFLICT (scanner) DO NOTHING
+RETURNING scanner, cursor_ts, cursor_id, cycle_started_at, generation, updated_at
+`
+
+func (q *Queries) InitLabrastroMessageScanCursor(ctx context.Context, scanner string) (LabrastroMessageScanCursor, error) {
+	row := q.db.QueryRow(ctx, initLabrastroMessageScanCursor, scanner)
+	var i LabrastroMessageScanCursor
+	err := row.Scan(
+		&i.Scanner,
+		&i.CursorTs,
+		&i.CursorID,
+		&i.CycleStartedAt,
+		&i.Generation,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listEnabledLabrastroMessageRoutesByAutopilot = `-- name: ListEnabledLabrastroMessageRoutesByAutopilot :many
 SELECT id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at FROM labrastro_message_route
 WHERE workspace_id = $1 AND autopilot_id = $2 AND enabled = true
@@ -883,6 +1188,49 @@ func (q *Queries) ListEnabledLabrastroMessageRoutesByAutopilot(ctx context.Conte
 			&i.EffectiveFrom,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLabrastroMessageApprovedTargets = `-- name: ListLabrastroMessageApprovedTargets :many
+SELECT id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at FROM labrastro_message_approved_target
+WHERE workspace_id = $1
+  AND autopilot_id = $2
+  AND revoked_at IS NULL
+ORDER BY approved_at DESC, id
+`
+
+type ListLabrastroMessageApprovedTargetsParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AutopilotID pgtype.UUID `json:"autopilot_id"`
+}
+
+func (q *Queries) ListLabrastroMessageApprovedTargets(ctx context.Context, arg ListLabrastroMessageApprovedTargetsParams) ([]LabrastroMessageApprovedTarget, error) {
+	rows, err := q.db.Query(ctx, listLabrastroMessageApprovedTargets, arg.WorkspaceID, arg.AutopilotID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LabrastroMessageApprovedTarget{}
+	for rows.Next() {
+		var i LabrastroMessageApprovedTarget
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AutopilotID,
+			&i.InstallationID,
+			&i.TargetKey,
+			&i.TargetType,
+			&i.ApprovedBy,
+			&i.ApprovedAt,
+			&i.RevokedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1201,18 +1549,16 @@ func (q *Queries) ListLabrastroMessageRoutesByAutopilot(ctx context.Context, arg
 const listStaleCreateIssueAutopilotIssues = `-- name: ListStaleCreateIssueAutopilotIssues :many
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.revision, i.last_activity_at FROM issue i
 JOIN autopilot_run r ON r.issue_id = i.id
-JOIN autopilot a ON a.id = r.autopilot_id
-WHERE a.execution_mode = 'create_issue'
+WHERE r.issue_id IS NOT NULL
   AND r.status IN ('pending', 'issue_created', 'running')
-  AND (i.updated_at, i.id) > ($1::timestamptz, $2::uuid)
-ORDER BY i.updated_at, i.id
-LIMIT $3
+  AND i.id > $1::uuid
+ORDER BY i.id
+LIMIT $2
 `
 
 type ListStaleCreateIssueAutopilotIssuesParams struct {
-	AfterTs pgtype.Timestamptz `json:"after_ts"`
-	AfterID pgtype.UUID        `json:"after_id"`
-	Limit   int32              `json:"limit"`
+	AfterID pgtype.UUID `json:"after_id"`
+	Limit   int32       `json:"limit"`
 }
 
 // Issues whose create_issue automation run never saw the terminal
@@ -1220,8 +1566,10 @@ type ListStaleCreateIssueAutopilotIssuesParams struct {
 // canonical terminal states through Effective() inside SyncRunFromIssue,
 // and this query cannot see that mapping. The non-terminal run join keeps
 // the candidate set small; a non-terminal issue is a harmless no-op sync.
+// Same principle on the issue side: the run's own issue link identifies
+// create_issue sources.
 func (q *Queries) ListStaleCreateIssueAutopilotIssues(ctx context.Context, arg ListStaleCreateIssueAutopilotIssuesParams) ([]Issue, error) {
-	rows, err := q.db.Query(ctx, listStaleCreateIssueAutopilotIssues, arg.AfterTs, arg.AfterID, arg.Limit)
+	rows, err := q.db.Query(ctx, listStaleCreateIssueAutopilotIssues, arg.AfterID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1269,30 +1617,132 @@ func (q *Queries) ListStaleCreateIssueAutopilotIssues(ctx context.Context, arg L
 	return items, nil
 }
 
+const listStaleLinkedIssueTaskFailures = `-- name: ListStaleLinkedIssueTaskFailures :many
+SELECT t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing, t.retired_session_id, t.quick_actions_disabled, t.regenerate_quick_actions_for, t.branch_name, t.durable_work_dir, t.channel_context_revision FROM agent_task_queue t
+JOIN issue i ON i.id = t.issue_id
+JOIN autopilot_run r ON r.issue_id = i.id
+WHERE t.autopilot_run_id IS NULL
+  AND t.issue_id IS NOT NULL
+  AND t.status = 'failed'
+  AND r.status IN ('pending', 'issue_created', 'running')
+  AND t.id > $1::uuid
+ORDER BY t.id
+LIMIT $2
+`
+
+type ListStaleLinkedIssueTaskFailuresParams struct {
+	AfterID pgtype.UUID `json:"after_id"`
+	Limit   int32       `json:"limit"`
+}
+
+// create_issue tasks reach the run through the ISSUE link (their own
+// autopilot_run_id is NULL), and SyncRunFromLinkedIssueTask is the existing
+// state machine that fails the run when the task's terminal failure has no
+// active retry left. The scan feeds terminal linked-task failures whose run
+// is still active — the compensation for a lost task-failed event (repair
+// contract §4, review R12). Tasks not linked to any issue, and unrelated
+// chat tasks, never enter this scan.
+func (q *Queries) ListStaleLinkedIssueTaskFailures(ctx context.Context, arg ListStaleLinkedIssueTaskFailuresParams) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, listStaleLinkedIssueTaskFailures, arg.AfterID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.ChatFinalizeDeferredAt,
+			&i.OriginatorSource,
+			&i.DelegatedFromTaskID,
+			&i.RetryOfTaskID,
+			&i.RerunOfTaskID,
+			&i.RuleVersionID,
+			&i.TriggerEvidenceKind,
+			&i.TriggerEvidenceRefID,
+			&i.AccountableUserID,
+			&i.SessionRolloutMissing,
+			&i.RetiredSessionID,
+			&i.QuickActionsDisabled,
+			&i.RegenerateQuickActionsFor,
+			&i.BranchName,
+			&i.DurableWorkDir,
+			&i.ChannelContextRevision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStaleRunOnlyAutopilotTasks = `-- name: ListStaleRunOnlyAutopilotTasks :many
 SELECT t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing, t.retired_session_id, t.quick_actions_disabled, t.regenerate_quick_actions_for, t.branch_name, t.durable_work_dir, t.channel_context_revision FROM agent_task_queue t
 JOIN autopilot_run r ON r.id = t.autopilot_run_id
-JOIN autopilot a ON a.id = r.autopilot_id
-WHERE a.execution_mode = 'run_only'
+WHERE r.task_id IS NOT NULL
   AND r.status IN ('pending', 'issue_created', 'running')
   AND t.status IN ('completed', 'failed', 'cancelled')
-  AND (COALESCE(t.completed_at, t.created_at), t.id) > ($1::timestamptz, $2::uuid)
-ORDER BY COALESCE(t.completed_at, t.created_at), t.id
-LIMIT $3
+  AND t.id > $1::uuid
+ORDER BY t.id
+LIMIT $2
 `
 
 type ListStaleRunOnlyAutopilotTasksParams struct {
-	AfterTs pgtype.Timestamptz `json:"after_ts"`
-	AfterID pgtype.UUID        `json:"after_id"`
-	Limit   int32              `json:"limit"`
+	AfterID pgtype.UUID `json:"after_id"`
+	Limit   int32       `json:"limit"`
 }
 
 // Tasks whose run_only automation has not reached a terminal run state even
 // though the task itself is terminal — the event the run sync listens for
 // was lost. The scanner feeds these to the EXISTING SyncRunFromTask logic;
 // this module runs no state machine of its own.
+// The source relation (r.task_id IS NOT NULL) is the run's OWN persisted
+// evidence of run_only execution (repair contract §3, review R7) — the
+// autopilot's current execution_mode is mutable and must never filter
+// historical sources.
 func (q *Queries) ListStaleRunOnlyAutopilotTasks(ctx context.Context, arg ListStaleRunOnlyAutopilotTasksParams) ([]AgentTaskQueue, error) {
-	rows, err := q.db.Query(ctx, listStaleRunOnlyAutopilotTasks, arg.AfterTs, arg.AfterID, arg.Limit)
+	rows, err := q.db.Query(ctx, listStaleRunOnlyAutopilotTasks, arg.AfterID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1619,6 +2069,106 @@ func (q *Queries) RetryLabrastroMessageDeliveryManually(ctx context.Context, arg
 	return i, err
 }
 
+const revokeLabrastroMessageTarget = `-- name: RevokeLabrastroMessageTarget :many
+UPDATE labrastro_message_approved_target
+SET revoked_at = now()
+WHERE workspace_id = $1
+  AND autopilot_id = $2
+  AND installation_id = $3
+  AND target_key = $4
+  AND revoked_at IS NULL
+RETURNING id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at
+`
+
+type RevokeLabrastroMessageTargetParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	AutopilotID    pgtype.UUID `json:"autopilot_id"`
+	InstallationID pgtype.UUID `json:"installation_id"`
+	TargetKey      string      `json:"target_key"`
+}
+
+// Revocation is soft: the row remains as audit history and the active check
+// (revoked_at IS NULL) stops satisfying immediately. Queued deliveries are
+// cancelled by the service layer on this path.
+func (q *Queries) RevokeLabrastroMessageTarget(ctx context.Context, arg RevokeLabrastroMessageTargetParams) ([]LabrastroMessageApprovedTarget, error) {
+	rows, err := q.db.Query(ctx, revokeLabrastroMessageTarget,
+		arg.WorkspaceID,
+		arg.AutopilotID,
+		arg.InstallationID,
+		arg.TargetKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LabrastroMessageApprovedTarget{}
+	for rows.Next() {
+		var i LabrastroMessageApprovedTarget
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AutopilotID,
+			&i.InstallationID,
+			&i.TargetKey,
+			&i.TargetType,
+			&i.ApprovedBy,
+			&i.ApprovedAt,
+			&i.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const saveLabrastroMessageScanCursor = `-- name: SaveLabrastroMessageScanCursor :one
+UPDATE labrastro_message_scan_cursor
+SET cursor_ts = $1,
+    cursor_id = $2,
+    cycle_started_at = $3,
+    generation = generation + 1,
+    updated_at = now()
+WHERE scanner = $4
+  AND generation = $5
+RETURNING scanner, cursor_ts, cursor_id, cycle_started_at, generation, updated_at
+`
+
+type SaveLabrastroMessageScanCursorParams struct {
+	CursorTs           pgtype.Timestamptz `json:"cursor_ts"`
+	CursorID           pgtype.UUID        `json:"cursor_id"`
+	CycleStartedAt     pgtype.Timestamptz `json:"cycle_started_at"`
+	Scanner            string             `json:"scanner"`
+	ExpectedGeneration int64              `json:"expected_generation"`
+}
+
+// Compare-and-set on the generation: a replica resuming from an older cycle
+// loses the race (zero rows) and must reload before writing. Callers that
+// finish a cycle bump the generation and reset the position in the same
+// statement.
+func (q *Queries) SaveLabrastroMessageScanCursor(ctx context.Context, arg SaveLabrastroMessageScanCursorParams) (LabrastroMessageScanCursor, error) {
+	row := q.db.QueryRow(ctx, saveLabrastroMessageScanCursor,
+		arg.CursorTs,
+		arg.CursorID,
+		arg.CycleStartedAt,
+		arg.Scanner,
+		arg.ExpectedGeneration,
+	)
+	var i LabrastroMessageScanCursor
+	err := row.Scan(
+		&i.Scanner,
+		&i.CursorTs,
+		&i.CursorID,
+		&i.CycleStartedAt,
+		&i.Generation,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const setLabrastroMessageDeliveryOutcome = `-- name: SetLabrastroMessageDeliveryOutcome :one
 UPDATE labrastro_message_delivery
 SET status = $1,
@@ -1631,26 +2181,30 @@ SET status = $1,
     last_error = $3,
     updated_at = now()
 WHERE id = $4
+  AND lease_token = $5
   AND status = 'sending'
 RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at
 `
 
 type SetLabrastroMessageDeliveryOutcomeParams struct {
-	Status    string      `json:"status"`
-	ErrorCode pgtype.Text `json:"error_code"`
-	LastError pgtype.Text `json:"last_error"`
-	ID        pgtype.UUID `json:"id"`
+	Status     string      `json:"status"`
+	ErrorCode  pgtype.Text `json:"error_code"`
+	LastError  pgtype.Text `json:"last_error"`
+	ID         pgtype.UUID `json:"id"`
+	LeaseToken pgtype.UUID `json:"lease_token"`
 }
 
-// Terminal write for a SYNCHRONOUS send that never entered the lease queue
-// (manual test sends). Status-guarded on 'sending' so a row can never be
-// flipped twice by two racing writers.
+// Terminal write for a SYNCHRONOUS send. Same ownership contract as every
+// other result write (repair contract §5, review R13): ID + lease token +
+// 'sending' must all match, so an old request whose lease expired and was
+// re-claimed by someone else can never overwrite the new owner's state.
 func (q *Queries) SetLabrastroMessageDeliveryOutcome(ctx context.Context, arg SetLabrastroMessageDeliveryOutcomeParams) (LabrastroMessageDelivery, error) {
 	row := q.db.QueryRow(ctx, setLabrastroMessageDeliveryOutcome,
 		arg.Status,
 		arg.ErrorCode,
 		arg.LastError,
 		arg.ID,
+		arg.LeaseToken,
 	)
 	var i LabrastroMessageDelivery
 	err := row.Scan(

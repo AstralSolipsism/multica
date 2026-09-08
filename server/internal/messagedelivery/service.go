@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -126,12 +125,28 @@ type resolvedTarget struct {
 	openID       string // member targets: the live bound platform id
 }
 
+// Type exposes the resolved target type to the HTTP surface (approval
+// refuses member targets; they carry their own consent via binding).
+func (t resolvedTarget) Type() string { return t.targetType }
+
 // ResolveTarget validates a route payload against current state: the bot
 // installation must exist, be active and belong to this workspace; a member
 // target must be a current member AND hold a binding on THIS installation
 // (never "some recent binding of the channel"); group/topic targets must
 // carry addressable anchors.
-func (s *Service) ResolveTarget(ctx context.Context, workspaceID pgtype.UUID, in RouteInput) (resolvedTarget, error) {
+func (s *Service) ResolveTarget(ctx context.Context, workspaceID, autopilotID pgtype.UUID, in RouteInput) (resolvedTarget, error) {
+	return s.resolveTarget(ctx, workspaceID, autopilotID, in, true)
+}
+
+// ResolveTargetForApproval resolves a target for the APPROVAL flow: it
+// verifies the platform-side facts (installation, reachability, anchor) but
+// deliberately skips the approval lookup — an approval cannot require
+// itself. Only the owner/admin gate above decides who may approve.
+func (s *Service) ResolveTargetForApproval(ctx context.Context, workspaceID, autopilotID pgtype.UUID, in RouteInput) (resolvedTarget, error) {
+	return s.resolveTarget(ctx, workspaceID, autopilotID, in, false)
+}
+
+func (s *Service) resolveTarget(ctx context.Context, workspaceID, autopilotID pgtype.UUID, in RouteInput, requireApproval bool) (resolvedTarget, error) {
 	if !ValidTargetTypes[in.TargetType] {
 		return resolvedTarget{}, &InvalidRouteError{Field: "target_type"}
 	}
@@ -219,6 +234,14 @@ func (s *Service) ResolveTarget(ctx context.Context, workspaceID pgtype.UUID, in
 		}); err != nil {
 			return resolvedTarget{}, classifyTargetVerifyError(err)
 		}
+		// Workspace approval (repair contract §2, review R1): reachability
+		// proves the bot CAN deliver; approval proves the workspace ALLOWS
+		// this automation to share results to this target.
+		if requireApproval {
+			if err := s.targetApproved(ctx, workspaceID, autopilotID, instID, TargetKey(TargetGroup, "", in.TargetChatID, "")); err != nil {
+				return resolvedTarget{}, err
+			}
+		}
 	case TargetTopic:
 		if in.TargetChatID == "" {
 			return resolvedTarget{}, &InvalidRouteError{Field: "target_chat_id"}
@@ -243,12 +266,97 @@ func (s *Service) ResolveTarget(ctx context.Context, workspaceID pgtype.UUID, in
 		if err != nil {
 			return resolvedTarget{}, classifyTargetVerifyError(err)
 		}
+		// Approval is keyed on the VERIFIED chat: the anchor proved where
+		// it lives, and that chat is what the admin's approval covers.
+		if requireApproval {
+			if err := s.targetApproved(ctx, workspaceID, autopilotID, instID, TargetKey(TargetTopic, "", verified, in.TargetMessageID)); err != nil {
+				return resolvedTarget{}, err
+			}
+		}
 		out.chatID = pgtype.Text{String: verified, Valid: true}
 		in.TargetChatID = verified
 	}
 
 	out.targetKey = TargetKey(in.TargetType, in.TargetUserID, in.TargetChatID, in.TargetMessageID)
 	return out, nil
+}
+
+// targetApproved reports whether the (source, bot, target) triple currently
+// holds an active workspace-admin approval (repair contract §2, review R1).
+func (s *Service) targetApproved(ctx context.Context, workspaceID, autopilotID, installationID pgtype.UUID, targetKey string) error {
+	_, err := s.Queries.GetActiveLabrastroMessageApprovedTarget(ctx, db.GetActiveLabrastroMessageApprovedTargetParams{
+		WorkspaceID:    workspaceID,
+		AutopilotID:    autopilotID,
+		InstallationID: installationID,
+		TargetKey:      targetKey,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return &TargetNotApprovedError{}
+	}
+	if err != nil {
+		return &TargetUnverifiableError{Detail: "check approval: " + err.Error()}
+	}
+	return nil
+}
+
+// ---- approved-target administration (owner/admin only; enforced upstream) ----
+
+// ApproveTarget grants an active approval for one (automation, bot, target)
+// triple. The caller resolves the target first so the approval covers the
+// VERIFIED chat id, mirroring what a route against it would store.
+func (s *Service) ApproveTarget(ctx context.Context, ap db.Autopilot, approver db.Member, target resolvedTarget) (db.LabrastroMessageApprovedTarget, error) {
+	row, err := s.Queries.ApproveLabrastroMessageTarget(ctx, db.ApproveLabrastroMessageTargetParams{
+		WorkspaceID:    ap.WorkspaceID,
+		AutopilotID:    ap.ID,
+		InstallationID: target.installation.ID,
+		TargetKey:      target.targetKey,
+		TargetType:     target.targetType,
+		ApprovedBy:     approver.UserID,
+	})
+	if err != nil {
+		return db.LabrastroMessageApprovedTarget{}, fmt.Errorf("approve target: %w", err)
+	}
+	return row, nil
+}
+
+// RevokeTarget soft-revokes one active approval and cancels the route's
+// not-yet-started sends against it. Platform-accepted requests are not
+// recallable; their receipts stay.
+func (s *Service) RevokeTarget(ctx context.Context, ap db.Autopilot, targetKey string) (int, error) {
+	revoked, err := s.Queries.RevokeLabrastroMessageTarget(ctx, db.RevokeLabrastroMessageTargetParams{
+		WorkspaceID: ap.WorkspaceID,
+		AutopilotID: ap.ID,
+		TargetKey:   targetKey,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("revoke target: %w", err)
+	}
+	cancelled := 0
+	for _, r := range revoked {
+		rows, err := s.Queries.CancelLabrastroMessageDeliveriesByTarget(ctx, db.CancelLabrastroMessageDeliveriesByTargetParams{
+			WorkspaceID:    ap.WorkspaceID,
+			AutopilotID:    ap.ID,
+			InstallationID: r.InstallationID,
+			TargetKey:      r.TargetKey,
+			ErrorCode:      pgtype.Text{String: ErrorCodeTargetNotApproved, Valid: true},
+			LastError:      pgtype.Text{String: "target approval revoked", Valid: true},
+		})
+		if err != nil {
+			s.logger().Warn("messagedelivery: cancel queued deliveries for revoked target",
+				"target_key", r.TargetKey, "error", err)
+			continue
+		}
+		cancelled += len(rows)
+	}
+	return cancelled, nil
+}
+
+// ListApprovedTargets returns the automation's active approvals.
+func (s *Service) ListApprovedTargets(ctx context.Context, ap db.Autopilot) ([]db.LabrastroMessageApprovedTarget, error) {
+	return s.Queries.ListLabrastroMessageApprovedTargets(ctx, db.ListLabrastroMessageApprovedTargetsParams{
+		WorkspaceID: ap.WorkspaceID,
+		AutopilotID: ap.ID,
+	})
 }
 
 // classifyTargetVerifyError maps adapter verification failures onto the
@@ -285,7 +393,7 @@ func (s *Service) enabledOrDefault(in RouteInput, create bool, current bool) boo
 // updater — the config author is recorded, distinct from the recipient and
 // from whoever authorized the automation.
 func (s *Service) CreateRoute(ctx context.Context, ap db.Autopilot, member db.Member, in RouteInput) (db.LabrastroMessageRoute, error) {
-	target, err := s.ResolveTarget(ctx, ap.WorkspaceID, in)
+	target, err := s.ResolveTarget(ctx, ap.WorkspaceID, ap.ID, in)
 	if err != nil {
 		return db.LabrastroMessageRoute{}, err
 	}
@@ -319,7 +427,7 @@ func (s *Service) CreateRoute(ctx context.Context, ap db.Autopilot, member db.Me
 // matching-id-but-stale-revision update surface as ErrRouteRevisionConflict.
 // Disabling through an edit cancels the route's not-yet-started sends.
 func (s *Service) UpdateRoute(ctx context.Context, route db.LabrastroMessageRoute, member db.Member, expectedRevision int32, in RouteInput) (db.LabrastroMessageRoute, error) {
-	target, err := s.ResolveTarget(ctx, route.WorkspaceID, in)
+	target, err := s.ResolveTarget(ctx, route.WorkspaceID, route.AutopilotID, in)
 	if err != nil {
 		return db.LabrastroMessageRoute{}, err
 	}
@@ -494,27 +602,10 @@ func (s *Service) EnqueueRunDeliveries(ctx context.Context, runID pgtype.UUID) (
 		return 0, fmt.Errorf("load routes: %w", err)
 	}
 
+	source := sourceFactsFromRun(run)
 	decided := 0
 	for _, route := range routes {
-		in := decisionInput{
-			WorkspaceID:         util.UUIDToString(ap.WorkspaceID),
-			AutopilotID:         util.UUIDToString(ap.ID),
-			RunID:               util.UUIDToString(run.ID),
-			RunStatus:           run.Status,
-			RunCompletedAt:      run.CompletedAt.Time,
-			RunCompletedAtValid: run.CompletedAt.Valid,
-			ExecutionMode:       ap.ExecutionMode,
-			RunTaskID:           util.UUIDToString(run.TaskID),
-			RunTaskIDValid:      run.TaskID.Valid,
-			Route:               route,
-			Run: runFields{
-				Result:        run.Result,
-				FailureReason: run.FailureReason.String,
-				ReasonCode:    run.ReasonCode.String,
-				IssueID:       util.UUIDToString(run.IssueID),
-				IssueIDValid:  run.IssueID.Valid,
-			},
-		}
+		in := s.decisionInputFromSource(ap, route, source)
 		n, err := s.decideDelivery(ctx, ap, in)
 		if err != nil {
 			return decided, err
@@ -525,6 +616,48 @@ func (s *Service) EnqueueRunDeliveries(ctx context.Context, runID pgtype.UUID) (
 		s.Notify()
 	}
 	return decided, nil
+}
+
+// sourceFactsFromRun assembles the persisted source evidence from a run row.
+func sourceFactsFromRun(run db.AutopilotRun) sourceFacts {
+	return sourceFacts{
+		RunID:               util.UUIDToString(run.ID),
+		RunStatus:           run.Status,
+		RunCompletedAt:      run.CompletedAt.Time,
+		RunCompletedAtValid: run.CompletedAt.Valid,
+		TaskID:              util.UUIDToString(run.TaskID),
+		TaskIDValid:         run.TaskID.Valid,
+		IssueID:             util.UUIDToString(run.IssueID),
+		IssueIDValid:        run.IssueID.Valid,
+		Result:              run.Result,
+		FailureReason:       run.FailureReason.String,
+		ReasonCode:          run.ReasonCode.String,
+	}
+}
+
+// decisionInputFromSource is the ONE assembly point for decision inputs
+// (repair contract §3): both the event path and the compensator build
+// through here, so neither can silently omit a persisted field.
+func (s *Service) decisionInputFromSource(ap db.Autopilot, route db.LabrastroMessageRoute, src sourceFacts) decisionInput {
+	return decisionInput{
+		WorkspaceID:         util.UUIDToString(ap.WorkspaceID),
+		AutopilotID:         util.UUIDToString(ap.ID),
+		RunID:               src.RunID,
+		RunStatus:           src.RunStatus,
+		RunCompletedAt:      src.RunCompletedAt,
+		RunCompletedAtValid: src.RunCompletedAtValid,
+		ExecutionMode:       ap.ExecutionMode,
+		RunTaskID:           src.TaskID,
+		RunTaskIDValid:      src.TaskIDValid,
+		Route:               route,
+		Run: runFields{
+			Result:        src.Result,
+			FailureReason: src.FailureReason,
+			ReasonCode:    src.ReasonCode,
+			IssueID:       src.IssueID,
+			IssueIDValid:  src.IssueIDValid,
+		},
+	}
 }
 
 // decideDelivery freezes content + target for one (run, route) pair and
@@ -731,33 +864,24 @@ func (s *Service) issueRef(ctx context.Context, workspaceID pgtype.UUID, in deci
 	return issueIdentifier(prefix, issue.Number), s.firstTerminalIssueStatus(issue, in), slug
 }
 
-// firstTerminalIssueStatus reports the status to name on the card.
-//
-//   - Completed runs read the status frozen by the terminal sync
-//     (run.result.first_terminal_status — review R6).
-//   - Failed runs read it from the failure reason the SAME sync boundary
-//     wrote ("issue <status>" at the terminal moment — a single, stable
-//     producer).
-//   - Anything else degrades to "" — the card must never present the
-//     issue's CURRENT status as the first terminal one, and legacy rows
-//     carry no recoverable signal (issue.updated_at does not track writes
-//     reliably enough to prove "untouched since completion").
+// firstTerminalIssueStatus reports the status to name on the card: ONLY the
+// structured first_terminal_status the terminal sync froze into run.result
+// (both completed and failed branches — repair contract §3, review R11).
+// There is deliberately NO string parsing of failure_reason: that column
+// also carries raw task errors (paths, credentials) from other producers,
+// and everything without a structured signal degrades to an unnamed-status
+// card rather than guessing.
 func (s *Service) firstTerminalIssueStatus(issue db.Issue, in decisionInput) string {
-	if in.RunStatus == "completed" && len(in.Run.Result) > 0 {
-		var payload struct {
-			FirstTerminalStatus string `json:"first_terminal_status"`
-		}
-		if err := json.Unmarshal(in.Run.Result, &payload); err == nil && payload.FirstTerminalStatus != "" {
-			return payload.FirstTerminalStatus
-		}
+	if len(in.Run.Result) == 0 {
+		return ""
 	}
-	if in.RunStatus == "failed" {
-		const marker = "issue "
-		if rest, ok := strings.CutPrefix(in.Run.FailureReason, marker); ok && rest != "" {
-			return rest
-		}
+	var payload struct {
+		FirstTerminalStatus string `json:"first_terminal_status"`
 	}
-	return ""
+	if err := json.Unmarshal(in.Run.Result, &payload); err != nil {
+		return ""
+	}
+	return payload.FirstTerminalStatus
 }
 
 // issueIdentifier mirrors service.IssueIdentifier ("MUL-42", or "#42"

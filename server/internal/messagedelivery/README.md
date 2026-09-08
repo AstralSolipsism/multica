@@ -81,6 +81,24 @@ Member binding is installation-precise. The legacy "most recent binding of
 the channel" query is deliberately NOT used: with multiple bots in one
 workspace it picks the wrong app.
 
+### Approved external targets (workspace-admin consent)
+
+Group and topic targets additionally require an ACTIVE approval scoped to
+the exact **(workspace, automation, bot, target)** triple — approving
+automation A's outbound target is never borrowed by automation B. Approval
+and revocation are workspace owner/admin acts
+(`POST|DELETE /api/autopilots/{id}/message-approved-targets`); approving
+consents to sharing that automation's rule-permitted result content with
+that target, nothing more. The route save and EVERY execution path (enable,
+test-send, worker send, retry) check the approval — send-time checks key on
+the delivery's FROZEN target identity. Revocation cancels queued sends;
+platform-accepted requests are not recallable. Member targets stay out of
+the approval table: their binding proves address ownership and the route
+authorizer's source permission covers the sharing decision.
+
+The current repair contract (round-2 review response, four boundaries,
+acceptance matrix A1–E1) ships as `REPAIR-CONTRACT-v1.md` in this directory.
+
 ### Target verification (save-time AND send-time)
 
 External group/topic targets are verified against the live platform before
@@ -262,14 +280,16 @@ Delivery `error_code` values recorded by the pipeline:
 - **One decision per (source, target).** Unique index on `dedup_key`; the
   event wakeup, the compensator and other replicas race safely.
 - **Compensation.** A scanner pass (default 30s) (1) parks expired send
-  claims as `uncertain`, (2) feeds tasks/issues whose automation run missed
-  the terminal event to the EXISTING `SyncRunFromTask` / `SyncRunFromIssue`
-  logic — no second state machine — and (3) decides every persisted terminal
-  run that still lacks a decision for an enabled rule target. The scan is a
-  full missing-set sweep, not a monotonic cursor: a transaction that
-  committed late is never skipped, and the stale-source queries keyset-
-  paginate through the full candidate set each pass, so a page of
-  long-running rows cannot starve candidates behind it.
+  claims as `uncertain`, (2) feeds three PERSISTED source classes whose
+  automation run missed the terminal event to the EXISTING sync logic
+  (`SyncRunFromTask`, `SyncRunFromIssue`, `SyncRunFromLinkedIssueTask` — no
+  second state machine) and (3) decides every persisted terminal run that
+  still lacks a decision for an enabled rule target. Each scanner holds a
+  persistent per-scanner cursor (compare-and-set generation, immutable-id
+  keyset, fixed per-cycle bound and per-tick row budget): a tick resumes
+  where the last stopped, a completed cycle restarts from the set's
+  beginning, so late-committing sources and pages of long-running candidates
+  can never permanently starve anyone.
 - **Workspace deletion.** Decision and receipt inserts share a short
   transaction with a `FOR SHARE` lock on the workspace row (the delete flow
   takes the same row `FOR UPDATE` before sweeping), so a stale snapshot can

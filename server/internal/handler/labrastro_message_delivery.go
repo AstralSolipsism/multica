@@ -97,6 +97,7 @@ func writeMessageDeliveryError(w http.ResponseWriter, err error) {
 	var invalidInst *messagedelivery.InstallationInvalidError
 	var unbound *messagedelivery.MemberNotBoundError
 	var notMember *messagedelivery.TargetNotMemberError
+	var notApproved *messagedelivery.TargetNotApprovedError
 	var unverifiable *messagedelivery.TargetUnverifiableError
 	var unreachable *messagedelivery.TargetUnreachableError
 	var mismatch *messagedelivery.TargetAnchorMismatchError
@@ -112,6 +113,9 @@ func writeMessageDeliveryError(w http.ResponseWriter, err error) {
 	case errors.As(err, &notMember):
 		writeErrorCode(w, http.StatusBadRequest, "route_target_not_member",
 			"the target user is not a member of this workspace")
+	case errors.As(err, &notApproved):
+		writeErrorCode(w, http.StatusBadRequest, "route_target_not_approved",
+			"this target has no active approval by a workspace admin; nothing was saved")
 	case errors.As(err, &unverifiable):
 		writeErrorCode(w, http.StatusBadRequest, "route_target_unverifiable",
 			"the target could not be verified against the channel; nothing was saved")
@@ -392,4 +396,131 @@ func nullableJSONRaw(raw []byte) json.RawMessage {
 		return nil
 	}
 	return json.RawMessage(raw)
+}
+
+// ---- approved-target administration (repair contract §2, review R1) ----
+
+// messageApprovedTargetRequest is the approval payload; the target resolves
+// through the SAME validation a route save performs (installation active,
+// verifier, anchor→chat), so an approval always names a real, verified chat.
+type messageApprovedTargetRequest struct {
+	InstallationID  string `json:"installation_id"`
+	TargetType      string `json:"target_type"`
+	TargetChatID    string `json:"target_chat_id"`
+	TargetMessageID string `json:"target_message_id"`
+}
+
+// requireMessageTargetAdmin gates the approval surface to workspace
+// owners/admins. Approving an outbound target is a workspace consent act
+// (OL-23: "群聊使用工作区批准的目标"), categorically above automation write
+// permission — a collaborator can never approve their own target.
+func (h *Handler) requireMessageTargetAdmin(w http.ResponseWriter, r *http.Request) (db.Autopilot, bool) {
+	id := chi.URLParam(r, "id")
+	workspaceID := h.resolveWorkspaceID(r)
+	ap, ok := h.loadAutopilotInWorkspace(w, r, id, workspaceID)
+	if !ok {
+		return db.Autopilot{}, false
+	}
+	if _, ok := h.requireAutopilotWrite(w, r, ap, workspaceID); !ok {
+		return db.Autopilot{}, false
+	}
+	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
+		return db.Autopilot{}, false
+	}
+	return ap, true
+}
+
+// ApproveMessageTarget: POST /api/autopilots/{id}/message-approved-targets
+// Grants the (automation, bot, target) triple an active approval. The
+// resolved target key is stored, so the approval covers the VERIFIED chat.
+func (h *Handler) ApproveMessageTarget(w http.ResponseWriter, r *http.Request) {
+	ap, member, ok := h.requireMessageRouteAccessWithMember(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := h.requireMessageTargetAdmin(w, r); !ok {
+		return
+	}
+	var req messageApprovedTargetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	target, err := h.MessageDelivery.ResolveTargetForApproval(r.Context(), ap.WorkspaceID, ap.ID, messagedelivery.RouteInput{
+		InstallationID:  req.InstallationID,
+		TargetType:      req.TargetType,
+		TargetChatID:    req.TargetChatID,
+		TargetMessageID: req.TargetMessageID,
+		Conditions:      messagedelivery.ConditionSuccess,
+		ContentMode:     messagedelivery.ContentSummary,
+	})
+	if err != nil {
+		writeMessageDeliveryError(w, err)
+		return
+	}
+	if target.Type() == messagedelivery.TargetMember {
+		writeErrorCode(w, http.StatusBadRequest, "route_invalid",
+			"member targets are authorized by their own binding and need no approval")
+		return
+	}
+	row, err := h.MessageDelivery.ApproveTarget(r.Context(), ap, member, target)
+	if err != nil {
+		writeMessageDeliveryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"approved_target": row})
+}
+
+// ListMessageApprovedTargets: GET /api/autopilots/{id}/message-approved-targets
+func (h *Handler) ListMessageApprovedTargets(w http.ResponseWriter, r *http.Request) {
+	ap, ok := h.requireMessageTargetAdmin(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.MessageDelivery.ListApprovedTargets(r.Context(), ap)
+	if err != nil {
+		writeMessageDeliveryError(w, err)
+		return
+	}
+	if rows == nil {
+		rows = []db.LabrastroMessageApprovedTarget{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"approved_targets": rows})
+}
+
+// RevokeMessageTarget: DELETE /api/autopilots/{id}/message-approved-targets/{targetId}
+// Soft-revokes the approval (audit history kept) and cancels the route's
+// not-yet-started sends against the frozen target.
+func (h *Handler) RevokeMessageTarget(w http.ResponseWriter, r *http.Request) {
+	ap, ok := h.requireMessageTargetAdmin(w, r)
+	if !ok {
+		return
+	}
+	targetID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "targetId"), "approved target id")
+	if !ok {
+		return
+	}
+	// The row must belong to this automation and workspace.
+	rows, err := h.MessageDelivery.ListApprovedTargets(r.Context(), ap)
+	if err != nil {
+		writeMessageDeliveryError(w, err)
+		return
+	}
+	var found *db.LabrastroMessageApprovedTarget
+	for i := range rows {
+		if rows[i].ID == targetID {
+			found = &rows[i]
+			break
+		}
+	}
+	if found == nil {
+		writeErrorCode(w, http.StatusNotFound, "route_not_found", "approved target not found")
+		return
+	}
+	cancelled, err := h.MessageDelivery.RevokeTarget(r.Context(), ap, found.TargetKey)
+	if err != nil {
+		writeMessageDeliveryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"revoked": true, "cancelled_deliveries": cancelled})
 }

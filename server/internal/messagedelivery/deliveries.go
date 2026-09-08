@@ -113,11 +113,18 @@ func (s *Service) RetryDelivery(ctx context.Context, workspaceID, autopilotID, d
 
 // TestSend exercises the REAL send path for one rule with a synthetic
 // message, synchronously, and records the outcome as a test_send delivery
-// with its receipt ledger. This is the reachability check for group/topic
-// targets ("保存前校验机器人可达性" is a runtime act, not a config flag).
+// with its receipt ledger. It runs through the SAME lifecycle protocol as a
+// queued delivery (repair contract §5): parent-lock-guarded creation +
+// claim-by-ID in one transaction, then the shared send path, then a
+// lease-guarded outcome write. NO check is skipped for test sends — acting
+// member write (HTTP gate), target verification and approval
+// (ResolveTarget), workspace liveness (parent lock) and the lease protocol
+// all apply.
 func (s *Service) TestSend(ctx context.Context, route db.LabrastroMessageRoute, member db.Member) (db.LabrastroMessageDelivery, error) {
-	// The installation must still be usable right now.
-	if _, err := s.ResolveTarget(ctx, route.WorkspaceID, RouteInput{
+	// Same validation a route save performs: installation active +
+	// member binding / verifier + workspace-admin approval for external
+	// targets. Acting-member write was judged by the HTTP gate upstream.
+	if _, err := s.ResolveTarget(ctx, route.WorkspaceID, route.AutopilotID, RouteInput{
 		InstallationID:  util.UUIDToString(route.InstallationID),
 		TargetType:      route.TargetType,
 		TargetUserID:    util.UUIDToString(route.TargetUserID),
@@ -157,34 +164,39 @@ func (s *Service) TestSend(ctx context.Context, route db.LabrastroMessageRoute, 
 		return db.LabrastroMessageDelivery{}, fmt.Errorf("encode test ref: %w", err)
 	}
 
-	sendID := util.UUIDToString(dbid.NewV7())
-	// The test-send row carries a BOUNDED lease like a claimed queue row
-	// (review R10): if this process dies or the caller disconnects
-	// mid-send, the expiry sweep parks the row as uncertain and the retry
-	// path can resolve it — it can never strand in 'sending' forever.
-	leaseToken := dbid.NewV7()
-	rows, err := s.Queries.CreateLabrastroMessageDelivery(ctx, db.CreateLabrastroMessageDeliveryParams{
-		ID:              dbid.NewV7(),
-		WorkspaceID:     route.WorkspaceID,
-		RouteID:         route.ID,
-		RouteRevision:   pgtype.Int4{Int32: route.Revision, Valid: true},
-		AutopilotID:     route.AutopilotID,
-		DedupKey:        TestDeliveryDedupKey(sendID),
-		SourceKind:      SourceKindTestSend,
-		Status:          DeliveryStatusSending,
-		ContentSnapshot: contentJSON,
-		TargetSnapshot:  targetJSON,
-		ShardTotal:      int32(len(splitShards(content.Text))),
-		SourceRef:       refJSON,
-		TargetKey:       route.TargetKey,
-		InstallationID:  route.InstallationID,
-		LeaseToken:      leaseToken,
-		LeaseExpiresAt:  pgtype.Timestamptz{Time: s.now().Add(testSendLeaseTTL), Valid: true},
+	// Create queued + claim by ID inside ONE parent-lock transaction: a
+	// workspace deletion that commits before the lock either refuses the
+	// whole test send, or lands after and sweeps the row — no orphan.
+	var d db.LabrastroMessageDelivery
+	err = s.withParentLock(ctx, route.WorkspaceID, func(qtx *db.Queries) error {
+		created, cErr := qtx.CreateLabrastroMessageDelivery(ctx, db.CreateLabrastroMessageDeliveryParams{
+			ID:              dbid.NewV7(),
+			WorkspaceID:     route.WorkspaceID,
+			RouteID:         route.ID,
+			RouteRevision:   pgtype.Int4{Int32: route.Revision, Valid: true},
+			AutopilotID:     route.AutopilotID,
+			DedupKey:        TestDeliveryDedupKey(util.UUIDToString(dbid.NewV7())),
+			SourceKind:      SourceKindTestSend,
+			Status:          DeliveryStatusQueued,
+			ContentSnapshot: contentJSON,
+			TargetSnapshot:  targetJSON,
+			ShardTotal:      int32(len(splitShards(content.Text))),
+			SourceRef:       refJSON,
+			TargetKey:       route.TargetKey,
+			InstallationID:  route.InstallationID,
+		})
+		if cErr != nil {
+			return cErr
+		}
+		// Claim within the same transaction: this call owns a bounded
+		// lease under the same protocol as the queue workers.
+		createdRow := created[0]
+		d, cErr = qtx.ClaimLabrastroMessageDeliveryByID(ctx, createdRow.ID)
+		return cErr
 	})
 	if err != nil {
 		return db.LabrastroMessageDelivery{}, fmt.Errorf("record test send: %w", err)
 	}
-	d := rows[0]
 
 	out := s.sendDelivery(ctx, d)
 	if out.lost {
@@ -192,17 +204,27 @@ func (s *Service) TestSend(ctx context.Context, route db.LabrastroMessageRoute, 
 		// recovery protocol owns the row now.
 		return d, fmt.Errorf("test send lost ownership mid-flight; the delivery recovers via lease expiry")
 	}
-	// The final write runs on a detached bounded context: the caller
-	// disconnecting must not prevent the outcome from being recorded
-	// (review R10).
+	// The final write runs on a detached bounded context (a disconnected
+	// caller must not prevent the outcome from being recorded) and under
+	// the SAME lease-ownership guard as every other result write: an
+	// expired-then-reclaimed row belongs to its new owner.
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	updated, err := s.Queries.SetLabrastroMessageDeliveryOutcome(writeCtx, db.SetLabrastroMessageDeliveryOutcomeParams{
-		ID:        d.ID,
-		Status:    out.status,
-		ErrorCode: pgtype.Text{String: out.errorCode, Valid: out.errorCode != ""},
-		LastError: pgtype.Text{String: out.detail, Valid: out.detail != ""},
+		ID:         d.ID,
+		LeaseToken: d.LeaseToken,
+		Status:     out.status,
+		ErrorCode:  pgtype.Text{String: out.errorCode, Valid: out.errorCode != ""},
+		LastError:  pgtype.Text{String: out.detail, Valid: out.detail != ""},
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Benign lease handover: the row expired, was recovered and
+		// re-claimed while this request was in flight. The NEW owner owns
+		// the outcome; our rejected 'failed' write must not pollute it.
+		s.logger().Debug("messagedelivery: test send outcome write lost lease ownership",
+			"delivery_id", util.UUIDToString(d.ID))
+		return d, nil
+	}
 	if err != nil {
 		return d, fmt.Errorf("record test send outcome: %w", err)
 	}
