@@ -67,6 +67,10 @@ import { AutopilotDialog } from "./autopilot-dialog";
 import { runNowToastKind, runNowBlockedKey } from "./run-now-toast";
 import { WebhookPayloadPreview } from "./webhook-payload-preview";
 import { WebhookDeliveriesSection } from "./webhook-deliveries-section";
+import {
+  MessageDeliveriesSection,
+  MessageDeliverySection,
+} from "../../message-delivery";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { useT } from "../../i18n";
 import { PageHeader } from "../../layout/page-header";
@@ -969,6 +973,16 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
             )}
           </section>
 
+          {/* Result push (OL-26) — the automation's own config stays in the
+              edit dialog; push routes are a separate revision-guarded save
+              area. The component fetches its own data and renders the real
+              403/404 states for read-only users and pre-OL-25 servers. */}
+          <MessageDeliverySection
+            autopilotId={autopilotId}
+            canWrite={canWrite}
+            executionMode={autopilot.execution_mode}
+          />
+
           {/* Webhook deliveries — only renders when at least one webhook
               trigger is configured. The component does its own fetch so
               schedule-only autopilots don't pay for an empty list query. */}
@@ -1000,6 +1014,13 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
               />
             )}
           </section>
+
+          {/* Delivery records for result push (OL-26): per-source status,
+              frozen report content, receipts and a permission-gated retry. */}
+          <MessageDeliveriesSection
+            autopilotId={autopilotId}
+            canWrite={canWrite}
+          />
 
           {/* Danger zone */}
           {canWrite && (
