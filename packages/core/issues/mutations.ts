@@ -1,3 +1,4 @@
+import { invalidateIssueQueries } from "./invalidation";
 import { normalizeStatusPatch } from "./status-category";
 import { hashKey, useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { api } from "../api";
@@ -84,7 +85,7 @@ function useIssueCreateMutation<TVariables>(
   return useMutation({
     mutationFn,
     onSuccess: (newIssue) => {
-      qc.invalidateQueries({ queryKey: issueKeys.graphAll(wsId) });
+      invalidateIssueQueries(qc, wsId, "graph");
       for (const [key, data] of qc.getQueriesData<ListIssuesCache>({ queryKey: issueKeys.list(wsId) })) {
         if (data) qc.setQueryData<ListIssuesCache>(key, addIssueToBuckets(data, newIssue));
       }
@@ -718,7 +719,7 @@ export function useBatchDeleteIssues() {
       for (const id of ids) {
         invalidateIssueScopedCaches(qc, wsId, id);
       }
-      qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+      invalidateIssueQueries(qc, wsId);
       invalidateDeletedIssueDependentCaches(qc, wsId);
     },
     onSettled: (_data, _err, _ids, ctx) => {

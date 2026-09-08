@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
-import { issueKeys } from "@multica/core/issues/queries";
+import { invalidateIssueQueries } from "@multica/core/issues/invalidation";
 import { useWelcomeStore } from "@multica/core/onboarding";
 import { paths, useCurrentWorkspace } from "@multica/core/paths";
 import type { CreateIssueRequest, Issue } from "@multica/core/types";
@@ -125,9 +125,7 @@ function SkipWelcome({ workspaceId, onDismiss }: SkipWelcomeProps) {
             assignee_id: me.id,
           },
         );
-        void queryClient.invalidateQueries({
-          queryKey: issueKeys.all(workspaceId),
-        });
+        void invalidateIssueQueries(queryClient, workspaceId);
         if (!cancelled) {
           setBundle({ installIssueId: installRuntime.id });
         }

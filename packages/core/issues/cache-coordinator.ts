@@ -1,3 +1,4 @@
+import { invalidateIssueQueries } from "./invalidation";
 import { issueStatusCategory, normalizeStatusPatch } from "./status-category";
 import {
   hashKey,
@@ -611,7 +612,7 @@ export function invalidateIssueDerivatives(
   qc.invalidateQueries({ queryKey: issueKeys.assigneeGroupsAll(wsId) });
   qc.invalidateQueries({ queryKey: issueKeys.myAssigneeGroupsAll(wsId) });
   qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });
-  qc.invalidateQueries({ queryKey: issueKeys.graphAll(wsId) });
+  invalidateIssueQueries(qc, wsId, "graph");
   if (opts.statusOrProjectChanged) {
     qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
   }

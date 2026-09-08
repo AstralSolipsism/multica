@@ -1,11 +1,15 @@
 /**
  * @vitest-environment jsdom
  */
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, QueryObserver } from "@tanstack/react-query";
 import { renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { WSClient } from "../api/ws-client";
+import { setApiInstance, type ApiClient } from "../api";
+import { IssueGraphSchema, type IssueGraph } from "../api/issue-graph-schemas";
+import referenceGraph from "../api/testdata/issue-graph.json";
+import { issueGraphOptions } from "../issues/graph";
 import { defaultStorage } from "../platform/storage";
 import { issueKeys } from "../issues/queries";
 import { chatKeys } from "../chat/queries";
@@ -412,6 +416,41 @@ describe("useRealtimeSync — Table server membership invalidation", () => {
 });
 
 describe("useRealtimeSync — graph snapshot invalidation", () => {
+  it.each(["task:completed", "reconnect"])("supersedes the first graph read on %s", async (event) => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const before = IssueGraphSchema.parse(referenceGraph);
+    const after = { ...before, snapshotId: "after-event" };
+    const signals: AbortSignal[] = [];
+    let resolveFirst!: (value: IssueGraph) => void;
+    const getIssueGraph = vi.fn((_ws: string, _query: unknown, { signal }: { signal: AbortSignal }) => {
+      signals.push(signal);
+      if (signals.length === 1) return new Promise<IssueGraph>((resolve) => { resolveFirst = resolve; });
+      return Promise.resolve(after);
+    });
+    setApiInstance({ getIssueGraph } as unknown as ApiClient);
+    const ws = createMockWs();
+    const { unmount } = renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+    const observer = new QueryObserver(qc, issueGraphOptions("ws-1", {
+      scope: { kind: "workspace" }, filters: {}, sort: { field: "position", direction: "asc" },
+    }));
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      expect(getIssueGraph).toHaveBeenCalledTimes(1);
+      if (event === "reconnect") void vi.mocked(ws.onReconnect).mock.calls[0]![0]();
+      else vi.mocked(ws.onAny).mock.calls[0]![0]({ type: event, payload: {} } as never);
+      // Leave the first snapshot in flight until the actual event handler runs,
+      // including the task-prefix debounce. No graph data is pre-seeded.
+      await vi.waitFor(() => expect(getIssueGraph).toHaveBeenCalledTimes(2));
+      expect(signals[0]!.aborted).toBe(true);
+      resolveFirst(before);
+      await vi.waitFor(() => expect(observer.getCurrentResult().data?.snapshotId).toBe(after.snapshotId));
+    } finally {
+      unsubscribe();
+      unmount();
+      qc.clear();
+    }
+  });
+
   it("refreshes committed changes and reconnects without patching topology", () => {
     vi.useFakeTimers();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

@@ -1,3 +1,4 @@
+import { invalidateIssueQueries } from "./invalidation";
 import { hashKey, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { api, ApiError, type IssueGraph, type IssueGraphRequest } from "../api";
 import type { Issue, IssueTableQuerySpec } from "../types";
@@ -57,7 +58,7 @@ export function reconcileIssueGraphDetail(qc: QueryClient, wsId: string, graph: 
   const node = graph.nodes.find((n) => n.id === detail.id);
   if (detail.workspace_id !== wsId || !node) return "outside_snapshot";
   if (graph.snapshotId !== requestedSnapshotId || detail.revision !== node.revision) {
-    void qc.invalidateQueries({ queryKey: issueKeys.graphAll(wsId) });
+    void invalidateIssueQueries(qc, wsId, "graph");
     return "stale";
   }
   return "current";

@@ -309,7 +309,10 @@ Missing/malformed graph data is unavailable, not an empty graph or readiness.
 Unknown run/dependency summaries remain unknown. Details loaded afterward do
 not patch topology; changed revisions require a graph refresh. Shared React
 Query helpers own this cache and existing committed events/reconnects
-invalidate it. There is no graph CLI command or new navigation in this stage,
+invalidate it. The shared invalidation helper cancels graph reads before
+refetching, including an initial request with no cached snapshot, so a late
+pre-event response cannot erase a committed change's refresh signal.
+There is no graph CLI command or new navigation in this stage,
 and compound dependency writes remain gated as described above. The frontend
 integration contract and synthetic mock are in `docs/issue-graph-api.md` and
 `packages/core/api/testdata/issue-graph.json`.

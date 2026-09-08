@@ -1,3 +1,4 @@
+import { invalidateIssueQueries } from "../issues/invalidation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { propertyKeys } from "./queries";
@@ -46,7 +47,7 @@ export function useUpdateProperty() {
       // Issue caches embed the value bag; a definition change (rename,
       // option edits) changes how values render, and rows referencing an
       // archived definition must drop out of "+ Add property" menus.
-      qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+      invalidateIssueQueries(qc, wsId);
     },
   });
 }

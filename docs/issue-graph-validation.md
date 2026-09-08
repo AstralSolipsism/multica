@@ -8,6 +8,32 @@ The OL-38 API budget passes for 1000 nodes / 4950 direct edges: p95 166.397 ms
 38.20 MiB request allocation (64 MiB budget). All measured graphs returned the
 exact seeded node IDs and source-edge IDs/endpoints with correct counts.
 
+## First-load refresh correction
+
+Independent review reproduced a client race at `09411067c`: an event during
+the first fetch triggered only one API request, leaving cached revision 1
+fresh after revision 2 had committed. TanStack invalidation deduplicates a
+pending request with no data, and that response clears the invalidation flag.
+
+The shared `invalidateIssueQueries` helper now cancels in-flight graph reads,
+waits for cancellation, then invalidates the graph or workspace issue prefix.
+It preserves cached snapshots and leaves inactive queries for the next mount.
+Existing graph-specific and whole-workspace event/mutation/reconnect paths
+use this entry point, including prefix edits and onboarding issue creation.
+
+The original review test now records **two requests**, first request aborted,
+and cached revision **2** matching committed revision **2**. The retained
+`issues/invalidation.test.ts` matrix covers initial update/deletion/workspace
+invalidation, repeated events, late responses after abort, failed refreshes,
+workspace switching, inactive prefetches and ordinary-request/workspace
+isolation. Actual WS tests cover task events and reconnect during first load.
+
+Follow-up validation: **171 core tests / 12 files**, **14 shared-view tests /
+2 files**, core and views typecheck, changed-file ESLint and diff checks pass.
+The unchanged original review regression also passes independently. Backend
+code is unchanged by this correction; the Go and scale results below are from
+the initial implementation, not new production-concurrency measurements.
+
 ## Environment and method
 
 - Linux amd64, Intel Xeon Platinum 8259CL 2.50 GHz; shared 96-logical-CPU host,
@@ -84,7 +110,7 @@ budgets remain OL-43/OL-45 work.
   workspace caches and excluding per-message streaming invalidation.
 - The dependency model/service/handler and shared Issue Table suites pass
   under `go test -race`; the final graph suite passes after the URL/deadline
-  tests. Targeted core tests: **114 passed across 6 files**. Core typecheck,
+  tests. Initial targeted core tests: **114 passed across 6 files**. Core typecheck,
   changed-file ESLint, scoped Go vet, sqlc generation and diff checks pass.
   This is targeted validation, not a claim that every repository test ran.
 

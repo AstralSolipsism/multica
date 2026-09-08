@@ -112,6 +112,15 @@ prefixes. Streaming task messages do not refetch the graph for every chunk.
 Run-only refreshes preserve `topologyId`. Local committed issue mutations use
 the same cache coordinator; graph snapshots are not optimistically patched.
 
+Use `invalidateIssueQueries(queryClient, workspaceId, "graph")` for graph-only
+refreshes, or omit the last argument for the whole workspace's issue queries.
+It cancels in-flight graph reads, waits for cancellation, then invalidates;
+inactive graphs refetch on their next mount. This includes first loads:
+TanStack's plain `invalidateQueries` can reuse an initial request without data,
+letting its pre-event snapshot clear the invalidation under infinite freshness.
+The shared helper also handles workspace-wide reconnect/catalog/prefix changes;
+ordinary list/detail request cancellation keeps its existing behavior.
+
 ## Errors and verification
 
 Malformed/unsupported queries return 400. Inaccessible workspace/project/focus
