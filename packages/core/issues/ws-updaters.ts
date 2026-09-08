@@ -1,3 +1,4 @@
+import { invalidateIssueQueries } from "./invalidation";
 import { issueStatusCategory } from "./status-category";
 import type { QueryClient } from "@tanstack/react-query";
 import { issueKeys } from "./queries";
@@ -269,7 +270,7 @@ function refetchForUnversionedIssueEvent(
   if (freshestCachedIssueRevision(qc, wsId, issueId) === undefined) return false;
   // Mixed-version rollout: once any projection has an ordered revision, an
   // older server's unversioned snapshot can no longer be applied safely.
-  qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+  invalidateIssueQueries(qc, wsId);
   return true;
 }
 
@@ -334,6 +335,7 @@ export function invalidateIssueOwnerProjections(
   wsId: string,
   issueId: string,
 ) {
+  invalidateIssueQueries(qc, wsId, "graph");
   invalidateIssueOwnerProjectionsWhere(
     qc,
     wsId,
@@ -357,6 +359,11 @@ export function onIssueAuxiliaryRevision(
   revision: number | undefined,
   projection: AuxiliaryIssueProjection = "generic",
 ) {
+  // Named projections have their own committed filter invalidation. Generic
+  // comment/attachment changes still advance the graph's owner revision.
+  if (projection === "generic") {
+    invalidateIssueQueries(qc, wsId, "graph");
+  }
   if (!revision || revision <= 0) return;
   recordAuxiliaryIssueRevision(qc, wsId, issueId, revision, projection);
   invalidateStaleIssueOwnerProjections(qc, wsId, issueId, revision);
@@ -381,6 +388,7 @@ export function onIssueCreated(
   wsId: string,
   issue: Issue,
 ) {
+  invalidateIssueQueries(qc, wsId, "graph");
   // A custom status this client cannot resolve to a category has no bucket to
   // go in. Inserting nowhere would silently hide an issue that exists on the
   // server, so invalidate the list instead and let the refetch place it.
@@ -446,6 +454,8 @@ export function onIssueUpdated(
     cachedIssue?.revision !== undefined &&
     issue.revision < cachedIssue.revision
   ) {
+    // The independent graph may still predate this event.
+    invalidateIssueQueries(qc, wsId, "graph");
     return;
   }
   const oldParentId =
@@ -600,6 +610,7 @@ export function patchIssueLabels(
 
 /** Reconcile server-filtered label windows only after the write commits. */
 export function invalidateIssueLabelDerivatives(qc: QueryClient, wsId: string) {
+  invalidateIssueQueries(qc, wsId, "graph");
   // A committed response/event must cancel or supersede any per-parent fetch
   // that started before the label write and could otherwise land afterward.
   qc.invalidateQueries({ queryKey: issueKeys.childrenAll(wsId) });
@@ -638,6 +649,7 @@ export function onIssueMetadataChanged(
   metadata: IssueMetadata,
   revision?: number,
 ) {
+  invalidateIssueQueries(qc, wsId, "graph");
   if (refetchForUnversionedIssueEvent(qc, wsId, issueId, revision)) return;
   if (
     isOlderThanRecordedAuxiliaryProjection(
@@ -677,6 +689,7 @@ export function onIssuePropertiesChanged(
   properties: IssuePropertyValues,
   revision?: number,
 ) {
+  invalidateIssueQueries(qc, wsId, "graph");
   if (refetchForUnversionedIssueEvent(qc, wsId, issueId, revision)) return;
   patchIssueProperties(qc, wsId, issueId, properties, revision);
   invalidateLastActivitySortedIssueLists(qc, wsId);

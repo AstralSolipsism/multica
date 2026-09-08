@@ -7,7 +7,7 @@ import enCommon from "../../locales/en/common.json";
 import enSettings from "../../locales/en/settings.json";
 
 const mockUpdateWorkspace = vi.hoisted(() => vi.fn());
-const mockInvalidateQueries = vi.hoisted(() => vi.fn());
+const mockInvalidateIssueQueries = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 const workspaceRef = vi.hoisted(() => ({
   current: {
@@ -29,7 +29,6 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({
     setQueryData: vi.fn(),
     getQueryData: vi.fn(() => []),
-    invalidateQueries: mockInvalidateQueries,
   }),
 }));
 
@@ -49,8 +48,9 @@ vi.mock("@multica/core/workspace/queries", () => ({
   workspaceKeys: { list: () => ["workspaces"] },
 }));
 
-vi.mock("@multica/core/issues/queries", () => ({
-  issueKeys: { all: (workspaceId: string) => ["issues", workspaceId] },
+// Core invalidation.test.ts owns the request/cancellation race matrix.
+vi.mock("@multica/core/issues/invalidation", () => ({
+  invalidateIssueQueries: mockInvalidateIssueQueries,
 }));
 
 vi.mock("@multica/core/workspace/mutations", () => ({
@@ -178,7 +178,7 @@ describe("WorkspaceTab — automatic updates", () => {
         { id: "settings-auto-save" },
       );
     });
-    expect(mockInvalidateQueries).not.toHaveBeenCalled();
+    expect(mockInvalidateIssueQueries).not.toHaveBeenCalled();
   });
 
   it("asks for confirmation on prefix blur and persists only after confirmation", async () => {
@@ -202,9 +202,7 @@ describe("WorkspaceTab — automatic updates", () => {
         issue_prefix: "NEW",
       });
     });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["issues", "workspace-1"],
-    });
+    expect(mockInvalidateIssueQueries).toHaveBeenCalledWith(expect.anything(), "workspace-1");
     expect(mockToastSuccess).toHaveBeenCalledWith(
       "Workspace settings saved",
       { id: "settings-auto-save" },

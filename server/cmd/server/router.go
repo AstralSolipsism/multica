@@ -1877,6 +1877,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		})
 
 		// --- Workspace-scoped routes (all require workspace membership) ---
+		r.With(middleware.RequireWorkspaceMemberFromURL(queries, "workspaceId")).
+			Get("/api/workspaces/{workspaceId}/issues/graph", h.GetIssueGraph)
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireWorkspaceMember(queries))
 

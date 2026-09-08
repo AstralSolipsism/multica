@@ -278,6 +278,45 @@ as a prerequisite. Canonical constraints still apply with compound writes off;
 an affected invalid canonical reference fails closed. A successful ordinary
 operation does not mean the workspace is verified or dependency dispatch is ready.
 
+## Complete issue graph: Stage 3 API contract
+
+`GET /api/workspaces/{workspaceId}/issues/graph` reads a complete compact
+snapshot in one read-only REPEATABLE READ transaction. The default includes
+every project and unprojected/undated issue in the workspace. `project_id`
+selects a project; URL-encoded `query` accepts the shared Issue Table query
+spec with workspace/project scope and filters. There is no pagination or
+scheduled-only default; unsupported parameters fail instead of truncating.
+`focus_issue_id` locates one visible issue and its prerequisite/ancestor
+context, even when filters exclude it; an excluded focus remains context.
+
+The response has `schema_version: 1`, opaque `snapshot_id` and `topology_id`,
+`captured_at`, `complete: true`, separate `matched_count`/`context_count`,
+nodes, direct edges and project titles. Edges point from prerequisite to
+dependent and retain the stored `source_edge_id`. Parent fields explain
+inherited prerequisites. Collapsed project arrows are display projections;
+opposing project arrows are not evidence of an Issue cycle.
+
+Each node carries its revision, current effective status category, dependency
+summary/version and actual queued/dispatched/running/waiting task counts.
+`in_progress` alone is not a run. Restricted prerequisites still block, but
+only boolean restricted-context/blocker/parent markers are exposed; no hidden
+IDs, titles or counts. Current authorization is workspace membership, matching
+ordinary issue reads. Graph reads recheck it inside the snapshot. Foreign
+workspace/project/focus references are not readable. Invalid dependency data
+returns 422; query failures/timeouts return 500/504, never a partial success.
+
+Missing/malformed graph data is unavailable, not an empty graph or readiness.
+Unknown run/dependency summaries remain unknown. Details loaded afterward do
+not patch topology; changed revisions require a graph refresh. Shared React
+Query helpers own this cache and existing committed events/reconnects
+invalidate it. The shared invalidation helper cancels graph reads before
+refetching, including an initial request with no cached snapshot, so a late
+pre-event response cannot erase a committed change's refresh signal.
+There is no graph CLI command or new navigation in this stage,
+and compound dependency writes remain gated as described above. The frontend
+integration contract and synthetic mock are in `docs/issue-graph-api.md` and
+`packages/core/api/testdata/issue-graph.json`.
+
 ## Claim ownership without duplicating a run
 
 Assigning an active issue to an agent normally starts a run. When the work is

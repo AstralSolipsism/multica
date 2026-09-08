@@ -1,3 +1,4 @@
+import { invalidateIssueQueries } from "../issues/invalidation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { labelKeys } from "./queries";
@@ -71,7 +72,7 @@ export function useUpdateLabel() {
       qc.invalidateQueries({ queryKey: labelKeys.all(wsId) });
       // Issues now embed labels (denormalized snapshot), so a rename/recolor
       // also has to refresh the issues caches that hold those snapshots.
-      qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+      invalidateIssueQueries(qc, wsId);
     },
   });
 }
@@ -102,7 +103,7 @@ export function useDeleteLabel() {
       qc.invalidateQueries({ queryKey: labelKeys.all(wsId) });
       // A deleted label still lives in cached issue.labels arrays until we
       // refetch — invalidate so list/board chips drop the orphan.
-      qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+      invalidateIssueQueries(qc, wsId);
     },
   });
 }
@@ -233,7 +234,7 @@ export function useAttachLabelToIssue() {
       qc.invalidateQueries({ queryKey: labelKeys.byIssue(wsId, issueId) });
       // Issues embed a denormalized labels snapshot, so refresh the issues
       // caches that hold it (list / board / detail) once the attach settles.
-      qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+      invalidateIssueQueries(qc, wsId);
     },
   });
 }

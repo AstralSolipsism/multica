@@ -24,7 +24,7 @@ import {
   workspaceKeys,
   workspaceListOptions,
 } from "@multica/core/workspace/queries";
-import { issueKeys } from "@multica/core/issues/queries";
+import { invalidateIssueQueries } from "@multica/core/issues/invalidation";
 import { api } from "@multica/core/api";
 import {
   resolvePostAuthDestination,
@@ -228,7 +228,7 @@ export function WorkspaceTab() {
       );
       // Issue identifiers are computed from the workspace prefix at read time,
       // so every cached issue key is stale after this confirmed change.
-      await qc.invalidateQueries({ queryKey: issueKeys.all(updated.id) });
+      await invalidateIssueQueries(qc, updated.id);
       setPrefixSaveStatus("saved");
       toast.success(t(($) => $.workspace.toast_saved), {
         id: "settings-auto-save",

@@ -5,6 +5,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { api, ApiError } from "../api";
+import type { IssueGraphRequest } from "../api/issue-graph-schemas";
 import type {
   Issue,
   IssueAssigneeType,
@@ -34,6 +35,9 @@ export interface IssueSortParam {
 
 export const issueKeys = {
   all: (wsId: string) => ["issues", wsId] as const,
+  graphAll: (wsId: string) => [...issueKeys.all(wsId), "graph"] as const,
+  graph: (wsId: string, request: IssueGraphRequest) =>
+    [...issueKeys.graphAll(wsId), request] as const,
   /** PREFIX for invalidation — no sort. */
   list: (wsId: string) => [...issueKeys.all(wsId), "list"] as const,
   /** FULL KEY for queryOptions — includes sort. */
