@@ -408,6 +408,33 @@ describe("MessageRouteEditorDialog (via section)", () => {
     expect(mockUpdate.mock.calls[1]?.[0].target_user_id).toBe("user-2");
   });
 
+  it("ends the adopted notice when a NEW save reports its own error", async () => {
+    routesRef.current = ok([ROUTE]);
+    mockUpdate
+      .mockImplementationOnce(() => {
+        routesRef.current = ok([{ ...ROUTE, revision: 4, conditions: "failure" }]);
+        return Promise.reject(
+          new ApiError("conflict", 409, "Conflict", { code: "route_revision_conflict" }),
+        );
+      })
+      // The re-save on the adopted v4 fails for its own reason.
+      .mockRejectedValueOnce(
+        new ApiError("bad request", 400, "Bad Request", { code: "route_member_not_bound" }),
+      );
+
+    const user = userEvent.setup();
+    renderSection();
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
+    await screen.findByText("Edit push target");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+    expect(await screen.findByText(/updated by someone else/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+    // The new attempt's own error replaces the stale adopted notice.
+    expect(await screen.findByText(/hasn't bound/i)).toBeInTheDocument();
+    expect(screen.queryByText(/updated by someone else/i)).not.toBeInTheDocument();
+  });
+
   it("409 + failed reload: no freshness claim, save stays blocked, reload retryable", async () => {
     routesRef.current = ok([ROUTE]);
     fetchQueryBehavior.current = "reject";

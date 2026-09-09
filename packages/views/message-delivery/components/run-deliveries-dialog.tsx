@@ -56,59 +56,69 @@ export function RunDeliveriesDialog({
       <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
         <DialogTitle>{t(($) => $.deliveries.run_dialog.title)}</DialogTitle>
         <div className="space-y-1 pt-1">
-          {unsupported && (
-            <p className="text-caption text-muted-foreground">
-              {t(($) => $.deliveries.run_filter_unsupported)}
-            </p>
-          )}
           {query.isLoading ? (
             Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className="h-10 w-full" />
             ))
           ) : rows.length === 0 ? (
-            <p className="text-body text-muted-foreground">
-              {t(($) => $.deliveries.empty)}
-            </p>
+            // "No deliveries" only when the scope is CONFIRMED empty;
+            // an unconfirmed scope says unsupported instead.
+            unsupported ? (
+              <p className="text-caption text-muted-foreground">
+                {t(($) => $.deliveries.run_filter_unsupported)}
+              </p>
+            ) : (
+              <p className="text-body text-muted-foreground">
+                {t(($) => $.deliveries.empty)}
+              </p>
+            )
           ) : (
-            rows.map((d) => {
-              const visual = deliveryStatusVisual(d.status);
-              const StatusIcon = visual.icon;
-              return (
-                <button
-                  key={d.id}
-                  type="button"
-                  onClick={() => onOpenDelivery(d)}
-                  className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-body hover:bg-accent/30 transition-colors"
-                >
-                  <StatusIcon
-                    className={cn(
-                      "h-4 w-4 shrink-0",
-                      visual.color,
-                      visual.spin && "animate-spin",
-                    )}
-                  />
-                  <span className="w-24 shrink-0 text-caption font-medium text-foreground">
-                    {t(($) => $.deliveries.status[messageDeliveryStatusKey(d.status)])}
-                  </span>
-                  <span className="w-24 shrink-0 text-caption text-muted-foreground">
-                    {t(($) => $.deliveries.source_kind[messageDeliverySourceKindKey(d.source_kind)])}
-                  </span>
-                  <span className="flex-1 min-w-0 truncate font-mono text-caption text-muted-foreground">
-                    {d.target_key}
-                  </span>
-                  <span className="shrink-0 text-caption text-muted-foreground tabular-nums">
-                    {new Date(d.created_at).toLocaleString(locale, {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                </button>
-              );
-            })
+            <>
+              {rows.map((d) => {
+                const visual = deliveryStatusVisual(d.status);
+                const StatusIcon = visual.icon;
+                return (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => onOpenDelivery(d)}
+                    className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-body hover:bg-accent/30 transition-colors"
+                  >
+                    <StatusIcon
+                      className={cn(
+                        "h-4 w-4 shrink-0",
+                        visual.color,
+                        visual.spin && "animate-spin",
+                      )}
+                    />
+                    <span className="w-24 shrink-0 text-caption font-medium text-foreground">
+                      {t(($) => $.deliveries.status[messageDeliveryStatusKey(d.status)])}
+                    </span>
+                    <span className="w-24 shrink-0 text-caption text-muted-foreground">
+                      {t(($) => $.deliveries.source_kind[messageDeliverySourceKindKey(d.source_kind)])}
+                    </span>
+                    <span className="flex-1 min-w-0 truncate font-mono text-caption text-muted-foreground">
+                      {d.target_key}
+                    </span>
+                    <span className="shrink-0 text-caption text-muted-foreground tabular-nums">
+                      {new Date(d.created_at).toLocaleString(locale, {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </button>
+                );
+              })}
+              {unsupported && (
+                <p className="px-2 pt-1 text-caption text-muted-foreground">
+                  {t(($) => $.deliveries.run_filter_unsupported)}
+                </p>
+              )}
+            </>
           )}
-          {query.hasNextPage === true && (
+          {unsupported === false && query.hasNextPage === true && (
             <div className="flex justify-center pt-1">
               <Button
                 size="sm"

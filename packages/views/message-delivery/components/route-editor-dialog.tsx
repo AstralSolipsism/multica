@@ -184,6 +184,9 @@ export function MessageRouteEditorDialog({
 
   const handleSave = async () => {
     setError(null);
+    // A new save ends the previous round's "adopted latest" notice — the
+    // result of THIS attempt (success or its own error) is what must show.
+    if (conflict === "adopted") setConflict(null);
     const payload: SaveMessageRouteRequest = {
       installation_id: installationId,
       target_type: targetType,
