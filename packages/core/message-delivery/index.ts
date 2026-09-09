@@ -3,6 +3,7 @@ export {
   messageDeliveryKeys,
   messageRoutesOptions,
   messageApprovedTargetsOptions,
+  messageDeliveriesInfiniteOptions,
   messageDeliveriesOptions,
   messageDeliveryOptions,
 } from "./queries";

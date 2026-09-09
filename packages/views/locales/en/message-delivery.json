@@ -73,7 +73,7 @@
     "save_approve": "Approve and save",
     "saving": "Saving...",
     "cancel": "Cancel",
-    "conflict": "This configuration was changed elsewhere. The latest version has been loaded — review and save again."
+    "conflict": "This configuration was updated by someone else. The latest version has been loaded and your unsaved edits were replaced — review it before saving again."
   },
   "approvals": {
     "title": "Approved external targets",
@@ -109,7 +109,8 @@
     "row": {
       "attempts": "{{count}} attempts",
       "shards": "{{done}}/{{total}} shards",
-      "open_delivery": "View delivery"
+      "open_delivery": "View delivery",
+      "open_run_deliveries": "View all deliveries for this run"
     },
     "source_kind": {
       "run_only": "Automation run",
@@ -150,7 +151,11 @@
       "cancel": "Cancel",
       "disabled": "Only failed or uncertain deliveries can be retried."
     },
-    "load_more": "Load more"
+    "load_more": "Load more",
+    "run_filter_unsupported": "Run linkage isn't supported by this server",
+    "run_dialog": {
+      "title": "Deliveries for this run"
+    }
   },
   "error_code": {
     "route_disabled": "The push target was disabled",

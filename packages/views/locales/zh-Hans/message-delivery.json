@@ -73,7 +73,7 @@
     "save_approve": "批准并保存",
     "saving": "保存中...",
     "cancel": "取消",
-    "conflict": "该配置已在别处被修改，已加载最新版本，请确认后重新保存。"
+    "conflict": "该配置已被他人更新，已为你加载最新版本（你未保存的修改已被替换），请确认后再保存。"
   },
   "approvals": {
     "title": "已批准的外部目标",
@@ -109,7 +109,8 @@
     "row": {
       "attempts": "{{count}} 次尝试",
       "shards": "分片 {{done}}/{{total}}",
-      "open_delivery": "查看投递"
+      "open_delivery": "查看投递",
+      "open_run_deliveries": "查看该运行的全部投递"
     },
     "source_kind": {
       "run_only": "自动化运行",
@@ -150,7 +151,11 @@
       "cancel": "取消",
       "disabled": "仅失败或结果不确定的投递可以重试。"
     },
-    "load_more": "加载更多"
+    "load_more": "加载更多",
+    "run_filter_unsupported": "当前服务端不支持按运行关联",
+    "run_dialog": {
+      "title": "该运行的投递"
+    }
   },
   "error_code": {
     "route_disabled": "推送目标已停用",

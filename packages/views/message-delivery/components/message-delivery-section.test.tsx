@@ -49,7 +49,10 @@ const installationsRef = vi.hoisted(() => ({
   current: undefined as unknown as QueryResult,
 }));
 const membersRef = vi.hoisted(() => ({
-  current: ok([{ user_id: "user-1", name: "Alice", email: "alice@example.com" }]) as QueryResult,
+  current: ok([
+    { user_id: "user-1", name: "Alice", email: "alice@example.com" },
+    { user_id: "user-2", name: "Bob", email: "bob@example.com" },
+  ]) as QueryResult,
 }));
 const roleRef = vi.hoisted(() => ({ current: "owner" as string }));
 
@@ -357,17 +360,20 @@ describe("MessageRouteEditorDialog (via section)", () => {
 
     // A failed save must surface inside the dialog — never as a saved push.
     expect(
-      await screen.findByText(/changed elsewhere/i),
+      await screen.findByText(/updated by someone else/i),
     ).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("recovers from a revision conflict by adopting the latest revision", async () => {
-    routesRef.current = ok([ROUTE]); // revision 3
+  it("recovers from a conflict by adopting the other writer's FULL version", async () => {
+    routesRef.current = ok([ROUTE]); // revision 3, success, member user-1
     mockUpdate
       .mockImplementationOnce(() => {
-        // The other writer committed v4; the list refetch sees it.
-        routesRef.current = ok([{ ...ROUTE, revision: 4 }]);
+        // The other writer committed v4: failure condition AND a different
+        // target member. A revision-only reload would silently overwrite both.
+        routesRef.current = ok([
+          { ...ROUTE, revision: 4, conditions: "failure", target_user_id: "user-2", target_key: "member:user-2" },
+        ]);
         return Promise.reject(
           new ApiError("conflict", 409, "Conflict", { code: "route_revision_conflict" }),
         );
@@ -380,13 +386,17 @@ describe("MessageRouteEditorDialog (via section)", () => {
     await screen.findByText("Edit push target");
 
     await user.click(screen.getByRole("button", { name: /^save$/i }));
-    expect(await screen.findByText(/changed elsewhere/i)).toBeInTheDocument();
+    expect(await screen.findByText(/updated by someone else/i)).toBeInTheDocument();
     expect(mockUpdate.mock.calls[0]?.[0].expected_revision).toBe(3);
+    expect(mockUpdate.mock.calls[0]?.[0].conditions).toBe("success");
 
-    // The dialog adopted the fresh route — the retry carries v4, not v3.
+    // The dialog adopted the committed version — every field, not just the
+    // revision lock. The re-save carries the other writer's v4 values.
     await user.click(screen.getByRole("button", { name: /^save$/i }));
     await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2));
     expect(mockUpdate.mock.calls[1]?.[0].expected_revision).toBe(4);
+    expect(mockUpdate.mock.calls[1]?.[0].conditions).toBe("failure");
+    expect(mockUpdate.mock.calls[1]?.[0].target_user_id).toBe("user-2");
   });
 
   it("tells collaborators that external targets need admin approval", async () => {

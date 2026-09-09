@@ -73,7 +73,7 @@
     "save_approve": "승인 후 저장",
     "saving": "저장 중...",
     "cancel": "취소",
-    "conflict": "이 설정이 다른 곳에서 변경되었습니다. 최신 버전을 불러왔으니 확인 후 다시 저장하세요."
+    "conflict": "이 설정이 다른 사람에 의해 업데이트되었습니다. 최신 버전을 불러왔고 저장하지 않은 편집은 대체되었습니다. 확인 후 다시 저장하세요."
   },
   "approvals": {
     "title": "승인된 외부 대상",
@@ -109,7 +109,8 @@
     "row": {
       "attempts": "{{count}}회 시도",
       "shards": "샤드 {{done}}/{{total}}",
-      "open_delivery": "전송 보기"
+      "open_delivery": "전송 보기",
+      "open_run_deliveries": "이 실행의 모든 전송 보기"
     },
     "source_kind": {
       "run_only": "자동화 실행",
@@ -150,7 +151,11 @@
       "cancel": "취소",
       "disabled": "실패하거나 결과가 불명인 전송만 재시도할 수 있습니다."
     },
-    "load_more": "더 불러오기"
+    "load_more": "더 불러오기",
+    "run_filter_unsupported": "이 서버는 실행 연결을 지원하지 않습니다",
+    "run_dialog": {
+      "title": "이 실행의 전송"
+    }
   },
   "error_code": {
     "route_disabled": "푸시 대상이 비활성화되었습니다",

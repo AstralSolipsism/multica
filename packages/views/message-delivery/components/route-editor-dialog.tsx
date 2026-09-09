@@ -87,6 +87,9 @@ export function MessageRouteEditorDialog({
   // refetched and adopted HERE, so the next save carries the newest
   // expected_revision — the conflict copy's promise is real, not advice.
   const [currentRoute, setCurrentRoute] = useState<MessageRoute | null>(route);
+  // While a post-409 reload is in flight the form still shows the stale
+  // draft — saving must stay disabled until the fresh version is adopted.
+  const [reloading, setReloading] = useState(false);
 
   const activeInstallations = installations.filter((inst) => inst.status === "active");
 
@@ -141,7 +144,7 @@ export function MessageRouteEditorDialog({
         : targetChatId.trim() !== "" && targetMessageId.trim() !== "");
 
   const saving =
-    createRoute.isPending || updateRoute.isPending || approveTarget.isPending;
+    createRoute.isPending || updateRoute.isPending || approveTarget.isPending || reloading;
 
   const handleSave = async () => {
     setError(null);
@@ -187,14 +190,30 @@ export function MessageRouteEditorDialog({
       // Stays inside the dialog — a failed save must not look like a saved,
       // enabled push anywhere else on the page.
       if (errorCode(e) === "route_revision_conflict" && currentRoute) {
+        // R2: adopt the OTHER writer's committed version in full — every
+        // form field, not just the revision lock — so a re-save never
+        // silently overwrites changes the user never saw. A failed reload
+        // keeps the conflict state and must not claim freshness.
+        setReloading(true);
         try {
           // fetchQuery returns the raw envelope (select is observer-only).
           const fresh = await qc.fetchQuery(messageRoutesOptions(wsId, autopilotId));
           const found = fresh.routes.find((r: MessageRoute) => r.id === currentRoute.id);
-          if (found) setCurrentRoute(found);
+          if (found) {
+            setCurrentRoute(found);
+            setInstallationId(found.installation_id);
+            setTargetType(found.target_type);
+            setTargetUserId(found.target_user_id ?? "");
+            setTargetChatId(found.target_chat_id ?? "");
+            setTargetMessageId(found.target_message_id ?? "");
+            setConditions(found.conditions);
+            setContentMode(found.content_mode);
+          }
         } catch {
           // The refetch failed too; the conflict alert still explains the
           // situation and the list below is already fresh from invalidation.
+        } finally {
+          setReloading(false);
         }
       }
       setError(e);

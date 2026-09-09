@@ -37,12 +37,31 @@ const ok = vi.hoisted(
     }),
 );
 
-const deliveriesRef = vi.hoisted(() => ({ current: ok({ deliveries: [], limit: 50, offset: 0 }) as QueryResult }));
+const deliveriesRef = vi.hoisted(() => ({
+  current: undefined as unknown as Record<string, unknown>,
+}));
+const fetchNextPageSpy = vi.hoisted(() => vi.fn());
+const invalidateSpy = vi.hoisted(() => vi.fn());
+function okList(rows: unknown[], hasNextPage = false) {
+  return {
+    data: { pages: [{ deliveries: rows, limit: 100, offset: 0, applied_run_id: null }] },
+    isLoading: false,
+    isError: false,
+    isSuccess: true,
+    hasNextPage,
+    isFetchingNextPage: false,
+    fetchNextPage: fetchNextPageSpy,
+  };
+}
 const detailRef = vi.hoisted(() => ({ current: undefined as QueryResult | undefined }));
 const mockRetry = vi.hoisted(() => vi.fn());
 const useQuerySpy = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-query", () => ({
+  useInfiniteQuery: (opts: { queryKey: unknown[] }) => {
+    useQuerySpy(opts);
+    return deliveriesRef.current;
+  },
   useQuery: (opts: { queryKey: unknown[]; enabled?: boolean }) => {
     useQuerySpy(opts);
     if (opts.enabled === false) {
@@ -59,18 +78,22 @@ vi.mock("@tanstack/react-query", () => ({
         }
       );
     }
-    if (key.includes("deliveries")) return deliveriesRef.current;
     return { data: undefined, isLoading: false, isError: false, isSuccess: false };
   },
-  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+  useQueryClient: () => ({ invalidateQueries: invalidateSpy }),
+  infiniteQueryOptions: <T,>(opts: T) => opts,
   queryOptions: <T,>(opts: T) => opts,
 }));
 
 vi.mock("@multica/core/message-delivery", () => ({
   MESSAGE_DELIVERIES_PAGE_SIZE: 50,
-  messageDeliveriesOptions: (_wsId: string, autopilotId: string, params?: { status?: string; limit?: number }) => ({
-    queryKey: ["message-delivery", "ws-1", "autopilot", autopilotId, "deliveries", params?.status ?? "all", params?.limit ?? 0],
+  messageDeliveriesInfiniteOptions: (_wsId: string, autopilotId: string, scope?: { status?: string; runId?: string }) => ({
+    queryKey: ["message-delivery", "ws-1", "autopilot", autopilotId, "deliveries", scope?.status ?? "all", scope?.runId ?? "any"],
   }),
+  messageDeliveryKeys: {
+    delivery: (_wsId: string, autopilotId: string, deliveryId: string) =>
+      ["message-delivery", "ws-1", "autopilot", autopilotId, "deliveries", "detail", deliveryId],
+  },
   messageDeliveryOptions: (_wsId: string, autopilotId: string, deliveryId: string, options?: { enabled?: boolean }) => ({
     queryKey: ["message-delivery", "ws-1", "autopilot", autopilotId, "deliveries", "detail", deliveryId],
     enabled: options?.enabled ?? true,
@@ -127,9 +150,12 @@ function renderSection(canWrite = true) {
 
 describe("MessageDeliveriesSection", () => {
   beforeEach(() => {
-    deliveriesRef.current = ok({ deliveries: [], limit: 50, offset: 0 });
+    deliveriesRef.current = okList([]);
     detailRef.current = undefined;
     mockRetry.mockReset();
+    fetchNextPageSpy.mockReset();
+    invalidateSpy.mockReset();
+    useQuerySpy.mockClear();
   });
 
   afterEach(() => {
@@ -137,14 +163,10 @@ describe("MessageDeliveriesSection", () => {
   });
 
   it("renders rows with localized status, source kind and target key", () => {
-    deliveriesRef.current = ok({
-      deliveries: [
-        delivery({ id: "d-1", status: "sent" }),
-        delivery({ id: "d-2", status: "uncertain", source_kind: "test_send", target_key: "group:oc_9" }),
-      ],
-      limit: 50,
-      offset: 0,
-    });
+    deliveriesRef.current = okList([
+      delivery({ id: "d-1", status: "sent" }),
+      delivery({ id: "d-2", status: "uncertain", source_kind: "test_send", target_key: "group:oc_9" }),
+    ]);
     renderSection();
     expect(screen.getByText("Sent")).toBeInTheDocument();
     expect(screen.getByText("Uncertain")).toBeInTheDocument();
@@ -159,8 +181,8 @@ describe("MessageDeliveriesSection", () => {
 
   it("stays silent on 403/404 — the config section owns those states", () => {
     deliveriesRef.current = {
+      ...okList([]),
       data: undefined,
-      isLoading: false,
       isError: true,
       isSuccess: false,
       error: new ApiError("forbidden", 403, "Forbidden"),
@@ -171,7 +193,7 @@ describe("MessageDeliveriesSection", () => {
 
   it("shows the sent semantics note and no retry for a sent delivery", async () => {
     const user = userEvent.setup();
-    deliveriesRef.current = ok({ deliveries: [delivery({ id: "d-1", status: "sent" })] });
+    deliveriesRef.current = okList([delivery({ id: "d-1", status: "sent" })]);
     detailRef.current = ok({
       delivery: delivery({ id: "d-1", status: "sent" }),
       content_snapshot: {
@@ -217,7 +239,7 @@ describe("MessageDeliveriesSection", () => {
       opts?.onSuccess?.(),
     );
     const user = userEvent.setup();
-    deliveriesRef.current = ok({ deliveries: [delivery({ id: "d-2", status: "uncertain" })] });
+    deliveriesRef.current = okList([delivery({ id: "d-2", status: "uncertain" })]);
     detailRef.current = ok({
       delivery: delivery({ id: "d-2", status: "uncertain" }),
       content_snapshot: null,
@@ -242,7 +264,7 @@ describe("MessageDeliveriesSection", () => {
 
   it("shows an explicit error instead of a fake empty report when the detail read fails", async () => {
     const user = userEvent.setup();
-    deliveriesRef.current = ok({ deliveries: [delivery({ id: "d-9", status: "failed" })] });
+    deliveriesRef.current = okList([delivery({ id: "d-9", status: "failed" })]);
     detailRef.current = {
       data: undefined,
       isLoading: false,
@@ -262,24 +284,44 @@ describe("MessageDeliveriesSection", () => {
     expect(screen.getByText(/detail failed to load/i)).toBeInTheDocument();
   });
 
-  it("offers a load-more entry once the page size is reached", async () => {
+  it("offers a load-more entry while the server has another page", async () => {
     const user = userEvent.setup();
-    deliveriesRef.current = ok({
-      deliveries: Array.from({ length: 50 }, (_, i) =>
-        delivery({ id: `d-${i}`, status: "sent" }),
-      ),
-      limit: 50,
-      offset: 0,
+    deliveriesRef.current = okList(
+      Array.from({ length: 100 }, (_, i) => delivery({ id: `d-${i}`, status: "sent" })),
+      true,
+    );
+    renderSection();
+    await user.click(screen.getByRole("button", { name: /load more/i }));
+    expect(fetchNextPageSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides load-more when the current scope is exhausted", () => {
+    deliveriesRef.current = okList([delivery({ id: "d-1", status: "sent" })], false);
+    renderSection();
+    expect(screen.queryByRole("button", { name: /load more/i })).not.toBeInTheDocument();
+  });
+
+  it("invalidates a stale open detail when the list row observed a newer write", async () => {
+    // R1: worker finished after the detail was cached — the polling list row
+    // carries the newer updated_at and must knock out the stale detail cache.
+    const user = userEvent.setup();
+    deliveriesRef.current = okList([
+      delivery({ id: "d-1", status: "sent", updated_at: "2026-09-08T02:31:00Z" }),
+    ]);
+    detailRef.current = ok({
+      delivery: delivery({ id: "d-1", status: "queued", updated_at: "2026-09-08T02:30:02Z" }),
+      content_snapshot: null,
+      target_snapshot: null,
+      source_ref: null,
+      receipts: [],
     });
     renderSection();
-    const more = screen.getByRole("button", { name: /load more/i });
-    await user.click(more);
-    // The widened page size lands in the query key, so pages never share a
-    // cache entry.
+    await user.click(screen.getByText("member:user-1"));
+    await screen.findByText("Delivery detail");
     await waitFor(() =>
       expect(
-        useQuerySpy.mock.calls.some(([opts]) =>
-          JSON.stringify(opts.queryKey).includes('"deliveries","all",100'),
+        invalidateSpy.mock.calls.some(
+          ([arg]) => JSON.stringify(arg?.queryKey).includes('"detail","d-1"'),
         ),
       ).toBe(true),
     );
@@ -287,7 +329,7 @@ describe("MessageDeliveriesSection", () => {
 
   it("hides the retry affordance from read-only users", async () => {
     const user = userEvent.setup();
-    deliveriesRef.current = ok({ deliveries: [delivery({ id: "d-3", status: "failed" })] });
+    deliveriesRef.current = okList([delivery({ id: "d-3", status: "failed" })]);
     detailRef.current = ok({
       delivery: delivery({ id: "d-3", status: "failed", error_code: "send_rejected" }),
       content_snapshot: null,

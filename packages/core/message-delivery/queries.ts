@@ -1,4 +1,4 @@
-import { queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 import { autopilotKeys } from "../autopilots/queries";
 
@@ -10,8 +10,9 @@ import { autopilotKeys } from "../autopilots/queries";
  * autopilot events — nesting means those events also refresh this module
  * without a second wiring point.
  *
- * The records-list key carries both the status filter and the page size so
- * filtered/paged views never share a cache entry.
+ * The records-list key carries the status filter and the run linkage (R3)
+ * so filtered/paged views never share a cache entry; page position inside a
+ * scope is managed by the infinite query's pageParam (offset).
  */
 export const messageDeliveryKeys = {
   all: (wsId: string) => [...autopilotKeys.all(wsId), "message-delivery"] as const,
@@ -21,12 +22,12 @@ export const messageDeliveryKeys = {
     [...messageDeliveryKeys.autopilot(wsId, autopilotId), "routes"] as const,
   approvedTargets: (wsId: string, autopilotId: string) =>
     [...messageDeliveryKeys.autopilot(wsId, autopilotId), "approved-targets"] as const,
-  deliveries: (wsId: string, autopilotId: string, status?: string, limit?: number) =>
+  deliveries: (wsId: string, autopilotId: string, status?: string, runId?: string) =>
     [
       ...messageDeliveryKeys.autopilot(wsId, autopilotId),
       "deliveries",
       status ?? "all",
-      limit ?? 0,
+      runId ?? "any",
     ] as const,
   deliveriesAll: (wsId: string, autopilotId: string) =>
     [...messageDeliveryKeys.autopilot(wsId, autopilotId), "deliveries"] as const,
@@ -75,41 +76,87 @@ export function messageApprovedTargetsOptions(
   });
 }
 
-export const MESSAGE_DELIVERIES_PAGE_SIZE = 50;
+/** Fixed legal page size for the records surface (server caps at 200). */
+export const MESSAGE_DELIVERIES_PAGE_SIZE = 100;
+
+function isInFlight(status: string): boolean {
+  return status === "queued" || status === "sending";
+}
 
 /**
- * Delivery records page. `status` filters server-side; the projection is
- * slim (no content/target snapshots). Detail is fetched on demand via
- * messageDeliveryOptions when a row is opened.
+ * Delivery records, paginated by offset at a fixed legal page size (R4).
+ * `scope.runId` filters to a single source run (R3) — the response's
+ * `applied_run_id` echo tells the caller whether the server actually
+ * applied it; views must treat a missing/mismatched echo as "unsupported
+ * server", never as "no deliveries".
  *
  * Refresh: autopilot websocket events invalidate the shared prefix, and the
- * list polls — fast while any row is in flight (queued/sending), slow
- * otherwise — because worker write-backs do not emit their own events.
+ * first page polls — fast while any row is in flight, slow otherwise —
+ * because worker write-backs do not emit their own events.
  */
-export function messageDeliveriesOptions(
+export function messageDeliveriesInfiniteOptions(
   wsId: string,
   autopilotId: string,
-  params?: { status?: string; limit?: number; offset?: number },
+  scope?: { status?: string; runId?: string },
   options?: { enabled?: boolean },
 ) {
-  return queryOptions({
-    queryKey: messageDeliveryKeys.deliveries(wsId, autopilotId, params?.status, params?.limit),
-    queryFn: () => api.listMessageDeliveries(autopilotId, params),
+  return infiniteQueryOptions({
+    queryKey: messageDeliveryKeys.deliveries(wsId, autopilotId, scope?.status, scope?.runId),
+    queryFn: ({ pageParam }) =>
+      api.listMessageDeliveries(autopilotId, {
+        status: scope?.status,
+        runId: scope?.runId,
+        limit: MESSAGE_DELIVERIES_PAGE_SIZE,
+        offset: pageParam,
+      }),
+    initialPageParam: 0,
+    getNextPageParam: (last) =>
+      last.deliveries.length < MESSAGE_DELIVERIES_PAGE_SIZE
+        ? undefined
+        : last.offset + MESSAGE_DELIVERIES_PAGE_SIZE,
     enabled: options?.enabled ?? true,
     retry: false,
     refetchInterval: (query) => {
-      const rows = query.state.data?.deliveries ?? [];
-      return rows.some((d) => d.status === "queued" || d.status === "sending")
-        ? 5_000
-        : 30_000;
+      const first = query.state.data?.pages[0];
+      return first?.deliveries.some((d) => isInFlight(d.status)) ? 5_000 : 30_000;
     },
   });
 }
 
 /**
+ * Single-page records read (compatibility surface used by the detail-refresh
+ * regression and by callers that only need the first page). Paged views use
+ * messageDeliveriesInfiniteOptions instead.
+ */
+export function messageDeliveriesOptions(
+  wsId: string,
+  autopilotId: string,
+  params?: { status?: string; runId?: string; limit?: number; offset?: number },
+  options?: { enabled?: boolean },
+) {
+  return queryOptions({
+    queryKey: [
+      ...messageDeliveryKeys.deliveries(wsId, autopilotId, params?.status, params?.runId),
+      "page",
+      params?.limit ?? 0,
+      params?.offset ?? 0,
+    ] as const,
+    queryFn: () => api.listMessageDeliveries(autopilotId, params),
+    enabled: options?.enabled ?? true,
+    retry: false,
+    refetchInterval: (query) =>
+      query.state.data?.deliveries.some((d) => isInFlight(d.status)) ? 5_000 : 30_000,
+  });
+}
+
+/**
  * Full delivery detail: frozen content/target snapshots, source_ref locator
- * and the per-shard receipt ledger. Fetched on demand from the detail
- * dialog.
+ * and the per-shard receipt ledger.
+ *
+ * Refresh (R1): an opened detail polls fast while the delivery is in flight;
+ * `staleTime: 0` + refetch-on-mount mean reopening never replays a stale
+ * terminal state, and a list row that observed a newer `updated_at`
+ * invalidates this cache from the view layer.
  */
 export function messageDeliveryOptions(
   wsId: string,
@@ -122,5 +169,9 @@ export function messageDeliveryOptions(
     queryFn: () => api.getMessageDelivery(autopilotId, deliveryId),
     enabled: options?.enabled ?? true,
     retry: false,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchInterval: (query) =>
+      query.state.data && isInFlight(query.state.data.delivery.status) ? 5_000 : false,
   });
 }

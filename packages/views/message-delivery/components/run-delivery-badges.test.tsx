@@ -3,75 +3,40 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { ApiError } from "@multica/core/api";
 import { renderWithI18n } from "../../test/i18n";
-import { NavigationProvider } from "../../navigation";
 import { RunDeliveryBadges } from "./run-delivery-badges";
 
-const NAV_ADAPTER = {
-  push: () => {},
-  replace: () => {},
-  back: () => {},
-  pathname: "/ws/autopilots/ap-1",
-  searchParams: new URLSearchParams(),
-  hash: "",
-  getShareableUrl: (path: string) => path,
-};
-
-type QueryResult = {
-  data?: unknown;
+type InfiniteResult = {
+  data?: { pages: { deliveries: unknown[]; applied_run_id: string | null }[] };
   isLoading: boolean;
   isError: boolean;
-  isSuccess: boolean;
+  error?: unknown;
 };
 
-const deliveriesRef = vi.hoisted(() => ({
-  current: { data: { deliveries: [] }, isLoading: false, isError: false, isSuccess: true } as QueryResult,
-}));
-const membersRef = vi.hoisted(() => ({
-  current: { data: [], isLoading: false, isError: false, isSuccess: true } as QueryResult,
-}));
+const queryRef = vi.hoisted(() => ({ current: undefined as InfiniteResult | undefined }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: (opts: { queryKey: unknown[]; enabled?: boolean }) => {
-    if (opts.enabled === false) {
-      return { data: undefined, isLoading: false, isError: false, isSuccess: false };
-    }
-    const key = JSON.stringify(opts.queryKey);
-    if (key.includes('"detail"')) {
-      return { data: undefined, isLoading: true, isError: false, isSuccess: false };
-    }
-    if (key.includes("members")) return membersRef.current;
-    return deliveriesRef.current;
-  },
+  useInfiniteQuery: () =>
+    queryRef.current ?? {
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      hasNextPage: false,
+    },
+  useQuery: () => ({ data: undefined, isLoading: false, isError: false }),
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+  infiniteQueryOptions: <T,>(opts: T) => opts,
   queryOptions: <T,>(opts: T) => opts,
 }));
 
 vi.mock("@multica/core/message-delivery", () => ({
-  MESSAGE_DELIVERIES_PAGE_SIZE: 50,
-  messageDeliveriesOptions: (_wsId: string, autopilotId: string) => ({
-    queryKey: ["autopilots", "ws-1", "message-delivery", autopilotId, "deliveries", "all", 0],
+  messageDeliveriesInfiniteOptions: (_wsId: string, autopilotId: string, scope?: { runId?: string }) => ({
+    queryKey: ["deliveries", autopilotId, scope?.runId],
   }),
-  messageDeliveryOptions: (_wsId: string, autopilotId: string, deliveryId: string, options?: { enabled?: boolean }) => ({
-    queryKey: ["autopilots", "ws-1", "message-delivery", autopilotId, "deliveries", "detail", deliveryId],
-    enabled: options?.enabled ?? true,
-  }),
-  useRetryMessageDelivery: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
-}));
-
-vi.mock("@multica/core/workspace/queries", () => ({
-  memberListOptions: () => ({ queryKey: ["members"] }),
 }));
 
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
-
-vi.mock("@multica/core/paths", () => ({
-  useWorkspacePaths: () => ({ issueDetail: (id: string) => `/ws/issues/${id}` }),
-}));
-
-vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
-}));
 
 function delivery(id: string, runId: string, status: string) {
   return {
@@ -97,56 +62,89 @@ function delivery(id: string, runId: string, status: string) {
   };
 }
 
+function withRows(runId: string, rows: ReturnType<typeof delivery>[], applied?: string | null) {
+  queryRef.current = {
+    data: {
+      pages: [{ deliveries: rows, applied_run_id: applied === undefined ? runId : applied }],
+    },
+    isLoading: false,
+    isError: false,
+  };
+}
+
+const onOpenDelivery = vi.fn();
+const onOpenRunList = vi.fn();
+
 function renderBadges(runId = "run-1") {
   return renderWithI18n(
-    <NavigationProvider value={NAV_ADAPTER}>
-      <RunDeliveryBadges autopilotId="ap-1" runId={runId} canWrite />
-    </NavigationProvider>,
+    <RunDeliveryBadges
+      autopilotId="ap-1"
+      runId={runId}
+      onOpenDelivery={onOpenDelivery}
+      onOpenRunList={onOpenRunList}
+    />,
   );
 }
 
 describe("RunDeliveryBadges", () => {
   beforeEach(() => {
-    deliveriesRef.current = {
-      data: {
-        deliveries: [
-          delivery("d-1", "run-1", "sent"),
-          delivery("d-2", "run-1", "failed"),
-          delivery("d-3", "run-2", "queued"),
-        ],
-      },
-      isLoading: false,
-      isError: false,
-      isSuccess: true,
-    };
+    queryRef.current = undefined;
+    onOpenDelivery.mockReset();
+    onOpenRunList.mockReset();
   });
 
   afterEach(() => cleanup());
 
-  it("renders the delivery statuses linked to this run only", () => {
+  it("renders only this run's delivery statuses and opens them via callback", async () => {
+    withRows("run-1", [delivery("d-1", "run-1", "sent"), delivery("d-2", "run-1", "failed")]);
+    const user = userEvent.setup();
     renderBadges("run-1");
-    expect(screen.getByRole("button", { name: /view delivery: sent/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /view delivery: failed/i })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /view delivery: queued/i }),
-    ).not.toBeInTheDocument();
+    const sent = screen.getByRole("button", { name: /view delivery: sent/i });
+    const failed = screen.getByRole("button", { name: /view delivery: failed/i });
+    expect(sent).toBeInTheDocument();
+    expect(failed).toBeInTheDocument();
+    await user.click(failed);
+    expect(onOpenDelivery).toHaveBeenCalledTimes(1);
+    expect(onOpenDelivery.mock.calls[0]?.[0].id).toBe("d-2");
   });
 
-  it("renders nothing when the run has no deliveries", () => {
-    const { container } = renderBadges("run-404");
-    expect(container).toBeEmptyDOMElement();
+  it("offers the per-run list from the overflow affordance", async () => {
+    withRows("run-1", [
+      delivery("d-1", "run-1", "sent"),
+      delivery("d-2", "run-1", "failed"),
+      delivery("d-3", "run-1", "queued"),
+      delivery("d-4", "run-1", "cancelled"),
+      delivery("d-5", "run-1", "suppressed"),
+    ]);
+    const user = userEvent.setup();
+    renderBadges("run-1");
+    await user.click(screen.getByRole("button", { name: /all deliveries for this run/i }));
+    expect(onOpenRunList).toHaveBeenCalledWith("run-1");
   });
 
-  it("renders nothing when the records query is forbidden (read-only)", () => {
-    deliveriesRef.current = { data: undefined, isLoading: false, isError: true, isSuccess: false };
+  it("renders nothing when the run genuinely has no deliveries (echo confirms)", () => {
+    withRows("run-1", [], "run-1");
     const { container } = renderBadges("run-1");
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("opens the delivery detail dialog from a badge", async () => {
-    const user = userEvent.setup();
+  it("states unsupported instead of 'no deliveries' when the server ignores run_id", () => {
+    // A pre-R3 server answers 200 but its response lacks a matching
+    // applied_run_id echo — the filter was NOT applied.
+    withRows("run-1", [], null);
     renderBadges("run-1");
-    await user.click(screen.getByRole("button", { name: /view delivery: failed/i }));
-    expect(await screen.findByText("Delivery detail")).toBeInTheDocument();
+    expect(screen.getByText(/isn't supported by this server/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /view delivery/i })).not.toBeInTheDocument();
+  });
+
+  it("stays silent on a real 403 (read-only)", () => {
+    queryRef.current = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new ApiError("forbidden", 403, "Forbidden"),
+    };
+    const { container } = renderBadges("run-1");
+    expect(container).toBeEmptyDOMElement();
   });
 });

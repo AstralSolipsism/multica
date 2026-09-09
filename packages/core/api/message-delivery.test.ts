@@ -477,10 +477,14 @@ describe("OL-26 review regressions", () => {
     expect(actual.deliveries).toHaveLength(1);
   });
 
-  it("nests records keys under the autopilot prefix with status and page size", () => {
+  it("nests records keys under the autopilot prefix with status, run and page", () => {
     expect(
-      messageDeliveriesOptions("workspace", "autopilot", { status: "failed", limit: 100 })
-        .queryKey,
+      messageDeliveriesOptions("workspace", "autopilot", {
+        status: "failed",
+        runId: "run-1",
+        limit: 100,
+        offset: 200,
+      }).queryKey,
     ).toEqual([
       "autopilots",
       "workspace",
@@ -488,7 +492,10 @@ describe("OL-26 review regressions", () => {
       "autopilot",
       "deliveries",
       "failed",
+      "run-1",
+      "page",
       100,
+      200,
     ]);
   });
 

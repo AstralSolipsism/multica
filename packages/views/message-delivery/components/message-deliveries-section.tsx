@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { RotateCw, Send } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  MESSAGE_DELIVERIES_PAGE_SIZE,
-  messageDeliveriesOptions,
+  messageDeliveriesInfiniteOptions,
+  messageDeliveryKeys,
   messageDeliveryOptions,
   useRetryMessageDelivery,
 } from "@multica/core/message-delivery";
@@ -101,14 +101,12 @@ export function MessageDeliveriesSection({
   const { t } = useT("message-delivery");
   const wsId = useWorkspaceId();
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  // Growing page size: the server pages with limit/offset; "load more"
-  // widens the window (and the cache key) instead of stacking offsets.
-  const [limit, setLimit] = useState(MESSAGE_DELIVERIES_PAGE_SIZE);
 
-  const deliveriesQuery = useQuery(
-    messageDeliveriesOptions(wsId, autopilotId, {
+  // Fixed legal page size + offset pages (R4): the server caps limit at 200,
+  // so growing the limit past it would silently bounce back to page one.
+  const deliveriesQuery = useInfiniteQuery(
+    messageDeliveriesInfiniteOptions(wsId, autopilotId, {
       status: statusFilter === "all" ? undefined : statusFilter,
-      limit,
     }),
   );
 
@@ -159,8 +157,8 @@ export function MessageDeliveriesSection({
     );
   }
 
-  const deliveries = deliveriesQuery.data?.deliveries ?? [];
-  const mayHaveMore = deliveries.length >= limit;
+  const deliveries = deliveriesQuery.data?.pages.flatMap((page) => page.deliveries) ?? [];
+  const mayHaveMore = deliveriesQuery.hasNextPage === true;
 
   return (
     <section className="space-y-3">
@@ -195,8 +193,8 @@ export function MessageDeliveriesSection({
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => setLimit((n) => n + MESSAGE_DELIVERIES_PAGE_SIZE)}
-                disabled={deliveriesQuery.isFetching}
+                onClick={() => deliveriesQuery.fetchNextPage()}
+                disabled={deliveriesQuery.isFetchingNextPage}
               >
                 {t(($) => $.deliveries.load_more)}
               </Button>
@@ -303,6 +301,22 @@ export function DeliveryDetailDialog({
   // A failed detail read (403/500/…) is NOT an empty report: show the error
   // explicitly and keep retry unavailable until the real state is known.
   const detailError = isError ? error : null;
+
+  // R1: the list row prop refreshes via the section's polling/invalidation.
+  // When it observed a newer write than the cached detail, drop the stale
+  // detail so the dialog re-reads the truth (status, receipts, retry gate).
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (
+      detail &&
+      delivery.updated_at &&
+      detail.delivery.updated_at !== delivery.updated_at
+    ) {
+      qc.invalidateQueries({
+        queryKey: messageDeliveryKeys.delivery(wsId, autopilotId, delivery.id),
+      });
+    }
+  }, [qc, wsId, autopilotId, delivery.id, delivery.updated_at, detail]);
   // Member targets show the member's name rather than a raw user uuid.
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   // Slim row until the detail lands; snapshots/receipts skeleton meanwhile.
