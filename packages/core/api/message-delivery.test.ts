@@ -9,6 +9,10 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClient } from "./client";
+import { setApiInstance } from "./index";
+import { createQueryClient } from "../query-client";
+import { messageDeliveriesOptions } from "../message-delivery/queries";
+import { autopilotKeys } from "../autopilots/queries";
 import { parseWithFallback, setSchemaLogger } from "./schema";
 import { noopLogger } from "../logger";
 import {
@@ -377,5 +381,113 @@ describe("ApiClient message-delivery endpoints", () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain(`/message-deliveries/d1/retry`);
     expect(init.method).toBe("POST");
+  });
+});
+
+describe("OL-26 review regressions", () => {
+  // TestSend omits RunID in deliveries.go. The handler returns the sqlc row;
+  // pgtype.UUID{Valid:false} is encoded as JSON null, in list rows and the
+  // detail envelope alike.
+  const testSend = {
+    id: "test-delivery",
+    workspace_id: "workspace",
+    route_id: "route",
+    route_revision: 1,
+    autopilot_id: "autopilot",
+    run_id: null,
+    source_kind: "test_send",
+    status: "sent",
+    attempts: 1,
+    installation_id: "installation",
+    target_key: "group:oc_test",
+    shard_total: 1,
+  };
+  const runDelivery = {
+    ...testSend,
+    id: "run-delivery",
+    run_id: "run",
+    source_kind: "run_only",
+  };
+  function response(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(body), {
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    return new ApiClient("https://api.example.test");
+  }
+
+  it("retains a real test-send outcome with no source run", async () => {
+    const api = response({ delivery: testSend });
+    const actual = await api.testMessageRoute("autopilot", "route");
+    expect(actual.status).toBe("sent");
+    expect(actual.run_id).toBeNull();
+  });
+
+  it("keeps all delivery records when the page includes a test send", async () => {
+    const api = response({ deliveries: [runDelivery, testSend], limit: 50, offset: 0 });
+    const actual = await api.listMessageDeliveries("autopilot");
+    expect(actual.deliveries).toHaveLength(2);
+  });
+
+  it("keeps a failed test send retryable in the delivery detail", async () => {
+    const api = response({
+      delivery: { ...testSend, status: "failed", error_code: "sender_unavailable" },
+      content_snapshot: { text: "Labrastro test message", run_status: "test" },
+      target_snapshot: { target_type: "group", chat_id: "oc_test" },
+      source_ref: { run_id: "" },
+      receipts: [],
+    });
+    const actual = await api.getMessageDelivery("autopilot", "test-delivery");
+    expect(actual.delivery.status).toBe("failed");
+    expect(actual.content_snapshot?.text).toBe("Labrastro test message");
+  });
+
+  it("refreshes deliveries when the autopilot prefix is invalidated", async () => {
+    const client = createQueryClient();
+    setApiInstance(response({ deliveries: [], limit: 50, offset: 0 }));
+    const options = messageDeliveriesOptions("workspace", "autopilot");
+    await client.fetchQuery(options);
+    // The worker wrote back a new delivery; the next realtime autopilot
+    // event invalidates the shared prefix and the records refetch.
+    response({ deliveries: [runDelivery], limit: 50, offset: 0 });
+    await client.invalidateQueries({ queryKey: autopilotKeys.all("workspace") });
+    const actual = await client.fetchQuery(options);
+    client.clear();
+    expect(actual.deliveries).toHaveLength(1);
+  });
+
+  it("nests records keys under the autopilot prefix with status and page size", () => {
+    expect(
+      messageDeliveriesOptions("workspace", "autopilot", { status: "failed", limit: 100 })
+        .queryKey,
+    ).toEqual([
+      "autopilots",
+      "workspace",
+      "message-delivery",
+      "autopilot",
+      "deliveries",
+      "failed",
+      100,
+    ]);
+  });
+
+  it("throws response_unconfirmed instead of a phantom saved route", async () => {
+    const api = response({ route: { broken: true } });
+    await expect(
+      api.createMessageRoute("autopilot", {
+        installation_id: "inst",
+        target_type: "member",
+        target_user_id: "user",
+        conditions: "success",
+        content_mode: "summary",
+      }),
+    ).rejects.toMatchObject({
+      name: "ApiError",
+      body: { code: "response_unconfirmed" },
+    });
   });
 });

@@ -3551,7 +3551,9 @@ export const MessageDeliverySchema = z.object({
   route_id: z.string().default(""),
   route_revision: z.number().default(0),
   autopilot_id: z.string().default(""),
-  run_id: z.string().default(""),
+  // Test sends carry no source run; the handler serializes the sqlc row's
+  // invalid UUID as null, in both list rows and the detail envelope.
+  run_id: z.string().nullable().default(null),
   dedup_key: z.string().optional(),
   source_kind: z.string().default("unknown"),
   // Unknown/future statuses fall through to a generic UI visual; a
@@ -3598,7 +3600,7 @@ export const EMPTY_MESSAGE_DELIVERY: MessageDelivery = {
   route_id: "",
   route_revision: 0,
   autopilot_id: "",
-  run_id: "",
+  run_id: null,
   source_kind: "unknown",
   status: "unknown",
   attempts: 0,
@@ -3678,7 +3680,7 @@ export function emptyMessageDeliveryDetail(
       route_id: "",
       route_revision: 0,
       autopilot_id: autopilotId,
-      run_id: "",
+      run_id: null,
       source_kind: "unknown",
       status: "unknown",
       attempts: 0,

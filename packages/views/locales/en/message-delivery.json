@@ -108,7 +108,8 @@
     },
     "row": {
       "attempts": "{{count}} attempts",
-      "shards": "{{done}}/{{total}} shards"
+      "shards": "{{done}}/{{total}} shards",
+      "open_delivery": "View delivery"
     },
     "source_kind": {
       "run_only": "Automation run",
@@ -134,7 +135,9 @@
       "delivered_at": "Platform accepted",
       "next_attempt_at": "Next retry",
       "attempts": "Attempts",
-      "route_revision": "Rule version"
+      "route_revision": "Rule version",
+      "run": "Run",
+      "load_failed": "The detail failed to load — the state above comes from the list row and may be stale."
     },
     "retry": {
       "action": "Retry",
@@ -146,7 +149,8 @@
       "uncertain_confirm": "Checked — retry",
       "cancel": "Cancel",
       "disabled": "Only failed or uncertain deliveries can be retried."
-    }
+    },
+    "load_more": "Load more"
   },
   "error_code": {
     "route_disabled": "The push target was disabled",
@@ -191,6 +195,7 @@
     "source_unavailable": "The automation was archived or removed.",
     "autopilot_no_originator": "The request has no resolvable human originator.",
     "autopilot_forbidden": "You don't have write access to this automation.",
-    "generic": "The operation failed. Try again."
+    "generic": "The operation failed. Try again.",
+    "response_unconfirmed": "The server's response couldn't be confirmed. The list has been refreshed — check the actual state before trying again."
   }
 }

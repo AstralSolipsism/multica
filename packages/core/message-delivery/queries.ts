@@ -1,21 +1,33 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
+import { autopilotKeys } from "../autopilots/queries";
 
 /**
  * Query keys for the Labrastro message-delivery surface (automation result
- * push). Scoped per (wsId, autopilotId); the records list key includes the
- * status filter so filtered pages never share a cache entry.
+ * push). Nested UNDER the autopilot namespace on purpose: deliveries and
+ * routes are produced asynchronously by the send worker / compensator, and
+ * the realtime layer already invalidates `autopilotKeys.all(wsId)` on
+ * autopilot events — nesting means those events also refresh this module
+ * without a second wiring point.
+ *
+ * The records-list key carries both the status filter and the page size so
+ * filtered/paged views never share a cache entry.
  */
 export const messageDeliveryKeys = {
-  all: (wsId: string) => ["message-delivery", wsId] as const,
+  all: (wsId: string) => [...autopilotKeys.all(wsId), "message-delivery"] as const,
   autopilot: (wsId: string, autopilotId: string) =>
-    [...messageDeliveryKeys.all(wsId), "autopilot", autopilotId] as const,
+    [...messageDeliveryKeys.all(wsId), autopilotId] as const,
   routes: (wsId: string, autopilotId: string) =>
     [...messageDeliveryKeys.autopilot(wsId, autopilotId), "routes"] as const,
   approvedTargets: (wsId: string, autopilotId: string) =>
     [...messageDeliveryKeys.autopilot(wsId, autopilotId), "approved-targets"] as const,
-  deliveries: (wsId: string, autopilotId: string, status?: string) =>
-    [...messageDeliveryKeys.autopilot(wsId, autopilotId), "deliveries", status ?? "all"] as const,
+  deliveries: (wsId: string, autopilotId: string, status?: string, limit?: number) =>
+    [
+      ...messageDeliveryKeys.autopilot(wsId, autopilotId),
+      "deliveries",
+      status ?? "all",
+      limit ?? 0,
+    ] as const,
   deliveriesAll: (wsId: string, autopilotId: string) =>
     [...messageDeliveryKeys.autopilot(wsId, autopilotId), "deliveries"] as const,
   delivery: (wsId: string, autopilotId: string, deliveryId: string) =>
@@ -63,10 +75,16 @@ export function messageApprovedTargetsOptions(
   });
 }
 
+export const MESSAGE_DELIVERIES_PAGE_SIZE = 50;
+
 /**
  * Delivery records page. `status` filters server-side; the projection is
  * slim (no content/target snapshots). Detail is fetched on demand via
  * messageDeliveryOptions when a row is opened.
+ *
+ * Refresh: autopilot websocket events invalidate the shared prefix, and the
+ * list polls — fast while any row is in flight (queued/sending), slow
+ * otherwise — because worker write-backs do not emit their own events.
  */
 export function messageDeliveriesOptions(
   wsId: string,
@@ -75,10 +93,16 @@ export function messageDeliveriesOptions(
   options?: { enabled?: boolean },
 ) {
   return queryOptions({
-    queryKey: messageDeliveryKeys.deliveries(wsId, autopilotId, params?.status),
+    queryKey: messageDeliveryKeys.deliveries(wsId, autopilotId, params?.status, params?.limit),
     queryFn: () => api.listMessageDeliveries(autopilotId, params),
     enabled: options?.enabled ?? true,
     retry: false,
+    refetchInterval: (query) => {
+      const rows = query.state.data?.deliveries ?? [];
+      return rows.some((d) => d.status === "queued" || d.status === "sending")
+        ? 5_000
+        : 30_000;
+    },
   });
 }
 

@@ -40,9 +40,11 @@ const ok = vi.hoisted(
 const deliveriesRef = vi.hoisted(() => ({ current: ok({ deliveries: [], limit: 50, offset: 0 }) as QueryResult }));
 const detailRef = vi.hoisted(() => ({ current: undefined as QueryResult | undefined }));
 const mockRetry = vi.hoisted(() => vi.fn());
+const useQuerySpy = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (opts: { queryKey: unknown[]; enabled?: boolean }) => {
+    useQuerySpy(opts);
     if (opts.enabled === false) {
       return { data: undefined, isLoading: false, isError: false, isSuccess: false };
     }
@@ -65,8 +67,9 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("@multica/core/message-delivery", () => ({
-  messageDeliveriesOptions: (_wsId: string, autopilotId: string, params?: { status?: string }) => ({
-    queryKey: ["message-delivery", "ws-1", "autopilot", autopilotId, "deliveries", params?.status ?? "all"],
+  MESSAGE_DELIVERIES_PAGE_SIZE: 50,
+  messageDeliveriesOptions: (_wsId: string, autopilotId: string, params?: { status?: string; limit?: number }) => ({
+    queryKey: ["message-delivery", "ws-1", "autopilot", autopilotId, "deliveries", params?.status ?? "all", params?.limit ?? 0],
   }),
   messageDeliveryOptions: (_wsId: string, autopilotId: string, deliveryId: string, options?: { enabled?: boolean }) => ({
     queryKey: ["message-delivery", "ws-1", "autopilot", autopilotId, "deliveries", "detail", deliveryId],
@@ -235,6 +238,51 @@ describe("MessageDeliveriesSection", () => {
     await user.click(screen.getByRole("button", { name: /checked — retry/i }));
     await waitFor(() => expect(mockRetry).toHaveBeenCalledTimes(1));
     expect(mockRetry.mock.calls[0]?.[0]).toEqual({ autopilotId: "ap-1", deliveryId: "d-2" });
+  });
+
+  it("shows an explicit error instead of a fake empty report when the detail read fails", async () => {
+    const user = userEvent.setup();
+    deliveriesRef.current = ok({ deliveries: [delivery({ id: "d-9", status: "failed" })] });
+    detailRef.current = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      isSuccess: false,
+      error: new ApiError("forbidden", 403, "Forbidden", { code: "autopilot_forbidden" }),
+    };
+    renderSection();
+    await user.click(screen.getByText("member:user-1"));
+
+    expect(
+      await screen.findByText(/don't have write access to this automation/i),
+    ).toBeInTheDocument();
+    // Never the misleading "(no report body)" empty state on a read failure.
+    expect(screen.queryByText(/no report body/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry/i })).toBeDisabled();
+    expect(screen.getByText(/detail failed to load/i)).toBeInTheDocument();
+  });
+
+  it("offers a load-more entry once the page size is reached", async () => {
+    const user = userEvent.setup();
+    deliveriesRef.current = ok({
+      deliveries: Array.from({ length: 50 }, (_, i) =>
+        delivery({ id: `d-${i}`, status: "sent" }),
+      ),
+      limit: 50,
+      offset: 0,
+    });
+    renderSection();
+    const more = screen.getByRole("button", { name: /load more/i });
+    await user.click(more);
+    // The widened page size lands in the query key, so pages never share a
+    // cache entry.
+    await waitFor(() =>
+      expect(
+        useQuerySpy.mock.calls.some(([opts]) =>
+          JSON.stringify(opts.queryKey).includes('"deliveries","all",100'),
+        ),
+      ).toBe(true),
+    );
   });
 
   it("hides the retry affordance from read-only users", async () => {

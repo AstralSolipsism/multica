@@ -284,6 +284,16 @@ function RouteRow({
     route.target_type === "member"
       ? members.find((m) => m.user_id === route.target_user_id)
       : undefined;
+  const conditionKey =
+    route.conditions === "success" ||
+    route.conditions === "failure" ||
+    route.conditions === "all"
+      ? route.conditions
+      : null;
+  const contentModeKey =
+    route.content_mode === "summary" || route.content_mode === "with_output"
+      ? route.content_mode
+      : null;
   const TargetIcon =
     route.target_type === "member"
       ? User
@@ -377,13 +387,11 @@ function RouteRow({
           <span className="truncate">{botLabel}</span>
           <span aria-hidden>·</span>
           <span>
-            {t(($) => $.condition[route.conditions as "success" | "failure" | "all"] ??
-              route.conditions)}
+            {conditionKey ? t(($) => $.condition[conditionKey]) : route.conditions}
           </span>
           <span aria-hidden>·</span>
           <span>
-            {t(($) => $.content_mode[route.content_mode as "summary" | "with_output"] ??
-              route.content_mode)}
+            {contentModeKey ? t(($) => $.content_mode[contentModeKey]) : route.content_mode}
           </span>
           <span aria-hidden>·</span>
           <span className="shrink-0 tabular-nums">
@@ -496,30 +504,35 @@ function ApprovedTargetsList({
         </p>
       ) : (
         <div className="rounded-md border divide-y">
-          {approvals.map((approval) => (
-            <div key={approval.id} className="flex items-center gap-3 px-3 py-2">
-              <Badge variant="secondary" className="shrink-0">
-                {t(($) => $.target_type[approval.target_type as "group" | "topic"] ??
-                  approval.target_type)}
-              </Badge>
-              <code className="flex-1 min-w-0 truncate text-caption font-mono">
-                {approval.target_key}
-              </code>
-              <span className="shrink-0 text-caption text-muted-foreground tabular-nums">
-                {t(($) => $.approvals.approved_at, {
-                  time: formatDate(approval.approved_at, locale),
-                })}
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setRevoking(approval)}
-                aria-label={t(($) => $.approvals.revoke)}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          ))}
+          {approvals.map((approval) => {
+            const typeKey =
+              approval.target_type === "group" || approval.target_type === "topic"
+                ? approval.target_type
+                : null;
+            return (
+              <div key={approval.id} className="flex items-center gap-3 px-3 py-2">
+                <Badge variant="secondary" className="shrink-0">
+                  {typeKey ? t(($) => $.target_type[typeKey]) : approval.target_type}
+                </Badge>
+                <code className="flex-1 min-w-0 truncate text-caption font-mono">
+                  {approval.target_key}
+                </code>
+                <span className="shrink-0 text-caption text-muted-foreground tabular-nums">
+                  {t(($) => $.approvals.approved_at, {
+                    time: formatDate(approval.approved_at, locale),
+                  })}
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setRevoking(approval)}
+                  aria-label={t(($) => $.approvals.revoke)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            );
+          })}
         </div>
       )}
       <AlertDialog

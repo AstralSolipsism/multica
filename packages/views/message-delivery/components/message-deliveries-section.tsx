@@ -1,20 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import {
-  AlertTriangle,
-  Ban,
-  CheckCircle2,
-  Clock,
-  HelpCircle,
-  Loader2,
-  RotateCw,
-  Send,
-  ShieldOff,
-  XCircle,
-} from "lucide-react";
+import { RotateCw, Send } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  MESSAGE_DELIVERIES_PAGE_SIZE,
   messageDeliveriesOptions,
   messageDeliveryOptions,
   useRetryMessageDelivery,
@@ -58,40 +48,17 @@ import { cn } from "@multica/ui/lib/utils";
 import { toast } from "sonner";
 import { useLocale, useT } from "../../i18n";
 import { AppLink } from "../../navigation";
+import { deliveryStatusVisual } from "../status-visual";
 import {
   canRetryMessageDelivery,
   messageDeliveryErrorCodeKey,
   messageDeliveryErrorKey,
   messageDeliverySourceKindKey,
   messageDeliveryStatusKey,
-  type MessageDeliveryStatusKey,
 } from "../copy";
 
 // --- Status visuals -------------------------------------------------------
 
-type StatusVisual = {
-  color: string;
-  icon: typeof CheckCircle2;
-  spin?: boolean;
-};
-
-const STATUS_VISUAL: Record<MessageDeliveryStatusKey, StatusVisual> = {
-  queued: { color: "text-blue-500", icon: Clock },
-  sending: { color: "text-blue-500", icon: Loader2, spin: true },
-  sent: { color: "text-emerald-500", icon: CheckCircle2 },
-  failed: { color: "text-destructive", icon: XCircle },
-  // The send may have landed; only a manual verify-and-retry resolves it.
-  uncertain: { color: "text-amber-500", icon: AlertTriangle },
-  cancelled: { color: "text-muted-foreground", icon: Ban },
-  // Condition mismatch / unresolved historical source — deliberately muted,
-  // it is a recorded non-send, not a bug.
-  suppressed: { color: "text-muted-foreground", icon: ShieldOff },
-  unknown: { color: "text-muted-foreground", icon: HelpCircle },
-};
-
-function visualForStatus(status: string): StatusVisual {
-  return STATUS_VISUAL[messageDeliveryStatusKey(status)];
-}
 
 function formatDate(value: string | null | undefined, locale: string): string {
   if (!value) return "—";
@@ -134,13 +101,15 @@ export function MessageDeliveriesSection({
   const { t } = useT("message-delivery");
   const wsId = useWorkspaceId();
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  // Growing page size: the server pages with limit/offset; "load more"
+  // widens the window (and the cache key) instead of stacking offsets.
+  const [limit, setLimit] = useState(MESSAGE_DELIVERIES_PAGE_SIZE);
 
   const deliveriesQuery = useQuery(
-    messageDeliveriesOptions(
-      wsId,
-      autopilotId,
-      { status: statusFilter === "all" ? undefined : statusFilter },
-    ),
+    messageDeliveriesOptions(wsId, autopilotId, {
+      status: statusFilter === "all" ? undefined : statusFilter,
+      limit,
+    }),
   );
 
   const header = (
@@ -191,6 +160,7 @@ export function MessageDeliveriesSection({
   }
 
   const deliveries = deliveriesQuery.data?.deliveries ?? [];
+  const mayHaveMore = deliveries.length >= limit;
 
   return (
     <section className="space-y-3">
@@ -209,16 +179,30 @@ export function MessageDeliveriesSection({
           {t(($) => $.deliveries.empty)}
         </div>
       ) : (
-        <div className="rounded-md border overflow-hidden">
-          {deliveries.map((delivery) => (
-            <DeliveryRow
-              key={delivery.id}
-              delivery={delivery}
-              autopilotId={autopilotId}
-              canWrite={canWrite}
-            />
-          ))}
-        </div>
+        <>
+          <div className="rounded-md border overflow-hidden">
+            {deliveries.map((delivery) => (
+              <DeliveryRow
+                key={delivery.id}
+                delivery={delivery}
+                autopilotId={autopilotId}
+                canWrite={canWrite}
+              />
+            ))}
+          </div>
+          {mayHaveMore && (
+            <div className="flex justify-center">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setLimit((n) => n + MESSAGE_DELIVERIES_PAGE_SIZE)}
+                disabled={deliveriesQuery.isFetching}
+              >
+                {t(($) => $.deliveries.load_more)}
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </section>
   );
@@ -239,7 +223,7 @@ function DeliveryRow({
   const locale = useLocale();
   const [open, setOpen] = useState(false);
 
-  const visual = visualForStatus(delivery.status);
+  const visual = deliveryStatusVisual(delivery.status);
   const StatusIcon = visual.icon;
 
   return (
@@ -252,7 +236,7 @@ function DeliveryRow({
         <StatusIcon
           className={cn("h-4 w-4 shrink-0", visual.color, visual.spin && "animate-spin")}
         />
-        <span className={cn("w-24 shrink-0 text-caption font-medium", visual.color)}>
+        <span className="w-24 shrink-0 text-caption font-medium text-foreground">
           {t(($) => $.deliveries.status[messageDeliveryStatusKey(delivery.status)])}
         </span>
         <span className="w-28 shrink-0 text-caption text-muted-foreground truncate">
@@ -293,7 +277,7 @@ function DeliveryRow({
 
 // --- Detail dialog --------------------------------------------------------
 
-function DeliveryDetailDialog({
+export function DeliveryDetailDialog({
   open,
   onOpenChange,
   autopilotId,
@@ -313,21 +297,24 @@ function DeliveryDetailDialog({
   const retry = useRetryMessageDelivery();
   const [confirmUncertain, setConfirmUncertain] = useState(false);
 
-  const { data: detail, isLoading } = useQuery(
+  const { data: detail, isLoading, isError, error } = useQuery(
     messageDeliveryOptions(wsId, autopilotId, delivery.id, { enabled: open }),
   );
+  // A failed detail read (403/500/…) is NOT an empty report: show the error
+  // explicitly and keep retry unavailable until the real state is known.
+  const detailError = isError ? error : null;
   // Member targets show the member's name rather than a raw user uuid.
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   // Slim row until the detail lands; snapshots/receipts skeleton meanwhile.
   const full = detail?.delivery ?? delivery;
-  const visual = visualForStatus(full.status);
+  const visual = deliveryStatusVisual(full.status);
   const StatusIcon = visual.icon;
   const content = detail?.content_snapshot ?? null;
   const target = detail?.target_snapshot ?? null;
   const sourceRef = detail?.source_ref ?? null;
   const receipts = detail?.receipts ?? [];
 
-  const retryable = canWrite && canRetryMessageDelivery(full.status);
+  const retryable = canWrite && !detailError && canRetryMessageDelivery(full.status);
 
   const handleRetry = () => {
     retry.mutate(
@@ -357,7 +344,7 @@ function DeliveryDetailDialog({
               <StatusIcon
                 className={cn("h-4 w-4 shrink-0", visual.color, visual.spin && "animate-spin")}
               />
-              <span className={cn("text-body font-medium", visual.color)}>
+              <span className="text-body font-medium text-foreground">
                 {t(($) => $.deliveries.status[messageDeliveryStatusKey(full.status)])}
               </span>
             </div>
@@ -380,7 +367,16 @@ function DeliveryDetailDialog({
             </p>
           )}
 
+          {detailError && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                {t(($) => $.error[messageDeliveryErrorKey(errorCode(detailError))])}
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Report content (frozen at decision time) */}
+          {!detailError && (
           <div className="min-w-0 rounded-md border bg-background">
             <div className="border-b px-3 py-1.5 text-micro font-medium text-muted-foreground">
               {t(($) => $.deliveries.detail.report)}
@@ -411,6 +407,7 @@ function DeliveryDetailDialog({
               </p>
             )}
           </div>
+          )}
 
           {/* Target + meta */}
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-caption">
@@ -443,6 +440,11 @@ function DeliveryDetailDialog({
               label={t(($) => $.deliveries.detail.route_revision)}
               value={`v${full.route_revision}`}
             />
+            <MetaRow
+              label={t(($) => $.deliveries.detail.run)}
+              value={full.run_id ? full.run_id.slice(0, 8) : "—"}
+              mono
+            />
           </dl>
 
           {full.error_code && (
@@ -457,7 +459,7 @@ function DeliveryDetailDialog({
           )}
 
           {/* Receipt ledger */}
-          {isLoading && !detail ? (
+          {detailError ? null : isLoading && !detail ? (
             <Skeleton className="h-16 w-full" />
           ) : receipts.length > 0 ? (
             <div className="space-y-1.5">
@@ -474,11 +476,13 @@ function DeliveryDetailDialog({
 
           {/* Retry — gated on write permission and a retryable status */}
           <div className="flex items-center justify-between pt-2">
-            {!canWrite || !canRetryMessageDelivery(full.status) ? (
+            {!retryable ? (
               <span className="text-caption text-muted-foreground">
-                {canRetryMessageDelivery(full.status)
-                  ? t(($) => $.section.read_only)
-                  : t(($) => $.deliveries.retry.disabled)}
+                {detailError
+                  ? t(($) => $.deliveries.detail.load_failed)
+                  : !canWrite && canRetryMessageDelivery(full.status)
+                    ? t(($) => $.section.read_only)
+                    : t(($) => $.deliveries.retry.disabled)}
               </span>
             ) : (
               <span />

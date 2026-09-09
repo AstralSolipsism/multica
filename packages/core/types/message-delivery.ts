@@ -138,7 +138,9 @@ export interface MessageDelivery {
   route_id: string;
   route_revision: number;
   autopilot_id: string;
-  run_id: string;
+  /** Null on manual test sends — they are recorded like deliveries but have
+   * no source run (server/internal/messagedelivery/deliveries.go). */
+  run_id: string | null;
   dedup_key?: string;
   source_kind: MessageDeliverySourceKind;
   status: MessageDeliveryStatus;

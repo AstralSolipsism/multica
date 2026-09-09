@@ -4411,6 +4411,14 @@ export class ApiClient {
     const parsed = parseWithFallback(raw, MessageRouteResponseSchema,
       { route: EMPTY_MESSAGE_ROUTE },
       { endpoint: "POST /api/autopilots/:id/message-routes" });
+    if (!parsed.route.id) {
+      // A write whose response cannot be parsed must not masquerade as a
+      // saved rule: surface an explicit unconfirmed error instead of the
+      // empty fallback, so the UI never toasts "saved" on guesswork.
+      throw new ApiError("unparseable message-route write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
     return parsed.route;
   }
 
@@ -4429,6 +4437,14 @@ export class ApiClient {
     const parsed = parseWithFallback(raw, MessageRouteResponseSchema,
       { route: EMPTY_MESSAGE_ROUTE },
       { endpoint: "PUT /api/autopilots/:id/message-routes/:routeId" });
+    if (!parsed.route.id) {
+      // A write whose response cannot be parsed must not masquerade as a
+      // saved rule: surface an explicit unconfirmed error instead of the
+      // empty fallback, so the UI never toasts "saved" on guesswork.
+      throw new ApiError("unparseable message-route write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
     return parsed.route;
   }
 
@@ -4448,6 +4464,14 @@ export class ApiClient {
     const parsed = parseWithFallback(raw, MessageRouteResponseSchema,
       { route: EMPTY_MESSAGE_ROUTE },
       { endpoint: "POST /api/autopilots/:id/message-routes/:routeId/enable" });
+    if (!parsed.route.id) {
+      // A write whose response cannot be parsed must not masquerade as a
+      // saved rule: surface an explicit unconfirmed error instead of the
+      // empty fallback, so the UI never toasts "saved" on guesswork.
+      throw new ApiError("unparseable message-route write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
     return parsed.route;
   }
 
@@ -4467,6 +4491,11 @@ export class ApiClient {
     const parsed = parseWithFallback(raw, MessageDeliveryResponseSchema,
       { delivery: EMPTY_MESSAGE_DELIVERY },
       { endpoint: "POST /api/autopilots/:id/message-routes/:routeId/test-send" });
+    if (!parsed.delivery.id) {
+      throw new ApiError("unparseable delivery write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
     return parsed.delivery;
   }
 
@@ -4497,6 +4526,11 @@ export class ApiClient {
     const parsed = parseWithFallback(raw, ApproveMessageTargetResponseSchema,
       { approved_target: EMPTY_MESSAGE_APPROVED_TARGET },
       { endpoint: "POST /api/autopilots/:id/message-approved-targets" });
+    if (!parsed.approved_target.id) {
+      throw new ApiError("unparseable approved-target write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
     return parsed.approved_target;
   }
 
@@ -4569,6 +4603,11 @@ export class ApiClient {
     const parsed = parseWithFallback(raw, MessageDeliveryResponseSchema,
       { delivery: EMPTY_MESSAGE_DELIVERY },
       { endpoint: "POST /api/autopilots/:id/message-deliveries/:deliveryId/retry" });
+    if (!parsed.delivery.id) {
+      throw new ApiError("unparseable delivery write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
     return parsed.delivery;
   }
 

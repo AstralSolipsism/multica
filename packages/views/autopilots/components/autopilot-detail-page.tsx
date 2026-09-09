@@ -71,6 +71,7 @@ import {
   MessageDeliveriesSection,
   MessageDeliverySection,
 } from "../../message-delivery";
+import { RunDeliveryBadges } from "../../message-delivery/components/run-delivery-badges";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { useT } from "../../i18n";
 import { PageHeader } from "../../layout/page-header";
@@ -110,7 +111,7 @@ function WebhookPayloadSlot({ autopilotId, runId }: { autopilotId: string; runId
   return <WebhookPayloadPreview payload={data.trigger_payload} />;
 }
 
-function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: string; agentName: string }) {
+function RunRow({ run, agentId, agentName, canWrite }: { run: AutopilotRun; agentId: string; agentName: string; canWrite: boolean }) {
   const { t, i18n } = useT("autopilots");
   const wsPaths = useWorkspacePaths();
   const status = (RUN_VISUAL[run.status as RunStatus] ? (run.status as RunStatus) : "issue_created");
@@ -156,6 +157,9 @@ function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: strin
           <span className="text-destructive">{run.failure_reason}</span>
         ) : null}
       </span>
+      {/* Result-push deliveries for this run (OL-26): status at a glance,
+          click through to the frozen report / receipts / retry. */}
+      <RunDeliveryBadges autopilotId={run.autopilot_id} runId={run.id} canWrite={canWrite} />
       <span className="w-32 shrink-0 text-right text-caption text-muted-foreground tabular-nums">
         {formatInTimeZone(run.triggered_at || run.created_at, undefined, i18n.language)}
       </span>
@@ -192,10 +196,12 @@ function RunHistoryList({
   runs,
   agentId,
   agentName,
+  canWrite,
 }: {
   runs: AutopilotRun[];
   agentId: string;
   agentName: string;
+  canWrite: boolean;
 }) {
   const visibleRuns = runs.filter((run) => run.status !== "skipped");
   const skippedRuns = runs.filter((run) => run.status === "skipped");
@@ -203,10 +209,10 @@ function RunHistoryList({
   return (
     <div className="rounded-md border overflow-hidden">
       {visibleRuns.map((run) => (
-        <RunRow key={run.id} run={run} agentId={agentId} agentName={agentName} />
+        <RunRow key={run.id} run={run} agentId={agentId} agentName={agentName} canWrite={canWrite} />
       ))}
       {skippedRuns.length > 0 && (
-        <SkippedRunsGroup runs={skippedRuns} agentId={agentId} agentName={agentName} />
+        <SkippedRunsGroup runs={skippedRuns} agentId={agentId} agentName={agentName} canWrite={canWrite} />
       )}
     </div>
   );
@@ -216,10 +222,12 @@ function SkippedRunsGroup({
   runs,
   agentId,
   agentName,
+  canWrite,
 }: {
   runs: AutopilotRun[];
   agentId: string;
   agentName: string;
+  canWrite: boolean;
 }) {
   const { t, i18n } = useT("autopilots");
   const [open, setOpen] = useState(false);
@@ -251,7 +259,7 @@ function SkippedRunsGroup({
       {open && (
         <div className="border-t bg-background">
           {runs.map((run) => (
-            <RunRow key={run.id} run={run} agentId={agentId} agentName={agentName} />
+            <RunRow key={run.id} run={run} agentId={agentId} agentName={agentName} canWrite={canWrite} />
           ))}
         </div>
       )}
@@ -1011,6 +1019,7 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
                 runs={runs}
                 agentId={autopilot.assignee_id}
                 agentName={getActorName(autopilot.assignee_type, autopilot.assignee_id)}
+                canWrite={canWrite}
               />
             )}
           </section>

@@ -108,7 +108,8 @@
     },
     "row": {
       "attempts": "{{count}} 次尝试",
-      "shards": "分片 {{done}}/{{total}}"
+      "shards": "分片 {{done}}/{{total}}",
+      "open_delivery": "查看投递"
     },
     "source_kind": {
       "run_only": "自动化运行",
@@ -134,7 +135,9 @@
       "delivered_at": "平台接收时间",
       "next_attempt_at": "下次重试",
       "attempts": "尝试次数",
-      "route_revision": "规则版本"
+      "route_revision": "规则版本",
+      "run": "运行",
+      "load_failed": "详情加载失败——上方状态来自列表行，可能不是最新。"
     },
     "retry": {
       "action": "重试",
@@ -146,7 +149,8 @@
       "uncertain_confirm": "已核实，重试",
       "cancel": "取消",
       "disabled": "仅失败或结果不确定的投递可以重试。"
-    }
+    },
+    "load_more": "加载更多"
   },
   "error_code": {
     "route_disabled": "推送目标已停用",
@@ -191,6 +195,7 @@
     "source_unavailable": "该自动化已被归档或删除。",
     "autopilot_no_originator": "请求缺少可识别的发起人。",
     "autopilot_forbidden": "你没有该自动化的写权限。",
-    "generic": "操作失败，请重试。"
+    "generic": "操作失败，请重试。",
+    "response_unconfirmed": "无法确认服务端响应，列表已刷新，请先核对实际状态再重试。"
   }
 }

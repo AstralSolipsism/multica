@@ -1,4 +1,5 @@
 export {
+  MESSAGE_DELIVERIES_PAGE_SIZE,
   messageDeliveryKeys,
   messageRoutesOptions,
   messageApprovedTargetsOptions,

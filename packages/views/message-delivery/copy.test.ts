@@ -36,6 +36,7 @@ describe("messageDeliveryErrorKey", () => {
       "source_unavailable",
       "autopilot_no_originator",
       "autopilot_forbidden",
+      "response_unconfirmed",
     ] as const;
     for (const code of codes) {
       expect(messageDeliveryErrorKey(code)).toBe(code);

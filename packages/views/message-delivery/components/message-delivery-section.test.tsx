@@ -73,7 +73,11 @@ vi.mock("@tanstack/react-query", () => ({
     if (key.includes("members")) return membersRef.current;
     return { data: undefined, isLoading: false, isError: false, isSuccess: false };
   },
-  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+  useQueryClient: () => ({
+    invalidateQueries: vi.fn(),
+    // fetchQuery returns the raw envelope (select is observer-only).
+    fetchQuery: async () => ({ routes: routesRef.current.data ?? [] }),
+  }),
   queryOptions: <T,>(opts: T) => opts,
 }));
 
@@ -356,6 +360,33 @@ describe("MessageRouteEditorDialog (via section)", () => {
       await screen.findByText(/changed elsewhere/i),
     ).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("recovers from a revision conflict by adopting the latest revision", async () => {
+    routesRef.current = ok([ROUTE]); // revision 3
+    mockUpdate
+      .mockImplementationOnce(() => {
+        // The other writer committed v4; the list refetch sees it.
+        routesRef.current = ok([{ ...ROUTE, revision: 4 }]);
+        return Promise.reject(
+          new ApiError("conflict", 409, "Conflict", { code: "route_revision_conflict" }),
+        );
+      })
+      .mockResolvedValueOnce({ ...ROUTE, revision: 5 });
+
+    const user = userEvent.setup();
+    renderSection();
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
+    await screen.findByText("Edit push target");
+
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+    expect(await screen.findByText(/changed elsewhere/i)).toBeInTheDocument();
+    expect(mockUpdate.mock.calls[0]?.[0].expected_revision).toBe(3);
+
+    // The dialog adopted the fresh route — the retry carries v4, not v3.
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2));
+    expect(mockUpdate.mock.calls[1]?.[0].expected_revision).toBe(4);
   });
 
   it("tells collaborators that external targets need admin approval", async () => {

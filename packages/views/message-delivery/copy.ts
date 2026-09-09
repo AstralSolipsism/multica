@@ -24,6 +24,7 @@ export type MessageDeliveryErrorKey =
   | "source_unavailable"
   | "autopilot_no_originator"
   | "autopilot_forbidden"
+  | "response_unconfirmed"
   | "generic";
 
 export function messageDeliveryErrorKey(code: string | undefined): MessageDeliveryErrorKey {
@@ -47,6 +48,7 @@ export function messageDeliveryErrorKey(code: string | undefined): MessageDelive
     case "source_unavailable":
     case "autopilot_no_originator":
     case "autopilot_forbidden":
+    case "response_unconfirmed":
       return code;
     default:
       return "generic";

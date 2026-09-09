@@ -1,11 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
+  messageRoutesOptions,
   useApproveMessageTarget,
   useCreateMessageRoute,
   useUpdateMessageRoute,
 } from "@multica/core/message-delivery";
+import { useWorkspaceId } from "@multica/core/hooks";
 import { errorCode } from "@multica/core/api";
 import type {
   MessageApprovedTarget,
@@ -75,9 +78,15 @@ export function MessageRouteEditorDialog({
 }) {
   const { t } = useT("message-delivery");
   const { getActorName } = useActorName();
+  const wsId = useWorkspaceId();
+  const qc = useQueryClient();
   const createRoute = useCreateMessageRoute();
   const updateRoute = useUpdateMessageRoute();
   const approveTarget = useApproveMessageTarget();
+  // The route being edited. On a 409 the latest committed version is
+  // refetched and adopted HERE, so the next save carries the newest
+  // expected_revision — the conflict copy's promise is real, not advice.
+  const [currentRoute, setCurrentRoute] = useState<MessageRoute | null>(route);
 
   const activeInstallations = installations.filter((inst) => inst.status === "active");
 
@@ -162,12 +171,12 @@ export function MessageRouteEditorDialog({
             : {}),
         });
       }
-      if (route) {
+      if (currentRoute) {
         await updateRoute.mutateAsync({
           autopilotId,
-          routeId: route.id,
+          routeId: currentRoute.id,
           ...payload,
-          expected_revision: route.revision,
+          expected_revision: currentRoute.revision,
         });
       } else {
         await createRoute.mutateAsync({ autopilotId, ...payload, enabled });
@@ -177,6 +186,17 @@ export function MessageRouteEditorDialog({
     } catch (e) {
       // Stays inside the dialog — a failed save must not look like a saved,
       // enabled push anywhere else on the page.
+      if (errorCode(e) === "route_revision_conflict" && currentRoute) {
+        try {
+          // fetchQuery returns the raw envelope (select is observer-only).
+          const fresh = await qc.fetchQuery(messageRoutesOptions(wsId, autopilotId));
+          const found = fresh.routes.find((r: MessageRoute) => r.id === currentRoute.id);
+          if (found) setCurrentRoute(found);
+        } catch {
+          // The refetch failed too; the conflict alert still explains the
+          // situation and the list below is already fresh from invalidation.
+        }
+      }
       setError(e);
     }
   };
@@ -193,7 +213,7 @@ export function MessageRouteEditorDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogTitle>
-          {route ? t(($) => $.editor.title_edit) : t(($) => $.editor.title_add)}
+          {currentRoute ? t(($) => $.editor.title_edit) : t(($) => $.editor.title_add)}
         </DialogTitle>
         <div className="space-y-4 pt-1">
           <div className="space-y-1.5">
@@ -361,7 +381,7 @@ export function MessageRouteEditorDialog({
             </p>
           </div>
 
-          {route == null && (
+          {currentRoute == null && (
             <div className="flex items-center justify-between">
               <label className="text-caption text-muted-foreground">
                 {t(($) => $.editor.enabled)}

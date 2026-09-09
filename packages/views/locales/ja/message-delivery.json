@@ -108,7 +108,8 @@
     },
     "row": {
       "attempts": "{{count}} 回試行",
-      "shards": "シャード {{done}}/{{total}}"
+      "shards": "シャード {{done}}/{{total}}",
+      "open_delivery": "配信を表示"
     },
     "source_kind": {
       "run_only": "自動化の実行",
@@ -134,7 +135,9 @@
       "delivered_at": "プラットフォーム受理",
       "next_attempt_at": "次回リトライ",
       "attempts": "試行回数",
-      "route_revision": "ルールバージョン"
+      "route_revision": "ルールバージョン",
+      "run": "実行",
+      "load_failed": "詳細を読み込めませんでした。上のステータスはリスト行のもので、最新でない可能性があります。"
     },
     "retry": {
       "action": "リトライ",
@@ -146,7 +149,8 @@
       "uncertain_confirm": "確認済み — リトライ",
       "cancel": "キャンセル",
       "disabled": "失敗または結果不明の配信のみリトライできます。"
-    }
+    },
+    "load_more": "さらに読み込む"
   },
   "error_code": {
     "route_disabled": "プッシュ先は無効化されました",
@@ -191,6 +195,7 @@
     "source_unavailable": "この自動化はアーカイブまたは削除されました。",
     "autopilot_no_originator": "リクエストに解決可能な実行者がいません。",
     "autopilot_forbidden": "この自動化への書き込み権限がありません。",
-    "generic": "操作に失敗しました。もう一度お試しください。"
+    "generic": "操作に失敗しました。もう一度お試しください。",
+    "response_unconfirmed": "サーバーの応答を確認できませんでした。リストを更新済みです。実際の状態を確認してから再試行してください。"
   }
 }
