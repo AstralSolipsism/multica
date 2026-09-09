@@ -137,6 +137,7 @@ func channelMessageFromLark(lm InboundMessage) channel.InboundMessage {
 		Type:               channelMsgType(lm.MessageType),
 		Text:               lm.Body,
 		CommandText:        lm.CommandBody,
+		CommandTextSet:     true,
 		HasSelectedContext: lm.HasSelectedContext,
 		ReplyTo:            reply,
 		AddressedToBot:     lm.AddressedToBot,

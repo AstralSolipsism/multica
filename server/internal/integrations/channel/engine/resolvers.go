@@ -22,6 +22,8 @@ import (
 // over unchanged.
 type Outcome string
 
+const OutcomeFeedback Outcome = "feedback"
+
 const (
 	OutcomeDropped       Outcome = "dropped"
 	OutcomeNeedsBinding  Outcome = "needs_binding"
@@ -50,6 +52,7 @@ const (
 // consumed by the outbound side (OutboundReplier / typing). It mirrors the
 // legacy lark.DispatchResult.
 type Result struct {
+	FeedbackNotice       string
 	Outcome              Outcome
 	DropReason           DropReason
 	InstallationID       pgtype.UUID

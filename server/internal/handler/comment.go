@@ -1921,17 +1921,57 @@ func isNoteComment(content string) bool {
 // deferred / blocked from enqueue. UI-suppressed triggers (the user unchecked
 // them) are removed before enqueue and produce no outcome.
 func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, actorType, actorID, originatorUserID string, suppressAgentIDs []pgtype.UUID) []CommentTriggerOutcome {
+	outcomes, _ := h.triggerTasksForCommentChecked(ctx, issue, comment, parentComment, actorType, actorID, originatorUserID, suppressAgentIDs, false)
+	return outcomes
+}
+
+func (h *Handler) triggerTasksForCommentChecked(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, actorType, actorID, originatorUserID string, suppressAgentIDs []pgtype.UUID, recover bool) ([]CommentTriggerOutcome, error) {
 	if isNoteComment(comment.Content) {
-		return nil
+		return nil, nil
 	}
 	triggers, targets := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, commentTriggerComputeOptions{
 		ExcludeTriggerCommentID: comment.ID,
 		OriginatorUserID:        originatorUserID,
 	})
 	triggers = filterSuppressedCommentAgentTriggers(triggers, suppressAgentIDs)
+	if recover {
+		// The durable feedback path holds these locks through enqueue. Recheck
+		// the SAME invocation predicate after locking, including target revokes.
+		sort.Slice(triggers, func(i, j int) bool { return uuidToString(triggers[i].Agent.ID) < uuidToString(triggers[j].Agent.ID) })
+		remaining := triggers[:0]
+		for _, trigger := range triggers {
+			agent, err := h.Queries.GetAgentForClaimUpdate(ctx, trigger.Agent.ID)
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if _, err := h.Queries.LockLabrastroFeedbackInvocationTargets(ctx, agent.ID); err != nil {
+				return nil, err
+			}
+			if !h.canInvokeAgent(ctx, agent, actorType, actorID, originatorUserID, uuidToString(issue.WorkspaceID)) {
+				continue
+			}
+			trigger.Agent = agent
+			covered, err := h.Queries.HasTaskCoveringDelegatedFailureComment(ctx, db.HasTaskCoveringDelegatedFailureCommentParams{IssueID: issue.ID, AgentID: trigger.Agent.ID, CommentID: comment.ID})
+			if err != nil {
+				return nil, err
+			}
+			if !covered {
+				remaining = append(remaining, trigger)
+			}
+		}
+		triggers = remaining
+	}
 	h.noteBlockedRuntimeTargets(ctx, issue, targets)
 	enqueued := h.enqueueCommentAgentTriggers(ctx, issue, comment.ID, triggers)
-	return commentTriggerOutcomes(targets, enqueued)
+	for _, result := range enqueued {
+		if result.reason == ReasonInternalError {
+			return commentTriggerOutcomes(targets, enqueued), errors.New("comment trigger enqueue failed")
+		}
+	}
+	return commentTriggerOutcomes(targets, enqueued), nil
 }
 
 // noteBlockedRuntimeTargets leaves one system comment per agent refused for an
@@ -3533,7 +3573,7 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("cancel tasks for deleted trigger comment failed", append(logger.RequestAttrs(r), "error", cancelErr, "comment_id", commentId)...)
 	}
 
-	deleted, err := h.Queries.DeleteComment(r.Context(), db.DeleteCommentParams{
+	deleted, err := h.deleteCommentWithFeedback(r.Context(), db.DeleteCommentParams{
 		ID:          comment.ID,
 		WorkspaceID: comment.WorkspaceID,
 	})

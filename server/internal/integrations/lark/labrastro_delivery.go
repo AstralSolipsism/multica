@@ -260,7 +260,7 @@ func (s *DeliverySender) resolveInstallation(ctx context.Context, workspaceID, i
 		return InstallationCredentials{}, Installation{}, fmt.Errorf("load installation: %w", err)
 	}
 	if inst.Status != "active" {
-		return InstallationCredentials{}, Installation{}, fmt.Errorf("installation is revoked")
+		return InstallationCredentials{}, Installation{}, ErrInstallationRevoked
 	}
 	secret, err := s.installations.DecryptAppSecret(inst)
 	if err != nil {
@@ -313,8 +313,7 @@ func (s *DeliverySender) Send(ctx context.Context, req messagedelivery.SendReque
 			Err:   err,
 		}
 	}
-	_ = inst
-
+	req.Text += signedFeedbackLink(req, creds.AppSecret, util.UUIDToString(inst.AgentID))
 	params, err := deliveryParams(req, creds)
 	if err != nil {
 		return messagedelivery.SendResult{}, &messagedelivery.SendError{

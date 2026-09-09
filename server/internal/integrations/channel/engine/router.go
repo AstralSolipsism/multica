@@ -34,8 +34,9 @@ import (
 // implementation). Adding a platform is "register a ResolverSet", not "edit
 // the Router".
 type Router struct {
-	mu   sync.RWMutex
-	sets map[channel.Type]ResolverSet
+	mu       sync.RWMutex
+	sets     map[channel.Type]ResolverSet
+	feedback FeedbackHandler
 
 	issues    IssueCreator
 	tasks     TaskEnqueuer
@@ -206,7 +207,7 @@ func (r *Router) Handle(ctx context.Context, msg channel.InboundMessage) error {
 	// enriching adapters and both comply: lark maps the decoder's
 	// pre-enrichment CommandBody, telegram the cleaned instruction captured
 	// before enrichWithQuotedHumanMessage.
-	if msg.CommandText == "" {
+	if msg.CommandText == "" && !msg.CommandTextSet {
 		msg.CommandText = msg.Text
 	}
 
@@ -368,6 +369,22 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			return r.drop(ctx, set, msg, inst.ID, DropReasonNonWorkspaceMember), finalizeMark, nil
 		default:
 			return Result{}, finalizeRelease, fmt.Errorf("resolve sender: %w", err)
+		}
+	}
+
+	r.mu.RLock()
+	feedback := r.feedback
+	r.mu.RUnlock()
+	_, issueCommand := ParseIssueCommand(msg.CommandText)
+	if feedback != nil && !bareFresh && !startChat && !msg.ForceFresh && !issueCommand {
+		res, handled, err := feedback(ctx, inst, identity, msg)
+		if err != nil {
+			return Result{}, finalizeRelease, err
+		}
+		if handled {
+			res.InstallationID = inst.ID
+			res.Sender = msg.Source.SenderID
+			return res, finalizeMark, nil
 		}
 	}
 

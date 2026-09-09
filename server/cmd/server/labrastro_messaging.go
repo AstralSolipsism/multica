@@ -40,6 +40,7 @@ func assembleMessageDelivery(h *handler.Handler, bus *events.Bus) {
 		if client, ok := h.LarkAPIClient.(lark.DeliveryAPIClient); ok {
 			sender := lark.NewDeliverySender(h.LarkInstallations, client)
 			svc.Sender = sender
+			svc.FeedbackTransport = sender
 			// The same adapter proves group/topic targets before a route
 			// referencing them may be saved or sent; without it those
 			// saves fail closed.
@@ -76,4 +77,8 @@ func assembleMessageDelivery(h *handler.Handler, bus *events.Bus) {
 	})
 
 	h.MessageDelivery = svc
+	svc.ProcessFeedback = h.ProcessMessageFeedback
+	if h.ChannelRouter != nil {
+		h.ChannelRouter.SetFeedbackHandler(h.HandleMessageFeedback)
+	}
 }
