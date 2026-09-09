@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -10,20 +11,21 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
 // maxPreviewTriggerIssues caps a single preview request so a pathological
 // selection cannot fan out into thousands of readiness probes.
 const maxPreviewTriggerIssues = 500
 
-// issueTriggerWriteProbe builds the probe the write paths feed to
-// WillEnqueueRun. The private-agent gate is already enforced at the HTTP
-// boundary (validateAssigneePair on assign) and inside enqueueSquadLeaderTask
-// (canEnqueueSquadLeader), so a write must NOT re-run or sink it — it passes
-// allow-all. The self-loop check needs the request's X-Task-ID header.
+// issueTriggerWriteProbe carries invocation and self-loop checks into the
+// compound transaction now that it owns the queue insertion.
 func (h *Handler) issueTriggerWriteProbe(r *http.Request, actorType, actorID string, issue db.Issue) service.IssueTriggerProbe {
+	originatorUserID := h.invokeOriginatorFromRequest(r, actorType, actorID)
 	return service.IssueTriggerProbe{
-		CanAccessAgent: nil, // allow-all; gate lives at the write boundary
+		CanAccessAgent: func(agent db.Agent) bool {
+			return h.canInvokeAgent(r.Context(), agent, actorType, actorID, originatorUserID, uuidToString(issue.WorkspaceID))
+		},
 		IsSelfLoop: func() bool {
 			return h.isAgentRunningOnIssue(r, actorType, issue)
 		},
@@ -76,23 +78,6 @@ func (h *Handler) shouldSuppressActiveSelfAssignment(ctx context.Context, actorT
 	return active || err != nil
 }
 
-// dispatchIssueRun executes the enqueue side effect for a decision produced by
-// WillEnqueueRun. handoffNote is a legacy API input retained for installed
-// clients and travels only with a run that actually starts. The squad path
-// still flows through enqueueSquadLeaderTask so the leader access gate and
-// pending dedup stay in one place.
-func (h *Handler) dispatchIssueRun(ctx context.Context, issue db.Issue, trigger service.IssueRunTrigger, actorType, actorID, handoffNote string) {
-	switch trigger.AssigneeType {
-	case "agent":
-		// The member who performed this assign/promote is the accountable human
-		// for the run (MUL-4302 §4). An agent actor is not a human, so only a
-		// member actor is threaded; otherwise attribution falls back to the chain.
-		_, _ = h.TaskService.EnqueueTaskForIssueWithHandoff(ctx, issue, handoffNote, memberActorUserID(actorType, actorID))
-	case "squad":
-		h.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, actorType, actorID, handoffNote)
-	}
-}
-
 // memberActorUserID returns the acting member's user id as a pgtype.UUID when the
 // actor is a member, and an invalid UUID otherwise (an agent actor id is not a
 // human and must never become an accountable human). Used to thread the
@@ -116,10 +101,11 @@ type IssueTriggerPreviewRequest struct {
 	// or a batch). Empty with IsCreate=true evaluates a candidate new issue.
 	IssueIDs []string `json:"issue_ids"`
 	// IsCreate previews a not-yet-persisted issue from AssigneeType/ID/Status.
-	IsCreate     bool    `json:"is_create"`
-	AssigneeType *string `json:"assignee_type"`
-	AssigneeID   *string `json:"assignee_id"`
-	Status       *string `json:"status"`
+	IsCreate     bool            `json:"is_create"`
+	AssigneeType *string         `json:"assignee_type"`
+	AssigneeID   *string         `json:"assignee_id"`
+	Status       *string         `json:"status"`
+	Mutation     json.RawMessage `json:"mutation,omitempty"`
 }
 
 // IssueTriggerPreviewItem is one issue that WILL start a run under the
@@ -136,6 +122,14 @@ type IssueTriggerPreviewItem struct {
 type IssueTriggerPreviewResponse struct {
 	Triggers   []IssueTriggerPreviewItem `json:"triggers"`
 	TotalCount int                       `json:"total_count"`
+	Blocked    []IssueDependencyPreview  `json:"blocked,omitempty"`
+}
+
+type IssueDependencyPreview struct {
+	IssueID      string                       `json:"issue_id"`
+	ReasonCode   string                       `json:"reason_code"`
+	Dependencies *service.DependencyView      `json:"dependencies,omitempty"`
+	Confirmation *service.DependencyChallenge `json:"confirmation,omitempty"`
 }
 
 // PreviewIssueTrigger dry-runs WillEnqueueRun for a prospective issue write and
@@ -164,6 +158,48 @@ func (h *Handler) PreviewIssueTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var mutation UpdateIssueRequest
+	var mutationFields map[string]json.RawMessage
+	var dependencyWrite service.DependencyWrite
+	var proposedParent pgtype.UUID
+	digest := ""
+	if req.Mutation != nil {
+		if json.Unmarshal(req.Mutation, &mutation) != nil || json.Unmarshal(req.Mutation, &mutationFields) != nil {
+			writeError(w, http.StatusBadRequest, "invalid mutation")
+			return
+		}
+		req.AssigneeType = mutation.AssigneeType
+		req.AssigneeID = mutation.AssigneeID
+		req.Status = mutation.Status
+		var valid bool
+		dependencyWrite, valid = h.parseDependencyWrite(w, r, mutation.dependencyWriteFields, true, req.IsCreate)
+		if !valid {
+			return
+		}
+		if dependencyWrite.Override != nil {
+			writeError(w, http.StatusBadRequest, "preview mutation must not include dependency_override")
+			return
+		}
+		if raw, ok := mutationFields["parent_issue_id"]; ok && string(raw) != "null" {
+			var parent string
+			if json.Unmarshal(raw, &parent) != nil {
+				writeError(w, http.StatusBadRequest, "invalid parent_issue_id")
+				return
+			}
+			if parent != "" {
+				row, ok := h.loadDependencyIssue(w, r, parent)
+				if !ok {
+					return
+				}
+				proposedParent = row.ID
+			}
+		}
+		digest, valid = dependencyPayloadDigest(w, r, req.Mutation)
+		if !valid {
+			return
+		}
+	}
+
 	// Resolve the prospective assignee once — a malformed id is a deterministic
 	// 400, never a silent miscount.
 	var (
@@ -184,15 +220,50 @@ func (h *Handler) PreviewIssueTrigger(w http.ResponseWriter, r *http.Request) {
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	resp := IssueTriggerPreviewResponse{Triggers: make([]IssueTriggerPreviewItem, 0)}
 
-	appendTrigger := func(issue db.Issue, in service.IssueTriggerInput) {
-		probe := h.issueTriggerPreviewProbe(r, actorType, actorID, workspaceID, issue)
-		if trigger, ok := h.IssueService.WillEnqueueRun(r.Context(), in, probe); ok {
-			resp.Triggers = append(resp.Triggers, IssueTriggerPreviewItem{
-				IssueID: uuidToString(trigger.IssueID),
-				AgentID: uuidToString(trigger.AgentID),
-				Source:  string(trigger.Source),
-			})
+	appendTrigger := func(issue db.Issue, in service.IssueTriggerInput) bool {
+		if _, ok := mutationFields["parent_issue_id"]; ok {
+			issue.ParentIssueID = proposedParent
+			in.Issue = issue
 		}
+		if mutation.SuppressRun {
+			return true
+		}
+		probe := h.issueTriggerPreviewProbe(r, actorType, actorID, workspaceID, issue)
+		trigger, ok := h.IssueService.WillEnqueueRun(r.Context(), in, probe)
+		if !ok {
+			return true
+		}
+		snapshot, err := h.IssueService.Dependencies.ReadWorkspace(r.Context(), issue.WorkspaceID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to read dependencies")
+			return false
+		}
+		proposal := snapshot.Proposal(issue, dependencyWrite.BlockedBy)
+		if err = proposal.CheckRun(r.Context(), issue.ID); err != nil {
+			var dep *service.DependencyError
+			if !errors.As(err, &dep) {
+				writeError(w, http.StatusInternalServerError, "failed to check dependencies")
+				return false
+			}
+			item := IssueDependencyPreview{IssueID: uuidToString(issue.ID), ReasonCode: dep.Code, Dependencies: dep.View}
+			if digest != "" && dep.Code == "dependency_unsatisfied" {
+				item.Confirmation, err = h.IssueService.Dependencies.Challenge(r.Context(), snapshot, issue, trigger, dependencyWrite.BlockedBy, digest, req.IsCreate)
+				if err != nil {
+					if !writeDependencyError(w, err) {
+						writeError(w, http.StatusInternalServerError, "failed to prepare confirmation")
+					}
+					return false
+				}
+			}
+			resp.Blocked = append(resp.Blocked, item)
+			return true
+		}
+		displayID := uuidToString(trigger.IssueID)
+		if req.IsCreate {
+			displayID = ""
+		}
+		resp.Triggers = append(resp.Triggers, IssueTriggerPreviewItem{IssueID: displayID, AgentID: uuidToString(trigger.AgentID), Source: string(trigger.Source)})
+		return true
 	}
 
 	if req.IsCreate {
@@ -206,12 +277,15 @@ func (h *Handler) PreviewIssueTrigger(w http.ResponseWriter, r *http.Request) {
 			status = *req.Status
 		}
 		candidate := db.Issue{
+			ID:           dbid.NewV7(),
 			WorkspaceID:  wsUUID,
 			Status:       status,
 			AssigneeType: newAssigneeType,
 			AssigneeID:   newAssigneeID,
 		}
-		appendTrigger(candidate, service.IssueTriggerInput{Issue: candidate, IsCreate: true})
+		if !appendTrigger(candidate, service.IssueTriggerInput{Issue: candidate, IsCreate: true}) {
+			return
+		}
 		resp.TotalCount = len(resp.Triggers)
 		writeJSON(w, http.StatusOK, resp)
 		return
@@ -243,9 +317,28 @@ func (h *Handler) PreviewIssueTrigger(w http.ResponseWriter, r *http.Request) {
 			in.StatusChanged = loaded.Status != *req.Status
 		}
 		in.Issue = post
-		appendTrigger(post, in)
+		if !appendTrigger(post, in) {
+			return
+		}
 	}
 
 	resp.TotalCount = len(resp.Triggers)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func issueRunOutcome(task db.AgentTaskQueue, coalesced bool) *DispatchOutcome {
+	out := &DispatchOutcome{Status: DispatchDeferred, ReasonCode: ReasonDeferred}
+	if task.ID.Valid {
+		id := uuidToString(task.ID)
+		out.TaskID = &id
+		out.RunID = &id
+		if task.Status != "deferred" {
+			out.Status = DispatchQueued
+			out.ReasonCode = ReasonQueued
+		}
+	}
+	if coalesced && task.ID.Valid {
+		out.Status, out.ReasonCode = DispatchCoalesced, ReasonCoalesced
+	}
+	return out
 }

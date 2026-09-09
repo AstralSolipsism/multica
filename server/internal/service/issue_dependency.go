@@ -33,8 +33,8 @@ func dependencyError(code, message string) *DependencyError {
 }
 
 // DependencyService owns graph validation and transaction-scoped relation writes.
-// WritesEnabled is intentionally NOT wired to configuration in Stage 2. Only
-// isolated tests enable it until enqueue/claim admission is integrated (OL-41).
+// WritesEnabled can close compound writes independently of execution admission.
+// Admission always protects canonical historical edges, even when writes close.
 type DependencyService struct {
 	Queries       *db.Queries
 	TxStarter     TxStarter
@@ -43,7 +43,7 @@ type DependencyService struct {
 }
 
 func NewDependencyService(q *db.Queries, tx TxStarter) *DependencyService {
-	return &DependencyService{Queries: q, TxStarter: tx, SigningKey: auth.JWTSecret()}
+	return &DependencyService{Queries: q, TxStarter: tx, SigningKey: auth.JWTSecret(), WritesEnabled: true}
 }
 
 type DependencySnapshot struct {
@@ -56,9 +56,8 @@ type DependencySnapshot struct {
 // LockWrite must precede any issue, attachment, queue or agent-capacity lock.
 // Workspace ownership/counter -> catalog -> structure -> attachments (if any)
 // -> sorted issue rows. Attachment binders already lock attachments before issues.
-// Stage 2 favors a simple serialized write boundary. Read() uses MVCC and does
-// not block edits. A future admission transaction can use the shared structural
-// query and lock just the target's effective prerequisite rows in UUID order.
+// Structural writes serialize per workspace. Admission takes the shared locks
+// and sorted issue rows; read-only previews use MVCC without blocking edits.
 func (s *DependencyService) LockWrite(ctx context.Context, q *db.Queries, ws pgtype.UUID) error {
 	if _, err := q.LockWorkspaceForDependencyWrite(ctx, ws); err != nil {
 		return err
@@ -235,6 +234,11 @@ type DependencyWrite struct {
 	Creating        bool
 	SuppressRun     bool
 	IncludeView     bool
+	Probe           IssueTriggerProbe
+	ActorUserID     pgtype.UUID
+	HandoffNote     string
+	Override        *DependencyOverride
+	PayloadDigest   string
 }
 
 // Apply validates and persists relations against the proposed final issue row.
@@ -359,8 +363,7 @@ func (s *DependencyService) Apply(ctx context.Context, q *db.Queries, before *De
 }
 
 // CheckWriteAdmission is the pre-mutation decision reused by create/update.
-// Actual queue insertion/claim and explicit human overrides belong to OL-41;
-// until that integration exists, execution-bearing dependency writes fail closed.
+// The same decision guards task insertion, first claim and fresh retries.
 func (s *DependencySnapshot) CheckWriteAdmission(ctx context.Context, issue db.Issue, assignedChanged, runIntent bool) error {
 	if !assignedChanged && !runIntent {
 		return nil
@@ -381,9 +384,6 @@ func (s *DependencySnapshot) CheckWriteAdmission(ctx context.Context, issue db.I
 			return &DependencyError{Code: "dependency_unsatisfied", Message: "prerequisites are unfinished; propose a plan or request human help", View: &v}
 		}
 	}
-	if runIntent {
-		return dependencyError("dependency_dispatch_unavailable", "dependency execution admission is not enabled yet")
-	}
 	return nil
 }
 
@@ -398,7 +398,8 @@ func DependencyWriteIntent(ctx context.Context, q *db.Queries, previous *db.Issu
 	machine := next.AssigneeID.Valid && (next.AssigneeType.String == "agent" || next.AssigneeType.String == "squad")
 	assigned := machine && (previous == nil || previous.AssigneeID != next.AssigneeID || previous.AssigneeType != next.AssigneeType)
 	category := issuestatus.Effective(ctx, q, next.WorkspaceID, next.Status)
-	run := machine && !suppress && (assigned || previous == nil || previous.Status != next.Status) && category != "backlog" && category != "done" && category != "cancelled"
+	activation := previous != nil && previous.Status != next.Status && issuestatus.Effective(ctx, q, next.WorkspaceID, previous.Status) == "backlog"
+	run := machine && !suppress && category != "backlog" && (assigned || previous == nil || (activation && category != "done" && category != "cancelled"))
 	return assigned, run
 }
 

@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -17,6 +20,17 @@ type dependencyWriteFields struct {
 	BlockedBy                 json.RawMessage `json:"blocked_by"`
 	ExpectedDependencyVersion string          `json:"expected_dependency_version"`
 	DependencyOverride        json.RawMessage `json:"dependency_override"`
+}
+
+func dependencyPayloadDigest(w http.ResponseWriter, r *http.Request, raw []byte) (string, bool) {
+	digest, err := service.DependencyPayloadDigest(raw)
+	if err != nil {
+		// Never log the mutation or confirmation: either may contain private data.
+		slog.Warn("dependency payload digest failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusBadRequest, "invalid mutation payload")
+		return "", false
+	}
+	return digest, true
 }
 
 func (h *Handler) CreateIssueWithDependencies(w http.ResponseWriter, r *http.Request) {
@@ -41,10 +55,21 @@ func (h *Handler) parseDependencyWrite(w http.ResponseWriter, r *http.Request, f
 		writeError(w, http.StatusBadRequest, "use the with-dependencies endpoint for prerequisite edits")
 		return write, false
 	}
+
 	if fields.DependencyOverride != nil {
-		writeDependencyError(w, &service.DependencyError{Code: "dependency_override_not_allowed", Message: "dependency execution overrides are not enabled yet"})
-		return write, false
+		identity, ok := auth.IdentityFromContext(r.Context())
+		if !ok || identity.CredentialKind != "jwt" || identity.AgentID != "" || identity.TaskID != "" {
+			writeDependencyError(w, &service.DependencyError{Code: "dependency_override_not_allowed", Message: "explicit confirmation requires an authenticated human session"})
+			return write, false
+		}
+		var override service.DependencyOverride
+		if err := json.Unmarshal(fields.DependencyOverride, &override); err != nil || override.Challenge == "" || override.RequestID == "" {
+			writeError(w, http.StatusBadRequest, "dependency_override requires challenge and request_id")
+			return write, false
+		}
+		write.Override = &override
 	}
+
 	if creating && fields.ExpectedDependencyVersion != "" {
 		writeError(w, http.StatusBadRequest, "expected_dependency_version is only valid for updates")
 		return write, false

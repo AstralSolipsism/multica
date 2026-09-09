@@ -325,6 +325,7 @@ var concurrentIndexCleanups = map[string]string{
 	"465_issue_dependency_audit_workspace_index":                "idx_issue_dependency_audit_workspace",
 	"466_issue_dependency_blocked_by_index":                     "idx_issue_dependency_blocked_by",
 	"468_labrastro_message_route_source_identity_index":         "uq_labrastro_message_route_source_identity",
+	"468_task_dependency_request_index":                         "idx_task_dependency_request",
 	"469_labrastro_message_delivery_source_index":               "idx_labrastro_message_delivery_source",
 	"470_labrastro_message_approved_target_source_active_index": "uq_labrastro_message_approved_target_source_active",
 	"473_labrastro_message_project_approval_index":              "uq_labrastro_message_approved_target_project_active",

@@ -413,7 +413,18 @@ func (f *feedbackFaultStarter) Begin(ctx context.Context) (pgx.Tx, error) {
 
 type feedbackFaultTx struct {
 	pgx.Tx
-	fault *feedbackFaultStarter
+	fault  *feedbackFaultStarter
+	nested bool
+}
+
+func (t *feedbackFaultTx) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := t.Tx.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Admission uses savepoints; keep SQL faults active inside them, while a
+	// missing commit acknowledgement still refers to the outer durable commit.
+	return &feedbackFaultTx{Tx: tx, fault: t.fault, nested: true}, nil
 }
 
 func (t *feedbackFaultTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
@@ -440,7 +451,7 @@ func (t *feedbackFaultTx) Exec(ctx context.Context, sql string, args ...any) (pg
 }
 func (t *feedbackFaultTx) Commit(ctx context.Context) error {
 	err := t.Tx.Commit(ctx)
-	if err == nil && t.fault.commit && t.fault.once.CompareAndSwap(false, true) {
+	if err == nil && !t.nested && t.fault.commit && t.fault.once.CompareAndSwap(false, true) {
 		if t.fault.observe != nil {
 			t.fault.observe(nil)
 		}

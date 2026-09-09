@@ -28,6 +28,50 @@ function respond(body: unknown, status = 200) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("dependency API boundary", () => {
+  it("serializes the same mutation in preview and confirmed execution", async () => {
+    const client = new ApiClient("https://api.example.test");
+    const mutation = { title: "B", status: "todo", assignee_type: "agent" as const, assignee_id: "agent", blockedBy: ["a"] };
+    let mock = respond({ triggers: [], total_count: 0, blocked: [{
+      issue_id: "b", reason_code: "dependency_unsatisfied", dependencies: view,
+      confirmation: { request_id: "request", challenge: "signed", expires_at: "2026-09-08T15:00:00Z" },
+    }] });
+    const preview = await client.previewIssueTrigger({ issueIds: ["b"], mutation });
+    expect(preview.blocked?.[0]?.confirmation?.requestId).toBe("request");
+    const previewBody = JSON.parse(mock.mock.calls[0]?.[1].body).mutation;
+    mock = respond({ ...issue, dependencies: view, dispatch: { status: "queued", reason_code: "queued", task_id: "task", run_id: "task" } });
+    const result = await client.updateIssueWithDependencies("b", { ...mutation, dependencyOverride: { requestId: "request", challenge: "signed" } });
+    expect(JSON.parse(mock.mock.calls[0]?.[1].body)).toEqual({ ...previewBody, dependency_override: { request_id: "request", challenge: "signed" } });
+    expect(result.dispatch?.taskId).toBe("task");
+  });
+
+  it.each([undefined, null, {}, { status: "queued", reason_code: "queued" }, { status: "unknown", task_id: "x" }])("keeps malformed dispatch unknown without retrying a committed write: %j", async (dispatch) => {
+    const mock = respond({ ...issue, dependencies: view, dispatch });
+    const result = await new ApiClient("https://api.example.test").updateIssueWithDependencies("b", { title: "B" });
+    expect(result.id).toBe("b");
+    expect(result.dispatch).toBeNull();
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, {}, [{ issue_id: "b" }]])("keeps incomplete preview diagnostics unknown: %j", async (blocked) => {
+    respond({ triggers: [], total_count: 0, blocked });
+    const result = await new ApiClient("https://api.example.test").previewIssueTrigger({ issueIds: ["b"] });
+    expect(result.blocked).toBeNull();
+  });
+
+  it("retains a blocked decision while discarding an invalid confirmation", async () => {
+    respond({ triggers: [], total_count: 0, blocked: [{ issue_id: "b", reason_code: "dependency_unsatisfied", dependencies: view, confirmation: { request_id: "r", challenge: "s", expires_at: "invalid" } }] });
+    const result = await new ApiClient("https://api.example.test").previewIssueTrigger({ issueIds: ["b"] });
+    expect(result.blocked?.[0]?.reasonCode).toBe("dependency_unsatisfied");
+    expect(result.blocked?.[0]?.confirmation).toBeNull();
+  });
+
+  it("keeps per-item confirmations separate and reports replay as coalesced", async () => {
+    const mock = respond({ updated: 1, results: [{ issue_id: "b", updated: true, dispatch: { status: "coalesced", reason_code: "coalesced", task_id: "task", run_id: "task" } }] });
+    const result = await new ApiClient("https://api.example.test").batchUpdateIssues(["b"], { status: "todo" }, { b: { requestId: "request", challenge: "signed" } });
+    expect(JSON.parse(mock.mock.calls[0]?.[1].body).dependency_overrides).toEqual({ b: { request_id: "request", challenge: "signed" } });
+    expect(result.results?.[0]?.dispatch?.status).toBe("coalesced");
+  });
+
   it("preserves structured partial-batch rejections", async () => {
     respond({ updated: 1, results: [
       { issue_id: "a", updated: true },

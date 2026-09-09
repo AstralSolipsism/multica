@@ -11,6 +11,78 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const bindTaskDependencyIssue = `-- name: BindTaskDependencyIssue :one
+UPDATE agent_task_queue SET issue_id=$2 WHERE id=$1 AND issue_id IS NULL RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, dependency_admission
+`
+
+type BindTaskDependencyIssueParams struct {
+	ID      pgtype.UUID `json:"id"`
+	IssueID pgtype.UUID `json:"issue_id"`
+}
+
+func (q *Queries) BindTaskDependencyIssue(ctx context.Context, arg BindTaskDependencyIssueParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, bindTaskDependencyIssue, arg.ID, arg.IssueID)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.SessionRolloutMissing,
+		&i.RetiredSessionID,
+		&i.QuickActionsDisabled,
+		&i.RegenerateQuickActionsFor,
+		&i.BranchName,
+		&i.DurableWorkDir,
+		&i.ChannelContextRevision,
+		&i.DependencyAdmission,
+	)
+	return i, err
+}
+
 const deleteDirectIssueDependencies = `-- name: DeleteDirectIssueDependencies :exec
 DELETE FROM issue_dependency d USING issue i
 WHERE i.workspace_id = $1 AND i.id = $2
@@ -43,6 +115,168 @@ type DeleteIssueDependenciesParams struct {
 func (q *Queries) DeleteIssueDependencies(ctx context.Context, arg DeleteIssueDependenciesParams) error {
 	_, err := q.db.Exec(ctx, deleteIssueDependencies, arg.WorkspaceID, arg.IssueIds)
 	return err
+}
+
+const getPendingTaskForIssueAndAgent = `-- name: GetPendingTaskForIssueAndAgent :one
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, dependency_admission FROM agent_task_queue WHERE issue_id=$1 AND agent_id=$2
+AND (status IN ('queued','dispatched') OR (status='deferred' AND context->>'channel_issue_media_pending'='true'))
+AND (COALESCE($3::text,'')='' OR context->>'head_sha'=$3::text)
+ORDER BY created_at,id LIMIT 1
+`
+
+type GetPendingTaskForIssueAndAgentParams struct {
+	IssueID pgtype.UUID `json:"issue_id"`
+	AgentID pgtype.UUID `json:"agent_id"`
+	HeadSha pgtype.Text `json:"head_sha"`
+}
+
+func (q *Queries) GetPendingTaskForIssueAndAgent(ctx context.Context, arg GetPendingTaskForIssueAndAgentParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, getPendingTaskForIssueAndAgent, arg.IssueID, arg.AgentID, arg.HeadSha)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.SessionRolloutMissing,
+		&i.RetiredSessionID,
+		&i.QuickActionsDisabled,
+		&i.RegenerateQuickActionsFor,
+		&i.BranchName,
+		&i.DurableWorkDir,
+		&i.ChannelContextRevision,
+		&i.DependencyAdmission,
+	)
+	return i, err
+}
+
+const getTaskByDependencyRequest = `-- name: GetTaskByDependencyRequest :one
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, dependency_admission FROM agent_task_queue WHERE dependency_admission->>'request_id' = $1::text
+`
+
+func (q *Queries) GetTaskByDependencyRequest(ctx context.Context, dollar_1 string) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, getTaskByDependencyRequest, dollar_1)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.SessionRolloutMissing,
+		&i.RetiredSessionID,
+		&i.QuickActionsDisabled,
+		&i.RegenerateQuickActionsFor,
+		&i.BranchName,
+		&i.DurableWorkDir,
+		&i.ChannelContextRevision,
+		&i.DependencyAdmission,
+	)
+	return i, err
+}
+
+const hasDependencyConfirmationRequest = `-- name: HasDependencyConfirmationRequest :one
+SELECT EXISTS (SELECT 1 FROM issue_dependency_audit WHERE workspace_id=$1
+AND action='dispatch_confirmation' AND after_state->>'request_id'=$2::text)
+`
+
+type HasDependencyConfirmationRequestParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RequestID   string      `json:"request_id"`
+}
+
+// Keep a denial tombstone in the existing relation audit after issue/task
+// deletion, so a still-signed create request cannot resurrect its execution.
+func (q *Queries) HasDependencyConfirmationRequest(ctx context.Context, arg HasDependencyConfirmationRequestParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasDependencyConfirmationRequest, arg.WorkspaceID, arg.RequestID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const insertIssueDependency = `-- name: InsertIssueDependency :exec
@@ -148,6 +382,36 @@ func (q *Queries) ListIssueDependencyNodes(ctx context.Context, workspaceID pgty
 	return items, nil
 }
 
+const lockAutopilotRunForDependencyAdmission = `-- name: LockAutopilotRunForDependencyAdmission :one
+SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code FROM autopilot_run WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockAutopilotRunForDependencyAdmission(ctx context.Context, id pgtype.UUID) (AutopilotRun, error) {
+	row := q.db.QueryRow(ctx, lockAutopilotRunForDependencyAdmission, id)
+	var i AutopilotRun
+	err := row.Scan(
+		&i.ID,
+		&i.AutopilotID,
+		&i.TriggerID,
+		&i.Source,
+		&i.Status,
+		&i.IssueID,
+		&i.TaskID,
+		&i.TriggeredAt,
+		&i.CompletedAt,
+		&i.FailureReason,
+		&i.TriggerPayload,
+		&i.Result,
+		&i.CreatedAt,
+		&i.SquadID,
+		&i.PlannedAt,
+		&i.WebhookDeliveryID,
+		&i.QuotaReservationID,
+		&i.ReasonCode,
+	)
+	return i, err
+}
+
 const lockIssueDependencyStructure = `-- name: LockIssueDependencyStructure :exec
 SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text || ':issue_dependency', 0))
 `
@@ -166,6 +430,15 @@ func (q *Queries) LockIssueDependencyStructureShared(ctx context.Context, worksp
 	return err
 }
 
+const lockIssuesForDependencyAdmission = `-- name: LockIssuesForDependencyAdmission :exec
+SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR SHARE
+`
+
+func (q *Queries) LockIssuesForDependencyAdmission(ctx context.Context, workspaceID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, lockIssuesForDependencyAdmission, workspaceID)
+	return err
+}
+
 const lockIssuesForDependencyWrite = `-- name: LockIssuesForDependencyWrite :exec
 SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR UPDATE
 `
@@ -175,6 +448,17 @@ SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR UPDATE
 func (q *Queries) LockIssuesForDependencyWrite(ctx context.Context, workspaceID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, lockIssuesForDependencyWrite, workspaceID)
 	return err
+}
+
+const lockWorkspaceForDependencyAdmission = `-- name: LockWorkspaceForDependencyAdmission :one
+SELECT id FROM workspace WHERE id = $1 FOR SHARE
+`
+
+func (q *Queries) LockWorkspaceForDependencyAdmission(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockWorkspaceForDependencyAdmission, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
 }
 
 const lockWorkspaceForDependencyWrite = `-- name: LockWorkspaceForDependencyWrite :one
@@ -217,6 +501,154 @@ func (q *Queries) RecordIssueDependencyAudit(ctx context.Context, arg RecordIssu
 		arg.AfterState,
 	)
 	return err
+}
+
+const rejectTaskDependencyAdmission = `-- name: RejectTaskDependencyAdmission :one
+UPDATE agent_task_queue SET status='failed', completed_at=now(),
+    error=$2, failure_reason=$3, prepare_lease_expires_at=NULL
+WHERE id=$1 AND status IN ('queued','deferred','dispatched') AND started_at IS NULL
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, dependency_admission
+`
+
+type RejectTaskDependencyAdmissionParams struct {
+	ID            pgtype.UUID `json:"id"`
+	Error         pgtype.Text `json:"error"`
+	FailureReason pgtype.Text `json:"failure_reason"`
+}
+
+func (q *Queries) RejectTaskDependencyAdmission(ctx context.Context, arg RejectTaskDependencyAdmissionParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, rejectTaskDependencyAdmission, arg.ID, arg.Error, arg.FailureReason)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.SessionRolloutMissing,
+		&i.RetiredSessionID,
+		&i.QuickActionsDisabled,
+		&i.RegenerateQuickActionsFor,
+		&i.BranchName,
+		&i.DurableWorkDir,
+		&i.ChannelContextRevision,
+		&i.DependencyAdmission,
+	)
+	return i, err
+}
+
+const setTaskDependencyAdmission = `-- name: SetTaskDependencyAdmission :one
+UPDATE agent_task_queue SET dependency_admission = $2 WHERE id = $1 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, dependency_admission
+`
+
+type SetTaskDependencyAdmissionParams struct {
+	ID                  pgtype.UUID `json:"id"`
+	DependencyAdmission []byte      `json:"dependency_admission"`
+}
+
+func (q *Queries) SetTaskDependencyAdmission(ctx context.Context, arg SetTaskDependencyAdmissionParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, setTaskDependencyAdmission, arg.ID, arg.DependencyAdmission)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.SessionRolloutMissing,
+		&i.RetiredSessionID,
+		&i.QuickActionsDisabled,
+		&i.RegenerateQuickActionsFor,
+		&i.BranchName,
+		&i.DurableWorkDir,
+		&i.ChannelContextRevision,
+		&i.DependencyAdmission,
+	)
+	return i, err
 }
 
 const touchIssueDependencyRevision = `-- name: TouchIssueDependencyRevision :one

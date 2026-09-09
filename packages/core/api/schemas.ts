@@ -1,3 +1,4 @@
+import { DispatchOutcomeSchema } from "./dispatch-schemas";
 import { z } from "zod";
 import type {
   AgentBuilderRuntimeSwitch,
@@ -1228,6 +1229,7 @@ export const CommentSubIssueTaskResponseSchema = z.object({
 }).loose();
 
 export const IssueSchema = z.object({
+ dispatch: DispatchOutcomeSchema.nullable().catch(null),
   id: z.string(),
   workspace_id: z.string(),
   number: z.number(),

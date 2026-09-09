@@ -258,7 +258,16 @@ func (h *Handler) processMessageFeedback(ctx context.Context, prior db.Labrastro
 	}
 	defer tx.Rollback(ctx)
 	q := h.Queries.WithTx(tx)
-	if _, err = q.LockWorkspaceForMessageDecision(ctx, prior.WorkspaceID); err != nil {
+	if prior.Kind == "comment" && prior.Status == "pending" {
+		// Recovery may enqueue within this transaction. Take the compound-write
+		// lock order before its issue/agent locks, avoiding later lock upgrades.
+		if err := service.NewDependencyService(q, tx).LockWrite(ctx, q, prior.WorkspaceID); err != nil {
+			return err
+		}
+		if err := q.LockIssuesForDependencyWrite(ctx, prior.WorkspaceID); err != nil {
+			return err
+		}
+	} else if _, err = q.LockWorkspaceForMessageDecision(ctx, prior.WorkspaceID); err != nil {
 		return err
 	}
 	var issue db.Issue
@@ -313,7 +322,7 @@ func (h *Handler) processMessageFeedback(ctx context.Context, prior db.Labrastro
 		if !comment.ID.Valid || comment.IssueID != f.IssueID || comment.AuthorID != f.UserID || comment.Content != f.Content || (f.ParentCommentID.Valid && parent == nil) {
 			f.Status, f.Notice = "rejected", feedbackRefusal
 		} else {
-			scoped, publish := h.feedbackCommentTransaction(q)
+			scoped, publish := h.feedbackCommentTransaction(q, tx)
 			resp := commentToResponse(comment, nil, nil)
 			resp.IssueRevision = f.IssueRevision
 			scoped.commentCommitted(ctx, issue, comment, root, resp)
@@ -349,11 +358,13 @@ func (h *Handler) processMessageFeedback(ctx context.Context, prior db.Labrastro
 // A fresh service contains no copied mutexes or caches. All SQL uses the
 // caller's transaction; synchronous events are buffered until commit. Task
 // availability is a hint after commit; durable tasks remain pollable on crash.
-func (h *Handler) feedbackCommentTransaction(q *db.Queries) (*Handler, func()) {
+func (h *Handler) feedbackCommentTransaction(q *db.Queries, tx pgx.Tx) (*Handler, func()) {
 	bus := events.New()
 	var emitted []events.Event
 	bus.SubscribeAll(func(e events.Event) { emitted = append(emitted, e) })
-	s := service.NewTaskService(q, nil, nil, bus)
+	// pgx.Tx.Begin creates a savepoint, so admission stays in the same outer
+	// transaction as feedback settlement; a new pool transaction would deadlock.
+	s := service.NewTaskService(q, tx, nil, bus)
 	s.Entitlements, s.FeatureFlags, s.Composio = h.TaskService.Entitlements, h.TaskService.FeatureFlags, h.TaskService.Composio
 	// Supply only the dependencies of the shared comment path, without copying
 	// the HTTP handler, runtime caches, or unrelated integration clients.
