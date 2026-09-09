@@ -236,17 +236,21 @@ func (s *Service) decideActivityPair(ctx context.Context, row db.ListLabrastroMe
 		})
 	}
 	var change string
+	var assigneeChange *assigneeChangeSnapshot
 	switch row.ActivityAction {
 	case notify.ActivityActionStatusChanged:
 		change = notify.StatusLabel(details.From) + " → " + notify.StatusLabel(details.To)
 	case notify.ActivityActionAssigneeChanged:
-		change = "assignee changed"
-		if name, err := s.memberOrAgentName(ctx, row.ActivityWorkspaceID, details.ToType, details.ToID); err == nil && name != "" {
-			change = "assigned to " + name
+		assigneeChange = &assigneeChangeSnapshot{
+			FromType: details.FromType, FromID: details.FromID,
+			ToType: details.ToType, ToID: details.ToID,
 		}
+		change = "changed assignee: " + s.assigneeLabel(ctx, row.ActivityWorkspaceID, details.FromType, details.FromID) +
+			" → " + s.assigneeLabel(ctx, row.ActivityWorkspaceID, details.ToType, details.ToID)
 	}
 	content := buildTeamContent(SourceKindActivity, row.ActivityAction, actor, change,
 		row.IssueTitle, ident, s.AppURL, row.WorkspaceSlug)
+	content.AssigneeChange = assigneeChange
 	ref := sourceRef{
 		SourceKind:      SourceKindActivity,
 		ActivityID:      refID,
@@ -263,38 +267,40 @@ func (s *Service) decideActivityPair(ctx context.Context, row db.ListLabrastroMe
 	})
 }
 
-// memberOrAgentName resolves a polymorphic assignee reference to a display
-// name for message bodies. Best effort: an unresolvable reference renders
-// as empty and the message degrades instead of failing the decision.
-func (s *Service) memberOrAgentName(ctx context.Context, workspaceID pgtype.UUID, refType, refID string) (string, error) {
-	if refType == "" || refID == "" {
-		return "", nil
+// assigneeLabel keeps the type visible, including for identically named
+// members and agents. Name lookup is best effort within the source workspace;
+// missing records or lookup failures retain the original type and ID.
+func (s *Service) assigneeLabel(ctx context.Context, workspaceID pgtype.UUID, refType, refID string) string {
+	if refType == "" && refID == "" {
+		return "Unassigned"
 	}
-	id, err := util.ParseUUID(refID)
-	if err != nil {
-		return "", nil
-	}
+	label := refType
 	switch refType {
 	case "member":
-		u, err := s.Queries.GetUser(ctx, id)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", nil
-		}
-		if err != nil {
-			return "", err
-		}
-		return u.Name, nil
+		label = "Member"
 	case "agent":
-		a, err := s.Queries.GetAgent(ctx, id)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", nil
-		}
-		if err != nil {
-			return "", err
-		}
-		return a.Name, nil
+		label = "Agent"
+	case "":
+		label = "Assignee"
 	}
-	return "", nil
+	name := refID
+	if id, err := util.ParseUUID(refID); err == nil {
+		switch refType {
+		case "member":
+			if _, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+				UserID: id, WorkspaceID: workspaceID,
+			}); err == nil {
+				if user, err := s.Queries.GetUser(ctx, id); err == nil && strings.TrimSpace(user.Name) != "" {
+					name = user.Name
+				}
+			}
+		case "agent":
+			if agent, err := s.Queries.GetAgent(ctx, id); err == nil && agent.WorkspaceID == workspaceID && strings.TrimSpace(agent.Name) != "" {
+				name = agent.Name
+			}
+		}
+	}
+	return strings.TrimSpace(label + " " + name)
 }
 
 func actorName(actorType string, memberName, agentName pgtype.Text) string {

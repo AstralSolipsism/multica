@@ -712,7 +712,7 @@ error-code strings, projection listing, retry semantics), keyed by route:
 ```
 
 Delivery detail adds `content_snapshot`
-(`{"text","summary","source_kind","issue_identifier","issue_title","actor_name","change","body","link"}`),
+(`{"text","summary","source_kind","issue_identifier","issue_title","actor_name","change","assignee_change","body","link"}`),
 `target_snapshot` and `receipts` — same shapes as OL-25. `source_ref`
 locates the record:
 
@@ -721,6 +721,29 @@ locates the record:
 - Inbox: `{"source_kind":"inbox","inbox_item_id":"…","comment_id":"…","issue_id":"…","issue_identifier":"MUL-42"}`; a valid explicit comment UUID in the item's details is retained when present.
 
 References locate feedback targets; they grant no permission.
+
+For `assignee_changed`, `content_snapshot.assignee_change` freezes the source
+record's typed identities independently of display names:
+
+```json
+{
+  "change": "changed assignee: Member Sam → Agent Sam",
+  "assignee_change": {
+    "from_type": "member",
+    "from_id": "55e0…",
+    "to_type": "agent",
+    "to_id": "8dc1…"
+  }
+}
+```
+
+An unassigned side has both type and ID set to `""` and renders as `Unassigned`,
+so removing a member assignment reads `Member Sam → Unassigned`. If a name
+cannot be resolved within the source workspace, the message shows the type
+and original ID instead. The rendered text and typed identities are frozen
+together; renaming/removing an assignee or retrying delivery never rewrites
+them. Other event kinds omit `assignee_change`. Existing frozen decisions
+remain unchanged and are not backfilled or resent.
 
 ### New error codes (stable strings)
 

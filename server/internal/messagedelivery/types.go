@@ -297,10 +297,22 @@ type contentSnapshot struct {
 	// Change renders a team transition ("Todo → In Progress", or the
 	// assignee handover) for activity deliveries.
 	Change string `json:"change,omitempty"`
+	// AssigneeChange retains the source identities independently of display
+	// names. It is present only for assignee_changed activity decisions.
+	AssigneeChange *assigneeChangeSnapshot `json:"assignee_change,omitempty"`
 	// Body is the forwarded inbox/comment excerpt (redaction boundary: the
 	// persisted title/body the recipient already sees in their own inbox,
 	// and plain comment content — nothing else from the record).
 	Body string `json:"body,omitempty"`
+}
+
+// Empty type/ID pairs explicitly represent an unassigned side. Keep all four
+// fields in JSON even when the source listener omitted the empty pair.
+type assigneeChangeSnapshot struct {
+	FromType string `json:"from_type"`
+	FromID   string `json:"from_id"`
+	ToType   string `json:"to_type"`
+	ToID     string `json:"to_id"`
 }
 
 // sourceRef is the JSON shape frozen into

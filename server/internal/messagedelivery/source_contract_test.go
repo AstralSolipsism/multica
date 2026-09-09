@@ -28,6 +28,131 @@ func sourceRecord(t *testing.T, s *Service, sourceID string) db.LabrastroMessage
 	return d
 }
 
+func TestSourceAssignmentSnapshotRetainsTransition(t *testing.T) {
+	ctx := context.Background()
+	fx := newSourceFixture(t, "assignment")
+	resetSourceScanCursors(t)
+	fx.approveTeam(t, RouteSourceActivity, "oc_assignment")
+	fx.teamRoute(t, "assignment", RouteSourceActivity, "oc_assignment", nil)
+	// A display name alone cannot distinguish a member from an agent.
+	testFx.Exec(t, `UPDATE "user" SET name='Sam' WHERE id=$1`, fx.memberB)
+	agentID := testFx.Agent(t, "Sam", "")
+	otherWS := testFx.Workspace(t, "Other assignment workspace", "assignment-"+fx.memberB)
+	otherMember := testFx.User(t, "Outside member", "assignment-"+fx.memberB+"@multica.test")
+	testFx.Member(t, otherWS, otherMember, "owner")
+	otherAgent := testFx.Agent(t, "Outside agent", "", testutil.Cols{"workspace_id": otherWS, "owner_id": otherMember})
+	missingMember, missingAgent := "00000000-0000-0000-0000-000000000011", "00000000-0000-0000-0000-000000000012"
+	cases := []struct {
+		name, fromType, fromID, toType, toID, want string
+	}{
+		{"member_to_agent", "member", fx.memberB, "agent", agentID, "Member Sam → Agent Sam"},
+		{"agent_to_member", "agent", agentID, "member", fx.memberB, "Agent Sam → Member Sam"},
+		{"unassign_member", "member", fx.memberB, "", "", "Member Sam → Unassigned"},
+		{"unassign_agent", "agent", agentID, "", "", "Agent Sam → Unassigned"},
+		{"assign_member", "", "", "member", fx.memberB, "Unassigned → Member Sam"},
+		{"assign_agent", "", "", "agent", agentID, "Unassigned → Agent Sam"},
+		{"missing_names", "member", missingMember, "agent", missingAgent, "Member " + missingMember + " → Agent " + missingAgent},
+		{"outside_workspace", "member", otherMember, "agent", otherAgent, "Member " + otherMember + " → Agent " + otherAgent},
+	}
+	s := newTestService(nil, nil)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			want := map[string]string{"from_type": tc.fromType, "from_id": tc.fromID, "to_type": tc.toType, "to_id": tc.toID}
+			// The canonical listener omits the empty side on assignment/removal.
+			details := map[string]string{}
+			for key, value := range want {
+				if value != "" {
+					details[key] = value
+				}
+			}
+			encoded, err := json.Marshal(details)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sourceID := fx.activity(t, fx.issue, "assignee_changed", string(encoded))
+			if errs := s.decideSourcesErr(ctx); len(errs) != 0 {
+				t.Fatal(errs)
+			}
+			d := sourceRecord(t, s, sourceID)
+			var content struct {
+				Text           string            `json:"text"`
+				Change         string            `json:"change"`
+				AssigneeChange map[string]string `json:"assignee_change"`
+			}
+			if err := json.Unmarshal(d.ContentSnapshot, &content); err != nil {
+				t.Fatal(err)
+			}
+			if d.Status != DeliveryStatusQueued || !strings.Contains(content.Change, tc.want) || !strings.Contains(content.Text, tc.want) {
+				t.Errorf("assignment delivery status=%s snapshot=%s; want transition %q", d.Status, d.ContentSnapshot, tc.want)
+			}
+			for key, value := range want {
+				if got, ok := content.AssigneeChange[key]; !ok || got != value {
+					t.Errorf("frozen %s=%q (present=%v), want %q", key, got, ok, value)
+				}
+			}
+		})
+	}
+	// Other activity kinds must not acquire a fabricated assignment change.
+	statusID := fx.activity(t, fx.issue, "status_changed", `{"from":"todo","to":"done"}`)
+	if errs := s.decideSourcesErr(ctx); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	if snapshot := sourceRecord(t, s, statusID).ContentSnapshot; strings.Contains(string(snapshot), "assignee_change") {
+		t.Fatalf("status event contains assignment metadata: %s", snapshot)
+	}
+}
+
+func TestSourceAssignmentRetryKeepsFrozenTransition(t *testing.T) {
+	ctx := context.Background()
+	fx := newSourceFixture(t, "assignment-retry")
+	resetSourceScanCursors(t)
+	fx.approveTeam(t, RouteSourceActivity, "oc_assignment_retry")
+	fx.teamRoute(t, "assignment", RouteSourceActivity, "oc_assignment_retry", nil)
+	agentID := testFx.Agent(t, "Original agent", "")
+	sourceID := fx.activity(t, fx.issue, "assignee_changed", fmt.Sprintf(
+		`{"from_type":"member","from_id":%q,"to_type":"agent","to_id":%q}`, fx.memberB, agentID))
+	sender := &fakeSender{fn: func(SendRequest) (SendResult, error) {
+		return SendResult{}, &SendError{Class: ClassPermanent, Err: errors.New("test rejection")}
+	}}
+	s := newTestService(sender, nil)
+	if errs := s.decideSourcesErr(ctx); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	frozen := sourceRecord(t, s, sourceID)
+	if ok, err := s.ProcessNext(ctx); err != nil || !ok {
+		t.Fatalf("initial send: processed=%v err=%v", ok, err)
+	}
+	if failed := sourceRecord(t, s, sourceID); failed.Status != DeliveryStatusFailed {
+		t.Fatalf("initial send status=%s, want failed", failed.Status)
+	}
+	// Display names and the current assignment are mutable; a persisted
+	// historical delivery must retain both its identity and rendered text.
+	testFx.Exec(t, `UPDATE "user" SET name='Renamed member' WHERE id=$1`, fx.memberB)
+	testFx.Exec(t, `DELETE FROM agent WHERE id=$1 AND workspace_id=$2`, agentID, testWSID)
+	testFx.Exec(t, `UPDATE issue SET assignee_type='member', assignee_id=$1 WHERE id=$2`, fx.memberB, fx.issue)
+	if errs := s.decideSourcesErr(ctx); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	if _, err := s.RetryRouteDelivery(ctx, frozen.WorkspaceID, frozen.RouteID, frozen.ID); err != nil {
+		t.Fatal(err)
+	}
+	sender.fn = nil
+	if ok, err := s.ProcessNext(ctx); err != nil || !ok {
+		t.Fatalf("retry: processed=%v err=%v", ok, err)
+	}
+	got := sourceRecord(t, s, sourceID)
+	if got.Status != DeliveryStatusSent || string(got.ContentSnapshot) != string(frozen.ContentSnapshot) || countSourceDecisions(t, sourceID) != 1 {
+		t.Fatalf("retry changed the historical decision: status=%s snapshot=%s", got.Status, got.ContentSnapshot)
+	}
+	requests := sender.requests()
+	if len(requests) != 2 {
+		t.Fatalf("send requests=%d, want one original and one retry", len(requests))
+	}
+	if requests[0].Text != requests[1].Text || requests[0].SendUUID != requests[1].SendUUID || !strings.Contains(requests[1].Text, "Agent Original agent") {
+		t.Fatalf("retry changed body or send identity: %+v", requests)
+	}
+}
+
 func TestSourceScanOverlappingTargetsAcrossPagesAndWorkers(t *testing.T) {
 	for _, kind := range []string{RouteSourceActivity, RouteSourceComment} {
 		t.Run(kind, func(t *testing.T) {
