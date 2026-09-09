@@ -60,5 +60,20 @@ func assembleMessageDelivery(h *handler.Handler, bus *events.Bus) {
 		svc.Notify()
 	})
 
+	// OL-27: the three persisted personal/team sources wake the decide
+	// scan the same way. The wakeups are hints; the compensation scanner
+	// re-derives every missing decision from the persisted records, so a
+	// lost event, a crash between the source commit and the decision
+	// insert, or a second replica is always recovered.
+	bus.Subscribe(protocol.EventInboxNew, func(events.Event) {
+		svc.NotifyDecide()
+	})
+	bus.Subscribe(protocol.EventActivityCreated, func(events.Event) {
+		svc.NotifyDecide()
+	})
+	bus.Subscribe(protocol.EventCommentCreated, func(events.Event) {
+		svc.NotifyDecide()
+	})
+
 	h.MessageDelivery = svc
 }

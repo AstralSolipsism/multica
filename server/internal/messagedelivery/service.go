@@ -60,17 +60,23 @@ type Service struct {
 	MaxSendAttempts int
 
 	notify chan struct{}
-	done   chan struct{}
+	// decideNotify is the OL-27 source wakeup: inbox:new /
+	// activity:created / comment:created land here as a latency hint and
+	// the scan loop runs a decide pass over the persisted sources. Lossy
+	// by design — the periodic compensator is the guarantee.
+	decideNotify chan struct{}
+	done         chan struct{}
 }
 
 // New builds the module. Call Run to start the worker and compensator.
 func New(queries *db.Queries) *Service {
 	return &Service{
-		Queries: queries,
-		Log:     slog.Default(),
-		Now:     time.Now,
-		notify:  make(chan struct{}, 1),
-		done:    make(chan struct{}),
+		Queries:      queries,
+		Log:          slog.Default(),
+		Now:          time.Now,
+		notify:       make(chan struct{}, 1),
+		decideNotify: make(chan struct{}, 1),
+		done:         make(chan struct{}),
 	}
 }
 
@@ -122,7 +128,8 @@ type resolvedTarget struct {
 	messageID    pgtype.Text
 	threadID     pgtype.Text
 	targetKey    string
-	openID       string // member targets: the live bound platform id
+	openID       string      // member targets: the live bound platform id
+	projectID    pgtype.UUID // team routes: the workspace project filter
 }
 
 // Type exposes the resolved target type to the HTTP surface (approval
@@ -156,6 +163,21 @@ func (s *Service) resolveTarget(ctx context.Context, workspaceID, autopilotID pg
 	if !ValidContentModes[in.ContentMode] {
 		return resolvedTarget{}, &InvalidRouteError{Field: "content_mode"}
 	}
+	target, err := s.resolveDeliveryTarget(ctx, workspaceID, in)
+	if err != nil {
+		return resolvedTarget{}, err
+	}
+	if requireApproval && target.targetType != TargetMember {
+		if err := s.targetApproved(ctx, workspaceID, autopilotID, target.installation.ID, target.targetKey); err != nil {
+			return resolvedTarget{}, err
+		}
+	}
+	return target, nil
+}
+
+// resolveDeliveryTarget shares installation, binding and live destination checks
+// across all sources. Each caller separately enforces its authorization scope.
+func (s *Service) resolveDeliveryTarget(ctx context.Context, workspaceID pgtype.UUID, in RouteInput) (resolvedTarget, error) {
 	instID, err := util.ParseUUID(in.InstallationID)
 	if err != nil {
 		return resolvedTarget{}, &InvalidRouteError{Field: "installation_id"}
@@ -234,14 +256,6 @@ func (s *Service) resolveTarget(ctx context.Context, workspaceID, autopilotID pg
 		}); err != nil {
 			return resolvedTarget{}, classifyTargetVerifyError(err)
 		}
-		// Workspace approval (repair contract §2, review R1): reachability
-		// proves the bot CAN deliver; approval proves the workspace ALLOWS
-		// this automation to share results to this target.
-		if requireApproval {
-			if err := s.targetApproved(ctx, workspaceID, autopilotID, instID, TargetKey(TargetGroup, "", in.TargetChatID, "")); err != nil {
-				return resolvedTarget{}, err
-			}
-		}
 	case TargetTopic:
 		if in.TargetChatID == "" {
 			return resolvedTarget{}, &InvalidRouteError{Field: "target_chat_id"}
@@ -265,13 +279,6 @@ func (s *Service) resolveTarget(ctx context.Context, workspaceID, autopilotID pg
 		})
 		if err != nil {
 			return resolvedTarget{}, classifyTargetVerifyError(err)
-		}
-		// Approval is keyed on the VERIFIED chat: the anchor proved where
-		// it lives, and that chat is what the admin's approval covers.
-		if requireApproval {
-			if err := s.targetApproved(ctx, workspaceID, autopilotID, instID, TargetKey(TargetTopic, "", verified, in.TargetMessageID)); err != nil {
-				return resolvedTarget{}, err
-			}
 		}
 		out.chatID = pgtype.Text{String: verified, Valid: true}
 		in.TargetChatID = verified
@@ -536,13 +543,21 @@ func (s *Service) SetRouteEnabled(ctx context.Context, route db.LabrastroMessage
 // already made (sent/failed/...) keep their snapshots and receipts for
 // audit — deleting a rule never rewrites history.
 func (s *Service) DeleteRoute(ctx context.Context, route db.LabrastroMessageRoute) error {
-	s.cancelRouteDeliveries(ctx, route.ID, ErrorCodeRouteDeleted, "route deleted")
-	if err := s.Queries.DeleteLabrastroMessageRoute(ctx, db.DeleteLabrastroMessageRouteParams{
-		ID: route.ID, WorkspaceID: route.WorkspaceID,
-	}); err != nil {
-		return fmt.Errorf("delete message route: %w", err)
-	}
-	return nil
+	return s.withParentLock(ctx, route.WorkspaceID, func(q *db.Queries) error {
+		// Delete takes the row lock before cancelling: source decisions hold
+		// SHARE on this row until insertion, so no late candidate can escape.
+		if err := q.DeleteLabrastroMessageRoute(ctx, db.DeleteLabrastroMessageRouteParams{ID: route.ID, WorkspaceID: route.WorkspaceID}); err != nil {
+			return err
+		}
+		return cancelRouteDeliveriesWith(ctx, q, route.ID, ErrorCodeRouteDeleted, "route deleted")
+	})
+}
+
+func cancelRouteDeliveriesWith(ctx context.Context, q *db.Queries, routeID pgtype.UUID, code, reason string) error {
+	_, err := q.CancelLabrastroMessageDeliveriesByRoute(ctx, db.CancelLabrastroMessageDeliveriesByRouteParams{
+		RouteID: routeID, ErrorCode: pgtype.Text{String: code, Valid: true}, LastError: pgtype.Text{String: reason, Valid: true},
+	})
+	return err
 }
 
 func (s *Service) cancelRouteDeliveries(ctx context.Context, routeID pgtype.UUID, code, reason string) {

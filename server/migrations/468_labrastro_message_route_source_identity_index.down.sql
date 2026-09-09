@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS uq_labrastro_message_route_source_identity;
