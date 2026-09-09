@@ -1,10 +1,14 @@
--- OL-27 source-scope rollback. Deliveries decided for the new sources keep
--- their rows: dropping the columns would erase the audit trail, and the
--- source_kind check below would refuse 'inbox'/'activity'/'comment' rows
--- anyway — so the rollback is only clean once those rows are gone. Orders
--- and workspaces are swept explicitly first.
+-- Rolling back this feature removes its audit data. Export it first if it
+-- must be retained. Include source test sends, and remove receipts before
+-- deliveries: this repository has no foreign keys or cascade cleanup.
+DELETE FROM labrastro_message_receipt r
+USING labrastro_message_delivery d
+WHERE r.delivery_id = d.id
+  AND (d.source_kind IN ('inbox', 'activity', 'comment')
+       OR (d.source_kind = 'test_send' AND d.autopilot_id IS NULL));
 DELETE FROM labrastro_message_delivery
-WHERE source_kind IN ('inbox', 'activity', 'comment');
+WHERE source_kind IN ('inbox', 'activity', 'comment')
+   OR (source_kind = 'test_send' AND autopilot_id IS NULL);
 DELETE FROM labrastro_message_approved_target
 WHERE source_kind IN ('activity', 'comment');
 DELETE FROM labrastro_message_route

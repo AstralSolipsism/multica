@@ -15,13 +15,13 @@ const approveLabrastroMessageSourceTarget = `-- name: ApproveLabrastroMessageSou
 
 INSERT INTO labrastro_message_approved_target (
     workspace_id, autopilot_id, installation_id, target_key, target_type,
-    source_kind, approved_by
+    source_kind, approved_by, project_id
 ) VALUES (
     $1, NULL, $2,
     $3, $4,
-    $5, $6
+    $5, $6, $7
 )
-RETURNING id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind
+RETURNING id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind, project_id
 `
 
 type ApproveLabrastroMessageSourceTargetParams struct {
@@ -31,12 +31,13 @@ type ApproveLabrastroMessageSourceTargetParams struct {
 	TargetType     string      `json:"target_type"`
 	SourceKind     string      `json:"source_kind"`
 	ApprovedBy     pgtype.UUID `json:"approved_by"`
+	ProjectID      pgtype.UUID `json:"project_id"`
 }
 
 // ---- team target approvals (workspace-admin consent, OL-27 scope) ----
-// Active approval for one (workspace, source kind, bot, target) scope. A
+// Active approval for one (workspace, source kind, project, bot, target) scope. A
 // concurrent duplicate insert is a 23505 against
-// uq_labrastro_message_approved_target_source_active, reported as
+// uq_labrastro_message_approved_target_project_active, reported as
 // already-approved.
 func (q *Queries) ApproveLabrastroMessageSourceTarget(ctx context.Context, arg ApproveLabrastroMessageSourceTargetParams) (LabrastroMessageApprovedTarget, error) {
 	row := q.db.QueryRow(ctx, approveLabrastroMessageSourceTarget,
@@ -46,6 +47,7 @@ func (q *Queries) ApproveLabrastroMessageSourceTarget(ctx context.Context, arg A
 		arg.TargetType,
 		arg.SourceKind,
 		arg.ApprovedBy,
+		arg.ProjectID,
 	)
 	var i LabrastroMessageApprovedTarget
 	err := row.Scan(
@@ -59,6 +61,7 @@ func (q *Queries) ApproveLabrastroMessageSourceTarget(ctx context.Context, arg A
 		&i.ApprovedAt,
 		&i.RevokedAt,
 		&i.SourceKind,
+		&i.ProjectID,
 	)
 	return i, err
 }
@@ -71,7 +74,7 @@ INSERT INTO labrastro_message_approved_target (
     $1, $2, $3,
     $4, $5, $6
 )
-RETURNING id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind
+RETURNING id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind, project_id
 `
 
 type ApproveLabrastroMessageTargetParams struct {
@@ -112,6 +115,7 @@ func (q *Queries) ApproveLabrastroMessageTarget(ctx context.Context, arg Approve
 		&i.ApprovedAt,
 		&i.RevokedAt,
 		&i.SourceKind,
+		&i.ProjectID,
 	)
 	return i, err
 }
@@ -128,7 +132,7 @@ WHERE id = $3
   AND lease_token = $4
   AND status = 'sending'
   AND lease_expires_at > clock_timestamp()
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id
 `
 
 type CancelClaimedLabrastroMessageDeliveryParams struct {
@@ -176,6 +180,8 @@ func (q *Queries) CancelClaimedLabrastroMessageDelivery(ctx context.Context, arg
 		&i.UpdatedAt,
 		&i.RequestedBy,
 		&i.SourceRefID,
+		&i.SourceScope,
+		&i.SourceProjectID,
 	)
 	return i, err
 }
@@ -209,7 +215,7 @@ SET status = 'cancelled',
 WHERE installation_id = $3
   AND workspace_id = $4
   AND status = 'queued'
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id
 `
 
 type CancelLabrastroMessageDeliveriesByInstallationParams struct {
@@ -264,6 +270,8 @@ func (q *Queries) CancelLabrastroMessageDeliveriesByInstallation(ctx context.Con
 			&i.UpdatedAt,
 			&i.RequestedBy,
 			&i.SourceRefID,
+			&i.SourceScope,
+			&i.SourceProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -284,7 +292,7 @@ SET status = 'cancelled',
     lease_expires_at = NULL,
     updated_at = now()
 WHERE workspace_id = $3
-  AND source_kind = 'inbox'
+  AND source_scope = 'inbox'
   AND target_key = $4
   AND status = 'queued'
 RETURNING id
@@ -331,11 +339,7 @@ SET status = 'cancelled',
     lease_expires_at = NULL,
     updated_at = now()
 WHERE d.workspace_id = $3
-  AND d.route_id IN (
-      SELECT r.id FROM labrastro_message_route r
-      WHERE r.workspace_id = $3
-        AND r.project_id = $4
-  )
+  AND d.source_project_id = $4
   AND status = 'queued'
 RETURNING id
 `
@@ -382,7 +386,7 @@ SET status = 'cancelled',
     updated_at = now()
 WHERE route_id = $3
   AND status = 'queued'
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id
 `
 
 type CancelLabrastroMessageDeliveriesByRouteParams struct {
@@ -430,6 +434,8 @@ func (q *Queries) CancelLabrastroMessageDeliveriesByRoute(ctx context.Context, a
 			&i.UpdatedAt,
 			&i.RequestedBy,
 			&i.SourceRefID,
+			&i.SourceScope,
+			&i.SourceProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -450,31 +456,34 @@ SET status = 'cancelled',
     lease_expires_at = NULL,
     updated_at = now()
 WHERE workspace_id = $3
-  AND source_kind = $4
-  AND installation_id = $5
-  AND target_key = $6
+  AND source_scope = $4
+  AND source_project_id IS NOT DISTINCT FROM $5
+  AND installation_id = $6
+  AND target_key = $7
   AND status = 'queued'
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id
 `
 
 type CancelLabrastroMessageDeliveriesBySourceTargetParams struct {
 	ErrorCode      pgtype.Text `json:"error_code"`
 	LastError      pgtype.Text `json:"last_error"`
 	WorkspaceID    pgtype.UUID `json:"workspace_id"`
-	SourceKind     string      `json:"source_kind"`
+	SourceKind     pgtype.Text `json:"source_kind"`
+	ProjectID      pgtype.UUID `json:"project_id"`
 	InstallationID pgtype.UUID `json:"installation_id"`
 	TargetKey      string      `json:"target_key"`
 }
 
 // An approval revocation stops the not-yet-started team sends against the
-// FROZEN target. Matches the delivery's copied columns (source kind is
-// derivable from source_kind), never the live route.
+// FROZEN scope, project and target, including diagnostic sends. The live
+// route never supplies the historical authorization range.
 func (q *Queries) CancelLabrastroMessageDeliveriesBySourceTarget(ctx context.Context, arg CancelLabrastroMessageDeliveriesBySourceTargetParams) ([]LabrastroMessageDelivery, error) {
 	rows, err := q.db.Query(ctx, cancelLabrastroMessageDeliveriesBySourceTarget,
 		arg.ErrorCode,
 		arg.LastError,
 		arg.WorkspaceID,
 		arg.SourceKind,
+		arg.ProjectID,
 		arg.InstallationID,
 		arg.TargetKey,
 	)
@@ -513,6 +522,8 @@ func (q *Queries) CancelLabrastroMessageDeliveriesBySourceTarget(ctx context.Con
 			&i.UpdatedAt,
 			&i.RequestedBy,
 			&i.SourceRefID,
+			&i.SourceScope,
+			&i.SourceProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -537,7 +548,7 @@ WHERE workspace_id = $3
   AND installation_id = $5
   AND target_key = $6
   AND status = 'queued'
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id
 `
 
 type CancelLabrastroMessageDeliveriesByTargetParams struct {
@@ -596,6 +607,8 @@ func (q *Queries) CancelLabrastroMessageDeliveriesByTarget(ctx context.Context, 
 			&i.UpdatedAt,
 			&i.RequestedBy,
 			&i.SourceRefID,
+			&i.SourceScope,
+			&i.SourceProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -626,7 +639,7 @@ SET status = 'sending',
     updated_at = now()
 FROM candidate
 WHERE d.id = candidate.id
-RETURNING d.id, d.workspace_id, d.route_id, d.route_revision, d.autopilot_id, d.run_id, d.dedup_key, d.source_kind, d.status, d.attempts, d.next_attempt_at, d.lease_token, d.lease_expires_at, d.error_code, d.last_error, d.content_snapshot, d.target_snapshot, d.installation_id, d.target_key, d.shard_total, d.source_ref, d.delivered_at, d.first_attempt_at, d.created_at, d.updated_at, d.requested_by, d.source_ref_id
+RETURNING d.id, d.workspace_id, d.route_id, d.route_revision, d.autopilot_id, d.run_id, d.dedup_key, d.source_kind, d.status, d.attempts, d.next_attempt_at, d.lease_token, d.lease_expires_at, d.error_code, d.last_error, d.content_snapshot, d.target_snapshot, d.installation_id, d.target_key, d.shard_total, d.source_ref, d.delivered_at, d.first_attempt_at, d.created_at, d.updated_at, d.requested_by, d.source_ref_id, d.source_scope, d.source_project_id
 `
 
 // Claims one due delivery. SKIP LOCKED distributes the queue across
@@ -665,6 +678,8 @@ func (q *Queries) ClaimDueLabrastroMessageDelivery(ctx context.Context) (Labrast
 		&i.UpdatedAt,
 		&i.RequestedBy,
 		&i.SourceRefID,
+		&i.SourceScope,
+		&i.SourceProjectID,
 	)
 	return i, err
 }
@@ -678,7 +693,7 @@ SET status = 'sending',
     updated_at = now()
 WHERE id = $1
   AND status = 'queued'
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id
 `
 
 // Claims ONE known row for a synchronous sender (test-send): created queued
@@ -715,6 +730,8 @@ func (q *Queries) ClaimLabrastroMessageDeliveryByID(ctx context.Context, id pgty
 		&i.UpdatedAt,
 		&i.RequestedBy,
 		&i.SourceRefID,
+		&i.SourceScope,
+		&i.SourceProjectID,
 	)
 	return i, err
 }
@@ -789,7 +806,7 @@ WHERE id = $1
   AND lease_token = $2
   AND status = 'sending'
   AND lease_expires_at > clock_timestamp()
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id
 `
 
 type CompleteClaimedLabrastroMessageDeliveryParams struct {
@@ -829,6 +846,8 @@ func (q *Queries) CompleteClaimedLabrastroMessageDelivery(ctx context.Context, a
 		&i.UpdatedAt,
 		&i.RequestedBy,
 		&i.SourceRefID,
+		&i.SourceScope,
+		&i.SourceProjectID,
 	)
 	return i, err
 }
@@ -839,15 +858,16 @@ INSERT INTO labrastro_message_delivery (
     id, workspace_id, route_id, route_revision, autopilot_id, run_id,
     dedup_key, source_kind, status, content_snapshot, target_snapshot,
     shard_total, source_ref, target_key, installation_id, error_code,
-    lease_token, lease_expires_at, requested_by
+    lease_token, lease_expires_at, requested_by, source_scope, source_project_id
 ) VALUES (
     $1, $2, $12, $13, $3,
     $14, $4, $5, $6, $7, $8, $9, $15,
     $10, $11, $16,
-    $17, $18, $19
+    $17, $18, $19,
+    COALESCE($20::text, 'run'), $21
 )
 ON CONFLICT (dedup_key) DO NOTHING
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id
 `
 
 type CreateLabrastroMessageDeliveryParams struct {
@@ -870,6 +890,8 @@ type CreateLabrastroMessageDeliveryParams struct {
 	LeaseToken      pgtype.UUID        `json:"lease_token"`
 	LeaseExpiresAt  pgtype.Timestamptz `json:"lease_expires_at"`
 	RequestedBy     pgtype.UUID        `json:"requested_by"`
+	SourceScope     pgtype.Text        `json:"source_scope"`
+	SourceProjectID pgtype.UUID        `json:"source_project_id"`
 }
 
 // =====================
@@ -900,6 +922,8 @@ func (q *Queries) CreateLabrastroMessageDelivery(ctx context.Context, arg Create
 		arg.LeaseToken,
 		arg.LeaseExpiresAt,
 		arg.RequestedBy,
+		arg.SourceScope,
+		arg.SourceProjectID,
 	)
 	if err != nil {
 		return nil, err
@@ -936,6 +960,8 @@ func (q *Queries) CreateLabrastroMessageDelivery(ctx context.Context, arg Create
 			&i.UpdatedAt,
 			&i.RequestedBy,
 			&i.SourceRefID,
+			&i.SourceScope,
+			&i.SourceProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -961,7 +987,7 @@ INSERT INTO labrastro_message_route (
     $14, $15,
     $7, $8, $9,
     $10, 1, $11, $11, now()
-) RETURNING id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types
+) RETURNING id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types, last_disabled_at
 `
 
 type CreateLabrastroMessageRouteParams struct {
@@ -1033,6 +1059,7 @@ func (q *Queries) CreateLabrastroMessageRoute(ctx context.Context, arg CreateLab
 		&i.SourceKind,
 		&i.ProjectID,
 		&i.EventTypes,
+		&i.LastDisabledAt,
 	)
 	return i, err
 }
@@ -1043,14 +1070,14 @@ INSERT INTO labrastro_message_delivery (
     id, workspace_id, route_id, route_revision, autopilot_id, run_id,
     source_ref_id, dedup_key, source_kind, status, content_snapshot,
     target_snapshot, shard_total, source_ref, target_key, installation_id,
-    error_code
+    error_code, source_scope, source_project_id
 ) VALUES (
     $1, $2, $3, $4, NULL, NULL,
     $5, $6, $7, $8, $9, $10, $11, $12,
-    $13, $14, $15
+    $13, $14, $15, $16, $17
 )
 ON CONFLICT (dedup_key) DO NOTHING
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id
 `
 
 type CreateLabrastroMessageSourceDeliveryParams struct {
@@ -1069,6 +1096,8 @@ type CreateLabrastroMessageSourceDeliveryParams struct {
 	TargetKey       string      `json:"target_key"`
 	InstallationID  pgtype.UUID `json:"installation_id"`
 	ErrorCode       pgtype.Text `json:"error_code"`
+	SourceScope     pgtype.Text `json:"source_scope"`
+	SourceProjectID pgtype.UUID `json:"source_project_id"`
 }
 
 // ---- decision insert ----
@@ -1099,6 +1128,8 @@ func (q *Queries) CreateLabrastroMessageSourceDelivery(ctx context.Context, arg 
 		arg.TargetKey,
 		arg.InstallationID,
 		arg.ErrorCode,
+		arg.SourceScope,
+		arg.SourceProjectID,
 	)
 	if err != nil {
 		return nil, err
@@ -1135,6 +1166,8 @@ func (q *Queries) CreateLabrastroMessageSourceDelivery(ctx context.Context, arg 
 			&i.UpdatedAt,
 			&i.RequestedBy,
 			&i.SourceRefID,
+			&i.SourceScope,
+			&i.SourceProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -1159,7 +1192,7 @@ INSERT INTO labrastro_message_route (
     $13, $14,
     $6, $7, $15, $8,
     $9, 1, $10, $10, now()
-) RETURNING id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types
+) RETURNING id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types, last_disabled_at
 `
 
 type CreateLabrastroMessageSourceRouteParams struct {
@@ -1186,7 +1219,7 @@ type CreateLabrastroMessageSourceRouteParams struct {
 // The same route/delivery/receipt storage the automation source uses; these
 // queries add the source-scoped configuration, the candidate scans over the
 // three persisted source records, the team target approvals and the
-// lifecycle stop paths. Legacy run queries above are untouched.
+// lifecycle stop paths. Shared delivery/cleanup queries above also serve runs.
 // Personal/team route. autopilot_id stays NULL — a non-run route never
 // impersonates an automation id. Revision 1, effective_from now (the same
 // "only sources from enabling on" boundary the run routes use).
@@ -1233,6 +1266,7 @@ func (q *Queries) CreateLabrastroMessageSourceRoute(ctx context.Context, arg Cre
 		&i.SourceKind,
 		&i.ProjectID,
 		&i.EventTypes,
+		&i.LastDisabledAt,
 	)
 	return i, err
 }
@@ -1328,7 +1362,7 @@ func (q *Queries) DeleteLabrastroMessageRoutesByWorkspace(ctx context.Context, w
 
 const disableLabrastroMessagePersonalRoutesByUser = `-- name: DisableLabrastroMessagePersonalRoutesByUser :many
 UPDATE labrastro_message_route
-SET enabled = false, revision = revision + 1, updated_at = now()
+SET enabled = false, last_disabled_at = clock_timestamp(), revision = revision + 1, updated_at = now()
 WHERE workspace_id = $1
   AND source_kind = 'inbox'
   AND target_user_id = $2
@@ -1366,7 +1400,9 @@ func (q *Queries) DisableLabrastroMessagePersonalRoutesByUser(ctx context.Contex
 
 const disableLabrastroMessageRoutesByInstallation = `-- name: DisableLabrastroMessageRoutesByInstallation :exec
 UPDATE labrastro_message_route
-SET enabled = false, revision = revision + 1, updated_at = now()
+SET enabled = false,
+    last_disabled_at = CASE WHEN source_kind <> 'run' THEN clock_timestamp() ELSE last_disabled_at END,
+    revision = revision + 1, updated_at = now()
 WHERE workspace_id = $1 AND installation_id = $2 AND enabled
 `
 
@@ -1381,9 +1417,8 @@ func (q *Queries) DisableLabrastroMessageRoutesByInstallation(ctx context.Contex
 }
 
 const disableLabrastroMessageSourceRoutesByProject = `-- name: DisableLabrastroMessageSourceRoutesByProject :many
-
 UPDATE labrastro_message_route
-SET enabled = false, revision = revision + 1, updated_at = now()
+SET enabled = false, last_disabled_at = clock_timestamp(), revision = revision + 1, updated_at = now()
 WHERE workspace_id = $1
   AND project_id = $2
   AND source_kind IN ('activity', 'comment')
@@ -1396,7 +1431,6 @@ type DisableLabrastroMessageSourceRoutesByProjectParams struct {
 	ProjectID   pgtype.UUID `json:"project_id"`
 }
 
-// ---- lifecycle stop paths ----
 // Project deletion stops the team routes scoped to it (the filter can
 // never match again). Runs inside the project-delete transaction; the
 // service layer cancels their queued sends in the same transaction.
@@ -1433,7 +1467,7 @@ WHERE id = $3
   AND lease_token = $4
   AND status = 'sending'
   AND lease_expires_at > clock_timestamp()
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id
 `
 
 type FailClaimedLabrastroMessageDeliveryParams struct {
@@ -1482,12 +1516,14 @@ func (q *Queries) FailClaimedLabrastroMessageDelivery(ctx context.Context, arg F
 		&i.UpdatedAt,
 		&i.RequestedBy,
 		&i.SourceRefID,
+		&i.SourceScope,
+		&i.SourceProjectID,
 	)
 	return i, err
 }
 
 const getActiveLabrastroMessageApprovedTarget = `-- name: GetActiveLabrastroMessageApprovedTarget :one
-SELECT id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind FROM labrastro_message_approved_target
+SELECT id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind, project_id FROM labrastro_message_approved_target
 WHERE workspace_id = $1
   AND autopilot_id = $2
   AND installation_id = $3
@@ -1523,17 +1559,19 @@ func (q *Queries) GetActiveLabrastroMessageApprovedTarget(ctx context.Context, a
 		&i.ApprovedAt,
 		&i.RevokedAt,
 		&i.SourceKind,
+		&i.ProjectID,
 	)
 	return i, err
 }
 
 const getActiveLabrastroMessageSourceApprovedTarget = `-- name: GetActiveLabrastroMessageSourceApprovedTarget :one
-SELECT id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind FROM labrastro_message_approved_target
+SELECT id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind, project_id FROM labrastro_message_approved_target
 WHERE workspace_id = $1
   AND source_kind = $2
   AND autopilot_id IS NULL
   AND installation_id = $3
   AND target_key = $4
+  AND project_id IS NOT DISTINCT FROM $5
   AND revoked_at IS NULL
 `
 
@@ -1542,10 +1580,11 @@ type GetActiveLabrastroMessageSourceApprovedTargetParams struct {
 	SourceKind     string      `json:"source_kind"`
 	InstallationID pgtype.UUID `json:"installation_id"`
 	TargetKey      string      `json:"target_key"`
+	ProjectID      pgtype.UUID `json:"project_id"`
 }
 
 // The single authorization lookup for team sends: is this exact
-// (source kind, bot, target) triple currently approved? An automation's
+// (source kind, project, bot, target) range currently approved? An automation's
 // approval never satisfies it and vice versa.
 func (q *Queries) GetActiveLabrastroMessageSourceApprovedTarget(ctx context.Context, arg GetActiveLabrastroMessageSourceApprovedTargetParams) (LabrastroMessageApprovedTarget, error) {
 	row := q.db.QueryRow(ctx, getActiveLabrastroMessageSourceApprovedTarget,
@@ -1553,6 +1592,7 @@ func (q *Queries) GetActiveLabrastroMessageSourceApprovedTarget(ctx context.Cont
 		arg.SourceKind,
 		arg.InstallationID,
 		arg.TargetKey,
+		arg.ProjectID,
 	)
 	var i LabrastroMessageApprovedTarget
 	err := row.Scan(
@@ -1566,6 +1606,7 @@ func (q *Queries) GetActiveLabrastroMessageSourceApprovedTarget(ctx context.Cont
 		&i.ApprovedAt,
 		&i.RevokedAt,
 		&i.SourceKind,
+		&i.ProjectID,
 	)
 	return i, err
 }
@@ -1614,7 +1655,7 @@ func (q *Queries) GetChannelUserBindingForDelivery(ctx context.Context, arg GetC
 }
 
 const getLabrastroMessageDelivery = `-- name: GetLabrastroMessageDelivery :one
-SELECT id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id FROM labrastro_message_delivery
+SELECT id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id FROM labrastro_message_delivery
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -1654,6 +1695,8 @@ func (q *Queries) GetLabrastroMessageDelivery(ctx context.Context, arg GetLabras
 		&i.UpdatedAt,
 		&i.RequestedBy,
 		&i.SourceRefID,
+		&i.SourceScope,
+		&i.SourceProjectID,
 	)
 	return i, err
 }
@@ -1689,7 +1732,7 @@ func (q *Queries) GetLabrastroMessageDeliveryLease(ctx context.Context, id pgtyp
 }
 
 const getLabrastroMessageRoute = `-- name: GetLabrastroMessageRoute :one
-SELECT id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types FROM labrastro_message_route
+SELECT id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types, last_disabled_at FROM labrastro_message_route
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -1726,6 +1769,7 @@ func (q *Queries) GetLabrastroMessageRoute(ctx context.Context, arg GetLabrastro
 		&i.SourceKind,
 		&i.ProjectID,
 		&i.EventTypes,
+		&i.LastDisabledAt,
 	)
 	return i, err
 }
@@ -1812,7 +1856,7 @@ func (q *Queries) InitLabrastroMessageScanCursor(ctx context.Context, scanner st
 }
 
 const listEnabledLabrastroMessageRoutesByAutopilot = `-- name: ListEnabledLabrastroMessageRoutesByAutopilot :many
-SELECT id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types FROM labrastro_message_route
+SELECT id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types, last_disabled_at FROM labrastro_message_route
 WHERE workspace_id = $1 AND autopilot_id = $2 AND enabled = true
 ORDER BY created_at, id
 `
@@ -1857,6 +1901,7 @@ func (q *Queries) ListEnabledLabrastroMessageRoutesByAutopilot(ctx context.Conte
 			&i.SourceKind,
 			&i.ProjectID,
 			&i.EventTypes,
+			&i.LastDisabledAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1869,7 +1914,7 @@ func (q *Queries) ListEnabledLabrastroMessageRoutesByAutopilot(ctx context.Conte
 }
 
 const listLabrastroMessageActivitySourceCandidates = `-- name: ListLabrastroMessageActivitySourceCandidates :many
-SELECT
+SELECT DISTINCT ON (al.id, rt.installation_id, rt.target_key)
     al.id AS activity_id, al.workspace_id AS activity_workspace_id,
     al.issue_id AS activity_issue_id,
     al.actor_type AS activity_actor_type, al.actor_id AS activity_actor_id,
@@ -1883,7 +1928,7 @@ SELECT
     rt.installation_id, rt.channel_type,
     rt.target_type, rt.target_user_id, rt.target_chat_id,
     rt.target_message_id, rt.target_thread_id, rt.target_key,
-    rt.project_id AS route_project_id, rt.effective_from,
+    rt.project_id AS route_project_id, rt.event_types, rt.effective_from,
     rt.created_at AS route_created_at, rt.updated_by AS route_updated_by
 FROM activity_log al
 JOIN issue iss ON iss.id = al.issue_id
@@ -1894,17 +1939,27 @@ JOIN labrastro_message_route rt
   ON rt.workspace_id = al.workspace_id
  AND rt.source_kind = 'activity'
  AND rt.enabled = true
+LEFT JOIN member route_authorizer
+  ON route_authorizer.workspace_id = rt.workspace_id AND route_authorizer.user_id = rt.updated_by
+LEFT JOIN labrastro_message_approved_target approval
+  ON approval.workspace_id = rt.workspace_id AND approval.source_kind = rt.source_kind
+ AND approval.installation_id = rt.installation_id AND approval.target_key = rt.target_key
+ AND approval.project_id IS NOT DISTINCT FROM rt.project_id AND approval.revoked_at IS NULL
 WHERE al.action IN ('status_changed', 'assignee_changed')
   AND al.created_at >= rt.effective_from
-  AND al.id > $1::uuid
+  AND al.id >= $1::uuid
   AND al.id <= $2::uuid
   AND NOT EXISTS (
       SELECT 1 FROM labrastro_message_delivery d
-      WHERE d.source_ref_id = al.id
+      WHERE d.workspace_id = al.workspace_id
+        AND d.source_scope = rt.source_kind
+        AND d.source_ref_id = al.id
         AND d.installation_id = rt.installation_id
         AND d.target_key = rt.target_key
   )
-ORDER BY al.id, rt.created_at, rt.id
+ORDER BY al.id, rt.installation_id, rt.target_key,
+    (((rt.project_id IS NULL OR rt.project_id = iss.project_id) AND (cardinality(rt.event_types) = 0 OR al.action = ANY(rt.event_types))) AND route_authorizer.role IN ('owner', 'admin') AND approval.id IS NOT NULL) DESC NULLS LAST,
+    ((rt.project_id IS NULL OR rt.project_id = iss.project_id) AND (cardinality(rt.event_types) = 0 OR al.action = ANY(rt.event_types))) DESC NULLS LAST, rt.created_at, rt.id
 LIMIT $3
 `
 
@@ -1942,6 +1997,7 @@ type ListLabrastroMessageActivitySourceCandidatesRow struct {
 	TargetThreadID       pgtype.Text        `json:"target_thread_id"`
 	TargetKey            string             `json:"target_key"`
 	RouteProjectID       pgtype.UUID        `json:"route_project_id"`
+	EventTypes           []string           `json:"event_types"`
 	EffectiveFrom        pgtype.Timestamptz `json:"effective_from"`
 	RouteCreatedAt       pgtype.Timestamptz `json:"route_created_at"`
 	RouteUpdatedBy       pgtype.UUID        `json:"route_updated_by"`
@@ -1984,6 +2040,7 @@ func (q *Queries) ListLabrastroMessageActivitySourceCandidates(ctx context.Conte
 			&i.TargetThreadID,
 			&i.TargetKey,
 			&i.RouteProjectID,
+			&i.EventTypes,
 			&i.EffectiveFrom,
 			&i.RouteCreatedAt,
 			&i.RouteUpdatedBy,
@@ -1999,7 +2056,7 @@ func (q *Queries) ListLabrastroMessageActivitySourceCandidates(ctx context.Conte
 }
 
 const listLabrastroMessageApprovedTargets = `-- name: ListLabrastroMessageApprovedTargets :many
-SELECT id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind FROM labrastro_message_approved_target
+SELECT id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind, project_id FROM labrastro_message_approved_target
 WHERE workspace_id = $1
   AND autopilot_id = $2
   AND revoked_at IS NULL
@@ -2031,6 +2088,7 @@ func (q *Queries) ListLabrastroMessageApprovedTargets(ctx context.Context, arg L
 			&i.ApprovedAt,
 			&i.RevokedAt,
 			&i.SourceKind,
+			&i.ProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -2043,9 +2101,9 @@ func (q *Queries) ListLabrastroMessageApprovedTargets(ctx context.Context, arg L
 }
 
 const listLabrastroMessageCommentSourceCandidates = `-- name: ListLabrastroMessageCommentSourceCandidates :many
-SELECT
+SELECT DISTINCT ON (c.id, rt.installation_id, rt.target_key)
     c.id AS comment_id, c.workspace_id AS comment_workspace_id,
-    c.issue_id AS comment_issue_id,
+    c.issue_id AS comment_issue_id, c.parent_id AS comment_parent_id,
     c.author_type AS comment_author_type, c.author_id AS comment_author_id,
     c.content AS comment_content, c.created_at AS comment_created_at,
     iss.number AS issue_number, iss.title AS issue_title,
@@ -2056,7 +2114,7 @@ SELECT
     rt.installation_id, rt.channel_type,
     rt.target_type, rt.target_user_id, rt.target_chat_id,
     rt.target_message_id, rt.target_thread_id, rt.target_key,
-    rt.project_id AS route_project_id, rt.effective_from,
+    rt.project_id AS route_project_id, rt.event_types, rt.effective_from,
     rt.created_at AS route_created_at, rt.updated_by AS route_updated_by
 FROM comment c
 JOIN issue iss ON iss.id = c.issue_id
@@ -2067,17 +2125,27 @@ JOIN labrastro_message_route rt
   ON rt.workspace_id = c.workspace_id
  AND rt.source_kind = 'comment'
  AND rt.enabled = true
+LEFT JOIN member route_authorizer
+  ON route_authorizer.workspace_id = rt.workspace_id AND route_authorizer.user_id = rt.updated_by
+LEFT JOIN labrastro_message_approved_target approval
+  ON approval.workspace_id = rt.workspace_id AND approval.source_kind = rt.source_kind
+ AND approval.installation_id = rt.installation_id AND approval.target_key = rt.target_key
+ AND approval.project_id IS NOT DISTINCT FROM rt.project_id AND approval.revoked_at IS NULL
 WHERE c.type = 'comment'
   AND c.created_at >= rt.effective_from
-  AND c.id > $1::uuid
+  AND c.id >= $1::uuid
   AND c.id <= $2::uuid
   AND NOT EXISTS (
       SELECT 1 FROM labrastro_message_delivery d
-      WHERE d.source_ref_id = c.id
+      WHERE d.workspace_id = c.workspace_id
+        AND d.source_scope = rt.source_kind
+        AND d.source_ref_id = c.id
         AND d.installation_id = rt.installation_id
         AND d.target_key = rt.target_key
   )
-ORDER BY c.id, rt.created_at, rt.id
+ORDER BY c.id, rt.installation_id, rt.target_key,
+    (((rt.project_id IS NULL OR rt.project_id = iss.project_id) AND (cardinality(rt.event_types) = 0 OR c.type = ANY(rt.event_types))) AND route_authorizer.role IN ('owner', 'admin') AND approval.id IS NOT NULL) DESC NULLS LAST,
+    ((rt.project_id IS NULL OR rt.project_id = iss.project_id) AND (cardinality(rt.event_types) = 0 OR c.type = ANY(rt.event_types))) DESC NULLS LAST, rt.created_at, rt.id
 LIMIT $3
 `
 
@@ -2091,6 +2159,7 @@ type ListLabrastroMessageCommentSourceCandidatesRow struct {
 	CommentID            pgtype.UUID        `json:"comment_id"`
 	CommentWorkspaceID   pgtype.UUID        `json:"comment_workspace_id"`
 	CommentIssueID       pgtype.UUID        `json:"comment_issue_id"`
+	CommentParentID      pgtype.UUID        `json:"comment_parent_id"`
 	CommentAuthorType    string             `json:"comment_author_type"`
 	CommentAuthorID      pgtype.UUID        `json:"comment_author_id"`
 	CommentContent       string             `json:"comment_content"`
@@ -2114,6 +2183,7 @@ type ListLabrastroMessageCommentSourceCandidatesRow struct {
 	TargetThreadID       pgtype.Text        `json:"target_thread_id"`
 	TargetKey            string             `json:"target_key"`
 	RouteProjectID       pgtype.UUID        `json:"route_project_id"`
+	EventTypes           []string           `json:"event_types"`
 	EffectiveFrom        pgtype.Timestamptz `json:"effective_from"`
 	RouteCreatedAt       pgtype.Timestamptz `json:"route_created_at"`
 	RouteUpdatedBy       pgtype.UUID        `json:"route_updated_by"`
@@ -2135,6 +2205,7 @@ func (q *Queries) ListLabrastroMessageCommentSourceCandidates(ctx context.Contex
 			&i.CommentID,
 			&i.CommentWorkspaceID,
 			&i.CommentIssueID,
+			&i.CommentParentID,
 			&i.CommentAuthorType,
 			&i.CommentAuthorID,
 			&i.CommentContent,
@@ -2158,6 +2229,7 @@ func (q *Queries) ListLabrastroMessageCommentSourceCandidates(ctx context.Contex
 			&i.TargetThreadID,
 			&i.TargetKey,
 			&i.RouteProjectID,
+			&i.EventTypes,
 			&i.EffectiveFrom,
 			&i.RouteCreatedAt,
 			&i.RouteUpdatedBy,
@@ -2277,7 +2349,7 @@ SELECT
     d.run_id, d.source_ref_id, d.dedup_key, d.source_kind, d.status,
     d.attempts, d.next_attempt_at, d.error_code, d.last_error,
     d.shard_total, d.delivered_at, d.first_attempt_at, d.created_at,
-    d.updated_at, d.installation_id, d.target_key
+    d.updated_at, d.installation_id, d.target_key, d.source_scope, d.source_project_id
 FROM labrastro_message_delivery d
 WHERE d.workspace_id = $1
   AND d.route_id = $2
@@ -2295,27 +2367,29 @@ type ListLabrastroMessageDeliveriesByRouteParams struct {
 }
 
 type ListLabrastroMessageDeliveriesByRouteRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	RouteID        pgtype.UUID        `json:"route_id"`
-	RouteRevision  pgtype.Int4        `json:"route_revision"`
-	AutopilotID    pgtype.UUID        `json:"autopilot_id"`
-	RunID          pgtype.UUID        `json:"run_id"`
-	SourceRefID    pgtype.UUID        `json:"source_ref_id"`
-	DedupKey       string             `json:"dedup_key"`
-	SourceKind     string             `json:"source_kind"`
-	Status         string             `json:"status"`
-	Attempts       int32              `json:"attempts"`
-	NextAttemptAt  pgtype.Timestamptz `json:"next_attempt_at"`
-	ErrorCode      pgtype.Text        `json:"error_code"`
-	LastError      pgtype.Text        `json:"last_error"`
-	ShardTotal     int32              `json:"shard_total"`
-	DeliveredAt    pgtype.Timestamptz `json:"delivered_at"`
-	FirstAttemptAt pgtype.Timestamptz `json:"first_attempt_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	InstallationID pgtype.UUID        `json:"installation_id"`
-	TargetKey      string             `json:"target_key"`
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	RouteID         pgtype.UUID        `json:"route_id"`
+	RouteRevision   pgtype.Int4        `json:"route_revision"`
+	AutopilotID     pgtype.UUID        `json:"autopilot_id"`
+	RunID           pgtype.UUID        `json:"run_id"`
+	SourceRefID     pgtype.UUID        `json:"source_ref_id"`
+	DedupKey        string             `json:"dedup_key"`
+	SourceKind      string             `json:"source_kind"`
+	Status          string             `json:"status"`
+	Attempts        int32              `json:"attempts"`
+	NextAttemptAt   pgtype.Timestamptz `json:"next_attempt_at"`
+	ErrorCode       pgtype.Text        `json:"error_code"`
+	LastError       pgtype.Text        `json:"last_error"`
+	ShardTotal      int32              `json:"shard_total"`
+	DeliveredAt     pgtype.Timestamptz `json:"delivered_at"`
+	FirstAttemptAt  pgtype.Timestamptz `json:"first_attempt_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	InstallationID  pgtype.UUID        `json:"installation_id"`
+	TargetKey       string             `json:"target_key"`
+	SourceScope     pgtype.Text        `json:"source_scope"`
+	SourceProjectID pgtype.UUID        `json:"source_project_id"`
 }
 
 // ---- delivery records for source routes ----
@@ -2358,6 +2432,8 @@ func (q *Queries) ListLabrastroMessageDeliveriesByRoute(ctx context.Context, arg
 			&i.UpdatedAt,
 			&i.InstallationID,
 			&i.TargetKey,
+			&i.SourceScope,
+			&i.SourceProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -2485,10 +2561,10 @@ func (q *Queries) ListLabrastroMessageDeliveryCandidateRoutes(ctx context.Contex
 
 const listLabrastroMessageInboxSourceCandidates = `-- name: ListLabrastroMessageInboxSourceCandidates :many
 
-SELECT
+SELECT DISTINCT ON (i.id, rt.installation_id, rt.target_key)
     i.id AS item_id, i.workspace_id AS item_workspace_id,
     i.recipient_id, i.type AS item_type, i.severity AS item_severity,
-    i.title AS item_title, i.body AS item_body,
+    i.title AS item_title, i.body AS item_body, i.details AS item_details,
     i.created_at AS item_created_at, i.issue_id AS item_issue_id,
     iss.number AS issue_number, iss.title AS issue_title,
     w.slug AS workspace_slug, w.issue_prefix AS workspace_issue_prefix,
@@ -2508,15 +2584,18 @@ JOIN workspace w ON w.id = i.workspace_id
 LEFT JOIN issue iss ON iss.id = i.issue_id
 WHERE i.recipient_type = 'member'
   AND i.created_at >= rt.effective_from
-  AND i.id > $1::uuid
+  AND i.id >= $1::uuid
   AND i.id <= $2::uuid
   AND NOT EXISTS (
       SELECT 1 FROM labrastro_message_delivery d
-      WHERE d.source_ref_id = i.id
+      WHERE d.workspace_id = i.workspace_id
+        AND d.source_scope = rt.source_kind
+        AND d.source_ref_id = i.id
         AND d.installation_id = rt.installation_id
         AND d.target_key = rt.target_key
   )
-ORDER BY i.id, rt.created_at, rt.id
+ORDER BY i.id, rt.installation_id, rt.target_key,
+    (cardinality(rt.event_types) = 0 OR i.type = ANY(rt.event_types)) DESC NULLS LAST, rt.created_at, rt.id
 LIMIT $3
 `
 
@@ -2534,6 +2613,7 @@ type ListLabrastroMessageInboxSourceCandidatesRow struct {
 	ItemSeverity         string             `json:"item_severity"`
 	ItemTitle            string             `json:"item_title"`
 	ItemBody             pgtype.Text        `json:"item_body"`
+	ItemDetails          []byte             `json:"item_details"`
 	ItemCreatedAt        pgtype.Timestamptz `json:"item_created_at"`
 	ItemIssueID          pgtype.UUID        `json:"item_issue_id"`
 	IssueNumber          pgtype.Int4        `json:"issue_number"`
@@ -2556,15 +2636,11 @@ type ListLabrastroMessageInboxSourceCandidatesRow struct {
 }
 
 // ---- candidate scans ----
-// Each scan pairs one persisted source class with enabled routes and
-// returns only (source, route) pairs that still lack a decision — the
-// NOT EXISTS shrinking set is what makes a full cycle's cost decay. The
-// keyset (after_id / upper_id) freezes one cycle's immutable bound, so a
-// source that commits late is revisited when the next cycle restarts.
-// Definitional filters (source class, target ownership) live in the JOIN;
-// preference filters (project, event types, mutes) are judged by the
-// service, which records a suppressed decision for the pair — that marker
-// is what stops a later filter edit from replaying old events.
+// Collapse equivalent routes BEFORE pagination. A matching, authorized rule
+// wins over every non-match; attribution is deterministic within that set.
+// The inclusive cursor drains all targets of the last source across pages.
+// NOT EXISTS removes completed targets, so no target cursor is required.
+// A later full cycle recovers sources that committed behind the cursor.
 func (q *Queries) ListLabrastroMessageInboxSourceCandidates(ctx context.Context, arg ListLabrastroMessageInboxSourceCandidatesParams) ([]ListLabrastroMessageInboxSourceCandidatesRow, error) {
 	rows, err := q.db.Query(ctx, listLabrastroMessageInboxSourceCandidates, arg.AfterID, arg.UpperID, arg.Limit)
 	if err != nil {
@@ -2582,6 +2658,7 @@ func (q *Queries) ListLabrastroMessageInboxSourceCandidates(ctx context.Context,
 			&i.ItemSeverity,
 			&i.ItemTitle,
 			&i.ItemBody,
+			&i.ItemDetails,
 			&i.ItemCreatedAt,
 			&i.ItemIssueID,
 			&i.IssueNumber,
@@ -2656,7 +2733,7 @@ func (q *Queries) ListLabrastroMessageReceiptsByDelivery(ctx context.Context, ar
 }
 
 const listLabrastroMessageRoutesByAutopilot = `-- name: ListLabrastroMessageRoutesByAutopilot :many
-SELECT id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types FROM labrastro_message_route
+SELECT id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types, last_disabled_at FROM labrastro_message_route
 WHERE workspace_id = $1 AND autopilot_id = $2
 ORDER BY created_at, id
 `
@@ -2699,6 +2776,7 @@ func (q *Queries) ListLabrastroMessageRoutesByAutopilot(ctx context.Context, arg
 			&i.SourceKind,
 			&i.ProjectID,
 			&i.EventTypes,
+			&i.LastDisabledAt,
 		); err != nil {
 			return nil, err
 		}
@@ -2711,7 +2789,7 @@ func (q *Queries) ListLabrastroMessageRoutesByAutopilot(ctx context.Context, arg
 }
 
 const listLabrastroMessageSourceApprovedTargets = `-- name: ListLabrastroMessageSourceApprovedTargets :many
-SELECT id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind FROM labrastro_message_approved_target
+SELECT id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind, project_id FROM labrastro_message_approved_target
 WHERE workspace_id = $1
   AND source_kind IN ('activity', 'comment')
   AND revoked_at IS NULL
@@ -2738,6 +2816,7 @@ func (q *Queries) ListLabrastroMessageSourceApprovedTargets(ctx context.Context,
 			&i.ApprovedAt,
 			&i.RevokedAt,
 			&i.SourceKind,
+			&i.ProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -2750,21 +2829,25 @@ func (q *Queries) ListLabrastroMessageSourceApprovedTargets(ctx context.Context,
 }
 
 const listLabrastroMessageSourceRoutes = `-- name: ListLabrastroMessageSourceRoutes :many
-SELECT id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types FROM labrastro_message_route
-WHERE workspace_id = $1
-  AND source_kind <> 'run'
-  AND ($2::text IS NULL OR source_kind = $2::text)
-ORDER BY created_at, id
+SELECT r.id, r.workspace_id, r.autopilot_id, r.installation_id, r.channel_type, r.target_type, r.target_user_id, r.target_chat_id, r.target_message_id, r.target_thread_id, r.target_key, r.conditions, r.content_mode, r.enabled, r.revision, r.created_by, r.updated_by, r.effective_from, r.created_at, r.updated_at, r.source_kind, r.project_id, r.event_types, r.last_disabled_at FROM labrastro_message_route r
+JOIN member viewer ON viewer.workspace_id = r.workspace_id
+    AND viewer.user_id = $1::uuid
+WHERE r.workspace_id = $2
+  AND ((r.source_kind = 'inbox' AND r.target_user_id = viewer.user_id)
+       OR (r.source_kind IN ('activity', 'comment') AND viewer.role IN ('owner', 'admin')))
+  AND ($3::text IS NULL OR r.source_kind = $3::text)
+ORDER BY r.created_at, r.id
 `
 
 type ListLabrastroMessageSourceRoutesParams struct {
+	UserID      pgtype.UUID `json:"user_id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	SourceKind  pgtype.Text `json:"source_kind"`
 }
 
-// Personal/team rules of one workspace, newest scope kind filterable.
+// Resolve current membership and visibility together; personal config is self-only.
 func (q *Queries) ListLabrastroMessageSourceRoutes(ctx context.Context, arg ListLabrastroMessageSourceRoutesParams) ([]LabrastroMessageRoute, error) {
-	rows, err := q.db.Query(ctx, listLabrastroMessageSourceRoutes, arg.WorkspaceID, arg.SourceKind)
+	rows, err := q.db.Query(ctx, listLabrastroMessageSourceRoutes, arg.UserID, arg.WorkspaceID, arg.SourceKind)
 	if err != nil {
 		return nil, err
 	}
@@ -2796,6 +2879,7 @@ func (q *Queries) ListLabrastroMessageSourceRoutes(ctx context.Context, arg List
 			&i.SourceKind,
 			&i.ProjectID,
 			&i.EventTypes,
+			&i.LastDisabledAt,
 		); err != nil {
 			return nil, err
 		}
@@ -3155,6 +3239,69 @@ func (q *Queries) LockLabrastroMessageRuntimeInstallations(ctx context.Context, 
 	return items, nil
 }
 
+const lockLabrastroMessageSourceProject = `-- name: LockLabrastroMessageSourceProject :one
+SELECT id FROM project
+WHERE id = $1 AND workspace_id = $2
+FOR KEY SHARE
+`
+
+type LockLabrastroMessageSourceProjectParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// The same parent lock used by project deletion, before locking any route.
+func (q *Queries) LockLabrastroMessageSourceProject(ctx context.Context, arg LockLabrastroMessageSourceProjectParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockLabrastroMessageSourceProject, arg.ID, arg.WorkspaceID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockLabrastroMessageSourceRoute = `-- name: LockLabrastroMessageSourceRoute :one
+SELECT id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types, last_disabled_at FROM labrastro_message_route
+WHERE id = $1 AND workspace_id = $2
+FOR SHARE
+`
+
+type LockLabrastroMessageSourceRouteParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// SHARE conflicts with configuration edits/deletion until a decision commits.
+func (q *Queries) LockLabrastroMessageSourceRoute(ctx context.Context, arg LockLabrastroMessageSourceRouteParams) (LabrastroMessageRoute, error) {
+	row := q.db.QueryRow(ctx, lockLabrastroMessageSourceRoute, arg.ID, arg.WorkspaceID)
+	var i LabrastroMessageRoute
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AutopilotID,
+		&i.InstallationID,
+		&i.ChannelType,
+		&i.TargetType,
+		&i.TargetUserID,
+		&i.TargetChatID,
+		&i.TargetMessageID,
+		&i.TargetThreadID,
+		&i.TargetKey,
+		&i.Conditions,
+		&i.ContentMode,
+		&i.Enabled,
+		&i.Revision,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+		&i.EffectiveFrom,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SourceKind,
+		&i.ProjectID,
+		&i.EventTypes,
+		&i.LastDisabledAt,
+	)
+	return i, err
+}
+
 const lockWorkspaceForMessageDecision = `-- name: LockWorkspaceForMessageDecision :one
 
 SELECT id FROM workspace
@@ -3222,7 +3369,7 @@ SET status = 'uncertain',
     updated_at = now()
 WHERE status = 'sending'
   AND (lease_expires_at IS NULL OR lease_expires_at <= now())
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id
 `
 
 type RequeueExpiredLabrastroMessageDeliveryClaimsParams struct {
@@ -3271,6 +3418,8 @@ func (q *Queries) RequeueExpiredLabrastroMessageDeliveryClaims(ctx context.Conte
 			&i.UpdatedAt,
 			&i.RequestedBy,
 			&i.SourceRefID,
+			&i.SourceScope,
+			&i.SourceProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -3296,7 +3445,7 @@ WHERE id = $4
   AND lease_token = $5
   AND status = 'sending'
   AND lease_expires_at > clock_timestamp()
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id
 `
 
 type RetryClaimedLabrastroMessageDeliveryParams struct {
@@ -3345,6 +3494,8 @@ func (q *Queries) RetryClaimedLabrastroMessageDelivery(ctx context.Context, arg 
 		&i.UpdatedAt,
 		&i.RequestedBy,
 		&i.SourceRefID,
+		&i.SourceScope,
+		&i.SourceProjectID,
 	)
 	return i, err
 }
@@ -3361,7 +3512,7 @@ SET status = 'queued',
 WHERE id = $3
   AND workspace_id = $4
   AND status IN ('failed', 'uncertain')
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id
 `
 
 type RetryLabrastroMessageDeliveryManuallyParams struct {
@@ -3411,73 +3562,8 @@ func (q *Queries) RetryLabrastroMessageDeliveryManually(ctx context.Context, arg
 		&i.UpdatedAt,
 		&i.RequestedBy,
 		&i.SourceRefID,
-	)
-	return i, err
-}
-
-const retryLabrastroMessageDeliveryManuallyByRoute = `-- name: RetryLabrastroMessageDeliveryManuallyByRoute :one
-UPDATE labrastro_message_delivery
-SET status = 'queued',
-    next_attempt_at = now(),
-    error_code = $1,
-    last_error = $2,
-    lease_token = NULL,
-    lease_expires_at = NULL,
-    updated_at = now()
-WHERE id = $3
-  AND workspace_id = $4
-  AND route_id = $5
-  AND status IN ('failed', 'uncertain')
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
-`
-
-type RetryLabrastroMessageDeliveryManuallyByRouteParams struct {
-	ErrorCode   pgtype.Text `json:"error_code"`
-	LastError   pgtype.Text `json:"last_error"`
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	RouteID     pgtype.UUID `json:"route_id"`
-}
-
-// Manual verify-and-retry inside ONE route. Same transition contract as
-// the automation retry: failed/uncertain only, same per-shard send UUIDs.
-func (q *Queries) RetryLabrastroMessageDeliveryManuallyByRoute(ctx context.Context, arg RetryLabrastroMessageDeliveryManuallyByRouteParams) (LabrastroMessageDelivery, error) {
-	row := q.db.QueryRow(ctx, retryLabrastroMessageDeliveryManuallyByRoute,
-		arg.ErrorCode,
-		arg.LastError,
-		arg.ID,
-		arg.WorkspaceID,
-		arg.RouteID,
-	)
-	var i LabrastroMessageDelivery
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.RouteID,
-		&i.RouteRevision,
-		&i.AutopilotID,
-		&i.RunID,
-		&i.DedupKey,
-		&i.SourceKind,
-		&i.Status,
-		&i.Attempts,
-		&i.NextAttemptAt,
-		&i.LeaseToken,
-		&i.LeaseExpiresAt,
-		&i.ErrorCode,
-		&i.LastError,
-		&i.ContentSnapshot,
-		&i.TargetSnapshot,
-		&i.InstallationID,
-		&i.TargetKey,
-		&i.ShardTotal,
-		&i.SourceRef,
-		&i.DeliveredAt,
-		&i.FirstAttemptAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.RequestedBy,
-		&i.SourceRefID,
+		&i.SourceScope,
+		&i.SourceProjectID,
 	)
 	return i, err
 }
@@ -3491,8 +3577,9 @@ WHERE id = $1
   AND autopilot_id IS NULL
   AND installation_id = $4
   AND target_key = $5
+  AND project_id IS NOT DISTINCT FROM $6
   AND revoked_at IS NULL
-RETURNING id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind
+RETURNING id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind, project_id
 `
 
 type RevokeLabrastroMessageSourceTargetParams struct {
@@ -3501,6 +3588,7 @@ type RevokeLabrastroMessageSourceTargetParams struct {
 	SourceKind     string      `json:"source_kind"`
 	InstallationID pgtype.UUID `json:"installation_id"`
 	TargetKey      string      `json:"target_key"`
+	ProjectID      pgtype.UUID `json:"project_id"`
 }
 
 // Soft revoke with the same audit semantics as the automation approvals.
@@ -3511,6 +3599,7 @@ func (q *Queries) RevokeLabrastroMessageSourceTarget(ctx context.Context, arg Re
 		arg.SourceKind,
 		arg.InstallationID,
 		arg.TargetKey,
+		arg.ProjectID,
 	)
 	if err != nil {
 		return nil, err
@@ -3530,6 +3619,7 @@ func (q *Queries) RevokeLabrastroMessageSourceTarget(ctx context.Context, arg Re
 			&i.ApprovedAt,
 			&i.RevokedAt,
 			&i.SourceKind,
+			&i.ProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -3541,6 +3631,27 @@ func (q *Queries) RevokeLabrastroMessageSourceTarget(ctx context.Context, arg Re
 	return items, nil
 }
 
+const revokeLabrastroMessageSourceTargetsByProject = `-- name: RevokeLabrastroMessageSourceTargetsByProject :exec
+
+UPDATE labrastro_message_approved_target
+SET revoked_at = now()
+WHERE workspace_id = $1
+  AND project_id = $2
+  AND revoked_at IS NULL
+`
+
+type RevokeLabrastroMessageSourceTargetsByProjectParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+}
+
+// ---- lifecycle stop paths ----
+// Keep historical consent, but a deleted project must leave no active grant.
+func (q *Queries) RevokeLabrastroMessageSourceTargetsByProject(ctx context.Context, arg RevokeLabrastroMessageSourceTargetsByProjectParams) error {
+	_, err := q.db.Exec(ctx, revokeLabrastroMessageSourceTargetsByProject, arg.WorkspaceID, arg.ProjectID)
+	return err
+}
+
 const revokeLabrastroMessageTarget = `-- name: RevokeLabrastroMessageTarget :many
 UPDATE labrastro_message_approved_target
 SET revoked_at = now()
@@ -3550,7 +3661,7 @@ WHERE id = $1
   AND installation_id = $4
   AND target_key = $5
   AND revoked_at IS NULL
-RETURNING id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind
+RETURNING id, workspace_id, autopilot_id, installation_id, target_key, target_type, approved_by, approved_at, revoked_at, source_kind, project_id
 `
 
 type RevokeLabrastroMessageTargetParams struct {
@@ -3590,6 +3701,7 @@ func (q *Queries) RevokeLabrastroMessageTarget(ctx context.Context, arg RevokeLa
 			&i.ApprovedAt,
 			&i.RevokedAt,
 			&i.SourceKind,
+			&i.ProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -3666,7 +3778,7 @@ WHERE id = $4
   AND lease_token = $5
   AND status = 'sending'
   AND lease_expires_at > clock_timestamp()
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id
 `
 
 type SetLabrastroMessageDeliveryOutcomeParams struct {
@@ -3718,6 +3830,8 @@ func (q *Queries) SetLabrastroMessageDeliveryOutcome(ctx context.Context, arg Se
 		&i.UpdatedAt,
 		&i.RequestedBy,
 		&i.SourceRefID,
+		&i.SourceScope,
+		&i.SourceProjectID,
 	)
 	return i, err
 }
@@ -3735,7 +3849,7 @@ SET enabled = $1,
 WHERE id = $3
   AND workspace_id = $4
   AND revision = $5
-RETURNING id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types
+RETURNING id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types, last_disabled_at
 `
 
 type SetLabrastroMessageRouteEnabledParams struct {
@@ -3782,6 +3896,7 @@ func (q *Queries) SetLabrastroMessageRouteEnabled(ctx context.Context, arg SetLa
 		&i.SourceKind,
 		&i.ProjectID,
 		&i.EventTypes,
+		&i.LastDisabledAt,
 	)
 	return i, err
 }
@@ -3789,18 +3904,20 @@ func (q *Queries) SetLabrastroMessageRouteEnabled(ctx context.Context, arg SetLa
 const setLabrastroMessageSourceRouteEnabled = `-- name: SetLabrastroMessageSourceRouteEnabled :one
 UPDATE labrastro_message_route
 SET enabled = $1,
+    last_disabled_at = CASE WHEN NOT $1::boolean AND enabled
+        THEN clock_timestamp() ELSE last_disabled_at END,
     revision = revision + 1,
     updated_by = $2,
     updated_at = now(),
     effective_from = CASE
-        WHEN $1::boolean THEN now()
+        WHEN $1::boolean AND NOT enabled THEN clock_timestamp()
         ELSE effective_from
     END
 WHERE id = $3
   AND workspace_id = $4
   AND source_kind = $5
   AND revision = $6
-RETURNING id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types
+RETURNING id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types, last_disabled_at
 `
 
 type SetLabrastroMessageSourceRouteEnabledParams struct {
@@ -3849,6 +3966,7 @@ func (q *Queries) SetLabrastroMessageSourceRouteEnabled(ctx context.Context, arg
 		&i.SourceKind,
 		&i.ProjectID,
 		&i.EventTypes,
+		&i.LastDisabledAt,
 	)
 	return i, err
 }
@@ -3865,7 +3983,7 @@ WHERE id = $3
   AND lease_token = $4
   AND status = 'sending'
   AND lease_expires_at > clock_timestamp()
-RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id
+RETURNING id, workspace_id, route_id, route_revision, autopilot_id, run_id, dedup_key, source_kind, status, attempts, next_attempt_at, lease_token, lease_expires_at, error_code, last_error, content_snapshot, target_snapshot, installation_id, target_key, shard_total, source_ref, delivered_at, first_attempt_at, created_at, updated_at, requested_by, source_ref_id, source_scope, source_project_id
 `
 
 type UncertainClaimedLabrastroMessageDeliveryParams struct {
@@ -3913,6 +4031,8 @@ func (q *Queries) UncertainClaimedLabrastroMessageDelivery(ctx context.Context, 
 		&i.UpdatedAt,
 		&i.RequestedBy,
 		&i.SourceRefID,
+		&i.SourceScope,
+		&i.SourceProjectID,
 	)
 	return i, err
 }
@@ -3943,7 +4063,7 @@ SET installation_id = $1,
 WHERE id = $13
   AND workspace_id = $14
   AND revision = $15
-RETURNING id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types
+RETURNING id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types, last_disabled_at
 `
 
 type UpdateLabrastroMessageRouteParams struct {
@@ -4011,6 +4131,7 @@ func (q *Queries) UpdateLabrastroMessageRoute(ctx context.Context, arg UpdateLab
 		&i.SourceKind,
 		&i.ProjectID,
 		&i.EventTypes,
+		&i.LastDisabledAt,
 	)
 	return i, err
 }
@@ -4028,18 +4149,25 @@ SET installation_id = $1,
     project_id = $9,
     event_types = $10,
     enabled = $11,
+    last_disabled_at = CASE WHEN NOT $11::boolean AND enabled
+        THEN clock_timestamp() ELSE last_disabled_at END,
     revision = revision + 1,
     updated_by = $12,
     updated_at = now(),
     effective_from = CASE
-        WHEN $11::boolean AND NOT enabled THEN now()
+        WHEN ($11::boolean AND NOT enabled)
+          OR installation_id IS DISTINCT FROM $1
+          OR target_key IS DISTINCT FROM $8
+          OR project_id IS DISTINCT FROM $9
+          OR event_types IS DISTINCT FROM $10
+        THEN clock_timestamp()
         ELSE effective_from
     END
 WHERE id = $13
   AND workspace_id = $14
   AND source_kind = $15
   AND revision = $16
-RETURNING id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types
+RETURNING id, workspace_id, autopilot_id, installation_id, channel_type, target_type, target_user_id, target_chat_id, target_message_id, target_thread_id, target_key, conditions, content_mode, enabled, revision, created_by, updated_by, effective_from, created_at, updated_at, source_kind, project_id, event_types, last_disabled_at
 `
 
 type UpdateLabrastroMessageSourceRouteParams struct {
@@ -4109,6 +4237,7 @@ func (q *Queries) UpdateLabrastroMessageSourceRoute(ctx context.Context, arg Upd
 		&i.SourceKind,
 		&i.ProjectID,
 		&i.EventTypes,
+		&i.LastDisabledAt,
 	)
 	return i, err
 }

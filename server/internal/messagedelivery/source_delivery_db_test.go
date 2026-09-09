@@ -45,15 +45,11 @@ func newSourceFixture(t *testing.T, label string) srcFixture {
 	project := testFx.Project(t, "SRC project "+label)
 	memberB := testFx.User(t, "src-b-"+label, "src-b-"+label+"-"+testWSID[:8]+"@multica.test")
 	testFx.Member(t, testWSID, memberB, "member")
-	f := srcFixture{install: install, issue: issue, project: project, memberB: memberB}
-	t.Cleanup(func() {
-		ctx := context.Background()
-		for _, routeID := range f.routes {
-			testPool.Exec(ctx, `DELETE FROM labrastro_message_delivery WHERE route_id = $1::uuid`, routeID)
-			testPool.Exec(ctx, `DELETE FROM labrastro_message_route WHERE id = $1::uuid`, routeID)
-		}
-	})
-	return f
+	// Cleanup is LIFO and includes rows created through service APIs.
+	testFx.Cleanup(t, `DELETE FROM labrastro_message_route WHERE installation_id=$1`, install)
+	testFx.Cleanup(t, `DELETE FROM labrastro_message_delivery WHERE installation_id=$1`, install)
+	testFx.Cleanup(t, `DELETE FROM labrastro_message_receipt WHERE installation_id=$1`, install)
+	return srcFixture{install: install, issue: issue, project: project, memberB: memberB}
 }
 
 func (f *srcFixture) bindMember(t *testing.T, userID, openID string) string {
@@ -111,16 +107,20 @@ func (f *srcFixture) teamRoute(t *testing.T, label, kind, chatID string, over te
 
 // approveTeam inserts an active team approval for the (scope, bot, target)
 // scope — the workspace consent a team send requires.
-func (f *srcFixture) approveTeam(t *testing.T, scope, chatID string) {
+func (f *srcFixture) approveTeam(t *testing.T, scope, chatID string, projects ...string) {
 	t.Helper()
-	testFx.Insert(t, "labrastro_message_approved_target", testutil.Cols{
+	cols := testutil.Cols{
 		"workspace_id":    testWSID,
 		"installation_id": f.install,
 		"target_key":      TargetKey(TargetGroup, "", chatID, ""),
 		"target_type":     TargetGroup,
 		"source_kind":     scope,
 		"approved_by":     testUID,
-	})
+	}
+	if len(projects) > 0 {
+		cols["project_id"] = projects[0]
+	}
+	testFx.Insert(t, "labrastro_message_approved_target", cols)
 }
 
 func (f *srcFixture) inboxItem(t *testing.T, recipientID, itemType string, issueID string) string {
@@ -359,7 +359,7 @@ func TestSourceDecisions_ProjectFilterIsDecideTimeAndDeleteStops(t *testing.T) {
 	inProject := fx.teamRoute(t, "activity-in-project", RouteSourceActivity, "oc_team_project", testutil.Cols{
 		"project_id": testutil.Raw("'" + fx.project + "'::uuid"),
 	})
-	fx.approveTeam(t, RouteSourceActivity, "oc_team_project")
+	fx.approveTeam(t, RouteSourceActivity, "oc_team_project", fx.project)
 	issueIn := fx.issue
 	issueOut := testFx.Issue(t, "SRC outside project")
 	testFx.Exec(t, `UPDATE issue SET project_id = $1::uuid WHERE id = $2::uuid`, fx.project, issueIn)
@@ -384,7 +384,9 @@ func TestSourceDecisions_ProjectFilterIsDecideTimeAndDeleteStops(t *testing.T) {
 	testFx.Exec(t, `UPDATE issue SET project_id = $1::uuid WHERE id = $2::uuid`, other, issueIn)
 	sender := &fakeSender{}
 	gate := newTestService(sender, nil)
-	gate.ProcessNext(ctx)
+	if _, err := gate.ProcessNext(ctx); err != nil {
+		t.Fatal(err)
+	}
 	testFx.QueryRow(t, `SELECT status, error_code FROM labrastro_message_delivery WHERE source_ref_id = $1::uuid`, hit).Scan(&status, &code)
 	if status != DeliveryStatusCancelled || code != ErrorCodeConditionMismatch {
 		t.Fatalf("post-decision scope change = %s/%s, want cancelled/condition_mismatch", status, code)
@@ -443,7 +445,9 @@ func TestSourceGates_TeamAuthorizerLostAdmin(t *testing.T) {
 	testFx.Exec(t, `UPDATE member SET role = 'member' WHERE workspace_id = $1::uuid AND user_id = $2::uuid`, testWSID, authorizer)
 	sender := &fakeSender{}
 	gate := newTestService(sender, nil)
-	gate.ProcessNext(ctx)
+	if _, err := gate.ProcessNext(ctx); err != nil {
+		t.Fatal(err)
+	}
 	var code string
 	testFx.QueryRow(t, `SELECT status, error_code FROM labrastro_message_delivery WHERE source_ref_id = $1::uuid`, commentID).Scan(&status, &code)
 	if status != DeliveryStatusCancelled || code != ErrorCodeAuthorizationLost {
@@ -494,7 +498,9 @@ func TestSourceApprovals_RevocationCancelsQueuedAndBlocksSend(t *testing.T) {
 	s.decideSourcesOnce(ctx)
 	sender := &fakeSender{}
 	gate := newTestService(sender, nil)
-	gate.ProcessNext(ctx)
+	if _, err := gate.ProcessNext(ctx); err != nil {
+		t.Fatal(err)
+	}
 	testFx.QueryRow(t, `SELECT status, error_code FROM labrastro_message_delivery WHERE source_ref_id = $1::uuid`, fresh).Scan(&status, new(pgtype.Text))
 	if status != DeliveryStatusCancelled {
 		t.Fatalf("send without approval = %s, want cancelled", status)
@@ -675,7 +681,10 @@ func TestSourceWorker_EndToEndSendsThroughSharedChain(t *testing.T) {
 	var sent int
 	testFx.QueryRow(t, `SELECT count(*) FROM labrastro_message_delivery WHERE workspace_id = $1::uuid AND source_kind IN ('inbox','activity') AND status = 'sent'`, testWSID).Scan(&sent)
 	if sent != 2 {
-		rows, _ := testPool.Query(ctx, `SELECT source_kind, status, error_code, last_error FROM labrastro_message_delivery WHERE workspace_id = $1::uuid AND source_kind IN ('inbox','activity')`, testWSID)
+		rows, err := testPool.Query(ctx, `SELECT source_kind, status, error_code, last_error FROM labrastro_message_delivery WHERE workspace_id = $1::uuid AND source_kind IN ('inbox','activity')`, testWSID)
+		if err != nil {
+			t.Fatal(err)
+		}
 		defer rows.Close()
 		for rows.Next() {
 			var kind, status string

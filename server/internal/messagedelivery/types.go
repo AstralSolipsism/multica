@@ -312,12 +312,13 @@ type sourceRef struct {
 	IssueID         string `json:"issue_id,omitempty"`
 	IssueIdentifier string `json:"issue_identifier,omitempty"`
 	IssueStatus     string `json:"issue_status,omitempty"`
-	// OL-27 source records: exactly one of the three ids below is set, and
-	// it matches the delivery's source_ref_id / source_kind columns.
-	SourceKind  string `json:"source_kind,omitempty"`
-	InboxItemID string `json:"inbox_item_id,omitempty"`
-	ActivityID  string `json:"activity_id,omitempty"`
-	CommentID   string `json:"comment_id,omitempty"`
+	// The primary locator matches source_ref_id/source_kind. An inbox item
+	// may additionally name its originating comment; replies keep the parent.
+	SourceKind      string `json:"source_kind,omitempty"`
+	InboxItemID     string `json:"inbox_item_id,omitempty"`
+	ActivityID      string `json:"activity_id,omitempty"`
+	CommentID       string `json:"comment_id,omitempty"`
+	ParentCommentID string `json:"parent_comment_id,omitempty"`
 }
 
 // ---- errors the HTTP layer maps to stable codes ----

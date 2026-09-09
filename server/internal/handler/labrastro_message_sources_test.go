@@ -9,7 +9,6 @@ package handler
 // revision guard.
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -18,6 +17,7 @@ import (
 
 	messagedelivery "github.com/multica-ai/multica/server/internal/messagedelivery"
 	"github.com/multica-ai/multica/server/internal/testutil"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 var srcOnce sync.Once
@@ -44,11 +44,134 @@ func newSourceHTTPFixture(t *testing.T, label string) srcHTTPFixture {
 		"status":            "active",
 		"installer_user_id": testUserID,
 	})
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM channel_installation WHERE id = $1 AND NOT EXISTS (
-			SELECT 1 FROM labrastro_message_route WHERE installation_id = channel_installation.id)`, installID)
-	})
+	dbfx.Cleanup(t, `DELETE FROM labrastro_message_route WHERE installation_id=$1`, installID)
+	dbfx.Cleanup(t, `DELETE FROM labrastro_message_approved_target WHERE installation_id=$1`, installID)
+	dbfx.Cleanup(t, `DELETE FROM labrastro_message_delivery WHERE installation_id=$1`, installID)
+	dbfx.Cleanup(t, `DELETE FROM labrastro_message_receipt WHERE installation_id=$1`, installID)
 	return srcHTTPFixture{installID: installID}
+}
+
+func TestMessageSourceRoutes_ProjectApprovalFiltersAndVisibility(t *testing.T) {
+	for _, scope := range []string{"activity", "comment"} {
+		t.Run(scope, func(t *testing.T) {
+			fx := newSourceHTTPFixture(t, "project-filter-"+scope)
+			project := dbfx.Project(t, "source HTTP consent range")
+			payload := map[string]any{
+				"source_kind": scope, "project_id": project, "installation_id": fx.installID,
+				"target_type": "group", "target_chat_id": "oc_http_scoped_" + scope,
+			}
+			var approval struct {
+				Target db.LabrastroMessageApprovedTarget `json:"approved_target"`
+			}
+			testutil.Call(t, testHandler.ApproveMessageSourceTarget,
+				newRequest("POST", "/api/message-approved-targets", payload)).Want(http.StatusCreated).JSON(&approval)
+			if approval.Target.ProjectID != parseUUID(project) {
+				t.Fatalf("approval did not retain project_id: %+v", approval.Target)
+			}
+			event := "status_changed"
+			if scope == "comment" {
+				event = "comment"
+			}
+			payload["event_types"] = []string{event, event}
+			var created sourceRouteResponse
+			testutil.Call(t, testHandler.CreateMessageSourceRoute,
+				newRequest("POST", "/api/message-routes", payload)).Want(http.StatusCreated).JSON(&created)
+			if len(created.Route.EventTypes) != 1 || created.Route.EventTypes[0] != event {
+				t.Fatalf("event filter not normalized: %v", created.Route.EventTypes)
+			}
+			payload["event_types"] = []string{"new_comment"}
+			testutil.Call(t, testHandler.CreateMessageSourceRoute,
+				newRequest("POST", "/api/message-routes", payload)).Want(http.StatusBadRequest)
+			var send struct {
+				Delivery db.LabrastroMessageDelivery `json:"delivery"`
+			}
+			req := withURLParams(newRequest("POST", "/api/message-routes/"+created.Route.ID+"/test-send", nil), "routeId", created.Route.ID)
+			testutil.Call(t, testHandler.TestMessageSourceRoute, req).Want(http.StatusOK).JSON(&send)
+			if send.Delivery.Status != "sent" || send.Delivery.SourceScope.String != scope || send.Delivery.SourceProjectID != parseUUID(project) {
+				t.Fatalf("project-scoped test send did not use source consent: %+v", send.Delivery)
+			}
+			plain := plainMember(t, "source-list-"+scope)
+			testutil.Call(t, testHandler.ListMessageSourceRoutes,
+				newRequestAs(plain, "GET", "/api/message-routes?source_kind="+scope, nil)).Want(http.StatusForbidden)
+			var list struct {
+				Routes []db.LabrastroMessageRoute `json:"routes"`
+			}
+			testutil.Call(t, testHandler.ListMessageSourceRoutes,
+				newRequestAs(plain, "GET", "/api/message-routes", nil)).Want(http.StatusOK).JSON(&list)
+			for _, route := range list.Routes {
+				if route.SourceKind != "inbox" || route.TargetUserID != parseUUID(plain) {
+					t.Fatalf("mixed list exposed unauthorized config: %+v", route)
+				}
+			}
+		})
+	}
+}
+
+func TestMessageSourceRoutes_ProjectDeleteUsesFrozenScope(t *testing.T) {
+	fx := newSourceHTTPFixture(t, "delete-project")
+	project := dbfx.Project(t, "notification delete contract")
+	input := map[string]any{
+		"source_kind": "activity", "project_id": project, "installation_id": fx.installID,
+		"target_type": "group", "target_chat_id": "oc_http_project_delete",
+	}
+	testutil.Call(t, testHandler.ApproveMessageSourceTarget,
+		newRequest("POST", "/api/message-approved-targets", input)).Want(http.StatusCreated)
+	var created sourceRouteResponse
+	testutil.Call(t, testHandler.CreateMessageSourceRoute,
+		newRequest("POST", "/api/message-routes", input)).Want(http.StatusCreated).JSON(&created)
+	deliveryID := dbfx.Insert(t, "labrastro_message_delivery", testutil.Cols{
+		"id": testutil.Raw("gen_random_uuid()"), "workspace_id": testWorkspaceID, "route_id": created.Route.ID,
+		"source_ref_id": testutil.Raw("gen_random_uuid()"), "dedup_key": "frozen-project:" + created.Route.ID,
+		"source_kind": "activity", "source_scope": "activity", "source_project_id": project,
+		"status": "queued", "content_snapshot": testutil.Raw(`'{}'::jsonb`), "target_snapshot": testutil.Raw(`'{}'::jsonb`),
+		"installation_id": fx.installID, "target_key": "group:oc_http_project_delete",
+	})
+	// Retarget the live route's range; deletion must still find the older
+	// delivery and approval through their frozen project identity.
+	delete(input, "project_id")
+	testutil.Call(t, testHandler.ApproveMessageSourceTarget,
+		newRequest("POST", "/api/message-approved-targets", input)).Want(http.StatusCreated)
+	input["expected_revision"] = created.Route.Revision
+	req := withURLParams(newRequest("PUT", "/api/message-routes/"+created.Route.ID, input), "routeId", created.Route.ID)
+	testutil.Call(t, testHandler.UpdateMessageSourceRoute, req).Want(http.StatusOK)
+	req = withURLParams(newRequest("DELETE", "/api/projects/"+project, nil), "id", project)
+	testutil.Call(t, testHandler.DeleteProject, req).Want(http.StatusNoContent)
+	if n := dbfx.Count(t, `SELECT count(*) FROM labrastro_message_delivery WHERE id=$1 AND status='cancelled'`, deliveryID); n != 1 {
+		t.Fatal("project deletion left the frozen delivery queued")
+	}
+	if n := dbfx.Count(t, `SELECT count(*) FROM labrastro_message_approved_target WHERE installation_id=$1 AND project_id=$2 AND revoked_at IS NULL`, fx.installID, project); n != 0 {
+		t.Fatal("project deletion left active project consent")
+	}
+	if n := dbfx.Count(t, `SELECT count(*) FROM labrastro_message_route WHERE id=$1 AND enabled`, created.Route.ID); n != 1 {
+		t.Fatal("project deletion stopped the newly authorized workspace route")
+	}
+}
+
+func TestMessageSourceRoutes_MemberRemovalCancelsDiagnosticRetry(t *testing.T) {
+	fx := newSourceHTTPFixture(t, "remove-member")
+	user := plainMember(t, "source-diagnostic-recipient")
+	dbfx.Insert(t, "channel_user_binding", testutil.Cols{
+		"workspace_id": testWorkspaceID, "multica_user_id": user, "installation_id": fx.installID,
+		"channel_type": "feishu", "channel_user_id": "ou_source_diagnostic",
+	})
+	var created sourceRouteResponse
+	testutil.Call(t, testHandler.CreateMessageSourceRoute, newRequestAs(user, "POST", "/api/message-routes", map[string]any{
+		"source_kind": "inbox", "installation_id": fx.installID, "target_type": "member",
+	})).Want(http.StatusCreated).JSON(&created)
+	deliveryID := dbfx.Insert(t, "labrastro_message_delivery", testutil.Cols{
+		"id": testutil.Raw("gen_random_uuid()"), "workspace_id": testWorkspaceID, "route_id": created.Route.ID,
+		"dedup_key": "diagnostic-retry:" + created.Route.ID, "requested_by": user,
+		"source_kind": "test_send", "source_scope": "inbox", "status": "queued",
+		"content_snapshot": testutil.Raw(`'{}'::jsonb`), "target_snapshot": testutil.Raw(`'{}'::jsonb`),
+		"installation_id": fx.installID, "target_key": "member:" + user,
+	})
+	var memberID string
+	dbfx.QueryRow(t, `SELECT id FROM member WHERE workspace_id=$1 AND user_id=$2`, testWorkspaceID, user).Scan(&memberID)
+	req := withURLParams(newRequest("DELETE", "/api/workspaces/"+testWorkspaceID+"/members/"+memberID, nil), "id", testWorkspaceID, "memberId", memberID)
+	testutil.Call(t, testHandler.DeleteMember, req).Want(http.StatusNoContent)
+	if n := dbfx.Count(t, `SELECT count(*) FROM labrastro_message_delivery WHERE id=$1 AND status='cancelled'`, deliveryID); n != 1 {
+		t.Fatal("member removal left a private diagnostic retry queued")
+	}
 }
 
 type sourceRouteResponse struct {
@@ -147,16 +270,17 @@ func TestMessageSourceRoutes_TeamRequiresAdminAndApproval(t *testing.T) {
 	})
 	testutil.Call(t, testHandler.ApproveMessageSourceTarget, req).Want(http.StatusForbidden)
 
-	// Admin approves the (activity, bot, target) scope, then the route saves.
+	// Admin approves the exact project range, then the route saves.
+	projectID := dbfx.Project(t, "SRC http project")
 	req = newRequest("POST", "/api/message-approved-targets", map[string]any{
 		"source_kind":     "activity",
+		"project_id":      projectID,
 		"installation_id": fx.installID,
 		"target_type":     "group",
 		"target_chat_id":  "oc_src_team",
 	})
 	testutil.Call(t, testHandler.ApproveMessageSourceTarget, req).Want(http.StatusCreated)
 
-	projectID := dbfx.Project(t, "SRC http project")
 	req = newRequest("POST", "/api/message-routes", map[string]any{
 		"source_kind":     "activity",
 		"installation_id": fx.installID,

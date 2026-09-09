@@ -1,8 +1,8 @@
 package messagedelivery
 
 // OL-27 personal-inbox and team-event source configuration. The delivery
-// pipeline (route → frozen decision → lease worker → receipt) is the OL-25
-// machinery unchanged; this file extends the CONFIGURATION surface with the
+// pipeline (route → frozen decision → lease worker → receipt) reuses the
+// OL-25 machinery; this file extends the CONFIGURATION surface with the
 // source scopes:
 //
 //	inbox    → forwards the route owner's OWN inbox items to their OWN DM
@@ -14,7 +14,7 @@ package messagedelivery
 //   - an inbox route's target is the acting member themselves — configuring
 //     someone else's inbox is refused, admins included
 //   - team routes are owner/admin configuration, and their external targets
-//     carry their own (workspace, source scope, bot, target) approval — an
+//     carry their own (workspace, source scope, project, bot, target) approval — an
 //     automation's approval is never borrowed
 //   - personal mute semantics reuse notification_preference through the
 //     shared notify catalog, re-checked before every send
@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -49,175 +50,88 @@ type SourceRouteInput struct {
 	// ProjectID scopes a TEAM route to one project (empty = whole
 	// workspace). Rejected on inbox routes.
 	ProjectID string
-	// EventTypes filters an INBOX route by inbox item type (empty = every
-	// type). Rejected on team routes.
+	// EventTypes selects a subset of the scope event catalog (empty = all).
 	EventTypes []string
 	// Enabled is a pointer so create can default to true and update can
 	// leave the flag untouched when omitted.
 	Enabled *bool
 }
 
-// ValidSourceEventTypes validates the inbox event filter against the shared
-// catalog: an unknown type would silently never match, which reads as a
-// broken route, so it is refused at save time.
-func ValidSourceEventTypes(types []string) bool {
-	for _, t := range types {
-		if _, ok := notify.PreferenceGroupForType(t); !ok {
+// ValidSourceEventTypes checks a source-specific subset of the event catalog.
+func ValidSourceEventTypes(scope string, types []string) bool {
+	for _, event := range types {
+		switch scope {
+		case RouteSourceInbox:
+			if _, ok := notify.PreferenceGroupForType(event); !ok {
+				return false
+			}
+		case RouteSourceActivity:
+			if !notify.IsTeamActivityAction(event) {
+				return false
+			}
+		case RouteSourceComment:
+			if !notify.IsDeliverableCommentType(event) {
+				return false
+			}
+		default:
 			return false
 		}
 	}
-	return true
+	return IsSourceRouteScope(scope)
 }
 
-// resolveSourceTarget validates a source-route payload against current
-// state, mirroring resolveTarget for the automation scope: the installation
-// must be active and in this workspace; a member target must be a member
-// with a binding on THIS installation; group/topic targets must pass the
-// fail-closed platform verification. Team targets additionally require the
-// scope's own active approval — unless this IS the approval flow.
+// resolveSourceTarget validates the source/filter scope, delegates destination
+// verification to the shared pipeline, then checks consent for the exact scope.
 func (s *Service) resolveSourceTarget(ctx context.Context, workspaceID pgtype.UUID, scope string, in SourceRouteInput, requireApproval bool) (resolvedTarget, error) {
 	if !IsSourceRouteScope(scope) {
 		return resolvedTarget{}, &InvalidRouteError{Field: "source_kind"}
 	}
-	if !ValidTargetTypes[in.TargetType] {
+	if !ValidTargetTypes[in.TargetType] || (scope == RouteSourceInbox) != (in.TargetType == TargetMember) {
 		return resolvedTarget{}, &InvalidRouteError{Field: "target_type"}
 	}
-	instID, err := util.ParseUUID(in.InstallationID)
-	if err != nil {
-		return resolvedTarget{}, &InvalidRouteError{Field: "installation_id"}
+	if !ValidSourceEventTypes(scope, in.EventTypes) {
+		return resolvedTarget{}, &InvalidRouteError{Field: "event_types"}
 	}
-	inst, err := s.Queries.GetChannelInstallationInWorkspace(ctx, db.GetChannelInstallationInWorkspaceParams{
-		ID:          instID,
-		WorkspaceID: workspaceID,
-		ChannelType: "feishu",
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return resolvedTarget{}, &InstallationInvalidError{Reason: "installation not found in workspace"}
-	}
-	if err != nil {
-		return resolvedTarget{}, fmt.Errorf("load installation: %w", err)
-	}
-	if inst.Status != "active" {
-		return resolvedTarget{}, &InstallationInvalidError{Reason: "installation is revoked"}
-	}
-
-	out := resolvedTarget{
-		installation: inst,
-		targetType:   in.TargetType,
-		chatID:       pgtype.Text{String: in.TargetChatID, Valid: in.TargetChatID != ""},
-		messageID:    pgtype.Text{String: in.TargetMessageID, Valid: in.TargetMessageID != ""},
-		threadID:     pgtype.Text{String: in.TargetThreadID, Valid: in.TargetThreadID != ""},
-	}
-
-	switch scope {
-	case RouteSourceInbox:
-		// Personal forwarding is member-DM only: the whole point is the
-		// recipient's own private chat.
-		if in.TargetType != TargetMember {
-			return resolvedTarget{}, &InvalidRouteError{Field: "target_type"}
-		}
-		userID, parseErr := util.ParseUUID(in.TargetUserID)
-		if parseErr != nil {
-			return resolvedTarget{}, &InvalidRouteError{Field: "target_user_id"}
-		}
-		if _, memberErr := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
-			UserID: userID, WorkspaceID: workspaceID,
-		}); errors.Is(memberErr, pgx.ErrNoRows) {
-			return resolvedTarget{}, &TargetNotMemberError{}
-		} else if memberErr != nil {
-			return resolvedTarget{}, fmt.Errorf("load target member: %w", memberErr)
-		}
-		if _, bindErr := s.Queries.GetChannelUserBindingForDelivery(ctx, db.GetChannelUserBindingForDeliveryParams{
-			WorkspaceID: workspaceID, InstallationID: instID, MulticaUserID: userID,
-		}); errors.Is(bindErr, pgx.ErrNoRows) {
-			return resolvedTarget{}, &MemberNotBoundError{}
-		} else if bindErr != nil {
-			return resolvedTarget{}, fmt.Errorf("load member binding: %w", bindErr)
-		}
-		if !ValidSourceEventTypes(in.EventTypes) {
-			return resolvedTarget{}, &InvalidRouteError{Field: "event_types"}
-		}
-		if in.ProjectID != "" {
+	var projectID pgtype.UUID
+	if in.ProjectID != "" {
+		if scope == RouteSourceInbox {
 			return resolvedTarget{}, &InvalidRouteError{Field: "project_id"}
 		}
-		// A member target shapes its own row: any group/topic addressing in
-		// the payload would violate the target-shape check at insert time.
-		in.TargetChatID, in.TargetMessageID, in.TargetThreadID = "", "", ""
-		out.userID = userID
-		in.TargetUserID = util.UUIDToString(userID)
-
-	case RouteSourceActivity, RouteSourceComment:
-		// Team events deliver to shared destinations, never to a member DM
-		// (the personal inbox source is the DM surface — a team route must
-		// not become a per-member fan-out). Member addressing in the
-		// payload is dropped, not stored.
-		if in.TargetType == TargetMember {
-			return resolvedTarget{}, &InvalidRouteError{Field: "target_type"}
+		var err error
+		projectID, err = util.ParseUUID(in.ProjectID)
+		if err != nil {
+			return resolvedTarget{}, &InvalidRouteError{Field: "project_id"}
 		}
-		if in.TargetChatID == "" {
-			return resolvedTarget{}, &InvalidRouteError{Field: "target_chat_id"}
-		}
-		if len(in.EventTypes) > 0 {
-			return resolvedTarget{}, &InvalidRouteError{Field: "event_types"}
-		}
-		in.TargetUserID, in.TargetThreadID = "", ""
-		if in.ProjectID != "" {
-			projectID, parseErr := util.ParseUUID(in.ProjectID)
-			if parseErr != nil {
-				return resolvedTarget{}, &InvalidRouteError{Field: "project_id"}
-			}
-			if _, pErr := s.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
-				ID: projectID, WorkspaceID: workspaceID,
-			}); errors.Is(pErr, pgx.ErrNoRows) {
-				return resolvedTarget{}, &InvalidRouteError{Field: "project_id"}
-			} else if pErr != nil {
-				return resolvedTarget{}, fmt.Errorf("load route project: %w", pErr)
-			}
-			out.projectID = projectID
-		}
-		if s.Verifier == nil {
-			return resolvedTarget{}, &TargetUnverifiableError{}
-		}
-		if in.TargetType == TargetGroup {
-			if err := s.Verifier.VerifyGroupTarget(ctx, VerifyTargetRequest{
-				WorkspaceID:    util.UUIDToString(workspaceID),
-				InstallationID: util.UUIDToString(instID),
-				ChannelType:    inst.ChannelType,
-				ChatID:         in.TargetChatID,
-			}); err != nil {
-				return resolvedTarget{}, classifyTargetVerifyError(err)
-			}
-			if requireApproval {
-				if err := s.sourceTargetApproved(ctx, workspaceID, scope, instID, TargetKey(TargetGroup, "", in.TargetChatID, "")); err != nil {
-					return resolvedTarget{}, err
-				}
-			}
-		} else {
-			if in.TargetMessageID == "" {
-				return resolvedTarget{}, &InvalidRouteError{Field: "target_message_id"}
-			}
-			verified, err := s.Verifier.VerifyTopicTarget(ctx, VerifyTargetRequest{
-				WorkspaceID:    util.UUIDToString(workspaceID),
-				InstallationID: util.UUIDToString(instID),
-				ChannelType:    inst.ChannelType,
-				ChatID:         in.TargetChatID,
-				MessageID:      in.TargetMessageID,
-			})
-			if err != nil {
-				return resolvedTarget{}, classifyTargetVerifyError(err)
-			}
-			if requireApproval {
-				if err := s.sourceTargetApproved(ctx, workspaceID, scope, instID, TargetKey(TargetTopic, "", verified, in.TargetMessageID)); err != nil {
-					return resolvedTarget{}, err
-				}
-			}
-			out.chatID = pgtype.Text{String: verified, Valid: true}
-			in.TargetChatID = verified
+		if _, err := s.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: projectID, WorkspaceID: workspaceID}); errors.Is(err, pgx.ErrNoRows) {
+			return resolvedTarget{}, &InvalidRouteError{Field: "project_id"}
+		} else if err != nil {
+			return resolvedTarget{}, fmt.Errorf("load route project: %w", err)
 		}
 	}
-
-	out.targetKey = TargetKey(in.TargetType, in.TargetUserID, in.TargetChatID, in.TargetMessageID)
-	return out, nil
+	// Store only addressing fields that belong to the chosen target shape.
+	if in.TargetType == TargetMember {
+		in.TargetChatID, in.TargetMessageID, in.TargetThreadID = "", "", ""
+	} else {
+		in.TargetUserID, in.TargetThreadID = "", ""
+		if in.TargetType == TargetGroup {
+			in.TargetMessageID = ""
+		}
+	}
+	target, err := s.resolveDeliveryTarget(ctx, workspaceID, RouteInput{
+		InstallationID: in.InstallationID, TargetType: in.TargetType,
+		TargetUserID: in.TargetUserID, TargetChatID: in.TargetChatID,
+		TargetMessageID: in.TargetMessageID, TargetThreadID: in.TargetThreadID,
+	})
+	if err != nil {
+		return resolvedTarget{}, err
+	}
+	target.projectID = projectID
+	if requireApproval && scope != RouteSourceInbox {
+		if err := s.sourceTargetApproved(ctx, workspaceID, scope, projectID, target.installation.ID, target.targetKey); err != nil {
+			return resolvedTarget{}, err
+		}
+	}
+	return target, nil
 }
 
 // ResolveSourceTarget validates a source-route payload the way a save
@@ -232,17 +146,18 @@ func (s *Service) ResolveSourceTargetForApproval(ctx context.Context, workspaceI
 	return s.resolveSourceTarget(ctx, workspaceID, scope, in, false)
 }
 
-// sourceTargetApproved reports whether the (source scope, bot, target)
-// triple currently holds an active workspace-admin approval. Team approvals
+// sourceTargetApproved checks active consent for the exact project range
+// and destination in the source scope. Team approvals
 // have their own scope: an automation's approval is never borrowed.
-func (s *Service) sourceTargetApproved(ctx context.Context, workspaceID pgtype.UUID, scope string, installationID pgtype.UUID, targetKey string) error {
-	return sourceTargetApprovedWith(ctx, s.Queries, workspaceID, scope, installationID, targetKey)
+func (s *Service) sourceTargetApproved(ctx context.Context, workspaceID pgtype.UUID, scope string, projectID, installationID pgtype.UUID, targetKey string) error {
+	return sourceTargetApprovedWith(ctx, s.Queries, workspaceID, scope, projectID, installationID, targetKey)
 }
 
-func sourceTargetApprovedWith(ctx context.Context, q *db.Queries, workspaceID pgtype.UUID, scope string, installationID pgtype.UUID, targetKey string) error {
+func sourceTargetApprovedWith(ctx context.Context, q *db.Queries, workspaceID pgtype.UUID, scope string, projectID, installationID pgtype.UUID, targetKey string) error {
 	_, err := q.GetActiveLabrastroMessageSourceApprovedTarget(ctx, db.GetActiveLabrastroMessageSourceApprovedTargetParams{
 		WorkspaceID:    workspaceID,
 		SourceKind:     scope,
+		ProjectID:      projectID,
 		InstallationID: installationID,
 		TargetKey:      targetKey,
 	})
@@ -264,6 +179,13 @@ func sourceTargetApprovedWith(ctx context.Context, q *db.Queries, workspaceID pg
 func (s *Service) withSourceRouteWrite(ctx context.Context, workspaceID pgtype.UUID, scope string, member db.Member, target resolvedTarget, requireApproval bool, fn func(*db.Queries) error) error {
 	adminRequired := scope != RouteSourceInbox
 	return s.withParentLock(ctx, workspaceID, func(q *db.Queries) error {
+		if target.projectID.Valid {
+			if _, err := q.LockLabrastroMessageSourceProject(ctx, db.LockLabrastroMessageSourceProjectParams{ID: target.projectID, WorkspaceID: workspaceID}); errors.Is(err, pgx.ErrNoRows) {
+				return &InvalidRouteError{Field: "project_id"}
+			} else if err != nil {
+				return err
+			}
+		}
 		acting, err := q.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
 			WorkspaceID: workspaceID, UserID: member.UserID,
 		})
@@ -300,7 +222,7 @@ func (s *Service) withSourceRouteWrite(ctx context.Context, workspaceID pgtype.U
 				return err
 			}
 		} else if requireApproval {
-			if err := sourceTargetApprovedWith(ctx, q, workspaceID, scope, inst.ID, target.targetKey); err != nil {
+			if err := sourceTargetApprovedWith(ctx, q, workspaceID, scope, target.projectID, inst.ID, target.targetKey); err != nil {
 				return err
 			}
 		}
@@ -376,21 +298,22 @@ func (s *Service) sourceScopeAuthority(ctx context.Context, member db.Member, sc
 	return nil
 }
 
-// normalizeEventTypes dedupes and canonicalizes the inbox event filter so
-// two spellings of one filter are one route identity.
+// normalizeEventTypes makes order and duplicate spelling irrelevant to identity.
 func normalizeEventTypes(types []string) []string {
-	if len(types) == 0 {
-		return []string{}
+	out := append([]string{}, types...)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// sourceRouteAuthority applies the same ownership rule to every service entry.
+func (s *Service) sourceRouteAuthority(ctx context.Context, route db.LabrastroMessageRoute, member db.Member) error {
+	if route.WorkspaceID != member.WorkspaceID {
+		return ErrAuthorizationLost
 	}
-	seen := make(map[string]bool, len(types))
-	out := make([]string, 0, len(types))
-	for _, t := range types {
-		if !seen[t] {
-			seen[t] = true
-			out = append(out, t)
-		}
+	if route.SourceKind == RouteSourceInbox && route.TargetUserID != member.UserID {
+		return &RouteNotSelfError{}
 	}
-	return out
+	return s.sourceScopeAuthority(ctx, member, route.SourceKind)
 }
 
 // UpdateSourceRoute edits a personal/team route under optimistic
@@ -398,7 +321,7 @@ func normalizeEventTypes(types []string) []string {
 // an edit cancels the route's not-yet-started sends.
 func (s *Service) UpdateSourceRoute(ctx context.Context, route db.LabrastroMessageRoute, member db.Member, expectedRevision int32, in SourceRouteInput) (db.LabrastroMessageRoute, error) {
 	in.Scope = route.SourceKind
-	if err := s.sourceScopeAuthority(ctx, member, in.Scope); err != nil {
+	if err := s.sourceRouteAuthority(ctx, route, member); err != nil {
 		return db.LabrastroMessageRoute{}, err
 	}
 	target, err := s.resolveSourceTarget(ctx, route.WorkspaceID, route.SourceKind, in, true)
@@ -427,7 +350,13 @@ func (s *Service) UpdateSourceRoute(ctx context.Context, route db.LabrastroMessa
 			Enabled:          enabled,
 			UpdatedBy:        member.UserID,
 		})
-		return writeErr
+		if writeErr != nil {
+			return writeErr
+		}
+		if !enabled {
+			return cancelRouteDeliveriesWith(ctx, q, route.ID, ErrorCodeRouteDisabled, "route disabled by edit")
+		}
+		return nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		current, getErr := s.Queries.GetLabrastroMessageRoute(ctx, db.GetLabrastroMessageRouteParams{
@@ -444,9 +373,6 @@ func (s *Service) UpdateSourceRoute(ctx context.Context, route db.LabrastroMessa
 	if err != nil {
 		return db.LabrastroMessageRoute{}, fmt.Errorf("update message source route: %w", err)
 	}
-	if route.Enabled && !enabled {
-		s.cancelRouteDeliveries(ctx, route.ID, ErrorCodeRouteDisabled, "route disabled by edit")
-	}
 	return updated, nil
 }
 
@@ -455,7 +381,7 @@ func (s *Service) UpdateSourceRoute(ctx context.Context, route db.LabrastroMessa
 // resets the eligibility boundary; disable cancels queued sends and never
 // backfills the disabled window.
 func (s *Service) SetSourceRouteEnabled(ctx context.Context, route db.LabrastroMessageRoute, member db.Member, enabled bool, expectedRevision int32) (db.LabrastroMessageRoute, error) {
-	if err := s.sourceScopeAuthority(ctx, member, route.SourceKind); err != nil {
+	if err := s.sourceRouteAuthority(ctx, route, member); err != nil {
 		return db.LabrastroMessageRoute{}, err
 	}
 	var updated db.LabrastroMessageRoute
@@ -469,7 +395,13 @@ func (s *Service) SetSourceRouteEnabled(ctx context.Context, route db.LabrastroM
 			Enabled:          enabled,
 			UpdatedBy:        member.UserID,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		if !enabled {
+			return cancelRouteDeliveriesWith(ctx, q, route.ID, ErrorCodeRouteDisabled, "route disabled")
+		}
+		return nil
 	}
 	var err error
 	if enabled {
@@ -496,9 +428,6 @@ func (s *Service) SetSourceRouteEnabled(ctx context.Context, route db.LabrastroM
 	if err != nil {
 		return db.LabrastroMessageRoute{}, fmt.Errorf("set message source route enabled: %w", err)
 	}
-	if !enabled {
-		s.cancelRouteDeliveries(ctx, route.ID, ErrorCodeRouteDisabled, "route disabled")
-	}
 	return updated, nil
 }
 
@@ -518,9 +447,9 @@ func sourceRouteInputFromRoute(route db.LabrastroMessageRoute) SourceRouteInput 
 	}
 }
 
-// ListSourceRoutes returns the workspace's personal/team rules, optionally
-// filtered to one scope.
-func (s *Service) ListSourceRoutes(ctx context.Context, workspaceID pgtype.UUID, scope *string) ([]db.LabrastroMessageRoute, error) {
+// ListSourceRoutes returns only the actor's own inbox rules and, for a
+// current owner/admin, team rules. Membership is evaluated by the query.
+func (s *Service) ListSourceRoutes(ctx context.Context, member db.Member, scope *string) ([]db.LabrastroMessageRoute, error) {
 	var scopeArg pgtype.Text
 	if scope != nil && *scope != "" {
 		if !IsSourceRouteScope(*scope) {
@@ -529,7 +458,8 @@ func (s *Service) ListSourceRoutes(ctx context.Context, workspaceID pgtype.UUID,
 		scopeArg = pgtype.Text{String: *scope, Valid: true}
 	}
 	routes, err := s.Queries.ListLabrastroMessageSourceRoutes(ctx, db.ListLabrastroMessageSourceRoutesParams{
-		WorkspaceID: workspaceID,
+		WorkspaceID: member.WorkspaceID,
+		UserID:      member.UserID,
 		SourceKind:  scopeArg,
 	})
 	if routes == nil {
@@ -540,7 +470,7 @@ func (s *Service) ListSourceRoutes(ctx context.Context, workspaceID pgtype.UUID,
 
 // ---- team target approvals ----
 
-// ApproveSourceTarget grants the (source scope, bot, target) approval. The
+// ApproveSourceTarget grants the (source scope, project, bot, target) approval. The
 // caller resolved the target first so the approval covers the VERIFIED chat.
 func (s *Service) ApproveSourceTarget(ctx context.Context, workspaceID pgtype.UUID, scope string, approver db.Member, target resolvedTarget) (db.LabrastroMessageApprovedTarget, error) {
 	var row db.LabrastroMessageApprovedTarget
@@ -552,6 +482,7 @@ func (s *Service) ApproveSourceTarget(ctx context.Context, workspaceID pgtype.UU
 			TargetKey:      target.targetKey,
 			TargetType:     target.targetType,
 			SourceKind:     scope,
+			ProjectID:      target.projectID,
 			ApprovedBy:     approver.UserID,
 		})
 		return err
@@ -571,6 +502,7 @@ func (s *Service) RevokeSourceTarget(ctx context.Context, workspaceID pgtype.UUI
 			ID:             target.ID,
 			WorkspaceID:    workspaceID,
 			SourceKind:     scope,
+			ProjectID:      target.ProjectID,
 			InstallationID: target.InstallationID,
 			TargetKey:      target.TargetKey,
 		})
@@ -582,7 +514,8 @@ func (s *Service) RevokeSourceTarget(ctx context.Context, workspaceID pgtype.UUI
 		}
 		rows, err := q.CancelLabrastroMessageDeliveriesBySourceTarget(ctx, db.CancelLabrastroMessageDeliveriesBySourceTargetParams{
 			WorkspaceID:    workspaceID,
-			SourceKind:     scope,
+			SourceKind:     pgtype.Text{String: scope, Valid: true},
+			ProjectID:      target.ProjectID,
 			InstallationID: target.InstallationID,
 			TargetKey:      target.TargetKey,
 			ErrorCode:      pgtype.Text{String: ErrorCodeTargetNotApproved, Valid: true},
@@ -625,9 +558,8 @@ func (s *Service) ListRouteDeliveries(ctx context.Context, workspaceID, routeID 
 }
 
 // RetryRouteDelivery re-queues a failed/uncertain delivery of ONE route —
-// the source-scope twin of RetryDelivery, with the route pinning in the
-// WHERE clause so a delivery id from another route (or workspace) is not
-// found.
+// using the shared retry transition after checking the immutable route
+// identity. A delivery from another route (or workspace) is not found.
 func (s *Service) RetryRouteDelivery(ctx context.Context, workspaceID, routeID, deliveryID pgtype.UUID) (db.LabrastroMessageDelivery, error) {
 	d, err := s.Queries.GetLabrastroMessageDelivery(ctx, db.GetLabrastroMessageDeliveryParams{
 		ID: deliveryID, WorkspaceID: workspaceID,
@@ -641,26 +573,7 @@ func (s *Service) RetryRouteDelivery(ctx context.Context, workspaceID, routeID, 
 	if d.RouteID != routeID {
 		return db.LabrastroMessageDelivery{}, ErrDeliveryNotFound
 	}
-	switch d.Status {
-	case DeliveryStatusFailed, DeliveryStatusUncertain:
-	default:
-		return db.LabrastroMessageDelivery{}, ErrDeliveryNotRetryable
-	}
-	row, err := s.Queries.RetryLabrastroMessageDeliveryManuallyByRoute(ctx, db.RetryLabrastroMessageDeliveryManuallyByRouteParams{
-		ID:          d.ID,
-		WorkspaceID: workspaceID,
-		RouteID:     routeID,
-		ErrorCode:   pgtype.Text{},
-		LastError:   pgtype.Text{String: "manual retry requested", Valid: true},
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return db.LabrastroMessageDelivery{}, ErrDeliveryNotRetryable
-	}
-	if err != nil {
-		return db.LabrastroMessageDelivery{}, fmt.Errorf("retry delivery: %w", err)
-	}
-	s.Notify()
-	return row, nil
+	return s.retryDelivery(ctx, d)
 }
 
 // GetSourceDelivery loads one record with its receipt ledger for a source
@@ -681,6 +594,9 @@ func (s *Service) GetSourceDelivery(ctx context.Context, workspaceID, routeID, d
 // skipped: acting-member gate (HTTP), scope ownership, target verification
 // and scope approval, workspace liveness and the lease protocol all apply.
 func (s *Service) TestSourceSend(ctx context.Context, route db.LabrastroMessageRoute, member db.Member) (db.LabrastroMessageDelivery, error) {
+	if err := s.sourceRouteAuthority(ctx, route, member); err != nil {
+		return db.LabrastroMessageDelivery{}, err
+	}
 	if _, err := s.ResolveSourceTarget(ctx, route.WorkspaceID, route.SourceKind, sourceRouteInputFromRoute(route)); err != nil {
 		return db.LabrastroMessageDelivery{}, err
 	}

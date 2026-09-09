@@ -140,14 +140,19 @@ func (h *Handler) ListMessageSourceRoutes(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if _, ok := h.requireMessageSourceMember(w, r, util.UUIDToString(workspaceID)); !ok {
+	member, ok := h.requireMessageSourceMember(w, r, util.UUIDToString(workspaceID))
+	if !ok {
 		return
 	}
 	var scope *string
 	if v := r.URL.Query().Get("source_kind"); v != "" {
 		scope = &v
+		if (v == messagedelivery.RouteSourceActivity || v == messagedelivery.RouteSourceComment) && member.Role != "owner" && member.Role != "admin" {
+			writeErrorCode(w, http.StatusForbidden, "message_target_admin_required", "team notification configuration requires a workspace owner or admin")
+			return
+		}
 	}
-	routes, err := h.MessageDelivery.ListSourceRoutes(r.Context(), workspaceID, scope)
+	routes, err := h.MessageDelivery.ListSourceRoutes(r.Context(), member, scope)
 	if err != nil {
 		writeMessageDeliveryError(w, err)
 		return
@@ -451,6 +456,7 @@ func (h *Handler) RetryMessageRouteDelivery(w http.ResponseWriter, r *http.Reque
 // messageSourceApprovedTargetRequest is the approval payload; the target
 // resolves through the SAME validation a team route save performs.
 type messageSourceApprovedTargetRequest struct {
+	ProjectID       string `json:"project_id"`
 	SourceKind      string `json:"source_kind"`
 	InstallationID  string `json:"installation_id"`
 	TargetType      string `json:"target_type"`
@@ -481,6 +487,7 @@ func (h *Handler) ApproveMessageSourceTarget(w http.ResponseWriter, r *http.Requ
 	}
 	target, err := h.MessageDelivery.ResolveSourceTargetForApproval(r.Context(), workspaceID, req.SourceKind, messagedelivery.SourceRouteInput{
 		Scope:           req.SourceKind,
+		ProjectID:       req.ProjectID,
 		InstallationID:  req.InstallationID,
 		TargetType:      req.TargetType,
 		TargetChatID:    req.TargetChatID,

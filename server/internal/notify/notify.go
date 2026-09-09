@@ -48,8 +48,8 @@ var inboxTypes = []InboxType{
 	{Type: "priority_changed", Group: GroupUpdates, Label: "Priority changed"},
 	{Type: "start_date_changed", Group: GroupUpdates, Label: "Start date changed"},
 	{Type: "due_date_changed", Group: GroupUpdates, Label: "Due date changed"},
-	{Type: "task_completed", Group: GroupAgentActivity, Label: "Agent task completed"},
-	{Type: "task_failed", Group: GroupAgentActivity, Label: "Agent task failed"},
+	{Type: "task_completed", Group: GroupAgentActivity, Label: "Agent run completed"},
+	{Type: "task_failed", Group: GroupAgentActivity, Label: "Agent run failed"},
 	{Type: "agent_blocked", Group: GroupAgentActivity, Label: "Agent blocked"},
 	{Type: "agent_completed", Group: GroupAgentActivity, Label: "Agent completed"},
 }

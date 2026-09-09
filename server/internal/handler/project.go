@@ -676,6 +676,13 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to cancel project notification deliveries")
 		return
 	}
+	if err := qtx.RevokeLabrastroMessageSourceTargetsByProject(r.Context(), db.RevokeLabrastroMessageSourceTargetsByProjectParams{
+		WorkspaceID: project.WorkspaceID,
+		ProjectID:   project.ID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to revoke project notification approvals")
+		return
+	}
 	if err := qtx.DeleteProject(r.Context(), db.DeleteProjectParams{
 		ID:          project.ID,
 		WorkspaceID: project.WorkspaceID,

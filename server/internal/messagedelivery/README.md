@@ -220,6 +220,7 @@ recall an already-accepted shard.
     "created_by": "55e0…",
     "updated_by": "55e0…",
     "effective_from": "2026-09-08T02:30:00Z",
+    "last_disabled_at": null,
     "created_at": "2026-09-08T02:30:00Z",
     "updated_at": "2026-09-08T02:30:00Z"
   }
@@ -365,9 +366,10 @@ Delivery `error_code` values recorded by the pipeline:
 ## OL-27 sources: personal inbox and team events
 
 Stage 2 of the parent plan widens the pipeline's SOURCE SCOPE. The delivery
-machinery — frozen decisions, the lease worker, receipts, retries, the
-compensator — is the OL-25 code unchanged. What changed is what a route can
-point at.
+machinery — frozen decisions, the lease worker, receipts, retries and cursor
+advancement — is shared with OL-25. Source adapters own event selection and
+permission checks; destination verification and the retry transition have
+one implementation for all scopes.
 
 ### Route source scopes (`labrastro_message_route.source_kind`)
 
@@ -392,7 +394,9 @@ Hard rules:
 - **Self-only inbox.** An inbox route's recipient is ALWAYS the resolved
   acting member; the caller's `target_user_id` is never consulted.
   Managing another member's personal route → 403 `route_not_self`, admins
-  included.
+  included. Lists return only the acting member's inbox rules. An unfiltered
+  list additionally includes team rules for current owners/admins; explicitly
+  requesting an activity/comment list without that role returns 403.
 - **Team configuration is admin-only.** Team routes and team target
   approvals require workspace owner/admin (403
   `message_target_admin_required`). An ordinary member managing their own
@@ -401,7 +405,8 @@ Hard rules:
   dialing: personal sends re-check the recipient's membership and CURRENT
   mute state; team sends re-check the authorizing member (`updated_by`)
   still holds owner/admin, the source record still exists, and the issue
-  still matches the route's project filter. Losing authorization cancels
+  still matches the delivery's FROZEN project range. Editing the live route
+  does not broaden an existing decision's authority. Losing authorization cancels
   the queued send (`route_authorization_lost` / `condition_mismatch` /
   `recipient_muted`), never misdelivers.
 
@@ -426,23 +431,35 @@ route revision and any web-client state, so:
 - personal DMs stay per-recipient independent (each inbox item is its own
   source record).
 
-When several enabled routes to the same target match one source, the
-decision is attributed to the first route in `(created_at, id)` order —
-content is route-independent (built from the source record), so only
-attribution is chosen. A concurrent replica may win the insert race; only
-one decision row ever exists either way.
+Candidate SQL groups equivalent routes by `(source id, installation, target)`
+BEFORE applying the page limit. A matching route with current admin authority
+and exact active approval wins over non-matching or unauthorized routes; ties
+use `(created_at, id)`. Suppression is written only when no equivalent route
+matches. Insertion locks and rechecks the selected route's revision, enabled
+state and eligibility boundary. Concurrent replicas still produce only one
+decision, through the shared unique dedup key.
 
 ### Filters are decide-time and recorded
 
-The inbox `event_types` filter and the team `project_id` filter are judged
-at DECISION time against current state (the sources carry no historical
-project attribution). A pair that does not match is RECORDED as
-`suppressed` with `condition_mismatch` — which is what makes "editing a
-filter never replays old events" hold: the marker already exists, so a
-later edit cannot revive pre-edit sources. New sources after the edit flow
-normally. The eligibility window is the route's `effective_from`, reset at
-every enable exactly like the automation scope — disabling cancels queued
-sends and re-enabling never backfills the disabled window.
+`event_types` selects a subset of each scope's catalog (empty = all); a
+cross-scope or unknown event is 400 `route_invalid`. Values are sorted and
+deduplicated before storage, so reordering a filter is not a behavior change.
+Team `project_id` is evaluated against the issue's project at decision time;
+the source records contain no historical project attribution. Non-matching
+groups of equivalent rules leave a durable `suppressed/condition_mismatch`
+decision.
+
+Changing the installation, normalized target, project or event filter resets
+`effective_from`; only source records created after that boundary are eligible.
+This also applies when the worker has not yet scanned the old configuration.
+Previously persisted decisions keep their content, target and project snapshots.
+Re-enabling resets the boundary; repeating `enabled=true` does not. No supported
+edit, route recreation or enable cycle replays an already decided source/target.
+
+Disabling and cancelling queued deliveries commit in the same transaction.
+The route's `last_disabled_at` additionally invalidates older sending claims,
+even if the route is re-enabled before the next shard. An already accepted or
+in-flight external request cannot be recalled; its receipt remains auditable.
 
 Personal mute semantics reuse `notification_preference` through the shared
 `notify.IsMuted` mapping — the SAME grouping the inbox listeners apply when
@@ -455,11 +472,17 @@ transient.
 ### Team target approvals (separate scope)
 
 Group/topic team targets require an ACTIVE approval scoped to the exact
-**(workspace, source_kind, installation, target)** — an automation's
+**(workspace, source_kind, project_id, installation, target)** — an automation's
 approval is never borrowed by a team source, and `activity` and `comment`
 approvals do not cover each other. Approval, revocation, send-time checks
 and the revoke-cancels-queued-sends transaction mirror the OL-25 contract,
-keyed on the delivery's FROZEN target identity. `system_notifications` /
+keyed on the delivery's FROZEN target and project range. `project_id=null`
+means explicit workspace-wide consent; it is distinct from a project grant.
+Changing to another project or to the whole workspace requires a matching
+approval. Existing decisions retain their original range even after a route
+edit. Real and diagnostic sends carry `source_scope` (`run`, `inbox`,
+`activity`, `comment`) separately from `source_kind` (delivery purpose); a
+`test_send` uses its own source's consent. `system_notifications` /
 OS-level notification settings are unrelated to this pipeline and never act
 as a Feishu master switch.
 
@@ -474,6 +497,9 @@ per source table, per-tick row budget, compare-and-set generations, a
 completed cycle restarts from the beginning — so a source that commits
 after the cursor passed is decided in the next cycle, a failed page never
 advances the cursor, and one source class failing never starves the others.
+A source cursor includes its last source ID: completed decisions are excluded
+in SQL, so all destinations of one source drain even across multiple pages.
+The shared loop distinguishes a nonempty page at the same ID from exhaustion.
 Suppressed markers are durable decisions, so their retention covers any
 rescan window by construction (decision rows are never pruned except by
 workspace deletion). Historical backfill beyond a route's `effective_from`
@@ -487,7 +513,8 @@ sweeper.
 
 ### Lifecycle stop paths
 
-- Route disabled/deleted → queued sends cancelled (shared with OL-25).
+- Route disabled/deleted → queued sends cancelled transactionally. A disabled
+  source route also fences old in-flight claims from starting another shard.
 - Installation revoked → `lifecycle.StopInstallation` disables routes and
   cancels queued sends for ALL scopes (installation-keyed).
 - **Member removal** → `revokeAndRemoveMember` disables the departing
@@ -495,8 +522,11 @@ sweeper.
   the same transaction. Team routes authored by them keep their audit trail
   but the continuous-authorization gate cancels their sends.
 - **Project deletion** → `DeleteProject` disables the project-scoped team
-  routes and cancels their queued sends inside the delete transaction, so
-  no queued message outlives the filter it was decided under.
+  routes, revokes project approvals, and cancels decisions by their frozen
+  `source_project_id` inside the delete transaction. Route and approval writes
+  take a compatible project lock after external verification; deletion cannot
+  leave a newly saved active orphan. A route edited to another project does
+  not hide its older decisions from this cleanup.
 - Workspace deletion → the OL-25 sweep covers the new rows (all keyed by
   `workspace_id`).
 
@@ -509,7 +539,7 @@ human), 403 `message_forbidden`.
 | Method & path | purpose | gate |
 | --- | --- | --- |
 | `GET /api/message-event-catalog` | event/filter catalog for the config UI | member |
-| `GET /api/message-routes?source_kind=inbox\|activity\|comment` | list personal/team rules | member |
+| `GET /api/message-routes?source_kind=inbox\|activity\|comment` | list own inbox rules; team rules only for admins | recipient / owner-admin |
 | `POST /api/message-routes` | create rule | member (inbox) / owner-admin (team) |
 | `PUT /api/message-routes/{routeId}` | update rule, `expected_revision` required | recipient (inbox) / owner-admin (team) |
 | `POST /api/message-routes/{routeId}/enable` | enable/disable, `{"enabled":bool,"expected_revision":N}` | recipient (inbox) / owner-admin (team) |
@@ -559,7 +589,8 @@ against the catalog; an unknown type is 400 `route_invalid`. `201`:
     "revision": 1,
     "created_by": "55e0…",
     "updated_by": "55e0…",
-    "effective_from": "2026-09-08T02:30:00Z"
+    "effective_from": "2026-09-08T02:30:00Z",
+    "last_disabled_at": null
   }
 }
 ```
@@ -575,15 +606,55 @@ against the catalog; an unknown type is 400 `route_invalid`. `201`:
   "target_type": "group",
   "target_chat_id": "oc_…",
   "project_id": "aa31…",
+  "event_types": ["status_changed"],
   "enabled": true
 }
 ```
 
 `project_id` is optional (null = whole workspace). The target chat must
-already hold an ACTIVE approval for this exact scope. `comment` scope is
+already hold an ACTIVE approval for this source kind and exact project range. `comment` scope is
 the same shape with `"source_kind": "comment"`. There are no
 `conditions`/`content_mode` fields on this surface — every source record
 inside the window is forwarded or explicitly suppressed.
+
+### Approve a project destination — request / response
+
+`POST /api/message-approved-targets` (workspace owner/admin):
+
+```json
+{
+  "source_kind": "activity",
+  "project_id": "aa31…",
+  "installation_id": "9f1c…",
+  "target_type": "group",
+  "target_chat_id": "oc_…"
+}
+```
+
+`201` returns `{"approved_target": {...}}`; its fields are `id`, `workspace_id`,
+`source_kind`, nullable `project_id`, nullable `autopilot_id` (always null for
+team grants), `installation_id`, `target_key`, `target_type`, `approved_by`,
+`approved_at`, nullable `revoked_at`. Omit `project_id` (or send null/empty) to
+approve the whole workspace explicitly. Approval does not enable a route.
+
+### Response fields for source clients
+
+Route responses use the same stored route shape as OL-25, adding `source_kind`,
+nullable UUID `project_id`, string-array `event_types`, and nullable timestamp
+`last_disabled_at`. `revision` is an integer; every update/enable request must
+send the version it read. `effective_from` is a timestamp, not a client input.
+
+Delivery detail and source-route record projections add nullable string
+`source_scope` and nullable UUID `source_project_id`. New source deliveries
+always have a known scope; null is reserved for terminal preview test sends
+whose deleted route prevented reconstruction. `source_kind="test_send"` does
+not imply automation authority. A project team diagnostic record, for example,
+contains `{"source_kind":"test_send","source_scope":"activity","source_project_id":"aa31…","autopilot_id":null}`.
+
+The persisted SQL/schema and returned fields are defined by migrations 467–473
+and `pkg/db/generated/models.go`; source-route projections live in
+`pkg/db/generated/labrastro_message.sql.go`. No client-side schema or frontend
+files change in this backend stage.
 
 ### Event catalog — response
 
@@ -628,6 +699,8 @@ error-code strings, projection listing, retry semantics), keyed by route:
       "run_id": null,
       "source_ref_id": "77bd…",
       "source_kind": "activity",
+      "source_scope": "activity",
+      "source_project_id": "aa31…",
       "status": "sent",
       "shard_total": 1,
       "installation_id": "9f1c…",
@@ -641,7 +714,13 @@ error-code strings, projection listing, retry semantics), keyed by route:
 Delivery detail adds `content_snapshot`
 (`{"text","summary","source_kind","issue_identifier","issue_title","actor_name","change","body","link"}`),
 `target_snapshot` and `receipts` — same shapes as OL-25. `source_ref`
-locates the record: `{"source_kind":"activity","activity_id":"…","issue_id":"…","issue_identifier":"MUL-42"}`.
+locates the record:
+
+- Activity: `{"source_kind":"activity","activity_id":"…","issue_id":"…","issue_identifier":"MUL-42"}`.
+- Comment: `{"source_kind":"comment","comment_id":"…","parent_comment_id":"…","issue_id":"…","issue_identifier":"MUL-42"}`; the parent is omitted for a root comment.
+- Inbox: `{"source_kind":"inbox","inbox_item_id":"…","comment_id":"…","issue_id":"…","issue_identifier":"MUL-42"}`; a valid explicit comment UUID in the item's details is retained when present.
+
+References locate feedback targets; they grant no permission.
 
 ### New error codes (stable strings)
 
@@ -655,13 +734,40 @@ locates the record: `{"source_kind":"activity","activity_id":"…","issue_id":"�
 Delivery `error_code` additions recorded by the pipeline:
 `recipient_muted` (suppressed at decision or cancelled at the send gate).
 
+### Upgrade and rollback
+
+Apply migrations 467–473 before running this binary. Stop delivery workers
+while upgrading a populated 467–470 preview deployment: old rows cannot prove
+their historical project consent or last-disable boundary. Migration 471
+withdraws preview team approvals, disables team routes, cancels all unfinished
+non-run deliveries (including diagnostics), and clears their leases. It keeps
+sent/suppressed/cancelled history, receipts and dedup identities. Personal
+routes retain their enabled flag but start a new eligibility window; automation
+configuration, approvals and deliveries are unchanged. Re-approve each desired
+team project/workspace range, then explicitly enable its route. Cancelled
+preview work is not automatically replayed.
+
+The project approval index in 473 uses `NULLS NOT DISTINCT`, keeping one active
+grant for each exact range, including the workspace range. Each concurrent
+index build has its own migration and registered invalid-index retry cleanup.
+The migration regression deliberately fails the build with duplicates, then
+repairs and retries through the real runner.
+
+Downgrading 473 refuses BEFORE any DDL if an active project grant exists: revoke
+those grants first. After that precondition, 472 can restore the old workspace
+index and 471 withdraws remaining source activity before dropping scope fields.
+Downgrading 467 deletes all non-run deliveries INCLUDING test sends with null
+`autopilot_id`, their receipts, source routes and approvals. Export that audit
+history before a downgrade if it must be retained. Legacy automation records
+and receipts remain. The populated migration test covers upgrade, rejected
+downgrade, successful retry, receipt cleanup and re-upgrade.
+
 ## Known gaps (explicitly out of this stage)
 
 - Real-Feishu verification (member/group/topic, service-side dedup window)
   requires an authorized test bot; the contract above is covered by DB-backed
   tests with fake senders/verifiers plus HTTP-contract tests on the real
   client.
-- Personal inbox and team-event sources, and the frontend configuration UI,
-  are later stages of the same parent plan.
+- The frontend configuration UI remains a later stage of the parent plan.
 - Feedback (reply-to-deliver → comment) is a later stage; `source_ref` is
   reserved for it.

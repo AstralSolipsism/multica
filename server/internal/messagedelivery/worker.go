@@ -208,6 +208,19 @@ func (s *Service) gateClaimed(ctx context.Context, d db.LabrastroMessageDelivery
 	if !route.Enabled {
 		return refuse(DeliveryStatusCancelled, ErrorCodeRouteDisabled, "route disabled before send")
 	}
+	if !d.SourceScope.Valid || d.SourceScope.String != route.SourceKind {
+		return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "delivery source scope is unavailable")
+	}
+	if route.LastDisabledAt.Valid && !d.CreatedAt.Time.After(route.LastDisabledAt.Time) {
+		return refuse(DeliveryStatusCancelled, ErrorCodeRouteDisabled, "delivery predates the last route disable")
+	}
+	if d.SourceProjectID.Valid {
+		if _, err := s.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: d.SourceProjectID, WorkspaceID: d.WorkspaceID}); errors.Is(err, pgx.ErrNoRows) {
+			return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "approved source project no longer exists")
+		} else if err != nil {
+			return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load source project failed")
+		}
+	}
 	// Source checks branch per scope. A TEST send carries no source record
 	// — it is judged against the scope of the route it exercised, with the
 	// requesting member as the authority; a real delivery is judged against
@@ -329,7 +342,7 @@ func (s *Service) gateInboxSource(ctx context.Context, d db.LabrastroMessageDeli
 	if err != nil {
 		return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load inbox item failed")
 	}
-	if item.RecipientID != route.TargetUserID {
+	if item.WorkspaceID != d.WorkspaceID || item.RecipientType != "member" || item.RecipientID != route.TargetUserID {
 		return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "inbox item no longer belongs to the route recipient")
 	}
 	if _, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
@@ -351,7 +364,7 @@ func (s *Service) gateInboxSource(ctx context.Context, d db.LabrastroMessageDeli
 
 // gateTeamSource re-checks a team source before sending: the canonical
 // record still exists (its issue may have been deleted), the issue still
-// matches the route's project filter, and the member who LAST SAVED the
+// matches the delivery's frozen project range, and the member who LAST SAVED the
 // route still holds workspace owner/admin — the same continuous
 // authorization the automation source applies to its authorizer.
 func (s *Service) gateTeamSource(ctx context.Context, d db.LabrastroMessageDelivery, route db.LabrastroMessageRoute) *sendOutcome {
@@ -371,6 +384,9 @@ func (s *Service) gateTeamSource(ctx context.Context, d db.LabrastroMessageDeliv
 		if err != nil {
 			return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load activity record failed")
 		}
+		if activity.WorkspaceID != d.WorkspaceID {
+			return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "activity belongs to another workspace")
+		}
 		issueID = activity.IssueID
 	case SourceKindComment:
 		comment, err := s.Queries.GetCommentInWorkspace(ctx, db.GetCommentInWorkspaceParams{ID: d.SourceRefID, WorkspaceID: d.WorkspaceID})
@@ -382,7 +398,7 @@ func (s *Service) gateTeamSource(ctx context.Context, d db.LabrastroMessageDeliv
 		}
 		issueID = comment.IssueID
 	}
-	if route.ProjectID.Valid {
+	{
 		issue, err := s.Queries.GetIssue(ctx, issueID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "source issue no longer exists")
@@ -390,8 +406,8 @@ func (s *Service) gateTeamSource(ctx context.Context, d db.LabrastroMessageDeliv
 		if err != nil {
 			return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load source issue failed")
 		}
-		if issue.ProjectID != route.ProjectID {
-			return refuse(DeliveryStatusCancelled, ErrorCodeConditionMismatch, "source issue left the route's project scope")
+		if issue.WorkspaceID != d.WorkspaceID || (d.SourceProjectID.Valid && issue.ProjectID != d.SourceProjectID) {
+			return refuse(DeliveryStatusCancelled, ErrorCodeConditionMismatch, "source issue left the decision's project scope")
 		}
 	}
 	authorizer, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
@@ -426,7 +442,7 @@ func (s *Service) reverifyTarget(ctx context.Context, d db.LabrastroMessageDeliv
 	// Approval is checked against the FROZEN target (delivery rows pin
 	// installation + target_key at decision time), never against the
 	// route's current configuration (repair contract §2). The approval
-	// SCOPE follows the delivery's source kind: a team delivery checks the
+	// SCOPE follows the delivery's frozen source_scope: a team delivery checks the
 	// team scope's own approval, never an automation's.
 	if (snap.TargetType == TargetGroup || snap.TargetType == TargetTopic) && s.Verifier == nil {
 		return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "target verifier unavailable")
@@ -458,14 +474,18 @@ func (s *Service) reverifyTarget(ctx context.Context, d db.LabrastroMessageDeliv
 }
 
 // deliveryTargetApproved keys the send-time approval check on the
-// delivery's OWN scope: team kinds check the (workspace, source kind, bot,
-// target) approval; automation deliveries keep the OL-25 per-automation
+// delivery's OWN scope: team kinds check (workspace, source scope, project,
+// bot, target) approval; automation deliveries keep the OL-25 per-automation
 // check. An approval is never borrowed across scopes.
 func (s *Service) deliveryTargetApproved(ctx context.Context, d db.LabrastroMessageDelivery, snap targetSnapshot) error {
-	if d.SourceKind == SourceKindActivity || d.SourceKind == SourceKindComment {
-		return s.sourceTargetApproved(ctx, d.WorkspaceID, d.SourceKind, d.InstallationID, snap.TargetKeyFor())
+	switch d.SourceScope.String {
+	case RouteSourceActivity, RouteSourceComment:
+		return s.sourceTargetApproved(ctx, d.WorkspaceID, d.SourceScope.String, d.SourceProjectID, d.InstallationID, snap.TargetKeyFor())
+	case RouteSourceRun:
+		return s.targetApproved(ctx, d.WorkspaceID, d.AutopilotID, d.InstallationID, snap.TargetKeyFor())
+	default:
+		return &TargetNotApprovedError{}
 	}
-	return s.targetApproved(ctx, d.WorkspaceID, d.AutopilotID, d.InstallationID, snap.TargetKeyFor())
 }
 
 // refuseApproval maps the approval verdict to a send outcome: a revoked or
@@ -679,7 +699,7 @@ func (s *Service) sourceScannerFuncs() map[string]func(context.Context, scanCurs
 func (s *Service) decideSourcesErr(ctx context.Context) []error {
 	var failures []error
 	for scanner, page := range s.sourceScannerFuncs() {
-		if _, err := s.advanceSourceScanner(ctx, scanner, page); err != nil && !errors.Is(err, errScanCursorMoved) {
+		if _, err := s.advanceScanner(ctx, scanner, page); err != nil && !errors.Is(err, errScanCursorMoved) {
 			failures = append(failures, err)
 		}
 	}
@@ -745,6 +765,8 @@ type scanCursor struct {
 	upperID      pgtype.UUID
 	generation   int64
 	cycleStarted time.Time
+	// nonempty distinguishes another target page at the same source ID from exhaustion; never persisted.
+	nonempty bool
 }
 
 var scanCursorStart = scanCursor{id: pgtype.UUID{Valid: true}}
@@ -767,7 +789,7 @@ func (s *Service) advanceScanner(ctx context.Context, scanner string, page func(
 		if err != nil {
 			return cur, err
 		}
-		if last.id == cur.id {
+		if last.id == cur.id && !last.nonempty {
 			// Exhausted this fixed bound. The next tick freezes a new bound.
 			cur.id, cur.upperID = scanCursorStart.id, pgtype.UUID{}
 			return s.saveCursor(ctx, scanner, cur)
@@ -782,6 +804,9 @@ func (s *Service) advanceScanner(ctx context.Context, scanner string, page func(
 
 func (s *Service) loadCursor(ctx context.Context, scanner string) (scanCursor, error) {
 	return s.loadCursorWithBound(ctx, scanner, func() (pgtype.UUID, error) {
+		if scope := sourceScopeForScanner(scanner); scope != "" {
+			return s.Queries.GetLabrastroMessageSourceScanUpperBound(ctx, scope)
+		}
 		return s.Queries.GetLabrastroMessageScanUpperBound(ctx, scanner == scannerIssueStatus)
 	})
 }
@@ -809,33 +834,6 @@ func (s *Service) loadCursorWithBound(ctx context.Context, scanner string, upper
 	}
 	cur.id, cur.upperID, cur.cycleStarted = scanCursorStart.id, upper, s.now()
 	return s.saveCursor(ctx, scanner, cur)
-}
-
-// advanceSourceScanner is advanceScanner for the OL-27 sources: the same
-// budget loop and cycle restart, with the per-source upper bound.
-func (s *Service) advanceSourceScanner(ctx context.Context, scanner string, page func(context.Context, scanCursor) (scanCursor, error)) (scanCursor, error) {
-	cur, err := s.loadCursorWithBound(ctx, scanner, func() (pgtype.UUID, error) {
-		return s.Queries.GetLabrastroMessageSourceScanUpperBound(ctx, sourceScopeForScanner(scanner))
-	})
-	if err != nil {
-		return cur, err
-	}
-	for budget := scanRowBudgetPerTick; budget > 0; budget -= scanPageLimit {
-		last, err := page(ctx, cur)
-		if err != nil {
-			return cur, err
-		}
-		if last.id == cur.id {
-			// Exhausted this fixed bound. The next tick freezes a new bound.
-			cur.id, cur.upperID = scanCursorStart.id, pgtype.UUID{}
-			return s.saveCursor(ctx, scanner, cur)
-		}
-		cur, err = s.saveCursor(ctx, scanner, last)
-		if err != nil {
-			return cur, err
-		}
-	}
-	return cur, nil
 }
 
 // sourceScopeForScanner maps a source scanner name onto the route scope

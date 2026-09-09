@@ -1,24 +1,9 @@
 package messagedelivery
 
-// OL-27 decision pipeline for the three persisted sources. The compensator
-// pairs each source class with enabled routes (the candidate scans), and
-// every pair is judged exactly once: a queued send, or an explicit
-// suppressed marker. Suppressed markers are what make the semantics hold —
-//
-//   - a filter (project / event type) or a mute that did not match is
-//     RECORDED, so editing the filter later can never replay old events;
-//   - the dedup key carries workspace + scope + original record id +
-//     installation + normalized target and nothing else, so equivalent
-//     routes to the same target collapse into ONE decision, web
-//     reads/archives never re-produce one, and several personal
-//     subscriptions to the same team event still yield a single group send.
-//
-// Deterministic route attribution: candidate rows are ordered by (source
-// id, route created_at, route id); within one enqueuer the first matching
-// route in that order is the decision's recorded route. A concurrent
-// replica may win the race instead — but only one decision row ever exists,
-// and content is route-independent (built from the SOURCE record), so the
-// only thing attribution chooses is which config row gets the credit.
+// Candidates already collapse all equivalent routes to the best matching
+// authorized rule. We freeze one decision per source/normalized target,
+// checking the selected route again under the lock used by configuration
+// writes. Source cursors include their last ID until all its targets drain.
 
 import (
 	"context"
@@ -26,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -61,6 +47,7 @@ func (s *Service) scanInboxSourceDecisions(ctx context.Context, cur scanCursor) 
 		}
 	}
 	cur.id = rows[len(rows)-1].ItemID
+	cur.nonempty = true
 	return cur, nil
 }
 
@@ -86,10 +73,19 @@ func (s *Service) decideInboxPair(ctx context.Context, row db.ListLabrastroMessa
 		IssueID:         util.UUIDToString(row.ItemIssueID),
 		IssueIdentifier: ident,
 	}
+	var details struct {
+		CommentID string `json:"comment_id"`
+	}
+	if err := json.Unmarshal(row.ItemDetails, &details); err == nil {
+		if _, err := util.ParseUUID(details.CommentID); err == nil {
+			ref.CommentID = details.CommentID
+		}
+	}
 	base := sourceDecision{
 		scope: RouteSourceInbox, workspaceID: wsID, sourceRefID: refID,
 		routeID: row.RouteID, routeRevision: row.RouteRevision,
-		installationID: row.InstallationID, targetKey: row.TargetKey,
+		sourceCreatedAt: row.ItemCreatedAt.Time,
+		installationID:  row.InstallationID, targetKey: row.TargetKey,
 		kind: SourceKindInbox, content: content, ref: ref,
 	}
 	// The event filter is judged here (not in SQL) so a filtered-out pair
@@ -191,6 +187,7 @@ func (s *Service) scanActivitySourceDecisions(ctx context.Context, cur scanCurso
 		}
 	}
 	cur.id = rows[len(rows)-1].ActivityID
+	cur.nonempty = true
 	return cur, nil
 }
 
@@ -198,10 +195,11 @@ func (s *Service) decideActivityPair(ctx context.Context, row db.ListLabrastroMe
 	refID := util.UUIDToString(row.ActivityID)
 	wsID := util.UUIDToString(row.ActivityWorkspaceID)
 	instID := util.UUIDToString(row.InstallationID)
-	if row.RouteProjectID.Valid && row.RouteProjectID != row.IssueProjectID {
+	if (row.RouteProjectID.Valid && row.RouteProjectID != row.IssueProjectID) || (len(row.EventTypes) > 0 && !containsString(row.EventTypes, row.ActivityAction)) {
 		return s.insertSourceDecision(ctx, sourceDecision{
 			scope: RouteSourceActivity, workspaceID: wsID, sourceRefID: refID,
 			routeID: row.RouteID, routeRevision: row.RouteRevision,
+			sourceCreatedAt: row.ActivityCreatedAt.Time, projectID: row.RouteProjectID,
 			installationID: row.InstallationID, targetKey: row.TargetKey,
 			kind: SourceKindActivity, status: DeliveryStatusSuppressed,
 			errorCode: ErrorCodeConditionMismatch,
@@ -231,6 +229,7 @@ func (s *Service) decideActivityPair(ctx context.Context, row db.ListLabrastroMe
 		return s.insertSourceDecision(ctx, sourceDecision{
 			scope: RouteSourceActivity, workspaceID: wsID, sourceRefID: refID,
 			routeID: row.RouteID, routeRevision: row.RouteRevision,
+			sourceCreatedAt: row.ActivityCreatedAt.Time, projectID: row.RouteProjectID,
 			installationID: row.InstallationID, targetKey: row.TargetKey,
 			kind: SourceKindActivity, status: DeliveryStatusSuppressed,
 			errorCode: ErrorCodeConditionMismatch,
@@ -257,6 +256,7 @@ func (s *Service) decideActivityPair(ctx context.Context, row db.ListLabrastroMe
 	return s.insertSourceDecision(ctx, sourceDecision{
 		scope: RouteSourceActivity, workspaceID: wsID, sourceRefID: refID,
 		routeID: row.RouteID, routeRevision: row.RouteRevision,
+		sourceCreatedAt: row.ActivityCreatedAt.Time, projectID: row.RouteProjectID,
 		installationID: row.InstallationID, targetKey: row.TargetKey,
 		kind: SourceKindActivity, status: DeliveryStatusQueued,
 		target: target, content: content, ref: ref,
@@ -329,6 +329,7 @@ func (s *Service) scanCommentSourceDecisions(ctx context.Context, cur scanCursor
 		}
 	}
 	cur.id = rows[len(rows)-1].CommentID
+	cur.nonempty = true
 	return cur, nil
 }
 
@@ -336,10 +337,11 @@ func (s *Service) decideCommentPair(ctx context.Context, row db.ListLabrastroMes
 	refID := util.UUIDToString(row.CommentID)
 	wsID := util.UUIDToString(row.CommentWorkspaceID)
 	instID := util.UUIDToString(row.InstallationID)
-	if row.RouteProjectID.Valid && row.RouteProjectID != row.IssueProjectID {
+	if (row.RouteProjectID.Valid && row.RouteProjectID != row.IssueProjectID) || (len(row.EventTypes) > 0 && !containsString(row.EventTypes, notify.CommentTypeDeliverable)) {
 		return s.insertSourceDecision(ctx, sourceDecision{
 			scope: RouteSourceComment, workspaceID: wsID, sourceRefID: refID,
 			routeID: row.RouteID, routeRevision: row.RouteRevision,
+			sourceCreatedAt: row.CommentCreatedAt.Time, projectID: row.RouteProjectID,
 			installationID: row.InstallationID, targetKey: row.TargetKey,
 			kind: SourceKindComment, status: DeliveryStatusSuppressed,
 			errorCode: ErrorCodeConditionMismatch,
@@ -362,12 +364,14 @@ func (s *Service) decideCommentPair(ctx context.Context, row db.ListLabrastroMes
 	ref := sourceRef{
 		SourceKind:      SourceKindComment,
 		CommentID:       refID,
+		ParentCommentID: util.UUIDToString(row.CommentParentID),
 		IssueID:         util.UUIDToString(row.CommentIssueID),
 		IssueIdentifier: ident,
 	}
 	return s.insertSourceDecision(ctx, sourceDecision{
 		scope: RouteSourceComment, workspaceID: wsID, sourceRefID: refID,
 		routeID: row.RouteID, routeRevision: row.RouteRevision,
+		sourceCreatedAt: row.CommentCreatedAt.Time, projectID: row.RouteProjectID,
 		installationID: row.InstallationID, targetKey: row.TargetKey,
 		kind: SourceKindComment, status: DeliveryStatusQueued,
 		target: target, content: content, ref: ref,
@@ -378,19 +382,21 @@ func (s *Service) decideCommentPair(ctx context.Context, row db.ListLabrastroMes
 
 // sourceDecision is one judged (source, route) pair ready to record.
 type sourceDecision struct {
-	scope          string
-	workspaceID    string
-	sourceRefID    string
-	routeID        pgtype.UUID
-	routeRevision  int32
-	installationID pgtype.UUID
-	targetKey      string
-	kind           string
-	status         string
-	errorCode      string
-	target         targetSnapshot
-	content        contentSnapshot
-	ref            sourceRef
+	sourceCreatedAt time.Time
+	projectID       pgtype.UUID
+	scope           string
+	workspaceID     string
+	sourceRefID     string
+	routeID         pgtype.UUID
+	routeRevision   int32
+	installationID  pgtype.UUID
+	targetKey       string
+	kind            string
+	status          string
+	errorCode       string
+	target          targetSnapshot
+	content         contentSnapshot
+	ref             sourceRef
 }
 
 // insertSourceDecision records the decision inside the parent-integrity
@@ -429,6 +435,25 @@ func (s *Service) insertSourceDecision(ctx context.Context, d sourceDecision) er
 		}
 		return fmt.Errorf("lock decision parent: %w", err)
 	}
+	// Project-before-route order matches deletion; a candidate must not
+	// recreate a route/source reference after its parent has been swept.
+	if d.projectID.Valid {
+		if _, err := qtx.LockLabrastroMessageSourceProject(ctx, db.LockLabrastroMessageSourceProjectParams{ID: d.projectID, WorkspaceID: mustUUID(d.workspaceID)}); errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+	}
+	route, err := qtx.LockLabrastroMessageSourceRoute(ctx, db.LockLabrastroMessageSourceRouteParams{ID: d.routeID, WorkspaceID: mustUUID(d.workspaceID)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !route.Enabled || route.SourceKind != d.scope || route.Revision != d.routeRevision || d.sourceCreatedAt.Before(route.EffectiveFrom.Time) {
+		return nil // stale candidate; a subsequent page/cycle recomputes it
+	}
 	rows, err := qtx.CreateLabrastroMessageSourceDelivery(ctx, db.CreateLabrastroMessageSourceDeliveryParams{
 		ID:              dbid.NewV7(),
 		WorkspaceID:     mustUUID(d.workspaceID),
@@ -437,6 +462,8 @@ func (s *Service) insertSourceDecision(ctx context.Context, d sourceDecision) er
 		SourceRefID:     mustUUID(d.sourceRefID),
 		DedupKey:        SourceDeliveryDedupKey(d.scope, d.workspaceID, d.sourceRefID, util.UUIDToString(d.installationID), d.targetKey),
 		SourceKind:      d.kind,
+		SourceScope:     pgtype.Text{String: d.scope, Valid: true},
+		SourceProjectID: d.projectID,
 		Status:          d.status,
 		ContentSnapshot: contentJSON,
 		TargetSnapshot:  targetJSON,

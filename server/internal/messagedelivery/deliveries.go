@@ -99,6 +99,12 @@ func (s *Service) RetryDelivery(ctx context.Context, workspaceID, autopilotID, d
 	if util.UUIDToString(d.AutopilotID) != util.UUIDToString(autopilotID) {
 		return db.LabrastroMessageDelivery{}, ErrDeliveryNotFound
 	}
+	return s.retryDelivery(ctx, d)
+}
+
+// retryDelivery is the common failed/uncertain transition. Callers first
+// authorize the delivery's immutable parent (automation or source route).
+func (s *Service) retryDelivery(ctx context.Context, d db.LabrastroMessageDelivery) (db.LabrastroMessageDelivery, error) {
 	switch d.Status {
 	case DeliveryStatusFailed, DeliveryStatusUncertain:
 	default:
@@ -106,7 +112,7 @@ func (s *Service) RetryDelivery(ctx context.Context, workspaceID, autopilotID, d
 	}
 	row, err := s.Queries.RetryLabrastroMessageDeliveryManually(ctx, db.RetryLabrastroMessageDeliveryManuallyParams{
 		ID:          d.ID,
-		WorkspaceID: workspaceID,
+		WorkspaceID: d.WorkspaceID,
 		ErrorCode:   pgtype.Text{},
 		LastError:   pgtype.Text{String: "manual retry requested", Valid: true},
 	})
@@ -177,7 +183,7 @@ func (s *Service) executeTestSend(ctx context.Context, route db.LabrastroMessage
 	if err != nil {
 		return db.LabrastroMessageDelivery{}, fmt.Errorf("encode test target: %w", err)
 	}
-	refJSON, err := json.Marshal(sourceRef{RunID: ""})
+	refJSON, err := json.Marshal(sourceRef{SourceKind: route.SourceKind})
 	if err != nil {
 		return db.LabrastroMessageDelivery{}, fmt.Errorf("encode test ref: %w", err)
 	}
@@ -187,6 +193,25 @@ func (s *Service) executeTestSend(ctx context.Context, route db.LabrastroMessage
 	// whole test send, or lands after and sweeps the row — no orphan.
 	var d db.LabrastroMessageDelivery
 	err = s.withParentLock(ctx, route.WorkspaceID, func(qtx *db.Queries) error {
+		if IsSourceRouteScope(route.SourceKind) {
+			if route.ProjectID.Valid {
+				if _, err := qtx.LockLabrastroMessageSourceProject(ctx, db.LockLabrastroMessageSourceProjectParams{ID: route.ProjectID, WorkspaceID: route.WorkspaceID}); errors.Is(err, pgx.ErrNoRows) {
+					return ErrSourceUnavailable
+				} else if err != nil {
+					return err
+				}
+			}
+			current, err := qtx.LockLabrastroMessageSourceRoute(ctx, db.LockLabrastroMessageSourceRouteParams{ID: route.ID, WorkspaceID: route.WorkspaceID})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrRouteNotFound
+			}
+			if err != nil {
+				return err
+			}
+			if current.Revision != route.Revision || !current.Enabled {
+				return ErrRouteRevisionConflict
+			}
+		}
 		created, cErr := qtx.CreateLabrastroMessageDelivery(ctx, db.CreateLabrastroMessageDeliveryParams{
 			ID:              dbid.NewV7(),
 			WorkspaceID:     route.WorkspaceID,
@@ -195,6 +220,8 @@ func (s *Service) executeTestSend(ctx context.Context, route db.LabrastroMessage
 			AutopilotID:     route.AutopilotID,
 			DedupKey:        TestDeliveryDedupKey(util.UUIDToString(dbid.NewV7())),
 			SourceKind:      SourceKindTestSend,
+			SourceScope:     pgtype.Text{String: route.SourceKind, Valid: true},
+			SourceProjectID: route.ProjectID,
 			RequestedBy:     member.UserID,
 			Status:          DeliveryStatusQueued,
 			ContentSnapshot: contentJSON,
