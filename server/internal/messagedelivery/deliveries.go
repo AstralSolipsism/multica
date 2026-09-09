@@ -325,6 +325,10 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 	}
 
 	shards := splitShards(content.Text)
+	sourceURL := content.Link
+	if sourceURL == "" {
+		sourceURL = s.AppURL
+	}
 	for i, shard := range shards {
 		// Claim (or re-read) the shard's receipt row. The send UUID is
 		// written once and never changes, so a retry replays the SAME
@@ -397,6 +401,8 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 				detail: fmt.Sprintf("lease lost before shard %d", i)}
 		}
 		res, err := s.Sender.Send(ctx, SendRequest{
+			DeliveryID:     util.UUIDToString(d.ID),
+			SourceURL:      sourceURL,
 			WorkspaceID:    util.UUIDToString(d.WorkspaceID),
 			InstallationID: snap.Installation,
 			ChannelType:    snap.ChannelType,

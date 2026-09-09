@@ -4085,6 +4085,11 @@ func (h *Handler) reconcileCommentsOnCompletion(ctx context.Context, task *db.Ag
 	scheduled := 0
 	for i := range comments {
 		c := comments[i]
+		// Pending feedback has a durable worker; it owns the initial trigger.
+		if pending, err := h.Queries.IsPendingLabrastroFeedbackComment(ctx, c.ID); err != nil || pending {
+			continue
+		}
+
 		if _, ok := delivered[uuidToString(c.ID)]; ok {
 			// Already delivered to this run (trigger or pre-claim coalesced).
 			continue

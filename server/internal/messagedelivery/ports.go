@@ -53,6 +53,8 @@ func (e *SendError) Unwrap() error { return e.Err }
 
 // SendRequest is one shard going to one resolved target.
 type SendRequest struct {
+	DeliveryID     string
+	SourceURL      string
 	WorkspaceID    string
 	InstallationID string
 	ChannelType    string

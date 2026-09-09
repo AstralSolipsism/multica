@@ -1845,21 +1845,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	// entity-encode Markdown syntax characters (>, ", &, <) and corrupt the
 	// source. See issue #1303 / discussion in MUL-1119, MUL-1125.
 
-	// parent_id stores the exact comment being replied to. Thread-level behavior
-	// (for example auto-unresolving a resolved thread) resolves the root
-	// separately so storing a reply-to-reply does not destroy the direct-parent
-	// signal used by trigger decisions.
-	var rootComment *db.Comment
-	if parentID.Valid {
-		if root, err := h.Queries.GetThreadRoot(r.Context(), db.GetThreadRootParams{
-			CommentID:   parentID,
-			WorkspaceID: issue.WorkspaceID,
-		}); err == nil {
-			rootComment = &root
-		}
-	}
-
-	created, err := h.Queries.CreateComment(r.Context(), db.CreateCommentParams{
+	created, rootComment, err := writeComment(r.Context(), h.Queries, db.CreateCommentParams{
 		ID:           dbid.NewV7(),
 		IssueID:      issue.ID,
 		WorkspaceID:  issue.WorkspaceID,
@@ -1887,23 +1873,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	resp := commentToResponse(comment, nil, groupedAtt[uuidToString(comment.ID)])
 	resp.IssueRevision = created.IssueRevision
 	slog.Info("comment created", append(logger.RequestAttrs(r), "comment_id", uuidToString(comment.ID), "issue_id", issueID)...)
-	h.publish(protocol.EventCommentCreated, uuidToString(issue.WorkspaceID), authorType, authorID, map[string]any{
-		"comment":             resp,
-		"issue_title":         issue.Title,
-		"issue_assignee_type": textToPtr(issue.AssigneeType),
-		"issue_assignee_id":   uuidToPtr(issue.AssigneeID),
-		"issue_status":        issue.Status,
-		"issue_revision":      created.IssueRevision,
-	})
-
-	// A reply in a resolved thread re-opens it. Done after CreateComment commits
-	// so the reply is visible regardless of the unresolve outcome. Shared with
-	// the agent task path (TaskService.createAgentComment) — both reply paths
-	// must keep the resolved root in sync.
-	h.TaskService.AutoUnresolveThreadOnReply(r.Context(), rootComment, uuidToString(issue.WorkspaceID), authorType, authorID)
-	if authorType == "agent" {
-		h.TaskService.CancelDeferredEscalationsForIssueAgent(r.Context(), issue.ID, comment.AuthorID)
-	}
+	h.commentCommitted(r.Context(), issue, comment, rootComment, resp)
 
 	originatorUserID := h.invokeOriginatorFromRequest(r, authorType, authorID)
 	// The comment is already saved; a blocked mention must not fail the whole
@@ -1951,17 +1921,57 @@ func isNoteComment(content string) bool {
 // deferred / blocked from enqueue. UI-suppressed triggers (the user unchecked
 // them) are removed before enqueue and produce no outcome.
 func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, actorType, actorID, originatorUserID string, suppressAgentIDs []pgtype.UUID) []CommentTriggerOutcome {
+	outcomes, _ := h.triggerTasksForCommentChecked(ctx, issue, comment, parentComment, actorType, actorID, originatorUserID, suppressAgentIDs, false)
+	return outcomes
+}
+
+func (h *Handler) triggerTasksForCommentChecked(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, actorType, actorID, originatorUserID string, suppressAgentIDs []pgtype.UUID, recover bool) ([]CommentTriggerOutcome, error) {
 	if isNoteComment(comment.Content) {
-		return nil
+		return nil, nil
 	}
 	triggers, targets := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, commentTriggerComputeOptions{
 		ExcludeTriggerCommentID: comment.ID,
 		OriginatorUserID:        originatorUserID,
 	})
 	triggers = filterSuppressedCommentAgentTriggers(triggers, suppressAgentIDs)
+	if recover {
+		// The durable feedback path holds these locks through enqueue. Recheck
+		// the SAME invocation predicate after locking, including target revokes.
+		sort.Slice(triggers, func(i, j int) bool { return uuidToString(triggers[i].Agent.ID) < uuidToString(triggers[j].Agent.ID) })
+		remaining := triggers[:0]
+		for _, trigger := range triggers {
+			agent, err := h.Queries.GetAgentForClaimUpdate(ctx, trigger.Agent.ID)
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if _, err := h.Queries.LockLabrastroFeedbackInvocationTargets(ctx, agent.ID); err != nil {
+				return nil, err
+			}
+			if !h.canInvokeAgent(ctx, agent, actorType, actorID, originatorUserID, uuidToString(issue.WorkspaceID)) {
+				continue
+			}
+			trigger.Agent = agent
+			covered, err := h.Queries.HasTaskCoveringDelegatedFailureComment(ctx, db.HasTaskCoveringDelegatedFailureCommentParams{IssueID: issue.ID, AgentID: trigger.Agent.ID, CommentID: comment.ID})
+			if err != nil {
+				return nil, err
+			}
+			if !covered {
+				remaining = append(remaining, trigger)
+			}
+		}
+		triggers = remaining
+	}
 	h.noteBlockedRuntimeTargets(ctx, issue, targets)
 	enqueued := h.enqueueCommentAgentTriggers(ctx, issue, comment.ID, triggers)
-	return commentTriggerOutcomes(targets, enqueued)
+	for _, result := range enqueued {
+		if result.reason == ReasonInternalError {
+			return commentTriggerOutcomes(targets, enqueued), errors.New("comment trigger enqueue failed")
+		}
+	}
+	return commentTriggerOutcomes(targets, enqueued), nil
 }
 
 // noteBlockedRuntimeTargets leaves one system comment per agent refused for an
@@ -3563,7 +3573,7 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("cancel tasks for deleted trigger comment failed", append(logger.RequestAttrs(r), "error", cancelErr, "comment_id", commentId)...)
 	}
 
-	deleted, err := h.Queries.DeleteComment(r.Context(), db.DeleteCommentParams{
+	deleted, err := h.deleteCommentWithFeedback(r.Context(), comment.IssueID, db.DeleteCommentParams{
 		ID:          comment.ID,
 		WorkspaceID: comment.WorkspaceID,
 	})

@@ -566,7 +566,8 @@ WHERE workspace_id = sqlc.arg('workspace_id')
   AND autopilot_id = sqlc.arg('autopilot_id')
   AND installation_id = sqlc.arg('installation_id')
   AND target_key = sqlc.arg('target_key')
-  AND revoked_at IS NULL;
+  AND revoked_at IS NULL
+FOR SHARE;
 
 -- name: ListLabrastroMessageApprovedTargets :many
 SELECT * FROM labrastro_message_approved_target
@@ -1008,7 +1009,8 @@ WHERE workspace_id = sqlc.arg('workspace_id')
   AND installation_id = sqlc.arg('installation_id')
   AND target_key = sqlc.arg('target_key')
   AND project_id IS NOT DISTINCT FROM sqlc.narg('project_id')
-  AND revoked_at IS NULL;
+  AND revoked_at IS NULL
+FOR SHARE;
 
 -- name: ListLabrastroMessageSourceApprovedTargets :many
 SELECT * FROM labrastro_message_approved_target

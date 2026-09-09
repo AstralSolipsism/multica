@@ -133,6 +133,8 @@ func (s *InstallationService) ListByWorkspace(ctx context.Context, workspaceID p
 // pgx.ErrNoRows so handlers do not need to import pgx.
 var ErrInstallationNotFound = errors.New("lark installation not found")
 
+var ErrInstallationRevoked = errors.New("lark installation is revoked")
+
 func validateInstallationParams(p InstallationParams) error {
 	switch {
 	case !p.WorkspaceID.Valid:

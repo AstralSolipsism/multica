@@ -991,6 +991,33 @@ type LabrastroMessageDelivery struct {
 	SourceProjectID pgtype.UUID        `json:"source_project_id"`
 }
 
+type LabrastroMessageFeedback struct {
+	InstallationID      pgtype.UUID        `json:"installation_id"`
+	InboundMessageID    string             `json:"inbound_message_id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	DeliveryID          pgtype.UUID        `json:"delivery_id"`
+	QuotedMessageID     string             `json:"quoted_message_id"`
+	SenderID            string             `json:"sender_id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	InstallationAgentID pgtype.UUID        `json:"installation_agent_id"`
+	ChatID              string             `json:"chat_id"`
+	ThreadID            string             `json:"thread_id"`
+	Content             string             `json:"content"`
+	Kind                string             `json:"kind"`
+	IssueID             pgtype.UUID        `json:"issue_id"`
+	ParentCommentID     pgtype.UUID        `json:"parent_comment_id"`
+	CommentID           pgtype.UUID        `json:"comment_id"`
+	IssueRevision       int64              `json:"issue_revision"`
+	ChatSessionID       pgtype.UUID        `json:"chat_session_id"`
+	Status              string             `json:"status"`
+	Notice              string             `json:"notice"`
+	AckUuid             pgtype.UUID        `json:"ack_uuid"`
+	AcknowledgedAt      pgtype.Timestamptz `json:"acknowledged_at"`
+	NextAttemptAt       pgtype.Timestamptz `json:"next_attempt_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
 type LabrastroMessageReceipt struct {
 	ID                pgtype.UUID        `json:"id"`
 	DeliveryID        pgtype.UUID        `json:"delivery_id"`

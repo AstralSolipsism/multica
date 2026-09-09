@@ -28,7 +28,9 @@ type txStarter interface {
 // by any path (API test send, event wakeup, compensator) lands in the same
 // queue the worker drains.
 type Service struct {
-	Queries *db.Queries
+	FeedbackTransport FeedbackTransport
+	ProcessFeedback   func(context.Context) error
+	Queries           *db.Queries
 	// Tx starts transactions for parent-integrity-guarded writes (the
 	// workspace FOR SHARE lock around decision/receipt inserts, review
 	// R3). The server assembly passes the pool; tests do the same.

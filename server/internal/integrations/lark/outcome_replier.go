@@ -155,6 +155,13 @@ func NewLarkOutcomeReplier(cfg OutcomeReplierConfig) OutcomeReplier {
 // missing branch silently drops the user-visible side effect.
 func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst Installation, msg InboundMessage, res DispatchResult) {
 	switch res.Outcome {
+	case OutcomeFeedback:
+		if res.FeedbackNotice != "" {
+			if err := r.sendChatNotice(ctx, inst, msg, res.FeedbackNotice); err != nil {
+				r.log.Warn("feedback notice failed", "err", err)
+			}
+		}
+
 	case OutcomeNeedsBinding:
 		if err := r.sendBindingPrompt(ctx, inst, msg, res); err != nil {
 			r.log.Warn("lark outcome replier: binding prompt failed",
