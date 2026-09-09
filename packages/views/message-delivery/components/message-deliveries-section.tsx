@@ -10,6 +10,13 @@ import {
   useRetryMessageDelivery,
 } from "@multica/core/message-delivery";
 import { memberListOptions } from "@multica/core/workspace/queries";
+import {
+  autopilotDetailOptions,
+  autopilotRunOptions,
+} from "@multica/core/autopilots/queries";
+import { useActorName } from "@multica/core/workspace/hooks";
+import { TranscriptButton } from "../../common/task-transcript";
+import type { AgentTask } from "@multica/core/types/agent";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { ApiError, errorCode } from "@multica/core/api";
@@ -454,12 +461,18 @@ export function DeliveryDetailDialog({
               label={t(($) => $.deliveries.detail.route_revision)}
               value={`v${full.route_revision}`}
             />
-            <MetaRow
-              label={t(($) => $.deliveries.detail.run)}
-              value={full.run_id ? full.run_id.slice(0, 8) : "—"}
-              mono
-            />
           </dl>
+
+          {/* R3 reverse linkage: the FULL run id (an 8-char prefix can
+              collide across runs) plus the run's own log entry, loaded via
+              the existing autopilotRunOptions contract. */}
+          {full.run_id && (
+            <SourceRunRow
+              wsId={wsId}
+              autopilotId={autopilotId}
+              runId={full.run_id}
+            />
+          )}
 
           {full.error_code && (
             <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-caption text-destructive">
@@ -610,6 +623,87 @@ function ReceiptRow({ receipt }: { receipt: MessageDeliveryReceipt }) {
       <span className="shrink-0 text-muted-foreground tabular-nums">
         {formatDate(receipt.created_at, locale)}
       </span>
+    </div>
+  );
+}
+
+/**
+ * Reverse linkage for a delivery: locate its exact source run and offer the
+ * run's own entries (transcript log via the shared TranscriptButton, issue
+ * link when the run created one). No new pages, no new endpoints.
+ */
+function SourceRunRow({
+  wsId,
+  autopilotId,
+  runId,
+}: {
+  wsId: string;
+  autopilotId: string;
+  runId: string;
+}) {
+  const { t } = useT("message-delivery");
+  const wsPaths = useWorkspacePaths();
+  const { getActorName } = useActorName();
+  const { data: run, isLoading } = useQuery(
+    autopilotRunOptions(wsId, autopilotId, runId, { enabled: true }),
+  );
+  const { data: autopilotData } = useQuery(autopilotDetailOptions(wsId, autopilotId));
+  const autopilot = autopilotData?.autopilot;
+
+  const agentName = autopilot
+    ? getActorName(autopilot.assignee_type, autopilot.assignee_id)
+    : "";
+  // Same synthetic AgentTask mapping the run history rows use.
+  const syntheticTask: AgentTask | null =
+    run && run.task_id && autopilot
+      ? {
+          id: run.task_id,
+          agent_id: autopilot.assignee_id,
+          runtime_id: "",
+          issue_id: "",
+          status:
+            run.status === "running"
+              ? "running"
+              : run.status === "completed"
+                ? "completed"
+                : run.status === "failed"
+                  ? "failed"
+                  : "queued",
+          priority: 0,
+          dispatched_at: null,
+          started_at: run.triggered_at || null,
+          completed_at: run.completed_at || null,
+          result: null,
+          error: run.failure_reason || null,
+          created_at: run.created_at,
+        }
+      : null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-caption">
+      <span className="text-muted-foreground">
+        {t(($) => $.deliveries.detail.run)}
+      </span>
+      <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-micro break-all">
+        {runId}
+      </code>
+      {isLoading && <Skeleton className="h-4 w-16" />}
+      {syntheticTask && (
+        <TranscriptButton
+          task={syntheticTask}
+          agentName={agentName}
+          isLive={run?.status === "running"}
+          title={t(($) => $.deliveries.detail.view_log)}
+        />
+      )}
+      {run?.issue_id && (
+        <AppLink
+          href={wsPaths.issueDetail(run.issue_id)}
+          className="font-medium text-foreground underline underline-offset-2"
+        >
+          {t(($) => $.deliveries.detail.view_issue)}
+        </AppLink>
+      )}
     </div>
   );
 }

@@ -55,6 +55,7 @@ const membersRef = vi.hoisted(() => ({
   ]) as QueryResult,
 }));
 const roleRef = vi.hoisted(() => ({ current: "owner" as string }));
+const fetchQueryBehavior = vi.hoisted(() => ({ current: "ok" as "ok" | "reject" }));
 
 const mockCreate = vi.hoisted(() => vi.fn());
 const mockUpdate = vi.hoisted(() => vi.fn());
@@ -78,8 +79,14 @@ vi.mock("@tanstack/react-query", () => ({
   },
   useQueryClient: () => ({
     invalidateQueries: vi.fn(),
-    // fetchQuery returns the raw envelope (select is observer-only).
-    fetchQuery: async () => ({ routes: routesRef.current.data ?? [] }),
+    // fetchQuery returns the raw envelope (select is observer-only);
+    // fetchQueryBehavior simulates a failing reload on demand.
+    fetchQuery: async () => {
+      if (fetchQueryBehavior.current === "reject") {
+        throw new ApiError("boom", 500, "Internal Server Error");
+      }
+      return { routes: routesRef.current.data ?? [] };
+    },
   }),
   queryOptions: <T,>(opts: T) => opts,
 }));
@@ -274,7 +281,9 @@ describe("MessageRouteEditorDialog (via section)", () => {
     approvalsRef.current = ok([]);
     installationsRef.current = ok(DEFAULT_INSTALLATIONS);
     roleRef.current = "owner";
+    fetchQueryBehavior.current = "ok";
     mockCreate.mockReset().mockResolvedValue({});
+    mockUpdate.mockReset().mockResolvedValue({});
     mockApprove.mockReset().mockResolvedValue({});
   });
 
@@ -397,6 +406,63 @@ describe("MessageRouteEditorDialog (via section)", () => {
     expect(mockUpdate.mock.calls[1]?.[0].expected_revision).toBe(4);
     expect(mockUpdate.mock.calls[1]?.[0].conditions).toBe("failure");
     expect(mockUpdate.mock.calls[1]?.[0].target_user_id).toBe("user-2");
+  });
+
+  it("409 + failed reload: no freshness claim, save stays blocked, reload retryable", async () => {
+    routesRef.current = ok([ROUTE]);
+    fetchQueryBehavior.current = "reject";
+    mockUpdate.mockRejectedValue(
+      new ApiError("conflict", 409, "Conflict", { code: "route_revision_conflict" }),
+    );
+
+    const user = userEvent.setup();
+    renderSection();
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
+    await screen.findByText("Edit push target");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    // The reload failed: NO "latest version loaded" claim, and the stale
+    // draft cannot be submitted.
+    expect(
+      await screen.findByText(/couldn't load the latest version/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/updated by someone else/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+
+    // The explicit reload recovers: latest version adopted, save re-enabled.
+    fetchQueryBehavior.current = "ok";
+    routesRef.current = ok([{ ...ROUTE, revision: 4, conditions: "failure" }]);
+    mockUpdate.mockReset().mockResolvedValue({ ...ROUTE, revision: 5 });
+    await user.click(screen.getByRole("button", { name: /^reload$/i }));
+    expect(await screen.findByText(/updated by someone else/i)).toBeInTheDocument();
+    const save = screen.getByRole("button", { name: /^save$/i });
+    expect(save).toBeEnabled();
+    await user.click(save);
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
+    expect(mockUpdate.mock.calls[0]?.[0].expected_revision).toBe(4);
+    expect(mockUpdate.mock.calls[0]?.[0].conditions).toBe("failure");
+  });
+
+  it("409 + route gone from the list: says so, never resubmits the stale draft", async () => {
+    routesRef.current = ok([ROUTE]);
+    mockUpdate.mockRejectedValue(
+      new ApiError("conflict", 409, "Conflict", { code: "route_revision_conflict" }),
+    );
+    // The other actor deleted the rule; the reload finds nothing.
+    const user = userEvent.setup();
+    renderSection();
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
+    await screen.findByText("Edit push target");
+    routesRef.current = ok([]);
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(
+      await screen.findByText(/deleted elsewhere/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/updated by someone else/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
   });
 
   it("tells collaborators that external targets need admin approval", async () => {

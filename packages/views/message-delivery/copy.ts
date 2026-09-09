@@ -1,3 +1,8 @@
+import type {
+  ListMessageDeliveriesResponse,
+  MessageDelivery,
+} from "@multica/core/types";
+
 // Pure copy/classification helpers for the message-delivery surface (OL-26).
 // Keys mirror the stable wire codes in server/internal/messagedelivery — the
 // switch form keeps the mapping exhaustive at compile time; unknown/future
@@ -179,4 +184,33 @@ export function messageTargetKey(
     default:
       return `${targetType}:unknown`;
   }
+}
+
+/**
+ * R3 shared echo validation: every consumed page of a run-scoped records
+ * query must echo the requested run_id, otherwise the server ignored the
+ * filter (pre-contract server) and the page must NOT be merged into this
+ * run's view. All consumers (run badges, the per-run list dialog, polling
+ * refetches) go through this single judgment.
+ *
+ * Pages are processed in order; the first unconfirmed page ends the merge,
+ * so rows from a valid prefix stay visible and everything past it is
+ * excluded.
+ */
+export function confirmedRunPages(
+  pages:
+    | ReadonlyArray<
+        Pick<ListMessageDeliveriesResponse, "applied_run_id" | "deliveries">
+      >
+    | undefined,
+  runId: string,
+): { rows: MessageDelivery[]; unsupported: boolean } {
+  const rows: MessageDelivery[] = [];
+  for (const page of pages ?? []) {
+    if (page.applied_run_id !== runId) {
+      return { rows, unsupported: true };
+    }
+    rows.push(...page.deliveries);
+  }
+  return { rows, unsupported: false };
 }

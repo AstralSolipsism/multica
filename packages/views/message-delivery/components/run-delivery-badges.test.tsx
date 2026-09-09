@@ -137,6 +137,24 @@ describe("RunDeliveryBadges", () => {
     expect(screen.queryByRole("button", { name: /view delivery/i })).not.toBeInTheDocument();
   });
 
+  it("does not merge a later page that lacks the run echo", () => {
+    // First page valid, second page from a server that ignored run_id:
+    // the other run's rows must not appear, and the unsupported marker shows.
+    queryRef.current = {
+      data: {
+        pages: [
+          { deliveries: [delivery("d-1", "run-1", "sent")], applied_run_id: "run-1" },
+          { deliveries: [delivery("d-9", "run-2", "failed")], applied_run_id: null },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    };
+    renderBadges("run-1");
+    expect(screen.getByText(/isn't supported by this server/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /view delivery/i })).not.toBeInTheDocument();
+  });
+
   it("stays silent on a real 403 (read-only)", () => {
     queryRef.current = {
       data: undefined,

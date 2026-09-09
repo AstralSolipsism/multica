@@ -13,7 +13,11 @@ import {
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { useLocale, useT } from "../../i18n";
-import { messageDeliverySourceKindKey, messageDeliveryStatusKey } from "../copy";
+import {
+  confirmedRunPages,
+  messageDeliverySourceKindKey,
+  messageDeliveryStatusKey,
+} from "../copy";
 import { deliveryStatusVisual } from "../status-visual";
 
 /**
@@ -43,13 +47,20 @@ export function RunDeliveriesDialog({
     enabled: open,
   });
 
-  const rows = (query.data?.pages ?? []).flatMap((page) => page.deliveries);
+  // Same shared echo validation as the badges (R3): pages without a
+  // matching applied_run_id are never merged into this run's list.
+  const { rows, unsupported } = confirmedRunPages(query.data?.pages, runId);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
         <DialogTitle>{t(($) => $.deliveries.run_dialog.title)}</DialogTitle>
         <div className="space-y-1 pt-1">
+          {unsupported && (
+            <p className="text-caption text-muted-foreground">
+              {t(($) => $.deliveries.run_filter_unsupported)}
+            </p>
+          )}
           {query.isLoading ? (
             Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className="h-10 w-full" />

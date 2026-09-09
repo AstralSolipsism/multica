@@ -6,7 +6,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import type { MessageDelivery } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
-import { messageDeliveryStatusKey } from "../copy";
+import { confirmedRunPages, messageDeliveryStatusKey } from "../copy";
 import { deliveryStatusVisual } from "../status-visual";
 
 /**
@@ -42,8 +42,10 @@ export function RunDeliveryBadges({
   // Read-only callers get a real 403; badges stay silent there.
   if (query.isError) return null;
 
-  const firstPage = query.data?.pages[0];
-  if (firstPage && firstPage.applied_run_id !== runId) {
+  // Every page — first, later, refetched — must echo the requested run_id
+  // before its rows may be presented as this run's deliveries.
+  const { rows, unsupported } = confirmedRunPages(query.data?.pages, runId);
+  if (unsupported) {
     return (
       <span
         className="shrink-0 text-micro text-muted-foreground"
@@ -53,8 +55,6 @@ export function RunDeliveryBadges({
       </span>
     );
   }
-
-  const rows = (query.data?.pages ?? []).flatMap((page) => page.deliveries);
   if (rows.length === 0) return null;
 
   const shown = rows.slice(0, 3);

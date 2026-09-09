@@ -78,6 +78,19 @@ vi.mock("@tanstack/react-query", () => ({
         }
       );
     }
+    if (key.includes("autopilot-run")) {
+      const runId = (opts.queryKey as unknown[])[1] as string;
+      return { data: runById.current[runId], isLoading: false, isError: false };
+    }
+    if (key.includes("autopilot-detail")) {
+      return {
+        data: {
+          autopilot: { assignee_type: "agent", assignee_id: "agent-1" },
+        },
+        isLoading: false,
+        isError: false,
+      };
+    }
     return { data: undefined, isLoading: false, isError: false, isSuccess: false };
   },
   useQueryClient: () => ({ invalidateQueries: invalidateSpy }),
@@ -109,6 +122,49 @@ vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
 
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({ issueDetail: (id: string) => `/ws/issues/${id}` }),
+}));
+
+// Runs with a shared 8-char prefix: the dialog must resolve the FULL run id.
+const runById = vi.hoisted(() => ({
+  current: {
+    "abcd1234-0000-4000-8000-000000000001": {
+      id: "abcd1234-0000-4000-8000-000000000001",
+      task_id: "task-A",
+      issue_id: null,
+      status: "completed",
+      triggered_at: "2026-09-08T02:00:00Z",
+      completed_at: "2026-09-08T02:01:00Z",
+      failure_reason: null,
+      created_at: "2026-09-08T02:00:00Z",
+    },
+    "abcd1234-0000-4000-8000-000000000002": {
+      id: "abcd1234-0000-4000-8000-000000000002",
+      task_id: "task-B",
+      issue_id: null,
+      status: "completed",
+      triggered_at: "2026-09-08T03:00:00Z",
+      completed_at: "2026-09-08T03:01:00Z",
+      failure_reason: null,
+      created_at: "2026-09-08T03:00:00Z",
+    },
+  } as Record<string, unknown>,
+}));
+
+vi.mock("@multica/core/autopilots/queries", () => ({
+  autopilotRunOptions: (_wsId: string, _apId: string, runId: string) => ({
+    queryKey: ["autopilot-run", runId],
+  }),
+  autopilotDetailOptions: () => ({ queryKey: ["autopilot-detail"] }),
+}));
+
+vi.mock("@multica/core/workspace/hooks", () => ({
+  useActorName: () => ({ getActorName: () => "Reporter Bot" }),
+}));
+
+vi.mock("../../common/task-transcript", () => ({
+  TranscriptButton: ({ task }: { task: { id: string } }) => (
+    <span data-testid="transcript-entry">{task.id}</span>
+  ),
 }));
 
 vi.mock("sonner", () => ({
@@ -299,6 +355,42 @@ describe("MessageDeliveriesSection", () => {
     deliveriesRef.current = okList([delivery({ id: "d-1", status: "sent" })], false);
     renderSection();
     expect(screen.queryByRole("button", { name: /load more/i })).not.toBeInTheDocument();
+  });
+
+  it("locates the exact source run even when another run shares the 8-char prefix", async () => {
+    const user = userEvent.setup();
+    const mk = (id: string, runId: string) =>
+      delivery({ id, status: "sent", run_id: runId });
+    deliveriesRef.current = okList([
+      mk("d-A", "abcd1234-0000-4000-8000-000000000001"),
+      mk("d-B", "abcd1234-0000-4000-8000-000000000002"),
+    ]);
+    renderSection();
+
+    // Delivery A → run …0001 → task-A; delivery B → run …0002 → task-B.
+    const detailFor = (id: string, runId: string) =>
+      ok({
+        delivery: delivery({ id, status: "sent", run_id: runId }),
+        content_snapshot: { text: "report", has_output: true },
+        target_snapshot: null,
+        source_ref: null,
+        receipts: [],
+      });
+
+    detailRef.current = detailFor("d-A", "abcd1234-0000-4000-8000-000000000001");
+    await user.click(screen.getAllByText("member:user-1")[0]!);
+    expect(await screen.findByText("abcd1234-0000-4000-8000-000000000001")).toBeInTheDocument();
+    expect(screen.getByTestId("transcript-entry")).toHaveTextContent("task-A");
+    await user.keyboard("{Escape}");
+    await screen.findByText("Delivery detail", undefined, { timeout: 3000 }).catch(() => {});
+    await waitFor(() =>
+      expect(screen.queryByText("Delivery detail")).not.toBeInTheDocument(),
+    );
+
+    detailRef.current = detailFor("d-B", "abcd1234-0000-4000-8000-000000000002");
+    await user.click(screen.getAllByText("member:user-1")[1]!);
+    expect(await screen.findByText("abcd1234-0000-4000-8000-000000000002")).toBeInTheDocument();
+    expect(screen.getByTestId("transcript-entry")).toHaveTextContent("task-B");
   });
 
   it("invalidates a stale open detail when the list row observed a newer write", async () => {

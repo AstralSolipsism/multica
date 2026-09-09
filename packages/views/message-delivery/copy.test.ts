@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  confirmedRunPages,
   canRetryMessageDelivery,
   messageDeliveryErrorCodeKey,
   messageDeliveryErrorKey,
@@ -132,5 +133,58 @@ describe("messageTargetKey", () => {
       "topic:oc_1:om_1",
     );
     expect(messageTargetKey("future", {})).toBe("future:unknown");
+  });
+});
+
+describe("confirmedRunPages (R3 per-page echo validation)", () => {
+  const row = (id: string) => ({ id }) as never;
+
+  it("merges multiple pages whose echoes all match", () => {
+    const { rows, unsupported } = confirmedRunPages(
+      [
+        { applied_run_id: "run-1", deliveries: [row("a"), row("b")] },
+        { applied_run_id: "run-1", deliveries: [row("c")] },
+      ],
+      "run-1",
+    );
+    expect(unsupported).toBe(false);
+    expect(rows.map((r) => r.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("rejects everything when the FIRST page lacks the echo (old server)", () => {
+    const { rows, unsupported } = confirmedRunPages(
+      [{ applied_run_id: null, deliveries: [row("a")] }],
+      "run-1",
+    );
+    expect(unsupported).toBe(true);
+    expect(rows).toEqual([]);
+  });
+
+  it("keeps the confirmed prefix and drops a later unconfirmed page", () => {
+    const { rows, unsupported } = confirmedRunPages(
+      [
+        { applied_run_id: "run-1", deliveries: [row("a")] },
+        { applied_run_id: null, deliveries: [row("other-run")] },
+        { applied_run_id: "run-1", deliveries: [row("c")] },
+      ],
+      "run-1",
+    );
+    expect(unsupported).toBe(true);
+    expect(rows.map((r) => r.id)).toEqual(["a"]);
+  });
+
+  it("treats a mismatched echo as unconfirmed", () => {
+    const { rows, unsupported } = confirmedRunPages(
+      [{ applied_run_id: "run-2", deliveries: [row("x")] }],
+      "run-1",
+    );
+    expect(unsupported).toBe(true);
+    expect(rows).toEqual([]);
+  });
+
+  it("empty page list is vacuously confirmed (loading state)", () => {
+    const { rows, unsupported } = confirmedRunPages(undefined, "run-1");
+    expect(unsupported).toBe(false);
+    expect(rows).toEqual([]);
   });
 });

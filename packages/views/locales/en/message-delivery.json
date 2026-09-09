@@ -73,7 +73,10 @@
     "save_approve": "Approve and save",
     "saving": "Saving...",
     "cancel": "Cancel",
-    "conflict": "This configuration was updated by someone else. The latest version has been loaded and your unsaved edits were replaced — review it before saving again."
+    "conflict": "This configuration was updated by someone else. The latest version has been loaded and your unsaved edits were replaced — review it before saving again.",
+    "conflict_gone": "This push target was deleted elsewhere. Close and review the list before making changes.",
+    "conflict_reload_failed": "Couldn't load the latest version. Your draft was NOT saved and nothing was overwritten — reload it before saving.",
+    "retry_reload": "Reload"
   },
   "approvals": {
     "title": "Approved external targets",
@@ -138,7 +141,8 @@
       "attempts": "Attempts",
       "route_revision": "Rule version",
       "run": "Run",
-      "load_failed": "The detail failed to load — the state above comes from the list row and may be stale."
+      "load_failed": "The detail failed to load — the state above comes from the list row and may be stale.",
+      "view_log": "View log"
     },
     "retry": {
       "action": "Retry",

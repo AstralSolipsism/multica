@@ -87,9 +87,12 @@ export function MessageRouteEditorDialog({
   // refetched and adopted HERE, so the next save carries the newest
   // expected_revision — the conflict copy's promise is real, not advice.
   const [currentRoute, setCurrentRoute] = useState<MessageRoute | null>(route);
-  // While a post-409 reload is in flight the form still shows the stale
-  // draft — saving must stay disabled until the fresh version is adopted.
-  const [reloading, setReloading] = useState(false);
+  // Post-409 reload outcome (R2): only "adopted" may claim freshness.
+  // "reload_failed" and "gone" keep the real error and block saving the
+  // stale draft; "reloading" disables saving while the refetch is in flight.
+  const [conflict, setConflict] = useState<
+    "reloading" | "adopted" | "reload_failed" | "gone" | null
+  >(null);
 
   const activeInstallations = installations.filter((inst) => inst.status === "active");
 
@@ -144,7 +147,40 @@ export function MessageRouteEditorDialog({
         : targetChatId.trim() !== "" && targetMessageId.trim() !== "");
 
   const saving =
-    createRoute.isPending || updateRoute.isPending || approveTarget.isPending || reloading;
+    createRoute.isPending || updateRoute.isPending || approveTarget.isPending ||
+    conflict === "reloading";
+  // After a conflict, a stale draft may only be saved once the latest
+  // committed version was actually adopted.
+  const saveBlockedByConflict =
+    conflict === "reloading" || conflict === "reload_failed" || conflict === "gone";
+
+  // Adopt the other writer's committed version in full — every form field,
+  // not just the revision lock — so a re-save never silently overwrites
+  // changes the user never saw. Any outcome other than a found-and-adopted
+  // route leaves the conflict in a honest state.
+  const reloadAfterConflict = async (routeId: string) => {
+    setConflict("reloading");
+    try {
+      // fetchQuery returns the raw envelope (select is observer-only).
+      const fresh = await qc.fetchQuery(messageRoutesOptions(wsId, autopilotId));
+      const found = fresh.routes.find((r: MessageRoute) => r.id === routeId);
+      if (!found) {
+        setConflict("gone");
+        return;
+      }
+      setCurrentRoute(found);
+      setInstallationId(found.installation_id);
+      setTargetType(found.target_type);
+      setTargetUserId(found.target_user_id ?? "");
+      setTargetChatId(found.target_chat_id ?? "");
+      setTargetMessageId(found.target_message_id ?? "");
+      setConditions(found.conditions);
+      setContentMode(found.content_mode);
+      setConflict("adopted");
+    } catch {
+      setConflict("reload_failed");
+    }
+  };
 
   const handleSave = async () => {
     setError(null);
@@ -190,43 +226,26 @@ export function MessageRouteEditorDialog({
       // Stays inside the dialog — a failed save must not look like a saved,
       // enabled push anywhere else on the page.
       if (errorCode(e) === "route_revision_conflict" && currentRoute) {
-        // R2: adopt the OTHER writer's committed version in full — every
-        // form field, not just the revision lock — so a re-save never
-        // silently overwrites changes the user never saw. A failed reload
-        // keeps the conflict state and must not claim freshness.
-        setReloading(true);
-        try {
-          // fetchQuery returns the raw envelope (select is observer-only).
-          const fresh = await qc.fetchQuery(messageRoutesOptions(wsId, autopilotId));
-          const found = fresh.routes.find((r: MessageRoute) => r.id === currentRoute.id);
-          if (found) {
-            setCurrentRoute(found);
-            setInstallationId(found.installation_id);
-            setTargetType(found.target_type);
-            setTargetUserId(found.target_user_id ?? "");
-            setTargetChatId(found.target_chat_id ?? "");
-            setTargetMessageId(found.target_message_id ?? "");
-            setConditions(found.conditions);
-            setContentMode(found.content_mode);
-          }
-        } catch {
-          // The refetch failed too; the conflict alert still explains the
-          // situation and the list below is already fresh from invalidation.
-        } finally {
-          setReloading(false);
-        }
+        await reloadAfterConflict(currentRoute.id);
       }
       setError(e);
     }
   };
 
   const errCode = errorCode(error);
-  const errorMessage =
-    error == null
-      ? null
-      : errCode === "route_revision_conflict"
+  let errorMessage: string | null = null;
+  if (conflict === "adopted") {
+    errorMessage = t(($) => $.editor.conflict);
+  } else if (conflict === "gone") {
+    errorMessage = t(($) => $.editor.conflict_gone);
+  } else if (conflict === "reload_failed" || conflict === "reloading") {
+    errorMessage = t(($) => $.editor.conflict_reload_failed);
+  } else if (error != null) {
+    errorMessage =
+      errCode === "route_revision_conflict"
         ? t(($) => $.editor.conflict)
         : t(($) => $.error[messageDeliveryErrorKey(errCode)]);
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -411,7 +430,18 @@ export function MessageRouteEditorDialog({
 
           {errorMessage && (
             <Alert variant="destructive">
-              <AlertDescription>{errorMessage}</AlertDescription>
+              <AlertDescription className="flex items-center justify-between gap-2">
+                <span>{errorMessage}</span>
+                {conflict === "reload_failed" && currentRoute && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => reloadAfterConflict(currentRoute.id)}
+                  >
+                    {t(($) => $.editor.retry_reload)}
+                  </Button>
+                )}
+              </AlertDescription>
             </Alert>
           )}
 
@@ -419,7 +449,7 @@ export function MessageRouteEditorDialog({
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
               {t(($) => $.editor.cancel)}
             </Button>
-            <Button onClick={handleSave} disabled={!valid || saving}>
+            <Button onClick={handleSave} disabled={!valid || saving || saveBlockedByConflict}>
               {saving
                 ? t(($) => $.editor.saving)
                 : willApprove
