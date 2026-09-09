@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -426,6 +427,17 @@ func (t *feedbackFaultTx) QueryRow(ctx context.Context, sql string, args ...any)
 	}
 	return r
 }
+
+func (t *feedbackFaultTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	tag, err := t.Tx.Exec(ctx, sql, args...)
+	if err == nil && t.fault.query != "" && strings.Contains(sql, "-- name: "+t.fault.query+" ") && t.fault.once.CompareAndSwap(false, true) {
+		if t.fault.observe != nil {
+			t.fault.observe(t.Tx)
+		}
+		return tag, errors.New("injected failure after SQL landed")
+	}
+	return tag, err
+}
 func (t *feedbackFaultTx) Commit(ctx context.Context) error {
 	err := t.Tx.Commit(ctx)
 	if err == nil && t.fault.commit && t.fault.once.CompareAndSwap(false, true) {
@@ -478,6 +490,40 @@ func TestFeedbackCommentAndDedupRollbackTogether(t *testing.T) {
 	f.recover(t)
 	if c, q := f.counts(t); c != 1 || q != 1 {
 		t.Fatalf("retry produced %d comments/%d tasks", c, q)
+	}
+}
+
+func TestFeedbackDeletionRollsBackRedactionWithComment(t *testing.T) {
+	f := newFeedbackFixture(t)
+	parent := dbfx.Comment(t, f.issue, "report", testutil.Cols{"author_type": "agent", "author_id": f.agent})
+	dbfx.Exec(t, `UPDATE labrastro_message_delivery SET source_kind='comment',source_scope='comment',source_ref_id=$2,source_ref=$3 WHERE id=$1`, f.delivery, parent, fmt.Sprintf(`{"source_kind":"comment","issue_id":%q,"comment_id":%q}`, f.issue, parent))
+	f.ingest(t)
+	observed := false
+	f.h.TxStarter = &feedbackFaultStarter{txStarter: testPool, query: "RedactLabrastroFeedbackByComment", observe: func(tx pgx.Tx) {
+		var remaining, redacted int
+		if err := tx.QueryRow(context.Background(), `SELECT count(*) FROM comment WHERE id=$1`, parent).Scan(&remaining); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.QueryRow(context.Background(), `SELECT count(*) FROM labrastro_message_feedback WHERE installation_id=$1 AND content=''`, f.install).Scan(&redacted); err != nil {
+			t.Fatal(err)
+		}
+		observed = remaining == 0 && redacted == 1 && f.row(t).Content == f.msg.CommandText && dbfx.Count(t, `SELECT count(*) FROM comment WHERE id=$1`, parent) == 1
+	}}
+	req := withURLParam(newRequest(http.MethodDelete, "/api/comments/"+parent, nil), "commentId", parent)
+	testutil.Call(t, f.h.DeleteComment, req).Want(http.StatusInternalServerError)
+	if !observed {
+		t.Fatal("fault did not surround real deletion and redaction before commit")
+	}
+	if c, q := f.counts(t); c != 1 || q != 0 {
+		t.Fatalf("failed cleanup left comment/task %d/%d", c, q)
+	}
+	if f.row(t).Content != f.msg.CommandText {
+		t.Fatal("rollback lost the copied feedback")
+	}
+	f.h.TxStarter = testPool
+	f.recover(t)
+	if c, q := f.counts(t); c != 1 || q != 1 {
+		t.Fatalf("recovery after rolled-back deletion: %d/%d", c, q)
 	}
 }
 
@@ -640,12 +686,17 @@ func TestFeedbackReceiptRecoveryAndTrustRefusals(t *testing.T) {
 }
 
 func TestFeedbackRevocationAndParentDeletion(t *testing.T) {
-	for _, kind := range []string{"unbound", "removed_member", "rebound_bot", "deleted_issue", "deleted_parent", "private_agent"} {
+	for _, kind := range []string{"unbound", "removed_member", "rebound_bot", "deleted_issue", "deleted_parent", "deleted_ancestor", "private_agent"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newFeedbackFixture(t)
 			var parent string
-			if kind == "deleted_parent" {
+			var ancestor string
+			if kind == "deleted_parent" || kind == "deleted_ancestor" {
 				parent = dbfx.Comment(t, f.issue, "report", testutil.Cols{"author_type": "agent", "author_id": f.agent})
+				if kind == "deleted_ancestor" {
+					ancestor = dbfx.Comment(t, f.issue, "Root", testutil.Cols{"author_type": "agent", "author_id": f.agent})
+					dbfx.Exec(t, `UPDATE comment SET parent_id=$2 WHERE id=$1`, parent, ancestor)
+				}
 				dbfx.Exec(t, `UPDATE labrastro_message_delivery SET source_kind='comment',source_scope='comment',source_ref=$2 WHERE id=$1`, f.delivery, fmt.Sprintf(`{"source_kind":"comment","issue_id":%q,"comment_id":%q}`, f.issue, parent))
 			}
 			f.ingest(t)
@@ -663,7 +714,10 @@ func TestFeedbackRevocationAndParentDeletion(t *testing.T) {
 			case "deleted_issue":
 				req := withURLParam(newRequest(http.MethodDelete, "/api/issues/"+f.issue, nil), "id", f.issue)
 				testutil.Call(t, f.h.DeleteIssue, req).Want(http.StatusNoContent)
-			case "deleted_parent":
+			case "deleted_parent", "deleted_ancestor":
+				if ancestor != "" {
+					parent = ancestor
+				}
 				req := withURLParam(newRequest(http.MethodDelete, "/api/comments/"+parent, nil), "commentId", parent)
 				testutil.Call(t, f.h.DeleteComment, req).Want(http.StatusNoContent)
 			case "private_agent":
@@ -675,7 +729,7 @@ func TestFeedbackRevocationAndParentDeletion(t *testing.T) {
 			if q != 0 {
 				t.Fatalf("revoked/deleted source triggered %d tasks", q)
 			}
-			if kind == "deleted_issue" || kind == "deleted_parent" {
+			if kind == "deleted_issue" || kind == "deleted_parent" || kind == "deleted_ancestor" {
 				row := f.row(t)
 				if row.Content != "" || row.CommentID.Valid || row.ParentCommentID.Valid {
 					t.Fatalf("deleted source retained feedback data: %+v", row)

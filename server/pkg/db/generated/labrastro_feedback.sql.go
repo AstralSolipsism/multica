@@ -488,16 +488,22 @@ const redactLabrastroFeedbackByComment = `-- name: RedactLabrastroFeedbackByComm
 UPDATE labrastro_message_feedback
 SET content = '', parent_comment_id = NULL, comment_id = NULL,
     status = 'rejected', notice = '评论已删除，无法回填。', updated_at = now()
-WHERE workspace_id = $1 AND (comment_id = $2 OR parent_comment_id = $2)
+WHERE labrastro_message_feedback.workspace_id = $1 AND labrastro_message_feedback.issue_id = $3
+  AND (labrastro_message_feedback.comment_id = $2 OR labrastro_message_feedback.parent_comment_id = $2
+    -- The existing comment FK may have cascaded through deeper descendants.
+    -- This query runs after DeleteComment, with its issue lock still held.
+    OR (labrastro_message_feedback.comment_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM comment c WHERE c.id = labrastro_message_feedback.comment_id))
+    OR (labrastro_message_feedback.parent_comment_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM comment c WHERE c.id = labrastro_message_feedback.parent_comment_id)))
 `
 
 type RedactLabrastroFeedbackByCommentParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	CommentID   pgtype.UUID `json:"comment_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
 }
 
 func (q *Queries) RedactLabrastroFeedbackByComment(ctx context.Context, arg RedactLabrastroFeedbackByCommentParams) error {
-	_, err := q.db.Exec(ctx, redactLabrastroFeedbackByComment, arg.WorkspaceID, arg.CommentID)
+	_, err := q.db.Exec(ctx, redactLabrastroFeedbackByComment, arg.WorkspaceID, arg.CommentID, arg.IssueID)
 	return err
 }
 

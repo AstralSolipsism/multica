@@ -3573,7 +3573,7 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("cancel tasks for deleted trigger comment failed", append(logger.RequestAttrs(r), "error", cancelErr, "comment_id", commentId)...)
 	}
 
-	deleted, err := h.deleteCommentWithFeedback(r.Context(), db.DeleteCommentParams{
+	deleted, err := h.deleteCommentWithFeedback(r.Context(), comment.IssueID, db.DeleteCommentParams{
 		ID:          comment.ID,
 		WorkspaceID: comment.WorkspaceID,
 	})

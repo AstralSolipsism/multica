@@ -111,8 +111,8 @@ execution guarantee or retract work already accepted before a revocation.
 ## Deletion and downgrade
 
 Workspace deletion explicitly removes feedback before receipt/delivery cleanup.
-Issue and comment deletion redact copied feedback text and anchors in the same
-transaction as deletion, retaining inbound identities so delayed callbacks
+Issue and comment deletion (including cascaded descendants) redact copied feedback
+text and anchors in the same transaction as deletion, retaining inbound identities so delayed callbacks
 cannot resurrect comments. Recovery checks parents again. The existing deletion
 manifest includes the table; no foreign keys or cascades are added.
 
@@ -144,6 +144,8 @@ the PR/issue evidence, avoiding a self-referential SHA in this document.
 | Lost receipt, forged human/bot/chat, bad signature, diagnostic with actionable-looking scope | Valid recovery 1 comment/1 task; refusals 0/0 and no Chat | `TestFeedbackReceiptRecoveryAndTrustRefusals` |
 | Real proactive HTTP send, then real HTTP GET + DB recovery; tamper signature, copy as human/other bot, move chat, delete message, rebind bot, mismatch shard | Only exact signed bot/shard restores the missing receipt; no untrusted association | `TestFeedbackSignedSourceRecoveryThroughHTTPAndDatabase` |
 | Unbind/remove member/rebind bot/delete issue or parent/change private-agent owner after intake | 0 new tasks; deleted anchors/copy text redacted | `TestFeedbackRevocationAndParentDeletion` |
+| Delete original comment and redact feedback with real SQL; inject failure while both changes are visible only inside the transaction | HTTP 500; deletion and redaction roll back together; recovery keeps 1 comment/1 task | `TestFeedbackDeletionRollsBackRedactionWithComment` |
+| Existing deletion failure and concurrent no-op after cancelling a planned comment batch; fault adapters also wrap the new transaction | Original HTTP 500/404 and complete surviving batch repair assertions retained | `TestDeleteComment_FailureRestoresCancelledCompleteBatch`, `TestDeleteComment_ConcurrentNoOpIsReportedAndRestoresCancelledBatch` |
 | Group approval revoked before intake, before wake, or via post-commit event before acknowledgement | Respectively comments/tasks 0/0, 1/0, 1/1; no acknowledgement after revoke | `TestFeedbackGroupApprovalRevokedAtEachStage` |
 | Pure report, then automation agent selection changes; retry recovery and send ordinary next turn | One member-owned Chat/task with original agent/snapshot/run identity; original run unchanged; next message in same Chat | `TestFeedbackReportCreatesRealConversationAndPreservesRun` |
 | Ambiguous or multiple task report; explicit task selection; private agent or removed source run | No batch/task-state action; only explicit task selection gives 1 comment/1 task; no refusal Chat | `TestFeedbackReportSelectionAndPrivateAgent` |

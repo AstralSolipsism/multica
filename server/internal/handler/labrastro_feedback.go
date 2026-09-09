@@ -512,7 +512,7 @@ var errFeedbackSettled = errors.New("feedback already settled")
 
 // deleteCommentWithFeedback retains the receipt tombstone and removes copied
 // text/anchors in the same transaction as the existing comment deletion.
-func (h *Handler) deleteCommentWithFeedback(ctx context.Context, p db.DeleteCommentParams) (db.DeleteCommentRow, error) {
+func (h *Handler) deleteCommentWithFeedback(ctx context.Context, issueID pgtype.UUID, p db.DeleteCommentParams) (db.DeleteCommentRow, error) {
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
 		return db.DeleteCommentRow{}, err
@@ -524,7 +524,7 @@ func (h *Handler) deleteCommentWithFeedback(ctx context.Context, p db.DeleteComm
 		return deleted, err
 	}
 	if deleted.Changed {
-		if err := q.RedactLabrastroFeedbackByComment(ctx, db.RedactLabrastroFeedbackByCommentParams{WorkspaceID: p.WorkspaceID, CommentID: p.ID}); err != nil {
+		if err := q.RedactLabrastroFeedbackByComment(ctx, db.RedactLabrastroFeedbackByCommentParams{WorkspaceID: p.WorkspaceID, CommentID: p.ID, IssueID: issueID}); err != nil {
 			return deleted, err
 		}
 	}

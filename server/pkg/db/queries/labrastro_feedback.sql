@@ -78,4 +78,9 @@ WHERE workspace_id = $1 AND issue_id = ANY($2::uuid[]);
 UPDATE labrastro_message_feedback
 SET content = '', parent_comment_id = NULL, comment_id = NULL,
     status = 'rejected', notice = '评论已删除，无法回填。', updated_at = now()
-WHERE workspace_id = $1 AND (comment_id = $2 OR parent_comment_id = $2);
+WHERE labrastro_message_feedback.workspace_id = $1 AND labrastro_message_feedback.issue_id = $3
+  AND (labrastro_message_feedback.comment_id = $2 OR labrastro_message_feedback.parent_comment_id = $2
+    -- The existing comment FK may have cascaded through deeper descendants.
+    -- This query runs after DeleteComment, with its issue lock still held.
+    OR (labrastro_message_feedback.comment_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM comment c WHERE c.id = labrastro_message_feedback.comment_id))
+    OR (labrastro_message_feedback.parent_comment_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM comment c WHERE c.id = labrastro_message_feedback.parent_comment_id)));
