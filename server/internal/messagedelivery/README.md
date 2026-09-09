@@ -162,7 +162,7 @@ authorizer and message recipient are distinct identities; `created_by` /
 | `POST /api/autopilots/{id}/message-routes/{routeId}/enable` | enable/disable, `{"enabled":bool,"expected_revision":N}` |
 | `DELETE /api/autopilots/{id}/message-routes/{routeId}` | delete rule (queued sends cancelled) |
 | `POST /api/autopilots/{id}/message-routes/{routeId}/test-send` | real-path reachability check |
-| `GET /api/autopilots/{id}/message-deliveries?status=&limit=&offset=` | records page (projection, no snapshots) |
+| `GET /api/autopilots/{id}/message-deliveries?run_id=&status=&limit=&offset=` | records page, optionally scoped to one run (projection, no snapshots) |
 | `GET /api/autopilots/{id}/message-deliveries/{deliveryId}` | detail incl. snapshots + receipts |
 | `POST /api/autopilots/{id}/message-deliveries/{deliveryId}/retry` | re-queue a `failed`/`uncertain` delivery |
 
@@ -230,6 +230,51 @@ recall an already-accepted shard.
 Group target: `"target_type":"group"`, `"target_chat_id":"oc_…"`.
 Topic target: `"target_type":"topic"`, `"target_chat_id":"oc_…"`,
 `"target_message_id":"om_…"`.
+
+### Run-filtered records and pagination (OL-26 R3)
+
+`run_id` is an optional UUID filter on the persisted delivery's `run_id`.
+Omit the parameter to list all sources, including `test_send` rows whose
+`run_id` is null. A supplied empty or malformed UUID returns 400 with
+`{"error":"invalid run_id"}` through the existing UUID validator. The filter
+intersects `status` and the existing workspace/autopilot scope; it never
+changes `requireAutopilotWrite` or grants access to another source.
+
+Every successful list response now includes `applied_run_id`: the canonical
+UUID actually applied by SQL, or null when no run filter was requested.
+The echo is present even when no delivery matches (including a run outside
+this automation, a nonexistent run, or an exhausted page). These cases all
+return an empty `deliveries` array without disclosing another source.
+
+```http
+GET /api/autopilots/<autopilot-id>/message-deliveries?run_id=019e0123-4567-7000-8000-0123456789ab&limit=100&offset=0
+```
+
+```json
+{
+  "deliveries": [],
+  "limit": 100,
+  "offset": 0,
+  "applied_run_id": "019e0123-4567-7000-8000-0123456789ab"
+}
+```
+
+For a run-scoped request, clients must compare the echo with the requested
+run UUID before interpreting an empty page as "no deliveries". Older servers
+may ignore `run_id` and return 200 without an echo; a missing, null, malformed
+or mismatched echo cannot confirm support. The shared client's `runId` option
+encodes `run_id`; its response schema preserves `applied_run_id` and normalizes
+missing/malformed echoes to null. Frontend run queries must carry the run ID,
+status and page position in their cache identity and render an unsupported
+state when the echo cannot confirm the requested filter.
+
+Pagination retains `limit` (1–200, default/fallback 50) and `offset` (default
+0). Use fixed page lengths, for example 100 with offsets 0/100/200, rather
+than increasing the limit past 200. Rows sort by `created_at DESC, id DESC`,
+including ties, and a page shorter than its returned `limit` ends the current
+listing. This is offset pagination, not a snapshot: concurrent new decisions
+can shift later pages, so clients should deduplicate IDs and refresh from the
+first page. This extension introduces no migration or sending side effect.
 
 ### Delivery record example
 

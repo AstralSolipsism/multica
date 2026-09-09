@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	messagedelivery "github.com/multica-ai/multica/server/internal/messagedelivery"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -313,18 +314,25 @@ func (h *Handler) TestMessageRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListMessageDeliveries: GET /api/autopilots/{id}/message-deliveries
-// Query: status, limit (<=200, default 50), offset.
+// Query: run_id (optional UUID), status, limit (<=200, default 50), offset.
 func (h *Handler) ListMessageDeliveries(w http.ResponseWriter, r *http.Request) {
 	ap, ok := h.requireMessageRouteAccess(w, r)
 	if !ok {
 		return
+	}
+	var runID pgtype.UUID
+	if r.URL.Query().Has("run_id") {
+		runID, ok = parseUUIDOrBadRequest(w, r.URL.Query().Get("run_id"), "run_id")
+		if !ok {
+			return
+		}
 	}
 	var status *string
 	if v := r.URL.Query().Get("status"); v != "" {
 		status = &v
 	}
 	limit, offset := messageDeliveryPaging(r)
-	rows, err := h.MessageDelivery.ListDeliveries(r.Context(), ap.WorkspaceID, ap.ID, status, limit, offset)
+	rows, err := h.MessageDelivery.ListDeliveries(r.Context(), ap.WorkspaceID, ap.ID, runID, status, limit, offset)
 	if err != nil {
 		writeMessageDeliveryError(w, err)
 		return
@@ -333,9 +341,10 @@ func (h *Handler) ListMessageDeliveries(w http.ResponseWriter, r *http.Request) 
 		rows = []db.ListLabrastroMessageDeliveriesByAutopilotRow{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"deliveries": rows,
-		"limit":      limit,
-		"offset":     offset,
+		"deliveries":     rows,
+		"limit":          limit,
+		"offset":         offset,
+		"applied_run_id": runID,
 	})
 }
 

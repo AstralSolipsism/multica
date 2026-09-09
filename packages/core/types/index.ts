@@ -280,6 +280,27 @@ export type {
   ListWebhookDeliveriesResponse,
 } from "./autopilot";
 export type {
+  MessageTargetType,
+  MessageRouteCondition,
+  MessageContentMode,
+  MessageDeliveryStatus,
+  MessageDeliverySourceKind,
+  MessageRoute,
+  ListMessageRoutesResponse,
+  SaveMessageRouteRequest,
+  MessageApprovedTarget,
+  ListMessageApprovedTargetsResponse,
+  ApproveMessageTargetRequest,
+  RevokeMessageTargetResponse,
+  MessageDelivery,
+  ListMessageDeliveriesResponse,
+  MessageDeliveryContentSnapshot,
+  MessageDeliveryTargetSnapshot,
+  MessageDeliverySourceRef,
+  MessageDeliveryReceipt,
+  GetMessageDeliveryResponse,
+} from "./message-delivery";
+export type {
   Squad,
   SquadMember,
   SquadMemberType,

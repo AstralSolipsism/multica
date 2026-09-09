@@ -28,7 +28,7 @@ func (s *Service) ListRoutes(ctx context.Context, workspaceID, autopilotID pgtyp
 
 // ListDeliveries returns the record page for one automation. Rows are the
 // projection (no snapshots) so a listing never carries message bodies.
-func (s *Service) ListDeliveries(ctx context.Context, workspaceID, autopilotID pgtype.UUID, status *string, limit, offset int32) ([]db.ListLabrastroMessageDeliveriesByAutopilotRow, error) {
+func (s *Service) ListDeliveries(ctx context.Context, workspaceID, autopilotID, runID pgtype.UUID, status *string, limit, offset int32) ([]db.ListLabrastroMessageDeliveriesByAutopilotRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -39,6 +39,7 @@ func (s *Service) ListDeliveries(ctx context.Context, workspaceID, autopilotID p
 	return s.Queries.ListLabrastroMessageDeliveriesByAutopilot(ctx, db.ListLabrastroMessageDeliveriesByAutopilotParams{
 		WorkspaceID: workspaceID,
 		AutopilotID: autopilotID,
+		RunID:       runID,
 		Status:      statusArg,
 		Limit:       limit,
 		Offset:      offset,
