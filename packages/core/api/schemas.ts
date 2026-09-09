@@ -72,6 +72,14 @@ import type {
   ListMessageApprovedTargetsResponse,
   ListMessageDeliveriesResponse,
   ListMessageRoutesResponse,
+  GetMessageRouteDeliveryResponse,
+  ListMessageRouteDeliveriesResponse,
+  ListMessageSourceApprovedTargetsResponse,
+  ListMessageSourceRoutesResponse,
+  MessageEventCatalog,
+  MessageSourceApprovedTarget,
+  MessageSourceDelivery,
+  MessageSourceRoute,
   IssueStatusEntry,
   ListIssueStatusesResponse,
   NotificationPreferenceResponse,
@@ -3698,6 +3706,270 @@ export function emptyMessageDeliveryDetail(
       updated_at: "",
       requested_by: null,
     },
+    content_snapshot: null,
+    target_snapshot: null,
+    source_ref: null,
+    receipts: [],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// OL-27 source-route surface (personal inbox / team activity & comment).
+// Same conventions as the automation schemas above: enums stay z.string(),
+// .loose() tolerates additive fields, fallbacks never fabricate success.
+// ---------------------------------------------------------------------------
+
+export const MessageSourceRouteSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string().default(""),
+  autopilot_id: z.string().nullable().default(null),
+  source_kind: z.string().default("inbox"),
+  installation_id: z.string().default(""),
+  channel_type: z.string().default("feishu"),
+  target_type: z.string(),
+  target_user_id: z.string().nullable().default(null),
+  target_chat_id: z.string().nullable().default(null),
+  target_message_id: z.string().nullable().default(null),
+  target_thread_id: z.string().nullable().default(null),
+  target_key: z.string().default(""),
+  project_id: z.string().nullable().default(null),
+  event_types: z.array(z.string()).default([]),
+  enabled: z.boolean().default(false),
+  revision: z.number().default(1),
+  created_by: z.string().default(""),
+  updated_by: z.string().default(""),
+  effective_from: z.string().default(""),
+  last_disabled_at: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const ListMessageSourceRoutesResponseSchema = z.object({
+  routes: z.array(MessageSourceRouteSchema).default([]),
+}).loose();
+
+export const MessageSourceRouteResponseSchema = z.object({
+  route: MessageSourceRouteSchema,
+}).loose();
+
+export const EMPTY_LIST_MESSAGE_SOURCE_ROUTES_RESPONSE: ListMessageSourceRoutesResponse = {
+  routes: [],
+};
+
+// Same unconfirmed-write principle as the automation surface: a create/update
+// response that cannot be parsed degrades to a non-enabled, revision-0 row —
+// never a fabricated enabled rule.
+export const EMPTY_MESSAGE_SOURCE_ROUTE: MessageSourceRoute = {
+  id: "",
+  workspace_id: "",
+  autopilot_id: null,
+  source_kind: "inbox",
+  installation_id: "",
+  channel_type: "feishu",
+  target_type: "member",
+  target_user_id: null,
+  target_chat_id: null,
+  target_message_id: null,
+  target_thread_id: null,
+  target_key: "",
+  project_id: null,
+  event_types: [],
+  enabled: false,
+  revision: 0,
+  created_by: "",
+  updated_by: "",
+  effective_from: "",
+  last_disabled_at: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const MessageSourceApprovedTargetSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string().default(""),
+  autopilot_id: z.string().nullable().default(null),
+  source_kind: z.string().default("activity"),
+  project_id: z.string().nullable().default(null),
+  installation_id: z.string().default(""),
+  target_key: z.string().default(""),
+  target_type: z.string(),
+  approved_by: z.string().default(""),
+  approved_at: z.string().default(""),
+  revoked_at: z.string().nullable().default(null),
+}).loose();
+
+export const ListMessageSourceApprovedTargetsResponseSchema = z.object({
+  approved_targets: z.array(MessageSourceApprovedTargetSchema).default([]),
+}).loose();
+
+export const ApproveMessageSourceTargetResponseSchema = z.object({
+  approved_target: MessageSourceApprovedTargetSchema,
+}).loose();
+
+export const EMPTY_LIST_MESSAGE_SOURCE_APPROVED_TARGETS_RESPONSE: ListMessageSourceApprovedTargetsResponse = {
+  approved_targets: [],
+};
+
+export const EMPTY_MESSAGE_SOURCE_APPROVED_TARGET: MessageSourceApprovedTarget = {
+  id: "",
+  workspace_id: "",
+  autopilot_id: null,
+  source_kind: "activity",
+  project_id: null,
+  installation_id: "",
+  target_key: "",
+  target_type: "group",
+  approved_by: "",
+  approved_at: "",
+  revoked_at: null,
+};
+
+export const MessageEventCatalogSchema = z.object({
+  personal: z.object({
+    source_kind: z.string().default("inbox"),
+    target_type: z.string().default("member"),
+    event_types: z.array(
+      z.object({
+        type: z.string(),
+        group: z.string().default(""),
+        label: z.string().default(""),
+      }).loose(),
+    ).default([]),
+  }).loose(),
+  team: z.array(
+    z.object({
+      source_kind: z.string(),
+      events: z.array(
+        z.object({
+          event: z.string(),
+          label: z.string().default(""),
+        }).loose(),
+      ).default([]),
+    }).loose(),
+  ).default([]),
+}).loose();
+
+export const EMPTY_MESSAGE_EVENT_CATALOG: MessageEventCatalog = {
+  personal: { source_kind: "inbox", target_type: "member", event_types: [] },
+  team: [],
+};
+
+export const MessageSourceDeliverySchema = z.object({
+  id: z.string(),
+  workspace_id: z.string().default(""),
+  route_id: z.string().default(""),
+  route_revision: z.number().default(0),
+  autopilot_id: z.string().nullable().default(null),
+  run_id: z.string().nullable().default(null),
+  source_ref_id: z.string().nullable().default(null),
+  dedup_key: z.string().optional(),
+  source_kind: z.string().default("unknown"),
+  source_scope: z.string().nullable().default(null),
+  source_project_id: z.string().nullable().default(null),
+  // No conservative default: an unparseable status falls back to the
+  // whole-page fallback rather than risk presenting an unconfirmed send.
+  status: z.string(),
+  attempts: z.number().default(0),
+  next_attempt_at: z.string().nullable().default(null),
+  error_code: z.string().nullable().default(null),
+  last_error: z.string().nullable().default(null),
+  shard_total: z.number().default(0),
+  installation_id: z.string().default(""),
+  target_key: z.string().default(""),
+  delivered_at: z.string().nullable().default(null),
+  first_attempt_at: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+  requested_by: z.string().nullable().optional().default(null),
+}).loose();
+
+// The source records listing has no applied_run_id echo — run filtering is an
+// automation-surface feature and must not be requested here.
+export const ListMessageRouteDeliveriesResponseSchema = z.object({
+  deliveries: z.array(MessageSourceDeliverySchema).default([]),
+  limit: z.number().default(0),
+  offset: z.number().default(0),
+}).loose();
+
+export const EMPTY_LIST_MESSAGE_ROUTE_DELIVERIES_RESPONSE: ListMessageRouteDeliveriesResponse = {
+  deliveries: [],
+  limit: 0,
+  offset: 0,
+};
+
+export const MessageSourceDeliveryResponseSchema = z.object({
+  delivery: MessageSourceDeliverySchema,
+}).loose();
+
+export const EMPTY_MESSAGE_SOURCE_DELIVERY: MessageSourceDelivery = {
+  id: "",
+  workspace_id: "",
+  route_id: "",
+  route_revision: 0,
+  autopilot_id: null,
+  run_id: null,
+  source_ref_id: null,
+  source_kind: "unknown",
+  source_scope: null,
+  source_project_id: null,
+  status: "unknown",
+  attempts: 0,
+  next_attempt_at: null,
+  error_code: null,
+  last_error: null,
+  shard_total: 0,
+  installation_id: "",
+  target_key: "",
+  delivered_at: null,
+  first_attempt_at: null,
+  created_at: "",
+  updated_at: "",
+  requested_by: null,
+};
+
+export const MessageSourceContentSnapshotSchema = z.object({
+  text: z.string().optional(),
+  summary: z.string().optional(),
+  source_kind: z.string().optional(),
+  issue_identifier: z.string().optional(),
+  issue_title: z.string().optional(),
+  actor_name: z.string().optional(),
+  change: z.string().optional(),
+  assignee_change: z.object({
+    from_type: z.string().default(""),
+    from_id: z.string().default(""),
+    to_type: z.string().default(""),
+    to_id: z.string().default(""),
+  }).loose().optional(),
+  body: z.string().optional(),
+  link: z.string().optional(),
+}).loose();
+
+export const MessageSourceRefSchema = z.object({
+  source_kind: z.string().optional(),
+  activity_id: z.string().optional(),
+  comment_id: z.string().optional(),
+  parent_comment_id: z.string().optional(),
+  inbox_item_id: z.string().optional(),
+  issue_id: z.string().nullable().optional(),
+  issue_identifier: z.string().nullable().optional(),
+}).loose();
+
+export const GetMessageRouteDeliveryResponseSchema = z.object({
+  delivery: MessageSourceDeliverySchema,
+  content_snapshot: MessageSourceContentSnapshotSchema.nullable().default(null),
+  target_snapshot: MessageDeliveryTargetSnapshotSchema.nullable().default(null),
+  source_ref: MessageSourceRefSchema.nullable().default(null),
+  receipts: z.array(MessageDeliveryReceiptSchema).default([]),
+}).loose();
+
+// Conservative detail fallback: an unreadable detail must never present
+// fabricated content as the delivered message.
+export function emptyMessageRouteDeliveryDetail(
+  deliveryId: string,
+): GetMessageRouteDeliveryResponse {
+  return {
+    delivery: { ...EMPTY_MESSAGE_SOURCE_DELIVERY, id: deliveryId },
     content_snapshot: null,
     target_snapshot: null,
     source_ref: null,

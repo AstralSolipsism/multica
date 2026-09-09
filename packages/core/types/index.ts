@@ -301,6 +301,23 @@ export type {
   GetMessageDeliveryResponse,
 } from "./message-delivery";
 export type {
+  MessageSourceKind,
+  MessageSourceRoute,
+  ListMessageSourceRoutesResponse,
+  SaveMessageSourceRouteRequest,
+  MessageSourceApprovedTarget,
+  ListMessageSourceApprovedTargetsResponse,
+  ApproveMessageSourceTargetRequest,
+  MessageEventCatalog,
+  MessageEventCatalogPersonalEvent,
+  MessageEventCatalogTeamEvent,
+  MessageSourceDelivery,
+  ListMessageRouteDeliveriesResponse,
+  MessageSourceContentSnapshot,
+  MessageSourceRef,
+  GetMessageRouteDeliveryResponse,
+} from "./message-delivery-sources";
+export type {
   Squad,
   SquadMember,
   SquadMemberType,

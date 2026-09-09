@@ -8,6 +8,7 @@ import type { NotificationGroupKey, NotificationPreferences } from "@multica/cor
 import { Switch } from "@multica/ui/components/ui/switch";
 import { toast } from "sonner";
 import { useT } from "../../i18n";
+import { PersonalFeishuPushSection } from "../../message-delivery";
 import { BrowserNotificationSetting } from "./browser-notification-setting";
 import {
   SettingsCard,
@@ -30,6 +31,7 @@ type InboxGroupKey = (typeof INBOX_GROUP_KEYS)[number];
 
 export function NotificationsTab() {
   const { t } = useT("settings");
+  const { t: tMd } = useT("message-delivery");
   const wsId = useWorkspaceId();
   const { data } = useQuery(notificationPreferenceOptions(wsId));
   const mutation = useUpdateNotificationPreferences();
@@ -85,6 +87,17 @@ export function NotificationsTab() {
               );
             })}
         </SettingsCard>
+      </SettingsSection>
+
+      {/* OL-28: personal inbox → Feishu DM forwarding. A separate
+          revision-guarded resource from the preference toggles above; a
+          failed route save never shows as an enabled push. The browser/OS
+          switch below stays an unrelated preference. */}
+      <SettingsSection
+        title={tMd(($) => $.personal.title)}
+        description={tMd(($) => $.personal.description)}
+      >
+        <PersonalFeishuPushSection />
       </SettingsSection>
 
       <SettingsSection

@@ -22,9 +22,12 @@ export type MessageDeliveryErrorKey =
   | "route_revision_conflict"
   | "route_already_exists"
   | "route_disabled"
+  | "route_not_self"
   | "delivery_not_found"
   | "delivery_not_retryable"
   | "message_target_admin_required"
+  | "message_no_originator"
+  | "message_forbidden"
   | "authorization_lost"
   | "source_unavailable"
   | "autopilot_no_originator"
@@ -46,9 +49,12 @@ export function messageDeliveryErrorKey(code: string | undefined): MessageDelive
     case "route_revision_conflict":
     case "route_already_exists":
     case "route_disabled":
+    case "route_not_self":
     case "delivery_not_found":
     case "delivery_not_retryable":
     case "message_target_admin_required":
+    case "message_no_originator":
+    case "message_forbidden":
     case "authorization_lost":
     case "source_unavailable":
     case "autopilot_no_originator":
@@ -67,6 +73,7 @@ export type MessageDeliveryErrorCodeKey =
   | "source_archived"
   | "source_missing"
   | "condition_mismatch"
+  | "recipient_muted"
   | "member_unbound"
   | "installation_revoked"
   | "installation_missing"
@@ -91,6 +98,7 @@ export function messageDeliveryErrorCodeKey(code: string | null | undefined): Me
     case "source_archived":
     case "source_missing":
     case "condition_mismatch":
+    case "recipient_muted":
     case "member_unbound":
     case "installation_revoked":
     case "installation_missing":
@@ -143,6 +151,9 @@ export type MessageDeliverySourceKindKey =
   | "run_only"
   | "create_issue"
   | "test_send"
+  | "inbox"
+  | "activity"
+  | "comment"
   | "unknown";
 
 export function messageDeliverySourceKindKey(kind: string): MessageDeliverySourceKindKey {
@@ -151,9 +162,117 @@ export function messageDeliverySourceKindKey(kind: string): MessageDeliverySourc
     case "create_issue":
     case "test_send":
       return kind;
+    // OL-27 source scopes appear as the delivery's source_kind on the
+    // personal/team records surface.
+    case "inbox":
+    case "activity":
+    case "comment":
+      return kind;
     default:
       return "unknown";
   }
+}
+
+/** Route source scopes (OL-27) → keys under `source.kind`. */
+export type MessageSourceScopeKey = "inbox" | "activity" | "comment" | "unknown";
+
+export function messageSourceScopeKey(kind: string): MessageSourceScopeKey {
+  switch (kind) {
+    case "inbox":
+    case "activity":
+    case "comment":
+      return kind;
+    default:
+      return "unknown";
+  }
+}
+
+/**
+ * Personal-route event types (the shared notify inbox catalog) → keys under
+ * `event`. Returns null for a type the UI has no translation for — callers
+ * fall back to the server-provided English label rather than dropping the
+ * option.
+ */
+export type PersonalEventTypeKey =
+  | "issue_assigned"
+  | "unassigned"
+  | "assignee_changed"
+  | "status_changed"
+  | "new_comment"
+  | "mentioned"
+  | "priority_changed"
+  | "start_date_changed"
+  | "due_date_changed"
+  | "task_completed"
+  | "task_failed"
+  | "agent_blocked"
+  | "agent_completed";
+
+export function personalEventTypeKey(type: string): PersonalEventTypeKey | null {
+  switch (type) {
+    case "issue_assigned":
+    case "unassigned":
+    case "assignee_changed":
+    case "status_changed":
+    case "new_comment":
+    case "mentioned":
+    case "priority_changed":
+    case "start_date_changed":
+    case "due_date_changed":
+    case "task_completed":
+    case "task_failed":
+    case "agent_blocked":
+    case "agent_completed":
+      return type;
+    default:
+      return null;
+  }
+}
+
+/** Team-route events → keys under `team_event`; null → use the server label. */
+export type TeamEventKey = "status_changed" | "assignee_changed" | "comment";
+
+export function teamEventKey(event: string): TeamEventKey | null {
+  switch (event) {
+    case "status_changed":
+    case "assignee_changed":
+    case "comment":
+      return event;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Exact team-approval match. An approval covers only its precise
+ * (source_kind, project range, installation, target) scope: a project grant
+ * never covers the workspace range (project_id null), activity never covers
+ * comment, and an automation's approval is never borrowed. Changing any
+ * dimension must stop showing the old approval as applicable.
+ */
+export function isSourceTargetApproved(
+  approvals: ReadonlyArray<{
+    source_kind: string;
+    project_id: string | null;
+    installation_id: string;
+    target_key: string;
+    revoked_at: string | null;
+  }>,
+  scope: {
+    sourceKind: string;
+    projectId: string | null;
+    installationId: string;
+    targetKey: string;
+  },
+): boolean {
+  return approvals.some(
+    (a) =>
+      a.source_kind === scope.sourceKind &&
+      a.project_id === scope.projectId &&
+      a.installation_id === scope.installationId &&
+      a.target_key === scope.targetKey &&
+      a.revoked_at == null,
+  );
 }
 
 /** The server only allows retrying `failed` (cause fixed) and `uncertain`

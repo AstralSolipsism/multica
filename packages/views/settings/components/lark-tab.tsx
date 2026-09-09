@@ -42,6 +42,7 @@ import { api, ApiError } from "@multica/core/api";
 import type { LarkInstallation, LarkInstallStatusResponse } from "@multica/core/types";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useLocale, useT } from "../../i18n";
+import { TeamSubscriptionsSection } from "../../message-delivery";
 
 // MUL-3083: the Lark (international, open.larksuite.com) "connect a Bot"
 // entry is temporarily hidden while its install → inbound pipeline is
@@ -172,6 +173,11 @@ export function LarkTab() {
           )}
         </section>
       )}
+
+      {/* OL-28: team event subscriptions (activity/comment → group/topic).
+          Self-gated on the member's role; a plain member sees an explanatory
+          note, never the admin-only configuration. */}
+      <TeamSubscriptionsSection />
 
       <AlertDialog
         open={!!disconnectTarget}

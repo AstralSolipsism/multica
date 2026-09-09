@@ -119,11 +119,15 @@
       "run_only": "Automation run",
       "create_issue": "Task automation",
       "test_send": "Test message",
+      "inbox": "Personal notification",
+      "activity": "Task activity",
+      "comment": "Comment",
       "unknown": "Unknown source"
     },
     "detail": {
       "title": "Delivery detail",
       "report": "Report content",
+      "content": "Message content",
       "no_report_body": "(no report body)",
       "summary": "Summary",
       "target": "Target",
@@ -159,7 +163,90 @@
     "run_filter_unsupported": "Run linkage isn't supported by this server",
     "run_dialog": {
       "title": "Deliveries for this run"
+    },
+    "route_dialog": {
+      "title": "Deliveries for this rule"
     }
+  },
+  "source": {
+    "kind": {
+      "inbox": "Personal notifications",
+      "activity": "Task activity",
+      "comment": "New comments",
+      "unknown": "Unknown source"
+    },
+    "events_all": "All events",
+    "events_count": "{{count}} events",
+    "effective_from": "Delivers events after {{time}}",
+    "records": "Records",
+    "project_workspace": "Whole workspace"
+  },
+  "event": {
+    "issue_assigned": "Issue assigned to you",
+    "unassigned": "Unassigned from issue",
+    "assignee_changed": "Assignee changed",
+    "status_changed": "Status changed",
+    "new_comment": "New comment",
+    "mentioned": "You were mentioned",
+    "priority_changed": "Priority changed",
+    "start_date_changed": "Start date changed",
+    "due_date_changed": "Due date changed",
+    "task_completed": "Agent run completed",
+    "task_failed": "Agent run failed",
+    "agent_blocked": "Agent blocked",
+    "agent_completed": "Agent completed"
+  },
+  "team_event": {
+    "status_changed": "Issue status changed",
+    "assignee_changed": "Issue assignee changed",
+    "comment": "New comment"
+  },
+  "personal": {
+    "title": "Push to my Feishu",
+    "description": "Forward your own inbox notifications to your Feishu direct message through a workspace bot. Only you can see and manage this rule — nobody can read or configure another member's inbox.",
+    "add": "Set up push",
+    "empty": "Feishu push isn't set up yet. Your notifications stay in the inbox until then.",
+    "forbidden": "You can only manage your own Feishu push.",
+    "unsupported": "This server doesn't support Feishu push yet. Ask the operator to upgrade the server.",
+    "load_failed": "Couldn't load the push configuration.",
+    "no_bot": "No active Feishu bot in this workspace. Install one under integration settings first.",
+    "install_bot": "Open integration settings",
+    "target_self": "Your Feishu DM",
+    "mute_hint": "Notification categories muted above are not forwarded to Feishu.",
+    "system_hint": "Browser and system notifications below are a separate switch — they don't turn Feishu push on or off."
+  },
+  "team": {
+    "title": "Team event subscriptions",
+    "description": "Subscribe a Feishu group chat or topic to this workspace's task activity or new comments. This is a shared team subscription — it doesn't copy any member's personal inbox, and each event is delivered to a chat only once no matter how many rules match.",
+    "add": "Add subscription",
+    "empty": "No team subscriptions yet.",
+    "admin_required": "Team subscriptions are configured by workspace owners/admins. Members receive the subscribed events in the configured chats.",
+    "unsupported": "This server doesn't support team subscriptions yet. Ask the operator to upgrade the server.",
+    "load_failed": "Couldn't load team subscriptions.",
+    "no_bot": "No active Feishu bot in this workspace. Install one above first.",
+    "approvals_title": "Approved team targets",
+    "approvals_empty": "No approved team targets yet."
+  },
+  "source_editor": {
+    "title_add_personal": "Set up Feishu push",
+    "title_edit_personal": "Edit Feishu push",
+    "title_add_team": "Add subscription",
+    "title_edit_team": "Edit subscription",
+    "target_self_hint": "Notifications are delivered to your own Feishu direct message — the recipient is always you and can't be changed.",
+    "kind": "Source",
+    "kind_activity": "Task activity",
+    "kind_comment": "New comments",
+    "kind_activity_hint": "Forwards issue status and assignee changes.",
+    "kind_comment_hint": "Forwards plain new comments only.",
+    "project": "Scope",
+    "project_workspace": "Whole workspace",
+    "project_hint": "Approvals apply to the exact source, scope, bot and target. Changing the scope requires its own approval.",
+    "events": "Events to forward",
+    "events_hint": "Leave everything unchecked to forward all events. Excluded events are recorded as not delivered.",
+    "boundary_hint": "Changing the bot, target, scope or events — or re-enabling a disabled rule — restarts delivery from that moment; earlier history is not backfilled.",
+    "approval_admin": "This target isn't approved for this source and scope yet. Saving approves it as a workspace admin and verifies the bot can reach it.",
+    "approval_member": "This target needs a workspace owner/admin approval for this source and scope before it can be saved.",
+    "enable_hint": "Approving a target doesn't enable the rule — events are delivered only while the rule is enabled."
   },
   "error_code": {
     "route_disabled": "The push target was disabled",
@@ -167,6 +254,7 @@
     "source_archived": "The source automation was archived",
     "source_missing": "The source run no longer exists",
     "condition_mismatch": "The run result didn't match the send condition",
+    "recipient_muted": "The recipient muted this notification category",
     "member_unbound": "The member's Feishu binding was removed",
     "installation_revoked": "The bot installation was revoked",
     "installation_missing": "The bot installation no longer exists",
@@ -197,9 +285,12 @@
     "route_revision_conflict": "This configuration was changed elsewhere. It has been reloaded — review and try again.",
     "route_already_exists": "An equivalent push target already exists.",
     "route_disabled": "Enable this target before sending a test message.",
+    "route_not_self": "You can only manage your own personal notifications.",
     "delivery_not_found": "This delivery no longer exists.",
     "delivery_not_retryable": "Only failed or uncertain deliveries can be retried.",
     "message_target_admin_required": "Approving targets requires a workspace owner or admin.",
+    "message_no_originator": "The request has no resolvable human originator.",
+    "message_forbidden": "You don't have access to this notification configuration.",
     "authorization_lost": "Your permission to this automation was lost.",
     "source_unavailable": "The automation was archived or removed.",
     "autopilot_no_originator": "The request has no resolvable human originator.",
