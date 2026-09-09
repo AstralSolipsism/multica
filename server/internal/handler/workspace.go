@@ -1283,6 +1283,9 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			// enforce it.
 			name: "delete labrastro message delivery data",
 			run: func() error {
+				if err := qtx.DeleteLabrastroFeedbackByWorkspace(ctx, requester.WorkspaceID); err != nil {
+					return err
+				}
 				if err := qtx.DeleteLabrastroMessageApprovedTargetsByWorkspace(ctx, requester.WorkspaceID); err != nil {
 					return err
 				}

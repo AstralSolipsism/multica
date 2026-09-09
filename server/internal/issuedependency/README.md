@@ -132,10 +132,18 @@ structure locks, then all workspace issue rows `FOR SHARE` in UUID order.
 Capacity locks precede queue locks. Machine recovery locks multiple workspaces
 in UUID order. This makes status producers, reparenting and graph edits serialize
 against the dependency decision without changing completion permissions.
-External attribution/connected-app preparation precedes the transaction;
+For standalone enqueue and compound assignment, external attribution/connected-app
+preparation precedes the transaction;
 queue insertion, confirmation audit and the compound issue mutation commit
 before task events or runtime wakeups. Manual rerun retries its entire transaction
 once if a concurrent provider retry acquires the pending slot.
+
+Durable Feishu feedback recovery retains its caller-owned comment transaction.
+It takes the compound-write locks before issue/agent locks and uses savepoints
+for shared admission, keeping queue writes and feedback settlement atomic.
+Its full critical-section time, including optional overlay preparation, needs
+separate rollout measurement alongside standalone enqueue; the sparse load
+fixture does not measure feedback recovery.
 
 The initial scope deliberately locks/loads the complete workspace rather than
 introducing a second graph/cache or a partial-page approximation. This costs

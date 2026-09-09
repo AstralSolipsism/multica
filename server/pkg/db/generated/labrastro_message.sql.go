@@ -1529,6 +1529,7 @@ WHERE workspace_id = $1
   AND installation_id = $3
   AND target_key = $4
   AND revoked_at IS NULL
+FOR SHARE
 `
 
 type GetActiveLabrastroMessageApprovedTargetParams struct {
@@ -1573,6 +1574,7 @@ WHERE workspace_id = $1
   AND target_key = $4
   AND project_id IS NOT DISTINCT FROM $5
   AND revoked_at IS NULL
+FOR SHARE
 `
 
 type GetActiveLabrastroMessageSourceApprovedTargetParams struct {

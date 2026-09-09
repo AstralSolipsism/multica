@@ -119,6 +119,31 @@ type zeroDeleteCommentDB struct {
 	delegate db.DBTX
 }
 
+// Deletion now owns a transaction for atomic feedback redaction. Preserve the
+// same failure/no-op injection inside that transaction, not just on the outer
+// query handle. The response and complete-batch repair assertions stay intact.
+type commentDeletionTxStarter struct {
+	txStarter
+	wrap func(pgx.Tx) db.DBTX
+}
+
+func (s commentDeletionTxStarter) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.txStarter.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &commentDeletionTx{Tx: tx, queries: s.wrap(tx)}, nil
+}
+
+type commentDeletionTx struct {
+	pgx.Tx
+	queries db.DBTX
+}
+
+func (tx *commentDeletionTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	return tx.queries.QueryRow(ctx, sql, args...)
+}
+
 type deleteCommentResultRow struct {
 	changed bool
 	err     error
@@ -483,6 +508,7 @@ func TestDeleteComment_FailureRestoresCancelledCompleteBatch(t *testing.T) {
 
 	failingHandler := *testHandler
 	failingHandler.Queries = db.New(&failDeleteCommentDB{delegate: testPool})
+	failingHandler.TxStarter = commentDeletionTxStarter{txStarter: testPool, wrap: func(tx pgx.Tx) db.DBTX { return &failDeleteCommentDB{delegate: tx} }}
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodDelete, "/api/comments/"+fixture.commentID[2], nil)
 	req = withURLParam(req, "commentId", fixture.commentID[2])
@@ -512,6 +538,7 @@ func TestDeleteComment_ConcurrentNoOpIsReportedAndRestoresCancelledBatch(t *test
 
 	zeroHandler := *testHandler
 	zeroHandler.Queries = db.New(&zeroDeleteCommentDB{delegate: testPool})
+	zeroHandler.TxStarter = commentDeletionTxStarter{txStarter: testPool, wrap: func(tx pgx.Tx) db.DBTX { return &zeroDeleteCommentDB{delegate: tx} }}
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodDelete, "/api/comments/"+fixture.commentID[2], nil)
 	req = withURLParam(req, "commentId", fixture.commentID[2])

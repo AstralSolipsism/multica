@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY uq_labrastro_message_feedback_identity ON labrastro_message_feedback (installation_id, inbound_message_id);

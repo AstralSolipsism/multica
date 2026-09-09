@@ -101,6 +101,7 @@ dispatch. No CLI flag or UI confirmation flow ships in OL-41.
 | --- | --- |
 | Single, batch, create, inherited assignment / activation | `IssueService.Create`, `updateIssueAtomically`; `dependency_dispatch*_test.go` |
 | Mention, reply, Squad leader, deferred channel/fallback | Shared `TaskService` admission; entrypoint matrix and comment tests |
+| Durable Feishu feedback comment recovery | Ordered compound-write locks and savepoints in the caller's transaction; inherited blockers, rollback and replica recovery tests |
 | Queue claim, runtime claim, machine batch, legacy recovery | Admission before credentials, skip rejected queue head, existing capacity/claim regressions |
 | Manual rerun, provider retry and retry sweeper | Fresh admission; atomic replacement; concurrent fail/rerun regressions |
 | Delegated recovery, parent/stage wake, webhook callers | Shared enqueue boundary; existing delegated/child-done tests |

@@ -65,6 +65,34 @@ func TestDependencyDigestRejectsNullMutationBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestDependencyFeedbackRecoveryPreservesCommentAndChecksInheritedBlockers(t *testing.T) {
+	f := newFeedbackFixture(t)
+	a := dbfx.Issue(t, "feedback prerequisite A")
+	c := dbfx.Issue(t, "feedback prerequisite C")
+	parent := dbfx.Issue(t, "feedback parent")
+	dbfx.Exec(t, "UPDATE issue SET parent_issue_id=$2 WHERE id=$1", f.issue, parent)
+	for _, id := range []string{a, c} {
+		dbfx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": parent, "depends_on_issue_id": id, "type": "blocked_by"})
+	}
+	for i, completed := range []string{"", a, c} {
+		if completed != "" {
+			dbfx.Exec(t, "UPDATE issue SET status='done', revision=revision+1 WHERE id=$1", completed)
+		}
+		f.msg.MessageID = []string{"om_blocked_both", "om_blocked_one", "om_ready"}[i]
+		f.ingest(t)
+		f.recover(t)
+		f.recover(t)
+		wantTasks := 0
+		if i == 2 {
+			wantTasks = 1
+		}
+		comments, tasks := f.counts(t)
+		if comments != i+1 || tasks != wantTasks || f.queued.Load() != int64(wantTasks) {
+			t.Fatalf("feedback stage %d: comments=%d tasks=%d events=%d", i, comments, tasks, f.queued.Load())
+		}
+	}
+}
+
 type dependencyPausedTx struct {
 	pgx.Tx
 	pause *dependencyPausedCommit

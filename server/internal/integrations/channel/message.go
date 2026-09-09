@@ -143,8 +143,11 @@ type InboundMessage struct {
 
 	// CommandText is the user's normalized text before command stripping or
 	// contextual enrichment. Shared command classifiers read this field so a
-	// rewritten Text is never interpreted as a second command. Empty means Text.
+	// rewritten Text is never interpreted as a second command. Empty means Text
+	// unless CommandTextSet preserves an intentionally empty sender body.
 	CommandText string
+	// CommandTextSet preserves an intentionally empty pre-enrichment body.
+	CommandTextSet bool
 
 	// HasSelectedContext means Text includes a quote or forward explicitly
 	// selected by the sender, including an unavailable-content placeholder.

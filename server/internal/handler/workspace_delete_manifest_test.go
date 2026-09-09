@@ -90,6 +90,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"labrastro_message_receipt":  workspaceDelete,
 	"labrastro_message_delivery": workspaceDelete,
 	"labrastro_message_route":    workspaceDelete,
+	"labrastro_message_feedback": workspaceDelete,
 	// OL-25 repair contract §2/§4. Approved targets are workspace-scoped
 	// and swept with the workspace; the scan-cursor table is cross-workspace
 	// shared state owned by the scanner loop — kept, rebuilt if lost.

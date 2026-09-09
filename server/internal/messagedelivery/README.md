@@ -1,4 +1,7 @@
-# Labrastro Message Delivery — Backend Contract (OL-25 + OL-27)
+# Labrastro Message Delivery — Backend Contract (OL-25 + OL-27 + OL-29)
+
+Quoted Feishu feedback, actual-member authorization, comment/Chat recovery,
+deletion and migration evidence are defined in [FEEDBACK-CONTRACT.md](FEEDBACK-CONTRACT.md).
 
 This is the API/contract reference for the standalone result-delivery module
 ("自动化结果投递" + "个人收件箱与团队事件投递"): automation runs finish,

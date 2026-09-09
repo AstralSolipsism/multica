@@ -4174,6 +4174,9 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLs(ctx context.Context, issu
 		} else if !errors.Is(contextErr, pgx.ErrNoRows) {
 			return issueDeleteResult{}, fmt.Errorf("load issue source context for delete: %w", contextErr)
 		}
+		if err := qtx.RedactLabrastroFeedbackByIssue(ctx, db.RedactLabrastroFeedbackByIssueParams{WorkspaceID: ws, Column2: []pgtype.UUID{issue.ID}}); err != nil {
+			return result, err
+		}
 		if err := qtx.DeleteIssue(ctx, db.DeleteIssueParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID}); err != nil {
 			return issueDeleteResult{}, fmt.Errorf("delete issue: %w", err)
 		}
