@@ -16,6 +16,8 @@ import (
 // LockAdmission precedes capacity and queue locks. Structural writers take the
 // incompatible workspace/structure locks; status producers synchronize through
 // the issue row locks without acquiring new completion-specific permissions.
+// ponytail: whole-workspace row locks can starve unrelated writes; require the
+// OL-45 contention gate before rollout, then narrow only with a closure proof.
 func (s *DependencyService) LockAdmission(ctx context.Context, q *db.Queries, ws pgtype.UUID) (*DependencySnapshot, error) {
 	if _, err := q.LockWorkspaceForDependencyAdmission(ctx, ws); err != nil {
 		return nil, err

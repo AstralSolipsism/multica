@@ -286,6 +286,10 @@ in five minutes; first claim expires fifteen minutes after confirmation. Never
 invent or infer confirmation from a comment, a PAT, an owner, or an originator.
 Agents should report `dependency_unsatisfied` and propose backlog work or ask the
 human for help. They must not replay a human session or confirmation themselves.
+The mutation must be a JSON object. A malformed mutation (including `null`)
+returns HTTP 400 `invalid mutation payload` before any write or confirmation;
+correct the request body before retrying. Batch confirmations validate the
+shared `updates` object before any item is written.
 
 The committed response includes `dispatch`: `queued`, `coalesced`, `deferred`,
 or `blocked`, with `reason_code` and task/run IDs when available. Identical

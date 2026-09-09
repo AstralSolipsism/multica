@@ -2808,7 +2808,10 @@ func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound b
 		return
 	}
 
-	dependencyWrite.PayloadDigest, _ = service.DependencyPayloadDigest(bodyBytes)
+	dependencyWrite.PayloadDigest, ok = dependencyPayloadDigest(w, r, bodyBytes)
+	if !ok {
+		return
+	}
 
 	status := req.Status
 	if status == "" {
@@ -3499,7 +3502,10 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 	if !ok {
 		return
 	}
-	dependencyWrite.PayloadDigest, _ = service.DependencyPayloadDigest(bodyBytes)
+	dependencyWrite.PayloadDigest, ok = dependencyPayloadDigest(w, r, bodyBytes)
+	if !ok {
+		return
+	}
 
 	dependencyWrite.SuppressRun = req.SuppressRun
 
@@ -4238,6 +4244,15 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// All confirmations bind the same updates object. Validate it once, before
+	// any item can commit, including when the caller sent JSON null.
+	batchDigest := ""
+	if len(req.DependencyOverrides) > 0 {
+		batchDigest, ok = dependencyPayloadDigest(w, r, rawTop["updates"])
+		if !ok {
+			return
+		}
+	}
 
 	// Short-circuit when no mutation field is present in `updates`. Without
 	// this, the loop below runs N no-op UPDATEs (every if-guard skips, every
@@ -4465,8 +4480,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		if override, exists := req.DependencyOverrides[issueID]; exists {
 			itemWrite.Override = &override
 			itemWrite.IncludeView = true
-			raw, _ := json.Marshal(rawUpdates)
-			itemWrite.PayloadDigest, _ = service.DependencyPayloadDigest(raw)
+			itemWrite.PayloadDigest = batchDigest
 		}
 
 		updateResult, err := h.updateIssueAtomically(

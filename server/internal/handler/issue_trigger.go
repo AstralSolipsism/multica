@@ -194,7 +194,10 @@ func (h *Handler) PreviewIssueTrigger(w http.ResponseWriter, r *http.Request) {
 				proposedParent = row.ID
 			}
 		}
-		digest, _ = service.DependencyPayloadDigest(req.Mutation)
+		digest, valid = dependencyPayloadDigest(w, r, req.Mutation)
+		if !valid {
+			return
+		}
 	}
 
 	// Resolve the prospective assignee once — a malformed id is a deterministic

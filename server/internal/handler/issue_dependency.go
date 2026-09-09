@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"github.com/multica-ai/multica/server/internal/auth"
+	"log/slog"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -18,6 +20,17 @@ type dependencyWriteFields struct {
 	BlockedBy                 json.RawMessage `json:"blocked_by"`
 	ExpectedDependencyVersion string          `json:"expected_dependency_version"`
 	DependencyOverride        json.RawMessage `json:"dependency_override"`
+}
+
+func dependencyPayloadDigest(w http.ResponseWriter, r *http.Request, raw []byte) (string, bool) {
+	digest, err := service.DependencyPayloadDigest(raw)
+	if err != nil {
+		// Never log the mutation or confirmation: either may contain private data.
+		slog.Warn("dependency payload digest failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusBadRequest, "invalid mutation payload")
+		return "", false
+	}
+	return digest, true
 }
 
 func (h *Handler) CreateIssueWithDependencies(w http.ResponseWriter, r *http.Request) {

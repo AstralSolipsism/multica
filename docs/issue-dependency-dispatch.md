@@ -30,6 +30,12 @@ complete dependency projection. Only human JWT requests can receive
 diagnostics without a confirmation. Preview is advisory; the transaction and
 first claim always check again.
 
+Mutation bodies must be JSON objects. If canonicalization fails (including
+`mutation: null`), the server returns HTTP 400 `invalid mutation payload` before
+issuing a challenge or writing data. Batch confirmations validate the shared
+`updates` body once before the first item. The warning `dependency payload digest
+failed` includes request/client context, never the mutation or confirmation.
+
 After displaying blockers and receiving the human's explicit choice, submit
 the same mutation to `PATCH /api/issues/{id}/with-dependencies` or
 `POST /api/issues/with-dependencies`, adding:
@@ -103,8 +109,72 @@ dispatch. No CLI flag or UI confirmation flow ships in OL-41.
 | Atomic failure and concurrency | Real PostgreSQL insertion fault and observed blocking locks; revision/relations/audit rollback |
 | Client boundary | Serialization parity, partial batches, missing/malformed preview/confirmation/dispatch tests |
 
-Use an isolated PostgreSQL database migrated through 468 and the repository's
+Use an isolated PostgreSQL database with all candidate migrations (including
+`467_task_dependency_admission` / `468_task_dependency_request_index`) and the
+repository's
 `scripts/go-test-with-agent-cli-guard.sh`. Fixtures use fake runtimes; tests must
 not launch installed real-agent CLIs. The implementation uses complete workspace
-snapshots and conservative row locks; large-workspace contention remains a
-rollout measurement requirement, not an asserted performance guarantee.
+snapshots and conservative row locks. The contention gate below must be accepted
+in OL-45 before broad rollout.
+
+## Contention gate (OL-45)
+
+Admission readers share locks and can run concurrently. They lock every issue
+row in the workspace, so an unrelated title/status writer can wait behind them.
+Repeated waits can accumulate into a long request even when each individual
+lock wait is short. Do not judge this risk from average latency or p95 alone.
+
+`TestDependencyAdmissionContention` exercises real enqueue, claim and issue-write
+transactions at 100/1,000/5,000 nodes, 1/8/16 independent agent workers, with and
+without two writers (title and status on unrelated issues). Each worker executes
+100 enqueue/claim cycles after warmup. Each functional parent has two completed
+prerequisites, inherited by its children: `E = V/2`, with one parent level.
+Every claim must return exactly its new task with admission proof. Completion
+is simulated outside the timing; no agent or daemon runs. Each case has a
+two-minute deadline and all its goroutines are joined before returning.
+
+Run alone against a disposable database containing all candidate migrations:
+
+```bash
+cd server
+# Set DATABASE_URL to the isolated DB; include pool_max_conns=24 (or higher).
+go run ./cmd/migrate up
+DEPENDENCY_LOAD_TEST=1 ../scripts/go-test-with-agent-cli-guard.sh -- \
+  go test ./internal/handler -run '^TestDependencyAdmissionContention$' \
+  -count=1 -timeout=15m -json > dependency-load.jsonl
+```
+
+`DEPENDENCY_LOAD_ITERATIONS` increases samples per worker (default 100, minimum
+10). Subtests can select a single size/concurrency case with `-run`. Records
+prefixed `DEPENDENCY_LOAD_RESULT` contain sorted raw millisecond samples,
+p50/p95/p99/max per operation, cycle throughput, failures and 10 ms `pg_locks`
+samples. Reassemble Go JSON `Output` chunks before parsing a result line.
+`max_observed_wait_ms` is an individual lock's observed age, not the total wait
+of a request; inspect write `max_ms` as well. A Go test PASS means all operations
+completed correctly, **not** that the deployment performance gate passed.
+
+OL-45 must record candidate SHA, PostgreSQL/application versions, CPU/memory,
+connection limits, graph sizes/density/depth, warm/cold behavior, workload and
+the full results. Repeat on production-like resources with the intended peak
+load and dense/deep shapes (including the OL-38 1,000-node/~5,000-edge sample),
+plus competing workspaces and continuous writers. The sparse local fixture
+does not establish capacity for those cases or a product node limit.
+
+The initial review budget at the intended rollout load is p95 <= 500 ms,
+p99 <= 1,000 ms and maximum <= 2,000 ms for each measured operation, with zero
+deadlocks, timeouts, lost writes, duplicate or unauthorized executions. These
+are acceptance targets, not measured guarantees; any change to them requires
+an explicit rationale in OL-45. Missing evidence or a breached budget blocks
+broad enablement. If writers starve, return the contention defect to OL-41,
+prove any narrower lock scope covers the complete execution component and
+re-run the existing relation/status/enqueue/claim concurrency tests. Do not
+truncate the graph or bypass admission to meet the budget.
+
+The 2026-09-09 local baseline **fails this performance gate**. With PostgreSQL
+15.19, Go 1.27.1, 96 visible CPUs/GOMAXPROCS and 24 pool connections, all 18 sparse
+cases completed 15,000 enqueue/claim cycles and 1,800 issue writes without an
+execution or write failure. However, the 1,000-node/16-worker case reached 9.62 s
+for a status write; the 5,000-node/16-worker case reached 41.53 s even though that
+case's status-write p95 was only 48.03 ms. Lock contention is still unresolved;
+these shared-host measurements justify the rollout hold, not a production
+capacity claim. OL-41's follow-up validation attachment contains the raw samples.

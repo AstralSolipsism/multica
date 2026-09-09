@@ -143,6 +143,10 @@ O(V+E+H) data per admission and can delay unrelated issue edits in a large
 workspace. Measure claim latency and lock waits against realistic size and
 contention before a wide rollout; narrow locks only with an equivalent closure
 proof and the concurrency tests intact.
+The executable contention matrix, measurement limits and required OL-45 rollout
+gate are in [`docs/issue-dependency-dispatch.md`](../../../docs/issue-dependency-dispatch.md#contention-gate-ol-45).
+Concurrent shared admission locks do not themselves serialize readers; include
+maximum write latency to detect starvation behind a sustained reader workload.
 
 ## Execution and one-shot confirmation
 

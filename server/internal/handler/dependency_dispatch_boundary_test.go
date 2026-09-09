@@ -28,6 +28,43 @@ type dependencyPausedCommit struct {
 	release chan struct{}
 }
 
+func TestDependencyDigestRejectsNullMutationBeforeWriting(t *testing.T) {
+	h, fx, _, b, _, agent, _ := dispatchFixture(t)
+	mutation := map[string]any{"status": "todo", "assignee_type": "agent", "assignee_id": agent}
+	override := dependencyConfirmation(t, h, fx, b, mutation, false)
+	before, err := h.Queries.GetIssue(context.Background(), parseUUID(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		handler http.HandlerFunc
+		body    any
+	}{
+		{"preview", h.PreviewIssueTrigger, map[string]any{"issue_ids": []string{b}, "mutation": json.RawMessage(`null`)}},
+		{"update", h.UpdateIssue, json.RawMessage(`null`)},
+		{"compound_update", h.UpdateIssueWithDependencies, json.RawMessage(`null`)},
+		{"batch", h.BatchUpdateIssues, map[string]any{"issue_ids": []string{b}, "updates": json.RawMessage(`null`), "dependency_overrides": map[string]any{b: override}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := testutil.Call(t, tc.handler, dependencyRequest(fx, http.MethodPatch, b, tc.body, "jwt")).Want(http.StatusBadRequest).Map()
+			if body["error"] != "invalid mutation payload" {
+				t.Fatalf("unexpected digest error: %v", body)
+			}
+		})
+	}
+	after, err := h.Queries.GetIssue(context.Background(), parseUUID(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != before.Revision || after.AssigneeID != before.AssigneeID || after.Status != before.Status {
+		t.Fatal("invalid digest mutated the issue")
+	}
+	if fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE issue_id=$1", b) != 0 {
+		t.Fatal("invalid digest created an execution")
+	}
+}
+
 type dependencyPausedTx struct {
 	pgx.Tx
 	pause *dependencyPausedCommit
