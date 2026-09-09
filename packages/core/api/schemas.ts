@@ -3579,12 +3579,14 @@ export const ListMessageDeliveriesResponseSchema = z.object({
   deliveries: z.array(MessageDeliverySchema).default([]),
   limit: z.number().default(0),
   offset: z.number().default(0),
+  applied_run_id: z.string().uuid().nullable().catch(null),
 }).loose();
 
 export const EMPTY_LIST_MESSAGE_DELIVERIES_RESPONSE: ListMessageDeliveriesResponse = {
   deliveries: [],
   limit: 0,
   offset: 0,
+  applied_run_id: null,
 };
 
 // {delivery} wrapper for test-send and retry responses.

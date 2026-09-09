@@ -162,6 +162,8 @@ export interface ListMessageDeliveriesResponse {
   deliveries: MessageDelivery[];
   limit: number;
   offset: number;
+  /** Applied UUID filter; null also covers old/unconfirmed server responses. */
+  applied_run_id: string | null;
 }
 
 /** Frozen message content at decision time (detail endpoint only). */

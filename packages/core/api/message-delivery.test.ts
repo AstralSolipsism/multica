@@ -152,6 +152,18 @@ describe("ListMessageDeliveriesResponseSchema", () => {
     expect(parsed.deliveries[0]?.status).toBe("throttled");
   });
 
+  it("confirms only a valid run-filter echo, keeping old or malformed echoes unconfirmed", () => {
+    const runId = "019e0123-4567-7000-8000-0123456789ab";
+    for (const echo of [undefined, null, "invalid", 123, {}, runId]) {
+      const parsed = ListMessageDeliveriesResponseSchema.parse({
+        deliveries: [DELIVERY],
+        applied_run_id: echo,
+      });
+      expect(parsed.applied_run_id).toBe(echo === runId ? runId : null);
+      expect(parsed.deliveries).toHaveLength(1);
+    }
+  });
+
   it("falls back to an empty page on a malformed response", () => {
     const warn = vi.fn();
     setSchemaLogger({ ...noopLogger, warn });
@@ -162,6 +174,7 @@ describe("ListMessageDeliveriesResponseSchema", () => {
       { endpoint: "test" },
     );
     expect(parsed.deliveries).toEqual([]);
+    expect(parsed.applied_run_id).toBeNull();
     expect(warn).toHaveBeenCalled();
   });
 });
@@ -347,10 +360,12 @@ describe("ApiClient message-delivery endpoints", () => {
     expect(JSON.parse(String(init.body))).toEqual({ enabled: false, expected_revision: 3 });
   });
 
-  it("passes the status filter and paging to the records endpoint", async () => {
-    const fetchMock = stubFetch({ deliveries: [], limit: 50, offset: 100 });
+  it("passes intersecting run/status filters and paging, preserving the applied echo", async () => {
+    const runId = "019e0123-4567-7000-8000-0123456789ab";
+    const fetchMock = stubFetch({ deliveries: [], limit: 50, offset: 100, applied_run_id: runId });
     const client = new ApiClient("https://api.example.test");
-    await client.listMessageDeliveries(ROUTE.autopilot_id, {
+    const page = await client.listMessageDeliveries(ROUTE.autopilot_id, {
+      runId,
       status: "uncertain",
       limit: 50,
       offset: 100,
@@ -359,6 +374,8 @@ describe("ApiClient message-delivery endpoints", () => {
     expect(url).toContain("/message-deliveries?");
     expect(url).toContain("status=uncertain");
     expect(url).toContain("offset=100");
+    expect(new URL(url).searchParams.get("run_id")).toBe(runId);
+    expect(page.applied_run_id).toBe(runId);
   });
 
   it("revokes an approved target with DELETE", async () => {

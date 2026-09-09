@@ -1329,14 +1329,16 @@ SELECT
 FROM labrastro_message_delivery d
 WHERE d.workspace_id = $1
   AND d.autopilot_id = $2
-  AND ($3::text IS NULL OR d.status = $3::text)
-ORDER BY d.created_at DESC
-LIMIT $5 OFFSET $4
+  AND ($3::uuid IS NULL OR d.run_id = $3::uuid)
+  AND ($4::text IS NULL OR d.status = $4::text)
+ORDER BY d.created_at DESC, d.id DESC
+LIMIT $6 OFFSET $5
 `
 
 type ListLabrastroMessageDeliveriesByAutopilotParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	AutopilotID pgtype.UUID `json:"autopilot_id"`
+	RunID       pgtype.UUID `json:"run_id"`
 	Status      pgtype.Text `json:"status"`
 	Offset      int32       `json:"offset"`
 	Limit       int32       `json:"limit"`
@@ -1373,6 +1375,7 @@ func (q *Queries) ListLabrastroMessageDeliveriesByAutopilot(ctx context.Context,
 	rows, err := q.db.Query(ctx, listLabrastroMessageDeliveriesByAutopilot,
 		arg.WorkspaceID,
 		arg.AutopilotID,
+		arg.RunID,
 		arg.Status,
 		arg.Offset,
 		arg.Limit,

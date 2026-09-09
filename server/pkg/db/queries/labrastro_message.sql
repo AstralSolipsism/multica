@@ -344,8 +344,9 @@ SELECT
 FROM labrastro_message_delivery d
 WHERE d.workspace_id = sqlc.arg('workspace_id')
   AND d.autopilot_id = sqlc.arg('autopilot_id')
+  AND (sqlc.narg('run_id')::uuid IS NULL OR d.run_id = sqlc.narg('run_id')::uuid)
   AND (sqlc.narg('status')::text IS NULL OR d.status = sqlc.narg('status')::text)
-ORDER BY d.created_at DESC
+ORDER BY d.created_at DESC, d.id DESC
 LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
 
 -- =====================

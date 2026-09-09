@@ -4557,9 +4557,10 @@ export class ApiClient {
   // snapshots — use getMessageDelivery for those.
   async listMessageDeliveries(
     autopilotId: string,
-    params?: { status?: string; limit?: number; offset?: number },
+    params?: { runId?: string; status?: string; limit?: number; offset?: number },
   ): Promise<ListMessageDeliveriesResponse> {
     const search = new URLSearchParams();
+    if (params?.runId !== undefined) search.set("run_id", params.runId);
     if (params?.status) search.set("status", params.status);
     if (params?.limit) search.set("limit", params.limit.toString());
     if (params?.offset) search.set("offset", params.offset.toString());
