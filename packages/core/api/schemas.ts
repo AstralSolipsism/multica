@@ -66,6 +66,13 @@ import type {
   ListGitHubRepositoriesResponse,
   ListLabelsResponse,
   ListWebhookDeliveriesResponse,
+  MessageApprovedTarget,
+  MessageDelivery,
+  MessageRoute,
+  GetMessageDeliveryResponse,
+  ListMessageApprovedTargetsResponse,
+  ListMessageDeliveriesResponse,
+  ListMessageRoutesResponse,
   IssueStatusEntry,
   ListIssueStatusesResponse,
   NotificationPreferenceResponse,
@@ -3426,5 +3433,278 @@ export const EMPTY_JOIN_SHARE_LINK_RESPONSE: {
   workspace_id: "",
   workspace_slug: "",
 };
+
+// ---------------------------------------------------------------------------
+// Labrastro message-delivery schemas (OL-25 backend / OL-26 frontend). The
+// contract lives in server/internal/messagedelivery/README.md — routes,
+// approved targets, delivery records and receipts under
+// /api/autopilots/:id/message-{routes,approved-targets,deliveries}.
+// Enums (status / source_kind / target_type / conditions / content_mode)
+// stay z.string() so a future server value degrades to a generic UI
+// fallback instead of dropping rows; .loose() tolerates additive fields.
+// ---------------------------------------------------------------------------
+
+export const MessageRouteSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  autopilot_id: z.string(),
+  installation_id: z.string(),
+  channel_type: z.string().default("feishu"),
+  target_type: z.string(),
+  target_user_id: z.string().nullable().default(null),
+  target_chat_id: z.string().nullable().default(null),
+  target_message_id: z.string().nullable().default(null),
+  target_thread_id: z.string().nullable().default(null),
+  target_key: z.string().default(""),
+  conditions: z.string().default("success"),
+  content_mode: z.string().default("summary"),
+  enabled: z.boolean().default(false),
+  revision: z.number().default(1),
+  created_by: z.string().default(""),
+  updated_by: z.string().default(""),
+  effective_from: z.string().default(""),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const ListMessageRoutesResponseSchema = z.object({
+  routes: z.array(MessageRouteSchema).default([]),
+}).loose();
+
+export const MessageRouteResponseSchema = z.object({
+  route: MessageRouteSchema,
+}).loose();
+
+export const EMPTY_LIST_MESSAGE_ROUTES_RESPONSE: ListMessageRoutesResponse = {
+  routes: [],
+};
+
+// Conservative mutation fallbacks. If a create/update/enable response cannot
+// be parsed, callers invalidate the routes query and refetch the truth; the
+// fallback must never show a fabricated enabled rule (MUL-4525 principle:
+// unconfirmable state degrades to non-success).
+export const EMPTY_MESSAGE_ROUTE: MessageRoute = {
+  id: "",
+  workspace_id: "",
+  autopilot_id: "",
+  installation_id: "",
+  channel_type: "feishu",
+  target_type: "member",
+  target_user_id: null,
+  target_chat_id: null,
+  target_message_id: null,
+  target_thread_id: null,
+  target_key: "",
+  conditions: "success",
+  content_mode: "summary",
+  enabled: false,
+  revision: 0,
+  created_by: "",
+  updated_by: "",
+  effective_from: "",
+  created_at: "",
+  updated_at: "",
+};
+
+export const MessageApprovedTargetSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  autopilot_id: z.string(),
+  installation_id: z.string(),
+  target_key: z.string().default(""),
+  target_type: z.string(),
+  approved_by: z.string().default(""),
+  approved_at: z.string().default(""),
+  revoked_at: z.string().nullable().default(null),
+}).loose();
+
+export const ListMessageApprovedTargetsResponseSchema = z.object({
+  approved_targets: z.array(MessageApprovedTargetSchema).default([]),
+}).loose();
+
+export const ApproveMessageTargetResponseSchema = z.object({
+  approved_target: MessageApprovedTargetSchema,
+}).loose();
+
+export const EMPTY_LIST_MESSAGE_APPROVED_TARGETS_RESPONSE: ListMessageApprovedTargetsResponse = {
+  approved_targets: [],
+};
+
+export const EMPTY_MESSAGE_APPROVED_TARGET: MessageApprovedTarget = {
+  id: "",
+  workspace_id: "",
+  autopilot_id: "",
+  installation_id: "",
+  target_key: "",
+  target_type: "group",
+  approved_by: "",
+  approved_at: "",
+  revoked_at: null,
+};
+
+export const RevokeMessageTargetResponseSchema = z.object({
+  revoked: z.boolean().default(false),
+  cancelled_deliveries: z.number().default(0),
+}).loose();
+
+export const MessageDeliverySchema = z.object({
+  id: z.string(),
+  workspace_id: z.string().default(""),
+  route_id: z.string().default(""),
+  route_revision: z.number().default(0),
+  autopilot_id: z.string().default(""),
+  // Test sends carry no source run; the handler serializes the sqlc row's
+  // invalid UUID as null, in both list rows and the detail envelope.
+  run_id: z.string().nullable().default(null),
+  dedup_key: z.string().optional(),
+  source_kind: z.string().default("unknown"),
+  // Unknown/future statuses fall through to a generic UI visual; a
+  // conservative default would risk presenting an unconfirmed send as
+  // delivered, so there is no default here — parse failure falls back to
+  // the whole-page fallback instead.
+  status: z.string(),
+  attempts: z.number().default(0),
+  next_attempt_at: z.string().nullable().default(null),
+  error_code: z.string().nullable().default(null),
+  last_error: z.string().nullable().default(null),
+  shard_total: z.number().default(0),
+  installation_id: z.string().default(""),
+  target_key: z.string().default(""),
+  delivered_at: z.string().nullable().default(null),
+  first_attempt_at: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+  requested_by: z.string().nullable().optional().default(null),
+}).loose();
+
+export const ListMessageDeliveriesResponseSchema = z.object({
+  deliveries: z.array(MessageDeliverySchema).default([]),
+  limit: z.number().default(0),
+  offset: z.number().default(0),
+  applied_run_id: z.string().uuid().nullable().catch(null),
+}).loose();
+
+export const EMPTY_LIST_MESSAGE_DELIVERIES_RESPONSE: ListMessageDeliveriesResponse = {
+  deliveries: [],
+  limit: 0,
+  offset: 0,
+  applied_run_id: null,
+};
+
+// {delivery} wrapper for test-send and retry responses.
+export const MessageDeliveryResponseSchema = z.object({
+  delivery: MessageDeliverySchema,
+}).loose();
+
+// Fallback for an unreadable test-send/retry response: status "unknown"
+// renders the generic visual, never a false success.
+export const EMPTY_MESSAGE_DELIVERY: MessageDelivery = {
+  id: "",
+  workspace_id: "",
+  route_id: "",
+  route_revision: 0,
+  autopilot_id: "",
+  run_id: null,
+  source_kind: "unknown",
+  status: "unknown",
+  attempts: 0,
+  next_attempt_at: null,
+  error_code: null,
+  last_error: null,
+  shard_total: 0,
+  installation_id: "",
+  target_key: "",
+  delivered_at: null,
+  first_attempt_at: null,
+  created_at: "",
+  updated_at: "",
+  requested_by: null,
+};
+
+export const MessageDeliveryContentSnapshotSchema = z.object({
+  text: z.string().optional(),
+  summary: z.string().optional(),
+  run_status: z.string().optional(),
+  has_output: z.boolean().optional(),
+  link: z.string().optional(),
+}).loose();
+
+export const MessageDeliveryTargetSnapshotSchema = z.object({
+  target_type: z.string().optional(),
+  channel_type: z.string().optional(),
+  installation_id: z.string().optional(),
+  user_id: z.string().nullable().optional(),
+  open_id: z.string().nullable().optional(),
+  chat_id: z.string().nullable().optional(),
+  message_id: z.string().nullable().optional(),
+  thread_id: z.string().nullable().optional(),
+}).loose();
+
+export const MessageDeliverySourceRefSchema = z.object({
+  run_id: z.string().optional(),
+  execution_mode: z.string().optional(),
+  issue_id: z.string().nullable().optional(),
+  issue_identifier: z.string().nullable().optional(),
+  issue_status: z.string().nullable().optional(),
+}).loose();
+
+export const MessageDeliveryReceiptSchema = z.object({
+  id: z.string(),
+  delivery_id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  installation_id: z.string().default(""),
+  shard_index: z.number().default(0),
+  shard_total: z.number().default(1),
+  send_uuid: z.string().default(""),
+  external_message_id: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+// The detail endpoint inlines the frozen snapshots as raw JSON next to the
+// delivery row; a missing snapshot is null, not an absent key.
+export const GetMessageDeliveryResponseSchema = z.object({
+  delivery: MessageDeliverySchema,
+  content_snapshot: MessageDeliveryContentSnapshotSchema.nullable().default(null),
+  target_snapshot: MessageDeliveryTargetSnapshotSchema.nullable().default(null),
+  source_ref: MessageDeliverySourceRefSchema.nullable().default(null),
+  receipts: z.array(MessageDeliveryReceiptSchema).default([]),
+}).loose();
+
+// Conservative detail fallback: an unreadable detail must never present
+// fabricated content as the delivered message.
+export function emptyMessageDeliveryDetail(
+  autopilotId: string,
+  deliveryId: string,
+): GetMessageDeliveryResponse {
+  return {
+    delivery: {
+      id: deliveryId,
+      workspace_id: "",
+      route_id: "",
+      route_revision: 0,
+      autopilot_id: autopilotId,
+      run_id: null,
+      source_kind: "unknown",
+      status: "unknown",
+      attempts: 0,
+      next_attempt_at: null,
+      error_code: null,
+      last_error: null,
+      shard_total: 0,
+      installation_id: "",
+      target_key: "",
+      delivered_at: null,
+      first_attempt_at: null,
+      created_at: "",
+      updated_at: "",
+      requested_by: null,
+    },
+    content_snapshot: null,
+    target_snapshot: null,
+    source_ref: null,
+    receipts: [],
+  };
+}
 
 export { ProjectFileResultSchema, ProjectFileSchema, ProjectFilePageSchema, ProjectFileOperationSchema, ProjectFileCapabilitiesSchema, parseProjectFileResult } from "./project-file-schemas";

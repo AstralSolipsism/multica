@@ -2088,6 +2088,29 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
+			// Labrastro personal/team notification sources (OL-27).
+			// Same module, separate scope surface; see
+			// internal/handler/labrastro_message_sources.go.
+			r.Get("/api/message-event-catalog", h.GetMessageEventCatalog)
+			r.Route("/api/message-routes", func(r chi.Router) {
+				r.Get("/", h.ListMessageSourceRoutes)
+				r.Post("/", h.CreateMessageSourceRoute)
+				r.Route("/{routeId}", func(r chi.Router) {
+					r.Put("/", h.UpdateMessageSourceRoute)
+					r.Delete("/", h.DeleteMessageSourceRoute)
+					r.Post("/enable", h.SetMessageSourceRouteEnabled)
+					r.Post("/test-send", h.TestMessageSourceRoute)
+					r.Get("/message-deliveries", h.ListMessageRouteDeliveries)
+					r.Route("/message-deliveries/{deliveryId}", func(r chi.Router) {
+						r.Get("/", h.GetMessageRouteDelivery)
+						r.Post("/retry", h.RetryMessageRouteDelivery)
+					})
+				})
+			})
+			r.Get("/api/message-approved-targets", h.ListMessageSourceApprovedTargets)
+			r.Post("/api/message-approved-targets", h.ApproveMessageSourceTarget)
+			r.Delete("/api/message-approved-targets/{targetId}", h.RevokeMessageSourceTarget)
+
 			// Pins
 			r.Route("/api/pins", func(r chi.Router) {
 				r.Get("/", h.ListPins)

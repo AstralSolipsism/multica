@@ -161,6 +161,16 @@ import type {
   ListAutopilotRunsResponse,
   ListWebhookDeliveriesResponse,
   WebhookDelivery,
+  ApproveMessageTargetRequest,
+  GetMessageDeliveryResponse,
+  ListMessageApprovedTargetsResponse,
+  ListMessageDeliveriesResponse,
+  ListMessageRoutesResponse,
+  MessageApprovedTarget,
+  MessageDelivery,
+  MessageRoute,
+  RevokeMessageTargetResponse,
+  SaveMessageRouteRequest,
   NotificationPreferenceResponse,
   NotificationPreferences,
   PluginHookResult,
@@ -327,6 +337,21 @@ import {
   SourceContextPreviewSchema,
   CommentSubIssueTaskResponseSchema,
   ListWebhookDeliveriesResponseSchema,
+  ApproveMessageTargetResponseSchema,
+  EMPTY_LIST_MESSAGE_APPROVED_TARGETS_RESPONSE,
+  EMPTY_LIST_MESSAGE_DELIVERIES_RESPONSE,
+  EMPTY_LIST_MESSAGE_ROUTES_RESPONSE,
+  GetMessageDeliveryResponseSchema,
+  ListMessageApprovedTargetsResponseSchema,
+  ListMessageDeliveriesResponseSchema,
+  ListMessageRoutesResponseSchema,
+  MessageDeliveryResponseSchema,
+  MessageRouteResponseSchema,
+  RevokeMessageTargetResponseSchema,
+  EMPTY_MESSAGE_APPROVED_TARGET,
+  EMPTY_MESSAGE_DELIVERY,
+  EMPTY_MESSAGE_ROUTE,
+  emptyMessageDeliveryDetail,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByHourListSchema,
@@ -4355,6 +4380,237 @@ export class ApiClient {
       { ...EMPTY_WEBHOOK_DELIVERY, autopilot_id: autopilotId },
       { endpoint: "POST /api/autopilots/:id/deliveries/:deliveryId/replay" },
     );
+  }
+
+  // Labrastro message delivery (OL-25 backend / OL-26 frontend) — the
+  // automation "结果推送" route configuration plus the delivery records and
+  // retry surface. Contract: server/internal/messagedelivery/README.md.
+  // These paths exist only on servers running OL-25+; older servers answer
+  // 404, which callers present as an "unsupported server" state (never as
+  // a successful save).
+  async listMessageRoutes(autopilotId: string): Promise<ListMessageRoutesResponse> {
+    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/message-routes`);
+    return parseWithFallback(
+      raw,
+      ListMessageRoutesResponseSchema,
+      EMPTY_LIST_MESSAGE_ROUTES_RESPONSE,
+      { endpoint: "GET /api/autopilots/:id/message-routes" },
+    );
+  }
+
+  // Create returns 201 with {route}; the revision starts at 1. Enabled
+  // defaults to true server-side when omitted — the editor always sends it
+  // explicitly so the saved state matches what the user saw.
+  async createMessageRoute(
+    autopilotId: string,
+    data: SaveMessageRouteRequest,
+  ): Promise<MessageRoute> {
+    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/message-routes`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    const parsed = parseWithFallback(raw, MessageRouteResponseSchema,
+      { route: EMPTY_MESSAGE_ROUTE },
+      { endpoint: "POST /api/autopilots/:id/message-routes" });
+    if (!parsed.route.id) {
+      // A write whose response cannot be parsed must not masquerade as a
+      // saved rule: surface an explicit unconfirmed error instead of the
+      // empty fallback, so the UI never toasts "saved" on guesswork.
+      throw new ApiError("unparseable message-route write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
+    return parsed.route;
+  }
+
+  // Update and enable/disable are revision-guarded: a stale
+  // expected_revision is a 409 route_revision_conflict, never a silent
+  // overwrite. Callers surface that conflict instead of retrying blindly.
+  async updateMessageRoute(
+    autopilotId: string,
+    routeId: string,
+    data: SaveMessageRouteRequest,
+  ): Promise<MessageRoute> {
+    const raw = await this.fetch<unknown>(
+      `/api/autopilots/${autopilotId}/message-routes/${routeId}`,
+      { method: "PUT", body: JSON.stringify(data) },
+    );
+    const parsed = parseWithFallback(raw, MessageRouteResponseSchema,
+      { route: EMPTY_MESSAGE_ROUTE },
+      { endpoint: "PUT /api/autopilots/:id/message-routes/:routeId" });
+    if (!parsed.route.id) {
+      // A write whose response cannot be parsed must not masquerade as a
+      // saved rule: surface an explicit unconfirmed error instead of the
+      // empty fallback, so the UI never toasts "saved" on guesswork.
+      throw new ApiError("unparseable message-route write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
+    return parsed.route;
+  }
+
+  async setMessageRouteEnabled(
+    autopilotId: string,
+    routeId: string,
+    enabled: boolean,
+    expectedRevision: number,
+  ): Promise<MessageRoute> {
+    const raw = await this.fetch<unknown>(
+      `/api/autopilots/${autopilotId}/message-routes/${routeId}/enable`,
+      {
+        method: "POST",
+        body: JSON.stringify({ enabled, expected_revision: expectedRevision }),
+      },
+    );
+    const parsed = parseWithFallback(raw, MessageRouteResponseSchema,
+      { route: EMPTY_MESSAGE_ROUTE },
+      { endpoint: "POST /api/autopilots/:id/message-routes/:routeId/enable" });
+    if (!parsed.route.id) {
+      // A write whose response cannot be parsed must not masquerade as a
+      // saved rule: surface an explicit unconfirmed error instead of the
+      // empty fallback, so the UI never toasts "saved" on guesswork.
+      throw new ApiError("unparseable message-route write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
+    return parsed.route;
+  }
+
+  async deleteMessageRoute(autopilotId: string, routeId: string): Promise<void> {
+    await this.fetch(`/api/autopilots/${autopilotId}/message-routes/${routeId}`, {
+      method: "DELETE",
+    });
+  }
+
+  // Test-send runs the REAL send path synchronously with a synthetic
+  // message; the server refuses with 409 route_disabled on a disabled rule.
+  async testMessageRoute(autopilotId: string, routeId: string): Promise<MessageDelivery> {
+    const raw = await this.fetch<unknown>(
+      `/api/autopilots/${autopilotId}/message-routes/${routeId}/test-send`,
+      { method: "POST" },
+    );
+    const parsed = parseWithFallback(raw, MessageDeliveryResponseSchema,
+      { delivery: EMPTY_MESSAGE_DELIVERY },
+      { endpoint: "POST /api/autopilots/:id/message-routes/:routeId/test-send" });
+    if (!parsed.delivery.id) {
+      throw new ApiError("unparseable delivery write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
+    return parsed.delivery;
+  }
+
+  // Approved targets are a workspace owner/admin consent surface; the server
+  // answers 403 message_target_admin_required for plain collaborators.
+  async listMessageApprovedTargets(
+    autopilotId: string,
+  ): Promise<ListMessageApprovedTargetsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/autopilots/${autopilotId}/message-approved-targets`,
+    );
+    return parseWithFallback(
+      raw,
+      ListMessageApprovedTargetsResponseSchema,
+      EMPTY_LIST_MESSAGE_APPROVED_TARGETS_RESPONSE,
+      { endpoint: "GET /api/autopilots/:id/message-approved-targets" },
+    );
+  }
+
+  async approveMessageTarget(
+    autopilotId: string,
+    data: ApproveMessageTargetRequest,
+  ): Promise<MessageApprovedTarget> {
+    const raw = await this.fetch<unknown>(
+      `/api/autopilots/${autopilotId}/message-approved-targets`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+    const parsed = parseWithFallback(raw, ApproveMessageTargetResponseSchema,
+      { approved_target: EMPTY_MESSAGE_APPROVED_TARGET },
+      { endpoint: "POST /api/autopilots/:id/message-approved-targets" });
+    if (!parsed.approved_target.id) {
+      throw new ApiError("unparseable approved-target write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
+    return parsed.approved_target;
+  }
+
+  // Revoke cancels the route's queued sends in the same transaction; the
+  // response reports how many were cancelled. Platform-accepted sends are
+  // not recallable.
+  async revokeMessageTarget(
+    autopilotId: string,
+    targetId: string,
+  ): Promise<RevokeMessageTargetResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/autopilots/${autopilotId}/message-approved-targets/${targetId}`,
+      { method: "DELETE" },
+    );
+    return parseWithFallback(
+      raw,
+      RevokeMessageTargetResponseSchema,
+      { revoked: false, cancelled_deliveries: 0 },
+      { endpoint: "DELETE /api/autopilots/:id/message-approved-targets/:targetId" },
+    );
+  }
+
+  // Delivery records page. The list projection carries no content/target
+  // snapshots — use getMessageDelivery for those.
+  async listMessageDeliveries(
+    autopilotId: string,
+    params?: { runId?: string; status?: string; limit?: number; offset?: number },
+  ): Promise<ListMessageDeliveriesResponse> {
+    const search = new URLSearchParams();
+    if (params?.runId !== undefined) search.set("run_id", params.runId);
+    if (params?.status) search.set("status", params.status);
+    if (params?.limit) search.set("limit", params.limit.toString());
+    if (params?.offset) search.set("offset", params.offset.toString());
+    const raw = await this.fetch<unknown>(
+      `/api/autopilots/${autopilotId}/message-deliveries?${search}`,
+    );
+    return parseWithFallback(
+      raw,
+      ListMessageDeliveriesResponseSchema,
+      EMPTY_LIST_MESSAGE_DELIVERIES_RESPONSE,
+      { endpoint: "GET /api/autopilots/:id/message-deliveries" },
+    );
+  }
+
+  async getMessageDelivery(
+    autopilotId: string,
+    deliveryId: string,
+  ): Promise<GetMessageDeliveryResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/autopilots/${autopilotId}/message-deliveries/${deliveryId}`,
+    );
+    return parseWithFallback(
+      raw,
+      GetMessageDeliveryResponseSchema,
+      emptyMessageDeliveryDetail(autopilotId, deliveryId),
+      { endpoint: "GET /api/autopilots/:id/message-deliveries/:deliveryId" },
+    );
+  }
+
+  // Retry is allowed from failed (cause fixed) and uncertain (operator
+  // verified in Feishu first); the replay reuses the fixed per-shard send
+  // UUIDs and skips shards that already carry an external message id.
+  async retryMessageDelivery(
+    autopilotId: string,
+    deliveryId: string,
+  ): Promise<MessageDelivery> {
+    const raw = await this.fetch<unknown>(
+      `/api/autopilots/${autopilotId}/message-deliveries/${deliveryId}/retry`,
+      { method: "POST" },
+    );
+    const parsed = parseWithFallback(raw, MessageDeliveryResponseSchema,
+      { delivery: EMPTY_MESSAGE_DELIVERY },
+      { endpoint: "POST /api/autopilots/:id/message-deliveries/:deliveryId/retry" });
+    if (!parsed.delivery.id) {
+      throw new ApiError("unparseable delivery write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
+    return parsed.delivery;
   }
 
   // GitHub integration

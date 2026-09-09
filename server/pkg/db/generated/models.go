@@ -956,6 +956,8 @@ type LabrastroMessageApprovedTarget struct {
 	ApprovedBy     pgtype.UUID        `json:"approved_by"`
 	ApprovedAt     pgtype.Timestamptz `json:"approved_at"`
 	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
+	SourceKind     string             `json:"source_kind"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
 }
 
 type LabrastroMessageDelivery struct {
@@ -985,6 +987,9 @@ type LabrastroMessageDelivery struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	RequestedBy     pgtype.UUID        `json:"requested_by"`
+	SourceRefID     pgtype.UUID        `json:"source_ref_id"`
+	SourceScope     pgtype.Text        `json:"source_scope"`
+	SourceProjectID pgtype.UUID        `json:"source_project_id"`
 }
 
 type LabrastroMessageReceipt struct {
@@ -1021,6 +1026,10 @@ type LabrastroMessageRoute struct {
 	EffectiveFrom   pgtype.Timestamptz `json:"effective_from"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	SourceKind      string             `json:"source_kind"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EventTypes      []string           `json:"event_types"`
+	LastDisabledAt  pgtype.Timestamptz `json:"last_disabled_at"`
 }
 
 type LabrastroMessageScanCursor struct {

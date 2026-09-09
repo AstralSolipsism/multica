@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_labrastro_message_delivery_source;
