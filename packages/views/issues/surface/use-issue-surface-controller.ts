@@ -81,6 +81,9 @@ export interface IssueSurfaceController {
     isError: boolean;
     error: Error | null;
     isFetching: boolean;
+    /** React Query freshness: an invalidated snapshot refetching in the
+     *  background stays stale until the fresh graph lands. */
+    isStale: boolean;
     refetch: () => void;
   };
   /**
@@ -906,6 +909,7 @@ export function useIssueSurfaceController({
       isError: dagGraphQuery.isError,
       error: dagGraphQuery.error,
       isFetching: dagGraphQuery.isFetching,
+      isStale: dagGraphQuery.isStale,
       refetch: () => void dagGraphQuery.refetch(),
     },
     dagMembershipComplete:

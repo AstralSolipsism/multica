@@ -55,6 +55,9 @@ export interface DagGraphQueryState {
   isError: boolean;
   error: Error | null;
   isFetching: boolean;
+  /** False only for a fresh, settled snapshot: an invalidated cache that is
+   *  still refetching (or failed and was retained) must not license pruning. */
+  isStale: boolean;
   refetch: () => void;
 }
 
@@ -121,17 +124,23 @@ export function DagView({
   // Stale-fold cleanup: only a PROVABLY inert fold loses its entry, and
   // nothing is provable under a filtered/searched/narrowed or restricted
   // graph — a todo filter hiding a done child is not the child being gone.
+  // Freshness is part of the proof too: an invalidated snapshot still
+  // refetching (or retained after a failed refresh) predates folds the user
+  // made against a newer filtered graph, so pruning waits for a settled,
+  // fresh, complete read and re-evaluates when one lands.
+  const pruneAllowed =
+    membershipComplete &&
+    !graph?.hasRestrictedContext &&
+    !graphQuery.isStale &&
+    !graphQuery.isFetching &&
+    !graphQuery.isError;
   useEffect(() => {
-    if (!graph || storedCollapsedIds === null) return;
-    const pruned = pruneDagCollapsedIds(
-      storedCollapsedIds,
-      graph,
-      membershipComplete && !graph.hasRestrictedContext,
-    );
+    if (!graph || storedCollapsedIds === null || !pruneAllowed) return;
+    const pruned = pruneDagCollapsedIds(storedCollapsedIds, graph, true);
     if (pruned.length !== storedCollapsedIds.length) {
       storeApi.getState().setDagCollapsedIds(pruned);
     }
-  }, [graph, membershipComplete, storeApi, storedCollapsedIds]);
+  }, [graph, pruneAllowed, storeApi, storedCollapsedIds]);
 
   // Layout inputs track topologyId, not the graph object: status/title/run
   // refreshes keep the topology id and must not re-run Dagre. The ref gate

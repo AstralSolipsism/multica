@@ -158,6 +158,7 @@ function graphQuery(partial: Partial<DagGraphQueryState>): DagGraphQueryState {
     isError: false,
     error: null,
     isFetching: false,
+    isStale: false,
     refetch: vi.fn(),
     ...partial,
   };
@@ -363,6 +364,41 @@ describe("DagView", () => {
     renderDagView(graphQuery({ data: makeGraph([makeNode("feature")]) }), false);
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
     expect(store.getState().dagCollapsedIds).not.toContain("issue:feature");
+  });
+
+  it.each([
+    { label: "while refreshing", state: { isFetching: true } },
+    {
+      label: "after a refresh failure",
+      state: { isError: true, error: new ApiError("Unavailable", 500, "unavailable") },
+    },
+  ])("review round 5 F3: keeps a newer fold against old full-graph cache $label", async ({ state }) => {
+    // The inactive, unfiltered query still caches G0: feature had no child.
+    const oldFullGraph = makeGraph([makeNode("feature")]);
+    // While a filter was active, a child was created and that active query
+    // refreshed to G1. The user then folded the newly visible feature.
+    const newerFilteredGraph = {
+      ...makeGraph([
+        makeNode("feature"),
+        makeNode("child", { parentIssueId: "feature" }),
+      ]),
+      snapshotId: "snap-2",
+      topologyId: "topo-2",
+      capturedAt: "2026-09-10T00:01:00Z",
+    };
+    const filtered = renderDagView(graphQuery({ data: newerFilteredGraph }), true);
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    act(() => store.getState().setDagCollapsedIds(["issue:feature"]));
+    expect(store.getState().dagCollapsedIds).toContain("issue:feature");
+    filtered.unmount();
+    canvasSpy.mockClear();
+
+    // Clearing the filter returns the invalidated G0 cache while its own
+    // query fetches G1 (or retains G0 after a failed refresh). An old complete
+    // transaction cannot disprove a fold chosen against the newer graph.
+    renderDagView(graphQuery({ data: oldFullGraph, ...state }));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    expect(store.getState().dagCollapsedIds).toContain("issue:feature");
   });
 
   it("expand all / collapse all drive the fold preference", async () => {
