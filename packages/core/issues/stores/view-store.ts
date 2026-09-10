@@ -8,8 +8,21 @@ import type { IssueStatus, IssueStatusCategory, IssuePriority, PropertyFilterVal
 import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../../platform/workspace-storage";
 import { defaultStorage } from "../../platform/storage";
 
-export type ViewMode = "board" | "list" | "table" | "gantt" | "swimlane";
+export type ViewMode = "board" | "list" | "table" | "gantt" | "swimlane" | "dag";
 export type GanttZoom = "day" | "week" | "month";
+/** DAG canvas layout direction: left-to-right or top-to-bottom ranks. */
+export type DagDirection = "LR" | "TB";
+/**
+ * DAG representative grouping. `project` folds nodes under project
+ * representatives (including a "no project" group); `parent` folds them under
+ * their top-level feature ancestor; `none` keeps every node flat — feature
+ * collapse stays available in all three.
+ */
+export type DagGrouping = "project" | "parent" | "none";
+/** Representative id namespaces inside `dagCollapsedIds`. */
+export const DAG_PROJECT_REP_PREFIX = "project:";
+export const DAG_ISSUE_REP_PREFIX = "issue:";
+export const DAG_NO_PROJECT_REP = "project:none";
 /**
  * Board grouping. Besides the three built-ins, a select-type custom property
  * groups columns by its options via the `property:<definitionId>` form.
@@ -244,6 +257,19 @@ export interface IssueViewState {
   tableCollapsedParents: string[];
   tableHierarchy: boolean;
   tableCalculation: TableCalculation;
+  /** DAG canvas direction; layout re-runs when it changes. */
+  dagDirection: DagDirection;
+  /** DAG representative grouping — see DagGrouping. */
+  dagGrouping: DagGrouping;
+  /**
+   * Collapsed DAG representatives, prefixed (`project:<id>`, `issue:<id>`,
+   * `project:none`). `null` means the user has never folded this surface's
+   * graph: the view then applies the DEFAULT collapse (every project rep when
+   * grouping is `project`, plus every feature rep) on first paint, and writes
+   * the result back so later graph growth keeps the user's explicit choices.
+   * An entry whose representative no longer exists is pruned on read.
+   */
+  dagCollapsedIds: string[] | null;
   setViewMode: (mode: ViewMode) => void;
   setGanttZoom: (zoom: GanttZoom) => void;
   toggleGanttShowCompleted: () => void;
@@ -291,6 +317,14 @@ export interface IssueViewState {
   toggleTableParentCollapsed: (issueId: string) => void;
   toggleTableHierarchy: () => void;
   setTableCalculation: (calculation: TableCalculation) => void;
+  setDagDirection: (direction: DagDirection) => void;
+  setDagGrouping: (grouping: DagGrouping) => void;
+  /** Toggle one representative's folded state. Initializes the default
+   *  collapse first when the user has never folded this surface. */
+  toggleDagCollapsed: (representativeId: string, defaultCollapsed: string[]) => void;
+  /** Replace the folded set wholesale (expand/collapse all, first-paint
+   *  default). Passing the default marks the surface initialized. */
+  setDagCollapsedIds: (ids: string[] | null) => void;
 }
 
 export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): IssueViewState => ({
@@ -334,6 +368,9 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   tableCollapsedParents: [],
   tableHierarchy: true,
   tableCalculation: "none",
+  dagDirection: "LR",
+  dagGrouping: "project",
+  dagCollapsedIds: null,
 
   setViewMode: (mode) => set({ viewMode: mode }),
   setGanttZoom: (zoom) => set({ ganttZoom: zoom }),
@@ -552,6 +589,17 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   toggleTableHierarchy: () =>
     set((state) => ({ tableHierarchy: !state.tableHierarchy })),
   setTableCalculation: (tableCalculation) => set({ tableCalculation }),
+  setDagDirection: (dagDirection) => set({ dagDirection }),
+  setDagGrouping: (dagGrouping) => set({ dagGrouping }),
+  toggleDagCollapsed: (representativeId, defaultCollapsed) =>
+    set((state) => {
+      const current = state.dagCollapsedIds ?? defaultCollapsed;
+      const next = current.includes(representativeId)
+        ? current.filter((id) => id !== representativeId)
+        : [...current, representativeId];
+      return { dagCollapsedIds: next };
+    }),
+  setDagCollapsedIds: (dagCollapsedIds) => set({ dagCollapsedIds }),
 });
 
 export const viewStorePersistOptions = (name: string) => ({
@@ -593,6 +641,9 @@ export const viewStorePersistOptions = (name: string) => ({
     tableCollapsedParents: state.tableCollapsedParents,
     tableHierarchy: state.tableHierarchy,
     tableCalculation: state.tableCalculation,
+    dagDirection: state.dagDirection,
+    dagGrouping: state.dagGrouping,
+    dagCollapsedIds: state.dagCollapsedIds,
   }),
   // Default Zustand merge is shallow, so a persisted `cardProperties` snapshot
   // saved before a new toggle was introduced wins entirely and the new key is
@@ -656,6 +707,24 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
     tableCollapsedParents: Array.isArray(p.tableCollapsedParents)
       ? p.tableCollapsedParents
       : current.tableCollapsedParents,
+    // `null` is a real value here ("never folded — apply the default
+    // collapse"), so only a non-array non-null snapshot falls back.
+    dagCollapsedIds:
+      p.dagCollapsedIds === null || Array.isArray(p.dagCollapsedIds)
+        ? (p.dagCollapsedIds as string[] | null)
+        : current.dagCollapsedIds,
+    // Enum guards: a malformed/server-seeded value degrades to the default
+    // instead of breaking the projection.
+    dagDirection:
+      p.dagDirection === "LR" || p.dagDirection === "TB"
+        ? p.dagDirection
+        : current.dagDirection,
+    dagGrouping:
+      p.dagGrouping === "project" ||
+      p.dagGrouping === "parent" ||
+      p.dagGrouping === "none"
+        ? p.dagGrouping
+        : current.dagGrouping,
   };
 }
 

@@ -22,6 +22,7 @@ import {
   UserMinus,
   UserPen,
   Waves,
+  Waypoints,
 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Spinner } from "@multica/ui/components/ui/spinner";
@@ -93,6 +94,8 @@ import {
   type SwimlaneGrouping,
   type TableGrouping,
   type ViewMode,
+  type DagDirection,
+  type DagGrouping,
 } from "@multica/core/issues/stores/view-store";
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import { FilterChipsBar } from "./filter-chips-bar";
@@ -1143,6 +1146,7 @@ export function IssuesHeader({
   scopedIssues,
   workingAgents,
   allowGantt = false,
+  allowDag = false,
   dateFilter = null,
   onDateFilterChange,
   isRefreshing = false,
@@ -1156,6 +1160,8 @@ export function IssuesHeader({
    *  behind the agents-working chip. */
   workingAgents: WorkingAgentSummary[] | undefined;
   allowGantt?: boolean;
+  /** Surface offers DAG mode (its `modes` include "dag"). */
+  allowDag?: boolean;
   dateFilter?: IssueDateFilter | null;
   onDateFilterChange?: (filter: IssueDateFilter | null) => void;
   isRefreshing?: boolean;
@@ -1334,6 +1340,7 @@ export function IssuesHeader({
           <IssueDisplayControls
             scopedIssues={scopedIssues}
             allowGantt={allowGantt}
+            allowDag={allowDag}
             dateFilter={dateFilter}
             onDateFilterChange={onDateFilterChange}
             facetCountsExact={facetCountsExact}
@@ -1810,6 +1817,7 @@ export function IssueDisplayControls({
   scopedIssues,
   hideViewToggle = false,
   allowGantt = false,
+  allowDag = false,
   dateFilter = null,
   onDateFilterChange,
   facetCountsExact = true,
@@ -1828,6 +1836,9 @@ export function IssueDisplayControls({
   // /my-issues, actor panel) ignore viewMode === "gantt" and would silently
   // fall back to List if the option were exposed there. Keep Gantt opt-in.
   allowGantt?: boolean;
+  /** DAG mode is likewise opt-in per surface: only surfaces whose `modes`
+   *  include "dag" (issues page, project detail) offer it. */
+  allowDag?: boolean;
   /**
    * Whether `scopedIssues` covers the surface's full window. Table does not
    * use loaded rows for counts; server-paged List, Board, and Swimlane follow
@@ -1856,6 +1867,8 @@ export function IssueDisplayControls({
   const sortDirection = useViewStore((s) => s.sortDirection);
   const grouping = useViewStore((s) => s.grouping);
   const swimlaneGrouping = useViewStore((s) => s.swimlaneGrouping);
+  const dagDirection = useViewStore((s) => s.dagDirection);
+  const dagGrouping = useViewStore((s) => s.dagGrouping);
   const cardProperties = useViewStore((s) => s.cardProperties);
   const tableGrouping = useViewStore((s) => s.tableGrouping ?? "none");
   const tableHierarchy = useViewStore((s) => s.tableHierarchy ?? true);
@@ -2201,6 +2214,86 @@ export function IssueDisplayControls({
                   />
                 </label>
               )}
+              {viewMode === "dag" && (
+                <>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-caption font-medium text-muted-foreground">
+                      {t(($) => $.dag.direction_label)}
+                    </span>
+                    <Select
+                      items={(
+                        [
+                          { value: "LR", labelKey: "direction_lr" },
+                          { value: "TB", labelKey: "direction_tb" },
+                        ] as const
+                      ).map((opt) => ({
+                        value: opt.value as string,
+                        label: t(($) => $.dag[opt.labelKey]),
+                      }))}
+                      value={dagDirection}
+                      onValueChange={(v) => {
+                        if (v) act.setDagDirection(v as DagDirection);
+                      }}
+                    >
+                      <SelectTrigger size="sm" className="w-32" aria-label={t(($) => $.dag.direction_label)}>
+                        <SelectValue>
+                          {t(($) => $.dag[dagDirection === "TB" ? "direction_tb" : "direction_lr"])}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent align="end">
+                        <SelectGroup>
+                          <SelectItem value="LR">{t(($) => $.dag.direction_lr)}</SelectItem>
+                          <SelectItem value="TB">{t(($) => $.dag.direction_tb)}</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-caption font-medium text-muted-foreground">
+                      {t(($) => $.dag.grouping_label)}
+                    </span>
+                    <Select
+                      items={(
+                        [
+                          { value: "project", labelKey: "grouping_project" },
+                          { value: "parent", labelKey: "grouping_parent" },
+                          { value: "none", labelKey: "grouping_none" },
+                        ] as const
+                      ).map((opt) => ({
+                        value: opt.value as string,
+                        label: t(($) => $.dag[opt.labelKey]),
+                      }))}
+                      value={dagGrouping}
+                      onValueChange={(v) => {
+                        if (v) act.setDagGrouping(v as DagGrouping);
+                      }}
+                    >
+                      <SelectTrigger size="sm" className="w-32" aria-label={t(($) => $.dag.grouping_label)}>
+                        <SelectValue>
+                          {t(($) => $.dag[
+                            dagGrouping === "parent"
+                              ? "grouping_parent"
+                              : dagGrouping === "none"
+                                ? "grouping_none"
+                                : "grouping_project"
+                          ])}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent align="end">
+                        <SelectGroup>
+                          <SelectItem value="project">{t(($) => $.dag.grouping_project)}</SelectItem>
+                          <SelectItem value="parent">{t(($) => $.dag.grouping_parent)}</SelectItem>
+                          <SelectItem value="none">{t(($) => $.dag.grouping_none)}</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              )}
+              {/* Sort is a list-shaped concept: the graph endpoint ignores it
+                  and Dagre owns node order, so the control hides in DAG mode
+                  rather than pretending to apply. */}
+              {viewMode !== "dag" && (
               <div className="flex items-center justify-between gap-3">
                 <span className="text-caption font-medium text-muted-foreground">
                   {t(($) => $.display.ordering_section)}
@@ -2258,6 +2351,7 @@ export function IssueDisplayControls({
                   )}
                 </div>
               </div>
+              )}
               <label className="flex cursor-pointer items-center justify-between gap-3">
                 <span className="text-caption font-medium text-muted-foreground">
                   {t(($) => $.display.show_sub_issues)}
@@ -2268,7 +2362,9 @@ export function IssueDisplayControls({
                   onCheckedChange={() => act.toggleShowSubIssues()}
                 />
               </label>
-              {viewMode !== "table" && (
+              {/* DAG nodes render one fixed compact card; card-property chips
+                  would not change it, so the section stays with card modes. */}
+              {viewMode !== "table" && viewMode !== "dag" && (
                 <div>
                   <span className="text-caption font-medium text-muted-foreground">
                     {t(($) => $.display.card_properties_section)}
@@ -2309,7 +2405,8 @@ export function IssueDisplayControls({
 
         {/* View toggle. If a store has `viewMode === "gantt"` persisted but
             this surface doesn't render Gantt, fall back to "list" so the
-            trigger icon matches what's actually on screen. */}
+            trigger icon matches what's actually on screen. Same for a DAG
+            value reaching a surface that never opted in (allowDag). */}
         {!hideViewToggle && (
           <DropdownMenu open={viewMenuOpen} onOpenChange={setViewMenuOpen}>
             <Tooltip>
@@ -2326,6 +2423,8 @@ export function IssueDisplayControls({
                           <Waves className="size-3.5" />
                         ) : viewMode === "gantt" && allowGantt ? (
                           <ChartGantt className="size-3.5" />
+                        ) : viewMode === "dag" && allowDag ? (
+                          <Waypoints className="size-3.5" />
                         ) : (
                           <List className="size-3.5" />
                         )}
@@ -2338,6 +2437,8 @@ export function IssueDisplayControls({
                             ? t(($) => $.view.swimlane)
                             : viewMode === "gantt" && allowGantt
                             ? t(($) => $.view.gantt)
+                            : viewMode === "dag" && allowDag
+                            ? t(($) => $.view.dag)
                             : t(($) => $.view.list)}
                         </span>
                       </Button>
@@ -2354,6 +2455,8 @@ export function IssueDisplayControls({
                   ? t(($) => $.view.tooltip_swimlane)
                   : viewMode === "gantt" && allowGantt
                   ? t(($) => $.view.tooltip_gantt)
+                  : viewMode === "dag" && allowDag
+                  ? t(($) => $.view.tooltip_dag)
                   : t(($) => $.view.tooltip_list)}
               </TooltipContent>
             </Tooltip>
@@ -2388,6 +2491,12 @@ export function IssueDisplayControls({
                   <DropdownMenuRadioItem value="gantt">
                     <ChartGantt />
                     {t(($) => $.view.gantt)}
+                  </DropdownMenuRadioItem>
+                )}
+                {allowDag && (
+                  <DropdownMenuRadioItem value="dag">
+                    <Waypoints />
+                    {t(($) => $.view.dag)}
                   </DropdownMenuRadioItem>
                 )}
               </DropdownMenuRadioGroup>

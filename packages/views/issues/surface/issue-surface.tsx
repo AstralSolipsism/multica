@@ -32,6 +32,7 @@ import { IssuesHeader } from "../components/issues-header";
 import { ListView } from "../components/list-view";
 import { SwimLaneView } from "../components/swimlane-view";
 import { TableView } from "../components/table-view";
+import { DagView } from "../dag/dag-view";
 import { useT } from "../../i18n";
 import { IssueContextMenuProvider } from "../actions";
 import { IssueSurfaceActionsProvider } from "./actions-context";
@@ -227,6 +228,9 @@ function IssueSurfaceContent({
     (showClientEmpty ? showClientEmpty(renderContext) : true);
   const shouldShowBatchToolbar =
     batchToolbar !== "never" &&
+    // DAG has no row/card selection — batch actions stay with list-shaped
+    // modes.
+    controller.viewMode !== "dag" &&
     (batchToolbar === "always" ||
       controller.viewMode === "list" ||
       controller.viewMode === "table");
@@ -246,7 +250,13 @@ function IssueSurfaceContent({
             scopedIssues={controller.surfaceIssues}
             workingAgents={controller.workingAgents}
             allowGantt={controller.allowGantt}
-            isRefreshing={controller.isRefreshing}
+            allowDag={controller.allowDag}
+            isRefreshing={
+              controller.isRefreshing ||
+              (controller.viewMode === "dag" &&
+                controller.dagGraph.isFetching &&
+                !controller.dagGraph.isPending)
+            }
             facetCountsExact={
               controller.facetCountsExact
             }
@@ -342,6 +352,12 @@ function IssueSurfaceContent({
             )}
             {controller.viewMode === "gantt" && (
               <GanttView issues={controller.filteredGanttIssues} />
+            )}
+            {controller.viewMode === "dag" && (
+              <DagView
+                graphQuery={controller.dagGraph}
+                hasActiveFilters={controller.hasActiveFilters}
+              />
             )}
             {controller.viewMode === "swimlane" && (
               <SwimLaneView

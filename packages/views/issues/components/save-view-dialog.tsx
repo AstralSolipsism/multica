@@ -53,6 +53,8 @@ import {
   type SortField,
   type SwimlaneGrouping,
   type ViewMode,
+  type DagDirection,
+  type DagGrouping,
 } from "@multica/core/issues/stores/view-store";
 import {
   ViewStoreProvider,
@@ -103,6 +105,7 @@ const LAYOUT_LABEL_KEY = {
   table: "table",
   swimlane: "swimlane",
   gantt: "gantt",
+  dag: "dag",
 } as const;
 
 const GROUPING_LABEL_KEY = {
@@ -154,6 +157,8 @@ export function DraftDefinitionFields() {
   const viewMode = useViewStore((s) => s.viewMode);
   const grouping = useViewStore((s) => s.grouping);
   const swimlaneGrouping = useViewStore((s) => s.swimlaneGrouping);
+  const dagDirection = useViewStore((s) => s.dagDirection);
+  const dagGrouping = useViewStore((s) => s.dagGrouping);
   const sortBy = useViewStore((s) => s.sortBy);
   const sortDirection = useViewStore((s) => s.sortDirection);
   const cardProperties = useViewStore((s) => s.cardProperties);
@@ -181,13 +186,27 @@ export function DraftDefinitionFields() {
         : propertyName(grouping)
       : viewMode === "swimlane"
         ? t(($) => $.display[SWIMLANE_LABEL_KEY[swimlaneGrouping]])
-        : null;
+        : viewMode === "dag"
+          ? t(($) => $.dag[
+              dagGrouping === "parent"
+                ? "grouping_parent"
+                : dagGrouping === "none"
+                  ? "grouping_none"
+                  : "grouping_project"
+            ])
+          : null;
+  const dagDirectionLabel =
+    viewMode === "dag"
+      ? t(($) => $.dag[dagDirection === "TB" ? "direction_tb" : "direction_lr"])
+      : null;
   const sortLabel =
-    sortBy in SORT_LABEL_KEY
-      ? t(($) => $.display[SORT_LABEL_KEY[sortBy as keyof typeof SORT_LABEL_KEY]])
-      : propertyName(sortBy);
+    viewMode === "dag"
+      ? null
+      : sortBy in SORT_LABEL_KEY
+        ? t(($) => $.display[SORT_LABEL_KEY[sortBy as keyof typeof SORT_LABEL_KEY]])
+        : propertyName(sortBy);
   const sortDirectionLabel =
-    sortBy === "position"
+    viewMode === "dag" || sortBy === "position"
       ? null
       : sortDirection === "asc"
         ? t(($) => $.display.ascending_title)
@@ -195,6 +214,7 @@ export function DraftDefinitionFields() {
   const displaySummary = [
     layoutLabel,
     groupingLabel,
+    dagDirectionLabel,
     sortLabel,
     sortDirectionLabel,
   ]
@@ -244,7 +264,7 @@ export function DraftDefinitionFields() {
             <div className="flex items-center gap-3">
               <Label className={ROW_LABEL}>{t(($) => $.save_view.layout_label)}</Label>
               <Select
-                items={(["list", "board", "table", "swimlane"] as const).map((mode) => ({
+                items={(["list", "board", "table", "swimlane", "dag"] as const).map((mode) => ({
                   value: mode as string,
                   label: t(($) => $.view[LAYOUT_LABEL_KEY[mode]]),
                 }))}
@@ -258,7 +278,7 @@ export function DraftDefinitionFields() {
                 </SelectTrigger>
                 <SelectContent align="start">
                   <SelectGroup>
-                    {(["list", "board", "table", "swimlane"] as const).map((mode) => (
+                    {(["list", "board", "table", "swimlane", "dag"] as const).map((mode) => (
                       <SelectItem key={mode} value={mode}>
                         {t(($) => $.view[LAYOUT_LABEL_KEY[mode]])}
                       </SelectItem>
@@ -344,6 +364,75 @@ export function DraftDefinitionFields() {
                 </Select>
               </div>
             )}
+            {viewMode === "dag" && (
+              <>
+                <div className="flex items-center gap-3">
+                  <Label className={ROW_LABEL}>
+                    {t(($) => $.dag.direction_label)}
+                  </Label>
+                  <Select
+                    items={[
+                      { value: "LR", label: t(($) => $.dag.direction_lr) },
+                      { value: "TB", label: t(($) => $.dag.direction_tb) },
+                    ]}
+                    value={dagDirection}
+                    onValueChange={(v) => {
+                      if (v) act.setDagDirection(v as DagDirection);
+                    }}
+                  >
+                    <SelectTrigger size="sm" className="w-64" aria-label={t(($) => $.dag.direction_label)}>
+                      <SelectValue>
+                        {t(($) => $.dag[dagDirection === "TB" ? "direction_tb" : "direction_lr"])}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent align="start">
+                      <SelectGroup>
+                        <SelectItem value="LR">{t(($) => $.dag.direction_lr)}</SelectItem>
+                        <SelectItem value="TB">{t(($) => $.dag.direction_tb)}</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Label className={ROW_LABEL}>
+                    {t(($) => $.dag.grouping_label)}
+                  </Label>
+                  <Select
+                    items={[
+                      { value: "project", label: t(($) => $.dag.grouping_project) },
+                      { value: "parent", label: t(($) => $.dag.grouping_parent) },
+                      { value: "none", label: t(($) => $.dag.grouping_none) },
+                    ]}
+                    value={dagGrouping}
+                    onValueChange={(v) => {
+                      if (v) act.setDagGrouping(v as DagGrouping);
+                    }}
+                  >
+                    <SelectTrigger size="sm" className="w-64" aria-label={t(($) => $.dag.grouping_label)}>
+                      <SelectValue>
+                        {t(($) => $.dag[
+                          dagGrouping === "parent"
+                            ? "grouping_parent"
+                            : dagGrouping === "none"
+                              ? "grouping_none"
+                              : "grouping_project"
+                        ])}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent align="start">
+                      <SelectGroup>
+                        <SelectItem value="project">{t(($) => $.dag.grouping_project)}</SelectItem>
+                        <SelectItem value="parent">{t(($) => $.dag.grouping_parent)}</SelectItem>
+                        <SelectItem value="none">{t(($) => $.dag.grouping_none)}</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
+            {/* The graph endpoint ignores sort — DAG drafts omit ordering
+                rather than save a no-op default. */}
+            {viewMode !== "dag" && (
             <div className="flex items-center gap-3">
               <Label className={ROW_LABEL}>
                 {t(($) => $.display.ordering_section)}
@@ -405,7 +494,8 @@ export function DraftDefinitionFields() {
                 )}
               </div>
             </div>
-            {viewMode !== "table" && (
+            )}
+            {viewMode !== "table" && viewMode !== "dag" && (
               <div className="flex items-start gap-3">
                 <Label className={`${ROW_LABEL} pt-1`}>
                   {t(($) => $.display.card_properties_section)}
@@ -611,6 +701,11 @@ export function SaveViewDialog({
         swimlaneGrouping: state.swimlaneGrouping,
         ganttZoom: state.ganttZoom,
         ganttShowCompleted: state.ganttShowCompleted,
+        // DAG defaults seed the first open; folded representatives stay a
+        // per-user surface preference and are never part of the view
+        // definition.
+        dagDirection: state.dagDirection,
+        dagGrouping: state.dagGrouping,
       },
     };
     if (editView) {
