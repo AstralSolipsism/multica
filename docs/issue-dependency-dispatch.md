@@ -93,7 +93,37 @@ Core exposes camelCase dependency and outcome fields. Use
 `updateIssueWithDependencies`, and `batchUpdateIssues`' third argument.
 `parseWithFallback` preserves committed issue data while malformed additive
 diagnostics become `null`. Missing queue/run identity cannot parse as successful
-dispatch. No CLI flag or UI confirmation flow ships in OL-41.
+dispatch. OL-42 adds CLI relationship commands and refusal output; the human
+confirmation interaction remains the UI/API contract above.
+
+## CLI integration (OL-42)
+
+`issue create/update --blocked-by <issue-key-or-uuid>` is repeatable. Create
+submits one compound POST; update reads `dependency_version` and submits one
+compound PATCH replacing the complete direct set. `update --clear-blocked-by`
+submits `[]` and is mutually exclusive with `--blocked-by`.
+`issue dependency list/add/remove <issue>` share the same endpoints; add/remove
+require `--blocked-by` and carry the read version without conflict retries.
+Only direct edges are edited; inherited and unfinished prerequisites remain
+separate in JSON and table output. Unknown/malformed read data prevents edits.
+
+Ordinary commands retain their old endpoints, which still enforce admission.
+With `--output json`, dependency HTTP errors preserve their full JSON up to
+1 MiB (including projections larger than the CLI's former 4 KiB error cap) on
+stdout and return the existing nonzero exit classification. Larger issue error
+bodies produce a local `body_truncated: true` diagnostic with the HTTP status;
+incomplete projections are not emitted as server JSON and never cause a retry.
+`--output table` emits readable refusal guidance on stderr only.
+A 404/405 never causes a fallback write. A saved comment
+with a blocked target prints the saved comment and all outcomes, then exits 1
+with guidance not to repost. Partial success can include other queued targets.
+
+`TestDependencyCLI*` in `server/cmd/multica` runs real CLI process entry points
+against isolated HTTP peers for parameters, versions, compatibility, JSON and
+exit codes. `TestDependencyCLIIntegration` in `server/internal/handler` builds
+the CLI and runs it against real handlers, auth and PostgreSQL, including the
+human JWT preview/confirmation API. Both use only test credentials and fake
+runtimes. Run with the agent CLI guard; no force/override CLI flag is provided.
 
 ## Execution coverage and validation
 

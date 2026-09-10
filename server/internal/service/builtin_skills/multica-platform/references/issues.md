@@ -6,7 +6,7 @@ Product contracts the runtime brief does not fully encode.
 - [Reading a linked PR's real state](#reading-a-linked-prs-real-state)
 - [Custom properties: typed workflow state](#custom-properties-typed-workflow-state)
 - [Status changes have server side effects](#status-changes-have-server-side-effects)
-- [Explicit prerequisites: Stage 2 API contract](#explicit-prerequisites-stage-2-api-contract)
+- [Explicit prerequisites and execution admission](#explicit-prerequisites-and-execution-admission)
 - [Claim ownership without duplicating a run](#claim-ownership-without-duplicating-a-run)
 - [Who else is running right now](#who-else-is-running-right-now)
 - [Sub-issues: todo starts work now, backlog parks it](#sub-issues-todo-starts-work-now-backlog-parks-it)
@@ -265,13 +265,40 @@ ancestors; parentage alone does not block execution. Only each prerequisite's
 own current effective `done` category satisfies it. Existing status-write
 permissions remain unchanged; `in_review` and `cancelled` are not satisfaction.
 
-The future CLI parameter is `--blocked-by`. It is **not available in this
-stage**. Do not simulate it with `--parent`, `--stage`, free-form fields, or a second
-post-create write. The compound API paths are
+Register known prerequisites when creating the plan. Parentage and stages do
+not substitute for explicit dependency edges. These commands accept issue keys
+or full UUIDs; repeat `--blocked-by` once per prerequisite (no `--depends-on`
+alias). Cross-project prerequisites are allowed within one workspace.
+
+```bash
+multica issue create --title "Checkout API" --parent MUL-32 --stage 3 \
+  --project <project-uuid> --blocked-by MUL-39 --blocked-by MUL-41 --status backlog
+multica issue dependency list MUL-42 --output json
+multica issue dependency add MUL-42 --blocked-by MUL-40
+multica issue dependency remove MUL-42 --blocked-by MUL-40
+multica issue update MUL-42 --blocked-by MUL-39 --blocked-by MUL-41
+multica issue update MUL-42 --clear-blocked-by
+```
+
+`create` writes the issue, parent/project/stage, prerequisites and any allowed
+dispatch together. `update --blocked-by` **replaces all direct prerequisites**;
+it does not append. `--clear-blocked-by` explicitly clears them and is mutually
+exclusive with `--blocked-by`. Omitting both leaves prerequisites unchanged.
+`dependency add/remove` read the direct set and submit an edited set. All three
+update forms carry the server version from that read; a conflict exits nonzero
+without automatic rereading or retrying. Read again and decide before a new edit.
+Inherited prerequisites are shown separately; edit their source issue to change
+them. The CLI does not decide whether a prerequisite is complete or removable.
+
+The compound API paths are
 `POST /api/issues/with-dependencies` and
 `PATCH /api/issues/{id}/with-dependencies`; writes use the same dependency
 admission as enqueue, claim and retry.
-Do not fall back to ordinary create/update after 404/405.
+The CLI fails explicitly on 404/405 (unsupported/disabled API or inaccessible
+issue); it never falls back to ordinary create/update. On an older CLI that
+does not recognize these flags, stop and report the missing capability. Never
+omit dependencies to make creation or dispatch succeed. Commands without new
+dependency flags keep their original HTTP paths and behavior.
 
 `blocked_by` is an array of UUIDs/identifiers:
 omission preserves direct relations, `[]` clears them, and `null` is invalid.
@@ -320,6 +347,31 @@ normal admission. Comment saves remain successful when dispatch is blocked;
 inspect `trigger_outcomes` rather than assuming a mention ran. Batch updates use
 `dependency_overrides` keyed by issue ID and retain per-item results. Missing or
 malformed outcome fields mean unknown, never permission to retry a write.
+
+CLI `--output json` preserves the server's dependency and dispatch fields, and
+dependency HTTP refusals print the structured error body on stdout with guidance
+on stderr. `--output table` prints readable refusal guidance on stderr only;
+choose JSON when a caller needs the structured error body. Keep the streams
+separate. Issue error bodies are bounded at 1 MiB (other paths retain 4 KiB).
+An oversized body produces a local JSON diagnostic with `body_truncated: true`,
+`http_status` and `error`, not a partial server payload. Complete diagnostics
+are unavailable; do not retry the write automatically. The HTTP failure and
+its nonzero exit classification are preserved.
+Exit codes retain the existing contract:
+409/conflict = 1, 403/permission = 3, 404 = 4, 400/422 = 5; a 405 is 1.
+`issue comment add` can exit 1 **after the comment was saved** when any
+`trigger_outcomes` entry is blocked. Its JSON is the saved comment, including
+the comment ID and all target outcomes, even when other targets did start.
+Do not repost the comment or treat a nonzero exit as proof that no write happened.
+
+When prerequisites are ready, advance the issue using ordinary assignment and
+status commands under the existing stage/Squad/automation workflow. When
+`dependency_unsatisfied` is returned, stop dispatching and suggest next steps or
+request human handling. `--no-start` is not an exemption for a new machine
+assignment. CLI task tokens, PATs and cloud PATs never become human authority
+through an owner/originator, a header, a flag, or a confirmation string. This
+CLI supplies no force/override flag; the explicit human interaction belongs to
+the authenticated UI/API flow above.
 
 ## Complete issue graph: Stage 3 API contract
 
