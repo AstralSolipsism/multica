@@ -2,6 +2,7 @@ export {
   ApiClient,
   ApiError,
   clientErrorMessage,
+  dependencyErrorDetails,
   dispatchReasonCode,
   errorCode,
   PreviewTooLargeError,
@@ -11,6 +12,7 @@ export type {
   ApiClientOptions,
   ClientRuntimeSnapshot,
   ClientUsageRequest,
+  DependencyErrorDetails,
 } from "./client";
 export type { GlmQuotaStatus, GlmQuotaSnapshot, GlmQuotaWindow } from "./schemas";
 export { parseWithFallback, setSchemaLogger } from "./schema";
@@ -20,7 +22,8 @@ export type { IssueGraph, IssueGraphNode, IssueGraphRequest } from "./issue-grap
 export type {
   DependencyView, IssuePrerequisite, IssueWithDependencies,
   CreateIssueWithDependenciesRequest, UpdateIssueWithDependenciesRequest,
-  IssueBatchUpdateResult,
+  IssueBatchUpdateResult, IssueDependencyPreview, DependencyMutationFields,
+  DependencyOverride,
 } from "./dependency-schemas";
 export type { ParseOptions } from "./schema";
 export { DuplicateIssueErrorBodySchema } from "./schemas";

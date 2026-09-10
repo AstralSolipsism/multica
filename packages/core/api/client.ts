@@ -615,6 +615,38 @@ export function dispatchReasonCode(err: unknown): string | undefined {
   return undefined;
 }
 
+export interface DependencyErrorDetails {
+  /** The machine-readable dependency refusal (`dependency_unsatisfied`, …). */
+  reasonCode: string;
+  /** The dependency projection the server attached to the refusal, when it
+   *  sent one — the authoritative replacement for whatever the UI displayed
+   *  before the rejected write. null = unknown, never "all satisfied". */
+  dependencies: DependencyView | null;
+}
+
+// dependencyErrorDetails reads the structured body a `with-dependencies`
+// refusal carries ({ error, reason_code, dependencies? } — see
+// writeDependencyError in server/internal/handler/issue_dependency.go). It
+// returns null for non-dependency errors so callers keep their generic
+// handling; a `reason_code` that is not a dependency code is not ours to
+// interpret here (dispatchReasonCode already covers the admission family).
+export function dependencyErrorDetails(err: unknown): DependencyErrorDetails | null {
+  if (!(err instanceof ApiError) || !err.body || typeof err.body !== "object") {
+    return null;
+  }
+  const body = err.body as { reason_code?: unknown; dependencies?: unknown };
+  if (typeof body.reason_code !== "string" || !body.reason_code.startsWith("dependency_")) {
+    return null;
+  }
+  const dependencies =
+    body.dependencies === undefined
+      ? null
+      : parseWithFallback<DependencyView | null>(body.dependencies, DependencyViewSchema, null, {
+          endpoint: "with-dependencies error body",
+        });
+  return { reasonCode: body.reason_code, dependencies };
+}
+
 // clientErrorMessage returns the server's message only when it is a CLIENT
 // error (4xx). Handlers write those for the user — "autopilot is not active",
 // "Idempotency-Key is too long" — so they are worth rendering. A 5xx message is

@@ -121,6 +121,13 @@ export const issueKeys = {
     ] as const,
   detail: (wsId: string, id: string) =>
     [...issueKeys.all(wsId), "detail", id] as const,
+  /** Prefix for every per-issue dependency projection in a workspace — a
+   *  relation or status write on one issue can change another issue's
+   *  inherited/unsatisfied sets, so mutations invalidate the whole prefix. */
+  dependenciesAll: (wsId: string) =>
+    [...issueKeys.all(wsId), "dependencies"] as const,
+  dependencies: (wsId: string, id: string) =>
+    [...issueKeys.dependenciesAll(wsId), id] as const,
   /** Resolve a bare issue identifier (e.g. "MUL-123") to an issue. */
   identifier: (wsId: string, identifier: string) =>
     [...issueKeys.all(wsId), "identifier", identifier] as const,
@@ -431,6 +438,23 @@ export function issueDetailOptions(wsId: string, id: string) {
   return queryOptions({
     queryKey: issueKeys.detail(wsId, id),
     queryFn: () => api.getIssue(id),
+  });
+}
+
+/**
+ * The dependency projection for one issue (`GET /api/issues/:id/dependencies`):
+ * direct/inherited prerequisites, direct successors, the unsatisfied subset
+ * and the opaque `dependencyVersion` a replacing write must echo back.
+ *
+ * A malformed payload parses to `null` ("unknown"), never to an empty — and
+ * therefore falsely "ready" — view; callers render that as needing a refresh.
+ * Dependency state rides the same WS invalidation as the rest of the issue
+ * (`issueKeys.all(wsId)` covers this prefix), so no custom staleTime here.
+ */
+export function issueDependenciesOptions(wsId: string, id: string) {
+  return queryOptions({
+    queryKey: issueKeys.dependencies(wsId, id),
+    queryFn: () => api.getIssueDependencies(id),
   });
 }
 

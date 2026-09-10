@@ -18,6 +18,7 @@ import {
   Trash2,
   Unlink,
   UserMinus,
+  Workflow,
 } from "lucide-react";
 import type { Issue } from "@multica/core/types";
 import { resolveWorkdirCopyTarget } from "@multica/core/issues";
@@ -119,6 +120,7 @@ export function IssueActionsMenuItems({
     openSetParent,
     removeParent,
     openAddChild,
+    openEditDependencies,
     openDeleteConfirm,
   } = actions;
 
@@ -351,6 +353,13 @@ export function IssueActionsMenuItems({
           <P.Item onClick={openAddChild}>
             <ArrowDown className="h-3.5 w-3.5" />
             {t(($) => $.actions.add_sub_issue)}
+          </P.Item>
+          {/* Prerequisite (blocked_by) editing — the same shared editor backs
+              the detail sidebar and the DAG node menu, so a relation change
+              looks and behaves identically from every entry point (OL-44). */}
+          <P.Item onClick={openEditDependencies}>
+            <Workflow className="h-3.5 w-3.5" />
+            {t(($) => $.actions.edit_dependencies)}
           </P.Item>
         </P.SubContent>
       </P.Sub>

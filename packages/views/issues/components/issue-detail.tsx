@@ -68,7 +68,7 @@ import { formatDateOnly, isPastDateOnly } from "@multica/core/issues/date";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { toast } from "sonner";
 import { errorCode } from "@multica/core/api";
-import { StatusIcon, PriorityIcon, StatusPicker, PriorityPicker, StagePicker, StartDatePicker, DueDatePicker, AssigneePicker, LabelPicker } from ".";
+import { StatusIcon, PriorityIcon, StatusPicker, PriorityPicker, StagePicker, StartDatePicker, DueDatePicker, AssigneePicker, LabelPicker, IssueDependenciesSection } from ".";
 import { maxSiblingStage } from "./pickers/stage-picker";
 import { CustomPropertyValueEditor, CustomPropertyValueDisplay } from "./pickers/custom-property-picker";
 import { Switch } from "@multica/ui/components/ui/switch";
@@ -2493,6 +2493,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </div>
       )}
 
+      {/* Prerequisites — direct + inherited blocked_by edges, their source
+          project/state, and what this issue blocks. Editing (add/remove) goes
+          through the shared editor; the Relations menu carries the same entry
+          so an issue with zero edges still reaches it (OL-44). */}
+      <IssueDependenciesSection issue={issue} />
+
       {/* Pull requests — hidden when the workspace disables the PR sidebar
           (or the GitHub master switch is off). Backend data is kept either
           way so re-enabling restores the section instantly. */}
@@ -2771,7 +2777,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               // to the list we came from, falling back to all issues.
               onDeletedFallbackPath={onDelete ? undefined : paths.issues()}
               trigger={
-                <Button variant="ghost" size="icon-sm" className="text-muted-foreground">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground"
+                  aria-label={t(($) => $.detail.more_actions)}
+                >
                   <MoreHorizontal />
                 </Button>
               }

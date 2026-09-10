@@ -36,6 +36,13 @@ import type {
   MoveIssueRequest,
   UpdateIssueRequest,
 } from "../types";
+import type {
+  CreateIssueWithDependenciesRequest,
+  DependencyMutationFields,
+  DependencyOverride,
+  IssueWithDependencies,
+  UpdateIssueWithDependenciesRequest,
+} from "../api/dependency-schemas";
 import type { TimelineEntry, IssueSubscriber, Reaction } from "../types";
 import { sortTimelineEntriesAsc } from "./timeline-sort";
 import {
@@ -67,7 +74,21 @@ export type UpdateIssueMutationInput = {
    * while the request sent to the server contains relative anchors instead.
    */
   move_intent?: Pick<MoveIssueRequest, "before_id" | "after_id">;
-} & UpdateIssueRequest;
+} & UpdateIssueRequest &
+  DependencyMutationFields;
+
+/** The compound `with-dependencies` write path is required exactly when the
+ *  mutation carries dependency semantics (a `blocked_by` replacement set, its
+ *  expected version, or a one-shot human override challenge). Plain field
+ *  edits keep the legacy endpoints — never send dependency fields on them,
+ *  and never fall back to them after an ambiguous compound response. */
+function hasDependencyFields(data: DependencyMutationFields): boolean {
+  return (
+    data.blockedBy !== undefined ||
+    data.expectedDependencyVersion !== undefined ||
+    data.dependencyOverride !== undefined
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Per-status pagination
@@ -97,6 +118,11 @@ function useIssueCreateMutation<TVariables>(
         qc.invalidateQueries({ queryKey: issueKeys.children(wsId, newIssue.parent_issue_id) });
         qc.invalidateQueries({ queryKey: issueKeys.childProgress(wsId) });
       }
+      // A compound create may have registered prerequisite edges: refresh the
+      // dependency projections (the new issue's own inherited set among them).
+      if ("dependencies" in newIssue) {
+        qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
+      }
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: issueKeys.list(wsId) });
@@ -111,7 +137,12 @@ function useIssueCreateMutation<TVariables>(
 }
 
 export function useCreateIssue() {
-  return useIssueCreateMutation((data: CreateIssueRequest) => api.createIssue(data));
+  return useIssueCreateMutation(
+    (data: CreateIssueRequest & DependencyMutationFields) =>
+      hasDependencyFields(data)
+        ? api.createIssueWithDependencies(data as CreateIssueWithDependenciesRequest)
+        : api.createIssue(data),
+  );
 }
 
 export function useCreateCommentSubIssue() {
@@ -129,8 +160,19 @@ export function useUpdateIssue() {
   const wsId = useWorkspaceId();
   return useMutation({
     mutationFn: ({ id, move_intent: moveIntent, ...data }: UpdateIssueMutationInput) => {
-      if (!moveIntent) return api.updateIssue(id, data);
-      const { position: _optimisticPosition, ...target } = data;
+      if (!moveIntent) {
+        const { blockedBy, expectedDependencyVersion, dependencyOverride, ...issueFields } = data;
+        if (hasDependencyFields(data)) {
+          return api.updateIssueWithDependencies(id, {
+            ...issueFields,
+            blockedBy,
+            expectedDependencyVersion,
+            dependencyOverride,
+          } as UpdateIssueWithDependenciesRequest);
+        }
+        return api.updateIssue(id, issueFields);
+      }
+      const { position: _optimisticPosition, blockedBy: _b, expectedDependencyVersion: _e, dependencyOverride: _d, ...target } = data;
       return api.moveIssue(id, { ...target, ...moveIntent });
     },
     onMutate: ({ id, move_intent: _moveIntent, ...data }) => {
@@ -140,12 +182,17 @@ export function useUpdateIssue() {
       // to predict optimistically. Keep the authoritative raw description in
       // cache so hidden channel-media markers remain available as the base for
       // a rapid follow-up edit. mutationFn still sends the full payload.
+      // The dependency fields ride the compound write path and describe
+      // relations, not Issue columns — never patch them into the cache.
       const {
         suppress_run: _suppressRun,
         description: _description,
         description_base: _descriptionBase,
         title_base: _titleBase,
         expected_revision: _expectedRevision,
+        blockedBy: _blockedBy,
+        expectedDependencyVersion: _expectedDependencyVersion,
+        dependencyOverride: _dependencyOverride,
         ...patch
       } = data;
       // Fire-and-forget cancelQueries — keeps onMutate synchronous so the
@@ -236,6 +283,14 @@ export function useUpdateIssue() {
       qc.invalidateQueries({ queryKey: issueKeys.myAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.flatAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
+      // A rejected compound write changes nothing, but the state the server
+      // compared against (dependency version, prerequisite statuses) did move
+      // — refresh projections so the UI shows the current picture, not the
+      // snapshot the failed write was built from.
+      if (hasDependencyFields(vars)) {
+        qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
+        void invalidateIssueQueries(qc, wsId, "graph");
+      }
     },
     onSuccess: (serverIssue, vars) => {
       // Reconcile with the authoritative server entity by patching the one card
@@ -255,14 +310,23 @@ export function useUpdateIssue() {
         description_base: _descriptionBase,
         move_intent: _moveIntent,
         id: _id,
+        blockedBy: _intentBlockedBy,
+        expectedDependencyVersion: _intentEdv,
+        dependencyOverride: _intentOverride,
         ...intent
       } = vars;
       // Drop `properties` from the reconcile payload: the bag is owned by the
       // property mutation pipeline (single-key atomic writes + its own
       // optimistic state). An UpdateIssue snapshot taken before a concurrent
       // property write resolves would otherwise overwrite the newer bag
-      // (clean-room review F3 response-ordering race).
-      const { properties: _staleBag, ...reconcilable } = serverIssue;
+      // (clean-room review F3 response-ordering race). `dependencies` is the
+      // compound write's relation projection — it lives in the dedicated
+      // dependencies cache below, not on the Issue entity.
+      const {
+        properties: _staleBag,
+        dependencies,
+        ...reconcilable
+      } = serverIssue as Issue & { dependencies?: IssueWithDependencies["dependencies"] };
       const reconcile = applyIssueChange(qc, wsId, serverIssue.id, reconcilable as typeof serverIssue, {
         changed: issueChangedDims(intent, serverIssue),
         baseIssue: serverIssue,
@@ -275,6 +339,16 @@ export function useUpdateIssue() {
           (serverIssue.revision !== undefined &&
             serverIssue.revision > current.revision),
       });
+      if (dependencies !== undefined) {
+        // Seed the target's projection from the compound response, then
+        // refresh every other projection: a relation/status write here can
+        // change another issue's inherited or unsatisfied sets.
+        if (dependencies) {
+          qc.setQueryData(issueKeys.dependencies(wsId, serverIssue.id), dependencies);
+        }
+        qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
+        void invalidateIssueQueries(qc, wsId, "graph");
+      }
       reconcileIssueFullSnapshotRevision(
         qc,
         wsId,
@@ -434,10 +508,19 @@ export function useBatchUpdateIssues() {
     mutationFn: ({
       ids,
       updates,
+      dependencyOverrides,
     }: {
       ids: string[];
       updates: UpdateIssueRequest;
-    }) => api.batchUpdateIssues(ids, updates),
+      /** Per-target one-shot human confirmations, keyed by issue id. Each
+       *  entry authorizes exactly that issue's write under the shared
+       *  `updates` body — never carry one item's confirmation to another. */
+      dependencyOverrides?: Record<string, DependencyOverride>;
+      // Call shape stays two-argument when no item carries a confirmation so
+      // existing callers (and their call-site assertions) are untouched.
+    }) => dependencyOverrides
+      ? api.batchUpdateIssues(ids, updates, dependencyOverrides)
+      : api.batchUpdateIssues(ids, updates),
     onMutate: async ({ ids, updates }) => {
       // Control and description-merge fields are not safe optimistic cache
       // patches. The server resolves description against description_base, so
@@ -590,6 +673,12 @@ export function useBatchUpdateIssues() {
           Object.prototype.hasOwnProperty.call(_vars.updates, "project_id"),
       });
       qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
+      // A batch carrying per-item overrides changed relation-gated dispatch
+      // state; refresh dependency projections and any loaded graph snapshot.
+      if (_vars.dependencyOverrides && Object.keys(_vars.dependencyOverrides).length > 0) {
+        qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
+        void invalidateIssueQueries(qc, wsId, "graph");
+      }
       if (ctx) {
         invalidateStaleListKeys(qc, ctx.staleKeys);
       }
