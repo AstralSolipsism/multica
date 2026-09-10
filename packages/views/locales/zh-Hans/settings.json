@@ -877,7 +877,16 @@
     "install_error_installer_bind": "已安装 Bot，但未能绑定你的飞书身份。请重试或联系管理员。",
     "install_error_session_lost": "安装会话已失效或丢失，请重新扫码。",
     "install_error_forbidden": "你已没有在此工作区安装飞书 Bot 的权限，请联系工作区管理员。",
-    "install_error_generic": "安装失败，请重试。"
+    "install_error_generic": "安装失败，请重试。",
+    "conversation_title": "与智能体交流",
+    "conversation_description": "这些会话的参与者无需 Labrastro 账号。智能体会澄清、整理意见，再以自己的身份回填评论；处理会有延迟和模型消耗，不会把每条消息立即逐字变成任务评论。",
+    "conversation_groups": "群聊 ID（每行一个 oc_ ID，群内各话题独立）",
+    "conversation_directs": "私聊 ID（每行一个 oc_ ID）",
+    "conversation_scope": "授权范围是当前整个工作区，使用此智能体的正常工具，并遵守你的智能体调用权限。这些会话的所有参与者都可提供输入。保存会启用新会话并使旧运行授权失效。通知外发授权仍需单独配置。",
+    "conversation_save": "授权这些会话",
+    "conversation_revoke": "撤销会话授权",
+    "conversation_unavailable": "配置不可用或正在刷新。草稿已保留，读取恢复后才能保存。",
+    "conversation_saved": "会话授权已保存。"
   },
   "composio": {
     "section_title": "Composio",

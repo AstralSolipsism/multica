@@ -34,9 +34,9 @@ import (
 // implementation). Adding a platform is "register a ResolverSet", not "edit
 // the Router".
 type Router struct {
-	mu       sync.RWMutex
-	sets     map[channel.Type]ResolverSet
-	feedback FeedbackHandler
+	mu           sync.RWMutex
+	sets         map[channel.Type]ResolverSet
+	conversation ConversationHandler
 
 	issues    IssueCreator
 	tasks     TaskEnqueuer
@@ -351,6 +351,29 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	if msg.Source.ChatType == channel.ChatTypeGroup && !msg.AddressedToBot {
 		return r.drop(ctx, set, msg, inst.ID, DropReasonNotAddressedInGroup), finalizeMark, nil
 	}
+	r.mu.RLock()
+	conversation := r.conversation
+	r.mu.RUnlock()
+	if conversation != nil {
+		mediaSeconds := 0.0
+		if set.Media != nil && set.Media.HasMedia(msg) {
+			mediaSeconds = r.mediaTimeout.Seconds()
+		}
+		deadline := time.Now().Add(r.mediaTimeout)
+		res, handled, err := conversation(ctx, inst, msg, claimToken, bareFresh, startChat, mediaSeconds)
+		if err != nil {
+			return Result{}, finalizeRelease, err
+		}
+		if handled {
+			res.InstallationID, res.Sender = inst.ID, msg.Source.SenderID
+			res.runScheduled = res.Outcome == OutcomeIngested
+			if mediaSeconds > 0 && res.ConversationMessageID.Valid {
+				msg.Text = res.ConversationBody
+				r.enqueueMedia(set, inst, ResolvedIdentity{UserID: res.ConversationUserID}, res.ConversationMessageID, msg, res.ChatSessionID, db.Issue{}, pgtype.Text{}, "", pgtype.UUID{}, deadline)
+			}
+			return res, finalizeMark, nil
+		}
+	}
 
 	// 4. Identity check: map the platform sender to a Multica user and
 	//    re-verify workspace membership (no binding->member FK; MUL-3515 §4).
@@ -369,22 +392,6 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			return r.drop(ctx, set, msg, inst.ID, DropReasonNonWorkspaceMember), finalizeMark, nil
 		default:
 			return Result{}, finalizeRelease, fmt.Errorf("resolve sender: %w", err)
-		}
-	}
-
-	r.mu.RLock()
-	feedback := r.feedback
-	r.mu.RUnlock()
-	_, issueCommand := ParseIssueCommand(msg.CommandText)
-	if feedback != nil && !bareFresh && !startChat && !msg.ForceFresh && !issueCommand {
-		res, handled, err := feedback(ctx, inst, identity, msg)
-		if err != nil {
-			return Result{}, finalizeRelease, err
-		}
-		if handled {
-			res.InstallationID = inst.ID
-			res.Sender = msg.Source.SenderID
-			return res, finalizeMark, nil
 		}
 	}
 

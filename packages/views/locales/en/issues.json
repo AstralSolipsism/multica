@@ -611,7 +611,8 @@
       "source_rule_owner": "Autopilot rule publisher",
       "source_owner_fallback": "No precise owner — attributed to the agent owner",
       "source_backfill": "Backfilled attribution",
-      "source_unattributed": "No responsible member resolved"
+      "source_unattributed": "No responsible member resolved",
+      "source_channel_integration": "Integration conversation authorization"
     },
     "usage_total_tooltip": "Token usage for this issue — click for the per-run breakdown"
   },

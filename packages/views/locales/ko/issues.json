@@ -589,7 +589,8 @@
       "source_rule_owner": "오토파일럿 규칙 게시자",
       "source_owner_fallback": "정확한 담당자 없음 — 에이전트 소유자에게 귀속",
       "source_backfill": "백필된 귀속",
-      "source_unattributed": "책임 멤버를 확인할 수 없음"
+      "source_unattributed": "책임 멤버를 확인할 수 없음",
+      "source_channel_integration": "연동 대화 승인"
     },
     "usage_total_tooltip": "이 태스크의 토큰 사용량 — 클릭하면 실행별 내역"
   },

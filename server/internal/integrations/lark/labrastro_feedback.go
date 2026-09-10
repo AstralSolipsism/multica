@@ -12,7 +12,6 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/messagedelivery"
 	"github.com/multica-ai/multica/server/internal/util"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 const feedbackFragment = "#labrastro-feedback="
@@ -89,18 +88,4 @@ func (s *DeliverySender) ReadFeedbackMessage(ctx context.Context, workspaceID, i
 		return proof, nil
 	}
 	return messagedelivery.FeedbackMessage{}, messagedelivery.ErrFeedbackSource
-}
-
-func (s *DeliverySender) SendFeedbackNotice(ctx context.Context, f db.LabrastroMessageFeedback) error {
-	creds, _, err := s.resolveInstallation(ctx, util.UUIDToString(f.WorkspaceID), util.UUIDToString(f.InstallationID))
-	if err != nil {
-		return err
-	}
-	content, _ := json.Marshal(map[string]string{"text": f.Notice})
-	_, err = s.client.SendDeliveryMessage(ctx, creds, DeliveryMessageParams{
-		InstallationID: creds, ReceiveIDType: "chat_id", ReceiveID: f.ChatID,
-		MsgType: "text", Content: string(content), UUID: util.UUIDToString(f.AckUuid),
-		ReplyTarget: ReplyTarget{MessageID: f.InboundMessageID, InThread: f.ThreadID != ""},
-	})
-	return err
 }

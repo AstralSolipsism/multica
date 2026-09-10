@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -2145,6 +2146,14 @@ func claimResponseAgentIdentityMatches(resp AgentTaskResponse) bool {
 // means the task must not be dispatched; the builder has already cancelled it
 // where the failure semantics require it.
 func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, runtimeID, runtimeWorkspaceID string) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
+	if err := channel.AuthorizeConversationTask(r.Context(), h.Queries, *task, parseUUID(runtimeWorkspaceID)); err != nil {
+		if !errors.Is(err, channel.ErrConversationDenied) {
+			return resp, nil, 0, 0, h.rejectClaimSourceLoad(r.Context(), task, err, "conversation authorization", uuidToString(task.ID))
+		}
+		return resp, nil, 0, 0, h.failClaimedTaskBeforeLaunch(r.Context(), task,
+			"Conversation authorization was revoked or changed.", taskfailure.ReasonInvalidTaskIdentity,
+			"conversation_authorization_revoked", http.StatusConflict, "conversation authorization unavailable")
+	}
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp = taskToResponse(*task, runtimeWorkspaceID)
 	var issueNumber int32
@@ -2802,6 +2811,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// snapshot and remain private to Multica after /new rotates the route.
 		delivery, deliveryErr := h.Queries.GetChannelTaskDelivery(r.Context(), task.ID)
 		if deliveryErr == nil {
+			if task.OriginatorSource.String == channel.ConversationOrigin {
+				resp.Agent.Instructions += "\n\n" + conversationInstructions
+			}
 			resp.ChatChannelType = delivery.ChannelType
 			resp.ChatType = delivery.ChatType
 			resp.ChatChannelDeliversFiles = h.channelDeliversFiles(delivery.ChannelType)
@@ -4085,8 +4097,8 @@ func (h *Handler) reconcileCommentsOnCompletion(ctx context.Context, task *db.Ag
 	scheduled := 0
 	for i := range comments {
 		c := comments[i]
-		// Pending feedback has a durable worker; it owns the initial trigger.
-		if pending, err := h.Queries.IsPendingLabrastroFeedbackComment(ctx, c.ID); err != nil || pending {
+		// Retired feedback must not acquire an implicit wake during cutover.
+		if pending, err := h.Queries.IsRetiredLabrastroFeedbackComment(ctx, c.ID); err != nil || pending {
 			continue
 		}
 

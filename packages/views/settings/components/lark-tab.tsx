@@ -42,6 +42,7 @@ import { api, ApiError } from "@multica/core/api";
 import type { LarkInstallation, LarkInstallStatusResponse } from "@multica/core/types";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useLocale, useT } from "../../i18n";
+import { LarkConversationForm } from "./lark-conversation-form";
 import { TeamSubscriptionsSection } from "../../message-delivery";
 
 // MUL-3083: the Lark (international, open.larksuite.com) "connect a Bot"
@@ -74,7 +75,7 @@ export function LarkTab() {
   const canManage =
     currentMember?.role === "owner" || currentMember?.role === "admin";
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, isFetching } = useQuery({
     ...larkInstallationsOptions(wsId),
     enabled: !!wsId,
   });
@@ -165,6 +166,9 @@ export function LarkTab() {
                     key={inst.id}
                     installation={inst}
                     canManage={canManage}
+                    conversationSupported={data?.conversation_supported === true || inst.conversation != null}
+                    conversationWritable={data?.conversation_supported === true && !isError && !isFetching}
+                    workspaceId={wsId}
                     onDisconnect={() => setDisconnectTarget(inst.id)}
                   />
                 ))}
@@ -211,11 +215,17 @@ export function LarkTab() {
 }
 
 function InstallationRow({
+  conversationSupported,
+  workspaceId,
+  conversationWritable,
   installation,
   canManage,
   onDisconnect,
 }: {
   installation: LarkInstallation;
+  workspaceId: string;
+  conversationWritable: boolean;
+  conversationSupported: boolean;
   canManage: boolean;
   onDisconnect: () => void;
 }) {
@@ -259,6 +269,7 @@ function InstallationRow({
               when: new Date(installation.installed_at).toLocaleString(locale),
             })}
           </p>
+          {canManage && isActive && conversationSupported && <LarkConversationForm workspaceId={workspaceId} installation={installation} disabled={!conversationWritable} />}
         </div>
       </div>
       {canManage && isActive && (
@@ -335,7 +346,7 @@ export function LarkAgentBindButton({
     null,
   );
 
-  const { data: listing } = useQuery({
+  const { data: listing, isError, isFetching } = useQuery({
     ...larkInstallationsOptions(wsId),
     enabled: !!wsId,
   });
@@ -374,7 +385,13 @@ export function LarkAgentBindButton({
         className={className}
       />
     ) : (
-      <LarkAgentBotConnectedBadge installation={existing} className={className} />
+      <div className={className}>
+        <LarkAgentBotConnectedBadge installation={existing} />
+        {(listing?.conversation_supported === true || existing.conversation != null) && (
+          <LarkConversationForm workspaceId={wsId} installation={existing}
+            disabled={listing?.conversation_supported !== true || isError || isFetching} />
+        )}
+      </div>
     );
   }
 

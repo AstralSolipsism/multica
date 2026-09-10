@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	"github.com/multica-ai/multica/server/internal/messagedelivery/lifecycle"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -21,14 +22,15 @@ import (
 // InstallationService.DecryptAppSecret server-side). Likewise, the WS
 // lease columns are omitted; they are runtime state, not API surface.
 type LarkInstallationResponse struct {
-	ID              string  `json:"id"`
-	WorkspaceID     string  `json:"workspace_id"`
-	AgentID         string  `json:"agent_id"`
-	AppID           string  `json:"app_id"`
-	TenantKey       *string `json:"tenant_key,omitempty"`
-	BotOpenID       string  `json:"bot_open_id"`
-	InstallerUserID string  `json:"installer_user_id"`
-	Status          string  `json:"status"`
+	Conversation    *channel.ConversationGrant `json:"conversation,omitempty"`
+	ID              string                     `json:"id"`
+	WorkspaceID     string                     `json:"workspace_id"`
+	AgentID         string                     `json:"agent_id"`
+	AppID           string                     `json:"app_id"`
+	TenantKey       *string                    `json:"tenant_key,omitempty"`
+	BotOpenID       string                     `json:"bot_open_id"`
+	InstallerUserID string                     `json:"installer_user_id"`
+	Status          string                     `json:"status"`
 	// Region is the Lark cloud this installation lives on: "feishu"
 	// (mainland) or "lark" (international). The UI uses it to render a
 	// badge and to build the correct "Manage in Lark" dev-console host.
@@ -40,6 +42,7 @@ type LarkInstallationResponse struct {
 
 func larkInstallationToResponse(row lark.Installation) LarkInstallationResponse {
 	resp := LarkInstallationResponse{
+		Conversation:    row.Conversation,
 		ID:              uuidToString(row.ID),
 		WorkspaceID:     uuidToString(row.WorkspaceID),
 		AgentID:         uuidToString(row.AgentID),
@@ -101,9 +104,10 @@ func (h *Handler) ListLarkInstallations(w http.ResponseWriter, r *http.Request) 
 		out = append(out, larkInstallationToResponse(row))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"installations":     out,
-		"configured":        true,
-		"install_supported": h.LarkRegistration != nil && h.LarkAPIClient != nil && h.LarkAPIClient.IsConfigured(),
+		"installations":          out,
+		"configured":             true,
+		"conversation_supported": true,
+		"install_supported":      h.LarkRegistration != nil && h.LarkAPIClient != nil && h.LarkAPIClient.IsConfigured(),
 	})
 }
 

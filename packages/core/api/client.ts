@@ -271,6 +271,7 @@ import { type Logger, noopLogger } from "../logger";
 import { createRequestId, createSafeId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
+import { LarkInstallationsSchema, LarkConversationResponseSchema } from "../lark/schema";
 import {
   AgentTaskListSchema,
   AttachmentResponseSchema,
@@ -4974,7 +4975,10 @@ export class ApiClient {
 
   // Lark integration
   async listLarkInstallations(workspaceId: string): Promise<ListLarkInstallationsResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/lark/installations`);
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/lark/installations`);
+    const parsed = parseWithFallback<ListLarkInstallationsResponse | null>(raw, LarkInstallationsSchema, null, { endpoint: "listLarkInstallations" });
+    if (parsed === null) throw new Error("Conversation configuration could not be read. Refresh before saving.");
+    return parsed;
   }
 
   async beginLarkInstall(
@@ -4998,6 +5002,14 @@ export class ApiClient {
 
   async getLarkInstallStatus(workspaceId: string, sessionId: string): Promise<LarkInstallStatusResponse> {
     return this.fetch(`/api/workspaces/${workspaceId}/lark/install/${sessionId}/status`);
+  }
+
+  async setLarkConversation(workspaceId: string, installationId: string, chats: { chat_id: string; chat_type: "group" | "p2p" }[]): Promise<void> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/lark/installations/${installationId}/conversation`, {
+      method: "PUT", body: JSON.stringify({ scope: "workspace", chats }),
+    });
+    const parsed = parseWithFallback<unknown>(raw, LarkConversationResponseSchema, null, { endpoint: "setLarkConversation" });
+    if (parsed === null) throw new Error("Could not verify saved conversation authorization. Refresh and check the current configuration.");
   }
 
   async deleteLarkInstallation(workspaceId: string, installationId: string): Promise<void> {

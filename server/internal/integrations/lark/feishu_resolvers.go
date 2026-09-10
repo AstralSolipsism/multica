@@ -96,24 +96,10 @@ func (r *feishuInstallationResolver) ResolveInstallation(ctx context.Context, ms
 type feishuIdentityResolver struct{ store *ChannelStore }
 
 func (r *feishuIdentityResolver) ResolveSender(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage) (engine.ResolvedIdentity, error) {
-	binding, err := r.store.GetLarkUserBindingByOpenID(ctx, GetUserBindingByOpenIDParams{
-		InstallationID: inst.ID,
-		ChannelUserID:  msg.Source.SenderID,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return engine.ResolvedIdentity{}, engine.ErrSenderUnbound
-		}
-		return engine.ResolvedIdentity{}, err
-	}
-	isMember, err := r.store.IsWorkspaceMember(ctx, inst.WorkspaceID, binding.MulticaUserID)
-	if err != nil {
-		return engine.ResolvedIdentity{}, err
-	}
-	if !isMember {
-		return engine.ResolvedIdentity{}, engine.ErrSenderNotMember
-	}
-	return engine.ResolvedIdentity{UserID: binding.MulticaUserID}, nil
+	// Feishu conversations are authorized by the integration handler before
+	// member identity resolution. Missing assembly must never restore member
+	// impersonation merely because this sender happens to have a binding.
+	return engine.ResolvedIdentity{}, engine.ErrSenderNotMember
 }
 
 // ---- dedup ----
