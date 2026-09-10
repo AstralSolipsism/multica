@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   setQueryData: vi.fn(),
   refetch: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
+  searchResults: { issues: [] as unknown[] },
   deps: {
     view: null as unknown,
     isLoading: false,
@@ -35,21 +36,32 @@ vi.mock("@multica/core/issues/mutations", () => ({
 vi.mock("@multica/core/issues/queries", () => ({
   issueDetailOptions: (_wsId: string, id: string) => ({ queryKey: ["detail", id] }),
   issueDependenciesOptions: (_wsId: string, id: string) => ({ queryKey: ["deps", id] }),
+  issueSearchOptions: (_wsId: string, q: string) => ({ queryKey: ["search", q] }),
   issueKeys: {
     dependencies: (_wsId: string, id: string) => ["deps", id],
   },
 }));
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: (opts: { queryKey: string[] }) =>
-    opts.queryKey[0] === "detail"
-      ? { data: { id: "issue-1", identifier: "MUL-1", title: "Target" }, isSuccess: true }
-      : {
-          data: mocks.deps.view,
-          isLoading: mocks.deps.isLoading,
-          isError: mocks.deps.isError,
-          isSuccess: !mocks.deps.isLoading && !mocks.deps.isError,
-          refetch: mocks.refetch,
-        },
+  useQuery: (opts: { queryKey: string[]; enabled?: boolean }) => {
+    const kind = opts.queryKey[0];
+    if (kind === "detail") {
+      return { data: { id: "issue-1", identifier: "MUL-1", title: "Target" }, isSuccess: true };
+    }
+    if (kind === "search") {
+      return {
+        data: mocks.searchResults,
+        isSuccess: true,
+        isFetching: false,
+      };
+    }
+    return {
+      data: mocks.deps.view,
+      isLoading: mocks.deps.isLoading,
+      isError: mocks.deps.isError,
+      isSuccess: !mocks.deps.isLoading && !mocks.deps.isError,
+      refetch: mocks.refetch,
+    };
+  },
   useQueryClient: () => ({ setQueryData: mocks.setQueryData }),
 }));
 
@@ -236,11 +248,12 @@ describe("EditDependenciesModal", () => {
     mocks.deps.isError = false;
     mocks.save.mockResolvedValue({ id: "issue-1" });
     mocks.search.mockResolvedValue({ issues: [] });
+    mocks.searchResults = { issues: [] };
     mocks.refetch.mockResolvedValue({ data: mocks.deps.view });
   });
 
   it("adds a searched issue and saves the full replacement set with the reviewed version", async () => {
-    mocks.search.mockResolvedValue({
+    mocks.searchResults = {
       issues: [
         {
           id: "issue-7",
@@ -250,7 +263,7 @@ describe("EditDependenciesModal", () => {
           status_category: "todo",
         },
       ],
-    });
+    };
     const onClose = vi.fn();
     render(<EditDependenciesModal onClose={onClose} data={{ issueId: "issue-1" }} />);
 
@@ -291,7 +304,7 @@ describe("EditDependenciesModal", () => {
     expect(mocks.save).not.toHaveBeenCalled();
   });
 
-  it("re-bases onto the fresh projection after a version conflict and keeps the user's edits", async () => {
+  it("REVIEW preserves a concurrently added prerequisite when retrying the user removal", async () => {
     // The server refused v1 and attached the current (v2) projection.
     mocks.save.mockRejectedValueOnce(
       new TestApiError("conflict", 409, {
@@ -316,7 +329,7 @@ describe("EditDependenciesModal", () => {
     await waitFor(() =>
       expect(mocks.save).toHaveBeenLastCalledWith({
         id: "issue-1",
-        blockedBy: [],
+        blockedBy: ["issue-8"],
         expectedDependencyVersion: "v2",
       }),
     );

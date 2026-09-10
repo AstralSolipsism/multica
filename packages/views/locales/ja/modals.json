@@ -230,7 +230,7 @@
     "set_start_date": "開始日を設定...",
     "set_parent": "親タスクを設定...",
     "add_subissue": "サブタスクを追加...",
-    "add_prerequisite": "前提タスクを追加…",
+    "add_prerequisite": "前提タスクを追加...",
     "prerequisite_chip": "前提：{{identifier}}",
     "remove_prerequisite_aria": "前提 {{identifier}} を削除",
     "prerequisite_picker": {
@@ -241,7 +241,8 @@
       "title": "前提条件が未完了です",
       "body": "未完了の前提条件があるため、このタスクは作成後に開始されません。編集に戻る（例：バックログに置く）か、この実行だけを明示的に許可できます。",
       "cancel": "編集に戻る",
-      "confirm": "それでも作成して開始"
+      "confirm": "それでも作成して開始",
+      "uncertain_note": "結果は不明です——タスクがすでに作成されている可能性があります。再試行は同じ一回限りの許可を再利用します。重複した確認は元の結果を返し、二重作成にはなりません。"
     },
     "dependency_now_ready": "前提条件が完了しました——もう一度作成すると通常どおり開始されます。",
     "dependency_override_not_allowed": "現在のサインインでは未完了の前提条件を解除できません。",

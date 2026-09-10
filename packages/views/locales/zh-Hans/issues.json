@@ -644,7 +644,7 @@
     "remove_not_allowed": "只有人工账号才能移除未完成的前置",
     "remove_conflict": "前置刚刚发生变化——已刷新，请重试",
     "remove_failed": "更新前置失败",
-    "loading": "正在加载前置…",
+    "loading": "正在加载前置...",
     "load_error": "前置加载失败",
     "unknown_state": "前置状态不可用——请刷新后再编辑",
     "retry": "重试",
@@ -697,7 +697,7 @@
     "remove_parent_issue": "移除父任务",
     "remove_parent_issue_success": "已移除父任务",
     "add_sub_issue": "添加子任务...",
-    "edit_dependencies": "编辑前置…",
+    "edit_dependencies": "编辑前置...",
     "delete_issue": "删除任务"
   },
   "pickers": {

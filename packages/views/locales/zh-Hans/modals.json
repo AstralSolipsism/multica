@@ -230,7 +230,7 @@
     "set_start_date": "设置开始日期...",
     "set_parent": "设置父任务...",
     "add_subissue": "添加子任务...",
-    "add_prerequisite": "添加前置任务…",
+    "add_prerequisite": "添加前置任务...",
     "prerequisite_chip": "前置：{{identifier}}",
     "remove_prerequisite_aria": "移除前置 {{identifier}}",
     "prerequisite_picker": {
@@ -241,7 +241,8 @@
       "title": "前置未完成",
       "body": "此任务有未完成的前置，创建后不会启动。你可以返回编辑（例如先放入 backlog），或明确放行本次执行。",
       "cancel": "返回编辑",
-      "confirm": "仍然创建并启动"
+      "confirm": "仍然创建并启动",
+      "uncertain_note": "请求结果未知——任务可能已创建。重试将沿用同一份一次性许可：重复确认返回原结果，不会重复创建。"
     },
     "dependency_now_ready": "前置已完成——重新创建即可正常启动。",
     "dependency_override_not_allowed": "当前登录身份无法提前放行未完成的前置。",

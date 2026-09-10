@@ -134,7 +134,7 @@ export function IssueDependenciesSection({ issue }: { issue: Issue }) {
           {view && (
             <>
               {(unsatisfiedCount > 0 || view.hasRestrictedBlockers) && (
-                <div className="flex items-start gap-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-caption text-amber-700 dark:text-amber-400">
+                <div className="flex items-start gap-1.5 rounded-md bg-warning/10 px-2 py-1.5 text-caption text-warning">
                   <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
                   <span>
                     {unsatisfiedCount > 0 &&

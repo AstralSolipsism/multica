@@ -510,6 +510,13 @@ export function onIssueUpdated(
     statusOrProjectChanged:
       issue.status !== undefined || issue.project_id !== undefined,
   });
+  // Dependency projections evaluate the CURRENT state of every registered
+  // prerequisite (status, parent chain, revision — OL-38 D1). A relation-only
+  // compound edit publishes this event with every change flag false and just
+  // a bumped revision, so gating on the dims would strand an open detail
+  // page's prerequisite list. Invalidate the prefix on every accepted event:
+  // only mounted observers (open detail/editor) actually refetch.
+  qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
   // Group counts, branch membership and hierarchy are server-owned. Never
   // guess deltas from a partial branch; refetch the active Table queries.
   qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
@@ -775,4 +782,7 @@ export function onIssueDeleted(
   qc.invalidateQueries({ queryKey: issueKeys.assigneeGroupsAll(wsId) });
   qc.invalidateQueries({ queryKey: issueKeys.myAssigneeGroupsAll(wsId) });
   qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
+  // A deleted issue may have been a registered prerequisite — projections
+  // referencing it must re-read instead of pointing at a ghost.
+  qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
 }

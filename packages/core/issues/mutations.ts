@@ -409,6 +409,18 @@ export function useUpdateIssue() {
       if (ctx?.parentId || newParentId) {
         qc.invalidateQueries({ queryKey: issueKeys.childrenByParentsAll(wsId) });
       }
+      // Dependency projections read the CURRENT status/parent chain of every
+      // registered prerequisite. The WS event carries the same invalidation,
+      // but with the socket down this settle is the only refresh — and the
+      // compound path above already invalidated on success. Position/title
+      // writes don't affect readiness and skip this.
+      if (
+        vars.status !== undefined ||
+        Object.prototype.hasOwnProperty.call(vars, "parent_issue_id") ||
+        hasDependencyFields(vars)
+      ) {
+        qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
+      }
     },
   });
 }
@@ -496,6 +508,8 @@ export function useDeleteIssue() {
       qc.invalidateQueries({ queryKey: issueKeys.myAssigneeGroupsAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });
       qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
+      // The deleted issue may have been a registered prerequisite.
+      qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
       if (ctx?.metadata) invalidateDeletedIssueParentCaches(qc, wsId, ctx.metadata);
     },
   });
@@ -819,6 +833,8 @@ export function useBatchDeleteIssues() {
       qc.invalidateQueries({ queryKey: issueKeys.myAssigneeGroupsAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });
       qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
+      // Any deleted issue may have been a registered prerequisite.
+      qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
       if (ctx?.parentIssueIds && ctx.parentIssueIds.size > 0) {
         invalidateDeletedIssueParentCaches(qc, wsId, {
           parentIssueIds: Array.from(ctx.parentIssueIds),

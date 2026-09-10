@@ -145,19 +145,10 @@ export function RunConfirmModal({
   // an assignee write on the server's side of the trigger predicate.
   const isPromote = d.mode === "promote" && !!d.status;
 
-  const applyTo = (extra: Partial<UpdateIssueRequest>) => {
-    const base: UpdateIssueRequest = isPromote
-      ? { status: d.status }
-      : {
-          assignee_type: d.assigneeType ?? null,
-          assignee_id: d.assigneeId ?? null,
-        };
-    return { ...base, ...extra };
-  };
-
-  // The previewed mutation is byte-for-byte the body the confirm submits
-  // (minus suppress_run / dependency_override): the challenge the server
-  // signs covers exactly this payload, so the two can never drift apart.
+  // The ONE prospective write body. The preview signs exactly this, and the
+  // confirm extends the same object with suppress_run / dependencyOverride —
+  // never a second, separately-assembled payload that could drift from what
+  // was previewed (OL-44 review).
   const baseMutation = useMemo<UpdateIssueRequest>(
     () =>
       isPromote
@@ -273,7 +264,10 @@ export function RunConfirmModal({
     if (issueIds.length === 0 || submitting) return;
     if (action === "override" && !overrideUsable) return;
     setPendingAction(action === "suppress" ? "suppress" : "go");
-    const payload = applyTo(action === "suppress" ? { suppress_run: true } : {});
+    const payload: UpdateIssueRequest = {
+      ...baseMutation,
+      ...(action === "suppress" ? { suppress_run: true } : {}),
+    };
     try {
       // Completion is silent, exactly as before: the assignee and any run show
       // up through the issue's normal assignee / run-status updates, so there is
@@ -425,8 +419,8 @@ export function RunConfirmModal({
           </div>
         ) : (
           dependencyBlocked && (
-            <div className="flex flex-col gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
-              <div className="flex items-center gap-1.5 text-caption font-medium text-amber-700 dark:text-amber-400">
+            <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/5 p-3">
+              <div className="flex items-center gap-1.5 text-caption font-medium text-warning">
                 <TriangleAlert className="size-3.5 shrink-0" />
                 {t(($) => $.run_confirm.blocked_title)}
               </div>
@@ -440,17 +434,17 @@ export function RunConfirmModal({
                 {t(($) => $.run_confirm.blocked_one_time_note)}
               </p>
               {dependencyNotice === "stale" && (
-                <p className="text-micro text-amber-700 dark:text-amber-400">
+                <p className="text-micro text-warning">
                   {t(($) => $.run_confirm.stale_notice)}
                 </p>
               )}
               {dependencyNotice === "expired" && (
-                <p className="text-micro text-amber-700 dark:text-amber-400">
+                <p className="text-micro text-warning">
                   {t(($) => $.run_confirm.expired_notice)}
                 </p>
               )}
               {dependencyNotice === "not_allowed" && (
-                <p className="text-micro text-amber-700 dark:text-amber-400">
+                <p className="text-micro text-warning">
                   {t(($) => $.run_confirm.override_unavailable)}
                 </p>
               )}

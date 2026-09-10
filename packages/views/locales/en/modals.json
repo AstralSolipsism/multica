@@ -243,7 +243,8 @@
       "title": "Prerequisites unfinished",
       "body": "This issue has unfinished prerequisites, so it won't start on creation. Go back to adjust it (for example, park it in Backlog), or explicitly release this one execution.",
       "cancel": "Back to editing",
-      "confirm": "Create and start anyway"
+      "confirm": "Create and start anyway",
+      "uncertain_note": "The outcome is unknown — the issue may already have been created. Retrying reuses the same one-time permit: a repeated confirmation returns the original result, never a second create."
     },
     "dependency_now_ready": "Prerequisites are done — create again to start normally.",
     "dependency_override_not_allowed": "Your current sign-in can't release unfinished prerequisites.",

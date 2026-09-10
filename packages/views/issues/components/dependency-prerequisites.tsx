@@ -129,7 +129,7 @@ function PrerequisiteRow({
         </span>
       )}
       {!satisfied && (
-        <span className="shrink-0 text-micro text-amber-600 dark:text-amber-500">
+        <span className="shrink-0 text-micro text-warning">
           {statusLabel}
         </span>
       )}

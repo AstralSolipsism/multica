@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -22,10 +22,15 @@ import {
   CommandItem,
   CommandList,
 } from "@multica/ui/components/ui/command";
-import { api, clientErrorMessage, dependencyErrorDetails } from "@multica/core/api";
+import { clientErrorMessage, dependencyErrorDetails } from "@multica/core/api";
 import type { IssuePrerequisite } from "@multica/core/api";
 import { issueStatusCategory } from "@multica/core/issues";
-import { issueDependenciesOptions, issueDetailOptions, issueKeys } from "@multica/core/issues/queries";
+import {
+  issueDependenciesOptions,
+  issueDetailOptions,
+  issueKeys,
+  issueSearchOptions,
+} from "@multica/core/issues/queries";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -138,6 +143,12 @@ function EditDependenciesBody({
   } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [saving, setSaving] = useState(false);
+  // A refused save leaves the intent pending: even when the conflict merge
+  // lands on a selection equal to the fresh baseline, the user must be able
+  // to confirm that visible state with one more Save (a version-matched
+  // no-op replace), not find the button dead. Cleared only by success (which
+  // closes the dialog) — a later edit keeps it set harmlessly.
+  const [writeAttempted, setWriteAttempted] = useState(false);
 
   useEffect(() => {
     if (!view) return;
@@ -160,42 +171,26 @@ function EditDependenciesBody({
   const dirty =
     !!form && !sameIdSet([...form.selected.keys()], form.baselineIds);
 
-  // --- search (workspace-wide, cross-project — same endpoint the other
-  // issue pickers use) -------------------------------------------------------
+  // --- search (workspace-wide, cross-project) — a server read, so it lives
+  // in TanStack Query keyed by wsId+query (CLAUDE.md state rules); the input
+  // just debounces into the query identity. -------------------------------
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Issue[]>([]);
-  const [searching, setSearching] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const abortRef = useRef<AbortController>(undefined);
-
-  const search = useCallback((q: string) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (abortRef.current) abortRef.current.abort();
-    if (!q.trim()) {
-      setResults([]);
-      setSearching(false);
-      return;
-    }
-    setSearching(true);
-    debounceRef.current = setTimeout(async () => {
-      const controller = new AbortController();
-      abortRef.current = controller;
-      try {
-        const res = await api.searchIssues({
-          q: q.trim(),
-          limit: 20,
-          include_closed: true,
-          signal: controller.signal,
-        });
-        if (!controller.signal.aborted) {
-          setResults(res.issues);
-          setSearching(false);
-        }
-      } catch {
-        if (!controller.signal.aborted) setSearching(false);
-      }
-    }, 300);
-  }, []);
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+  const searchQuery = useQuery({
+    ...issueSearchOptions(wsId, debouncedQuery),
+    enabled: debouncedQuery.length > 0,
+  });
+  const results = useMemo(
+    () => searchQuery.data?.issues ?? [],
+    [searchQuery.data],
+  );
+  const searching =
+    query.trim().length > 0 &&
+    (query.trim() !== debouncedQuery || searchQuery.isFetching);
 
   const inheritedIds = useMemo(
     () => new Set((view?.inheritedBlockedBy ?? []).map((p) => p.issueId)),
@@ -242,11 +237,16 @@ function EditDependenciesBody({
   );
 
   const canSave =
-    !!form && dirty && !saving && !depsQuery.isLoading && depsQuery.data !== null;
+    !!form &&
+    (dirty || writeAttempted) &&
+    !saving &&
+    !depsQuery.isLoading &&
+    depsQuery.data !== null;
 
   const save = async () => {
     if (!form || !canSave) return;
     setSaving(true);
+    setWriteAttempted(true);
     setNotice(null);
     try {
       await updateIssue.mutateAsync({
@@ -261,7 +261,11 @@ function EditDependenciesBody({
       switch (details?.reasonCode) {
         case "dependency_version_conflict": {
           // Someone else edited first: re-base onto the projection the server
-          // just sent (or a refetch), keep the user's selection, and say so.
+          // just sent (or a refetch) — by MERGING the user's intent, not by
+          // keeping the stale selection. The diff against the reviewed
+          // baseline (what the user added / removed) is applied to the fresh
+          // set, so a prerequisite another editor added meanwhile survives
+          // the retry and is visibly listed before the user confirms again.
           setNotice({ kind: "conflict" });
           const fresh =
             details.dependencies ??
@@ -269,15 +273,24 @@ function EditDependenciesBody({
             null;
           if (fresh) {
             qc.setQueryData(issueKeys.dependencies(wsId, issueId), fresh);
-            setForm((prev) =>
-              prev
-                ? {
-                    version: fresh.dependencyVersion,
-                    baselineIds: sortedIds(fresh),
-                    selected: prev.selected,
-                  }
-                : prev,
-            );
+            setForm((prev) => {
+              if (!prev) return prev;
+              const baseline = new Set(prev.baselineIds);
+              const userAdds = [...prev.selected.keys()].filter((id) => !baseline.has(id));
+              const userRemovals = [...baseline].filter((id) => !prev.selected.has(id));
+              const merged = new Map<string, EditablePrerequisite>();
+              for (const p of fresh.blockedBy) merged.set(p.issueId, fromProjection(p));
+              for (const id of userAdds) {
+                const entry = prev.selected.get(id);
+                if (entry) merged.set(id, entry);
+              }
+              for (const id of userRemovals) merged.delete(id);
+              return {
+                version: fresh.dependencyVersion,
+                baselineIds: sortedIds(fresh),
+                selected: merged,
+              };
+            });
           }
           break;
         }
@@ -405,10 +418,7 @@ function EditDependenciesBody({
                 <CommandInput
                   placeholder={t(($) => $.issue_picker.search_placeholder)}
                   value={query}
-                  onValueChange={(v) => {
-                    setQuery(v);
-                    search(v);
-                  }}
+                  onValueChange={setQuery}
                 />
                 <CommandList>
                   {searching && (

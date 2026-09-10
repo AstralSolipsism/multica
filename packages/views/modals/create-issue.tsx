@@ -65,12 +65,12 @@ import { ShortcutKeycaps } from "../common/shortcut-keycaps";
 import { StatusIcon, StatusPicker, PriorityIcon, PriorityPicker, StagePicker, AssigneePicker, StartDatePicker, DueDatePicker, LabelPicker } from "../issues/components";
 import { maxSiblingStage } from "../issues/components/pickers/stage-picker";
 import { ProjectPicker } from "../projects/components/project-picker";
-import { useIssueTriggerPreview } from "../issues/hooks/use-issue-trigger-preview";
+import { useIssueTriggerPreview, useIssueTriggerPreviewCheck } from "../issues/hooks/use-issue-trigger-preview";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
-import { useIssueDraftStore, type IssueCreateDraft } from "@multica/core/issues/stores/draft-store";
+import { useIssueDraftStore, type IssueCreateDraft, type IssueDraftPrerequisite } from "@multica/core/issues/stores/draft-store";
 import { useCreateModeStore } from "@multica/core/issues/stores/create-mode-store";
 import { useQuickCreateStore } from "@multica/core/issues/stores/quick-create-store";
 import {
@@ -90,7 +90,6 @@ import {
 } from "@multica/core/properties";
 import {
   ApiError,
-  api,
   dependencyErrorDetails,
   DuplicateIssueErrorBodySchema,
   type DependencyMutationFields,
@@ -225,7 +224,7 @@ function CreateRunHint({
           aria-live="polite"
           className={cn(
             "flex items-center gap-1.5 px-4 pb-1 pt-0.5 text-micro",
-            blocked ? "text-amber-600 dark:text-amber-500" : "text-muted-foreground",
+            blocked ? "text-warning" : "text-muted-foreground",
           )}
         >
           {avatarId && (
@@ -363,10 +362,19 @@ export function ManualCreatePanel({
   // object, and we never need to hydrate from an ID the way we do for parent.
   const [childIssues, setChildIssues] = useState<Issue[]>([]);
   const [childPickerOpen, setChildPickerOpen] = useState(false);
-  // Prerequisites (blocked_by) queued for the compound create — same
-  // whole-object local pattern as children. Not persisted in the draft:
-  // relations are a deliberate per-creation choice, not a sticky preference.
-  const [blockedByIssues, setBlockedByIssues] = useState<Issue[]>([]);
+  // Prerequisites (blocked_by) queued for the compound create. Persisted in
+  // the manual draft (id + display label), so closing and reopening the
+  // dialog — including navigating out to inspect a blocker from the
+  // confirmation dialog — restores them exactly like the title (OL-44
+  // review): the constraint set the user registered is never silently
+  // dropped. Not carried to the next issue as a preference.
+  const [blockedByIssues, setBlockedByIssues] = useState<IssueDraftPrerequisite[]>(
+    () => draft.manual.blockedBy ?? [],
+  );
+  const updateBlockedBy = (list: IssueDraftPrerequisite[]) => {
+    setBlockedByIssues(list);
+    setManual({ blockedBy: list });
+  };
   const [blockedByPickerOpen, setBlockedByPickerOpen] = useState(false);
   // The submit-time dependency confirmation (OL-41): set when the preview of
   // the exact create body reports unfinished prerequisites. The dialog below
@@ -379,6 +387,10 @@ export function ManualCreatePanel({
     /** Set after a stale/expired retry re-previewed: tells the user the
      *  reasons on screen are the current ones. */
     refreshed?: boolean;
+    /** Set when the confirmed write's outcome is UNKNOWN (transport/5xx):
+     *  the dialog stays open with the original permit so retry replays the
+     *  same requestId — never a second create (OL-44 review P1). */
+    uncertain?: boolean;
   } | null>(null);
   const [overrideCreating, setOverrideCreating] = useState(false);
   // Fetch parent issue details for the chip (status/identifier/title).
@@ -474,6 +486,10 @@ export function ManualCreatePanel({
   };
 
   const createIssueMutation = useCreateIssue();
+  // Submit-time authoritative previews (exact create body) go through the
+  // shared mutation wrapper — TanStack owns every server interaction, no
+  // bare api.* calls in the component (CLAUDE.md state rules).
+  const previewCheck = useIssueTriggerPreviewCheck();
   const createCommentSubIssueMutation = useCreateCommentSubIssue();
   const updateIssueMutation = useUpdateIssue();
   const attachLabelMutation = useAttachLabelToIssue();
@@ -491,7 +507,7 @@ export function ManualCreatePanel({
     setParentIssueId(undefined);
     setStage(null);
     setChildIssues([]);
-    setBlockedByIssues([]);
+    updateBlockedBy([]);
     // Keep the just-used assignee for the next issue in the batch; reset
     // everything else across the manual + shared slots.
     setManual({
@@ -502,6 +518,7 @@ export function ManualCreatePanel({
       assigneeId,
       startDate: null,
       labelIds: [],
+      blockedBy: [],
       propertyValues: {},
     });
     setShared({
@@ -753,7 +770,7 @@ export function ManualCreatePanel({
           dep.reasonCode === "dependency_unsatisfied")
       ) {
         try {
-          const refreshed = await api.previewIssueTrigger({
+          const refreshed = await previewCheck.mutateAsync({
             isCreate: true,
             mutation: pending.request,
           });
@@ -770,7 +787,23 @@ export function ManualCreatePanel({
           setDependencyConfirm(null);
           toast.error(t(($) => $.create_issue.toast_failed));
         }
+      } else if (!(err instanceof ApiError) || err.status >= 500) {
+        // AMBIGUOUS failure (transport drop / 5xx): the server may have
+        // committed before the answer was lost. Keep the exact request AND
+        // its one-shot permit — replaying the same requestId returns the
+        // original task (OL-41 idempotent replay), while discarding it and
+        // re-previewing would issue a NEW permit that could create and run
+        // twice (OL-44 review P1). Only a definite refusal (dependency code
+        // above, or any other 4xx below) clears the permit.
+        toast.error(
+          err instanceof Error && err.message
+            ? err.message
+            : t(($) => $.create_issue.toast_failed),
+        );
+        setDependencyConfirm({ ...pending, uncertain: true });
       } else {
+        // Definite refusal (4xx, nothing committed) — including a credential
+        // that may not override. Close back to the form with the reason.
         toast.error(
           dep?.reasonCode === "dependency_override_not_allowed"
             ? t(($) => $.create_issue.dependency_override_not_allowed)
@@ -839,7 +872,7 @@ export function ManualCreatePanel({
           (assigneeType === "agent" || assigneeType === "squad") && !!assigneeId;
         if (wantsRun && (blockedByIssues.length > 0 || parentIssueId)) {
           try {
-            const previewResult = await api.previewIssueTrigger({
+            const previewResult = await previewCheck.mutateAsync({
               isCreate: true,
               mutation: request,
             });
@@ -893,7 +926,7 @@ export function ManualCreatePanel({
           // The advisory precheck raced a concurrent relation change: get
           // the signed confirmation now and open the explicit dialog.
           try {
-            const previewResult = await api.previewIssueTrigger({
+            const previewResult = await previewCheck.mutateAsync({
               isCreate: true,
               mutation: attemptedRequest,
             });
@@ -1437,7 +1470,7 @@ export function ManualCreatePanel({
                   <button
                     type="button"
                     onClick={() =>
-                      setBlockedByIssues((prev) => prev.filter((x) => x.id !== b.id))
+                      updateBlockedBy(blockedByIssues.filter((x) => x.id !== b.id))
                     }
                     className="p-1 pr-2 text-muted-foreground hover:text-foreground cursor-pointer"
                     aria-label={t(($) => $.create_issue.remove_prerequisite_aria, { identifier: b.identifier })}
@@ -1640,8 +1673,17 @@ export function ManualCreatePanel({
                 ...(parentIssueId ? [parentIssueId] : []),
               ]}
               onSelect={(selected) => {
-                setBlockedByIssues((prev) =>
-                  prev.some((x) => x.id === selected.id) ? prev : [...prev, selected],
+                updateBlockedBy(
+                  blockedByIssues.some((x) => x.id === selected.id)
+                    ? blockedByIssues
+                    : [
+                        ...blockedByIssues,
+                        {
+                          id: selected.id,
+                          identifier: selected.identifier,
+                          title: selected.title,
+                        },
+                      ],
                 );
               }}
             />
@@ -1666,8 +1708,8 @@ export function ManualCreatePanel({
                       {t(($) => $.create_issue.dependency_confirm.body)}
                     </DialogDescription>
                   </DialogHeader>
-                  <div className="flex flex-col gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
-                    <div className="flex items-center gap-1.5 text-caption font-medium text-amber-700 dark:text-amber-400">
+                  <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/5 p-3">
+                    <div className="flex items-center gap-1.5 text-caption font-medium text-warning">
                       <AlertTriangle className="size-3.5 shrink-0" />
                       {t(($) => $.run_confirm.blocked_title)}
                     </div>
@@ -1686,8 +1728,13 @@ export function ManualCreatePanel({
                       {t(($) => $.run_confirm.blocked_one_time_note)}
                     </p>
                     {dependencyConfirm.refreshed && (
-                      <p className="text-micro text-amber-700 dark:text-amber-400">
+                      <p className="text-micro text-warning">
                         {t(($) => $.run_confirm.stale_notice)}
+                      </p>
+                    )}
+                    {dependencyConfirm.uncertain && (
+                      <p className="text-micro text-warning">
+                        {t(($) => $.create_issue.dependency_confirm.uncertain_note)}
                       </p>
                     )}
                   </div>

@@ -838,6 +838,10 @@ export function useRealtimeSync(
           qc.invalidateQueries({ queryKey: issueStatusKeys.all(wsId) });
           // Graph summaries contain server-resolved dependency categories.
           invalidateIssueQueries(qc, wsId, "graph");
+          // A re-categorized status changes which prerequisites count as done
+          // (the projection resolves categories server-side), so open
+          // dependency views re-read alongside the catalog.
+          qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
         }
       },
       pin: () => {

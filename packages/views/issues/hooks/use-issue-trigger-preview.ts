@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import type { IssueDependencyPreview } from "@multica/core/api";
 import { issueKeys } from "@multica/core/issues/queries";
@@ -160,4 +160,26 @@ export function useIssueTriggerPreview(
       void previewQuery.refetch();
     },
   };
+}
+
+/**
+ * The imperative sibling of the declarative preview: submit-time flows
+ * (create-with-relations, override retry) need one authoritative preview of
+ * the exact body being submitted, fired at a chosen moment — not a mounted
+ * query. Same endpoint, same params shape; mutation semantics because this
+ * is a deliberately-triggered server interaction, and TanStack owns all of
+ * those (no bare `api.*` calls in components).
+ */
+export function useIssueTriggerPreviewCheck() {
+  return useMutation({
+    mutationFn: (params: UseIssueTriggerPreviewParams) =>
+      api.previewIssueTrigger({
+        issueIds: params.issueIds,
+        isCreate: params.isCreate,
+        assigneeType: params.assigneeType,
+        assigneeId: params.assigneeId,
+        status: params.status,
+        mutation: params.mutation,
+      }),
+  });
 }

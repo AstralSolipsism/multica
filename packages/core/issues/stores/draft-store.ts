@@ -55,7 +55,33 @@ export interface IssueCreateManual {
    *  it is created (the create endpoint takes no labels), so they are kept as
    *  a plain id list rather than full Label objects. */
   labelIds: string[];
+  /** Prerequisites (blocked_by) queued for the create, with the minimal
+   *  display fields the chips need. Persisted with the draft so closing and
+   *  reopening the dialog — including jumping out to inspect a blocker from
+   *  the confirmation dialog — never silently drops the execution
+   *  constraints the user registered (OL-44 review). Not a next-issue
+   *  preference: cleared on successful create and explicit draft clears. */
+  blockedBy: IssueDraftPrerequisite[];
   propertyValues: IssuePropertyValues;
+}
+
+/** Minimal display record for a prerequisite queued in the create draft. */
+export interface IssueDraftPrerequisite {
+  id: string;
+  identifier: string;
+  title: string;
+}
+
+function normalizeDraftPrerequisites(raw: unknown): IssueDraftPrerequisite[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (e): e is IssueDraftPrerequisite =>
+      !!e &&
+      typeof e === "object" &&
+      typeof (e as IssueDraftPrerequisite).id === "string" &&
+      typeof (e as IssueDraftPrerequisite).identifier === "string" &&
+      typeof (e as IssueDraftPrerequisite).title === "string",
+  );
 }
 
 export interface IssueCreateAgent {
@@ -86,6 +112,7 @@ const emptyManual = (): IssueCreateManual => ({
   assigneeType: undefined,
   assigneeId: undefined,
   labelIds: [],
+  blockedBy: [],
   propertyValues: {},
 });
 
@@ -164,6 +191,7 @@ function migrateDraft(raw: unknown): IssueCreateDraft {
   }
 
   const sharedRaw = (d.shared as Partial<IssueCreateShared> & { attachments?: unknown }) ?? {};
+  const manualRaw = (d.manual as Partial<IssueCreateManual>) ?? {};
   return {
     shared: {
       ...emptyShared(),
@@ -172,7 +200,13 @@ function migrateDraft(raw: unknown): IssueCreateDraft {
       // drops `uploading` placeholders (bytes are gone).
       attachments: normalizeStoredUploads(sharedRaw.attachments),
     },
-    manual: { ...emptyManual(), ...((d.manual as Partial<IssueCreateManual>) ?? {}) },
+    manual: {
+      ...emptyManual(),
+      ...manualRaw,
+      // Drafts persisted before OL-44 have no blockedBy; anything malformed
+      // is dropped rather than resurrected as a phantom constraint.
+      blockedBy: normalizeDraftPrerequisites(manualRaw.blockedBy),
+    },
     agent: { ...emptyAgent(), ...((d.agent as Partial<IssueCreateAgent>) ?? {}) },
     activeMode: d.activeMode === "agent" ? "agent" : "manual",
   };
@@ -234,6 +268,8 @@ export const useIssueDraftStore = create<IssueDraftStore>()(
           manual.title ||
           manual.description ||
           agent.prompt ||
+          // Defensive: pre-OL-44 persisted/test drafts predate the field.
+          (manual.blockedBy?.length ?? 0) > 0 ||
           Object.keys(manual.propertyValues).length > 0 ||
           // Recoverable uploads only: a failed/interrupted remnant the user
           // never dismissed must not pin the sidebar's draft dot forever.

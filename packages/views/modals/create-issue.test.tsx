@@ -135,6 +135,7 @@ const emptyIssueDraft = () => ({
     assigneeType: undefined as "agent" | "squad" | "member" | undefined,
     assigneeId: undefined as string | undefined,
     labelIds: [] as string[],
+    blockedBy: [] as { id: string; identifier: string; title: string }[],
     propertyValues: {} as Record<string, string | number | boolean | string[]>,
   },
   agent: {
@@ -231,6 +232,9 @@ vi.mock("../issues/hooks/use-issue-trigger-preview", () => ({
     totalCount: 0,
     isLoading: false,
   }),
+  // The submit-time authoritative preview (mutation form) — backed by the
+  // same mock so tests drive both preview surfaces identically.
+  useIssueTriggerPreviewCheck: () => ({ mutateAsync: mockPreviewIssueTrigger }),
 }));
 
 vi.mock("@multica/core/workspace/hooks", () => ({
@@ -911,6 +915,7 @@ describe("CreateIssueModal", () => {
       assigneeId: undefined,
       startDate: null,
       labelIds: [],
+      blockedBy: [],
       propertyValues: {},
     });
     expect(mockSetShared).toHaveBeenCalledWith({
@@ -1990,6 +1995,62 @@ describe("CreateIssueModal", () => {
       );
       await waitFor(() => expect(onClose).toHaveBeenCalled());
       expect(mockToastCustom).toHaveBeenCalled();
+    });
+
+    it("REVIEW retries an ambiguous confirmed create with its original one-shot permit", async () => {
+      const firstPreview = blockedPreview();
+      const nextPreview = blockedPreview();
+      nextPreview.blocked[0]!.confirmation = {
+        requestId: "req-2",
+        challenge: "ch-2",
+        expiresAt: "2099-01-01T00:00:00Z",
+      };
+      mockPreviewIssueTrigger
+        .mockResolvedValueOnce(firstPreview)
+        .mockResolvedValue(nextPreview);
+      // The server may have committed before this transport failure: retry
+      // must replay req-1, whose contract returns the original issue/run.
+      mockCreateIssue.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      const { user } = await seedAgentAndPrerequisite();
+
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
+
+      // Follow the offered retry affordance. The confirmation should remain;
+      // today's implementation discards it and offers Create Issue again.
+      await waitFor(() => expect(mockToastError).toHaveBeenCalled());
+      if (!screen.queryByRole("button", { name: "Create and start anyway" })) {
+        await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      }
+      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
+      expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
+      }));
+      expect(mockPreviewIssueTrigger).toHaveBeenCalledTimes(1);
+    });
+
+    it("REVIEW preserves drafted prerequisites when reopening the same create draft", async () => {
+      const user = userEvent.setup();
+      const firstOpen = renderModal(<CreateIssueModal onClose={vi.fn()} />);
+      fireEvent.change(screen.getByPlaceholderText("Issue title"), {
+        target: { value: "Relation-bearing draft" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Add prerequisite..." }));
+      fireEvent.click(screen.getByRole("button", { name: "pick:Add prerequisite" }));
+
+      // Closing the modal (including inspecting a blocker from the confirm
+      // dialog) unmounts the panel. Reopen the existing persisted draft.
+      firstOpen.unmount();
+      renderModal(<CreateIssueModal onClose={vi.fn()} />);
+      expect(screen.getByPlaceholderText("Issue title")).toHaveValue("Relation-bearing draft");
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
+      expect(mockCreateIssue).toHaveBeenCalledWith(expect.objectContaining({
+        title: "Relation-bearing draft",
+        blockedBy: ["picked-issue-1"],
+      }));
     });
 
     it("cancel writes nothing and returns to the form", async () => {
