@@ -9,12 +9,14 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/testutil"
@@ -55,7 +57,7 @@ func TestDependencyAdmissionContention(t *testing.T) {
 			}
 		})
 	}
-	for _, shape := range []string{"dense", "deep", "multi_workspace", "sustained", "overlay", "dense_reference"} {
+	for _, shape := range []string{"dense", "deep", "multi_workspace", "sustained", "overlay", "dense_reference", "feishu", "feishu_overlay"} {
 		t.Run(shape, func(t *testing.T) {
 			size := 5000
 			if shape == "dense_reference" {
@@ -83,13 +85,23 @@ type dependencyLoadWorkspace struct {
 	runtimeID string
 	edges     int
 	overlay   bool
+	feishu    bool
 }
 
 func newDependencyLoadWorkspace(t *testing.T, size int, shape string) dependencyLoadWorkspace {
 	t.Helper()
 	h, fx := dependencyFixture(t)
+	feishu := strings.HasPrefix(shape, "feishu")
+	if feishu {
+		// Existing signed-source/consent fixtures use the suite's workspace.
+		fx = dbfx
+	}
 	w := dependencyLoadWorkspace{h: h, fx: fx, runtimeID: fx.Runtime(t, "dependency load fake runtime"), ids: make([]string, size)}
-	if shape == "overlay" {
+	w.feishu = feishu
+	if feishu {
+		w.runtimeID = handlerTestRuntimeID(t)
+	}
+	if shape == "overlay" || shape == "feishu_overlay" {
 		h.TaskService = service.NewTaskService(h.Queries, testPool, h.Hub, h.Bus)
 		h.IssueService.TaskService = h.TaskService
 		flags := featureflag.NewStaticProvider()
@@ -155,9 +167,19 @@ func runDependencyAdmissionLoad(t *testing.T, workspaces []dependencyLoadWorkspa
 	}
 	agents := make([]string, claimers)
 	issues := make([]db.Issue, claimers)
+	conversations := make([]*conversationFixture, claimers)
+	routers := make([]*engine.Router, claimers)
 	for i := range agents {
 		w := workspaces[i%len(workspaces)]
-		agents[i] = w.fx.Agent(t, fmt.Sprintf("dependency load fake agent %d", i), w.runtimeID)
+		if w.feishu {
+			f := newConversationFixture(t)
+			conversations[i], agents[i] = f, f.agent
+			f.h.TaskService.FeatureFlags = w.h.TaskService.FeatureFlags
+			f.h.TaskService.Composio = w.h.TaskService.Composio
+			routers[i] = f.router(t)
+		} else {
+			agents[i] = w.fx.Agent(t, fmt.Sprintf("dependency load fake agent %d", i), w.runtimeID)
+		}
 		w.fx.Cleanup(t, "DELETE FROM agent_task_queue WHERE agent_id=$1", agents[i])
 		var err error
 		issues[i], err = w.h.Queries.GetIssue(context.Background(), parseUUID(w.ids[len(w.ids)/2+i]))
@@ -197,9 +219,26 @@ func runDependencyAdmissionLoad(t *testing.T, workspaces []dependencyLoadWorkspa
 		return err == nil
 	}
 	cycle := func(i int, measure bool) bool {
-		h := workspaces[i%len(workspaces)].h
+		w := workspaces[i%len(workspaces)]
+		h := w.h
 		start := time.Now()
-		queued, err := h.TaskService.EnqueueTaskForIssue(ctx, issues[i])
+		var queued db.AgentTaskQueue
+		var err error
+		if f := conversations[i]; f != nil {
+			msg := f.msg
+			msg.MessageID = fmt.Sprintf("ol41-load-%d", completed[i])
+			msg.EventID = msg.MessageID
+			err = routers[i].Handle(ctx, msg)
+			if err == nil {
+				var id pgtype.UUID
+				err = testPool.QueryRow(ctx, "SELECT id FROM agent_task_queue WHERE agent_id=$1 AND status='queued' ORDER BY created_at,id LIMIT 1", agents[i]).Scan(&id)
+				if err == nil {
+					queued, err = h.Queries.GetAgentTask(ctx, id)
+				}
+			}
+		} else {
+			queued, err = h.TaskService.EnqueueTaskForIssue(ctx, issues[i])
+		}
 		if measure {
 			record("enqueue", start, err)
 		}
@@ -209,13 +248,13 @@ func runDependencyAdmissionLoad(t *testing.T, workspaces []dependencyLoadWorkspa
 			}
 			return false
 		}
-		if workspaces[i%len(workspaces)].overlay && len(queued.RuntimeMcpOverlay) == 0 {
+		if w.overlay && len(queued.RuntimeMcpOverlay) == 0 {
 			t.Error("enabled overlay was not prepared and persisted")
 			return false
 		}
 		start = time.Now()
 		claimed, err := h.TaskService.ClaimTask(ctx, parseUUID(agents[i]))
-		if err == nil && (claimed == nil || claimed.ID != queued.ID || claimed.Status != "dispatched" || len(claimed.DependencyAdmission) == 0) {
+		if err == nil && (claimed == nil || claimed.ID != queued.ID || claimed.Status != "dispatched" || (!w.feishu && len(claimed.DependencyAdmission) == 0) || (w.feishu && (claimed.IssueID.Valid || !claimed.ChatSessionID.Valid))) {
 			err = fmt.Errorf("claim did not admit exactly the newly enqueued task")
 		}
 		if err == nil {
@@ -234,6 +273,16 @@ func runDependencyAdmissionLoad(t *testing.T, workspaces []dependencyLoadWorkspa
 				t.Error(err)
 			}
 			return false
+		}
+		if f := conversations[i]; f != nil {
+			// Simulate the designated agent using the real authenticated comment
+			// handler. Input/Chat/dispatch remains the normal upstream transaction.
+			token := f.token(t, *claimed)
+			start = time.Now()
+			f.comment(t, token, fmt.Sprintf("feedback source %d", completed[i]), "")
+			if measure {
+				record("feedback_comment", start, nil)
+			}
 		}
 		// Simulate completion outside the measurement; no daemon or CLI runs.
 		if _, err := testPool.Exec(ctx, "UPDATE agent_task_queue SET status='completed', completed_at=now() WHERE id=$1", queued.ID); err != nil {
@@ -321,7 +370,7 @@ func runDependencyAdmissionLoad(t *testing.T, workspaces []dependencyLoadWorkspa
 	}
 	nodes, edges := 0, 0
 	for _, w := range workspaces {
-		nodes += len(w.ids)
+		nodes += w.fx.Count(t, "SELECT count(*) FROM issue WHERE workspace_id=$1", w.fx.WorkspaceID)
 		edges += w.edges
 	}
 	data, err := json.Marshal(map[string]any{"scenario": t.Name(), "nodes": nodes, "edges": edges, "workspaces": len(workspaces), "claimers": claimers, "writers": writers, "iterations_min": iterations, "duration_min_seconds": duration.Seconds(), "seconds": elapsed, "cycles_per_second": float64(len(latencies["claim"])) / elapsed, "summary": summary, "latency_ms": latencies, "locks": locks, "errors": errors, "performance_passed": performancePassed})
@@ -333,9 +382,16 @@ func runDependencyAdmissionLoad(t *testing.T, workspaces []dependencyLoadWorkspa
 		t.Fatal("load did not finish every operation successfully; see result")
 	}
 	for i, agent := range agents {
-		fx := workspaces[i%len(workspaces)].fx
-		if completed[i] < iterations+1 || fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE agent_id=$1", agent) != completed[i] || fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE agent_id=$1 AND status='completed' AND dependency_admission->>'consumed_at' IS NOT NULL", agent) != completed[i] {
+		w := workspaces[i%len(workspaces)]
+		fx := w.fx
+		if completed[i] < iterations+1 || fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE agent_id=$1", agent) != completed[i] || fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE agent_id=$1 AND status='completed' AND ($2::bool OR dependency_admission->>'consumed_at' IS NOT NULL)", agent, w.feishu) != completed[i] {
 			t.Fatal("load lost or duplicated an admitted execution, including warmup")
+		}
+		if f := conversations[i]; f != nil {
+			inputs, runs, comments := f.counts(t)
+			if inputs != completed[i] || runs != completed[i] || comments != completed[i] || fx.Count(t, "SELECT count(*) FROM channel_task_delivery WHERE task_id IN (SELECT id FROM agent_task_queue WHERE agent_id=$1)", agent) != completed[i] {
+				t.Fatal("Feishu input, run, frozen delivery or agent comment was lost or duplicated")
+			}
 		}
 	}
 	for writer, count := range written {
