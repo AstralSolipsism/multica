@@ -41,56 +41,98 @@ func TestDependencyAdmissionContention(t *testing.T) {
 	t.Logf("postgres=%s go=%s cpus=%d gomaxprocs=%d pool_max_conns=%d iterations_per_worker=%d", version, runtime.Version(), runtime.NumCPU(), runtime.GOMAXPROCS(0), testPool.Config().MaxConns, iterations)
 	for _, size := range []int{100, 1000, 5000} {
 		t.Run(fmt.Sprintf("nodes=%d", size), func(t *testing.T) {
-			h, fx := dependencyFixture(t)
-			runtimeID := fx.Runtime(t, "dependency load fake runtime")
-			quarter := size / 4
-			ids := make([]string, size)
-			for i := range ids {
-				cols := testutil.Cols{"number": i + 1, "status": "done"}
-				if i >= 2*quarter {
-					cols["parent_issue_id"] = ids[quarter+i%quarter]
-					cols["status"] = "backlog"
-				}
-				ids[i] = fx.Issue(t, "dependency load fixture", cols)
-			}
-			for i := 0; i < quarter; i++ {
-				for _, prerequisite := range []int{i, (i + 1) % quarter} {
-					fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": ids[quarter+i], "depends_on_issue_id": ids[prerequisite], "type": "blocked_by"})
-				}
-			}
+			workspaces := []dependencyLoadWorkspace{newDependencyLoadWorkspace(t, size, "sparse")}
 			for _, claimers := range []int{1, 8, 16} {
 				for _, writers := range []int{0, 2} {
 					t.Run(fmt.Sprintf("claimers=%d/writers=%d", claimers, writers), func(t *testing.T) {
-						runDependencyAdmissionLoad(t, h, fx, ids, runtimeID, claimers, writers, iterations)
+						runDependencyAdmissionLoad(t, workspaces, claimers, writers, iterations, 0)
 					})
 				}
 			}
 		})
 	}
+	for _, shape := range []string{"dense", "deep", "multi_workspace", "sustained"} {
+		t.Run(shape, func(t *testing.T) {
+			workspaces := []dependencyLoadWorkspace{newDependencyLoadWorkspace(t, 5000, shape)}
+			if shape == "multi_workspace" {
+				for range 3 {
+					workspaces = append(workspaces, newDependencyLoadWorkspace(t, 5000, shape))
+				}
+			}
+			var duration time.Duration
+			if shape == "sustained" {
+				duration = 30 * time.Second
+			}
+			runDependencyAdmissionLoad(t, workspaces, 16, 2, iterations, duration)
+		})
+	}
 }
 
-func runDependencyAdmissionLoad(t *testing.T, h *Handler, fx *testutil.Fixture, ids []string, runtimeID string, claimers, writers, iterations int) {
+type dependencyLoadWorkspace struct {
+	h         *Handler
+	fx        *testutil.Fixture
+	ids       []string
+	runtimeID string
+	edges     int
+}
+
+func newDependencyLoadWorkspace(t *testing.T, size int, shape string) dependencyLoadWorkspace {
 	t.Helper()
-	size := len(ids)
+	h, fx := dependencyFixture(t)
+	w := dependencyLoadWorkspace{h: h, fx: fx, runtimeID: fx.Runtime(t, "dependency load fake runtime"), ids: make([]string, size)}
 	quarter := size / 4
+	for i := range w.ids {
+		cols := testutil.Cols{"number": i + 1, "status": "done"}
+		if shape == "deep" && i > quarter && i < 2*quarter {
+			cols["parent_issue_id"] = w.ids[i-1]
+		}
+		if i >= 2*quarter {
+			parent := quarter + i%quarter
+			if shape == "deep" {
+				parent = 2*quarter - 1
+			}
+			cols["parent_issue_id"] = w.ids[parent]
+			cols["status"] = "backlog"
+		}
+		w.ids[i] = fx.Issue(t, "dependency load fixture", cols)
+	}
+	width := 2
+	if shape == "dense" {
+		width = 32
+	}
+	for i := 0; i < quarter; i++ {
+		for offset := range width {
+			fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": w.ids[quarter+i], "depends_on_issue_id": w.ids[(i+offset)%quarter], "type": "blocked_by"})
+			w.edges++
+		}
+	}
+	return w
+}
+
+func runDependencyAdmissionLoad(t *testing.T, workspaces []dependencyLoadWorkspace, claimers, writers, iterations int, duration time.Duration) {
+	t.Helper()
 	if testPool.Config().MaxConns < int32(claimers+writers+1) {
 		t.Fatal("set pool_max_conns >= claimers + writers + 1 in DATABASE_URL")
 	}
-	fx.Exec(t, "UPDATE agent_runtime SET last_seen_at=now() WHERE id=$1", runtimeID)
+	for _, w := range workspaces {
+		// Fake runtime stays healthy through slow baseline cases; no daemon runs.
+		w.fx.Exec(t, "UPDATE agent_runtime SET last_seen_at=now()+interval '10 minutes' WHERE id=$1", w.runtimeID)
+	}
 	agents := make([]string, claimers)
 	issues := make([]db.Issue, claimers)
 	for i := range agents {
-		agents[i] = fx.Agent(t, fmt.Sprintf("dependency load fake agent %d", i), runtimeID)
-		fx.Cleanup(t, "DELETE FROM agent_task_queue WHERE agent_id=$1", agents[i])
+		w := workspaces[i%len(workspaces)]
+		agents[i] = w.fx.Agent(t, fmt.Sprintf("dependency load fake agent %d", i), w.runtimeID)
+		w.fx.Cleanup(t, "DELETE FROM agent_task_queue WHERE agent_id=$1", agents[i])
 		var err error
-		issues[i], err = h.Queries.GetIssue(context.Background(), parseUUID(ids[2*quarter+i]))
+		issues[i], err = w.h.Queries.GetIssue(context.Background(), parseUUID(w.ids[len(w.ids)/2+i]))
 		if err != nil {
 			t.Fatal(err)
 		}
 		issues[i].AssigneeType = pgtype.Text{String: "agent", Valid: true}
 		issues[i].AssigneeID = parseUUID(agents[i])
 	}
-	deadline := time.Now().Add(2 * time.Minute)
+	deadline := time.Now().Add(5 * time.Minute)
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	type sample struct {
@@ -98,12 +140,29 @@ func runDependencyAdmissionLoad(t *testing.T, h *Handler, fx *testutil.Fixture, 
 		ms  float64
 		err error
 	}
-	samples := make(chan sample, iterations*(2*claimers+writers))
+	var mu sync.Mutex
+	samples := make([]sample, 0, iterations*(2*claimers+writers))
+	completed := make([]int, claimers)
+	written := make([]int, writers)
+	beforeWrites := make([]db.Issue, writers)
+	for writer := range beforeWrites {
+		w := workspaces[writer%len(workspaces)]
+		var err error
+		beforeWrites[writer], err = w.h.Queries.GetIssue(ctx, parseUUID(w.ids[len(w.ids)-1-writer]))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	claimedIDs := make(map[pgtype.UUID]bool)
 	record := func(op string, start time.Time, err error) bool {
-		samples <- sample{op, float64(time.Since(start)) / float64(time.Millisecond), err}
+		ms := float64(time.Since(start)) / float64(time.Millisecond)
+		mu.Lock()
+		samples = append(samples, sample{op, ms, err})
+		mu.Unlock()
 		return err == nil
 	}
 	cycle := func(i int, measure bool) bool {
+		h := workspaces[i%len(workspaces)].h
 		start := time.Now()
 		queued, err := h.TaskService.EnqueueTaskForIssue(ctx, issues[i])
 		if measure {
@@ -120,6 +179,14 @@ func runDependencyAdmissionLoad(t *testing.T, h *Handler, fx *testutil.Fixture, 
 		if err == nil && (claimed == nil || claimed.ID != queued.ID || claimed.Status != "dispatched" || len(claimed.DependencyAdmission) == 0) {
 			err = fmt.Errorf("claim did not admit exactly the newly enqueued task")
 		}
+		if err == nil {
+			mu.Lock()
+			if claimedIDs[claimed.ID] {
+				err = fmt.Errorf("duplicate execution returned by claim")
+			}
+			claimedIDs[claimed.ID] = true
+			mu.Unlock()
+		}
 		if measure {
 			record("claim", start, err)
 		}
@@ -134,6 +201,7 @@ func runDependencyAdmissionLoad(t *testing.T, h *Handler, fx *testutil.Fixture, 
 			t.Error(err)
 			return false
 		}
+		completed[i]++
 		return true
 	}
 	for i := range agents {
@@ -146,12 +214,13 @@ func runDependencyAdmissionLoad(t *testing.T, h *Handler, fx *testutil.Fixture, 
 	go func() { monitored <- sampleDependencyLoadLocks(monitorCtx) }()
 	var wg sync.WaitGroup
 	startWork := make(chan struct{})
+	var started time.Time
 	for i := range agents {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			<-startWork
-			for range iterations {
+			for n := 0; n < iterations || time.Since(started) < duration; n++ {
 				if !cycle(i, true) {
 					return
 				}
@@ -163,18 +232,19 @@ func runDependencyAdmissionLoad(t *testing.T, h *Handler, fx *testutil.Fixture, 
 		go func() {
 			defer wg.Done()
 			<-startWork
-			for i := 0; i < iterations; i++ {
+			w := workspaces[writer%len(workspaces)]
+			for i := 0; i < iterations || time.Since(started) < duration; i++ {
 				op := "title_write"
 				body := map[string]any{"title": fmt.Sprintf("load edit %d", i)}
 				if writer == 1 {
 					op = "status_write"
 					body = map[string]any{"status": []string{"todo", "done"}[i%2]}
 				}
-				r := dependencyRequest(fx, http.MethodPatch, ids[size-1-writer], body, "jwt")
+				r := dependencyRequest(w.fx, http.MethodPatch, w.ids[len(w.ids)-1-writer], body, "jwt")
 				requestCtx, cancelRequest := context.WithDeadline(r.Context(), deadline)
 				r = r.WithContext(requestCtx)
 				start := time.Now()
-				response := testutil.Call(t, h.UpdateIssue, r)
+				response := testutil.Call(t, w.h.UpdateIssue, r)
 				cancelRequest()
 				var err error
 				if response.Code != http.StatusOK {
@@ -183,60 +253,81 @@ func runDependencyAdmissionLoad(t *testing.T, h *Handler, fx *testutil.Fixture, 
 				if !record(op, start, err) {
 					return
 				}
+				written[writer]++
 			}
 		}()
 	}
-	started := time.Now()
+	started = time.Now()
 	close(startWork)
 	wg.Wait()
 	elapsed := time.Since(started).Seconds()
 	stopMonitor()
 	locks := <-monitored
-	close(samples)
 	latencies := map[string][]float64{}
 	errors := []string{}
-	for sample := range samples {
+	for _, sample := range samples {
 		latencies[sample.op] = append(latencies[sample.op], sample.ms)
 		if sample.err != nil {
 			errors = append(errors, sample.op+": "+sample.err.Error())
 		}
 	}
 	summary := map[string]any{}
+	performancePassed := true
 	for op, values := range latencies {
 		sort.Float64s(values)
 		percentile := func(p int) float64 { return values[(len(values)*p+99)/100-1] }
-		summary[op] = map[string]any{"count": len(values), "p50_ms": percentile(50), "p95_ms": percentile(95), "p99_ms": percentile(99), "max_ms": values[len(values)-1]}
+		maximum := values[len(values)-1]
+		performancePassed = performancePassed && percentile(95) <= 500 && percentile(99) <= 1000 && maximum <= 2000
+		summary[op] = map[string]any{"count": len(values), "per_second": float64(len(values)) / elapsed, "p50_ms": percentile(50), "p95_ms": percentile(95), "p99_ms": percentile(99), "max_ms": maximum}
 	}
-	data, err := json.Marshal(map[string]any{"nodes": size, "edges": 2 * quarter, "claimers": claimers, "writers": writers, "seconds": elapsed, "cycles_per_second": float64(len(latencies["claim"])) / elapsed, "summary": summary, "latency_ms": latencies, "locks": locks, "errors": errors})
+	nodes, edges := 0, 0
+	for _, w := range workspaces {
+		nodes += len(w.ids)
+		edges += w.edges
+	}
+	data, err := json.Marshal(map[string]any{"scenario": t.Name(), "nodes": nodes, "edges": edges, "workspaces": len(workspaces), "claimers": claimers, "writers": writers, "iterations_min": iterations, "duration_min_seconds": duration.Seconds(), "seconds": elapsed, "cycles_per_second": float64(len(latencies["claim"])) / elapsed, "summary": summary, "latency_ms": latencies, "locks": locks, "errors": errors, "performance_passed": performancePassed})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("DEPENDENCY_LOAD_RESULT %s", data)
-	if len(errors) != 0 || locks.Error != "" || len(latencies["claim"]) != iterations*claimers || len(latencies["enqueue"]) != iterations*claimers || (writers > 0 && (len(latencies["title_write"]) != iterations || len(latencies["status_write"]) != iterations)) {
+	if len(errors) != 0 || locks.Error != "" || len(latencies["claim"]) < iterations*claimers || len(latencies["enqueue"]) != len(latencies["claim"]) || (writers > 0 && (len(latencies["title_write"]) < iterations || len(latencies["status_write"]) < iterations)) {
 		t.Fatal("load did not finish every operation successfully; see result")
 	}
-	for _, agent := range agents {
-		if fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE agent_id=$1 AND status='completed' AND dependency_admission->>'consumed_at' IS NOT NULL", agent) != iterations+1 {
+	for i, agent := range agents {
+		fx := workspaces[i%len(workspaces)].fx
+		if completed[i] < iterations+1 || fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE agent_id=$1", agent) != completed[i] || fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE agent_id=$1 AND status='completed' AND dependency_admission->>'consumed_at' IS NOT NULL", agent) != completed[i] {
 			t.Fatal("load lost or duplicated an admitted execution, including warmup")
 		}
 	}
-	if writers > 0 {
-		if fx.Count(t, "SELECT count(*) FROM issue WHERE (id=$1 AND title=$2) OR (id=$3 AND status=$4)", ids[size-1], fmt.Sprintf("load edit %d", iterations-1), ids[size-2], []string{"todo", "done"}[(iterations-1)%2]) != 2 {
+	for writer, count := range written {
+		w := workspaces[writer%len(workspaces)]
+		issue, err := w.h.Queries.GetIssue(ctx, parseUUID(w.ids[len(w.ids)-1-writer]))
+		if err != nil || issue.Revision != beforeWrites[writer].Revision+int64(count) || (writer == 0 && issue.Title != fmt.Sprintf("load edit %d", count-1)) || (writer == 1 && issue.Status != []string{"todo", "done"}[(count-1)%2]) {
 			t.Fatal("load lost an acknowledged issue write")
 		}
+	}
+	if os.Getenv("DEPENDENCY_LOAD_ENFORCE_SLO") == "1" && !performancePassed {
+		t.Error("OL-45 latency budget exceeded; see result")
 	}
 }
 
 type dependencyLoadLocks struct {
-	Samples           int     `json:"samples"`
-	WaitingSamples    int     `json:"waiting_samples"`
-	MaxWaiters        int     `json:"max_waiters"`
-	MaxObservedWaitMS float64 `json:"max_observed_wait_ms"`
-	Error             string  `json:"error,omitempty"`
+	Samples           int                  `json:"samples"`
+	WaitingSamples    int                  `json:"waiting_samples"`
+	MaxWaiters        int                  `json:"max_waiters"`
+	MaxObservedWaitMS float64              `json:"max_observed_wait_ms"`
+	Error             string               `json:"error,omitempty"`
+	Waits             []dependencyLoadWait `json:"waits"`
+}
+
+type dependencyLoadWait struct {
+	ElapsedMS float64         `json:"elapsed_ms"`
+	Details   json.RawMessage `json:"details"`
 }
 
 func sampleDependencyLoadLocks(ctx context.Context) dependencyLoadLocks {
 	var result dependencyLoadLocks
+	started := time.Now()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -246,9 +337,11 @@ func sampleDependencyLoadLocks(ctx context.Context) dependencyLoadLocks {
 		case <-ticker.C:
 			var waiters int
 			var waitMS float64
-			err := testPool.QueryRow(ctx, `SELECT count(DISTINCT l.pid), COALESCE(max(EXTRACT(EPOCH FROM clock_timestamp()-l.waitstart)*1000),0)::float8
+			var details []byte
+			err := testPool.QueryRow(ctx, `SELECT count(DISTINCT l.pid), COALESCE(max(EXTRACT(EPOCH FROM clock_timestamp()-l.waitstart)*1000),0)::float8,
+				COALESCE(jsonb_agg(jsonb_build_object('pid',l.pid,'locktype',l.locktype,'statement',split_part(a.query,E'\n',1),'wait_ms',EXTRACT(EPOCH FROM clock_timestamp()-l.waitstart)*1000,'blockers',pg_blocking_pids(l.pid))),'[]'::jsonb)
 				FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid
-				WHERE NOT l.granted AND a.datname=current_database() AND l.pid<>pg_backend_pid()`).Scan(&waiters, &waitMS)
+				WHERE NOT l.granted AND a.datname=current_database() AND l.pid<>pg_backend_pid()`).Scan(&waiters, &waitMS, &details)
 			if err != nil {
 				if ctx.Err() == nil {
 					result.Error = err.Error()
@@ -258,6 +351,7 @@ func sampleDependencyLoadLocks(ctx context.Context) dependencyLoadLocks {
 			result.Samples++
 			if waiters > 0 {
 				result.WaitingSamples++
+				result.Waits = append(result.Waits, dependencyLoadWait{ElapsedMS: float64(time.Since(started)) / float64(time.Millisecond), Details: details})
 			}
 			result.MaxWaiters = max(result.MaxWaiters, waiters)
 			result.MaxObservedWaitMS = max(result.MaxObservedWaitMS, waitMS)
