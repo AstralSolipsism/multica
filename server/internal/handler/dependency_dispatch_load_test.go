@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
@@ -54,9 +55,13 @@ func TestDependencyAdmissionContention(t *testing.T) {
 			}
 		})
 	}
-	for _, shape := range []string{"dense", "deep", "multi_workspace", "sustained", "overlay"} {
+	for _, shape := range []string{"dense", "deep", "multi_workspace", "sustained", "overlay", "dense_reference"} {
 		t.Run(shape, func(t *testing.T) {
-			workspaces := []dependencyLoadWorkspace{newDependencyLoadWorkspace(t, 5000, shape)}
+			size := 5000
+			if shape == "dense_reference" {
+				size = 1000
+			}
+			workspaces := []dependencyLoadWorkspace{newDependencyLoadWorkspace(t, size, shape)}
 			if shape == "multi_workspace" {
 				for range 3 {
 					workspaces = append(workspaces, newDependencyLoadWorkspace(t, 5000, shape))
@@ -85,6 +90,8 @@ func newDependencyLoadWorkspace(t *testing.T, size int, shape string) dependency
 	h, fx := dependencyFixture(t)
 	w := dependencyLoadWorkspace{h: h, fx: fx, runtimeID: fx.Runtime(t, "dependency load fake runtime"), ids: make([]string, size)}
 	if shape == "overlay" {
+		h.TaskService = service.NewTaskService(h.Queries, testPool, h.Hub, h.Bus)
+		h.IssueService.TaskService = h.TaskService
 		flags := featureflag.NewStaticProvider()
 		flags.Set(featureflags.ComposioMCPApps, featureflag.Rule{Default: true})
 		h.TaskService.FeatureFlags = featureflag.NewService(flags)
@@ -110,6 +117,9 @@ func newDependencyLoadWorkspace(t *testing.T, size int, shape string) dependency
 	width := 2
 	if shape == "dense" {
 		width = 32
+	}
+	if shape == "dense_reference" {
+		width = 20
 	}
 	for i := 0; i < quarter; i++ {
 		for offset := range width {
