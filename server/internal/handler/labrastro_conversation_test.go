@@ -127,6 +127,10 @@ func TestConversationUnboundAndBoundAgentComment(t *testing.T) {
 			if n := dbfx.Count(t, `SELECT count(*) FROM comment WHERE issue_id=$1 AND author_type='member'`, f.issue); n != 0 {
 				t.Fatal("member impersonation")
 			}
+			inputs, runs, comments = f.counts(t)
+			t.Logf("acceptance trace: bound=%v seeded_delivery=%s receipt=%s external_message=%s issue=%s parent=%s run=%s comment=%s author_agent=%s inputs/runs/comments=%d/%d/%d",
+				bound, f.delivery, f.receipt, f.msg.MessageID, f.issue, parent,
+				uuidToString(task.ID), id, uuidToString(c.AuthorID), inputs, runs, comments)
 		})
 	}
 }
