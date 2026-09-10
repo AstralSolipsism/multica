@@ -3526,7 +3526,7 @@ func (s *TaskService) claimTask(ctx context.Context, agentID, runtimeID pgtype.U
 		if err != nil {
 			return err
 		}
-		snapshot, err := NewDependencyService(s.Queries, s.TxStarter).LockAdmission(ctx, qtx, beforeAgent.WorkspaceID)
+		snapshot, admissionIssueIDs, err := NewDependencyService(s.Queries, s.TxStarter).lockClaimAdmission(ctx, qtx, beforeAgent.WorkspaceID, agentID)
 		if err != nil {
 			return err
 		}
@@ -3574,10 +3574,11 @@ func (s *TaskService) claimTask(ctx context.Context, agentID, runtimeID pgtype.U
 		for {
 
 			task, err := qtx.ClaimAgentTask(ctx, db.ClaimAgentTaskParams{
-				AgentID:          agentID,
-				RuntimeID:        claimRuntimeID,
-				PrepareLeaseSecs: prepareLeaseDuration.Seconds(),
-				RuntimeStaleSecs: RuntimeClaimFreshnessSeconds,
+				AgentID:           agentID,
+				AdmissionIssueIds: admissionIssueIDs,
+				RuntimeID:         claimRuntimeID,
+				PrepareLeaseSecs:  prepareLeaseDuration.Seconds(),
+				RuntimeStaleSecs:  RuntimeClaimFreshnessSeconds,
 			})
 			claimAgentMs = time.Since(t0).Milliseconds()
 			if err != nil {

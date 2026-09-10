@@ -146,10 +146,20 @@ This covers every status/revision used by D1 and its signed version: parentage
 only propagates explicit prerequisites; a prerequisite's own predecessors are
 not additional completion requirements. Structure/catalog locks stabilize the
 whole graph while the existing validator checks all structural constraints.
-Claims and multi-workspace recovery select their targets after capacity/queue
-locks, so they retain all workspace issue row locks. The lock order remains
-issue rows, then capacity, then queue; recovery orders workspaces by UUID.
-Completion permissions are unchanged.
+A claim first reads the agent's queued issue targets without taking queue locks,
+then locks the union of their decision inputs. The final claim SQL only admits
+these issue IDs or issue-less chat/planning rows. A concurrently enqueued row
+for a covered target is safe; a different target stays queued until a fresh poll.
+This preserves issue rows, then capacity, then queue lock order and the existing
+runtime, priority, capacity and duplicate-run checks among covered candidates.
+Foreign or missing inputs remain in the model so corrupt targets are quarantined
+and scanning continues to later valid tasks. Multiple targets reuse the existing
+immutable prerequisite index when collecting their status inputs.
+
+An existing legacy run-only row with NULL issue binding needs a target resolved
+later, so that claim retains the full workspace row set. Multi-workspace recovery
+also retains full locks and orders workspaces by UUID. Completion permissions
+are unchanged.
 `KEY SHARE` still prevents workspace deletion, but is compatible with a writer's
 `NO KEY UPDATE` counter lock. This lets the writer enter the exclusive structure
 lock's wait queue, where later admissions wait behind it. Taking workspace
@@ -178,8 +188,8 @@ back. Do not restore the retired worker to test that transaction contract.
 
 Every admission still loads the complete workspace graph, at O(V+E+H) cost.
 There is no cross-request cache or partial-page approximation. Known-target
-admission removes unrelated status row locks; claims still take the conservative
-full row set. Large graphs can still delay ordinary writers waiting at the
+admission and ordinary issue claims remove unrelated status row locks; legacy
+unbound run-only claims and multi-workspace recovery retain the full row set. Large graphs can still delay ordinary writers waiting at the
 structure gate. Measure realistic sizes and contention before broad rollout;
 any further narrowing needs a decision-set proof and concurrency regressions.
 Validation uses integer vertex/edge indexes; the edge query returns aligned

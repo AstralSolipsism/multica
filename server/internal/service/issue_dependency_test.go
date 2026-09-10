@@ -16,7 +16,7 @@ import (
 func TestDependencyScopedSnapshotRejectsAnotherTarget(t *testing.T) {
 	target := util.MustParseUUID("00000000-0000-4000-8000-000000000001")
 	other := util.MustParseUUID("00000000-0000-4000-8000-000000000002")
-	snapshot := DependencySnapshot{admissionTarget: util.UUIDToString(target)}
+	snapshot := DependencySnapshot{admissionTargets: map[string]bool{util.UUIDToString(target): true}}
 	err := snapshot.CheckWriteAdmission(context.Background(), db.Issue{ID: other}, false, true)
 	var dep *DependencyError
 	if !errors.As(err, &dep) || dep.Code != "dependency_data_unverified" {

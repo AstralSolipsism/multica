@@ -154,8 +154,11 @@ in OL-45 before broad rollout.
 Admission readers take workspace `KEY SHARE` and shared catalog/structure locks.
 Known-target admissions load the whole graph, then lock and refresh only the
 target, its ancestors and all their explicit prerequisites in UUID order. Claims
-and multi-workspace recovery retain all issue rows `SHARE`, because their targets
-are selected after capacity/queue locking. Complete graph validation is unchanged;
+read queued target IDs first, lock their combined status inputs, then restrict
+claim SQL to those targets and issue-less chat/planning. Concurrently queued
+other targets wait for a fresh poll. Existing unbound run-only claims and
+multi-workspace recovery retain all issue rows `SHARE`. Complete graph validation
+is unchanged;
 execution does not sort the whole edge list, while public views and versions
 retain their stable output ordering. Ordinary title/status writers enter the existing
 exclusive structure-lock queue before locking issue rows; later readers wait
@@ -196,6 +199,9 @@ change prerequisite status while admission waits for its row lock, reject reuse
 of a scoped snapshot for another target, and preserve current parent/assignee
 fields across plugin content edits. A projection regression checks identical
 views and signed versions when admission traverses edges in reverse order.
+Claim regressions hold an unrelated status row, enqueue a higher-priority target
+after the candidate read, and check that foreign target/ancestor/prerequisite
+bindings are quarantined while the next valid task remains claimable.
 
 Run alone against a disposable database containing all candidate migrations:
 

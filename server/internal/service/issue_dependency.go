@@ -53,8 +53,8 @@ type DependencySnapshot struct {
 	Model       issuedependency.Model
 	Catalog     []db.IssueStatus
 	service     *DependencyService
-	// Empty for full snapshots; scoped admission may only decide for this ID.
-	admissionTarget string
+	// Nil for full snapshots; otherwise only these targets may be admitted.
+	admissionTargets map[string]bool
 }
 
 // LockWrite must precede any issue, attachment, queue or agent-capacity lock.
@@ -399,7 +399,7 @@ func (s *DependencySnapshot) CheckWriteAdmission(ctx context.Context, issue db.I
 	}
 	id := util.UUIDToString(issue.ID)
 	execution := *s
-	if s.admissionTarget != "" && s.admissionTarget != id {
+	if s.admissionTargets != nil && !s.admissionTargets[id] {
 		return dependencyError("dependency_data_unverified", "execution target was not locked")
 	}
 	if err := execution.Model.Validate(); err != nil {

@@ -30,18 +30,50 @@ func (s *DependencyService) LockAdmission(ctx context.Context, q *db.Queries, ws
 // A known target only needs stable status/revision rows for itself, its
 // ancestors and their explicit prerequisites. The shared structure/catalog
 // locks still protect the complete graph; Validate never reads status.
-// Unknown claim/recovery targets retain the complete workspace row locks.
+// Unknown recovery targets retain the complete workspace row locks.
 func (s *DependencyService) lockAdmission(ctx context.Context, q *db.Queries, ws, target pgtype.UUID) (*DependencySnapshot, error) {
-	if _, err := q.LockWorkspaceForDependencyAdmission(ctx, ws); err != nil {
+	if err := s.lockAdmissionStructure(ctx, q, ws); err != nil {
 		return nil, err
+	}
+	var targets []pgtype.UUID
+	if target.Valid {
+		targets = []pgtype.UUID{target}
+	}
+	return s.loadAdmission(ctx, q, ws, targets)
+}
+
+func (s *DependencyService) lockAdmissionStructure(ctx context.Context, q *db.Queries, ws pgtype.UUID) error {
+	if _, err := q.LockWorkspaceForDependencyAdmission(ctx, ws); err != nil {
+		return err
 	}
 	if err := q.LockIssueStatusCatalogShared(ctx, ws); err != nil {
-		return nil, err
+		return err
 	}
-	if err := q.LockIssueDependencyStructureShared(ctx, ws); err != nil {
-		return nil, err
+	return q.LockIssueDependencyStructureShared(ctx, ws)
+}
+
+// Read the queued targets before taking issue/capacity/queue locks. The claim
+// SQL is restricted to this set: a newly queued different target waits for the
+// next poll. A new row for a covered target is safe under the same status locks.
+// Legacy run-only targets are resolved later, so retain full locks for them.
+func (s *DependencyService) lockClaimAdmission(ctx context.Context, q *db.Queries, ws, agent pgtype.UUID) (*DependencySnapshot, []pgtype.UUID, error) {
+	if err := s.lockAdmissionStructure(ctx, q, ws); err != nil {
+		return nil, nil, err
 	}
-	if !target.Valid {
+	queued, err := q.ListQueuedDependencyTargets(ctx, db.ListQueuedDependencyTargetsParams{AgentID: agent, WorkspaceID: ws})
+	if err != nil {
+		return nil, nil, err
+	}
+	ids := append([]pgtype.UUID{}, queued.IssueIds...)
+	if queued.HasUnboundAutopilot {
+		ids = nil
+	}
+	snapshot, err := s.loadAdmission(ctx, q, ws, ids)
+	return snapshot, ids, err
+}
+
+func (s *DependencyService) loadAdmission(ctx context.Context, q *db.Queries, ws pgtype.UUID, targets []pgtype.UUID) (*DependencySnapshot, error) {
+	if targets == nil {
 		if err := q.LockIssuesForDependencyAdmission(ctx, ws); err != nil {
 			return nil, err
 		}
@@ -51,21 +83,35 @@ func (s *DependencyService) lockAdmission(ctx context.Context, q *db.Queries, ws
 	if err != nil {
 		return nil, err
 	}
-	id := util.UUIDToString(target)
-	if _, ok := snapshot.Model.Issues[id]; !ok {
-		return nil, dependencyError("not_found", "issue not found")
-	}
+	snapshot.admissionTargets = make(map[string]bool, len(targets))
 	selected := map[string]bool{}
-	for _, ancestor := range snapshot.Model.Ancestors(id) {
-		selected[ancestor] = true
+	prerequisites := snapshot.Model.Prerequisites
+	if len(targets) > 1 {
+		// Reuse the existing immutable index instead of rescanning every edge
+		// for every queued target in a busy agent's backlog.
+		prerequisites = snapshot.Model.IndexedPrerequisites()
 	}
-	for _, prerequisite := range snapshot.Model.Prerequisites(id) {
-		if prerequisite.IssueID != "" {
+	for _, target := range targets {
+		id := util.UUIDToString(target)
+		snapshot.admissionTargets[id] = true
+		if _, ok := snapshot.Model.Issues[id]; !ok {
+			// Keep broken queue targets in scope so AdmitClaim can quarantine
+			// them and continue scanning, without aborting every later task.
+			continue
+		}
+		for _, ancestor := range snapshot.Model.Ancestors(id) {
+			selected[ancestor] = true
+		}
+		for _, prerequisite := range prerequisites(id) {
 			selected[prerequisite.IssueID] = true
 		}
 	}
 	ids := make([]pgtype.UUID, 0, len(selected))
 	for key := range selected {
+		if _, exists := snapshot.Model.Issues[key]; !exists {
+			// Missing ancestors/endpoints remain in the graph for validation.
+			continue
+		}
 		uuid, err := util.ParseUUID(key)
 		if err != nil {
 			return nil, dependencyError("dependency_data_unverified", "invalid dependency endpoint")
@@ -89,12 +135,11 @@ func (s *DependencyService) lockAdmission(ctx context.Context, q *db.Queries, ws
 		// these locks were pending. Never decide from the earlier MVCC read.
 		snapshot.Model.Issues[key] = issuedependency.Issue{ID: key, ParentID: parent, Status: node.Status, Category: resolver.Effective(ctx, q, node.Status), Revision: node.Revision, Title: node.Title, Number: node.Number}
 	}
-	snapshot.admissionTarget = id
 	return snapshot, nil
 }
 
 func (s *DependencySnapshot) CheckRun(ctx context.Context, issueID pgtype.UUID) error {
-	if s.admissionTarget != "" && s.admissionTarget != util.UUIDToString(issueID) {
+	if s.admissionTargets != nil && !s.admissionTargets[util.UUIDToString(issueID)] {
 		return dependencyError("dependency_data_unverified", "execution target was not locked")
 	}
 	if !issueID.Valid {

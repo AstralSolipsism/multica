@@ -387,6 +387,33 @@ func (q *Queries) ListIssueDependencyNodes(ctx context.Context, workspaceID pgty
 	return items, nil
 }
 
+const listQueuedDependencyTargets = `-- name: ListQueuedDependencyTargets :one
+SELECT coalesce(array_agg(DISTINCT t.issue_id) FILTER (WHERE t.issue_id IS NOT NULL), '{}')::uuid[] AS issue_ids,
+       coalesce(bool_or(t.issue_id IS NULL AND t.autopilot_run_id IS NOT NULL), false)::bool AS has_unbound_autopilot
+FROM agent_task_queue t JOIN agent a ON a.id = t.agent_id
+WHERE t.agent_id = $1 AND a.workspace_id = $2
+AND t.status = 'queued'
+`
+
+type ListQueuedDependencyTargetsParams struct {
+	AgentID     pgtype.UUID `json:"agent_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+type ListQueuedDependencyTargetsRow struct {
+	IssueIds            []pgtype.UUID `json:"issue_ids"`
+	HasUnboundAutopilot bool          `json:"has_unbound_autopilot"`
+}
+
+// This is an unlocked candidate read. ClaimAgentTask must only select covered
+// targets after the service has taken their ordered status locks.
+func (q *Queries) ListQueuedDependencyTargets(ctx context.Context, arg ListQueuedDependencyTargetsParams) (ListQueuedDependencyTargetsRow, error) {
+	row := q.db.QueryRow(ctx, listQueuedDependencyTargets, arg.AgentID, arg.WorkspaceID)
+	var i ListQueuedDependencyTargetsRow
+	err := row.Scan(&i.IssueIds, &i.HasUnboundAutopilot)
+	return i, err
+}
+
 const lockAutopilotRunForDependencyAdmission = `-- name: LockAutopilotRunForDependencyAdmission :one
 SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code FROM autopilot_run WHERE id=$1 FOR UPDATE
 `

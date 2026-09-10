@@ -26,6 +26,15 @@ ORDER BY id FOR SHARE;
 -- name: SetTaskDependencyAdmission :one
 UPDATE agent_task_queue SET dependency_admission = $2 WHERE id = $1 RETURNING *;
 
+-- name: ListQueuedDependencyTargets :one
+-- This is an unlocked candidate read. ClaimAgentTask must only select covered
+-- targets after the service has taken their ordered status locks.
+SELECT coalesce(array_agg(DISTINCT t.issue_id) FILTER (WHERE t.issue_id IS NOT NULL), '{}')::uuid[] AS issue_ids,
+       coalesce(bool_or(t.issue_id IS NULL AND t.autopilot_run_id IS NOT NULL), false)::bool AS has_unbound_autopilot
+FROM agent_task_queue t JOIN agent a ON a.id = t.agent_id
+WHERE t.agent_id = sqlc.arg('agent_id') AND a.workspace_id = sqlc.arg('workspace_id')
+AND t.status = 'queued';
+
 -- name: GetTaskByDependencyRequest :one
 SELECT * FROM agent_task_queue WHERE dependency_admission->>'request_id' = $1::text;
 

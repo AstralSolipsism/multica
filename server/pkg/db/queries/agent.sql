@@ -755,6 +755,15 @@ WHERE id = (
     WHERE atq.agent_id = @agent_id
       AND atq.runtime_id = @runtime_id
       AND atq.status = 'queued'
+      -- NULL denotes a full workspace snapshot. Otherwise only covered issue
+      -- targets and issue-less chat/planning rows can be admitted this poll.
+      -- New/different issue targets and legacy run-only rows wait for a fresh
+      -- snapshot instead of being claimed under unrelated status locks.
+      AND (
+          sqlc.narg('admission_issue_ids')::uuid[] IS NULL
+          OR atq.issue_id = ANY(sqlc.narg('admission_issue_ids')::uuid[])
+          OR (atq.issue_id IS NULL AND atq.autopilot_run_id IS NULL)
+      )
       AND EXISTS (
           SELECT 1
           FROM agent a
