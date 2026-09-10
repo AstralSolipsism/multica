@@ -365,7 +365,11 @@ func TestConversationReorderedInputAndFirstPartyContinuation(t *testing.T) {
 
 func TestConversationLegacyTombstoneAndCommentRetryLimit(t *testing.T) {
 	f := newConversationFixture(t)
-	dbfx.Exec(t, `INSERT INTO labrastro_message_feedback (installation_id,inbound_message_id,workspace_id,delivery_id,quoted_message_id,sender_id,user_id,installation_agent_id,chat_id,content,kind,status) VALUES ($1,$2,$3,$4,'om_report','ou_feedback',$5,$6,'oc_feedback','legacy input','comment','pending')`, f.install, f.msg.MessageID, testWorkspaceID, f.delivery, testUserID, f.agent)
+	dbfx.InsertNoID(t, "labrastro_message_feedback", testutil.Cols{
+		"installation_id": f.install, "inbound_message_id": f.msg.MessageID, "workspace_id": testWorkspaceID,
+		"delivery_id": f.delivery, "quoted_message_id": "om_report", "sender_id": "ou_feedback", "user_id": testUserID,
+		"installation_agent_id": f.agent, "chat_id": "oc_feedback", "content": "legacy input", "kind": "comment", "status": "pending",
+	}, "installation_id = $1 AND inbound_message_id = $2", f.install, f.msg.MessageID)
 	f.ingest(t)
 	inputs, runs, comments := f.counts(t)
 	if inputs != 0 || runs != 0 || comments != 0 {

@@ -26,6 +26,14 @@ channel task delivery is frozen with input ownership, and whether task-token
 workspace/human-only checks still execute before tool handlers. Do not silently
 copy integration authority into fresh human actions or unrelated agents.
 
+Run `TestConversationInvocationMatchesMemberGate` whenever the ordinary human
+invoke predicate changes. Conversation intake, transactional enqueue and task
+execution intentionally validate different live/frozen inputs through the same
+grant validator. Preserve the task-token database-failure behavior and 64-task
+lineage boundary documented in the contract; the initial task read also affects
+ordinary platform tokens. Legacy retirement is the explicit `retired` status,
+independent of notice wording.
+
 Keep migrations 474–477 intact. Never restore the removed feedback worker to
 resolve a merge conflict. An old/new mixed-writer deployment is not a supported
 migration plan; apply the stopped-worker cutover in the contract. If future

@@ -11,7 +11,7 @@ import (
 // ConversationHandler runs after installation, dedup and group addressing, but
 // before member identity resolution. Participating channels persist the input,
 // claim fence and normal Chat task together. Other channels return false.
-type ConversationHandler func(context.Context, ResolvedInstallation, channel.InboundMessage, pgtype.UUID, bool, bool, float64) (Result, bool, error)
+type ConversationHandler func(ctx context.Context, inst ResolvedInstallation, msg channel.InboundMessage, claimToken pgtype.UUID, bareFresh, startChat bool, mediaSeconds float64) (result Result, handled bool, err error)
 
 func (r *Router) SetConversationHandler(handler ConversationHandler) {
 	r.mu.Lock()

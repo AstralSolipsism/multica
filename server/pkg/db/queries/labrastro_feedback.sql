@@ -7,7 +7,7 @@ SELECT * FROM labrastro_message_feedback
 WHERE installation_id = $1 AND inbound_message_id = $2;
 
 -- name: IsRetiredLabrastroFeedbackComment :one
-SELECT EXISTS (SELECT 1 FROM labrastro_message_feedback WHERE comment_id = $1 AND (status = 'pending' OR (status = 'rejected' AND notice LIKE 'Legacy feedback retired;%')));
+SELECT EXISTS (SELECT 1 FROM labrastro_message_feedback WHERE comment_id = $1 AND status IN ('pending', 'retired'));
 
 -- name: DeleteLabrastroFeedbackByWorkspace :exec
 DELETE FROM labrastro_message_feedback WHERE workspace_id = $1;

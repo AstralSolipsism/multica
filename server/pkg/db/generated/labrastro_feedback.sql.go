@@ -92,7 +92,7 @@ func (q *Queries) GetLabrastroFeedbackReceipt(ctx context.Context, arg GetLabras
 }
 
 const isRetiredLabrastroFeedbackComment = `-- name: IsRetiredLabrastroFeedbackComment :one
-SELECT EXISTS (SELECT 1 FROM labrastro_message_feedback WHERE comment_id = $1 AND (status = 'pending' OR (status = 'rejected' AND notice LIKE 'Legacy feedback retired;%')))
+SELECT EXISTS (SELECT 1 FROM labrastro_message_feedback WHERE comment_id = $1 AND status IN ('pending', 'retired'))
 `
 
 func (q *Queries) IsRetiredLabrastroFeedbackComment(ctx context.Context, commentID pgtype.UUID) (bool, error) {

@@ -47,7 +47,7 @@ func larkMsgFromRaw(msg channel.InboundMessage) (InboundMessage, error) {
 func NewFeishuResolverSet(store *ChannelStore, session *engine.ChatSession, audit AuditLogger, replier OutcomeReplier, typing *TypingIndicatorManager, media engine.MediaResolver) engine.ResolverSet {
 	set := engine.ResolverSet{
 		Installation: &feishuInstallationResolver{store: store},
-		Identity:     &feishuIdentityResolver{store: store},
+		Identity:     feishuRejectMemberIdentity{},
 		Dedup:        &feishuDeduper{store: store},
 		Session:      &feishuSessionBinder{session: session},
 		Audit:        &feishuAuditor{audit: audit},
@@ -93,9 +93,9 @@ func (r *feishuInstallationResolver) ResolveInstallation(ctx context.Context, ms
 
 // ---- identity ----
 
-type feishuIdentityResolver struct{ store *ChannelStore }
+type feishuRejectMemberIdentity struct{}
 
-func (r *feishuIdentityResolver) ResolveSender(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage) (engine.ResolvedIdentity, error) {
+func (feishuRejectMemberIdentity) ResolveSender(context.Context, engine.ResolvedInstallation, channel.InboundMessage) (engine.ResolvedIdentity, error) {
 	// Feishu conversations are authorized by the integration handler before
 	// member identity resolution. Missing assembly must never restore member
 	// impersonation merely because this sender happens to have a binding.

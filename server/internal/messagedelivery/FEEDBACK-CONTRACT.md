@@ -55,6 +55,17 @@ of invocation rights invalidate previous external work at these boundaries.
 An already accepted side effect or a local tool running on a daemon cannot be
 recalled. This is not a filesystem/network sandbox for agent runtimes.
 
+Every task-token API request now reads its task after authenticating the token,
+including ordinary platform tasks. Fresh direct tasks require no ancestor or
+installation lookup. Retry links are followed regardless of source; delegation
+links are followed only for `delegation` and `comment_source`. Limiting the
+initial check to `channel_integration` would let descendants escape revocation.
+The walk checks at most 64 tasks, including the executing task; a longer chain
+(even a valid ordinary retry chain), a cycle or a missing ancestor is denied.
+At the tool boundary, denial is HTTP 403; a database lookup failure is HTTP 503.
+Claim-time database failures use existing claim recovery. These are additional
+database dependencies, not free local checks; no latency benchmark is claimed.
+
 A fresh first-party action in the same Chat follows normal human authorization
 and has no external delivery snapshot. Normal task-token, workspace and
 human-only endpoint gates remain in force. No shadow members, system author,
@@ -128,9 +139,10 @@ is introduced.
    backup and inventory legacy `pending` rows with their comment/Chat/run IDs.
 2. Apply the additive migration `478_labrastro_feedback_retirement.up.sql`
    with the normal runner after migrations through 477. It marks old pending
-   rows `rejected` with a retirement notice and sets missing `acknowledged_at`.
+   rows `retired` with a retirement notice and sets missing `acknowledged_at`.
    Complete/rejected rows keep their outcome. It does not delete comments,
    receipts, source data, Chat/run anchors or inbound replay identities.
+   Reconciliation recognizes the explicit status, never the notice wording.
 3. Start only the new binary. It has no legacy member writer, recovery callback
    or acknowledgement worker. Reconciliation skips pending/retired legacy
    comments; a matching old inbound ID is dropped by the new hook. Review
@@ -175,6 +187,8 @@ client, encrypted credentials and receipt recovery.
 | Normal comment dependency gate; lost comment response gives two comments, not a claimed exactly-once result | `TestConversationCommentDependencyGateAndLostResponse`, `TestConversationLegacyTombstoneAndCommentRetryLimit` |
 | Bare controls; committed queue recovered through normal claim; revoke before daemon payload | `TestConversationControlCommandsAndQueuedRecovery` |
 | Bot identity backfill cannot overwrite consent revoked immediately before its write | `TestConversationRevocationSurvivesBotBackfill` |
+| Human invocation matches the ordinary member gate; owner/admin have no private-agent bypass | `TestConversationInvocationMatchesMemberGate` |
+| 64/65-task boundary, cyclic/missing lineage, fresh direct action and database failure semantics | `TestConversationLineageBoundaries`, `TestConversationTaskTokenLookupFailures` |
 | Source context cannot authorize an unapproved group or a forged/diagnostic quote | `TestConversationNotificationContextCannotAuthorize` |
 | Replies use the real chat ID and fail closed on revoked/unavailable consent | `TestConversationOutboundUsesRealChatAndLiveConsent` |
 | Real signed bot source / shard recovery and forgery refusals | `TestFeedbackSignedSourceRecoveryThroughHTTPAndDatabase` |
