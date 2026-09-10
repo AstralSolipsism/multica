@@ -46,6 +46,12 @@ func dependencyWaiter(t *testing.T, ctx context.Context, blocker int) (int, stri
 }
 
 func TestDependencyWaitingWriterPrecedesNewAdmissions(t *testing.T) {
+	for _, field := range []string{"status", "title"} {
+		t.Run(field, func(t *testing.T) { dependencyWaitingWriterPrecedesNewAdmissions(t, field) })
+	}
+}
+
+func dependencyWaitingWriterPrecedesNewAdmissions(t *testing.T, field string) {
 	h, fx := dependencyFixture(t)
 	issue := dependencyIssue(t, fx, "ordinary status write")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -66,7 +72,7 @@ func TestDependencyWaitingWriterPrecedesNewAdmissions(t *testing.T) {
 	writerDone := make(chan struct{})
 	go func() {
 		defer close(writerDone)
-		r := dependencyRequest(fx, http.MethodPatch, issue, map[string]any{"status": "todo"}, "jwt")
+		r := dependencyRequest(fx, http.MethodPatch, issue, map[string]any{field: "todo"}, "jwt")
 		requestCtx, stop := context.WithCancel(r.Context())
 		stopCancel := context.AfterFunc(ctx, stop)
 		defer stopCancel()
@@ -104,7 +110,8 @@ func TestDependencyWaitingWriterPrecedesNewAdmissions(t *testing.T) {
 	if err = <-read; err != nil {
 		t.Fatal(err)
 	}
-	if fx.Count(t, "SELECT count(*) FROM issue WHERE id=$1 AND status='todo'", issue) != 1 {
+	row, err := h.Queries.GetIssue(ctx, parseUUID(issue))
+	if err != nil || (field == "title" && row.Title != "todo") || (field == "status" && row.Status != "todo") {
 		t.Fatal("writer did not commit")
 	}
 }

@@ -57,7 +57,7 @@ func TestDependencyAdmissionContention(t *testing.T) {
 			}
 		})
 	}
-	for _, shape := range []string{"dense", "deep", "multi_workspace", "sustained", "overlay", "dense_reference", "feishu", "feishu_overlay"} {
+	for _, shape := range []string{"dense", "deep", "multi_workspace", "sustained", "overlay", "dense_reference", "feishu", "feishu_overlay", "title_only"} {
 		t.Run(shape, func(t *testing.T) {
 			size := 5000
 			if shape == "dense_reference" {
@@ -70,10 +70,14 @@ func TestDependencyAdmissionContention(t *testing.T) {
 				}
 			}
 			var duration time.Duration
-			if shape == "sustained" {
+			if shape == "sustained" || shape == "title_only" {
 				duration = 30 * time.Second
 			}
-			runDependencyAdmissionLoad(t, workspaces, 16, 2, iterations, duration)
+			writers := 2
+			if shape == "title_only" {
+				writers = 1
+			}
+			runDependencyAdmissionLoad(t, workspaces, 16, writers, iterations, duration)
 		})
 	}
 }
@@ -378,7 +382,7 @@ func runDependencyAdmissionLoad(t *testing.T, workspaces []dependencyLoadWorkspa
 		t.Fatal(err)
 	}
 	t.Logf("DEPENDENCY_LOAD_RESULT %s", data)
-	if len(errors) != 0 || locks.Error != "" || len(latencies["claim"]) < iterations*claimers || len(latencies["enqueue"]) != len(latencies["claim"]) || (writers > 0 && (len(latencies["title_write"]) < iterations || len(latencies["status_write"]) < iterations)) {
+	if len(errors) != 0 || locks.Error != "" || len(latencies["claim"]) < iterations*claimers || len(latencies["enqueue"]) != len(latencies["claim"]) || (writers > 0 && len(latencies["title_write"]) < iterations) || (writers == 2 && len(latencies["status_write"]) < iterations) {
 		t.Fatal("load did not finish every operation successfully; see result")
 	}
 	for i, agent := range agents {
