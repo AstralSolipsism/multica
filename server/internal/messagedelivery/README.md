@@ -1,7 +1,10 @@
 # Labrastro Message Delivery — Backend Contract (OL-25 + OL-27 + OL-29)
 
-Quoted Feishu feedback, actual-member authorization, comment/Chat recovery,
-deletion and migration evidence are defined in [FEEDBACK-CONTRACT.md](FEEDBACK-CONTRACT.md).
+Feishu participants converse with the designated agent under explicit integration
+consent, including participants without platform accounts. The agent uses normal
+tools to summarize feedback under its own identity. Authorization, recovery and
+legacy-feedback retirement are defined in [FEEDBACK-CONTRACT.md](FEEDBACK-CONTRACT.md).
+Upstream sync points are listed in [UPSTREAM-ADAPTATION.md](UPSTREAM-ADAPTATION.md).
 
 This is the API/contract reference for the standalone result-delivery module
 ("自动化结果投递" + "个人收件箱与团队事件投递"): automation runs finish,
@@ -840,5 +843,5 @@ downgrade, successful retry, receipt cleanup and re-upgrade.
   tests with fake senders/verifiers plus HTTP-contract tests on the real
   client.
 - The frontend configuration UI remains a later stage of the parent plan.
-- Feedback (reply-to-deliver → comment) is a later stage; `source_ref` is
-  reserved for it.
+- Verified `source_ref` and receipt/report context now feed the designated
+  agent conversation; they do not directly insert a member-authored comment.

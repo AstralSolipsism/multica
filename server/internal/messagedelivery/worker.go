@@ -48,24 +48,7 @@ func (s *Service) Run(ctx context.Context) {
 		defer wg.Done()
 		s.scanLoop(ctx)
 	}()
-	if s.ProcessFeedback != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ticker := time.NewTicker(pollInterval)
-			defer ticker.Stop()
-			for {
-				if err := s.ProcessFeedback(ctx); err != nil && ctx.Err() == nil {
-					s.logger().Error("message feedback recovery failed", "error", err)
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-				}
-			}
-		}()
-	}
+
 	wg.Wait()
 }
 

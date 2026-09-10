@@ -1,3 +1,10 @@
+export interface LarkConversationGrant {
+  id: string;
+  authorized_by: string;
+  scope: "workspace";
+  chats: { chat_id: string; chat_type: "group" | "p2p" }[];
+}
+
 /** A Lark Bot installation bound to a single Multica agent.
  *
  * Wire shape mirrors `LarkInstallationResponse` in
@@ -5,6 +12,7 @@
  * future MUST default to optional so older desktop builds keep parsing
  * the response — see CLAUDE.md → API Response Compatibility. */
 export interface LarkInstallation {
+  conversation?: LarkConversationGrant | null;
   id: string;
   workspace_id: string;
   agent_id: string;
@@ -25,6 +33,7 @@ export interface LarkInstallation {
 }
 
 export interface ListLarkInstallationsResponse {
+  conversation_supported?: boolean;
   installations: LarkInstallation[];
   /** Whether the deployment has the at-rest secret key configured. When
    * false the Bind button must be disabled and the panel renders an

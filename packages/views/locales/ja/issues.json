@@ -589,7 +589,8 @@
       "source_rule_owner": "オートパイロットのルール公開者",
       "source_owner_fallback": "正確な責任者なし — エージェント所有者に帰属",
       "source_backfill": "バックフィルされた帰属",
-      "source_unattributed": "責任メンバーを解決できません"
+      "source_unattributed": "責任メンバーを解決できません",
+      "source_channel_integration": "連携会話の承認"
     },
     "usage_total_tooltip": "このタスクのトークン使用量 — クリックで実行ごとの内訳"
   },

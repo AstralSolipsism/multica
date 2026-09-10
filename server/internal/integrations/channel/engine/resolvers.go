@@ -52,13 +52,18 @@ const (
 // consumed by the outbound side (OutboundReplier / typing). It mirrors the
 // legacy lark.DispatchResult.
 type Result struct {
-	FeedbackNotice       string
-	Outcome              Outcome
-	DropReason           DropReason
-	InstallationID       pgtype.UUID
-	ChatSessionID        pgtype.UUID
-	ChannelBindingID     pgtype.UUID
-	ChannelRouteRevision int64
+	// The integration handler returns the committed turn so detached media can
+	// reuse the ordinary resolver/intent ledger without rewriting its context.
+	ConversationMessageID pgtype.UUID
+	ConversationUserID    pgtype.UUID
+	ConversationBody      string
+	FeedbackNotice        string
+	Outcome               Outcome
+	DropReason            DropReason
+	InstallationID        pgtype.UUID
+	ChatSessionID         pgtype.UUID
+	ChannelBindingID      pgtype.UUID
+	ChannelRouteRevision  int64
 	// Sender is the platform-native sender id (e.g. Lark open_id), so the
 	// replier can target a binding prompt back to the sender.
 	Sender          string

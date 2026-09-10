@@ -77,8 +77,7 @@ func assembleMessageDelivery(h *handler.Handler, bus *events.Bus) {
 	})
 
 	h.MessageDelivery = svc
-	svc.ProcessFeedback = h.ProcessMessageFeedback
 	if h.ChannelRouter != nil {
-		h.ChannelRouter.SetFeedbackHandler(h.HandleMessageFeedback)
+		h.ChannelRouter.SetConversationHandler(h.HandleChannelConversation)
 	}
 }

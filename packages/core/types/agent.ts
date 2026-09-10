@@ -317,7 +317,7 @@ export interface TaskEvidence {
 export interface TaskAttribution {
   /**
    * Waterfall level that resolved the accountable human:
-   * `direct_human` | `delegation` | `comment_source` | `rule_owner` |
+   * `direct_human` | `channel_integration` | `delegation` | `comment_source` | `rule_owner` |
    * `owner_fallback` | `backfill` | `unattributed`. Never blank.
    */
   source: string;

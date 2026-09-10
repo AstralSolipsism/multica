@@ -11,6 +11,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -112,6 +113,18 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 					return
 				}
 				userID := uuidToString(tt.UserID)
+				task, taskErr := queries.GetAgentTask(r.Context(), tt.TaskID)
+				if taskErr == nil {
+					taskErr = channel.AuthorizeConversationTask(r.Context(), queries, task, tt.WorkspaceID)
+				}
+				if taskErr != nil {
+					status := http.StatusServiceUnavailable
+					if errors.Is(taskErr, channel.ErrConversationDenied) {
+						status = http.StatusForbidden
+					}
+					http.Error(w, `{"error":"task authorization unavailable"}`, status)
+					return
+				}
 				if rejectTemporarilyDisabledUser(w, r, userID, "", "task_token") {
 					return
 				}

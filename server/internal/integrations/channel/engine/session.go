@@ -379,6 +379,7 @@ func (s *ChatSession) createSessionAndBinding(ctx context.Context, in EnsureSess
 // its own binding row, recording the real thread here per session does not clash
 // across sibling threads.
 type AppendInput struct {
+	ConversationOnly    bool // External conversation text must never execute a member command.
 	SessionID           pgtype.UUID
 	Sender              pgtype.UUID
 	InstallationID      pgtype.UUID
@@ -631,6 +632,9 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 		commandSource = in.Body
 	}
 	cmd, _ := ParseIssueCommand(commandSource)
+	if in.ConversationOnly {
+		cmd = nil
+	}
 	// Context paths acquire chat_session before binding and generation. This
 	// also keeps the later TouchChatSession update from introducing the reverse
 	// binding -> chat_session edge against task enqueue.

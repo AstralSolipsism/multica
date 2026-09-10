@@ -877,7 +877,16 @@
     "install_error_installer_bind": "ボットは設置されましたが、Lark の身元情報を連携できませんでした。もう一度お試しいただくか、サポートにお問い合わせください。",
     "install_error_session_lost": "設置セッションが期限切れまたは失われました。もう一度スキャンしてやり直してください。",
     "install_error_forbidden": "このワークスペースに Lark ボットを設置する権限がなくなりました。ワークスペース管理者にお問い合わせください。",
-    "install_error_generic": "設置に失敗しました。もう一度お試しください。"
+    "install_error_generic": "設置に失敗しました。もう一度お試しください。",
+    "conversation_title": "エージェントと会話",
+    "conversation_description": "参加者に Labrastro アカウントは不要です。エージェントが意見を確認・整理し、自分の名前でコメントします。処理時間とモデル使用量が発生し、各メッセージがそのままタスクに転記されるわけではありません。",
+    "conversation_groups": "グループのチャット ID（1 行に 1 つの oc_ ID、トピックは独立）",
+    "conversation_directs": "個別チャット ID（1 行に 1 つの oc_ ID）",
+    "conversation_scope": "現在のワークスペース全体で、このエージェントの通常のツールをあなたの呼び出し権限に従って使用します。会話の全参加者が入力できます。保存すると新しい会話に切り替わり、古い実行の承認は無効になります。通知の送信承認は別途設定します。",
+    "conversation_save": "会話を承認",
+    "conversation_revoke": "会話の承認を取り消す",
+    "conversation_unavailable": "設定を取得できないか更新中です。下書きは保持されています。更新後に保存してください。",
+    "conversation_saved": "会話の承認を保存しました。"
   },
   "composio": {
     "section_title": "Composio",

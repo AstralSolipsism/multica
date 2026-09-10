@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/realtime"
@@ -2047,6 +2048,30 @@ func (s *TaskService) enqueueChatTaskTx(
 		}
 	}
 
+	evidenceRef := chatSession.ID
+	if requireDelivery && bindingErr == nil && binding.ChannelType == string(channel.TypeFeishu) {
+		cfg, err := channel.ParseConversationConfig(binding.Config)
+		if err != nil {
+			return db.AgentTaskQueue{}, err
+		}
+		if cfg.Grant != nil {
+			inst, err := qtx.LockConversationInstallation(ctx, db.LockConversationInstallationParams{ID: binding.InstallationID, WorkspaceID: currentSession.WorkspaceID})
+			if err != nil {
+				return db.AgentTaskQueue{}, err
+			}
+			if inst.AgentID != chatSession.AgentID || cfg.Grant.AuthorizedBy != util.UUIDToString(initiatorUserID) {
+				return db.AgentTaskQueue{}, channel.ErrConversationDenied
+			}
+			if err := channel.AuthorizeConversation(ctx, qtx, inst, cfg.Grant, cfg.ChatID, binding.ChatType); err != nil {
+				return db.AgentTaskQueue{}, err
+			}
+			prepared.accountableUser = initiatorUserID
+			prepared.attrSource = pgtype.Text{String: channel.ConversationOrigin, Valid: true}
+			prepared.attrEvidenceKind = pgtype.Text{String: "channel_conversation", Valid: true}
+			evidenceRef = binding.ID
+		}
+	}
+
 	pendingFresh := false
 	if bindingErr == nil {
 		if contextRevision <= 0 {
@@ -2096,7 +2121,7 @@ func (s *TaskService) enqueueChatTaskTx(
 		RuntimeConnectedApps: prepared.runtimeOverlay.ConnectedApps,
 		OriginatorSource:     prepared.attrSource,
 		TriggerEvidenceKind:  prepared.attrEvidenceKind,
-		TriggerEvidenceRefID: chatSession.ID,
+		TriggerEvidenceRefID: evidenceRef,
 		ChannelContextRevision: pgtype.Int8{
 			Int64: contextRevision, Valid: contextRevision > 0,
 		},

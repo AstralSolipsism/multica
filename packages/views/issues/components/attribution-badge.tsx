@@ -76,6 +76,9 @@ export function AttributionBadge({
     case "comment_source":
       sourceLabel = t(($) => $.execution_log.attribution.source_comment_source);
       break;
+    case "channel_integration":
+      sourceLabel = t(($) => $.execution_log.attribution.source_channel_integration);
+      break;
     case "trigger_owner":
       sourceLabel = t(($) => $.execution_log.attribution.source_trigger_owner);
       break;

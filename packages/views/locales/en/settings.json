@@ -879,7 +879,16 @@
     "install_error_installer_bind": "Installed the bot, but could not bind your Lark identity. Try again or contact support.",
     "install_error_session_lost": "Install session expired or was lost. Scan again to start over.",
     "install_error_forbidden": "You no longer have permission to install Lark Bots in this workspace. Ask a workspace admin to continue.",
-    "install_error_generic": "Install failed. Try again."
+    "install_error_generic": "Install failed. Try again.",
+    "conversation_title": "Agent conversations",
+    "conversation_description": "People in these conversations can talk to this agent without a Labrastro account. The agent clarifies and summarizes feedback, then posts comments in its own name. This takes time and model usage; messages are not copied verbatim into tasks.",
+    "conversation_groups": "Group chat IDs (one oc_ ID per line; topics remain separate)",
+    "conversation_directs": "Direct chat IDs (one oc_ ID per line)",
+    "conversation_scope": "Authorization covers this agent’s normal tools in the entire current workspace, under your invocation rights. Everyone in these conversations may provide input. Saving starts a new conversation scope and invalidates old runs. Notification delivery consent is managed separately.",
+    "conversation_save": "Authorize conversations",
+    "conversation_revoke": "Revoke conversations",
+    "conversation_unavailable": "Configuration is unavailable or refreshing. Your draft is preserved; refresh before saving.",
+    "conversation_saved": "Conversation authorization saved."
   },
   "composio": {
     "section_title": "Composio",

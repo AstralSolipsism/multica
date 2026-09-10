@@ -23,7 +23,6 @@ type FeedbackMessage struct {
 
 type FeedbackTransport interface {
 	ReadFeedbackMessage(context.Context, string, string, string) (FeedbackMessage, error)
-	SendFeedbackNotice(context.Context, db.LabrastroMessageFeedback) error
 }
 
 var ErrFeedbackSource = errors.New("feedback source cannot be verified")
@@ -128,20 +127,21 @@ func (s *Service) ResolveFeedbackSource(ctx context.Context, workspaceID, instal
 	return &FeedbackSource{Delivery: d, IssueID: ref.IssueID, CommentID: ref.CommentID, RunID: ref.RunID, Text: snap.Text, Link: snap.Link}, nil
 }
 
-// AuthorizeFeedbackTarget checks frozen recipient/range consent with the same
-// approval predicates as sending. Member and issue authorization is separate.
-func AuthorizeFeedbackTarget(ctx context.Context, q *db.Queries, d db.LabrastroMessageDelivery, userID pgtype.UUID, chatID string) error {
+// AuthorizeConversationSource checks frozen group/topic consent after the real
+// bot message and chat are verified. It grants context access only; execution
+// authority comes from the independent conversation grant.
+func AuthorizeConversationSource(ctx context.Context, q *db.Queries, d db.LabrastroMessageDelivery, chatID, threadID string) error {
 	var snap targetSnapshot
 	if json.Unmarshal(d.TargetSnapshot, &snap) != nil {
 		return ErrFeedbackSource
 	}
 	if snap.TargetType == TargetMember {
-		if snap.UserID != util.UUIDToString(userID) {
-			return ErrFeedbackSource
-		}
 		return nil
 	}
 	if (snap.TargetType != TargetGroup && snap.TargetType != TargetTopic) || snap.ChatID != chatID {
+		return ErrFeedbackSource
+	}
+	if snap.TargetType == TargetTopic && snap.ThreadID != "" && snap.ThreadID != threadID {
 		return ErrFeedbackSource
 	}
 	if d.AutopilotID.Valid {

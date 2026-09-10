@@ -1127,7 +1127,16 @@
     "install_error_installer_bind": "봇은 설치되었지만 Lark 신원을 연결하지 못했어요. 다시 시도하거나 지원팀에 문의하세요.",
     "install_error_session_lost": "설치 세션이 만료되었거나 유실되었어요. 다시 스캔해 처음부터 진행하세요.",
     "install_error_forbidden": "이 워크스페이스에 Lark 봇을 설치할 권한이 더 이상 없어요. 워크스페이스 관리자에게 문의하세요.",
-    "install_error_generic": "설치에 실패했어요. 다시 시도하세요."
+    "install_error_generic": "설치에 실패했어요. 다시 시도하세요.",
+    "conversation_title": "에이전트와 대화",
+    "conversation_description": "참여자는 Labrastro 계정이 없어도 됩니다. 에이전트가 의견을 확인하고 정리한 뒤 자신의 이름으로 댓글을 남깁니다. 처리 시간과 모델 사용량이 발생하며 모든 메시지가 그대로 작업에 복사되지는 않습니다.",
+    "conversation_groups": "그룹 채팅 ID (줄마다 oc_ ID 하나, 주제별 대화 분리)",
+    "conversation_directs": "개인 채팅 ID (줄마다 oc_ ID 하나)",
+    "conversation_scope": "현재 작업 공간 전체에서 이 에이전트의 일반 도구를 사용하며 내 호출 권한을 따릅니다. 대화의 모든 참여자가 입력할 수 있습니다. 저장하면 새 대화로 전환되고 이전 실행의 권한은 무효화됩니다. 알림 전송 권한은 별도로 설정합니다.",
+    "conversation_save": "대화 승인",
+    "conversation_revoke": "대화 승인 취소",
+    "conversation_unavailable": "설정을 읽을 수 없거나 새로 고치는 중입니다. 초안은 유지됩니다. 새로 고친 후 저장하세요.",
+    "conversation_saved": "대화 승인을 저장했습니다."
   },
   "composio": {
     "section_title": "Composio",

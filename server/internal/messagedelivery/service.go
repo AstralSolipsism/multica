@@ -29,7 +29,6 @@ type txStarter interface {
 // queue the worker drains.
 type Service struct {
 	FeedbackTransport FeedbackTransport
-	ProcessFeedback   func(context.Context) error
 	Queries           *db.Queries
 	// Tx starts transactions for parent-integrity-guarded writes (the
 	// workspace FOR SHARE lock around decision/receipt inserts, review

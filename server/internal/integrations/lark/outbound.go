@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -380,6 +381,24 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 	if InstallationStatus(inst.Status) != InstallationActive {
 		// Revoked between trigger and event; nothing to patch.
 		return nil
+	}
+	cfg, configErr := channel.ParseConversationConfig(delivery.Config)
+	if configErr != nil {
+		return configErr
+	}
+	if cfg.Grant != nil {
+		checker, ok := p.queries.(interface {
+			AuthorizeConversationTask(context.Context, pgtype.UUID, pgtype.UUID) error
+		})
+		if !ok {
+			return channel.ErrConversationDenied
+		}
+		if err := checker.AuthorizeConversationTask(ctx, taskID, inst.WorkspaceID); err != nil {
+			if errors.Is(err, channel.ErrConversationDenied) {
+				return nil
+			}
+			return err
+		}
 	}
 	creds, err := p.installationCredentials(inst)
 	if err != nil {

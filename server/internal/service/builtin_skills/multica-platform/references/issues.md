@@ -10,7 +10,28 @@ Product contracts the runtime brief does not fully encode.
 - [Claim ownership without duplicating a run](#claim-ownership-without-duplicating-a-run)
 - [Who else is running right now](#who-else-is-running-right-now)
 - [Sub-issues: todo starts work now, backlog parks it](#sub-issues-todo-starts-work-now-backlog-parks-it)
+- [External Feishu conversations](#external-feishu-conversations)
 - [Incorrect to correct](#incorrect-to-correct)
+
+## External Feishu conversations
+
+In an explicitly authorized Feishu conversation, speakers may have no Labrastro
+account. Their message/sender/chat IDs are source evidence, not member identity.
+The designated agent receives a workspace-scoped integration grant with a real
+human grantor; ordinary task-token and private-agent invocation rules still
+apply. Notification receipts and frozen reports supply context only.
+
+Clarify the intended task/discussion when it is missing or ambiguous. Then use
+the normal `multica issue comment add --content-file <path> --parent <comment-id>`
+path to post as the agent, retaining important original wording and external
+message sources. Do not claim a platform member personally submitted or approved
+the feedback. A report question does not by itself request an automation rerun
+or a new issue; a bare “yes/可以/继续” does not approve a batch of changes.
+
+Receiving a message does not directly create a comment. The comment API has no
+idempotency key: after a lost submission response, inspect existing comments
+and run provenance before blindly repeating the write. Grant revocation stops
+new authorized tool calls; it cannot undo side effects already accepted.
 
 ## PR linking and close intent are two distinct contracts
 

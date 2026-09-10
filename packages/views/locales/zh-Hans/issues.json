@@ -589,7 +589,8 @@
       "source_rule_owner": "自动化规则发布者",
       "source_owner_fallback": "无精确责任人——归到智能体所有者",
       "source_backfill": "回填的归因",
-      "source_unattributed": "未解析到责任成员"
+      "source_unattributed": "未解析到责任成员",
+      "source_channel_integration": "集成会话授权"
     },
     "usage_total_tooltip": "这个任务的 token 用量——点击查看每次运行的明细"
   },
