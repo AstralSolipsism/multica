@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  messageSourceKeys,
   messageSourceRoutesOptions,
   useApproveMessageSourceTarget,
   useCreateMessageSourceRoute,
@@ -47,6 +48,34 @@ import {
   type TeamEventKey,
 } from "../copy";
 
+
+/**
+ * React Query notifies useQuery observers one tick AFTER a failed read lands
+ * in the cache; a write block must not have that gap. This mirrors the routes
+ * query's error state synchronously from the query cache, so a failed
+ * background refresh blocks saving the moment it is recorded — the
+ * observer-driven `routesRefreshFailed` prop follows for the visible note.
+ */
+function useRoutesErrorSync(wsId: string, sourceKind?: string): boolean {
+  const qc = useQueryClient();
+  const queryKey = messageSourceKeys.routes(wsId, sourceKind);
+  const [syncError, setSyncError] = useState<boolean>(
+    () => qc.getQueryState?.(queryKey)?.status === "error",
+  );
+  useEffect(() => {
+    const cache = qc.getQueryCache?.();
+    if (!cache) return;
+    return cache.subscribe((event) => {
+      if (event.type === "updated" || event.type === "removed" || event.type === "added") {
+        setSyncError(
+          qc.getQueryState?.(messageSourceKeys.routes(wsId, sourceKind))?.status === "error",
+        );
+      }
+    });
+  }, [qc, wsId, sourceKind]);
+  return syncError;
+}
+
 const TEAM_KINDS = ["activity", "comment"] as const;
 const TEAM_TARGET_TYPES = ["group", "topic"] as const;
 
@@ -75,6 +104,7 @@ export function SourceRouteEditorDialog({
   catalog,
   catalogError = false,
   onCatalogRetry,
+  routesRefreshFailed = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -94,6 +124,12 @@ export function SourceRouteEditorDialog({
    * never be submitted by default. */
   catalogError?: boolean;
   onCatalogRetry?: () => void;
+  /** True when the routes list's BACKGROUND refresh failed with retained
+   * data (initial-load failures never reach the editor — the section keeps
+   * its full error state instead). The open draft is preserved, but saving
+   * is blocked until the list reads successfully again: the revision and
+   * sibling-state the save builds on are not confirmed current. */
+  routesRefreshFailed?: boolean;
 }) {
   const { t } = useT("message-delivery");
   const { getActorName } = useActorName();
@@ -195,6 +231,15 @@ export function SourceRouteEditorDialog({
   // AND when a refresh failed with retained (now unverifiable) data — the
   // error state means the options on screen are not confirmed current.
   const saveBlockedByCatalog = catalog == null || catalogError;
+  // Same honesty for the routes list the save builds on (revision for
+  // updates, sibling state): a failed background refresh pauses saving
+  // without touching the open draft. The synchronous cache mirror closes the
+  // observer-notification gap, so the block is in force the moment the
+  // failed read is recorded, not one render later.
+  const routesErrorSync = useRoutesErrorSync(wsId, mode === "personal" ? "inbox" : undefined);
+  const routesFailed = routesRefreshFailed || routesErrorSync;
+  const saveBlocked =
+    saveBlockedByConflict || saveBlockedByCatalog || routesFailed;
 
   const toggleEvent = (value: string, checked: boolean) => {
     setSelectedEvents((prev) =>
@@ -232,6 +277,15 @@ export function SourceRouteEditorDialog({
   };
 
   const handleSave = async () => {
+    // The button is disabled in these states; guard the submit itself too so
+    // a programmatic/keyboard path can never write past them. The routes
+    // error state is re-read straight from the cache — the freshest possible
+    // answer at click time.
+    if (saveBlocked || saving || !valid) return;
+    const routesStatus = qc.getQueryState?.(
+      messageSourceKeys.routes(wsId, mode === "personal" ? "inbox" : undefined),
+    )?.status;
+    if (routesStatus === "error") return;
     setError(null);
     // A new save ends the previous round's "adopted latest" notice — the
     // result of THIS attempt (success or its own error) is what must show.
@@ -554,6 +608,14 @@ export function SourceRouteEditorDialog({
             </p>
           )}
 
+          {routesFailed && (
+            <Alert>
+              <AlertDescription>
+                {t(($) => $.source_editor.routes_refresh_failed)}
+              </AlertDescription>
+            </Alert>
+          )}
+
           {errorMessage && (
             <Alert variant="destructive">
               <AlertDescription className="flex items-center justify-between gap-2">
@@ -577,7 +639,7 @@ export function SourceRouteEditorDialog({
             </Button>
             <Button
               onClick={handleSave}
-              disabled={!valid || saving || saveBlockedByConflict || saveBlockedByCatalog}
+              disabled={!valid || saving || saveBlocked}
             >
               {saving
                 ? t(($) => $.editor.saving)

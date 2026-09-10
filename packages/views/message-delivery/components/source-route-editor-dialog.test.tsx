@@ -38,6 +38,14 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("@multica/core/message-delivery", () => ({
+  messageSourceKeys: {
+    routes: (wsId: string, sourceKind?: string) => [
+      "message-sources",
+      wsId,
+      "routes",
+      sourceKind ?? "all",
+    ],
+  },
   messageSourceRoutesOptions: (_wsId: string, sourceKind?: string) => ({
     queryKey: ["message-sources", "ws-1", "routes", sourceKind ?? "all"],
   }),
