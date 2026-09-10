@@ -146,7 +146,8 @@
       "route_revision": "规则版本",
       "run": "运行",
       "load_failed": "详情加载失败——上方状态来自列表行，可能不是最新。",
-      "view_log": "查看日志"
+      "view_log": "查看日志",
+      "loading_state": "正在读取当前状态..."
     },
     "retry": {
       "action": "重试",
@@ -225,7 +226,8 @@
     "load_failed": "团队订阅加载失败。",
     "no_bot": "当前工作区没有可用的飞书机器人，请先在上方安装。",
     "approvals_title": "已批准的团队目标",
-    "approvals_empty": "暂无已批准的团队目标。"
+    "approvals_empty": "暂无已批准的团队目标。",
+    "approvals_load_failed": "批准列表加载失败。"
   },
   "source_editor": {
     "title_add_personal": "设置飞书推送",
@@ -246,7 +248,8 @@
     "boundary_hint": "修改机器人、目标、范围或事件，或重新启用已停用的规则，都会从该时刻起重新计算生效边界；之前的历史不会补发。",
     "approval_admin": "该目标在此来源和范围下尚未批准。保存时将以工作区管理员身份批准，并验证机器人可达。",
     "approval_member": "该目标在此来源和范围下需工作区 owner/admin 批准后才能保存。",
-    "enable_hint": "批准目标不代表规则已启用，只有规则处于启用状态时才会投递事件。"
+    "enable_hint": "批准目标不代表规则已启用，只有规则处于启用状态时才会投递事件。",
+    "catalog_load_failed": "事件目录加载失败，无法确认事件范围，请重新加载后再保存。"
   },
   "error_code": {
     "route_disabled": "推送目标已停用",

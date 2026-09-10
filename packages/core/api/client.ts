@@ -4857,12 +4857,20 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(`/api/message-approved-targets/${targetId}`, {
       method: "DELETE",
     });
-    return parseWithFallback(
+    const parsed = parseWithFallback(
       raw,
       RevokeMessageTargetResponseSchema,
       { revoked: false, cancelled_deliveries: 0 },
       { endpoint: "DELETE /api/message-approved-targets/:targetId" },
     );
+    if (parsed.revoked !== true) {
+      // A 2xx that cannot confirm the revoke must not resolve as success —
+      // the UI would otherwise toast "revoked" while queued sends live on.
+      throw new ApiError("unconfirmed approved-target revoke response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
+    return parsed;
   }
 
   // GitHub integration

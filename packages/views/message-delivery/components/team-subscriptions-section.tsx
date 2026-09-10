@@ -202,6 +202,8 @@ function TeamSubscriptionsBody() {
         <TeamApprovedTargetsList
           approvals={approvals}
           isLoading={approvalsQuery.isLoading}
+          isError={approvalsQuery.isError}
+          onReload={() => approvalsQuery.refetch()}
           projects={projects}
         />
       )}
@@ -216,6 +218,8 @@ function TeamSubscriptionsBody() {
           approvals={approvals}
           projects={projects}
           catalog={catalogQuery.data}
+          catalogError={catalogQuery.isError}
+          onCatalogRetry={() => catalogQuery.refetch()}
         />
       )}
 
@@ -242,10 +246,14 @@ function TeamSubscriptionsBody() {
 function TeamApprovedTargetsList({
   approvals,
   isLoading,
+  isError,
+  onReload,
   projects,
 }: {
   approvals: MessageSourceApprovedTarget[];
   isLoading: boolean;
+  isError: boolean;
+  onReload: () => void;
   projects: { id: string; title: string }[];
 }) {
   const { t } = useT("message-delivery");
@@ -279,6 +287,17 @@ function TeamApprovedTargetsList({
       </h3>
       {isLoading ? (
         <Skeleton className="h-8 w-full" />
+      ) : isError ? (
+        // A failed approvals read is never a confirmed empty list: keep the
+        // error visible with an explicit reload entry.
+        <Alert variant="destructive">
+          <AlertDescription className="flex items-center justify-between gap-2">
+            <span>{t(($) => $.team.approvals_load_failed)}</span>
+            <Button size="sm" variant="outline" onClick={onReload}>
+              {t(($) => $.editor.retry_reload)}
+            </Button>
+          </AlertDescription>
+        </Alert>
       ) : approvals.length === 0 ? (
         <p className="text-caption text-muted-foreground">
           {t(($) => $.team.approvals_empty)}
@@ -295,15 +314,21 @@ function TeamApprovedTargetsList({
               ? (projects.find((p) => p.id === approval.project_id)?.title ?? approval.project_id)
               : null;
             return (
-              <div key={approval.id} className="flex items-center gap-3 px-3 py-2">
+              <div key={approval.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
                 <Badge variant="secondary" className="shrink-0">
                   {typeKey ? t(($) => $.target_type[typeKey]) : approval.target_type}
                 </Badge>
                 <Badge variant="outline" className="shrink-0">
                   {t(($) => $.source.kind[scopeKey])}
                 </Badge>
-                <Badge variant="outline" className="shrink-0">
-                  {projectTitle ?? t(($) => $.source.project_workspace)}
+                <Badge
+                  variant="outline"
+                  className="max-w-40 min-w-0 overflow-hidden"
+                  title={projectTitle ?? undefined}
+                >
+                  <span className="truncate">
+                    {projectTitle ?? t(($) => $.source.project_workspace)}
+                  </span>
                 </Badge>
                 <code className="flex-1 min-w-0 truncate text-caption font-mono">
                   {approval.target_key}

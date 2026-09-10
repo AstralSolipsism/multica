@@ -146,7 +146,8 @@
       "route_revision": "Rule version",
       "run": "Run",
       "load_failed": "The detail failed to load — the state above comes from the list row and may be stale.",
-      "view_log": "View log"
+      "view_log": "View log",
+      "loading_state": "Reading the current state..."
     },
     "retry": {
       "action": "Retry",
@@ -225,7 +226,8 @@
     "load_failed": "Couldn't load team subscriptions.",
     "no_bot": "No active Feishu bot in this workspace. Install one above first.",
     "approvals_title": "Approved team targets",
-    "approvals_empty": "No approved team targets yet."
+    "approvals_empty": "No approved team targets yet.",
+    "approvals_load_failed": "Couldn't load the approved targets."
   },
   "source_editor": {
     "title_add_personal": "Set up Feishu push",
@@ -246,7 +248,8 @@
     "boundary_hint": "Changing the bot, target, scope or events — or re-enabling a disabled rule — restarts delivery from that moment; earlier history is not backfilled.",
     "approval_admin": "This target isn't approved for this source and scope yet. Saving approves it as a workspace admin and verifies the bot can reach it.",
     "approval_member": "This target needs a workspace owner/admin approval for this source and scope before it can be saved.",
-    "enable_hint": "Approving a target doesn't enable the rule — events are delivered only while the rule is enabled."
+    "enable_hint": "Approving a target doesn't enable the rule — events are delivered only while the rule is enabled.",
+    "catalog_load_failed": "Couldn't load the event catalog, so the event scope can't be confirmed. Reload it before saving."
   },
   "error_code": {
     "route_disabled": "The push target was disabled",

@@ -72,13 +72,22 @@ export function messageSourceRoutesOptions(
     select: (data) => data.routes,
     enabled: options?.enabled ?? true,
     retry: false,
+    // No websocket event covers source routes: another client disabling a
+    // rule must surface on reopen, on window focus, and while the settings
+    // page stays open — never show a stale "enabled".
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchInterval: 30_000,
   });
 }
 
 /**
  * Team outbound-target approvals (workspace owner/admin only — other roles
  * get 403 message_target_admin_required, so callers pass `enabled` from the
- * current member's role instead of burning a forbidden request).
+ * current member's role instead of burning a forbidden request). Same refresh
+ * contract as the routes list: a revocation by another client must surface on
+ * reopen/focus/poll instead of lingering as a stale "approved".
  */
 export function messageSourceApprovedTargetsOptions(
   wsId: string,
@@ -90,6 +99,10 @@ export function messageSourceApprovedTargetsOptions(
     select: (data) => data.approved_targets,
     enabled: options?.enabled ?? true,
     retry: false,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchInterval: 30_000,
   });
 }
 

@@ -284,7 +284,7 @@ export function SourceDeliveryDetailDialog({
   const retry = useRetryMessageRouteDelivery();
   const [confirmUncertain, setConfirmUncertain] = useState(false);
 
-  const { data: detail, isLoading, isError, error } = useQuery(
+  const { data: detail, isLoading, isFetching, isError, error } = useQuery(
     messageRouteDeliveryOptions(wsId, routeId, delivery.id, { enabled: open }),
   );
   // A failed detail read is NOT an empty message: show the error explicitly
@@ -314,11 +314,25 @@ export function SourceDeliveryDetailDialog({
   const sourceRef = detail?.source_ref ?? null;
   const receipts = detail?.receipts ?? [];
 
-  const retryable = canManage && !detailError && canRetryMessageDelivery(full.status);
+  // Retry is decided ONLY by a completed current detail read — never by the
+  // list row, which may be stale (another client may already have retried and
+  // the worker moved the row to uncertain). While the read is pending or a
+  // fresher one is in flight, retry stays blocked; the uncertain branch and
+  // its confirm gate are chosen from the freshly read status.
+  const detailReady = detail != null && !isFetching && detailError == null;
+  const retryable =
+    canManage &&
+    detail != null &&
+    !isFetching &&
+    detailError == null &&
+    canRetryMessageDelivery(detail.delivery.status);
 
   const handleRetry = () => {
+    // Re-check at click time: the state may have changed while the confirm
+    // dialog was open.
+    if (!detail || detailError || !canRetryMessageDelivery(detail.delivery.status)) return;
     retry.mutate(
-      { routeId, deliveryId: full.id },
+      { routeId, deliveryId: detail.delivery.id },
       {
         onSuccess: () => {
           toast.success(t(($) => $.deliveries.retry.toast));
@@ -476,9 +490,11 @@ export function SourceDeliveryDetailDialog({
               <span className="text-caption text-muted-foreground">
                 {detailError
                   ? t(($) => $.deliveries.detail.load_failed)
-                  : !canManage && canRetryMessageDelivery(full.status)
-                    ? t(($) => $.section.read_only)
-                    : t(($) => $.deliveries.retry.disabled)}
+                  : !detailReady
+                    ? t(($) => $.deliveries.detail.loading_state)
+                    : !canManage && canRetryMessageDelivery(full.status)
+                      ? t(($) => $.section.read_only)
+                      : t(($) => $.deliveries.retry.disabled)}
               </span>
             ) : (
               <span />

@@ -141,6 +141,8 @@ export function PersonalFeishuPushSection() {
           route={editing}
           installations={installations}
           catalog={catalogQuery.data}
+          catalogError={catalogQuery.isError}
+          onCatalogRetry={() => catalogQuery.refetch()}
         />
       )}
 

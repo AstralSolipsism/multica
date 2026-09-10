@@ -73,6 +73,8 @@ export function SourceRouteEditorDialog({
   approvals,
   projects,
   catalog,
+  catalogError = false,
+  onCatalogRetry,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -86,6 +88,12 @@ export function SourceRouteEditorDialog({
   /** Team mode only: project options for the scope picker. */
   projects?: { id: string; title: string }[];
   catalog: MessageEventCatalog | undefined;
+  /** True when the catalog request failed. The event filter cannot be
+   * expressed without the catalog, so saving is blocked until a retry
+   * succeeds — an empty event_types means "forward everything" and must
+   * never be submitted by default. */
+  catalogError?: boolean;
+  onCatalogRetry?: () => void;
 }) {
   const { t } = useT("message-delivery");
   const { getActorName } = useActorName();
@@ -181,6 +189,11 @@ export function SourceRouteEditorDialog({
     conflict === "reloading";
   const saveBlockedByConflict =
     conflict === "reloading" || conflict === "reload_failed" || conflict === "gone";
+  // Without the catalog the event filter cannot be expressed: an empty
+  // event_types means "forward everything" and must never be submitted by
+  // default. Block saving while the catalog is missing (loading or failed);
+  // a failed read additionally shows an error with a reload entry.
+  const saveBlockedByCatalog = catalog == null;
 
   const toggleEvent = (value: string, checked: boolean) => {
     setSelectedEvents((prev) =>
@@ -474,7 +487,18 @@ export function SourceRouteEditorDialog({
             <legend className="text-caption text-muted-foreground">
               {t(($) => $.source_editor.events)}
             </legend>
-            {eventOptions.length === 0 ? (
+            {catalogError ? (
+              <Alert variant="destructive">
+                <AlertDescription className="flex items-center justify-between gap-2">
+                  <span>{t(($) => $.source_editor.catalog_load_failed)}</span>
+                  {onCatalogRetry && (
+                    <Button size="sm" variant="outline" onClick={onCatalogRetry}>
+                      {t(($) => $.editor.retry_reload)}
+                    </Button>
+                  )}
+                </AlertDescription>
+              </Alert>
+            ) : eventOptions.length === 0 ? (
               <p className="text-caption text-muted-foreground">
                 {t(($) => $.source_editor.events_hint)}
               </p>
@@ -550,7 +574,10 @@ export function SourceRouteEditorDialog({
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
               {t(($) => $.editor.cancel)}
             </Button>
-            <Button onClick={handleSave} disabled={!valid || saving || saveBlockedByConflict}>
+            <Button
+              onClick={handleSave}
+              disabled={!valid || saving || saveBlockedByConflict || saveBlockedByCatalog}
+            >
               {saving
                 ? t(($) => $.editor.saving)
                 : willApprove

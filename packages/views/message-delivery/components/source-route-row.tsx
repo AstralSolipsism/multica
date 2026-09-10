@@ -224,6 +224,12 @@ export function SourceRouteRow({
               disabled={!route.enabled || testSend.isPending}
               title={route.enabled ? undefined : t(($) => $.error.route_disabled)}
               onClick={handleTestSend}
+              // The visible text hides below sm; the accessible name stays.
+              aria-label={
+                testSend.isPending
+                  ? t(($) => $.routes.test_sending)
+                  : t(($) => $.routes.test_send)
+              }
             >
               <Send className="h-3.5 w-3.5 sm:mr-1" />
               <span className="hidden sm:inline">
