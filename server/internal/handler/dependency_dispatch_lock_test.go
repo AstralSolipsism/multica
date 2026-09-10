@@ -47,11 +47,13 @@ func dependencyWaiter(t *testing.T, ctx context.Context, blocker int) (int, stri
 
 func TestDependencyWaitingWriterPrecedesNewAdmissions(t *testing.T) {
 	for _, field := range []string{"status", "title"} {
-		t.Run(field, func(t *testing.T) { dependencyWaitingWriterPrecedesNewAdmissions(t, field) })
+		for _, writers := range []int{1, 2} {
+			t.Run(fmt.Sprintf("%s/writers=%d", field, writers), func(t *testing.T) { dependencyWaitingWriterPrecedesNewAdmissions(t, field, writers) })
+		}
 	}
 }
 
-func dependencyWaitingWriterPrecedesNewAdmissions(t *testing.T, field string) {
+func dependencyWaitingWriterPrecedesNewAdmissions(t *testing.T, field string, writers int) {
 	h, fx := dependencyFixture(t)
 	issue := dependencyIssue(t, fx, "ordinary status write")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -89,6 +91,30 @@ func dependencyWaitingWriterPrecedesNewAdmissions(t *testing.T, field string) {
 	if !strings.Contains(statement, "LockIssueDependencyStructure ") {
 		t.Fatalf("writer cannot reach the structure wait queue: %s", statement)
 	}
+	var secondWrite chan error
+	if writers == 2 {
+		secondWrite = make(chan error, 1)
+		secondDone := make(chan struct{})
+		go func() {
+			defer close(secondDone)
+			r := dependencyRequest(fx, http.MethodPatch, issue, map[string]any{field: "todo"}, "jwt")
+			requestCtx, stop := context.WithCancel(r.Context())
+			stopCancel := context.AfterFunc(ctx, stop)
+			defer stopCancel()
+			defer stop()
+			response := testutil.Call(t, h.UpdateIssue, r.WithContext(requestCtx))
+			var err error
+			if response.Code != http.StatusOK {
+				err = fmt.Errorf("second writer: HTTP %d: %s", response.Code, response.Text())
+			}
+			secondWrite <- err
+		}()
+		defer func() { cancel(); <-secondDone }()
+		writerPID, statement = dependencyWaiter(t, ctx, writerPID)
+		if !strings.Contains(statement, "LockIssueDependencyStructure ") {
+			t.Fatalf("second writer cannot reach the structure wait queue: %s", statement)
+		}
+	}
 
 	readerDone := make(chan struct{})
 	read := make(chan error, 1)
@@ -106,6 +132,11 @@ func dependencyWaitingWriterPrecedesNewAdmissions(t *testing.T, field string) {
 	}
 	if err = <-written; err != nil {
 		t.Fatal(err)
+	}
+	if secondWrite != nil {
+		if err = <-secondWrite; err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err = <-read; err != nil {
 		t.Fatal(err)

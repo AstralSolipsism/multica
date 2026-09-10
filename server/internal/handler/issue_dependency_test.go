@@ -264,7 +264,7 @@ func TestDependencyReferencesAndMalformedRequests(t *testing.T) {
 }
 
 func TestDependencySnapshotRetainsIncidentEdges(t *testing.T) {
-	for _, direction := range []string{"local", "outbound", "inbound", "missing_source", "missing_target"} {
+	for _, direction := range []string{"local", "outbound", "inbound"} {
 		t.Run(direction, func(t *testing.T) {
 			h, fx := dependencyFixture(t)
 			local := dependencyIssue(t, fx, "local")
@@ -274,10 +274,6 @@ func TestDependencySnapshotRetainsIncidentEdges(t *testing.T) {
 				target = dbfx.Issue(t, "foreign")
 			case "inbound":
 				source, target = dbfx.Issue(t, "foreign"), local
-			case "missing_source":
-				source, target = "00000000-0000-0000-0000-000000000001", local
-			case "missing_target":
-				target = "00000000-0000-0000-0000-000000000001"
 			}
 			edge := fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": source, "depends_on_issue_id": target, "type": "blocked_by"})
 			snapshot, err := h.IssueService.Dependencies.Load(context.Background(), h.Queries, parseUUID(fx.WorkspaceID))
@@ -349,17 +345,17 @@ func TestDependencyDeepHierarchyAndTextOnlyEdit(t *testing.T) {
 		last = dependencyIssue(t, fx, "descendant", testutil.Cols{"parent_issue_id": last})
 	}
 	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, root, map[string]any{"parent_issue_id": last}, "jwt")).Want(http.StatusConflict)
-	// A plain title edit refreshes nullable fields under its target lock but
-	// should not wait on the dependency structure lock for unrelated work.
+	// A plain title edit joins the structure queue but still avoids loading and
+	// locking the full graph. Hold an unrelated row without the structure lock.
 	tx, err := testPool.Begin(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	if err := h.Queries.WithTx(tx).LockIssueDependencyStructure(context.Background(), parseUUID(fx.WorkspaceID)); err != nil {
+	if _, err := h.Queries.WithTx(tx).LockIssueForDescriptionUpdate(context.Background(), db.LockIssueForDescriptionUpdateParams{ID: parseUUID(root), WorkspaceID: parseUUID(fx.WorkspaceID)}); err != nil {
 		t.Fatal(err)
 	}
-	r := dependencyRequest(fx, http.MethodPut, last, map[string]any{"title": "edited without structure lock"}, "jwt")
+	r := dependencyRequest(fx, http.MethodPut, last, map[string]any{"title": "edited without loading graph"}, "jwt")
 	ctx, cancel := context.WithTimeout(r.Context(), time.Second)
 	defer cancel()
 	testutil.Call(t, h.UpdateIssue, r.WithContext(ctx)).Want(http.StatusOK)

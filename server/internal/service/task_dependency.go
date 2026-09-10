@@ -14,10 +14,13 @@ import (
 )
 
 // LockAdmission precedes capacity and queue locks. Structural writers take the
-// incompatible workspace/structure locks; status producers synchronize through
+// incompatible structure lock; status producers synchronize through
 // the issue row locks without acquiring new completion-specific permissions.
-// ponytail: whole-workspace row locks can starve unrelated writes; require the
-// OL-45 contention gate before rollout, then narrow only with a closure proof.
+// The workspace KEY SHARE lock fences deletion without keeping writers out of
+// the structure lock's wait queue. Do not strengthen it to SHARE: successive
+// readers can otherwise starve a writer waiting on the workspace counter row.
+// ponytail: full-workspace snapshots still cost O(V+E); use the OL-45 load gate
+// before increasing rollout size, and narrow only with a closure proof.
 func (s *DependencyService) LockAdmission(ctx context.Context, q *db.Queries, ws pgtype.UUID) (*DependencySnapshot, error) {
 	if _, err := q.LockWorkspaceForDependencyAdmission(ctx, ws); err != nil {
 		return nil, err

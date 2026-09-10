@@ -3,7 +3,10 @@
 SELECT id FROM workspace WHERE id = $1 FOR NO KEY UPDATE;
 
 -- name: LockWorkspaceForDependencyAdmission :one
-SELECT id FROM workspace WHERE id = $1 FOR SHARE;
+-- Fence workspace deletion, but let structural writers reach the advisory
+-- lock's wait queue. SHARE conflicts with their NO KEY UPDATE counter lock
+-- and a continuous stream of admissions can starve them before that queue.
+SELECT id FROM workspace WHERE id = $1 FOR KEY SHARE;
 
 -- name: LockIssuesForDependencyAdmission :exec
 SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR SHARE;
@@ -38,12 +41,16 @@ WHERE workspace_id = $1 ORDER BY id;
 -- name: ListIssueDependencyEdges :many
 -- Include either local endpoint so corrupt cross-workspace edges fail closed.
 -- Separate joins can use the existing endpoint indexes without correlating
--- every relation in every workspace. UNION removes the overlap by row identity.
-SELECT d.* FROM issue i JOIN issue_dependency d ON d.issue_id = i.id
+-- every relation in every workspace. The disjoint second arm avoids sorting or
+-- hashing the full duplicate edge set while preserving corrupt inbound edges.
+SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
+FROM issue i JOIN issue_dependency d ON d.issue_id = i.id
 WHERE i.workspace_id = $1
-UNION
-SELECT d.* FROM issue i JOIN issue_dependency d ON d.depends_on_issue_id = i.id
+UNION ALL
+SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
+FROM issue i JOIN issue_dependency d ON d.depends_on_issue_id = i.id
 WHERE i.workspace_id = $1
+AND NOT EXISTS (SELECT 1 FROM issue source WHERE source.id = d.issue_id AND source.workspace_id = $1)
 ORDER BY id;
 
 -- name: InsertIssueDependency :exec

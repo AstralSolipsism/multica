@@ -240,6 +240,11 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	}
 	defer tx.Rollback(ctx)
 	qtx := s.Queries.WithTx(tx)
+	// Only creates need to update the workspace counter. Acquire its lock before
+	// catalog/structure locks, so counter updates never invert the lock order.
+	if _, err := qtx.LockWorkspaceForDependencyWrite(ctx, p.WorkspaceID); err != nil {
+		return IssueCreateResult{}, err
+	}
 	if err := s.Dependencies.LockWrite(ctx, qtx, p.WorkspaceID); err != nil {
 		return IssueCreateResult{}, err
 	}

@@ -113,7 +113,7 @@ func (m Model) ExecutionComponent(seeds ...string) Model {
 func (m Model) Validate() error {
 	ids := m.IDs()
 	index := make(map[string]int, len(ids))
-	children := make(map[string][]string)
+	children := make([][]int, len(ids))
 	for i, id := range ids {
 		index[id] = i
 	}
@@ -122,18 +122,19 @@ func (m Model) Validate() error {
 		if p == "" {
 			continue
 		}
-		if _, ok := m.Issues[p]; !ok {
+		parent, ok := index[p]
+		if !ok {
 			return &Violation{Code: "dependency_data_unverified", IssueIDs: []string{id}}
 		}
-		children[p] = append(children[p], id)
+		children[parent] = append(children[parent], index[id])
 	}
 	// DFS intervals make ancestor checks O(1), including arbitrarily deep trees.
-	state, enter, leave := map[string]int{}, map[string]int{}, map[string]int{}
+	state, enter, leave := make([]int, len(ids)), make([]int, len(ids)), make([]int, len(ids))
 	clock := 0
-	var visitTree func(string) error
-	visitTree = func(id string) error {
+	var visitTree func(int) error
+	visitTree = func(id int) error {
 		if state[id] == 1 {
-			return &Violation{Code: "dependency_cycle", IssueIDs: []string{id}}
+			return &Violation{Code: "dependency_cycle", IssueIDs: []string{ids[id]}}
 		}
 		if state[id] == 2 {
 			return nil
@@ -151,19 +152,19 @@ func (m Model) Validate() error {
 		state[id] = 2
 		return nil
 	}
-	for _, id := range ids {
+	for i, id := range ids {
 		if m.Issues[id].ParentID == "" {
-			if err := visitTree(id); err != nil {
+			if err := visitTree(i); err != nil {
 				return err
 			}
 		}
 	}
-	for _, id := range ids {
-		if err := visitTree(id); err != nil {
+	for i := range ids {
+		if err := visitTree(i); err != nil {
 			return err
 		}
 	}
-	ancestor := func(a, b string) bool { return enter[a] <= enter[b] && leave[b] <= leave[a] }
+	ancestor := func(a, b int) bool { return enter[a] <= enter[b] && leave[b] <= leave[a] }
 	type arc struct {
 		to     int
 		edgeID string
@@ -176,10 +177,10 @@ func (m Model) Validate() error {
 			adj[2*index[p]] = append(adj[2*index[p]], arc{to: 2 * i})
 		}
 	}
-	seen := make(map[[2]string]bool)
+	seen := make(map[[2]int]bool, len(m.Edges))
 	for _, e := range m.Edges {
-		_, aOK := m.Issues[e.DependsOnID]
-		_, bOK := m.Issues[e.IssueID]
+		a, aOK := index[e.DependsOnID]
+		b, bOK := index[e.IssueID]
 		if !aOK || !bOK {
 			return &Violation{Code: "dependency_data_unverified", EdgeIDs: []string{e.ID}}
 		}
@@ -189,15 +190,15 @@ func (m Model) Validate() error {
 		if e.Type != "blocked_by" {
 			return &Violation{Code: "dependency_data_unverified", EdgeIDs: []string{e.ID}}
 		}
-		key := [2]string{e.IssueID, e.DependsOnID}
+		key := [2]int{b, a}
 		if seen[key] {
 			return &Violation{Code: "dependency_data_unverified", EdgeIDs: []string{e.ID}}
 		}
 		seen[key] = true
-		if ancestor(e.DependsOnID, e.IssueID) || ancestor(e.IssueID, e.DependsOnID) {
+		if ancestor(a, b) || ancestor(b, a) {
 			return &Violation{Code: "dependency_ancestor_conflict", IssueIDs: []string{e.DependsOnID, e.IssueID}, EdgeIDs: []string{e.ID}}
 		}
-		adj[2*index[e.DependsOnID]+1] = append(adj[2*index[e.DependsOnID]+1], arc{to: 2 * index[e.IssueID], edgeID: e.ID})
+		adj[2*a+1] = append(adj[2*a+1], arc{to: 2 * b, edgeID: e.ID})
 	}
 	colors := make([]int, len(adj))
 	positions := make([]int, len(adj))

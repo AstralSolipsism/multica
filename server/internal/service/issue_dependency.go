@@ -54,12 +54,14 @@ type DependencySnapshot struct {
 }
 
 // LockWrite must precede any issue, attachment, queue or agent-capacity lock.
-// Workspace ownership/counter -> catalog -> structure -> attachments (if any)
+// Workspace ownership -> catalog -> structure -> attachments (if any)
 // -> sorted issue rows. Attachment binders already lock attachments before issues.
-// Structural writes serialize per workspace. Admission takes the shared locks
+// Ordinary issue writes serialize per workspace. Admission takes the shared locks
 // and sorted issue rows; read-only previews use MVCC without blocking edits.
+// Create takes its counter lock before this sequence. Other writers must not
+// take that exclusive row lock: they all need to reach the structure wait queue.
 func (s *DependencyService) LockWrite(ctx context.Context, q *db.Queries, ws pgtype.UUID) error {
-	if _, err := q.LockWorkspaceForDependencyWrite(ctx, ws); err != nil {
+	if _, err := q.LockWorkspaceForDependencyAdmission(ctx, ws); err != nil {
 		return err
 	}
 	if err := q.LockIssueStatusCatalogShared(ctx, ws); err != nil {
@@ -98,13 +100,23 @@ func (s *DependencyService) Load(ctx context.Context, q *db.Queries, ws pgtype.U
 		return nil, err
 	}
 	model := issuedependency.Model{Issues: make(map[string]issuedependency.Issue, len(nodes)), Edges: make([]issuedependency.Edge, 0, len(edges))}
+	// Reuse endpoint strings across dense edges instead of allocating two new
+	// UUID strings per edge. Missing/foreign endpoints still retain their IDs.
+	ids := make(map[pgtype.UUID]string, len(nodes))
 	resolver := issuestatus.NewResolver(ws)
 	for _, n := range nodes {
 		id := util.UUIDToString(n.ID)
+		ids[n.ID] = id
 		model.Issues[id] = issuedependency.Issue{ID: id, ParentID: util.UUIDToString(n.ParentIssueID), Status: n.Status, Category: resolver.Effective(ctx, q, n.Status), Revision: n.Revision, Title: n.Title, Number: n.Number}
 	}
+	endpoint := func(id pgtype.UUID) string {
+		if str, ok := ids[id]; ok {
+			return str
+		}
+		return util.UUIDToString(id)
+	}
 	for _, e := range edges {
-		model.Edges = append(model.Edges, issuedependency.Edge{ID: util.UUIDToString(e.ID), IssueID: util.UUIDToString(e.IssueID), DependsOnID: util.UUIDToString(e.DependsOnIssueID), Type: e.Type})
+		model.Edges = append(model.Edges, issuedependency.Edge{ID: util.UUIDToString(e.ID), IssueID: endpoint(e.IssueID), DependsOnID: endpoint(e.DependsOnIssueID), Type: e.Type})
 	}
 	return &DependencySnapshot{WorkspaceID: ws, Model: model, Catalog: catalog, service: s}, nil
 }
@@ -370,9 +382,14 @@ func (s *DependencySnapshot) CheckWriteAdmission(ctx context.Context, issue db.I
 	}
 	id := util.UUIDToString(issue.ID)
 	execution := *s
-	execution.Model = s.Model.ExecutionComponent(id)
 	if err := execution.Model.Validate(); err != nil {
-		return dependencyError("dependency_data_unverified", "dependency data must be audited before execution")
+		// A valid full graph already proves every execution component valid.
+		// Only select/copy the closure when historical data needs isolation;
+		// unrelated unverified relations must retain their legacy behavior.
+		execution.Model = s.Model.ExecutionComponent(id)
+		if err := execution.Model.Validate(); err != nil {
+			return dependencyError("dependency_data_unverified", "dependency data must be audited before execution")
+		}
 	}
 	ps := execution.Model.Prerequisites(id)
 	if len(ps) == 0 {

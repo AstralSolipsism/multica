@@ -305,17 +305,21 @@ func (q *Queries) InsertIssueDependency(ctx context.Context, arg InsertIssueDepe
 }
 
 const listIssueDependencyEdges = `-- name: ListIssueDependencyEdges :many
-SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type FROM issue i JOIN issue_dependency d ON d.issue_id = i.id
+SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
+FROM issue i JOIN issue_dependency d ON d.issue_id = i.id
 WHERE i.workspace_id = $1
-UNION
-SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type FROM issue i JOIN issue_dependency d ON d.depends_on_issue_id = i.id
+UNION ALL
+SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
+FROM issue i JOIN issue_dependency d ON d.depends_on_issue_id = i.id
 WHERE i.workspace_id = $1
+AND NOT EXISTS (SELECT 1 FROM issue source WHERE source.id = d.issue_id AND source.workspace_id = $1)
 ORDER BY id
 `
 
 // Include either local endpoint so corrupt cross-workspace edges fail closed.
 // Separate joins can use the existing endpoint indexes without correlating
-// every relation in every workspace. UNION removes the overlap by row identity.
+// every relation in every workspace. The disjoint second arm avoids sorting or
+// hashing the full duplicate edge set while preserving corrupt inbound edges.
 func (q *Queries) ListIssueDependencyEdges(ctx context.Context, workspaceID pgtype.UUID) ([]IssueDependency, error) {
 	rows, err := q.db.Query(ctx, listIssueDependencyEdges, workspaceID)
 	if err != nil {
@@ -451,9 +455,12 @@ func (q *Queries) LockIssuesForDependencyWrite(ctx context.Context, workspaceID 
 }
 
 const lockWorkspaceForDependencyAdmission = `-- name: LockWorkspaceForDependencyAdmission :one
-SELECT id FROM workspace WHERE id = $1 FOR SHARE
+SELECT id FROM workspace WHERE id = $1 FOR KEY SHARE
 `
 
+// Fence workspace deletion, but let structural writers reach the advisory
+// lock's wait queue. SHARE conflicts with their NO KEY UPDATE counter lock
+// and a continuous stream of admissions can starve them before that queue.
 func (q *Queries) LockWorkspaceForDependencyAdmission(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, lockWorkspaceForDependencyAdmission, id)
 	var id_2 pgtype.UUID

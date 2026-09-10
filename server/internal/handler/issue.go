@@ -3280,10 +3280,11 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 			guardDependencies = true
 		}
 	}
-	if guardDependencies {
-		if err := h.IssueService.Dependencies.LockWrite(ctx, qtx, workspaceID); err != nil {
-			return result, err
-		}
+	// Even a text-only writer must join the structure lock's wait queue before
+	// locking its target. Otherwise successive full-snapshot SHARE lockers can
+	// repeatedly overtake it on the issue row. Only guarded writes load the graph.
+	if err := h.IssueService.Dependencies.LockWrite(ctx, qtx, workspaceID); err != nil {
+		return result, err
 	}
 	// The catalog lock precedes attachment and issue row locks. (MUL-6243)
 	if err := assertIssueStatusStillActive(ctx, qtx, workspaceID, statusKey); err != nil {
