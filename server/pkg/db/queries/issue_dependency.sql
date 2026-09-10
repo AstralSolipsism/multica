@@ -9,7 +9,11 @@ SELECT id FROM workspace WHERE id = $1 FOR NO KEY UPDATE;
 SELECT id FROM workspace WHERE id = $1 FOR KEY SHARE;
 
 -- name: LockIssuesForDependencyAdmission :exec
-SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR SHARE;
+-- Drain all ordered row locks on the server without sending unused IDs.
+WITH locked AS MATERIALIZED (
+    SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR SHARE
+)
+SELECT count(*) FROM locked;
 
 -- name: SetTaskDependencyAdmission :one
 UPDATE agent_task_queue SET dependency_admission = $2 WHERE id = $1 RETURNING *;
@@ -32,17 +36,23 @@ SELECT pg_advisory_xact_lock_shared(hashtextextended(sqlc.arg('workspace_id')::u
 -- name: LockIssuesForDependencyWrite :exec
 -- The first implementation serializes structural edits per workspace. Lock
 -- status rows in UUID order before inspecting unfinished constraints.
-SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR UPDATE;
+WITH locked AS MATERIALIZED (
+    SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR UPDATE
+)
+SELECT count(*) FROM locked;
 
 -- name: ListIssueDependencyNodes :many
 SELECT id, parent_issue_id, status, revision, title, number FROM issue
 WHERE workspace_id = $1 ORDER BY id;
 
--- name: ListIssueDependencyEdges :many
+-- name: ListIssueDependencyEdges :one
 -- Include either local endpoint so corrupt cross-workspace edges fail closed.
 -- Separate joins can use the existing endpoint indexes without correlating
 -- every relation in every workspace. The disjoint second arm avoids sorting or
 -- hashing the full duplicate edge set while preserving corrupt inbound edges.
+-- One ordered input keeps columns aligned without sorting each aggregate.
+-- Arrays avoid per-row protocol/scan overhead and expose the allocation size.
+WITH edges AS MATERIALIZED (
 SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
 FROM issue i JOIN issue_dependency d ON d.issue_id = i.id
 WHERE i.workspace_id = $1
@@ -51,7 +61,13 @@ SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
 FROM issue i JOIN issue_dependency d ON d.depends_on_issue_id = i.id
 WHERE i.workspace_id = $1
 AND NOT EXISTS (SELECT 1 FROM issue source WHERE source.id = d.issue_id AND source.workspace_id = $1)
-ORDER BY id;
+ORDER BY id
+)
+SELECT coalesce(array_agg(id), '{}')::uuid[] AS ids,
+       coalesce(array_agg(issue_id), '{}')::uuid[] AS issue_ids,
+       coalesce(array_agg(depends_on_issue_id), '{}')::uuid[] AS depends_on_ids,
+       coalesce(array_agg(type), '{}')::text[] AS types
+FROM edges;
 
 -- name: InsertIssueDependency :exec
 INSERT INTO issue_dependency (id, issue_id, depends_on_issue_id, type)

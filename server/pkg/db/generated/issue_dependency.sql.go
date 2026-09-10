@@ -304,7 +304,8 @@ func (q *Queries) InsertIssueDependency(ctx context.Context, arg InsertIssueDepe
 	return err
 }
 
-const listIssueDependencyEdges = `-- name: ListIssueDependencyEdges :many
+const listIssueDependencyEdges = `-- name: ListIssueDependencyEdges :one
+WITH edges AS MATERIALIZED (
 SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
 FROM issue i JOIN issue_dependency d ON d.issue_id = i.id
 WHERE i.workspace_id = $1
@@ -314,35 +315,37 @@ FROM issue i JOIN issue_dependency d ON d.depends_on_issue_id = i.id
 WHERE i.workspace_id = $1
 AND NOT EXISTS (SELECT 1 FROM issue source WHERE source.id = d.issue_id AND source.workspace_id = $1)
 ORDER BY id
+)
+SELECT coalesce(array_agg(id), '{}')::uuid[] AS ids,
+       coalesce(array_agg(issue_id), '{}')::uuid[] AS issue_ids,
+       coalesce(array_agg(depends_on_issue_id), '{}')::uuid[] AS depends_on_ids,
+       coalesce(array_agg(type), '{}')::text[] AS types
+FROM edges
 `
+
+type ListIssueDependencyEdgesRow struct {
+	Ids          []pgtype.UUID `json:"ids"`
+	IssueIds     []pgtype.UUID `json:"issue_ids"`
+	DependsOnIds []pgtype.UUID `json:"depends_on_ids"`
+	Types        []string      `json:"types"`
+}
 
 // Include either local endpoint so corrupt cross-workspace edges fail closed.
 // Separate joins can use the existing endpoint indexes without correlating
 // every relation in every workspace. The disjoint second arm avoids sorting or
 // hashing the full duplicate edge set while preserving corrupt inbound edges.
-func (q *Queries) ListIssueDependencyEdges(ctx context.Context, workspaceID pgtype.UUID) ([]IssueDependency, error) {
-	rows, err := q.db.Query(ctx, listIssueDependencyEdges, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []IssueDependency{}
-	for rows.Next() {
-		var i IssueDependency
-		if err := rows.Scan(
-			&i.ID,
-			&i.IssueID,
-			&i.DependsOnIssueID,
-			&i.Type,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+// One ordered input keeps columns aligned without sorting each aggregate.
+// Arrays avoid per-row protocol/scan overhead and expose the allocation size.
+func (q *Queries) ListIssueDependencyEdges(ctx context.Context, workspaceID pgtype.UUID) (ListIssueDependencyEdgesRow, error) {
+	row := q.db.QueryRow(ctx, listIssueDependencyEdges, workspaceID)
+	var i ListIssueDependencyEdgesRow
+	err := row.Scan(
+		&i.Ids,
+		&i.IssueIds,
+		&i.DependsOnIds,
+		&i.Types,
+	)
+	return i, err
 }
 
 const listIssueDependencyNodes = `-- name: ListIssueDependencyNodes :many
@@ -435,16 +438,23 @@ func (q *Queries) LockIssueDependencyStructureShared(ctx context.Context, worksp
 }
 
 const lockIssuesForDependencyAdmission = `-- name: LockIssuesForDependencyAdmission :exec
-SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR SHARE
+WITH locked AS MATERIALIZED (
+    SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR SHARE
+)
+SELECT count(*) FROM locked
 `
 
+// Drain all ordered row locks on the server without sending unused IDs.
 func (q *Queries) LockIssuesForDependencyAdmission(ctx context.Context, workspaceID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, lockIssuesForDependencyAdmission, workspaceID)
 	return err
 }
 
 const lockIssuesForDependencyWrite = `-- name: LockIssuesForDependencyWrite :exec
-SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR UPDATE
+WITH locked AS MATERIALIZED (
+    SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR UPDATE
+)
+SELECT count(*) FROM locked
 `
 
 // The first implementation serializes structural edits per workspace. Lock

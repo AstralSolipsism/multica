@@ -166,8 +166,8 @@ func (m Model) Validate() error {
 	}
 	ancestor := func(a, b int) bool { return enter[a] <= enter[b] && leave[b] <= leave[a] }
 	type arc struct {
-		to     int
-		edgeID string
+		to   int
+		edge int // Original edge index + 1; zero denotes an internal tree arc.
 	}
 	adj := make([][]arc, 2*len(ids))
 	for _, id := range ids {
@@ -178,7 +178,7 @@ func (m Model) Validate() error {
 		}
 	}
 	seen := make(map[[2]int]bool, len(m.Edges))
-	for _, e := range m.Edges {
+	for edgeIndex, e := range m.Edges {
 		a, aOK := index[e.DependsOnID]
 		b, bOK := index[e.IssueID]
 		if !aOK || !bOK {
@@ -198,12 +198,12 @@ func (m Model) Validate() error {
 		if ancestor(a, b) || ancestor(b, a) {
 			return &Violation{Code: "dependency_ancestor_conflict", IssueIDs: []string{e.DependsOnID, e.IssueID}, EdgeIDs: []string{e.ID}}
 		}
-		adj[2*a+1] = append(adj[2*a+1], arc{to: 2 * b, edgeID: e.ID})
+		adj[2*a+1] = append(adj[2*a+1], arc{to: 2 * b, edge: edgeIndex + 1})
 	}
 	colors := make([]int, len(adj))
 	positions := make([]int, len(adj))
 	var path []int
-	var pathEdges []string
+	var pathEdges []int
 	var visit func(int) error
 	visit = func(v int) error {
 		colors[v] = 1
@@ -215,9 +215,9 @@ func (m Model) Validate() error {
 				for _, n := range path[positions[a.to]:] {
 					violation.IssueIDs = append(violation.IssueIDs, ids[n/2])
 				}
-				for _, eid := range append(append([]string(nil), pathEdges[positions[a.to]:]...), a.edgeID) {
-					if eid != "" {
-						violation.EdgeIDs = append(violation.EdgeIDs, eid)
+				for _, edge := range append(append([]int(nil), pathEdges[positions[a.to]:]...), a.edge) {
+					if edge != 0 && m.Edges[edge-1].ID != "" {
+						violation.EdgeIDs = append(violation.EdgeIDs, m.Edges[edge-1].ID)
 					}
 				}
 				violation.IssueIDs = unique(violation.IssueIDs)
@@ -225,7 +225,7 @@ func (m Model) Validate() error {
 				return violation
 			}
 			if colors[a.to] == 0 {
-				pathEdges = append(pathEdges, a.edgeID)
+				pathEdges = append(pathEdges, a.edge)
 				if err := visit(a.to); err != nil {
 					return err
 				}

@@ -99,7 +99,7 @@ func (s *DependencyService) Load(ctx context.Context, q *db.Queries, ws pgtype.U
 	if err != nil {
 		return nil, err
 	}
-	model := issuedependency.Model{Issues: make(map[string]issuedependency.Issue, len(nodes)), Edges: make([]issuedependency.Edge, 0, len(edges))}
+	model := issuedependency.Model{Issues: make(map[string]issuedependency.Issue, len(nodes)), Edges: make([]issuedependency.Edge, 0, len(edges.Ids))}
 	// Reuse endpoint strings across dense edges instead of allocating two new
 	// UUID strings per edge. Missing/foreign endpoints still retain their IDs.
 	ids := make(map[pgtype.UUID]string, len(nodes))
@@ -115,8 +115,8 @@ func (s *DependencyService) Load(ctx context.Context, q *db.Queries, ws pgtype.U
 		}
 		return util.UUIDToString(id)
 	}
-	for _, e := range edges {
-		model.Edges = append(model.Edges, issuedependency.Edge{ID: util.UUIDToString(e.ID), IssueID: endpoint(e.IssueID), DependsOnID: endpoint(e.DependsOnIssueID), Type: e.Type})
+	for i, id := range edges.Ids {
+		model.Edges = append(model.Edges, issuedependency.Edge{ID: util.UUIDToString(id), IssueID: endpoint(edges.IssueIds[i]), DependsOnID: endpoint(edges.DependsOnIds[i]), Type: edges.Types[i]})
 	}
 	return &DependencySnapshot{WorkspaceID: ws, Model: model, Catalog: catalog, service: s}, nil
 }

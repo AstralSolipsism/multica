@@ -263,6 +263,49 @@ func TestDependencyReferencesAndMalformedRequests(t *testing.T) {
 	}
 }
 
+func TestDependencySnapshotUUIDsRemainStable(t *testing.T) {
+	w := newDependencyLoadWorkspace(t, 300, "sparse")
+	ctx := context.Background()
+	ws := parseUUID(w.fx.WorkspaceID)
+	snapshot, err := w.h.IssueService.Dependencies.Load(ctx, w.h.Queries, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := w.h.Queries.ListIssueDependencyNodes(ctx, ws)
+	if err != nil || len(snapshot.Model.Issues) != len(nodes) {
+		t.Fatalf("snapshot nodes: %v", err)
+	}
+	for _, n := range nodes {
+		id := uuidToString(n.ID)
+		if got := snapshot.Model.Issues[id]; got.ID != id || got.ParentID != uuidToString(n.ParentIssueID) {
+			t.Fatal("snapshot UUID changed after loading later rows")
+		}
+	}
+	// Read ordinary rows independently of the compact snapshot query.
+	rows, err := testPool.Query(ctx, "SELECT d.id,d.issue_id,d.depends_on_issue_id FROM issue_dependency d JOIN issue i ON i.id=d.issue_id WHERE i.workspace_id=$1 ORDER BY d.id", ws)
+	if err != nil {
+		t.Fatalf("snapshot edges: %v", err)
+	}
+	defer rows.Close()
+	i := 0
+	for rows.Next() {
+		var e db.IssueDependency
+		if err := rows.Scan(&e.ID, &e.IssueID, &e.DependsOnIssueID); err != nil {
+			t.Fatal(err)
+		}
+		if i >= len(snapshot.Model.Edges) {
+			t.Fatal("snapshot omitted an edge")
+		}
+		if got := snapshot.Model.Edges[i]; got.ID != uuidToString(e.ID) || got.IssueID != uuidToString(e.IssueID) || got.DependsOnID != uuidToString(e.DependsOnIssueID) {
+			t.Fatal("snapshot edge UUID or endpoint changed after loading later rows")
+		}
+		i++
+	}
+	if err := rows.Err(); err != nil || i != len(snapshot.Model.Edges) {
+		t.Fatalf("snapshot duplicated edges or query failed: %v", err)
+	}
+}
+
 func TestDependencySnapshotRetainsIncidentEdges(t *testing.T) {
 	for _, direction := range []string{"local", "outbound", "inbound"} {
 		t.Run(direction, func(t *testing.T) {

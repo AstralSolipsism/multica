@@ -166,8 +166,11 @@ O(V+E+H) data per admission and can delay unrelated issue edits in a large
 workspace. Measure claim latency and lock waits against realistic size and
 contention before a wide rollout; narrow locks only with an equivalent closure
 proof and the concurrency tests intact.
-Validation uses the existing integer vertex index; edge loading reuses endpoint
-strings and avoids duplicate SQL union rows. A valid full graph already proves
+Validation uses integer vertex/edge indexes; the edge query returns aligned
+arrays from one ordered input, so graph storage is allocated once. Loading
+reuses endpoint strings and avoids duplicate union rows. Ordered row-lock
+queries drain their complete result on the server rather
+than transferring unused IDs. A valid full graph already proves
 each execution component valid, so the admission path selects/copies a component
 only when historical corruption needs the existing component isolation.
 The executable contention matrix, measurement limits and required OL-45 rollout
