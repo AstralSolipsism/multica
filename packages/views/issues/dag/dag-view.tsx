@@ -61,6 +61,10 @@ export interface DagGraphQueryState {
 export interface DagViewProps {
   graphQuery: DagGraphQueryState;
   hasActiveFilters: boolean;
+  /** The graph request covered the full authorized membership (no filters,
+   *  no search, sub-issues included). Fold pruning stays off otherwise —
+   *  combined with `!graph.hasRestrictedContext` inside the view. */
+  membershipComplete: boolean;
   /** OL-44 shared node-action contract. `onEditDependencies` /
    *  `onAssignIssue` default to opening the existing issue detail until the
    *  shared relation/assign form ships; the detail page keeps one
@@ -76,6 +80,7 @@ const EXPAND_ALL_CANCEL_AFTER_MS = 5000;
 export function DagView({
   graphQuery,
   hasActiveFilters,
+  membershipComplete,
   onEditDependencies,
   onAssignIssue,
   layoutRunnerFactory,
@@ -113,17 +118,20 @@ export function DagView({
     [graph, grouping, collapsedIds],
   );
 
-  // Stale-fold cleanup: only a PROVABLY inert fold loses its entry (a feature
-  // whose visible children are gone). A rep missing from the current filtered
-  // graph is not proof of deletion — pruning it would discard a valid
-  // personal fold when the filter clears.
+  // Stale-fold cleanup: only a PROVABLY inert fold loses its entry, and
+  // nothing is provable under a filtered/searched/narrowed or restricted
+  // graph — a todo filter hiding a done child is not the child being gone.
   useEffect(() => {
     if (!graph || storedCollapsedIds === null) return;
-    const pruned = pruneDagCollapsedIds(storedCollapsedIds, graph);
+    const pruned = pruneDagCollapsedIds(
+      storedCollapsedIds,
+      graph,
+      membershipComplete && !graph.hasRestrictedContext,
+    );
     if (pruned.length !== storedCollapsedIds.length) {
       storeApi.getState().setDagCollapsedIds(pruned);
     }
-  }, [graph, storeApi, storedCollapsedIds]);
+  }, [graph, membershipComplete, storeApi, storedCollapsedIds]);
 
   // Layout inputs track topologyId, not the graph object: status/title/run
   // refreshes keep the topology id and must not re-run Dagre. The ref gate

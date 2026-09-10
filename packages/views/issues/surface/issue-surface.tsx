@@ -357,6 +357,7 @@ function IssueSurfaceContent({
               <DagView
                 graphQuery={controller.dagGraph}
                 hasActiveFilters={controller.hasActiveFilters}
+                membershipComplete={controller.dagMembershipComplete}
               />
             )}
             {controller.viewMode === "swimlane" && (

@@ -83,6 +83,14 @@ export interface IssueSurfaceController {
     isFetching: boolean;
     refetch: () => void;
   };
+  /**
+   * True only when the graph request reads the FULL authorized membership:
+   * no filter field, no search, and sub-issues included. Fold-preference
+   * pruning is legal only under this — a narrowed graph cannot tell a deleted
+   * issue from a filtered-out one. `hasRestrictedContext` is checked by the
+   * view against the response itself.
+   */
+  dagMembershipComplete: boolean;
   surfaceIssues: Issue[];
   projectIssues: Issue[];
   issues: Issue[];
@@ -890,6 +898,8 @@ export function useIssueSurfaceController({
       isFetching: dagGraphQuery.isFetching,
       refetch: () => void dagGraphQuery.refetch(),
     },
+    dagMembershipComplete:
+      !hasActiveFilters && showSubIssues && debouncedActiveSearch === "",
     ...surfaceData,
     workingAgents,
     hasActiveFilters,

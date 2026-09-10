@@ -320,27 +320,49 @@ describe("computeDagProjection", () => {
 });
 
 describe("pruneDagCollapsedIds", () => {
-  it("drops only provably inert feature folds and keeps everything else", () => {
+  it("keeps every fold while membership is not complete", () => {
     const graph = fixture();
-    // f1 has a visible child (a1): its fold stays. A feature fold whose node
-    // is absent from this graph (filtered out or unknown) also stays — absence
-    // is not proof of deletion. Project folds are never auto-pruned.
+    // Even a feature with no visible child keeps its fold: under a filtered
+    // or restricted graph that is a display artifact, not deletion (review
+    // F3 — a todo filter hides the done child).
+    expect(
+      pruneDagCollapsedIds(
+        [dagProjectRepId(P1), dagFeatureRepId("f1"), "issue:gone"],
+        graph,
+        false,
+      ),
+    ).toEqual([dagProjectRepId(P1), dagFeatureRepId("f1"), "issue:gone"]);
+    const childless = {
+      ...graph,
+      nodes: graph.nodes.filter((node) => node.id !== "a1"),
+      edges: graph.edges.filter(
+        (edge) => edge.source !== "a1" && edge.target !== "a1",
+      ),
+    };
+    expect(pruneDagCollapsedIds([dagFeatureRepId("f1")], childless, false)).toEqual([
+      dagFeatureRepId("f1"),
+    ]);
+  });
+
+  it("clears only genuinely inert folds on a complete membership read", () => {
+    const graph = fixture();
     expect(
       pruneDagCollapsedIds(
         [dagProjectRepId(P1), "project:gone", dagFeatureRepId("f1"), "issue:gone"],
         graph,
+        true,
       ),
-    ).toEqual([dagProjectRepId(P1), "project:gone", dagFeatureRepId("f1"), "issue:gone"]);
-  });
+    ).toEqual([dagProjectRepId(P1), dagFeatureRepId("f1")]);
 
-  it("prunes a feature fold whose issue lost all visible children", () => {
-    const graph = fixture();
-    // Remove a1: f1 remains but has no visible child, so issue:f1 is inert.
-    graph.nodes = graph.nodes.filter((node) => node.id !== "a1");
-    graph.edges = graph.edges.filter(
-      (edge) => edge.source !== "a1" && edge.target !== "a1",
-    );
-    expect(pruneDagCollapsedIds([dagFeatureRepId("f1")], graph)).toEqual([]);
+    // Feature present but childless on a complete read: provably inert.
+    const childless = {
+      ...graph,
+      nodes: graph.nodes.filter((node) => node.id !== "a1"),
+      edges: graph.edges.filter(
+        (edge) => edge.source !== "a1" && edge.target !== "a1",
+      ),
+    };
+    expect(pruneDagCollapsedIds([dagFeatureRepId("f1")], childless, true)).toEqual([]);
   });
 });
 
@@ -453,6 +475,34 @@ describe("dagFocusNeighborhood", () => {
     ]).toEqual(
       expect.arrayContaining(["feature", "dependency", "dependency-parent", "upstream"]),
     );
+  });
+
+  it("closes over raw issue ids before mapping to canvas reps (review F4 mixed folds)", () => {
+    // prerequisite → feature; middle ∈ feature; leaf ∈ middle but lives in
+    // another project. feature/middle fold to issue:feature; leaf folds into
+    // the collapsed project rep. The downstream walk must reach the leaf
+    // THROUGH the folded middle and light project:proj-2.
+    const graph = makeGraph(
+      [
+        makeNode("prerequisite", { projectId: "p0" }),
+        makeNode("feature", { projectId: P1 }),
+        makeNode("middle", { projectId: P1, parentIssueId: "feature" }),
+        makeNode("leaf", { projectId: P2, parentIssueId: "middle" }),
+      ],
+      [{ id: "e1", source: "prerequisite", target: "feature" }],
+    );
+    graph.projects.push({ id: "p0", title: "Prerequisite" });
+    const projection = computeDagProjection(graph, "project", [
+      dagFeatureRepId("feature"),
+      dagProjectRepId(P2),
+    ]);
+    expect(
+      projection.nodes.find((node) => node.id === dagFeatureRepId("feature"))
+        ?.memberIds,
+    ).toEqual(["feature", "middle"]);
+    const seen = dagFocusNeighborhood(projection, graph, "prerequisite", "downstream");
+    expect(seen.has(dagProjectRepId(P2))).toBe(true);
+    expect(seen.has(dagFeatureRepId("feature"))).toBe(true);
   });
 
   it("the root's own children are not its downstream", () => {

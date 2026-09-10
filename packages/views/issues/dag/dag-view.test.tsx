@@ -174,6 +174,7 @@ describe("DagView", () => {
           <DagView
             graphQuery={query}
             hasActiveFilters={hasActiveFilters}
+            membershipComplete={!hasActiveFilters}
             layoutRunnerFactory={syncLayoutRunner}
           />
         </ViewStoreProvider>
@@ -340,6 +341,28 @@ describe("DagView", () => {
     );
     expect(screen.getByText("dag.run_active")).toBeTruthy();
     expect(screen.queryByText("dag.run_queued")).toBeNull();
+  });
+
+
+  it("keeps a feature fold when a status filter hides its children (review F3)", async () => {
+    store.getState().setDagCollapsedIds(["issue:feature"]);
+    // membershipComplete=false mirrors a filtered request: the feature is
+    // present, its done child is filtered out — the fold must survive.
+    renderDagView(
+      graphQuery({
+        data: makeGraph([makeNode("feature")]),
+      }),
+      true,
+    );
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    expect(store.getState().dagCollapsedIds).toContain("issue:feature");
+  });
+
+  it("prunes a genuinely childless feature fold on a complete graph", async () => {
+    store.getState().setDagCollapsedIds(["issue:feature"]);
+    renderDagView(graphQuery({ data: makeGraph([makeNode("feature")]) }), false);
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    expect(store.getState().dagCollapsedIds).not.toContain("issue:feature");
   });
 
   it("expand all / collapse all drive the fold preference", async () => {
