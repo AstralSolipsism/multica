@@ -162,15 +162,25 @@ import type {
   ListWebhookDeliveriesResponse,
   WebhookDelivery,
   ApproveMessageTargetRequest,
+  ApproveMessageSourceTargetRequest,
   GetMessageDeliveryResponse,
+  GetMessageRouteDeliveryResponse,
   ListMessageApprovedTargetsResponse,
   ListMessageDeliveriesResponse,
+  ListMessageRouteDeliveriesResponse,
   ListMessageRoutesResponse,
+  ListMessageSourceApprovedTargetsResponse,
+  ListMessageSourceRoutesResponse,
   MessageApprovedTarget,
   MessageDelivery,
+  MessageEventCatalog,
   MessageRoute,
+  MessageSourceApprovedTarget,
+  MessageSourceDelivery,
+  MessageSourceRoute,
   RevokeMessageTargetResponse,
   SaveMessageRouteRequest,
+  SaveMessageSourceRouteRequest,
   NotificationPreferenceResponse,
   NotificationPreferences,
   PluginHookResult,
@@ -352,6 +362,22 @@ import {
   EMPTY_MESSAGE_DELIVERY,
   EMPTY_MESSAGE_ROUTE,
   emptyMessageDeliveryDetail,
+  ApproveMessageSourceTargetResponseSchema,
+  EMPTY_LIST_MESSAGE_ROUTE_DELIVERIES_RESPONSE,
+  EMPTY_LIST_MESSAGE_SOURCE_APPROVED_TARGETS_RESPONSE,
+  EMPTY_LIST_MESSAGE_SOURCE_ROUTES_RESPONSE,
+  EMPTY_MESSAGE_EVENT_CATALOG,
+  EMPTY_MESSAGE_SOURCE_APPROVED_TARGET,
+  EMPTY_MESSAGE_SOURCE_DELIVERY,
+  EMPTY_MESSAGE_SOURCE_ROUTE,
+  emptyMessageRouteDeliveryDetail,
+  GetMessageRouteDeliveryResponseSchema,
+  ListMessageRouteDeliveriesResponseSchema,
+  ListMessageSourceApprovedTargetsResponseSchema,
+  ListMessageSourceRoutesResponseSchema,
+  MessageEventCatalogSchema,
+  MessageSourceDeliveryResponseSchema,
+  MessageSourceRouteResponseSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByHourListSchema,
@@ -4611,6 +4637,241 @@ export class ApiClient {
       });
     }
     return parsed.delivery;
+  }
+
+  // -----------------------------------------------------------------------
+  // Labrastro message delivery — OL-27 source surface: personal inbox
+  // forwarding ("推送到我的飞书") and team (activity/comment) subscriptions.
+  // Contract: server/internal/messagedelivery/README.md "OL-27 HTTP API";
+  // refusals: 403 route_not_self / message_no_originator / message_forbidden
+  // / message_target_admin_required. Servers without OL-27 answer 404, which
+  // callers present as an "unsupported server" state.
+  // -----------------------------------------------------------------------
+
+  // The config-UI catalog: which source kinds exist, which events each may
+  // forward, and which preference group each personal event is muted under.
+  async getMessageEventCatalog(): Promise<MessageEventCatalog> {
+    const raw = await this.fetch<unknown>("/api/message-event-catalog");
+    return parseWithFallback(
+      raw,
+      MessageEventCatalogSchema,
+      EMPTY_MESSAGE_EVENT_CATALOG,
+      { endpoint: "GET /api/message-event-catalog" },
+    );
+  }
+
+  // Lists the acting member's own inbox rules; an unfiltered list also
+  // includes team rules for owners/admins. Explicitly requesting a team
+  // source_kind without that role is a 403 message_target_admin_required.
+  async listMessageSourceRoutes(
+    sourceKind?: string,
+  ): Promise<ListMessageSourceRoutesResponse> {
+    const search = new URLSearchParams();
+    if (sourceKind) search.set("source_kind", sourceKind);
+    const raw = await this.fetch<unknown>(`/api/message-routes?${search}`);
+    return parseWithFallback(
+      raw,
+      ListMessageSourceRoutesResponseSchema,
+      EMPTY_LIST_MESSAGE_SOURCE_ROUTES_RESPONSE,
+      { endpoint: "GET /api/message-routes" },
+    );
+  }
+
+  // Create returns 201 with {route}, revision 1. For source_kind=inbox the
+  // server pins the recipient to the acting member — a caller-supplied
+  // target_user_id is ignored, never honored.
+  async createMessageSourceRoute(
+    data: SaveMessageSourceRouteRequest,
+  ): Promise<MessageSourceRoute> {
+    const raw = await this.fetch<unknown>("/api/message-routes", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    const parsed = parseWithFallback(raw, MessageSourceRouteResponseSchema,
+      { route: EMPTY_MESSAGE_SOURCE_ROUTE },
+      { endpoint: "POST /api/message-routes" });
+    if (!parsed.route.id) {
+      // Unconfirmed writes must not masquerade as a saved rule.
+      throw new ApiError("unparseable message-route write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
+    return parsed.route;
+  }
+
+  // Revision-guarded: a stale expected_revision is a 409
+  // route_revision_conflict, never a silent overwrite.
+  async updateMessageSourceRoute(
+    routeId: string,
+    data: SaveMessageSourceRouteRequest,
+  ): Promise<MessageSourceRoute> {
+    const raw = await this.fetch<unknown>(`/api/message-routes/${routeId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    const parsed = parseWithFallback(raw, MessageSourceRouteResponseSchema,
+      { route: EMPTY_MESSAGE_SOURCE_ROUTE },
+      { endpoint: "PUT /api/message-routes/:routeId" });
+    if (!parsed.route.id) {
+      throw new ApiError("unparseable message-route write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
+    return parsed.route;
+  }
+
+  // Disabling cancels queued sends; enabling re-verifies the target and
+  // resets the eligibility boundary (the disabled window is not backfilled).
+  async setMessageSourceRouteEnabled(
+    routeId: string,
+    enabled: boolean,
+    expectedRevision: number,
+  ): Promise<MessageSourceRoute> {
+    const raw = await this.fetch<unknown>(`/api/message-routes/${routeId}/enable`, {
+      method: "POST",
+      body: JSON.stringify({ enabled, expected_revision: expectedRevision }),
+    });
+    const parsed = parseWithFallback(raw, MessageSourceRouteResponseSchema,
+      { route: EMPTY_MESSAGE_SOURCE_ROUTE },
+      { endpoint: "POST /api/message-routes/:routeId/enable" });
+    if (!parsed.route.id) {
+      throw new ApiError("unparseable message-route write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
+    return parsed.route;
+  }
+
+  async deleteMessageSourceRoute(routeId: string): Promise<void> {
+    await this.fetch(`/api/message-routes/${routeId}`, { method: "DELETE" });
+  }
+
+  // Test-send runs the REAL send path synchronously; a disabled rule is
+  // refused with 409 route_disabled.
+  async testMessageSourceRoute(routeId: string): Promise<MessageSourceDelivery> {
+    const raw = await this.fetch<unknown>(`/api/message-routes/${routeId}/test-send`, {
+      method: "POST",
+    });
+    const parsed = parseWithFallback(raw, MessageSourceDeliveryResponseSchema,
+      { delivery: EMPTY_MESSAGE_SOURCE_DELIVERY },
+      { endpoint: "POST /api/message-routes/:routeId/test-send" });
+    if (!parsed.delivery.id) {
+      throw new ApiError("unparseable delivery write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
+    return parsed.delivery;
+  }
+
+  // Records page for one source route. No run filter exists on this surface
+  // (source records are not runs); statuses/pagination mirror the automation
+  // records API.
+  async listMessageRouteDeliveries(
+    routeId: string,
+    params?: { status?: string; limit?: number; offset?: number },
+  ): Promise<ListMessageRouteDeliveriesResponse> {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status", params.status);
+    if (params?.limit) search.set("limit", params.limit.toString());
+    if (params?.offset) search.set("offset", params.offset.toString());
+    const raw = await this.fetch<unknown>(
+      `/api/message-routes/${routeId}/message-deliveries?${search}`,
+    );
+    return parseWithFallback(
+      raw,
+      ListMessageRouteDeliveriesResponseSchema,
+      EMPTY_LIST_MESSAGE_ROUTE_DELIVERIES_RESPONSE,
+      { endpoint: "GET /api/message-routes/:routeId/message-deliveries" },
+    );
+  }
+
+  async getMessageRouteDelivery(
+    routeId: string,
+    deliveryId: string,
+  ): Promise<GetMessageRouteDeliveryResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/message-routes/${routeId}/message-deliveries/${deliveryId}`,
+    );
+    return parseWithFallback(
+      raw,
+      GetMessageRouteDeliveryResponseSchema,
+      emptyMessageRouteDeliveryDetail(deliveryId),
+      { endpoint: "GET /api/message-routes/:routeId/message-deliveries/:deliveryId" },
+    );
+  }
+
+  async retryMessageRouteDelivery(
+    routeId: string,
+    deliveryId: string,
+  ): Promise<MessageSourceDelivery> {
+    const raw = await this.fetch<unknown>(
+      `/api/message-routes/${routeId}/message-deliveries/${deliveryId}/retry`,
+      { method: "POST" },
+    );
+    const parsed = parseWithFallback(raw, MessageSourceDeliveryResponseSchema,
+      { delivery: EMPTY_MESSAGE_SOURCE_DELIVERY },
+      { endpoint: "POST /api/message-routes/:routeId/message-deliveries/:deliveryId/retry" });
+    if (!parsed.delivery.id) {
+      throw new ApiError("unparseable delivery write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
+    return parsed.delivery;
+  }
+
+  // Team outbound-target approvals are a workspace owner/admin consent
+  // surface, scoped to the exact (source_kind, project range, bot, target);
+  // the server answers 403 message_target_admin_required for plain members.
+  async listMessageSourceApprovedTargets(): Promise<ListMessageSourceApprovedTargetsResponse> {
+    const raw = await this.fetch<unknown>("/api/message-approved-targets");
+    return parseWithFallback(
+      raw,
+      ListMessageSourceApprovedTargetsResponseSchema,
+      EMPTY_LIST_MESSAGE_SOURCE_APPROVED_TARGETS_RESPONSE,
+      { endpoint: "GET /api/message-approved-targets" },
+    );
+  }
+
+  async approveMessageSourceTarget(
+    data: ApproveMessageSourceTargetRequest,
+  ): Promise<MessageSourceApprovedTarget> {
+    const raw = await this.fetch<unknown>("/api/message-approved-targets", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    const parsed = parseWithFallback(raw, ApproveMessageSourceTargetResponseSchema,
+      { approved_target: EMPTY_MESSAGE_SOURCE_APPROVED_TARGET },
+      { endpoint: "POST /api/message-approved-targets" });
+    if (!parsed.approved_target.id) {
+      throw new ApiError("unparseable approved-target write response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
+    return parsed.approved_target;
+  }
+
+  // Revoke soft-revokes the grant and cancels the scope's not-yet-started
+  // sends in one transaction; the response reports the cancelled count.
+  async revokeMessageSourceTarget(
+    targetId: string,
+  ): Promise<RevokeMessageTargetResponse> {
+    const raw = await this.fetch<unknown>(`/api/message-approved-targets/${targetId}`, {
+      method: "DELETE",
+    });
+    const parsed = parseWithFallback(
+      raw,
+      RevokeMessageTargetResponseSchema,
+      { revoked: false, cancelled_deliveries: 0 },
+      { endpoint: "DELETE /api/message-approved-targets/:targetId" },
+    );
+    if (parsed.revoked !== true) {
+      // A 2xx that cannot confirm the revoke must not resolve as success —
+      // the UI would otherwise toast "revoked" while queued sends live on.
+      throw new ApiError("unconfirmed approved-target revoke response", 0, "", {
+        code: "response_unconfirmed",
+      });
+    }
+    return parsed;
   }
 
   // GitHub integration

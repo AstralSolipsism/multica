@@ -119,11 +119,15 @@
       "run_only": "自動化の実行",
       "create_issue": "タスク自動化",
       "test_send": "テストメッセージ",
+      "inbox": "個人通知",
+      "activity": "タスクのアクティビティ",
+      "comment": "コメント",
       "unknown": "不明なソース"
     },
     "detail": {
       "title": "配信の詳細",
       "report": "レポート内容",
+      "content": "メッセージ内容",
       "no_report_body": "(レポート本文なし)",
       "summary": "要約",
       "target": "ターゲット",
@@ -142,7 +146,8 @@
       "route_revision": "ルールバージョン",
       "run": "実行",
       "load_failed": "詳細を読み込めませんでした。上のステータスはリスト行のもので、最新でない可能性があります。",
-      "view_log": "ログを表示"
+      "view_log": "ログを表示",
+      "loading_state": "現在の状態を読み込んでいます..."
     },
     "retry": {
       "action": "リトライ",
@@ -159,7 +164,92 @@
     "run_filter_unsupported": "このサーバーは実行との関連付けに対応していません",
     "run_dialog": {
       "title": "この実行の配信"
+    },
+    "route_dialog": {
+      "title": "このルールの配信"
     }
+  },
+  "source": {
+    "kind": {
+      "inbox": "個人通知",
+      "activity": "タスクのアクティビティ",
+      "comment": "新着コメント",
+      "unknown": "不明なソース"
+    },
+    "events_all": "すべてのイベント",
+    "events_count": "{{count}} 件のイベント",
+    "effective_from": "{{time}} 以降のイベントのみ配信",
+    "records": "配信記録",
+    "project_workspace": "ワークスペース全体"
+  },
+  "event": {
+    "issue_assigned": "タスクがあなたに割り当て",
+    "unassigned": "タスクの割り当て解除",
+    "assignee_changed": "担当者の変更",
+    "status_changed": "ステータスの変更",
+    "new_comment": "新着コメント",
+    "mentioned": "あなたへのメンション",
+    "priority_changed": "優先度の変更",
+    "start_date_changed": "開始日の変更",
+    "due_date_changed": "期限日の変更",
+    "task_completed": "エージェントの実行完了",
+    "task_failed": "エージェントの実行失敗",
+    "agent_blocked": "エージェントがブロック",
+    "agent_completed": "エージェント完了"
+  },
+  "team_event": {
+    "status_changed": "タスクのステータス変更",
+    "assignee_changed": "タスクの担当者変更",
+    "comment": "新着コメント"
+  },
+  "personal": {
+    "title": "自分の Feishu にプッシュ",
+    "description": "自分の受信ボックスの通知をワークスペースのボット経由で自分の Feishu DM に転送します。このルールを表示・管理できるのはあなただけです。他のメンバーの受信ボックスは誰も読めず、設定もできません。",
+    "add": "プッシュを設定",
+    "empty": "Feishu プッシュはまだ設定されていません。それまで通知は受信ボックスに残ります。",
+    "forbidden": "管理できるのは自分の Feishu プッシュだけです。",
+    "unsupported": "このサーバーは Feishu プッシュにまだ対応していません。運用者にサーバーのアップグレードを依頼してください。",
+    "load_failed": "プッシュ設定を読み込めませんでした。",
+    "no_bot": "このワークスペースに有効な Feishu ボットがありません。先に連携設定でインストールしてください。",
+    "install_bot": "連携設定を開く",
+    "target_self": "あなたの Feishu DM",
+    "mute_hint": "上でミュートした通知カテゴリは Feishu に転送されません。",
+    "system_hint": "下のブラウザ・システム通知は別のスイッチです。Feishu プッシュのオン・オフには影響しません。"
+  },
+  "team": {
+    "title": "チームイベント購読",
+    "description": "このワークスペースのタスクのアクティビティや新着コメントを Feishu のグループチャットやトピックに購読します。これはチーム向けの共有購読であり、メンバー個人の受信ボックスを複製するものではありません。同じイベントは、一致するルールの数に関わらず、1 つのチャットに 1 回だけ配信されます。",
+    "add": "購読を追加",
+    "empty": "チーム購読はまだありません。",
+    "admin_required": "チーム購読はワークスペースの owner/admin が設定します。メンバーは設定されたチャットで購読されたイベントを受け取ります。",
+    "unsupported": "このサーバーはチーム購読にまだ対応していません。運用者にサーバーのアップグレードを依頼してください。",
+    "load_failed": "チーム購読を読み込めませんでした。",
+    "no_bot": "このワークスペースに有効な Feishu ボットがありません。先に上でインストールしてください。",
+    "approvals_title": "承認済みのチームターゲット",
+    "approvals_empty": "承認済みのチームターゲットはまだありません。",
+    "approvals_load_failed": "承認済みターゲットを読み込めませんでした。"
+  },
+  "source_editor": {
+    "title_add_personal": "Feishu プッシュを設定",
+    "title_edit_personal": "Feishu プッシュを編集",
+    "title_add_team": "購読を追加",
+    "title_edit_team": "購読を編集",
+    "target_self_hint": "通知はあなた自身の Feishu DM にのみ配信されます。受信者は常にあなた本人で、変更できません。",
+    "kind": "ソース",
+    "kind_activity": "タスクのアクティビティ",
+    "kind_comment": "新着コメント",
+    "kind_activity_hint": "タスクのステータスと担当者の変更を転送します。",
+    "kind_comment_hint": "通常の新着コメントのみを転送します。",
+    "project": "範囲",
+    "project_workspace": "ワークスペース全体",
+    "project_hint": "承認はソース・範囲・ボット・ターゲットの組合せごとに適用されます。範囲を変えるには個別の承認が必要です。",
+    "events": "転送するイベント",
+    "events_hint": "すべて未選択なら全イベントを転送します。除外されたイベントは未配信として記録されます。",
+    "boundary_hint": "ボット・ターゲット・範囲・イベントの変更、または無効化したルールの再有効化は、その時点から配信をやり直します。それ以前の履歴は再送されません。",
+    "approval_admin": "このターゲットはこのソースと範囲ではまだ承認されていません。保存時にワークスペース管理者として承認し、ボットの到達性を検証します。",
+    "approval_member": "このターゲットは、このソースと範囲についてワークスペースの owner/admin の承認を得るまで保存できません。",
+    "enable_hint": "ターゲットを承認してもルールは有効になりません。ルールが有効な間だけイベントが配信されます。",
+    "catalog_load_failed": "イベントカタログを読み込めなかったため、イベント範囲を確認できません。再読み込みしてから保存してください。"
   },
   "error_code": {
     "route_disabled": "プッシュ先は無効化されました",
@@ -167,6 +257,7 @@
     "source_archived": "元の自動化はアーカイブされました",
     "source_missing": "元の実行はもう存在しません",
     "condition_mismatch": "実行結果が送信条件に一致しませんでした",
+    "recipient_muted": "受信者がこの通知カテゴリをミュートしています",
     "member_unbound": "メンバーの Feishu 連携が解除されました",
     "installation_revoked": "ボットのインストールが取り消されました",
     "installation_missing": "ボットのインストールが存在しません",
@@ -197,9 +288,12 @@
     "route_revision_conflict": "この設定は別の場所で変更されました。再読み込み済みです。確認してもう一度お試しください。",
     "route_already_exists": "同等のプッシュ先が既に存在します。",
     "route_disabled": "テストメッセージを送る前にこのターゲットを有効にしてください。",
+    "route_not_self": "管理できるのは自分の個人通知だけです。",
     "delivery_not_found": "この配信はもう存在しません。",
     "delivery_not_retryable": "失敗または結果不明の配信のみリトライできます。",
     "message_target_admin_required": "ターゲットの承認にはワークスペースの owner または admin 権限が必要です。",
+    "message_no_originator": "リクエストに解決可能な実行者がいません。",
+    "message_forbidden": "この通知設定へのアクセス権がありません。",
     "authorization_lost": "この自動化への権限が失われました。",
     "source_unavailable": "この自動化はアーカイブまたは削除されました。",
     "autopilot_no_originator": "リクエストに解決可能な実行者がいません。",

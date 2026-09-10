@@ -8,11 +8,15 @@ import { describe, expect, it } from "vitest";
 import {
   confirmedRunPages,
   canRetryMessageDelivery,
+  isSourceTargetApproved,
   messageDeliveryErrorCodeKey,
   messageDeliveryErrorKey,
   messageDeliverySourceKindKey,
   messageDeliveryStatusKey,
+  messageSourceScopeKey,
   messageTargetKey,
+  personalEventTypeKey,
+  teamEventKey,
 } from "./copy";
 
 describe("messageDeliveryErrorKey", () => {
@@ -33,6 +37,9 @@ describe("messageDeliveryErrorKey", () => {
       "delivery_not_found",
       "delivery_not_retryable",
       "message_target_admin_required",
+      "message_no_originator",
+      "message_forbidden",
+      "route_not_self",
       "authorization_lost",
       "source_unavailable",
       "autopilot_no_originator",
@@ -58,6 +65,7 @@ describe("messageDeliveryErrorCodeKey", () => {
       "source_archived",
       "source_missing",
       "condition_mismatch",
+      "recipient_muted",
       "member_unbound",
       "installation_revoked",
       "installation_missing",
@@ -111,7 +119,87 @@ describe("messageDeliverySourceKindKey", () => {
     expect(messageDeliverySourceKindKey("create_issue")).toBe("create_issue");
     expect(messageDeliverySourceKindKey("test_send")).toBe("test_send");
     expect(messageDeliverySourceKindKey("unknown")).toBe("unknown");
-    expect(messageDeliverySourceKindKey("inbox")).toBe("unknown");
+  });
+
+  it("maps the OL-27 source scopes (personal/team records surface)", () => {
+    expect(messageDeliverySourceKindKey("inbox")).toBe("inbox");
+    expect(messageDeliverySourceKindKey("activity")).toBe("activity");
+    expect(messageDeliverySourceKindKey("comment")).toBe("comment");
+    expect(messageDeliverySourceKindKey("some_future_scope")).toBe("unknown");
+  });
+});
+
+describe("messageSourceScopeKey", () => {
+  it("maps route scopes and degrades unknown ones", () => {
+    expect(messageSourceScopeKey("inbox")).toBe("inbox");
+    expect(messageSourceScopeKey("activity")).toBe("activity");
+    expect(messageSourceScopeKey("comment")).toBe("comment");
+    expect(messageSourceScopeKey("run")).toBe("unknown");
+  });
+});
+
+describe("event label keys", () => {
+  it("maps the shared notify inbox catalog", () => {
+    const types = [
+      "issue_assigned",
+      "unassigned",
+      "assignee_changed",
+      "status_changed",
+      "new_comment",
+      "mentioned",
+      "priority_changed",
+      "start_date_changed",
+      "due_date_changed",
+      "task_completed",
+      "task_failed",
+      "agent_blocked",
+      "agent_completed",
+    ] as const;
+    for (const type of types) {
+      expect(personalEventTypeKey(type)).toBe(type);
+    }
+    expect(personalEventTypeKey("future_type")).toBeNull();
+  });
+
+  it("maps the team-event whitelist", () => {
+    expect(teamEventKey("status_changed")).toBe("status_changed");
+    expect(teamEventKey("assignee_changed")).toBe("assignee_changed");
+    expect(teamEventKey("comment")).toBe("comment");
+    expect(teamEventKey("progress_update")).toBeNull();
+  });
+});
+
+describe("isSourceTargetApproved (exact-scope team consent)", () => {
+  const grant = {
+    source_kind: "activity",
+    project_id: "p1",
+    installation_id: "i1",
+    target_key: "group:oc_1",
+    revoked_at: null as string | null,
+  };
+  const scope = {
+    sourceKind: "activity",
+    projectId: "p1",
+    installationId: "i1",
+    targetKey: "group:oc_1",
+  };
+
+  it("matches only the exact (source kind, project range, bot, target) scope", () => {
+    expect(isSourceTargetApproved([grant], scope)).toBe(true);
+    // A project grant never covers the workspace-wide range, and vice versa.
+    expect(isSourceTargetApproved([grant], { ...scope, projectId: null })).toBe(false);
+    expect(
+      isSourceTargetApproved([{ ...grant, project_id: null }], scope),
+    ).toBe(false);
+    // activity and comment approvals never cover each other.
+    expect(isSourceTargetApproved([grant], { ...scope, sourceKind: "comment" })).toBe(false);
+    // Another bot or target is a different grant.
+    expect(isSourceTargetApproved([grant], { ...scope, installationId: "i2" })).toBe(false);
+    expect(isSourceTargetApproved([grant], { ...scope, targetKey: "group:oc_2" })).toBe(false);
+    // A revoked grant no longer applies.
+    expect(
+      isSourceTargetApproved([{ ...grant, revoked_at: "2026-09-08T00:00:00Z" }], scope),
+    ).toBe(false);
   });
 });
 

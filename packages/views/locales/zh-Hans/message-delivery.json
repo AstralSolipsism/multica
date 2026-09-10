@@ -119,11 +119,15 @@
       "run_only": "自动化运行",
       "create_issue": "任务自动化",
       "test_send": "测试消息",
+      "inbox": "个人通知",
+      "activity": "任务动态",
+      "comment": "评论",
       "unknown": "未知来源"
     },
     "detail": {
       "title": "投递详情",
       "report": "报告内容",
+      "content": "消息内容",
       "no_report_body": "（无报告正文）",
       "summary": "摘要",
       "target": "目标",
@@ -142,7 +146,8 @@
       "route_revision": "规则版本",
       "run": "运行",
       "load_failed": "详情加载失败——上方状态来自列表行，可能不是最新。",
-      "view_log": "查看日志"
+      "view_log": "查看日志",
+      "loading_state": "正在读取当前状态..."
     },
     "retry": {
       "action": "重试",
@@ -159,7 +164,92 @@
     "run_filter_unsupported": "当前服务端不支持按运行关联",
     "run_dialog": {
       "title": "该运行的投递"
+    },
+    "route_dialog": {
+      "title": "该规则的投递"
     }
+  },
+  "source": {
+    "kind": {
+      "inbox": "个人通知",
+      "activity": "任务动态",
+      "comment": "新评论",
+      "unknown": "未知来源"
+    },
+    "events_all": "全部事件",
+    "events_count": "{{count}} 类事件",
+    "effective_from": "仅投递 {{time}} 之后的事件",
+    "records": "投递记录",
+    "project_workspace": "整个工作区"
+  },
+  "event": {
+    "issue_assigned": "任务分配给你",
+    "unassigned": "取消分配给你的任务",
+    "assignee_changed": "负责人变更",
+    "status_changed": "状态变更",
+    "new_comment": "新评论",
+    "mentioned": "提及你",
+    "priority_changed": "优先级变更",
+    "start_date_changed": "开始日期变更",
+    "due_date_changed": "截止日期变更",
+    "task_completed": "智能体运行完成",
+    "task_failed": "智能体运行失败",
+    "agent_blocked": "智能体受阻",
+    "agent_completed": "智能体完成"
+  },
+  "team_event": {
+    "status_changed": "任务状态变更",
+    "assignee_changed": "任务负责人变更",
+    "comment": "新评论"
+  },
+  "personal": {
+    "title": "推送到我的飞书",
+    "description": "将你自己的收件箱通知通过工作区机器人转发到你的飞书私聊。只有你能查看和管理这条规则，任何人都无法读取或配置他人的收件箱。",
+    "add": "设置推送",
+    "empty": "尚未设置飞书推送，在此之前通知只保留在收件箱中。",
+    "forbidden": "只能管理你自己的飞书推送。",
+    "unsupported": "当前服务端尚不支持飞书推送，请联系运维升级服务端。",
+    "load_failed": "推送配置加载失败。",
+    "no_bot": "当前工作区没有可用的飞书机器人，请先在集成设置中安装。",
+    "install_bot": "打开集成设置",
+    "target_self": "你的飞书私聊",
+    "mute_hint": "上方已静音的通知分类不会转发到飞书。",
+    "system_hint": "下方的浏览器与系统通知是独立开关，不影响飞书推送。"
+  },
+  "team": {
+    "title": "团队事件订阅",
+    "description": "将工作区的任务动态或新评论订阅到飞书群聊或话题。这是面向团队的共享订阅，不是复制各成员的个人收件箱；同一事件无论匹配多少条规则，在同一群聊只投递一次。",
+    "add": "添加订阅",
+    "empty": "暂无团队订阅。",
+    "admin_required": "团队订阅由工作区 owner/admin 配置，成员在已订阅的群聊中接收消息。",
+    "unsupported": "当前服务端尚不支持团队订阅，请联系运维升级服务端。",
+    "load_failed": "团队订阅加载失败。",
+    "no_bot": "当前工作区没有可用的飞书机器人，请先在上方安装。",
+    "approvals_title": "已批准的团队目标",
+    "approvals_empty": "暂无已批准的团队目标。",
+    "approvals_load_failed": "批准列表加载失败。"
+  },
+  "source_editor": {
+    "title_add_personal": "设置飞书推送",
+    "title_edit_personal": "编辑飞书推送",
+    "title_add_team": "添加订阅",
+    "title_edit_team": "编辑订阅",
+    "target_self_hint": "通知只投递到你自己的飞书私聊，收件人始终是你本人，无法更改。",
+    "kind": "来源",
+    "kind_activity": "任务动态",
+    "kind_comment": "新评论",
+    "kind_activity_hint": "转发任务的状态与负责人变更。",
+    "kind_comment_hint": "仅转发普通新评论。",
+    "project": "生效范围",
+    "project_workspace": "整个工作区",
+    "project_hint": "批准严格对应来源、范围、机器人和目标。更换范围需要单独批准。",
+    "events": "转发的事件",
+    "events_hint": "全部不勾选即转发所有事件；被排除的事件会记录为未投递。",
+    "boundary_hint": "修改机器人、目标、范围或事件，或重新启用已停用的规则，都会从该时刻起重新计算生效边界；之前的历史不会补发。",
+    "approval_admin": "该目标在此来源和范围下尚未批准。保存时将以工作区管理员身份批准，并验证机器人可达。",
+    "approval_member": "该目标在此来源和范围下需工作区 owner/admin 批准后才能保存。",
+    "enable_hint": "批准目标不代表规则已启用，只有规则处于启用状态时才会投递事件。",
+    "catalog_load_failed": "事件目录加载失败，无法确认事件范围，请重新加载后再保存。"
   },
   "error_code": {
     "route_disabled": "推送目标已停用",
@@ -167,6 +257,7 @@
     "source_archived": "来源自动化已归档",
     "source_missing": "来源运行已不存在",
     "condition_mismatch": "运行结果不满足发送条件",
+    "recipient_muted": "接收人已静音该通知分类",
     "member_unbound": "成员的飞书绑定已解除",
     "installation_revoked": "机器人安装已失效",
     "installation_missing": "机器人安装已不存在",
@@ -197,9 +288,12 @@
     "route_revision_conflict": "该配置已在别处被修改，已为你重新加载，请确认后重试。",
     "route_already_exists": "已存在等效的推送目标。",
     "route_disabled": "请先启用该目标，再发送测试消息。",
+    "route_not_self": "只能管理你自己的个人通知。",
     "delivery_not_found": "该投递记录已不存在。",
     "delivery_not_retryable": "仅失败或结果不确定的投递可以重试。",
     "message_target_admin_required": "批准目标需要工作区 owner 或 admin 权限。",
+    "message_no_originator": "请求缺少可识别的发起人。",
+    "message_forbidden": "你没有该通知配置的访问权限。",
     "authorization_lost": "你对该自动化的权限已失效。",
     "source_unavailable": "该自动化已被归档或删除。",
     "autopilot_no_originator": "请求缺少可识别的发起人。",
