@@ -3,13 +3,15 @@
  *
  * Two subscription groups:
  *
- * 1. `inbox:*` events → invalidate the inbox query. inbox payloads are
- *    small and (apart from inbox:new) rare, so refetching is cheaper than
- *    maintaining per-event patchers. Multi-device parity: subscribing to
- *    inbox:read / inbox:archived means a read/archive on web reaches
- *    mobile within the next WS frame (web's use-realtime-sync deliberately
- *    DOESN'T subscribe to those, but mobile's stricter freshness wins for
- *    multi-device users).
+ * 1. `inbox:*` events → invalidate the inbox list AND the cross-workspace
+ *    unread summary that backs the tab badge (the summary lives under its
+ *    own account-level key, so the list invalidation does not reach it).
+ *    inbox payloads are small and (apart from inbox:new) rare, so refetching
+ *    is cheaper than maintaining per-event patchers. Multi-device parity:
+ *    subscribing to inbox:read / inbox:archived means a read/archive on web
+ *    reaches mobile within the next WS frame (web's use-realtime-sync
+ *    deliberately DOESN'T subscribe to those, but mobile's stricter freshness
+ *    wins for multi-device users).
  *
  * 2. `issue:*` events → patch the inbox cache directly via the dedicated
  *    updaters (inbox-ws-updaters.ts). Required because:
@@ -28,6 +30,7 @@ import { useWSSubscriptions } from "@/lib/use-ws-subscriptions";
 import {
   dropInboxItemsByIssue,
   patchInboxIssueStatus,
+  refreshInboxUnreadSummary,
 } from "./inbox-ws-updaters";
 
 export function useInboxRealtime() {
@@ -35,11 +38,15 @@ export function useInboxRealtime() {
 
   useWSSubscriptions(
     (ws, wsId) => {
-      const invalidate = () =>
+      const invalidate = () => {
         qc.invalidateQueries({ queryKey: inboxKeys.list(wsId) });
+        // Shared entry point: it cancels an in-flight summary request before
+        // invalidating, which a plain invalidate cannot do on a first load.
+        void refreshInboxUnreadSummary(qc);
+      };
 
       return [
-        // Inbox-domain events: refetch the small inbox list.
+        // Inbox-domain events: refetch the inbox list and the badge count.
         ws.on("inbox:new", invalidate),
         ws.on("inbox:read", invalidate),
         // Mobile has no mark-unread affordance yet (web/desktop right-click
@@ -65,7 +72,7 @@ export function useInboxRealtime() {
           );
         }),
         ws.on("issue:deleted", (payload) => {
-          dropInboxItemsByIssue(qc, wsId, payload.issue_id);
+          void dropInboxItemsByIssue(qc, wsId, payload.issue_id);
         }),
 
         // After a reconnect we don't know what we missed during the

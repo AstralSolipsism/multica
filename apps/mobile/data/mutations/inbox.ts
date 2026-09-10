@@ -26,10 +26,33 @@
  *     Just invalidate on settle. Matches web.
  */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import type { InboxItem } from "@multica/core/types";
 import { api } from "@/data/api";
 import { inboxKeys } from "@/data/queries/inbox";
+import { refreshInboxUnreadSummary } from "@/data/realtime/inbox-ws-updaters";
 import { useWorkspaceStore } from "@/data/workspace-store";
+
+/**
+ * Refresh the cross-workspace unread summary that backs the tab badge after a
+ * write. It lives under its own account-level key, so invalidating the
+ * workspace list does not reach it — every mutation here can change the number
+ * it holds.
+ *
+ * Deliberately the shared entry point rather than a second local copy: a
+ * mutation racing the first summary load hits exactly the same in-flight hole
+ * a WS event does, and `refreshInboxUnreadSummary` is where that is handled.
+ * Not awaited by `onSettled` — the mutation is done once the server answers.
+ *
+ * Rows are optimistic, the badge is not: it follows the server's confirmation.
+ * Mirrors the same decision in packages/core/inbox/mutations.ts, whose comment
+ * carries the reasoning — recomputing the count from the list cache and
+ * writing it back cannot be made correct once the list is paginated, and races
+ * an in-flight summary response that no `cancelQueries` here covers.
+ */
+function invalidateUnreadSummary(qc: QueryClient) {
+  void refreshInboxUnreadSummary(qc);
+}
 
 export function useMarkInboxRead() {
   const qc = useQueryClient();
@@ -53,6 +76,7 @@ export function useMarkInboxRead() {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: inboxKeys.list(wsId) });
+      invalidateUnreadSummary(qc);
     },
   });
 }
@@ -88,6 +112,7 @@ export function useArchiveInbox() {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: inboxKeys.list(wsId) });
+      invalidateUnreadSummary(qc);
     },
   });
 }
@@ -114,6 +139,7 @@ export function useMarkAllInboxRead() {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: inboxKeys.list(wsId) });
+      invalidateUnreadSummary(qc);
     },
   });
 }
@@ -121,7 +147,8 @@ export function useMarkAllInboxRead() {
 // Batch archive mutations — invalidate-only, matching web. The optimistic
 // path isn't worth the complexity: archive-completed depends on the issue
 // status of each linked issue (not carried on InboxItem), and predicting
-// that on the client risks divergence with the server's SQL filter.
+// that on the client risks divergence with the server's SQL filter. The badge
+// therefore catches up on settle rather than moving instantly.
 export function useArchiveAllInbox() {
   const qc = useQueryClient();
   const wsId = useWorkspaceStore((s) => s.currentWorkspaceId);
@@ -129,6 +156,7 @@ export function useArchiveAllInbox() {
     mutationFn: () => api.archiveAllInbox(),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: inboxKeys.list(wsId) });
+      invalidateUnreadSummary(qc);
     },
   });
 }
@@ -140,6 +168,7 @@ export function useArchiveAllReadInbox() {
     mutationFn: () => api.archiveAllReadInbox(),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: inboxKeys.list(wsId) });
+      invalidateUnreadSummary(qc);
     },
   });
 }
@@ -151,6 +180,7 @@ export function useArchiveCompletedInbox() {
     mutationFn: () => api.archiveCompletedInbox(),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: inboxKeys.list(wsId) });
+      invalidateUnreadSummary(qc);
     },
   });
 }
