@@ -308,10 +308,18 @@ func TestDependencyCLIInheritedRemovalDoesNotMutate(t *testing.T) {
 }
 
 func TestDependencyCLILegacyDispatchRefusals(t *testing.T) {
-	for _, args := range [][]string{{"issue", "status", dependencyCLIB, "todo", "--output", "json"}, {"issue", "rerun", dependencyCLIB}} {
+	for _, args := range [][]string{{"issue", "status", dependencyCLIB, "todo", "--output", "json"}, {"issue", "rerun", dependencyCLIB}, {"issue", "assign", dependencyCLIB, "--to-id", dependencyCLIActor}} {
 		t.Run(args[1], func(t *testing.T) {
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "GET" {
+					actors := []map[string]any{}
+					if r.URL.Path == "/api/agents" {
+						actors = append(actors, map[string]any{"id": dependencyCLIActor, "name": "test agent"})
+					}
+					_ = json.NewEncoder(w).Encode(actors)
+					return
+				}
 				requests.Add(1)
 				w.WriteHeader(http.StatusConflict)
 				_ = json.NewEncoder(w).Encode(map[string]any{"error": "blocked", "reason_code": "dependency_unsatisfied", "dependencies": dependencyCLIView()})
@@ -322,5 +330,46 @@ func TestDependencyCLILegacyDispatchRefusals(t *testing.T) {
 				t.Fatalf("requests=%d out=%s stderr=%s", requests.Load(), out, stderr)
 			}
 		})
+	}
+}
+
+func TestDependencyCLIOversizedRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		name, body   string
+		status, exit int
+	}{
+		{"large_json", `{"error":"` + strings.Repeat("x", 1<<20) + `","reason_code":"dependency_unsatisfied"}`, 403, 3},
+		// A valid JSON prefix followed by excessive whitespace is still oversized.
+		{"valid_prefix", `{"reason_code":"dependency_unsatisfied"}` + strings.Repeat(" ", 1<<20), 409, 1},
+	} {
+		for _, action := range []string{"create", "status"} {
+			for _, output := range []string{"json", "table"} {
+				t.Run(tc.name+"/"+action+"/"+output, func(t *testing.T) {
+					var requests atomic.Int32
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						requests.Add(1)
+						w.WriteHeader(tc.status)
+						_, _ = w.Write([]byte(tc.body))
+					}))
+					defer server.Close()
+					args := []string{"issue", "create", "--title", "rejected", "--blocked-by", dependencyCLIA}
+					if action == "status" {
+						args = []string{"issue", "status", dependencyCLIB, "todo"}
+					}
+					out, stderr := callDependencyCLI(t, server.URL, tc.exit, append(args, "--output", output)...)
+					if requests.Load() != 1 || !strings.Contains(stderr, "exceeded 1 MiB") || !strings.Contains(stderr, "Do not retry") {
+						t.Fatalf("requests=%d stderr=%.300s", requests.Load(), stderr)
+					}
+					if output == "json" {
+						var result map[string]any
+						if err := json.Unmarshal([]byte(out), &result); err != nil || result["body_truncated"] != true || result["http_status"] != float64(tc.status) || result["reason_code"] != nil || !strings.Contains(strVal(result, "error"), "exceeded 1 MiB") {
+							t.Fatalf("missing local truncation diagnostic: %.300s", out)
+						}
+					} else if out != "" {
+						t.Fatalf("table refusal should only print guidance on stderr: %.300s", out)
+					}
+				})
+			}
+		}
 	}
 }

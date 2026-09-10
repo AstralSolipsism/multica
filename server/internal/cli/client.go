@@ -81,6 +81,8 @@ type HTTPError struct {
 	Path       string
 	StatusCode int
 	Body       string
+	// BodyTruncated means the diagnostic is incomplete, even if its prefix is JSON.
+	BodyTruncated bool
 	// TaskScoped records that the failing request actually carried a
 	// task-scoped `mat_` token. It changes nothing about the request; it only
 	// lets FormatError tell a 401 worth signing in again for from one where
@@ -101,17 +103,23 @@ func newHTTPError(method, path string, resp *http.Response) *HTTPError {
 	// Dependency refusals carry complete direct/inherited blocker projections.
 	// The old 4 KiB diagnostic cap truncated these into invalid JSON, hiding the
 	// reason and preventing callers from handling a refusal without --debug.
-	var body io.Reader = io.LimitReader(resp.Body, 4096)
+	limit := 4096
 	if path == "/api/issues" || strings.HasPrefix(path, "/api/issues/") {
-		body = resp.Body
+		limit = 1 << 20
 	}
-	data, _ := io.ReadAll(body)
+	// Read one extra byte to distinguish an exact fit from an oversized body.
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
+	truncated := len(data) > limit
+	if truncated {
+		data = data[:limit]
+	}
 	return &HTTPError{
-		Method:     method,
-		Path:       path,
-		StatusCode: resp.StatusCode,
-		Body:       strings.TrimSpace(string(data)),
-		TaskScoped: requestUsedTaskToken(resp),
+		Method:        method,
+		Path:          path,
+		StatusCode:    resp.StatusCode,
+		Body:          strings.TrimSpace(string(data)),
+		BodyTruncated: truncated,
+		TaskScoped:    requestUsedTaskToken(resp),
 	}
 }
 

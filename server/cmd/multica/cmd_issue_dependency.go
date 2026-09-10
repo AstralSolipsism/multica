@@ -261,15 +261,20 @@ func issueDependencyCommandError(cmd *cobra.Command, err error) error {
 		return err
 	}
 	var payload map[string]any
-	_ = json.Unmarshal([]byte(httpErr.Body), &payload)
+	if !httpErr.BodyTruncated {
+		_ = json.Unmarshal([]byte(httpErr.Body), &payload)
+	}
 	code := strVal(payload, "reason_code")
+	issuePath := httpErr.Path == "/api/issues" || strings.HasPrefix(httpErr.Path, "/api/issues/")
 	dependencyPath := strings.HasPrefix(httpErr.Path, "/api/issues/") &&
 		(strings.HasSuffix(httpErr.Path, "/dependencies") || strings.HasSuffix(httpErr.Path, "/with-dependencies"))
-	if !strings.HasPrefix(code, "dependency_") && !dependencyPath {
+	if !strings.HasPrefix(code, "dependency_") && !dependencyPath && !(issuePath && httpErr.BodyTruncated) {
 		return err
 	}
 	message := cli.FormatError(err, false)
-	if code != "" {
+	if httpErr.BodyTruncated {
+		message += " Error response exceeded 1 MiB; complete issue/dependency diagnostics are unavailable. Do not retry the write automatically; inspect the issue or request human handling."
+	} else if code != "" {
 		message = fmt.Sprintf("%s (%s)", strVal(payload, "error"), code)
 	}
 	if dependencyPath && (httpErr.StatusCode == http.StatusNotFound || httpErr.StatusCode == http.StatusMethodNotAllowed) {
@@ -298,6 +303,9 @@ func issueDependencyCommandError(cmd *cobra.Command, err error) error {
 		var data any = json.RawMessage(httpErr.Body)
 		if payload == nil {
 			data = map[string]any{"error": message, "http_status": httpErr.StatusCode}
+			if httpErr.BodyTruncated {
+				data.(map[string]any)["body_truncated"] = true
+			}
 		}
 		if printErr := cli.PrintJSON(os.Stdout, data); printErr != nil {
 			message += fmt.Sprintf("\nCould not print error JSON: %v", printErr)

@@ -329,7 +329,14 @@ malformed outcome fields mean unknown, never permission to retry a write.
 
 CLI `--output json` preserves the server's dependency and dispatch fields, and
 dependency HTTP refusals print the structured error body on stdout with guidance
-on stderr. Keep the streams separate. Exit codes retain the existing contract:
+on stderr. `--output table` prints readable refusal guidance on stderr only;
+choose JSON when a caller needs the structured error body. Keep the streams
+separate. Issue error bodies are bounded at 1 MiB (other paths retain 4 KiB).
+An oversized body produces a local JSON diagnostic with `body_truncated: true`,
+`http_status` and `error`, not a partial server payload. Complete diagnostics
+are unavailable; do not retry the write automatically. The HTTP failure and
+its nonzero exit classification are preserved.
+Exit codes retain the existing contract:
 409/conflict = 1, 403/permission = 3, 404 = 4, 400/422 = 5; a 405 is 1.
 `issue comment add` can exit 1 **after the comment was saved** when any
 `trigger_outcomes` entry is blocked. Its JSON is the saved comment, including

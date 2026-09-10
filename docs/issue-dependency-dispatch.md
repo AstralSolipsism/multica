@@ -108,9 +108,13 @@ Only direct edges are edited; inherited and unfinished prerequisites remain
 separate in JSON and table output. Unknown/malformed read data prevents edits.
 
 Ordinary commands retain their old endpoints, which still enforce admission.
-Dependency HTTP errors preserve their full JSON (including projections larger
-than the CLI's former 4 KiB error cap) on stdout and return the existing nonzero
-exit classification. A 404/405 never causes a fallback write. A saved comment
+With `--output json`, dependency HTTP errors preserve their full JSON up to
+1 MiB (including projections larger than the CLI's former 4 KiB error cap) on
+stdout and return the existing nonzero exit classification. Larger issue error
+bodies produce a local `body_truncated: true` diagnostic with the HTTP status;
+incomplete projections are not emitted as server JSON and never cause a retry.
+`--output table` emits readable refusal guidance on stderr only.
+A 404/405 never causes a fallback write. A saved comment
 with a blocked target prints the saved comment and all outcomes, then exits 1
 with guidance not to repost. Partial success can include other queued targets.
 

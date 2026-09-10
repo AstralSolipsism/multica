@@ -11,6 +11,31 @@ import (
 	"testing"
 )
 
+func TestHTTPErrorBodyLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name, path  string
+		size, limit int
+	}{
+		{"ordinary", "/api/agents", 8192, 4096},
+		{"similar_prefix", "/api/issues-other", 8192, 4096},
+		{"issue_above_old_cap", "/api/issues/id", 6000, 1 << 20},
+		{"issue_at_limit", "/api/issues/id/dependencies", 1 << 20, 1 << 20},
+		{"issue_over_limit", "/api/issues/id/with-dependencies", 2 << 20, 1 << 20},
+		{"issue_root_over_limit", "/api/issues", 2 << 20, 1 << 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := strings.NewReader(strings.Repeat("x", tc.size))
+			err := newHTTPError("POST", tc.path, &http.Response{StatusCode: 409, Body: io.NopCloser(body)})
+			if len(err.Body) != min(tc.size, tc.limit) || tc.size-body.Len() > tc.limit+1 {
+				t.Fatalf("body=%d bytes, consumed=%d bytes, limit=%d", len(err.Body), tc.size-body.Len(), tc.limit)
+			}
+			if err.BodyTruncated != (tc.size > tc.limit) {
+				t.Fatalf("BodyTruncated=%t for size=%d limit=%d", err.BodyTruncated, tc.size, tc.limit)
+			}
+		})
+	}
+}
+
 func TestPostJSON(t *testing.T) {
 	type reqBody struct {
 		Name string `json:"name"`
