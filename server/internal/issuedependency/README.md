@@ -119,6 +119,9 @@ status and revisions even for existing status producers outside HTTP. Ordinary
 text/date/position edits join the same structure-lock queue before their existing
 attachment/target locks, but do not load the graph unless admission requires it;
 top-level creates load the workspace graph when they also enqueue execution.
+Status-only updates keep the ordered workspace row locks and decide execution
+intent from the locked target. Without execution or an explicit dependency
+write/view/version check, they skip loading and cloning the graph.
 Updates refresh untouched nullable fields under their target lock to avoid
 overwriting a concurrent reparent or assignment with stale preloaded values.
 Compound responses retain the committed transaction's snapshot rather than
@@ -167,7 +170,8 @@ workspace. Measure claim latency and lock waits against realistic size and
 contention before a wide rollout; narrow locks only with an equivalent closure
 proof and the concurrency tests intact.
 Validation uses integer vertex/edge indexes; the edge query returns aligned
-arrays from one ordered input, so graph storage is allocated once. Loading
+arrays from one input, so graph storage is allocated once. Loading orders the
+final edge representation in memory, avoiding PostgreSQL temporary-file sorts,
 reuses endpoint strings and avoids duplicate union rows. Ordered row-lock
 queries drain their complete result on the server rather
 than transferring unused IDs. A valid full graph already proves

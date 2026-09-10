@@ -118,6 +118,9 @@ func (s *DependencyService) Load(ctx context.Context, q *db.Queries, ws pgtype.U
 	for i, id := range edges.Ids {
 		model.Edges = append(model.Edges, issuedependency.Edge{ID: util.UUIDToString(id), IssueID: endpoint(edges.IssueIds[i]), DependsOnID: endpoint(edges.DependsOnIds[i]), Type: edges.Types[i]})
 	}
+	// Sort the final representation once. Sorting/materializing full SQL rows
+	// spills dense snapshots to temporary files at the default work_mem.
+	sort.Slice(model.Edges, func(i, j int) bool { return model.Edges[i].ID < model.Edges[j].ID })
 	return &DependencySnapshot{WorkspaceID: ws, Model: model, Catalog: catalog, service: s}, nil
 }
 

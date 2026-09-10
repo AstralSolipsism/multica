@@ -3275,7 +3275,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 
 	qtx := h.Queries.WithTx(tx)
 	guardDependencies := dependencyWrite.IncludeView || dependencyWrite.BlockedBy != nil || dependencyWrite.ExpectedVersion != ""
-	for _, field := range []string{"parent_issue_id", "assignee_type", "assignee_id", "status"} {
+	for _, field := range []string{"parent_issue_id", "assignee_type", "assignee_id"} {
 		if _, touched := rawFields[field]; touched {
 			guardDependencies = true
 		}
@@ -3299,8 +3299,28 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 		}
 	}
 	var dependencyBefore *service.DependencySnapshot
+	_, statusTouched := rawFields["status"]
+	if guardDependencies || statusTouched {
+		if err := qtx.LockIssuesForDependencyWrite(ctx, workspaceID); err != nil {
+			return result, err
+		}
+	}
+	if statusTouched && !guardDependencies {
+		// Decide from the locked row, not the preflight read. Completion and
+		// other status changes without execution need no graph snapshot, but
+		// retain the same ordered row locks against concurrent status writers.
+		current, err := qtx.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: params.ID, WorkspaceID: workspaceID})
+		if err != nil {
+			return result, err
+		}
+		next := current
+		if params.Status.Valid {
+			next.Status = params.Status.String
+		}
+		_, guardDependencies = service.DependencyWriteIntent(ctx, qtx, &current, next, dependencyWrite.SuppressRun)
+	}
 	if guardDependencies {
-		dependencyBefore, err = h.IssueService.Dependencies.LoadForWrite(ctx, qtx, workspaceID)
+		dependencyBefore, err = h.IssueService.Dependencies.Load(ctx, qtx, workspaceID)
 		if err != nil {
 			return result, err
 		}

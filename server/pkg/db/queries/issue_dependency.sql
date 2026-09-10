@@ -50,18 +50,18 @@ WHERE workspace_id = $1 ORDER BY id;
 -- Separate joins can use the existing endpoint indexes without correlating
 -- every relation in every workspace. The disjoint second arm avoids sorting or
 -- hashing the full duplicate edge set while preserving corrupt inbound edges.
--- One ordered input keeps columns aligned without sorting each aggregate.
+-- One input keeps columns aligned; the service orders the resulting edges.
 -- Arrays avoid per-row protocol/scan overhead and expose the allocation size.
-WITH edges AS MATERIALIZED (
+WITH edges AS (
 SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
 FROM issue i JOIN issue_dependency d ON d.issue_id = i.id
 WHERE i.workspace_id = $1
 UNION ALL
 SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
 FROM issue i JOIN issue_dependency d ON d.depends_on_issue_id = i.id
+LEFT JOIN issue source ON source.id = d.issue_id
 WHERE i.workspace_id = $1
-AND NOT EXISTS (SELECT 1 FROM issue source WHERE source.id = d.issue_id AND source.workspace_id = $1)
-ORDER BY id
+AND source.workspace_id IS DISTINCT FROM $1
 )
 SELECT coalesce(array_agg(id), '{}')::uuid[] AS ids,
        coalesce(array_agg(issue_id), '{}')::uuid[] AS issue_ids,

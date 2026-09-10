@@ -265,6 +265,9 @@ func TestDependencyReferencesAndMalformedRequests(t *testing.T) {
 
 func TestDependencySnapshotUUIDsRemainStable(t *testing.T) {
 	w := newDependencyLoadWorkspace(t, 300, "sparse")
+	for _, kind := range []string{"related", "blocks"} {
+		w.fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": w.ids[0], "depends_on_issue_id": w.ids[299], "type": kind})
+	}
 	ctx := context.Background()
 	ws := parseUUID(w.fx.WorkspaceID)
 	snapshot, err := w.h.IssueService.Dependencies.Load(ctx, w.h.Queries, ws)
@@ -282,7 +285,7 @@ func TestDependencySnapshotUUIDsRemainStable(t *testing.T) {
 		}
 	}
 	// Read ordinary rows independently of the compact snapshot query.
-	rows, err := testPool.Query(ctx, "SELECT d.id,d.issue_id,d.depends_on_issue_id FROM issue_dependency d JOIN issue i ON i.id=d.issue_id WHERE i.workspace_id=$1 ORDER BY d.id", ws)
+	rows, err := testPool.Query(ctx, "SELECT d.id,d.issue_id,d.depends_on_issue_id,d.type FROM issue_dependency d JOIN issue i ON i.id=d.issue_id WHERE i.workspace_id=$1 ORDER BY d.id", ws)
 	if err != nil {
 		t.Fatalf("snapshot edges: %v", err)
 	}
@@ -290,14 +293,14 @@ func TestDependencySnapshotUUIDsRemainStable(t *testing.T) {
 	i := 0
 	for rows.Next() {
 		var e db.IssueDependency
-		if err := rows.Scan(&e.ID, &e.IssueID, &e.DependsOnIssueID); err != nil {
+		if err := rows.Scan(&e.ID, &e.IssueID, &e.DependsOnIssueID, &e.Type); err != nil {
 			t.Fatal(err)
 		}
 		if i >= len(snapshot.Model.Edges) {
 			t.Fatal("snapshot omitted an edge")
 		}
-		if got := snapshot.Model.Edges[i]; got.ID != uuidToString(e.ID) || got.IssueID != uuidToString(e.IssueID) || got.DependsOnID != uuidToString(e.DependsOnIssueID) {
-			t.Fatal("snapshot edge UUID or endpoint changed after loading later rows")
+		if got := snapshot.Model.Edges[i]; got.ID != uuidToString(e.ID) || got.IssueID != uuidToString(e.IssueID) || got.DependsOnID != uuidToString(e.DependsOnIssueID) || got.Type != e.Type {
+			t.Fatal("snapshot edge columns lost alignment or changed after loading later rows")
 		}
 		i++
 	}
