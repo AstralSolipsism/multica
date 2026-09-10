@@ -328,9 +328,10 @@ export function SourceDeliveryDetailDialog({
     canRetryMessageDelivery(detail.delivery.status);
 
   const handleRetry = () => {
-    // Re-check at click time: the state may have changed while the confirm
-    // dialog was open.
-    if (!detail || detailError || !canRetryMessageDelivery(detail.delivery.status)) return;
+    // Re-check at click time with the FULL gate: the state may have changed
+    // while the confirm dialog was open (including a newer read now in
+    // flight — isFetching — which the main button already blocks on).
+    if (!retryable || detail == null) return;
     retry.mutate(
       { routeId, deliveryId: detail.delivery.id },
       {
@@ -533,7 +534,7 @@ export function SourceDeliveryDetailDialog({
               <AlertDialogCancel disabled={retry.isPending}>
                 {t(($) => $.deliveries.retry.cancel)}
               </AlertDialogCancel>
-              <AlertDialogAction onClick={handleRetry} disabled={retry.isPending}>
+              <AlertDialogAction onClick={handleRetry} disabled={retry.isPending || !retryable}>
                 {retry.isPending
                   ? t(($) => $.deliveries.retry.in_progress)
                   : t(($) => $.deliveries.retry.uncertain_confirm)}

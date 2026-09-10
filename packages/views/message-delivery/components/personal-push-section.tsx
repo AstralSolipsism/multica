@@ -52,7 +52,10 @@ export function PersonalFeishuPushSection() {
     setEditorOpen(true);
   };
 
-  if (routesQuery.isError) {
+  // Only an INITIAL load failure replaces the section. A failed background
+  // refresh (data retained) shows a non-blocking note and must NOT unmount
+  // anything — an open editor's unsaved draft survives the failed refresh.
+  if (routesQuery.isError && routesQuery.data == null) {
     const err = routesQuery.error;
     const status = err instanceof ApiError ? err.status : 0;
     const copyKey =
@@ -71,6 +74,12 @@ export function PersonalFeishuPushSection() {
 
   return (
     <div className="space-y-3">
+      {routesQuery.isError && (
+        <Alert>
+          <AlertDescription>{t(($) => $.personal.load_failed)}</AlertDescription>
+        </Alert>
+      )}
+
       {sendingUnavailable && (
         <Alert>
           <AlertDescription>{t(($) => $.section.sending_unavailable)}</AlertDescription>

@@ -134,7 +134,10 @@ function TeamSubscriptionsBody() {
     setEditorOpen(true);
   };
 
-  if (routesQuery.isError) {
+  // Only an INITIAL load failure replaces the section. A failed background
+  // refresh (data retained) shows a non-blocking note and must NOT unmount
+  // anything — an open editor's unsaved draft survives the failed refresh.
+  if (routesQuery.isError && routesQuery.data == null) {
     const err = routesQuery.error;
     const status = err instanceof ApiError ? err.status : 0;
     const copyKey = status === 404 ? "unsupported" : "load_failed";
@@ -152,6 +155,12 @@ function TeamSubscriptionsBody() {
 
   return (
     <div className="space-y-3">
+      {routesQuery.isError && (
+        <Alert>
+          <AlertDescription>{t(($) => $.team.load_failed)}</AlertDescription>
+        </Alert>
+      )}
+
       {sendingUnavailable && (
         <Alert>
           <AlertDescription>{t(($) => $.section.sending_unavailable)}</AlertDescription>

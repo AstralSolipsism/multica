@@ -191,9 +191,10 @@ export function SourceRouteEditorDialog({
     conflict === "reloading" || conflict === "reload_failed" || conflict === "gone";
   // Without the catalog the event filter cannot be expressed: an empty
   // event_types means "forward everything" and must never be submitted by
-  // default. Block saving while the catalog is missing (loading or failed);
-  // a failed read additionally shows an error with a reload entry.
-  const saveBlockedByCatalog = catalog == null;
+  // default. Block saving while the catalog is missing (loading or failed)
+  // AND when a refresh failed with retained (now unverifiable) data — the
+  // error state means the options on screen are not confirmed current.
+  const saveBlockedByCatalog = catalog == null || catalogError;
 
   const toggleEvent = (value: string, checked: boolean) => {
     setSelectedEvents((prev) =>
