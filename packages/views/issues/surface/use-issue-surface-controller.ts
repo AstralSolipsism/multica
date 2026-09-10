@@ -359,6 +359,12 @@ export function useIssueSurfaceController({
   // still hold the graph until the catalog resolves them (MUL-6243).
   const usesDagScope = scope.type === "workspace" || scope.type === "project";
   const usesDag = effectiveViewMode === "dag" && usesDagScope;
+  // The agents/members tab narrows graph membership through
+  // scope.assignee_types exactly like a filter does: a node outside it is
+  // outside the QUERY, not deleted. Completeness (and the fold pruning it
+  // licenses) must cover that axis too.
+  const dagScopeNarrowsMembership =
+    usesDagScope && assigneeTypesForActorKind(scope.actorKind) != null;
   const activeSearch = usesTable ? tableSearch : search;
   const debouncedActiveSearch = useDebouncedTableSearch(activeSearch);
   const usesServerStatusSurface =
@@ -899,7 +905,10 @@ export function useIssueSurfaceController({
       refetch: () => void dagGraphQuery.refetch(),
     },
     dagMembershipComplete:
-      !hasActiveFilters && showSubIssues && debouncedActiveSearch === "",
+      !dagScopeNarrowsMembership &&
+      !hasActiveFilters &&
+      showSubIssues &&
+      debouncedActiveSearch === "",
     ...surfaceData,
     workingAgents,
     hasActiveFilters,

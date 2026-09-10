@@ -398,13 +398,18 @@ export function repsToRevealIssues(
  * representative, and display-level dedup must not stop a business walk
  * (a cross-project child folded into another project still inherits).
  *
- * - upstream: reversed dependency edges (everything the node waits on,
- *   directly or through inheritance) plus ancestor ascent from every reached
- *   issue — ancestors are inheritance SOURCES, never wait conditions of
- *   their own (a parent's status does not gate its children).
- * - downstream: forward dependency edges plus descent into the children of
- *   every reached NON-root issue — they inherit the wait. The root's own
- *   children are excluded: a child does not wait on its parent.
+ * - Seeds cover every member the selected canvas node stands for: a
+ *   representative's canvas edges aggregate its members' real edges, so the
+ *   focus walk honors exactly what the canvas shows. A plain unfolded issue
+ *   keeps the narrow boundary — its children never join its downstream on
+ *   parentage alone.
+ * - upstream: reversed dependency edges plus ancestor ascent from every
+ *   reached issue — ancestors are inheritance SOURCES, never wait conditions
+ *   of their own (a parent's status does not gate its children).
+ * - downstream: forward dependency edges plus descent into children of every
+ *   reached issue, except nodes that are ONLY initial seeds. A seed that a
+ *   real dependency edge later reaches unlocks descent: its children inherit
+ *   the incoming wait even though they did not wait on the seed itself.
  *
  * The returned set holds canvas node ids.
  */
@@ -433,17 +438,12 @@ export function dagFocusNeighborhood(
   }
   const edgeNext = way === "upstream" ? backEdges : fwdEdges;
 
-  // The issues the selected canvas node stands for: itself for a plain
-  // issue, the carried issue for a feature rep, all folded members for a
-  // project rep.
-  const seeds = (() => {
-    if (nodeId.startsWith(DAG_ISSUE_REP_PREFIX)) {
-      return [nodeId.slice(DAG_ISSUE_REP_PREFIX.length)];
-    }
-    const node = projection.nodes.find((candidate) => candidate.id === nodeId);
-    return node ? node.memberIds : [nodeId];
-  })();
+  const selected = projection.nodes.find((candidate) => candidate.id === nodeId);
+  const seeds = selected ? selected.memberIds : [nodeId];
   const rootSeeds = new Set(seeds);
+  // A node that a real dependency edge reached propagates the wait to its
+  // children even when it is also an initial seed.
+  const edgeReached = new Set<string>();
 
   const issueSeen = new Set<string>();
   const queue: string[] = [];
@@ -456,8 +456,14 @@ export function dagFocusNeighborhood(
   while (queue.length > 0) {
     const current = queue.shift()!;
     for (const next of edgeNext.get(current) ?? []) {
+      const firstEdgeArrival = !edgeReached.has(next);
+      edgeReached.add(next);
       if (!issueSeen.has(next)) {
         issueSeen.add(next);
+        queue.push(next);
+      } else if (firstEdgeArrival && way === "downstream") {
+        // Already processed as a seed before this edge arrived — reprocess so
+        // the now-unlocked descent into its children runs.
         queue.push(next);
       }
     }
@@ -472,7 +478,7 @@ export function dagFocusNeighborhood(
         }
         ancestor = parentById.get(ancestor) ?? null;
       }
-    } else if (!rootSeeds.has(current)) {
+    } else if (!rootSeeds.has(current) || edgeReached.has(current)) {
       for (const child of childrenOf.get(current) ?? []) {
         if (!issueSeen.has(child)) {
           issueSeen.add(child);

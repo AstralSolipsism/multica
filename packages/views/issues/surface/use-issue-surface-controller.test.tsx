@@ -1795,6 +1795,50 @@ describe("useIssueSurfaceController", () => {
       hasRestrictedContext: false,
     };
 
+    it("review F3: preserves a feature fold when agents scope excludes its member-assigned child", async () => {
+      const { pruneDagCollapsedIds } = await import("../dag/dag-projection");
+      // The same workspace:agents surface previously contained F and its
+      // child C, both assigned to agents, and the user folded F. C was then
+      // assigned to a member: it is outside the query, not deleted/reparented.
+      const graph = {
+        ...graphFixture,
+        scope: { type: "workspace" as const, projectId: null },
+        nodes: [{
+          ...graphFixture.nodes[0], id: "feature",
+          assignee: { type: "agent", id: "agent-1" },
+        }],
+      };
+      const getIssueGraph = vi.fn(async () => graph);
+      setApiInstance({
+        listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+        getIssueGraph,
+        listProjects: vi.fn(() => never()),
+        getAgentTaskSnapshot: vi.fn(() => never()),
+        getWorkspaceWorkingAgents: vi.fn(async () => []),
+        getChildIssueProgress: vi.fn(() => never()),
+      } as unknown as ApiClient);
+      const store = getIssueSurfaceViewStore("workspace:agents");
+      store.getState().setViewMode("dag");
+      store.getState().setDagCollapsedIds(["issue:feature"]);
+      const { result } = renderHook(
+        () => useIssueSurfaceController({
+          scope: { type: "workspace", actorKind: "agents" },
+          modes: ["dag"],
+        }),
+        { wrapper: makeWrapper(qc, "workspace:agents") },
+      );
+      await waitFor(() => expect(result.current.dagGraph.data).toBeTruthy());
+      expect(result.current.tableQuerySpec.scope).toEqual({
+        kind: "workspace", assignee_types: ["agent", "squad"],
+      });
+      expect(result.current.hasActiveFilters).toBe(false);
+      const response = result.current.dagGraph.data!;
+      expect(pruneDagCollapsedIds(
+        store.getState().dagCollapsedIds!, response,
+        result.current.dagMembershipComplete && !response.hasRestrictedContext,
+      )).toContain("issue:feature");
+    });
+
     it("keeps the graph query off in list-shaped modes", async () => {
       const store = getIssueSurfaceViewStore("project:p1");
       act(() => store.getState().setViewMode("list"));

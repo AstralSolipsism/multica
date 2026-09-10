@@ -388,6 +388,50 @@ describe("repsToRevealIssues", () => {
 });
 
 describe("dagFocusNeighborhood", () => {
+  it("review F4: a project member reached by an internal dependency still passes the wait to descendants", () => {
+    const graph = makeGraph(
+      [
+        makeNode("prerequisite", { projectId: P1 }),
+        makeNode("feature", { projectId: P1 }),
+        makeNode("child", { projectId: P2, parentIssueId: "feature" }),
+      ],
+      [{ id: "e1", source: "prerequisite", target: "feature" }],
+    );
+    const projection = computeDagProjection(graph, "project", [
+      dagProjectRepId(P1), dagProjectRepId(P2),
+    ]);
+    expect(projection.nodes.find((node) => node.id === dagProjectRepId(P1))?.internalEdgeCount)
+      .toBe(1);
+    expect([...dagFocusNeighborhood(projection, graph, dagProjectRepId(P1), "downstream")])
+      .toContain(dagProjectRepId(P2));
+  });
+
+  it("review F4: a folded feature keeps its child's incoming dependency in focus", () => {
+    const graph = makeGraph(
+      [makeNode("feature"), makeNode("child", { parentIssueId: "feature" }), makeNode("upstream")],
+      [{ id: "e1", source: "upstream", target: "child" }],
+    );
+    const projection = computeDagProjection(graph, "none", ["issue:feature"]);
+    expect(projection.edges).toEqual([
+      expect.objectContaining({ source: "upstream", target: "issue:feature" }),
+    ]);
+    expect([...dagFocusNeighborhood(projection, graph, "issue:feature", "upstream")])
+      .toContain("upstream");
+  });
+
+  it("review F4: a folded feature keeps its child's outgoing dependency in focus", () => {
+    const graph = makeGraph(
+      [makeNode("feature"), makeNode("child", { parentIssueId: "feature" }), makeNode("downstream")],
+      [{ id: "e1", source: "child", target: "downstream" }],
+    );
+    const projection = computeDagProjection(graph, "none", ["issue:feature"]);
+    expect(projection.edges).toEqual([
+      expect.objectContaining({ source: "issue:feature", target: "downstream" }),
+    ]);
+    expect([...dagFocusNeighborhood(projection, graph, "issue:feature", "downstream")])
+      .toContain("downstream");
+  });
+
   // f1 → b1 → c1; a1 is f1's child; d1 depends on a1.
   function focusFixture() {
     const nodes = [
