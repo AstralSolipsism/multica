@@ -14,6 +14,9 @@ import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-contex
 import type { DagLayoutRequest, DagLayoutResponse } from "./dag-layout";
 import { DagView, type DagGraphQueryState } from "./dag-view";
 import type { DagCanvasProps } from "./dag-canvas";
+import { computeDagProjection } from "./dag-projection";
+import { DagFlowNodeCard } from "./dag-node";
+import { ReactFlowProvider } from "@xyflow/react";
 
 // t($ => $.path.to.key, params) → "path.to.key {params}" so assertions can
 // pin the exact locale key each state renders.
@@ -262,6 +265,81 @@ describe("DagView", () => {
     expect(retry).toBeTruthy();
     retry!.click();
     expect(refetch).toHaveBeenCalledOnce();
+  });
+
+
+  it.each([403, 404])(
+    "hides the cached graph after access loss (%s) instead of showing it stale",
+    async (status) => {
+      renderDagView(
+        graphQuery({
+          data: makeGraph([makeNode("private")]),
+          isError: true,
+          error: new ApiError("Access lost", status, "denied"),
+        }),
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          status === 403 ? "dag.error_forbidden" : "dag.error_unavailable",
+        ),
+      );
+      expect(screen.queryByTestId("dag-canvas")).toBeNull();
+    },
+  );
+
+  it("keeps a transient failure on the last snapshot with the stale banner", async () => {
+    const graph = makeGraph([makeNode("a1")]);
+    renderDagView(
+      graphQuery({ data: graph, isError: true, error: new ApiError("Timeout", 504, "graph_query_timeout") }),
+    );
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    expect(screen.getByRole("alert").textContent).toContain("dag.stale_banner");
+  });
+
+  it("preserves a folded project omitted by the current filter (review F3)", async () => {
+    store.getState().setDagCollapsedIds(["project:proj-1", "project:proj-2"]);
+    renderDagView(
+      graphQuery({ data: makeGraph([makeNode("a", { projectId: "proj-1" })]) }),
+      true,
+    );
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    expect(store.getState().dagCollapsedIds).toContain("project:proj-2");
+  });
+
+  it("shows an active child as running on its folded project (review F5)", () => {
+    const running = makeNode("child", {
+      projectId: "proj-1",
+      runSummary: {
+        queued: 0,
+        dispatched: 0,
+        running: 1,
+        waitingLocalDirectory: 0,
+        capturedAt: "2026-09-10T00:00:00Z",
+      },
+    });
+    const graph = makeGraph([running]);
+    const model = computeDagProjection(graph, "project", ["project:proj-1"])
+      .nodes[0]!;
+    render(
+      <ReactFlowProvider>
+        <DagFlowNodeCard
+          {...({
+            id: model.id,
+            type: "dagNode",
+            data: {
+              model,
+              direction: "LR",
+              projectTitle: null,
+              statusColor: null,
+              focused: false,
+              dimmed: false,
+            },
+          } as Parameters<typeof DagFlowNodeCard>[0])}
+        />
+      </ReactFlowProvider>,
+    );
+    expect(screen.getByText("dag.run_active")).toBeTruthy();
+    expect(screen.queryByText("dag.run_queued")).toBeNull();
   });
 
   it("expand all / collapse all drive the fold preference", async () => {

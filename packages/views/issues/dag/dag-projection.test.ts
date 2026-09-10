@@ -7,7 +7,6 @@ import {
   dagFocusNeighborhood,
   dagProjectRepId,
   defaultDagCollapsedIds,
-  existingDagRepIds,
   pruneDagCollapsedIds,
   repsToRevealIssues,
 } from "./dag-projection";
@@ -251,9 +250,59 @@ describe("computeDagProjection", () => {
     const p1Rep = projection.nodes.find((node) => node.id === dagProjectRepId(P1));
     expect(p1Rep?.blockedMemberCount).toBe(1);
     expect(p1Rep?.hasRestrictedBlockers).toBe(true);
-    expect(p1Rep?.hasActiveRun).toBe(true);
+    expect(p1Rep?.runState).toBe("running");
     const p2Rep = projection.nodes.find((node) => node.id === dagProjectRepId(P2));
     expect(p2Rep?.unknownSummaryCount).toBe(1);
+  });
+
+  it("reports queued when members queue but none run, and none when idle", () => {
+    const graph = fixture();
+    const a1 = graph.nodes.find((node) => node.id === "a1")!;
+    a1.runSummary = {
+      queued: 1,
+      dispatched: 0,
+      running: 0,
+      waitingLocalDirectory: 0,
+      capturedAt: "2026-09-10T00:00:00Z",
+    };
+    const projection = computeDagProjection(
+      graph,
+      "project",
+      defaultDagCollapsedIds(graph, "project"),
+    );
+    expect(
+      projection.nodes.find((node) => node.id === dagProjectRepId(P1))?.runState,
+    ).toBe("queued");
+    expect(
+      projection.nodes.find((node) => node.id === dagProjectRepId(P2))?.runState,
+    ).toBe("none");
+  });
+
+
+  it("folds nested features under the outermost collapsed ancestor (review F2)", () => {
+    const nodes = [
+      makeNode("root"),
+      makeNode("middle", { parentIssueId: "root" }),
+      makeNode("leaf", { parentIssueId: "middle" }),
+    ];
+    const graph = makeGraph(nodes, []);
+    const projection = computeDagProjection(
+      graph,
+      "parent",
+      defaultDagCollapsedIds(graph, "parent"),
+    );
+    expect(projection.nodes.map((node) => node.id)).toEqual(["issue:root"]);
+    expect(projection.nodes[0]?.memberIds).toEqual(["root", "middle", "leaf"]);
+
+    // Expanding the outermost reveals the still-folded middle layer.
+    const next = computeDagProjection(graph, "parent", ["issue:middle"]);
+    expect(next.nodes.map((node) => node.id).sort()).toEqual([
+      "issue:middle",
+      "root",
+    ]);
+    expect(
+      next.nodes.find((node) => node.id === "issue:middle")?.memberIds,
+    ).toEqual(["middle", "leaf"]);
   });
 
   it("keeps every node flat under none grouping with an empty fold", () => {
@@ -271,14 +320,27 @@ describe("computeDagProjection", () => {
 });
 
 describe("pruneDagCollapsedIds", () => {
-  it("drops representatives that vanished and keeps the rest", () => {
+  it("drops only provably inert feature folds and keeps everything else", () => {
     const graph = fixture();
-    const existing = existingDagRepIds(graph);
-    const pruned = pruneDagCollapsedIds(
-      [dagProjectRepId(P1), "project:gone", dagFeatureRepId("f1"), "issue:gone"],
-      existing,
+    // f1 has a visible child (a1): its fold stays. A feature fold whose node
+    // is absent from this graph (filtered out or unknown) also stays — absence
+    // is not proof of deletion. Project folds are never auto-pruned.
+    expect(
+      pruneDagCollapsedIds(
+        [dagProjectRepId(P1), "project:gone", dagFeatureRepId("f1"), "issue:gone"],
+        graph,
+      ),
+    ).toEqual([dagProjectRepId(P1), "project:gone", dagFeatureRepId("f1"), "issue:gone"]);
+  });
+
+  it("prunes a feature fold whose issue lost all visible children", () => {
+    const graph = fixture();
+    // Remove a1: f1 remains but has no visible child, so issue:f1 is inert.
+    graph.nodes = graph.nodes.filter((node) => node.id !== "a1");
+    graph.edges = graph.edges.filter(
+      (edge) => edge.source !== "a1" && edge.target !== "a1",
     );
-    expect(pruned).toEqual([dagProjectRepId(P1), dagFeatureRepId("f1")]);
+    expect(pruneDagCollapsedIds([dagFeatureRepId("f1")], graph)).toEqual([]);
   });
 });
 
@@ -359,5 +421,48 @@ describe("dagFocusNeighborhood", () => {
     const seen = dagFocusNeighborhood(projection, graph, "issue:f1", "downstream");
     expect(seen.has("b1")).toBe(true);
     expect(seen.has("c1")).toBe(true);
+  });
+  it("downstream includes descendants that inherit a prerequisite (review F4)", () => {
+    const graph = makeGraph(
+      [makeNode("prerequisite"), makeNode("feature"), makeNode("child", { parentIssueId: "feature" })],
+      [{ id: "e1", source: "prerequisite", target: "feature" }],
+    );
+    const projection = computeDagProjection(graph, "none", []);
+    expect([
+      ...dagFocusNeighborhood(projection, graph, "prerequisite", "downstream"),
+    ]).toContain("child");
+  });
+
+  it("upstream recursively resolves prerequisites of reached ancestors (review F4)", () => {
+    const graph = makeGraph(
+      [
+        makeNode("child", { parentIssueId: "feature" }),
+        makeNode("feature"),
+        makeNode("dependency", { parentIssueId: "dependency-parent" }),
+        makeNode("dependency-parent"),
+        makeNode("upstream"),
+      ],
+      [
+        { id: "e1", source: "dependency", target: "feature" },
+        { id: "e2", source: "upstream", target: "dependency-parent" },
+      ],
+    );
+    const projection = computeDagProjection(graph, "none", []);
+    expect([
+      ...dagFocusNeighborhood(projection, graph, "child", "upstream"),
+    ]).toEqual(
+      expect.arrayContaining(["feature", "dependency", "dependency-parent", "upstream"]),
+    );
+  });
+
+  it("the root's own children are not its downstream", () => {
+    const graph = makeGraph(
+      [makeNode("parent"), makeNode("kid", { parentIssueId: "parent" })],
+      [],
+    );
+    const projection = computeDagProjection(graph, "none", []);
+    expect([...dagFocusNeighborhood(projection, graph, "parent", "downstream")]).toEqual(
+      ["parent"],
+    );
   });
 });

@@ -27,7 +27,7 @@ import {
   pruneDagCollapsedIds,
   repsToRevealIssues,
 } from "./dag-projection";
-import { dagNodeSize } from "./dag-node";
+import { dagNodeSize } from "./dag-constants";
 import {
   EMPTY_LAYOUT_EDGES,
   EMPTY_LAYOUT_NODES,
@@ -113,18 +113,17 @@ export function DagView({
     [graph, grouping, collapsedIds],
   );
 
-  // Stale-fold cleanup: a representative that vanished from the graph loses
-  // its entry; every other personal fold stays untouched.
+  // Stale-fold cleanup: only a PROVABLY inert fold loses its entry (a feature
+  // whose visible children are gone). A rep missing from the current filtered
+  // graph is not proof of deletion — pruning it would discard a valid
+  // personal fold when the filter clears.
   useEffect(() => {
-    if (!projection || storedCollapsedIds === null) return;
-    const pruned = pruneDagCollapsedIds(
-      storedCollapsedIds,
-      projection.existingRepIds,
-    );
+    if (!graph || storedCollapsedIds === null) return;
+    const pruned = pruneDagCollapsedIds(storedCollapsedIds, graph);
     if (pruned.length !== storedCollapsedIds.length) {
       storeApi.getState().setDagCollapsedIds(pruned);
     }
-  }, [projection, storeApi, storedCollapsedIds]);
+  }, [graph, storeApi, storedCollapsedIds]);
 
   // Layout inputs track topologyId, not the graph object: status/title/run
   // refreshes keep the topology id and must not re-run Dagre. The ref gate
@@ -248,6 +247,19 @@ export function DagView({
 
   // ---------- states ----------
 
+  // Access loss (403/404/405) and unverified dependency data (422) hide any
+  // cached graph outright — the contract forbids rendering the old snapshot
+  // once authorization or integrity is gone. Only transient failures keep
+  // the stale snapshot (with the banner below).
+  const errorStatus =
+    graphQuery.error instanceof ApiError ? graphQuery.error.status : null;
+  const mustHideGraph =
+    graphQuery.isError &&
+    (errorStatus === 403 ||
+      errorStatus === 404 ||
+      errorStatus === 405 ||
+      errorStatus === 422);
+
   if (graphQuery.isPending) {
     return (
       <div
@@ -260,7 +272,7 @@ export function DagView({
     );
   }
 
-  if (graphQuery.isError && !graph) {
+  if (graphQuery.isError && (!graph || mustHideGraph)) {
     return <DagErrorState error={graphQuery.error} onRetry={graphQuery.refetch} />;
   }
 

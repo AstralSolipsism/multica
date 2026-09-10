@@ -41,9 +41,6 @@ export interface DagLayoutResponse {
   elapsedMs: number;
 }
 
-export const DAG_NODE_WIDTH = 232;
-export const DAG_NODE_HEIGHT = 84;
-
 export function layoutDagProjection(
   nodes: DagLayoutNodeInput[],
   edges: DagLayoutEdgeInput[],

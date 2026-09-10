@@ -23,9 +23,9 @@ import {
   type DagFlowEdge,
   type DagFlowEdgeData,
 } from "./dag-edge";
+import { dagNodeSize } from "./dag-constants";
 import {
   DagFlowNodeCard,
-  dagNodeSize,
   type DagFlowNode,
   type DagFlowNodeData,
 } from "./dag-node";

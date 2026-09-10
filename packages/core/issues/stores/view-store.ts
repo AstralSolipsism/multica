@@ -23,6 +23,29 @@ export type DagGrouping = "project" | "parent" | "none";
 export const DAG_PROJECT_REP_PREFIX = "project:";
 export const DAG_ISSUE_REP_PREFIX = "issue:";
 export const DAG_NO_PROJECT_REP = "project:none";
+
+/** Shared option order + label keys for the DAG direction/grouping controls,
+ *  so the header display popover and the save-view dialog cannot drift. */
+export const DAG_DIRECTION_OPTIONS: readonly DagDirection[] = ["LR", "TB"];
+export const DAG_GROUPING_OPTIONS: readonly DagGrouping[] = [
+  "project",
+  "parent",
+  "none",
+];
+export function dagDirectionLabelKey(
+  direction: DagDirection,
+): "direction_lr" | "direction_tb" {
+  return direction === "TB" ? "direction_tb" : "direction_lr";
+}
+export function dagGroupingLabelKey(
+  grouping: DagGrouping,
+): "grouping_project" | "grouping_parent" | "grouping_none" {
+  return grouping === "parent"
+    ? "grouping_parent"
+    : grouping === "none"
+      ? "grouping_none"
+      : "grouping_project";
+}
 /**
  * Board grouping. Besides the three built-ins, a select-type custom property
  * groups columns by its options via the `property:<definitionId>` form.

@@ -272,8 +272,8 @@
     "inverted_dates_warning": "开始日期晚于截止日期——已按区间最小/最大端绘制。"
   },
   "dag": {
-    "loading": "正在加载完整依赖图…",
-    "layout_pending": "正在计算布局…",
+    "loading": "正在加载完整依赖图...",
+    "layout_pending": "正在计算布局...",
     "layout_cancel": "取消",
     "error_title": "依赖图加载失败",
     "error_unavailable": "当前服务端版本暂不支持依赖图，请升级后重试。",

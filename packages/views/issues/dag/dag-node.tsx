@@ -19,7 +19,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { useT } from "../../i18n";
 import type { DagVisibleNode } from "./dag-projection";
-import { DAG_NODE_HEIGHT, DAG_NODE_WIDTH } from "./dag-layout";
+import { DAG_NODE_HEIGHT, DAG_NODE_WIDTH } from "./dag-constants";
 
 /** Display data for one canvas node. Kept flat and value-typed so React
  *  Flow's node diffing and the memo comparator below stay cheap; interaction
@@ -37,20 +37,10 @@ export type DagFlowNodeData = {
 
 export type DagFlowNode = Node<DagFlowNodeData, "dagNode">;
 
-export function dagNodeSize(kind: DagVisibleNode["kind"]): {
-  width: number;
-  height: number;
-} {
-  return {
-    width: DAG_NODE_WIDTH,
-    height: kind === "issue" ? DAG_NODE_HEIGHT : DAG_NODE_HEIGHT + 10,
-  };
-}
-
 function RunBadge({ model }: { model: DagVisibleNode }) {
   const { t } = useT("issues");
-  if (!model.hasActiveRun) return null;
-  const running = model.issue?.runSummary && model.issue.runSummary.running > 0;
+  if (model.runState === "none") return null;
+  const running = model.runState === "running";
   return (
     <span
       className={cn(

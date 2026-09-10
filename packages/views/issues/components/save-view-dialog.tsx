@@ -55,6 +55,10 @@ import {
   type ViewMode,
   type DagDirection,
   type DagGrouping,
+  DAG_DIRECTION_OPTIONS,
+  DAG_GROUPING_OPTIONS,
+  dagDirectionLabelKey,
+  dagGroupingLabelKey,
 } from "@multica/core/issues/stores/view-store";
 import {
   ViewStoreProvider,
@@ -151,7 +155,12 @@ const ROW_LABEL = "w-16 shrink-0 text-caption text-muted-foreground";
 
 /** Filter row + layout row + collapsible display defaults, all bound to the
  *  DRAFT store via the surrounding provider. */
-export function DraftDefinitionFields() {
+/** Filter row + layout row + collapsible display defaults, all bound to the
+ *  DRAFT store via the surrounding provider. `allowDag` gates the DAG layout
+ *  option to surfaces whose modes can actually render it — the my-issues
+ *  surface has no dag mode, so saving one there would silently reopen as the
+ *  board fallback. */
+export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean }) {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
   const viewMode = useViewStore((s) => s.viewMode);
@@ -187,17 +196,11 @@ export function DraftDefinitionFields() {
       : viewMode === "swimlane"
         ? t(($) => $.display[SWIMLANE_LABEL_KEY[swimlaneGrouping]])
         : viewMode === "dag"
-          ? t(($) => $.dag[
-              dagGrouping === "parent"
-                ? "grouping_parent"
-                : dagGrouping === "none"
-                  ? "grouping_none"
-                  : "grouping_project"
-            ])
+          ? t(($) => $.dag[dagGroupingLabelKey(dagGrouping)])
           : null;
   const dagDirectionLabel =
     viewMode === "dag"
-      ? t(($) => $.dag[dagDirection === "TB" ? "direction_tb" : "direction_lr"])
+      ? t(($) => $.dag[dagDirectionLabelKey(dagDirection)])
       : null;
   const sortLabel =
     viewMode === "dag"
@@ -264,7 +267,18 @@ export function DraftDefinitionFields() {
             <div className="flex items-center gap-3">
               <Label className={ROW_LABEL}>{t(($) => $.save_view.layout_label)}</Label>
               <Select
-                items={(["list", "board", "table", "swimlane", "dag"] as const).map((mode) => ({
+                items={(
+                  [
+                    "list",
+                    "board",
+                    "table",
+                    "swimlane",
+                    // Only surfaces whose modes render DAG may save it — a
+                    // my-scope view would reopen on the board fallback and
+                    // misdescribe itself. (OL-43 F7)
+                    ...(allowDag ? (["dag"] as const) : []),
+                  ] as const
+                ).map((mode) => ({
                   value: mode as string,
                   label: t(($) => $.view[LAYOUT_LABEL_KEY[mode]]),
                 }))}
@@ -278,7 +292,15 @@ export function DraftDefinitionFields() {
                 </SelectTrigger>
                 <SelectContent align="start">
                   <SelectGroup>
-                    {(["list", "board", "table", "swimlane", "dag"] as const).map((mode) => (
+                    {(
+                      [
+                        "list",
+                        "board",
+                        "table",
+                        "swimlane",
+                        ...(allowDag ? (["dag"] as const) : []),
+                      ] as const
+                    ).map((mode) => (
                       <SelectItem key={mode} value={mode}>
                         {t(($) => $.view[LAYOUT_LABEL_KEY[mode]])}
                       </SelectItem>
@@ -371,10 +393,10 @@ export function DraftDefinitionFields() {
                     {t(($) => $.dag.direction_label)}
                   </Label>
                   <Select
-                    items={[
-                      { value: "LR", label: t(($) => $.dag.direction_lr) },
-                      { value: "TB", label: t(($) => $.dag.direction_tb) },
-                    ]}
+                    items={DAG_DIRECTION_OPTIONS.map((value) => ({
+                      value: value as string,
+                      label: t(($) => $.dag[dagDirectionLabelKey(value)]),
+                    }))}
                     value={dagDirection}
                     onValueChange={(v) => {
                       if (v) act.setDagDirection(v as DagDirection);
@@ -382,13 +404,16 @@ export function DraftDefinitionFields() {
                   >
                     <SelectTrigger size="sm" className="w-64" aria-label={t(($) => $.dag.direction_label)}>
                       <SelectValue>
-                        {t(($) => $.dag[dagDirection === "TB" ? "direction_tb" : "direction_lr"])}
+                        {t(($) => $.dag[dagDirectionLabelKey(dagDirection)])}
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent align="start">
                       <SelectGroup>
-                        <SelectItem value="LR">{t(($) => $.dag.direction_lr)}</SelectItem>
-                        <SelectItem value="TB">{t(($) => $.dag.direction_tb)}</SelectItem>
+                        {DAG_DIRECTION_OPTIONS.map((value) => (
+                          <SelectItem key={value} value={value}>
+                            {t(($) => $.dag[dagDirectionLabelKey(value)])}
+                          </SelectItem>
+                        ))}
                       </SelectGroup>
                     </SelectContent>
                   </Select>
@@ -398,11 +423,10 @@ export function DraftDefinitionFields() {
                     {t(($) => $.dag.grouping_label)}
                   </Label>
                   <Select
-                    items={[
-                      { value: "project", label: t(($) => $.dag.grouping_project) },
-                      { value: "parent", label: t(($) => $.dag.grouping_parent) },
-                      { value: "none", label: t(($) => $.dag.grouping_none) },
-                    ]}
+                    items={DAG_GROUPING_OPTIONS.map((value) => ({
+                      value: value as string,
+                      label: t(($) => $.dag[dagGroupingLabelKey(value)]),
+                    }))}
                     value={dagGrouping}
                     onValueChange={(v) => {
                       if (v) act.setDagGrouping(v as DagGrouping);
@@ -410,20 +434,16 @@ export function DraftDefinitionFields() {
                   >
                     <SelectTrigger size="sm" className="w-64" aria-label={t(($) => $.dag.grouping_label)}>
                       <SelectValue>
-                        {t(($) => $.dag[
-                          dagGrouping === "parent"
-                            ? "grouping_parent"
-                            : dagGrouping === "none"
-                              ? "grouping_none"
-                              : "grouping_project"
-                        ])}
+                        {t(($) => $.dag[dagGroupingLabelKey(dagGrouping)])}
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent align="start">
                       <SelectGroup>
-                        <SelectItem value="project">{t(($) => $.dag.grouping_project)}</SelectItem>
-                        <SelectItem value="parent">{t(($) => $.dag.grouping_parent)}</SelectItem>
-                        <SelectItem value="none">{t(($) => $.dag.grouping_none)}</SelectItem>
+                        {DAG_GROUPING_OPTIONS.map((value) => (
+                          <SelectItem key={value} value={value}>
+                            {t(($) => $.dag[dagGroupingLabelKey(value)])}
+                          </SelectItem>
+                        ))}
                       </SelectGroup>
                     </SelectContent>
                   </Select>
@@ -894,7 +914,7 @@ export function SaveViewDialog({
 
           {draftStore && (
             <ViewStoreProvider store={draftStore}>
-              <DraftDefinitionFields />
+              <DraftDefinitionFields allowDag={scope.kind !== "my"} />
             </ViewStoreProvider>
           )}
         </div>

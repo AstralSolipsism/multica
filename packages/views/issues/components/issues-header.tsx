@@ -96,6 +96,10 @@ import {
   type ViewMode,
   type DagDirection,
   type DagGrouping,
+  DAG_DIRECTION_OPTIONS,
+  DAG_GROUPING_OPTIONS,
+  dagDirectionLabelKey,
+  dagGroupingLabelKey,
 } from "@multica/core/issues/stores/view-store";
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import { FilterChipsBar } from "./filter-chips-bar";
@@ -2221,14 +2225,9 @@ export function IssueDisplayControls({
                       {t(($) => $.dag.direction_label)}
                     </span>
                     <Select
-                      items={(
-                        [
-                          { value: "LR", labelKey: "direction_lr" },
-                          { value: "TB", labelKey: "direction_tb" },
-                        ] as const
-                      ).map((opt) => ({
-                        value: opt.value as string,
-                        label: t(($) => $.dag[opt.labelKey]),
+                      items={DAG_DIRECTION_OPTIONS.map((value) => ({
+                        value: value as string,
+                        label: t(($) => $.dag[dagDirectionLabelKey(value)]),
                       }))}
                       value={dagDirection}
                       onValueChange={(v) => {
@@ -2237,13 +2236,16 @@ export function IssueDisplayControls({
                     >
                       <SelectTrigger size="sm" className="w-32" aria-label={t(($) => $.dag.direction_label)}>
                         <SelectValue>
-                          {t(($) => $.dag[dagDirection === "TB" ? "direction_tb" : "direction_lr"])}
+                          {t(($) => $.dag[dagDirectionLabelKey(dagDirection)])}
                         </SelectValue>
                       </SelectTrigger>
                       <SelectContent align="end">
                         <SelectGroup>
-                          <SelectItem value="LR">{t(($) => $.dag.direction_lr)}</SelectItem>
-                          <SelectItem value="TB">{t(($) => $.dag.direction_tb)}</SelectItem>
+                          {DAG_DIRECTION_OPTIONS.map((value) => (
+                            <SelectItem key={value} value={value}>
+                              {t(($) => $.dag[dagDirectionLabelKey(value)])}
+                            </SelectItem>
+                          ))}
                         </SelectGroup>
                       </SelectContent>
                     </Select>
@@ -2253,15 +2255,9 @@ export function IssueDisplayControls({
                       {t(($) => $.dag.grouping_label)}
                     </span>
                     <Select
-                      items={(
-                        [
-                          { value: "project", labelKey: "grouping_project" },
-                          { value: "parent", labelKey: "grouping_parent" },
-                          { value: "none", labelKey: "grouping_none" },
-                        ] as const
-                      ).map((opt) => ({
-                        value: opt.value as string,
-                        label: t(($) => $.dag[opt.labelKey]),
+                      items={DAG_GROUPING_OPTIONS.map((value) => ({
+                        value: value as string,
+                        label: t(($) => $.dag[dagGroupingLabelKey(value)]),
                       }))}
                       value={dagGrouping}
                       onValueChange={(v) => {
@@ -2270,20 +2266,16 @@ export function IssueDisplayControls({
                     >
                       <SelectTrigger size="sm" className="w-32" aria-label={t(($) => $.dag.grouping_label)}>
                         <SelectValue>
-                          {t(($) => $.dag[
-                            dagGrouping === "parent"
-                              ? "grouping_parent"
-                              : dagGrouping === "none"
-                                ? "grouping_none"
-                                : "grouping_project"
-                          ])}
+                          {t(($) => $.dag[dagGroupingLabelKey(dagGrouping)])}
                         </SelectValue>
                       </SelectTrigger>
                       <SelectContent align="end">
                         <SelectGroup>
-                          <SelectItem value="project">{t(($) => $.dag.grouping_project)}</SelectItem>
-                          <SelectItem value="parent">{t(($) => $.dag.grouping_parent)}</SelectItem>
-                          <SelectItem value="none">{t(($) => $.dag.grouping_none)}</SelectItem>
+                          {DAG_GROUPING_OPTIONS.map((value) => (
+                            <SelectItem key={value} value={value}>
+                              {t(($) => $.dag[dagGroupingLabelKey(value)])}
+                            </SelectItem>
+                          ))}
                         </SelectGroup>
                       </SelectContent>
                     </Select>
