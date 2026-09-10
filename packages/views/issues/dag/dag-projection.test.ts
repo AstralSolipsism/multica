@@ -388,6 +388,27 @@ describe("repsToRevealIssues", () => {
 });
 
 describe("dagFocusNeighborhood", () => {
+  it("review round 4 F4: inherited arrival unlocks an already processed seed", () => {
+    // middle/feature are processed as seeds before prerequisite. A real edge
+    // unlocks feature, then the inherited wait must unlock middle as well.
+    const graph = makeGraph(
+      [
+        makeNode("middle", { projectId: P1, parentIssueId: "feature" }),
+        makeNode("feature", { projectId: P1 }),
+        makeNode("prerequisite", { projectId: P1 }),
+        makeNode("leaf", { projectId: P2, parentIssueId: "middle" }),
+      ],
+      [{ id: "e1", source: "prerequisite", target: "feature" }],
+    );
+    const projection = computeDagProjection(graph, "project", [
+      dagProjectRepId(P1), dagProjectRepId(P2),
+    ]);
+    expect(projection.nodes.find((node) => node.id === dagProjectRepId(P1))?.memberIds)
+      .toEqual(["middle", "feature", "prerequisite"]);
+    expect([...dagFocusNeighborhood(projection, graph, dagProjectRepId(P1), "downstream")])
+      .toContain(dagProjectRepId(P2));
+  });
+
   it("review F4: a project member reached by an internal dependency still passes the wait to descendants", () => {
     const graph = makeGraph(
       [

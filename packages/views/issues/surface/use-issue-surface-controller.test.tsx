@@ -1839,6 +1839,46 @@ describe("useIssueSurfaceController", () => {
       )).toContain("issue:feature");
     });
 
+    it("review round 4 F3: project scope cannot prove that a cross-project child disappeared", async () => {
+      const { pruneDagCollapsedIds } = await import("../dag/dag-projection");
+      // F and C were both in P1 when issue:F was folded. C then moved to P2
+      // without changing its parent F. The P1 query now returns only F;
+      // its complete=true is transaction completeness, not global membership.
+      const graph = {
+        ...graphFixture,
+        nodes: [{ ...graphFixture.nodes[0], id: "feature" }],
+      };
+      const getIssueGraph = vi.fn(async () => graph);
+      setApiInstance({
+        listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+        getIssueGraph,
+        listProjects: vi.fn(() => never()),
+        getAgentTaskSnapshot: vi.fn(() => never()),
+        getWorkspaceWorkingAgents: vi.fn(async () => []),
+        getChildIssueProgress: vi.fn(() => never()),
+      } as unknown as ApiClient);
+      const store = getIssueSurfaceViewStore("project:p1");
+      store.getState().setViewMode("dag");
+      store.getState().setDagCollapsedIds(["issue:feature"]);
+      const { result } = renderHook(
+        () => useIssueSurfaceController({
+          scope: { type: "project", projectId: "p1" },
+          modes: ["dag"],
+        }),
+        { wrapper: makeWrapper(qc, "project:p1") },
+      );
+      await waitFor(() => expect(result.current.dagGraph.data).toBeTruthy());
+      expect(result.current.tableQuerySpec.scope).toEqual({
+        kind: "project", project_id: "p1",
+      });
+      expect(result.current.hasActiveFilters).toBe(false);
+      const response = result.current.dagGraph.data!;
+      expect(pruneDagCollapsedIds(
+        store.getState().dagCollapsedIds!, response,
+        result.current.dagMembershipComplete && !response.hasRestrictedContext,
+      )).toContain("issue:feature");
+    });
+
     it("keeps the graph query off in list-shaped modes", async () => {
       const store = getIssueSurfaceViewStore("project:p1");
       act(() => store.getState().setViewMode("list"));

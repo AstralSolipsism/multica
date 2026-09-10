@@ -406,10 +406,12 @@ export function repsToRevealIssues(
  * - upstream: reversed dependency edges plus ancestor ascent from every
  *   reached issue — ancestors are inheritance SOURCES, never wait conditions
  *   of their own (a parent's status does not gate its children).
- * - downstream: forward dependency edges plus descent into children of every
- *   reached issue, except nodes that are ONLY initial seeds. A seed that a
- *   real dependency edge later reaches unlocks descent: its children inherit
- *   the incoming wait even though they did not wait on the seed itself.
+ * - downstream: forward dependency edges from every reached issue, plus
+ *   descent into children of AFFECTED issues only. Affected means reached as
+ *   a waiter (forward-edge target) or as an inheritor (child of an affected
+ *   issue); both arrival kinds requeue an already-processed seed so its
+ *   descent still runs. An initial seed that is never affected keeps the
+ *   narrow boundary — its children do not wait on it.
  *
  * The returned set holds canvas node ids.
  */
@@ -440,13 +442,18 @@ export function dagFocusNeighborhood(
 
   const selected = projection.nodes.find((candidate) => candidate.id === nodeId);
   const seeds = selected ? selected.memberIds : [nodeId];
-  const rootSeeds = new Set(seeds);
-  // A node that a real dependency edge reached propagates the wait to its
-  // children even when it is also an initial seed.
-  const edgeReached = new Set<string>();
 
   const issueSeen = new Set<string>();
+  // Downstream propagation state: a node that a forward edge (waiter) or a
+  // descent (inheritor) reached carries the wait and passes it to children.
+  // Initial seeds are queued without it; either arrival kind (re)queues them.
+  const affected = new Set<string>();
   const queue: string[] = [];
+  const markAffected = (id: string) => {
+    if (affected.has(id)) return;
+    affected.add(id);
+    queue.push(id);
+  };
   for (const seed of seeds) {
     if (!issueSeen.has(seed)) {
       issueSeen.add(seed);
@@ -456,16 +463,10 @@ export function dagFocusNeighborhood(
   while (queue.length > 0) {
     const current = queue.shift()!;
     for (const next of edgeNext.get(current) ?? []) {
-      const firstEdgeArrival = !edgeReached.has(next);
-      edgeReached.add(next);
-      if (!issueSeen.has(next)) {
-        issueSeen.add(next);
-        queue.push(next);
-      } else if (firstEdgeArrival && way === "downstream") {
-        // Already processed as a seed before this edge arrived — reprocess so
-        // the now-unlocked descent into its children runs.
-        queue.push(next);
-      }
+      const isNew = !issueSeen.has(next);
+      if (isNew) issueSeen.add(next);
+      if (way === "downstream") markAffected(next);
+      else if (isNew) queue.push(next);
     }
     if (way === "upstream") {
       let ancestor = parentById.get(current) ?? null;
@@ -478,12 +479,10 @@ export function dagFocusNeighborhood(
         }
         ancestor = parentById.get(ancestor) ?? null;
       }
-    } else if (!rootSeeds.has(current) || edgeReached.has(current)) {
+    } else if (affected.has(current)) {
       for (const child of childrenOf.get(current) ?? []) {
-        if (!issueSeen.has(child)) {
-          issueSeen.add(child);
-          queue.push(child);
-        }
+        if (!issueSeen.has(child)) issueSeen.add(child);
+        markAffected(child);
       }
     }
   }

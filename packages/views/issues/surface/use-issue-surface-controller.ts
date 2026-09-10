@@ -361,10 +361,14 @@ export function useIssueSurfaceController({
   const usesDag = effectiveViewMode === "dag" && usesDagScope;
   // The agents/members tab narrows graph membership through
   // scope.assignee_types exactly like a filter does: a node outside it is
-  // outside the QUERY, not deleted. Completeness (and the fold pruning it
-  // licenses) must cover that axis too.
+  // outside the QUERY, not deleted. A project graph narrows it too — the
+  // context closure adds ancestors/prerequisites but never unrelated
+  // descendants, so a cross-project child that kept its parent is absent
+  // without being gone. Completeness (and the fold pruning it licenses) must
+  // cover both axes; only the full workspace scope can prove membership.
   const dagScopeNarrowsMembership =
-    usesDagScope && assigneeTypesForActorKind(scope.actorKind) != null;
+    scope.type === "project" ||
+    (usesDagScope && assigneeTypesForActorKind(scope.actorKind) != null);
   const activeSearch = usesTable ? tableSearch : search;
   const debouncedActiveSearch = useDebouncedTableSearch(activeSearch);
   const usesServerStatusSurface =
