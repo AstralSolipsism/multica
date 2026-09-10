@@ -249,7 +249,8 @@
     "approval_admin": "This target isn't approved for this source and scope yet. Saving approves it as a workspace admin and verifies the bot can reach it.",
     "approval_member": "This target needs a workspace owner/admin approval for this source and scope before it can be saved.",
     "enable_hint": "Approving a target doesn't enable the rule — events are delivered only while the rule is enabled.",
-    "catalog_load_failed": "Couldn't load the event catalog, so the event scope can't be confirmed. Reload it before saving."
+    "catalog_load_failed": "Couldn't load the event catalog, so the event scope can't be confirmed. Reload it before saving.",
+    "routes_refresh_failed": "The rules list couldn't be refreshed, so the current state isn't confirmed. Your draft is kept — save after the list reloads."
   },
   "error_code": {
     "route_disabled": "The push target was disabled",

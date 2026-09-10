@@ -228,6 +228,9 @@ function TeamSubscriptionsBody() {
           projects={projects}
           catalog={catalogQuery.data}
           catalogError={catalogQuery.isError}
+          // Editor mounts only outside the initial-load error branch, so an
+          // isError here is always a failed background refresh with retained data.
+          routesRefreshFailed={routesQuery.isError}
           onCatalogRetry={() => catalogQuery.refetch()}
         />
       )}

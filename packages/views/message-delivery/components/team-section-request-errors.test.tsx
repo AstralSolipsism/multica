@@ -118,6 +118,12 @@ vi.mock("@multica/core/message-delivery", () => ({
     queryKey: ["message-sources", "ws-1", "deliveries", routeId, "detail", deliveryId],
   }),
   messageSourceKeys: {
+    routes: (wsId: string, sourceKind?: string) => [
+      "message-sources",
+      wsId,
+      "routes",
+      sourceKind ?? "all",
+    ],
     delivery: (wsId: string, routeId: string, deliveryId: string) => [
       "message-sources",
       wsId,

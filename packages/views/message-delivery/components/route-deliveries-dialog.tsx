@@ -326,12 +326,16 @@ export function SourceDeliveryDetailDialog({
     !isFetching &&
     detailError == null &&
     canRetryMessageDelivery(detail.delivery.status);
+  // The submit gate shared by the main button, the uncertain-confirm action
+  // and handleRetry itself: retryable state AND no retry request in flight,
+  // so a double click can only ever produce one POST.
+  const canSubmitRetry = retryable && !retry.isPending;
 
   const handleRetry = () => {
     // Re-check at click time with the FULL gate: the state may have changed
     // while the confirm dialog was open (including a newer read now in
     // flight — isFetching — which the main button already blocks on).
-    if (!retryable || detail == null) return;
+    if (!canSubmitRetry || detail == null) return;
     retry.mutate(
       { routeId, deliveryId: detail.delivery.id },
       {
@@ -503,7 +507,7 @@ export function SourceDeliveryDetailDialog({
             <Button
               size="sm"
               variant="outline"
-              disabled={!retryable || retry.isPending}
+              disabled={!canSubmitRetry}
               onClick={() => {
                 if (full.status === "uncertain") setConfirmUncertain(true);
                 else handleRetry();
@@ -534,7 +538,7 @@ export function SourceDeliveryDetailDialog({
               <AlertDialogCancel disabled={retry.isPending}>
                 {t(($) => $.deliveries.retry.cancel)}
               </AlertDialogCancel>
-              <AlertDialogAction onClick={handleRetry} disabled={retry.isPending || !retryable}>
+              <AlertDialogAction onClick={handleRetry} disabled={!canSubmitRetry}>
                 {retry.isPending
                   ? t(($) => $.deliveries.retry.in_progress)
                   : t(($) => $.deliveries.retry.uncertain_confirm)}
