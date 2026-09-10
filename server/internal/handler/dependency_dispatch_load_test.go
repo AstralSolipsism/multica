@@ -14,8 +14,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/featureflag"
 )
 
 // Opt-in real admission/claim/write load, without running an agent. Latencies
@@ -51,7 +54,7 @@ func TestDependencyAdmissionContention(t *testing.T) {
 			}
 		})
 	}
-	for _, shape := range []string{"dense", "deep", "multi_workspace", "sustained"} {
+	for _, shape := range []string{"dense", "deep", "multi_workspace", "sustained", "overlay"} {
 		t.Run(shape, func(t *testing.T) {
 			workspaces := []dependencyLoadWorkspace{newDependencyLoadWorkspace(t, 5000, shape)}
 			if shape == "multi_workspace" {
@@ -74,12 +77,20 @@ type dependencyLoadWorkspace struct {
 	ids       []string
 	runtimeID string
 	edges     int
+	overlay   bool
 }
 
 func newDependencyLoadWorkspace(t *testing.T, size int, shape string) dependencyLoadWorkspace {
 	t.Helper()
 	h, fx := dependencyFixture(t)
 	w := dependencyLoadWorkspace{h: h, fx: fx, runtimeID: fx.Runtime(t, "dependency load fake runtime"), ids: make([]string, size)}
+	if shape == "overlay" {
+		flags := featureflag.NewStaticProvider()
+		flags.Set(featureflags.ComposioMCPApps, featureflag.Rule{Default: true})
+		h.TaskService.FeatureFlags = featureflag.NewService(flags)
+		h.TaskService.Composio = dependencyLoadOverlay{}
+		w.overlay = true
+	}
 	quarter := size / 4
 	for i := range w.ids {
 		cols := testutil.Cols{"number": i + 1, "status": "done"}
@@ -107,6 +118,20 @@ func newDependencyLoadWorkspace(t *testing.T, size int, shape string) dependency
 		}
 	}
 	return w
+}
+
+type dependencyLoadOverlay struct{}
+
+func (dependencyLoadOverlay) BuildTaskOverlay(ctx context.Context, _ pgtype.UUID, _ db.Agent) (runtimeapps.MCPOverlayResult, error) {
+	// Controlled external latency; never contact a real connected-app provider.
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return runtimeapps.MCPOverlayResult{}, ctx.Err()
+	case <-timer.C:
+		return runtimeapps.MCPOverlayResult{MCPOverlay: json.RawMessage(`{"mcpServers":{"fixture":{"url":"https://example.test/mcp"}}}`)}, nil
+	}
 }
 
 func runDependencyAdmissionLoad(t *testing.T, workspaces []dependencyLoadWorkspace, claimers, writers, iterations int, duration time.Duration) {
@@ -172,6 +197,10 @@ func runDependencyAdmissionLoad(t *testing.T, workspaces []dependencyLoadWorkspa
 			if !measure {
 				t.Error(err)
 			}
+			return false
+		}
+		if workspaces[i%len(workspaces)].overlay && len(queued.RuntimeMcpOverlay) == 0 {
+			t.Error("enabled overlay was not prepared and persisted")
 			return false
 		}
 		start = time.Now()
