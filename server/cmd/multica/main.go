@@ -106,7 +106,8 @@ func main() {
 		return
 	}
 	cli.CleanupStaleUpdateArtifacts()
-	if err := rootCmd.Execute(); err != nil {
+	if cmd, err := rootCmd.ExecuteC(); err != nil {
+		err = issueDependencyCommandError(cmd, err)
 		if err != errSilent {
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, debugFlag))
 		}

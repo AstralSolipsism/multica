@@ -491,6 +491,7 @@ func init() {
 	issueCmd.AddCommand(issueRerunCmd)
 	issueCmd.AddCommand(issueCancelTaskCmd)
 	issueCmd.AddCommand(issueSearchCmd)
+	issueCmd.AddCommand(newIssueDependencyCmd())
 
 	issueCommentCmd.AddCommand(issueCommentListCmd)
 	issueCommentCmd.AddCommand(issueCommentAddCmd)
@@ -548,6 +549,8 @@ func init() {
 	issueCreateCmd.Flags().String("output", "json", "Output format: table or json")
 	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
 	issueCreateCmd.Flags().StringSlice("attachment-id", nil, "Existing attachment UUID(s) to bind to the created issue (can be specified multiple times)")
+	registerIssueDependencyFlags(issueCreateCmd, false)
+	issueCreateCmd.Example = "  multica issue create --title \"Checkout API\" --parent MUL-32 --stage 3 --project <project-uuid> --blocked-by MUL-39 --blocked-by MUL-41 --status backlog"
 
 	// issue update
 	issueUpdateCmd.Flags().String("title", "", "New title")
@@ -567,6 +570,8 @@ func init() {
 	issueUpdateCmd.Flags().Float64("position", 0, "Ordering position within the board column (lower sorts first); prefer `issue reorder` for relative moves")
 	issueUpdateCmd.Flags().Bool("no-start", false, "Apply the update without starting an agent run")
 	issueUpdateCmd.Flags().String("output", "json", "Output format: table or json")
+	registerIssueDependencyFlags(issueUpdateCmd, true)
+	issueUpdateCmd.Example = "  multica issue update MUL-42 --blocked-by MUL-39 --blocked-by MUL-41\n  multica issue update MUL-42 --clear-blocked-by"
 
 	// issue status
 	issueStatusCmd.Flags().Bool("no-start", false, "Change status without starting an agent run")
@@ -1222,6 +1227,9 @@ func quickCreateAttachmentIDsFromEnv() ([]string, error) {
 }
 
 func runIssueCreate(cmd *cobra.Command, _ []string) error {
+	if _, _, err := issueDependencyFlagValues(cmd); err != nil {
+		return err
+	}
 	title, _ := cmd.Flags().GetString("title")
 	if title == "" {
 		return fmt.Errorf("--title is required")
@@ -1341,9 +1349,17 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	compound, err := prepareIssueDependencyWrite(ctx, client, cmd, body, "")
+	if err != nil {
+		return err
+	}
+	path := "/api/issues"
+	if compound {
+		path += "/with-dependencies"
+	}
 
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/issues", body, &result); err != nil {
+	if err := client.PostJSON(ctx, path, body, &result); err != nil {
 		if msg, ok := activeDuplicateIssueCreateMessage(err); ok {
 			return errors.New(msg)
 		}
@@ -1364,20 +1380,7 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"KEY", "TITLE", "STATUS", "PRIORITY"}
-		rows := [][]string{{
-			issueDisplayKey(result),
-			strVal(result, "title"),
-			strVal(result, "status"),
-			strVal(result, "priority"),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-
-	return cli.PrintJSON(os.Stdout, result)
+	return printIssueMutation(cmd, result)
 }
 
 func activeDuplicateIssueCreateMessage(err error) (string, bool) {
@@ -1399,6 +1402,9 @@ func activeDuplicateIssueCreateMessage(err error) (string, bool) {
 }
 
 func runIssueUpdate(cmd *cobra.Command, args []string) error {
+	if _, _, err := issueDependencyFlagValues(cmd); err != nil {
+		return err
+	}
 	noStart, _ := cmd.Flags().GetBool("no-start")
 	statusChanged := cmd.Flags().Changed("status")
 	statusFlag, _ := cmd.Flags().GetString("status")
@@ -1507,6 +1513,10 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		body["position"] = v
 	}
 
+	compound, err := prepareIssueDependencyWrite(ctx, client, cmd, body, issueRef.ID)
+	if err != nil {
+		return err
+	}
 	if len(body) == 0 {
 		return fmt.Errorf("no fields to update; use flags like --title, --status, --priority, --assignee, etc.")
 	}
@@ -1515,24 +1525,16 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	var result map[string]any
-	if err := client.PutJSON(ctx, "/api/issues/"+issueRef.ID, body, &result); err != nil {
+	if compound {
+		err = client.PatchJSON(ctx, "/api/issues/"+issueRef.ID+"/with-dependencies", body, &result)
+	} else {
+		err = client.PutJSON(ctx, "/api/issues/"+issueRef.ID, body, &result)
+	}
+	if err != nil {
 		return fmt.Errorf("update issue: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"KEY", "TITLE", "STATUS", "PRIORITY"}
-		rows := [][]string{{
-			issueDisplayKey(result),
-			strVal(result, "title"),
-			strVal(result, "status"),
-			strVal(result, "priority"),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-
-	return cli.PrintJSON(os.Stdout, result)
+	return printIssueMutation(cmd, result)
 }
 
 func runIssueAssign(cmd *cobra.Command, args []string) error {
@@ -2178,10 +2180,12 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "Comment added to issue %s.\n", issueRef.Display)
 
 	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		return nil
+	if output != "table" {
+		if err := cli.PrintJSON(os.Stdout, result); err != nil {
+			return cli.WithUserMessage(fmt.Sprintf("Comment %s saved, but output failed; do not repost the comment.", strVal(result, "id")), err)
+		}
 	}
-	return cli.PrintJSON(os.Stdout, result)
+	return commentDispatchError(result)
 }
 
 func runIssueCommentDelete(cmd *cobra.Command, args []string) error {

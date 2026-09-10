@@ -98,7 +98,14 @@ func (e *HTTPError) Error() string {
 // classify the failure via errors.As(err, **HTTPError) regardless of which
 // HTTP verb the command used.
 func newHTTPError(method, path string, resp *http.Response) *HTTPError {
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	// Dependency refusals carry complete direct/inherited blocker projections.
+	// The old 4 KiB diagnostic cap truncated these into invalid JSON, hiding the
+	// reason and preventing callers from handling a refusal without --debug.
+	var body io.Reader = io.LimitReader(resp.Body, 4096)
+	if path == "/api/issues" || strings.HasPrefix(path, "/api/issues/") {
+		body = resp.Body
+	}
+	data, _ := io.ReadAll(body)
 	return &HTTPError{
 		Method:     method,
 		Path:       path,
