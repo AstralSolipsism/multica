@@ -27,6 +27,24 @@ type IssueContentPatch struct {
 // remain separate operations because each has additional policy and side
 // effects.
 func (s *IssueService) UpdateContent(ctx context.Context, issue db.Issue, patch IssueContentPatch) (db.Issue, error) {
+	if s.TxStarter == nil {
+		return db.Issue{}, errors.New("issue content update requires a transaction starter")
+	}
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.Issue{}, err
+	}
+	defer tx.Rollback(ctx)
+	q := s.Queries.WithTx(tx)
+	if err := s.Dependencies.LockWrite(ctx, q, issue.WorkspaceID); err != nil {
+		return db.Issue{}, err
+	}
+	// UpdateIssue accepts nullable hierarchy/assignment fields. Populate them
+	// from the locked row so a content edit cannot restore stale structure.
+	issue, err = q.LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID})
+	if err != nil {
+		return db.Issue{}, err
+	}
 	params := db.UpdateIssueParams{
 		ID:            issue.ID,
 		AssigneeType:  issue.AssigneeType,
@@ -47,9 +65,15 @@ func (s *IssueService) UpdateContent(ctx context.Context, issue db.Issue, patch 
 		params.Description = pgtype.Text{String: *patch.Description, Valid: true}
 	}
 
-	updated, err := s.Queries.UpdateIssue(ctx, params)
+	updated, err := q.UpdateIssue(ctx, params)
 	if patch.ExpectedRevision != nil && errors.Is(err, pgx.ErrNoRows) {
 		return db.Issue{}, ErrIssueRevisionConflict
 	}
-	return updated, err
+	if err != nil {
+		return db.Issue{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.Issue{}, err
+	}
+	return updated, nil
 }

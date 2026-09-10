@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
@@ -51,6 +53,8 @@ type DependencySnapshot struct {
 	Model       issuedependency.Model
 	Catalog     []db.IssueStatus
 	service     *DependencyService
+	// Empty for full snapshots; scoped admission may only decide for this ID.
+	admissionTarget string
 }
 
 // LockWrite must precede any issue, attachment, queue or agent-capacity lock.
@@ -87,6 +91,19 @@ func (s *DependencyService) LoadForWrite(ctx context.Context, q *db.Queries, ws 
 // transaction; for writes, use LockWrite followed by LoadForWrite. No list
 // pagination is involved.
 func (s *DependencyService) Load(ctx context.Context, q *db.Queries, ws pgtype.UUID) (*DependencySnapshot, error) {
+	snapshot, err := s.load(ctx, q, ws)
+	if err != nil {
+		return nil, err
+	}
+	// Keep read/edit traversal deterministic without sorting full SQL rows,
+	// which can spill to temporary files at the default work_mem.
+	slices.SortFunc(snapshot.Model.Edges, func(a, b issuedependency.Edge) int { return strings.Compare(a.ID, b.ID) })
+	return snapshot, nil
+}
+
+// Admission does not depend on edge traversal order. Prerequisite projections,
+// versions and audit states already sort their own output at the boundary.
+func (s *DependencyService) load(ctx context.Context, q *db.Queries, ws pgtype.UUID) (*DependencySnapshot, error) {
 	nodes, err := q.ListIssueDependencyNodes(ctx, ws)
 	if err != nil {
 		return nil, err
@@ -118,9 +135,6 @@ func (s *DependencyService) Load(ctx context.Context, q *db.Queries, ws pgtype.U
 	for i, id := range edges.Ids {
 		model.Edges = append(model.Edges, issuedependency.Edge{ID: util.UUIDToString(id), IssueID: endpoint(edges.IssueIds[i]), DependsOnID: endpoint(edges.DependsOnIds[i]), Type: edges.Types[i]})
 	}
-	// Sort the final representation once. Sorting/materializing full SQL rows
-	// spills dense snapshots to temporary files at the default work_mem.
-	sort.Slice(model.Edges, func(i, j int) bool { return model.Edges[i].ID < model.Edges[j].ID })
 	return &DependencySnapshot{WorkspaceID: ws, Model: model, Catalog: catalog, service: s}, nil
 }
 
@@ -385,6 +399,9 @@ func (s *DependencySnapshot) CheckWriteAdmission(ctx context.Context, issue db.I
 	}
 	id := util.UUIDToString(issue.ID)
 	execution := *s
+	if s.admissionTarget != "" && s.admissionTarget != id {
+		return dependencyError("dependency_data_unverified", "execution target was not locked")
+	}
 	if err := execution.Model.Validate(); err != nil {
 		// A valid full graph already proves every execution component valid.
 		// Only select/copy the closure when historical data needs isolation;

@@ -151,8 +151,13 @@ in OL-45 before broad rollout.
 
 ## Contention gate (OL-45)
 
-Admission readers take workspace `KEY SHARE`, shared catalog/structure locks
-and all issue rows `SHARE`. Ordinary title/status writers enter the existing
+Admission readers take workspace `KEY SHARE` and shared catalog/structure locks.
+Known-target admissions load the whole graph, then lock and refresh only the
+target, its ancestors and all their explicit prerequisites in UUID order. Claims
+and multi-workspace recovery retain all issue rows `SHARE`, because their targets
+are selected after capacity/queue locking. Complete graph validation is unchanged;
+execution does not sort the whole edge list, while public views and versions
+retain their stable output ordering. Ordinary title/status writers enter the existing
 exclusive structure-lock queue before locking issue rows; later readers wait
 behind the queued writer. Ordinary writers use the same workspace `KEY SHARE`
 fence; only creates first acquire the stronger counter lock. This lets multiple
@@ -186,6 +191,11 @@ Exact claimed IDs must be unique; queue/input/comment/delivery counts and final
 issue revisions/values must match acknowledged operations, including warmup.
 The deterministic lock regressions separately prove waiting-writer precedence,
 workspace deletion fencing, savepoint settlement and overlay revalidation.
+Known-target regressions also hold an unrelated issue lock during a real enqueue,
+change prerequisite status while admission waits for its row lock, reject reuse
+of a scoped snapshot for another target, and preserve current parent/assignee
+fields across plugin content edits. A projection regression checks identical
+views and signed versions when admission traverses edges in reverse order.
 
 Run alone against a disposable database containing all candidate migrations:
 
@@ -225,7 +235,8 @@ deadlocks, timeouts, lost writes, duplicate or unauthorized executions. These
 are acceptance targets, not measured guarantees; any change to them requires
 an explicit rationale in OL-45. Missing evidence or a breached budget blocks
 broad enablement. If writers starve, return the contention defect to OL-41,
-prove any narrower lock scope covers the complete execution component and
+prove any narrower lock scope stabilizes every decision input while preserving
+complete structural validation, and
 re-run the existing relation/status/enqueue/claim concurrency tests. Do not
 truncate the graph or bypass admission to meet the budget.
 

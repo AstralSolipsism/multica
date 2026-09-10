@@ -15,6 +15,14 @@ WITH locked AS MATERIALIZED (
 )
 SELECT count(*) FROM locked;
 
+-- name: LockIssueAdmissionNodes :many
+-- Structure/catalog locks precede this read. Refresh every status/revision
+-- used by the known target after its sorted row locks have been acquired.
+SELECT id, parent_issue_id, status, revision, title, number FROM issue
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND id = ANY(sqlc.arg('issue_ids')::uuid[])
+ORDER BY id FOR SHARE;
+
 -- name: SetTaskDependencyAdmission :one
 UPDATE agent_task_queue SET dependency_admission = $2 WHERE id = $1 RETURNING *;
 
@@ -47,21 +55,19 @@ WHERE workspace_id = $1 ORDER BY id;
 
 -- name: ListIssueDependencyEdges :one
 -- Include either local endpoint so corrupt cross-workspace edges fail closed.
--- Separate joins can use the existing endpoint indexes without correlating
--- every relation in every workspace. The disjoint second arm avoids sorting or
--- hashing the full duplicate edge set while preserving corrupt inbound edges.
--- One input keeps columns aligned; the service orders the resulting edges.
--- Arrays avoid per-row protocol/scan overhead and expose the allocation size.
-WITH edges AS (
-SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
-FROM issue i JOIN issue_dependency d ON d.issue_id = i.id
-WHERE i.workspace_id = $1
-UNION ALL
-SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
-FROM issue i JOIN issue_dependency d ON d.depends_on_issue_id = i.id
-LEFT JOIN issue source ON source.id = d.issue_id
-WHERE i.workspace_id = $1
-AND source.workspace_id IS DISTINCT FROM $1
+-- Reuse the local UUID set in both indexable endpoint joins. NOT IN is safe
+-- here because issue.id is non-null; it excludes duplicates without a source
+-- row lookup per edge when a new workspace is absent from planner statistics.
+-- One input keeps arrays aligned and avoids per-row protocol/scan overhead.
+WITH local AS MATERIALIZED (
+    SELECT id FROM issue WHERE workspace_id = $1
+), edges AS (
+    SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
+    FROM local i JOIN issue_dependency d ON d.issue_id = i.id
+    UNION ALL
+    SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
+    FROM local i JOIN issue_dependency d ON d.depends_on_issue_id = i.id
+    WHERE d.issue_id NOT IN (SELECT id FROM local)
 )
 SELECT coalesce(array_agg(id), '{}')::uuid[] AS ids,
        coalesce(array_agg(issue_id), '{}')::uuid[] AS issue_ids,

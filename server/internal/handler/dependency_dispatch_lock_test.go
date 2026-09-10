@@ -21,7 +21,7 @@ import (
 
 // Return an observed waiter, including soft blockers ahead of it in the lock
 // queue. This establishes the interleaving instead of hoping a sleep did so.
-func dependencyWaiter(t *testing.T, ctx context.Context, blocker int) (int, string) {
+func dependencyWaiter(t *testing.T, ctx context.Context, blocker int, expected string) int {
 	t.Helper()
 	ticker := time.NewTicker(time.Millisecond)
 	defer ticker.Stop()
@@ -31,15 +31,17 @@ func dependencyWaiter(t *testing.T, ctx context.Context, blocker int) (int, stri
 		err := testPool.QueryRow(ctx, `SELECT pid,split_part(query,E'\n',1) FROM pg_stat_activity
 			WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid))
 			ORDER BY query_start LIMIT 1`, blocker).Scan(&pid, &statement)
-		if err == nil {
-			return pid, statement
+		// The blocker and pg_stat_activity query can change between observations.
+		// Establish both the wait and its intended phase before releasing a lock.
+		if err == nil && strings.Contains(statement, expected) {
+			return pid
 		}
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatal(err)
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatal("expected overlapping lock wait: ", ctx.Err())
+			t.Fatalf("expected overlapping lock wait for %s: %v (last query: %s)", expected, ctx.Err(), statement)
 		case <-ticker.C:
 		}
 	}
@@ -87,10 +89,7 @@ func dependencyWaitingWriterPrecedesNewAdmissions(t *testing.T, field string, wr
 		written <- err
 	}()
 	defer func() { cancel(); <-writerDone }()
-	writerPID, statement := dependencyWaiter(t, ctx, firstPID)
-	if !strings.Contains(statement, "LockIssueDependencyStructure ") {
-		t.Fatalf("writer cannot reach the structure wait queue: %s", statement)
-	}
+	writerPID := dependencyWaiter(t, ctx, firstPID, "LockIssueDependencyStructure ")
 	var secondWrite chan error
 	if writers == 2 {
 		secondWrite = make(chan error, 1)
@@ -110,10 +109,7 @@ func dependencyWaitingWriterPrecedesNewAdmissions(t *testing.T, field string, wr
 			secondWrite <- err
 		}()
 		defer func() { cancel(); <-secondDone }()
-		writerPID, statement = dependencyWaiter(t, ctx, writerPID)
-		if !strings.Contains(statement, "LockIssueDependencyStructure ") {
-			t.Fatalf("second writer cannot reach the structure wait queue: %s", statement)
-		}
+		writerPID = dependencyWaiter(t, ctx, writerPID, "LockIssueDependencyStructure ")
 	}
 
 	readerDone := make(chan struct{})
@@ -123,10 +119,7 @@ func dependencyWaitingWriterPrecedesNewAdmissions(t *testing.T, field string, wr
 		read <- h.TaskService.WithIssueAdmission(ctx, parseUUID(fx.WorkspaceID), parseUUID(issue), func(*db.Queries) error { return nil })
 	}()
 	defer func() { cancel(); <-readerDone }()
-	_, statement = dependencyWaiter(t, ctx, writerPID)
-	if !strings.Contains(statement, "LockIssueDependencyStructureShared ") {
-		t.Fatalf("new admission bypassed the waiting writer: %s", statement)
-	}
+	dependencyWaiter(t, ctx, writerPID, "LockIssueDependencyStructureShared ")
 	if err = first.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -172,15 +165,125 @@ func TestDependencyAdmissionFencesWorkspaceDeletion(t *testing.T) {
 		result <- err
 	}()
 	defer func() { cancel(); <-done }()
-	_, statement := dependencyWaiter(t, ctx, pid)
-	if !strings.Contains(statement, "LockWorkspaceForDelete ") {
-		t.Fatalf("unexpected deletion waiter: %s", statement)
-	}
+	dependencyWaiter(t, ctx, pid, "LockWorkspaceForDelete ")
 	if err = tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err = <-result; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDependencyEnqueueDoesNotLockUnrelatedStatus(t *testing.T) {
+	h, fx, a, b, c, agent, _ := dispatchFixture(t)
+	fx.Exec(t, "UPDATE issue SET status='done',revision=revision+1 WHERE id IN ($1,$2)", a, c)
+	unrelated := dependencyIssue(t, fx, "unrelated external status update")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	holder, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Rollback(context.Background())
+	if _, err = h.Queries.WithTx(holder).LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{ID: parseUUID(unrelated), WorkspaceID: parseUUID(fx.WorkspaceID)}); err != nil {
+		t.Fatal(err)
+	}
+	issue, err := h.Queries.GetIssue(ctx, parseUUID(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue.AssigneeID, issue.AssigneeType = parseUUID(agent), pgtype.Text{String: "agent", Valid: true}
+	queued, err := h.TaskService.EnqueueTaskForIssue(ctx, issue)
+	if err != nil {
+		t.Fatalf("unrelated locked status prevented enqueue: %v", err)
+	}
+	if !queued.ID.Valid || fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE id=$1", queued.ID) != 1 {
+		t.Fatal("enqueue did not commit exactly one task while unrelated row stayed locked")
+	}
+}
+
+func TestDependencyEnqueueRefreshesStatusAfterLock(t *testing.T) {
+	for _, finalStatus := range []string{"done", "todo"} {
+		t.Run(finalStatus, func(t *testing.T) {
+			h, fx, a, b, c, agent, _ := dispatchFixture(t)
+			initialStatus := "todo"
+			if finalStatus == "todo" {
+				initialStatus = "done"
+			}
+			fx.Exec(t, "UPDATE issue SET status=$2,revision=revision+1 WHERE id=$1", a, initialStatus)
+			fx.Exec(t, "UPDATE issue SET status='done',revision=revision+1 WHERE id=$1", c)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			holder, err := testPool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer holder.Rollback(context.Background())
+			if _, err = holder.Exec(ctx, "UPDATE issue SET status=$2,revision=revision+1 WHERE id=$1", a, finalStatus); err != nil {
+				t.Fatal(err)
+			}
+			var pid int
+			if err = holder.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
+				t.Fatal(err)
+			}
+			issue, err := h.Queries.GetIssue(ctx, parseUUID(b))
+			if err != nil {
+				t.Fatal(err)
+			}
+			issue.AssigneeID, issue.AssigneeType = parseUUID(agent), pgtype.Text{String: "agent", Valid: true}
+			finished := make(chan struct{})
+			result := make(chan error, 1)
+			go func() {
+				defer close(finished)
+				_, err := h.TaskService.EnqueueTaskForIssue(ctx, issue)
+				result <- err
+			}()
+			defer func() { cancel(); <-finished }()
+			dependencyWaiter(t, ctx, pid, "LockIssueAdmissionNodes ")
+			if err = holder.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			err = <-result
+			wantTasks := 1
+			if finalStatus == "todo" {
+				wantTasks = 0
+				var dep *service.DependencyError
+				if !errors.As(err, &dep) || dep.Code != "dependency_unsatisfied" {
+					t.Fatalf("stale completed status admitted execution: %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("fresh completion was not observed: %v", err)
+			}
+			if fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE issue_id=$1", b) != wantTasks {
+				t.Fatal("enqueue did not preserve atomic admission")
+			}
+		})
+	}
+}
+
+func TestDependencyContentEditPreservesCurrentStructure(t *testing.T) {
+	h, fx := dependencyFixture(t)
+	oldParent := dependencyIssue(t, fx, "old parent")
+	newParent := dependencyIssue(t, fx, "new parent")
+	id := dependencyIssue(t, fx, "content target")
+	fx.Exec(t, "UPDATE issue SET parent_issue_id=$2 WHERE id=$1", id, oldParent)
+	ctx := context.Background()
+	stale, err := h.Queries.GetIssue(ctx, parseUUID(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := fx.Agent(t, "content edit assignee", fx.Runtime(t, "content edit fake runtime"))
+	fx.Exec(t, "UPDATE issue SET parent_issue_id=$2,assignee_type='agent',assignee_id=$3,revision=revision+1 WHERE id=$1", id, newParent, agent)
+	title := "edited title"
+	updated, err := h.IssueService.UpdateContent(ctx, stale, service.IssueContentPatch{Title: &title})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ParentIssueID != parseUUID(newParent) || updated.AssigneeID != parseUUID(agent) || updated.AssigneeType.String != "agent" || updated.Title != title {
+		t.Fatal("content edit restored stale hierarchy or assignment")
+	}
+	if _, err := h.IssueService.UpdateContent(ctx, stale, service.IssueContentPatch{Title: &title, ExpectedRevision: &stale.Revision}); !errors.Is(err, service.ErrIssueRevisionConflict) {
+		t.Fatalf("stale content revision did not conflict: %v", err)
 	}
 }
 
@@ -225,7 +328,7 @@ func TestDependencyAdmissionSavepointKeepsOuterTransaction(t *testing.T) {
 				mutated <- err
 			}()
 			defer func() { cancel(); <-done }()
-			dependencyWaiter(t, ctx, pid)
+			dependencyWaiter(t, ctx, pid, "UPDATE issue SET status")
 			if commit {
 				err = tx.Commit(ctx)
 			} else {

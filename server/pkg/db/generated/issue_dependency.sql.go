@@ -305,16 +305,15 @@ func (q *Queries) InsertIssueDependency(ctx context.Context, arg InsertIssueDepe
 }
 
 const listIssueDependencyEdges = `-- name: ListIssueDependencyEdges :one
-WITH edges AS (
-SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
-FROM issue i JOIN issue_dependency d ON d.issue_id = i.id
-WHERE i.workspace_id = $1
-UNION ALL
-SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
-FROM issue i JOIN issue_dependency d ON d.depends_on_issue_id = i.id
-LEFT JOIN issue source ON source.id = d.issue_id
-WHERE i.workspace_id = $1
-AND source.workspace_id IS DISTINCT FROM $1
+WITH local AS MATERIALIZED (
+    SELECT id FROM issue WHERE workspace_id = $1
+), edges AS (
+    SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
+    FROM local i JOIN issue_dependency d ON d.issue_id = i.id
+    UNION ALL
+    SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
+    FROM local i JOIN issue_dependency d ON d.depends_on_issue_id = i.id
+    WHERE d.issue_id NOT IN (SELECT id FROM local)
 )
 SELECT coalesce(array_agg(id), '{}')::uuid[] AS ids,
        coalesce(array_agg(issue_id), '{}')::uuid[] AS issue_ids,
@@ -331,11 +330,10 @@ type ListIssueDependencyEdgesRow struct {
 }
 
 // Include either local endpoint so corrupt cross-workspace edges fail closed.
-// Separate joins can use the existing endpoint indexes without correlating
-// every relation in every workspace. The disjoint second arm avoids sorting or
-// hashing the full duplicate edge set while preserving corrupt inbound edges.
-// One input keeps columns aligned; the service orders the resulting edges.
-// Arrays avoid per-row protocol/scan overhead and expose the allocation size.
+// Reuse the local UUID set in both indexable endpoint joins. NOT IN is safe
+// here because issue.id is non-null; it excludes duplicates without a source
+// row lookup per edge when a new workspace is absent from planner statistics.
+// One input keeps arrays aligned and avoids per-row protocol/scan overhead.
 func (q *Queries) ListIssueDependencyEdges(ctx context.Context, workspaceID pgtype.UUID) (ListIssueDependencyEdgesRow, error) {
 	row := q.db.QueryRow(ctx, listIssueDependencyEdges, workspaceID)
 	var i ListIssueDependencyEdgesRow
@@ -417,6 +415,56 @@ func (q *Queries) LockAutopilotRunForDependencyAdmission(ctx context.Context, id
 		&i.ReasonCode,
 	)
 	return i, err
+}
+
+const lockIssueAdmissionNodes = `-- name: LockIssueAdmissionNodes :many
+SELECT id, parent_issue_id, status, revision, title, number FROM issue
+WHERE workspace_id = $1
+  AND id = ANY($2::uuid[])
+ORDER BY id FOR SHARE
+`
+
+type LockIssueAdmissionNodesParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	IssueIds    []pgtype.UUID `json:"issue_ids"`
+}
+
+type LockIssueAdmissionNodesRow struct {
+	ID            pgtype.UUID `json:"id"`
+	ParentIssueID pgtype.UUID `json:"parent_issue_id"`
+	Status        string      `json:"status"`
+	Revision      int64       `json:"revision"`
+	Title         string      `json:"title"`
+	Number        int32       `json:"number"`
+}
+
+// Structure/catalog locks precede this read. Refresh every status/revision
+// used by the known target after its sorted row locks have been acquired.
+func (q *Queries) LockIssueAdmissionNodes(ctx context.Context, arg LockIssueAdmissionNodesParams) ([]LockIssueAdmissionNodesRow, error) {
+	rows, err := q.db.Query(ctx, lockIssueAdmissionNodes, arg.WorkspaceID, arg.IssueIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockIssueAdmissionNodesRow{}
+	for rows.Next() {
+		var i LockIssueAdmissionNodesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ParentIssueID,
+			&i.Status,
+			&i.Revision,
+			&i.Title,
+			&i.Number,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockIssueDependencyStructure = `-- name: LockIssueDependencyStructure :exec

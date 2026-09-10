@@ -122,8 +122,10 @@ top-level creates load the workspace graph when they also enqueue execution.
 Status-only updates keep the ordered workspace row locks and decide execution
 intent from the locked target. Without execution or an explicit dependency
 write/view/version check, they skip loading and cloning the graph.
-Updates refresh untouched nullable fields under their target lock to avoid
-overwriting a concurrent reparent or assignment with stale preloaded values.
+Updates, including plugin content edits, refresh untouched nullable fields under
+their target lock to avoid overwriting a concurrent reparent or assignment with
+stale preloaded values. The plugin content transaction joins the same structure
+gate before locking its target and applying an optional expected revision.
 Compound responses retain the committed transaction's snapshot rather than
 mixing a post-commit graph read with an older issue revision.
 
@@ -132,11 +134,22 @@ database changes share the deletion transaction; runtime notifications occur
 only after commit. Existing deletion cleanup and source-context retention are
 preserved. Rejected creates/updates/deletes emit no task-start/cancel effects.
 
-Admission transactions take workspace `FOR KEY SHARE`, the shared catalog and
-structure locks, then all workspace issue rows `FOR SHARE` in UUID order.
-Capacity locks precede queue locks. Machine recovery locks multiple workspaces
-in UUID order. This makes status producers, reparenting and graph edits serialize
-against the dependency decision without changing completion permissions.
+Admission transactions take workspace `FOR KEY SHARE` and the shared catalog and
+structure locks. A known execution target (enqueue, rerun, retry or pending
+recovery) reads the complete graph, then takes issue `FOR SHARE` locks in UUID
+order on the target, every ancestor, and every explicit prerequisite of those
+nodes. It refreshes those rows after locking: status producers can commit between
+the first MVCC read and lock acquisition. Missing endpoints or changed parentage
+fail closed, and that snapshot cannot admit another target.
+
+This covers every status/revision used by D1 and its signed version: parentage
+only propagates explicit prerequisites; a prerequisite's own predecessors are
+not additional completion requirements. Structure/catalog locks stabilize the
+whole graph while the existing validator checks all structural constraints.
+Claims and multi-workspace recovery select their targets after capacity/queue
+locks, so they retain all workspace issue row locks. The lock order remains
+issue rows, then capacity, then queue; recovery orders workspaces by UUID.
+Completion permissions are unchanged.
 `KEY SHARE` still prevents workspace deletion, but is compatible with a writer's
 `NO KEY UPDATE` counter lock. This lets the writer enter the exclusive structure
 lock's wait queue, where later admissions wait behind it. Taking workspace
@@ -163,18 +176,23 @@ transactions remain supported: a regression proves nested admission savepoints
 keep row locks and queued writes until the outer transaction commits or rolls
 back. Do not restore the retired worker to test that transaction contract.
 
-The initial scope deliberately locks/loads the complete workspace rather than
-introducing a second graph/cache or a partial-page approximation. This costs
-O(V+E+H) data per admission and can delay unrelated issue edits in a large
-workspace. Measure claim latency and lock waits against realistic size and
-contention before a wide rollout; narrow locks only with an equivalent closure
-proof and the concurrency tests intact.
+Every admission still loads the complete workspace graph, at O(V+E+H) cost.
+There is no cross-request cache or partial-page approximation. Known-target
+admission removes unrelated status row locks; claims still take the conservative
+full row set. Large graphs can still delay ordinary writers waiting at the
+structure gate. Measure realistic sizes and contention before broad rollout;
+any further narrowing needs a decision-set proof and concurrency regressions.
 Validation uses integer vertex/edge indexes; the edge query returns aligned
-arrays from one input, so graph storage is allocated once. Loading orders the
-final edge representation in memory, avoiding PostgreSQL temporary-file sorts,
-reuses endpoint strings and avoids duplicate union rows. Ordered row-lock
-queries drain their complete result on the server rather
-than transferring unused IDs. A valid full graph already proves
+arrays from one input, so graph storage is allocated once. Read/edit snapshots
+sort the final edge representation in memory, avoiding PostgreSQL temporary-file
+sorts. Admission skips this full-edge sort: validation is order-independent and
+views, prerequisite sources, versions and audit states sort at their own output
+boundaries. Loading reuses endpoint strings and avoids duplicate union rows.
+Both endpoint joins reuse a materialized set of local UUIDs, eliminating
+per-edge source-row lookups for workspaces absent from planner statistics while
+keeping the endpoint indexes usable. Ordered row-lock queries drain their
+complete result on the server rather than transferring unused IDs.
+A valid full graph already proves
 each execution component valid, so the admission path selects/copies a component
 only when historical corruption needs the existing component isolation.
 The executable contention matrix, measurement limits and required OL-45 rollout
@@ -197,7 +215,8 @@ run; completion/reporting does not become a new trigger. No arbitrary DAG-edge
 auto-dispatch is introduced. Ordinary comments persist independently and report
 blocked dispatch; they are never a confirmation, even from a human.
 
-Enqueue and first claim use the same complete snapshot. A failed first claim is
+Enqueue and first claim independently reload and validate the complete graph.
+Each locks all status/revision inputs needed for its own decision. A failed first claim is
 quarantined as `failed` with a stable `dependency_*` reason, without credentials,
 issue rollback or automatic retries, and scanning continues to the next row.
 Corrupt/missing workspace bindings are rejected at this boundary as well.

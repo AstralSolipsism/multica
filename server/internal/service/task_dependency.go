@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/issuedependency"
+	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -22,6 +24,14 @@ import (
 // ponytail: full-workspace snapshots still cost O(V+E); use the OL-45 load gate
 // before increasing rollout size, and narrow only with a closure proof.
 func (s *DependencyService) LockAdmission(ctx context.Context, q *db.Queries, ws pgtype.UUID) (*DependencySnapshot, error) {
+	return s.lockAdmission(ctx, q, ws, pgtype.UUID{})
+}
+
+// A known target only needs stable status/revision rows for itself, its
+// ancestors and their explicit prerequisites. The shared structure/catalog
+// locks still protect the complete graph; Validate never reads status.
+// Unknown claim/recovery targets retain the complete workspace row locks.
+func (s *DependencyService) lockAdmission(ctx context.Context, q *db.Queries, ws, target pgtype.UUID) (*DependencySnapshot, error) {
 	if _, err := q.LockWorkspaceForDependencyAdmission(ctx, ws); err != nil {
 		return nil, err
 	}
@@ -31,13 +41,62 @@ func (s *DependencyService) LockAdmission(ctx context.Context, q *db.Queries, ws
 	if err := q.LockIssueDependencyStructureShared(ctx, ws); err != nil {
 		return nil, err
 	}
-	if err := q.LockIssuesForDependencyAdmission(ctx, ws); err != nil {
+	if !target.Valid {
+		if err := q.LockIssuesForDependencyAdmission(ctx, ws); err != nil {
+			return nil, err
+		}
+		return s.load(ctx, q, ws)
+	}
+	snapshot, err := s.load(ctx, q, ws)
+	if err != nil {
 		return nil, err
 	}
-	return s.Load(ctx, q, ws)
+	id := util.UUIDToString(target)
+	if _, ok := snapshot.Model.Issues[id]; !ok {
+		return nil, dependencyError("not_found", "issue not found")
+	}
+	selected := map[string]bool{}
+	for _, ancestor := range snapshot.Model.Ancestors(id) {
+		selected[ancestor] = true
+	}
+	for _, prerequisite := range snapshot.Model.Prerequisites(id) {
+		if prerequisite.IssueID != "" {
+			selected[prerequisite.IssueID] = true
+		}
+	}
+	ids := make([]pgtype.UUID, 0, len(selected))
+	for key := range selected {
+		uuid, err := util.ParseUUID(key)
+		if err != nil {
+			return nil, dependencyError("dependency_data_unverified", "invalid dependency endpoint")
+		}
+		ids = append(ids, uuid)
+	}
+	nodes, err := q.LockIssueAdmissionNodes(ctx, db.LockIssueAdmissionNodesParams{WorkspaceID: ws, IssueIds: ids})
+	if err != nil {
+		return nil, err
+	}
+	if len(nodes) != len(ids) {
+		return nil, dependencyError("dependency_data_unverified", "dependency endpoint is unavailable")
+	}
+	resolver := issuestatus.NewResolver(ws)
+	for _, node := range nodes {
+		key, parent := util.UUIDToString(node.ID), util.UUIDToString(node.ParentIssueID)
+		if parent != snapshot.Model.Issues[key].ParentID {
+			return nil, dependencyError("dependency_version_conflict", "dependency structure changed; retry admission")
+		}
+		// Status producers outside the structure gate may have committed while
+		// these locks were pending. Never decide from the earlier MVCC read.
+		snapshot.Model.Issues[key] = issuedependency.Issue{ID: key, ParentID: parent, Status: node.Status, Category: resolver.Effective(ctx, q, node.Status), Revision: node.Revision, Title: node.Title, Number: node.Number}
+	}
+	snapshot.admissionTarget = id
+	return snapshot, nil
 }
 
 func (s *DependencySnapshot) CheckRun(ctx context.Context, issueID pgtype.UUID) error {
+	if s.admissionTarget != "" && s.admissionTarget != util.UUIDToString(issueID) {
+		return dependencyError("dependency_data_unverified", "execution target was not locked")
+	}
 	if !issueID.Valid {
 		return nil
 	}
@@ -47,7 +106,8 @@ func (s *DependencySnapshot) CheckRun(ctx context.Context, issueID pgtype.UUID) 
 	return s.CheckWriteAdmission(ctx, db.Issue{ID: issueID}, false, true)
 }
 
-// WithIssueAdmission runs a mutation under the complete dependency snapshot.
+// WithIssueAdmission validates the complete graph and locks this issue's full
+// status/version decision set. The snapshot cannot admit a different target.
 // It accepts no human override; only the compound assignment transaction may
 // mint an admission record for one specifically confirmed queue row.
 func (s *TaskService) WithIssueAdmission(ctx context.Context, ws, issueID pgtype.UUID, fn func(*db.Queries) error) error {
@@ -55,7 +115,7 @@ func (s *TaskService) WithIssueAdmission(ctx context.Context, ws, issueID pgtype
 		return errors.New("issue admission requires a transaction starter")
 	}
 	return s.runInTx(ctx, func(q *db.Queries) error {
-		snapshot, err := NewDependencyService(s.Queries, s.TxStarter).LockAdmission(ctx, q, ws)
+		snapshot, err := NewDependencyService(s.Queries, s.TxStarter).lockAdmission(ctx, q, ws, issueID)
 		if err != nil {
 			return err
 		}
@@ -164,7 +224,7 @@ func (s *TaskService) checkRetryAdmission(ctx context.Context, q *db.Queries, pa
 	if err != nil {
 		return dependencyError("not_found", "issue not found")
 	}
-	snapshot, err := NewDependencyService(s.Queries, s.TxStarter).LockAdmission(ctx, q, issue.WorkspaceID)
+	snapshot, err := NewDependencyService(s.Queries, s.TxStarter).lockAdmission(ctx, q, issue.WorkspaceID, parent.IssueID)
 	if err != nil {
 		return err
 	}
@@ -250,7 +310,7 @@ func (s *TaskService) WithPendingIssueAdmission(ctx context.Context, ws, issueID
 		return errors.New("issue admission requires a transaction starter")
 	}
 	return s.runInTx(ctx, func(q *db.Queries) error {
-		snapshot, err := NewDependencyService(s.Queries, s.TxStarter).LockAdmission(ctx, q, ws)
+		snapshot, err := NewDependencyService(s.Queries, s.TxStarter).lockAdmission(ctx, q, ws, issueID)
 		if err != nil {
 			return err
 		}
