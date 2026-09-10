@@ -263,6 +263,37 @@ func TestDependencyReferencesAndMalformedRequests(t *testing.T) {
 	}
 }
 
+func TestDependencySnapshotRetainsIncidentEdges(t *testing.T) {
+	for _, direction := range []string{"local", "outbound", "inbound", "missing_source", "missing_target"} {
+		t.Run(direction, func(t *testing.T) {
+			h, fx := dependencyFixture(t)
+			local := dependencyIssue(t, fx, "local")
+			source, target := local, dependencyIssue(t, fx, "prerequisite")
+			switch direction {
+			case "outbound":
+				target = dbfx.Issue(t, "foreign")
+			case "inbound":
+				source, target = dbfx.Issue(t, "foreign"), local
+			case "missing_source":
+				source, target = "00000000-0000-0000-0000-000000000001", local
+			case "missing_target":
+				target = "00000000-0000-0000-0000-000000000001"
+			}
+			edge := fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": source, "depends_on_issue_id": target, "type": "blocked_by"})
+			snapshot, err := h.IssueService.Dependencies.Load(context.Background(), h.Queries, parseUUID(fx.WorkspaceID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshot.Model.Edges) != 1 || snapshot.Model.Edges[0].ID != edge || snapshot.Model.Edges[0].IssueID != source || snapshot.Model.Edges[0].DependsOnID != target {
+				t.Fatalf("lost or duplicated incident edge: %+v", snapshot.Model.Edges)
+			}
+			if err := snapshot.Model.Validate(); (err == nil) != (direction == "local") {
+				t.Fatalf("corrupt endpoint validation: %v", err)
+			}
+		})
+	}
+}
+
 func TestDependencyCompoundCreateWithoutExplicitPrerequisites(t *testing.T) {
 	h, fx := dependencyFixture(t)
 	var created IssueResponse

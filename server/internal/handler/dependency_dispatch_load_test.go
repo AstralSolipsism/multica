@@ -177,6 +177,7 @@ func runDependencyAdmissionLoad(t *testing.T, workspaces []dependencyLoadWorkspa
 		w := workspaces[i%len(workspaces)]
 		if w.feishu {
 			f := newConversationFixture(t)
+			w.fx.Exec(t, "UPDATE agent SET name=$2 WHERE id=$1", f.agent, "Feedback load "+f.agent)
 			conversations[i], agents[i] = f, f.agent
 			f.h.TaskService.FeatureFlags = w.h.TaskService.FeatureFlags
 			f.h.TaskService.Composio = w.h.TaskService.Composio
