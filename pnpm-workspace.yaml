@@ -3,6 +3,7 @@ packages:
   - packages/*
 
 catalog:
+  '@dagrejs/dagre': 3.1.1
   '@formatjs/intl-localematcher': ^0.8.4
   '@tailwindcss/postcss': ^4
   '@tailwindcss/vite': ^4
@@ -16,6 +17,7 @@ catalog:
   '@types/react': ^19.2.0
   '@types/react-dom': ^19.2.0
   '@vitejs/plugin-react': ^6.0.1
+  '@xyflow/react': 12.11.6
   class-variance-authority: ^0.7.1
   clsx: ^2.1.1
   eslint-plugin-i18next: ^6.1.4

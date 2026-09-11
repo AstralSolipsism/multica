@@ -17,6 +17,7 @@ import { IssuesHeader } from "./issues-header";
 function IssuesSurfaceHeader({
   issues,
   workingAgents,
+  allowDag,
   isRefreshing,
   facetCountsExact,
   tableFacetCounts,
@@ -24,6 +25,7 @@ function IssuesSurfaceHeader({
 }: {
   issues: Issue[];
   workingAgents: WorkingAgentSummary[] | undefined;
+  allowDag?: boolean;
   isRefreshing: boolean;
   facetCountsExact: boolean;
   tableFacetCounts?: IssueTableFacetsResponse;
@@ -36,6 +38,7 @@ function IssuesSurfaceHeader({
     <IssuesHeader
       scopedIssues={issues}
       workingAgents={workingAgents}
+      allowDag={allowDag}
       dateFilter={dateFilter}
       onDateFilterChange={setDateFilter}
       isRefreshing={isRefreshing}
@@ -59,13 +62,19 @@ export function IssuesPage() {
 
       <IssueSurface
         scope={{ type: "workspace", actorKind: scope }}
-        modes={["board", "list", "table", "swimlane"]}
+        modes={["board", "list", "table", "swimlane", "dag"]}
         batchToolbar="list"
         renderHeader={({ controller }) => (
           <IssuesSurfaceHeader
             issues={controller.surfaceIssues}
             workingAgents={controller.workingAgents}
-            isRefreshing={controller.isRefreshing}
+            allowDag={controller.allowDag}
+            isRefreshing={
+              controller.isRefreshing ||
+              (controller.viewMode === "dag" &&
+                controller.dagGraph.isFetching &&
+                !controller.dagGraph.isPending)
+            }
             facetCountsExact={controller.facetCountsExact}
             tableFacetCounts={controller.tableFacetCounts}
             onTableFacetChange={controller.setActiveTableFacet}

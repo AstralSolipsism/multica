@@ -1749,4 +1749,233 @@ describe("useIssueSurfaceController", () => {
     ]);
     expect(getAgentTaskSnapshot).not.toHaveBeenCalled();
   });
+
+  describe("dag mode", () => {
+    const graphFixture = {
+      schemaVersion: 1 as const,
+      snapshotId: "snap-1",
+      topologyId: "topo-1",
+      capturedAt: "2026-09-10T00:00:00Z",
+      complete: true as const,
+      scope: { type: "project" as const, projectId: "p1" },
+      focusIssueId: null,
+      matchedCount: 1,
+      contextCount: 0,
+      nodes: [
+        {
+          id: "g1",
+          identifier: "P1-1",
+          title: "Graph task",
+          status: "todo",
+          statusCategory: "todo",
+          revision: 1,
+          parentIssueId: null,
+          hasRestrictedParent: false,
+          projectId: "p1",
+          stage: 1,
+          priority: "none",
+          assignee: null,
+          role: "match" as const,
+          runSummary: {
+            queued: 0,
+            dispatched: 0,
+            running: 0,
+            waitingLocalDirectory: 0,
+            capturedAt: "2026-09-10T00:00:00Z",
+          },
+          dependencySummary: {
+            visibleUnsatisfiedCount: 0,
+            hasRestrictedBlockers: false,
+            dependencyVersion: "v-g1",
+          },
+        },
+      ],
+      edges: [],
+      projects: [{ id: "p1", title: "Project One" }],
+      hasRestrictedContext: false,
+    };
+
+    it("review F3: preserves a feature fold when agents scope excludes its member-assigned child", async () => {
+      const { pruneDagCollapsedIds } = await import("../dag/dag-projection");
+      // The same workspace:agents surface previously contained F and its
+      // child C, both assigned to agents, and the user folded F. C was then
+      // assigned to a member: it is outside the query, not deleted/reparented.
+      const graph = {
+        ...graphFixture,
+        scope: { type: "workspace" as const, projectId: null },
+        nodes: [{
+          ...graphFixture.nodes[0], id: "feature",
+          assignee: { type: "agent", id: "agent-1" },
+        }],
+      };
+      const getIssueGraph = vi.fn(async () => graph);
+      setApiInstance({
+        listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+        getIssueGraph,
+        listProjects: vi.fn(() => never()),
+        getAgentTaskSnapshot: vi.fn(() => never()),
+        getWorkspaceWorkingAgents: vi.fn(async () => []),
+        getChildIssueProgress: vi.fn(() => never()),
+      } as unknown as ApiClient);
+      const store = getIssueSurfaceViewStore("workspace:agents");
+      store.getState().setViewMode("dag");
+      store.getState().setDagCollapsedIds(["issue:feature"]);
+      const { result } = renderHook(
+        () => useIssueSurfaceController({
+          scope: { type: "workspace", actorKind: "agents" },
+          modes: ["dag"],
+        }),
+        { wrapper: makeWrapper(qc, "workspace:agents") },
+      );
+      await waitFor(() => expect(result.current.dagGraph.data).toBeTruthy());
+      expect(result.current.tableQuerySpec.scope).toEqual({
+        kind: "workspace", assignee_types: ["agent", "squad"],
+      });
+      expect(result.current.hasActiveFilters).toBe(false);
+      const response = result.current.dagGraph.data!;
+      expect(pruneDagCollapsedIds(
+        store.getState().dagCollapsedIds!, response,
+        result.current.dagMembershipComplete && !response.hasRestrictedContext,
+      )).toContain("issue:feature");
+    });
+
+    it("review round 4 F3: project scope cannot prove that a cross-project child disappeared", async () => {
+      const { pruneDagCollapsedIds } = await import("../dag/dag-projection");
+      // F and C were both in P1 when issue:F was folded. C then moved to P2
+      // without changing its parent F. The P1 query now returns only F;
+      // its complete=true is transaction completeness, not global membership.
+      const graph = {
+        ...graphFixture,
+        nodes: [{ ...graphFixture.nodes[0], id: "feature" }],
+      };
+      const getIssueGraph = vi.fn(async () => graph);
+      setApiInstance({
+        listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+        getIssueGraph,
+        listProjects: vi.fn(() => never()),
+        getAgentTaskSnapshot: vi.fn(() => never()),
+        getWorkspaceWorkingAgents: vi.fn(async () => []),
+        getChildIssueProgress: vi.fn(() => never()),
+      } as unknown as ApiClient);
+      const store = getIssueSurfaceViewStore("project:p1");
+      store.getState().setViewMode("dag");
+      store.getState().setDagCollapsedIds(["issue:feature"]);
+      const { result } = renderHook(
+        () => useIssueSurfaceController({
+          scope: { type: "project", projectId: "p1" },
+          modes: ["dag"],
+        }),
+        { wrapper: makeWrapper(qc, "project:p1") },
+      );
+      await waitFor(() => expect(result.current.dagGraph.data).toBeTruthy());
+      expect(result.current.tableQuerySpec.scope).toEqual({
+        kind: "project", project_id: "p1",
+      });
+      expect(result.current.hasActiveFilters).toBe(false);
+      const response = result.current.dagGraph.data!;
+      expect(pruneDagCollapsedIds(
+        store.getState().dagCollapsedIds!, response,
+        result.current.dagMembershipComplete && !response.hasRestrictedContext,
+      )).toContain("issue:feature");
+    });
+
+    it("keeps the graph query off in list-shaped modes", async () => {
+      const store = getIssueSurfaceViewStore("project:p1");
+      act(() => store.getState().setViewMode("list"));
+
+      const { result } = renderHook(
+        () =>
+          useIssueSurfaceController({
+            scope: { type: "project", projectId: "p1" },
+            modes: ["board", "list", "swimlane", "dag"],
+          }),
+        { wrapper: makeWrapper(qc, "project:p1") },
+      );
+
+      // The list branch fires; the graph query stays dormant off-dag.
+      await waitFor(() => expect(listIssueTableRows).toHaveBeenCalled());
+      expect(result.current.viewMode).toBe("list");
+      expect(result.current.allowDag).toBe(true);
+      expect(result.current.dagGraph.isPending).toBe(false);
+      expect(result.current.dagGraph.data).toBeUndefined();
+    });
+
+    it("loads the complete graph in dag mode and skips list branches", async () => {
+      const getIssueGraph = vi.fn(async () => graphFixture);
+      setApiInstance({
+        listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+        getIssueGraph,
+        listProjects: vi.fn(() => never()),
+        getAgentTaskSnapshot: vi.fn(() => never()),
+        getWorkspaceWorkingAgents: vi.fn(async () => []),
+        getChildIssueProgress: vi.fn(() => never()),
+      } as unknown as ApiClient);
+
+      const store = getIssueSurfaceViewStore("project:p1");
+      act(() => store.getState().setViewMode("dag"));
+
+      const { result } = renderHook(
+        () =>
+          useIssueSurfaceController({
+            scope: { type: "project", projectId: "p1" },
+            modes: ["board", "list", "swimlane", "dag"],
+          }),
+        { wrapper: makeWrapper(qc, "project:p1") },
+      );
+
+      await waitFor(() => expect(result.current.dagGraph.data).toBeTruthy());
+      expect(result.current.viewMode).toBe("dag");
+      expect(getIssueGraph).toHaveBeenCalledOnce();
+      // The graph request carries the surface's project scope and filters.
+      const [wsId, request] = getIssueGraph.mock.calls[0] as unknown as [
+        string,
+        { query: { scope: { kind: string; project_id?: string } } },
+      ];
+      expect(wsId).toBe("ws-1");
+      expect(request.query.scope).toEqual({ kind: "project", project_id: "p1" });
+      // No list-shaped branch/facet fetch fires while dag is active.
+      expect(listIssueTableRows).not.toHaveBeenCalled();
+      // DAG owns its empty/loading states; the surface never asserts them.
+      expect(result.current.isEmpty).toBe(false);
+      expect(result.current.facetCountsExact).toBe(false);
+    });
+
+    it("falls back when the surface never opted into dag", async () => {
+      const store = getIssueSurfaceViewStore("project:p1");
+      act(() => store.getState().setViewMode("dag"));
+
+      const { result } = renderHook(
+        () =>
+          useIssueSurfaceController({
+            scope: { type: "project", projectId: "p1" },
+            modes: ["board", "list", "swimlane"],
+          }),
+        { wrapper: makeWrapper(qc, "project:p1") },
+      );
+
+      await waitFor(() => expect(result.current.viewMode).toBe("board"));
+      expect(result.current.allowDag).toBe(false);
+      expect(result.current.dagGraph.data).toBeUndefined();
+      expect(result.current.dagGraph.isPending).toBe(false);
+    });
+
+    it("never constructs the graph request on a my-scope surface", async () => {
+      const store = getIssueSurfaceViewStore("my:user-1:assigned");
+      act(() => store.getState().setViewMode("dag"));
+
+      const { result } = renderHook(
+        () =>
+          useIssueSurfaceController({
+            scope: { type: "my", relation: "assigned", userId: "user-1" },
+            modes: ["dag"],
+          }),
+        { wrapper: makeWrapper(qc, "my:user-1:assigned") },
+      );
+
+      // Even forced into the mode list, a my-scope surface cannot serve the
+      // graph: no request is built and the branchless fallback stands.
+      expect(result.current.allowDag).toBe(false);
+      expect(result.current.dagGraph.data).toBeUndefined();
+    });
+  });
 });
