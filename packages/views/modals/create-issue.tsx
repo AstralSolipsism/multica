@@ -2,7 +2,7 @@
 
 import { issueStatusCategory } from "@multica/core/issues";
 import { useState, useRef, useEffect, useLayoutEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import { AppLink, resolveClickIntent, useNavigation } from "../navigation";
 import {
   AlertTriangle,
@@ -65,12 +65,12 @@ import { ShortcutKeycaps } from "../common/shortcut-keycaps";
 import { StatusIcon, StatusPicker, PriorityIcon, PriorityPicker, StagePicker, AssigneePicker, StartDatePicker, DueDatePicker, LabelPicker } from "../issues/components";
 import { maxSiblingStage } from "../issues/components/pickers/stage-picker";
 import { ProjectPicker } from "../projects/components/project-picker";
-import { useIssueTriggerPreview, useIssueTriggerPreviewCheck } from "../issues/hooks/use-issue-trigger-preview";
+import { useIssueTriggerPreview } from "../issues/hooks/use-issue-trigger-preview";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
-import { useIssueDraftStore, type IssueCreateDraft, type IssueDraftPrerequisite } from "@multica/core/issues/stores/draft-store";
+import { useIssueDraftStore, type IssueCreateDraft, type PendingDependencyCreate } from "@multica/core/issues/stores/draft-store";
 import { useCreateModeStore } from "@multica/core/issues/stores/create-mode-store";
 import { useQuickCreateStore } from "@multica/core/issues/stores/quick-create-store";
 import {
@@ -81,6 +81,7 @@ import { issueDetailOptions, childIssuesOptions } from "@multica/core/issues/que
 import {
   useCreateCommentSubIssue,
   useCreateIssue,
+  useIssueTriggerPreviewCheck,
   useUpdateIssue,
 } from "@multica/core/issues/mutations";
 import { useAttachLabelToIssue } from "@multica/core/labels";
@@ -90,11 +91,11 @@ import {
 } from "@multica/core/properties";
 import {
   ApiError,
+  canonicalDependencyMutation,
   dependencyErrorDetails,
   DuplicateIssueErrorBodySchema,
   type DependencyMutationFields,
   type DuplicateIssueErrorBody,
-  type IssueDependencyPreview,
   parseWithFallback,
 } from "@multica/core/api";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
@@ -110,6 +111,26 @@ import { DependencyBlockedList } from "../issues/components/dependency-prerequis
 import { useT } from "../i18n";
 import { SourceContextPreviewCard, useSourceContextFailureMessage } from "./source-context-preview";
 import { useIssueLimitUpgradePrompt } from "./use-issue-limit-upgrade-prompt";
+
+/** Whether a held one-shot confirmation can still be consumed (5-minute
+ *  server TTL). A malformed expiry reads as dead, never replayed. */
+function permitExpired(pending: PendingDependencyCreate): boolean {
+  const at = Date.parse(pending.item.confirmation?.expiresAt ?? "");
+  return !Number.isFinite(at) || at <= Date.now();
+}
+
+/** Digest-level equality between the operation a permit signed and the one
+ *  on screen — key order and blocked_by ordering are presentation details,
+ *  not a different operation (same rule as the server's payload digest). */
+function sameDependencyMutation(
+  a: CreateIssueRequest & DependencyMutationFields,
+  b: CreateIssueRequest & DependencyMutationFields,
+): boolean {
+  return (
+    JSON.stringify(canonicalDependencyMutation(a)) ===
+    JSON.stringify(canonicalDependencyMutation(b))
+  );
+}
 
 // ---------------------------------------------------------------------------
 // ManualCreatePanel — manual-mode body of the create-issue dialog. Renders
@@ -362,40 +383,44 @@ export function ManualCreatePanel({
   // object, and we never need to hydrate from an ID the way we do for parent.
   const [childIssues, setChildIssues] = useState<Issue[]>([]);
   const [childPickerOpen, setChildPickerOpen] = useState(false);
-  // Prerequisites (blocked_by) queued for the compound create. Persisted in
-  // the manual draft (id + display label), so closing and reopening the
-  // dialog — including navigating out to inspect a blocker from the
-  // confirmation dialog — restores them exactly like the title (OL-44
-  // review): the constraint set the user registered is never silently
-  // dropped. Not carried to the next issue as a preference.
-  const [blockedByIssues, setBlockedByIssues] = useState<IssueDraftPrerequisite[]>(
+  // Prerequisites (blocked_by) queued for the compound create. Only the IDs
+  // persist in the manual draft — closing and reopening the dialog restores
+  // them exactly like the title (OL-44 review), while the chips' display
+  // labels come from the detail cache/Query because server data belongs
+  // there, not in a persisted snapshot (CLAUDE.md state rules).
+  const [blockedByIds, setBlockedByIds] = useState<string[]>(
     () => draft.manual.blockedBy ?? [],
   );
-  const updateBlockedBy = (list: IssueDraftPrerequisite[]) => {
-    setBlockedByIssues(list);
-    setManual({ blockedBy: list });
+  const updateBlockedBy = (ids: string[]) => {
+    setBlockedByIds(ids);
+    setManual({ blockedBy: ids });
   };
   const [blockedByPickerOpen, setBlockedByPickerOpen] = useState(false);
-  // The submit-time dependency confirmation (OL-41): set when the preview of
-  // the exact create body reports unfinished prerequisites. The dialog below
-  // lists them and — only with the server-signed confirmation — offers the
-  // one-shot "create and start anyway". Local to this dialog (not the modal
-  // store) so it stacks over the create form like the pickers do.
-  const [dependencyConfirm, setDependencyConfirm] = useState<{
-    request: CreateIssueRequest & DependencyMutationFields;
-    item: IssueDependencyPreview;
-    /** Set after a stale/expired retry re-previewed: tells the user the
-     *  reasons on screen are the current ones. */
-    refreshed?: boolean;
-    /** Set when the confirmed write's outcome is UNKNOWN (transport/5xx):
-     *  the dialog stays open with the original permit so retry replays the
-     *  same requestId — never a second create (OL-44 review P1). */
-    uncertain?: boolean;
-  } | null>(null);
+  // The submit-time dependency confirmation (OL-41): when the preview of the
+  // exact create body reports unfinished prerequisites, the pending body +
+  // server-signed confirmation live in the draft store (runtime-only) so
+  // they survive "Back to editing", dialog close, and navigating out to
+  // inspect a blocker — the undetermined operation must be restored, never
+  // silently replaced by a fresh attempt (OL-44 re-review P1). `confirmOpen`
+  // is only the dialog's visibility; the permit outlives it.
+  const pendingDependencyCreate = useIssueDraftStore((s) => s.pendingDependencyCreate);
+  const setPendingDependencyCreate = useIssueDraftStore((s) => s.setPendingDependencyCreate);
+  const [confirmOpen, setConfirmOpen] = useState(() => {
+    const pending = useIssueDraftStore.getState().pendingDependencyCreate;
+    return !!pending && !permitExpired(pending);
+  });
   const [overrideCreating, setOverrideCreating] = useState(false);
+  const wsId = useWorkspaceId();
+  // Chip labels for queued prerequisites — resolved live from the detail
+  // cache (a reopened draft's picks are usually already warm); the raw id
+  // stays as the honest fallback while a label is unknown.
+  const blockedByDetails = useQueries({
+    queries: blockedByIds.map((id) => issueDetailOptions(wsId, id)),
+  });
+  const blockedByLabelOf = (id: string, index: number): string =>
+    blockedByDetails[index]?.data?.identifier ?? id;
   // Fetch parent issue details for the chip (status/identifier/title).
   // List cache usually has it already, so this resolves synchronously.
-  const wsId = useWorkspaceId();
   const { categoryOf: draftStatusCategory } = useIssueStatuses(wsId);
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(wsId));
   const { data: parentIssue } = useQuery({
@@ -578,8 +603,8 @@ export function ManualCreatePanel({
     // Stage is only meaningful for a sub-issue (relative to its siblings).
     stage: parentIssueId && stage != null ? stage : undefined,
     project_id: projectId,
-    ...(blockedByIssues.length > 0
-      ? { blockedBy: blockedByIssues.map((i) => i.id).sort() }
+    ...(blockedByIds.length > 0
+      ? { blockedBy: [...blockedByIds].sort() }
       : {}),
   });
 
@@ -745,9 +770,29 @@ export function ManualCreatePanel({
   // answer re-previews the same body for a fresh challenge and current
   // reasons — the human always re-decides; nothing auto-retries (OL-41).
   const submitDependencyOverride = async () => {
-    const pending = dependencyConfirm;
+    const pending = pendingDependencyCreate;
     const confirmation = pending?.item.confirmation ?? null;
     if (!pending || !confirmation || overrideCreating) return;
+    // The permit is digest-bound to the exact body it signed. Before
+    // replaying it, prove the draft on screen still IS that operation — a
+    // user who edited after an undetermined attempt must get a fresh
+    // preview, not a replay against changed content.
+    const currentDescription = descEditorRef.current?.getMarkdown()?.trim() || undefined;
+    const currentAttachmentIds = draftAttachments
+      .filter((a) => contentReferencesAttachment(currentDescription ?? "", a))
+      .map((a) => a.id);
+    if (!sameDependencyMutation(buildCreateRequest(currentDescription, currentAttachmentIds), pending.request)) {
+      setPendingDependencyCreate(null);
+      setConfirmOpen(false);
+      toast.error(t(($) => $.create_issue.dependency_confirm.changed_note));
+      return;
+    }
+    if (permitExpired(pending)) {
+      setPendingDependencyCreate(null);
+      setConfirmOpen(false);
+      toast.error(t(($) => $.run_confirm.expired_notice));
+      return;
+    }
     setOverrideCreating(true);
     try {
       const issue = await createIssueMutation.mutateAsync({
@@ -758,7 +803,8 @@ export function ManualCreatePanel({
         },
       });
       await finalizeCreatedIssue(issue);
-      setDependencyConfirm(null);
+      setPendingDependencyCreate(null);
+      setConfirmOpen(false);
       acceptSubmittedDraft();
     } catch (err) {
       const dep = dependencyErrorDetails(err);
@@ -776,15 +822,17 @@ export function ManualCreatePanel({
           });
           const item = refreshed.blocked?.[0] ?? null;
           if (item) {
-            setDependencyConfirm({ request: pending.request, item, refreshed: true });
+            setPendingDependencyCreate({ request: pending.request, item, refreshed: true });
           } else {
             // The prerequisites completed in the meantime — a plain create
             // now starts the run without any override.
-            setDependencyConfirm(null);
+            setPendingDependencyCreate(null);
+            setConfirmOpen(false);
             toast.success(t(($) => $.create_issue.dependency_now_ready));
           }
         } catch {
-          setDependencyConfirm(null);
+          setPendingDependencyCreate(null);
+          setConfirmOpen(false);
           toast.error(t(($) => $.create_issue.toast_failed));
         }
       } else if (!(err instanceof ApiError) || err.status >= 500) {
@@ -793,14 +841,15 @@ export function ManualCreatePanel({
         // its one-shot permit — replaying the same requestId returns the
         // original task (OL-41 idempotent replay), while discarding it and
         // re-previewing would issue a NEW permit that could create and run
-        // twice (OL-44 review P1). Only a definite refusal (dependency code
-        // above, or any other 4xx below) clears the permit.
+        // twice (OL-44 review P1). The permit stays in the draft store even
+        // if the dialog now closes. Only a definite refusal (dependency code
+        // above, or any other 4xx below) clears it.
         toast.error(
           err instanceof Error && err.message
             ? err.message
             : t(($) => $.create_issue.toast_failed),
         );
-        setDependencyConfirm({ ...pending, uncertain: true });
+        setPendingDependencyCreate({ ...pending, uncertain: true });
       } else {
         // Definite refusal (4xx, nothing committed) — including a credential
         // that may not override. Close back to the form with the reason.
@@ -811,7 +860,8 @@ export function ManualCreatePanel({
               ? err.message
               : t(($) => $.create_issue.toast_failed),
         );
-        setDependencyConfirm(null);
+        setPendingDependencyCreate(null);
+        setConfirmOpen(false);
       }
     } finally {
       setOverrideCreating(false);
@@ -870,7 +920,21 @@ export function ManualCreatePanel({
         // compound write re-checks authoritatively and 409s below.
         const wantsRun =
           (assigneeType === "agent" || assigneeType === "squad") && !!assigneeId;
-        if (wantsRun && (blockedByIssues.length > 0 || parentIssueId)) {
+        if (wantsRun && (blockedByIds.length > 0 || parentIssueId)) {
+          // A previous attempt with this exact body may still be
+          // UNDETERMINED (transport failure): restore its confirmation
+          // instead of minting a fresh permit — replaying the original
+          // requestId is the only path that cannot double-create.
+          const held = useIssueDraftStore.getState().pendingDependencyCreate;
+          if (held && !permitExpired(held) && sameDependencyMutation(held.request, request)) {
+            setConfirmOpen(true);
+            return false;
+          }
+          if (held) {
+            // Expired, or the operation itself changed — either way the old
+            // permit is determined-dead and safe to replace.
+            setPendingDependencyCreate(null);
+          }
           try {
             const previewResult = await previewCheck.mutateAsync({
               isCreate: true,
@@ -878,7 +942,8 @@ export function ManualCreatePanel({
             });
             const blockedItem = previewResult.blocked?.[0] ?? null;
             if (blockedItem && blockedItem.reasonCode === "dependency_unsatisfied") {
-              setDependencyConfirm({ request, item: blockedItem });
+              setPendingDependencyCreate({ request, item: blockedItem });
+              setConfirmOpen(true);
               return false;
             }
           } catch {
@@ -888,6 +953,9 @@ export function ManualCreatePanel({
         }
         attemptedRequest = request;
         issue = await createIssueMutation.mutateAsync(request);
+        // A committed create determines any held pending operation: its
+        // permit is spent, never replayable again.
+        setPendingDependencyCreate(null);
       }
 
       await finalizeCreatedIssue(issue);
@@ -932,7 +1000,8 @@ export function ManualCreatePanel({
             });
             const item = previewResult.blocked?.[0] ?? null;
             if (item) {
-              setDependencyConfirm({ request: attemptedRequest, item, refreshed: true });
+              setPendingDependencyCreate({ request: attemptedRequest, item, refreshed: true });
+              setConfirmOpen(true);
               return false;
             }
           } catch {
@@ -1239,7 +1308,7 @@ export function ManualCreatePanel({
               assigneeId={assigneeId}
               status={status}
               parentIssueId={parentIssueId}
-              blockedBy={blockedByIssues.map((i) => i.id)}
+              blockedBy={blockedByIds}
             />
 
             {/* Property toolbar — each field renders per the Settings → Preferences → Issue creation
@@ -1458,22 +1527,22 @@ export function ManualCreatePanel({
 
               {/* Prerequisite chips — one per queued blocked_by edge, sent with
                   the create in the same compound write (OL-44). */}
-              {blockedByIssues.map((b) => (
+              {blockedByIds.map((b, i) => (
                 <div
-                  key={b.id}
+                  key={b}
                   className="inline-flex items-center rounded-full border text-caption transition-colors hover:bg-accent/60"
                 >
                   <div className="flex items-center gap-1.5 py-1 pl-2.5">
                     <Workflow className="size-3 text-muted-foreground" />
-                    <span>{t(($) => $.create_issue.prerequisite_chip, { identifier: b.identifier })}</span>
+                    <span>{t(($) => $.create_issue.prerequisite_chip, { identifier: blockedByLabelOf(b, i) })}</span>
                   </div>
                   <button
                     type="button"
                     onClick={() =>
-                      updateBlockedBy(blockedByIssues.filter((x) => x.id !== b.id))
+                      updateBlockedBy(blockedByIds.filter((x) => x !== b))
                     }
                     className="p-1 pr-2 text-muted-foreground hover:text-foreground cursor-pointer"
-                    aria-label={t(($) => $.create_issue.remove_prerequisite_aria, { identifier: b.identifier })}
+                    aria-label={t(($) => $.create_issue.remove_prerequisite_aria, { identifier: blockedByLabelOf(b, i) })}
                   >
                     <XIcon className="size-3" />
                   </button>
@@ -1668,35 +1737,29 @@ export function ManualCreatePanel({
               title={t(($) => $.create_issue.prerequisite_picker.title)}
               description={t(($) => $.create_issue.prerequisite_picker.description)}
               excludeIds={[
-                ...blockedByIssues.map((b) => b.id),
+                ...blockedByIds,
                 ...childIssues.map((c) => c.id),
                 ...(parentIssueId ? [parentIssueId] : []),
               ]}
               onSelect={(selected) => {
                 updateBlockedBy(
-                  blockedByIssues.some((x) => x.id === selected.id)
-                    ? blockedByIssues
-                    : [
-                        ...blockedByIssues,
-                        {
-                          id: selected.id,
-                          identifier: selected.identifier,
-                          title: selected.title,
-                        },
-                      ],
+                  blockedByIds.includes(selected.id)
+                    ? blockedByIds
+                    : [...blockedByIds, selected.id],
                 );
               }}
             />
 
             {/* One-shot human release for a create blocked by unfinished
                 prerequisites (OL-41). The listed body is byte-for-byte the one
-                the preview signed; confirming replays it with the challenge,
-                canceling returns to the form untouched. */}
-            {dependencyConfirm && (
+                the preview signed; confirming replays it with the challenge.
+                Closing keeps the permit in the draft store — an undetermined
+                attempt is restored on resubmit, never silently re-minted. */}
+            {confirmOpen && pendingDependencyCreate && (
               <Dialog
                 open
                 onOpenChange={(v) => {
-                  if (!v && !overrideCreating) setDependencyConfirm(null);
+                  if (!v && !overrideCreating) setConfirmOpen(false);
                 }}
               >
                 <DialogContent>
@@ -1715,24 +1778,24 @@ export function ManualCreatePanel({
                     </div>
                     <DependencyBlockedList
                       wsId={wsId}
-                      items={[dependencyConfirm.item]}
+                      items={[pendingDependencyCreate.item]}
                       onOpenIssue={(targetId) => {
-                        // Inspecting a blocker abandons the un-confirmed
-                        // create; the draft persists for reopening.
+                        // Inspecting a blocker leaves the form; the draft AND
+                        // the pending permit persist for reopening.
                         router.push(p.issueDetail(targetId));
-                        setDependencyConfirm(null);
+                        setConfirmOpen(false);
                         onClose();
                       }}
                     />
                     <p className="text-micro text-muted-foreground">
                       {t(($) => $.run_confirm.blocked_one_time_note)}
                     </p>
-                    {dependencyConfirm.refreshed && (
+                    {pendingDependencyCreate.refreshed && (
                       <p className="text-micro text-warning">
                         {t(($) => $.run_confirm.stale_notice)}
                       </p>
                     )}
-                    {dependencyConfirm.uncertain && (
+                    {pendingDependencyCreate.uncertain && (
                       <p className="text-micro text-warning">
                         {t(($) => $.create_issue.dependency_confirm.uncertain_note)}
                       </p>
@@ -1743,13 +1806,13 @@ export function ManualCreatePanel({
                       type="button"
                       variant="outline"
                       disabled={overrideCreating}
-                      onClick={() => setDependencyConfirm(null)}
+                      onClick={() => setConfirmOpen(false)}
                     >
                       {t(($) => $.create_issue.dependency_confirm.cancel)}
                     </Button>
                     <Button
                       type="button"
-                      disabled={overrideCreating || !dependencyConfirm.item.confirmation}
+                      disabled={overrideCreating || !pendingDependencyCreate.item.confirmation}
                       onClick={() => void submitDependencyOverride()}
                     >
                       {overrideCreating ? (

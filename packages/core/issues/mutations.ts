@@ -1,4 +1,4 @@
-import { invalidateIssueQueries } from "./invalidation";
+import { invalidateDependencyQueries, invalidateIssueQueries } from "./invalidation";
 import { normalizeStatusPatch } from "./status-category";
 import { hashKey, useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { api } from "../api";
@@ -32,6 +32,7 @@ import type { InboxItem, Issue, IssueReaction } from "../types";
 import type {
   CreateCommentSubIssueManualRequest,
   CreateIssueRequest,
+  IssueTriggerPreviewParams,
   ListIssuesCache,
   MoveIssueRequest,
   UpdateIssueRequest,
@@ -121,7 +122,7 @@ function useIssueCreateMutation<TVariables>(
       // A compound create may have registered prerequisite edges: refresh the
       // dependency projections (the new issue's own inherited set among them).
       if ("dependencies" in newIssue) {
-        qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
+        void invalidateDependencyQueries(qc, wsId);
       }
     },
     onSettled: () => {
@@ -143,6 +144,21 @@ export function useCreateIssue() {
         ? api.createIssueWithDependencies(data as CreateIssueWithDependenciesRequest)
         : api.createIssue(data),
   );
+}
+
+/**
+ * Imperative one-shot trigger preview for submit-time flows
+ * (create-with-relations, override retry): one authoritative preview of the
+ * exact body being submitted, fired at a chosen moment rather than mounted
+ * like the declarative views-side query hook. Mutation semantics because
+ * this is a deliberately-triggered server interaction, and TanStack owns
+ * all of those (CLAUDE.md: no bare `api.*` calls in components).
+ */
+export function useIssueTriggerPreviewCheck() {
+  return useMutation({
+    mutationFn: (params: IssueTriggerPreviewParams) =>
+      api.previewIssueTrigger(params),
+  });
 }
 
 export function useCreateCommentSubIssue() {
@@ -288,7 +304,7 @@ export function useUpdateIssue() {
       // — refresh projections so the UI shows the current picture, not the
       // snapshot the failed write was built from.
       if (hasDependencyFields(vars)) {
-        qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
+        void invalidateDependencyQueries(qc, wsId);
         void invalidateIssueQueries(qc, wsId, "graph");
       }
     },
@@ -346,7 +362,7 @@ export function useUpdateIssue() {
         if (dependencies) {
           qc.setQueryData(issueKeys.dependencies(wsId, serverIssue.id), dependencies);
         }
-        qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
+        void invalidateDependencyQueries(qc, wsId);
         void invalidateIssueQueries(qc, wsId, "graph");
       }
       reconcileIssueFullSnapshotRevision(
@@ -419,7 +435,7 @@ export function useUpdateIssue() {
         Object.prototype.hasOwnProperty.call(vars, "parent_issue_id") ||
         hasDependencyFields(vars)
       ) {
-        qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
+        void invalidateDependencyQueries(qc, wsId);
       }
     },
   });
@@ -509,7 +525,7 @@ export function useDeleteIssue() {
       qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });
       qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
       // The deleted issue may have been a registered prerequisite.
-      qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
+      void invalidateDependencyQueries(qc, wsId);
       if (ctx?.metadata) invalidateDeletedIssueParentCaches(qc, wsId, ctx.metadata);
     },
   });
@@ -687,10 +703,19 @@ export function useBatchUpdateIssues() {
           Object.prototype.hasOwnProperty.call(_vars.updates, "project_id"),
       });
       qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
-      // A batch carrying per-item overrides changed relation-gated dispatch
-      // state; refresh dependency projections and any loaded graph snapshot.
+      // Dependency projections read the CURRENT status/parent chain of every
+      // registered prerequisite — so a batch that moved status or parents
+      // refreshes them locally even while the WS event is still in transit
+      // (or the socket is down). A batch carrying per-item overrides changed
+      // relation-gated dispatch state and refreshes the graph alongside.
+      if (
+        _vars.updates.status !== undefined ||
+        Object.prototype.hasOwnProperty.call(_vars.updates, "parent_issue_id")
+      ) {
+        void invalidateDependencyQueries(qc, wsId);
+      }
       if (_vars.dependencyOverrides && Object.keys(_vars.dependencyOverrides).length > 0) {
-        qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
+        void invalidateDependencyQueries(qc, wsId);
         void invalidateIssueQueries(qc, wsId, "graph");
       }
       if (ctx) {
@@ -834,7 +859,7 @@ export function useBatchDeleteIssues() {
       qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });
       qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
       // Any deleted issue may have been a registered prerequisite.
-      qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
+      void invalidateDependencyQueries(qc, wsId);
       if (ctx?.parentIssueIds && ctx.parentIssueIds.size > 0) {
         invalidateDeletedIssueParentCaches(qc, wsId, {
           parentIssueIds: Array.from(ctx.parentIssueIds),

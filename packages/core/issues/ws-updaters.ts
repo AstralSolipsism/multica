@@ -1,4 +1,4 @@
-import { invalidateIssueQueries } from "./invalidation";
+import { invalidateDependencyQueries, invalidateIssueQueries } from "./invalidation";
 import { issueStatusCategory } from "./status-category";
 import type { QueryClient } from "@tanstack/react-query";
 import { issueKeys } from "./queries";
@@ -516,7 +516,7 @@ export function onIssueUpdated(
   // a bumped revision, so gating on the dims would strand an open detail
   // page's prerequisite list. Invalidate the prefix on every accepted event:
   // only mounted observers (open detail/editor) actually refetch.
-  qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
+  void invalidateDependencyQueries(qc, wsId);
   // Group counts, branch membership and hierarchy are server-owned. Never
   // guess deltas from a partial branch; refetch the active Table queries.
   qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
@@ -784,5 +784,5 @@ export function onIssueDeleted(
   qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
   // A deleted issue may have been a registered prerequisite — projections
   // referencing it must re-read instead of pointing at a ghost.
-  qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
+  void invalidateDependencyQueries(qc, wsId);
 }

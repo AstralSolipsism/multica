@@ -9,6 +9,26 @@ vi.mock("@multica/core/api", () => ({
   api: {
     previewIssueTrigger: vi.fn(),
   },
+  // Same canonicalization rule as the real helper (sorted keys; blockedBy as
+  // an ordered set) — the signature tests depend on its exact semantics.
+  canonicalDependencyMutation: (mutation: Record<string, unknown>) => {
+    const canon = (v: unknown): unknown => {
+      if (Array.isArray(v)) return v.map(canon);
+      if (v && typeof v === "object") {
+        const out: Record<string, unknown> = {};
+        for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+          const val = (v as Record<string, unknown>)[k];
+          if (val === undefined) continue;
+          out[k] = canon(val);
+        }
+        return out;
+      }
+      return v;
+    };
+    const out = canon(mutation) as Record<string, unknown>;
+    if (Array.isArray(out.blockedBy)) out.blockedBy = [...out.blockedBy].sort();
+    return out;
+  },
 }));
 
 const previewIssueTrigger = vi.mocked(api.previewIssueTrigger);

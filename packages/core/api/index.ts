@@ -16,7 +16,7 @@ export type {
 } from "./client";
 export type { GlmQuotaStatus, GlmQuotaSnapshot, GlmQuotaWindow } from "./schemas";
 export { parseWithFallback, setSchemaLogger } from "./schema";
-export { dependencyReadiness } from "./dependency-schemas";
+export { dependencyReadiness, canonicalDependencyMutation } from "./dependency-schemas";
 export { issueGraphReadiness } from "./issue-graph-schemas";
 export type { IssueGraph, IssueGraphNode, IssueGraphRequest } from "./issue-graph-schemas";
 export type {

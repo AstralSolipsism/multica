@@ -1,6 +1,6 @@
 "use client";
 
-import { invalidateIssueQueries } from "../issues/invalidation";
+import { invalidateDependencyQueries, invalidateIssueQueries } from "../issues/invalidation";
 import { useEffect, useRef } from "react";
 import { useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import type { WSClient } from "../api/ws-client";
@@ -841,7 +841,7 @@ export function useRealtimeSync(
           // A re-categorized status changes which prerequisites count as done
           // (the projection resolves categories server-side), so open
           // dependency views re-read alongside the catalog.
-          qc.invalidateQueries({ queryKey: issueKeys.dependenciesAll(wsId) });
+          void invalidateDependencyQueries(qc, wsId);
         }
       },
       pin: () => {

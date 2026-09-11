@@ -43,6 +43,7 @@ const mockSetActiveMode = vi.hoisted(() => vi.fn());
 const mockClearDraft = vi.hoisted(() => vi.fn());
 const mockSetLastAssignee = vi.hoisted(() => vi.fn());
 const mockSetKeepOpen = vi.hoisted(() => vi.fn());
+const mockSetPendingDependencyCreate = vi.hoisted(() => vi.fn());
 const mockToastCustom = vi.hoisted(() => vi.fn());
 const mockToastDismiss = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
@@ -150,12 +151,21 @@ const mockDraftStore = {
   draft: emptyIssueDraft(),
   lastAssigneeType: undefined as "agent" | "squad" | "member" | undefined,
   lastAssigneeId: undefined as string | undefined,
+  pendingDependencyCreate: undefined as
+    | {
+        request: Record<string, unknown>;
+        item: { confirmation: { requestId: string; challenge: string; expiresAt: string } | null };
+        uncertain?: boolean;
+        refreshed?: boolean;
+      }
+    | undefined,
   setShared: mockSetShared,
   setManual: mockSetManual,
   setAgent: mockSetAgent,
   setActiveMode: mockSetActiveMode,
   clearDraft: mockClearDraft,
   setLastAssignee: mockSetLastAssignee,
+  setPendingDependencyCreate: mockSetPendingDependencyCreate,
   hasDraft: () => false,
 };
 
@@ -232,9 +242,6 @@ vi.mock("../issues/hooks/use-issue-trigger-preview", () => ({
     totalCount: 0,
     isLoading: false,
   }),
-  // The submit-time authoritative preview (mutation form) — backed by the
-  // same mock so tests drive both preview surfaces identically.
-  useIssueTriggerPreviewCheck: () => ({ mutateAsync: mockPreviewIssueTrigger }),
 }));
 
 vi.mock("@multica/core/workspace/hooks", () => ({
@@ -276,6 +283,9 @@ vi.mock("@multica/core/issues/mutations", () => ({
     }) => mockCreateCommentSubIssue(anchorCommentId, data),
   }),
   useUpdateIssue: () => ({ mutate: vi.fn() }),
+  // Submit-time authoritative preview (moved to core with the other mutation
+  // hooks) — backed by the same mock as the declarative preview.
+  useIssueTriggerPreviewCheck: () => ({ mutateAsync: mockPreviewIssueTrigger }),
 }));
 
 vi.mock("@multica/core/labels", () => ({
@@ -329,6 +339,26 @@ vi.mock("@multica/core/api", async () => {
   const { DuplicateIssueErrorBodySchema } = await vi.importActual<
     typeof import("@multica/core/api/schemas")
   >("@multica/core/api/schemas");
+  // The permit-matching comparison uses the same canonicalization rule as
+  // the real helper (sorted object keys; blockedBy as an ordered set).
+  const canonicalDependencyMutation = (mutation: Record<string, unknown>) => {
+    const canon = (v: unknown): unknown => {
+      if (Array.isArray(v)) return v.map(canon);
+      if (v && typeof v === "object") {
+        const out: Record<string, unknown> = {};
+        for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+          const val = (v as Record<string, unknown>)[k];
+          if (val === undefined) continue;
+          out[k] = canon(val);
+        }
+        return out;
+      }
+      return v;
+    };
+    const out = canon(mutation) as Record<string, unknown>;
+    if (Array.isArray(out.blockedBy)) out.blockedBy = [...out.blockedBy].sort();
+    return out;
+  };
   return {
     api: {
       createCommentSubIssue: mockCreateCommentSubIssue,
@@ -338,6 +368,7 @@ vi.mock("@multica/core/api", async () => {
       previewIssueTrigger: mockPreviewIssueTrigger,
     },
     ApiError,
+    canonicalDependencyMutation,
     // Local mirror of the real dependencyErrorDetails contract: reason_code
     // gated on the dependency_ prefix, projection passed through.
     dependencyErrorDetails: (err: unknown) => {
@@ -684,6 +715,12 @@ describe("CreateIssueModal", () => {
     // Reset the unified draft mock so per-test seeding (assignee, project, …)
     // doesn't leak into the next test in the suite.
     mockDraftStore.draft = emptyIssueDraft();
+    mockDraftStore.pendingDependencyCreate = undefined;
+    mockSetPendingDependencyCreate.mockImplementation(
+      (pending: typeof mockDraftStore.pendingDependencyCreate | null) => {
+        mockDraftStore.pendingDependencyCreate = pending ?? undefined;
+      },
+    );
     mockSetShared.mockImplementation((patch: Partial<typeof mockDraftStore.draft.shared>) => {
       mockDraftStore.draft.shared = { ...mockDraftStore.draft.shared, ...patch };
     });
@@ -2050,6 +2087,36 @@ describe("CreateIssueModal", () => {
       expect(mockCreateIssue).toHaveBeenCalledWith(expect.objectContaining({
         title: "Relation-bearing draft",
         blockedBy: ["picked-issue-1"],
+      }));
+    });
+
+    it("REREVIEW keeps the original permit after an ambiguous create returns to editing", async () => {
+      const firstPreview = blockedPreview();
+      const nextPreview = blockedPreview();
+      nextPreview.blocked[0]!.confirmation = {
+        requestId: "req-2",
+        challenge: "ch-2",
+        expiresAt: "2099-01-01T00:00:00Z",
+      };
+      mockPreviewIssueTrigger
+        .mockResolvedValueOnce(firstPreview)
+        .mockResolvedValue(nextPreview);
+      // The first POST may have committed; no transport response proves
+      // either outcome, so returning to editing must not mint a new create.
+      mockCreateIssue.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      const { user } = await seedAgentAndPrerequisite();
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() => expect(mockToastError).toHaveBeenCalled());
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
+
+      // This action remains enabled beside the uncertain-outcome message.
+      await user.click(screen.getByRole("button", { name: "Back to editing" }));
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
+      expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
       }));
     });
 

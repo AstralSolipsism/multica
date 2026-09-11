@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo } from "react";
-import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
-import { api } from "@multica/core/api";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { api, canonicalDependencyMutation } from "@multica/core/api";
 import type { IssueDependencyPreview } from "@multica/core/api";
 import { issueKeys } from "@multica/core/issues/queries";
 import type { IssueAssigneeType, IssueStatus, IssueTriggerPreviewItem } from "@multica/core/types";
@@ -56,35 +56,6 @@ export interface UseIssueTriggerPreviewResult {
 
 const EMPTY: IssueTriggerPreviewItem[] = [];
 
-/** Deterministic serialization for the query identity: object keys sorted
- *  recursively so a semantically identical body always maps to one cache
- *  entry. `blockedBy` is a set, so its copy is sorted — the server's payload
- *  digest treats it as the replacement set it is. */
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value).sort()) {
-      const v = (value as Record<string, unknown>)[key];
-      if (v === undefined) continue;
-      out[key] = canonicalize(v);
-    }
-    return out;
-  }
-  return value;
-}
-
-function canonicalMutation(
-  mutation: UseIssueTriggerPreviewParams["mutation"],
-): Record<string, unknown> | undefined {
-  if (!mutation) return undefined;
-  const canonical = canonicalize(mutation) as Record<string, unknown>;
-  if (Array.isArray(canonical.blockedBy)) {
-    canonical.blockedBy = [...canonical.blockedBy].sort();
-  }
-  return canonical;
-}
-
 function previewSignature(params: UseIssueTriggerPreviewParams): string {
   return JSON.stringify({
     ids: [...(params.issueIds ?? [])].sort(),
@@ -92,7 +63,7 @@ function previewSignature(params: UseIssueTriggerPreviewParams): string {
     at: params.assigneeType ?? null,
     aid: params.assigneeId ?? null,
     status: params.status ?? null,
-    mutation: canonicalMutation(params.mutation) ?? null,
+    mutation: params.mutation ? canonicalDependencyMutation(params.mutation) : null,
   });
 }
 
@@ -160,26 +131,4 @@ export function useIssueTriggerPreview(
       void previewQuery.refetch();
     },
   };
-}
-
-/**
- * The imperative sibling of the declarative preview: submit-time flows
- * (create-with-relations, override retry) need one authoritative preview of
- * the exact body being submitted, fired at a chosen moment — not a mounted
- * query. Same endpoint, same params shape; mutation semantics because this
- * is a deliberately-triggered server interaction, and TanStack owns all of
- * those (no bare `api.*` calls in components).
- */
-export function useIssueTriggerPreviewCheck() {
-  return useMutation({
-    mutationFn: (params: UseIssueTriggerPreviewParams) =>
-      api.previewIssueTrigger({
-        issueIds: params.issueIds,
-        isCreate: params.isCreate,
-        assigneeType: params.assigneeType,
-        assigneeId: params.assigneeId,
-        status: params.status,
-        mutation: params.mutation,
-      }),
-  });
 }
