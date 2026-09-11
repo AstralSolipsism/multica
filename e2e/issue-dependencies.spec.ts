@@ -363,5 +363,57 @@ test.describe("Issue dependencies (OL-44)", () => {
       return rows.length === 1 && rows[0]!.dependency_admission !== null;
     }).toBe(true);
     expect(page.url()).toBe(graphUrl);
+    // Node content must still respond to a real graph refresh.
+    const updatedTitle = "Updated prerequisite in DAG";
+    await ctx.api.updateIssue(ctx.issueA.id, { title: updatedTitle });
+    await expect(
+      page.locator(`.react-flow__node[data-id="${ctx.issueA.id}"]`).getByText(updatedTitle, { exact: true }),
+    ).toBeVisible();
+  });
+
+  test("saved DAG at the view-bar overflow boundary reloads without losing expansion", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await enterWorkspace(page, ctx);
+    await page.goto(`/${ctx.workspaceSlug}/issues`);
+    await page.getByRole("button", { name: "Board", exact: true }).click();
+    await page.getByText("Graph", { exact: true }).click();
+    await expect(page.locator(".react-flow__node").first()).toBeVisible();
+    const viewIds: string[] = [];
+    try {
+      // These label widths put the third saved view at the last fitting tab:
+      // the old fitCount/reserveTier effects oscillated between 5 and 6 tabs.
+      for (const name of ["OL45 saved DAG", "OL45 saved DAG", "OL45 saved DAG 1789114381162", "OL45 clean saved DAG 1789115242133"]) {
+        await page.getByRole("button", { name: "Views", exact: true }).click();
+        await page.getByText("New view", { exact: true }).click();
+        const dialog = page.getByRole("dialog");
+        await dialog.getByPlaceholder("e.g. Needs review").fill(name);
+        const response = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/issue-views");
+        await dialog.getByRole("button", { name: "Create view", exact: true }).click();
+        viewIds.push((await (await response).json()).id);
+        await expect(dialog).not.toBeVisible();
+      }
+      await page.goto(`/${ctx.workspaceSlug}/issues?view=${viewIds[2]}`);
+      await expect(page.locator(".react-flow__node").first()).toBeVisible();
+      await page.getByRole("button", { name: "Expand all", exact: true }).click();
+      await expect(page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`)).toBeVisible();
+      await page.reload();
+      await expect(page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`)).toBeVisible();
+      await expect(page.getByRole("button", { name: "OL45 saved DAG 1789114381162", exact: true })).toBeVisible();
+      for (const width of [1024, 680, 1440]) {
+        await page.setViewportSize({ width, height: 1000 });
+        // The entire toolbar is hidden at the mobile breakpoint; the graph
+        // and expanded state must survive it and return with the same tab.
+        await expect(page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`)).toBeVisible();
+        if (width >= 1024) {
+          await expect(page.getByRole("button", { name: "OL45 saved DAG 1789114381162", exact: true })).toBeVisible();
+          await expect(page.getByRole("button", { name: "Graph", exact: true })).toBeVisible();
+        }
+      }
+    } finally {
+      for (const id of viewIds) await fetch(`${API_BASE}/api/issue-views/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${ctx.token}`, "X-Workspace-ID": ctx.workspaceId },
+      });
+    }
   });
 });

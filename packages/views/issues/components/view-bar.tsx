@@ -273,34 +273,22 @@ export function ViewBar({
   );
 
   // --- single-row fit -----------------------------------------------------
-  // The reserve feeds back into the fit, but only ever grows when items
-  // fall out (the "more" trigger appears, then the promoted active tab
-  // widens it), which shrinks the fit further and keeps them out — the
-  // settle is monotonic in both directions.
+  // The hook resolves all three chrome widths in one measurement pass;
+  // the result never feeds another state/effect back into its inputs.
   const activeBarId = activeView ? `view:${activeView.id}` : null;
-  const [reserveTier, setReserveTier] = useState<"menu" | "more" | "promoted">(
-    "menu",
-  );
   const { containerRef, measureRef, fitCount } = useSingleRowFit({
     count: visible.length,
     gap: 4,
-    reserve:
-      reserveTier === "promoted"
-        ? RESERVE_PROMOTED
-        : reserveTier === "more"
-          ? RESERVE_MORE
-          : RESERVE_MENU,
+    reserve: RESERVE_MENU,
+    overflowReserve: RESERVE_MORE,
+    promotedIndex: visible.findIndex((item) => item.barItemId === activeBarId),
+    promotedReserve: RESERVE_PROMOTED,
   });
   const fitting = visible.slice(0, fitCount);
   const overflowed = visible.slice(fitCount);
   const activeOverflowed =
     !!activeBarId && overflowed.some((item) => item.barItemId === activeBarId);
-  useEffect(() => {
-    setReserveTier(
-      activeOverflowed ? "promoted" : overflowed.length > 0 ? "more" : "menu",
-    );
-  }, [activeOverflowed, overflowed.length]);
-  const promoted = reserveTier === "promoted" && activeOverflowed;
+  const promoted = activeOverflowed;
 
   const savePrefs = (next: { hidden: string[]; order: string[] }) => {
     // A drag can land before the views list has loaded; pruning against an
