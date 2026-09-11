@@ -96,6 +96,7 @@ export function useIssueSurfaceData({
   projectId,
   usesGantt,
   usesTable,
+  usesDag,
   serverStatusBranches,
   serverGroupBranches,
   ganttShowCompleted,
@@ -121,6 +122,9 @@ export function useIssueSurfaceData({
   projectId?: string;
   usesGantt: boolean;
   usesTable: boolean;
+  /** DAG owns its loading/empty/error states against the complete graph —
+   *  the branch-based window projections below never apply to it. */
+  usesDag: boolean;
   serverStatusBranches: IssueStatusBranches;
   serverGroupBranches: IssueGroupBranches;
   /** Gantt's "show completed" display toggle. The canvas hides done/cancelled
@@ -441,11 +445,13 @@ export function useIssueSurfaceData({
     // "no scheduled issues" empty state instead of the generic create-issue
     // one. Table owns its own branch-level loading, empty and retry states,
     // so this shared legacy surface projection never asserts Table empty.
+    // DAG owns its states against the complete graph the same way.
     isEmpty:
       !isLoading &&
       !statusFilterError &&
       !usesGantt &&
       !usesTable &&
+      !usesDag &&
       (serverStatusBranches.enabled
         ? serverStatusBranches.isTotalKnown &&
           serverStatusBranches.total === 0
