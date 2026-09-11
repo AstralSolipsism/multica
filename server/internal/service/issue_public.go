@@ -37,11 +37,18 @@ func (s *IssueService) UpdateContent(ctx context.Context, issue db.Issue, patch 
 	defer tx.Rollback(ctx)
 	q := s.Queries.WithTx(tx)
 	if err := s.Dependencies.LockWrite(ctx, q, issue.WorkspaceID); err != nil {
+		// Workspace deletion also invalidates a previously read issue revision.
+		if patch.ExpectedRevision != nil && errors.Is(err, pgx.ErrNoRows) {
+			return db.Issue{}, ErrIssueRevisionConflict
+		}
 		return db.Issue{}, err
 	}
 	// UpdateIssue accepts nullable hierarchy/assignment fields. Populate them
 	// from the locked row so a content edit cannot restore stale structure.
 	issue, err = q.LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID})
+	if patch.ExpectedRevision != nil && errors.Is(err, pgx.ErrNoRows) {
+		return db.Issue{}, ErrIssueRevisionConflict
+	}
 	if err != nil {
 		return db.Issue{}, err
 	}

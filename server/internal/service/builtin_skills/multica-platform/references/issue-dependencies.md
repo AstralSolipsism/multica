@@ -114,4 +114,3 @@ assignment. CLI task tokens, PATs and cloud PATs never become human authority
 through an owner/originator, a header, a flag, or a confirmation string. This
 CLI supplies no force/override flag; the explicit human interaction belongs to
 the authenticated UI/API flow above.
-
