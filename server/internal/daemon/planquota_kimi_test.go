@@ -320,6 +320,23 @@ func TestKimiUsageToPlanQuota_SummaryWindow(t *testing.T) {
 			t.Fatalf("windows = %+v", quota.Windows)
 		}
 	})
+
+	// Docs shape: a usage row may omit window entirely (OL-70 review
+	// regression). Such a row is not one of the two canonical windows and
+	// must keep its provider name instead of being renamed by position.
+	t.Run("summary without window keeps provider name", func(t *testing.T) {
+		var data kimiUsageData
+		if err := json.Unmarshal([]byte(`{"kind":"ok","summary":{"name":"weekly","used":100,"limit":100},"limits":[{"name":"5-hour","window":{"duration":5,"unit":"hour"},"used":3,"limit":100}]}`), &data); err != nil {
+			t.Fatal(err)
+		}
+		quota := kimiUsageToPlanQuota(&data, observed)
+		if quota == nil || len(quota.Windows) != 2 {
+			t.Fatalf("quota = %+v", quota)
+		}
+		if quota.Windows[1].Name != "weekly" || *quota.Windows[1].UsedPercent != 100 {
+			t.Fatalf("unknown-duration window = %+v", quota.Windows[1])
+		}
+	})
 }
 
 // Full-path regression for the live response shape (captured 2026-09-11):

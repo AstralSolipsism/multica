@@ -593,7 +593,10 @@ func splitAddrPort(s string) (string, int, bool) {
 // kimiUsageToPlanQuota normalizes the usage rows. Windows are sorted by
 // duration ascending and the two canonical ones renamed to the cross-provider
 // window ids ("primary" = shortest, "secondary" = next), matching the codex
-// collector; any additional rows keep their provider name. Rows whose limit
+// collector; any additional rows keep their provider name. Only known
+// durations take a canonical slot — an unknown-duration row (the docs allow
+// a row to omit window) is not one of the two canonical windows and keeps
+// the provider's own name. Rows whose limit
 // is missing or non-positive carry no percentage (never a fabricated 0);
 // rows with no usable fields at all are dropped. Nil when nothing reportable
 // remains. extra_usage is never part of the input — no credits in, none out.
@@ -622,10 +625,21 @@ func kimiUsageToPlanQuota(data *kimiUsageData, observedAt time.Time) *protocol.R
 	}
 	canonical := []string{"primary", "secondary"}
 	limited := false
+	knownSeen := 0
 	for i, row := range rows {
+		minutes := kimiWindowMinutes(row.Window)
+		// Canonical slots are earned by known durations only; an
+		// unknown-duration row keeps the provider name (trim, cap and the
+		// empty-name fallback in planQuotaWindowName still apply).
+		canonicalFor := canonical
+		if minutes == nil || knownSeen >= len(canonical) {
+			canonicalFor = nil
+		} else {
+			knownSeen++
+		}
 		window := protocol.RuntimePlanQuotaWindow{
-			Name:          planQuotaWindowName(row.Name, canonical, i),
-			WindowMinutes: kimiWindowMinutes(row.Window),
+			Name:          planQuotaWindowName(row.Name, canonicalFor, i),
+			WindowMinutes: minutes,
 			ResetsAt:      unixSecondsPtr(row.ResetAt),
 		}
 		if row.Used != nil && row.Limit != nil && *row.Limit > 0 {
