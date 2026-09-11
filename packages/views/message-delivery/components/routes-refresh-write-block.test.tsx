@@ -101,7 +101,12 @@ function setup(mode: "personal" | "team" = "team") {
     }
     if (path === "/api/workspaces/ws1/lark/installations") {
       return response({
-        installations: [{ id: "i1", agent_id: "agent1", status: "active", region: "feishu" }],
+        installations: [{
+          id: "i1", workspace_id: "ws1", agent_id: "agent1", app_id: "cli_test",
+          bot_open_id: "ou_bot", installer_user_id: "u1", status: "active", region: "feishu",
+          installed_at: "2026-09-10T00:00:00Z", created_at: "2026-09-10T00:00:00Z",
+          updated_at: "2026-09-10T00:00:00Z",
+        }],
         configured: true,
       });
     }

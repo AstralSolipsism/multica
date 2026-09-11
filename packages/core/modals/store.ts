@@ -12,6 +12,7 @@ type ModalType =
   | "issue-add-child"
   | "issue-delete-confirm"
   | "issue-run-confirm"
+  | "issue-edit-dependencies"
   | null;
 
 export type IssueLimitRecoveryReason = "issue_limit" | "autopilot_quota";

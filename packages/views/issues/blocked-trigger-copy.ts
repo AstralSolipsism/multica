@@ -38,6 +38,13 @@ export function blockedReasonLabel(reasonCode: string, t: IssuesT): string {
       return t(($) => $.comment.trigger_blocked_runtime_unusable);
     case "agent_runtime_required":
       return t(($) => $.comment.trigger_blocked_agent_runtime_required);
+    // OL-41 dependency refusals reach this surface through comment-mention
+    // triggers and batch results: the run was refused because the issue's
+    // registered prerequisites are not done — the comment itself was saved.
+    case "dependency_unsatisfied":
+      return t(($) => $.comment.trigger_blocked_dependency_unsatisfied);
+    case "dependency_data_unverified":
+      return t(($) => $.comment.trigger_blocked_dependency_data_unverified);
     default:
       return t(($) => $.comment.trigger_blocked_generic);
   }
@@ -57,6 +64,10 @@ export function blockedShortReasonLabel(reasonCode: string, t: IssuesT): string 
       return t(($) => $.comment.trigger_blocked_short_runtime_unusable);
     case "agent_runtime_required":
       return t(($) => $.comment.trigger_blocked_short_agent_runtime_required);
+    case "dependency_unsatisfied":
+      return t(($) => $.comment.trigger_blocked_short_dependency_unsatisfied);
+    case "dependency_data_unverified":
+      return t(($) => $.comment.trigger_blocked_short_dependency_data_unverified);
     default:
       return t(($) => $.comment.trigger_blocked_short_generic);
   }

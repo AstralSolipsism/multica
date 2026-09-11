@@ -1,6 +1,6 @@
 "use client";
 
-import { invalidateIssueQueries } from "../issues/invalidation";
+import { invalidateDependencyQueries, invalidateIssueQueries } from "../issues/invalidation";
 import { useEffect, useRef } from "react";
 import { useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import type { WSClient } from "../api/ws-client";
@@ -644,6 +644,11 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
   const wsId = getCurrentWsId();
   if (wsId) {
     invalidateIssueQueries(qc, wsId);
+    // Dependency first reads share the graph's first-load race: a projection
+    // GET that was in flight across the disconnect would otherwise complete
+    // with a pre-reconnect snapshot and stay "fresh" under staleTime:
+    // Infinity. Cancel-then-invalidate, same as the live-event path.
+    void invalidateDependencyQueries(qc, wsId);
     qc.invalidateQueries({ queryKey: inboxKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
@@ -838,6 +843,10 @@ export function useRealtimeSync(
           qc.invalidateQueries({ queryKey: issueStatusKeys.all(wsId) });
           // Graph summaries contain server-resolved dependency categories.
           invalidateIssueQueries(qc, wsId, "graph");
+          // A re-categorized status changes which prerequisites count as done
+          // (the projection resolves categories server-side), so open
+          // dependency views re-read alongside the catalog.
+          void invalidateDependencyQueries(qc, wsId);
         }
       },
       pin: () => {

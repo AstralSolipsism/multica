@@ -43,9 +43,13 @@ const mockSetActiveMode = vi.hoisted(() => vi.fn());
 const mockClearDraft = vi.hoisted(() => vi.fn());
 const mockSetLastAssignee = vi.hoisted(() => vi.fn());
 const mockSetKeepOpen = vi.hoisted(() => vi.fn());
+const mockSetPendingDependencyCreate = vi.hoisted(() => vi.fn());
 const mockToastCustom = vi.hoisted(() => vi.fn());
 const mockToastDismiss = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
+const mockToastSuccess = vi.hoisted(() => vi.fn());
+const mockToastWarning = vi.hoisted(() => vi.fn());
+const mockPreviewIssueTrigger = vi.hoisted(() => vi.fn());
 const mockShowIssueLimitUpgradePrompt = vi.hoisted(() => vi.fn());
 // Uploads flow through the module-level coordinator, which calls
 // `api.uploadFile(file, ctx, signal)` (MUL-5181 L2). Tests drive uploads by
@@ -132,6 +136,7 @@ const emptyIssueDraft = () => ({
     assigneeType: undefined as "agent" | "squad" | "member" | undefined,
     assigneeId: undefined as string | undefined,
     labelIds: [] as string[],
+    blockedBy: [] as { id: string; identifier: string; title: string }[],
     propertyValues: {} as Record<string, string | number | boolean | string[]>,
   },
   agent: {
@@ -146,12 +151,21 @@ const mockDraftStore = {
   draft: emptyIssueDraft(),
   lastAssigneeType: undefined as "agent" | "squad" | "member" | undefined,
   lastAssigneeId: undefined as string | undefined,
+  pendingDependencyCreate: undefined as
+    | {
+        request: Record<string, unknown>;
+        item: { confirmation: { requestId: string; challenge: string; expiresAt: string } | null };
+        uncertain?: boolean;
+        refreshed?: boolean;
+      }
+    | undefined,
   setShared: mockSetShared,
   setManual: mockSetManual,
   setAgent: mockSetAgent,
   setActiveMode: mockSetActiveMode,
   clearDraft: mockClearDraft,
   setLastAssignee: mockSetLastAssignee,
+  setPendingDependencyCreate: mockSetPendingDependencyCreate,
   hasDraft: () => false,
 };
 
@@ -269,6 +283,9 @@ vi.mock("@multica/core/issues/mutations", () => ({
     }) => mockCreateCommentSubIssue(anchorCommentId, data),
   }),
   useUpdateIssue: () => ({ mutate: vi.fn() }),
+  // Submit-time authoritative preview (moved to core with the other mutation
+  // hooks) — backed by the same mock as the declarative preview.
+  useIssueTriggerPreviewCheck: () => ({ mutateAsync: mockPreviewIssueTrigger }),
 }));
 
 vi.mock("@multica/core/labels", () => ({
@@ -322,14 +339,31 @@ vi.mock("@multica/core/api", async () => {
   const { DuplicateIssueErrorBodySchema } = await vi.importActual<
     typeof import("@multica/core/api/schemas")
   >("@multica/core/api/schemas");
+  // The permit-matching comparison runs the REAL canonicalizer (its
+  // boundary semantics are tested next to the helper in core — no mirrors).
+  const { canonicalDependencyMutation } = await vi.importActual<
+    typeof import("@multica/core/api")
+  >("@multica/core/api");
   return {
     api: {
       createCommentSubIssue: mockCreateCommentSubIssue,
       listProperties: mockListProperties,
       setIssueProperty: mockSetIssueProperty,
       uploadFile: mockApiUploadFile,
+      previewIssueTrigger: mockPreviewIssueTrigger,
     },
     ApiError,
+    canonicalDependencyMutation,
+    // Local mirror of the real dependencyErrorDetails contract: reason_code
+    // gated on the dependency_ prefix, projection passed through.
+    dependencyErrorDetails: (err: unknown) => {
+      if (!(err instanceof ApiError) || !err.body || typeof err.body !== "object") return null;
+      const body = err.body as { reason_code?: unknown; dependencies?: unknown };
+      if (typeof body.reason_code !== "string" || !body.reason_code.startsWith("dependency_")) {
+        return null;
+      }
+      return { reasonCode: body.reason_code, dependencies: body.dependencies ?? null };
+    },
     parseWithFallback,
     DuplicateIssueErrorBodySchema,
   };
@@ -504,6 +538,9 @@ vi.mock("@multica/ui/components/ui/dialog", () => ({
   DialogContent: ({ children, className }: { children: React.ReactNode; className?: string }) => (
     <div className={className}>{children}</div>
   ),
+  DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children, className }: { children: React.ReactNode; className?: string }) => (
     <div className={className}>{children}</div>
   ),
@@ -537,7 +574,35 @@ vi.mock("@multica/ui/components/ui/dropdown-menu", () => ({
 }));
 
 vi.mock("./issue-picker-modal", () => ({
-  IssuePickerModal: () => null,
+  // Open-aware so tests can actually pick a parent/child/prerequisite; the
+  // picked issue is fixed per open dialog, labeled by the picker's title.
+  IssuePickerModal: ({ open, title, onSelect }: {
+    open: boolean;
+    title: string;
+    onSelect: (issue: Record<string, unknown>) => void;
+  }) =>
+    open ? (
+      <button
+        type="button"
+        onClick={() =>
+          onSelect({
+            id: "picked-issue-1",
+            identifier: "TES-77",
+            title: "Picked issue",
+            status: "in_progress",
+            status_category: "in_progress",
+          })
+        }
+      >
+        {`pick:${title}`}
+      </button>
+    ) : null,
+}));
+
+// The blocked-prerequisite list renders via real i18n + query caches in its
+// own suites; here the confirm dialog only needs the stand-in.
+vi.mock("../issues/components/dependency-prerequisites", () => ({
+  DependencyBlockedList: () => <div data-testid="blocked-list" />,
 }));
 
 vi.mock("@multica/ui/components/ui/tooltip", () => ({
@@ -603,6 +668,8 @@ vi.mock("sonner", () => ({
     custom: mockToastCustom,
     dismiss: mockToastDismiss,
     error: mockToastError,
+    success: mockToastSuccess,
+    warning: mockToastWarning,
   },
 }));
 
@@ -633,6 +700,12 @@ describe("CreateIssueModal", () => {
     // Reset the unified draft mock so per-test seeding (assignee, project, …)
     // doesn't leak into the next test in the suite.
     mockDraftStore.draft = emptyIssueDraft();
+    mockDraftStore.pendingDependencyCreate = undefined;
+    mockSetPendingDependencyCreate.mockImplementation(
+      (pending: typeof mockDraftStore.pendingDependencyCreate | null) => {
+        mockDraftStore.pendingDependencyCreate = pending ?? undefined;
+      },
+    );
     mockSetShared.mockImplementation((patch: Partial<typeof mockDraftStore.draft.shared>) => {
       mockDraftStore.draft.shared = { ...mockDraftStore.draft.shared, ...patch };
     });
@@ -864,6 +937,7 @@ describe("CreateIssueModal", () => {
       assigneeId: undefined,
       startDate: null,
       labelIds: [],
+      blockedBy: [],
       propertyValues: {},
     });
     expect(mockSetShared).toHaveBeenCalledWith({
@@ -1847,6 +1921,298 @@ describe("CreateIssueModal", () => {
       expect(footer?.className).toContain("sm:flex");
       expect(create.parentElement).toBe(footer);
       expect(create.className).toContain("justify-self-end");
+    });
+  });
+
+  // OL-44 — creating with prerequisites and an agent assignee must never
+  // silently skip the dispatch gate: a blocked preview opens the explicit
+  // one-shot confirmation, and only its confirm carries the signed challenge.
+  describe("dependency-blocked create", () => {
+    const blockedPreview = () => ({
+      triggers: [],
+      total_count: 0,
+      blocked: [
+        {
+          issueId: "candidate-1",
+          reasonCode: "dependency_unsatisfied",
+          dependencies: {
+            blockedBy: [],
+            inheritedBlockedBy: [],
+            blocking: [],
+            unsatisfied: [
+              {
+                issueId: "picked-issue-1",
+                status: "in_progress",
+                statusCategory: "in_progress",
+                satisfied: false,
+                sourceEdges: ["edge-1"],
+                inheritedFrom: [],
+                title: "Picked issue",
+                identifier: "TES-77",
+                descendantCount: 0,
+              },
+            ],
+            hasRestrictedBlockers: false,
+            dependencyVersion: "v1",
+          },
+          confirmation: {
+            requestId: "req-1",
+            challenge: "ch-1",
+            expiresAt: "2099-01-01T00:00:00Z",
+          },
+        },
+      ],
+    });
+
+    const seedAgentAndPrerequisite = async () => {
+      const user = userEvent.setup();
+      const onClose = vi.fn();
+      renderModal(
+        <CreateIssueModal
+          onClose={onClose}
+          data={{ assignee_type: "agent", assignee_id: "agent-1" }}
+        />,
+      );
+      // Queue one prerequisite through the same picker flow as sub-issues.
+      fireEvent.click(screen.getByRole("button", { name: "Add prerequisite..." }));
+      fireEvent.click(screen.getByRole("button", { name: "pick:Add prerequisite" }));
+      fireEvent.change(screen.getByPlaceholderText("Issue title"), {
+        target: { value: "Blocked task" },
+      });
+      return { user, onClose };
+    };
+
+    it("asks explicitly, then creates with the one-shot override", async () => {
+      mockPreviewIssueTrigger.mockResolvedValue(blockedPreview());
+      const { user, onClose } = await seedAgentAndPrerequisite();
+
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+
+      // The preview saw the exact create body — title, assignee, relations.
+      await waitFor(() => expect(mockPreviewIssueTrigger).toHaveBeenCalledTimes(1));
+      expect(mockPreviewIssueTrigger).toHaveBeenCalledWith(
+        expect.objectContaining({
+          isCreate: true,
+          mutation: expect.objectContaining({
+            title: "Blocked task",
+            assignee_type: "agent",
+            assignee_id: "agent-1",
+            blockedBy: ["picked-issue-1"],
+          }),
+        }),
+      );
+      // Nothing written yet — the dialog holds the decision.
+      expect(mockCreateIssue).not.toHaveBeenCalled();
+      expect((await screen.findAllByText("Prerequisites unfinished")).length).toBeGreaterThan(0);
+
+      await user.click(screen.getByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() =>
+        expect(mockCreateIssue).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: "Blocked task",
+            blockedBy: ["picked-issue-1"],
+            dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
+          }),
+        ),
+      );
+      await waitFor(() => expect(onClose).toHaveBeenCalled());
+      expect(mockToastCustom).toHaveBeenCalled();
+    });
+
+    it("REVIEW retries an ambiguous confirmed create with its original one-shot permit", async () => {
+      const firstPreview = blockedPreview();
+      const nextPreview = blockedPreview();
+      nextPreview.blocked[0]!.confirmation = {
+        requestId: "req-2",
+        challenge: "ch-2",
+        expiresAt: "2099-01-01T00:00:00Z",
+      };
+      mockPreviewIssueTrigger
+        .mockResolvedValueOnce(firstPreview)
+        .mockResolvedValue(nextPreview);
+      // The server may have committed before this transport failure: retry
+      // must replay req-1, whose contract returns the original issue/run.
+      mockCreateIssue.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      const { user } = await seedAgentAndPrerequisite();
+
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
+
+      // Follow the offered retry affordance. The confirmation should remain;
+      // today's implementation discards it and offers Create Issue again.
+      await waitFor(() => expect(mockToastError).toHaveBeenCalled());
+      if (!screen.queryByRole("button", { name: "Create and start anyway" })) {
+        await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      }
+      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
+      expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
+      }));
+      expect(mockPreviewIssueTrigger).toHaveBeenCalledTimes(1);
+    });
+
+    it("REVIEW preserves drafted prerequisites when reopening the same create draft", async () => {
+      const user = userEvent.setup();
+      const firstOpen = renderModal(<CreateIssueModal onClose={vi.fn()} />);
+      fireEvent.change(screen.getByPlaceholderText("Issue title"), {
+        target: { value: "Relation-bearing draft" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Add prerequisite..." }));
+      fireEvent.click(screen.getByRole("button", { name: "pick:Add prerequisite" }));
+
+      // Closing the modal (including inspecting a blocker from the confirm
+      // dialog) unmounts the panel. Reopen the existing persisted draft.
+      firstOpen.unmount();
+      renderModal(<CreateIssueModal onClose={vi.fn()} />);
+      expect(screen.getByPlaceholderText("Issue title")).toHaveValue("Relation-bearing draft");
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
+      expect(mockCreateIssue).toHaveBeenCalledWith(expect.objectContaining({
+        title: "Relation-bearing draft",
+        blockedBy: ["picked-issue-1"],
+      }));
+    });
+
+    it("REREVIEW keeps the original permit after an ambiguous create returns to editing", async () => {
+      const firstPreview = blockedPreview();
+      const nextPreview = blockedPreview();
+      nextPreview.blocked[0]!.confirmation = {
+        requestId: "req-2",
+        challenge: "ch-2",
+        expiresAt: "2099-01-01T00:00:00Z",
+      };
+      mockPreviewIssueTrigger
+        .mockResolvedValueOnce(firstPreview)
+        .mockResolvedValue(nextPreview);
+      // The first POST may have committed; no transport response proves
+      // either outcome, so returning to editing must not mint a new create.
+      mockCreateIssue.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      const { user } = await seedAgentAndPrerequisite();
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() => expect(mockToastError).toHaveBeenCalled());
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
+
+      // This action remains enabled beside the uncertain-outcome message.
+      await user.click(screen.getByRole("button", { name: "Back to editing" }));
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
+      expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
+      }));
+    });
+
+    it("THIRDREVIEW replays an uncertain create after its confirmation expiry", async () => {
+      const initialTime = Date.now();
+      const firstPreview = blockedPreview();
+      firstPreview.blocked[0]!.confirmation.expiresAt = new Date(initialTime + 300_000).toISOString();
+      const nextPreview = blockedPreview();
+      nextPreview.blocked[0]!.confirmation = {
+        requestId: "req-2",
+        challenge: "ch-2",
+        expiresAt: "2099-01-01T00:00:00Z",
+      };
+      mockPreviewIssueTrigger
+        .mockResolvedValueOnce(firstPreview)
+        .mockResolvedValue(nextPreview);
+      mockCreateIssue.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      const { user } = await seedAgentAndPrerequisite();
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(mockDraftStore.pendingDependencyCreate?.uncertain).toBe(true));
+
+      // A used request still replays after this deadline on the server;
+      // expiry only prevents first use. This outcome remains unknown.
+      const clock = vi.spyOn(Date, "now").mockReturnValue(initialTime + 360_000);
+      try {
+        await user.click(screen.getByRole("button", { name: "Back to editing" }));
+        await user.click(screen.getByRole("button", { name: "Create Issue" }));
+        await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+        await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
+        expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({
+          dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
+        }));
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
+    it("THIRDREVIEW clears the unchanged draft after a remounted confirmation succeeds", async () => {
+      mockPreviewIssueTrigger.mockResolvedValue(blockedPreview());
+      mockCreateIssue.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      const user = userEvent.setup();
+      const data = { assignee_type: "agent", assignee_id: "agent-1" };
+      const firstOpen = renderModal(<CreateIssueModal onClose={vi.fn()} data={data} />);
+      fireEvent.change(screen.getByPlaceholderText("Issue title"), {
+        target: { value: "Recoverable create" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Add prerequisite..." }));
+      fireEvent.click(screen.getByRole("button", { name: "pick:Add prerequisite" }));
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() => expect(mockDraftStore.pendingDependencyCreate?.uncertain).toBe(true));
+
+      firstOpen.unmount();
+      const onClose = vi.fn();
+      renderModal(<CreateIssueModal onClose={onClose} data={data} />);
+      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
+      expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
+      }));
+      await waitFor(() => expect(mockToastCustom).toHaveBeenCalled());
+      await waitFor(() => expect(mockClearDraft).toHaveBeenCalledTimes(1));
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("cancel writes nothing and returns to the form", async () => {
+      mockPreviewIssueTrigger.mockResolvedValue(blockedPreview());
+      const { user } = await seedAgentAndPrerequisite();
+
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await screen.findAllByText("Prerequisites unfinished");
+
+      await user.click(screen.getByRole("button", { name: "Back to editing" }));
+      expect(mockCreateIssue).not.toHaveBeenCalled();
+      await waitFor(() =>
+        expect(screen.queryByRole("button", { name: "Create and start anyway" })).not.toBeInTheDocument(),
+      );
+    });
+
+    it("re-previews and asks when the write itself is refused by a concurrent change", async () => {
+      // Preview said ready; a prerequisite landed before the write arrived.
+      mockPreviewIssueTrigger
+        .mockResolvedValueOnce({
+          triggers: [{ issue_id: "", agent_id: "agent-1", source: "issue_assignee" }],
+          total_count: 1,
+          blocked: null,
+        })
+        .mockResolvedValueOnce(blockedPreview());
+      mockCreateIssue.mockRejectedValueOnce(
+        new ApiError("conflict", 409, "Conflict", {
+          error: "unfinished prerequisites",
+          reason_code: "dependency_unsatisfied",
+        }),
+      );
+      const { user } = await seedAgentAndPrerequisite();
+
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      // First attempt: no override, refused; the fresh preview opens the dialog.
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
+      expect(mockCreateIssue.mock.calls[0]![0].dependencyOverride).toBeUndefined();
+      expect((await screen.findAllByText("Prerequisites unfinished")).length).toBeGreaterThan(0);
+
+      await user.click(screen.getByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
+      expect(mockCreateIssue).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
+        }),
+      );
     });
   });
 });

@@ -16,11 +16,13 @@ import {
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
+import type { IssueBatchUpdateResult } from "@multica/core/api";
 import { commonIssueFields } from "@multica/core/issues/batch";
 import { issueBehavesAs } from "@multica/core/issues";
 import { useBatchUpdateIssues, useBatchDeleteIssues } from "@multica/core/issues/mutations";
 import { useModalStore } from "@multica/core/modals";
 import { StatusPicker, PriorityPicker, AssigneePicker } from "./pickers";
+import { blockedReasonLabel } from "../blocked-trigger-copy";
 import { useT } from "../../i18n";
 import { cn } from "@multica/ui/lib/utils";
 import {
@@ -94,14 +96,44 @@ export function BatchActionToolbar({
     setDeleteOpen(false);
   }, [count]);
 
+  // Per-item honesty for partial batches (OL-41): the server commits item by
+  // item and names each refused one — a count-only success toast would
+  // misreport those. Returns true when a warning replaced the success toast.
+  const reportPartialFailures = (result: IssueBatchUpdateResult | undefined): boolean => {
+    const items = result?.results;
+    if (!items) return false; // older server: totals only, keep the count toast
+    const failures = items.filter(
+      (r) => r.updated === false || r.dispatch?.status === "blocked",
+    );
+    if (failures.length === 0) return false;
+    const identifierOf = (id: string) =>
+      selectedIssues.find((i) => i.id === id)?.identifier ?? id;
+    toast.warning(
+      t(($) => $.batch.update_partial, {
+        failed: failures.length,
+        total: count,
+      }),
+      {
+        description: failures
+          .slice(0, 5)
+          .map(
+            (f) =>
+              `${identifierOf(f.issueId)}: ${blockedReasonLabel(f.dispatch?.reasonCode ?? f.reasonCode ?? "", t)}`,
+          )
+          .join("\n"),
+      },
+    );
+    return true;
+  };
+
   const handleBatchUpdate = async (updates: Partial<UpdateIssueRequest>) => {
     try {
-      if (surfaceActions) {
-        await surfaceActions.batchUpdate(ids, updates);
-      } else {
-        await batchUpdate.mutateAsync({ ids, updates });
+      const result = surfaceActions
+        ? await surfaceActions.batchUpdate(ids, updates)
+        : await batchUpdate.mutateAsync({ ids, updates });
+      if (!reportPartialFailures(result)) {
+        toast.success(t(($) => $.batch.update_success, { count }));
       }
-      toast.success(t(($) => $.batch.update_success, { count }));
     } catch (err) {
       toast.error(
         err instanceof Error && err.message
