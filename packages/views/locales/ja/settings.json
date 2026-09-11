@@ -806,7 +806,7 @@
   },
   "lark": {
     "section_title": "Lark",
-    "page_description": "各 Labrastro エージェントを Lark (飞书) PersonalAgent ボットに接続します。メンバーはボットに DM したり、グループで @ メンションしたり、/issue と入力して新しい Labrastro タスクを起こすことができます。",
+    "page_description": "各 Labrastro エージェントを Lark (飞书) PersonalAgent ボットに接続します。許可された会話では、参加者はボットに DM を送ったり、グループで @メンションしたりできます。エージェントが要望を理解し、必要に応じて通常のツールで関連タスクに意見を反映します。意図が曖昧な場合は、まず確認します。",
     "not_enabled_title": "Lark 連携が有効化されていません",
     "not_enabled_description_prefix": "Lark ボットの設置を有効化するにはサーバーに",
     "not_enabled_description_suffix": "を設定してください。",
