@@ -12,7 +12,6 @@ import {
 import { cn } from "@multica/ui/lib/utils";
 import { issueGraphReadiness } from "@multica/core/api";
 import type { IssueStatusCategory } from "@multica/core/types";
-import type { DagDirection } from "@multica/core/issues/stores/view-store";
 import { PriorityIcon } from "../components/priority-icon";
 import { StatusIcon } from "../components/status-icon";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -26,7 +25,6 @@ import { DAG_NODE_HEIGHT, DAG_NODE_WIDTH } from "./dag-constants";
  *  callbacks arrive via context, not node data. */
 export type DagFlowNodeData = {
   model: DagVisibleNode;
-  direction: DagDirection;
   projectTitle: string | null;
   statusColor: string | null;
   /** In the highlighted upstream/downstream neighborhood of the selection. */
@@ -97,8 +95,6 @@ function NodeShell({
   selected?: boolean;
   className?: string;
 }) {
-  const targetPosition = data.direction === "LR" ? Position.Left : Position.Top;
-  const sourcePosition = data.direction === "LR" ? Position.Right : Position.Bottom;
   return (
     <div
       className={cn(
@@ -113,9 +109,13 @@ function NodeShell({
       )}
       style={{ width: DAG_NODE_WIDTH, minHeight: DAG_NODE_HEIGHT }}
     >
-      <Handle type="target" position={targetPosition} className="!opacity-0" />
+      {/* Fixed ports let edges change direction without remeasuring every
+          node or rerendering its status, avatar and title. */}
+      <Handle id="LR" type="target" position={Position.Left} className="!opacity-0" />
+      <Handle id="TB" type="target" position={Position.Top} className="!opacity-0" />
       {children}
-      <Handle type="source" position={sourcePosition} className="!opacity-0" />
+      <Handle id="LR" type="source" position={Position.Right} className="!opacity-0" />
+      <Handle id="TB" type="source" position={Position.Bottom} className="!opacity-0" />
     </div>
   );
 }

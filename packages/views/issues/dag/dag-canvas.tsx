@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
+  getNodesBounds,
   MarkerType,
   MiniMap,
   ReactFlow,
@@ -103,7 +104,7 @@ function DagCanvasInner({
   onRevealIssues,
 }: DagCanvasProps) {
   const { t } = useT("issues");
-  const { fitView } = useReactFlow();
+  const { fitBounds, fitView, getInternalNode, viewportInitialized } = useReactFlow();
   const colorMode = useDagColorMode();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -158,22 +159,26 @@ function DagCanvasInner({
   // Base node objects stay referentially stable across selection/focus
   // changes; the second pass re-allocates only nodes whose flags flipped, so
   // the memoized card component skips every untouched node on large graphs.
+  const nodeData = useMemo<DagFlowNodeData[]>(
+    () =>
+      projection.nodes.map((model) => ({
+        model,
+        projectTitle:
+          model.kind === "issue" && model.issue?.projectId
+            ? (projectTitleById.get(model.issue.projectId) ?? null)
+            : null,
+        statusColor: model.issue ? statusColorOf(model.issue.status) : null,
+        focused: false,
+        dimmed: false,
+      })),
+    [projectTitleById, projection, statusColorOf],
+  );
   const baseNodes = useMemo<DagFlowNode[]>(
     () =>
-      projection.nodes.flatMap((model) => {
+      nodeData.flatMap((data) => {
+        const model = data.model;
         const position = positions.get(model.id);
         if (!position) return [];
-        const data: DagFlowNodeData = {
-          model,
-          direction,
-          projectTitle:
-            model.kind === "issue" && model.issue?.projectId
-              ? (projectTitleById.get(model.issue.projectId) ?? null)
-              : null,
-          statusColor: model.issue ? statusColorOf(model.issue.status) : null,
-          focused: false,
-          dimmed: false,
-        };
         return [
           {
             id: model.id,
@@ -182,13 +187,17 @@ function DagCanvasInner({
             data,
             width: dagNodeSize(model.kind).width,
             height: dagNodeSize(model.kind).height,
+            // React Flow clears cached handle bounds if a controlled node
+            // drops its measurements. Keep its measured geometry across
+            // position-only updates instead of unmounting every edge.
+            measured: getInternalNode(model.id)?.measured,
             selected: false,
             draggable: false,
             connectable: false,
           },
         ];
       }),
-    [direction, positions, projectTitleById, projection, statusColorOf],
+    [getInternalNode, nodeData, positions],
   );
   const rfNodes = useMemo<DagFlowNode[]>(
     () =>
@@ -203,9 +212,14 @@ function DagCanvasInner({
         ) {
           return node;
         }
-        return { ...node, selected, data: { ...node.data, focused, dimmed } };
+        return {
+          ...node,
+          measured: getInternalNode(node.id)?.measured ?? node.measured,
+          selected,
+          data: { ...node.data, focused, dimmed },
+        };
       }),
-    [baseNodes, focusSet, selectedNodeId],
+    [baseNodes, focusSet, getInternalNode, selectedNodeId],
   );
 
   const rfEdges = useMemo<DagFlowEdge[]>(
@@ -225,13 +239,15 @@ function DagCanvasInner({
           id: model.id,
           source: model.source,
           target: model.target,
+          sourceHandle: direction,
+          targetHandle: direction,
           type: "dagEdge" as const,
           data,
           selected: selectedEdgeId === model.id,
           markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
         };
       }),
-    [focusSet, projection, selectedEdgeId],
+    [direction, focusSet, projection, selectedEdgeId],
   );
 
   const selectedNode = useMemo(
@@ -288,11 +304,13 @@ function DagCanvasInner({
   // Fit once when a fresh layout lands (projection or direction changed the
   // position set). Selection/focus fits are separate, user-initiated.
   const fittedPositionsRef = useRef<typeof positions | null>(null);
-  useEffect(() => {
-    if (positions === fittedPositionsRef.current || positions.size === 0) return;
+  useLayoutEffect(() => {
+    if (!viewportInitialized || positions === fittedPositionsRef.current || positions.size === 0) return;
     fittedPositionsRef.current = positions;
-    void fitView({ padding: 0.15, duration: 200 });
-  }, [fitView, positions]);
+    // Fit the worker's complete bounds before paint so new coordinates and
+    // viewport appear together. fitView queues another measurement pass.
+    void fitBounds(getNodesBounds(rfNodes), { padding: 0.15 });
+  }, [fitBounds, positions, rfNodes, viewportInitialized]);
 
   return (
     <div className="relative flex-1 min-h-0">
@@ -318,7 +336,9 @@ function DagCanvasInner({
         nodesFocusable
         edgesFocusable
         elementsSelectable
-        onlyRenderVisibleElements
+        // Avoid mount/measurement churn for small projections. Larger
+        // projections retain viewport windowing without truncating the data.
+        onlyRenderVisibleElements={projection.nodes.length > 100 || projection.edges.length > 500}
         minZoom={0.08}
         maxZoom={2}
         deleteKeyCode={null}

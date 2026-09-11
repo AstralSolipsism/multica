@@ -416,4 +416,49 @@ test.describe("Issue dependencies (OL-44)", () => {
       });
     }
   });
+
+  test("changing DAG direction keeps existing edges attached to their handles", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await enterWorkspace(page, ctx);
+    await page.goto(`/${ctx.workspaceSlug}/issues`);
+    await page.getByRole("button", { name: "Board", exact: true }).click();
+    await page.getByText("Graph", { exact: true }).click();
+    await page.getByRole("button", { name: "Expand all", exact: true }).click();
+    await expect(page.locator(".react-flow__edge")).toHaveCount(2);
+    await page.evaluate(() => {
+      const observer = new MutationObserver((changes) => {
+        for (const change of changes) for (const removed of change.removedNodes) {
+          if (removed instanceof Element && (removed.matches(".react-flow__edge") || removed.querySelector(".react-flow__edge"))) {
+            document.documentElement.dataset.detachedDagEdges = "true";
+          }
+        }
+      });
+      observer.observe(document.querySelector(".react-flow__viewport")!, { childList: true, subtree: true });
+    });
+    await page.getByRole("button", { name: "Display", exact: true }).click();
+    for (const [name, sourceSide, targetSide] of [["Top to bottom", "bottom", "top"], ["Left to right", "right", "left"]]) {
+      await page.getByRole("combobox", { name: "Direction", exact: true }).click();
+      await page.getByRole("option", { name, exact: true }).click();
+      await expect.poll(() => page.evaluate(({ sourceSide, targetSide }) => {
+        const edges = Array.from(document.querySelectorAll(".react-flow__edge"));
+        return edges.length === 2 && edges.every((edge) => {
+          const match = edge.getAttribute("aria-label")?.match(/^Edge from (.+) to (.+)$/);
+          if (!match) return false;
+          const path = edge.querySelector<SVGPathElement>(".react-flow__edge-path")!;
+          const matrix = path.getScreenCTM()!;
+          return [[match[1], "source", sourceSide, 0], [match[2], "target", targetSide, path.getTotalLength()]].every(([id, type, side, length]) => {
+            const handle = document.querySelector(`.react-flow__node[data-id="${id}"] .react-flow__handle.${type}.react-flow__handle-${side}`);
+            if (!handle) return false;
+            const rect = handle.getBoundingClientRect();
+            const point = path.getPointAtLength(Number(length)).matrixTransform(matrix);
+            // React Flow attaches at the port's outer edge, not its center.
+            const x = side === "left" ? rect.left : side === "right" ? rect.right : rect.x + rect.width / 2;
+            const y = side === "top" ? rect.top : side === "bottom" ? rect.bottom : rect.y + rect.height / 2;
+            return Math.hypot(point.x - x, point.y - y) < 2;
+          });
+        });
+      }, { sourceSide, targetSide })).toBe(true);
+    }
+    expect(await page.evaluate(() => document.documentElement.dataset.detachedDagEdges)).toBeUndefined();
+  });
 });

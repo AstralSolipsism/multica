@@ -371,7 +371,6 @@ describe("DagView", () => {
             type: "dagNode",
             data: {
               model,
-              direction: "LR",
               projectTitle: null,
               statusColor: null,
               focused: false,
