@@ -1,17 +1,40 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type {
+  CreateIssueRequest,
   IssueStatus,
   IssuePriority,
   IssueAssigneeType,
   IssuePropertyValues,
 } from "../../types";
+import type {
+  DependencyMutationFields,
+  IssueDependencyPreview,
+} from "../../api/dependency-schemas";
 import type { CreateMode } from "./create-mode-store";
 import type { QuickCreateActorType } from "./quick-create-store";
 import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../../platform/workspace-storage";
 import { defaultStorage } from "../../platform/storage";
 import { registerDraftCleanup } from "../../drafts/cleanup-registry";
 import { normalizeStoredUploads, type DraftUpload } from "../../drafts/draft-upload";
+
+/** A dependency-blocked create whose outcome is not yet final. The exact
+ *  body the preview signed plus the server-issued one-shot confirmation
+ *  (OL-41). Kept in memory — NOT persisted: the challenge is short-lived
+ *  (5-minute TTL) and bound to this session's JWT, so a reload can never
+ *  legitimately replay it; what must survive is dialog close / navigation
+ *  / draft editing inside one session (OL-44 re-review). The pending entry
+ *  is discarded only when the outcome is determined (success, a definite
+ *  refusal, expiry, or the user changing the operation itself). */
+export interface PendingDependencyCreate {
+  request: CreateIssueRequest & DependencyMutationFields;
+  item: IssueDependencyPreview;
+  /** Set when the confirmed write's outcome is UNKNOWN (transport/5xx) —
+   *  retry must replay this same requestId, never mint a new permit. */
+  uncertain?: boolean;
+  /** Set when a stale/expired retry re-previewed for fresh reasons. */
+  refreshed?: boolean;
+}
 
 // One logical Issue-Create draft (MUL-5181), split so switching between the
 // manual form and the agent form never destroys the other side's content.
@@ -55,7 +78,21 @@ export interface IssueCreateManual {
    *  it is created (the create endpoint takes no labels), so they are kept as
    *  a plain id list rather than full Label objects. */
   labelIds: string[];
+  /** Prerequisite (blocked_by) issue IDs queued for the create. Persisted
+   *  with the draft so closing and reopening the dialog — including jumping
+   *  out to inspect a blocker from the confirmation dialog — never silently
+   *  drops the execution constraints the user registered (OL-44 review).
+   *  IDs only: display fields are server data and come from React Query at
+   *  render time, never from a persisted snapshot (CLAUDE.md state rules).
+   *  Not a next-issue preference: cleared on successful create and explicit
+   *  draft clears. */
+  blockedBy: string[];
   propertyValues: IssuePropertyValues;
+}
+
+function normalizeDraftPrerequisiteIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((e): e is string => typeof e === "string" && e.length > 0);
 }
 
 export interface IssueCreateAgent {
@@ -86,6 +123,7 @@ const emptyManual = (): IssueCreateManual => ({
   assigneeType: undefined,
   assigneeId: undefined,
   labelIds: [],
+  blockedBy: [],
   propertyValues: {},
 });
 
@@ -114,6 +152,11 @@ interface IssueDraftStore {
   beginIsolatedDraft: () => void;
   endIsolatedDraft: () => void;
   setLastAssignee: (type?: IssueAssigneeType, id?: string) => void;
+  /** The dependency-blocked create awaiting a determined outcome (see the
+   *  type's comment). Runtime-only: never reaches localStorage, and the
+   *  logout cleanup drops it so one user never inherits another's permit. */
+  pendingDependencyCreate?: PendingDependencyCreate;
+  setPendingDependencyCreate: (pending: PendingDependencyCreate | null) => void;
   hasDraft: () => boolean;
 }
 
@@ -164,6 +207,7 @@ function migrateDraft(raw: unknown): IssueCreateDraft {
   }
 
   const sharedRaw = (d.shared as Partial<IssueCreateShared> & { attachments?: unknown }) ?? {};
+  const manualRaw = (d.manual as Partial<IssueCreateManual>) ?? {};
   return {
     shared: {
       ...emptyShared(),
@@ -172,7 +216,13 @@ function migrateDraft(raw: unknown): IssueCreateDraft {
       // drops `uploading` placeholders (bytes are gone).
       attachments: normalizeStoredUploads(sharedRaw.attachments),
     },
-    manual: { ...emptyManual(), ...((d.manual as Partial<IssueCreateManual>) ?? {}) },
+    manual: {
+      ...emptyManual(),
+      ...manualRaw,
+      // Drafts persisted before OL-44 have no blockedBy; anything malformed
+      // is dropped rather than resurrected as a phantom constraint.
+      blockedBy: normalizeDraftPrerequisiteIds(manualRaw.blockedBy),
+    },
     agent: { ...emptyAgent(), ...((d.agent as Partial<IssueCreateAgent>) ?? {}) },
     activeMode: d.activeMode === "agent" ? "agent" : "manual",
   };
@@ -228,12 +278,16 @@ export const useIssueDraftStore = create<IssueDraftStore>()(
           : s),
       setLastAssignee: (type, id) =>
         set({ lastAssigneeType: type, lastAssigneeId: id }),
+      setPendingDependencyCreate: (pending) =>
+        set({ pendingDependencyCreate: pending ?? undefined }),
       hasDraft: () => {
         const { manual, agent, shared } = get().draft;
         return !!(
           manual.title ||
           manual.description ||
           agent.prompt ||
+          // Defensive: pre-OL-44 persisted/test drafts predate the field.
+          (manual.blockedBy?.length ?? 0) > 0 ||
           Object.keys(manual.propertyValues).length > 0 ||
           // Recoverable uploads only: a failed/interrupted remnant the user
           // never dismissed must not pin the sidebar's draft dot forever.
@@ -281,5 +335,6 @@ registerDraftCleanup({
       lastAssigneeType: undefined,
       lastAssigneeId: undefined,
       isolatedDraftBackup: undefined,
+      pendingDependencyCreate: undefined,
     }),
 });

@@ -1,0 +1,292 @@
+import { test, expect, type Page } from "@playwright/test";
+import pg from "pg";
+import { TestApiClient } from "./fixtures";
+import { waitForPageText } from "./helpers";
+
+// OL-44 — dependency editing + human early-dispatch confirmation against the
+// REAL server (OL-39/41 endpoints), not a mocked boundary. The agent/runtime
+// are DB-seeded fakes: the override is proven by the queue row the server
+// writes, never by an actual agent execution.
+
+const E2E_WORKER =
+  process.env.TEST_PARALLEL_INDEX ?? process.env.TEST_WORKER_INDEX ?? "0";
+const E2E_RUN_ID =
+  process.env.E2E_RUN_ID ?? `${Date.now().toString(36)}-${process.pid.toString(36)}`;
+const EMAIL = `e2e-dep-${E2E_WORKER}-${E2E_RUN_ID}@multica.ai`;
+const NAME = "E2E Dependency User";
+
+const DATABASE_URL =
+  process.env.DATABASE_URL ??
+  "postgres://multica:multica@localhost:5432/multica?sslmode=disable";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ||
+  `http://localhost:${process.env.PORT || "8080"}`;
+
+interface Ctx {
+  api: TestApiClient;
+  token: string;
+  workspaceId: string;
+  workspaceSlug: string;
+  userId: string;
+  agentId: string;
+  runtimeId: string;
+  issueA: { id: string; identifier: string };
+  issueB: { id: string; identifier: string };
+  issueC: { id: string; identifier: string };
+}
+
+async function sql<T = Record<string, unknown>>(
+  query: string,
+  params: unknown[],
+): Promise<T[]> {
+  const client = new pg.Client(DATABASE_URL);
+  await client.connect();
+  try {
+    const res = await client.query(query, params);
+    return res.rows as T[];
+  } finally {
+    await client.end();
+  }
+}
+
+/** The exact read→replace flow the editor drives (OL-39 compound write). */
+async function setBlockedBy(ctx: Ctx, issueId: string, blockedBy: string[]) {
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${ctx.token}`,
+    "X-Workspace-ID": ctx.workspaceId,
+  };
+  const depsRes = await fetch(`${API_BASE}/api/issues/${issueId}/dependencies`, {
+    headers,
+  });
+  if (!depsRes.ok) throw new Error(`dependencies read failed: ${depsRes.status}`);
+  const view = (await depsRes.json()) as { dependency_version: string };
+  const writeRes = await fetch(`${API_BASE}/api/issues/${issueId}/with-dependencies`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({
+      blocked_by: blockedBy,
+      expected_dependency_version: view.dependency_version,
+    }),
+  });
+  if (!writeRes.ok) {
+    throw new Error(`dependency write failed: ${writeRes.status} ${await writeRes.text()}`);
+  }
+}
+
+async function getBlockedBy(ctx: Ctx, issueId: string): Promise<string[]> {
+  const res = await fetch(`${API_BASE}/api/issues/${issueId}/dependencies`, {
+    headers: {
+      Authorization: `Bearer ${ctx.token}`,
+      "X-Workspace-ID": ctx.workspaceId,
+    },
+  });
+  const view = (await res.json()) as { blocked_by: { issue_id: string }[] };
+  return view.blocked_by.map((p) => p.issue_id);
+}
+
+async function setup(): Promise<Ctx> {
+  const api = new TestApiClient();
+  const login = await api.login(EMAIL, NAME);
+  const userId: string | undefined = login?.user?.id;
+  if (!userId) throw new Error("login did not return a user id");
+  const workspace = await api.ensureWorkspace(
+    `E2E Dep WS ${E2E_WORKER}`,
+    `e2e-dep-${E2E_WORKER}-${E2E_RUN_ID}`,
+  );
+  await api.markUserOnboarded();
+  const token = api.getToken();
+  if (!token) throw new Error("login did not return a token");
+
+  const runtimeRows = await sql<{ id: string }>(
+    `INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, visibility, owner_id, last_seen_at)
+     VALUES ($1, NULL, 'E2E fake runtime', 'cloud', 'e2e_fake', 'online', 'private', $2, now())
+     RETURNING id`,
+    [workspace.id, userId],
+  );
+  const runtimeId = runtimeRows[0]!.id;
+  const agentRows = await sql<{ id: string }>(
+    `INSERT INTO agent (workspace_id, name, description, runtime_id, runtime_mode, visibility, status, max_concurrent_tasks, owner_id)
+     VALUES ($1, 'E2E Dependency Agent', '', $2, 'cloud', 'private', 'idle', 1, $3)
+     RETURNING id`,
+    [workspace.id, runtimeId, userId],
+  );
+  const agentId = agentRows[0]!.id;
+
+  const a = await api.createIssue("Prerequisite A", { status: "todo" });
+  const b = await api.createIssue("Blocked B", { status: "todo" });
+  const c = await api.createIssue("Cancel Cand C", { status: "todo" });
+
+  const ctx: Ctx = {
+    api,
+    token,
+    workspaceId: workspace.id,
+    workspaceSlug: workspace.slug,
+    userId,
+    agentId,
+    runtimeId,
+    issueA: { id: a.id, identifier: a.identifier },
+    issueB: { id: b.id, identifier: b.identifier },
+    issueC: { id: c.id, identifier: c.identifier },
+  };
+  // B and C both wait on A, registered through the real compound write path.
+  await setBlockedBy(ctx, ctx.issueB.id, [ctx.issueA.id]);
+  await setBlockedBy(ctx, ctx.issueC.id, [ctx.issueA.id]);
+  return ctx;
+}
+
+async function enterWorkspace(page: Page, ctx: Ctx) {
+  await page.addInitScript((t) => {
+    localStorage.setItem("multica_token", t);
+    localStorage.setItem("multica:chat:isOpen", "false");
+  }, ctx.token);
+}
+
+async function cleanup(ctx: Ctx) {
+  // No FK cascade by design (repo rule): remove the relation + queue rows
+  // first, then the issues, runtime and agent.
+  await sql(
+    `DELETE FROM issue_dependency WHERE issue_id = ANY($1::uuid[]) OR depends_on_issue_id = ANY($1::uuid[])`,
+    [[ctx.issueA.id, ctx.issueB.id, ctx.issueC.id]],
+  );
+  await sql(`DELETE FROM agent_task_queue WHERE agent_id = $1`, [ctx.agentId]);
+  await ctx.api.cleanup();
+  await sql(`DELETE FROM agent WHERE id = $1`, [ctx.agentId]);
+  await sql(`DELETE FROM agent_runtime WHERE id = $1`, [ctx.runtimeId]);
+}
+
+test.describe("Issue dependencies (OL-44)", () => {
+  test.setTimeout(120_000);
+  let ctx: Ctx;
+
+  test.beforeAll(async () => {
+    ctx = await setup();
+  });
+
+  test.afterAll(async () => {
+    if (ctx) await cleanup(ctx);
+  });
+
+  test("detail shows unfinished prerequisites and the editor removes/re-adds them", async ({
+    page,
+  }) => {
+    await enterWorkspace(page, ctx);
+    await page.goto(`/${ctx.workspaceSlug}/issues/${ctx.issueB.id}`, {
+      waitUntil: "domcontentloaded",
+    });
+    // The issue title alone also matches the list row — wait for the detail's
+    // Properties panel so we know the detail page (and its sidebar) mounted.
+    await expect(page.locator("text=Properties").first()).toBeVisible({ timeout: 30000 });
+    await waitForPageText(page, "Blocked B");
+
+    // The sidebar section names the direct prerequisite, its unfinished state,
+    // and stays one consistent surface with the editor.
+    await expect(page.getByText("Prerequisites").first()).toBeVisible();
+    await expect(page.getByText("Prerequisite A").first()).toBeVisible();
+    await expect(page.getByText("1 prerequisite unfinished")).toBeVisible();
+
+    // Remove via the shared editor.
+    await page.getByRole("button", { name: "Edit prerequisites" }).first().click();
+    const editor = page.getByRole("dialog", { name: "Edit prerequisites" });
+    await expect(editor).toBeVisible({ timeout: 30000 });
+    await editor
+      .getByRole("button", { name: `Remove prerequisite ${ctx.issueA.identifier}` })
+      .click();
+    await editor.getByRole("button", { name: "Save" }).click();
+    // Editor closed; the section now shows no direct prerequisites.
+    await expect(editor).not.toBeVisible();
+    await expect
+      .poll(() => getBlockedBy(ctx, ctx.issueB.id))
+      .toEqual([]);
+
+    // Re-add via the Relations menu entry (the section is hidden while empty,
+    // so the menu is the always-available entry point) — then the same editor.
+    await page.getByRole("button", { name: "Issue actions" }).click();
+    await page.getByText("Relations", { exact: true }).click();
+    const editItem = page.getByText("Edit prerequisites...");
+    await expect(editItem).toBeVisible({ timeout: 15000 });
+    await editItem.click();
+    const editor2 = page.getByRole("dialog", { name: "Edit prerequisites" });
+    await expect(editor2).toBeVisible({ timeout: 30000 });
+    await editor2.getByPlaceholder("Search issues...").fill("Prerequisite A");
+    const result = editor2.getByText(ctx.issueA.identifier, { exact: false }).first();
+    await expect(result).toBeVisible({ timeout: 15000 });
+    await result.click();
+    await editor2.getByRole("button", { name: "Save" }).click();
+    await expect
+      .poll(() => getBlockedBy(ctx, ctx.issueB.id))
+      .toEqual([ctx.issueA.id]);
+  });
+
+  test("assigning an agent to a blocked issue asks once, and only the explicit override starts it", async ({
+    page,
+  }) => {
+    await enterWorkspace(page, ctx);
+    await page.goto(`/${ctx.workspaceSlug}/issues/${ctx.issueB.id}`, {
+      waitUntil: "domcontentloaded",
+    });
+    await expect(page.locator("text=Properties").first()).toBeVisible({ timeout: 30000 });
+    await waitForPageText(page, "Blocked B");
+
+    // Cancel path first: opening the assignee picker and dismissing the
+    // confirmation must not write anything.
+    // The agent rows carry avatar hover cards that steal the pointer mid-click,
+    // so the pick happens inside the picker popover with a forced click.
+    const pickAgent = async () => {
+      await page.getByText("Unassigned").first().click();
+      const popover = page.locator('[data-slot="popover-content"]').last();
+      await expect(popover).toBeVisible();
+      await popover.getByPlaceholder("Assign to...").fill("E2E Dependency");
+      const row = popover.getByText("E2E Dependency Agent").first();
+      await expect(row).toBeVisible();
+      await row.click({ force: true });
+    };
+    await pickAgent();
+    await expect(page.getByText("Confirm assignment?")).toBeVisible();
+    // The blocked panel lists the unfinished prerequisite before any choice.
+    await expect(page.getByText("Prerequisites unfinished")).toBeVisible();
+    await expect(
+      page.getByText(ctx.issueA.identifier, { exact: false }).first(),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByText("Confirm assignment?")).not.toBeVisible();
+    let queueRows = await sql(
+      `SELECT id FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2`,
+      [ctx.issueB.id, ctx.agentId],
+    );
+    expect(queueRows).toHaveLength(0);
+
+    // Now the explicit one-shot override.
+    await pickAgent();
+    await expect(page.getByText("Prerequisites unfinished")).toBeVisible();
+    await page.getByRole("button", { name: "Assign and start anyway" }).click();
+    await expect(page.getByText("Confirm assignment?")).not.toBeVisible();
+
+    // The server committed the assignment AND queued exactly one run carrying
+    // the consumed one-shot admission record (OL-41 §5).
+    await expect
+      .poll(async () => {
+        const rows = await sql<{ dependency_admission: unknown }>(
+          `SELECT dependency_admission FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2`,
+          [ctx.issueB.id, ctx.agentId],
+        );
+        return rows.length === 1 && rows[0]!.dependency_admission !== null;
+      })
+      .toBe(true);
+
+    // Cancel-on-confirm for C wrote nothing either: still unassigned, no run.
+    const cRes = await fetch(`${API_BASE}/api/issues/${ctx.issueC.id}`, {
+      headers: {
+        Authorization: `Bearer ${ctx.token}`,
+        "X-Workspace-ID": ctx.workspaceId,
+      },
+    });
+    const c = (await cRes.json()) as { assignee_id: string | null };
+    expect(c.assignee_id).toBeNull();
+    queueRows = await sql(
+      `SELECT id FROM agent_task_queue WHERE issue_id = $1`,
+      [ctx.issueC.id],
+    );
+    expect(queueRows).toHaveLength(0);
+  });
+});

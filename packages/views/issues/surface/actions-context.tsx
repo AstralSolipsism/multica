@@ -2,6 +2,7 @@
 
 import { createContext, useContext, type ReactNode } from "react";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
+import type { IssueBatchUpdateResult } from "@multica/core/api";
 import type { IssueCreateDefaults } from "./types";
 
 export type IssueSurfaceMutationOptions = {
@@ -24,10 +25,12 @@ export interface IssueSurfaceActions {
     updates: Partial<UpdateIssueRequest>,
     options?: IssueSurfaceMutationOptions,
   ) => void;
+  /** Resolves with the parsed per-item result so callers can report partial
+   *  refusals (OL-41) instead of assuming the whole batch landed. */
   batchUpdate: (
     issueIds: string[],
     updates: Partial<UpdateIssueRequest>,
-  ) => Promise<void>;
+  ) => Promise<IssueBatchUpdateResult>;
   batchDelete: (issueIds: string[]) => Promise<void>;
 }
 

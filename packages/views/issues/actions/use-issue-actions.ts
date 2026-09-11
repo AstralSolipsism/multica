@@ -32,6 +32,10 @@ export interface UseIssueActionsResult {
   openSetParent: () => void;
   removeParent: () => void;
   openAddChild: () => void;
+  /** Open the shared prerequisite editor (direct `blocked_by` edges) for this
+   *  issue. The same entry point backs the detail sidebar, the Relations
+   *  menu, and the DAG node's `onEditDependencies` callback (OL-43/44). */
+  openEditDependencies: () => void;
   openDeleteConfirm: (opts?: { onDeletedFallbackPath?: string }) => void;
 }
 
@@ -248,6 +252,11 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     openModal("issue-add-child", { issueId });
   }, [openModal, issueId]);
 
+  const openEditDependencies = useCallback(() => {
+    if (!issueId) return;
+    openModal("issue-edit-dependencies", { issueId });
+  }, [openModal, issueId]);
+
   const openDeleteConfirm = useCallback(
     (opts?: { onDeletedFallbackPath?: string }) => {
       if (!issueId) return;
@@ -270,6 +279,7 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     openSetParent,
     removeParent,
     openAddChild,
+    openEditDependencies,
     openDeleteConfirm,
   };
 }

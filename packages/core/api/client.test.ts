@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAuthStore } from "../auth";
 import { configStore } from "../config";
 import type { StorageAdapter, User } from "../types";
-import { ApiClient, ApiError, CHAT_DRAFT_RESTORE_CAPABILITY, clientErrorMessage } from "./client";
+import { ApiClient, ApiError, CHAT_DRAFT_RESTORE_CAPABILITY, clientErrorMessage, dependencyErrorDetails } from "./client";
 import { EMPTY_PLUGIN_PACKAGE_LIST, EMPTY_PLUGIN_PREVIEW, EMPTY_PLUGIN_SURFACE_LAUNCH } from "./schemas";
 
 afterEach(() => {
@@ -2740,5 +2740,58 @@ describe("ApiClient session expiry", () => {
     expect(store.getState().status).toBe("unauthenticated");
     expect(store.getState().expired).toBe(true);
     expect(storage.getItem("multica_token")).toBeNull();
+  });
+});
+
+describe("dependencyErrorDetails", () => {
+  const wireView = {
+    blocked_by: [
+      {
+        issue_id: "issue-9",
+        status: "in_progress",
+        status_category: "in_progress",
+        satisfied: false,
+        source_edges: ["edge-1"],
+        inherited_from: [],
+        title: "Upstream",
+        identifier: "MUL-9",
+      },
+    ],
+    inherited_blocked_by: [],
+    blocking: [],
+    unsatisfied: [],
+    has_restricted_blockers: false,
+    dependency_version: "v9",
+  };
+
+  it("parses the dependency refusal body (reason_code + camelCased projection)", () => {
+    const err = new ApiError("conflict", 409, "Conflict", {
+      error: "unfinished prerequisites",
+      reason_code: "dependency_unsatisfied",
+      dependencies: wireView,
+    });
+    const details = dependencyErrorDetails(err);
+    expect(details?.reasonCode).toBe("dependency_unsatisfied");
+    expect(details?.dependencies?.dependencyVersion).toBe("v9");
+    expect(details?.dependencies?.blockedBy[0]?.issueId).toBe("issue-9");
+  });
+
+  it("returns null for non-dependency and non-API errors", () => {
+    expect(dependencyErrorDetails(new Error("nope"))).toBeNull();
+    expect(
+      dependencyErrorDetails(new ApiError("gone", 410, "Gone", { reason_code: "gone" })),
+    ).toBeNull();
+    expect(dependencyErrorDetails(new ApiError("conflict", 409, "Conflict"))).toBeNull();
+  });
+
+  it("parses a malformed projection to null — unknown, never a false ready", () => {
+    const err = new ApiError("conflict", 409, "Conflict", {
+      error: "conflict",
+      reason_code: "dependency_version_conflict",
+      dependencies: { blocked_by: "not-an-array" },
+    });
+    const details = dependencyErrorDetails(err);
+    expect(details?.reasonCode).toBe("dependency_version_conflict");
+    expect(details?.dependencies).toBeNull();
   });
 });

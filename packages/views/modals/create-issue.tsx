@@ -2,7 +2,7 @@
 
 import { issueStatusCategory } from "@multica/core/issues";
 import { useState, useRef, useEffect, useLayoutEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import { AppLink, resolveClickIntent, useNavigation } from "../navigation";
 import {
   AlertTriangle,
@@ -21,11 +21,13 @@ import {
   Settings2,
   Shapes,
   Tag,
+  Workflow,
   X as XIcon,
 } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
 import { toast } from "sonner";
 import type {
+  CreateIssueRequest,
   Issue,
   IssueStatus,
   IssuePriority,
@@ -35,7 +37,11 @@ import type {
 } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
 import {
+  Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
 import {
@@ -50,6 +56,7 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@multica/ui/components/ui/tooltip";
 import { Button } from "@multica/ui/components/ui/button";
+import { Spinner } from "@multica/ui/components/ui/spinner";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { ContentEditor, type ContentEditorRef, TitleEditor, type TitleEditorRef, useFileDropZone, FileDropOverlay, useUploadGate, useComposerSubmit } from "../editor";
 import { useIssueCreateUploads } from "./use-issue-create-uploads";
@@ -63,7 +70,7 @@ import { useActorName } from "@multica/core/workspace/hooks";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
-import { useIssueDraftStore, type IssueCreateDraft } from "@multica/core/issues/stores/draft-store";
+import { useIssueDraftStore, type IssueCreateDraft, type PendingDependencyCreate } from "@multica/core/issues/stores/draft-store";
 import { useCreateModeStore } from "@multica/core/issues/stores/create-mode-store";
 import { useQuickCreateStore } from "@multica/core/issues/stores/quick-create-store";
 import {
@@ -74,6 +81,7 @@ import { issueDetailOptions, childIssuesOptions } from "@multica/core/issues/que
 import {
   useCreateCommentSubIssue,
   useCreateIssue,
+  useIssueTriggerPreviewCheck,
   useUpdateIssue,
 } from "@multica/core/issues/mutations";
 import { useAttachLabelToIssue } from "@multica/core/labels";
@@ -83,7 +91,10 @@ import {
 } from "@multica/core/properties";
 import {
   ApiError,
+  canonicalDependencyMutation,
+  dependencyErrorDetails,
   DuplicateIssueErrorBodySchema,
+  type DependencyMutationFields,
   type DuplicateIssueErrorBody,
   parseWithFallback,
 } from "@multica/core/api";
@@ -96,9 +107,41 @@ import {
   CustomPropertyValueInput,
 } from "../issues/components/pickers/custom-property-picker";
 import { IssuePickerModal } from "./issue-picker-modal";
+import { DependencyBlockedList } from "../issues/components/dependency-prerequisites";
 import { useT } from "../i18n";
 import { SourceContextPreviewCard, useSourceContextFailureMessage } from "./source-context-preview";
 import { useIssueLimitUpgradePrompt } from "./use-issue-limit-upgrade-prompt";
+
+/** Whether a held one-shot confirmation can still be consumed (5-minute
+ *  server TTL). A malformed expiry reads as dead, never replayed. */
+function permitExpired(pending: PendingDependencyCreate): boolean {
+  const at = Date.parse(pending.item.confirmation?.expiresAt ?? "");
+  return !Number.isFinite(at) || at <= Date.now();
+}
+
+/** Whether the held permit may still be replayed for this user. Expiry only
+ *  retires UNUSED permits: the server looks up the request record first and
+ *  checks expiry only when nothing was ever committed (dependency_override.go),
+ *  so a permit whose confirmed write may have committed (uncertain outcome)
+ *  replays at any age — the server, not the local clock, adjudicates the
+ *  original result. Discarding it locally is exactly the double-create risk
+ *  the mechanism exists to prevent (OL-44 third review P1). */
+function permitRestorable(pending: PendingDependencyCreate): boolean {
+  return pending.uncertain === true || !permitExpired(pending);
+}
+
+/** Digest-level equality between the operation a permit signed and the one
+ *  on screen — key order and blocked_by ordering are presentation details,
+ *  not a different operation (same rule as the server's payload digest). */
+function sameDependencyMutation(
+  a: CreateIssueRequest & DependencyMutationFields,
+  b: CreateIssueRequest & DependencyMutationFields,
+): boolean {
+  return (
+    JSON.stringify(canonicalDependencyMutation(a)) ===
+    JSON.stringify(canonicalDependencyMutation(b))
+  );
+}
 
 // ---------------------------------------------------------------------------
 // ManualCreatePanel — manual-mode body of the create-issue dialog. Renders
@@ -112,6 +155,13 @@ import { useIssueLimitUpgradePrompt } from "./use-issue-limit-upgrade-prompt";
 // whether saving will start a run, driven by the unified backend predicate
 // (preview, isCreate) — never a frontend guess. No dialog, no blocking.
 //
+// OL-44: when the form carries prerequisites (or a parent whose inherited
+// prerequisites apply), the preview includes a diagnostics-only mutation so
+// the hint can say "won't start — prerequisites unfinished" instead of
+// falsely promising a start. This preview is NEVER the license: its challenge
+// is signed over a partial body and is ignored; the submit path re-previews
+// the exact create body for the authoritative confirmation.
+//
 // Visually it borrows the comment header's avatar+text line, minus the
 // interactivity — purely a caption, never a link/hover-card. It renders its own
 // reveal band (a grid 0fr→1fr collapse) so it sits on a dedicated row above the
@@ -122,26 +172,45 @@ function CreateRunHint({
   assigneeType,
   assigneeId,
   status,
+  parentIssueId,
+  blockedBy,
 }: {
   assigneeType?: IssueAssigneeType;
   assigneeId?: string;
   status: IssueStatus;
+  parentIssueId?: string;
+  blockedBy?: string[];
 }) {
   const { t } = useT("modals");
   const { getActorName } = useActorName();
   const isAgentLike = assigneeType === "agent" || assigneeType === "squad";
+  const hasRelations = (blockedBy?.length ?? 0) > 0 || !!parentIssueId;
   const preview = useIssueTriggerPreview({
     isCreate: true,
     assigneeType: assigneeType ?? null,
     assigneeId: assigneeId ?? null,
     status,
+    mutation:
+      isAgentLike && assigneeId && hasRelations
+        ? {
+            assignee_type: assigneeType,
+            assignee_id: assigneeId,
+            status,
+            parent_issue_id: parentIssueId,
+            blockedBy: [...(blockedBy ?? [])].sort(),
+          }
+        : undefined,
     enabled: isAgentLike && !!assigneeId,
   });
 
   // Reveal only after the predicate resolves so the band animates to the final
   // copy instead of flashing "parked" before the run preview lands.
   const ready = isAgentLike && !!assigneeId && !preview.isLoading;
-  const willStart = preview.totalCount > 0;
+  // A placeholder answer still describes the PREVIOUS field set — never show
+  // its blocked verdict against the current one.
+  const blocked =
+    !preview.isPlaceholderData && (preview.blocked?.length ?? 0) > 0;
+  const willStart = !blocked && preview.totalCount > 0;
   const isSquad = assigneeType === "squad";
   const triggerAgentId = preview.triggers[0]?.agent_id ?? assigneeId;
 
@@ -152,7 +221,11 @@ function CreateRunHint({
   let avatarType: string;
   let avatarId: string | undefined;
   let text: string;
-  if (!willStart) {
+  if (blocked) {
+    avatarType = assigneeType ?? "agent";
+    avatarId = assigneeId;
+    text = t(($) => $.run_confirm.create_blocked);
+  } else if (!willStart) {
     avatarType = assigneeType ?? "agent";
     avatarId = assigneeId;
     text = t(($) => $.run_confirm.create_parked);
@@ -181,7 +254,10 @@ function CreateRunHint({
       <div className="overflow-hidden">
         <div
           aria-live="polite"
-          className="flex items-center gap-1.5 px-4 pb-1 pt-0.5 text-micro text-muted-foreground"
+          className={cn(
+            "flex items-center gap-1.5 px-4 pb-1 pt-0.5 text-micro",
+            blocked ? "text-warning" : "text-muted-foreground",
+          )}
         >
           {avatarId && (
             <ActorAvatar
@@ -318,9 +394,44 @@ export function ManualCreatePanel({
   // object, and we never need to hydrate from an ID the way we do for parent.
   const [childIssues, setChildIssues] = useState<Issue[]>([]);
   const [childPickerOpen, setChildPickerOpen] = useState(false);
+  // Prerequisites (blocked_by) queued for the compound create. Only the IDs
+  // persist in the manual draft — closing and reopening the dialog restores
+  // them exactly like the title (OL-44 review), while the chips' display
+  // labels come from the detail cache/Query because server data belongs
+  // there, not in a persisted snapshot (CLAUDE.md state rules).
+  const [blockedByIds, setBlockedByIds] = useState<string[]>(
+    () => draft.manual.blockedBy ?? [],
+  );
+  const updateBlockedBy = (ids: string[]) => {
+    setBlockedByIds(ids);
+    setManual({ blockedBy: ids });
+  };
+  const [blockedByPickerOpen, setBlockedByPickerOpen] = useState(false);
+  // The submit-time dependency confirmation (OL-41): when the preview of the
+  // exact create body reports unfinished prerequisites, the pending body +
+  // server-signed confirmation live in the draft store (runtime-only) so
+  // they survive "Back to editing", dialog close, and navigating out to
+  // inspect a blocker — the undetermined operation must be restored, never
+  // silently replaced by a fresh attempt (OL-44 re-review P1). `confirmOpen`
+  // is only the dialog's visibility; the permit outlives it.
+  const pendingDependencyCreate = useIssueDraftStore((s) => s.pendingDependencyCreate);
+  const setPendingDependencyCreate = useIssueDraftStore((s) => s.setPendingDependencyCreate);
+  const [confirmOpen, setConfirmOpen] = useState(() => {
+    const pending = useIssueDraftStore.getState().pendingDependencyCreate;
+    return !!pending && permitRestorable(pending);
+  });
+  const [overrideCreating, setOverrideCreating] = useState(false);
+  const wsId = useWorkspaceId();
+  // Chip labels for queued prerequisites — resolved live from the detail
+  // cache (a reopened draft's picks are usually already warm); the raw id
+  // stays as the honest fallback while a label is unknown.
+  const blockedByDetails = useQueries({
+    queries: blockedByIds.map((id) => issueDetailOptions(wsId, id)),
+  });
+  const blockedByLabelOf = (id: string, index: number): string =>
+    blockedByDetails[index]?.data?.identifier ?? id;
   // Fetch parent issue details for the chip (status/identifier/title).
   // List cache usually has it already, so this resolves synchronously.
-  const wsId = useWorkspaceId();
   const { categoryOf: draftStatusCategory } = useIssueStatuses(wsId);
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(wsId));
   const { data: parentIssue } = useQuery({
@@ -411,6 +522,10 @@ export function ManualCreatePanel({
   };
 
   const createIssueMutation = useCreateIssue();
+  // Submit-time authoritative previews (exact create body) go through the
+  // shared mutation wrapper — TanStack owns every server interaction, no
+  // bare api.* calls in the component (CLAUDE.md state rules).
+  const previewCheck = useIssueTriggerPreviewCheck();
   const createCommentSubIssueMutation = useCreateCommentSubIssue();
   const updateIssueMutation = useUpdateIssue();
   const attachLabelMutation = useAttachLabelToIssue();
@@ -428,6 +543,7 @@ export function ManualCreatePanel({
     setParentIssueId(undefined);
     setStage(null);
     setChildIssues([]);
+    updateBlockedBy([]);
     // Keep the just-used assignee for the next issue in the batch; reset
     // everything else across the manual + shared slots.
     setManual({
@@ -438,6 +554,7 @@ export function ManualCreatePanel({
       assigneeId,
       startDate: null,
       labelIds: [],
+      blockedBy: [],
       propertyValues: {},
     });
     setShared({
@@ -469,6 +586,306 @@ export function ManualCreatePanel({
   }, []);
   const submittedDraftRef = useRef<IssueCreateDraft | null>(null);
 
+  // The exact body a manual create submits. Built once per attempt so the
+  // submit-time dependency preview and the write can never diverge (OL-41:
+  // the confirmation challenge is signed over this payload). `blockedBy`
+  // present — even as the complete set the user queued — routes the write to
+  // the compound with-dependencies endpoint; omitted means "no relations".
+  const buildCreateRequest = (
+    description: string | undefined,
+    activeAttachmentIds: string[],
+  ): CreateIssueRequest & DependencyMutationFields => ({
+    title: title.trim(),
+    description,
+    status,
+    priority,
+    assignee_type: assigneeType,
+    assignee_id: assigneeId,
+    start_date: startDate || undefined,
+    due_date: dueDate || undefined,
+    attachment_ids: activeAttachmentIds.length > 0 ? activeAttachmentIds : undefined,
+    // The server attaches these in the same transaction as the create and
+    // echoes them back as `issue.labels`, so a stale selection fails the
+    // create instead of leaving a committed-but-unlabeled issue. A legacy
+    // backend that predates this ignores the field — handled by the
+    // compatibility fallback below.
+    label_ids: labelIds.length > 0 ? labelIds : undefined,
+    parent_issue_id: parentIssueId,
+    // Stage is only meaningful for a sub-issue (relative to its siblings).
+    stage: parentIssueId && stage != null ? stage : undefined,
+    project_id: projectId,
+    ...(blockedByIds.length > 0
+      ? { blockedBy: [...blockedByIds].sort() }
+      : {}),
+  });
+
+  // Everything after the issue row exists: property/sub-issue/label fan-out
+  // (each failure toasts individually, none rolls the create back) and the
+  // success toast. Shared by the plain submit and the override-confirm path.
+  const finalizeCreatedIssue = async (issue: Issue) => {
+    // Custom-property values can only be addressed once the issue has an
+    // id. Keep the modal in its submitting state until every value settles
+    // so closing or "Create another" cannot race the fan-out.
+    const propertyEntries = Object.entries(propertyValues);
+    if (propertyEntries.length > 0) {
+      const results = await Promise.allSettled(
+        propertyEntries.map(([propertyId, value]) =>
+          setIssuePropertyMutation.mutateAsync({
+            issueId: issue.id,
+            propertyId,
+            value,
+          }),
+        ),
+      );
+      let failed = 0;
+      for (const result of results) {
+        if (result.status === "rejected") {
+          failed += 1;
+          console.error("[create-issue] custom property set failed", result.reason);
+        }
+      }
+      if (failed > 0) {
+        toast.error(
+          t(($) => $.create_issue.toast_set_properties_failed, { count: failed }),
+        );
+      }
+    }
+
+    // Link queued children to the new parent. Deferred to after create
+    // because the new issue's ID doesn't exist yet. Partial failures don't
+    // roll back the new issue — it's already committed.
+    if (childIssues.length > 0) {
+      const results = await Promise.allSettled(
+        childIssues.map((child) =>
+          updateIssueMutation.mutateAsync({
+            id: child.id,
+            parent_issue_id: issue.id,
+          }),
+        ),
+      );
+      // Aggregate fan-out: N independent requests can fail for N different
+      // reasons. The user-facing toast stays count-based (any single
+      // err.message would mislead), but log each rejection so developers
+      // still have signal in dev-tools / Sentry.
+      for (const result of results) {
+        if (result.status === "rejected") {
+          console.error("[create-issue] sub-issue link failed", result.reason);
+        }
+      }
+      const failed = results.filter((r) => r.status === "rejected").length;
+      if (failed > 0) {
+        toast.error(
+          failed === childIssues.length
+            ? t(($) => $.create_issue.toast_link_subissues_all_failed)
+            : t(($) => $.create_issue.toast_link_subissues_partial, {
+                failed,
+                total: childIssues.length,
+              }),
+        );
+      }
+    }
+
+    // Backend-compatibility fallback for the rolling deploy window: the web
+    // app auto-deploys on merge but the backend deploys manually, so a newer
+    // web build can briefly talk to a backend that predates atomic label
+    // creation. That backend silently ignores `label_ids` and returns an
+    // issue with no `labels` field. Only then do we fall back to the legacy
+    // per-label attach so the user's labels aren't silently dropped. When
+    // `labels` is present (current backend) the atomic path already ran, so
+    // we skip this — no double-write, no per-label fan-out.
+    if (labelIds.length > 0 && issue.labels === undefined) {
+      const results = await Promise.allSettled(
+        labelIds.map((labelId) =>
+          attachLabelMutation.mutateAsync({ issueId: issue.id, labelId }),
+        ),
+      );
+      let labelsFailed = 0;
+      for (const result of results) {
+        if (result.status === "rejected") {
+          labelsFailed += 1;
+          console.error("[create-issue] label attach fallback failed", result.reason);
+        }
+      }
+      if (labelsFailed > 0) {
+        toast.error(t(($) => $.create_issue.toast_link_labels_failed));
+      }
+    }
+
+    // The old post-create "agent paused in Backlog" blocking panel is gone —
+    // a passive inline hint now warns before submit (MUL-3375). The draft
+    // reset + close/keep-open happens in onAccepted once we report success.
+    {
+      toast.custom((toastId) => (
+        <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg p-4 w-[360px]">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center justify-center size-5 rounded-full bg-emerald-500/15 text-emerald-500">
+              <Check className="size-3" />
+            </div>
+            <span className="text-body font-medium">{t(($) => $.create_issue.toast_created)}</span>
+          </div>
+          <div className="flex items-center gap-2 text-body text-muted-foreground ml-7">
+            <StatusIcon
+              status={issue.status}
+              category={issueStatusCategory(issue) ?? undefined}
+              className="size-3.5 shrink-0"
+            />
+            <span className="truncate">{issue.identifier} – {issue.title}</span>
+          </div>
+          {/* Not an AppLink: sonner renders toast content under <Toaster />,
+              which is mounted outside NavigationProvider, so useNavigation()
+              would throw here. */}
+          <button
+            type="button"
+            className="ml-7 mt-2 text-body text-primary hover:underline cursor-pointer"
+            onClick={() => {
+              router.push(p.issueDetail(issue.id));
+              toast.dismiss(toastId);
+            }}
+          >
+            {t(($) => $.create_issue.view_issue)}
+          </button>
+        </div>
+      ), { duration: 5000 });
+    }
+  };
+
+  // The composer's onAccepted body, shared with the override-confirm path:
+  // consume the draft only when it is still the one that was submitted
+  // (MUL-5181 P0), then close or reset per "create another".
+  const acceptSubmittedDraft = () => {
+    // These preferences derive from the SUBMITTED values, not the live
+    // draft — an issue was created, so record them regardless of the guard.
+    setLastAssignee(assigneeType, assigneeId);
+    setLastMode("manual");
+    // Success may only consume the draft it submitted (MUL-5181 P0): any
+    // edit after the submit snapshot — typing while the request is in
+    // flight, or a reopened dialog — survives, and the dialog then stays
+    // open on the newer draft instead of closing/resetting over it. Flush
+    // the editor's pending debounce first so mid-flight typing still inside
+    // the debounce window is judged correctly.
+    const lateDesc = descEditorRef.current?.flushPendingUpdate?.();
+    if (lateDesc != null) setManual({ description: lateDesc });
+    const untouched =
+      useIssueDraftStore.getState().draft === submittedDraftRef.current;
+    if (untouched) clearDraft();
+    if (!mountedRef.current || !untouched) return;
+    if (keepOpen) {
+      resetForNextIssue();
+    } else {
+      onClose();
+    }
+  };
+
+  // The dependency confirmation's explicit "create and start anyway": replay
+  // the previewed body with its one-shot challenge. A stale/expired/!allowed
+  // answer re-previews the same body for a fresh challenge and current
+  // reasons — the human always re-decides; nothing auto-retries (OL-41).
+  const submitDependencyOverride = async () => {
+    const pending = pendingDependencyCreate;
+    const confirmation = pending?.item.confirmation ?? null;
+    if (!pending || !confirmation || overrideCreating) return;
+    // The permit is digest-bound to the exact body it signed. Before
+    // replaying it, prove the draft on screen still IS that operation — a
+    // user who edited after an undetermined attempt must get a fresh
+    // preview, not a replay against changed content.
+    const currentDescription = descEditorRef.current?.getMarkdown()?.trim() || undefined;
+    const currentAttachmentIds = draftAttachments
+      .filter((a) => contentReferencesAttachment(currentDescription ?? "", a))
+      .map((a) => a.id);
+    if (!sameDependencyMutation(buildCreateRequest(currentDescription, currentAttachmentIds), pending.request)) {
+      setPendingDependencyCreate(null);
+      setConfirmOpen(false);
+      toast.error(t(($) => $.create_issue.dependency_confirm.changed_note));
+      return;
+    }
+    if (!permitRestorable(pending)) {
+      setPendingDependencyCreate(null);
+      setConfirmOpen(false);
+      toast.error(t(($) => $.run_confirm.expired_notice));
+      return;
+    }
+    // Snapshot the draft being submitted: the guard just proved the on-screen
+    // draft IS this operation, and the modal dialog blocks edits mid-flight —
+    // the same "consume only the submitted draft" guarantee the composer's
+    // onSubmit snapshot gives the normal path (MUL-5181 P0). Without this,
+    // a restored confirmation's success compares the draft against null and
+    // wrongly keeps the window open (OL-44 third review P2).
+    submittedDraftRef.current = useIssueDraftStore.getState().draft;
+    setOverrideCreating(true);
+    try {
+      const issue = await createIssueMutation.mutateAsync({
+        ...pending.request,
+        dependencyOverride: {
+          requestId: confirmation.requestId,
+          challenge: confirmation.challenge,
+        },
+      });
+      await finalizeCreatedIssue(issue);
+      setPendingDependencyCreate(null);
+      setConfirmOpen(false);
+      acceptSubmittedDraft();
+    } catch (err) {
+      const dep = dependencyErrorDetails(err);
+      if (
+        dep &&
+        (dep.reasonCode === "dependency_override_stale" ||
+          dep.reasonCode === "dependency_override_expired" ||
+          dep.reasonCode === "dependency_version_conflict" ||
+          dep.reasonCode === "dependency_unsatisfied")
+      ) {
+        try {
+          const refreshed = await previewCheck.mutateAsync({
+            isCreate: true,
+            mutation: pending.request,
+          });
+          const item = refreshed.blocked?.[0] ?? null;
+          if (item) {
+            setPendingDependencyCreate({ request: pending.request, item, refreshed: true });
+          } else {
+            // The prerequisites completed in the meantime — a plain create
+            // now starts the run without any override.
+            setPendingDependencyCreate(null);
+            setConfirmOpen(false);
+            toast.success(t(($) => $.create_issue.dependency_now_ready));
+          }
+        } catch {
+          setPendingDependencyCreate(null);
+          setConfirmOpen(false);
+          toast.error(t(($) => $.create_issue.toast_failed));
+        }
+      } else if (!(err instanceof ApiError) || err.status >= 500) {
+        // AMBIGUOUS failure (transport drop / 5xx): the server may have
+        // committed before the answer was lost. Keep the exact request AND
+        // its one-shot permit — replaying the same requestId returns the
+        // original task (OL-41 idempotent replay), while discarding it and
+        // re-previewing would issue a NEW permit that could create and run
+        // twice (OL-44 review P1). The permit stays in the draft store even
+        // if the dialog now closes. Only a definite refusal (dependency code
+        // above, or any other 4xx below) clears it.
+        toast.error(
+          err instanceof Error && err.message
+            ? err.message
+            : t(($) => $.create_issue.toast_failed),
+        );
+        setPendingDependencyCreate({ ...pending, uncertain: true });
+      } else {
+        // Definite refusal (4xx, nothing committed) — including a credential
+        // that may not override. Close back to the form with the reason.
+        toast.error(
+          dep?.reasonCode === "dependency_override_not_allowed"
+            ? t(($) => $.create_issue.dependency_override_not_allowed)
+            : err instanceof Error && err.message
+              ? err.message
+              : t(($) => $.create_issue.toast_failed),
+        );
+        setPendingDependencyCreate(null);
+        setConfirmOpen(false);
+      }
+    } finally {
+      setOverrideCreating(false);
+    }
+  };
+
   const composer = useComposerSubmit({
     editorRef: descEditorRef,
     uploadGate: gate,
@@ -480,6 +897,9 @@ export function ManualCreatePanel({
       const pendingDesc = descEditorRef.current?.flushPendingUpdate?.();
       if (pendingDesc != null) setManual({ description: pendingDesc });
       submittedDraftRef.current = useIssueDraftStore.getState().draft;
+      // The body actually attempted — the dependency refusal handling in
+      // catch re-previews exactly it for the confirmation challenge.
+      let attemptedRequest: (CreateIssueRequest & DependencyMutationFields) | undefined;
       try {
       const description = descEditorRef.current?.getMarkdown()?.trim() || undefined;
       const activeAttachmentIds = draftAttachments
@@ -509,153 +929,54 @@ export function ManualCreatePanel({
           },
         });
       } else {
-        issue = await createIssueMutation.mutateAsync({
-          title: title.trim(),
-          description,
-          status,
-          priority,
-          assignee_type: assigneeType,
-          assignee_id: assigneeId,
-          start_date: startDate || undefined,
-          due_date: dueDate || undefined,
-          attachment_ids: activeAttachmentIds.length > 0 ? activeAttachmentIds : undefined,
-          // The server attaches these in the same transaction as the create and
-          // echoes them back as `issue.labels`, so a stale selection fails the
-          // create instead of leaving a committed-but-unlabeled issue. A legacy
-          // backend that predates this ignores the field — handled by the
-          // compatibility fallback below.
-          label_ids: labelIds.length > 0 ? labelIds : undefined,
-          parent_issue_id: parentIssueId,
-          // Stage is only meaningful for a sub-issue (relative to its siblings).
-          stage: parentIssueId && stage != null ? stage : undefined,
-          project_id: projectId,
-        });
-      }
-
-      // Custom-property values can only be addressed once the issue has an
-      // id. Keep the modal in its submitting state until every value settles
-      // so closing or "Create another" cannot race the fan-out.
-      const propertyEntries = Object.entries(propertyValues);
-      if (propertyEntries.length > 0) {
-        const results = await Promise.allSettled(
-          propertyEntries.map(([propertyId, value]) =>
-            setIssuePropertyMutation.mutateAsync({
-              issueId: issue.id,
-              propertyId,
-              value,
-            }),
-          ),
-        );
-        let failed = 0;
-        for (const result of results) {
-          if (result.status === "rejected") {
-            failed += 1;
-            console.error("[create-issue] custom property set failed", result.reason);
+        const request = buildCreateRequest(description, activeAttachmentIds);
+        // OL-44: with an agent/squad assignee and prerequisites in play
+        // (direct picks, or inherited ones through the parent), preview the
+        // exact create body first. An unfinished-prerequisite verdict opens
+        // the explicit one-shot confirmation instead of writing anything.
+        // The preview is advisory: its failure never blocks the submit — the
+        // compound write re-checks authoritatively and 409s below.
+        const wantsRun =
+          (assigneeType === "agent" || assigneeType === "squad") && !!assigneeId;
+        if (wantsRun && (blockedByIds.length > 0 || parentIssueId)) {
+          // A previous attempt with this exact body may still be
+          // UNDETERMINED (transport failure): restore its confirmation
+          // instead of minting a fresh permit — replaying the original
+          // requestId is the only path that cannot double-create.
+          const held = useIssueDraftStore.getState().pendingDependencyCreate;
+          if (held && permitRestorable(held) && sameDependencyMutation(held.request, request)) {
+            setConfirmOpen(true);
+            return false;
+          }
+          if (held) {
+            // Expired, or the operation itself changed — either way the old
+            // permit is determined-dead and safe to replace.
+            setPendingDependencyCreate(null);
+          }
+          try {
+            const previewResult = await previewCheck.mutateAsync({
+              isCreate: true,
+              mutation: request,
+            });
+            const blockedItem = previewResult.blocked?.[0] ?? null;
+            if (blockedItem && blockedItem.reasonCode === "dependency_unsatisfied") {
+              setPendingDependencyCreate({ request, item: blockedItem });
+              setConfirmOpen(true);
+              return false;
+            }
+          } catch {
+            // Preview unavailable (offline / older server): fall through to
+            // the write — the server's answer is the authoritative one.
           }
         }
-        if (failed > 0) {
-          toast.error(
-            t(($) => $.create_issue.toast_set_properties_failed, { count: failed }),
-          );
-        }
+        attemptedRequest = request;
+        issue = await createIssueMutation.mutateAsync(request);
+        // A committed create determines any held pending operation: its
+        // permit is spent, never replayable again.
+        setPendingDependencyCreate(null);
       }
 
-      // Link queued children to the new parent. Deferred to after create
-      // because the new issue's ID doesn't exist yet. Partial failures don't
-      // roll back the new issue — it's already committed.
-      if (childIssues.length > 0) {
-        const results = await Promise.allSettled(
-          childIssues.map((child) =>
-            updateIssueMutation.mutateAsync({
-              id: child.id,
-              parent_issue_id: issue.id,
-            }),
-          ),
-        );
-        // Aggregate fan-out: N independent requests can fail for N different
-        // reasons. The user-facing toast stays count-based (any single
-        // err.message would mislead), but log each rejection so developers
-        // still have signal in dev-tools / Sentry.
-        for (const result of results) {
-          if (result.status === "rejected") {
-            console.error("[create-issue] sub-issue link failed", result.reason);
-          }
-        }
-        const failed = results.filter((r) => r.status === "rejected").length;
-        if (failed > 0) {
-          toast.error(
-            failed === childIssues.length
-              ? t(($) => $.create_issue.toast_link_subissues_all_failed)
-              : t(($) => $.create_issue.toast_link_subissues_partial, {
-                  failed,
-                  total: childIssues.length,
-                }),
-          );
-        }
-      }
-
-      // Backend-compatibility fallback for the rolling deploy window: the web
-      // app auto-deploys on merge but the backend deploys manually, so a newer
-      // web build can briefly talk to a backend that predates atomic label
-      // creation. That backend silently ignores `label_ids` and returns an
-      // issue with no `labels` field. Only then do we fall back to the legacy
-      // per-label attach so the user's labels aren't silently dropped. When
-      // `labels` is present (current backend) the atomic path already ran, so
-      // we skip this — no double-write, no per-label fan-out.
-      if (labelIds.length > 0 && issue.labels === undefined) {
-        const results = await Promise.allSettled(
-          labelIds.map((labelId) =>
-            attachLabelMutation.mutateAsync({ issueId: issue.id, labelId }),
-          ),
-        );
-        let labelsFailed = 0;
-        for (const result of results) {
-          if (result.status === "rejected") {
-            labelsFailed += 1;
-            console.error("[create-issue] label attach fallback failed", result.reason);
-          }
-        }
-        if (labelsFailed > 0) {
-          toast.error(t(($) => $.create_issue.toast_link_labels_failed));
-        }
-      }
-
-      // The old post-create "agent paused in Backlog" blocking panel is gone —
-      // a passive inline hint now warns before submit (MUL-3375). The draft
-      // reset + close/keep-open happens in onAccepted once we report success.
-      {
-        toast.custom((toastId) => (
-          <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg p-4 w-[360px]">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="flex items-center justify-center size-5 rounded-full bg-emerald-500/15 text-emerald-500">
-                <Check className="size-3" />
-              </div>
-              <span className="text-body font-medium">{t(($) => $.create_issue.toast_created)}</span>
-            </div>
-            <div className="flex items-center gap-2 text-body text-muted-foreground ml-7">
-              <StatusIcon
-                status={issue.status}
-                category={issueStatusCategory(issue) ?? undefined}
-                className="size-3.5 shrink-0"
-              />
-              <span className="truncate">{issue.identifier} – {issue.title}</span>
-            </div>
-            {/* Not an AppLink: sonner renders toast content under <Toaster />,
-                which is mounted outside NavigationProvider, so useNavigation()
-                would throw here. */}
-            <button
-              type="button"
-              className="ml-7 mt-2 text-body text-primary hover:underline cursor-pointer"
-              onClick={() => {
-                router.push(p.issueDetail(issue.id));
-                toast.dismiss(toastId);
-              }}
-            >
-              {t(($) => $.create_issue.view_issue)}
-            </button>
-          </div>
-        ), { duration: 5000 });
-      }
+      await finalizeCreatedIssue(issue);
       return true;
     } catch (err) {
       const sourceCode = err instanceof ApiError && err.body && typeof err.body === "object"
@@ -680,6 +1001,54 @@ export function ManualCreatePanel({
       }
       if (sourceCode === "issue_limit_reached") {
         showIssueLimitUpgradePrompt();
+        return false;
+      }
+      // OL-44: dependency refusals from the compound write. The write is
+      // atomic — nothing was committed, the form is still exactly what the
+      // server rejected, and `attemptedRequest` is the body to re-preview.
+      const depDetails = dependencyErrorDetails(err);
+      if (depDetails && attemptedRequest) {
+        if (depDetails.reasonCode === "dependency_unsatisfied") {
+          // The advisory precheck raced a concurrent relation change: get
+          // the signed confirmation now and open the explicit dialog.
+          try {
+            const previewResult = await previewCheck.mutateAsync({
+              isCreate: true,
+              mutation: attemptedRequest,
+            });
+            const item = previewResult.blocked?.[0] ?? null;
+            if (item) {
+              setPendingDependencyCreate({ request: attemptedRequest, item, refreshed: true });
+              setConfirmOpen(true);
+              return false;
+            }
+          } catch {
+            // Preview unreachable — fall through to the plain refusal toast.
+          }
+          toast.error(tIssues(($) => $.comment.trigger_blocked_dependency_unsatisfied));
+          return false;
+        }
+        if (
+          depDetails.reasonCode === "dependency_cycle" ||
+          depDetails.reasonCode === "dependency_ancestor_conflict"
+        ) {
+          toast.error(t(($) => $.create_issue.dependency_structure_error));
+          return false;
+        }
+        if (depDetails.reasonCode === "dependency_data_unverified") {
+          toast.error(t(($) => $.create_issue.dependency_unverified_error));
+          return false;
+        }
+      }
+      // A 404/405 on a relation-carrying create means the server predates the
+      // compound endpoint: report the missing capability — never fall back to
+      // the legacy create, which would silently drop the prerequisites (OL-41).
+      if (
+        attemptedRequest?.blockedBy !== undefined &&
+        err instanceof ApiError &&
+        (err.status === 404 || err.status === 405)
+      ) {
+        toast.error(t(($) => $.create_issue.dependency_unsupported));
         return false;
       }
       // Duplicate-issue is the only structured 409 the create endpoint
@@ -735,29 +1104,7 @@ export function ManualCreatePanel({
       return false;
     }
   },
-    onAccepted: () => {
-      // These preferences derive from the SUBMITTED values, not the live
-      // draft — an issue was created, so record them regardless of the guard.
-      setLastAssignee(assigneeType, assigneeId);
-      setLastMode("manual");
-      // Success may only consume the draft it submitted (MUL-5181 P0): any
-      // edit after the submit snapshot — typing while the request is in
-      // flight, or a reopened dialog — survives, and the dialog then stays
-      // open on the newer draft instead of closing/resetting over it. Flush
-      // the editor's pending debounce first so mid-flight typing still inside
-      // the debounce window is judged correctly.
-      const lateDesc = descEditorRef.current?.flushPendingUpdate?.();
-      if (lateDesc != null) setManual({ description: lateDesc });
-      const untouched =
-        useIssueDraftStore.getState().draft === submittedDraftRef.current;
-      if (untouched) clearDraft();
-      if (!mountedRef.current || !untouched) return;
-      if (keepOpen) {
-        resetForNextIssue();
-      } else {
-        onClose();
-      }
-    },
+    onAccepted: acceptSubmittedDraft,
   });
 
   // Button + shortcut entry point. The title-empty case can't rely on the
@@ -972,8 +1319,15 @@ export function ManualCreatePanel({
             )}
 
             {/* Pre-trigger preview — a passive caption above the toolbar; reveals
-                when an agent assignee will pick the issue up. */}
-            <CreateRunHint assigneeType={assigneeType} assigneeId={assigneeId} status={status} />
+                when an agent assignee will pick the issue up, and warns when
+                queued prerequisites would block that start. */}
+            <CreateRunHint
+              assigneeType={assigneeType}
+              assigneeId={assigneeId}
+              status={status}
+              parentIssueId={parentIssueId}
+              blockedBy={blockedByIds}
+            />
 
             {/* Property toolbar — each field renders per the Settings → Preferences → Issue creation
                 selection (see showField above). */}
@@ -1189,6 +1543,30 @@ export function ManualCreatePanel({
                 </div>
               ))}
 
+              {/* Prerequisite chips — one per queued blocked_by edge, sent with
+                  the create in the same compound write (OL-44). */}
+              {blockedByIds.map((b, i) => (
+                <div
+                  key={b}
+                  className="inline-flex items-center rounded-full border text-caption transition-colors hover:bg-accent/60"
+                >
+                  <div className="flex items-center gap-1.5 py-1 pl-2.5">
+                    <Workflow className="size-3 text-muted-foreground" />
+                    <span>{t(($) => $.create_issue.prerequisite_chip, { identifier: blockedByLabelOf(b, i) })}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateBlockedBy(blockedByIds.filter((x) => x !== b))
+                    }
+                    className="p-1 pr-2 text-muted-foreground hover:text-foreground cursor-pointer"
+                    aria-label={t(($) => $.create_issue.remove_prerequisite_aria, { identifier: blockedByLabelOf(b, i) })}
+                  >
+                    <XIcon className="size-3" />
+                  </button>
+                </div>
+              ))}
+
               {/* Overflow — always the last child so DOM order keeps it at the
                   end of the wrap flow, no matter how many chips are present. */}
               <DropdownMenu>
@@ -1264,6 +1642,15 @@ export function ManualCreatePanel({
                     <ArrowDown className="h-3.5 w-3.5" />
                     {t(($) => $.create_issue.add_subissue)}
                   </DropdownMenuItem>
+                  {/* Prerequisites are unavailable in the comment sub-issue
+                      flow: that endpoint has no blocked_by, so the entry stays
+                      hidden there instead of pretending to apply. */}
+                  {!anchorCommentId && (
+                    <DropdownMenuItem onClick={() => setBlockedByPickerOpen(true)}>
+                      <Workflow className="h-3.5 w-3.5" />
+                      {t(($) => $.create_issue.add_prerequisite)}
+                    </DropdownMenuItem>
+                  )}
                   {workspaceProperties.length > 0 && (
                     <DropdownMenuSub>
                       <DropdownMenuSubTrigger>
@@ -1359,6 +1746,103 @@ export function ManualCreatePanel({
                 );
               }}
             />
+            {/* Prerequisite picker — the parent and queued children are
+                excluded because ancestor↔descendant edges are structural
+                conflicts the server rejects anyway. */}
+            <IssuePickerModal
+              open={blockedByPickerOpen}
+              onOpenChange={setBlockedByPickerOpen}
+              title={t(($) => $.create_issue.prerequisite_picker.title)}
+              description={t(($) => $.create_issue.prerequisite_picker.description)}
+              excludeIds={[
+                ...blockedByIds,
+                ...childIssues.map((c) => c.id),
+                ...(parentIssueId ? [parentIssueId] : []),
+              ]}
+              onSelect={(selected) => {
+                updateBlockedBy(
+                  blockedByIds.includes(selected.id)
+                    ? blockedByIds
+                    : [...blockedByIds, selected.id],
+                );
+              }}
+            />
+
+            {/* One-shot human release for a create blocked by unfinished
+                prerequisites (OL-41). The listed body is byte-for-byte the one
+                the preview signed; confirming replays it with the challenge.
+                Closing keeps the permit in the draft store — an undetermined
+                attempt is restored on resubmit, never silently re-minted. */}
+            {confirmOpen && pendingDependencyCreate && (
+              <Dialog
+                open
+                onOpenChange={(v) => {
+                  if (!v && !overrideCreating) setConfirmOpen(false);
+                }}
+              >
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>
+                      {t(($) => $.create_issue.dependency_confirm.title)}
+                    </DialogTitle>
+                    <DialogDescription>
+                      {t(($) => $.create_issue.dependency_confirm.body)}
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/5 p-3">
+                    <div className="flex items-center gap-1.5 text-caption font-medium text-warning">
+                      <AlertTriangle className="size-3.5 shrink-0" />
+                      {t(($) => $.run_confirm.blocked_title)}
+                    </div>
+                    <DependencyBlockedList
+                      wsId={wsId}
+                      items={[pendingDependencyCreate.item]}
+                      onOpenIssue={(targetId) => {
+                        // Inspecting a blocker leaves the form; the draft AND
+                        // the pending permit persist for reopening.
+                        router.push(p.issueDetail(targetId));
+                        setConfirmOpen(false);
+                        onClose();
+                      }}
+                    />
+                    <p className="text-micro text-muted-foreground">
+                      {t(($) => $.run_confirm.blocked_one_time_note)}
+                    </p>
+                    {pendingDependencyCreate.refreshed && (
+                      <p className="text-micro text-warning">
+                        {t(($) => $.run_confirm.stale_notice)}
+                      </p>
+                    )}
+                    {pendingDependencyCreate.uncertain && (
+                      <p className="text-micro text-warning">
+                        {t(($) => $.create_issue.dependency_confirm.uncertain_note)}
+                      </p>
+                    )}
+                  </div>
+                  <DialogFooter>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={overrideCreating}
+                      onClick={() => setConfirmOpen(false)}
+                    >
+                      {t(($) => $.create_issue.dependency_confirm.cancel)}
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={overrideCreating || !pendingDependencyCreate.item.confirmation}
+                      onClick={() => void submitDependencyOverride()}
+                    >
+                      {overrideCreating ? (
+                        <Spinner className="size-4" />
+                      ) : (
+                        t(($) => $.create_issue.dependency_confirm.confirm)
+                      )}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
 
             {/* Footer — same 2x2-grid-on-phones / single-row-from-`sm` shape
                 as the agent panel; see the note on AgentCreatePanel's footer

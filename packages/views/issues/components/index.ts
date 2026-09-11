@@ -3,6 +3,8 @@ export { StatusHeading } from "./status-heading";
 export { PriorityIcon } from "./priority-icon";
 export { StatusPicker, PriorityPicker, StagePicker, AssigneePicker, canAssignAgent, StartDatePicker, DueDatePicker, LabelPicker } from "./pickers";
 export { IssueDetail, IssueDetailSkeleton, issueHighlightMementoKey } from "./issue-detail";
+export { IssueDependenciesSection } from "./issue-dependencies-section";
+export { PrerequisiteList, DependencyBlockedList, usePrerequisiteDisplay } from "./dependency-prerequisites";
 export { IssueDetailRoute } from "./issue-detail-route";
 export { IssuesPage } from "./issues-page";
 export { CommentCard } from "./comment-card";

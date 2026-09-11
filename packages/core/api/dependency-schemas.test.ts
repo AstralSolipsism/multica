@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClient } from "./client";
-import { dependencyReadiness } from "./dependency-schemas";
+import { canonicalDependencyMutation, dependencyReadiness } from "./dependency-schemas";
 
 const view = {
   blocked_by: [], inherited_blocked_by: [], blocking: [], unsatisfied: [],
@@ -146,5 +146,53 @@ describe("dependency API boundary", () => {
     const result = await new ApiClient("https://api.example.test").createIssueWithDependencies({ title: "B" });
     expect(result.id).toBe("b");
     expect(dependencyReadiness(result.dependencies)).toBe("unknown");
+  });
+});
+
+// canonicalDependencyMutation — the digest-level identity shared by the
+// preview query key and the held-permit comparison. Its boundary semantics
+// live here, next to the helper (CLAUDE.md: one canonical test layer).
+describe("canonicalDependencyMutation", () => {
+  it("is insensitive to object key order at any depth", () => {
+    const a = canonicalDependencyMutation({
+      title: "B", status: "todo", assignee_type: "agent",
+      parent_issue_id: null as unknown as undefined,
+    } as never);
+    const b = canonicalDependencyMutation({
+      assignee_type: "agent", parent_issue_id: null as unknown as undefined,
+      status: "todo", title: "B",
+    } as never);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it("drops undefined fields but keeps explicit nulls and falsy scalars", () => {
+    const out = canonicalDependencyMutation({
+      title: "", due_date: undefined, parent_issue_id: null, priority: "none",
+    } as never);
+    expect(out).toEqual({ parent_issue_id: null, priority: "none", title: "" });
+    expect(out).not.toHaveProperty("due_date");
+  });
+
+  it("treats blockedBy as a set: selection order is not identity", () => {
+    const a = canonicalDependencyMutation({ title: "B", blockedBy: ["x", "y"] });
+    const b = canonicalDependencyMutation({ title: "B", blockedBy: ["y", "x"] });
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    // …while membership changes are always a different operation.
+    const c = canonicalDependencyMutation({ title: "B", blockedBy: ["x"] });
+    expect(JSON.stringify(a)).not.toBe(JSON.stringify(c));
+  });
+
+  it("preserves order inside non-relation arrays (label/attachment ids are sequences)", () => {
+    const a = canonicalDependencyMutation({ title: "B", label_ids: ["l2", "l1"] } as never);
+    expect(a.label_ids).toEqual(["l2", "l1"]);
+  });
+
+  it("distinguishes override presence: a mutation with an override is not the unsigned body", () => {
+    const bare = canonicalDependencyMutation({ title: "B" });
+    const withOverride = canonicalDependencyMutation({
+      title: "B",
+      dependencyOverride: { requestId: "r1", challenge: "c1" },
+    });
+    expect(JSON.stringify(bare)).not.toBe(JSON.stringify(withOverride));
   });
 });

@@ -22,3 +22,23 @@ export function invalidateIssueQueries(
   // replacement. Inactive queries stay stale and fetch only on the next mount.
   return qc.cancelQueries(graphFilters).then(() => qc.invalidateQueries({ queryKey }));
 }
+
+/** Refresh dependency projections after a committed change — the same
+ *  first-load race the graph helper exists for: a projection's very first
+ *  GET in flight when the invalidation lands would otherwise complete and
+ *  become permanently "fresh" under staleTime: Infinity, painting an
+ *  upstream as done after it reopened (OL-44 re-review). Cancel the stale
+ *  in-flight read, then invalidate so the next read sees the current
+ *  prerequisite state. */
+export function invalidateDependencyQueries(
+  qc: QueryClient,
+  wsId: string,
+): Promise<void> {
+  const filters = { queryKey: issueKeys.dependenciesAll(wsId) };
+  const pending = qc
+    .getQueryCache()
+    .findAll(filters)
+    .some((query) => query.state.fetchStatus !== "idle");
+  if (!pending) return qc.invalidateQueries(filters);
+  return qc.cancelQueries(filters).then(() => qc.invalidateQueries(filters));
+}
