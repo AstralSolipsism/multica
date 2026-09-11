@@ -153,4 +153,3 @@ refetching, including an initial request with no cached snapshot, so a late
 pre-event response cannot erase a committed change's refresh signal.
 There is no graph CLI command or new navigation in this stage. Use the
 complete graph endpoint for topology and the dependency endpoint for decisions.
-

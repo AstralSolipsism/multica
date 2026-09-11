@@ -258,6 +258,12 @@ writes the literal `done` key.
 
 ## Explicit prerequisites and execution admission
 
+Register known prerequisites when creating the plan. Direct and inherited
+unfinished prerequisites block fresh machine execution; only the prerequisite's
+current effective `done` category satisfies it. Parentage and stages do not
+replace explicit edges, and `--no-start` does not exempt a new assignment.
+A saved comment may still report blocked dispatch; do not repost it.
+
 Read [Issue prerequisites and graph](issue-dependencies.md) before managing
 prerequisites, interpreting dispatch refusals, or using the complete graph API.
 

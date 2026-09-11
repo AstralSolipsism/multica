@@ -104,9 +104,10 @@ including dependency rejection codes; each item is its own atomic mutation.
 
 ## Transaction and lock order
 
-Structural/create/delete and status/assignment updates use:
+Create/delete and all ordinary issue updates use:
 
-1. Workspace row `FOR NO KEY UPDATE` (also the existing create counter lock).
+1. Workspace row `FOR KEY SHARE`; creates first take `FOR NO KEY UPDATE` for
+   their existing counter update.
 2. Shared workspace status-catalog advisory lock.
 3. Exclusive workspace dependency-structure advisory lock.
 4. Requested attachment locks, when updating with new attachments.
@@ -115,10 +116,16 @@ Structural/create/delete and status/assignment updates use:
 
 Issue rows are locked before reading prerequisite status. This stabilizes
 status and revisions even for existing status producers outside HTTP. Ordinary
-text/date/position edits use only their existing attachment/target locks;
+text/date/position edits join the same structure-lock queue before their existing
+attachment/target locks, but do not load the graph unless admission requires it;
 top-level creates load the workspace graph when they also enqueue execution.
-Updates refresh untouched nullable fields under their target lock to avoid
-overwriting a concurrent reparent or assignment with stale preloaded values.
+Status-only updates keep the ordered workspace row locks and decide execution
+intent from the locked target. Without execution or an explicit dependency
+write/view/version check, they skip loading and cloning the graph.
+Updates, including plugin content edits, refresh untouched nullable fields under
+their target lock to avoid overwriting a concurrent reparent or assignment with
+stale preloaded values. The plugin content transaction joins the same structure
+gate before locking its target and applying an optional expected revision.
 Compound responses retain the committed transaction's snapshot rather than
 mixing a post-commit graph read with an older issue revision.
 
@@ -127,30 +134,77 @@ database changes share the deletion transaction; runtime notifications occur
 only after commit. Existing deletion cleanup and source-context retention are
 preserved. Rejected creates/updates/deletes emit no task-start/cancel effects.
 
-Admission transactions take workspace `FOR SHARE`, the shared catalog and
-structure locks, then all workspace issue rows `FOR SHARE` in UUID order.
-Capacity locks precede queue locks. Machine recovery locks multiple workspaces
-in UUID order. This makes status producers, reparenting and graph edits serialize
-against the dependency decision without changing completion permissions.
+Admission transactions take workspace `FOR KEY SHARE` and the shared catalog and
+structure locks. A known execution target (enqueue, rerun, retry or pending
+recovery) reads the complete graph, then takes issue `FOR SHARE` locks in UUID
+order on the target, every ancestor, and every explicit prerequisite of those
+nodes. It refreshes those rows after locking: status producers can commit between
+the first MVCC read and lock acquisition. Missing endpoints or changed parentage
+fail closed, and that snapshot cannot admit another target.
+
+This covers every status/revision used by D1 and its signed version: parentage
+only propagates explicit prerequisites; a prerequisite's own predecessors are
+not additional completion requirements. Structure/catalog locks stabilize the
+whole graph while the existing validator checks all structural constraints.
+A claim first reads the agent's queued issue targets without taking queue locks,
+then locks the union of their decision inputs. The final claim SQL only admits
+these issue IDs or issue-less chat/planning rows. A concurrently enqueued row
+for a covered target is safe; a different target stays queued until a fresh poll.
+This preserves issue rows, then capacity, then queue lock order and the existing
+runtime, priority, capacity and duplicate-run checks among covered candidates.
+Foreign or missing inputs remain in the model so corrupt targets are quarantined
+and scanning continues to later valid tasks. Multiple targets reuse the existing
+immutable prerequisite index when collecting their status inputs.
+
+An existing legacy run-only row with NULL issue binding needs a target resolved
+later, so that claim retains the full workspace row set. Multi-workspace recovery
+also retains full locks and orders workspaces by UUID. Completion permissions
+are unchanged.
+`KEY SHARE` still prevents workspace deletion, but is compatible with a writer's
+`NO KEY UPDATE` counter lock. This lets the writer enter the exclusive structure
+lock's wait queue, where later admissions wait behind it. Taking workspace
+`SHARE` instead lets successive readers overtake the writer before it reaches
+that queue. Text-only writers must also join this queue to avoid the same
+starvation at the issue row. These writes serialize per workspace; they wait
+for current admissions to finish, without requiring the reader stream to stop.
+Only creates take the stronger counter lock: taking it for ordinary writes
+would keep the second writer out of the structure queue behind the first,
+allowing another reader batch between them. Creates retain the counter-first
+order to avoid upgrading after catalog/structure/issue locks.
 For standalone enqueue and compound assignment, external attribution/connected-app
 preparation precedes the transaction;
 queue insertion, confirmation audit and the compound issue mutation commit
 before task events or runtime wakeups. Manual rerun retries its entire transaction
 once if a concurrent provider retry acquires the pending slot.
 
-Durable Feishu feedback recovery retains its caller-owned comment transaction.
-It takes the compound-write locks before issue/agent locks and uses savepoints
-for shared admission, keeping queue writes and feedback settlement atomic.
-Its full critical-section time, including optional overlay preparation, needs
-separate rollout measurement alongside standalone enqueue; the sparse load
-fixture does not measure feedback recovery.
+PR #32 and migration 478 retired the separate Feishu feedback worker. The live
+conversation path prepares external source/overlay data before the Chat
+transaction; input, run and frozen delivery commit together. A task-token agent
+then uses the ordinary comment handler. The load matrix exercises this full
+path with and without a controlled external overlay delay. Caller-owned
+transactions remain supported: a regression proves nested admission savepoints
+keep row locks and queued writes until the outer transaction commits or rolls
+back. Do not restore the retired worker to test that transaction contract.
 
-The initial scope deliberately locks/loads the complete workspace rather than
-introducing a second graph/cache or a partial-page approximation. This costs
-O(V+E+H) data per admission and can delay unrelated issue edits in a large
-workspace. Measure claim latency and lock waits against realistic size and
-contention before a wide rollout; narrow locks only with an equivalent closure
-proof and the concurrency tests intact.
+Every admission still loads the complete workspace graph, at O(V+E+H) cost.
+There is no cross-request cache or partial-page approximation. Known-target
+admission and ordinary issue claims remove unrelated status row locks; legacy
+unbound run-only claims and multi-workspace recovery retain the full row set. Large graphs can still delay ordinary writers waiting at the
+structure gate. Measure realistic sizes and contention before broad rollout;
+any further narrowing needs a decision-set proof and concurrency regressions.
+Validation uses integer vertex/edge indexes; the edge query returns aligned
+arrays from one input, so graph storage is allocated once. Read/edit snapshots
+sort the final edge representation in memory, avoiding PostgreSQL temporary-file
+sorts. Admission skips this full-edge sort: validation is order-independent and
+views, prerequisite sources, versions and audit states sort at their own output
+boundaries. Loading reuses endpoint strings and avoids duplicate union rows.
+Both endpoint joins reuse a materialized set of local UUIDs, eliminating
+per-edge source-row lookups for workspaces absent from planner statistics while
+keeping the endpoint indexes usable. Ordered row-lock queries drain their
+complete result on the server rather than transferring unused IDs.
+A valid full graph already proves
+each execution component valid, so the admission path selects/copies a component
+only when historical corruption needs the existing component isolation.
 The executable contention matrix, measurement limits and required OL-45 rollout
 gate are in [`docs/issue-dependency-dispatch.md`](../../../docs/issue-dependency-dispatch.md#contention-gate-ol-45).
 Concurrent shared admission locks do not themselves serialize readers; include
@@ -171,7 +225,8 @@ run; completion/reporting does not become a new trigger. No arbitrary DAG-edge
 auto-dispatch is introduced. Ordinary comments persist independently and report
 blocked dispatch; they are never a confirmation, even from a human.
 
-Enqueue and first claim use the same complete snapshot. A failed first claim is
+Enqueue and first claim independently reload and validate the complete graph.
+Each locks all status/revision inputs needed for its own decision. A failed first claim is
 quarantined as `failed` with a stable `dependency_*` reason, without credentials,
 issue rollback or automatic retries, and scanning continues to the next row.
 Corrupt/missing workspace bindings are rejected at this boundary as well.

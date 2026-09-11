@@ -263,6 +263,79 @@ func TestDependencyReferencesAndMalformedRequests(t *testing.T) {
 	}
 }
 
+func TestDependencySnapshotUUIDsRemainStable(t *testing.T) {
+	w := newDependencyLoadWorkspace(t, 300, "sparse")
+	for _, kind := range []string{"related", "blocks"} {
+		w.fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": w.ids[0], "depends_on_issue_id": w.ids[299], "type": kind})
+	}
+	ctx := context.Background()
+	ws := parseUUID(w.fx.WorkspaceID)
+	snapshot, err := w.h.IssueService.Dependencies.Load(ctx, w.h.Queries, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := w.h.Queries.ListIssueDependencyNodes(ctx, ws)
+	if err != nil || len(snapshot.Model.Issues) != len(nodes) {
+		t.Fatalf("snapshot nodes: %v", err)
+	}
+	for _, n := range nodes {
+		id := uuidToString(n.ID)
+		if got := snapshot.Model.Issues[id]; got.ID != id || got.ParentID != uuidToString(n.ParentIssueID) {
+			t.Fatal("snapshot UUID changed after loading later rows")
+		}
+	}
+	// Read ordinary rows independently of the compact snapshot query.
+	rows, err := testPool.Query(ctx, "SELECT d.id,d.issue_id,d.depends_on_issue_id,d.type FROM issue_dependency d JOIN issue i ON i.id=d.issue_id WHERE i.workspace_id=$1 ORDER BY d.id", ws)
+	if err != nil {
+		t.Fatalf("snapshot edges: %v", err)
+	}
+	defer rows.Close()
+	i := 0
+	for rows.Next() {
+		var e db.IssueDependency
+		if err := rows.Scan(&e.ID, &e.IssueID, &e.DependsOnIssueID, &e.Type); err != nil {
+			t.Fatal(err)
+		}
+		if i >= len(snapshot.Model.Edges) {
+			t.Fatal("snapshot omitted an edge")
+		}
+		if got := snapshot.Model.Edges[i]; got.ID != uuidToString(e.ID) || got.IssueID != uuidToString(e.IssueID) || got.DependsOnID != uuidToString(e.DependsOnIssueID) || got.Type != e.Type {
+			t.Fatal("snapshot edge columns lost alignment or changed after loading later rows")
+		}
+		i++
+	}
+	if err := rows.Err(); err != nil || i != len(snapshot.Model.Edges) {
+		t.Fatalf("snapshot duplicated edges or query failed: %v", err)
+	}
+}
+
+func TestDependencySnapshotRetainsIncidentEdges(t *testing.T) {
+	for _, direction := range []string{"local", "outbound", "inbound"} {
+		t.Run(direction, func(t *testing.T) {
+			h, fx := dependencyFixture(t)
+			local := dependencyIssue(t, fx, "local")
+			source, target := local, dependencyIssue(t, fx, "prerequisite")
+			switch direction {
+			case "outbound":
+				target = dbfx.Issue(t, "foreign")
+			case "inbound":
+				source, target = dbfx.Issue(t, "foreign"), local
+			}
+			edge := fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": source, "depends_on_issue_id": target, "type": "blocked_by"})
+			snapshot, err := h.IssueService.Dependencies.Load(context.Background(), h.Queries, parseUUID(fx.WorkspaceID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshot.Model.Edges) != 1 || snapshot.Model.Edges[0].ID != edge || snapshot.Model.Edges[0].IssueID != source || snapshot.Model.Edges[0].DependsOnID != target {
+				t.Fatalf("lost or duplicated incident edge: %+v", snapshot.Model.Edges)
+			}
+			if err := snapshot.Model.Validate(); (err == nil) != (direction == "local") {
+				t.Fatalf("corrupt endpoint validation: %v", err)
+			}
+		})
+	}
+}
+
 func TestDependencyCompoundCreateWithoutExplicitPrerequisites(t *testing.T) {
 	h, fx := dependencyFixture(t)
 	var created IssueResponse
@@ -318,17 +391,17 @@ func TestDependencyDeepHierarchyAndTextOnlyEdit(t *testing.T) {
 		last = dependencyIssue(t, fx, "descendant", testutil.Cols{"parent_issue_id": last})
 	}
 	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, root, map[string]any{"parent_issue_id": last}, "jwt")).Want(http.StatusConflict)
-	// A plain title edit refreshes nullable fields under its target lock but
-	// should not wait on the dependency structure lock for unrelated work.
+	// A plain title edit joins the structure queue but still avoids loading and
+	// locking the full graph. Hold an unrelated row without the structure lock.
 	tx, err := testPool.Begin(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	if err := h.Queries.WithTx(tx).LockIssueDependencyStructure(context.Background(), parseUUID(fx.WorkspaceID)); err != nil {
+	if _, err := h.Queries.WithTx(tx).LockIssueForDescriptionUpdate(context.Background(), db.LockIssueForDescriptionUpdateParams{ID: parseUUID(root), WorkspaceID: parseUUID(fx.WorkspaceID)}); err != nil {
 		t.Fatal(err)
 	}
-	r := dependencyRequest(fx, http.MethodPut, last, map[string]any{"title": "edited without structure lock"}, "jwt")
+	r := dependencyRequest(fx, http.MethodPut, last, map[string]any{"title": "edited without loading graph"}, "jwt")
 	ctx, cancel := context.WithTimeout(r.Context(), time.Second)
 	defer cancel()
 	testutil.Call(t, h.UpdateIssue, r.WithContext(ctx)).Want(http.StatusOK)

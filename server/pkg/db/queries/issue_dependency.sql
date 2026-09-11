@@ -3,13 +3,37 @@
 SELECT id FROM workspace WHERE id = $1 FOR NO KEY UPDATE;
 
 -- name: LockWorkspaceForDependencyAdmission :one
-SELECT id FROM workspace WHERE id = $1 FOR SHARE;
+-- Fence workspace deletion, but let structural writers reach the advisory
+-- lock's wait queue. SHARE conflicts with their NO KEY UPDATE counter lock
+-- and a continuous stream of admissions can starve them before that queue.
+SELECT id FROM workspace WHERE id = $1 FOR KEY SHARE;
 
 -- name: LockIssuesForDependencyAdmission :exec
-SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR SHARE;
+-- Drain all ordered row locks on the server without sending unused IDs.
+WITH locked AS MATERIALIZED (
+    SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR SHARE
+)
+SELECT count(*) FROM locked;
+
+-- name: LockIssueAdmissionNodes :many
+-- Structure/catalog locks precede this read. Refresh every status/revision
+-- used by the known target after its sorted row locks have been acquired.
+SELECT id, parent_issue_id, status, revision, title, number FROM issue
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND id = ANY(sqlc.arg('issue_ids')::uuid[])
+ORDER BY id FOR SHARE;
 
 -- name: SetTaskDependencyAdmission :one
 UPDATE agent_task_queue SET dependency_admission = $2 WHERE id = $1 RETURNING *;
+
+-- name: ListQueuedDependencyTargets :one
+-- This is an unlocked candidate read. ClaimAgentTask must only select covered
+-- targets after the service has taken their ordered status locks.
+SELECT coalesce(array_agg(DISTINCT t.issue_id) FILTER (WHERE t.issue_id IS NOT NULL), '{}')::uuid[] AS issue_ids,
+       coalesce(bool_or(t.issue_id IS NULL AND t.autopilot_run_id IS NOT NULL), false)::bool AS has_unbound_autopilot
+FROM agent_task_queue t JOIN agent a ON a.id = t.agent_id
+WHERE t.agent_id = sqlc.arg('agent_id') AND a.workspace_id = sqlc.arg('workspace_id')
+AND t.status = 'queued';
 
 -- name: GetTaskByDependencyRequest :one
 SELECT * FROM agent_task_queue WHERE dependency_admission->>'request_id' = $1::text;
@@ -29,22 +53,36 @@ SELECT pg_advisory_xact_lock_shared(hashtextextended(sqlc.arg('workspace_id')::u
 -- name: LockIssuesForDependencyWrite :exec
 -- The first implementation serializes structural edits per workspace. Lock
 -- status rows in UUID order before inspecting unfinished constraints.
-SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR UPDATE;
+WITH locked AS MATERIALIZED (
+    SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR UPDATE
+)
+SELECT count(*) FROM locked;
 
 -- name: ListIssueDependencyNodes :many
 SELECT id, parent_issue_id, status, revision, title, number FROM issue
 WHERE workspace_id = $1 ORDER BY id;
 
--- name: ListIssueDependencyEdges :many
+-- name: ListIssueDependencyEdges :one
 -- Include either local endpoint so corrupt cross-workspace edges fail closed.
--- Separate joins can use the existing endpoint indexes without correlating
--- every relation in every workspace. UNION removes the overlap by row identity.
-SELECT d.* FROM issue i JOIN issue_dependency d ON d.issue_id = i.id
-WHERE i.workspace_id = $1
-UNION
-SELECT d.* FROM issue i JOIN issue_dependency d ON d.depends_on_issue_id = i.id
-WHERE i.workspace_id = $1
-ORDER BY id;
+-- Reuse the local UUID set in both indexable endpoint joins. NOT IN is safe
+-- here because issue.id is non-null; it excludes duplicates without a source
+-- row lookup per edge when a new workspace is absent from planner statistics.
+-- One input keeps arrays aligned and avoids per-row protocol/scan overhead.
+WITH local AS MATERIALIZED (
+    SELECT id FROM issue WHERE workspace_id = $1
+), edges AS (
+    SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
+    FROM local i JOIN issue_dependency d ON d.issue_id = i.id
+    UNION ALL
+    SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
+    FROM local i JOIN issue_dependency d ON d.depends_on_issue_id = i.id
+    WHERE d.issue_id NOT IN (SELECT id FROM local)
+)
+SELECT coalesce(array_agg(id), '{}')::uuid[] AS ids,
+       coalesce(array_agg(issue_id), '{}')::uuid[] AS issue_ids,
+       coalesce(array_agg(depends_on_issue_id), '{}')::uuid[] AS depends_on_ids,
+       coalesce(array_agg(type), '{}')::text[] AS types
+FROM edges;
 
 -- name: InsertIssueDependency :exec
 INSERT INTO issue_dependency (id, issue_id, depends_on_issue_id, type)

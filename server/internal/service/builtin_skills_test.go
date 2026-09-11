@@ -353,7 +353,7 @@ func TestPlatformSkillDescriptionNamesEveryDomain(t *testing.T) {
 	// autopilot", never as "Core model".
 	triggerWords := map[string]string{
 		"references/issues.md":             "issue",
-		"references/issue-dependencies.md": "issue",
+		"references/issue-dependencies.md": "prerequisite",
 		"references/mentions.md":           "mention",
 		"references/agents.md":             "agent",
 		"references/squads.md":             "squad",

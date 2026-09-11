@@ -1591,6 +1591,15 @@ WHERE id = (
     WHERE atq.agent_id = $2
       AND atq.runtime_id = $3
       AND atq.status = 'queued'
+      -- NULL denotes a full workspace snapshot. Otherwise only covered issue
+      -- targets and issue-less chat/planning rows can be admitted this poll.
+      -- New/different issue targets and legacy run-only rows wait for a fresh
+      -- snapshot instead of being claimed under unrelated status locks.
+      AND (
+          $4::uuid[] IS NULL
+          OR atq.issue_id = ANY($4::uuid[])
+          OR (atq.issue_id IS NULL AND atq.autopilot_run_id IS NULL)
+      )
       AND EXISTS (
           SELECT 1
           FROM agent a
@@ -1616,7 +1625,7 @@ WHERE id = (
             )
             AND r.status = 'online'
             AND COALESCE(r.last_seen_at, r.updated_at) >=
-                now() - make_interval(secs => $4::double precision)
+                now() - make_interval(secs => $5::double precision)
       )
       AND NOT EXISTS (
           SELECT 1 FROM agent_task_queue active
@@ -1643,10 +1652,11 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 `
 
 type ClaimAgentTaskParams struct {
-	PrepareLeaseSecs float64     `json:"prepare_lease_secs"`
-	AgentID          pgtype.UUID `json:"agent_id"`
-	RuntimeID        pgtype.UUID `json:"runtime_id"`
-	RuntimeStaleSecs float64     `json:"runtime_stale_secs"`
+	PrepareLeaseSecs  float64       `json:"prepare_lease_secs"`
+	AgentID           pgtype.UUID   `json:"agent_id"`
+	RuntimeID         pgtype.UUID   `json:"runtime_id"`
+	AdmissionIssueIds []pgtype.UUID `json:"admission_issue_ids"`
+	RuntimeStaleSecs  float64       `json:"runtime_stale_secs"`
 }
 
 // Claims the next queued task for an agent on one healthy runtime, enforcing
@@ -1664,6 +1674,7 @@ func (q *Queries) ClaimAgentTask(ctx context.Context, arg ClaimAgentTaskParams) 
 		arg.PrepareLeaseSecs,
 		arg.AgentID,
 		arg.RuntimeID,
+		arg.AdmissionIssueIds,
 		arg.RuntimeStaleSecs,
 	)
 	var i AgentTaskQueue

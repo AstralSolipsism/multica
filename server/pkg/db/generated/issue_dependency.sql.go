@@ -304,41 +304,46 @@ func (q *Queries) InsertIssueDependency(ctx context.Context, arg InsertIssueDepe
 	return err
 }
 
-const listIssueDependencyEdges = `-- name: ListIssueDependencyEdges :many
-SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type FROM issue i JOIN issue_dependency d ON d.issue_id = i.id
-WHERE i.workspace_id = $1
-UNION
-SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type FROM issue i JOIN issue_dependency d ON d.depends_on_issue_id = i.id
-WHERE i.workspace_id = $1
-ORDER BY id
+const listIssueDependencyEdges = `-- name: ListIssueDependencyEdges :one
+WITH local AS MATERIALIZED (
+    SELECT id FROM issue WHERE workspace_id = $1
+), edges AS (
+    SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
+    FROM local i JOIN issue_dependency d ON d.issue_id = i.id
+    UNION ALL
+    SELECT d.id, d.issue_id, d.depends_on_issue_id, d.type
+    FROM local i JOIN issue_dependency d ON d.depends_on_issue_id = i.id
+    WHERE d.issue_id NOT IN (SELECT id FROM local)
+)
+SELECT coalesce(array_agg(id), '{}')::uuid[] AS ids,
+       coalesce(array_agg(issue_id), '{}')::uuid[] AS issue_ids,
+       coalesce(array_agg(depends_on_issue_id), '{}')::uuid[] AS depends_on_ids,
+       coalesce(array_agg(type), '{}')::text[] AS types
+FROM edges
 `
 
+type ListIssueDependencyEdgesRow struct {
+	Ids          []pgtype.UUID `json:"ids"`
+	IssueIds     []pgtype.UUID `json:"issue_ids"`
+	DependsOnIds []pgtype.UUID `json:"depends_on_ids"`
+	Types        []string      `json:"types"`
+}
+
 // Include either local endpoint so corrupt cross-workspace edges fail closed.
-// Separate joins can use the existing endpoint indexes without correlating
-// every relation in every workspace. UNION removes the overlap by row identity.
-func (q *Queries) ListIssueDependencyEdges(ctx context.Context, workspaceID pgtype.UUID) ([]IssueDependency, error) {
-	rows, err := q.db.Query(ctx, listIssueDependencyEdges, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []IssueDependency{}
-	for rows.Next() {
-		var i IssueDependency
-		if err := rows.Scan(
-			&i.ID,
-			&i.IssueID,
-			&i.DependsOnIssueID,
-			&i.Type,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+// Reuse the local UUID set in both indexable endpoint joins. NOT IN is safe
+// here because issue.id is non-null; it excludes duplicates without a source
+// row lookup per edge when a new workspace is absent from planner statistics.
+// One input keeps arrays aligned and avoids per-row protocol/scan overhead.
+func (q *Queries) ListIssueDependencyEdges(ctx context.Context, workspaceID pgtype.UUID) (ListIssueDependencyEdgesRow, error) {
+	row := q.db.QueryRow(ctx, listIssueDependencyEdges, workspaceID)
+	var i ListIssueDependencyEdgesRow
+	err := row.Scan(
+		&i.Ids,
+		&i.IssueIds,
+		&i.DependsOnIds,
+		&i.Types,
+	)
+	return i, err
 }
 
 const listIssueDependencyNodes = `-- name: ListIssueDependencyNodes :many
@@ -382,6 +387,33 @@ func (q *Queries) ListIssueDependencyNodes(ctx context.Context, workspaceID pgty
 	return items, nil
 }
 
+const listQueuedDependencyTargets = `-- name: ListQueuedDependencyTargets :one
+SELECT coalesce(array_agg(DISTINCT t.issue_id) FILTER (WHERE t.issue_id IS NOT NULL), '{}')::uuid[] AS issue_ids,
+       coalesce(bool_or(t.issue_id IS NULL AND t.autopilot_run_id IS NOT NULL), false)::bool AS has_unbound_autopilot
+FROM agent_task_queue t JOIN agent a ON a.id = t.agent_id
+WHERE t.agent_id = $1 AND a.workspace_id = $2
+AND t.status = 'queued'
+`
+
+type ListQueuedDependencyTargetsParams struct {
+	AgentID     pgtype.UUID `json:"agent_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+type ListQueuedDependencyTargetsRow struct {
+	IssueIds            []pgtype.UUID `json:"issue_ids"`
+	HasUnboundAutopilot bool          `json:"has_unbound_autopilot"`
+}
+
+// This is an unlocked candidate read. ClaimAgentTask must only select covered
+// targets after the service has taken their ordered status locks.
+func (q *Queries) ListQueuedDependencyTargets(ctx context.Context, arg ListQueuedDependencyTargetsParams) (ListQueuedDependencyTargetsRow, error) {
+	row := q.db.QueryRow(ctx, listQueuedDependencyTargets, arg.AgentID, arg.WorkspaceID)
+	var i ListQueuedDependencyTargetsRow
+	err := row.Scan(&i.IssueIds, &i.HasUnboundAutopilot)
+	return i, err
+}
+
 const lockAutopilotRunForDependencyAdmission = `-- name: LockAutopilotRunForDependencyAdmission :one
 SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code FROM autopilot_run WHERE id=$1 FOR UPDATE
 `
@@ -412,6 +444,56 @@ func (q *Queries) LockAutopilotRunForDependencyAdmission(ctx context.Context, id
 	return i, err
 }
 
+const lockIssueAdmissionNodes = `-- name: LockIssueAdmissionNodes :many
+SELECT id, parent_issue_id, status, revision, title, number FROM issue
+WHERE workspace_id = $1
+  AND id = ANY($2::uuid[])
+ORDER BY id FOR SHARE
+`
+
+type LockIssueAdmissionNodesParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	IssueIds    []pgtype.UUID `json:"issue_ids"`
+}
+
+type LockIssueAdmissionNodesRow struct {
+	ID            pgtype.UUID `json:"id"`
+	ParentIssueID pgtype.UUID `json:"parent_issue_id"`
+	Status        string      `json:"status"`
+	Revision      int64       `json:"revision"`
+	Title         string      `json:"title"`
+	Number        int32       `json:"number"`
+}
+
+// Structure/catalog locks precede this read. Refresh every status/revision
+// used by the known target after its sorted row locks have been acquired.
+func (q *Queries) LockIssueAdmissionNodes(ctx context.Context, arg LockIssueAdmissionNodesParams) ([]LockIssueAdmissionNodesRow, error) {
+	rows, err := q.db.Query(ctx, lockIssueAdmissionNodes, arg.WorkspaceID, arg.IssueIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockIssueAdmissionNodesRow{}
+	for rows.Next() {
+		var i LockIssueAdmissionNodesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ParentIssueID,
+			&i.Status,
+			&i.Revision,
+			&i.Title,
+			&i.Number,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockIssueDependencyStructure = `-- name: LockIssueDependencyStructure :exec
 SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text || ':issue_dependency', 0))
 `
@@ -431,16 +513,23 @@ func (q *Queries) LockIssueDependencyStructureShared(ctx context.Context, worksp
 }
 
 const lockIssuesForDependencyAdmission = `-- name: LockIssuesForDependencyAdmission :exec
-SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR SHARE
+WITH locked AS MATERIALIZED (
+    SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR SHARE
+)
+SELECT count(*) FROM locked
 `
 
+// Drain all ordered row locks on the server without sending unused IDs.
 func (q *Queries) LockIssuesForDependencyAdmission(ctx context.Context, workspaceID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, lockIssuesForDependencyAdmission, workspaceID)
 	return err
 }
 
 const lockIssuesForDependencyWrite = `-- name: LockIssuesForDependencyWrite :exec
-SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR UPDATE
+WITH locked AS MATERIALIZED (
+    SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR UPDATE
+)
+SELECT count(*) FROM locked
 `
 
 // The first implementation serializes structural edits per workspace. Lock
@@ -451,9 +540,12 @@ func (q *Queries) LockIssuesForDependencyWrite(ctx context.Context, workspaceID 
 }
 
 const lockWorkspaceForDependencyAdmission = `-- name: LockWorkspaceForDependencyAdmission :one
-SELECT id FROM workspace WHERE id = $1 FOR SHARE
+SELECT id FROM workspace WHERE id = $1 FOR KEY SHARE
 `
 
+// Fence workspace deletion, but let structural writers reach the advisory
+// lock's wait queue. SHARE conflicts with their NO KEY UPDATE counter lock
+// and a continuous stream of admissions can starve them before that queue.
 func (q *Queries) LockWorkspaceForDependencyAdmission(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, lockWorkspaceForDependencyAdmission, id)
 	var id_2 pgtype.UUID
