@@ -29,8 +29,15 @@ import (
 //   - The bearer token is generated on first server boot and persisted at
 //     ~/.kimi-code/server.token (mode 0600). It never leaves this machine.
 //   - GET /api/v1/oauth/usage answers the envelope
-//     {code, msg, data:{kind:"ok", limits:[...]}} and reports upstream
-//     failures in-band as data.kind:"error".
+//     {code, msg, data:{kind:"ok", summary, limits:[...]}} and reports upstream
+//     failures in-band as data.kind:"error". The live server (verified
+//     2026-09-11) puts the weekly window only in data.summary while
+//     data.limits carries the 5-hour row; the published docs put both rows
+//     in data.limits with summary duplicating one of them. The snapshot
+//     unions the two fields so either shape reports every window the plan
+//     actually has — a shape drift must never silently hide a window again
+//     (the OL-45 incident: weekly exhausted while the page showed a healthy
+//     5-hour window).
 //
 // Credential safety (OL-5 R1, converged design): there is exactly ONE
 // credential gate, and it is bound to the actual connection. Immediately
@@ -298,10 +305,12 @@ func (c *kimiPlanQuotaCollector) fetchUsage(ctx context.Context, token string) (
 // kimiUsageData is the `data` payload of GET /api/v1/oauth/usage. Only the
 // fields the snapshot maps are modeled; extra_usage (the pay-as-you-go
 // wallet) is deliberately never decoded — credit balances must not cross
-// into the snapshot.
+// into the snapshot. Summary is merged into the window set (see
+// mergeKimiUsageRows): the live server reports the weekly window only here.
 type kimiUsageData struct {
 	Kind    string              `json:"kind"`
 	Message string              `json:"message,omitempty"`
+	Summary *kimiUsageLimitRow  `json:"summary,omitempty"`
 	Limits  []kimiUsageLimitRow `json:"limits,omitempty"`
 }
 
@@ -584,15 +593,21 @@ func splitAddrPort(s string) (string, int, bool) {
 // kimiUsageToPlanQuota normalizes the usage rows. Windows are sorted by
 // duration ascending and the two canonical ones renamed to the cross-provider
 // window ids ("primary" = shortest, "secondary" = next), matching the codex
-// collector; any additional rows keep their provider name. Rows whose limit
+// collector; any additional rows keep their provider name. Only known
+// durations take a canonical slot — an unknown-duration row (the docs allow
+// a row to omit window) is not one of the two canonical windows and keeps
+// the provider's own name. Rows whose limit
 // is missing or non-positive carry no percentage (never a fabricated 0);
 // rows with no usable fields at all are dropped. Nil when nothing reportable
 // remains. extra_usage is never part of the input — no credits in, none out.
 func kimiUsageToPlanQuota(data *kimiUsageData, observedAt time.Time) *protocol.RuntimePlanQuota {
-	if data == nil || len(data.Limits) == 0 {
+	if data == nil {
 		return nil
 	}
-	rows := append([]kimiUsageLimitRow(nil), data.Limits...)
+	rows := mergeKimiUsageRows(data)
+	if len(rows) == 0 {
+		return nil
+	}
 	minutesOrMax := func(w *kimiUsageWindow) int64 {
 		if m := kimiWindowMinutes(w); m != nil {
 			return *m
@@ -610,10 +625,21 @@ func kimiUsageToPlanQuota(data *kimiUsageData, observedAt time.Time) *protocol.R
 	}
 	canonical := []string{"primary", "secondary"}
 	limited := false
+	knownSeen := 0
 	for i, row := range rows {
+		minutes := kimiWindowMinutes(row.Window)
+		// Canonical slots are earned by known durations only; an
+		// unknown-duration row keeps the provider name (trim, cap and the
+		// empty-name fallback in planQuotaWindowName still apply).
+		canonicalFor := canonical
+		if minutes == nil || knownSeen >= len(canonical) {
+			canonicalFor = nil
+		} else {
+			knownSeen++
+		}
 		window := protocol.RuntimePlanQuotaWindow{
-			Name:          planQuotaWindowName(row.Name, canonical, i),
-			WindowMinutes: kimiWindowMinutes(row.Window),
+			Name:          planQuotaWindowName(row.Name, canonicalFor, i),
+			WindowMinutes: minutes,
 			ResetsAt:      unixSecondsPtr(row.ResetAt),
 		}
 		if row.Used != nil && row.Limit != nil && *row.Limit > 0 {
@@ -635,6 +661,33 @@ func kimiUsageToPlanQuota(data *kimiUsageData, observedAt time.Time) *protocol.R
 		quota.Status = protocol.PlanQuotaStatusLimited
 	}
 	return quota
+}
+
+// mergeKimiUsageRows unions the summary row into the limits rows. The live
+// local server (verified 2026-09-11) reports the weekly window only in
+// summary while limits carries the 5-hour row; the published docs show both
+// rows in limits with summary duplicating one of them. The union covers
+// either shape: a summary whose window duration already exists in limits is
+// dropped (limits is the authoritative window list — it is never replaced
+// or dropped, only added to), and a summary with an unknown duration cannot
+// collide, so it is kept under its provider name.
+func mergeKimiUsageRows(data *kimiUsageData) []kimiUsageLimitRow {
+	rows := append([]kimiUsageLimitRow(nil), data.Limits...)
+	if s := data.Summary; s != nil {
+		if m := kimiWindowMinutes(s.Window); m == nil || !kimiRowsHaveWindowMinutes(rows, *m) {
+			rows = append(rows, *s)
+		}
+	}
+	return rows
+}
+
+func kimiRowsHaveWindowMinutes(rows []kimiUsageLimitRow, minutes int64) bool {
+	for i := range rows {
+		if m := kimiWindowMinutes(rows[i].Window); m != nil && *m == minutes {
+			return true
+		}
+	}
+	return false
 }
 
 // planQuotaWindowName picks the window id: the canonical slot name for the

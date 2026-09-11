@@ -266,6 +266,115 @@ func TestKimiCollect_DriftedShape(t *testing.T) {
 	}
 }
 
+// The live local server (verified 2026-09-11) reports the weekly window
+// only in data.summary while data.limits carries just the 5-hour row; the
+// published docs show both rows in limits with summary duplicating one.
+// Every shape must yield both windows — the OL-45 incident was the weekly
+// window silently vanishing while the page showed a healthy 5-hour row.
+func TestKimiUsageToPlanQuota_SummaryWindow(t *testing.T) {
+	observed := time.Unix(1757000000, 0)
+	weekly := func(used float64) *kimiUsageLimitRow {
+		return &kimiUsageLimitRow{Name: "weekly", Window: &kimiUsageWindow{Duration: 1, Unit: "week"}, Used: f64(used), Limit: f64(100)}
+	}
+	fiveHour := func(used float64) kimiUsageLimitRow {
+		return kimiUsageLimitRow{Name: "5-hour", Window: &kimiUsageWindow{Duration: 5, Unit: "hour"}, Used: f64(used), Limit: f64(100)}
+	}
+
+	t.Run("live shape: weekly only in summary", func(t *testing.T) {
+		data := &kimiUsageData{Kind: "ok", Summary: weekly(100), Limits: []kimiUsageLimitRow{fiveHour(3)}}
+		quota := kimiUsageToPlanQuota(data, observed)
+		if quota == nil || len(quota.Windows) != 2 {
+			t.Fatalf("quota = %+v", quota)
+		}
+		if *quota.Windows[0].WindowMinutes != 300 || *quota.Windows[0].UsedPercent != 3 {
+			t.Fatalf("5-hour window = %+v", quota.Windows[0])
+		}
+		if *quota.Windows[1].WindowMinutes != 10080 || *quota.Windows[1].UsedPercent != 100 {
+			t.Fatalf("weekly window = %+v", quota.Windows[1])
+		}
+		if quota.Status != protocol.PlanQuotaStatusLimited {
+			t.Fatalf("status = %q, want limited", quota.Status)
+		}
+	})
+
+	t.Run("duplicate summary: limits row wins", func(t *testing.T) {
+		dup := fiveHour(7)
+		data := &kimiUsageData{Kind: "ok", Summary: &dup, Limits: []kimiUsageLimitRow{fiveHour(3)}}
+		quota := kimiUsageToPlanQuota(data, observed)
+		if quota == nil || len(quota.Windows) != 1 {
+			t.Fatalf("quota = %+v", quota)
+		}
+		if *quota.Windows[0].UsedPercent != 3 {
+			t.Fatalf("summary row overrode limits: %+v", quota.Windows[0])
+		}
+	})
+
+	t.Run("reverse drift: 5-hour only in summary", func(t *testing.T) {
+		five := fiveHour(3)
+		data := &kimiUsageData{Kind: "ok", Summary: &five, Limits: []kimiUsageLimitRow{*weekly(45)}}
+		quota := kimiUsageToPlanQuota(data, observed)
+		if quota == nil || len(quota.Windows) != 2 {
+			t.Fatalf("quota = %+v", quota)
+		}
+		if *quota.Windows[0].WindowMinutes != 300 || *quota.Windows[1].WindowMinutes != 10080 {
+			t.Fatalf("windows = %+v", quota.Windows)
+		}
+	})
+
+	// Docs shape: a usage row may omit window entirely (OL-70 review
+	// regression). Such a row is not one of the two canonical windows and
+	// must keep its provider name instead of being renamed by position.
+	t.Run("summary without window keeps provider name", func(t *testing.T) {
+		var data kimiUsageData
+		if err := json.Unmarshal([]byte(`{"kind":"ok","summary":{"name":"weekly","used":100,"limit":100},"limits":[{"name":"5-hour","window":{"duration":5,"unit":"hour"},"used":3,"limit":100}]}`), &data); err != nil {
+			t.Fatal(err)
+		}
+		quota := kimiUsageToPlanQuota(&data, observed)
+		if quota == nil || len(quota.Windows) != 2 {
+			t.Fatalf("quota = %+v", quota)
+		}
+		if quota.Windows[1].Name != "weekly" || *quota.Windows[1].UsedPercent != 100 {
+			t.Fatalf("unknown-duration window = %+v", quota.Windows[1])
+		}
+	})
+}
+
+// Full-path regression for the live response shape (captured 2026-09-11):
+// weekly lives in data.summary with an RFC3339 reset_at, limits carries
+// only the 5-hour row. Before the summary merge this reported exactly one
+// window while the weekly quota was exhausted.
+func TestKimiCollect_LiveShapeWeeklyInSummary(t *testing.T) {
+	body := `{"code":0,"msg":"success","data":{"kind":"ok",
+	  "summary":{"name":"weekly","window":{"duration":1,"unit":"week"},"used":100,"limit":100,"reset_at":"2026-09-13T07:44:03Z"},
+	  "limits":[{"name":"5-hour","window":{"duration":5,"unit":"hour"},"used":3,"limit":100,"reset_at":"2026-09-11T16:44:03Z"}]}}`
+	var gotAuth string
+	srv := newKimiTestServer(t, body, 0, &gotAuth)
+	defer srv.Close()
+	port := serverPort(t, srv)
+
+	collector := newKimiTestCollector(kimiTestHome(t, port), port)
+	quota, err := collector.collect(context.Background())
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	if len(quota.Windows) != 2 {
+		t.Fatalf("windows = %+v", quota.Windows)
+	}
+	primary, secondary := quota.Windows[0], quota.Windows[1]
+	if *primary.WindowMinutes != 300 || *primary.UsedPercent != 3 {
+		t.Fatalf("primary = %+v", primary)
+	}
+	if *secondary.WindowMinutes != 10080 || *secondary.UsedPercent != 100 {
+		t.Fatalf("secondary = %+v", secondary)
+	}
+	if want := time.Date(2026, 9, 13, 7, 44, 3, 0, time.UTC).Unix(); secondary.ResetsAt == nil || *secondary.ResetsAt != want {
+		t.Fatalf("secondary reset = %v, want %d", secondary.ResetsAt, want)
+	}
+	if quota.Status != protocol.PlanQuotaStatusLimited {
+		t.Fatalf("status = %q, want limited", quota.Status)
+	}
+}
+
 func TestKimiUsageToPlanQuota_Mapping(t *testing.T) {
 	observed := time.Unix(1757000000, 0)
 	t.Run("sorts and renames canonical windows", func(t *testing.T) {
