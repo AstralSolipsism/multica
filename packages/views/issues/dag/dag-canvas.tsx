@@ -24,6 +24,7 @@ import {
   type DagFlowEdgeData,
 } from "./dag-edge";
 import { dagNodeSize } from "./dag-constants";
+import { DagIssueActions } from "./dag-issue-actions";
 import {
   DagFlowNodeCard,
   type DagFlowNode,
@@ -71,10 +72,6 @@ function useDagColorMode(): "light" | "dark" {
 
 export interface DagCanvasCallbacks {
   onOpenIssue: (issueId: string) => void;
-  /** OL-44 shared relation-form entry; DagView defaults it to onOpenIssue. */
-  onEditDependencies: (issueId: string) => void;
-  /** OL-44 shared assign entry; DagView defaults it to onOpenIssue. */
-  onAssignIssue: (issueId: string) => void;
   /** Toggle one representative's folded state in the view store. */
   onToggleCollapsed: (representativeId: string) => void;
   /** Reveal folded issue ids (unfold their representatives), then focus. */
@@ -102,8 +99,6 @@ function DagCanvasInner({
   statusColorOf,
   focusRequest,
   onOpenIssue,
-  onEditDependencies,
-  onAssignIssue,
   onToggleCollapsed,
   onRevealIssues,
 }: DagCanvasProps) {
@@ -351,29 +346,11 @@ function DagCanvasInner({
           {/* Feature representatives are issues too — their detail, relation
               and assign actions act on the representative's own issue. */}
           {selectedNode.issue && (
-            <>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => onOpenIssue(selectedNode.issue!.id)}
-              >
-                {t(($) => $.dag.open_detail)}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => onEditDependencies(selectedNode.issue!.id)}
-              >
-                {t(($) => $.dag.edit_dependencies)}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => onAssignIssue(selectedNode.issue!.id)}
-              >
-                {t(($) => $.dag.assign_issue)}
-              </Button>
-            </>
+            <DagIssueActions
+              key={selectedNode.issue.id}
+              issueId={selectedNode.issue.id}
+              onOpenIssue={onOpenIssue}
+            />
           )}
           <Button
             size="sm"

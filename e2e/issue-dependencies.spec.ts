@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import pg from "pg";
 import { TestApiClient } from "./fixtures";
 import { waitForPageText } from "./helpers";
@@ -140,6 +140,19 @@ async function enterWorkspace(page: Page, ctx: Ctx) {
     localStorage.setItem("multica_token", t);
     localStorage.setItem("multica:chat:isOpen", "false");
   }, ctx.token);
+}
+
+async function expectReadablePrerequisite(container: Locator, title: string) {
+  const label = container.getByText(title, { exact: true });
+  await expect(label).toBeVisible();
+  const bounds = await label.evaluate((el) => ({
+    width: el.getBoundingClientRect().width,
+    clientWidth: el.clientWidth,
+    scrollWidth: el.scrollWidth,
+  }));
+  expect(bounds.width).toBeGreaterThan(100);
+  expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.clientWidth + 1);
+  expect(await container.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
 }
 
 async function cleanup(ctx: Ctx) {
@@ -288,5 +301,67 @@ test.describe("Issue dependencies (OL-44)", () => {
       [ctx.issueC.id],
     );
     expect(queueRows).toHaveLength(0);
+  });
+
+  test("DAG actions edit in place and preserve cancel/one-shot assignment with readable prerequisites", async ({ page }, testInfo) => {
+    const title = "跨项目依赖需要完整显示：" + "long-unbroken-prerequisite-title".repeat(4);
+    await ctx.api.updateIssue(ctx.issueA.id, { title });
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await enterWorkspace(page, ctx);
+    await page.goto(`/${ctx.workspaceSlug}/issues`);
+    await page.getByRole("button", { name: "Board", exact: true }).click();
+    await page.getByText("Graph", { exact: true }).click();
+    await expect(page.locator(".react-flow__node").first()).toBeVisible();
+    await page.getByRole("button", { name: "Expand all", exact: true }).click();
+    const node = page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`);
+    await expect(node).toBeVisible();
+    await node.click();
+    const graphUrl = page.url();
+
+    await page.getByRole("button", { name: "Edit prerequisites", exact: true }).click();
+    const editor = page.getByRole("dialog", { name: "Edit prerequisites" });
+    await expectReadablePrerequisite(editor, title);
+    await editor.getByRole("button", { name: `Remove prerequisite ${ctx.issueA.identifier}` }).click();
+    await page.keyboard.press("Escape");
+    expect(await getBlockedBy(ctx, ctx.issueC.id)).toEqual([ctx.issueA.id]);
+    expect(page.url()).toBe(graphUrl);
+
+    // Save through the same entry, then restore the edge through the real API.
+    await page.getByRole("button", { name: "Edit prerequisites", exact: true }).click();
+    await editor.getByRole("button", { name: `Remove prerequisite ${ctx.issueA.identifier}` }).click();
+    await editor.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(editor).not.toBeVisible();
+    await expect.poll(() => getBlockedBy(ctx, ctx.issueC.id)).toEqual([]);
+    await setBlockedBy(ctx, ctx.issueC.id, [ctx.issueA.id]);
+
+    const before = await sql("SELECT assignee_id, revision FROM issue WHERE id = $1", [ctx.issueC.id]);
+    const pickAgent = async () => {
+      await page.getByRole("button", { name: "Assign", exact: true }).click();
+      const picker = page.locator('[data-slot="popover-content"]').last();
+      await picker.getByPlaceholder("Assign to...").fill("E2E Dependency");
+      await picker.getByText("E2E Dependency Agent", { exact: true }).click({ force: true });
+      await expect(page.getByText("Confirm assignment?", { exact: true })).toBeVisible();
+    };
+    await pickAgent();
+    const confirmation = page.getByRole("dialog");
+    await expectReadablePrerequisite(confirmation, title);
+    await expect(confirmation.getByText(ctx.issueA.identifier, { exact: true })).toBeVisible();
+    await testInfo.attach("dag-confirmation-readability", { body: await confirmation.screenshot(), contentType: "image/png" });
+    await page.keyboard.press("Escape");
+    expect(await sql("SELECT assignee_id, revision FROM issue WHERE id = $1", [ctx.issueC.id])).toEqual(before);
+    expect(await sql("SELECT id FROM agent_task_queue WHERE issue_id = $1", [ctx.issueC.id])).toHaveLength(0);
+    expect(page.url()).toBe(graphUrl);
+
+    await pickAgent();
+    await confirmation.getByRole("button", { name: "Assign and start anyway", exact: true }).click();
+    await expect(confirmation).not.toBeVisible();
+    await expect.poll(async () => {
+      const rows = await sql<{ dependency_admission: unknown }>(
+        "SELECT dependency_admission FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2",
+        [ctx.issueC.id, ctx.agentId],
+      );
+      return rows.length === 1 && rows[0]!.dependency_admission !== null;
+    }).toBe(true);
+    expect(page.url()).toBe(graphUrl);
   });
 });
