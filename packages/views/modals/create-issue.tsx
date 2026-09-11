@@ -119,6 +119,17 @@ function permitExpired(pending: PendingDependencyCreate): boolean {
   return !Number.isFinite(at) || at <= Date.now();
 }
 
+/** Whether the held permit may still be replayed for this user. Expiry only
+ *  retires UNUSED permits: the server looks up the request record first and
+ *  checks expiry only when nothing was ever committed (dependency_override.go),
+ *  so a permit whose confirmed write may have committed (uncertain outcome)
+ *  replays at any age — the server, not the local clock, adjudicates the
+ *  original result. Discarding it locally is exactly the double-create risk
+ *  the mechanism exists to prevent (OL-44 third review P1). */
+function permitRestorable(pending: PendingDependencyCreate): boolean {
+  return pending.uncertain === true || !permitExpired(pending);
+}
+
 /** Digest-level equality between the operation a permit signed and the one
  *  on screen — key order and blocked_by ordering are presentation details,
  *  not a different operation (same rule as the server's payload digest). */
@@ -407,7 +418,7 @@ export function ManualCreatePanel({
   const setPendingDependencyCreate = useIssueDraftStore((s) => s.setPendingDependencyCreate);
   const [confirmOpen, setConfirmOpen] = useState(() => {
     const pending = useIssueDraftStore.getState().pendingDependencyCreate;
-    return !!pending && !permitExpired(pending);
+    return !!pending && permitRestorable(pending);
   });
   const [overrideCreating, setOverrideCreating] = useState(false);
   const wsId = useWorkspaceId();
@@ -787,12 +798,19 @@ export function ManualCreatePanel({
       toast.error(t(($) => $.create_issue.dependency_confirm.changed_note));
       return;
     }
-    if (permitExpired(pending)) {
+    if (!permitRestorable(pending)) {
       setPendingDependencyCreate(null);
       setConfirmOpen(false);
       toast.error(t(($) => $.run_confirm.expired_notice));
       return;
     }
+    // Snapshot the draft being submitted: the guard just proved the on-screen
+    // draft IS this operation, and the modal dialog blocks edits mid-flight —
+    // the same "consume only the submitted draft" guarantee the composer's
+    // onSubmit snapshot gives the normal path (MUL-5181 P0). Without this,
+    // a restored confirmation's success compares the draft against null and
+    // wrongly keeps the window open (OL-44 third review P2).
+    submittedDraftRef.current = useIssueDraftStore.getState().draft;
     setOverrideCreating(true);
     try {
       const issue = await createIssueMutation.mutateAsync({
@@ -926,7 +944,7 @@ export function ManualCreatePanel({
           // instead of minting a fresh permit — replaying the original
           // requestId is the only path that cannot double-create.
           const held = useIssueDraftStore.getState().pendingDependencyCreate;
-          if (held && !permitExpired(held) && sameDependencyMutation(held.request, request)) {
+          if (held && permitRestorable(held) && sameDependencyMutation(held.request, request)) {
             setConfirmOpen(true);
             return false;
           }

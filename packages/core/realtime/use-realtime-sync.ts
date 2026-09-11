@@ -644,6 +644,11 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
   const wsId = getCurrentWsId();
   if (wsId) {
     invalidateIssueQueries(qc, wsId);
+    // Dependency first reads share the graph's first-load race: a projection
+    // GET that was in flight across the disconnect would otherwise complete
+    // with a pre-reconnect snapshot and stay "fresh" under staleTime:
+    // Infinity. Cancel-then-invalidate, same as the live-event path.
+    void invalidateDependencyQueries(qc, wsId);
     qc.invalidateQueries({ queryKey: inboxKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });

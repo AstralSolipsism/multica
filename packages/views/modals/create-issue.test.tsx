@@ -339,26 +339,11 @@ vi.mock("@multica/core/api", async () => {
   const { DuplicateIssueErrorBodySchema } = await vi.importActual<
     typeof import("@multica/core/api/schemas")
   >("@multica/core/api/schemas");
-  // The permit-matching comparison uses the same canonicalization rule as
-  // the real helper (sorted object keys; blockedBy as an ordered set).
-  const canonicalDependencyMutation = (mutation: Record<string, unknown>) => {
-    const canon = (v: unknown): unknown => {
-      if (Array.isArray(v)) return v.map(canon);
-      if (v && typeof v === "object") {
-        const out: Record<string, unknown> = {};
-        for (const k of Object.keys(v as Record<string, unknown>).sort()) {
-          const val = (v as Record<string, unknown>)[k];
-          if (val === undefined) continue;
-          out[k] = canon(val);
-        }
-        return out;
-      }
-      return v;
-    };
-    const out = canon(mutation) as Record<string, unknown>;
-    if (Array.isArray(out.blockedBy)) out.blockedBy = [...out.blockedBy].sort();
-    return out;
-  };
+  // The permit-matching comparison runs the REAL canonicalizer (its
+  // boundary semantics are tested next to the helper in core — no mirrors).
+  const { canonicalDependencyMutation } = await vi.importActual<
+    typeof import("@multica/core/api")
+  >("@multica/core/api");
   return {
     api: {
       createCommentSubIssue: mockCreateCommentSubIssue,
@@ -2118,6 +2103,70 @@ describe("CreateIssueModal", () => {
       expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({
         dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
       }));
+    });
+
+    it("THIRDREVIEW replays an uncertain create after its confirmation expiry", async () => {
+      const initialTime = Date.now();
+      const firstPreview = blockedPreview();
+      firstPreview.blocked[0]!.confirmation.expiresAt = new Date(initialTime + 300_000).toISOString();
+      const nextPreview = blockedPreview();
+      nextPreview.blocked[0]!.confirmation = {
+        requestId: "req-2",
+        challenge: "ch-2",
+        expiresAt: "2099-01-01T00:00:00Z",
+      };
+      mockPreviewIssueTrigger
+        .mockResolvedValueOnce(firstPreview)
+        .mockResolvedValue(nextPreview);
+      mockCreateIssue.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      const { user } = await seedAgentAndPrerequisite();
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(mockDraftStore.pendingDependencyCreate?.uncertain).toBe(true));
+
+      // A used request still replays after this deadline on the server;
+      // expiry only prevents first use. This outcome remains unknown.
+      const clock = vi.spyOn(Date, "now").mockReturnValue(initialTime + 360_000);
+      try {
+        await user.click(screen.getByRole("button", { name: "Back to editing" }));
+        await user.click(screen.getByRole("button", { name: "Create Issue" }));
+        await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+        await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
+        expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({
+          dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
+        }));
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
+    it("THIRDREVIEW clears the unchanged draft after a remounted confirmation succeeds", async () => {
+      mockPreviewIssueTrigger.mockResolvedValue(blockedPreview());
+      mockCreateIssue.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      const user = userEvent.setup();
+      const data = { assignee_type: "agent", assignee_id: "agent-1" };
+      const firstOpen = renderModal(<CreateIssueModal onClose={vi.fn()} data={data} />);
+      fireEvent.change(screen.getByPlaceholderText("Issue title"), {
+        target: { value: "Recoverable create" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Add prerequisite..." }));
+      fireEvent.click(screen.getByRole("button", { name: "pick:Add prerequisite" }));
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() => expect(mockDraftStore.pendingDependencyCreate?.uncertain).toBe(true));
+
+      firstOpen.unmount();
+      const onClose = vi.fn();
+      renderModal(<CreateIssueModal onClose={onClose} data={data} />);
+      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
+      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
+      expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
+      }));
+      await waitFor(() => expect(mockToastCustom).toHaveBeenCalled());
+      await waitFor(() => expect(mockClearDraft).toHaveBeenCalledTimes(1));
+      expect(onClose).toHaveBeenCalledTimes(1);
     });
 
     it("cancel writes nothing and returns to the form", async () => {
