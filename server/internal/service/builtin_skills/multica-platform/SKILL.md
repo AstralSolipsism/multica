@@ -19,7 +19,8 @@ Read the invariants below, then open the reference(s) your task actually needs
 
 | Open | When the task is about |
 |---|---|
-| `references/issues.md` | Issues: prerequisite CLI (`--blocked-by`, dependency list/add/remove), blocked dispatch and saved-comment outcomes, PR linking vs close intent, custom properties, status side effects, sub-issues and stages, who else is running |
+| `references/issues.md` | Issues: PR linking vs close intent, custom properties, status side effects, sub-issues and stages, external Feishu feedback, who else is running |
+| `references/issue-dependencies.md` | Issue prerequisites, compound writes, execution admission, human overrides, and complete graph reads |
 | `references/mentions.md` | Writing a `mention://` link: which types enqueue a run, which are inert, why one silently did nothing |
 | `references/agents.md` | Creating, copying or debugging an agent definition: fields, secrets, MCP config, skill binding |
 | `references/squads.md` | Squads: leader routing, roster, recording leader activity, why a squad did or did not run |
@@ -33,7 +34,7 @@ crosses domains needs each domain it touches — creating a squad, assigning it 
 issue, then writing a mention needs `squads.md`, `issues.md` and `mentions.md`,
 and skipping one of those means acting on a contract you have not read.
 
-What is never right is reading all eight because you are not sure. Each
+What is never right is reading every reference because you are not sure. Each
 reference states its own contracts in full and none depends on another, so
 pick by domain and skip the rest.
 

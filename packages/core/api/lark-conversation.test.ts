@@ -6,8 +6,16 @@ afterEach(() => vi.unstubAllGlobals());
 const client = new ApiClient("https://example.test");
 
 it("keeps older installations readable without enabling unadvertised conversation writes", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ installations: [], configured: true }))));
-  expect((await client.listLarkInstallations("ws")).conversation_supported).toBeUndefined();
+  const installation = {
+    id: "inst", workspace_id: "ws", agent_id: "agent", app_id: "cli_test",
+    bot_open_id: "ou_bot", installer_user_id: "user", status: "active", region: "feishu",
+    installed_at: "2026-09-10T00:00:00Z", created_at: "2026-09-10T00:00:00Z",
+    updated_at: "2026-09-10T00:00:00Z",
+  };
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ installations: [installation], configured: true }))));
+  const result = await client.listLarkInstallations("ws");
+  expect(result.installations).toEqual([installation]);
+  expect(result.conversation_supported).toBeUndefined();
 });
 
 it("rejects malformed reads and ambiguous save responses so drafts remain unsaved", async () => {
