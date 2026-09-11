@@ -319,10 +319,11 @@ func (b *cursorBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		}
 		scanErr := scanner.Err()
 		if scanErr != nil {
-			// Scanner stopped consuming stdout. Close the pipe before Wait so a
-			// child writing a malformed or oversized event cannot deadlock on a
-			// full OS pipe; the scanner error remains the primary failure.
+			// No more events can be read. A producer may ignore EPIPE and keep
+			// running, so close the pipe and stop its tree before Wait. Do not
+			// cancel runCtx here: the scanner error must remain the failure.
 			_ = stdout.Close()
+			reapProcessTree(cmd)
 		}
 
 		// Use result usage if available (session totals); otherwise fall back

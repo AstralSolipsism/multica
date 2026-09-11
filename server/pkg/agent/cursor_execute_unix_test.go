@@ -191,6 +191,15 @@ exit 1
 }
 
 func TestCursorExecuteReportsScannerOverflow(t *testing.T) {
+	for _, linger := range []bool{false, true} {
+		t.Run(fmt.Sprintf("linger=%t", linger), func(t *testing.T) {
+			testCursorExecuteScannerOverflow(t, linger)
+		})
+	}
+}
+
+func testCursorExecuteScannerOverflow(t *testing.T, linger bool) {
+	t.Helper()
 	// The oversized event is sized from agentStreamMaxLineBytes so raising
 	// the shared cap cannot silently turn this into a plain oversized-line
 	// pass that never reaches the overflow branch.
@@ -199,6 +208,12 @@ printf '%%s\n' '{"type":"system","subtype":"init","session_id":"sess-overflow"}'
 dd if=/dev/zero bs=1048576 count=%d 2>/dev/null | tr '\000' x
 printf '\n'
 `, agentStreamMaxLineBytes/(1024*1024)+1)
+	if linger {
+		// Closing stdout alone is insufficient if the producer ignores EPIPE
+		// and keeps working. Overflow must stop the process, not await timeout.
+		script = strings.Replace(script, "#!/bin/sh\n", "#!/bin/sh\ntrap '' PIPE\n", 1)
+		script += "sleep 10\n"
+	}
 	result := executeFakeCursor(t, script)
 
 	if result.Status != "failed" {

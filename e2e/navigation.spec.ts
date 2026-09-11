@@ -27,13 +27,26 @@ test.describe("Navigation", () => {
     await expect(page).toHaveTitle("Issues | Labrastro");
   });
 
-  test("settings page loads via sidebar", async ({ page }) => {
+  test("settings links navigate to General and Members", async ({ page }) => {
     await page.getByRole("link", { name: "Settings", exact: true }).click();
     await expect(page).toHaveURL(/\/settings/, { timeout: ROUTE_CHANGE_TIMEOUT });
     await waitForPageText(page, "Settings");
 
-    await expect(page.getByRole("tab", { name: "General" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Members" })).toBeVisible();
+    const settingsNav = page.getByRole("navigation", { name: "Settings", exact: true });
+    const general = settingsNav.getByRole("link", { name: "General", exact: true });
+    const members = settingsNav.getByRole("link", { name: "Members", exact: true });
+
+    await general.click();
+    await expect(page).toHaveURL(/\/settings\?tab=workspace$/, { timeout: ROUTE_CHANGE_TIMEOUT });
+    await expect(general).toHaveAttribute("aria-current", "page");
+    await expect(page.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue(/^E2E Workspace /);
+
+    await members.click();
+    await expect(page).toHaveURL(/\/settings\?tab=members$/, { timeout: ROUTE_CHANGE_TIMEOUT });
+    await expect(members).toHaveAttribute("aria-current", "page");
+    await expect(page.getByRole("heading", { name: "Members", exact: true })).toBeVisible();
+    await expect(page.getByText("E2E User", { exact: true })).toBeVisible();
   });
 
   test("agents page shows agent list", async ({ page }) => {

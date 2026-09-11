@@ -806,7 +806,7 @@
   },
   "lark": {
     "section_title": "飞书",
-    "page_description": "将每个 Labrastro 智能体绑定到飞书 PersonalAgent Bot。成员可在飞书私聊 Bot、群聊 @ Bot，或输入 /issue 直接创建 Labrastro 任务。",
+    "page_description": "将每个 Labrastro 智能体绑定到飞书 PersonalAgent Bot。在已授权的会话中，参与者可私聊机器人或在群聊中 @ 它。智能体理解诉求后，会按需通过正常工具将意见回填到相关任务；意图不明确时先澄清。",
     "not_enabled_title": "未启用飞书集成",
     "not_enabled_description_prefix": "在服务器上设置",
     "not_enabled_description_suffix": "才能启用飞书 Bot 绑定。",

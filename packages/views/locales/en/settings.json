@@ -808,7 +808,7 @@
   },
   "lark": {
     "section_title": "Lark",
-    "page_description": "Connect each Labrastro Agent to a Lark (飞书) PersonalAgent Bot. Members can DM the Bot, @ it in groups, and type /issue to spin up a new Labrastro issue.",
+    "page_description": "Connect each Labrastro Agent to a Lark (飞书) PersonalAgent Bot. In authorized conversations, people can DM the Bot or @mention it in groups. The Agent understands the request and uses its normal tools to post feedback to the relevant issue when needed, asking for clarification first if the intent is unclear.",
     "not_enabled_title": "Lark integration not enabled",
     "not_enabled_description_prefix": "Set",
     "not_enabled_description_suffix": "on the server to enable Lark Bot installations.",
