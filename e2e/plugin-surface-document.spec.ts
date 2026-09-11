@@ -81,14 +81,16 @@ test.describe("plugin surface document (real Chromium, hosted guest)", () => {
     });
   });
 
-  test("reports a first-line guest error to the listener armed before launch", async ({ page }) => {
+  test("reports a first-line guest error after the bootstrap connects", async ({ page }) => {
     await page.route("https://plugin-content.example.test/plugin-surfaces/error-proof", async (route) => {
       await route.fulfill({
         contentType: "text/html",
-        // The hosted bootstrap installs this handler before inserting plugin
-        // code. The wrapper relays the one-shot terminal signal to the host.
+        // The hosted bootstrap installs its error handler and transfers the
+        // bridge port before inserting plugin code that can throw immediately.
         body: `<!doctype html><body><script>
           addEventListener("error", () => parent.postMessage({ type: "multica:plugin-surface-error" }, "*"));
+          const channel = new MessageChannel();
+          parent.postMessage({ type: "multica:plugin-bridge-connect", version: 2, challenge: "error-proof" }, "*", [channel.port1]);
           const plugin = document.createElement("script");
           plugin.textContent = "throw new Error('plugin failed during bootstrap');";
           document.body.appendChild(plugin);
@@ -98,7 +100,7 @@ test.describe("plugin surface document (real Chromium, hosted guest)", () => {
     await mountHost(page);
     await launchSurface(page, "error-proof");
     await expect.poll(() => readState(page)).toEqual({
-      challenges: [],
+      challenges: ["error-proof"],
       replies: [],
       terminal: ["multica:plugin-surface-error"],
     });
