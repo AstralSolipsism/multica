@@ -287,13 +287,12 @@ function DagCanvasInner({
 
   // Fit once when a fresh layout lands (projection or direction changed the
   // position set). Selection/focus fits are separate, user-initiated.
-  const layoutKeyRef = useRef("");
+  const fittedPositionsRef = useRef<typeof positions | null>(null);
   useEffect(() => {
-    const key = `${positions.size}:${direction}`;
-    if (key === layoutKeyRef.current || positions.size === 0) return;
-    layoutKeyRef.current = key;
+    if (positions === fittedPositionsRef.current || positions.size === 0) return;
+    fittedPositionsRef.current = positions;
     void fitView({ padding: 0.15, duration: 200 });
-  }, [direction, fitView, positions]);
+  }, [fitView, positions]);
 
   return (
     <div className="relative flex-1 min-h-0">

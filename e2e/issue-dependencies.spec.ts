@@ -304,7 +304,7 @@ test.describe("Issue dependencies (OL-44)", () => {
   });
 
   test("DAG actions edit in place and preserve cancel/one-shot assignment with readable prerequisites", async ({ page }, testInfo) => {
-    const title = "跨项目依赖需要完整显示：" + "long-unbroken-prerequisite-title".repeat(4);
+    const title = "跨项目依赖需要完整显示：" + "longunbrokenprerequisitetitle".repeat(4);
     await ctx.api.updateIssue(ctx.issueA.id, { title });
     await page.setViewportSize({ width: 1024, height: 768 });
     await enterWorkspace(page, ctx);

@@ -413,7 +413,7 @@ export function DagView({
             graph={graph}
             projection={projection}
             positions={layout.positions!}
-            direction={direction}
+            direction={layout.direction}
             statusColorOf={catalog.colorOf}
             focusRequest={focusRequest}
             onOpenIssue={onOpenIssue}
