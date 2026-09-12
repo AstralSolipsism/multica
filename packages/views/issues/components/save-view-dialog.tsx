@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, ChevronRight, Plus } from "lucide-react";
+import { ChevronRight, Plus } from "lucide-react";
+import { sortDirectionLabelKey } from "../utils/sort-direction";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
@@ -45,9 +46,9 @@ import {
   viewStorePersistOptions,
   mergeViewStatePersisted,
   GROUPING_OPTIONS,
-  SORT_OPTIONS,
   SWIMLANE_GROUPINGS,
-  CARD_PROPERTY_OPTIONS,
+  cardPropertyOptionsForView,
+  sortOptionsForView,
   type IssueGrouping,
   type IssueViewState,
   type SortField,
@@ -173,6 +174,8 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
   const cardProperties = useViewStore((s) => s.cardProperties);
   const cardPropertyIds = useViewStore((s) => s.cardPropertyIds);
   const act = useViewStoreApi().getState();
+  const availableSortOptions = sortOptionsForView(viewMode, grouping);
+  const availableCardPropertyOptions = cardPropertyOptionsForView(viewMode);
 
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(wsId));
   const groupableProperties = useMemo(
@@ -211,9 +214,7 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
   const sortDirectionLabel =
     viewMode === "dag" || sortBy === "position"
       ? null
-      : sortDirection === "asc"
-        ? t(($) => $.display.ascending_title)
-        : t(($) => $.display.descending_title);
+      : t(($) => $.display[sortDirectionLabelKey(sortBy, sortDirection)]);
   const displaySummary = [
     layoutLabel,
     groupingLabel,
@@ -460,7 +461,7 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
               <div className="flex items-center gap-1.5">
                 <Select
                   items={[
-                    ...SORT_OPTIONS.map((opt) => ({
+                    ...availableSortOptions.map((opt) => ({
                       value: opt.value as string,
                       label: t(($) => $.display[SORT_LABEL_KEY[opt.value as keyof typeof SORT_LABEL_KEY]]),
                     })),
@@ -479,7 +480,7 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
                   </SelectTrigger>
                   <SelectContent align="start">
                     <SelectGroup>
-                      {SORT_OPTIONS.map((opt) => (
+                      {availableSortOptions.map((opt) => (
                         <SelectItem key={opt.value} value={opt.value}>
                           {t(($) => $.display[SORT_LABEL_KEY[opt.value as keyof typeof SORT_LABEL_KEY]])}
                         </SelectItem>
@@ -496,7 +497,7 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
                   <Button
                     type="button"
                     variant="outline"
-                    size="icon-sm"
+                    size="sm"
                     onClick={() =>
                       act.setSortDirection(
                         sortDirection === "asc" ? "desc" : "asc",
@@ -505,23 +506,19 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
                     aria-label={sortDirectionLabel ?? undefined}
                     title={sortDirectionLabel ?? undefined}
                   >
-                    {sortDirection === "asc" ? (
-                      <ArrowUp className="size-3.5" />
-                    ) : (
-                      <ArrowDown className="size-3.5" />
-                    )}
+                    {sortDirectionLabel}
                   </Button>
                 )}
               </div>
             </div>
             )}
-            {viewMode !== "table" && viewMode !== "dag" && (
+            {availableCardPropertyOptions.length > 0 && (
               <div className="flex items-start gap-3">
                 <Label className={`${ROW_LABEL} pt-1`}>
                   {t(($) => $.display.card_properties_section)}
                 </Label>
                 <div className="flex min-w-0 flex-1 flex-wrap gap-1">
-                  {CARD_PROPERTY_OPTIONS.map((opt) => (
+                  {availableCardPropertyOptions.map((opt) => (
                     <Toggle
                       key={opt.key}
                       size="sm"

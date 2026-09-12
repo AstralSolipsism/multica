@@ -412,7 +412,7 @@ export function SourceDeliveryDetailDialog({
                     <p className="text-caption text-muted-foreground">{content.change}</p>
                   )}
                   {content.text ?? content.body ? (
-                    <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/40 px-3 py-2 text-caption font-mono leading-relaxed">
+                    <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-muted/40 px-3 py-2 text-caption font-mono leading-relaxed">
                       {content.text ?? content.body}
                     </pre>
                   ) : (

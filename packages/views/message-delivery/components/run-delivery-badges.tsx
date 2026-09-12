@@ -81,7 +81,7 @@ export function RunDeliveryBadges({
               e.stopPropagation();
               onOpenDelivery(d);
             }}
-            className="rounded p-0.5 hover:bg-accent transition-colors"
+            className="rounded-sm p-0.5 hover:bg-accent transition-colors"
           >
             <StatusIcon
               className={cn("h-3.5 w-3.5", visual.color, visual.spin && "animate-spin")}
@@ -98,7 +98,7 @@ export function RunDeliveryBadges({
             e.stopPropagation();
             onOpenRunList(runId);
           }}
-          className="rounded px-1 py-0.5 text-micro text-muted-foreground hover:bg-accent hover:text-foreground transition-colors tabular-nums"
+          className="rounded-sm px-1 py-0.5 text-micro text-muted-foreground hover:bg-accent hover:text-foreground transition-colors tabular-nums"
         >
           +{overflow}
         </button>

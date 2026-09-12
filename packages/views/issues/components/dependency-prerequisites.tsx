@@ -144,7 +144,7 @@ function PrerequisiteRow({
             <button
               type="button"
               onClick={() => onEditSource(sourceId)}
-              className="rounded px-1.5 py-0.5 text-primary transition-colors hover:bg-accent"
+              className="rounded-sm px-1.5 py-0.5 text-primary transition-colors hover:bg-accent"
             >
               {t(($) => $.dependencies.edit_source)}
             </button>
@@ -162,7 +162,7 @@ function PrerequisiteRow({
             identifier: prerequisite.identifier ?? "",
           })}
           onClick={() => onRemove(prerequisite)}
-          className="shrink-0 rounded p-1 text-muted-foreground transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100 disabled:opacity-50 sm:opacity-0"
+          className="shrink-0 rounded-sm p-1 text-muted-foreground transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100 disabled:opacity-50 sm:opacity-0"
         >
           <Unlink className="h-3.5 w-3.5" />
         </button>

@@ -117,9 +117,9 @@ None of these start a fresh run, and none produce an error response — but they
 are three different things, and the response tells you which. A mention that
 never parsed is a truly silent no-op. One that parsed and was refused comes back
 in `trigger_outcomes` as `status: "blocked"` with a `reason_code`. One whose
-target is already busy comes back `coalesced` or `deferred`: no second run, but
-your comment IS folded into the task that is already running, so it still gets
-read. Read that array after posting — it is the only place any of this shows up.
+target has a queued task in the same comment thread can come back `coalesced`.
+A claim race can return `deferred`: the input is recorded for a follow-up run,
+not injected into an already running prompt. Different threads queue independently. Read that array after posting — it is the only place any of this shows up.
 
 - **A name where a UUID belongs.** `mention://member/Alice` is dead. The id
   group accepts only hex+dashes or `all`; the non-hex letters in a typical name
@@ -138,13 +138,22 @@ read. Read that array after posting — it is the only place any of this shows u
   with `target_unavailable` instead — a non-UUID names no entity anywhere, so
   it conceals nothing. Neither case is ever an error response.
 - **An already-pending task.** Even a correct `@agent`/`@squad` starts no second
-  run when the target already has a pending task on this issue. This is a fold,
-  not a drop: the comment merges into that task and the outcome is `coalesced`
-  (same reviewed head) or `deferred` (different head) — do NOT re-post it as
-  "the mention didn't work". Edit preview is the only exception:
+  run when the same target has a mergeable queued task in the **same thread**
+  (the root comment and all descendants), with the same reviewed head. The
+  outcome is `coalesced`; all covered instructions are delivered together.
+  Different root threads and assignment-triggered runs have separate queue
+  slots. Inputs received after execution starts belong to a successor run;
+  `deferred` means a claim race durably recorded the follow-up obligation.
+  Agent concurrency limits still apply, and runs for the same issue and agent
+  execute serially. Stopping or retrying one thread does not cancel another
+  thread's queue. Do not re-post a successfully queued/coalesced/deferred input. Edit preview is the only exception:
   `editing_comment_id` ignores pending tasks from the same comment being edited,
   because save cancels those old tasks before it re-computes triggers. It is
   still comment-scoped, not an agent-wide bypass.
+- **A hand-off to the issue assignee because your target is busy.** A reply
+  already routed to an agent stays with that agent; an offline or queued target
+  is waited for, never swapped for the issue assignee. Mention whoever else you
+  need by hand.
 - **An archived agent, or one with no runtime bound** (likewise a squad whose
   leader is): blocked with `target_unavailable` and `runtime_offline`
   respectively. Both are checked only AFTER the invoke gate, so a caller who may
@@ -169,23 +178,23 @@ created. It does not go the other way: nothing ever substitutes a different huma
 human at its top, member-scoped allow-lists stay closed no matter which issue you
 move to.
 
-One nuance for automation: when an UNATTRIBUTED autopilot run (a schedule/webhook
-dispatch has no human originator, so the gate has no human to key on) delegates
-by `@mention` while working on the issue that autopilot created, the invoke gate
-falls back to the **autopilot creator** as the effective invoking user — the same
-principal that admitted the first dispatch. So a mid-run `@agent` / `@squad`
-delegation fires exactly when the autopilot creator could invoke that target
-(owner / `public_to` match), and stays skipped otherwise. It is authorization
-only — the enqueued run's originator/attribution is unchanged.
+Automation follows the same chain. A schedule/webhook dispatch acts as the
+member recorded in the trigger's `created_by`; manual "run now" acts as its
+invoking member. Delegated `@agent` / `@squad` runs inherit that human through
+verified task lineage, and invocation checks apply that member's access to the
+target. The autopilot creator is never substituted for a missing originator.
+Historical triggers without a recorded member principal remain unable to
+dispatch; see `autopilots.md` for recovery.
 
-This fallback is bound to verified task lineage: it applies only when the
-delegating run's own task is the one working on that autopilot issue (author ==
-task agent, `task.issue_id` == this issue), so a run doing work elsewhere can
-never borrow another autopilot creator's authority by commenting on its issue.
-The same authority carries the plain assigned-squad-leader wake (a worker's
-result comment on the autopilot issue can still wake the leader), and it survives
-a busy target: if the mentioned agent is already running, the delegation is
-replayed at that run's completion under the same authority, so it is never lost.
+The same inherited authority carries a worker's result back to the assigned
+squad leader. If a mentioned target is busy, deferred reconciliation uses the
+comment's recorded task lineage and rechecks access when the target frees up.
+
+Editing or deleting input cancels active runs that contain that comment and
+re-evaluates surviving inputs. These cancelled runs expose
+`cancelled_by_comment_change: true` in task responses. Unstarted runs without
+replies remain in execution history but do not create cancelled comment blocks;
+manual cancellations and runs that already executed remain visible.
 
 An edit is treated as a fresh action — it re-derives the comment's lineage from
 the editing action. Only the agent author editing its OWN comment re-stamps the

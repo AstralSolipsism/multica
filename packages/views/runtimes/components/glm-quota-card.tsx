@@ -110,10 +110,9 @@ export function GlmQuotaChip({
       : t(($) => $.quota.glm_unknown);
   const pill = (
     <span
-      aria-label={`GLM: ${ariaText}`}
-      className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-micro font-medium tabular-nums ${CHIP_TONE_CLASS[tone]}`}
+      aria-label={t(($) => $.quota.glm_title) + ": " + ariaText}
+      className={`inline-flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-micro font-medium tabular-nums ${CHIP_TONE_CLASS[tone]}`}
     >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={staticAssetSrc(zhipuLogo)} alt="" className="h-3.5 w-3.5" />
       {remaining != null && (
         <MiniMeterBar
@@ -203,11 +202,10 @@ export function GlmQuotaCard({ now }: { now: number }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border bg-card px-3 py-2">
       <span className="flex items-center gap-2">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={staticAssetSrc(zhipuLogo)} alt="Zhipu" className="h-4 w-4" />
         <span className="text-sm font-medium">{t(($) => $.quota.glm_title)}</span>
         {data.quota.level ? (
-          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+          <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
             {data.quota.level}
           </span>
         ) : null}

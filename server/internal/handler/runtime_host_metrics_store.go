@@ -48,8 +48,8 @@ type MachineMetricsStore interface {
 
 	// GetBatch fetches the latest sample for many (workspace, daemon) refs
 	// at once. The returned map contains an entry only for refs with a live
-	// sample. Backend errors degrade to an empty map (callers render
-	// "no data").
+	// sample. Failed reads are omitted (callers render "no data") while
+	// successfully read machines remain available.
 	GetBatch(ctx context.Context, refs []MachineRef) map[MachineRef]*protocol.HostMetrics
 }
 
@@ -163,10 +163,10 @@ return {1, newKey}
 // RedisMachineMetricsStore stores one TTL'd JSON key per (workspace,
 // daemon), written at most once per daemon sampling cycle.
 type RedisMachineMetricsStore struct {
-	rdb *redis.Client
+	rdb redis.UniversalClient
 }
 
-func NewRedisMachineMetricsStore(rdb *redis.Client) *RedisMachineMetricsStore {
+func NewRedisMachineMetricsStore(rdb redis.UniversalClient) *RedisMachineMetricsStore {
 	return &RedisMachineMetricsStore{rdb: rdb}
 }
 
@@ -210,19 +210,20 @@ func (s *RedisMachineMetricsStore) GetBatch(ctx context.Context, refs []MachineR
 	if !s.Available() || len(refs) == 0 {
 		return out
 	}
-	keys := make([]string, len(refs))
+	// Machine keys may belong to different Redis Cluster slots. Pipeline GETs
+	// so the universal client can route each sample to its owning node.
+	pipe := s.rdb.Pipeline()
+	values := make([]*redis.StringCmd, len(refs))
 	for i, ref := range refs {
-		keys[i] = machineMetricsKey(ref)
+		values[i] = pipe.Get(ctx, machineMetricsKey(ref))
 	}
-	values, err := s.rdb.MGet(ctx, keys...).Result()
-	if err != nil {
-		slog.Warn("machine metrics mget failed; reporting no host metrics",
-			"error", err, "count", len(keys))
-		return map[MachineRef]*protocol.HostMetrics{}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		slog.Warn("machine metrics pipeline failed; reporting available samples",
+			"error", err, "count", len(refs))
 	}
 	for i, ref := range refs {
-		raw, ok := values[i].(string)
-		if !ok || raw == "" {
+		raw, err := values[i].Result()
+		if err != nil || raw == "" {
 			continue
 		}
 		var sample protocol.HostMetrics

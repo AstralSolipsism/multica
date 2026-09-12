@@ -5,9 +5,43 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestMigrationNumericPrefixesAreUnique(t *testing.T) {
+	files := migrationFilesForLint(t, "*.up.sql")
+
+	// Migrations through 128 contain historical duplicate numeric prefixes.
+	// OL-49 also preserves the independently shipped Fork/upstream names in
+	// 451–478: the runner records full stems, and renaming an applied migration
+	// would replay its DDL. Keep other numbers unique for new migrations.
+	const firstUniqueMigrationNumber = 129
+	stemByNumber := make(map[int]string)
+	for _, file := range files {
+		stem, _, ok := splitMigrationFilename(filepath.Base(file))
+		if !ok {
+			continue
+		}
+		prefix, _, ok := strings.Cut(stem, "_")
+		if !ok {
+			continue
+		}
+		number, err := strconv.Atoi(prefix)
+		if err != nil || number < firstUniqueMigrationNumber {
+			continue
+		}
+		if number >= 451 && number <= 478 {
+			continue
+		}
+		if previous, exists := stemByNumber[number]; exists {
+			t.Errorf("migrations %s and %s share numeric prefix %s", previous, stem, prefix)
+			continue
+		}
+		stemByNumber[number] = stem
+	}
+}
 
 func TestMigrationFilesHaveMatchingDirections(t *testing.T) {
 	files := migrationFilesForLint(t, "*.sql")

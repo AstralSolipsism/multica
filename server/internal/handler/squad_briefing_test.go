@@ -420,15 +420,8 @@ func TestClaimTask_LeaderGetsBriefing(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	ctx := context.Background()
-
-	var leaderID, runtimeID string
-	if err := testPool.QueryRow(ctx,
-		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1`,
-		testWorkspaceID,
-	).Scan(&leaderID, &runtimeID); err != nil {
-		t.Fatalf("get leader agent: %v", err)
-	}
+	runtimeID := dbfx.Runtime(t, "Briefing leader runtime")
+	leaderID := dbfx.Agent(t, "Briefing leader", runtimeID)
 
 	squad := seedSquadForBriefing(t, leaderID, "Briefing Claim Squad", "Be terse.")
 
@@ -474,12 +467,8 @@ func TestClaimTask_NonLeaderGetsNoBriefing(t *testing.T) {
 	// claim path picks its task without ambiguity.
 	helperID := createHandlerTestAgent(t, "Non Leader Helper", []byte("[]"))
 	addAgentMember(t, squad.ID, helperID, "")
-	var helperRuntime string
-	if err := testPool.QueryRow(ctx,
-		`SELECT runtime_id FROM agent WHERE id = $1`, helperID,
-	).Scan(&helperRuntime); err != nil {
-		t.Fatalf("get helper runtime: %v", err)
-	}
+	helperRuntime := dbfx.Runtime(t, "Non Leader Helper runtime")
+	dbfx.Exec(t, `UPDATE agent SET runtime_id=$2 WHERE id=$1`, helperID, helperRuntime)
 
 	queueSquadIssueTaskFor(t, util.UUIDToString(squad.ID), helperID, helperRuntime, 95002)
 

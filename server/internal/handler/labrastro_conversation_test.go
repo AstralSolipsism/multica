@@ -135,6 +135,47 @@ func TestConversationUnboundAndBoundAgentComment(t *testing.T) {
 	}
 }
 
+func TestConversationFreezesExternalReplyTargetSeparatelyFromGrantor(t *testing.T) {
+	for _, input := range []string{"first question", "/new first question"} {
+		t.Run(input, func(t *testing.T) {
+			f := newConversationFixture(t)
+			dbfx.Exec(t, `DELETE FROM channel_user_binding WHERE id=$1`, f.binding)
+			f.msg.Source.ChatType = channel.ChatTypeGroup
+			f.msg.Source.ThreadID = "omt_question"
+			f.msg.Source.SenderID = "ou_unbound_asker"
+			f.msg.ReplyTo = nil
+			f.msg.Text, f.msg.CommandText = input, input
+			f.ingest(t)
+			task := f.task(t)
+			if task.OriginatorUserID != parseUUID(testUserID) {
+				t.Fatal("external sender replaced the grantor's invocation identity")
+			}
+			readDelivery := func() db.ChannelTaskDelivery {
+				t.Helper()
+				delivery, err := f.h.Queries.GetChannelTaskDelivery(context.Background(), task.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return delivery
+			}
+			before := readDelivery()
+			if before.ChannelMessageID.String != f.msg.MessageID || before.ChannelThreadID.String != "omt_question" || before.ChannelSenderID.String != "ou_unbound_asker" {
+				t.Fatalf("wrong external reply target: message=%v thread=%v sender=%v", before.ChannelMessageID, before.ChannelThreadID, before.ChannelSenderID)
+			}
+			// A later speaker advances the session cursor; the first task's
+			// immutable delivery must still name the first external asker.
+			f.msg.MessageID = "om_later_speaker"
+			f.msg.Source.SenderID = "ou_later_asker"
+			f.msg.Text, f.msg.CommandText = "second question", "second question"
+			f.ingest(t)
+			after := readDelivery()
+			if after.ChannelMessageID != before.ChannelMessageID || after.ChannelThreadID != before.ChannelThreadID || after.ChannelSenderID != before.ChannelSenderID {
+				t.Fatal("later speaker overwrote the earlier task's reply target")
+			}
+		})
+	}
+}
+
 func TestConversationScopeCommandsAndIsolation(t *testing.T) {
 	for _, mode := range []string{"unconfigured", "revoked", "grantor_removed", "private_changed", "unaddressed", "unknown_chat", "issue_command", "report_question", "ambiguous"} {
 		t.Run(mode, func(t *testing.T) {

@@ -433,11 +433,11 @@ fi
 # gap here.
 #
 # This is also where Compose's precedence is pinned against the real binary: the
-# calling environment outranks the env file. Both installers relied on their own
-# .env-only derivation and so probed a port Compose never published (#6145);
-# they now ask `docker compose port` instead, which is asserted end to end in
-# scripts/install.test.sh and scripts/install.ps1.test.ps1. Those suites run on
-# agents without a Docker CLI, so the ground truth for precedence lives here.
+# calling environment outranks the env file. The PowerShell server installer
+# asks `docker compose port`, asserted end to end in install.ps1.test.ps1.
+# Labrastro's shell installer installs only the CLI from internal releases;
+# install.test.sh checks that separate contract. The direct Compose path here
+# remains the ground truth for self-host port precedence.
 # ---------------------------------------------------------------------------
 
 # Neither installer may reconstruct the port from the env file again.
@@ -445,14 +445,6 @@ for installer in scripts/install.sh scripts/install.ps1; do
   if grep -nE '(selfhost_backend_port|selfhost_frontend_port|Get-SelfHostBackendPort|Get-SelfHostFrontendPort)' "$installer"; then
     echo "$installer must not re-derive host ports from .env."
     echo "Read the published port from Compose, as scripts/selfhost-wait.sh does."
-    exit 1
-  fi
-done
-for installer_call in \
-  'compose_published_port backend 8080' \
-  'compose_published_port frontend 3000'; do
-  if ! grep -Fq "$installer_call" scripts/install.sh; then
-    echo "scripts/install.sh must read the published port from Compose: $installer_call"
     exit 1
   fi
 done

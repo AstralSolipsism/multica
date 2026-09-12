@@ -250,7 +250,7 @@ function QuotaChip({
   const pill = (
     <span
       aria-label={`${label}: ${ariaText}`}
-      className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-micro font-medium tabular-nums ${CHIP_TONE_CLASS[chip.tone]}`}
+      className={`inline-flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-micro font-medium tabular-nums ${CHIP_TONE_CLASS[chip.tone]}`}
     >
       <ProviderLogo provider={chip.provider} className="h-3.5 w-3.5" />
       {state.kind === "percent" && (

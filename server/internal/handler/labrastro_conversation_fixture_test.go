@@ -29,10 +29,10 @@ func (f *conversationSourceTransport) ReadFeedbackMessage(_ context.Context, _, 
 }
 
 type conversationFixture struct {
-	h                                                      *Handler
-	transport                                              *conversationSourceTransport
-	install, app, issue, agent, delivery, receipt, binding string
-	msg                                                    channel.InboundMessage
+	h                                                               *Handler
+	transport                                                       *conversationSourceTransport
+	install, app, issue, agent, runtime, delivery, receipt, binding string
+	msg                                                             channel.InboundMessage
 }
 
 func newConversationFixture(t *testing.T) *conversationFixture {
@@ -41,7 +41,8 @@ func newConversationFixture(t *testing.T) *conversationFixture {
 		t.Fatal("conversation acceptance requires PostgreSQL")
 	}
 	f := &conversationFixture{}
-	f.agent = dbfx.Agent(t, "Feedback agent", handlerTestRuntimeID(t))
+	f.runtime = dbfx.Runtime(t, "Feedback runtime")
+	f.agent = dbfx.Agent(t, "Feedback agent", f.runtime)
 	f.issue = dbfx.Issue(t, "Feedback target", testutil.Cols{"assignee_type": "agent", "assignee_id": f.agent})
 	f.app = "cli_feedback_" + f.issue
 	f.install = dbfx.Insert(t, "channel_installation", testutil.Cols{"workspace_id": testWorkspaceID, "agent_id": f.agent, "channel_type": "feishu", "installer_user_id": testUserID, "status": "active", "config": fmt.Sprintf(`{"app_id":%q}`, f.app)})
@@ -78,7 +79,7 @@ func newConversationFixture(t *testing.T) *conversationFixture {
 func (f *conversationFixture) report(t *testing.T) (string, string) {
 	t.Helper()
 	ap := dbfx.Insert(t, "autopilot", testutil.Cols{"workspace_id": testWorkspaceID, "title": "Frozen report source", "assignee_id": f.agent, "status": "active", "execution_mode": "run_only", "created_by_type": "member", "created_by_id": testUserID})
-	task := dbfx.Task(t, f.agent, testutil.Cols{"runtime_id": handlerTestRuntimeID(t), "status": "completed", "completed_at": testutil.Raw("now()")})
+	task := dbfx.Task(t, f.agent, testutil.Cols{"runtime_id": f.runtime, "status": "completed", "completed_at": testutil.Raw("now()")})
 	run := dbfx.Insert(t, "autopilot_run", testutil.Cols{"autopilot_id": ap, "task_id": task, "source": "schedule", "status": "completed", "completed_at": testutil.Raw("now()"), "result": `{"output":"Frozen report"}`})
 	dbfx.Exec(t, `UPDATE labrastro_message_delivery SET source_kind='run_only',source_scope='run',source_ref_id=NULL,autopilot_id=$2,run_id=$3,source_ref=$4 WHERE id=$1`, f.delivery, ap, run, fmt.Sprintf(`{"run_id":%q,"execution_mode":"run_only"}`, run))
 	return ap, run

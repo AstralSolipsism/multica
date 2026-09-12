@@ -26,18 +26,21 @@ func newSkillImportTestCmd() *cobra.Command {
 func captureStdout(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
 	old := os.Stdout
-	r, w, err := os.Pipe()
+	// A synchronous pipe writer blocks once a large JSON page fills the
+	// kernel pipe buffer. A temporary file captures output without that limit.
+	outFile, err := os.CreateTemp(t.TempDir(), "stdout-*")
 	if err != nil {
-		t.Fatalf("pipe stdout: %v", err)
+		t.Fatalf("create stdout capture: %v", err)
 	}
-	os.Stdout = w
+	defer outFile.Close()
+	os.Stdout = outFile
 	defer func() { os.Stdout = old }()
 
 	runErr := fn()
-	if err := w.Close(); err != nil {
-		t.Fatalf("close stdout writer: %v", err)
+	if _, err := outFile.Seek(0, io.SeekStart); err != nil {
+		t.Fatalf("rewind stdout capture: %v", err)
 	}
-	out, err := io.ReadAll(r)
+	out, err := io.ReadAll(outFile)
 	if err != nil {
 		t.Fatalf("read stdout: %v", err)
 	}

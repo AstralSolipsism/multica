@@ -214,6 +214,61 @@ export const CARD_PROPERTY_OPTIONS: { key: keyof CardProperties; label: string }
   { key: "childProgress", label: "Sub-issue progress" },
 ];
 
+export const DEFAULT_CARD_PROPERTIES: Readonly<CardProperties> = {
+  priority: true,
+  description: false,
+  assignee: true,
+  startDate: false,
+  dueDate: true,
+  project: true,
+  childProgress: true,
+  labels: false,
+};
+
+export const DEFAULT_HIDDEN_STATUS_CATEGORIES: readonly IssueStatusCategory[] = [
+  "cancelled",
+];
+
+export function defaultSortDirection(field: SortField): SortDirection {
+  return field === "created_at" || field === "updated_at" ? "desc" : "asc";
+}
+
+/** Only expose card controls that the active renderer can honor. */
+export function cardPropertyOptionsForView(viewMode: ViewMode) {
+  if (viewMode === "table" || viewMode === "gantt" || viewMode === "dag") return [];
+  if (viewMode === "list") {
+    return CARD_PROPERTY_OPTIONS.filter((option) => option.key !== "description");
+  }
+  return CARD_PROPERTY_OPTIONS;
+}
+
+export function sortOptionsForView(
+  _viewMode: ViewMode,
+  grouping: IssueGrouping,
+) {
+  if (grouping !== "status") {
+    return SORT_OPTIONS.filter((option) => option.value !== "position");
+  }
+  return SORT_OPTIONS;
+}
+
+/**
+ * Manual order is one shared `issue.position` sequence per status column. It
+ * has no honest meaning while another grouping is active: reordering an
+ * assignee/project column would otherwise rewrite the status board behind the
+ * user's back. Keep this invariant at every store boundary (actions and
+ * persisted-state hydration), not only in the display menu.
+ */
+export function normalizeSortForGrouping(
+  grouping: IssueGrouping,
+  sortBy: SortField,
+  sortDirection: SortDirection,
+): Pick<IssueViewState, "sortBy" | "sortDirection"> {
+  return grouping !== "status" && sortBy === "position"
+    ? { sortBy: "created_at", sortDirection: "desc" }
+    : { sortBy, sortDirection };
+}
+
 export interface IssueViewState {
   viewMode: ViewMode;
   grouping: IssueGrouping;
@@ -243,6 +298,8 @@ export interface IssueViewState {
   agentRunningFilter: boolean;
   sortBy: SortField;
   sortDirection: SortDirection;
+  /** Last explicit direction per field, so switching fields is reversible. */
+  sortDirections: Partial<Record<SortField, SortDirection>>;
   cardProperties: CardProperties;
   /** Custom property definition ids whose values render on board/list cards. */
   cardPropertyIds: string[];
@@ -364,22 +421,14 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   propertyFilters: {},
   dateFilter: null,
   agentRunningFilter: false,
-  sortBy: "position",
-  sortDirection: "asc",
-  cardProperties: {
-    priority: true,
-    description: true,
-    assignee: true,
-    startDate: true,
-    dueDate: true,
-    project: true,
-    childProgress: true,
-    labels: true,
-  },
+  sortBy: "created_at",
+  sortDirection: "desc",
+  sortDirections: { created_at: "desc" },
+  cardProperties: { ...DEFAULT_CARD_PROPERTIES },
   cardPropertyIds: [],
   showSubIssues: true,
   listCollapsedStatuses: [],
-  hiddenStatusCategories: [],
+  hiddenStatusCategories: [...DEFAULT_HIDDEN_STATUS_CATEGORIES],
   ganttZoom: "week",
   ganttShowCompleted: false,
   swimlaneGrouping: "assignee",
@@ -395,11 +444,27 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   dagGrouping: "project",
   dagCollapsedIds: null,
 
-  setViewMode: (mode) => set({ viewMode: mode }),
+  setViewMode: (mode) =>
+    set((state) => ({
+      viewMode: mode,
+      ...normalizeSortForGrouping(
+        state.grouping,
+        state.sortBy,
+        state.sortDirection,
+      ),
+    })),
   setGanttZoom: (zoom) => set({ ganttZoom: zoom }),
   toggleGanttShowCompleted: () =>
     set((state) => ({ ganttShowCompleted: !state.ganttShowCompleted })),
-  setGrouping: (grouping) => set({ grouping }),
+  setGrouping: (grouping) =>
+    set((state) => ({
+      grouping,
+      ...normalizeSortForGrouping(
+        grouping,
+        state.sortBy,
+        state.sortDirection,
+      ),
+    })),
   toggleStatusFilter: (status) =>
     set((state) => ({
       statusFilters: state.statusFilters.includes(status)
@@ -498,9 +563,6 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       propertyFilters: {},
       dateFilter: null,
       agentRunningFilter: false,
-      // Reset restores every column, matching what it did when hiding a column
-      // was expressed as a status filter.
-      hiddenStatusCategories: [],
     }),
   resetFiltersTo: (snapshot) => set({ ...snapshot }),
   clearFilterDimension: (dimension) =>
@@ -527,8 +589,26 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
         }
       }
     }),
-  setSortBy: (field) => set({ sortBy: field }),
-  setSortDirection: (dir) => set({ sortDirection: dir }),
+  setSortBy: (field) =>
+    set((state) => {
+      const next = normalizeSortForGrouping(
+        state.grouping,
+        field,
+        state.sortDirections[field] ?? defaultSortDirection(field),
+      );
+      return {
+        ...next,
+        sortDirections: {
+          ...state.sortDirections,
+          [next.sortBy]: next.sortDirection,
+        },
+      };
+    }),
+  setSortDirection: (dir) =>
+    set((state) => ({
+      sortDirection: dir,
+      sortDirections: { ...state.sortDirections, [state.sortBy]: dir },
+    })),
   toggleCardProperty: (key) =>
     set((state) => ({
       cardProperties: {
@@ -648,6 +728,7 @@ export const viewStorePersistOptions = (name: string) => ({
     propertyFilters: state.propertyFilters,
     sortBy: state.sortBy,
     sortDirection: state.sortDirection,
+    sortDirections: state.sortDirections,
     cardProperties: state.cardProperties,
     cardPropertyIds: state.cardPropertyIds,
     showSubIssues: state.showSubIssues,
@@ -693,6 +774,14 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
   // persisted value isn't a plain object.
   const isRecord = (v: unknown): v is Record<string, unknown> =>
     v !== null && typeof v === "object" && !Array.isArray(v);
+  const persistedSortDirections = isRecord(p.sortDirections)
+    ? Object.fromEntries(
+        Object.entries(p.sortDirections).filter(
+          (entry): entry is [string, SortDirection] =>
+            entry[1] === "asc" || entry[1] === "desc",
+        ),
+      )
+    : {};
   const persistedTableColumns = Array.isArray(p.tableColumns)
     ? p.tableColumns.filter(
         (column): column is TableColumnConfig =>
@@ -707,12 +796,16 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
   const persistedTitle = persistedTableColumns.find(
     (column) => column.key === "title",
   );
-  return {
+  const merged = {
     ...current,
     ...p,
     cardProperties: {
       ...current.cardProperties,
       ...(p.cardProperties ?? {}),
+    },
+    sortDirections: {
+      ...current.sortDirections,
+      ...persistedSortDirections,
     },
     swimlaneOrders: isRecord(p.swimlaneOrders)
       ? { ...current.swimlaneOrders, ...p.swimlaneOrders }
@@ -748,6 +841,14 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
       p.dagGrouping === "none"
         ? p.dagGrouping
         : current.dagGrouping,
+  };
+  return {
+    ...merged,
+    ...normalizeSortForGrouping(
+      merged.grouping,
+      merged.sortBy,
+      merged.sortDirection,
+    ),
   };
 }
 

@@ -29,6 +29,44 @@ func dispatchFixture(t *testing.T) (*Handler, *testutil.Fixture, string, string,
 	return h, fx, a, b, c, agent, runtime
 }
 
+func TestDependencyRerunPreservesOtherThreadAndRejectedReplacement(t *testing.T) {
+	h, fx, a, issueID, c, agentID, runtimeID := dispatchFixture(t)
+	ctx := context.Background()
+	fx.Exec(t, `UPDATE issue SET status='todo',assignee_type='agent',assignee_id=$2 WHERE id=$1`, issueID, agentID)
+	first := fx.Comment(t, issueID, "first thread")
+	second := fx.Comment(t, issueID, "second thread")
+	oldRun := fx.Task(t, agentID, testutil.Cols{"issue_id": issueID, "runtime_id": runtimeID, "trigger_comment_id": first, "status": "completed"})
+	queuedFirst := fx.Task(t, agentID, testutil.Cols{"issue_id": issueID, "runtime_id": runtimeID, "trigger_comment_id": first, "status": "queued"})
+	queuedSecond := fx.Task(t, agentID, testutil.Cols{"issue_id": issueID, "runtime_id": runtimeID, "trigger_comment_id": second, "status": "queued"})
+	rerun := func() (*db.AgentTaskQueue, error) {
+		return h.TaskService.RerunIssue(ctx, parseUUID(issueID), parseUUID(oldRun), parseUUID(first), parseUUID(fx.UserID), func(db.Agent) bool { return true })
+	}
+	if _, err := rerun(); err == nil {
+		t.Fatal("unsatisfied dependencies allowed a rerun")
+	} else {
+		var blocked *service.DependencyError
+		if !errors.As(err, &blocked) || blocked.Code != "dependency_unsatisfied" {
+			t.Fatalf("wrong refusal: %v", err)
+		}
+	}
+	assertStatus := func(id, want string) {
+		t.Helper()
+		task, err := h.Queries.GetAgentTask(ctx, parseUUID(id))
+		if err != nil || task.Status != want {
+			t.Fatalf("task %s status=%s err=%v, want %s", id, task.Status, err, want)
+		}
+	}
+	assertStatus(queuedFirst, "queued")
+	assertStatus(queuedSecond, "queued")
+	fx.Exec(t, `UPDATE issue SET status='done' WHERE id IN ($1,$2)`, a, c)
+	task, err := rerun()
+	if err != nil || task == nil || task.CommentThreadID != parseUUID(first) {
+		t.Fatalf("admitted rerun lost its thread: task=%+v err=%v", task, err)
+	}
+	assertStatus(queuedFirst, "cancelled")
+	assertStatus(queuedSecond, "queued")
+}
+
 func TestDependencyDispatchEntrypointMatrix(t *testing.T) {
 	h, fx, a, b, c, agent, _ := dispatchFixture(t)
 	squad := fx.Squad(t, "fake dependency squad", agent)
@@ -68,9 +106,6 @@ func TestDependencyDispatchEntrypointMatrix(t *testing.T) {
 		}},
 		{"channel_deferred", func() (db.AgentTaskQueue, error) {
 			return h.TaskService.EnqueueDeferredChannelIssueTask(context.Background(), row, time.Now().Add(time.Minute))
-		}},
-		{"fallback", func() (db.AgentTaskQueue, error) {
-			return h.TaskService.EnqueueDeferredAssigneeFallback(context.Background(), row, parseUUID(agent), pgtype.UUID{}, pgtype.UUID{}, parseUUID(comment), time.Now().Add(time.Minute))
 		}},
 	} {
 		t.Run(entry.name, func(t *testing.T) {

@@ -44,7 +44,4 @@ func (h *Handler) commentCommitted(ctx context.Context, issue db.Issue, comment 
 		"issue_revision":      resp.IssueRevision,
 	})
 	h.TaskService.AutoUnresolveThreadOnReply(ctx, root, uuidToString(issue.WorkspaceID), comment.AuthorType, authorID)
-	if comment.AuthorType == "agent" {
-		h.TaskService.CancelDeferredEscalationsForIssueAgent(ctx, issue.ID, comment.AuthorID)
-	}
 }

@@ -330,6 +330,7 @@ function IssueSurfaceContent({
               <ListView
                 issues={issues}
                 visibleStatuses={controller.visibleStatuses}
+                hiddenStatuses={controller.hiddenStatuses}
                 childProgressMap={controller.childProgressMap}
                 projectMap={controller.projectMap}
                 projectId={controller.projectId}

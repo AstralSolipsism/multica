@@ -124,7 +124,7 @@ func (h *Handler) HandleChannelConversation(ctx context.Context, resolved engine
 		return engine.Result{Outcome: engine.OutcomeFreshPending, ChatSessionID: sessionID}, true, err
 	}
 	if startChat && !persist {
-		started, err := sessions.StartSession(ctx, engine.StartSessionInput{EnsureSessionInput: input, Initiator: grantor, MessageID: msg.MessageID, ThreadID: msg.Source.ThreadID, ClaimToken: claim})
+		started, err := sessions.StartSession(ctx, engine.StartSessionInput{EnsureSessionInput: input, Initiator: grantor, MessageID: msg.MessageID, ThreadID: msg.Source.ThreadID, SenderChannelID: msg.Source.SenderID, ClaimToken: claim})
 		if err == nil {
 			notifyStarted(started.SessionID, started.RouteRevision, started.Append.InitialTitle)
 		}
@@ -143,7 +143,7 @@ func (h *Handler) HandleChannelConversation(ctx context.Context, resolved engine
 	var result engine.Result
 	if startChat {
 		started, err := sessions.StartSession(ctx, engine.StartSessionInput{EnsureSessionInput: input, Initiator: grantor,
-			Body: body, CommandText: msg.CommandText, MessageID: msg.MessageID, ThreadID: msg.Source.ThreadID, ClaimToken: claim,
+			Body: body, CommandText: msg.CommandText, MessageID: msg.MessageID, ThreadID: msg.Source.ThreadID, SenderChannelID: msg.Source.SenderID, ClaimToken: claim,
 			PersistMessage: true, MediaPendingSeconds: mediaSeconds, BeforeCommit: func(ctx context.Context, tx pgx.Tx, s db.ChatSession) error { return enqueue(ctx, tx, s, 1) }})
 		if err != nil {
 			return engine.Result{}, true, err
@@ -156,7 +156,7 @@ func (h *Handler) HandleChannelConversation(ctx context.Context, resolved engine
 			return engine.Result{}, true, err
 		}
 		appended, err := sessions.AppendUserMessage(ctx, engine.AppendInput{SessionID: sessionID, Sender: grantor, InstallationID: inst.ID,
-			Body: body, CommandText: msg.CommandText, ConversationOnly: true, MessageID: msg.MessageID, ThreadID: msg.Source.ThreadID,
+			Body: body, CommandText: msg.CommandText, ConversationOnly: true, MessageID: msg.MessageID, ThreadID: msg.Source.ThreadID, SenderChannelID: msg.Source.SenderID,
 			MediaPendingSeconds: mediaSeconds, ClaimToken: claim, ForceFresh: msg.ForceFresh, BeforeCommit: func(ctx context.Context, tx pgx.Tx, s db.ChatSession, rev int64, _ pgtype.UUID, _ int64) error {
 				return enqueue(ctx, tx, s, rev)
 			}})

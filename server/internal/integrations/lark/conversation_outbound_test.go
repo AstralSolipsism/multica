@@ -3,6 +3,7 @@ package lark
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -28,6 +29,10 @@ func TestConversationOutboundUsesRealChatAndLiveConsent(t *testing.T) {
 			p, q, api := newTestPatcher(t)
 			q.binding.ChannelChatID = "external/grant/group/oc_real/topic"
 			q.binding.Config = []byte(`{"chat_id":"oc_real","conversation":{"id":"grant","authorized_by":"grantor","scope":"workspace"}}`)
+			q.binding.ChatType = "group"
+			q.binding.LastMessageID = pgtype.Text{String: "om_question", Valid: true}
+			q.binding.LastThreadID = pgtype.Text{String: "omt_question", Valid: true}
+			q.binding.LastSenderID = pgtype.Text{String: "ou_external", Valid: true}
 			checked := &conversationPatcherQueries{fakePatcherQueries: q}
 			switch state {
 			case "revoked":
@@ -57,6 +62,12 @@ func TestConversationOutboundUsesRealChatAndLiveConsent(t *testing.T) {
 			if state == "allowed" {
 				if len(api.textSent) != 1 || api.textSent[0].ChatID != "oc_real" {
 					t.Fatalf("incorrect reply route: %+v", api.textSent)
+				}
+				if target := api.textSent[0].ReplyTarget; target.MessageID != "om_question" || !target.InThread {
+					t.Fatalf("incorrect native reply target: %+v", target)
+				}
+				if !strings.Contains(api.textSent[0].Text, "ou_external") || strings.Contains(api.textSent[0].Text, "grantor") {
+					t.Fatalf("reply should mention the external sender: %s", api.textSent[0].Text)
 				}
 			} else if len(api.textSent) != 0 {
 				t.Fatal("reply escaped revoked or unavailable authorization")

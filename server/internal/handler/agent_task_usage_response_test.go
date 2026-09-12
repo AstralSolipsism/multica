@@ -13,6 +13,66 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// A received zero is a recorded measurement. Exercise the authenticated write,
+// database upsert and history response instead of inserting usage rows directly.
+func TestReportTaskUsagePreservesExplicitZero(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	agentID := createHandlerTestAgent(t, "ReportedZeroUsage", []byte("[]"))
+	issueID := dbfx.Issue(t, "Reported zero usage")
+	newTask := func() string {
+		return dbfx.Task(t, agentID, testutil.Cols{
+			"issue_id": issueID, "runtime_id": handlerTestRuntimeID(t), "status": "completed",
+		})
+	}
+	zeroTask, unknownTask := newTask(), newTask()
+	for range 2 {
+		req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+zeroTask+"/usage", map[string]any{
+			"usage": []TaskUsagePayload{{Provider: "antigravity", Model: "fixture-model"}},
+		}, testWorkspaceID, "usage-fixture")
+		req = withURLParam(req, "taskId", zeroTask)
+		testutil.Call(t, testHandler.ReportTaskUsage, req).Want(http.StatusOK)
+	}
+	if got := dbfx.Count(t, "SELECT count(*) FROM task_usage WHERE task_id=$1", zeroTask); got != 1 {
+		t.Fatalf("zero usage rows = %d, want one idempotent measurement", got)
+	}
+	if got := dbfx.Count(t, "SELECT count(*) FROM task_usage WHERE task_id=$1", unknownTask); got != 0 {
+		t.Fatalf("unreported task has %d usage rows", got)
+	}
+	req := withURLParam(newRequest(http.MethodGet, "/api/agents/"+agentID+"/tasks?include_usage=true", nil), "id", agentID)
+	var tasks []AgentTaskResponse
+	response := testutil.Call(t, testHandler.ListAgentTasks, req).Want(http.StatusOK).JSON(&tasks)
+	var foundZero bool
+	for _, task := range tasks {
+		if task.ID == zeroTask {
+			foundZero = true
+			if len(task.Usage) != 1 || task.Usage[0] != (TaskUsageData{Provider: "antigravity", Model: "fixture-model"}) {
+				t.Fatalf("zero measurement did not survive storage and readback: %+v", task.Usage)
+			}
+		}
+	}
+	if !foundZero {
+		t.Fatal("reported-zero task missing from history")
+	}
+	var raw []map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	var foundUnknown bool
+	for _, task := range raw {
+		if task["id"] == unknownTask {
+			foundUnknown = true
+			if _, present := task["usage"]; present {
+				t.Fatalf("unreported usage serialized as a measurement: %v", task["usage"])
+			}
+		}
+	}
+	if !foundUnknown {
+		t.Fatal("unreported task missing from history")
+	}
+}
+
 // TestListAgentTasksHydratesUsage pins the JSON contract used by
 // `multica agent tasks --output json`: usage is returned at the stored
 // (provider, model) grain, only for tasks owned by the requested agent, and
