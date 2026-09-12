@@ -91,6 +91,11 @@ func waitProcessGroupGone(cmd *exec.Cmd, timeout time.Duration) bool {
 // conservative signal-probe answer, which is correct there because their init
 // reaps orphans promptly.
 func processGroupAlive(pgid int) bool {
+	// A reaped group needs no /proc scan. On busy hosts, walking every
+	// process here can exceed the caller's entire interrupt deadline.
+	if err := syscall.Kill(-pgid, 0); err == syscall.ESRCH {
+		return false
+	}
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return syscall.Kill(-pgid, 0) == nil

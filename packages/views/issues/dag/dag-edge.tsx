@@ -63,8 +63,8 @@ export const DagFlowEdgeLine = memo(function DagFlowEdgeLine({
         <EdgeLabelRenderer>
           <div
             className={cn(
-              "nodrag nopan pointer-events-none absolute rounded-full bg-muted px-1.5 py-0.5 text-micro font-medium text-muted-foreground",
-              data.dimmed && "opacity-25",
+              "nodrag nopan pointer-events-none absolute rounded-full bg-muted px-1.5 py-0.5 text-micro font-medium",
+              data.dimmed ? "text-faint-foreground" : "text-muted-foreground",
             )}
             style={{
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,

@@ -474,12 +474,8 @@ func TestClaimTask_NonLeaderGetsNoBriefing(t *testing.T) {
 	// claim path picks its task without ambiguity.
 	helperID := createHandlerTestAgent(t, "Non Leader Helper", []byte("[]"))
 	addAgentMember(t, squad.ID, helperID, "")
-	var helperRuntime string
-	if err := testPool.QueryRow(ctx,
-		`SELECT runtime_id FROM agent WHERE id = $1`, helperID,
-	).Scan(&helperRuntime); err != nil {
-		t.Fatalf("get helper runtime: %v", err)
-	}
+	helperRuntime := dbfx.Runtime(t, "Non Leader Helper runtime")
+	dbfx.Exec(t, `UPDATE agent SET runtime_id=$2 WHERE id=$1`, helperID, helperRuntime)
 
 	queueSquadIssueTaskFor(t, util.UUIDToString(squad.ID), helperID, helperRuntime, 95002)
 

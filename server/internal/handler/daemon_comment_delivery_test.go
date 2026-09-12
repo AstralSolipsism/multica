@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -258,6 +259,16 @@ func createCommentDeliveryFixture(t *testing.T, label string) commentDeliveryFix
 	}
 }
 
+func makeCommentDeliverySingleThread(t *testing.T, fixture commentDeliveryFixture) {
+	t.Helper()
+	root := dbfx.Comment(t, fixture.issueID, "thread root", testutil.Cols{"author_type": "agent", "author_id": fixture.agentID})
+	dbfx.Exec(t, `UPDATE comment SET created_at=now()-interval '10 minutes' WHERE id=$1`, root)
+	for _, id := range fixture.commentID {
+		dbfx.Exec(t, `UPDATE comment SET parent_id=$2 WHERE id=$1`, id, root)
+	}
+	dbfx.Exec(t, `UPDATE agent_task_queue SET trigger_comment_id=trigger_comment_id WHERE id=$1`, fixture.taskID)
+}
+
 func claimCommentDeliveryFixture(t *testing.T, fixture commentDeliveryFixture, capabilities string) AgentTaskResponse {
 	t.Helper()
 	w := httptest.NewRecorder()
@@ -378,6 +389,7 @@ func TestClaimTaskByRuntime_CoalescedOnlyStaleTaskDoesNotReuseDeletedTriggerCapa
 		t.Skip("database not available")
 	}
 	fixture := createCommentDeliveryFixture(t, "Deleted trigger stale claim")
+	makeCommentDeliverySingleThread(t, fixture)
 	if _, err := testPool.Exec(context.Background(), `UPDATE issue SET assignee_type = 'agent', assignee_id = $2 WHERE id = $1`, fixture.issueID, fixture.agentID); err != nil {
 		t.Fatalf("assign stale-claim issue: %v", err)
 	}
@@ -411,6 +423,7 @@ func TestUpdateComment_RequeuesSurvivingCoalescedBatch(t *testing.T) {
 		t.Skip("database not available")
 	}
 	fixture := createCommentDeliveryFixture(t, "Edited trigger batch repair")
+	makeCommentDeliverySingleThread(t, fixture)
 	if _, err := testPool.Exec(context.Background(), `UPDATE issue SET assignee_type = 'agent', assignee_id = $2 WHERE id = $1`, fixture.issueID, fixture.agentID); err != nil {
 		t.Fatalf("assign edited-trigger issue: %v", err)
 	}
@@ -433,6 +446,7 @@ func TestDeleteComment_RequeuesSurvivingCoalescedBatch(t *testing.T) {
 		t.Skip("database not available")
 	}
 	fixture := createCommentDeliveryFixture(t, "Deleted trigger batch repair")
+	makeCommentDeliverySingleThread(t, fixture)
 	if _, err := testPool.Exec(context.Background(), `UPDATE issue SET assignee_type = 'agent', assignee_id = $2 WHERE id = $1`, fixture.issueID, fixture.agentID); err != nil {
 		t.Fatalf("assign deleted-trigger issue: %v", err)
 	}
@@ -460,6 +474,7 @@ func TestUpdateComment_CancelsAndRequeuesWhenEditedInputIsCoalesced(t *testing.T
 		t.Skip("database not available")
 	}
 	fixture := createCommentDeliveryFixture(t, "Edited coalesced input repair")
+	makeCommentDeliverySingleThread(t, fixture)
 	if _, err := testPool.Exec(context.Background(), `UPDATE issue SET assignee_type = 'agent', assignee_id = $2 WHERE id = $1`, fixture.issueID, fixture.agentID); err != nil {
 		t.Fatalf("assign edited-coalesced issue: %v", err)
 	}
@@ -475,6 +490,13 @@ func TestUpdateComment_CancelsAndRequeuesWhenEditedInputIsCoalesced(t *testing.T
 	}
 
 	assertRepairedCommentBatch(t, fixture, fixture.commentID[0], fixture.commentID[1:])
+	original, err := testHandler.Queries.GetAgentTask(context.Background(), parseUUID(fixture.taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !taskToResponse(original, testWorkspaceID).CancelledByCommentChange {
+		t.Fatal("edited input must identify the cancelled run as invalidated by a comment change")
+	}
 }
 
 func TestDeleteComment_CancelsAndRequeuesWhenDeletedInputIsCoalesced(t *testing.T) {
@@ -482,6 +504,7 @@ func TestDeleteComment_CancelsAndRequeuesWhenDeletedInputIsCoalesced(t *testing.
 		t.Skip("database not available")
 	}
 	fixture := createCommentDeliveryFixture(t, "Deleted coalesced input repair")
+	makeCommentDeliverySingleThread(t, fixture)
 	if _, err := testPool.Exec(context.Background(), `UPDATE issue SET assignee_type = 'agent', assignee_id = $2 WHERE id = $1`, fixture.issueID, fixture.agentID); err != nil {
 		t.Fatalf("assign deleted-coalesced issue: %v", err)
 	}
@@ -502,6 +525,7 @@ func TestDeleteComment_FailureRestoresCancelledCompleteBatch(t *testing.T) {
 		t.Skip("database not available")
 	}
 	fixture := createCommentDeliveryFixture(t, "Failed deletion batch repair")
+	makeCommentDeliverySingleThread(t, fixture)
 	if _, err := testPool.Exec(context.Background(), `UPDATE issue SET assignee_type = 'agent', assignee_id = $2 WHERE id = $1`, fixture.issueID, fixture.agentID); err != nil {
 		t.Fatalf("assign failed-delete issue: %v", err)
 	}
@@ -532,6 +556,7 @@ func TestDeleteComment_ConcurrentNoOpIsReportedAndRestoresCancelledBatch(t *test
 		t.Skip("database not available")
 	}
 	fixture := createCommentDeliveryFixture(t, "Concurrent deletion batch repair")
+	makeCommentDeliverySingleThread(t, fixture)
 	if _, err := testPool.Exec(context.Background(), `UPDATE issue SET assignee_type = 'agent', assignee_id = $2 WHERE id = $1`, fixture.issueID, fixture.agentID); err != nil {
 		t.Fatalf("assign concurrent-delete issue: %v", err)
 	}
@@ -614,6 +639,7 @@ func TestClaimTaskByRuntime_PayloadOverflowReceiptsOnlyEmbeddedPrefix(t *testing
 		t.Skip("database not available")
 	}
 	fixture := createCommentDeliveryFixture(t, "Comment payload overflow")
+	makeCommentDeliverySingleThread(t, fixture)
 	oversized := strings.Repeat("x", maxClaimCommentPayloadBytes+1024)
 	if _, err := testPool.Exec(context.Background(), `UPDATE comment SET content = $2 WHERE id = $1`, fixture.commentID[0], oversized); err != nil {
 		t.Fatalf("make first coalesced comment oversized: %v", err)

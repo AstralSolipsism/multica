@@ -60,6 +60,14 @@ material into comments, logs, docs, or PRs.
 
 ## Debugging "why didn't it run"
 
+Manual dispatch runs as the member who requested it. Schedule/webhook dispatch
+runs as the trigger's recorded member principal; ordinary edits do not transfer
+that identity. Labrastro leaves legacy triggers without a member principal
+unresolved instead of inferring authority from the autopilot creator. Such a
+trigger stays skipped until an authorized member recreates it; recreating a
+webhook changes its URL. A receipt alone does not prove a task executed: read the
+run's status and failure reason.
+
 1. `multica autopilot get <id> --output json` — status, mode, assignee, triggers.
 2. `multica autopilot runs <id> --output json` — run status and failure reason.
 3. If assigned to a squad, inspect the squad: `multica squad get <squad-id> --output json`; execution goes to the leader.

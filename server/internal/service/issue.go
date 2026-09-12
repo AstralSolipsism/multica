@@ -219,8 +219,13 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	candidate := db.Issue{ID: createID, WorkspaceID: p.WorkspaceID, Status: p.Status, Priority: p.Priority, AssigneeType: p.AssigneeType, AssigneeID: p.AssigneeID, CreatorType: p.CreatorType, CreatorID: p.CreatorID, OriginType: p.OriginType, OriginID: p.OriginID}
 	var prepared *PreparedIssueRun
 	var preparedTrigger IssueRunTrigger
+	var runtimeVerdict AgentVerdict
 	if trigger, ok := s.WillEnqueueRun(ctx, IssueTriggerInput{Issue: candidate, IsCreate: true}, IssueTriggerProbe{}); ok {
-		if trigger.AssigneeType != "agent" || s.shouldEnqueueAgentTaskWithQueries(ctx, s.Queries, candidate) {
+		admitted := true
+		if trigger.AssigneeType == "agent" {
+			runtimeVerdict, admitted = agentAssigneeVerdict(ctx, s.runtimeLookup(s.Queries), candidate)
+		}
+		if admitted {
 			var err error
 			prepared, err = s.TaskService.PrepareIssueRun(ctx, candidate, trigger, pgtype.UUID{}, "")
 			if err != nil {
@@ -576,6 +581,11 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	s.publishIssueCreated(issue, attachments, labels, p.CreatorType, actorID, opts)
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
 	s.TaskService.PublishIssueTask(ctx, assignedTask)
+	// A repair notice must not decide whether the issue transaction commits.
+	// Reuse the admission verdict without restoring a second enqueue path.
+	if RuntimeBlockedNeedsNotice(runtimeVerdict.Reason) {
+		s.noteRuntimeUnusable(ctx, issue, runtimeVerdict)
+	}
 
 	return IssueCreateResult{Issue: issue, Attachments: attachments, Labels: labels, AssignedTaskID: assignedTaskID, AssignedTask: assignedTask, Dependencies: dependencyAfter}, nil
 }
@@ -791,29 +801,6 @@ func classifyOrigin(issue db.Issue, opts IssueCreateOpts) (source, taskID, autop
 		)
 		return analytics.SourceManual, "", ""
 	}
-}
-
-// shouldEnqueueAgentTaskWithQueries returns true when an issue create should
-// trigger the assigned agent. Backlog issues are skipped — backlog acts as a
-// parking lot for pre-assigning without immediate execution. The assignment
-// path does the same test through agentAssigneeVerdict, which also tells it
-// WHY a refusal happened; this one runs inside the create transaction, where
-// there is nothing to tell anyone yet.
-//
-// Mirrors handler.shouldEnqueueAgentTask; kept here to make the service
-// self-contained, since both code paths must move together.
-func (s *IssueService) shouldEnqueueAgentTaskWithQueries(ctx context.Context, q *db.Queries, issue db.Issue) bool {
-	// Resolved through q, not s.Queries: this runs inside the create
-	// transaction and must see the same snapshot as the rest of it. (MUL-6243)
-	if issuestatus.Effective(ctx, q, issue.WorkspaceID, issue.Status) == "backlog" {
-		return false
-	}
-	return isAgentAssigneeReadyWithQueries(ctx, s.runtimeLookup(q), issue)
-}
-
-func isAgentAssigneeReadyWithQueries(ctx context.Context, lookup RuntimeLookup, issue db.Issue) bool {
-	_, ok := agentAssigneeVerdict(ctx, lookup, issue)
-	return ok
 }
 
 // agentAssigneeVerdict resolves the issue's agent assignee through the shared

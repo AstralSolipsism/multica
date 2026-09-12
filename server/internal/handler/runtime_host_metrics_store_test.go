@@ -2,10 +2,52 @@ package handler
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"github.com/redis/go-redis/v9"
 )
+
+func TestRedisMachineMetricsStoreAcrossClusterSlots(t *testing.T) {
+	addrs := os.Getenv("REDIS_TEST_CLUSTER_ADDRS")
+	if addrs == "" {
+		t.Skip("REDIS_TEST_CLUSTER_ADDRS is not set")
+	}
+	rdb := redis.NewClusterClient(&redis.ClusterOptions{Addrs: strings.Split(addrs, ",")})
+	t.Cleanup(func() { _ = rdb.Close() })
+	ctx := context.Background()
+	store := NewRedisMachineMetricsStore(rdb)
+	workspace := t.Name() + time.Now().Format("150405.000000000")
+	refs := []MachineRef{{WorkspaceID: workspace, DaemonID: "{machine-a}"}, {WorkspaceID: workspace, DaemonID: "{machine-b}"}}
+	var firstSlot int64
+	for i, ref := range refs {
+		key := machineMetricsKey(ref)
+		slot, err := rdb.ClusterKeySlot(ctx, key).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i > 0 && slot == firstSlot {
+			t.Fatal("fixture keys must occupy different Redis cluster slots")
+		}
+		firstSlot = slot
+		t.Cleanup(func() { _ = rdb.Del(context.Background(), key).Err() })
+		if _, _, err := store.PutIfNewer(ctx, ref, hostMetricsSample(f64(float64(i+1)), nil, 1000)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := store.GetBatch(ctx, append(refs, MachineRef{WorkspaceID: workspace, DaemonID: "missing"}))
+	if len(got) != 2 {
+		t.Fatalf("cross-slot batch lost samples: %+v", got)
+	}
+	for i, ref := range refs {
+		if got[ref] == nil || got[ref].CPUPercent == nil || *got[ref].CPUPercent != float64(i+1) {
+			t.Fatalf("wrong sample for %v: %+v", ref, got[ref])
+		}
+	}
+}
 
 func hostMetricsSample(cpu, mem *float64, capturedAt int64) *protocol.HostMetrics {
 	return &protocol.HostMetrics{CPUPercent: cpu, MemoryPercent: mem, CapturedAt: capturedAt}
