@@ -28,6 +28,9 @@ export function useSingleRowFit({
   count,
   gap,
   reserve,
+  overflowReserve = reserve,
+  promotedIndex = -1,
+  promotedReserve = overflowReserve,
 }: {
   /** Number of candidate items (mirror children must match). */
   count: number;
@@ -35,6 +38,11 @@ export function useSingleRowFit({
   gap: number;
   /** Width in px to hold back for the overflow trigger. */
   reserve: number;
+  /** Reserve when an overflow trigger is needed. */
+  overflowReserve?: number;
+  /** Candidate promoted into the trigger when it falls outside the prefix. */
+  promotedIndex?: number;
+  promotedReserve?: number;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const measureRef = useRef<HTMLDivElement | null>(null);
@@ -49,19 +57,29 @@ export function useSingleRowFit({
       (child) => (child as HTMLElement).offsetWidth,
     );
 
-    let used = 0;
-    let next = 0;
-    for (let i = 0; i < widths.length; i++) {
-      const withItem = used + (i > 0 ? gap : 0) + widths[i]!;
-      if (withItem + gap + reserve > available) break;
-      used = withItem;
-      next = i + 1;
+    const fit = (reserved: number) => {
+      let used = 0;
+      let next = 0;
+      for (let i = 0; i < widths.length; i++) {
+        const withItem = used + (i > 0 ? gap : 0) + widths[i]!;
+        if (withItem + gap + reserved > available) break;
+        used = withItem;
+        next = i + 1;
+      }
+      return next;
+    };
+    // Resolve the trailing chrome and prefix from the SAME measurements.
+    // Feeding the previous fit back as a second React state can alternate
+    // between two prefixes forever when the active item sits at the edge.
+    let next = fit(reserve);
+    if (next < widths.length) {
+      next = fit(overflowReserve);
+      if (promotedIndex >= next) next = fit(promotedReserve);
     }
     setFitCount((current) => (current === next ? current : next));
-  }, [gap, reserve]);
+  }, [gap, reserve, overflowReserve, promotedIndex, promotedReserve]);
 
   // After every commit: the mirror just re-rendered with current labels.
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberate every-commit measure; the setState inside is change-guarded
   useLayoutEffect(() => {
     recompute();
   });

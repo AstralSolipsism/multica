@@ -393,8 +393,8 @@ export function RunConfirmModal({
 
   return (
     <Dialog open onOpenChange={(v) => { if (!v && !submitting) onClose(); }}>
-      <DialogContent onKeyDown={onDialogKeyDown}>
-        <DialogHeader>
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col" onKeyDown={onDialogKeyDown}>
+        <DialogHeader className="shrink-0">
           <DialogTitle>
             {batchFailures
               ? t(($) => $.run_confirm.title_partial)
@@ -406,7 +406,7 @@ export function RunConfirmModal({
         </DialogHeader>
 
         {batchFailures ? (
-          <div className="flex flex-col gap-1.5">
+          <div className="flex min-h-0 flex-col gap-1.5 overflow-y-auto overscroll-contain">
             {batchFailures.map((f) => (
               <div
                 key={f.issueId}
@@ -419,7 +419,7 @@ export function RunConfirmModal({
           </div>
         ) : (
           dependencyBlocked && (
-            <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/5 p-3">
+            <div className="flex min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain rounded-md border border-warning/40 bg-warning/5 p-3">
               <div className="flex items-center gap-1.5 text-caption font-medium text-warning">
                 <TriangleAlert className="size-3.5 shrink-0" />
                 {t(($) => $.run_confirm.blocked_title)}
@@ -459,7 +459,7 @@ export function RunConfirmModal({
 
         {/* The only spinner is on the button the user just pressed, and it
             reflects the write in flight — never a pre-flight check. */}
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           {batchFailures ? (
             <Button type="button" onClick={onClose}>
               {t(($) => $.run_confirm.close)}

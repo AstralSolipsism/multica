@@ -68,12 +68,6 @@ export interface DagViewProps {
    *  no search, sub-issues included). Fold pruning stays off otherwise —
    *  combined with `!graph.hasRestrictedContext` inside the view. */
   membershipComplete: boolean;
-  /** OL-44 shared node-action contract. `onEditDependencies` /
-   *  `onAssignIssue` default to opening the existing issue detail until the
-   *  shared relation/assign form ships; the detail page keeps one
-   *  implementation of each flow. */
-  onEditDependencies?: (issueId: string) => void;
-  onAssignIssue?: (issueId: string) => void;
   /** Test seam: replaces the Web Worker layout runner. */
   layoutRunnerFactory?: () => DagLayoutRunner;
 }
@@ -84,8 +78,6 @@ export function DagView({
   graphQuery,
   hasActiveFilters,
   membershipComplete,
-  onEditDependencies,
-  onAssignIssue,
   layoutRunnerFactory,
 }: DagViewProps) {
   const { t } = useT("issues");
@@ -421,12 +413,10 @@ export function DagView({
             graph={graph}
             projection={projection}
             positions={layout.positions!}
-            direction={direction}
+            direction={layout.direction}
             statusColorOf={catalog.colorOf}
             focusRequest={focusRequest}
             onOpenIssue={onOpenIssue}
-            onEditDependencies={onEditDependencies ?? onOpenIssue}
-            onAssignIssue={onAssignIssue ?? onOpenIssue}
             onToggleCollapsed={onToggleCollapsed}
             onRevealIssues={onRevealIssues}
           />

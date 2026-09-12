@@ -37,6 +37,8 @@ export interface DagLayoutRunner {
 export interface DagLayoutState {
   /** Top-left positions by node id; null until the first layout lands. */
   positions: ReadonlyMap<string, { x: number; y: number }> | null;
+  /** Direction that produced the committed positions, retained while pending. */
+  direction: DagDirection;
   /** A request is in flight (first load or re-layout after a topology fold). */
   pending: boolean;
   /** When the current request started — drives the >5s cancel affordance. */
@@ -80,8 +82,11 @@ export function useDagLayout(
 ): DagLayoutState {
   const runnerRef = useRef<DagLayoutRunner | null>(null);
   runnerRef.current ??= runnerFactory();
-  const [positions, setPositions] = useState<DagLayoutState["positions"]>(null);
-  const [lastElapsedMs, setLastElapsedMs] = useState<number | null>(null);
+  const [result, setResult] = useState<{
+    positions: NonNullable<DagLayoutState["positions"]>;
+    direction: DagDirection;
+    elapsedMs: number;
+  } | null>(null);
   const [pendingSince, setPendingSince] = useState<number | null>(null);
   // Latest-response wins: the ref flips synchronously with each new request,
   // so a stale worker answer can never overwrite a newer layout.
@@ -99,8 +104,11 @@ export function useDagLayout(
     const onDone = (response: DagLayoutResponse) => {
       if (response.requestId !== liveRequestIdRef.current) return;
       setPendingSince(null);
-      setLastElapsedMs(response.elapsedMs);
-      setPositions(new Map(Object.entries(response.positions)));
+      setResult({
+        positions: new Map(Object.entries(response.positions)),
+        direction: request.direction,
+        elapsedMs: response.elapsedMs,
+      });
     };
     runnerRef.current!.execute(request, onDone);
   }, [request]);
@@ -109,10 +117,11 @@ export function useDagLayout(
   useEffect(() => () => runnerRef.current?.terminate(), []);
 
   return {
-    positions,
+    positions: result?.positions ?? null,
+    direction: result?.direction ?? direction,
     pending: pendingSince !== null,
     pendingSince,
-    lastElapsedMs,
+    lastElapsedMs: result?.elapsedMs ?? null,
     cancel: () => {
       runnerRef.current?.terminate();
       setPendingSince(null);

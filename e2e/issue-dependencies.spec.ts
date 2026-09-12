@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import pg from "pg";
 import { TestApiClient } from "./fixtures";
 import { waitForPageText } from "./helpers";
@@ -140,6 +140,19 @@ async function enterWorkspace(page: Page, ctx: Ctx) {
     localStorage.setItem("multica_token", t);
     localStorage.setItem("multica:chat:isOpen", "false");
   }, ctx.token);
+}
+
+async function expectReadablePrerequisite(container: Locator, title: string) {
+  const label = container.getByText(title, { exact: true });
+  await expect(label).toBeVisible();
+  const bounds = await label.evaluate((el) => ({
+    width: el.getBoundingClientRect().width,
+    clientWidth: el.clientWidth,
+    scrollWidth: el.scrollWidth,
+  }));
+  expect(bounds.width).toBeGreaterThan(100);
+  expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.clientWidth + 1);
+  expect(await container.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
 }
 
 async function cleanup(ctx: Ctx) {
@@ -288,5 +301,239 @@ test.describe("Issue dependencies (OL-44)", () => {
       [ctx.issueC.id],
     );
     expect(queueRows).toHaveLength(0);
+  });
+
+  test("DAG actions edit in place and preserve cancel/one-shot assignment with readable prerequisites", async ({ page }, testInfo) => {
+    const title = "跨项目依赖需要完整显示：" + "longunbrokenprerequisitetitle".repeat(4);
+    await ctx.api.updateIssue(ctx.issueA.id, { title });
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await enterWorkspace(page, ctx);
+    await page.goto(`/${ctx.workspaceSlug}/issues`);
+    await page.getByRole("button", { name: "Board", exact: true }).click();
+    await page.getByText("Graph", { exact: true }).click();
+    await expect(page.locator(".react-flow__node").first()).toBeVisible();
+    await page.getByRole("button", { name: "Expand all", exact: true }).click();
+    const node = page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`);
+    await expect(node).toBeVisible();
+    await node.click();
+    const graphUrl = page.url();
+
+    await page.getByRole("button", { name: "Edit prerequisites", exact: true }).click();
+    const editor = page.getByRole("dialog", { name: "Edit prerequisites" });
+    await expectReadablePrerequisite(editor, title);
+    await editor.getByRole("button", { name: `Remove prerequisite ${ctx.issueA.identifier}` }).click();
+    await page.keyboard.press("Escape");
+    expect(await getBlockedBy(ctx, ctx.issueC.id)).toEqual([ctx.issueA.id]);
+    expect(page.url()).toBe(graphUrl);
+
+    // Save through the same entry, then restore the edge through the real API.
+    await page.getByRole("button", { name: "Edit prerequisites", exact: true }).click();
+    await editor.getByRole("button", { name: `Remove prerequisite ${ctx.issueA.identifier}` }).click();
+    await editor.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(editor).not.toBeVisible();
+    await expect.poll(() => getBlockedBy(ctx, ctx.issueC.id)).toEqual([]);
+    await setBlockedBy(ctx, ctx.issueC.id, [ctx.issueA.id]);
+
+    const before = await sql("SELECT assignee_id, revision FROM issue WHERE id = $1", [ctx.issueC.id]);
+    const pickAgent = async () => {
+      await page.getByRole("button", { name: "Assign", exact: true }).click();
+      const picker = page.locator('[data-slot="popover-content"]').last();
+      await picker.getByPlaceholder("Assign to...").fill("E2E Dependency");
+      await picker.getByText("E2E Dependency Agent", { exact: true }).click({ force: true });
+      await expect(page.getByText("Confirm assignment?", { exact: true })).toBeVisible();
+    };
+    await pickAgent();
+    const confirmation = page.getByRole("dialog");
+    await expectReadablePrerequisite(confirmation, title);
+    await expect(confirmation.getByText(ctx.issueA.identifier, { exact: true })).toBeVisible();
+    await testInfo.attach("dag-confirmation-readability", { body: await confirmation.screenshot(), contentType: "image/png" });
+    await page.keyboard.press("Escape");
+    expect(await sql("SELECT assignee_id, revision FROM issue WHERE id = $1", [ctx.issueC.id])).toEqual(before);
+    expect(await sql("SELECT id FROM agent_task_queue WHERE issue_id = $1", [ctx.issueC.id])).toHaveLength(0);
+    expect(page.url()).toBe(graphUrl);
+
+    await pickAgent();
+    await confirmation.getByRole("button", { name: "Assign and start anyway", exact: true }).click();
+    await expect(confirmation).not.toBeVisible();
+    await expect.poll(async () => {
+      const rows = await sql<{ dependency_admission: unknown }>(
+        "SELECT dependency_admission FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2",
+        [ctx.issueC.id, ctx.agentId],
+      );
+      return rows.length === 1 && rows[0]!.dependency_admission !== null;
+    }).toBe(true);
+    expect(page.url()).toBe(graphUrl);
+    // Node content must still respond to a real graph refresh.
+    const updatedTitle = "Updated prerequisite in DAG";
+    await ctx.api.updateIssue(ctx.issueA.id, { title: updatedTitle });
+    await expect(
+      page.locator(`.react-flow__node[data-id="${ctx.issueA.id}"]`).getByText(updatedTitle, { exact: true }),
+    ).toBeVisible();
+  });
+
+  test("saved DAG at the view-bar overflow boundary reloads without losing expansion", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await enterWorkspace(page, ctx);
+    await page.goto(`/${ctx.workspaceSlug}/issues`);
+    await page.getByRole("button", { name: "Board", exact: true }).click();
+    await page.getByText("Graph", { exact: true }).click();
+    await expect(page.locator(".react-flow__node").first()).toBeVisible();
+    const viewIds: string[] = [];
+    try {
+      // These label widths put the third saved view at the last fitting tab:
+      // the old fitCount/reserveTier effects oscillated between 5 and 6 tabs.
+      for (const name of ["OL45 saved DAG", "OL45 saved DAG", "OL45 saved DAG 1789114381162", "OL45 clean saved DAG 1789115242133"]) {
+        await page.getByRole("button", { name: "Views", exact: true }).click();
+        await page.getByText("New view", { exact: true }).click();
+        const dialog = page.getByRole("dialog");
+        await dialog.getByPlaceholder("e.g. Needs review").fill(name);
+        const response = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/issue-views");
+        await dialog.getByRole("button", { name: "Create view", exact: true }).click();
+        viewIds.push((await (await response).json()).id);
+        await expect(dialog).not.toBeVisible();
+      }
+      await page.goto(`/${ctx.workspaceSlug}/issues?view=${viewIds[2]}`);
+      await expect(page.locator(".react-flow__node").first()).toBeVisible();
+      await page.getByRole("button", { name: "Expand all", exact: true }).click();
+      await expect(page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`)).toBeVisible();
+      await page.reload();
+      await expect(page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`)).toBeVisible();
+      await expect(page.getByRole("button", { name: "OL45 saved DAG 1789114381162", exact: true })).toBeVisible();
+      for (const width of [1024, 680, 1440]) {
+        await page.setViewportSize({ width, height: 1000 });
+        // The entire toolbar is hidden at the mobile breakpoint; the graph
+        // and expanded state must survive it and return with the same tab.
+        await expect(page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`)).toBeVisible();
+        if (width >= 1024) {
+          await expect(page.getByRole("button", { name: "OL45 saved DAG 1789114381162", exact: true })).toBeVisible();
+          await expect(page.getByRole("button", { name: "Graph", exact: true })).toBeVisible();
+        }
+      }
+    } finally {
+      for (const id of viewIds) await ctx.api.deleteIssueView(id);
+    }
+  });
+
+  test("changing DAG direction keeps existing edges attached to their handles", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await enterWorkspace(page, ctx);
+    await page.goto(`/${ctx.workspaceSlug}/issues`);
+    await page.getByRole("button", { name: "Board", exact: true }).click();
+    await page.getByText("Graph", { exact: true }).click();
+    await page.getByRole("button", { name: "Expand all", exact: true }).click();
+    await expect(page.locator(".react-flow__edge")).toHaveCount(2);
+    await page.evaluate(() => {
+      const observer = new MutationObserver((changes) => {
+        for (const change of changes) for (const removed of change.removedNodes) {
+          if (removed instanceof Element && (removed.matches(".react-flow__edge") || removed.querySelector(".react-flow__edge"))) {
+            document.documentElement.dataset.detachedDagEdges = "true";
+          }
+        }
+      });
+      observer.observe(document.querySelector(".react-flow__viewport")!, { childList: true, subtree: true });
+    });
+    await page.getByRole("button", { name: "Display", exact: true }).click();
+    for (const [name, sourceSide, targetSide] of [["Top to bottom", "bottom", "top"], ["Left to right", "right", "left"]]) {
+      await page.getByRole("combobox", { name: "Direction", exact: true }).click();
+      await page.getByRole("option", { name, exact: true }).click();
+      await expect.poll(() => page.evaluate(({ sourceSide, targetSide }) => {
+        const edges = Array.from(document.querySelectorAll(".react-flow__edge"));
+        return edges.length === 2 && edges.every((edge) => {
+          const match = edge.getAttribute("aria-label")?.match(/^Edge from (.+) to (.+)$/);
+          if (!match) return false;
+          const path = edge.querySelector<SVGPathElement>(".react-flow__edge-path")!;
+          const matrix = path.getScreenCTM()!;
+          return [[match[1], "source", sourceSide, 0], [match[2], "target", targetSide, path.getTotalLength()]].every(([id, type, side, length]) => {
+            const handle = document.querySelector(`.react-flow__node[data-id="${id}"] .react-flow__handle.${type}.react-flow__handle-${side}`);
+            if (!handle) return false;
+            const rect = handle.getBoundingClientRect();
+            const point = path.getPointAtLength(Number(length)).matrixTransform(matrix);
+            // React Flow attaches at the port's outer edge, not its center.
+            const x = side === "left" ? rect.left : side === "right" ? rect.right : rect.x + rect.width / 2;
+            const y = side === "top" ? rect.top : side === "bottom" ? rect.bottom : rect.y + rect.height / 2;
+            return Math.hypot(point.x - x, point.y - y) < 2;
+          });
+        });
+      }, { sourceSide, targetSide })).toBe(true);
+    }
+    expect(await page.evaluate(() => document.documentElement.dataset.detachedDagEdges)).toBeUndefined();
+  });
+
+  test("many inherited prerequisites remain reachable without hiding confirmation actions", async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await enterWorkspace(page, ctx);
+    const parent = await ctx.api.createIssue("Confirmation parent", { status: "todo" });
+    const target = await ctx.api.createIssue("Confirmation target", { status: "todo", parent_issue_id: parent.id });
+    const prerequisites: { id: string; identifier: string; title: string }[] = [];
+    for (let i = 0; i < 12; i++) {
+      prerequisites.push(await ctx.api.createIssue(`Authentication prerequisite ${i + 1}`, { status: "todo" }));
+    }
+    try {
+      for (const long of [false, true]) {
+        const active = prerequisites.slice(0, long ? 8 : 12);
+        if (long) {
+          for (const issue of active) {
+            await ctx.api.updateIssue(issue.id, { title: `${issue.title}: cross-project authentication and authorization must be implemented before dispatch` });
+          }
+        }
+        await setBlockedBy(ctx, parent.id, active.map((issue) => issue.id));
+        await page.goto(`/${ctx.workspaceSlug}/issues/${target.id}`);
+        await expect(page.getByText("Properties", { exact: true }).first()).toBeVisible();
+        await page.getByText("Unassigned", { exact: true }).first().click();
+        const picker = page.locator('[data-slot="popover-content"]').last();
+        await picker.getByPlaceholder("Assign to...").fill("E2E Dependency");
+        await picker.getByText("E2E Dependency Agent", { exact: true }).click();
+        const dialog = page.getByRole("dialog");
+        const confirm = dialog.getByRole("button", { name: "Assign and start anyway", exact: true });
+        await expect(confirm).toBeEnabled();
+        const assertActionsFit = async () => {
+          for (const element of [dialog, confirm, dialog.getByRole("button", { name: "Don't start yet", exact: true }), dialog.getByRole("button", { name: "Close", exact: true })]) {
+            await expect(element).toBeInViewport({ ratio: 1 });
+          }
+          await confirm.click({ trial: true });
+        };
+        await assertActionsFit();
+        const first = dialog.getByRole("button").filter({ has: page.getByText(active[0]!.identifier, { exact: true }) });
+        const last = dialog.getByRole("button").filter({ has: page.getByText(active.at(-1)!.identifier, { exact: true }) });
+        await expect(first).toBeInViewport({ ratio: 1 });
+        const content = dialog.locator(".overflow-y-auto");
+        await content.hover();
+        await page.mouse.wheel(0, 2000);
+        await expect(last).toBeInViewport({ ratio: 1 });
+        await assertActionsFit();
+        // Keyboard focus must also scroll both ends into view, without a write.
+        await dialog.getByRole("button", { name: "Close", exact: true }).focus();
+        await page.keyboard.press("Tab");
+        await expect(first).toBeFocused();
+        await expect(first).toBeInViewport({ ratio: 1 });
+        await dialog.getByRole("button", { name: "Don't start yet", exact: true }).focus();
+        await page.keyboard.press("Shift+Tab");
+        await expect(last).toBeFocused();
+        await expect(last).toBeInViewport({ ratio: 1 });
+        await assertActionsFit();
+        await testInfo.attach(`many-prerequisites-${active.length}-bounds`, {
+          body: Buffer.from(JSON.stringify(await dialog.evaluate((el) => ({
+            dialog: el.getBoundingClientRect().toJSON(),
+            content: el.querySelector(".overflow-y-auto")!.getBoundingClientRect().toJSON(),
+            buttons: Array.from(el.querySelectorAll("[data-slot=dialog-footer] button")).map((button) => button.getBoundingClientRect().toJSON()),
+          })))),
+          contentType: "application/json",
+        });
+        await testInfo.attach(`many-prerequisites-${active.length}`, { body: await page.screenshot(), contentType: "image/png" });
+        const before = await sql("SELECT assignee_id, revision FROM issue WHERE id = $1", [target.id]);
+        if (long) {
+          await confirm.click();
+          await expect(dialog).not.toBeVisible();
+          await expect.poll(async () => (await sql("SELECT id FROM agent_task_queue WHERE issue_id = $1", [target.id])).length).toBe(1);
+        } else {
+          await page.keyboard.press("Escape");
+          await expect(dialog).not.toBeVisible();
+          expect(await sql("SELECT assignee_id, revision FROM issue WHERE id = $1", [target.id])).toEqual(before);
+          expect(await sql("SELECT id FROM agent_task_queue WHERE issue_id = $1", [target.id])).toHaveLength(0);
+        }
+      }
+    } finally {
+      await setBlockedBy(ctx, parent.id, []);
+    }
   });
 });

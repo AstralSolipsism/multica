@@ -53,11 +53,11 @@ export function usePrerequisiteDisplay(wsId: string, items: IssuePrerequisite[])
     };
   }, [byId, projects]);
 
-  /** Short "PREFIX-123" label for an ancestor an edge is inherited through. */
-  const ancestorLabelOf = (issueId: string): string | undefined =>
+  /** Short "PREFIX-123" label for a prerequisite or its source ancestor. */
+  const identifierOf = (issueId: string): string | undefined =>
     byId.get(issueId)?.identifier;
 
-  return { projectTitleOf, ancestorLabelOf };
+  return { projectTitleOf, identifierOf };
 }
 
 function PrerequisiteRow({
@@ -96,57 +96,61 @@ function PrerequisiteRow({
             ? prerequisite.statusCategory
             : undefined
         }
-        className="h-3.5 w-3.5 shrink-0"
+        className="mt-0.5 h-3.5 w-3.5 shrink-0"
       />
-      <span className="shrink-0 text-muted-foreground tabular-nums">
-        {prerequisite.identifier ?? prerequisite.issueId}
+      <span className="min-w-0 flex-1">
+        <span className="block break-all text-muted-foreground tabular-nums">
+          {prerequisite.identifier ?? prerequisite.issueId}
+        </span>
+        <span className="block whitespace-normal [overflow-wrap:anywhere]">
+          {prerequisite.title ?? ""}
+        </span>
       </span>
-      <span className="truncate">{prerequisite.title ?? ""}</span>
     </>
   );
 
   return (
-    <div className="group/row flex items-center gap-0.5 rounded-md px-2 -mx-2 transition-colors hover:bg-accent/50">
-      {onOpen ? (
-        <button
-          type="button"
-          onClick={() => onOpen(prerequisite.issueId)}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 py-1.5 text-left text-caption"
-        >
-          {body}
-        </button>
-      ) : (
-        <AppLink
-          href={paths.issueDetail(prerequisite.identifier || prerequisite.issueId)}
-          className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 text-caption"
-        >
-          {body}
-        </AppLink>
-      )}
-      {projectTitle && (
-        <span className="max-w-28 shrink-0 truncate rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground">
-          {projectTitle}
-        </span>
-      )}
-      {!satisfied && (
-        <span className="shrink-0 text-micro text-warning">
-          {statusLabel}
-        </span>
-      )}
-      {ancestorLabel && (
-        <span className="shrink-0 text-micro text-muted-foreground">
-          {t(($) => $.dependencies.inherited_from, { name: ancestorLabel })}
-        </span>
-      )}
-      {onEditSource && sourceId && (
-        <button
-          type="button"
-          onClick={() => onEditSource(sourceId)}
-          className="shrink-0 rounded px-1.5 py-0.5 text-micro text-primary transition-colors hover:bg-accent"
-        >
-          {t(($) => $.dependencies.edit_source)}
-        </button>
-      )}
+    <div className="group/row flex items-start gap-1 rounded-md px-2 -mx-2 py-1 transition-colors hover:bg-accent/50">
+      <div className="min-w-0 flex-1">
+        {onOpen ? (
+          <button
+            type="button"
+            onClick={() => onOpen(prerequisite.issueId)}
+            className="flex w-full min-w-0 cursor-pointer items-start gap-1.5 text-left text-caption"
+          >
+            {body}
+          </button>
+        ) : (
+          <AppLink
+            href={paths.issueDetail(prerequisite.identifier || prerequisite.issueId)}
+            className="flex min-w-0 items-start gap-1.5 text-caption"
+          >
+            {body}
+          </AppLink>
+        )}
+        <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 pl-5 text-micro [overflow-wrap:anywhere]">
+          {projectTitle && (
+            <span className="max-w-full rounded-full bg-muted/60 px-1.5 py-0.5 text-muted-foreground">
+              {projectTitle}
+            </span>
+          )}
+          {!satisfied && <span className="text-warning">{statusLabel}</span>}
+          {ancestorLabel && (
+            <span className="text-muted-foreground">
+              {t(($) => $.dependencies.inherited_from, { name: ancestorLabel })}
+            </span>
+          )}
+          {onEditSource && sourceId && (
+            <button
+              type="button"
+              onClick={() => onEditSource(sourceId)}
+              className="rounded px-1.5 py-0.5 text-primary transition-colors hover:bg-accent"
+            >
+              {t(($) => $.dependencies.edit_source)}
+            </button>
+          )}
+        </div>
+      </div>
       {onRemove && (
         <button
           type="button"
@@ -193,7 +197,7 @@ export function PrerequisiteList({
   removeDisabled?: boolean;
   onEditSource?: (ancestorId: string) => void;
 }) {
-  const { projectTitleOf, ancestorLabelOf } = usePrerequisiteDisplay(wsId, items);
+  const { projectTitleOf, identifierOf } = usePrerequisiteDisplay(wsId, items);
   return (
     <div className="flex flex-col">
       {items.map((p) => {
@@ -202,11 +206,11 @@ export function PrerequisiteList({
           <PrerequisiteRow
             key={p.issueId}
             wsId={wsId}
-            prerequisite={p}
+            prerequisite={{ ...p, identifier: p.identifier ?? identifierOf(p.issueId) }}
             projectTitle={projectTitleOf(p.issueId)}
             ancestorLabel={
               isInherited && p.inheritedFrom.length > 0
-                ? ancestorLabelOf(p.inheritedFrom[0]!)
+                ? identifierOf(p.inheritedFrom[0]!)
                 : undefined
             }
             onOpen={onOpen}

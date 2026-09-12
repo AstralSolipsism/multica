@@ -34,7 +34,7 @@ export interface UseIssueActionsResult {
   openAddChild: () => void;
   /** Open the shared prerequisite editor (direct `blocked_by` edges) for this
    *  issue. The same entry point backs the detail sidebar, the Relations
-   *  menu, and the DAG node's `onEditDependencies` callback (OL-43/44). */
+   *  menu, and the selected DAG node's actions (OL-43/44). */
   openEditDependencies: () => void;
   openDeleteConfirm: (opts?: { onDeletedFallbackPath?: string }) => void;
 }

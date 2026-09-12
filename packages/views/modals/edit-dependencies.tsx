@@ -484,7 +484,7 @@ function EditDependenciesBody({
         )}
       </div>
 
-      <DialogFooter className="shrink-0 border-t px-4 py-3">
+      <DialogFooter className="mx-0 mb-0 shrink-0 border-t px-4 py-3">
         <Button type="button" variant="outline" disabled={saving} onClick={onClose}>
           {t(($) => $.edit_dependencies.cancel)}
         </Button>

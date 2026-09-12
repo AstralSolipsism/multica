@@ -269,6 +269,47 @@ describe("DagView", () => {
     expect(refetch).toHaveBeenCalledOnce();
   });
 
+  it("keeps direction paired with committed positions while a replacement layout is pending", async () => {
+    store.getState().setDagCollapsedIds([]);
+    const pending: { request: DagLayoutRequest; done: (response: DagLayoutResponse) => void }[] = [];
+    const runner = {
+      execute: (request: DagLayoutRequest, done: (response: DagLayoutResponse) => void) => {
+        pending.push({ request, done });
+      },
+      terminate: vi.fn(),
+    };
+    render(
+      <QueryClientProvider client={qc}>
+        <ViewStoreProvider store={store}>
+          <DagView
+            graphQuery={graphQuery({ data: makeGraph([makeNode("a1")]) })}
+            hasActiveFilters={false}
+            membershipComplete
+            layoutRunnerFactory={() => runner}
+          />
+        </ViewStoreProvider>
+      </QueryClientProvider>,
+    );
+    await act(async () => pending[0]!.done({
+      requestId: pending[0]!.request.requestId,
+      positions: { a1: { x: 100, y: 0 } },
+      elapsedMs: 1,
+    }));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    const committed = canvasSpy.mock.calls.at(-1)![0].positions;
+    act(() => store.getState().setDagDirection("TB"));
+    expect(pending.at(-1)!.request.direction).toBe("TB");
+    expect(canvasSpy.mock.calls.at(-1)![0].positions).toBe(committed);
+    expect(canvasSpy.mock.calls.at(-1)![0].direction).toBe("LR");
+    await act(async () => pending.at(-1)!.done({
+      requestId: pending.at(-1)!.request.requestId,
+      positions: { a1: { x: 0, y: 100 } },
+      elapsedMs: 2,
+    }));
+    expect(canvasSpy.mock.calls.at(-1)![0].direction).toBe("TB");
+    expect(canvasSpy.mock.calls.at(-1)![0].positions.get("a1")).toEqual({ x: 0, y: 100 });
+  });
+
 
   it.each([403, 404])(
     "hides the cached graph after access loss (%s) instead of showing it stale",
@@ -330,7 +371,6 @@ describe("DagView", () => {
             type: "dagNode",
             data: {
               model,
-              direction: "LR",
               projectTitle: null,
               statusColor: null,
               focused: false,
