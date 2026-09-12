@@ -98,6 +98,10 @@ func TestConvergeAgentRuntimes_ForcedRoundWithNothingMissingKeepsTheBackoffClear
 func TestDshRuntimeProfileMismatch(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("DSH_HOME", home)
+	launcher := filepath.Join(t.TempDir(), "dsh")
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	registered := func() *Daemon {
 		d := &Daemon{
@@ -107,7 +111,7 @@ func TestDshRuntimeProfileMismatch(t *testing.T) {
 		}
 		// A daemon that has discovered dsh, which is the only situation in
 		// which registering one is possible at all.
-		d.cfg.Agents = map[string]AgentEntry{"dsh": {Path: "/somewhere/dsh"}}
+		d.cfg.Agents = map[string]AgentEntry{"dsh": {Path: launcher}}
 		return d
 	}
 
@@ -150,7 +154,7 @@ func TestDshRuntimeProfileMismatch(t *testing.T) {
 
 	// With a dsh CLI present it is actionable again: the profile is installed
 	// and the built-in runtime is genuinely missing.
-	d.cfg.Agents = map[string]AgentEntry{"dsh": {Path: "/somewhere/dsh"}}
+	d.cfg.Agents = map[string]AgentEntry{"dsh": {Path: launcher}}
 	if d.dshRuntimeProfileMismatch() == dshMismatchNone {
 		t.Fatal("an installed profile plus a discovered dsh should earn a registration round")
 	}

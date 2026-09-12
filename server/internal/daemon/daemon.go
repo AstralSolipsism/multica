@@ -2525,7 +2525,7 @@ const dshProfileInstallStartedReason = "the Multica runtime profile is not insta
 // automatic install has stopped without producing a profile. It says the
 // attempt happened and ended, because a reader who saw the earlier "installing"
 // reason needs to know which of the two states they are looking at.
-const dshInstallGaveUpReason = "the Multica runtime profile is not installed; the automatic install failed, so it has to be installed by hand"
+const dshInstallGaveUpReason = "the automatic install did not make the Multica runtime profile available; check the profile installation and --probe output"
 
 // dshIncompatibleProfileReason is the /health reason for a profile that answers
 // with a protocol this daemon does not drive. It names both sides because

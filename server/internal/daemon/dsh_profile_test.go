@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // fakeDsh records every invocation and its PATH, then exits per the args it
@@ -30,7 +31,7 @@ func fakeDsh(t *testing.T) (path, record string) {
 // fakeDshSilentlySucceeds exits 0 from `add` and writes no profile: a package
 // manager reporting success over a run that produced nothing. Whether any real
 // bundle behaves this way, the daemon must not disagree with
-// dshMulticaProfilePresent about whether a profile exists, because that is the
+// dshMulticaProfileState about whether a profile exists, because that is the
 // fact every other part of it reads.
 func fakeDshSilentlySucceeds(t *testing.T) (path, record string) {
 	t.Helper()
@@ -60,7 +61,7 @@ func fakeDshScript(t *testing.T, onSuccess string) (path, record string) {
 
 // pinnedDshHome points DSH_HOME at a directory the test owns and reports it.
 //
-// Without this, dshMulticaProfilePresent() reads the developer's real ~/.dsh,
+// Without this, dshMulticaProfileState reads the developer's real ~/.dsh,
 // so whether a test passes depends on whether the machine running it happens to
 // have a `multica` profile installed. That is the ambient-agent-state
 // dependency the repo forbids, and it hid here until the install path started
@@ -72,7 +73,7 @@ func pinnedDshHome(t *testing.T) string {
 	return home
 }
 
-// installMulticaProfile creates the manifest dshMulticaProfilePresent looks for.
+// installMulticaProfile creates the manifest dshMulticaProfileState looks for.
 func installMulticaProfile(t *testing.T, dshHome string) {
 	t.Helper()
 	dir := filepath.Join(dshHome, "profiles", dshMulticaProfileName)
@@ -392,11 +393,15 @@ func TestKickAgentDiscovery_NonBlockingAndCollapsing(t *testing.T) {
 // The stat is what the discovery loop polls every tick to decide whether to
 // force a round, so it has to mean exactly what DSH means by "this profile is
 // installed" — a directory alone is not one.
-func TestDshMulticaProfilePresent(t *testing.T) {
+func TestDshMulticaProfileState(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("DSH_HOME", home)
+	launcher := filepath.Join(t.TempDir(), "dsh")
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
-	if dshMulticaProfilePresent() {
+	if dshMulticaProfileState(launcher) != dshProfileMissing {
 		t.Fatal("profile reported installed before it exists")
 	}
 	dir := filepath.Join(home, "profiles", dshMulticaProfileName)
@@ -406,19 +411,19 @@ func TestDshMulticaProfilePresent(t *testing.T) {
 	// DSH's loadProfile falls back to a built-in template (or fails, for a
 	// profile that has none) when the manifest is missing, so a bare directory
 	// is not an installed profile.
-	if dshMulticaProfilePresent() {
+	if dshMulticaProfileState(launcher) != dshProfileMissing {
 		t.Fatal("a directory without a manifest was reported as an installed profile")
 	}
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if !dshMulticaProfilePresent() {
+	if dshMulticaProfileState(launcher) != dshProfilePresent {
 		t.Fatal("manifest present but the profile was reported missing")
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		t.Fatal(err)
 	}
-	if dshMulticaProfilePresent() {
+	if dshMulticaProfileState(launcher) != dshProfileMissing {
 		t.Fatal("removing the profile was not observed; the loop would never force a demotion round")
 	}
 }
@@ -477,6 +482,15 @@ func TestDshProvisionCommand(t *testing.T) {
 }
 
 func TestDshProvisionOutput(t *testing.T) {
+	t.Run("preserves multibyte tails", func(t *testing.T) {
+		for _, runeText := range []string{"错", "😀", "é"} {
+			got := dshProvisionOutput([]byte(strings.Repeat(runeText, 3000)))
+			if !utf8.ValidString(got) || !strings.HasSuffix(got, runeText) || len(got) > dshProvisionOutputBytes+len("…") {
+				t.Fatalf("invalid or discarded UTF-8 tail: bytes=%d suffix=%q", len(got), got[max(0, len(got)-12):])
+			}
+		}
+	})
+
 	t.Run("bounded from the tail", func(t *testing.T) {
 		long := strings.Repeat("x", dshProvisionOutputBytes*2) + "THE-END"
 		got := dshProvisionOutput([]byte(long))

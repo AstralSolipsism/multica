@@ -205,19 +205,19 @@ func (m dshProfileMismatch) forcesEveryTick() bool {
 // live state, so a profile removed before the daemon's first look — or while it
 // was not looking — is caught on the very next tick rather than never.
 func (d *Daemon) dshRuntimeProfileMismatch() dshProfileMismatch {
+	entry, discovered := d.agents()["dsh"]
+	if !discovered {
+		return dshMismatchNone
+	}
+	profile := dshMulticaProfileState(entry.Path)
 	registered := d.dshRuntimeRegistered()
-	if registered == dshMulticaProfilePresent() {
+	if profile == dshProfileUnknown || registered == (profile == dshProfilePresent) {
 		return dshMismatchNone
 	}
 	if registered {
 		return dshMismatchRuntimeWithoutProfile
 	}
-	// Only worth a round if there is a dsh CLI to register at all: without one
-	// nothing this round does can resolve the mismatch.
-	if _, discovered := d.agents()["dsh"]; discovered {
-		return dshMismatchProfileWithoutRuntime
-	}
-	return dshMismatchNone
+	return dshMismatchProfileWithoutRuntime
 }
 
 // dshRuntimeRegistered reports whether any tracked workspace still holds a

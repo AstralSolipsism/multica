@@ -482,7 +482,7 @@ func probeDshMulticaProfile(ctx context.Context, executablePath string) dshProbe
 	// refuses to boot, so a confirmed-absent one is evidence, not a guess —
 	// while a manifest that IS present keeps every failure transient, which is
 	// what protects a working install from being overwritten during an upgrade.
-	if !dshMulticaProfilePresent() {
+	if dshMulticaProfileState(executablePath) == dshProfileMissing {
 		return dshProbeMissingProfile
 	}
 	return dshProbeUnavailable

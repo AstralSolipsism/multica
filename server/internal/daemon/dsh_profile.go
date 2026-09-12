@@ -60,32 +60,6 @@ const (
 // talking to a registry, so it is generous next to the CLI probes.
 const dshProvisionTimeout = 3 * time.Minute
 
-// dshMulticaProfilePresent reports whether the `multica` profile is installed.
-//
-// A stat, deliberately. This is the cheap change detector the discovery loop
-// runs on every tick, and both things that change the answer — `dsh plugin
-// --profile multica add` and a user removing the directory — create or remove
-// exactly this file. DSH decides a profile exists the same way: dsh-app-boot's
-// loadProfile falls back to a built-in template, or fails, when the manifest is
-// missing.
-//
-// The authoritative question — "does --probe actually succeed?" — costs booting
-// a whole DSH process, so it stays in the probe round this signal forces.
-func dshMulticaProfilePresent() bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return false
-	}
-	// DSH_HOME is DSH's own override, and the profile store lives under it
-	// either way. Same resolution local_skills.go uses to find ~/.dsh/skills.
-	dshHome := strings.TrimSpace(os.Getenv("DSH_HOME"))
-	if dshHome == "" {
-		dshHome = filepath.Join(home, ".dsh")
-	}
-	_, err = os.Stat(filepath.Join(dshHome, "profiles", dshMulticaProfileName, "package.json"))
-	return err == nil
-}
-
 // dshProfileBundleSpecs returns the configured install candidates, in order,
 // or nil when the operator has not opted in.
 func dshProfileBundleSpecs() []string {
@@ -214,7 +188,7 @@ func dshProvisionOutput(raw []byte) string {
 	// produces is an invalid-UTF-8 log line, which downstream JSON encoders
 	// rewrite into replacement characters.
 	tail := text[len(text)-dshProvisionOutputBytes:]
-	for len(tail) > 0 && !utf8.ValidString(tail[:1]) {
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
 		tail = tail[1:]
 	}
 	return "…" + tail
@@ -258,8 +232,9 @@ func dshProvisionCommand(dshPath, spec string) *exec.Cmd {
 // credentials in its userinfo or a path carrying a username, so the log names
 // the candidate by position instead, and the output is redacted and bounded.
 //
-// A nil return means the profile is on disk, not merely that the package
-// manager exited 0 — see the loop for why those are not the same thing.
+// A successful command is rejected only when its manifest is confirmed absent
+// in the selected launcher's home. An opaque launcher must be re-probed: the
+// daemon's own DSH_HOME cannot disprove what that launcher installed elsewhere.
 //
 // Returns nil when nothing is configured — the caller treats provisioning as
 // best-effort either way, and the missing-profile verdict stands until a probe
@@ -276,25 +251,14 @@ func provisionDshMulticaProfile(ctx context.Context, dshPath string, logger *slo
 	for i, spec := range specs {
 		output, err := processtree.CombinedOutput(ctx, dshProvisionCommand(dshPath, spec), 5*time.Second)
 		switch {
-		case err == nil && dshMulticaProfilePresent():
-			logger.Info("installed the DSH runtime profile",
+		case err == nil && dshMulticaProfileState(dshPath) != dshProfileMissing:
+			logger.Info("DSH runtime profile install command completed; discovery will verify the profile",
 				"bundle_candidate", i+1, "candidates", len(specs),
 				"path", dshPath, "profile", dshMulticaProfileName)
 			return nil
 		case err == nil:
-			// Exit 0 with no manifest behind it. The exit status is the package
-			// manager's opinion about its own run; dshMulticaProfilePresent is
-			// the fact the REST of the daemon judges by — the probe
-			// classification and the discovery loop's mismatch check both read
-			// it — so an install allowed to report success while disagreeing
-			// with it would log "installed the DSH runtime profile" and leave
-			// every later round reporting that same profile as missing.
-			//
-			// Treating it as a failed candidate rather than as done is what
-			// gives the remaining candidates their turn: a spec that resolves
-			// and installs dependencies without producing a profile has not
-			// done the job, and stopping on it would hide a later spec that
-			// would have.
+			// Only a known home can establish a false-success candidate and
+			// justify trying another bundle. Unknown is not missing.
 			lastErr = fmt.Errorf("dsh plugin --profile %s add (candidate %d of %d): reported success without creating the profile: %s",
 				dshMulticaProfileName, i+1, len(specs), dshProvisionOutput(output))
 		default:
@@ -332,12 +296,17 @@ func (d *Daemon) startDshProfileProvision(dshPath string) bool {
 		d.dshInstallInFlight.Store(true)
 		go func() {
 			defer d.dshInstallInFlight.Store(false)
-			// provisionDshMulticaProfile returns nil only once the profile is
-			// actually on disk, so nil here means there is something new to
-			// find. The exit status alone would not have meant that.
 			err := provisionDshMulticaProfile(ctx, dshPath, d.logger)
 			if err == nil {
-				d.logger.Info("DSH runtime profile installed; re-probing to bring dsh online")
+				// An opaque shim can finish installing without yielding a usable
+				// profile. Verify through that same launcher before leaving tasks
+				// queued behind its install; missing filesystem evidence is not a
+				// reason to keep advertising an install that has already ended.
+				if dshMulticaProfileState(dshPath) == dshProfileUnknown && probeDshMulticaProfile(ctx, dshPath) != dshProbeOK {
+					d.dshInstallInFlight.Store(false)
+					d.withdrawDshInstallWait(ctx)
+				}
+				d.logger.Info("DSH runtime profile install completed; re-probing to verify registration")
 				// Re-probe now rather than at the next scheduled round. The
 				// discovery loop backs off while a provider cannot register, and
 				// dsh counts as "missing a runtime" for as long as the profile is
