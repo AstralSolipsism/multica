@@ -410,10 +410,7 @@ test.describe("Issue dependencies (OL-44)", () => {
         }
       }
     } finally {
-      for (const id of viewIds) await fetch(`${API_BASE}/api/issue-views/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${ctx.token}`, "X-Workspace-ID": ctx.workspaceId },
-      });
+      for (const id of viewIds) await ctx.api.deleteIssueView(id);
     }
   });
 
@@ -460,5 +457,83 @@ test.describe("Issue dependencies (OL-44)", () => {
       }, { sourceSide, targetSide })).toBe(true);
     }
     expect(await page.evaluate(() => document.documentElement.dataset.detachedDagEdges)).toBeUndefined();
+  });
+
+  test("many inherited prerequisites remain reachable without hiding confirmation actions", async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await enterWorkspace(page, ctx);
+    const parent = await ctx.api.createIssue("Confirmation parent", { status: "todo" });
+    const target = await ctx.api.createIssue("Confirmation target", { status: "todo", parent_issue_id: parent.id });
+    const prerequisites: { id: string; identifier: string; title: string }[] = [];
+    for (let i = 0; i < 12; i++) {
+      prerequisites.push(await ctx.api.createIssue(`Authentication prerequisite ${i + 1}`, { status: "todo" }));
+    }
+    try {
+      for (const long of [false, true]) {
+        const active = prerequisites.slice(0, long ? 8 : 12);
+        if (long) {
+          for (const issue of active) {
+            await ctx.api.updateIssue(issue.id, { title: `${issue.title}: cross-project authentication and authorization must be implemented before dispatch` });
+          }
+        }
+        await setBlockedBy(ctx, parent.id, active.map((issue) => issue.id));
+        await page.goto(`/${ctx.workspaceSlug}/issues/${target.id}`);
+        await expect(page.getByText("Properties", { exact: true }).first()).toBeVisible();
+        await page.getByText("Unassigned", { exact: true }).first().click();
+        const picker = page.locator('[data-slot="popover-content"]').last();
+        await picker.getByPlaceholder("Assign to...").fill("E2E Dependency");
+        await picker.getByText("E2E Dependency Agent", { exact: true }).click();
+        const dialog = page.getByRole("dialog");
+        const confirm = dialog.getByRole("button", { name: "Assign and start anyway", exact: true });
+        await expect(confirm).toBeEnabled();
+        const assertActionsFit = async () => {
+          for (const element of [dialog, confirm, dialog.getByRole("button", { name: "Don't start yet", exact: true }), dialog.getByRole("button", { name: "Close", exact: true })]) {
+            await expect(element).toBeInViewport({ ratio: 1 });
+          }
+          await confirm.click({ trial: true });
+        };
+        await assertActionsFit();
+        const first = dialog.getByRole("button").filter({ has: page.getByText(active[0]!.identifier, { exact: true }) });
+        const last = dialog.getByRole("button").filter({ has: page.getByText(active.at(-1)!.identifier, { exact: true }) });
+        await expect(first).toBeInViewport({ ratio: 1 });
+        const content = dialog.locator(".overflow-y-auto");
+        await content.hover();
+        await page.mouse.wheel(0, 2000);
+        await expect(last).toBeInViewport({ ratio: 1 });
+        await assertActionsFit();
+        // Keyboard focus must also scroll both ends into view, without a write.
+        await dialog.getByRole("button", { name: "Close", exact: true }).focus();
+        await page.keyboard.press("Tab");
+        await expect(first).toBeFocused();
+        await expect(first).toBeInViewport({ ratio: 1 });
+        await dialog.getByRole("button", { name: "Don't start yet", exact: true }).focus();
+        await page.keyboard.press("Shift+Tab");
+        await expect(last).toBeFocused();
+        await expect(last).toBeInViewport({ ratio: 1 });
+        await assertActionsFit();
+        await testInfo.attach(`many-prerequisites-${active.length}-bounds`, {
+          body: Buffer.from(JSON.stringify(await dialog.evaluate((el) => ({
+            dialog: el.getBoundingClientRect().toJSON(),
+            content: el.querySelector(".overflow-y-auto")!.getBoundingClientRect().toJSON(),
+            buttons: Array.from(el.querySelectorAll("[data-slot=dialog-footer] button")).map((button) => button.getBoundingClientRect().toJSON()),
+          })))),
+          contentType: "application/json",
+        });
+        await testInfo.attach(`many-prerequisites-${active.length}`, { body: await page.screenshot(), contentType: "image/png" });
+        const before = await sql("SELECT assignee_id, revision FROM issue WHERE id = $1", [target.id]);
+        if (long) {
+          await confirm.click();
+          await expect(dialog).not.toBeVisible();
+          await expect.poll(async () => (await sql("SELECT id FROM agent_task_queue WHERE issue_id = $1", [target.id])).length).toBe(1);
+        } else {
+          await page.keyboard.press("Escape");
+          await expect(dialog).not.toBeVisible();
+          expect(await sql("SELECT assignee_id, revision FROM issue WHERE id = $1", [target.id])).toEqual(before);
+          expect(await sql("SELECT id FROM agent_task_queue WHERE issue_id = $1", [target.id])).toHaveLength(0);
+        }
+      }
+    } finally {
+      await setBlockedBy(ctx, parent.id, []);
+    }
   });
 });

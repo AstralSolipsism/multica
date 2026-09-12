@@ -305,6 +305,13 @@ export class TestApiClient {
     await this.authedFetch(`/api/issues/${id}`, { method: "DELETE" });
   }
 
+  async deleteIssueView(id: string) {
+    const res = await this.authedFetch(`/api/issue-views/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      throw new Error(`delete issue view failed: ${res.status} ${await res.text()}`);
+    }
+  }
+
   async updateIssue(id: string, updates: Record<string, unknown>) {
     const res = await this.authedFetch(`/api/issues/${id}`, {
       method: "PUT",
