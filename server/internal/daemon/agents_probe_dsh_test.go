@@ -37,7 +37,7 @@ func dshProbeFixture(t *testing.T, body string, manifest bool) string {
 		}
 	}
 	path := filepath.Join(t.TempDir(), "dsh")
-	script := "#!/bin/sh\ncase \"$*\" in\n  *--probe*) " + body + " ;;\n  *) printf '%s\\n' '0.1.2-rc.1' ;;\nesac\n"
+	script := "#!/bin/sh\nexport DSH_HOME='" + home + "'\ncase \"$*\" in\n  *--probe*) " + body + " ;;\n  *) printf '%s\\n' '0.1.2-rc.1' ;;\nesac\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

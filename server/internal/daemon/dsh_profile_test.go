@@ -40,11 +40,11 @@ func fakeDshSilentlySucceeds(t *testing.T) (path, record string) {
 
 func fakeDshScript(t *testing.T, onSuccess string) (path, record string) {
 	t.Helper()
-	pinnedDshHome(t)
+	home := pinnedDshHome(t)
 	dir := t.TempDir()
 	path = filepath.Join(dir, "dsh")
 	record = filepath.Join(dir, "calls.log")
-	script := "#!/bin/sh\n" +
+	script := "#!/bin/sh\nexport DSH_HOME='" + home + "'\n" +
 		`printf 'args=%s\n' "$*" >> "$DSH_TEST_RECORD"` + "\n" +
 		`printf 'path=%s\n' "$PATH" >> "$DSH_TEST_RECORD"` + "\n" +
 		"case \"$*\" in\n" +
@@ -61,11 +61,9 @@ func fakeDshScript(t *testing.T, onSuccess string) (path, record string) {
 
 // pinnedDshHome points DSH_HOME at a directory the test owns and reports it.
 //
-// Without this, dshMulticaProfileState reads the developer's real ~/.dsh,
-// so whether a test passes depends on whether the machine running it happens to
-// have a `multica` profile installed. That is the ambient-agent-state
-// dependency the repo forbids, and it hid here until the install path started
-// checking the profile rather than only the exit status.
+// This also isolates fake subprocesses which inherit the environment. Fixtures
+// that need a known filesystem verdict must explicitly declare this home in
+// their launcher; an inherited value alone cannot establish the profile path.
 func pinnedDshHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
@@ -397,7 +395,7 @@ func TestDshMulticaProfileState(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("DSH_HOME", home)
 	launcher := filepath.Join(t.TempDir(), "dsh")
-	if err := os.WriteFile(launcher, []byte("#!/bin/sh\n"), 0o755); err != nil {
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\nexport DSH_HOME='"+home+"'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

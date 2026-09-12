@@ -99,7 +99,7 @@ func TestDshRuntimeProfileMismatch(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("DSH_HOME", home)
 	launcher := filepath.Join(t.TempDir(), "dsh")
-	if err := os.WriteFile(launcher, []byte("#!/bin/sh\n"), 0o755); err != nil {
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\nexport DSH_HOME='"+home+"'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

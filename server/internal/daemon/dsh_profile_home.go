@@ -39,6 +39,8 @@ var dshHomeAssignment = regexp.MustCompile(`(?i)\bDSH_HOME\s*=`)
 // prologue, before any command or control flow. Desktop shims own that value;
 // the daemon's inherited environment must not override it. Dynamic assignments,
 // unreadable launchers and opaque binaries have no reliable filesystem answer.
+// Absence of an assignment does not prove inheritance: a launcher can source
+// its environment or delegate to another wrapper without naming DSH_HOME.
 // We do not execute or expand shell text to discover one. A successful protocol
 // probe remains authoritative even when this cheap filesystem check is unknown.
 func dshLauncherHome(executablePath string) string {
@@ -99,20 +101,7 @@ func dshLauncherHome(executablePath string) string {
 		}
 		return ""
 	}
-	// A launcher that otherwise manipulates the home (unset, eval, JS access)
-	// is opaque too. Ordinary shell references do not change the inherited home.
-	referencesRemoved := removeReferences.Replace(script)
-	if strings.Contains(strings.ToUpper(referencesRemoved), "DSH_HOME") {
-		return ""
-	}
-	if home := os.Getenv("DSH_HOME"); home != "" {
-		return absoluteDshHome(home)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return absoluteDshHome(filepath.Join(home, ".dsh"))
+	return ""
 }
 
 func absoluteDshHome(home string) string {
