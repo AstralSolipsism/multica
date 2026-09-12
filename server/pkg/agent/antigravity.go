@@ -77,10 +77,6 @@ type antigravityStreamEvent struct {
 
 const antigravityNetworkIssueError = "There was a network issue connecting to the server, please try again."
 
-func (u antigravityStreamUsage) hasTokens() bool {
-	return u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0
-}
-
 // tokenUsage maps agy's provider-defined buckets directly. Cache reads are
 // separate from input_tokens even when total_tokens equals input + output; the
 // official structured-output examples include cache reads larger than input.
@@ -272,7 +268,7 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 						output.WriteString(event.StepUpdate.TextDelta)
 						trySend(msgCh, Message{Type: MessageText, Content: event.StepUpdate.TextDelta})
 					}
-					if strings.EqualFold(event.StepUpdate.State, "done") && event.StepUpdate.Usage != nil && event.StepUpdate.Usage.hasTokens() {
+					if strings.EqualFold(event.StepUpdate.State, "done") && event.StepUpdate.Usage != nil {
 						// A step may be re-emitted as its state changes. Keying by
 						// index makes the final DONE snapshot replace, not duplicate,
 						// an earlier copy of the same step.
@@ -288,7 +284,7 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 					streamResultStatus = event.Result.Status
 					streamResultError = event.Result.Error
 					streamResponse = event.Result.Response
-					if event.Result.Usage != nil && event.Result.Usage.hasTokens() {
+					if event.Result.Usage != nil {
 						streamResultUsage = event.Result.Usage
 					}
 				}
@@ -402,14 +398,17 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		// agy result.usage is cumulative across a resumed conversation, while
 		// completed step usage covers only this execution. Prefer the
 		// deduplicated step sum so resumed tasks do not persist earlier turns
-		// again. A terminal result remains the fallback for failures that emit
-		// no completed step usage.
-		usage, hasStepUsage := sumAntigravityStepUsage(streamStepUsage)
-		if !hasStepUsage && streamResultUsage != nil {
+		// again. The terminal aggregate is safe as a fallback only for a new
+		// conversation; without a baseline a resumed aggregate has no reliable
+		// per-run delta. Presence is independent of the token counts: a reported
+		// zero must remain distinguishable from unreported usage.
+		usage, hasUsage := sumAntigravityStepUsage(streamStepUsage)
+		if !hasUsage && opts.ResumeSessionID == "" && streamResultUsage != nil {
 			usage = streamResultUsage.tokenUsage()
+			hasUsage = true
 		}
 		usageByModel := map[string]TokenUsage{}
-		if usage != (TokenUsage{}) {
+		if hasUsage {
 			model := readAntigravitySelectedModel(logPath, streamModel, opts.Model)
 			usageByModel[model] = usage
 		}
