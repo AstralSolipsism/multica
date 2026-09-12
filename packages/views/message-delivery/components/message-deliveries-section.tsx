@@ -413,7 +413,7 @@ export function DeliveryDetailDialog({
                   <p className="text-body">{content.summary}</p>
                 )}
                 {content.text ? (
-                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/40 px-3 py-2 text-caption font-mono leading-relaxed">
+                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-muted/40 px-3 py-2 text-caption font-mono leading-relaxed">
                     {content.text}
                   </pre>
                 ) : (
@@ -684,7 +684,7 @@ function SourceRunRow({
       <span className="text-muted-foreground">
         {t(($) => $.deliveries.detail.run)}
       </span>
-      <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-micro break-all">
+      <code className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-micro break-all">
         {runId}
       </code>
       {isLoading && <Skeleton className="h-4 w-16" />}

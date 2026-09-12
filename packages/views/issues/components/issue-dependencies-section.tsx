@@ -99,7 +99,7 @@ export function IssueDependenciesSection({ issue }: { issue: Issue }) {
           title={t(($) => $.dependencies.edit_aria)}
           aria-label={t(($) => $.dependencies.edit_aria)}
           onClick={() => openModal("issue-edit-dependencies", { issueId: issue.id })}
-          className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="shrink-0 rounded-sm p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <Pencil className="h-3.5 w-3.5" />
         </button>
@@ -124,7 +124,7 @@ export function IssueDependenciesSection({ issue }: { issue: Issue }) {
               <button
                 type="button"
                 onClick={() => void depsQuery.refetch()}
-                className="shrink-0 rounded px-1.5 py-0.5 text-micro text-primary hover:bg-accent"
+                className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-primary hover:bg-accent"
               >
                 {t(($) => $.dependencies.retry)}
               </button>

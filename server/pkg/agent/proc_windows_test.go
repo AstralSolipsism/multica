@@ -335,6 +335,8 @@ func processStillRunning(pid int) bool {
 	return code == stillActive
 }
 
+func processAlive(pid int) bool { return processStillRunning(pid) }
+
 func TestCodexWindowsDescendantsDieWithTheOwnedProcessTree(t *testing.T) {
 	tempDir := t.TempDir()
 	sourcePath := filepath.Join(tempDir, "fake_codex.go")
