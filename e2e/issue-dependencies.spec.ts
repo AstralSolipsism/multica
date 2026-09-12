@@ -479,6 +479,7 @@ test.describe("Issue dependencies (OL-44)", () => {
         await setBlockedBy(ctx, parent.id, active.map((issue) => issue.id));
         await page.goto(`/${ctx.workspaceSlug}/issues/${target.id}`);
         await expect(page.getByText("Properties", { exact: true }).first()).toBeVisible();
+        await expect(page.getByText(`Inherited from ${parent.identifier}`, { exact: true })).toHaveCount(active.length);
         await page.getByText("Unassigned", { exact: true }).first().click();
         const picker = page.locator('[data-slot="popover-content"]').filter({
           has: page.getByPlaceholder("Assign to..."),
