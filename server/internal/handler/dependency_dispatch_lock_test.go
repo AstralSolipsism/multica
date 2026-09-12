@@ -64,7 +64,7 @@ func dependencyWaitingWriterPrecedesNewAdmissions(t *testing.T, field string, wr
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer first.Rollback(ctx)
+	defer first.Rollback(context.Background())
 	if _, err = h.IssueService.Dependencies.LockAdmission(ctx, h.Queries.WithTx(first), parseUUID(fx.WorkspaceID)); err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestDependencyAdmissionFencesWorkspaceDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback(context.Background())
 	if _, err = h.IssueService.Dependencies.LockAdmission(ctx, h.Queries.WithTx(tx), parseUUID(fx.WorkspaceID)); err != nil {
 		t.Fatal(err)
 	}

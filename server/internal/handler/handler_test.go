@@ -48,7 +48,16 @@ func TestMain(m *testing.M) {
 		dbURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
 	}
 
-	pool, err := pgxpool.New(ctx, dbURL)
+	poolConfig, err := pgxpool.ParseConfig(dbURL)
+	if err != nil {
+		fmt.Printf("Invalid test database configuration: %v\n", err)
+		os.Exit(1)
+	}
+	// Lock-order tests hold an admission, two writers and a later reader while
+	// pg_stat_activity observes their queue. The CPU-dependent default (4 on
+	// small CI runners) starves that observer, so no test can release its lock.
+	poolConfig.MaxConns = 8
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		fmt.Printf("Skipping tests: could not connect to database: %v\n", err)
 		os.Exit(0)
