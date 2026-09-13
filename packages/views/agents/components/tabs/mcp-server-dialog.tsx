@@ -394,7 +394,9 @@ export function McpServerDialog({
                   })
                 : snippetError.error === "unbalanced_quotes"
                   ? t(($) => $.tab_body.mcp_config.dialog_snippet_unbalanced)
-                  : t(($) => $.tab_body.mcp_config.dialog_snippet_missing_target);
+                  : snippetError.error === "unsupported_syntax"
+                    ? t(($) => $.tab_body.mcp_config.dialog_snippet_unsupported)
+                    : t(($) => $.tab_body.mcp_config.dialog_snippet_missing_target);
 
   const nameHintId = `${fieldId}-name-hint`;
   const nameErrorId = `${fieldId}-name-error`;
@@ -437,9 +439,13 @@ export function McpServerDialog({
         setNameTouched(true);
       }
     }
-    if (formAvailable) {
-      // Every accepted shape is command/url-based, which the form expresses;
-      // landing on it shows the user exactly what was filled in.
+    if (formAvailable && formCanExpressConfig(result.config)) {
+      // Landing on the form shows the user exactly what was filled in — but
+      // only when THIS snippet round-trips through it. The judge is the
+      // pasted config, not the entry being replaced: an `sse` (or any
+      // non-form-expressible) snippet must go to the verbatim JSON editor,
+      // or saving from the form would silently rewrite its protocol to
+      // `type: "http"`.
       setForm(formFromConfig(result.config));
       setMode("form");
     } else {

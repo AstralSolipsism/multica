@@ -429,4 +429,91 @@ describe("McpServerDialog", () => {
     // The saved name is identity and is never touched.
     expect(screen.getByLabelText("Server name")).toHaveValue("fetch");
   });
+
+  it.each([false, true])(
+    "preserves a pasted SSE config verbatim on save (replacement=%s)",
+    async (replacementMode) => {
+      const user = userEvent.setup();
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      renderDialog({
+        server: replacementMode
+          ? managedServer({ name: "events", transport: "sse", config: {} })
+          : null,
+        replacementMode,
+        existingNames: new Set(replacementMode ? ["events"] : []),
+        onSave,
+      });
+
+      const config = {
+        type: "sse",
+        url: "https://example.test/sse",
+        headers: { Authorization: "Bearer example" },
+      };
+      await user.click(
+        screen.getByRole("button", { name: "Paste a config snippet" }),
+      );
+      fireEvent.change(screen.getByLabelText("MCP config snippet"), {
+        target: { value: JSON.stringify({ mcpServers: { events: config } }) },
+      });
+      await user.click(screen.getByRole("button", { name: "Fill in fields" }));
+
+      // The form would rewrite the entry to type "http" on save, so the
+      // snippet must land on the verbatim JSON editor instead.
+      expect(screen.getByRole("tab", { name: "JSON" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await user.click(
+        screen.getByRole("button", {
+          name: replacementMode ? "Replace configuration" : "Add",
+        }),
+      );
+      await waitFor(() => expect(onSave).toHaveBeenCalled());
+      expect(onSave).toHaveBeenCalledWith("events", config);
+    },
+  );
+
+  it("keeps the draft and reports an error for a null command", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderDialog();
+
+    fireEvent.change(screen.getByLabelText("Server name"), {
+      target: { value: "draft" },
+    });
+    fireEvent.change(screen.getByLabelText("Command"), {
+      target: { value: "uvx" },
+    });
+    await user.click(
+      screen.getByRole("button", { name: "Add environment variable" }),
+    );
+    fireEvent.change(
+      screen.getByLabelText("Environment variables: Variable name 1"),
+      { target: { value: "API_KEY" } },
+    );
+    fireEvent.change(
+      screen.getByLabelText("Environment variables: Value 1"),
+      { target: { value: "draft-secret" } },
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Paste a config snippet" }),
+    );
+    fireEvent.change(screen.getByLabelText("MCP config snippet"), {
+      target: { value: '{"command":null}' },
+    });
+    await user.click(screen.getByRole("button", { name: "Fill in fields" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The snippet needs a command or a url.",
+    );
+    // Nothing was applied: the snippet stays put and every drafted field
+    // keeps its value.
+    expect(screen.getByLabelText("MCP config snippet")).toHaveValue(
+      '{"command":null}',
+    );
+    expect(screen.getByLabelText("Command")).toHaveValue("uvx");
+    expect(
+      screen.getByLabelText("Environment variables: Value 1"),
+    ).toHaveValue("draft-secret");
+    expect(onSave).not.toHaveBeenCalled();
+  });
 });

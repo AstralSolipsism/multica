@@ -264,7 +264,12 @@ export function RuntimeConfigTab({
             id="openclaw-gw-token-hint"
             className="text-caption text-muted-foreground"
           >
-            {t(($) => $.tab_body.runtime_config.token_hint)}
+            {/* The masked-token contract makes "blank" ambiguous: with a
+                saved token blank KEEPS it, while with none blank INHERITS.
+                Say which one applies instead of promising both. */}
+            {state.tokenWasMasked
+              ? t(($) => $.tab_body.runtime_config.token_hint_saved)
+              : t(($) => $.tab_body.runtime_config.token_hint)}
           </p>
         </div>
 

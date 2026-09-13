@@ -85,4 +85,24 @@ describe("RuntimeConfigTab gateway guidance", () => {
     await user.click(screen.getByRole("button", { name: "Gateway" }));
     expect(screen.getByLabelText("Host")).toBeEnabled();
   });
+
+  it("distinguishes a saved token (blank keeps) from an unset one (blank inherits)", () => {
+    renderTab(
+      agentWithConfig({
+        mode: "gateway",
+        gateway: { host: "gw.internal", token: "***" },
+      }),
+    );
+
+    // Saved token: blank means KEEP, and the hint must not promise inherit.
+    expect(screen.getByText(/A token is saved/)).toBeVisible();
+    expect(screen.queryByText(/When none is set, blank inherits/)).toBeNull();
+  });
+
+  it("offers the inherit wording only when no token is saved", () => {
+    renderTab(agentWithConfig({ mode: "gateway", gateway: { host: "gw.internal" } }));
+
+    expect(screen.getByText(/When none is set, blank inherits/)).toBeVisible();
+    expect(screen.queryByText(/A token is saved/)).toBeNull();
+  });
 });

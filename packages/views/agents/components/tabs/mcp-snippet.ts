@@ -1,3 +1,4 @@
+import { parseCommandLine } from "../../../common/command-line";
 import { isRecord } from "./mcp-config-model";
 
 /**
@@ -22,59 +23,48 @@ export type McpSnippetError =
   | "no_servers"
   | "multiple_servers"
   | "missing_target"
-  | "unbalanced_quotes";
+  | "unbalanced_quotes"
+  | "unsupported_syntax";
 
 export type McpSnippetResult =
   | { ok: true; name: string | null; config: Record<string, unknown> }
   | { ok: false; error: McpSnippetError; detail?: string };
 
 /**
- * Split a copied command line into tokens on whitespace, honoring single and
- * double quotes so `--header "Authorization: Bearer x"` survives as one
- * token. No expansion, no execution — the result is data for the form.
- * Returns null on an unclosed quote.
+ * The MCP entry's thin wrapper over the shared command-line tokenizer (see
+ * packages/views/common/command-line.ts), keeping the dialog's `string[] |
+ * null` contract: null on any rejected line — unclosed quote, dangling
+ * escape, or shell syntax the form cannot represent.
  */
 export function splitCommandLine(input: string): string[] | null {
-  const tokens: string[] = [];
-  let current = "";
-  let quote: string | null = null;
-  // Tracks a token that is only quotes (`cmd ""` → ["cmd", ""]) so the
-  // empty-but-explicit argument is not lost.
-  let started = false;
-  for (const char of input) {
-    if (quote !== null) {
-      if (char === quote) quote = null;
-      else current += char;
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-      started = true;
-      continue;
-    }
-    if (/\s/.test(char)) {
-      if (started) {
-        tokens.push(current);
-        current = "";
-        started = false;
-      }
-      continue;
-    }
-    current += char;
-    started = true;
+  const parsed = parseCommandLine(input);
+  return parsed.ok ? [parsed.commandName, ...parsed.fixedArgs] : null;
+}
+
+/**
+ * A snippet is only usable when it carries a launchable target: a non-empty
+ * command string (or a command token array with at least one non-empty
+ * entry) or a non-empty url string. Anything else — `{"command": null}`,
+ * `{"url": 42}`, `{}` — must be rejected BEFORE the dialog touches the
+ * draft, or applying it would silently wipe fields the user already filled.
+ */
+function hasUsableTarget(config: Record<string, unknown>): boolean {
+  const { command, url } = config;
+  if (typeof command === "string" && command.trim() !== "") return true;
+  if (
+    Array.isArray(command) &&
+    command.some((part) => typeof part === "string" && part.trim() !== "")
+  ) {
+    return true;
   }
-  if (quote !== null) return null;
-  if (started) tokens.push(current);
-  return tokens;
+  return typeof url === "string" && url.trim() !== "";
 }
 
 function finalize(
   name: string | null,
   config: Record<string, unknown>,
 ): McpSnippetResult {
-  if (config.command === undefined && config.url === undefined) {
-    return { ok: false, error: "missing_target" };
-  }
+  if (!hasUsableTarget(config)) return { ok: false, error: "missing_target" };
   return { ok: true, name, config };
 }
 
@@ -119,16 +109,25 @@ function parseCommandLineSnippet(trimmed: string): McpSnippetResult {
   if (/^https?:\/\/\S+$/.test(trimmed)) {
     return { ok: true, name: null, config: { type: "http", url: trimmed } };
   }
-  const tokens = splitCommandLine(trimmed);
-  if (tokens === null) return { ok: false, error: "unbalanced_quotes" };
-  const [command, ...args] = tokens;
-  if (!command || command.trim() === "") {
-    return { ok: false, error: "missing_target" };
+  const parsed = parseCommandLine(trimmed);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      error:
+        parsed.error === "unclosed_quote"
+          ? "unbalanced_quotes"
+          : parsed.error === "empty"
+            ? "empty"
+            : "unsupported_syntax",
+    };
   }
+  const { commandName, fixedArgs } = parsed;
   return {
     ok: true,
     name: null,
-    config: args.length > 0 ? { command, args } : { command },
+    config: fixedArgs.length > 0
+      ? { command: commandName, args: fixedArgs }
+      : { command: commandName },
   };
 }
 

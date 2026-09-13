@@ -139,17 +139,59 @@ describe("parseMcpSnippet", () => {
     });
   });
 
-  it("rejects an empty command line", () => {
+  it("rejects an empty quoted command line as empty", () => {
     expect(parseMcpSnippet('""')).toEqual({
       ok: false,
-      error: "missing_target",
+      error: "empty",
     });
+  });
+
+  it("preserves escaped spaces and quotes in a pasted launch command", () => {
+    expect(
+      splitCommandLine(
+        String.raw`node /opt/My\ Server/index.js --data "{\"project\":\"demo\"}"`,
+      ),
+    ).toEqual(["node", "/opt/My Server/index.js", "--data", '{"project":"demo"}']);
   });
 
   it("rejects an unclosed quote in a command line", () => {
     expect(parseMcpSnippet('cmd "unclosed')).toEqual({
       ok: false,
       error: "unbalanced_quotes",
+    });
+  });
+
+  it.each(["npx pkg && rm -rf /", "npx pkg | tee out", "npx $(which pkg)"])(
+    "rejects shell syntax that the form cannot represent: %j",
+    (input) => {
+      expect(parseMcpSnippet(input)).toEqual({
+        ok: false,
+        error: "unsupported_syntax",
+      });
+    },
+  );
+
+  it.each([
+    '{"command": null}',
+    '{"command": ""}',
+    '{"command": 42}',
+    '{"command": [null, "  "]}',
+    '{"url": null}',
+    '{"url": ""}',
+    '{"url": 42}',
+    '{"mcpServers": {"x": {"command": null}}}',
+  ])("rejects an unusable target before any draft is touched: %s", (input) => {
+    expect(parseMcpSnippet(input)).toEqual({
+      ok: false,
+      error: "missing_target",
+    });
+  });
+
+  it("accepts a command given as a token array with a usable first entry", () => {
+    expect(parseMcpSnippet('{"command": ["npx", "-y", "pkg"]}')).toEqual({
+      ok: true,
+      name: null,
+      config: { command: ["npx", "-y", "pkg"] },
     });
   });
 });
