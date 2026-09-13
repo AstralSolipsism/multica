@@ -42,10 +42,9 @@ export interface LarkDiscoveryListState<T> {
 
 function useRetryRestart(
   error: unknown,
+  isFetchNextPageError: boolean,
   restart: () => void,
   refetchPage: () => void,
-  hasData: boolean,
-  hasNextPage: boolean,
   fetchNextPage: () => void,
 ) {
   return useCallback(() => {
@@ -54,15 +53,16 @@ function useRetryRestart(
       restart();
       return;
     }
-    // Append-page failure vs. refresh failure: only a failed "load more"
-    // continues with fetchNextPage. A failed (re)read of the current
-    // sequence — initial load, or a background refresh of an already
-    // complete list — must re-read the API; calling fetchNextPage when no
-    // next page exists would clear the error from stale cache without any
-    // request (OL-74 review).
-    if (hasData && hasNextPage) fetchNextPage();
+    // Only a failed "load more" continues with fetchNextPage. A failed
+    // (re)read of loaded pages — initial load or a background refresh —
+    // must re-read them via refetch; fetchNextPage would skip ahead to the
+    // next cursor (or nowhere, when the list is complete) and clear the
+    // error off stale rows without re-reading the failed page (OL-74
+    // review). React Query records which fetch failed as
+    // isFetchNextPageError.
+    if (isFetchNextPageError) fetchNextPage();
     else refetchPage();
-  }, [error, restart, refetchPage, hasData, hasNextPage, fetchNextPage]);
+  }, [error, isFetchNextPageError, restart, refetchPage, fetchNextPage]);
 }
 
 export function useLarkTargetCapabilities(
@@ -115,10 +115,9 @@ export function useLarkTargetChats(
   const restart = useCallback(() => setSession((s) => s + 1), []);
   const retry = useRetryRestart(
     result.error,
+    result.isFetchNextPageError,
     restart,
     () => void result.refetch(),
-    (data?.pages.length ?? 0) > 0,
-    result.hasNextPage === true,
     () => void fetchNextPage(),
   );
 
@@ -155,10 +154,9 @@ export function useLarkMessageAnchors(
   const restart = useCallback(() => setSession((s) => s + 1), []);
   const retry = useRetryRestart(
     result.error,
+    result.isFetchNextPageError,
     restart,
     () => void result.refetch(),
-    (data?.pages.length ?? 0) > 0,
-    result.hasNextPage === true,
     () => void result.fetchNextPage(),
   );
 
