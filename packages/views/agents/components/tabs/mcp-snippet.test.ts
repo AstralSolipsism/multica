@@ -172,10 +172,23 @@ describe("parseMcpSnippet", () => {
     '{"url": ""}',
     '{"url": 42}',
     '{"mcpServers": {"x": {"command": null}}}',
+    // A valid url must not rescue a target that routes to STDIO: the form
+    // would read the empty command and drop the url.
+    '{"command":["","--help"],"url":"https://example.test/mcp"}',
+    '{"type":"stdio","url":"https://example.test/mcp"}',
   ])("rejects an unusable target before any draft is touched: %s", (input) => {
     expect(parseMcpSnippet(input)).toEqual({
       ok: false,
       error: "missing_target",
+    });
+  });
+
+  it("accepts a config whose selected target is usable", () => {
+    // An absent (null) command alongside a valid url routes to HTTP.
+    expect(parseMcpSnippet('{"command": null, "url": "https://x.test/mcp"}')).toEqual({
+      ok: true,
+      name: null,
+      config: { command: null, url: "https://x.test/mcp" },
     });
   });
 

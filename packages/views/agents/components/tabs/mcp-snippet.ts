@@ -1,5 +1,5 @@
 import { parseCommandLine } from "../../../common/command-line";
-import { isRecord } from "./mcp-config-model";
+import { isRecord, mcpTransport } from "./mcp-config-model";
 
 /**
  * Parsing for the paste-a-snippet assistant in the MCP server dialog.
@@ -31,25 +31,31 @@ export type McpSnippetResult =
   | { ok: false; error: McpSnippetError; detail?: string };
 
 /**
- * A snippet is only usable when it carries a launchable target: a non-empty
- * command string, a command token array whose FIRST element is a non-empty
- * string (the form takes element 0 as the executable — a `["", "--help"]`
- * array would fill an empty command), or a non-empty url string. Later array
- * elements are arguments and may legitimately be empty. Anything else —
- * `{"command": null}`, `{"url": 42}`, `{}` — must be rejected BEFORE the
- * dialog touches the draft, or applying it would silently wipe fields the
- * user already filled.
+ * A snippet is only usable when the target the dialog will ACTUALLY use is
+ * launchable. The check mirrors routing: `mcpTransport` (the same classifier
+ * `formFromConfig` uses) selects STDIO whenever `command` is present — even
+ * an array — or the type says `local`/`stdio`; in that case the command must
+ * be a non-empty string or an array whose FIRST element is a non-empty
+ * string (element 0 becomes the executable; later elements are arguments and
+ * may legitimately be empty). A valid `url` sitting next to a broken stdio
+ * target must not rescue the snippet — the form would read the empty
+ * command and drop the url. Otherwise the url must be a non-empty string.
+ * Anything failing this — `{"command": null}`, `{"command": ["", "--help"],
+ * "url": "..."}`, `{"type": "stdio", "url": "..."}` — must be rejected
+ * BEFORE the dialog touches the draft, or applying it would silently wipe
+ * fields the user already filled.
  */
 function hasUsableTarget(config: Record<string, unknown>): boolean {
-  const { command, url } = config;
-  if (typeof command === "string" && command.trim() !== "") return true;
-  if (
-    Array.isArray(command) &&
-    typeof command[0] === "string" &&
-    command[0].trim() !== ""
-  ) {
-    return true;
+  if (mcpTransport(config) === "stdio") {
+    const { command } = config;
+    if (typeof command === "string") return command.trim() !== "";
+    if (Array.isArray(command)) {
+      const executable = command[0];
+      return typeof executable === "string" && executable.trim() !== "";
+    }
+    return false;
   }
+  const { url } = config;
   return typeof url === "string" && url.trim() !== "";
 }
 

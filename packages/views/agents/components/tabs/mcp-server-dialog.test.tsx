@@ -473,87 +473,53 @@ describe("McpServerDialog", () => {
     },
   );
 
-  it("keeps the draft and reports an error for a null command", async () => {
-    const user = userEvent.setup();
-    const { onSave } = renderDialog();
+  it.each([
+    '{"command":null}',
+    '{"command":["","--help"]}',
+    // The valid url must not rescue a config that routes to STDIO with an
+    // unusable command — the form would clear it and drop the url.
+    '{"command":["","--help"],"url":"https://example.test/mcp"}',
+    '{"type":"stdio","url":"https://example.test/mcp"}',
+  ])(
+    "rejects an unusable target and keeps the whole draft: %s",
+    async (snippet) => {
+      const user = userEvent.setup();
+      const { onSave } = renderDialog();
 
-    fireEvent.change(screen.getByLabelText("Server name"), {
-      target: { value: "draft" },
-    });
-    fireEvent.change(screen.getByLabelText("Command"), {
-      target: { value: "uvx" },
-    });
-    await user.click(
-      screen.getByRole("button", { name: "Add environment variable" }),
-    );
-    fireEvent.change(
-      screen.getByLabelText("Environment variables: Variable name 1"),
-      { target: { value: "API_KEY" } },
-    );
-    fireEvent.change(
-      screen.getByLabelText("Environment variables: Value 1"),
-      { target: { value: "draft-secret" } },
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Paste a config snippet" }),
-    );
-    fireEvent.change(screen.getByLabelText("MCP config snippet"), {
-      target: { value: '{"command":null}' },
-    });
-    await user.click(screen.getByRole("button", { name: "Fill in fields" }));
+      fireEvent.change(screen.getByLabelText("Server name"), {
+        target: { value: "draft" },
+      });
+      fireEvent.change(screen.getByLabelText("Command"), {
+        target: { value: "uvx" },
+      });
+      await user.click(
+        screen.getByRole("button", { name: "Add environment variable" }),
+      );
+      fireEvent.change(
+        screen.getByLabelText("Environment variables: Value 1"),
+        { target: { value: "draft-secret" } },
+      );
+      await user.click(
+        screen.getByRole("button", { name: "Paste a config snippet" }),
+      );
+      fireEvent.change(screen.getByLabelText("MCP config snippet"), {
+        target: { value: snippet },
+      });
+      await user.click(screen.getByRole("button", { name: "Fill in fields" }));
 
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "The snippet needs a command or a url.",
-    );
-    // Nothing was applied: the snippet stays put and every drafted field
-    // keeps its value.
-    expect(screen.getByLabelText("MCP config snippet")).toHaveValue(
-      '{"command":null}',
-    );
-    expect(screen.getByLabelText("Command")).toHaveValue("uvx");
-    expect(
-      screen.getByLabelText("Environment variables: Value 1"),
-    ).toHaveValue("draft-secret");
-    expect(onSave).not.toHaveBeenCalled();
-  });
-
-  it("rejects a command array whose executable element is empty, keeping the draft", async () => {
-    const user = userEvent.setup();
-    const { onSave } = renderDialog();
-
-    fireEvent.change(screen.getByLabelText("Server name"), {
-      target: { value: "draft" },
-    });
-    fireEvent.change(screen.getByLabelText("Command"), {
-      target: { value: "uvx" },
-    });
-    await user.click(
-      screen.getByRole("button", { name: "Add environment variable" }),
-    );
-    fireEvent.change(
-      screen.getByLabelText("Environment variables: Value 1"),
-      { target: { value: "draft-secret" } },
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Paste a config snippet" }),
-    );
-    fireEvent.change(screen.getByLabelText("MCP config snippet"), {
-      target: { value: '{"command":["","--help"]}' },
-    });
-    await user.click(screen.getByRole("button", { name: "Fill in fields" }));
-
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "The snippet needs a command or a url.",
-    );
-    expect(screen.getByLabelText("MCP config snippet")).toHaveValue(
-      '{"command":["","--help"]}',
-    );
-    expect(screen.getByLabelText("Command")).toHaveValue("uvx");
-    expect(
-      screen.getByLabelText("Environment variables: Value 1"),
-    ).toHaveValue("draft-secret");
-    expect(onSave).not.toHaveBeenCalled();
-  });
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "The snippet needs a command or a url.",
+      );
+      // Nothing was applied: the snippet stays put and every drafted field
+      // keeps its value.
+      expect(screen.getByLabelText("MCP config snippet")).toHaveValue(snippet);
+      expect(screen.getByLabelText("Command")).toHaveValue("uvx");
+      expect(
+        screen.getByLabelText("Environment variables: Value 1"),
+      ).toHaveValue("draft-secret");
+      expect(onSave).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(["", "old-server"])(
     "suggests a deduplicated name for an unnamed SSE snippet after command %j",
