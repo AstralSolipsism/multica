@@ -64,6 +64,44 @@ vi.mock("sonner", () => ({
   toast: { success: toastSuccess, error: toastError, warning: vi.fn() },
 }));
 
+// The Lark pickers' own behavior (search, paging, error states) is covered by
+// packages/views/lark/*.test.tsx. Here a stub renders the manual-entry
+// fallback by default — matching a pre-discovery server — and a "pick" mode
+// commits a canned selection so the dialog's payload threading is testable.
+const pickerMode = vi.hoisted(() => ({ current: "fallback" as "fallback" | "pick" }));
+vi.mock("../../lark", () => ({
+  LarkChatPicker: (props: {
+    fallback: React.ReactNode;
+    onChange: (sel: { chat_id: string; name: string } | null) => void;
+  }) =>
+    pickerMode.current === "pick" ? (
+      <button
+        type="button"
+        onClick={() => props.onChange({ chat_id: "oc_picked", name: "Picked Group" })}
+      >
+        Pick group
+      </button>
+    ) : (
+      <>{props.fallback}</>
+    ),
+  LarkAnchorPicker: (props: {
+    fallback: React.ReactNode;
+    onChange: (sel: { message_id: string; summary: string; thread_id?: string } | null) => void;
+  }) =>
+    pickerMode.current === "pick" ? (
+      <button
+        type="button"
+        onClick={() =>
+          props.onChange({ message_id: "om_picked", summary: "Picked anchor", thread_id: "omt_1" })
+        }
+      >
+        Pick anchor
+      </button>
+    ) : (
+      <>{props.fallback}</>
+    ),
+}));
+
 const INSTALLATION = { id: "inst-1", agent_id: "agent-1", status: "active", region: "feishu" };
 
 const CATALOG: MessageEventCatalog = {
@@ -276,6 +314,7 @@ describe("SourceRouteEditorDialog (team)", () => {
   beforeEach(() => {
     reloadRoutesRef.current = [];
     fetchQueryBehavior.current = "ok";
+    pickerMode.current = "fallback";
     mockCreate.mockReset().mockResolvedValue({});
     mockUpdate.mockReset().mockResolvedValue({});
     mockApprove.mockReset().mockResolvedValue({});
@@ -363,6 +402,76 @@ describe("SourceRouteEditorDialog (team)", () => {
     ).toBeInTheDocument();
     expect(mockApprove).not.toHaveBeenCalled();
     expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("threads a picked group, anchor and topic thread into approve + save (OL-74)", async () => {
+    pickerMode.current = "pick";
+    renderEditor({ mode: "team", approvals: [], projects: PROJECTS });
+    const user = userEvent.setup();
+
+    expect(await screen.findByText("Add subscription")).toBeInTheDocument();
+    await user.click(screen.getByRole("combobox", { name: /^target$/i }));
+    await user.click(await screen.findByRole("option", { name: /topic/i }));
+    await user.click(screen.getByRole("button", { name: "Pick group" }));
+    await user.click(screen.getByRole("button", { name: "Pick anchor" }));
+
+    await user.click(screen.getByRole("button", { name: /approve and save/i }));
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
+    // Approval identity stays chat+message; the anchor's thread rides along
+    // on the save only.
+    expect(mockApprove).toHaveBeenCalledWith({
+      source_kind: "activity",
+      project_id: null,
+      installation_id: "inst-1",
+      target_type: "topic",
+      target_chat_id: "oc_picked",
+      target_message_id: "om_picked",
+    });
+    expect(mockCreate).toHaveBeenCalledWith({
+      source_kind: "activity",
+      installation_id: "inst-1",
+      target_type: "topic",
+      event_types: [],
+      project_id: null,
+      target_chat_id: "oc_picked",
+      target_message_id: "om_picked",
+      target_thread_id: "omt_1",
+      enabled: true,
+    });
+  });
+
+  it("preserves a saved topic's thread id when the team route is edited untouched", async () => {
+    const TOPIC_ROUTE: MessageSourceRoute = {
+      ...TEAM_ROUTE,
+      target_type: "topic",
+      target_message_id: "om_anchor",
+      target_thread_id: "omt_keep",
+      target_key: "topic:oc_1:om_anchor",
+    };
+    renderEditor({
+      mode: "team",
+      route: TOPIC_ROUTE,
+      approvals: [
+        approval({ target_key: "topic:oc_1:om_anchor", target_type: "topic" }),
+      ],
+      projects: PROJECTS,
+    });
+    const user = userEvent.setup();
+
+    expect(await screen.findByText("Edit subscription")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        routeId: "route-1",
+        target_type: "topic",
+        target_chat_id: "oc_1",
+        target_message_id: "om_anchor",
+        target_thread_id: "omt_keep",
+        expected_revision: 3,
+      }),
+    );
   });
 
   it("disables the source-kind select when editing a team route", async () => {

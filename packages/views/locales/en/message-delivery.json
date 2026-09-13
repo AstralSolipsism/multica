@@ -76,7 +76,9 @@
     "conflict": "This configuration was updated by someone else. The latest version has been loaded and your unsaved edits were replaced — review it before saving again.",
     "conflict_gone": "This push target was deleted elsewhere. Close and review the list before making changes.",
     "conflict_reload_failed": "Couldn't load the latest version. Your draft was NOT saved and nothing was overwritten — reload it before saving.",
-    "retry_reload": "Reload"
+    "retry_reload": "Reload",
+    "group": "Group chat",
+    "anchor": "Anchor message"
   },
   "approvals": {
     "title": "Approved external targets",

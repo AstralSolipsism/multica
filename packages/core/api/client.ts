@@ -207,6 +207,9 @@ import type {
   BeginLarkInstallResponse,
   LarkInstallStatusResponse,
   RedeemLarkBindingTokenResponse,
+  LarkTargetCapabilities,
+  LarkChatsPage,
+  LarkAnchorsPage,
   ComposioToolkit,
   ComposioConnection,
   ComposioConnectInitResponse,
@@ -271,7 +274,7 @@ import { type Logger, noopLogger } from "../logger";
 import { createRequestId, createSafeId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
-import { LarkInstallationsSchema, LarkConversationResponseSchema } from "../lark/schema";
+import { LarkInstallationsSchema, LarkConversationResponseSchema, LarkTargetCapabilitiesSchema, LarkChatsPageSchema, LarkAnchorsPageSchema } from "../lark/schema";
 import {
   AgentTaskListSchema,
   AttachmentResponseSchema,
@@ -5063,6 +5066,61 @@ export class ApiClient {
     await this.fetch(`/api/workspaces/${workspaceId}/lark/installations/${installationId}`, {
       method: "DELETE",
     });
+  }
+
+  // Lark target discovery (OL-72 contract): read-only group / message-anchor
+  // listing behind the group, topic and conversation-grant pickers. Every
+  // response passes a schema before returning — a malformed page is thrown as
+  // an error so the picker shows its failure state instead of merging
+  // unverified rows. `cursor` is the opaque signed continuation from the
+  // previous page; it is forwarded unchanged, never constructed here.
+
+  async getLarkTargetCapabilities(
+    workspaceId: string,
+    installationId: string,
+  ): Promise<LarkTargetCapabilities> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/lark/installations/${installationId}/target-capabilities`,
+    );
+    const parsed = parseWithFallback<LarkTargetCapabilities | null>(raw, LarkTargetCapabilitiesSchema, null, { endpoint: "getLarkTargetCapabilities" });
+    if (parsed === null) throw new Error("Target capabilities could not be read. Retry before picking a target.");
+    return parsed;
+  }
+
+  async listLarkTargetChats(
+    workspaceId: string,
+    installationId: string,
+    opts: { pageSize?: number; q?: string; cursor?: string } = {},
+  ): Promise<LarkChatsPage> {
+    const search = new URLSearchParams();
+    if (opts.pageSize != null) search.set("page_size", String(opts.pageSize));
+    if (opts.q) search.set("q", opts.q);
+    if (opts.cursor) search.set("cursor", opts.cursor);
+    const qs = search.toString();
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/lark/installations/${installationId}/chats${qs ? `?${qs}` : ""}`,
+    );
+    const parsed = parseWithFallback<LarkChatsPage | null>(raw, LarkChatsPageSchema, null, { endpoint: "listLarkTargetChats" });
+    if (parsed === null) throw new Error("The group list could not be read. Retry before picking a group.");
+    return parsed;
+  }
+
+  async listLarkMessageAnchors(
+    workspaceId: string,
+    installationId: string,
+    chatId: string,
+    opts: { pageSize?: number; cursor?: string } = {},
+  ): Promise<LarkAnchorsPage> {
+    const search = new URLSearchParams();
+    if (opts.pageSize != null) search.set("page_size", String(opts.pageSize));
+    if (opts.cursor) search.set("cursor", opts.cursor);
+    const qs = search.toString();
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/lark/installations/${installationId}/chats/${encodeURIComponent(chatId)}/message-anchors${qs ? `?${qs}` : ""}`,
+    );
+    const parsed = parseWithFallback<LarkAnchorsPage | null>(raw, LarkAnchorsPageSchema, null, { endpoint: "listLarkMessageAnchors" });
+    if (parsed === null) throw new Error("The message list could not be read. Retry before picking an anchor.");
+    return parsed;
   }
 
   async redeemLarkBindingToken(token: string): Promise<RedeemLarkBindingTokenResponse> {

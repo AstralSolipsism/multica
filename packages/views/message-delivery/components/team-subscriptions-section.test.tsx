@@ -182,6 +182,14 @@ vi.mock("sonner", () => ({
   toast: { success: toastSuccess, error: toastError, warning: vi.fn() },
 }));
 
+// The Lark pickers' own behavior is covered by packages/views/lark/*.test.tsx;
+// here they render their manual-entry fallback (the pre-discovery server path).
+vi.mock("../../lark", () => ({
+  LarkChatPicker: (props: { fallback: React.ReactNode }) => <>{props.fallback}</>,
+  LarkAnchorPicker: (props: { fallback: React.ReactNode }) => <>{props.fallback}</>,
+}));
+
+
 const CATALOG: MessageEventCatalog = {
   personal: { source_kind: "inbox", target_type: "member", event_types: [] },
   team: [
