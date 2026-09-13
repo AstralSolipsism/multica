@@ -516,4 +516,77 @@ describe("McpServerDialog", () => {
     ).toHaveValue("draft-secret");
     expect(onSave).not.toHaveBeenCalled();
   });
+
+  it("rejects a command array whose executable element is empty, keeping the draft", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderDialog();
+
+    fireEvent.change(screen.getByLabelText("Server name"), {
+      target: { value: "draft" },
+    });
+    fireEvent.change(screen.getByLabelText("Command"), {
+      target: { value: "uvx" },
+    });
+    await user.click(
+      screen.getByRole("button", { name: "Add environment variable" }),
+    );
+    fireEvent.change(
+      screen.getByLabelText("Environment variables: Value 1"),
+      { target: { value: "draft-secret" } },
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Paste a config snippet" }),
+    );
+    fireEvent.change(screen.getByLabelText("MCP config snippet"), {
+      target: { value: '{"command":["","--help"]}' },
+    });
+    await user.click(screen.getByRole("button", { name: "Fill in fields" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The snippet needs a command or a url.",
+    );
+    expect(screen.getByLabelText("MCP config snippet")).toHaveValue(
+      '{"command":["","--help"]}',
+    );
+    expect(screen.getByLabelText("Command")).toHaveValue("uvx");
+    expect(
+      screen.getByLabelText("Environment variables: Value 1"),
+    ).toHaveValue("draft-secret");
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "old-server"])(
+    "suggests a deduplicated name for an unnamed SSE snippet after command %j",
+    async (previousCommand) => {
+      const user = userEvent.setup();
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      renderDialog({ existingNames: new Set(["notion"]), onSave });
+
+      if (previousCommand !== "") {
+        fireEvent.change(screen.getByLabelText("Command"), {
+          target: { value: previousCommand },
+        });
+        expect(screen.getByLabelText("Server name")).toHaveValue("old-server");
+      }
+      const config = { type: "sse", url: "https://mcp.notion.com/sse" };
+      await user.click(
+        screen.getByRole("button", { name: "Paste a config snippet" }),
+      );
+      fireEvent.change(screen.getByLabelText("MCP config snippet"), {
+        target: { value: JSON.stringify(config) },
+      });
+      await user.click(screen.getByRole("button", { name: "Fill in fields" }));
+
+      // The snippet routes to the verbatim JSON editor, and the name is
+      // derived from the snippet's own endpoint — not left empty, and not
+      // the stale suggestion from the earlier draft.
+      expect(screen.getByRole("tab", { name: "JSON" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(screen.getByLabelText("Server name")).toHaveValue("notion-2");
+      await user.click(screen.getByRole("button", { name: "Add" }));
+      expect(onSave).toHaveBeenCalledWith("notion-2", config);
+    },
+  );
 });

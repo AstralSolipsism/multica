@@ -1,30 +1,13 @@
 // @vitest-environment node
 
 import { describe, expect, it } from "vitest";
-import { parseMcpSnippet, splitCommandLine } from "./mcp-snippet";
+import { parseMcpSnippet } from "./mcp-snippet";
 
 // Canonical matrix for the paste-assistant parser. The dialog test covers the
 // wiring (fill on apply, draft kept on error); every accepted/rejected shape
-// lives here so it runs without a DOM.
-
-describe("splitCommandLine", () => {
-  it.each([
-    ["npx -y @scope/server", ["npx", "-y", "@scope/server"]],
-    ['cmd --header "Authorization: Bearer x"', ["cmd", "--header", "Authorization: Bearer x"]],
-    ["cmd 'single quoted'", ["cmd", "single quoted"]],
-    ["  padded   tokens  ", ["padded", "tokens"]],
-    ['cmd ""', ["cmd", ""]],
-  ])("splits %j", (input, expected) => {
-    expect(splitCommandLine(input)).toEqual(expected);
-  });
-
-  it.each(['cmd "unclosed', "cmd 'unclosed"])(
-    "rejects an unclosed quote in %j",
-    (input) => {
-      expect(splitCommandLine(input)).toBeNull();
-    },
-  );
-});
+// lives here so it runs without a DOM. Command-line tokenization itself is
+// covered by packages/views/common/command-line.test.ts beside the shared
+// tokenizer; here only the MCP entry's use of it is exercised.
 
 describe("parseMcpSnippet", () => {
   it("parses an mcpServers wrapper and carries the entry name", () => {
@@ -146,12 +129,19 @@ describe("parseMcpSnippet", () => {
     });
   });
 
-  it("preserves escaped spaces and quotes in a pasted launch command", () => {
+  it("preserves escaped spaces and quotes via the shared tokenizer", () => {
     expect(
-      splitCommandLine(
+      parseMcpSnippet(
         String.raw`node /opt/My\ Server/index.js --data "{\"project\":\"demo\"}"`,
       ),
-    ).toEqual(["node", "/opt/My Server/index.js", "--data", '{"project":"demo"}']);
+    ).toEqual({
+      ok: true,
+      name: null,
+      config: {
+        command: "node",
+        args: ["/opt/My Server/index.js", "--data", '{"project":"demo"}'],
+      },
+    });
   });
 
   it("rejects an unclosed quote in a command line", () => {
@@ -175,7 +165,9 @@ describe("parseMcpSnippet", () => {
     '{"command": null}',
     '{"command": ""}',
     '{"command": 42}',
+    '{"command": []}',
     '{"command": [null, "  "]}',
+    '{"command": ["", "--help"]}',
     '{"url": null}',
     '{"url": ""}',
     '{"url": 42}',
@@ -187,11 +179,11 @@ describe("parseMcpSnippet", () => {
     });
   });
 
-  it("accepts a command given as a token array with a usable first entry", () => {
-    expect(parseMcpSnippet('{"command": ["npx", "-y", "pkg"]}')).toEqual({
+  it("accepts a command given as a token array with a usable first entry, keeping empty args", () => {
+    expect(parseMcpSnippet('{"command": ["npx", "-y", "pkg", ""]}')).toEqual({
       ok: true,
       name: null,
-      config: { command: ["npx", "-y", "pkg"] },
+      config: { command: ["npx", "-y", "pkg", ""] },
     });
   });
 });

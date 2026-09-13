@@ -31,29 +31,22 @@ export type McpSnippetResult =
   | { ok: false; error: McpSnippetError; detail?: string };
 
 /**
- * The MCP entry's thin wrapper over the shared command-line tokenizer (see
- * packages/views/common/command-line.ts), keeping the dialog's `string[] |
- * null` contract: null on any rejected line — unclosed quote, dangling
- * escape, or shell syntax the form cannot represent.
- */
-export function splitCommandLine(input: string): string[] | null {
-  const parsed = parseCommandLine(input);
-  return parsed.ok ? [parsed.commandName, ...parsed.fixedArgs] : null;
-}
-
-/**
  * A snippet is only usable when it carries a launchable target: a non-empty
- * command string (or a command token array with at least one non-empty
- * entry) or a non-empty url string. Anything else — `{"command": null}`,
- * `{"url": 42}`, `{}` — must be rejected BEFORE the dialog touches the
- * draft, or applying it would silently wipe fields the user already filled.
+ * command string, a command token array whose FIRST element is a non-empty
+ * string (the form takes element 0 as the executable — a `["", "--help"]`
+ * array would fill an empty command), or a non-empty url string. Later array
+ * elements are arguments and may legitimately be empty. Anything else —
+ * `{"command": null}`, `{"url": 42}`, `{}` — must be rejected BEFORE the
+ * dialog touches the draft, or applying it would silently wipe fields the
+ * user already filled.
  */
 function hasUsableTarget(config: Record<string, unknown>): boolean {
   const { command, url } = config;
   if (typeof command === "string" && command.trim() !== "") return true;
   if (
     Array.isArray(command) &&
-    command.some((part) => typeof part === "string" && part.trim() !== "")
+    typeof command[0] === "string" &&
+    command[0].trim() !== ""
   ) {
     return true;
   }

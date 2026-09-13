@@ -454,6 +454,13 @@ export function McpServerDialog({
       // protocol — the snippet lands there verbatim instead.
       setJsonText(JSON.stringify(result.config, null, 2));
       setMode("json");
+      // The form is also the name-suggestion source. Without this sync, a
+      // JSON-routed snippet would leave the suggested name empty — or
+      // carrying a stale suggestion from an earlier draft — even though the
+      // endpoint/command it came from is known. The form values stay hidden
+      // behind the JSON view; a later manual switch regenerates them from
+      // the JSON anyway.
+      setForm(formFromConfig(result.config));
     }
     setSnippetText("");
     setSnippetError(null);
