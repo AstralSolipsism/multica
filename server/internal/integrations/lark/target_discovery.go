@@ -193,11 +193,8 @@ func (c *httpAPIClient) ListMessageAnchors(ctx context.Context, creds Installati
 			return out, ErrDiscoveryResponse
 		}
 		summary := flattenContent(msg.MsgType, msg.Body.Content)
-		for _, mention := range msg.Mentions {
-			if mention.Key != "" && mention.Name != "" {
-				summary = strings.ReplaceAll(summary, mention.Key, "@"+mention.Name)
-			}
-		}
+		// Resolve overlapping keys once; empty bot IDs preserve every mention.
+		summary = resolveMentions(summary, restMentionsToEvent(msg.normalize().Mentions), "", "")
 		summary = strings.Join(strings.FieldsFunc(summary, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }), " ")
 		if summary == "" {
 			summary = "[Message]"

@@ -87,7 +87,9 @@ roots are included, not all nested topic replies. It is not a complete chat
 transcript or text-search API. Deleted/recalled messages and forwarded children
 are omitted without losing continuation. No messages gives `items: []`.
 
-Text/post summaries reuse the flattener, replace inline mention names, collapse
+Text/post summaries reuse the flattener and the shared longest-match, single-pass
+mention resolver. Mention names are literal text, never reinterpreted as tokens;
+bot mentions stay visible. Summaries collapse
 whitespace/control characters, and keep at most 200 Unicode characters plus an
 ellipsis. Media/cards use placeholders; unsupported or malformed content gives
 `[Message]`. Render as plain text, not HTML/Markdown. No raw message body or

@@ -244,3 +244,76 @@ func TestTargetDiscoveryAnchorsBoundaries(t *testing.T) {
 		})
 	}
 }
+
+// Regression from the OL-72 review: shorter mention keys must not rewrite longer keys.
+func TestReviewOL72SummaryMentionPrefixes(t *testing.T) {
+	f := newLarkFake(t)
+	f.stubToken("review-token", 7200)
+	f.mux.HandleFunc("/open-apis/im/v1/chats/oc_review", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"code": 0, "data": map[string]string{"chat_mode": "group"}})
+	})
+	var placeholders, expected []string
+	var mentions []map[string]string
+	for i := 1; i <= 10; i++ {
+		key, name := fmt.Sprintf("@_user_%d", i), fmt.Sprintf("Person%d", i)
+		if i == 1 {
+			name = "Alice"
+		}
+		if i == 10 {
+			name = "Zoe"
+		}
+		placeholders = append(placeholders, key)
+		expected = append(expected, "@"+name)
+		mentions = append(mentions, map[string]string{"key": key, "name": name})
+	}
+	body, err := json.Marshal(map[string]string{"text": strings.Join(placeholders, " ")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mux.HandleFunc("/open-apis/im/v1/messages", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"code": 0, "data": map[string]any{
+			"has_more": false,
+			"items": []map[string]any{{
+				"message_id": "om_review", "chat_id": "oc_review", "msg_type": "text",
+				"create_time": "1700000000000", "mentions": mentions,
+				"body": map[string]string{"content": string(body)},
+			}},
+		}})
+	})
+	page, err := newTestClient(f, time.Now).ListMessageAnchors(context.Background(), testCreds(), DiscoveryParams{PageSize: 1}, "oc_review")
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("anchor page: %+v; error: %v", page, err)
+	}
+	if got, want := page.Items[0].Summary, strings.Join(expected, " "); got != want {
+		t.Fatalf("mention identities changed:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestTargetDiscoverySummaryPreservesMentionNames(t *testing.T) {
+	f := newLarkFake(t)
+	f.stubToken("tok", 7200)
+	f.mux.HandleFunc("/open-apis/im/v1/chats/oc_a", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"code": 0, "data": map[string]string{"chat_mode": "group"}})
+	})
+	f.mux.HandleFunc("/open-apis/im/v1/messages", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"code":0,"data":{"has_more":false,"items":[{
+			"message_id":"om_a","chat_id":"oc_a","create_time":"1700000000000","msg_type":"text",
+			"body":{"content":"{\"text\":\"@_user_1 @_user_2 @_user_3 @_user_4 @_user_1\"}"},
+			"mentions":[
+				{"key":"@_user_1","name":"Name @_user_2"},
+				{"key":"@_user_2","name":"Alice"},
+				{"key":"@_user_3","name":""},
+				{"key":"@_user_4","name":"Bot","id":"ou_bot"},
+				{"key":"","name":"Ignored"}
+			]}]}}`)
+	})
+	page, err := newTestClient(f, time.Now).ListMessageAnchors(context.Background(), testCreds(), DiscoveryParams{PageSize: 1}, "oc_a")
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("anchor page: %+v; error: %v", page, err)
+	}
+	// Names are literal text, unnamed mentions stay visible, and bot mentions
+	// remain in historical summaries even when the same key occurs again.
+	if got, want := page.Items[0].Summary, "@Name @_user_2 @Alice @_user_3 @Bot @Name @_user_2"; got != want {
+		t.Fatalf("mention names changed:\n got: %s\nwant: %s", got, want)
+	}
+}
