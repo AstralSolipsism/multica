@@ -1,0 +1,27 @@
+{
+  "capabilities": {
+    "chat_list_supported": true,
+    "message_anchor_list_supported": true,
+    "region": "feishu",
+    "scope_status": "not_checked",
+    "max_chat_page_size": 100,
+    "max_message_page_size": 50
+  },
+  "chats_page": {
+    "items": [
+      {"chat_id":"oc_a","name":"Release","description":"Team A","avatar":"","external":false,"chat_status":"normal"},
+      {"chat_id":"oc_b","name":"Release","description":"Team B","avatar":"","external":true,"chat_status":"normal"}
+    ],
+    "has_more": false,
+    "next_cursor": ""
+  },
+  "anchors_page": {
+    "items": [
+      {"message_id":"om_new","chat_id":"oc_a","message_type":"text","summary":"release ready","create_time":"1700000000000","thread_id":"omt_topic","sender":{"type":"user","id":"ou_1","id_type":"open_id"}},
+      {"message_id":"om_old","chat_id":"oc_a","message_type":"image","summary":"[Image]","create_time":"1600000000000","sender":{"type":"anonymous"}}
+    ],
+    "has_more": false,
+    "next_cursor": ""
+  },
+  "error": {"error":"check bot scopes and external group access","code":"lark_discovery_permission_denied"}
+}
