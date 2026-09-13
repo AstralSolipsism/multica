@@ -51,8 +51,9 @@
     },
     "metrics_credential": {
       "type": "secret",
-      "label": "Metrics MCP server token",
-      "description": "Optional. Credential for your metrics MCP server, from whoever operates it — often a read-only API token. Without it the metrics tools stay unavailable; everything else still works."
+      "label": "Metrics MCP server credential",
+      "description": "Optional. Sent verbatim as the Authorization header, so enter the FULL header value — e.g. Bearer <token>. The token comes from whoever operates your metrics MCP server (the example server reads it from its METRICS_TOKEN environment variable). Without it the metrics tools stay unavailable; everything else still works.",
+      "placeholder": "Bearer <token>"
     }
   },
 
