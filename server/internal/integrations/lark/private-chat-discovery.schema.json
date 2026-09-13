@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Feishu private chat discovery and confirmation",
+  "anyOf": [{"$ref":"#/$defs/candidate_list"},{"$ref":"#/$defs/confirm_request"},{"$ref":"#/$defs/conversation_response"}],
+  "$defs": {
+    "uuid": {"type":"string","format":"uuid"},
+    "chat_id": {"type":"string","pattern":"^oc_[A-Za-z0-9_-]+$","maxLength":200},
+    "candidate": {
+      "type":"object",
+      "required":["id","chat_id","chat_type","sender","display_name","identity_status","authorization_status","first_seen_at","last_seen_at","expires_at"],
+      "properties": {
+        "id":{"$ref":"#/$defs/uuid"},
+        "chat_id":{"$ref":"#/$defs/chat_id"},
+        "chat_type":{"const":"p2p"},
+        "sender": {
+          "type":"object","required":["type","id","id_type"],
+          "properties": {
+            "type":{"const":"user"},
+            "id":{"type":"string","pattern":"^ou_[A-Za-z0-9_-]+$","maxLength":200},
+            "id_type":{"const":"open_id"}
+          }
+        },
+        "display_name":{"type":"string","maxLength":100},
+        "identity_status":{"enum":["name_available","id_only"]},
+        "authorization_status":{"enum":["pending","authorized"]},
+        "first_seen_at":{"type":"string","format":"date-time"},
+        "last_seen_at":{"type":"string","format":"date-time"},
+        "expires_at":{"type":"string","format":"date-time"}
+      }
+    },
+    "candidate_list": {
+      "type":"object","required":["items","max_candidates","retention_seconds"],
+      "properties": {
+        "items":{"type":"array","maxItems":50,"items":{"$ref":"#/$defs/candidate"}},
+        "max_candidates":{"const":50},
+        "retention_seconds":{"const":604800}
+      }
+    },
+    "confirm_request": {
+      "type":"object","required":["scope","candidate_ids"],"additionalProperties":false,
+      "properties": {
+        "scope":{"const":"workspace"},
+        "candidate_ids":{"type":"array","minItems":1,"maxItems":50,"uniqueItems":true,"items":{"$ref":"#/$defs/uuid"}}
+      }
+    },
+    "conversation_grant": {
+      "type":"object","required":["id","authorized_by","scope","chats"],
+      "properties": {
+        "id":{"$ref":"#/$defs/uuid"},
+        "authorized_by":{"$ref":"#/$defs/uuid"},
+        "scope":{"const":"workspace"},
+        "chats": {
+          "type":"array","minItems":1,"maxItems":50,"uniqueItems":true,
+          "items":{"type":"object","required":["chat_id","chat_type"],"properties":{"chat_id":{"$ref":"#/$defs/chat_id"},"chat_type":{"enum":["p2p","group"]}}}
+        }
+      }
+    },
+    "conversation_response": {
+      "type":"object","required":["conversation"],
+      "properties":{"conversation":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/conversation_grant"}]}}
+    }
+  }
+}

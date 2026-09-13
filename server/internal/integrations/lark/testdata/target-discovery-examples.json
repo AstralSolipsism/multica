@@ -5,7 +5,11 @@
     "region": "feishu",
     "scope_status": "not_checked",
     "max_chat_page_size": 100,
-    "max_message_page_size": 50
+    "max_message_page_size": 50,
+    "private_chat_candidates_supported": true,
+    "private_chat_identity_lookup_supported": true,
+    "max_private_chat_candidates": 50,
+    "private_chat_candidate_retention_seconds": 604800
   },
   "chats_page": {
     "items": [

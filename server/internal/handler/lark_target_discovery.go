@@ -19,12 +19,16 @@ import (
 )
 
 type LarkTargetCapabilitiesResponse struct {
-	ChatListSupported          bool   `json:"chat_list_supported"`
-	MessageAnchorListSupported bool   `json:"message_anchor_list_supported"`
-	Region                     string `json:"region"`
-	ScopeStatus                string `json:"scope_status"`
-	MaxChatPageSize            int    `json:"max_chat_page_size"`
-	MaxMessagePageSize         int    `json:"max_message_page_size"`
+	ChatListSupported                    bool   `json:"chat_list_supported"`
+	MessageAnchorListSupported           bool   `json:"message_anchor_list_supported"`
+	Region                               string `json:"region"`
+	ScopeStatus                          string `json:"scope_status"`
+	MaxChatPageSize                      int    `json:"max_chat_page_size"`
+	MaxMessagePageSize                   int    `json:"max_message_page_size"`
+	PrivateChatCandidatesSupported       bool   `json:"private_chat_candidates_supported"`
+	PrivateChatIdentityLookupSupported   bool   `json:"private_chat_identity_lookup_supported"`
+	MaxPrivateChatCandidates             int    `json:"max_private_chat_candidates"`
+	PrivateChatCandidateRetentionSeconds int    `json:"private_chat_candidate_retention_seconds"`
 }
 
 type larkDiscoveryPageResponse[T any] struct {
@@ -103,6 +107,10 @@ func (h *Handler) GetLarkTargetCapabilities(w http.ResponseWriter, r *http.Reque
 		ChatListSupported: supported, MessageAnchorListSupported: supported,
 		Region: string(lark.RegionOrDefault(inst.Region)), ScopeStatus: "not_checked",
 		MaxChatPageSize: 100, MaxMessagePageSize: 50,
+		PrivateChatCandidatesSupported:       h.TxStarter != nil,
+		PrivateChatIdentityLookupSupported:   h.LarkAPIClient != nil && h.LarkAPIClient.IsConfigured(),
+		MaxPrivateChatCandidates:             maxLarkPrivateChatCandidates,
+		PrivateChatCandidateRetentionSeconds: int(larkPrivateChatCandidateTTL.Seconds()),
 	})
 }
 

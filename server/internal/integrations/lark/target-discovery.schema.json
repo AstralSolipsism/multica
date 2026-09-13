@@ -12,7 +12,11 @@
         "region":{"enum":["feishu","lark"]},
         "scope_status":{"const":"not_checked"},
         "max_chat_page_size":{"const":100},
-        "max_message_page_size":{"const":50}
+        "max_message_page_size":{"const":50},
+        "private_chat_candidates_supported":{"type":"boolean"},
+        "private_chat_identity_lookup_supported":{"type":"boolean"},
+        "max_private_chat_candidates":{"const":50},
+        "private_chat_candidate_retention_seconds":{"const":604800}
       }
     },
     "chat": {

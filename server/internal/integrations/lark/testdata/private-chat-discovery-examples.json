@@ -1,0 +1,14 @@
+{
+  "candidate_list": {
+    "items": [
+      {"id":"01994566-7cc0-7000-8000-000000000001","chat_id":"oc_private_alice","chat_type":"p2p","sender":{"type":"user","id":"ou_alice","id_type":"open_id"},"display_name":"Alice","identity_status":"name_available","authorization_status":"pending","first_seen_at":"2026-09-13T12:00:00Z","last_seen_at":"2026-09-13T12:00:00Z","expires_at":"2026-09-20T12:00:00Z"},
+      {"id":"01994566-7cc0-7000-8000-000000000002","chat_id":"oc_private_bob","chat_type":"p2p","sender":{"type":"user","id":"ou_bob","id_type":"open_id"},"display_name":"","identity_status":"id_only","authorization_status":"authorized","first_seen_at":"2026-09-13T11:00:00Z","last_seen_at":"2026-09-13T11:00:00Z","expires_at":"2026-09-20T11:00:00Z"}
+    ],
+    "max_candidates":50,
+    "retention_seconds":604800
+  },
+  "confirm_request":{"scope":"workspace","candidate_ids":["01994566-7cc0-7000-8000-000000000001"]},
+  "conversation_response": {
+    "conversation":{"id":"01994566-7cc0-7000-8000-000000000003","authorized_by":"01994566-7cc0-7000-8000-000000000004","scope":"workspace","chats":[{"chat_id":"oc_existing_group","chat_type":"group"},{"chat_id":"oc_private_alice","chat_type":"p2p"}]}
+  }
+}

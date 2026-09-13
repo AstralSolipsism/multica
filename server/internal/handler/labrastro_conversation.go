@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
@@ -56,18 +59,21 @@ func (h *Handler) HandleChannelConversation(ctx context.Context, resolved engine
 	if err != nil {
 		return engine.Result{}, true, err
 	}
+	if inst.WorkspaceID != resolved.WorkspaceID || inst.AgentID != resolved.AgentID {
+		return refuse("conversation_installation_changed")
+	}
 	cfg, err := channel.ParseConversationConfig(inst.Config)
 	if err != nil {
 		return refuse("invalid_conversation_grant")
 	}
 	if err = channel.AuthorizeConversation(ctx, h.Queries, inst, cfg.Grant, msg.Source.ChatID, string(msg.Source.ChatType)); err != nil {
 		if errors.Is(err, channel.ErrConversationDenied) {
+			if err := h.recordLarkPrivateChatCandidate(ctx, resolved, msg); err != nil {
+				return engine.Result{}, true, err
+			}
 			return refuse("conversation_not_authorized")
 		}
 		return engine.Result{}, true, err
-	}
-	if inst.WorkspaceID != resolved.WorkspaceID || inst.AgentID != resolved.AgentID {
-		return refuse("conversation_installation_changed")
 	}
 	if utf8.RuneCountInString(msg.Text) > 20000 {
 		return conversationNotice("消息过长，请分段发送（每条最多 20,000 字）。"), true, nil
@@ -178,12 +184,17 @@ func (h *Handler) HandleChannelConversation(ctx context.Context, resolved engine
 // SetLarkConversationGrant records the authenticated member's explicit consent.
 // Removing all chats revokes it. Grant identity and grantor are server-issued.
 func (h *Handler) SetLarkConversationGrant(w http.ResponseWriter, r *http.Request) {
+	h.setLarkConversationGrant(w, r, false)
+}
+
+func (h *Handler) setLarkConversationGrant(w http.ResponseWriter, r *http.Request, confirmCandidates bool) {
+	w.Header().Set("Cache-Control", "no-store")
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
 	if isMachineCredentialActor(r) {
-		writeError(w, http.StatusForbidden, "human authorization required")
+		writeErrorCode(w, http.StatusForbidden, "lark_discovery_forbidden", "human authorization required")
 		return
 	}
 	ws, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace id")
@@ -194,27 +205,92 @@ func (h *Handler) SetLarkConversationGrant(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	inst, err := h.Queries.GetChannelInstallationInWorkspace(r.Context(), db.GetChannelInstallationInWorkspaceParams{ID: id, WorkspaceID: ws, ChannelType: string(channel.TypeFeishu)})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "installation not found")
+	var req struct {
+		Chats        []channel.ConversationTarget `json:"chats"`
+		Scope        string                       `json:"scope"`
+		CandidateIDs []string                     `json:"candidate_ids"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16000)
+	decoder := json.NewDecoder(r.Body)
+	if confirmCandidates {
+		decoder.DisallowUnknownFields()
+	}
+	if err := decoder.Decode(&req); err != nil || decoder.Decode(&struct{}{}) != io.EOF || req.Scope != "workspace" || len(req.Chats) > 50 ||
+		(confirmCandidates && (len(req.Chats) != 0 || len(req.CandidateIDs) == 0 || len(req.CandidateIDs) > 50)) ||
+		(!confirmCandidates && len(req.CandidateIDs) != 0) {
+		writeErrorCode(w, http.StatusBadRequest, "lark_conversation_invalid_request", "scope must be workspace; at most 50 chats or candidate IDs")
 		return
 	}
-	agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: inst.AgentID, WorkspaceID: ws})
+	tx, q, inst, err := h.lockLarkConversationInstallation(r.Context(), id, ws)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErrorCode(w, http.StatusNotFound, "lark_installation_not_found", "installation not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to load installation")
+		}
+		return
+	}
+	defer tx.Rollback(context.WithoutCancel(r.Context()))
+	agent, err := q.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: inst.AgentID, WorkspaceID: ws})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
 	}
-	if !h.canManageAgent(w, r, agent) {
+	// Keep every authorization query on this transaction's connection; a
+	// contended installation must not consume a second pool slot while locked.
+	authorizer := &Handler{Queries: q}
+	if !authorizer.canManageAgent(w, r, agent) {
 		return
 	}
-	var req struct {
-		Chats []channel.ConversationTarget `json:"chats"`
-		Scope string                       `json:"scope"`
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16000)
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Scope != "workspace" || len(req.Chats) > 50 {
-		writeError(w, http.StatusBadRequest, "scope must be workspace; at most 50 chats")
-		return
+	var unchangedGrant *channel.ConversationGrant
+	if confirmCandidates {
+		if inst.Status != "active" || agent.ArchivedAt.Valid {
+			writeErrorCode(w, http.StatusConflict, "lark_installation_inactive", "installation or agent is inactive")
+			return
+		}
+		cfg, err := channel.ParseConversationConfig(inst.Config)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "invalid conversation configuration")
+			return
+		}
+		if cfg.Grant != nil {
+			req.Chats = slices.Clone(cfg.Grant.Chats)
+			if cfg.Grant.AuthorizedBy == userID && cfg.Grant.Scope == "workspace" {
+				unchangedGrant = cfg.Grant
+			}
+		}
+		candidates, _, err := activeLarkPrivateChatCandidates(inst.Config, time.Now())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load private chat candidates")
+			return
+		}
+		seenIDs := map[string]bool{}
+		for _, candidateID := range req.CandidateIDs {
+			parsed, ok := parseUUIDOrBadRequest(w, candidateID, "candidate id")
+			if !ok {
+				return
+			}
+			candidateID = uuidToString(parsed)
+			if seenIDs[candidateID] {
+				writeErrorCode(w, http.StatusBadRequest, "lark_conversation_invalid_request", "duplicate candidate id")
+				return
+			}
+			seenIDs[candidateID] = true
+			index := slices.IndexFunc(candidates, func(c larkPrivateChatCandidate) bool { return c.ID == candidateID })
+			if index < 0 {
+				writeErrorCode(w, http.StatusGone, "lark_private_chat_candidate_unavailable", "candidate expired or unavailable; refresh the list")
+				return
+			}
+			target := channel.ConversationTarget{ChatID: candidates[index].ChatID, ChatType: "p2p"}
+			if !slices.Contains(req.Chats, target) {
+				req.Chats = append(req.Chats, target)
+				unchangedGrant = nil
+			}
+		}
+		if len(req.Chats) > 50 {
+			writeErrorCode(w, http.StatusConflict, "lark_conversation_limit_exceeded", "at most 50 authorized conversations; remove a saved conversation first")
+			return
+		}
 	}
 	seen := map[channel.ConversationTarget]bool{}
 	for _, chat := range req.Chats {
@@ -227,14 +303,21 @@ func (h *Handler) SetLarkConversationGrant(w http.ResponseWriter, r *http.Reques
 	}
 	var grant *channel.ConversationGrant
 	if len(req.Chats) > 0 {
-		if inst.Status != "active" || agent.ArchivedAt.Valid || !h.canInvokeAgent(r.Context(), agent, "member", userID, userID, uuidToString(ws)) {
-			writeError(w, http.StatusForbidden, "agent invocation not allowed")
+		if inst.Status != "active" || agent.ArchivedAt.Valid || !authorizer.canInvokeAgent(r.Context(), agent, "member", userID, userID, uuidToString(ws)) {
+			writeErrorCode(w, http.StatusForbidden, "lark_conversation_invocation_denied", "agent invocation not allowed")
 			return
 		}
 		grant = &channel.ConversationGrant{ID: uuidToString(dbid.NewV7()), AuthorizedBy: userID, Scope: req.Scope, Chats: req.Chats}
+		if unchangedGrant != nil {
+			grant = unchangedGrant
+		}
 	}
 	raw, _ := json.Marshal(grant)
-	if _, err := h.Queries.SetConversationGrant(r.Context(), db.SetConversationGrantParams{ID: id, WorkspaceID: ws, Grant: raw}); err != nil {
+	if _, err := q.SetConversationGrant(r.Context(), db.SetConversationGrantParams{ID: id, WorkspaceID: ws, Grant: raw}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save conversation authorization")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save conversation authorization")
 		return
 	}
