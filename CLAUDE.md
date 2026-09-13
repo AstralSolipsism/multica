@@ -250,7 +250,8 @@ Do not claim verification passed unless you ran it. If you skip checks because t
 ## Commits and Releases
 
 - Commits should be atomic and use conventional prefixes: `feat(scope)`, `fix(scope)`, `refactor(scope)`, `docs`, `test(scope)`, `chore(scope)`.
-- A production deployment requires a CLI release tag on `main`: create `v0.x.x`, push it, and let `release.yml` publish binaries and the Homebrew tap.
+- Labrastro application images are built locally from a reviewed, tagged source commit. Do not publish them to GHCR or pull application images from external registries. Keep the fork publishing guards in `release.yml`; upstream publishing automation is not the Labrastro deployment procedure.
+- The operations specialist agent owns operational access and predeployment inventory. Master schedules actual deployment, migrations and active update-feed changes separately; preparing or pushing a tag does not authorize those operations. See `.github/RELEASING.md`.
 - Bump patch by default unless the user specifies a version.
 
 ## Domain Reminders
