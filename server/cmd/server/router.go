@@ -1714,6 +1714,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/lark/installations", h.ListLarkInstallations)
 					r.Get("/lark/installations/{installationId}/target-capabilities", h.GetLarkTargetCapabilities)
+					r.Get("/lark/installations/{installationId}/private-chat-candidates", h.ListLarkPrivateChatCandidates)
+					r.Post("/lark/installations/{installationId}/private-chat-candidates/confirm", h.ConfirmLarkPrivateChatCandidates)
 					r.Get("/lark/installations/{installationId}/chats", h.ListLarkTargetChats)
 					r.Get("/lark/installations/{installationId}/chats/{chatId}/message-anchors", h.ListLarkMessageAnchors)
 					r.Delete("/lark/installations/{installationId}", h.RevokeLarkInstallation)

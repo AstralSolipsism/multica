@@ -42,6 +42,39 @@ func (q *Queries) LockConversationInstallation(ctx context.Context, arg LockConv
 	return i, err
 }
 
+const lockConversationInstallationForUpdate = `-- name: LockConversationInstallationForUpdate :one
+SELECT id, workspace_id, agent_id, channel_type, config, status, ws_lease_token, ws_lease_expires_at, installer_user_id, installed_at, created_at, updated_at FROM channel_installation
+WHERE id = $1 AND workspace_id = $2 AND channel_type = 'feishu'
+FOR UPDATE
+`
+
+type LockConversationInstallationForUpdateParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Serialize consent edits and bounded discovery metadata updates with revoke
+// and reinstallation. Never replace credentials from a pre-lock snapshot.
+func (q *Queries) LockConversationInstallationForUpdate(ctx context.Context, arg LockConversationInstallationForUpdateParams) (ChannelInstallation, error) {
+	row := q.db.QueryRow(ctx, lockConversationInstallationForUpdate, arg.ID, arg.WorkspaceID)
+	var i ChannelInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Config,
+		&i.Status,
+		&i.WsLeaseToken,
+		&i.WsLeaseExpiresAt,
+		&i.InstallerUserID,
+		&i.InstalledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const setConversationGrant = `-- name: SetConversationGrant :one
 UPDATE channel_installation
 SET config = jsonb_set(config, '{conversation}', $3::jsonb), updated_at = now()
@@ -94,4 +127,21 @@ func (q *Queries) SetLarkInstallationBotUnionID(ctx context.Context, arg SetLark
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const setLarkPrivateChatCandidates = `-- name: SetLarkPrivateChatCandidates :exec
+UPDATE channel_installation
+SET config = jsonb_set(config, '{private_chat_candidates}', $3::jsonb)
+WHERE id = $1 AND workspace_id = $2 AND channel_type = 'feishu'
+`
+
+type SetLarkPrivateChatCandidatesParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Candidates  []byte      `json:"candidates"`
+}
+
+func (q *Queries) SetLarkPrivateChatCandidates(ctx context.Context, arg SetLarkPrivateChatCandidatesParams) error {
+	_, err := q.db.Exec(ctx, setLarkPrivateChatCandidates, arg.ID, arg.WorkspaceID, arg.Candidates)
+	return err
 }

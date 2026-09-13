@@ -392,7 +392,9 @@ ORDER BY ci.created_at ASC;
 
 -- name: SetChannelInstallationStatus :exec
 UPDATE channel_installation
-SET status = $2, updated_at = now()
+SET status = $2, updated_at = now(),
+    config = CASE WHEN channel_type = 'feishu' AND $2 <> 'active'
+        THEN config - 'private_chat_candidates' ELSE config END
 WHERE id = $1;
 
 -- name: SetChannelInstallationConfig :exec

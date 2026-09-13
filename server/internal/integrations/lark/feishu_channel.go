@@ -26,10 +26,9 @@ import (
 // through the Lark HTTP API. One instance is built per channel_installation by
 // the registered Factory; the connector is shared across instances.
 //
-// The Channel holds only the credentials it needs for Connect/Send (decoded
-// from the per-installation config blob). The installation IDENTITY
-// (workspace / agent / installer) is resolved per message by the Router's
-// InstallationResolver, so it is deliberately absent here.
+// The Channel holds connection credentials and the installation row ID, which
+// it stamps on emitted messages. Workspace / agent / installer are resolved
+// per message by the Router's InstallationResolver.
 type feishuChannel struct {
 	inst    Installation
 	conn    EventConnector
@@ -51,6 +50,10 @@ func (c *feishuChannel) Type() channel.Type { return channel.TypeFeishu }
 // so the handler's error is what flows back.
 func (c *feishuChannel) Connect(ctx context.Context) error {
 	return c.conn.Run(ctx, c.inst, func(emitCtx context.Context, lm InboundMessage) (DispatchResult, error) {
+		if lm.AppID != c.inst.AppID || (c.inst.TenantKey.Valid && lm.TenantKey != c.inst.TenantKey.String) {
+			return DispatchResult{Outcome: OutcomeDropped, DropReason: DropReasonInvalidEvent}, nil
+		}
+		lm.InstallationID = c.inst.ID
 		if c.handler == nil {
 			return DispatchResult{}, errors.New("lark: inbound handler not configured")
 		}
@@ -215,6 +218,7 @@ func newFeishuFactory(deps FeishuChannelDeps) channel.Factory {
 		// We build a credentials-only Installation from it; the workspace /
 		// agent identity is resolved per message by the Router, not needed here.
 		inst, err := installationFromRow(db.ChannelInstallation{
+			ID:          cfg.ID,
 			ChannelType: channelTypeFeishu,
 			Config:      cfg.Raw,
 		})
@@ -316,11 +320,18 @@ var _ engine.LeaseStore = (*channelInstallationStore)(nil)
 
 // rowFingerprint condenses the credential-bearing config of a
 // channel_installation row into an opaque string. Any change to the platform
-// config (Feishu rotates app_id / app_secret / region on re-install) flips the
+// connection config (Feishu rotates credentials on re-install) flips the
 // fingerprint and the Supervisor restarts the connection. The config JSONB
 // carries only the secret ciphertext (never plaintext), so hashing it is safe
-// and channel-agnostic — no platform field is read directly.
+// and safe to hash. Feishu candidate observations do not restart a connection.
 func rowFingerprint(row db.ChannelInstallation) string {
+	if row.ChannelType == channelTypeFeishu {
+		var config map[string]json.RawMessage
+		if json.Unmarshal(row.Config, &config) == nil {
+			delete(config, "private_chat_candidates")
+			row.Config, _ = json.Marshal(config)
+		}
+	}
 	h := sha256.New()
 	_, _ = h.Write([]byte(row.ChannelType))
 	_, _ = h.Write([]byte{0})

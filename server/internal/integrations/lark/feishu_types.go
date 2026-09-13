@@ -14,14 +14,19 @@ import "github.com/jackc/pgx/v5/pgtype"
 // (stashing this struct in Raw) so the resolvers can read the platform-
 // specific fields the normalized envelope does not carry.
 type InboundMessage struct {
-	EventType    string
-	EventID      string
-	AppID        string
-	ChatID       ChatID
-	ChatType     ChatType
-	MessageID    string
-	SenderOpenID OpenID
-	Body         string
+	// InstallationID is stamped by the authenticated connection, never the
+	// event payload. It prevents a delayed connection from following a rebind.
+	InstallationID pgtype.UUID
+	EventType      string
+	EventID        string
+	AppID          string
+	TenantKey      string
+	SenderType     string
+	ChatID         ChatID
+	ChatType       ChatType
+	MessageID      string
+	SenderOpenID   OpenID
+	Body           string
 	// Content is the raw msg_type-specific JSON string Lark sends in
 	// event.message.content. Text/post decoding consumes it immediately; media
 	// ingestion keeps it so the adapter can extract image_key/file_key before

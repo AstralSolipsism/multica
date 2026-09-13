@@ -21,6 +21,13 @@ The designated agent receives a workspace-scoped integration grant with a real
 human grantor; ordinary task-token and private-agent invocation rules still
 apply. Notification receipts and frozen reports supply context only.
 
+An unapproved private message may appear as a bounded candidate in the human
+integration settings. Observation does not grant permission or dispatch an agent.
+Only a human who can manage and invoke the bound agent can explicitly confirm it;
+task tokens/cloud agent credentials cannot read or confirm candidates. Sender
+`ou_` IDs are not conversation `oc_` IDs. Confirmation affects future messages,
+not rejected inputs; removing the saved conversation revokes its grant.
+
 Clarify the intended task/discussion when it is missing or ambiguous. Then use
 the normal `multica issue comment add --content-file <path> --parent <comment-id>`
 path to post as the agent, retaining important original wording and external

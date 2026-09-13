@@ -91,7 +91,8 @@ type Config struct {
 	// in-tree does today, but Factory implementations should tolerate it
 	// rather than assume Valid). WeCom uses it to key its per-connection
 	// wsSender into a shared registry the OutboundReplier looks up by;
-	// Feishu and Slack don't currently read it.
+	// Feishu stamps it onto inbound events to fence delayed connections after
+	// an app is rebound to another installation. Slack does not read it.
 	ID pgtype.UUID
 
 	// Handler is the shared inbound entry point the engine injects so the

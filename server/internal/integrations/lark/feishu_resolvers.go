@@ -81,6 +81,9 @@ func (r *feishuInstallationResolver) ResolveInstallation(ctx context.Context, ms
 		}
 		return engine.ResolvedInstallation{}, err
 	}
+	if lm.InstallationID.Valid && lm.InstallationID != inst.ID {
+		return engine.ResolvedInstallation{}, engine.ErrInstallationNotFound
+	}
 	return engine.ResolvedInstallation{
 		ID:              inst.ID,
 		WorkspaceID:     inst.WorkspaceID,

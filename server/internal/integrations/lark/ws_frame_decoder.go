@@ -68,6 +68,8 @@ func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst Installation) (Inboun
 		EventType:    env.Header.EventType,
 		EventID:      env.Header.EventID,
 		AppID:        env.Header.AppID,
+		TenantKey:    env.Header.TenantKey,
+		SenderType:   evt.Sender.SenderType,
 		ChatID:       ChatID(evt.Message.ChatID),
 		ChatType:     normalizeChatType(evt.Message.ChatType),
 		MessageID:    evt.Message.MessageID,

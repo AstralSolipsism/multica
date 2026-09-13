@@ -5,6 +5,11 @@ Discovery does not save or approve targets. Existing source/project/issue/
 automation scope, installation, group-reachability and message-belongs-to-group
 checks remain on their save/send paths. OL-12 chat-only ingress is unchanged.
 
+Private-chat observations and explicit confirmation are specified separately in
+[PRIVATE-CHAT-DISCOVERY-CONTRACT.md](PRIVATE-CHAT-DISCOVERY-CONTRACT.md) (OL-75).
+That contract adds local candidate and optional identity-lookup capability fields;
+the group list below remains group-only.
+
 ## Endpoints and authorization
 
 Prefix: `/api/workspaces/{workspace_uuid}/lark/installations/{installation_uuid}`.
