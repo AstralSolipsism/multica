@@ -189,6 +189,9 @@ export function RuntimeConfigTab({
         <legend className="px-1 text-caption font-medium">
           {t(($) => $.tab_body.runtime_config.gateway_legend)}
         </legend>
+        <p className="text-caption text-muted-foreground">
+          {t(($) => $.tab_body.runtime_config.gateway_hint)}
+        </p>
 
         <div className="space-y-1.5">
           <Label htmlFor="openclaw-gw-host" className="text-caption">
@@ -199,8 +202,15 @@ export function RuntimeConfigTab({
             value={state.host}
             onChange={(e) => setState((s) => ({ ...s, host: e.target.value }))}
             placeholder={t(($) => $.tab_body.runtime_config.host_placeholder)}
+            aria-describedby="openclaw-gw-host-hint"
             className="font-mono text-caption"
           />
+          <p
+            id="openclaw-gw-host-hint"
+            className="text-caption text-muted-foreground"
+          >
+            {t(($) => $.tab_body.runtime_config.host_hint)}
+          </p>
         </div>
 
         <div className="space-y-1.5">
@@ -247,8 +257,20 @@ export function RuntimeConfigTab({
                 : t(($) => $.tab_body.runtime_config.token_placeholder)
             }
             autoComplete="off"
+            aria-describedby="openclaw-gw-token-hint"
             className="font-mono text-caption"
           />
+          <p
+            id="openclaw-gw-token-hint"
+            className="text-caption text-muted-foreground"
+          >
+            {/* The masked-token contract makes "blank" ambiguous: with a
+                saved token blank KEEPS it, while with none blank INHERITS.
+                Say which one applies instead of promising both. */}
+            {state.tokenWasMasked
+              ? t(($) => $.tab_body.runtime_config.token_hint_saved)
+              : t(($) => $.tab_body.runtime_config.token_hint)}
+          </p>
         </div>
 
         <div className="flex items-center justify-between gap-2 pt-1">

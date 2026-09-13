@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Globe2, Loader2, Plus, SquareTerminal, Trash2 } from "lucide-react";
+import { ChevronDown, ClipboardPaste, Globe2, Loader2, Plus, SquareTerminal, Trash2 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
 import {
@@ -34,7 +34,15 @@ import {
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { useT } from "../../../i18n";
 import type { ManagedMcpServer } from "./mcp-config-model";
-import { isRecord, mcpTransport } from "./mcp-config-model";
+import {
+  dedupeMcpServerName,
+  isRecord,
+  MCP_SERVER_NAME_PATTERN,
+  mcpTransport,
+  sanitizeMcpServerName,
+  suggestMcpServerName,
+} from "./mcp-config-model";
+import { parseMcpSnippet, type McpSnippetError } from "./mcp-snippet";
 
 type EditorMode = "form" | "json";
 type FormTransport = "stdio" | "http";
@@ -240,9 +248,19 @@ export function McpServerDialog({
 }) {
   const { t } = useT("agents");
   const [name, setName] = useState("");
+  // Once the user edits the name (or accepts one carried by a pasted
+  // snippet), it is theirs: command/URL edits stop rewriting it. Editing a
+  // saved server never touches its name at all — that is identity.
+  const [nameTouched, setNameTouched] = useState(false);
   const [mode, setMode] = useState<EditorMode>("form");
   const [form, setForm] = useState<McpFormState>(emptyForm);
   const [jsonText, setJsonText] = useState("{}");
+  const [snippetOpen, setSnippetOpen] = useState(false);
+  const [snippetText, setSnippetText] = useState("");
+  const [snippetError, setSnippetError] = useState<{
+    error: McpSnippetError;
+    detail?: string;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveAttempted, setSaveAttempted] = useState(false);
   const fieldId = useId();
@@ -269,8 +287,36 @@ export function McpServerDialog({
     );
     setJsonText(JSON.stringify(config, null, 2));
     setMode(server && !formSupportsServer(server) ? "json" : "form");
+    setNameTouched(false);
+    setSnippetOpen(false);
+    setSnippetText("");
+    setSnippetError(null);
     setSaveAttempted(false);
   }, [open, replacementMode, server]);
+
+  // Suggesting a name is a CREATE-time convenience only. `replacementMode`
+  // hides the name field and editing preserves the saved name, so both are
+  // excluded here.
+  const creating = server === null && !replacementMode;
+  const nameSuggestion = useMemo(
+    () =>
+      creating
+        ? suggestMcpServerName(
+            {
+              transport: form.transport,
+              command: form.command,
+              args: form.args,
+              url: form.url,
+            },
+            existingNames,
+          )
+        : "",
+    [creating, form.transport, form.command, form.args, form.url, existingNames],
+  );
+  useEffect(() => {
+    if (!creating || nameTouched) return;
+    setName(nameSuggestion);
+  }, [creating, nameTouched, nameSuggestion]);
 
   // The form is unavailable — not merely unselected — for entries it cannot
   // represent, so switching to it cannot rewrite them either.
@@ -287,7 +333,7 @@ export function McpServerDialog({
       ? null
       : submittedName === ""
         ? "required"
-        : !/^[A-Za-z0-9_-]+$/.test(submittedName)
+        : !MCP_SERVER_NAME_PATTERN.test(submittedName)
           ? "format"
           : existingNames.has(submittedName) && submittedName !== server?.name
             ? "duplicate"
@@ -329,11 +375,38 @@ export function McpServerDialog({
             })
           : "";
 
+  const snippetErrorMessage =
+    snippetError === null
+      ? ""
+      : snippetError.error === "empty"
+        ? t(($) => $.tab_body.mcp_config.dialog_snippet_empty)
+        : snippetError.error === "invalid_json"
+          ? t(($) => $.tab_body.mcp_config.dialog_snippet_invalid_json, {
+              error: snippetError.detail ?? "",
+            })
+          : snippetError.error === "not_object"
+            ? t(($) => $.tab_body.mcp_config.dialog_snippet_not_object)
+            : snippetError.error === "no_servers"
+              ? t(($) => $.tab_body.mcp_config.dialog_snippet_no_servers)
+              : snippetError.error === "multiple_servers"
+                ? t(($) => $.tab_body.mcp_config.dialog_snippet_multiple, {
+                    names: snippetError.detail ?? "",
+                  })
+                : snippetError.error === "unbalanced_quotes"
+                  ? t(($) => $.tab_body.mcp_config.dialog_snippet_unbalanced)
+                  : snippetError.error === "unsupported_syntax"
+                    ? t(($) => $.tab_body.mcp_config.dialog_snippet_unsupported)
+                    : t(($) => $.tab_body.mcp_config.dialog_snippet_missing_target);
+
   const nameHintId = `${fieldId}-name-hint`;
   const nameErrorId = `${fieldId}-name-error`;
+  const commandHintId = `${fieldId}-command-hint`;
   const commandErrorId = `${fieldId}-command-error`;
+  const urlHintId = `${fieldId}-url-hint`;
   const urlErrorId = `${fieldId}-url-error`;
   const jsonErrorId = `${fieldId}-json-error`;
+  const snippetHintId = `${fieldId}-snippet-hint`;
+  const snippetErrorId = `${fieldId}-snippet-error`;
 
   const handleModeChange = (next: string | number | null) => {
     if (next !== "form" && next !== "json") return;
@@ -344,6 +417,55 @@ export function McpServerDialog({
     }
     setSaveAttempted(false);
     setMode(next);
+  };
+
+  const applySnippet = () => {
+    const result = parseMcpSnippet(snippetText);
+    if (!result.ok) {
+      // The snippet stays in the box and every field keeps its draft value —
+      // a paste error must never destroy what was already entered.
+      setSnippetError(result);
+      return;
+    }
+    // A name carried by the snippet is an explicit choice: it latches the
+    // field the same way typing does, so later command/URL edits (or the
+    // suggestion effect) never overwrite it. An unusable snippet name falls
+    // back to the derived suggestion instead of failing required-validation
+    // on an empty string.
+    if (creating && result.name !== null && !nameTouched) {
+      const base = sanitizeMcpServerName(result.name);
+      if (base !== "") {
+        setName(dedupeMcpServerName(base, existingNames));
+        setNameTouched(true);
+      }
+    }
+    if (formAvailable && formCanExpressConfig(result.config)) {
+      // Landing on the form shows the user exactly what was filled in — but
+      // only when THIS snippet round-trips through it. The judge is the
+      // pasted config, not the entry being replaced: an `sse` (or any
+      // non-form-expressible) snippet must go to the verbatim JSON editor,
+      // or saving from the form would silently rewrite its protocol to
+      // `type: "http"`.
+      setForm(formFromConfig(result.config));
+      setMode("form");
+    } else {
+      // Entries the form cannot represent (legacy provider-native or exotic
+      // transports) are JSON-only so saving cannot silently rewrite their
+      // protocol — the snippet lands there verbatim instead.
+      setJsonText(JSON.stringify(result.config, null, 2));
+      setMode("json");
+      // The form is also the name-suggestion source. Without this sync, a
+      // JSON-routed snippet would leave the suggested name empty — or
+      // carrying a stale suggestion from an earlier draft — even though the
+      // endpoint/command it came from is known. The form values stay hidden
+      // behind the JSON view; a later manual switch regenerates them from
+      // the JSON anyway.
+      setForm(formFromConfig(result.config));
+    }
+    setSnippetText("");
+    setSnippetError(null);
+    setSnippetOpen(false);
+    setSaveAttempted(false);
   };
 
   const handleSave = async () => {
@@ -421,7 +543,10 @@ export function McpServerDialog({
                         autoComplete="off"
                         spellCheck={false}
                         value={name}
-                        onChange={(event) => setName(event.target.value)}
+                        onChange={(event) => {
+                          setName(event.target.value);
+                          setNameTouched(true);
+                        }}
                         aria-invalid={nameErrorMessage ? true : undefined}
                         aria-describedby={nameErrorMessage ? nameErrorId : nameHintId}
                         readOnly={lockName}
@@ -445,6 +570,83 @@ export function McpServerDialog({
                       )}
                     </Field>
                   ) : null}
+
+                  {/* Paste assistant for the shapes MCP docs actually publish
+                      (wrapper JSON, one server object, a launch command line,
+                      a bare URL). Applying only fills fields — a pasted
+                      command is never executed — and a parse failure keeps
+                      both the snippet and the draft. */}
+                  <div className="rounded-lg border border-dashed border-surface-border">
+                    <button
+                      type="button"
+                      aria-expanded={snippetOpen}
+                      onClick={() => {
+                        setSnippetOpen((current) => !current);
+                        setSnippetError(null);
+                      }}
+                      className="flex w-full items-center gap-2 px-4 py-3 text-left text-body font-medium transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <ClipboardPaste
+                        className="h-4 w-4 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                      {t(($) => $.tab_body.mcp_config.dialog_snippet_toggle)}
+                      <ChevronDown
+                        className={cn(
+                          "ml-auto h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                          snippetOpen && "rotate-180",
+                        )}
+                        aria-hidden="true"
+                      />
+                    </button>
+                    {snippetOpen ? (
+                      <div className="space-y-3 border-t border-dashed border-surface-border px-4 py-4">
+                        <p
+                          id={snippetHintId}
+                          className="text-caption text-muted-foreground"
+                        >
+                          {t(($) => $.tab_body.mcp_config.dialog_snippet_hint)}
+                        </p>
+                        <Textarea
+                          aria-label={t(($) => $.tab_body.mcp_config.dialog_snippet_aria)}
+                          aria-describedby={
+                            snippetErrorMessage
+                              ? snippetErrorId
+                              : snippetHintId
+                          }
+                          aria-invalid={snippetErrorMessage ? true : undefined}
+                          autoFocus
+                          autoComplete="off"
+                          spellCheck={false}
+                          rows={4}
+                          // Example launch command: a format hint, not translatable copy.
+                          // eslint-disable-next-line no-restricted-syntax
+                          placeholder="npx -y @modelcontextprotocol/server-github"
+                          className="resize-none font-mono text-caption leading-5 aria-invalid:border-input aria-invalid:ring-0"
+                          value={snippetText}
+                          onChange={(event) => {
+                            setSnippetText(event.target.value);
+                            setSnippetError(null);
+                          }}
+                        />
+                        {snippetErrorMessage ? (
+                          <FieldError id={snippetErrorId} className="text-caption">
+                            {snippetErrorMessage}
+                          </FieldError>
+                        ) : null}
+                        <div className="flex justify-end">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={applySnippet}
+                          >
+                            {t(($) => $.tab_body.mcp_config.dialog_snippet_apply)}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
 
                   <Tabs value={mode} onValueChange={handleModeChange} className="gap-7">
                     <div className="space-y-3">
@@ -533,7 +735,7 @@ export function McpServerDialog({
                               }}
                               aria-invalid={formErrorMessage ? true : undefined}
                               aria-describedby={
-                                formErrorMessage ? commandErrorId : undefined
+                                formErrorMessage ? commandErrorId : commandHintId
                               }
                               className="aria-invalid:border-input aria-invalid:ring-0"
                             />
@@ -541,7 +743,11 @@ export function McpServerDialog({
                               <FieldError id={commandErrorId} className="text-caption">
                                 {formErrorMessage}
                               </FieldError>
-                            ) : null}
+                            ) : (
+                              <FieldDescription id={commandHintId} className="text-caption">
+                                {t(($) => $.tab_body.mcp_config.dialog_command_hint)}
+                              </FieldDescription>
+                            )}
                           </Field>
                           <StringListEditor
                             label={t(($) => $.tab_body.mcp_config.dialog_args_label)}
@@ -590,14 +796,18 @@ export function McpServerDialog({
                                 }));
                               }}
                               aria-invalid={formErrorMessage ? true : undefined}
-                              aria-describedby={formErrorMessage ? urlErrorId : undefined}
+                              aria-describedby={formErrorMessage ? urlErrorId : urlHintId}
                               className="aria-invalid:border-input aria-invalid:ring-0"
                             />
                             {formErrorMessage ? (
                               <FieldError id={urlErrorId} className="text-caption">
                                 {formErrorMessage}
                               </FieldError>
-                            ) : null}
+                            ) : (
+                              <FieldDescription id={urlHintId} className="text-caption">
+                                {t(($) => $.tab_body.mcp_config.dialog_url_hint)}
+                              </FieldDescription>
+                            )}
                           </Field>
                           <KeyValueEditor
                             label={t(($) => $.tab_body.mcp_config.dialog_headers_label)}
