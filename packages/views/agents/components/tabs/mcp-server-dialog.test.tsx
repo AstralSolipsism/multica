@@ -235,4 +235,198 @@ describe("McpServerDialog", () => {
       headers: { First: "one", Updated: "four" },
     });
   });
+
+  // The derivation/collision matrix itself is covered node-side in
+  // mcp-config-model.test.ts; here only the wiring between it and the draft.
+  it("suggests a unique name from the typed command until the user edits it", async () => {
+    const user = userEvent.setup();
+    renderDialog({ existingNames: new Set(["server-github"]) });
+
+    const name = screen.getByLabelText("Server name");
+    expect(name).toHaveValue("");
+
+    await user.type(screen.getByLabelText("Command"), "npx");
+    // A bare launcher has no meaningful name yet.
+    expect(name).toHaveValue("");
+
+    await user.click(screen.getByRole("button", { name: "Add argument" }));
+    await user.type(screen.getByLabelText("Startup arguments 1"), "-y");
+    await user.click(screen.getByRole("button", { name: "Add argument" }));
+    await user.type(
+      screen.getByLabelText("Startup arguments 2"),
+      "@modelcontextprotocol/server-github",
+    );
+    expect(name).toHaveValue("server-github-2");
+
+    // Once the user edits the name, command changes stop rewriting it.
+    await user.clear(name);
+    await user.type(name, "my-fetch");
+    await user.clear(screen.getByLabelText("Command"));
+    await user.type(screen.getByLabelText("Command"), "uvx");
+    expect(name).toHaveValue("my-fetch");
+  });
+
+  it("suggests a name from the endpoint URL", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.click(screen.getByRole("button", { name: /^Streamable HTTP/ }));
+    await user.type(
+      screen.getByLabelText("Server URL"),
+      "https://mcp.notion.com/mcp",
+    );
+
+    expect(screen.getByLabelText("Server name")).toHaveValue("notion");
+  });
+
+  it("never rewrites the saved name of an existing server", async () => {
+    const user = userEvent.setup();
+    renderDialog({ server: managedServer() });
+
+    const name = screen.getByLabelText("Server name");
+    expect(name).toHaveValue("fetch");
+    await user.clear(screen.getByLabelText("Command"));
+    await user.type(screen.getByLabelText("Command"), "npx");
+    await user.click(screen.getByRole("button", { name: "Add argument" }));
+    await user.type(screen.getByLabelText("Startup arguments 1"), "other-server");
+
+    expect(name).toHaveValue("fetch");
+  });
+
+  it("fills fields and the name from a pasted mcpServers snippet", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderDialog();
+
+    await user.click(screen.getByRole("button", { name: "Paste a config snippet" }));
+    fireEvent.change(screen.getByLabelText("MCP config snippet"), {
+      target: {
+        value: JSON.stringify({
+          mcpServers: {
+            github: {
+              command: "npx",
+              args: ["-y", "@modelcontextprotocol/server-github"],
+              env: { GITHUB_TOKEN: "secret" },
+            },
+          },
+        }),
+      },
+    });
+    await user.click(screen.getByRole("button", { name: "Fill in fields" }));
+
+    expect(screen.getByLabelText("Server name")).toHaveValue("github");
+    expect(screen.getByLabelText("Command")).toHaveValue("npx");
+    expect(screen.getByLabelText("Startup arguments 1")).toHaveValue("-y");
+    expect(screen.getByLabelText("Startup arguments 2")).toHaveValue(
+      "@modelcontextprotocol/server-github",
+    );
+    expect(
+      screen.getByLabelText("Environment variables: Variable name 1"),
+    ).toHaveValue("GITHUB_TOKEN");
+
+    // The snippet's name latches like a typed one: editing the command must
+    // not replace it with a derived suggestion.
+    await user.type(screen.getByLabelText("Command"), "-alt");
+    expect(screen.getByLabelText("Server name")).toHaveValue("github");
+
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    expect(onSave).toHaveBeenCalledWith("github", {
+      command: "npx-alt",
+      args: ["-y", "@modelcontextprotocol/server-github"],
+      env: { GITHUB_TOKEN: "secret" },
+    });
+  });
+
+  it("splits a pasted launch command line and derives the name, without running it", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderDialog();
+
+    await user.click(screen.getByRole("button", { name: "Paste a config snippet" }));
+    fireEvent.change(screen.getByLabelText("MCP config snippet"), {
+      target: { value: "npx -y @modelcontextprotocol/server-github" },
+    });
+    await user.click(screen.getByRole("button", { name: "Fill in fields" }));
+
+    expect(screen.getByLabelText("Command")).toHaveValue("npx");
+    expect(screen.getByLabelText("Startup arguments 1")).toHaveValue("-y");
+    expect(screen.getByLabelText("Startup arguments 2")).toHaveValue(
+      "@modelcontextprotocol/server-github",
+    );
+    expect(screen.getByLabelText("Server name")).toHaveValue("server-github");
+
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    expect(onSave).toHaveBeenCalledWith("server-github", {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-github"],
+    });
+  });
+
+  it("keeps the snippet and every draft field when the snippet fails validation", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderDialog();
+
+    await user.type(screen.getByLabelText("Server name"), "draft-name");
+    await user.type(screen.getByLabelText("Command"), "uvx");
+    await user.click(screen.getByRole("button", { name: "Paste a config snippet" }));
+    const snippet = screen.getByLabelText("MCP config snippet");
+    fireEvent.change(snippet, { target: { value: "{invalid" } });
+    await user.click(screen.getByRole("button", { name: "Fill in fields" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "That JSON doesn't parse",
+    );
+    expect(snippet).toHaveValue("{invalid");
+    expect(screen.getByLabelText("Server name")).toHaveValue("draft-name");
+    expect(screen.getByLabelText("Command")).toHaveValue("uvx");
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("rejects a snippet that defines more than one server", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.click(screen.getByRole("button", { name: "Paste a config snippet" }));
+    fireEvent.change(screen.getByLabelText("MCP config snippet"), {
+      target: {
+        value:
+          '{"mcpServers": {"one": {"command": "a"}, "two": {"command": "b"}}}',
+      },
+    });
+    await user.click(screen.getByRole("button", { name: "Fill in fields" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "more than one server (one, two)",
+    );
+    expect(screen.getByLabelText("Command")).toHaveValue("");
+  });
+
+  it("fills the JSON editor instead when the entry cannot use the form", async () => {
+    const user = userEvent.setup();
+    renderDialog({
+      server: managedServer({
+        container: "mcp",
+        config: { type: "local", command: ["old"] },
+      }),
+    });
+
+    expect(screen.getByRole("tab", { name: "JSON" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await user.click(screen.getByRole("button", { name: "Paste a config snippet" }));
+    fireEvent.change(screen.getByLabelText("MCP config snippet"), {
+      target: { value: "npx new-server" },
+    });
+    await user.click(screen.getByRole("button", { name: "Fill in fields" }));
+
+    const json = screen.getByLabelText("MCP server JSON configuration");
+    expect(json).toHaveValue(
+      JSON.stringify({ command: "npx", args: ["new-server"] }, null, 2),
+    );
+    expect(screen.getByRole("tab", { name: "JSON" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    // The saved name is identity and is never touched.
+    expect(screen.getByLabelText("Server name")).toHaveValue("fetch");
+  });
 });
