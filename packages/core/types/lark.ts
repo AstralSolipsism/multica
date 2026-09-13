@@ -5,6 +5,72 @@ export interface LarkConversationGrant {
   chats: { chat_id: string; chat_type: "group" | "p2p" }[];
 }
 
+// --- Target discovery (OL-72 contract, OL-74 frontend) ---
+// Wire shapes mirror server/internal/messagedelivery/TARGET-DISCOVERY-CONTRACT.md
+// and server/internal/integrations/lark/target-discovery.schema.json. Read-only
+// discovery for the group / message-anchor / conversation-grant pickers; it
+// never saves or approves a target.
+
+/** What the configured transport can do — describes the transport, not the
+ * current provider permission grants (those surface as errors on list calls). */
+export interface LarkTargetCapabilities {
+  chat_list_supported: boolean;
+  message_anchor_list_supported: boolean;
+  region: string;
+  scope_status: string;
+  max_chat_page_size: number;
+  max_message_page_size: number;
+}
+
+/** One joined group as returned by the discovery list. Identity is
+ * (installation_id, chat_id); name/description are NOT unique. */
+export interface LarkDiscoveredChat {
+  chat_id: string;
+  name: string;
+  description: string;
+  avatar: string;
+  external: boolean;
+  /** Provider status string ("normal", …). Unknown/new values are retained;
+   * they never prove sending is allowed. */
+  chat_status: string;
+}
+
+export interface LarkChatsPage {
+  items: LarkDiscoveredChat[];
+  /** false always pairs with next_cursor ""; a short or empty items page does
+   * NOT imply completion — keep paging while has_more is true. */
+  has_more: boolean;
+  /** Opaque signed continuation, valid ~30 min, bound to
+   * workspace/installation/caller/query/page-size. Never construct or store
+   * it as target identity. */
+  next_cursor: string;
+}
+
+export interface LarkMessageAnchorSender {
+  /** "user" | "app" | "anonymous" | "unknown"; anonymous/unknown carry no id. */
+  type: string;
+  id?: string;
+  id_type?: string;
+}
+
+/** One selectable message anchor. `summary` is pre-flattened plain text
+ * (never HTML/Markdown); `create_time` is an epoch-millisecond string. */
+export interface LarkMessageAnchor {
+  message_id: string;
+  chat_id: string;
+  message_type: string;
+  summary: string;
+  create_time: string;
+  thread_id?: string;
+  sender: LarkMessageAnchorSender;
+}
+
+export interface LarkAnchorsPage {
+  items: LarkMessageAnchor[];
+  has_more: boolean;
+  next_cursor: string;
+}
+
 /** A Lark Bot installation bound to a single Multica agent.
  *
  * Wire shape mirrors `LarkInstallationResponse` in

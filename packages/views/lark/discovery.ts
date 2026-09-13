@@ -1,0 +1,114 @@
+import { ApiError, errorCode } from "@multica/core/api";
+import type {
+  LarkAnchorsPage,
+  LarkChatsPage,
+  LarkDiscoveredChat,
+  LarkMessageAnchor,
+} from "@multica/core/types";
+
+// Pure helpers for the Lark target pickers (OL-74). Canonical home of the
+// error-code mapping and the page-merge rules from
+// server/internal/messagedelivery/TARGET-DISCOVERY-CONTRACT.md — component
+// suites render the states, the matrices live in discovery.test.ts.
+
+/** Stable discovery error codes → keys under `settings:lark.picker.error`. */
+export type LarkDiscoveryErrorKey =
+  | "forbidden"
+  | "permission_denied"
+  | "unsupported"
+  | "unavailable"
+  | "rate_limited"
+  | "invalid_cursor"
+  | "chat_unavailable"
+  | "message_unavailable"
+  | "installation_inactive"
+  | "installation_not_found"
+  | "invalid_response"
+  | "invalid_request"
+  | "generic";
+
+export function larkDiscoveryErrorKey(err: unknown): LarkDiscoveryErrorKey {
+  switch (errorCode(err)) {
+    case "lark_discovery_forbidden":
+      return "forbidden";
+    case "lark_discovery_permission_denied":
+      return "permission_denied";
+    case "lark_discovery_unsupported":
+      return "unsupported";
+    case "lark_discovery_unavailable":
+      return "unavailable";
+    case "lark_discovery_rate_limited":
+      return "rate_limited";
+    case "lark_discovery_invalid_cursor":
+      return "invalid_cursor";
+    case "lark_discovery_chat_unavailable":
+      return "chat_unavailable";
+    case "lark_discovery_message_unavailable":
+      return "message_unavailable";
+    case "lark_installation_inactive":
+      return "installation_inactive";
+    case "lark_installation_not_found":
+      return "installation_not_found";
+    case "lark_discovery_invalid_response":
+      return "invalid_response";
+    case "lark_discovery_invalid_request":
+      return "invalid_request";
+    default:
+      break;
+  }
+  // A pre-discovery server answers these routes with a bare router 404 and
+  // no code. That is the "old server" state, distinct from a coded 404
+  // (installation gone / chat unavailable) which is handled above.
+  if (err instanceof ApiError && err.status === 404) return "unsupported";
+  return "generic";
+}
+
+/** Merge chat pages in order, deduplicating by chat_id (first occurrence
+ * wins). The provider listing is not an immutable snapshot — a group may
+ * move between pages while the bot joins/leaves others. */
+export function mergeDiscoveredChats(
+  pages: ReadonlyArray<Pick<LarkChatsPage, "items">> | undefined,
+): LarkDiscoveredChat[] {
+  const seen = new Set<string>();
+  const rows: LarkDiscoveredChat[] = [];
+  for (const page of pages ?? []) {
+    for (const item of page.items) {
+      if (seen.has(item.chat_id)) continue;
+      seen.add(item.chat_id);
+      rows.push(item);
+    }
+  }
+  return rows;
+}
+
+/** Merge anchor pages in order, deduplicating by message_id. Order is the
+ * provider's newest-first; deleted/recalled messages are already omitted
+ * server-side. */
+export function mergeMessageAnchors(
+  pages: ReadonlyArray<Pick<LarkAnchorsPage, "items">> | undefined,
+): LarkMessageAnchor[] {
+  const seen = new Set<string>();
+  const rows: LarkMessageAnchor[] = [];
+  for (const page of pages ?? []) {
+    for (const item of page.items) {
+      if (seen.has(item.message_id)) continue;
+      seen.add(item.message_id);
+      rows.push(item);
+    }
+  }
+  return rows;
+}
+
+/** `create_time` is an epoch-millisecond string; anything else is drift and
+ * must not become a bogus Date (NaN renders as "Invalid Date"). */
+export function anchorTimeMs(createTime: string): number | null {
+  if (!/^\d{1,15}$/.test(createTime)) return null;
+  const ms = Number(createTime);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** Short non-unique disambiguator shown next to equal-named groups; the full
+ * ID is one toggle away in the row itself. */
+export function chatIdSuffix(id: string): string {
+  return id.length <= 6 ? id : id.slice(-6);
+}

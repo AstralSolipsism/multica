@@ -143,6 +143,44 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
+// The Lark pickers' own behavior (search, paging, error states) is covered by
+// packages/views/lark/*.test.tsx. Here a stub renders the manual-entry
+// fallback by default — matching a pre-discovery server — and a "pick" mode
+// commits a canned selection so the dialog's payload threading is testable.
+const pickerMode = vi.hoisted(() => ({ current: "fallback" as "fallback" | "pick" }));
+vi.mock("../../lark", () => ({
+  LarkChatPicker: (props: {
+    fallback: React.ReactNode;
+    onChange: (sel: { chatId: string; name: string } | null) => void;
+  }) =>
+    pickerMode.current === "pick" ? (
+      <button
+        type="button"
+        onClick={() => props.onChange({ chatId: "oc_picked", name: "Picked Group" })}
+      >
+        Pick group
+      </button>
+    ) : (
+      <>{props.fallback}</>
+    ),
+  LarkAnchorPicker: (props: {
+    fallback: React.ReactNode;
+    onChange: (sel: { messageId: string; summary: string; threadId?: string } | null) => void;
+  }) =>
+    pickerMode.current === "pick" ? (
+      <button
+        type="button"
+        onClick={() =>
+          props.onChange({ messageId: "om_picked", summary: "Picked anchor", threadId: "omt_1" })
+        }
+      >
+        Pick anchor
+      </button>
+    ) : (
+      <>{props.fallback}</>
+    ),
+}));
+
 const ROUTE = {
   id: "route-1",
   workspace_id: "ws-1",
@@ -282,6 +320,7 @@ describe("MessageRouteEditorDialog (via section)", () => {
     installationsRef.current = ok(DEFAULT_INSTALLATIONS);
     roleRef.current = "owner";
     fetchQueryBehavior.current = "ok";
+    pickerMode.current = "fallback";
     mockCreate.mockReset().mockResolvedValue({});
     mockUpdate.mockReset().mockResolvedValue({});
     mockApprove.mockReset().mockResolvedValue({});
@@ -356,6 +395,83 @@ describe("MessageRouteEditorDialog (via section)", () => {
       content_mode: "summary",
       enabled: true,
     });
+  });
+
+  it("threads a picked group, anchor and topic thread into approve + save (OL-74)", async () => {
+    pickerMode.current = "pick";
+    const user = await openEditor();
+    await user.click(screen.getByRole("combobox", { name: /^target$/i }));
+    await user.click(await screen.findByRole("option", { name: /topic/i }));
+
+    await user.click(screen.getByRole("button", { name: "Pick group" }));
+    await user.click(screen.getByRole("button", { name: "Pick anchor" }));
+
+    await user.click(screen.getByRole("button", { name: /approve and save/i }));
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
+    // Approval identity stays chat+message (the server target key); the
+    // picked anchor's thread rides along on the save only.
+    expect(mockApprove).toHaveBeenCalledWith({
+      autopilotId: "ap-1",
+      installation_id: "inst-1",
+      target_type: "topic",
+      target_chat_id: "oc_picked",
+      target_message_id: "om_picked",
+    });
+    expect(mockCreate).toHaveBeenCalledWith({
+      autopilotId: "ap-1",
+      installation_id: "inst-1",
+      target_type: "topic",
+      target_chat_id: "oc_picked",
+      target_message_id: "om_picked",
+      target_thread_id: "omt_1",
+      conditions: "success",
+      content_mode: "summary",
+      enabled: true,
+    });
+  });
+
+  it("preserves a saved topic's thread id when the route is edited untouched", async () => {
+    const TOPIC_ROUTE = {
+      ...ROUTE,
+      target_type: "topic",
+      target_user_id: null,
+      target_chat_id: "oc_1",
+      target_message_id: "om_anchor",
+      target_thread_id: "omt_keep",
+      target_key: "topic:oc_1:om_anchor",
+    };
+    routesRef.current = ok([TOPIC_ROUTE]);
+    approvalsRef.current = ok([
+      {
+        id: "appr-1",
+        workspace_id: "ws-1",
+        autopilot_id: "ap-1",
+        installation_id: "inst-1",
+        target_key: "topic:oc_1:om_anchor",
+        target_type: "topic",
+        approved_by: "user-1",
+        approved_at: "2026-09-08T02:30:00Z",
+        revoked_at: null,
+      },
+    ]);
+
+    const user = userEvent.setup();
+    renderSection();
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
+    await screen.findByText("Edit push target");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        routeId: "route-1",
+        target_type: "topic",
+        target_chat_id: "oc_1",
+        target_message_id: "om_anchor",
+        target_thread_id: "omt_keep",
+        expected_revision: 3,
+      }),
+    );
   });
 
   it("keeps the dialog open with the server error when the save fails", async () => {

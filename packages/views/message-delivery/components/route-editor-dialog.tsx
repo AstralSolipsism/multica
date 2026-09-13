@@ -37,7 +37,9 @@ import { Alert, AlertDescription } from "@multica/ui/components/ui/alert";
 import { toast } from "sonner";
 import { useT } from "../../i18n";
 import { useActorName } from "@multica/core/workspace/hooks";
+import { LarkAnchorPicker, LarkChatPicker } from "../../lark";
 import { messageDeliveryErrorKey, messageTargetKey } from "../copy";
+import { anchorAfterChatChange, anchorAfterMessageEdit } from "../target-selection";
 
 const TARGET_TYPES = ["member", "group", "topic"] as const;
 const CONDITIONS = ["success", "failure", "all"] as const;
@@ -105,6 +107,13 @@ export function MessageRouteEditorDialog({
   const [targetUserId, setTargetUserId] = useState(route?.target_user_id ?? "");
   const [targetChatId, setTargetChatId] = useState(route?.target_chat_id ?? "");
   const [targetMessageId, setTargetMessageId] = useState(route?.target_message_id ?? "");
+  // Display-only snapshots of the picked group/anchor names, plus the
+  // optional topic thread the anchor belongs to. Persisted identity stays
+  // the raw IDs; a restored saved target starts with empty snapshots and
+  // shows its ID instead.
+  const [targetChatName, setTargetChatName] = useState("");
+  const [targetAnchorSummary, setTargetAnchorSummary] = useState("");
+  const [targetThreadId, setTargetThreadId] = useState(route?.target_thread_id ?? "");
   const [conditions, setConditions] = useState<MessageRouteCondition>(
     route?.conditions ?? "success",
   );
@@ -113,6 +122,32 @@ export function MessageRouteEditorDialog({
   );
   const [enabled, setEnabled] = useState(route?.enabled ?? true);
   const [error, setError] = useState<unknown>(null);
+
+  // One rule for both entry paths (picker pick and manual fallback typing):
+  // the anchor triple only survives edits that leave its parent untouched.
+  // See target-selection.ts for the canonical matrix.
+  const applyTargetChatId = (nextChatId: string, name = "") => {
+    const anchor = anchorAfterChatChange(targetChatId, nextChatId, {
+      messageId: targetMessageId,
+      threadId: targetThreadId,
+      summary: targetAnchorSummary,
+    });
+    setTargetChatId(nextChatId);
+    setTargetChatName(name);
+    setTargetMessageId(anchor.messageId);
+    setTargetThreadId(anchor.threadId);
+    setTargetAnchorSummary(anchor.summary);
+  };
+  const applyTargetMessageId = (nextMessageId: string) => {
+    const anchor = anchorAfterMessageEdit(targetMessageId, nextMessageId, {
+      messageId: targetMessageId,
+      threadId: targetThreadId,
+      summary: targetAnchorSummary,
+    });
+    setTargetMessageId(anchor.messageId);
+    setTargetThreadId(anchor.threadId);
+    setTargetAnchorSummary(anchor.summary);
+  };
 
   const isExternal = targetType === "group" || targetType === "topic";
   const typedKey = useMemo(
@@ -174,6 +209,9 @@ export function MessageRouteEditorDialog({
       setTargetUserId(found.target_user_id ?? "");
       setTargetChatId(found.target_chat_id ?? "");
       setTargetMessageId(found.target_message_id ?? "");
+      setTargetThreadId(found.target_thread_id ?? "");
+      setTargetChatName("");
+      setTargetAnchorSummary("");
       setConditions(found.conditions);
       setContentMode(found.content_mode);
       setConflict("adopted");
@@ -197,7 +235,14 @@ export function MessageRouteEditorDialog({
         : {
             target_chat_id: targetChatId.trim(),
             ...(targetType === "topic"
-              ? { target_message_id: targetMessageId.trim() }
+              ? {
+                  target_message_id: targetMessageId.trim(),
+                  // Optional thread of the picked anchor; manual ID entry
+                  // (discovery fallback) never carries one.
+                  ...(targetThreadId.trim() !== ""
+                    ? { target_thread_id: targetThreadId.trim() }
+                    : {}),
+                }
               : {}),
           }),
     };
@@ -334,13 +379,27 @@ export function MessageRouteEditorDialog({
           {isExternal && (
             <div className="space-y-1.5">
               <label className="text-caption text-muted-foreground">
-                {t(($) => $.editor.chat_id)}
+                {t(($) => $.editor.group)}
               </label>
-              <Input
-                value={targetChatId}
-                onChange={(e) => setTargetChatId(e.target.value)}
-                placeholder={t(($) => $.editor.chat_id_placeholder)}
-                className="font-mono"
+              <LarkChatPicker
+                wsId={wsId}
+                installationId={installationId}
+                value={
+                  targetChatId.trim() !== ""
+                    ? { chatId: targetChatId.trim(), name: targetChatName }
+                    : null
+                }
+                onChange={(sel) => applyTargetChatId(sel?.chatId ?? "", sel?.name ?? "")}
+                disabled={saving}
+                fallback={
+                  <Input
+                    value={targetChatId}
+                    onChange={(e) => applyTargetChatId(e.target.value)}
+                    placeholder={t(($) => $.editor.chat_id_placeholder)}
+                    className="font-mono"
+                    aria-label={t(($) => $.editor.chat_id)}
+                  />
+                }
               />
             </div>
           )}
@@ -348,17 +407,40 @@ export function MessageRouteEditorDialog({
           {targetType === "topic" && (
             <div className="space-y-1.5">
               <label className="text-caption text-muted-foreground">
-                {t(($) => $.editor.message_id)}
+                {t(($) => $.editor.anchor)}
               </label>
-              <Input
-                value={targetMessageId}
-                onChange={(e) => setTargetMessageId(e.target.value)}
-                placeholder={t(($) => $.editor.message_id_placeholder)}
-                className="font-mono"
+              <LarkAnchorPicker
+                wsId={wsId}
+                installationId={installationId}
+                chatId={targetChatId.trim()}
+                value={
+                  targetMessageId.trim() !== ""
+                    ? { messageId: targetMessageId.trim(), summary: targetAnchorSummary }
+                    : null
+                }
+                onChange={(sel) => {
+                  // A picked anchor carries its discovered thread; clearing
+                  // drops the triple.
+                  setTargetMessageId(sel?.messageId ?? "");
+                  setTargetAnchorSummary(sel?.summary ?? "");
+                  setTargetThreadId(sel?.threadId ?? "");
+                }}
+                disabled={saving}
+                fallback={
+                  <>
+                    <Input
+                      value={targetMessageId}
+                      onChange={(e) => applyTargetMessageId(e.target.value)}
+                      placeholder={t(($) => $.editor.message_id_placeholder)}
+                      className="font-mono"
+                      aria-label={t(($) => $.editor.message_id)}
+                    />
+                    <p className="text-caption text-muted-foreground">
+                      {t(($) => $.editor.message_id_hint)}
+                    </p>
+                  </>
+                }
               />
-              <p className="text-caption text-muted-foreground">
-                {t(($) => $.editor.message_id_hint)}
-              </p>
             </div>
           )}
 

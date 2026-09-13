@@ -217,6 +217,12 @@ export type {
   BeginLarkInstallResponse,
   LarkInstallStatusResponse,
   RedeemLarkBindingTokenResponse,
+  LarkTargetCapabilities,
+  LarkDiscoveredChat,
+  LarkChatsPage,
+  LarkMessageAnchor,
+  LarkMessageAnchorSender,
+  LarkAnchorsPage,
 } from "./lark";
 export type {
   ComposioToolkit,
