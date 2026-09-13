@@ -5,6 +5,7 @@ consent, including participants without platform accounts. The agent uses normal
 tools to summarize feedback under its own identity. Authorization, recovery and
 legacy-feedback retirement are defined in [FEEDBACK-CONTRACT.md](FEEDBACK-CONTRACT.md).
 Upstream sync points are listed in [UPSTREAM-ADAPTATION.md](UPSTREAM-ADAPTATION.md).
+Group and message-anchor picker APIs are defined in [TARGET-DISCOVERY-CONTRACT.md](TARGET-DISCOVERY-CONTRACT.md).
 
 This is the API/contract reference for the standalone result-delivery module
 ("自动化结果投递" + "个人收件箱与团队事件投递"): automation runs finish,
