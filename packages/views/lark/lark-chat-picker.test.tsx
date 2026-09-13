@@ -199,7 +199,7 @@ describe("LarkChatPicker", () => {
       <LarkChatPicker
         wsId="ws-1"
         installationId="inst-1"
-        value={{ chat_id: "oc_saved", name: "" }}
+        value={{ chatId: "oc_saved", name: "" }}
         onChange={() => {}}
         fallback={<input aria-label="manual" />}
       />,
@@ -227,14 +227,37 @@ describe("LarkChatPicker", () => {
     expect(await screen.findByLabelText("manual chat id")).toBeInTheDocument();
   });
 
-  it("explains the management role on 403 and still offers manual entry", async () => {
+  it("explains the required management role on 403 and offers NO manual-entry bypass (OL-72 contract)", async () => {
     capsMock.mockRejectedValue(
       new ApiError("forbidden", 403, "Forbidden", { error: "x", code: "lark_discovery_forbidden" }),
     );
     renderPicker(<Harness />);
 
     expect(await screen.findByText(/requires the bot's agent owner or a workspace admin/i)).toBeInTheDocument();
-    expect(screen.getByLabelText("manual chat id")).toBeInTheDocument();
+    // Forbidden is not a fallback case: no raw-ID input, no listbox.
+    expect(screen.queryByLabelText("manual chat id")).not.toBeInTheDocument();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    // The copy must not suggest bypassing discovery with a raw ID.
+    expect(screen.queryByText(/enter the ID manually/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the saved target visible (with its save semantics) under 403", async () => {
+    capsMock.mockRejectedValue(
+      new ApiError("forbidden", 403, "Forbidden", { error: "x", code: "lark_discovery_forbidden" }),
+    );
+    renderPicker(
+      <LarkChatPicker
+        wsId="ws-1"
+        installationId="inst-1"
+        value={{ chatId: "oc_saved", name: "Saved Group" }}
+        onChange={() => {}}
+        fallback={<input aria-label="manual chat id" />}
+      />,
+    );
+
+    expect(await screen.findByText("Saved Group")).toBeInTheDocument();
+    expect(screen.getByText(/requires the bot's agent owner or a workspace admin/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("manual chat id")).not.toBeInTheDocument();
   });
 
   it("switching bots cannot be polluted by the previous bot's in-flight pages", async () => {

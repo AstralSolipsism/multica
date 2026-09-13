@@ -119,9 +119,9 @@ describe("LarkAnchorPicker", () => {
     );
     await user.click(await screen.findByRole("option", { name: /release ready/ }));
     expect(picked).toEqual({
-      message_id: "om_new",
+      messageId: "om_new",
       summary: "release ready",
-      thread_id: "omt_topic",
+      threadId: "omt_topic",
     });
   });
 
@@ -168,7 +168,7 @@ describe("LarkAnchorPicker", () => {
         wsId="ws-1"
         installationId="inst-1"
         chatId="oc_a"
-        value={{ message_id: "om_saved", summary: "" }}
+        value={{ messageId: "om_saved", summary: "" }}
         onChange={() => {}}
         fallback={<input aria-label="manual" />}
       />,
@@ -181,5 +181,16 @@ describe("LarkAnchorPicker", () => {
     capsMock.mockResolvedValue({ ...CAPS, message_anchor_list_supported: false });
     renderAnchor(<Harness />);
     expect(await screen.findByLabelText("manual message id")).toBeInTheDocument();
+  });
+
+  it("explains the required role on 403 without a manual-entry bypass", async () => {
+    capsMock.mockRejectedValue(
+      new ApiError("forbidden", 403, "Forbidden", { error: "x", code: "lark_discovery_forbidden" }),
+    );
+    renderAnchor(<Harness />);
+
+    expect(await screen.findByText(/requires the bot's agent owner or a workspace admin/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("manual message id")).not.toBeInTheDocument();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 });

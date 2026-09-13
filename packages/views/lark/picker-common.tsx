@@ -12,14 +12,14 @@ import { chatIdSuffix, type LarkDiscoveryErrorKey } from "./discovery";
  * persisted identity is always the raw chat/message ID. "" means the ID was
  * restored from a saved target whose name discovery has not resolved. */
 export interface LarkChatSelection {
-  chat_id: string;
+  chatId: string;
   name: string;
 }
 
 export interface LarkAnchorSelection {
-  message_id: string;
+  messageId: string;
   summary: string;
-  thread_id?: string;
+  threadId?: string;
 }
 
 /** Stable-code → localized sentence for every discovery failure, with the

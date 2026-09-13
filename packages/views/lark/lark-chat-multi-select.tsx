@@ -48,35 +48,35 @@ export function LarkChatMultiSelect({
   const supported = caps.data?.chat_list_supported === true;
   const list = useLarkTargetChats(wsId, installationId, { enabled: supported && expanded });
 
-  const selectedIds = new Set(selected.map((s) => s.chat_id));
+  const selectedIds = new Set(selected.map((s) => s.chatId));
   const atCap = selected.length + otherCount >= max;
 
   const toggle = (chat: LarkDiscoveredChat) => {
     if (selectedIds.has(chat.chat_id)) {
-      onChange(selected.filter((s) => s.chat_id !== chat.chat_id));
+      onChange(selected.filter((s) => s.chatId !== chat.chat_id));
       return;
     }
     if (atCap) return;
-    onChange([...selected, { chat_id: chat.chat_id, name: chat.name }]);
+    onChange([...selected, { chatId: chat.chat_id, name: chat.name }]);
   };
 
   const chips = (
     <div className="flex flex-wrap gap-1.5">
       {selected.map((sel) => {
-        const label = sel.name.trim() !== "" ? sel.name : sel.chat_id;
+        const label = sel.name.trim() !== "" ? sel.name : sel.chatId;
         return (
           <span
-            key={sel.chat_id}
+            key={sel.chatId}
             className="inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/40 py-0.5 pl-2 pr-1 text-caption"
           >
             <span className="truncate">{label}</span>
-            <ChatIdDisclosure id={sel.chat_id} />
+            <ChatIdDisclosure id={sel.chatId} />
             <button
               type="button"
               className="shrink-0 rounded-xs p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
               aria-label={t(($) => $.lark.picker.multi_remove, { name: label })}
               disabled={disabled}
-              onClick={() => onChange(selected.filter((s) => s.chat_id !== sel.chat_id))}
+              onClick={() => onChange(selected.filter((s) => s.chatId !== sel.chatId))}
             >
               <X className="h-3 w-3" />
             </button>
@@ -87,6 +87,19 @@ export function LarkChatMultiSelect({
   );
 
   if (!supported) {
+    // Forbidden is NOT a fallback case (OL-72 contract): explain the required
+    // management role, never offer raw-ID entry as a bypass. Saved grants
+    // stay visible (and removable) — they keep their existing save semantics.
+    if (caps.isError && larkDiscoveryErrorKey(caps.error) === "forbidden") {
+      return (
+        <div className="space-y-2">
+          {selected.length > 0 && chips}
+          <p className="text-caption text-muted-foreground">
+            {t(($) => $.lark.picker.error.forbidden)}
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="space-y-2">
         {selected.length > 0 && chips}
@@ -139,7 +152,7 @@ export function LarkChatMultiSelect({
             />
           </div>
           {atCap && (
-            <p role="status" className="text-caption text-amber-600 dark:text-amber-500">
+            <p role="status" className="text-caption text-warning">
               {t(($) => $.lark.picker.multi_max, { max })}
             </p>
           )}

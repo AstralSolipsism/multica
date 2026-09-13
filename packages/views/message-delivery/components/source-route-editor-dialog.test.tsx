@@ -72,12 +72,12 @@ const pickerMode = vi.hoisted(() => ({ current: "fallback" as "fallback" | "pick
 vi.mock("../../lark", () => ({
   LarkChatPicker: (props: {
     fallback: React.ReactNode;
-    onChange: (sel: { chat_id: string; name: string } | null) => void;
+    onChange: (sel: { chatId: string; name: string } | null) => void;
   }) =>
     pickerMode.current === "pick" ? (
       <button
         type="button"
-        onClick={() => props.onChange({ chat_id: "oc_picked", name: "Picked Group" })}
+        onClick={() => props.onChange({ chatId: "oc_picked", name: "Picked Group" })}
       >
         Pick group
       </button>
@@ -86,13 +86,13 @@ vi.mock("../../lark", () => ({
     ),
   LarkAnchorPicker: (props: {
     fallback: React.ReactNode;
-    onChange: (sel: { message_id: string; summary: string; thread_id?: string } | null) => void;
+    onChange: (sel: { messageId: string; summary: string; threadId?: string } | null) => void;
   }) =>
     pickerMode.current === "pick" ? (
       <button
         type="button"
         onClick={() =>
-          props.onChange({ message_id: "om_picked", summary: "Picked anchor", thread_id: "omt_1" })
+          props.onChange({ messageId: "om_picked", summary: "Picked anchor", threadId: "omt_1" })
         }
       >
         Pick anchor

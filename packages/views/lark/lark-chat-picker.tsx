@@ -93,7 +93,7 @@ export function LarkSelectedChatChip({
   disabled?: boolean;
 }) {
   const { t } = useT("settings");
-  const label = value.name.trim() !== "" ? value.name : value.chat_id;
+  const label = value.name.trim() !== "" ? value.name : value.chatId;
   return (
     <div className="flex items-center justify-between gap-2 rounded-md border border-primary/40 bg-primary/5 px-3 py-2">
       <span className="min-w-0">
@@ -101,7 +101,7 @@ export function LarkSelectedChatChip({
           {t(($) => $.lark.picker.selected_group)}
         </span>
         <span className="block truncate text-body font-medium">{label}</span>
-        {value.name.trim() !== "" && <ChatIdDisclosure id={value.chat_id} />}
+        {value.name.trim() !== "" && <ChatIdDisclosure id={value.chatId} />}
       </span>
       <Button
         size="sm"
@@ -275,6 +275,22 @@ export function LarkChatPicker({
     );
   }
   if (!supported) {
+    // Forbidden is NOT a fallback case (OL-72 contract): the picker explains
+    // the management role required and never offers raw-ID entry as a bypass.
+    // The already-saved target stays visible and keeps its existing save
+    // semantics.
+    if (caps.isError && larkDiscoveryErrorKey(caps.error) === "forbidden") {
+      return (
+        <div className="space-y-2">
+          {value != null && (
+            <LarkSelectedChatChip value={value} onClear={() => onChange(null)} disabled={disabled} />
+          )}
+          <p className="text-caption text-muted-foreground">
+            {t(($) => $.lark.picker.error.forbidden)}
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="space-y-2">
         <p className="text-caption text-muted-foreground">
@@ -293,7 +309,7 @@ export function LarkChatPicker({
     !list.isLoading &&
     !list.hasMore &&
     list.query === "" &&
-    !list.items.some((c) => c.chat_id === value.chat_id);
+    !list.items.some((c) => c.chat_id === value.chatId);
 
   return (
     <div className="space-y-2">
@@ -317,18 +333,16 @@ export function LarkChatPicker({
       </div>
       <LarkChatList
         list={list}
-        selectedIds={value != null ? new Set([value.chat_id]) : new Set<string>()}
+        selectedIds={value != null ? new Set([value.chatId]) : new Set<string>()}
         onToggle={(chat) =>
           onChange(
-            value?.chat_id === chat.chat_id
-              ? null
-              : { chat_id: chat.chat_id, name: chat.name },
+            value?.chatId === chat.chat_id ? null : { chatId: chat.chat_id, name: chat.name },
           )
         }
         disabled={disabled}
       />
       {savedMissing && (
-        <p role="status" className="text-caption text-amber-600 dark:text-amber-500">
+        <p role="status" className="text-caption text-warning">
           {t(($) => $.lark.picker.saved_group_missing)}
         </p>
       )}

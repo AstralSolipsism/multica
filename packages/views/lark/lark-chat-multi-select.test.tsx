@@ -91,12 +91,12 @@ describe("LarkChatMultiSelect", () => {
     await user.click(await screen.findByRole("checkbox", { name: /Alpha/ }));
     await user.click(screen.getByRole("checkbox", { name: /Beta/ }));
 
-    const added = onChange.mock.calls.map((c) => (c[0] as LarkChatSelection[]).map((s) => s.chat_id));
+    const added = onChange.mock.calls.map((c) => (c[0] as LarkChatSelection[]).map((s) => s.chatId));
     expect(added).toEqual([["oc_a"], [], ["oc_b"]]);
   });
 
   it("renders saved grants as removable chips even before the list loads", async () => {
-    renderMulti(<Harness initial={[{ chat_id: "oc_saved", name: "" }]} />);
+    renderMulti(<Harness initial={[{ chatId: "oc_saved", name: "" }]} />);
     expect(await screen.findByText("oc_saved")).toBeInTheDocument();
 
     const user = userEvent.setup();
@@ -124,5 +124,21 @@ describe("LarkChatMultiSelect", () => {
     renderMulti(<Harness />);
     expect(await screen.findByLabelText("legacy groups")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /add groups/i })).not.toBeInTheDocument();
+  });
+
+  it("explains the required role on 403 without a manual-entry bypass, keeping saved grants removable", async () => {
+    capsMock.mockRejectedValue(
+      new ApiError("forbidden", 403, "Forbidden", { error: "x", code: "lark_discovery_forbidden" }),
+    );
+    renderMulti(<Harness initial={[{ chatId: "oc_saved", name: "" }]} />);
+
+    expect(await screen.findByText(/requires the bot's agent owner or a workspace admin/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("legacy groups")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /add groups/i })).not.toBeInTheDocument();
+    // Saved grants stay visible and removable (existing save semantics).
+    expect(screen.getByText("oc_saved")).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /remove oc_saved/i }));
+    expect(screen.queryByText("oc_saved")).not.toBeInTheDocument();
   });
 });

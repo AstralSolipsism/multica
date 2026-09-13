@@ -31,7 +31,7 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
   const [groups, setGroups] = useState<LarkChatSelection[]>(() =>
     installation.conversation?.chats
       .filter((c) => c.chat_type === "group")
-      .map((c) => ({ chat_id: c.chat_id, name: "" })) ?? []);
+      .map((c) => ({ chatId: c.chat_id, name: "" })) ?? []);
   const [groupsText, setGroupsText] = useState(() =>
     installation.conversation?.chats
       .filter((c) => c.chat_type === "group")
@@ -48,9 +48,9 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
   function applyGroups(next: LarkChatSelection[]) {
     // Dedupe by chat_id — a duplicate conversation is a 400 server-side.
     const seen = new Set<string>();
-    const deduped = next.filter((g) => !seen.has(g.chat_id) && seen.add(g.chat_id));
+    const deduped = next.filter((g) => !seen.has(g.chatId) && seen.add(g.chatId));
     setGroups(deduped);
-    setGroupsText(deduped.map((g) => g.chat_id).join("\n"));
+    setGroupsText(deduped.map((g) => g.chatId).join("\n"));
     setSaved(false);
   }
 
@@ -60,7 +60,7 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
     setGroups(
       text.split(/\s+/).filter(Boolean)
         .filter((id) => !seen.has(id) && seen.add(id))
-        .map((chat_id) => ({ chat_id, name: "" })),
+        .map((chatId) => ({ chatId, name: "" })),
     );
     setSaved(false);
   }
@@ -69,7 +69,7 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
     if (blocked) return;
     setSaved(false);
     const chats = revoke ? [] : [
-      ...groups.map((g) => ({ chat_id: g.chat_id, chat_type: "group" as const })),
+      ...groups.map((g) => ({ chat_id: g.chatId, chat_type: "group" as const })),
       ...directIds.map((chat_id) => ({ chat_id, chat_type: "p2p" as const })),
     ];
     try {
@@ -108,7 +108,7 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
     </label>
     <p className="text-muted-foreground">{t($ => $.lark.conversation_scope)}</p>
     {overLimit && (
-      <p role="alert" className="text-amber-600 dark:text-amber-500">
+      <p role="alert" className="text-warning">
         {t($ => $.lark.conversation_over_limit, { max: MAX_CONVERSATION_CHATS })}
       </p>
     )}

@@ -40,16 +40,29 @@ export interface LarkDiscoveryListState<T> {
   fetchMore: () => void;
 }
 
-function useRetryRestart(error: unknown, restart: () => void, refetchPage: () => void, hasData: boolean, fetchNextPage: () => void) {
+function useRetryRestart(
+  error: unknown,
+  restart: () => void,
+  refetchPage: () => void,
+  hasData: boolean,
+  hasNextPage: boolean,
+  fetchNextPage: () => void,
+) {
   return useCallback(() => {
     if (larkDiscoveryErrorKey(error) === "invalid_cursor") {
       // Every cursor of this sequence is dead; only a fresh first page helps.
       restart();
       return;
     }
-    if (hasData) fetchNextPage();
+    // Append-page failure vs. refresh failure: only a failed "load more"
+    // continues with fetchNextPage. A failed (re)read of the current
+    // sequence — initial load, or a background refresh of an already
+    // complete list — must re-read the API; calling fetchNextPage when no
+    // next page exists would clear the error from stale cache without any
+    // request (OL-74 review).
+    if (hasData && hasNextPage) fetchNextPage();
     else refetchPage();
-  }, [error, restart, refetchPage, hasData, fetchNextPage]);
+  }, [error, restart, refetchPage, hasData, hasNextPage, fetchNextPage]);
 }
 
 export function useLarkTargetCapabilities(
@@ -105,6 +118,7 @@ export function useLarkTargetChats(
     restart,
     () => void result.refetch(),
     (data?.pages.length ?? 0) > 0,
+    result.hasNextPage === true,
     () => void fetchNextPage(),
   );
 
@@ -144,6 +158,7 @@ export function useLarkMessageAnchors(
     restart,
     () => void result.refetch(),
     (data?.pages.length ?? 0) > 0,
+    result.hasNextPage === true,
     () => void result.fetchNextPage(),
   );
 

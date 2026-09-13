@@ -913,7 +913,7 @@
       "multi_max": "At most {{max}} conversations (groups and direct chats combined).",
       "multi_remove": "Remove {{name}}",
       "error": {
-        "forbidden": "Browsing groups requires the bot's agent owner or a workspace admin. You can still enter the ID manually.",
+        "forbidden": "Browsing groups and messages requires the bot's agent owner or a workspace admin.",
         "permission_denied": "The Feishu app is missing the group or message read scope. Update its permissions in the developer console, or enter the ID manually.",
         "unsupported": "This server cannot browse groups or messages yet. Enter the ID manually.",
         "unavailable": "Browsing is temporarily unavailable (credentials, bot or network). Retry, or enter the ID manually.",

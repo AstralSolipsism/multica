@@ -90,6 +90,40 @@ function AnchorRow({
   );
 }
 
+function SelectedAnchorChip({
+  value,
+  onClear,
+  disabled,
+}: {
+  value: LarkAnchorSelection;
+  onClear: () => void;
+  disabled?: boolean;
+}) {
+  const { t } = useT("settings");
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-md border border-primary/40 bg-primary/5 px-3 py-2">
+      <span className="min-w-0">
+        <span className="block text-micro text-muted-foreground">
+          {t(($) => $.lark.anchor.selected)}
+        </span>
+        <span className="line-clamp-2 block text-body font-medium">
+          {value.summary.trim() !== "" ? value.summary : value.messageId}
+        </span>
+      </span>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="shrink-0"
+        onClick={onClear}
+        disabled={disabled}
+        aria-label={t(($) => $.lark.picker.clear)}
+      >
+        <X className="h-3.5 w-3.5" />
+      </Button>
+    </div>
+  );
+}
+
 /**
  * Message-anchor picker for one already-selected group (OL-74): newest
  * first, manual "load earlier" paging, summary + localized time + sender per
@@ -139,6 +173,21 @@ export function LarkAnchorPicker({
     );
   }
   if (!supported) {
+    // Forbidden is NOT a fallback case (OL-72 contract): explain the required
+    // management role, never offer raw-ID entry as a bypass. A saved anchor
+    // stays visible and keeps its existing save semantics.
+    if (caps.isError && larkDiscoveryErrorKey(caps.error) === "forbidden") {
+      return (
+        <div className="space-y-2">
+          {value != null && (
+            <SelectedAnchorChip value={value} onClear={() => onChange(null)} disabled={disabled} />
+          )}
+          <p className="text-caption text-muted-foreground">
+            {t(($) => $.lark.picker.error.forbidden)}
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="space-y-2">
         <p className="text-caption text-muted-foreground">
@@ -156,31 +205,12 @@ export function LarkAnchorPicker({
     list.errorKey == null &&
     !list.isLoading &&
     !list.hasMore &&
-    !list.items.some((a) => a.message_id === value.message_id);
+    !list.items.some((a) => a.message_id === value.messageId);
 
   return (
     <div className="space-y-2">
       {value != null && (
-        <div className="flex items-center justify-between gap-2 rounded-md border border-primary/40 bg-primary/5 px-3 py-2">
-          <span className="min-w-0">
-            <span className="block text-micro text-muted-foreground">
-              {t(($) => $.lark.anchor.selected)}
-            </span>
-            <span className="line-clamp-2 block text-body font-medium">
-              {value.summary.trim() !== "" ? value.summary : value.message_id}
-            </span>
-          </span>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="shrink-0"
-            onClick={() => onChange(null)}
-            disabled={disabled}
-            aria-label={t(($) => $.lark.picker.clear)}
-          >
-            <X className="h-3.5 w-3.5" />
-          </Button>
-        </div>
+        <SelectedAnchorChip value={value} onClear={() => onChange(null)} disabled={disabled} />
       )}
       {list.errorKey != null && (
         <LarkDiscoveryErrorAlert
@@ -198,16 +228,16 @@ export function LarkAnchorPicker({
           <AnchorRow
             key={anchor.message_id}
             anchor={anchor}
-            selected={value?.message_id === anchor.message_id}
+            selected={value?.messageId === anchor.message_id}
             disabled={disabled}
             onSelect={() =>
               onChange(
-                value?.message_id === anchor.message_id
+                value?.messageId === anchor.message_id
                   ? null
                   : {
-                      message_id: anchor.message_id,
+                      messageId: anchor.message_id,
                       summary: anchor.summary,
-                      thread_id: anchor.thread_id,
+                      threadId: anchor.thread_id,
                     },
               )
             }
@@ -238,7 +268,7 @@ export function LarkAnchorPicker({
         </Button>
       )}
       {savedMissing && (
-        <p role="status" className="text-caption text-amber-600 dark:text-amber-500">
+        <p role="status" className="text-caption text-warning">
           {t(($) => $.lark.anchor.saved_missing)}
         </p>
       )}

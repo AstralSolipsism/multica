@@ -39,6 +39,7 @@ import { toast } from "sonner";
 import { useT } from "../../i18n";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { LarkAnchorPicker, LarkChatPicker } from "../../lark";
+import { anchorAfterChatChange, anchorAfterMessageEdit } from "../target-selection";
 import {
   isSourceTargetApproved,
   messageDeliveryErrorKey,
@@ -170,6 +171,32 @@ export function SourceRouteEditorDialog({
   const [selectedEvents, setSelectedEvents] = useState<string[]>(route?.event_types ?? []);
   const [enabled, setEnabled] = useState(route?.enabled ?? true);
   const [error, setError] = useState<unknown>(null);
+
+  // One rule for both entry paths (picker pick and manual fallback typing):
+  // the anchor triple only survives edits that leave its parent untouched.
+  // See target-selection.ts for the canonical matrix.
+  const applyTargetChatId = (nextChatId: string, name = "") => {
+    const anchor = anchorAfterChatChange(targetChatId, nextChatId, {
+      messageId: targetMessageId,
+      threadId: targetThreadId,
+      summary: targetAnchorSummary,
+    });
+    setTargetChatId(nextChatId);
+    setTargetChatName(name);
+    setTargetMessageId(anchor.messageId);
+    setTargetThreadId(anchor.threadId);
+    setTargetAnchorSummary(anchor.summary);
+  };
+  const applyTargetMessageId = (nextMessageId: string) => {
+    const anchor = anchorAfterMessageEdit(targetMessageId, nextMessageId, {
+      messageId: targetMessageId,
+      threadId: targetThreadId,
+      summary: targetAnchorSummary,
+    });
+    setTargetMessageId(anchor.messageId);
+    setTargetThreadId(anchor.threadId);
+    setTargetAnchorSummary(anchor.summary);
+  };
 
   const isTeam = mode === "team";
   const isExternal = isTeam && (targetType === "group" || targetType === "topic");
@@ -524,27 +551,15 @@ export function SourceRouteEditorDialog({
                 installationId={installationId}
                 value={
                   targetChatId.trim() !== ""
-                    ? { chat_id: targetChatId.trim(), name: targetChatName }
+                    ? { chatId: targetChatId.trim(), name: targetChatName }
                     : null
                 }
-                onChange={(sel) => {
-                  const nextChatId = sel?.chat_id ?? "";
-                  if (nextChatId !== targetChatId) {
-                    // An anchor belongs to its group — a group switch must
-                    // clear it (the server's belongs-to-group check would
-                    // reject the stale pair anyway).
-                    setTargetMessageId("");
-                    setTargetAnchorSummary("");
-                    setTargetThreadId("");
-                  }
-                  setTargetChatId(nextChatId);
-                  setTargetChatName(sel?.name ?? "");
-                }}
+                onChange={(sel) => applyTargetChatId(sel?.chatId ?? "", sel?.name ?? "")}
                 disabled={saving}
                 fallback={
                   <Input
                     value={targetChatId}
-                    onChange={(e) => setTargetChatId(e.target.value)}
+                    onChange={(e) => applyTargetChatId(e.target.value)}
                     placeholder={t(($) => $.editor.chat_id_placeholder)}
                     className="font-mono"
                     aria-label={t(($) => $.editor.chat_id)}
@@ -565,20 +580,22 @@ export function SourceRouteEditorDialog({
                 chatId={targetChatId.trim()}
                 value={
                   targetMessageId.trim() !== ""
-                    ? { message_id: targetMessageId.trim(), summary: targetAnchorSummary }
+                    ? { messageId: targetMessageId.trim(), summary: targetAnchorSummary }
                     : null
                 }
                 onChange={(sel) => {
-                  setTargetMessageId(sel?.message_id ?? "");
+                  // A picked anchor carries its discovered thread; clearing
+                  // drops the triple.
+                  setTargetMessageId(sel?.messageId ?? "");
                   setTargetAnchorSummary(sel?.summary ?? "");
-                  setTargetThreadId(sel?.thread_id ?? "");
+                  setTargetThreadId(sel?.threadId ?? "");
                 }}
                 disabled={saving}
                 fallback={
                   <>
                     <Input
                       value={targetMessageId}
-                      onChange={(e) => setTargetMessageId(e.target.value)}
+                      onChange={(e) => applyTargetMessageId(e.target.value)}
                       placeholder={t(($) => $.editor.message_id_placeholder)}
                       className="font-mono"
                       aria-label={t(($) => $.editor.message_id)}
