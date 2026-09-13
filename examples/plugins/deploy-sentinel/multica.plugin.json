@@ -20,31 +20,39 @@
     "service_prefix": {
       "type": "string",
       "label": "Service name prefix",
-      "required": true
+      "description": "The prefix your deploy pipeline puts in front of service names — ask the team running Deploy Sentinel. If deploys register as prod-checkout, the prefix is prod-.",
+      "required": true,
+      "placeholder": "prod-"
     },
     "rollback_window_minutes": {
       "type": "number",
       "label": "How recent a deploy must be to be rollback-eligible",
-      "required": true
+      "description": "A number of minutes. Deploys older than this are refused by the rollback hook and left for a human change process.",
+      "required": true,
+      "placeholder": "60"
     },
     "require_incident_label": {
       "type": "bool",
-      "label": "Only correlate issues labelled as incidents"
+      "label": "Only correlate issues labelled as incidents",
+      "description": "When on, issues without your incident label are skipped, so routine tasks never page anyone."
     },
     "environment": {
       "type": "enum",
       "label": "Environment",
+      "description": "Which Deploy Sentinel environment this workspace reports on. The offered values come from this plugin; your Sentinel admin tells you which one to pick.",
       "options": ["production", "staging"],
       "required": true
     },
     "sentinel_token": {
       "type": "secret",
       "label": "Deploy Sentinel API token",
+      "description": "Issued by the Deploy Sentinel admin console under Service accounts → Tokens. Stored encrypted, never shown again — saving a new value replaces it.",
       "required": true
     },
     "metrics_credential": {
       "type": "secret",
-      "label": "Metrics MCP server token"
+      "label": "Metrics MCP server token",
+      "description": "Optional. Credential for your metrics MCP server, from whoever operates it — often a read-only API token. Without it the metrics tools stay unavailable; everything else still works."
     }
   },
 

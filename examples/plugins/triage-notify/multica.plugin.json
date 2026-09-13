@@ -18,7 +18,7 @@
     "team": {
       "type": "string",
       "label": "Team",
-      "description": "Passed to the triage service so it can route the issue.",
+      "description": "Passed to the triage service so it can route the issue. Get the exact team identifier from whoever runs your triage service — it must match what that service expects.",
       "required": true,
       "placeholder": "platform"
     }
