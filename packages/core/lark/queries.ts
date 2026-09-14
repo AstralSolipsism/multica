@@ -1,5 +1,6 @@
 import { infiniteQueryOptions, queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../api";
+import type { ListLarkInstallationsResponse } from "../types";
 
 /** Query key namespace for everything Lark-installation-related. Realtime
  * sync invalidates `installations(wsId)` on `lark_installation:*` events
@@ -17,6 +18,8 @@ export const larkKeys = {
     [...larkKeys.all(wsId), "target-chats", installationId, q, session] as const,
   messageAnchors: (wsId: string, installationId: string, chatId: string, session: number) =>
     [...larkKeys.all(wsId), "message-anchors", installationId, chatId, session] as const,
+  privateChatCandidates: (wsId: string, installationId: string) =>
+    [...larkKeys.all(wsId), "private-chat-candidates", installationId] as const,
 };
 
 export const larkInstallationsOptions = (wsId: string) =>
@@ -30,7 +33,48 @@ export function useSetLarkConversation(wsId: string, installationId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (chats: { chat_id: string; chat_type: "group" | "p2p" }[]) => api.setLarkConversation(wsId, installationId, chats),
-    onSuccess: () => qc.invalidateQueries({ queryKey: larkKeys.installations(wsId) }),
+    onSuccess: async () => {
+      // Cancel any installations read still in flight (e.g. a WS invalidation
+      // started before the PUT committed): its pre-save snapshot must not
+      // land after the save and become the form's new baseline. The
+      // invalidate below then re-reads the post-save state for real.
+      await qc.cancelQueries({ queryKey: larkKeys.installations(wsId) });
+      await qc.invalidateQueries({ queryKey: larkKeys.installations(wsId) });
+      // The saved grant re-derives candidate authorization states (a removed
+      // chat can expose its still-valid observation as pending again), so the
+      // candidate list must be re-read after a full-list save.
+      void qc.invalidateQueries({ queryKey: larkKeys.privateChatCandidates(wsId, installationId) });
+    },
+  });
+}
+
+/** Confirm observed private chats into the saved grant (OL-75 contract). The
+ * server atomically unions the candidates' p2p targets with every saved
+ * target and returns the resulting grant — the response is the authoritative
+ * saved state, so the installations cache is patched from it directly instead
+ * of waiting on a refetch that a stale full-list draft could then overwrite. */
+export function useConfirmLarkPrivateChats(wsId: string, installationId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (candidateIds: string[]) => api.confirmLarkPrivateChatCandidates(wsId, installationId, candidateIds),
+    onSuccess: async (grant) => {
+      // Cancel any installations read still in flight — including reads
+      // started AFTER the confirm POST went out (a WS invalidation during
+      // the request): their pre-confirm snapshot must never land after this
+      // write-back and regress the cache (OL-76 re-review). Cancelling only
+      // on mutate cannot cover those, so it happens here, before the patch.
+      await qc.cancelQueries({ queryKey: larkKeys.installations(wsId) });
+      qc.setQueryData<ListLarkInstallationsResponse | undefined>(
+        larkKeys.installations(wsId),
+        (old) => old == null ? old : {
+          ...old,
+          installations: old.installations.map((inst) =>
+            inst.id === installationId ? { ...inst, conversation: grant } : inst),
+        },
+      );
+      // Re-derive pending/authorized badges from the new grant.
+      void qc.invalidateQueries({ queryKey: larkKeys.privateChatCandidates(wsId, installationId) });
+    },
   });
 }
 
@@ -122,6 +166,26 @@ export function larkMessageAnchorsInfiniteOptions(
     getNextPageParam: (last) =>
       last.has_more === true && last.next_cursor !== "" ? last.next_cursor : undefined,
     enabled: (options?.enabled ?? true) && !!wsId && !!installationId && !!chatId,
+    retry: discoveryRetry,
+  });
+}
+
+/**
+ * Observed private chats awaiting human confirmation (OL-75). Single-shot:
+ * the contract has no paging or search (at most 50 unexpired candidates per
+ * installation), so the manual refresh entry is a plain refetch. The response
+ * is `Cache-Control: no-store` and the picker renders stable errors (403 /
+ * 404 / 409 / 503) as explicit states, hence the shared discovery retry.
+ */
+export function larkPrivateChatCandidatesOptions(
+  wsId: string,
+  installationId: string,
+  options?: { enabled?: boolean },
+) {
+  return queryOptions({
+    queryKey: larkKeys.privateChatCandidates(wsId, installationId),
+    queryFn: () => api.listLarkPrivateChatCandidates(wsId, installationId),
+    enabled: (options?.enabled ?? true) && !!wsId && !!installationId,
     retry: discoveryRetry,
   });
 }

@@ -3,8 +3,9 @@
 import { expect, it, beforeEach, afterEach, vi } from "vitest";
 import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ApiError } from "@multica/core/api";
+import { larkInstallationsOptions } from "@multica/core/lark";
 import type { LarkInstallation } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { LarkConversationForm } from "./lark-conversation-form";
@@ -22,6 +23,9 @@ vi.mock("@multica/core/lark", async (importOriginal) => {
 
 const capsMock = vi.hoisted(() => vi.fn());
 const chatsMock = vi.hoisted(() => vi.fn());
+const candidatesMock = vi.hoisted(() => vi.fn());
+const confirmMock = vi.hoisted(() => vi.fn());
+const installationsMock = vi.hoisted(() => vi.fn());
 vi.mock("@multica/core/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@multica/core/api")>();
   return {
@@ -30,6 +34,9 @@ vi.mock("@multica/core/api", async (importOriginal) => {
       ...actual.api,
       getLarkTargetCapabilities: (...args: unknown[]) => capsMock(...args),
       listLarkTargetChats: (...args: unknown[]) => chatsMock(...args),
+      listLarkPrivateChatCandidates: (...args: unknown[]) => candidatesMock(...args),
+      confirmLarkPrivateChatCandidates: (...args: unknown[]) => confirmMock(...args),
+      listLarkInstallations: (...args: unknown[]) => installationsMock(...args),
     },
   };
 });
@@ -41,6 +48,14 @@ const CAPS = {
   scope_status: "not_checked",
   max_chat_page_size: 100,
   max_message_page_size: 50,
+};
+
+const PRIVATE_CAPS = {
+  ...CAPS,
+  private_chat_candidates_supported: true,
+  private_chat_identity_lookup_supported: true,
+  max_private_chat_candidates: 50,
+  private_chat_candidate_retention_seconds: 604800,
 };
 
 const installation: LarkInstallation = {
@@ -58,9 +73,27 @@ function view(disabled: boolean, inst: LarkInstallation = installation) {
   );
 }
 
+// Mirrors production: both call sites feed the form from the live
+// installations query, so the confirm mutation's cache write flows back in
+// as props and the draft re-baselines from the returned grant.
+function QueryDrivenForm() {
+  const { data } = useQuery(larkInstallationsOptions("ws"));
+  const inst = data?.installations[0];
+  return inst ? <LarkConversationForm workspaceId="ws" installation={inst} disabled={false} /> : null;
+}
+
+function viewQueryDriven() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return (
+    <QueryClientProvider client={qc}>
+      <QueryDrivenForm />
+    </QueryClientProvider>
+  );
+}
+
 async function openForm() {
   const user = userEvent.setup();
-  await user.click(screen.getByText("Agent conversations"));
+  await user.click(await screen.findByText("Agent conversations"));
   return user;
 }
 
@@ -76,6 +109,31 @@ beforeEach(() => {
     has_more: false,
     next_cursor: "",
   });
+  candidatesMock.mockReset().mockResolvedValue({
+    items: [
+      {
+        id: "cand1",
+        chat_id: "oc_dm_alice",
+        chat_type: "p2p",
+        sender: { type: "user", id: "ou_alice", id_type: "open_id" },
+        display_name: "Alice",
+        identity_status: "name_available",
+        authorization_status: "pending",
+        first_seen_at: "2026-09-13T12:00:00Z",
+        last_seen_at: "2026-09-13T12:00:00Z",
+        expires_at: "2026-09-20T12:00:00Z",
+      },
+    ],
+    max_candidates: 50,
+    retention_seconds: 604800,
+  });
+  confirmMock.mockReset().mockResolvedValue({
+    id: "grant",
+    authorized_by: "owner",
+    scope: "workspace",
+    chats: [{ chat_id: "oc_dm_alice", chat_type: "p2p" }],
+  });
+  installationsMock.mockReset().mockResolvedValue({ installations: [installation], configured: true });
 });
 
 afterEach(() => cleanup());
@@ -84,7 +142,8 @@ it("preserves the edited conversations and blocks save/revoke while configuratio
   const { rerender } = renderWithI18n(view(false));
   const user = await openForm();
 
-  // Direct chats keep the manual entry (p2p candidate picking is OL-76).
+  // The default caps mock lacks OL-75 fields, so direct chats use the
+  // manual-entry fallback (candidate-mode tests are below).
   const directs = screen.getByLabelText(/Direct chat IDs/);
   await user.type(directs, "oc_dm");
 
@@ -168,4 +227,58 @@ it("blocks saving past the 50-conversation cap with an inline hint", async () =>
   expect(await screen.findByText(/at most 50 conversations/i)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Authorize conversations" })).toBeDisabled();
   expect(mutation.mutateAsync).not.toHaveBeenCalled();
+});
+
+it("confirms a discovered private chat and saves it with the groups in one draft", async () => {
+  capsMock.mockResolvedValue(PRIVATE_CAPS);
+  renderWithI18n(viewQueryDriven());
+  const user = await openForm();
+
+  // The legacy p2p textarea is gone once candidate discovery is supported.
+  await waitFor(() =>
+    expect(screen.queryByLabelText(/Direct chat IDs/)).not.toBeInTheDocument());
+
+  // Confirm the discovered candidate: the confirm endpoint (not the
+  // full-list PUT) records consent; the returned grant re-baselines the
+  // draft through the installations cache and the chat appears as a chip.
+  await user.click(await screen.findByRole("checkbox", { name: /Alice/ }));
+  await user.click(screen.getByRole("button", { name: /Authorize selected \(1\)/ }));
+  await waitFor(() =>
+    expect(confirmMock).toHaveBeenCalledWith("ws", "inst", ["cand1"]));
+  expect(await screen.findByRole("button", { name: /remove Alice/i })).toBeInTheDocument();
+
+  // Pick a group too, then the full-list save carries both sections.
+  await user.click(screen.getByRole("button", { name: /add groups/i }));
+  await user.click(await screen.findByRole("checkbox", { name: /Alpha/ }));
+  await user.click(screen.getByRole("button", { name: "Authorize conversations" }));
+  expect(mutation.mutateAsync).toHaveBeenCalledWith([
+    { chat_id: "oc_a", chat_type: "group" },
+    { chat_id: "oc_dm_alice", chat_type: "p2p" },
+  ]);
+});
+
+it("keeps a saved private chat revocable even when it is not a candidate", async () => {
+  capsMock.mockResolvedValue(PRIVATE_CAPS);
+  const granted: LarkInstallation = {
+    ...installation,
+    conversation: {
+      id: "grant", authorized_by: "owner", scope: "workspace",
+      chats: [{ chat_id: "oc_dm_old", chat_type: "p2p" }],
+    },
+  };
+  renderWithI18n(view(false, granted));
+  const user = await openForm();
+
+  // oc_dm_old is in the saved grant but not in the candidate list — it still
+  // renders as a removable chip.
+  expect(await screen.findByText("oc_dm_old")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /remove oc_dm_old/i }));
+  await user.click(screen.getByRole("button", { name: /add groups/i }));
+  await user.click(await screen.findByRole("checkbox", { name: /Alpha/ }));
+  await user.click(screen.getByRole("button", { name: "Authorize conversations" }));
+
+  // The revoked p2p chat is gone from the saved list; the group stays.
+  expect(mutation.mutateAsync).toHaveBeenCalledWith([
+    { chat_id: "oc_a", chat_type: "group" },
+  ]);
 });

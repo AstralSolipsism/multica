@@ -4,6 +4,7 @@ import type {
   LarkChatsPage,
   LarkDiscoveredChat,
   LarkMessageAnchor,
+  LarkPrivateChatCandidate,
 } from "@multica/core/types";
 
 // Pure helpers for the Lark target pickers (OL-74). Canonical home of the
@@ -111,4 +112,139 @@ export function anchorTimeMs(createTime: string): number | null {
  * ID is one toggle away in the row itself. */
 export function chatIdSuffix(id: string): string {
   return id.length <= 6 ? id : id.slice(-6);
+}
+
+// --- Private chat candidates (OL-75 contract, OL-76 frontend) ---
+
+/** Stable candidate/confirmation error codes → keys under
+ * `settings:lark.private.error`. */
+export type LarkPrivateChatErrorKey =
+  | "forbidden"
+  | "invocation_denied"
+  | "limit_exceeded"
+  | "candidate_unavailable"
+  | "invalid_request"
+  | "installation_inactive"
+  | "installation_not_found"
+  | "unsupported"
+  | "generic";
+
+export function larkPrivateChatErrorKey(err: unknown): LarkPrivateChatErrorKey {
+  switch (errorCode(err)) {
+    case "lark_discovery_forbidden":
+      return "forbidden";
+    case "lark_conversation_invocation_denied":
+      return "invocation_denied";
+    case "lark_conversation_limit_exceeded":
+      return "limit_exceeded";
+    case "lark_private_chat_candidate_unavailable":
+      return "candidate_unavailable";
+    case "lark_conversation_invalid_request":
+      return "invalid_request";
+    case "lark_installation_inactive":
+      return "installation_inactive";
+    case "lark_installation_not_found":
+      return "installation_not_found";
+    case "lark_discovery_unsupported":
+      return "unsupported";
+    default:
+      break;
+  }
+  // Same old-server rule as group discovery: a bare router 404 (no code) is
+  // the pre-discovery server, not a coded "installation gone".
+  if (err instanceof ApiError && err.status === 404) return "unsupported";
+  return "generic";
+}
+
+/** Candidate timestamps are RFC3339 strings; drift must not become a bogus
+ * Date (NaN renders as "Invalid Date"). */
+export function candidateTimeMs(value: string): number | null {
+  if (value === "") return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** Display name only when the contract says one is actually available —
+ * identity drift (name_available with an empty name) and unknown statuses
+ * degrade to the id_only presentation; a name is never fabricated. */
+export function candidateDisplayName(
+  candidate: Pick<LarkPrivateChatCandidate, "display_name" | "identity_status">,
+): string | null {
+  if (candidate.identity_status !== "name_available") return null;
+  const name = candidate.display_name.trim();
+  return name === "" ? null : candidate.display_name;
+}
+
+// --- Conversation draft reconciliation (OL-76 re-review) ---
+// The conversation form's draft is "saved grant + explicit local edits". When
+// a newer authoritative grant arrives (confirm response via the installations
+// cache, WS invalidation, refetch after save), the draft must re-baseline to
+// it — a stale draft saved over the new grant would silently drop chats added
+// elsewhere and resurrect chats revoked elsewhere.
+
+type ConversationChatLike = { chat_id: string; chat_type: string };
+
+function conversationChatKey(chat: ConversationChatLike): string {
+  return `${chat.chat_type}:${chat.chat_id}`;
+}
+
+/** Two chat lists carry the same target set (order-independent). Used to
+ * skip re-baselining when a refetch only changed the grant's identity. */
+export function sameConversationChats(
+  a: ReadonlyArray<ConversationChatLike> | null | undefined,
+  b: ReadonlyArray<ConversationChatLike> | null | undefined,
+): boolean {
+  const keys = new Set((a ?? []).map(conversationChatKey));
+  const other = (b ?? []).map(conversationChatKey);
+  return keys.size === other.length && other.every((k) => keys.has(k));
+}
+
+export interface LarkConversationDraftChat {
+  chatId: string;
+  name: string;
+  chat_type: "group" | "p2p";
+}
+
+/** Reconcile the form draft with a fresh authoritative grant: the new grant
+ * becomes the baseline, then explicit local edit intent is replayed — picks
+ * the user added since the baseline stay; chips they removed stay removed;
+ * upstream removals win over chats the user merely kept. Draft display names
+ * are preserved for surviving chats; new arrivals start nameless (the pickers
+ * re-resolve them). */
+export function mergeConversationDraft(
+  baseline: ReadonlyArray<ConversationChatLike> | null | undefined,
+  incoming: ReadonlyArray<ConversationChatLike> | null | undefined,
+  draft: ReadonlyArray<LarkConversationDraftChat>,
+): LarkConversationDraftChat[] {
+  const base = new Set((baseline ?? []).map(conversationChatKey));
+  const draftKeys = new Set(draft.map((d) => conversationChatKey({ chat_id: d.chatId, chat_type: d.chat_type })));
+  const nameByKey = new Map(
+    draft.map((d) => [conversationChatKey({ chat_id: d.chatId, chat_type: d.chat_type }), d.name] as const),
+  );
+  // Explicit local removals: in the baseline but no longer in the draft.
+  const removals = new Set(
+    (baseline ?? [])
+      .filter((c) => !draftKeys.has(conversationChatKey(c)))
+      .map(conversationChatKey),
+  );
+  const merged: LarkConversationDraftChat[] = [];
+  const seen = new Set<string>();
+  for (const c of incoming ?? []) {
+    const key = conversationChatKey(c);
+    if (removals.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    merged.push({
+      chatId: c.chat_id,
+      name: nameByKey.get(key) ?? "",
+      chat_type: c.chat_type === "p2p" ? "p2p" : "group",
+    });
+  }
+  // Explicit local additions: in the draft but never in the baseline.
+  for (const d of draft) {
+    const key = conversationChatKey({ chat_id: d.chatId, chat_type: d.chat_type });
+    if (base.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(d);
+  }
+  return merged;
 }

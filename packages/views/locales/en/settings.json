@@ -943,7 +943,39 @@
       "sender_unknown": "Unknown sender"
     },
     "conversation_groups_label": "Groups",
-    "conversation_over_limit": "At most {{max}} conversations (groups and direct chats combined). Remove some before saving."
+    "conversation_directs_label": "Direct chats",
+    "conversation_over_limit": "At most {{max}} conversations (groups and direct chats combined). Remove some before saving.",
+    "private": {
+      "intro": "People who message this bot privately appear here for review. Sending a message only makes the conversation discoverable — the agent answers new messages only after you authorize the conversation below.",
+      "loading": "Loading private chats…",
+      "refresh": "Refresh",
+      "refreshing": "Refreshing…",
+      "list_label": "Discovered private chats",
+      "empty_title": "No private chats discovered yet",
+      "empty_steps": "Ask the person to open a private chat with this bot in Feishu and send any message, then come back and refresh. The message only makes the conversation discoverable here — it grants no access by itself.",
+      "pending_badge": "Pending",
+      "authorized_badge": "Authorized",
+      "name_unavailable": "Name unavailable",
+      "id_only_hint": "Names marked unavailable could not be read (external user or missing contact permission). Match the chat and user IDs plus the last-message time, or have the intended person send a new message and compare the updated time.",
+      "last_seen": "Last message {{when}}",
+      "expires": "discoverable until {{when}}",
+      "show_user_id": "Show full user ID",
+      "hide_user_id": "Hide full user ID",
+      "confirm_selected": "Authorize selected ({{count}})",
+      "confirm_scope": "Authorizing adds the selected conversations to the current grant — existing groups and direct chats stay authorized. It covers this agent's normal tools across the whole workspace, under your invocation rights.",
+      "confirmed": "Authorization saved. The agent now answers new messages in these conversations; earlier messages are not replayed.",
+      "error": {
+        "forbidden": "Viewing and authorizing private chats requires the bot's agent owner or a workspace admin.",
+        "invocation_denied": "You can manage this bot, but authorizing conversations also requires permission to invoke this agent.",
+        "limit_exceeded": "At most {{max}} conversations (groups and direct chats combined). Remove a saved conversation first.",
+        "candidate_unavailable": "A selected candidate expired or was replaced. The list has been refreshed — select again.",
+        "invalid_request": "The selection was rejected. Refresh the list and try again.",
+        "installation_inactive": "This bot installation is inactive or its agent is archived.",
+        "installation_not_found": "This bot installation no longer exists in this workspace.",
+        "unsupported": "This server cannot discover private chats yet. Enter the ID manually.",
+        "generic": "Could not load the private chat list. Retry."
+      }
+    }
   },
   "composio": {
     "section_title": "Composio",

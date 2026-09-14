@@ -4,15 +4,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   larkMessageAnchorsInfiniteOptions,
+  larkPrivateChatCandidatesOptions,
   larkTargetCapabilitiesOptions,
   larkTargetChatsInfiniteOptions,
 } from "@multica/core/lark";
-import type { LarkDiscoveredChat, LarkMessageAnchor } from "@multica/core/types";
+import type { LarkDiscoveredChat, LarkMessageAnchor, LarkPrivateChatCandidate } from "@multica/core/types";
 import {
   larkDiscoveryErrorKey,
+  larkPrivateChatErrorKey,
   mergeDiscoveredChats,
   mergeMessageAnchors,
   type LarkDiscoveryErrorKey,
+  type LarkPrivateChatErrorKey,
 } from "./discovery";
 
 // Headless state for the OL-74 target pickers. All discovery reads are
@@ -71,6 +74,39 @@ export function useLarkTargetCapabilities(
   options?: { enabled?: boolean },
 ) {
   return useQuery(larkTargetCapabilitiesOptions(wsId, installationId, options));
+}
+
+export interface LarkPrivateChatListState {
+  items: LarkPrivateChatCandidate[];
+  /** First read is loading — nothing to show yet. */
+  isLoading: boolean;
+  /** Any read (initial or manual refresh) is in flight. */
+  isFetching: boolean;
+  error: unknown;
+  errorKey: LarkPrivateChatErrorKey | null;
+  /** The explicit "discover new messages" entry: re-reads the candidate list. */
+  refresh: () => void;
+}
+
+/**
+ * Observed private chats awaiting human confirmation (OL-75). Single-shot
+ * read — the contract has no paging, so there is no cursor state to restart;
+ * refresh after a stale-candidate error (410) is a plain refetch.
+ */
+export function useLarkPrivateChatCandidates(
+  wsId: string,
+  installationId: string,
+  options?: { enabled?: boolean },
+): LarkPrivateChatListState {
+  const result = useQuery(larkPrivateChatCandidatesOptions(wsId, installationId, options));
+  return {
+    items: result.data?.items ?? [],
+    isLoading: result.isPending,
+    isFetching: result.isFetching,
+    error: result.error,
+    errorKey: result.isError ? larkPrivateChatErrorKey(result.error) : null,
+    refresh: () => void result.refetch(),
+  };
 }
 
 export function useLarkTargetChats(

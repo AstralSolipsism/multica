@@ -941,7 +941,39 @@
       "sender_unknown": "未知发送者"
     },
     "conversation_groups_label": "群聊",
-    "conversation_over_limit": "最多 {{max}} 个会话（群聊与私聊合计）。请先移除一部分再保存。"
+    "conversation_directs_label": "私聊",
+    "conversation_over_limit": "最多 {{max}} 个会话（群聊与私聊合计）。请先移除一部分再保存。",
+    "private": {
+      "intro": "私聊过这个 Bot 的人会出现在这里等待确认。发消息只是让会话被发现——只有你在下方授权后，智能体才会处理该会话的新消息。",
+      "loading": "正在加载私聊...",
+      "refresh": "刷新",
+      "refreshing": "正在刷新...",
+      "list_label": "发现的私聊",
+      "empty_title": "还没有发现私聊",
+      "empty_steps": "请对方在飞书中打开与这个 Bot 的私聊并发送任意消息，然后回到这里刷新。消息只是让会话出现在这里，本身不构成授权。",
+      "pending_badge": "待确认",
+      "authorized_badge": "已授权",
+      "name_unavailable": "姓名不可用",
+      "id_only_hint": "标记为\"姓名不可用\"的候选无法读取姓名（对方是外部用户或应用缺少通讯录权限）。请对照会话 ID、用户 ID 和最后消息时间辨认；也可以让对方重新发一条消息，比对更新后的时间。",
+      "last_seen": "最后消息 {{when}}",
+      "expires": "可发现至 {{when}}",
+      "show_user_id": "显示完整用户 ID",
+      "hide_user_id": "收起完整用户 ID",
+      "confirm_selected": "授权所选（{{count}}）",
+      "confirm_scope": "授权会把所选会话追加到当前授权中，已授权的群聊和私聊都会保留。授权范围是整个工作区内此智能体的正常工具，并遵守你的智能体调用权限。",
+      "confirmed": "授权已保存。智能体将处理这些会话的新消息；之前的消息不会重放。",
+      "error": {
+        "forbidden": "查看和授权私聊需要机器人所属智能体的负责人或工作区管理员权限。",
+        "invocation_denied": "你可以管理这个 Bot，但授权会话还需要此智能体的调用权限。",
+        "limit_exceeded": "最多 {{max}} 个会话（群聊与私聊合计）。请先移除一个已授权会话。",
+        "candidate_unavailable": "所选候选已过期或被替换。列表已刷新，请重新选择。",
+        "invalid_request": "选择被服务端拒绝。请刷新列表后重试。",
+        "installation_inactive": "该机器人安装已失效或其智能体已归档。",
+        "installation_not_found": "该机器人安装在当前工作区已不存在。",
+        "unsupported": "当前服务端暂不支持私聊发现，请手动输入 ID。",
+        "generic": "无法加载私聊列表，请重试。"
+      }
+    }
   },
   "composio": {
     "section_title": "Composio",
