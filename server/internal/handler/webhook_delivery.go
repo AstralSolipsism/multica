@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -51,9 +52,45 @@ type WebhookDeliveryResponse struct {
 	// Detail-only fields. List responses leave these nil/empty so a page
 	// of N deliveries never serialises ~N × 256 KiB of raw bodies. Detail
 	// requests opt in by hitting GET /deliveries/{deliveryId}.
-	SelectedHeaders json.RawMessage `json:"selected_headers,omitempty"`
-	RawBody         *string         `json:"raw_body,omitempty"`
-	ResponseBody    *string         `json:"response_body,omitempty"`
+	SelectedHeaders json.RawMessage               `json:"selected_headers,omitempty"`
+	RawBody         *string                       `json:"raw_body,omitempty"`
+	ResponseBody    *string                       `json:"response_body,omitempty"`
+	FilterContext   *WebhookDeliveryFilterContext `json:"filter_context,omitempty"`
+}
+
+// WebhookDeliveryFilterContext describes only this stored delivery. Matches is
+// null without a draft or when the stored body cannot be normalized.
+type WebhookDeliveryFilterContext struct {
+	Suggestion        *WebhookEventFilter `json:"suggestion"`
+	UnavailableReason string              `json:"unavailable_reason,omitempty"`
+	Matches           *bool               `json:"matches"`
+}
+
+func webhookDeliveryFilterContext(d db.WebhookDelivery, eventFilters []byte) WebhookDeliveryFilterContext {
+	result := WebhookDeliveryFilterContext{}
+	if len(d.RawBody) == 0 {
+		result.UnavailableReason = "raw_body_missing"
+		return result
+	}
+	envelope, err := normalizeWebhookPayload(d.RawBody, headersFromSelected(d.SelectedHeaders))
+	if err != nil {
+		result.UnavailableReason = "raw_body_invalid"
+		return result
+	}
+	_, event, action := splitWebhookEvent(envelope.Event)
+	if strings.TrimSpace(event) == "" {
+		result.UnavailableReason = "event_empty"
+	} else {
+		actions := webhookActionCandidates(action, envelope.EventPayload)
+		// The matcher treats candidates as a set; stabilize their display order.
+		slices.Sort(actions)
+		result.Suggestion = &WebhookEventFilter{Event: event, Actions: actions}
+	}
+	if eventFilters != nil {
+		matches := webhookEventAllowedByTriggerScope(eventFilters, envelope)
+		result.Matches = &matches
+	}
+	return result
 }
 
 // slimDeliveryToResponse maps the projected list row (no raw_body /
@@ -219,7 +256,25 @@ func (h *Handler) GetAutopilotDelivery(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, deliveryToResponse(delivery, true))
+	// An optional JSON array previews the entire draft, without saving it or
+	// invoking dispatch. [] explicitly means an unrestricted event scope.
+	var eventFilters []byte
+	if values, present := r.URL.Query()["event_filters"]; present {
+		var filters []WebhookEventFilter
+		if len(values) != 1 || json.Unmarshal([]byte(values[0]), &filters) != nil || filters == nil {
+			writeError(w, http.StatusBadRequest, "event_filters must be a JSON array")
+			return
+		}
+		if err := validateWebhookEventFilters(filters); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		eventFilters = []byte(values[0])
+	}
+	resp := deliveryToResponse(delivery, true)
+	filterContext := webhookDeliveryFilterContext(delivery, eventFilters)
+	resp.FilterContext = &filterContext
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // ReplayAutopilotDelivery creates a NEW queued delivery row from a prior one;
@@ -348,9 +403,8 @@ func (h *Handler) ReplayAutopilotDelivery(w http.ResponseWriter, r *http.Request
 }
 
 // loadDeliveryForAutopilot returns the delivery row when it exists in the
-// same workspace AND belongs to the given autopilot. Cross-autopilot or
-// cross-workspace IDs are returned as 404 — defense in depth against ID
-// guessing.
+// same workspace AND belongs to the given autopilot and its webhook trigger.
+// Cross-autopilot or cross-workspace IDs are returned as 404.
 func (h *Handler) loadDeliveryForAutopilot(w http.ResponseWriter, r *http.Request, autopilot db.Autopilot, deliveryID string) (db.WebhookDelivery, bool) {
 	deliveryUUID, ok := parseUUIDOrBadRequest(w, deliveryID, "delivery id")
 	if !ok {
@@ -372,13 +426,22 @@ func (h *Handler) loadDeliveryForAutopilot(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "delivery not found")
 		return db.WebhookDelivery{}, false
 	}
+	trigger, err := h.Queries.GetAutopilotTrigger(r.Context(), delivery.TriggerID)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && (trigger.AutopilotID != autopilot.ID || trigger.Kind != "webhook")) {
+		writeError(w, http.StatusNotFound, "delivery not found")
+		return db.WebhookDelivery{}, false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load delivery trigger")
+		return db.WebhookDelivery{}, false
+	}
 	return delivery, true
 }
 
 // headersFromSelected decodes the small headers-subset blob back into an
-// http.Header. Only used by the replay path — fields we did not capture at
-// ingress time are simply absent, which matches what would have happened if
-// the original request had not sent them either.
+// http.Header. Shared by dispatch, replay and filter previews; fields we did
+// not capture at ingress time are simply absent, which matches what would have
+// happened if the original request had not sent them either.
 func headersFromSelected(raw []byte) http.Header {
 	out := http.Header{}
 	if len(raw) == 0 {
