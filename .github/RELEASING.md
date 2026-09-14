@@ -1,8 +1,25 @@
 # Release runbook
 
-## Normal release
+## Labrastro deployment
 
-Release from a reviewed commit on `main` by creating and pushing a new semantic
+Build Labrastro application images locally from the reviewed, tagged source
+commit. Do not publish them to GHCR or pull application images from an external
+registry. A container registry is not a deployment prerequisite; provisioning one
+requires a separate decision.
+
+The operations specialist agent owns operational access, the current component
+and database inventory, and the existing local build procedure. Prepare and
+verify the candidate without replacing running containers. Master schedules the
+actual deployment, database migration and active update-feed switch separately.
+
+Fork image-build jobs are gated to the canonical upstream owner. Their dependent
+manifest jobs are consequently skipped on forks. CLI, Desktop and chart
+publishing are also gated to upstream. Do not remove these guards to make a
+Labrastro tag behave like an upstream release.
+
+## Canonical upstream release
+
+For `multica-ai/multica`, release from a reviewed commit on `main` by creating and pushing a new semantic
 version tag such as `v0.18.4`. The Release workflow intentionally has no manual
 trigger: a tag push is the only event that can publish binaries, Homebrew
 formulae, and container images.

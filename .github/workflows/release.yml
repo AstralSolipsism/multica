@@ -114,8 +114,11 @@ jobs:
   # (amd64 on ubuntu-latest, arm64 on ubuntu-24.04-arm) and merged into a
   # manifest list. This avoids QEMU emulation, which was making the Next.js
   # arm64 build run for 30+ minutes per release.
+  # Only upstream publishes images. Labrastro builds application images locally
+  # from its reviewed source; a fork tag must never publish them to GHCR.
   docker-backend-build:
     needs: verify
+    if: github.repository_owner == 'multica-ai'
     strategy:
       fail-fast: false
       matrix:
@@ -233,6 +236,7 @@ jobs:
 
   docker-web-build:
     needs: verify
+    if: github.repository_owner == 'multica-ai'
     strategy:
       fail-fast: false
       matrix:
