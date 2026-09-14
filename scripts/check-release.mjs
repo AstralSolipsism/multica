@@ -58,17 +58,23 @@ export function checkRelease({ repository, tag, sha, version, requireTag = false
     requireThat(git("rev-parse", `refs/tags/${tag}^{commit}`) === sha, "existing candidate tag points to another commit; never move it");
   } else {
     requireThat(!requireTag, "candidate tag is not present; tag creation is a separate authorized step");
-    let lastRevision = 0n;
-    for (const existing of tags) {
-      const previous = tagParts(existing);
-      const difference = parts.slice(0, 3).findIndex((n, i) => n !== previous[i]);
-      requireThat(difference === -1 || parts[difference] > previous[difference], "new candidate base cannot go backwards");
-      if (difference === -1 && previous[3] > lastRevision) lastRevision = previous[3];
-    }
-    requireThat(parts[3] === lastRevision + 1n, "new candidate revision must be the next N for this base (start at 1)");
   }
   const aliases = git("tag", "--points-at", "HEAD").split("\n").filter(t => tagParts(t) && t !== tag);
   requireThat(aliases.length === 0, "candidate SHA already has another Labrastro tag");
+
+  // A tagged rebuild excludes itself and tags on descendant commits, so later
+  // candidates do not invalidate a historical identity. Earlier and off-lineage
+  // tags still constrain its sequence; tag existence alone proves nothing.
+  const successors = new Set(tagExists ? git("tag", "--contains", sha).split("\n") : []);
+  let lastRevision = 0n;
+  for (const existing of tags) {
+    if (successors.has(existing)) continue;
+    const previous = tagParts(existing);
+    const difference = parts.slice(0, 3).findIndex((n, i) => n !== previous[i]);
+    requireThat(difference === -1 || parts[difference] > previous[difference], "candidate base cannot go backwards");
+    if (difference === -1 && previous[3] > lastRevision) lastRevision = previous[3];
+  }
+  requireThat(parts[3] === lastRevision + 1n, "candidate revision must be the next N for this base (start at 1)");
 
   const epoch = git("show", "-s", "--format=%ct", sha);
   return {

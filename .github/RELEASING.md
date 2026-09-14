@@ -59,6 +59,10 @@ The candidate identity is `(repository, full commit SHA, tag, version)`:
   tags. One source SHA has one Labrastro tag. Never move a tag or reuse an old
   version for changed source. Rebuilding the same identity for verification is
   allowed; overwriting already delivered artifacts is not implicitly allowed.
+  Rebuilds still check base/revision order: only tags on descendant commits are
+  excluded from the comparison, so later candidates do not invalidate an older
+  identity. Earlier and unrelated source tags remain constraints. Tag creation
+  time or existence alone is not proof of a valid sequence.
 - A proposal may be checked before tagging. It is not a reservation or a release:
   re-fetch the fork's tags and rerun the check before the separately authorized
   tag creation. Candidate packaging and draft delivery require `--require-tag`.
@@ -90,20 +94,32 @@ git fetch --no-recurse-submodules https://github.com/AstralSolipsism/multica \
   '+refs/heads/main:refs/remotes/origin/main' 'refs/tags/*:refs/tags/*'
 ```
 
-Example of **proposal validation**, using the planning baseline for illustration.
-It creates no tag and is not the final candidate (it predates this PR):
+For **proposal validation**, supply `reviewed_sha` and `reviewed_tag` from the
+reviewed candidate record. The full SHA must already be contained in the fetched
+fork `main` and include `scripts/check-release.mjs` and its Desktop import; this
+requires the release changes to be reviewed and merged first. The planning
+baseline `530ae038…` predates the validator and cannot run this entry.
+Use an isolated, clean checkout whose origin points only to the fork. The
+proposed tag must be unused and the next revision among all fetched candidate
+tags (or `.1` for a greater source base). Then run from the repository root:
 
 ```bash
+set -eu
+: "${reviewed_sha:?Set the reviewed full SHA containing the validator on fork main}"
+: "${reviewed_tag:?Set the reviewed unused vX.Y.Z-labrastro.N proposal}"
+git checkout --detach "$reviewed_sha"
 node scripts/check-release.mjs --repository AstralSolipsism/multica \
-  --sha 530ae0385e1aa54d17c13207a275ba416997c104 \
-  --tag v0.4.43-labrastro.2
+  --sha "$reviewed_sha" --tag "$reviewed_tag"
 ```
 
-On a clean checkout of that exact SHA, while `.1` is the greatest existing
-revision, JSON reports `version: "0.4.43-labrastro.2"`, the full `commit`,
+This creates no tag and never chooses a SHA for you. For example, if that
+reviewed commit has package version `0.4.43`, `.1` is the greatest fetched
+revision and the proposed tag is `v0.4.43-labrastro.2`, JSON reports
+`version: "0.4.43-labrastro.2"`, `commit` equal to `reviewed_sha`,
 `tag_exists: false` and `artifact_dir: "dist/candidate/v0.4.43-labrastro.2"`.
 A dirty checkout, different HEAD, non-target origin or missing required tag
-exits nonzero and emits no metadata on stdout. It never chooses a SHA for you.
+exits nonzero and emits no metadata on stdout. After a tag is created,
+`--require-tag` still rejects skipped revisions and base rollback.
 
 The three required values also have environment equivalents. After the final
 tag exists, component build scripts use this common entry before compiling:
