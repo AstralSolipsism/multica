@@ -33,8 +33,13 @@ export function useSetLarkConversation(wsId: string, installationId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (chats: { chat_id: string; chat_type: "group" | "p2p" }[]) => api.setLarkConversation(wsId, installationId, chats),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: larkKeys.installations(wsId) });
+    onSuccess: async () => {
+      // Cancel any installations read still in flight (e.g. a WS invalidation
+      // started before the PUT committed): its pre-save snapshot must not
+      // land after the save and become the form's new baseline. The
+      // invalidate below then re-reads the post-save state for real.
+      await qc.cancelQueries({ queryKey: larkKeys.installations(wsId) });
+      await qc.invalidateQueries({ queryKey: larkKeys.installations(wsId) });
       // The saved grant re-derives candidate authorization states (a removed
       // chat can expose its still-valid observation as pending again), so the
       // candidate list must be re-read after a full-list save.
@@ -52,7 +57,13 @@ export function useConfirmLarkPrivateChats(wsId: string, installationId: string)
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (candidateIds: string[]) => api.confirmLarkPrivateChatCandidates(wsId, installationId, candidateIds),
-    onSuccess: (grant) => {
+    onSuccess: async (grant) => {
+      // Cancel any installations read still in flight — including reads
+      // started AFTER the confirm POST went out (a WS invalidation during
+      // the request): their pre-confirm snapshot must never land after this
+      // write-back and regress the cache (OL-76 re-review). Cancelling only
+      // on mutate cannot cover those, so it happens here, before the patch.
+      await qc.cancelQueries({ queryKey: larkKeys.installations(wsId) });
       qc.setQueryData<ListLarkInstallationsResponse | undefined>(
         larkKeys.installations(wsId),
         (old) => old == null ? old : {

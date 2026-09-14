@@ -117,3 +117,45 @@ it("frees the selection slot when a refreshed candidate no longer exists", async
   expect(bob).toBeEnabled();
   expect(screen.getByRole("button", { name: /Authorize selected \(0\)/ })).toBeDisabled();
 });
+
+it("does not let a late installation GET replace a completed confirmation", async () => {
+  // Match the production parent: background installation reads disable the
+  // form, but can start while the confirmation POST is already in flight.
+  function RefreshAwareHarness() {
+    const { data, isFetching, isError } = useQuery(larkInstallationsOptions("ws"));
+    const inst = data?.installations[0];
+    return inst ? <LarkConversationForm workspaceId="ws" installation={inst} disabled={isFetching || isError} /> : null;
+  }
+  let resolveConfirm!: (grant: LarkConversationGrant) => void;
+  let resolveRead!: (listing: ListLarkInstallationsResponse) => void;
+  const grantAfterConfirm: LarkConversationGrant = { ...confirmed, chats: [
+    ...(initial.conversation?.chats ?? []), { chat_id: "oc_alice", chat_type: "p2p" },
+  ] };
+  calls.confirm.mockImplementation(() => new Promise<LarkConversationGrant>((resolve) => { resolveConfirm = resolve; }));
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderWithI18n(<QueryClientProvider client={qc}><RefreshAwareHarness /></QueryClientProvider>);
+  const user = userEvent.setup();
+  await user.click(await screen.findByText("Agent conversations"));
+  await user.click(await screen.findByRole("checkbox", { name: /Alice/ }));
+  await user.click(screen.getByRole("button", { name: /Authorize selected \(1\)/ }));
+  await waitFor(() => expect(calls.confirm).toHaveBeenCalledTimes(1));
+
+  // A WS invalidation starts a read before the POST commits; its response
+  // holds the old snapshot until after the confirmation response arrives.
+  calls.installations.mockImplementationOnce(() => new Promise<ListLarkInstallationsResponse>((resolve) => { resolveRead = resolve; }));
+  let refresh!: Promise<void>;
+  await act(async () => { refresh = qc.invalidateQueries({ queryKey: larkKeys.installations("ws") }); });
+  await waitFor(() => expect(calls.installations).toHaveBeenCalledTimes(2));
+  await act(async () => resolveConfirm(grantAfterConfirm));
+  await waitFor(() => expect(qc.getQueryData<ListLarkInstallationsResponse>(larkKeys.installations("ws"))?.installations[0]?.conversation).toEqual(grantAfterConfirm));
+  await screen.findByRole("button", { name: /remove Alice/i });
+
+  await act(async () => {
+    resolveRead({ installations: [initial], configured: true });
+    await refresh;
+  });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Authorize conversations" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Authorize conversations" }));
+  await waitFor(() => expect(calls.save).toHaveBeenCalledTimes(1));
+  expect(calls.save.mock.calls[0]?.[2]).toEqual(grantAfterConfirm.chats);
+});
