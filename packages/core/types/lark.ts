@@ -20,6 +20,54 @@ export interface LarkTargetCapabilities {
   scope_status: string;
   max_chat_page_size: number;
   max_message_page_size: number;
+  /** OL-75 private-chat discovery. Optional: a server predating OL-75 omits
+   * them, which the UI must read as "not supported" (=== true checks). */
+  private_chat_candidates_supported?: boolean;
+  private_chat_identity_lookup_supported?: boolean;
+  max_private_chat_candidates?: number;
+  private_chat_candidate_retention_seconds?: number;
+}
+
+// --- Private chat discovery (OL-75 contract, OL-76 frontend) ---
+// Wire shapes mirror server/internal/messagedelivery/PRIVATE-CHAT-DISCOVERY-CONTRACT.md
+// and server/internal/integrations/lark/private-chat-discovery.schema.json.
+// An observation is NOT consent: it becomes an authorized conversation only
+// through an explicit human confirmation.
+
+export interface LarkPrivateChatCandidateSender {
+  /** "user" for real candidates; anonymous/app senders never qualify. */
+  type: string;
+  /** App-scoped open ID (ou_…). Identity evidence only — never a platform
+   * member, never a selectable target by itself. */
+  id?: string;
+  id_type?: string;
+}
+
+/** One observed private chat awaiting human confirmation. Confirmation
+ * identity is the server-issued candidate `id`; conversation identity is
+ * (installation_id, chat_id). Never substitute one for the other. */
+export interface LarkPrivateChatCandidate {
+  id: string;
+  chat_id: string;
+  chat_type: string;
+  sender: LarkPrivateChatCandidateSender;
+  /** Plain-text contact name, "" when the provider did not return one.
+   * Never fabricated client-side. */
+  display_name: string;
+  /** "name_available" | "id_only"; unknown values must be treated as id_only. */
+  identity_status: string;
+  /** "pending" | "authorized" — saved consent state, not provider
+   * reachability; unknown values must be treated as pending. */
+  authorization_status: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  expires_at: string;
+}
+
+export interface LarkPrivateChatCandidateList {
+  items: LarkPrivateChatCandidate[];
+  max_candidates: number;
+  retention_seconds: number;
 }
 
 /** One joined group as returned by the discovery list. Identity is

@@ -210,6 +210,8 @@ import type {
   LarkTargetCapabilities,
   LarkChatsPage,
   LarkAnchorsPage,
+  LarkConversationGrant,
+  LarkPrivateChatCandidateList,
   ComposioToolkit,
   ComposioConnection,
   ComposioConnectInitResponse,
@@ -274,7 +276,7 @@ import { type Logger, noopLogger } from "../logger";
 import { createRequestId, createSafeId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
-import { LarkInstallationsSchema, LarkConversationResponseSchema, LarkTargetCapabilitiesSchema, LarkChatsPageSchema, LarkAnchorsPageSchema } from "../lark/schema";
+import { LarkInstallationsSchema, LarkConversationResponseSchema, LarkTargetCapabilitiesSchema, LarkChatsPageSchema, LarkAnchorsPageSchema, LarkPrivateChatCandidatesSchema } from "../lark/schema";
 import {
   AgentTaskListSchema,
   AttachmentResponseSchema,
@@ -5121,6 +5123,38 @@ export class ApiClient {
     const parsed = parseWithFallback<LarkAnchorsPage | null>(raw, LarkAnchorsPageSchema, null, { endpoint: "listLarkMessageAnchors" });
     if (parsed === null) throw new Error("The message list could not be read. Retry before picking an anchor.");
     return parsed;
+  }
+
+  // Lark private chat discovery (OL-75 contract): observed private chats a
+  // human can authorize. The list is read-only — it never sends messages or
+  // changes consent; confirmation appends the selected candidates to the
+  // saved grant atomically server-side and returns the resulting full grant,
+  // which callers must treat as the authoritative saved state.
+
+  async listLarkPrivateChatCandidates(
+    workspaceId: string,
+    installationId: string,
+  ): Promise<LarkPrivateChatCandidateList> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/lark/installations/${installationId}/private-chat-candidates`,
+    );
+    const parsed = parseWithFallback<LarkPrivateChatCandidateList | null>(raw, LarkPrivateChatCandidatesSchema, null, { endpoint: "listLarkPrivateChatCandidates" });
+    if (parsed === null) throw new Error("The private chat list could not be read. Refresh before authorizing.");
+    return parsed;
+  }
+
+  async confirmLarkPrivateChatCandidates(
+    workspaceId: string,
+    installationId: string,
+    candidateIds: string[],
+  ): Promise<LarkConversationGrant | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/lark/installations/${installationId}/private-chat-candidates/confirm`,
+      { method: "POST", body: JSON.stringify({ scope: "workspace", candidate_ids: candidateIds }) },
+    );
+    const parsed = parseWithFallback<{ conversation: LarkConversationGrant | null } | null>(raw, LarkConversationResponseSchema, null, { endpoint: "confirmLarkPrivateChatCandidates" });
+    if (parsed === null) throw new Error("Could not verify saved conversation authorization. Refresh and check the current configuration.");
+    return parsed.conversation;
   }
 
   async redeemLarkBindingToken(token: string): Promise<RedeemLarkBindingTokenResponse> {

@@ -35,6 +35,12 @@ export const LarkTargetCapabilitiesSchema = z.object({
   scope_status: z.string(),
   max_chat_page_size: z.number(),
   max_message_page_size: z.number(),
+  // OL-75 additions. Optional: a pre-OL-75 server omits them and the UI must
+  // read that as "private chat discovery unsupported" (=== true checks).
+  private_chat_candidates_supported: z.boolean().optional(),
+  private_chat_identity_lookup_supported: z.boolean().optional(),
+  max_private_chat_candidates: z.number().optional(),
+  private_chat_candidate_retention_seconds: z.number().optional(),
 });
 
 const LarkDiscoveredChatSchema = z.object({
@@ -70,3 +76,35 @@ const LarkMessageAnchorSchema = z.object({
 });
 
 export const LarkAnchorsPageSchema = discoveryPage(LarkMessageAnchorSchema);
+
+// Private chat discovery (OL-75 wire contract, see
+// server/internal/messagedelivery/PRIVATE-CHAT-DISCOVERY-CONTRACT.md). The
+// candidate UUID and chat_id stay required — a row without them can neither
+// be confirmed nor identified; descriptive fields default so drift degrades
+// a row into its id_only / pending state instead of failing the list.
+
+const LarkPrivateChatCandidateSchema = z.object({
+  id: z.string(),
+  chat_id: z.string(),
+  chat_type: z.string().optional().default("p2p"),
+  sender: z
+    .object({
+      type: z.string().optional().default("user"),
+      id: z.string().optional(),
+      id_type: z.string().optional().default("open_id"),
+    })
+    .optional()
+    .default({ type: "user", id_type: "open_id" }),
+  display_name: z.string().optional().default(""),
+  identity_status: z.string().optional().default("id_only"),
+  authorization_status: z.string().optional().default("pending"),
+  first_seen_at: z.string().optional().default(""),
+  last_seen_at: z.string().optional().default(""),
+  expires_at: z.string().optional().default(""),
+});
+
+export const LarkPrivateChatCandidatesSchema = z.object({
+  items: z.array(LarkPrivateChatCandidateSchema),
+  max_candidates: z.number().optional().default(50),
+  retention_seconds: z.number().optional().default(604800),
+});

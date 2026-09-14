@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronUp, RefreshCw, X } from "lucide-react";
 import { Alert, AlertDescription } from "@multica/ui/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@multica/ui/components/ui/avatar";
 import { Button } from "@multica/ui/components/ui/button";
@@ -59,8 +59,13 @@ export function LarkDiscoveryErrorAlert({
 
 /** Rows are not <button> elements (they host this toggle), so the suffix →
  * full-ID expansion is its own keyboard-focusable control. stopPropagation
- * keeps the toggle from selecting the row. */
-export function ChatIdDisclosure({ id }: { id: string }) {
+ * keeps the toggle from selecting the row. `showLabel`/`hideLabel` override
+ * the default chat-ID aria labels (e.g. for a sender open ID). */
+export function ChatIdDisclosure({ id, showLabel, hideLabel }: {
+  id: string;
+  showLabel?: string;
+  hideLabel?: string;
+}) {
   const { t } = useT("settings");
   const [open, setOpen] = useState(false);
   return (
@@ -71,7 +76,7 @@ export function ChatIdDisclosure({ id }: { id: string }) {
       <button
         type="button"
         className="shrink-0 rounded-xs p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-        aria-label={open ? t(($) => $.lark.picker.hide_id) : t(($) => $.lark.picker.show_id)}
+        aria-label={open ? (hideLabel ?? t(($) => $.lark.picker.hide_id)) : (showLabel ?? t(($) => $.lark.picker.show_id))}
         aria-expanded={open}
         onClick={(e) => {
           e.stopPropagation();
@@ -83,6 +88,42 @@ export function ChatIdDisclosure({ id }: { id: string }) {
         {open ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
       </button>
     </span>
+  );
+}
+
+/** The current picks as removable chips, so a restored saved target (raw ID,
+ * name unresolved) is as visible as a freshly picked one. Shared by the
+ * group multi-select and the private-chat select. */
+export function LarkSelectionChips({ selected, onRemove, disabled }: {
+  selected: LarkChatSelection[];
+  onRemove: (chatId: string) => void;
+  disabled?: boolean;
+}) {
+  const { t } = useT("settings");
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {selected.map((sel) => {
+        const label = sel.name.trim() !== "" ? sel.name : sel.chatId;
+        return (
+          <span
+            key={sel.chatId}
+            className="inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/40 py-0.5 pl-2 pr-1 text-caption"
+          >
+            <span className="truncate">{label}</span>
+            <ChatIdDisclosure id={sel.chatId} />
+            <button
+              type="button"
+              className="shrink-0 rounded-xs p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              aria-label={t(($) => $.lark.picker.multi_remove, { name: label })}
+              disabled={disabled}
+              onClick={() => onRemove(sel.chatId)}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        );
+      })}
+    </div>
   );
 }
 

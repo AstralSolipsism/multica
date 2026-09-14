@@ -1,14 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Search, X } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import type { LarkDiscoveredChat } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { useT } from "../i18n";
 import { larkDiscoveryErrorKey } from "./discovery";
 import { useLarkTargetCapabilities, useLarkTargetChats } from "./use-lark-discovery";
-import { ChatIdDisclosure } from "./picker-common";
+import { LarkSelectionChips } from "./picker-common";
 import { LarkChatList } from "./lark-chat-picker";
 import type { LarkChatSelection } from "./picker-common";
 
@@ -61,29 +61,11 @@ export function LarkChatMultiSelect({
   };
 
   const chips = (
-    <div className="flex flex-wrap gap-1.5">
-      {selected.map((sel) => {
-        const label = sel.name.trim() !== "" ? sel.name : sel.chatId;
-        return (
-          <span
-            key={sel.chatId}
-            className="inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/40 py-0.5 pl-2 pr-1 text-caption"
-          >
-            <span className="truncate">{label}</span>
-            <ChatIdDisclosure id={sel.chatId} />
-            <button
-              type="button"
-              className="shrink-0 rounded-xs p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-              aria-label={t(($) => $.lark.picker.multi_remove, { name: label })}
-              disabled={disabled}
-              onClick={() => onChange(selected.filter((s) => s.chatId !== sel.chatId))}
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </span>
-        );
-      })}
-    </div>
+    <LarkSelectionChips
+      selected={selected}
+      onRemove={(chatId) => onChange(selected.filter((s) => s.chatId !== chatId))}
+      disabled={disabled}
+    />
   );
 
   if (!supported) {

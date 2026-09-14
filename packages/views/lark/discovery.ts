@@ -4,6 +4,7 @@ import type {
   LarkChatsPage,
   LarkDiscoveredChat,
   LarkMessageAnchor,
+  LarkPrivateChatCandidate,
 } from "@multica/core/types";
 
 // Pure helpers for the Lark target pickers (OL-74). Canonical home of the
@@ -111,4 +112,65 @@ export function anchorTimeMs(createTime: string): number | null {
  * ID is one toggle away in the row itself. */
 export function chatIdSuffix(id: string): string {
   return id.length <= 6 ? id : id.slice(-6);
+}
+
+// --- Private chat candidates (OL-75 contract, OL-76 frontend) ---
+
+/** Stable candidate/confirmation error codes → keys under
+ * `settings:lark.private.error`. */
+export type LarkPrivateChatErrorKey =
+  | "forbidden"
+  | "invocation_denied"
+  | "limit_exceeded"
+  | "candidate_unavailable"
+  | "invalid_request"
+  | "installation_inactive"
+  | "installation_not_found"
+  | "unsupported"
+  | "generic";
+
+export function larkPrivateChatErrorKey(err: unknown): LarkPrivateChatErrorKey {
+  switch (errorCode(err)) {
+    case "lark_discovery_forbidden":
+      return "forbidden";
+    case "lark_conversation_invocation_denied":
+      return "invocation_denied";
+    case "lark_conversation_limit_exceeded":
+      return "limit_exceeded";
+    case "lark_private_chat_candidate_unavailable":
+      return "candidate_unavailable";
+    case "lark_conversation_invalid_request":
+      return "invalid_request";
+    case "lark_installation_inactive":
+      return "installation_inactive";
+    case "lark_installation_not_found":
+      return "installation_not_found";
+    case "lark_discovery_unsupported":
+      return "unsupported";
+    default:
+      break;
+  }
+  // Same old-server rule as group discovery: a bare router 404 (no code) is
+  // the pre-discovery server, not a coded "installation gone".
+  if (err instanceof ApiError && err.status === 404) return "unsupported";
+  return "generic";
+}
+
+/** Candidate timestamps are RFC3339 strings; drift must not become a bogus
+ * Date (NaN renders as "Invalid Date"). */
+export function candidateTimeMs(value: string): number | null {
+  if (value === "") return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** Display name only when the contract says one is actually available —
+ * identity drift (name_available with an empty name) and unknown statuses
+ * degrade to the id_only presentation; a name is never fabricated. */
+export function candidateDisplayName(
+  candidate: Pick<LarkPrivateChatCandidate, "display_name" | "identity_status">,
+): string | null {
+  if (candidate.identity_status !== "name_available") return null;
+  const name = candidate.display_name.trim();
+  return name === "" ? null : candidate.display_name;
 }

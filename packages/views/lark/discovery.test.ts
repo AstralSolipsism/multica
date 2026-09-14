@@ -4,8 +4,11 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "@multica/core/api";
 import {
   anchorTimeMs,
+  candidateDisplayName,
+  candidateTimeMs,
   chatIdSuffix,
   larkDiscoveryErrorKey,
+  larkPrivateChatErrorKey,
   mergeDiscoveredChats,
   mergeMessageAnchors,
 } from "./discovery";
@@ -95,5 +98,48 @@ describe("chatIdSuffix", () => {
   it("shows the last 6 chars, or the whole short id", () => {
     expect(chatIdSuffix("oc_abcdef1234")).toBe("ef1234");
     expect(chatIdSuffix("oc_x")).toBe("oc_x");
+  });
+});
+
+describe("larkPrivateChatErrorKey", () => {
+  it.each([
+    [apiErr(403, "lark_discovery_forbidden"), "forbidden"],
+    [apiErr(403, "lark_conversation_invocation_denied"), "invocation_denied"],
+    [apiErr(409, "lark_conversation_limit_exceeded"), "limit_exceeded"],
+    [apiErr(410, "lark_private_chat_candidate_unavailable"), "candidate_unavailable"],
+    [apiErr(400, "lark_conversation_invalid_request"), "invalid_request"],
+    [apiErr(409, "lark_installation_inactive"), "installation_inactive"],
+    [apiErr(404, "lark_installation_not_found"), "installation_not_found"],
+    [apiErr(503, "lark_discovery_unsupported"), "unsupported"],
+  ] as const)("%s → %s", (err, key) => {
+    expect(larkPrivateChatErrorKey(err)).toBe(key);
+  });
+
+  it("maps an uncoded router 404 (pre-discovery server) to unsupported", () => {
+    expect(larkPrivateChatErrorKey(apiErr(404))).toBe("unsupported");
+  });
+
+  it("degrades unknown codes and non-API errors to generic", () => {
+    expect(larkPrivateChatErrorKey(apiErr(500, "some_future_code"))).toBe("generic");
+    expect(larkPrivateChatErrorKey(new Error("network down"))).toBe("generic");
+  });
+});
+
+describe("candidateTimeMs", () => {
+  it("parses RFC3339 strings and rejects drift", () => {
+    expect(candidateTimeMs("2026-09-13T12:00:00Z")).toBe(Date.parse("2026-09-13T12:00:00Z"));
+    expect(candidateTimeMs("")).toBeNull();
+    expect(candidateTimeMs("not-a-date")).toBeNull();
+  });
+});
+
+describe("candidateDisplayName", () => {
+  it("returns the name only when identity_status confirms availability", () => {
+    expect(candidateDisplayName({ display_name: "Alice", identity_status: "name_available" })).toBe("Alice");
+    // id_only and unknown statuses never show a name…
+    expect(candidateDisplayName({ display_name: "", identity_status: "id_only" })).toBeNull();
+    expect(candidateDisplayName({ display_name: "Alice", identity_status: "some_future_status" })).toBeNull();
+    // …and drift (available but empty) never fabricates one.
+    expect(candidateDisplayName({ display_name: "  ", identity_status: "name_available" })).toBeNull();
   });
 });
