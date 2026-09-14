@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { useConfirmLarkPrivateChats } from "@multica/core/lark";
 import type { LarkPrivateChatCandidate } from "@multica/core/types";
@@ -26,9 +26,9 @@ import { ChatIdDisclosure, LarkSelectionChips, type LarkChatSelection } from "./
  * CONFIRMED by a human with the management role — no raw oc_ entry, no
  * auto-approval, no test messages. Confirmation goes through the OL-75
  * confirm endpoint, which atomically appends the selected candidates to the
- * saved grant; the returned grant is the authoritative saved state, and the
- * confirmed chats are unioned into the caller's draft so a later full-list
- * save can never silently drop them.
+ * saved grant; the returned grant is the authoritative saved state — the
+ * mutation writes it into the installations cache and the form re-baselines
+ * its draft from there, so a later full-list save can never overwrite it.
  *
  * Saved p2p chats are chips (removed individually, applied by the form's
  * full-list save) — including chats no longer present in the candidate list.
@@ -44,6 +44,7 @@ export function LarkPrivateChatSelect({
   otherCount,
   disabled,
   fallback,
+  onBusyChange,
 }: {
   wsId: string;
   installationId: string;
@@ -55,6 +56,9 @@ export function LarkPrivateChatSelect({
   otherCount: number;
   disabled?: boolean;
   fallback: React.ReactNode;
+  /** Reports the confirm mutation's wait state so the parent form can hold
+   * its full-list save/revoke until the confirmation has landed. */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const { t } = useT("settings");
   const locale = useLocale();
@@ -69,6 +73,33 @@ export function LarkPrivateChatSelect({
   const [confirmedNote, setConfirmedNote] = useState(false);
 
   const blocked = disabled === true || confirm.isPending;
+
+  // Confirm and the form's full-list save/revoke are mutually exclusive
+  // writes: a stale-draft PUT committed after a confirm would drop the
+  // freshly authorized chats, so the parent shares this wait state.
+  useEffect(() => {
+    onBusyChange?.(confirm.isPending);
+    return () => onBusyChange?.(false);
+  }, [confirm.isPending, onBusyChange]);
+
+  // A refreshed list may drop checked candidates (expired, evicted, or
+  // authorized elsewhere): prune them so a dead UUID never occupies the cap
+  // or gets submitted.
+  useEffect(() => {
+    setChecked((prev) => {
+      if (prev.size === 0) return prev;
+      const valid = new Set(
+        list.items.filter((c) => c.authorization_status !== "authorized").map((c) => c.id),
+      );
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (valid.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [list.items]);
 
   // Saved p2p chips resolve their names from the candidate list when the
   // draft only has the raw ID (e.g. a grant saved before this UI existed).
@@ -162,17 +193,11 @@ export function LarkPrivateChatSelect({
     const ids = [...checked];
     try {
       await confirm.mutateAsync(ids);
-      // Union the just-authorized chats into the form draft: the confirm
-      // endpoint already saved them server-side, so the next full-list save
-      // must carry them too — never overwrite the fresh grant with a stale
-      // draft (OL-75 contract).
-      const byId = new Map(list.items.map((c) => [c.id, c]));
-      const known = new Set(selected.map((s) => s.chatId));
-      const additions = ids
-        .map((id) => byId.get(id))
-        .filter((c): c is LarkPrivateChatCandidate => c != null && !known.has(c.chat_id))
-        .map((c) => ({ chatId: c.chat_id, name: candidateDisplayName(c) ?? "" }));
-      onChange([...selected, ...additions]);
+      // The mutation's onSuccess has already written the returned grant into
+      // the installations cache; the parent form re-baselines its draft from
+      // that authoritative grant (OL-76 re-review — never hand-merge a stale
+      // draft here). This component only releases the selection and confirms
+      // the outcome.
       setChecked(new Set());
       setConfirmedNote(true);
     } catch (err) {

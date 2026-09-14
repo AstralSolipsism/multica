@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "@multica/core/api";
@@ -69,11 +69,12 @@ function renderSelect(ui: ReactElement) {
   return renderWithI18n(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 
-function Harness({ initial = [], otherCount = 0, max = 50, onChange }: {
+function Harness({ initial = [], otherCount = 0, max = 50, onChange, onBusyChange }: {
   initial?: LarkChatSelection[];
   otherCount?: number;
   max?: number;
   onChange?: (next: LarkChatSelection[]) => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const [selected, setSelected] = useState<LarkChatSelection[]>(initial);
   return (
@@ -88,6 +89,7 @@ function Harness({ initial = [], otherCount = 0, max = 50, onChange }: {
       max={max}
       otherCount={otherCount}
       fallback={<textarea aria-label="legacy directs" />}
+      onBusyChange={onBusyChange}
     />
   );
 }
@@ -149,21 +151,52 @@ describe("LarkPrivateChatSelect", () => {
     await waitFor(() => expect(listMock).toHaveBeenCalledTimes(2));
   });
 
-  it("confirms selected candidates via the confirm endpoint and unions them into the draft", async () => {
-    const onChange = vi.fn();
-    renderSelect(<Harness onChange={onChange} />);
+  it("prunes checked candidates that vanish from the refreshed list", async () => {
+    renderSelect(<Harness />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("checkbox", { name: /Alice/ }));
+    // Alice expired between refreshes; a different candidate shows up.
+    listMock.mockResolvedValue({
+      items: [candidate("c9", { display_name: "Zoe", identity_status: "name_available" })],
+      max_candidates: 50,
+      retention_seconds: 604800,
+    });
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+
+    // The dead UUID no longer occupies a selection slot or the submit set.
+    expect(await screen.findByRole("checkbox", { name: /Zoe/ })).toBeEnabled();
+    expect(screen.queryByRole("checkbox", { name: /Alice/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Authorize selected \(0\)/ })).toBeDisabled();
+  });
+
+  it("confirms selected candidates via the confirm endpoint and reports its wait state", async () => {
+    const busy = vi.fn();
+    // Deferred confirm: an instantly-resolving mock would settle within one
+    // render batch and the busy=true transition would never be observable.
+    let resolveConfirm!: (value: unknown) => void;
+    confirmMock.mockImplementation(
+      () => new Promise((resolve) => { resolveConfirm = resolve; }),
+    );
+    renderSelect(<Harness onBusyChange={busy} />);
     const user = userEvent.setup();
 
     await user.click(await screen.findByRole("checkbox", { name: /Alice/ }));
     await user.click(screen.getByRole("button", { name: /Authorize selected \(1\)/ }));
 
+    // The confirm endpoint (not the full-list PUT) records consent.
     await waitFor(() =>
       expect(confirmMock).toHaveBeenCalledWith("ws-1", "inst-1", ["c1"]));
-    // The confirmed chat joins the draft (with its display name) so the next
-    // full-list save cannot silently drop it.
-    await waitFor(() =>
-      expect(onChange).toHaveBeenCalledWith([{ chatId: "oc_chat_c1", name: "Alice" }]));
+    // The parent form shares the wait state while the write is in flight.
+    await waitFor(() => expect(busy).toHaveBeenCalledWith(true));
+
+    await act(async () => resolveConfirm(grant));
+
+    await waitFor(() => expect(busy).toHaveBeenCalledWith(false));
+    // Selection released; the draft itself re-baselines from the returned
+    // grant via the installations cache (form-level coverage).
     expect(await screen.findByText(/Authorization saved/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Authorize selected \(0\)/ })).toBeDisabled();
     // Earlier messages are not replayed — the note says so.
     expect(screen.getByText(/earlier messages are not replayed/i)).toBeInTheDocument();
   });

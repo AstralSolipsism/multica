@@ -3,8 +3,9 @@
 import { expect, it, beforeEach, afterEach, vi } from "vitest";
 import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ApiError } from "@multica/core/api";
+import { larkInstallationsOptions } from "@multica/core/lark";
 import type { LarkInstallation } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { LarkConversationForm } from "./lark-conversation-form";
@@ -24,6 +25,7 @@ const capsMock = vi.hoisted(() => vi.fn());
 const chatsMock = vi.hoisted(() => vi.fn());
 const candidatesMock = vi.hoisted(() => vi.fn());
 const confirmMock = vi.hoisted(() => vi.fn());
+const installationsMock = vi.hoisted(() => vi.fn());
 vi.mock("@multica/core/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@multica/core/api")>();
   return {
@@ -34,6 +36,7 @@ vi.mock("@multica/core/api", async (importOriginal) => {
       listLarkTargetChats: (...args: unknown[]) => chatsMock(...args),
       listLarkPrivateChatCandidates: (...args: unknown[]) => candidatesMock(...args),
       confirmLarkPrivateChatCandidates: (...args: unknown[]) => confirmMock(...args),
+      listLarkInstallations: (...args: unknown[]) => installationsMock(...args),
     },
   };
 });
@@ -70,9 +73,27 @@ function view(disabled: boolean, inst: LarkInstallation = installation) {
   );
 }
 
+// Mirrors production: both call sites feed the form from the live
+// installations query, so the confirm mutation's cache write flows back in
+// as props and the draft re-baselines from the returned grant.
+function QueryDrivenForm() {
+  const { data } = useQuery(larkInstallationsOptions("ws"));
+  const inst = data?.installations[0];
+  return inst ? <LarkConversationForm workspaceId="ws" installation={inst} disabled={false} /> : null;
+}
+
+function viewQueryDriven() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return (
+    <QueryClientProvider client={qc}>
+      <QueryDrivenForm />
+    </QueryClientProvider>
+  );
+}
+
 async function openForm() {
   const user = userEvent.setup();
-  await user.click(screen.getByText("Agent conversations"));
+  await user.click(await screen.findByText("Agent conversations"));
   return user;
 }
 
@@ -112,6 +133,7 @@ beforeEach(() => {
     scope: "workspace",
     chats: [{ chat_id: "oc_dm_alice", chat_type: "p2p" }],
   });
+  installationsMock.mockReset().mockResolvedValue({ installations: [installation], configured: true });
 });
 
 afterEach(() => cleanup());
@@ -209,7 +231,7 @@ it("blocks saving past the 50-conversation cap with an inline hint", async () =>
 
 it("confirms a discovered private chat and saves it with the groups in one draft", async () => {
   capsMock.mockResolvedValue(PRIVATE_CAPS);
-  renderWithI18n(view(false));
+  renderWithI18n(viewQueryDriven());
   const user = await openForm();
 
   // The legacy p2p textarea is gone once candidate discovery is supported.
@@ -217,7 +239,8 @@ it("confirms a discovered private chat and saves it with the groups in one draft
     expect(screen.queryByLabelText(/Direct chat IDs/)).not.toBeInTheDocument());
 
   // Confirm the discovered candidate: the confirm endpoint (not the
-  // full-list PUT) records consent, and the chat joins the draft as a chip.
+  // full-list PUT) records consent; the returned grant re-baselines the
+  // draft through the installations cache and the chat appears as a chip.
   await user.click(await screen.findByRole("checkbox", { name: /Alice/ }));
   await user.click(screen.getByRole("button", { name: /Authorize selected \(1\)/ }));
   await waitFor(() =>

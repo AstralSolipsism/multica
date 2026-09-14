@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSetLarkConversation } from "@multica/core/lark";
-import type { LarkInstallation } from "@multica/core/types";
+import type { LarkConversationGrant, LarkInstallation } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { useT } from "../../i18n";
 import { LarkChatMultiSelect, LarkPrivateChatSelect, type LarkChatSelection } from "../../lark";
+import { mergeConversationDraft, sameConversationChats } from "../../lark/discovery";
 
 /** Server-side conversation grant cap (scope must be workspace; at most 50
  * chats — server/internal/handler/labrastro_conversation.go). The picker
@@ -50,7 +51,49 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
       .join("\n") ?? "");
   const mutation = useSetLarkConversation(workspaceId, installation.id);
   const [saved, setSaved] = useState(false);
-  const blocked = disabled || mutation.isPending;
+  // The candidate confirm's wait state, shared from the picker: confirm and
+  // the full-list save/revoke are mutually exclusive writes — a stale-draft
+  // PUT committed after a confirm would drop the freshly authorized chats,
+  // and a late confirm response must not land while a PUT is in flight.
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const blocked = disabled || mutation.isPending || confirmBusy;
+
+  // The authoritative saved grant the current draft derives from. When a
+  // newer grant arrives — the confirm mutation's cache write, a WS-driven
+  // invalidation, or the refetch after our own save — the draft re-baselines
+  // to it and replays only explicit local edit intent (picks added / chips
+  // removed since the baseline). This is what stops a stale full-list save
+  // from dropping chats authorized elsewhere or resurrecting revoked ones.
+  const baselineRef = useRef<LarkConversationGrant | null | undefined>(installation.conversation);
+  useEffect(() => {
+    const incoming = installation.conversation;
+    // undefined = the field is absent (server drift): no authoritative value
+    // to re-baseline against, keep the draft and the baseline.
+    if (incoming === undefined || incoming === baselineRef.current) return;
+    const baseline = baselineRef.current;
+    baselineRef.current = incoming;
+    if (sameConversationChats(incoming?.chats, baseline?.chats)) return;
+    const draft = [
+      ...groups.map((g) => ({ ...g, chat_type: "group" as const })),
+      ...directs.map((d) => ({ ...d, chat_type: "p2p" as const })),
+    ];
+    const merged = mergeConversationDraft(baseline?.chats, incoming?.chats, draft);
+    if (
+      sameConversationChats(
+        merged.map((m) => ({ chat_id: m.chatId, chat_type: m.chat_type })),
+        draft.map((d) => ({ chat_id: d.chatId, chat_type: d.chat_type })),
+      )
+    ) {
+      return;
+    }
+    const nextGroups = merged.filter((m) => m.chat_type === "group").map(({ chatId, name }) => ({ chatId, name }));
+    const nextDirects = merged.filter((m) => m.chat_type === "p2p").map(({ chatId, name }) => ({ chatId, name }));
+    setGroups(nextGroups);
+    setGroupsText(nextGroups.map((g) => g.chatId).join("\n"));
+    setDirects(nextDirects);
+    setDirectsText(nextDirects.map((d) => d.chatId).join("\n"));
+    setSaved(false);
+  }, [installation.conversation, groups, directs]);
 
   const overLimit = groups.length + directs.length > MAX_CONVERSATION_CHATS;
 
@@ -141,6 +184,7 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
         max={MAX_CONVERSATION_CHATS}
         otherCount={groups.length}
         disabled={blocked}
+        onBusyChange={setConfirmBusy}
         fallback={
           <Textarea
             value={directsText}

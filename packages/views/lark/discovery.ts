@@ -174,3 +174,77 @@ export function candidateDisplayName(
   const name = candidate.display_name.trim();
   return name === "" ? null : candidate.display_name;
 }
+
+// --- Conversation draft reconciliation (OL-76 re-review) ---
+// The conversation form's draft is "saved grant + explicit local edits". When
+// a newer authoritative grant arrives (confirm response via the installations
+// cache, WS invalidation, refetch after save), the draft must re-baseline to
+// it — a stale draft saved over the new grant would silently drop chats added
+// elsewhere and resurrect chats revoked elsewhere.
+
+type ConversationChatLike = { chat_id: string; chat_type: string };
+
+function conversationChatKey(chat: ConversationChatLike): string {
+  return `${chat.chat_type}:${chat.chat_id}`;
+}
+
+/** Two chat lists carry the same target set (order-independent). Used to
+ * skip re-baselining when a refetch only changed the grant's identity. */
+export function sameConversationChats(
+  a: ReadonlyArray<ConversationChatLike> | null | undefined,
+  b: ReadonlyArray<ConversationChatLike> | null | undefined,
+): boolean {
+  const keys = new Set((a ?? []).map(conversationChatKey));
+  const other = (b ?? []).map(conversationChatKey);
+  return keys.size === other.length && other.every((k) => keys.has(k));
+}
+
+export interface LarkConversationDraftChat {
+  chatId: string;
+  name: string;
+  chat_type: "group" | "p2p";
+}
+
+/** Reconcile the form draft with a fresh authoritative grant: the new grant
+ * becomes the baseline, then explicit local edit intent is replayed — picks
+ * the user added since the baseline stay; chips they removed stay removed;
+ * upstream removals win over chats the user merely kept. Draft display names
+ * are preserved for surviving chats; new arrivals start nameless (the pickers
+ * re-resolve them). */
+export function mergeConversationDraft(
+  baseline: ReadonlyArray<ConversationChatLike> | null | undefined,
+  incoming: ReadonlyArray<ConversationChatLike> | null | undefined,
+  draft: ReadonlyArray<LarkConversationDraftChat>,
+): LarkConversationDraftChat[] {
+  const base = new Set((baseline ?? []).map(conversationChatKey));
+  const draftKeys = new Set(draft.map((d) => conversationChatKey({ chat_id: d.chatId, chat_type: d.chat_type })));
+  const nameByKey = new Map(
+    draft.map((d) => [conversationChatKey({ chat_id: d.chatId, chat_type: d.chat_type }), d.name] as const),
+  );
+  // Explicit local removals: in the baseline but no longer in the draft.
+  const removals = new Set(
+    (baseline ?? [])
+      .filter((c) => !draftKeys.has(conversationChatKey(c)))
+      .map(conversationChatKey),
+  );
+  const merged: LarkConversationDraftChat[] = [];
+  const seen = new Set<string>();
+  for (const c of incoming ?? []) {
+    const key = conversationChatKey(c);
+    if (removals.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    merged.push({
+      chatId: c.chat_id,
+      name: nameByKey.get(key) ?? "",
+      chat_type: c.chat_type === "p2p" ? "p2p" : "group",
+    });
+  }
+  // Explicit local additions: in the draft but never in the baseline.
+  for (const d of draft) {
+    const key = conversationChatKey({ chat_id: d.chatId, chat_type: d.chat_type });
+    if (base.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(d);
+  }
+  return merged;
+}
