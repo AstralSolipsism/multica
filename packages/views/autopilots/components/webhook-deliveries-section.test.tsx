@@ -6,9 +6,10 @@
 // dialog and its unsaved draft must survive, and only an explicit close runs
 // the discard guard.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { autopilotKeys } from "@multica/core/autopilots/queries";
+import { ApiError } from "@multica/core/api";
 import type { AutopilotTrigger, WebhookDelivery, WebhookEventFilter } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { WebhookDeliveriesSection } from "./webhook-deliveries-section";
@@ -113,3 +114,64 @@ it("keeps a dirty delivery dialog open when the refreshed list no longer contain
   // The evicted row's detail renders from the cached detail query.
   expect(screen.getAllByText("github.workflow_run.completed").length).toBeGreaterThan(0);
 });
+
+// The row can leave the list while its detail request is still in flight.
+// If that request then fails, the dialog must surface the existing error
+// copy — never skeletons forever.
+it.each([404, 500])(
+  "reports HTTP %i when the selected row leaves the list before the detail load fails",
+  async (status) => {
+    let rejectDetail!: (reason: unknown) => void;
+    const pending = new Promise<WebhookDelivery>((_resolve, reject) => {
+      rejectDetail = reject;
+    });
+    mocks.getAutopilotDelivery.mockImplementation(() => pending);
+
+    renderWithI18n(
+      <QueryClientProvider client={client}>
+        <WebhookDeliveriesSection
+          autopilotId="ap-1"
+          hasWebhookTrigger
+          triggers={[trigger]}
+          canWrite
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByText("github.workflow_run.completed"));
+    await waitFor(() =>
+      expect(mocks.getAutopilotDelivery).toHaveBeenCalledWith("ap-1", "d-1"),
+    );
+
+    // Evict the row, then fail the in-flight detail request.
+    act(() =>
+      client.setQueryData(autopilotKeys.deliveries("ws-1", "ap-1"), {
+        deliveries: [{ ...detail, id: "d-new", event: "github.push" }],
+        total: 1,
+      }),
+    );
+    await screen.findByText("github.push");
+    await act(async () => {
+      rejectDetail(
+        new ApiError(
+          "detail failed",
+          status,
+          status === 404 ? "Not Found" : "Internal Server Error",
+        ),
+      );
+      await pending.catch(() => undefined);
+    });
+    await waitFor(() =>
+      expect(
+        client.getQueryState(autopilotKeys.delivery("ws-1", "ap-1", "d-1"))?.status,
+      ).toBe("error"),
+    );
+
+    expect(mocks.updateAutopilotTrigger).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeNull();
+    await screen.findByText(
+      status === 404
+        ? /This delivery is unavailable/
+        : /Couldn't load the filter suggestion/,
+    );
+  },
+);

@@ -316,6 +316,9 @@ describe("DeliveryFilterPanel", () => {
   });
 
   // --- Bring-in flow ----------------------------------------------------------
+  // Dedupe boundary cases of the bring-in merge live at the helper level:
+  // packages/core/autopilots/webhook.test.ts (mergeWebhookFilterSuggestion).
+  // The tests here only cover the panel wiring.
 
   it("brings the suggestion into the draft without saving", async () => {
     const { onDirtyChange } = renderPanel();
@@ -337,22 +340,6 @@ describe("DeliveryFilterPanel", () => {
       [{ event: "issues" }, SUGGESTION],
       expect.objectContaining({ enabled: true }),
     );
-  });
-
-  it("does not duplicate a suggestion already covered by an identical row", () => {
-    renderPanel({ trigger: makeTrigger([SUGGESTION]) });
-    fireEvent.click(
-      screen.getByRole("button", { name: /Create filter from this delivery/ }),
-    );
-    expect(screen.getAllByRole("button", { name: "Remove filter" })).toHaveLength(1);
-  });
-
-  it("does not duplicate when a same-event any-action row already covers it", () => {
-    renderPanel({ trigger: makeTrigger([{ event: "workflow_run" }]) });
-    fireEvent.click(
-      screen.getByRole("button", { name: /Create filter from this delivery/ }),
-    );
-    expect(screen.getAllByRole("button", { name: "Remove filter" })).toHaveLength(1);
   });
 
   it("keeps manual multi-row editing inside the draft", () => {

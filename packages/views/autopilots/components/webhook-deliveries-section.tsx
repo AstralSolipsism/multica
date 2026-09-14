@@ -300,6 +300,9 @@ function DeliveryDetailDialog({
   };
 
   if (!full) {
+    // The row left the list before the detail landed. Distinguish failure
+    // from loading: a failed detail request (404 / 500 / ...) must surface
+    // the panel's existing error copy, not skeletons forever.
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
@@ -307,11 +310,26 @@ function DeliveryDetailDialog({
             <Webhook className="h-4 w-4 text-muted-foreground" />
             {t(($) => $.deliveries.detail.title)}
           </DialogTitle>
-          <div className="space-y-2 pt-1">
-            <Skeleton className="h-6 w-48" />
-            <Skeleton className="h-24 w-full" />
-            <Skeleton className="h-16 w-full" />
-          </div>
+          {detailError ? (
+            <div className="pt-1">
+              <DeliveryFilterPanel
+                autopilotId={autopilotId}
+                deliveryId={deliveryId}
+                detail={undefined}
+                detailLoading={false}
+                detailError={detailError}
+                trigger={undefined}
+                canWrite={canWrite}
+                onDirtyChange={setFilterDirty}
+              />
+            </div>
+          ) : (
+            <div className="space-y-2 pt-1">
+              <Skeleton className="h-6 w-48" />
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     );
@@ -469,7 +487,7 @@ function DeliveryDetailDialog({
             {t(($) => $.deliveries.filter.discard_keep)}
           </AlertDialogCancel>
           <AlertDialogAction
-            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            variant="destructive"
             onClick={() => {
               setDiscardOpen(false);
               setFilterDirty(false);
