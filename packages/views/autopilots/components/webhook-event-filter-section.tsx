@@ -9,11 +9,21 @@ import { useT } from "../../i18n";
 interface WebhookEventFilterSectionProps {
   filters: WebhookEventFilter[];
   onChange: (filters: WebhookEventFilter[]) => void;
+  /** Suppress the built-in section label when the host already renders one. */
+  hideLabel?: boolean;
+  /**
+   * Freeze the whole editor (inputs, add, remove). Hosts use this while a
+   * save of the current rows is in flight: an edit accepted mid-flight would
+   * not be part of the request, and the success path would silently drop it.
+   */
+  disabled?: boolean;
 }
 
 export function WebhookEventFilterSection({
   filters,
   onChange,
+  hideLabel = false,
+  disabled = false,
 }: WebhookEventFilterSectionProps) {
   const { t } = useT("autopilots");
   const [newEvent, setNewEvent] = useState("");
@@ -39,10 +49,12 @@ export function WebhookEventFilterSection({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-1.5 text-micro font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-        <Filter className="size-3" />
-        {t(($) => $.dialog.event_filter_label)}
-      </div>
+      {!hideLabel && (
+        <div className="flex items-center gap-1.5 text-micro font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+          <Filter className="size-3" />
+          {t(($) => $.dialog.event_filter_label)}
+        </div>
+      )}
 
       {filters.length > 0 && (
         <div className="space-y-1">
@@ -62,9 +74,10 @@ export function WebhookEventFilterSection({
               <button
                 type="button"
                 onClick={() => removeFilter(idx)}
+                disabled={disabled}
                 aria-label={t(($) => $.dialog.event_filter_remove_label)}
                 title={t(($) => $.dialog.event_filter_remove_label)}
-                className="ml-auto rounded-xs p-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                className="ml-auto rounded-xs p-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50 disabled:pointer-events-none"
               >
                 <X className="size-3" />
               </button>
@@ -84,8 +97,9 @@ export function WebhookEventFilterSection({
               addFilter();
             }
           }}
+          disabled={disabled}
           placeholder={t(($) => $.dialog.event_filter_event_placeholder)}
-          className="flex-1 min-w-0 rounded-md border bg-background px-2.5 py-1.5 text-caption font-mono outline-none focus:ring-1 focus:ring-ring"
+          className="flex-1 min-w-0 rounded-md border bg-background px-2.5 py-1.5 text-caption font-mono outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
         />
         <input
           type="text"
@@ -97,16 +111,17 @@ export function WebhookEventFilterSection({
               addFilter();
             }
           }}
+          disabled={disabled}
           placeholder={t(($) => $.dialog.event_filter_actions_placeholder)}
-          className="w-28 rounded-md border bg-background px-2.5 py-1.5 text-caption outline-none focus:ring-1 focus:ring-ring"
+          className="w-28 rounded-md border bg-background px-2.5 py-1.5 text-caption outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
         />
         <button
           type="button"
           onClick={addFilter}
-          disabled={!newEvent.trim()}
+          disabled={disabled || !newEvent.trim()}
           className={cn(
             "inline-flex shrink-0 items-center justify-center gap-1 rounded-md border px-2.5 py-1.5 text-caption font-medium transition-colors",
-            newEvent.trim()
+            !disabled && newEvent.trim()
               ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer"
               : "bg-muted text-muted-foreground cursor-not-allowed",
           )}

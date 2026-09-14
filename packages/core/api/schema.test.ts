@@ -799,6 +799,106 @@ describe("ApiClient schema fallback", () => {
       expect(detail.id).toBe("d-1");
       expect(detail.autopilot_id).toBe("ap-1");
     });
+
+    const DELIVERY_ROW = {
+      id: "d-1",
+      workspace_id: "ws-1",
+      autopilot_id: "ap-1",
+      trigger_id: "t-1",
+      provider: "github",
+      event: "github.workflow_run.completed",
+      dedupe_key: null,
+      dedupe_source: null,
+      signature_status: "valid",
+      status: "ignored",
+      content_type: "application/json",
+      response_status: 200,
+      autopilot_run_id: null,
+      replayed_from_delivery_id: null,
+      error: null,
+      received_at: "2026-01-01T00:00:00Z",
+      last_attempt_at: "2026-01-01T00:00:00Z",
+      created_at: "2026-01-01T00:00:00Z",
+    };
+
+    it("parses filter_context with a suggestion and a match verdict", async () => {
+      stubFetchJson({
+        ...DELIVERY_ROW,
+        filter_context: {
+          suggestion: { event: "workflow_run", actions: ["completed", "success"] },
+          matches: false,
+        },
+      });
+      const client = new ApiClient("https://api.example.test");
+      const detail = await client.getAutopilotDelivery("ap-1", "d-1");
+      expect(detail.filter_context).toEqual({
+        suggestion: { event: "workflow_run", actions: ["completed", "success"] },
+        matches: false,
+      });
+    });
+
+    it("keeps matches null and surfaces unavailable_reason", async () => {
+      stubFetchJson({
+        ...DELIVERY_ROW,
+        filter_context: {
+          suggestion: null,
+          unavailable_reason: "raw_body_missing",
+          matches: null,
+        },
+      });
+      const client = new ApiClient("https://api.example.test");
+      const detail = await client.getAutopilotDelivery("ap-1", "d-1");
+      expect(detail.filter_context?.suggestion).toBeNull();
+      expect(detail.filter_context?.matches).toBeNull();
+      expect(detail.filter_context?.unavailable_reason).toBe("raw_body_missing");
+    });
+
+    it("treats a missing filter_context as unavailable (older server)", async () => {
+      stubFetchJson(DELIVERY_ROW);
+      const client = new ApiClient("https://api.example.test");
+      const detail = await client.getAutopilotDelivery("ap-1", "d-1");
+      expect(detail.filter_context).toBeUndefined();
+    });
+
+    it("degrades a malformed filter_context to null instead of dropping the row", async () => {
+      stubFetchJson({ ...DELIVERY_ROW, filter_context: "not-an-object" });
+      const client = new ApiClient("https://api.example.test");
+      const detail = await client.getAutopilotDelivery("ap-1", "d-1");
+      expect(detail.id).toBe("d-1");
+      expect(detail.filter_context).toBeNull();
+    });
+
+    it("omits the event_filters query when no draft is given", async () => {
+      stubFetchJson(DELIVERY_ROW);
+      const client = new ApiClient("https://api.example.test");
+      await client.getAutopilotDelivery("ap-1", "d-1");
+      const url = String(vi.mocked(fetch).mock.calls[0]?.[0]);
+      expect(url).not.toContain("event_filters");
+    });
+
+    it("URL-encodes the event_filters draft as a single JSON array param", async () => {
+      stubFetchJson(DELIVERY_ROW);
+      const client = new ApiClient("https://api.example.test");
+      const draft = [
+        { event: "workflow_run", actions: ["requested"] },
+        { event: "workflow_run", actions: ["success"] },
+      ];
+      await client.getAutopilotDelivery("ap-1", "d-1", { eventFilters: draft });
+      const url = String(vi.mocked(fetch).mock.calls[0]?.[0]);
+      const parsed = new URL(url);
+      expect(parsed.searchParams.getAll("event_filters")).toHaveLength(1);
+      expect(parsed.searchParams.get("event_filters")).toBe(
+        JSON.stringify(draft),
+      );
+    });
+
+    it("sends an explicit [] for the unrestricted draft", async () => {
+      stubFetchJson(DELIVERY_ROW);
+      const client = new ApiClient("https://api.example.test");
+      await client.getAutopilotDelivery("ap-1", "d-1", { eventFilters: [] });
+      const url = String(vi.mocked(fetch).mock.calls[0]?.[0]);
+      expect(new URL(url).searchParams.get("event_filters")).toBe("[]");
+    });
   });
 
   describe("listAgentBuilderSessions", () => {

@@ -69,6 +69,19 @@ export interface WebhookEventFilter {
   actions?: string[];
 }
 
+// Detail-only, additive (OL-77 backend). Absent on older servers — callers
+// must treat a missing context as "suggestions unavailable", never guess one
+// from the raw body. `unavailable_reason` is a server-driven enum
+// ("raw_body_missing" | "raw_body_invalid" | "event_empty"); switch with a
+// default arm, a future value is possible. `matches` is null without a draft
+// query (?event_filters=) or when the stored body cannot be normalized — it
+// never means "no match".
+export interface WebhookDeliveryFilterContext {
+  suggestion: WebhookEventFilter | null;
+  unavailable_reason?: string;
+  matches: boolean | null;
+}
+
 export interface AutopilotSubscriber {
   user_type: "member";
   user_id: string;
@@ -272,6 +285,8 @@ export interface WebhookDelivery {
   selected_headers?: Record<string, unknown> | null;
   raw_body?: string | null;
   response_body?: string | null;
+  // Detail-only, additive (OL-77). Absent on older servers.
+  filter_context?: WebhookDeliveryFilterContext | null;
 }
 
 export interface ListWebhookDeliveriesResponse {

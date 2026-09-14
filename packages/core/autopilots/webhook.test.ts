@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAutopilotWebhookUrl, maskAutopilotWebhookUrl } from "./webhook";
+import { buildAutopilotWebhookUrl, maskAutopilotWebhookUrl, mergeWebhookFilterSuggestion } from "./webhook";
 import type { AutopilotTrigger } from "../types";
 
 const baseTrigger: AutopilotTrigger = {
@@ -94,5 +94,59 @@ describe("maskAutopilotWebhookUrl", () => {
   it("masks the whole value when there is no separable last segment", () => {
     expect(maskAutopilotWebhookUrl("awt_abc")).toBe("••••••••••••");
     expect(maskAutopilotWebhookUrl("https://api.example/hooks/")).toBe("••••••••••••");
+  });
+});
+
+describe("mergeWebhookFilterSuggestion", () => {
+  const suggestion = { event: "workflow_run", actions: ["completed", "success"] };
+
+  it("appends the suggestion to a draft that does not cover it", () => {
+    expect(mergeWebhookFilterSuggestion([{ event: "issues" }], suggestion)).toEqual([
+      { event: "issues" },
+      { event: "workflow_run", actions: ["completed", "success"] },
+    ]);
+  });
+
+  it("appends to an empty draft", () => {
+    expect(mergeWebhookFilterSuggestion([], suggestion)).toEqual([suggestion]);
+  });
+
+  it("omits the actions key when the suggestion has none (any-action semantics)", () => {
+    expect(mergeWebhookFilterSuggestion([], { event: "custom" })).toEqual([
+      { event: "custom" },
+    ]);
+    expect(mergeWebhookFilterSuggestion([], { event: "custom", actions: [] })).toEqual([
+      { event: "custom" },
+    ]);
+  });
+
+  it("does not duplicate an identical row", () => {
+    const saved = [{ event: "workflow_run", actions: ["completed", "success"] }];
+    expect(mergeWebhookFilterSuggestion(saved, suggestion)).toEqual(saved);
+  });
+
+  it("treats action order as irrelevant when detecting duplicates", () => {
+    const saved = [{ event: "workflow_run", actions: ["success", "completed"] }];
+    expect(mergeWebhookFilterSuggestion(saved, suggestion)).toEqual(saved);
+  });
+
+  it("does not append a narrower row under a same-event any-action row", () => {
+    const saved = [{ event: "workflow_run" }];
+    expect(mergeWebhookFilterSuggestion(saved, suggestion)).toEqual(saved);
+  });
+
+  it("still appends when an existing row shares the event but covers different actions", () => {
+    const saved = [{ event: "workflow_run", actions: ["requested"] }];
+    expect(mergeWebhookFilterSuggestion(saved, suggestion)).toEqual([
+      ...saved,
+      suggestion,
+    ]);
+  });
+
+  it("does not mutate the input arrays", () => {
+    const saved = [{ event: "issues", actions: ["opened"] }];
+    const before = JSON.stringify(saved);
+    mergeWebhookFilterSuggestion(saved, suggestion);
+    expect(JSON.stringify(saved)).toBe(before);
   });
 });

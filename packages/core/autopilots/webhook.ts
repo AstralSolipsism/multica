@@ -1,4 +1,4 @@
-import type { AutopilotTrigger } from "../types";
+import type { AutopilotTrigger, WebhookEventFilter } from "../types";
 
 /**
  * Compose a usable absolute webhook URL for a webhook trigger.
@@ -40,6 +40,46 @@ export function buildAutopilotWebhookUrl(params: {
 function stripTrailingSlash(s: string | undefined): string {
   if (!s) return "";
   return s.endsWith("/") ? s.slice(0, -1) : s;
+}
+
+/**
+ * Stable JSON form of an event-filter draft for dirty checks and query keys.
+ * Normalizes omitted Actions to [] so omitted-vs-explicit-empty doesn't read
+ * as a phantom difference.
+ */
+export function serializeWebhookEventFilters(
+  filters: Pick<WebhookEventFilter, "event" | "actions">[],
+): string {
+  return JSON.stringify(
+    filters.map((f) => ({ event: f.event, actions: f.actions ?? [] })),
+  );
+}
+
+/**
+ * Merge a server-derived filter suggestion into an existing draft (OL-78).
+ * Pure append with coverage dedupe: a same-event row with empty actions
+ * already accepts every action, and an identical row is already present in
+ * effect — in both cases the suggestion adds nothing, so no redundant row is
+ * appended. Rows combine with OR server-side, so order carries no semantics.
+ */
+export function mergeWebhookFilterSuggestion(
+  saved: WebhookEventFilter[],
+  suggestion: WebhookEventFilter,
+): WebhookEventFilter[] {
+  const actions = suggestion.actions ?? [];
+  const covered = saved.some((f) => {
+    if (f.event !== suggestion.event) return false;
+    const existing = f.actions ?? [];
+    if (existing.length === 0) return true;
+    if (existing.length !== actions.length) return false;
+    const a = [...existing].sort();
+    const b = [...actions].sort();
+    return a.every((v, i) => v === b[i]);
+  });
+  if (covered) return [...saved];
+  const row: WebhookEventFilter = { event: suggestion.event };
+  if (actions.length > 0) row.actions = [...actions];
+  return [...saved, row];
 }
 
 /** Fixed-width run — never derived from the token, so the mask leaks no length. */
