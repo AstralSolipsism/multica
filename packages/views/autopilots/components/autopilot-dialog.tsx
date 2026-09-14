@@ -46,7 +46,7 @@ import {
   useUpdateAutopilot,
   useUpdateAutopilotTrigger,
 } from "@multica/core/autopilots/mutations";
-import { buildAutopilotWebhookUrl } from "@multica/core/autopilots";
+import { buildAutopilotWebhookUrl, serializeWebhookEventFilters } from "@multica/core/autopilots";
 import { api } from "@multica/core/api";
 import type {
   AutopilotAssigneeType,
@@ -121,15 +121,10 @@ const OUTPUT_MODE_ICONS: Record<AutopilotExecutionMode, typeof FilePlus2> = {
 // Webhook event-filter dirty detection
 // ---------------------------------------------------------------------------
 
-// serializeEventFilters returns a stable JSON string so the edit-mode dirty
-// check can compare the current filters against the snapshot taken on open
-// without depending on reference equality. Normalizes empty Actions to []
-// so omitted-vs-explicit-empty doesn't show as a phantom change.
-function serializeEventFilters(filters: WebhookEventFilter[]): string {
-  return JSON.stringify(
-    filters.map((f) => ({ event: f.event, actions: f.actions ?? [] })),
-  );
-}
+// The edit-mode dirty check compares the current filters against the snapshot
+// taken on open via a stable serialization — shared with the delivery-detail
+// filter panel so both surfaces agree on what "unchanged" means.
+const serializeEventFilters = serializeWebhookEventFilters;
 
 // ---------------------------------------------------------------------------
 // AutopilotDialog

@@ -287,6 +287,7 @@ export type {
   ListAutopilotRunsResponse,
   WebhookDelivery,
   WebhookDeliveryStatus,
+  WebhookDeliveryFilterContext,
   WebhookSignatureStatus,
   ListWebhookDeliveriesResponse,
 } from "./autopilot";

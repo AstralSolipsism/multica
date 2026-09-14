@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
+import type { WebhookEventFilter } from "../types";
 
 export const autopilotKeys = {
   all: (wsId: string) => ["autopilots", wsId] as const,
@@ -15,6 +16,23 @@ export const autopilotKeys = {
     [...autopilotKeys.all(wsId), "deliveries", id] as const,
   delivery: (wsId: string, autopilotId: string, deliveryId: string) =>
     [...autopilotKeys.all(wsId), "deliveries", autopilotId, deliveryId] as const,
+  // The filter preview answer is keyed by the exact draft sent, so a late
+  // response for a superseded draft lands in its own cache entry and can
+  // never overwrite the current draft's verdict (OL-78).
+  deliveryFilterPreview: (
+    wsId: string,
+    autopilotId: string,
+    deliveryId: string,
+    draftJson: string,
+  ) =>
+    [
+      ...autopilotKeys.all(wsId),
+      "deliveries",
+      autopilotId,
+      deliveryId,
+      "filter-preview",
+      draftJson,
+    ] as const,
   cronPreview: (wsId: string, expr: string, tz: string) =>
     [...autopilotKeys.all(wsId), "cron-preview", expr, tz] as const,
 };
@@ -98,6 +116,36 @@ export function autopilotDeliveryOptions(
     queryKey: autopilotKeys.delivery(wsId, autopilotId, deliveryId),
     queryFn: () => api.getAutopilotDelivery(autopilotId, deliveryId),
     enabled: options?.enabled ?? true,
+  });
+}
+
+// autopilotDeliveryFilterPreviewOptions asks the server to evaluate a full
+// filter DRAFT against one stored delivery (GET ...?event_filters=<draft>).
+// The verdict lives in `filter_context.matches` of the response — true /
+// false / null (un-normalizable body) — computed by the same matcher that
+// gates real dispatch, so the preview cannot drift from post-save behavior.
+// `filters` is sent verbatim: pass [] for the explicit unrestricted draft.
+export function autopilotDeliveryFilterPreviewOptions(
+  wsId: string,
+  autopilotId: string,
+  deliveryId: string,
+  filters: WebhookEventFilter[],
+  options?: { enabled?: boolean },
+) {
+  return queryOptions({
+    queryKey: autopilotKeys.deliveryFilterPreview(
+      wsId,
+      autopilotId,
+      deliveryId,
+      JSON.stringify(filters),
+    ),
+    queryFn: () =>
+      api.getAutopilotDelivery(autopilotId, deliveryId, { eventFilters: filters }),
+    enabled: options?.enabled ?? true,
+    // A 400 (malformed draft) is a stable answer for this input, not a
+    // transient failure — retrying only delays the inline error state.
+    retry: false,
+    staleTime: 30_000,
   });
 }
 

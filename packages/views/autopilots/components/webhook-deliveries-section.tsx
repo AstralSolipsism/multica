@@ -28,11 +28,23 @@ import {
   DialogContent,
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@multica/ui/components/ui/alert-dialog";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { toast } from "sonner";
 import { useLocale, useT } from "../../i18n";
+import { DeliveryFilterPanel } from "./webhook-delivery-filter-panel";
 import type {
+  AutopilotTrigger,
   WebhookDelivery,
   WebhookDeliveryStatus,
   WebhookSignatureStatus,
@@ -100,9 +112,15 @@ function canReplay(delivery: WebhookDelivery): boolean {
 export function WebhookDeliveriesSection({
   autopilotId,
   hasWebhookTrigger,
+  triggers = [],
+  canWrite = false,
 }: {
   autopilotId: string;
   hasWebhookTrigger: boolean;
+  /** The autopilot's triggers — used to seed the filter draft from the
+      delivery's own webhook trigger. */
+  triggers?: AutopilotTrigger[];
+  canWrite?: boolean;
 }) {
   const { t } = useT("autopilots");
   const wsId = useWorkspaceId();
@@ -140,6 +158,8 @@ export function WebhookDeliveriesSection({
               key={delivery.id}
               delivery={delivery}
               autopilotId={autopilotId}
+              triggers={triggers}
+              canWrite={canWrite}
             />
           ))}
         </div>
@@ -153,9 +173,13 @@ export function WebhookDeliveriesSection({
 function DeliveryRow({
   delivery,
   autopilotId,
+  triggers,
+  canWrite,
 }: {
   delivery: WebhookDelivery;
   autopilotId: string;
+  triggers: AutopilotTrigger[];
+  canWrite: boolean;
 }) {
   const { t } = useT("autopilots");
   const locale = useLocale();
@@ -214,6 +238,8 @@ function DeliveryRow({
           onOpenChange={setOpen}
           autopilotId={autopilotId}
           delivery={delivery}
+          triggers={triggers}
+          canWrite={canWrite}
         />
       )}
     </>
@@ -227,16 +253,24 @@ function DeliveryDetailDialog({
   onOpenChange,
   autopilotId,
   delivery,
+  triggers,
+  canWrite,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   autopilotId: string;
   delivery: WebhookDelivery;
+  triggers: AutopilotTrigger[];
+  canWrite: boolean;
 }) {
   const { t } = useT("autopilots");
   const locale = useLocale();
   const wsId = useWorkspaceId();
-  const { data: detail, isLoading } = useQuery(
+  const {
+    data: detail,
+    isLoading,
+    error: detailError,
+  } = useQuery(
     autopilotDeliveryOptions(wsId, autopilotId, delivery.id, { enabled: open }),
   );
   // Use the detail row when loaded, otherwise the slim row from the list.
@@ -247,8 +281,25 @@ function DeliveryDetailDialog({
   const visual = visualForStatus(full.status);
   const StatusIcon = visual.icon;
 
+  // The filter panel edits against the delivery's own webhook trigger.
+  const deliveryTrigger = triggers.find((trig) => trig.id === full.trigger_id);
+
+  // Unsaved filter drafts survive an accidental close: Esc / overlay / the X
+  // all route through requestClose, which detours to a discard confirmation
+  // instead of dropping the draft on the floor.
+  const [filterDirty, setFilterDirty] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const requestClose = (nextOpen: boolean) => {
+    if (!nextOpen && filterDirty) {
+      setDiscardOpen(true);
+      return;
+    }
+    onOpenChange(nextOpen);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <>
+    <Dialog open={open} onOpenChange={requestClose}>
       {/* max-h + overflow-y-auto: webhook bodies + headers + response can
           easily exceed viewport height. Without a cap the dialog grows past
           the screen edge and the bottom (e.g. Replay button) becomes
@@ -346,18 +397,65 @@ function DeliveryDetailDialog({
           {/* Raw body + response body + headers, all loaded lazily */}
           <DetailSections detail={detail} isLoading={isLoading} />
 
+          {/* Filter suggestion + bring-in with a live match preview (OL-78).
+              Read-only inspection for everyone; the draft only persists via
+              an explicit save, which needs write access. */}
+          <DeliveryFilterPanel
+            autopilotId={autopilotId}
+            deliveryId={full.id}
+            detail={detail}
+            detailLoading={isLoading}
+            detailError={detailError}
+            trigger={deliveryTrigger}
+            canWrite={canWrite}
+            onDirtyChange={setFilterDirty}
+          />
+
           {/* Replay button */}
           <div className="flex items-center justify-between pt-2">
             <ReplayHint delivery={full} />
             <ReplayButton
               autopilotId={autopilotId}
               delivery={full}
-              onSuccess={() => onOpenChange(false)}
+              onSuccess={() => requestClose(false)}
             />
           </div>
         </div>
       </DialogContent>
     </Dialog>
+    <AlertDialog
+      open={discardOpen}
+      onOpenChange={(v) => {
+        if (!v) setDiscardOpen(false);
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {t(($) => $.deliveries.filter.discard_title)}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {t(($) => $.deliveries.filter.discard_description)}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>
+            {t(($) => $.deliveries.filter.discard_keep)}
+          </AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-white hover:bg-destructive/90"
+            onClick={() => {
+              setDiscardOpen(false);
+              setFilterDirty(false);
+              onOpenChange(false);
+            }}
+          >
+            {t(($) => $.deliveries.filter.discard_confirm)}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
 

@@ -2289,6 +2289,23 @@ export interface DuplicateIssueErrorBody {
 // the rule used by every other endpoint here.
 // ---------------------------------------------------------------------------
 
+// `filter_context` is additive (OL-77): absent on older servers. A malformed
+// context degrades to `null` ("unavailable") instead of failing the whole
+// delivery row — the UI must never reconstruct a suggestion from raw JSON.
+const WebhookDeliveryFilterContextSchema = z.object({
+  suggestion: z
+    .object({
+      event: z.string(),
+      // `actions` carries json:"omitempty" server-side: an empty candidate
+      // list arrives as an absent field and means "any action" when saved.
+      actions: z.array(z.string()).optional(),
+    })
+    .nullable()
+    .default(null),
+  unavailable_reason: z.string().optional(),
+  matches: z.boolean().nullable().default(null),
+}).loose();
+
 const WebhookDeliverySchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
@@ -2320,6 +2337,7 @@ const WebhookDeliverySchema = z.object({
   selected_headers: z.record(z.string(), z.unknown()).nullable().optional(),
   raw_body: z.string().nullable().optional(),
   response_body: z.string().nullable().optional(),
+  filter_context: WebhookDeliveryFilterContextSchema.nullable().catch(null).optional(),
 }).loose();
 
 export const ListWebhookDeliveriesResponseSchema = z.object({

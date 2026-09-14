@@ -9,11 +9,14 @@ import { useT } from "../../i18n";
 interface WebhookEventFilterSectionProps {
   filters: WebhookEventFilter[];
   onChange: (filters: WebhookEventFilter[]) => void;
+  /** Suppress the built-in section label when the host already renders one. */
+  hideLabel?: boolean;
 }
 
 export function WebhookEventFilterSection({
   filters,
   onChange,
+  hideLabel = false,
 }: WebhookEventFilterSectionProps) {
   const { t } = useT("autopilots");
   const [newEvent, setNewEvent] = useState("");
@@ -39,10 +42,12 @@ export function WebhookEventFilterSection({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-1.5 text-micro font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-        <Filter className="size-3" />
-        {t(($) => $.dialog.event_filter_label)}
-      </div>
+      {!hideLabel && (
+        <div className="flex items-center gap-1.5 text-micro font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+          <Filter className="size-3" />
+          {t(($) => $.dialog.event_filter_label)}
+        </div>
+      )}
 
       {filters.length > 0 && (
         <div className="space-y-1">

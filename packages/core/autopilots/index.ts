@@ -6,6 +6,7 @@ export {
   autopilotRunsOptions,
   autopilotDeliveriesOptions,
   autopilotDeliveryOptions,
+  autopilotDeliveryFilterPreviewOptions,
   cronPreviewOptions,
 } from "./queries";
 export {
@@ -19,4 +20,4 @@ export {
   useRotateAutopilotTriggerWebhookToken,
   useReplayAutopilotDelivery,
 } from "./mutations";
-export { buildAutopilotWebhookUrl, maskAutopilotWebhookUrl } from "./webhook";
+export { buildAutopilotWebhookUrl, maskAutopilotWebhookUrl, serializeWebhookEventFilters } from "./webhook";

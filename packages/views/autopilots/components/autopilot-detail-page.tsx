@@ -1067,10 +1067,14 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
 
           {/* Webhook deliveries — only renders when at least one webhook
               trigger is configured. The component does its own fetch so
-              schedule-only autopilots don't pay for an empty list query. */}
+              schedule-only autopilots don't pay for an empty list query.
+              Triggers and canWrite feed the per-delivery filter bring-in
+              panel (OL-78). */}
           <WebhookDeliveriesSection
             autopilotId={autopilotId}
             hasWebhookTrigger={triggers.some((trig) => trig.kind === "webhook")}
+            triggers={triggers}
+            canWrite={canWrite}
           />
 
           {/* Run History */}

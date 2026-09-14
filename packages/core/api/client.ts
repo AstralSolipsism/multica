@@ -161,6 +161,7 @@ import type {
   ListAutopilotRunsResponse,
   ListWebhookDeliveriesResponse,
   WebhookDelivery,
+  WebhookEventFilter,
   ApproveMessageTargetRequest,
   ApproveMessageSourceTargetRequest,
   GetMessageDeliveryResponse,
@@ -4426,12 +4427,23 @@ export class ApiClient {
     );
   }
 
+  // `eventFilters` previews a full draft against the stored delivery
+  // (OL-77/OL-78): the server re-runs its own matcher and returns the verdict
+  // in `filter_context.matches`, so the UI never reimplements the rule.
+  // `undefined` omits the query (suggestion only, matches stays null); an
+  // explicit `[]` previews unrestricted event scope.
   async getAutopilotDelivery(
     autopilotId: string,
     deliveryId: string,
+    params?: { eventFilters?: WebhookEventFilter[] },
   ): Promise<WebhookDelivery> {
+    const search = new URLSearchParams();
+    if (params?.eventFilters !== undefined) {
+      search.set("event_filters", JSON.stringify(params.eventFilters));
+    }
+    const query = search.toString();
     const raw = await this.fetch<unknown>(
-      `/api/autopilots/${autopilotId}/deliveries/${deliveryId}`,
+      `/api/autopilots/${autopilotId}/deliveries/${deliveryId}${query ? `?${query}` : ""}`,
     );
     return parseWithFallback(
       raw,
