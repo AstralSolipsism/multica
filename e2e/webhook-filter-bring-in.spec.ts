@@ -42,21 +42,6 @@ async function seed(page: Page): Promise<Seed> {
   const token = api.getToken();
   if (!token) throw new Error("login did not return a token");
 
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
-    "X-Workspace-Slug": workspace.slug,
-  };
-  const post = async (path: string, body: unknown) => {
-    const res = await fetch(`${API_BASE}${path}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(`POST ${path} → ${res.status}: ${await res.text()}`);
-    return res.json();
-  };
-
   // Agents bind to a runtime, and runtimes are normally registered by a live
   // daemon — seed a workspace-visible row directly instead.
   const pgClient = new pg.Client(DATABASE_URL);
@@ -73,19 +58,19 @@ async function seed(page: Page): Promise<Seed> {
     await pgClient.end();
   }
 
-  const agent = await post("/api/agents", {
+  const agent = await api.postJson("/api/agents", {
     name: "ol78-agent",
     runtime_id: runtimeId,
     instructions: "e2e",
   });
-  const autopilot = await post("/api/autopilots", {
+  const autopilot = await api.postJson("/api/autopilots", {
     title: "OL78 filter bring-in",
     assignee_type: "agent",
     assignee_id: agent.id,
     execution_mode: "run_only",
   });
   // A saved filter that deliberately does NOT match the delivery below.
-  const trigger = await post(`/api/autopilots/${autopilot.id}/triggers`, {
+  const trigger = await api.postJson(`/api/autopilots/${autopilot.id}/triggers`, {
     kind: "webhook",
     event_filters: [{ event: "push", actions: ["created"] }],
   });

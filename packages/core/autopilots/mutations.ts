@@ -146,6 +146,25 @@ export function useUpdateAutopilotTrigger() {
   return useMutation({
     mutationFn: ({ autopilotId, triggerId, ...data }: { autopilotId: string; triggerId: string } & UpdateAutopilotTriggerRequest) =>
       api.updateAutopilotTrigger(autopilotId, triggerId, data),
+    onSuccess: (updated, vars) => {
+      // The PATCH response IS the server's persisted state: sync it into the
+      // detail cache so readers immediately show the saved trigger even when
+      // the follow-up refetch fails — a stale cached row must never keep
+      // presenting the pre-save configuration as current (OL-78 review).
+      if (updated?.id !== vars.triggerId) return;
+      qc.setQueryData<GetAutopilotResponse>(
+        autopilotKeys.detail(wsId, vars.autopilotId),
+        (old) =>
+          old
+            ? {
+                ...old,
+                triggers: old.triggers.map((t) =>
+                  t.id === vars.triggerId ? updated : t,
+                ),
+              }
+            : old,
+      );
+    },
     onSettled: (_data, _err, vars) => {
       qc.invalidateQueries({ queryKey: autopilotKeys.detail(wsId, vars.autopilotId) });
     },

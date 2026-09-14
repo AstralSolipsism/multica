@@ -55,6 +55,33 @@ export function serializeWebhookEventFilters(
   );
 }
 
+/**
+ * Merge a server-derived filter suggestion into an existing draft (OL-78).
+ * Pure append with coverage dedupe: a same-event row with empty actions
+ * already accepts every action, and an identical row is already present in
+ * effect — in both cases the suggestion adds nothing, so no redundant row is
+ * appended. Rows combine with OR server-side, so order carries no semantics.
+ */
+export function mergeWebhookFilterSuggestion(
+  saved: WebhookEventFilter[],
+  suggestion: WebhookEventFilter,
+): WebhookEventFilter[] {
+  const actions = suggestion.actions ?? [];
+  const covered = saved.some((f) => {
+    if (f.event !== suggestion.event) return false;
+    const existing = f.actions ?? [];
+    if (existing.length === 0) return true;
+    if (existing.length !== actions.length) return false;
+    const a = [...existing].sort();
+    const b = [...actions].sort();
+    return a.every((v, i) => v === b[i]);
+  });
+  if (covered) return [...saved];
+  const row: WebhookEventFilter = { event: suggestion.event };
+  if (actions.length > 0) row.actions = [...actions];
+  return [...saved, row];
+}
+
 /** Fixed-width run — never derived from the token, so the mask leaks no length. */
 const WEBHOOK_URL_MASK = "••••••••••••";
 

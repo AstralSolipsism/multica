@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import {
   autopilotDeliveryFilterPreviewOptions,
+  mergeWebhookFilterSuggestion,
   serializeWebhookEventFilters,
   useUpdateAutopilotTrigger,
 } from "@multica/core/autopilots";
@@ -54,28 +55,8 @@ interface DeliveryFilterPanelProps {
   onDirtyChange: (dirty: boolean) => void;
 }
 
-// The bring-in merge. A same-event row with empty actions already accepts
-// every action, and an identical row is already covered — in both cases the
-// suggestion is present in effect, so we don't append a redundant row.
-function mergeSuggestion(
-  saved: WebhookEventFilter[],
-  suggestion: WebhookEventFilter,
-): WebhookEventFilter[] {
-  const actions = suggestion.actions ?? [];
-  const covered = saved.some((f) => {
-    if (f.event !== suggestion.event) return false;
-    const existing = f.actions ?? [];
-    if (existing.length === 0) return true;
-    if (existing.length !== actions.length) return false;
-    const a = [...existing].sort();
-    const b = [...actions].sort();
-    return a.every((v, i) => v === b[i]);
-  });
-  if (covered) return [...saved];
-  const row: WebhookEventFilter = { event: suggestion.event };
-  if (actions.length > 0) row.actions = [...actions];
-  return [...saved, row];
-}
+// The bring-in merge (a pure rule with boundary cases) lives in core next to
+// the other webhook helpers — this panel only wires it to the draft state.
 
 export function DeliveryFilterPanel({
   autopilotId,
@@ -136,7 +117,7 @@ export function DeliveryFilterPanel({
   const bringIn = () => {
     if (!suggestion) return;
     baselineRef.current = serializeWebhookEventFilters(savedFilters);
-    setDraft(mergeSuggestion(savedFilters, suggestion));
+    setDraft(mergeWebhookFilterSuggestion(savedFilters, suggestion));
     setEditing(true);
   };
 
@@ -258,12 +239,15 @@ export function DeliveryFilterPanel({
       )}
 
       {/* Editor (edit mode): the shared multi-row editor keeps manual input,
-          same-event OR rows and empty-action semantics unchanged. */}
+          same-event OR rows and empty-action semantics unchanged. Frozen while
+          the save is in flight — an edit accepted mid-flight would not be in
+          the request, and the success path exits edit mode. */}
       {editing && (
         <WebhookEventFilterSection
           filters={draft}
           onChange={setDraft}
           hideLabel
+          disabled={updateTrigger.isPending}
         />
       )}
 
@@ -387,13 +371,13 @@ function VerdictRow({ icon }: { icon: VerdictKind }) {
   const visual =
     icon === "yes"
       ? {
-          className: "text-emerald-500",
+          className: "text-success",
           Icon: CheckCircle2,
           text: t(($) => $.deliveries.filter.match_yes),
         }
       : icon === "no"
         ? {
-            className: "text-amber-600 dark:text-amber-400",
+            className: "text-warning",
             Icon: Ban,
             text: t(($) => $.deliveries.filter.match_no),
           }

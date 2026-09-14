@@ -267,8 +267,8 @@
       "reason_raw_body_invalid": "这条投递保存的内容已无法解析，无法从中派生条件。",
       "reason_event_empty": "这条投递没有可用的事件名，无法从中派生条件。",
       "reason_unknown": "无法从这条投递派生条件。",
-      "format_help": "条件由事件名和可选的动作列表（逗号分隔）组成：动作留空表示匹配该事件的任意动作，多行条件之间为“或”关系。例如：事件 workflow_run，动作 completed, requested。",
-      "read_only_hint": "你对这个自动任务只有读取权限，无法保存过滤修改。"
+      "format_help": "条件由事件名和可选的动作列表（逗号分隔）组成：动作留空表示匹配该事件的任意动作，多行条件之间为\"或\"关系。例如：事件 workflow_run，动作 completed, requested。",
+      "read_only_hint": "你对这个自动化只有读取权限，无法保存过滤修改。"
     }
   },
   "add_trigger_dialog": {
