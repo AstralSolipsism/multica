@@ -75,6 +75,100 @@ run's status and failure reason.
 5. For webhooks, inspect delivery status: `queued` means the worker has not completed dispatch; `failed` carries the worker error. A provider retry with the same `X-GitHub-Delivery` / `Idempotency-Key` reuses the original delivery.
 6. For `create_issue`, inspect the created issue if the run records one.
 
+## Webhook filter suggestions and draft matching (authenticated API)
+
+`GET /api/autopilots/{id}/deliveries/{deliveryId}` includes a detail-only
+`filter_context`. To preview a complete draft, pass `event_filters` once as a
+URL-encoded JSON array using the same `{event, actions?}` shape as trigger
+create/update. For example, the query value before URL encoding is:
+
+```json
+[{"event":"workflow_run","actions":["requested"]},{"event":"workflow_run","actions":["success"]}]
+```
+
+The request path is:
+
+```text
+GET /api/autopilots/{id}/deliveries/{deliveryId}?event_filters=%5B%7B%22event%22%3A%22workflow_run%22%2C%22actions%22%3A%5B%22requested%22%5D%7D%2C%7B%22event%22%3A%22workflow_run%22%2C%22actions%22%3A%5B%22success%22%5D%7D%5D
+```
+
+For a stored GitHub delivery with `X-GitHub-Event: workflow_run` and raw body
+`{"action":"completed","conclusion":"success"}`, the relevant response fields
+are below (other existing delivery fields are unchanged):
+
+```json
+{
+  "event": "github.workflow_run.completed",
+  "filter_context": {
+    "suggestion": {"event":"workflow_run","actions":["completed","success"]},
+    "matches": true
+  }
+}
+```
+
+The server reuses `normalizeWebhookPayload` on the stored raw body and captured
+headers, just as the delivery worker does. It then uses `splitWebhookEvent` and
+`webhookActionCandidates` to produce the suggestion; it does not split the
+delivery metadata's `event` independently or invent future events. The optional
+preview calls `webhookEventAllowedByTriggerScope` with that same envelope and
+the full draft. Frontends consume this result instead of duplicating these rules:
+
+- Known prefixes `github`, `gitlab`, `bitbucket`, and `gitea` are stripped from
+  the filter event name. Remaining dot-separated suffix segments form one action.
+  For other prefixes the first segment is the event: `stripe.charge.succeeded`
+  suggests event `stripe` and action `charge.succeeded`. An unqualified `custom`
+  remains event `custom`. Prefixes and values are case-sensitive.
+- Candidate actions are the event suffix plus string values from **only** the
+  normalized payload's top-level `action`, `state`, `conclusion`, and `status`.
+  Values are trimmed, empty values discarded, duplicates removed, and the result
+  sorted lexicographically. Nested fields, array elements, non-string values and
+  fields outside an explicit `eventPayload` do not contribute candidates.
+- Multiple candidates are alternatives (OR), not simultaneous conditions or a
+  priority order. Multiple rows, including rows with the same event, also use OR.
+  Draft strings are validated but not trimmed or case-folded by the matcher.
+- With no action candidates, the suggestion is `{"event":"custom"}`: omitted,
+  null or empty `actions` means **any action for that event**, not “no action”.
+  A restrictive non-empty action list cannot match a delivery with no candidates.
+- Omitting the query means suggestion only (`matches: null`). `event_filters=[]`
+  explicitly previews unrestricted event scope. This never reads the saved filters
+  as a fallback. Saving still uses the existing trigger create/update endpoints
+  and their existing authorization, validation and publication behavior.
+- An absent raw body yields `suggestion: null`, `matches: null`, and
+  `unavailable_reason: "raw_body_missing"`. An invalid JSON body or a top-level
+  scalar/null raw body similarly yields `raw_body_invalid`. Neither case returns
+  a guessed match, even for `[]`. Detail still returns HTTP 200 for inspection.
+- A valid envelope with null, scalar, or array `eventPayload` is normalizable;
+  only its event suffix can supply an action. If splitting yields an empty or
+  whitespace-only event name (e.g. event `github`), the suggestion is null with
+  `unavailable_reason: "event_empty"`; a supplied draft still gets the real
+  matcher result, so an unrestricted draft can match.
+
+`matches` tests only event/action scope. It does not predict execution admission:
+signature rejection, a paused autopilot, a disabled trigger, permissions, quota,
+concurrency and other dispatch gates still apply. Suggestions from a rejected
+delivery do not establish trust in its sender.
+
+The route keeps authenticated workspace membership and task-token workspace
+binding. It loads the autopilot and delivery within that workspace, verifies the
+delivery's autopilot and source webhook trigger, and accepts no alternative
+trigger or payload input. There is no additional write grant for preview: anyone
+who can read that delivery can inspect these derived fields. It neither replays
+the delivery nor writes a trigger, delivery, rule version, run, or task. List and
+replay responses omit `filter_context`.
+
+Errors use the existing `{"error":"..."}` shape:
+
+| HTTP | Condition |
+| --- | --- |
+| 400 | Malformed resource/workspace UUID; repeated, missing-value, null, non-array or malformed `event_filters`; blank event/action or wrong field type. `[]` is the explicit empty draft. |
+| 401 | Unauthenticated request. |
+| 404 | Unavailable workspace/autopilot/delivery, delivery from another autopilot/workspace, or missing/mismatched/non-webhook source trigger. No delivery content is returned. |
+| 500 | Delivery or source-trigger database lookup failure. |
+
+`filter_context` is additive and absent on older servers. The frontend follow-up
+must extend its API schema/type, preserve nullable results, and treat absent or
+malformed context as unavailable; it must not fall back to guessing from raw JSON.
+
 ## Access
 
 Reads (list / get / runs / deliveries) are open to any workspace member, but
