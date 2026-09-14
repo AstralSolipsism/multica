@@ -11,6 +11,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-contract:
+    # Keep the foundation guards running while the Release workflow is disabled.
+    if: github.repository == 'AstralSolipsism/multica'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: AstralSolipsism/multica
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: node --test scripts/check-release.test.mjs
+
   cursor-background-lifecycle:
     needs: changes
     if: ${{ needs.changes.outputs.backend == 'true' }}
