@@ -1,75 +1,396 @@
-name: Release foundation
+name: Fork candidate
 
-# Verification only. OL-83 must deliver and review the complete candidate
-# pipeline before any publishing job or write permission is added.
+# Enabling the workflow is a separate OL-84 operation after review/merge.
+# Only dispatch from main may build an already-authorized tag.
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing authorized vX.Y.Z-labrastro.N tag
+        required: true
+        type: string
+      source_sha:
+        description: Reviewed full source SHA on fork main
+        required: true
+        type: string
   pull_request:
-    paths:
-      - ".github/workflows/release.yml"
-      - ".github/RELEASING.md"
-      - ".goreleaser.yml"
-      - "scripts/check-release*"
-      - "scripts/build-candidate-web*"
-      - "apps/desktop/scripts/package.mjs"
-      - "apps/desktop/scripts/stage-candidate.mjs"
+    paths: ['.github/workflows/release.yml', '.github/actions/setup-candidate/**', '.github/RELEASING.md', '.goreleaser.yml', 'scripts/*candidate*', 'scripts/check-release*']
   push:
     branches: [main]
-    tags: ["v*-labrastro.*"]
-    paths:
-      - ".github/workflows/release.yml"
-      - ".github/RELEASING.md"
-      - ".goreleaser.yml"
-      - "scripts/check-release*"
-      - "scripts/build-candidate-web*"
-      - "apps/desktop/scripts/package.mjs"
-      - "apps/desktop/scripts/stage-candidate.mjs"
+    paths: ['.github/workflows/release.yml', '.github/actions/setup-candidate/**', '.github/RELEASING.md', '.goreleaser.yml', 'scripts/*candidate*', 'scripts/check-release*']
 
 permissions:
   contents: read
 
+concurrency:
+  group: fork-candidate-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  LABRASTRO_RELEASE_REPOSITORY: AstralSolipsism/multica
+  LABRASTRO_RELEASE_TAG: ${{ inputs.tag }}
+  LABRASTRO_RELEASE_SHA: ${{ inputs.source_sha }}
+  LABRASTRO_RELEASE_MODE: candidate
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   verify:
-    if: github.repository == 'AstralSolipsism/multica'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout the fork
-        uses: actions/checkout@v4
+      - name: Reject a non-target repository
+        run: test "$GITHUB_REPOSITORY" = AstralSolipsism/multica
+      - uses: actions/checkout@v6
         with:
           repository: AstralSolipsism/multica
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
-
-      - name: Test candidate guards and publishing isolation
-        run: node --test scripts/check-release.test.mjs scripts/build-candidate-web.test.mjs
-
-      - name: Validate a pushed candidate tag
-        if: github.ref_type == 'tag'
-        env:
-          LABRASTRO_RELEASE_REPOSITORY: AstralSolipsism/multica
-          LABRASTRO_RELEASE_TAG: ${{ github.ref_name }}
-          LABRASTRO_RELEASE_SHA: ${{ github.sha }}
-        run: node scripts/check-release.mjs --require-tag --mode candidate
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
-          go-version: "1.26.x"
-          check-latest: true
+          go-version: '1.26.x'
           cache-dependency-path: server/go.sum
-
-      - name: Check workflow syntax
+      - run: node --test scripts/check-release.test.mjs scripts/build-candidate-web.test.mjs
+      - name: Check Actions syntax
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$(go env GOPATH)/bin/actionlint" .github/workflows/release.yml
-
-      - name: Check GoReleaser configuration
-        uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@v6
         with:
-          version: "~> v2"
+          version: '~> v2'
           args: check
+
+  prepare:
+    if: github.event_name == 'workflow_dispatch'
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check dispatch admission before reading candidate code
+        env:
+          ENABLED: ${{ vars.LABRASTRO_CANDIDATE_ENABLED }}
+        run: |
+          test "$GITHUB_REPOSITORY" = AstralSolipsism/multica
+          test "$GITHUB_REF" = refs/heads/main
+          test "$ENABLED" = true
+          [[ "$LABRASTRO_RELEASE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$LABRASTRO_RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-labrastro\.[1-9][0-9]*$ ]]
+      - uses: actions/checkout@v6
+        with:
+          repository: AstralSolipsism/multica
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-candidate
+      - run: python3 scripts/candidate.py start prepare
+      - name: Refuse existing Releases, including incomplete drafts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/candidate.py absent
+      - run: python3 scripts/candidate.py seal prepare
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-prepare
+          path: dist/transfer/prepare
+          if-no-files-found: error
+          compression-level: 0
+
+  qa-go:
+    needs: prepare
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: multica
+          POSTGRES_PASSWORD: multica
+          POSTGRES_DB: multica
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: --health-cmd 'redis-cli ping' --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://multica:multica@localhost:5432/multica?sslmode=disable
+      PROJECT_FILE_TEST_DATABASE_URL: postgres://multica:multica@localhost:5432/multica?sslmode=disable
+      REDIS_TEST_URL: redis://localhost:6379/1
+      GOFLAGS: -count=1
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: AstralSolipsism/multica
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-candidate
+      - run: python3 scripts/candidate.py start qa-go
+      - run: go run ./cmd/migrate up
+        working-directory: server
+      - run: bash scripts/test-go.sh --race
+      - run: go tool govulncheck ./...
+        working-directory: server
+      - run: bash scripts/install.test.sh
+      - run: python3 scripts/candidate.py seal qa-go
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-qa-go
+          path: dist/transfer/qa-go
+          if-no-files-found: error
+          compression-level: 0
+
+  qa-web:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: AstralSolipsism/multica
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-candidate
+        with:
+          frontend: 'true'
+      - run: python3 scripts/candidate.py start qa-web
+      - run: pnpm exec turbo typecheck test --filter='!@multica/docs' --filter='!@multica/mobile' --force
+      - run: node --test scripts/check-release.test.mjs scripts/build-candidate-web.test.mjs scripts/local-images.test.mjs
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user-static
+      - run: python3 scripts/build-backend.test.py
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          install-only: true
+      - run: python3 scripts/candidate.test.py
+      - run: python3 scripts/candidate.py seal qa-web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-qa-web
+          path: dist/transfer/qa-web
+          if-no-files-found: error
+          compression-level: 0
+
+  cli:
+    needs: prepare
+    runs-on: ubuntu-latest
+    env:
+      GORELEASER_CURRENT_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: AstralSolipsism/multica
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-candidate
+      - run: python3 scripts/candidate.py start cli
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --clean --skip=publish
+      - run: python3 scripts/candidate.py seal cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-cli
+          path: dist/transfer/cli
+          if-no-files-found: error
+          compression-level: 0
+
+  backend:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: AstralSolipsism/multica
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-candidate
+      - run: python3 scripts/candidate.py start backend
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user-static
+      - run: make candidate-backend
+      - run: python3 scripts/build-backend.py --verify
+      - run: python3 scripts/candidate.py seal backend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-backend
+          path: dist/transfer/backend
+          if-no-files-found: error
+          compression-level: 0
+
+  web:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: AstralSolipsism/multica
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-candidate
+        with:
+          frontend: 'true'
+      - run: python3 scripts/candidate.py start web
+      - run: node scripts/build-candidate-web.mjs
+      - run: python3 scripts/candidate.py seal web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-web
+          path: dist/transfer/web
+          if-no-files-found: error
+          compression-level: 0
+
+  desktop:
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-latest
+          - platform: win
+            runner: windows-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: AstralSolipsism/multica
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-candidate
+        with:
+          frontend: 'true'
+      - run: python3 scripts/candidate.py start desktop-${{ matrix.platform }}
+      - name: PowerShell installer regression
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: ./scripts/install.ps1.test.ps1
+      - name: Package Linux x64 and arm64
+        if: matrix.platform == 'linux'
+        run: node apps/desktop/scripts/package.mjs --linux AppImage --x64 --arm64 --publish never
+      - name: Package Windows x64 and arm64
+        if: matrix.platform == 'win'
+        run: node apps/desktop/scripts/package.mjs --win nsis --x64 --arm64 --publish never
+      - name: Stage every target on the build host
+        run: node apps/desktop/scripts/stage-candidate.mjs ${{ matrix.platform }}-x64 ${{ matrix.platform }}-arm64
+      - run: python3 scripts/candidate.py seal desktop-${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-desktop-${{ matrix.platform }}
+          path: dist/transfer/desktop-${{ matrix.platform }}
+          if-no-files-found: error
+          compression-level: 0
+
+  images:
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: AstralSolipsism/multica
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-candidate
+      - run: python3 scripts/candidate.py start images-${{ matrix.arch }}
+      - name: Build and verify locally on the disposable native runner
+        run: node scripts/local-images.mjs --arch ${{ matrix.arch }}
+      - run: python3 scripts/candidate.py seal images-${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-images-${{ matrix.arch }}
+          path: dist/transfer/images-${{ matrix.arch }}
+          if-no-files-found: error
+          compression-level: 0
+
+  assemble:
+    # always() prevents a skipped dependency from silently skipping the gate.
+    if: always() && github.event_name == 'workflow_dispatch'
+    needs: [prepare, qa-go, qa-web, cli, backend, web, desktop, images]
+    runs-on: ubuntu-latest
+    env:
+      CANDIDATE_NEEDS: ${{ toJSON(needs) }}
+    steps:
+      - name: Require every upstream job to succeed, including matrix jobs
+        run: |
+          node -e 'const n=JSON.parse(process.env.CANDIDATE_NEEDS); for (const k of ["prepare","qa-go","qa-web","cli","backend","web","desktop","images"]) { if(n[k]?.result!=="success") throw Error(k+": "+n[k]?.result); }'
+      - uses: actions/checkout@v6
+        with:
+          repository: AstralSolipsism/multica
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-candidate
+        with:
+          frontend: 'true'
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user-static
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: candidate-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: dist/inputs
+          merge-multiple: false
+      - run: python3 scripts/candidate.py assemble
+      - name: Preserve the complete inactive handoff
+        run: tar -cf dist/candidate.tar -C dist/candidate "$LABRASTRO_RELEASE_TAG"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: complete-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/candidate.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  draft:
+    needs: assemble
+    runs-on: ubuntu-latest
+    # Configure environment approval and main-only policy before enabling.
+    environment: fork-candidate
+    permissions:
+      contents: write
+    steps:
+      - name: Recheck writer admission
+        env:
+          ENABLED: ${{ vars.LABRASTRO_CANDIDATE_ENABLED }}
+        run: |
+          test "$GITHUB_REPOSITORY" = AstralSolipsism/multica
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$ENABLED" = true
+      - uses: actions/checkout@v6
+        with:
+          repository: AstralSolipsism/multica
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-candidate
+        with:
+          frontend: 'true'
+      - uses: actions/download-artifact@v5
+        with:
+          name: complete-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist
+      - name: Extract the inactive handoff
+        run: |
+          mkdir -p dist/candidate
+          python3 -c 'import sys; sys.path.insert(0,"scripts"); import candidate; candidate.extract(candidate.ROOT/"dist/candidate.tar",candidate.ROOT/"dist/candidate",__import__("os").environ["LABRASTRO_RELEASE_TAG"])'
+      - name: Verify local bytes, create draft, upload and verify remote bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/candidate.py publish

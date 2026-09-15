@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   release-contract:
-    # Keep the foundation guards running while the Release workflow is disabled.
+    # Keep candidate contracts running while candidate dispatch is disabled.
     if: github.repository == 'AstralSolipsism/multica'
     permissions:
       contents: read
@@ -25,6 +25,11 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
       - run: node --test scripts/check-release.test.mjs scripts/build-candidate-web.test.mjs
       - uses: actions/setup-go@v6
         with:
@@ -36,6 +41,15 @@ jobs:
           sudo apt-get install -y --no-install-recommends qemu-user-static
       - run: python3 scripts/build-backend.test.py
       - run: node --test scripts/local-images.test.mjs
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          install-only: true
+      - run: python3 scripts/candidate.test.py
+      - name: Check candidate workflow syntax
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" .github/workflows/release.yml
 
 
   cursor-background-lifecycle:

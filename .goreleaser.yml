@@ -2,7 +2,7 @@ version: 2
 
 project_name: multica
 
-# Local CLI packaging only until the complete OL-83 pipeline is reviewed.
+# CLI packaging only; the candidate workflow owns the separate draft writer.
 # Even a direct `goreleaser release` cannot create or upload a Release.
 release:
   github:
