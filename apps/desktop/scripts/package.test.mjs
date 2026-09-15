@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { afterEach, describe, it, expect } from "vitest";
@@ -16,6 +17,13 @@ import {
   stripLeadingSeparator,
 } from "./package.mjs";
 import { resolveCliStamp } from "./bundle-cli.mjs";
+
+// Resolve the desktop package dir without import.meta.url (not a file:// URL
+// under the vitest transform), tolerating a repo-root cwd.
+const desktopRoot = [
+  resolve(process.cwd(), "apps/desktop"),
+  process.cwd(),
+].find((candidate) => existsSync(join(candidate, "electron-builder.yml")));
 
 describe("normalizeGitVersion", () => {
   it("returns null for empty / nullish input", () => {
@@ -473,7 +481,7 @@ describe("candidateReleaseInputs", () => {
 });
 
 describe("enforceCandidatePublishPolicy", () => {
-  it("pins --publish never when the caller left it out", () => {
+  it("pins exactly one scalar --publish never when the caller left it out", () => {
     expect(enforceCandidatePublishPolicy(["--x64"])).toEqual([
       "--x64",
       "--publish",
@@ -481,17 +489,28 @@ describe("enforceCandidatePublishPolicy", () => {
     ]);
   });
 
-  it("keeps an explicit --publish never", () => {
-    expect(enforceCandidatePublishPolicy(["--publish", "never"])).toEqual([
+  it("collapses every accepted publish form into one scalar --publish never", () => {
+    // yargs turns repeated flags into an array, which electron-builder's
+    // PublishManager still treats as publish-enabled — the guard must emit
+    // a single scalar regardless of how the caller phrased it.
+    for (const input of [
+      ["--publish", "never"],
+      ["-p", "never"],
+      ["--publish=never"],
+      ["-p=never"],
+      ["--publish", "never", "--publish", "never"],
+      ["-p", "never", "--publish=never"],
+    ]) {
+      expect(enforceCandidatePublishPolicy(input)).toEqual(["--publish", "never"]);
+    }
+    expect(enforceCandidatePublishPolicy(["--x64", "--publish", "never"])).toEqual([
+      "--x64",
       "--publish",
       "never",
     ]);
-    expect(enforceCandidatePublishPolicy(["--publish=never"])).toEqual([
-      "--publish=never",
-    ]);
   });
 
-  it("rejects any real publish mode — feed upload is a separate authorized step", () => {
+  it("rejects any real publish mode, including the -p alias — feed upload is a separate authorized step", () => {
     // The old workflow's `--publish always` pushed update metadata to GitHub
     // Releases. Candidate packaging must stay local; the internal generic
     // feed is populated by staging + an authorized upload, never by
@@ -501,15 +520,58 @@ describe("enforceCandidatePublishPolicy", () => {
       ["--publish", "onTag"],
       ["--publish", "onTagOrDraft"],
       ["--publish=always"],
+      ["-p", "always"],
+      ["-p=always"],
+      ["-p", "onTag"],
     ]) {
       expect(() => enforceCandidatePublishPolicy(args)).toThrow(/cannot publish/);
     }
   });
 
-  it("rejects a bare trailing --publish", () => {
+  it("rejects a bare trailing --publish or -p", () => {
     expect(() => enforceCandidatePublishPolicy(["--publish"])).toThrow(
       /cannot publish/,
     );
+    expect(() => enforceCandidatePublishPolicy(["-p"])).toThrow(/cannot publish/);
+  });
+
+  it("passes the real electron-builder parser as scalar never with isPublish=false", () => {
+    // Integration guard through the actual yargs/normalizeOptions/
+    // PublishManager pipeline the builder uses, so a parser change (alias,
+    // array coercion) cannot silently re-enable publishing.
+    const requireDesktop = createRequire(join(desktopRoot, "package.json"));
+    const requireBuilder = createRequire(
+      requireDesktop.resolve("electron-builder/package.json"),
+    );
+    const requireAppBuilder = createRequire(
+      requireBuilder.resolve("app-builder-lib/package.json"),
+    );
+    const { configureBuildCommand, normalizeOptions } = requireBuilder("./out/builder.js");
+    const { PublishManager } = requireAppBuilder("./out/publish/PublishManager.js");
+    const { CancellationToken } = requireAppBuilder("builder-util-runtime");
+    const yargs = requireBuilder("yargs/yargs");
+
+    for (const input of [
+      [],
+      ["--publish", "never"],
+      ["-p", "never"],
+      ["--publish=never"],
+      ["--publish", "never", "--publish", "never"],
+      ["--linux", "AppImage", "--x64"],
+    ]) {
+      const guarded = enforceCandidatePublishPolicy(input);
+      const options = normalizeOptions(
+        configureBuildCommand(yargs(guarded)).exitProcess(false).parse(),
+      );
+      expect(options.publish, JSON.stringify(input)).toBe("never");
+      const packager = {
+        cancellationToken: new CancellationToken(),
+        onAfterPack() {},
+        onArtifactCreated() {},
+      };
+      const manager = new PublishManager(packager, options);
+      expect(manager.isPublish, JSON.stringify(input)).toBe(false);
+    }
   });
 });
 

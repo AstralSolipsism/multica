@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   assembleWebCandidate,
+  buildWebStandalone,
   verifyStandaloneBuild,
   webArchiveName,
 } from "./build-candidate-web.mjs";
@@ -38,7 +39,7 @@ function metadata() {
   };
 }
 
-function fixture(t, { version = VERSION, buildId = "probe-build-id" } = {}) {
+function fixture(t, { version = VERSION, buildId = "probe-build-id", clientVersion = version } = {}) {
   const root = mkdtempSync(join(tmpdir(), "web-candidate-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const webRoot = join(root, "apps", "web");
@@ -51,12 +52,12 @@ function fixture(t, { version = VERSION, buildId = "probe-build-id" } = {}) {
   });
   writeFileSync(
     join(nextDir, "standalone", "apps", "web", ".next", "server", "chunk.js"),
-    `server chunk carrying ${version}\n`,
+    `exports.appVersion="${version}";\n`,
   );
   mkdirSync(join(nextDir, "static", "chunks"), { recursive: true });
   writeFileSync(
     join(nextDir, "static", "chunks", "layout.js"),
-    `client chunk carrying ${version}\n`,
+    `globalThis.appVersion="${clientVersion}";\n`,
   );
   writeFileSync(join(nextDir, "BUILD_ID"), `${buildId}\n`);
   mkdirSync(join(webRoot, "public"), { recursive: true });
@@ -81,8 +82,50 @@ test("verifyStandaloneBuild rejects output built for another version", t => {
   const { webRoot } = fixture(t, { version: "0.0.0-gdeadbeef" });
   assert.throws(
     () => verifyStandaloneBuild(webRoot, { version: VERSION }),
-    /not found in the built bundles/,
+    /not found as an exact literal in the client bundle/,
   );
+});
+
+test("verifyStandaloneBuild rejects a client bundle whose version merely starts with the candidate version", t => {
+  // .20 must never satisfy a check for .2.
+  const { webRoot } = fixture(t, { clientVersion: `${VERSION}0` });
+  assert.throws(
+    () => verifyStandaloneBuild(webRoot, { version: VERSION }),
+    /exact literal/,
+  );
+});
+
+test("verifyStandaloneBuild does not accept a server-only version hit", t => {
+  // The server chunk may carry the right version while the user-visible
+  // client bundle was built with another; only the client bundle proves it.
+  const { webRoot } = fixture(t, { clientVersion: "0.0.0-gdeadbeef" });
+  assert.throws(
+    () => verifyStandaloneBuild(webRoot, { version: VERSION }),
+    /exact literal/,
+  );
+});
+
+test("buildWebStandalone refuses a non-linux/amd64 host", t => {
+  const { webRoot } = fixture(t);
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  const arch = Object.getOwnPropertyDescriptor(process, "arch");
+  const calls = [];
+  try {
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    Object.defineProperty(process, "arch", { value: "arm64" });
+    assert.throws(
+      () =>
+        buildWebStandalone(
+          { version: VERSION },
+          { spawnImpl: (...args) => (calls.push(args), { status: 0 }), webRoot },
+        ),
+      /linux\/amd64/,
+    );
+    assert.equal(calls.length, 0, "the build must not start on the wrong host");
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+    Object.defineProperty(process, "arch", arch);
+  }
 });
 
 test("verifyStandaloneBuild rejects output predating the build run", t => {
@@ -150,14 +193,20 @@ test("assembleWebCandidate packs the runnable tree, evidence and inventory", t =
     "archive members stay inside the versioned root directory",
   );
 
-  // Inactive version directory copy.
+  // Inactive version directory copy, including the evidence file whose
+  // download_path points at releases/<tag>/.
   assert.ok(
     existsSync(join(artifactDir, "downloads", "releases", TAG, webArchiveName(VERSION))),
+  );
+  assert.ok(
+    existsSync(join(artifactDir, "downloads", "releases", TAG, "web-build.json")),
   );
 
   // Evidence, flat and inside the archive.
   assert.equal(evidence.version, VERSION);
   assert.equal(evidence.commit, SHA);
+  assert.equal(evidence.build_id, "probe-build-id");
+  assert.equal(evidence.build_platform, `${process.platform}/${process.arch}`);
   const embedded = JSON.parse(
     execFileSync("tar", ["-xOzf", archive, `${treeName}/web-build.json`], {
       encoding: "utf8",

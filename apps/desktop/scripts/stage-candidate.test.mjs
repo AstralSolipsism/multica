@@ -1,10 +1,12 @@
 // Fixture-driven tests for the Desktop candidate staging entry. Everything
 // runs against synthetic electron-builder output in a temp dir — no real
 // installer is built here — but update metadata is parsed and resolved by
-// the REAL electron-updater GenericProvider, including one end-to-end pass
-// over a local HTTP server that simulates the internal feed.
+// the REAL electron-updater GenericProvider, including an end-to-end pass
+// over a local HTTP server that simulates the internal feed for every
+// channel an installed client can request.
 
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import {
   cpSync,
@@ -18,13 +20,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
-import { execFileSync } from "node:child_process";
+import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DESKTOP_TARGETS,
+  goBuildSetting,
   INTERNAL_FEED_URL,
   loadDesktopModules,
   stageDesktopCandidate,
+  verifyBlockmap,
   verifyTarget,
 } from "./stage-candidate.mjs";
 import { DEFAULT_UPDATER_PREFERENCES } from "../src/main/updater-preferences";
@@ -56,15 +60,15 @@ function tmpRoot() {
   return dir;
 }
 
-function goBuildInfoStub(targetKey) {
+function goBuildInfoStub(targetKey, { version = VERSION, commit = SHA } = {}) {
   const target = DESKTOP_TARGETS[targetKey];
   return [
     `/fake/${targetKey}/multica: go1.26.8`,
-    `build\t-ldflags="-X main.version=${VERSION} -X main.commit=${SHA} -X main.date=2026-09-15T00:00:00Z"`,
-    `build\tGOOS=${target.goos}`,
-    `build\tGOARCH=${target.goarch}`,
-    `build\tvcs.revision=${SHA}`,
-    "build\tvcs.modified=false",
+    `\tbuild\t-ldflags="-X main.version=${version} -X main.commit=${commit} -X main.date=2026-09-15T00:00:00Z"`,
+    `\tbuild\tGOOS=${target.goos}`,
+    `\tbuild\tGOARCH=${target.goarch}`,
+    `\tbuild\tvcs.revision=${commit}`,
+    "\tbuild\tvcs.modified=false",
   ].join("\n");
 }
 
@@ -79,10 +83,27 @@ function goBuildInfoForPath(binaryPath) {
 const nativeHost = { goos: "linux", goarch: "amd64" };
 const nativeCliVersionStub = () => ({ version: VERSION, commit: SHA });
 
+// Real-format blockmap (gzip JSON) describing the given installer bytes.
+function blockmapBytes(installerBytes) {
+  return gzipSync(
+    JSON.stringify({
+      version: "2",
+      files: [
+        {
+          name: "file",
+          offset: 0,
+          checksums: ["fakeblockchecksum"],
+          sizes: [installerBytes.length],
+        },
+      ],
+    }),
+  );
+}
+
 /**
  * Build a synthetic electron-builder output directory for one target:
- * unpacked resources (real asar), a dummy installer + blockmap, and the
- * channel YAML with real size/sha512 entries.
+ * unpacked resources (real asar), a dummy installer (+ blockmap on Windows),
+ * and the channel YAML with real size/sha512 entries.
  */
 async function makeTargetFixture(distRoot, targetKey, overrides = {}) {
   const target = DESKTOP_TARGETS[targetKey];
@@ -126,8 +147,11 @@ async function makeTargetFixture(distRoot, targetKey, overrides = {}) {
     overrides.installerBytes ?? `installer-bytes-${targetKey}-${VERSION}`,
   );
   writeFileSync(join(dir, installerName), installerBytes);
-  if (target.platform === "win") {
-    writeFileSync(join(dir, `${installerName}.blockmap`), `blockmap-${targetKey}\n`);
+  if (target.platform === "win" && !overrides.omitBlockmap) {
+    writeFileSync(
+      join(dir, `${installerName}.blockmap`),
+      overrides.blockmapBytes ?? blockmapBytes(installerBytes),
+    );
   }
 
   const channelFile =
@@ -170,6 +194,53 @@ async function makeFullMatrix(distRoot) {
     await makeTargetFixture(distRoot, targetKey);
   }
 }
+
+describe("goBuildSetting", () => {
+  it("parses ldflags values and plain build settings exactly", () => {
+    const info = goBuildInfoStub("linux-x64");
+    expect(goBuildSetting(info, "main.version")).toBe(VERSION);
+    expect(goBuildSetting(info, "main.commit")).toBe(SHA);
+    expect(goBuildSetting(info, "GOOS")).toBe("linux");
+    expect(goBuildSetting(info, "vcs.modified")).toBe("false");
+    expect(goBuildSetting(info, "main.missing")).toBe(null);
+  });
+
+  it("does not confuse a longer value with its prefix (.20 is not .2)", () => {
+    const info = goBuildInfoStub("linux-x64", { version: `${VERSION}0` });
+    expect(goBuildSetting(info, "main.version")).toBe(`${VERSION}0`);
+    expect(goBuildSetting(info, "main.version")).not.toBe(VERSION);
+  });
+});
+
+describe("verifyBlockmap", () => {
+  it("accepts a blockmap whose block sizes sum to the installer size", () => {
+    const root = tmpRoot();
+    const installer = join(root, "a.exe");
+    const bytes = Buffer.from("0123456789".repeat(100));
+    writeFileSync(installer, bytes);
+    const blockmap = join(root, "a.exe.blockmap");
+    writeFileSync(blockmap, blockmapBytes(bytes));
+    expect(() => verifyBlockmap(blockmap, installer)).not.toThrow();
+  });
+
+  it("rejects a blockmap describing different content", () => {
+    const root = tmpRoot();
+    const installer = join(root, "a.exe");
+    writeFileSync(installer, Buffer.from("0123456789".repeat(100)));
+    const blockmap = join(root, "a.exe.blockmap");
+    writeFileSync(blockmap, blockmapBytes(Buffer.from("shorter")));
+    expect(() => verifyBlockmap(blockmap, installer)).toThrow(/block sizes sum/);
+  });
+
+  it("rejects a blockmap that is not gzip JSON", () => {
+    const root = tmpRoot();
+    const installer = join(root, "a.exe");
+    writeFileSync(installer, "content");
+    const blockmap = join(root, "a.exe.blockmap");
+    writeFileSync(blockmap, "not a blockmap");
+    expect(() => verifyBlockmap(blockmap, installer)).toThrow(/gzip/);
+  });
+});
 
 describe("verifyTarget", () => {
   it("verifies a well-formed target and reports evidence", async () => {
@@ -257,6 +328,36 @@ describe("verifyTarget", () => {
     ).toThrow(/GOARCH/);
   });
 
+  it("rejects a bundled CLI whose version merely starts with the candidate version", async () => {
+    const root = tmpRoot();
+    const distRoot = join(root, "dist");
+    await makeTargetFixture(distRoot, "linux-arm64");
+    expect(() =>
+      verifyTarget("linux-arm64", {
+        metadata,
+        distRoot,
+        modules,
+        goBuildInfo: () => goBuildInfoStub("linux-arm64", { version: `${VERSION}0` }),
+        host: nativeHost,
+      }),
+    ).toThrow(/does not exactly match/);
+  });
+
+  it("rejects a bundled CLI built from a different commit", async () => {
+    const root = tmpRoot();
+    const distRoot = join(root, "dist");
+    await makeTargetFixture(distRoot, "linux-arm64");
+    expect(() =>
+      verifyTarget("linux-arm64", {
+        metadata,
+        distRoot,
+        modules,
+        goBuildInfo: () => goBuildInfoStub("linux-arm64", { commit: "b".repeat(40) }),
+        host: nativeHost,
+      }),
+    ).toThrow(/does not exactly match/);
+  });
+
   it("rejects a tampered installer whose sha512 no longer matches", async () => {
     const root = tmpRoot();
     const distRoot = join(root, "dist");
@@ -274,6 +375,65 @@ describe("verifyTarget", () => {
         host: nativeHost,
       }),
     ).toThrow(/sha512 mismatch/);
+  });
+
+  it("rejects a Windows target whose differential blockmap is missing", async () => {
+    const root = tmpRoot();
+    const distRoot = join(root, "dist");
+    await makeTargetFixture(distRoot, "win-x64", { omitBlockmap: true });
+    expect(() =>
+      verifyTarget("win-x64", {
+        metadata,
+        distRoot,
+        modules,
+        goBuildInfo: goBuildInfoForPath,
+        host: nativeHost,
+      }),
+    ).toThrow(/missing differential blockmap/);
+  });
+
+  it("rejects a Windows target whose blockmap describes other bytes", async () => {
+    const root = tmpRoot();
+    const distRoot = join(root, "dist");
+    await makeTargetFixture(distRoot, "win-arm64", {
+      blockmapBytes: blockmapBytes(Buffer.from("unrelated content")),
+    });
+    expect(() =>
+      verifyTarget("win-arm64", {
+        metadata,
+        distRoot,
+        modules,
+        goBuildInfo: goBuildInfoForPath,
+        host: nativeHost,
+      }),
+    ).toThrow(/block sizes sum/);
+  });
+
+  it("rejects an unverified extra channel YAML riding along", async () => {
+    const root = tmpRoot();
+    const distRoot = join(root, "dist");
+    await makeTargetFixture(distRoot, "win-x64", {
+      extraFiles: {
+        "old-channel.yml": [
+          "version: 0.0.1",
+          "files:",
+          "- url: missing-old.exe",
+          "  sha512: invalid",
+          "  size: 100",
+          "path: missing-old.exe",
+          "",
+        ].join("\n"),
+      },
+    });
+    expect(() =>
+      verifyTarget("win-x64", {
+        metadata,
+        distRoot,
+        modules,
+        goBuildInfo: goBuildInfoForPath,
+        host: nativeHost,
+      }),
+    ).toThrow(/does not match candidate|references missing file/);
   });
 
   it("rejects a feed provider that is not the internal generic source", async () => {
@@ -312,6 +472,7 @@ describe("stageDesktopCandidate", () => {
       `labrastro-desktop-${VERSION}-windows-x64.exe`,
       `labrastro-desktop-${VERSION}-windows-x64.exe.blockmap`,
       `labrastro-desktop-${VERSION}-windows-arm64.exe`,
+      `labrastro-desktop-${VERSION}-windows-arm64.exe.blockmap`,
       `labrastro-desktop-${VERSION}-linux-x86_64.AppImage`,
       `labrastro-desktop-${VERSION}-linux-arm64.AppImage`,
       "labrastro.yml",
@@ -376,7 +537,7 @@ describe("stageDesktopCandidate", () => {
       ),
     ).toBe(true);
 
-    // Evidence per target.
+    // Evidence per target, plus its download copy.
     expect(Object.keys(evidence).sort()).toEqual(Object.keys(DESKTOP_TARGETS).sort());
     expect(evidence["win-arm64"].channel).toBe("latest-arm64.yml");
     expect(evidence["win-x64"].compatibility_channel).toBe("latest.yml");
@@ -384,6 +545,11 @@ describe("stageDesktopCandidate", () => {
       version: VERSION,
       commit: SHA,
     });
+    expect(
+      existsSync(
+        join(artifactDir, "downloads", "releases", TAG, "desktop-verification.json"),
+      ),
+    ).toBe(true);
 
     // Inventory fragment follows the RELEASING.md artifact contract.
     const byName = Object.fromEntries(artifacts.map((a) => [a.name, a]));
@@ -442,12 +608,27 @@ describe("stageDesktopCandidate", () => {
     const root = tmpRoot();
     const distRoot = join(root, "dist");
     const artifactDir = join(root, "candidate");
-    await makeTargetFixture(distRoot, "linux-x64", {
-      extraFiles: { "collision.yml": "from x64\n" },
-    });
-    await makeTargetFixture(distRoot, "linux-arm64", {
-      extraFiles: { "collision.yml": "from arm64 — different bytes\n" },
-    });
+    // Both targets emit a same-named, individually VALID channel YAML whose
+    // bytes differ per architecture. Staging must not let one arch's file
+    // overwrite the other's.
+    const x64 = await makeTargetFixture(distRoot, "linux-x64");
+    const arm64 = await makeTargetFixture(distRoot, "linux-arm64");
+    for (const fixture of [x64, arm64]) {
+      const sha512 = createHash("sha512")
+        .update(fixture.installerBytes)
+        .digest("base64");
+      writeFileSync(
+        join(fixture.dir, "labrastro-extra.yml"),
+        yaml.dump({
+          version: VERSION,
+          files: [
+            { url: fixture.installerName, sha512, size: fixture.installerBytes.length },
+          ],
+          path: fixture.installerName,
+          sha512,
+        }),
+      );
+    }
     expect(() =>
       stageDesktopCandidate(
         baseOptions(distRoot, artifactDir, { targets: ["linux-x64", "linux-arm64"] }),
@@ -469,8 +650,135 @@ describe("stageDesktopCandidate", () => {
   });
 });
 
+describe("incremental staging", () => {
+  it("merges targets staged in separate invocations and keeps feeds consistent", async () => {
+    const root = tmpRoot();
+    const distRoot = join(root, "dist");
+    const artifactDir = join(root, "candidate");
+    await makeTargetFixture(distRoot, "linux-x64");
+    await makeTargetFixture(distRoot, "win-x64");
+
+    const first = stageDesktopCandidate(
+      baseOptions(distRoot, artifactDir, { targets: ["linux-x64"] }),
+    );
+    expect(Object.keys(first.evidence)).toEqual(["linux-x64"]);
+    expect(first.artifacts.some((a) => a.name.includes("windows"))).toBe(false);
+
+    const second = stageDesktopCandidate(
+      baseOptions(distRoot, artifactDir, { targets: ["win-x64"] }),
+    );
+    expect(Object.keys(second.evidence).sort()).toEqual(["linux-x64", "win-x64"]);
+    const names = second.artifacts.map((a) => a.name);
+    expect(names).toContain(`labrastro-desktop-${VERSION}-linux-x86_64.AppImage`);
+    expect(names).toContain(`labrastro-desktop-${VERSION}-windows-x64.exe`);
+    expect(names).toContain(`labrastro-desktop-${VERSION}-windows-x64.exe.blockmap`);
+
+    // The archive carries the MERGED activation tree (linux + windows feeds).
+    const feedArchive = join(
+      artifactDir,
+      "assets",
+      `labrastro-feed-metadata-${VERSION}.tar.gz`,
+    );
+    const members = execFileSync("tar", ["-tzf", feedArchive], { encoding: "utf8" })
+      .split("\n")
+      .filter(Boolean);
+    for (const feed of [
+      "labrastro-linux.yml",
+      "latest-linux.yml",
+      "labrastro.yml",
+      "latest.yml",
+    ]) {
+      expect(members).toContain(`activation/desktop/${feed}`);
+    }
+
+    // Evidence in the version directory is the merged one.
+    const staged = JSON.parse(
+      readFileSync(
+        join(artifactDir, "downloads", "releases", TAG, "desktop-verification.json"),
+        "utf8",
+      ),
+    );
+    expect(Object.keys(staged).sort()).toEqual(["linux-x64", "win-x64"]);
+  });
+
+  it("is idempotent when the same target is staged twice", async () => {
+    const root = tmpRoot();
+    const distRoot = join(root, "dist");
+    const artifactDir = join(root, "candidate");
+    await makeTargetFixture(distRoot, "linux-x64");
+    const first = stageDesktopCandidate(
+      baseOptions(distRoot, artifactDir, { targets: ["linux-x64"] }),
+    );
+    const second = stageDesktopCandidate(
+      baseOptions(distRoot, artifactDir, { targets: ["linux-x64"] }),
+    );
+    expect(second.artifacts).toEqual(first.artifacts);
+    expect(second.evidence).toEqual(first.evidence);
+  });
+
+  it("preserves the prior delivery when a later invocation fails", async () => {
+    const root = tmpRoot();
+    const distRoot = join(root, "dist");
+    const artifactDir = join(root, "candidate");
+    await makeTargetFixture(distRoot, "linux-x64");
+    await makeTargetFixture(distRoot, "win-x64", { feedVersion: "0.0.0-broken" });
+
+    stageDesktopCandidate(
+      baseOptions(distRoot, artifactDir, { targets: ["linux-x64"] }),
+    );
+    const evidenceBefore = readFileSync(
+      join(artifactDir, "assets", "desktop-verification.json"),
+      "utf8",
+    );
+    const inventoryBefore = readFileSync(
+      join(artifactDir, "assets", "desktop-inventory.json"),
+      "utf8",
+    );
+    const archiveBefore = readFileSync(
+      join(artifactDir, "assets", `labrastro-feed-metadata-${VERSION}.tar.gz`),
+    );
+
+    expect(() =>
+      stageDesktopCandidate(
+        baseOptions(distRoot, artifactDir, { targets: ["win-x64"] }),
+      ),
+    ).toThrow(/does not match candidate/);
+
+    // The earlier staged delivery is untouched by the failed run.
+    expect(
+      readFileSync(join(artifactDir, "assets", "desktop-verification.json"), "utf8"),
+    ).toBe(evidenceBefore);
+    expect(
+      readFileSync(join(artifactDir, "assets", "desktop-inventory.json"), "utf8"),
+    ).toBe(inventoryBefore);
+    expect(
+      readFileSync(
+        join(artifactDir, "assets", `labrastro-feed-metadata-${VERSION}.tar.gz`),
+      ),
+    ).toEqual(archiveBefore);
+  });
+
+  it("refuses to merge state from a different candidate identity", async () => {
+    const root = tmpRoot();
+    const distRoot = join(root, "dist");
+    const artifactDir = join(root, "candidate");
+    await makeTargetFixture(distRoot, "linux-x64");
+    stageDesktopCandidate(
+      baseOptions(distRoot, artifactDir, { targets: ["linux-x64"] }),
+    );
+    expect(() =>
+      stageDesktopCandidate(
+        baseOptions(distRoot, artifactDir, {
+          metadata: { ...metadata, commit: "c".repeat(40) },
+          targets: ["linux-x64"],
+        }),
+      ),
+    ).toThrow(/different candidate/);
+  });
+});
+
 describe("mock internal feed over HTTP", () => {
-  it("serves the staged feed and every referenced file with matching hashes", async () => {
+  it("serves every channel its clients resolve, with matching hashes", async () => {
     const root = tmpRoot();
     const distRoot = join(root, "dist");
     const artifactDir = join(root, "candidate");
@@ -492,7 +800,7 @@ describe("mock internal feed over HTTP", () => {
       { recursive: true },
     );
     const server = createServer((req, res) => {
-      const path = join(serverRoot, decodeURIComponent(req.url));
+      const path = join(serverRoot, decodeURIComponent(req.url.split("?")[0]));
       let stat = null;
       try {
         stat = statSync(path);
@@ -511,27 +819,62 @@ describe("mock internal feed over HTTP", () => {
     );
     try {
       const { port } = server.address();
-      const executor = {
-        request: async (options) => {
-          const url = `${options.protocol}//${options.hostname}:${options.port}${options.path}`;
-          const res = await fetch(url);
-          if (!res.ok) {
-            const error = new Error(`HTTP ${res.status}`);
-            error.statusCode = res.status;
-            throw error;
-          }
-          return res.text();
-        },
+      // Each target's client must resolve its exact channel file — the same
+      // resolution the installed app performs (runtime override, app-update
+      // channel, arch suffix).
+      const expectedChannels = {
+        "linux-x64": "labrastro-linux.yml",
+        "linux-arm64": "labrastro-linux-arm64.yml",
+        "win-x64": "labrastro.yml",
+        "win-arm64": "latest-arm64.yml",
       };
-      for (const targetKey of Object.keys(DESKTOP_TARGETS)) {
+      for (const [targetKey, channelFile] of Object.entries(expectedChannels)) {
         const target = DESKTOP_TARGETS[targetKey];
-        const provider = new modules.GenericProvider(
-          { provider: "generic", url: `http://127.0.0.1:${port}/downloads/desktop` },
-          { channel: null, isAddNoCacheQuery: false },
-          { platform: target.runtimePlatform, executor },
+        const requested = [];
+        const executor = {
+          request: async (options) => {
+            const url = `${options.protocol}//${options.hostname}:${options.port}${options.path}`;
+            requested.push(options.path);
+            const res = await fetch(url);
+            if (!res.ok) {
+              const error = new Error(`HTTP ${res.status}`);
+              error.statusCode = res.status;
+              throw error;
+            }
+            return res.text();
+          },
+        };
+        const savedTestArch = process.env.TEST_UPDATER_ARCH;
+        process.env.TEST_UPDATER_ARCH = target.arch;
+        let info;
+        let provider;
+        try {
+          provider = new modules.GenericProvider(
+            {
+              provider: "generic",
+              url: `http://127.0.0.1:${port}/downloads/desktop`,
+              channel: "labrastro",
+            },
+            {
+              channel: targetKey === "win-arm64" ? "latest-arm64" : null,
+              isAddNoCacheQuery: false,
+            },
+            { platform: target.runtimePlatform, executor },
+          );
+          // Channel resolution reads TEST_UPDATER_ARCH at request time, so
+          // the env stays set for the whole resolution + request.
+          info = await provider.getLatestVersion();
+        } finally {
+          if (savedTestArch === undefined) delete process.env.TEST_UPDATER_ARCH;
+          else process.env.TEST_UPDATER_ARCH = savedTestArch;
+        }
+        expect(info.version, targetKey).toBe(VERSION);
+        expect(requested, targetKey).toEqual([`/downloads/desktop/${channelFile}`]);
+        // The feed's installer matches this target's platform/architecture.
+        expect(info.path, targetKey).toContain(TAG);
+        expect(info.path, targetKey).toContain(
+          target.platform === "win" ? `windows-${target.arch}` : "linux",
         );
-        const info = await provider.getLatestVersion();
-        expect(info.version).toBe(VERSION);
         for (const resolved of provider.resolveFiles(info)) {
           expect(
             resolved.url.pathname.startsWith(`/downloads/desktop/${TAG}/`),
@@ -552,31 +895,6 @@ describe("mock internal feed over HTTP", () => {
     } finally {
       await new Promise((resolveServer) => server.close(resolveServer));
     }
-  });
-
-  it("client against the mock feed sees no update when versions match", async () => {
-    // The "closed auto-update" scenario at the feed boundary: a client
-    // already running the candidate version resolves the feed, sees the same
-    // version and has nothing to download. The app's own opt-in default is
-    // pinned separately below.
-    const root = tmpRoot();
-    const distRoot = join(root, "dist");
-    const artifactDir = join(root, "candidate");
-    await makeTargetFixture(distRoot, "linux-x64");
-    stageDesktopCandidate(
-      baseOptions(distRoot, artifactDir, { targets: ["linux-x64"] }),
-    );
-    const feed = yaml.load(
-      readFileSync(
-        join(artifactDir, "activation", "desktop", "labrastro-linux.yml"),
-        "utf8",
-      ),
-    );
-    expect(feed.version).toBe(VERSION);
-    // electron-updater treats equal versions as "no update available"; the
-    // feed must therefore report exactly the candidate version — a stale or
-    // placeholder version here would either downgrade clients or look like
-    // an update when none exists.
   });
 });
 

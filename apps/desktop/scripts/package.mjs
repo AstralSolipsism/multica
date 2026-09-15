@@ -203,37 +203,38 @@ export function candidateReleaseInputs(env = process.env) {
  * generated, then collected into the artifact directory by
  * scripts/stage-candidate.mjs. electron-builder must not publish anything —
  * the old workflow's `--publish always` targeted GitHub Releases, which is
- * not the Labrastro feed. Reject an explicit publish request and pin
- * `--publish never` when the caller left it out.
+ * not the Labrastro feed.
+ *
+ * electron-builder parses `--publish` and its `-p` alias with yargs, and a
+ * repeated flag becomes an ARRAY (`publish: ['never','never']`), which its
+ * PublishManager still treats as "publish enabled". This guard therefore
+ * removes every publish form from the caller's args — rejecting any real
+ * publish request — and appends exactly one scalar `--publish never`.
  */
 export function enforceCandidatePublishPolicy(sharedArgs) {
-  const args = [...sharedArgs];
-  for (let i = 0; i < args.length; i += 1) {
-    const token = args[i];
-    if (token === "--publish") {
-      const value = args[i + 1];
-      if (value !== "never") {
-        throw new Error(
-          `[package] candidate builds cannot publish (got --publish ${value ?? "<missing>"}); ` +
-            "local packaging uses --publish never, feed upload is a separate authorized step",
-        );
-      }
-      i += 1;
+  const args = [];
+  const reject = (value) => {
+    throw new Error(
+      `[package] candidate builds cannot publish (got publish mode "${value}"); ` +
+        "local packaging uses --publish never, feed upload is a separate authorized step",
+    );
+  };
+  for (let i = 0; i < sharedArgs.length; i += 1) {
+    const token = sharedArgs[i];
+    if (token === "--publish" || token === "-p") {
+      const value = sharedArgs[i + 1];
+      if (value !== "never") reject(value ?? "<missing>");
+      i += 1; // consumed; exactly one is re-added below
       continue;
     }
-    if (token.startsWith("--publish=")) {
-      const value = token.slice("--publish=".length);
-      if (value !== "never") {
-        throw new Error(
-          `[package] candidate builds cannot publish (got --publish=${value}); ` +
-            "local packaging uses --publish never, feed upload is a separate authorized step",
-        );
-      }
+    if (token.startsWith("--publish=") || token.startsWith("-p=")) {
+      const value = token.slice(token.indexOf("=") + 1);
+      if (value !== "never") reject(value);
+      continue;
     }
+    args.push(token);
   }
-  if (!args.includes("--publish") && !args.some((a) => a.startsWith("--publish="))) {
-    args.push("--publish", "never");
-  }
+  args.push("--publish", "never");
   return args;
 }
 

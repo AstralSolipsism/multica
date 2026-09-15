@@ -54,6 +54,10 @@ const repoRoot = resolve(here, "..");
 
 export const WEB_COMPONENT = "web";
 export const WEB_ARCHIVE_PLATFORM = { os: "linux", arch: "amd64" };
+// Host the archive must be built on: Next standalone bundles the host's
+// native runtime dependencies, so linux/amd64 output requires a linux/x64
+// build host.
+export const WEB_ARCHIVE_HOST = { platform: "linux", arch: "x64" };
 
 function requireThat(condition, message) {
   if (!condition) throw new Error(`[build-candidate-web] ${message}`);
@@ -85,8 +89,19 @@ function walkFiles(root) {
  * Run the actual Next.js standalone build with the candidate version baked
  * in. Returns the epoch milliseconds the build started at, used by
  * verifyStandaloneBuild to reject pre-existing output.
+ *
+ * The archive is declared `linux/amd64`, and Next standalone copies the
+ * host's runtime dependencies into it (e.g. sharp's prebuilt binary is
+ * selected by the installing platform), so the build is gated to a Linux
+ * x64 host. Building on anything else would produce an archive that
+ * silently carries the wrong platform's native dependencies.
  */
 export function buildWebStandalone(metadata, { spawnImpl = spawnSync, webRoot = join(repoRoot, "apps", "web") } = {}) {
+  requireThat(
+    process.platform === WEB_ARCHIVE_HOST.platform && process.arch === WEB_ARCHIVE_HOST.arch,
+    `web candidate archives are linux/amd64; build on a ${WEB_ARCHIVE_HOST.platform}/${WEB_ARCHIVE_HOST.arch} host ` +
+      `(got ${process.platform}/${process.arch}) or in an explicit Linux amd64 build environment`,
+  );
   const startedAt = Date.now();
   const result = spawnImpl("pnpm", ["--filter", "@multica/web", "build"], {
     cwd: repoRoot,
@@ -106,8 +121,10 @@ export function buildWebStandalone(metadata, { spawnImpl = spawnSync, webRoot = 
 /**
  * Prove the standalone output on disk belongs to this build: BUILD_ID must
  * have been (re)written after the build started, the runtime pieces must
- * exist, and the candidate version string must be baked into the emitted
- * bundles. A cached build from another version fails here.
+ * exist, and the candidate version must be baked into the CLIENT bundle as
+ * an exact string literal. The client bundle is what the user's browser
+ * runs; a server-side hit alone cannot prove the user-visible version, and
+ * a substring check would accept 0.4.43-labrastro.20 for .2.
  */
 export function verifyStandaloneBuild(webRoot, { version, builtAfter }) {
   const nextDir = join(webRoot, ".next");
@@ -130,21 +147,23 @@ export function verifyStandaloneBuild(webRoot, { version, builtAfter }) {
   );
   requireThat(existsSync(staticDir), "missing .next/static directory");
 
-  // The user-visible version is inlined into the client bundle at build
-  // time; finding any other outcome means this output was not built with
-  // NEXT_PUBLIC_APP_VERSION=<version>.
-  const haystacks = [staticDir, join(standaloneDir, "apps", "web", ".next", "server")];
-  const found = haystacks.some((dir) =>
-    existsSync(dir) &&
-    walkFiles(dir).some(
-      (file) =>
-        statSync(file).size < 32 * 1024 * 1024 &&
-        readFileSync(file).includes(version),
-    ),
+  // The user-visible version is inlined into client chunks as a JS string
+  // literal. Require the EXACT literal (any quote style) so a different
+  // version carrying this one as a prefix (labrastro.20 vs .2) or a dev
+  // suffix fails here.
+  const literals = [`"${version}"`, `'${version}'`, `\`${version}\``];
+  const found = walkFiles(staticDir).some(
+    (file) =>
+      statSync(file).size < 32 * 1024 * 1024 &&
+      (() => {
+        const content = readFileSync(file);
+        return literals.some((literal) => content.includes(literal));
+      })(),
   );
   requireThat(
     found,
-    `candidate version ${version} not found in the built bundles — output was not produced by this version's build`,
+    `candidate version ${version} not found as an exact literal in the client bundle — ` +
+      "output was not produced by this version's build",
   );
   return { buildId, standaloneDir, staticDir, serverEntry };
 }
@@ -166,7 +185,7 @@ export function assembleWebCandidate({
     version === tag.slice(1),
     `metadata version ${version} does not match tag ${tag}`,
   );
-  const { standaloneDir, staticDir } = verifyStandaloneBuild(webRoot, {
+  const { standaloneDir, staticDir, buildId } = verifyStandaloneBuild(webRoot, {
     version,
     builtAfter: evidence?.build_started_at_ms,
   });
@@ -205,6 +224,8 @@ export function assembleWebCandidate({
     tag,
     version,
     commit: metadata.commit,
+    build_id: buildId,
+    build_platform: `${process.platform}/${process.arch}`,
     ...evidence,
   };
   writeFileSync(
@@ -224,10 +245,12 @@ export function assembleWebCandidate({
   ]);
   rmSync(join(artifactDir, "scratch"), { recursive: true, force: true });
 
-  // Flat evidence copy, then the version-directory copy of the archive.
+  // Flat evidence copy, then the version-directory copies of the archive
+  // and the evidence (their download_path entries point at releases/<tag>/).
   const evidencePath = join(assetsDir, "web-build.json");
   writeFileSync(evidencePath, `${JSON.stringify(evidenceBody, null, 2)}\n`);
   cpSync(archivePath, join(releaseDir, archiveName));
+  cpSync(evidencePath, join(releaseDir, "web-build.json"));
 
   const entry = (name, filePath, extra = {}) => {
     const bytes = statSync(filePath).size;
