@@ -128,8 +128,9 @@ add_to_path() {
 install_cli_binary() (
   # A subshell owns cleanup even when a download, extraction or install fails.
   local tmp_dir="" staged="" bin_dir current latest version base_url archive expected actual candidate status
-  local install_cmd=()
-  trap 'rm -rf "$tmp_dir"; if [ -n "$staged" ]; then "${install_cmd[@]}" rm -f "$staged"; fi' EXIT
+  # Use a nonempty command for macOS Bash 3.2 with nounset enabled.
+  local install_cmd=env
+  trap 'rm -rf "$tmp_dir"; if [ -n "$staged" ]; then "$install_cmd" rm -f "$staged"; fi' EXIT
 
   if command_exists multica; then
     current=$(binary_version multica) || fail "Could not read the installed CLI version; keeping the existing installation."
@@ -178,17 +179,17 @@ install_cli_binary() (
   bin_dir="${MULTICA_BIN_DIR:-/usr/local/bin}"
   if [ ! -w "$bin_dir" ]; then
     if command_exists sudo; then
-      install_cmd=(sudo)
+      install_cmd=sudo
     else
       bin_dir="$HOME/.local/bin"
       mkdir -p "$bin_dir"
       add_to_path "$bin_dir"
     fi
   fi
-  staged=$("${install_cmd[@]}" mktemp "$bin_dir/.multica-install.XXXXXX")
-  "${install_cmd[@]}" cp "$tmp_dir/multica" "$staged"
-  "${install_cmd[@]}" chmod 755 "$staged"
-  "${install_cmd[@]}" mv -f "$staged" "$bin_dir/multica"
+  staged=$("$install_cmd" mktemp "$bin_dir/.multica-install.XXXXXX")
+  "$install_cmd" cp "$tmp_dir/multica" "$staged"
+  "$install_cmd" chmod 755 "$staged"
+  "$install_cmd" mv -f "$staged" "$bin_dir/multica"
   staged=""
   ok "Labrastro CLI installed to $bin_dir/multica"
 )

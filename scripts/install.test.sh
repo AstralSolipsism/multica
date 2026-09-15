@@ -112,7 +112,7 @@ run_case() {
     INSTALL_TEST_MODE="$mode" INSTALL_TEST_BASE="${base%/}" INSTALL_TEST_LOG="$case_dir/downloads" \
     INSTALL_TEST_ARCHIVE="$archive" INSTALL_TEST_ARCHIVE_NAME="$asset" INSTALL_TEST_SHA="$hash" \
     INSTALL_TEST_BINARY_VERSION="$binary_version" \
-    bash "$ROOT_DIR/scripts/install.sh" >"$case_dir/out" 2>"$case_dir/err" || status=$?
+    "${INSTALL_TEST_BASH:-bash}" "$ROOT_DIR/scripts/install.sh" >"$case_dir/out" 2>"$case_dir/err" || status=$?
   if grep -q 'unexpected' "$case_dir/downloads" "$case_dir/err"; then
     cat "$case_dir/downloads" "$case_dir/err" >&2; return 1
   fi
