@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import zipfile
@@ -209,8 +210,10 @@ def seal(job, meta, ctx):
     for source in sources:
         require(source.is_file() and not source.is_symlink(), f"missing component output: {source}")
         shutil.copyfile(source, output / source.name)
-    tools = {"python": run(["python3", "--version"]), "node": run(["node", "--version"])}
-    for tool, args in (("go", ["go", "version"]), ("pnpm", ["pnpm", "--version"]), ("goreleaser", ["goreleaser", "--version"])):
+    tools = {"python": sys.version, "node": run(["node", "--version"])}
+    if os.environ.get("CANDIDATE_PNPM_VERSION"):
+        tools["pnpm"] = os.environ["CANDIDATE_PNPM_VERSION"]
+    for tool, args in (("go", ["go", "version"]), ("goreleaser", ["goreleaser", "--version"])):
         if shutil.which(tool):
             tools[tool] = run(args)
     write_json(output / "receipt.json", {**receipt, "finished_at": now(), "result": "success", "tools": tools,

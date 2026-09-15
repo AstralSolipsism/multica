@@ -86,12 +86,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-candidate
-      - run: python3 scripts/candidate.py start prepare
+      - run: python scripts/candidate.py start prepare
       - name: Refuse existing Releases, including incomplete drafts
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/candidate.py absent
-      - run: python3 scripts/candidate.py seal prepare
+        run: python scripts/candidate.py absent
+      - run: python scripts/candidate.py seal prepare
       - uses: actions/upload-artifact@v4
         with:
           name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-prepare
@@ -128,14 +128,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-candidate
-      - run: python3 scripts/candidate.py start qa-go
+      - run: python scripts/candidate.py start qa-go
       - run: go run ./cmd/migrate up
         working-directory: server
       - run: bash scripts/test-go.sh --race
       - run: go tool govulncheck ./...
         working-directory: server
       - run: bash scripts/install.test.sh
-      - run: python3 scripts/candidate.py seal qa-go
+      - run: python scripts/candidate.py seal qa-go
       - uses: actions/upload-artifact@v4
         with:
           name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-qa-go
@@ -156,7 +156,7 @@ jobs:
       - uses: ./.github/actions/setup-candidate
         with:
           frontend: 'true'
-      - run: python3 scripts/candidate.py start qa-web
+      - run: python scripts/candidate.py start qa-web
       - run: pnpm exec turbo typecheck test --filter='!@multica/docs' --filter='!@multica/mobile' --force
       - run: node --test scripts/check-release.test.mjs scripts/build-candidate-web.test.mjs scripts/local-images.test.mjs
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user-static
@@ -166,7 +166,7 @@ jobs:
           version: '~> v2'
           install-only: true
       - run: python3 scripts/candidate.test.py
-      - run: python3 scripts/candidate.py seal qa-web
+      - run: python scripts/candidate.py seal qa-web
       - uses: actions/upload-artifact@v4
         with:
           name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-qa-web
@@ -187,12 +187,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-candidate
-      - run: python3 scripts/candidate.py start cli
+      - run: python scripts/candidate.py start cli
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: '~> v2'
           args: release --clean --skip=publish
-      - run: python3 scripts/candidate.py seal cli
+      - run: python scripts/candidate.py seal cli
       - uses: actions/upload-artifact@v4
         with:
           name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-cli
@@ -211,11 +211,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-candidate
-      - run: python3 scripts/candidate.py start backend
+      - run: python scripts/candidate.py start backend
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user-static
       - run: make candidate-backend
       - run: python3 scripts/build-backend.py --verify
-      - run: python3 scripts/candidate.py seal backend
+      - run: python scripts/candidate.py seal backend
       - uses: actions/upload-artifact@v4
         with:
           name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-backend
@@ -236,9 +236,9 @@ jobs:
       - uses: ./.github/actions/setup-candidate
         with:
           frontend: 'true'
-      - run: python3 scripts/candidate.py start web
+      - run: python scripts/candidate.py start web
       - run: node scripts/build-candidate-web.mjs
-      - run: python3 scripts/candidate.py seal web
+      - run: python scripts/candidate.py seal web
       - uses: actions/upload-artifact@v4
         with:
           name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-web
@@ -269,7 +269,7 @@ jobs:
       - uses: ./.github/actions/setup-candidate
         with:
           frontend: 'true'
-      - run: python3 scripts/candidate.py start desktop-${{ matrix.platform }}
+      - run: python scripts/candidate.py start desktop-${{ matrix.platform }}
       - name: PowerShell installer regression
         if: matrix.platform == 'win'
         shell: pwsh
@@ -282,7 +282,7 @@ jobs:
         run: node apps/desktop/scripts/package.mjs --win nsis --x64 --arm64 --publish never
       - name: Stage every target on the build host
         run: node apps/desktop/scripts/stage-candidate.mjs ${{ matrix.platform }}-x64 ${{ matrix.platform }}-arm64
-      - run: python3 scripts/candidate.py seal desktop-${{ matrix.platform }}
+      - run: python scripts/candidate.py seal desktop-${{ matrix.platform }}
       - uses: actions/upload-artifact@v4
         with:
           name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-desktop-${{ matrix.platform }}
@@ -309,10 +309,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-candidate
-      - run: python3 scripts/candidate.py start images-${{ matrix.arch }}
+      - run: python scripts/candidate.py start images-${{ matrix.arch }}
       - name: Build and verify locally on the disposable native runner
         run: node scripts/local-images.mjs --arch ${{ matrix.arch }}
-      - run: python3 scripts/candidate.py seal images-${{ matrix.arch }}
+      - run: python scripts/candidate.py seal images-${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
           name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-images-${{ matrix.arch }}
@@ -346,7 +346,7 @@ jobs:
           pattern: candidate-${{ github.run_id }}-${{ github.run_attempt }}-*
           path: dist/inputs
           merge-multiple: false
-      - run: python3 scripts/candidate.py assemble
+      - run: python scripts/candidate.py assemble
       - name: Preserve the complete inactive handoff
         run: tar -cf dist/candidate.tar -C dist/candidate "$LABRASTRO_RELEASE_TAG"
       - uses: actions/upload-artifact@v4
@@ -393,4 +393,4 @@ jobs:
       - name: Verify local bytes, create draft, upload and verify remote bytes
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/candidate.py publish
+        run: python scripts/candidate.py publish

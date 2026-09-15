@@ -24,4 +24,7 @@ runs:
       run: node scripts/check-release.mjs --require-tag --mode candidate --format env >> "$GITHUB_ENV"
     - shell: bash
       if: inputs.frontend == 'true'
-      run: pnpm install --frozen-lockfile
+      run: |
+        pnpm install --frozen-lockfile
+        candidate_pnpm_version=$(pnpm --version)
+        echo "CANDIDATE_PNPM_VERSION=$candidate_pnpm_version" >> "$GITHUB_ENV"
