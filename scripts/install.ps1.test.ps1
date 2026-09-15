@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
-# Port-contract tests for scripts/install.ps1 — the PowerShell counterpart of the
-# `--with-server` cases in scripts/install.test.sh.
+# Tests for the Windows installer: retained self-host port wiring, followed by
+# the internal CLI release contract shared with scripts/install.test.sh.
 #
 # The installer used to derive the backend/frontend host port from .env with its
 # own copy of the alias chain. Docker Compose gives the calling process
@@ -135,8 +135,7 @@ $cases = @(
 
 $runnerScript = Join-Path ([System.IO.Path]::GetTempPath()) "multica-install-ps1-case.ps1"
 
-# Each case runs in its own pwsh process: install.ps1 uses `exit` on failure, and
-# a child process is also the only way to control the ambient environment
+# Each port case runs in its own pwsh process to control the ambient environment
 # cleanly rather than inheriting a CI runner's PORT.
 @'
 param(
@@ -304,4 +303,163 @@ foreach ($case in $cases) {
 }
 
 Remove-Item $runnerScript -Force -ErrorAction SilentlyContinue
-Write-Host "install.ps1 tests passed" -ForegroundColor Green
+Write-Host "install.ps1 port tests passed" -ForegroundColor Green
+
+# CLI fixtures intercept every network, architecture and executable boundary.
+# The archive and file replacement are real; no installed user CLI is executed.
+function Assert-Equal($Actual, $Expected, [string]$Label) {
+    if ($Actual -cne $Expected) { Fail-Test "$Label`: expected '$Expected', got '$Actual'" }
+}
+
+& {
+    Invoke-Expression $definitions
+    Assert-Equal $RepoUrl 'https://github.com/AstralSolipsism/multica.git' 'fork source'
+    Assert-Equal $DownloadBase 'https://multica.outlune.com/downloads' 'default download source'
+    foreach ($signal in @('AMD64', 'X64', '9', 'X86_64')) { Assert-Equal (Convert-ToCliArch $signal) 'amd64' $signal }
+    foreach ($signal in @('ARM64', 'AARCH64', '12')) { Assert-Equal (Convert-ToCliArch $signal) 'arm64' $signal }
+    Assert-Equal (Convert-ToCliArch 'x86') $null 'unsupported processor'
+    function Get-CimInstance { [pscustomobject]@{ Architecture = 12 } }
+    Assert-Equal (Get-WindowsCliArch) 'arm64' 'native ARM64 beats emulation'
+    function Get-CimInstance { [pscustomobject]@{ Architecture = 9 } }
+    Assert-Equal (Get-WindowsCliArch) 'amd64' 'native x64'
+    function git {
+        $global:LASTEXITCODE = 0
+        if ($args[0] -eq 'fetch' -and ($args -notcontains $RepoUrl)) { Fail-Test 'fetch must explicitly use the fork' }
+    }
+    Checkout-ServerRef 'v0.4.43-labrastro.10'
+    function multica {
+        $global:LASTEXITCODE = 0
+        Assert-Equal $args[0] '--version' 'version command'
+        "multica v0.4.43-labrastro.10 (commit: fixture, built: fixture)"
+    }
+    Assert-Equal (Get-InstalledCliVersion) 'v0.4.43-labrastro.10' 'version retains revision'
+    function multica { $global:LASTEXITCODE = 0; 'multica v0.4.43-labrastro.10-dirty (commit: fixture)' }
+    Assert-Equal (Get-InstalledCliVersion) 'v0.4.43-labrastro.10-dirty' 'version retains dirty suffix'
+    foreach ($invalid in @('dev', '0.0.0', 'v0.0.0-labrastro.1', 'v0.4.43-labrastro.0', 'v0.4.43-labrastro.01', 'v0.04.43-labrastro.1', 'v0.4.43-labrastro.1-dirty', 'v0.4.43-labrastro.1-2-gabcdef', 'v0.4.43-beta.1', 'v0.4.43-labrastro.1+build')) {
+        Assert-Equal @(Get-ReleaseParts $invalid).Count 0 "invalid version $invalid"
+    }
+    Assert-Equal (Test-NewerVersion '0.4.43-labrastro.18446744073709551616' '0.4.43-labrastro.18446744073709551615') $true 'large numeric revision'
+}
+
+$cliCases = @(
+    @{ Name = 'new x64'; Mode = 'success'; Arch = 'amd64'; Current = '' }
+    @{ Name = 'new arm64'; Mode = 'success'; Arch = 'arm64'; Current = '' }
+    @{ Name = 'numeric revision'; Mode = 'success'; Current = 'v0.4.43-labrastro.9' }
+    @{ Name = 'base bump'; Mode = 'success'; Current = 'v0.4.42-labrastro.99' }
+    @{ Name = 'legacy migration'; Mode = 'success'; Current = 'v0.4.43' }
+    @{ Name = 'legacy archive'; Mode = 'legacy' }
+    @{ Name = 'byte checksum response'; Mode = 'bytes' }
+    @{ Name = 'binary checksum'; Mode = 'binary-checksum' }
+    @{ Name = 'same version'; Mode = 'unchanged'; Current = '0.4.43-labrastro.10' }
+    @{ Name = 'newer installed'; Mode = 'unchanged'; Current = 'v0.4.43-labrastro.11' }
+    @{ Name = 'newer base'; Mode = 'unchanged'; Current = 'v0.4.44-labrastro.1' }
+    @{ Name = 'dirty protected'; Mode = 'dev'; Current = 'v0.4.43-labrastro.9-dirty' }
+    @{ Name = 'describe protected'; Mode = 'dev'; Current = 'v0.4.43-labrastro.9-2-gabcdef' }
+)
+foreach ($mode in @('missing-checksum', 'missing-entry', 'malformed-checksum', 'duplicate', 'missing-archive', 'bad-checksum', 'wrong-version', 'missing-binary', 'invalid-archive', 'copy-failure', 'swap-failure', 'metadata-failure')) {
+    $cliCases += @{ Name = $mode; Mode = $mode }
+}
+foreach ($tag in @('v0.4.43', 'v0.0.0-labrastro.1', 'v0.4.43-labrastro.0', 'v0.4.43-labrastro.01', 'v0.4.43-labrastro.10-dirty', 'v0.4.43-labrastro.10-2-gabc', '../bad')) {
+    $cliCases += @{ Name = "invalid $tag"; Mode = 'invalid-version'; Tag = $tag }
+}
+
+foreach ($case in $cliCases) {
+    if (-not $case.ContainsKey('Arch')) { $case.Arch = 'amd64' }
+    if (-not $case.ContainsKey('Current')) { $case.Current = '0.4.43-labrastro.9' }
+    if (-not $case.ContainsKey('Tag')) { $case.Tag = 'v0.4.43-labrastro.10' }
+    $caseDir = Join-Path ([IO.Path]::GetTempPath()) ('labrastro-cli-' + [guid]::NewGuid().ToString('N'))
+    $binDir = Join-Path $caseDir 'bin'
+    $payloadDir = Join-Path $caseDir 'payload'
+    New-Item -ItemType Directory -Path $binDir, $payloadDir | Out-Null
+    $target = Join-Path $binDir 'multica.exe'
+    $archive = Join-Path $caseDir 'fixture.zip'
+    $reported = if ($case.Mode -eq 'wrong-version') { '0.4.43-labrastro.9' } else { '0.4.43-labrastro.10' }
+    $entry = if ($case.Mode -eq 'missing-binary') { 'README' } else { 'multica.exe' }
+    [IO.File]::WriteAllText((Join-Path $payloadDir $entry), $reported)
+    Compress-Archive -Path (Join-Path $payloadDir $entry) -DestinationPath $archive
+    if ($case.Mode -eq 'invalid-archive') { [IO.File]::WriteAllText($archive, 'not an archive') }
+    if ($case.Current) { [IO.File]::WriteAllText($target, $case.Current) }
+    $originalBinDir = $env:MULTICA_BIN_DIR
+    $env:MULTICA_BIN_DIR = $binDir
+    try {
+        & {
+            Invoke-Expression $definitions
+            $DownloadBase = 'https://mirror.example.test/downloads'
+            $requests = [Collections.Generic.List[string]]::new()
+            function Test-CommandExists { param($Name) return $Name -eq 'multica' -and (Test-Path $target) }
+            function Get-WindowsCliArch { return $case.Arch }
+            function Add-ToUserPath { param($Dir) Assert-Equal $Dir $binDir 'PATH install directory' }
+            function Get-InstalledCliVersion {
+                param([string]$Path = 'multica')
+                if ($Path -eq 'multica') { return [IO.File]::ReadAllText($target) }
+                # Stand in for executing this exact staged binary, not PATH.
+                if (-not $Path.EndsWith('multica.exe') -or $Path -eq $target) { Fail-Test "wrong version probe path $Path" }
+                return [IO.File]::ReadAllText($Path)
+            }
+            function Invoke-RestMethod {
+                param($Uri, $ErrorAction)
+                $requests.Add($Uri)
+                Assert-Equal $Uri "$DownloadBase/latest.json" 'metadata URL'
+                if ($case.Mode -eq 'metadata-failure') { throw 'fixture metadata unavailable' }
+                return [pscustomobject]@{ version = $case.Tag }
+            }
+            $asset = if ($case.Mode -eq 'legacy') { "multica_windows_$($case.Arch).zip" } else { "multica-cli-$($case.Tag.Substring(1))-windows-$($case.Arch).zip" }
+            function Invoke-WebRequest {
+                param($Uri, $OutFile, [switch]$UseBasicParsing, $ErrorAction)
+                $requests.Add($Uri)
+                $baseUrl = "$DownloadBase/cli/$($case.Tag)"
+                if ($Uri -eq "$baseUrl/checksums.txt") {
+                    if ($case.Mode -eq 'missing-checksum') { throw 'fixture missing checksums' }
+                    $hash = (Get-FileHash $archive -Algorithm SHA256).Hash
+                    $name = $asset
+                    switch ($case.Mode) {
+                        'bad-checksum' { $hash = '0' * 64 }
+                        'malformed-checksum' { $hash = 'bad' }
+                        'missing-entry' { $name += '.extra' }
+                        'binary-checksum' { $name = "*$name" }
+                    }
+                    $manifest = "$hash  $name`n"
+                    if ($case.Mode -eq 'duplicate') { $manifest += $manifest }
+                    if ($case.Mode -eq 'bytes') { return [pscustomobject]@{ Content = [Text.Encoding]::UTF8.GetBytes($manifest) } }
+                    return [pscustomobject]@{ Content = $manifest }
+                }
+                Assert-Equal $Uri "$baseUrl/$asset" 'archive URL'
+                if ($case.Mode -eq 'missing-archive') { throw 'fixture missing archive' }
+                Copy-Item -LiteralPath $archive -Destination $OutFile
+            }
+            function Copy-Item {
+                param($LiteralPath, $Destination)
+                if ($case.Mode -eq 'copy-failure' -and (Split-Path $Destination -Leaf) -like 'multica-install-*') {
+                    [IO.File]::WriteAllText($Destination, 'partial')
+                    throw 'fixture copy failed'
+                }
+                Microsoft.PowerShell.Management\Copy-Item -LiteralPath $LiteralPath -Destination $Destination
+            }
+            function Move-Item {
+                param($LiteralPath, $Destination)
+                if ($case.Mode -eq 'swap-failure' -and (Split-Path $LiteralPath -Leaf) -like 'multica-install-*') { throw 'fixture swap failed' }
+                Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination
+            }
+            $caught = $null
+            try { Install-Cli } catch { $caught = $_ }
+            $succeeds = $case.Mode -in @('success', 'legacy', 'bytes', 'binary-checksum', 'unchanged')
+            if (($null -eq $caught) -ne $succeeds) { Fail-Test "$($case.Name): unexpected result $caught" }
+            $expectedBytes = if ($succeeds -and $case.Mode -ne 'unchanged') { $reported } else { $case.Current }
+            Assert-Equal ([IO.File]::ReadAllText($target)) $expectedBytes "$($case.Name) installation"
+            $expectedRequests = switch ($case.Mode) {
+                'dev' { 0 }
+                { $_ -in @('unchanged', 'invalid-version', 'metadata-failure') } { 1 }
+                { $_ -in @('missing-checksum', 'missing-entry', 'malformed-checksum', 'duplicate') } { 2 }
+                default { 3 }
+            }
+            Assert-Equal $requests.Count $expectedRequests "$($case.Name) request count"
+            Assert-Equal @(Get-ChildItem $binDir -Filter 'multica-install-*').Count 0 'staging cleanup'
+            Assert-Equal (Test-Path "$target.old") $false 'backup cleanup or rollback'
+            Write-Host "PASS $($case.Name)"
+        }
+    } finally {
+        $env:MULTICA_BIN_DIR = $originalBinDir
+        Remove-Item -LiteralPath $caseDir -Recurse -Force
+    }
+}
+Write-Host 'Labrastro internal install.ps1 tests passed' -ForegroundColor Green

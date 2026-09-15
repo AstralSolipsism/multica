@@ -5217,6 +5217,9 @@ func (d *Daemon) tryBeginServerUpdate(ctx context.Context) serverUpdateAcquireRe
 // (handleUpdate) and the auto-update poller (autoUpdateLoop) share the exact
 // same execution body.
 func (d *Daemon) runUpdate(targetVersion string) (string, error) {
+	if !cli.IsNewerVersion(targetVersion, d.cfg.CLIVersion) {
+		return "", fmt.Errorf("refusing update from %q to %q: requires a newer release and an installed release build", d.cfg.CLIVersion, targetVersion)
+	}
 	d.logger.Info("updating CLI from the internal release source...", "target_version", targetVersion)
 	out, err := cli.UpdateViaDownload(targetVersion)
 	if err != nil {

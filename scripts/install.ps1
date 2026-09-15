@@ -1,10 +1,10 @@
-# Multica installer for Windows — one command to get started.
+# Labrastro installer for Windows — one command to get started.
 #
-# Install CLI (default): connects to multica.ai
-#   irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
+# Install CLI (default): connects to multica.outlune.com
+#   irm https://multica.outlune.com/downloads/install.ps1 | iex
 #
-# Self-host: starts a local Multica server + installs CLI + configures
-#   $env:MULTICA_MODE="local"; irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
+# Self-host: starts a local Labrastro server + installs CLI + configures
+#   $env:MULTICA_MODE="local"; irm https://multica.outlune.com/downloads/install.ps1 | iex
 #
 
 $ErrorActionPreference = "Stop"
@@ -12,8 +12,8 @@ $ErrorActionPreference = "Stop"
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-$RepoUrl       = "https://github.com/multica-ai/multica.git"
-$RepoWebUrl    = "https://github.com/multica-ai/multica"
+$RepoUrl       = "https://github.com/AstralSolipsism/multica.git"
+$DownloadBase = if ($env:MULTICA_DOWNLOAD_BASE) { $env:MULTICA_DOWNLOAD_BASE.TrimEnd("/") } else { "https://multica.outlune.com/downloads" }
 $DefaultInstallDir = Join-Path $env:USERPROFILE ".multica\server"
 $InstallDir    = if ($env:MULTICA_INSTALL_DIR) { $env:MULTICA_INSTALL_DIR } else { $DefaultInstallDir }
 
@@ -28,7 +28,7 @@ $script:SelfHostFrontendPort = $null
 function Write-Info  { param([string]$Msg) Write-Host "==> $Msg" -ForegroundColor Cyan }
 function Write-Ok    { param([string]$Msg) Write-Host "[OK] $Msg" -ForegroundColor Green }
 function Write-Warn  { param([string]$Msg) Write-Warning $Msg }
-function Write-Fail  { param([string]$Msg) Write-Host "[ERROR] $Msg" -ForegroundColor Red; exit 1 }
+function Write-Fail  { param([string]$Msg) throw $Msg }
 
 function Test-CommandExists {
     param([string]$Name)
@@ -84,13 +84,35 @@ function Get-ComposePublishedPort {
     return $published
 }
 
-function Get-LatestVersion {
-    try {
-        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/multica-ai/multica/releases/latest" -ErrorAction Stop
-        return $release.tag_name
-    } catch {
-        return $null
+# Legacy numeric versions are accepted only as installed migration inputs.
+function Get-ReleaseParts {
+    param([string]$Version)
+    $match = [regex]::Match($Version, '\Av?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-labrastro\.([1-9][0-9]*))?\z')
+    if (-not $match.Success) { return }
+    $parts = @([bigint]$match.Groups[1].Value, [bigint]$match.Groups[2].Value, [bigint]$match.Groups[3].Value)
+    if ($parts[0] -eq 0 -and $parts[1] -eq 0 -and $parts[2] -eq 0) { return }
+    $revision = if ($match.Groups[4].Success) { [bigint]$match.Groups[4].Value } else { [bigint]0 }
+    return $parts + @($revision)
+}
+
+function Test-NewerVersion {
+    param([string]$Latest, [string]$Current)
+    $next = @(Get-ReleaseParts $Latest)
+    $previous = @(Get-ReleaseParts $Current)
+    if ($next.Count -ne 4 -or $previous.Count -ne 4) { return $false }
+    for ($i = 0; $i -lt 4; $i++) {
+        if ($next[$i] -ne $previous[$i]) { return $next[$i] -gt $previous[$i] }
     }
+    return $false
+}
+
+function Get-LatestVersion {
+    $release = Invoke-RestMethod -Uri "$DownloadBase/latest.json" -ErrorAction Stop
+    $tag = [string]$release.version
+    if (@(Get-ReleaseParts $tag).Count -ne 4 -or $tag -cnotlike 'v*-labrastro.*') {
+        Write-Fail "Release manifest version must be vX.Y.Z-labrastro.N."
+    }
+    return $tag
 }
 
 function Get-SelfHostRef {
@@ -109,23 +131,12 @@ function Get-SelfHostRef {
 function Checkout-ServerRef {
     param([string]$Ref)
 
-    if ($Ref -eq "main") {
-        git fetch origin main --depth 1 2>$null
-        git checkout --force main 2>$null
-        git reset --hard origin/main 2>$null
-        return
-    }
-
-    git fetch origin --tags --force 2>$null
-    $tagRef = "refs/tags/$Ref"
-    git show-ref --verify --quiet $tagRef 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        git checkout --force $Ref 2>$null
-        return
-    }
-
-    git fetch origin $Ref --depth 1 2>$null
-    git checkout --force $Ref 2>$null
+    # Never trust an existing checkout's origin: old installations may still
+    # point upstream. All source fetches explicitly select our fork.
+    git fetch --no-recurse-submodules --depth 1 -- $RepoUrl $Ref
+    if ($LASTEXITCODE -ne 0) { Write-Fail "Failed to fetch $Ref from the Labrastro fork." }
+    git checkout --force --detach FETCH_HEAD
+    if ($LASTEXITCODE -ne 0) { Write-Fail "Failed to check out the fetched Labrastro source." }
 }
 
 function Pull-OfficialSelfHostImages {
@@ -215,106 +226,97 @@ function Get-WindowsCliArch {
 }
 
 function Get-InstalledCliVersion {
-    try {
-        $firstLine = multica version 2>$null | Select-Object -First 1
-        if ("$firstLine" -match '\b(v?\d+(?:\.\d+)+)\b') {
-            $version = $Matches[1]
-            if ($version -notlike 'v*') {
-                $version = "v$version"
-            }
-            return $version
-        }
-    } catch {}
-
+    param([string]$Path = "multica")
+    $output = & $Path --version
+    if ($LASTEXITCODE -ne 0) { Write-Fail "Could not read CLI version from $Path." }
+    $firstLine = @($output) | Select-Object -First 1
+    if ("$firstLine" -cmatch '^multica\s+(\S+)') { return $Matches[1] }
     return $null
+}
+
+function Get-AssetChecksum {
+    param([string]$Manifest, [string]$Asset)
+    $hash = $null
+    foreach ($line in ($Manifest -split "`r?`n")) {
+        $fields = $line.Trim() -split '\s+'
+        if ($fields.Count -lt 2 -or ($fields[1] -creplace '^\*', '') -cne $Asset) { continue }
+        if ($hash -or $fields.Count -ne 2 -or $fields[0] -notmatch '\A[0-9a-fA-F]{64}\z') {
+            Write-Fail "Invalid or duplicate checksum for $Asset."
+        }
+        $hash = $fields[0].ToLowerInvariant()
+    }
+    return $hash
 }
 
 # ---------------------------------------------------------------------------
 # CLI Installation
 # ---------------------------------------------------------------------------
 function Install-CliBinary {
-    Write-Info "Installing Multica CLI from GitHub Releases..."
-
+    param([string]$Tag = (Get-LatestVersion))
+    if (@(Get-ReleaseParts $Tag).Count -ne 4 -or $Tag -cnotlike 'v*-labrastro.*') {
+        Write-Fail "Install target must be vX.Y.Z-labrastro.N."
+    }
     if (-not [Environment]::Is64BitOperatingSystem) {
-        Write-Fail "Multica requires a 64-bit Windows installation."
+        Write-Fail "Labrastro requires a 64-bit Windows installation."
     }
-
     $arch = Get-WindowsCliArch
-
-    $latest = Get-LatestVersion
-    if (-not $latest) {
-        Write-Fail "Could not determine latest release. Check your network connection."
-    }
-
-    $version = $latest.TrimStart('v')
-    $url = "https://github.com/multica-ai/multica/releases/download/$latest/multica-cli-$version-windows-$arch.zip"
-    $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "multica-install"
-
-    if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force }
+    $version = $Tag.Substring(1)
+    $baseUrl = "$DownloadBase/cli/$Tag"
+    $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("multica-install-" + [guid]::NewGuid().ToString("N"))
+    $staged = $null
     New-Item -ItemType Directory -Path $tmpDir | Out-Null
-
-    Write-Info "Downloading $url ..."
     try {
-        Invoke-WebRequest -Uri $url -OutFile (Join-Path $tmpDir "multica.zip") -UseBasicParsing
-    } catch {
-        Remove-Item $tmpDir -Recurse -Force
-        Write-Fail "Failed to download CLI binary: $_"
-    }
-
-    # Verify SHA256 checksum
-    $checksumUrl = "https://github.com/multica-ai/multica/releases/download/$latest/checksums.txt"
-    try {
-        $checksums = Invoke-WebRequest -Uri $checksumUrl -UseBasicParsing -ErrorAction Stop
-        $checksumContent = if ($checksums.Content -is [byte[]]) {
+        Write-Info "Installing Labrastro CLI $Tag from the internal release source..."
+        $checksums = Invoke-WebRequest -Uri "$baseUrl/checksums.txt" -UseBasicParsing -ErrorAction Stop
+        $manifest = if ($checksums.Content -is [byte[]]) {
             [System.Text.Encoding]::UTF8.GetString($checksums.Content)
-        } else {
-            [string]$checksums.Content
+        } else { [string]$checksums.Content }
+        $asset = $null
+        foreach ($candidate in @("multica-cli-$version-windows-$arch.zip", "multica_windows_$arch.zip")) {
+            $expected = Get-AssetChecksum -Manifest $manifest -Asset $candidate
+            if ($expected) { $asset = $candidate; break }
         }
+        if (-not $asset) { Write-Fail "No checksummed CLI archive for windows/$arch." }
         $zipFile = Join-Path $tmpDir "multica.zip"
-        $actualHash = (Get-FileHash -Path $zipFile -Algorithm SHA256).Hash.ToLower()
-        $releaseAsset = "multica-cli-$version-windows-$arch.zip"
-        $legacyAsset = "multica_windows_$arch.zip"
-        $expectedLine = ($checksumContent -split "`r?`n") |
-            Where-Object {
-                $_ -match [regex]::Escape($releaseAsset) -or
-                $_ -match [regex]::Escape($legacyAsset)
-            } |
-            Select-Object -First 1
-        if ($expectedLine) {
-            $expectedHash = ($expectedLine -split "\s+")[0].ToLower()
-            if ($actualHash -ne $expectedHash) {
-                Remove-Item $tmpDir -Recurse -Force
-                Write-Fail "Checksum verification failed. Expected: $expectedHash, Got: $actualHash"
-            }
-            Write-Ok "Checksum verified"
-        } else {
-            Write-Warn "Could not find checksum entry for $releaseAsset — skipping verification."
+        Invoke-WebRequest -Uri "$baseUrl/$asset" -OutFile $zipFile -UseBasicParsing -ErrorAction Stop
+        $actual = (Get-FileHash -Path $zipFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $expected) { Write-Fail "Checksum verification failed for $asset." }
+        Write-Ok "Checksum verified"
+        Expand-Archive -Path $zipFile -DestinationPath $tmpDir -Force
+        $binaries = @(Get-ChildItem -Path $tmpDir -Filter "multica.exe" -File -Recurse)
+        if ($binaries.Count -ne 1) { Write-Fail "Archive must contain exactly one multica.exe." }
+        $exeSrc = $binaries[0].FullName
+        $actualVersion = Get-InstalledCliVersion -Path $exeSrc
+        if (-not $actualVersion -or ($actualVersion -creplace '^v', '') -cne $version) {
+            Write-Fail "Downloaded CLI version ($actualVersion) does not match $Tag."
         }
-    } catch {
-        Write-Warn "Could not download checksums.txt — skipping verification."
-    }
 
-    Expand-Archive -Path (Join-Path $tmpDir "multica.zip") -DestinationPath $tmpDir -Force
-
-    $binDir = Join-Path $env:USERPROFILE ".multica\bin"
-    if (-not (Test-Path $binDir)) {
+        $binDir = if ($env:MULTICA_BIN_DIR) { $env:MULTICA_BIN_DIR } else { Join-Path $env:USERPROFILE ".multica\bin" }
         New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+        $target = Join-Path $binDir "multica.exe"
+        $staged = Join-Path $binDir ("multica-install-" + [guid]::NewGuid().ToString("N") + ".exe")
+        Copy-Item -LiteralPath $exeSrc -Destination $staged
+        $backup = "$target.old"
+        $hadExisting = Test-Path -LiteralPath $target
+        if ($hadExisting) {
+            if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force }
+            Move-Item -LiteralPath $target -Destination $backup
+        }
+        try {
+            Move-Item -LiteralPath $staged -Destination $target
+        } catch {
+            if ($hadExisting) { Move-Item -LiteralPath $backup -Destination $target }
+            throw
+        }
+        # A running Windows executable can be renamed but may still be locked
+        # for deletion. The CLI also cleans this .old file on next startup.
+        if ($hadExisting) { Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }
+        Add-ToUserPath $binDir
+        Write-Ok "Labrastro CLI installed to $target"
+    } finally {
+        if ($staged -and (Test-Path -LiteralPath $staged)) { Remove-Item -LiteralPath $staged -Force }
+        Remove-Item -LiteralPath $tmpDir -Recurse -Force
     }
-
-    $exeSrc = Join-Path $tmpDir "multica.exe"
-    if (-not (Test-Path $exeSrc)) {
-        $exeSrc = Get-ChildItem -Path $tmpDir -Filter "multica.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
-    }
-    if (-not $exeSrc -or -not (Test-Path $exeSrc)) {
-        Remove-Item $tmpDir -Recurse -Force
-        Write-Fail "multica.exe not found in downloaded archive."
-    }
-
-    Copy-Item $exeSrc (Join-Path $binDir "multica.exe") -Force
-    Remove-Item $tmpDir -Recurse -Force
-
-    Add-ToUserPath $binDir
-    Write-Ok "Multica CLI installed to $binDir\multica.exe"
 }
 
 function Add-ToUserPath {
@@ -333,37 +335,19 @@ function Add-ToUserPath {
 }
 
 function Install-Cli {
+    $current = $null
     if (Test-CommandExists "multica") {
-        $currentVer = Get-InstalledCliVersion
-        $latestVer = Get-LatestVersion
-
-        $currentCmp = if ($currentVer) { $currentVer -replace '^v','' } else { $null }
-        $latestCmp = if ($latestVer) { $latestVer -replace '^v','' } else { $null }
-
-        $isUpToDate = $currentCmp -and -not $latestCmp
-        if (-not $isUpToDate) {
-            try {
-                $isUpToDate = $currentCmp -and $latestCmp -and ([System.Version]$currentCmp -ge [System.Version]$latestCmp)
-            } catch {
-                $isUpToDate = $currentCmp -and $latestCmp -and ($currentCmp -eq $latestCmp)
-            }
+        $current = Get-InstalledCliVersion
+        if (@(Get-ReleaseParts $current).Count -ne 4) {
+            Write-Fail "Refusing to replace a development or unrecognized build ($current)."
         }
-
-        if ($isUpToDate) {
-            Write-Ok "Multica CLI is up to date ($currentVer)"
-            return
-        }
-
-        Write-Info "Multica CLI $currentVer installed, latest is $latestVer - upgrading..."
-        Install-CliBinary
-
-        $newVer = Get-InstalledCliVersion
-        Write-Ok "Multica CLI upgraded ($currentVer -> $newVer)"
+    }
+    $latest = Get-LatestVersion
+    if ($current -and -not (Test-NewerVersion -Latest $latest -Current $current)) {
+        Write-Ok "Labrastro CLI is up to date ($current)"
         return
     }
-
-    Install-CliBinary
-
+    Install-CliBinary -Tag $latest
     if (-not (Test-CommandExists "multica")) {
         Write-Fail "CLI installed but 'multica' not found on PATH. Restart your terminal and try again."
     }
@@ -375,7 +359,7 @@ function Install-Cli {
 function Test-Docker {
     if (-not (Test-CommandExists "docker")) {
         Write-Fail @"
-Docker is not installed. Multica self-hosting requires Docker and Docker Compose.
+Docker is not installed. Labrastro self-hosting requires Docker and Docker Compose.
 
 Install Docker Desktop for Windows:
   https://docs.docker.com/desktop/install/windows-install/
@@ -397,7 +381,7 @@ After installing Docker, re-run this script with `$env:MULTICA_MODE="local"`.
 # Server setup (self-host / local)
 # ---------------------------------------------------------------------------
 function Install-Server {
-    Write-Info "Setting up Multica server..."
+    Write-Info "Setting up Labrastro server..."
     $serverRef = Get-SelfHostRef
     Write-Info "Using self-host assets from $serverRef..."
 
@@ -405,7 +389,7 @@ function Install-Server {
         Write-Info "Updating existing installation at $InstallDir..."
         Write-Warn "Any local changes in $InstallDir will be overwritten."
     } else {
-        Write-Info "Cloning Multica repository..."
+        Write-Info "Cloning Labrastro repository..."
         if (-not (Test-CommandExists "git")) {
             Write-Fail "Git is not installed. Please install git and re-run."
         }
@@ -418,6 +402,7 @@ function Install-Server {
             New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
         }
         git clone --depth 1 $RepoUrl $InstallDir
+        if ($LASTEXITCODE -ne 0) { Write-Fail "Failed to clone the Labrastro fork." }
     }
 
     Push-Location $InstallDir
@@ -439,9 +424,9 @@ function Install-Server {
         Write-Ok "Using existing .env"
     }
 
-    Write-Info "Pulling official Multica images..."
+    Write-Info "Pulling official Labrastro images..."
     Pull-OfficialSelfHostImages
-    Write-Info "Starting Multica services (this may take a few minutes on first run)..."
+    Write-Info "Starting Labrastro services (this may take a few minutes on first run)..."
     docker compose -f docker-compose.selfhost.yml up -d
 
     # Read the ports Compose actually published, once, and reuse them for both
@@ -468,7 +453,7 @@ function Install-Server {
     }
 
     if ($ready) {
-        Write-Ok "Multica server is running"
+        Write-Ok "Labrastro server is running"
     } else {
         Write-Warn "Server is still starting. Check logs with:"
         Write-Host "  cd $InstallDir; docker compose -f docker-compose.selfhost.yml logs"
@@ -483,23 +468,23 @@ function Install-Server {
 # ---------------------------------------------------------------------------
 function Start-DefaultInstall {
     Write-Host ""
-    Write-Host "  Multica - Installer" -ForegroundColor White
+    Write-Host "  Labrastro - Installer" -ForegroundColor White
     Write-Host ""
 
     Install-Cli
 
     Write-Host ""
     Write-Host "  ============================================" -ForegroundColor Green
-    Write-Host "  [OK] Multica CLI is ready!" -ForegroundColor Green
+    Write-Host "  [OK] Labrastro CLI is ready!" -ForegroundColor Green
     Write-Host "  ============================================" -ForegroundColor Green
     Write-Host ""
     Write-Host "  Next: configure your environment"
     Write-Host ""
-    Write-Host "     multica setup               " -NoNewline; Write-Host "# Connect to Multica Cloud (multica.ai)" -ForegroundColor DarkGray
+    Write-Host "     multica setup               " -NoNewline; Write-Host "# Connect to Labrastro (multica.outlune.com)" -ForegroundColor DarkGray
     Write-Host "     multica setup self-host      " -NoNewline; Write-Host "# Connect to a self-hosted server" -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "  Self-hosting? Install the server first:"
-    Write-Host '     $env:MULTICA_MODE="with-server"; irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex'
+    Write-Host '     $env:MULTICA_MODE="with-server"; irm https://multica.outlune.com/downloads/install.ps1 | iex'
     Write-Host ""
 }
 
@@ -508,7 +493,7 @@ function Start-DefaultInstall {
 # ---------------------------------------------------------------------------
 function Start-LocalInstall {
     Write-Host ""
-    Write-Host "  Multica - Self-Host Installer" -ForegroundColor White
+    Write-Host "  Labrastro - Self-Host Installer" -ForegroundColor White
     Write-Host "  Provisioning server infrastructure + installing CLI"
     Write-Host ""
 
@@ -518,7 +503,7 @@ function Start-LocalInstall {
 
     Write-Host ""
     Write-Host "  ============================================" -ForegroundColor Green
-    Write-Host "  [OK] Multica server is running and CLI is ready!" -ForegroundColor Green
+    Write-Host "  [OK] Labrastro server is running and CLI is ready!" -ForegroundColor Green
     Write-Host "  ============================================" -ForegroundColor Green
     Write-Host ""
     Write-Host "  Frontend:  http://localhost:$($script:SelfHostFrontendPort)"
@@ -533,7 +518,7 @@ function Start-LocalInstall {
     Write-Host "  or read the generated code from backend logs when Resend is unset."
     Write-Host ""
     Write-Host "  To stop all services:"
-    Write-Host '     $env:MULTICA_MODE="stop"; irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex'
+    Write-Host '     $env:MULTICA_MODE="stop"; irm https://multica.outlune.com/downloads/install.ps1 | iex'
     Write-Host ""
 }
 
@@ -542,7 +527,7 @@ function Start-LocalInstall {
 # ---------------------------------------------------------------------------
 function Start-Stop {
     Write-Host ""
-    Write-Info "Stopping Multica services..."
+    Write-Info "Stopping Labrastro services..."
 
     if (Test-Path $InstallDir) {
         Push-Location $InstallDir
@@ -554,7 +539,7 @@ function Start-Stop {
         }
         Pop-Location
     } else {
-        Write-Warn "No Multica installation found at $InstallDir"
+        Write-Warn "No Labrastro installation found at $InstallDir"
     }
 
     if (Test-CommandExists "multica") {

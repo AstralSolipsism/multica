@@ -225,15 +225,15 @@ func TestAutoUpdateLoop_EarlyExits(t *testing.T) {
 	}{
 		{
 			name: "disabled by config",
-			cfg:  Config{AutoUpdateEnabled: false, CLIVersion: "v0.1.13"},
+			cfg:  Config{AutoUpdateEnabled: false, CLIVersion: "v0.4.43-labrastro.1"},
 		},
 		{
 			name: "managed by desktop",
-			cfg:  Config{AutoUpdateEnabled: true, CLIVersion: "v0.1.13", LaunchedBy: "desktop"},
+			cfg:  Config{AutoUpdateEnabled: true, CLIVersion: "v0.4.43-labrastro.1", LaunchedBy: "desktop"},
 		},
 		{
 			name: "dev build",
-			cfg:  Config{AutoUpdateEnabled: true, CLIVersion: "v0.1.13-235-gabcdef0"},
+			cfg:  Config{AutoUpdateEnabled: true, CLIVersion: "v0.4.43-labrastro.1-235-gabcdef0"},
 		},
 	}
 	for _, tt := range tests {
@@ -252,5 +252,70 @@ func TestAutoUpdateLoop_EarlyExits(t *testing.T) {
 			}()
 			<-done
 		})
+	}
+}
+
+func TestTryAutoUpdateLabrastroSequence(t *testing.T) {
+	for _, tc := range []struct {
+		current, latest string
+		wantUpdate      bool
+	}{
+		{"0.4.43-labrastro.9", "v0.4.43-labrastro.10", true},
+		{"0.4.43-labrastro.99", "v0.4.44-labrastro.1", true},
+		{"v0.4.43", "v0.4.43-labrastro.1", true},
+		{"0.4.43-labrastro.10", "v0.4.43-labrastro.10", false},
+		{"0.4.43-labrastro.11", "v0.4.43-labrastro.10", false},
+		{"0.4.44-labrastro.1", "v0.4.43-labrastro.99", false},
+		{"0.4.43-labrastro.1-dirty", "v0.4.43-labrastro.10", false},
+		{"0.4.43-labrastro.1-2-gabcdef0", "v0.4.43-labrastro.10", false},
+		{"0.4.43-labrastro.1", "v0.4.43-labrastro.10-dirty", false},
+	} {
+		t.Run(tc.current+" to "+tc.latest, func(t *testing.T) {
+			d, restarts := newAutoUpdateTestDaemon(t, tc.current)
+			withStubLatestVersion(t, tc.latest, nil)
+			var target string
+			d.runUpdateFn = func(v string) (string, error) { target = v; return "fixture updated", nil }
+			d.tryAutoUpdate(context.Background())
+			if (target != "") != tc.wantUpdate || (restarts.Load() == 1) != tc.wantUpdate {
+				t.Fatalf("target=%q restarts=%d wantUpdate=%v", target, restarts.Load(), tc.wantUpdate)
+			}
+			if tc.wantUpdate && target != tc.latest {
+				t.Fatalf("target=%q, want %q", target, tc.latest)
+			}
+		})
+	}
+}
+
+func TestAutoUpdateLoopAcceptsLabrastroRelease(t *testing.T) {
+	originalDelay := autoUpdateInitialDelay
+	autoUpdateInitialDelay = 0
+	t.Cleanup(func() { autoUpdateInitialDelay = originalDelay })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d, _ := newAutoUpdateTestDaemon(t, "0.4.43-labrastro.9")
+	d.cancelFunc = cancel
+	withStubLatestVersion(t, "v0.4.43-labrastro.10", nil)
+	called := false
+	d.runUpdateFn = func(v string) (string, error) { called = true; return "fixture updated", nil }
+	d.autoUpdateLoop(ctx)
+	if !called {
+		t.Fatal("Labrastro release was incorrectly treated as a development build")
+	}
+}
+
+func TestRunUpdateProtectsInstalledVersionBeforeDownload(t *testing.T) {
+	for _, tc := range []struct{ current, target string }{
+		{"0.4.43-labrastro.1-dirty", "v0.4.43-labrastro.10"},
+		{"0.4.43-labrastro.1-2-gabcdef0", "v0.4.43-labrastro.10"},
+		{"0.4.43-labrastro.10", "v0.4.43-labrastro.9"},
+		{"0.4.43-labrastro.10", "v0.4.43-labrastro.10"},
+		{"0.4.44-labrastro.1", "v0.4.43-labrastro.99"},
+		{"0.4.43-labrastro.1", "../../invalid"},
+		{"0.4.43-labrastro.1", "v0.4.44"},
+	} {
+		d, _ := newAutoUpdateTestDaemon(t, tc.current)
+		if _, err := d.runUpdate(tc.target); err == nil {
+			t.Fatalf("accepted %q to %q", tc.current, tc.target)
+		}
 	}
 }
