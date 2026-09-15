@@ -11,7 +11,8 @@
 # Usage:
 #   cp .env.example .env
 #   # Edit .env — generate JWT_SECRET with `openssl rand -hex 32` (required)
-#   docker compose -f docker-compose.selfhost.yml up -d
+#   make selfhost                 # development build + start
+#   # For reviewed candidates, see docs/local-builds.md before starting services.
 #
 # Frontend: http://localhost:${FRONTEND_PORT:-3000}
 # Backend:  http://localhost:${BACKEND_PORT:-${API_PORT:-${SERVER_PORT:-${PORT:-8080}}}}
@@ -53,7 +54,8 @@ services:
       retries: 5
 
   backend:
-    image: ${MULTICA_BACKEND_IMAGE:-ghcr.io/multica-ai/multica-backend}:${MULTICA_IMAGE_TAG:-latest}
+    image: labrastro-backend:${MULTICA_IMAGE_TAG:?Set MULTICA_IMAGE_TAG to a locally built version}
+    pull_policy: never
     depends_on:
       postgres:
         condition: service_healthy
@@ -203,7 +205,8 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: ${MULTICA_WEB_IMAGE:-ghcr.io/multica-ai/multica-web}:${MULTICA_IMAGE_TAG:-latest}
+    image: labrastro-web:${MULTICA_IMAGE_TAG:?Set MULTICA_IMAGE_TAG to a locally built version}
+    pull_policy: never
     depends_on:
       - backend
     ports:

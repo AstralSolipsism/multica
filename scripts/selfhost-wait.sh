@@ -17,19 +17,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-mode=${1:-official}
-case "$mode" in
-official)
-  compose_files=(-f docker-compose.selfhost.yml)
-  ;;
-build)
-  compose_files=(-f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml)
-  ;;
-*)
-  echo "usage: ${BASH_SOURCE[0]} [official|build]" >&2
-  exit 2
-  ;;
-esac
+compose_files=(-f docker-compose.selfhost.yml)
 
 # The Makefile exports COMPOSE; keep the same default when run standalone.
 read -r -a compose_cmd <<<"${COMPOSE:-docker compose}"
@@ -80,17 +68,15 @@ echo "✓ Multica is running!"
 echo "  Frontend: ${frontend_url}"
 echo "  Backend:  ${backend_url}"
 echo ""
-if [ "$mode" = "build" ]; then
-  echo "Built images locally via docker-compose.selfhost.build.yml."
-  echo "Local tags: multica-backend:dev and multica-web:dev."
-else
-  echo "Images: ${MULTICA_BACKEND_IMAGE:-ghcr.io/multica-ai/multica-backend}:${MULTICA_IMAGE_TAG:-latest}"
-  echo "        ${MULTICA_WEB_IMAGE:-ghcr.io/multica-ai/multica-web}:${MULTICA_IMAGE_TAG:-latest}"
-fi
+echo "Built local development images from this checkout."
+echo "Images: labrastro-backend:${MULTICA_IMAGE_TAG}"
+echo "        labrastro-web:${MULTICA_IMAGE_TAG}"
+echo "For subsequent direct Compose commands: export MULTICA_IMAGE_TAG=${MULTICA_IMAGE_TAG}"
 echo ""
 echo "Log in: configure RESEND_API_KEY in .env for email codes,"
 echo "        or read the generated code from backend logs when Resend is unset."
 echo ""
 echo "Next — install the CLI and connect your machine:"
-echo "  brew install multica-ai/tap/multica"
+echo "  Install the matching CLI from your verified candidate archive or internal downloads."
+echo "  Verify: multica version --output json"
 echo "  multica setup self-host"

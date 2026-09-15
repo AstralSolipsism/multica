@@ -11,6 +11,8 @@ cd "$ROOT_DIR"
 # include .env and bare-`export` it to the recipe environment, clobbering
 # this value, so run_recipe seeds it into the recipe .env as well.
 export JWT_SECRET=test-secret-for-config-test
+export VERSION=dev-config-test MULTICA_IMAGE_TAG=dev-config-test
+export COMMIT=1234567890123456789012345678901234567890 DATE=2026-09-15T00:00:00Z
 
 require_config() {
   local config=$1
@@ -227,6 +229,7 @@ process.stdin.on("end", () => {
   for (const service of ["backend", "frontend"]) {
     console.log(service + "=" + config.services[service].ports[0].published);
   }
+  console.log("postgres_password=" + config.services.postgres.environment.POSTGRES_PASSWORD);
 });
 ' >>"$STUB_PUBLISHED_RECORD"
   ;;
@@ -352,6 +355,25 @@ if [ "$(published_port frontend)" != "3000" ]; then
   exit 1
 fi
 
+# First boot must re-read the newly generated .env instead of exporting the
+# Makefile's pre-generation default password into the initial containers.
+rm "$recipe_dir/.env"
+: >"$record"
+: >"$curl_log"
+env -u JWT_SECRET -u POSTGRES_PASSWORD PATH="$stub_dir:$PATH" \
+  REAL_DOCKER="$real_docker" STUB_PUBLISHED_RECORD="$record" STUB_CURL_LOG="$curl_log" \
+  make --no-print-directory -C "$recipe_dir" selfhost >/dev/null
+generated_password=$(sed -n 's/^POSTGRES_PASSWORD=//p' "$recipe_dir/.env")
+require_env "$(cat "$record")" "postgres_password=$generated_password"
+test "$generated_password" != multica
+
+# A development rebuild cannot silently replace a versioned candidate tag.
+if run_recipe selfhost '' '' 'MULTICA_IMAGE_TAG=v1.2.3-labrastro.1' >/dev/null 2>&1; then
+  echo "selfhost accepted a candidate tag for a development build"
+  exit 1
+fi
+test ! -s "$record"
+
 # selfhost-build resolves the port the same way.
 run_recipe selfhost-build 's/^PORT=8080/PORT=9400/' '' '' >/dev/null
 require_consistent 'selfhost-build with PORT edited' 9400
@@ -411,7 +433,7 @@ if [ "$(published_port frontend)" != "3000" ]; then
 fi
 
 # The recipes must delegate instead of re-deriving the port.
-for expected_call in 'bash scripts/selfhost-wait.sh official' 'bash scripts/selfhost-wait.sh build'; do
+for expected_call in 'bash scripts/selfhost-wait.sh'; do
   if ! grep -Fq "$expected_call" Makefile; then
     echo "Makefile must call the shared wait script: $expected_call"
     exit 1

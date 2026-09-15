@@ -42,6 +42,9 @@ default_backend="$(
     --show-only templates/backend.yaml
 )"
 require_rendered_value "$default_backend" 'failureThreshold: 60'
+require_rendered_value "$default_backend" 'labrastro-backend:local-unconfigured'
+require_rendered_value "$default_backend" 'imagePullPolicy: Never'
+reject_rendered_value "$default_backend" 'ghcr.io/'
 liveness_block="$(sed -n '/livenessProbe:/,/resources:/p' <<<"$default_backend")"
 require_rendered_value "$liveness_block" 'path: /health'
 reject_rendered_value "$liveness_block" 'path: /healthz'

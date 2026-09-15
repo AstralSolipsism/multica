@@ -1,21 +1,22 @@
-# Development override: build the backend/web images from the current checkout
-# instead of pulling the official GHCR images.
+# Build from this checkout. Make supplies development identity; candidate
+# builds use scripts/local-images.mjs and an exact tracked source snapshot.
 
 services:
   backend:
-    image: multica-backend:dev
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        VERSION: ${VERSION:-dev}
-        COMMIT: ${COMMIT:-unknown}
-        DATE: ${DATE:-unknown}
+        VERSION: ${VERSION:?Set VERSION from the source identity}
+        COMMIT: ${COMMIT:?Set COMMIT to the full source SHA}
+        DATE: ${DATE:?Set DATE to the source commit time}
 
   frontend:
-    image: multica-web:dev
     build:
       context: .
       dockerfile: Dockerfile.web
       args:
-        NEXT_PUBLIC_APP_VERSION: dev
+        VERSION: ${VERSION:?Set VERSION from the source identity}
+        COMMIT: ${COMMIT:?Set COMMIT to the full source SHA}
+        DATE: ${DATE:?Set DATE to the source commit time}
+        NEXT_PUBLIC_APP_VERSION: ${VERSION:?Set VERSION from the source identity}

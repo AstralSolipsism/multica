@@ -5,35 +5,33 @@ This document is designed for AI agents to execute. Follow these steps exactly t
 ## Prerequisites
 
 - Docker and Docker Compose installed
-- Homebrew installed (for CLI)
+- Git, Make, Go 1.26.6+, curl and OpenSSL
 - At least one AI agent CLI on PATH: `claude` or `codex`
 
 ## Install
 
 ```bash
-# Install CLI + provision self-host server
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server
+# Build a local development stack and matching CLI
+git clone https://github.com/AstralSolipsism/multica.git
+cd multica
+make selfhost
+make build
+export PATH="$PWD/server/bin:$PATH"
+multica version --output json
 
 # Configure CLI for localhost, authenticate, and start daemon
 multica setup self-host
 ```
 
-Wait for the server output `✓ Multica server is running and CLI is ready!` before running `multica setup self-host`.
+Use the printed `MULTICA_IMAGE_TAG` for subsequent direct Compose commands.
+Application images are built locally. For approved candidates or existing
+deployments use [Local builds](docs/local-builds.md); the repository development
+stack must not replace the operator's custom Compose.
 
 **Expected result:**
 - Frontend at http://localhost:3000
 - Backend at http://localhost:8080
 - `multica` CLI installed and configured for localhost
-
-## Alternative: Manual Setup
-
-```bash
-git clone https://github.com/multica-ai/multica.git
-cd multica
-make selfhost
-brew install multica-ai/tap/multica
-multica setup self-host
-```
 
 The `multica setup self-host` command will:
 1. Configure CLI to connect to localhost:8080 / localhost:3000

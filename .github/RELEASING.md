@@ -207,10 +207,12 @@ version, clean-tree and tag-identity checks still apply to rebuilds.
 | Desktop `apps/desktop/scripts/package.mjs` | Preflight before cleanup/build, pass normalized version to `extraMetadata.version`; pass the same full SHA/version/date to `bundle-cli.mjs`. Invoke through `pnpm -C apps/desktop package -- --linux AppImage --win --x64 --arm64 --publish never`. Generic internal feed stays configured. | OL-81 |
 | Local `Dockerfile` / `Dockerfile.web` | Preflight on host source, backend args `VERSION`, `COMMIT`, `DATE`; Web arg `NEXT_PUBLIC_APP_VERSION`. Local image names `labrastro-backend:$LABRASTRO_RELEASE_TAG` and `labrastro-web:$LABRASTRO_RELEASE_TAG`; record full revision/version OCI labels and local Image IDs. Use local build/load, never push. | OL-82 |
 
-The table is the interface for successor work. Web/Desktop candidate env wiring,
-backend archives and Docker/Compose enforcement are not yet implemented here;
-plain development commands must not be presented as verified candidates. Each
-successor must call the same preflight and validate the bytes actually produced.
+The table is the interface for successor work. Backend archives now use
+`make candidate-backend`; local application images use `make candidate-images`.
+Both invoke the common tagged preflight and verify produced bytes; see
+[local build instructions](../docs/local-builds.md). Plain development commands
+are not verified candidates. Web/Desktop integration and full artifact
+aggregation remain with their respective successor tasks.
 Do not turn a missing bundled CLI, missing toolchain or skipped build into success.
 
 ## Artifact directory and inventory
