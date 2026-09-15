@@ -4,15 +4,21 @@ import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { afterEach, describe, it, expect } from "vitest";
 import {
+  assertCandidatePublishIsolated,
   builderArgsForTarget,
+  candidateReleaseInputs,
   deriveVersion,
   DESCRIBE_ARGS,
+  enforceCandidatePublishPolicy,
   envWithLocalBins,
   normalizeGitVersion,
   parsePackageArgs,
+  resolveBinCommand,
   resolveBuildMatrix,
+  spawnBuildTool,
   stripLeadingSeparator,
 } from "./package.mjs";
+import { resolveCliStamp } from "./bundle-cli.mjs";
 
 describe("normalizeGitVersion", () => {
   it("returns null for empty / nullish input", () => {
@@ -429,6 +435,260 @@ describe("envWithLocalBins", () => {
   });
 });
 
+describe("candidateReleaseInputs", () => {
+  const full = {
+    LABRASTRO_RELEASE_REPOSITORY: "AstralSolipsism/multica",
+    LABRASTRO_RELEASE_TAG: "v0.4.43-labrastro.2",
+    LABRASTRO_RELEASE_SHA: "a".repeat(40),
+  };
+
+  it("returns null when no release env is set (development path)", () => {
+    expect(candidateReleaseInputs({})).toBe(null);
+    expect(candidateReleaseInputs({ PATH: "/usr/bin" })).toBe(null);
+  });
+
+  it("returns the three inputs with the default candidate mode", () => {
+    expect(candidateReleaseInputs(full)).toEqual({
+      repository: "AstralSolipsism/multica",
+      tag: "v0.4.43-labrastro.2",
+      sha: "a".repeat(40),
+      mode: "candidate",
+    });
+  });
+
+  it("honours an explicit rebuild mode", () => {
+    expect(
+      candidateReleaseInputs({ ...full, LABRASTRO_RELEASE_MODE: "rebuild" })?.mode,
+    ).toBe("rebuild");
+  });
+
+  it("rejects partial release env instead of guessing", () => {
+    expect(() =>
+      candidateReleaseInputs({ LABRASTRO_RELEASE_TAG: full.LABRASTRO_RELEASE_TAG }),
+    ).toThrow(/together/);
+    expect(() =>
+      candidateReleaseInputs({
+        LABRASTRO_RELEASE_REPOSITORY: full.LABRASTRO_RELEASE_REPOSITORY,
+        LABRASTRO_RELEASE_SHA: full.LABRASTRO_RELEASE_SHA,
+      }),
+    ).toThrow(/together/);
+  });
+});
+
+describe("enforceCandidatePublishPolicy", () => {
+  it("pins exactly one scalar --publish never when the caller left it out", () => {
+    expect(enforceCandidatePublishPolicy(["--x64"])).toEqual([
+      "--x64",
+      "--publish",
+      "never",
+    ]);
+  });
+
+  it("collapses every accepted publish form into one scalar --publish never", () => {
+    // yargs turns repeated flags into an array, which electron-builder's
+    // PublishManager still treats as publish-enabled — the guard must emit
+    // a single scalar regardless of how the caller phrased it.
+    for (const input of [
+      ["--publish", "never"],
+      ["-p", "never"],
+      ["--publish=never"],
+      ["-p=never"],
+      ["--publish", "never", "--publish", "never"],
+      ["-p", "never", "--publish=never"],
+    ]) {
+      expect(enforceCandidatePublishPolicy(input)).toEqual(["--publish", "never"]);
+    }
+    expect(enforceCandidatePublishPolicy(["--x64", "--publish", "never"])).toEqual([
+      "--x64",
+      "--publish",
+      "never",
+    ]);
+  });
+
+  it("rejects any real publish mode, in every yargs spelling — feed upload is a separate authorized step", () => {
+    // The old workflow's `--publish always` pushed update metadata to GitHub
+    // Releases. Candidate packaging must stay local; the internal generic
+    // feed is populated by staging + an authorized upload, never by
+    // electron-builder itself.
+    for (const args of [
+      ["--publish", "always"],
+      ["--publish", "onTag"],
+      ["--publish", "onTagOrDraft"],
+      ["--publish=always"],
+      ["-p", "always"],
+      ["-p=always"],
+      ["-p", "onTag"],
+      // yargs also resolves the long-form alias and short clusters.
+      ["--p", "always"],
+      ["--p=always"],
+      ["-lp", "always"],
+      ["-pl", "always"],
+    ]) {
+      expect(() => enforceCandidatePublishPolicy(args)).toThrow(/cannot publish/);
+    }
+  });
+
+  it("rejects a bare trailing publish flag in any spelling", () => {
+    expect(() => enforceCandidatePublishPolicy(["--publish"])).toThrow(
+      /cannot publish/,
+    );
+    expect(() => enforceCandidatePublishPolicy(["-p"])).toThrow(/cannot publish/);
+    expect(() => enforceCandidatePublishPolicy(["--p"])).toThrow(/cannot publish/);
+  });
+});
+
+describe("assertCandidatePublishIsolated (real electron-builder parser)", () => {
+  it("accepts guarded args through the full wrapper chain, resolving to scalar never", () => {
+    // The same wrapper path main() takes: parsePackageArgs →
+    // enforceCandidatePublishPolicy → builderArgsForTarget → the real
+    // electron-builder yargs/normalizeOptions pipeline.
+    for (const input of [[], ["--publish", "never", "--publish", "never"], ["-p=never"]]) {
+      const parsed = parsePackageArgs(["--linux", "AppImage", "--x64", ...input]);
+      parsed.sharedArgs = enforceCandidatePublishPolicy(parsed.sharedArgs);
+      const args = builderArgsForTarget(
+        { platform: "linux", arch: "x64" },
+        parsed,
+        "0.4.43-labrastro.2",
+        { useScopedOutputDir: true },
+      );
+      expect(() => assertCandidatePublishIsolated(args)).not.toThrow();
+    }
+  });
+
+  it("rejects every publish-spelling bypass, and even an unguarded arg list", () => {
+    // Any form that slipped the textual guard is still caught by the real
+    // parser — the isolation closure.
+    for (const input of [["--p", "always"], ["--p=always"], ["-lp", "always"]]) {
+      const parsed = parsePackageArgs(["--linux", "AppImage", "--x64", ...input]);
+      expect(() => {
+        parsed.sharedArgs = enforceCandidatePublishPolicy(parsed.sharedArgs);
+      }).toThrow(/cannot publish/);
+    }
+    const parsed = parsePackageArgs(["--linux", "AppImage", "--x64", "--publish", "always"]);
+    const args = builderArgsForTarget(
+      { platform: "linux", arch: "x64" },
+      parsed,
+      "0.4.43-labrastro.2",
+      { useScopedOutputDir: true },
+    );
+    expect(() => assertCandidatePublishIsolated(args)).toThrow(/publish mode/);
+  });
+
+  it("validated argv reaches the spawn boundary byte-identical — no shell re-split", () => {
+    // The P1 the r3 review proved: a single -c override containing spaces
+    // ("-c.extraMetadata.description=demo --p always") is legitimate and
+    // passes validation, but `shell: true` would re-tokenize it into a REAL
+    // `--p always` publish flag inside the child. The spawn must carry the
+    // exact array through node directly.
+    const parsed = parsePackageArgs([
+      "--linux",
+      "AppImage",
+      "--x64",
+      "-c.extraMetadata.description=demo --p always",
+    ]);
+    parsed.sharedArgs = enforceCandidatePublishPolicy(parsed.sharedArgs);
+    const args = builderArgsForTarget(
+      { platform: "linux", arch: "x64" },
+      parsed,
+      "0.4.43-labrastro.2",
+      { useScopedOutputDir: true },
+    );
+    expect(() => assertCandidatePublishIsolated(args)).not.toThrow();
+
+    const command = resolveBinCommand("electron-builder", "electron-builder");
+    expect(command[0]).toBe(process.execPath);
+    expect(command[1]).toMatch(/electron-builder/);
+
+    const calls = [];
+    spawnBuildTool(command, args, {
+      cwd: "/tmp",
+      env: {},
+      spawnImpl: (file, argv, options) => {
+        calls.push({ file, argv, options });
+        return { status: 0 };
+      },
+    });
+    expect(calls).toHaveLength(1);
+    const [{ file, argv, options }] = calls;
+    expect(options.shell).toBe(false);
+    expect(file).toBe(process.execPath);
+    // Every validated argument is one argv element — the description with
+    // spaces included; nothing is re-tokenized at the process boundary.
+    expect(argv).toEqual([command[1], ...args]);
+    expect(argv).toContain("-c.extraMetadata.description=demo --p always");
+    // And the argv the child would actually receive still parses to never.
+    expect(() =>
+      assertCandidatePublishIsolated(argv.slice(1)),
+    ).not.toThrow();
+  });
+});
+
+describe("resolveCliStamp (bundle-cli candidate stamp)", () => {
+  const env = {
+    LABRASTRO_RELEASE_REPOSITORY: "AstralSolipsism/multica",
+    LABRASTRO_RELEASE_TAG: "v0.4.43-labrastro.2",
+    LABRASTRO_RELEASE_SHA: "b".repeat(40),
+    VERSION: "0.4.43-labrastro.2",
+    COMMIT: "b".repeat(40),
+    DATE: "2026-09-15T01:02:03Z",
+  };
+
+  it("uses the preflight stamp in candidate mode", () => {
+    expect(resolveCliStamp(env)).toEqual({
+      version: "0.4.43-labrastro.2",
+      commit: "b".repeat(40),
+      date: "2026-09-15T01:02:03Z",
+      source: "candidate",
+    });
+  });
+
+  it("keeps the git-describe development fallback when no release env is set", () => {
+    expect(
+      resolveCliStamp(
+        {},
+        { describe: "v0.4.43-12-gdeadbeef", head: "deadbeef", now: "2026-09-15T01:02:03Z" },
+      ),
+    ).toEqual({
+      version: "v0.4.43-12-gdeadbeef",
+      commit: "deadbeef",
+      date: "2026-09-15T01:02:03Z",
+      source: "git-describe",
+    });
+    expect(resolveCliStamp({}, { now: "2026-09-15T01:02:03Z" })).toEqual({
+      version: "dev",
+      commit: "unknown",
+      date: "2026-09-15T01:02:03Z",
+      source: "git-describe",
+    });
+  });
+
+  it("fails closed on partial release env", () => {
+    expect(() =>
+      resolveCliStamp({ LABRASTRO_RELEASE_TAG: env.LABRASTRO_RELEASE_TAG }),
+    ).toThrow(/together/);
+  });
+
+  it("fails closed when preflight outputs are missing", () => {
+    const { VERSION, ...withoutVersion } = env;
+    expect(() => resolveCliStamp(withoutVersion)).toThrow(/VERSION, COMMIT and DATE/);
+  });
+
+  it("rejects a VERSION that does not match the release tag", () => {
+    expect(() =>
+      resolveCliStamp({ ...env, VERSION: "0.4.43-labrastro.3" }),
+    ).toThrow(/does not match release tag/);
+    expect(() => resolveCliStamp({ ...env, VERSION: "dev" })).toThrow(
+      /does not match release tag/,
+    );
+  });
+
+  it("rejects a COMMIT that does not match the release SHA", () => {
+    expect(() => resolveCliStamp({ ...env, COMMIT: "c".repeat(40) })).toThrow(
+      /COMMIT does not match/,
+    );
+  });
+});
+
 describe("electron-builder.yml packaging config", () => {
   // Regression guard for github.com/multica-ai/multica/issues/5595. The
   // multi-arch release build writes each target's output to
@@ -472,5 +732,23 @@ describe("electron-builder.yml packaging config", () => {
     const entries = readFilesBlock(readFileSync(configPath, "utf-8"));
     expect(entries.length).toBeGreaterThan(0);
     expect(entries).toContain("!dist/**");
+  });
+
+  it("keeps the update provider on the internal generic feed, never upstream GitHub", () => {
+    // Installed clients resolve updates against this block. Pointing it back
+    // at a GitHub provider would let an upstream release overwrite the
+    // customized build; candidate packaging stages feed files locally and an
+    // authorized step uploads them — electron-builder never publishes.
+    expect(configPath, "electron-builder.yml not found").toBeTruthy();
+    const raw = readFileSync(configPath, "utf-8");
+    const publishMatch = raw.match(/^publish:\n((?: {2,}.*\n?)*)/m);
+    expect(publishMatch, "publish block not found").toBeTruthy();
+    const publish = publishMatch[1];
+    expect(publish).toContain("provider: generic");
+    expect(publish).toContain(
+      "url: https://multica.outlune.com/downloads/desktop",
+    );
+    expect(publish).not.toMatch(/provider:\s*github/);
+    expect(publish).not.toMatch(/multica-ai/);
   });
 });

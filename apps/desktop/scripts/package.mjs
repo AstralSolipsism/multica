@@ -1,10 +1,20 @@
 #!/usr/bin/env node
 // Wrapper around `electron-builder` that keeps the Desktop version in
-// lockstep with the CLI. Both are derived from `git describe --tags
-// --match 'v[0-9]*' --always --dirty` — the same source GoReleaser reads
-// for the CLI
-// binary via the `main.version` ldflag — so a single `vX.Y.Z` tag push
-// produces matching CLI and Desktop versions.
+// lockstep with the CLI.
+//
+// Candidate release mode (LABRASTRO_RELEASE_REPOSITORY/TAG/SHA set): the
+// shared preflight in scripts/check-release.mjs validates the reviewed
+// (repository, tag, full SHA) identity BEFORE any cleanup or build, its
+// normalized version (tag without `v`) is written to extraMetadata.version,
+// and the same version/full SHA/source-commit date are handed to
+// bundle-cli.mjs as VERSION/COMMIT/DATE. Packaging is always local
+// (`--publish never` is pinned); staging and feed preparation live in
+// scripts/stage-candidate.mjs, and the fork draft upload is a separate
+// authorized step.
+//
+// Development mode (no release env): both versions are derived from
+// `git describe --tags --match 'v[0-9]*' --always --dirty` — the same
+// source GoReleaser reads for the CLI binary via the `main.version` ldflag.
 //
 // Builds the Electron bundles once, then for each requested target
 // (platform + arch) compiles the matching Go CLI into resources/bin/ and
@@ -28,11 +38,17 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { rmSync } from "node:fs";
-import { delimiter, dirname, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+// Circular by design: check-release.mjs imports normalizeGitVersion from this
+// file. Neither side touches the other's bindings at module-evaluation time,
+// so the ESM cycle resolves cleanly.
+import { checkRelease } from "../../../scripts/check-release.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(here, "..");
+const repoRoot = resolve(desktopRoot, "..", "..");
 const bundleCliScript = resolve(here, "bundle-cli.mjs");
 
 const PLATFORM_CONFIG = {
@@ -155,6 +171,174 @@ export const DESCRIBE_ARGS = [
 // isolation — the gap that let the Windows quoting regression through CI.
 export function deriveVersion(cwd) {
   return normalizeGitVersion(git(DESCRIBE_ARGS, cwd));
+}
+
+/**
+ * Candidate release inputs from the environment. Returns null when no
+ * LABRASTRO_RELEASE_* variable is set — the everyday development path. When
+ * any of them is set, all three must be present: candidate packaging runs on
+ * the reviewed identity from scripts/check-release.mjs, never on a partial
+ * override. mode comes from LABRASTRO_RELEASE_MODE (candidate | rebuild).
+ */
+export function candidateReleaseInputs(env = process.env) {
+  const repository = env.LABRASTRO_RELEASE_REPOSITORY;
+  const tag = env.LABRASTRO_RELEASE_TAG;
+  const sha = env.LABRASTRO_RELEASE_SHA;
+  if (!repository && !tag && !sha) return null;
+  if (!repository || !tag || !sha) {
+    throw new Error(
+      "[package] candidate mode needs LABRASTRO_RELEASE_REPOSITORY, " +
+        "LABRASTRO_RELEASE_TAG and LABRASTRO_RELEASE_SHA together",
+    );
+  }
+  return {
+    repository,
+    tag,
+    sha,
+    mode: env.LABRASTRO_RELEASE_MODE ?? "candidate",
+  };
+}
+
+/**
+ * Candidate packaging is strictly local: installers and update metadata are
+ * generated, then collected into the artifact directory by
+ * scripts/stage-candidate.mjs. electron-builder must not publish anything —
+ * the old workflow's `--publish always` targeted GitHub Releases, which is
+ * not the Labrastro feed.
+ *
+ * electron-builder parses `--publish` and its aliases with yargs: the `-p`
+ * short flag, the `--p` long-form alias, short-flag CLUSTERS containing `p`
+ * (`-lp always` parses as `-l -p always`), and repeated flags, which become
+ * an ARRAY (`publish: ['never','never']`) that its PublishManager still
+ * treats as "publish enabled". This guard therefore removes every publish
+ * form from the caller's args — rejecting any real publish request — and
+ * appends exactly one scalar `--publish never`. Anything that could slip
+ * past this textual guard is caught by assertCandidatePublishIsolated,
+ * which runs the same parser electron-builder itself uses.
+ */
+export function enforceCandidatePublishPolicy(sharedArgs) {
+  const args = [];
+  const reject = (value) => {
+    throw new Error(
+      `[package] candidate builds cannot publish (got publish mode "${value}"); ` +
+        "local packaging uses --publish never, feed upload is a separate authorized step",
+    );
+  };
+  for (let i = 0; i < sharedArgs.length; i += 1) {
+    const token = sharedArgs[i];
+    if (token === "--publish" || token === "-p" || token === "--p") {
+      const value = sharedArgs[i + 1];
+      if (value !== "never") reject(value ?? "<missing>");
+      i += 1; // consumed; exactly one is re-added below
+      continue;
+    }
+    if (
+      token.startsWith("--publish=") ||
+      token.startsWith("-p=") ||
+      token.startsWith("--p=")
+    ) {
+      const value = token.slice(token.indexOf("=") + 1);
+      if (value !== "never") reject(value);
+      continue;
+    }
+    // yargs splits short-flag clusters: any remaining cluster containing
+    // "p" smuggles a publish flag past this guard (e.g. `-lp always` →
+    // `-l -p always`). Legitimate platform shorthands (-mwl) are consumed
+    // by parsePackageArgs before sharedArgs is built, so a "p" here can
+    // only mean publish.
+    if (/^-[A-Za-z]+$/.test(token) && token.includes("p")) {
+      reject(`cluster ${token}`);
+      continue;
+    }
+    args.push(token);
+  }
+  args.push("--publish", "never");
+  return args;
+}
+
+// The parser harness electron-builder's own CLI uses. electron-builder and
+// yargs are declared dependencies of this package — no transitive traversal.
+let builderParser = null;
+function loadBuilderParser() {
+  if (builderParser) return builderParser;
+  const rootRequire = createRequire(join(desktopRoot, "package.json"));
+  const builderRequire = createRequire(
+    rootRequire.resolve("electron-builder/package.json"),
+  );
+  const { configureBuildCommand, normalizeOptions } = builderRequire(
+    "./out/builder.js",
+  );
+  const yargs = rootRequire("yargs/yargs");
+  builderParser = { configureBuildCommand, normalizeOptions, yargs };
+  return builderParser;
+}
+
+/**
+ * Resolve a workspace package's bin entry to a direct `node <file>` command.
+ * Running the tool through its bin FILE (never through a shell) keeps the
+ * validated argv byte-identical at the process boundary: with `shell: true`
+ * a single argument containing spaces — e.g. an
+ * `-c.extraMetadata.description=a b` override — is re-split by the shell
+ * into NEW arguments electron-builder never saw during validation, which
+ * could smuggle `--p always` into the real invocation. It also sidesteps
+ * the Windows `.cmd` shim issue (Node does not honour PATHEXT when spawning
+ * a bare command without a shell, but node.exe itself is a real binary).
+ */
+export function resolveBinCommand(packageName, binName, root = desktopRoot) {
+  const rootRequire = createRequire(join(root, "package.json"));
+  const packageJsonPath = rootRequire.resolve(`${packageName}/package.json`);
+  const pkg = rootRequire(packageJsonPath);
+  const bin = pkg.bin?.[binName];
+  if (typeof bin !== "string") {
+    throw new Error(`[package] ${packageName} has no bin entry "${binName}"`);
+  }
+  return [process.execPath, resolve(dirname(packageJsonPath), bin)];
+}
+
+/**
+ * Spawn a build tool with the exact argv, never through a shell. Extracted
+ * so tests can capture the spawned argv and prove nothing is re-tokenized.
+ */
+export function spawnBuildTool(command, args, { cwd, env, spawnImpl = spawnSync } = {}) {
+  const result = spawnImpl(command[0], [...command.slice(1), ...args], {
+    stdio: "inherit",
+    cwd,
+    env,
+    shell: false,
+  });
+  if (result.error) {
+    console.error(`[package] failed to spawn ${command[0]}:`, result.error.message);
+    process.exit(1);
+  }
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+  return result;
+}
+
+/**
+ * Closure check on the FINAL builder argument list: run it through
+ * electron-builder's own yargs command definition and option normalization
+ * and require publish to resolve to the scalar "never" (which is exactly
+ * what PublishManager treats as isPublish=false). This catches every alias,
+ * cluster or repeat form the textual guard could miss.
+ */
+export function assertCandidatePublishIsolated(args) {
+  const { configureBuildCommand, normalizeOptions, yargs } = loadBuilderParser();
+  const parsed = configureBuildCommand(yargs(args))
+    .exitProcess(false)
+    .showHelpOnFail(false)
+    .fail((message, error) => {
+      throw error ?? new Error(message);
+    })
+    .parse();
+  const options = normalizeOptions(parsed);
+  if (options.publish !== "never") {
+    throw new Error(
+      `[package] candidate args resolve to publish mode ${JSON.stringify(options.publish)}; ` +
+        "candidate packaging must resolve to a scalar --publish never",
+    );
+  }
 }
 
 function uniqueOrdered(values) {
@@ -361,6 +545,25 @@ export function builderArgsForTarget(
 function main() {
   const passthrough = stripLeadingSeparator(process.argv.slice(2));
   const parsed = parsePackageArgs(passthrough);
+  const candidate = candidateReleaseInputs();
+  let candidateEnv = null;
+  if (candidate) {
+    // Candidate preflight runs before ANY cleanup or build: a rejected
+    // identity must leave dist/ and the worktree untouched. It validates the
+    // repository, exact HEAD, clean source, fork-main ancestry, the immutable
+    // tag and the global revision order, and returns the canonical version.
+    const metadata = checkRelease({ ...candidate, requireTag: true }, repoRoot);
+    parsed.sharedArgs = enforceCandidatePublishPolicy(parsed.sharedArgs);
+    console.log(
+      `[package] candidate ${metadata.tag} → version ${metadata.version} ` +
+        `(commit ${metadata.commit}, mode ${metadata.mode})`,
+    );
+    candidateEnv = {
+      VERSION: metadata.version,
+      COMMIT: metadata.commit,
+      DATE: metadata.date,
+    };
+  }
   const buildMatrix = resolveBuildMatrix(parsed);
   console.log(
     `[package] build matrix → ${buildMatrix.map(formatTarget).join(", ")}`,
@@ -382,36 +585,22 @@ function main() {
   // out/, which on a fresh checkout (or after a partial build) ships an
   // app that white-screens because the renderer bundle is missing.
   //
-  // CI invokes this script via `node scripts/package.mjs`, so we cannot
-  // rely on pnpm/npm to inject package-local binaries into PATH.
-  //
-  // `shell: true` is required on Windows: `node_modules/.bin/electron-vite`
-  // ships as a `.cmd` shim there, and Node's `spawnSync` does not honour
-  // PATHEXT when spawning a bare command without a shell — it would fail
-  // with `ENOENT`. On POSIX hosts the shim is a real executable so going
-  // through the shell is harmless. See
-  // https://nodejs.org/api/child_process.html#spawning-bat-and-cmd-files-on-windows
-  const viteResult = spawnSync("electron-vite", ["build"], {
-    stdio: "inherit",
+  // Tools run through their bin FILE under node directly — never through a
+  // shell — so the validated argv reaches the child process byte-identical
+  // (see resolveBinCommand for the injection and Windows .cmd rationale).
+  spawnBuildTool(resolveBinCommand("electron-vite", "electron-vite"), ["build"], {
     cwd: desktopRoot,
     env: envWithLocalBins(),
-    shell: true,
   });
-  if (viteResult.error) {
-    console.error(
-      "[package] failed to spawn electron-vite:",
-      viteResult.error.message,
-    );
-    process.exit(1);
-  }
-  if (viteResult.status !== 0) {
-    process.exit(viteResult.status ?? 1);
-  }
 
   // Step 2: derive the version that should be written into the app.
-  const version = deriveVersion();
+  // Candidate builds take the preflight-validated version; development
+  // builds keep the git-describe fallback.
+  const version = candidateEnv?.VERSION ?? deriveVersion();
   if (version) {
-    console.log(`[package] Desktop version → ${version} (from git describe)`);
+    console.log(
+      `[package] Desktop version → ${version} (${candidateEnv ? "release preflight" : "from git describe"})`,
+    );
   } else {
     console.warn(
       "[package] could not derive version from git; falling back to package.json",
@@ -426,7 +615,10 @@ function main() {
     );
   }
 
-  const useScopedOutputDir = buildMatrix.length > 1;
+  // Candidate builds always use per-target output directories so
+  // scripts/stage-candidate.mjs can verify and collect each target in
+  // isolation, even when only one target is requested.
+  const useScopedOutputDir = buildMatrix.length > 1 || candidateEnv !== null;
 
   // Step 3: for each requested target, build the matching CLI into
   // resources/bin/ and package that target in isolation.
@@ -444,6 +636,9 @@ function main() {
       {
         stdio: "inherit",
         cwd: desktopRoot,
+        // Candidate mode hands the preflight stamp to bundle-cli, which
+        // cross-checks it against the LABRASTRO_RELEASE_* inputs.
+        env: candidateEnv ? { ...process.env, ...candidateEnv } : process.env,
       },
     );
 
@@ -453,26 +648,21 @@ function main() {
       useScopedOutputDir,
     });
 
-    // Step 4: invoke electron-builder for the current target only.
-    // `shell: true` for the same Windows `.cmd` shim reason as the
-    // electron-vite invocation above.
-    const result = spawnSync("electron-builder", builderArgs, {
-      stdio: "inherit",
-      cwd: desktopRoot,
-      env: envWithLocalBins(),
-      shell: true,
-    });
+    // Closure check: run the FINAL argument list for this target through
+    // electron-builder's own parser and require publish to resolve to the
+    // scalar "never". Any alias, cluster or repeat form that slipped the
+    // textual guard is caught here, before a single byte is packaged.
+    if (candidateEnv) {
+      assertCandidatePublishIsolated(builderArgs);
+    }
 
-    if (result.error) {
-      console.error(
-        "[package] failed to spawn electron-builder:",
-        result.error.message,
-      );
-      process.exit(1);
-    }
-    if (result.status !== 0) {
-      process.exit(result.status ?? 1);
-    }
+    // Step 4: invoke electron-builder for the current target only, through
+    // its bin file under node — the exact validated argv, no shell between.
+    spawnBuildTool(
+      resolveBinCommand("electron-builder", "electron-builder"),
+      builderArgs,
+      { cwd: desktopRoot, env: envWithLocalBins() },
+    );
   }
 }
 

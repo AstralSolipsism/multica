@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-      - run: node --test scripts/check-release.test.mjs
+      - run: node --test scripts/check-release.test.mjs scripts/build-candidate-web.test.mjs
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26.x'
@@ -36,6 +36,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends qemu-user-static
       - run: python3 scripts/build-backend.test.py
       - run: node --test scripts/local-images.test.mjs
+
 
   cursor-background-lifecycle:
     needs: changes

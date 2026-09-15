@@ -28,6 +28,7 @@
     "preview": "electron-vite preview",
     "package": "node scripts/package.mjs",
     "package:all": "node scripts/package.mjs --all-platforms --publish never",
+    "stage-candidate": "node scripts/stage-candidate.mjs",
     "lint": "eslint .",
     "test": "vitest run",
     "postinstall": "electron-builder install-app-deps"
@@ -61,6 +62,7 @@
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^2.0.0",
+    "@electron/asar": "^3.4.1",
     "@multica/eslint-config": "workspace:*",
     "@multica/tsconfig": "workspace:*",
     "@tailwindcss/vite": "^4",
@@ -70,13 +72,16 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "^5.1.1",
+    "app-builder-bin": "5.0.0-alpha.12",
     "electron": "^39.2.6",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
     "globals": "^16.0.0",
+    "js-yaml": "^4.1.1",
     "jsdom": "catalog:",
     "tailwindcss": "^4",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "yargs": "^17.7.2"
   }
 }
