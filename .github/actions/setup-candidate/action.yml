@@ -1,0 +1,30 @@
+name: Candidate toolchains
+description: Shared toolchains and tagged preflight after an explicit fork checkout
+inputs:
+  frontend:
+    description: Install locked workspace dependencies
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 22
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - uses: actions/setup-go@v6
+      with:
+        go-version: '1.26.x'
+        check-latest: true
+        cache-dependency-path: server/go.sum
+    - uses: pnpm/action-setup@v4
+      if: inputs.frontend == 'true'
+    - shell: bash
+      run: node scripts/check-release.mjs --require-tag --mode candidate --format env >> "$GITHUB_ENV"
+    - shell: bash
+      if: inputs.frontend == 'true'
+      run: |
+        pnpm install --frozen-lockfile
+        candidate_pnpm_version=$(pnpm --version)
+        echo "CANDIDATE_PNPM_VERSION=$candidate_pnpm_version" >> "$GITHUB_ENV"

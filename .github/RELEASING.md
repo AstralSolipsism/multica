@@ -7,23 +7,23 @@ must explicitly target `AstralSolipsism/multica`. Never let a tool infer the for
 upstream as its target. Historical module paths and copyright attribution are
 not publishing destinations; retain LICENSE and NOTICE.
 
-`release.yml` now contains verification only, with `contents: read`, an exact
-repository guard and explicit checkout repository. It has no publishing jobs,
-registry credentials, image export, Helm push or Desktop `--publish always`.
-`.goreleaser.yml` retains local CLI packaging, pins its GitHub destination to the
-fork, removes Homebrew entirely and sets `release.disable: true`. Merely changing
-an owner condition or re-enabling the workflow cannot restore the old graph.
+`release.yml` contains the complete candidate graph described below. PR/main
+events run static verification; only `workflow_dispatch` from fork `main` can
+build an existing authorized tag. All jobs default to `contents: read`; only
+the final `draft` job has `contents: write`. Every checkout names the fork.
+`.goreleaser.yml` packages CLI archives with `release.disable: true`; the final
+writer owns draft upload. There are no registry credentials, image export,
+Helm push, Homebrew publishing or Desktop `--publish always`.
 [GoReleaser's release configuration](https://goreleaser.com/customization/publish/scm/)
 distinguishes disabling the Release pipe from merely keeping a release draft.
 
-The GitHub workflow setting was verified as `disabled_manually` on 2026-09-14;
-this change does not enable it. OL-83 owns complete candidate assembly and its
-review; OL-84 owns the later authorized tag/build/draft handoff. Go tests and
-vulnerability scanning remain in normal CI, alongside the new `release-contract`
-guard tests (which run even while Release is disabled). The full candidate workflow must
-restore those gates before any draft upload; the foundation check alone is
-never evidence that a candidate passed product tests. Do not use the old
-`ALLOW_VULN_BYPASS_FOR_TAG` variable: no bypass is wired into this foundation.
+The GitHub workflow setting was verified as `disabled_manually` on 2026-09-15;
+this implementation does not enable it or set repository variables. OL-83 owns
+implementation/review; OL-84 owns the authorized tag/build/draft handoff after
+merge and acceptance. Normal CI runs candidate contract tests even while
+dispatch is disabled. Candidate dispatch runs Go tests, the live vulnerability
+scan, frontend tests/typechecks and packaging regressions before draft upload.
+There is no vulnerability bypass.
 
 PR [#42](https://github.com/AstralSolipsism/multica/pull/42), inspected at
 `cb4bf5cbfe11960bd8ab36edda22bc2c542f9214`, remains an unmerged historical patch.
@@ -214,12 +214,13 @@ entries are implemented as `scripts/build-candidate-web.mjs`,
 `make candidate-backend`; local application images use `make candidate-images`.
 Both invoke the common tagged preflight and verify produced bytes; see
 [local build instructions](../docs/local-builds.md). Plain development commands
-are not verified candidates. Full artifact aggregation remains with OL-83.
+are not verified candidates. `scripts/candidate.py assemble` now consumes all
+component outputs in the Actions graph below.
 Do not turn a missing bundled CLI, missing toolchain or skipped build into success.
 
-Component entries write per-component inventory fragments
-(`C/assets/<component>-inventory.json`) holding the `artifacts[]` objects
-described below; the aggregation pipeline merges them into
+Web/Desktop write `web-inventory.json` / `desktop-inventory.json`; backend
+writes `backend-build.json` with its `artifacts[]` array (there is no
+`backend-inventory.json`). The aggregation pipeline merges them into
 `C/assets/manifest.json`. Desktop staging also emits
 `C/assets/desktop-verification.json`, `C/activation/latest.json` and
 `C/activation/desktop/*.yml`; Web emits `C/assets/web-build.json`. All of
@@ -311,7 +312,7 @@ explicit failed/skipped/missing items. Keep native smoke, signature/notarization
 and feed checks distinct. A complete candidate requires every mandatory target
 and required file, no version/SHA/architecture mismatch and verified hashes/feed
 references. No skipped or absent required job may be counted as success. OL-83
-owns executable aggregation and missing-file/failure checks.
+owns executable aggregation and missing-file/failure checks in `candidate.py`.
 
 ## Inactive feed contract and deployment boundary
 
@@ -343,7 +344,7 @@ output must not replace the currently working Mac feed with an empty file.
 
 Local validation/build, fork Draft Release handoff, immutable internal version
 upload, production deployment, and live feed activation are separate actions.
-A future draft writer must explicitly use `--repo AstralSolipsism/multica`, the
+The draft writer explicitly uses `--repo AstralSolipsism/multica`, the
 reviewed full target SHA and `--draft`; it must not publish the draft or select
 it as latest. Validate the complete asset set before advertising readiness.
 Writing `C/activation/` or attaching its archive authorizes no live pointer change.
@@ -357,3 +358,102 @@ upgrades and atomic active-feed switches separately. A repository Compose
 example must not replace the production configuration. Keep previous versions
 and deployment evidence; failure recovery must not silently combine artifacts
 from different builds or reconnect old application code to a new schema.
+
+## Candidate workflow: enable, dispatch, inspect
+
+After OL-83 is reviewed, merged and accepted, OL-84 must choose the reviewed
+full SHA and new version, create its immutable tag under the separate tagging
+authorization, and configure these fork settings before dispatch:
+
+1. `fork-candidate` environment: require the designated human reviewer and
+   restrict deployment branches to `main`. GitHub environment approval is the
+   last step before draft writing; reviewers can download the already-assembled
+   artifact and inspect validation at that point.
+2. Set repository variable `LABRASTRO_CANDIDATE_ENABLED=true` and enable
+   `release.yml`. This PR changes neither setting. Blank/false is a hard failure
+   on dispatch. A disabled workflow cannot receive dispatches.
+3. Ensure hosted Linux amd64, Linux arm64 (`ubuntu-24.04-arm`) and Windows x64
+   runners are available, with outbound access to the locked dependencies,
+   Go vulnerability database, Electron build tools and Docker base images.
+   Lack of a required runner is not permission to omit that matrix row.
+
+With the authorized tag already on the fork:
+
+```bash
+gh workflow run release.yml --repo AstralSolipsism/multica --ref main \
+  -f tag="$reviewed_tag" -f source_sha="$reviewed_sha"
+```
+
+The workflow does not run candidate packaging on tag push, select a version,
+create/move tags, activate feeds or upload internally. There is no historical
+rebuild dispatch mode. Historical local verification still uses the separately
+reviewed history record and component `--mode rebuild` contract above.
+
+| Job | Required work and handoff |
+| --- | --- |
+| `verify`, `prepare` | Static guards/actionlint/GoReleaser check; fresh full fork checkout, exact tag/SHA/main preflight; refuse any existing Release; preserve successful candidate preflight |
+| `qa-go` | Isolated PostgreSQL/Redis, migrations, guarded race tests, live `govulncheck`, Bash installer regressions |
+| `qa-web` | Locked pnpm install; Web/Desktop/shared typechecks and tests without Turbo result reuse; packaging/feed, backend, image-contract and aggregate regressions |
+| `cli` | GoReleaser `release --clean --skip=publish`, explicitly selected candidate tag; all six targets and both naming schemes |
+| `backend` | Existing `make candidate-backend`, independent archive verification; QEMU required for cross-target version execution |
+| `web` | Existing Linux x64 standalone builder and its build/inventory evidence |
+| `desktop` | Linux and Windows build hosts each package x64 + arm64, stage both targets, seal the **full** target directories in tar plus host verification; Windows also runs PowerShell installer regressions |
+| `images` | Both native Linux architectures build backend/Web images locally with the existing image entry, verify actual container bytes, retain Image IDs and evidence only; no image export or registry push |
+| `assemble` | Runs even if a dependency failed/skipped; requires every job and receipt, verifies CLI/backend binaries, Web archive/client version and all Desktop staging inputs/feeds, merges manifest and download tree |
+| `draft` | Protected environment; recheck candidate identity and transferred bytes/feeds; create a new incomplete draft, upload, download every remote asset and compare hashes, then mark notes complete |
+
+`scripts/candidate.py start/seal` only record build times, tool versions and
+file digests around these existing entries; Actions owns scheduling. All input
+artifacts are named `candidate-<run_id>-<run_attempt>-<component>`. Receipts must
+match that exact run, attempt, tag, version, full SHA and tag object. Download
+keeps component directories separate; missing/extra directories, files, zero
+lengths, symlinks in handoff paths, changed hashes and duplicate flat names fail.
+Tar transport retains Desktop staging permissions and safe internal links.
+Actions' own artifact digest warnings are supplemented with fatal byte checks.
+See [artifact behavior](https://docs.github.com/en/actions/tutorials/store-and-share-data)
+and [run/attempt context](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts).
+
+The `complete-<run_id>-<run_attempt>` Actions artifact contains `candidate.tar`:
+`<tag>/assets/`, `<tag>/downloads/` and `<tag>/activation/`. Extract it in a fresh
+directory. `assets/manifest.json` inventories every flat deliverable except
+itself/global checksums; every download copy is checked. Local images remain on
+disposable runners; the manifest records their measured IDs, and operations
+must rebuild and reverify images from the same source on the deployment host.
+
+`release-validation.json.complete=true` establishes mandatory build, byte and
+feed completeness. It separately records host/QEMU execution, native install
+and GUI, signing/notarization, running Windows exe replacement, upload and
+deployment omissions. It does not establish installation or production
+readiness. The fork draft is a complete handoff only when `draft` succeeded,
+its final notes identify this run/attempt, and its exact remote assets match
+the checksums. A partial draft or green subset of jobs is insufficient.
+
+Keep `candidate-preflight.json` from the successful candidate together with
+its workflow and validation evidence. Any later `.github/release-history/<tag>.json`
+must derive from that real preflight and pass independent review into fork
+main. Never commit test receipts or infer acceptance merely from tag existence.
+
+## Failure recovery
+
+- **Before draft creation:** inspect the failed job, correct its environment
+  or submit a source fix for review. For unchanged source use **Re-run all jobs**
+  (or a new dispatch); all receipts are regenerated. Re-run failed jobs alone
+  deliberately cannot reuse successful artifacts from an older attempt.
+- **During/after upload:** the draft is left with `INCOMPLETE` notes until all
+  remote bytes are verified. Any existing Release blocks another upload,
+  including incomplete drafts. No automatic delete, `--clobber`, append/resume
+  or cleanup of tags occurs. Inspect the fork draft and exact failed run first;
+  only after explicit cleanup authorization remove that incomplete draft
+  **without deleting the tag**, then rerun all jobs from a fresh checkout.
+- **Already complete candidate:** retain it. Do not overwrite it to retry an
+  installation or operational step. A code change needs a newly reviewed SHA
+  and next authorized version/tag. Stop on a tag conflict or moved tag object.
+- **Cancelled, skipped or absent required jobs/files:** assembly fails and no
+  complete artifact is produced. Inspect Actions job logs/receipts; absence of
+  `release-validation.json` is failure evidence, not an implicit pass. Failed
+  runs never write a history acceptance record.
+
+The writer uses [GitHub CLI's `--verify-tag`, `--draft` and `--latest=false`](https://cli.github.com/manual/gh_release_create).
+GitHub draft uploads are not transactional; the explicit incomplete notes,
+remote download/hash verification and refusal to resume prevent a partial
+upload from being advertised as ready.

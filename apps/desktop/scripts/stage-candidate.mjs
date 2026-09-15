@@ -701,7 +701,7 @@ export function listTarGzMembers(buffer) {
  * exactly the installer set its owning target produced — a deleted prior
  * channel, or one switched to another architecture's installer, fails here.
  */
-function verifyActivationTree(activationDir, versionDir, tag, version, modules, mergedEvidence) {
+export function verifyActivationTree(activationDir, versionDir, tag, version, modules, mergedEvidence) {
   const desktopDir = join(activationDir, "desktop");
   const feeds = existsSync(desktopDir)
     ? readdirSync(desktopDir).filter((name) => name.endsWith(".yml")).sort()

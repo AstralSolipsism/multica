@@ -326,20 +326,25 @@ test("a new base starts its own revision sequence", t => {
   assert.throws(() => check({ tag: "v1.2.4-labrastro.2", sha }), /next N/);
 });
 
-test("release entry remains verification-only with explicit fork ownership and compatible CLI archives", () => {
+test("candidate entry isolates draft writing and keeps compatible CLI archives", () => {
   const read = path => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
   const workflow = read(".github/workflows/release.yml");
-  // This stage intentionally permits only this one verification job. Adding
-  // artifact delivery requires replacing this invariant in the OL-83 review.
   const jobs = workflow.split("\njobs:\n")[1];
-  assert.deepEqual([...jobs.matchAll(/^  ([\w-]+):$/gm)].map(m => m[1]), ["verify"]);
-  assert.match(jobs, /^    if: github.repository == 'AstralSolipsism\/multica'$/m);
+  assert.deepEqual([...jobs.matchAll(/^  ([\w-]+):$/gm)].map(m => m[1]),
+    ["verify", "prepare", "qa-go", "qa-web", "cli", "backend", "web", "desktop", "images", "assemble", "draft"]);
+  assert.match(jobs, /test "\$GITHUB_REPOSITORY" = AstralSolipsism\/multica/);
   assert.match(jobs, /^          repository: AstralSolipsism\/multica$/m);
   assert.match(jobs, /^          persist-credentials: false$/m);
   assert.match(workflow, /^permissions:\n  contents: read\n/m);
-  assert.doesNotMatch(workflow, /:\s*write\b|secrets\.|ghcr\.io|homebrew|--publish|args: release|workflow_dispatch|workflow_call/);
+  assert.equal([...workflow.matchAll(/contents: write/g)].length, 1);
+  assert.match(jobs.split("\n  draft:\n")[1], /contents: write/);
+  assert.doesNotMatch(workflow, /secrets\.|ghcr\.io|homebrew|--publish always|workflow_call|continue-on-error/);
+  assert.match(workflow, /if: always\(\) && github.event_name == 'workflow_dispatch'/);
+  assert.match(workflow, /args: release --clean --skip=publish/);
+  assert.match(workflow, /merge-multiple: false/);
+  assert.match(workflow, /LABRASTRO_CANDIDATE_ENABLED/);
   assert.match(workflow, /args: check/);
-  assert.match(workflow, /run: node scripts\/check-release.mjs --require-tag --mode candidate/);
+  assert.match(read(".github/actions/setup-candidate/action.yml"), /node scripts\/check-release.mjs --require-tag --mode candidate/);
   const config = read(".goreleaser.yml");
   assert.match(config, /release:\n  github:\n    owner: AstralSolipsism\n    name: multica\n  disable: true\n  draft: true\n  make_latest: false/);
   assert.match(config, /node scripts\/check-release.mjs --require-tag --tag=\{\{ .Tag \}\} --version=\{\{ .Version \}\}/);
