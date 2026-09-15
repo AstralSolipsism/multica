@@ -766,7 +766,16 @@ type runOptions struct {
 	Conditions map[string]migrationCondition
 }
 
+var (
+	version = "dev"
+	commit  = "unknown"
+)
+
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Printf("migrate %s (commit: %s)\n", version, commit)
+		return
+	}
 	logger.Init()
 
 	if len(os.Args) < 2 {

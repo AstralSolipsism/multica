@@ -1,9 +1,13 @@
 # Dependencies
 node_modules
+**/node_modules
 .pnpm-store
 
 # Build outputs
 .next
+**/.next
+**/.source
+**/.turbo
 dist
 server/bin
 server/tmp

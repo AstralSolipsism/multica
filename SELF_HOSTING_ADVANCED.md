@@ -662,9 +662,9 @@ go tool pprof ./heap.pprof
 ## Upgrading
 
 ```bash
-docker compose -f docker-compose.selfhost.yml pull
-docker compose -f docker-compose.selfhost.yml up -d
+# Prepare and verify reviewed source locally; see docs/local-builds.md.
+make candidate-images
 ```
 
-Pin `MULTICA_IMAGE_TAG` in `.env` to an exact release like `v0.2.4` if you want to stay on a specific version. Migrations run automatically on backend startup. They are idempotent — running them multiple times has no effect.
-If the selected GHCR tag has not been published yet, fall back to `docker compose -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml up -d --build`.
+Set `MULTICA_IMAGE_TAG` from the verified candidate image evidence (an exact `vX.Y.Z-labrastro.N` tag). Migrations run automatically on backend startup. They are idempotent — running them multiple times has no effect.
+Use the local image evidence and the existing custom Compose during the separately scheduled deployment window; see [Local builds](docs/local-builds.md).

@@ -1,0 +1,10 @@
+# Merge with the actual operator-owned Compose only during a deployment window.
+# This file intentionally defines no networks, volumes, ports or runtime config.
+# Adapt service keys if the existing stack names them differently.
+services:
+  backend:
+    image: labrastro-backend:${MULTICA_IMAGE_TAG:?Set the verified local candidate tag}
+    pull_policy: never
+  frontend:
+    image: labrastro-web:${MULTICA_IMAGE_TAG:?Set the verified local candidate tag}
+    pull_policy: never

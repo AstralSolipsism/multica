@@ -3,16 +3,15 @@
 # -----------------------------------------------------------------------------
 images:
   backend:
-    repository: ghcr.io/multica-ai/multica-backend
-    # Empty defaults to Chart.appVersion. Released OCI charts set appVersion to
-    # the Git tag (for example v0.3.5), so installs use matching app images.
-    tag: ""
-    pullPolicy: IfNotPresent
+    repository: labrastro-backend
+    # This source-only chart has no publishing chain. Explicitly load matching
+    # locally built images into nodes before any separately approved use.
+    tag: "local-unconfigured"
+    pullPolicy: Never
   frontend:
-    repository: ghcr.io/multica-ai/multica-web
-    # Empty defaults to Chart.appVersion. Set explicitly to override.
-    tag: ""
-    pullPolicy: IfNotPresent
+    repository: labrastro-web
+    tag: "local-unconfigured"
+    pullPolicy: Never
   postgres:
     repository: pgvector/pgvector
     tag: pg17

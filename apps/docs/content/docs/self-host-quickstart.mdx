@@ -14,7 +14,7 @@ Self-hosting Multica has two parts:
 
 They can be the same machine or separate ones. Self-hosting replaces only the Multica Cloud part.
 
-This guide uses Docker Compose. For Kubernetes deployments, see the [Self-hosting guide](https://github.com/multica-ai/multica/blob/main/SELF_HOSTING.md#kubernetes-deployment-alternative) in the repository.
+This guide uses the repository development Compose. Reviewed candidates and existing deployments use the [local build handoff](https://github.com/AstralSolipsism/multica/blob/main/docs/local-builds.md).
 
 ## Before you start
 
@@ -40,7 +40,7 @@ The computer also needs at least one [AI coding tool](/providers) installed and 
 On the machine that will run the service:
 
 ```bash
-git clone --depth 1 https://github.com/multica-ai/multica.git
+git clone https://github.com/AstralSolipsism/multica.git
 cd multica
 make selfhost
 ```
@@ -49,21 +49,16 @@ On first run, `make selfhost` will:
 
 1. Create `.env` from `.env.example`
 2. Generate a random `JWT_SECRET`, PostgreSQL password, and `MULTICA_VCS_SECRET_KEY` (the encryption key for self-hosted Git integrations)
-3. Pull the PostgreSQL, Multica backend, and Multica frontend images
+3. Build backend and frontend locally from this checkout; fetch PostgreSQL and build/runtime base images as needed
 4. Create persistent volumes and start the three containers
 5. Wait until the backend starts answering health checks
 
 Running `make selfhost` again reuses the existing `.env` and volumes; it does not regenerate secrets.
 
 <Callout type="info">
-`make selfhost` pulls published images and does not build the code in your checkout. To test local source, use `make selfhost-build`.
+`make selfhost` and `make selfhost-build` build both applications with the same `dev-<sha>[-dirty]` version and full source SHA. Application images are local and never pulled. This entry starts services and migrations; use it for the example development stack.
 
-The published images track the newest **release tag**, while a plain `git clone` checks out `main`, which usually runs ahead. If you build anything from this checkout — the CLI, or images via `make selfhost-build` — check out the matching release tag first so built binaries and the running containers stay on the same version:
-
-```bash
-git fetch --tags --depth 1
-git checkout $(git tag -l 'v*' --sort=-v:refname | head -1)
-```
+Before subsequent direct Compose commands, export the `MULTICA_IMAGE_TAG` printed at startup (or set it in `.env`). For a new development build, clear any old pinned tag. Reviewed candidates use `make candidate-images` and the approved tag/SHA from the [local build handoff](https://github.com/AstralSolipsism/multica/blob/main/docs/local-builds.md).
 </Callout>
 
 ## 2. Confirm the services are ready
@@ -285,44 +280,9 @@ docker compose -f docker-compose.selfhost.yml up -d
 docker compose -f docker-compose.selfhost.yml down
 ```
 
-To upgrade to the latest published images:
+### Prepare an upgrade
 
-```bash
-git pull --ff-only
-docker compose -f docker-compose.selfhost.yml pull
-docker compose -f docker-compose.selfhost.yml up -d
-curl -fsS http://localhost:8080/readyz
-```
-
-Two ways to upgrade a Docker Compose install. On an existing install they produce the **same result** — the `selfhost` target in the `Makefile` runs the same `docker compose pull` + `up -d`, and additionally creates `.env` when it is missing and waits on `/health` before printing a status summary. Pick whichever you prefer:
-
-```bash
-cd multica
-git pull
-make selfhost
-```
-
-```bash
-cd multica
-git pull
-docker compose -f docker-compose.selfhost.yml pull
-docker compose -f docker-compose.selfhost.yml up -d
-```
-
-### What `git pull` actually does
-
-`git pull` updates **`docker-compose.selfhost.yml` itself** — new environment variables, new services, changed healthchecks. It is **not** how you get a new Multica version.
-
-The version you end up running is resolved by `docker compose pull`, which asks GHCR what the tag points at right now. A checkout that is months out of date will still pull today's `latest` images; conversely, `git pull` alone changes nothing until you pull images and recreate the containers.
-
-<Callout type="warning">
-**If you pinned `MULTICA_IMAGE_TAG`, neither command upgrades anything.** Both images resolve as `${MULTICA_IMAGE_TAG:-latest}` (`docker-compose.selfhost.yml:42`, `:125`), and `.env.example` ships `MULTICA_IMAGE_TAG=latest`. If your `.env` pins an exact release, `pull` just re-fetches that same tag and you stay on the old version — no error, no warning. Check before you upgrade:
-
-```bash
-grep MULTICA_IMAGE_TAG .env
-# MULTICA_IMAGE_TAG=v0.4.5   ← pinned: edit to `latest` (or the release you want) first
-```
-</Callout>
+Build the approved candidate from its exact fork SHA, verify backend/Web versions and local Image IDs, and render the small image override against the operator's existing Compose. Follow the [local build handoff](https://github.com/AstralSolipsism/multica/blob/main/docs/local-builds.md). Master schedules stop-write, backups, migrations and service changes separately. The repository example must not replace production networks, volumes or runtime configuration.
 
 ### Your `.env` is not overwritten
 
@@ -366,9 +326,7 @@ Anything other than HTTP 200 with both checks `ok` means the new version did not
 
 ### Kubernetes
 
-Helm has its own upgrade path: set `images.backend.tag` / `images.frontend.tag` to the release you want in your values file, then `helm upgrade`. Changing the tag changes the pod spec, so Kubernetes pulls the new image and rolls the Deployments — this is the reliable route.
-
-`kubectl -n multica rollout restart` is **not** an upgrade on its own. The chart ships `pullPolicy: IfNotPresent` (`deploy/helm/multica/values.yaml`), so a node that already has that tag cached reuses the old image and the restart silently changes nothing — the same class of trap as a pinned `MULTICA_IMAGE_TAG`. If you want to track a floating tag that way, set `images.backend.pullPolicy` / `images.frontend.pullPolicy` to `Always` first. See the [Self-hosting guide](https://github.com/multica-ai/multica/blob/main/SELF_HOSTING.md#kubernetes-deployment-alternative).
+Helm publishing remains disabled. The source chart has unconfigured local image names and `Never` pull policy. Use the existing custom Compose and local image handoff for this project.
 
 <Callout type="warning">
 `docker compose down` keeps `pgdata` and `backend_uploads`. Adding `-v` deletes these volumes, including the database; do not run `docker compose down -v` unless you intend to wipe the instance.
@@ -390,5 +348,5 @@ For more scenarios, see [Troubleshooting](/troubleshooting).
 
 - [Auth setup](/auth-setup) — configure email, Google login, and signup scope.
 - [Environment variables](/environment-variables) — the full server configuration reference.
-- [Self-hosting guide](https://github.com/multica-ai/multica/blob/main/SELF_HOSTING.md) — Kubernetes, upgrades, and manual deployment.
+- [Self-hosting guide](https://github.com/AstralSolipsism/multica/blob/main/SELF_HOSTING.md) — Kubernetes, upgrades, and manual deployment.
 - [Desktop app](/desktop-app) — connect Desktop to a self-hosted service.

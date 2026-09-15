@@ -14,7 +14,7 @@ Multica のセルフホストは 2 つの部分に分かれます。
 
 両者は同じマシンでも、別々のマシンでも構いません。セルフホストで置き換えるのは Multica Cloud の部分だけです。
 
-このページでは Docker Compose を使います。Kubernetes でのデプロイは、リポジトリの [Self-hosting guide](https://github.com/multica-ai/multica/blob/main/SELF_HOSTING.md#kubernetes-deployment-alternative) を参照してください。
+このページでは開発用 Compose を使います。承認済み候補と既存環境への適用は[ローカルビルド手順](https://github.com/AstralSolipsism/multica/blob/main/docs/local-builds.md)に従ってください。
 
 ## 始める前に
 
@@ -40,7 +40,7 @@ Multica は Compose v2（`docker compose`）を使います。旧版の `docker-
 サービスを実行するマシンで次を実行します。
 
 ```bash
-git clone --depth 1 https://github.com/multica-ai/multica.git
+git clone https://github.com/AstralSolipsism/multica.git
 cd multica
 make selfhost
 ```
@@ -49,21 +49,16 @@ make selfhost
 
 1. `.env.example` から `.env` を作成する
 2. `JWT_SECRET`、PostgreSQL パスワード、`MULTICA_VCS_SECRET_KEY`（セルフホストの Git 連携用の暗号化キー）をランダム生成する
-3. PostgreSQL、Multica backend、Multica frontend のイメージを取得する
+3. この checkout から backend と frontend をローカルでビルドし、PostgreSQL とビルド用ベースイメージを必要に応じて取得する
 4. 永続化ボリュームを作成し、3 つのコンテナを起動する
 5. backend がヘルスチェックに応答し始めるまで待機する
 
 2 回目以降の `make selfhost` は既存の `.env` とボリュームをそのまま使い、シークレットを再生成しません。
 
 <Callout type="info">
-`make selfhost` は公開済みのイメージを取得し、checkout 中のコードをビルドしません。ローカルのソースを試すには `make selfhost-build` を使ってください。
+`make selfhost` と `make selfhost-build` は、両アプリに同じ `dev-<sha>[-dirty]` バージョンと完全なソース SHA を設定します。アプリのイメージはローカルでビルドします。この開発用コマンドはサービスとマイグレーションを起動します。
 
-公開済みのイメージは最新の **release タグ** を追跡しますが、単なる `git clone` でチェックアウトされるのは `main` で、通常リリースより先行しています。この checkout から何かをビルドする場合（CLI、または `make selfhost-build` によるイメージ）は、先に対応する release タグへ切り替えて、ビルドしたバイナリと稼働中のコンテナのバージョンを揃えてください:
-
-```bash
-git fetch --tags --depth 1
-git checkout $(git tag -l 'v*' --sort=-v:refname | head -1)
-```
+以降の Compose コマンドでは、起動時に表示された `MULTICA_IMAGE_TAG` を export するか `.env` に設定してください。新しい開発ビルドの前に古い固定タグを解除してください。承認済み候補は `make candidate-images` と承認済みタグ／SHA を使います。
 </Callout>
 
 ## 2. サービスの準備完了を確認する
@@ -283,44 +278,9 @@ docker compose -f docker-compose.selfhost.yml up -d
 docker compose -f docker-compose.selfhost.yml down
 ```
 
-公開済みの最新イメージへアップグレードします。
+### アップグレードの準備
 
-```bash
-git pull --ff-only
-docker compose -f docker-compose.selfhost.yml pull
-docker compose -f docker-compose.selfhost.yml up -d
-curl -fsS http://localhost:8080/readyz
-```
-
-Docker Compose 構成のアップグレード方法は2通りあります。既存の構成では**同じ結果**になります — `Makefile` の `selfhost` ターゲットは同じ `docker compose pull` + `up -d` を実行し、加えて `.env` が無ければ生成し、`/health` を待ってからステータスの要約を表示します。好きな方を使ってください。
-
-```bash
-cd multica
-git pull
-make selfhost
-```
-
-```bash
-cd multica
-git pull
-docker compose -f docker-compose.selfhost.yml pull
-docker compose -f docker-compose.selfhost.yml up -d
-```
-
-### `git pull` が実際に更新するもの
-
-`git pull` が更新するのは **`docker-compose.selfhost.yml` そのもの**です — 新しい環境変数、新しいサービス、変更された healthcheck。新しい Multica のバージョンを取得する仕組み**ではありません**。
-
-実際に動くバージョンを決めるのは `docker compose pull` で、そのタグが今どのイメージを指しているかを GHCR に問い合わせます。したがって数か月更新していない checkout でも今日の `latest` イメージを取得できますし、逆に `git pull` だけではイメージを取得してコンテナを作り直すまで何も変わりません。
-
-<Callout type="warning">
-**`MULTICA_IMAGE_TAG` を固定している場合、どちらのコマンドでもアップグレードされません。** 両方のイメージが `${MULTICA_IMAGE_TAG:-latest}` として解決され（`docker-compose.selfhost.yml:42`、`:125`）、`.env.example` は `MULTICA_IMAGE_TAG=latest` を同梱しています。`.env` で特定のリリースに固定していると、`pull` は同じタグを取り直すだけで、古いバージョンのままです — エラーも警告も出ません。アップグレード前に確認してください。
-
-```bash
-grep MULTICA_IMAGE_TAG .env
-# MULTICA_IMAGE_TAG=v0.4.5   ← 固定されている: 先に latest（または希望のリリース）へ変更する
-```
-</Callout>
+承認済みの完全な fork SHA から候補をビルドし、backend/Web のバージョンとローカル Image ID を検証してください。運用担当者の既存 Compose に小さなイメージ上書きファイルを組み合わせて設定を確認します。[ローカルビルド手順](https://github.com/AstralSolipsism/multica/blob/main/docs/local-builds.md)を参照してください。書き込み停止、バックアップ、マイグレーション、サービス変更は Master が別途計画します。既存のネットワーク、ボリューム、実行設定をリポジトリの例で置き換えないでください。
 
 ### `.env` は上書きされません
 
@@ -364,9 +324,7 @@ HTTP 200 かつ両方のチェックが `ok` でない場合、新しいバー�
 
 ### Kubernetes
 
-Helm には独自のアップグレード経路があります。values ファイルで `images.backend.tag` / `images.frontend.tag` に目的のリリースを設定し、`helm upgrade` を実行してください。タグを変えると Pod スペックが変わるため、Kubernetes が新しいイメージを取得して Deployment をロールします — これが確実な経路です。
-
-`kubectl -n multica rollout restart` はそれ単体ではアップグレードになりません。チャートは `pullPolicy: IfNotPresent` を同梱しているため（`deploy/helm/multica/values.yaml`）、そのタグをすでにキャッシュしているノードでは古いイメージが再利用され、restart しても何も変わりません — `MULTICA_IMAGE_TAG` の固定と同種の落とし穴です。浮動タグでこの方法を使いたい場合は、先に `images.backend.pullPolicy` / `images.frontend.pullPolicy` を `Always` に設定してください。リポジトリの [Self-hosting guide](https://github.com/multica-ai/multica/blob/main/SELF_HOSTING.md#kubernetes-deployment-alternative) を参照してください。
+Helm の公開は無効です。ソースのテンプレートは未設定のローカルイメージ名と `Never` pull policy を使います。このプロジェクトでは既存のカスタム Compose とローカルイメージの引き継ぎ手順を使ってください。
 
 <Callout type="warning">
 `docker compose down` は `pgdata` と `backend_uploads` を保持します。`-v` を付けると、データベースを含むこれらのボリュームが削除されます。インスタンスを消去するつもりがない限り、`docker compose down -v` を実行しないでください。
@@ -388,5 +346,5 @@ Helm には独自のアップグレード経路があります。values ファ�
 
 - [ログインとサインアップ設定](/auth-setup) — メール、Google ログイン、サインアップ範囲を設定する。
 - [環境変数](/environment-variables) — サーバー設定の完全なリファレンス。
-- [Self-hosting guide](https://github.com/multica-ai/multica/blob/main/SELF_HOSTING.md) — Kubernetes、アップグレード、手動デプロイ。
+- [Self-hosting guide](https://github.com/AstralSolipsism/multica/blob/main/SELF_HOSTING.md) — Kubernetes、アップグレード、手動デプロイ。
 - [デスクトップアプリ](/desktop-app) — デスクトップアプリをセルフホストのサービスに接続する。

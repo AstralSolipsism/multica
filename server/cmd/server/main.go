@@ -304,6 +304,10 @@ func newMainHTTPServer(addr string, handler http.Handler) *http.Server {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Printf("server %s (commit: %s)\n", version, commit)
+		return
+	}
 	logger.Init()
 	// Warn about missing configuration
 	if err := jwtSecretBootError(os.Getenv("JWT_SECRET"), os.Getenv("APP_ENV")); err != nil {
