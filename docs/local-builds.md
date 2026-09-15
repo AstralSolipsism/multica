@@ -22,6 +22,14 @@ Node 22; evidence records the actual patch/toolchain. Reproduction also depends
 on base images and tool versions, not just source; the scripts do not claim
 bit-for-bit reproducibility across toolchains.
 
+Backend archive building/verification runs on Linux and executes the version
+entrypoint of every binary on both targets. Install QEMU user emulation for the
+other architecture (`qemu-aarch64` / `qemu-aarch64-static` on amd64,
+`qemu-x86_64` / `qemu-x86_64-static` on arm64, available in `qemu-user-static`
+on Debian/Ubuntu). It is invoked directly from PATH; privileged binfmt
+registration is unnecessary. A missing runner fails verification and prevents
+the builder from delivering a partially verified archive set.
+
 `make selfhost` creates `.env` only when absent. It uses a development version
 for **both** applications, full `COMMIT`, and commit `DATE`; it rejects a pinned
 candidate tag or candidate inputs. Clear an old `MULTICA_IMAGE_TAG` for a new
@@ -82,9 +90,13 @@ python3 scripts/build-backend.py --verify
 This separate invocation reads the archives again, checks the exact required
 file set and SHA-256 values, compares migrations/notices with tracked source,
 and reads each executable with `go version -m -json`. Wrong binary, architecture,
-CGO setting, VCS SHA, dirty provenance or toolchain fails. Native CLI, server
-and migrator versions run without a database; other architectures are explicitly
-recorded as `not_run_cross_target`, not as native smoke successes.
+CGO setting, VCS SHA, dirty provenance or toolchain fails. CLI, server, migrator
+and both backfills must also report the expected version and full SHA, on both
+architectures, without a database. Cross-target version checks run under QEMU;
+`binary_versions: passed` and `version_execution` record this separately from
+`native_version: not_run_cross_target`. Emulated version checks do not claim
+native installation or service smoke success. Correct VCS metadata and rehashed
+checksums cannot conceal an executable built with a different embedded identity.
 
 For an already extracted and trusted archive, operators can also run:
 
@@ -93,7 +105,9 @@ sha256sum -c checksums.txt
 ./multica version --output json
 ./server --version
 ./migrate --version
-go version -m ./server ./multica ./migrate
+./backfill_task_usage_hourly --version
+./backfill_codex_usage_cache --version
+go version -m ./server ./multica ./migrate ./backfill_task_usage_hourly ./backfill_codex_usage_cache
 ```
 
 `backend-build.json` is a **component inventory**, containing archive names,
@@ -117,9 +131,10 @@ Images are `labrastro-backend:<tag>` and `labrastro-web:<tag>`. The tool checks
 full Image ID, architecture and OCI version/revision/source/date labels. It
 runs checks by immutable ID using `--pull=never --network=none --read-only` and
 an explicit entrypoint, so the backend's migration entrypoint never executes.
-It verifies the actual CLI/server/migrator version, backend file checksums and
+It verifies the actual version and full SHA of all five backend programs,
+including both backfills built from the Git-free source snapshot, file checksums and
 source migration/notices, plus Web build metadata and the version embedded in
-compiled client JavaScript. A new label wrapped around an old CLI fails.
+compiled client JavaScript. A new label wrapped around any stale binary fails.
 
 `dist/candidate/<tag>/local-images/linux-<arch>/images.json` records these results,
 full local IDs, versions, toolchains and build/verification times. `images.env`

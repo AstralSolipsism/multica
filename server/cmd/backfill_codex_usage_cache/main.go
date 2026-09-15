@@ -55,7 +55,16 @@ type totals struct {
 	ClampedRows int64
 }
 
+var (
+	version = "dev"
+	commit  = "unknown"
+)
+
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Printf("backfill_codex_usage_cache %s (commit: %s)\n", version, commit)
+		return
+	}
 	logger.Init()
 	if err := run(); err != nil {
 		slog.Error("codex usage cache backfill failed", "error", err)

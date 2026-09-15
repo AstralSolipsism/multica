@@ -61,6 +61,17 @@ def build_settings(binary, root, identity, arch):
     return info["GoVersion"]
 
 
+def version_runner(root, arch):
+    host = run(["go", "env", "GOHOSTOS", "GOHOSTARCH"], root).splitlines()
+    require(host[0] == "linux", "backend version verification requires a Linux host")
+    if host[1] == arch:
+        return []
+    emulator = "qemu-" + {"amd64": "x86_64", "arm64": "aarch64"}[arch]
+    path = shutil.which(emulator) or shutil.which(emulator + "-static")
+    require(path, f"linux/{arch} version verification requires {emulator} or {emulator}-static on PATH")
+    return [path]
+
+
 def verify_archive(archive, root, identity, arch):
     """Read bytes afresh; never trust a build's success, inventory or tar paths."""
     sources = source_files(root)
@@ -92,19 +103,22 @@ def verify_archive(archive, root, identity, arch):
             binary.chmod(0o755)
             toolchain = build_settings(binary, root, identity, arch)
             require(toolchain == metadata.get("go"), f"toolchain differs: {command}")
-        native = run(["go", "env", "GOHOSTOS", "GOHOSTARCH"], root).splitlines() == ["linux", arch]
-        if native:
-            cli = json.loads(run([str(Path(temporary) / "multica"), "version", "--output", "json"], root))
-            require(all(cli.get(key) == identity[key] for key in ("version", "commit", "date")), "CLI runtime identity differs")
-            require(cli.get("go") == metadata["go"] and cli.get("os") == "linux" and cli.get("arch") == arch,
-                    "CLI runtime toolchain/target differs")
-            for command in ("server", "migrate"):
-                output = run([str(Path(temporary) / command), "--version"], root)
-                require(output == f'{command} {identity["version"]} (commit: {identity["commit"]})',
-                        f"{command} runtime identity differs")
+        runner = version_runner(root, arch)
+        cli = json.loads(run([*runner, str(Path(temporary) / "multica"), "version", "--output", "json"], root))
+        require(all(cli.get(key) == identity[key] for key in ("version", "commit", "date")), "CLI runtime identity differs")
+        require(cli.get("go") == metadata["go"] and cli.get("os") == "linux" and cli.get("arch") == arch,
+                "CLI runtime toolchain/target differs")
+        for command in COMMANDS:
+            if command == "multica":
+                continue
+            output = run([*runner, str(Path(temporary) / command), "--version"], root)
+            require(output == f'{command} {identity["version"]} (commit: {identity["commit"]})',
+                    f"{command} runtime identity differs")
     return {"arch": arch, "archive_sha256": digest(archive.read_bytes()),
             "files": len(files), "up_migrations": len(migrations),
-            "binary_metadata": "passed", "native_version": "passed" if native else "not_run_cross_target"}
+            "binary_metadata": "passed", "binary_versions": "passed",
+            "version_execution": run([*runner, "--version"], root).splitlines()[0] if runner else "native",
+            "native_version": "not_run_cross_target" if runner else "passed"}
 
 
 def main():
@@ -122,6 +136,8 @@ def main():
 
     require(not any((assets / n).exists() for n in [*names.values(), "backend-build.json"]),
             "backend outputs already exist; verify them or use a fresh isolated checkout")
+    for arch in ARCHES:
+        version_runner(root, arch)
     source_files(root)
     assets.mkdir(parents=True, exist_ok=True)
     started = now()

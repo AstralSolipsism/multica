@@ -72,7 +72,7 @@ volumes:
   assert.notEqual(missing.status, 0);
 });
 
-test("new image labels cannot conceal an old cached CLI; no successful evidence is written", t => {
+test("new image labels cannot conceal a stale CLI or backfill identity; no successful evidence is written", t => {
   const dir = mkdtempSync(join(tmpdir(), "local-image-cache-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -115,21 +115,34 @@ test("new image labels cannot conceal an old cached CLI; no successful evidence 
       assert(args.includes('COMMIT=${sha}'));
       assert(args.includes('--no-cache'));
       fs.appendFileSync(state,'built\\n');
-    } else if(args.includes('/app/multica')) {
+    } else if(args[0]==='run') {
       for(const flag of ['--read-only','--network=none','--pull=never','${info.Id}']) assert(args.includes(flag));
-      console.log(JSON.stringify({version:'0.4.40-labrastro.3',commit:'old'}));
+      const command=path.basename(args[args.indexOf('--entrypoint')+1]);
+      assert(['multica','server','migrate','backfill_task_usage_hourly','backfill_codex_usage_cache'].includes(command));
+      const version={version:'${identity.version}',commit:'${sha}',date:'${info.Config.Labels["org.opencontainers.image.created"]}',os:'linux',arch:'amd64'};
+      if(command===process.env.TEST_STALE) version[process.env.TEST_FIELD]='old';
+      if(command==='multica') console.log(JSON.stringify(version));
+      else {
+        assert.equal(args.at(-1),'--version');
+        console.log(command+' '+version.version+' (commit: '+version.commit+')');
+      }
     }
     else throw Error('unexpected Docker operation');
   `, { mode: 0o755 });
   for (const build of [false, true]) {
-    const result = spawnSync(process.execPath, [join(root, "scripts/local-images.mjs"), build ? "--no-cache" : "--verify", "--arch", "amd64"], {
-    cwd: dir, encoding: "utf8", env: { ...env, PATH: join(dir, "dist/bin") + ":" + process.env.PATH,
-      LABRASTRO_RELEASE_REPOSITORY: "AstralSolipsism/multica", LABRASTRO_RELEASE_TAG: identity.tag,
-      LABRASTRO_RELEASE_SHA: sha, LABRASTRO_RELEASE_MODE: "candidate", GITHUB_REPOSITORY: "AstralSolipsism/multica", TEST_BUILD: build ? "1" : "0" },
-  });
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /old CLI/);
-  assert.equal(existsSync(join(dir, `dist/candidate/${identity.tag}/local-images/linux-amd64/images.json`)), false);
+    for (const [command, field] of [["multica", "version"], ...["backfill_task_usage_hourly", "backfill_codex_usage_cache"]
+      .flatMap(command => ["version", "commit"].map(field => [command, field]))]) {
+      rmSync(join(dir, "dist/built"), { force: true });
+      const result = spawnSync(process.execPath, [join(root, "scripts/local-images.mjs"), build ? "--no-cache" : "--verify", "--arch", "amd64"], {
+        cwd: dir, encoding: "utf8", env: { ...env, PATH: join(dir, "dist/bin") + ":" + process.env.PATH,
+          LABRASTRO_RELEASE_REPOSITORY: "AstralSolipsism/multica", LABRASTRO_RELEASE_TAG: identity.tag,
+          LABRASTRO_RELEASE_SHA: sha, LABRASTRO_RELEASE_MODE: "candidate", GITHUB_REPOSITORY: "AstralSolipsism/multica",
+          TEST_BUILD: build ? "1" : "0", TEST_STALE: command, TEST_FIELD: field },
+      });
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, command === "multica" ? /old CLI/ : new RegExp(`image ${command} identity differs`));
+      assert.equal(existsSync(join(dir, `dist/candidate/${identity.tag}/local-images/linux-amd64/images.json`)), false);
+    }
   }
   assert.equal(existsSync(join(dir, "dist/built")), true);
 });

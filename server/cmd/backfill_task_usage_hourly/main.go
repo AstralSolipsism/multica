@@ -54,7 +54,16 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 )
 
+var (
+	version = "dev"
+	commit  = "unknown"
+)
+
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Printf("backfill_task_usage_hourly %s (commit: %s)\n", version, commit)
+		return
+	}
 	logger.Init()
 	if err := run(); err != nil {
 		slog.Error("backfill failed", "error", err)

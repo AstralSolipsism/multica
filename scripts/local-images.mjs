@@ -35,9 +35,11 @@ function verifyImages(identity, arch) {
       const cli = JSON.parse(execute("/app/multica", ["version", "--output", "json"]));
       requireThat(["version", "commit", "date"].every(key => cli[key] === identity[key]), "image contains an old CLI");
       requireThat(cli.os === "linux" && cli.arch === arch, "CLI runtime architecture differs");
-      for (const command of ["server", "migrate"]) {
-        requireThat(execute(`/app/${command}`, ["--version"]) === `${command} ${identity.version} (commit: ${identity.commit})`,
-          `image ${command} version differs`);
+      const versions = {};
+      for (const command of ["server", "migrate", "backfill_task_usage_hourly", "backfill_codex_usage_cache"]) {
+        versions[command] = execute(`/app/${command}`, ["--version"]);
+        requireThat(versions[command] === `${command} ${identity.version} (commit: ${identity.commit})`,
+          `image ${command} identity differs`);
       }
       execute("sha256sum", ["-c", "/app/checksums.txt"]);
       const actual = execute("cat", ["/app/checksums.txt"]);
@@ -53,7 +55,7 @@ function verifyImages(identity, arch) {
       const binaries = ["server", "multica", "migrate", "backfill_task_usage_hourly", "backfill_codex_usage_cache", "go-build-info.txt"];
       requireThat(lines.length === expected.length + binaries.length && binaries.every(name =>
         lines.some(line => line.endsWith(`  ${name}`) && /^[a-f0-9]{64}  /.test(line))), "image required file set differs");
-      evidence = { cli, binary_checksums: execute("sha256sum", ["/app/server", "/app/multica", "/app/migrate"]),
+      evidence = { cli, versions, binary_checksums: execute("sha256sum", ["/app/multica", ...Object.keys(versions).map(name => `/app/${name}`)]),
         migration_files: tracked.length, go_build_info: execute("cat", ["/app/go-build-info.txt"]) };
     } else {
       const metadata = JSON.parse(execute("node", ["-p", "require('fs').readFileSync('/app/build-info.json','utf8')"]));

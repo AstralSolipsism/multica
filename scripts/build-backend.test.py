@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("backend", ROOT / "scripts/build-backend.py")
@@ -65,12 +66,14 @@ def main():
         subprocess.run(["python3", "scripts/build-backend.py"], cwd=root, env=env, check=True)
         subprocess.run(["python3", "scripts/build-backend.py", "--verify"], cwd=root, env=env, check=True)
         identity = json.loads(call(["node", "scripts/check-release.mjs", "--require-tag"], root, env=env))
-        archive = root / identity["artifact_dir"] / "assets/labrastro-backend-1.2.3-labrastro.1-linux-amd64.tar.gz"
-        with tarfile.open(archive) as tar:
-            original = {m.name: tar.extractfile(m).read() for m in tar}
+        original = {}
+        for arch in backend.ARCHES:
+            archive = root / identity["artifact_dir"] / f"assets/labrastro-backend-1.2.3-labrastro.1-linux-{arch}.tar.gz"
+            with tarfile.open(archive) as tar:
+                original[arch] = {m.name: tar.extractfile(m).read() for m in tar}
 
-        def rejected(label, change, expected, rehash=False):
-            files = dict(original)
+        def rejected(label, change, expected, rehash=False, arch="amd64"):
+            files = dict(original[arch])
             change(files)
             if rehash:
                 files["checksums.txt"] = "".join(f"{backend.digest(files[n])}  {n}\n" for n in sorted(files) if n != "checksums.txt").encode()
@@ -81,7 +84,7 @@ def main():
                     member.size, member.mode = len(data), 0o755
                     tar.addfile(member, io.BytesIO(data))
             try:
-                backend.verify_archive(bad, root, identity, "amd64")
+                backend.verify_archive(bad, root, identity, arch)
             except ValueError as error:
                 backend.require(expected in str(error), f"{label}: unexpected rejection {error}")
             else:
@@ -95,6 +98,25 @@ def main():
         rejected("rehashed different migration", lambda f: f.update({"migrations/001_first.up.sql": b"SELECT 9;"}), "content differs", True)
         rejected("wrong executable", lambda f: f.update({"server": f["migrate"]}), "wrong executable", True)
         rejected("wrong metadata", lambda f: f.update({"build-info.json": json.dumps({**identity, "version": "dev"}).encode()}), "identity differs", True)
+        # Same source SHA and valid checksums must not conceal wrong linked
+        # values, including on the architecture that the host cannot execute.
+        (root / "server/cmd/server/ignored.go").unlink()
+        for arch in backend.ARCHES:
+            cases = [(command, "version", "dev") for command in backend.COMMANDS]
+            cases += [(command, "commit", "0" * 40) for command in backend.COMMANDS if command.startswith("backfill_")]
+            cases += [("multica", "date", "unknown")]
+            for command, key, value in cases:
+                linked = {**identity, key: value}
+                binary = root / "dist" / command
+                flags = f'-s -w -X main.version={linked["version"]} -X main.commit={linked["commit"]} -X main.date={linked["date"]}'
+                subprocess.run(["go", "build", "-trimpath", "-buildvcs=true", "-ldflags", flags,
+                                "-o", str(binary), "./cmd/" + command], cwd=root / "server",
+                               env=dict(env, CGO_ENABLED="0", GOOS="linux", GOARCH=arch), check=True)
+                rejected(f"{arch} {command} wrong linked {key}", lambda f: f.update({command: binary.read_bytes()}),
+                         "runtime identity differs", rehash=True, arch=arch)
+        cross_arch = next(a for a in backend.ARCHES if a != call(["go", "env", "GOHOSTARCH"], root))
+        with patch.object(backend.shutil, "which", return_value=None):
+            rejected("missing cross-target runner", lambda f: None, "version verification requires qemu-", arch=cross_arch)
         # Candidate guards must run even when an output archive already exists.
         (root / "NOTICE").write_text("dirty")
         result = subprocess.run(["python3", "scripts/build-backend.py", "--verify"], cwd=root, env=env, capture_output=True, text=True)
