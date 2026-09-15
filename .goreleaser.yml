@@ -2,6 +2,22 @@ version: 2
 
 project_name: multica
 
+# Local CLI packaging only until the complete OL-83 pipeline is reviewed.
+# Even a direct `goreleaser release` cannot create or upload a Release.
+release:
+  github:
+    owner: AstralSolipsism
+    name: multica
+  disable: true
+  draft: true
+  make_latest: false
+
+dist: dist/goreleaser
+
+before:
+  hooks:
+    - node scripts/check-release.mjs --require-tag --tag={{ .Tag }} --version={{ .Version }}
+
 builds:
   - id: multica
     main: ./cmd/multica
@@ -10,8 +26,8 @@ builds:
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
-      - -X main.commit={{.ShortCommit}}
-      - -X main.date={{.Date}}
+      - -X main.commit={{.FullCommit}}
+      - -X main.date={{.CommitDate}}
     env:
       - CGO_ENABLED=0
     goos:
@@ -63,23 +79,3 @@ changelog:
       - "^docs:"
       - "^test:"
       - "^chore:"
-
-brews:
-  - name: multica
-    ids:
-      - versioned
-    repository:
-      owner: multica-ai
-      name: homebrew-tap
-      branch: main
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
-    homepage: "https://github.com/multica-ai/multica"
-    description: "Multica CLI — local agent runtime and management tool for the Multica platform"
-    # No license stanza: Multica ships under the Multica License (Apache 2.0
-    # terms with additional conditions, see LICENSE), which has no SPDX
-    # identifier, so declaring "Apache-2.0" here would be a false claim.
-    install: |
-      bin.install "multica"
-    test: |
-      system "#{bin}/multica", "version"

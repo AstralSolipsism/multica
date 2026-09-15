@@ -250,8 +250,11 @@ Do not claim verification passed unless you ran it. If you skip checks because t
 ## Commits and Releases
 
 - Commits should be atomic and use conventional prefixes: `feat(scope)`, `fix(scope)`, `refactor(scope)`, `docs`, `test(scope)`, `chore(scope)`.
-- A production deployment requires a CLI release tag on `main`: create `v0.x.x`, push it, and let `release.yml` publish binaries and the Homebrew tap.
-- Bump patch by default unless the user specifies a version.
+- All project repository and Release operations must explicitly target `AstralSolipsism/multica`; never resolve to the fork's upstream. Preserve historical module paths, LICENSE and NOTICE.
+- Labrastro candidates bind one reviewed full source SHA on fork `main` to `vX.Y.Z-labrastro.N`; application version is the tag without `v`. Increment `N` for the same source base version; a greater base starts at `1`. Never move or reuse a tag for different source. Run `node scripts/check-release.mjs --require-tag` with the explicit candidate inputs before packaging. See `.github/RELEASING.md` for the inputs, artifact and inactive-feed contract.
+- Normal candidate checks enforce global version order before and after tagging. Historical verification requires `--mode rebuild --require-tag` and a matching acceptance record from `.github/release-history/<tag>.json` on fetched fork `main`; tag existence or source ancestry alone grants no exception.
+- `release.yml` is verification-only and GoReleaser publishing is disabled until the complete candidate chain is implemented and reviewed. No Homebrew/tap or GHCR publishing. Labrastro application images are built locally from reviewed source; do not pull upstream application images.
+- The operations specialist owns operational access and predeployment inventory. Master schedules deployment, migrations, client upgrades and active update-feed changes separately. A tag, local build or fork Draft Release is not deployment authorization.
 
 ## Domain Reminders
 
