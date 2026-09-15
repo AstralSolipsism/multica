@@ -252,7 +252,7 @@ function Get-AssetChecksum {
 # CLI Installation
 # ---------------------------------------------------------------------------
 function Install-CliBinary {
-    param([string]$Tag = (Get-LatestVersion))
+    param([string]$Tag, [string]$Target)
     if (@(Get-ReleaseParts $Tag).Count -ne 4 -or $Tag -cnotlike 'v*-labrastro.*') {
         Write-Fail "Install target must be vX.Y.Z-labrastro.N."
     }
@@ -291,9 +291,8 @@ function Install-CliBinary {
             Write-Fail "Downloaded CLI version ($actualVersion) does not match $Tag."
         }
 
-        $binDir = if ($env:MULTICA_BIN_DIR) { $env:MULTICA_BIN_DIR } else { Join-Path $env:USERPROFILE ".multica\bin" }
+        $binDir = Split-Path -Path $Target -Parent
         New-Item -ItemType Directory -Path $binDir -Force | Out-Null
-        $target = Join-Path $binDir "multica.exe"
         $staged = Join-Path $binDir ("multica-install-" + [guid]::NewGuid().ToString("N") + ".exe")
         Copy-Item -LiteralPath $exeSrc -Destination $staged
         $backup = "$target.old"
@@ -335,9 +334,12 @@ function Add-ToUserPath {
 }
 
 function Install-Cli {
+    # Check the file that will be replaced, independently of PATH lookup.
+    $binDir = if ($env:MULTICA_BIN_DIR) { $env:MULTICA_BIN_DIR } else { Join-Path $env:USERPROFILE ".multica\bin" }
+    $target = Join-Path $binDir "multica.exe"
     $current = $null
-    if (Test-CommandExists "multica") {
-        $current = Get-InstalledCliVersion
+    if (Test-Path -LiteralPath $target) {
+        $current = Get-InstalledCliVersion -Path $target
         if (@(Get-ReleaseParts $current).Count -ne 4) {
             Write-Fail "Refusing to replace a development or unrecognized build ($current)."
         }
@@ -347,7 +349,7 @@ function Install-Cli {
         Write-Ok "Labrastro CLI is up to date ($current)"
         return
     }
-    Install-CliBinary -Tag $latest
+    Install-CliBinary -Tag $latest -Target $target
     if (-not (Test-CommandExists "multica")) {
         Write-Fail "CLI installed but 'multica' not found on PATH. Restart your terminal and try again."
     }

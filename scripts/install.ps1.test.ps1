@@ -355,6 +355,13 @@ $cliCases = @(
     @{ Name = 'newer base'; Mode = 'unchanged'; Current = 'v0.4.44-labrastro.1' }
     @{ Name = 'dirty protected'; Mode = 'dev'; Current = 'v0.4.43-labrastro.9-dirty' }
     @{ Name = 'describe protected'; Mode = 'dev'; Current = 'v0.4.43-labrastro.9-2-gabcdef' }
+    @{ Name = 'PATH older target dirty'; Mode = 'dev'; Current = 'v0.4.43-labrastro.10-dirty'; PathVersion = 'v0.4.43-labrastro.9' }
+    @{ Name = 'PATH older target newer'; Mode = 'unchanged'; Current = 'v0.4.43-labrastro.11'; PathVersion = 'v0.4.43-labrastro.9' }
+    @{ Name = 'PATH older target same'; Mode = 'unchanged'; Current = 'v0.4.43-labrastro.10'; PathVersion = 'v0.4.43-labrastro.9' }
+    @{ Name = 'PATH older target newer base'; Mode = 'unchanged'; Current = 'v0.4.44-labrastro.1'; PathVersion = 'v0.4.43-labrastro.9' }
+    @{ Name = 'PATH newer target older'; Mode = 'success'; Current = 'v0.4.43-labrastro.9'; PathVersion = 'v0.4.43-labrastro.11' }
+    @{ Name = 'PATH dev target older'; Mode = 'success'; Current = 'v0.4.43-labrastro.9'; PathVersion = 'dev' }
+    @{ Name = 'PATH newer target missing'; Mode = 'success'; Current = ''; PathVersion = 'v0.4.43-labrastro.11' }
 )
 foreach ($mode in @('missing-checksum', 'missing-entry', 'malformed-checksum', 'duplicate', 'missing-archive', 'bad-checksum', 'wrong-version', 'missing-binary', 'invalid-archive', 'copy-failure', 'swap-failure', 'metadata-failure')) {
     $cliCases += @{ Name = $mode; Mode = $mode }
@@ -366,12 +373,15 @@ foreach ($tag in @('v0.4.43', 'v0.0.0-labrastro.1', 'v0.4.43-labrastro.0', 'v0.4
 foreach ($case in $cliCases) {
     if (-not $case.ContainsKey('Arch')) { $case.Arch = 'amd64' }
     if (-not $case.ContainsKey('Current')) { $case.Current = '0.4.43-labrastro.9' }
+    if (-not $case.ContainsKey('PathVersion')) { $case.PathVersion = $case.Current }
     if (-not $case.ContainsKey('Tag')) { $case.Tag = 'v0.4.43-labrastro.10' }
     $caseDir = Join-Path ([IO.Path]::GetTempPath()) ('labrastro-cli-' + [guid]::NewGuid().ToString('N'))
     $binDir = Join-Path $caseDir 'bin'
     $payloadDir = Join-Path $caseDir 'payload'
-    New-Item -ItemType Directory -Path $binDir, $payloadDir | Out-Null
+    $pathBinDir = Join-Path $caseDir 'path-bin'
+    New-Item -ItemType Directory -Path $binDir, $payloadDir, $pathBinDir | Out-Null
     $target = Join-Path $binDir 'multica.exe'
+    $pathTarget = Join-Path $pathBinDir 'multica.exe'
     $archive = Join-Path $caseDir 'fixture.zip'
     $reported = if ($case.Mode -eq 'wrong-version') { '0.4.43-labrastro.9' } else { '0.4.43-labrastro.10' }
     $entry = if ($case.Mode -eq 'missing-binary') { 'README' } else { 'multica.exe' }
@@ -379,6 +389,7 @@ foreach ($case in $cliCases) {
     Compress-Archive -Path (Join-Path $payloadDir $entry) -DestinationPath $archive
     if ($case.Mode -eq 'invalid-archive') { [IO.File]::WriteAllText($archive, 'not an archive') }
     if ($case.Current) { [IO.File]::WriteAllText($target, $case.Current) }
+    if ($case.PathVersion) { [IO.File]::WriteAllText($pathTarget, $case.PathVersion) }
     $originalBinDir = $env:MULTICA_BIN_DIR
     $env:MULTICA_BIN_DIR = $binDir
     try {
@@ -386,14 +397,14 @@ foreach ($case in $cliCases) {
             Invoke-Expression $definitions
             $DownloadBase = 'https://mirror.example.test/downloads'
             $requests = [Collections.Generic.List[string]]::new()
-            function Test-CommandExists { param($Name) return $Name -eq 'multica' -and (Test-Path $target) }
+            function Test-CommandExists { param($Name) return $Name -eq 'multica' -and ((Test-Path $pathTarget) -or (Test-Path $target)) }
             function Get-WindowsCliArch { return $case.Arch }
             function Add-ToUserPath { param($Dir) Assert-Equal $Dir $binDir 'PATH install directory' }
             function Get-InstalledCliVersion {
                 param([string]$Path = 'multica')
-                if ($Path -eq 'multica') { return [IO.File]::ReadAllText($target) }
-                # Stand in for executing this exact staged binary, not PATH.
-                if (-not $Path.EndsWith('multica.exe') -or $Path -eq $target) { Fail-Test "wrong version probe path $Path" }
+                if ($Path -eq 'multica') { return [IO.File]::ReadAllText($pathTarget) }
+                # Execute the selected existing or staged binary, independently of PATH.
+                if (-not $Path.EndsWith('multica.exe')) { Fail-Test "wrong version probe path $Path" }
                 return [IO.File]::ReadAllText($Path)
             }
             function Invoke-RestMethod {
@@ -446,6 +457,7 @@ foreach ($case in $cliCases) {
             if (($null -eq $caught) -ne $succeeds) { Fail-Test "$($case.Name): unexpected result $caught" }
             $expectedBytes = if ($succeeds -and $case.Mode -ne 'unchanged') { $reported } else { $case.Current }
             Assert-Equal ([IO.File]::ReadAllText($target)) $expectedBytes "$($case.Name) installation"
+            if ($case.PathVersion) { Assert-Equal ([IO.File]::ReadAllText($pathTarget)) $case.PathVersion "$($case.Name) PATH installation preserved" }
             $expectedRequests = switch ($case.Mode) {
                 'dev' { 0 }
                 { $_ -in @('unchanged', 'invalid-version', 'metadata-failure') } { 1 }

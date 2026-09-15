@@ -85,6 +85,7 @@ chmod +x "$test_dir/stubs/"*
 
 run_case() {
   local name="$1" mode="$2" current="${3:-}" tag="${4:-v0.4.43-labrastro.10}"
+  local path_current="${INSTALL_TEST_PATH_VERSION-$current}"
   local os="${5:-Linux}" arch="${6:-x86_64}" release_os="${7:-linux}" release_arch="${8:-amd64}"
   local base="${9:-https://multica.outlune.com/downloads}"
   local case_dir="$test_dir/$name" archive="$test_dir/archive.tar.gz" binary_version="${tag#v}"
@@ -98,15 +99,20 @@ run_case() {
   else
     hash=$(shasum -a 256 "$archive" | cut -d' ' -f1)
   fi
-  mkdir -p "$case_dir/bin" "$case_dir/home"
+  mkdir -p "$case_dir/bin" "$case_dir/path-bin" "$case_dir/home"
   : >"$case_dir/downloads"
   if [ -n "$current" ]; then
     printf '#!/bin/sh\necho "multica %s (commit: old)"\n' "$current" >"$case_dir/bin/multica"
     chmod +x "$case_dir/bin/multica"
     cp "$case_dir/bin/multica" "$case_dir/original"
   fi
+  if [ -n "$path_current" ]; then
+    printf '#!/bin/sh\necho "multica %s (commit: PATH)"\n' "$path_current" >"$case_dir/path-bin/multica"
+    chmod +x "$case_dir/path-bin/multica"
+    cp "$case_dir/path-bin/multica" "$case_dir/path-original"
+  fi
   local status=0
-  env -i PATH="$case_dir/bin:$test_dir/stubs:/usr/bin:/bin" HOME="$case_dir/home" \
+  env -i PATH="$case_dir/path-bin:$case_dir/bin:$test_dir/stubs:/usr/bin:/bin" HOME="$case_dir/home" \
     MULTICA_BIN_DIR="$case_dir/bin" MULTICA_DOWNLOAD_BASE="$base" \
     INSTALL_TEST_OS="$os" INSTALL_TEST_ARCH="$arch" INSTALL_TEST_TAG="$tag" \
     INSTALL_TEST_MODE="$mode" INSTALL_TEST_BASE="${base%/}" INSTALL_TEST_LOG="$case_dir/downloads" \
@@ -140,6 +146,7 @@ run_case() {
       esac
       ;;
   esac
+  if [ -n "$path_current" ]; then cmp "$case_dir/path-original" "$case_dir/path-bin/multica"; fi
   if compgen -G "$case_dir/bin/.multica-install.*" >/dev/null; then echo "$name left staged files" >&2; return 1; fi
   echo "PASS $name"
 }
@@ -161,6 +168,13 @@ run_case newer-base-installed unchanged v0.4.44-labrastro.1
 run_case dirty-protected dev v0.4.43-labrastro.9-dirty
 run_case describe-protected dev v0.4.43-labrastro.9-3-gabc1234
 run_case unknown-protected dev dev
+INSTALL_TEST_PATH_VERSION=v0.4.43-labrastro.9 run_case path-older-target-dirty dev v0.4.43-labrastro.10-dirty
+INSTALL_TEST_PATH_VERSION=v0.4.43-labrastro.9 run_case path-older-target-newer unchanged v0.4.43-labrastro.11
+INSTALL_TEST_PATH_VERSION=v0.4.43-labrastro.9 run_case path-older-target-same unchanged v0.4.43-labrastro.10
+INSTALL_TEST_PATH_VERSION=v0.4.43-labrastro.9 run_case path-older-target-newer-base unchanged v0.4.44-labrastro.1
+INSTALL_TEST_PATH_VERSION=v0.4.43-labrastro.11 run_case path-newer-target-older success v0.4.43-labrastro.9
+INSTALL_TEST_PATH_VERSION=dev run_case path-dev-target-older success v0.4.43-labrastro.9
+INSTALL_TEST_PATH_VERSION=v0.4.43-labrastro.11 run_case path-newer-target-missing success
 for mode in missing-checksum missing-entry malformed-checksum duplicate missing-archive bad-checksum wrong-version invalid-archive missing-binary copy-failure metadata-failure; do
   run_case "$mode" "$mode" v0.4.43-labrastro.9
 done
