@@ -13,7 +13,9 @@ import {
   envWithLocalBins,
   normalizeGitVersion,
   parsePackageArgs,
+  resolveBinCommand,
   resolveBuildMatrix,
+  spawnBuildTool,
   stripLeadingSeparator,
 } from "./package.mjs";
 import { resolveCliStamp } from "./bundle-cli.mjs";
@@ -570,6 +572,54 @@ describe("assertCandidatePublishIsolated (real electron-builder parser)", () => 
       { useScopedOutputDir: true },
     );
     expect(() => assertCandidatePublishIsolated(args)).toThrow(/publish mode/);
+  });
+
+  it("validated argv reaches the spawn boundary byte-identical — no shell re-split", () => {
+    // The P1 the r3 review proved: a single -c override containing spaces
+    // ("-c.extraMetadata.description=demo --p always") is legitimate and
+    // passes validation, but `shell: true` would re-tokenize it into a REAL
+    // `--p always` publish flag inside the child. The spawn must carry the
+    // exact array through node directly.
+    const parsed = parsePackageArgs([
+      "--linux",
+      "AppImage",
+      "--x64",
+      "-c.extraMetadata.description=demo --p always",
+    ]);
+    parsed.sharedArgs = enforceCandidatePublishPolicy(parsed.sharedArgs);
+    const args = builderArgsForTarget(
+      { platform: "linux", arch: "x64" },
+      parsed,
+      "0.4.43-labrastro.2",
+      { useScopedOutputDir: true },
+    );
+    expect(() => assertCandidatePublishIsolated(args)).not.toThrow();
+
+    const command = resolveBinCommand("electron-builder", "electron-builder");
+    expect(command[0]).toBe(process.execPath);
+    expect(command[1]).toMatch(/electron-builder/);
+
+    const calls = [];
+    spawnBuildTool(command, args, {
+      cwd: "/tmp",
+      env: {},
+      spawnImpl: (file, argv, options) => {
+        calls.push({ file, argv, options });
+        return { status: 0 };
+      },
+    });
+    expect(calls).toHaveLength(1);
+    const [{ file, argv, options }] = calls;
+    expect(options.shell).toBe(false);
+    expect(file).toBe(process.execPath);
+    // Every validated argument is one argv element — the description with
+    // spaces included; nothing is re-tokenized at the process boundary.
+    expect(argv).toEqual([command[1], ...args]);
+    expect(argv).toContain("-c.extraMetadata.description=demo --p always");
+    // And the argv the child would actually receive still parses to never.
+    expect(() =>
+      assertCandidatePublishIsolated(argv.slice(1)),
+    ).not.toThrow();
   });
 });
 

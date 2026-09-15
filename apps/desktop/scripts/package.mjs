@@ -256,8 +256,8 @@ export function enforceCandidatePublishPolicy(sharedArgs) {
   return args;
 }
 
-// The parser harness electron-builder's own CLI uses, loaded through the
-// declared electron-builder dependency — no transitive traversal.
+// The parser harness electron-builder's own CLI uses. electron-builder and
+// yargs are declared dependencies of this package — no transitive traversal.
 let builderParser = null;
 function loadBuilderParser() {
   if (builderParser) return builderParser;
@@ -268,9 +268,52 @@ function loadBuilderParser() {
   const { configureBuildCommand, normalizeOptions } = builderRequire(
     "./out/builder.js",
   );
-  const yargs = builderRequire("yargs/yargs");
+  const yargs = rootRequire("yargs/yargs");
   builderParser = { configureBuildCommand, normalizeOptions, yargs };
   return builderParser;
+}
+
+/**
+ * Resolve a workspace package's bin entry to a direct `node <file>` command.
+ * Running the tool through its bin FILE (never through a shell) keeps the
+ * validated argv byte-identical at the process boundary: with `shell: true`
+ * a single argument containing spaces — e.g. an
+ * `-c.extraMetadata.description=a b` override — is re-split by the shell
+ * into NEW arguments electron-builder never saw during validation, which
+ * could smuggle `--p always` into the real invocation. It also sidesteps
+ * the Windows `.cmd` shim issue (Node does not honour PATHEXT when spawning
+ * a bare command without a shell, but node.exe itself is a real binary).
+ */
+export function resolveBinCommand(packageName, binName, root = desktopRoot) {
+  const rootRequire = createRequire(join(root, "package.json"));
+  const packageJsonPath = rootRequire.resolve(`${packageName}/package.json`);
+  const pkg = rootRequire(packageJsonPath);
+  const bin = pkg.bin?.[binName];
+  if (typeof bin !== "string") {
+    throw new Error(`[package] ${packageName} has no bin entry "${binName}"`);
+  }
+  return [process.execPath, resolve(dirname(packageJsonPath), bin)];
+}
+
+/**
+ * Spawn a build tool with the exact argv, never through a shell. Extracted
+ * so tests can capture the spawned argv and prove nothing is re-tokenized.
+ */
+export function spawnBuildTool(command, args, { cwd, env, spawnImpl = spawnSync } = {}) {
+  const result = spawnImpl(command[0], [...command.slice(1), ...args], {
+    stdio: "inherit",
+    cwd,
+    env,
+    shell: false,
+  });
+  if (result.error) {
+    console.error(`[package] failed to spawn ${command[0]}:`, result.error.message);
+    process.exit(1);
+  }
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+  return result;
 }
 
 /**
@@ -542,31 +585,13 @@ function main() {
   // out/, which on a fresh checkout (or after a partial build) ships an
   // app that white-screens because the renderer bundle is missing.
   //
-  // CI invokes this script via `node scripts/package.mjs`, so we cannot
-  // rely on pnpm/npm to inject package-local binaries into PATH.
-  //
-  // `shell: true` is required on Windows: `node_modules/.bin/electron-vite`
-  // ships as a `.cmd` shim there, and Node's `spawnSync` does not honour
-  // PATHEXT when spawning a bare command without a shell — it would fail
-  // with `ENOENT`. On POSIX hosts the shim is a real executable so going
-  // through the shell is harmless. See
-  // https://nodejs.org/api/child_process.html#spawning-bat-and-cmd-files-on-windows
-  const viteResult = spawnSync("electron-vite", ["build"], {
-    stdio: "inherit",
+  // Tools run through their bin FILE under node directly — never through a
+  // shell — so the validated argv reaches the child process byte-identical
+  // (see resolveBinCommand for the injection and Windows .cmd rationale).
+  spawnBuildTool(resolveBinCommand("electron-vite", "electron-vite"), ["build"], {
     cwd: desktopRoot,
     env: envWithLocalBins(),
-    shell: true,
   });
-  if (viteResult.error) {
-    console.error(
-      "[package] failed to spawn electron-vite:",
-      viteResult.error.message,
-    );
-    process.exit(1);
-  }
-  if (viteResult.status !== 0) {
-    process.exit(viteResult.status ?? 1);
-  }
 
   // Step 2: derive the version that should be written into the app.
   // Candidate builds take the preflight-validated version; development
@@ -631,26 +656,13 @@ function main() {
       assertCandidatePublishIsolated(builderArgs);
     }
 
-    // Step 4: invoke electron-builder for the current target only.
-    // `shell: true` for the same Windows `.cmd` shim reason as the
-    // electron-vite invocation above.
-    const result = spawnSync("electron-builder", builderArgs, {
-      stdio: "inherit",
-      cwd: desktopRoot,
-      env: envWithLocalBins(),
-      shell: true,
-    });
-
-    if (result.error) {
-      console.error(
-        "[package] failed to spawn electron-builder:",
-        result.error.message,
-      );
-      process.exit(1);
-    }
-    if (result.status !== 0) {
-      process.exit(result.status ?? 1);
-    }
+    // Step 4: invoke electron-builder for the current target only, through
+    // its bin file under node — the exact validated argv, no shell between.
+    spawnBuildTool(
+      resolveBinCommand("electron-builder", "electron-builder"),
+      builderArgs,
+      { cwd: desktopRoot, env: envWithLocalBins() },
+    );
   }
 }
 

@@ -81,6 +81,7 @@
     "jsdom": "catalog:",
     "tailwindcss": "^4",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "yargs": "^17.7.2"
   }
 }

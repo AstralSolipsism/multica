@@ -65,7 +65,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { gunzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 // Circular by design (see package.mjs); bindings are only used at call time.
 import { checkRelease } from "../../../scripts/check-release.mjs";
 
@@ -310,8 +310,10 @@ export function recomputeBlockmap(installerPath, { binary, tmpDir } = {}) {
  * A differential-update blockmap must exist for Windows NSIS installers and
  * describe the installer's actual content: gzip-compressed JSON whose block
  * size list sums to the installer size, one checksum per block — and whose
- * per-block checksums match a fresh app-builder recomputation, so a blockmap
- * from another build of the same length cannot pass. (AppImage does not
+ * complete structure (container version, per-file name, offset and block
+ * list) matches a fresh app-builder recomputation, so a blockmap from
+ * another build of the same length, or one with a corrupted offset that
+ * would send a download plan out of range, cannot pass. (AppImage does not
  * emit blockmaps; when one is present it is validated the same way.)
  */
 export function verifyBlockmap(blockmapPath, installerPath, { recompute = recomputeBlockmap } = {}) {
@@ -334,7 +336,15 @@ export function verifyBlockmap(blockmapPath, installerPath, { recompute = recomp
         entry.sizes.length > 0 && entry.sizes.length === entry.checksums.length,
       `${name} has a malformed block list`,
     );
+    requireThat(
+      Number.isSafeInteger(entry.offset) && entry.offset >= 0,
+      `${name} has a malformed offset`,
+    );
     total += entry.sizes.reduce((sum, size) => sum + size, 0);
+    requireThat(
+      entry.offset + entry.sizes.reduce((sum, size) => sum + size, 0) <= installerSize,
+      `${name} block range exceeds the installer size`,
+    );
   }
   requireThat(
     total === installerSize,
@@ -342,15 +352,18 @@ export function verifyBlockmap(blockmapPath, installerPath, { recompute = recomp
   );
   const recomputed = recompute(installerPath);
   const summarize = (blockmap) =>
-    JSON.stringify(
-      (blockmap.files ?? []).map((entry) => ({
+    JSON.stringify({
+      version: blockmap.version ?? null,
+      files: (blockmap.files ?? []).map((entry) => ({
+        name: entry.name,
+        offset: entry.offset,
         sizes: entry.sizes,
         checksums: entry.checksums,
       })),
-    );
+    });
   requireThat(
     summarize(parsed) === summarize(recomputed),
-    `${name} block checksums do not match the installer content`,
+    `${name} block map does not match the installer content`,
   );
 }
 
@@ -597,6 +610,88 @@ function activationMembers(activationDir) {
   return members.sort();
 }
 
+// --- Minimal deterministic ustar writer -----------------------------------
+// Writes a standard ustar/gzip archive with sorted members, uid/gid 0 and
+// zero mtimes (Node's gzip emits a zero header mtime), so identical content
+// yields byte-identical archives on ANY host — no dependence on GNU tar
+// flags that bsdtar (the tar Windows ships) rejects.
+
+function tarOctal(value, length) {
+  return value.toString(8).padStart(length - 1, "0") + "\0";
+}
+
+function tarHeader({ name, mode, size, type }) {
+  const nameBytes = Buffer.from(name, "utf8");
+  requireThat(nameBytes.length <= 100, `tar member name too long: ${name}`);
+  const header = Buffer.alloc(512, 0);
+  nameBytes.copy(header, 0);
+  header.write(tarOctal(mode, 8), 100, "ascii");
+  header.write(tarOctal(0, 8), 108, "ascii"); // uid
+  header.write(tarOctal(0, 8), 116, "ascii"); // gid
+  header.write(tarOctal(size, 12), 124, "ascii");
+  header.write(tarOctal(0, 12), 136, "ascii"); // mtime 0
+  header.fill(" ", 148, 156); // checksum computed over spaces
+  header.write(type, 156, "ascii");
+  header.write("ustar\0", 257, "ascii");
+  header.write("00", 263, "ascii");
+  let sum = 0;
+  for (const byte of header) sum += byte;
+  header.write(sum.toString(8).padStart(6, "0") + "\0 ", 148, "ascii");
+  return header;
+}
+
+export function createDeterministicTarGz(rootDir, rootName) {
+  const members = activationMembers(rootDir).map((rel) => ({
+    rel,
+    abs: join(rootDir, rel.slice(rootName.length + 1)),
+  }));
+  const chunks = [];
+  for (const member of members) {
+    const isDir = member.rel.endsWith("/");
+    const content = isDir ? null : readFileSync(member.abs);
+    chunks.push(
+      tarHeader({
+        name: member.rel,
+        mode: isDir ? 0o755 : 0o644,
+        size: isDir ? 0 : content.length,
+        type: isDir ? "5" : "0",
+      }),
+    );
+    if (!isDir) {
+      chunks.push(content);
+      const pad = (512 - (content.length % 512)) % 512;
+      if (pad) chunks.push(Buffer.alloc(pad, 0));
+    }
+  }
+  chunks.push(Buffer.alloc(1024, 0));
+  return gzipSync(Buffer.concat(chunks), { level: 9 });
+}
+
+// In-process read-back used to verify the produced archive: lists member
+// names in the same shape as activationMembers (dirs keep their slash).
+export function listTarGzMembers(buffer) {
+  const data = gunzipSync(buffer);
+  const names = [];
+  let offset = 0;
+  while (offset + 512 <= data.length) {
+    const header = data.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const name = header
+      .subarray(0, 100)
+      .toString("utf8")
+      .replace(/\0.*$/, "");
+    const sizeText = header
+      .subarray(124, 136)
+      .toString("ascii")
+      .replace(/\0.*$/, "")
+      .trim();
+    const size = Number.parseInt(sizeText || "0", 8);
+    names.push(name);
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
+  return names.sort();
+}
+
 /**
  * Re-validate the complete activation tree against the staged version
  * directory and the MERGED target set: every proposed feed parses, names
@@ -841,41 +936,23 @@ export function stageDesktopCandidate(options) {
   verifyActivationTree(activationDir, versionDir, tag, version, modules, mergedEvidence);
 
   // --- Feed metadata archive over the complete activation tree -------------
-  // Deterministic: sorted members, zeroed owner/mtime, gzip -n — a retry of
-  // the same staged content yields the byte-identical archive.
+  // Deterministic AND portable: the archive is written by a small in-repo
+  // ustar implementation (sorted members, uid/gid 0, mtime 0, gzip with a
+  // zero header mtime). No system tar/gzip is required — GNU tar, bsdtar
+  // (the Windows built-in) or none at all — and a retry of the same staged
+  // content yields the byte-identical archive.
   const feedName = `labrastro-feed-metadata-${version}.tar.gz`;
   const feedPath = join(assetsDir, feedName);
-  const tmpTar = join(assetsDir, `.feed-${process.pid}.tar`);
-  rmSync(tmpTar, { force: true });
-  execFileSync("tar", [
-    "--sort=name",
-    "--owner=0",
-    "--group=0",
-    "--numeric-owner",
-    "--mtime=@0",
-    "-cf",
-    tmpTar,
-    "-C",
-    artifactDir,
-    "activation",
-  ]);
-  const listing = execFileSync("tar", ["-tf", tmpTar], { encoding: "utf8" })
-    .split("\n")
-    .filter(Boolean)
-    .sort();
+  const tmpFeed = `${feedPath}.tmp-${process.pid}`;
+  rmSync(tmpFeed, { force: true });
+  const archive = createDeterministicTarGz(activationDir, "activation");
   const expected = activationMembers(activationDir);
+  const listing = listTarGzMembers(archive);
   requireThat(
     JSON.stringify(listing) === JSON.stringify(expected),
     `feed metadata archive members differ: ${listing.join(", ")}`,
   );
-  const tmpFeed = `${feedPath}.tmp-${process.pid}`;
-  rmSync(tmpFeed, { force: true });
-  const gzipped = execFileSync("gzip", ["-n", "-c", tmpTar], {
-    encoding: "buffer",
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  writeFileSync(tmpFeed, gzipped);
-  rmSync(tmpTar, { force: true });
+  writeFileSync(tmpFeed, archive);
   renameSync(tmpFeed, feedPath);
   // The archive and evidence are regenerated from the merged tree on every
   // run — their version-directory copies are replaced, not conflict-checked.

@@ -20,11 +20,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DESKTOP_TARGETS,
   goBuildSetting,
   INTERNAL_FEED_URL,
+  listTarGzMembers,
   loadDesktopModules,
   resolveAppBuilderBin,
   stageDesktopCandidate,
@@ -223,7 +225,22 @@ describe("verifyBlockmap", () => {
     // Every byte changed, length unchanged — a stale blockmap must fail.
     writeFileSync(installer, Buffer.alloc(65536, 0x62));
     expect(() => verifyBlockmap(`${installer}.blockmap`, installer)).toThrow(
-      /block checksums/,
+      /does not match the installer content/,
+    );
+  });
+
+  it("rejects a blockmap whose offset pushes the range out of the installer", () => {
+    const root = tmpRoot();
+    const installer = join(root, "a.exe");
+    writeFileSync(installer, Buffer.alloc(65536, 0x61));
+    writeRealBlockmap(installer);
+    // Corrupt the offset: a downloader would read out of range.
+    const blockmapPath = `${installer}.blockmap`;
+    const parsed = JSON.parse(gunzipSync(readFileSync(blockmapPath)).toString("utf8"));
+    parsed.files[0].offset = 4096;
+    writeFileSync(blockmapPath, gzipSync(JSON.stringify(parsed)));
+    expect(() => verifyBlockmap(blockmapPath, installer)).toThrow(
+      /block range exceeds|does not match the installer content/,
     );
   });
 
@@ -234,7 +251,7 @@ describe("verifyBlockmap", () => {
     writeRealBlockmap(installer);
     writeFileSync(installer, Buffer.from("shorter"));
     expect(() => verifyBlockmap(`${installer}.blockmap`, installer)).toThrow(
-      /block sizes sum|block checksums/,
+      /block sizes sum|block range exceeds|does not match the installer content/,
     );
   });
 
@@ -418,7 +435,7 @@ describe("verifyTarget", () => {
         goBuildInfo: goBuildInfoForPath,
         host: nativeHost,
       }),
-    ).toThrow(/block checksums/);
+    ).toThrow(/does not match the installer content/);
   });
 
   it("rejects an unverified extra channel YAML riding along", async () => {
@@ -465,6 +482,53 @@ describe("verifyTarget", () => {
         host: nativeHost,
       }),
     ).toThrow(/provider must stay generic/);
+  });
+});
+
+describe("deterministic feed archive (in-repo ustar writer)", () => {
+  it("produces a byte-identical archive that the system tar reads back", async () => {
+    const root = tmpRoot();
+    const distRoot = join(root, "dist");
+    await makeTargetFixture(distRoot, "linux-x64");
+    const first = stageDesktopCandidate(
+      baseOptions(distRoot, join(root, "c1"), { targets: ["linux-x64"] }),
+    );
+    const second = stageDesktopCandidate(
+      baseOptions(distRoot, join(root, "c2"), { targets: ["linux-x64"] }),
+    );
+    const feed = (r) => r.artifacts.find((a) => a.component === "feed");
+    expect(feed(first).sha256).toBe(feed(second).sha256);
+
+    // The same archive is readable by whatever tar the host ships (GNU tar
+    // here, bsdtar elsewhere) — that is the compatibility the GNU-flag
+    // version lacked.
+    const archive = join(
+      root,
+      "c1",
+      "assets",
+      `labrastro-feed-metadata-${VERSION}.tar.gz`,
+    );
+    const listing = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" })
+      .split("\n")
+      .filter(Boolean)
+      .sort();
+    expect(listing).toEqual(listTarGzMembers(readFileSync(archive)));
+    for (const name of [
+      "activation/",
+      "activation/desktop/",
+      "activation/latest.json",
+      "activation/desktop/labrastro-linux.yml",
+    ]) {
+      expect(listing).toContain(name);
+    }
+
+    // Extraction through the system tar yields the verified feed bytes.
+    const out = join(root, "extract");
+    mkdirSync(out, { recursive: true });
+    execFileSync("tar", ["-xzf", archive, "-C", out]);
+    expect(readFileSync(join(out, "activation", "latest.json"), "utf8")).toBe(
+      `{"version":"${TAG}"}`,
+    );
   });
 });
 
