@@ -34,6 +34,17 @@ function fixture(t, base = "1.2.3") {
   return { cwd, git, input, previous, check: (patch = {}, env = {}) => checkRelease({ ...input, ...patch }, cwd, env) };
 }
 
+function recordHistory({ cwd, git }, records) {
+  const directory = join(cwd, ".github/release-history");
+  mkdirSync(directory, { recursive: true });
+  for (const record of records) {
+    writeFileSync(join(directory, `${record.tag}.json`), JSON.stringify(record));
+  }
+  git("add", ".github/release-history");
+  git("commit", "-m", "record accepted candidate identities");
+  return git("rev-parse", "HEAD");
+}
+
 test("proposed and tagged candidates map to one version/SHA; preflight makes no tag or output", t => {
   const { cwd, git, input, check } = fixture(t);
   const before = git("tag", "--list");
@@ -69,6 +80,8 @@ test("non-target repositories, unexpected remotes and conflicting inputs fail cl
   assert.throws(() => check({}, { GITHUB_REPOSITORY: "someone/multica" }), /GitHub repository/);
   assert.throws(() => check({}, { LABRASTRO_RELEASE_TAG: "v1.2.3-labrastro.9" }), /disagrees/);
   assert.throws(() => check({}, { LABRASTRO_RELEASE_SHA: "0".repeat(40) }), /disagrees/);
+  assert.throws(() => check({}, { LABRASTRO_RELEASE_MODE: "rebuild" }), /disagrees/);
+  assert.throws(() => check({ mode: "unknown" }), /mode must be/);
   git("remote", "set-url", "--push", "origin", "https://github.com/someone/multica");
   assert.throws(() => check(), /origin must point/);
   git("remote", "set-url", "--push", "origin", `https://github.com/${input.repository}`);
@@ -170,28 +183,124 @@ test("creating a tag cannot bypass revision or base checks at the packaging entr
   }
 });
 
-test("valid historical identities rebuild after later revisions and a greater base exist", t => {
-  const { cwd, git, input, previous, check } = fixture(t);
+test("first tagging old unused source after a higher base exists fails in every mode", async t => {
+  for (const annotated of [false, true]) {
+    await t.test(annotated ? "annotated" : "lightweight", t => {
+      const { cwd, git, input, check } = fixture(t);
+      writeFileSync(join(cwd, "apps/web/package.json"), '{"version":"2.0.0"}\n');
+      git("add", ".");
+      git("commit", "-m", "higher base on later source");
+      const sha = git("rev-parse", "HEAD");
+      git("update-ref", "refs/remotes/origin/main", sha);
+      check({ tag: "v2.0.0-labrastro.1", sha });
+      git("tag", "v2.0.0-labrastro.1");
+      git("checkout", "--detach", input.sha);
+      assert.equal(git("tag", "--points-at", "HEAD"), "");
+      assert.throws(() => check(), /base cannot go backwards/);
+      git("tag", ...(annotated ? ["-a", input.tag, "-m", "first retroactive tag"] : [input.tag]));
+      assert.throws(() => check(), /base cannot go backwards/);
+      for (const mode of ["candidate", "rebuild"]) {
+        for (const format of ["json", "env"]) {
+          const child = spawnSync(process.execPath, [script, "--require-tag", "--version", input.tag.slice(1), "--format", format], {
+            cwd, encoding: "utf8", env: {
+              ...process.env, GITHUB_REPOSITORY: RELEASE_REPOSITORY,
+              LABRASTRO_RELEASE_REPOSITORY: RELEASE_REPOSITORY,
+              LABRASTRO_RELEASE_TAG: input.tag, LABRASTRO_RELEASE_SHA: input.sha,
+              LABRASTRO_RELEASE_MODE: mode,
+            },
+          });
+          assert.equal(child.status, 1, child.stderr);
+          assert.match(child.stderr, mode === "candidate" ? /base cannot go backwards/ : /history record/);
+          assert.equal(child.stdout, "");
+        }
+      }
+    });
+  }
+});
+
+test("recorded historical identities rebuild after later revisions and a greater base exist", t => {
+  const f = fixture(t);
+  const { cwd, git, input, previous, check } = f;
+  git("checkout", "--detach", previous);
+  const first = check({ tag: "v1.2.3-labrastro.1", sha: previous, requireTag: true });
+  git("checkout", "--detach", input.sha);
   git("tag", "-a", input.tag, "-m", "candidate 2");
+  const second = check({ requireTag: true });
+  git("update-ref", "refs/remotes/origin/main", recordHistory(f, [first, second]));
   git("commit", "--allow-empty", "-m", "candidate 3");
   const third = git("rev-parse", "HEAD");
   git("tag", "v1.2.3-labrastro.3");
+  git("update-ref", "refs/remotes/origin/main", third);
+  const thirdRecord = check({ tag: "v1.2.3-labrastro.3", sha: third, requireTag: true });
+  git("update-ref", "refs/remotes/origin/main", recordHistory(f, [thirdRecord]));
   writeFileSync(join(cwd, "apps/web/package.json"), '{"version":"2.0.0"}\n');
   git("add", ".");
   git("commit", "-m", "next base");
   const nextBase = git("rev-parse", "HEAD");
   git("tag", "-a", "v2.0.0-labrastro.1", "-m", "next base candidate");
   git("update-ref", "refs/remotes/origin/main", nextBase);
+  const nextRecord = check({ tag: "v2.0.0-labrastro.1", sha: nextBase, requireTag: true });
+  git("update-ref", "refs/remotes/origin/main", recordHistory(f, [nextRecord]));
   for (const [tag, sha] of [
     ["v1.2.3-labrastro.1", previous], [input.tag, input.sha],
     ["v1.2.3-labrastro.3", third], ["v2.0.0-labrastro.1", nextBase],
   ]) {
     git("checkout", "--detach", sha);
-    const metadata = check({ tag, sha, requireTag: true });
+    if (tag !== nextRecord.tag) {
+      assert.throws(() => check({ tag, sha, requireTag: true }), /base cannot go backwards/);
+    }
+    const metadata = check({ tag, sha, requireTag: true, mode: "rebuild" });
     assert.equal(metadata.tag_exists, true);
+    assert.equal(metadata.mode, "rebuild");
     assert.equal(metadata.version, tag.slice(1));
     assert.equal(metadata.commit, sha);
+    assert.equal(metadata.tag_object, git("rev-parse", `refs/tags/${tag}`));
   }
+  const env = releaseEnvironment(check({ tag: "v2.0.0-labrastro.1", sha: nextBase, requireTag: true, mode: "rebuild" }));
+  const child = spawnSync(process.execPath, [script, "--require-tag", "--format", "env"], {
+    cwd, encoding: "utf8", env: { ...process.env, ...env, GITHUB_REPOSITORY: RELEASE_REPOSITORY },
+  });
+  assert.equal(child.status, 0, child.stderr);
+  assert.match(child.stdout, /^LABRASTRO_RELEASE_MODE=rebuild$/m);
+});
+
+test("rebuild requires a main-branch record of the exact accepted tag object and identity", t => {
+  const f = fixture(t);
+  const { cwd, git, input, check } = f;
+  git("tag", "-a", input.tag, "-m", "accepted candidate");
+  const metadata = check({ requireTag: true });
+  const rebuild = () => check({ mode: "rebuild", requireTag: true });
+  assert.throws(() => check({ mode: "rebuild" }), /requires --require-tag/);
+  assert.throws(rebuild, /history record/);
+  const excludePath = join(cwd, ".git/info/exclude");
+  const excludes = readFileSync(excludePath, "utf8");
+  writeFileSync(excludePath, `${excludes}\n.github/release-history/\n`);
+  mkdirSync(join(cwd, ".github/release-history"), { recursive: true });
+  writeFileSync(join(cwd, ".github/release-history", `${input.tag}.json`), JSON.stringify(metadata));
+  assert.equal(git("status", "--porcelain"), "");
+  assert.throws(rebuild, /history record/, "an ignored local receipt is not approval");
+  writeFileSync(excludePath, excludes);
+  const history = recordHistory(f, [metadata]);
+  git("checkout", "--detach", input.sha);
+  assert.throws(rebuild, /history record/, "a record on an unmerged branch is not approval");
+  git("update-ref", "refs/remotes/origin/main", history);
+  assert.equal(rebuild().mode, "rebuild");
+  for (const patch of [
+    { repository: "someone/multica" }, { tag: "v1.2.3-labrastro.99" },
+    { version: "1.2.3-labrastro.99" }, { commit: "0".repeat(40) },
+    { tag_object: "0".repeat(40) }, { tag_exists: false }, { mode: "rebuild" },
+  ]) {
+    git("checkout", "--detach", history);
+    writeFileSync(join(cwd, ".github/release-history", `${input.tag}.json`), JSON.stringify({ ...metadata, ...patch }));
+    git("add", ".");
+    git("commit", "-m", "invalid history record");
+    git("update-ref", "refs/remotes/origin/main", git("rev-parse", "HEAD"));
+    git("checkout", "--detach", input.sha);
+    assert.throws(rebuild, /history record does not match/);
+  }
+  git("update-ref", "refs/remotes/origin/main", history);
+  git("tag", "-f", "-a", input.tag, "-m", "recreated annotation at the same source SHA");
+  assert.throws(rebuild, /history record does not match/);
 });
 
 test("a tagged rebuild still rejects conflicting versions on unrelated source history", t => {
@@ -230,6 +339,7 @@ test("release entry remains verification-only with explicit fork ownership and c
   assert.match(workflow, /^permissions:\n  contents: read\n/m);
   assert.doesNotMatch(workflow, /:\s*write\b|secrets\.|ghcr\.io|homebrew|--publish|args: release|workflow_dispatch|workflow_call/);
   assert.match(workflow, /args: check/);
+  assert.match(workflow, /run: node scripts\/check-release.mjs --require-tag --mode candidate/);
   const config = read(".goreleaser.yml");
   assert.match(config, /release:\n  github:\n    owner: AstralSolipsism\n    name: multica\n  disable: true\n  draft: true\n  make_latest: false/);
   assert.match(config, /node scripts\/check-release.mjs --require-tag --tag=\{\{ .Tag \}\} --version=\{\{ .Version \}\}/);

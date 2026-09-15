@@ -18,10 +18,12 @@ function tagParts(tag) {
   return match && match[0] === tag ? match.slice(1).map(BigInt) : null;
 }
 
-export function checkRelease({ repository, tag, sha, version, requireTag = false }, cwd = process.cwd(), env = process.env) {
+export function checkRelease({ repository, tag, sha, version, requireTag = false, mode = "candidate" }, cwd = process.cwd(), env = process.env) {
   requireThat(repository === RELEASE_REPOSITORY, `repository must be ${RELEASE_REPOSITORY}`);
   requireThat(!env.GITHUB_REPOSITORY || env.GITHUB_REPOSITORY === repository, "GitHub repository does not match candidate repository");
-  for (const [key, value] of Object.entries({ REPOSITORY: repository, TAG: tag, SHA: sha })) {
+  requireThat(["candidate", "rebuild"].includes(mode), "mode must be candidate or rebuild");
+  requireThat(mode !== "rebuild" || requireTag, "rebuild mode requires --require-tag");
+  for (const [key, value] of Object.entries({ REPOSITORY: repository, TAG: tag, SHA: sha, MODE: mode })) {
     const expected = env[`LABRASTRO_RELEASE_${key}`];
     requireThat(!expected || expected === value, `${key} disagrees with the explicit candidate input`);
   }
@@ -62,25 +64,40 @@ export function checkRelease({ repository, tag, sha, version, requireTag = false
   const aliases = git("tag", "--points-at", "HEAD").split("\n").filter(t => tagParts(t) && t !== tag);
   requireThat(aliases.length === 0, "candidate SHA already has another Labrastro tag");
 
-  // A tagged rebuild excludes itself and tags on descendant commits, so later
-  // candidates do not invalidate a historical identity. Earlier and off-lineage
-  // tags still constrain its sequence; tag existence alone proves nothing.
-  const successors = new Set(tagExists ? git("tag", "--contains", sha).split("\n") : []);
-  let lastRevision = 0n;
-  for (const existing of tags) {
-    if (successors.has(existing)) continue;
-    const previous = tagParts(existing);
-    const difference = parts.slice(0, 3).findIndex((n, i) => n !== previous[i]);
-    requireThat(difference === -1 || parts[difference] > previous[difference], "candidate base cannot go backwards");
-    if (difference === -1 && previous[3] > lastRevision) lastRevision = previous[3];
+  const identity = {
+    repository, tag, version: normalized, commit: sha, tag_exists: tagExists,
+    tag_object: tagExists ? git("rev-parse", `refs/tags/${tag}`) : null,
+  };
+  if (mode === "rebuild") {
+    // Only a separately reviewed acceptance record on fetched fork main can
+    // authorize historical verification. Local files and tag dates are not proof.
+    let record;
+    try {
+      record = JSON.parse(git("show", `refs/remotes/origin/main:.github/release-history/${tag}.json`));
+    } catch {
+      throw new Error("rebuild requires a valid history record on fetched fork main");
+    }
+    requireThat(Object.entries({ ...identity, mode: "candidate" }).every(([key, value]) => record?.[key] === value),
+      "history record does not match the accepted candidate identity and tag object");
+  } else {
+    // A new tag cannot turn a rejected proposal into an accepted candidate.
+    // Exclude only this tag, never other tags based on source ancestry or dates.
+    let lastRevision = 0n;
+    for (const existing of tags) {
+      if (existing === tag) continue;
+      const previous = tagParts(existing);
+      const difference = parts.slice(0, 3).findIndex((n, i) => n !== previous[i]);
+      requireThat(difference === -1 || parts[difference] > previous[difference], "candidate base cannot go backwards");
+      if (difference === -1 && previous[3] > lastRevision) lastRevision = previous[3];
+    }
+    requireThat(parts[3] === lastRevision + 1n, "candidate revision must be the next N for this base (start at 1)");
   }
-  requireThat(parts[3] === lastRevision + 1n, "candidate revision must be the next N for this base (start at 1)");
 
   const epoch = git("show", "-s", "--format=%ct", sha);
   return {
-    repository, tag, version: normalized, commit: sha,
+    ...identity, mode,
     date: new Date(Number(epoch) * 1000).toISOString().replace(".000Z", "Z"),
-    source_date_epoch: epoch, tag_exists: tagExists,
+    source_date_epoch: epoch,
     artifact_dir: `dist/candidate/${tag}`,
   };
 }
@@ -90,6 +107,7 @@ export function releaseEnvironment(metadata) {
     LABRASTRO_RELEASE_REPOSITORY: metadata.repository,
     LABRASTRO_RELEASE_TAG: metadata.tag,
     LABRASTRO_RELEASE_SHA: metadata.commit,
+    LABRASTRO_RELEASE_MODE: metadata.mode,
     VERSION: metadata.version, COMMIT: metadata.commit, DATE: metadata.date,
     NEXT_PUBLIC_APP_VERSION: metadata.version,
     SOURCE_DATE_EPOCH: metadata.source_date_epoch,
@@ -103,6 +121,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       repository: { type: "string", default: process.env.LABRASTRO_RELEASE_REPOSITORY },
       tag: { type: "string", default: process.env.LABRASTRO_RELEASE_TAG },
       sha: { type: "string", default: process.env.LABRASTRO_RELEASE_SHA },
+      mode: { type: "string", default: process.env.LABRASTRO_RELEASE_MODE ?? "candidate" },
       version: { type: "string" },
       "require-tag": { type: "boolean", default: false },
       format: { type: "string", default: "json" },

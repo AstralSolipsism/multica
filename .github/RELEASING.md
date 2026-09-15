@@ -51,7 +51,9 @@ The candidate identity is `(repository, full commit SHA, tag, version)`:
   version sequence.
 - For a new candidate on the same base, increment the greatest existing `N` by
   one. On a greater base, start at `1`. Compare components numerically (`.10`
-  follows `.9`); never decrement the base. A Labrastro suffix denotes our
+  follows `.9`); never decrement the base. The default `candidate` mode applies
+  these global constraints both before and after tagging, excluding only the
+  candidate's own tag from comparison. A Labrastro suffix denotes our
   internal sequence even though SemVer calls it a prerelease. Update comparison
   support belongs to OL-80; do not strip arbitrary suffixes to treat dev as a
   release.
@@ -59,10 +61,10 @@ The candidate identity is `(repository, full commit SHA, tag, version)`:
   tags. One source SHA has one Labrastro tag. Never move a tag or reuse an old
   version for changed source. Rebuilding the same identity for verification is
   allowed; overwriting already delivered artifacts is not implicitly allowed.
-  Rebuilds still check base/revision order: only tags on descendant commits are
-  excluded from the comparison, so later candidates do not invalidate an older
-  identity. Earlier and unrelated source tags remain constraints. Tag creation
-  time or existence alone is not proof of a valid sequence.
+  Historical verification requires explicit `rebuild` mode and an independently
+  reviewed acceptance record on fetched fork `main`, as described below. Source
+  ancestry, tag existence and tagger/commit dates cannot establish acceptance:
+  a tag newly created on old source must not receive an automatic exemption.
 - A proposal may be checked before tagging. It is not a reservation or a release:
   re-fetch the fork's tags and rerun the check before the separately authorized
   tag creation. Candidate packaging and draft delivery require `--require-tag`.
@@ -130,6 +132,7 @@ set -eu
 export LABRASTRO_RELEASE_REPOSITORY=AstralSolipsism/multica
 export LABRASTRO_RELEASE_TAG="$reviewed_tag"
 export LABRASTRO_RELEASE_SHA="$reviewed_sha"
+export LABRASTRO_RELEASE_MODE=candidate
 mkdir -p dist
 node scripts/check-release.mjs --require-tag > dist/candidate.json
 node scripts/check-release.mjs --require-tag --format env > dist/candidate.env
@@ -142,11 +145,59 @@ set +a
 Shell scripts must use `set -e` (or explicitly check exit status), and callers in
 other languages must fail on a nonzero subprocess result. JSON exports
 `repository`, `tag`, `version`, `commit`, `date`, `source_date_epoch`,
-`tag_exists`, `artifact_dir`. Env output exports the three inputs plus `VERSION`,
+`tag_exists`, `tag_object`, `mode`, `artifact_dir`. `tag_object` is the exact Git
+tag ref object ID (the annotated tag object, or commit for a lightweight tag),
+and is `null` for an untagged proposal. Env output exports the three inputs plus
+`LABRASTRO_RELEASE_MODE`, `VERSION`,
 `COMMIT`, `DATE`, `NEXT_PUBLIC_APP_VERSION`, `SOURCE_DATE_EPOCH`, and
 `LABRASTRO_ARTIFACT_DIR`. `DATE`/epoch use source commit time; record actual build
 time and tool versions separately. Flags that disagree with candidate env fail.
 Optional `--version` checks the actual version selected by a builder.
+`--mode` / `LABRASTRO_RELEASE_MODE` accepts only `candidate` (default) or
+`rebuild`; conflicting flag and environment values fail.
+
+### Historical verification with an acceptance record
+
+While a tagged candidate still satisfies the global sequence, preserve the
+successful `candidate.json` from `--require-tag --mode candidate` as
+`.github/release-history/<tag>.json` in a separate reviewed commit on fork
+`main`, before advancing the candidate sequence. The acceptance record reuses
+the preflight JSON. It must contain the exact `repository`,
+`tag`, `version`, `commit`, `tag_object`, `tag_exists: true` and
+`mode: "candidate"`. Keep the archived successful check with the review evidence;
+reviewers must verify acceptance before approving this record. A proposal's
+output or another rebuild's output cannot authorize historical verification.
+Do not infer or backfill acceptance just from an existing tag or its dates.
+
+The checker reads this fixed path from `refs/remotes/origin/main`, not HEAD,
+a local file or an arbitrary caller-supplied record. Authentic, freshly fetched
+fork refs and review of main-branch changes are the trust boundary, as for source
+approval. Missing/malformed records, changed identity or a replaced annotated
+tag object fail closed. The preflight reads acceptance records without writing
+them. OL-83/84 own preserving and submitting successful candidate evidence during
+handoff. An acceptance record establishes previously accepted identity; the
+product build, artifact delivery and operations gates below still apply.
+
+On the clean historical source checkout, set the same explicit repository,
+reviewed tag and SHA inputs, fetch fork main/tags as above, then run:
+
+```bash
+set -eu
+export LABRASTRO_RELEASE_MODE=rebuild
+mkdir -p dist
+node scripts/check-release.mjs --require-tag > dist/rebuild.json
+node scripts/check-release.mjs --require-tag --format env > dist/rebuild.env
+```
+
+This example requires the historical source to contain this guarded entry.
+For older source, invoke the reviewed current checker by absolute path from a
+separate tool checkout, keeping the working directory at the historical SHA.
+Build consumers must use the reviewed guard, not an older packaging entry that
+lacks it. The same `rebuild` environment is read by GoReleaser's before-hook;
+tag-push workflow validation is explicitly pinned to `candidate` mode. A later
+version may coexist with an approved historical rebuild, while an unrecorded
+retroactive tag remains rejected in both modes. All other source, repository,
+version, clean-tree and tag-identity checks still apply to rebuilds.
 
 | Existing entry | Required candidate inputs / output | Integration owner |
 | --- | --- | --- |

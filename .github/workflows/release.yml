@@ -50,7 +50,7 @@ jobs:
           LABRASTRO_RELEASE_REPOSITORY: AstralSolipsism/multica
           LABRASTRO_RELEASE_TAG: ${{ github.ref_name }}
           LABRASTRO_RELEASE_SHA: ${{ github.sha }}
-        run: node scripts/check-release.mjs --require-tag
+        run: node scripts/check-release.mjs --require-tag --mode candidate
 
       - name: Setup Go
         uses: actions/setup-go@v5
