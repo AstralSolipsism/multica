@@ -203,17 +203,28 @@ version, clean-tree and tag-identity checks still apply to rebuilds.
 | --- | --- | --- |
 | GoReleaser, repo root | Export the three inputs; `goreleaser release --clean --skip=publish`. The before-hook requires the tag and checks GoReleaser's selected tag/version against them. CLI archives land in `dist/goreleaser/`. No Homebrew or Release write. Snapshot versions fail this candidate entry; use normal source builds for dev. | OL-79 guard; OL-83 collection |
 | `make build` / direct Go build | Run preflight first, then `make build VERSION="$VERSION" COMMIT="$COMMIT" DATE="$DATE"`. `GOOS` and `GOARCH` select the binary target; `CGO_ENABLED=0` for distributed CLI. All distributed Go binaries retain full source SHA and Go build metadata. | OL-82 |
-| Web standalone | Preflight, then `STANDALONE=true NEXT_PUBLIC_APP_VERSION="$VERSION" pnpm --filter @multica/web build`. Include standalone output, `.next/static`, public assets, LICENSE/NOTICE and source/build evidence. Do not reuse a cached build from another version. | OL-81 |
-| Desktop `apps/desktop/scripts/package.mjs` | Preflight before cleanup/build, pass normalized version to `extraMetadata.version`; pass the same full SHA/version/date to `bundle-cli.mjs`. Invoke through `pnpm -C apps/desktop package -- --linux AppImage --win --x64 --arm64 --publish never`. Generic internal feed stays configured. | OL-81 |
+| Web standalone | Preflight, then `node scripts/build-candidate-web.mjs`. It runs `STANDALONE=true NEXT_PUBLIC_APP_VERSION="$VERSION" pnpm --filter @multica/web build` itself, refuses output it cannot prove belongs to this version, and packs standalone output, `.next/static`, public assets, LICENSE/NOTICE and `web-build.json` evidence into `labrastro-web-<version>-linux-amd64-node-standalone.tar.gz` under `C/assets/` plus the inactive `C/downloads/releases/<tag>/`. | OL-81 |
+| Desktop `apps/desktop/scripts/package.mjs` | Preflight runs before cleanup/build inside `package.mjs` whenever the three release inputs are set; the preflight version goes to `extraMetadata.version` and the same version/full SHA/date reach `bundle-cli.mjs` as `VERSION`/`COMMIT`/`DATE`. Candidate packaging is always local: `--publish never` is pinned and any other publish mode fails. Invoke through `pnpm -C apps/desktop package -- --linux AppImage --win --x64 --arm64`. Generic internal feed stays configured. Afterwards `node apps/desktop/scripts/stage-candidate.mjs` verifies each target (app version/notices, bundled CLI platform/arch/version, installer hashes, channel pact) and writes the version directory, proposed feeds and inventory below. | OL-81 |
 | Local `Dockerfile` / `Dockerfile.web` | Preflight on host source, backend args `VERSION`, `COMMIT`, `DATE`; Web arg `NEXT_PUBLIC_APP_VERSION`. Local image names `labrastro-backend:$LABRASTRO_RELEASE_TAG` and `labrastro-web:$LABRASTRO_RELEASE_TAG`; record full revision/version OCI labels and local Image IDs. Use local build/load, never push. | OL-82 |
 
-The table is the interface for successor work. Backend archives now use
+The table is the interface for successor work. Web and Desktop candidate
+entries are implemented as `scripts/build-candidate-web.mjs`,
+`apps/desktop/scripts/package.mjs` candidate mode and
+`apps/desktop/scripts/stage-candidate.mjs`. Backend archives now use
 `make candidate-backend`; local application images use `make candidate-images`.
 Both invoke the common tagged preflight and verify produced bytes; see
 [local build instructions](../docs/local-builds.md). Plain development commands
-are not verified candidates. Web/Desktop integration and full artifact
-aggregation remain with their respective successor tasks.
+are not verified candidates. Full artifact aggregation remains with OL-83.
 Do not turn a missing bundled CLI, missing toolchain or skipped build into success.
+
+Component entries write per-component inventory fragments
+(`C/assets/<component>-inventory.json`) holding the `artifacts[]` objects
+described below; the aggregation pipeline merges them into
+`C/assets/manifest.json`. Desktop staging also emits
+`C/assets/desktop-verification.json`, `C/activation/latest.json` and
+`C/activation/desktop/*.yml`; Web emits `C/assets/web-build.json`. All of
+these are inactive proposals — never live pointer writes.
+
 
 ## Artifact directory and inventory
 

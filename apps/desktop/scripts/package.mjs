@@ -1,10 +1,20 @@
 #!/usr/bin/env node
 // Wrapper around `electron-builder` that keeps the Desktop version in
-// lockstep with the CLI. Both are derived from `git describe --tags
-// --match 'v[0-9]*' --always --dirty` — the same source GoReleaser reads
-// for the CLI
-// binary via the `main.version` ldflag — so a single `vX.Y.Z` tag push
-// produces matching CLI and Desktop versions.
+// lockstep with the CLI.
+//
+// Candidate release mode (LABRASTRO_RELEASE_REPOSITORY/TAG/SHA set): the
+// shared preflight in scripts/check-release.mjs validates the reviewed
+// (repository, tag, full SHA) identity BEFORE any cleanup or build, its
+// normalized version (tag without `v`) is written to extraMetadata.version,
+// and the same version/full SHA/source-commit date are handed to
+// bundle-cli.mjs as VERSION/COMMIT/DATE. Packaging is always local
+// (`--publish never` is pinned); staging and feed preparation live in
+// scripts/stage-candidate.mjs, and the fork draft upload is a separate
+// authorized step.
+//
+// Development mode (no release env): both versions are derived from
+// `git describe --tags --match 'v[0-9]*' --always --dirty` — the same
+// source GoReleaser reads for the CLI binary via the `main.version` ldflag.
 //
 // Builds the Electron bundles once, then for each requested target
 // (platform + arch) compiles the matching Go CLI into resources/bin/ and
@@ -30,9 +40,14 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+// Circular by design: check-release.mjs imports normalizeGitVersion from this
+// file. Neither side touches the other's bindings at module-evaluation time,
+// so the ESM cycle resolves cleanly.
+import { checkRelease } from "../../../scripts/check-release.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(here, "..");
+const repoRoot = resolve(desktopRoot, "..", "..");
 const bundleCliScript = resolve(here, "bundle-cli.mjs");
 
 const PLATFORM_CONFIG = {
@@ -155,6 +170,71 @@ export const DESCRIBE_ARGS = [
 // isolation — the gap that let the Windows quoting regression through CI.
 export function deriveVersion(cwd) {
   return normalizeGitVersion(git(DESCRIBE_ARGS, cwd));
+}
+
+/**
+ * Candidate release inputs from the environment. Returns null when no
+ * LABRASTRO_RELEASE_* variable is set — the everyday development path. When
+ * any of them is set, all three must be present: candidate packaging runs on
+ * the reviewed identity from scripts/check-release.mjs, never on a partial
+ * override. mode comes from LABRASTRO_RELEASE_MODE (candidate | rebuild).
+ */
+export function candidateReleaseInputs(env = process.env) {
+  const repository = env.LABRASTRO_RELEASE_REPOSITORY;
+  const tag = env.LABRASTRO_RELEASE_TAG;
+  const sha = env.LABRASTRO_RELEASE_SHA;
+  if (!repository && !tag && !sha) return null;
+  if (!repository || !tag || !sha) {
+    throw new Error(
+      "[package] candidate mode needs LABRASTRO_RELEASE_REPOSITORY, " +
+        "LABRASTRO_RELEASE_TAG and LABRASTRO_RELEASE_SHA together",
+    );
+  }
+  return {
+    repository,
+    tag,
+    sha,
+    mode: env.LABRASTRO_RELEASE_MODE ?? "candidate",
+  };
+}
+
+/**
+ * Candidate packaging is strictly local: installers and update metadata are
+ * generated, then collected into the artifact directory by
+ * scripts/stage-candidate.mjs. electron-builder must not publish anything —
+ * the old workflow's `--publish always` targeted GitHub Releases, which is
+ * not the Labrastro feed. Reject an explicit publish request and pin
+ * `--publish never` when the caller left it out.
+ */
+export function enforceCandidatePublishPolicy(sharedArgs) {
+  const args = [...sharedArgs];
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i];
+    if (token === "--publish") {
+      const value = args[i + 1];
+      if (value !== "never") {
+        throw new Error(
+          `[package] candidate builds cannot publish (got --publish ${value ?? "<missing>"}); ` +
+            "local packaging uses --publish never, feed upload is a separate authorized step",
+        );
+      }
+      i += 1;
+      continue;
+    }
+    if (token.startsWith("--publish=")) {
+      const value = token.slice("--publish=".length);
+      if (value !== "never") {
+        throw new Error(
+          `[package] candidate builds cannot publish (got --publish=${value}); ` +
+            "local packaging uses --publish never, feed upload is a separate authorized step",
+        );
+      }
+    }
+  }
+  if (!args.includes("--publish") && !args.some((a) => a.startsWith("--publish="))) {
+    args.push("--publish", "never");
+  }
+  return args;
 }
 
 function uniqueOrdered(values) {
@@ -361,6 +441,25 @@ export function builderArgsForTarget(
 function main() {
   const passthrough = stripLeadingSeparator(process.argv.slice(2));
   const parsed = parsePackageArgs(passthrough);
+  const candidate = candidateReleaseInputs();
+  let candidateEnv = null;
+  if (candidate) {
+    // Candidate preflight runs before ANY cleanup or build: a rejected
+    // identity must leave dist/ and the worktree untouched. It validates the
+    // repository, exact HEAD, clean source, fork-main ancestry, the immutable
+    // tag and the global revision order, and returns the canonical version.
+    const metadata = checkRelease({ ...candidate, requireTag: true }, repoRoot);
+    parsed.sharedArgs = enforceCandidatePublishPolicy(parsed.sharedArgs);
+    console.log(
+      `[package] candidate ${metadata.tag} → version ${metadata.version} ` +
+        `(commit ${metadata.commit}, mode ${metadata.mode})`,
+    );
+    candidateEnv = {
+      VERSION: metadata.version,
+      COMMIT: metadata.commit,
+      DATE: metadata.date,
+    };
+  }
   const buildMatrix = resolveBuildMatrix(parsed);
   console.log(
     `[package] build matrix → ${buildMatrix.map(formatTarget).join(", ")}`,
@@ -409,9 +508,13 @@ function main() {
   }
 
   // Step 2: derive the version that should be written into the app.
-  const version = deriveVersion();
+  // Candidate builds take the preflight-validated version; development
+  // builds keep the git-describe fallback.
+  const version = candidateEnv?.VERSION ?? deriveVersion();
   if (version) {
-    console.log(`[package] Desktop version → ${version} (from git describe)`);
+    console.log(
+      `[package] Desktop version → ${version} (${candidateEnv ? "release preflight" : "from git describe"})`,
+    );
   } else {
     console.warn(
       "[package] could not derive version from git; falling back to package.json",
@@ -426,7 +529,10 @@ function main() {
     );
   }
 
-  const useScopedOutputDir = buildMatrix.length > 1;
+  // Candidate builds always use per-target output directories so
+  // scripts/stage-candidate.mjs can verify and collect each target in
+  // isolation, even when only one target is requested.
+  const useScopedOutputDir = buildMatrix.length > 1 || candidateEnv !== null;
 
   // Step 3: for each requested target, build the matching CLI into
   // resources/bin/ and package that target in isolation.
@@ -444,6 +550,9 @@ function main() {
       {
         stdio: "inherit",
         cwd: desktopRoot,
+        // Candidate mode hands the preflight stamp to bundle-cli, which
+        // cross-checks it against the LABRASTRO_RELEASE_* inputs.
+        env: candidateEnv ? { ...process.env, ...candidateEnv } : process.env,
       },
     );
 

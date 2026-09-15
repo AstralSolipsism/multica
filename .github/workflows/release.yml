@@ -9,7 +9,9 @@ on:
       - ".github/RELEASING.md"
       - ".goreleaser.yml"
       - "scripts/check-release*"
+      - "scripts/build-candidate-web*"
       - "apps/desktop/scripts/package.mjs"
+      - "apps/desktop/scripts/stage-candidate.mjs"
   push:
     branches: [main]
     tags: ["v*-labrastro.*"]
@@ -18,7 +20,9 @@ on:
       - ".github/RELEASING.md"
       - ".goreleaser.yml"
       - "scripts/check-release*"
+      - "scripts/build-candidate-web*"
       - "apps/desktop/scripts/package.mjs"
+      - "apps/desktop/scripts/stage-candidate.mjs"
 
 permissions:
   contents: read
@@ -42,7 +46,7 @@ jobs:
           node-version: 22
 
       - name: Test candidate guards and publishing isolation
-        run: node --test scripts/check-release.test.mjs
+        run: node --test scripts/check-release.test.mjs scripts/build-candidate-web.test.mjs
 
       - name: Validate a pushed candidate tag
         if: github.ref_type == 'tag'

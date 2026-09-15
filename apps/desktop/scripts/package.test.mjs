@@ -5,14 +5,17 @@ import { delimiter, join, resolve } from "node:path";
 import { afterEach, describe, it, expect } from "vitest";
 import {
   builderArgsForTarget,
+  candidateReleaseInputs,
   deriveVersion,
   DESCRIBE_ARGS,
+  enforceCandidatePublishPolicy,
   envWithLocalBins,
   normalizeGitVersion,
   parsePackageArgs,
   resolveBuildMatrix,
   stripLeadingSeparator,
 } from "./package.mjs";
+import { resolveCliStamp } from "./bundle-cli.mjs";
 
 describe("normalizeGitVersion", () => {
   it("returns null for empty / nullish input", () => {
@@ -429,6 +432,153 @@ describe("envWithLocalBins", () => {
   });
 });
 
+describe("candidateReleaseInputs", () => {
+  const full = {
+    LABRASTRO_RELEASE_REPOSITORY: "AstralSolipsism/multica",
+    LABRASTRO_RELEASE_TAG: "v0.4.43-labrastro.2",
+    LABRASTRO_RELEASE_SHA: "a".repeat(40),
+  };
+
+  it("returns null when no release env is set (development path)", () => {
+    expect(candidateReleaseInputs({})).toBe(null);
+    expect(candidateReleaseInputs({ PATH: "/usr/bin" })).toBe(null);
+  });
+
+  it("returns the three inputs with the default candidate mode", () => {
+    expect(candidateReleaseInputs(full)).toEqual({
+      repository: "AstralSolipsism/multica",
+      tag: "v0.4.43-labrastro.2",
+      sha: "a".repeat(40),
+      mode: "candidate",
+    });
+  });
+
+  it("honours an explicit rebuild mode", () => {
+    expect(
+      candidateReleaseInputs({ ...full, LABRASTRO_RELEASE_MODE: "rebuild" })?.mode,
+    ).toBe("rebuild");
+  });
+
+  it("rejects partial release env instead of guessing", () => {
+    expect(() =>
+      candidateReleaseInputs({ LABRASTRO_RELEASE_TAG: full.LABRASTRO_RELEASE_TAG }),
+    ).toThrow(/together/);
+    expect(() =>
+      candidateReleaseInputs({
+        LABRASTRO_RELEASE_REPOSITORY: full.LABRASTRO_RELEASE_REPOSITORY,
+        LABRASTRO_RELEASE_SHA: full.LABRASTRO_RELEASE_SHA,
+      }),
+    ).toThrow(/together/);
+  });
+});
+
+describe("enforceCandidatePublishPolicy", () => {
+  it("pins --publish never when the caller left it out", () => {
+    expect(enforceCandidatePublishPolicy(["--x64"])).toEqual([
+      "--x64",
+      "--publish",
+      "never",
+    ]);
+  });
+
+  it("keeps an explicit --publish never", () => {
+    expect(enforceCandidatePublishPolicy(["--publish", "never"])).toEqual([
+      "--publish",
+      "never",
+    ]);
+    expect(enforceCandidatePublishPolicy(["--publish=never"])).toEqual([
+      "--publish=never",
+    ]);
+  });
+
+  it("rejects any real publish mode — feed upload is a separate authorized step", () => {
+    // The old workflow's `--publish always` pushed update metadata to GitHub
+    // Releases. Candidate packaging must stay local; the internal generic
+    // feed is populated by staging + an authorized upload, never by
+    // electron-builder itself.
+    for (const args of [
+      ["--publish", "always"],
+      ["--publish", "onTag"],
+      ["--publish", "onTagOrDraft"],
+      ["--publish=always"],
+    ]) {
+      expect(() => enforceCandidatePublishPolicy(args)).toThrow(/cannot publish/);
+    }
+  });
+
+  it("rejects a bare trailing --publish", () => {
+    expect(() => enforceCandidatePublishPolicy(["--publish"])).toThrow(
+      /cannot publish/,
+    );
+  });
+});
+
+describe("resolveCliStamp (bundle-cli candidate stamp)", () => {
+  const env = {
+    LABRASTRO_RELEASE_REPOSITORY: "AstralSolipsism/multica",
+    LABRASTRO_RELEASE_TAG: "v0.4.43-labrastro.2",
+    LABRASTRO_RELEASE_SHA: "b".repeat(40),
+    VERSION: "0.4.43-labrastro.2",
+    COMMIT: "b".repeat(40),
+    DATE: "2026-09-15T01:02:03Z",
+  };
+
+  it("uses the preflight stamp in candidate mode", () => {
+    expect(resolveCliStamp(env)).toEqual({
+      version: "0.4.43-labrastro.2",
+      commit: "b".repeat(40),
+      date: "2026-09-15T01:02:03Z",
+      source: "candidate",
+    });
+  });
+
+  it("keeps the git-describe development fallback when no release env is set", () => {
+    expect(
+      resolveCliStamp(
+        {},
+        { describe: "v0.4.43-12-gdeadbeef", head: "deadbeef", now: "2026-09-15T01:02:03Z" },
+      ),
+    ).toEqual({
+      version: "v0.4.43-12-gdeadbeef",
+      commit: "deadbeef",
+      date: "2026-09-15T01:02:03Z",
+      source: "git-describe",
+    });
+    expect(resolveCliStamp({}, { now: "2026-09-15T01:02:03Z" })).toEqual({
+      version: "dev",
+      commit: "unknown",
+      date: "2026-09-15T01:02:03Z",
+      source: "git-describe",
+    });
+  });
+
+  it("fails closed on partial release env", () => {
+    expect(() =>
+      resolveCliStamp({ LABRASTRO_RELEASE_TAG: env.LABRASTRO_RELEASE_TAG }),
+    ).toThrow(/together/);
+  });
+
+  it("fails closed when preflight outputs are missing", () => {
+    const { VERSION, ...withoutVersion } = env;
+    expect(() => resolveCliStamp(withoutVersion)).toThrow(/VERSION, COMMIT and DATE/);
+  });
+
+  it("rejects a VERSION that does not match the release tag", () => {
+    expect(() =>
+      resolveCliStamp({ ...env, VERSION: "0.4.43-labrastro.3" }),
+    ).toThrow(/does not match release tag/);
+    expect(() => resolveCliStamp({ ...env, VERSION: "dev" })).toThrow(
+      /does not match release tag/,
+    );
+  });
+
+  it("rejects a COMMIT that does not match the release SHA", () => {
+    expect(() => resolveCliStamp({ ...env, COMMIT: "c".repeat(40) })).toThrow(
+      /COMMIT does not match/,
+    );
+  });
+});
+
 describe("electron-builder.yml packaging config", () => {
   // Regression guard for github.com/multica-ai/multica/issues/5595. The
   // multi-arch release build writes each target's output to
@@ -472,5 +622,23 @@ describe("electron-builder.yml packaging config", () => {
     const entries = readFilesBlock(readFileSync(configPath, "utf-8"));
     expect(entries.length).toBeGreaterThan(0);
     expect(entries).toContain("!dist/**");
+  });
+
+  it("keeps the update provider on the internal generic feed, never upstream GitHub", () => {
+    // Installed clients resolve updates against this block. Pointing it back
+    // at a GitHub provider would let an upstream release overwrite the
+    // customized build; candidate packaging stages feed files locally and an
+    // authorized step uploads them — electron-builder never publishes.
+    expect(configPath, "electron-builder.yml not found").toBeTruthy();
+    const raw = readFileSync(configPath, "utf-8");
+    const publishMatch = raw.match(/^publish:\n((?: {2,}.*\n?)*)/m);
+    expect(publishMatch, "publish block not found").toBeTruthy();
+    const publish = publishMatch[1];
+    expect(publish).toContain("provider: generic");
+    expect(publish).toContain(
+      "url: https://multica.outlune.com/downloads/desktop",
+    );
+    expect(publish).not.toMatch(/provider:\s*github/);
+    expect(publish).not.toMatch(/multica-ai/);
   });
 });
