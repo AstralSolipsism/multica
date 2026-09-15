@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { afterEach, describe, it, expect } from "vitest";
 import {
+  assertCandidatePublishIsolated,
   builderArgsForTarget,
   candidateReleaseInputs,
   deriveVersion,
@@ -17,13 +17,6 @@ import {
   stripLeadingSeparator,
 } from "./package.mjs";
 import { resolveCliStamp } from "./bundle-cli.mjs";
-
-// Resolve the desktop package dir without import.meta.url (not a file:// URL
-// under the vitest transform), tolerating a repo-root cwd.
-const desktopRoot = [
-  resolve(process.cwd(), "apps/desktop"),
-  process.cwd(),
-].find((candidate) => existsSync(join(candidate, "electron-builder.yml")));
 
 describe("normalizeGitVersion", () => {
   it("returns null for empty / nullish input", () => {
@@ -510,7 +503,7 @@ describe("enforceCandidatePublishPolicy", () => {
     ]);
   });
 
-  it("rejects any real publish mode, including the -p alias — feed upload is a separate authorized step", () => {
+  it("rejects any real publish mode, in every yargs spelling — feed upload is a separate authorized step", () => {
     // The old workflow's `--publish always` pushed update metadata to GitHub
     // Releases. Candidate packaging must stay local; the internal generic
     // feed is populated by staging + an authorized upload, never by
@@ -523,55 +516,60 @@ describe("enforceCandidatePublishPolicy", () => {
       ["-p", "always"],
       ["-p=always"],
       ["-p", "onTag"],
+      // yargs also resolves the long-form alias and short clusters.
+      ["--p", "always"],
+      ["--p=always"],
+      ["-lp", "always"],
+      ["-pl", "always"],
     ]) {
       expect(() => enforceCandidatePublishPolicy(args)).toThrow(/cannot publish/);
     }
   });
 
-  it("rejects a bare trailing --publish or -p", () => {
+  it("rejects a bare trailing publish flag in any spelling", () => {
     expect(() => enforceCandidatePublishPolicy(["--publish"])).toThrow(
       /cannot publish/,
     );
     expect(() => enforceCandidatePublishPolicy(["-p"])).toThrow(/cannot publish/);
+    expect(() => enforceCandidatePublishPolicy(["--p"])).toThrow(/cannot publish/);
+  });
+});
+
+describe("assertCandidatePublishIsolated (real electron-builder parser)", () => {
+  it("accepts guarded args through the full wrapper chain, resolving to scalar never", () => {
+    // The same wrapper path main() takes: parsePackageArgs →
+    // enforceCandidatePublishPolicy → builderArgsForTarget → the real
+    // electron-builder yargs/normalizeOptions pipeline.
+    for (const input of [[], ["--publish", "never", "--publish", "never"], ["-p=never"]]) {
+      const parsed = parsePackageArgs(["--linux", "AppImage", "--x64", ...input]);
+      parsed.sharedArgs = enforceCandidatePublishPolicy(parsed.sharedArgs);
+      const args = builderArgsForTarget(
+        { platform: "linux", arch: "x64" },
+        parsed,
+        "0.4.43-labrastro.2",
+        { useScopedOutputDir: true },
+      );
+      expect(() => assertCandidatePublishIsolated(args)).not.toThrow();
+    }
   });
 
-  it("passes the real electron-builder parser as scalar never with isPublish=false", () => {
-    // Integration guard through the actual yargs/normalizeOptions/
-    // PublishManager pipeline the builder uses, so a parser change (alias,
-    // array coercion) cannot silently re-enable publishing.
-    const requireDesktop = createRequire(join(desktopRoot, "package.json"));
-    const requireBuilder = createRequire(
-      requireDesktop.resolve("electron-builder/package.json"),
-    );
-    const requireAppBuilder = createRequire(
-      requireBuilder.resolve("app-builder-lib/package.json"),
-    );
-    const { configureBuildCommand, normalizeOptions } = requireBuilder("./out/builder.js");
-    const { PublishManager } = requireAppBuilder("./out/publish/PublishManager.js");
-    const { CancellationToken } = requireAppBuilder("builder-util-runtime");
-    const yargs = requireBuilder("yargs/yargs");
-
-    for (const input of [
-      [],
-      ["--publish", "never"],
-      ["-p", "never"],
-      ["--publish=never"],
-      ["--publish", "never", "--publish", "never"],
-      ["--linux", "AppImage", "--x64"],
-    ]) {
-      const guarded = enforceCandidatePublishPolicy(input);
-      const options = normalizeOptions(
-        configureBuildCommand(yargs(guarded)).exitProcess(false).parse(),
-      );
-      expect(options.publish, JSON.stringify(input)).toBe("never");
-      const packager = {
-        cancellationToken: new CancellationToken(),
-        onAfterPack() {},
-        onArtifactCreated() {},
-      };
-      const manager = new PublishManager(packager, options);
-      expect(manager.isPublish, JSON.stringify(input)).toBe(false);
+  it("rejects every publish-spelling bypass, and even an unguarded arg list", () => {
+    // Any form that slipped the textual guard is still caught by the real
+    // parser — the isolation closure.
+    for (const input of [["--p", "always"], ["--p=always"], ["-lp", "always"]]) {
+      const parsed = parsePackageArgs(["--linux", "AppImage", "--x64", ...input]);
+      expect(() => {
+        parsed.sharedArgs = enforceCandidatePublishPolicy(parsed.sharedArgs);
+      }).toThrow(/cannot publish/);
     }
+    const parsed = parsePackageArgs(["--linux", "AppImage", "--x64", "--publish", "always"]);
+    const args = builderArgsForTarget(
+      { platform: "linux", arch: "x64" },
+      parsed,
+      "0.4.43-labrastro.2",
+      { useScopedOutputDir: true },
+    );
+    expect(() => assertCandidatePublishIsolated(args)).toThrow(/publish mode/);
   });
 });
 

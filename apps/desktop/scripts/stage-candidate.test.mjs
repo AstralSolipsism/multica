@@ -20,13 +20,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
-import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DESKTOP_TARGETS,
   goBuildSetting,
   INTERNAL_FEED_URL,
   loadDesktopModules,
+  resolveAppBuilderBin,
   stageDesktopCandidate,
   verifyBlockmap,
   verifyTarget,
@@ -83,21 +83,18 @@ function goBuildInfoForPath(binaryPath) {
 const nativeHost = { goos: "linux", goarch: "amd64" };
 const nativeCliVersionStub = () => ({ version: VERSION, commit: SHA });
 
-// Real-format blockmap (gzip JSON) describing the given installer bytes.
-function blockmapBytes(installerBytes) {
-  return gzipSync(
-    JSON.stringify({
-      version: "2",
-      files: [
-        {
-          name: "file",
-          offset: 0,
-          checksums: ["fakeblockchecksum"],
-          sizes: [installerBytes.length],
-        },
-      ],
-    }),
-  );
+// Build a REAL blockmap for the file at installerPath using the same
+// app-builder binary electron-builder invokes — fixtures then exercise the
+// actual format and checksum algorithm.
+function writeRealBlockmap(installerPath, blockmapPath = `${installerPath}.blockmap`) {
+  execFileSync(resolveAppBuilderBin(), [
+    "blockmap",
+    "--input",
+    installerPath,
+    "--output",
+    blockmapPath,
+  ]);
+  return blockmapPath;
 }
 
 /**
@@ -148,10 +145,7 @@ async function makeTargetFixture(distRoot, targetKey, overrides = {}) {
   );
   writeFileSync(join(dir, installerName), installerBytes);
   if (target.platform === "win" && !overrides.omitBlockmap) {
-    writeFileSync(
-      join(dir, `${installerName}.blockmap`),
-      overrides.blockmapBytes ?? blockmapBytes(installerBytes),
-    );
+    writeRealBlockmap(join(dir, installerName));
   }
 
   const channelFile =
@@ -213,23 +207,35 @@ describe("goBuildSetting", () => {
 });
 
 describe("verifyBlockmap", () => {
-  it("accepts a blockmap whose block sizes sum to the installer size", () => {
+  it("accepts a real app-builder blockmap for the installer", () => {
     const root = tmpRoot();
     const installer = join(root, "a.exe");
-    const bytes = Buffer.from("0123456789".repeat(100));
-    writeFileSync(installer, bytes);
-    const blockmap = join(root, "a.exe.blockmap");
-    writeFileSync(blockmap, blockmapBytes(bytes));
-    expect(() => verifyBlockmap(blockmap, installer)).not.toThrow();
+    writeFileSync(installer, Buffer.alloc(65536, 0x61));
+    writeRealBlockmap(installer);
+    expect(() => verifyBlockmap(`${installer}.blockmap`, installer)).not.toThrow();
   });
 
-  it("rejects a blockmap describing different content", () => {
+  it("rejects a blockmap for different content of the SAME length", () => {
+    const root = tmpRoot();
+    const installer = join(root, "a.exe");
+    writeFileSync(installer, Buffer.alloc(65536, 0x61));
+    writeRealBlockmap(installer);
+    // Every byte changed, length unchanged — a stale blockmap must fail.
+    writeFileSync(installer, Buffer.alloc(65536, 0x62));
+    expect(() => verifyBlockmap(`${installer}.blockmap`, installer)).toThrow(
+      /block checksums/,
+    );
+  });
+
+  it("rejects a blockmap describing a different length", () => {
     const root = tmpRoot();
     const installer = join(root, "a.exe");
     writeFileSync(installer, Buffer.from("0123456789".repeat(100)));
-    const blockmap = join(root, "a.exe.blockmap");
-    writeFileSync(blockmap, blockmapBytes(Buffer.from("shorter")));
-    expect(() => verifyBlockmap(blockmap, installer)).toThrow(/block sizes sum/);
+    writeRealBlockmap(installer);
+    writeFileSync(installer, Buffer.from("shorter"));
+    expect(() => verifyBlockmap(`${installer}.blockmap`, installer)).toThrow(
+      /block sizes sum|block checksums/,
+    );
   });
 
   it("rejects a blockmap that is not gzip JSON", () => {
@@ -392,12 +398,18 @@ describe("verifyTarget", () => {
     ).toThrow(/missing differential blockmap/);
   });
 
-  it("rejects a Windows target whose blockmap describes other bytes", async () => {
+  it("rejects a Windows target whose blockmap describes other bytes of the same length", async () => {
     const root = tmpRoot();
     const distRoot = join(root, "dist");
-    await makeTargetFixture(distRoot, "win-arm64", {
-      blockmapBytes: blockmapBytes(Buffer.from("unrelated content")),
-    });
+    const fixture = await makeTargetFixture(distRoot, "win-arm64");
+    // Rebuild the blockmap for same-length but different content.
+    const fixturePath = join(fixture.dir, fixture.installerName);
+    const other = join(fixture.dir, "other.tmp");
+    writeFileSync(other, Buffer.alloc(fixture.installerBytes.length, 0x41));
+    writeRealBlockmap(other);
+    writeFileSync(`${fixturePath}.blockmap`, readFileSync(`${other}.blockmap`));
+    rmSync(other);
+    rmSync(`${other}.blockmap`);
     expect(() =>
       verifyTarget("win-arm64", {
         metadata,
@@ -406,7 +418,7 @@ describe("verifyTarget", () => {
         goBuildInfo: goBuildInfoForPath,
         host: nativeHost,
       }),
-    ).toThrow(/block sizes sum/);
+    ).toThrow(/block checksums/);
   });
 
   it("rejects an unverified extra channel YAML riding along", async () => {
@@ -714,6 +726,67 @@ describe("incremental staging", () => {
     );
     expect(second.artifacts).toEqual(first.artifacts);
     expect(second.evidence).toEqual(first.evidence);
+  });
+
+  it("is byte-identical on a retry across a second boundary", async () => {
+    const root = tmpRoot();
+    const distRoot = join(root, "dist");
+    const artifactDir = join(root, "candidate");
+    await makeTargetFixture(distRoot, "linux-x64");
+    const first = stageDesktopCandidate(
+      baseOptions(distRoot, artifactDir, { targets: ["linux-x64"] }),
+    );
+    await new Promise((resolveWait) => setTimeout(resolveWait, 1100));
+    const second = stageDesktopCandidate(
+      baseOptions(distRoot, artifactDir, { targets: ["linux-x64"] }),
+    );
+    expect(second.artifacts).toEqual(first.artifacts);
+    const feedOf = (r) => r.artifacts.find((a) => a.component === "feed");
+    expect(feedOf(second).sha256).toBe(feedOf(first).sha256);
+    expect(second.evidence).toEqual(first.evidence);
+  });
+
+  it("requires activation feeds of all merged targets, not only this run's", async () => {
+    const root = tmpRoot();
+    const distRoot = join(root, "dist");
+    const artifactDir = join(root, "candidate");
+    await makeTargetFixture(distRoot, "linux-x64");
+    await makeTargetFixture(distRoot, "linux-arm64");
+    stageDesktopCandidate(
+      baseOptions(distRoot, artifactDir, { targets: ["linux-arm64"] }),
+    );
+    // The arm64 feeds vanish before the next invocation stages x64 only.
+    rmSync(join(artifactDir, "activation", "desktop", "labrastro-linux-arm64.yml"));
+    rmSync(join(artifactDir, "activation", "desktop", "latest-linux-arm64.yml"));
+    expect(() =>
+      stageDesktopCandidate(
+        baseOptions(distRoot, artifactDir, { targets: ["linux-x64"] }),
+      ),
+    ).toThrow(/requires activation feed labrastro-linux-arm64\.yml/);
+  });
+
+  it("rejects a prior feed switched to another architecture's installer", async () => {
+    const root = tmpRoot();
+    const distRoot = join(root, "dist");
+    const artifactDir = join(root, "candidate");
+    await makeTargetFixture(distRoot, "linux-x64");
+    await makeTargetFixture(distRoot, "linux-arm64");
+    stageDesktopCandidate(
+      baseOptions(distRoot, artifactDir, { targets: ["linux-arm64", "linux-x64"] }),
+    );
+    // Point the arm64 feeds at the x64 installer — must be caught even when
+    // the current run only re-stages x64.
+    const x64Feed = readFileSync(
+      join(artifactDir, "activation", "desktop", "labrastro-linux.yml"),
+    );
+    for (const name of ["labrastro-linux-arm64.yml", "latest-linux-arm64.yml"]) {
+      writeFileSync(join(artifactDir, "activation", "desktop", name), x64Feed);
+    }
+    expect(() =>
+      stageDesktopCandidate(
+        baseOptions(distRoot, artifactDir, { targets: ["linux-x64"] }),
+      ),
+    ).toThrow(/references .* but target linux-arm64 owns/);
   });
 
   it("preserves the prior delivery when a later invocation fails", async () => {

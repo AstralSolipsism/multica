@@ -52,6 +52,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -60,6 +61,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -276,18 +278,47 @@ export function verifyUpdateMetadataFile(ymlPath, fileBaseDir, version, modules,
   return generated;
 }
 
+// The app-builder binary electron-builder itself uses to build blockmaps,
+// resolved through the declared app-builder-bin dependency.
+let appBuilderBinPath = null;
+export function resolveAppBuilderBin(root = desktopRoot) {
+  if (appBuilderBinPath) return appBuilderBinPath;
+  const rootRequire = createRequire(join(root, "package.json"));
+  appBuilderBinPath = rootRequire("app-builder-bin").appBuilderPath;
+  return appBuilderBinPath;
+}
+
+function gunzipJson(path) {
+  return JSON.parse(gunzipSync(readFileSync(path)).toString("utf8"));
+}
+
+// Recompute the installer's blockmap with the real app-builder binary and
+// return the decompressed block map.
+export function recomputeBlockmap(installerPath, { binary, tmpDir } = {}) {
+  const bin = binary ?? resolveAppBuilderBin();
+  const tmp = join(
+    tmpDir ?? mkdtempSync(join(tmpdir(), "blockmap-check-")),
+    "recomputed.blockmap",
+  );
+  execFileSync(bin, ["blockmap", "--input", installerPath, "--output", tmp], {
+    encoding: "utf8",
+  });
+  return gunzipJson(tmp);
+}
+
 /**
  * A differential-update blockmap must exist for Windows NSIS installers and
  * describe the installer's actual content: gzip-compressed JSON whose block
- * size list sums to the installer size, one checksum per block. (AppImage
- * does not emit blockmaps; when one is present it is validated the same
- * way.)
+ * size list sums to the installer size, one checksum per block — and whose
+ * per-block checksums match a fresh app-builder recomputation, so a blockmap
+ * from another build of the same length cannot pass. (AppImage does not
+ * emit blockmaps; when one is present it is validated the same way.)
  */
-export function verifyBlockmap(blockmapPath, installerPath) {
+export function verifyBlockmap(blockmapPath, installerPath, { recompute = recomputeBlockmap } = {}) {
   const name = basename(blockmapPath);
   let parsed;
   try {
-    parsed = JSON.parse(gunzipSync(readFileSync(blockmapPath)).toString("utf8"));
+    parsed = gunzipJson(blockmapPath);
   } catch {
     throw new Error(`[stage-candidate] ${name} is not a valid gzip-compressed blockmap`);
   }
@@ -308,6 +339,18 @@ export function verifyBlockmap(blockmapPath, installerPath) {
   requireThat(
     total === installerSize,
     `${name} block sizes sum to ${total}, installer is ${installerSize} bytes`,
+  );
+  const recomputed = recompute(installerPath);
+  const summarize = (blockmap) =>
+    JSON.stringify(
+      (blockmap.files ?? []).map((entry) => ({
+        sizes: entry.sizes,
+        checksums: entry.checksums,
+      })),
+    );
+  requireThat(
+    summarize(parsed) === summarize(recomputed),
+    `${name} block checksums do not match the installer content`,
   );
 }
 
@@ -556,12 +599,14 @@ function activationMembers(activationDir) {
 
 /**
  * Re-validate the complete activation tree against the staged version
- * directory: every proposed feed parses, names the candidate version, and
- * every reference resolves to a staged file with matching size and SHA-512.
- * Runs over the MERGED tree, so previously staged targets are re-verified
- * on every incremental invocation.
+ * directory and the MERGED target set: every proposed feed parses, names
+ * the candidate version, and every reference resolves to a staged file with
+ * matching size and SHA-512. Beyond that, the channels required by ALL
+ * merged targets must exist, and each channel's references must name
+ * exactly the installer set its owning target produced — a deleted prior
+ * channel, or one switched to another architecture's installer, fails here.
  */
-function verifyActivationTree(activationDir, versionDir, tag, version, modules) {
+function verifyActivationTree(activationDir, versionDir, tag, version, modules, mergedEvidence) {
   const desktopDir = join(activationDir, "desktop");
   const feeds = existsSync(desktopDir)
     ? readdirSync(desktopDir).filter((name) => name.endsWith(".yml")).sort()
@@ -573,6 +618,42 @@ function verifyActivationTree(activationDir, versionDir, tag, version, modules) 
     verifyUpdateMetadataFile(join(desktopDir, name), versionDir, version, modules, {
       urlPrefix: `${tag}/`,
     });
+  }
+  const requiredFeeds = new Map(); // feed file → owning target key
+  for (const [targetKey, record] of Object.entries(mergedEvidence)) {
+    for (const name of [record.channel, record.compatibility_channel]) {
+      requireThat(typeof name === "string" && name.length > 0, `target ${targetKey} has no channel record`);
+      requireThat(
+        !requiredFeeds.has(name) || requiredFeeds.get(name) === targetKey,
+        `channel ${name} is claimed by two targets`,
+      );
+      requiredFeeds.set(name, targetKey);
+    }
+  }
+  for (const [name, targetKey] of requiredFeeds) {
+    const feedPath = join(desktopDir, name);
+    requireThat(
+      existsSync(feedPath),
+      `merged target ${targetKey} requires activation feed ${name}, but it is missing`,
+    );
+    const feed = verifyUpdateMetadataFile(feedPath, versionDir, version, modules, {
+      urlPrefix: `${tag}/`,
+    });
+    // The feed must serve its OWN target's installers — the same file set
+    // that target's generated channel YAML staged into the version dir.
+    const ownChannel = verifyUpdateMetadataFile(
+      join(versionDir, mergedEvidence[targetKey].channel),
+      versionDir,
+      version,
+      modules,
+    );
+    const ownFiles = new Set(ownChannel.files.map((file) => file.url));
+    const feedFiles = new Set(feed.files.map((file) => file.url.slice(`${tag}/`.length)));
+    requireThat(
+      ownFiles.size === feedFiles.size && [...ownFiles].every((file) => feedFiles.has(file)),
+      `activation feed ${name} references ${[...feedFiles].join(", ")} ` +
+        `but target ${targetKey} owns ${[...ownFiles].join(", ")}`,
+    );
   }
   const latest = JSON.parse(readFileSync(join(activationDir, "latest.json"), "utf8"));
   requireThat(
@@ -744,22 +825,41 @@ export function stageDesktopCandidate(options) {
   }
 
   // Proposed CLI pointer. Same shape the internal source serves today; the
-  // CLI version directory itself is OL-80's deliverable.
-  writeFileAtomic(
-    join(activationDir, "latest.json"),
-    `${JSON.stringify({ version: tag })}`,
-  );
+  // CLI version directory itself is OL-80's deliverable. Unchanged content
+  // is never rewritten, keeping retries byte-identical.
+  const latestPath = join(activationDir, "latest.json");
+  const latestContent = `${JSON.stringify({ version: tag })}`;
+  if (!existsSync(latestPath) || readFileSync(latestPath, "utf8") !== latestContent) {
+    writeFileAtomic(latestPath, latestContent);
+  }
 
   // --- Re-validate the MERGED activation tree ------------------------------
-  verifyActivationTree(activationDir, versionDir, tag, version, modules);
+  const mergedEvidence = {
+    ...priorEvidence,
+    ...Object.fromEntries(verified.map(([targetKey, result]) => [targetKey, result.evidence])),
+  };
+  verifyActivationTree(activationDir, versionDir, tag, version, modules, mergedEvidence);
 
   // --- Feed metadata archive over the complete activation tree -------------
+  // Deterministic: sorted members, zeroed owner/mtime, gzip -n — a retry of
+  // the same staged content yields the byte-identical archive.
   const feedName = `labrastro-feed-metadata-${version}.tar.gz`;
   const feedPath = join(assetsDir, feedName);
-  const tmpFeed = `${feedPath}.tmp-${process.pid}`;
-  rmSync(tmpFeed, { force: true });
-  execFileSync("tar", ["-czf", tmpFeed, "-C", artifactDir, "activation"]);
-  const listing = execFileSync("tar", ["-tzf", tmpFeed], { encoding: "utf8" })
+  const tmpTar = join(assetsDir, `.feed-${process.pid}.tar`);
+  rmSync(tmpTar, { force: true });
+  execFileSync("tar", [
+    "--sort=name",
+    "--owner=0",
+    "--group=0",
+    "--numeric-owner",
+    "--mtime=@0",
+    "-cf",
+    tmpTar,
+    "-C",
+    artifactDir,
+    "activation",
+  ]);
+  const listing = execFileSync("tar", ["-tf", tmpTar], { encoding: "utf8" })
     .split("\n")
     .filter(Boolean)
     .sort();
@@ -768,6 +868,14 @@ export function stageDesktopCandidate(options) {
     JSON.stringify(listing) === JSON.stringify(expected),
     `feed metadata archive members differ: ${listing.join(", ")}`,
   );
+  const tmpFeed = `${feedPath}.tmp-${process.pid}`;
+  rmSync(tmpFeed, { force: true });
+  const gzipped = execFileSync("gzip", ["-n", "-c", tmpTar], {
+    encoding: "buffer",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  writeFileSync(tmpFeed, gzipped);
+  rmSync(tmpTar, { force: true });
   renameSync(tmpFeed, feedPath);
   // The archive and evidence are regenerated from the merged tree on every
   // run — their version-directory copies are replaced, not conflict-checked.
@@ -776,10 +884,7 @@ export function stageDesktopCandidate(options) {
   copyFileSync(feedPath, join(releaseDir, feedName));
 
   // --- Merged evidence + inventory, written last ----------------------------
-  const evidence = { ...priorEvidence };
-  for (const [targetKey, result] of verified) {
-    evidence[targetKey] = result.evidence;
-  }
+  const evidence = mergedEvidence;
   writeFileAtomic(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
   copyFileSync(evidencePath, join(releaseDir, "desktop-verification.json"));
 

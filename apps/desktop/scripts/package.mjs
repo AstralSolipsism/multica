@@ -38,7 +38,8 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { rmSync } from "node:fs";
-import { delimiter, dirname, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 // Circular by design: check-release.mjs imports normalizeGitVersion from this
 // file. Neither side touches the other's bindings at module-evaluation time,
@@ -205,11 +206,15 @@ export function candidateReleaseInputs(env = process.env) {
  * the old workflow's `--publish always` targeted GitHub Releases, which is
  * not the Labrastro feed.
  *
- * electron-builder parses `--publish` and its `-p` alias with yargs, and a
- * repeated flag becomes an ARRAY (`publish: ['never','never']`), which its
- * PublishManager still treats as "publish enabled". This guard therefore
- * removes every publish form from the caller's args — rejecting any real
- * publish request — and appends exactly one scalar `--publish never`.
+ * electron-builder parses `--publish` and its aliases with yargs: the `-p`
+ * short flag, the `--p` long-form alias, short-flag CLUSTERS containing `p`
+ * (`-lp always` parses as `-l -p always`), and repeated flags, which become
+ * an ARRAY (`publish: ['never','never']`) that its PublishManager still
+ * treats as "publish enabled". This guard therefore removes every publish
+ * form from the caller's args — rejecting any real publish request — and
+ * appends exactly one scalar `--publish never`. Anything that could slip
+ * past this textual guard is caught by assertCandidatePublishIsolated,
+ * which runs the same parser electron-builder itself uses.
  */
 export function enforceCandidatePublishPolicy(sharedArgs) {
   const args = [];
@@ -221,21 +226,76 @@ export function enforceCandidatePublishPolicy(sharedArgs) {
   };
   for (let i = 0; i < sharedArgs.length; i += 1) {
     const token = sharedArgs[i];
-    if (token === "--publish" || token === "-p") {
+    if (token === "--publish" || token === "-p" || token === "--p") {
       const value = sharedArgs[i + 1];
       if (value !== "never") reject(value ?? "<missing>");
       i += 1; // consumed; exactly one is re-added below
       continue;
     }
-    if (token.startsWith("--publish=") || token.startsWith("-p=")) {
+    if (
+      token.startsWith("--publish=") ||
+      token.startsWith("-p=") ||
+      token.startsWith("--p=")
+    ) {
       const value = token.slice(token.indexOf("=") + 1);
       if (value !== "never") reject(value);
+      continue;
+    }
+    // yargs splits short-flag clusters: any remaining cluster containing
+    // "p" smuggles a publish flag past this guard (e.g. `-lp always` →
+    // `-l -p always`). Legitimate platform shorthands (-mwl) are consumed
+    // by parsePackageArgs before sharedArgs is built, so a "p" here can
+    // only mean publish.
+    if (/^-[A-Za-z]+$/.test(token) && token.includes("p")) {
+      reject(`cluster ${token}`);
       continue;
     }
     args.push(token);
   }
   args.push("--publish", "never");
   return args;
+}
+
+// The parser harness electron-builder's own CLI uses, loaded through the
+// declared electron-builder dependency — no transitive traversal.
+let builderParser = null;
+function loadBuilderParser() {
+  if (builderParser) return builderParser;
+  const rootRequire = createRequire(join(desktopRoot, "package.json"));
+  const builderRequire = createRequire(
+    rootRequire.resolve("electron-builder/package.json"),
+  );
+  const { configureBuildCommand, normalizeOptions } = builderRequire(
+    "./out/builder.js",
+  );
+  const yargs = builderRequire("yargs/yargs");
+  builderParser = { configureBuildCommand, normalizeOptions, yargs };
+  return builderParser;
+}
+
+/**
+ * Closure check on the FINAL builder argument list: run it through
+ * electron-builder's own yargs command definition and option normalization
+ * and require publish to resolve to the scalar "never" (which is exactly
+ * what PublishManager treats as isPublish=false). This catches every alias,
+ * cluster or repeat form the textual guard could miss.
+ */
+export function assertCandidatePublishIsolated(args) {
+  const { configureBuildCommand, normalizeOptions, yargs } = loadBuilderParser();
+  const parsed = configureBuildCommand(yargs(args))
+    .exitProcess(false)
+    .showHelpOnFail(false)
+    .fail((message, error) => {
+      throw error ?? new Error(message);
+    })
+    .parse();
+  const options = normalizeOptions(parsed);
+  if (options.publish !== "never") {
+    throw new Error(
+      `[package] candidate args resolve to publish mode ${JSON.stringify(options.publish)}; ` +
+        "candidate packaging must resolve to a scalar --publish never",
+    );
+  }
 }
 
 function uniqueOrdered(values) {
@@ -562,6 +622,14 @@ function main() {
       hostPlatform: process.platform,
       useScopedOutputDir,
     });
+
+    // Closure check: run the FINAL argument list for this target through
+    // electron-builder's own parser and require publish to resolve to the
+    // scalar "never". Any alias, cluster or repeat form that slipped the
+    // textual guard is caught here, before a single byte is packaged.
+    if (candidateEnv) {
+      assertCandidatePublishIsolated(builderArgs);
+    }
 
     // Step 4: invoke electron-builder for the current target only.
     // `shell: true` for the same Windows `.cmd` shim reason as the
