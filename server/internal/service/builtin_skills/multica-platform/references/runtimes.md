@@ -42,6 +42,18 @@ update runtimes, or check out arbitrary repos just to test.
 limited to its owner or a workspace owner/admin; the original initiator may keep
 polling that specific in-flight request if their admin role changes.
 
+CLI and daemon downloads use the internal Labrastro source. Release targets are
+`vX.Y.Z-labrastro.N` (the CLI also accepts the version without `v`). Compare the
+base numerically, then `N`; `.10` follows `.9`. Legacy numeric installed versions
+can migrate to Labrastro. Development, dirty and git-describe builds are protected.
+`multica update` and the installers leave the same or a newer installed version
+alone. Installer version guards check the actual destination binary, including
+when `MULTICA_BIN_DIR` selects a different installation from PATH.
+A server-triggered runtime update rejects a non-newer target. Missing or
+invalid checksums, archives and mismatched binary versions fail before replacement.
+Desktop-managed daemons still require a Desktop update. Self-host auto-update
+remains off by default and honors the existing opt-in/opt-out controls.
+
 `runtime delete` removes a runtime registration; if active agents are still
 bound, it refuses unless the user explicitly passes `--cascade`, which unbinds
 those agents and cancels their queued/running tasks before deleting the runtime.

@@ -10,14 +10,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -60,37 +61,15 @@ func releaseAssetsBase(tag string) string {
 	return downloadBase + "/cli/" + tag
 }
 
-// IsReleaseVersion reports whether v looks like a tagged release version
-// (e.g. "0.1.13", "v0.1.13") rather than a dev build (e.g. an empty version
-// or a `git describe`–style "v0.2.15-235-gdaf0e935"). The auto-update poller
-// uses this to skip self-update for source builds, where downgrading to a
-// public release would clobber unreleased changes.
+// IsReleaseVersion accepts Labrastro releases and legacy numeric releases as
+// installed versions. Dev, dirty, describe and placeholder builds stay protected.
 func IsReleaseVersion(v string) bool {
-	s := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(v), "v"))
-	if s == "" {
-		return false
-	}
-	parts := strings.Split(s, ".")
-	if len(parts) != 3 {
-		return false
-	}
-	for _, p := range parts {
-		if p == "" {
-			return false
-		}
-		for _, r := range p {
-			if r < '0' || r > '9' {
-				return false
-			}
-		}
-	}
-	return true
+	_, ok := parseReleaseVersion(v)
+	return ok
 }
 
-// IsNewerVersion reports whether latest is strictly newer than current. Both
-// arguments may carry an optional "v" prefix; non-numeric tails are ignored
-// (a 4th component, pre-release tag, etc.). Returns false if either side
-// cannot be parsed — the caller treats that as "stay on current".
+// IsNewerVersion compares base versions, then the numeric Labrastro revision.
+// A legacy numeric release has revision zero. Invalid inputs never upgrade.
 func IsNewerVersion(latest, current string) bool {
 	l, ok := parseReleaseVersion(latest)
 	if !ok {
@@ -100,47 +79,34 @@ func IsNewerVersion(latest, current string) bool {
 	if !ok {
 		return false
 	}
-	for i := 0; i < 3; i++ {
+	for i := range l {
 		if l[i] != c[i] {
+			// Canonical decimal strings compare numerically without overflow.
+			if len(l[i]) != len(c[i]) {
+				return len(l[i]) > len(c[i])
+			}
 			return l[i] > c[i]
 		}
 	}
 	return false
 }
 
-// parseReleaseVersion extracts the three numeric components of v. Returns
-// (parts, true) on success; (_, false) when v is missing, malformed, or
-// carries any non-numeric tail (a dev-describe suffix, a 4th component, a
-// pre-release tag, etc.). The strict shape is intentional: this is the only
-// parser used by IsNewerVersion, and the autoUpdateLoop must never silently
-// downgrade a developer build to a public release just because the
-// dev-describe patch happened to look numeric after trimming.
-func parseReleaseVersion(v string) ([3]int, bool) {
-	s := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(v), "v"))
-	if s == "" {
-		return [3]int{}, false
+var releaseVersionPattern = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-labrastro\.([1-9][0-9]*))?$`)
+
+func parseReleaseVersion(v string) ([4]string, bool) {
+	m := releaseVersionPattern.FindStringSubmatch(strings.TrimSpace(v))
+	if m == nil || (m[1] == "0" && m[2] == "0" && m[3] == "0") {
+		return [4]string{}, false
 	}
-	parts := strings.Split(s, ".")
-	if len(parts) != 3 {
-		return [3]int{}, false
+	if m[4] == "" {
+		m[4] = "0"
 	}
-	var out [3]int
-	for i, p := range parts {
-		if p == "" {
-			return [3]int{}, false
-		}
-		for _, r := range p {
-			if r < '0' || r > '9' {
-				return [3]int{}, false
-			}
-		}
-		n, err := strconv.Atoi(p)
-		if err != nil {
-			return [3]int{}, false
-		}
-		out[i] = n
-	}
-	return out, true
+	return [4]string{m[1], m[2], m[3], m[4]}, true
+}
+
+func isLabrastroRelease(v string) bool {
+	parts, ok := parseReleaseVersion(v)
+	return ok && parts[3] != "0"
 }
 
 // latestManifest is the subset of the release source's latest.json we need.
@@ -167,8 +133,8 @@ func FetchLatestVersion() (string, error) {
 		return "", err
 	}
 	tag := strings.TrimSpace(manifest.Version)
-	if tag == "" {
-		return "", fmt.Errorf("release manifest has no version")
+	if tag != manifest.Version || !strings.HasPrefix(tag, "v") || !isLabrastroRelease(tag) {
+		return "", fmt.Errorf("release manifest version must be vX.Y.Z-labrastro.N, got %q", tag)
 	}
 	return tag, nil
 }
@@ -210,11 +176,15 @@ func resolveReleaseAsset(manifest []byte, tag, goos, goarch string) (string, str
 	for _, candidate := range releaseAssetCandidates(tag, goos, goarch) {
 		if sum, err := parseChecksumManifest(manifest, candidate); err == nil {
 			return candidate, sum, nil
+		} else if !errors.Is(err, errChecksumNotFound) {
+			return "", "", err
 		}
 	}
 	candidates := strings.Join(releaseAssetCandidates(tag, goos, goarch), ", ")
 	return "", "", fmt.Errorf("no checksummed release asset for %s/%s (tried: %s)", goos, goarch, candidates)
 }
+
+var errChecksumNotFound = errors.New("checksum not found")
 
 // parseChecksumManifest reads a GoReleaser-style "<sha256>  <filename>"
 // manifest and returns the lowercase hex SHA-256 for assetName. Returns an
@@ -223,6 +193,7 @@ func resolveReleaseAsset(manifest []byte, tag, goos, goarch string) (string, str
 // verification.
 func parseChecksumManifest(manifest []byte, assetName string) (string, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(manifest))
+	var checksum string
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -234,14 +205,21 @@ func parseChecksumManifest(manifest []byte, assetName string) (string, error) {
 		if len(fields) < 2 {
 			continue
 		}
-		if fields[1] == assetName {
-			return strings.ToLower(fields[0]), nil
+		if strings.TrimPrefix(fields[1], "*") == assetName {
+			sum, err := hex.DecodeString(fields[0])
+			if len(fields) != 2 || err != nil || len(sum) != sha256.Size || checksum != "" {
+				return "", fmt.Errorf("invalid or duplicate checksum for %q", assetName)
+			}
+			checksum = strings.ToLower(fields[0])
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return "", fmt.Errorf("read checksum manifest: %w", err)
 	}
-	return "", fmt.Errorf("checksum for %q not found in manifest", assetName)
+	if checksum != "" {
+		return checksum, nil
+	}
+	return "", fmt.Errorf("%w for %q in manifest", errChecksumNotFound, assetName)
 }
 
 // verifyAssetSHA256 returns nil when the SHA-256 of data matches the lowercase
@@ -344,6 +322,9 @@ func UpdateViaDownload(targetVersion string) (string, error) {
 // UpdateViaDownloadWithTimeout downloads the target release archive with a
 // caller-selected timeout.
 func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Duration) (string, error) {
+	if !isLabrastroRelease(targetVersion) {
+		return "", fmt.Errorf("update target must be a Labrastro release, got %q", targetVersion)
+	}
 	// Determine current binary path.
 	exePath, err := selfexec.Resolve()
 	if err != nil {
@@ -353,7 +334,10 @@ func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Dur
 	if err != nil {
 		return "", fmt.Errorf("resolve symlink: %w", err)
 	}
+	return updateViaDownload(targetVersion, downloadTimeout, exePath)
+}
 
+func updateViaDownload(targetVersion string, downloadTimeout time.Duration, exePath string) (string, error) {
 	tag := normalizeReleaseTag(targetVersion)
 	assetBase := releaseAssetsBase(tag)
 
@@ -408,34 +392,48 @@ func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Dur
 
 	// Atomic replace: write to temp file, then rename over the original.
 	dir := filepath.Dir(exePath)
-	tmpFile, err := os.CreateTemp(dir, "multica-update-*")
+	tmpFile, err := os.CreateTemp(dir, "multica-update-*.exe")
 	if err != nil {
 		return "", fmt.Errorf("create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
 
 	if _, err := tmpFile.Write(binaryData); err != nil {
 		tmpFile.Close()
-		os.Remove(tmpPath)
 		return "", fmt.Errorf("write temp file: %w", err)
 	}
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		return "", fmt.Errorf("close temp file: %w", err)
+	}
 
 	// Preserve original file permissions.
 	info, err := os.Stat(exePath)
 	if err != nil {
-		os.Remove(tmpPath)
 		return "", fmt.Errorf("stat original binary: %w", err)
 	}
 	if err := os.Chmod(tmpPath, info.Mode()); err != nil {
-		os.Remove(tmpPath)
 		return "", fmt.Errorf("chmod temp file: %w", err)
+	}
+	// A checksummed archive can still contain a stale or wrong-platform binary.
+	// Probe the staged executable before touching the working installation.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, tmpPath, "--version")
+	cmd.WaitDelay = 2 * time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("verify downloaded binary version: %w", err)
+	}
+	line, _, _ := strings.Cut(string(out), "\n")
+	fields := strings.Fields(line)
+	if len(fields) < 2 || fields[0] != "multica" || normalizeReleaseTag(fields[1]) != tag {
+		return "", fmt.Errorf("downloaded binary does not report %s: %q", tag, line)
 	}
 
 	// Replace the original binary. On Windows this moves the running executable
 	// aside first; on Unix a plain rename over the running inode is fine.
 	if err := replaceBinary(tmpPath, exePath); err != nil {
-		os.Remove(tmpPath)
 		return "", fmt.Errorf("replace binary: %w", err)
 	}
 

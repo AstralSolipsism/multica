@@ -12,6 +12,7 @@ set -euo pipefail
 # Configuration
 # ---------------------------------------------------------------------------
 DOWNLOAD_BASE="${MULTICA_DOWNLOAD_BASE:-https://multica.outlune.com/downloads}"
+DOWNLOAD_BASE="${DOWNLOAD_BASE%/}"
 
 # Colors (disabled when not a terminal)
 if [ -t 1 ] || [ -t 2 ]; then
@@ -62,9 +63,56 @@ detect_os() {
   esac
 }
 
+# Legacy numeric versions are accepted only as installed migration inputs.
+parse_release_version() {
+  local pattern='^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-labrastro\.([1-9][0-9]*))?$'
+  [[ "$1" =~ $pattern ]] || return 1
+  RELEASE_PARTS=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[5]:-0}")
+  [[ "${RELEASE_PARTS[*]}" != "0 0 0 "* ]]
+}
+
+is_newer_version() {
+  parse_release_version "$1" || return 1
+  local latest=("${RELEASE_PARTS[@]}")
+  parse_release_version "$2" || return 1
+  local i
+  for i in 0 1 2 3; do
+    if [ "${latest[$i]}" != "${RELEASE_PARTS[$i]}" ]; then
+      if [ "${#latest[$i]}" != "${#RELEASE_PARTS[$i]}" ]; then
+        [ "${#latest[$i]}" -gt "${#RELEASE_PARTS[$i]}" ]
+      else
+        [[ "${latest[$i]}" > "${RELEASE_PARTS[$i]}" ]]
+      fi
+      return
+    fi
+  done
+  return 1
+}
+
 get_latest_version() {
-  curl -fsSL "$DOWNLOAD_BASE/latest.json" 2>/dev/null \
-    | sed -n 's/.*"version"[: ]*"\([^"]*\)".*/\1/p' | head -n1
+  local manifest tag
+  manifest=$(curl -fsSL "$DOWNLOAD_BASE/latest.json") || return 1
+  tag=$(printf '%s\n' "$manifest" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+  parse_release_version "$tag" && [[ "$tag" == v*-labrastro.* ]] || return 1
+  printf '%s\n' "$tag"
+}
+
+checksum_for() {
+  awk -v name="$2" '
+    { sub(/\r$/, "") }
+    $2 == name || $2 == "*" name {
+      count++; hash = tolower($1)
+      if (NF != 2 || length(hash) != 64 || hash ~ /[^0-9a-f]/) invalid = 1
+    }
+    END {
+      if (count == 0) exit 2
+      if (count != 1 || invalid) exit 1
+      print hash
+    }' "$1"
+}
+
+binary_version() {
+  "$1" --version | awk 'NR == 1 && $1 == "multica" { print $2 }'
 }
 
 add_to_path() {
@@ -77,77 +125,76 @@ add_to_path() {
   done
 }
 
-install_cli_binary() {
-  info "Installing Labrastro CLI from the internal release source..."
+install_cli_binary() (
+  # A subshell owns cleanup even when a download, extraction or install fails.
+  local tmp_dir="" staged="" bin_dir target current latest version base_url archive expected actual candidate status
+  # Use a nonempty command for macOS Bash 3.2 with nounset enabled.
+  local install_cmd=env
+  trap 'rm -rf "$tmp_dir"; if [ -n "$staged" ]; then "$install_cmd" rm -f "$staged"; fi' EXIT
 
-  local latest
-  latest=$(get_latest_version)
-  if [ -z "$latest" ]; then
-    fail "Could not determine the latest version from $DOWNLOAD_BASE/latest.json. Check your network connection."
+  # Resolve the destination before checking versions; PATH may select another CLI.
+  bin_dir="${MULTICA_BIN_DIR:-/usr/local/bin}"
+  if [ ! -w "$bin_dir" ]; then
+    if command_exists sudo; then
+      install_cmd=sudo
+    else
+      bin_dir="$HOME/.local/bin"
+    fi
+  fi
+  target="$bin_dir/multica"
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    current=$(binary_version "$target") || fail "Could not read the installed CLI version; keeping the existing installation."
+    parse_release_version "$current" || fail "Refusing to replace a development or unrecognized build ($current)."
+  else
+    current=""
+  fi
+  latest=$(get_latest_version) || fail "Could not read a valid Labrastro release from $DOWNLOAD_BASE/latest.json."
+  if [ -n "$current" ] && ! is_newer_version "$latest" "$current"; then
+    ok "Labrastro CLI is up to date ($current)"
+    return
   fi
 
-  local version="${latest#v}"
-  local base_url="$DOWNLOAD_BASE/cli/v$version"
-  local archive="multica-cli-$version-$OS-$ARCH.tar.gz"
-  local url="$base_url/$archive"
-  local tmp_dir
+  info "Installing Labrastro CLI $latest from the internal release source..."
+  version="${latest#v}"
+  base_url="$DOWNLOAD_BASE/cli/$latest"
   tmp_dir=$(mktemp -d)
-
-  info "Downloading $url ..."
-  if ! curl -fsSL "$url" -o "$tmp_dir/$archive"; then
-    rm -rf "$tmp_dir"
-    fail "Failed to download the CLI archive."
-  fi
-
-  # Integrity: verify against checksums.txt published next to the archive.
-  if curl -fsSL "$base_url/checksums.txt" -o "$tmp_dir/checksums.txt"; then
-    local expected actual
-    expected=$(grep -F " $archive" "$tmp_dir/checksums.txt" | head -n1 | cut -d' ' -f1)
-    actual=$(sha256_of "$tmp_dir/$archive")
-    if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
-      rm -rf "$tmp_dir"
-      fail "Checksum verification failed for $archive."
+  curl -fsSL "$base_url/checksums.txt" -o "$tmp_dir/checksums.txt" || fail "Could not download checksums.txt; keeping the existing installation."
+  archive=""
+  for candidate in "multica-cli-$version-$OS-$ARCH.tar.gz" "multica_${OS}_${ARCH}.tar.gz"; do
+    if expected=$(checksum_for "$tmp_dir/checksums.txt" "$candidate"); then
+      archive="$candidate"
+      break
+    else
+      status=$?
+      [ "$status" -eq 2 ] || fail "Invalid or duplicate checksum for $candidate."
     fi
-    ok "Checksum verified"
-  else
-    warn "checksums.txt unavailable; skipping integrity verification."
-  fi
+  done
+  [ -n "$archive" ] || fail "No checksummed CLI archive for $OS/$ARCH."
+  info "Downloading $base_url/$archive ..."
+  curl -fsSL "$base_url/$archive" -o "$tmp_dir/archive.tar.gz" || fail "Failed to download the CLI archive."
+  actual=$(sha256_of "$tmp_dir/archive.tar.gz")
+  [ "$actual" = "$expected" ] || fail "Checksum verification failed for $archive."
+  ok "Checksum verified"
 
-  tar -xzf "$tmp_dir/$archive" -C "$tmp_dir" multica
+  # Extract only the binary bytes, including older archives with a directory.
+  local entry
+  entry=$(tar -tzf "$tmp_dir/archive.tar.gz" | awk '/(^|\/)multica$/ { print; count++ } END { if (count != 1) exit 1 }') || fail "Archive must contain exactly one multica binary."
+  tar -xOzf "$tmp_dir/archive.tar.gz" "$entry" > "$tmp_dir/multica"
+  chmod +x "$tmp_dir/multica"
+  actual=$(binary_version "$tmp_dir/multica") || fail "Downloaded CLI cannot run; keeping the existing installation."
+  [ "${actual#v}" = "$version" ] || fail "Downloaded CLI version ($actual) does not match $latest."
 
-  # Try /usr/local/bin first, fall back to ~/.local/bin. Scripted installs can
-  # override the first choice with MULTICA_BIN_DIR.
-  local bin_dir="${MULTICA_BIN_DIR:-/usr/local/bin}"
-  if [ -w "$bin_dir" ]; then
-    mv "$tmp_dir/multica" "$bin_dir/multica"
-  elif command_exists sudo; then
-    sudo mv "$tmp_dir/multica" "$bin_dir/multica"
-  else
-    bin_dir="$HOME/.local/bin"
-    mkdir -p "$bin_dir"
-    mv "$tmp_dir/multica" "$bin_dir/multica"
-    chmod +x "$bin_dir/multica"
-    if ! echo "$PATH" | tr ':' '\n' | grep -q "^$bin_dir$"; then
-      export PATH="$bin_dir:$PATH"
-      add_to_path "$bin_dir"
-    fi
-  fi
-
-  rm -rf "$tmp_dir"
-  ok "Labrastro CLI installed to $bin_dir/multica"
-}
-
-upgrade_cli_if_available() {
-  command_exists multica || return 0
-  local current_ver latest_ver
-  current_ver=$(multica --version 2>/dev/null | head -n1 | sed 's/^[^0-9]*//' || true)
-  latest_ver=$(get_latest_version)
-  [ -n "$latest_ver" ] || return 0
-  local latest_cmp="${latest_ver#v}"
-  if [ -n "$current_ver" ] && [ "$current_ver" != "$latest_cmp" ]; then
-    info "Labrastro CLI $current_ver installed, latest is $latest_cmp — upgrading..."
-  fi
-}
+  # Stage on the target filesystem, then rename, so a failed copy preserves the
+  # working binary even when the download directory is on another filesystem.
+  "$install_cmd" mkdir -p "$bin_dir"
+  if [ "$bin_dir" = "$HOME/.local/bin" ]; then add_to_path "$bin_dir"; fi
+  staged=$("$install_cmd" mktemp "$bin_dir/.multica-install.XXXXXX")
+  "$install_cmd" cp "$tmp_dir/multica" "$staged"
+  "$install_cmd" chmod 755 "$staged"
+  "$install_cmd" mv -f "$staged" "$target"
+  staged=""
+  ok "Labrastro CLI installed to $target"
+)
 
 # ---------------------------------------------------------------------------
 # Main
@@ -157,9 +204,11 @@ printf "${BOLD}  Labrastro — CLI Installer${RESET}\n"
 printf "\n"
 
 detect_os
-upgrade_cli_if_available
 install_cli_binary
 
+if ! command_exists multica && [ -x "$HOME/.local/bin/multica" ]; then
+  export PATH="$HOME/.local/bin:$PATH"
+fi
 if ! command_exists multica; then
   fail "CLI installed but 'multica' not found on PATH. You may need to restart your shell."
 fi
