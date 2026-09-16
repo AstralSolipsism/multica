@@ -114,7 +114,7 @@ jobs:
       redis:
         image: redis:7-alpine
         ports: ['6379:6379']
-        options: --health-cmd 'redis-cli ping' --health-interval 5s --health-timeout 5s --health-retries 10
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       DATABASE_URL: postgres://multica:multica@localhost:5432/multica?sslmode=disable
       PROJECT_FILE_TEST_DATABASE_URL: postgres://multica:multica@localhost:5432/multica?sslmode=disable
@@ -157,7 +157,8 @@ jobs:
         with:
           frontend: 'true'
       - run: python scripts/candidate.py start qa-web
-      - run: pnpm exec turbo typecheck test --filter='!@multica/docs' --filter='!@multica/mobile' --force
+      # Keep tsc and separate Vitest pools from competing on this runner.
+      - run: pnpm exec turbo typecheck test --filter='!@multica/docs' --filter='!@multica/mobile' --force --concurrency=1
       - run: node --test scripts/check-release.test.mjs scripts/build-candidate-web.test.mjs scripts/local-images.test.mjs
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user-static
       - run: python3 scripts/build-backend.test.py
