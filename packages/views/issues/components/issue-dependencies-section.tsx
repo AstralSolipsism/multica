@@ -19,8 +19,7 @@ import { PrerequisiteList } from "./dependency-prerequisites";
  * The issue detail sidebar's dependency section (OL-44): direct and inherited
  * prerequisites, what this issue blocks, and the unsatisfied summary. Direct
  * removal goes through the same compound write as the editor (version-guarded),
- * so an agent's remove of an unfinished prerequisite is refused by the server
- * with the reason surfaced — the button never impersonates a human approval.
+ * under the ordinary issue permissions. Relations do not gate execution.
  * Inherited rows are read-only here and in the editor; the constraint changes
  * on the source ancestor only.
  */
@@ -60,9 +59,7 @@ export function IssueDependenciesSection({ issue }: { issue: Issue }) {
       // projections (mutations.ts), so the fresh picture is on its way; the
       // toast only has to say why THIS removal did not happen.
       toast.error(
-        details?.reasonCode === "dependency_change_not_allowed"
-          ? t(($) => $.dependencies.remove_not_allowed)
-          : details?.reasonCode === "dependency_version_conflict"
+        details?.reasonCode === "dependency_version_conflict"
             ? t(($) => $.dependencies.remove_conflict)
             : t(($) => $.dependencies.remove_failed),
       );

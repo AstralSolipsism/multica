@@ -10,8 +10,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/auth"
-	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -20,17 +18,6 @@ type dependencyWriteFields struct {
 	BlockedBy                 json.RawMessage `json:"blocked_by"`
 	ExpectedDependencyVersion string          `json:"expected_dependency_version"`
 	DependencyOverride        json.RawMessage `json:"dependency_override"`
-}
-
-func dependencyPayloadDigest(w http.ResponseWriter, r *http.Request, raw []byte) (string, bool) {
-	digest, err := service.DependencyPayloadDigest(raw)
-	if err != nil {
-		// Never log the mutation or confirmation: either may contain private data.
-		slog.Warn("dependency payload digest failed", append(logger.RequestAttrs(r), "error", err)...)
-		writeError(w, http.StatusBadRequest, "invalid mutation payload")
-		return "", false
-	}
-	return digest, true
 }
 
 func (h *Handler) CreateIssueWithDependencies(w http.ResponseWriter, r *http.Request) {
@@ -57,17 +44,8 @@ func (h *Handler) parseDependencyWrite(w http.ResponseWriter, r *http.Request, f
 	}
 
 	if fields.DependencyOverride != nil {
-		identity, ok := auth.IdentityFromContext(r.Context())
-		if !ok || identity.CredentialKind != "jwt" || identity.AgentID != "" || identity.TaskID != "" {
-			writeDependencyError(w, &service.DependencyError{Code: "dependency_override_not_allowed", Message: "explicit confirmation requires an authenticated human session"})
-			return write, false
-		}
-		var override service.DependencyOverride
-		if err := json.Unmarshal(fields.DependencyOverride, &override); err != nil || override.Challenge == "" || override.RequestID == "" {
-			writeError(w, http.StatusBadRequest, "dependency_override requires challenge and request_id")
-			return write, false
-		}
-		write.Override = &override
+		writeError(w, http.StatusBadRequest, "dependency execution overrides are no longer supported")
+		return write, false
 	}
 
 	if creating && fields.ExpectedDependencyVersion != "" {
@@ -190,4 +168,14 @@ func writeDependencyError(w http.ResponseWriter, err error) bool {
 	}
 	writeJSON(w, dependencyHTTPStatus(e.Code), body)
 	return true
+}
+
+func (h *Handler) fillDependencyResponse(r *http.Request, issue db.Issue, resp *IssueResponse) {
+	snapshot, err := h.IssueService.Dependencies.Read(r.Context(), issue.WorkspaceID, uuidToString(issue.ID))
+	if err != nil {
+		slog.Warn("dependency response refresh failed", "error", err)
+		return
+	}
+	view := h.dependencyView(r, snapshot, issue.ID)
+	resp.Dependencies = &view
 }

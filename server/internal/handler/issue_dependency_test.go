@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -139,24 +140,22 @@ func TestDependencyInheritedCycleAndReparentRollback(t *testing.T) {
 	replaceDependencies(t, h, fx, b, []string{b}, "jwt", http.StatusConflict)
 }
 
-func TestDependencyMachineCannotWeakenOrDeleteConstraints(t *testing.T) {
-	h, fx := dependencyFixture(t)
-	a := dependencyIssue(t, fx, "A")
-	b := dependencyIssue(t, fx, "B")
-	child := dependencyIssue(t, fx, "child", testutil.Cols{"parent_issue_id": b})
-	replaceDependencies(t, h, fx, b, []string{a}, "task", http.StatusOK)
-	for _, kind := range []string{"task", "pat", "cloud_pat", "", "unknown"} {
-		replaceDependencies(t, h, fx, b, []string{}, kind, http.StatusForbidden)
-		testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, child, map[string]any{"parent_issue_id": nil}, kind)).Want(http.StatusForbidden)
-		testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, a, nil, kind)).Want(http.StatusForbidden)
-		testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, b, nil, kind)).Want(http.StatusForbidden)
-	}
-	// A status write is still allowed by the original policy. No human-only
-	// completion restriction may be smuggled in through dependency protection.
-	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, a, map[string]any{"status": "done"}, "task")).Want(http.StatusOK)
-	testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, a, nil, "task")).Want(http.StatusNoContent)
-	if len(dependencies(t, h, fx, b).BlockedBy) != 0 {
-		t.Fatal("deletion did not clean relation rows")
+func TestDependencyMachineCanEditInformationalRelations(t *testing.T) {
+	for _, kind := range []string{"task", "pat", "cloud_pat"} {
+		t.Run(kind, func(t *testing.T) {
+			h, fx := dependencyFixture(t)
+			a := dependencyIssue(t, fx, "A")
+			b := dependencyIssue(t, fx, "B")
+			child := dependencyIssue(t, fx, "child", testutil.Cols{"parent_issue_id": b})
+			replaceDependencies(t, h, fx, b, []string{a}, kind, http.StatusOK)
+			testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, child, map[string]any{"parent_issue_id": nil}, kind)).Want(http.StatusOK)
+			replaceDependencies(t, h, fx, b, []string{}, kind, http.StatusOK)
+			replaceDependencies(t, h, fx, b, []string{a}, kind, http.StatusOK)
+			testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, a, nil, kind)).Want(http.StatusNoContent)
+			if len(dependencies(t, h, fx, b).BlockedBy) != 0 {
+				t.Fatal("deletion left relation rows")
+			}
+		})
 	}
 }
 
@@ -201,23 +200,11 @@ func TestDependencyConcurrentOppositeEdges(t *testing.T) {
 	}
 }
 
-func TestDependencyCreateAndAssignRollbackAndWriteGate(t *testing.T) {
+func TestDependencyCreateAssignmentAndWriteGate(t *testing.T) {
 	h, fx := dependencyFixture(t)
 	a := dependencyIssue(t, fx, "A")
 	agent := fx.Agent(t, "Fake assignee", fx.Runtime(t, "Fake runtime"))
-	payload := map[string]any{"title": "blocked creation", "status": "backlog", "assignee_type": "agent", "assignee_id": agent, "blocked_by": []string{a}}
-	var out map[string]any
-	testutil.Call(t, h.CreateIssueWithDependencies, dependencyRequest(fx, http.MethodPost, "", payload, "task")).Want(http.StatusConflict).JSON(&out)
-	if out["reason_code"] != "dependency_unsatisfied" {
-		t.Fatalf("wrong admission result %v", out)
-	}
-	var count int
-	err := testPool.QueryRow(context.Background(), "SELECT count(*) FROM issue WHERE workspace_id=$1 AND title=$2", fx.WorkspaceID, "blocked creation").Scan(&count)
-	if err != nil || count != 0 {
-		t.Fatal("rejected create left an issue")
-	}
-	delete(payload, "assignee_type")
-	delete(payload, "assignee_id")
+	payload := map[string]any{"title": "Informational creation", "status": "backlog", "assignee_type": "agent", "assignee_id": agent, "blocked_by": []string{a}}
 	var created IssueResponse
 	testutil.Call(t, h.CreateIssueWithDependencies, dependencyRequest(fx, http.MethodPost, "", payload, "task")).Want(http.StatusCreated).JSON(&created)
 	t.Cleanup(func() {
@@ -225,9 +212,9 @@ func TestDependencyCreateAndAssignRollbackAndWriteGate(t *testing.T) {
 		fx.Exec(t, "DELETE FROM issue WHERE id=$1", created.ID)
 	})
 	if created.Dependencies == nil || len(created.Dependencies.Unsatisfied) != 1 {
-		t.Fatal("planning create did not persist prerequisites")
+		t.Fatal("creation lost informational prerequisites")
 	}
-	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, created.ID, map[string]any{"assignee_type": "agent", "assignee_id": agent, "suppress_run": true}, "task")).Want(http.StatusConflict)
+	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, created.ID, map[string]any{"assignee_type": "agent", "assignee_id": agent, "suppress_run": true}, "task")).Want(http.StatusOK)
 	h.IssueService.Dependencies.WritesEnabled = false
 	testutil.Call(t, h.CreateIssueWithDependencies, dependencyRequest(fx, http.MethodPost, "", payload, "jwt")).Want(http.StatusNotFound)
 	testutil.Call(t, h.CreateIssue, dependencyRequest(fx, http.MethodPost, "", payload, "jwt")).Want(http.StatusBadRequest)
@@ -264,7 +251,26 @@ func TestDependencyReferencesAndMalformedRequests(t *testing.T) {
 }
 
 func TestDependencySnapshotUUIDsRemainStable(t *testing.T) {
-	w := newDependencyLoadWorkspace(t, 300, "sparse")
+	h, fx := dependencyFixture(t)
+	ids := make([]string, 300)
+	for i := range ids {
+		cols := testutil.Cols{"number": i + 1, "status": "done"}
+		if i >= 150 {
+			cols["parent_issue_id"] = ids[75+i%75]
+			cols["status"] = "backlog"
+		}
+		ids[i] = fx.Issue(t, fmt.Sprintf("Snapshot issue %d", i), cols)
+	}
+	for i := 0; i < 75; i++ {
+		for offset := 0; offset < 2; offset++ {
+			fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": ids[75+i], "depends_on_issue_id": ids[(i+offset)%75], "type": "blocked_by"})
+		}
+	}
+	w := struct {
+		h   *Handler
+		fx  *testutil.Fixture
+		ids []string
+	}{h, fx, ids}
 	for _, kind := range []string{"related", "blocks"} {
 		w.fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": w.ids[0], "depends_on_issue_id": w.ids[299], "type": kind})
 	}
@@ -346,40 +352,28 @@ func TestDependencyCompoundCreateWithoutExplicitPrerequisites(t *testing.T) {
 	}
 }
 
-func TestDependencyBatchAndDeleteFailureHaveNoSideEffects(t *testing.T) {
+func TestDependencyBatchAndDeleteFollowUpstream(t *testing.T) {
 	h, fx := dependencyFixture(t)
 	a := dependencyIssue(t, fx, "A")
 	b := dependencyIssue(t, fx, "B")
 	child := dependencyIssue(t, fx, "child", testutil.Cols{"parent_issue_id": b})
 	free := dependencyIssue(t, fx, "free")
 	replaceDependencies(t, h, fx, b, []string{a}, "task", http.StatusOK)
-	var batch struct {
-		Updated int `json:"updated"`
-		Results []struct {
-			Updated    bool   `json:"updated"`
-			ReasonCode string `json:"reason_code"`
-		} `json:"results"`
-	}
+	var batch struct{ Updated int }
 	testutil.Call(t, h.BatchUpdateIssues, dependencyRequest(fx, http.MethodPost, "", map[string]any{"issue_ids": []string{child, free}, "updates": map[string]any{"parent_issue_id": nil, "title": "renamed"}}, "task")).Want(http.StatusOK).JSON(&batch)
-	if batch.Updated != 1 || len(batch.Results) != 2 || batch.Results[0].ReasonCode != "dependency_change_not_allowed" || !batch.Results[1].Updated {
-		t.Fatalf("incorrect partial batch: %+v", batch)
+	if batch.Updated != 2 {
+		t.Fatalf("informational relation blocked batch: %+v", batch)
 	}
 	row, err := h.Queries.GetIssueInWorkspace(context.Background(), db.GetIssueInWorkspaceParams{ID: parseUUID(child), WorkspaceID: parseUUID(fx.WorkspaceID)})
-	if err != nil || row.Title != "child" || uuidToString(row.ParentIssueID) != b {
-		t.Fatal("blocked batch item was partially written")
+	if err != nil || row.Title != "renamed" || row.ParentIssueID.Valid {
+		t.Fatal("batch did not apply upstream update")
 	}
 	runtime := fx.Runtime(t, "Fake runtime")
 	agent := fx.Agent(t, "Fake agent", runtime)
 	task := fx.Task(t, agent, testutil.Cols{"issue_id": a, "runtime_id": runtime, "status": "running"})
-	testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, a, nil, "task")).Want(http.StatusForbidden)
-	var status string
-	if err := testPool.QueryRow(context.Background(), "SELECT status FROM agent_task_queue WHERE id=$1", task).Scan(&status); err != nil || status != "running" {
-		t.Fatalf("rejected delete cancelled task: %s %v", status, err)
-	}
-	testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, a, nil, "jwt")).Want(http.StatusNoContent)
-	var remaining int
-	if err := testPool.QueryRow(context.Background(), "SELECT count(*) FROM agent_task_queue WHERE id=$1", task).Scan(&remaining); err != nil || remaining != 0 {
-		t.Fatalf("accepted delete did not clean up the task through the existing cascade: %d %v", remaining, err)
+	testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, a, nil, "task")).Want(http.StatusNoContent)
+	if fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE id=$1", task) != 0 || len(dependencies(t, h, fx, b).BlockedBy) != 0 {
+		t.Fatal("deletion left task or relation rows")
 	}
 }
 
@@ -484,7 +478,7 @@ func TestDependencyLegacyOperationsIgnoreUnrelatedUnverifiedData(t *testing.T) {
 	}
 }
 
-func TestDependencyLegacyOperationsStillProtectCanonicalConstraints(t *testing.T) {
+func TestDependencyWriteSwitchDoesNotChangeExecutionOrGraphValidation(t *testing.T) {
 	h, fx := dependencyFixture(t)
 	h.IssueService.Dependencies.WritesEnabled = false
 	a := dependencyIssue(t, fx, "prerequisite")
@@ -495,24 +489,18 @@ func TestDependencyLegacyOperationsStillProtectCanonicalConstraints(t *testing.T
 	unknown := fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": b, "depends_on_issue_id": parent, "type": "blocks"})
 	agent := fx.Agent(t, "Fake assignee", fx.Runtime(t, "Fake runtime"))
 	assignment := map[string]any{"assignee_type": "agent", "assignee_id": agent, "suppress_run": true}
-	out := testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, b, assignment, "task")).Want(http.StatusConflict).Map()
-	if out["reason_code"] != "dependency_unsatisfied" {
-		t.Fatalf("unknown rows disabled canonical admission: %v", out)
-	}
-	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, child, map[string]any{"parent_issue_id": nil}, "task")).Want(http.StatusForbidden)
-	testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, a, nil, "task")).Want(http.StatusForbidden)
-	testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, b, nil, "task")).Want(http.StatusForbidden)
+	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, b, assignment, "task")).Want(http.StatusOK)
 	// The new parent is in a previously disconnected execution component.
 	// Both components must be considered without interpreting the blocks row.
 	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, b, map[string]any{"parent_issue_id": parent}, "jwt")).Want(http.StatusOK)
-	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, parent, map[string]any{"parent_issue_id": child}, "jwt")).Want(http.StatusConflict)
+	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, parent, map[string]any{"parent_issue_id": child}, "jwt")).Want(http.StatusBadRequest)
 	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, a, map[string]any{"parent_issue_id": child}, "jwt")).Want(http.StatusConflict)
 	var retained int
 	fx.QueryRow(t, "SELECT count(*) FROM issue_dependency WHERE id IN ($1,$2)", canonical, unknown).Scan(&retained)
 	if retained != 2 {
 		t.Fatal("reparent rewrote historical relations")
 	}
-	// Human preassignment and the existing completion policy still work.
+	// Ordinary assignment and status changes use upstream behavior.
 	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, b, assignment, "jwt")).Want(http.StatusOK)
 	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, a, map[string]any{"status": "done"}, "task")).Want(http.StatusOK)
 	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, b, map[string]any{"status": "todo"}, "task")).Want(http.StatusOK)
@@ -521,8 +509,8 @@ func TestDependencyLegacyOperationsStillProtectCanonicalConstraints(t *testing.T
 	foreign := dbfx.Issue(t, "foreign prerequisite")
 	bad := dependencyIssue(t, fx, "invalid canonical reference")
 	fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": bad, "depends_on_issue_id": foreign, "type": "blocked_by"})
+	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, bad, assignment, "task")).Want(http.StatusOK)
 	for _, request := range []*http.Request{
-		dependencyRequest(fx, http.MethodPut, bad, assignment, "task"),
 		dependencyRequest(fx, http.MethodPut, b, map[string]any{"parent_issue_id": bad}, "jwt"),
 	} {
 		out := testutil.Call(t, h.UpdateIssue, request).Want(http.StatusUnprocessableEntity).Map()
@@ -531,5 +519,5 @@ func TestDependencyLegacyOperationsStillProtectCanonicalConstraints(t *testing.T
 			t.Fatalf("affected invalid canonical data was ignored or disclosed: %v", out)
 		}
 	}
-	testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, bad, nil, "jwt")).Want(http.StatusUnprocessableEntity)
+	testutil.Call(t, h.DeleteIssue, dependencyRequest(fx, http.MethodDelete, bad, nil, "jwt")).Want(http.StatusNoContent)
 }

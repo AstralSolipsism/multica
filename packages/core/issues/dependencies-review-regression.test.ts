@@ -29,7 +29,7 @@ it("REVIEW refreshes a mounted prerequisite projection after its upstream change
     };
     client.setQueryData(issueKeys.detail("review-ws", "upstream"), upstream);
     onIssueUpdated(client, "review-ws", {
-      ...upstream, status: "todo", status_category: "todo", revision: 2,
+      ...upstream, status: "todo", status_category: "unstarted", revision: 2,
     }, { statusChanged: true });
     await Promise.resolve();
     expect(client.getQueryData<Issue>(issueKeys.detail("review-ws", "upstream"))?.status).toBe("todo");

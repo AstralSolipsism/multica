@@ -16,14 +16,13 @@ export type {
 } from "./client";
 export type { GlmQuotaStatus, GlmQuotaSnapshot, GlmQuotaWindow } from "./schemas";
 export { parseWithFallback, setSchemaLogger } from "./schema";
-export { dependencyReadiness, canonicalDependencyMutation } from "./dependency-schemas";
+export { dependencyReadiness } from "./dependency-schemas";
 export { issueGraphReadiness } from "./issue-graph-schemas";
 export type { IssueGraph, IssueGraphNode, IssueGraphRequest } from "./issue-graph-schemas";
 export type {
   DependencyView, IssuePrerequisite, IssueWithDependencies,
   CreateIssueWithDependenciesRequest, UpdateIssueWithDependenciesRequest,
-  IssueBatchUpdateResult, IssueDependencyPreview, DependencyMutationFields,
-  DependencyOverride,
+  IssueBatchUpdateResult, DependencyMutationFields,
 } from "./dependency-schemas";
 export type { ParseOptions } from "./schema";
 export { DuplicateIssueErrorBodySchema } from "./schemas";

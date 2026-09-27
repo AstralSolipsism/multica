@@ -30,7 +30,9 @@
   "help": {
     "trigger": "Help",
     "download_desktop": "Desktop app",
-    "discord": "Feishu group",
+    "docs": "Docs",
+    "changelog": "Change log",
+    "discord": "Discord",
     "feedback": "Feedback",
     "server_version": "Server version {{version}}"
   },
@@ -56,7 +58,7 @@
     "show_fewer_pins": "Show fewer",
     "unread_overflow": "99+",
     "discord_card": {
-      "title": "Feishu group",
+      "title": "Join our Discord",
       "dismiss": "Dismiss"
     }
   },

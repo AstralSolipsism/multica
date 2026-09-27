@@ -20,6 +20,7 @@ import { useIssueSurfaceActionsOptional } from "../surface/actions-context";
 import type { IssueSurfaceMutationOptions } from "../surface/actions-context";
 
 export interface UseIssueActionsResult {
+  openEditDependencies: () => void;
   isPinned: boolean;
   updateField: (
     updates: Partial<UpdateIssueRequest>,
@@ -28,14 +29,12 @@ export interface UseIssueActionsResult {
   openInNewTab: () => void;
   togglePin: () => void;
   copyLink: () => Promise<void>;
+  copyCommentLink: (commentId: string) => Promise<void>;
   openCreateSubIssue: () => void;
   openSetParent: () => void;
   removeParent: () => void;
   openAddChild: () => void;
-  /** Open the shared prerequisite editor (direct `blocked_by` edges) for this
-   *  issue. The same entry point backs the detail sidebar, the Relations
-   *  menu, and the selected DAG node's actions (OL-43/44). */
-  openEditDependencies: () => void;
+  openMarkDuplicate: () => void;
   openDeleteConfirm: (opts?: { onDeletedFallbackPath?: string }) => void;
 }
 
@@ -172,6 +171,26 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     }
   }, [paths, issueId, issueIdentifier, navigation, t]);
 
+  // Built during render so `copyCommentLink` depends on this string alone:
+  // `paths` is rebuilt on every render, and the handler is passed to every
+  // memoized comment card, so depending on it would re-render all of them on
+  // any unrelated page update. Identifier form for the same reason as `copyLink`.
+  const issueShareUrl = issueId
+    ? navigation.getShareableUrl(paths.issueDetail(issueIdentifier || issueId))
+    : null;
+  const copyCommentLink = useCallback(async (commentId: string) => {
+    if (!issueShareUrl) return;
+    // The `#comment-…` fragment is the deep-link anchor `IssueDetailRoute`
+    // resolves via `parseCommentHighlightHash`; dropping it would downgrade the
+    // link to the whole issue.
+    const url = `${issueShareUrl}#comment-${commentId}`;
+    if (await copyText(url)) {
+      toast.success(t(($) => $.comment.link_copied));
+    } else {
+      toast.error(t(($) => $.comment.link_copy_failed));
+    }
+  }, [issueShareUrl, t]);
+
   const openCreateSubIssue = useCallback(() => {
     if (!issueId) return;
     openModal("create-issue", {
@@ -201,6 +220,11 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
   const openSetParent = useCallback(() => {
     if (!issueId) return;
     openModal("issue-set-parent", { issueId });
+  }, [openModal, issueId]);
+
+  const openMarkDuplicate = useCallback(() => {
+    if (!issueId) return;
+    openModal("issue-mark-duplicate", { issueId });
   }, [openModal, issueId]);
 
   // Detach from the parent and promote to a standalone issue. Reversible
@@ -271,15 +295,17 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
 
   return {
     isPinned,
+    openEditDependencies,
     updateField,
     openInNewTab,
     togglePin,
     copyLink,
+    copyCommentLink,
     openCreateSubIssue,
     openSetParent,
     removeParent,
     openAddChild,
-    openEditDependencies,
+    openMarkDuplicate,
     openDeleteConfirm,
   };
 }

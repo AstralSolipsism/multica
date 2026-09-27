@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	messagedelivery "github.com/multica-ai/multica/server/internal/messagedelivery"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -188,14 +189,13 @@ func (c *httpAPIClient) GetDeliveryChatInfo(ctx context.Context, creds Installat
 // VerifyGroupTarget implements the messagedelivery TargetVerifier port:
 // a group route may only be saved/sent when the pinned bot can see the chat.
 func (s *DeliverySender) VerifyGroupTarget(ctx context.Context, req messagedelivery.VerifyTargetRequest) error {
-	creds, inst, err := s.resolveInstallation(ctx, req.WorkspaceID, req.InstallationID)
+	creds, _, err := s.resolveInstallation(ctx, req.WorkspaceID, req.InstallationID)
 	if err != nil {
 		return err
 	}
 	if err := s.client.GetDeliveryChatInfo(ctx, creds, req.ChatID); err != nil {
 		return s.classifyVerifyError(err)
 	}
-	_ = inst
 	return nil
 }
 
@@ -306,14 +306,13 @@ func (s *DeliverySender) Send(ctx context.Context, req messagedelivery.SendReque
 	}
 	// Workspace-scoped lookup: a forged or stale installation id from
 	// another workspace cannot be dialed.
-	creds, inst, err := s.resolveInstallation(ctx, req.WorkspaceID, req.InstallationID)
+	creds, _, err := s.resolveInstallation(ctx, req.WorkspaceID, req.InstallationID)
 	if err != nil {
 		return messagedelivery.SendResult{}, &messagedelivery.SendError{
 			Class: messagedelivery.ClassPermanent,
 			Err:   err,
 		}
 	}
-	req.Text += signedFeedbackLink(req, creds.AppSecret, util.UUIDToString(inst.AgentID))
 	params, err := deliveryParams(req, creds)
 	if err != nil {
 		return messagedelivery.SendResult{}, &messagedelivery.SendError{
@@ -332,6 +331,12 @@ func (s *DeliverySender) Send(ctx context.Context, req messagedelivery.SendReque
 // member → open_id DM, group → chat send, topic → reply to the anchor
 // message threaded into its 话题.
 func deliveryParams(req messagedelivery.SendRequest, creds InstallationCredentials) (DeliveryMessageParams, error) {
+	if req.SourceURL != "" && !strings.Contains(req.Text, req.SourceURL) {
+		req.Text += "\n\nSource: " + req.SourceURL
+	}
+	if req.SourceRunID != "" {
+		req.Text += "\nRun: " + req.SourceRunID
+	}
 	contentBytes, err := json.Marshal(map[string]string{"text": req.Text})
 	if err != nil {
 		return DeliveryMessageParams{}, fmt.Errorf("encode text content: %w", err)

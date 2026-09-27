@@ -35,8 +35,7 @@ func dependencyError(code, message string) *DependencyError {
 }
 
 // DependencyService owns graph validation and transaction-scoped relation writes.
-// WritesEnabled can close compound writes independently of execution admission.
-// Admission always protects canonical historical edges, even when writes close.
+// WritesEnabled controls compound relation edits; execution does not consult it.
 type DependencyService struct {
 	Queries       *db.Queries
 	TxStarter     TxStarter
@@ -53,15 +52,12 @@ type DependencySnapshot struct {
 	Model       issuedependency.Model
 	Catalog     []db.IssueStatus
 	service     *DependencyService
-	// Nil for full snapshots; otherwise only these targets may be admitted.
-	admissionTargets map[string]bool
 }
 
 // LockWrite must precede any issue, attachment, queue or agent-capacity lock.
 // Workspace ownership -> catalog -> structure -> attachments (if any)
 // -> sorted issue rows. Attachment binders already lock attachments before issues.
-// Ordinary issue writes serialize per workspace. Admission takes the shared locks
-// and sorted issue rows; read-only previews use MVCC without blocking edits.
+// Structural relation writes serialize per workspace; graph reads use MVCC.
 // Create takes its counter lock before this sequence. Other writers must not
 // take that exclusive row lock: they all need to reach the structure wait queue.
 func (s *DependencyService) LockWrite(ctx context.Context, q *db.Queries, ws pgtype.UUID) error {
@@ -101,7 +97,7 @@ func (s *DependencyService) Load(ctx context.Context, q *db.Queries, ws pgtype.U
 	return snapshot, nil
 }
 
-// Admission does not depend on edge traversal order. Prerequisite projections,
+// Graph validation does not depend on edge traversal order. Prerequisite projections,
 // versions and audit states already sort their own output at the boundary.
 func (s *DependencyService) load(ctx context.Context, q *db.Queries, ws pgtype.UUID) (*DependencySnapshot, error) {
 	nodes, err := q.ListIssueDependencyNodes(ctx, ws)
@@ -124,7 +120,7 @@ func (s *DependencyService) load(ctx context.Context, q *db.Queries, ws pgtype.U
 	for _, n := range nodes {
 		id := util.UUIDToString(n.ID)
 		ids[n.ID] = id
-		model.Issues[id] = issuedependency.Issue{ID: id, ParentID: util.UUIDToString(n.ParentIssueID), Status: n.Status, Category: resolver.Effective(ctx, q, n.Status), Revision: n.Revision, Title: n.Title, Number: n.Number}
+		model.Issues[id] = issuedependency.Issue{ID: id, ParentID: util.UUIDToString(n.ParentIssueID), Status: n.Status, Category: issuestatus.WireCategory(n.Status, resolver.Category(ctx, q, n.Status)), Revision: n.Revision, Title: n.Title, Number: n.Number}
 	}
 	endpoint := func(id pgtype.UUID) string {
 		if str, ok := ids[id]; ok {
@@ -252,11 +248,6 @@ func (s *DependencySnapshot) View(id string, visible func(string) bool) Dependen
 	return v
 }
 
-func isDependencyHuman(ctx context.Context) bool {
-	i, ok := auth.IdentityFromContext(ctx)
-	return ok && i.CredentialKind == "jwt" && i.AgentID == "" && i.TaskID == ""
-}
-
 type DependencyWrite struct {
 	BlockedBy       *[]pgtype.UUID
 	ExpectedVersion string
@@ -266,8 +257,6 @@ type DependencyWrite struct {
 	Probe           IssueTriggerProbe
 	ActorUserID     pgtype.UUID
 	HandoffNote     string
-	Override        *DependencyOverride
-	PayloadDigest   string
 }
 
 // Apply validates and persists relations against the proposed final issue row.
@@ -291,7 +280,7 @@ func (s *DependencyService) Apply(ctx context.Context, q *db.Queries, before *De
 	}
 	next := *before
 	next.Model = before.Model.Clone()
-	next.Model.Issues[id] = issuedependency.Issue{ID: id, ParentID: util.UUIDToString(issue.ParentIssueID), Status: issue.Status, Category: issuestatus.Effective(ctx, q, issue.WorkspaceID, issue.Status), Revision: issue.Revision, Title: issue.Title, Number: issue.Number}
+	next.Model.Issues[id] = issuedependency.Issue{ID: id, ParentID: util.UUIDToString(issue.ParentIssueID), Status: issue.Status, Category: issuestatus.WireCategory(issue.Status, issuestatus.NewResolver(issue.WorkspaceID).Category(ctx, q, issue.Status)), Revision: issue.Revision, Title: issue.Title, Number: issue.Number}
 	if parent := next.Model.Issues[id].ParentID; parent != "" {
 		if _, ok := next.Model.Issues[parent]; !ok {
 			return nil, false, dependencyError("not_found", "parent issue not found")
@@ -345,9 +334,6 @@ func (s *DependencyService) Apply(ctx context.Context, q *db.Queries, before *De
 			return nil, false, err
 		}
 	}
-	if structureChanged && !isDependencyHuman(ctx) && previousModel.Weakened(nextModel) {
-		return nil, false, dependencyError("dependency_change_not_allowed", "only an authenticated human can remove unfinished constraints")
-	}
 	beforeState, afterState := relationState(before.Model, id), relationState(next.Model, id)
 	changed := beforeState != afterState
 	// Ordinary reparenting must never rewrite or normalize historical rows.
@@ -391,53 +377,9 @@ func (s *DependencyService) Apply(ctx context.Context, q *db.Queries, before *De
 	return &next, changed, nil
 }
 
-// CheckWriteAdmission is the pre-mutation decision reused by create/update.
-// The same decision guards task insertion, first claim and fresh retries.
-func (s *DependencySnapshot) CheckWriteAdmission(ctx context.Context, issue db.Issue, assignedChanged, runIntent bool) error {
-	if !assignedChanged && !runIntent {
-		return nil
-	}
-	id := util.UUIDToString(issue.ID)
-	execution := *s
-	if s.admissionTargets != nil && !s.admissionTargets[id] {
-		return dependencyError("dependency_data_unverified", "execution target was not locked")
-	}
-	if err := execution.Model.Validate(); err != nil {
-		// A valid full graph already proves every execution component valid.
-		// Only select/copy the closure when historical data needs isolation;
-		// unrelated unverified relations must retain their legacy behavior.
-		execution.Model = s.Model.ExecutionComponent(id)
-		if err := execution.Model.Validate(); err != nil {
-			return dependencyError("dependency_data_unverified", "dependency data must be audited before execution")
-		}
-	}
-	ps := execution.Model.Prerequisites(id)
-	if len(ps) == 0 {
-		return nil
-	}
-	for _, p := range ps {
-		if !p.Satisfied && ((!isDependencyHuman(ctx) && assignedChanged) || runIntent) {
-			v := execution.View(id, func(string) bool { return true })
-			return &DependencyError{Code: "dependency_unsatisfied", Message: "prerequisites are unfinished; propose a plan or request human help", View: &v}
-		}
-	}
-	return nil
-}
-
 func legacyDependencyModels(before, next issuedependency.Model, seeds ...string) (issuedependency.Model, issuedependency.Model) {
 	previous := before.ExecutionComponent(seeds...)
 	return previous, next.ExecutionComponent(append(previous.IDs(), seeds...)...)
-}
-
-// DependencyWriteIntent is conservative before runtime availability checks:
-// offline runtimes and suppress_run cannot legitimize a new machine assignment.
-func DependencyWriteIntent(ctx context.Context, q *db.Queries, previous *db.Issue, next db.Issue, suppress bool) (bool, bool) {
-	machine := next.AssigneeID.Valid && (next.AssigneeType.String == "agent" || next.AssigneeType.String == "squad")
-	assigned := machine && (previous == nil || previous.AssigneeID != next.AssigneeID || previous.AssigneeType != next.AssigneeType)
-	category := issuestatus.Effective(ctx, q, next.WorkspaceID, next.Status)
-	activation := previous != nil && previous.Status != next.Status && issuestatus.Effective(ctx, q, next.WorkspaceID, previous.Status) == "backlog"
-	run := machine && !suppress && category != "backlog" && (assigned || previous == nil || (activation && category != "done" && category != "cancelled"))
-	return assigned, run
 }
 
 func relationState(m issuedependency.Model, id string) string {
@@ -496,20 +438,8 @@ func (s *DependencyService) Delete(ctx context.Context, q *db.Queries, before *D
 		}
 	}
 	next.Edges = kept
-	seeds := make([]string, 0, len(ids))
-	for _, id := range ids {
-		seeds = append(seeds, util.UUIDToString(id))
-	}
-	previousModel, nextModel := legacyDependencyModels(before.Model, next, seeds...)
-	if err := previousModel.Validate(); err != nil {
-		return dependencyError("dependency_data_unverified", "dependency data must be audited before deletion")
-	}
-	if err := nextModel.Validate(); err != nil {
-		return dependencyError("dependency_data_unverified", "the proposed deletion leaves invalid dependency data")
-	}
-	if !isDependencyHuman(ctx) && previousModel.Weakened(nextModel) {
-		return dependencyError("dependency_change_not_allowed", "only an authenticated human can remove unfinished constraints")
-	}
+	// Deletion removes incident edges and cannot introduce new graph cycles.
+	// Historical graph anomalies must not prevent ordinary upstream deletion.
 	for _, id := range next.IDs() {
 		if before.Model.Issues[id].ParentID == next.Issues[id].ParentID {
 			continue

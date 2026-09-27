@@ -80,9 +80,11 @@ func (f *conversationFixture) comment(t *testing.T, token, body, parent string) 
 	rc.URLParams.Add("id", f.issue)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rc))
 	var response struct {
-		ID string `json:"id"`
+		ID              string                  `json:"id"`
+		TriggerOutcomes []CommentTriggerOutcome `json:"trigger_outcomes"`
 	}
-	testutil.Call(t, middleware.Auth(f.h.Queries, nil, nil)(http.HandlerFunc(f.h.CreateComment)).ServeHTTP, req).Want(http.StatusCreated).JSON(&response)
+	testutil.Call(t, middleware.Auth(f.h.Queries, nil, nil, nil)(http.HandlerFunc(f.h.CreateComment)).ServeHTTP, req).Want(http.StatusCreated).JSON(&response)
+	t.Logf("comment trigger outcomes: %+v", response.TriggerOutcomes)
 	return response.ID
 }
 
@@ -90,12 +92,16 @@ func TestConversationUnboundAndBoundAgentComment(t *testing.T) {
 	for _, bound := range []bool{false, true} {
 		t.Run(fmt.Sprint(bound), func(t *testing.T) {
 			f := newConversationFixture(t)
+			if bound {
+				f.msg.Source.SenderID = "ou_bound_member"
+			}
 			if !bound {
 				dbfx.Exec(t, `DELETE FROM channel_user_binding WHERE id=$1`, f.binding)
 			}
 			f.msg.Source.ChatType = channel.ChatTypeGroup
 			parent := dbfx.Comment(t, f.issue, "original review", testutil.Cols{"author_type": "agent", "author_id": f.agent})
 			dbfx.Exec(t, `UPDATE labrastro_message_delivery SET source_kind='comment',source_scope='comment',source_ref=$2 WHERE id=$1`, f.delivery, fmt.Sprintf(`{"source_kind":"comment","issue_id":%q,"comment_id":%q}`, f.issue, parent))
+			f.msg.Text = fmt.Sprintf("<quoted_message>Frozen report https://example.test/ws/issues/%s#comment=%s</quoted_message>\nPlease clarify the report", f.issue, parent)
 			f.ingest(t)
 			f.ingest(t)
 			inputs, runs, comments := f.counts(t)
@@ -103,12 +109,16 @@ func TestConversationUnboundAndBoundAgentComment(t *testing.T) {
 				t.Fatalf("input/run/comment = %d/%d/%d", inputs, runs, comments)
 			}
 			task := f.task(t)
-			if task.OriginatorSource.String != channel.ConversationOrigin || task.OriginatorUserID != parseUUID(testUserID) || task.AccountableUserID != task.OriginatorUserID {
+			wantOrigin := channel.ConversationOrigin
+			if bound {
+				wantOrigin = "direct_human"
+			}
+			if task.OriginatorSource.String != wantOrigin || task.OriginatorUserID != parseUUID(testUserID) || task.AccountableUserID != task.OriginatorUserID {
 				t.Fatalf("wrong authorization: %+v", task)
 			}
 			var body string
 			dbfx.QueryRow(t, `SELECT content FROM chat_message WHERE task_id=$1 AND role='user'`, task.ID).Scan(&body)
-			for _, text := range []string{f.issue, parent, "Frozen report", "ou_feedback", "om_input"} {
+			for _, text := range []string{f.issue, parent, "Frozen report"} {
 				if !strings.Contains(body, text) {
 					t.Fatalf("missing context %q: %s", text, body)
 				}
@@ -234,25 +244,30 @@ func TestConversationScopeCommandsAndIsolation(t *testing.T) {
 	}
 }
 
-func TestConversationNotificationContextCannotAuthorize(t *testing.T) {
-	for _, invalid := range []string{"human_message", "other_chat", "bad_signature", "diagnostic", "unapproved_group"} {
-		t.Run(invalid, func(t *testing.T) {
+func TestConversationOrdinaryQuotesStillRequireConversationGrant(t *testing.T) {
+	for _, authorized := range []bool{false, true} {
+		t.Run(fmt.Sprint(authorized), func(t *testing.T) {
 			f := newConversationFixture(t)
-			switch invalid {
-			case "human_message":
-				f.transport.proof.Bot = false
-			case "other_chat":
-				f.transport.proof.ChatID = "oc_other"
-			case "bad_signature":
-				f.transport.proof.Signed = false
-			case "diagnostic":
-				dbfx.Exec(t, `UPDATE labrastro_message_delivery SET source_kind='test_send',source_ref_id=NULL WHERE id=$1`, f.delivery)
-			case "unapproved_group":
-				dbfx.Exec(t, `UPDATE labrastro_message_delivery SET target_snapshot='{"target_type":"group","chat_id":"oc_feedback"}' WHERE id=$1`, f.delivery)
+			f.msg.ReplyTo = &channel.ReplyCtx{MessageID: "om_ordinary_quote"}
+			f.msg.Text = "<quoted_message>Report with an explicit source link</quoted_message> Please explain it"
+			if !authorized {
+				dbfx.Exec(t, "UPDATE channel_installation SET config=config-'conversation' WHERE id=$1", f.install)
 			}
 			f.ingest(t)
-			if inputs, runs, comments := f.counts(t); inputs != 0 || runs != 0 || comments != 0 {
-				t.Fatalf("untrusted source created %d/%d/%d input/run/comment", inputs, runs, comments)
+			inputs, runs, comments := f.counts(t)
+			want := 0
+			if authorized {
+				want = 1
+			}
+			if inputs != want || runs != want || comments != 0 {
+				t.Fatalf("quote bypassed grant or depended on retired source binding: %d/%d/%d", inputs, runs, comments)
+			}
+			if authorized {
+				var body string
+				dbfx.QueryRow(t, "SELECT content FROM chat_message WHERE task_id=$1 AND role='user'", f.task(t).ID).Scan(&body)
+				if !strings.Contains(body, "explicit source link") || strings.Contains(body, "Verified notification context") {
+					t.Fatal("ordinary quoted input changed", body)
+				}
 			}
 		})
 	}
@@ -357,13 +372,13 @@ func TestConversationDuplicateReplicasAndRevocation(t *testing.T) {
 	token := f.token(t, task)
 	req := httptest.NewRequest(http.MethodPost, "/api/issues/"+f.issue+"/comments/unused/sub-issues", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
-	testutil.Call(t, middleware.Auth(f.h.Queries, nil, nil)(RequireHumanActor(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	testutil.Call(t, middleware.Auth(f.h.Queries, nil, nil, nil)(RequireHumanActor(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("external task bypassed member-only command")
 	}))).ServeHTTP, req).Want(http.StatusForbidden)
 	dbfx.Exec(t, `UPDATE channel_installation SET config=config-'conversation' WHERE id=$1`, f.install)
 	req = httptest.NewRequest(http.MethodGet, "/api/issues/"+f.issue, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
-	testutil.Call(t, middleware.Auth(f.h.Queries, nil, nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("revoked task reached tool") })).ServeHTTP, req).Want(http.StatusForbidden)
+	testutil.Call(t, middleware.Auth(f.h.Queries, nil, nil, nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("revoked task reached tool") })).ServeHTTP, req).Want(http.StatusForbidden)
 }
 
 func TestConversationReorderedInputAndFirstPartyContinuation(t *testing.T) {
@@ -476,7 +491,7 @@ func TestConversationGrantUsesActualAuthorizerAndRejectsMachines(t *testing.T) {
 	}
 	// Task-token user remains the runtime owner in the existing protocol.
 	// Normal delegation must resolve the grantor from the real source task.
-	private := dbfx.Agent(t, "Grantor private agent", handlerTestRuntimeID(t), testutil.Cols{"owner_id": grantor, "permission_mode": "private"})
+	private := dbfx.Agent(t, "Grantor private agent", dbfx.Runtime(t, "Grantor runtime", testutil.Cols{"owner_id": grantor}), testutil.Cols{"owner_id": grantor, "permission_mode": "private"})
 	f.comment(t, f.token(t, task), "Review [private](mention://agent/"+private+")", "")
 	if n := dbfx.Count(t, `SELECT count(*) FROM agent_task_queue WHERE agent_id=$1 AND originator_user_id=$2 AND delegated_from_task_id=$3`, private, grantor, task.ID); n != 1 {
 		t.Fatal("normal tool delegation lost the actual grantor")
@@ -513,26 +528,20 @@ func TestConversationPrivateInvocationAndDelegatedRevocation(t *testing.T) {
 	}
 }
 
-func TestConversationCommentDependencyGateAndLostResponse(t *testing.T) {
+func TestConversationCommentIgnoresInformationalDependencies(t *testing.T) {
 	f := newConversationFixture(t)
 	f.msg.ReplyTo = nil
 	f.ingest(t)
 	task := f.task(t)
-	dbfx.Exec(t, `UPDATE agent_task_queue SET status='running',started_at=now() WHERE id=$1`, task.ID)
+	dbfx.Exec(t, "UPDATE agent_task_queue SET status='running',started_at=now() WHERE id=$1", task.ID)
 	worker := dbfx.Agent(t, "Worker", handlerTestRuntimeID(t))
 	parent := dbfx.Issue(t, "Parent")
-	blocker := dbfx.Issue(t, "Blocking task")
-	dbfx.Exec(t, `UPDATE issue SET parent_issue_id=$2 WHERE id=$1`, f.issue, parent)
+	blocker := dbfx.Issue(t, "Unfinished prerequisite")
+	dbfx.Exec(t, "UPDATE issue SET parent_issue_id=$2 WHERE id=$1", f.issue, parent)
 	dbfx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": parent, "depends_on_issue_id": blocker, "type": "blocked_by"})
-	token := f.token(t, task)
-	f.comment(t, token, "Review [worker](mention://agent/"+worker+")", "")
-	if n := dbfx.Count(t, `SELECT count(*) FROM agent_task_queue WHERE issue_id=$1 AND agent_id=$2`, f.issue, worker); n != 0 {
-		t.Fatal("comment bypassed inherited dependency")
-	}
-	dbfx.Exec(t, `UPDATE issue SET status='done' WHERE id=$1`, blocker)
-	f.comment(t, token, "Now review [worker](mention://agent/"+worker+")", "")
-	if n := dbfx.Count(t, `SELECT count(*) FROM agent_task_queue WHERE issue_id=$1 AND agent_id=$2`, f.issue, worker); n != 1 {
-		t.Fatalf("ready comment failed normal wake: %d", n)
+	f.comment(t, f.token(t, task), "Review [worker](mention://agent/"+worker+")", "")
+	if n := dbfx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE issue_id=$1 AND agent_id=$2", f.issue, worker); n != 1 {
+		t.Fatalf("informational relations blocked upstream comment wake: %d", n)
 	}
 }
 
@@ -567,12 +576,12 @@ func TestConversationControlCommandsAndQueuedRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/runtimes/claim", nil)
-	resp, _, _, _, failure := f.h.buildClaimedTaskResponse(req, claimed, runtime, uuidToString(runtime.ID), testWorkspaceID)
+	resp, _, _, _, _, failure := f.h.buildClaimedTaskResponse(req, claimed, runtime, uuidToString(runtime.ID), testWorkspaceID)
 	if failure != nil || !strings.Contains(resp.Agent.Instructions, conversationInstructions) {
 		t.Fatalf("conversation instructions did not reach real claim payload: %+v", failure)
 	}
 	dbfx.Exec(t, `UPDATE channel_installation SET config=config-'conversation' WHERE id=$1`, f.install)
-	_, _, _, _, failure = f.h.buildClaimedTaskResponse(req, claimed, runtime, uuidToString(runtime.ID), testWorkspaceID)
+	_, _, _, _, _, failure = f.h.buildClaimedTaskResponse(req, claimed, runtime, uuidToString(runtime.ID), testWorkspaceID)
 	if failure == nil {
 		t.Fatal("revoked queued task reached daemon")
 	}
@@ -582,5 +591,26 @@ func TestConversationControlCommandsAndQueuedRecovery(t *testing.T) {
 	}
 	if settled.Status != "failed" {
 		t.Fatalf("revoked claim not settled: %s", settled.Status)
+	}
+}
+
+func TestConversationWithoutApplicableGrantRetainsNativeBinding(t *testing.T) {
+	for _, missingGrant := range []bool{false, true} {
+		t.Run(fmt.Sprint(missingGrant), func(t *testing.T) {
+			f := newConversationFixture(t)
+			if missingGrant {
+				dbfx.Exec(t, "UPDATE channel_installation SET config=config-'conversation' WHERE id=$1", f.install)
+			} else {
+				f.msg.Source.ChatID = "oc_not_granted"
+			}
+			_, handled, err := f.h.HandleChannelConversation(context.Background(), engine.ResolvedInstallation{ID: parseUUID(f.install), WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(f.agent)}, f.msg, pgtype.UUID{}, false, false, 0)
+			if err != nil || handled {
+				t.Fatalf("native binding flow intercepted: handled=%v err=%v", handled, err)
+			}
+			inputs, runs, comments := f.counts(t)
+			if inputs != 0 || runs != 0 || comments != 0 {
+				t.Fatal("missing grant created an agent action")
+			}
+		})
 	}
 }

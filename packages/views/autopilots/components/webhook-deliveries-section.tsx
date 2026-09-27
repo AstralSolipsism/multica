@@ -28,23 +28,11 @@ import {
   DialogContent,
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@multica/ui/components/ui/alert-dialog";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { toast } from "sonner";
 import { useLocale, useT } from "../../i18n";
-import { DeliveryFilterPanel } from "./webhook-delivery-filter-panel";
 import type {
-  AutopilotTrigger,
   WebhookDelivery,
   WebhookDeliveryStatus,
   WebhookSignatureStatus,
@@ -112,15 +100,9 @@ function canReplay(delivery: WebhookDelivery): boolean {
 export function WebhookDeliveriesSection({
   autopilotId,
   hasWebhookTrigger,
-  triggers = [],
-  canWrite = false,
 }: {
   autopilotId: string;
   hasWebhookTrigger: boolean;
-  /** The autopilot's triggers — used to seed the filter draft from the
-      delivery's own webhook trigger. */
-  triggers?: AutopilotTrigger[];
-  canWrite?: boolean;
 }) {
   const { t } = useT("autopilots");
   const wsId = useWorkspaceId();
@@ -130,13 +112,6 @@ export function WebhookDeliveriesSection({
       enabled: hasWebhookTrigger,
     }),
   );
-
-  // The selected delivery and its detail dialog live at SECTION level, not
-  // inside the row: the list holds only the newest N deliveries, and a
-  // refresh (realtime event / reconnect) that pushes the selected row out of
-  // the window must not unmount the dialog and silently drop an unsaved
-  // filter draft — the discard guard only runs on an explicit close.
-  const [selectedDeliveryId, setSelectedDeliveryId] = useState<string | null>(null);
 
   // No webhook trigger configured → the entire section is irrelevant. We hide
   // it rather than render an empty card to keep the detail page short for
@@ -164,23 +139,10 @@ export function WebhookDeliveriesSection({
             <DeliveryRow
               key={delivery.id}
               delivery={delivery}
-              onOpen={() => setSelectedDeliveryId(delivery.id)}
+              autopilotId={autopilotId}
             />
           ))}
         </div>
-      )}
-      {selectedDeliveryId && (
-        <DeliveryDetailDialog
-          open
-          onOpenChange={(next) => {
-            if (!next) setSelectedDeliveryId(null);
-          }}
-          autopilotId={autopilotId}
-          deliveryId={selectedDeliveryId}
-          slimDelivery={deliveries.find((d) => d.id === selectedDeliveryId)}
-          triggers={triggers}
-          canWrite={canWrite}
-        />
       )}
     </section>
   );
@@ -190,13 +152,14 @@ export function WebhookDeliveriesSection({
 
 function DeliveryRow({
   delivery,
-  onOpen,
+  autopilotId,
 }: {
   delivery: WebhookDelivery;
-  onOpen: () => void;
+  autopilotId: string;
 }) {
   const { t } = useT("autopilots");
   const locale = useLocale();
+  const [open, setOpen] = useState(false);
 
   const visual = visualForStatus(delivery.status);
   const StatusIcon = visual.icon;
@@ -206,44 +169,54 @@ function DeliveryRow({
   const providerLabel = delivery.provider || "—";
 
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-body hover:bg-accent/30 transition-colors"
-    >
-      <StatusIcon
-        className={cn(
-          "h-4 w-4 shrink-0",
-          visual.color,
-          visual.spin && "animate-spin",
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-body hover:bg-accent/30 transition-colors"
+      >
+        <StatusIcon
+          className={cn(
+            "h-4 w-4 shrink-0",
+            visual.color,
+            visual.spin && "animate-spin",
+          )}
+        />
+        <span className={cn("w-24 shrink-0 text-caption font-medium", visual.color)}>
+          {statusLabel}
+        </span>
+        <span className="w-20 shrink-0 text-caption text-muted-foreground truncate">
+          {providerLabel}
+        </span>
+        <span className="flex-1 min-w-0 text-caption text-muted-foreground truncate font-mono">
+          {delivery.event || t(($) => $.webhook_payload.unknown_event)}
+        </span>
+        {delivery.replayed_from_delivery_id && (
+          <Badge variant="secondary" className="shrink-0">
+            <RotateCw className="h-3 w-3" />
+            {t(($) => $.deliveries.row.replay_badge)}
+          </Badge>
         )}
-      />
-      <span className={cn("w-24 shrink-0 text-caption font-medium", visual.color)}>
-        {statusLabel}
-      </span>
-      <span className="w-20 shrink-0 text-caption text-muted-foreground truncate">
-        {providerLabel}
-      </span>
-      <span className="flex-1 min-w-0 text-caption text-muted-foreground truncate font-mono">
-        {delivery.event || t(($) => $.webhook_payload.unknown_event)}
-      </span>
-      {delivery.replayed_from_delivery_id && (
-        <Badge variant="secondary" className="shrink-0">
-          <RotateCw className="h-3 w-3" />
-          {t(($) => $.deliveries.row.replay_badge)}
-        </Badge>
+        {delivery.attempt_count > 1 && (
+          <Badge variant="outline" className="shrink-0">
+            {t(($) => $.deliveries.row.attempts, {
+              count: delivery.attempt_count,
+            })}
+          </Badge>
+        )}
+        <span className="w-32 shrink-0 text-right text-caption text-muted-foreground tabular-nums">
+          {formatDate(delivery.received_at || delivery.created_at, locale)}
+        </span>
+      </button>
+      {open && (
+        <DeliveryDetailDialog
+          open={open}
+          onOpenChange={setOpen}
+          autopilotId={autopilotId}
+          delivery={delivery}
+        />
       )}
-      {delivery.attempt_count > 1 && (
-        <Badge variant="outline" className="shrink-0">
-          {t(($) => $.deliveries.row.attempts, {
-            count: delivery.attempt_count,
-          })}
-        </Badge>
-      )}
-      <span className="w-32 shrink-0 text-right text-caption text-muted-foreground tabular-nums">
-        {formatDate(delivery.received_at || delivery.created_at, locale)}
-      </span>
-    </button>
+    </>
   );
 }
 
@@ -253,97 +226,29 @@ function DeliveryDetailDialog({
   open,
   onOpenChange,
   autopilotId,
-  deliveryId,
-  slimDelivery,
-  triggers,
-  canWrite,
+  delivery,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   autopilotId: string;
-  deliveryId: string;
-  /** The list row for instant render while the detail query loads. Undefined
-      when a list refresh has pushed the delivery out of the newest-N window —
-      the dialog then relies on the (cached or in-flight) detail query. */
-  slimDelivery?: WebhookDelivery;
-  triggers: AutopilotTrigger[];
-  canWrite: boolean;
+  delivery: WebhookDelivery;
 }) {
   const { t } = useT("autopilots");
   const locale = useLocale();
   const wsId = useWorkspaceId();
-  const {
-    data: detail,
-    isLoading,
-    error: detailError,
-  } = useQuery(
-    autopilotDeliveryOptions(wsId, autopilotId, deliveryId, { enabled: open }),
+  const { data: detail, isLoading } = useQuery(
+    autopilotDeliveryOptions(wsId, autopilotId, delivery.id, { enabled: open }),
   );
   // Use the detail row when loaded, otherwise the slim row from the list.
   // The slim row is missing raw_body / response_body / selected_headers; the
   // dialog renders skeleton placeholders for those sections while detail is
-  // still loading. Both are absent only in the narrow window where the row
-  // left the list before the detail landed.
-  const full = detail ?? slimDelivery;
-
-  // Unsaved filter drafts survive an accidental close: Esc / overlay / the X
-  // all route through requestClose, which detours to a discard confirmation
-  // instead of dropping the draft on the floor.
-  const [filterDirty, setFilterDirty] = useState(false);
-  const [discardOpen, setDiscardOpen] = useState(false);
-  const requestClose = (nextOpen: boolean) => {
-    if (!nextOpen && filterDirty) {
-      setDiscardOpen(true);
-      return;
-    }
-    onOpenChange(nextOpen);
-  };
-
-  if (!full) {
-    // The row left the list before the detail landed. Distinguish failure
-    // from loading: a failed detail request (404 / 500 / ...) must surface
-    // the panel's existing error copy, not skeletons forever.
-    return (
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogTitle className="flex items-center gap-2">
-            <Webhook className="h-4 w-4 text-muted-foreground" />
-            {t(($) => $.deliveries.detail.title)}
-          </DialogTitle>
-          {detailError ? (
-            <div className="pt-1">
-              <DeliveryFilterPanel
-                autopilotId={autopilotId}
-                deliveryId={deliveryId}
-                detail={undefined}
-                detailLoading={false}
-                detailError={detailError}
-                trigger={undefined}
-                canWrite={canWrite}
-                onDirtyChange={setFilterDirty}
-              />
-            </div>
-          ) : (
-            <div className="space-y-2 pt-1">
-              <Skeleton className="h-6 w-48" />
-              <Skeleton className="h-24 w-full" />
-              <Skeleton className="h-16 w-full" />
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-    );
-  }
-
+  // still loading.
+  const full = detail ?? delivery;
   const visual = visualForStatus(full.status);
   const StatusIcon = visual.icon;
 
-  // The filter panel edits against the delivery's own webhook trigger.
-  const deliveryTrigger = triggers.find((trig) => trig.id === full.trigger_id);
-
   return (
-    <>
-    <Dialog open={open} onOpenChange={requestClose}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       {/* max-h + overflow-y-auto: webhook bodies + headers + response can
           easily exceed viewport height. Without a cap the dialog grows past
           the screen edge and the bottom (e.g. Replay button) becomes
@@ -441,65 +346,18 @@ function DeliveryDetailDialog({
           {/* Raw body + response body + headers, all loaded lazily */}
           <DetailSections detail={detail} isLoading={isLoading} />
 
-          {/* Filter suggestion + bring-in with a live match preview (OL-78).
-              Read-only inspection for everyone; the draft only persists via
-              an explicit save, which needs write access. */}
-          <DeliveryFilterPanel
-            autopilotId={autopilotId}
-            deliveryId={deliveryId}
-            detail={detail}
-            detailLoading={isLoading}
-            detailError={detailError}
-            trigger={deliveryTrigger}
-            canWrite={canWrite}
-            onDirtyChange={setFilterDirty}
-          />
-
           {/* Replay button */}
           <div className="flex items-center justify-between pt-2">
             <ReplayHint delivery={full} />
             <ReplayButton
               autopilotId={autopilotId}
               delivery={full}
-              onSuccess={() => requestClose(false)}
+              onSuccess={() => onOpenChange(false)}
             />
           </div>
         </div>
       </DialogContent>
     </Dialog>
-    <AlertDialog
-      open={discardOpen}
-      onOpenChange={(v) => {
-        if (!v) setDiscardOpen(false);
-      }}
-    >
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            {t(($) => $.deliveries.filter.discard_title)}
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            {t(($) => $.deliveries.filter.discard_description)}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>
-            {t(($) => $.deliveries.filter.discard_keep)}
-          </AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            onClick={() => {
-              setDiscardOpen(false);
-              setFilterDirty(false);
-              onOpenChange(false);
-            }}
-          >
-            {t(($) => $.deliveries.filter.discard_confirm)}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-    </>
   );
 }
 

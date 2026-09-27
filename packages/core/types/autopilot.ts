@@ -76,11 +76,7 @@ export interface WebhookEventFilter {
 // default arm, a future value is possible. `matches` is null without a draft
 // query (?event_filters=) or when the stored body cannot be normalized — it
 // never means "no match".
-export interface WebhookDeliveryFilterContext {
-  suggestion: WebhookEventFilter | null;
-  unavailable_reason?: string;
-  matches: boolean | null;
-}
+
 
 export interface AutopilotSubscriber {
   user_type: "member";
@@ -286,7 +282,6 @@ export interface WebhookDelivery {
   raw_body?: string | null;
   response_body?: string | null;
   // Detail-only, additive (OL-77). Absent on older servers.
-  filter_context?: WebhookDeliveryFilterContext | null;
 }
 
 export interface ListWebhookDeliveriesResponse {

@@ -96,53 +96,50 @@ func conversationLookupError(err error) error {
 	return err
 }
 
-// AuthorizeConversationTask follows existing retry/delegation provenance. A
-// new direct human action has its own authorization. This check only adds live
-// revocation for integration-origin work; normal task-token/agent gates still
-// decide every operation. A bounded walk fails closed on broken/cyclic lineage.
+// AuthorizeConversationTask checks only work carrying the persisted external
+// conversation root. The database copies this reference on retry/delegation.
+// Ordinary task history may be deleted without changing its copied human
+// authority; an external task still checks its one frozen grant and live consent.
 func AuthorizeConversationTask(ctx context.Context, q *db.Queries, task db.AgentTaskQueue, workspaceID pgtype.UUID) error {
-	originator := task.OriginatorUserID
-	executingAgent := task.AgentID
-	for range 64 {
+	if !task.ConversationRootTaskID.Valid {
 		if task.OriginatorSource.String == ConversationOrigin {
-			delivery, err := q.GetChannelTaskDelivery(ctx, task.ID)
-			if err != nil {
-				return conversationLookupError(err)
-			}
-			cfg, err := ParseConversationConfig(delivery.Config)
-			if err != nil || cfg.Grant == nil || cfg.Grant.AuthorizedBy != util.UUIDToString(originator) {
-				return ErrConversationDenied
-			}
-			inst, err := q.GetChannelInstallation(ctx, db.GetChannelInstallationParams{ID: delivery.InstallationID, ChannelType: string(TypeFeishu)})
-			if err != nil {
-				return conversationLookupError(err)
-			}
-			if inst.WorkspaceID != workspaceID || inst.AgentID != task.AgentID {
-				return ErrConversationDenied
-			}
-			if err := AuthorizeConversation(ctx, q, inst, cfg.Grant, cfg.ChatID, delivery.ChatType); err != nil {
-				return err
-			}
-			// A delegated target must still be invocable by this grantor. The
-			// installation's consent never grants access to a second private agent.
-			if executingAgent != inst.AgentID {
-				inst.AgentID = executingAgent
-				return AuthorizeConversation(ctx, q, inst, cfg.Grant, cfg.ChatID, delivery.ChatType)
-			}
-			return nil
+			return ErrConversationDenied
 		}
-		parent := task.RetryOfTaskID
-		if !parent.Valid && (task.OriginatorSource.String == "delegation" || task.OriginatorSource.String == "comment_source") {
-			parent = task.DelegatedFromTaskID
-		}
-		if !parent.Valid {
-			return nil
-		}
+		return nil
+	}
+	executingAgent, originator := task.AgentID, task.OriginatorUserID
+	root := task
+	if task.ConversationRootTaskID != task.ID {
 		var err error
-		task, err = q.GetAgentTask(ctx, parent)
+		root, err = q.GetAgentTask(ctx, task.ConversationRootTaskID)
 		if err != nil {
 			return conversationLookupError(err)
 		}
 	}
-	return ErrConversationDenied
+	if root.OriginatorSource.String != ConversationOrigin || root.OriginatorUserID != originator {
+		return ErrConversationDenied
+	}
+	delivery, err := q.GetChannelTaskDelivery(ctx, root.ID)
+	if err != nil {
+		return conversationLookupError(err)
+	}
+	cfg, err := ParseConversationConfig(delivery.Config)
+	if err != nil || cfg.Grant == nil || cfg.Grant.AuthorizedBy != util.UUIDToString(originator) {
+		return ErrConversationDenied
+	}
+	inst, err := q.GetChannelInstallation(ctx, db.GetChannelInstallationParams{ID: delivery.InstallationID, ChannelType: string(TypeFeishu)})
+	if err != nil {
+		return conversationLookupError(err)
+	}
+	if inst.WorkspaceID != workspaceID || inst.AgentID != root.AgentID {
+		return ErrConversationDenied
+	}
+	if err := AuthorizeConversation(ctx, q, inst, cfg.Grant, cfg.ChatID, delivery.ChatType); err != nil {
+		return err
+	}
+	if executingAgent != inst.AgentID {
+		inst.AgentID = executingAgent
+		return AuthorizeConversation(ctx, q, inst, cfg.Grant, cfg.ChatID, delivery.ChatType)
+	}
+	return nil
 }

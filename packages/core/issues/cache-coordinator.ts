@@ -12,7 +12,7 @@ import {
   type IssueSortParam,
   type MyIssuesFilter,
 } from "./queries";
-import { inboxKeys } from "../inbox/queries";
+import { inboxKeys, type ArchivedInboxCache } from "../inbox/queries";
 import { patchInboxIssueProjection } from "../inbox/ws-updaters";
 import { projectKeys } from "../projects/queries";
 import {
@@ -90,7 +90,7 @@ export interface IssueCacheChangeResult {
   prevTableRows: [QueryKey, IssueTableRowCache][];
   prevDetail: Issue | undefined;
   prevInboxList: InboxItem[] | undefined;
-  prevArchivedInboxList: InboxItem[] | undefined;
+  prevArchivedInboxCaches: [QueryKey, ArchivedInboxCache | undefined][] | undefined;
   /** Loaded list keys whose server result may have drifted (membership
    *  unknown, possible enter/leave beyond the loaded window, bucket-count
    *  drift). Invalidate on settle (mutation) or immediately (WS). */
@@ -535,12 +535,21 @@ export function applyIssueChange(
   // filtering. The issue is the real state, so both projections follow every
   // write immediately.
   let prevInboxList: InboxItem[] | undefined;
-  let prevArchivedInboxList: InboxItem[] | undefined;
+  let prevArchivedInboxCaches: [QueryKey, ArchivedInboxCache | undefined][] | undefined;
   if (patch.status !== undefined || patch.priority !== undefined) {
     prevInboxList = qc.getQueryData<InboxItem[]>(inboxKeys.list(wsId));
-    prevArchivedInboxList = qc.getQueryData<InboxItem[]>(
-      inboxKeys.archived(wsId),
-    );
+    prevArchivedInboxCaches = qc.getQueriesData<ArchivedInboxCache>({ queryKey: inboxKeys.archived(wsId) });
+    // Membership and facets are server-owned; callers refresh after commit.
+    // Full issue events also carry unchanged status/priority on title edits.
+    const archiveProjectionChanged =
+      (patch.status !== undefined && (changed.status || !prevIssue || prevIssue.status !== patch.status)) ||
+      (patch.priority !== undefined && (!prevIssue || prevIssue.priority !== patch.priority));
+    if (archiveProjectionChanged) {
+      staleKeys.push(...qc.getQueryCache().findAll({ queryKey: inboxKeys.archived(wsId) })
+        .filter((query) => query.queryKey.length > inboxKeys.archived(wsId).length)
+        .map((query) => query.queryKey));
+      staleKeys.push(...qc.getQueryCache().findAll({ queryKey: inboxKeys.facets(wsId) }).map((query) => query.queryKey));
+    }
     patchInboxIssueProjection(qc, wsId, id, {
       status: patch.status,
       priority: patch.priority,
@@ -553,7 +562,7 @@ export function applyIssueChange(
     prevTableRows,
     prevDetail,
     prevInboxList,
-    prevArchivedInboxList,
+    prevArchivedInboxCaches,
     staleKeys,
     prevIssue,
   };
@@ -572,7 +581,7 @@ export function rollbackIssueChange(
     | "prevTableRows"
     | "prevDetail"
     | "prevInboxList"
-    | "prevArchivedInboxList"
+    | "prevArchivedInboxCaches"
   >,
 ) {
   for (const [key, snapshot] of result.prevLists) {
@@ -590,11 +599,8 @@ export function rollbackIssueChange(
   if (result.prevInboxList !== undefined) {
     qc.setQueryData(inboxKeys.list(wsId), result.prevInboxList);
   }
-  if (result.prevArchivedInboxList !== undefined) {
-    qc.setQueryData(
-      inboxKeys.archived(wsId),
-      result.prevArchivedInboxList,
-    );
+  for (const [key, snapshot] of result.prevArchivedInboxCaches ?? []) {
+    qc.setQueryData(key, snapshot);
   }
 }
 
@@ -680,6 +686,13 @@ export function invalidateStaleListKeys(qc: QueryClient, staleKeys: QueryKey[]) 
     const hash = hashKey(key);
     if (seen.has(hash)) continue;
     seen.add(hash);
-    qc.invalidateQueries({ queryKey: key, exact: true });
+    if (key[0] === "inbox") {
+      // A first archive page/facet request may predate this committed issue
+      // change. Cancel before invalidation even when it has no cached data.
+      void qc.cancelQueries({ queryKey: key, exact: true }).then(() =>
+        qc.invalidateQueries({ queryKey: key, exact: true }));
+    } else {
+      qc.invalidateQueries({ queryKey: key, exact: true });
+    }
   }
 }

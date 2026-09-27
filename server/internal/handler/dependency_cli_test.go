@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -14,9 +13,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/multica-ai/multica/server/internal/auth"
-	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/testutil"
 )
@@ -47,7 +44,7 @@ func TestDependencyCLIIntegration(t *testing.T) {
 		fx.Exec(t, "DELETE FROM issue WHERE workspace_id=$1", fx.WorkspaceID)
 	})
 	router := chi.NewRouter()
-	router.Use(middleware.Auth(h.Queries, nil, nil), middleware.RequireWorkspaceMember(h.Queries))
+	router.Use(middleware.Auth(h.Queries, nil, nil, nil), middleware.RequireWorkspaceMember(h.Queries))
 	router.Get("/api/issues/{id}", h.GetIssue)
 	router.Get("/api/issues/{id}/dependencies", h.GetIssueDependencies)
 	router.Post("/api/issues", h.CreateIssue)
@@ -104,80 +101,31 @@ func TestDependencyCLIIntegration(t *testing.T) {
 		t.Fatal("compound planning did not preserve ownership, stage and dependencies", created)
 	}
 	before := countIssues()
-	failure := run(1, "issue", "create", "--title", "must not exist", "--blocked-by", a, "--blocked-by", c, "--assignee-id", agent, "--status", "todo")
-	if failure["reason_code"] != "dependency_unsatisfied" || countIssues() != before {
-		t.Fatal("blocked compound create left an issue", failure)
+	running := run(0, "issue", "create", "--title", "CLI informational prerequisite", "--blocked-by", a, "--blocked-by", c, "--assignee-id", agent, "--status", "todo")
+	runningID := running["id"].(string)
+	if countIssues() != before+1 || countRuns(runningID) != 1 {
+		t.Fatal("informational prerequisites blocked CLI creation or dispatch", running)
 	}
-	d := dependencyIssue(t, fx, "additional prerequisite", testutil.Cols{"status": "done"})
-	failure = run(1, "issue", "update", id, "--blocked-by", a, "--blocked-by", c, "--blocked-by", d, "--title", "must roll back", "--assignee-id", agent, "--no-start")
-	row := run(0, "issue", "get", id)
-	if failure["reason_code"] != "dependency_unsatisfied" || row["title"] != "CLI checkout" || row["assignee_id"] != nil || countRuns(id) != 0 || len(dependencies(t, h, fx, id).BlockedBy) != 2 {
-		t.Fatal("blocked compound update partially committed", row)
+	run(0, "issue", "dependency", "remove", runningID, "--blocked-by", a)
+	if len(dependencies(t, h, fx, runningID).BlockedBy) != 1 {
+		t.Fatal("agent could not edit unfinished informational relations")
 	}
-	for _, args := range [][]string{{"issue", "update", id, "--clear-blocked-by"}, {"issue", "dependency", "remove", id, "--blocked-by", a}} {
-		if got := run(3, args...); got["reason_code"] != "dependency_change_not_allowed" {
-			t.Fatal(got)
-		}
+	run(0, "issue", "update", runningID, "--clear-blocked-by")
+	if len(dependencies(t, h, fx, runningID).BlockedBy) != 0 {
+		t.Fatal("CLI did not clear relations")
 	}
 	child := dependencyIssue(t, fx, "inherited CLI target", testutil.Cols{"parent_issue_id": b, "status": "backlog"})
 	view := run(0, "issue", "dependency", "list", child)
-	if len(view["inherited_blocked_by"].([]any)) != 2 || len(view["blocked_by"].([]any)) != 0 {
-		t.Fatal("inherited projection lost", view)
+	if len(view["inherited_blocked_by"].([]any)) != 2 {
+		t.Fatal("inherited display lost", view)
 	}
-	if got := run(1, "issue", "assign", child, "--to-id", agent, "--no-start"); got["reason_code"] != "dependency_unsatisfied" || countRuns(child) != 0 {
-		t.Fatal("legacy assignment bypassed inheritance", got)
+	assigned := run(0, "issue", "assign", child, "--to-id", agent)
+	if assigned["assignee_id"] != agent || countRuns(child) != 0 {
+		t.Fatal("upstream Backlog behavior changed", assigned)
 	}
-	content := fmt.Sprintf("[@fake](mention://agent/%s)", agent)
-	if err := os.WriteFile(filepath.Join(dir, "comment.md"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
+	run(0, "issue", "status", child, "todo")
+	if countRuns(child) != 1 {
+		t.Fatal("unfinished prerequisites blocked upstream status-triggered execution")
 	}
-	comment := run(1, "issue", "comment", "add", id, "--content-file", "./comment.md")
-	if comment["id"] == nil || fx.Count(t, "SELECT count(*) FROM comment WHERE issue_id=$1", id) != 1 || countRuns(id) != 0 {
-		t.Fatal("comment was lost, duplicated or dispatched", comment)
-	}
-
-	// The human half is the existing UI/API contract, not a force flag or an
-	// agent borrowing a profile. Sign an isolated test JWT and exercise Auth.
-	jwtToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"sub": fx.UserID, "email": "cli-fixture@example.test", "exp": time.Now().Add(time.Hour).Unix()}).SignedString(auth.JWTSecret())
-	if err != nil {
-		t.Fatal(err)
-	}
-	human := cli.NewAPIClient(server.URL, fx.WorkspaceID, jwtToken)
-	mutation := map[string]any{"assignee_type": "agent", "assignee_id": agent, "status": "todo"}
-	var preview IssueTriggerPreviewResponse
-	if err := human.PostJSON(context.Background(), "/api/issues/preview-trigger", map[string]any{"issue_ids": []string{b}, "mutation": mutation}, &preview); err != nil {
-		t.Fatal(err)
-	}
-	if len(preview.Blocked) != 1 || preview.Blocked[0].Confirmation == nil {
-		t.Fatal("human preview lacks confirmation", preview)
-	}
-	mutation["dependency_override"] = preview.Blocked[0].Confirmation.DependencyOverride
-	var first, replay IssueResponse
-	for _, dst := range []*IssueResponse{&first, &replay} {
-		if err := human.PatchJSON(context.Background(), "/api/issues/"+b+"/with-dependencies", mutation, dst); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if first.Dispatch == nil || first.Dispatch.TaskID == nil || replay.Dispatch == nil || replay.Dispatch.TaskID == nil || *first.Dispatch.TaskID != *replay.Dispatch.TaskID || countRuns(b) != 1 {
-		t.Fatal("human confirmation did not produce exactly one execution")
-	}
-	run(0, "issue", "status", a, "done", "--no-start")
-	if got := run(1, "issue", "assign", id, "--to-id", agent); got["reason_code"] != "dependency_unsatisfied" || countRuns(id) != 0 {
-		t.Fatal("one completed prerequisite permitted execution", got)
-	}
-	run(0, "issue", "status", c, "done", "--no-start")
-	assigned := run(0, "issue", "assign", id, "--to-id", agent)
-	if assigned["assignee_id"] != agent || countRuns(id) != 0 {
-		t.Fatal("ready backlog assignment must preserve backlog planning", assigned)
-	}
-	ready := run(0, "issue", "status", id, "todo")
-	if ready["dispatch"].(map[string]any)["status"] != "queued" || countRuns(id) != 1 {
-		t.Fatal("completed prerequisites did not restore execution", ready)
-	}
-	run(0, "issue", "dependency", "remove", id, "--blocked-by", a)
-	run(0, "issue", "update", id, "--clear-blocked-by")
-	if len(dependencies(t, h, fx, id).BlockedBy) != 0 {
-		t.Fatal("completed prerequisites could not be removed")
-	}
-	t.Log("CLI/API: compound planning, blocked create/update rollback, inherited admission, removal authorization, saved comment/refused dispatch, authenticated human one-shot confirmation, partial/all prerequisites complete passed")
+	t.Log("CLI relation create/read/edit and upstream enqueue verified without execution permits")
 }

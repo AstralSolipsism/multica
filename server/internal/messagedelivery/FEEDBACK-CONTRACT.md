@@ -1,6 +1,7 @@
 # Feishu agent conversation contract
 
-Baseline: fork main `ec7f334be1b00700c4b5537323ad483547e58c14`.
+Synchronization baseline: upstream `12f8f3f`, with the owner-confirmed retained extensions in
+[the synchronization scope](../../../docs/engineering/upstream-sync-20260926.md).
 This contract replaces the member-authored feedback workflow. Feishu provides
 notifications and a conversation with one designated agent. Participants may
 have no Labrastro account. The agent clarifies and summarizes feedback, then
@@ -55,16 +56,20 @@ of invocation rights invalidate previous external work at these boundaries.
 An already accepted side effect or a local tool running on a daemon cannot be
 recalled. This is not a filesystem/network sandbox for agent runtimes.
 
-Every task-token API request now reads its task after authenticating the token,
-including ordinary platform tasks. Fresh direct tasks require no ancestor or
-installation lookup. Retry links are followed regardless of source; delegation
-links are followed only for `delegation` and `comment_source`. Limiting the
-initial check to `channel_integration` would let descendants escape revocation.
-The walk checks at most 64 tasks, including the executing task; a longer chain
-(even a valid ordinary retry chain), a cycle or a missing ancestor is denied.
-At the tool boundary, denial is HTTP 403; a database lookup failure is HTTP 503.
-Claim-time database failures use existing claim recovery. These are additional
-database dependencies, not free local checks; no latency benchmark is claimed.
+Every task-token API request reads its task after authenticating the token.
+Migration 551 adds a nullable `conversation_root_task_id` derived reference.
+The database copies it on external retry/delegation; ordinary task roots remain
+NULL. Ordinary status/lease/result updates do not recompute it. Authorization
+checks load only the referenced external root's frozen delivery and live grant.
+There is no lineage depth limit or ordinary-parent-history dependency. Deleting
+an intermediate issue therefore cannot block an ordinary child or erase an
+external child's grant. Deleting an external root leaves a denied reference.
+
+The migration backfills resolved historical chains. Unresolvable historical
+ancestry retains the old fork's denial using a self reference that fails root
+validation; this does not automatically repair those pre-existing records.
+Fresh human actions use upstream authority. Tool denial is HTTP 403; database
+lookup failure is HTTP 503. Claim-time failures use existing claim recovery.
 
 A fresh first-party action in the same Chat follows normal human authorization
 and has no external delivery snapshot. Normal task-token, workspace and
@@ -75,9 +80,11 @@ installer impersonation, or parallel comment-trigger engine are introduced.
 
 The connector's existing bot/event verification remains in front of the Router.
 Installation lookup, persistent dedup and explicit group-address filtering run
-before the conversation hook. Bound and unbound senders take the same hook;
-Feishu identity fallback fails closed if the hook is missing. Idle group
-messages do not start runs. Routes are keyed by installation, grant epoch,
+before identity resolution. Bound workspace members follow the upstream member
+path using their own identity. Only unbound/nonmember senders enter the explicit
+grant hook. Without an applicable grant, the hook returns control to the normal
+binding/not-member outcome; it never grants execution. Idle group messages do
+not start runs. External routes are keyed by installation, grant epoch,
 chat type, chat ID, and group topic; an old member-owned route is never reused.
 
 Text, selected context and media use existing Chat storage, task ownership and
@@ -91,23 +98,18 @@ Chat; intake does not rerun the original automation or force issue creation.
 These interpretation rules are agent instructions, not claims of deterministic
 model understanding.
 
-A quoted notification supplies context only after the existing source resolver
-fetches the actual bot message using that installation's credentials, checks
-bot sender and same chat, and resolves its receipt/frozen source. Existing
-receipt/HMAC shard recovery is retained: a lost message ID is restored only
-for the exact persisted signed shard; pasted links or human-copied messages
-cannot create trusted associations. A present signature must validate; old
-unsigned messages need an existing receipt. Diagnostic/unknown sources are not
-actionable. Group/topic context retains current source/range approval checks.
-Ordinary non-notification quotes remain conversation text.
+Quoted messages use the upstream connector's ordinary selected-context text.
+Outgoing notifications carry an explicit source URL and, for an automation run,
+its run ID. There is no signed-report recovery, HMAC report validation, receipt
+lookup for quote context, or frozen-report injection. A link or quote is reference
+material, never authorization. Inbound dedup and outbound idempotency receipts
+remain for their own delivery/retry purposes.
 
-Verified issue/comment/run/delivery IDs, frozen report text and source link are
-added to the input. They neither change the configured agent nor expand its
-workspace rights. Ordinary comment handlers validate issue/parent membership,
-set agent authorship and `source_task_id`, and preserve discussion, mention,
-private-agent, squad-role and dependency behavior. Notification delivery,
-personal Inbox addressing/member bindings, subscriptions and retries retain
-their existing authorization and storage.
+Ordinary comment handlers validate issue/parent membership and set agent
+authorship and the real `source_task_id`. Delegation follows upstream private
+agent and runtime permissions. Dependency relations are informational and do
+not gate comments or execution. Notification routes, personal inbox bindings,
+subscriptions and retries retain their existing authorization and storage.
 
 ## Commit, retry and ordering guarantees
 
@@ -172,12 +174,12 @@ Handler tests use the production Router, Feishu resolvers, PostgreSQL Chat/task
 transactions and the real task-token middleware/comment handlers. Only the
 external message API is replaced; a deterministic agent stand-in calls normal
 HTTP tools. Faults surround actual SQL/COMMIT and independent connections
-observe committed counts. Signed-source tests also use the production HTTP
-client, encrypted credentials and receipt recovery.
+observe committed counts. Outgoing source-link tests use the real message
+parameter encoder and verify stable retry content and idempotency identity.
 
 | Behavior | Regression |
 | --- | --- |
-| Bound/unbound group input → same agent; correct issue/thread and `source_task_id` | `TestConversationUnboundAndBoundAgentComment` |
+| Member-owned and grantor-owned input follow their respective paths; agent author and `source_task_id` remain correct | `TestConversationUnboundAndBoundAgentComment` |
 | Unconfigured/revoked/private/removed-member refusal; commands, report and ambiguous input; group/topic/DM isolation | `TestConversationScopeCommandsAndIsolation` |
 | Real INSERT rollback and missing COMMIT confirmation; separate-connection counts | `TestConversationAtomicIntakeAndLostCommit` |
 | Two Routers, eight duplicates; cross-workspace denial; real token and member-only gate | `TestConversationDuplicateReplicasAndRevocation` |
@@ -188,10 +190,11 @@ client, encrypted credentials and receipt recovery.
 | Bare controls; committed queue recovered through normal claim; revoke before daemon payload | `TestConversationControlCommandsAndQueuedRecovery` |
 | Bot identity backfill cannot overwrite consent revoked immediately before its write | `TestConversationRevocationSurvivesBotBackfill` |
 | Human invocation matches the ordinary member gate; owner/admin have no private-agent bypass | `TestConversationInvocationMatchesMemberGate` |
-| 64/65-task boundary, cyclic/missing lineage, fresh direct action and database failure semantics | `TestConversationLineageBoundaries`, `TestConversationTaskTokenLookupFailures` |
-| Source context cannot authorize an unapproved group or a forged/diagnostic quote | `TestConversationNotificationContextCannotAuthorize` |
+| Long ordinary/external chains, cyclic/missing lineage, fresh direct action and database failure semantics | `TestConversationLineageBoundaries`, `TestConversationTaskTokenLookupFailures` |
+| Source context cannot authorize an unapproved group or a forged/diagnostic quote | `TestConversationOrdinaryQuotesStillRequireConversationGrant` |
 | Replies use the real chat ID and fail closed on revoked/unavailable consent | `TestConversationOutboundUsesRealChatAndLiveConsent` |
-| Real signed bot source / shard recovery and forgery refusals | `TestFeedbackSignedSourceRecoveryThroughHTTPAndDatabase` |
+| Ordinary source URL appears once; retries retain body/send identity | `TestDeliveryParamsOrdinarySourceLink` |
+| Missing/nonmatching grants preserve native account binding | `TestConversationWithoutApplicableGrantRetainsNativeBinding` |
 | Populated old outcomes/anchors retained; repeated upgrade and down refusal | `TestConversationRetirementPreservesHistoryAndRefusesDowngrade` |
 | Old list response, malformed read/save, revoke payload, saved-data/draft error state | `lark-conversation.test.ts`, `lark-conversation-form.test.tsx` |
 

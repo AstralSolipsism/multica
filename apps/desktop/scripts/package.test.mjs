@@ -553,7 +553,9 @@ describe("assertCandidatePublishIsolated (real electron-builder parser)", () => 
       );
       expect(() => assertCandidatePublishIsolated(args)).not.toThrow();
     }
-  });
+    // Loading the real electron-builder parser is cold filesystem work on
+    // Windows. Keep all parser assertions while allowing that initial load.
+  }, 20_000);
 
   it("rejects every publish-spelling bypass, and even an unguarded arg list", () => {
     // Any form that slipped the textual guard is still caught by the real
@@ -729,7 +731,7 @@ describe("electron-builder.yml packaging config", () => {
 
   it("excludes prior architecture output from packaged files", () => {
     expect(configPath, "electron-builder.yml not found").toBeTruthy();
-    const entries = readFilesBlock(readFileSync(configPath, "utf-8"));
+    const entries = readFilesBlock(readFileSync(configPath, "utf-8").replace(/\r\n/g, "\n"));
     expect(entries.length).toBeGreaterThan(0);
     expect(entries).toContain("!dist/**");
   });
@@ -740,7 +742,7 @@ describe("electron-builder.yml packaging config", () => {
     // customized build; candidate packaging stages feed files locally and an
     // authorized step uploads them — electron-builder never publishes.
     expect(configPath, "electron-builder.yml not found").toBeTruthy();
-    const raw = readFileSync(configPath, "utf-8");
+    const raw = readFileSync(configPath, "utf-8").replace(/\r\n/g, "\n");
     const publishMatch = raw.match(/^publish:\n((?: {2,}.*\n?)*)/m);
     expect(publishMatch, "publish block not found").toBeTruthy();
     const publish = publishMatch[1];

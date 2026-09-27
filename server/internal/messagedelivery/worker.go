@@ -397,6 +397,9 @@ func (s *Service) gateTeamSource(ctx context.Context, d db.LabrastroMessageDeliv
 		if err != nil {
 			return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load comment failed")
 		}
+		if comment.DeletedAt.Valid {
+			return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "comment was deleted")
+		}
 		issueID = comment.IssueID
 	}
 	{

@@ -10,7 +10,7 @@ import {
 import { api } from "../api";
 import { issueKeys } from "./queries";
 import { projectKeys } from "../projects/queries";
-import { inboxKeys } from "../inbox/queries";
+import { inboxKeys, type ArchivedInboxCache } from "../inbox/queries";
 import {
   cancelInboxLists,
   isInboxListRequestInFlight,
@@ -43,7 +43,6 @@ import type { InboxItem, Issue, IssueReaction } from "../types";
 import type {
   CreateCommentSubIssueManualRequest,
   CreateIssueRequest,
-  IssueTriggerPreviewParams,
   ListIssuesCache,
   MoveIssueRequest,
   UpdateIssueRequest,
@@ -51,12 +50,13 @@ import type {
 import type {
   CreateIssueWithDependenciesRequest,
   DependencyMutationFields,
-  DependencyOverride,
   IssueWithDependencies,
   UpdateIssueWithDependenciesRequest,
 } from "../api/dependency-schemas";
 import type { TimelineEntry, IssueSubscriber, Reaction } from "../types";
 import { sortTimelineEntriesAsc } from "./timeline-sort";
+import { applyCommentDeletion, removeCommentSubtree } from "./comment-deletion";
+import { configStore } from "../config";
 import {
   onIssueAuxiliaryRevision,
   invalidateIssueOwnerProjections,
@@ -91,14 +91,13 @@ export type UpdateIssueMutationInput = {
 
 /** The compound `with-dependencies` write path is required exactly when the
  *  mutation carries dependency semantics (a `blocked_by` replacement set, its
- *  expected version, or a one-shot human override challenge). Plain field
+ *  expected version). Plain field
  *  edits keep the legacy endpoints — never send dependency fields on them,
  *  and never fall back to them after an ambiguous compound response. */
 function hasDependencyFields(data: DependencyMutationFields): boolean {
   return (
     data.blockedBy !== undefined ||
-    data.expectedDependencyVersion !== undefined ||
-    data.dependencyOverride !== undefined
+    data.expectedDependencyVersion !== undefined
   );
 }
 
@@ -209,21 +208,6 @@ export function useCreateIssue() {
   );
 }
 
-/**
- * Imperative one-shot trigger preview for submit-time flows
- * (create-with-relations, override retry): one authoritative preview of the
- * exact body being submitted, fired at a chosen moment rather than mounted
- * like the declarative views-side query hook. Mutation semantics because
- * this is a deliberately-triggered server interaction, and TanStack owns
- * all of those (CLAUDE.md: no bare `api.*` calls in components).
- */
-export function useIssueTriggerPreviewCheck() {
-  return useMutation({
-    mutationFn: (params: IssueTriggerPreviewParams) =>
-      api.previewIssueTrigger(params),
-  });
-}
-
 export function useCreateCommentSubIssue() {
   return useIssueCreateMutation(({
     anchorCommentId,
@@ -241,18 +225,17 @@ export function useUpdateIssue() {
     mutationKey: issueWriteMutationKey(wsId),
     mutationFn: ({ id, move_intent: moveIntent, ...data }: UpdateIssueMutationInput) => {
       if (!moveIntent) {
-        const { blockedBy, expectedDependencyVersion, dependencyOverride, ...issueFields } = data;
+        const { blockedBy, expectedDependencyVersion, ...issueFields } = data;
         if (hasDependencyFields(data)) {
           return api.updateIssueWithDependencies(id, {
             ...issueFields,
             blockedBy,
             expectedDependencyVersion,
-            dependencyOverride,
           } as UpdateIssueWithDependenciesRequest);
         }
         return api.updateIssue(id, issueFields);
       }
-      const { position: _optimisticPosition, blockedBy: _b, expectedDependencyVersion: _e, dependencyOverride: _d, ...target } = data;
+      const { position: _optimisticPosition, blockedBy: _b, expectedDependencyVersion: _e, ...target } = data;
       return api.moveIssue(id, { ...target, ...moveIntent });
     },
     onMutate: ({ id, move_intent: _moveIntent, ...data }) => {
@@ -266,13 +249,13 @@ export function useUpdateIssue() {
       // relations, not Issue columns — never patch them into the cache.
       const {
         suppress_run: _suppressRun,
+        duplicate_of_issue_id: _duplicateOfIssueId,
         description: _description,
         description_base: _descriptionBase,
         title_base: _titleBase,
         expected_revision: _expectedRevision,
         blockedBy: _blockedBy,
         expectedDependencyVersion: _expectedDependencyVersion,
-        dependencyOverride: _dependencyOverride,
         ...patch
       } = data;
       // Fire-and-forget cancelQueries — keeps onMutate synchronous so the
@@ -388,12 +371,12 @@ export function useUpdateIssue() {
       // is the plain surgical patch it always was.
       const {
         suppress_run: _suppressRun,
+        duplicate_of_issue_id: _duplicateOfIssueId,
         description_base: _descriptionBase,
         move_intent: _moveIntent,
         id: _id,
         blockedBy: _intentBlockedBy,
         expectedDependencyVersion: _intentEdv,
-        dependencyOverride: _intentOverride,
         ...intent
       } = vars;
       // Drop `properties` from the reconcile payload: the bag is owned by the
@@ -466,6 +449,14 @@ export function useUpdateIssue() {
       // payload mutates the attachment join table.
       if (vars.attachment_ids?.length) {
         qc.invalidateQueries({ queryKey: issueKeys.attachments(vars.id) });
+      }
+      // A duplicate mark is not on Issue; refresh both sides now rather than
+      // waiting for the realtime echo.
+      if (vars.duplicate_of_issue_id) {
+        qc.invalidateQueries({ queryKey: issueKeys.duplicates(wsId, vars.id) });
+        qc.invalidateQueries({
+          queryKey: issueKeys.duplicates(wsId, vars.duplicate_of_issue_id),
+        });
       }
       // Invalidate old parent's children cache
       if (ctx?.parentId) {
@@ -602,22 +593,7 @@ export function useBatchUpdateIssues() {
   const wsId = useWorkspaceId();
   return useMutation({
     mutationKey: issueWriteMutationKey(wsId),
-    mutationFn: ({
-      ids,
-      updates,
-      dependencyOverrides,
-    }: {
-      ids: string[];
-      updates: UpdateIssueRequest;
-      /** Per-target one-shot human confirmations, keyed by issue id. Each
-       *  entry authorizes exactly that issue's write under the shared
-       *  `updates` body — never carry one item's confirmation to another. */
-      dependencyOverrides?: Record<string, DependencyOverride>;
-      // Call shape stays two-argument when no item carries a confirmation so
-      // existing callers (and their call-site assertions) are untouched.
-    }) => dependencyOverrides
-      ? api.batchUpdateIssues(ids, updates, dependencyOverrides)
-      : api.batchUpdateIssues(ids, updates),
+    mutationFn: ({ ids, updates }: { ids: string[]; updates: UpdateIssueRequest }) => api.batchUpdateIssues(ids, updates),
     onMutate: async ({ ids, updates }) => {
       // Control and description-merge fields are not safe optimistic cache
       // patches. The server resolves description against description_base, so
@@ -652,7 +628,7 @@ export function useBatchUpdateIssues() {
       >();
       const prevDetailById = new Map<string, Issue>();
       let prevInboxList: InboxItem[] | undefined;
-      let prevArchivedInboxList: InboxItem[] | undefined;
+      let prevArchivedInboxCaches: [QueryKey, ArchivedInboxCache | undefined][] | undefined;
       const staleKeys: QueryKey[] = [];
       for (const id of ids) {
         const base = qc.getQueryData<Issue>(issueKeys.detail(wsId, id));
@@ -681,10 +657,10 @@ export function useBatchUpdateIssues() {
           prevInboxList = change.prevInboxList;
         }
         if (
-          prevArchivedInboxList === undefined &&
-          change.prevArchivedInboxList !== undefined
+          prevArchivedInboxCaches === undefined &&
+          change.prevArchivedInboxCaches !== undefined
         ) {
-          prevArchivedInboxList = change.prevArchivedInboxList;
+          prevArchivedInboxCaches = change.prevArchivedInboxCaches;
         }
         staleKeys.push(...change.staleKeys);
       }
@@ -714,7 +690,7 @@ export function useBatchUpdateIssues() {
         prevTableRows: [...prevTableRowByHash.values()],
         prevDetailById,
         prevInboxList,
-        prevArchivedInboxList,
+        prevArchivedInboxCaches,
         inboxWrite,
         staleKeys,
         prevChildren,
@@ -745,11 +721,8 @@ export function useBatchUpdateIssues() {
       if (ctx?.prevInboxList !== undefined) {
         qc.setQueryData(inboxKeys.list(wsId), ctx.prevInboxList);
       }
-      if (ctx?.prevArchivedInboxList !== undefined) {
-        qc.setQueryData(
-          inboxKeys.archived(wsId),
-          ctx.prevArchivedInboxList,
-        );
+      for (const [key, snapshot] of ctx?.prevArchivedInboxCaches ?? []) {
+        qc.setQueryData(key, snapshot);
       }
       if (ctx?.prevChildren) {
         for (const [parentId, snapshot] of ctx.prevChildren) {
@@ -776,17 +749,13 @@ export function useBatchUpdateIssues() {
       // Dependency projections read the CURRENT status/parent chain of every
       // registered prerequisite — so a batch that moved status or parents
       // refreshes them locally even while the WS event is still in transit
-      // (or the socket is down). A batch carrying per-item overrides changed
+      // (or the socket is down). A successful batch may have changed
       // relation-gated dispatch state and refreshes the graph alongside.
       if (
         _vars.updates.status !== undefined ||
         Object.prototype.hasOwnProperty.call(_vars.updates, "parent_issue_id")
       ) {
         void invalidateDependencyQueries(qc, wsId);
-      }
-      if (_vars.dependencyOverrides && Object.keys(_vars.dependencyOverrides).length > 0) {
-        void invalidateDependencyQueries(qc, wsId);
-        void invalidateIssueQueries(qc, wsId, "graph");
       }
       if (ctx) {
         invalidateStaleListKeys(qc, ctx.staleKeys);
@@ -955,13 +924,16 @@ export function useCreateComment(issueId: string) {
       parentId,
       attachmentIds,
       suppressAgentIds,
+      steerTaskIds,
     }: {
       content: string;
       type?: string;
       parentId?: string;
       attachmentIds?: string[];
       suppressAgentIds?: string[];
-    }) => api.createComment(issueId, content, type, parentId, attachmentIds, suppressAgentIds),
+      /** Running turns this comment goes into instead of a follow-up run. */
+      steerTaskIds?: string[];
+    }) => api.createComment(issueId, content, type, parentId, attachmentIds, suppressAgentIds, steerTaskIds),
     onSuccess: (comment) => {
       if (comment.issue_revision) {
         onIssueAuxiliaryRevision(qc, wsId, issueId, comment.issue_revision);
@@ -981,15 +953,24 @@ export function useCreateComment(issueId: string) {
         attachments: comment.attachments ?? [],
         created_at: comment.created_at,
         updated_at: comment.updated_at,
+        supplements: comment.supplements,
       };
+      const steered = !!comment.supplements?.length;
       // Dedupe by id: the `comment:created` WS event may have already added
       // this entry from the broadcast path before this onSuccess fires. Skip
-      // the append if the entry is already in the cache.
+      // the append if the entry is already in the cache — but keep the
+      // steering receipts, which that broadcast predates.
       qc.setQueryData<TimelineCache>(issueKeys.timeline(issueId), (old) => {
         if (!old) return [entry];
-        if (old.some((e) => e.id === entry.id)) return old;
+        if (old.some((e) => e.id === entry.id)) {
+          return steered
+            ? old.map((e) => (e.id === entry.id && !e.supplements?.length ? { ...e, supplements: entry.supplements } : e))
+            : old;
+        }
         return sortTimelineEntriesAsc([...old, entry]);
       });
+      // A steered turn now lists this comment among its inputs.
+      if (steered) qc.invalidateQueries({ queryKey: issueKeys.tasks(issueId) });
       // Posting a comment changes the trigger answer itself (the enqueued
       // task now dedupes follow-up triggers), so cached previews for this
       // issue are stale the moment the create lands.
@@ -1062,41 +1043,24 @@ export function useDeleteComment(issueId: string) {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
-    mutationFn: (commentId: string) => api.deleteComment(commentId),
-    onMutate: async (commentId) => {
-      await qc.cancelQueries({ queryKey: issueKeys.timeline(issueId) });
-      const prev = qc.getQueryData<TimelineCache>(issueKeys.timeline(issueId));
-
-      // Cascade: collect all descendants of the deleted comment.
-      const toRemove = new Set<string>([commentId]);
-      if (prev) {
-        let changed = true;
-        while (changed) {
-          changed = false;
-          for (const e of prev) {
-            if (
-              e.parent_id &&
-              toRemove.has(e.parent_id) &&
-              !toRemove.has(e.id)
-            ) {
-              toRemove.add(e.id);
-              changed = true;
-            }
-          }
-        }
-      }
-
-      qc.setQueryData<TimelineCache>(issueKeys.timeline(issueId), (old) =>
-        old?.filter((e) => !toRemove.has(e.id)),
-      );
-      return { prev };
+    // The capability is read when the delete runs, so the route matches the
+    // copy the confirmation showed. Older servers delete the replies too.
+    mutationFn: async (commentId: string) => {
+      const keepReplies = configStore.getState().commentDeleteKeepRepliesSupported;
+      await api.deleteComment(commentId, { keepReplies });
+      return keepReplies;
     },
-    onError: (_err, _id, ctx) => {
-      if (ctx?.prev !== undefined) {
-        qc.setQueryData(issueKeys.timeline(issueId), ctx.prev);
-      }
-    },
-    onSuccess: () => {
+    // Not optimistic: whether the comment disappears or stays as a tombstone
+    // depends on replies only the server sees for certain (#8296). Once it
+    // confirms, mirror its outcome; realtime events and the settle refetch
+    // reconcile the rest.
+    onSuccess: (keptReplies, commentId) => {
+      qc.setQueryData<TimelineCache>(issueKeys.timeline(issueId), (old) => {
+        if (!old) return old;
+        return keptReplies
+          ? applyCommentDeletion(old, commentId, new Date().toISOString())
+          : removeCommentSubtree(old, commentId);
+      });
       // The endpoint remains 204 for compatibility, so the local caller has
       // no body carrying issue_revision. The realtime event will narrow this
       // with its revision when connected; this is the no-WS safety net.
@@ -1345,6 +1309,18 @@ export function useCancelIssueRun(issueId: string) {
   return useMutation({
     mutationFn: (taskId: string) => api.cancelTask(issueId, taskId),
     onSuccess: () => client.invalidateQueries({ queryKey: issueKeys.tasks(issueId) }),
+  });
+}
+
+export function useRetryTaskSupplement(issueId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ taskId, commentId }: { taskId: string; commentId: string }) =>
+      api.retryTaskSupplement(issueId, taskId, commentId),
+    onSettled: () => {
+      client.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
+      client.invalidateQueries({ queryKey: issueKeys.tasks(issueId) });
+    },
   });
 }
 

@@ -133,7 +133,7 @@ describe("LoginPage", () => {
         );
       });
       expect(
-        await screen.findByRole("button", { name: "Open Labrastro Desktop" }),
+        await screen.findByRole("button", { name: "Open Multica Desktop" }),
       ).toBeInTheDocument();
     } finally {
       Object.defineProperty(window, "location", {

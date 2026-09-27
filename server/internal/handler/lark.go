@@ -127,7 +127,7 @@ func (h *Handler) ListLarkInstallations(w http.ResponseWriter, r *http.Request) 
 // rights.
 func (h *Handler) RevokeLarkInstallation(w http.ResponseWriter, r *http.Request) {
 	if h.LarkInstallations == nil {
-		writeError(w, http.StatusServiceUnavailable, "lark integration not configured")
+		writeFeatureDisabled(w, "lark_not_configured", "lark integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -230,7 +230,7 @@ type RedeemLarkBindingTokenResponse struct {
 //   - 403 Forbidden:  redeemer is not a workspace member
 func (h *Handler) RedeemLarkBindingToken(w http.ResponseWriter, r *http.Request) {
 	if h.LarkBindingTokens == nil {
-		writeError(w, http.StatusServiceUnavailable, "lark integration not configured")
+		writeFeatureDisabled(w, "lark_not_configured", "lark integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -298,7 +298,7 @@ type BeginLarkInstallResponse struct {
 // in that case so this should not be reached through the normal flow.
 func (h *Handler) BeginLarkInstall(w http.ResponseWriter, r *http.Request) {
 	if h.LarkRegistration == nil {
-		writeError(w, http.StatusServiceUnavailable, "lark install not configured")
+		writeFeatureDisabled(w, "lark_not_configured", "lark install not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -406,7 +406,7 @@ type LarkInstallStatusResponse struct {
 // idempotent.
 func (h *Handler) GetLarkInstallStatus(w http.ResponseWriter, r *http.Request) {
 	if h.LarkRegistration == nil {
-		writeError(w, http.StatusServiceUnavailable, "lark install not configured")
+		writeFeatureDisabled(w, "lark_not_configured", "lark install not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -422,7 +422,7 @@ func (h *Handler) GetLarkInstallStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "session id is required")
 		return
 	}
-	state, err := h.LarkRegistration.GetSession(wsUUID, sessionID)
+	state, err := h.LarkRegistration.GetSession(r.Context(), wsUUID, sessionID)
 	if err != nil {
 		if errors.Is(err, lark.ErrRegistrationSessionNotFound) {
 			writeError(w, http.StatusNotFound, "install session not found")

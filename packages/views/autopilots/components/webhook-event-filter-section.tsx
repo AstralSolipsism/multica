@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X, Plus, Filter } from "lucide-react";
+import { X, Plus, Filter, ExternalLink } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
 import type { WebhookEventFilter } from "@multica/core/types";
 import { useT } from "../../i18n";
@@ -9,25 +9,20 @@ import { useT } from "../../i18n";
 interface WebhookEventFilterSectionProps {
   filters: WebhookEventFilter[];
   onChange: (filters: WebhookEventFilter[]) => void;
-  /** Suppress the built-in section label when the host already renders one. */
-  hideLabel?: boolean;
-  /**
-   * Freeze the whole editor (inputs, add, remove). Hosts use this while a
-   * save of the current rows is in flight: an edit accepted mid-flight would
-   * not be part of the request, and the success path would silently drop it.
-   */
-  disabled?: boolean;
 }
 
 export function WebhookEventFilterSection({
   filters,
   onChange,
-  hideLabel = false,
-  disabled = false,
 }: WebhookEventFilterSectionProps) {
-  const { t } = useT("autopilots");
+  const { t, i18n } = useT("autopilots");
   const [newEvent, setNewEvent] = useState("");
   const [newActions, setNewActions] = useState("");
+  const docsHref = i18n.language?.startsWith("zh")
+    ? `https://multica.ai/docs/zh/autopilots#${encodeURIComponent("事件过滤")}`
+    : i18n.language?.startsWith("fr")
+      ? `https://multica.ai/docs/fr/autopilots#${encodeURIComponent("filtres-dévénements")}`
+      : "https://multica.ai/docs/autopilots#event-filters";
 
   const addFilter = () => {
     const event = newEvent.trim();
@@ -49,12 +44,20 @@ export function WebhookEventFilterSection({
 
   return (
     <div className="space-y-2">
-      {!hideLabel && (
-        <div className="flex items-center gap-1.5 text-micro font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-          <Filter className="size-3" />
-          {t(($) => $.dialog.event_filter_label)}
-        </div>
-      )}
+      <div className="flex items-center gap-1.5 text-micro font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+        <Filter className="size-3" />
+        {t(($) => $.dialog.event_filter_label)}
+        <a
+          href={docsHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={t(($) => $.dialog.event_filter_docs_link_label)}
+          title={t(($) => $.dialog.event_filter_docs_link_label)}
+          className="ml-0.5 inline-flex items-center text-faint-foreground hover:text-foreground transition-colors"
+        >
+          <ExternalLink className="size-3" />
+        </a>
+      </div>
 
       {filters.length > 0 && (
         <div className="space-y-1">
@@ -74,10 +77,9 @@ export function WebhookEventFilterSection({
               <button
                 type="button"
                 onClick={() => removeFilter(idx)}
-                disabled={disabled}
                 aria-label={t(($) => $.dialog.event_filter_remove_label)}
                 title={t(($) => $.dialog.event_filter_remove_label)}
-                className="ml-auto rounded-xs p-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                className="ml-auto rounded-xs p-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
               >
                 <X className="size-3" />
               </button>
@@ -97,9 +99,8 @@ export function WebhookEventFilterSection({
               addFilter();
             }
           }}
-          disabled={disabled}
           placeholder={t(($) => $.dialog.event_filter_event_placeholder)}
-          className="flex-1 min-w-0 rounded-md border bg-background px-2.5 py-1.5 text-caption font-mono outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex-1 min-w-0 rounded-md border bg-background px-2.5 py-1.5 text-caption font-mono outline-none focus:ring-1 focus:ring-ring"
         />
         <input
           type="text"
@@ -111,17 +112,16 @@ export function WebhookEventFilterSection({
               addFilter();
             }
           }}
-          disabled={disabled}
           placeholder={t(($) => $.dialog.event_filter_actions_placeholder)}
-          className="w-28 rounded-md border bg-background px-2.5 py-1.5 text-caption outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-28 rounded-md border bg-background px-2.5 py-1.5 text-caption outline-none focus:ring-1 focus:ring-ring"
         />
         <button
           type="button"
           onClick={addFilter}
-          disabled={disabled || !newEvent.trim()}
+          disabled={!newEvent.trim()}
           className={cn(
             "inline-flex shrink-0 items-center justify-center gap-1 rounded-md border px-2.5 py-1.5 text-caption font-medium transition-colors",
-            !disabled && newEvent.trim()
+            newEvent.trim()
               ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer"
               : "bg-muted text-muted-foreground cursor-not-allowed",
           )}

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClient } from "./client";
-import { canonicalDependencyMutation, dependencyReadiness } from "./dependency-schemas";
+import { dependencyReadiness } from "./dependency-schemas";
 
 const view = {
   blocked_by: [], inherited_blocked_by: [], blocking: [], unsatisfied: [],
@@ -28,20 +28,11 @@ function respond(body: unknown, status = 200) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("dependency API boundary", () => {
-  it("serializes the same mutation in preview and confirmed execution", async () => {
-    const client = new ApiClient("https://api.example.test");
-    const mutation = { title: "B", status: "todo", assignee_type: "agent" as const, assignee_id: "agent", blockedBy: ["a"] };
-    let mock = respond({ triggers: [], total_count: 0, blocked: [{
-      issue_id: "b", reason_code: "dependency_unsatisfied", dependencies: view,
-      confirmation: { request_id: "request", challenge: "signed", expires_at: "2026-09-08T15:00:00Z" },
-    }] });
-    const preview = await client.previewIssueTrigger({ issueIds: ["b"], mutation });
-    expect(preview.blocked?.[0]?.confirmation?.requestId).toBe("request");
-    const previewBody = JSON.parse(mock.mock.calls[0]?.[1].body).mutation;
-    mock = respond({ ...issue, dependencies: view, dispatch: { status: "queued", reason_code: "queued", task_id: "task", run_id: "task" } });
-    const result = await client.updateIssueWithDependencies("b", { ...mutation, dependencyOverride: { requestId: "request", challenge: "signed" } });
-    expect(JSON.parse(mock.mock.calls[0]?.[1].body)).toEqual({ ...previewBody, dependency_override: { request_id: "request", challenge: "signed" } });
-    expect(result.dispatch?.taskId).toBe("task");
+  it("uses upstream trigger preview without execution permits", async () => {
+    const mock = respond({ triggers: [], total_count: 0 });
+    const result = await new ApiClient("https://api.example.test").previewIssueTrigger({ issueIds: ["b"] });
+    expect(result).toEqual({ triggers: [], total_count: 0 });
+    expect(JSON.parse(mock.mock.calls[0]?.[1].body)).not.toHaveProperty("dependency_override");
   });
 
   it.each([undefined, null, {}, { status: "queued", reason_code: "queued" }, { status: "unknown", task_id: "x" }])("keeps malformed dispatch unknown without retrying a committed write: %j", async (dispatch) => {
@@ -50,26 +41,6 @@ describe("dependency API boundary", () => {
     expect(result.id).toBe("b");
     expect(result.dispatch).toBeNull();
     expect(mock).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([undefined, {}, [{ issue_id: "b" }]])("keeps incomplete preview diagnostics unknown: %j", async (blocked) => {
-    respond({ triggers: [], total_count: 0, blocked });
-    const result = await new ApiClient("https://api.example.test").previewIssueTrigger({ issueIds: ["b"] });
-    expect(result.blocked).toBeNull();
-  });
-
-  it("retains a blocked decision while discarding an invalid confirmation", async () => {
-    respond({ triggers: [], total_count: 0, blocked: [{ issue_id: "b", reason_code: "dependency_unsatisfied", dependencies: view, confirmation: { request_id: "r", challenge: "s", expires_at: "invalid" } }] });
-    const result = await new ApiClient("https://api.example.test").previewIssueTrigger({ issueIds: ["b"] });
-    expect(result.blocked?.[0]?.reasonCode).toBe("dependency_unsatisfied");
-    expect(result.blocked?.[0]?.confirmation).toBeNull();
-  });
-
-  it("keeps per-item confirmations separate and reports replay as coalesced", async () => {
-    const mock = respond({ updated: 1, results: [{ issue_id: "b", updated: true, dispatch: { status: "coalesced", reason_code: "coalesced", task_id: "task", run_id: "task" } }] });
-    const result = await new ApiClient("https://api.example.test").batchUpdateIssues(["b"], { status: "todo" }, { b: { requestId: "request", challenge: "signed" } });
-    expect(JSON.parse(mock.mock.calls[0]?.[1].body).dependency_overrides).toEqual({ b: { request_id: "request", challenge: "signed" } });
-    expect(result.results?.[0]?.dispatch?.status).toBe("coalesced");
   });
 
   it("preserves structured partial-batch rejections", async () => {
@@ -146,53 +117,5 @@ describe("dependency API boundary", () => {
     const result = await new ApiClient("https://api.example.test").createIssueWithDependencies({ title: "B" });
     expect(result.id).toBe("b");
     expect(dependencyReadiness(result.dependencies)).toBe("unknown");
-  });
-});
-
-// canonicalDependencyMutation — the digest-level identity shared by the
-// preview query key and the held-permit comparison. Its boundary semantics
-// live here, next to the helper (CLAUDE.md: one canonical test layer).
-describe("canonicalDependencyMutation", () => {
-  it("is insensitive to object key order at any depth", () => {
-    const a = canonicalDependencyMutation({
-      title: "B", status: "todo", assignee_type: "agent",
-      parent_issue_id: null as unknown as undefined,
-    } as never);
-    const b = canonicalDependencyMutation({
-      assignee_type: "agent", parent_issue_id: null as unknown as undefined,
-      status: "todo", title: "B",
-    } as never);
-    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-  });
-
-  it("drops undefined fields but keeps explicit nulls and falsy scalars", () => {
-    const out = canonicalDependencyMutation({
-      title: "", due_date: undefined, parent_issue_id: null, priority: "none",
-    } as never);
-    expect(out).toEqual({ parent_issue_id: null, priority: "none", title: "" });
-    expect(out).not.toHaveProperty("due_date");
-  });
-
-  it("treats blockedBy as a set: selection order is not identity", () => {
-    const a = canonicalDependencyMutation({ title: "B", blockedBy: ["x", "y"] });
-    const b = canonicalDependencyMutation({ title: "B", blockedBy: ["y", "x"] });
-    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-    // …while membership changes are always a different operation.
-    const c = canonicalDependencyMutation({ title: "B", blockedBy: ["x"] });
-    expect(JSON.stringify(a)).not.toBe(JSON.stringify(c));
-  });
-
-  it("preserves order inside non-relation arrays (label/attachment ids are sequences)", () => {
-    const a = canonicalDependencyMutation({ title: "B", label_ids: ["l2", "l1"] } as never);
-    expect(a.label_ids).toEqual(["l2", "l1"]);
-  });
-
-  it("distinguishes override presence: a mutation with an override is not the unsigned body", () => {
-    const bare = canonicalDependencyMutation({ title: "B" });
-    const withOverride = canonicalDependencyMutation({
-      title: "B",
-      dependencyOverride: { requestId: "r1", challenge: "c1" },
-    });
-    expect(JSON.stringify(bare)).not.toBe(JSON.stringify(withOverride));
   });
 });

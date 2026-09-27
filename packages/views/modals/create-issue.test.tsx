@@ -7,7 +7,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, onTestFinished } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -43,13 +43,9 @@ const mockSetActiveMode = vi.hoisted(() => vi.fn());
 const mockClearDraft = vi.hoisted(() => vi.fn());
 const mockSetLastAssignee = vi.hoisted(() => vi.fn());
 const mockSetKeepOpen = vi.hoisted(() => vi.fn());
-const mockSetPendingDependencyCreate = vi.hoisted(() => vi.fn());
 const mockToastCustom = vi.hoisted(() => vi.fn());
 const mockToastDismiss = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
-const mockToastSuccess = vi.hoisted(() => vi.fn());
-const mockToastWarning = vi.hoisted(() => vi.fn());
-const mockPreviewIssueTrigger = vi.hoisted(() => vi.fn());
 const mockShowIssueLimitUpgradePrompt = vi.hoisted(() => vi.fn());
 // Uploads flow through the module-level coordinator, which calls
 // `api.uploadFile(file, ctx, signal)` (MUL-5181 L2). Tests drive uploads by
@@ -136,7 +132,7 @@ const emptyIssueDraft = () => ({
     assigneeType: undefined as "agent" | "squad" | "member" | undefined,
     assigneeId: undefined as string | undefined,
     labelIds: [] as string[],
-    blockedBy: [] as { id: string; identifier: string; title: string }[],
+    blockedBy: [] as string[],
     propertyValues: {} as Record<string, string | number | boolean | string[]>,
   },
   agent: {
@@ -151,21 +147,12 @@ const mockDraftStore = {
   draft: emptyIssueDraft(),
   lastAssigneeType: undefined as "agent" | "squad" | "member" | undefined,
   lastAssigneeId: undefined as string | undefined,
-  pendingDependencyCreate: undefined as
-    | {
-        request: Record<string, unknown>;
-        item: { confirmation: { requestId: string; challenge: string; expiresAt: string } | null };
-        uncertain?: boolean;
-        refreshed?: boolean;
-      }
-    | undefined,
   setShared: mockSetShared,
   setManual: mockSetManual,
   setAgent: mockSetAgent,
   setActiveMode: mockSetActiveMode,
   clearDraft: mockClearDraft,
   setLastAssignee: mockSetLastAssignee,
-  setPendingDependencyCreate: mockSetPendingDependencyCreate,
   hasDraft: () => false,
 };
 
@@ -283,9 +270,6 @@ vi.mock("@multica/core/issues/mutations", () => ({
     }) => mockCreateCommentSubIssue(anchorCommentId, data),
   }),
   useUpdateIssue: () => ({ mutate: vi.fn() }),
-  // Submit-time authoritative preview (moved to core with the other mutation
-  // hooks) — backed by the same mock as the declarative preview.
-  useIssueTriggerPreviewCheck: () => ({ mutateAsync: mockPreviewIssueTrigger }),
 }));
 
 vi.mock("@multica/core/labels", () => ({
@@ -339,31 +323,14 @@ vi.mock("@multica/core/api", async () => {
   const { DuplicateIssueErrorBodySchema } = await vi.importActual<
     typeof import("@multica/core/api/schemas")
   >("@multica/core/api/schemas");
-  // The permit-matching comparison runs the REAL canonicalizer (its
-  // boundary semantics are tested next to the helper in core — no mirrors).
-  const { canonicalDependencyMutation } = await vi.importActual<
-    typeof import("@multica/core/api")
-  >("@multica/core/api");
   return {
     api: {
       createCommentSubIssue: mockCreateCommentSubIssue,
       listProperties: mockListProperties,
       setIssueProperty: mockSetIssueProperty,
       uploadFile: mockApiUploadFile,
-      previewIssueTrigger: mockPreviewIssueTrigger,
     },
     ApiError,
-    canonicalDependencyMutation,
-    // Local mirror of the real dependencyErrorDetails contract: reason_code
-    // gated on the dependency_ prefix, projection passed through.
-    dependencyErrorDetails: (err: unknown) => {
-      if (!(err instanceof ApiError) || !err.body || typeof err.body !== "object") return null;
-      const body = err.body as { reason_code?: unknown; dependencies?: unknown };
-      if (typeof body.reason_code !== "string" || !body.reason_code.startsWith("dependency_")) {
-        return null;
-      }
-      return { reasonCode: body.reason_code, dependencies: body.dependencies ?? null };
-    },
     parseWithFallback,
     DuplicateIssueErrorBodySchema,
   };
@@ -508,10 +475,11 @@ vi.mock("../issues/components", () => ({
 }));
 
 vi.mock("../issues/components/pickers/custom-property-picker", () => ({
-  CustomPropertyValueInput: ({ property, onChange }: any) => (
+  CustomPropertyValueInput: ({ property, onChange, open }: any) => (
     <button
       type="button"
       aria-label={`Edit ${property.name}`}
+      data-open={open ? "true" : "false"}
       onClick={() => onChange("option-enterprise")}
     >
       {property.name}
@@ -538,9 +506,6 @@ vi.mock("@multica/ui/components/ui/dialog", () => ({
   DialogContent: ({ children, className }: { children: React.ReactNode; className?: string }) => (
     <div className={className}>{children}</div>
   ),
-  DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children, className }: { children: React.ReactNode; className?: string }) => (
     <div className={className}>{children}</div>
   ),
@@ -574,35 +539,7 @@ vi.mock("@multica/ui/components/ui/dropdown-menu", () => ({
 }));
 
 vi.mock("./issue-picker-modal", () => ({
-  // Open-aware so tests can actually pick a parent/child/prerequisite; the
-  // picked issue is fixed per open dialog, labeled by the picker's title.
-  IssuePickerModal: ({ open, title, onSelect }: {
-    open: boolean;
-    title: string;
-    onSelect: (issue: Record<string, unknown>) => void;
-  }) =>
-    open ? (
-      <button
-        type="button"
-        onClick={() =>
-          onSelect({
-            id: "picked-issue-1",
-            identifier: "TES-77",
-            title: "Picked issue",
-            status: "in_progress",
-            status_category: "in_progress",
-          })
-        }
-      >
-        {`pick:${title}`}
-      </button>
-    ) : null,
-}));
-
-// The blocked-prerequisite list renders via real i18n + query caches in its
-// own suites; here the confirm dialog only needs the stand-in.
-vi.mock("../issues/components/dependency-prerequisites", () => ({
-  DependencyBlockedList: () => <div data-testid="blocked-list" />,
+  IssuePickerModal: () => null,
 }));
 
 vi.mock("@multica/ui/components/ui/tooltip", () => ({
@@ -668,8 +605,6 @@ vi.mock("sonner", () => ({
     custom: mockToastCustom,
     dismiss: mockToastDismiss,
     error: mockToastError,
-    success: mockToastSuccess,
-    warning: mockToastWarning,
   },
 }));
 
@@ -700,12 +635,6 @@ describe("CreateIssueModal", () => {
     // Reset the unified draft mock so per-test seeding (assignee, project, …)
     // doesn't leak into the next test in the suite.
     mockDraftStore.draft = emptyIssueDraft();
-    mockDraftStore.pendingDependencyCreate = undefined;
-    mockSetPendingDependencyCreate.mockImplementation(
-      (pending: typeof mockDraftStore.pendingDependencyCreate | null) => {
-        mockDraftStore.pendingDependencyCreate = pending ?? undefined;
-      },
-    );
     mockSetShared.mockImplementation((patch: Partial<typeof mockDraftStore.draft.shared>) => {
       mockDraftStore.draft.shared = { ...mockDraftStore.draft.shared, ...patch };
     });
@@ -785,6 +714,31 @@ describe("CreateIssueModal", () => {
     renderModal(<CreateIssueModal onClose={vi.fn()} />);
 
     expect(screen.getByRole("button", { name: "Upload file" })).toHaveAttribute("data-size", "sm");
+  });
+
+  it("creates with drafted prerequisites through the ordinary submit flow", async () => {
+    mockDraftStore.draft.manual.blockedBy = ["prerequisite-z", "prerequisite-a"];
+    const onClose = vi.fn();
+    renderModal(<CreateIssueModal onClose={onClose} />);
+    fireEvent.change(screen.getByPlaceholderText("Issue title"), { target: { value: "Informational dependencies" } });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Create Issue" }));
+    await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
+    expect(mockCreateIssue.mock.calls[0]?.[0]).toMatchObject({ blockedBy: ["prerequisite-a", "prerequisite-z"] });
+    expect(mockCreateIssue.mock.calls[0]?.[0]).not.toHaveProperty("dependencyOverride");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears informational prerequisites after create another", async () => {
+    mockQuickCreateStore.keepOpen = true;
+    mockDraftStore.draft.manual.blockedBy = ["prerequisite-a"];
+    renderModal(<CreateIssueModal onClose={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText("Issue title"), { target: { value: "First" } });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Create Issue" }));
+    await waitFor(() => expect(screen.getByPlaceholderText("Issue title")).toHaveValue(""));
+    fireEvent.change(screen.getByPlaceholderText("Issue title"), { target: { value: "Second" } });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Create Issue" }));
+    await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
+    expect(mockCreateIssue.mock.calls[1]?.[0]).not.toHaveProperty("blockedBy");
   });
 
   it("shows success feedback with a direct path to the new issue", async () => {
@@ -937,7 +891,6 @@ describe("CreateIssueModal", () => {
       assigneeId: undefined,
       startDate: null,
       labelIds: [],
-      blockedBy: [],
       propertyValues: {},
     });
     expect(mockSetShared).toHaveBeenCalledWith({
@@ -948,7 +901,7 @@ describe("CreateIssueModal", () => {
     });
   });
 
-  it("sets configured custom property values after the issue is created", async () => {
+  it("includes configured custom properties in the atomic create request", async () => {
     const user = userEvent.setup();
 
     renderModal(<CreateIssueModal onClose={vi.fn()} />);
@@ -959,14 +912,260 @@ describe("CreateIssueModal", () => {
     await user.type(screen.getByPlaceholderText("Issue title"), "Enterprise follow-up");
     await user.click(screen.getByRole("button", { name: "Create Issue" }));
 
-    await waitFor(() => {
-      expect(mockSetIssueProperty).toHaveBeenCalledWith(
-        "issue-123",
-        "property-tier",
-        "option-enterprise",
-      );
-    });
+    await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Enterprise follow-up",
+        properties: { "property-tier": "option-enterprise" },
+      }),
+    ));
+    expect(mockSetIssueProperty).not.toHaveBeenCalled();
     expect(mockClearDraft).toHaveBeenCalled();
+  });
+
+  it("keeps the draft open and highlights the rejected custom property", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    mockDraftStore.draft.manual.propertyValues = {
+      "property-tier": "option-enterprise",
+    };
+    mockCreateIssue.mockRejectedValueOnce(
+      new ApiError("Customer tier is invalid", 400, "Bad Request", {
+        code: "invalid_issue_property",
+        property_id: "property-tier",
+        error: "Customer tier is invalid",
+      }),
+    );
+
+    renderModal(<CreateIssueModal onClose={onClose} />);
+    await user.type(screen.getByPlaceholderText("Issue title"), "Keep this draft");
+    await user.click(screen.getByRole("button", { name: "Create Issue" }));
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith("Customer tier is invalid"));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mockClearDraft).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText("Issue title")).toHaveValue("Keep this draft");
+    expect(document.querySelector('[data-property-error="true"]')).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Edit Customer tier" })).toHaveAttribute(
+      "data-open",
+      "true",
+    );
+    expect(mockDraftStore.draft.manual.propertyValues).toEqual({
+      "property-tier": "option-enterprise",
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(mockSetManual).not.toHaveBeenCalledWith(
+      expect.objectContaining({ propertyValues: expect.anything() }),
+    );
+    expect(mockSetIssueProperty).not.toHaveBeenCalled();
+  });
+
+  it.each(["ordinary", "comment-source"] as const)(
+    "removes only the rejected unavailable property from the %s draft before a manual retry",
+    async (path) => {
+      const user = userEvent.setup();
+      const onClose = vi.fn();
+      mockDraftStore.draft.manual = {
+        ...mockDraftStore.draft.manual,
+        title: "Keep this draft",
+        description: "Keep this body",
+        assigneeType: "member",
+        assigneeId: "user-1",
+        propertyValues: {
+          "property-stale": "old value",
+          "property-tier": "option-enterprise",
+        },
+      };
+      mockDraftStore.draft.shared.priority = "high";
+      const originalDraft = structuredClone(mockDraftStore.draft);
+      if (path === "ordinary") {
+        // Forward the modal's draft writes to the real persisted store, so
+        // this regression also checks the workspace storage boundary.
+        const { useIssueDraftStore: persistedStore } = await vi.importActual<
+          typeof import("@multica/core/issues/stores/draft-store")
+        >("@multica/core/issues/stores/draft-store");
+        const { setCurrentWorkspace } = await import("@multica/core/platform");
+        setCurrentWorkspace("property-recovery", "ws-test");
+        onTestFinished(() => {
+          setCurrentWorkspace(null, null);
+          localStorage.removeItem("multica_issue_draft:property-recovery");
+        });
+        await Promise.resolve();
+        persistedStore.setState({
+          draft: { ...structuredClone(originalDraft), shared: { ...originalDraft.shared, attachments: [] } },
+          isolatedDraftBackup: undefined,
+        });
+        mockSetManual.mockImplementation((patch: Partial<typeof mockDraftStore.draft.manual>) => {
+          persistedStore.getState().setManual(patch);
+          mockDraftStore.draft.manual = { ...mockDraftStore.draft.manual, ...patch };
+        });
+      }
+      const create = path === "ordinary" ? mockCreateIssue : mockCreateCommentSubIssue;
+      create.mockRejectedValueOnce(
+        new ApiError("Property is unavailable", 400, "Bad Request", {
+          code: "invalid_issue_property",
+          property_id: "property-stale",
+        }),
+      );
+      const panel = (
+        <ManualCreatePanel
+          data={path === "comment-source" ? sourceContextPanelData() : undefined}
+          onClose={onClose}
+          onSwitchMode={vi.fn()}
+          isExpanded={false}
+          setIsExpanded={vi.fn()}
+        />
+      );
+      const view = renderModal(panel);
+      await screen.findByRole("button", { name: "Edit Customer tier" });
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "An unavailable custom property was removed from the draft. Review it before submitting again.",
+      );
+      const submittedIssue = (index: number) => path === "ordinary"
+        ? create.mock.calls[index]?.[0]
+        : create.mock.calls[index]?.[1].issue;
+      // Nothing is filtered before the server identifies the invalid field.
+      expect(submittedIssue(0).properties).toEqual(originalDraft.manual.propertyValues);
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(onClose).not.toHaveBeenCalled();
+      expect(mockClearDraft).not.toHaveBeenCalled();
+      expect(mockToastError).not.toHaveBeenCalled();
+      expect(screen.getByPlaceholderText("Issue title")).toHaveValue("Keep this draft");
+      expect(screen.getByPlaceholderText("Add description...")).toHaveValue("Keep this body");
+      const remainingProperties = { "property-tier": "option-enterprise" };
+      expect(mockSetManual).toHaveBeenCalledWith({ propertyValues: remainingProperties });
+      expect(mockDraftStore.draft).toEqual({
+        ...originalDraft,
+        manual: { ...originalDraft.manual, propertyValues: remainingProperties },
+      });
+      if (path === "ordinary") {
+        const persisted = JSON.parse(localStorage.getItem("multica_issue_draft:property-recovery")!);
+        expect(persisted.state.draft).toEqual(mockDraftStore.draft);
+      }
+
+      // A user-initiated retry reads the updated local selection, not the
+      // rejected payload. Keep this retry open so reopening can check the store.
+      create.mockRejectedValueOnce(new Error("Try again later"));
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+      expect(submittedIssue(1)).toMatchObject({
+        title: "Keep this draft",
+        description: "Keep this body",
+        assignee_type: "member",
+        assignee_id: "user-1",
+        status: "todo",
+        priority: "high",
+        properties: remainingProperties,
+      });
+      view.unmount();
+      renderModal(panel);
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await waitFor(() => expect(create).toHaveBeenCalledTimes(3));
+      expect(submittedIssue(2).properties).toEqual(remainingProperties);
+      expect(mockSetIssueProperty).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([undefined, "", 42, "property-not-submitted", "toString"])(
+    "does not change the draft for an unlocatable property error (%s)",
+    async (propertyId) => {
+      const user = userEvent.setup();
+      mockDraftStore.draft.manual.title = "Keep this draft";
+      mockDraftStore.draft.manual.propertyValues = { "property-stale": "old value" };
+      const originalDraft = structuredClone(mockDraftStore.draft);
+      mockCreateIssue.mockRejectedValueOnce(
+        new ApiError("Invalid property", 400, "Bad Request", {
+          code: "invalid_issue_property",
+          property_id: propertyId,
+        }),
+      );
+      renderModal(<CreateIssueModal onClose={vi.fn()} />);
+      await screen.findByText("Customer tier");
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+
+      await waitFor(() => expect(mockToastError).toHaveBeenCalledWith("Invalid property"));
+      expect(mockDraftStore.draft).toEqual(originalDraft);
+      expect(mockSetManual).not.toHaveBeenCalledWith(
+        expect.objectContaining({ propertyValues: expect.anything() }),
+      );
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(document.querySelector('[data-property-error="true"]')).toBeNull();
+    },
+  );
+
+  it("does not treat an unloaded property catalog as an unavailable property", async () => {
+    const user = userEvent.setup();
+    mockDraftStore.draft.manual.title = "Keep this draft";
+    mockDraftStore.draft.manual.propertyValues = { "property-tier": "option-enterprise" };
+    mockListProperties.mockReturnValueOnce(new Promise(() => {}));
+    mockCreateIssue.mockRejectedValueOnce(
+      new ApiError("Invalid property", 400, "Bad Request", {
+        code: "invalid_issue_property",
+        property_id: "property-tier",
+      }),
+    );
+    renderModal(<CreateIssueModal onClose={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Create Issue" }));
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith("Invalid property"));
+    expect(mockDraftStore.draft.manual.propertyValues).toEqual({ "property-tier": "option-enterprise" });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("preserves edits made while the unavailable-property error is pending", async () => {
+    const user = userEvent.setup();
+    mockDraftStore.draft.manual.title = "Draft before submit";
+    mockDraftStore.draft.manual.propertyValues = {
+      "property-stale": "old value",
+      "property-tier": "option-old",
+    };
+    let rejectCreate!: (error: Error) => void;
+    mockCreateIssue.mockImplementationOnce(() => new Promise((_, reject) => { rejectCreate = reject; }));
+    renderModal(<CreateIssueModal onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Edit Customer tier" });
+    await user.click(screen.getByRole("button", { name: "Create Issue" }));
+    await user.type(screen.getByPlaceholderText("Issue title"), " with new edits");
+    await user.click(screen.getByRole("button", { name: "Edit Customer tier" }));
+    await act(async () => {
+      rejectCreate(new ApiError("Property is unavailable", 400, "Bad Request", {
+        code: "invalid_issue_property",
+        property_id: "property-stale",
+      }));
+    });
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(mockDraftStore.draft.manual.title).toBe("Draft before submit with new edits");
+    expect(mockDraftStore.draft.manual.propertyValues).toEqual({ "property-tier": "option-enterprise" });
+    await user.click(screen.getByRole("button", { name: "Create Issue" }));
+    expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      title: "Draft before submit with new edits",
+      properties: { "property-tier": "option-enterprise" },
+    }));
+  });
+
+  it("does not remove a property from a reopened draft after a late rejection", async () => {
+    const user = userEvent.setup();
+    mockDraftStore.draft.manual.title = "Draft before submit";
+    mockDraftStore.draft.manual.propertyValues = { "property-stale": "old value" };
+    let rejectCreate!: (error: Error) => void;
+    mockCreateIssue.mockImplementationOnce(() => new Promise((_, reject) => { rejectCreate = reject; }));
+    const view = renderModal(<CreateIssueModal onClose={vi.fn()} />);
+    await screen.findByText("Customer tier");
+    await user.click(screen.getByRole("button", { name: "Create Issue" }));
+    view.unmount();
+    mockDraftStore.draft.manual.title = "Reopened draft";
+    const reopenedDraft = structuredClone(mockDraftStore.draft);
+    renderModal(<CreateIssueModal onClose={vi.fn()} />);
+    await act(async () => {
+      rejectCreate(new ApiError("Property is unavailable", 400, "Bad Request", {
+        code: "invalid_issue_property",
+        property_id: "property-stale",
+      }));
+    });
+
+    expect(mockDraftStore.draft).toEqual(reopenedDraft);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("persists manual-mode uploads in the issue draft", async () => {
@@ -1426,6 +1625,9 @@ describe("CreateIssueModal", () => {
 
   it("submits source-context manual create through the dedicated endpoint", async () => {
     const user = userEvent.setup();
+    mockDraftStore.draft.manual.propertyValues = {
+      "property-tier": "option-enterprise",
+    };
     renderModal(
       <ManualCreatePanel
         onClose={vi.fn()}
@@ -1444,10 +1646,14 @@ describe("CreateIssueModal", () => {
       {
         mode: "manual",
         capture_token: "sha256:preview-token",
-        issue: expect.objectContaining({ title: "Create from source comment" }),
+        issue: expect.objectContaining({
+          title: "Create from source comment",
+          properties: { "property-tier": "option-enterprise" },
+        }),
       },
     ));
     expect(mockCreateIssue).not.toHaveBeenCalled();
+    expect(mockSetIssueProperty).not.toHaveBeenCalled();
   });
 
   // Start date is a low-frequency field — by default it lives behind the
@@ -1921,298 +2127,6 @@ describe("CreateIssueModal", () => {
       expect(footer?.className).toContain("sm:flex");
       expect(create.parentElement).toBe(footer);
       expect(create.className).toContain("justify-self-end");
-    });
-  });
-
-  // OL-44 — creating with prerequisites and an agent assignee must never
-  // silently skip the dispatch gate: a blocked preview opens the explicit
-  // one-shot confirmation, and only its confirm carries the signed challenge.
-  describe("dependency-blocked create", () => {
-    const blockedPreview = () => ({
-      triggers: [],
-      total_count: 0,
-      blocked: [
-        {
-          issueId: "candidate-1",
-          reasonCode: "dependency_unsatisfied",
-          dependencies: {
-            blockedBy: [],
-            inheritedBlockedBy: [],
-            blocking: [],
-            unsatisfied: [
-              {
-                issueId: "picked-issue-1",
-                status: "in_progress",
-                statusCategory: "in_progress",
-                satisfied: false,
-                sourceEdges: ["edge-1"],
-                inheritedFrom: [],
-                title: "Picked issue",
-                identifier: "TES-77",
-                descendantCount: 0,
-              },
-            ],
-            hasRestrictedBlockers: false,
-            dependencyVersion: "v1",
-          },
-          confirmation: {
-            requestId: "req-1",
-            challenge: "ch-1",
-            expiresAt: "2099-01-01T00:00:00Z",
-          },
-        },
-      ],
-    });
-
-    const seedAgentAndPrerequisite = async () => {
-      const user = userEvent.setup();
-      const onClose = vi.fn();
-      renderModal(
-        <CreateIssueModal
-          onClose={onClose}
-          data={{ assignee_type: "agent", assignee_id: "agent-1" }}
-        />,
-      );
-      // Queue one prerequisite through the same picker flow as sub-issues.
-      fireEvent.click(screen.getByRole("button", { name: "Add prerequisite..." }));
-      fireEvent.click(screen.getByRole("button", { name: "pick:Add prerequisite" }));
-      fireEvent.change(screen.getByPlaceholderText("Issue title"), {
-        target: { value: "Blocked task" },
-      });
-      return { user, onClose };
-    };
-
-    it("asks explicitly, then creates with the one-shot override", async () => {
-      mockPreviewIssueTrigger.mockResolvedValue(blockedPreview());
-      const { user, onClose } = await seedAgentAndPrerequisite();
-
-      await user.click(screen.getByRole("button", { name: "Create Issue" }));
-
-      // The preview saw the exact create body — title, assignee, relations.
-      await waitFor(() => expect(mockPreviewIssueTrigger).toHaveBeenCalledTimes(1));
-      expect(mockPreviewIssueTrigger).toHaveBeenCalledWith(
-        expect.objectContaining({
-          isCreate: true,
-          mutation: expect.objectContaining({
-            title: "Blocked task",
-            assignee_type: "agent",
-            assignee_id: "agent-1",
-            blockedBy: ["picked-issue-1"],
-          }),
-        }),
-      );
-      // Nothing written yet — the dialog holds the decision.
-      expect(mockCreateIssue).not.toHaveBeenCalled();
-      expect((await screen.findAllByText("Prerequisites unfinished")).length).toBeGreaterThan(0);
-
-      await user.click(screen.getByRole("button", { name: "Create and start anyway" }));
-      await waitFor(() =>
-        expect(mockCreateIssue).toHaveBeenCalledWith(
-          expect.objectContaining({
-            title: "Blocked task",
-            blockedBy: ["picked-issue-1"],
-            dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
-          }),
-        ),
-      );
-      await waitFor(() => expect(onClose).toHaveBeenCalled());
-      expect(mockToastCustom).toHaveBeenCalled();
-    });
-
-    it("REVIEW retries an ambiguous confirmed create with its original one-shot permit", async () => {
-      const firstPreview = blockedPreview();
-      const nextPreview = blockedPreview();
-      nextPreview.blocked[0]!.confirmation = {
-        requestId: "req-2",
-        challenge: "ch-2",
-        expiresAt: "2099-01-01T00:00:00Z",
-      };
-      mockPreviewIssueTrigger
-        .mockResolvedValueOnce(firstPreview)
-        .mockResolvedValue(nextPreview);
-      // The server may have committed before this transport failure: retry
-      // must replay req-1, whose contract returns the original issue/run.
-      mockCreateIssue.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-      const { user } = await seedAgentAndPrerequisite();
-
-      await user.click(screen.getByRole("button", { name: "Create Issue" }));
-      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
-      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
-
-      // Follow the offered retry affordance. The confirmation should remain;
-      // today's implementation discards it and offers Create Issue again.
-      await waitFor(() => expect(mockToastError).toHaveBeenCalled());
-      if (!screen.queryByRole("button", { name: "Create and start anyway" })) {
-        await user.click(screen.getByRole("button", { name: "Create Issue" }));
-      }
-      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
-      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
-      expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({
-        dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
-      }));
-      expect(mockPreviewIssueTrigger).toHaveBeenCalledTimes(1);
-    });
-
-    it("REVIEW preserves drafted prerequisites when reopening the same create draft", async () => {
-      const user = userEvent.setup();
-      const firstOpen = renderModal(<CreateIssueModal onClose={vi.fn()} />);
-      fireEvent.change(screen.getByPlaceholderText("Issue title"), {
-        target: { value: "Relation-bearing draft" },
-      });
-      fireEvent.click(screen.getByRole("button", { name: "Add prerequisite..." }));
-      fireEvent.click(screen.getByRole("button", { name: "pick:Add prerequisite" }));
-
-      // Closing the modal (including inspecting a blocker from the confirm
-      // dialog) unmounts the panel. Reopen the existing persisted draft.
-      firstOpen.unmount();
-      renderModal(<CreateIssueModal onClose={vi.fn()} />);
-      expect(screen.getByPlaceholderText("Issue title")).toHaveValue("Relation-bearing draft");
-      await user.click(screen.getByRole("button", { name: "Create Issue" }));
-      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
-      expect(mockCreateIssue).toHaveBeenCalledWith(expect.objectContaining({
-        title: "Relation-bearing draft",
-        blockedBy: ["picked-issue-1"],
-      }));
-    });
-
-    it("REREVIEW keeps the original permit after an ambiguous create returns to editing", async () => {
-      const firstPreview = blockedPreview();
-      const nextPreview = blockedPreview();
-      nextPreview.blocked[0]!.confirmation = {
-        requestId: "req-2",
-        challenge: "ch-2",
-        expiresAt: "2099-01-01T00:00:00Z",
-      };
-      mockPreviewIssueTrigger
-        .mockResolvedValueOnce(firstPreview)
-        .mockResolvedValue(nextPreview);
-      // The first POST may have committed; no transport response proves
-      // either outcome, so returning to editing must not mint a new create.
-      mockCreateIssue.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-      const { user } = await seedAgentAndPrerequisite();
-      await user.click(screen.getByRole("button", { name: "Create Issue" }));
-      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
-      await waitFor(() => expect(mockToastError).toHaveBeenCalled());
-      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
-
-      // This action remains enabled beside the uncertain-outcome message.
-      await user.click(screen.getByRole("button", { name: "Back to editing" }));
-      await user.click(screen.getByRole("button", { name: "Create Issue" }));
-      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
-      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
-      expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({
-        dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
-      }));
-    });
-
-    it("THIRDREVIEW replays an uncertain create after its confirmation expiry", async () => {
-      const initialTime = Date.now();
-      const firstPreview = blockedPreview();
-      firstPreview.blocked[0]!.confirmation.expiresAt = new Date(initialTime + 300_000).toISOString();
-      const nextPreview = blockedPreview();
-      nextPreview.blocked[0]!.confirmation = {
-        requestId: "req-2",
-        challenge: "ch-2",
-        expiresAt: "2099-01-01T00:00:00Z",
-      };
-      mockPreviewIssueTrigger
-        .mockResolvedValueOnce(firstPreview)
-        .mockResolvedValue(nextPreview);
-      mockCreateIssue.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-      const { user } = await seedAgentAndPrerequisite();
-      await user.click(screen.getByRole("button", { name: "Create Issue" }));
-      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
-      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(mockDraftStore.pendingDependencyCreate?.uncertain).toBe(true));
-
-      // A used request still replays after this deadline on the server;
-      // expiry only prevents first use. This outcome remains unknown.
-      const clock = vi.spyOn(Date, "now").mockReturnValue(initialTime + 360_000);
-      try {
-        await user.click(screen.getByRole("button", { name: "Back to editing" }));
-        await user.click(screen.getByRole("button", { name: "Create Issue" }));
-        await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
-        await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
-        expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({
-          dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
-        }));
-      } finally {
-        clock.mockRestore();
-      }
-    });
-
-    it("THIRDREVIEW clears the unchanged draft after a remounted confirmation succeeds", async () => {
-      mockPreviewIssueTrigger.mockResolvedValue(blockedPreview());
-      mockCreateIssue.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-      const user = userEvent.setup();
-      const data = { assignee_type: "agent", assignee_id: "agent-1" };
-      const firstOpen = renderModal(<CreateIssueModal onClose={vi.fn()} data={data} />);
-      fireEvent.change(screen.getByPlaceholderText("Issue title"), {
-        target: { value: "Recoverable create" },
-      });
-      fireEvent.click(screen.getByRole("button", { name: "Add prerequisite..." }));
-      fireEvent.click(screen.getByRole("button", { name: "pick:Add prerequisite" }));
-      await user.click(screen.getByRole("button", { name: "Create Issue" }));
-      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
-      await waitFor(() => expect(mockDraftStore.pendingDependencyCreate?.uncertain).toBe(true));
-
-      firstOpen.unmount();
-      const onClose = vi.fn();
-      renderModal(<CreateIssueModal onClose={onClose} data={data} />);
-      await user.click(await screen.findByRole("button", { name: "Create and start anyway" }));
-      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
-      expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({
-        dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
-      }));
-      await waitFor(() => expect(mockToastCustom).toHaveBeenCalled());
-      await waitFor(() => expect(mockClearDraft).toHaveBeenCalledTimes(1));
-      expect(onClose).toHaveBeenCalledTimes(1);
-    });
-
-    it("cancel writes nothing and returns to the form", async () => {
-      mockPreviewIssueTrigger.mockResolvedValue(blockedPreview());
-      const { user } = await seedAgentAndPrerequisite();
-
-      await user.click(screen.getByRole("button", { name: "Create Issue" }));
-      await screen.findAllByText("Prerequisites unfinished");
-
-      await user.click(screen.getByRole("button", { name: "Back to editing" }));
-      expect(mockCreateIssue).not.toHaveBeenCalled();
-      await waitFor(() =>
-        expect(screen.queryByRole("button", { name: "Create and start anyway" })).not.toBeInTheDocument(),
-      );
-    });
-
-    it("re-previews and asks when the write itself is refused by a concurrent change", async () => {
-      // Preview said ready; a prerequisite landed before the write arrived.
-      mockPreviewIssueTrigger
-        .mockResolvedValueOnce({
-          triggers: [{ issue_id: "", agent_id: "agent-1", source: "issue_assignee" }],
-          total_count: 1,
-          blocked: null,
-        })
-        .mockResolvedValueOnce(blockedPreview());
-      mockCreateIssue.mockRejectedValueOnce(
-        new ApiError("conflict", 409, "Conflict", {
-          error: "unfinished prerequisites",
-          reason_code: "dependency_unsatisfied",
-        }),
-      );
-      const { user } = await seedAgentAndPrerequisite();
-
-      await user.click(screen.getByRole("button", { name: "Create Issue" }));
-      // First attempt: no override, refused; the fresh preview opens the dialog.
-      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
-      expect(mockCreateIssue.mock.calls[0]![0].dependencyOverride).toBeUndefined();
-      expect((await screen.findAllByText("Prerequisites unfinished")).length).toBeGreaterThan(0);
-
-      await user.click(screen.getByRole("button", { name: "Create and start anyway" }));
-      await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
-      expect(mockCreateIssue).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          dependencyOverride: { requestId: "req-1", challenge: "ch-1" },
-        }),
-      );
     });
   });
 });

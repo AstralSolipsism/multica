@@ -2,8 +2,8 @@
 
 This additive API and headless data layer implement the OL-38 v2 graph
 contract on top of OL-39 persistence. OL-43/T6 can consume them from the
-existing shared Issue surface. Rendering, navigation, layout workers and
-dependency dispatch admission belong to their respective stages.
+existing shared Issue surface. Dependencies are informational: this API does
+not gate assignment or execution. See the [confirmed synchronization scope](engineering/upstream-sync-20260926.md).
 
 ## Request and authorization
 

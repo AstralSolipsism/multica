@@ -30,7 +30,9 @@
   "help": {
     "trigger": "도움말",
     "download_desktop": "데스크톱 앱",
-    "discord": "Feishu 그룹",
+    "docs": "문서",
+    "changelog": "변경 로그",
+    "discord": "Discord",
     "feedback": "피드백",
     "server_version": "서버 버전 {{version}}"
   },
@@ -56,7 +58,7 @@
     "show_fewer_pins": "접기",
     "unread_overflow": "99+",
     "discord_card": {
-      "title": "Feishu 그룹",
+      "title": "Discord 참여하기",
       "dismiss": "닫기"
     }
   },

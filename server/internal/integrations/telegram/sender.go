@@ -34,7 +34,8 @@ const (
 	msgAgentOffline     = "⚠️ The agent is offline right now. Your message was received and will be handled once it's back online."
 	msgAgentArchived    = "⚠️ This agent has been archived and can't respond. Please contact your workspace admin."
 	msgUnsupportedType  = "Sorry, I can't handle this kind of message yet. Please send text."
-	msgBindingGroupHint = "Please message me in a direct chat first, then link your Labrastro account."
+	msgMediaUnavailable = "⚠️ I couldn't fetch that file from Telegram, so the agent won't see it. Bots can only download files up to 20 MB."
+	msgBindingGroupHint = "Please message me in a direct chat first, then link your Multica account."
 )
 
 // maxMessageUnits caps one outbound sendMessage body. Telegram hard-caps a

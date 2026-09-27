@@ -40,93 +40,6 @@ Common resource types:
   `daemon_id`, optional label, and optional `execution_mode` (`in_place`, the
   default, or `worktree`).
 
-## Shared project files
-
-An opt-in backend file API exists at `/api/projects/{project_uuid}/files`,
-separate from resource pointers. It offers capabilities, bounded metadata lists,
-authorized content reads, revision-checked saves, candidates and operation lookup.
-The CLI advertises `multica project file --help`; each subcommand exposes its
-parameters and recovery requirements. Project-bearing
-runtime briefs and `.multica/project/resources.json.shared_files` carry its
-capabilities/list/help commands; they do not preload any shared file content or
-claim the opt-in service is enabled. Check capabilities before use.
-
-```bash
-multica project file capabilities <project-id> --output json
-multica project file list <project-id> --prefix docs/ --limit 50 --output json
-multica project file read <project-id> docs/facts.md --to-file ./facts.md --output json
-multica project file save <project-id> docs/facts.md --from-file ./facts.md --base-revision <revision-read> --request-file ./save-1.json --output json
-multica project file operation <project-id> <operation-id> --output json
-multica project file retry ./save-1.json --output json
-multica project file candidates <project-id> docs/facts.md --output json
-multica project file candidate <project-id> <candidate-id> --to-file ./candidate.md --output json
-multica project file adopt <project-id> docs/facts.md <candidate-id> --expected-revision <revision-observed-at-decision> --request-file ./adopt-1.json --output json
-```
-
-All these commands emit one JSON response on stdout. Downloads require a **new**
-`--to-file` destination, verify length/SHA-256 before publishing, and return the
-version headers as JSON. Use `revision`, not `base_revision`, as the next save's
-base. `read --revision N` reads history. Lists contain one page (default 50,
-maximum 200): use returned `next_cursor` as `--after` with the same prefix/path.
-Candidate `revision` is 0 and must not become a working copy's current revision.
-
-`save` requires an explicit `--base-revision` (0 creates); `adopt` requires an
-explicit `--expected-revision`. Both require a new `--request-file`. Before any
-mutation, the CLI persists the original request and content in a private JSON
-snapshot. Do not edit, commit, share, or delete pending snapshots. `--operation-id`
-is optional for a new decision (default UUID); the generated ID is saved before
-the request and returned with results/errors. A retry uses the snapshot's ID,
-bytes, content type, path and revision, even if the working file has changed.
-The snapshot contains a one-way credential binding, never the raw credential;
-it refuses replay with a different server, workspace or credential. A later run
-cannot inherit the previous run's private ledger. For a rotated member credential,
-query the original operation with the same member identity; do not rewrite the
-snapshot or turn an uncertain request into a new operation.
-
-Exit codes: **0** confirms a validated successful read/query or SAVED mutation;
-**6** is a committed CONFLICT (candidate preserved, current file unchanged);
-**7** means pending/unconfirmed or malformed response. Existing codes remain
-**2** transport failure, **3** auth rejection, **4** not found, **5** invalid
-parameters, **1** other errors (including operation-key reuse/path collision and
-503 `PROJECT_FILES_DISABLED`). On mutation failures stdout preserves `code`,
-`operation_id` and `request_file`. Its `state` is `FAILED` for local/preflight
-failures and terminal API rejections, including 400/401/403/404/413 and
-`PROJECT_FILES_DISABLED`. `UNCONFIRMED` is reserved for mutation attempts or
-operation lookups with transport failures, unverifiable results or other 5xx
-responses. A preflight network/malformed-response failure exits 2/7 but has
-`FAILED` state because no mutation was sent. A rejected retry or failed lookup
-does not settle an earlier uncertain attempt; retain its original request.
-The CLI never invents a candidate or a successful save. Stop on
-401/403; never fall back from the run's token to a member/profile credential.
-PENDING does not schedule a worker, and operation 404 is not proof an in-flight
-write cannot commit. Wait at least one second after 202/503; query first, then
-retry unchanged when appropriate. There is no automatic retry or polling loop.
-
-Snapshots/downloads are capped at 64 MiB of content by this CLI; a lower server
-capability limit still applies. Each new `save` preserves its snapshot, fetches
-capabilities once and prechecks `max_file_bytes` before uploading. Over-limit
-drafts return `FILE_TOO_LARGE`/`FAILED` with exit 5; capability failures also send
-no mutation and retain the snapshot. The server can still reject with 413 if its
-limit changes. `retry` skips preflight to reach the original operation ledger
-under changed capabilities, using the original bytes/key. JSON snapshots include
-base64 content and need additional local disk/memory. Keep them in the task workdir; the CLI retains them
-after success too, until the caller explicitly cleans up. The filesystem must
-support private files and hard links (atomic publication without overwrite).
-
-An enabled client must retain the revision read before editing, acknowledge only
-`SAVED`, keep drafts on `CONFLICT` or unknown outcomes, and retry the same request
-with its original operation key. Conflict adoption also requires an explicit
-expected revision. A task token is limited to its current server-associated
-project; operation keys are isolated per run. Listings contain no file contents,
-and shared documents do not acquire instruction priority from being stored here.
-
-For an uncertain save/adopt result, query its operation before resending content;
-that lookup avoids the project write lock taken by mutation retries. In candidate
-lists, `updated_at` means candidate creation time, not a later edit or resolution.
-Use revision/version IDs for concurrency. Local PAT/task-token validity is
-rechecked before commit; JWT expiry is rechecked when present, but remote JWT
-session or cloud-PAT revocation during an authenticated request is not.
-
 ## CLI
 
 ```bash
@@ -174,9 +87,8 @@ of editing the working copy. Every task of one conversation shares that branch �
 `HEAD`; a task with no conversation behind it gets `agent/<agent>/<task>`.
 
 Continuation is decided by an ownership record
-(`refs/multica/local-state/<conversation-fingerprint>/<branch>`, whose path carries the owning
-conversation — commit messages carry no owner data — and whose commit holds the
-snapshot of the user's directory the branch already carries and the branch tip
+(`refs/multica/local-state/<branch>`, which holds the owning conversation, the
+snapshot of the user's directory the branch already carries, and the branch tip
 it was recorded at), never by the branch name. A same-named branch the user
 created — or one that no longer contains the recorded commit, i.e. deleted and
 recreated or force-moved — is left alone and the task falls back to

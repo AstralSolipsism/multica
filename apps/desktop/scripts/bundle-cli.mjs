@@ -34,7 +34,7 @@ import { constants } from "node:fs";
 import { execFileSync, execSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { normalizeGitVersion } from "./package.mjs";
+import { deriveVersion, normalizeGitVersion } from "./package.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..");
@@ -179,7 +179,7 @@ async function main() {
   const destBinary = join(destDir, binName);
 
   const stamp = resolveCliStamp(process.env, {
-    describe: git("describe", "--tags", "--match", "v[0-9]*", "--always", "--dirty"),
+    describe: deriveVersion(),
     head: git("rev-parse", "--short", "HEAD"),
   });
 

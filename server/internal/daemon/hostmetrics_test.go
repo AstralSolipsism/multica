@@ -181,3 +181,13 @@ func TestHostMetricsSamplerConstructedBeforeReaders(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestNewInitializesHostMetrics(t *testing.T) {
+	d := New(Config{WorkspacesRoot: t.TempDir()}, slog.Default())
+	if d.hostMetrics == nil {
+		t.Fatal("daemon startup has no host metrics sampler")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	d.hostMetrics.run(ctx)
+}

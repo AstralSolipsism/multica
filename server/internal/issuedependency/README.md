@@ -1,262 +1,47 @@
-# Issue prerequisites and execution admission (OL-39 / OL-41)
+# Informational issue dependencies
 
-This implements the persistence boundary frozen by OL-38 contract v2 on
-baseline `aa5d5a17dc821d88dfdace7a49726df55d49dd31`. It reuses
-`issue_dependency`, `issue.parent_issue_id`, projects, stages and the existing
-`issuestatus` resolver.
+This package models explicit `blocked_by` edges and parent-inherited
+prerequisites. It supports the retained graph and relation-editing feature under
+the [confirmed synchronization scope](../../../docs/engineering/upstream-sync-20260926.md).
+Execution, claiming, retries, comment wakeups and automation use upstream rules.
+This model cannot grant or deny execution.
 
-## Semantics and ownership
+## Model and validation
 
-When B waits for A, store exactly one canonical row:
-`(issue_id=B, depends_on_issue_id=A, type=blocked_by)`. The execution arrow is
-A → B. `related` is inert. Historical `blocks` rows have unverified direction;
-neither the migration nor the service reverses them automatically.
+Edges connect issues in one workspace and may cross projects. Parentage alone
+is not a prerequisite; descendants inherit an ancestor's explicit prerequisites.
+Only each prerequisite's own effective `done` category marks it satisfied in
+the displayed summary. Direct and inherited relations remain distinct.
 
-The effective prerequisites of a task are the union of the direct prerequisites
-on itself and every ancestor. Parentage alone is not a prerequisite. The
-referenced prerequisite's **own current** effective category `done` satisfies
-the relation. `in_review`, `cancelled` and unknown categories do not. Completion
-does not recursively depend on the prerequisite's predecessors. Existing
-status-write permissions and completion producers remain unchanged (D1).
+Relation edits reject self edges, cycles, ancestor conflicts and references to
+inaccessible workspaces. Versioned replacement prevents overwriting a concurrent
+edit. Invalid historical data makes the affected graph/read/edit unavailable
+instead of returning a misleading partial graph. Ordinary field edits and
+execution do not use that condition as an execution gate. Deleting an issue
+removes its incident edges and follows upstream deletion behavior.
 
-Validation checks the complete proposed forest and graph, including completed
-tasks, without a depth or list-page limit. The compressed graph has two nodes
-per issue, with `gate(v) → done(v)`, `gate(parent) → gate(child)` and
-`done(prerequisite) → gate(dependent)` arcs. DFS detects inherited waiting
-cycles; ancestor intervals reject self and ancestor/descendant prerequisites.
-The graph representation is O(V+E+H), with deterministic O(V log V) ID ordering.
-Cycle diagnostics contain original issue/edge IDs, never compression nodes.
+The service layer owns transactional locking, persistence, relation audit and
+opaque versions. The pure model owns graph validation and projection. Workspace
+structure locking serializes structural edits; reads use a repeatable-read
+snapshot. Related component selection keeps unrelated historical anomalies from
+blocking ordinary edits. Projections sort their output for stable versions.
 
-Dependency GET and compound writes strictly validate the entire workspace.
-Legacy create/reparent/delete/admission checks instead validate the complete
-connected component formed by parent links and canonical `blocked_by` edges,
-in both directions. A reparent includes the old and proposed parent's components;
-deletion also validates the surviving structure. This includes every potentially
-affected ancestor, descendant, prerequisite and successor, without pagination.
-Unrelated malformed history cannot disable ordinary issue operations across a
-workspace. Unknown `blocks` and inert `related` rows are excluded only from this
-execution check, not from storage or the strict workspace audit. Missing/foreign
-endpoints, duplicate canonical rows and cycles **inside** the affected component
-still fail closed; the service never treats a missing prerequisite as ready.
-Ordinary reparenting does not rewrite relation rows. Explicit issue deletion
-removes incident rows through the existing cleanup policy and records their
-original contents in the same transaction's audit.
+## Read and edit contracts
 
-Machine callers may add constraints. Removing an unfinished direct relation,
-losing inherited constraints on reparent, or deleting a prerequisite/parent so
-surviving tasks lose unfinished constraints requires a trusted human JWT.
-PATs, cloud PATs, task credentials and unknown identities are not human
-overrides. This rule does not restrict existing status writes. Relation writes,
-deletions and child detachments record before/after structure, credential kind
-and actor ID (agent ID when available, otherwise user ID) in
-`issue_dependency_audit` in the mutation transaction.
+The [CLI/API reference](../service/builtin_skills/multica-platform/references/issue-dependencies.md)
+is the current contract. `GET /api/issues/{id}/dependencies` returns visible
+direct/inherited prerequisites, successors and unfinished summaries. Hidden
+context is represented by markers without disclosing inaccessible IDs/titles.
+The [complete graph API](../../../docs/issue-graph-api.md) returns a coherent
+workspace/project snapshot. A graph's unfinished-prerequisite count is not an
+execution status or permission.
 
-## Read and write boundary
+The active implementation has no prerequisite admission service, signed early
+execution permit, human-only relation-removal policy, or dependency-specific
+dispatch result. Historical migrations and stored records are retained so that
+existing databases upgrade without rewriting their ledger or deleting data.
 
-| Endpoint | Contract |
-| --- | --- |
-| `GET /api/issues/{id}/dependencies` | Complete dependency view in a repeatable-read snapshot. |
-| `POST /api/issues/with-dependencies` | Existing issue creation pipeline with atomic prerequisite persistence. |
-| `PATCH /api/issues/{id}/with-dependencies` | Existing issue update pipeline with atomic prerequisite replacement. |
-
-The response has `blocked_by`, `inherited_blocked_by`, `blocking`, `unsatisfied`,
-`has_restricted_blockers` and `dependency_version`. Entries retain
-`source_edges` and `inherited_from`; `blocking` lists direct successors with
-visible descendant counts. Cross-project edges are allowed within one
-workspace. Identifier resolution uses the same workspace prefix and membership
-policy as ordinary issue GET. Missing and foreign references both return 404
-with `reason_code=not_found`.
-
-The projection accepts an issue-visibility predicate: hidden prerequisites and
-source paths disclose no IDs, titles, edge IDs or counts. An invisible
-unfinished prerequisite sets only `has_restricted_blockers`. The current
-transport uses the existing workspace-membership visibility policy. Consumers
-must retain the full server snapshot for decisions, rather than deciding from
-the projected list, a project filter or a paginated task list.
-
-`dependency_version` is an opaque HMAC of workspace, target/ancestor chain and
-revisions, effective prerequisite status/revisions, source edges and status
-catalog categories. A stale version fails in the write transaction. It is a
-conservative concurrency token; unrelated text changes on those issues or
-catalog changes may also require a refresh.
-
-For compound writes, `blocked_by` accepts UUIDs or issue identifiers. Omission
-leaves relations unchanged (empty on create); `[]` clears direct relations;
-`null` is invalid. Replacements on PATCH require
-`expected_dependency_version`. Repeated/order-independent references are
-deduplicated without changing retained edge IDs or incrementing a no-op issue
-revision. Existing POST/PUT/batch endpoints reject dependency-edit fields, so a
-client cannot silently lose constraints by falling back to a legacy endpoint.
-
-New clients use `ApiClient.getIssueDependencies`,
-`createIssueWithDependencies` and `updateIssueWithDependencies`. New TypeScript
-fields are camelCase; the boundary converts wire names. Missing/malformed
-dependency data becomes `null` and readiness `unknown`, never an empty ready
-set. The compound client does not retry POST/PUT after 404/405.
-
-Errors carry `error` and `reason_code`: 409 for `dependency_unsatisfied`,
-`dependency_cycle`, `dependency_ancestor_conflict` or
-`dependency_version_conflict`; 403 for `dependency_change_not_allowed` or
-`dependency_override_not_allowed`; 422 for `dependency_data_unverified`.
-Malformed fields use 400. Unverified historical data never discloses raw
-invalid endpoints. Batch update retains `updated` and adds per-item `results`,
-including dependency rejection codes; each item is its own atomic mutation.
-
-## Transaction and lock order
-
-Create/delete and all ordinary issue updates use:
-
-1. Workspace row `FOR KEY SHARE`; creates first take `FOR NO KEY UPDATE` for
-   their existing counter update.
-2. Shared workspace status-catalog advisory lock.
-3. Exclusive workspace dependency-structure advisory lock.
-4. Requested attachment locks, when updating with new attachments.
-5. Workspace issue rows in UUID order, then graph validation/mutation/audit.
-6. Existing transaction-local side effects; commit before publishing events.
-
-Issue rows are locked before reading prerequisite status. This stabilizes
-status and revisions even for existing status producers outside HTTP. Ordinary
-text/date/position edits join the same structure-lock queue before their existing
-attachment/target locks, but do not load the graph unless admission requires it;
-top-level creates load the workspace graph when they also enqueue execution.
-Status-only updates keep the ordered workspace row locks and decide execution
-intent from the locked target. Without execution or an explicit dependency
-write/view/version check, they skip loading and cloning the graph.
-Updates, including plugin content edits, refresh untouched nullable fields under
-their target lock to avoid overwriting a concurrent reparent or assignment with
-stale preloaded values. The plugin content transaction joins the same structure
-gate before locking its target and applying an optional expected revision.
-Compound responses retain the committed transaction's snapshot rather than
-mixing a post-commit graph read with an older issue revision.
-
-Deletion validates before cancelling tasks or failing autopilot runs. These
-database changes share the deletion transaction; runtime notifications occur
-only after commit. Existing deletion cleanup and source-context retention are
-preserved. Rejected creates/updates/deletes emit no task-start/cancel effects.
-
-Admission transactions take workspace `FOR KEY SHARE` and the shared catalog and
-structure locks. A known execution target (enqueue, rerun, retry or pending
-recovery) reads the complete graph, then takes issue `FOR SHARE` locks in UUID
-order on the target, every ancestor, and every explicit prerequisite of those
-nodes. It refreshes those rows after locking: status producers can commit between
-the first MVCC read and lock acquisition. Missing endpoints or changed parentage
-fail closed, and that snapshot cannot admit another target.
-
-This covers every status/revision used by D1 and its signed version: parentage
-only propagates explicit prerequisites; a prerequisite's own predecessors are
-not additional completion requirements. Structure/catalog locks stabilize the
-whole graph while the existing validator checks all structural constraints.
-A claim first reads the agent's queued issue targets without taking queue locks,
-then locks the union of their decision inputs. The final claim SQL only admits
-these issue IDs or issue-less chat/planning rows. A concurrently enqueued row
-for a covered target is safe; a different target stays queued until a fresh poll.
-This preserves issue rows, then capacity, then queue lock order and the existing
-runtime, priority, capacity and duplicate-run checks among covered candidates.
-Foreign or missing inputs remain in the model so corrupt targets are quarantined
-and scanning continues to later valid tasks. Multiple targets reuse the existing
-immutable prerequisite index when collecting their status inputs.
-
-An existing legacy run-only row with NULL issue binding needs a target resolved
-later, so that claim retains the full workspace row set. Multi-workspace recovery
-also retains full locks and orders workspaces by UUID. Completion permissions
-are unchanged.
-`KEY SHARE` still prevents workspace deletion, but is compatible with a writer's
-`NO KEY UPDATE` counter lock. This lets the writer enter the exclusive structure
-lock's wait queue, where later admissions wait behind it. Taking workspace
-`SHARE` instead lets successive readers overtake the writer before it reaches
-that queue. Text-only writers must also join this queue to avoid the same
-starvation at the issue row. These writes serialize per workspace; they wait
-for current admissions to finish, without requiring the reader stream to stop.
-Only creates take the stronger counter lock: taking it for ordinary writes
-would keep the second writer out of the structure queue behind the first,
-allowing another reader batch between them. Creates retain the counter-first
-order to avoid upgrading after catalog/structure/issue locks.
-For standalone enqueue and compound assignment, external attribution/connected-app
-preparation precedes the transaction;
-queue insertion, confirmation audit and the compound issue mutation commit
-before task events or runtime wakeups. Manual rerun retries its entire transaction
-once if a concurrent provider retry acquires the pending slot.
-
-PR #32 and migration 478 retired the separate Feishu feedback worker. The live
-conversation path prepares external source/overlay data before the Chat
-transaction; input, run and frozen delivery commit together. A task-token agent
-then uses the ordinary comment handler. The load matrix exercises this full
-path with and without a controlled external overlay delay. Caller-owned
-transactions remain supported: a regression proves nested admission savepoints
-keep row locks and queued writes until the outer transaction commits or rolls
-back. Do not restore the retired worker to test that transaction contract.
-
-Every admission still loads the complete workspace graph, at O(V+E+H) cost.
-There is no cross-request cache or partial-page approximation. Known-target
-admission and ordinary issue claims remove unrelated status row locks; legacy
-unbound run-only claims and multi-workspace recovery retain the full row set. Large graphs can still delay ordinary writers waiting at the
-structure gate. Measure realistic sizes and contention before broad rollout;
-any further narrowing needs a decision-set proof and concurrency regressions.
-Validation uses integer vertex/edge indexes; the edge query returns aligned
-arrays from one input, so graph storage is allocated once. Read/edit snapshots
-sort the final edge representation in memory, avoiding PostgreSQL temporary-file
-sorts. Admission skips this full-edge sort: validation is order-independent and
-views, prerequisite sources, versions and audit states sort at their own output
-boundaries. Loading reuses endpoint strings and avoids duplicate union rows.
-Both endpoint joins reuse a materialized set of local UUIDs, eliminating
-per-edge source-row lookups for workspaces absent from planner statistics while
-keeping the endpoint indexes usable. Ordered row-lock queries drain their
-complete result on the server rather than transferring unused IDs.
-A valid full graph already proves
-each execution component valid, so the admission path selects/copies a component
-only when historical corruption needs the existing component isolation.
-The executable contention matrix, measurement limits and required OL-45 rollout
-gate are in [`docs/issue-dependency-dispatch.md`](../../../docs/issue-dependency-dispatch.md#contention-gate-ol-45).
-Concurrent shared admission locks do not themselves serialize readers; include
-maximum write latency to detect starvation behind a sustained reader workload.
-
-## Execution and one-shot confirmation
-
-Compound writes are enabled after integration of the shared enqueue, claim,
-retry and recovery gates. A workspace with unverified historical data still
-fails strict dependency operations with 422; audit and repair the data using
-[the historical audit procedure](../../cmd/audit_issue_dependencies/README.md).
-Disabling compound writes must never disable canonical execution admission.
-
-A new machine assignment with unfinished direct/inherited prerequisites fails
-even on backlog or with `suppress_run`. A human may preassign without execution.
-Only the existing assign/create/backlog-promotion predicate creates an automatic
-run; completion/reporting does not become a new trigger. No arbitrary DAG-edge
-auto-dispatch is introduced. Ordinary comments persist independently and report
-blocked dispatch; they are never a confirmation, even from a human.
-
-Enqueue and first claim independently reload and validate the complete graph.
-Each locks all status/revision inputs needed for its own decision. A failed first claim is
-quarantined as `failed` with a stable `dependency_*` reason, without credentials,
-issue rollback or automatic retries, and scanning continues to the next row.
-Corrupt/missing workspace bindings are rejected at this boundary as well.
-Fresh provider retries, manual reruns, member/child tasks and recovery comments
-never copy early-execution permission. A server-owned autopilot issue association
-also gates legacy `run_only` rows with NULL `issue_id`; issue-less chat and planning
-retain their existing behavior.
-
-Only authenticated human JWT sessions may explicitly confirm. Task tokens,
-PATs/cloud PATs, owner/originator attribution and forged headers cannot authorize
-it. Preview signs a five-minute challenge over the user, workspace, issue,
-executing agent/Squad leader, complete proposed mutation digest and dependency
-version. Confirmation is rechecked in the mutation transaction and stores a
-record on exactly one new queue row; its initial claim must occur within fifteen
-minutes and rechecks dependencies, membership, invoke permission and leader.
-If all prerequisites are now done, ordinary admission is sufficient.
-
-`request_id` has a unique queue index. An identical signed replay is read-only
-and returns the same task/run even after it finishes; changed input/target is
-rejected. A small existing dependency-audit record prevents resurrection after
-queue/issue deletion. Audit retention must preserve `dispatch_confirmation`
-records for at least the challenge lifetime. Claim stamps `consumed_at` in the
-same transaction as dispatch; lost-response/claim-finalization recovery of that
-same row is safe and does not mint another permit. Historical dispatched rows
-without proof are validated before recovery delivery.
-
-The transport and frontend contract, request examples and test map live in
-[`docs/issue-dependency-dispatch.md`](../../../docs/issue-dependency-dispatch.md).
-OL-42 owns CLI `--blocked-by` and confirmation UX; this PR adds no UI or CLI flags.
-Migrations 467/468 add nullable queue metadata and its concurrent unique index.
-Deploy schema before the upgraded server. Rolling back the server to a version
-without admission while canonical edges exist is unsafe; first drain/stop new
-execution or keep admission enabled. Never drop the column to revoke one task.
+Tests cover graph consistency, projections, versions, concurrent structural
+edits, rollback and UUID stability. Handler regressions separately prove that
+unfinished relations do not prevent ordinary assignment, enqueue, claim,
+comment wakeups or machine-authored relation edits.

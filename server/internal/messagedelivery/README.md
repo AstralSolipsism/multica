@@ -1,7 +1,8 @@
 # Labrastro Message Delivery — Backend Contract (OL-25 + OL-27 + OL-29)
 
-Feishu participants converse with the designated agent under explicit integration
-consent, including participants without platform accounts. The agent uses normal
+Feishu participants without platform membership converse with the designated
+agent under explicit integration consent. Bound workspace members use the
+upstream member flow and their own identity. The agent uses normal
 tools to summarize feedback under its own identity. Authorization, recovery and
 legacy-feedback retirement are defined in [FEEDBACK-CONTRACT.md](FEEDBACK-CONTRACT.md).
 Upstream sync points are listed in [UPSTREAM-ADAPTATION.md](UPSTREAM-ADAPTATION.md).

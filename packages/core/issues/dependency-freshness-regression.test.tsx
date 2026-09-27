@@ -39,7 +39,7 @@ it("REREVIEW replaces a first dependency read overtaken by an upstream event", a
     expect(reads).toBe(1);
     client.setQueryData(issueKeys.detail("review-ws", "upstream"), upstream);
     onIssueUpdated(client, "review-ws", {
-      ...upstream, status: "todo", status_category: "todo", revision: 2,
+      ...upstream, status: "todo", status_category: "unstarted", revision: 2,
     }, { statusChanged: true });
     release({ unsatisfied: [] });
     await waitFor(() => expect(client.getQueryState(key)?.fetchStatus).toBe("idle"));

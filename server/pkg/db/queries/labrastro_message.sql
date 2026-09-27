@@ -913,6 +913,7 @@ LEFT JOIN labrastro_message_approved_target approval
  AND approval.installation_id = rt.installation_id AND approval.target_key = rt.target_key
  AND approval.project_id IS NOT DISTINCT FROM rt.project_id AND approval.revoked_at IS NULL
 WHERE c.type = 'comment'
+  AND c.deleted_at IS NULL
   AND c.created_at >= rt.effective_from
   AND c.id >= sqlc.arg('after_id')::uuid
   AND c.id <= sqlc.arg('upper_id')::uuid

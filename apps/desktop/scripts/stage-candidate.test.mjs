@@ -9,7 +9,8 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import {
-  cpSync,
+  copyFileSync,
+  readdirSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -509,7 +510,7 @@ describe("deterministic feed archive (in-repo ustar writer)", () => {
       `labrastro-feed-metadata-${VERSION}.tar.gz`,
     );
     const listing = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" })
-      .split("\n")
+      .split(/\r?\n/)
       .filter(Boolean)
       .sort();
     expect(listing).toEqual(listTarGzMembers(readFileSync(archive)));
@@ -596,7 +597,7 @@ describe("stageDesktopCandidate", () => {
     );
     expect(existsSync(feedArchive)).toBe(true);
     const members = execFileSync("tar", ["-tzf", feedArchive], { encoding: "utf8" })
-      .split("\n")
+      .split(/\r?\n/)
       .filter(Boolean);
     expect(members).toContain("activation/latest.json");
     expect(members).toContain("activation/desktop/labrastro.yml");
@@ -756,7 +757,7 @@ describe("incremental staging", () => {
       `labrastro-feed-metadata-${VERSION}.tar.gz`,
     );
     const members = execFileSync("tar", ["-tzf", feedArchive], { encoding: "utf8" })
-      .split("\n")
+      .split(/\r?\n/)
       .filter(Boolean);
     for (const feed of [
       "labrastro-linux.yml",
@@ -926,16 +927,16 @@ describe("mock internal feed over HTTP", () => {
     // /downloads/desktop/<channel>.yml, version directory at
     // /downloads/desktop/<tag>/<name>.
     const serverRoot = join(root, "srv");
-    cpSync(
-      join(artifactDir, "activation", "desktop"),
-      join(serverRoot, "downloads", "desktop"),
-      { recursive: true },
-    );
-    cpSync(
-      join(artifactDir, "downloads", "desktop", TAG),
-      join(serverRoot, "downloads", "desktop", TAG),
-      { recursive: true },
-    );
+    mkdirSync(join(serverRoot, "downloads", "desktop"), { recursive: true });
+    // These staging directories contain flat files; the HTTP fixture needs
+    // their bytes, not directory attributes (fs.cp can fail copying those on Windows).
+    for (const [source, target] of [
+      [join(artifactDir, "activation", "desktop"), join(serverRoot, "downloads", "desktop")],
+      [join(artifactDir, "downloads", "desktop", TAG), join(serverRoot, "downloads", "desktop", TAG)],
+    ]) {
+      mkdirSync(target, { recursive: true });
+      for (const name of readdirSync(source)) copyFileSync(join(source, name), join(target, name));
+    }
     const server = createServer((req, res) => {
       const path = join(serverRoot, decodeURIComponent(req.url.split("?")[0]));
       let stat = null;

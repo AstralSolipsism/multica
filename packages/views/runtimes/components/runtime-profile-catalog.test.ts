@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { RuntimeProfile } from "@multica/core/types";
 import {
   buildRuntimeCatalog,
-  PROTOCOL_FAMILIES,
+  formatCommandLine,
+  parseCommandLine,
+  runtimeTypeLabel,
+  RUNTIME_TYPES,
 } from "./runtime-profile-catalog";
 
 // parseCommandLine / formatCommandLine now live in packages/views/common and
@@ -44,11 +47,11 @@ describe("buildRuntimeCatalog", () => {
       id: "prof-1",
       protocolFamily: "codex",
     });
-    expect(catalog.builtins).toHaveLength(PROTOCOL_FAMILIES.length);
+    expect(catalog.builtins).toHaveLength(RUNTIME_TYPES.length);
     expect(catalog.builtins[0]).toMatchObject({
       kind: "builtin",
-      id: `builtin:${PROTOCOL_FAMILIES[0]}`,
-      protocolFamily: PROTOCOL_FAMILIES[0],
+      id: `builtin:${RUNTIME_TYPES[0]}`,
+      protocolFamily: RUNTIME_TYPES[0],
     });
   });
 
@@ -69,3 +72,92 @@ describe("buildRuntimeCatalog", () => {
   });
 });
 
+describe("runtimeTypeLabel", () => {
+  // The picker and the profile it creates must not disagree about what the
+  // target is called: every surface reads the label from here.
+  it("names a target whose product name differs from its stored id", () => {
+    expect(runtimeTypeLabel("omp")).toBe("Oh-My-Pi");
+  });
+
+  it("passes through ids that are their own label", () => {
+    expect(runtimeTypeLabel("pi")).toBe("pi");
+    expect(runtimeTypeLabel("claude")).toBe("claude");
+  });
+
+  // A target the client does not recognise still has to render as something.
+  it("falls back to the raw value for an unknown target", () => {
+    expect(runtimeTypeLabel("future-runtime")).toBe("future-runtime");
+  });
+});
+
+describe("parseCommandLine", () => {
+  it("splits a pasted executable and fixed args", () => {
+    expect(parseCommandLine("agent --model composer-2.5")).toEqual({
+      ok: true,
+      commandName: "agent",
+      fixedArgs: ["--model", "composer-2.5"],
+    });
+  });
+
+  it("preserves quoted whitespace and escaped characters", () => {
+    expect(
+      parseCommandLine(`agent --flag "a b c" path\\ with\\ spaces`),
+    ).toEqual({
+      ok: true,
+      commandName: "agent",
+      fixedArgs: ["--flag", "a b c", "path with spaces"],
+    });
+  });
+
+  it("rejects shell control syntax", () => {
+    expect(parseCommandLine("agent && rm -rf /")).toEqual({
+      ok: false,
+      error: "shell_syntax",
+    });
+    expect(parseCommandLine("agent | tee out")).toEqual({
+      ok: false,
+      error: "shell_syntax",
+    });
+  });
+
+  it("rejects shell expansion syntax", () => {
+    expect(parseCommandLine("agent --path $HOME/bin")).toEqual({
+      ok: false,
+      error: "shell_expansion",
+    });
+    expect(parseCommandLine("agent --path $(which foo)")).toEqual({
+      ok: false,
+      error: "shell_expansion",
+    });
+  });
+
+  it("allows literal shell-looking characters inside single quotes", () => {
+    expect(parseCommandLine("agent --note '$5 reward `literal`'")).toEqual({
+      ok: true,
+      commandName: "agent",
+      fixedArgs: ["--note", "$5 reward `literal`"],
+    });
+  });
+
+  it("rejects unclosed quotes", () => {
+    expect(parseCommandLine(`agent --flag "unterminated`)).toEqual({
+      ok: false,
+      error: "unclosed_quote",
+    });
+  });
+
+  it("rejects a trailing escape", () => {
+    expect(parseCommandLine("agent \\")).toEqual({
+      ok: false,
+      error: "trailing_escape",
+    });
+  });
+});
+
+describe("formatCommandLine", () => {
+  it("quotes args that need shell escaping for display", () => {
+    expect(formatCommandLine("agent", ["--flag", "a b c"])).toBe(
+      'agent --flag "a b c"',
+    );
+  });
+});

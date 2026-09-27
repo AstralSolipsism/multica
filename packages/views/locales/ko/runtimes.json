@@ -2,6 +2,7 @@
   "page": {
     "title": "런타임",
     "tagline": "에이전트의 CLI 세션을 실행하는 기기와 클라우드 워커입니다.",
+    "learn_more": "자세히 보기 →",
     "connect_remote": "컴퓨터 추가",
     "search_placeholder": "런타임 검색...",
     "scope_mine": "내 것",
@@ -12,7 +13,7 @@
     "filter_all_description": "이 보기의 모든 런타임",
     "empty": {
       "title": "아직 런타임이 없습니다",
-      "hint": "데스크톱 앱은 이 컴퓨터를 자동으로 스캔합니다. 서버, 개발용 박스, 터미널이 있는 다른 컴퓨터를 쓰려면 여기에 추가하세요."
+      "hint": "데스크톱 앱은 이 컴퓨터를 자동 감지합니다. 다른 컴퓨터는 여기서 연결하세요."
     },
     "no_matches": {
       "title": "일치하는 결과 없음",
@@ -23,17 +24,17 @@
     },
     "bootstrapping": {
       "title": "로컬 런타임 시작 중...",
-      "hint": "보통 몇 초 정도 걸립니다. 데몬이 워크스페이스에 등록되는 중입니다."
+      "hint": "워크스페이스에 연결 중..."
     }
   },
   "mika_setup": {
-    "title": "런타임이 준비되었습니다. Mizuki와 시작하세요.",
-    "description": "Mizuki가 목표를 태스크로 구체화하고 적합한 에이전트를 조율하며, 워크플로에 필요할 때 재사용 가능한 specialist 추가를 돕습니다.",
-    "action": "Mizuki와 시작",
-    "failed": "Mizuki를 시작하지 못했습니다",
-    "dialog_title": "Mizuki를 어디에서 실행할까요?",
-    "dialog_description": "Mizuki가 사용할 런타임을 선택하세요. 나중에 설정에서 변경할 수 있습니다.",
-    "cancel": "취소"
+    "title": "런타임이 준비되었습니다. Mika와 시작하세요.",
+    "description": "Mika가 태스크를 정리하고 에이전트를 조율하도록 하세요.",
+    "action": "Mika와 시작",
+    "failed": "Mika를 시작하지 못했습니다",
+    "dialog_title": "Mika를 어디에서 실행할까요?",
+    "cancel": "취소",
+    "dialog_description": "Mizuki가 사용할 런타임을 선택하세요. 나중에 설정에서 변경할 수 있습니다."
   },
   "machine": {
     "search_placeholder": "기기 검색...",
@@ -79,7 +80,7 @@
     "rename": "기기 이름 변경",
     "rename_dialog": {
       "title": "기기 이름 변경",
-      "description": "이 기기에 알아보기 쉬운 이름을 지정합니다. 이 기기의 모든 런타임에 적용되며 에이전트의 런타임을 선택할 때 표시됩니다.",
+      "description": "이 컴퓨터와 모든 런타임에 사용됩니다.",
       "placeholder": "예: 내 MacBook",
       "hint": "비워 두면 기기의 기본 이름을 사용합니다.",
       "cancel": "취소",
@@ -193,11 +194,13 @@
   "connect": {
     "title": "컴퓨터 추가",
     "description": "추가하려는 컴퓨터에서 아래 두 명령을 실행하세요. 데몬이 온라인이 되는 순간 감지합니다.",
-    "step1_label": "Labrastro CLI 설치",
+    "step1_label": "Multica CLI 설치",
+    "platform_group": "플랫폼 선택",
+    "platform_macos_linux": "macOS / Linux",
+    "platform_windows": "Windows",
     "step2_label": "데몬 시작",
     "step2_hint": "로그인을 위해 브라우저를 열고, 이후 데몬을 백그라운드에서 계속 실행합니다.",
     "live_listening": "컴퓨터를 기다리는 중",
-    "live_listening_hint": "데몬이 시작되면 바로 감지합니다. 보통 1분 이내입니다.",
     "troubleshooting": "해당 컴퓨터에서 브라우저를 열 수 없나요?",
     "trouble_intro": "브라우저 로그인 대신 토큰을 사용하세요. 2단계를 대체하며 터미널이 있는 곳이면 어디서든 작동합니다.",
     "trouble_token_hint_prefix": "토큰은 ",
@@ -208,21 +211,21 @@
     "copy_aria": "복사",
     "cancel": "취소",
     "success_title": "컴퓨터 연결됨",
-    "success_description": "컴퓨터가 온라인이며 준비되었습니다. 에이전트를 만들면 여기서 실행을 시작할 수 있습니다.",
+    "success_description": "컴퓨터가 연결되었습니다. 에이전트를 만들 수 있습니다.",
     "view_runtime": "런타임 보기",
-    "create_agent": "에이전트 만들기"
+    "create_agent": "에이전트 만들기",
+    "live_listening_hint": "데몬이 시작되면 바로 감지합니다. 보통 1분 이내입니다."
   },
   "cloud_runtime": {
     "action": "클라우드 런타임",
     "title": "클라우드 런타임",
-    "description": "관리형 클라우드 노드를 시작하고 Fleet 상태를 확인합니다.",
+    "description": "클라우드 런타임을 만듭니다.",
     "create_title": "새 노드",
-    "create_hint": "이름, 인스턴스 유형, 디스크 크기를 선택하세요. 나머지는 Fleet이 적용합니다.",
     "nodes_title": "Fleet 노드",
     "refresh": "새로고침",
     "nodes_empty": "클라우드 노드 없음",
     "nodes_failed": "클라우드 런타임을 사용할 수 없습니다",
-    "nodes_failed_hint": "Fleet이 노드 목록을 반환하지 않았습니다.",
+    "nodes_failed_hint": "클라우드 노드를 불러올 수 없습니다. 다시 시도하세요.",
     "node_fallback_name": "클라우드 노드",
     "create": "노드 만들기",
     "creating": "만드는 중...",
@@ -250,17 +253,18 @@
     "validation": {
       "instance_type_required": "인스턴스 유형은 필수입니다",
       "disk_size_invalid": "디스크 크기는 양의 정수여야 합니다"
-    }
+    },
+    "create_hint": "이름, 인스턴스 유형, 디스크 크기를 선택하세요. 나머지는 Fleet이 적용합니다."
   },
   "update": {
     "cli_version_label": "CLI 버전:",
     "version_unknown": "알 수 없음",
     "managed_by_desktop": "데스크톱에서 관리",
-    "managed_by_desktop_title": "CLI 바이너리는 Labrastro Desktop에서 관리합니다. CLI를 업그레이드하려면 Desktop을 업데이트하세요.",
+    "managed_by_desktop_title": "CLI 바이너리는 Multica Desktop에서 관리합니다. CLI를 업그레이드하려면 Desktop을 업데이트하세요.",
     "read_only": "읽기 전용",
     "read_only_title": "런타임 소유자와 워크스페이스 관리자만 CLI를 업데이트할 수 있습니다.",
     "local_build": "로컬 빌드",
-    "local_build_title": "이 런타임은 릴리스 버전이 아닌 버전을 보고하므로 Labrastro가 업그레이드 가능 여부를 판단할 수 없습니다. 머신에서 직접 업데이트하세요.",
+    "local_build_title": "이 런타임은 릴리스 버전이 아닌 버전을 보고하므로 Multica가 업그레이드 가능 여부를 판단할 수 없습니다. 머신에서 직접 업데이트하세요.",
     "latest": "최신",
     "available": "사용 가능",
     "action": "업데이트",
@@ -292,7 +296,6 @@
     "col_owner": "소유자",
     "col_agents": "에이전트",
     "col_cost": "비용 · 7일",
-    "col_quota": "할당량",
     "col_cli": "CLI",
     "cost_delta_flat": "변화 없음",
     "cli_managed_badge": "데스크톱",
@@ -310,31 +313,8 @@
     "pending_health_warning": "Daemon 동기화 대기 중",
     "pending_health_error": "등록 오류",
     "pending_health_disabled": "비활성화됨",
-    "pending_cli_unknown": "대기 중"
-  },
-  "quota": {
-    "title": "플랜 할당량",
-    "window_short_minutes": "{{value}}m",
-    "window_short_hours": "{{value}}h",
-    "window_short_days": "{{value}}d",
-    "window_weekly": "주",
-    "group_gemini": "Gemini",
-    "group_claude_gpt": "Claude + GPT",
-    "remaining": "{{percent}}% 남음",
-    "resets_in": "{{time}} 후 재설정",
-    "exhausted": "속도 제한됨",
-    "not_reported": "보고되지 않음",
-    "stale": "오래된 데이터",
-    "stale_hint": "{{time}} 전 스냅샷",
-    "observed_ago": "{{time}} 전 업데이트됨",
-    "source_daemon": "데몬 경유",
-    "source_external": "외부 푸시 경유",
-    "glm_title": "GLM 플랜 잔여량",
-    "glm_window_tokens": "5시간 토큰",
-    "glm_window_time": "월간 도구 크레딧",
-    "glm_window_credit": "크레딧 윈도우",
-    "glm_unknown": "잔여량 미상",
-    "glm_window_fallback": "{{type}}"
+    "pending_cli_unknown": "대기 중",
+    "col_quota": "할당량"
   },
   "profiles": {
     "cta": "런타임 추가",
@@ -345,6 +325,7 @@
     "dialog_title": "사용자 지정 런타임",
     "dialog_description": "사용자 지정 런타임 정의는 워크스페이스 전체에 적용되며 연결된 모든 기기에 동기화됩니다. 해당 명령을 사용할 수 있는 기기에서만 런타임이 등록됩니다.",
     "create_dialog_description": "{{machine}}에서 사용자 지정 명령을 설정합니다. 정의는 워크스페이스 전체에 동기화되며 해당 명령을 사용할 수 있는 기기에만 등록됩니다.",
+    "learn_more": "설정 가이드 보기",
     "close": "닫기",
     "add_new": "새 사용자 지정 런타임",
     "list_title": "런타임 백엔드",
@@ -355,7 +336,7 @@
     "builtin_section_aria": "지원되는 기본 제공 프로토콜 제품군",
     "builtin_reference": "참고",
     "empty_title": "첫 사용자 지정 런타임 만들기",
-    "empty_description": "기본 프로토콜 제품군을 선택한 다음 Labrastro가 실행할 명령을 지정하세요.",
+    "empty_description": "기본 프로토콜 제품군을 선택한 다음 Multica가 실행할 명령을 지정하세요.",
     "badge_builtin": "기본 제공",
     "badge_custom": "사용자 지정",
     "badge_disabled": "비활성화됨",
@@ -365,7 +346,7 @@
       "read_only": "읽기 전용"
     },
     "detail": {
-      "base_family": "기본 프로토콜 제품군",
+      "base_family": "기본 런타임",
       "command": "명령",
       "description": "설명",
       "no_description": "설명 없음",
@@ -377,12 +358,12 @@
     "form": {
       "create_title": "새 사용자 지정 런타임",
       "edit_title": "사용자 지정 런타임 편집",
-      "step_family_label": "기본 프로토콜 제품군 선택",
-      "step_family_hint": "이 런타임이 사용하는 기반 CLI 프로토콜입니다.",
+      "step_family_label": "기본 런타임 선택",
+      "step_family_hint": "이 명령과 호환되는 CLI를 선택하세요.",
       "step_details_label": "런타임 구성",
       "step_progress": "{{current}} / {{total}}단계",
-      "family_label": "기본 프로토콜 제품군",
-      "family_locked_hint": "생성 후에는 기본 프로토콜 제품군을 변경할 수 없습니다.",
+      "family_label": "기본 런타임",
+      "family_locked_hint": "생성 후에는 기본 런타임을 변경할 수 없습니다.",
       "display_name_label": "표시 이름",
       "display_name_placeholder": "예: 내 사용자 지정 Claude…",
       "command_name_label": "명령",
@@ -416,7 +397,7 @@
       "cancel": "취소",
       "deleting": "삭제 중…",
       "toast_deleted": "사용자 지정 런타임이 워크스페이스에서 삭제되었습니다",
-      "error_bound": "아직 에이전트가 사용 중이어서 이 런타임을 삭제할 수 없습니다.",
+      "error_bound": "아직 에이전트가 사용 중이어서 이 사용자 지정 런타임을 삭제할 수 없습니다. 해당 에이전트는 이 런타임을 등록한 다른 컴퓨터에 있을 수 있습니다.",
       "error_generic": "런타임 삭제에 실패했습니다."
     }
   },
@@ -476,5 +457,29 @@
     "table_cache_r": "캐시 R",
     "table_cache_w": "캐시 W",
     "no_data": "아직 사용량 데이터가 없습니다"
+  },
+  "quota": {
+    "title": "플랜 할당량",
+    "window_short_minutes": "{{value}}m",
+    "window_short_hours": "{{value}}h",
+    "window_short_days": "{{value}}d",
+    "window_weekly": "주",
+    "group_gemini": "Gemini",
+    "group_claude_gpt": "Claude + GPT",
+    "remaining": "{{percent}}% 남음",
+    "resets_in": "{{time}} 후 재설정",
+    "exhausted": "속도 제한됨",
+    "not_reported": "보고되지 않음",
+    "stale": "오래된 데이터",
+    "stale_hint": "{{time}} 전 스냅샷",
+    "observed_ago": "{{time}} 전 업데이트됨",
+    "source_daemon": "데몬 경유",
+    "source_external": "외부 푸시 경유",
+    "glm_title": "GLM 플랜 잔여량",
+    "glm_window_tokens": "5시간 토큰",
+    "glm_window_time": "월간 도구 크레딧",
+    "glm_window_credit": "크레딧 윈도우",
+    "glm_unknown": "잔여량 미상",
+    "glm_window_fallback": "{{type}}"
   }
 }

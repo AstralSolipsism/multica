@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { QueryClient, QueryClientProvider, QueryObserver } from "@tanstack/react-query";
+import { QueryClient, QueryObserver, QueryClientProvider, type InvalidateQueryFilters } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
@@ -287,6 +287,11 @@ describe("useRealtimeSync — ws instance change", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: issueStatusKeys.all("ws-1"),
     });
+    const groupRefresh = invalidateSpy.mock.calls.find(([options]: [InvalidateQueryFilters?]) => options?.predicate);
+    expect(groupRefresh?.[0]?.queryKey).toEqual([...issueKeys.tableAll("ws-1"), "groups"]);
+    const predicate = groupRefresh![0]!.predicate!;
+    expect(predicate({ queryKey: ["issues", "ws-1", "table-query", "groups", {}, { kind: "status" }] } as never)).toBe(true);
+    expect(predicate({ queryKey: ["issues", "ws-1", "table-query", "groups", {}, { kind: "assignee" }] } as never)).toBe(false);
     // Deliberately NOT the issue caches. A row stores the status KEY; its name,
     // color and category are resolved from the catalog at render time, so no
     // cached issue field can go stale here. Dragging every board and list along
@@ -483,11 +488,11 @@ describe("useRealtimeSync — graph snapshot invalidation", () => {
         ),
         () => { void vi.mocked(ws.onReconnect).mock.calls[0]![0](); },
       ];
-      for (const change of changes) {
+      for (const [index, change] of changes.entries()) {
         qc.setQueryData(key, snapshot);
         qc.setQueryData(otherKey, snapshot);
         change();
-        expect(qc.getQueryState(key)?.isInvalidated).toBe(true);
+        expect(qc.getQueryState(key)?.isInvalidated, `graph event ${index}`).toBe(true);
         expect(qc.getQueryData(key)).toBe(snapshot);
         expect(qc.getQueryState(otherKey)?.isInvalidated).toBe(false);
       }

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { CreateIssueRequest, Issue, UpdateIssueRequest } from "../types";
-import { IssueSchema, IssueTriggerPreviewSchema } from "./schemas";
+import { IssueSchema } from "./schemas";
 import { DispatchOutcomeSchema } from "./dispatch-schemas";
 
 const prerequisiteSchema = z.object({
@@ -86,64 +86,14 @@ export function dependencyReadiness(view: DependencyView | null | undefined): "u
   return "ready";
 }
 
-export type DependencyOverride = { requestId: string; challenge: string };
 export type DependencyMutationFields = {
   blockedBy?: string[];
   expectedDependencyVersion?: string;
-  dependencyOverride?: DependencyOverride;
 };
 
-const confirmationSchema = z.object({
-  request_id: z.string().min(1), challenge: z.string().min(1), expires_at: z.iso.datetime(),
-}).transform((v) => ({ requestId: v.request_id, challenge: v.challenge, expiresAt: v.expires_at }));
-
-const dependencyPreviewItemSchema = z.object({
-  issue_id: z.string().min(1), reason_code: z.string().min(1),
-  dependencies: DependencyViewSchema.nullable().catch(null),
-  confirmation: confirmationSchema.nullable().catch(null),
-}).transform((v) => ({
-  issueId: v.issue_id, reasonCode: v.reason_code, dependencies: v.dependencies, confirmation: v.confirmation,
-}));
-export type IssueDependencyPreview = z.infer<typeof dependencyPreviewItemSchema>;
-export const DependencyTriggerPreviewSchema = IssueTriggerPreviewSchema.extend({
-  // Missing diagnostics are unknown, never proof that prerequisites are ready.
-  blocked: z.array(dependencyPreviewItemSchema).nullable().catch(null),
-});
-
 export function dependencyMutationToWire(data: (CreateIssueRequest | UpdateIssueRequest) & DependencyMutationFields) {
-  const { blockedBy, expectedDependencyVersion, dependencyOverride, ...issue } = data;
+  const { blockedBy, expectedDependencyVersion, ...issue } = data;
   return {
     ...issue, blocked_by: blockedBy, expected_dependency_version: expectedDependencyVersion,
-    dependency_override: dependencyOverride ? { request_id: dependencyOverride.requestId, challenge: dependencyOverride.challenge } : undefined,
   };
-}
-
-function canonicalizeValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalizeValue);
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value).sort()) {
-      const v = (value as Record<string, unknown>)[key];
-      if (v === undefined) continue;
-      out[key] = canonicalizeValue(v);
-    }
-    return out;
-  }
-  return value;
-}
-
-/** Deterministic identity of a prospective compound mutation: object keys
- *  sorted recursively and `blockedBy` ordered (the server treats it as the
- *  replacement set it is). Used for the preview query identity and to decide
- *  whether a held one-shot permit still matches the operation on screen —
- *  the server's payload digest treats whitespace/key order as irrelevant, so
- *  this comparison must too. */
-export function canonicalDependencyMutation(
-  mutation: (CreateIssueRequest | UpdateIssueRequest) & DependencyMutationFields,
-): Record<string, unknown> {
-  const canonical = canonicalizeValue(mutation) as Record<string, unknown>;
-  if (Array.isArray(canonical.blockedBy)) {
-    canonical.blockedBy = [...canonical.blockedBy].sort();
-  }
-  return canonical;
 }

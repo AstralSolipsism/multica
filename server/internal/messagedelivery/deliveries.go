@@ -328,6 +328,11 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 	sourceURL := content.Link
 	if sourceURL == "" {
 		sourceURL = s.AppURL
+		if d.AutopilotID.Valid && s.AppURL != "" {
+			if workspace, err := s.Queries.GetWorkspace(ctx, d.WorkspaceID); err == nil && workspace.Slug != "" {
+				sourceURL = strings.TrimRight(s.AppURL, "/") + "/" + workspace.Slug + "/autopilots/" + util.UUIDToString(d.AutopilotID)
+			}
+		}
 	}
 	for i, shard := range shards {
 		// Claim (or re-read) the shard's receipt row. The send UUID is
@@ -403,6 +408,7 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 		res, err := s.Sender.Send(ctx, SendRequest{
 			DeliveryID:     util.UUIDToString(d.ID),
 			SourceURL:      sourceURL,
+			SourceRunID:    util.UUIDToString(d.RunID),
 			WorkspaceID:    util.UUIDToString(d.WorkspaceID),
 			InstallationID: snap.Installation,
 			ChannelType:    snap.ChannelType,

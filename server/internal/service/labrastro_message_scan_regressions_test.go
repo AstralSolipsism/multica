@@ -128,20 +128,28 @@ func (tx *v1ReviewMissingReverseLinkTx) QueryRow(ctx context.Context, sql string
 	return tx.Tx.QueryRow(ctx, sql, args...)
 }
 
-func TestAutopilotDispatchRollsBackWhenReverseLinkFails(t *testing.T) {
+func TestAutopilotDispatchRepairsReverseLinkWithoutDuplicatingTask(t *testing.T) {
 	f := v1ReviewScanSetup(t, "run_only")
 	broken := &v1ReviewMissingReverseLinkDB{Pool: f.pool}
-	tasks := NewTaskService(f.q, broken, nil, events.New())
-	dispatcher := NewAutopilotService(f.q, broken, events.New(), tasks)
-	err := dispatcher.dispatchRunOnly(context.Background(), f.ap, &f.run, f.userID)
-	if err == nil || !broken.failed {
-		t.Fatalf("dispatch did not exercise the transaction failure: %v", err)
+	q := db.New(broken)
+	tasks := NewTaskService(q, broken, nil, events.New())
+	dispatcher := NewAutopilotService(q, broken, events.New(), tasks)
+	ctx := context.Background()
+	if err := dispatcher.dispatchRunOnly(ctx, f.ap, &f.run, f.userID); err != nil || !broken.failed {
+		t.Fatalf("upstream accepted task did not exercise repairable link failure: %v", err)
 	}
-	if _, err := f.q.GetAutopilotTaskByRun(context.Background(), f.run.ID); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("failed dispatch left a task: %v", err)
+	task, err := f.q.GetAutopilotTaskByRun(ctx, f.run.ID)
+	if err != nil {
+		t.Fatalf("accepted task was lost: %v", err)
 	}
-	if f.run.TaskID.Valid {
-		t.Fatal("failed dispatch exposed an uncommitted task")
+	t.Cleanup(func() { f.fx.Exec(t, "DELETE FROM agent_task_queue WHERE autopilot_run_id=$1", f.run.ID) })
+	repairer := NewAutopilotService(f.q, f.pool, events.New(), NewTaskService(f.q, f.pool, nil, events.New()))
+	repaired, found, err := repairer.repairAutopilotRunTaskLink(ctx, f.run)
+	if err != nil || !found || repaired == nil || repaired.TaskID != task.ID {
+		t.Fatalf("upstream repair failed: %+v %v %v", repaired, found, err)
+	}
+	if count := f.fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE autopilot_run_id=$1", f.run.ID); count != 1 {
+		t.Fatalf("repair duplicated task: %d", count)
 	}
 }
 
@@ -154,9 +162,8 @@ func TestV1ReviewScannerRecoversCommittedTaskWithoutRunReverseLink(t *testing.T)
 	if err := dispatcher.dispatchRunOnly(ctx, f.ap, &f.run, f.userID); err != nil {
 		t.Fatalf("real dispatch failed: %v", err)
 	}
-	// Reproduce the historical row shape left by pre-OL-41 servers, whose
-	// reverse-link write followed the task commit. New dispatch is atomic, but
-	// the scanner must continue recovering records created by older producers.
+	// Reproduce an interrupted upstream reverse-link write after task commit.
+	// The scanner must recover this accepted task without dispatching another.
 	f.fx.Exec(t, `UPDATE autopilot_run SET task_id = NULL WHERE id = $1`, f.run.ID)
 	t.Cleanup(func() {
 		f.fx.Exec(t, `DELETE FROM agent_task_queue WHERE autopilot_run_id = $1`, f.run.ID)

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -103,11 +104,24 @@ func TestConversationLineageBoundaries(t *testing.T) {
 					continue
 				}
 				err = channel.AuthorizeConversationTask(ctx, f.h.Queries, head, parseUUID(testWorkspaceID))
-				if (depth == 64 && err != nil) || (depth == 65 && !errors.Is(err, channel.ErrConversationDenied)) {
+				if err != nil {
 					t.Fatalf("depth %d: %v", depth, err)
 				}
 			}
 		})
+	}
+	// Ordinary upstream delegation can be longer than an external conversation.
+	// Its copied human authority must not acquire an arbitrary fork depth limit.
+	ordinaryID := dbfx.Task(t, f.agent, testutil.Cols{"runtime_id": root.RuntimeID, "originator_source": "direct_human", "originator_user_id": testUserID, "accountable_user_id": testUserID})
+	for depth := 1; depth < 100; depth++ {
+		ordinaryID = dbfx.Task(t, f.agent, testutil.Cols{"runtime_id": root.RuntimeID, "originator_source": "delegation", "delegated_from_task_id": ordinaryID, "originator_user_id": testUserID, "accountable_user_id": testUserID})
+	}
+	ordinary, err := f.h.Queries.GetAgentTask(ctx, parseUUID(ordinaryID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := channel.AuthorizeConversationTask(ctx, f.h.Queries, ordinary, parseUUID(testWorkspaceID)); err != nil {
+		t.Fatalf("ordinary chain was blocked: %v", err)
 	}
 	for _, missing := range []bool{false, true} {
 		id := dbfx.Task(t, f.agent, testutil.Cols{"runtime_id": root.RuntimeID, "originator_source": "retry", "originator_user_id": testUserID, "accountable_user_id": testUserID})
@@ -173,9 +187,67 @@ func TestConversationTaskTokenLookupFailures(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/issues/"+f.issue, nil)
 			req.Header.Set("Authorization", "Bearer "+token)
 			q := db.New(conversationLookupFault{DBTX: testPool, query: tc.query})
-			testutil.Call(t, middleware.Auth(q, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			testutil.Call(t, middleware.Auth(q, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			})).ServeHTTP, req).Want(tc.status)
 		})
+	}
+}
+
+func TestConversationRootSurvivesIntermediateIssueDeletion(t *testing.T) {
+	for _, external := range []bool{false, true} {
+		t.Run(fmt.Sprint(external), func(t *testing.T) {
+			f := newConversationFixture(t)
+			f.msg.ReplyTo = nil
+			f.ingest(t)
+			root := f.task(t)
+			if !external {
+				dbfx.Exec(t, "UPDATE agent_task_queue SET originator_source='direct_human' WHERE id=$1", root.ID)
+			}
+			parentIssue := dbfx.Issue(t, "Intermediate issue")
+			childIssue := dbfx.Issue(t, "Independent child issue")
+			parent := dbfx.Task(t, f.agent, testutil.Cols{"issue_id": parentIssue, "runtime_id": root.RuntimeID, "originator_source": "delegation", "delegated_from_task_id": root.ID, "originator_user_id": testUserID, "accountable_user_id": testUserID})
+			child := dbfx.Task(t, f.agent, testutil.Cols{"issue_id": childIssue, "runtime_id": root.RuntimeID, "originator_source": "delegation", "delegated_from_task_id": parent, "originator_user_id": testUserID, "accountable_user_id": testUserID})
+			dbfx.Exec(t, "DELETE FROM issue WHERE id=$1", parentIssue)
+			// A routine update that includes unchanged provenance must preserve the stamp.
+			dbfx.Exec(t, "UPDATE agent_task_queue SET originator_source=originator_source,status='running',started_at=now() WHERE id=$1", child)
+			task, err := f.h.Queries.GetAgentTask(context.Background(), parseUUID(child))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if task.ConversationRootTaskID.Valid != external {
+				t.Fatalf("wrong root stamp after parent deletion: %+v", task.ConversationRootTaskID)
+			}
+			if err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, task, parseUUID(testWorkspaceID)); err != nil {
+				t.Fatalf("ordinary retention changed valid authority: %v", err)
+			}
+			dbfx.Exec(t, "UPDATE channel_installation SET config=config-'conversation' WHERE id=$1", f.install)
+			err = channel.AuthorizeConversationTask(context.Background(), f.h.Queries, task, parseUUID(testWorkspaceID))
+			if external && !errors.Is(err, channel.ErrConversationDenied) {
+				t.Fatalf("external descendant escaped revocation: %v", err)
+			}
+			if !external && err != nil {
+				t.Fatalf("ordinary descendant borrowed external consent: %v", err)
+			}
+		})
+	}
+}
+
+func TestConversationMissingRootNeverBecomesOrdinary(t *testing.T) {
+	f := newConversationFixture(t)
+	f.msg.ReplyTo = nil
+	f.ingest(t)
+	root := f.task(t)
+	child := dbfx.Task(t, f.agent, testutil.Cols{"runtime_id": root.RuntimeID, "originator_source": "delegation", "delegated_from_task_id": root.ID, "originator_user_id": testUserID, "accountable_user_id": testUserID})
+	dbfx.Exec(t, "DELETE FROM agent_task_queue WHERE id=$1", root.ID)
+	task, err := f.h.Queries.GetAgentTask(context.Background(), parseUUID(child))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.ConversationRootTaskID != root.ID {
+		t.Fatal("root deletion cleared external provenance")
+	}
+	if err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, task, parseUUID(testWorkspaceID)); !errors.Is(err, channel.ErrConversationDenied) {
+		t.Fatalf("missing root granted authority: %v", err)
 	}
 }

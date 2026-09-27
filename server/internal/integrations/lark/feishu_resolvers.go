@@ -47,7 +47,7 @@ func larkMsgFromRaw(msg channel.InboundMessage) (InboundMessage, error) {
 func NewFeishuResolverSet(store *ChannelStore, session *engine.ChatSession, audit AuditLogger, replier OutcomeReplier, typing *TypingIndicatorManager, media engine.MediaResolver) engine.ResolverSet {
 	set := engine.ResolverSet{
 		Installation: &feishuInstallationResolver{store: store},
-		Identity:     feishuRejectMemberIdentity{},
+		Identity:     &feishuIdentityResolver{store: store},
 		Dedup:        &feishuDeduper{store: store},
 		Session:      &feishuSessionBinder{session: session},
 		Audit:        &feishuAuditor{audit: audit},
@@ -96,13 +96,27 @@ func (r *feishuInstallationResolver) ResolveInstallation(ctx context.Context, ms
 
 // ---- identity ----
 
-type feishuRejectMemberIdentity struct{}
+type feishuIdentityResolver struct{ store *ChannelStore }
 
-func (feishuRejectMemberIdentity) ResolveSender(context.Context, engine.ResolvedInstallation, channel.InboundMessage) (engine.ResolvedIdentity, error) {
-	// Feishu conversations are authorized by the integration handler before
-	// member identity resolution. Missing assembly must never restore member
-	// impersonation merely because this sender happens to have a binding.
-	return engine.ResolvedIdentity{}, engine.ErrSenderNotMember
+func (r *feishuIdentityResolver) ResolveSender(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage) (engine.ResolvedIdentity, error) {
+	binding, err := r.store.GetLarkUserBindingByOpenID(ctx, GetUserBindingByOpenIDParams{
+		InstallationID: inst.ID,
+		ChannelUserID:  msg.Source.SenderID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return engine.ResolvedIdentity{}, engine.ErrSenderUnbound
+		}
+		return engine.ResolvedIdentity{}, err
+	}
+	isMember, err := r.store.IsWorkspaceMember(ctx, inst.WorkspaceID, binding.MulticaUserID)
+	if err != nil {
+		return engine.ResolvedIdentity{}, err
+	}
+	if !isMember {
+		return engine.ResolvedIdentity{}, engine.ErrSenderNotMember
+	}
+	return engine.ResolvedIdentity{UserID: binding.MulticaUserID}, nil
 }
 
 // ---- dedup ----

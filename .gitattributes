@@ -4,3 +4,8 @@ docker/entrypoint.sh text eol=lf
 
 # Default behavior
 * text=auto
+
+# Embedded Skill frontmatter and command allowlists must be portable to Linux.
+server/internal/service/builtin_skills/** text eol=lf
+server/internal/service/builtin_skills_legacy/** text eol=lf
+scripts/agent-cli-command-names.txt text eol=lf

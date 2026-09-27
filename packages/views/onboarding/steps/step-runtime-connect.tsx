@@ -220,7 +220,7 @@ function FancyView({
         ? t(($) => $.step_runtime.hint_pick)
         : phase === "scanning"
           ? t(($) => $.step_runtime.hint_waiting)
-          : t(($) => $.step_runtime.hint_skip_or_refresh);
+          : undefined;
 
   return (
     <>
@@ -357,9 +357,6 @@ function FoundView({
       <h2 className="text-title-sm font-medium tracking-tight text-foreground">
         {t(($) => $.step_runtime.found_headline)}
       </h2>
-      <p className="mt-2 text-body text-muted-foreground">
-        {t(($) => $.step_runtime.found_lede)}
-      </p>
 
       <div className="mt-8 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-muted/60 px-4 py-2.5 text-caption">
         <span className="font-semibold text-foreground">
@@ -438,7 +435,49 @@ function EmptyView({
           actionLabel={t(($) => $.step_runtime.empty_skip_action)}
           onAction={onSkip}
         />
+
+        <ComingSoonCard
+          title={t(($) => $.step_runtime.empty_waitlist_title)}
+          subtitle={t(($) => $.step_runtime.empty_waitlist_subtitle)}
+          badgeLabel={t(($) => $.step_runtime.empty_waitlist_action)}
+        />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Static, non-interactive variant of EmptyCard used for the cloud-computer
+ * row. The card is dimmed and the pill is rendered as a badge so the user
+ * understands the option exists but isn't actionable yet. Mirrors the
+ * "Coming soon" treatment on the web platform fork.
+ */
+function ComingSoonCard({
+  title,
+  subtitle,
+  badgeLabel,
+}: {
+  title: string;
+  subtitle: string;
+  badgeLabel: string;
+}) {
+  return (
+    <div
+      aria-disabled
+      className="flex items-center justify-between gap-4 rounded-lg border border-dashed bg-muted/20 px-5 py-4 opacity-70"
+    >
+      <div className="min-w-0">
+        <div className="text-body font-medium text-foreground">{title}</div>
+        <p className="mt-1 text-caption leading-[1.55] text-muted-foreground">
+          {subtitle}
+        </p>
+      </div>
+      <span
+        aria-hidden
+        className="inline-flex shrink-0 items-center rounded-full border bg-background px-3 py-1.5 text-caption font-medium uppercase tracking-wide text-muted-foreground"
+      >
+        {badgeLabel}
+      </span>
     </div>
   );
 }

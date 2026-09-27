@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -35,18 +36,17 @@ import (
 
 // IssueResponse is the JSON response for an issue.
 type IssueResponse struct {
-	ID          string  `json:"id"`
-	WorkspaceID string  `json:"workspace_id"`
-	Number      int32   `json:"number"`
-	Identifier  string  `json:"identifier"`
-	Title       string  `json:"title"`
-	Description *string `json:"description"`
-	Status      string  `json:"status"`
-	// StatusCategory is the canonical status whose platform behavior Status
-	// carries — identical to Status for the 7 built-ins, and the inherited
-	// category for a custom status. Omitted when the endpoint does not resolve
-	// it, so consumers must fall back to Status rather than assume a blank
-	// value means "no category". (MUL-6243)
+	Dependencies *service.DependencyView `json:"dependencies,omitempty"`
+	ID           string                  `json:"id"`
+	WorkspaceID  string                  `json:"workspace_id"`
+	Number       int32                   `json:"number"`
+	Identifier   string                  `json:"identifier"`
+	Title        string                  `json:"title"`
+	Description  *string                 `json:"description"`
+	Status       string                  `json:"status"`
+	// StatusCategory encodes lifecycle using the legacy seven-value wire enum. It is
+	// omitted when an endpoint cannot resolve a custom status, so consumers must
+	// fall back to their catalog rather than treat a blank as "no category".
 	StatusCategory string `json:"status_category,omitempty"`
 	// StatusName is a CUSTOM status's display name, carried beside the key so a
 	// consumer that only ever sees `status` is not left holding a bare handle.
@@ -68,8 +68,13 @@ type IssueResponse struct {
 	CreatorType   string  `json:"creator_type"`
 	CreatorID     string  `json:"creator_id"`
 	ParentIssueID *string `json:"parent_issue_id"`
-	ProjectID     *string `json:"project_id"`
-	Position      float64 `json:"position"`
+	// DuplicateOf is the original this issue duplicates (MUL-7349), set only
+	// while the mark counts: the issue is cancelled and the original still
+	// exists. newStatusCategoryFiller resolves it from duplicateOfIssueID;
+	// an endpoint that skips the filler emits null rather than a bare pointer.
+	DuplicateOf *IssueRefResponse `json:"duplicate_of"`
+	ProjectID   *string           `json:"project_id"`
+	Position    float64           `json:"position"`
 	// Stage groups sub-issues under the same parent into ordered barrier
 	// groups (null = unstaged). See issue_child_done.go for how a closed
 	// stage gates the child-done -> parent wake.
@@ -101,8 +106,17 @@ type IssueResponse struct {
 	// SourceContext is detail-only. List, board, search, and children responses
 	// deliberately omit the potentially large immutable snapshot.
 	SourceContext *sourceContextDetailResponse `json:"source_context,omitempty"`
-	Dependencies  *service.DependencyView      `json:"dependencies,omitempty"`
-	Dispatch      *DispatchOutcome             `json:"dispatch,omitempty"`
+	// duplicateOfIssueID is the raw mark, kept off the wire; see DuplicateOf.
+	duplicateOfIssueID pgtype.UUID
+}
+
+// IssueRefResponse names another issue inside a response: enough to render
+// a link and its status without a second request.
+type IssueRefResponse struct {
+	ID         string `json:"id"`
+	Identifier string `json:"identifier"`
+	Title      string `json:"title"`
+	Status     string `json:"status"`
 }
 
 // validIssuePriorities mirrors the CHECK constraint on the issue table. Write
@@ -122,9 +136,22 @@ var validIssuePriorities = []string{"urgent", "high", "medium", "low", "none"}
 // driven); it is scoped out here so this change cannot alter the table view for
 // workspaces that have no custom statuses.
 var validIssueStatuses = issuestatus.Canonical()
+var validIssueStatusCategories = issuestatus.Categories()
 
-// Status sort follows the board's category order and resolves custom keys to
-// their effective category with one catalog read plus a parameterized CASE.
+// Status sort ranks by the CONCRETE status key, in the catalog's own display
+// order. Sorting is a display question, so it resolves on status; only behavior
+// decisions aggregate on the four lifecycle categories (MUL-7379).
+//
+// Ranking by category instead collapses the seven built-ins into four buckets —
+// Backlog ties with Todo, and In Progress / In Review / Blocked all tie — which
+// leaves the created_at tiebreak deciding the visible order of a list the user
+// explicitly asked to sort by status.
+//
+// issueTableStatusOrder is the same "board order" the status GROUPING path
+// already builds, so sorting and grouping now share one source of truth instead
+// of drifting apart. Archived statuses are included because issues stay on them
+// after archival and still have to rank somewhere real.
+//
 // Keeping the indexed column bare avoids the per-row issue_effective_status()
 // call that would otherwise turn a bounded page into a workspace scan.
 func (h *Handler) issueStatusSortExpression(
@@ -132,15 +159,17 @@ func (h *Handler) issueStatusSortExpression(
 	workspaceID pgtype.UUID,
 	addArg func(any) string,
 ) (string, error) {
-	customKeys, err := issuestatus.CustomKeyCategories(
-		ctx,
-		h.issueStatusCatalog(),
-		workspaceID,
-	)
+	entries, err := h.issueStatusCatalog().ListIssueStatusEntries(ctx, db.ListIssueStatusEntriesParams{
+		WorkspaceID:     workspaceID,
+		IncludeArchived: true,
+	})
 	if err != nil {
 		return "", err
 	}
-	return statusOrderExpression(statusCategoryExpr(customKeys, addArg)), nil
+	return fmt.Sprintf(
+		"COALESCE(array_position(%s::text[], i.status), 100000)",
+		addArg(issueTableStatusOrder(entries)),
+	), nil
 }
 
 // resolveIssueStatusKey checks a status against the workspace's catalog and
@@ -161,7 +190,7 @@ func (h *Handler) resolveIssueStatusKey(w http.ResponseWriter, r *http.Request, 
 
 // resolveIssueStatusKeyKind is resolveIssueStatusKey plus whether the target is
 // a CUSTOM status. Callers use that to decide whether the write needs the
-// shared catalog lock — see updateIssueAtomically.
+// shared catalog lock — see runWithIssueStatusGuard.
 func (h *Handler) resolveIssueStatusKeyKind(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, status string) (string, bool, bool) {
 	entry, err := issuestatus.Resolve(r.Context(), h.Queries, workspaceID, status)
 	if err != nil {
@@ -203,8 +232,8 @@ var errIssueStatusArchivedRace = errors.New("issue status was archived while the
 //
 //   - archive first: it commits, this re-resolve then fails and the write is
 //     rejected, so no new assignment lands on an archived status;
-//   - writer first: archive blocks until this transaction commits, then retires
-//     the status from future use while the issue keeps its existing assignment.
+//   - writer first: archive blocks until this transaction commits, then its
+//     issue count rejects archival of the now-occupied status.
 //
 // A built-in status is a no-op: it can never be archived (enforced by
 // issue_status_system_not_archivable), so the common path takes no lock and
@@ -227,6 +256,76 @@ func assertIssueStatusStillActive(ctx context.Context, qtx *db.Queries, workspac
 	return nil
 }
 
+// runWithIssueStatusGuard runs an issue write that lands on a custom status
+// inside a transaction that re-verifies the status under the shared catalog
+// lock (see assertIssueStatusStillActive). Request writes also carry trusted
+// wakeup actor identity in transaction-local settings, including built-in targets.
+func (h *Handler) runWithIssueStatusGuard(ctx context.Context, workspaceID pgtype.UUID, statusKey string, fn func(q *db.Queries) error) error {
+	_, hasActor := ctx.Value(wakeupActorKey{}).(wakeupActor)
+	if !hasActor && (statusKey == "" || issuestatus.IsBuiltIn(statusKey)) {
+		return fn(h.Queries)
+	}
+	tx, err := h.beginWakeupWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	qtx := h.Queries.WithTx(tx)
+	if err := assertIssueStatusStillActive(ctx, qtx, workspaceID, statusKey); err != nil {
+		return err
+	}
+	if err := fn(qtx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// updateIssueWithStatusGuard writes params under the status-archive guard.
+func (h *Handler) updateIssueWithStatusGuard(ctx context.Context, workspaceID pgtype.UUID, statusKey string, params db.UpdateIssueParams) (db.Issue, error) {
+	var issue db.Issue
+	var cancelledWakeups []db.AgentTaskQueue
+	err := h.runWithIssueStatusGuard(ctx, workspaceID, statusKey, func(q *db.Queries) error {
+		if params.DuplicateOfIssueID.Valid {
+			if err := lockAndCheckDuplicateMark(ctx, q, workspaceID, params.ID, params.DuplicateOfIssueID); err != nil {
+				return err
+			}
+		}
+		var innerErr error
+		issue, cancelledWakeups, innerErr = updateIssueStoppingWakeups(ctx, q, params)
+		return innerErr
+	})
+	if err != nil {
+		return issue, err
+	}
+	h.broadcastCancelledWakeups(ctx, workspaceID, cancelledWakeups)
+	return issue, nil
+}
+
+// updateIssueStoppingWakeups writes params and, when the write moves the issue
+// into a done/closed status, ends its wakeups with the same queries. Callers
+// run it inside the status write's transaction and broadcast the returned runs
+// after commit.
+func updateIssueStoppingWakeups(ctx context.Context, q *db.Queries, params db.UpdateIssueParams) (db.Issue, []db.AgentTaskQueue, error) {
+	issue, err := q.UpdateIssue(ctx, params)
+	if err != nil || !params.Status.Valid {
+		return issue, nil, err
+	}
+	cancelled, err := service.StopClosedIssueWakeups(ctx, q, issue)
+	if err != nil {
+		return db.Issue{}, nil, fmt.Errorf("stop closed issue wakeups: %w", err)
+	}
+	return issue, cancelled, nil
+}
+
+func (h *Handler) broadcastCancelledWakeups(ctx context.Context, workspaceID pgtype.UUID, cancelled []db.AgentTaskQueue) {
+	if len(cancelled) > 0 {
+		h.TaskService.BroadcastCancelledTasks(ctx, uuidToString(workspaceID), cancelled)
+	}
+}
+
+// writeIssueStatusRaceError renders errIssueStatusArchivedRace as a 409 and
+// reports whether it handled the error.
 func writeIssueStatusRaceError(w http.ResponseWriter, err error) bool {
 	if errors.Is(err, errIssueStatusArchivedRace) {
 		writeError(w, http.StatusConflict,
@@ -247,8 +346,8 @@ func validateIssueEnum(w http.ResponseWriter, field, value string, allowed []str
 }
 
 // fillStatusCategories resolves status_category for responses whose status is
-// CUSTOM. The pure builders below fill it for built-in keys — where key IS the
-// category — and leave it empty otherwise, so this is the step that makes the
+// CUSTOM. The pure builders below map built-ins directly and leave custom
+// statuses empty, so this is the step that makes the
 // field authoritative on every payload a client caches or buckets by.
 //
 // Uses one Resolver for the whole slice: built-in statuses cost no query, and a
@@ -256,7 +355,11 @@ func validateIssueEnum(w http.ResponseWriter, field, value string, allowed []str
 // Resolver includes ARCHIVED statuses, because an issue left on an archived
 // status still belongs in its category's column. (MUL-6243)
 func (h *Handler) fillStatusCategories(ctx context.Context, wsID pgtype.UUID, resps []IssueResponse) {
-	fill := h.newStatusCategoryFiller(ctx, wsID)
+	var originals []pgtype.UUID
+	for i := range resps {
+		originals = appendDuplicateOriginal(originals, resps[i].Status, resps[i].duplicateOfIssueID)
+	}
+	fill := h.newStatusCategoryFiller(ctx, wsID, originals...)
 	for i := range resps {
 		fill(&resps[i])
 	}
@@ -267,13 +370,26 @@ func (h *Handler) fillStatusCategories(ctx context.Context, wsID pgtype.UUID, re
 // the catalog at most once, so a page of custom-status rows costs one query
 // rather than one per row. Creating a filler per row would reintroduce the N+1
 // this exists to avoid. (MUL-6243)
-func (h *Handler) newStatusCategoryFiller(ctx context.Context, wsID pgtype.UUID) func(*IssueResponse) {
+//
+// originals are the duplicate originals the caller's rows point at, collected
+// with appendDuplicateOriginal. A page passes them so they resolve in one read
+// up front, the way labelsByIssue loads a page's labels; an original that was
+// not passed still resolves, one read per distinct original. (MUL-7349)
+func (h *Handler) newStatusCategoryFiller(ctx context.Context, wsID pgtype.UUID, originals ...pgtype.UUID) func(*IssueResponse) {
 	resolver := issuestatus.NewResolver(wsID)
+	refs := duplicateOriginals{}
+	h.loadDuplicateOriginals(ctx, wsID, refs, originals)
 	return func(resp *IssueResponse) {
-		if resp == nil || resp.StatusCategory != "" {
+		if resp == nil {
 			return
 		}
-		resp.StatusCategory = resolver.Effective(ctx, h.Queries, resp.Status)
+		// Every response that resolves its status also resolves its duplicate
+		// mark, so the two never disagree about which endpoints carry them.
+		h.fillDuplicateOf(ctx, wsID, resp, refs)
+		if resp.StatusCategory != "" {
+			return
+		}
+		resp.StatusCategory = issuestatus.WireCategory(resp.Status, resolver.Category(ctx, h.Queries, resp.Status))
 		// Same Resolver, same single catalog read, so the name rides along for
 		// free. Built-ins return "" and stay omitted. (MUL-6749)
 		resp.StatusName = resolver.Name(ctx, h.Queries, resp.Status)
@@ -286,42 +402,115 @@ func (h *Handler) fillStatusCategory(ctx context.Context, wsID pgtype.UUID, resp
 	h.newStatusCategoryFiller(ctx, wsID)(resp)
 }
 
+// duplicateOfPointer keeps a duplicate mark only while the issue is
+// cancelled. Whether the original still exists is checked when the response
+// is filled (fillDuplicateOf), so a pointer an older server left behind
+// never surfaces. Same rule as IssueHasDuplicates in issue.sql.
+func duplicateOfPointer(status string, id pgtype.UUID) pgtype.UUID {
+	if status != issuestatus.Cancelled {
+		return pgtype.UUID{}
+	}
+	return id
+}
+
+// duplicateOriginals memoises the originals a request's duplicates point at,
+// by id. A nil entry is an original that no longer exists (or could not be
+// read), so it is looked up once and then left off every response.
+type duplicateOriginals map[pgtype.UUID]*db.ListIssueRefsInWorkspaceRow
+
+// appendDuplicateOriginal adds the original a row points at, if the row
+// carries a live duplicate mark.
+func appendDuplicateOriginal(originals []pgtype.UUID, status string, id pgtype.UUID) []pgtype.UUID {
+	if pointer := duplicateOfPointer(status, id); pointer.Valid {
+		return append(originals, pointer)
+	}
+	return originals
+}
+
+// loadDuplicateOriginals reads every id not yet in refs in one query.
+func (h *Handler) loadDuplicateOriginals(ctx context.Context, wsID pgtype.UUID, refs duplicateOriginals, ids []pgtype.UUID) {
+	var missing []pgtype.UUID
+	for _, id := range ids {
+		if _, seen := refs[id]; !seen {
+			refs[id] = nil
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	rows, err := h.Queries.ListIssueRefsInWorkspace(ctx, db.ListIssueRefsInWorkspaceParams{
+		WorkspaceID: wsID,
+		Ids:         missing,
+	})
+	if err != nil {
+		slog.Warn("resolve duplicate originals failed", "error", err, "count", len(missing))
+		return
+	}
+	for i := range rows {
+		refs[rows[i].ID] = &rows[i]
+	}
+}
+
+// fillDuplicateOf resolves a duplicate mark to its original (MUL-7349),
+// through refs so a page's originals cost one read (see
+// newStatusCategoryFiller). A missing original leaves DuplicateOf unset.
+func (h *Handler) fillDuplicateOf(ctx context.Context, wsID pgtype.UUID, resp *IssueResponse, refs duplicateOriginals) {
+	id := resp.duplicateOfIssueID
+	if !id.Valid {
+		return
+	}
+	h.loadDuplicateOriginals(ctx, wsID, refs, []pgtype.UUID{id})
+	row := refs[id]
+	if row == nil {
+		return
+	}
+	// The response already rendered its own identifier with the workspace
+	// prefix; the original shares it.
+	prefix := strings.TrimSuffix(resp.Identifier, "-"+strconv.Itoa(int(resp.Number)))
+	resp.DuplicateOf = &IssueRefResponse{
+		ID:         uuidToString(row.ID),
+		Identifier: prefix + "-" + strconv.Itoa(int(row.Number)),
+		Title:      row.Title,
+		Status:     row.Status,
+	}
+}
+
 func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
-	// A built-in status IS its own category, so this costs no catalog lookup and
-	// every response carries it. A CUSTOM status is left empty here and filled
-	// in by endpoints that resolve the catalog (see the children endpoints'
-	// Resolver); consumers fall back on the same rule. (MUL-6243)
+	// Built-ins map to public categories without a catalog lookup. A custom
+	// status is filled by endpoints that resolve the workspace catalog.
 	statusCategory := ""
 	if issuestatus.IsBuiltIn(i.Status) {
 		statusCategory = i.Status
 	}
 	return IssueResponse{
-		ID:             uuidToString(i.ID),
-		WorkspaceID:    uuidToString(i.WorkspaceID),
-		Number:         i.Number,
-		Identifier:     identifier,
-		Title:          i.Title,
-		Description:    textToPtr(i.Description),
-		Status:         i.Status,
-		StatusCategory: statusCategory,
-		Priority:       i.Priority,
-		AssigneeType:   textToPtr(i.AssigneeType),
-		AssigneeID:     uuidToPtr(i.AssigneeID),
-		CreatorType:    i.CreatorType,
-		CreatorID:      uuidToString(i.CreatorID),
-		ParentIssueID:  uuidToPtr(i.ParentIssueID),
-		ProjectID:      uuidToPtr(i.ProjectID),
-		Position:       i.Position,
-		Stage:          int4ToPtr(i.Stage),
-		StartDate:      dateToPtr(i.StartDate),
-		DueDate:        dateToPtr(i.DueDate),
-		CreatedAt:      timestampToString(i.CreatedAt),
-		UpdatedAt:      timestampToString(i.UpdatedAt),
-		Revision:       i.Revision,
-		LastActivityAt: timestampToNanoPtr(i.LastActivityAt),
-		Metadata:       parseIssueMetadata(i.Metadata),
-		Properties:     parseIssueProperties(i.Properties),
+		ID:                 uuidToString(i.ID),
+		WorkspaceID:        uuidToString(i.WorkspaceID),
+		Number:             i.Number,
+		Identifier:         identifier,
+		Title:              i.Title,
+		Description:        textToPtr(i.Description),
+		Status:             i.Status,
+		StatusCategory:     statusCategory,
+		Priority:           i.Priority,
+		AssigneeType:       textToPtr(i.AssigneeType),
+		AssigneeID:         uuidToPtr(i.AssigneeID),
+		CreatorType:        i.CreatorType,
+		CreatorID:          uuidToString(i.CreatorID),
+		ParentIssueID:      uuidToPtr(i.ParentIssueID),
+		duplicateOfIssueID: duplicateOfPointer(i.Status, i.DuplicateOfIssueID),
+		ProjectID:          uuidToPtr(i.ProjectID),
+		Position:           i.Position,
+		Stage:              int4ToPtr(i.Stage),
+		StartDate:          dateToPtr(i.StartDate),
+		DueDate:            dateToPtr(i.DueDate),
+		CreatedAt:          timestampToString(i.CreatedAt),
+		UpdatedAt:          timestampToString(i.UpdatedAt),
+		Revision:           i.Revision,
+		LastActivityAt:     timestampToNanoPtr(i.LastActivityAt),
+		Metadata:           parseIssueMetadata(i.Metadata),
+		Properties:         parseIssueProperties(i.Properties),
 	}
 }
 
@@ -334,31 +523,32 @@ func issueListRowToResponse(i db.ListIssuesRow, issuePrefix string) IssueRespons
 	}
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
-		ID:             uuidToString(i.ID),
-		WorkspaceID:    uuidToString(i.WorkspaceID),
-		Number:         i.Number,
-		Identifier:     identifier,
-		Title:          i.Title,
-		Description:    textToPtr(i.Description),
-		Status:         i.Status,
-		StatusCategory: statusCategory,
-		Priority:       i.Priority,
-		AssigneeType:   textToPtr(i.AssigneeType),
-		AssigneeID:     uuidToPtr(i.AssigneeID),
-		CreatorType:    i.CreatorType,
-		CreatorID:      uuidToString(i.CreatorID),
-		ParentIssueID:  uuidToPtr(i.ParentIssueID),
-		ProjectID:      uuidToPtr(i.ProjectID),
-		Position:       i.Position,
-		Stage:          int4ToPtr(i.Stage),
-		StartDate:      dateToPtr(i.StartDate),
-		DueDate:        dateToPtr(i.DueDate),
-		CreatedAt:      timestampToString(i.CreatedAt),
-		UpdatedAt:      timestampToString(i.UpdatedAt),
-		Revision:       i.Revision,
-		LastActivityAt: timestampToNanoPtr(i.LastActivityAt),
-		Metadata:       parseIssueMetadata(i.Metadata),
-		Properties:     parseIssueProperties(i.Properties),
+		ID:                 uuidToString(i.ID),
+		WorkspaceID:        uuidToString(i.WorkspaceID),
+		Number:             i.Number,
+		Identifier:         identifier,
+		Title:              i.Title,
+		Description:        textToPtr(i.Description),
+		Status:             i.Status,
+		StatusCategory:     statusCategory,
+		Priority:           i.Priority,
+		AssigneeType:       textToPtr(i.AssigneeType),
+		AssigneeID:         uuidToPtr(i.AssigneeID),
+		CreatorType:        i.CreatorType,
+		CreatorID:          uuidToString(i.CreatorID),
+		ParentIssueID:      uuidToPtr(i.ParentIssueID),
+		duplicateOfIssueID: duplicateOfPointer(i.Status, i.DuplicateOfIssueID),
+		ProjectID:          uuidToPtr(i.ProjectID),
+		Position:           i.Position,
+		Stage:              int4ToPtr(i.Stage),
+		StartDate:          dateToPtr(i.StartDate),
+		DueDate:            dateToPtr(i.DueDate),
+		CreatedAt:          timestampToString(i.CreatedAt),
+		UpdatedAt:          timestampToString(i.UpdatedAt),
+		Revision:           i.Revision,
+		LastActivityAt:     timestampToNanoPtr(i.LastActivityAt),
+		Metadata:           parseIssueMetadata(i.Metadata),
+		Properties:         parseIssueProperties(i.Properties),
 	}
 }
 
@@ -403,31 +593,32 @@ func openIssueRowToResponse(i db.ListOpenIssuesRow, issuePrefix string) IssueRes
 	}
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
-		ID:             uuidToString(i.ID),
-		WorkspaceID:    uuidToString(i.WorkspaceID),
-		Number:         i.Number,
-		Identifier:     identifier,
-		Title:          i.Title,
-		Description:    textToPtr(i.Description),
-		Status:         i.Status,
-		StatusCategory: statusCategory,
-		Priority:       i.Priority,
-		AssigneeType:   textToPtr(i.AssigneeType),
-		AssigneeID:     uuidToPtr(i.AssigneeID),
-		CreatorType:    i.CreatorType,
-		CreatorID:      uuidToString(i.CreatorID),
-		ParentIssueID:  uuidToPtr(i.ParentIssueID),
-		ProjectID:      uuidToPtr(i.ProjectID),
-		Position:       i.Position,
-		Stage:          int4ToPtr(i.Stage),
-		StartDate:      dateToPtr(i.StartDate),
-		DueDate:        dateToPtr(i.DueDate),
-		CreatedAt:      timestampToString(i.CreatedAt),
-		UpdatedAt:      timestampToString(i.UpdatedAt),
-		Revision:       i.Revision,
-		LastActivityAt: timestampToNanoPtr(i.LastActivityAt),
-		Metadata:       parseIssueMetadata(i.Metadata),
-		Properties:     parseIssueProperties(i.Properties),
+		ID:                 uuidToString(i.ID),
+		WorkspaceID:        uuidToString(i.WorkspaceID),
+		Number:             i.Number,
+		Identifier:         identifier,
+		Title:              i.Title,
+		Description:        textToPtr(i.Description),
+		Status:             i.Status,
+		StatusCategory:     statusCategory,
+		Priority:           i.Priority,
+		AssigneeType:       textToPtr(i.AssigneeType),
+		AssigneeID:         uuidToPtr(i.AssigneeID),
+		CreatorType:        i.CreatorType,
+		CreatorID:          uuidToString(i.CreatorID),
+		ParentIssueID:      uuidToPtr(i.ParentIssueID),
+		duplicateOfIssueID: duplicateOfPointer(i.Status, i.DuplicateOfIssueID),
+		ProjectID:          uuidToPtr(i.ProjectID),
+		Position:           i.Position,
+		Stage:              int4ToPtr(i.Stage),
+		StartDate:          dateToPtr(i.StartDate),
+		DueDate:            dateToPtr(i.DueDate),
+		CreatedAt:          timestampToString(i.CreatedAt),
+		UpdatedAt:          timestampToString(i.UpdatedAt),
+		Revision:           i.Revision,
+		LastActivityAt:     timestampToNanoPtr(i.LastActivityAt),
+		Metadata:           parseIssueMetadata(i.Metadata),
+		Properties:         parseIssueProperties(i.Properties),
 	}
 }
 
@@ -910,7 +1101,7 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
 		i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position,
 		i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id,
-		i.revision,
+		i.revision, i.duplicate_of_issue_id,
 		pc.match_source,
 		COALESCE(c.content, '') AS matched_comment_content
 	FROM page_candidates pc
@@ -1006,6 +1197,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 				&sr.issue.Number,
 				&sr.issue.ProjectID,
 				&sr.issue.Revision,
+				&sr.issue.DuplicateOfIssueID,
 				&sr.matchSource,
 				&sr.matchedCommentContent,
 			); err != nil {
@@ -1035,7 +1227,11 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	prefix := h.getIssuePrefix(ctx, wsUUID)
-	fillSearch := h.newStatusCategoryFiller(ctx, wsUUID)
+	var originals []pgtype.UUID
+	for _, sr := range results {
+		originals = appendDuplicateOriginal(originals, sr.issue.Status, sr.issue.DuplicateOfIssueID)
+	}
+	fillSearch := h.newStatusCategoryFiller(ctx, wsUUID, originals...)
 	resp := make([]SearchIssueResponse, len(results))
 	for i, sr := range results {
 		sir := SearchIssueResponse{
@@ -1203,11 +1399,13 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 
 		prefix := h.getIssuePrefix(ctx, wsUUID)
 		ids := make([]pgtype.UUID, len(issues))
+		var originals []pgtype.UUID
 		for i, issue := range issues {
 			ids[i] = issue.ID
+			originals = appendDuplicateOriginal(originals, issue.Status, issue.DuplicateOfIssueID)
 		}
 		labelsMap := h.labelsByIssue(ctx, wsUUID, ids)
-		fillOpen := h.newStatusCategoryFiller(ctx, wsUUID)
+		fillOpen := h.newStatusCategoryFiller(ctx, wsUUID, originals...)
 		resp := make([]IssueResponse, len(issues))
 		for i, issue := range issues {
 			resp[i] = openIssueRowToResponse(issue, prefix)
@@ -1246,10 +1444,10 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	if len(statusesFilter) == 0 {
 		statusesFilter = splitCommaParam(r.URL.Query().Get("status"))
 	}
-	// status_category filters by BEHAVIOR rather than by exact key, so one
-	// board column can hold a category's canonical status plus every custom
-	// status that inherits it. Without this the board would need one column —
-	// and one request — per status. (MUL-6243)
+	// status_category filters by lifecycle phase rather than by exact key, so
+	// one board column can hold all concrete and custom statuses in that phase.
+	// Without this the board would need one column — and one request — per
+	// status. (MUL-6243, MUL-7240)
 	statusCategoriesFilter := splitCommaParam(r.URL.Query().Get("status_categories"))
 	if len(statusCategoriesFilter) == 0 {
 		statusCategoriesFilter = splitCommaParam(r.URL.Query().Get("status_category"))
@@ -1350,16 +1548,6 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		args = append(args, v)
 		return "$" + strconv.Itoa(len(args))
 	}
-	if sortByStatus {
-		var err error
-		sortCol, err = h.issueStatusSortExpression(r.Context(), wsUUID, addArg)
-		if err != nil {
-			slog.Warn("resolve status sort failed", append(logger.RequestAttrs(r), "error", err)...)
-			writeError(w, http.StatusInternalServerError, "failed to resolve sort")
-			return
-		}
-	}
-
 	if len(statusCategoriesFilter) > 0 {
 		// Expanded to concrete status keys rather than filtered through
 		// issue_effective_status(): wrapping the column in a function makes the
@@ -1526,6 +1714,18 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	whereSql := strings.Join(where, " AND ")
 
 	// Build ORDER BY clause.
+	// Count queries use only filter parameters. Sort-only CASE parameters must
+	// be appended afterwards or COUNT receives unused/untyped bind positions.
+	filterArgCount := len(args)
+	if sortByStatus {
+		var err error
+		sortCol, err = h.issueStatusSortExpression(r.Context(), wsUUID, addArg)
+		if err != nil {
+			slog.Warn("resolve status sort failed", append(logger.RequestAttrs(r), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to resolve sort")
+			return
+		}
+	}
 	orderBy := sortCol
 	if !sortIsExpr {
 		orderBy = "i." + sortCol
@@ -1551,7 +1751,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	query := fmt.Sprintf(`SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-	   i.revision
+	   i.revision, i.duplicate_of_issue_id
 FROM issue i
 WHERE %s
 ORDER BY %s
@@ -1592,6 +1792,7 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 			&row.Stage,
 			&row.Properties,
 			&row.Revision,
+			&row.DuplicateOfIssueID,
 		); err != nil {
 			slog.Warn("ListIssues scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list issues")
@@ -1608,7 +1809,7 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 	// Get the true total count for pagination awareness.
 	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM issue i WHERE %s`, whereSql)
 	// Count query uses the same args minus the OFFSET and LIMIT params (last two added).
-	countArgs := args[:len(args)-2]
+	countArgs := args[:filterArgCount]
 	var total int64
 	if err := h.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		slog.Warn("ListIssues count failed", "error", err)
@@ -2150,7 +2351,7 @@ WITH ranked AS (
 		i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
 		i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at,
-		i.number, i.project_id, i.metadata, i.stage, i.properties, i.revision,
+		i.number, i.project_id, i.metadata, i.stage, i.properties, i.revision, i.duplicate_of_issue_id,
 		COUNT(*) OVER (PARTITION BY i.assignee_type, i.assignee_id) AS group_total,
 		ROW_NUMBER() OVER (
 			PARTITION BY i.assignee_type, i.assignee_id
@@ -2163,7 +2364,7 @@ SELECT
 	id, workspace_id, title, description, status, priority,
 	assignee_type, assignee_id, creator_type, creator_id,
 	parent_issue_id, position, start_date, due_date, created_at, updated_at, last_activity_at,
-	number, project_id, metadata, stage, properties, revision, group_total
+	number, project_id, metadata, stage, properties, revision, duplicate_of_issue_id, group_total
 FROM ranked
 WHERE rn > %s AND rn <= %s + %s
 ORDER BY
@@ -2212,6 +2413,7 @@ ORDER BY
 			&row.Stage,
 			&row.Properties,
 			&row.Revision,
+			&row.DuplicateOfIssueID,
 			&row.GroupTotal,
 		); err != nil {
 			slog.Warn("ListGroupedIssues scan failed", "error", err)
@@ -2227,14 +2429,16 @@ ORDER BY
 	}
 
 	ids := make([]pgtype.UUID, len(groupedRows))
+	var originals []pgtype.UUID
 	for i, row := range groupedRows {
 		ids[i] = row.ID
+		originals = appendDuplicateOriginal(originals, row.Status, row.DuplicateOfIssueID)
 	}
 	labelsMap := h.labelsByIssue(ctx, wsUUID, ids)
 	prefix := h.getIssuePrefix(ctx, wsUUID)
 	// One Resolver for the whole page — a per-row filler would query the
 	// catalog once per custom-status row. (MUL-6243)
-	fillGrouped := h.newStatusCategoryFiller(ctx, wsUUID)
+	fillGrouped := h.newStatusCategoryFiller(ctx, wsUUID, originals...)
 
 	groups := []IssueAssigneeGroupResponse{}
 	groupIndex := map[string]int{}
@@ -2336,14 +2540,14 @@ func (h *Handler) ListChildIssues(w http.ResponseWriter, r *http.Request) {
 	labelsMap := h.labelsByIssue(r.Context(), issue.WorkspaceID, ids)
 	// Sub-issue progress is computed from these rows (the CLI's `issue children`
 	// stage counts, among others), so they carry the resolved category — a
-	// custom done status must count as done. One Resolver for the whole list:
+	// custom completed status must count as completed. One Resolver for the whole list:
 	// built-in statuses still cost no query, and a list full of custom ones
 	// costs one catalog read rather than one per row.
 	statusResolver := issuestatus.NewResolver(issue.WorkspaceID)
 	resp := make([]IssueResponse, len(children))
 	for i, child := range children {
 		resp[i] = issueToResponse(child, prefix)
-		resp[i].StatusCategory = statusResolver.Effective(r.Context(), h.Queries, child.Status)
+		resp[i].StatusCategory = issuestatus.WireCategory(child.Status, statusResolver.Category(r.Context(), h.Queries, child.Status))
 		labels := labelsMap[resp[i].ID]
 		if labels == nil {
 			labels = []LabelResponse{}
@@ -2422,14 +2626,14 @@ func (h *Handler) ListChildrenByParents(w http.ResponseWriter, r *http.Request) 
 	labelsMap := h.labelsByIssue(r.Context(), wsUUID, ids)
 	// Sub-issue progress is computed from these rows (the CLI's `issue children`
 	// stage counts, among others), so they carry the resolved category — a
-	// custom done status must count as done. One Resolver for the whole list:
+	// custom completed status must count as completed. One Resolver for the whole list:
 	// built-in statuses still cost no query, and a list full of custom ones
 	// costs one catalog read rather than one per row.
 	statusResolver := issuestatus.NewResolver(wsUUID)
 	resp := make([]IssueResponse, len(children))
 	for i, child := range children {
 		resp[i] = issueToResponse(child, prefix)
-		resp[i].StatusCategory = statusResolver.Effective(r.Context(), h.Queries, child.Status)
+		resp[i].StatusCategory = issuestatus.WireCategory(child.Status, statusResolver.Category(r.Context(), h.Queries, child.Status))
 		labels := labelsMap[resp[i].ID]
 		if labels == nil {
 			labels = []LabelResponse{}
@@ -2838,6 +3042,9 @@ type CreateIssueRequest struct {
 	// transaction as the create. Unknown or non-issue ids are rejected with
 	// 400 (service.ErrIssueLabelNotFound) rather than silently dropped.
 	LabelIDs []string `json:"label_ids,omitempty"`
+	// Properties is an ID-keyed bag whose values use the same typed wire shape
+	// as Issue.properties and the standalone property PUT endpoint.
+	Properties map[string]json.RawMessage `json:"properties,omitempty"`
 	// OriginType / OriginID stamp the new issue with its provenance so
 	// platform-internal flows can deterministically locate it later. Only
 	// trusted callers should set these — currently the daemon CLI passes
@@ -2849,23 +3056,136 @@ type CreateIssueRequest struct {
 	AllowDuplicate bool `json:"allow_duplicate,omitempty"`
 }
 
+// UnmarshalJSON rejects duplicate object members before Go's ordinary map
+// decoding can silently apply last-wins semantics. This is especially
+// important for properties: two values for one definition must reject the
+// whole create, never choose one implicitly.
+func (r *CreateIssueRequest) UnmarshalJSON(data []byte) error {
+	if err := rejectDuplicateJSONKeys(data); err != nil {
+		return err
+	}
+	type createIssueRequestAlias CreateIssueRequest
+	var decoded createIssueRequestAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*r = CreateIssueRequest(decoded)
+	return nil
+}
+
+func rejectDuplicateJSONKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := rejectDuplicateJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("request body must contain one JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func rejectDuplicateJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("object key must be a string")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("duplicate JSON key %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := rejectDuplicateJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token()
+		return err
+	case '[':
+		for decoder.More() {
+			if err := rejectDuplicateJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token()
+		return err
+	default:
+		return errors.New("invalid JSON delimiter")
+	}
+}
+
+func parseIssueCreateProperties(w http.ResponseWriter, values map[string]json.RawMessage) (map[pgtype.UUID]json.RawMessage, bool) {
+	if len(values) == 0 {
+		return nil, true
+	}
+	parsed := make(map[pgtype.UUID]json.RawMessage, len(values))
+	for propertyID, value := range values {
+		id, err := util.ParseUUID(propertyID)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"code": "invalid_issue_property", "property_id": propertyID,
+				"error": "property id must be a UUID",
+			})
+			return nil, false
+		}
+		if _, duplicate := parsed[id]; duplicate {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"code": "invalid_issue_property", "property_id": propertyID,
+				"error": "property was provided more than once",
+			})
+			return nil, false
+		}
+		parsed[id] = value
+	}
+	return parsed, true
+}
+
+func writeIssueCreatePropertyError(w http.ResponseWriter, err error) bool {
+	var propertyErr *service.IssuePropertyValidationError
+	if errors.As(err, &propertyErr) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"code": "invalid_issue_property", "property_id": propertyErr.PropertyID,
+			"error": propertyErr.Message,
+		})
+		return true
+	}
+	if errors.Is(err, service.ErrIssuePropertiesTooLarge) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"code": "issue_properties_too_large", "error": err.Error(),
+		})
+		return true
+	}
+	return false
+}
+
 func duplicateIssueMessage(issue IssueResponse) string {
 	return issueguard.DuplicateMessage(issue.Identifier, issue.Title, issue.Status)
 }
 
-func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
-	h.createIssue(w, r, false)
-}
+func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) { h.createIssue(w, r, false) }
 
 func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound bool) {
-
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
+	r = h.withWakeupActor(r)
 	var req CreateIssueRequest
-	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -2875,6 +3195,10 @@ func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound b
 		return
 	}
 
+	dependencyWrite, ok := h.parseDependencyWrite(w, r, req.dependencyWriteFields, compound, true)
+	if !ok {
+		return
+	}
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
@@ -2883,15 +3207,6 @@ func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound b
 
 	// Get creator from context (set by auth middleware)
 	creatorID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	dependencyWrite, ok := h.parseDependencyWrite(w, r, req.dependencyWriteFields, compound, true)
-	if !ok {
-		return
-	}
-
-	dependencyWrite.PayloadDigest, ok = dependencyPayloadDigest(w, r, bodyBytes)
 	if !ok {
 		return
 	}
@@ -2977,6 +3292,10 @@ func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound b
 	}
 
 	labelIDs, ok := parseUUIDSliceOrBadRequest(w, req.LabelIDs, "label_ids")
+	if !ok {
+		return
+	}
+	properties, ok := parseIssueCreateProperties(w, req.Properties)
 	if !ok {
 		return
 	}
@@ -3088,27 +3407,27 @@ func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound b
 	}
 
 	res, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
-		WorkspaceID:        wsUUID,
-		Title:              req.Title,
-		Description:        ptrToText(req.Description),
-		Status:             status,
-		Priority:           priority,
-		AssigneeType:       assigneeType,
-		AssigneeID:         assigneeID,
-		CreatorType:        creatorType,
-		CreatorID:          parseUUID(actualCreatorID),
-		ParentIssueID:      parentIssueID,
-		ProjectID:          projectID,
-		StartDate:          startDate,
-		DueDate:            dueDate,
-		OriginType:         originType,
-		OriginID:           originID,
-		Stage:              ptrToInt4(req.Stage),
-		AttachmentIDs:      attachmentIDs,
-		LabelIDs:           labelIDs,
-		AllowDuplicate:     req.AllowDuplicate,
-		BlockedBy:          dependencyWrite.BlockedBy,
-		DependencyOverride: dependencyWrite.Override, DependencyPayloadDigest: dependencyWrite.PayloadDigest,
+		BlockedBy:      dependencyWrite.BlockedBy,
+		WorkspaceID:    wsUUID,
+		Title:          req.Title,
+		Description:    ptrToText(req.Description),
+		Status:         status,
+		Priority:       priority,
+		AssigneeType:   assigneeType,
+		AssigneeID:     assigneeID,
+		CreatorType:    creatorType,
+		CreatorID:      parseUUID(actualCreatorID),
+		ParentIssueID:  parentIssueID,
+		ProjectID:      projectID,
+		StartDate:      startDate,
+		DueDate:        dueDate,
+		OriginType:     originType,
+		OriginID:       originID,
+		Stage:          ptrToInt4(req.Stage),
+		AttachmentIDs:  attachmentIDs,
+		LabelIDs:       labelIDs,
+		Properties:     properties,
+		AllowDuplicate: req.AllowDuplicate,
 	}, service.IssueCreateOpts{
 		ActorID:          actualCreatorID,
 		AnalyticsAgentID: analyticsAgentID,
@@ -3132,9 +3451,6 @@ func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound b
 		},
 	})
 
-	if writeDependencyError(w, err) {
-		return
-	}
 	if errors.Is(err, service.ErrActiveDuplicate) {
 		dup := *res.DuplicateIssue
 		existing := issueToResponse(dup, h.getIssuePrefix(r.Context(), dup.WorkspaceID))
@@ -3163,7 +3479,13 @@ func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound b
 			"the target status was archived while this request was in flight; reload the status list and retry")
 		return
 	}
+	if writeIssueCreatePropertyError(w, err) {
+		return
+	}
 	if writeIssueLimitReached(w, err) {
+		return
+	}
+	if writeDependencyError(w, err) {
 		return
 	}
 	if err != nil {
@@ -3176,18 +3498,17 @@ func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound b
 	slog.Info("issue created", append(logger.RequestAttrs(r), "issue_id", uuidToString(issue.ID), "title", issue.Title, "status", issue.Status, "workspace_id", workspaceID)...)
 
 	resp := issueToResponse(issue, prefix)
+	if res.Dependencies != nil {
+		view := h.dependencyView(r, res.Dependencies, issue.ID)
+		resp.Dependencies = &view
+	}
 	fillCreated(&resp)
 	resp.Attachments = buildAttachmentResponses(res.Attachments)
-	resp.Dispatch = issueRunOutcome(res.AssignedTask, res.Replayed)
 	// Echo the authoritative labels attached in the create transaction. Always
 	// non-nil (empty slice when none) so a newer client can tell the backend
 	// understood label_ids and skip its legacy post-create attach fallback.
 	labelResponses := labelsToResponse(res.Labels)
 	resp.Labels = &labelResponses
-	if compound {
-		v := h.dependencyView(r, res.Dependencies, issue.ID)
-		resp.Dependencies = &v
-	}
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -3230,6 +3551,13 @@ type UpdateIssueRequest struct {
 	// predate the handoff UI removal. It is consumed only when this write starts
 	// a run and is never stored on the issue itself.
 	HandoffNote string `json:"handoff_note,omitempty"`
+	// DuplicateOfIssueID marks this issue as a duplicate of another issue in
+	// the same workspace (MUL-7349). A duplicate is an ordinary cancelled issue
+	// that remembers its original, so this also sets status to cancelled.
+	// Any later status change away from cancelled removes the mark; there is
+	// no explicit null. Write-only: read the relation back from
+	// GET /api/issues/{id}/duplicates. Not accepted by batch updates.
+	DuplicateOfIssueID *string `json:"duplicate_of_issue_id,omitempty"`
 }
 
 func mergeIssueChannelMediaDescription(current, incoming string, base *string, attachments []db.Attachment) string {
@@ -3311,128 +3639,60 @@ func refreshUntouchedNullableIssueParams(params *db.UpdateIssueParams, current d
 
 var errIssueFieldConflict = errors.New("issue text field conflict")
 
-type atomicIssueUpdateResult struct {
-	Issue              db.Issue
-	Previous           db.Issue
-	AttachmentsChanged bool
-	Dependencies       *service.DependencySnapshot
-	Task               db.AgentTaskQueue
-	Replayed           bool
-	Coalesced          bool
-}
-
-func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.UUID, params db.UpdateIssueParams, rawFields map[string]json.RawMessage, titleBase, descriptionBase *string, attachmentIDs []pgtype.UUID, statusKey string, dependencyWrite service.DependencyWrite) (result atomicIssueUpdateResult, err error) {
+func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.UUID, params db.UpdateIssueParams, rawFields map[string]json.RawMessage, titleBase, descriptionBase *string, attachmentIDs []pgtype.UUID, statusKey string, dependencyWrite service.DependencyWrite) (db.Issue, db.Issue, bool, error) {
 	if h.TxStarter == nil {
-		return result, errors.New("atomic issue update requires transaction starter")
+		return db.Issue{}, db.Issue{}, false, errors.New("atomic issue update requires transaction starter")
 	}
-	var prepared *service.PreparedIssueRun
-	if !dependencyWrite.SuppressRun {
-		current, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: params.ID, WorkspaceID: workspaceID})
-		if err != nil {
-			return result, err
-		}
-		post := current
-		if params.Status.Valid {
-			post.Status = params.Status.String
-		}
-		if _, ok := rawFields["assignee_type"]; ok {
-			post.AssigneeType = params.AssigneeType
-		}
-		if _, ok := rawFields["assignee_id"]; ok {
-			post.AssigneeID = params.AssigneeID
-		}
-		trigger, ok := h.IssueService.WillEnqueueRun(ctx, service.IssueTriggerInput{Issue: post, PrevStatus: current.Status, AssigneeChanged: post.AssigneeID != current.AssigneeID || post.AssigneeType != current.AssigneeType, StatusChanged: post.Status != current.Status}, dependencyWrite.Probe)
-		if ok {
-			prepared, err = h.TaskService.PrepareIssueRun(ctx, post, trigger, dependencyWrite.ActorUserID, dependencyWrite.HandoffNote)
-			if err != nil {
-				return result, err
-			}
-		}
-	}
-
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := h.beginWakeupWrite(ctx)
 	if err != nil {
-		return result, fmt.Errorf("begin atomic issue update: %w", err)
+		return db.Issue{}, db.Issue{}, false, fmt.Errorf("begin atomic issue update: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
 	qtx := h.Queries.WithTx(tx)
-	guardDependencies := dependencyWrite.IncludeView || dependencyWrite.BlockedBy != nil || dependencyWrite.ExpectedVersion != ""
-	for _, field := range []string{"parent_issue_id", "assignee_type", "assignee_id"} {
-		if _, touched := rawFields[field]; touched {
-			guardDependencies = true
+	_, parentTouched := rawFields["parent_issue_id"]
+	guardRelations := parentTouched || dependencyWrite.IncludeView || dependencyWrite.BlockedBy != nil || dependencyWrite.ExpectedVersion != ""
+	if guardRelations {
+		if err := h.IssueService.Dependencies.LockWrite(ctx, qtx, workspaceID); err != nil {
+			return db.Issue{}, db.Issue{}, false, err
 		}
 	}
-	// Even a text-only writer must join the structure lock's wait queue before
-	// locking its target. Otherwise successive full-snapshot SHARE lockers can
-	// repeatedly overtake it on the issue row. Only guarded writes load the graph.
-	if err := h.IssueService.Dependencies.LockWrite(ctx, qtx, workspaceID); err != nil {
-		return result, err
-	}
-	// The catalog lock precedes attachment and issue row locks. (MUL-6243)
+	// This path opens its own transaction, so it carries the archive-race guard
+	// itself rather than going through runWithIssueStatusGuard. The catalog lock
+	// must precede both attachment and issue row locks everywhere. (MUL-6243)
 	if err := assertIssueStatusStillActive(ctx, qtx, workspaceID, statusKey); err != nil {
-		return result, err
+		return db.Issue{}, db.Issue{}, false, err
 	}
 	if len(attachmentIDs) > 0 {
 		if _, err := qtx.LockAttachmentsForIssueLink(ctx, db.LockAttachmentsForIssueLinkParams{
 			WorkspaceID:   workspaceID,
 			AttachmentIds: attachmentIDs,
 		}); err != nil {
-			return result, fmt.Errorf("lock issue attachments: %w", err)
+			return db.Issue{}, db.Issue{}, false, fmt.Errorf("lock issue attachments: %w", err)
 		}
 	}
 	var dependencyBefore *service.DependencySnapshot
-	_, statusTouched := rawFields["status"]
-	if guardDependencies || statusTouched {
-		if err := qtx.LockIssuesForDependencyWrite(ctx, workspaceID); err != nil {
-			return result, err
-		}
-	}
-	if statusTouched && !guardDependencies {
-		// Decide from the locked row, not the preflight read. Completion and
-		// other status changes without execution need no graph snapshot, but
-		// retain the same ordered row locks against concurrent status writers.
-		current, err := qtx.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: params.ID, WorkspaceID: workspaceID})
+	if guardRelations {
+		dependencyBefore, err = h.IssueService.Dependencies.LoadForWrite(ctx, qtx, workspaceID)
 		if err != nil {
-			return result, err
-		}
-		next := current
-		if params.Status.Valid {
-			next.Status = params.Status.String
-		}
-		_, guardDependencies = service.DependencyWriteIntent(ctx, qtx, &current, next, dependencyWrite.SuppressRun)
-	}
-	if guardDependencies {
-		dependencyBefore, err = h.IssueService.Dependencies.Load(ctx, qtx, workspaceID)
-		if err != nil {
-			return result, err
+			return db.Issue{}, db.Issue{}, false, err
 		}
 	}
-	if replay, replayErr := h.IssueService.Dependencies.Replay(ctx, qtx, workspaceID, params.ID, dependencyWrite.Override, dependencyWrite.PayloadDigest); replayErr != nil {
-		return result, replayErr
-	} else if replay != nil {
-		result.Issue, err = qtx.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: params.ID, WorkspaceID: workspaceID})
-		if err != nil {
-			return result, err
+	if params.DuplicateOfIssueID.Valid {
+		if err := lockAndCheckDuplicateMark(ctx, qtx, workspaceID, params.ID, params.DuplicateOfIssueID); err != nil {
+			return db.Issue{}, db.Issue{}, false, err
 		}
-		result.Previous = result.Issue
-		result.Task = *replay
-		result.Dependencies = dependencyBefore
-		result.Replayed = true
-		return result, nil
 	}
-
 	current, err := qtx.LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{
 		ID:          params.ID,
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
-		return result, fmt.Errorf("lock issue for update: %w", err)
+		return db.Issue{}, db.Issue{}, false, fmt.Errorf("lock issue for update: %w", err)
 	}
 
-	result.Previous = current
 	if params.Title.Valid && titleBase != nil && current.Title != *titleBase && current.Title != params.Title.String {
-		return result, errIssueFieldConflict
+		return db.Issue{}, current, false, errIssueFieldConflict
 	}
 
 	if params.Description.Valid {
@@ -3441,7 +3701,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 			WorkspaceID: current.WorkspaceID,
 		})
 		if listErr != nil {
-			return result, fmt.Errorf("list issue attachments for description merge: %w", listErr)
+			return db.Issue{}, current, false, fmt.Errorf("list issue attachments for description merge: %w", listErr)
 		}
 		currentDescription := ""
 		if current.Description.Valid {
@@ -3470,42 +3730,23 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 	}
 	refreshUntouchedNullableIssueParams(&params, current, rawFields)
 
-	issue, err := qtx.UpdateIssue(ctx, params)
+	issue, cancelledWakeups, err := updateIssueStoppingWakeups(ctx, qtx, params)
 	if err != nil {
-		return result, fmt.Errorf("update locked issue: %w", err)
+		return db.Issue{}, current, false, fmt.Errorf("update locked issue: %w", err)
 	}
-	var confirmation []byte
-	var dependencyAfter *service.DependencySnapshot
-	if guardDependencies {
-		var dependencyChanged bool
-		dependencyAfter, dependencyChanged, err = h.IssueService.Dependencies.Apply(ctx, qtx, dependencyBefore, issue, dependencyWrite)
-		if err != nil {
-			return result, err
-		}
-		if dependencyWrite.Override != nil {
-			if prepared == nil || dependencyWrite.SuppressRun {
-				return result, &service.DependencyError{Code: "dependency_override_stale", Message: "confirmation requires an execution"}
-			}
-			trigger := service.IssueRunTrigger{AgentID: prepared.Params.AgentID, AssigneeType: issue.AssigneeType.String}
-			confirmation, err = h.IssueService.Dependencies.Confirm(ctx, qtx, dependencyBefore, issue, trigger, dependencyWrite)
-			if err != nil {
-				return result, err
-			}
-		}
 
-		assigned, run := service.DependencyWriteIntent(ctx, qtx, &current, issue, dependencyWrite.SuppressRun)
-		if err := dependencyAfter.CheckWriteAdmission(ctx, issue, assigned, run); err != nil && confirmation == nil {
-			return result, err
+	if dependencyBefore != nil {
+		_, changed, relationErr := h.IssueService.Dependencies.Apply(ctx, qtx, dependencyBefore, issue, dependencyWrite)
+		if relationErr != nil {
+			return db.Issue{}, current, false, relationErr
 		}
-		if dependencyChanged && issue.Revision == current.Revision {
+		if changed && issue.Revision == current.Revision {
 			issue, err = qtx.TouchIssueDependencyRevision(ctx, db.TouchIssueDependencyRevisionParams{WorkspaceID: workspaceID, ID: issue.ID})
 			if err != nil {
-				return result, err
+				return db.Issue{}, current, false, err
 			}
 		}
-
 	}
-
 	attachmentsChanged := false
 	if len(attachmentIDs) > 0 {
 		linked, linkErr := qtx.LinkAttachmentsToIssue(ctx, db.LinkAttachmentsToIssueParams{
@@ -3515,7 +3756,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 			BumpRevision:  issue.Revision == current.Revision,
 		})
 		if linkErr != nil {
-			return result, fmt.Errorf("link issue attachments: %w", linkErr)
+			return db.Issue{}, current, false, fmt.Errorf("link issue attachments: %w", linkErr)
 		}
 		attachmentsChanged = linked.LinkedCount > 0
 		if linked.IssueRevision > 0 {
@@ -3524,62 +3765,23 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 				WorkspaceID: issue.WorkspaceID,
 			})
 			if err != nil {
-				return result, fmt.Errorf("reload issue after attachment link: %w", err)
+				return db.Issue{}, current, false, fmt.Errorf("reload issue after attachment link: %w", err)
 			}
 		}
 	}
-	if guardDependencies && !dependencyWrite.SuppressRun {
-		txIssues := *h.IssueService
-		txIssues.Queries = qtx
-		txIssues.TaskService = &service.TaskService{Queries: qtx}
-		trigger, ok := txIssues.WillEnqueueRun(ctx, service.IssueTriggerInput{Issue: issue, PrevStatus: current.Status, AssigneeChanged: issue.AssigneeID != current.AssigneeID || issue.AssigneeType != current.AssigneeType, StatusChanged: issue.Status != current.Status}, dependencyWrite.Probe)
-		if ok {
-			result.Task, err = h.TaskService.EnqueueIssueRunTx(ctx, qtx, issue, trigger, prepared, dependencyAfter, confirmation)
-			if err != nil {
-				return result, err
-			}
-		}
-	}
-
-	result.Coalesced = result.Task.ID.Valid && prepared != nil && result.Task.ID != prepared.Params.ID
-	if confirmation != nil {
-		if !result.Task.ID.Valid || result.Task.ID != prepared.Params.ID {
-			return result, &service.DependencyError{Code: "dependency_override_stale", Message: "confirmation requires a new execution"}
-		}
-		node := dependencyAfter.Model.Issues[uuidToString(issue.ID)]
-		node.Revision = issue.Revision
-		dependencyAfter.Model.Issues[node.ID] = node
-		result.Task, err = dependencyAfter.RecordConfirmation(ctx, qtx, result.Task, confirmation)
-		if err != nil {
-			return result, err
-		}
-	}
-
 	if err := tx.Commit(ctx); err != nil {
-		return result, fmt.Errorf("commit atomic issue update: %w", err)
+		return db.Issue{}, current, false, fmt.Errorf("commit atomic issue update: %w", err)
 	}
-	if dependencyAfter != nil {
-		node := dependencyAfter.Model.Issues[uuidToString(issue.ID)]
-		node.Revision = issue.Revision
-		dependencyAfter.Model.Issues[node.ID] = node
-	}
-	result.Issue = issue
-	result.AttachmentsChanged = attachmentsChanged
-	result.Dependencies = dependencyAfter
-	return result, nil
+	h.broadcastCancelledWakeups(ctx, workspaceID, cancelledWakeups)
+	return issue, current, attachmentsChanged, nil
 }
 
-func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
-	h.updateIssue(w, r, false)
-}
+func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) { h.updateIssue(w, r, false) }
 
 func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound bool) {
+	r = h.withWakeupActor(r)
 	id := chi.URLParam(r, "id")
-	loadIssue := h.loadIssueForUser
-	if compound {
-		loadIssue = h.loadDependencyIssue
-	}
-	prevIssue, ok := loadIssue(w, r, id)
+	prevIssue, ok := h.loadIssueForUser(w, r, id)
 	if !ok {
 		return
 	}
@@ -3599,22 +3801,29 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 		return
 	}
 
-	// Track which fields were explicitly present in JSON (even if null)
-	var rawFields map[string]json.RawMessage
-	json.Unmarshal(bodyBytes, &rawFields)
 	dependencyWrite, ok := h.parseDependencyWrite(w, r, req.dependencyWriteFields, compound, false)
 	if !ok {
 		return
 	}
-	dependencyWrite.PayloadDigest, ok = dependencyPayloadDigest(w, r, bodyBytes)
+	// Track which fields were explicitly present in JSON (even if null)
+	var rawFields map[string]json.RawMessage
+	json.Unmarshal(bodyBytes, &rawFields)
+
+	if prevIssue.TriageState.Valid {
+		if field := triageLockedField(rawFields); field != "" {
+			writeIssueInTriage(w, field)
+			return
+		}
+	}
+
+	duplicateOfID, ok := parseDuplicateMark(w, &req, rawFields, prevIssue.ID)
 	if !ok {
 		return
 	}
 
-	dependencyWrite.SuppressRun = req.SuppressRun
-
 	// Pre-fill nullable fields (bare sqlc.narg) with current values
 	params := db.UpdateIssueParams{
+		SourceTaskID:  h.wakeupSourceTaskID(r),
 		ID:            prevIssue.ID,
 		AssigneeType:  prevIssue.AssigneeType,
 		AssigneeID:    prevIssue.AssigneeID,
@@ -3623,6 +3832,8 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 		ParentIssueID: prevIssue.ParentIssueID,
 		ProjectID:     prevIssue.ProjectID,
 		Stage:         prevIssue.Stage,
+		// Checked against the locked rows in updateIssueWithStatusGuard.
+		DuplicateOfIssueID: duplicateOfID,
 	}
 	if req.ExpectedRevision != nil {
 		if *req.ExpectedRevision < 1 {
@@ -3728,6 +3939,19 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 				writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
 				return
 			}
+			// Cycle detection: walk up from the new parent to ensure we don't reach this issue.
+			cursor := newParentID
+			for depth := 0; depth < 10; depth++ {
+				ancestor, err := h.Queries.GetIssue(r.Context(), cursor)
+				if err != nil || !ancestor.ParentIssueID.Valid {
+					break
+				}
+				if ancestor.ParentIssueID == prevIssue.ID {
+					writeError(w, http.StatusBadRequest, "circular parent relationship detected")
+					return
+				}
+				cursor = ancestor.ParentIssueID
+			}
 			params.ParentIssueID = newParentID
 		} else {
 			params.ParentIssueID = pgtype.UUID{Valid: false} // explicit null = remove parent
@@ -3792,24 +4016,28 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 		return
 	}
 
-	preActorType, preActorID := h.resolveActor(r, userID, workspaceID)
-	dependencyWrite.Probe = h.issueTriggerWriteProbe(r, preActorType, preActorID, prevIssue)
-	dependencyWrite.ActorUserID = memberActorUserID(preActorType, preActorID)
-	dependencyWrite.HandoffNote = req.HandoffNote
-
-	updateResult, err := h.updateIssueAtomically(
-		r.Context(), prevIssue.WorkspaceID, params, rawFields, req.TitleBase, req.DescriptionBase, attachmentIDs, statusKeyForGuard, dependencyWrite,
-	)
-	issue, attachmentsChanged := updateResult.Issue, updateResult.AttachmentsChanged
-	if updateResult.Previous.ID.Valid {
-		prevIssue = updateResult.Previous
+	var issue db.Issue
+	attachmentsChanged := false
+	_, parentTouched := rawFields["parent_issue_id"]
+	if compound || parentTouched || req.Description != nil || req.TitleBase != nil || req.DescriptionBase != nil || len(attachmentIDs) > 0 {
+		var lockedPrev db.Issue
+		issue, lockedPrev, attachmentsChanged, err = h.updateIssueAtomically(
+			r.Context(), prevIssue.WorkspaceID, params, rawFields, req.TitleBase, req.DescriptionBase, attachmentIDs, statusKeyForGuard, dependencyWrite,
+		)
+		if lockedPrev.ID.Valid {
+			prevIssue = lockedPrev
+		}
+	} else {
+		issue, err = h.updateIssueWithStatusGuard(r.Context(), prevIssue.WorkspaceID, statusKeyForGuard, params)
 	}
-
 	if err != nil {
 		if writeDependencyError(w, err) {
 			return
 		}
 		if writeIssueStatusRaceError(w, err) {
+			return
+		}
+		if writeDuplicateMarkError(w, err) {
 			return
 		}
 		if errors.Is(err, errIssueFieldConflict) {
@@ -3828,28 +4056,15 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 		return
 	}
 
-	if updateResult.Replayed {
-		resp := issueToResponse(issue, h.getIssuePrefix(r.Context(), issue.WorkspaceID))
-		h.fillStatusCategory(r.Context(), issue.WorkspaceID, &resp)
-		view := h.dependencyView(r, updateResult.Dependencies, issue.ID)
-		resp.Dependencies = &view
-		resp.Dispatch = issueRunOutcome(updateResult.Task, updateResult.Replayed || updateResult.Coalesced)
-		resp.Dispatch.Status = DispatchCoalesced
-		resp.Dispatch.ReasonCode = ReasonCoalesced
-		writeJSON(w, http.StatusOK, resp)
-		return
-	}
-
 	// Determine actor identity: agent (via X-Agent-ID header) or member.
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
-	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
 	if compound {
-		v := h.dependencyView(r, updateResult.Dependencies, issue.ID)
-		resp.Dependencies = &v
+		h.fillDependencyResponse(r, issue, &resp)
 	}
+	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
 
 	h.fillStatusCategory(r.Context(), issue.WorkspaceID, &resp)
 	assigneeChanged := (req.AssigneeType != nil || req.AssigneeID != nil) &&
@@ -3890,6 +4105,10 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 		"prev_description":    textToPtr(prevIssue.Description),
 		"creator_type":        prevIssue.CreatorType,
 		"creator_id":          uuidToString(prevIssue.CreatorID),
+		// Both ends of a mark change ride here: the activity log records it
+		// and clients refresh the two issues' relations from it.
+		"duplicate_of_issue_id":      liveDuplicateMark(issue.Status, issue.DuplicateOfIssueID),
+		"prev_duplicate_of_issue_id": liveDuplicateMark(prevIssue.Status, prevIssue.DuplicateOfIssueID),
 	})
 	if attachmentsChanged {
 		// The full owner snapshot must be admitted before an auxiliary event at
@@ -3918,10 +4137,17 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 	// it stops in-flight agent runs, so that implicit coupling is gone
 	// (MUL-4465). Deleting an issue still cancels its tasks (see DeleteIssue),
 	// because the tasks' owning issue ceases to exist.
-	if !updateResult.Coalesced {
-		h.TaskService.PublishIssueTask(r.Context(), updateResult.Task)
+	if trigger, ok := h.IssueService.WillEnqueueRun(r.Context(),
+		service.IssueTriggerInput{
+			Issue:           issue,
+			PrevStatus:      prevIssue.Status,
+			AssigneeChanged: assigneeChanged,
+			StatusChanged:   statusChanged,
+		},
+		h.issueTriggerWriteProbe(r, actorType, actorID, issue),
+	); ok && !req.SuppressRun {
+		h.dispatchIssueRun(r.Context(), issue, trigger, actorType, actorID, req.HandoffNote)
 	}
-	resp.Dispatch = issueRunOutcome(updateResult.Task, updateResult.Replayed || updateResult.Coalesced)
 
 	// Platform-driven parent notification: when this issue transitions into
 	// `done` and has a parent, post a top-level system comment on the parent
@@ -4031,8 +4257,10 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 // triggering execution. Moving out of backlog is handled separately in
 // UpdateIssue.
 func (h *Handler) shouldEnqueueAgentTask(ctx context.Context, issue db.Issue) bool {
-	// A custom status in the backlog category parks like Backlog. (MUL-6243)
-	if issuestatus.Effective(ctx, h.Queries, issue.WorkspaceID, issue.Status) == "backlog" {
+	// Only the fixed backlog key parks work; custom unstarted statuses do not.
+	// An issue in Triage is not parked but refused: it produces no run from any
+	// entry point until it is accepted (MUL-7189 §2.3).
+	if issue.TriageState.Valid || issuestatus.Effective(ctx, h.Queries, issue.WorkspaceID, issue.Status) == "backlog" {
 		return false
 	}
 	return h.isAgentAssigneeReady(ctx, issue)
@@ -4139,17 +4367,19 @@ func (h *Handler) isAgentAssigneeReady(ctx context.Context, issue db.Issue) bool
 }
 
 func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
+	r = h.withWakeupActor(r)
 	id := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, id)
 	if !ok {
 		return
 	}
 
+	h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
+	// Fail any linked autopilot runs before delete (ON DELETE SET NULL clears issue_id).
+	_ = h.AutopilotService.FailAutopilotRunsByIssue(r.Context(), issue.ID)
+
 	deleteResult, err := h.deleteIssueAndCollectAttachmentURLs(r.Context(), issue, nil)
 	if err != nil {
-		if writeDependencyError(w, err) {
-			return
-		}
 		writeError(w, http.StatusInternalServerError, "failed to delete issue")
 		return
 	}
@@ -4162,7 +4392,8 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 	// other clients after an identifier-path delete.
 	resolvedID := uuidToString(issue.ID)
 	h.publish(protocol.EventIssueDeleted, uuidToString(issue.WorkspaceID), actorType, actorID, map[string]any{"issue_id": resolvedID})
-	h.publishDetachedChildren(r.Context(), deleteResult.DetachedChildren, actorType, actorID)
+	h.publishIssueSnapshots(r.Context(), deleteResult.DetachedChildren, actorType, actorID)
+	h.publishClearedDuplicates(r.Context(), deleteResult.ClearedDuplicates, actorType, actorID)
 	slog.Info("issue deleted", append(logger.RequestAttrs(r), "issue_id", resolvedID, "workspace_id", uuidToString(issue.WorkspaceID))...)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -4175,7 +4406,16 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 type issueDeleteResult struct {
 	AttachmentURLs   []string
 	DetachedChildren []db.Issue
-	CancelledTasks   []db.AgentTaskQueue
+	// ClearedDuplicates lost their duplicate mark because their original was
+	// deleted. They stay cancelled.
+	ClearedDuplicates []clearedDuplicate
+}
+
+// clearedDuplicate pairs a duplicate whose mark a delete cleared with the
+// original that delete removed, so the broadcast can still name it.
+type clearedDuplicate struct {
+	Issue    db.Issue
+	Original db.Issue
 }
 
 func (h *Handler) deleteIssueAndCollectAttachmentURLs(ctx context.Context, issue db.Issue, excludedIssueIDs []pgtype.UUID) (issueDeleteResult, error) {
@@ -4183,51 +4423,43 @@ func (h *Handler) deleteIssueAndCollectAttachmentURLs(ctx context.Context, issue
 }
 
 func (h *Handler) deleteIssuesAndCollectAttachmentURLs(ctx context.Context, issues []db.Issue, excludedIssueIDs []pgtype.UUID) (issueDeleteResult, error) {
+	if len(issues) == 0 {
+		return issueDeleteResult{}, nil
+	}
 	sort.Slice(issues, func(i, j int) bool {
 		return uuidToString(issues[i].ID) < uuidToString(issues[j].ID)
 	})
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := h.beginWakeupWrite(ctx)
 	if err != nil {
 		return issueDeleteResult{}, fmt.Errorf("begin issue delete: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
-
-	result := issueDeleteResult{}
-	if len(issues) == 0 {
-		return result, nil
-	}
-	ws := issues[0].WorkspaceID
+	workspaceID := issues[0].WorkspaceID
 	ids := make([]pgtype.UUID, 0, len(issues))
 	for _, issue := range issues {
-		if issue.WorkspaceID != ws {
-			return result, errors.New("issue deletion must be workspace scoped")
+		if issue.WorkspaceID != workspaceID {
+			return issueDeleteResult{}, errors.New("issues belong to different workspaces")
 		}
 		ids = append(ids, issue.ID)
 	}
-	if err := h.IssueService.Dependencies.LockWrite(ctx, qtx, ws); err != nil {
-		return result, err
+	if err := h.IssueService.Dependencies.LockWrite(ctx, qtx, workspaceID); err != nil {
+		return issueDeleteResult{}, err
 	}
-	before, err := h.IssueService.Dependencies.LoadForWrite(ctx, qtx, ws)
+	before, err := h.IssueService.Dependencies.LoadForWrite(ctx, qtx, workspaceID)
 	if err != nil {
-		return result, err
+		return issueDeleteResult{}, err
 	}
 	if err := h.IssueService.Dependencies.Delete(ctx, qtx, before, ids); err != nil {
-		return result, err
+		return issueDeleteResult{}, err
 	}
+
+	result := issueDeleteResult{}
 	for _, issue := range issues {
 		if _, err := qtx.LockIssueForDelete(ctx, db.LockIssueForDeleteParams{
 			ID: issue.ID, WorkspaceID: issue.WorkspaceID,
 		}); err != nil {
 			return issueDeleteResult{}, fmt.Errorf("lock issue for delete: %w", err)
-		}
-		cancelled, err := h.TaskService.CancelTasksForIssueInTx(ctx, qtx, issue.ID)
-		if err != nil {
-			return result, err
-		}
-		result.CancelledTasks = append(result.CancelledTasks, cancelled...)
-		if _, err := qtx.FailAutopilotRunsByIssue(ctx, issue.ID); err != nil {
-			return result, err
 		}
 		detached, err := qtx.DetachDirectChildIssues(ctx, db.DetachDirectChildIssuesParams{
 			WorkspaceID: issue.WorkspaceID, ParentIssueID: issue.ID, ExcludedIssueIds: excludedIssueIDs,
@@ -4236,6 +4468,15 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLs(ctx context.Context, issu
 			return issueDeleteResult{}, fmt.Errorf("detach child issues: %w", err)
 		}
 		result.DetachedChildren = append(result.DetachedChildren, detached...)
+		cleared, err := qtx.ClearIssueDuplicatesOf(ctx, db.ClearIssueDuplicatesOfParams{
+			WorkspaceID: issue.WorkspaceID, IssueID: issue.ID, ExcludedIssueIds: excludedIssueIDs,
+		})
+		if err != nil {
+			return issueDeleteResult{}, fmt.Errorf("clear duplicate marks: %w", err)
+		}
+		for _, duplicate := range cleared {
+			result.ClearedDuplicates = append(result.ClearedDuplicates, clearedDuplicate{Issue: duplicate, Original: issue})
+		}
 		attachmentURLs, err := qtx.ListAttachmentURLsByIssueOrComments(ctx, issue.ID)
 		if err != nil {
 			return issueDeleteResult{}, fmt.Errorf("list issue attachment URLs: %w", err)
@@ -4278,9 +4519,6 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLs(ctx context.Context, issu
 		} else if !errors.Is(contextErr, pgx.ErrNoRows) {
 			return issueDeleteResult{}, fmt.Errorf("load issue source context for delete: %w", contextErr)
 		}
-		if err := qtx.RedactLabrastroFeedbackByIssue(ctx, db.RedactLabrastroFeedbackByIssueParams{WorkspaceID: ws, Column2: []pgtype.UUID{issue.ID}}); err != nil {
-			return result, err
-		}
 		if err := qtx.DeleteIssue(ctx, db.DeleteIssueParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID}); err != nil {
 			return issueDeleteResult{}, fmt.Errorf("delete issue: %w", err)
 		}
@@ -4288,15 +4526,34 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLs(ctx context.Context, issu
 	if err := tx.Commit(ctx); err != nil {
 		return issueDeleteResult{}, fmt.Errorf("commit issue delete: %w", err)
 	}
-	h.TaskService.PublishCancelledIssueTasks(ctx, result.CancelledTasks)
 	return result, nil
 }
 
-func (h *Handler) publishDetachedChildren(ctx context.Context, children []db.Issue, actorType, actorID string) {
-	for _, child := range children {
-		response := issueToResponse(child, h.getIssuePrefix(ctx, child.WorkspaceID))
-		h.fillStatusCategory(ctx, child.WorkspaceID, &response)
-		h.publish(protocol.EventIssueUpdated, uuidToString(child.WorkspaceID), actorType, actorID, map[string]any{"issue": response})
+// publishIssueSnapshots broadcasts issue:updated for issues a delete rewrote:
+// detached children and duplicates whose original was deleted.
+func (h *Handler) publishIssueSnapshots(ctx context.Context, issues []db.Issue, actorType, actorID string) {
+	for _, issue := range issues {
+		response := issueToResponse(issue, h.getIssuePrefix(ctx, issue.WorkspaceID))
+		h.fillStatusCategory(ctx, issue.WorkspaceID, &response)
+		h.publish(protocol.EventIssueUpdated, uuidToString(issue.WorkspaceID), actorType, actorID, map[string]any{"issue": response})
+	}
+}
+
+// publishClearedDuplicates broadcasts issue:updated for duplicates whose
+// original a delete removed. The pointer went with the original, so the
+// payload names both ends the way UpdateIssue does, plus the identifier the
+// activity log can no longer look up (MUL-7349).
+func (h *Handler) publishClearedDuplicates(ctx context.Context, cleared []clearedDuplicate, actorType, actorID string) {
+	for _, c := range cleared {
+		prefix := h.getIssuePrefix(ctx, c.Issue.WorkspaceID)
+		response := issueToResponse(c.Issue, prefix)
+		h.fillStatusCategory(ctx, c.Issue.WorkspaceID, &response)
+		h.publish(protocol.EventIssueUpdated, uuidToString(c.Issue.WorkspaceID), actorType, actorID, map[string]any{
+			"issue":                        response,
+			"duplicate_of_issue_id":        liveDuplicateMark(c.Issue.Status, c.Issue.DuplicateOfIssueID),
+			"prev_duplicate_of_issue_id":   liveDuplicateMark(c.Issue.Status, c.Original.ID),
+			"prev_duplicate_of_identifier": prefix + "-" + strconv.Itoa(int(c.Original.Number)),
+		})
 	}
 }
 
@@ -4305,12 +4562,12 @@ func (h *Handler) publishDetachedChildren(ctx context.Context, children []db.Iss
 // ---------------------------------------------------------------------------
 
 type BatchUpdateIssuesRequest struct {
-	IssueIDs            []string                              `json:"issue_ids"`
-	Updates             UpdateIssueRequest                    `json:"updates"`
-	DependencyOverrides map[string]service.DependencyOverride `json:"dependency_overrides,omitempty"`
+	IssueIDs []string           `json:"issue_ids"`
+	Updates  UpdateIssueRequest `json:"updates"`
 }
 
 func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
+	r = h.withWakeupActor(r)
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to read request body")
@@ -4340,25 +4597,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	if raw, exists := rawTop["updates"]; exists {
 		json.Unmarshal(raw, &rawUpdates)
 	}
-	if _, ok := h.parseDependencyWrite(w, r, req.Updates.dependencyWriteFields, false, false); !ok {
+	if _, ok := rawUpdates["duplicate_of_issue_id"]; ok {
+		writeError(w, http.StatusBadRequest, "duplicate_of_issue_id is not supported in batch updates")
 		return
-	}
-
-	// Validate the confirmation envelope for every item before the first write.
-	for _, override := range req.DependencyOverrides {
-		raw, _ := json.Marshal(override)
-		if _, ok := h.parseDependencyWrite(w, r, dependencyWriteFields{DependencyOverride: raw}, true, false); !ok {
-			return
-		}
-	}
-	// All confirmations bind the same updates object. Validate it once, before
-	// any item can commit, including when the caller sent JSON null.
-	batchDigest := ""
-	if len(req.DependencyOverrides) > 0 {
-		batchDigest, ok = dependencyPayloadDigest(w, r, rawTop["updates"])
-		if !ok {
-			return
-		}
 	}
 
 	// Short-circuit when no mutation field is present in `updates`. Without
@@ -4408,6 +4649,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !h.validateBatchTriageLocks(w, r, wsUUID, req.IssueIDs, rawUpdates) {
+		return
+	}
 	// The batch shares one project_id, so it is checked once here rather than
 	// per issue, and rejected instead of skipped like the per-item guards in
 	// the loop: a foreign project invalidates the whole request.
@@ -4434,7 +4678,6 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updated := 0
-	results := make([]map[string]any, 0, len(req.IssueIDs))
 	// One Resolver for the whole batch — a per-issue filler would query the
 	// catalog once per custom-status row. (MUL-6243)
 	fillBatch := h.newStatusCategoryFiller(r.Context(), wsUUID)
@@ -4443,8 +4686,6 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	// after the loop (MUL-4155) rather than per-child mid-batch.
 	var childDoneCompleted []db.Issue
 	for _, issueID := range req.IssueIDs {
-		itemResult := map[string]any{"issue_id": issueID, "updated": false, "reason_code": "not_found"}
-		results = append(results, itemResult)
 		issueUUID, err := util.ParseUUID(issueID)
 		if err != nil {
 			continue
@@ -4456,9 +4697,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		itemResult["reason_code"] = "invalid_request"
 
 		params := db.UpdateIssueParams{
+			SourceTaskID:  h.wakeupSourceTaskID(r),
 			ID:            prevIssue.ID,
 			AssigneeType:  prevIssue.AssigneeType,
 			AssigneeID:    prevIssue.AssigneeID,
@@ -4542,6 +4783,23 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 				}); err != nil {
 					continue
 				}
+				// Cycle detection: walk up from the new parent to ensure we don't reach this issue.
+				cycleDetected := false
+				cursor := newParentID
+				for depth := 0; depth < 10; depth++ {
+					ancestor, err := h.Queries.GetIssue(r.Context(), cursor)
+					if err != nil || !ancestor.ParentIssueID.Valid {
+						break
+					}
+					if ancestor.ParentIssueID == prevIssue.ID {
+						cycleDetected = true
+						break
+					}
+					cursor = ancestor.ParentIssueID
+				}
+				if cycleDetected {
+					continue
+				}
 				params.ParentIssueID = newParentID
 			} else {
 				params.ParentIssueID = pgtype.UUID{Valid: false}
@@ -4579,25 +4837,22 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Each item uses the same transaction and preserves channel media.
-		itemResult["reason_code"] = "update_failed"
-		preActorType, preActorID := h.resolveActor(r, userID, workspaceID)
-
-		itemWrite := service.DependencyWrite{SuppressRun: req.Updates.SuppressRun, Probe: h.issueTriggerWriteProbe(r, preActorType, preActorID, prevIssue), ActorUserID: memberActorUserID(preActorType, preActorID), HandoffNote: req.Updates.HandoffNote}
-		if override, exists := req.DependencyOverrides[issueID]; exists {
-			itemWrite.Override = &override
-			itemWrite.IncludeView = true
-			itemWrite.PayloadDigest = batchDigest
+		var issue db.Issue
+		_, parentTouched := rawUpdates["parent_issue_id"]
+		if parentTouched || req.Updates.Description != nil {
+			// One batch-level base cannot describe multiple issue documents.
+			// Preserve every marked channel-media block conservatively, matching
+			// legacy single-update clients that omit description_base.
+			var lockedPrev db.Issue
+			issue, lockedPrev, _, err = h.updateIssueAtomically(
+				r.Context(), prevIssue.WorkspaceID, params, rawUpdates, nil, nil, nil, batchStatusKey, service.DependencyWrite{},
+			)
+			if err == nil {
+				prevIssue = lockedPrev
+			}
+		} else {
+			issue, err = h.updateIssueWithStatusGuard(r.Context(), wsUUID, batchStatusKey, params)
 		}
-
-		updateResult, err := h.updateIssueAtomically(
-			r.Context(), prevIssue.WorkspaceID, params, rawUpdates, nil, nil, nil, batchStatusKey, itemWrite,
-		)
-		issue := updateResult.Issue
-		if updateResult.Previous.ID.Valid {
-			prevIssue = updateResult.Previous
-		}
-
 		if err != nil {
 			// The archive race is a property of the batch's shared target
 			// status, not of one issue, so every remaining item would fail the
@@ -4606,20 +4861,6 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			slog.Warn("batch update issue failed", "issue_id", issueID, "error", err)
-			var dependencyErr *service.DependencyError
-			if errors.As(err, &dependencyErr) {
-				itemResult["reason_code"] = dependencyErr.Code
-				itemResult["error"] = dependencyErr.Message
-				itemResult["dependencies"] = dependencyErr.View
-			}
-			continue
-		}
-
-		if updateResult.Replayed {
-			itemResult["updated"] = true
-			itemResult["dispatch"] = issueRunOutcome(updateResult.Task, updateResult.Replayed || updateResult.Coalesced)
-			delete(itemResult, "reason_code")
-			updated++
 			continue
 		}
 
@@ -4635,11 +4876,13 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		projectChanged := req.Updates.ProjectID != nil && uuidToString(prevIssue.ProjectID) != uuidToString(issue.ProjectID)
 
 		h.publish(protocol.EventIssueUpdated, workspaceID, actorType, actorID, map[string]any{
-			"issue":            resp,
-			"assignee_changed": assigneeChanged,
-			"status_changed":   statusChanged,
-			"priority_changed": priorityChanged,
-			"project_changed":  projectChanged,
+			"issue":                      resp,
+			"assignee_changed":           assigneeChanged,
+			"status_changed":             statusChanged,
+			"priority_changed":           priorityChanged,
+			"project_changed":            projectChanged,
+			"duplicate_of_issue_id":      liveDuplicateMark(issue.Status, issue.DuplicateOfIssueID),
+			"prev_duplicate_of_issue_id": liveDuplicateMark(prevIssue.Status, prevIssue.DuplicateOfIssueID),
 		})
 
 		// Reassignment does not cancel existing tasks (#4963 / MUL-4113) —
@@ -4648,10 +4891,17 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		// Same single predicate as UpdateIssue — batch must not grow its own
 		// copy of the enqueue rule (the historical source of four-entry-point
 		// drift, MUL-3375). suppress_run applies batch-wide.
-		if !updateResult.Coalesced {
-			h.TaskService.PublishIssueTask(r.Context(), updateResult.Task)
+		if trigger, ok := h.IssueService.WillEnqueueRun(r.Context(),
+			service.IssueTriggerInput{
+				Issue:           issue,
+				PrevStatus:      prevIssue.Status,
+				AssigneeChanged: assigneeChanged,
+				StatusChanged:   statusChanged,
+			},
+			h.issueTriggerWriteProbe(r, actorType, actorID, issue),
+		); ok && !req.Updates.SuppressRun {
+			h.dispatchIssueRun(r.Context(), issue, trigger, actorType, actorID, req.Updates.HandoffNote)
 		}
-		itemResult["dispatch"] = issueRunOutcome(updateResult.Task, updateResult.Replayed || updateResult.Coalesced)
 
 		// No status change — not even → cancelled — cancels active tasks here,
 		// mirroring UpdateIssue (MUL-4465). See that handler for the rationale.
@@ -4680,8 +4930,6 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 
 		updated++
-		itemResult["updated"] = true
-		delete(itemResult, "reason_code")
 	}
 
 	// Aggregate parent/stage notification over the whole batch's final state so
@@ -4691,7 +4939,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	h.notifyParentsOfBatchChildDone(r.Context(), childDoneCompleted)
 
 	slog.Info("batch update issues", append(logger.RequestAttrs(r), "count", updated)...)
-	writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "results": results})
+	writeJSON(w, http.StatusOK, map[string]any{"updated": updated})
 }
 
 type BatchDeleteIssuesRequest struct {
@@ -4742,12 +4990,11 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 		seenIssueIDs[issueUUID] = struct{}{}
 		issues = append(issues, issue)
 		excludedIDs = append(excludedIDs, issue.ID)
+		h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
+		_ = h.AutopilotService.FailAutopilotRunsByIssue(r.Context(), issue.ID)
 	}
 	deleteResult, err := h.deleteIssuesAndCollectAttachmentURLs(r.Context(), issues, excludedIDs)
 	if err != nil {
-		if writeDependencyError(w, err) {
-			return
-		}
 		slog.Warn("batch delete issues failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete issues")
 		return
@@ -4757,7 +5004,8 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 	for _, issue := range issues {
 		h.publish(protocol.EventIssueDeleted, workspaceID, actorType, actorID, map[string]any{"issue_id": uuidToString(issue.ID)})
 	}
-	h.publishDetachedChildren(r.Context(), deleteResult.DetachedChildren, actorType, actorID)
+	h.publishIssueSnapshots(r.Context(), deleteResult.DetachedChildren, actorType, actorID)
+	h.publishClearedDuplicates(r.Context(), deleteResult.ClearedDuplicates, actorType, actorID)
 	deleted := len(issues)
 
 	slog.Info("batch delete issues", append(logger.RequestAttrs(r), "count", deleted)...)

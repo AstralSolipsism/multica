@@ -2,8 +2,10 @@ package lark
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -187,5 +189,39 @@ func TestReviewCreateDeliveryUUIDInReplyBody(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDeliveryParamsOrdinarySourceLink(t *testing.T) {
+	for _, alreadyLinked := range []bool{false, true} {
+		t.Run(map[bool]string{false: "append", true: "existing"}[alreadyLinked], func(t *testing.T) {
+			const link = "https://example.test/ws/autopilots/job"
+			body := "Report completed"
+			if alreadyLinked {
+				body += "\n" + link
+			}
+			req := messagedelivery.SendRequest{Target: messagedelivery.Target{Type: messagedelivery.TargetGroup, ChatID: "oc_test"}, Text: body, SourceURL: link, SourceRunID: "run-id", SendUUID: "fixed-send-id"}
+			first, err := deliveryParams(req, InstallationCredentials{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := deliveryParams(req, InstallationCredentials{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var content map[string]string
+			if err := json.Unmarshal([]byte(first.Content), &content); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Count(content["text"], link) != 1 || !strings.Contains(content["text"], "Run: run-id") {
+				t.Fatalf("missing or repeated source: %s", content["text"])
+			}
+			if first.Content != second.Content || first.UUID != second.UUID {
+				t.Fatal("retry changed frozen content or send identity")
+			}
+			if strings.Contains(content["text"], "signature") || strings.Contains(content["text"], "Verified notification") {
+				t.Fatal("retired source verification returned")
+			}
+		})
 	}
 }

@@ -13,12 +13,12 @@
   "delete_issue": {
     "title": "タスクを削除",
     "description": "このタスクとすべてのコメントが完全に削除されます。この操作は元に戻せません。",
-    "hint": "ワークスペースのメンバーであれば誰でもタスクを削除できます。",
     "cancel": "キャンセル",
     "confirm": "削除",
     "deleting": "削除中...",
     "toast_deleted": "タスクを削除しました",
-    "toast_delete_failed": "タスクを削除できませんでした"
+    "toast_delete_failed": "タスクを削除できませんでした",
+    "hint": "ワークスペースのメンバーであれば誰でもタスクを削除できます。"
   },
   "feedback": {
     "title": "フィードバック",
@@ -28,13 +28,17 @@
     "toast_sent": "フィードバックをありがとうございます！",
     "toast_failed": "フィードバックを送信できませんでした",
     "send": "フィードバックを送信",
-    "sending": "送信中…"
+    "sending": "送信中…",
+    "github_hint_prefix": "こちらでもフィードバックを送れます：",
+    "github_hint_link": "GitHub"
   },
   "issue_picker": {
     "search_placeholder": "タスクを検索...",
     "searching": "検索中...",
     "no_results": "タスクが見つかりません。",
-    "prompt_to_search": "タスクを検索するには入力してください"
+    "prompt_to_search": "タスクを検索するには入力してください",
+    "suggested_similar": "タイトルが似ているタスク",
+    "suggested_recent": "最近表示したタスク"
   },
   "set_parent": {
     "title": "親タスクを設定",
@@ -72,30 +76,6 @@
     "title_partial": "一部のタスクを更新できませんでした",
     "close": "閉じる"
   },
-  "edit_dependencies": {
-    "title": "前提条件を編集",
-    "description": "このタスクを開始する前に完了が必要なタスクを選択します。",
-    "description_for": "{{identifier}} を開始する前に完了が必要なタスクを選択します。",
-    "direct_section": "直接の前提条件",
-    "empty_direct": "直接の前提条件はありません",
-    "inherited_section": "継承された前提条件",
-    "inherited_hint": "継承された制約は元のタスクでのみ変更できます。",
-    "restricted_note": "閲覧権限のない前提条件がありますが、開始は引き続きブロックされます。",
-    "self_badge": "このタスク",
-    "added_badge": "追加済み",
-    "inherited_badge": "継承済み",
-    "conflict_notice": "編集中に前提条件が変更されました。最新の状態を表示しています——確認してから再度保存してください。",
-    "error_structure": "この変更は依存関係の循環または祖先の競合を生じさせます。",
-    "error_permission": "未完了の前提条件の削除には、編集権限を持つ人間のアカウントが必要です。",
-    "error_unverified": "既存の依存データの確認が済むまで編集できません。",
-    "error_generic": "前提条件の保存に失敗しました。",
-    "unknown_state": "前提条件の状態を取得できません——更新してから編集してください。",
-    "load_error": "前提条件を読み込めませんでした。",
-    "retry": "再試行",
-    "cancel": "キャンセル",
-    "save": "保存",
-    "toast_saved": "前提条件を更新しました"
-  },
   "create_squad": {
     "title": "スクワッドを作成",
     "description": "リーダーエージェントと任意の追加メンバーで協働スクワッドを作成します。",
@@ -108,7 +88,7 @@
     "leader_placeholder": "リーダーエージェントを選択",
     "members_label": "追加メンバー",
     "members_optional": "（任意）",
-    "members_hint": "リーダーがサブタスクを委任できるメンバーです。後から追加できます。",
+    "members_hint": "リーダーはこれらのメンバーにサブタスクを委任できます。",
     "members_placeholder": "エージェントまたはワークスペースメンバーを追加",
     "members_selected_count_other": "{{count}} 件選択中",
     "members_more_count": "+{{count}}",
@@ -168,7 +148,8 @@
     "local_clear": "クリア",
     "local_pick_failed": "ディレクトリ選択画面を開けませんでした。",
     "local_invalid_dir": "このディレクトリは使用できません。別のものを選択してください。",
-    "local_hint": "他のマシンのエージェントはこのパスを参照できず、起動に失敗します。共有作業にはリポジトリを使用してください。"
+    "local_hint": "他のマシンのエージェントはこのパスを参照できず、起動に失敗します。共有作業にはリポジトリを使用してください。",
+    "repos_ref_default": "デフォルトブランチ"
   },
   "create_issue": {
     "sr_manual": "新規タスク",
@@ -216,6 +197,7 @@
     "toast_link_subissues_partial": "サブタスク {{total}} 件中 {{failed}} 件をリンクできませんでした",
     "toast_link_labels_failed": "ラベルを付けられませんでした",
     "toast_set_properties_failed": "{{count}} 件のカスタムプロパティを設定できませんでした",
+    "unavailable_property_removed": "利用できなくなったカスタムプロパティを下書きから削除しました。内容を確認してから再度送信してください。",
     "switch_to_agent": "エージェントに切り替え",
     "switch_to_agent_tooltip": "エージェントで作成に切り替えます。一行で説明すれば、エージェントがタスクを作成します",
     "switch_to_manual": "手動に切り替え",
@@ -230,26 +212,6 @@
     "set_start_date": "開始日を設定...",
     "set_parent": "親タスクを設定...",
     "add_subissue": "サブタスクを追加...",
-    "add_prerequisite": "前提タスクを追加...",
-    "prerequisite_chip": "前提：{{identifier}}",
-    "remove_prerequisite_aria": "前提 {{identifier}} を削除",
-    "prerequisite_picker": {
-      "title": "前提タスクを追加",
-      "description": "新しいタスクを開始する前に完了が必要なタスクを検索"
-    },
-    "dependency_confirm": {
-      "title": "前提条件が未完了です",
-      "body": "未完了の前提条件があるため、このタスクは作成後に開始されません。編集に戻る（例：バックログに置く）か、この実行だけを明示的に許可できます。",
-      "cancel": "編集に戻る",
-      "confirm": "それでも作成して開始",
-      "uncertain_note": "結果は不明です——タスクがすでに作成されている可能性があります。再試行は同じ一回限りの許可を再利用します。重複した確認は元の結果を返し、二重作成にはなりません。",
-      "changed_note": "この確認の後で下書きが変更されました——この一回限りの許可は適用されません。もう一度作成して確認してください。"
-    },
-    "dependency_now_ready": "前提条件が完了しました——もう一度作成すると通常どおり開始されます。",
-    "dependency_override_not_allowed": "現在のサインインでは未完了の前提条件を解除できません。",
-    "dependency_structure_error": "これらの前提条件は循環または祖先の競合を生じさせます。",
-    "dependency_unverified_error": "既存の依存データの確認が済むまで編集できません。",
-    "dependency_unsupported": "このサーバーバージョンは前提条件に未対応です。",
     "set_status": "ステータスを設定...",
     "set_priority": "優先度を設定...",
     "set_assignee": "担当者を設定...",
@@ -294,6 +256,48 @@
       "error_daemon_version": "このエージェントのデーモン CLI（{{current}}）が必要なバージョン {{min}} を下回っています。エージェントで作成を使用するには、デーモンをアップグレードしてください。",
       "error_unknown": "送信できませんでした。再試行してください。",
       "sub_issue_of": "{{identifier}} のサブタスク"
-    }
+    },
+    "add_prerequisite": "前提タスクを追加...",
+    "prerequisite_chip": "前提：{{identifier}}",
+    "remove_prerequisite_aria": "前提 {{identifier}} を削除",
+    "prerequisite_picker": {
+      "title": "前提タスクを追加",
+      "description": "新しいタスクを開始する前に完了が必要なタスクを検索"
+    },
+    "dependency_structure_error": "これらの前提条件は循環または祖先の競合を生じさせます。",
+    "dependency_unverified_error": "既存の依存データの確認が済むまで編集できません。",
+    "dependency_unsupported": "このサーバーバージョンは前提条件に未対応です。"
+  },
+  "mark_duplicate": {
+    "title": "重複としてマーク",
+    "description": "元のタスクを検索してください。このタスクはキャンセルされ、元のタスクに関連付けられます。",
+    "toast_success": "{{identifier}} の重複としてマークしました",
+    "toast_failed": "重複としてマークできませんでした",
+    "error_target_is_duplicate": "{{identifier}} 自体が重複です。元のタスクを選択してください",
+    "error_has_duplicates": "他のタスクがこのタスクの重複としてマークされています。先にそのマークを解除してください"
+  },
+  "edit_dependencies": {
+    "title": "前提条件を編集",
+    "description": "このタスクを開始する前に完了が必要なタスクを選択します。",
+    "description_for": "{{identifier}} を開始する前に完了が必要なタスクを選択します。",
+    "direct_section": "直接の前提条件",
+    "empty_direct": "直接の前提条件はありません",
+    "inherited_section": "継承された前提条件",
+    "inherited_hint": "継承された制約は元のタスクでのみ変更できます。",
+    "restricted_note": "閲覧権限のない前提条件がありますが、開始は引き続きブロックされます。",
+    "self_badge": "このタスク",
+    "added_badge": "追加済み",
+    "inherited_badge": "継承済み",
+    "conflict_notice": "編集中に前提条件が変更されました。最新の状態を表示しています——確認してから再度保存してください。",
+    "error_structure": "この変更は依存関係の循環または祖先の競合を生じさせます。",
+    "error_permission": "未完了の前提条件の削除には、編集権限を持つ人間のアカウントが必要です。",
+    "error_unverified": "既存の依存データの確認が済むまで編集できません。",
+    "error_generic": "前提条件の保存に失敗しました。",
+    "unknown_state": "前提条件の状態を取得できません——更新してから編集してください。",
+    "load_error": "前提条件を読み込めませんでした。",
+    "retry": "再試行",
+    "cancel": "キャンセル",
+    "save": "保存",
+    "toast_saved": "前提条件を更新しました"
   }
 }

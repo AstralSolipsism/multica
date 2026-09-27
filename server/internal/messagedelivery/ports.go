@@ -55,6 +55,7 @@ func (e *SendError) Unwrap() error { return e.Err }
 type SendRequest struct {
 	DeliveryID     string
 	SourceURL      string
+	SourceRunID    string
 	WorkspaceID    string
 	InstallationID string
 	ChannelType    string

@@ -142,18 +142,18 @@ describe("WelcomeAfterOnboarding", () => {
 
     expect(screen.getByText(/Setting up your workspace/i)).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByText(/Welcome to Labrastro/i)).toBeInTheDocument();
+      expect(screen.getByText(/Welcome to Multica/i)).toBeInTheDocument();
     });
 
     expect(mockCreateIssue).toHaveBeenCalledTimes(1);
     expect(mockCreateIssue.mock.calls[0]![0]).toMatchObject({
-      title: "Connect a runtime to start with Mizuki",
+      title: "Connect a runtime to start with Mika",
       status: "in_progress",
       assignee_type: "member",
       assignee_id: "user-1",
     });
     expect(mockCreateIssue.mock.calls[0]![0].description).toContain(
-      "Start with Mizuki",
+      "Start with Mika",
     );
 
     fireEvent.click(screen.getByRole("button", { name: /got it/i }));
@@ -193,7 +193,7 @@ describe("WelcomeAfterOnboarding", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /try again/i }));
 
-    expect(await screen.findByText(/Welcome to Labrastro/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Welcome to Multica/i)).toBeInTheDocument();
     expect(mockCreateIssue).toHaveBeenCalledTimes(2);
   });
 

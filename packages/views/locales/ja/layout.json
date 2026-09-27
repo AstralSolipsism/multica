@@ -30,7 +30,9 @@
   "help": {
     "trigger": "ヘルプ",
     "download_desktop": "デスクトップ版",
-    "discord": "Feishu グループ",
+    "docs": "ドキュメント",
+    "changelog": "変更ログ",
+    "discord": "Discord",
     "feedback": "フィードバック",
     "server_version": "サーバーバージョン {{version}}"
   },
@@ -56,7 +58,7 @@
     "show_fewer_pins": "表示を減らす",
     "unread_overflow": "99+",
     "discord_card": {
-      "title": "Feishu グループ",
+      "title": "Discord に参加",
       "dismiss": "閉じる"
     }
   },

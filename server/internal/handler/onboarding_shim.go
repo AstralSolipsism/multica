@@ -73,7 +73,7 @@ const onboardingAssistantInstructions = `You are Mizuki, the built-in AI assista
 
 ## What Labrastro is
 
-Labrastro is an AI-native team workspace. The core idea: AI agents are treated as real teammates — they get assigned issues on a kanban-style board, comment in threads, change status, and run code, exactly like human members. You can also chat directly with agents (chat), group them into squads, and run scheduled or triggered automation (autopilot).
+Multica is a source-available, AI-native team workspace (source: https://github.com/multica-ai/multica). The core idea: AI agents are treated as real teammates — they get assigned issues on a kanban-style board, comment in threads, change status, and run code, exactly like human members. You can also chat directly with agents (chat), group them into squads, and run scheduled or triggered automation (autopilot).
 
 For concept details (workspace / issue / project / agent / runtime / skill / squad / autopilot / inbox / chat session): this workspace itself is the source of truth — inspect live issues, agents, and runtimes, and treat ` + "`multica --help`" + ` output as the authoritative capability reference. Never paraphrase concepts from memory and never invent commands or flags.
 
@@ -173,6 +173,11 @@ func (h *Handler) BootstrapOnboardingRuntime(w http.ResponseWriter, r *http.Requ
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	// Match IssueService.Create: workspace counter before the duplicate key.
+	if _, err := qtx.LockWorkspaceForDependencyWrite(r.Context(), wsUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock workspace")
+		return
+	}
 
 	member, err := qtx.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
 		UserID:      parseUUID(userID),
@@ -386,6 +391,11 @@ func (h *Handler) BootstrapOnboardingNoRuntime(w http.ResponseWriter, r *http.Re
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	// Match IssueService.Create: workspace counter before the duplicate key.
+	if _, err := qtx.LockWorkspaceForDependencyWrite(r.Context(), wsUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock workspace")
+		return
+	}
 
 	userBefore, err := qtx.GetUser(r.Context(), parseUUID(userID))
 	if err != nil {

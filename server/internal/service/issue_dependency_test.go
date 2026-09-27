@@ -1,36 +1,16 @@
 package service
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/issuedependency"
-	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func TestDependencyScopedSnapshotRejectsAnotherTarget(t *testing.T) {
-	target := util.MustParseUUID("00000000-0000-4000-8000-000000000001")
-	other := util.MustParseUUID("00000000-0000-4000-8000-000000000002")
-	snapshot := DependencySnapshot{admissionTargets: map[string]bool{util.UUIDToString(target): true}}
-	err := snapshot.CheckWriteAdmission(context.Background(), db.Issue{ID: other}, false, true)
-	var dep *DependencyError
-	if !errors.As(err, &dep) || dep.Code != "dependency_data_unverified" {
-		t.Fatalf("snapshot admitted a target whose statuses were not locked: %v", err)
-	}
-	for _, issue := range []db.Issue{{ID: other}, {}} {
-		err := snapshot.CheckRun(context.Background(), issue.ID)
-		if !errors.As(err, &dep) || dep.Code != "dependency_data_unverified" {
-			t.Fatalf("run bypassed the scoped snapshot: %v", err)
-		}
-	}
-}
-
-func TestDependencyAdmissionProjectionIgnoresEdgeOrder(t *testing.T) {
+func TestDependencyProjectionIgnoresEdgeOrder(t *testing.T) {
 	snapshot := DependencySnapshot{service: &DependencyService{SigningKey: []byte("test-only-signing-key")}, Model: issuedependency.Model{
 		Issues: map[string]issuedependency.Issue{
 			"target": {ID: "target", ParentID: "parent"}, "parent": {ID: "parent"},
@@ -74,7 +54,7 @@ func TestDependencyProjectionAndSignedVersion(t *testing.T) {
 	}
 	v := s.View("target", func(id string) bool { return id == "target" })
 	if !v.HasRestrictedBlockers || len(v.Unsatisfied) > 0 || len(v.InheritedBlockedBy) > 0 {
-		t.Fatalf("restricted prerequisites must block without disclosure: %+v", v)
+		t.Fatalf("restricted prerequisites must remain informational without disclosure: %+v", v)
 	}
 	encoded, _ := json.Marshal(v)
 	for _, hidden := range []string{"hidden-parent", "hidden-edge", "secret", "private title"} {

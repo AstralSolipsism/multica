@@ -2,6 +2,7 @@
   "page": {
     "title": "Runtimes",
     "tagline": "Machines and cloud workers running CLI sessions for your agents.",
+    "learn_more": "Learn more →",
     "connect_remote": "Add a computer",
     "search_placeholder": "Search runtimes…",
     "scope_mine": "Mine",
@@ -12,7 +13,7 @@
     "filter_all_description": "All runtimes in this view",
     "empty": {
       "title": "No runtimes yet",
-      "hint": "Desktop auto-scans this computer. To use another machine — a server, dev box, or any computer with a terminal — add it here."
+      "hint": "Desktop detects this computer automatically. Connect other computers here."
     },
     "no_matches": {
       "title": "No matches",
@@ -23,17 +24,17 @@
     },
     "bootstrapping": {
       "title": "Starting local runtime…",
-      "hint": "This usually takes a few seconds. Your daemon is registering with the workspace."
+      "hint": "Connecting to the workspace..."
     }
   },
   "mika_setup": {
-    "title": "Your runtime is ready. Start with Mizuki.",
-    "description": "Mizuki turns your goal into an issue, coordinates the right agent, and helps you add reusable specialists when your workflow needs them.",
-    "action": "Start with Mizuki",
-    "failed": "Couldn't start Mizuki",
-    "dialog_title": "Where should Mizuki run?",
-    "dialog_description": "Pick the runtime Mizuki will use. You can change it later in settings.",
-    "cancel": "Cancel"
+    "title": "Your runtime is ready. Start with Mika.",
+    "description": "Let Mika organize work and coordinate agents.",
+    "action": "Start with Mika",
+    "failed": "Couldn't start Mika",
+    "dialog_title": "Where should Mika run?",
+    "cancel": "Cancel",
+    "dialog_description": "Pick the runtime Mizuki will use. You can change it later in settings."
   },
   "machine": {
     "search_placeholder": "Search machines…",
@@ -83,7 +84,7 @@
     "rename": "Rename machine",
     "rename_dialog": {
       "title": "Rename machine",
-      "description": "Give this machine a name you'll recognize. It applies to every runtime on this machine and shows up when you pick a runtime for an agent.",
+      "description": "Used for this computer and all its runtimes.",
       "placeholder": "e.g. Bohan's MacBook",
       "hint": "Leave empty to use the device's default name.",
       "cancel": "Cancel",
@@ -205,11 +206,13 @@
   "connect": {
     "title": "Add a computer",
     "description": "Run these two commands on the computer you want to add. We'll detect it the moment the daemon comes online.",
-    "step1_label": "Install the Labrastro CLI",
+    "step1_label": "Install the Multica CLI",
+    "platform_group": "Choose your platform",
+    "platform_macos_linux": "macOS / Linux",
+    "platform_windows": "Windows",
     "step2_label": "Start the daemon",
     "step2_hint": "Opens a browser to sign in, then keeps the daemon running in the background.",
     "live_listening": "Waiting for your computer",
-    "live_listening_hint": "We'll detect it as soon as the daemon starts — usually under a minute.",
     "troubleshooting": "Can't open a browser on that computer?",
     "trouble_intro": "Use a token instead of the browser sign-in. This replaces step 2 and works anywhere you have a terminal.",
     "trouble_token_hint_prefix": "Create a token in ",
@@ -220,21 +223,21 @@
     "copy_aria": "Copy",
     "cancel": "Cancel",
     "success_title": "Computer connected",
-    "success_description": "Your computer is online and ready. Create an agent and it can start picking up runs here.",
+    "success_description": "Computer connected. You can now create an agent.",
     "view_runtime": "View runtime",
-    "create_agent": "Create an agent"
+    "create_agent": "Create an agent",
+    "live_listening_hint": "We'll detect it as soon as the daemon starts — usually under a minute."
   },
   "cloud_runtime": {
     "action": "Cloud Runtime",
     "title": "Cloud Runtime",
-    "description": "Launch a managed cloud node and watch its Fleet status.",
+    "description": "Create a cloud runtime.",
     "create_title": "New node",
-    "create_hint": "Choose a name, instance type, and disk size. Fleet applies the rest.",
     "nodes_title": "Fleet nodes",
     "refresh": "Refresh",
     "nodes_empty": "No cloud nodes",
     "nodes_failed": "Cloud Runtime unavailable",
-    "nodes_failed_hint": "Fleet did not return a node list.",
+    "nodes_failed_hint": "Couldn't load cloud nodes. Try again.",
     "node_fallback_name": "Cloud node",
     "create": "Create node",
     "creating": "Creating...",
@@ -262,17 +265,18 @@
     "validation": {
       "instance_type_required": "Instance type is required",
       "disk_size_invalid": "Disk size must be a positive integer"
-    }
+    },
+    "create_hint": "Choose a name, instance type, and disk size. Fleet applies the rest."
   },
   "update": {
     "cli_version_label": "CLI Version:",
     "version_unknown": "unknown",
     "managed_by_desktop": "Managed by Desktop",
-    "managed_by_desktop_title": "The CLI binary is managed by Labrastro Desktop — update Desktop to upgrade the CLI.",
+    "managed_by_desktop_title": "The CLI binary is managed by Multica Desktop — update Desktop to upgrade the CLI.",
     "read_only": "Read-only",
     "read_only_title": "Only runtime owners and workspace admins can update the CLI.",
     "local_build": "Local build",
-    "local_build_title": "This runtime reports a non-release version, so Labrastro cannot tell whether an upgrade is available. Update it from the machine itself.",
+    "local_build_title": "This runtime reports a non-release version, so Multica cannot tell whether an upgrade is available. Update it from the machine itself.",
     "latest": "Latest",
     "available": "available",
     "action": "Update",
@@ -305,7 +309,6 @@
     "col_owner": "Owner",
     "col_agents": "Agents",
     "col_cost": "Cost · 7d",
-    "col_quota": "Quota",
     "col_cli": "CLI",
     "cost_delta_flat": "flat",
     "cli_managed_badge": "Desktop",
@@ -323,31 +326,8 @@
     "pending_health_warning": "Waiting for daemon sync",
     "pending_health_error": "Registration error",
     "pending_health_disabled": "Disabled",
-    "pending_cli_unknown": "waiting"
-  },
-  "quota": {
-    "title": "Plan quota",
-    "window_short_minutes": "{{value}}m",
-    "window_short_hours": "{{value}}h",
-    "window_short_days": "{{value}}d",
-    "window_weekly": "wk",
-    "group_gemini": "Gemini",
-    "group_claude_gpt": "Claude + GPT",
-    "remaining": "{{percent}}% left",
-    "resets_in": "resets in {{time}}",
-    "exhausted": "Rate limited",
-    "not_reported": "Not reported",
-    "stale": "Stale data",
-    "stale_hint": "snapshot {{time}} ago",
-    "observed_ago": "updated {{time}} ago",
-    "source_daemon": "via daemon",
-    "source_external": "via external push",
-    "glm_title": "GLM plan balance",
-    "glm_window_tokens": "5-hour tokens",
-    "glm_window_time": "Monthly tool credits",
-    "glm_window_credit": "Credit window",
-    "glm_unknown": "balance unknown",
-    "glm_window_fallback": "{{type}}"
+    "pending_cli_unknown": "waiting",
+    "col_quota": "Quota"
   },
   "profiles": {
     "cta": "Add runtime",
@@ -358,6 +338,7 @@
     "dialog_title": "Custom runtimes",
     "dialog_description": "Custom runtime definitions are workspace-wide and sync to every connected machine. A machine registers the runtime when the command is available there.",
     "create_dialog_description": "Set up a custom command from {{machine}}. The definition syncs workspace-wide and registers only on machines where that command is available.",
+    "learn_more": "View setup guide",
     "close": "Close",
     "add_new": "New custom runtime",
     "list_title": "Runtime backends",
@@ -368,7 +349,7 @@
     "builtin_section_aria": "Supported built-in protocol families",
     "builtin_reference": "Reference",
     "empty_title": "Create your first custom runtime",
-    "empty_description": "Pick a base protocol family, then point Labrastro at the command to run.",
+    "empty_description": "Pick a base protocol family, then point Multica at the command to run.",
     "badge_builtin": "Built-in",
     "badge_custom": "Custom",
     "badge_disabled": "Disabled",
@@ -378,7 +359,7 @@
       "read_only": "Read-only"
     },
     "detail": {
-      "base_family": "Base protocol family",
+      "base_family": "Base runtime",
       "command": "Command",
       "description": "Description",
       "no_description": "No description",
@@ -390,12 +371,12 @@
     "form": {
       "create_title": "New custom runtime",
       "edit_title": "Edit custom runtime",
-      "step_family_label": "Choose a base protocol family",
-      "step_family_hint": "The underlying CLI protocol this runtime speaks.",
+      "step_family_label": "Choose a base runtime",
+      "step_family_hint": "Select the CLI this command is compatible with.",
       "step_details_label": "Configure the runtime",
       "step_progress": "Step {{current}} of {{total}}",
-      "family_label": "Base protocol family",
-      "family_locked_hint": "The base protocol family can't be changed after creation.",
+      "family_label": "Base runtime",
+      "family_locked_hint": "The base runtime cannot be changed after creation.",
       "display_name_label": "Display name",
       "display_name_placeholder": "e.g. My custom Claude…",
       "command_name_label": "Command",
@@ -429,7 +410,7 @@
       "cancel": "Cancel",
       "deleting": "Deleting…",
       "toast_deleted": "Custom runtime deleted from workspace",
-      "error_bound": "This runtime can't be deleted while agents are still using it.",
+      "error_bound": "This custom runtime can't be deleted while agents are still using it — including agents on other machines that registered it.",
       "error_generic": "Failed to delete the runtime."
     }
   },
@@ -492,5 +473,29 @@
     "table_cache_r": "Cache R",
     "table_cache_w": "Cache W",
     "no_data": "No usage data yet"
+  },
+  "quota": {
+    "title": "Plan quota",
+    "window_short_minutes": "{{value}}m",
+    "window_short_hours": "{{value}}h",
+    "window_short_days": "{{value}}d",
+    "window_weekly": "wk",
+    "group_gemini": "Gemini",
+    "group_claude_gpt": "Claude + GPT",
+    "remaining": "{{percent}}% left",
+    "resets_in": "resets in {{time}}",
+    "exhausted": "Rate limited",
+    "not_reported": "Not reported",
+    "stale": "Stale data",
+    "stale_hint": "snapshot {{time}} ago",
+    "observed_ago": "updated {{time}} ago",
+    "source_daemon": "via daemon",
+    "source_external": "via external push",
+    "glm_title": "GLM plan balance",
+    "glm_window_tokens": "5-hour tokens",
+    "glm_window_time": "Monthly tool credits",
+    "glm_window_credit": "Credit window",
+    "glm_unknown": "balance unknown",
+    "glm_window_fallback": "{{type}}"
   }
 }

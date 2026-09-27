@@ -6,7 +6,7 @@ import { Unlink } from "lucide-react";
 import { isIssueStatusCategory } from "@multica/core/issue-statuses";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
-import type { IssueDependencyPreview, IssuePrerequisite } from "@multica/core/api";
+import type { IssuePrerequisite } from "@multica/core/api";
 import type { Issue } from "@multica/core/types";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { AppLink } from "../../navigation";
@@ -232,73 +232,3 @@ export function PrerequisiteList({
  * (run-confirm modal / create dialog), and a `null` projection is rendered as
  * "unknown, refresh", never as an empty (read: satisfied) list.
  */
-export function DependencyBlockedList({
-  wsId,
-  items,
-  showTarget,
-  onOpenIssue,
-}: {
-  wsId: string;
-  items: IssueDependencyPreview[];
-  /** Batch confirmations show which issue each prerequisite list belongs to. */
-  showTarget?: boolean;
-  onOpenIssue?: (issueId: string) => void;
-}) {
-  const { t } = useT("issues");
-  const targetIds = useMemo(
-    () => [...new Set(items.map((i) => i.issueId).filter(Boolean))].sort(),
-    [items],
-  );
-  const targetDetails = useQueries({
-    // Only fetched when the target label renders — a create preview's
-    // candidate id is random and must not fire a pointless 404 read.
-    queries: targetIds.map((id) => ({
-      ...issueDetailOptions(wsId, id),
-      enabled: showTarget === true,
-    })),
-  });
-  const targetLabelOf = (id: string): string => {
-    const idx = targetIds.indexOf(id);
-    const issue = idx >= 0 ? targetDetails[idx]?.data : undefined;
-    return issue?.identifier ?? id;
-  };
-
-  const restricted = items.some((i) => i.dependencies?.hasRestrictedBlockers === true);
-
-  return (
-    <div className="flex flex-col gap-2">
-      {items.map((item) => (
-        <div key={item.issueId || "create"}>
-          {showTarget && (
-            <div className="px-2 pb-0.5 text-micro font-medium text-muted-foreground tabular-nums">
-              {targetLabelOf(item.issueId)}
-            </div>
-          )}
-          {item.dependencies ? (
-            item.dependencies.unsatisfied.length > 0 ? (
-              <PrerequisiteList
-                wsId={wsId}
-                items={item.dependencies.unsatisfied}
-                mode="mixed"
-                onOpen={onOpenIssue}
-              />
-            ) : (
-              <p className="px-2 py-1 text-caption text-muted-foreground">
-                {t(($) => $.dependencies.blocked_without_visible)}
-              </p>
-            )
-          ) : (
-            <p className="px-2 py-1 text-caption text-muted-foreground">
-              {t(($) => $.dependencies.unknown_state)}
-            </p>
-          )}
-        </div>
-      ))}
-      {restricted && (
-        <p className="px-2 text-micro text-muted-foreground">
-          {t(($) => $.dependencies.restricted_note)}
-        </p>
-      )}
-    </div>
-  );
-}

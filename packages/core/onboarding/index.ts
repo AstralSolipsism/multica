@@ -9,6 +9,7 @@ export type {
 export {
   saveQuestionnaire,
   completeOnboarding,
+  joinCloudWaitlist,
 } from "./store";
 export { ONBOARDING_STEP_ORDER } from "./step-order";
 export {

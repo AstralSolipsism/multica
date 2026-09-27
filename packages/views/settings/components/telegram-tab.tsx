@@ -35,6 +35,7 @@ import { telegramInstallationsOptions, telegramKeys } from "@multica/core/telegr
 import { api } from "@multica/core/api";
 import type { TelegramInstallation } from "@multica/core/types";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { docsLocalePrefix } from "../../common/docs-locale";
 import { openExternal } from "../../platform";
 import { useLocale, useT } from "../../i18n";
 
@@ -231,6 +232,12 @@ function InstallationRow({
   );
 }
 
+// telegramDocsUrl points at the Telegram integration guide on the docs site,
+// localized like the Slack docs link.
+function telegramDocsUrl(lang: string | undefined): string {
+  return `https://multica.ai/docs${docsLocalePrefix(lang)}/telegram-bot-integration`;
+}
+
 // TelegramAgentBindButton is the per-agent CTA on the agent detail page.
 // Telegram uses the paste-a-token model: the admin creates a bot with
 // @BotFather and pastes its token; the backend validates via getMe before
@@ -249,7 +256,7 @@ export function TelegramAgentBindButton({
    * handler so management actions live in one place. */
   onShowConnectedDetails?: () => void;
 }) {
-  const { t } = useT("settings");
+  const { t, i18n } = useT("settings");
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
   const user = useAuthStore((s) => s.user);
@@ -355,6 +362,16 @@ export function TelegramAgentBindButton({
           <p className="text-caption text-muted-foreground">
             {t(($) => $.telegram.connect_dialog_description)}
           </p>
+
+          <button
+            type="button"
+            onClick={() => openExternal(telegramDocsUrl(i18n.language))}
+            className="inline-flex w-fit items-center gap-2 text-body font-medium text-primary underline-offset-2 hover:underline"
+            data-testid="telegram-docs-link"
+          >
+            <ExternalLink className="h-4 w-4" />
+            {t(($) => $.telegram.connect_docs_link)}
+          </button>
 
           <div className="space-y-1.5">
             <Label htmlFor="telegram-bot-token">

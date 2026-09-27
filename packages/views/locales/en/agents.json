@@ -2,6 +2,7 @@
   "page": {
     "title": "Agents",
     "tagline": "AI teammates that pick up issues, comment, and update status.",
+    "learn_more": "Learn more →",
     "new_agent": "New agent",
     "search_placeholder": "Search agents…",
     "show_archived": "Show archived ({{count}}) →",
@@ -44,7 +45,7 @@
   },
   "empty": {
     "title": "No agents yet",
-    "description": "Create an agent and assign it issues, like any teammate. Local agents run on your machine; cloud agents run on Labrastro's runtime."
+    "description": "Create an agent, then assign it issues."
   },
   "no_matches": {
     "title": "No matches",
@@ -169,11 +170,8 @@
   },
   "inspector": {
     "section_profile": "Profile",
-    "section_profile_hint": "Manage how this agent appears across the workspace.",
     "section_execution": "Execution",
-    "section_execution_hint": "Choose the runtime, model, reasoning level, speed, and parallel run limit.",
     "section_access": "Access",
-    "section_access_hint": "Control who can run this agent and use its connected capabilities.",
     "section_properties": "Properties",
     "section_details": "Details",
     "section_details_hint": "Read-only ownership and lifecycle information.",
@@ -190,7 +188,6 @@
     "prop_updated": "Updated",
     "no_description_placeholder": "No description",
     "avatar_label": "Avatar",
-    "avatar_hint": "Shown in assignments, activity, and chat.",
     "name_label": "Name",
     "description_label": "Description",
     "change_avatar_aria": "Change avatar",
@@ -202,7 +199,11 @@
     "edit_description_title": "Edit description",
     "description_placeholder": "What does this agent do?",
     "save": "Save",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "section_profile_hint": "Manage how this agent appears across the workspace.",
+    "section_execution_hint": "Choose the runtime, model, reasoning level, speed, and parallel run limit.",
+    "section_access_hint": "Control who can run this agent and use its connected capabilities.",
+    "avatar_hint": "Shown in assignments, activity, and chat."
   },
   "overview": {
     "agent_context": "Agent",
@@ -294,7 +295,6 @@
     "back": "Go back",
     "eyebrow": "Agent creation",
     "choose_title": "How would you like to start?",
-    "choose_description": "Start with full control, or describe what you need and build it through conversation.",
     "recommended": "Recommended",
     "continue": "Continue",
     "step_choose": "Choose a starting point",
@@ -303,7 +303,7 @@
     "modes": {
       "blank": {
         "title": "Start blank",
-        "description": "Configure every field yourself. Best when you already know exactly how this agent should work."
+        "description": "Set the name, instructions, and runtime yourself."
       },
       "template": {
         "title": "Use a template",
@@ -311,17 +311,17 @@
       },
       "ai": {
         "title": "Build with AI",
-        "description": "Describe the outcome you want. An Agent Builder will ask focused questions and prepare a live draft."
+        "description": "Create an editable configuration through conversation."
       }
     },
     "sections": {
       "identity": "Identity",
-      "identity_hint": "Give the agent a recognizable name and a concise purpose.",
       "behavior": "Behavior & capabilities",
-      "behavior_hint": "Define how it should work and attach workspace skills it can rely on.",
       "execution": "Execution",
-      "execution_hint": "Choose where the agent runs, and optionally override the runtime's default model, thinking level and speed.",
+      "execution_hint": "Unspecified options use the runtime defaults.",
       "access": "Access",
+      "identity_hint": "Give the agent a recognizable name and a concise purpose.",
+      "behavior_hint": "Define how it should work and attach workspace skills it can rely on.",
       "access_hint": "Control who can start runs with this agent. You can change this later."
     },
     "thinking_label": "Thinking",
@@ -343,7 +343,7 @@
     },
     "builder": {
       "setup_title": "Choose a runtime for Agent Builder",
-      "setup_description": "The selected online runtime powers the setup conversation and becomes the new agent's runtime by default.",
+      "setup_description": "This runtime powers setup and is the default for the new agent.",
       "start": "Start conversation",
       "connect_runtime": "Connect a runtime",
       "start_failed": "Could not start Agent Builder.",
@@ -353,20 +353,20 @@
       "switch_runtime_pending": "Stop the current reply to switch runtime.",
       "switch_runtime_success": "Runtime switched. Your draft is kept and the conversation continues on the new runtime with a fresh model session.",
       "chat_title": "Agent Builder",
-      "chat_hint": "Shape the requirements through conversation and refine the configuration beside it.",
       "runtime_online": "Runtime online",
       "runtime_offline": "Runtime offline",
       "empty_title": "What should this agent do?",
-      "empty_description": "Describe its role, workflow, output, or constraints. A useful first draft will appear on the right.",
+      "empty_description": "Describe what this agent should do.",
       "prompt_review": "Review frontend pull requests",
       "prompt_research": "Research competitors and summarize findings",
       "prompt_assistant": "Help our team plan and write projects",
       "thinking": "Updating the draft…",
       "placeholder": "Describe the agent you need…",
-      "send": "Send message"
+      "send": "Send message",
+      "chat_hint": "Shape the requirements through conversation and refine the configuration beside it."
     },
     "live_draft": "Agent configuration",
-    "live_draft_hint": "Conversation updates appear here, and you can adjust any field directly.",
+    "live_draft_hint": "You can edit the draft directly.",
     "duplicate_env_notice": "Instructions, skills and command arguments are copied. Environment variables, MCP servers and machine-local runtime config are not.",
     "duplicate_runtime_reset_notice": "The original runtime is unavailable, so this copy runs on another one. Model, thinking level and speed were cleared because they only apply to the runtime they were chosen on.",
     "create_and_open": "Create & open agent",
@@ -384,12 +384,12 @@
       "discard_cancel": "Keep editing",
       "banner": "You have {{count}} unfinished draft(s)",
       "pick_hint": "Pick one to continue."
-    }
+    },
+    "choose_description": "Start with full control, or describe what you need and build it through conversation."
   },
   "create_dialog": {
     "title_create": "Create Agent",
     "title_duplicate": "Duplicate Agent",
-    "description_create": "Create a new AI agent for your workspace.",
     "description_duplicate": "Create a new agent based on \"{{name}}\". Instructions, env, and skills are copied for you.",
     "name_label": "Name",
     "name_placeholder": "e.g. Deep Research Agent",
@@ -450,11 +450,12 @@
       "remove_aria": "Remove avatar",
       "select_image_toast": "Please select an image file.",
       "upload_failed_toast": "Avatar upload failed"
-    }
+    },
+    "description_create": "Create a new AI agent for your workspace."
   },
   "conversation_starters": {
     "label": "Conversation starters",
-    "hint": "Up to three examples, shown when someone opens a new chat with this agent. Selecting one fills the composer without sending it.",
+    "hint": "Up to three. Selecting one fills the composer without sending.",
     "add": "Add suggestion",
     "item_label": "Suggestion {{number}} label",
     "prompt_label": "Suggestion {{number}} prompt",
@@ -475,12 +476,12 @@
       "intro": "Set the system prompt used for every run. Markdown is supported.",
       "system_prompt_label": "System prompt",
       "placeholder": "Define this agent's role, expertise, and working style.\n\n# Example\nYou are a frontend engineer specializing in React and TypeScript.\n\n## Working Style\n- Write small, focused PRs — one commit per logical change\n- Prefer composition over inheritance\n- Always add unit tests for new components\n\n## Constraints\n- Do not modify shared/ types without explicit approval\n- Follow the existing component patterns in features/",
-      "system_layer_label": "Maintained by Labrastro",
-      "system_layer_hint": "Updates with each Labrastro release. You can't edit it, and your notes below are never overwritten.",
+      "system_layer_label": "Maintained by Multica",
+      "system_layer_hint": "Updates with each Multica release. You can't edit it, and your notes below are never overwritten.",
       "system_layer_show": "Show",
       "system_layer_hide": "Hide",
       "workspace_notes_label": "Workspace notes",
-      "workspace_notes_intro": "Add your team's context and preferences below. They apply on top of the instructions Labrastro maintains for this agent. Markdown is supported.",
+      "workspace_notes_intro": "Add your team's context and preferences below. They apply on top of the instructions Multica maintains for this agent. Markdown is supported.",
       "workspace_notes_placeholder": "Add context this agent should always have.\n\n# Example\nOur main repository is github.com/acme/platform.\nWrite issues in English even when we chat in Chinese.\nWe do not deploy on Fridays."
     },
     "env": {
@@ -512,7 +513,7 @@
       "reveal_action": "Reveal & edit",
       "revealing": "Revealing…",
       "reveal_failed_toast": "Failed to load env values",
-      "empty_editable": "No environment variables configured. Add one to inject it into the agent at launch."
+      "empty_editable": "No environment variables configured."
     },
     "custom_args": {
       "intro": "Add CLI arguments passed when this agent starts.",
@@ -527,19 +528,19 @@
       "input_aria": "Argument {{index}}",
       "new_argument_aria": "New argument",
       "empty_title": "No arguments yet",
-      "empty_hint": "Add the first token to build the launch command.",
       "edit_aria": "Edit argument {{index}}",
       "remove_aria": "Remove argument {{index}}",
       "saved_toast": "Custom arguments saved",
-      "save_failed_toast": "Failed to save custom arguments"
+      "save_failed_toast": "Failed to save custom arguments",
+      "empty_hint": "Add the first token to build the launch command."
     },
     "mcp_config": {
-      "managed_title": "Managed by Labrastro",
-      "managed_empty": "No MCP servers are managed by Labrastro yet.",
+      "managed_title": "Managed by Multica",
+      "managed_empty": "No MCP servers are managed by Multica yet.",
       "add_action": "Add MCP",
       "agent_disabled_badge": "Off for agent",
       "runtime_disabled_badge": "Off in runtime",
-      "runtime_overridden_badge": "Overridden by Labrastro",
+      "runtime_overridden_badge": "Overridden by Multica",
       "workspace_title": "From the workspace library",
       "workspace_action_failed": "Could not update this agent's MCP servers",
       "workspace_removed_toast": "MCP server removed from this agent",
@@ -582,10 +583,9 @@
       "dialog_edit_title": "Edit MCP Server",
       "dialog_edit_title_named": "Edit configuration for {{name}}",
       "dialog_replace_title": "Replace configuration for {{name}}",
-      "dialog_description": "Choose a connection method and enter its settings. Switch to JSON for advanced configuration.",
       "dialog_replace_description": "To protect sensitive information, saved values aren't shown again. Enter the complete new configuration. Existing agent assignments will stay the same.",
       "dialog_name_label": "Server name",
-      "dialog_name_hint": "Used to identify this server at runtime — letters, numbers, hyphens, and underscores. New servers get a name suggested from the command or URL; edit it anytime.",
+      "dialog_name_hint": "Used to identify this server at runtime. Use letters, numbers, hyphens, and underscores.",
       "dialog_name_required": "Enter a server name.",
       "dialog_name_invalid": "Use only letters, numbers, hyphens, and underscores.",
       "dialog_name_duplicate": "A server with this name already exists.",
@@ -599,22 +599,20 @@
       "dialog_type_http_hint": "Connect to a remote HTTP endpoint",
       "dialog_command_label": "Command",
       "dialog_command_required": "Enter the command used to launch this server.",
-      "dialog_command_hint": "The executable that starts the server, from the server's install docs — e.g. npx, uvx, or an absolute path. Arguments go in the fields below, not here.",
       "dialog_args_label": "Startup arguments",
-      "dialog_args_hint": "Passed to the command in this order, one per row — e.g. -y, then @scope/server-name. Split a copied command line at its spaces.",
+      "dialog_args_hint": "Passed to the command in this order.",
       "dialog_add_arg": "Add argument",
       "dialog_remove_arg": "Remove argument",
       "dialog_env_label": "Environment variables",
-      "dialog_env_hint": "Injected only when this server starts. Variable names come from the server's docs; secret values come from its account or API-key page.",
+      "dialog_env_hint": "Injected only when this server starts.",
       "dialog_env_key": "Variable name",
       "dialog_value": "Value",
       "dialog_add_env": "Add environment variable",
       "dialog_remove_env": "Remove environment variable",
       "dialog_url_label": "Server URL",
       "dialog_url_required": "Enter the MCP server URL.",
-      "dialog_url_hint": "The MCP endpoint published by the service or given by your deployment admin — a homepage URL won't work here.",
       "dialog_headers_label": "HTTP headers",
-      "dialog_headers_hint": "Sent with every HTTP request. Names and formats come from the service's docs — e.g. Authorization often needs a Bearer prefix.",
+      "dialog_headers_hint": "Sent with every HTTP request.",
       "dialog_header_key": "Header name",
       "dialog_add_header": "Add header",
       "dialog_remove_header": "Remove header",
@@ -623,6 +621,21 @@
       "dialog_json_aria": "MCP server JSON configuration",
       "dialog_json_object": "The server configuration must be a JSON object.",
       "dialog_json_target": "The server configuration must include a command or URL.",
+      "dialog_cancel": "Cancel",
+      "dialog_add_action": "Add",
+      "dialog_update_action": "Save",
+      "dialog_replace_action": "Replace configuration",
+      "delete_dialog_title": "Delete MCP Server?",
+      "delete_dialog_description": "{{name}} will no longer be available to this agent. Runtime servers are not affected.",
+      "delete_action": "Delete Server",
+      "invalid_json": "Invalid JSON: {{error}}",
+      "save_failed_toast": "Failed to save MCP config",
+      "redacted_title": "Configured — hidden from your view",
+      "redacted_hint": "Only the agent owner or a workspace admin can read this config.",
+      "dialog_json_help": "Edit the full server configuration as JSON.",
+      "dialog_description": "Choose a connection method and enter its settings. Switch to JSON for advanced configuration.",
+      "dialog_command_hint": "The executable that starts the server, from the server's install docs — e.g. npx, uvx, or an absolute path. Arguments go in the fields below, not here.",
+      "dialog_url_hint": "The MCP endpoint published by the service or given by your deployment admin — a homepage URL won't work here.",
       "dialog_snippet_toggle": "Paste a config snippet",
       "dialog_snippet_hint": "Paste what the server's install docs give you — a {\"mcpServers\": {...}} block, a single server object, a launch command line, or an endpoint URL. Applying only fills in the fields below; it never runs a command.",
       "dialog_snippet_aria": "MCP config snippet",
@@ -634,25 +647,13 @@
       "dialog_snippet_multiple": "The snippet defines more than one server ({{names}}) — paste one at a time.",
       "dialog_snippet_missing_target": "The snippet needs a command or a url.",
       "dialog_snippet_unbalanced": "The command line has an unclosed quote.",
-      "dialog_snippet_unsupported": "The command line uses unsupported shell syntax (pipes, redirects, expansions, or a dangling backslash) — paste a single launch command.",
-      "dialog_cancel": "Cancel",
-      "dialog_add_action": "Add",
-      "dialog_update_action": "Save",
-      "dialog_replace_action": "Replace configuration",
-      "delete_dialog_title": "Delete MCP Server?",
-      "delete_dialog_description": "{{name}} will no longer be available to this agent. Runtime servers are not affected.",
-      "delete_action": "Delete Server",
-      "invalid_json": "Invalid JSON: {{error}}",
-      "save_failed_toast": "Failed to save MCP config",
-      "redacted_title": "Configured — hidden from your view",
-      "redacted_hint": "Only the agent owner or a workspace admin can read this config."
+      "dialog_snippet_unsupported": "The command line uses unsupported shell syntax (pipes, redirects, expansions, or a dangling backslash) — paste a single launch command."
     },
     "composio_mcp": {
       "subtitle": "Check a toolkit to let this agent mount it as an MCP server — but only when you (its creator) are the one who triggered the run, directly or down a sub-agent chain.",
       "loading": "Loading your connections…",
       "load_failed": "Couldn't load your connected apps. Try again shortly.",
       "empty_title": "No connected apps yet",
-      "empty_hint": "You haven't connected any third-party services. Authorize one first, then come back here to allow it.",
       "empty_link_to_settings": "Connect one in Settings → Integrations",
       "connected": "Connected",
       "toggle_aria": "Allow {{toolkit}} for this agent",
@@ -661,36 +662,36 @@
       "redacted_title": "Configured — hidden from your view",
       "redacted_hint": "Only the agent's creator can view or change which apps it may use.",
       "shared_warning": "This agent is shared. People who can run this agent may use the Composio apps you enable here. Use Private or narrow the access list if these apps expose sensitive data.",
-      "workspace_warning": "Public to workspace: any workspace member may use these Composio apps through this agent."
+      "workspace_warning": "Public to workspace: any workspace member may use these Composio apps through this agent.",
+      "empty_hint": "You haven't connected any third-party services. Authorize one first, then come back here to allow it."
     },
     "runtime_config": {
-      "intro": "Choose how the OpenClaw runtime executes this agent's turns. Local mode runs the agent inside the daemon process. Gateway mode forwards each turn to an OpenClaw Gateway — useful when the daemon host is a lightweight coordinator and the agent should run on a more powerful machine.",
       "mode_label": "Routing mode",
       "mode_local": "Local",
       "mode_gateway": "Gateway",
-      "mode_local_hint": "Default. The daemon spawns `openclaw agent --local …` and the agent loop runs on this host.",
-      "mode_gateway_hint": "The daemon dials an OpenClaw Gateway instead of running the agent on this host.",
+      "mode_local_hint": "Run on this computer.",
+      "mode_gateway_hint": "The daemon dials an OpenClaw Gateway. Leave the endpoint fields blank to inherit them from the daemon host's `~/.openclaw/openclaw.json`.",
       "gateway_legend": "Gateway endpoint",
-      "gateway_hint": "Only used in Gateway mode. Every field is optional — a blank field is inherited from the daemon host's gateway config (`~/.openclaw/openclaw.json`, `gateway` section). A saved token is the exception: leaving it blank keeps the saved value.",
       "host_label": "Host",
       "host_placeholder": "gw.internal",
-      "host_hint": "The gateway address, from your deployment admin. Blank inherits the host's config.",
       "port_label": "Port",
       "port_invalid": "Port must be a positive integer.",
       "token_label": "Auth token",
       "token_placeholder": "Bearer token issued by the gateway",
       "token_masked_placeholder": "Saved — submit a new value to rotate, or leave blank to keep",
-      "token_hint": "Issued by the gateway — get it from your deployment admin or the gateway host's config. When none is set, blank inherits.",
-      "token_hint_saved": "A token is saved — leaving this field blank keeps it. Enter a new value to replace it.",
       "tls_label": "Use TLS",
       "tls_hint": "Dial https:// instead of http://",
       "saved_toast": "Routing config saved",
-      "save_failed_toast": "Failed to save routing config"
+      "save_failed_toast": "Failed to save routing config",
+      "intro": "Choose how the OpenClaw runtime executes this agent's turns. Local mode runs the agent inside the daemon process. Gateway mode forwards each turn to an OpenClaw Gateway — useful when the daemon host is a lightweight coordinator and the agent should run on a more powerful machine.",
+      "gateway_hint": "Only used in Gateway mode. Every field is optional — a blank field is inherited from the daemon host's gateway config (`~/.openclaw/openclaw.json`, `gateway` section). A saved token is the exception: leaving it blank keeps the saved value.",
+      "host_hint": "The gateway address, from your deployment admin. Blank inherits the host's config.",
+      "token_hint": "Issued by the gateway — get it from your deployment admin or the gateway host's config. When none is set, blank inherits.",
+      "token_hint_saved": "A token is saved — leaving this field blank keeps it. Enter a new value to replace it."
     },
     "skills": {
-      "intro": "This is the agent's effective skill set. Workspace skills are managed here; inherited Codex and Claude Code skills can also be turned off per agent.",
       "assigned_title": "Assigned to agent",
-      "assigned_hint": "Workspace skills travel with the agent. Turn one off temporarily without removing it.",
+      "assigned_hint": "Turn off a skill to pause its use without removing it.",
       "runtime_title": "Inherited from runtime",
       "runtime_hint": "Discovered automatically from {{runtime}} and available whenever this agent runs there.",
       "workspace_badge": "Workspace",
@@ -718,10 +719,8 @@
       "detail_supporting_files": "Supporting files",
       "add_action": "Add skill",
       "empty_title": "No skills assigned",
-      "empty_hint": "Add workspace skills to share team knowledge with this agent.",
       "remove_failed_toast": "Failed to remove skill",
       "add_dialog_title": "Add skill",
-      "add_dialog_description": "Select a workspace skill to assign to this agent.",
       "add_dialog_search_placeholder": "Search skills",
       "add_dialog_empty": "All workspace skills are already assigned.",
       "add_dialog_no_match": "No skills match your search.",
@@ -731,11 +730,14 @@
       "add_dialog_confirm_one": "Add {{count}} skill",
       "add_dialog_confirm_other": "Add {{count}} skills",
       "add_dialog_cancel": "Cancel",
-      "add_failed_toast": "Failed to add skill"
+      "add_failed_toast": "Failed to add skill",
+      "intro": "This is the agent's effective skill set. Workspace skills are managed here; inherited Codex and Claude Code skills can also be turned off per agent.",
+      "empty_hint": "Add workspace skills to share team knowledge with this agent.",
+      "add_dialog_description": "Select a workspace skill to assign to this agent."
     },
     "integrations": {
-      "intro": "Connect this agent to external chat platforms so people can work with it where they already are.",
-      "members_note": "Only workspace owners and admins can manage this connection. You can view connected bots in Settings → Integrations."
+      "members_note": "Only workspace owners and admins can manage this connection. You can view connected bots in Settings → Integrations.",
+      "intro": "Connect this agent to external chat platforms so people can work with it where they already are."
     },
     "activity": {
       "status": {
@@ -764,7 +766,10 @@
       "runs_one": "run",
       "runs_other": "runs",
       "success_pct": "{{percent}}% success",
-      "success_label": "succeeded",
+      "success_label": "success rate",
+      "success_hint": "Completed runs divided by completed and failed runs. Cancelled runs are excluded.",
+      "success_unavailable": "No completed or failed runs in this period, so there is no success rate to show.",
+      "cancelled_count": "{{count}} cancelled",
       "avg_duration": "avg {{value}}",
       "avg_duration_label": "average duration",
       "failed_count": "{{count}} failed",
@@ -866,7 +871,6 @@
     "copy_filtered": "Copy filtered",
     "copied": "Copied",
     "waiting_events": "Waiting for events...",
-    "antigravity_live_unavailable": "Antigravity does not currently provide live execution events. The transcript will be available after the run completes.",
     "no_data": "No execution data recorded.",
     "sort_chronological": "Oldest first",
     "sort_newest_first": "Newest first",
@@ -942,7 +946,8 @@
     "tool_kind_command": "Commands",
     "tool_kind_write": "Edits",
     "tool_kind_read": "Reads",
-    "tool_kind_misc": "Other"
+    "tool_kind_misc": "Other",
+    "antigravity_live_unavailable": "Antigravity does not currently provide live execution events. The transcript will be available after the run completes."
   },
   "task_failure": {
     "cancelled_by_system": "Cancelled by the system",
@@ -959,6 +964,7 @@
       "skill_bundle_unavailable": "Couldn't download the agent's skills",
       "runtime_cli_timeout": "Local runtime CLI timed out",
       "environment_prepare_failed": "Couldn't prepare the execution environment",
+      "runtime_access_denied": "This agent can't run on its private runtime, so it couldn't reply. Make the runtime public, or rebind/copy the agent to a runtime its owner can use.",
       "invalid_task_identity": "Run identity mismatch",
       "agent_error_provider_auth_or_access": "Provider auth failed",
       "agent_error_provider_quota_limit": "Provider quota exhausted",
