@@ -278,28 +278,18 @@ function Install-CliBinary {
         }
         if (-not $asset) { Write-Fail "No checksummed CLI archive for windows/$arch." }
         $zipFile = Join-Path $tmpDir "multica.zip"
-        $actualHash = (Get-FileHash -Path $zipFile -Algorithm SHA256).Hash.ToLower()
-        $releaseAsset = "multica-cli-$version-windows-$arch.zip"
-        $legacyAsset = "multica_windows_$arch.zip"
-        $expectedLine = ($checksumContent -split "`r?`n") |
-            Where-Object {
-                $_ -match [regex]::Escape($releaseAsset) -or
-                $_ -match [regex]::Escape($legacyAsset)
-            } |
-            Select-Object -First 1
-        if ($expectedLine) {
-            $expectedHash = ($expectedLine -split "\s+")[0].ToLower()
-            if ($actualHash -ne $expectedHash) {
-                Remove-Item $tmpDir -Recurse -Force
-                Write-Fail "Checksum verification failed. Expected: $expectedHash, Got: $actualHash"
-            }
-            Write-Ok "Checksum verified"
-        } else {
-            Write-Warn "Could not find checksum entry for $releaseAsset - skipping verification."
+        Invoke-WebRequest -Uri "$baseUrl/$asset" -OutFile $zipFile -UseBasicParsing -ErrorAction Stop
+        $actual = (Get-FileHash -Path $zipFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $expected) { Write-Fail "Checksum verification failed for $asset." }
+        Write-Ok "Checksum verified"
+        Expand-Archive -Path $zipFile -DestinationPath $tmpDir -Force
+        $binaries = @(Get-ChildItem -Path $tmpDir -Filter "multica.exe" -File -Recurse)
+        if ($binaries.Count -ne 1) { Write-Fail "Archive must contain exactly one multica.exe." }
+        $exeSrc = $binaries[0].FullName
+        $actualVersion = Get-InstalledCliVersion -Path $exeSrc
+        if (-not $actualVersion -or ($actualVersion -creplace '^v', '') -cne $version) {
+            Write-Fail "Downloaded CLI version ($actualVersion) does not match $Tag."
         }
-    } catch {
-        Write-Warn "Could not download checksums.txt - skipping verification."
-    }
 
         $binDir = Split-Path -Path $Target -Parent
         New-Item -ItemType Directory -Path $binDir -Force | Out-Null
