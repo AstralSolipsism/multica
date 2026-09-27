@@ -38,6 +38,8 @@ coverage
 # Docs
 /docs/
 *.md
+!server/internal/service/builtin_skills/**/*.md
+!server/internal/service/builtin_skills_legacy/**/*.md
 
 # Only the web workspace is used by Dockerfile.web. Default-exclude future
 # app workspaces so they do not silently enter the build context.

@@ -52,7 +52,7 @@ function verifyImages(identity, arch) {
       });
       const lines = actual.split("\n");
       requireThat(expected.every(line => lines.includes(line)), "image migration/license content differs from source");
-      const binaries = ["server", "multica", "migrate", "backfill_task_usage_hourly", "backfill_codex_usage_cache", "go-build-info.txt"];
+      const binaries = ["server", "multica", "migrate", "maintenance", "backfill_task_usage_hourly", "backfill_codex_usage_cache", "go-build-info.txt"];
       requireThat(lines.length === expected.length + binaries.length && binaries.every(name =>
         lines.some(line => line.endsWith(`  ${name}`) && /^[a-f0-9]{64}  /.test(line))), "image required file set differs");
       evidence = { cli, versions, binary_checksums: execute("sha256sum", ["/app/multica", ...Object.keys(versions).map(name => `/app/${name}`)]),
