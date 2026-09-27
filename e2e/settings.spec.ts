@@ -15,26 +15,23 @@ test.describe("Settings", () => {
     await waitForPageText(page, "General");
 
     // Change workspace name
-    const nameInput = page
-      .locator('input[type="text"]')
-      .first();
+    const nameInput = page.getByRole("textbox", { name: "Name", exact: true });
     await nameInput.clear();
     const newName = "Renamed WS " + Date.now();
     await nameInput.fill(newName);
 
-    // Save
-    await page.locator("button", { hasText: "Save" }).click();
-
-    await expect(page.getByText("Workspace settings saved").first()).toBeVisible({ timeout: 5000 });
+    // The upstream settings form saves changes automatically.
+    await nameInput.blur();
 
     // Sidebar should reflect the new name WITHOUT page refresh
     await expect(page.getByRole("button", { name: new RegExp(newName) }).first()).toBeVisible();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(nameInput).toHaveValue(newName);
 
     // Restore original name so other tests aren't affected
     await nameInput.clear();
     await nameInput.fill(originalName.trim());
-    await page.locator("button", { hasText: "Save" }).click();
-    await expect(page.getByText("Workspace settings saved").first()).toBeVisible({ timeout: 5000 });
+    await nameInput.blur();
     await expect(page.getByRole("button", { name: new RegExp(originalName) }).first()).toBeVisible();
   });
 

@@ -13,6 +13,7 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
 import { AppLink, useBackOrReplace } from "../../navigation";
 import { IssueDuplicateBanner, IssueDuplicatesSection, isDuplicateIssue } from "./issue-duplicates";
+import { IssueDependenciesSection } from "./issue-dependencies-section";
 import {
   Archive,
   Calendar,
@@ -2711,6 +2712,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       <QuickActionsSection issueId={issue.id} />
       <WakeupsSection issueId={issue.id} closed={["done", "closed"].includes(resolveStatusCategory(issue.status))} />
       <PluginPanelSection issueId={issue.id} />
+      <IssueDependenciesSection issue={issue} />
 
       {/* Parent issue — standalone section, only when the issue has a
           parent. Setting a parent is reachable via the issue actions menu;

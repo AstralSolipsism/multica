@@ -49,6 +49,12 @@ vi.mock("@multica/core/hooks", () => ({
 // Mocks
 // ---------------------------------------------------------------------------
 
+vi.mock("./issue-dependencies-section", () => ({
+  IssueDependenciesSection: ({ issue }: { issue: { id: string } }) => (
+    <div data-testid="issue-dependencies-section" data-issue-id={issue.id} />
+  ),
+}));
+
 // Mock @multica/core/auth
 const mockAuthUser = { id: "user-1", email: "test@test.com", name: "Test User" };
 vi.mock("@multica/core/auth", () => ({
@@ -837,6 +843,7 @@ describe("IssueDetail (shared)", () => {
     // Title and comment/reply composers remain readonly-first.
     expect(await screen.findByDisplayValue("Add JWT auth to the backend")).toBeInTheDocument();
     expect(screen.getByText("Implement authentication")).toBeInTheDocument();
+    expect(screen.getByTestId("issue-dependencies-section")).toHaveAttribute("data-issue-id", "issue-1");
     expect(screen.queryByTestId("title-editor")).not.toBeInTheDocument();
     expect(screen.getAllByTestId("rich-text-editor")).toHaveLength(1);
     expect(contentEditorMounts.count).toBe(1);
