@@ -95,9 +95,12 @@ test("onboarding — zh-Hans renders Chinese labels", async ({ page, context, ba
 });
 
 for (const pathname of ["/about", "/homepage"]) {
-  test("retired marketing route " + pathname + " returns not found", async ({ request }) => {
-    const response = await request.get(pathname);
-    expect(response.status()).toBe(404);
+  test("retired marketing route " + pathname + " shows not found", async ({ page }) => {
+    await page.goto(pathname);
+    // The async layout can start a 200 stream before notFound renders.
+    // Assert the user-visible boundary and noindex, not only the transport code.
+    await expect(page.getByText("404", { exact: true })).toBeVisible();
+    await expect(page.locator('meta[name="robots"][content*="noindex"]').first()).toBeAttached();
   });
 }
 
