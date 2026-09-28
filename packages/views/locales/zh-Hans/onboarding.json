@@ -2,9 +2,6 @@
   "step_nav": {
     "wordmark": "Multica",
     "label": "引导步骤",
-    "about_you": {
-      "label": "关于你"
-    },
     "workspace": {
       "label": "工作区",
       "description": "起个名字，定个网址。"
@@ -64,9 +61,6 @@
     "hint_ready": "看起来不错，准备好就点提交。"
   },
   "questions": {
-    "about_you": {
-      "question": "简单介绍一下你自己。"
-    },
     "source": {
       "question": "你是从哪里了解到 Multica 的？",
       "friends_colleagues": "朋友或同事",
@@ -83,32 +77,6 @@
       "dont_remember": "想不起来了",
       "other": "其他",
       "other_placeholder": "例如：一档播客"
-    },
-    "role": {
-      "question": "哪一项最符合你？",
-      "engineer": "工程师 / 开发者",
-      "product": "产品经理",
-      "designer": "设计师",
-      "founder": "创始人 / 高管",
-      "marketing": "市场 / 增长",
-      "writer": "写作 / 内容",
-      "research": "研究员 / 分析师",
-      "ops": "运营 / 项目管理",
-      "student": "学生 / 个人使用",
-      "other": "其他",
-      "other_placeholder": "例如：教师、支持负责人"
-    },
-    "use_case": {
-      "question": "你打算用 Multica 做什么？",
-      "ship_code": "让 AI 智能体帮我写代码",
-      "manage_team": "给团队做任务管理",
-      "personal_tasks": "管理我自己的任务",
-      "plan_research": "计划、头脑风暴、调研",
-      "write_publish": "写作、编辑、发布",
-      "automate_ops": "自动化日常运营",
-      "evaluate": "只是随便看看",
-      "other": "其他",
-      "other_placeholder": "例如：协调学习小组"
     }
   },
   "option_card": {
@@ -218,9 +186,6 @@
     "empty_skip_title": "暂时跳过",
     "empty_skip_subtitle": "连接运行时前，智能体无法运行。",
     "empty_skip_action": "跳过",
-    "empty_waitlist_title": "使用云电脑",
-    "empty_waitlist_subtitle": "我们会在云上为你运行一台电脑。尚未上线。",
-    "empty_waitlist_action": "即将推出",
     "skip": "暂时跳过",
     "refresh": "刷新",
     "refreshing": "正在刷新...",
@@ -242,9 +207,6 @@
     "cli_title": "通过终端连接",
     "cli_subtitle": "连接一台服务器、远程开发机或任意无头电脑。需要终端。",
     "cli_action": "查看步骤",
-    "cloud_title": "使用云电脑",
-    "cloud_subtitle": "我们会在云上为你运行一台电脑。尚未上线。",
-    "cloud_action": "即将推出",
     "cli_dialog_title": "通过终端连接",
     "cli_dialog_pick_hint": "在上方选一台电脑。",
     "cli_dialog_connect": "连接并继续",

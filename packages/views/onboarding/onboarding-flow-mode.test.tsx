@@ -1,9 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../locales/en/common.json";
 import enOnboarding from "../locales/en/onboarding.json";
 import enWorkspace from "../locales/en/workspace.json";
+
+const workspaceState = vi.hoisted(() => ({ fresh: false }));
+afterEach(() => { workspaceState.fresh = false; });
 
 const TEST_RESOURCES = {
   en: { common: enCommon, onboarding: enOnboarding, workspace: enWorkspace },
@@ -38,7 +42,7 @@ vi.mock("@multica/core/auth", () => ({
 vi.mock("@multica/core/workspace", () => {
   return {
     useWorkspaceList: () => ({
-      workspaces: [{ id: "ws-1", name: "Existing", slug: "existing" }],
+      workspaces: workspaceState.fresh ? [] : [{ id: "ws-1", name: "Existing", slug: "existing" }],
       ready: true,
     }),
   };
@@ -88,4 +92,22 @@ describe("OnboardingFlow — new-workspace mode", () => {
       screen.queryByRole("heading", { name: /Name your workspace/i }),
     ).not.toBeInTheDocument();
   });
+});
+
+describe("OnboardingFlow — fork first-use contract", () => {
+  it.each(["web", "desktop"])(
+    "%s continues directly to workspace setup without a persona questionnaire",
+    async (platform) => {
+      workspaceState.fresh = true;
+      const user = userEvent.setup();
+      renderFlow(platform === "web" ? { runtimeInstructions: <div>CLI instructions</div> } : {});
+      await user.click(screen.getByRole("button", {
+        name: platform === "web" ? "Continue on web" : "Start exploring",
+      }));
+      expect(screen.getByRole("heading", { name: /Name your workspace/i })).toBeInTheDocument();
+      expect(screen.queryByText("Tell us a bit about you.")).not.toBeInTheDocument();
+      expect(screen.queryByText("Which best describes you?")).not.toBeInTheDocument();
+      expect(screen.queryAllByText("About you")).toHaveLength(0);
+    },
+  );
 });

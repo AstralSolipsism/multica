@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
 import { waitForPageText } from "./helpers";
+import enOnboarding from "../packages/views/locales/en/onboarding.json";
 
 // Smoke test for the onboarding flow: welcome → workspace → runtime.
 // The About-you questionnaire and the source question are intentionally
@@ -10,11 +11,11 @@ import { waitForPageText } from "./helpers";
 // is always a fresh, un-onboarded user landing on /onboarding.
 
 const EMAIL = `onboarding-v4-${Date.now()}@localhost`;
-const SHOTS_DIR = "../shots-rail";
+const RUNTIME_LABEL = enOnboarding.step_nav.runtime.label;
 
 test.use({ viewport: { width: 1440, height: 900 } });
 
-test("onboarding — welcome → workspace → runtime", async ({ page }) => {
+test("onboarding — welcome → workspace → runtime", async ({ page }, testInfo) => {
   const api = new TestApiClient();
   await api.login(EMAIL, "OBv4 Tester");
   const token = api.getToken();
@@ -27,7 +28,7 @@ test("onboarding — welcome → workspace → runtime", async ({ page }) => {
 
   // 1. Welcome screen
   await expect(page.getByRole("button", { name: "Continue on web" })).toBeVisible({ timeout: 15000 });
-  await page.screenshot({ path: `${SHOTS_DIR}/01-welcome.png`, fullPage: false });
+  await page.screenshot({ path: testInfo.outputPath("01-welcome.png"), fullPage: false });
 
   // Continue on web lands directly on the workspace step.
   await page.getByRole("button", { name: "Continue on web" }).click();
@@ -41,25 +42,26 @@ test("onboarding — welcome → workspace → runtime", async ({ page }) => {
   // counter it replaced is gone.
   await expect(page.locator('[data-slot="stepper-title"]')).toHaveText([
     "Workspace",
-    "Meet Mizuki",
+    RUNTIME_LABEL,
   ]);
   await expect(
     page.locator('[aria-current="step"]').filter({ hasText: "Workspace" }),
   ).toBeVisible();
   await page.waitForTimeout(500);
-  await page.screenshot({ path: `${SHOTS_DIR}/02-workspace.png` });
+  await page.screenshot({ path: testInfo.outputPath("02-workspace.png") });
 
-  // 3. Runtime step — the rail marks "Meet Mizuki" current.
+  // 3. Runtime step — check the functional destination using its current translation.
   await page.getByRole("textbox").first().fill(`Rail QA ${Date.now()}`);
   await page.getByRole("button", { name: /^Create /i }).click();
   await expect(
-    page.locator('[aria-current="step"]').filter({ hasText: "Meet Mizuki" }),
+    page.locator('[aria-current="step"]').filter({ hasText: RUNTIME_LABEL }),
   ).toBeVisible({ timeout: 20000 });
-  await page.waitForTimeout(800);
-  await page.screenshot({ path: `${SHOTS_DIR}/03-runtime.png` });
+  await expect(page.getByText(/use a cloud computer/i)).toHaveCount(0);
+  await expect(page.getByText(/coming soon/i)).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("03-runtime.png") });
 });
 
-test("onboarding — zh-Hans renders Chinese labels", async ({ page, context, baseURL }) => {
+test("onboarding — zh-Hans renders Chinese labels", async ({ page, context, baseURL }, testInfo) => {
   await context.addCookies([
     {
       name: "multica-locale",
@@ -85,5 +87,5 @@ test("onboarding — zh-Hans renders Chinese labels", async ({ page, context, ba
   await expect(page.getByRole("heading", { name: /给工作区起个名字/ })).toBeVisible({ timeout: 10000 });
   await expect(page.getByText("简单介绍一下你自己。")).toHaveCount(0);
   await page.waitForTimeout(500);
-  await page.screenshot({ path: `${SHOTS_DIR}/03-workspace-zh.png` });
+  await page.screenshot({ path: testInfo.outputPath("03-workspace-zh.png") });
 });

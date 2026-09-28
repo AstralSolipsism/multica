@@ -84,13 +84,12 @@ describe("StepPlatformFork", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders the three fork options at rest", () => {
+  it("renders working connection options without cloud promotion", () => {
     renderFork();
     expect(screen.getByText(/^use this computer$/i)).toBeInTheDocument();
     expect(screen.getByText(/^connect from the terminal$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^use a cloud computer$/i)).toBeInTheDocument();
-    // Cloud option is a "Coming soon" preview — not yet wired up.
-    expect(screen.getByText(/^coming soon$/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^use a cloud computer$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^coming soon$/i)).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /^coming soon$/i }),
     ).not.toBeInTheDocument();

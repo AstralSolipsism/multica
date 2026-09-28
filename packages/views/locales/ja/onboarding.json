@@ -2,9 +2,6 @@
   "step_nav": {
     "wordmark": "Multica",
     "label": "オンボーディングの手順",
-    "about_you": {
-      "label": "あなたについて"
-    },
     "workspace": {
       "label": "ワークスペース",
       "description": "名前と URL を決める。"
@@ -64,9 +61,6 @@
     "hint_ready": "OK です。準備ができたら送信を押してください。"
   },
   "questions": {
-    "about_you": {
-      "question": "あなたについて少し教えてください。"
-    },
     "source": {
       "question": "Multica をどこで知りましたか?",
       "friends_colleagues": "友人または同僚",
@@ -83,32 +77,6 @@
       "other": "その他",
       "other_placeholder": "例: よく聴くポッドキャスト",
       "social_github": "GitHub"
-    },
-    "role": {
-      "question": "あなたに最も近いのはどれですか?",
-      "engineer": "エンジニア / 開発者",
-      "product": "プロダクトマネージャー",
-      "designer": "デザイナー",
-      "founder": "創業者 / 経営層",
-      "marketing": "マーケティング / グロース",
-      "writer": "ライター / コンテンツ",
-      "research": "リサーチャー / アナリスト",
-      "ops": "オペレーション / プロジェクト管理",
-      "student": "学生 / 個人利用",
-      "other": "その他",
-      "other_placeholder": "例: 教師、サポートリード"
-    },
-    "use_case": {
-      "question": "Multica を何に使いたいですか?",
-      "ship_code": "AI エージェントとコードをリリース",
-      "manage_team": "チームのタスクを管理",
-      "personal_tasks": "自分のタスクを整理",
-      "plan_research": "計画、ブレインストーミング、リサーチ",
-      "write_publish": "執筆、編集、公開",
-      "automate_ops": "運用とワークフローの自動化",
-      "evaluate": "とりあえず試してみる",
-      "other": "その他",
-      "other_placeholder": "例: スタディグループの運営"
     }
   },
   "option_card": {
@@ -218,9 +186,6 @@
     "empty_skip_title": "今はスキップ",
     "empty_skip_subtitle": "ランタイムに接続するまでエージェントは実行できません。",
     "empty_skip_action": "スキップ",
-    "empty_waitlist_title": "クラウドコンピュータを使う",
-    "empty_waitlist_subtitle": "クラウドでコンピュータを動かします。まだ提供されていません。",
-    "empty_waitlist_action": "近日公開",
     "skip": "今はスキップ",
     "refresh": "更新",
     "refreshing": "更新中…",
@@ -242,9 +207,6 @@
     "cli_title": "ターミナルから接続",
     "cli_subtitle": "サーバー、リモート開発環境、ヘッドレスなコンピュータを接続します。ターミナルが必要です。",
     "cli_action": "手順を表示",
-    "cloud_title": "クラウドコンピュータを使う",
-    "cloud_subtitle": "クラウドでコンピュータを動かします。まだ提供されていません。",
-    "cloud_action": "近日公開",
     "cli_dialog_title": "ターミナルから接続",
     "cli_dialog_pick_hint": "上でコンピュータを選んでください。",
     "cli_dialog_connect": "接続して続ける",

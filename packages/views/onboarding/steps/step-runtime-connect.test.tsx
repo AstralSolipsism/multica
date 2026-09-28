@@ -82,6 +82,8 @@ describe("StepRuntimeConnect", () => {
     expect(
       screen.getByText(/no agent runtime found on this computer yet/i),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/use a cloud computer/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/coming soon/i)).not.toBeInTheDocument();
   });
 
   it("keeps scanning past the idle timeout while runtimes are pending, then falls back at the hard ceiling", () => {

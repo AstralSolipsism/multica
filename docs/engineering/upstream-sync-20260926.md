@@ -64,3 +64,27 @@ older host returns `EINVAL` for the capability probe, so its four Cursor
 background test groups cannot pass here. Keep the upstream fail-closed behavior;
 using that capability requires a supporting kernel. No production kernel change
 or weaker process-killing fallback is part of this synchronization.
+
+## Retained fork product constraints
+
+Upstream-first capability updates do not revoke previously confirmed product
+choices. Keep OL-14's non-marketing experience unless the owner explicitly
+changes it: first-use setup has no source, role or use-case questionnaire; Web
+and Desktop show no cloud-computer promotion; community entries open the
+instance's Feishu QR dialog; the help menu and download/update paths retain
+their internal destinations. Source-backfill prompts remain unmounted.
+
+During an upstream merge, review the resulting user paths and their tests
+against these constraints. Do not replace a fork's absence assertion with an
+upstream test expecting the removed feature. New-account setup and an existing
+account are separate regression cases; a healthy login or an existing-account
+smoke test cannot establish first-use behavior.
+
+Before publishing affected Web/Desktop builds, run the shared onboarding,
+runtime-empty-state and community-entry component tests, then
+`e2e/onboarding-smoke.spec.ts` against the candidate in an isolated test stack.
+The browser test must register a fresh user, continue directly to workspace
+creation without persona questions, and reach runtime setup without a cloud
+promotion. Verify the desktop entry uses the same tested flow, and publish the
+rebuilt desktop packages and feeds when shared UI changes. Record what actually
+ran in the deployment handoff; test totals alone are not acceptance evidence.

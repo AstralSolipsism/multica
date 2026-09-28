@@ -32,7 +32,7 @@
     "download_desktop": "Application de bureau",
     "docs": "Documentation",
     "changelog": "Journal des modifications",
-    "discord": "Discord",
+    "discord": "Groupe Feishu",
     "feedback": "Faire un retour",
     "server_version": "Version du serveur {{version}}"
   },
@@ -58,12 +58,12 @@
     "show_fewer_pins": "Afficher moins",
     "unread_overflow": "99+",
     "discord_card": {
-      "title": "Rejoignez notre Discord",
-      "dismiss": "Ignorer"
+      "title": "Groupe Feishu",
+      "dismiss": "Masquer"
     }
   },
   "feishu_qr": {
-    "title": "Feishu group QR code",
-    "hint": "Scan with Feishu to join the group"
+    "title": "Code QR du groupe Feishu",
+    "hint": "Scannez avec Feishu pour rejoindre le groupe"
   }
 }
