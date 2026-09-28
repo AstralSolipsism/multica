@@ -93,3 +93,25 @@ test("onboarding — zh-Hans renders Chinese labels", async ({ page, context, ba
   await page.waitForTimeout(500);
   await page.screenshot({ path: testInfo.outputPath("03-workspace-zh.png") });
 });
+
+for (const pathname of ["/about", "/homepage"]) {
+  test("retired marketing route " + pathname + " returns not found", async ({ request }) => {
+    const response = await request.get(pathname);
+    expect(response.status()).toBe(404);
+  });
+}
+
+test("sitemap excludes retired marketing routes", async ({ request }) => {
+  const response = await request.get("/sitemap.xml");
+  expect(response.ok()).toBe(true);
+  const xml = await response.text();
+  for (const route of ["about", "homepage", "changelog", "contact-sales"]) {
+    expect(xml).not.toContain("/" + route + "</loc>");
+  }
+});
+
+test("internal download page omits upstream organization promotion", async ({ page }) => {
+  await page.goto("/download");
+  await expect(page.getByRole("heading", { name: /download|下载/i }).first()).toBeVisible();
+  await expect(page.locator('script[type="application/ld+json"]')).toHaveCount(0);
+});
