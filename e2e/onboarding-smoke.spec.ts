@@ -1,7 +1,11 @@
 import { test, expect } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
 import { waitForPageText } from "./helpers";
-import enOnboarding from "../packages/views/locales/en/onboarding.json";
+import { readFileSync } from "node:fs";
+
+const enOnboarding = JSON.parse(
+  readFileSync(new URL("../packages/views/locales/en/onboarding.json", import.meta.url), "utf8"),
+);
 
 // Smoke test for the onboarding flow: welcome → workspace → runtime.
 // The About-you questionnaire and the source question are intentionally
