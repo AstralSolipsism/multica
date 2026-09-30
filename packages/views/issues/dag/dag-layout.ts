@@ -1,4 +1,4 @@
-import dagre from "@dagrejs/dagre";
+import dagre, { type Graph } from "@dagrejs/dagre";
 import type { DagDirection } from "@multica/core/issues/stores/view-store";
 
 /**
@@ -15,6 +15,9 @@ export interface DagLayoutNodeInput {
   id: string;
   width: number;
   height: number;
+  /** Stages are local to sibling issues; project representatives have neither. */
+  parentIssueId?: string | null;
+  stage?: number | null;
 }
 
 export interface DagLayoutEdgeInput {
@@ -39,6 +42,51 @@ export interface DagLayoutResponse {
   positions: Record<string, DagLayoutPosition>;
   /** Layout wall time inside the worker, for the expand-all budget UX. */
   elapsedMs: number;
+}
+
+/**
+ * Add invisible stage boundaries only to the worker's layout graph. Each
+ * boundary joins adjacent stages of ONE parent; siblings without a stage and
+ * unparented issues remain unconstrained. A boundary needs O(n) connections,
+ * avoiding the all-pairs edges between two wide stages.
+ *
+ * Never let a stage preference make Dagre reverse a real dependency. Remove
+ * boundaries involved in cycles, including paths through other task lines or
+ * unstaged issues. The original dependency graph and canvas edges stay intact.
+ */
+function addStageConstraints(graph: Graph, nodes: DagLayoutNodeInput[]): void {
+  const groups = new Map<string, Map<number, string[]>>();
+  for (const node of nodes) {
+    if (node.parentIssueId == null || node.stage == null) continue;
+    let stages = groups.get(node.parentIssueId);
+    if (!stages) {
+      stages = new Map();
+      groups.set(node.parentIssueId, stages);
+    }
+    const members = stages.get(node.stage) ?? [];
+    members.push(node.id);
+    stages.set(node.stage, members);
+  }
+
+  const boundaries = new Set<string>();
+  for (const stages of groups.values()) {
+    const ordered = [...stages.entries()].sort(([a], [b]) => a - b);
+    for (let index = 1; index < ordered.length; index++) {
+      // Real canvas ids are UUIDs, issue:<uuid>, or project:<uuid/none>.
+      const boundaryId = "stage-boundary:" + boundaries.size;
+      boundaries.add(boundaryId);
+      graph.setNode(boundaryId, { width: 0, height: 0 });
+      for (const id of ordered[index - 1]![1]) graph.setEdge(id, boundaryId);
+      for (const id of ordered[index]![1]) graph.setEdge(boundaryId, id);
+    }
+  }
+  if (boundaries.size === 0) return;
+  for (const component of dagre.graphlib.alg.tarjan(graph)) {
+    if (component.length < 2) continue;
+    for (const id of component) {
+      if (boundaries.has(id)) graph.removeNode(id);
+    }
+  }
 }
 
 export function layoutDagProjection(
@@ -67,6 +115,7 @@ export function layoutDagProjection(
       g.setEdge(edge.source, edge.target);
     }
   }
+  addStageConstraints(g, nodes);
   dagre.layout(g);
   const positions: Record<string, DagLayoutPosition> = {};
   for (const node of nodes) {

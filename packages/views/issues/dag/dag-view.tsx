@@ -27,6 +27,7 @@ import {
   pruneDagCollapsedIds,
   repsToRevealIssues,
 } from "./dag-projection";
+import type { DagLayoutNodeInput } from "./dag-layout";
 import { dagNodeSize } from "./dag-constants";
 import {
   EMPTY_LAYOUT_EDGES,
@@ -141,13 +142,18 @@ export function DagView({
   const layoutKey = hashKey([graph?.topologyId, grouping, collapsedIds, direction]);
   const layoutInputRef = useRef<{
     key: string;
-    nodes: { id: string; width: number; height: number }[];
+    nodes: DagLayoutNodeInput[];
     edges: { source: string; target: string }[];
   } | null>(null);
   if (projection && layoutInputRef.current?.key !== layoutKey) {
     layoutInputRef.current = {
       key: layoutKey,
-      nodes: projection.nodes.map((node) => ({ id: node.id, ...dagNodeSize(node.kind) })),
+      nodes: projection.nodes.map((node) => ({
+        id: node.id,
+        ...dagNodeSize(node.kind),
+        parentIssueId: node.issue?.parentIssueId ?? null,
+        stage: node.issue?.stage ?? null,
+      })),
       edges: projection.edges.map((edge) => ({
         source: edge.source,
         target: edge.target,

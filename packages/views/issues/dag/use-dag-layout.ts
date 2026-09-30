@@ -53,7 +53,10 @@ function createWorkerRunner(): DagLayoutRunner {
   let listener: ((event: MessageEvent<DagLayoutResponse>) => void) | null = null;
   return {
     execute(request, onDone) {
-      worker ??= new Worker(new URL("./dag-layout-worker.ts", import.meta.url));
+      // Vite serves worker imports as ES modules in development.
+      worker ??= new Worker(new URL("./dag-layout-worker.ts", import.meta.url), {
+        type: "module",
+      });
       if (listener) worker.removeEventListener("message", listener);
       listener = (event) => {
         if (event.data?.requestId === request.requestId) onDone(event.data);

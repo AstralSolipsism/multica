@@ -66,6 +66,21 @@ dependency cycle. Edit or explain the original edges, never the aggregate IDs.
 For inherited explanations, follow the node's parent chain and original
 incoming edges, or request `/api/issues/{id}/dependencies` on demand.
 
+## DAG stage ordering
+
+The shared Web/Desktop layout uses ascending stage numbers **within the same
+parent issue** as display order, even when no dependency edges are stored.
+Stages on unrelated task lines or unparented issues are not compared. Unstaged
+issues and same-stage siblings remain unconstrained unless a direct or
+transitive dependency orders them. Parentage alone creates no precedence.
+
+Stage boundaries exist only inside the layout worker; they produce no canvas
+arrows, persisted relations, or execution gates. Folded issues use their own
+stage, never a child's stage. If stage ordering would create a cycle through
+real dependencies (including cross-line paths), conflicting stage boundaries
+are omitted; real arrows retain their original direction. A stage edit changes
+`topologyId` and relayouts the graph; status/run-only updates keep its positions.
+
 ## Shared frontend integration
 
 ```ts

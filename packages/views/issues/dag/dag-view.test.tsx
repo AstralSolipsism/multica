@@ -11,7 +11,7 @@ import {
   type IssueViewState,
 } from "@multica/core/issues/stores/view-store";
 import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-context";
-import type { DagLayoutRequest, DagLayoutResponse } from "./dag-layout";
+import { layoutDagProjection, type DagLayoutRequest, type DagLayoutResponse } from "./dag-layout";
 import { DagView, type DagGraphQueryState } from "./dag-view";
 import type { DagCanvasProps } from "./dag-canvas";
 import { computeDagProjection } from "./dag-projection";
@@ -94,6 +94,19 @@ function syncLayoutRunner() {
   };
 }
 
+function realLayoutRunner() {
+  return {
+    execute(request: DagLayoutRequest, onDone: (response: DagLayoutResponse) => void) {
+      onDone({
+        requestId: request.requestId,
+        positions: layoutDagProjection(request.nodes, request.edges, request.direction),
+        elapsedMs: 1,
+      });
+    },
+    terminate: vi.fn(),
+  };
+}
+
 function makeNode(id: string, partial: Partial<IssueGraphNode> = {}): IssueGraphNode {
   return {
     id,
@@ -168,7 +181,7 @@ describe("DagView", () => {
   let qc: QueryClient;
   let store: StoreApi<IssueViewState>;
 
-  function renderDagView(query: DagGraphQueryState, hasActiveFilters = false) {
+  function renderDagView(query: DagGraphQueryState, hasActiveFilters = false, layoutRunnerFactory = syncLayoutRunner) {
     return render(
       <QueryClientProvider client={qc}>
         <ViewStoreProvider store={store}>
@@ -176,7 +189,7 @@ describe("DagView", () => {
             graphQuery={query}
             hasActiveFilters={hasActiveFilters}
             membershipComplete={!hasActiveFilters}
-            layoutRunnerFactory={syncLayoutRunner}
+            layoutRunnerFactory={layoutRunnerFactory}
           />
         </ViewStoreProvider>
       </QueryClientProvider>,
@@ -255,6 +268,92 @@ describe("DagView", () => {
     expect(store.getState().dagCollapsedIds).toEqual(
       expect.arrayContaining(["project:proj-1", "project:none", "issue:f1"]),
     );
+  });
+
+  it("expands a stage-only task line into ordered columns without dependency arrows", async () => {
+    store.getState().setDagGrouping("parent");
+    store.getState().setDagCollapsedIds(["issue:line"]);
+    const graph = makeGraph([
+      makeNode("line"),
+      makeNode("first-a", { parentIssueId: "line", stage: 1 }),
+      makeNode("first-b", { parentIssueId: "line", stage: 1 }),
+      makeNode("second", { parentIssueId: "line", stage: 2 }),
+      makeNode("last", { parentIssueId: "line", stage: 5 }),
+    ]);
+    renderDagView(graphQuery({ data: graph }), false, realLayoutRunner);
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    expect(canvasSpy.mock.calls.at(-1)![0].projection.nodes.map((n) => n.id)).toEqual(["issue:line"]);
+    act(() => canvasSpy.mock.calls.at(-1)![0].onToggleCollapsed("issue:line"));
+    await waitFor(() => {
+      const { positions, projection } = canvasSpy.mock.calls.at(-1)![0];
+      expect(positions.get("first-a")!.x).toEqual(positions.get("first-b")!.x);
+      expect(positions.get("first-a")!.x).toBeLessThan(positions.get("second")!.x);
+      expect(positions.get("second")!.x).toBeLessThan(positions.get("last")!.x);
+      expect(projection.edges).toEqual([]);
+    });
+    expect(graph.edges).toEqual([]);
+  });
+
+  it("uses the folded task's own stage without leaking its children's stage numbers", async () => {
+    store.getState().setDagGrouping("parent");
+    store.getState().setDagCollapsedIds(["issue:nested"]);
+    renderDagView(graphQuery({ data: makeGraph([
+      makeNode("line"),
+      makeNode("nested", { parentIssueId: "line", stage: 1 }),
+      makeNode("child", { parentIssueId: "nested", stage: 99 }),
+      makeNode("next", { parentIssueId: "line", stage: 2 }),
+    ]) }), false, realLayoutRunner);
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    const { positions, projection } = canvasSpy.mock.calls.at(-1)![0];
+    expect(positions.get("issue:nested")!.x).toBeLessThan(positions.get("next")!.x);
+    expect(positions.has("child")).toBe(false);
+    expect(projection.edges).toEqual([]);
+  });
+
+  it("relayouts stage edits but keeps positions for status-only refreshes", async () => {
+    store.getState().setDagCollapsedIds([]);
+    const runner = realLayoutRunner();
+    const execute = vi.spyOn(runner, "execute");
+    const initial = makeGraph([
+      makeNode("line"),
+      makeNode("a", { parentIssueId: "line", stage: 1 }),
+      makeNode("b", { parentIssueId: "line", stage: 2 }),
+    ]);
+    const surface = (graph: IssueGraph) => (
+      <QueryClientProvider client={qc}>
+        <ViewStoreProvider store={store}>
+          <DagView
+            graphQuery={graphQuery({ data: graph })}
+            hasActiveFilters={false}
+            membershipComplete
+            layoutRunnerFactory={() => runner}
+          />
+        </ViewStoreProvider>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(surface(initial));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    const committed = canvasSpy.mock.calls.at(-1)![0].positions;
+    expect(committed.get("a")!.x).toBeLessThan(committed.get("b")!.x);
+    const callsBeforeRefresh = execute.mock.calls.length;
+    rerender(surface({
+      ...initial,
+      snapshotId: "status-refresh",
+      nodes: initial.nodes.map((node) => ({ ...node, status: "done" })),
+    }));
+    expect(execute).toHaveBeenCalledTimes(callsBeforeRefresh);
+    expect(canvasSpy.mock.calls.at(-1)![0].positions).toBe(committed);
+    rerender(surface({
+      ...initial,
+      topologyId: "stage-edit",
+      snapshotId: "stage-edit",
+      nodes: initial.nodes.map((node) => node.id === "a" ? { ...node, stage: 3 } : node),
+    }));
+    await waitFor(() => {
+      const { positions } = canvasSpy.mock.calls.at(-1)![0];
+      expect(positions.get("b")!.x).toBeLessThan(positions.get("a")!.x);
+    });
+    expect(execute).toHaveBeenCalledTimes(callsBeforeRefresh + 1);
   });
 
   it("marks a refresh failure while keeping the last snapshot visible", async () => {
