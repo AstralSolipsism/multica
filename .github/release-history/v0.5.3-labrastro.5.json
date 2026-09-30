@@ -1,0 +1,12 @@
+{
+  "repository": "AstralSolipsism/multica",
+  "tag": "v0.5.3-labrastro.5",
+  "version": "0.5.3-labrastro.5",
+  "commit": "c923ced7032bdf0ddb6caec4a0bee8f32dac9ed3",
+  "tag_exists": true,
+  "tag_object": "c923ced7032bdf0ddb6caec4a0bee8f32dac9ed3",
+  "mode": "candidate",
+  "date": "2026-09-30T10:52:42Z",
+  "source_date_epoch": "1790765562",
+  "artifact_dir": "dist/candidate/v0.5.3-labrastro.5"
+}
