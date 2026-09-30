@@ -60,7 +60,7 @@ The version-1 envelope includes `snapshot_id`, `captured_at`, `complete: true`,
 
 `projectIssueGraph(graph, representatives)` groups visible node IDs under
 display representatives and merges directed edges while retaining all real
-source-edge IDs. It separately counts internal edges. Project/feature collapse
+source-edge IDs. It separately counts internal edges. Task-line collapse
 can produce both A → B and B → A; those display arrows do not imply a task
 dependency cycle. Edit or explain the original edges, never the aggregate IDs.
 For inherited explanations, follow the node's parent chain and original
@@ -74,12 +74,67 @@ Stages on unrelated task lines or unparented issues are not compared. Unstaged
 issues and same-stage siblings remain unconstrained unless a direct or
 transitive dependency orders them. Parentage alone creates no precedence.
 
-Stage boundaries exist only inside the layout worker; they produce no canvas
-arrows, persisted relations, or execution gates. Folded issues use their own
+Stage ordering constraints exist only inside the layout worker; they produce no
+task-to-task arrows, persisted relations, or execution gates. Stage progression
+is shown in stage headers, separately from dependency arrows. Folded issues use their own
 stage, never a child's stage. If stage ordering would create a cycle through
 real dependencies (including cross-line paths), conflicting stage boundaries
 are omitted; real arrows retain their original direction. A stage edit changes
 `topologyId` and relayouts the graph; status/run-only updates keep its positions.
+
+## Grouped Web/Desktop canvas
+
+The shared canvas uses React Flow with ELK. Each visible parent is a task-line
+container, including nested parents; its header is the entry to the actual
+parent issue. Project membership appears as context and does not split a
+parent's descendants into unrelated project representatives. A line expands
+in its own row (LR) or column (TB). Completed issues remain in that structure;
+explicit query filters continue to apply.
+
+First entry folds task lines. Unparented issues without visible relations and
+without unknown/restricted relationship information form a separate
+**Independent issues** container. It starts folded, uses the same canvas and
+cards, and expands into a compact grid. Its preference is independent of
+**Expand issue groups / Collapse issue groups**. A dependency-chain endpoint
+or an unordered child of a parent is not an independent root merely because
+it has no outgoing edge. Missing relationships do not authorize execution.
+
+Fully staged siblings receive bounded stage regions with visible separators
+and header-level progression. Mixed staged/unstaged siblings keep individual
+stage badges and layout preferences without assigning a stage to an unstaged
+issue. Conflicting stage preferences yield to dependency order, with a visible
+explanation on the group. All visible task arrows retain real source edges.
+
+Cross-line edges are always included. Folded endpoints attach to container
+boundaries; expanded endpoints attach to actual issues. Aggregate count
+buttons expose the original issue pairs. A group-to-group arrow does not mean
+that every member of one group depends on every member of the other.
+
+ELK computes both positions and edge paths. Local graphs expose boundary ports;
+an outer ELK layout arranges the groups in regular rows/columns and routes
+between those ports. Matching path sections are joined without a hand-written
+obstacle router. Stage constraints and routing terminals are display-only and
+never enter the API or become visible dependency arrows.
+
+The existing layout worker owns orchestration and an ELK worker created through
+its supported API. Replacing/canceling a worker invalidates its outstanding
+response. Failure is explicit and retryable; the canvas does not substitute
+straight or guessed dependency lines. The heavy kernel is only loaded when
+DAG layout runs. Selection, title, status and run refreshes do not relayout an
+unchanged visible topology.
+
+Single-click selects an issue and highlights its direct dependencies and stage.
+Other titles remain readable. Explicit dependency-neighborhood actions remain
+available; **Focus issue group** is a separate action. Double-click or the
+existing detail action follows the platform navigation adapter. Returning
+restores personal expansion and viewport state. Expand does not automatically
+fit the entire graph or shrink the reading size; ordinary scrolling pans the
+canvas. Personal viewport and independent expansion use the existing scoped
+view store, while selection stays session-only.
+
+The former DAG project/flat grouping chooser is replaced by this task-line
+model. Older shared-view grouping values continue to round-trip at the API
+boundary; they do not restore the former flat canvas.
 
 ## Shared frontend integration
 

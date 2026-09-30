@@ -1,136 +1,259 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { layoutDagProjection } from "./dag-layout";
+import ELK from "elkjs/lib/elk.bundled.js";
+import {
+  layoutDagProjection as computeLayout,
+  type DagLayoutNodeInput,
+  type DagLayoutGroupInput,
+  type DagLayoutEdgeInput,
+  type DagLayoutResult,
+} from "./dag-layout";
 
-describe("layoutDagProjection", () => {
-  it("positions every node and runs left-to-right under LR", () => {
-    const positions = layoutDagProjection(
-      [
-        { id: "a", width: 100, height: 40 },
-        { id: "b", width: 100, height: 40 },
-        { id: "c", width: 100, height: 40 },
-      ],
-      [
-        { source: "a", target: "b" },
-        { source: "b", target: "c" },
-      ],
-      "LR",
-    );
-    expect(Object.keys(positions).sort()).toEqual(["a", "b", "c"]);
-    // Ranks advance along x for LR, along y for TB.
-    expect(positions.a!.x).toBeLessThan(positions.b!.x);
-    expect(positions.b!.x).toBeLessThan(positions.c!.x);
-  });
-
-  it("advances ranks along y under TB", () => {
-    const positions = layoutDagProjection(
-      [
-        { id: "a", width: 100, height: 40 },
-        { id: "b", width: 100, height: 40 },
-      ],
-      [{ source: "a", target: "b" }],
-      "TB",
-    );
-    expect(positions.a!.y).toBeLessThan(positions.b!.y);
-  });
-
-  it("ignores edges to nodes outside the projection and still places isolates", () => {
-    const positions = layoutDagProjection(
-      [
-        { id: "a", width: 100, height: 40 },
-        { id: "lonely", width: 100, height: 40 },
-      ],
-      [
-        { source: "a", target: "missing" },
-        { source: "missing", target: "a" },
-      ],
-      "LR",
-    );
-    expect(Object.keys(positions).sort()).toEqual(["a", "lonely"]);
-    for (const position of Object.values(positions)) {
-      expect(Number.isFinite(position.x)).toBe(true);
-      expect(Number.isFinite(position.y)).toBe(true);
+const engine = new ELK();
+const layoutDagProjection = (
+  nodes: DagLayoutNodeInput[],
+  edges: DagLayoutEdgeInput[],
+  direction: "LR" | "TB",
+  groups: DagLayoutGroupInput[] = [],
+) => computeLayout(nodes, edges, direction, groups, engine);
+const node = (
+  id: string,
+  groupId: string | null = null,
+  stage: number | null = null,
+): DagLayoutNodeInput => ({ id, groupId, stage, width: 248, height: 116 });
+const group = (
+  id: string,
+  collapsed = false,
+  parentId: string | null = null,
+): DagLayoutGroupInput => ({ id, collapsed, parentId, independent: false });
+const edge = (source: string, target: string): DagLayoutEdgeInput => ({
+  id: `${source}->${target}`,
+  source,
+  target,
+});
+function routeEndpoints(result: DagLayoutResult, edges: DagLayoutEdgeInput[]) {
+  expect(Object.keys(result.routes).sort()).toEqual(edges.map((e) => e.id).sort());
+  for (const e of edges) {
+    const path = result.routes[e.id]!;
+    expect(path.length).toBeGreaterThan(1);
+    for (const p of path) {
+      expect(Number.isFinite(p.x)).toBe(true);
+      expect(Number.isFinite(p.y)).toBe(true);
     }
-  });
-
-  it("returns top-left coordinates (Dagre centers shifted by half size)", () => {
-    const positions = layoutDagProjection(
-      [{ id: "only", width: 200, height: 80 }],
-      [],
-      "LR",
-    );
-    expect(positions.only).toEqual({ x: expect.any(Number), y: expect.any(Number) });
-  });
-
-  function stagedNode(id: string, parentIssueId: string | null, stage: number | null) {
-    return { id, width: 100, height: 40, parentIssueId, stage };
+    const sourcePort = result.ports[e.source]!.find((p) => p.id === `source:${e.id}`)!;
+    const targetPort = result.ports[e.target]!.find((p) => p.id === `target:${e.id}`)!;
+    expect(path[0]!.x).toBeCloseTo(result.positions[e.source]!.x + sourcePort.x);
+    expect(path[0]!.y).toBeCloseTo(result.positions[e.source]!.y + sourcePort.y);
+    expect(path.at(-1)!.x).toBeCloseTo(result.positions[e.target]!.x + targetPort.x);
+    expect(path.at(-1)!.y).toBeCloseTo(result.positions[e.target]!.y + targetPort.y);
   }
+}
+function expectNoCardIntersections(
+  result: DagLayoutResult,
+  nodes: DagLayoutNodeInput[],
+  edges: DagLayoutEdgeInput[],
+) {
+  for (const e of edges) {
+    const path = result.routes[e.id]!;
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1]!,
+        b = path[i]!;
+      expect(a.x === b.x || a.y === b.y).toBe(true);
+      for (const n of nodes) {
+        if (result.groups[n.id] || n.id === e.source || n.id === e.target) continue;
+        const p = result.positions[n.id]!;
+        const hit =
+          a.x === b.x
+            ? a.x > p.x + 0.01 &&
+              a.x < p.x + n.width - 0.01 &&
+              Math.max(a.y, b.y) > p.y + 0.01 &&
+              Math.min(a.y, b.y) < p.y + n.height - 0.01
+            : a.y > p.y + 0.01 &&
+              a.y < p.y + n.height - 0.01 &&
+              Math.max(a.x, b.x) > p.x + 0.01 &&
+              Math.min(a.x, b.x) < p.x + n.width - 0.01;
+        expect(hit, `${e.id} intersects ${n.id}`).toBe(false);
+      }
+    }
+  }
+}
 
-  it.each(["LR", "TB"] as const)("orders stages within a task line under %s without stored edges", (direction) => {
+describe("ELK task-line layout", () => {
+  it.each(["LR", "TB"] as const)(
+    "lays out a real dependency chain inside its line under %s",
+    async (direction) => {
+      const nodes = [node("line"), node("a", "line"), node("b", "line"), node("c", "line")];
+      const edges = [edge("a", "b"), edge("b", "c")];
+      const result = await layoutDagProjection(nodes, edges, direction, [group("line")]);
+      const axis = direction === "LR" ? "x" : "y";
+      expect(result.positions.a![axis]).toBeLessThan(result.positions.b![axis]);
+      expect(result.positions.b![axis]).toBeLessThan(result.positions.c![axis]);
+      routeEndpoints(result, edges);
+      expectNoCardIntersections(result, nodes, edges);
+    },
+  );
+  it.each(["LR", "TB"] as const)(
+    "shows stage bands without inventing dependencies under %s",
+    async (direction) => {
+      const nodes = [
+        node("line"),
+        node("last", "line", 5),
+        node("first-a", "line", 1),
+        node("middle", "line", 3),
+        node("first-b", "line", 1),
+      ];
+      const result = await layoutDagProjection(nodes, [], direction, [group("line")]);
+      const axis = direction === "LR" ? "x" : "y";
+      expect(result.positions["first-a"]![axis]).toBe(result.positions["first-b"]![axis]);
+      expect(result.positions["first-a"]![axis]).toBeLessThan(result.positions.middle![axis]);
+      expect(result.positions.middle![axis]).toBeLessThan(result.positions.last![axis]);
+      expect(result.groups.line!.bands.map((b) => b.stage)).toEqual([1, 3, 5]);
+      expect(result.routes).toEqual({});
+    },
+  );
+  it.each(["LR", "TB"] as const)(
+    "keeps lines in separate rows/columns and routes cross-line edges without crossing cards under %s",
+    async (direction) => {
+      const nodes = [
+        node("one"),
+        node("a", "one", 1),
+        node("b", "one", 2),
+        node("two"),
+        node("c", "two", 1),
+        node("d", "two", 2),
+        node("folded"),
+      ];
+      const edges = [
+        edge("a", "b"),
+        edge("c", "d"),
+        edge("a", "c"),
+        edge("b", "c"),
+        edge("d", "folded"),
+      ];
+      const result = await layoutDagProjection(nodes, edges, direction, [
+        group("one"),
+        group("two"),
+        group("folded", true),
+      ]);
+      const axis = direction === "LR" ? "y" : "x",
+        size = direction === "LR" ? "height" : "width";
+      expect(result.groups.one![axis] + result.groups.one![size]).toBeLessThan(
+        result.groups.two![axis],
+      );
+      expect(result.groups.two![axis] + result.groups.two![size]).toBeLessThan(
+        result.groups.folded![axis],
+      );
+      routeEndpoints(result, edges);
+      expectNoCardIntersections(result, nodes, edges);
+    },
+  );
+  it("preserves opposite aggregate directions between folded task lines", async () => {
+    const edges = [edge("one", "two"), edge("two", "one")];
+    const result = await layoutDagProjection([node("one"), node("two")], edges, "LR", [
+      group("one", true),
+      group("two", true),
+    ]);
+    expect(result.groups.one!.y).toBeLessThan(result.groups.two!.y);
+    routeEndpoints(result, edges);
+  });
+  it("joins paths across nested containers and an expanded parent's own endpoint", async () => {
     const nodes = [
-      stagedNode("last", "line", 5),
-      stagedNode("first-a", "line", 1),
-      stagedNode("middle", "line", 3),
-      stagedNode("first-b", "line", 1),
+      node("one"),
+      node("nested", "one", 1),
+      node("a", "nested"),
+      node("b", "one", 2),
+      node("two"),
+      node("c", "two"),
     ];
-    const positions = layoutDagProjection(nodes, [], direction);
-    const axis = direction === "LR" ? "x" : "y";
-    const size = direction === "LR" ? 100 : 40;
-    expect(positions["first-a"]![axis]).toEqual(positions["first-b"]![axis]);
-    expect(positions["first-a"]![axis] + size).toBeLessThan(positions.middle![axis]);
-    expect(positions.middle![axis] + size).toBeLessThan(positions.last![axis]);
-    expect(Object.keys(positions).sort()).toEqual(nodes.map((n) => n.id).sort());
+    const edges = [edge("a", "b"), edge("a", "c"), edge("one", "a")];
+    const result = await layoutDagProjection(nodes, edges, "LR", [
+      group("one"),
+      group("nested", false, "one"),
+      group("two"),
+    ]);
+    routeEndpoints(result, edges);
+    expectNoCardIntersections(result, nodes, edges);
+    expect(result.groups.nested!.x).toBeGreaterThan(result.groups.one!.x);
   });
-
-  it("keeps independent task lines, unparented stages and unstaged tasks parallel", () => {
-    const positions = layoutDagProjection([
-      stagedNode("line-a", "parent-a", 8),
-      stagedNode("line-b", "parent-b", 1),
-      stagedNode("root-a", null, 1),
-      stagedNode("root-b", null, 9),
-      stagedNode("unstaged-a", "line", null),
-      stagedNode("unstaged-b", "line", null),
-    ], [], "LR");
-    expect(new Set(Object.values(positions).map((p) => p.x)).size).toBe(1);
+  it("keeps unordered children in a compact grid and leaves unparented stage numbers unconstrained", async () => {
+    const nodes = [
+      node("line"),
+      ...Array.from({ length: 8 }, (_, i) => node(`n${i}`, "line")),
+      node("loose", null, 9),
+    ];
+    const result = await layoutDagProjection(nodes, [], "LR", [group("line")]);
+    expect(new Set(nodes.slice(1, 9).map((n) => result.positions[n.id]!.x)).size).toBe(3);
+    expect(new Set(nodes.slice(1, 9).map((n) => result.positions[n.id]!.y)).size).toBe(3);
+    expect(result.groups.line!.bands).toEqual([]);
+    expect(result.positions.loose).toBeDefined();
   });
-
-  it("honors transitive dependencies within one stage through unstaged tasks", () => {
-    const positions = layoutDagProjection([
-      stagedNode("a", "line", 1),
-      stagedNode("b", "line", null),
-      stagedNode("c", "line", 1),
-      stagedNode("later", "line", 2),
-    ], [{ source: "a", target: "b" }, { source: "b", target: "c" }], "LR");
-    expect(positions.a!.x).toBeLessThan(positions.b!.x);
-    expect(positions.b!.x).toBeLessThan(positions.c!.x);
-    expect(positions.c!.x).toBeLessThan(positions.later!.x);
+  it("honors an unstaged dependency bridge between members of the same stage", async () => {
+    const nodes = [
+      node("line"),
+      node("a", "line", 1),
+      node("b", "line"),
+      node("c", "line", 1),
+      node("later", "line", 2),
+    ];
+    const edges = [edge("a", "b"), edge("b", "c")];
+    const result = await layoutDagProjection(nodes, edges, "LR", [group("line")]);
+    expect(result.positions.a!.x).toBeLessThan(result.positions.b!.x);
+    expect(result.positions.b!.x).toBeLessThan(result.positions.c!.x);
+    expect(result.positions.c!.x).toBeLessThan(result.positions.later!.x);
+    routeEndpoints(result, edges);
   });
-
-  it("gives a conflicting dependency path priority over stage numbers", () => {
-    const positions = layoutDagProjection([
-      stagedNode("early", "line", 1),
-      stagedNode("later", "line", 2),
-      stagedNode("outside", "another-line", null),
-      stagedNode("final", "line", 3),
-    ], [
-      { source: "later", target: "outside" },
-      { source: "outside", target: "early" },
-    ], "LR");
-    expect(positions.later!.x).toBeLessThan(positions.outside!.x);
-    expect(positions.outside!.x).toBeLessThan(positions.early!.x);
-    expect(positions.later!.x).toBeLessThan(positions.final!.x);
+  it("gives a real dependency path through another line priority over conflicting stages", async () => {
+    const nodes = [
+      node("line"),
+      node("early", "line", 1),
+      node("later", "line", 2),
+      node("other"),
+      node("outside", "other"),
+    ];
+    const edges = [edge("later", "outside"), edge("outside", "early")];
+    const result = await layoutDagProjection(nodes, edges, "LR", [group("line"), group("other")]);
+    expect(result.groups.line!.stageConflict).toBe(true);
+    expect(result.groups.line!.bands).toEqual([]);
+    routeEndpoints(result, edges);
+    expectNoCardIntersections(result, nodes, edges);
   });
-
-  it("does not reverse dependencies when stage constraints across lines would make a cycle", () => {
-    const positions = layoutDagProjection([
-      stagedNode("a1", "a", 1), stagedNode("a2", "a", 2),
-      stagedNode("b1", "b", 1), stagedNode("b2", "b", 2),
-    ], [
-      { source: "a2", target: "b1" },
-      { source: "b2", target: "a1" },
-    ], "LR");
-    expect(positions.a2!.x).toBeLessThan(positions.b1!.x);
-    expect(positions.b2!.x).toBeLessThan(positions.a1!.x);
+  it("does not drop real edges when stage preferences form a cross-line cycle", async () => {
+    const nodes = [
+      node("one"),
+      node("a1", "one", 1),
+      node("a2", "one", 2),
+      node("two"),
+      node("b1", "two", 1),
+      node("b2", "two", 2),
+    ];
+    const edges = [edge("a2", "b1"), edge("b2", "a1")];
+    const result = await layoutDagProjection(nodes, edges, "LR", [group("one"), group("two")]);
+    expect(result.groups.one!.stageConflict).toBe(true);
+    expect(result.groups.two!.stageConflict).toBe(true);
+    routeEndpoints(result, edges);
+    expectNoCardIntersections(result, nodes, edges);
   });
-
+  it("ignores invisible endpoints and does not mutate layout inputs", async () => {
+    const nodes = [node("a"), node("lonely")],
+      edges = [edge("a", "hidden")];
+    const before = JSON.stringify({ nodes, edges });
+    const result = await layoutDagProjection(nodes, edges, "LR");
+    expect(Object.keys(result.positions).sort()).toEqual(["a", "lonely"]);
+    expect(result.routes).toEqual({});
+    expect(JSON.stringify({ nodes, edges })).toBe(before);
+  });
+  it.each(["LR", "TB"] as const)(
+    "keeps an unparented dependency chain directional under %s",
+    async (direction) => {
+      const nodes = [node("c"), node("a"), node("b"), node("independent")];
+      const edges = [edge("a", "b"), edge("b", "c")];
+      const result = await layoutDagProjection(nodes, edges, direction, [
+        { ...group("independent", true), independent: true },
+      ]);
+      const axis = direction === "LR" ? "x" : "y";
+      expect(result.positions.a![axis]).toBeLessThan(result.positions.b![axis]);
+      expect(result.positions.b![axis]).toBeLessThan(result.positions.c![axis]);
+      routeEndpoints(result, edges);
+    },
+  );
 });

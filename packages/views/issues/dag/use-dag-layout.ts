@@ -4,132 +4,163 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   DagLayoutEdgeInput,
   DagLayoutNodeInput,
+  DagLayoutGroupInput,
   DagLayoutRequest,
   DagLayoutResponse,
+  DagLayoutResult,
 } from "./dag-layout";
 import type { DagDirection } from "@multica/core/issues/stores/view-store";
-
-/**
- * Owns the layout worker across projection changes.
- *
- * - Every projection/direction change posts ONE request; responses carry the
- *   request id, so a slow answer to a superseded request is discarded and the
- *   last committed positions stay on screen meanwhile.
- * - `cancel()` terminates the worker outright. Dagre cannot abort mid-run and
- *   a worker processes messages serially, so termination is the only way to
- *   stop a stalled dense layout from blocking every later request; the next
- *   execute lazily spawns a fresh worker.
- * - Positions are keyed by node id, so a status/run-only refresh (same
- *   topologyId) never changes this hook's inputs and no layout happens.
- */
 
 export type DagLayoutExecutor = (
   request: DagLayoutRequest,
   onDone: (response: DagLayoutResponse) => void,
 ) => void;
-
 export interface DagLayoutRunner {
   execute: DagLayoutExecutor;
-  /** Hard-stop the in-flight layout (expand-all cancel). */
   terminate: () => void;
 }
-
-export interface DagLayoutState {
-  /** Top-left positions by node id; null until the first layout lands. */
+export interface DagLayoutState<T> {
+  snapshot: T | undefined;
+  result: DagLayoutResult | null;
   positions: ReadonlyMap<string, { x: number; y: number }> | null;
-  /** Direction that produced the committed positions, retained while pending. */
   direction: DagDirection;
-  /** A request is in flight (first load or re-layout after a topology fold). */
   pending: boolean;
-  /** When the current request started — drives the >5s cancel affordance. */
   pendingSince: number | null;
-  /** Wall time of the last committed layout, surfaced in performance notes. */
   lastElapsedMs: number | null;
+  error: string | null;
   cancel: () => void;
+  retry: () => void;
 }
 
 function createWorkerRunner(): DagLayoutRunner {
   let worker: Worker | null = null;
   let listener: ((event: MessageEvent<DagLayoutResponse>) => void) | null = null;
+  let errorListener: ((event: ErrorEvent) => void) | null = null;
+  let activeRequest: number | null = null;
+  const stop = () => {
+    worker?.terminate();
+    worker = null;
+    listener = null;
+    errorListener = null;
+    activeRequest = null;
+  };
   return {
     execute(request, onDone) {
-      // Vite serves worker imports as ES modules in development.
-      worker ??= new Worker(new URL("./dag-layout-worker.ts", import.meta.url), {
-        type: "module",
-      });
+      if (activeRequest !== null) stop();
+      activeRequest = request.requestId;
+      worker ??= new Worker(new URL("./dag-layout-worker.ts", import.meta.url), { type: "module" });
       if (listener) worker.removeEventListener("message", listener);
+      if (errorListener) worker.removeEventListener("error", errorListener);
       listener = (event) => {
-        if (event.data?.requestId === request.requestId) onDone(event.data);
+        if (event.data?.requestId === request.requestId) {
+          activeRequest = null;
+          onDone(event.data);
+        }
       };
+      errorListener = (event) =>
+        onDone({
+          requestId: request.requestId,
+          positions: {},
+          groups: {},
+          routes: {},
+          ports: {},
+          elapsedMs: 0,
+          error: event.message || "DAG worker failed",
+        });
       worker.addEventListener("message", listener);
-      worker.postMessage(request satisfies DagLayoutRequest);
+      worker.addEventListener("error", errorListener);
+      worker.postMessage(request);
     },
-    terminate() {
-      worker?.terminate();
-      worker = null;
-      listener = null;
-    },
+    terminate: stop,
   };
 }
-
 let nextRequestId = 1;
+export const EMPTY_LAYOUT_NODES: DagLayoutNodeInput[] = [];
+export const EMPTY_LAYOUT_EDGES: DagLayoutEdgeInput[] = [];
+export const EMPTY_LAYOUT_GROUPS: DagLayoutGroupInput[] = [];
 
-const EMPTY_LAYOUT_NODES: DagLayoutNodeInput[] = [];
-const EMPTY_LAYOUT_EDGES: DagLayoutEdgeInput[] = [];
-
-export function useDagLayout(
+/** The latest complete geometry wins. The worker owns ELK and can be stopped
+ * outright; status/title/selection updates never change its topology input. */
+export function useDagLayout<T>(
   nodes: DagLayoutNodeInput[],
   edges: DagLayoutEdgeInput[],
+  groups: DagLayoutGroupInput[],
   direction: DagDirection,
   runnerFactory: () => DagLayoutRunner = createWorkerRunner,
-): DagLayoutState {
+  snapshot?: T,
+): DagLayoutState<T> {
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
   const runnerRef = useRef<DagLayoutRunner | null>(null);
   runnerRef.current ??= runnerFactory();
-  const [result, setResult] = useState<{
-    positions: NonNullable<DagLayoutState["positions"]>;
+  const [revision, setRevision] = useState(0);
+  const [committed, setCommitted] = useState<{
+    result: DagLayoutResult;
+    snapshot: T | undefined;
     direction: DagDirection;
     elapsedMs: number;
   } | null>(null);
   const [pendingSince, setPendingSince] = useState<number | null>(null);
-  // Latest-response wins: the ref flips synchronously with each new request,
-  // so a stale worker answer can never overwrite a newer layout.
-  const liveRequestIdRef = useRef(0);
-
-  const request = useMemo<DagLayoutRequest>(
-    () => ({ requestId: nextRequestId++, nodes, edges, direction }),
-    [nodes, edges, direction],
+  const [error, setError] = useState<string | null>(null);
+  const liveRequest = useRef(0);
+  const input = useMemo(
+    () => ({ nodes, edges, groups, direction }),
+    [nodes, edges, groups, direction],
   );
-
   useEffect(() => {
-    if (request.nodes.length === 0) return;
-    liveRequestIdRef.current = request.requestId;
-    setPendingSince(Date.now());
-    const onDone = (response: DagLayoutResponse) => {
-      if (response.requestId !== liveRequestIdRef.current) return;
+    const request: DagLayoutRequest = { ...input, requestId: nextRequestId++ };
+    const requestedSnapshot = snapshotRef.current;
+    liveRequest.current = request.requestId;
+    setError(null);
+    if (!request.nodes.length) {
+      runnerRef.current?.terminate();
       setPendingSince(null);
-      setResult({
-        positions: new Map(Object.entries(response.positions)),
+      return;
+    }
+    setPendingSince(Date.now());
+    runnerRef.current!.execute(request, (response) => {
+      if (response.requestId !== liveRequest.current) return;
+      setPendingSince(null);
+      if (response.error) {
+        setError(response.error);
+        return;
+      }
+      setCommitted({
+        result: response,
+        snapshot: requestedSnapshot,
         direction: request.direction,
         elapsedMs: response.elapsedMs,
       });
-    };
-    runnerRef.current!.execute(request, onDone);
-  }, [request]);
-
-  // Unmount tears the worker down with the surface.
-  useEffect(() => () => runnerRef.current?.terminate(), []);
-
+    });
+  }, [input, revision]);
+  useEffect(
+    () => () => {
+      liveRequest.current = 0;
+      runnerRef.current?.terminate();
+    },
+    [],
+  );
+  const positions = useMemo(
+    () => (committed ? new Map(Object.entries(committed.result.positions)) : null),
+    [committed],
+  );
   return {
-    positions: result?.positions ?? null,
-    direction: result?.direction ?? direction,
+    snapshot: committed?.snapshot,
+    result: committed?.result ?? null,
+    positions,
+    direction: committed?.direction ?? direction,
     pending: pendingSince !== null,
     pendingSince,
-    lastElapsedMs: result?.elapsedMs ?? null,
+    lastElapsedMs: committed?.elapsedMs ?? null,
+    error,
     cancel: () => {
+      liveRequest.current = 0;
       runnerRef.current?.terminate();
       setPendingSince(null);
     },
+    retry: () => {
+      runnerRef.current?.terminate();
+      setRevision((r) => r + 1);
+    },
   };
 }
-
-export { EMPTY_LAYOUT_NODES, EMPTY_LAYOUT_EDGES };

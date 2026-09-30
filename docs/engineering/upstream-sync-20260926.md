@@ -72,7 +72,10 @@ choices. Keep OL-14's non-marketing experience unless the owner explicitly
 changes it: first-use setup has no source, role or use-case questionnaire; Web
 and Desktop show no cloud-computer promotion; community entries open the
 instance's Feishu QR dialog; the help menu and download/update paths retain
-their internal destinations. Source-backfill prompts remain unmounted. Retired public marketing pages such as\n/about and /homepage remain unavailable; the sitemap excludes retired marketing\nroutes, and the internal download page does not emit upstream organization\npromotion. Keep software license and attribution notices.
+their internal destinations. Source-backfill prompts remain unmounted. Retired public marketing pages such as
+/about and /homepage remain unavailable; the sitemap excludes retired marketing
+routes, and the internal download page does not emit upstream organization
+promotion. Keep software license and attribution notices.
 
 During an upstream merge, review the resulting user paths and their tests
 against these constraints. Do not replace a fork's absence assertion with an
@@ -88,3 +91,11 @@ creation without persona questions, and reach runtime setup without a cloud
 promotion. Check retired public routes, the sitemap and download-page metadata. Verify the desktop entry uses the same tested flow, and publish the
 rebuilt desktop packages and feeds when shared UI changes. Record what actually
 ran in the deployment handoff; test totals alone are not acceptance evidence.
+
+The DAG task-line view is also a retained product behavior: keep bounded task
+lines, stage separators, only real dependency arrows, and the independent-issue
+group's separate manual expansion. Global expansion must not open independent
+issues or auto-shrink the canvas. Shared Web/Desktop regression must exercise
+actual layout output, cross-line folded/expanded endpoints and detail-return
+viewport state; a screenshot of clustered summaries alone is insufficient.
+See [the graph view contract](../issue-graph-api.md#grouped-webdesktop-canvas).

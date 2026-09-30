@@ -1,44 +1,28 @@
 "use client";
 
-import {
-  Suspense,
-  lazy,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { hashKey } from "@tanstack/react-query";
-import {
-  AlertTriangle,
-  Expand,
-  FilterX,
-  ListTree,
-  Loader2,
-  Shrink,
-} from "lucide-react";
+import { AlertTriangle, Expand, FilterX, ListTree, Loader2, Shrink } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { ApiError, type IssueGraph } from "@multica/core/api";
 import {
   computeDagProjection,
+  DAG_INDEPENDENT_GROUP,
   defaultDagCollapsedIds,
   pruneDagCollapsedIds,
   repsToRevealIssues,
 } from "./dag-projection";
-import type { DagLayoutNodeInput } from "./dag-layout";
+import type { DagLayoutNodeInput, DagLayoutGroupInput, DagLayoutEdgeInput } from "./dag-layout";
 import { dagNodeSize } from "./dag-constants";
 import {
   EMPTY_LAYOUT_EDGES,
+  EMPTY_LAYOUT_GROUPS,
   EMPTY_LAYOUT_NODES,
   useDagLayout,
   type DagLayoutRunner,
 } from "./use-dag-layout";
-import {
-  useViewStore,
-  useViewStoreApi,
-} from "@multica/core/issues/stores/view-store-context";
+import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import { useViewBaseline } from "../surface/view-baseline-context";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -88,20 +72,14 @@ export function DagView({
   const catalog = useIssueStatuses(wsId);
   const storeApi = useViewStoreApi();
   const direction = useViewStore((s) => s.dagDirection);
-  const grouping = useViewStore((s) => s.dagGrouping);
+  const independentExpanded = useViewStore((s) => s.dagIndependentExpanded);
   const storedCollapsedIds = useViewStore((s) => s.dagCollapsedIds);
   const baseline = useViewBaseline();
 
   const graph = graphQuery.data;
 
-  // First-paint default collapse: an uninitialized surface (null) folds every
-  // project rep (project grouping) and every feature, so the initial canvas
-  // is the group level. The default writes back once so later graph growth
-  // keeps the user's explicit fold choices instead of re-defaulting.
-  const defaultCollapsed = useMemo(
-    () => (graph ? defaultDagCollapsedIds(graph, grouping) : []),
-    [graph, grouping],
-  );
+  // Initialize personal task-line folds once; independent expansion has its own preference.
+  const defaultCollapsed = useMemo(() => (graph ? defaultDagCollapsedIds(graph) : []), [graph]);
   const collapsedIds = storedCollapsedIds ?? defaultCollapsed;
   useEffect(() => {
     if (graph && storedCollapsedIds === null) {
@@ -110,8 +88,8 @@ export function DagView({
   }, [defaultCollapsed, graph, storeApi, storedCollapsedIds]);
 
   const projection = useMemo(
-    () => (graph ? computeDagProjection(graph, grouping, collapsedIds) : null),
-    [graph, grouping, collapsedIds],
+    () => (graph ? computeDagProjection(graph, collapsedIds, independentExpanded) : null),
+    [graph, collapsedIds, independentExpanded],
   );
 
   // Stale-fold cleanup: only a PROVABLY inert fold loses its entry, and
@@ -136,14 +114,22 @@ export function DagView({
   }, [graph, pruneAllowed, storeApi, storedCollapsedIds]);
 
   // Layout inputs track topologyId, not the graph object: status/title/run
-  // refreshes keep the topology id and must not re-run Dagre. The ref gate
+  // refreshes keep the topology id and must not re-run ELK. The ref gate
   // keeps the last inputs when the key is unchanged even though a fresh graph
   // snapshot produced a new projection object.
-  const layoutKey = hashKey([graph?.topologyId, grouping, collapsedIds, direction]);
+  const layoutKey = hashKey([
+    graph?.topologyId,
+    collapsedIds,
+    independentExpanded,
+    direction,
+    projection?.nodes.map((n) => [n.id, n.groupId, n.issue?.stage]),
+    projection?.groups.map((g) => [g.id, g.parentId, g.collapsed]),
+  ]);
   const layoutInputRef = useRef<{
     key: string;
     nodes: DagLayoutNodeInput[];
-    edges: { source: string; target: string }[];
+    edges: DagLayoutEdgeInput[];
+    groups: DagLayoutGroupInput[];
   } | null>(null);
   if (projection && layoutInputRef.current?.key !== layoutKey) {
     layoutInputRef.current = {
@@ -152,9 +138,17 @@ export function DagView({
         id: node.id,
         ...dagNodeSize(node.kind),
         parentIssueId: node.issue?.parentIssueId ?? null,
+        groupId: node.groupId,
         stage: node.issue?.stage ?? null,
       })),
+      groups: projection.groups.map(({ id, parentId, collapsed, independent }) => ({
+        id,
+        parentId,
+        collapsed,
+        independent,
+      })),
       edges: projection.edges.map((edge) => ({
+        id: edge.id,
         source: edge.source,
         target: edge.target,
       })),
@@ -163,9 +157,20 @@ export function DagView({
   const layout = useDagLayout(
     layoutInputRef.current?.nodes ?? EMPTY_LAYOUT_NODES,
     layoutInputRef.current?.edges ?? EMPTY_LAYOUT_EDGES,
+    layoutInputRef.current?.groups ?? EMPTY_LAYOUT_GROUPS,
     direction,
     layoutRunnerFactory,
+    { key: layoutKey, graph, projection },
   );
+  // Commit a complete canvas: a fold must never combine new endpoint IDs
+  // with old routes. Fresh content can reuse matching geometry; a changed
+  // server graph waits for its own layout rather than exposing removed data.
+  const canvasSnapshot =
+    layout.snapshot?.key === layoutKey
+      ? { graph, projection }
+      : layout.snapshot?.graph === graph
+        ? layout.snapshot
+        : null;
 
   // Expand-all cancel path: folding is restored and the stalled worker is
   // terminated; the restored fold issues a fresh layout on a new worker.
@@ -184,20 +189,25 @@ export function DagView({
   const [focusRequest, setFocusRequest] = useState<{
     issueIds: string[];
     nonce: number;
+    groupId?: string;
   } | null>(null);
   const pendingRevealRef = useRef<string[] | null>(null);
+  const pendingGroupRef = useRef<string | null>(null);
 
   // Reveal completes once the post-unfold layout settled: the canvas can only
   // center ids that have positions.
   useEffect(() => {
     const pending = pendingRevealRef.current;
-    if (!pending || layout.pending) return;
+    const groupId = pendingGroupRef.current;
+    if ((!pending && !groupId) || layout.pending || layout.error || layout.snapshot?.key !== layoutKey) return;
+    pendingGroupRef.current = null;
     pendingRevealRef.current = null;
     setFocusRequest((current) => ({
-      issueIds: pending,
+      issueIds: pending ?? [],
+      groupId: groupId ?? undefined,
       nonce: (current?.nonce ?? 0) + 1,
     }));
-  }, [layout.pending, layout.positions]);
+  }, [layout.pending, layout.positions, layout.error, layout.snapshot?.key, layoutKey]);
 
   const onOpenIssue = useCallback(
     (issueId: string) => {
@@ -208,16 +218,44 @@ export function DagView({
 
   const onToggleCollapsed = useCallback(
     (representativeId: string) => {
-      storeApi.getState().toggleDagCollapsed(representativeId, defaultCollapsed);
+      if (representativeId === DAG_INDEPENDENT_GROUP) {
+        const state = storeApi.getState();
+        state.setDagIndependentExpanded(!state.dagIndependentExpanded);
+      } else storeApi.getState().toggleDagCollapsed(representativeId, defaultCollapsed);
     },
     [defaultCollapsed, storeApi],
+  );
+
+  const onFocusGroup = useCallback(
+    (id: string) => {
+      const group = projection?.groups.find((g) => g.id === id);
+      if (!group) return;
+      if (!group.collapsed) {
+        setFocusRequest((current) => ({
+          issueIds: [],
+          groupId: id,
+          nonce: (current?.nonce ?? 0) + 1,
+        }));
+        return;
+      }
+      pendingGroupRef.current = id;
+      if (group.independent) storeApi.getState().setDagIndependentExpanded(true);
+      else storeApi.getState().setDagCollapsedIds(collapsedIds.filter((item) => item !== id));
+    },
+    [projection, collapsedIds, storeApi],
   );
 
   const onRevealIssues = useCallback(
     (issueIds: string[]) => {
       if (!graph) return;
-      const reps = repsToRevealIssues(graph, grouping, collapsedIds, issueIds);
-      if (reps.length === 0) {
+      const reps = repsToRevealIssues(graph, collapsedIds, issueIds);
+      const revealIndependent =
+        !independentExpanded &&
+        projection?.groups.some(
+          (g) => g.independent && g.memberIds.some((id) => issueIds.includes(id)),
+        );
+      if (revealIndependent) storeApi.getState().setDagIndependentExpanded(true);
+      if (reps.length === 0 && !revealIndependent) {
         // Already visible — focus immediately.
         setFocusRequest((current) => ({
           issueIds,
@@ -227,11 +265,9 @@ export function DagView({
       }
       pendingRevealRef.current = issueIds;
       const removal = new Set(reps);
-      storeApi
-        .getState()
-        .setDagCollapsedIds(collapsedIds.filter((repId) => !removal.has(repId)));
+      storeApi.getState().setDagCollapsedIds(collapsedIds.filter((repId) => !removal.has(repId)));
     },
-    [collapsedIds, graph, grouping, storeApi],
+    [collapsedIds, graph, independentExpanded, projection, storeApi],
   );
 
   const expandAll = useCallback(() => {
@@ -266,14 +302,10 @@ export function DagView({
   // cached graph outright — the contract forbids rendering the old snapshot
   // once authorization or integrity is gone. Only transient failures keep
   // the stale snapshot (with the banner below).
-  const errorStatus =
-    graphQuery.error instanceof ApiError ? graphQuery.error.status : null;
+  const errorStatus = graphQuery.error instanceof ApiError ? graphQuery.error.status : null;
   const mustHideGraph =
     graphQuery.isError &&
-    (errorStatus === 403 ||
-      errorStatus === 404 ||
-      errorStatus === 405 ||
-      errorStatus === 422);
+    (errorStatus === 403 || errorStatus === 404 || errorStatus === 405 || errorStatus === 422);
 
   if (graphQuery.isPending) {
     return (
@@ -298,14 +330,10 @@ export function DagView({
       <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-3 text-muted-foreground">
         <FilterX className="h-10 w-10 text-faint-foreground" />
         <p className="text-body">
-          {hasActiveFilters
-            ? t(($) => $.dag.empty_title)
-            : t(($) => $.dag.empty_title_unfiltered)}
+          {hasActiveFilters ? t(($) => $.dag.empty_title) : t(($) => $.dag.empty_title_unfiltered)}
         </p>
         <p className="text-caption">
-          {hasActiveFilters
-            ? t(($) => $.dag.empty_hint)
-            : t(($) => $.dag.empty_hint_unfiltered)}
+          {hasActiveFilters ? t(($) => $.dag.empty_hint) : t(($) => $.dag.empty_hint_unfiltered)}
         </p>
         {hasActiveFilters && (
           <Button variant="outline" size="sm" className="mt-1" onClick={clearFilters}>
@@ -316,7 +344,20 @@ export function DagView({
     );
   }
 
-  const firstLayoutPending = layout.positions === null;
+  const firstLayoutPending = layout.positions === null || !canvasSnapshot;
+  if (layout.error && firstLayoutPending) {
+    return (
+      <div
+        role="alert"
+        className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground"
+      >
+        <p>{t(($) => $.dag.layout_error)}</p>
+        <Button variant="outline" size="sm" onClick={layout.retry}>
+          {t(($) => $.dag.error_retry)}
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -345,6 +386,10 @@ export function DagView({
         {graph.matchedCount === 0 && graph.contextCount > 0 && (
           <span>{t(($) => $.dag.context_only_hint)}</span>
         )}
+        <span className="inline-flex items-center gap-3 text-micro">
+          <span>{t(($) => $.dag.stage_legend)}</span>
+          <span>{t(($) => $.dag.dependency_legend)}</span>
+        </span>
         <span className="ml-auto flex items-center gap-1">
           {layout.pending && (
             <span className="inline-flex items-center gap-1.5" role="status">
@@ -366,18 +411,24 @@ export function DagView({
             <Expand className="size-3.5" />
             {t(($) => $.dag.expand_all)}
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={collapseAll}
-            disabled={isDefaultFold}
-          >
+          <Button size="sm" variant="ghost" onClick={collapseAll} disabled={isDefaultFold}>
             <Shrink className="size-3.5" />
             {t(($) => $.dag.collapse_all)}
           </Button>
         </span>
       </div>
 
+      {layout.error && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 border-b px-3 py-2 text-caption text-warning"
+        >
+          <span>{t(($) => $.dag.layout_error)}</span>
+          <Button size="sm" variant="ghost" onClick={layout.retry}>
+            {t(($) => $.dag.error_retry)}
+          </Button>
+        </div>
+      )}
       {graphQuery.isError && (
         <div
           className="flex shrink-0 items-center gap-2 border-b bg-warning/10 px-3 py-1.5 text-caption text-warning"
@@ -416,15 +467,17 @@ export function DagView({
           }
         >
           <DagCanvas
-            graph={graph}
-            projection={projection}
+            graph={canvasSnapshot!.graph!}
+            projection={canvasSnapshot!.projection!}
             positions={layout.positions!}
+            geometry={layout.result!}
             direction={layout.direction}
             statusColorOf={catalog.colorOf}
             focusRequest={focusRequest}
             onOpenIssue={onOpenIssue}
             onToggleCollapsed={onToggleCollapsed}
             onRevealIssues={onRevealIssues}
+            onFocusGroup={onFocusGroup}
           />
         </Suspense>
       )}
@@ -432,13 +485,7 @@ export function DagView({
   );
 }
 
-function DagErrorState({
-  error,
-  onRetry,
-}: {
-  error: Error | null;
-  onRetry: () => void;
-}) {
+function DagErrorState({ error, onRetry }: { error: Error | null; onRetry: () => void }) {
   const { t } = useT("issues");
   const status = error instanceof ApiError ? error.status : null;
   const messageKey =
@@ -459,9 +506,7 @@ function DagErrorState({
       <AlertTriangle className="h-10 w-10 text-faint-foreground" />
       <p className="text-body">{t(($) => $.dag.error_title)}</p>
       <p className="text-caption">
-        {messageKey
-          ? t(($) => $.dag[messageKey])
-          : (error?.message ?? t(($) => $.dag.error_title))}
+        {messageKey ? t(($) => $.dag[messageKey]) : (error?.message ?? t(($) => $.dag.error_title))}
       </p>
       {status !== 403 && status !== 404 && status !== 405 && (
         <Button variant="outline" size="sm" className="mt-1" onClick={onRetry}>

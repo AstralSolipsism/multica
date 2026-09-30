@@ -5,19 +5,15 @@ import {
   computeDagProjection,
   dagFeatureRepId,
   dagFocusNeighborhood,
-  dagProjectRepId,
+  DAG_INDEPENDENT_GROUP,
   defaultDagCollapsedIds,
   pruneDagCollapsedIds,
   repsToRevealIssues,
 } from "./dag-projection";
-
 const P1 = "proj-1";
 const P2 = "proj-2";
 
-function makeNode(
-  id: string,
-  partial: Partial<IssueGraphNode> = {},
-): IssueGraphNode {
+function makeNode(id: string, partial: Partial<IssueGraphNode> = {}): IssueGraphNode {
   return {
     id,
     identifier: `T-${id.toUpperCase()}`,
@@ -77,507 +73,294 @@ function makeGraph(
   };
 }
 
-/**
- * F1 (P1) ── child A1 (P1); B1 (P2); C1 (no project); D1 (context, P2)
- * edges: e1 F1→B1, e2 B1→F1 (legal cross-project bidirectional),
- *        e3 A1→B1, e4 F1→A1 (intra-project)
- */
-function fixture() {
-  const nodes = [
-    makeNode("f1", { projectId: P1, title: "Accounts feature" }),
-    makeNode("a1", { projectId: P1, parentIssueId: "f1" }),
-    makeNode("b1", { projectId: P2 }),
-    makeNode("c1"),
-    makeNode("d1", { projectId: P2, role: "context" }),
-  ];
-  const graph = makeGraph(nodes, [
-    { id: "e1", source: "f1", target: "b1" },
-    { id: "e2", source: "b1", target: "f1" },
-    { id: "e3", source: "a1", target: "b1" },
-    { id: "e4", source: "f1", target: "a1" },
-  ]);
-  return graph;
-}
-
-describe("defaultDagCollapsedIds", () => {
-  it("folds every project rep and every feature under project grouping", () => {
-    const ids = defaultDagCollapsedIds(fixture(), "project");
-    expect(ids).toEqual(
+describe("task-line projection", () => {
+  function fixture() {
+    return makeGraph(
+      [
+        makeNode("one", { projectId: P1 }),
+        makeNode("a", { parentIssueId: "one", projectId: P1 }),
+        makeNode("b", { parentIssueId: "one", projectId: P2 }),
+        makeNode("two"),
+        makeNode("c", { parentIssueId: "two" }),
+        makeNode("solo"),
+      ],
+      [
+        { id: "ab", source: "a", target: "b" },
+        { id: "ac", source: "a", target: "c" },
+        { id: "bc", source: "b", target: "c" },
+        { id: "ca", source: "c", target: "a" },
+      ],
+    );
+  }
+  it("defaults to folded task lines and a separate folded independent group", () => {
+    const graph = fixture(),
+      folded = defaultDagCollapsedIds(graph);
+    expect(folded.sort()).toEqual(["issue:one", "issue:two"]);
+    const view = computeDagProjection(graph, folded);
+    expect(view.nodes.map((n) => n.id)).toEqual(["issue:one", "issue:two", DAG_INDEPENDENT_GROUP]);
+    expect(view.groups.every((g) => g.collapsed)).toBe(true);
+    expect(view.foldedNodeCount).toBe(4);
+  });
+  it("preserves all original endpoints when aggregating opposite cross-line directions", () => {
+    const graph = fixture(),
+      before = JSON.stringify(graph);
+    const view = computeDagProjection(graph, defaultDagCollapsedIds(graph));
+    const forward = view.edges.find((e) => e.source === "issue:one")!;
+    expect(forward.sourceEdgeIds.sort()).toEqual(["ac", "bc"]);
+    expect(forward.sources).toEqual(
       expect.arrayContaining([
-        dagProjectRepId(P1),
-        dagProjectRepId(P2),
-        dagProjectRepId(null),
-        dagFeatureRepId("f1"),
+        { edgeId: "ac", source: "a", target: "c" },
+        { edgeId: "bc", source: "b", target: "c" },
       ]),
     );
-    expect(ids).toHaveLength(4);
+    expect(view.edges.find((e) => e.source === "issue:two")?.sourceEdgeIds).toEqual(["ca"]);
+    expect(view.nodes.find((n) => n.id === "issue:one")?.internalEdgeCount).toBe(1);
+    expect(JSON.stringify(graph)).toBe(before);
   });
-
-  it("folds only features under parent/none grouping", () => {
-    expect(defaultDagCollapsedIds(fixture(), "parent")).toEqual([
-      dagFeatureRepId("f1"),
+  it("keeps the parent as a container header and connects expanded children to folded boundaries", () => {
+    const view = computeDagProjection(fixture(), ["issue:two"]);
+    expect(view.nodes.find((n) => n.id === "one")).toBeUndefined();
+    expect(view.nodes.find((n) => n.id === "issue:one")?.kind).toBe("feature");
+    expect(view.nodes.find((n) => n.id === "b")?.groupId).toBe("issue:one");
+    expect(view.edges.map((e) => `${e.source}->${e.target}`).sort()).toEqual([
+      "a->b",
+      "a->issue:two",
+      "b->issue:two",
+      "issue:two->a",
     ]);
-    expect(defaultDagCollapsedIds(fixture(), "none")).toEqual([
-      dagFeatureRepId("f1"),
-    ]);
+    expect(view.representatives.get("one")).toBe("issue:one");
   });
-});
-
-describe("computeDagProjection", () => {
-  it("with the default fold leaves only project representatives, aggregating cross-project edges in both directions", () => {
-    const graph = fixture();
-    const projection = computeDagProjection(
-      graph,
-      "project",
-      defaultDagCollapsedIds(graph, "project"),
-    );
-    const nodeIds = projection.nodes.map((node) => node.id).sort();
-    expect(nodeIds).toEqual([
-      dagProjectRepId(null),
-      dagProjectRepId(P1),
-      dagProjectRepId(P2),
-    ]);
-
-    // Both aggregate directions exist and neither is a cycle.
-    const p1ToP2 = projection.edges.find(
-      (edge) =>
-        edge.source === dagProjectRepId(P1) && edge.target === dagProjectRepId(P2),
-    );
-    const p2ToP1 = projection.edges.find(
-      (edge) =>
-        edge.source === dagProjectRepId(P2) && edge.target === dagProjectRepId(P1),
-    );
-    expect(p1ToP2?.sourceEdgeIds.sort()).toEqual(["e1", "e3"]);
-    expect(p2ToP1?.sourceEdgeIds).toEqual(["e2"]);
-    // Original endpoints stay addressable for explanation and locate.
-    expect(p1ToP2?.sources).toEqual([
-      { edgeId: "e1", source: "f1", target: "b1" },
-      { edgeId: "e3", source: "a1", target: "b1" },
-    ]);
-    // Intra-project edge e4 is internal to the P1 representative.
-    const p1Rep = projection.nodes.find((node) => node.id === dagProjectRepId(P1));
-    expect(p1Rep?.internalEdgeCount).toBe(1);
-    expect(p1Rep?.matchCount).toBe(2);
-    // Context members count separately and never inflate the subject count.
-    const p2Rep = projection.nodes.find((node) => node.id === dagProjectRepId(P2));
-    expect(p2Rep?.matchCount).toBe(1);
-    expect(p2Rep?.contextCount).toBe(1);
-    expect(projection.foldedNodeCount).toBe(5);
+  it("keeps independent tasks folded while all task lines are expanded", () => {
+    const graph = fixture(),
+      folded = computeDagProjection(graph, []),
+      expanded = computeDagProjection(graph, [], true);
+    expect(folded.nodes.some((n) => n.id === "solo")).toBe(false);
+    expect(expanded.nodes.find((n) => n.id === "solo")?.groupId).toBe(DAG_INDEPENDENT_GROUP);
+    expect(expanded.groups.find((g) => g.independent)?.collapsed).toBe(false);
   });
-
-  it("expanding a project reveals its collapsed feature representatives", () => {
-    const graph = fixture();
-    const collapsed = defaultDagCollapsedIds(graph, "project").filter(
-      (id) => id !== dagProjectRepId(P1),
-    );
-    const projection = computeDagProjection(graph, "project", collapsed);
-    const ids = projection.nodes.map((node) => node.id).sort();
-    expect(ids).toEqual([
-      dagFeatureRepId("f1"),
-      dagProjectRepId(null),
-      dagProjectRepId(P2),
-    ]);
-    // The feature representative carries the feature issue itself plus its
-    // folded child, and e4 is internal to it.
-    const feature = projection.nodes.find(
-      (node) => node.id === dagFeatureRepId("f1"),
-    );
-    expect(feature?.kind).toBe("feature");
-    expect(feature?.memberIds.sort()).toEqual(["a1", "f1"]);
-    expect(feature?.internalEdgeCount).toBe(1);
-    // Edges to/from the feature itself land on the representative.
-    const toFeature = projection.edges.find(
-      (edge) =>
-        edge.source === dagProjectRepId(P2) && edge.target === dagFeatureRepId("f1"),
-    );
-    expect(toFeature?.sourceEdgeIds).toEqual(["e2"]);
-  });
-
-  it("expanding the feature shows its children as plain issues", () => {
-    const graph = fixture();
-    const collapsed = defaultDagCollapsedIds(graph, "project").filter(
-      (id) => id !== dagProjectRepId(P1) && id !== dagFeatureRepId("f1"),
-    );
-    const projection = computeDagProjection(graph, "project", collapsed);
-    const ids = projection.nodes.map((node) => node.id).sort();
-    expect(ids).toEqual(["a1", "f1", dagProjectRepId(null), dagProjectRepId(P2)]);
-    const f1 = projection.nodes.find((node) => node.id === "f1");
-    expect(f1?.kind).toBe("issue");
-    expect(f1?.collapsible).toBe(true);
-    const a1 = projection.nodes.find((node) => node.id === "a1");
-    expect(a1?.collapsible).toBe(false);
-    // Individual edges reappear with their real endpoints.
-    const e3 = projection.edges.find(
-      (edge) => edge.source === "a1" && edge.target === dagProjectRepId(P2),
-    );
-    expect(e3?.sourceEdgeIds).toEqual(["e3"]);
-  });
-
-  it("parent grouping has no project representatives", () => {
-    const graph = fixture();
-    const projection = computeDagProjection(
-      graph,
-      "parent",
-      defaultDagCollapsedIds(graph, "parent"),
-    );
-    const ids = projection.nodes.map((node) => node.id).sort();
-    expect(ids).toEqual(["b1", "c1", "d1", dagFeatureRepId("f1")]);
-  });
-
-  it("aggregates blocked/run/unknown member signals on representatives", () => {
-    const graph = fixture();
-    const a1 = graph.nodes.find((node) => node.id === "a1")!;
-    a1.dependencySummary = {
-      visibleUnsatisfiedCount: 2,
-      hasRestrictedBlockers: true,
-      dependencyVersion: "v-a1",
-    };
-    a1.runSummary = {
-      queued: 0,
-      dispatched: 0,
-      running: 1,
-      waitingLocalDirectory: 0,
-      capturedAt: "2026-09-10T00:00:00Z",
-    };
-    const d1 = graph.nodes.find((node) => node.id === "d1")!;
-    d1.dependencySummary = null;
-
-    const projection = computeDagProjection(
-      graph,
-      "project",
-      defaultDagCollapsedIds(graph, "project"),
-    );
-    const p1Rep = projection.nodes.find((node) => node.id === dagProjectRepId(P1));
-    expect(p1Rep?.blockedMemberCount).toBe(1);
-    expect(p1Rep?.hasRestrictedBlockers).toBe(true);
-    expect(p1Rep?.runState).toBe("running");
-    const p2Rep = projection.nodes.find((node) => node.id === dagProjectRepId(P2));
-    expect(p2Rep?.unknownSummaryCount).toBe(1);
-  });
-
-  it("reports queued when members queue but none run, and none when idle", () => {
-    const graph = fixture();
-    const a1 = graph.nodes.find((node) => node.id === "a1")!;
-    a1.runSummary = {
-      queued: 1,
-      dispatched: 0,
-      running: 0,
-      waitingLocalDirectory: 0,
-      capturedAt: "2026-09-10T00:00:00Z",
-    };
-    const projection = computeDagProjection(
-      graph,
-      "project",
-      defaultDagCollapsedIds(graph, "project"),
-    );
-    expect(
-      projection.nodes.find((node) => node.id === dagProjectRepId(P1))?.runState,
-    ).toBe("queued");
-    expect(
-      projection.nodes.find((node) => node.id === dagProjectRepId(P2))?.runState,
-    ).toBe("none");
-  });
-
-
-  it("folds nested features under the outermost collapsed ancestor (review F2)", () => {
-    const nodes = [
-      makeNode("root"),
-      makeNode("middle", { parentIssueId: "root" }),
-      makeNode("leaf", { parentIssueId: "middle" }),
-    ];
-    const graph = makeGraph(nodes, []);
-    const projection = computeDagProjection(
-      graph,
-      "parent",
-      defaultDagCollapsedIds(graph, "parent"),
-    );
-    expect(projection.nodes.map((node) => node.id)).toEqual(["issue:root"]);
-    expect(projection.nodes[0]?.memberIds).toEqual(["root", "middle", "leaf"]);
-
-    // Expanding the outermost reveals the still-folded middle layer.
-    const next = computeDagProjection(graph, "parent", ["issue:middle"]);
-    expect(next.nodes.map((node) => node.id).sort()).toEqual([
-      "issue:middle",
-      "root",
-    ]);
-    expect(
-      next.nodes.find((node) => node.id === "issue:middle")?.memberIds,
-    ).toEqual(["middle", "leaf"]);
-  });
-
-  it("keeps every node flat under none grouping with an empty fold", () => {
-    const graph = fixture();
-    const projection = computeDagProjection(graph, "none", []);
-    expect(projection.nodes.map((node) => node.id).sort()).toEqual([
-      "a1",
-      "b1",
-      "c1",
-      "d1",
-      "f1",
-    ]);
-    expect(projection.edges).toHaveLength(4);
-  });
-});
-
-describe("pruneDagCollapsedIds", () => {
-  it("keeps every fold while membership is not complete", () => {
-    const graph = fixture();
-    // Even a feature with no visible child keeps its fold: under a filtered
-    // or restricted graph that is a display artifact, not deletion (review
-    // F3 — a todo filter hides the done child).
-    expect(
-      pruneDagCollapsedIds(
-        [dagProjectRepId(P1), dagFeatureRepId("f1"), "issue:gone"],
-        graph,
-        false,
-      ),
-    ).toEqual([dagProjectRepId(P1), dagFeatureRepId("f1"), "issue:gone"]);
-    const childless = {
-      ...graph,
-      nodes: graph.nodes.filter((node) => node.id !== "a1"),
-      edges: graph.edges.filter(
-        (edge) => edge.source !== "a1" && edge.target !== "a1",
-      ),
-    };
-    expect(pruneDagCollapsedIds([dagFeatureRepId("f1")], childless, false)).toEqual([
-      dagFeatureRepId("f1"),
-    ]);
-  });
-
-  it("clears only genuinely inert folds on a complete membership read", () => {
-    const graph = fixture();
-    expect(
-      pruneDagCollapsedIds(
-        [dagProjectRepId(P1), "project:gone", dagFeatureRepId("f1"), "issue:gone"],
-        graph,
-        true,
-      ),
-    ).toEqual([dagProjectRepId(P1), dagFeatureRepId("f1")]);
-
-    // Feature present but childless on a complete read: provably inert.
-    const childless = {
-      ...graph,
-      nodes: graph.nodes.filter((node) => node.id !== "a1"),
-      edges: graph.edges.filter(
-        (edge) => edge.source !== "a1" && edge.target !== "a1",
-      ),
-    };
-    expect(pruneDagCollapsedIds([dagFeatureRepId("f1")], childless, true)).toEqual([]);
-  });
-});
-
-describe("repsToRevealIssues", () => {
-  it("returns the nested representatives hiding a node, outermost first", () => {
-    const graph = fixture();
-    const collapsed = defaultDagCollapsedIds(graph, "project");
-    const reps = repsToRevealIssues(graph, "project", collapsed, ["a1"]);
-    expect(reps).toEqual([dagProjectRepId(P1), dagFeatureRepId("f1")]);
-    // After removing them, the node is visible.
-    const next = collapsed.filter((id) => !reps.includes(id));
-    const projection = computeDagProjection(graph, "project", next);
-    expect(projection.nodes.some((node) => node.id === "a1")).toBe(true);
-  });
-
-  it("returns an empty list for already-visible nodes", () => {
-    const graph = fixture();
-    const collapsed = defaultDagCollapsedIds(graph, "project").filter(
-      (id) => id !== dagProjectRepId(P1) && id !== dagFeatureRepId("f1"),
-    );
-    expect(repsToRevealIssues(graph, "project", collapsed, ["a1"])).toEqual([]);
-  });
-});
-
-describe("dagFocusNeighborhood", () => {
-  it("review round 4 F4: inherited arrival unlocks an already processed seed", () => {
-    // middle/feature are processed as seeds before prerequisite. A real edge
-    // unlocks feature, then the inherited wait must unlock middle as well.
+  it("does not mistake dependency starts/ends, restricted parents, or unknown summaries for independent tasks", () => {
     const graph = makeGraph(
       [
-        makeNode("middle", { projectId: P1, parentIssueId: "feature" }),
-        makeNode("feature", { projectId: P1 }),
-        makeNode("prerequisite", { projectId: P1 }),
-        makeNode("leaf", { projectId: P2, parentIssueId: "middle" }),
+        makeNode("a"),
+        makeNode("end"),
+        makeNode("hidden-parent", { hasRestrictedParent: true }),
+        makeNode("unknown", { dependencySummary: null }),
+        makeNode("restricted", {
+          dependencySummary: {
+            visibleUnsatisfiedCount: 0,
+            hasRestrictedBlockers: true,
+            dependencyVersion: "v",
+          },
+        }),
       ],
-      [{ id: "e1", source: "prerequisite", target: "feature" }],
+      [{ id: "ae", source: "a", target: "end" }],
     );
-    const projection = computeDagProjection(graph, "project", [
-      dagProjectRepId(P1), dagProjectRepId(P2),
-    ]);
-    expect(projection.nodes.find((node) => node.id === dagProjectRepId(P1))?.memberIds)
-      .toEqual(["middle", "feature", "prerequisite"]);
-    expect([...dagFocusNeighborhood(projection, graph, dagProjectRepId(P1), "downstream")])
-      .toContain(dagProjectRepId(P2));
+    const view = computeDagProjection(graph, []);
+    expect(view.groups).toEqual([]);
+    expect(view.nodes).toHaveLength(5);
   });
-
-  it("review F4: a project member reached by an internal dependency still passes the wait to descendants", () => {
+  it("keeps unordered children and cross-project descendants inside their real task line", () => {
     const graph = makeGraph(
       [
-        makeNode("prerequisite", { projectId: P1 }),
-        makeNode("feature", { projectId: P1 }),
-        makeNode("child", { projectId: P2, parentIssueId: "feature" }),
+        makeNode("root", { projectId: P1 }),
+        makeNode("child", { parentIssueId: "root", projectId: P2 }),
       ],
-      [{ id: "e1", source: "prerequisite", target: "feature" }],
-    );
-    const projection = computeDagProjection(graph, "project", [
-      dagProjectRepId(P1), dagProjectRepId(P2),
-    ]);
-    expect(projection.nodes.find((node) => node.id === dagProjectRepId(P1))?.internalEdgeCount)
-      .toBe(1);
-    expect([...dagFocusNeighborhood(projection, graph, dagProjectRepId(P1), "downstream")])
-      .toContain(dagProjectRepId(P2));
-  });
-
-  it("review F4: a folded feature keeps its child's incoming dependency in focus", () => {
-    const graph = makeGraph(
-      [makeNode("feature"), makeNode("child", { parentIssueId: "feature" }), makeNode("upstream")],
-      [{ id: "e1", source: "upstream", target: "child" }],
-    );
-    const projection = computeDagProjection(graph, "none", ["issue:feature"]);
-    expect(projection.edges).toEqual([
-      expect.objectContaining({ source: "upstream", target: "issue:feature" }),
-    ]);
-    expect([...dagFocusNeighborhood(projection, graph, "issue:feature", "upstream")])
-      .toContain("upstream");
-  });
-
-  it("review F4: a folded feature keeps its child's outgoing dependency in focus", () => {
-    const graph = makeGraph(
-      [makeNode("feature"), makeNode("child", { parentIssueId: "feature" }), makeNode("downstream")],
-      [{ id: "e1", source: "child", target: "downstream" }],
-    );
-    const projection = computeDagProjection(graph, "none", ["issue:feature"]);
-    expect(projection.edges).toEqual([
-      expect.objectContaining({ source: "issue:feature", target: "downstream" }),
-    ]);
-    expect([...dagFocusNeighborhood(projection, graph, "issue:feature", "downstream")])
-      .toContain("downstream");
-  });
-
-  // f1 → b1 → c1; a1 is f1's child; d1 depends on a1.
-  function focusFixture() {
-    const nodes = [
-      makeNode("f1", { projectId: P1 }),
-      makeNode("a1", { projectId: P1, parentIssueId: "f1" }),
-      makeNode("b1"),
-      makeNode("c1"),
-      makeNode("d1"),
-    ];
-    return makeGraph(nodes, [
-      { id: "e1", source: "f1", target: "b1" },
-      { id: "e2", source: "b1", target: "c1" },
-      { id: "e3", source: "a1", target: "d1" },
-    ]);
-  }
-
-  it("downstream walks forward edges transitively", () => {
-    const graph = focusFixture();
-    const projection = computeDagProjection(graph, "none", []);
-    expect([...dagFocusNeighborhood(projection, graph, "f1", "downstream")].sort()).toEqual(
-      ["b1", "c1", "f1"],
-    );
-  });
-
-  it("upstream includes direct prerequisites and the ancestor chain", () => {
-    const graph = focusFixture();
-    const projection = computeDagProjection(graph, "none", []);
-    // d1 waits on a1; a1's feature f1 (ancestor) and f1's own downstream do
-    // not leak in — but f1's upstream does (here: none).
-    expect([...dagFocusNeighborhood(projection, graph, "d1", "upstream")].sort()).toEqual(
-      ["a1", "d1", "f1"],
-    );
-    // b1 waits on f1; nothing else.
-    expect([...dagFocusNeighborhood(projection, graph, "b1", "upstream")].sort()).toEqual(
-      ["b1", "f1"],
-    );
-  });
-
-  it("folded ancestors light their representative, not a hidden node", () => {
-    const graph = focusFixture();
-    const projection = computeDagProjection(graph, "none", ["issue:f1"]);
-    // d1 waits on a1, which is folded into the feature rep issue:f1; the
-    // neighborhood contains the rep id, and never the invisible a1.
-    const seen = dagFocusNeighborhood(projection, graph, "d1", "upstream");
-    expect(seen.has("issue:f1")).toBe(true);
-    expect(seen.has("a1")).toBe(false);
-  });
-
-  it("downstream from a folded feature starts at its representative", () => {
-    const graph = focusFixture();
-    const projection = computeDagProjection(graph, "none", ["issue:f1"]);
-    // b1 waits on the folded feature; the rep's downstream reaches b1/c1.
-    const seen = dagFocusNeighborhood(projection, graph, "issue:f1", "downstream");
-    expect(seen.has("b1")).toBe(true);
-    expect(seen.has("c1")).toBe(true);
-  });
-  it("downstream includes descendants that inherit a prerequisite (review F4)", () => {
-    const graph = makeGraph(
-      [makeNode("prerequisite"), makeNode("feature"), makeNode("child", { parentIssueId: "feature" })],
-      [{ id: "e1", source: "prerequisite", target: "feature" }],
-    );
-    const projection = computeDagProjection(graph, "none", []);
-    expect([
-      ...dagFocusNeighborhood(projection, graph, "prerequisite", "downstream"),
-    ]).toContain("child");
-  });
-
-  it("upstream recursively resolves prerequisites of reached ancestors (review F4)", () => {
-    const graph = makeGraph(
-      [
-        makeNode("child", { parentIssueId: "feature" }),
-        makeNode("feature"),
-        makeNode("dependency", { parentIssueId: "dependency-parent" }),
-        makeNode("dependency-parent"),
-        makeNode("upstream"),
-      ],
-      [
-        { id: "e1", source: "dependency", target: "feature" },
-        { id: "e2", source: "upstream", target: "dependency-parent" },
-      ],
-    );
-    const projection = computeDagProjection(graph, "none", []);
-    expect([
-      ...dagFocusNeighborhood(projection, graph, "child", "upstream"),
-    ]).toEqual(
-      expect.arrayContaining(["feature", "dependency", "dependency-parent", "upstream"]),
-    );
-  });
-
-  it("closes over raw issue ids before mapping to canvas reps (review F4 mixed folds)", () => {
-    // prerequisite → feature; middle ∈ feature; leaf ∈ middle but lives in
-    // another project. feature/middle fold to issue:feature; leaf folds into
-    // the collapsed project rep. The downstream walk must reach the leaf
-    // THROUGH the folded middle and light project:proj-2.
-    const graph = makeGraph(
-      [
-        makeNode("prerequisite", { projectId: "p0" }),
-        makeNode("feature", { projectId: P1 }),
-        makeNode("middle", { projectId: P1, parentIssueId: "feature" }),
-        makeNode("leaf", { projectId: P2, parentIssueId: "middle" }),
-      ],
-      [{ id: "e1", source: "prerequisite", target: "feature" }],
-    );
-    graph.projects.push({ id: "p0", title: "Prerequisite" });
-    const projection = computeDagProjection(graph, "project", [
-      dagFeatureRepId("feature"),
-      dagProjectRepId(P2),
-    ]);
-    expect(
-      projection.nodes.find((node) => node.id === dagFeatureRepId("feature"))
-        ?.memberIds,
-    ).toEqual(["feature", "middle"]);
-    const seen = dagFocusNeighborhood(projection, graph, "prerequisite", "downstream");
-    expect(seen.has(dagProjectRepId(P2))).toBe(true);
-    expect(seen.has(dagFeatureRepId("feature"))).toBe(true);
-  });
-
-  it("the root's own children are not its downstream", () => {
-    const graph = makeGraph(
-      [makeNode("parent"), makeNode("kid", { parentIssueId: "parent" })],
       [],
     );
-    const projection = computeDagProjection(graph, "none", []);
-    expect([...dagFocusNeighborhood(projection, graph, "parent", "downstream")]).toEqual(
-      ["parent"],
+    const view = computeDagProjection(graph, []);
+    expect(view.groups).toHaveLength(1);
+    expect(view.nodes.find((n) => n.id === "child")?.groupId).toBe("issue:root");
+    expect(view.groups[0]!.memberIds).toEqual(["root", "child"]);
+  });
+  it("preserves nested group boundaries and folds only the selected subtree", () => {
+    const graph = makeGraph(
+      [
+        makeNode("root"),
+        makeNode("middle", { parentIssueId: "root", stage: 1 }),
+        makeNode("leaf", { parentIssueId: "middle", stage: 99 }),
+        makeNode("last", { parentIssueId: "root", stage: 2 }),
+      ],
+      [],
     );
+    const view = computeDagProjection(graph, ["issue:middle"]);
+    expect(view.groups.find((g) => g.id === "issue:middle")?.parentId).toBe("issue:root");
+    expect(view.nodes.find((n) => n.id === "issue:middle")?.issue?.stage).toBe(1);
+    expect(view.nodes.some((n) => n.id === "leaf")).toBe(false);
+    expect(view.representatives.get("leaf")).toBe("issue:middle");
+    expect(
+      computeDagProjection(graph, defaultDagCollapsedIds(graph)).nodes.map((n) => n.id),
+    ).toEqual(["issue:root"]);
+    expect(new Set(repsToRevealIssues(graph, defaultDagCollapsedIds(graph), ["leaf"]))).toEqual(
+      new Set(["issue:root", "issue:middle"]),
+    );
+  });
+  it("keeps completed tasks in expanded containers with accurate visible progress", () => {
+    const graph = makeGraph(
+      [
+        makeNode("root"),
+        makeNode("done", { parentIssueId: "root", status: "done", statusCategory: "done" }),
+        makeNode("todo", { parentIssueId: "root" }),
+      ],
+      [],
+    );
+    const view = computeDagProjection(graph, []);
+    expect(view.groups[0]).toMatchObject({ taskCount: 2, completedCount: 1 });
+    expect(view.nodes.some((n) => n.id === "done")).toBe(true);
+  });
+  it("aggregates running, blocked, unknown and context signals without inventing hidden members", () => {
+    const graph = makeGraph(
+      [
+        makeNode("root", { role: "context" }),
+        makeNode("run", {
+          parentIssueId: "root",
+          runSummary: {
+            queued: 1,
+            dispatched: 0,
+            running: 1,
+            waitingLocalDirectory: 0,
+            capturedAt: "now",
+          },
+        }),
+        makeNode("blocked", {
+          parentIssueId: "root",
+          dependencySummary: {
+            visibleUnsatisfiedCount: 2,
+            hasRestrictedBlockers: true,
+            dependencyVersion: "v",
+          },
+        }),
+        makeNode("unknown", { parentIssueId: "root", dependencySummary: null }),
+      ],
+      [],
+    );
+    const header = computeDagProjection(graph, ["issue:root"]).nodes[0]!;
+    expect(header).toMatchObject({
+      runState: "running",
+      blockedMemberCount: 1,
+      unknownSummaryCount: 1,
+      hasRestrictedBlockers: true,
+      matchCount: 3,
+      contextCount: 1,
+      role: "match",
+    });
+    expect(header.memberIds).toHaveLength(4);
+  });
+  it("reports queued only when no visible member is running", () => {
+    const graph = makeGraph(
+      [
+        makeNode("root"),
+        makeNode("child", {
+          parentIssueId: "root",
+          runSummary: {
+            queued: 0,
+            dispatched: 1,
+            running: 0,
+            waitingLocalDirectory: 0,
+            capturedAt: "now",
+          },
+        }),
+      ],
+      [],
+    );
+    expect(computeDagProjection(graph, ["issue:root"]).nodes[0]?.runState).toBe("queued");
+  });
+  it("does not synthesize a missing or inaccessible parent", () => {
+    const view = computeDagProjection(
+      makeGraph([makeNode("child", { parentIssueId: "absent", hasRestrictedParent: true })], []),
+      [],
+    );
+    expect(view.nodes.map((n) => n.id)).toEqual(["child"]);
+    expect(view.groups).toEqual([]);
+  });
+  it("terminates display traversal for an inconsistent parent cycle without mutating it", () => {
+    const graph = makeGraph(
+      [makeNode("a", { parentIssueId: "b" }), makeNode("b", { parentIssueId: "a" })],
+      [],
+    );
+    const before = JSON.stringify(graph),
+      view = computeDagProjection(graph, []);
+    expect(view.representatives.size).toBe(2);
+    expect(JSON.stringify(graph)).toBe(before);
+  });
+  it("retains known parent folds when a filter omits their children", () => {
+    const graph = makeGraph([makeNode("root")], []);
+    expect(pruneDagCollapsedIds(["issue:root", "issue:absent"], graph, false)).toEqual([
+      "issue:root",
+      "issue:absent",
+    ]);
+    expect(computeDagProjection(graph, ["issue:root"]).groups[0]?.id).toBe("issue:root");
+  });
+  it("prunes only absent/childless folds on complete membership reads", () => {
+    expect(
+      pruneDagCollapsedIds(["issue:one", "issue:solo", "issue:absent"], fixture(), true),
+    ).toEqual(["issue:one"]);
+  });
+  it("reveals only ancestor folds, never an unrelated line", () => {
+    const graph = fixture();
+    expect(repsToRevealIssues(graph, defaultDagCollapsedIds(graph), ["a"])).toEqual(["issue:one"]);
+    expect(repsToRevealIssues(graph, [], ["a"])).toEqual([]);
+  });
+});
+
+describe("dependency focus on task lines", () => {
+  it("follows raw dependencies before mapping folded representatives", () => {
+    const graph = makeGraph(
+      [
+        makeNode("up"),
+        makeNode("root"),
+        makeNode("middle", { parentIssueId: "root" }),
+        makeNode("leaf", { parentIssueId: "middle", projectId: P2 }),
+        makeNode("out"),
+      ],
+      [
+        { id: "ur", source: "up", target: "root" },
+        { id: "lo", source: "leaf", target: "out" },
+      ],
+    );
+    const view = computeDagProjection(graph, ["issue:root", "issue:middle"]);
+    const seen = dagFocusNeighborhood(view, graph, "up", "downstream");
+    expect([...seen]).toEqual(expect.arrayContaining(["up", "issue:root", "out"]));
+    expect(seen.has("leaf")).toBe(false);
+  });
+  it.each(["upstream", "downstream"] as const)(
+    "keeps a folded child's %s edge reachable",
+    (way) => {
+      const graph = makeGraph(
+        [makeNode("root"), makeNode("child", { parentIssueId: "root" }), makeNode("outside")],
+        [
+          way === "upstream"
+            ? { id: "e", source: "outside", target: "child" }
+            : { id: "e", source: "child", target: "outside" },
+        ],
+      );
+      const view = computeDagProjection(graph, ["issue:root"]);
+      expect(dagFocusNeighborhood(view, graph, "issue:root", way).has("outside")).toBe(true);
+    },
+  );
+  it("recursively includes prerequisites of reached ancestors", () => {
+    const graph = makeGraph(
+      [
+        makeNode("child", { parentIssueId: "root" }),
+        makeNode("root"),
+        makeNode("dependency", { parentIssueId: "dep-parent" }),
+        makeNode("dep-parent"),
+        makeNode("up"),
+      ],
+      [
+        { id: "dr", source: "dependency", target: "root" },
+        { id: "up", source: "up", target: "dep-parent" },
+      ],
+    );
+    const view = computeDagProjection(graph, []);
+    expect([...dagFocusNeighborhood(view, graph, "child", "upstream")]).toEqual(
+      expect.arrayContaining(["child", "issue:root", "dependency", "issue:dep-parent", "up"]),
+    );
+  });
+  it("does not turn parentage alone into a downstream dependency", () => {
+    const graph = makeGraph([makeNode("parent"), makeNode("kid", { parentIssueId: "parent" })], []);
+    const view = computeDagProjection(graph, []);
+    expect([...dagFocusNeighborhood(view, graph, "parent", "downstream")]).toEqual([
+      dagFeatureRepId("parent"),
+    ]);
   });
 });

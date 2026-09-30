@@ -1,31 +1,37 @@
-import {
-  layoutDagProjection,
-  type DagLayoutRequest,
-  type DagLayoutResponse,
-} from "./dag-layout";
+import ELK from "elkjs/lib/elk-api.js";
+import { layoutDagProjection, type DagLayoutRequest, type DagLayoutResponse } from "./dag-layout";
 
-/**
- * Worker entry: Dagre layout off the main thread so a dense re-layout never
- * blocks canvas interaction (OL-38 budget: layout must not occupy the main
- * thread). The host recreates this worker to cancel a stalled layout — Dagre
- * itself has no mid-run abort, and a terminated worker is the only hard stop.
- *
- * `self` is declared structurally: this package compiles against the DOM lib
- * (no WebWorker lib), and the worker global satisfies this shape at runtime.
- */
 declare const self: {
   onmessage: ((event: MessageEvent<DagLayoutRequest>) => void) | null;
   postMessage: (message: DagLayoutResponse) => void;
 };
 
-self.onmessage = (event) => {
-  const { requestId, nodes, edges, direction } = event.data;
+// Keep the orchestration off the UI thread and use ELK's supported worker API.
+// Its bundled synchronous factory detects a native WorkerGlobalScope and cannot
+// be nested directly. The browser owns the lifetime of this child worker.
+let engine: InstanceType<typeof ELK> | undefined;
+function layoutEngine() {
+  return (engine ??= new ELK({
+    workerFactory: () =>
+      new Worker(new URL("elkjs/lib/elk-worker.min.js", import.meta.url), { type: "module" }),
+  }));
+}
+
+self.onmessage = async (event) => {
+  const { requestId, nodes, edges, groups, direction } = event.data;
   const started = Date.now();
-  const positions = layoutDagProjection(nodes, edges, direction);
-  const response: DagLayoutResponse = {
-    requestId,
-    positions,
-    elapsedMs: Date.now() - started,
-  };
-  self.postMessage(response);
+  try {
+    const result = await layoutDagProjection(nodes, edges, direction, groups, layoutEngine());
+    self.postMessage({ ...result, requestId, elapsedMs: Date.now() - started });
+  } catch (error) {
+    self.postMessage({
+      requestId,
+      positions: {},
+      groups: {},
+      routes: {},
+      ports: {},
+      elapsedMs: Date.now() - started,
+      error: error instanceof Error ? error.message : "DAG layout failed",
+    });
+  }
 };

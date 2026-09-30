@@ -13,10 +13,10 @@ function makeStore() {
 }
 
 describe("dag view preferences", () => {
-  it("defaults to LR direction, project grouping and an uninitialized fold", () => {
+  it("defaults to LR direction, task-line grouping and an uninitialized fold", () => {
     const state = makeStore().getState();
     expect(state.dagDirection).toBe("LR");
-    expect(state.dagGrouping).toBe("project");
+    expect(state.dagGrouping).toBe("parent");
     expect(state.dagCollapsedIds).toBeNull();
   });
 
@@ -49,7 +49,7 @@ describe("dag view preferences", () => {
     const snapshot = partialize(makeStore().getState());
     expect(snapshot).toMatchObject({
       dagDirection: "LR",
-      dagGrouping: "project",
+      dagGrouping: "parent",
       dagCollapsedIds: null,
     });
   });
@@ -75,7 +75,7 @@ describe("dag view preferences", () => {
       current,
     );
     expect(merged.dagDirection).toBe("LR");
-    expect(merged.dagGrouping).toBe("project");
+    expect(merged.dagGrouping).toBe("parent");
     expect(
       mergeViewStatePersisted({ dagDirection: "TB", dagGrouping: "none" }, current)
         .dagDirection,
@@ -92,4 +92,30 @@ describe("dag view preferences", () => {
     expect(merged.dagDirection).toBe("TB");
     expect(merged.dagGrouping).toBe("parent");
   });
+  it("persists independent expansion and viewport while keeping selection session-only", () => {
+    const store = makeStore();
+    store.getState().setDagIndependentExpanded(true);
+    store.getState().setDagViewport({ x: 40, y: -80, zoom: 1.1 });
+    store.getState().setDagSelectedNodeId("task-a");
+    store.getState().setDagCollapsedIds([]);
+    const saved = viewStorePersistOptions("test").partialize(store.getState());
+    expect(saved).toMatchObject({ dagIndependentExpanded: true, dagViewport: { x: 40, y: -80, zoom: 1.1 } });
+    expect(saved).not.toHaveProperty("dagSelectedNodeId");
+    expect(mergeViewStatePersisted(saved, makeStore().getState()).dagViewport).toEqual(saved.dagViewport);
+  });
+  it("uses safe defaults for old or malformed personal layout preferences", () => {
+    const initial = makeStore().getState();
+    expect(mergeViewStatePersisted({}, initial)).toMatchObject({ dagIndependentExpanded: false, dagViewport: null });
+    for (const dagViewport of [{ x: NaN, y: 0, zoom: 1 }, { x: 0, y: 0, zoom: 0 }, { x: 0, y: 0, zoom: Infinity }]) {
+      expect(mergeViewStatePersisted({ dagViewport }, initial).dagViewport).toBeNull();
+    }
+  });
+
+  it("keeps a personal viewport when applying a partial shared-view definition", () => {
+    const store = makeStore();
+    store.getState().setDagViewport({ x: -240, y: -100, zoom: 1 });
+    const merged = mergeViewStatePersisted({ viewMode: "dag", dagDirection: "TB" }, store.getState());
+    expect(merged.dagViewport).toEqual({ x: -240, y: -100, zoom: 1 });
+  });
+
 });

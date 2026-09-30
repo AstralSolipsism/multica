@@ -1,54 +1,39 @@
 import type { IssueGraph, IssueGraphNode } from "@multica/core/api";
 import { projectIssueGraph } from "@multica/core/issues";
-import {
-  DAG_ISSUE_REP_PREFIX,
-  DAG_NO_PROJECT_REP,
-  DAG_PROJECT_REP_PREFIX,
-  type DagGrouping,
-} from "@multica/core/issues/stores/view-store";
+import { DAG_ISSUE_REP_PREFIX } from "@multica/core/issues/stores/view-store";
 
-/**
- * Visible projection of the complete issue graph (OL-38 §7/§8).
- *
- * The full compact graph stays in React Query; this module folds it into the
- * representatives the canvas lays out. All folding is display-only: aggregate
- * edges keep every real source edge id, and a collapsed group never deletes or
- * rewrites a business relation. Bidirectional aggregate edges between two
- * representatives are legal display output, not evidence of a task cycle.
- */
-
-export type DagNodeKind = "issue" | "project" | "feature";
+export const DAG_INDEPENDENT_GROUP = "independent:root";
+export type DagNodeKind = "issue" | "feature" | "independent";
 
 export interface DagVisibleNode {
-  /** Issue id for plain issues; `project:<id>` / `project:none` /
-   *  `issue:<id>` for representatives. */
   id: string;
   kind: DagNodeKind;
-  /** The issue behind `issue` nodes and feature representatives. */
   issue: IssueGraphNode | null;
   title: string;
   identifier: string | null;
-  /** Folded member issue ids. Plain issues hold only themselves. Feature
-   *  representatives hold the feature itself plus its folded descendants. */
+  /** Immediate visible container, not a business dependency. */
+  groupId: string | null;
   memberIds: string[];
   matchCount: number;
   contextCount: number;
-  /** Members whose server dependency summary reports unfinished prerequisites. */
   blockedMemberCount: number;
-  /** Members whose dependency summary is unknown (malformed/missing). */
   unknownSummaryCount: number;
   hasRestrictedBlockers: boolean;
-  /** Dependencies whose both ends folded into this representative. */
   internalEdgeCount: number;
-  /** Aggregated live execution signal: any member running wins over queued.
-   *  Representatives never read a single member's summary — a folded project
-   *  with a running child shows "running", not "queued". */
   runState: "running" | "queued" | "none";
-  /** "match" when the node itself or any folded member is a filter subject. */
   role: "match" | "context";
-  /** Plain issue with at least one visible child — it can fold into its
-   *  feature representative. Always false on representatives. */
   collapsible: boolean;
+}
+
+export interface DagVisibleGroup {
+  id: string;
+  parentId: string | null;
+  collapsed: boolean;
+  independent: boolean;
+  /** All authorized members, including the parent issue when one exists. */
+  memberIds: string[];
+  completedCount: number;
+  taskCount: number;
 }
 
 export interface DagVisibleEdge {
@@ -56,336 +41,268 @@ export interface DagVisibleEdge {
   source: string;
   target: string;
   sourceEdgeIds: string[];
-  /** Original task endpoints behind every aggregated source edge. */
   sources: { edgeId: string; source: string; target: string }[];
 }
 
 export interface DagProjection {
   nodes: DagVisibleNode[];
+  groups: DagVisibleGroup[];
   edges: DagVisibleEdge[];
-  /** Full node-id → representative-id fold map behind this projection. */
   representatives: ReadonlyMap<string, string>;
-  /** Issue nodes folded into a representative, for summary copy. */
   foldedNodeCount: number;
-}
-
-export function dagProjectRepId(projectId: string | null): string {
-  return projectId ? `${DAG_PROJECT_REP_PREFIX}${projectId}` : DAG_NO_PROJECT_REP;
 }
 
 export function dagFeatureRepId(issueId: string): string {
   return `${DAG_ISSUE_REP_PREFIX}${issueId}`;
 }
 
-/** Issues that have at least one child inside this graph — the only nodes a
- *  feature fold can attach to. */
 export function dagFeatureRepIds(graph: IssueGraph): Set<string> {
-  const parents = new Set<string>();
-  for (const node of graph.nodes) {
-    if (node.parentIssueId) parents.add(node.parentIssueId);
-  }
-  return parents;
+  const ids = new Set(graph.nodes.map((n) => n.id));
+  return new Set(
+    graph.nodes.flatMap((n) =>
+      n.parentIssueId && ids.has(n.parentIssueId) && n.parentIssueId !== n.id
+        ? [n.parentIssueId]
+        : [],
+    ),
+  );
 }
 
-/** First-paint fold: project representatives (project grouping) plus every
- *  feature with visible children, so the initial canvas is the group level
- *  and the user expands layer by layer. */
-export function defaultDagCollapsedIds(
-  graph: IssueGraph,
-  grouping: DagGrouping,
-): string[] {
-  const ids: string[] = [];
-  if (grouping === "project") {
-    const projectRepIds = new Set<string>();
-    for (const node of graph.nodes) projectRepIds.add(dagProjectRepId(node.projectId));
-    ids.push(...projectRepIds);
-  }
-  for (const id of dagFeatureRepIds(graph)) ids.push(dagFeatureRepId(id));
-  return ids;
+export function defaultDagCollapsedIds(graph: IssueGraph): string[] {
+  return [...dagFeatureRepIds(graph)].map(dagFeatureRepId);
 }
 
 function memberRunState(node: IssueGraphNode): "running" | "queued" | "none" {
   const run = node.runSummary;
   if (!run) return "none";
   if (run.running > 0) return "running";
-  if (run.queued > 0 || run.dispatched > 0 || run.waitingLocalDirectory > 0) {
-    return "queued";
-  }
-  return "none";
+  return run.queued > 0 || run.dispatched > 0 || run.waitingLocalDirectory > 0 ? "queued" : "none";
 }
 
-function isBlocked(node: IssueGraphNode): boolean {
-  const summary = node.dependencySummary;
-  if (!summary) return false;
-  return summary.hasRestrictedBlockers === true || summary.visibleUnsatisfiedCount > 0;
+function summarize(members: IssueGraphNode[]) {
+  const matchCount = members.filter((n) => n.role === "match").length;
+  return {
+    memberIds: members.map((n) => n.id),
+    matchCount,
+    contextCount: members.length - matchCount,
+    blockedMemberCount: members.filter(
+      (n) =>
+        n.dependencySummary &&
+        (n.dependencySummary.hasRestrictedBlockers ||
+          n.dependencySummary.visibleUnsatisfiedCount > 0),
+    ).length,
+    unknownSummaryCount: members.filter((n) => n.dependencySummary == null).length,
+    hasRestrictedBlockers: members.some((n) => n.dependencySummary?.hasRestrictedBlockers === true),
+    internalEdgeCount: 0,
+    runState: members.reduce<"running" | "queued" | "none">((state, n) => {
+      const next = memberRunState(n);
+      return state === "running" || next === "none" ? state : next;
+    }, "none"),
+    role: (matchCount > 0 ? "match" : "context") as "match" | "context",
+  };
 }
 
+/** Task-line containers are independent of project membership. Only authorized
+ * nodes enter the model. A missing parent is never synthesized or named. */
 export function computeDagProjection(
   graph: IssueGraph,
-  grouping: DagGrouping,
   collapsedIds: readonly string[],
+  independentExpanded = false,
 ): DagProjection {
-  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
-  const featureRepIds = dagFeatureRepIds(graph);
-  const collapsed = new Set(collapsedIds);
-
-  // Pass 1: project folding. Every node of a collapsed project folds into the
-  // project representative regardless of ancestry.
-  const afterProject = new Map<string, string>();
-  for (const node of graph.nodes) {
-    if (grouping === "project") {
-      const repId = dagProjectRepId(node.projectId);
-      if (collapsed.has(repId)) {
-        afterProject.set(node.id, repId);
-        continue;
-      }
-    }
-    afterProject.set(node.id, node.id);
-  }
-
-  // Pass 2: feature folding. A collapsed feature renders as its own
-  // representative only when no collapsed feature ancestor shades it; every
-  // other node folds into its nearest VISIBLE collapsed feature ancestor.
-  // Nested folds therefore surface a single outermost representative whose
-  // member list covers the whole folded subtree (root → middle → leaf with
-  // both folded shows only `issue:root`, holding all three).
-  const parentOf = (id: string): string | null =>
-    nodesById.get(id)?.parentIssueId ?? null;
-  const visibleFeatureMemo = new Map<string, boolean>();
-  const isVisibleCollapsedFeature = (id: string): boolean => {
-    const memoized = visibleFeatureMemo.get(id);
-    if (memoized !== undefined) return memoized;
-    let visible =
-      afterProject.get(id) === id &&
-      featureRepIds.has(id) &&
-      collapsed.has(dagFeatureRepId(id));
-    if (visible) {
-      const visited = new Set<string>([id]);
-      let current = parentOf(id);
-      while (current !== null && !visited.has(current)) {
-        visited.add(current);
-        if (
-          afterProject.get(current) === current &&
-          featureRepIds.has(current) &&
-          collapsed.has(dagFeatureRepId(current))
-        ) {
-          // A collapsed feature ancestor shades this one — regardless of
-          // whether that ancestor is itself shaded further up.
-          visible = false;
-          break;
-        }
-        current = parentOf(current);
-      }
-    }
-    visibleFeatureMemo.set(id, visible);
-    return visible;
-  };
-
-  const representatives = new Map<string, string>();
-  for (const node of graph.nodes) {
-    if (afterProject.get(node.id) !== node.id) continue;
-    if (isVisibleCollapsedFeature(node.id)) {
-      // The feature renders AS its representative; edges to/from it land on
-      // the rep node.
-      representatives.set(node.id, dagFeatureRepId(node.id));
-      continue;
-    }
-    const visited = new Set<string>([node.id]);
-    let current = node.parentIssueId;
-    while (current !== null && !visited.has(current)) {
-      visited.add(current);
-      if (isVisibleCollapsedFeature(current)) {
-        representatives.set(node.id, dagFeatureRepId(current));
-        break;
-      }
-      current = parentOf(current);
-    }
-  }
-  for (const [nodeId, repId] of afterProject) {
-    if (repId !== nodeId) representatives.set(nodeId, repId);
-  }
-
-  const { members, edges, internalEdgeCounts } = projectIssueGraph(
-    graph,
-    representatives,
-  );
-
-  const originalEdgeById = new Map(
-    graph.edges.map((edge) => [
-      edge.sourceEdgeId,
-      { source: edge.source, target: edge.target },
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  const parentOf = new Map(
+    graph.nodes.map((n) => [
+      n.id,
+      n.parentIssueId && byId.has(n.parentIssueId) && n.parentIssueId !== n.id
+        ? n.parentIssueId
+        : null,
     ]),
   );
-
-  const projectTitleById = new Map(
-    graph.projects.map((project) => [project.id, project.title]),
+  // Bound traversal even if an inconsistent hierarchy slips through a read.
+  // This repairs only the display forest; the source graph stays untouched.
+  const visited = new Set<string>();
+  for (const node of graph.nodes) {
+    const path = new Set<string>();
+    let id: string | null = node.id;
+    while (id && !visited.has(id)) {
+      if (path.has(id)) {
+        parentOf.set(id, null);
+        break;
+      }
+      path.add(id);
+      id = parentOf.get(id) ?? null;
+    }
+    for (const item of path) visited.add(item);
+  }
+  const children = new Map<string, IssueGraphNode[]>();
+  const roots: IssueGraphNode[] = [];
+  for (const node of graph.nodes) {
+    const parent = parentOf.get(node.id);
+    if (!parent) roots.push(node);
+    else {
+      const list = children.get(parent) ?? [];
+      list.push(node);
+      children.set(parent, list);
+    }
+  }
+  const compare = (a: IssueGraphNode, b: IssueGraphNode) =>
+    a.identifier.localeCompare(b.identifier, undefined, { numeric: true }) ||
+    a.id.localeCompare(b.id);
+  roots.sort(compare);
+  for (const list of children.values()) list.sort(compare);
+  const incident = new Set(graph.edges.flatMap((e) => [e.source, e.target]));
+  const collapsed = new Set(collapsedIds);
+  const independent = roots.filter(
+    (n) =>
+      !children.has(n.id) &&
+      !collapsed.has(dagFeatureRepId(n.id)) &&
+      n.parentIssueId === null &&
+      !n.hasRestrictedParent &&
+      !incident.has(n.id) &&
+      n.dependencySummary != null &&
+      !n.dependencySummary.hasRestrictedBlockers &&
+      n.dependencySummary.visibleUnsatisfiedCount === 0,
   );
-
+  const independentIds = new Set(independent.map((n) => n.id));
   const nodes: DagVisibleNode[] = [];
+  const groups: DagVisibleGroup[] = [];
+  const representatives = new Map<string, string>();
   let foldedNodeCount = 0;
-  for (const [repOrNodeId, memberIds] of members) {
-    const memberNodes = memberIds
-      .map((id) => nodesById.get(id))
-      .filter((node): node is IssueGraphNode => !!node);
-    const matchCount = memberNodes.filter((node) => node.role === "match").length;
-    const contextCount = memberNodes.length - matchCount;
-    const aggregate = {
-      memberIds,
-      matchCount,
-      contextCount,
-      blockedMemberCount: memberNodes.filter(isBlocked).length,
-      unknownSummaryCount: memberNodes.filter(
-        (node) => node.dependencySummary == null,
-      ).length,
-      hasRestrictedBlockers: memberNodes.some(
-        (node) => node.dependencySummary?.hasRestrictedBlockers === true,
-      ),
-      internalEdgeCount: internalEdgeCounts.get(repOrNodeId) ?? 0,
-      runState: memberNodes.reduce<"running" | "queued" | "none">(
-        (state, node) => {
-          const member = memberRunState(node);
-          if (state === "running" || member === "none") return state;
-          if (member === "running") return "running";
-          return "queued";
-        },
-        "none",
-      ),
-      role: (matchCount > 0 ? "match" : "context") as "match" | "context",
-    };
-
-    if (repOrNodeId.startsWith(DAG_PROJECT_REP_PREFIX)) {
-      foldedNodeCount += memberIds.length;
-      const projectId =
-        repOrNodeId === DAG_NO_PROJECT_REP
-          ? null
-          : repOrNodeId.slice(DAG_PROJECT_REP_PREFIX.length);
-      nodes.push({
-        id: repOrNodeId,
-        kind: "project",
-        issue: null,
-        title: (projectId && projectTitleById.get(projectId)) || projectId || "",
-        identifier: null,
-        collapsible: false,
-        ...aggregate,
-      });
-      continue;
+  function descendants(root: IssueGraphNode): IssueGraphNode[] {
+    const result: IssueGraphNode[] = [];
+    const stack = [root];
+    while (stack.length) {
+      const next = stack.pop()!;
+      result.push(next);
+      const nested = children.get(next.id);
+      if (nested) for (let i = nested.length - 1; i >= 0; i--) stack.push(nested[i]!);
     }
-    if (repOrNodeId.startsWith(DAG_ISSUE_REP_PREFIX)) {
-      const issueId = repOrNodeId.slice(DAG_ISSUE_REP_PREFIX.length);
-      const issue = nodesById.get(issueId);
-      if (!issue) continue;
-      foldedNodeCount += memberIds.length - 1;
+    return result;
+  }
+  function visit(node: IssueGraphNode, groupId: string | null) {
+    const nested = children.get(node.id);
+    if (!nested && !collapsed.has(dagFeatureRepId(node.id))) {
+      representatives.set(node.id, node.id);
       nodes.push({
-        id: repOrNodeId,
-        kind: "feature",
-        issue,
-        title: issue.title,
-        identifier: issue.identifier,
+        id: node.id,
+        kind: "issue",
+        issue: node,
+        title: node.title,
+        identifier: node.identifier,
+        groupId,
         collapsible: false,
-        ...aggregate,
+        ...summarize([node]),
       });
-      continue;
+      return;
     }
-    const issue = nodesById.get(repOrNodeId);
-    if (!issue) continue;
+    const id = dagFeatureRepId(node.id),
+      members = descendants(node);
+    const isCollapsed = collapsed.has(id);
+    groups.push({
+      id,
+      parentId: groupId,
+      collapsed: isCollapsed,
+      independent: false,
+      memberIds: members.map((n) => n.id),
+      taskCount: members.length - 1,
+      completedCount: members.slice(1).filter((n) => n.statusCategory === "done").length,
+    });
     nodes.push({
-      id: repOrNodeId,
-      kind: "issue",
-      issue,
-      title: issue.title,
-      identifier: issue.identifier,
-      collapsible: featureRepIds.has(issue.id),
-      ...aggregate,
+      id,
+      kind: "feature",
+      issue: node,
+      title: node.title,
+      identifier: node.identifier,
+      groupId,
+      collapsible: true,
+      ...summarize(members),
     });
+    representatives.set(node.id, id);
+    if (isCollapsed) {
+      foldedNodeCount += members.length - 1;
+      for (const member of members) representatives.set(member.id, id);
+    } else for (const child of nested ?? []) visit(child, id);
   }
-
-  const visibleIds = new Set(nodes.map((node) => node.id));
-  const visibleEdges: DagVisibleEdge[] = [];
-  for (const edge of edges) {
-    if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) continue;
-    const sources = edge.sourceEdgeIds.flatMap((edgeId) => {
-      const original = originalEdgeById.get(edgeId);
-      return original ? [{ edgeId, ...original }] : [];
+  for (const node of roots) if (!independentIds.has(node.id)) visit(node, null);
+  if (independent.length) {
+    const id = DAG_INDEPENDENT_GROUP;
+    groups.push({
+      id,
+      parentId: null,
+      independent: true,
+      collapsed: !independentExpanded,
+      memberIds: independent.map((n) => n.id),
+      taskCount: independent.length,
+      completedCount: independent.filter((n) => n.statusCategory === "done").length,
     });
-    if (sources.length === 0) continue;
-    visibleEdges.push({
-      id: `${edge.source}→${edge.target}`,
-      source: edge.source,
-      target: edge.target,
-      sourceEdgeIds: edge.sourceEdgeIds,
-      sources,
+    nodes.push({
+      id,
+      kind: "independent",
+      issue: null,
+      title: "",
+      identifier: null,
+      groupId: null,
+      collapsible: true,
+      ...summarize(independent),
     });
+    if (independentExpanded) for (const node of independent) visit(node, id);
+    else {
+      foldedNodeCount += independent.length;
+      for (const node of independent) representatives.set(node.id, id);
+    }
   }
-
-  return {
-    nodes,
-    edges: visibleEdges,
-    representatives,
-    foldedNodeCount,
-  };
+  const folded = projectIssueGraph(graph, representatives);
+  for (const node of nodes) node.internalEdgeCount = folded.internalEdgeCounts.get(node.id) ?? 0;
+  const original = new Map(graph.edges.map((e) => [e.sourceEdgeId, e]));
+  const visibleIds = new Set(nodes.map((n) => n.id));
+  const edges = folded.edges.flatMap((e): DagVisibleEdge[] => {
+    if (!visibleIds.has(e.source) || !visibleIds.has(e.target)) return [];
+    const sources = e.sourceEdgeIds.flatMap((edgeId) => {
+      const edge = original.get(edgeId);
+      return edge ? [{ edgeId, source: edge.source, target: edge.target }] : [];
+    });
+    return sources.length
+      ? [
+          {
+            id: `${e.source}→${e.target}`,
+            source: e.source,
+            target: e.target,
+            sourceEdgeIds: e.sourceEdgeIds,
+            sources,
+          },
+        ]
+      : [];
+  });
+  return { nodes, groups, edges, representatives, foldedNodeCount };
 }
 
-/**
- * Drop folds that are PROVABLY inert, and only then. Proof requires a
- * complete membership read: `membershipComplete` must be false whenever the
- * graph was produced with any filter/search/sub-issue narrowing or carries
- * restricted context — under all of those, a missing node or a feature
- * without visible children is a display artifact, not evidence of deletion
- * (a todo filter hides a done child; the fold must survive). With a complete
- * read, absence and childlessness are real, and stale entries are cleared
- * while every other personal setting stays (OL-38 §8).
- */
+/** Prune only against a fresh, complete membership read, never a filtered view. */
 export function pruneDagCollapsedIds(
   collapsedIds: readonly string[],
   graph: IssueGraph,
   membershipComplete: boolean,
 ): string[] {
   if (!membershipComplete) return [...collapsedIds];
-  const nodeIds = new Set(graph.nodes.map((node) => node.id));
-  const featureRepIds = dagFeatureRepIds(graph);
-  const projectRepIds = new Set(
-    graph.nodes.map((node) => dagProjectRepId(node.projectId)),
-  );
-  return collapsedIds.filter((id) => {
-    if (id.startsWith(DAG_ISSUE_REP_PREFIX)) {
-      const issueId = id.slice(DAG_ISSUE_REP_PREFIX.length);
-      return nodeIds.has(issueId) && featureRepIds.has(issueId);
-    }
-    if (id.startsWith(DAG_PROJECT_REP_PREFIX)) return projectRepIds.has(id);
-    return false;
-  });
+  const existing = new Set(defaultDagCollapsedIds(graph));
+  return collapsedIds.filter((id) => existing.has(id));
 }
 
-/**
- * Representatives to unfold so every given issue becomes visible. Nested
- * folding means removing one rep can leave the node inside another collapsed
- * rep (project expanded → feature still folded), so resolve iteratively
- * against a working fold set. Bounded: each round removes at least one rep or
- * stops.
- */
 export function repsToRevealIssues(
   graph: IssueGraph,
-  grouping: DagGrouping,
   collapsedIds: readonly string[],
   issueIds: readonly string[],
 ): string[] {
-  const targets = new Set(issueIds);
-  const removal = new Set<string>();
-  let working: readonly string[] = collapsedIds;
-  for (let round = 0; round < 16; round++) {
-    const projection = computeDagProjection(graph, grouping, working);
-    const visibleIds = new Set(projection.nodes.map((node) => node.id));
-    let changed = false;
-    for (const id of targets) {
-      if (visibleIds.has(id)) continue;
-      const rep = projection.representatives.get(id);
-      if (rep && !removal.has(rep)) {
-        removal.add(rep);
-        changed = true;
-      }
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  const collapsed = new Set(collapsedIds),
+    removal = new Set<string>();
+  for (const id of issueIds) {
+    let parent = byId.get(id)?.parentIssueId;
+    const seen = new Set<string>();
+    while (parent && !seen.has(parent)) {
+      seen.add(parent);
+      const rep = dagFeatureRepId(parent);
+      if (collapsed.has(rep)) removal.add(rep);
+      parent = byId.get(parent)?.parentIssueId;
     }
-    if (!changed) return [...removal];
-    working = working.filter((repId) => !removal.has(repId));
   }
   return [...removal];
 }

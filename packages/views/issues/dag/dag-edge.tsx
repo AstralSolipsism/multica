@@ -1,77 +1,60 @@
 "use client";
-
 import { memo } from "react";
-import {
-  BaseEdge,
-  EdgeLabelRenderer,
-  getBezierPath,
-  type Edge,
-  type EdgeProps,
-  type Position,
-} from "@xyflow/react";
+import { BaseEdge, EdgeLabelRenderer, type Edge, type EdgeProps } from "@xyflow/react";
 import { cn } from "@multica/ui/lib/utils";
 import type { DagVisibleEdge } from "./dag-projection";
+import type { DagPoint } from "./dag-layout";
+import { dagRouteMidpoint, dagRoutePath } from "./dag-route";
+import { useT } from "../../i18n";
 
-/** Display data for one canvas edge. Explanation content (original endpoints,
- *  bidirectional note) renders in the canvas inspector when the edge is
- *  selected; the edge itself only carries styling + the aggregate count. */
 export type DagFlowEdgeData = {
   model: DagVisibleEdge;
-  /** True when the edge summarizes folded members or merges several source
-   *  edges — the count badge and inspector treat it as an aggregate. */
   aggregate: boolean;
-  dimmed: boolean;
   focused: boolean;
+  route: readonly DagPoint[];
+  onSelect: (id: string) => void;
 };
-
 export type DagFlowEdge = Edge<DagFlowEdgeData, "dagEdge">;
-
 export const DagFlowEdgeLine = memo(function DagFlowEdgeLine({
-  sourceX,
-  sourceY,
-  targetX,
-  targetY,
-  sourcePosition,
-  targetPosition,
+  id,
   data,
   selected,
   markerEnd,
 }: EdgeProps<DagFlowEdge>) {
-  const [path, labelX, labelY] = getBezierPath({
-    sourceX,
-    sourceY,
-    targetX,
-    targetY,
-    sourcePosition: sourcePosition as Position,
-    targetPosition: targetPosition as Position,
-  });
-  const count = data?.model.sourceEdgeIds.length ?? 1;
+  const { t } = useT("issues");
+  if (!data?.route.length) return null;
+  const path = dagRoutePath(data.route),
+    label = dagRouteMidpoint(data.route);
+  const count = data.model.sourceEdgeIds.length;
   return (
     <>
       <BaseEdge
         path={path}
         markerEnd={markerEnd}
+        interactionWidth={18}
         className={cn(
-          "stroke-border",
-          data?.focused && "stroke-brand",
-          (selected || data?.focused) && "!stroke-2",
-          data?.dimmed && "opacity-25",
+          "stroke-muted-foreground/65",
+          data.focused && "stroke-brand",
+          (selected || data.focused) && "!stroke-2",
         )}
-        style={{ strokeDasharray: data?.aggregate ? "6 3" : undefined }}
+        style={{
+          stroke: selected || data.focused ? "var(--brand)" : "var(--muted-foreground)",
+          strokeWidth: selected || data.focused ? 2 : 1.4,
+          opacity: selected || data.focused ? 1 : 0.7,
+          strokeDasharray: data.aggregate ? "6 3" : undefined,
+        }}
       />
-      {data?.aggregate && count > 1 && (
+      {data.aggregate && count > 1 && (
         <EdgeLabelRenderer>
-          <div
-            className={cn(
-              "nodrag nopan pointer-events-none absolute rounded-full bg-muted px-1.5 py-0.5 text-micro font-medium",
-              data.dimmed ? "text-faint-foreground" : "text-muted-foreground",
-            )}
-            style={{
-              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-            }}
+          <button
+            type="button"
+            className="nodrag nopan pointer-events-auto absolute z-10 rounded-md border bg-card px-1.5 py-0.5 text-micro text-muted-foreground shadow-xs hover:border-brand focus-visible:outline-brand"
+            style={{ transform: `translate(-50%, -50%) translate(${label.x}px,${label.y}px)` }}
+            aria-label={t(($) => $.dag.edge_count, { count })}
+            onClick={() => data.onSelect(id)}
           >
-            ×{count}
-          </div>
+            {t(($) => $.dag.edge_count, { count })}
+          </button>
         </EdgeLabelRenderer>
       )}
     </>

@@ -13,39 +13,18 @@ export type ViewMode = "board" | "list" | "table" | "gantt" | "swimlane" | "dag"
 export type GanttZoom = "day" | "week" | "month";
 /** DAG canvas layout direction: left-to-right or top-to-bottom ranks. */
 export type DagDirection = "LR" | "TB";
-/**
- * DAG representative grouping. `project` folds nodes under project
- * representatives (including a "no project" group); `parent` folds them under
- * their top-level feature ancestor; `none` keeps every node flat — feature
- * collapse stays available in all three.
- */
+/** Historical shared-view values retained at the data boundary. The current
+ * DAG canvas always renders task-line containers. New definitions use parent. */
 export type DagGrouping = "project" | "parent" | "none";
 /** Representative id namespaces inside `dagCollapsedIds`. */
-export const DAG_PROJECT_REP_PREFIX = "project:";
 export const DAG_ISSUE_REP_PREFIX = "issue:";
-export const DAG_NO_PROJECT_REP = "project:none";
 
-/** Shared option order + label keys for the DAG direction/grouping controls,
- *  so the header display popover and the save-view dialog cannot drift. */
+/** Shared direction choices for the display controls and saved view dialog. */
 export const DAG_DIRECTION_OPTIONS: readonly DagDirection[] = ["LR", "TB"];
-export const DAG_GROUPING_OPTIONS: readonly DagGrouping[] = [
-  "project",
-  "parent",
-  "none",
-];
 export function dagDirectionLabelKey(
   direction: DagDirection,
 ): "direction_lr" | "direction_tb" {
   return direction === "TB" ? "direction_tb" : "direction_lr";
-}
-export function dagGroupingLabelKey(
-  grouping: DagGrouping,
-): "grouping_project" | "grouping_parent" | "grouping_none" {
-  return grouping === "parent"
-    ? "grouping_parent"
-    : grouping === "none"
-      ? "grouping_none"
-      : "grouping_project";
 }
 /**
  * Board grouping. Besides the three built-ins, a select-type custom property
@@ -349,17 +328,21 @@ export interface IssueViewState {
   tableCalculation: TableCalculation;
   /** DAG canvas direction; layout re-runs when it changes. */
   dagDirection: DagDirection;
-  /** DAG representative grouping — see DagGrouping. */
+  /** Shared-view metadata; see DagGrouping. */
   dagGrouping: DagGrouping;
   /**
-   * Collapsed DAG representatives, prefixed (`project:<id>`, `issue:<id>`,
-   * `project:none`). `null` means the user has never folded this surface's
-   * graph: the view then applies the DEFAULT collapse (every project rep when
-   * grouping is `project`, plus every feature rep) on first paint, and writes
-   * the result back so later graph growth keeps the user's explicit choices.
-   * An entry whose representative no longer exists is pruned on read.
+   * Personal task-line folds (`issue:<id>`). Null initializes collapsed
+   * headers on first entry. Only complete, fresh membership can prune a fold.
    */
   dagCollapsedIds: string[] | null;
+  /** Independent tasks are deliberately excluded from global line expansion. */
+  dagIndependentExpanded: boolean;
+  dagViewport: { x: number; y: number; zoom: number } | null;
+  /** Session selection; excluded from persisted/shared view definitions. */
+  dagSelectedNodeId: string | null;
+  setDagIndependentExpanded: (expanded: boolean) => void;
+  setDagViewport: (viewport: { x: number; y: number; zoom: number }) => void;
+  setDagSelectedNodeId: (id: string | null) => void;
   setViewMode: (mode: ViewMode) => void;
   setGanttZoom: (zoom: GanttZoom) => void;
   toggleGanttShowCompleted: () => void;
@@ -453,8 +436,14 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   tableHierarchy: true,
   tableCalculation: "none",
   dagDirection: "LR",
-  dagGrouping: "project",
+  dagGrouping: "parent",
   dagCollapsedIds: null,
+  dagIndependentExpanded: false,
+  dagViewport: null,
+  dagSelectedNodeId: null,
+  setDagIndependentExpanded: (dagIndependentExpanded) => set({ dagIndependentExpanded }),
+  setDagViewport: (dagViewport) => set({ dagViewport }),
+  setDagSelectedNodeId: (dagSelectedNodeId) => set({ dagSelectedNodeId }),
 
   setViewMode: (mode) =>
     set((state) => ({
@@ -770,6 +759,8 @@ export const viewStorePersistOptions = (name: string) => ({
     dagDirection: state.dagDirection,
     dagGrouping: state.dagGrouping,
     dagCollapsedIds: state.dagCollapsedIds,
+    dagIndependentExpanded: state.dagIndependentExpanded,
+    dagViewport: state.dagViewport,
   }),
   // Default Zustand merge is shallow, so a persisted `cardProperties` snapshot
   // saved before a new toggle was introduced wins entirely and the new key is
@@ -836,6 +827,8 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
   const merged = {
     ...current,
     ...p,
+    dagIndependentExpanded: typeof p.dagIndependentExpanded === "boolean" ? p.dagIndependentExpanded : current.dagIndependentExpanded,
+    dagViewport: p.dagViewport === undefined ? current.dagViewport : isDagViewport(p.dagViewport) ? p.dagViewport : null,
     dagDirection: p.dagDirection === "LR" || p.dagDirection === "TB" ? p.dagDirection : current.dagDirection,
     dagGrouping: p.dagGrouping === "project" || p.dagGrouping === "parent" || p.dagGrouping === "none" ? p.dagGrouping : current.dagGrouping,
     dagCollapsedIds: p.dagCollapsedIds === null || (Array.isArray(p.dagCollapsedIds) && p.dagCollapsedIds.every((id) => typeof id === "string")) ? p.dagCollapsedIds : current.dagCollapsedIds,
@@ -921,4 +914,13 @@ export function useClearFiltersOnWorkspaceChange(
     }
     prevIdRef.current = wsId;
   }, [wsId, store]);
+}
+
+function isDagViewport(value: unknown): value is { x: number; y: number; zoom: number } {
+  if (!value || typeof value !== "object") return false;
+  const viewport = value as Record<string, unknown>;
+  return typeof viewport.x === "number" && Number.isFinite(viewport.x) &&
+    typeof viewport.y === "number" && Number.isFinite(viewport.y) &&
+    typeof viewport.zoom === "number" && Number.isFinite(viewport.zoom) &&
+    viewport.zoom >= 0.08 && viewport.zoom <= 2;
 }

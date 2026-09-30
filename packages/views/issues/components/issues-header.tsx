@@ -100,11 +100,8 @@ import {
   type TableGrouping,
   type ViewMode,
   type DagDirection,
-  type DagGrouping,
   DAG_DIRECTION_OPTIONS,
-  DAG_GROUPING_OPTIONS,
   dagDirectionLabelKey,
-  dagGroupingLabelKey,
 } from "@multica/core/issues/stores/view-store";
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import { FilterChipsBar } from "./filter-chips-bar";
@@ -1949,7 +1946,6 @@ export function IssueDisplayControls({
   const grouping = useViewStore((s) => s.grouping);
   const swimlaneGrouping = useViewStore((s) => s.swimlaneGrouping);
   const dagDirection = useViewStore((s) => s.dagDirection);
-  const dagGrouping = useViewStore((s) => s.dagGrouping);
   const cardProperties = useViewStore((s) => s.cardProperties);
   const tableGrouping = useViewStore((s) => s.tableGrouping ?? "none");
   const tableHierarchy = useViewStore((s) => s.tableHierarchy ?? true);
@@ -2334,40 +2330,11 @@ export function IssueDisplayControls({
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-caption font-medium text-muted-foreground">
-                      {t(($) => $.dag.grouping_label)}
-                    </span>
-                    <Select
-                      items={DAG_GROUPING_OPTIONS.map((value) => ({
-                        value: value as string,
-                        label: t(($) => $.dag[dagGroupingLabelKey(value)]),
-                      }))}
-                      value={dagGrouping}
-                      onValueChange={(v) => {
-                        if (v) act.setDagGrouping(v as DagGrouping);
-                      }}
-                    >
-                      <SelectTrigger size="sm" className="w-32" aria-label={t(($) => $.dag.grouping_label)}>
-                        <SelectValue>
-                          {t(($) => $.dag[dagGroupingLabelKey(dagGrouping)])}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent align="end">
-                        <SelectGroup>
-                          {DAG_GROUPING_OPTIONS.map((value) => (
-                            <SelectItem key={value} value={value}>
-                              {t(($) => $.dag[dagGroupingLabelKey(value)])}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </div>
+
                 </>
               )}
               {/* Sort is a list-shaped concept: the graph endpoint ignores it
-                  and Dagre owns node order, so the control hides in DAG mode
+                  and ELK owns node order, so the control hides in DAG mode
                   rather than pretending to apply. */}
               {viewMode !== "dag" && (
               <div>

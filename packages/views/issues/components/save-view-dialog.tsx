@@ -55,11 +55,8 @@ import {
   type SwimlaneGrouping,
   type ViewMode,
   type DagDirection,
-  type DagGrouping,
   DAG_DIRECTION_OPTIONS,
-  DAG_GROUPING_OPTIONS,
   dagDirectionLabelKey,
-  dagGroupingLabelKey,
 } from "@multica/core/issues/stores/view-store";
 import {
   ViewStoreProvider,
@@ -168,7 +165,6 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
   const grouping = useViewStore((s) => s.grouping);
   const swimlaneGrouping = useViewStore((s) => s.swimlaneGrouping);
   const dagDirection = useViewStore((s) => s.dagDirection);
-  const dagGrouping = useViewStore((s) => s.dagGrouping);
   const sortBy = useViewStore((s) => s.sortBy);
   const sortDirection = useViewStore((s) => s.sortDirection);
   const cardProperties = useViewStore((s) => s.cardProperties);
@@ -199,7 +195,7 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
       : viewMode === "swimlane"
         ? t(($) => $.display[SWIMLANE_LABEL_KEY[swimlaneGrouping]])
         : viewMode === "dag"
-          ? t(($) => $.dag[dagGroupingLabelKey(dagGrouping)])
+          ? t(($) => $.dag.grouping_parent)
           : null;
   const dagDirectionLabel =
     viewMode === "dag"
@@ -419,36 +415,7 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="flex items-center gap-3">
-                  <Label className={ROW_LABEL}>
-                    {t(($) => $.dag.grouping_label)}
-                  </Label>
-                  <Select
-                    items={DAG_GROUPING_OPTIONS.map((value) => ({
-                      value: value as string,
-                      label: t(($) => $.dag[dagGroupingLabelKey(value)]),
-                    }))}
-                    value={dagGrouping}
-                    onValueChange={(v) => {
-                      if (v) act.setDagGrouping(v as DagGrouping);
-                    }}
-                  >
-                    <SelectTrigger size="sm" className="w-64" aria-label={t(($) => $.dag.grouping_label)}>
-                      <SelectValue>
-                        {t(($) => $.dag[dagGroupingLabelKey(dagGrouping)])}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent align="start">
-                      <SelectGroup>
-                        {DAG_GROUPING_OPTIONS.map((value) => (
-                          <SelectItem key={value} value={value}>
-                            {t(($) => $.dag[dagGroupingLabelKey(value)])}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </div>
+
               </>
             )}
             {/* The graph endpoint ignores sort — DAG drafts omit ordering
@@ -723,7 +690,7 @@ export function SaveViewDialog({
         // per-user surface preference and are never part of the view
         // definition.
         dagDirection: state.dagDirection,
-        dagGrouping: state.dagGrouping,
+        dagGrouping: "parent",
       },
     };
     if (editView) {

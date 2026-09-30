@@ -1,21 +1,12 @@
-/**
- * Canvas node geometry, engine-free by design: `dag-view.tsx` reaches these
- * constants without importing the React Flow node module or Dagre, keeping
- * both engines out of the first-load bundle (only the lazy canvas chunk and
- * the layout worker reference them).
- */
-
-export const DAG_NODE_WIDTH = 232;
-export const DAG_NODE_HEIGHT = 84;
-
-export type DagNodeKindForSize = "issue" | "project" | "feature";
-
-export function dagNodeSize(kind: DagNodeKindForSize): {
-  width: number;
-  height: number;
-} {
+/** Fixed, readable card geometry shared by the worker and canvas. */
+export const DAG_NODE_WIDTH = 248;
+export const DAG_NODE_HEIGHT = 116;
+export const DAG_GROUP_HEADER_HEIGHT = 76;
+export const DAG_GROUP_MIN_WIDTH = 680;
+export type DagNodeKindForSize = "issue" | "feature" | "independent";
+export function dagNodeSize(kind: DagNodeKindForSize) {
   return {
-    width: DAG_NODE_WIDTH,
-    height: kind === "issue" ? DAG_NODE_HEIGHT : DAG_NODE_HEIGHT + 10,
+    width: kind === "issue" ? DAG_NODE_WIDTH : DAG_GROUP_MIN_WIDTH,
+    height: kind === "issue" ? DAG_NODE_HEIGHT : DAG_GROUP_HEADER_HEIGHT,
   };
 }

@@ -1,14 +1,10 @@
 "use client";
 
 import { memo, type ReactNode } from "react";
-import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import {
-  AlertTriangle,
-  ChevronDown,
-  CircleHelp,
-  Layers,
-  Loader2,
-} from "lucide-react";
+import type { Node, NodeProps } from "@xyflow/react";
+import type { DagPort } from "./dag-layout";
+import { DagHandles } from "./dag-ports";
+import { AlertTriangle, CircleHelp, Loader2 } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
 import { issueGraphReadiness } from "@multica/core/api";
 import type { IssueStatusCategory } from "@multica/core/types";
@@ -25,6 +21,8 @@ import { DAG_NODE_HEIGHT, DAG_NODE_WIDTH } from "./dag-constants";
  *  callbacks arrive via context, not node data. */
 export type DagFlowNodeData = {
   model: DagVisibleNode;
+  ports: readonly DagPort[];
+  showStage: boolean;
   projectTitle: string | null;
   statusColor: string | null;
   /** In the highlighted upstream/downstream neighborhood of the selection. */
@@ -35,7 +33,7 @@ export type DagFlowNodeData = {
 
 export type DagFlowNode = Node<DagFlowNodeData, "dagNode">;
 
-function RunBadge({ model }: { model: DagVisibleNode }) {
+export function DagRunBadge({ model }: { model: DagVisibleNode }) {
   const { t } = useT("issues");
   if (model.runState === "none") return null;
   const running = model.runState === "running";
@@ -98,31 +96,29 @@ function NodeShell({
   return (
     <div
       className={cn(
-        "flex flex-col gap-1 rounded-lg border bg-card px-2.5 py-2 text-left shadow-xs transition-opacity",
-        selected
-          ? "border-brand ring-2 ring-brand/30"
-          : "border-border hover:border-foreground/30",
-        data.dimmed && "opacity-30",
+        "nopan flex flex-col gap-1 rounded-lg border bg-card px-2.5 py-2 text-left shadow-xs transition-opacity",
+        selected ? "border-brand ring-2 ring-brand/30" : "border-border hover:border-foreground/30",
+        data.model.issue?.statusCategory === "done" && "bg-muted/10",
         !data.dimmed && data.focused && "border-brand/60",
         data.model.role === "context" && "border-dashed",
         className,
       )}
-      style={{ width: DAG_NODE_WIDTH, minHeight: DAG_NODE_HEIGHT }}
+      style={{ width: DAG_NODE_WIDTH, height: DAG_NODE_HEIGHT }}
+      data-dag-issue={data.model.identifier}
     >
-      {/* Fixed ports let edges change direction without remeasuring every
-          node or rerendering its status, avatar and title. */}
-      <Handle id="LR" type="target" position={Position.Left} className="!opacity-0" />
-      <Handle id="TB" type="target" position={Position.Top} className="!opacity-0" />
+      <DagHandles
+        nodeId={data.model.id}
+        ports={data.ports}
+        width={DAG_NODE_WIDTH}
+        height={DAG_NODE_HEIGHT}
+      />
       {children}
-      <Handle id="LR" type="source" position={Position.Right} className="!opacity-0" />
-      <Handle id="TB" type="source" position={Position.Bottom} className="!opacity-0" />
     </div>
   );
 }
 
 /**
- * The single custom node renders all three kinds — the React Flow registry
- * stays at one entry, and the projection model already carries the kind.
+ * An issue card keeps the existing status, priority and assignment signals.
  * Folding state lives in the view store; the node itself is display-only.
  */
 export const DagFlowNodeCard = memo(
@@ -130,48 +126,8 @@ export const DagFlowNodeCard = memo(
     const { t } = useT("issues");
     const { model } = data;
 
-    if (model.kind === "project") {
-      return (
-        <NodeShell data={data} selected={selected} className="border-2">
-          <div className="flex items-center gap-1.5">
-            <Layers className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate text-body font-medium">
-              {model.title || t(($) => $.dag.no_project_group)}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-micro text-muted-foreground">
-            <span className="tabular-nums">
-              {t(($) => $.dag.members_badge, { count: model.matchCount })}
-            </span>
-            {model.contextCount > 0 && (
-              <span className="tabular-nums">
-                {t(($) => $.dag.context_count, { count: model.contextCount })}
-              </span>
-            )}
-            {model.blockedMemberCount > 0 && (
-              <span className="inline-flex items-center gap-0.5 text-warning">
-                <AlertTriangle className="size-3" />
-                <span className="tabular-nums">
-                  {t(($) => $.dag.blocked_members, {
-                    count: model.blockedMemberCount,
-                  })}
-                </span>
-              </span>
-            )}
-            {model.internalEdgeCount > 0 && (
-              <span className="tabular-nums">
-                {t(($) => $.dag.internal_edges, { count: model.internalEdgeCount })}
-              </span>
-            )}
-            <RunBadge model={model} />
-          </div>
-        </NodeShell>
-      );
-    }
-
     const issue = model.issue!;
-    const statusCategory =
-      (issue.statusCategory as IssueStatusCategory) || "todo";
+    const statusCategory = (issue.statusCategory as IssueStatusCategory) || "unstarted";
     return (
       <NodeShell data={data} selected={selected}>
         <div className="flex items-center gap-1.5">
@@ -185,15 +141,7 @@ export const DagFlowNodeCard = memo(
             color={data.statusColor}
             className="size-3.5"
           />
-          {model.kind === "feature" && (
-            <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-muted/70 px-1.5 py-0.5 text-micro text-muted-foreground">
-              <ChevronDown className="size-3" />
-              {t(($) => $.dag.folded_children, {
-                count: Math.max(0, model.memberIds.length - 1),
-              })}
-            </span>
-          )}
-          <RunBadge model={model} />
+          <DagRunBadge model={model} />
           {model.role === "context" && (
             <span className="ml-auto shrink-0 rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground">
               {t(($) => $.dag.context_badge)}
@@ -203,13 +151,9 @@ export const DagFlowNodeCard = memo(
         <div className="line-clamp-2 text-body leading-snug">{model.title}</div>
         <div className="mt-auto flex items-center gap-1.5">
           {issue.assignee ? (
-            <ActorAvatar
-              actorType={issue.assignee.type}
-              actorId={issue.assignee.id}
-              size="xs"
-            />
+            <ActorAvatar actorType={issue.assignee.type} actorId={issue.assignee.id} size="xs" />
           ) : null}
-          {issue.stage != null && (
+          {data.showStage && issue.stage != null && (
             <span className="shrink-0 rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground tabular-nums">
               {t(($) => $.dag.stage_badge, { number: issue.stage })}
             </span>

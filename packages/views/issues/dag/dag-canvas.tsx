@@ -1,10 +1,8 @@
 "use client";
-
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
-  getNodesBounds,
   MarkerType,
   MiniMap,
   ReactFlow,
@@ -12,332 +10,373 @@ import {
   useReactFlow,
   type EdgeChange,
   type NodeChange,
+  type Viewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Crosshair, X } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import type { IssueGraph } from "@multica/core/api";
 import type { DagDirection } from "@multica/core/issues/stores/view-store";
+import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import { useT } from "../../i18n";
-import {
-  DagFlowEdgeLine,
-  type DagFlowEdge,
-  type DagFlowEdgeData,
-} from "./dag-edge";
+import { DagFlowEdgeLine, type DagFlowEdge } from "./dag-edge";
 import { dagNodeSize } from "./dag-constants";
 import { DagIssueActions } from "./dag-issue-actions";
-import {
-  DagFlowNodeCard,
-  type DagFlowNode,
-  type DagFlowNodeData,
-} from "./dag-node";
-import {
-  dagFocusNeighborhood,
-  type DagProjection,
-  type DagVisibleEdge,
-} from "./dag-projection";
+import { DagFlowNodeCard, type DagFlowNode, type DagFlowNodeData } from "./dag-node";
+import { DagFlowGroupCard, type DagFlowGroup } from "./dag-group";
+import { dagFocusNeighborhood, type DagProjection, type DagVisibleEdge } from "./dag-projection";
+import type { DagLayoutResult, DagPoint, DagPort } from "./dag-layout";
 
-const nodeTypes = { dagNode: DagFlowNodeCard };
+const nodeTypes = { dagNode: DagFlowNodeCard, dagGroup: DagFlowGroupCard };
 const edgeTypes = { dagEdge: DagFlowEdgeLine };
-
-/** An edge is an aggregate when it merges several source edges or connects
- *  representatives (issue ids are UUIDs; representative ids are prefixed). */
-function isAggregateDagEdge(edge: DagVisibleEdge): boolean {
-  return (
-    edge.sourceEdgeIds.length > 1 ||
-    edge.source.includes(":") ||
-    edge.target.includes(":")
-  );
-}
-
-/** React Flow chrome (controls, minimap, attribution) themes off its own
- *  `colorMode`; track the app's `.dark` class the way the mermaid viewer does
- *  instead of taking a next-themes dependency into the shared package. */
-function useDagColorMode(): "light" | "dark" {
-  const read = () =>
-    typeof document !== "undefined" &&
-    document.documentElement.classList.contains("dark")
-      ? ("dark" as const)
-      : ("light" as const);
-  const [mode, setMode] = useState<"light" | "dark">(read);
-  useEffect(() => {
-    const observer = new MutationObserver(() => setMode(read()));
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-    return () => observer.disconnect();
-  }, []);
-  return mode;
-}
-
+const NO_PORTS: DagPort[] = [];
+type CanvasNode = DagFlowNode | DagFlowGroup;
 export interface DagCanvasCallbacks {
   onOpenIssue: (issueId: string) => void;
-  /** Toggle one representative's folded state in the view store. */
-  onToggleCollapsed: (representativeId: string) => void;
-  /** Reveal folded issue ids (unfold their representatives), then focus. */
+  onToggleCollapsed: (id: string) => void;
   onRevealIssues: (issueIds: string[]) => void;
+  onFocusGroup: (id: string) => void;
 }
-
 export interface DagCanvasProps extends DagCanvasCallbacks {
   graph: IssueGraph;
   projection: DagProjection;
-  positions: ReadonlyMap<string, { x: number; y: number }>;
+  positions: ReadonlyMap<string, DagPoint>;
+  geometry: DagLayoutResult;
   direction: DagDirection;
   statusColorOf: (statusKey: string) => string | null;
-  /** A reveal/focus request from outside (edge locate, summary jump). The
-   *  nonce re-fires identical id sets. */
-  focusRequest: { issueIds: string[]; nonce: number } | null;
+  focusRequest: { issueIds: string[]; groupId?: string; nonce: number } | null;
 }
-
 type FocusState = { nodeId: string; way: "upstream" | "downstream" } | null;
 
 function DagCanvasInner({
   graph,
   projection,
   positions,
+  geometry,
   direction,
   statusColorOf,
   focusRequest,
   onOpenIssue,
   onToggleCollapsed,
   onRevealIssues,
+  onFocusGroup,
 }: DagCanvasProps) {
-  const { t } = useT("issues");
-  const { fitBounds, fitView, getInternalNode, viewportInitialized } = useReactFlow();
+  const { t } = useT("issues"),
+    storeApi = useViewStoreApi();
+  const selectedNodeId = useViewStore((s) => s.dagSelectedNodeId);
+  const { getViewport, setViewport, getInternalNode, viewportInitialized } = useReactFlow<
+    CanvasNode,
+    DagFlowEdge
+  >();
   const colorMode = useDagColorMode();
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [focus, setFocus] = useState<FocusState>(null);
-  const handledFocusNonce = useRef(0);
-
-  const nodeLabelById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const node of projection.nodes) {
-      map.set(node.id, node.identifier ?? node.title);
+  const initialViewport = useRef(storeApi.getState().dagViewport ?? { x: 20, y: 20, zoom: 1 });
+  const anchor = useRef<{ id: string; position: DagPoint; viewport: Viewport } | null>(null);
+  const handledFocus = useRef(0);
+  const models = useMemo(() => new Map(projection.nodes.map((n) => [n.id, n])), [projection]);
+  const groupModels = useMemo(() => new Map(projection.groups.map((g) => [g.id, g])), [projection]);
+  const projectNames = useMemo(
+    () => new Map(graph.projects.map((p) => [p.id, p.title])),
+    [graph.projects],
+  );
+  const issueLabelById = useMemo(
+    () => new Map(graph.nodes.map((n) => [n.id, `${n.identifier} · ${n.title}`])),
+    [graph.nodes],
+  );
+  const nodeLabelById = useMemo(
+    () =>
+      new Map(
+        projection.nodes.map((n) => [
+          n.id,
+          n.kind === "independent"
+            ? t(($) => $.dag.independent_group)
+            : `${n.identifier ?? ""} ${n.title}`.trim(),
+        ]),
+      ),
+    [projection, t],
+  );
+  const focusSet = useMemo(
+    () =>
+      focus && models.has(focus.nodeId)
+        ? dagFocusNeighborhood(projection, graph, focus.nodeId, focus.way)
+        : null,
+    [focus, graph, models, projection],
+  );
+  const selectionContext = useMemo(() => {
+    const activeGroups = new Set<string>(),
+      stages = new Map<string, number>();
+    let node = selectedNodeId ? models.get(selectedNodeId) : undefined;
+    if (node && groupModels.has(node.id)) activeGroups.add(node.id);
+    const seen = new Set<string>();
+    while (node?.groupId && !seen.has(node.groupId)) {
+      seen.add(node.groupId);
+      activeGroups.add(node.groupId);
+      if (node.issue?.stage != null) stages.set(node.groupId, node.issue.stage);
+      node = models.get(node.groupId);
     }
-    return map;
-  }, [projection]);
-  const issueLabelById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const node of graph.nodes) map.set(node.id, node.identifier);
-    return map;
-  }, [graph]);
-  const projectTitleById = useMemo(
-    () => new Map(graph.projects.map((project) => [project.id, project.title])),
-    [graph],
+    return { activeGroups, stages };
+  }, [groupModels, models, selectedNodeId]);
+  const selectNode = useCallback(
+    (id: string | null) => {
+      storeApi.getState().setDagSelectedNodeId(id);
+      setSelectedEdgeId(null);
+      setFocus(null);
+    },
+    [storeApi],
   );
-
-  const focusSet = useMemo(() => {
-    if (!focus) return null;
-    const node = projection.nodes.find((candidate) => candidate.id === focus.nodeId);
-    if (!node) return null;
-    return dagFocusNeighborhood(projection, graph, focus.nodeId, focus.way);
-  }, [focus, graph, projection]);
-
-  // Reveal-then-focus: an outside request names ISSUE ids that may currently
-  // be folded. The view store has already unfolded their representatives by
-  // the time this fires again (nonce), so the ids are laid out and can be
-  // centered.
-  useEffect(() => {
-    if (!focusRequest || focusRequest.nonce === handledFocusNonce.current) return;
-    handledFocusNonce.current = focusRequest.nonce;
-    const ids = focusRequest.issueIds;
-    const visible = ids.filter((id) => positions.has(id));
-    if (visible.length === 0) return;
-    setSelectedNodeId(null);
-    setSelectedEdgeId(null);
-    setFocus(null);
-    void fitView({
-      nodes: visible.map((id) => ({ id })),
-      padding: 0.3,
-      duration: 300,
-      maxZoom: 1.2,
+  const selectEdge = useCallback(
+    (id: string) => {
+      setSelectedEdgeId(id);
+      storeApi.getState().setDagSelectedNodeId(null);
+      setFocus(null);
+    },
+    [storeApi],
+  );
+  const openIssue = useCallback(
+    (id: string) => {
+      storeApi.getState().setDagViewport(getViewport());
+      onOpenIssue(id);
+    },
+    [getViewport, onOpenIssue, storeApi],
+  );
+  const toggle = useCallback(
+    (id: string) => {
+      const position = positions.get(id);
+      if (position) anchor.current = { id, position, viewport: getViewport() };
+      onToggleCollapsed(id);
+    },
+    [getViewport, onToggleCollapsed, positions],
+  );
+  // Expanding a line preserves its header's screen position and zoom.
+  useLayoutEffect(() => {
+    const saved = anchor.current;
+    if (!saved || !viewportInitialized) return;
+    const next = positions.get(saved.id);
+    if (!next || next === saved.position) return;
+    anchor.current = null;
+    void setViewport({
+      ...saved.viewport,
+      x: saved.viewport.x + (saved.position.x - next.x) * saved.viewport.zoom,
+      y: saved.viewport.y + (saved.position.y - next.y) * saved.viewport.zoom,
     });
-  }, [focusRequest, fitView, positions]);
-
-  // Base node objects stay referentially stable across selection/focus
-  // changes; the second pass re-allocates only nodes whose flags flipped, so
-  // the memoized card component skips every untouched node on large graphs.
-  const nodeData = useMemo<DagFlowNodeData[]>(
+  }, [positions, setViewport, viewportInitialized]);
+  useEffect(() => {
+    if (!viewportInitialized || !focusRequest || handledFocus.current === focusRequest.nonce)
+      return;
+    const id =
+      focusRequest.groupId ??
+      focusRequest.issueIds
+        .map((issueId) => projection.representatives.get(issueId) ?? issueId)
+        .find((item) => positions.has(item));
+    const position = id ? positions.get(id) : undefined;
+    if (!id || !position) return;
+    handledFocus.current = focusRequest.nonce;
+    anchor.current = null;
+    selectNode(id);
+    const zoom = Math.max(0.85, getViewport().zoom);
+    void setViewport(
+      { x: 24 - position.x * zoom, y: 24 - position.y * zoom, zoom },
+      { duration: 200 },
+    );
+  }, [
+    focusRequest,
+    getViewport,
+    positions,
+    projection.representatives,
+    selectNode,
+    setViewport,
+    viewportInitialized,
+  ]);
+  const baseNodes = useMemo<CanvasNode[]>(
     () =>
-      projection.nodes.map((model) => ({
-        model,
-        projectTitle:
-          model.kind === "issue" && model.issue?.projectId
-            ? (projectTitleById.get(model.issue.projectId) ?? null)
-            : null,
-        statusColor: model.issue ? statusColorOf(model.issue.status) : null,
-        focused: false,
-        dimmed: false,
-      })),
-    [projectTitleById, projection, statusColorOf],
+      projection.nodes.flatMap((model): CanvasNode[] => {
+        const absolute = positions.get(model.id);
+        if (!absolute) return [];
+        const group = groupModels.get(model.id),
+          bounds = geometry.groups[model.id];
+        if (group && !bounds) return [];
+        const parent = model.groupId ? positions.get(model.groupId) : undefined;
+        const parentIssue = model.groupId ? models.get(model.groupId)?.issue : null;
+        const projectTitle =
+          model.issue?.projectId && (group || model.issue.projectId !== parentIssue?.projectId)
+            ? (projectNames.get(model.issue.projectId) ?? null)
+            : null;
+        const data: DagFlowNodeData = {
+          model,
+          projectTitle,
+          statusColor: model.issue ? statusColorOf(model.issue.status) : null,
+          ports: geometry.ports[model.id] ?? NO_PORTS,
+          showStage: !model.groupId || !geometry.groups[model.groupId]?.bands.length,
+          focused: false,
+          dimmed: false,
+        };
+        const size = bounds ?? dagNodeSize(model.kind);
+        const shared = {
+          id: model.id,
+          position: parent ? { x: absolute.x - parent.x, y: absolute.y - parent.y } : absolute,
+          parentId: model.groupId ?? undefined,
+          width: size.width,
+          height: size.height,
+          style: { width: size.width, height: size.height },
+          measured: getInternalNode(model.id)?.measured,
+          selected: false,
+          draggable: false,
+          connectable: false,
+        };
+        if (group && bounds)
+          return [
+            {
+              ...shared,
+              type: "dagGroup",
+              zIndex: 0,
+              data: {
+                ...data,
+                group,
+                bounds,
+                direction,
+                activeStage: null,
+                onToggle: toggle,
+                onFocus: onFocusGroup,
+                onOpen: openIssue,
+              },
+            },
+          ];
+        return [{ ...shared, type: "dagNode", zIndex: 2, data }];
+      }),
+    [
+      direction,
+      geometry,
+      getInternalNode,
+      groupModels,
+      models,
+      onFocusGroup,
+      openIssue,
+      positions,
+      projectNames,
+      projection,
+      statusColorOf,
+      toggle,
+    ],
   );
-  const baseNodes = useMemo<DagFlowNode[]>(
+  const rfNodes = useMemo<CanvasNode[]>(
     () =>
-      nodeData.flatMap((data) => {
-        const model = data.model;
-        const position = positions.get(model.id);
-        if (!position) return [];
+      baseNodes.map((node) => {
+        const selected = selectedNodeId === node.id;
+        if (node.type === "dagGroup") {
+          const focused =
+            selectionContext.activeGroups.has(node.id) || focusSet?.has(node.id) === true;
+          return {
+            ...node,
+            selected,
+            data: {
+              ...node.data,
+              focused,
+              activeStage: selectionContext.stages.get(node.id) ?? null,
+            },
+          };
+        }
+        const focused = selected || focusSet?.has(node.id) === true;
+        return selected || focused ? { ...node, selected, data: { ...node.data, focused } } : node;
+      }),
+    [baseNodes, focusSet, selectedNodeId, selectionContext],
+  );
+  const rfEdges = useMemo<DagFlowEdge[]>(
+    () =>
+      projection.edges.flatMap((model): DagFlowEdge[] => {
+        const route = geometry.routes[model.id];
+        if (!route || !positions.has(model.source) || !positions.has(model.target)) return [];
+        const focused = focusSet
+          ? focusSet.has(model.source) && focusSet.has(model.target)
+          : model.source === selectedNodeId || model.target === selectedNodeId;
+        const aggregate =
+          model.sourceEdgeIds.length > 1 ||
+          groupModels.get(model.source)?.collapsed === true ||
+          groupModels.get(model.target)?.collapsed === true;
         return [
           {
             id: model.id,
-            type: "dagNode" as const,
-            position,
-            data,
-            width: dagNodeSize(model.kind).width,
-            height: dagNodeSize(model.kind).height,
-            // React Flow clears cached handle bounds if a controlled node
-            // drops its measurements. Keep its measured geometry across
-            // position-only updates instead of unmounting every edge.
-            measured: getInternalNode(model.id)?.measured,
-            selected: false,
-            draggable: false,
-            connectable: false,
+            source: model.source,
+            target: model.target,
+            sourceHandle: `source:${model.id}`,
+            targetHandle: `target:${model.id}`,
+            type: "dagEdge",
+            zIndex: 1,
+            selected: selectedEdgeId === model.id,
+            data: { model, focused, aggregate, route, onSelect: selectEdge },
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+              width: 12,
+              height: 12,
+              color:
+                focused || selectedEdgeId === model.id ? "var(--brand)" : "var(--muted-foreground)",
+            },
           },
         ];
       }),
-    [getInternalNode, nodeData, positions],
+    [
+      focusSet,
+      geometry.routes,
+      groupModels,
+      positions,
+      projection.edges,
+      selectEdge,
+      selectedEdgeId,
+      selectedNodeId,
+    ],
   );
-  const rfNodes = useMemo<DagFlowNode[]>(
-    () =>
-      baseNodes.map((node) => {
-        const focused = focusSet?.has(node.id) === true;
-        const selected = selectedNodeId === node.id;
-        const dimmed = focusSet !== null && !focused;
-        if (
-          node.data.focused === focused &&
-          node.data.dimmed === dimmed &&
-          node.selected === selected
-        ) {
-          return node;
-        }
-        return {
-          ...node,
-          measured: getInternalNode(node.id)?.measured ?? node.measured,
-          selected,
-          data: { ...node.data, focused, dimmed },
-        };
-      }),
-    [baseNodes, focusSet, getInternalNode, selectedNodeId],
-  );
-
-  const rfEdges = useMemo<DagFlowEdge[]>(
-    () =>
-      projection.edges.map((model) => {
-        const focused =
-          focusSet !== null &&
-          focusSet.has(model.source) &&
-          focusSet.has(model.target);
-        const data: DagFlowEdgeData = {
-          model,
-          aggregate: isAggregateDagEdge(model),
-          dimmed: focusSet !== null && !focused,
-          focused,
-        };
-        return {
-          id: model.id,
-          source: model.source,
-          target: model.target,
-          sourceHandle: direction,
-          targetHandle: direction,
-          type: "dagEdge" as const,
-          data,
-          selected: selectedEdgeId === model.id,
-          markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
-        };
-      }),
-    [direction, focusSet, projection, selectedEdgeId],
-  );
-
-  const selectedNode = useMemo(
-    () => projection.nodes.find((node) => node.id === selectedNodeId) ?? null,
-    [projection, selectedNodeId],
-  );
-  const selectedEdge = useMemo(
-    () => projection.edges.find((edge) => edge.id === selectedEdgeId) ?? null,
-    [projection, selectedEdgeId],
-  );
-
-  const applyFocus = useCallback(
-    (nodeId: string, way: "upstream" | "downstream") => {
-      setFocus({ nodeId, way });
-      const neighborhood = dagFocusNeighborhood(projection, graph, nodeId, way);
-      const visible = [...neighborhood].filter((id) => positions.has(id));
-      if (visible.length > 0) {
-        void fitView({
-          nodes: visible.map((id) => ({ id })),
-          padding: 0.25,
-          duration: 300,
-          maxZoom: 1.2,
-        });
+  const selectedNode = selectedNodeId ? models.get(selectedNodeId) : undefined;
+  const selectedGroup = selectedNodeId ? groupModels.get(selectedNodeId) : undefined;
+  const selectedEdge = projection.edges.find((e) => e.id === selectedEdgeId);
+  const handleNodesChange = useCallback(
+    (changes: NodeChange<CanvasNode>[]) => {
+      for (const change of changes) {
+        if (change.type !== "select") continue;
+        if (change.selected) selectNode(change.id);
+        else if (storeApi.getState().dagSelectedNodeId === change.id) selectNode(null);
       }
     },
-    [fitView, graph, positions, projection],
+    [selectNode, storeApi],
   );
-
-  const handleNodesChange = useCallback((changes: NodeChange<DagFlowNode>[]) => {
-    for (const change of changes) {
-      if (change.type === "select") {
-        if (change.selected) {
-          setSelectedNodeId(change.id);
-          setSelectedEdgeId(null);
-        } else {
-          setSelectedNodeId((current) => (current === change.id ? null : current));
-        }
+  const handleEdgesChange = useCallback(
+    (changes: EdgeChange<DagFlowEdge>[]) => {
+      for (const change of changes) {
+        if (change.type !== "select") continue;
+        if (change.selected) selectEdge(change.id);
+        else setSelectedEdgeId((current) => (current === change.id ? null : current));
       }
-    }
-  }, []);
-  const handleEdgesChange = useCallback((changes: EdgeChange<DagFlowEdge>[]) => {
-    for (const change of changes) {
-      if (change.type === "select") {
-        if (change.selected) {
-          setSelectedEdgeId(change.id);
-          setSelectedNodeId(null);
-        } else {
-          setSelectedEdgeId((current) => (current === change.id ? null : current));
-        }
-      }
-    }
-  }, []);
-
-  // Fit once when a fresh layout lands (projection or direction changed the
-  // position set). Selection/focus fits are separate, user-initiated.
-  const fittedPositionsRef = useRef<typeof positions | null>(null);
-  useLayoutEffect(() => {
-    if (!viewportInitialized || positions === fittedPositionsRef.current || positions.size === 0) return;
-    fittedPositionsRef.current = positions;
-    // Fit the worker's complete bounds before paint so new coordinates and
-    // viewport appear together. fitView queues another measurement pass.
-    void fitBounds(getNodesBounds(rfNodes), { padding: 0.15 });
-  }, [fitBounds, positions, rfNodes, viewportInitialized]);
-
+    },
+    [selectEdge],
+  );
   return (
-    <div className="relative flex-1 min-h-0">
-      <ReactFlow
+    <div className="relative flex-1 min-h-0" data-dag-canvas>
+      <ReactFlow<CanvasNode, DagFlowEdge>
         nodes={rfNodes}
         edges={rfEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
+        defaultViewport={initialViewport.current}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
+        onNodeClick={(_, node) => selectNode(node.id)}
         onNodeDoubleClick={(_, node) => {
-          const model = node.data.model;
-          if (model.kind === "issue") onOpenIssue(model.id);
-          else onToggleCollapsed(model.id);
+          if (node.data.model.kind === "issue") openIssue(node.data.model.issue!.id);
         }}
         onPaneClick={() => {
-          setSelectedNodeId(null);
+          selectNode(null);
           setSelectedEdgeId(null);
-          setFocus(null);
         }}
+        onMoveEnd={(_, viewport) => storeApi.getState().setDagViewport(viewport)}
+        panOnScroll
+        zoomOnScroll={false}
+        zoomOnDoubleClick={false}
+        zoomOnPinch
+        zoomActivationKeyCode={["Control", "Meta"]}
         nodesDraggable={false}
         nodesConnectable={false}
         nodesFocusable
         edgesFocusable
         elementsSelectable
-        // Avoid mount/measurement churn for small projections. Larger
-        // projections retain viewport windowing without truncating the data.
         onlyRenderVisibleElements={projection.nodes.length > 100 || projection.edges.length > 500}
         minZoom={0.08}
         maxZoom={2}
@@ -349,60 +388,63 @@ function DagCanvasInner({
         <Controls showInteractive={false} position="bottom-left" />
         <MiniMap pannable zoomable className="!bg-card" />
       </ReactFlow>
-
-      {/* Selected-node action bar: every node action as a plain control, so
-          keyboard and pointer users get the same paths without relying on
-          canvas gestures. */}
       {selectedNode && (
         <div
           className="absolute left-1/2 top-3 z-10 flex max-w-[min(720px,90%)] -translate-x-1/2 flex-wrap items-center gap-1 rounded-lg border bg-card px-2 py-1.5 shadow-md"
           role="toolbar"
           aria-label={t(($) => $.dag.node_actions_label)}
         >
-          <span className="max-w-56 truncate px-1 text-caption font-medium">
-            {nodeLabelById.get(selectedNode.id)}
+          <span
+            className="max-w-48 truncate px-1 text-caption font-medium"
+            title={nodeLabelById.get(selectedNode.id)}
+          >
+            {selectedNode.identifier ?? nodeLabelById.get(selectedNode.id)}
           </span>
-          {/* Feature representatives are issues too — their detail, relation
-              and assign actions act on the representative's own issue. */}
           {selectedNode.issue && (
             <DagIssueActions
               key={selectedNode.issue.id}
               issueId={selectedNode.issue.id}
-              onOpenIssue={onOpenIssue}
+              onOpenIssue={openIssue}
             />
           )}
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => applyFocus(selectedNode.id, "upstream")}
+            onClick={() => setFocus({ nodeId: selectedNode.id, way: "upstream" })}
           >
             {t(($) => $.dag.focus_upstream)}
           </Button>
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => applyFocus(selectedNode.id, "downstream")}
+            onClick={() => setFocus({ nodeId: selectedNode.id, way: "downstream" })}
           >
             {t(($) => $.dag.focus_downstream)}
           </Button>
-          <CollapseToggleButton
-            node={selectedNode}
-            onToggleCollapsed={onToggleCollapsed}
-          />
+          {(selectedGroup || selectedNode.groupId) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onFocusGroup(selectedGroup?.id ?? selectedNode.groupId!)}
+            >
+              {t(($) => $.dag.focus_line)}
+            </Button>
+          )}
+          {selectedGroup && (
+            <Button size="sm" variant="ghost" onClick={() => toggle(selectedGroup.id)}>
+              {selectedGroup.collapsed ? t(($) => $.dag.expand) : t(($) => $.dag.collapse)}
+            </Button>
+          )}
           <Button
             size="icon-sm"
             variant="ghost"
             aria-label={t(($) => $.dag.clear_selection)}
-            onClick={() => {
-              setSelectedNodeId(null);
-              setFocus(null);
-            }}
+            onClick={() => selectNode(null)}
           >
             <X className="size-3.5" />
           </Button>
         </div>
       )}
-
       {focus && (
         <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border bg-card px-3 py-1 text-caption shadow-md">
           <Crosshair className="size-3.5 text-muted-foreground" />
@@ -416,50 +458,42 @@ function DagCanvasInner({
           </Button>
         </div>
       )}
-
       {selectedEdge && (
         <EdgeInspector
           edge={selectedEdge}
+          aggregate={
+            selectedEdge.sourceEdgeIds.length > 1 ||
+            groupModels.get(selectedEdge.source)?.collapsed === true ||
+            groupModels.get(selectedEdge.target)?.collapsed === true
+          }
           hasReverse={projection.edges.some(
-            (candidate) =>
-              candidate.source === selectedEdge.target &&
-              candidate.target === selectedEdge.source,
+            (e) => e.source === selectedEdge.target && e.target === selectedEdge.source,
           )}
-          aggregate={isAggregateDagEdge(selectedEdge)}
           nodeLabelById={nodeLabelById}
           issueLabelById={issueLabelById}
-          onLocate={(issueIds) => onRevealIssues(issueIds)}
-          onOpenIssue={onOpenIssue}
+          onLocate={onRevealIssues}
+          onOpenIssue={openIssue}
           onClose={() => setSelectedEdgeId(null)}
         />
       )}
     </div>
   );
 }
-
-function CollapseToggleButton({
-  node,
-  onToggleCollapsed,
-}: {
-  node: DagProjection["nodes"][number];
-  onToggleCollapsed: (representativeId: string) => void;
-}) {
-  const { t } = useT("issues");
-  // Representatives fold through their own id; an expanded feature folds
-  // through its `issue:` rep id. Plain issues without children never fold.
-  const target =
-    node.kind === "issue"
-      ? node.collapsible
-        ? `issue:${node.id}`
-        : null
-      : node.id;
-  if (!target) return null;
-  const collapsed = node.kind !== "issue";
-  return (
-    <Button size="sm" variant="ghost" onClick={() => onToggleCollapsed(target)}>
-      {collapsed ? t(($) => $.dag.expand) : t(($) => $.dag.collapse)}
-    </Button>
-  );
+function useDagColorMode(): "light" | "dark" {
+  const read = () =>
+    typeof document !== "undefined" && document.documentElement.classList.contains("dark")
+      ? ("dark" as const)
+      : ("light" as const);
+  const [mode, setMode] = useState<"light" | "dark">(read);
+  useEffect(() => {
+    const observer = new MutationObserver(() => setMode(read()));
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+    return () => observer.disconnect();
+  }, []);
+  return mode;
 }
 
 function EdgeInspector({
@@ -491,9 +525,7 @@ function EdgeInspector({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-caption font-medium">
-            {aggregate
-              ? t(($) => $.dag.edge_aggregate_title)
-              : t(($) => $.dag.edge_direct_title)}
+            {aggregate ? t(($) => $.dag.edge_aggregate_title) : t(($) => $.dag.edge_direct_title)}
           </p>
           <p className="text-caption text-muted-foreground break-words">
             {aggregate
@@ -531,9 +563,7 @@ function EdgeInspector({
           <Button
             size="sm"
             variant="ghost"
-            onClick={() =>
-              onLocate([edge.sources[0]!.source, edge.sources[0]!.target])
-            }
+            onClick={() => onLocate([edge.sources[0]!.source, edge.sources[0]!.target])}
           >
             {t(($) => $.dag.edge_locate)}
           </Button>
@@ -554,7 +584,9 @@ function EdgeInspector({
               >
                 {issueLabelById.get(source.source) ?? "?"}
               </button>
-              <span aria-hidden className="shrink-0 text-faint-foreground">→</span>
+              <span aria-hidden className="shrink-0 text-faint-foreground">
+                →
+              </span>
               <button
                 type="button"
                 className="min-w-0 flex-1 truncate text-left text-muted-foreground hover:text-foreground"
@@ -579,8 +611,6 @@ function EdgeInspector({
   );
 }
 
-/** Lazy boundary: this module owns the `@xyflow/react` import, so the canvas
- *  bundle only loads when a surface actually renders DAG mode. */
 export default function DagCanvas(props: DagCanvasProps) {
   return (
     <ReactFlowProvider>
