@@ -1,6 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
 import { waitForPageText } from "./helpers";
+import { readFileSync } from "node:fs";
+
+const onboarding = JSON.parse(readFileSync(new URL("../packages/views/locales/en/onboarding.json", import.meta.url), "utf8"));
+const runtimeLabel = onboarding.step_nav.runtime.label;
 
 // The onboarding column is one measure and everything structural inside it
 // runs that full width. This caught a real regression: the workspace form
@@ -60,22 +64,14 @@ test("onboarding — structural blocks match the column width on every step", as
   await waitForPageText(page, "Continue on web");
   await page.getByRole("button", { name: "Continue on web" }).click();
 
-  await page.getByText("Tell us a bit about you.").waitFor();
-  await expectFullWidthBlocks(page, "about you");
-
-  await page.getByRole("radio", { name: /Engineer \/ developer/i }).click();
-  await page.getByRole("checkbox", { name: /Ship code with AI agents/i }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
-
+  await expect(page.getByText("Tell us a bit about you.")).toHaveCount(0);
   await page.getByRole("heading", { name: /Name your workspace/i }).waitFor();
   await expectFullWidthBlocks(page, "workspace");
 
   await page.getByRole("textbox").first().fill(`Width Guard ${Date.now()}`);
   await page.getByRole("button", { name: /^Create /i }).click();
 
-  await page
-    .getByRole("heading", { name: /Connect a computer/i })
-    .waitFor({ timeout: 20000 });
+  await expect(page.locator('[aria-current="step"]').filter({ hasText: runtimeLabel })).toBeVisible({ timeout: 20000 });
   await expectFullWidthBlocks(page, "runtime");
 });
 
@@ -97,7 +93,8 @@ test("onboarding — the shell survives step changes instead of re-mounting", as
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
   await waitForPageText(page, "Continue on web");
   await page.getByRole("button", { name: "Continue on web" }).click();
-  await page.getByText("Tell us a bit about you.").waitFor();
+  await page.getByRole("heading", { name: /Name your workspace/i }).waitFor();
+  await expect(page.getByText("Tell us a bit about you.")).toHaveCount(0);
 
   // Tag the live nodes. A remount replaces the elements and drops the marks.
   await page.evaluate(() => {
@@ -105,10 +102,9 @@ test("onboarding — the shell survives step changes instead of re-mounting", as
     document.querySelector("main")?.setAttribute("data-persist-probe", "1");
   });
 
-  await page.getByRole("radio", { name: /Engineer \/ developer/i }).click();
-  await page.getByRole("checkbox", { name: /Ship code with AI agents/i }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("heading", { name: /Name your workspace/i }).waitFor();
+  await page.getByRole("textbox").first().fill("Shell Guard " + Date.now());
+  await page.getByRole("button", { name: /^Create /i }).click();
+  await expect(page.locator('[aria-current="step"]').filter({ hasText: runtimeLabel })).toBeVisible({ timeout: 20000 });
 
   await expect(
     page.locator("aside[data-persist-probe]"),
