@@ -148,6 +148,44 @@ for (const direction of ["LR", "TB"] as const) {
       await page.getByRole("button", { name: "Collapse issue groups", exact: true }).click();
       await expect(independent).toHaveAttribute("data-collapsed", "false");
       await expect(page.locator("[data-dag-issue]")).toHaveCount(1);
+      // Bounds must survive content shrink, not merely keep nodes mounted offscreen.
+      const visibleContent = () =>
+        page.evaluate(() => {
+          const canvas = document.querySelector("[data-dag-canvas]")!.getBoundingClientRect();
+          const items = [
+            ...document.querySelectorAll("[data-dag-issue]"),
+            ...Array.from(
+              document.querySelectorAll("[data-dag-group] button[aria-expanded]"),
+              (button) => button.parentElement!,
+            ),
+          ];
+          return items.filter((item) => {
+            const r = item.getBoundingClientRect();
+            return (
+              Math.min(r.right, canvas.right) - Math.max(r.left, canvas.left) >=
+                Math.min(100, r.width) - 1 &&
+              Math.min(r.bottom, canvas.bottom) - Math.max(r.top, canvas.top) >=
+                Math.min(40, r.height) - 1
+            );
+          }).length;
+        });
+      const zoom = () =>
+        page
+          .locator(".react-flow__viewport")
+          .evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).a);
+      const canvas = (await page.locator("[data-dag-canvas]").boundingBox())!;
+      await page.getByRole("button", { name: "Expand issue groups", exact: true }).click();
+      await expect(page.locator("[data-dag-issue]")).toHaveCount(5);
+      const originalZoom = await zoom();
+      await page.mouse.move(canvas.x + canvas.width / 2, canvas.y + canvas.height / 2);
+      await page.mouse.wheel(5000, 5000);
+      await expect.poll(visibleContent).toBeGreaterThan(0);
+      await page.getByRole("button", { name: "Collapse issue groups", exact: true }).click();
+      await expect(page.locator("[data-dag-issue]")).toHaveCount(1);
+      await page.getByRole("toolbar").getByRole("button", { name: "Collapse", exact: true }).click();
+      await expect(page.locator("[data-dag-issue]")).toHaveCount(0);
+      await expect.poll(visibleContent).toBeGreaterThan(0);
+      expect(await zoom()).toBe(originalZoom);
       expect(errors).toEqual([]);
       await testInfo.attach(`dag-${direction}`, {
         body: await page.screenshot(),

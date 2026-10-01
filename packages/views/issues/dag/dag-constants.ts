@@ -3,6 +3,7 @@ export const DAG_NODE_WIDTH = 248;
 export const DAG_NODE_HEIGHT = 116;
 export const DAG_GROUP_HEADER_HEIGHT = 76;
 export const DAG_GROUP_MIN_WIDTH = 680;
+export const DAG_GROUP_HEADER_MAX_WIDTH = 680;
 export type DagNodeKindForSize = "issue" | "feature" | "independent";
 export function dagNodeSize(kind: DagNodeKindForSize) {
   return {

@@ -129,7 +129,15 @@ available; **Focus issue group** is a separate action. Double-click or the
 existing detail action follows the platform navigation adapter. Returning
 restores personal expansion and viewport state. Expand does not automatically
 fit the entire graph or shrink the reading size; ordinary scrolling pans the
-canvas. Personal viewport and independent expansion use the existing scoped
+canvas. Dragging stays inside an outer content extent so routes between task lines
+remain traversable. Settled navigation, layout changes, restored positions and
+resizes keep at least one issue card or task-line/independent-group header in
+view when content exists. Already-readable partial items retain their position.
+Explicit focus is placed directly, without an interruptible transition across
+blank space. Bounds use actual cards and headers, not large empty
+group backgrounds. Recovery only translates to the nearest content (preferring
+a toggled group); it does not change zoom or expand groups. Personal viewport
+and independent expansion use the existing scoped
 view store, while selection stays session-only.
 
 The former DAG project/flat grouping chooser is replaced by this task-line

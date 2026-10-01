@@ -8,6 +8,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useStore as useFlowStore,
   type EdgeChange,
   type NodeChange,
   type Viewport,
@@ -21,6 +22,12 @@ import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-
 import { useT } from "../../i18n";
 import { DagFlowEdgeLine, type DagFlowEdge } from "./dag-edge";
 import { dagNodeSize } from "./dag-constants";
+import {
+  constrainDagViewport,
+  dagViewportTargets,
+  dagViewportExtent,
+  sameDagViewport,
+} from "./dag-viewport";
 import { DagIssueActions } from "./dag-issue-actions";
 import { DagFlowNodeCard, type DagFlowNode, type DagFlowNodeData } from "./dag-node";
 import { DagFlowGroupCard, type DagFlowGroup } from "./dag-group";
@@ -72,8 +79,36 @@ function DagCanvasInner({
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [focus, setFocus] = useState<FocusState>(null);
   const initialViewport = useRef(storeApi.getState().dagViewport ?? { x: 20, y: 20, zoom: 1 });
-  const anchor = useRef<{ id: string; position: DagPoint; viewport: Viewport } | null>(null);
+  const anchor = useRef<{ id: string; position: DagPoint } | null>(null);
   const handledFocus = useRef(0);
+  const canvasWidth = useFlowStore((state) => state.width);
+  const canvasHeight = useFlowStore((state) => state.height);
+  const viewportTargets = useMemo(() => dagViewportTargets(geometry), [geometry]);
+  const zoom = useFlowStore((state) => state.transform[2]);
+  const translateExtent = useMemo(
+    () => dagViewportExtent(viewportTargets, { width: canvasWidth, height: canvasHeight }, zoom),
+    [viewportTargets, canvasWidth, canvasHeight, zoom],
+  );
+  // React Flow installs callbacks after layout effects. Ref-backed geometry
+  // prevents an older callback from undoing the new layout's correction.
+  const viewportBounds = useRef({
+    targets: viewportTargets,
+    width: canvasWidth,
+    height: canvasHeight,
+  });
+  viewportBounds.current = { targets: viewportTargets, width: canvasWidth, height: canvasHeight };
+  const boundedViewport = useCallback((viewport: Viewport, preferredId?: string) => {
+    const bounds = viewportBounds.current;
+    return constrainDagViewport(viewport, bounds, bounds.targets, preferredId);
+  }, []);
+  const settleViewport = useCallback(() => {
+    // A delayed move-end event may predate a fold or resize. Read the live
+    // viewport, never persist that event's obsolete coordinates.
+    const current = getViewport();
+    const bounded = boundedViewport(current);
+    if (!sameDagViewport(current, bounded)) void setViewport(bounded);
+    storeApi.getState().setDagViewport(bounded);
+  }, [boundedViewport, getViewport, setViewport, storeApi]);
   const models = useMemo(() => new Map(projection.nodes.map((n) => [n.id, n])), [projection]);
   const groupModels = useMemo(() => new Map(projection.groups.map((g) => [g.id, g])), [projection]);
   const projectNames = useMemo(
@@ -143,24 +178,39 @@ function DagCanvasInner({
   const toggle = useCallback(
     (id: string) => {
       const position = positions.get(id);
-      if (position) anchor.current = { id, position, viewport: getViewport() };
+      if (position) anchor.current = { id, position };
       onToggleCollapsed(id);
     },
-    [getViewport, onToggleCollapsed, positions],
+    [onToggleCollapsed, positions],
   );
-  // Expanding a line preserves its header's screen position and zoom.
+  // Preserve the toggled header when possible, then recover only if the
+  // committed content/size no longer admits the current viewport.
   useLayoutEffect(() => {
+    if (!viewportInitialized || !canvasWidth || !canvasHeight) return;
+    const current = getViewport();
+    let nextViewport = current;
     const saved = anchor.current;
-    if (!saved || !viewportInitialized) return;
-    const next = positions.get(saved.id);
-    if (!next || next === saved.position) return;
-    anchor.current = null;
-    void setViewport({
-      ...saved.viewport,
-      x: saved.viewport.x + (saved.position.x - next.x) * saved.viewport.zoom,
-      y: saved.viewport.y + (saved.position.y - next.y) * saved.viewport.zoom,
-    });
-  }, [positions, setViewport, viewportInitialized]);
+    const next = saved ? positions.get(saved.id) : undefined;
+    if (saved && next && next !== saved.position) {
+      anchor.current = null;
+      nextViewport = {
+        ...current,
+        x: current.x + (saved.position.x - next.x) * current.zoom,
+        y: current.y + (saved.position.y - next.y) * current.zoom,
+      };
+    } else if (saved && !next) anchor.current = null;
+    const bounded = boundedViewport(nextViewport, saved?.id);
+    if (!sameDagViewport(current, bounded)) void setViewport(bounded);
+  }, [
+    positions,
+    viewportTargets,
+    canvasWidth,
+    canvasHeight,
+    boundedViewport,
+    getViewport,
+    setViewport,
+    viewportInitialized,
+  ]);
   useEffect(() => {
     if (!viewportInitialized || !focusRequest || handledFocus.current === focusRequest.nonce)
       return;
@@ -175,10 +225,9 @@ function DagCanvasInner({
     anchor.current = null;
     selectNode(id);
     const zoom = Math.max(0.85, getViewport().zoom);
-    void setViewport(
-      { x: 24 - position.x * zoom, y: 24 - position.y * zoom, zoom },
-      { duration: 200 },
-    );
+    // Position explicit focus in one step so a delayed scroll-end callback
+    // cannot interrupt a transition through empty space between task lines.
+    void setViewport({ x: 24 - position.x * zoom, y: 24 - position.y * zoom, zoom });
   }, [
     focusRequest,
     getViewport,
@@ -366,7 +415,8 @@ function DagCanvasInner({
           selectNode(null);
           setSelectedEdgeId(null);
         }}
-        onMoveEnd={(_, viewport) => storeApi.getState().setDagViewport(viewport)}
+        translateExtent={translateExtent}
+        onMoveEnd={settleViewport}
         panOnScroll
         zoomOnScroll={false}
         zoomOnDoubleClick={false}

@@ -20,7 +20,7 @@ import { DagRunBadge, type DagFlowNodeData } from "./dag-node";
 import type { IssueStatusCategory } from "@multica/core/types";
 import { StatusIcon } from "../components/status-icon";
 import { DagHandles } from "./dag-ports";
-import { DAG_GROUP_HEADER_HEIGHT } from "./dag-constants";
+import { DAG_GROUP_HEADER_HEIGHT, DAG_GROUP_HEADER_MAX_WIDTH } from "./dag-constants";
 
 export type DagFlowGroupData = DagFlowNodeData & {
   group: DagVisibleGroup;
@@ -56,7 +56,7 @@ export const DagFlowGroupCard = memo(function DagFlowGroupCard({
           "absolute left-0 top-0 z-10 flex w-full items-center gap-2 bg-card px-3 py-2",
           group.collapsed ? "rounded-lg" : "rounded-t-lg",
         )}
-        style={{ height: DAG_GROUP_HEADER_HEIGHT - 2, maxWidth: 680 }}
+        style={{ height: DAG_GROUP_HEADER_HEIGHT - 2, maxWidth: DAG_GROUP_HEADER_MAX_WIDTH }}
       >
         <button
           type="button"
