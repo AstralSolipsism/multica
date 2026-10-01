@@ -130,7 +130,8 @@ import { NO_PROPERTY_VALUE } from "../utils/filter";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import { WorkspaceAgentWorkingChip } from "./workspace-agent-working-chip";
-import { TableColumnPicker } from "./table-view";
+import { preloadIssueView } from "../surface/issue-view-loaders";
+import { TableColumnPicker } from "./table-column-picker";
 
 type LocalDateRange = {
   from: Date | undefined;
@@ -2513,7 +2514,7 @@ export function IssueDisplayControls({
                   setViewMenuOpen(false);
                 }}
               >
-                <DropdownMenuRadioItem value="board">
+                <DropdownMenuRadioItem value="board" onPointerEnter={() => preloadIssueView("board")} onFocus={() => preloadIssueView("board")}>
                   <Columns3 />
                   {t(($) => $.view.board)}
                 </DropdownMenuRadioItem>
@@ -2521,16 +2522,16 @@ export function IssueDisplayControls({
                   <List />
                   {t(($) => $.view.list)}
                 </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="table">
+                <DropdownMenuRadioItem value="table" onPointerEnter={() => preloadIssueView("table")} onFocus={() => preloadIssueView("table")}>
                   <Table2 />
                   {t(($) => $.view.table)}
                 </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="swimlane">
+                <DropdownMenuRadioItem value="swimlane" onPointerEnter={() => preloadIssueView("swimlane")} onFocus={() => preloadIssueView("swimlane")}>
                   <Waves />
                   {t(($) => $.view.swimlane)}
                 </DropdownMenuRadioItem>
                 {allowGantt && (
-                  <DropdownMenuRadioItem value="gantt">
+                  <DropdownMenuRadioItem value="gantt" onPointerEnter={() => preloadIssueView("gantt")} onFocus={() => preloadIssueView("gantt")}>
                     <ChartGantt />
                     {t(($) => $.view.gantt)}
                   </DropdownMenuRadioItem>

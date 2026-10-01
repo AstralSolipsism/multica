@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { MouseEventHandler, ReactNode } from "react";
 import type { IssueProperty } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
-import { TableColumnPicker } from "./table-view";
+import { TableColumnPicker } from "./table-column-picker";
 
 const { toggleTableColumn } = vi.hoisted(() => ({
   toggleTableColumn: vi.fn(),

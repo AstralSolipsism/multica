@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { StoreApi } from "zustand/vanilla";
 import type { IssueViewState } from "@multica/core/issues/stores/view-store";
 import type { IssueViewBaseline } from "@multica/core/issue-views/baseline";
@@ -30,13 +30,10 @@ import {
   type IssueScope,
 } from "@multica/core/issues/surface/scope";
 import type { Issue } from "@multica/core/types";
-import { BoardView } from "../components/board-view";
 import { BatchActionToolbar } from "../components/batch-action-toolbar";
-import { GanttView } from "../components/gantt-view";
 import { IssuesHeader } from "../components/issues-header";
 import { ListView } from "../components/list-view";
-import { SwimLaneView } from "../components/swimlane-view";
-import { TableView } from "../components/table-view";
+import { BoardView, TableView, GanttView, SwimLaneView, preloadIssueView } from "./issue-view-loaders";
 import { DagView } from "../dag/dag-view";
 import { useT } from "../../i18n";
 import { IssueContextMenuProvider } from "../actions";
@@ -207,6 +204,7 @@ function IssueSurfaceContent({
     createDefaults,
     search,
   });
+  useEffect(() => { preloadIssueView(controller.viewMode); }, [controller.viewMode]);
   const [tableLoadedIssues, setTableLoadedIssues] = useState<Issue[]>([]);
   const handleTableLoadedIssuesChange = useCallback((next: Issue[]) => {
     setTableLoadedIssues((current) =>
@@ -333,6 +331,7 @@ function IssueSurfaceContent({
           )
         ) : (
           <div className={cn("flex flex-col flex-1 min-h-0", contentClassName)}>
+            <Suspense fallback={<IssueSurfaceSkeleton mode={controller.viewMode} />}>
             {controller.viewMode === "board" && (
               <BoardView
                 issues={issues}
@@ -397,6 +396,7 @@ function IssueSurfaceContent({
                 groupBranches={controller.groupBranches}
               />
             )}
+            </Suspense>
           </div>
         )}
         {shouldShowBatchToolbar && (

@@ -404,12 +404,9 @@ describe("IssueSurface — table pagination ownership", () => {
       </QueryClientProvider>,
     );
 
-    // The first render has not received the independent working-agents query
-    // yet and therefore requests the explicit match-none form. Once that
-    // query resolves, the Table owns a new query key containing the agent id
-    // list and starts the real branch.
-    await waitFor(() => expect(listIssueTableRows).toHaveBeenCalledTimes(2));
-    expect(listIssueTableRows).toHaveBeenLastCalledWith(
+    // A cold lazy table may mount after working-agent membership arrives.
+    // Require one real root branch, with at most one earlier match-none read.
+    await waitFor(() => expect(listIssueTableRows).toHaveBeenLastCalledWith(
       expect.objectContaining({
         group: { kind: "none" },
         group_key: null,
@@ -420,7 +417,13 @@ describe("IssueSurface — table pagination ownership", () => {
           }),
         }),
       }),
-    );
+    ));
+    expect(listIssueTableRows.mock.calls.length).toBeLessThanOrEqual(2);
+    if (listIssueTableRows.mock.calls.length === 2) {
+      expect(listIssueTableRows).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        query: expect.objectContaining({ filters: expect.objectContaining({ working_issue_ids: [] }) }),
+      }));
+    }
     expect(listIssues).not.toHaveBeenCalled();
   });
 
