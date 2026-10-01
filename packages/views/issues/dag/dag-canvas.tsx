@@ -34,6 +34,8 @@ import { DagFlowGroupCard, type DagFlowGroup } from "./dag-group";
 import { dagFocusNeighborhood, type DagProjection, type DagVisibleEdge } from "./dag-projection";
 import type { DagLayoutResult, DagPoint, DagPort } from "./dag-layout";
 
+import { DagPortUpdateProvider } from "./dag-ports";
+
 const nodeTypes = { dagNode: DagFlowNodeCard, dagGroup: DagFlowGroupCard };
 const edgeTypes = { dagEdge: DagFlowEdgeLine };
 const NO_PORTS: DagPort[] = [];
@@ -664,7 +666,7 @@ function EdgeInspector({
 export default function DagCanvas(props: DagCanvasProps) {
   return (
     <ReactFlowProvider>
-      <DagCanvasInner {...props} />
+      <DagPortUpdateProvider><DagCanvasInner {...props} /></DagPortUpdateProvider>
     </ReactFlowProvider>
   );
 }

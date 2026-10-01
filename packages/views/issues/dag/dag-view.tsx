@@ -32,7 +32,12 @@ import { useT } from "../../i18n";
 
 // The canvas chunk owns `@xyflow/react`; it only downloads when a surface
 // actually renders DAG mode.
-const DagCanvas = lazy(() => import("./dag-canvas"));
+let canvasModule: Promise<typeof import("./dag-canvas")> | undefined;
+const loadDagCanvas = () => (canvasModule ??= import("./dag-canvas").catch((error) => {
+  canvasModule = undefined;
+  throw error;
+}));
+const DagCanvas = lazy(loadDagCanvas);
 
 export interface DagGraphQueryState {
   data: IssueGraph | undefined;
@@ -75,6 +80,9 @@ export function DagView({
   const independentExpanded = useViewStore((s) => s.dagIndependentExpanded);
   const storedCollapsedIds = useViewStore((s) => s.dagCollapsedIds);
   const baseline = useViewBaseline();
+
+  // Download the renderer while the graph and layout engine load.
+  useEffect(() => { void loadDagCanvas().catch(() => undefined); }, []);
 
   const graph = graphQuery.data;
 

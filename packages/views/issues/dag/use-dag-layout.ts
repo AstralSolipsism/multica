@@ -16,6 +16,7 @@ export type DagLayoutExecutor = (
   onDone: (response: DagLayoutResponse) => void,
 ) => void;
 export interface DagLayoutRunner {
+  prepare: () => void;
   execute: DagLayoutExecutor;
   terminate: () => void;
 }
@@ -32,44 +33,54 @@ export interface DagLayoutState<T> {
   retry: () => void;
 }
 
-function createWorkerRunner(): DagLayoutRunner {
+export function createWorkerRunner(): DagLayoutRunner {
   let worker: Worker | null = null;
-  let listener: ((event: MessageEvent<DagLayoutResponse>) => void) | null = null;
-  let errorListener: ((event: ErrorEvent) => void) | null = null;
-  let activeRequest: number | null = null;
+  let active: { requestId: number; onDone: (response: DagLayoutResponse) => void } | null = null;
+  let failure: string | null = null;
+  const fail = (requestId: number, error: string): DagLayoutResponse => ({
+    requestId, positions: {}, groups: {}, routes: {}, ports: {}, elapsedMs: 0, error,
+  });
   const stop = () => {
     worker?.terminate();
     worker = null;
-    listener = null;
-    errorListener = null;
-    activeRequest = null;
+    active = null;
+    failure = null;
+  };
+  const prepare = () => {
+    if (worker || failure) return;
+    try {
+      const instance = new Worker(new URL("./dag-layout-worker.ts", import.meta.url), { type: "module" });
+      worker = instance;
+      instance.addEventListener("message", (event: MessageEvent<DagLayoutResponse>) => {
+        if (worker !== instance || !active || event.data?.requestId !== active.requestId) return;
+        const pending = active!;
+        active = null;
+        pending.onDone(event.data);
+      });
+      instance.addEventListener("error", (event) => {
+        if (worker !== instance) return;
+        failure = event.message || "DAG worker failed";
+        instance.terminate();
+        worker = null;
+        const pending = active;
+        active = null;
+        if (pending) pending.onDone(fail(pending.requestId, failure));
+      });
+    } catch (error) {
+      failure = error instanceof Error ? error.message : "DAG worker failed";
+    }
   };
   return {
+    prepare,
     execute(request, onDone) {
-      if (activeRequest !== null) stop();
-      activeRequest = request.requestId;
-      worker ??= new Worker(new URL("./dag-layout-worker.ts", import.meta.url), { type: "module" });
-      if (listener) worker.removeEventListener("message", listener);
-      if (errorListener) worker.removeEventListener("error", errorListener);
-      listener = (event) => {
-        if (event.data?.requestId === request.requestId) {
-          activeRequest = null;
-          onDone(event.data);
-        }
-      };
-      errorListener = (event) =>
-        onDone({
-          requestId: request.requestId,
-          positions: {},
-          groups: {},
-          routes: {},
-          ports: {},
-          elapsedMs: 0,
-          error: event.message || "DAG worker failed",
-        });
-      worker.addEventListener("message", listener);
-      worker.addEventListener("error", errorListener);
-      worker.postMessage(request);
+      if (active) stop();
+      prepare();
+      if (failure) {
+        onDone(fail(request.requestId, failure));
+        return;
+      }
+      active = { requestId: request.requestId, onDone };
+      worker!.postMessage(request);
     },
     terminate: stop,
   };
@@ -103,6 +114,11 @@ export function useDagLayout<T>(
   const [pendingSince, setPendingSince] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const liveRequest = useRef(0);
+  const hadLayoutInput = useRef(false);
+  useEffect(() => {
+    runnerRef.current!.prepare();
+    return () => { liveRequest.current = 0; runnerRef.current?.terminate(); };
+  }, []);
   const input = useMemo(
     () => ({ nodes, edges, groups, direction }),
     [nodes, edges, groups, direction],
@@ -113,10 +129,12 @@ export function useDagLayout<T>(
     liveRequest.current = request.requestId;
     setError(null);
     if (!request.nodes.length) {
-      runnerRef.current?.terminate();
+      if (hadLayoutInput.current) runnerRef.current?.terminate();
+      hadLayoutInput.current = false;
       setPendingSince(null);
       return;
     }
+    hadLayoutInput.current = true;
     setPendingSince(Date.now());
     runnerRef.current!.execute(request, (response) => {
       if (response.requestId !== liveRequest.current) return;
@@ -133,13 +151,6 @@ export function useDagLayout<T>(
       });
     });
   }, [input, revision]);
-  useEffect(
-    () => () => {
-      liveRequest.current = 0;
-      runnerRef.current?.terminate();
-    },
-    [],
-  );
   const positions = useMemo(
     () => (committed ? new Map(Object.entries(committed.result.positions)) : null),
     [committed],

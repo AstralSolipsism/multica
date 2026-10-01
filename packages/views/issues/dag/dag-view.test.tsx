@@ -14,7 +14,14 @@ import { DagView, type DagGraphQueryState } from "./dag-view";
 import type { DagCanvasProps } from "./dag-canvas";
 import { computeDagProjection } from "./dag-projection";
 import { DagFlowGroupCard } from "./dag-group";
+import { DagPortUpdateProvider } from "./dag-ports";
 import { ReactFlowProvider } from "@xyflow/react";
+
+vi.mock("@xyflow/react", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@xyflow/react")>(),
+  // jsdom does not measure SVG/DOM geometry; dedicated ports tests cover batching.
+  useUpdateNodeInternals: () => () => undefined,
+}));
 
 // t($ => $.path.to.key, params) → "path.to.key {params}" so assertions can
 // pin the exact locale key each state renders.
@@ -90,6 +97,7 @@ function syncLayoutRunner() {
         elapsedMs: 1,
       });
     },
+    prepare: vi.fn(),
     terminate: vi.fn(),
   };
 }
@@ -118,6 +126,7 @@ function realLayoutRunner() {
           }),
       );
     },
+    prepare: vi.fn(),
     terminate: vi.fn(),
   };
 }
@@ -402,7 +411,8 @@ describe("DagView", () => {
       execute: (request: DagLayoutRequest, done: (response: DagLayoutResponse) => void) => {
         pending.push({ request, done });
       },
-      terminate: vi.fn(),
+      prepare: vi.fn(),
+    terminate: vi.fn(),
     };
     render(
       <QueryClientProvider client={qc}>
@@ -453,7 +463,8 @@ describe("DagView", () => {
       execute(request: DagLayoutRequest, done: (response: DagLayoutResponse) => void) {
         requests.push({ request, done });
       },
-      terminate: vi.fn(),
+      prepare: vi.fn(),
+    terminate: vi.fn(),
     });
     const graph = makeGraph(
       [
@@ -562,7 +573,7 @@ describe("DagView", () => {
     const projection = computeDagProjection(graph, ["issue:root"]),
       model = projection.nodes[0]!;
     render(
-      <ReactFlowProvider>
+      <ReactFlowProvider><DagPortUpdateProvider>
         <DagFlowGroupCard
           {...({
             id: model.id,
@@ -594,7 +605,7 @@ describe("DagView", () => {
             },
           } as Parameters<typeof DagFlowGroupCard>[0])}
         />
-      </ReactFlowProvider>,
+      </DagPortUpdateProvider></ReactFlowProvider>,
     );
     expect(screen.getByText("dag.run_active")).toBeTruthy();
     expect(document.querySelector('[data-dag-parent-status="done"] svg')).not.toBeNull();
@@ -719,7 +730,8 @@ describe("DagView", () => {
     );
     renderDagView(graphQuery({ data: makeGraph([makeNode("solo")]) }), false, () => ({
       execute,
-      terminate: vi.fn(),
+      prepare: vi.fn(),
+    terminate: vi.fn(),
     }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("dag.layout_error"));
     expect(screen.queryByTestId("dag-canvas")).toBeNull();

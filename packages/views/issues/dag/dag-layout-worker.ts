@@ -9,19 +9,16 @@ declare const self: {
 // Keep the orchestration off the UI thread and use ELK's supported worker API.
 // Its bundled synchronous factory detects a native WorkerGlobalScope and cannot
 // be nested directly. The browser owns the lifetime of this child worker.
-let engine: InstanceType<typeof ELK> | undefined;
-function layoutEngine() {
-  return (engine ??= new ELK({
+const engine = new ELK({
     workerFactory: () =>
       new Worker(new URL("elkjs/lib/elk-worker.min.js", import.meta.url), { type: "module" }),
-  }));
-}
+  });
 
 self.onmessage = async (event) => {
   const { requestId, nodes, edges, groups, direction } = event.data;
   const started = Date.now();
   try {
-    const result = await layoutDagProjection(nodes, edges, direction, groups, layoutEngine());
+    const result = await layoutDagProjection(nodes, edges, direction, groups, engine);
     self.postMessage({ ...result, requestId, elapsedMs: Date.now() - started });
   } catch (error) {
     self.postMessage({
