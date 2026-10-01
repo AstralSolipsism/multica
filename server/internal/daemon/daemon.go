@@ -1278,7 +1278,20 @@ func (d *Daemon) recordRuntimePlanQuota(runtimeID string, quota *protocol.Runtim
 	if runtimeID == "" || quota == nil {
 		return
 	}
-	d.planQuotaCache.Store(runtimeID, planQuotaCacheEntry{quota: quota})
+	entry := planQuotaCacheEntry{quota: quota}
+	for {
+		previous, loaded := d.planQuotaCache.LoadOrStore(runtimeID, entry)
+		if !loaded {
+			return
+		}
+		current := previous.(planQuotaCacheEntry)
+		if current.quota != nil && current.quota.ObservedAt > quota.ObservedAt {
+			return // An older run can finish after a newer live observation.
+		}
+		if d.planQuotaCache.CompareAndSwap(runtimeID, previous, entry) {
+			return
+		}
+	}
 }
 
 // recordZenMuxPlanQuotaClearMarker stores a windowless zenmux snapshot — the
@@ -8773,6 +8786,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		idleWatchdogTimeout = d.cfg.OpenCodeIdleWatchdog
 	}
 	execOpts := agent.ExecOptions{
+		OnPlanQuota: func(quota *protocol.RuntimePlanQuota) {
+			d.recordRuntimePlanQuota(task.RuntimeID, quota)
+		},
 		EnableTaskSupplement:       taskSupplementNegotiated,
 		Cwd:                        env.WorkDir,
 		Model:                      model,

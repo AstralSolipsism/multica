@@ -482,6 +482,7 @@
     "window_weekly": "wk",
     "group_gemini": "Gemini",
     "group_claude_gpt": "Claude + GPT",
+    "group_claude_models": "Model-specific",
     "remaining": "{{percent}}% left",
     "resets_in": "resets in {{time}}",
     "exhausted": "Rate limited",

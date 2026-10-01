@@ -103,6 +103,7 @@ export interface QuotaWindowView {
 export function quotaGroupLabel(group: string, t: RuntimesT): string {
   if (group === "gemini") return t(($) => $.quota.group_gemini);
   if (group === "claude_gpt") return t(($) => $.quota.group_claude_gpt);
+  if (group === "claude_models") return t(($) => $.quota.group_claude_models);
   return group;
 }
 

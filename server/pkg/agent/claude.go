@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
@@ -200,6 +201,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		terminalReasonError := ""
 		var sessionID string
 		var lastUsageResult *claudeSDKMessage
+		var planQuota *protocol.RuntimePlanQuota
 		sawAsyncLaunch := false
 		usage := make(map[string]TokenUsage)
 		seenUsage := make(map[string]struct{})
@@ -292,6 +294,13 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 					lastUsageResult = &usageMsg
 				}
 				closeStdin()
+			case "rate_limit_event":
+				if quota := parseClaudePlanQuota(msg.RateLimitInfo, time.Now()); quota != nil {
+					planQuota = quota
+					if opts.OnPlanQuota != nil {
+						opts.OnPlanQuota(quota)
+					}
+				}
 			case "log":
 				if msg.Log != nil {
 					trySend(msgCh, Message{
@@ -447,6 +456,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 			DurationMs:     duration.Milliseconds(),
 			SessionID:      reportedSessionID,
 			Usage:          usage,
+			PlanQuota:      planQuota,
 			ResumeRejected: resumeRejected,
 		}
 	}()
@@ -644,6 +654,7 @@ func claudeMapHasAsyncLaunchStatus(value map[string]any) bool {
 // ── Claude SDK JSON types ──
 
 type claudeSDKMessage struct {
+	RateLimitInfo   json.RawMessage `json:"rate_limit_info,omitempty"`
 	Type            string          `json:"type"`
 	Message         json.RawMessage `json:"message,omitempty"`
 	Subtype         string          `json:"subtype,omitempty"`

@@ -1,14 +1,12 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import type { GlmQuotaStatus } from "@multica/core/api";
 import { quotaTone, type QuotaTone } from "@multica/core/runtimes";
-import { glmQuotaOptions } from "@multica/core/runtimes/queries";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
-import { MiniMeterBar } from "./runtime-quota-cell";
 import { useT, useTimeAgo } from "../../i18n";
 import zhipuLogo from "./zhipu-logo.svg";
 
@@ -20,9 +18,8 @@ function staticAssetSrc(asset: string | { src: string }): string {
 }
 
 // The fixed, account-level GLM (Zhipu) Coding Plan balance card for the
-// runtimes page. Unlike the per-runtime quota chips, this allowance belongs
-// to the provider key shared by every GLM-backed runtime (claude/hermes),
-// so it is shown exactly once, above the machine list — never per runtime.
+// runtimes page. The server queries its configured provider key independently
+// of any runtime, so the balance is shown once above the machine list.
 
 const CHIP_TONE_CLASS: Record<QuotaTone, string> = {
   ok: "bg-success/10 text-success",
@@ -37,17 +34,6 @@ export type GlmQuotaWindow = {
   current_value?: number;
   remaining?: number;
   resets_at?: number;
-};
-
-export type GlmQuotaStatusResponse = {
-  enabled: boolean;
-  quota?: {
-    level?: string;
-    windows: GlmQuotaWindow[];
-    observed_at: number;
-  } | null;
-  stale?: boolean;
-  last_error?: string;
 };
 
 // Remaining percent per window: the provider's percentage is *used*, and
@@ -81,116 +67,15 @@ export function glmFormatResetIn(seconds: number): string {
   return `${Math.floor(h / 24)}d`;
 }
 
-// The compact in-row pill for the anchored machine: same visual language as
-// the per-runtime MachineQuotaChips pills, so the account-level GLM balance
-// reads as "one more quota on this server" rather than a detached banner.
-export function GlmQuotaChip({
-  data,
-  now,
-  interactive = true,
-}: {
-  data: GlmQuotaStatusResponse;
-  now: number;
-  /** false renders the bare pill (ghost measuring row, "+N" popover). */
-  interactive?: boolean;
-}) {
-  const { t } = useT("runtimes");
-  if (!data.enabled || !data.quota) return null;
-  const windows = glmWorstFirst(data.quota.windows ?? []);
-  const worst = windows[0];
-  if (!worst) return null;
-  const remaining = glmWindowRemainingPercent(worst);
-  const tone = quotaTone(remaining, "ok");
-  // Same pill form as QuotaChip: [logo] [draining bar of what is LEFT]
-  // [bare percent]. The spoken aria-label keeps the "剩 X%" phrasing so
-  // screen readers still hear the unit; sighted readers get the bar.
-  const ariaText =
-    remaining != null
-      ? t(($) => $.quota.remaining, { percent: Math.round(remaining) })
-      : t(($) => $.quota.glm_unknown);
-  const pill = (
-    <span
-      aria-label={t(($) => $.quota.glm_title) + ": " + ariaText}
-      className={`inline-flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-micro font-medium tabular-nums ${CHIP_TONE_CLASS[tone]}`}
-    >
-      <img src={staticAssetSrc(zhipuLogo)} alt="" className="h-3.5 w-3.5" />
-      {remaining != null && (
-        <MiniMeterBar
-          percent={remaining}
-          tone={tone}
-          ariaLabel="GLM"
-          className="w-6 shrink-0"
-        />
-      )}
-      {remaining != null ? `${Math.round(remaining)}%` : ariaText}
-    </span>
-  );
-  if (!interactive) return pill;
-  return (
-    <Tooltip>
-      <TooltipTrigger render={pill} />
-      <TooltipContent>
-        <GlmQuotaDetail data={data} now={now} />
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-// The GLM balance breakdown: every window with its remaining percent,
-// reset countdown, and observation age. Rendered as the chip's tooltip and
-// again inside the machine row's "+N" popover when the chip is collapsed.
-export function GlmQuotaDetail({
+export function GlmQuotaCard({
   data,
   now,
 }: {
-  data: GlmQuotaStatusResponse;
+  data: GlmQuotaStatus | undefined;
   now: number;
 }) {
   const { t } = useT("runtimes");
   const timeAgo = useTimeAgo();
-  if (!data.enabled || !data.quota) return null;
-  const windows = glmWorstFirst(data.quota.windows ?? []);
-  return (
-    <div className="space-y-0.5 text-xs">
-      <div className="font-medium">{t(($) => $.quota.glm_title)}</div>
-      {windows.map((w, i) => {
-        const rem = glmWindowRemainingPercent(w);
-        const label =
-          w.type === "TOKENS_LIMIT"
-            ? t(($) => $.quota.glm_window_tokens)
-            : w.type === "TIME_LIMIT"
-              ? t(($) => $.quota.glm_window_time)
-              : w.type === "CREDIT_LIMIT"
-                ? t(($) => $.quota.glm_window_credit)
-                : t(($) => $.quota.glm_window_fallback, { type: w.type });
-        const reset =
-          w.resets_at && w.resets_at > now
-            ? ` · ${t(($) => $.quota.resets_in, { time: glmFormatResetIn(w.resets_at - now) })}`
-            : "";
-        return (
-          <div key={`${w.type}-${i}`}>
-            {label}:{" "}
-            {rem != null
-              ? t(($) => $.quota.remaining, { percent: rem })
-              : t(($) => $.quota.glm_unknown)}
-            {reset}
-          </div>
-        );
-      })}
-      <div className="text-muted-foreground">
-        {t(($) => $.quota.observed_ago, {
-          time: timeAgo(new Date(data.quota.observed_at * 1000).toISOString()),
-        })}
-        {data.stale ? ` · ${t(($) => $.quota.stale)}` : ""}
-      </div>
-    </div>
-  );
-}
-
-export function GlmQuotaCard({ now }: { now: number }) {
-  const { t } = useT("runtimes");
-  const timeAgo = useTimeAgo();
-  const { data } = useQuery(glmQuotaOptions());
 
   // Unconfigured (no server key) hides the card entirely — the surface is
   // opt-in per deployment.
@@ -200,7 +85,7 @@ export function GlmQuotaCard({ now }: { now: number }) {
   if (windows.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border bg-card px-3 py-2">
+    <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border bg-card px-3 py-2">
       <span className="flex items-center gap-2">
         <img src={staticAssetSrc(zhipuLogo)} alt="Zhipu" className="h-4 w-4" />
         <span className="text-sm font-medium">{t(($) => $.quota.glm_title)}</span>

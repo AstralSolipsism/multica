@@ -466,6 +466,7 @@
     "window_weekly": "周",
     "group_gemini": "Gemini",
     "group_claude_gpt": "Claude + GPT",
+    "group_claude_models": "限定模型",
     "remaining": "剩 {{percent}}%",
     "resets_in": "{{time}} 后重置",
     "exhausted": "已限流",

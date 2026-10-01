@@ -175,47 +175,46 @@ export function RuntimesPage({
         onOpenCloudRuntime={() => setShowCloudRuntimeDialog(true)}
       />
 
-      {showEmpty ? (
-        <div className="flex flex-1 items-center justify-center p-6">
-          <EmptyState onConnectRemote={() => setShowConnectDialog(true)} />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {/* Fork deviation from the shared rail: relax the 1440px cap at 2xl
+            so 4K viewports use the full width (kept through upstream syncs). */}
+        <div className={cn(PAGE_RAIL, PAGE_GUTTER, "flex min-h-full flex-col py-4 sm:py-6", "2xl:max-w-[1920px]")}>
+          {!agentsLoading &&
+            !chatSessionsLoading &&
+            memberNeedsMikaSetup(agents, chatSessions) &&
+            runtimes.length > 0 && (
+            <MikaSetupCard
+              workspaceId={wsId}
+              runtimes={runtimes}
+              runtimesLoading={runtimesLoading}
+              currentUserId={currentUserId ?? null}
+            />
+          )}
+          <GlmQuotaCard data={glmQuota} now={now} />
+          {showEmpty ? (
+            <div className="flex flex-1 items-center justify-center p-6">
+              <EmptyState onConnectRemote={() => setShowConnectDialog(true)} />
+            </div>
+          ) : (
+            <>
+              {(machines.length > 0 || bootstrapping) && (
+                <MachineList
+                  machines={machines}
+                  bootstrapping={bootstrapping}
+                  now={now}
+                />
+              )}
+              {orphanProfileRuntimes.length > 0 && (
+                <OrphanRuntimeProfiles
+                  runtimes={orphanProfileRuntimes}
+                  now={now}
+                  hasMachines={machines.length > 0}
+                />
+              )}
+            </>
+          )}
         </div>
-      ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {/* Fork deviation from the shared rail: relax the 1440px cap at 2xl
-              so 4K viewports use the full width (kept through upstream syncs). */}
-          <div className={cn(PAGE_RAIL, PAGE_GUTTER, "flex flex-col py-4 sm:py-6", "2xl:max-w-[1920px]")}>
-            {!agentsLoading &&
-              !chatSessionsLoading &&
-              memberNeedsMikaSetup(agents, chatSessions) &&
-              runtimes.length > 0 && (
-              <MikaSetupCard
-                workspaceId={wsId}
-                runtimes={runtimes}
-                runtimesLoading={runtimesLoading}
-                currentUserId={currentUserId ?? null}
-              />
-            )}
-            {glmQuota?.enabled === true && !glmQuota.anchor_device && (
-              <GlmQuotaCard now={now} />
-            )}
-            {(machines.length > 0 || bootstrapping) && (
-              <MachineList
-                machines={machines}
-                bootstrapping={bootstrapping}
-                now={now}
-                glmQuota={glmQuota}
-              />
-            )}
-            {orphanProfileRuntimes.length > 0 && (
-              <OrphanRuntimeProfiles
-                runtimes={orphanProfileRuntimes}
-                now={now}
-                hasMachines={machines.length > 0}
-              />
-            )}
-          </div>
-        </div>
-      )}
+      </div>
 
       {showConnectDialog && (
         <ConnectRemoteDialog onClose={() => setShowConnectDialog(false)} />
@@ -421,12 +420,10 @@ function MachineList({
   machines,
   bootstrapping,
   now,
-  glmQuota,
 }: {
   machines: RuntimeMachine[];
   bootstrapping?: boolean;
   now: number;
-  glmQuota?: import("@multica/core/api").GlmQuotaStatus;
 }) {
   const { t } = useT("runtimes");
   if (machines.length === 0) {
@@ -455,7 +452,6 @@ function MachineList({
             key={machine.id}
             machine={machine}
             now={now}
-            glmQuota={glmQuota}
           />
         ))}
       </div>
@@ -466,11 +462,9 @@ function MachineList({
 function MachineRow({
   machine,
   now,
-  glmQuota,
 }: {
   machine: RuntimeMachine;
   now: number;
-  glmQuota?: import("@multica/core/api").GlmQuotaStatus;
 }) {
   const { t } = useT("runtimes");
   const healthLabel = useHealthLabel();
@@ -516,17 +510,7 @@ function MachineRow({
           squeeze the name to zero. Quota detail stays one click away on the
           machine page. */}
       <span className="hidden w-56 shrink-0 items-center gap-1.5 2xl:flex">
-        <MachineQuotaChips
-          machine={machine}
-          now={now}
-          glm={
-            glmQuota?.enabled === true &&
-            glmQuota.anchor_device != null &&
-            machine.deviceName === glmQuota.anchor_device
-              ? glmQuota
-              : undefined
-          }
-        />
+        <MachineQuotaChips machine={machine} now={now} />
       </span>
       <span className="hidden w-28 shrink-0 items-center gap-1.5 text-caption md:flex">
         <HealthIcon health={machine.health} />

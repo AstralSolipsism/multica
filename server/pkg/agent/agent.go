@@ -26,6 +26,11 @@ type Backend interface {
 
 // ExecOptions configures a single execution.
 type ExecOptions struct {
+	// OnPlanQuota observes live provider quota without adding transcript events or
+	// resetting task progress watchdogs. The observer must return promptly and
+	// must not mutate the snapshot. Nil disables live observation, not Result.PlanQuota.
+	OnPlanQuota func(*protocol.RuntimePlanQuota)
+
 	// EnableTaskSupplement installs provider hooks only for runs whose daemon/server
 	// capability handshake enabled additional messages.
 	EnableTaskSupplement bool

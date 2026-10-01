@@ -19,7 +19,6 @@ import {
 import { runtimeRowLabel, type MachineQuotaChip, type RuntimeMachine } from "./runtime-machines";
 import { formatQuotaWindowLabel, MiniMeterBar, quotaGroupLabel } from "./runtime-quota-cell";
 import { ProviderLogo } from "./provider-logo";
-import { GlmQuotaChip, GlmQuotaDetail, type GlmQuotaStatusResponse } from "./glm-quota-card";
 import { useT } from "../../i18n";
 
 const CHIP_TONE_CLASS: Record<QuotaTone, string> = {
@@ -31,37 +30,22 @@ const CHIP_TONE_CLASS: Record<QuotaTone, string> = {
 // The gap between pills, kept in sync with the flex row's `gap-1.5`.
 const CHIP_GAP_PX = 6;
 
-// The machine row's quota area: one pill per quota source — the anchored
-// account-level GLM balance first, then one pill per runtime carrying a
-// fresh plan-quota snapshot. How many fit is decided by MEASURED width,
-// not a fixed count: whatever does not fit whole collapses into a "+N"
-// pill whose hover lists every hidden pill with its full breakdown. The
-// degradation unit is the whole pill — a progress bar or label is never
-// clipped mid-content.
+// The machine row shows one pill per runtime carrying a fresh quota snapshot.
+// Pills that do not fit collapse into a "+N" tooltip with their full breakdown.
 export function MachineQuotaChips({
   machine,
   now,
-  glm,
 }: {
   machine: RuntimeMachine;
   now: number;
-  /** Anchored GLM balance; pass only when this machine is the anchor. */
-  glm?: GlmQuotaStatusResponse;
 }) {
-  const anchorGlm = glm?.enabled && glm.quota ? glm : undefined;
   const runtimeChips = machine.quotaChips;
-  const total = runtimeChips.length + (anchorGlm ? 1 : 0);
-  const { containerRef, ghostRef, visibleCount } = useChipFlow(total);
-  if (total === 0) return null;
+  const { containerRef, ghostRef, visibleCount } = useChipFlow(runtimeChips.length);
+  if (runtimeChips.length === 0) return null;
 
-  // GLM occupies the first slot; runtimes follow in the machine's runtime
-  // order (creation order from the API), so a percentage change never
-  // reshuffles the row.
-  const glmVisible = anchorGlm ? Math.min(1, visibleCount) : 0;
-  const runtimeVisible = Math.max(0, visibleCount - glmVisible);
-  const hiddenRuntime = runtimeChips.slice(runtimeVisible);
-  const glmHidden = Boolean(anchorGlm) && glmVisible === 0;
-  const hiddenCount = hiddenRuntime.length + (glmHidden ? 1 : 0);
+  // Keep the machine's runtime order so quota changes never reshuffle the row.
+  const hiddenRuntime = runtimeChips.slice(visibleCount);
+  const hiddenCount = hiddenRuntime.length;
 
   return (
     <span
@@ -76,9 +60,6 @@ export function MachineQuotaChips({
         aria-hidden="true"
         className="pointer-events-none invisible absolute left-0 top-0 flex items-center gap-1.5 whitespace-nowrap"
       >
-        {anchorGlm && (
-          <GlmQuotaChip key="ghost-glm" data={anchorGlm} now={now} interactive={false} />
-        )}
         {runtimeChips.map((chip) => (
           <QuotaChip
             key={`ghost-${chip.runtimeId}`}
@@ -90,10 +71,7 @@ export function MachineQuotaChips({
         ))}
         <OverflowPill count={99} />
       </span>
-      {anchorGlm && glmVisible === 1 && (
-        <GlmQuotaChip key="glm" data={anchorGlm} now={now} />
-      )}
-      {runtimeChips.slice(0, runtimeVisible).map((chip) => (
+      {runtimeChips.slice(0, visibleCount).map((chip) => (
         <QuotaChip key={chip.runtimeId} chip={chip} machine={machine} now={now} />
       ))}
       {hiddenCount > 0 && (
@@ -101,14 +79,6 @@ export function MachineQuotaChips({
           <TooltipTrigger render={<OverflowPill count={hiddenCount} />} />
           <TooltipContent>
             <span className="flex flex-col items-start gap-2">
-              {anchorGlm && glmHidden && (
-                <span className="flex flex-col items-start gap-1">
-                  <GlmQuotaChip data={anchorGlm} now={now} interactive={false} />
-                  <span className="text-xs">
-                    <GlmQuotaDetail data={anchorGlm} now={now} />
-                  </span>
-                </span>
-              )}
               {hiddenRuntime.map((chip) => {
                 const runtime = machine.runtimes.find((r) => r.id === chip.runtimeId);
                 const label = runtime
