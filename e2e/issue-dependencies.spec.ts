@@ -445,7 +445,11 @@ test.describe("Issue dependencies (OL-44)", () => {
           const path = edge.querySelector<SVGPathElement>(".react-flow__edge-path")!;
           const matrix = path.getScreenCTM()!;
           return [[match[1], "source", sourceSide, 0], [match[2], "target", targetSide, path.getTotalLength()]].every(([id, type, side, length]) => {
-            const handle = document.querySelector(`.react-flow__node[data-id="${id}"] .react-flow__handle.${type}.react-flow__handle-${side}`);
+            // ELK assigns a distinct port to each edge, including edges with
+            // the same source. Comparing every route to the first port hides
+            // a real attachment error and rejects valid multi-port layouts.
+            const handleId = CSS.escape(`${type}:${edge.getAttribute("data-id")}`);
+            const handle = document.querySelector(`.react-flow__node[data-id="${id}"] .react-flow__handle.${type}.react-flow__handle-${side}[data-handleid="${handleId}"]`);
             if (!handle) return false;
             const rect = handle.getBoundingClientRect();
             const point = path.getPointAtLength(Number(length)).matrixTransform(matrix);
