@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/events"
@@ -278,32 +279,37 @@ func TestAClosingFrameTheSocketRefusesToTakeIsNotSaidTwice(t *testing.T) {
 // fallback that needed that budget has none.
 //
 // REVERSE VERIFICATION: drop the deadline check from seal's loop and this
-// fails with the seal still writing after the budget is gone.
+// fails with a second closing frame consuming the remaining budget.
 func TestTheCloseRetryStopsWhenTheBudgetCannotCoverAnother(t *testing.T) {
 	t.Parallel()
-	rig, _ := retryRig(t)
-	rig.streams.closeRetryDelay = 40 * time.Millisecond
-	rig.conn.loseClosingAcks = 1 << 20 // nothing is ever acked
-	rig.ran(t, "REQ-FIT", "task-1")
+	// Use the shipped budgets on a virtual clock: scheduler contention must
+	// not turn a correct early stop into an apparent deadline overrun.
+	synctest.Test(t, func(t *testing.T) {
+		rig := newBubbleRig(t)
+		rig.conn.loseClosingAcks = 1 << 20 // nothing is ever acked
+		rig.ran(t, "REQ-FIT", "task-1")
 
-	// Room for the first attempt and not much else: 50ms ack + 40ms pause +
-	// 50ms ack is 140ms, so a second attempt does not fit in 120ms.
-	budget, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
-	defer cancel()
-	started := time.Now()
-	rig.answerWithContext(t, budget, "the agent reply", "task-1")
-	took := time.Since(started)
+		// One ack wait fits, but another pause plus ack wait does not.
+		budget, cancel := context.WithTimeout(context.Background(), streamCloseTimeout)
+		defer cancel()
+		started := time.Now()
+		rig.answerWithContext(t, budget, "the agent reply", "task-1")
+		took := time.Since(started)
 
-	if took > 120*time.Millisecond {
-		t.Fatalf("the seal ran %s against a 120ms budget — it started an attempt it could not finish", took)
-	}
-	closing := 0
-	for _, f := range rig.conn.streamFrames(t) {
-		if f["finish"] == true {
-			closing++
+		if took != ackTimeout {
+			t.Errorf("the seal ran %s, want only the first ack wait of %s", took, ackTimeout)
 		}
-	}
-	if closing != 1 {
-		t.Fatalf("the closing frame was written %d time(s); only the first fits this budget", closing)
-	}
+		if err := budget.Err(); err != nil {
+			t.Errorf("the seal exhausted the caller's budget: %v", err)
+		}
+		closing := 0
+		for _, f := range rig.conn.streamFrames(t) {
+			if f["finish"] == true {
+				closing++
+			}
+		}
+		if closing != 1 {
+			t.Fatalf("the closing frame was written %d time(s); only the first fits this budget", closing)
+		}
+	})
 }

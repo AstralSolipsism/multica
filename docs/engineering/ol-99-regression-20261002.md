@@ -49,13 +49,15 @@
 - Go 测试完成后启动恢复代码的本地 API，`/health` 确认 commit `c51c5e6b7`；执行 `pnpm exec playwright test e2e/issue-wakeups.spec.ts --reporter=json`，**2/2 通过、0 跳过、0 flaky**，用时约 139 秒。浏览器仍连接真实本地数据库。补充 Go 用例在关闭 API 后执行，避免后台 worker 干扰。
 - 本轮未重跑其余前端测试和构建，首轮结果保留于上表；候选仍需从最终批准的源码重建。
 
-### CI 文档长度修复
+### CI 修复
 
 `85021b08c` 的 [CI run 37023753317](https://github.com/AstralSolipsism/multica/actions/runs/37023753317) 中，`backend-tests` 的唯一失败是 `TestBuiltinSkillsConformToTemplate/multica-platform`：`references/issues.md` 达到 519 行，超过现有 500 行上限；`backend` 汇总检查随之失败。本地定向执行相同测试复现了同一错误。
 
 - 把 PR 关联、合并状态、交付约定和状态读取说明完整移到 `references/pull-requests.md`，更新 skill 路由、旧 skill 跳转及现有测试的文档位置。按测试的计数方式，`issues.md` 为 400 行，新文件为 131 行；没有放宽行数限制或删除契约断言。
 - 原文逐行核对保留，PR merge status 与状态读取正文逐字节一致；`Default for code-changing issue work` 回到 PR linking 标题下，解决审阅者提出的层级问题。唤醒产品代码保持基线，三个 E2E 与 squads 文档未改。
 - 经 CLI guard 执行 `GOTOOLCHAIN=go1.26.6 GOMAXPROCS=4 go -C server test -json -race -count=1 -run '^(TestBuiltin|TestPlatformSkill|TestLegacyRedirect)' ./internal/service`，8 个顶层测试及 25 个子测试全部通过，0 失败、0 跳过。这些测试直接检查内置 skill，不需要数据库；没有把数据库不可用导致的跳过算作成功。
+- `29f528ddd` 的 [CI run 37075547008](https://github.com/AstralSolipsism/multica/actions/runs/37075547008) 已通过上述 service 检查，但企业微信的 `TestTheCloseRetryStopsWhenTheBudgetCannotCoverAnother` 因墙钟耗时 125.85ms 超过 120ms 失败。该测试原先把调度耗时也当成重试超预算；现改用 Go `testing/synctest` 虚拟时钟及实际产品常量，严格断言只耗费首次 5s ack 等待、10s 调用预算未耗尽、仅写一个关闭帧。产品重试代码未改。
+- 经同一 CLI guard 执行 `go -C server test -json -race -count=100 -run '^TestTheCloseRetryStopsWhenTheBudgetCannotCoverAnother$' ./internal/integrations/wecom`，100/100 通过；再以 `-count=1 -run '^(TestAClosingFrame|TestARefusedClosingFrame|TestATakeThatThenFails|TestTheCloseRetry)'` 执行全部 6 个关闭重试测试，6/6 通过，均无跳过。使用独立 Go overlay 临时移除预算检查的反向验证按预期失败：耗时 10s、预算耗尽、写出两帧；因此修复没有放松被测约束，也未改写仓库产品文件。
 - Master 已授权修复 CI 后合入并完成本任务。最终 CI 与合并 SHA 记录在任务收尾评论；正式候选制品、部署及五台机器升级仍按下文发布安排执行，不能把任务收尾等同于已发布。
 
 ## 构建与版本来源
