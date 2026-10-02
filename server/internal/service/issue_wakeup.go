@@ -56,10 +56,6 @@ type WakeupInput struct {
 	// MaxFires caps how many runs a repeating rule may start. Repeating event
 	// rules default to wakeupDefaultMaxFires.
 	MaxFires int32 `json:"max_fires"`
-	// HTTP updates from pre-v2 clients omit fields they cannot represent.
-	// Resolve them under the subscription lock, never from a stale client GET.
-	PreserveCondition bool `json:"-"`
-	PreserveMaxFires  bool `json:"-"`
 }
 
 func hasWakeupCondition(raw json.RawMessage) bool {
@@ -439,31 +435,6 @@ func (s *IssueWakeupService) save(ctx context.Context, issueID, member, source, 
 			}
 		}
 	}
-	preserveUnlimited := false
-	if existingID.Valid && enable == nil && (in.PreserveCondition || in.PreserveMaxFires) {
-		old, e := q.LockIssueWakeup(ctx, existingID)
-		if e != nil {
-			return out, e
-		}
-		if old.IssueID != issueID || old.WorkspaceID != issue.WorkspaceID {
-			return out, pgx.ErrNoRows
-		}
-		if old.SystemRule.Valid {
-			return out, ErrWakeupForbidden
-		}
-		if in.PreserveCondition && hasWakeupCondition(old.Condition) {
-			in.Condition = old.Condition
-			// Older clients echo the condition's derived hint events. They
-			// are not a request to replace the predicate with a raw event.
-			if slices.Equal(in.EventTypes, old.EventTypes) {
-				in.EventTypes = nil
-			}
-		}
-		if in.PreserveMaxFires {
-			in.MaxFires = old.MaxFires.Int32
-			preserveUnlimited = !old.MaxFires.Valid
-		}
-	}
 	next, err := s.Validate(&in, now)
 	if err != nil {
 		return out, err
@@ -484,7 +455,7 @@ func (s *IssueWakeupService) save(ctx context.Context, issueID, member, source, 
 		next = pgtype.Timestamptz{Time: now, Valid: true}
 	}
 	maxFires := pgtype.Int4{Int32: in.MaxFires, Valid: in.MaxFires > 0}
-	if !maxFires.Valid && !preserveUnlimited && in.Kind == "event" && in.Mode == "continuous" {
+	if !maxFires.Valid && in.Kind == "event" && in.Mode == "continuous" {
 		maxFires = pgtype.Int4{Int32: wakeupDefaultMaxFires, Valid: true}
 	}
 	agentID, err := wakeupUUID(in.AgentID)

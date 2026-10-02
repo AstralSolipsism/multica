@@ -194,27 +194,13 @@ func (h *Handler) CreateIssueWakeup(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var body struct {
-		service.WakeupInput
-		MaxFires json.RawMessage `json:"max_fires"`
-	}
+	var in service.WakeupInput
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32768))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&body); err != nil {
+	if err := dec.Decode(&in); err != nil {
 		writeError(w, 400, "invalid wakeup body")
 		return
 	}
-	in := body.WakeupInput
-	if len(body.MaxFires) > 0 {
-		if err := json.Unmarshal(body.MaxFires, &in.MaxFires); err != nil {
-			writeError(w, 400, "invalid max_fires")
-			return
-		}
-	}
-	// Older installed clients do not know these v2 fields. Distinguish an
-	// omitted field from an explicit null/zero so a PUT cannot erase them.
-	in.PreserveCondition = r.Method == http.MethodPut && len(in.Condition) == 0
-	in.PreserveMaxFires = r.Method == http.MethodPut && len(body.MaxFires) == 0
 	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(issue.WorkspaceID))
 	if in.AgentID == "" && actorType == "agent" {
 		in.AgentID = actorID

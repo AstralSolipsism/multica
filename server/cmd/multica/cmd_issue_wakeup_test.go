@@ -101,7 +101,6 @@ func TestIssueWakeupCLIActorFilter(t *testing.T) {
 		wantMethod := "POST"
 		if action == "update" {
 			args = append(args, "wake")
-			args = append(args, "--max-fires", "0")
 			wantMethod = "PUT"
 		}
 		args = append(args, "--event", "comment.created", "--filter-actor-type", "member", "--filter-actor-id", person, "--instruction", "wait")
@@ -111,14 +110,6 @@ func TestIssueWakeupCLIActorFilter(t *testing.T) {
 		}
 		if method != wantMethod || body["filter_actor_type"] != "member" || body["filter_actor_id"] != person {
 			t.Fatalf("lost actor filter: %s %+v", method, body)
-		}
-		if action == "update" {
-			if condition, present := body["condition"]; !present || condition != nil {
-				t.Fatal("updating to raw events must explicitly clear any previous condition")
-			}
-			if cap, present := body["max_fires"]; !present || cap != float64(0) {
-				t.Fatal("an explicit zero must reset the cap, not preserve it")
-			}
 		}
 	}
 }
