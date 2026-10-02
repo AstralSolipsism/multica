@@ -1410,7 +1410,8 @@
     "dependency_legend": "矢印は依存関係を表示",
     "edge_count": "{{count}} 件の依存関係",
     "edge_locate_source": "前提タスクへ",
-    "edge_locate_target": "後続タスクへ"
+    "edge_locate_target": "後続タスクへ",
+    "edge_count_other": "{{count}} 件の依存関係"
   },
   "dependencies": {
     "section_title": "前提条件",

@@ -1458,7 +1458,9 @@
     "dependency_legend": "Les flèches indiquent les dépendances",
     "edge_count": "{{count}} dépendances",
     "edge_locate_source": "Localiser le prérequis",
-    "edge_locate_target": "Localiser le dépendant"
+    "edge_locate_target": "Localiser le dépendant",
+    "edge_count_other": "{{count}} dépendances",
+    "edge_count_one": "{{count}} dépendance"
   },
   "dependencies": {
     "section_title": "Prerequisites",

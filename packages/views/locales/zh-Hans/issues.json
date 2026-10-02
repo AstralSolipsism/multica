@@ -1410,7 +1410,8 @@
     "dependency_legend": "任务间箭头表示依赖",
     "edge_count": "{{count}} 条依赖",
     "edge_locate_source": "定位前置",
-    "edge_locate_target": "定位后续"
+    "edge_locate_target": "定位后续",
+    "edge_count_other": "{{count}} 条依赖"
   },
   "dependencies": {
     "section_title": "前置",

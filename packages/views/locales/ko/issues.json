@@ -1410,7 +1410,8 @@
     "dependency_legend": "화살표는 의존성을 표시",
     "edge_count": "의존성 {{count}}개",
     "edge_locate_source": "선행 태스크 찾기",
-    "edge_locate_target": "후속 태스크 찾기"
+    "edge_locate_target": "후속 태스크 찾기",
+    "edge_count_other": "의존성 {{count}}개"
   },
   "dependencies": {
     "section_title": "선행 조건",
