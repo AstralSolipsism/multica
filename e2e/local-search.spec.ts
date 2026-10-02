@@ -109,6 +109,32 @@ test.describe("Local search index", () => {
     await expect.poll(() => searchIndexDatabases(page)).toEqual([]);
   });
 
+  test("uses server search when the workspace exceeds the 500 MiB text budget", async ({ page }) => {
+    const token = `budget${Date.now().toString(36)}`;
+    await api.createIssue(`${token} server fallback`);
+    // Exercise the production worker's limit without allocating 500 MiB in
+    // the test browser. The real API supplies the rest of the manifest.
+    await page.route("**/api/search-index/manifest*", async (route) => {
+      const response = await route.fetch();
+      const manifest = await response.json();
+      await route.fulfill({ response, json: { ...manifest, text_bytes: 500 * 1024 * 1024 + 1 } });
+    });
+    const snapshots: string[] = [];
+    const searches: string[] = [];
+    page.on("request", (req) => {
+      if (req.url().includes("/api/search-index/snapshot")) snapshots.push(req.url());
+      if (req.url().includes("/api/issues/search")) searches.push(req.url());
+    });
+    const measured = page.waitForResponse((res) => res.url().includes("/api/search-index/manifest") && res.ok());
+    await loginAsDefault(page);
+    await measured;
+    await openSearch(page);
+    await search(page, token);
+    await expect(page.getByRole("option").filter({ hasText: `${token} server fallback` })).toBeVisible();
+    expect(searches.length).toBeGreaterThan(0);
+    expect(snapshots).toEqual([]);
+  });
+
   test("deletes a workspace's local copy when the user is removed from it", async ({ page }) => {
     const run = Date.now().toString(36);
     const owner = new TestApiClient();

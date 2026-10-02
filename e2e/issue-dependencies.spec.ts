@@ -3,10 +3,10 @@ import pg from "pg";
 import { TestApiClient } from "./fixtures";
 import { waitForPageText } from "./helpers";
 
-// OL-44 — dependency editing + human early-dispatch confirmation against the
-// REAL server (OL-39/41 endpoints), not a mocked boundary. The agent/runtime
-// are DB-seeded fakes: the override is proven by the queue row the server
-// writes, never by an actual agent execution.
+// Dependency editing and upstream assignment against the real server.
+// The owner-approved 2026-09-26 sync retired execution gates/overrides:
+// prerequisites remain collaboration information. DB-seeded fake runtimes
+// prove queue writes without executing an actual agent.
 
 const E2E_WORKER =
   process.env.TEST_PARALLEL_INDEX ?? process.env.TEST_WORKER_INDEX ?? "0";
@@ -113,9 +113,12 @@ async function setup(): Promise<Ctx> {
   );
   const agentId = agentRows[0]!.id;
 
-  const a = await api.createIssue("Prerequisite A", { status: "todo" });
-  const b = await api.createIssue("Blocked B", { status: "todo" });
-  const c = await api.createIssue("Cancel Cand C", { status: "todo" });
+  // Give the graph a real task line, so the saved-view regression verifies
+  // persisted expansion instead of already-visible standalone nodes.
+  const parent = await api.createIssue("Dependency task line", { status: "todo" });
+  const a = await api.createIssue("Prerequisite A", { status: "todo", parent_issue_id: parent.id });
+  const b = await api.createIssue("Blocked B", { status: "todo", parent_issue_id: parent.id });
+  const c = await api.createIssue("Cancel Cand C", { status: "todo", parent_issue_id: parent.id });
 
   const ctx: Ctx = {
     api,
@@ -153,6 +156,10 @@ async function expectReadablePrerequisite(container: Locator, title: string) {
   expect(bounds.width).toBeGreaterThan(100);
   expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.clientWidth + 1);
   expect(await container.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+}
+
+async function expandDependencyGraph(page: Page) {
+  await page.getByRole("button", { name: "Expand issue groups", exact: true }).click();
 }
 
 async function cleanup(ctx: Ctx) {
@@ -231,7 +238,7 @@ test.describe("Issue dependencies (OL-44)", () => {
       .toEqual([ctx.issueA.id]);
   });
 
-  test("assigning an agent to a blocked issue asks once, and only the explicit override starts it", async ({
+  test("unfinished prerequisites do not gate assignment, while cancelling writes nothing", async ({
     page,
   }) => {
     await enterWorkspace(page, ctx);
@@ -256,11 +263,7 @@ test.describe("Issue dependencies (OL-44)", () => {
     };
     await pickAgent();
     await expect(page.getByText("Confirm assignment?")).toBeVisible();
-    // The blocked panel lists the unfinished prerequisite before any choice.
-    await expect(page.getByText("Prerequisites unfinished")).toBeVisible();
-    await expect(
-      page.getByText(ctx.issueA.identifier, { exact: false }).first(),
-    ).toBeVisible();
+    await expect(page.getByRole("dialog").getByText("Prerequisites unfinished")).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(page.getByText("Confirm assignment?")).not.toBeVisible();
     let queueRows = await sql(
@@ -269,23 +272,22 @@ test.describe("Issue dependencies (OL-44)", () => {
     );
     expect(queueRows).toHaveLength(0);
 
-    // Now the explicit one-shot override.
+    // Normal upstream assignment starts the run without an execution permit.
     await pickAgent();
-    await expect(page.getByText("Prerequisites unfinished")).toBeVisible();
-    await page.getByRole("button", { name: "Assign and start anyway" }).click();
+    await page.getByRole("button", { name: "Confirm assignment", exact: true }).click();
     await expect(page.getByText("Confirm assignment?")).not.toBeVisible();
 
-    // The server committed the assignment AND queued exactly one run carrying
-    // the consumed one-shot admission record (OL-41 §5).
+    // The prerequisite remains unfinished; it does not block upstream dispatch.
     await expect
       .poll(async () => {
         const rows = await sql<{ dependency_admission: unknown }>(
           `SELECT dependency_admission FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2`,
           [ctx.issueB.id, ctx.agentId],
         );
-        return rows.length === 1 && rows[0]!.dependency_admission !== null;
+        return rows.length === 1 && rows[0]!.dependency_admission === null;
       })
       .toBe(true);
+    expect(await getBlockedBy(ctx, ctx.issueB.id)).toEqual([ctx.issueA.id]);
 
     // Cancel-on-confirm for C wrote nothing either: still unassigned, no run.
     const cRes = await fetch(`${API_BASE}/api/issues/${ctx.issueC.id}`, {
@@ -303,7 +305,7 @@ test.describe("Issue dependencies (OL-44)", () => {
     expect(queueRows).toHaveLength(0);
   });
 
-  test("DAG actions edit in place and preserve cancel/one-shot assignment with readable prerequisites", async ({ page }, testInfo) => {
+  test("DAG actions preserve readable dependency editing and normal assignment", async ({ page }, testInfo) => {
     const title = "跨项目依赖需要完整显示：" + "longunbrokenprerequisitetitle".repeat(4);
     await ctx.api.updateIssue(ctx.issueA.id, { title });
     await page.setViewportSize({ width: 1024, height: 768 });
@@ -312,7 +314,7 @@ test.describe("Issue dependencies (OL-44)", () => {
     await page.getByRole("button", { name: "Board", exact: true }).click();
     await page.getByText("Graph", { exact: true }).click();
     await expect(page.locator(".react-flow__node").first()).toBeVisible();
-    await page.getByRole("button", { name: "Expand all", exact: true }).click();
+    await expandDependencyGraph(page);
     const node = page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`);
     await expect(node).toBeVisible();
     await node.click();
@@ -321,6 +323,7 @@ test.describe("Issue dependencies (OL-44)", () => {
     await page.getByRole("button", { name: "Edit prerequisites", exact: true }).click();
     const editor = page.getByRole("dialog", { name: "Edit prerequisites" });
     await expectReadablePrerequisite(editor, title);
+    await testInfo.attach("dag-prerequisite-readability", { body: await editor.screenshot(), contentType: "image/png" });
     await editor.getByRole("button", { name: `Remove prerequisite ${ctx.issueA.identifier}` }).click();
     await page.keyboard.press("Escape");
     expect(await getBlockedBy(ctx, ctx.issueC.id)).toEqual([ctx.issueA.id]);
@@ -344,23 +347,21 @@ test.describe("Issue dependencies (OL-44)", () => {
     };
     await pickAgent();
     const confirmation = page.getByRole("dialog");
-    await expectReadablePrerequisite(confirmation, title);
-    await expect(confirmation.getByText(ctx.issueA.identifier, { exact: true })).toBeVisible();
-    await testInfo.attach("dag-confirmation-readability", { body: await confirmation.screenshot(), contentType: "image/png" });
+    await expect(confirmation.getByRole("button", { name: "Confirm assignment", exact: true })).toBeEnabled();
     await page.keyboard.press("Escape");
     expect(await sql("SELECT assignee_id, revision FROM issue WHERE id = $1", [ctx.issueC.id])).toEqual(before);
     expect(await sql("SELECT id FROM agent_task_queue WHERE issue_id = $1", [ctx.issueC.id])).toHaveLength(0);
     expect(page.url()).toBe(graphUrl);
 
     await pickAgent();
-    await confirmation.getByRole("button", { name: "Assign and start anyway", exact: true }).click();
+    await confirmation.getByRole("button", { name: "Confirm assignment", exact: true }).click();
     await expect(confirmation).not.toBeVisible();
     await expect.poll(async () => {
       const rows = await sql<{ dependency_admission: unknown }>(
         "SELECT dependency_admission FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2",
         [ctx.issueC.id, ctx.agentId],
       );
-      return rows.length === 1 && rows[0]!.dependency_admission !== null;
+      return rows.length === 1 && rows[0]!.dependency_admission === null;
     }).toBe(true);
     expect(page.url()).toBe(graphUrl);
     // Node content must still respond to a real graph refresh.
@@ -394,7 +395,7 @@ test.describe("Issue dependencies (OL-44)", () => {
       }
       await page.goto(`/${ctx.workspaceSlug}/issues?view=${viewIds[2]}`);
       await expect(page.locator(".react-flow__node").first()).toBeVisible();
-      await page.getByRole("button", { name: "Expand all", exact: true }).click();
+      await expandDependencyGraph(page);
       await expect(page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`)).toBeVisible();
       await page.reload();
       await expect(page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`)).toBeVisible();
@@ -420,7 +421,7 @@ test.describe("Issue dependencies (OL-44)", () => {
     await page.goto(`/${ctx.workspaceSlug}/issues`);
     await page.getByRole("button", { name: "Board", exact: true }).click();
     await page.getByText("Graph", { exact: true }).click();
-    await page.getByRole("button", { name: "Expand all", exact: true }).click();
+    await expandDependencyGraph(page);
     await expect(page.locator(".react-flow__edge")).toHaveCount(2);
     await page.evaluate(() => {
       const observer = new MutationObserver((changes) => {
@@ -444,7 +445,11 @@ test.describe("Issue dependencies (OL-44)", () => {
           const path = edge.querySelector<SVGPathElement>(".react-flow__edge-path")!;
           const matrix = path.getScreenCTM()!;
           return [[match[1], "source", sourceSide, 0], [match[2], "target", targetSide, path.getTotalLength()]].every(([id, type, side, length]) => {
-            const handle = document.querySelector(`.react-flow__node[data-id="${id}"] .react-flow__handle.${type}.react-flow__handle-${side}`);
+            // ELK assigns a distinct port to each edge, including edges with
+            // the same source. Comparing every route to the first port hides
+            // a real attachment error and rejects valid multi-port layouts.
+            const handleId = CSS.escape(`${type}:${edge.getAttribute("data-id")}`);
+            const handle = document.querySelector(`.react-flow__node[data-id="${id}"] .react-flow__handle.${type}.react-flow__handle-${side}[data-handleid="${handleId}"]`);
             if (!handle) return false;
             const rect = handle.getBoundingClientRect();
             const point = path.getPointAtLength(Number(length)).matrixTransform(matrix);
@@ -459,7 +464,7 @@ test.describe("Issue dependencies (OL-44)", () => {
     expect(await page.evaluate(() => document.documentElement.dataset.detachedDagEdges)).toBeUndefined();
   });
 
-  test("many inherited prerequisites remain reachable without hiding confirmation actions", async ({ page }, testInfo) => {
+  test("many inherited prerequisites remain readable without gating assignment", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1024, height: 768 });
     await enterWorkspace(page, ctx);
     const parent = await ctx.api.createIssue("Confirmation parent", { status: "todo" });
@@ -480,6 +485,12 @@ test.describe("Issue dependencies (OL-44)", () => {
         await page.goto(`/${ctx.workspaceSlug}/issues/${target.id}`);
         await expect(page.getByText("Properties", { exact: true }).first()).toBeVisible();
         await expect(page.getByText(`Inherited from ${parent.identifier}`, { exact: true })).toHaveCount(active.length);
+        for (const issue of [active[0]!, active.at(-1)!]) {
+          const label = page.getByText(issue.identifier, { exact: true }).first();
+          await label.scrollIntoViewIfNeeded();
+          await expect(label).toBeInViewport({ ratio: 1 });
+        }
+        await testInfo.attach(`inherited-prerequisites-${active.length}`, { body: await page.screenshot(), contentType: "image/png" });
         await page.getByText("Unassigned", { exact: true }).first().click();
         const picker = page.locator('[data-slot="popover-content"]').filter({
           has: page.getByPlaceholder("Assign to..."),
@@ -487,7 +498,7 @@ test.describe("Issue dependencies (OL-44)", () => {
         await picker.getByPlaceholder("Assign to...").fill("E2E Dependency");
         await picker.getByRole("button", { name: /E2E Dependency Agent$/ }).click();
         const dialog = page.getByRole("dialog");
-        const confirm = dialog.getByRole("button", { name: "Assign and start anyway", exact: true });
+        const confirm = dialog.getByRole("button", { name: "Confirm assignment", exact: true });
         await expect(confirm).toBeEnabled();
         const assertActionsFit = async () => {
           for (const element of [dialog, confirm, dialog.getByRole("button", { name: "Don't start yet", exact: true }), dialog.getByRole("button", { name: "Close", exact: true })]) {
@@ -496,33 +507,7 @@ test.describe("Issue dependencies (OL-44)", () => {
           await confirm.click({ trial: true });
         };
         await assertActionsFit();
-        const first = dialog.getByRole("button").filter({ has: page.getByText(active[0]!.identifier, { exact: true }) });
-        const last = dialog.getByRole("button").filter({ has: page.getByText(active.at(-1)!.identifier, { exact: true }) });
-        await expect(first).toBeInViewport({ ratio: 1 });
-        const content = dialog.locator(".overflow-y-auto");
-        await content.hover();
-        await page.mouse.wheel(0, 2000);
-        await expect(last).toBeInViewport({ ratio: 1 });
-        await assertActionsFit();
-        // Keyboard focus must also scroll both ends into view, without a write.
-        await dialog.getByRole("button", { name: "Close", exact: true }).focus();
-        await page.keyboard.press("Tab");
-        await expect(first).toBeFocused();
-        await expect(first).toBeInViewport({ ratio: 1 });
-        await dialog.getByRole("button", { name: "Don't start yet", exact: true }).focus();
-        await page.keyboard.press("Shift+Tab");
-        await expect(last).toBeFocused();
-        await expect(last).toBeInViewport({ ratio: 1 });
-        await assertActionsFit();
-        await testInfo.attach(`many-prerequisites-${active.length}-bounds`, {
-          body: Buffer.from(JSON.stringify(await dialog.evaluate((el) => ({
-            dialog: el.getBoundingClientRect().toJSON(),
-            content: el.querySelector(".overflow-y-auto")!.getBoundingClientRect().toJSON(),
-            buttons: Array.from(el.querySelectorAll("[data-slot=dialog-footer] button")).map((button) => button.getBoundingClientRect().toJSON()),
-          })))),
-          contentType: "application/json",
-        });
-        await testInfo.attach(`many-prerequisites-${active.length}`, { body: await page.screenshot(), contentType: "image/png" });
+        await expect(dialog.getByText("Prerequisites unfinished")).toHaveCount(0);
         const before = await sql("SELECT assignee_id, revision FROM issue WHERE id = $1", [target.id]);
         if (long) {
           await confirm.click();

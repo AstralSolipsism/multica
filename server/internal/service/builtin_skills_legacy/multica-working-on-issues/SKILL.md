@@ -8,17 +8,18 @@ allowed-tools: Bash(multica *)
 # Moved into `multica-platform`
 
 Multica's platform contracts are now one skill. Everything this skill used to
-carry — PR linking vs close intent, reading a linked PR's real state, custom
+carry — PR linking and merge status, reading a linked PR's real state, custom
 properties, status side effects, sub-issues and stages, and finding who else is
 running — lives in:
 
 ```text
 multica-platform  →  references/issues.md
+                 →  references/pull-requests.md
 ```
 
-Load the `multica-platform` skill and open that file. Its routing table also
-names the reference for every other platform domain: mentions, agents, squads,
-autopilots, projects, runtimes, and skill import.
+Load the `multica-platform` skill and open the relevant reference(s). Its routing
+table also names the reference for every other platform domain: mentions, agents,
+squads, autopilots, projects, runtimes, and skill import.
 
 The contracts were reorganized, not shortened — with one exception. The issue
 `metadata` guidance was retired (MUL-6966), so a brief that sends you here for
