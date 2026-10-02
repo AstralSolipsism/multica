@@ -77,6 +77,50 @@ and `/issue`. It checks denied writes (session/input/run/issue), permitted
 execution identity and duplicate redelivery. Existing conversation grant,
 retry, revocation, delivery and provider tests also ran.
 
+## Review corrections: wakeup consent and private denial notices
+
+Commit `a93435936` closes the two merge-blocking findings. The external root is
+now recorded on the wakeup itself by the additive
+`564_wakeup_conversation_root` migration. `trigger_owner` tasks inherit that
+root, so source-task retention and a human disable/enable do not detach existing
+instructions from the grant that authorized them. The migration backfills
+existing wakeups and their already-created descendants, preserves recorded roots
+on replay, and denies ambiguous historical rules whose source was already lost.
+A human can explicitly replace such a rule with fresh instructions; merely
+enabling it does not establish new consent.
+
+Dispatch, claim and joined-wakeup handling reuse `channel.AuthorizeConversationTask`
+to check the frozen grant against current installation consent, membership and
+invocation rights. Joining also requires the same conversation root and execution
+principal. A queued ordinary run cannot absorb external instructions or indefinitely
+defer the external rule. In-place instruction edits and manual triggers from an
+external task cannot modify a rule with a different root. Old joined instructions
+are checked again even when another transaction holds the rule lock. Claimed
+external descendants receive the external-input trust instructions; an issue
+wakeup does not acquire an unsolicited Feishu delivery route.
+
+The Feishu replier now handles `invoke_denied` by sending a generic Chinese
+permission notice privately to the denied sender's `open_id`, for both private
+and group input. It includes no agent name and creates no binding token. If the
+sender is missing or the private send fails, it logs the failure without sending
+anything to the group or original thread. Live Feishu reachability remains an
+integration check; transport tests cover the HTTP address and failure behavior.
+
+The added regressions cover revoked/replaced grants, removed grantors, lost target
+invocation rights, missing roots, ordinary versus same-root joins, stale joins
+under contention, source-history deletion, rule management and claim payloads.
+Migration tests execute the production runner through upgrade, lost-ledger replay,
+and the documented lossy down/up. The managed test database upgraded to **632**
+full migration stems; the 631-stem rehearsal below records the original upstream
+merge before this correction.
+
+Validation at `a93435936`: `make build` passed; a second `make sqlc` produced no
+generated-file changes; `tini -s -- bash scripts/test-go.sh --race --only regular`
+passed all regular packages, including handler, service, channel engine, Lark,
+migrations and message delivery. It used the same isolated test-child environment
+described below. The new service regressions also passed two consecutive runs.
+No frontend or agent-package implementation changed in this correction.
+
 ## Migration results
 
 All 618 historical up-migration identities remain. The merge adds the 13
@@ -243,8 +287,18 @@ They report unsupported process-group retention (`invalid argument`) and its
 cleanup consequences on this Linux 5.15 host. This is the previously recorded
 Cursor `PIDFD_SIGNAL_PROCESS_GROUP` limitation in the prior sync report; the
 relevant tests and implementation are unchanged from the Fork base. No
-production safety fallback or test exclusion was added. A compatible kernel
-is required to close this verification gap.
+production safety fallback or test exclusion was added. The subsequently
+completed [backend-agent-tests CI job](https://github.com/AstralSolipsism/multica/actions/runs/36954862210/job/110675534025)
+passed at the prior PR head `a0d914f2b`, so the failure above is a local-host
+limitation, not a failure in that CI environment. It is not a CI result for the
+new correction commit.
+
+That same prior CI run's backend job failed at
+`TestRereviewStaleIssueScanCrossesPassBudget`: it visited 28,400 of the 40,000
+nonterminal candidates before its two time-bounded passes ended. The complete
+regular suite at `a93435936`, including this test, passed locally. This correction
+does not change the scanner or that timing-sensitive test. The latest PR checks
+remain authoritative; no external CI run was awaited.
 
 Not run: browser E2E, live Feishu delivery, real agent smoke, native device or
 desktop package execution, production-sized migrations/search load, production
