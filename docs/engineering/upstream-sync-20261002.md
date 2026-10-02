@@ -324,6 +324,40 @@ logic did not change in this correction; the agent host limitation below remains
 and this round reran locale parity rather than the full frontend/mobile suites.
 No external CI run was awaited; current checks are reported on the PR.
 
+The completed [backend CI at `e2e3240b1`](https://github.com/AstralSolipsism/multica/actions/runs/36982816550/job/110761084481)
+failed only in `TestReviewOL27_OverlappingRoutesPreferMatch/comment`, with no
+delivery row after one source scan. The `backend` aggregate failed as a result;
+the other 15 executed jobs in that workflow passed, including agent tests.
+Two optional jobs were skipped, and Mobile Verify also passed.
+
+The service scanner fixtures clear the global `labrastro_message_scan_cursor`
+table, while the message-delivery suite reads, resets and advances the same
+cursors. Running those package binaries concurrently can invalidate the other
+fixture's first scan. Repeating their relevant tests 50 times in parallel
+reproduced 11 failures with the same missing-row assertion; the same tests each
+passed 50 repetitions with package parallelism set to one:
+
+```bash
+go -C server test -race ./internal/service ./internal/messagedelivery \
+  -run '^(TestV1ReviewScanner|TestReviewOL27_OverlappingRoutesPreferMatch)' -count=50
+go -C server test -race -p 1 ./internal/service ./internal/messagedelivery \
+  -run '^(TestV1ReviewScanner|TestReviewOL27_OverlappingRoutesPreferMatch)' -count=50
+```
+
+Commit `1043eb579` makes `scripts/test-go.sh` run message-delivery after the
+other regular packages, retaining their normal parallelism and the existing
+agent group. The script contract verifies package selection and ordering, and
+injects a message-delivery failure to confirm a nonzero exit stops subsequent
+groups. The runtime code and product assertions are unchanged. Use this runner
+for the combined suites; a raw parallel `go test ./...` against one shared
+database still violates the fixtures' isolation requirement.
+
+Validation at `1043eb579`: `bash scripts/test-go.test.sh` passed, followed by the
+complete regular race runner with `GOFLAGS='-p=4 -count=1'`. All **71** tested
+packages executed without test-result caching and passed, including the full
+message-delivery suite in its separate final phase. Whitespace checks passed.
+No application code changed, so builds and sqlc generation were not repeated.
+
 The initial v0.6.1 integration was checked as follows. These frontend/mobile
 results precede option B.
 
@@ -371,8 +405,8 @@ cleanup consequences on this Linux 5.15 host. This is the previously recorded
 Cursor `PIDFD_SIGNAL_PROCESS_GROUP` limitation in the prior sync report; the
 relevant tests and implementation are unchanged from the Fork base. No
 production safety fallback or test exclusion was added. The subsequently
-completed [backend-agent-tests CI job](https://github.com/AstralSolipsism/multica/actions/runs/36954862210/job/110675534025)
-passed at the prior PR head `a0d914f2b`, so the failure above is a local-host
+completed [backend-agent-tests CI job](https://github.com/AstralSolipsism/multica/actions/runs/36982816550/job/110761084567)
+passed at the option B PR head `e2e3240b1`, so the failure above is a local-host
 limitation, not a failure in that CI environment. It is not a CI result for the
 new correction commit.
 
