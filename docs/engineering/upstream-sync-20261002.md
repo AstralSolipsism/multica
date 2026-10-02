@@ -181,10 +181,17 @@ to external channels.
 
 Do not describe these downs as lossless:
 
-- `551_pr_merge_status` removes the selected PR-merge status setting.
+- `551_pr_merge_status` removes the selected PR-merge status setting. Its up
+  migration also writes the legacy `pr_auto_complete_enabled=false` setting
+  in affected workspaces; down does not restore the previous value.
 - `555_wakeup_system_rule` removes system wakeups and their receipts.
 - `557_wakeup_conditions` drops condition, fire-limit/count and pause data.
 - `558_issue_child_event` removes the child-event history/queue.
+- `564_wakeup_conversation_root` drops the durable consent reference on wakeup
+  rules. Existing task roots remain, but a later re-upgrade cannot reconstruct a
+  rule's original consent if its source task has already been deleted. It then
+  denies the rule rather than treating it as first-party. Recover with a matching
+  database snapshot and binary instead of relying on this down/up sequence.
 
 ## Verification commands and limits
 

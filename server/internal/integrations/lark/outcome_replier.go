@@ -53,7 +53,7 @@ type noopReplier struct {
 
 func (n *noopReplier) Reply(ctx context.Context, inst Installation, msg InboundMessage, res DispatchResult) {
 	switch res.Outcome {
-	case OutcomeNeedsBinding, OutcomeAgentOffline, OutcomeAgentArchived, OutcomeFreshPending, OutcomeChatStarted, OutcomeIssueUsage:
+	case OutcomeNeedsBinding, OutcomeInvokeDenied, OutcomeAgentOffline, OutcomeAgentArchived, OutcomeFreshPending, OutcomeChatStarted, OutcomeIssueUsage:
 		n.log.Warn("lark outcome replier: outbound reply skipped (replier not wired)",
 			"outcome", string(res.Outcome),
 			"installation_id", uuidString(inst.ID),
@@ -171,6 +171,11 @@ func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst Installation, msg I
 				"err", err.Error(),
 			)
 		}
+	case OutcomeInvokeDenied:
+		if err := r.sendInvokeDenied(ctx, inst, res.SenderOpenID); err != nil {
+			r.log.Warn("lark outcome replier: private invocation refusal failed",
+				"installation_id", uuidString(inst.ID), "err", err)
+		}
 	case OutcomeAgentOffline:
 		if err := r.sendChatNotice(ctx, inst, msg, agentOfflineCopy); err != nil {
 			r.log.Warn("lark outcome replier: offline notice failed",
@@ -229,6 +234,23 @@ func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst Installation, msg I
 	case OutcomeDropped:
 		// OutcomeDropped is informational; no user-visible reply.
 	}
+}
+
+// Refusals go only to the denied sender, including for group/topic messages.
+// There is deliberately no group fallback if the app cannot privately reach
+// that person. Do not disclose a private agent's name or mint a binding token.
+func (r *LarkOutcomeReplier) sendInvokeDenied(ctx context.Context, inst Installation, sender OpenID) error {
+	if sender == "" {
+		return errors.New("missing sender open_id")
+	}
+	creds, err := r.installationCredentials(inst)
+	if err != nil {
+		return err
+	}
+	_, err = r.client.SendTextMessage(ctx, SendTextParams{
+		InstallationID: creds, OpenID: sender, Text: invokeDeniedCopy,
+	})
+	return err
 }
 
 func (r *LarkOutcomeReplier) sendBindingPrompt(ctx context.Context, inst Installation, msg InboundMessage, res DispatchResult) error {
@@ -443,6 +465,7 @@ func renderNoticeCard(header, body string) (string, error) {
 // match the §4.6 design: an offline agent will run when the daemon
 // comes back; an archived agent needs operator action.
 const (
+	invokeDeniedCopy             = "你没有权限运行这个智能体。如需使用，请联系它的所有者开通调用权限。"
 	agentOfflineCopy             = "Agent 当前离线，消息已记录。下次 daemon 上线后会自动继续处理。"
 	agentArchivedCopy            = "这个 Agent 已被归档，无法继续处理消息。请联系工作区管理员恢复或重新绑定。"
 	freshPendingCopy             = "✅ 已准备从空上下文运行。你的下一条聊天消息仍会进入当前对话，但不会带上之前的上下文。"

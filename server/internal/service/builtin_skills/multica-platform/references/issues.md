@@ -364,7 +364,11 @@ live agent invocation rights. The external speaker's name and channel ID are
 source evidence, not workspace membership. Preserve that provenance in issues
 and comments; do not attribute the speaker's approval to a platform member.
 A bound member uses their own invocation rights and cannot borrow the
-conversation grant. Revoking or replacing consent invalidates its old runs.
+conversation grant. Wakeups created by an external conversation retain its
+consent root, including after source-task cleanup or disable/enable. They can
+join only runs with the same root and execution principal. Dispatch and claim
+recheck the live grant; revoking or replacing consent blocks subsequent work,
+but cannot undo actions a run has already performed.
 
 ## Charts and files in a comment
 

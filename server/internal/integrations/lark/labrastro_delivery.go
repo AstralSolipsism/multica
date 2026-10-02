@@ -20,9 +20,8 @@ import (
 // simply does not implement DeliveryAPIClient, so a deployment without the
 // real transport reports deliveries as unavailable instead of pretending.
 //
-// Why a dedicated method instead of SendTextMessage: that path is pinned to
-// receive_id_type=chat_id, while delivery targets need member DMs addressed
-// by open_id AND topic anchors routed through the reply endpoint, and every
+// Why a dedicated method instead of SendTextMessage: proactive delivery needs
+// several message types, member DMs and topic anchors, and every
 // send must carry the delivery's FIXED idempotency UUID so a retry after an
 // unclear outcome cannot duplicate the message.
 

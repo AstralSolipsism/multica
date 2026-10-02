@@ -55,7 +55,7 @@ func lockManagedWakeup(ctx context.Context, tx pgx.Tx, q *db.Queries, issueID, i
 // a queued run and re-checks the creator's permission to invoke the agent. A
 // rule someone turned off, or one the platform stopped for a loop or burst,
 // must be turned on first.
-func (s *IssueWakeupService) Trigger(ctx context.Context, issueID, id, member pgtype.UUID) error {
+func (s *IssueWakeupService) Trigger(ctx context.Context, issueID, id, member, source pgtype.UUID) error {
 	tx, err := s.Tasks.TxStarter.Begin(ctx)
 	if err != nil {
 		return err
@@ -64,6 +64,9 @@ func (s *IssueWakeupService) Trigger(ctx context.Context, issueID, id, member pg
 	q := s.Tasks.Queries.WithTx(tx)
 	issue, w, err := lockManagedWakeup(ctx, tx, q, issueID, id, member)
 	if err != nil {
+		return err
+	}
+	if err := s.authorizeWakeupMutation(ctx, q, w, source); err != nil {
 		return err
 	}
 	active, err := wakeupIssueActive(ctx, q, issue)
@@ -81,6 +84,9 @@ func (s *IssueWakeupService) Trigger(ctx context.Context, issueID, id, member pg
 		return ErrWakeupForbidden
 	}
 	if err = s.authorize(ctx, q, w.WorkspaceID, member, agent); err != nil {
+		return err
+	}
+	if err = s.authorizeWakeup(ctx, q, w, agent); err != nil {
 		return err
 	}
 	var now time.Time
