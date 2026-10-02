@@ -221,7 +221,10 @@ func TestWorkspaceWakeupsListSourcesSystemRulesAndPaused(t *testing.T) {
 
 func TestIssueWakeupManagementEndpoints(t *testing.T) {
 	issue := dbfx.Issue(t, "wakeup management")
-	agent := dbfx.Agent(t, "management target", testRuntimeID)
+	// Immediate dispatch has a short runtime-lock budget. This endpoint test
+	// must not contend with unrelated fixtures sharing the suite's runtime.
+	runtime := dbfx.Runtime(t, "wakeup management runtime")
+	agent := dbfx.Agent(t, "management target", runtime)
 	dbfx.Cleanup(t, "DELETE FROM issue_wakeup_receipt WHERE wakeup_id IN (SELECT id FROM issue_wakeup WHERE issue_id=$1)", issue)
 	dbfx.Cleanup(t, "DELETE FROM issue_wakeup WHERE issue_id=$1", issue)
 	dbfx.Cleanup(t, "DELETE FROM activity_log WHERE issue_id=$1", issue)
