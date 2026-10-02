@@ -947,7 +947,7 @@
     "conversation_description": "People in these conversations can talk to this agent without a Labrastro account. The agent clarifies and summarizes feedback, then posts comments in its own name. This takes time and model usage; messages are not copied verbatim into tasks.",
     "conversation_groups": "Group chat IDs (one oc_ ID per line; topics remain separate)",
     "conversation_directs": "Direct chat IDs (one oc_ ID per line)",
-    "conversation_scope": "Authorization covers this agent’s normal tools in the entire current workspace, under your invocation rights. Everyone in these conversations may provide input. Saving starts a new conversation scope and invalidates old runs. Notification delivery consent is managed separately.",
+    "conversation_scope": "Only collaboration content, issue creation and updates, comments, and attachments in this workspace are available, under your invocation rights. Everyone in these conversations may provide input. Wakeups, automation, credentials, and administrative settings are excluded. Saving invalidates old runs.",
     "conversation_save": "Authorize conversations",
     "conversation_revoke": "Revoke conversations",
     "conversation_unavailable": "Configuration is unavailable or refreshing. Your draft is preserved; refresh before saving.",
@@ -1025,7 +1025,7 @@
       "show_user_id": "Show full user ID",
       "hide_user_id": "Hide full user ID",
       "confirm_selected": "Authorize selected ({{count}})",
-      "confirm_scope": "Authorizing adds the selected conversations to the current grant — existing groups and direct chats stay authorized. It covers this agent's normal tools across the whole workspace, under your invocation rights.",
+      "confirm_scope": "Selected conversations are added to the current grant; existing groups and direct chats remain authorized. Access is limited to issue collaboration in this workspace, under your invocation rights. Wakeups, automation, credentials, and administrative settings are excluded.",
       "confirmed": "Authorization saved. The agent now answers new messages in these conversations; earlier messages are not replayed.",
       "error": {
         "forbidden": "Viewing and authorizing private chats requires the bot's agent owner or a workspace admin.",

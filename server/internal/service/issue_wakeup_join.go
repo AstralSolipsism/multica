@@ -124,11 +124,11 @@ func acknowledgedBySelf(ctx context.Context, q *db.Queries, w db.IssueWakeup, ag
 
 // hasWaitingRun reports whether a run of the agent that runs as this person
 // is waiting to start on the issue. A firing then keeps its inputs for it.
-func hasWaitingRun(ctx context.Context, q *db.Queries, issueID, agentID, runAs, conversationRoot pgtype.UUID) (bool, error) {
+func hasWaitingRun(ctx context.Context, q *db.Queries, issueID, agentID, runAs pgtype.UUID) (bool, error) {
 	if !runAs.Valid {
 		return false, nil
 	}
-	_, err := q.FindWaitingIssueRun(ctx, db.FindWaitingIssueRunParams{IssueID: issueID, AgentID: agentID, OriginatorUserID: runAs, ConversationRootTaskID: conversationRoot})
+	_, err := q.FindWaitingIssueRun(ctx, db.FindWaitingIssueRunParams{IssueID: issueID, AgentID: agentID, OriginatorUserID: runAs})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -170,8 +170,7 @@ type joinedWakeup struct {
 // reserved for the run, not consumed (see takenReceipts). What an earlier
 // claim of the same run reserved is checked again, so a rule turned off,
 // changed or no longer allowed since then drops out and gets its inputs back.
-// A rule another writer holds keeps what it had only if its authority still
-// permits joining this run.
+// A rule another writer holds keeps what it had.
 func (s *IssueWakeupService) JoinWaitingWakeups(ctx context.Context, task db.AgentTaskQueue) ([]byte, error) {
 	if !task.IssueID.Valid || !task.OriginatorUserID.Valid || task.Status != "dispatched" {
 		return task.Context, nil
@@ -224,20 +223,11 @@ func (s *IssueWakeupService) JoinWaitingWakeups(ctx context.Context, task db.Age
 		prev, had := previous[id]
 		w, err := q.TryLockIssueWakeup(ctx, id)
 		if errors.Is(err, pgx.ErrNoRows) {
-			// A busy row may keep its reservation, but it must not bypass live
-			// consent checks or retain a pre-upgrade cross-authority join.
-			w, err = q.LocklessWakeup(ctx, id)
-			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			// Busy: keep what an earlier claim reserved. Deleted: nothing left.
+			if _, err = q.LocklessWakeup(ctx, id); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return task.Context, err
 			}
-			allowed := false
-			if had && err == nil && active && !w.DisabledAt.Valid && w.IssueID == task.IssueID && w.Revision == prev.Revision {
-				_, allowed, err = s.mayJoin(ctx, q, issue, task, w)
-				if err != nil {
-					return task.Context, err
-				}
-			}
-			if allowed {
+			if had && err == nil {
 				joined = append(joined, prev)
 			} else if had {
 				changed = true
@@ -361,11 +351,6 @@ func (s *IssueWakeupService) reserveForRun(ctx context.Context, q *db.Queries, i
 // same agent, run as the same person, who may still use the agent. It returns
 // the instruction the run gets.
 func (s *IssueWakeupService) mayJoin(ctx context.Context, q *db.Queries, issue db.Issue, task db.AgentTaskQueue, w db.IssueWakeup) (string, bool, error) {
-	// The same human can own both private work and several external grants.
-	// Instructions may join only a run governed by the very same grant root.
-	if w.ConversationRootTaskID != task.ConversationRootTaskID {
-		return "", false, nil
-	}
 	agent, err := q.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: task.AgentID, WorkspaceID: w.WorkspaceID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, nil
@@ -377,7 +362,7 @@ func (s *IssueWakeupService) mayJoin(ctx context.Context, q *db.Queries, issue d
 		if w.AgentID != task.AgentID || w.CreatedBy != task.OriginatorUserID || (w.Mode == "once" && w.LastTaskID.Valid) {
 			return "", false, nil
 		}
-		if err := s.authorizeWakeup(ctx, q, w, agent); err != nil {
+		if err := s.authorize(ctx, q, w.WorkspaceID, w.CreatedBy, agent); err != nil {
 			if errors.Is(err, ErrWakeupForbidden) {
 				err = nil
 			}

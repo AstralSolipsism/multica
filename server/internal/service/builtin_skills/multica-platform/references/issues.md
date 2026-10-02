@@ -364,18 +364,14 @@ live agent invocation rights. The external speaker's name and channel ID are
 source evidence, not workspace membership. Preserve that provenance in issues
 and comments; do not attribute the speaker's approval to a platform member.
 A bound member uses their own invocation rights and cannot borrow the
-conversation grant. Wakeups created by an external conversation retain its
-consent root, including after source-task cleanup or disable/enable. They can
-join only runs with the same root and execution principal. Dispatch and claim
-recheck the live grant; revoking or replacing consent blocks subsequent work,
-but cannot undo actions a run has already performed.
+conversation grant. Revoking or replacing consent invalidates its old runs.
 
-External conversation tasks, including their descendants, cannot create, edit,
-run or manage Autopilots, their triggers, collaborators or delivery rules. The
-API returns `403 autopilot_external_conversation_forbidden`; reading details
-does not reveal webhook credentials. Ask a workspace member to configure or run
-the automation directly. Autopilots do not retain external conversation consent,
-so an active conversation grant does not authorize these durable operations.
+External conversations and their descendants use a restricted platform API:
+read collaboration content, create or update issues, and work with comments and
+attachments. All other endpoints are denied by default, including wakeups,
+Autopilots, credentials, membership, integrations and configuration. A read
+request does not bypass this restriction. Ask a workspace member to perform
+administrative or automation work directly; do not try another identity or API.
 
 ## Charts and files in a comment
 

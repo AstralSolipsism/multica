@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
@@ -39,7 +38,7 @@ func TestIssueWakeupInstructionPreservesStateAndPendingEvents(t *testing.T) {
 				t.Fatal(err)
 			}
 			in := WakeupInstructionInput{Instruction: "new instructions", ExpectedInstruction: w.Instruction, Revision: w.Revision}
-			if err = s.EditInstruction(ctx, issue, w.ID, owner, pgtype.UUID{}, in); err != nil {
+			if err = s.EditInstruction(ctx, issue, w.ID, owner, in); err != nil {
 				t.Fatal(err)
 			}
 			after, err := s.Tasks.Queries.LocklessWakeup(ctx, w.ID)
@@ -52,7 +51,7 @@ func TestIssueWakeupInstructionPreservesStateAndPendingEvents(t *testing.T) {
 			if !reflect.DeepEqual(before, normalized) {
 				t.Fatalf("editing altered subscription: before=%+v after=%+v", before, after)
 			}
-			if err = s.EditInstruction(ctx, issue, w.ID, owner, pgtype.UUID{}, in); !errors.Is(err, ErrWakeupConflict) {
+			if err = s.EditInstruction(ctx, issue, w.ID, owner, in); !errors.Is(err, ErrWakeupConflict) {
 				t.Fatalf("stale edit: %v", err)
 			}
 			if kind == "event" {
@@ -70,7 +69,7 @@ func TestIssueWakeupInstructionPreservesStateAndPendingEvents(t *testing.T) {
 			}
 			in.ExpectedInstruction = in.Instruction
 			in.Instruction = "saved while off"
-			if err = s.EditInstruction(ctx, issue, w.ID, owner, pgtype.UUID{}, in); err != nil {
+			if err = s.EditInstruction(ctx, issue, w.ID, owner, in); err != nil {
 				t.Fatal(err)
 			}
 			off, err := s.Tasks.Queries.LocklessWakeup(ctx, w.ID)
@@ -92,7 +91,7 @@ func TestIssueWakeupInstructionPreservesQueuedRunAndChecksScope(t *testing.T) {
 	f.Exec(t, "UPDATE issue_wakeup SET next_fire_at=now()-interval '1 second' WHERE id=$1", w.ID)
 	wakeDispatch(t, s, w)
 	in := WakeupInstructionInput{Instruction: "future instruction", ExpectedInstruction: w.Instruction, Revision: w.Revision}
-	if err := s.EditInstruction(ctx, issue, w.ID, owner, pgtype.UUID{}, in); err != nil {
+	if err := s.EditInstruction(ctx, issue, w.ID, owner, in); err != nil {
 		t.Fatal(err)
 	}
 	var note string
@@ -111,33 +110,33 @@ func TestIssueWakeupInstructionPreservesQueuedRunAndChecksScope(t *testing.T) {
 	}
 	in.ExpectedInstruction = in.Instruction
 	other := f.Issue(t, "other issue")
-	if err = s.EditInstruction(ctx, parseTestUUID(t, other), w.ID, owner, pgtype.UUID{}, in); !errors.Is(err, pgx.ErrNoRows) {
+	if err = s.EditInstruction(ctx, parseTestUUID(t, other), w.ID, owner, in); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("cross issue: %v", err)
 	}
 	outsider := f.User(t, "outsider", "edit-outsider@multica.test")
-	if err = s.EditInstruction(ctx, issue, w.ID, parseTestUUID(t, outsider), pgtype.UUID{}, in); !errors.Is(err, ErrWakeupForbidden) {
+	if err = s.EditInstruction(ctx, issue, w.ID, parseTestUUID(t, outsider), in); !errors.Is(err, ErrWakeupForbidden) {
 		t.Fatalf("outsider: %v", err)
 	}
 	f.Member(t, f.WorkspaceID, outsider, "member")
-	if err = s.EditInstruction(ctx, issue, w.ID, parseTestUUID(t, outsider), pgtype.UUID{}, in); !errors.Is(err, ErrWakeupForbidden) {
+	if err = s.EditInstruction(ctx, issue, w.ID, parseTestUUID(t, outsider), in); !errors.Is(err, ErrWakeupForbidden) {
 		t.Fatalf("other member: %v", err)
 	}
 	for _, value := range []string{" ", strings.Repeat("中", 4001)} {
 		in.Instruction = value
-		if err = s.EditInstruction(ctx, issue, w.ID, owner, pgtype.UUID{}, in); !errors.Is(err, ErrWakeupInput) {
+		if err = s.EditInstruction(ctx, issue, w.ID, owner, in); !errors.Is(err, ErrWakeupInput) {
 			t.Fatalf("invalid text accepted: %v", err)
 		}
 	}
 	// A revision change fences edits even when the old prompt remains the same.
 	in.Instruction = "valid"
 	in.Revision++
-	if err = s.EditInstruction(ctx, issue, w.ID, owner, pgtype.UUID{}, in); !errors.Is(err, ErrWakeupConflict) {
+	if err = s.EditInstruction(ctx, issue, w.ID, owner, in); !errors.Is(err, ErrWakeupConflict) {
 		t.Fatalf("stale revision: %v", err)
 	}
 	// Editing requires current invoke rights; it cannot borrow the rule owner's rights.
 	f.Exec(t, "UPDATE agent SET archived_at=$2 WHERE id=$1", agent, time.Now())
 	in.Revision = w.Revision
-	if err = s.EditInstruction(ctx, issue, w.ID, owner, pgtype.UUID{}, in); !errors.Is(err, ErrWakeupForbidden) {
+	if err = s.EditInstruction(ctx, issue, w.ID, owner, in); !errors.Is(err, ErrWakeupForbidden) {
 		t.Fatalf("archived target: %v", err)
 	}
 }

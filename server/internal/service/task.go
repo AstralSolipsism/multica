@@ -503,6 +503,14 @@ func (s *TaskService) resolveOriginatorForIssueTask(ctx context.Context, issue d
 // authorization is unaffected. agentAuthoredSource labels the agent-authored
 // trigger comment case (see attributionFromTriggerComment).
 func (s *TaskService) attributionForIssueTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, agentAuthoredSource attribution.Source, actorUserID pgtype.UUID) attribution.Result {
+	// An authenticated external assign/promote is a delegation, even when the
+	// existing issue belongs to a member. Comment dispatch already has its own
+	// persisted source-task evidence. Never turn either into the creator's grant.
+	if parent, ok := channel.ConversationTaskFromContext(ctx); ok && !triggerCommentID.Valid {
+		return attribution.Result{UserID: parent.OriginatorUserID, AccountableUserID: parent.OriginatorUserID,
+			Source: attribution.SourceDelegation, DelegatedFromTaskID: parent.ID,
+			EvidenceKind: attribution.EvidenceIssueAssignment, EvidenceRefID: issue.ID}
+	}
 	// A direct member action is the accountable human AND originator, ahead of any
 	// trigger comment, origin, or rule (MUL-4302 §4/§5). This covers assign/promote,
 	// a manual autopilot trigger, and a manual rerun — the last of which may INHERIT

@@ -323,7 +323,7 @@ func (h *Handler) EditIssueWakeupInstruction(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	svc := service.IssueWakeupService{Tasks: h.TaskService}
-	if err := svc.EditInstruction(r.Context(), issue.ID, id, parseUUID(originator), h.wakeupSourceTaskID(r), in); err != nil {
+	if err := svc.EditInstruction(r.Context(), issue.ID, id, parseUUID(originator), in); err != nil {
 		wakeupError(w, err)
 		return
 	}
@@ -357,7 +357,7 @@ func (h *Handler) TriggerIssueWakeup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	svc := service.IssueWakeupService{Tasks: h.TaskService}
-	if err := svc.Trigger(r.Context(), issue.ID, id, member, h.wakeupSourceTaskID(r)); err != nil {
+	if err := svc.Trigger(r.Context(), issue.ID, id, member); err != nil {
 		wakeupError(w, err)
 		return
 	}

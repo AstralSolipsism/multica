@@ -620,7 +620,7 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	if err != nil {
 		return err
 	}
-	waiting, err := hasWaitingRun(ctx, q, issue.ID, agent.ID, attr.UserID, pgtype.UUID{})
+	waiting, err := hasWaitingRun(ctx, q, issue.ID, agent.ID, attr.UserID)
 	if err != nil {
 		return err
 	}

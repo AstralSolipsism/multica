@@ -76,14 +76,14 @@ func (f *conversationFixture) comment(t *testing.T, token, body, parent string) 
 	raw, _ := json.Marshal(map[string]any{"content": body, "parent_id": nullableConversationParent(parent)})
 	req := httptest.NewRequest(http.MethodPost, "/api/issues/"+f.issue+"/comments", strings.NewReader(string(raw)))
 	req.Header.Set("Authorization", "Bearer "+token)
-	rc := chi.NewRouteContext()
-	rc.URLParams.Add("id", f.issue)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rc))
+	router := chi.NewRouter()
+	router.Use(middleware.Auth(f.h.Queries, nil, nil, nil))
+	router.Post("/api/issues/{id}/comments", f.h.CreateComment)
 	var response struct {
 		ID              string                  `json:"id"`
 		TriggerOutcomes []CommentTriggerOutcome `json:"trigger_outcomes"`
 	}
-	testutil.Call(t, middleware.Auth(f.h.Queries, nil, nil, nil)(http.HandlerFunc(f.h.CreateComment)).ServeHTTP, req).Want(http.StatusCreated).JSON(&response)
+	testutil.Call(t, router.ServeHTTP, req).Want(http.StatusCreated).JSON(&response)
 	t.Logf("comment trigger outcomes: %+v", response.TriggerOutcomes)
 	return response.ID
 }
