@@ -821,7 +821,9 @@
     "tool_kind_write": "編集",
     "tool_kind_read": "読み取り",
     "tool_kind_misc": "その他",
-    "antigravity_live_unavailable": "Antigravity は現在、リアルタイム実行イベントを提供していません。実行完了後に実行記録を確認できます。"
+    "antigravity_live_unavailable": "Antigravity は現在、リアルタイム実行イベントを提供していません。実行完了後に実行記録を確認できます。",
+    "trigger_text": "トリガー",
+    "trigger_wakeup": "起動"
   },
   "task_failure": {
     "cancelled_by_system": "システムによってキャンセルされました",

@@ -382,7 +382,10 @@ func (c *httpAPIClient) SendInteractiveCard(ctx context.Context, p SendCardParam
 // content envelope Lark expects is a JSON-encoded `{"text": "..."}`
 // blob; we encode it here so callers pass raw text.
 func (c *httpAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (string, error) {
-	if p.ChatID == "" {
+	if p.OpenID != "" && (p.ChatID != "" || p.ReplyTarget.IsSet()) {
+		return "", errors.New("lark http client: private text cannot have a chat or reply target")
+	}
+	if p.ChatID == "" && p.OpenID == "" {
 		return "", errors.New("lark http client: missing chat_id")
 	}
 	if p.Text == "" {
@@ -396,6 +399,10 @@ func (c *httpAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 		return "", fmt.Errorf("lark http client: encode text content: %w", err)
 	}
 	path, body := outboundMessageRequest(p.ChatID, "text", string(contentBytes), p.ReplyTarget)
+	if p.OpenID != "" {
+		path = "/open-apis/im/v1/messages?receive_id_type=open_id"
+		body["receive_id"] = string(p.OpenID)
+	}
 	var resp struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`

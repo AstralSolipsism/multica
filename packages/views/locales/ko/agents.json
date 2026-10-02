@@ -829,7 +829,9 @@
     "tool_kind_write": "편집",
     "tool_kind_read": "읽기",
     "tool_kind_misc": "기타",
-    "antigravity_live_unavailable": "Antigravity는 현재 실시간 실행 이벤트를 제공하지 않습니다. 실행이 완료되면 실행 기록을 확인할 수 있습니다."
+    "antigravity_live_unavailable": "Antigravity는 현재 실시간 실행 이벤트를 제공하지 않습니다. 실행이 완료되면 실행 기록을 확인할 수 있습니다.",
+    "trigger_text": "트리거",
+    "trigger_wakeup": "깨우기"
   },
   "task_failure": {
     "cancelled_by_system": "시스템에서 취소함",

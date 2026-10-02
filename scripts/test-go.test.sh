@@ -29,11 +29,19 @@ case "${1:-}" in
     printf '%s\n' \
       github.com/multica-ai/multica/server \
       github.com/multica-ai/multica/server/internal/daemon \
+      github.com/multica-ai/multica/server/internal/service \
+      github.com/multica-ai/multica/server/internal/messagedelivery \
+      github.com/multica-ai/multica/server/internal/messagedelivery/lifecycle \
       github.com/multica-ai/multica/server/pkg/agent \
       github.com/multica-ai/multica/server/pkg/agent/internal/testutil
     ;;
   test)
     printf '%s\n' "$*" >>"$MULTICA_TEST_GO_CALLS"
+    for arg in "$@"; do
+      if [ "$arg" = "${MULTICA_TEST_GO_FAIL_PACKAGE:-}" ]; then
+        exit 23
+      fi
+    done
     ;;
   *)
     echo "unexpected go command: $*" >&2
@@ -43,7 +51,8 @@ esac
 FAKE
 chmod 755 "$BIN_DIR/go"
 
-regular_call='test -race github.com/multica-ai/multica/server github.com/multica-ai/multica/server/internal/daemon'
+regular_call='test -race github.com/multica-ai/multica/server github.com/multica-ai/multica/server/internal/daemon github.com/multica-ai/multica/server/internal/service'
+delivery_call='test -race -p 1 ./internal/messagedelivery/...'
 agent_call='test -race -p 2 -parallel 2 ./pkg/agent/...'
 
 # $1: case label; $2: expected go calls, one per line. Clears the log after.
@@ -86,10 +95,25 @@ expect_usage_failure() {
 
 PATH="$BIN_DIR:$PATH" bash "$SCRIPT_DIR/test-go.sh" --race
 expect_calls "--race" "$regular_call
+$delivery_call
 $agent_call"
 
 PATH="$BIN_DIR:$PATH" bash "$SCRIPT_DIR/test-go.sh" --race --only regular
-expect_calls "--only regular" "$regular_call"
+expect_calls "--only regular" "$regular_call
+$delivery_call"
+
+# A failure in the deferred suite must still fail the wrapper and stop it
+# before the agent group; separating the suites must not hide a red check.
+status=0
+MULTICA_TEST_GO_FAIL_PACKAGE='./internal/messagedelivery/...' PATH="$BIN_DIR:$PATH" \
+  bash "$SCRIPT_DIR/test-go.sh" --race >"$OUTPUT_FILE" 2>&1 || status=$?
+if [ "$status" -ne 23 ]; then
+  echo "message-delivery failure returned status $status, want 23" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
+expect_calls "message-delivery failure" "$regular_call
+$delivery_call"
 
 # Option order must not matter: CI spells it one way, humans another.
 PATH="$BIN_DIR:$PATH" bash "$SCRIPT_DIR/test-go.sh" --only agent --race

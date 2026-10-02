@@ -18,8 +18,9 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// These regressions use the suite test database. Run service and message-delivery
-// suites sequentially: scanner cursors are global. No external sends are made.
+// These regressions use the suite test database. scripts/test-go.sh runs service
+// and message-delivery sequentially: scanner cursors are global. No external
+// sends are made.
 type v1ReviewScanFixture struct {
 	pool    *pgxpool.Pool
 	q       *db.Queries

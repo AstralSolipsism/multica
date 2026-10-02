@@ -81,6 +81,8 @@ const (
 	OutcomeDropped Outcome = "dropped"
 	// OutcomeNeedsBinding — the open_id is unbound; send the binding card.
 	OutcomeNeedsBinding Outcome = "needs_binding"
+	// OutcomeInvokeDenied — tell the bound sender privately that invocation was refused.
+	OutcomeInvokeDenied Outcome = "invoke_denied"
 	// OutcomeIngested — the message landed and a run was (or will be) enqueued.
 	OutcomeIngested Outcome = "ingested"
 	// OutcomeFreshPending — a bare /clear was persisted for the next chat turn.

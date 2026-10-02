@@ -16,7 +16,8 @@ func TestMigrationNumericPrefixesAreUnique(t *testing.T) {
 	// Migrations through 128 contain historical duplicate numeric prefixes.
 	// OL-49 also preserves the independently shipped Fork/upstream names in
 	// 451–478: the runner records full stems, and renaming an applied migration
-	// would replay its DDL. Keep other numbers unique for new migrations.
+	// would replay its DDL. OL-98 preserves the two shipped 551 stems too;
+	// that exception must not permit a third migration with the same number.
 	const firstUniqueMigrationNumber = 129
 	stemByNumber := make(map[int]string)
 	for _, file := range files {
@@ -36,8 +37,10 @@ func TestMigrationNumericPrefixesAreUnique(t *testing.T) {
 			continue
 		}
 		if previous, exists := stemByNumber[number]; exists {
-			t.Errorf("migrations %s and %s share numeric prefix %s", previous, stem, prefix)
-			continue
+			if number != 551 || previous != "551_channel_conversation_root" || stem != "551_pr_merge_status" {
+				t.Errorf("migrations %s and %s share numeric prefix %s", previous, stem, prefix)
+				continue
+			}
 		}
 		stemByNumber[number] = stem
 	}

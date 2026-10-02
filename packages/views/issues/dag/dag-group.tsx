@@ -175,7 +175,7 @@ export const DagFlowGroupCard = memo(function DagFlowGroupCard({
                 <div
                   className={cn(
                     "relative flex h-9 items-center border-b bg-muted/45 px-4 text-body font-semibold",
-                    active ? "text-brand" : "text-foreground/85",
+                    active ? "text-brand" : "text-foreground",
                   )}
                 >
                   {t(($) => $.dag.stage_badge, { number: band.stage })}

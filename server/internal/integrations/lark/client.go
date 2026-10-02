@@ -293,7 +293,10 @@ type PatchCardParams struct {
 type SendTextParams struct {
 	InstallationID InstallationCredentials
 	ChatID         ChatID
-	Text           string
+	// OpenID addresses a private notice to its sender. It is mutually
+	// exclusive with ChatID and ReplyTarget, so a refusal cannot reach a group.
+	OpenID OpenID
+	Text   string
 	// ReplyTarget threads the text reply back into a Lark topic; see
 	// ReplyTarget. Empty keeps the chat-level send.
 	ReplyTarget ReplyTarget

@@ -947,7 +947,9 @@
     "tool_kind_write": "Modifications",
     "tool_kind_read": "Lectures",
     "tool_kind_misc": "Autres",
-    "antigravity_live_unavailable": "Antigravity does not currently provide live execution events. The transcript will be available after the run completes."
+    "antigravity_live_unavailable": "Antigravity does not currently provide live execution events. The transcript will be available after the run completes.",
+    "trigger_text": "Déclencheur",
+    "trigger_wakeup": "Réveil"
   },
   "task_failure": {
     "cancelled_by_system": "Annulée par le système",

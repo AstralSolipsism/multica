@@ -23,6 +23,7 @@ import type {
   IssueTableRowsRequest,
   ListIssuesParams,
   ListIssuesResponse,
+  WorkspaceWorkingAgent,
 } from "@multica/core/types";
 import { IssueSurface, IssueSurfaceWithStore } from "./issue-surface";
 import { createIssueStatusListStore } from "@multica/core/issue-statuses";
@@ -339,7 +340,7 @@ describe("IssueSurface — table pagination ownership", () => {
     vi.restoreAllMocks();
   });
 
-  it("does not materialize the legacy offset window and starts one cursor root branch", async () => {
+  it("waits for working membership, offers retry on failure, and starts only the resolved cursor root branch", async () => {
     const { getIssueSurfaceViewStore } = await import(
       "@multica/core/issues/stores/surface-view-store"
     );
@@ -354,6 +355,18 @@ describe("IssueSurface — table pagination ownership", () => {
       status: "in_progress" as const,
     }));
     const listIssueTableRows = vi.fn(() => never());
+    let failMembership!: (reason: Error) => void;
+    const getWorkspaceWorkingAgents = vi.fn(async (): Promise<WorkspaceWorkingAgent[]> =>
+      runningIssues.map((issue, index) => ({
+        id: `agent-${index}`,
+        name: `Agent ${index}`,
+        avatar_url: null,
+        running_task_count: 1,
+        issue_ids: [issue.id],
+      })),
+    ).mockImplementationOnce(() => new Promise<WorkspaceWorkingAgent[]>((_, reject) => {
+      failMembership = reject;
+    }));
     setApiInstance({
       // The board pages by category, so every surface stub answers the catalog
       // read. Empty is the real shape for a workspace with no custom statuses:
@@ -374,17 +387,7 @@ describe("IssueSurface — table pagination ownership", () => {
           })) as unknown as AgentTask[],
         ),
       ),
-      getWorkspaceWorkingAgents: vi.fn(() =>
-        Promise.resolve(
-          runningIssues.map((issue, index) => ({
-            id: `agent-${index}`,
-            name: `Agent ${index}`,
-            avatar_url: null,
-            running_task_count: 1,
-            issue_ids: [issue.id],
-          })),
-        ),
-      ),
+      getWorkspaceWorkingAgents,
       getChildIssueProgress: vi.fn(() => never()),
       listProperties: vi.fn(() => never()),
       listMembers: vi.fn(() => never()),
@@ -404,9 +407,18 @@ describe("IssueSurface — table pagination ownership", () => {
       </QueryClientProvider>,
     );
 
-    // A cold lazy table may mount after working-agent membership arrives.
-    // Require one real root branch, with at most one earlier match-none read.
-    await waitFor(() => expect(listIssueTableRows).toHaveBeenLastCalledWith(
+    // Unknown membership must not mount an empty Table branch or show an
+    // empty-state claim. A failed initial request must provide recovery.
+    expect(screen.queryByTestId("surface-loading")).not.toBeNull();
+    expect(listIssueTableRows).not.toHaveBeenCalled();
+    await act(async () => failMembership(new Error("offline")));
+    const alert = await screen.findByRole("alert");
+    expect(screen.queryByTestId("surface-loading")).toBeNull();
+    expect(listIssueTableRows).not.toHaveBeenCalled();
+    fireEvent.click(alert.querySelector("button")!);
+    await waitFor(() => expect(listIssueTableRows).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(listIssueTableRows).toHaveBeenLastCalledWith(
       expect.objectContaining({
         group: { kind: "none" },
         group_key: null,
@@ -417,13 +429,7 @@ describe("IssueSurface — table pagination ownership", () => {
           }),
         }),
       }),
-    ));
-    expect(listIssueTableRows.mock.calls.length).toBeLessThanOrEqual(2);
-    if (listIssueTableRows.mock.calls.length === 2) {
-      expect(listIssueTableRows).toHaveBeenNthCalledWith(1, expect.objectContaining({
-        query: expect.objectContaining({ filters: expect.objectContaining({ working_issue_ids: [] }) }),
-      }));
-    }
+    );
     expect(listIssues).not.toHaveBeenCalled();
   });
 
