@@ -370,6 +370,13 @@ join only runs with the same root and execution principal. Dispatch and claim
 recheck the live grant; revoking or replacing consent blocks subsequent work,
 but cannot undo actions a run has already performed.
 
+External conversation tasks, including their descendants, cannot create, edit,
+run or manage Autopilots, their triggers, collaborators or delivery rules. The
+API returns `403 autopilot_external_conversation_forbidden`; reading metadata
+does not reveal webhook credentials. Ask a workspace member to configure or run
+the automation directly. Autopilots do not retain external conversation consent,
+so an active conversation grant does not authorize these durable operations.
+
 ## Charts and files in a comment
 
 Where content goes decides how it shows:

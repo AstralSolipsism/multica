@@ -698,6 +698,10 @@ var (
 // attributed. Read paths use it directly — they must not refuse an
 // unattributed caller, only decline to hand it a writer's secrets.
 func (h *Handler) autopilotActingUserID(r *http.Request, workspaceID string) string {
+	if external, err := h.autopilotExternalCaller(r, workspaceID); err != nil || external {
+		// Reading a webhook token grants invocation outside the task's lifetime.
+		return ""
+	}
 	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
 	return h.invokeOriginatorFromRequest(r, actorType, actorID)
 }
@@ -734,6 +738,26 @@ func (h *Handler) autopilotActingUserID(r *http.Request, workspaceID string) str
 //
 // On refusal the response is written and ok is false; the caller must return.
 func (h *Handler) requireAutopilotActingMember(w http.ResponseWriter, r *http.Request, workspaceID string, refusal autopilotRefusal) (db.Member, bool) {
+	external, err := h.autopilotExternalCaller(r, workspaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeErrorCode(w, http.StatusForbidden, refusal.noOriginatorCode, refusal.noOriginatorMsg)
+		return db.Member{}, false
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "autopilot caller authorization unavailable")
+		return db.Member{}, false
+	}
+	if external {
+		writeErrorCode(w, http.StatusForbidden, "autopilot_external_conversation_forbidden",
+			"external conversation tasks cannot manage or run autopilots; ask a workspace member to do this directly")
+		return db.Member{}, false
+	}
+	return h.requireActingMember(w, r, workspaceID, refusal)
+}
+
+// requireActingMember resolves identity without granting a surface's capabilities.
+// Notification routes share this identity check but have their own scope policy.
+func (h *Handler) requireActingMember(w http.ResponseWriter, r *http.Request, workspaceID string, refusal autopilotRefusal) (db.Member, bool) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return db.Member{}, false

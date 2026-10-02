@@ -119,6 +119,11 @@ func TestConversationWakeupCannotJoinAnOrdinaryRunAndRechecksClaim(t *testing.T)
 	if err := s.CheckClaim(context.Background(), task); err != nil {
 		t.Fatal(err)
 	}
+	detached := task
+	detached.ConversationRootTaskID = pgtype.UUID{}
+	if err := s.CheckClaim(context.Background(), detached); !errors.Is(err, ErrWakeupForbidden) {
+		t.Fatalf("claim lost its rule's conversation constraint: %v", err)
+	}
 	f.Exec(t, "UPDATE channel_installation SET config='{}' WHERE id=$1", install)
 	if err := s.CheckClaim(context.Background(), task); !errors.Is(err, ErrWakeupForbidden) {
 		t.Fatalf("claim after revocation: %v", err)

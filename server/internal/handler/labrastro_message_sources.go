@@ -9,8 +9,8 @@ package handler
 //	/api/message-approved-targets  team outbound-target approvals (workspace consent)
 //	/api/message-event-catalog   the event/filter catalog a config UI renders
 //
-// Identity: every endpoint resolves the ACTING member through the same
-// seam the autopilot surface uses (requireAutopilotActingMember) — a member
+// Identity: every endpoint resolves the ACTING member through the shared
+// member-resolution seam (requireActingMember) — a member
 // acts for themselves, an agent for its run's originator, and a request
 // with no resolvable human is refused. Scope rules on top of identity:
 //
@@ -49,7 +49,7 @@ var messageSourceRefusal = autopilotRefusal{
 // request spends. It performs NO scope judgment — the handlers layer the
 // self-ownership and admin rules on top.
 func (h *Handler) requireMessageSourceMember(w http.ResponseWriter, r *http.Request, workspaceID string) (db.Member, bool) {
-	return h.requireAutopilotActingMember(w, r, workspaceID, messageSourceRefusal)
+	return h.requireActingMember(w, r, workspaceID, messageSourceRefusal)
 }
 
 // requireMessageSourceAdmin additionally requires workspace owner/admin —
