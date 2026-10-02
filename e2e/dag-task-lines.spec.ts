@@ -132,7 +132,9 @@ for (const direction of ["LR", "TB"] as const) {
       await page.keyboard.press("Escape");
       await expect(page.getByRole("dialog")).toHaveCount(0);
       await bNode.dblclick();
-      await expect(page).toHaveURL(new RegExp(`/issues/${b.id}`));
+      // A dev server compiles the detail route on first navigation. Keep the
+      // same readiness allowance as the initial workspace route above.
+      await expect(page).toHaveURL(new RegExp(`/issues/${b.id}`), { timeout: 30_000 });
       await page.goBack();
       await expect(page.locator("[data-dag-issue]")).toHaveCount(4);
       await expect
