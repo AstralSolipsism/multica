@@ -49,6 +49,13 @@ CREATE TABLE issue_wakeup(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), source_
 	row(&ordinaryRule, "INSERT INTO issue_wakeup(source_task_id,created_by) VALUES($1,$2) RETURNING id", ordinary, owner)
 	row(&orphanTask, "INSERT INTO agent_task_queue(originator_source,delegated_from_task_id,originator_user_id) VALUES('trigger_owner',$1,$2) RETURNING id", missing, owner)
 	row(&orphanRule, "INSERT INTO issue_wakeup(source_task_id,created_by) VALUES($1,$2) RETURNING id", missing, owner)
+	var ordinaryWake, ordinaryRetry, cycleA, cycleB pgtype.UUID
+	row(&ordinaryWake, "INSERT INTO agent_task_queue(originator_source,delegated_from_task_id) VALUES('trigger_owner',$1) RETURNING id", ordinary)
+	row(&ordinaryRetry, "INSERT INTO agent_task_queue(originator_source,retry_of_task_id,delegated_from_task_id) VALUES('trigger_owner',$1,$2) RETURNING id", ordinaryWake, root)
+	row(&cycleA, "SELECT gen_random_uuid()")
+	row(&cycleB, "SELECT gen_random_uuid()")
+	row(&cycleA, "INSERT INTO agent_task_queue(id,originator_source,delegated_from_task_id) VALUES($1,'trigger_owner',$2) RETURNING id", cycleA, cycleB)
+	row(&cycleB, "INSERT INTO agent_task_queue(id,originator_source,delegated_from_task_id) VALUES($1,'trigger_owner',$2) RETURNING id", cycleB, cycleA)
 	const migration = "564_wakeup_conversation_root"
 	apply(migration, "up")
 	assertRoot := func(table string, id, want pgtype.UUID) {
@@ -68,6 +75,10 @@ CREATE TABLE issue_wakeup(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), source_
 	assertRoot("issue_wakeup", ordinaryRule, pgtype.UUID{})
 	assertRoot("agent_task_queue", orphanTask, orphanTask)
 	assertRoot("issue_wakeup", orphanRule, missing)
+	assertRoot("agent_task_queue", ordinaryWake, pgtype.UUID{})
+	assertRoot("agent_task_queue", ordinaryRetry, pgtype.UUID{})
+	assertRoot("agent_task_queue", cycleA, cycleA)
+	assertRoot("agent_task_queue", cycleB, cycleB)
 	if _, err := pool.Exec(ctx, "DELETE FROM agent_task_queue WHERE id=$1", source); err != nil {
 		t.Fatal(err)
 	}

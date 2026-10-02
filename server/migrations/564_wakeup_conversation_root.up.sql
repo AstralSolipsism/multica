@@ -78,24 +78,32 @@ FOR EACH ROW EXECUTE FUNCTION stamp_wakeup_conversation_root();
 DO $$
 BEGIN
 IF current_setting('multica.backfill_wakeup_conversation_root') = 'true' THEN
-    -- Close the historical trigger_owner gap, including its already-created
-    -- retries/delegations/comments. Keep every previously recorded root.
-    UPDATE agent_task_queue task SET conversation_root_task_id = task.id
-    WHERE task.conversation_root_task_id IS NULL AND task.originator_source = 'trigger_owner'
-      AND task.delegated_from_task_id IS NOT NULL
-      AND NOT EXISTS (SELECT 1 FROM agent_task_queue parent WHERE parent.id = task.delegated_from_task_id);
-    WITH RECURSIVE lineage AS (
-        SELECT id, conversation_root_task_id AS root_id FROM agent_task_queue
-        WHERE conversation_root_task_id IS NOT NULL
+    -- Scan history once for unresolved parent links. Recursion and cycle
+    -- detection use only that materialized subset, not the full task table at
+    -- every depth. Existing roots and ordinary parentless history need no writes.
+    WITH RECURSIVE links AS MATERIALIZED (
+        SELECT id, CASE WHEN retry_of_task_id IS NOT NULL THEN retry_of_task_id
+            ELSE delegated_from_task_id END AS parent_id
+        FROM agent_task_queue
+        WHERE conversation_root_task_id IS NULL
+          AND (retry_of_task_id IS NOT NULL
+               OR (originator_source IN ('delegation', 'comment_source', 'trigger_owner')
+                   AND delegated_from_task_id IS NOT NULL))
+    ), lineage AS (
+        SELECT child.id, CASE WHEN parent.id IS NULL THEN child.id
+            ELSE parent.conversation_root_task_id END AS root_id
+        FROM links child LEFT JOIN agent_task_queue parent ON parent.id = child.parent_id
+        WHERE NOT EXISTS (SELECT 1 FROM links ancestor WHERE ancestor.id = child.parent_id)
         UNION ALL
-        SELECT child.id, parent.root_id FROM agent_task_queue child JOIN lineage parent
-          ON parent.id = CASE WHEN child.retry_of_task_id IS NOT NULL THEN child.retry_of_task_id
-              WHEN child.originator_source IN ('delegation', 'comment_source', 'trigger_owner')
-                  THEN child.delegated_from_task_id END
-        WHERE child.conversation_root_task_id IS NULL
+        SELECT child.id, parent.root_id FROM links child JOIN lineage parent ON parent.id = child.parent_id
+    ), backfill AS (
+        -- Missing ancestors and cycles cannot prove first-party authority.
+        SELECT links.id, CASE WHEN lineage.id IS NULL THEN links.id ELSE lineage.root_id END AS root_id
+        FROM links LEFT JOIN lineage ON lineage.id = links.id
+        WHERE lineage.id IS NULL OR lineage.root_id IS NOT NULL
     )
-    UPDATE agent_task_queue task SET conversation_root_task_id = lineage.root_id
-    FROM lineage WHERE task.id = lineage.id AND task.conversation_root_task_id IS NULL;
+    UPDATE agent_task_queue task SET conversation_root_task_id = backfill.root_id
+    FROM backfill WHERE task.id = backfill.id AND task.conversation_root_task_id IS NULL;
 
     UPDATE issue_wakeup w SET conversation_root_task_id = source.conversation_root_task_id
     FROM agent_task_queue source WHERE source.id = w.source_task_id;
