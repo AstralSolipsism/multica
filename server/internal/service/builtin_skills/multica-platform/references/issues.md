@@ -3,6 +3,7 @@
 Product contracts the runtime brief does not fully encode.
 
 - [PR linking](#pr-linking)
+- [PR merge status](#pr-merge-status)
 - [Reading a linked PR's real state](#reading-a-linked-prs-real-state)
 - [Custom properties: typed workflow state](#custom-properties-typed-workflow-state)
 - [Status changes have server side effects](#status-changes-have-server-side-effects)
@@ -32,6 +33,26 @@ Related to MUL-123   (body only)              # no link
 
 While a PR is open, its automatic links follow the live title, branch, and
 body: removing the key drops the link. After merge or close, existing links stay.
+
+## PR merge status
+
+When every PR linked to an issue has merged, the workspace's
+`settings.pr_merge_status` selects the resulting status: `none` keeps the
+current status; an allowed started/done status key moves it there. An absent
+setting defaults to `done`. Closing keywords only establish links; a title or
+branch link participates in the same merge rule. Omitting `Closes` does not
+prevent a linked issue from moving after merge.
+
+Check Settings → Code and the issue's keep-status option before relying on
+automatic advancement. Open/draft PRs and PRs closed without merging prevent
+advancement. Changing the setting or reopening an issue does not replay past
+merges; subsequent PR events evaluate it again.
+
+Migration `551_pr_merge_status` pins `none` for workspaces with the old switch
+off, or linked PR history with no merged PR or a merge without a closing
+keyword. Workspaces with no PR history, or only keyword merges, retain the
+default. An explicit target is preserved. Old clients' off/on switch maps to
+`none`/`done`; an unchanged legacy switch must not erase a custom target.
 
 ### Default for code-changing issue work
 
@@ -460,7 +481,7 @@ multica issue wakeup create <issue> --until-issue <other-issue-id> --until-issue
 - `wakeup checkin <issue> <wakeup-id> --note "..."` ends a scheduled check (every or cron) that found nothing worth a reply. Only the running run that rule started may call it, and that run's `[WAKEUP]` block gives the exact command. The note (1–500 characters) is kept on the run and shows in the rule's run history and the issue timeline. The run then ends without a comment. When something changed, needs attention, or the check is done, post a comment instead.
 - `wakeup list <issue>` / `wakeup get <issue> <id>` show the saved configuration, next time and latest run. `wakeup runs <issue> <id>` lists the rule's latest ten runs with their triggers, check-in notes and whether each commented. Only promise that a reminder is arranged after creation succeeds.
 - `wakeup trigger <issue> <id>` queues one run now, as if the rule fired. It is refused on a closed issue, or while the rule is turned off or paused for a loop or burst. `wakeup delete <issue> <id>` removes the rule and its pending inputs and withdraws its runs that have not started.
-- `wakeup update <issue> <id>` uses the same flags as create and replaces the whole configuration, explicitly re-enabling it. Supply all intended fields. Old unclaimed work is withdrawn.
+- `wakeup update <issue> <id>` replaces the supplied configuration and explicitly re-enables it. Supply all intended event, schedule, filter and expiry fields. Old unclaimed work is withdrawn. For installed pre-v2 clients, omitted `condition` and `max_fires` retain their stored values. Current CLI updates explicitly replace the condition; an omitted `--max-fires` retains the cap, while `--max-fires 0` resets it to the kind's default (20 for continuous events, uncapped for timers). Use the dedicated enable/instruction operations for a toggle or instruction-only edit.
 - `wakeup disable <issue> <id>` stops future triggers and withdraws unclaimed work. Users can also turn it off in the issue sidebar. Closing/cancelling/completing the issue disables its wakeups; reopening does not restore them.
 - `--parent <comment-id>` keeps result delivery in the original thread.
 - Give waits an end: `--expires-in 72h` (restarts if the rule is re-enabled) or `--expires-at <RFC3339>`. With `--on-timeout wake`, an event rule runs the target once with a `wakeup.timeout` fact when the deadline passes first; the default `end` stops quietly. Recurring checks should carry an end date.
@@ -483,6 +504,11 @@ not wake you when you or the platform set the rule up. A wakeup that fires
 while a run of yours for the same person is waiting to start on the issue
 joins that run instead of starting another: its instruction and facts appear
 in that run's `[WAKEUP — joined this run]` block, so handle them there.
+
+Joining requires the claiming daemon's `joined-wakeups-v1` capability. An older
+daemon receives its original run and the wakeup is queued separately, so the
+instruction is not silently lost. Disabling a rule withdraws its unclaimed
+input from a joined run without cancelling unrelated work on that run.
 
 Event rules, conditions included, also have runaway protection. A rule pauses
 with `paused_reason=loop` when its trigger chain passes through it a third time

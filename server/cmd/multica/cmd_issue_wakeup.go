@@ -52,7 +52,7 @@ func newIssueWakeupCommand() *cobra.Command {
 		c := &cobra.Command{Use: use, Args: cobra.ExactArgs(count), Short: short, RunE: func(cmd *cobra.Command, args []string) error { return runIssueWakeup(cmd, args, action) }}
 		c.Flags().String("output", "json", "Output format (json or table)")
 		if action == "create" || action == "update" {
-			c.Long = "Create or replace the complete configuration. Events default to once; every/cron use continuous. Updating explicitly re-enables the configuration. Runs use normal comment delivery."
+			c.Long = "Create or replace the configuration. Events default to once; every/cron use continuous. Updating explicitly re-enables the configuration and replaces its condition; an omitted --max-fires preserves the current cap. Runs use normal comment delivery."
 			c.Long += " Give waits an end with --expires-in or --expires-at; --on-timeout wake runs the target once if the deadline passes first."
 			c.Long += " For task events, use --task-id for one run or --filter-agent-id for its agent. For comment/issue/reaction/attachment changes, use --filter-actor-type member|agent with --filter-actor-id. To wait for a person to comment, use --event comment.created --filter-actor-type member --filter-actor-id USER_ID. Actor filters identify who made the change, not the original author of an edited comment. Without a source filter, all matching events on this issue can wake the target."
 			c.Flags().String("agent-id", "", "Agent to wake (defaults to authenticated agent)")
@@ -84,7 +84,7 @@ func newIssueWakeupCommand() *cobra.Command {
 			c.Flags().String("until-pr", "", "Condition: a linked pull request's checks finish (checks) or it merges (merged)")
 			c.Flags().String("until-issue", "", "Condition: another issue in this workspace reaches --until-issue-state")
 			c.Flags().String("until-issue-state", "done", "With --until-issue: done, ended (done or cancelled) or in_review")
-			c.Flags().Int32("max-fires", 0, "Repeating rules: stop after this many runs (1-1000; continuous event rules default to 20)")
+			c.Flags().Int32("max-fires", 0, "Repeating rules: cap at 1-1000 runs; 0 resets to the kind's default (20 for continuous events, unlimited for timers)")
 		}
 		wake.AddCommand(c)
 	}
@@ -182,10 +182,10 @@ func runIssueWakeup(cmd *cobra.Command, args []string, action string) error {
 		if e != nil {
 			return e
 		}
-		if condition != nil {
+		if condition != nil || action == "update" {
 			body["condition"] = condition
 		}
-		if n, _ := cmd.Flags().GetInt32("max-fires"); n != 0 {
+		if n, _ := cmd.Flags().GetInt32("max-fires"); n != 0 || cmd.Flags().Changed("max-fires") {
 			body["max_fires"] = n
 		}
 		for flag, key := range map[string]string{"after": "after_seconds", "every": "interval_seconds", "expires-in": "expires_in_seconds"} {
