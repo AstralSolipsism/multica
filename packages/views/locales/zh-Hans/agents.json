@@ -928,7 +928,9 @@
     "tool_kind_write": "编辑",
     "tool_kind_read": "读取",
     "tool_kind_misc": "其他",
-    "antigravity_live_unavailable": "Antigravity 暂不提供实时执行事件。运行完成后即可查看执行记录。"
+    "antigravity_live_unavailable": "Antigravity 暂不提供实时执行事件。运行完成后即可查看执行记录。",
+    "trigger_text": "触发内容",
+    "trigger_wakeup": "唤醒触发"
   },
   "task_failure": {
     "cancelled_by_system": "已由系统取消",
