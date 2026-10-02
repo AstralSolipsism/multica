@@ -121,6 +121,99 @@ migrations and message delivery. It used the same isolated test-child environmen
 described below. The new service regressions also passed two consecutive runs.
 No frontend or agent-package implementation changed in this correction.
 
+## Autopilot boundary and migration scale
+
+`5dd60538a` rejects external conversation tasks and their descendants at the
+shared Autopilot write gate, even while the conversation grant is still valid.
+It covers creation, updates, deletion, manual runs, triggers, webhook token and
+signing-secret changes, collaborators and Autopilot delivery management. The
+response is `403 autopilot_external_conversation_forbidden`. Autopilot detail
+and list reads advertise no write/access-management permission for these tasks;
+detail reads omit webhook tokens, paths and URLs. Exposing an existing webhook
+credential would otherwise bypass the write gate. Ordinary members and their
+first-party tasks keep the existing originator-based rights. Notification-source
+identity resolution remains separate from this Autopilot-specific policy.
+
+This chooses refusal over adding a second persisted conversation-consent model
+to Autopilot. The existing consent-aware issue wakeups remain available. In
+tests using the real authentication middleware, direct, delegated, retried,
+wakeup-created and history-pruned external task lineages all receive refusals.
+Read-secret suppression and a first-party authenticated creation control pass.
+A negative control against `a93435936` returns HTTP 201 for the same external
+creation request where the corrected code returns 403. The new authority tests,
+manual wakeup management test and wakeup claim-root invariant pass three
+consecutive race runs.
+
+The preceding change prevents new unauthorized automation operations; it cannot
+reconstruct the provenance of already-existing Autopilots, which stored only
+their human creator. Before production acceptance, an operator must review
+existing automations with that creator, disable unconfirmed rules/triggers, and
+rotate webhook credentials that may already have been shared externally. Do not
+automatically delete or reattribute rules based on timestamp coincidence. No
+production records or credentials were inspected or changed in this work.
+
+`88973046f` revises the **unreleased** 564 backfill to materialize only unresolved
+parent links. The recursion walks that subset and joins ancestors by task ID,
+instead of rescanning all task history at every depth. Ordinary ancestry stays
+ordinary; missing ancestors and cycles fail closed; previously stored roots and
+lost-ledger replay behavior remain. Neither the two-second lock bound nor the
+ten-second statement bound was increased. The migration total remains 632.
+
+The opt-in `TestWakeupConversationMigrationLargeHistory` copies the current task
+columns and CHECK constraints into a private schema, adds a primary-key index,
+and creates 2,000,000 ordinary rows plus a 32-level external descendant chain.
+The tested table and primary-key index occupy 1,568,890,880 bytes. With PostgreSQL
+15.19, `fsync=on` and `synchronous_commit=on`, the original 564 at `a93435936`
+fails with statement timeout (`57014`) on this fixture; the revised migration
+completes in **1.802 seconds**, preserving all 2,000,000 ordinary roots and
+marking the external chain and wakeup correctly. Fixture setup is outside the
+timing. The table is freshly populated and cache-warm; it does not copy all
+production indexes, model every ancestry distribution, or predict production
+latency. Validate the actual database shape and resources before rollout.
+
+Reproduce in the managed disposable database:
+
+```bash
+set -a
+source .env.worktree
+set +a
+LABRASTRO_TEST_WAKEUP_HISTORY_ROWS=2000000 \
+  go -C server test -race ./cmd/migrate \
+  -run '^TestWakeupConversationMigrationLargeHistory$' -count=1 -v
+```
+
+`722b3ff3b` gives `TestIssueWakeupManagementEndpoints` its own runtime. Its
+immediate dispatch no longer competes with unrelated tests for the suite's
+shared runtime lock. Production dispatch budgets and assertions remain intact.
+
+Verification also exposed an existing object-intent cleanup bug. PostgreSQL can
+place the `UPDATE ... FROM (SELECT ... LIMIT 1 FOR UPDATE SKIP LOCKED)` subquery
+inside a nested loop, reevaluate it for each target row, and lease several
+intents while the caller consumes only one returned row. The existing
+`TestCleanupSourceContextObjectIntentsBoundsAttemptsNotSuccesses` failed five
+consecutive isolated runs: a batch of two attempted only one object. Commit
+`4639d1647` materializes that single-row claim and regenerates sqlc. The unchanged
+regression then passed five consecutive race runs. No cleanup budget or test
+assertion was relaxed.
+
+Final validation at `4639d1647`: the regular race command completed successfully
+for all **71** tested packages (nine executed again, including handler and
+service; 62 unchanged results reused Go's test cache). The preceding run had
+passed 70 packages and exposed a built-in skill-reference wording violation;
+`6395aa357` fixes that wording without changing the contract test. The subsequent
+service run exposed the SQL claim bug above. `go vet` passed for handler,
+service, migrate and generated queries; `make build` built all three binaries.
+The final sqlc regeneration and whitespace check were clean. Frontend and agent
+implementation did not change in this round, so their prior verification and
+host limitations below still apply.
+
+The completed backend CI job at `e11fce081` failed in
+`TestIssueWakeupManagementEndpoints` while its
+[agent job passed](https://github.com/AstralSolipsism/multica/actions/runs/36966777551/job/110712188347).
+The runtime-isolation change addresses that shared fixture dependency; the
+current local regular suite passes. This is not a claim that a new remote CI run
+has passed. The new push starts fresh checks, whose result remains on the PR.
+
 ## Migration results
 
 All 618 historical up-migration identities remain. The merge adds the 13
@@ -301,6 +394,7 @@ does not change the scanner or that timing-sensitive test. The latest PR checks
 remain authoritative; no external CI run was awaited.
 
 Not run: browser E2E, live Feishu delivery, real agent smoke, native device or
-desktop package execution, production-sized migrations/search load, production
-deployment, or release publication. Unit/component coverage does not substitute
+desktop package execution, migrations against production-shaped data or
+production search load, production deployment, or release publication.
+Unit/component coverage does not substitute
 for batch B acceptance. External CI is triggered by the PR and is not awaited.
