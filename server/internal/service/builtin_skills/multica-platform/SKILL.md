@@ -19,7 +19,8 @@ Read the invariants below, then open the reference(s) your task actually needs
 
 | Open | When the task is about |
 |---|---|
-| `references/issues.md` | Issues: PR linking, reading a linked PR's state, custom properties, status side effects, sub-issues and stages, who else is running, wakeups (events, conditions, timers, check-ins), charts vs attached files in a comment |
+| `references/pull-requests.md` | Pull requests: issue linking, code-change handoff, merge status, and reading a linked PR's state |
+| `references/issues.md` | Issues: custom properties, status side effects, sub-issues and stages, who else is running, wakeups (events, conditions, timers, check-ins), charts vs attached files in a comment |
 | `references/issue-dependencies.md` | Informational prerequisites, relation editing and complete dependency graphs; these do not gate execution |
 | `references/mentions.md` | Writing a `mention://` link: which types enqueue a run, which are inert, why one silently did nothing |
 | `references/agents.md` | Creating, copying or debugging an agent definition: fields, secrets, MCP config, skill binding |

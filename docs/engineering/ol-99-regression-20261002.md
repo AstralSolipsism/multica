@@ -41,13 +41,22 @@
 
 ### 按 Master 决定撤回兼容代码后的复测
 
-测试源码为 `c51c5e6b716b86729447453f26d26b03144ec6a9`；此后仅更新本报告。保留的三个 E2E、两份 squads 文档与复审前 `3526d1e65` 完全一致；技能文档仅恢复 `wakeup update` 原文，PR merge status 与 joined-wakeups-v1 段落保留。
+该轮测试源码为 `c51c5e6b716b86729447453f26d26b03144ec6a9`；截至 `85021b08c` 仅追加了报告更新。保留的三个 E2E、两份 squads 文档与复审前 `3526d1e65` 完全一致；技能文档仅恢复 `wakeup update` 原文，PR merge status 与 joined-wakeups-v1 段落保留。后续 CI 修复见下一节。
 
 - 执行 `git diff origin/main...HEAD -- server/internal/handler/issue_wakeup.go server/internal/service/issue_wakeup.go server/cmd/multica/`，输出为空；`origin/main` 已从 Fork 刷新，仍为 `9e346b4d7`。兼容测试文件已删除，`git diff --check` 通过。
 - 在不含运行任务 marker 的独立 worktree，加载本地 `DATABASE_URL`，先执行 `SELECT current_database(), count(*) FROM schema_migrations`，确认连接测试数据库且有 631 条记录。没有删除或修改任务 marker。
 - 经 `scripts/go-test-with-agent-cli-guard.sh` 执行 `go -C server test -json -race -count=1 -p 1 -run '<精确测试名正则>' ./internal/handler ./internal/service ./cmd/multica`。首批选择三个包 `*wakeup*test.go` 中全部 94 个顶层测试，再按相同命令追加其他文件中带 Wakeup/ChildDone 的 20 个测试。JSON 逐项核对预期名称、run 和 pass 事件：handler **42/42**、service **67/67**、CLI **5/5**，共 **114 个顶层测试通过，0 失败、0 跳过**。额外两个通知用例配置了独立 Redis 7.0.15 实例（`REDIS_TEST_URL`），没有因 Redis 缺失跳过。命令的精确参数和预期测试名随本轮验证附件交付。
 - Go 测试完成后启动恢复代码的本地 API，`/health` 确认 commit `c51c5e6b7`；执行 `pnpm exec playwright test e2e/issue-wakeups.spec.ts --reporter=json`，**2/2 通过、0 跳过、0 flaky**，用时约 139 秒。浏览器仍连接真实本地数据库。补充 Go 用例在关闭 API 后执行，避免后台 worker 干扰。
 - 本轮未重跑其余前端测试和构建，首轮结果保留于上表；候选仍需从最终批准的源码重建。
+
+### CI 文档长度修复
+
+`85021b08c` 的 [CI run 37023753317](https://github.com/AstralSolipsism/multica/actions/runs/37023753317) 中，`backend-tests` 的唯一失败是 `TestBuiltinSkillsConformToTemplate/multica-platform`：`references/issues.md` 达到 519 行，超过现有 500 行上限；`backend` 汇总检查随之失败。本地定向执行相同测试复现了同一错误。
+
+- 把 PR 关联、合并状态、交付约定和状态读取说明完整移到 `references/pull-requests.md`，更新 skill 路由、旧 skill 跳转及现有测试的文档位置。按测试的计数方式，`issues.md` 为 400 行，新文件为 131 行；没有放宽行数限制或删除契约断言。
+- 原文逐行核对保留，PR merge status 与状态读取正文逐字节一致；`Default for code-changing issue work` 回到 PR linking 标题下，解决审阅者提出的层级问题。唤醒产品代码保持基线，三个 E2E 与 squads 文档未改。
+- 经 CLI guard 执行 `GOTOOLCHAIN=go1.26.6 GOMAXPROCS=4 go -C server test -json -race -count=1 -run '^(TestBuiltin|TestPlatformSkill|TestLegacyRedirect)' ./internal/service`，8 个顶层测试及 25 个子测试全部通过，0 失败、0 跳过。这些测试直接检查内置 skill，不需要数据库；没有把数据库不可用导致的跳过算作成功。
+- Master 已授权修复 CI 后合入并完成本任务。最终 CI 与合并 SHA 记录在任务收尾评论；正式候选制品、部署及五台机器升级仍按下文发布安排执行，不能把任务收尾等同于已发布。
 
 ## 构建与版本来源
 

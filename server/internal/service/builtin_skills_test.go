@@ -103,7 +103,7 @@ func TestBuiltinSkillsConformToTemplate(t *testing.T) {
 			}
 			// allowed-tools is the union across everything the skill now covers.
 			// Merging eight skills merged their tool declarations too, so the
-			// router declares Bash(git *) / Bash(gh *) — which only issues.md
+			// router declares Bash(git *) / Bash(gh *) — which the PR reference
 			// needs — while an agent is reading, say, autopilots.md. The
 			// alternative is dropping them and regressing the issue workflow
 			// that legitimately runs `gh pr`. Recorded rather than silently
@@ -353,6 +353,7 @@ func TestPlatformSkillDescriptionNamesEveryDomain(t *testing.T) {
 	// autopilot", never as "Core model".
 	triggerWords := map[string]string{
 		"references/issues.md":             "issue",
+		"references/pull-requests.md":      "pr",
 		"references/issue-dependencies.md": "prerequisite",
 		"references/mentions.md":           "mention",
 		"references/agents.md":             "agent",
@@ -426,6 +427,7 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"Do not read them all",
 				// The router's whole job: name every domain and its file.
 				"references/issues.md",
+				"references/pull-requests.md",
 				"references/mentions.md",
 				"references/agents.md",
 				"references/squads.md",
@@ -456,7 +458,7 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 			},
 		},
 		{
-			file: "references/issues.md",
+			file: "references/pull-requests.md",
 			want: []string{
 				"multica issue pull-requests <issue-id> --output json",
 				"Default for code-changing issue work",
@@ -474,13 +476,40 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"redelivered once the receiving side is fixed",
 				"include the PR URL when a PR exists",
 				"Closes MUL-123",
-				"--status backlog",
 				// The link table is the only sanctioned source of PR state,
 				// and the guard against stale data survives MUL-6966 without
 				// naming the key it used to name: `issue get` still returns
 				// whatever an older run left on the issue, but a warning that
 				// spells out a metadata key teaches the key.
 				"stale values left on the issue by an earlier run",
+			},
+			notWant: []string{
+				"--no-start",
+				// MUL-6966 phase 1: this reference must not teach the KV bag
+				// at all — not as a section, not as a command, and not as a
+				// named key inside a warning. A blanket ban on the vocabulary
+				// is the contract; anything that needs the word back needs
+				// this decision revisited first.
+				"metadata",
+				"Metadata",
+				"pr_url",
+				// A curated key list is the "recommended fields" concept the
+				// owner ruled out on MUL-5442.
+				"High-signal keys",
+				"reuse these names so queries stay consistent",
+				"scratchpad for run state",
+				// Per-turn workflow the runtime brief owns; duplicating it here
+				// is how the two drift apart.
+				"Start from the trigger, not from memory",
+				"multica issue comment list <issue-id> --thread <trigger-comment-id>",
+				"multica issue comment add <issue-id> --parent <trigger-comment-id>",
+			},
+		},
+		{
+			file: "references/issues.md",
+			want: []string{
+				"[pull-requests.md](pull-requests.md)",
+				"--status backlog",
 				// MUL-5442: the brief's Sub-issue Creation section is a
 				// one-line map pointing here. These anchors are the demoted
 				// playbook — if they leave, the brief pointer dangles.
