@@ -77,142 +77,115 @@ and `/issue`. It checks denied writes (session/input/run/issue), permitted
 execution identity and duplicate redelivery. Existing conversation grant,
 retry, revocation, delivery and provider tests also ran.
 
-## Review corrections: wakeup consent and private denial notices
+## Selected policy: one default-deny boundary (option B)
 
-Commit `a93435936` closes the two merge-blocking findings. The external root is
-now recorded on the wakeup itself by the additive
-`564_wakeup_conversation_root` migration. `trigger_owner` tasks inherit that
-root, so source-task retention and a human disable/enable do not detach existing
-instructions from the grant that authorized them. The migration backfills
-existing wakeups and their already-created descendants, preserves recorded roots
-on replay, and denies ambiguous historical rules whose source was already lost.
-A human can explicitly replace such a rule with fresh instructions; merely
-enabling it does not establish new consent.
+External Feishu tasks and their descendants now pass one capability check in
+`server/internal/middleware/auth.go`. The check uses the persisted task ancestry
+already introduced by the shipped Fork migration 551, after validating the live
+conversation grant. It does not rely on caller-supplied actor or task headers.
+Normal member credentials and first-party task tokens keep upstream behavior.
 
-Dispatch, claim and joined-wakeup handling reuse `channel.AuthorizeConversationTask`
-to check the frozen grant against current installation consent, membership and
-invocation rights. Joining also requires the same conversation root and execution
-principal. A queued ordinary run cannot absorb external instructions or indefinitely
-defer the external rule. In-place instruction edits and manual triggers from an
-external task cannot modify a rule with a different root. Old joined instructions
-are checked again even when another transaction holds the rule lock. Claimed
-external descendants receive the external-input trust instructions; an issue
-wakeup does not acquire an unsolicited Feishu delivery route.
+`labrastro_conversation_policy.go` owns a small, explicit method/route allowlist:
+reading collaboration content, creating/updating issues, comments and
+attachments. The existing handler checks still enforce workspace, ownership and
+invocation permissions. It denies everything else, including wakeups,
+Autopilots, account credentials, invitations, notifications, integrations and
+configuration. Reads are enumerated too: GET is not a blanket exception for
+webhook credentials, MCP configuration or credential lists. Denials return
+`403 external_conversation_forbidden` before entering the business handler.
 
-The Feishu replier now handles `invoke_denied` by sending a generic Chinese
-permission notice privately to the denied sender's `open_id`, for both private
-and group input. It includes no agent name and creates no binding token. If the
-sender is missing or the private send fails, it logs the failure without sending
-anything to the group or original thread. Live Feishu reachability remains an
-integration check; transport tests cover the HTTP address and failure behavior.
+An additional real-router regression found that assigning an existing
+member-created issue from an external task lost its ancestry: the new run had a
+NULL root and would receive ordinary task authority. A request-scoped external
+task context now reaches the **shared issue-run attribution function**, which
+classifies that assign/promote as delegation from the actual caller. Existing
+comment-source classification and first-party behavior remain. This second
+shared boundary is necessary to make the allowed operations preserve the
+policy; an HTTP method allowlist alone cannot do that. It adds no per-feature
+denial checks or new persistence model.
 
-The added regressions cover revoked/replaced grants, removed grantors, lost target
-invocation rights, missing roots, ordinary versus same-root joins, stale joins
-under contention, source-history deletion, rule management and claim payloads.
-Migration tests execute the production runner through upgrade, lost-ledger replay,
-and the documented lossy down/up. The managed test database upgraded to **632**
-full migration stems; the 631-stem rehearsal below records the original upstream
-merge before this correction.
+The lookup resolves the real production Chi route, with a separate route
+context. A newly added literal `/api/issues/future-secret` cannot inherit the
+permission of `/api/issues/{id}`. Missing routing context and unknown methods or
+routes fail closed. Existing daemon and plugin credential boundaries remain
+separate; the external task token gains no daemon or plugin credential.
 
-Validation at `a93435936`: `make build` passed; a second `make sqlc` produced no
-generated-file changes; `tini -s -- bash scripts/test-go.sh --race --only regular`
-passed all regular packages, including handler, service, channel engine, Lark,
-migrations and message delivery. It used the same isolated test-child environment
-described below. The new service regressions also passed two consecutive runs.
-No frontend or agent-package implementation changed in this correction.
+The production route inventory currently contains **443 user-authenticated
+routes: 60 allowed and 383 denied**, plus 69 routes with separate authentication
+or public/capability handling. The test calls every denied user route with a
+real, otherwise-valid external task token and requires the central error code.
+It also records method, route, authentication boundary and decision in
+`server/cmd/server/testdata/labrastro-external-routes.tsv`. New or changed routes
+fail the inventory check until reviewed, while the runtime already denies new
+routes. This detects route changes, not semantic changes inside an existing
+handler; upstream sync still requires reviewing the latter.
 
-## Autopilot boundary and migration scale
-
-`5dd60538a` rejects external conversation tasks and their descendants at the
-shared Autopilot write gate, even while the conversation grant is still valid.
-It covers creation, updates, deletion, manual runs, triggers, webhook token and
-signing-secret changes, collaborators and Autopilot delivery management. The
-response is `403 autopilot_external_conversation_forbidden`. Autopilot detail
-and list reads advertise no write/access-management permission for these tasks;
-detail reads omit webhook tokens, paths and URLs. Exposing an existing webhook
-credential would otherwise bypass the write gate. Ordinary members and their
-first-party tasks keep the existing originator-based rights. Notification-source
-identity resolution remains separate from this Autopilot-specific policy.
-
-This chooses refusal over adding a second persisted conversation-consent model
-to Autopilot. The existing consent-aware issue wakeups remain available. In
-tests using the real authentication middleware, direct, delegated, retried,
-wakeup-created and history-pruned external task lineages all receive refusals.
-Read-secret suppression and a first-party authenticated creation control pass.
-A negative control against `a93435936` returns HTTP 201 for the same external
-creation request where the corrected code returns 403. The new authority tests,
-manual wakeup management test and wakeup claim-root invariant pass three
-consecutive race runs.
-
-The preceding change prevents new unauthorized automation operations; it cannot
-reconstruct the provenance of already-existing Autopilots, which stored only
-their human creator. Before production acceptance, an operator must review
-existing automations with that creator, disable unconfirmed rules/triggers, and
-rotate webhook credentials that may already have been shared externally. Do not
-automatically delete or reattribute rules based on timestamp coincidence. No
-production records or credentials were inspected or changed in this work.
-
-`88973046f` revises the **unreleased** 564 backfill to materialize only unresolved
-parent links. The recursion walks that subset and joins ancestors by task ID,
-instead of rescanning all task history at every depth. Ordinary ancestry stays
-ordinary; missing ancestors and cycles fail closed; previously stored roots and
-lost-ledger replay behavior remain. Neither the two-second lock bound nor the
-ten-second statement bound was increased. The migration total remains 632.
-
-The opt-in `TestWakeupConversationMigrationLargeHistory` copies the current task
-columns and CHECK constraints into a private schema, adds a primary-key index,
-and creates 2,000,000 ordinary rows plus a 32-level external descendant chain.
-The tested table and primary-key index occupy 1,568,890,880 bytes. With PostgreSQL
-15.19, `fsync=on` and `synchronous_commit=on`, the original 564 at `a93435936`
-fails with statement timeout (`57014`) on this fixture; the revised migration
-completes in **1.802 seconds**, preserving all 2,000,000 ordinary roots and
-marking the external chain and wakeup correctly. Fixture setup is outside the
-timing. The table is freshly populated and cache-warm; it does not copy all
-production indexes, model every ancestry distribution, or predict production
-latency. Validate the actual database shape and resources before rollout.
-
-Reproduce in the managed disposable database:
+After reviewing a changed route, update and inspect the inventory explicitly:
 
 ```bash
-set -a
-source .env.worktree
-set +a
-LABRASTRO_TEST_WAKEUP_HISTORY_ROWS=2000000 \
-  go -C server test -race ./cmd/migrate \
-  -run '^TestWakeupConversationMigrationLargeHistory$' -count=1 -v
+LABRASTRO_UPDATE_ROUTE_INVENTORY=1 go -C server test ./cmd/server \
+  -run '^TestExternalConversationRouteInventory$' -count=1
+git diff -- server/cmd/server/testdata/labrastro-external-routes.tsv
 ```
 
-`722b3ff3b` gives `TestIssueWakeupManagementEndpoints` its own runtime. Its
-immediate dispatch no longer competes with unrelated tests for the suite's
-shared runtime lock. Production dispatch budgets and assertions remain intact.
+The Autopilot-specific gates and the wakeup consent extension from the earlier
+review rounds are removed. The **unreleased** 564 migration and its dedicated
+backfill/scale tests are removed; released 551 and upstream 551–563 are intact.
+The final expected ledger is **631**, matching the initial v0.6.1 merge. The
+previous 632-migration and 564 performance results describe a superseded design,
+not this PR's final implementation. Only the managed disposable test database
+was taken back through 564 down; no production migration was run.
 
-Verification also exposed an existing object-intent cleanup bug. PostgreSQL can
-place the `UPDATE ... FROM (SELECT ... LIMIT 1 FOR UPDATE SKIP LOCKED)` subquery
-inside a nested loop, reevaluate it for each target row, and lease several
-intents while the caller consumes only one returned row. The existing
-`TestCleanupSourceContextObjectIntentsBoundsAttemptsNotSuccesses` failed five
-consecutive isolated runs: a batch of two attempted only one object. Commit
-`4639d1647` materializes that single-row claim and regenerates sqlc. The unchanged
-regression then passed five consecutive race runs. No cleanup budget or test
-assertion was relaxed.
+Two independent correctness fixes remain: the Feishu private invocation-denial
+notice, and the object-intent cleanup query's materialized single-row claim.
+The latter prevents a nested-loop plan from leasing several objects while the
+caller consumes one row; its existing regression failed five times before the
+fix and passed five times afterwards. The wakeup-management test also retains
+its dedicated runtime to remove fixture lock contention. None of these changes
+adds capabilities to the external-conversation policy.
 
-Final validation at `4639d1647`: the regular race command completed successfully
-for all **71** tested packages (nine executed again, including handler and
-service; 62 unchanged results reused Go's test cache). The preceding run had
-passed 70 packages and exposed a built-in skill-reference wording violation;
-`6395aa357` fixes that wording without changing the contract test. The subsequent
-service run exposed the SQL claim bug above. `go vet` passed for handler,
-service, migrate and generated queries; `make build` built all three binaries.
-The final sqlc regeneration and whitespace check were clean. Frontend and agent
-implementation did not change in this round, so their prior verification and
-host limitations below still apply.
+The grant instructions and all five existing grant-UI translations describe the
+reduced capability set. Real-router tests cover root/delegated/retried tasks,
+pruned intermediate history, revocation, successful issue/comment/attachment
+operations, and an actual delegated issue preserving its root. Ordinary member
+and first-party task calls retain their previous behavior. The separate
+middleware regression covers new literal routes, methods and malformed paths.
 
-The completed backend CI job at `e11fce081` failed in
-`TestIssueWakeupManagementEndpoints` while its
-[agent job passed](https://github.com/AstralSolipsism/multica/actions/runs/36966777551/job/110712188347).
-The runtime-isolation change addresses that shared fixture dependency; the
-current local regular suite passes. This is not a claim that a new remote CI run
-has passed. The new push starts fresh checks, whose result remains on the PR.
+## Deployment prerequisite: retire earlier delegated authority
+
+An API allowlist prevents new operations through an external task token. It
+**cannot undo credentials or automation created before this change**, and
+removing 564 means the final implementation does not track consent on historical
+manual wakeup rules. Do not deploy this version with such rules still active.
+Before reopening external conversation grants, an operator must:
+
+- Pause external conversation input and drain/cancel its in-flight work while
+  retiring the old rules, including queued tasks and joined wakeup instructions.
+- Disable external-origin or unverified manual wakeups, Autopilots and team
+  notification routes; review their approved external delivery targets.
+- Review the runtime owners' API/login credentials, invitations and join links;
+  revoke unknown credentials and rotate webhook secrets already shared outside.
+  Revoking the conversation grant alone does not revoke these independent items.
+- Treat missing source-task history as unverified, rather than assuming that the
+  rule was first-party. Existing Autopilots/notification rules do not record
+  sufficient task provenance, so creation timestamps are not proof of consent.
+
+A starting read-only query for manual wakeups on the shipped 551 schema is:
+
+```sql
+SELECT w.id, w.workspace_id, w.source_task_id, w.enabled
+FROM issue_wakeup w
+LEFT JOIN agent_task_queue t ON t.id = w.source_task_id
+WHERE w.system_rule IS NULL AND w.source_task_id IS NOT NULL
+  AND (t.id IS NULL OR t.conversation_root_task_id IS NOT NULL
+       OR t.originator_source = 'channel_integration');
+```
+
+This is an audit candidate list, not a complete historical lineage reconstruction
+or an automatic deletion script. Already materialized descendants without a
+root and old joined instructions also require review. No production data,
+configuration or credentials were inspected or changed. HTTP authorization is
+not an operating-system sandbox for an agent's local tools.
 
 ## Migration results
 
@@ -324,11 +297,6 @@ Do not describe these downs as lossless:
 - `555_wakeup_system_rule` removes system wakeups and their receipts.
 - `557_wakeup_conditions` drops condition, fire-limit/count and pause data.
 - `558_issue_child_event` removes the child-event history/queue.
-- `564_wakeup_conversation_root` drops the durable consent reference on wakeup
-  rules. Existing task roots remain, but a later re-upgrade cannot reconstruct a
-  rule's original consent if its source task has already been deleted. It then
-  denies the rule rather than treating it as first-party. Recover with a matching
-  database snapshot and binary instead of relying on this down/up sequence.
 
 ## Verification commands and limits
 
@@ -336,6 +304,28 @@ Toolchain: Go `1.26.6`, Node `24.21.0`, pnpm `10.28.2`, PostgreSQL `15.19`,
 Linux `5.15.0-157-generic`. Go commands used `GOMAXPROCS=4` and `GOFLAGS=-p=4`.
 DB-backed tests sourced the managed `.env.worktree`; the tests did not use
 real agent accounts or installed agent CLIs.
+
+Option B was verified at `92fe902fec287338f85fed9a5f7da98e195ac5d3`:
+
+| Command / scope | Result |
+| --- | --- |
+| `tini -s -- bash scripts/test-go.sh --race --only regular` in the detached test checkout | All 71 tested packages pass: 33 executed, 38 valid cached results; 16 other packages have no test files |
+| Real production-router policy tests | All 383 denied routes return the central 403 code; collaboration writes/reads, delegation, retry, deleted intermediate history and revocation pass |
+| Existing member-created issue assigned by an external task | Failed before the shared attribution fix with NULL conversation root; assignment and comment-mention cases now pass |
+| `go vet` for server, middleware, channel, handler and service | Pass |
+| `make build` | Server, CLI and migrator pass; only this report was uncommitted during the build |
+| Repeated `make sqlc` and `git diff --check` | Pass; generated wakeup code matches the pre-extension implementation |
+| `pnpm --filter @multica/views exec vitest run locales/parity.test.ts --maxWorkers=2` | All 220 tests pass |
+| Final disposable `migrate up` and audit-query `EXPLAIN` | Pass against the 631-row migration ledger |
+
+The regular suite includes the migration recovery/timeout tests and retained
+channel-invocation regressions. Agent implementation and frontend application
+logic did not change in this correction; the agent host limitation below remains,
+and this round reran locale parity rather than the full frontend/mobile suites.
+No external CI run was awaited; current checks are reported on the PR.
+
+The initial v0.6.1 integration was checked as follows. These frontend/mobile
+results precede option B.
 
 | Command / scope | Result |
 | --- | --- |
@@ -385,13 +375,6 @@ completed [backend-agent-tests CI job](https://github.com/AstralSolipsism/multic
 passed at the prior PR head `a0d914f2b`, so the failure above is a local-host
 limitation, not a failure in that CI environment. It is not a CI result for the
 new correction commit.
-
-That same prior CI run's backend job failed at
-`TestRereviewStaleIssueScanCrossesPassBudget`: it visited 28,400 of the 40,000
-nonterminal candidates before its two time-bounded passes ended. The complete
-regular suite at `a93435936`, including this test, passed locally. This correction
-does not change the scanner or that timing-sensitive test. The latest PR checks
-remain authoritative; no external CI run was awaited.
 
 Not run: browser E2E, live Feishu delivery, real agent smoke, native device or
 desktop package execution, migrations against production-shaped data or
