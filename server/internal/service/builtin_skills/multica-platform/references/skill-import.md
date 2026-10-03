@@ -8,6 +8,7 @@ once a URL or concrete target exists.
 
 - [The invariant](#the-invariant)
 - [Supported URL source families](#supported-url-source-families)
+- [Repository skill packages](#repository-skill-packages)
 - [Local archive import](#local-archive-import)
 - [Direct URL flow](#direct-url-flow)
 - [Additive add vs replace-all set](#additive-add-vs-replace-all-set)
@@ -20,16 +21,15 @@ once a URL or concrete target exists.
 ## The invariant
 
 A skill is installed for Multica only when it exists in the current workspace's
-skill database. The single supported path that puts it there is the workspace
-import endpoint. It accepts either a hosted URL or an uploaded local archive
-(`.skill` / `.zip`), driven by this CLI:
+skill database. Use the workspace import APIs through the CLI. Single-skill
+import accepts a hosted URL or an uploaded local archive (`.skill` / `.zip`):
 
 ```bash
 multica skill import --url <url> --output json              # hosted source
 multica skill import --file <path-to.skill> --output json   # local archive
 ```
 
-The CLI defaults to `--on-conflict fail`. A URL import sends:
+Single-skill import defaults to `--on-conflict fail`. A URL import sends:
 
 ```text
 POST /api/skills/import
@@ -62,6 +62,58 @@ multica skill import --url github.com/owner/repo/blob/main/path/to/SKILL.md --ou
   `/blob/{ref}/.../SKILL.md` file.
 - A bare ClawHub slug (no host) is accepted and routed to ClawHub.
 - Any other host is rejected with a 400 naming the supported sources.
+
+## Repository skill packages
+
+For multiple skills in a repository, use `multica skill package`. It accepts
+HTTPS GitHub repository or `tree/<ref>/<directory>` URLs and two-component
+`https://skills.sh/owner/repo` URLs. The runtime needs a CLI version containing
+these commands, delivered through the existing Labrastro release channel;
+updating this document or the server alone does not upgrade an installed CLI.
+
+```bash
+multica skill package import <url> --dry-run --output json
+multica skill package import <url> --output json
+multica skill package import <url> --skill skills/one --skill skills/two --on-conflict rename --output json
+multica skill package import <url> --all --output json
+multica skill package list --output json
+multica skill package get <package-id> --output json
+multica skill package rescan <package-id> --output json
+multica skill package rescan <package-id> --apply --output json
+multica skill package rescan <package-id> --apply --skill skills/new --output json
+```
+
+Import uses `/api/skill-packages/preview` and `/api/skill-packages/apply`;
+rescan uses `/api/skill-packages/{package-id}/rescan`. Requests use the current
+workspace regardless of the CLI's working directory. `--dry-run` and rescan
+without `--apply` only preview, with no workspace writes. List/get show the
+last applied package metadata, not a live source scan.
+
+Without selectors, import follows the server's manifest defaults. `--skill`
+is a repository-relative skill directory, repeatable, and mutually exclusive
+with `--all`; use `--skill ''` for a repository-root candidate. Package conflict
+strategies are `skip` (default), `rename`, and `overwrite`. `can_write` governs
+the existing target; false does not prohibit rename into an independent skill.
+Same-source skills already in another package must first be detached there.
+
+Rescan uses the saved URL/ref. Default `--apply` updates only changed imported
+skills; new or detached candidates require `--skill` or `--all`. Explicit
+selectors replace the default selection, so include changed paths too when
+selecting new ones. Disappeared source paths are retained. Reimporting an
+existing package follows these same rescan defaults.
+
+Read all per-item statuses, reasons, diagnostics and retryable flags, including
+unselected candidates. Partial failures print the complete JSON report before a
+nonzero exit, including in table mode; successful items remain applied. JSON stdout stays a single
+document, with warnings on stderr. Same-name candidates can fail the first apply
+even with rename. For these failures or a stale preview, preview again, inspect
+the results, then select remaining items; never blindly replay a write. Each
+request is bounded to 45 seconds. Malformed responses leave the result
+indeterminate and must not be treated as success.
+
+Single-skill import/refresh can also return `diagnostics` (inside `skill` for
+structured imports); table output displays these source/reference warnings.
+Agent binding remains a separate operation using returned workspace skill IDs.
 
 ## Local archive import
 
