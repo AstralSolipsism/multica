@@ -125,7 +125,7 @@ func TestLabrastroReferencePlusAndLocalDirectories(t *testing.T) {
 		"skills/demo/references/local.md": "local",
 		"references/c++.md":               "shared",
 	})
-	src, err := newLabrastroSkillSource(t.Context(), f.client(), f.url())
+	src, err := newLabrastroSkillSource(t.Context(), f.client(), f.url(), t.Name())
 	if err != nil {
 		t.Fatal(err)
 	}

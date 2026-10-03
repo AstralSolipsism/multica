@@ -132,7 +132,7 @@ func (f *labrastroSourceFixture) rebuild() {
 	f.Tree = nil
 	dirs := map[string]bool{}
 	for p, body := range f.Files {
-		f.Tree = append(f.Tree, githubTreeEntry{Path: p, Type: "blob", Mode: "100644", Size: int64(len(body)), SHA: sha(body)})
+		f.Tree = append(f.Tree, githubTreeEntry{Path: p, Type: "blob", Mode: "100644", Size: int64(len(body)), SHA: labrastroGitBlobSHA([]byte(body))})
 		for d := path.Dir(p); d != "."; d = path.Dir(d) {
 			dirs[d] = true
 		}
@@ -195,7 +195,7 @@ func TestLabrastroPinnedSourceFixtures(t *testing.T) {
 			start := time.Now()
 			ctx, cancel := context.WithTimeout(t.Context(), importFetchTimeout)
 			defer cancel()
-			src, err := newLabrastroSkillSource(ctx, f.client(), f.url())
+			src, err := newLabrastroSkillSource(ctx, f.client(), f.url(), t.Name())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -221,19 +221,19 @@ func TestLabrastroPinnedSourceFixtures(t *testing.T) {
 			if len(cs) != tc.count || selected != tc.defaults || shared != tc.shared {
 				t.Fatalf("got candidates/defaults/shared %d/%d/%d, want %d/%d/%d; diagnostics=%+v", len(cs), selected, shared, tc.count, tc.defaults, tc.shared, ds)
 			}
-			if src.treeRequests != 1 || src.cacheBytes > labrastroSourceCacheBytes || f.maxActive > treeDownloadConcurrency {
-				t.Fatalf("unbounded scan: trees=%d cache=%d concurrent=%d", src.treeRequests, src.cacheBytes, f.maxActive)
+			if src.treeRequests != 1 || src.blobs.bytes > labrastroBlobCacheBytes || f.maxActive > treeDownloadConcurrency {
+				t.Fatalf("unbounded scan: trees=%d cache=%d concurrent=%d", src.treeRequests, src.blobs.bytes, f.maxActive)
 			}
 			after := runtime.MemStats{}
 			runtime.ReadMemStats(&after)
-			t.Logf("snapshot=%s candidates=%d requests=%d trees=%d peak_downloads=%d cache_bytes=%d largest_bundle_bytes=%d total_alloc_delta=%d elapsed=%s", f.Commit, len(cs), f.requests, src.treeRequests, f.maxActive, src.cacheBytes, largestBundle, after.TotalAlloc-before.TotalAlloc, time.Since(start))
+			t.Logf("snapshot=%s candidates=%d requests=%d trees=%d peak_downloads=%d cache_bytes=%d largest_bundle_bytes=%d total_alloc_delta=%d elapsed=%s", f.Commit, len(cs), f.requests, src.treeRequests, f.maxActive, src.blobs.bytes, largestBundle, after.TotalAlloc-before.TotalAlloc, time.Since(start))
 		})
 	}
 }
 
 func TestLabrastroScopedTreeAndManifest(t *testing.T) {
 	f := labrastroTestFixture(map[string]string{"skills/demo/SKILL.md": "---\nname: demo\n---\n[shared](../../references/a.md)", "references/a.md": "shared", "outside/SKILL.md": "outside", ".claude-plugin/plugin.json": `{"skills":"./skills"}`})
-	src, err := newLabrastroSkillSource(t.Context(), f.client(), f.url()+"/tree/main/skills")
+	src, err := newLabrastroSkillSource(t.Context(), f.client(), f.url()+"/tree/main/skills", t.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestLabrastroScopedTreeAndManifest(t *testing.T) {
 	}
 	f.Files[".claude-plugin/plugin.json"] = `{"skills":["../escape"]}`
 	f.rebuild()
-	src, err = newLabrastroSkillSource(t.Context(), f.client(), f.url())
+	src, err = newLabrastroSkillSource(t.Context(), f.client(), f.url(), t.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,11 +268,11 @@ func TestLabrastroScopedTreeAndManifest(t *testing.T) {
 func TestLabrastroSourceFailureAndTimeout(t *testing.T) {
 	f := labrastroTestFixture(map[string]string{"skills/demo/SKILL.md": "[a](../../references/a.md)", "references/a.md": "shared"})
 	f.truncated = true
-	if _, err := newLabrastroSkillSource(t.Context(), f.client(), f.url()); err == nil {
+	if _, err := newLabrastroSkillSource(t.Context(), f.client(), f.url(), t.Name()); err == nil {
 		t.Fatal("truncated tree accepted")
 	}
 	f.truncated = false
-	src, err := newLabrastroSkillSource(t.Context(), f.client(), f.url())
+	src, err := newLabrastroSkillSource(t.Context(), f.client(), f.url(), t.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +284,7 @@ func TestLabrastroSourceFailureAndTimeout(t *testing.T) {
 	f.delay = time.Second
 	ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
 	defer cancel()
-	if _, err := newLabrastroSkillSource(ctx, f.client(), f.url()); err == nil {
+	if _, err := newLabrastroSkillSource(ctx, f.client(), f.url(), t.Name()); err == nil {
 		t.Fatal("cancelled scan accepted")
 	}
 }
@@ -350,7 +350,7 @@ func TestLabrastroManifestOptionalSkills(t *testing.T) {
 				files[".claude-plugin/plugin.json"] = tc.manifest
 			}
 			f := labrastroTestFixture(files)
-			src, err := newLabrastroSkillSource(t.Context(), f.client(), f.url())
+			src, err := newLabrastroSkillSource(t.Context(), f.client(), f.url(), t.Name())
 			if err != nil {
 				t.Fatal(err)
 			}

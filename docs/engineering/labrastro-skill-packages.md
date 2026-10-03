@@ -307,39 +307,71 @@ Tree-specific codes include `folder_cycle`, `managed_folder`, `managed_skill`.
 
 ## Bounded work and integration points
 
-Each request has a 45-second context. A source shares a tree, an 8 MiB raw-file
-cache, and at most eight concurrent downloads. Candidate bundles are handled
-one at a time and released. Source limits are 1,024 candidates, 256 tree
-requests, 32 MiB per API JSON response; raw files retain existing limits.
-Trees and summaries consume additional metadata memory. The heap measurement
-in the fixture test is a sampled process delta, not a hard total-memory limit.
-Full scans request one recursive tree; scoped scans traverse ancestors
-nonrecursively then request only the chosen subtree recursively. Shared paths
-outside scope use cached nonrecursive directory lookups. Files are fetched
-from the resolved commit during one request to avoid mixing branch revisions.
+Package preview, apply and rescan share the existing **45-second** request
+context. A file download still has a 30-second HTTP-client limit and at most
+1 MiB of content. Single-skill import and refresh use their existing paths and
+limits. The CLI and Next rewrite proxy allow 60 seconds for the server response.
+The proxy setting applies to all configured rewrites, not just package APIs.
 
-Apply currently scans **every candidate again**, sequentially, before validating
-the preview, then writes selected items within the same 45-second server budget.
-The eight-download limit is shared; it does not mean eight candidates scan in
-parallel. Selecting fewer items does not reduce this initial full scan. A source
-slow enough to exhaust the scan budget can time out on every attempt, including
-after another successful preview. Repreview/rescan is not guaranteed to complete
-on an unchanged slow connection.
+A package request resolves the ref to a commit **on every call**, then reads the
+current tree. Ref/commit resolution is never cached. Full scans use one
+recursive tree; scoped scans traverse ancestors nonrecursively and request only
+the chosen subtree recursively. Shared paths outside that scope use synchronized,
+request-local directory lookups. All raw and tree downloads share the request's
+eight-slot limit. Source limits remain 1,024 candidates, 256 tree requests and
+32 MiB per API JSON response.
 
-A `tree/<ref>/<subdirectory>` URL actually narrows the requested tree and
-candidate set, but changes the package identity (workspace + owner/repo +
-subdirectory). It creates/finds a different package, not a seamless continuation
-of the repository-root package; existing packaged skills cannot silently move
-to it. The CLI uses at least 60 seconds per HTTP request; the web proxy setting
-is tracked in the OL-104 touchpoints below. Longer client/proxy budgets allow
-the server's response to arrive; they do not extend its 45-second budget.
+### Slow sources: verified content cache and bounded candidates
 
-Decision retained for this revision: no token payload change, candidate
-concurrency increase, preview store or unlimited wait. A later optimization
-needs separate latency/request-count measurements and tests that preserve the
-shared eight-download and 8 MiB cache limits, cancellation, per-item content
-limits and transaction semantics. Local fixture timings below are not a promise
-that repeated attempts can import every slow source.
+`labrastro_skill_blob_cache.go` keeps immutable raw bodies in process memory,
+keyed by workspace ID, normalized owner/repo and the tree entry's Git blob SHA.
+A miss downloads from the fixed commit URL and checks Git's `blob <length>\0`
+SHA-1 identity before insertion. Hash mismatches and download failures are not
+cached; they retain the existing retryable source-failure classification. Keys
+never share content across workspaces or repositories. Concurrent requests for
+the same key share one download; a waiting request can cancel independently.
+The downloading request owns the network context: if it is canceled, its
+waiters receive the failure too, and a later request can retry. No network work
+is detached from a request and no write is automatically retried.
+
+The process-wide LRU holds at most **64 MiB of raw bodies** and **16,384 entries**
+(the latter also bounds metadata for empty blobs). Entries expire 30 minutes
+after insertion, longer than the 15-minute preview token lifetime; a cache hit
+does not extend the TTL. LRU pressure can evict entries earlier. There is no
+disk cache, database schema change, new token payload or persisted candidate
+body. A restart or another server instance is a cold cache miss and follows the
+same fixed-commit download, hash check and permission/fingerprint validation.
+
+Candidate bundles run with at most **four workers** and are released after their
+summaries/digests are collected. Results are placed in sorted path order,
+independent of completion order. Each candidate retains the existing 1 MiB
+primary plus 8 MiB/256 supporting-file budget. The bounded *logical content
+working set* is therefore the shared 64 MiB cache plus up to four times 9 MiB
+per active scan (100 MiB for one scan before overlap). This is **not an RSS or
+Go heap ceiling**: tree/summary/LRU metadata, in-flight raw buffers, string
+copies, reference rewriting, transport buffers and GC add allocations, and
+concurrent requests add their own candidate working sets. The entry and byte
+limits are process-wide, not a separate 64 MiB allowance for every workspace.
+
+Apply still validates **all candidates** and the fresh database/permission
+snapshot before writing. After a successful preview, its network work normally
+consists of confirming the ref/commit and reading the tree: cached blobs avoid
+raw downloads, but candidate parsing, reference completion, fingerprints and
+transactions still run. Selection alone does not shrink the scan. A preview
+that reaches 45 seconds writes nothing; its completed, validated blobs remain
+available for a user-initiated retry in the same process. The retry only
+fetches missing/changed/expired/evicted blobs. This improves slow-source progress
+without guaranteeing completion: tree/ref requests, changed sources, cache
+pressure, very large bundles, or landing on a different instance may still
+consume the whole budget. Once writes begin, the response retains successful
+items and reports remaining timeout failures; a lost response remains
+indeterminate and must not trigger an automatic write retry.
+
+A `tree/<ref>/<subdirectory>` URL narrows the actual tree and candidate set but
+changes package identity (workspace + owner/repo + subdirectory). It is a
+different package, not a continuation of the repository-root package; existing
+packaged skills cannot silently move to it. See the validation record for fixed
+snapshot equivalence, cold/warm timings and the actual 45-second retry probe.
 
 Fork migrations are `9001`–`9008`. `9001` creates the three tables; each later
 file creates one concurrent index and has a paired down migration. The fork
@@ -350,10 +382,14 @@ near-term collisions; future upstream syncs must still check numeric prefixes.
 
 This is a maintenance checklist across the three fork PRs, not a claim that
 the frontend/CLI files are in PR #58. Server entries describe #58; CLI entries
-were checked against #59 at `b31a975f5810c78bea873b43f3c3746c25871be9`.
+were checked against #59 at `b124382c3e23a2ddf0d577f439c3a33b20fa4c60`
+(tree `4e42ab6146182a2f049c78d6ac6cf4c0f42882dc`, identical to `b31a975f`).
 Frontend entries were checked against #60 at
-`69939e8d78baf00f2e836d21107fd1695b21ef51`; its rework is still in progress.
-Explicitly pending rows are not implemented in that frontend head.
+`0dab3c06b4e0f1a7775bc37d86ec11c497753ffe`
+(tree `9f324eb837ad58ee20f0d51409f9d062d317d1ed`, identical to `497db0ac`).
+Their PR descriptions and actual diffs from the shared `28eb1e838` base were
+checked; both retain 60-second client/proxy budgets. This documents source
+alignment, not combined runtime acceptance or independent approval of #58.
 
 Handwritten hooks in existing upstream files:
 
@@ -372,13 +408,15 @@ Handwritten hooks in existing upstream files:
 | `packages/core/types/index.ts` | Export `SkillImportDiagnostic` for UI consumers |
 | `packages/views/skills/components/skills-page.tsx` | Folder tree, subtree filtering, package-import and move dialogs, detach wiring and workspace query invalidation; the toolbar entry is here, not a separate `skill-list-toolbar.tsx` edit |
 | `packages/views/skills/components/skill-list-actions.tsx` | Row/batch move and detach permissions plus batch refresh diagnostic results |
-| `packages/views/skills/components/create-skill-dialog.tsx` | URL/archive import diagnostic notice view and malformed-result handling; localized sibling-skill error mapping is pending OL-104 rework |
+| `packages/views/skills/components/create-skill-dialog.tsx` | URL/archive diagnostics and malformed-result handling; map local `multiple_skills` and server sibling-archive errors to the same localized recovery |
 | `packages/views/skills/components/refresh-skill-dialog.tsx` | Single-refresh success diagnostics, detail-cache update and notice dismissal |
-| `packages/views/agents/components/skill-picker-list.tsx` | Tree-mode dispatch and batch-toggle props; extraction of the tree implementation to a fork file is pending OL-104 rework |
+| `packages/views/agents/components/skill-picker-list.tsx` | Thin tree-mode dispatch and optional batch-toggle props; tree implementation lives in fork `skills/components/skill-picker-tree.tsx`, retaining the upstream flat picker |
 | `packages/views/agents/components/skill-add-dialog.tsx`, `skill-multi-select.tsx` (same directory) | Opt in to the tree picker and batch toggle using the caller's filtered skills |
 | `packages/views/locales/index.ts`, `packages/views/i18n/resources-types.ts` | Register the `skill-packages` namespace and translation typing |
-| `packages/core/skills/pack-archive.ts` | **Pending OL-104 rework:** reject parallel SKILL.md roots before local-folder packing discards them; retain nested-root handling |
-| `apps/web/next.config.ts` | **Pending OL-104 rework:** `experimental.proxyTimeout: 60_000` lets the 45-second backend finish through the Next.js rewrite proxy |
+| `packages/views/locales/{en,zh-Hans,ja,ko,fr}/skills.json` | Add `create.local.multiple_skills` recovery wording for sibling folder/archive roots |
+| `packages/views/skills/lib/utils.ts` | `isMultipleSkillsError` recognizes the server archive rejection for localization |
+| `packages/core/skills/pack-archive.ts` | Reject sibling SKILL.md roots before local-folder packing discards them; normalize case/separators, retain nested-root handling |
+| `apps/web/next.config.ts` | Set `experimental.proxyTimeout: 60_000` for all configured rewrites, above the 45-second backend deadline |
 | `server/cmd/multica/cmd_skill.go` | Display additive diagnostics in legacy single-import and refresh table output; JSON response shape remains unchanged |
 | `server/internal/service/builtin_skills/multica-platform/references/skill-import.md` | Package CLI entry, selection/rescan defaults, complete partial-failure reports and no blind write retry |
 
@@ -387,9 +425,29 @@ migrator hooks, `packages/core/api/labrastro-skill-schemas.ts` (extended by #60)
 `packages/core/skills/package-queries.ts`, package/folder/move dialogs and tree
 models under `packages/views/skills/`, `skill-diagnostics-notice.tsx`, the five
 `skill-packages.json` locale files, and
-`server/cmd/multica/cmd_labrastro_skill_package.go` (registered with `init()`).
+`server/cmd/multica/cmd_labrastro_skill_package.go` (registered with `init()`;
+`cli.AtLeastAPITimeout(60*time.Second)` on both HTTP client and request context).
 They are feature modules, not generated output. Their adjacent tests cover the
 hooks above; #59 also updates `server/internal/service/builtin_skills_test.go`.
+
+The fork `package-apply-stage.tsx` distinguishes stale source/preview errors
+(`preview_stale`, `source_changed`), source-read errors (`source_timeout`,
+`source_unavailable`, `tree_unavailable`), other coded server failures, and
+unreadable/null/body-less responses. Its five locale files provide separate
+titles. Structured server details remain visible; explicit repreview and query
+invalidation remain, with no automatic write retry or blanket 5xx zero-write
+claim. Single and batch refresh diagnostic mounts remain in the upstream files
+listed above; batch results include diagnostic `path`/`target`.
+
+New fork tests include `apps/web/next.config.test.ts` (60,000 ms and API rewrite),
+the core package API/query tests, tree/model/dialog/picker suites and the two
+binding-entry tests. Extended upstream suites are `pack-archive.test.ts`,
+`create-skill-dialog.test.tsx`, `refresh-skill-dialog.test.tsx`,
+`skill-list-actions.test.tsx`, and `skills-page.source-link.test.tsx` in their
+implementation directories. The `labrastro-skill-schemas.ts` inferred-type
+extensions are changes to an existing **fork** file, not an upstream hook.
+Only picker extraction is in this round; further isolation of `skills-page`,
+`skill-list-actions`, `refresh-skill-dialog` and `client.ts` is deferred to OL-107.
 
 Generated sqlc output is separate from those handwritten hooks:
 
@@ -402,7 +460,7 @@ Generated sqlc output is separate from those handwritten hooks:
 `server/pkg/db/queries/` directory. Regenerate from the repository root with
 `make sqlc` (the Makefile pins sqlc v1.31.1), then inspect the generated diff.
 Indexes come from migrations 9002–9008, each with its paired down migration.
-This source-error revision changes no SQL or sqlc inputs and does not regenerate
+This cache/parallelism revision changes no SQL or sqlc inputs and does not regenerate
 files as a substitute for handler/contract verification.
 
 Folder mutations have no WebSocket events. Existing skill created/updated/

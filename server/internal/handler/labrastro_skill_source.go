@@ -20,10 +20,10 @@ import (
 )
 
 const labrastroMaxCandidates = 1024
-const labrastroSourceCacheBytes = 8 << 20
+const labrastroCandidateConcurrency = 4
 
-// One request owns one source context. Trees are shared, downloads are bounded,
-// and the cache has a byte budget rather than retaining every candidate bundle.
+// One request owns its commit, tree and shared download semaphore. Immutable
+// blobs can be reused by later requests in the same workspace and repository.
 type labrastroSkillSource struct {
 	spec                        githubSpec
 	URL                         string
@@ -33,9 +33,9 @@ type labrastroSkillSource struct {
 	directories                 map[string]map[string]githubTreeEntry
 	fullTree                    bool
 	treeRequests                int
-	mu                          sync.Mutex
-	cache                       map[string][]byte
-	cacheBytes                  int
+	treeMu, directoryMu         sync.Mutex
+	workspace                   string
+	blobs                       *labrastroBlobCache
 	semaphore                   chan struct{}
 }
 
@@ -54,7 +54,10 @@ func labrastroReadGitHubJSON(ctx context.Context, client *http.Client, endpoint 
 	return nil
 }
 
-func newLabrastroSkillSource(ctx context.Context, client *http.Client, raw string) (*labrastroSkillSource, error) {
+func newLabrastroSkillSource(ctx context.Context, client *http.Client, raw, workspace string) (*labrastroSkillSource, error) {
+	if workspace == "" {
+		return nil, fmt.Errorf("skill package source requires a workspace")
+	}
 	normalized := strings.TrimSpace(raw)
 	if !strings.Contains(normalized, "://") {
 		normalized = "https://" + normalized
@@ -111,7 +114,7 @@ func newLabrastroSkillSource(ctx context.Context, client *http.Client, raw strin
 	// Persist the resolved ref, not a bare repository URL whose default branch
 	// may change between rescans. The commit remains request-local only.
 	normalized = buildRawGitHubURL("https://github.com/"+spec.owner+"/"+spec.repo+"/tree/"+escapeRefPath(spec.ref), spec.skillDir)
-	s := &labrastroSkillSource{spec: spec, URL: normalized, commit: commit.SHA, rootTree: commit.Commit.Tree.SHA, client: client, entries: map[string]githubTreeEntry{}, directories: map[string]map[string]githubTreeEntry{}, cache: map[string][]byte{}, semaphore: make(chan struct{}, treeDownloadConcurrency)}
+	s := &labrastroSkillSource{spec: spec, URL: normalized, commit: commit.SHA, rootTree: commit.Commit.Tree.SHA, client: client, entries: map[string]githubTreeEntry{}, directories: map[string]map[string]githubTreeEntry{}, workspace: workspace, blobs: labrastroPackageBlobs, semaphore: make(chan struct{}, treeDownloadConcurrency)}
 	s.rawPrefix = fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s", url.PathEscape(spec.owner), url.PathEscape(spec.repo), commit.SHA)
 	treeID := s.rootTree
 	if spec.skillDir != "" {
@@ -145,14 +148,21 @@ func newLabrastroSkillSource(ctx context.Context, client *http.Client, raw strin
 }
 
 func (s *labrastroSkillSource) tree(ctx context.Context, sha string, recursive bool) ([]githubTreeEntry, error) {
+	s.treeMu.Lock()
 	s.treeRequests++
-	if s.treeRequests > 256 {
+	requests := s.treeRequests
+	s.treeMu.Unlock()
+	if requests > 256 {
 		return nil, fmt.Errorf("%w: repository traversal exceeds 256 tree requests; choose a smaller source", errImportCapExceeded)
 	}
 	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/%s/git/trees/%s", url.PathEscape(s.spec.owner), url.PathEscape(s.spec.repo), url.PathEscape(sha))
 	if recursive {
 		endpoint += "?recursive=1"
 	}
+	if err := s.acquire(ctx); err != nil {
+		return nil, err
+	}
+	defer func() { <-s.semaphore }()
 	var tree githubTreeResponse
 	if err := labrastroReadGitHubJSON(ctx, s.client, endpoint, &tree); err != nil {
 		return nil, err
@@ -163,6 +173,9 @@ func (s *labrastroSkillSource) tree(ctx context.Context, sha string, recursive b
 	return tree.Tree, nil
 }
 func (s *labrastroSkillSource) directory(ctx context.Context, dir, sha string) (map[string]githubTreeEntry, error) {
+	// Scoped scans lazily walk shared ancestors for out-of-directory references.
+	s.directoryMu.Lock()
+	defer s.directoryMu.Unlock()
 	if e, ok := s.directories[dir]; ok {
 		return e, nil
 	}
@@ -207,34 +220,34 @@ func (s *labrastroSkillSource) lookup(ctx context.Context, p string) (githubTree
 	}
 	return githubTreeEntry{}, false, nil
 }
-func (s *labrastroSkillSource) fetch(ctx context.Context, p string) ([]byte, error) {
-	s.mu.Lock()
-	data, ok := s.cache[p]
-	s.mu.Unlock()
-	if ok {
-		return data, nil
+func (s *labrastroSkillSource) acquire(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	select {
 	case s.semaphore <- struct{}{}:
+		return nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return ctx.Err()
 	}
-	defer func() { <-s.semaphore }()
-	data, err := fetchRawFile(ctx, s.client, buildRawGitHubURL(s.rawPrefix, p))
+}
+
+func (s *labrastroSkillSource) fetch(ctx context.Context, p string) ([]byte, error) {
+	e, ok, err := s.lookup(ctx, p)
 	if err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.cacheBytes+len(data) > labrastroSourceCacheBytes {
-		s.cache = map[string][]byte{}
-		s.cacheBytes = 0
+	if !ok || !labrastroRegularBlob(e) || len(e.SHA) != 40 {
+		return nil, fmt.Errorf("source file %s has no regular blob identity", p)
 	}
-	if _, ok := s.cache[p]; !ok {
-		s.cache[p] = data
-		s.cacheBytes += len(data)
-	}
-	return data, nil
+	key := labrastroBlobKey{s.workspace, s.spec.owner + "/" + s.spec.repo, e.SHA}
+	return s.blobs.get(ctx, key, func() ([]byte, error) {
+		if err := s.acquire(ctx); err != nil {
+			return nil, err
+		}
+		defer func() { <-s.semaphore }()
+		return fetchRawFile(ctx, s.client, buildRawGitHubURL(s.rawPrefix, p))
+	})
 }
 
 type LabrastroSkillCandidate struct {
@@ -353,42 +366,26 @@ func (s *labrastroSkillSource) candidates(ctx context.Context) ([]LabrastroSkill
 	if err != nil {
 		return nil, nil, err
 	}
-	result := make([]LabrastroSkillCandidate, 0, len(paths))
-	for _, dir := range paths {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, err
+	result := make([]LabrastroSkillCandidate, len(paths))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(labrastroCandidateConcurrency)
+	for i, dir := range paths {
+		if gctx.Err() != nil {
+			break
 		}
-		c := LabrastroSkillCandidate{Path: dir, DefaultSelected: defaults[dir], State: "new", CanWrite: true, SharedFiles: []string{}, Diagnostics: []SkillImportDiagnostic{}}
-		bundle, err := s.bundle(ctx, dir)
-		if err != nil {
-			c.Name = path.Base(dir)
-			c.State = "failed"
-			c.DefaultSelected = false
-			c.CanWrite = false
-			var detail *labrastroImportError
-			if errors.As(err, &detail) {
-				c.Diagnostics = append(c.Diagnostics, detail.Diagnostic)
-			} else {
-				code := "source_unavailable"
-				if isCapError(err) {
-					code = "limit_exceeded"
-				}
-				c.Diagnostics = append(c.Diagnostics, SkillImportDiagnostic{Code: code, Path: dir, Message: err.Error(), Retryable: !isCapError(err)})
+		g.Go(func() error {
+			if err := gctx.Err(); err != nil {
+				return err
 			}
-		} else {
-			c.Name = bundle.name
-			c.Description = bundle.description
-			c.Digest = labrastroBundleDigest(bundle)
-			c.FileCount = len(bundle.files)
-			c.Bytes = len(bundle.content) + bundle.bundleSize
-			c.Diagnostics = append(c.Diagnostics, bundle.diagnostics...)
-			for _, f := range bundle.files {
-				if strings.HasPrefix(f.path, "_shared/") {
-					c.SharedFiles = append(c.SharedFiles, f.path)
-				}
-			}
-		}
-		result = append(result, c)
+			result[i] = s.candidate(gctx, dir, defaults[dir])
+			return gctx.Err()
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
 	}
 	// Prefer ordinary paths for a same-name dot-directory mirror. All other
 	// collisions remain explicit candidates rather than being guessed away.
@@ -408,6 +405,40 @@ func (s *labrastroSkillSource) candidates(ctx context.Context) ([]LabrastroSkill
 	}
 	return filtered, diags, nil
 }
+func (s *labrastroSkillSource) candidate(ctx context.Context, dir string, selected bool) LabrastroSkillCandidate {
+	c := LabrastroSkillCandidate{Path: dir, DefaultSelected: selected, State: "new", CanWrite: true, SharedFiles: []string{}, Diagnostics: []SkillImportDiagnostic{}}
+	bundle, err := s.bundle(ctx, dir)
+	if err != nil {
+		c.Name = path.Base(dir)
+		c.State = "failed"
+		c.DefaultSelected = false
+		c.CanWrite = false
+		var detail *labrastroImportError
+		if errors.As(err, &detail) {
+			c.Diagnostics = append(c.Diagnostics, detail.Diagnostic)
+		} else {
+			code := "source_unavailable"
+			if isCapError(err) {
+				code = "limit_exceeded"
+			}
+			c.Diagnostics = append(c.Diagnostics, SkillImportDiagnostic{Code: code, Path: dir, Message: err.Error(), Retryable: !isCapError(err)})
+		}
+	} else {
+		c.Name = bundle.name
+		c.Description = bundle.description
+		c.Digest = labrastroBundleDigest(bundle)
+		c.FileCount = len(bundle.files)
+		c.Bytes = len(bundle.content) + bundle.bundleSize
+		c.Diagnostics = append(c.Diagnostics, bundle.diagnostics...)
+		for _, f := range bundle.files {
+			if strings.HasPrefix(f.path, "_shared/") {
+				c.SharedFiles = append(c.SharedFiles, f.path)
+			}
+		}
+	}
+	return c
+}
+
 func labrastroDotDirectory(p string) bool {
 	for _, part := range strings.Split(p, "/") {
 		if strings.HasPrefix(part, ".") {

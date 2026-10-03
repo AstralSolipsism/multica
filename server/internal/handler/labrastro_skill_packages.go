@@ -285,7 +285,7 @@ func (h *Handler) labrastroPackageOperation(w http.ResponseWriter, r *http.Reque
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), importFetchTimeout)
 	defer cancel()
-	src, err := newLabrastroSkillSource(ctx, &http.Client{Timeout: 30 * time.Second}, req.URL)
+	src, err := newLabrastroSkillSource(ctx, &http.Client{Timeout: 30 * time.Second}, req.URL, uuidToString(a.ws))
 	if err != nil {
 		var api *labrastroSkillAPIError
 		if errors.As(err, &api) {

@@ -52,6 +52,8 @@ func TestLabrastroPackageScanContextFailure(t *testing.T) {
 					handler = testHandler.LabrastroRescanPackage
 				}
 				before := labrastroPackageSnapshotHash(t, fx)
+				// Model a cold instance/cache eviction before a source failure.
+				labrastroEvictWorkspaceBlobs(fx.WorkspaceID)
 				// Stop in the final candidate, where candidates() used to return
 				// a failed row without checking the request context again.
 				ctx, cancel := context.WithTimeout(req.Context(), time.Second)
@@ -119,6 +121,8 @@ func TestLabrastroPackageApplySourceFailureClassification(t *testing.T) {
 			}
 			preview := labrastroPreview(t, fx, testUserID, source.url())
 			source.failPath = tc.failPath
+			// The network failure contract still applies on a cold instance.
+			labrastroEvictWorkspaceBlobs(fx.WorkspaceID)
 			switch tc.mutate {
 			case "source":
 				source.Files["skills/zulu/SKILL.md"] = "changed"

@@ -39,3 +39,22 @@ total allocations, a heap-delta sample every 1 ms, and elapsed time. Heap sample
 include other process activity and are not a production capacity estimate.
 `TestLabrastroSourceFailureAndTimeout` uses a 1 ms context with a 1 s transport
 delay to verify cancellation, alongside truncated-tree and required-file failures.
+
+The `*-baseline.json` files are byte-for-byte candidate/default/diagnostic and
+preview-fingerprint output captured from the serial scanner at
+`d8a51e11e10bd5c9d8b82a178e4bd5d50c0a72fe`, using these fixed archives, an empty
+package snapshot, workspace `11111111-1111-4111-8111-111111111111` and actor
+`22222222-2222-4222-8222-222222222222`. `TestLabrastroSourceCachedSnapshotEquivalence`
+compares both cold and warm parallel scans against those files. Do not regenerate
+them from the new scanner merely to accept a behavioral change.
+
+The longer DB-backed probes run with:
+
+```sh
+LABRASTRO_PACKAGE_LATENCY_TEST=1 go test -race ./internal/handler \
+  -run '^TestLabrastroPackageCacheLatency$' -count=1 -v
+```
+
+These offline probes delay every GitHub API and raw request, exercise
+warm apply, the real 45-second preview timeout and cached retry, and a real
+45-second deadline after one item commits. Use an isolated migrated test database.

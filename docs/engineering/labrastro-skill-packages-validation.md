@@ -5,7 +5,125 @@ Base: `803cfcf18a7db98ee45e7ac10367b12a4c773711`. Linux, Go 1.27.1,
 PostgreSQL 15 on a task-owned local cluster and isolated development database.
 No tests imported skills into the connected Labrastro workspace.
 
-## OL-106 integration rework
+## Content cache and candidate parallelism (final Q2)
+
+This revision starts at `d8a51e11e10bd5c9d8b82a178e4bd5d50c0a72fe` and keeps
+server/file deadlines at **45/30 seconds**. The unshipped timeout increase is not
+part of the delivered history. Changed production files are fork-owned:
+`labrastro_skill_blob_cache.go`, `labrastro_skill_source.go` and the workspace
+argument in `labrastro_skill_packages.go`. Single import/refresh, upstream files,
+API/token/fingerprint formats, SQL and migrations are unchanged. The results in
+this section supersede the historical sequential-scan measurements below.
+
+### Behavior and regression checks
+
+- `go test -race -json ./internal/handler -run '^TestLabrastro' -count=1` passed.
+  Cache cases cover hits/misses, workspace/repository isolation, Git blob hash
+  mismatch and failure rejection, LRU/byte bounds, TTL, singleflight and
+  cancellation. Scoped parallel scans exercise synchronized ancestor lookups,
+  shared reference deduplication, stable candidate order and eight downloads.
+- `TestLabrastroSourceCachedSnapshotEquivalence` compares the entire serialized
+  candidates (including defaults/diagnostics/digests), global diagnostics and
+  preview fingerprint **byte-for-byte** with output captured by a probe at
+  `d8a51e11`. Both cold and warm scans match for both pinned archives. The
+  committed `*-baseline.json` fixtures record that output, fixed actor/workspace
+  IDs and an empty database snapshot; they were not generated from the new code.
+- Existing cold-source 503/504/409 tests explicitly evict that workspace's cache
+  before injecting the network failure. Warm-cache tests separately prove that
+  identical immutable content survives a raw-host outage while a changed commit
+  still returns 409 without writing. Existing permission/target changes,
+  malformed/expired tokens, best-effort items, atomicity and complete reports
+  remain covered. No failing assertion was removed to accommodate the cache.
+- Full handler, router, CLI and migration suites passed under `-race`:
+  **3,292 top-level passes, 60 skips, zero failures**. The skips are the 59
+  existing gated tests plus the explicit long-probe gate; the latter was run
+  separately below. Package durations: handler 287.639 s, router 46.477 s,
+  CLI 18.981 s, migration command 58.223 s, migration checks 7.665 s.
+- The targeted cache suite also passed all four tests (1.598 s), including
+  the additional empty-blob entry-cap case. Production code is identical to the
+  full-scope and latency copies.
+- `go vet ./internal/handler`, formatting and `git diff --check` passed. SQL was
+  not changed or regenerated. Route inventory/external-token rejection and
+  migration up/down/interrupted-index checks ran in the suites above.
+
+Actual full-scope command, through `scripts/go-test-with-agent-cli-guard.sh`:
+
+```sh
+go -C server test -race -json -count=1 ./internal/handler ./cmd/server \
+  ./cmd/multica ./cmd/migrate ./internal/migrations -timeout=12m
+```
+
+### Fixed-snapshot latency
+
+All GitHub API and raw requests pay **20 ms** in the offline transport. Baseline
+and new code both ran with race instrumentation. Timings include parsing and
+reference completion and are local observations, not latency guarantees.
+
+| Pinned source | Serial baseline | Four-worker cold scan | Cold requests/raw | Warm scan | Warm requests/raw | Cold peak downloads |
+| --- | --- | --- | --- | --- | --- | --- |
+| mattpocock `d81f3a1` | 1.910 s | 0.607 s | 105 / 102 | 0.185 s | 3 / 0 | 8 |
+| addyosmani `9d0c60d` | 1.351 s | 0.454 s | 42 / 39 | 0.247 s | 3 / 0 | 6 |
+
+Counts remain 37 candidates/27 defaults and 25/25 (11 shared-reference users).
+The cold request count is unchanged; overlapping candidate work reduces the
+serial round trips. Retained raw bodies are 259,010 and 468,587 bytes. The warm
+three requests confirm the current default branch, commit and tree; no ref or
+candidate result is cached. The 64 MiB process cache and four active bundles
+are logical data budgets; additional metadata/copies/GC and concurrent scans
+are accounted for in the contract, not hidden in a claimed RSS ceiling.
+
+### Actual 45-second handler probes
+
+`LABRASTRO_PACKAGE_LATENCY_TEST=1` enables
+`TestLabrastroPackageCacheLatency`. These are direct httptest handlers with a
+real isolated PostgreSQL database and an offline GitHub RoundTripper. Every API
+and raw request is delayed. The handler uses its production 45-second context;
+no shortened test deadline is substituted. No live GitHub or production skills
+are used.
+
+| Scenario | Delay per request | Actual result | Network and database evidence |
+| --- | --- | --- | --- |
+| Pinned mattpocock preview then apply | 250 ms | Preview 6.126 s; warm apply 1.416 s | Preview 105 requests/102 raw, zero writes. Apply 3 requests/0 raw; 37 report rows, 27 skills and placements created. Peak 8. |
+| Cold 180-candidate preview | 1 s | 45.001 s, 504 `source_timeout` | 171 requests/168 raw attempts, 164 completed blobs (5,138 bytes) retained; whole workspace snapshot unchanged. |
+| User retry of the same preview | 1 s | 7.119 s, all 180 candidates valid | 19 requests/16 raw: only the uncached bodies were fetched; peak 4, whole workspace snapshot still unchanged. |
+| Deadline after first skill commits | 20 ms | 45.046 s, complete HTTP 200 partial report | Warm apply 3 requests/0 raw, exactly two transaction begins/commits (package + first skill), one skill/placement; all three report rows present, one created and two retryable `source_timeout`. |
+
+The probe suite passed in 106.405 seconds. Existing fast tests separately cover
+explicit client cancellation. Cache reuse does not promise every cold instance
+or changing/evicted source can finish in 45 seconds, and cannot justify retrying
+an indeterminate write automatically.
+
+### Environment, documentation and limits
+
+Linux, Go 1.27.1, task-owned PostgreSQL 15.19 on loopback port 55493. Managed
+`make up C=api` prepared separate databases for the scope and latency suites;
+`make down` stopped both APIs (the launcher reported a leftover zombie PID,
+verified not to be an active server). Runtime task/token variables were removed
+in disposable source copies, and the real-agent CLI guard stayed enabled.
+All production server files in the full-scope copy match the delivered source.
+
+Initial probe attempts were invalidated by environment setup: managed cleanup
+removed an old ephemeral database, and the prior canceled run's other database
+contained unfinished fixture rows. Those setup failures are preserved in the
+attached evidence and are not reported as product failures or passes. The
+successful runs above used fresh managed databases with distinct URLs.
+
+`make test` was attempted and stops before tests at missing Docker in
+`ensure-postgres.sh:72`. Thus full-repository green is not claimed. Unchanged
+agent/daemon process groups, browser/Next/Electron/Windows and live-source E2E
+were not rerun here; combined frontend/CLI acceptance belongs to OL-106.
+
+The public touchpoint table was checked against actual remote heads #59
+`b124382c3e23a2ddf0d577f439c3a33b20fa4c60` and #60
+`0dab3c06b4e0f1a7775bc37d86ec11c497753ffe`. Whole-tree diffs against `b31a975f`
+and `497db0ac` respectively are empty. The table now includes the completed
+picker extraction, locale/utils/archive hooks, proxy config test and error
+classification; 39 explicit repository paths resolve at the applicable heads.
+The earlier backup/restore rehearsal below remains historical evidence; no
+new content-writing behavior or SQL changes were introduced here, and no
+real-workspace operations were performed.
+
+## Earlier OL-106 source-classification rework
 
 The source-classification code under test is
 `d6988b89af13207e64cb711d60c5483f46c00c80`, appended to the previously reviewed
