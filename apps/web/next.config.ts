@@ -38,16 +38,20 @@ const allowedDevOrigins = process.env.CORS_ALLOWED_ORIGINS
       .filter(Boolean)
   : undefined;
 
+// Skill package preview/apply/rescan allow up to 180s server-side (fork
+// constant in server/internal/handler/labrastro_skill_packages.go). The
+// rewrite proxy must outlast that deadline so the server's answer — a full
+// per-item report or its own deadline failure — reaches the browser: Next's
+// 30s default (next/dist/server/lib/router-utils/proxy-request.js) used to
+// cut a ~35s apply and lose the report (OL-106 finding). 240s leaves a 60s
+// margin, matches the CLI client floor, and stays under common browser wait
+// limits (~300s). Single-skill import/refresh keep their own 45s deadline.
+const SKILL_PACKAGE_PROXY_TIMEOUT_MS = 240_000;
+
 const nextConfig: NextConfig = {
   ...(process.env.STANDALONE === "true" ? { output: "standalone" as const } : {}),
   experimental: {
-    // The rewrite proxy times out upstream responses after 30s by default
-    // (next/dist/server/lib/router-utils/proxy-request.js), which is shorter
-    // than the backend's 45s deadline for skill package preview/apply
-    // (server/internal/handler/skill.go importFetchTimeout). A slow apply
-    // through the proxy would be cut at 30s and its per-item report lost.
-    // 60s matches the CLI client timeout and stays above the server deadline.
-    proxyTimeout: 60_000,
+    proxyTimeout: SKILL_PACKAGE_PROXY_TIMEOUT_MS,
   },
   transpilePackages: ["@multica/core", "@multica/ui", "@multica/views"],
   ...(allowedDevOrigins && allowedDevOrigins.length > 0
