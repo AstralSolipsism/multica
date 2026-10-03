@@ -253,6 +253,17 @@ type LabrastroSkillCandidate struct {
 	Diagnostics     []SkillImportDiagnostic `json:"diagnostics"`
 }
 
+func (s *labrastroSkillSource) metadata(body, dir string) (string, string) {
+	name, desc := skillpkg.ParseSkillFrontmatter(body)
+	if name == "" {
+		name = path.Base(dir)
+		if dir == "" {
+			name = s.spec.repo
+		}
+	}
+	return name, desc
+}
+
 func (s *labrastroSkillSource) bundle(ctx context.Context, dir string) (*importedSkill, error) {
 	primary := path.Join(dir, "SKILL.md")
 	e, ok := s.entries[primary]
@@ -263,13 +274,7 @@ func (s *labrastroSkillSource) bundle(ctx context.Context, dir string) (*importe
 	if err != nil {
 		return nil, err
 	}
-	name, desc := skillpkg.ParseSkillFrontmatter(string(body))
-	if name == "" {
-		name = path.Base(dir)
-		if dir == "" {
-			name = s.spec.repo
-		}
-	}
+	name, desc := s.metadata(string(body), dir)
 	r := &importedSkill{name: name, description: desc, content: string(body), origin: map[string]any{"type": "github", "source_url": fmt.Sprintf("https://github.com/%s/%s/tree/%s/%s", s.spec.owner, s.spec.repo, escapeRefPath(s.spec.ref), dir), "owner": s.spec.owner, "repo": s.spec.repo, "ref": s.spec.ref, "path": dir}}
 	var selected []githubTreeEntry
 	var total int64
@@ -435,17 +440,30 @@ func (s *labrastroSkillSource) manifest(ctx context.Context, paths []string) (ma
 	if err != nil {
 		return nil, nil, err
 	}
-	var manifest struct {
-		Skills json.RawMessage `json:"skills"`
+	var manifest map[string]any
+	if json.Unmarshal(body, &manifest) != nil || manifest == nil {
+		return invalid("manifest must be a JSON object; no defaults selected")
 	}
-	if json.Unmarshal(body, &manifest) != nil || len(manifest.Skills) == 0 {
-		return invalid("manifest skills must be a directory or path list; no defaults selected")
+	skills, present := manifest["skills"]
+	if !present {
+		for _, p := range paths {
+			selected[p] = true
+		}
+		return selected, nil, nil
 	}
 	var entries []string
-	var dir string
-	if json.Unmarshal(manifest.Skills, &dir) == nil {
-		entries = []string{dir}
-	} else if json.Unmarshal(manifest.Skills, &entries) != nil || entries == nil {
+	switch value := skills.(type) {
+	case string:
+		entries = []string{value}
+	case []any:
+		for _, item := range value {
+			entry, ok := item.(string)
+			if !ok {
+				return invalid("manifest skills must contain only paths; no defaults selected")
+			}
+			entries = append(entries, entry)
+		}
+	default:
 		return invalid("manifest skills is invalid; no defaults selected")
 	}
 	for _, entry := range entries {

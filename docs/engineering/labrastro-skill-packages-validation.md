@@ -5,7 +5,7 @@ Base: `803cfcf18a7db98ee45e7ac10367b12a4c773711`. Linux, Go 1.27.1,
 PostgreSQL 15 on a task-owned local cluster and isolated development database.
 No tests imported skills into the connected Labrastro workspace.
 
-## Passing checks
+## Initial delivery checks (`c246a57`)
 
 - `make sqlc`: regenerated the three models and fork query file.
 - `go test -race ./cmd/migrate ./internal/migrations`: passed in the full
@@ -98,3 +98,44 @@ the full repository recursive-tree query.
 
 No merge, upstream PR, release, deployment or production skill mutation was
 performed as part of verification.
+
+## Review revision verification
+
+The new regressions first failed against `c246a57`, reproducing local-name
+rescan changes, packaged name-only collisions, selected same-source transfers,
+missing optional manifest keys, explicit null values selecting everything,
+and escaped `+` paths becoming spaces. They pass after the fixes. Additional
+cases cover readoption after detach, content updates preserving local names,
+upstream rename after deselection/repeated failure, and inferred names in both
+repository-root and nested skills. Local directory references retain their
+paths without a filter warning; external directory references remain diagnosed.
+
+The final code ran through the real-agent CLI guard, in the same isolated source
+copy and task-owned PostgreSQL database as above:
+
+```sh
+go -C server test -race -json ./internal/handler ./cmd/server ./cmd/multica ./cmd/migrate ./internal/migrations -count=1
+```
+
+| Package | Top-level tests passed | Top-level tests skipped | Elapsed |
+| --- | ---: | ---: | ---: |
+| `internal/handler` | 2,434 | 57 | 261.563 s |
+| `cmd/server` | 318 | 0 | 47.447 s |
+| `cmd/multica` | 469 | 0 | 18.974 s |
+| `cmd/migrate` | 43 | 2 | 60.055 s |
+| `internal/migrations` | 18 | 0 | 9.061 s |
+
+All five packages passed: 3,282 top-level passes and 59 existing gated skips
+(Redis, real pg_bigm, external-source integration, and scale tests). The new
+regressions and the OL-103 database, reference, permission, migration and route
+coverage were not skipped. `git diff --check` also passed. `make test` was
+attempted again and stopped at missing Docker, so this is not a claim that the
+entire Go suite passed. The unrelated process suites and unchanged frontend
+were not rerun for this revision; their earlier results remain recorded above.
+The task-owned database was stopped after verification.
+
+Apply still scans all candidates before reproducing the preview fingerprint.
+The current token contains a signed fingerprint, not recoverable candidate
+summaries; eliminating that scan needs a different signed payload or a server
+preview store. That optional optimization is not included in these fixes.
+The existing 45-second deadline, eight-download limit and 8 MiB cache remain.

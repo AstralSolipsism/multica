@@ -324,3 +324,49 @@ func TestLabrastroSingleImportAndRefreshReferences(t *testing.T) {
 		t.Fatal("second-level reference was not rewritten relative to its own file")
 	}
 }
+
+func TestLabrastroManifestOptionalSkills(t *testing.T) {
+	for _, tc := range []struct {
+		name, manifest string
+		selected       int
+		invalid        bool
+	}{
+		{"absent", "", 2, false},
+		{"no skills", `{"name":"x","version":"1.0.0"}`, 2, false},
+		{"empty object", `{}`, 2, false},
+		{"empty list", `{"skills":[]}`, 0, false},
+		{"directory", `{"skills":"./skills"}`, 1, false},
+		{"list", `{"skills":["./extra/beta"]}`, 1, false},
+		{"null manifest", `null`, 0, true},
+		{"null skills", `{"skills":null}`, 0, true},
+		{"null list item", `{"skills":[null]}`, 0, true},
+		{"object", `{"skills":{}}`, 0, true},
+		{"escape", `{"skills":["../outside"]}`, 0, true},
+		{"malformed", `{"name":`, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			files := map[string]string{"skills/alpha/SKILL.md": "alpha", "extra/beta/SKILL.md": "beta"}
+			if tc.manifest != "" {
+				files[".claude-plugin/plugin.json"] = tc.manifest
+			}
+			f := labrastroTestFixture(files)
+			src, err := newLabrastroSkillSource(t.Context(), f.client(), f.url())
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidates, diags, err := src.candidates(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected := 0
+			for _, c := range candidates {
+				if c.DefaultSelected {
+					selected++
+				}
+			}
+			if selected != tc.selected || (len(diags) > 0) != tc.invalid || tc.invalid && diags[0].Code != "manifest_invalid" {
+				t.Fatalf("selected=%d diagnostics=%+v", selected, diags)
+			}
+		})
+	}
+}

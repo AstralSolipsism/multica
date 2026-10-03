@@ -264,6 +264,11 @@ func labrastroCompleteReferences(ctx context.Context, result *importedSkill, ski
 			if !exists {
 				continue
 			}
+			// Local directories already retain their layout and support files.
+			// Leave these references intact without a misleading filter warning.
+			if entry.Type == "tree" && labrastroInside(src, skillDir) && (target == skillDir || labrastroInside(target, skillDir)) {
+				continue
+			}
 			if !labrastroRegularBlob(entry) || !labrastroTextPath(target) {
 				diagnostic("filtered_reference", src, target, "symlink, submodule, directory or filtered asset; left unchanged")
 				continue
@@ -309,7 +314,7 @@ func labrastroCompleteReferences(ctx context.Context, result *importedSkill, ski
 				continue
 			}
 			if strings.ContainsAny(targetPart, "%\\") {
-				rel = strings.ReplaceAll((&url.URL{Path: rel}).EscapedPath(), "+", "%20")
+				rel = (&url.URL{Path: rel}).EscapedPath()
 			}
 			if strings.Contains(raw, "#") {
 				rel += "#" + anchor

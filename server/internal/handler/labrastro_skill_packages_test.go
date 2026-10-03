@@ -401,3 +401,171 @@ func TestLabrastroWorkspaceDeleteCleansSkillTree(t *testing.T) {
 		t.Fatal("workspace deletion crossed the workspace boundary")
 	}
 }
+
+func TestLabrastroRenamedImportRescan(t *testing.T) {
+	for _, tc := range []struct{ path, name, header string }{
+		{"skills/alpha/SKILL.md", "alpha", "---\nname: alpha\n---\n"},
+		{"skills/alpha/SKILL.md", "alpha", ""},
+		{"SKILL.md", "skills", ""},
+	} {
+		t.Run(tc.path+tc.header, func(t *testing.T) {
+			fx := labrastroPackageDBFixture(t)
+			fx.Insert(t, "skill", testutil.Cols{"workspace_id": fx.WorkspaceID, "name": tc.name, "content": "other source", "created_by": testUserID})
+			source := labrastroTestFixture(map[string]string{tc.path: tc.header + "original"})
+			source.install(t)
+			preview := labrastroPreview(t, fx, testUserID, source.url())
+			report := labrastroApply(t, fx, testUserID, source.url(), preview.PreviewID, map[string]any{"on_conflict": "rename"})
+			if report.Failed || report.Results[0].Status != "created" {
+				t.Fatalf("initial rename: %+v", report)
+			}
+			id := report.Results[0].SkillID
+			var name string
+			fx.QueryRow(t, "SELECT name FROM skill WHERE id=$1", id).Scan(&name)
+			if name != tc.name+"-2" {
+				t.Fatalf("initial name = %q", name)
+			}
+			preview = labrastroPreview(t, fx, testUserID, source.url())
+			if preview.Candidates[0].State != "unchanged" || preview.Candidates[0].DefaultSelected {
+				t.Fatalf("local rename treated as source change: %+v", preview.Candidates)
+			}
+			if report = labrastroApply(t, fx, testUserID, source.url(), preview.PreviewID, nil); report.Failed {
+				t.Fatalf("unchanged rescan: %+v", report)
+			}
+			labrastroCall(t, fx, testUserID, testHandler.LabrastroDetachSkill, "POST", nil, "skillId", id).Want(200)
+			preview = labrastroPreview(t, fx, testUserID, source.url())
+			if preview.Candidates[0].State != "adoptable" || preview.Candidates[0].DefaultSelected {
+				t.Fatalf("detached candidate: %+v", preview.Candidates)
+			}
+			report = labrastroApply(t, fx, testUserID, source.url(), preview.PreviewID, map[string]any{"skills": []string{preview.Candidates[0].Path}})
+			fx.QueryRow(t, "SELECT name FROM skill WHERE id=$1", id).Scan(&name)
+			if report.Failed || report.Results[0].SkillID != id || name != tc.name+"-2" {
+				t.Fatalf("readoption lost local name or identity: name=%q report=%+v", name, report)
+			}
+			// A local display name is independent of source frontmatter. Content
+			// updates must preserve it, including skills with inferred names.
+			fx.Exec(t, "UPDATE skill SET name='local-display-name' WHERE id=$1", id)
+			preview = labrastroPreview(t, fx, testUserID, source.url())
+			if preview.Candidates[0].State != "unchanged" {
+				t.Fatalf("display rename alone marked changed: %+v", preview.Candidates)
+			}
+			source.Files[tc.path] = tc.header + "updated contents"
+			source.rebuild()
+			preview = labrastroPreview(t, fx, testUserID, source.url())
+			report = labrastroApply(t, fx, testUserID, source.url(), preview.PreviewID, nil)
+			if report.Failed || report.Results[0].SkillID != id || report.Results[0].Status != "updated" {
+				t.Fatalf("content update: %+v", report)
+			}
+			fx.QueryRow(t, "SELECT name FROM skill WHERE id=$1", id).Scan(&name)
+			if name != "local-display-name" {
+				t.Fatalf("content update lost local name: %q", name)
+			}
+			// Metadata advances even for deselected or failed items. It must
+			// not hide an unapplied upstream rename on the next retry.
+			source.Files[tc.path] = "---\nname: upstream-renamed\n---\nnew name"
+			source.rebuild()
+			blocker := fx.Insert(t, "skill", testutil.Cols{"workspace_id": fx.WorkspaceID, "name": "upstream-renamed", "content": "collision", "created_by": testUserID})
+			preview = labrastroPreview(t, fx, testUserID, source.url())
+			labrastroApply(t, fx, testUserID, source.url(), preview.PreviewID, map[string]any{"skills": []string{}})
+			for range 2 {
+				preview = labrastroPreview(t, fx, testUserID, source.url())
+				report = labrastroApply(t, fx, testUserID, source.url(), preview.PreviewID, nil)
+				if !report.Failed || report.Results[0].Code != "name_conflict" {
+					t.Fatalf("upstream rename lost after metadata apply: %+v", report)
+				}
+			}
+			fx.Exec(t, "UPDATE skill SET name='collision-resolved' WHERE id=$1", blocker)
+			preview = labrastroPreview(t, fx, testUserID, source.url())
+			report = labrastroApply(t, fx, testUserID, source.url(), preview.PreviewID, nil)
+			fx.QueryRow(t, "SELECT name FROM skill WHERE id=$1", id).Scan(&name)
+			if report.Failed || report.Results[0].SkillID != id || name != "upstream-renamed" {
+				t.Fatalf("upstream rename did not preserve ID: name=%s report=%+v", name, report)
+			}
+			preview = labrastroPreview(t, fx, testUserID, source.url())
+			if preview.Candidates[0].State != "unchanged" {
+				t.Fatalf("successful rename still changed: %+v", preview.Candidates)
+			}
+		})
+	}
+}
+
+func TestLabrastroPackagedNameConflictAllowsRename(t *testing.T) {
+	for _, moved := range []bool{false, true} {
+		t.Run(fmt.Sprintf("directory_moved=%t", moved), func(t *testing.T) {
+			fx := labrastroPackageDBFixture(t)
+			oldPath := "skills/old/alpha"
+			newPath := oldPath
+			source := labrastroTestFixture(map[string]string{oldPath + "/SKILL.md": "---\nname: alpha\n---\noriginal"})
+			source.install(t)
+			preview := labrastroPreview(t, fx, testUserID, source.url())
+			original := labrastroApply(t, fx, testUserID, source.url(), preview.PreviewID, nil)
+			if original.Failed {
+				t.Fatalf("original import: %+v", original)
+			}
+			id := original.Results[0].SkillID
+			if moved {
+				newPath = "skills/new/alpha"
+				delete(source.Files, oldPath+"/SKILL.md")
+			} else {
+				source.Repo = "other-repo"
+			}
+			source.Files[newPath+"/SKILL.md"] = "---\nname: alpha\n---\nnew source"
+			source.rebuild()
+			preview = labrastroPreview(t, fx, testUserID, source.url())
+			for _, c := range preview.Candidates {
+				if c.Path == newPath && (c.Conflict != "name_conflict" || c.CanWrite) {
+					t.Fatalf("name match misclassified or overwrite allowed: %+v", c)
+				}
+			}
+			// Even the creator cannot overwrite a skill in a managed package.
+			report := labrastroApply(t, fx, testUserID, source.url(), preview.PreviewID, map[string]any{"skills": []string{newPath}, "on_conflict": "overwrite"})
+			if !report.Failed {
+				t.Fatalf("overwrote a packaged target: %+v", report)
+			}
+			preview = labrastroPreview(t, fx, testUserID, source.url())
+			report = labrastroApply(t, fx, testUserID, source.url(), preview.PreviewID, map[string]any{"skills": []string{newPath}, "on_conflict": "rename"})
+			if report.Failed {
+				t.Fatalf("name-conflict rename failed: %+v", report)
+			}
+			var newID string
+			for _, item := range report.Results {
+				if item.Path == newPath {
+					if item.Status != "created" || item.SkillID == id {
+						t.Fatalf("rename transferred original: %+v", item)
+					}
+					newID = item.SkillID
+				}
+			}
+			if newID == "" || fx.Count(t, "SELECT count(*) FROM skill WHERE workspace_id=$1", fx.WorkspaceID) != 2 {
+				t.Fatalf("expected original plus renamed copy: %+v", report)
+			}
+			var originalPath, originalPackage, originalContent string
+			fx.QueryRow(t, "SELECT p.source_path,p.package_id::text,s.content FROM labrastro_skill_placement p JOIN skill s ON s.id=p.skill_id WHERE p.skill_id=$1", id).Scan(&originalPath, &originalPackage, &originalContent)
+			if originalPath != oldPath || originalPackage != original.Package.ID || !strings.HasSuffix(originalContent, "original") {
+				t.Fatal("name-conflict operation modified the original packaged skill")
+			}
+		})
+	}
+}
+
+func TestLabrastroAlreadyPackagedDefaultUnselected(t *testing.T) {
+	fx := labrastroPackageDBFixture(t)
+	source := labrastroTestFixture(map[string]string{"skills/alpha/SKILL.md": "---\nname: alpha\n---\noriginal"})
+	source.install(t)
+	preview := labrastroPreview(t, fx, testUserID, source.url())
+	original := labrastroApply(t, fx, testUserID, source.url(), preview.PreviewID, nil)
+	subURL := source.url() + "/tree/main/skills"
+	preview = labrastroPreview(t, fx, testUserID, subURL)
+	c := preview.Candidates[0]
+	if c.Conflict != "already_packaged" || c.DefaultSelected || c.CanWrite {
+		t.Fatalf("same-source transfer offered as default: %+v", c)
+	}
+	report := labrastroApply(t, fx, testUserID, subURL, preview.PreviewID, nil)
+	if report.Failed || report.Package != nil {
+		t.Fatalf("default selection created an empty package: %+v", report)
+	}
+	preview = labrastroPreview(t, fx, testUserID, subURL)
+	report = labrastroApply(t, fx, testUserID, subURL, preview.PreviewID, map[string]any{"all": true, "on_conflict": "rename"})
+	if !report.Failed || report.Results[0].Code != "already_packaged" || report.Results[0].SkillID != original.Results[0].SkillID {
+		t.Fatalf("same-source transfer was allowed: %+v", report)
+	}
+}

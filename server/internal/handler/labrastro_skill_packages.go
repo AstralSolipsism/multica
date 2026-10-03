@@ -188,14 +188,18 @@ func labrastroResolveCandidates(a labrastroSkillActor, s labrastroPackageSnapsho
 		if found {
 			c.SkillID = uuidToString(target.ID)
 			placement := places[c.SkillID]
-			if placement.PackageID.Valid && (p == nil || placement.PackageID != p.ID || placement.SourcePath.String != c.Path) {
+			if own && placement.PackageID.Valid && (p == nil || placement.PackageID != p.ID || placement.SourcePath.String != c.Path) {
 				c.State = "conflict"
 				c.Conflict = "already_packaged"
 				c.CanWrite = false
+				c.DefaultSelected = false
 			} else if own {
 				c.CanWrite = labrastroCanManage(target.CreatedBy, a, s.Member)
 				if placement.PackageID.Valid {
 					c.State = "changed"
+					// Local display names (including conflict suffixes) are not
+					// source changes. Source frontmatter is still part of ContentHash.
+					target.Name = sanitizeNullBytes(c.Name)
 					if labrastroStateDigest(target) == c.Digest && folders[placement.FolderID].PackagePath.String == labrastroCandidateFolderPath(c.Path, raw) {
 						c.State = "unchanged"
 					}
@@ -208,7 +212,7 @@ func labrastroResolveCandidates(a labrastroSkillActor, s labrastroPackageSnapsho
 			} else {
 				c.State = "conflict"
 				c.Conflict = "name_conflict"
-				c.CanWrite = target.CreatedBy == a.user
+				c.CanWrite = target.CreatedBy == a.user && !placement.PackageID.Valid
 			}
 		}
 		if p != nil {
@@ -493,7 +497,9 @@ func (h *Handler) labrastroApplyCandidate(ctx context.Context, r *http.Request, 
 	name := sanitizeNullBytes(bundle.name)
 	var target db.Skill
 	var original db.LabrastroListSkillStatesRow
-	hasTarget := c.SkillID != ""
+	// Rename creates an independent skill. A name-only collision does not
+	// grant or require permission to modify the existing skill or its placement.
+	hasTarget := c.SkillID != "" && !(c.Conflict == "name_conflict" && req.OnConflict == "rename")
 	overwrite := c.State == "conflict" && req.OnConflict == "overwrite"
 	if hasTarget {
 		target, err = q.LabrastroLockSkill(ctx, db.LabrastroLockSkillParams{WorkspaceID: a.ws, ID: parseUUID(c.SkillID)})
@@ -520,21 +526,28 @@ func (h *Handler) labrastroApplyCandidate(ctx context.Context, r *http.Request, 
 			return fail("operation_failed", "could not recheck placement", true)
 		}
 		for _, place := range places {
-			if place.SkillID == target.ID && place.PackageID.Valid && (place.PackageID != p.ID || place.SourcePath.String != c.Path) {
+			if place.SkillID == target.ID && place.PackageID.Valid && (overwrite || place.PackageID != p.ID || place.SourcePath.String != c.Path) {
 				return fail("already_packaged", "target belongs to another package or path", false)
 			}
 		}
 		if labrastroPlacementFor(target.ID, places) != labrastroPlacementFor(target.ID, snap.Places) {
 			return fail("preview_stale", "target placement changed since preview", true)
 		}
-		if c.State == "conflict" && req.OnConflict == "rename" {
-			hasTarget = false
-		} else if overwrite {
+		if overwrite {
 			if !canOverwriteSkillByLocalImport(uuidToString(a.user), target) {
 				return fail("forbidden", "only the skill creator can overwrite a different source", false)
 			}
 		} else if !labrastroCanManage(target.CreatedBy, a, m) {
 			return fail("forbidden", "only the skill creator or workspace admin can adopt/update", false)
+		}
+		if c.State == "changed" || c.State == "adoptable" {
+			// Use the last successfully persisted source frontmatter. Package
+			// summaries also advance for failed/deselected items, so comparing
+			// only their names would forget an upstream rename on a later retry.
+			previousName, _ := src.metadata(target.Content, c.Path)
+			if sanitizeNullBytes(previousName) == name {
+				name = target.Name
+			}
 		}
 	}
 	if !hasTarget && c.State == "conflict" && req.OnConflict == "rename" {

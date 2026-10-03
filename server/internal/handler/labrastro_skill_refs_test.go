@@ -117,3 +117,26 @@ func TestLabrastroReferenceCodeContainersAndEscapedPaths(t *testing.T) {
 		t.Fatalf("code examples or escaped path were rewritten incorrectly: fetches=%v body=%s", fetched, r.content)
 	}
 }
+
+func TestLabrastroReferencePlusAndLocalDirectories(t *testing.T) {
+	f := labrastroTestFixture(map[string]string{
+		"skills/demo/SKILL.md":            "[encoded](../../references/c%2B%2B.md#anchor) [literal](../../references/c++.md) `scripts/` [dir](references/) [external](../../references/)",
+		"skills/demo/scripts/run.sh":      "echo ok",
+		"skills/demo/references/local.md": "local",
+		"references/c++.md":               "shared",
+	})
+	src, err := newLabrastroSkillSource(t.Context(), f.client(), f.url())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := src.bundle(t.Context(), "skills/demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(bundle.content, "[encoded](_shared/references/c++.md#anchor)") || !strings.Contains(bundle.content, "[literal](_shared/references/c++.md)") || !strings.Contains(bundle.content, "`scripts/` [dir](references/)") {
+		t.Fatalf("paths corrupted: %s", bundle.content)
+	}
+	if len(bundle.files) != 3 || len(bundle.diagnostics) != 1 || bundle.diagnostics[0].Target != "references" {
+		t.Fatalf("local directory diagnosed as missing: files=%+v diagnostics=%+v", bundle.files, bundle.diagnostics)
+	}
+}

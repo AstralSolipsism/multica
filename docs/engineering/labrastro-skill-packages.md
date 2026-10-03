@@ -75,10 +75,22 @@ an imported skill also marks it `changed`; the same skill permission gate
 applies to that change.
 
 Preview is strictly read-only, including package candidates and timestamps.
-Manifest `skills` lists or directory values select defaults. Missing manifest
-selects all; invalid manifest selects none and reports `manifest_invalid`.
+Manifest `skills` lists or directory values select defaults. A missing manifest
+or valid manifest object without the optional `skills` key selects all discovered
+candidates. An explicit empty list selects none. Malformed JSON, a non-object
+manifest, a `skills` value other than a string/list of strings (including `null`
+or null list entries), or paths outside the repository select none and report
+`manifest_invalid`.
 Ordinary paths win over same-name dot-directory mirrors. Other duplicates
 remain visible. Failed candidates are unselected and carry diagnostics.
+
+`can_write` describes the existing target operation, not whether rename may
+create a separate skill. For `adoptable`/`changed`/`unchanged`, it means the caller
+is the skill creator or an administrator. For `name_conflict`, it means the
+caller is the conflicting skill's creator **and** that skill is not already in
+a package, so overwrite is allowed. Rename does not require `can_write:true`.
+For a new candidate it is true; failed, removed, ambiguous-source and
+already-packaged candidates have it false. Apply always rechecks permissions.
 
 `POST /api/skill-packages/apply`:
 
@@ -157,14 +169,29 @@ Reimporting the same normalized owner/repository/subdirectory finds this
 package, regardless of URL spelling or ref. Default rescan selection is only
 changed imported items. New or detached candidates require explicit selection.
 Removed source paths are `removed` in preview and `retained/source_removed` in
-apply. Source directory renames are removal plus new candidate; frontmatter
-name changes preserve skill ID and fail that item if the new name collides.
+apply. Source directory renames are removal plus new candidate; the new candidate
+may be imported with rename while the old skill remains in place. A same-name
+skill alone is a `name_conflict`, even if it belongs to another package or an
+old source path in this package. Rename creates a separate skill; overwrite
+cannot transfer a packaged target.
+
+Local display-name changes, including suffixes assigned by conflict rename,
+do not make an imported candidate `changed`. Content/support-file and layout
+changes still do. Content updates and same-source readoption retain that local
+name while the source name is unchanged. To detect an upstream rename, apply compares the new source name
+with the frontmatter (or inferred directory/repository name) of the skill's
+persisted `SKILL.md`. That content only advances after a successful item commit;
+the package's candidate summary can advance even when an item is deselected or
+fails. Thus a skipped/failed upstream rename is retried on the next rescan.
+Upstream name changes preserve skill ID and fail that item if the new name
+collides. Local content edits remain unprotected by rescan, as before.
 
 Same-source adoption preserves ID, creator, config outside `origin`, labels
 and agent bindings. Legacy skills.sh URLs without `origin.path` are resolved
 only when their source URL slug identifies one discovered path/frontmatter
 match. Ambiguous discovery is not adopted by guessing from the local name.
-A skill already placed in another package must first be detached.
+A same-source skill already placed in another package must first be detached;
+its `already_packaged` conflict is unselected by default, like `ambiguous_source`.
 
 ### Tree and folder operations
 
@@ -244,7 +271,7 @@ errors retain `error` and add `code`, `diagnostics`, `retryable`.
 | `limit_exceeded` | 1 MiB per final file; 256 support files, 8 MiB support contents per skill; shrink source/bundle. |
 | `shared_path_conflict` | `_shared` destination conflicts with existing or rewritten content; fix source before retrying. |
 | `cross_skill_reference` | Other skills' SKILL.md files are not copied; reference remains unchanged. |
-| `filtered_reference` | Directory, symlink/submodule, binary or license asset skipped. A nonregular primary SKILL.md fails import. |
+| `filtered_reference` | External directory, symlink/submodule, binary or license asset skipped. References between original skill files and their own directories remain unchanged without a warning. A nonregular primary SKILL.md fails import. |
 | `path_outside_repository` | Reference escapes repository; unchanged. Missing example paths and remote links are also unchanged. |
 | `manifest_invalid`, `dot_directory_duplicate` | Invalid manifest disables defaults; a same-name dot-directory mirror is omitted in favor of the ordinary path. |
 | `preview_stale`, `source_changed` | Repreview; no blind write based on stale source, permissions or targets. |
