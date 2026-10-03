@@ -280,6 +280,7 @@
       "archive_label": "压缩包",
       "files_other": "{{count}} 个文件",
       "missing_skill_md": "这个文件夹不是 skill——里面没有 SKILL.md。",
+      "multiple_skills": "所选内容包含多个 skill。请改选只含一个 skill 的文件夹或压缩包，或在技能页使用 \"导入技能包\"，填入 GitHub 或 skills.sh 仓库地址。",
       "too_large": "这个 skill 太大，无法导入。",
       "empty": "文件夹是空的。",
       "too_many_files": "这个 skill 的文件太多，无法导入。",

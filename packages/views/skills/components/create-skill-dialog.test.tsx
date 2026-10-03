@@ -193,6 +193,57 @@ describe("CreateSkillDialog local import", () => {
     expect(mockImportSkillArchive).not.toHaveBeenCalled();
   });
 
+  // OL-106: a folder holding sibling skills used to import just one of them
+  // silently. It is now rejected up front with guidance towards a single-skill
+  // folder or the repository-based Import package entry.
+  it("blocks a folder holding sibling skills with localized guidance", async () => {
+    mockPrepareFromPicker.mockResolvedValue({ ok: false, error: "multiple_skills" });
+    renderDialog();
+
+    const input = document.querySelector(
+      'input[type="file"][multiple]',
+    ) as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(["a"], "SKILL.md")] } });
+
+    expect(
+      await screen.findByText(/This selection contains multiple skills/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Import package/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Import$/i })).toBeDisabled();
+    expect(mockImportSkillArchive).not.toHaveBeenCalled();
+  });
+
+  // The server rejects a multi-skill .skill/.zip with an English sentence
+  // aimed at the CLI; the dialog must show the same localized recovery as the
+  // folder path instead of that raw message (OL-106).
+  it("maps the server multi-skill archive rejection to the same guidance", async () => {
+    mockImportSkillArchive.mockRejectedValueOnce(
+      new Error(
+        "archive contains multiple skills; use multica skill package import <repository-url>",
+      ),
+    );
+    renderDialog();
+
+    const archiveInput = document.querySelector(
+      'input[type="file"][accept]',
+    ) as HTMLInputElement;
+    fireEvent.change(archiveInput, { target: { files: [ARCHIVE_FILE] } });
+    expect((await screen.findAllByText("review-helper")).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Import$/i }));
+
+    expect(
+      await screen.findByText(/This selection contains multiple skills/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/archive contains multiple skills/i),
+    ).not.toBeInTheDocument();
+    // Other server errors still pass through unchanged.
+    mockImportSkillArchive.mockRejectedValueOnce(new Error("boom"));
+    fireEvent.click(screen.getByRole("button", { name: /^Import$/i }));
+    expect(await screen.findByText("boom")).toBeInTheDocument();
+  });
+
   it("snapshots folder files before resetting the live FileList", async () => {
     mockPrepareFromPicker.mockImplementation(async (list: File[]) => {
       if (list.length === 0) {

@@ -116,6 +116,52 @@ describe("prepareSkillArchiveFromEntries", () => {
     if (!prepared.ok) return;
     expect(prepared.preview.fileCount).toBe(1);
   });
+
+  it("rejects sibling skill roots instead of silently dropping one (OL-106)", () => {
+    const prepared = prepareSkillArchiveFromEntries([
+      { relativePath: "multi/sibling-alpha/SKILL.md", data: bytes(SKILL_MD) },
+      { relativePath: "multi/sibling-beta/SKILL.md", data: bytes(SKILL_MD) },
+    ]);
+    expect(prepared).toEqual({ ok: false, error: "multiple_skills" });
+  });
+
+  it("normalizes case and separators before detecting sibling roots", () => {
+    const prepared = prepareSkillArchiveFromEntries([
+      { relativePath: "Multi\\Alpha\\SKILL.MD", data: bytes(SKILL_MD) },
+      { relativePath: "multi/beta/skill.md", data: bytes(SKILL_MD) },
+    ]);
+    expect(prepared).toEqual({ ok: false, error: "multiple_skills" });
+  });
+
+  it("does not treat a similarly-prefixed sibling directory as nested", () => {
+    const prepared = prepareSkillArchiveFromEntries([
+      { relativePath: "skill/SKILL.md", data: bytes(SKILL_MD) },
+      { relativePath: "skill-extra/SKILL.md", data: bytes(SKILL_MD) },
+    ]);
+    expect(prepared).toEqual({ ok: false, error: "multiple_skills" });
+  });
+
+  it("keeps a nested SKILL.md inside the selected root as a supporting file", () => {
+    const prepared = prepareSkillArchiveFromEntries([
+      { relativePath: "outer/SKILL.md", data: bytes(SKILL_MD) },
+      { relativePath: "outer/inner/SKILL.md", data: bytes(SKILL_MD) },
+      { relativePath: "outer/inner/notes.md", data: bytes("notes") },
+    ]);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.preview.skillName).toBe("review-helper");
+    expect(prepared.preview.fileCount).toBe(3);
+  });
+
+  it("accepts a root-level SKILL.md with skills nested below it", () => {
+    const prepared = prepareSkillArchiveFromEntries([
+      { relativePath: "SKILL.md", data: bytes(SKILL_MD) },
+      { relativePath: "sub/SKILL.md", data: bytes(SKILL_MD) },
+    ]);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.preview.fileCount).toBe(2);
+  });
 });
 
 describe("wrapExistingSkillArchive", () => {
@@ -173,6 +219,31 @@ function fileWithPath(
 }
 
 describe("prepareSkillArchiveFromPickerFiles", () => {
+  it("rejects sibling skill roots before reading any file bytes", async () => {
+    const alpha = fileWithPath(
+      "SKILL.md",
+      "multi/sibling-alpha/SKILL.md",
+      bytes(SKILL_MD),
+      {
+        arrayBuffer: async () => {
+          throw new Error("should not read on multiple_skills");
+        },
+      },
+    );
+    const beta = fileWithPath(
+      "SKILL.md",
+      "multi/sibling-beta/SKILL.md",
+      bytes(SKILL_MD),
+      {
+        arrayBuffer: async () => {
+          throw new Error("should not read on multiple_skills");
+        },
+      },
+    );
+    const prepared = await prepareSkillArchiveFromPickerFiles([alpha, beta]);
+    expect(prepared).toEqual({ ok: false, error: "multiple_skills" });
+  });
+
   it("does not call arrayBuffer for ignored or oversized entries", async () => {
     const skill = fileWithPath("SKILL.md", "skill/SKILL.md", bytes(SKILL_MD));
     const ignored = fileWithPath(

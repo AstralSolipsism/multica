@@ -100,7 +100,9 @@ describe("window-focus refetch under production client defaults", () => {
       );
     } finally {
       unsubscribe();
-      focusManager.setFocused(false);
+      // Restore the "no explicit focus state" default, not a forced blur:
+      // setFocused(false) would leak a paused-fetch state into later tests.
+      focusManager.setFocused(undefined);
       qc.unmount();
       qc.clear();
     }

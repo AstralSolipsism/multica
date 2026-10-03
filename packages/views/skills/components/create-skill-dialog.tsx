@@ -49,7 +49,7 @@ import { openExternal } from "../../platform";
 import { RuntimeLocalSkillImportPanel } from "./runtime-local-skill-import-panel";
 import { SkillDiagnosticsNotice } from "./skill-diagnostics-notice";
 import { useT } from "../../i18n";
-import { isNameConflictError } from "../lib/utils";
+import { isMultipleSkillsError, isNameConflictError } from "../lib/utils";
 
 type Method = "chooser" | "manual" | "local" | "url" | "runtime";
 
@@ -527,8 +527,14 @@ function LocalForm({
         onCreated(skill);
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      // A multi-skill .skill/.zip rejected by the server gets the same
+      // localized recovery as the folder path (OL-106), not the English
+      // sentence the handler sends.
       setError(
-        err instanceof Error ? err.message : t(($) => $.create.local.fallback_error),
+        isMultipleSkillsError(message)
+          ? t(($) => $.create.local.multiple_skills)
+          : message || t(($) => $.create.local.fallback_error),
       );
       setLoading(false);
     }
@@ -548,6 +554,7 @@ function LocalForm({
     prepared && !prepared.ok
       ? {
           missing_skill_md: t(($) => $.create.local.missing_skill_md),
+          multiple_skills: t(($) => $.create.local.multiple_skills),
           too_large: t(($) => $.create.local.too_large),
           empty: t(($) => $.create.local.empty),
           too_many_files: t(($) => $.create.local.too_many_files),

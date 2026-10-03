@@ -145,6 +145,7 @@ describe("UpdateSkillsDialog diagnostics (OL-104 rework)", () => {
   const diagnostic = {
     code: "filtered_reference",
     path: "assets/logo.svg",
+    target: "references/setup.md",
     message: "Binary asset was skipped.",
     retryable: false,
   };
@@ -166,6 +167,11 @@ describe("UpdateSkillsDialog diagnostics (OL-104 rework)", () => {
     // unattributable in a mixed batch.
     expect(screen.getByText("skill-b")).toBeTruthy();
     expect(screen.getByText(/Binary asset was skipped/)).toBeTruthy();
+    // Path and target survive into the batch view, matching the
+    // single-import SkillDiagnosticRows rendering.
+    expect(screen.getByText(/filtered_reference/)).toBeTruthy();
+    expect(screen.getByText(/assets\/logo\.svg/)).toBeTruthy();
+    expect(screen.getByText(/references\/setup\.md/)).toBeTruthy();
     expect(toast.success).not.toHaveBeenCalled();
 
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));

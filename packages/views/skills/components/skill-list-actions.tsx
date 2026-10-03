@@ -640,6 +640,8 @@ export function UpdateSkillsDialog({
                   </span>
                   <span className="ml-1.5 text-muted-foreground">
                     {item.diagnostic.code}
+                    {item.diagnostic.path ? ` · ${item.diagnostic.path}` : ""}
+                    {item.diagnostic.target ? ` · ${item.diagnostic.target}` : ""}
                   </span>
                 </li>
               ))}

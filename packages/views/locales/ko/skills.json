@@ -280,6 +280,7 @@
       "archive_label": "아카이브",
       "files_other": "파일 {{count}}개",
       "missing_skill_md": "이 폴더는 스킬이 아닙니다. SKILL.md가 없습니다.",
+      "multiple_skills": "이 선택에는 여러 스킬이 포함되어 있습니다. 스킬이 하나만 있는 폴더나 압축 파일을 선택하거나, 스킬 페이지에서 \"패키지 가져오기\"를 사용해 GitHub 또는 skills.sh 저장소 URL을 입력하세요.",
       "too_large": "이 스킬은 너무 커서 가져올 수 없습니다.",
       "empty": "폴더가 비어 있습니다.",
       "too_many_files": "이 스킬의 파일이 너무 많아 가져올 수 없습니다.",
