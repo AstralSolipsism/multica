@@ -121,9 +121,14 @@ export type SkillFolder = z.infer<typeof SkillFolderSchema>;
 export type SkillPlacement = z.infer<typeof SkillPlacementSchema>;
 export type SkillPackage = z.infer<typeof SkillPackageSchema>;
 export type SkillFolderTree = z.infer<typeof SkillFolderTreeSchema>;
+export type SkillPackageCandidate = z.infer<typeof SkillPackageCandidateSchema>;
 export type SkillPackagePreview = z.infer<typeof SkillPackagePreviewSchema>;
+export type SkillPackageItemResult = z.infer<typeof SkillPackageItemResultSchema>;
 export type SkillPackageApplyResult = z.infer<typeof SkillPackageApplySchema>;
 export type SkillPackageDeletePreview = z.infer<typeof SkillPackageDeletePreviewSchema>;
+export type SkillPlacementUpdated = z.infer<typeof SkillPlacementUpdatedSchema>;
+export type SkillFolderDeleted = z.infer<typeof SkillFolderDeletedSchema>;
+export type SkillPackageRemoved = z.infer<typeof SkillPackageRemovedSchema>;
 
 export type SkillPackageRequest = {
   url?: string;

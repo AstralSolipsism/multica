@@ -40,6 +40,15 @@ const allowedDevOrigins = process.env.CORS_ALLOWED_ORIGINS
 
 const nextConfig: NextConfig = {
   ...(process.env.STANDALONE === "true" ? { output: "standalone" as const } : {}),
+  experimental: {
+    // The rewrite proxy times out upstream responses after 30s by default
+    // (next/dist/server/lib/router-utils/proxy-request.js), which is shorter
+    // than the backend's 45s deadline for skill package preview/apply
+    // (server/internal/handler/skill.go importFetchTimeout). A slow apply
+    // through the proxy would be cut at 30s and its per-item report lost.
+    // 60s matches the CLI client timeout and stays above the server deadline.
+    proxyTimeout: 60_000,
+  },
   transpilePackages: ["@multica/core", "@multica/ui", "@multica/views"],
   ...(allowedDevOrigins && allowedDevOrigins.length > 0
     ? { allowedDevOrigins }
