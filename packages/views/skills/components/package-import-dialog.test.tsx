@@ -186,6 +186,98 @@ describe("ImportPackageDialog apply", () => {
     expect(screen.queryByText(/Everything selected was applied/)).toBeNull();
   });
 
+describe("ImportPackageDialog apply error classification (OL-104 rework)", () => {
+  // Mirrors the OL-103 d8a51e11 wire shapes: a complete, structured server
+  // answer must not render under the "couldn't read the response" title.
+  it("shows the source-failure title for a 504 source_timeout, keeping the server detail", async () => {
+    await reachChecklist();
+    apiMock.applySkillPackage.mockRejectedValue(
+      new ApiError(
+        "skill package source scan timed out or was canceled; preview again",
+        504,
+        "Gateway Timeout",
+        {
+          error: "skill package source scan timed out or was canceled; preview again",
+          code: "source_timeout",
+          retryable: true,
+        },
+      ),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Import 1 skill" }));
+
+    expect(await screen.findByText("Couldn't read the source")).toBeTruthy();
+    expect(
+      screen.getByText(/source scan timed out or was canceled/),
+    ).toBeTruthy();
+    expect(screen.queryByText("Couldn't read the server response")).toBeNull();
+    // Explicit re-preview stays the only recovery; no write was retried.
+    expect(screen.getByRole("button", { name: "Preview again" })).toBeTruthy();
+    expect(apiMock.applySkillPackage).toHaveBeenCalledTimes(1);
+    expect(invalidateSkillPackageQueries).toHaveBeenCalled();
+  });
+
+  it("shows the source-failure title for a 503 source_unavailable", async () => {
+    await reachChecklist();
+    apiMock.applySkillPackage.mockRejectedValue(
+      new ApiError("could not fetch candidate: connection refused", 503, "Service Unavailable", {
+        error: "could not fetch candidate: connection refused",
+        code: "source_unavailable",
+        diagnostics: [
+          { code: "source_unavailable", message: "could not fetch candidate: connection refused", retryable: true },
+        ],
+        retryable: true,
+      }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Import 1 skill" }));
+
+    expect(await screen.findByText("Couldn't read the source")).toBeTruthy();
+    expect(screen.getByText(/connection refused/)).toBeTruthy();
+    expect(screen.queryByText("Couldn't read the server response")).toBeNull();
+  });
+
+  it("classifies tree_unavailable as a source failure too", async () => {
+    await reachChecklist();
+    apiMock.applySkillPackage.mockRejectedValue(
+      new ApiError("could not read the repository tree", 503, "Service Unavailable", {
+        error: "could not read the repository tree",
+        code: "tree_unavailable",
+        retryable: true,
+      }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Import 1 skill" }));
+
+    expect(await screen.findByText("Couldn't read the source")).toBeTruthy();
+    expect(screen.queryByText("Couldn't read the server response")).toBeNull();
+  });
+
+  it("shows the request-failed title for other structured server errors", async () => {
+    await reachChecklist();
+    apiMock.applySkillPackage.mockRejectedValue(
+      new ApiError("skill package operation failed", 500, "Internal Server Error", {
+        error: "skill package operation failed",
+        code: "operation_failed",
+        retryable: true,
+      }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Import 1 skill" }));
+
+    expect(await screen.findByText("The request failed")).toBeTruthy();
+    expect(screen.getByText(/operation failed/)).toBeTruthy();
+    expect(screen.queryByText("Couldn't read the server response")).toBeNull();
+    expect(screen.queryByText("Couldn't read the source")).toBeNull();
+  });
+
+  it("keeps body-less network/proxy errors on the unreadable-response path", async () => {
+    await reachChecklist();
+    apiMock.applySkillPackage.mockRejectedValue(new TypeError("fetch failed"));
+    await userEvent.click(await screen.findByRole("button", { name: "Import 1 skill" }));
+
+    expect(await screen.findByText("Couldn't read the server response")).toBeTruthy();
+    expect(screen.getByText("fetch failed")).toBeTruthy();
+    expect(screen.queryByText("Couldn't read the source")).toBeNull();
+  });
+});
+
   it("offers the conflict strategy only with a conflict selected, and gates overwrite on permission", async () => {
     await reachChecklist({
       ...preview,

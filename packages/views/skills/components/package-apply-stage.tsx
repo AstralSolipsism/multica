@@ -21,6 +21,26 @@ import {
 
 type StagePhase = "select" | "applying" | "report" | "stale" | "malformed" | "error";
 
+/** Terminal apply failures split by what actually happened (OL-104 rework):
+ *  a structured source read error (timeout / unavailable / tree_unavailable)
+ *  is a complete server answer about the source — showing it under the
+ *  "couldn't read the server response" title would claim a broken response
+ *  and an unknown write outcome the server never produced. Other coded
+ *  errors are plain request failures; only a null result or a body-less
+ *  network/proxy error keeps the unreadable-response semantics. */
+type ApplyErrorKind = "source" | "request" | "unreadable";
+
+function applyErrorKind(code: string | undefined): ApplyErrorKind {
+  if (
+    code === "source_timeout" ||
+    code === "source_unavailable" ||
+    code === "tree_unavailable"
+  ) {
+    return "source";
+  }
+  return code ? "request" : "unreadable";
+}
+
 function StageMessage({
   title,
   description,
@@ -81,6 +101,7 @@ export function PackageApplyStage({
   const [onConflict, setOnConflict] = useState<OnConflictChoice>("skip");
   const [phase, setPhase] = useState<StagePhase>("select");
   const [report, setReport] = useState<SkillPackageApplyResult | null>(null);
+  const [errorKind, setErrorKind] = useState<ApplyErrorKind>("unreadable");
   const [errorMessage, setErrorMessage] = useState("");
 
   const handleSelectedChange = (next: Set<string>) => {
@@ -120,6 +141,7 @@ export function PackageApplyStage({
       if (code === "preview_stale" || code === "source_changed") {
         setPhase("stale");
       } else {
+        setErrorKind(applyErrorKind(code));
         setErrorMessage(
           err instanceof Error && err.message
             ? err.message
@@ -156,10 +178,18 @@ export function PackageApplyStage({
   }
 
   if (phase === "malformed" || phase === "error") {
+    const title =
+      phase === "malformed"
+        ? t(($) => $.preview.malformed_title)
+        : errorKind === "source"
+          ? t(($) => $.preview.source_failed_title)
+          : errorKind === "request"
+            ? t(($) => $.preview.request_failed_title)
+            : t(($) => $.preview.malformed_title);
     return (
       <>
         <StageMessage
-          title={t(($) => $.preview.malformed_title)}
+          title={title}
           description={
             phase === "malformed"
               ? t(($) => $.preview.malformed_apply_description)

@@ -128,6 +128,8 @@
     "malformed_description": "La réponse était incomplète ou inattendue. Rien n’a été écrit.",
     "error_fallback": "La requête a échoué. Réessayez.",
     "malformed_apply_description": "Impossible de lire le résultat. Vérifiez la liste des skills avant de réessayer — ne répétez jamais une écriture à l’aveugle.",
+    "source_failed_title": "Impossible de lire la source",
+    "request_failed_title": "La requête a échoué",
     "forbidden_hint": "Pas de permission sur le skill existant ; il reste ignoré."
   },
   "report": {

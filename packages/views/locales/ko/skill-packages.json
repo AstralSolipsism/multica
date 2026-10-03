@@ -123,6 +123,8 @@
     "malformed_description": "응답이 불완전하거나 예상치 못한 형식입니다. 아무것도 기록되지 않았습니다.",
     "error_fallback": "요청에 실패했습니다. 다시 시도하세요.",
     "malformed_apply_description": "결과를 읽을 수 없습니다. 다시 시도하기 전에 스킬 목록을 확인하세요. 쓰기를 무작정 반복하지 마세요.",
+    "source_failed_title": "소스를 읽을 수 없습니다",
+    "request_failed_title": "요청에 실패했습니다",
     "forbidden_hint": "기존 스킬에 대한 권한이 없어 건너뜁니다."
   },
   "report": {

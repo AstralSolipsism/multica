@@ -128,6 +128,8 @@
     "malformed_description": "The response was incomplete or unexpected. Nothing was written.",
     "error_fallback": "The request failed. Try again.",
     "malformed_apply_description": "The result couldn't be read. Check the skill list before trying again — never repeat a write blindly.",
+    "source_failed_title": "Couldn't read the source",
+    "request_failed_title": "The request failed",
     "forbidden_hint": "No permission on the existing skill; it stays skipped."
   },
   "report": {

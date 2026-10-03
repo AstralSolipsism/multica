@@ -123,6 +123,8 @@
     "malformed_description": "レスポンスが不完全または予期しない形式でした。何も書き込まれていません。",
     "error_fallback": "リクエストに失敗しました。もう一度お試しください。",
     "malformed_apply_description": "結果を読み取れませんでした。再試行の前にスキル一覧を確認してください。書き込みを闇雲に繰り返さないでください。",
+    "source_failed_title": "ソースを読み取れませんでした",
+    "request_failed_title": "リクエストに失敗しました",
     "forbidden_hint": "既存のスキルへの権限がないため、スキップされます。"
   },
   "report": {

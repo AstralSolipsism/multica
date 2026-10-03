@@ -5,6 +5,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { SkillPackage, SkillPackagePreview } from "@multica/core/api/schemas";
+import { ApiError } from "@multica/core/api/client";
 import { renderWithI18n } from "../../test/i18n";
 
 const apiMock = vi.hoisted(() => ({
@@ -14,7 +15,10 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock("@multica/core/api", () => ({
   api: apiMock,
-  errorCode: () => undefined,
+  errorCode: (err: unknown) =>
+    err instanceof ApiError && err.body && typeof err.body === "object"
+      ? (err.body as { code?: string }).code
+      : undefined,
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -166,5 +170,34 @@ describe("RescanPackageDialog", () => {
     expect(apiMock.rescanSkillPackage).toHaveBeenCalledWith("ws-1", "p1", {
       url: "https://github.com/o/r/tree/dev",
     });
+  });
+
+  // The shared apply stage classifies structured source errors identically
+  // from the rescan entry (OL-104 rework): a 504 is a complete server answer
+  // about the source, not an unreadable response.
+  it("shows the source-failure title for a 504 source_timeout during apply", async () => {
+    renderDialog();
+    await userEvent.click(screen.getByRole("button", { name: "Rescan" }));
+    await screen.findByRole("button", { name: /alpha/ });
+
+    apiMock.applySkillPackageRescan.mockRejectedValue(
+      new ApiError(
+        "skill package source scan timed out or was canceled; preview again",
+        504,
+        "Gateway Timeout",
+        {
+          error: "skill package source scan timed out or was canceled; preview again",
+          code: "source_timeout",
+          retryable: true,
+        },
+      ),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Import 1 skill" }));
+
+    expect(await screen.findByText("Couldn't read the source")).toBeTruthy();
+    expect(screen.getByText(/source scan timed out or was canceled/)).toBeTruthy();
+    expect(screen.queryByText("Couldn't read the server response")).toBeNull();
+    expect(screen.getByRole("button", { name: "Preview again" })).toBeTruthy();
+    expect(apiMock.applySkillPackageRescan).toHaveBeenCalledTimes(1);
   });
 });

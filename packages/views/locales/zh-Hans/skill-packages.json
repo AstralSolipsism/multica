@@ -123,6 +123,8 @@
     "malformed_description": "响应不完整或格式异常，未写入任何内容。",
     "error_fallback": "请求失败，请重试。",
     "malformed_apply_description": "无法读取结果。重试前请先核对 skill 列表，切勿盲目重复写操作。",
+    "source_failed_title": "无法读取来源",
+    "request_failed_title": "请求失败",
     "forbidden_hint": "没有对现有 skill 的权限，将保持跳过。"
   },
   "report": {
