@@ -166,16 +166,14 @@ func runSkillPackage(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-const skillPackageMinRequestTimeout = 240 * time.Second
-
-const skillPackageTimeoutHelp = "The server has a 180-second work limit; the CLI waits at least 240 seconds per request for its report and honors larger MULTICA_HTTP_TIMEOUT settings."
+const skillPackageTimeoutHelp = "The server has a 45-second work limit; the CLI waits at least 60 seconds for its report and honors MULTICA_HTTP_TIMEOUT."
 
 const skillPackageRepreview = "Preview again with 'multica skill package import <url> --dry-run' or 'multica skill package rescan <package-id>', inspect the report, then explicitly select any remaining items."
 
 func requestSkillPackage(cmd *cobra.Command, client *cli.APIClient, path string, body map[string]any) (map[string]any, error) {
-	// Both transport and context must outlive the server's 180s work deadline
+	// Both transport and context must outlive the server's 45s work deadline
 	// so it can return partial results. Each request gets a fresh finite budget.
-	timeout := cli.AtLeastAPITimeout(skillPackageMinRequestTimeout)
+	timeout := cli.AtLeastAPITimeout(60 * time.Second)
 	client.HTTPClient.Timeout = timeout
 	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 	defer cancel()

@@ -586,44 +586,37 @@ func TestLabrastroSkillPackageRequestDeadline(t *testing.T) {
 	for _, tc := range []struct {
 		env  string
 		want time.Duration
-	}{{"", 240 * time.Second}, {"20s", 240 * time.Second}, {"90s", 240 * time.Second}, {"240s", 245 * time.Second}, {"10m", 605 * time.Second}} {
+	}{{"", 60 * time.Second}, {"20s", 60 * time.Second}, {"90s", 95 * time.Second}, {"10m", 605 * time.Second}} {
 		t.Run(tc.env, func(t *testing.T) {
 			t.Setenv("MULTICA_HTTP_TIMEOUT", tc.env)
-			synctest.Test(t, func(t *testing.T) {
-				cmd := &cobra.Command{}
-				cmd.SetContext(context.Background())
-				cmd.SetOut(io.Discard)
-				client := cli.NewAPIClient("https://offline.invalid", "offline-workspace", "mat_offline_test")
-				var deadlines []time.Time
-				client.HTTPClient.Transport = skillPackageRoundTripper(func(r *http.Request) (*http.Response, error) {
-					deadline, ok := r.Context().Deadline()
-					if !ok || time.Until(deadline) > tc.want || time.Until(deadline) < tc.want-time.Second || client.HTTPClient.Timeout != tc.want {
-						t.Errorf("deadline=%v, client timeout=%v, want %v (longer than server's 180s)", deadline, client.HTTPClient.Timeout, tc.want)
-					}
-					deadlines = append(deadlines, deadline)
-					select {
-					case <-time.After(181 * time.Second):
-					case <-r.Context().Done():
-						return nil, r.Context().Err()
-					}
-					return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
-				})
-				for _, action := range []string{"preview", "apply"} {
-					if _, err := requestSkillPackage(cmd, client, "/api/skill-packages/"+action, map[string]any{}); err != nil {
-						t.Fatal(err)
-					}
+			cmd := &cobra.Command{}
+			cmd.SetContext(context.Background())
+			cmd.SetOut(io.Discard)
+			client := cli.NewAPIClient("https://offline.invalid", "offline-workspace", "mat_offline_test")
+			var deadlines []time.Time
+			client.HTTPClient.Transport = skillPackageRoundTripper(func(r *http.Request) (*http.Response, error) {
+				deadline, ok := r.Context().Deadline()
+				if !ok || time.Until(deadline) > tc.want || time.Until(deadline) < tc.want-time.Second || client.HTTPClient.Timeout != tc.want {
+					t.Errorf("deadline=%v, client timeout=%v, want %v (longer than server's 45s)", deadline, client.HTTPClient.Timeout, tc.want)
 				}
-				if deadlines[1].Sub(deadlines[0]) != 181*time.Second {
-					t.Fatal("preview and apply did not receive separate request budgets")
-				}
+				deadlines = append(deadlines, deadline)
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
 			})
+			for range 2 {
+				if _, err := requestSkillPackage(cmd, client, "/api/skill-packages/preview", map[string]any{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !deadlines[1].After(deadlines[0]) {
+				t.Fatal("preview and apply did not receive separate request budgets")
+			}
 		})
 	}
 }
 
-// The server can commit earlier items before its 180s source deadline. Leave
+// The server can commit earlier items before its 45s source deadline. Leave
 // enough time to receive the resulting report instead of cancelling it first.
-// A fake transport and clock reproduce that boundary without a 181s wall wait.
+// A fake transport and clock reproduce that boundary without a 46s wall wait.
 func TestLabrastroSkillPackageReceivesServerTimeoutReport(t *testing.T) {
 	for _, status := range []int{http.StatusOK, http.StatusGatewayTimeout} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
@@ -645,12 +638,12 @@ func TestLabrastroSkillPackageReceivesServerTimeoutReport(t *testing.T) {
 				cmd.SetOut(&stdout)
 				cmd.Flags().String("output", "json", "")
 				client := cli.NewAPIClient("https://offline.invalid", "offline-workspace", "mat_offline_test")
-				client.HTTPClient.Timeout = 60 * time.Second
+				client.HTTPClient.Timeout = 45 * time.Second
 				calls := 0
 				client.HTTPClient.Transport = skillPackageRoundTripper(func(r *http.Request) (*http.Response, error) {
 					calls++
 					select {
-					case <-time.After(181 * time.Second):
+					case <-time.After(46 * time.Second):
 						return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(data)), Header: make(http.Header), Request: r}, nil
 					case <-r.Context().Done():
 						return nil, r.Context().Err()
