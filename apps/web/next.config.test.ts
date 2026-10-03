@@ -17,18 +17,16 @@ describe("next.config rewrite proxy timeout", () => {
   // Self-host default topology proxies /api/* through the Next rewrite proxy
   // (REMOTE_API_URL set, NEXT_PUBLIC_API_URL empty). Next caps an upstream
   // response at 30s by default, while the backend allows skill package
-  // preview/apply/rescan up to 180s (fork constant in
-  // server/internal/handler/labrastro_skill_packages.go; single-skill
-  // import/refresh keep the upstream 45s importFetchTimeout). A ~35s apply
-  // was cut at ~30s and its per-item report never reached the browser
-  // (OL-106 integration finding). The configured timeout must outlast the
-  // 180s package deadline — with margin for the server's own failure report
-  // — so the server response is what the UI renders.
-  it("sets experimental.proxyTimeout to 240s, above the 180s package deadline", async () => {
+  // preview/apply up to 45s (server/internal/handler/skill.go
+  // importFetchTimeout). A ~35s apply was cut at ~30s and its per-item report
+  // never reached the browser (OL-106 integration finding). The configured
+  // timeout must stay above the server deadline so the server response —
+  // success or its own 45s failure — is what the UI renders.
+  it("sets experimental.proxyTimeout above the 45s server deadline", async () => {
     const config = await loadConfig();
     const proxyTimeout = config.experimental?.proxyTimeout;
-    expect(proxyTimeout).toBe(240_000);
-    expect(proxyTimeout).toBeGreaterThan(180_000);
+    expect(proxyTimeout).toBe(60_000);
+    expect(proxyTimeout).toBeGreaterThan(45_000);
   });
 
   it("keeps the API rewrite proxy in place", async () => {
