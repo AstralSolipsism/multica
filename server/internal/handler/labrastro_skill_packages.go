@@ -312,6 +312,12 @@ func (h *Handler) labrastroPackageOperation(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	raw, diags, err := src.candidates(ctx)
+	// A last-candidate download failure can be returned as a failed row.
+	// Cancellation/deadline must win over both that row and fingerprint checks.
+	if ctx.Err() != nil {
+		labrastroWriteSkillError(w, labrastroSkillError(http.StatusGatewayTimeout, "source_timeout", "skill package source scan timed out or was canceled; preview again"))
+		return
+	}
 	if err != nil {
 		writeSkillFetchError(w, ctx, err)
 		return
@@ -331,6 +337,23 @@ func (h *Handler) labrastroPackageOperation(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !labrastroValidatePreview(req.PreviewID, fingerprint) {
+		// A valid token with an incomplete re-scan cannot prove source or
+		// permission changes. Matching previews with failed candidates still
+		// proceed to best-effort item reporting; invalid/expired tokens stay 409.
+		hash, _, _ := strings.Cut(req.PreviewID, ".")
+		if labrastroValidatePreview(req.PreviewID, hash) {
+			for _, c := range raw {
+				if c.State != "failed" {
+					continue
+				}
+				for _, d := range c.Diagnostics {
+					if d.Retryable {
+						writeSkillFetchError(w, ctx, fmt.Errorf("%w: could not revalidate candidate %q: %s; preview again", errImportSourceUnavailable, c.Path, d.Message))
+						return
+					}
+				}
+			}
+		}
 		labrastroWriteSkillError(w, labrastroStalePreview())
 		return
 	}
