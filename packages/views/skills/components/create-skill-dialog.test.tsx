@@ -4,9 +4,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enSkills from "../../locales/en/skills.json";
+import enSkillPackages from "../../locales/en/skill-packages.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, skills: enSkills },
+  en: { common: enCommon, skills: enSkills, "skill-packages": enSkillPackages },
 };
 
 const mockImportSkillArchive = vi.hoisted(() => vi.fn());
@@ -252,6 +253,50 @@ describe("CreateSkillDialog local import", () => {
       expect(mockImportSkillArchive).toHaveBeenCalled();
     });
     expect(mockPrepareFromPicker).not.toHaveBeenCalled();
+  });
+
+  it("shows source diagnostics after a successful import instead of closing", async () => {
+    mockImportSkillArchive.mockResolvedValue({
+      id: "skill-1",
+      workspace_id: "ws-1",
+      name: "review-helper",
+      description: "Reviews code changes",
+      content: "# Review Helper",
+      config: {},
+      files: [],
+      diagnostics: [
+        {
+          code: "filtered_reference",
+          path: "assets/logo.svg",
+          message: "Binary asset was skipped.",
+          retryable: false,
+        },
+      ],
+      created_by: "user-1",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    const { onCreated, onClose } = renderDialog();
+
+    const input = document.querySelector(
+      'input[type="file"][multiple]',
+    ) as HTMLInputElement;
+    const file = new File(["---\nname: review-helper\n---\n"], "SKILL.md");
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect((await screen.findAllByText("review-helper")).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: /^Import$/i }));
+
+    // The notices step replaces the form; onCreated waits for the user.
+    expect(await screen.findByText("Imported with 1 notice")).toBeTruthy();
+    expect(screen.getByText("Binary asset was skipped.")).toBeTruthy();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "View skill" }));
+    await waitFor(() => {
+      expect(onCreated).toHaveBeenCalled();
+    });
   });
 
   it("ignores a slower earlier folder selection", async () => {

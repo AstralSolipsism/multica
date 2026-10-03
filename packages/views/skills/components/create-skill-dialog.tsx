@@ -17,7 +17,7 @@ import {
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
-import type { Skill } from "@multica/core/types";
+import type { Skill, SkillImportDiagnostic } from "@multica/core/types";
 import {
   prepareSkillArchiveFromPickerFiles,
   wrapExistingSkillArchive,
@@ -47,10 +47,41 @@ import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
 import { cn } from "@multica/ui/lib/utils";
 import { openExternal } from "../../platform";
 import { RuntimeLocalSkillImportPanel } from "./runtime-local-skill-import-panel";
+import { SkillDiagnosticsNotice } from "./skill-diagnostics-notice";
 import { useT } from "../../i18n";
 import { isNameConflictError } from "../lib/utils";
 
 type Method = "chooser" | "manual" | "local" | "url" | "runtime";
+
+/** Success-with-notices step shared by the URL and local import forms
+ *  (OL-104): the skill was created, and the source left diagnostics the
+ *  user should see before navigating away. */
+function ImportNoticesView({
+  skill,
+  diagnostics,
+  onContinue,
+}: {
+  skill: Skill;
+  diagnostics: readonly SkillImportDiagnostic[];
+  onContinue: (skill: Skill) => void;
+}) {
+  const { t } = useT("skill-packages");
+  return (
+    <>
+      <div className="flex-1 min-h-0 space-y-4 overflow-y-auto px-5 py-4">
+        <SkillDiagnosticsNotice
+          title={t(($) => $.diagnostics.imported_with_notices, { count: diagnostics.length })}
+          diagnostics={diagnostics}
+        />
+      </div>
+      <div className="flex shrink-0 items-center justify-end gap-2 border-t bg-muted/30 px-5 py-3">
+        <Button type="button" size="sm" onClick={() => onContinue(skill)}>
+          {t(($) => $.diagnostics.view_skill)}
+        </Button>
+      </div>
+    </>
+  );
+}
 
 function seedAfterCreate(
   qc: ReturnType<typeof useQueryClient>,
@@ -297,6 +328,7 @@ function UrlForm({
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notices, setNotices] = useState<{ skill: Skill; diagnostics: SkillImportDiagnostic[] } | null>(null);
   const source = detectUrlSource(url);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fadeStyle = useScrollFade(scrollRef);
@@ -309,13 +341,28 @@ function UrlForm({
     try {
       const skill = await api.importSkill({ url: trimmed });
       seedAfterCreate(qc, wsId, skill);
-      toast.success(t(($) => $.create.url.toast_imported));
-      onCreated(skill);
+      const diagnostics = skill.diagnostics ?? [];
+      if (diagnostics.length > 0) {
+        setNotices({ skill, diagnostics });
+      } else {
+        toast.success(t(($) => $.create.url.toast_imported));
+        onCreated(skill);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : t(($) => $.create.url.fallback_error));
       setLoading(false);
     }
   };
+
+  if (notices) {
+    return (
+      <ImportNoticesView
+        skill={notices.skill}
+        diagnostics={notices.diagnostics}
+        onContinue={onCreated}
+      />
+    );
+  }
 
   const submittingLabel = (() => {
     if (!loading) return t(($) => $.create.url.import);
@@ -451,6 +498,7 @@ function LocalForm({
   const wsId = useWorkspaceId();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notices, setNotices] = useState<{ skill: Skill; diagnostics: SkillImportDiagnostic[] } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fadeStyle = useScrollFade(scrollRef);
 
@@ -463,8 +511,13 @@ function LocalForm({
     try {
       const skill = await api.importSkillArchive(prepared.file, "fail");
       seedAfterCreate(qc, wsId, skill);
-      toast.success(t(($) => $.create.local.toast_imported));
-      onCreated(skill);
+      const diagnostics = skill.diagnostics ?? [];
+      if (diagnostics.length > 0) {
+        setNotices({ skill, diagnostics });
+      } else {
+        toast.success(t(($) => $.create.local.toast_imported));
+        onCreated(skill);
+      }
     } catch (err) {
       setError(
         err instanceof Error ? err.message : t(($) => $.create.local.fallback_error),
@@ -472,6 +525,16 @@ function LocalForm({
       setLoading(false);
     }
   };
+
+  if (notices) {
+    return (
+      <ImportNoticesView
+        skill={notices.skill}
+        diagnostics={notices.diagnostics}
+        onContinue={onCreated}
+      />
+    );
+  }
 
   const prepareError =
     prepared && !prepared.ok

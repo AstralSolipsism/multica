@@ -5,8 +5,10 @@ import {
   Check,
   ChevronRight,
   ExternalLink,
+  FolderInput,
   Loader2,
   MoreHorizontal,
+  PackageX,
   Plus,
   RotateCw,
   Search,
@@ -15,7 +17,7 @@ import {
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { Agent, SkillSummary } from "@multica/core/types";
+import type { Agent, SkillImportDiagnostic, SkillSummary } from "@multica/core/types";
 import { api } from "@multica/core/api";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -54,6 +56,7 @@ import { useT } from "../../i18n";
 import { useIntentNavigate } from "../../navigation";
 import { isRefreshableOrigin, readOrigin } from "../lib/origin";
 import { RefreshSkillDialog } from "./refresh-skill-dialog";
+import { SkillDiagnosticsNotice } from "./skill-diagnostics-notice";
 import type { SkillRow } from "./skill-list-filter";
 
 // Shared context the row kebab and the batch toolbar both need. Assembled
@@ -64,6 +67,16 @@ export interface SkillActionsContext {
   currentUserId: string | null;
   /** Workspace owner/admin — may manage every agent, not only their own. */
   isAdmin: boolean;
+  /** Folder-tree extras (OL-104). Present when the workspace folder tree
+   *  loaded; absent callers keep the pre-tree flat behavior. */
+  treeActions?: {
+    /** Package/source association for a skill, when placed by a package. */
+    placementFor: (skillId: string) => { package_id: string | null } | null;
+    /** Open the move-to-folder dialog for the given rows. */
+    onMove: (rows: SkillRow[]) => void;
+    /** Detach a packaged skill from its package (keeps folder + skill). */
+    onDetach: (row: SkillRow) => void;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -543,20 +556,26 @@ export function UpdateSkillsDialog({
   onUpdated?: () => void;
 }) {
   const { t } = useT("skills");
+  const { t: tPkg } = useT("skill-packages");
   const qc = useQueryClient();
   const [updating, setUpdating] = useState(false);
   const [progress, setProgress] = useState(0);
+  // Diagnostics collected from successful refreshes (OL-104): shown in the
+  // dialog instead of closing silently when the source left notices.
+  const [notices, setNotices] = useState<SkillImportDiagnostic[] | null>(null);
 
   const handleConfirm = async () => {
     setUpdating(true);
     let updated = 0;
     let failed = 0;
+    const collected: SkillImportDiagnostic[] = [];
     try {
       for (const row of rows) {
         setProgress(updated + failed + 1);
         try {
-          await api.refreshSkill(row.skill.id);
+          const refreshed = await api.refreshSkill(row.skill.id);
           updated++;
+          collected.push(...(refreshed.diagnostics ?? []));
         } catch {
           failed++;
         }
@@ -564,9 +583,13 @@ export function UpdateSkillsDialog({
       qc.invalidateQueries({ queryKey: workspaceKeys.skills(ctx.wsId) });
       qc.invalidateQueries({ queryKey: workspaceKeys.agents(ctx.wsId) });
       if (failed === 0) {
-        toast.success(t(($) => $.actions.updated_toast, { count: updated }));
-        onOpenChange(false);
-        onUpdated?.();
+        if (collected.length > 0) {
+          setNotices(collected);
+        } else {
+          toast.success(t(($) => $.actions.updated_toast, { count: updated }));
+          onOpenChange(false);
+          onUpdated?.();
+        }
       } else {
         toast.error(
           t(($) => $.actions.update_partial_toast, { count: updated, failed }),
@@ -578,6 +601,34 @@ export function UpdateSkillsDialog({
       setProgress(0);
     }
   };
+
+  if (notices) {
+    return (
+      <Dialog open={open} onOpenChange={(v) => { if (!v) setNotices(null); onOpenChange(v); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t(($) => $.actions.update_dialog_title)}</DialogTitle>
+          </DialogHeader>
+          <SkillDiagnosticsNotice
+            title={tPkg(($) => $.diagnostics.refreshed_with_notices, { count: notices.length })}
+            diagnostics={notices}
+          />
+          <DialogFooter>
+            <Button
+              type="button"
+              onClick={() => {
+                setNotices(null);
+                onOpenChange(false);
+                onUpdated?.();
+              }}
+            >
+              {tPkg(($) => $.diagnostics.continue)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog
@@ -659,6 +710,7 @@ export function SkillRowActions({
 }) {
   const { t } = useT("skills");
   const { t: tCommon } = useT("common");
+  const { t: tPkg } = useT("skill-packages");
   const paths = useWorkspacePaths();
   const intentNavigate = useIntentNavigate();
   const [addOpen, setAddOpen] = useState(false);
@@ -667,6 +719,8 @@ export function SkillRowActions({
 
   const origin = readOrigin(row.skill);
   const canRefresh = row.canEdit && isRefreshableOrigin(origin);
+  const treeActions = ctx.treeActions;
+  const isPackaged = treeActions?.placementFor(row.skill.id)?.package_id != null;
 
   return (
     <span
@@ -703,6 +757,18 @@ export function SkillRowActions({
             <Plus className="size-3.5" />
             {t(($) => $.actions.add_to_agent)}
           </DropdownMenuItem>
+          {treeActions && row.canEdit && (
+            <DropdownMenuItem onClick={() => treeActions.onMove([row])}>
+              <FolderInput className="size-3.5" />
+              {tPkg(($) => $.move_skills.title, { count: 1 })}
+            </DropdownMenuItem>
+          )}
+          {treeActions && row.canEdit && isPackaged && (
+            <DropdownMenuItem onClick={() => treeActions.onDetach(row)}>
+              <PackageX className="size-3.5" />
+              {tPkg(($) => $.detach.action)}
+            </DropdownMenuItem>
+          )}
           {canRefresh && (
             <DropdownMenuItem onClick={() => setRefreshOpen(true)}>
               <RotateCw className="size-3.5" />
@@ -762,15 +828,30 @@ export function SkillBatchToolbar({
   onClear: () => void;
 }) {
   const { t } = useT("skills");
+  const { t: tPkg } = useT("skill-packages");
   const [addOpen, setAddOpen] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   if (rows.length === 0) return null;
 
+  const treeActions = ctx.treeActions;
   const allDeletable = rows.every((r) => r.canEdit);
   const updatable = rows.filter(
     (r) => r.canEdit && isRefreshableOrigin(readOrigin(r.skill)),
+  );
+
+  const moveButton = (
+    <Button
+      variant="ghost"
+      size="sm"
+      disabled={!allDeletable}
+      onClick={() => treeActions?.onMove(rows)}
+      className={cn(!allDeletable && "pointer-events-none")}
+    >
+      <FolderInput className="mr-1 size-3.5" />
+      {tPkg(($) => $.move_skills.confirm)}
+    </Button>
   );
 
   const updateButton = (
@@ -827,6 +908,21 @@ export function SkillBatchToolbar({
           <Plus className="mr-1 size-3.5" />
           {t(($) => $.actions.add_to_agent)}
         </Button>
+
+        {treeActions && (
+          allDeletable ? (
+            moveButton
+          ) : (
+            <Tooltip>
+              <TooltipTrigger
+                render={<span className="inline-flex">{moveButton}</span>}
+              />
+              <TooltipContent side="top">
+                {tPkg(($) => $.move_skills.no_permission)}
+              </TooltipContent>
+            </Tooltip>
+          )
+        )}
 
         {updatable.length > 0 ? (
           updateButton
