@@ -232,31 +232,36 @@ describe("SkillPickerList tree mode", () => {
   });
 
   it("rebinds the tree when the workspace changes", async () => {
-    const { rerender } = renderPicker(
+    // One QueryClient across the switch: only the queryKey (which embeds
+    // wsId) may decide what renders — shared data would leak across. A
+    // fresh element each rerender, or React bails out of reconciling the
+    // identical subtree and never re-reads wsId.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const picker = () => (
       <SkillPickerList
         tree
         skills={skills}
         selectedIds={new Set()}
         onToggle={vi.fn()}
         onToggleMany={vi.fn()}
-      />,
+      />
+    );
+    const { rerender } = renderWithI18n(
+      <QueryClientProvider client={qc}>{picker()}</QueryClientProvider>,
     );
     expect(await screen.findByText("Engineering")).toBeTruthy();
 
     mocks.wsId = "ws-2";
-    rerender(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <SkillPickerList
-          tree
-          skills={skills}
-          selectedIds={new Set()}
-          onToggle={vi.fn()}
-          onToggleMany={vi.fn()}
-        />
-      </QueryClientProvider>,
-    );
+    rerender(<QueryClientProvider client={qc}>{picker()}</QueryClientProvider>);
     await waitFor(() => expect(screen.queryByText("Engineering")).toBeNull());
     expect(await screen.findByText("OtherWS")).toBeTruthy();
+
+    // Back on ws-1 the cached tree returns without a new fetch: the two
+    // workspaces never shared an entry.
+    mocks.wsId = "ws-1";
+    rerender(<QueryClientProvider client={qc}>{picker()}</QueryClientProvider>);
+    expect(await screen.findByText("Engineering")).toBeTruthy();
+    expect(screen.queryByText("OtherWS")).toBeNull();
   });
 
   it("falls back to the flat list with a notice when the tree is unreadable", async () => {

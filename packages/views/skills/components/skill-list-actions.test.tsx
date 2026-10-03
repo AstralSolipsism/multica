@@ -8,10 +8,11 @@ import type { SkillSummary } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enSkills from "../../locales/en/skills.json";
+import enSkillPackages from "../../locales/en/skill-packages.json";
 import type { SkillRow } from "./skill-list-filter";
 import type { SkillActionsContext } from "./skill-list-actions";
 
-const TEST_RESOURCES = { en: { common: enCommon, skills: enSkills } };
+const TEST_RESOURCES = { en: { common: enCommon, skills: enSkills, "skill-packages": enSkillPackages } };
 
 vi.mock("@multica/core/api", () => ({
   api: { refreshSkill: vi.fn() },
@@ -136,6 +137,59 @@ describe("UpdateSkillsDialog", () => {
     // The failure on "a" must not strand "b".
     expect(refreshSkill.mock.calls.map(([id]) => id)).toEqual(["a", "b"]);
     // Partial success keeps the selection: onUpdated only fires on a clean run.
+    expect(onUpdated).not.toHaveBeenCalled();
+  });
+});
+
+describe("UpdateSkillsDialog diagnostics (OL-104 rework)", () => {
+  const diagnostic = {
+    code: "filtered_reference",
+    path: "assets/logo.svg",
+    message: "Binary asset was skipped.",
+    retryable: false,
+  };
+
+  it("groups success notices by skill name instead of a bare toast", async () => {
+    refreshSkill.mockImplementation((id: string) =>
+      Promise.resolve({
+        id,
+        diagnostics: id === "b" ? [diagnostic] : [],
+      } as never),
+    );
+    const onUpdated = vi.fn();
+    renderDialog([makeRow("a"), makeRow("b")], 0, onUpdated);
+
+    await userEvent.click(await screen.findByRole("button", { name: /Update 2/ }));
+
+    expect(await screen.findByText("Updated with 1 notice")).toBeTruthy();
+    // The notice carries its skill's name — a bare list would be
+    // unattributable in a mixed batch.
+    expect(screen.getByText("skill-b")).toBeTruthy();
+    expect(screen.getByText(/Binary asset was skipped/)).toBeTruthy();
+    expect(toast.success).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(onUpdated).toHaveBeenCalled();
+  });
+
+  it("keeps collected notices visible after a partial failure instead of discarding them", async () => {
+    refreshSkill.mockImplementation((id: string) =>
+      id === "a"
+        ? Promise.reject(new Error("name conflict"))
+        : Promise.resolve({ id, diagnostics: [diagnostic] } as never),
+    );
+    const onUpdated = vi.fn();
+    renderDialog([makeRow("a"), makeRow("b")], 0, onUpdated);
+
+    await userEvent.click(await screen.findByRole("button", { name: /Update 2/ }));
+
+    // Partial line + the successful item's notices, in one place.
+    expect(await screen.findByText(/Updated 1, 1 failed/)).toBeTruthy();
+    expect(screen.getByText(/Binary asset was skipped/)).toBeTruthy();
+    expect(toast.error).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    // Partial runs keep the selection for retry.
     expect(onUpdated).not.toHaveBeenCalled();
   });
 });

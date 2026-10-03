@@ -20,7 +20,8 @@
     "empty": "Aucun dossier pour l’instant. Créez-en un ou importez un paquet de skills.",
     "package_forbidden": "Seul l’importateur du paquet ou un administrateur peut faire cela.",
     "expand_folder": "Déplier « {{name}} »",
-    "collapse_folder": "Replier « {{name}} »"
+    "collapse_folder": "Replier « {{name}} »",
+    "clear_filter": "Effacer le filtre"
   },
   "folder_form": {
     "create_title": "Nouveau dossier",
@@ -62,7 +63,8 @@
     "done_other": "{{count}} skills déplacés.",
     "partial": "{{done}} skills déplacés sur {{total}} ; le reste a échoué.",
     "failed": "Impossible de déplacer les skills. Réessayez.",
-    "no_permission": "Vous n’avez pas la permission de déplacer tous les skills sélectionnés."
+    "no_permission": "Vous n’avez pas la permission de déplacer tous les skills sélectionnés.",
+    "packaged_hint": "Les skills d’un paquet ne peuvent pas être déplacés. Détachez-les d’abord du paquet."
   },
   "detach": {
     "action": "Détacher du paquet",
@@ -125,7 +127,8 @@
     "malformed_title": "Impossible de lire la réponse du serveur",
     "malformed_description": "La réponse était incomplète ou inattendue. Rien n’a été écrit.",
     "error_fallback": "La requête a échoué. Réessayez.",
-    "malformed_apply_description": "Impossible de lire le résultat. Vérifiez la liste des skills avant de réessayer — ne répétez jamais une écriture à l’aveugle."
+    "malformed_apply_description": "Impossible de lire le résultat. Vérifiez la liste des skills avant de réessayer — ne répétez jamais une écriture à l’aveugle.",
+    "forbidden_hint": "Pas de permission sur le skill existant ; il reste ignoré."
   },
   "report": {
     "title": "Rapport d’import",
@@ -158,7 +161,7 @@
     "cancel": "Annuler",
     "dissolved": "Paquet dissous ; skills conservés.",
     "deleted": "Paquet et ses skills supprimés.",
-    "failed": "L’opération a échoué. Refaites un aperçu d’impact."
+    "unconfirmed": "Impossible de confirmer le résultat. Vérifiez la liste des skills, puis refaites un aperçu d’impact avant de réessayer."
   },
   "diagnostics": {
     "imported_with_notices_one": "Importé avec {{count}} avis",

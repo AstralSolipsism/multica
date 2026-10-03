@@ -40,6 +40,7 @@ export function RescanPackageDialog({
   const { t } = useT("skill-packages");
   const [refUrl, setRefUrl] = useState("");
   const [previewing, setPreviewing] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [preview, setPreview] = useState<SkillPackagePreview | null>(null);
   const [error, setError] = useState<PreviewError | null>(null);
 
@@ -48,10 +49,14 @@ export function RescanPackageDialog({
     setPreview(null);
     setError(null);
     setPreviewing(false);
+    setApplying(false);
   };
 
+  // Previewing or applying blocks every close path (X, Escape, outside
+  // click all funnel through onOpenChange) so the per-item report — the
+  // only place failure diagnostics live — is never lost mid-write.
   const handleOpenChange = (v: boolean) => {
-    if (previewing) return;
+    if (previewing || applying) return;
     if (!v) reset();
     onOpenChange(v);
   };
@@ -109,6 +114,10 @@ export function RescanPackageDialog({
             allowEmptyApply
             applyRequest={(skills, onConflict) =>
               api.applySkillPackageRescan(wsId, pkg.id, {
+                // The preview's canonical URL carries any ref override;
+                // without it the server falls back to the saved URL and
+                // the fingerprint check fails as preview_stale.
+                url: preview.source.url,
                 preview_id: preview.preview_id,
                 skills,
                 on_conflict: onConflict,
@@ -116,6 +125,7 @@ export function RescanPackageDialog({
             }
             onRepreview={handleRepreview}
             onClose={() => handleOpenChange(false)}
+            onBusyChange={setApplying}
           />
         ) : (
           <>

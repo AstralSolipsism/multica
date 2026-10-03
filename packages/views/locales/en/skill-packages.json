@@ -20,7 +20,8 @@
     "empty": "No folders yet. Create one, or import a skill package.",
     "package_forbidden": "Only the package importer or an admin can do this.",
     "expand_folder": "Expand {{name}}",
-    "collapse_folder": "Collapse {{name}}"
+    "collapse_folder": "Collapse {{name}}",
+    "clear_filter": "Clear filter"
   },
   "folder_form": {
     "create_title": "New folder",
@@ -62,7 +63,8 @@
     "done_other": "{{count}} skills moved.",
     "partial": "Moved {{done}} of {{total}}; the rest failed.",
     "failed": "Couldn't move the skills. Try again.",
-    "no_permission": "You don't have permission to move every selected skill."
+    "no_permission": "You don't have permission to move every selected skill.",
+    "packaged_hint": "Packaged skills can't be moved. Detach from the package first."
   },
   "detach": {
     "action": "Detach from package",
@@ -125,7 +127,8 @@
     "malformed_title": "Couldn't read the server response",
     "malformed_description": "The response was incomplete or unexpected. Nothing was written.",
     "error_fallback": "The request failed. Try again.",
-    "malformed_apply_description": "The result couldn't be read. Check the skill list before trying again — never repeat a write blindly."
+    "malformed_apply_description": "The result couldn't be read. Check the skill list before trying again — never repeat a write blindly.",
+    "forbidden_hint": "No permission on the existing skill; it stays skipped."
   },
   "report": {
     "title": "Import report",
@@ -158,7 +161,7 @@
     "cancel": "Cancel",
     "dissolved": "Package dissolved; skills kept.",
     "deleted": "Package and its skills deleted.",
-    "failed": "The operation failed. Preview the impact again."
+    "unconfirmed": "The result couldn't be confirmed. Check the skills list, then preview the impact again before retrying."
   },
   "diagnostics": {
     "imported_with_notices_one": "Imported with {{count}} notice",

@@ -1,15 +1,17 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   AlertTriangle,
   Download,
+  Folder,
   HardDrive,
   Lock,
   PackagePlus,
   Pencil,
   Plus,
+  X,
 } from "lucide-react";
 import { SkillIcon } from "../lib/skill-icon";
 import type {
@@ -75,8 +77,8 @@ import { ImportPackageDialog } from "./package-import-dialog";
 import { MoveSkillsDialog } from "./move-skills-dialog";
 import { SkillFolderTreePanel } from "./skill-folder-tree-panel";
 import {
+  buildFolderSkillIndex,
   placementBySkillId,
-  skillMatchesFolderSelection,
   type FolderSelection,
 } from "../lib/skill-folder-tree";
 import {
@@ -752,15 +754,34 @@ export default function SkillsPage() {
     });
   }, [skills, assignments, membersById, runtimesById, currentUserId, myRole]);
 
-  // Visible rows: name search + filters + folder selection, then sort.
+  // Visible rows: name search + filters + folder selection, then sort. The
+  // folder index is built once per tree instead of per row per render.
+  const folderSkillIndex = useMemo(
+    () => (folderTree ? buildFolderSkillIndex(folderTree) : null),
+    [folderTree],
+  );
+
+  // A selected folder that disappears (deleted here or by another member)
+  // drops the filter back to All instead of silently emptying the list.
+  useEffect(() => {
+    if (folderSelection.kind !== "folder" || !folderTree) return;
+    if (!folderTree.folders.some((f) => f.id === folderSelection.folderId)) {
+      setFolderSelection({ kind: "all" });
+    }
+  }, [folderTree, folderSelection]);
+
   const rows = useMemo<SkillRow[]>(() => {
-    const filtered = allRows.filter(
-      (row) =>
-        rowMatchesFilters(row, filters, search) &&
-        (folderSelection.kind === "all" ||
-          !folderTree ||
-          skillMatchesFolderSelection(folderTree, folderSelection, row.skill.id)),
-    );
+    const filtered = allRows.filter((row) => {
+      if (!rowMatchesFilters(row, filters, search)) return false;
+      if (!folderSkillIndex || folderSelection.kind === "all") return true;
+      if (folderSelection.kind === "uncategorized") {
+        return !folderSkillIndex.placed.has(row.skill.id);
+      }
+      return (
+        folderSkillIndex.byFolder.get(folderSelection.folderId)?.has(row.skill.id) ??
+        false
+      );
+    });
 
     const dir = sortDirection === "asc" ? 1 : -1;
     filtered.sort((a, b) => {
@@ -784,7 +805,7 @@ export default function SkillsPage() {
       );
     });
     return filtered;
-  }, [allRows, search, filters, sortField, sortDirection, folderTree, folderSelection]);
+  }, [allRows, search, filters, sortField, sortDirection, folderSkillIndex, folderSelection]);
 
   // Row virtualization — Linear-style: the virtualizer only does the math
   // (visible index range + offsets); the DOM stays ours. Offsets become
@@ -925,6 +946,26 @@ export default function SkillsPage() {
             allRows={allRows}
             visibleCount={rows.length}
           />
+          {/* The folder panel hides below @2xl; an active folder filter
+              must stay visible (and clearable) there. */}
+          {folderSelection.kind !== "all" && (
+            <div className="flex shrink-0 items-center gap-1.5 border-b px-6 py-1.5 text-caption text-muted-foreground @2xl:hidden">
+              <Folder className="h-3 w-3 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">
+                {folderSelection.kind === "uncategorized"
+                  ? tPkg(($) => $.tree.uncategorized)
+                  : (folderTree?.folders.find((f) => f.id === folderSelection.folderId)?.name ?? "")}
+              </span>
+              <button
+                type="button"
+                aria-label={tPkg(($) => $.tree.clear_filter)}
+                onClick={() => setFolderSelection({ kind: "all" })}
+                className="shrink-0 rounded-xs p-0.5 transition-colors hover:bg-accent"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
           <div
             ref={listScrollRef}
             className="min-h-0 flex-1 overflow-auto @container"

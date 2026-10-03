@@ -4,7 +4,9 @@ import { workspaceKeys } from "../workspace/queries";
 
 // Skill package & folder-tree queries (Labrastro fork). Folder mutations
 // have no WebSocket events, so freshness comes from local invalidation after
-// writes plus window-focus refetches on these keys.
+// writes plus window-focus refetches on these keys. The global
+// `staleTime: Infinity` means data never goes stale on its own, so the
+// focus refetch must be unconditional ("always") to fire at all.
 export const skillPackageKeys = {
   tree: (wsId: string) => ["workspaces", wsId, "skill-folders"] as const,
   packages: (wsId: string) => ["workspaces", wsId, "skill-packages"] as const,
@@ -16,7 +18,7 @@ export function skillFolderTreeOptions(wsId: string) {
   return queryOptions({
     queryKey: skillPackageKeys.tree(wsId),
     queryFn: () => api.getSkillFolderTree(wsId),
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: "always",
   });
 }
 
@@ -24,7 +26,7 @@ export function skillPackageListOptions(wsId: string) {
   return queryOptions({
     queryKey: skillPackageKeys.packages(wsId),
     queryFn: () => api.listSkillPackages(wsId),
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: "always",
   });
 }
 

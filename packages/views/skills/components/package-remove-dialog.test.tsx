@@ -15,8 +15,12 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock("@multica/core/api", () => ({ api: apiMock }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@multica/core/skills/package-queries", () => ({
+  invalidateSkillPackageQueries: vi.fn(async () => {}),
+}));
 
 import { toast } from "sonner";
+import { invalidateSkillPackageQueries } from "@multica/core/skills/package-queries";
 import { PackageRemoveDialog } from "./package-remove-dialog";
 
 const pkg: SkillPackage = {
@@ -89,7 +93,7 @@ describe("PackageRemoveDialog impact preview", () => {
 });
 
 describe("PackageRemoveDialog permission gate", () => {
-  it("blocks the confirm when the server reports insufficient permission", async () => {
+  it("blocks only deletion when the server reports insufficient permission", async () => {
     apiMock.getSkillPackageDeletePreview.mockResolvedValue({
       ...deletePreview,
       can_delete: false,
@@ -101,6 +105,26 @@ describe("PackageRemoveDialog permission gate", () => {
     const confirm = screen.getByRole("button", { name: "Delete package" });
     expect(confirm.hasAttribute("disabled")).toBe(true);
     expect(apiMock.deleteSkillPackage).not.toHaveBeenCalled();
+  });
+
+  it("still allows dissolve: it needs package permission, not per-skill permission", async () => {
+    apiMock.getSkillPackageDeletePreview.mockResolvedValue({
+      ...deletePreview,
+      can_delete: false,
+    });
+    apiMock.dissolveSkillPackage.mockResolvedValue({ deleted: false, dissolved: true, skill_count: 2 });
+    renderDialog("dissolve");
+    // The per-skill warning is not even shown in dissolve mode.
+    await screen.findAllByText("Writer");
+    expect(
+      screen.queryByText("You don't have permission to remove every skill in this package."),
+    ).toBeNull();
+    const confirm = screen.getByRole("button", { name: "Dissolve" });
+    expect(confirm.hasAttribute("disabled")).toBe(false);
+    await userEvent.click(confirm);
+    await waitFor(() =>
+      expect(apiMock.dissolveSkillPackage).toHaveBeenCalledWith("ws-1", "p1", "token-1"),
+    );
   });
 });
 
@@ -135,5 +159,57 @@ describe("PackageRemoveDialog confirm and cancel", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(apiMock.deleteSkillPackage).not.toHaveBeenCalled();
     expect(apiMock.dissolveSkillPackage).not.toHaveBeenCalled();
+  });
+});
+
+describe("PackageRemoveDialog indeterminate results", () => {
+  it("treats an unreadable result as unconfirmed, never as a clean failure", async () => {
+    apiMock.deleteSkillPackage.mockResolvedValue(null);
+    renderDialog("delete");
+    await userEvent.click(await screen.findByRole("button", { name: "Delete package" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    const message = vi.mocked(toast.error).mock.calls[0]?.[0] as string;
+    expect(message).toContain("couldn't be confirmed");
+    expect(message).not.toMatch(/operation failed/i);
+    // The projections refresh on settle even when the outcome is unknown.
+    expect(invalidateSkillPackageQueries).toHaveBeenCalled();
+  });
+
+  it("discards the spent token and reloads the impact preview after a failed write", async () => {
+    apiMock.getSkillPackageDeletePreview
+      .mockResolvedValueOnce(deletePreview)
+      .mockResolvedValueOnce({ ...deletePreview, preview_id: "token-2" });
+    apiMock.deleteSkillPackage
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce({ deleted: true, dissolved: false, skill_count: 2 });
+
+    renderDialog("delete");
+    await userEvent.click(await screen.findByRole("button", { name: "Delete package" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+
+    // The dialog reloads the preview itself; the retry confirms against
+    // the fresh token, never the spent one.
+    await waitFor(() =>
+      expect(apiMock.getSkillPackageDeletePreview).toHaveBeenCalledTimes(2),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Delete package" }));
+    await waitFor(() =>
+      expect(apiMock.deleteSkillPackage).toHaveBeenCalledTimes(2),
+    );
+    expect(apiMock.deleteSkillPackage).toHaveBeenNthCalledWith(1, "ws-1", "p1", "token-1");
+    expect(apiMock.deleteSkillPackage).toHaveBeenNthCalledWith(2, "ws-1", "p1", "token-2");
+    expect(toast.success).toHaveBeenCalledWith("Package and its skills deleted.");
+  });
+
+  it("refreshes queries after a network-error settle as well", async () => {
+    apiMock.dissolveSkillPackage.mockRejectedValue(new Error("offline"));
+    renderDialog("dissolve");
+    await userEvent.click(await screen.findByRole("button", { name: "Dissolve" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(invalidateSkillPackageQueries).toHaveBeenCalledWith(
+      expect.anything(),
+      "ws-1",
+      { includeSkills: true },
+    );
   });
 });

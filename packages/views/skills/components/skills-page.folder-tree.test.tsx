@@ -287,3 +287,47 @@ describe("SkillsPage folder tree filtering", () => {
     expect(screen.getByText("Folders couldn't be loaded.")).toBeTruthy();
   });
 });
+
+describe("SkillsPage folder filter affordances (OL-104 rework)", () => {
+  it("shows a clearable filter strip when the panel is hidden", async () => {
+    renderWithI18n(
+      <NavigationProvider value={makeAdapter()}>
+        <SkillsPage />
+      </NavigationProvider>,
+    );
+    await userEvent.click(await screen.findByText("Engineering"));
+    expect(screen.queryByText("design-skill")).toBeNull();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Clear filter" }),
+    );
+    expect(await screen.findByText("design-skill")).toBeTruthy();
+    expect(screen.getByText("placed-skill")).toBeTruthy();
+  });
+
+  it("drops the filter back to All when the selected folder vanishes", async () => {
+    const { rerender } = renderWithI18n(
+      <NavigationProvider value={makeAdapter()}>
+        <SkillsPage />
+      </NavigationProvider>,
+    );
+    await userEvent.click(await screen.findByText("Design"));
+    expect(screen.getByText("design-skill")).toBeTruthy();
+    expect(screen.queryByText("placed-skill")).toBeNull();
+
+    // Another member deletes the folder; the next tree read no longer has it.
+    mocks.folderTree = {
+      ...folderTree,
+      folders: folderTree.folders.filter((f) => f.id !== "f-design"),
+      placements: folderTree.placements.filter((p) => p.folder_id !== "f-design"),
+    };
+    rerender(
+      <NavigationProvider value={makeAdapter()}>
+        <SkillsPage />
+      </NavigationProvider>,
+    );
+    // Without a reset the list would silently stay empty.
+    expect(await screen.findByText("placed-skill")).toBeTruthy();
+    expect(screen.getByText("loose-skill")).toBeTruthy();
+  });
+});

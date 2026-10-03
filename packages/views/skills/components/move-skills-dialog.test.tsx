@@ -88,11 +88,13 @@ beforeEach(() => {
 });
 
 describe("MoveSkillsDialog", () => {
-  it("offers custom folders and package roots but never managed internals", async () => {
+  it("offers custom folders only — every package folder is refused server-side", async () => {
     renderDialog([makeRow("s1")]);
     expect(await screen.findByText("Custom")).toBeTruthy();
-    expect(screen.getByText("o/r")).toBeTruthy();
     expect(screen.getByText("Uncategorized")).toBeTruthy();
+    // Package roots and managed internals are not destinations (409
+    // managed_folder), so they never appear.
+    expect(screen.queryByText("o/r")).toBeNull();
     expect(screen.queryByText("deep")).toBeNull();
   });
 

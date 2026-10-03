@@ -12,7 +12,7 @@ import { invalidateSkillPackageQueries } from "@multica/core/skills/package-quer
 import { Button } from "@multica/ui/components/ui/button";
 import { DialogFooter } from "@multica/ui/components/ui/dialog";
 import { useT } from "../../i18n";
-import { defaultSelectedPaths, hasSelectedConflict } from "../lib/package-preview-model";
+import { defaultSelectedPaths, canApplyOverwrite, hasSelectedConflict } from "../lib/package-preview-model";
 import {
   PackageApplyReport,
   PackagePreviewPanel,
@@ -54,6 +54,7 @@ export function PackageApplyStage({
   applyRequest,
   onRepreview,
   onClose,
+  onBusyChange,
 }: {
   wsId: string;
   preview: SkillPackagePreview;
@@ -68,6 +69,9 @@ export function PackageApplyStage({
   /** Produces a fresh preview; the stage remounts on the new token. */
   onRepreview: () => void;
   onClose: () => void;
+  /** Tells the host dialog whether a write is in flight, so it can block
+   *  every close path (X, Escape, outside click) until the report lands. */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const { t } = useT("skill-packages");
   const qc = useQueryClient();
@@ -81,15 +85,29 @@ export function PackageApplyStage({
 
   const handleSelectedChange = (next: Set<string>) => {
     setSelected(next);
-    // The strategy only matters while a conflict is selected; snap back to
-    // the safe default when none remains.
-    if (!hasSelectedConflict(preview.candidates, next)) setOnConflict("skip");
+    setOnConflict((current) => {
+      // Overwrite only survives while every selected conflict permits it;
+      // losing that (or losing the conflict itself) falls back to skip.
+      if (current === "overwrite" && !canApplyOverwrite(preview.candidates, next)) {
+        return "skip";
+      }
+      if (!hasSelectedConflict(preview.candidates, next)) return "skip";
+      return current;
+    });
   };
 
   const handleApply = async () => {
+    if (phase === "applying") return;
     setPhase("applying");
+    onBusyChange?.(true);
     try {
-      const result = await applyRequest([...selected], onConflict);
+      // Re-validate at submit time: an overwrite that became unavailable
+      // since the choice must go out as skip, never as a doomed overwrite.
+      const effectiveConflict =
+        onConflict === "overwrite" && !canApplyOverwrite(preview.candidates, selected)
+          ? "skip"
+          : onConflict;
+      const result = await applyRequest([...selected], effectiveConflict);
       if (result === null) {
         // Unreadable write result: indeterminate, never a fake success.
         setPhase("malformed");
@@ -97,7 +115,6 @@ export function PackageApplyStage({
       }
       setReport(result);
       setPhase("report");
-      await invalidateSkillPackageQueries(qc, wsId, { includeSkills: true });
     } catch (err) {
       const code = errorCode(err);
       if (code === "preview_stale" || code === "source_changed") {
@@ -110,6 +127,12 @@ export function PackageApplyStage({
         );
         setPhase("error");
       }
+    } finally {
+      onBusyChange?.(false);
+      // Package metadata commits before items, so even a failed or
+      // unreadable apply may have persisted. Refresh every projection the
+      // write could have touched, on every settle path.
+      await invalidateSkillPackageQueries(qc, wsId, { includeSkills: true });
     }
   };
 

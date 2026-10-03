@@ -323,6 +323,7 @@ function UrlForm({
   onCancel: () => void;
 }) {
   const { t } = useT("skills");
+  const { t: tPkg } = useT("skill-packages");
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   const [url, setUrl] = useState("");
@@ -340,6 +341,13 @@ function UrlForm({
     setError("");
     try {
       const skill = await api.importSkill({ url: trimmed });
+      if (!skill) {
+        // Unreadable import result: indeterminate — the skill may or may
+        // not exist. Never navigate as if it succeeded.
+        setError(tPkg(($) => $.preview.malformed_apply_description));
+        setLoading(false);
+        return;
+      }
       seedAfterCreate(qc, wsId, skill);
       const diagnostics = skill.diagnostics ?? [];
       if (diagnostics.length > 0) {

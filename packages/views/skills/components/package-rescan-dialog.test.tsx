@@ -95,7 +95,7 @@ describe("RescanPackageDialog", () => {
     expect(screen.getByText("Gone from the source; kept on apply.")).toBeTruthy();
   });
 
-  it("applies through the rescan endpoint with apply:true semantics", async () => {
+  it("applies through the rescan endpoint with the preview's source URL", async () => {
     renderDialog();
     await userEvent.click(screen.getByRole("button", { name: "Rescan" }));
     await screen.findByRole("button", { name: /alpha/ });
@@ -112,13 +112,48 @@ describe("RescanPackageDialog", () => {
     });
     await userEvent.click(await screen.findByRole("button", { name: "Import 1 skill" }));
 
+    // The apply must echo the preview's canonical URL — without it the
+    // server falls back to the saved URL and reports preview_stale.
     expect(apiMock.applySkillPackageRescan).toHaveBeenCalledWith("ws-1", "p1", {
+      url: "https://github.com/o/r/tree/main",
       preview_id: "token-1",
       skills: ["skills/a"],
       on_conflict: "skip",
     });
     expect(await screen.findByText("Updated")).toBeTruthy();
     expect(screen.getByText("Kept")).toBeTruthy();
+  });
+
+  it("applies a ref-overridden preview against the overridden source", async () => {
+    renderDialog();
+    await userEvent.type(
+      screen.getByPlaceholderText("https://github.com/owner/repo/tree/branch"),
+      "https://github.com/o/r/tree/dev",
+    );
+    const overridden: SkillPackagePreview = {
+      ...preview,
+      preview_id: "token-dev",
+      source: { ...preview.source, url: "https://github.com/o/r/tree/dev", ref: "dev" },
+    };
+    apiMock.rescanSkillPackage.mockResolvedValue(overridden);
+    await userEvent.click(screen.getByRole("button", { name: "Rescan" }));
+    await screen.findByRole("button", { name: /alpha/ });
+
+    apiMock.applySkillPackageRescan.mockResolvedValue({
+      package: { ...pkg, ref: "dev" },
+      results: [
+        { path: "skills/a", status: "updated", skill_id: "s1", retryable: false, diagnostics: [] },
+      ],
+      failed: false,
+      diagnostics: [],
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Import 1 skill" }));
+    expect(apiMock.applySkillPackageRescan).toHaveBeenCalledWith("ws-1", "p1", {
+      url: "https://github.com/o/r/tree/dev",
+      preview_id: "token-dev",
+      skills: ["skills/a"],
+      on_conflict: "skip",
+    });
   });
 
   it("passes a ref override URL only when given", async () => {

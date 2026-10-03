@@ -20,7 +20,8 @@
     "empty": "还没有文件夹。新建一个，或导入技能包。",
     "package_forbidden": "仅技能包导入者或管理员可执行此操作。",
     "expand_folder": "展开 \"{{name}}\"",
-    "collapse_folder": "折叠 \"{{name}}\""
+    "collapse_folder": "折叠 \"{{name}}\"",
+    "clear_filter": "清除筛选"
   },
   "folder_form": {
     "create_title": "新建文件夹",
@@ -60,7 +61,8 @@
     "done_other": "已移动 {{count}} 个 skill。",
     "partial": "已移动 {{done}}/{{total}} 个，其余失败。",
     "failed": "无法移动 skill，请重试。",
-    "no_permission": "你没有移动全部所选 skill 的权限。"
+    "no_permission": "你没有移动全部所选 skill 的权限。",
+    "packaged_hint": "包内 skill 不能移动，请先从技能包脱离。"
   },
   "detach": {
     "action": "从技能包脱离",
@@ -120,7 +122,8 @@
     "malformed_title": "无法读取服务器响应",
     "malformed_description": "响应不完整或格式异常，未写入任何内容。",
     "error_fallback": "请求失败，请重试。",
-    "malformed_apply_description": "无法读取结果。重试前请先核对 skill 列表，切勿盲目重复写操作。"
+    "malformed_apply_description": "无法读取结果。重试前请先核对 skill 列表，切勿盲目重复写操作。",
+    "forbidden_hint": "没有对现有 skill 的权限，将保持跳过。"
   },
   "report": {
     "title": "导入报告",
@@ -151,7 +154,7 @@
     "cancel": "取消",
     "dissolved": "技能包已解散，skill 已保留。",
     "deleted": "技能包及其 skill 已删除。",
-    "failed": "操作失败，请重新预览影响。"
+    "unconfirmed": "无法确认操作结果。请先核对 skill 列表，再重新预览影响后重试。"
   },
   "diagnostics": {
     "imported_with_notices_other": "已导入，含 {{count}} 条提示",

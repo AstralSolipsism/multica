@@ -37,6 +37,7 @@ export function ImportPackageDialog({
   const { t } = useT("skill-packages");
   const [url, setUrl] = useState("");
   const [previewing, setPreviewing] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [preview, setPreview] = useState<SkillPackagePreview | null>(null);
   const [error, setError] = useState<PreviewError | null>(null);
 
@@ -45,10 +46,12 @@ export function ImportPackageDialog({
     setPreview(null);
     setError(null);
     setPreviewing(false);
+    setApplying(false);
   };
 
+  // Same rule as the rescan dialog: no close path stays open mid-write.
   const handleOpenChange = (v: boolean) => {
-    if (previewing) return;
+    if (previewing || applying) return;
     if (!v) reset();
     onOpenChange(v);
   };
@@ -108,6 +111,7 @@ export function ImportPackageDialog({
             }
             onRepreview={handleRepreview}
             onClose={() => handleOpenChange(false)}
+            onBusyChange={setApplying}
           />
         ) : (
           <>

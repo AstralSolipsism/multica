@@ -9,6 +9,7 @@ import type {
 } from "@multica/core/api/schemas";
 import {
   buildFolderNodes,
+  buildFolderSkillIndex,
   collectSubtreeFolderIds,
   commonCandidatePrefix,
   folderDisplayPath,
@@ -122,8 +123,8 @@ describe("move destinations", () => {
     folder({ id: "managed", name: "M", package_id: "p", package_path: "deep", parent_id: "pkg-root" }),
   ];
 
-  it("skills move into custom folders and package roots, never managed internals", () => {
-    expect(skillMoveDestinations(folders).map((f) => f.id).sort()).toEqual(["custom-a", "custom-b", "pkg-root"]);
+  it("skills move only into custom folders; every package folder is refused", () => {
+    expect(skillMoveDestinations(folders).map((f) => f.id)).toEqual(["custom-a", "custom-b"]);
   });
 
   it("folders move only within the custom tree, excluding self and descendants", () => {
@@ -229,5 +230,25 @@ describe("skillMatchesFolderSelection", () => {
     expect(skillMatchesFolderSelection(t, { kind: "folder", folderId: "root" }, "in-child")).toBe(true);
     expect(skillMatchesFolderSelection(t, { kind: "folder", folderId: "child" }, "in-root")).toBe(false);
     expect(skillMatchesFolderSelection(t, { kind: "folder", folderId: "child" }, "loose")).toBe(false);
+  });
+});
+
+describe("buildFolderSkillIndex", () => {
+  const t = tree({
+    folders: [
+      folder({ id: "root" }),
+      folder({ id: "child", parent_id: "root" }),
+    ],
+    placements: [
+      placement({ skill_id: "in-root", folder_id: "root" }),
+      placement({ skill_id: "in-child", folder_id: "child" }),
+    ],
+  });
+
+  it("accumulates subtree skills once for every folder", () => {
+    const index = buildFolderSkillIndex(t);
+    expect([...(index.byFolder.get("root") ?? [])].sort()).toEqual(["in-child", "in-root"]);
+    expect([...(index.byFolder.get("child") ?? [])]).toEqual(["in-child"]);
+    expect([...index.placed].sort()).toEqual(["in-child", "in-root"]);
   });
 });

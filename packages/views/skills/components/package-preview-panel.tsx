@@ -63,7 +63,8 @@ function CandidateRow({
   // Why a row cannot be checked, or what a conflict means — stated once,
   // beside the row it applies to.
   let hint: string | null = null;
-  if (candidate.state === "removed") hint = t(($) => $.preview.removed_hint);
+  if (candidate.conflict === "forbidden") hint = t(($) => $.preview.forbidden_hint);
+  else if (candidate.state === "removed") hint = t(($) => $.preview.removed_hint);
   else if (candidate.state === "failed") hint = t(($) => $.preview.failed_hint);
   else if (candidate.state === "unknown") hint = t(($) => $.preview.unknown_hint);
   else if (candidate.conflict === "already_packaged") hint = t(($) => $.preview.already_packaged_hint);

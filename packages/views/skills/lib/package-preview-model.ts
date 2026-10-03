@@ -10,8 +10,13 @@ import type {
 // and can_write only gates the overwrite strategy — rename never requires it.
 
 /** States the user may explicitly check in the preview list. Removed items
- *  are retained automatically, failed/unknown states can only be read. */
+ *  are retained automatically, failed/unknown states can only be read, and
+ *  `forbidden` candidates (no permission on the existing target) stay
+ *  skipped — the server fails them on explicit selection, so the UI never
+ *  offers a doomed choice. A plain name conflict with can_write:false
+ *  remains selectable: rename creates a separate copy. */
 export function isCandidateSelectable(candidate: SkillPackageCandidate): boolean {
+  if (candidate.conflict === "forbidden") return false;
   return (
     candidate.state === "new" ||
     candidate.state === "adoptable" ||

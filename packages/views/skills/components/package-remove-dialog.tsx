@@ -74,7 +74,7 @@ export function PackageRemoveDialog({
   }, [open, loadPreview]);
 
   const handleConfirm = async () => {
-    if (state.status !== "ready") return;
+    if (state.status !== "ready" || working) return;
     setWorking(true);
     try {
       const result =
@@ -82,10 +82,13 @@ export function PackageRemoveDialog({
           ? await api.dissolveSkillPackage(wsId, pkg.id, state.preview.preview_id)
           : await api.deleteSkillPackage(wsId, pkg.id, state.preview.preview_id);
       if (result === null) {
-        toast.error(t(($) => $.remove.failed));
+        // Unreadable result: indeterminate — never claimed as failed or
+        // written. The spent token is discarded and the impact preview
+        // reloads, so any retry confirms against a fresh one.
+        toast.error(t(($) => $.remove.unconfirmed));
+        await loadPreview();
         return;
       }
-      await invalidateSkillPackageQueries(qc, wsId, { includeSkills: true });
       toast.success(
         result.dissolved ? t(($) => $.remove.dissolved) : t(($) => $.remove.deleted),
       );
@@ -94,16 +97,23 @@ export function PackageRemoveDialog({
       toast.error(
         err instanceof Error && err.message
           ? err.message
-          : t(($) => $.remove.failed),
+          : t(($) => $.remove.unconfirmed),
       );
+      await loadPreview();
     } finally {
       setWorking(false);
+      // Deletion commits per-skill before reporting: every settle path
+      // refreshes the projections the write could have touched.
+      await invalidateSkillPackageQueries(qc, wsId, { includeSkills: true });
     }
   };
 
   const ready = state.status === "ready" ? state.preview : null;
   const skillCount = ready?.skill_ids.length ?? 0;
-  const confirmAllowed = ready !== null && ready.can_delete && !working;
+  // can_delete gates only deletion (per-skill permission). Dissolution
+  // needs package permission, which the menu already gated.
+  const confirmAllowed =
+    ready !== null && !working && (mode === "dissolve" || ready.can_delete);
 
   return (
     <AlertDialog
@@ -159,7 +169,7 @@ export function PackageRemoveDialog({
                 ))}
               </ul>
             )}
-            {!ready.can_delete && (
+            {!ready.can_delete && mode === "delete" && (
               <div className="rounded-md bg-warning/10 px-3 py-2 text-caption text-muted-foreground">
                 {t(($) => $.remove.forbidden)}
               </div>

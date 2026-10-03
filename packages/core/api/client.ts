@@ -3681,10 +3681,16 @@ export class ApiClient {
     await this.fetch(`/api/skills/${id}`, { method: "DELETE" });
   }
 
-  async importSkill(data: { url: string }): Promise<Skill> {
-    return this.fetch("/api/skills/import", {
+  // Parsed like every other skill read: the response now carries optional
+  // import diagnostics, and a malformed result must stay indeterminate
+  // (null) rather than synthesizing a skill the server may not have made.
+  async importSkill(data: { url: string }): Promise<Skill | null> {
+    const raw = await this.fetch<unknown>("/api/skills/import", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, SkillSchema, null, {
+      endpoint: "POST /api/skills/import",
     });
   }
 

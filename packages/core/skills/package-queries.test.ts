@@ -1,7 +1,8 @@
 // @vitest-environment node
 
-import { describe, expect, it, vi } from "vitest";
-import { QueryClient } from "@tanstack/react-query";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { focusManager, QueryClient, QueryObserver } from "@tanstack/react-query";
+import { createQueryClient } from "../query-client";
 
 const apiMock = vi.hoisted(() => ({
   getSkillFolderTree: vi.fn(async () => null),
@@ -10,6 +11,12 @@ const apiMock = vi.hoisted(() => ({
 }));
 
 vi.mock("../api", () => ({ api: apiMock }));
+
+beforeEach(() => {
+  apiMock.getSkillFolderTree.mockReset().mockResolvedValue(null);
+  apiMock.listSkillPackages.mockReset().mockResolvedValue(null);
+  apiMock.getSkillPackage.mockReset().mockResolvedValue(null);
+});
 
 import {
   invalidateSkillPackageQueries,
@@ -41,8 +48,10 @@ describe("skill package query options", () => {
   });
 
   it("refreshes tree and packages on window focus (no folder WebSocket events)", () => {
-    expect(skillFolderTreeOptions("ws-1").refetchOnWindowFocus).toBe(true);
-    expect(skillPackageListOptions("ws-1").refetchOnWindowFocus).toBe(true);
+    // "always" is required: the global staleTime is Infinity, so plain
+    // `true` would never fire a focus refetch.
+    expect(skillFolderTreeOptions("ws-1").refetchOnWindowFocus).toBe("always");
+    expect(skillPackageListOptions("ws-1").refetchOnWindowFocus).toBe("always");
   });
 
   it("only enables the detail query with a package id", () => {
@@ -68,5 +77,53 @@ describe("invalidateSkillPackageQueries", () => {
     expect(allKeys).toContainEqual(["workspaces", "ws-1", "skills"]);
     expect(allKeys).toContainEqual(["workspaces", "ws-1", "agents"]);
     expect(allKeys).toHaveLength(4);
+  });
+});
+
+describe("window-focus refetch under production client defaults", () => {
+  it("actually refetches the tree when the window regains focus", async () => {
+    apiMock.getSkillFolderTree.mockClear();
+    const qc = createQueryClient();
+    // useQuery mounts the client in production; the focus subscription
+    // lives there, so the raw observer test must mount explicitly.
+    qc.mount();
+    const observer = new QueryObserver(qc, skillFolderTreeOptions("ws-1"));
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      // subscribe drives the initial fetch even with staleTime: Infinity.
+      await vi.waitFor(() =>
+        expect(apiMock.getSkillFolderTree).toHaveBeenCalledTimes(1),
+      );
+      focusManager.setFocused(true);
+      await vi.waitFor(() =>
+        expect(apiMock.getSkillFolderTree).toHaveBeenCalledTimes(2),
+      );
+    } finally {
+      unsubscribe();
+      focusManager.setFocused(false);
+      qc.unmount();
+      qc.clear();
+    }
+  });
+});
+
+describe("workspace isolation", () => {
+  it("caches per workspace and invalidates only the targeted one", async () => {
+    apiMock.getSkillFolderTree.mockClear();
+    apiMock.getSkillFolderTree.mockImplementation(
+      ((wsId: string) => Promise.resolve({ wsId })) as never,
+    );
+    const qc = createQueryClient();
+    await qc.fetchQuery(skillFolderTreeOptions("ws-1"));
+    await qc.fetchQuery(skillFolderTreeOptions("ws-2"));
+    expect(apiMock.getSkillFolderTree).toHaveBeenCalledTimes(2);
+    const data1 = qc.getQueryData(skillPackageKeys.tree("ws-1"));
+    const data2 = qc.getQueryData(skillPackageKeys.tree("ws-2"));
+    expect(data1).not.toBe(data2);
+
+    await invalidateSkillPackageQueries(qc, "ws-1");
+    expect(qc.getQueryState(skillPackageKeys.tree("ws-1"))?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(skillPackageKeys.tree("ws-2"))?.isInvalidated).toBe(false);
+    qc.clear();
   });
 });

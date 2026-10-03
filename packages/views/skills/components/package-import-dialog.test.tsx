@@ -21,7 +21,11 @@ vi.mock("@multica/core/api", () => ({
       : undefined,
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@multica/core/skills/package-queries", () => ({
+  invalidateSkillPackageQueries: vi.fn(async () => {}),
+}));
 
+import { invalidateSkillPackageQueries } from "@multica/core/skills/package-queries";
 import { ImportPackageDialog } from "./package-import-dialog";
 
 function candidate(partial: Partial<SkillPackageCandidate> & { path: string }): SkillPackageCandidate {
@@ -57,18 +61,18 @@ const preview: SkillPackagePreview = {
   diagnostics: [],
 };
 
-function renderDialog() {
+function renderDialog(onOpenChange = vi.fn()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderWithI18n(
     <QueryClientProvider client={qc}>
-      <ImportPackageDialog wsId="ws-1" open onOpenChange={vi.fn()} />
+      <ImportPackageDialog wsId="ws-1" open onOpenChange={onOpenChange} />
     </QueryClientProvider>,
   );
 }
 
-async function reachChecklist(custom: SkillPackagePreview = preview) {
+async function reachChecklist(custom: SkillPackagePreview = preview, onOpenChange = vi.fn()) {
   apiMock.previewSkillPackage.mockResolvedValue(custom);
-  renderDialog();
+  renderDialog(onOpenChange);
   await userEvent.type(
     screen.getByPlaceholderText("https://github.com/owner/repo"),
     "https://github.com/o/r",
@@ -207,6 +211,147 @@ describe("ImportPackageDialog apply", () => {
       expect(apiMock.applySkillPackage).toHaveBeenCalledWith(
         "ws-1",
         expect.objectContaining({ on_conflict: "rename" }),
+      ),
+    );
+  });
+});
+
+describe("ImportPackageDialog forbidden candidates (OL-104 rework)", () => {
+  it("never pre-checks or submits a forbidden candidate, and explains why", async () => {
+    await reachChecklist({
+      ...preview,
+      candidates: [
+        candidate({ path: "skills/ok", name: "okay", default_selected: true }),
+        // The server can default-select these (manifest/rescan), and an
+        // explicit submission would deterministically fail.
+        candidate({
+          path: "skills/no",
+          name: "nope",
+          state: "adoptable",
+          conflict: "forbidden",
+          default_selected: true,
+          can_write: false,
+        }),
+      ],
+    });
+    // No toggle at all, with the permission reason stated beside the row.
+    expect(screen.queryByRole("button", { name: /nope/ })).toBeNull();
+    expect(
+      screen.getByText("No permission on the existing skill; it stays skipped."),
+    ).toBeTruthy();
+
+    apiMock.applySkillPackage.mockResolvedValue({
+      results: [
+        { path: "skills/ok", status: "created", skill_id: "s1", retryable: false, diagnostics: [] },
+        { path: "skills/no", status: "skipped", code: "not_selected", retryable: false, diagnostics: [] },
+      ],
+      failed: false,
+      diagnostics: [],
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Import 1 skill" }));
+    expect(apiMock.applySkillPackage).toHaveBeenCalledWith(
+      "ws-1",
+      expect.objectContaining({ skills: ["skills/ok"] }),
+    );
+  });
+});
+
+describe("ImportPackageDialog close blocking during apply (OL-104 rework)", () => {
+  it("blocks X, Escape and outside click while a write is in flight", async () => {
+    const onOpenChange = vi.fn();
+    await reachChecklist(preview, onOpenChange);
+
+    let resolveApply!: (value: unknown) => void;
+    apiMock.applySkillPackage.mockImplementation(
+      () => new Promise((resolve) => { resolveApply = resolve; }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Import 1 skill" }));
+    expect(await screen.findByText("Importing...")).toBeTruthy();
+
+    // Every close path must be refused while the write runs.
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    await userEvent.keyboard("{Escape}");
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]');
+    expect(overlay).toBeTruthy();
+    await userEvent.pointer({ keys: "[MouseLeft]", target: overlay as Element });
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByText("Importing...")).toBeTruthy();
+
+    // Once the write lands, the full per-item report is still there to read.
+    resolveApply({
+      results: [
+        { path: "skills/a", status: "created", skill_id: "s1", retryable: false, diagnostics: [] },
+        { path: "skills/c", status: "failed", code: "candidate_failed", reason: "boom", retryable: true, diagnostics: [] },
+      ],
+      failed: true,
+      diagnostics: [],
+    });
+    expect(await screen.findByText("Some items failed. Preview again to retry them.")).toBeTruthy();
+    expect(screen.getByText(/boom/)).toBeTruthy();
+  });
+});
+
+describe("ImportPackageDialog settle invalidation (OL-104 rework)", () => {
+  beforeEach(() => {
+    vi.mocked(invalidateSkillPackageQueries).mockClear();
+  });
+
+  it("invalidates tree/package/skills/agents after a partial-failure report", async () => {
+    await reachChecklist();
+    apiMock.applySkillPackage.mockResolvedValue({
+      results: [
+        { path: "skills/a", status: "created", skill_id: "s1", retryable: false, diagnostics: [] },
+        { path: "skills/b", status: "failed", code: "item_failed", retryable: true, diagnostics: [] },
+      ],
+      failed: true,
+      diagnostics: [],
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Import 1 skill" }));
+    await screen.findByText("Some items failed. Preview again to retry them.");
+    expect(invalidateSkillPackageQueries).toHaveBeenCalledWith(
+      expect.anything(),
+      "ws-1",
+      { includeSkills: true },
+    );
+  });
+
+  it("invalidates after malformed and thrown-error settles too", async () => {
+    await reachChecklist();
+    apiMock.applySkillPackage.mockResolvedValue(null);
+    await userEvent.click(await screen.findByRole("button", { name: "Import 1 skill" }));
+    await screen.findByText(/never repeat a write blindly/);
+    expect(invalidateSkillPackageQueries).toHaveBeenCalled();
+  });
+});
+
+describe("ImportPackageDialog overwrite fallback (OL-104 rework)", () => {
+  it("falls back to skip when overwrite becomes unavailable after selection", async () => {
+    await reachChecklist({
+      ...preview,
+      candidates: [
+        candidate({ path: "skills/own", name: "own", state: "conflict", conflict: "name_conflict", can_write: true, default_selected: true }),
+        candidate({ path: "skills/foreign", name: "foreign", state: "conflict", conflict: "name_conflict", can_write: false }),
+      ],
+    });
+    // Overwrite is allowed while only the ownable conflict is selected.
+    const overwrite = await screen.findByRole("radio", { name: "Overwrite" });
+    await userEvent.click(overwrite);
+    expect((overwrite as HTMLInputElement).checked).toBe(true);
+
+    // Selecting the uncoverable conflict disables AND unchecks overwrite.
+    await userEvent.click(screen.getByRole("button", { name: /foreign/ }));
+    const overwriteAfter = screen.getByRole("radio", { name: "Overwrite" }) as HTMLInputElement;
+    expect(overwriteAfter.disabled).toBe(true);
+    expect(overwriteAfter.checked).toBe(false);
+
+    apiMock.applySkillPackage.mockResolvedValue({
+      results: [], failed: false, diagnostics: [],
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Import 2 skills" }));
+    await waitFor(() =>
+      expect(apiMock.applySkillPackage).toHaveBeenCalledWith(
+        "ws-1",
+        expect.objectContaining({ on_conflict: "skip" }),
       ),
     );
   });
