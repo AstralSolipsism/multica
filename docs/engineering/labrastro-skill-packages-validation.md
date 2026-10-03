@@ -5,6 +5,154 @@ Base: `803cfcf18a7db98ee45e7ac10367b12a4c773711`. Linux, Go 1.27.1,
 PostgreSQL 15 on a task-owned local cluster and isolated development database.
 No tests imported skills into the connected Labrastro workspace.
 
+## OL-106 integration rework
+
+The source-classification code under test is
+`d6988b89af13207e64cb711d60c5483f46c00c80`, appended to the previously reviewed
+`28eb1e838dc203a1c64cbfb4da2cbc8165c9c37c`. The accompanying changes to this
+record and the contract are documentation only. This section supersedes earlier
+results for the changed handler; earlier test runs below remain historical.
+
+Environment: Linux, Go 1.27.1, PostgreSQL 15.19, task-owned loopback cluster on
+port 55483 and isolated database `ol103_rework`. The checkout's managed
+`make up C=api` created/migrated that database; its API launch phase returned
+nonzero and the process stopped. Tests used httptest handlers directly.
+`make test` was attempted again and stopped at missing Docker in
+`scripts/ensure-postgres.sh:72`. No production database was accessed.
+
+### Reproduce, fix and preserve boundaries
+
+The committed `labrastro_skill_packages_source_test.go` adds 17 scenarios.
+Running it on unchanged `28eb1e838` first reproduced nine failures: preview
+returned 200 on last-candidate cancellation/deadline; apply/rescan returned 409;
+new primary/support/required-reference download failures also returned 409.
+The other boundary scenarios, including the complete write-phase timeout
+report, already passed. After the fix all 17 scenarios pass under `-race`:
+
+- Last-candidate deadline and explicit cancellation return 504
+  `source_timeout` for preview, apply and rescan, without persisting changes.
+- Newly failed downloads with a valid token return 503 `source_unavailable`.
+- A matching preview with an existing retryable candidate failure still
+  creates the healthy skill and reports the failed selected item.
+- True source/target/role changes, invalid/expired tokens during an outage,
+  and nonretryable limit changes retain 409 `preview_stale`.
+- A deadline after the first skill commits leaves that skill/placement saved,
+  reports both remaining items as `source_timeout`, and returns all three
+  results with `failed:true`; there is no write retry.
+
+Pre-write assertions compare complete package snapshots, including skill/file
+hashes, folders, placements, package candidates/revision/timestamps and role.
+Partial-write assertions compare report IDs/statuses against persisted rows.
+All fixture source requests stay offline.
+
+The before/after command (through `scripts/go-test-with-agent-cli-guard.sh`):
+
+```sh
+go -C server test -race -json ./internal/handler \
+  -run '^TestLabrastroPackage(ScanContextFailure|ApplySourceFailureClassification|WritePhaseTimeoutReport)$' -count=1
+```
+
+The full scoped run used a source copy of `d6988b89` outside the task marker,
+with production task/token environment variables removed from test processes.
+The runtime's actual task marker/credentials were not changed:
+
+```sh
+go -C server test -race -json ./internal/handler ./cmd/server ./cmd/multica ./cmd/migrate ./internal/migrations -count=1
+```
+
+| Package | Top-level passes | Existing gated skips | Elapsed |
+| --- | ---: | ---: | ---: |
+| `internal/handler` | 2,437 | 57 | 278.090 s |
+| `cmd/server` | 318 | 0 | 53.099 s |
+| `cmd/multica` | 469 | 0 | 18.857 s |
+| `cmd/migrate` | 43 | 2 | 65.189 s |
+| `internal/migrations` | 18 | 0 | 8.324 s |
+
+Total: **3,285 passed, 59 skipped, zero failures**. New regressions, fixed
+source fixtures, permissions/atomicity, external-token 403/route inventory,
+migration lint and 9001–9008 up/down/interrupted-index tests all ran.
+No SQL inputs changed, so sqlc was not regenerated in this revision.
+
+The two pinned source tests also reran with 1 ms synthetic latency:
+
+| Source | Candidates | Requests / recursive trees | Peak downloads | Cache bytes | Largest bundle bytes | Elapsed |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| mattpocock `d81f3a1` | 37 | 105 / 1 | 6 | 259,010 | 19,436 | 564 ms |
+| addyosmani `9d0c60d` | 25 | 42 / 1 | 4 | 468,587 | 48,479 | 800 ms |
+
+Sampled process heap deltas were 11,279,688 and 13,269,880 bytes respectively;
+these are process observations, not hard cache or memory limits. The scan
+algorithm, candidate concurrency, token payload and budgets are unchanged.
+
+### Actual 45-second probe and CLI contract
+
+The OL-106 `slow_apply.py` scenario was adapted into a temporary handler test
+using the same pinned mattpocock `skills/in-progress` subtree (six candidates).
+It first previews without delay, then delays only raw-file responses. No
+shortened request deadline is supplied, so this exercises the real server
+45-second limit:
+
+| Raw-file delay | Apply elapsed | Response | Database |
+| --- | ---: | --- | --- |
+| 4 s | 45.002 s | 504 `source_timeout`, retryable | Unchanged |
+| 8 s | 45.005 s | 504 `source_timeout`, retryable | Unchanged |
+
+This is an in-process HTTP handler probe, not a browser/Next.js proxy test.
+The permanent regression uses a one-second parent deadline for faster coverage
+of the exact last-candidate failure path.
+
+For CLI compatibility only, the verification source copy overlaid #59's seven
+changed files from `b31a975f5810c78bea873b43f3c3746c25871be9` onto `d6988b89`.
+No frontend code or combined delivery branch was created/pushed. A temporary
+CLI probe checked 503 `source_unavailable`, 504 `source_timeout` and 409
+`preview_stale`: one preview plus one apply, the complete error object on
+stdout, nonzero exit, and no source error mislabeled as an apply conflict.
+The existing delayed-server/partial-report/no-retry CLI tests also passed.
+
+```sh
+git diff --binary 28eb1e838dc203a1c64cbfb4da2cbc8165c9c37c b31a975f5810c78bea873b43f3c3746c25871be9 > ol105-contract-overlay.patch
+# Apply only to the disposable verification copy, then add the two probe
+# test files from the issue's evidence archive to their respective packages.
+git apply /path/to/ol105-contract-overlay.patch
+go -C server test -race -json ./internal/handler ./cmd/multica ./internal/service \
+  -run '^(TestLabrastroIntegrationSlowApplyProbe|TestLabrastroSkill|TestLabrastroCLIReworkSourceErrors|TestBuiltin)' -count=1
+```
+
+All selected tests passed without skips: one handler top-level test (two
+45-second cases), 20 CLI top-level tests and three builtin-skill tests.
+The probes, wrapper, before/after logs, full scoped race JSON and backup
+rehearsal log are attached to the OL-103 handoff. These are implementation
+checks; they do not replace the new independent reviews or OL-106 integration.
+
+### Backup/restore rehearsal
+
+`backup-rehearsal.py` and `backup-fixture.sql` in the issue's evidence archive
+implement the contract's runbook on a separate synthetic database. The fixture
+contains a completed skill, a shared reference, creator/workspace/agent/label
+records, bindings and all three package tables. `pg_dump --format=custom
+--no-owner --no-acl` succeeded; `pg_restore --list` included all seven relevant
+table data sections. `pg_restore --exit-on-error --single-transaction
+--no-owner --no-acl` restored it into two newly created databases.
+
+Both restores matched all 12 table counts and complete-row digests, covering
+the seven skill tables plus user/workspace/agent/label identities and migration
+metadata (empty in this schema-only synthetic fixture). The first restored
+copy was then deliberately overwritten and its `_shared/*` rows deleted.
+The second fresh restore recovered the original content and files exactly,
+including IDs, creator, bindings, labels and package candidate metadata.
+No destructive rehearsal command targeted the managed test database or a real
+workspace. This revision did not rerun the old server's refresh hazard; that
+observed behavior is attributed to the OL-106 integration review in the contract.
+
+### Coverage limits
+
+This is not an all-repository green claim. Docker-dependent `make test` could
+not run; unchanged daemon/agent process suites and frontend/Electron/browser
+E2E were not repeated for this server/documentation fix. Their previous results
+are not treated as new-head passes. No real agent CLI, live GitHub source,
+Windows, deployment or real-workspace import was exercised. The 45-second
+full-scan limitation remains explicitly documented.
+
 ## Initial delivery checks (`c246a57`)
 
 - `make sqlc`: regenerated the three models and fork query file.

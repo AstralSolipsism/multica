@@ -151,6 +151,23 @@ an item are rechecked under locks, including its content and placement.
 Never replay an old token: preview again, inspect results, and select the
 remaining items. There is no background continuation.
 
+Before any writes, an interrupted candidate scan returns 504
+`source_timeout` (deadline or request cancellation), including when the last
+candidate download fails. A disconnected client may not receive the response.
+With a valid, unexpired token, a fingerprint mismatch accompanied by retryable
+candidate download failures returns 503 `source_unavailable`: the server could
+not complete revalidation and cannot infer a source/permission change from that
+failure. Successful scans still detect genuine source, permission and target
+changes as 409. Invalid/expired tokens remain 409 even during a source outage.
+These pre-write failures leave skills, files, folders, placements and package
+metadata untouched.
+
+A matching preview that already contained failed candidates can still apply:
+selected failures enter the per-item report and other items may succeed. Once
+the package metadata transaction has committed, timeout handling remains in
+the item loop and returns the complete HTTP 200 report with `failed:true`;
+already committed successes remain saved. Neither error path retries writes.
+
 ### Existing packages and rescans
 
 `GET /api/skill-packages` returns `{"packages":[<package>]}`;
@@ -301,12 +318,44 @@ nonrecursively then request only the chosen subtree recursively. Shared paths
 outside scope use cached nonrecursive directory lookups. Files are fetched
 from the resolved commit during one request to avoid mixing branch revisions.
 
+Apply currently scans **every candidate again**, sequentially, before validating
+the preview, then writes selected items within the same 45-second server budget.
+The eight-download limit is shared; it does not mean eight candidates scan in
+parallel. Selecting fewer items does not reduce this initial full scan. A source
+slow enough to exhaust the scan budget can time out on every attempt, including
+after another successful preview. Repreview/rescan is not guaranteed to complete
+on an unchanged slow connection.
+
+A `tree/<ref>/<subdirectory>` URL actually narrows the requested tree and
+candidate set, but changes the package identity (workspace + owner/repo +
+subdirectory). It creates/finds a different package, not a seamless continuation
+of the repository-root package; existing packaged skills cannot silently move
+to it. The CLI uses at least 60 seconds per HTTP request; the web proxy setting
+is tracked in the OL-104 touchpoints below. Longer client/proxy budgets allow
+the server's response to arrive; they do not extend its 45-second budget.
+
+Decision retained for this revision: no token payload change, candidate
+concurrency increase, preview store or unlimited wait. A later optimization
+needs separate latency/request-count measurements and tests that preserve the
+shared eight-download and 8 MiB cache limits, cancellation, per-item content
+limits and transaction semantics. Local fixture timings below are not a promise
+that repeated attempts can import every slow source.
+
 Fork migrations are `9001`–`9008`. `9001` creates the three tables; each later
 file creates one concurrent index and has a paired down migration. The fork
 migrator registration provides interrupted-index repair. This range reduces
 near-term collisions; future upstream syncs must still check numeric prefixes.
 
-Upstream touchpoints (all remaining logic/queries/tests are fork files):
+### Upstream touchpoints
+
+This is a maintenance checklist across the three fork PRs, not a claim that
+the frontend/CLI files are in PR #58. Server entries describe #58; CLI entries
+were checked against #59 at `b31a975f5810c78bea873b43f3c3746c25871be9`.
+Frontend entries were checked against #60 at
+`69939e8d78baf00f2e836d21107fd1695b21ef51`; its rework is still in progress.
+Explicitly pending rows are not implemented in that frontend head.
+
+Handwritten hooks in existing upstream files:
 
 | File | Required change |
 |---|---|
@@ -318,7 +367,43 @@ Upstream touchpoints (all remaining logic/queries/tests are fork files):
 | `server/cmd/server/testdata/labrastro-external-routes.tsv` | 14 deny-by-default route entries |
 | `server/internal/handler/workspace.go` | One transactional fork tree cleanup step |
 | `packages/core/api/schemas.ts`, `packages/core/types/agent.ts` | Optional old-response diagnostics and exported new schemas |
-| `server/pkg/db/generated/models.go`, `labrastro_skill_package.sql.go` | sqlc output: three models and fork queries; no upstream skill columns |
+| `packages/core/api/client.ts` | Workspace-pinned folder/package/placement methods with zod/`parseWithFallback`; `importSkill` changes from `Promise<Skill>` to `Promise<Skill \| null>`, so malformed responses remain indeterminate |
+| `packages/core/package.json`, `packages/core/skills/index.ts` | Export the new `skills/package-queries` entry and query hooks |
+| `packages/core/types/index.ts` | Export `SkillImportDiagnostic` for UI consumers |
+| `packages/views/skills/components/skills-page.tsx` | Folder tree, subtree filtering, package-import and move dialogs, detach wiring and workspace query invalidation; the toolbar entry is here, not a separate `skill-list-toolbar.tsx` edit |
+| `packages/views/skills/components/skill-list-actions.tsx` | Row/batch move and detach permissions plus batch refresh diagnostic results |
+| `packages/views/skills/components/create-skill-dialog.tsx` | URL/archive import diagnostic notice view and malformed-result handling; localized sibling-skill error mapping is pending OL-104 rework |
+| `packages/views/skills/components/refresh-skill-dialog.tsx` | Single-refresh success diagnostics, detail-cache update and notice dismissal |
+| `packages/views/agents/components/skill-picker-list.tsx` | Tree-mode dispatch and batch-toggle props; extraction of the tree implementation to a fork file is pending OL-104 rework |
+| `packages/views/agents/components/skill-add-dialog.tsx`, `skill-multi-select.tsx` (same directory) | Opt in to the tree picker and batch toggle using the caller's filtered skills |
+| `packages/views/locales/index.ts`, `packages/views/i18n/resources-types.ts` | Register the `skill-packages` namespace and translation typing |
+| `packages/core/skills/pack-archive.ts` | **Pending OL-104 rework:** reject parallel SKILL.md roots before local-folder packing discards them; retain nested-root handling |
+| `apps/web/next.config.ts` | **Pending OL-104 rework:** `experimental.proxyTimeout: 60_000` lets the 45-second backend finish through the Next.js rewrite proxy |
+| `server/cmd/multica/cmd_skill.go` | Display additive diagnostics in legacy single-import and refresh table output; JSON response shape remains unchanged |
+| `server/internal/service/builtin_skills/multica-platform/references/skill-import.md` | Package CLI entry, selection/rescan defaults, complete partial-failure reports and no blind write retry |
+
+New handwritten modules include the server `labrastro_skill_*.go` handlers and
+migrator hooks, `packages/core/api/labrastro-skill-schemas.ts` (extended by #60),
+`packages/core/skills/package-queries.ts`, package/folder/move dialogs and tree
+models under `packages/views/skills/`, `skill-diagnostics-notice.tsx`, the five
+`skill-packages.json` locale files, and
+`server/cmd/multica/cmd_labrastro_skill_package.go` (registered with `init()`).
+They are feature modules, not generated output. Their adjacent tests cover the
+hooks above; #59 also updates `server/internal/service/builtin_skills_test.go`.
+
+Generated sqlc output is separate from those handwritten hooks:
+
+| Generated file | Input and purpose |
+| --- | --- |
+| `server/pkg/db/generated/models.go` | Three models from `server/migrations/9001_labrastro_skill_packages.up.sql`; no upstream skill columns |
+| `server/pkg/db/generated/labrastro_skill_package.sql.go` | Queries/types from `server/pkg/db/queries/labrastro_skill_package.sql` |
+
+`server/sqlc.yaml` reads the full `server/migrations/` schema and
+`server/pkg/db/queries/` directory. Regenerate from the repository root with
+`make sqlc` (the Makefile pins sqlc v1.31.1), then inspect the generated diff.
+Indexes come from migrations 9002–9008, each with its paired down migration.
+This source-error revision changes no SQL or sqlc inputs and does not regenerate
+files as a substitute for handler/contract verification.
 
 Folder mutations have no WebSocket events. Existing skill created/updated/
 deleted events remain. UI mutations invalidate workspace-specific skill/tree/
@@ -327,10 +412,98 @@ the existing agent-skill endpoints and must respect caller-filtered skills.
 
 ## Rollback
 
-Prefer reverting feature code and keeping the three new tables. Imported
-skills remain ordinary, self-contained skill/file records readable by older
-servers and daemons. Code rollback cannot restore overwritten contents;
-export/backup affected skills before applying if restoration is required.
-Down migrations drop package organization data and are for isolated tests or
-an explicitly planned cleanup, not routine rollback. No release, deployment,
-upstream PR, or import into a real workspace is part of OL-103.
+Normal application rollback reverts feature code and **keeps** all three
+`labrastro_skill_*` tables, their migration records and the ordinary skill/file
+rows. Older servers and daemons can read the completed skills. Down migrations
+drop organization metadata and are reserved for isolated tests or an explicit
+data-cleanup plan; dropping tables does not restore content.
+
+Take an operation-time backup before any action that can replace content:
+package `overwrite`, same-source adoption, default `rescan --apply` (including
+reimport of an existing package), explicitly selected changed items,
+single-skill overwrite import, and single/batch refresh from source. Default
+rescan does not protect local edits. Reverting code, dissolving a package or
+detaching a skill cannot undo those replacements.
+
+**Observed rollback hazard:** OL-106 ran the old server at `803cfcf18` against
+the new database. Reads included `_shared/*`, but an old-server “update from
+source” removed those files and restored repository-relative links such as
+`../../references/...`. Read compatibility does not imply that old refresh
+preserves completion. After rollback, pause single/batch source refresh and
+covering imports for completed skills, or recover their contents from backup.
+There is no automatic undo.
+
+### Backup scope and commands
+
+Use a database backup taken before the operation; a plain SKILL.md/zip export
+alone does not retain IDs, ownership, bindings, labels or package organization.
+The minimum logical set is `skill` (including content/config/creator),
+`skill_file` (including every `_shared/*` row), `agent_skill`,
+`skill_to_label`, and all three `labrastro_skill_*` tables. Those rows refer
+to workspace/user/agent identities and label definitions in `issue_label`;
+restore them only with those matching records. A whole-database archive is
+the recommended default because it also preserves those dependencies and
+`schema_migrations`. For deployments with external uploads, retain the normal
+object-store backup separately; it is outside this skill-content backup.
+
+The following commands are an operator runbook, not authorization to touch a
+connected workspace. Populate `SKILL_BACKUP_SOURCE` using a dedicated database
+service/credential, and keep credentials out of shell history/logs. Pause
+affected writers, record the application commit and PostgreSQL version, and
+restrict archive access; a full archive also contains unrelated workspace data.
+
+```sh
+set -eu
+umask 077
+: "${SKILL_BACKUP_SOURCE:?set the authorized source connection/service}"
+: "${SKILL_BACKUP_DIR:?set a new private backup directory}"
+mkdir -p "$SKILL_BACKUP_DIR"
+pg_dump --dbname="$SKILL_BACKUP_SOURCE" --format=custom --no-owner --no-acl \
+  --file="$SKILL_BACKUP_DIR/before-skill-operation.dump"
+pg_restore --list "$SKILL_BACKUP_DIR/before-skill-operation.dump" \
+  > "$SKILL_BACKUP_DIR/archive.list"
+sha256sum "$SKILL_BACKUP_DIR/before-skill-operation.dump" \
+  > "$SKILL_BACKUP_DIR/archive.sha256"
+```
+
+Verify the archive list includes the seven skill/organization tables and their
+data sections. A selective `pg_dump -t skill -t skill_file -t agent_skill
+-t skill_to_label -t labrastro_skill_folder -t labrastro_skill_package
+-t labrastro_skill_placement` is only an alternative when matching identity,
+label and schema backups already exist; it does not follow those dependencies
+and is not a standalone disaster-recovery backup.
+
+### Isolated restore rehearsal
+
+Use a newly created database in a separate local PostgreSQL cluster with the
+same required extensions. Never run restore/cleanup commands against the live
+workspace database. This example deliberately creates a new database without
+`--clean` or `--create`; choose an unused local port and database name:
+
+```sh
+set -eu
+unset PGSERVICE PGSERVICEFILE PGDATABASE PGOPTIONS
+export PGHOST=127.0.0.1 PGPORT=55483 PGUSER=postgres
+: "${SKILL_RESTORE_DB:?set a new isolated rehearsal database name}"
+createdb --template=template0 "$SKILL_RESTORE_DB"
+pg_restore --dbname="$SKILL_RESTORE_DB" --exit-on-error --single-transaction \
+  --no-owner --no-acl "$SKILL_BACKUP_DIR/before-skill-operation.dump"
+psql --dbname="$SKILL_RESTORE_DB" --no-psqlrc --set=ON_ERROR_STOP=1 \
+  --command="SELECT count(*) FROM skill; SELECT count(*) FROM skill_file WHERE path LIKE '_shared/%'; SELECT count(*) FROM labrastro_skill_placement;"
+```
+
+Compare row counts and hashes of complete rows (including contents/config,
+paths, IDs, creator, labels, bindings and candidate metadata) with the backup
+snapshot. In this isolated copy, change a skill and remove its shared files,
+then restore the archive into a **second fresh database** and verify exact
+recovery. Run a rollback-version server on isolated ports with all production
+credentials/integrations removed; verify skill reads, and reproduce the refresh
+hazard only on a disposable copy. The validation record identifies what was
+actually rehearsed.
+
+Promoting restored data is a separate maintenance decision: pause writers,
+assess writes since the backup, and review either whole-database replacement or
+a transactionally consistent selective restore of the affected IDs and related
+rows. A full restore can lose later unrelated writes; app rollback alone
+cannot promise restoration. No release, deployment, upstream PR or real
+workspace mutation is included in this work.
