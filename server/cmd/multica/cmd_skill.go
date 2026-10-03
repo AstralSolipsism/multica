@@ -491,6 +491,7 @@ func runSkillRefresh(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Skill updated from source: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
+	printSkillDiagnostics(os.Stdout, result)
 	return nil
 }
 
@@ -601,6 +602,8 @@ func printSkillImportResult(cmd *cobra.Command, result map[string]any) error {
 	if output == "json" {
 		return cli.PrintJSON(os.Stdout, result)
 	}
+	defer printSkillDiagnostics(os.Stdout, result)
+	defer printSkillDiagnostics(os.Stdout, nestedMap(result, "skill"))
 
 	status := strVal(result, "status")
 	if status == "" {
