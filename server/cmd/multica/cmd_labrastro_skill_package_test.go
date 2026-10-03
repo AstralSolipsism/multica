@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -145,6 +146,12 @@ func TestLabrastroSkillPackageImportSelection(t *testing.T) {
 				c := preview["candidates"].([]any)[1].(map[string]any)
 				c["state"], c["conflict"], c["can_write"] = "conflict", "name_conflict", false
 			}
+			if tc.name == "root and comma are literal" {
+				for i, path := range []string{"", "skills/a,b"} {
+					preview["candidates"].([]any)[i].(map[string]any)["path"] = path
+					report["results"].([]any)[i].(map[string]any)["path"] = path
+				}
+			}
 			requests := serveSkillPackageFixture(t, preview, report, 200)
 			out, _, err := executeSkillPackage(t, append([]string{"import", skillPackageTestURL}, tc.flags...)...)
 			if err != nil {
@@ -170,21 +177,123 @@ func TestLabrastroSkillPackageReadOnlyPreview(t *testing.T) {
 	for _, args := range [][]string{
 		{"import", skillPackageTestURL, "--dry-run"},
 		{"import", skillPackageTestURL, "--dry-run", "--all", "--on-conflict", "overwrite"},
+		{"import", skillPackageTestURL, "--dry-run", "--skill", "skills/optional"},
 		{"rescan", skillPackageTestID},
 		{"rescan", skillPackageTestID, "--all", "--on-conflict", "overwrite"},
+		{"rescan", skillPackageTestID, "--skill", "skills/optional"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			preview := skillPackageFixture(t, "preview")
 			requests := serveSkillPackageFixture(t, preview, nil, 200)
-			out, _, err := executeSkillPackage(t, args...)
+			out, stderr, err := executeSkillPackage(t, args...)
 			if err != nil {
 				t.Fatal(err)
 			}
 			assertSkillPackageJSON(t, out, preview)
+			if !strings.Contains(stderr, "Read-only preview") {
+				t.Fatalf("missing read-only notice: %q", stderr)
+			}
+			if (slices.Contains(args, "--all") || slices.Contains(args, "--skill")) && !strings.Contains(stderr, "flags were not applied") {
+				t.Fatalf("missing unapplied flags notice: %q", stderr)
+			}
 			got := requests()
 			if len(got) != 1 || got[0].body["apply"] != nil || strings.HasSuffix(got[0].path, "/apply") {
 				t.Fatalf("read-only preview sent a write: %#v", got)
 			}
+		})
+	}
+}
+
+func TestLabrastroSkillPackageUnknownPathsStopBeforeApply(t *testing.T) {
+	for _, args := range [][]string{
+		{"import", skillPackageTestURL}, {"import", skillPackageTestURL, "--dry-run"},
+		{"rescan", skillPackageTestID}, {"rescan", skillPackageTestID, "--apply"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			preview := skillPackageFixture(t, "preview")
+			requests := serveSkillPackageFixture(t, preview, nil, 200)
+			out, _, err := executeSkillPackage(t, append(args, "--skill", "skills/missing")...)
+			if err == nil || !strings.Contains(err.Error(), "skills/missing") || !strings.Contains(err.Error(), "available paths:") || !strings.Contains(err.Error(), "skills/optional") {
+				t.Fatalf("expected invalid path with available choices: %v", err)
+			}
+			if len(requests()) != 1 {
+				t.Fatalf("invalid selection sent apply: %#v", requests())
+			}
+			assertSkillPackageJSON(t, out, preview)
+		})
+	}
+}
+
+func TestLabrastroSkillPackageDuplicateWarningOnlyForSelectedNewCandidates(t *testing.T) {
+	for _, tc := range []struct {
+		name, state string
+		selected    bool
+		selection   map[string]any
+		warn        bool
+	}{
+		{"two selected new candidates", "new", true, nil, true},
+		{"one unselected new candidate", "new", false, nil, false},
+		{"explicit all", "new", false, map[string]any{"all": true}, true},
+		{"explicit both", "new", false, map[string]any{"skills": []string{"skills/selected", "skills/optional"}}, true},
+		{"explicit one", "new", true, map[string]any{"skills": []string{"skills/selected"}}, false},
+		{"renamed and unchanged", "unchanged", true, map[string]any{"all": true}, false},
+		{"existing changed", "changed", true, map[string]any{"all": true}, false},
+		{"known name conflict", "conflict", true, map[string]any{"all": true}, false},
+		{"removed source", "removed", true, map[string]any{"all": true}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			preview := skillPackageFixture(t, "preview")
+			c := preview["candidates"].([]any)[1].(map[string]any)
+			c["name"], c["state"], c["default_selected"] = "selected", tc.state, tc.selected
+			var stderr bytes.Buffer
+			warnSkillPackageDuplicateNames(&stderr, preview, tc.selection)
+			if strings.Contains(stderr.String(), "name_conflict") != tc.warn {
+				t.Fatalf("warning = %q, want warning %v", stderr.String(), tc.warn)
+			}
+		})
+	}
+}
+
+func TestLabrastroSkillPackageRecoveryGuidance(t *testing.T) {
+	for _, tc := range []struct {
+		name, path string
+		body       map[string]any
+		status     int
+		wantHint   bool
+		wantExit   int
+	}{
+		{"list unauthorized", "/api/skill-packages", nil, 401, false, cli.ExitAuth},
+		{"get forbidden", "/api/skill-packages/" + skillPackageTestID, nil, 403, false, cli.ExitAuth},
+		{"get missing", "/api/skill-packages/" + skillPackageTestID, nil, 404, false, cli.ExitNotFound},
+		{"get conflict", "/api/skill-packages/" + skillPackageTestID, nil, 409, false, cli.ExitGeneric},
+		{"apply task token rejected", "/api/skill-packages/apply", map[string]any{}, 401, false, cli.ExitAuth},
+		{"apply forbidden", "/api/skill-packages/apply", map[string]any{}, 403, false, cli.ExitAuth},
+		{"apply missing", "/api/skill-packages/apply", map[string]any{}, 404, false, cli.ExitNotFound},
+		{"apply stale", "/api/skill-packages/apply", map[string]any{}, 409, true, cli.ExitGeneric},
+		{"apply indeterminate", "/api/skill-packages/apply", map[string]any{}, 500, true, cli.ExitGeneric},
+		{"rescan stale", "/api/skill-packages/" + skillPackageTestID + "/rescan", map[string]any{"apply": true}, 409, true, cli.ExitGeneric},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := &cobra.Command{}
+			cmd.SetContext(context.Background())
+			var stdout bytes.Buffer
+			cmd.SetOut(&stdout)
+			client := cli.NewAPIClient("https://offline.invalid", "offline-workspace", "mat_offline_test")
+			client.HTTPClient.Transport = skillPackageRoundTripper(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(`{"error":"source changed; preview again"}`)), Header: make(http.Header), Request: r}, nil
+			})
+			_, err := requestSkillPackage(cmd, client, tc.path, tc.body)
+			message := cli.FormatError(err, false)
+			if err == nil || cli.ExitCodeFor(err) != tc.wantExit || strings.Contains(message, "multica skill package import") != tc.wantHint {
+				t.Fatalf("unexpected recovery/exit: %v, %s", err, message)
+			}
+			if tc.status == 409 && tc.wantHint && strings.Count(strings.ToLower(message), "preview again") != 1 {
+				t.Fatalf("duplicated conflict guidance: %s", message)
+			}
+			if tc.status == 401 && !strings.Contains(message, "Stop here") {
+				t.Fatalf("lost task-token stop guidance: %s", message)
+			}
+			assertSkillPackageJSON(t, stdout.String(), map[string]any{"error": "source changed; preview again"})
 		})
 	}
 }
@@ -339,7 +448,7 @@ func TestLabrastroSkillPackageFailureReportBeforeError(t *testing.T) {
 			requests := serveSkillPackageFixture(t, preview, report, status)
 			out, _, err := executeSkillPackage(t, "import", skillPackageTestURL, "--all")
 			assertSkillPackageJSON(t, out, report)
-			if err == nil || cli.ExitCodeFor(err) == 0 || !strings.Contains(cli.FormatError(err, false), "Preview again") {
+			if err == nil || cli.ExitCodeFor(err) == 0 || strings.Contains(cli.FormatError(err, false), "Preview again") != (mode != "forbidden") {
 				t.Fatalf("failure was not actionable/nonzero: %v", err)
 			}
 			if len(requests()) != 2 {
@@ -385,6 +494,8 @@ func TestLabrastroSkillPackageMalformedReadAndJSON(t *testing.T) {
 func TestLabrastroSkillPackageOutputAndCWD(t *testing.T) {
 	preview, report := skillPackageFixture(t, "preview"), skillPackageFixture(t, "apply")
 	preview["candidates"].([]any)[1].(map[string]any)["name"] = "selected"
+	preview["candidates"].([]any)[1].(map[string]any)["default_selected"] = true
+	preview["candidates"].([]any)[0].(map[string]any)["bytes"] = float64(1228848)
 	requests := serveSkillPackageFixture(t, preview, report, 200)
 	for _, dir := range []string{t.TempDir(), filepath.Join(t.TempDir(), "unrelated", "nested")} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -400,6 +511,9 @@ func TestLabrastroSkillPackageOutputAndCWD(t *testing.T) {
 			out, _, err = executeSkillPackage(t, "rescan", skillPackageTestID, "--output", "table")
 			if err != nil || !strings.Contains(out, "DEFAULT") || !strings.Contains(out, "required_reference_unavailable") || !strings.Contains(out, "references/guide.md") || !strings.Contains(out, "retryable=true") {
 				t.Fatalf("table lost preview diagnostics: %v, %s", err, out)
+			}
+			if !strings.Contains(out, "1.2 MiB") || strings.Contains(out, "e+06") {
+				t.Fatalf("preview size is not readable: %s", out)
 			}
 			out, _, err = executeSkillPackage(t, "import", skillPackageTestURL, "--output", "table")
 			if err != nil || !strings.Contains(out, "not_selected") || !strings.Contains(out, "required_reference_unavailable") {
@@ -469,27 +583,82 @@ type skillPackageRoundTripper func(*http.Request) (*http.Response, error)
 func (f skillPackageRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestLabrastroSkillPackageRequestDeadline(t *testing.T) {
-	t.Setenv("MULTICA_HTTP_TIMEOUT", "10m")
-	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
-	cmd.SetOut(io.Discard)
-	client := cli.NewAPIClient("https://offline.invalid", "offline-workspace", "mat_offline_test")
-	var deadlines []time.Time
-	client.HTTPClient.Transport = skillPackageRoundTripper(func(r *http.Request) (*http.Response, error) {
-		deadline, ok := r.Context().Deadline()
-		if !ok || time.Until(deadline) > 45*time.Second || time.Until(deadline) < 44*time.Second {
-			t.Errorf("unexpected request deadline: %v", deadline)
-		}
-		deadlines = append(deadlines, deadline)
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
-	})
-	for range 2 {
-		if _, err := requestSkillPackage(cmd, client, "/api/skill-packages/preview", map[string]any{}); err != nil {
-			t.Fatal(err)
-		}
+	for _, tc := range []struct {
+		env  string
+		want time.Duration
+	}{{"", 60 * time.Second}, {"20s", 60 * time.Second}, {"90s", 95 * time.Second}, {"10m", 605 * time.Second}} {
+		t.Run(tc.env, func(t *testing.T) {
+			t.Setenv("MULTICA_HTTP_TIMEOUT", tc.env)
+			cmd := &cobra.Command{}
+			cmd.SetContext(context.Background())
+			cmd.SetOut(io.Discard)
+			client := cli.NewAPIClient("https://offline.invalid", "offline-workspace", "mat_offline_test")
+			var deadlines []time.Time
+			client.HTTPClient.Transport = skillPackageRoundTripper(func(r *http.Request) (*http.Response, error) {
+				deadline, ok := r.Context().Deadline()
+				if !ok || time.Until(deadline) > tc.want || time.Until(deadline) < tc.want-time.Second || client.HTTPClient.Timeout != tc.want {
+					t.Errorf("deadline=%v, client timeout=%v, want %v (longer than server's 45s)", deadline, client.HTTPClient.Timeout, tc.want)
+				}
+				deadlines = append(deadlines, deadline)
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
+			})
+			for range 2 {
+				if _, err := requestSkillPackage(cmd, client, "/api/skill-packages/preview", map[string]any{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !deadlines[1].After(deadlines[0]) {
+				t.Fatal("preview and apply did not receive separate request budgets")
+			}
+		})
 	}
-	if !deadlines[1].After(deadlines[0]) {
-		t.Fatal("preview and apply did not receive separate request budgets")
+}
+
+// The server can commit earlier items before its 45s source deadline. Leave
+// enough time to receive the resulting report instead of cancelling it first.
+// A fake transport and clock reproduce that boundary without a 46s wall wait.
+func TestLabrastroSkillPackageReceivesServerTimeoutReport(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusGatewayTimeout} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Setenv("MULTICA_HTTP_TIMEOUT", "")
+			report := skillPackageFixture(t, "apply")
+			report["failed"] = true
+			report["results"].([]any)[3].(map[string]any)["status"] = "failed"
+			if status == http.StatusGatewayTimeout {
+				report = map[string]any{"error": "source request timed out", "code": "source_timeout", "retryable": true}
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				t.Fatal(err)
+			}
+			synctest.Test(t, func(t *testing.T) {
+				var stdout bytes.Buffer
+				cmd := &cobra.Command{}
+				cmd.SetContext(context.Background())
+				cmd.SetOut(&stdout)
+				cmd.Flags().String("output", "json", "")
+				client := cli.NewAPIClient("https://offline.invalid", "offline-workspace", "mat_offline_test")
+				client.HTTPClient.Timeout = 45 * time.Second
+				calls := 0
+				client.HTTPClient.Transport = skillPackageRoundTripper(func(r *http.Request) (*http.Response, error) {
+					calls++
+					select {
+					case <-time.After(46 * time.Second):
+						return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(data)), Header: make(http.Header), Request: r}, nil
+					case <-r.Context().Done():
+						return nil, r.Context().Err()
+					}
+				})
+				result, err := requestSkillPackage(cmd, client, "/api/skill-packages/apply", map[string]any{"preview_id": "offline-preview"})
+				if err == nil {
+					err = printSkillPackageResponse(cmd, result, "apply")
+				}
+				if cli.ExitCodeFor(err) != cli.ExitGeneric || calls != 1 {
+					t.Fatalf("expected reported server failure without retry, got err=%v calls=%d stdout=%s", err, calls, stdout.String())
+				}
+				assertSkillPackageJSON(t, stdout.String(), report)
+			})
+		})
 	}
 }
 

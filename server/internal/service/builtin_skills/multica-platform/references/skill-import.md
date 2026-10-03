@@ -88,13 +88,17 @@ rescan uses `/api/skill-packages/{package-id}/rescan`. Requests use the current
 workspace regardless of the CLI's working directory. `--dry-run` and rescan
 without `--apply` only preview, with no workspace writes. List/get show the
 last applied package metadata, not a live source scan.
+Preview stdout shows server defaults; stderr reminds you that selection/conflict
+flags do not change this read-only response. Unknown `--skill` paths are rejected
+against the preview before any apply request, with available paths in the error.
 
 Without selectors, import follows the server's manifest defaults. `--skill`
 is a repository-relative skill directory, repeatable, and mutually exclusive
 with `--all`; use `--skill ''` for a repository-root candidate. Package conflict
 strategies are `skip` (default), `rename`, and `overwrite`. `can_write` governs
 the existing target; false does not prohibit rename into an independent skill.
-Same-source skills already in another package must first be detached there.
+Same-source skills already in another package must first be detached on the
+Skills page; the CLI has no detach command.
 
 Rescan uses the saved URL/ref. Default `--apply` updates only changed imported
 skills; new or detached candidates require `--skill` or `--all`. Explicit
@@ -107,8 +111,11 @@ unselected candidates. Partial failures print the complete JSON report before a
 nonzero exit, including in table mode; successful items remain applied. JSON stdout stays a single
 document, with warnings on stderr. Same-name candidates can fail the first apply
 even with rename. For these failures or a stale preview, preview again, inspect
-the results, then select remaining items; never blindly replay a write. Each
-request is bounded to 45 seconds. Malformed responses leave the result
+the results, then select remaining items; never blindly replay a write. The server's
+work limit remains 45 seconds. The CLI uses a separate budget of at least 60
+seconds for both the HTTP client and request context, honoring larger
+`MULTICA_HTTP_TIMEOUT` settings so the server can return its timeout report.
+Malformed responses leave the result
 indeterminate and must not be treated as success.
 
 Single-skill import/refresh can also return `diagnostics` (inside `skill` for

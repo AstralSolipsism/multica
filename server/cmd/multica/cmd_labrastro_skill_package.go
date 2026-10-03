@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -29,14 +30,14 @@ func newSkillPackageCmd() *cobra.Command {
 			sub.Use = "import <url>"
 			sub.Short = "Preview and import a GitHub or skills.sh repository"
 			sub.Long = "Import through the workspace API using the server's manifest defaults.\n" +
-				"Use --dry-run for a read-only preview. Each request is bounded to 45 seconds."
+				"Use --dry-run for a read-only preview. " + skillPackageTimeoutHelp
 			sub.Flags().Bool("dry-run", false, "Only preview; do not create or update workspace data")
 		case "rescan":
 			sub.Use = "rescan <package-id>"
 			sub.Short = "Preview changes from a package's saved URL and ref"
 			sub.Long = "Preview only unless --apply is supplied. Apply defaults to changed imported skills;\n" +
 				"new skills require --skill or --all. Removed source paths are retained.\n" +
-				"Each request is bounded to 45 seconds; failed writes are never retried automatically."
+				skillPackageTimeoutHelp + "\nFailed writes are never retried automatically."
 			sub.Flags().Bool("apply", false, "Apply after a fresh preview")
 		case "list":
 			sub.Use, sub.Short, sub.Args = "list", "List packages in the workspace", exactArgs(0)
@@ -90,9 +91,6 @@ func runSkillPackage(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Use the existing workspace/auth resolution, with one bounded budget per
-	// request. Preview and apply each scan the source and need separate budgets.
-	client.HTTPClient.Timeout = skillPackageRequestTimeout
 	if action == "list" || action == "get" {
 		result, err := requestSkillPackage(cmd, client, path, nil)
 		if err != nil {
@@ -119,8 +117,22 @@ func runSkillPackage(cmd *cobra.Command, args []string) error {
 	if err := validateSkillPackageResponse(preview, "preview"); err != nil {
 		return printSkillPackageResponse(cmd, preview, "preview")
 	}
-	warnSkillPackageDuplicateNames(cmd.ErrOrStderr(), preview)
+	if err := validateSkillPackageSelection(preview, body); err != nil {
+		if printErr := printSkillPackageResponse(cmd, preview, "preview"); printErr != nil {
+			return printErr
+		}
+		return err
+	}
+	warnSkillPackageDuplicateNames(cmd.ErrOrStderr(), preview, body)
 	if !apply {
+		next := "Omit --dry-run to apply."
+		if action == "rescan" {
+			next = "Use --apply to update this package."
+		}
+		fmt.Fprintln(cmd.ErrOrStderr(), "Read-only preview; no workspace changes. "+next)
+		if cmd.Flags().Changed("skill") || cmd.Flags().Changed("all") || cmd.Flags().Changed("on-conflict") {
+			fmt.Fprintln(cmd.ErrOrStderr(), "Selection/conflict flags were not applied to this preview; stdout shows the server's default selection.")
+		}
 		return printSkillPackageResponse(cmd, preview, "preview")
 	}
 	// Do not resolve manifests or filter on can_write here: rename may create
@@ -154,12 +166,16 @@ func runSkillPackage(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-const skillPackageRequestTimeout = 45 * time.Second
+const skillPackageTimeoutHelp = "The server has a 45-second work limit; the CLI waits at least 60 seconds for its report and honors MULTICA_HTTP_TIMEOUT."
 
 const skillPackageRepreview = "Preview again with 'multica skill package import <url> --dry-run' or 'multica skill package rescan <package-id>', inspect the report, then explicitly select any remaining items."
 
 func requestSkillPackage(cmd *cobra.Command, client *cli.APIClient, path string, body map[string]any) (map[string]any, error) {
-	ctx, cancel := context.WithTimeout(cmd.Context(), skillPackageRequestTimeout)
+	// Both transport and context must outlive the server's 45s work deadline
+	// so it can return partial results. Each request gets a fresh finite budget.
+	timeout := cli.AtLeastAPITimeout(60 * time.Second)
+	client.HTTPClient.Timeout = timeout
+	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 	defer cancel()
 	var result map[string]any
 	var err error
@@ -172,13 +188,42 @@ func requestSkillPackage(cmd *cobra.Command, client *cli.APIClient, path string,
 		return result, nil
 	}
 	var httpErr *cli.HTTPError
-	if errors.As(err, &httpErr) && !httpErr.BodyTruncated && json.Unmarshal([]byte(httpErr.Body), &result) == nil && result != nil {
+	isHTTPError := errors.As(err, &httpErr)
+	if isHTTPError && !httpErr.BodyTruncated && json.Unmarshal([]byte(httpErr.Body), &result) == nil && result != nil {
 		// Preserve structured server errors too, without a second JSON document.
 		if printErr := cli.PrintJSON(cmd.OutOrStdout(), result); printErr != nil {
 			return nil, printErr
 		}
 	}
-	return nil, cli.WithUserMessage(cli.FormatError(err, false)+" "+skillPackageRepreview, err)
+	writing := body != nil && (strings.HasSuffix(path, "/apply") || body["apply"] == true)
+	if writing && isHTTPError && httpErr.StatusCode == http.StatusConflict {
+		return nil, cli.WithUserMessage("Skill package apply conflict. "+skillPackageRepreview, err)
+	}
+	if writing && (!isHTTPError || httpErr.StatusCode >= 500) {
+		return nil, cli.WithUserMessage(cli.FormatError(err, false)+" The apply result is indeterminate. "+skillPackageRepreview, err)
+	}
+	return nil, err
+}
+
+func validateSkillPackageSelection(preview, selection map[string]any) error {
+	requested, ok := selection["skills"].([]string)
+	if !ok {
+		return nil
+	}
+	available := []string{}
+	for _, item := range preview["candidates"].([]any) {
+		available = append(available, strVal(item.(map[string]any), "path"))
+	}
+	unknown := []string{}
+	for _, path := range requested {
+		if !slices.Contains(available, path) {
+			unknown = append(unknown, path)
+		}
+	}
+	if len(unknown) > 0 {
+		return fmt.Errorf("--skill paths are not in the preview: %q; available paths: %q", unknown, available)
+	}
+	return nil
 }
 
 // Validate the fields needed by this Go CLI against the frozen wire contract
@@ -186,7 +231,11 @@ func requestSkillPackage(cmd *cobra.Command, client *cli.APIClient, path string,
 // output, including additive fields; do not introduce another API model.
 func validateSkillPackageResponse(result map[string]any, kind string) error {
 	invalid := func(field string) error {
-		return fmt.Errorf("skill package %s response has a missing, malformed, or unsupported %s; result is indeterminate. %s", kind, field, skillPackageRepreview)
+		recovery := "Check server/CLI compatibility and repeat the read."
+		if kind == "preview" || kind == "apply" {
+			recovery = skillPackageRepreview
+		}
+		return fmt.Errorf("skill package %s response has a missing, malformed, or unsupported %s; result is indeterminate. %s", kind, field, recovery)
 	}
 	if result == nil {
 		return invalid("object")
@@ -400,7 +449,7 @@ func printSkillPackageTable(cmd *cobra.Command, result map[string]any, kind stri
 	headers := []string{"PATH", "STATUS", "SKILL_ID", "CODE", "REASON", "RETRYABLE"}
 	if kind == "preview" {
 		key = "candidates"
-		headers = []string{"PATH", "NAME", "STATE", "DEFAULT", "CAN_WRITE", "CONFLICT", "FILES", "BYTES"}
+		headers = []string{"PATH", "NAME", "STATE", "DEFAULT", "CAN_WRITE", "CONFLICT", "FILES", "SIZE"}
 		source := nestedMap(result, "source")
 		fmt.Fprintf(w, "Source: %s (ref %s, revision %s)\n", strVal(source, "url"), strVal(source, "ref"), strVal(source, "revision"))
 		fmt.Fprintln(w, "Read-only preview. DEFAULT shows the server selection without --skill/--all.")
@@ -417,7 +466,11 @@ func printSkillPackageTable(cmd *cobra.Command, result map[string]any, kind stri
 			fields = []string{"name", "state", "default_selected", "can_write", "conflict", "file_count", "bytes"}
 		}
 		for _, field := range fields {
-			row = append(row, strVal(m, field))
+			if size, ok := m[field].(float64); field == "bytes" && ok {
+				row = append(row, formatBytes(int64(size)))
+			} else {
+				row = append(row, strVal(m, field))
+			}
 		}
 		rows = append(rows, row)
 	}
@@ -439,11 +492,19 @@ func skillPackageDisplayPath(m map[string]any) string {
 	return "(repository root)"
 }
 
-func warnSkillPackageDuplicateNames(w io.Writer, preview map[string]any) {
+func warnSkillPackageDuplicateNames(w io.Writer, preview, selection map[string]any) {
 	paths := map[string][]string{}
 	for _, item := range preview["candidates"].([]any) {
 		c := item.(map[string]any)
-		if strVal(c, "state") != "removed" && strVal(c, "name") != "" {
+		// Only new candidates selected for the next apply can race each other
+		// for a name. Imported/renamed candidates do not have this limitation.
+		selected := c["default_selected"] == true
+		if explicit, ok := selection["skills"].([]string); ok {
+			selected = slices.Contains(explicit, strVal(c, "path"))
+		} else if selection["all"] == true {
+			selected = true
+		}
+		if selected && strVal(c, "state") == "new" && strVal(c, "name") != "" {
 			name := strVal(c, "name")
 			paths[name] = append(paths[name], skillPackageDisplayPath(c))
 		}
