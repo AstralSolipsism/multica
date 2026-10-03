@@ -1196,6 +1196,40 @@ type LabrastroMessageScanCursor struct {
 	CycleUpperID   pgtype.UUID        `json:"cycle_upper_id"`
 }
 
+type LabrastroSkillFolder struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ParentID    pgtype.UUID        `json:"parent_id"`
+	Name        string             `json:"name"`
+	PackageID   pgtype.UUID        `json:"package_id"`
+	PackagePath pgtype.Text        `json:"package_path"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LabrastroSkillPackage struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	OwnerRepo    string             `json:"owner_repo"`
+	Subdirectory string             `json:"subdirectory"`
+	SourceUrl    string             `json:"source_url"`
+	SourceRef    string             `json:"source_ref"`
+	RootFolderID pgtype.UUID        `json:"root_folder_id"`
+	CreatedBy    pgtype.UUID        `json:"created_by"`
+	Candidates   []byte             `json:"candidates"`
+	Revision     int64              `json:"revision"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LabrastroSkillPlacement struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	SkillID     pgtype.UUID `json:"skill_id"`
+	FolderID    pgtype.UUID `json:"folder_id"`
+	PackageID   pgtype.UUID `json:"package_id"`
+	SourcePath  pgtype.Text `json:"source_path"`
+}
+
 type LarkBindingToken struct {
 	TokenHash      string             `json:"token_hash"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`

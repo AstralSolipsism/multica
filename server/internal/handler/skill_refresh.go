@@ -158,8 +158,7 @@ func (h *Handler) RefreshSkill(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
-		status, msg := importFetchErrorResponse(ctx, err)
-		writeError(w, status, msg)
+		writeSkillFetchError(w, ctx, err)
 		return
 	}
 
@@ -196,6 +195,7 @@ func (h *Handler) RefreshSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp.Diagnostics = imported.diagnostics
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	h.publish(protocol.EventSkillUpdated, workspaceID, actorType, actorID, map[string]any{"skill": resp})
 	writeJSON(w, http.StatusOK, resp)

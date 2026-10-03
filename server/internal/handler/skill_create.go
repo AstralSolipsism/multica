@@ -139,6 +139,23 @@ type skillOverwriteInput struct {
 // bundle are pruned via DeleteSkillFilesBySkill. On any error the tx rolls back,
 // leaving the original skill unchanged.
 func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwriteInput) (SkillWithFilesResponse, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+	defer tx.Rollback(ctx)
+	resp, err := overwriteSkillWithFilesInTx(ctx, h.Queries.WithTx(tx), input)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+	return resp, nil
+}
+
+// overwriteSkillWithFilesInTx lets package placement share the content transaction.
+func overwriteSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillOverwriteInput) (SkillWithFilesResponse, error) {
 	config, err := json.Marshal(input.Config)
 	if err != nil {
 		return SkillWithFilesResponse{}, err
@@ -146,14 +163,6 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 	if input.Config == nil {
 		config = []byte("{}")
 	}
-
-	tx, err := h.TxStarter.Begin(ctx)
-	if err != nil {
-		return SkillWithFilesResponse{}, err
-	}
-	defer tx.Rollback(ctx)
-
-	qtx := h.Queries.WithTx(tx)
 
 	existing, err := qtx.GetSkillInWorkspace(ctx, db.GetSkillInWorkspaceParams{
 		ID:          input.TargetSkillID,
@@ -224,10 +233,6 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 			return SkillWithFilesResponse{}, err
 		}
 		fileResps = append(fileResps, skillFileToResponse(sf))
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return SkillWithFilesResponse{}, err
 	}
 
 	return SkillWithFilesResponse{
