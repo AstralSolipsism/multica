@@ -112,9 +112,11 @@ nonzero exit, including in table mode; successful items remain applied. JSON std
 document, with warnings on stderr. Same-name candidates can fail the first apply
 even with rename. For these failures or a stale preview, preview again, inspect
 the results, then select remaining items; never blindly replay a write. The server's
-work limit remains 45 seconds. The CLI uses a separate budget of at least 60
-seconds for both the HTTP client and request context, honoring larger
+package work limit is 180 seconds. The CLI uses a separate budget of at least 240 seconds
+for each request, for both the HTTP client and request context, honoring larger
 `MULTICA_HTTP_TIMEOUT` settings so the server can return its timeout report.
+Preview time does not consume the apply request's budget. Single-skill import/refresh
+retain their 45-second server work limit.
 Malformed responses leave the result
 indeterminate and must not be treated as success.
 
