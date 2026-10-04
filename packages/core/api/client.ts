@@ -513,6 +513,26 @@ import {
   EMPTY_SKILL_SUMMARY_LIST,
   SkillImportResultSchema,
   EMPTY_SKILL_IMPORT_RESULT,
+  SkillFolderTreeSchema,
+  SkillFolderSchema,
+  SkillPackageListSchema,
+  SkillPackageSchema,
+  SkillPackagePreviewSchema,
+  SkillPackageApplySchema,
+  SkillPackageDeletePreviewSchema,
+  SkillPlacementUpdatedSchema,
+  SkillFolderDeletedSchema,
+  SkillPackageRemovedSchema,
+  type SkillFolder,
+  type SkillFolderTree,
+  type SkillPackage,
+  type SkillPackagePreview,
+  type SkillPackageApplyResult,
+  type SkillPackageDeletePreview,
+  type SkillPackageRemoved,
+  type SkillPackageRequest,
+  type SkillPlacementUpdated,
+  type SkillFolderDeleted,
   IssueViewSchema,
   IssueViewListSchema,
   IssueViewPreferenceSchema,
@@ -3661,10 +3681,16 @@ export class ApiClient {
     await this.fetch(`/api/skills/${id}`, { method: "DELETE" });
   }
 
-  async importSkill(data: { url: string }): Promise<Skill> {
-    return this.fetch("/api/skills/import", {
+  // Parsed like every other skill read: the response now carries optional
+  // import diagnostics, and a malformed result must stay indeterminate
+  // (null) rather than synthesizing a skill the server may not have made.
+  async importSkill(data: { url: string }): Promise<Skill | null> {
+    const raw = await this.fetch<unknown>("/api/skills/import", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, SkillSchema, null, {
+      endpoint: "POST /api/skills/import",
     });
   }
 
@@ -3753,6 +3779,177 @@ export class ApiClient {
 			method: "DELETE",
 		});
 	}
+
+  // Skill packages & folder tree (Labrastro fork). The routes select the
+  // workspace strictly by X-Workspace-ID: pin it and clear the slug header
+  // so a request follows the query's workspace even across a route switch.
+  // Every response parses through parseWithFallback with a null fallback —
+  // a malformed tree/preview/write result stays visibly indeterminate and
+  // must never become an empty list or a fake success.
+  private workspacePinnedHeaders(wsId: string): Record<string, string> {
+    return { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" };
+  }
+
+  async getSkillFolderTree(wsId: string): Promise<SkillFolderTree | null> {
+    const raw = await this.fetch<unknown>("/api/skill-folders", {
+      headers: this.workspacePinnedHeaders(wsId),
+    });
+    return parseWithFallback(raw, SkillFolderTreeSchema, null, {
+      endpoint: "GET /api/skill-folders",
+    });
+  }
+
+  async listSkillPackages(wsId: string): Promise<SkillPackage[] | null> {
+    const raw = await this.fetch<unknown>("/api/skill-packages", {
+      headers: this.workspacePinnedHeaders(wsId),
+    });
+    const parsed = parseWithFallback<{ packages: SkillPackage[] } | null>(raw, SkillPackageListSchema, null, {
+      endpoint: "GET /api/skill-packages",
+    });
+    return parsed ? parsed.packages : null;
+  }
+
+  async getSkillPackage(wsId: string, packageId: string): Promise<SkillPackage | null> {
+    const raw = await this.fetch<unknown>(`/api/skill-packages/${encodeURIComponent(packageId)}`, {
+      headers: this.workspacePinnedHeaders(wsId),
+    });
+    return parseWithFallback(raw, SkillPackageSchema, null, {
+      endpoint: "GET /api/skill-packages/:id",
+    });
+  }
+
+  async previewSkillPackage(wsId: string, data: { url: string }): Promise<SkillPackagePreview | null> {
+    const raw = await this.fetch<unknown>("/api/skill-packages/preview", {
+      method: "POST",
+      headers: this.workspacePinnedHeaders(wsId),
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, SkillPackagePreviewSchema, null, {
+      endpoint: "POST /api/skill-packages/preview",
+    });
+  }
+
+  async applySkillPackage(wsId: string, data: SkillPackageRequest): Promise<SkillPackageApplyResult | null> {
+    const raw = await this.fetch<unknown>("/api/skill-packages/apply", {
+      method: "POST",
+      headers: this.workspacePinnedHeaders(wsId),
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, SkillPackageApplySchema, null, {
+      endpoint: "POST /api/skill-packages/apply",
+    });
+  }
+
+  // Read-only rescan: returns a fresh preview for the saved source (or an
+  // override URL that may only change the ref). Applying goes through
+  // applySkillPackageRescan with the preview token.
+  async rescanSkillPackage(wsId: string, packageId: string, data?: { url?: string }): Promise<SkillPackagePreview | null> {
+    const raw = await this.fetch<unknown>(`/api/skill-packages/${encodeURIComponent(packageId)}/rescan`, {
+      method: "POST",
+      headers: this.workspacePinnedHeaders(wsId),
+      body: JSON.stringify(data?.url ? { url: data.url } : {}),
+    });
+    return parseWithFallback(raw, SkillPackagePreviewSchema, null, {
+      endpoint: "POST /api/skill-packages/:id/rescan",
+    });
+  }
+
+  async applySkillPackageRescan(wsId: string, packageId: string, data: SkillPackageRequest): Promise<SkillPackageApplyResult | null> {
+    const raw = await this.fetch<unknown>(`/api/skill-packages/${encodeURIComponent(packageId)}/rescan`, {
+      method: "POST",
+      headers: this.workspacePinnedHeaders(wsId),
+      body: JSON.stringify({ ...data, apply: true }),
+    });
+    return parseWithFallback(raw, SkillPackageApplySchema, null, {
+      endpoint: "POST /api/skill-packages/:id/rescan (apply)",
+    });
+  }
+
+  async getSkillPackageDeletePreview(wsId: string, packageId: string): Promise<SkillPackageDeletePreview | null> {
+    const raw = await this.fetch<unknown>(`/api/skill-packages/${encodeURIComponent(packageId)}/delete-preview`, {
+      headers: this.workspacePinnedHeaders(wsId),
+    });
+    return parseWithFallback(raw, SkillPackageDeletePreviewSchema, null, {
+      endpoint: "GET /api/skill-packages/:id/delete-preview",
+    });
+  }
+
+  async dissolveSkillPackage(wsId: string, packageId: string, previewId: string): Promise<SkillPackageRemoved | null> {
+    const raw = await this.fetch<unknown>(`/api/skill-packages/${encodeURIComponent(packageId)}/dissolve`, {
+      method: "POST",
+      headers: this.workspacePinnedHeaders(wsId),
+      body: JSON.stringify({ preview_id: previewId }),
+    });
+    return parseWithFallback(raw, SkillPackageRemovedSchema, null, {
+      endpoint: "POST /api/skill-packages/:id/dissolve",
+    });
+  }
+
+  async deleteSkillPackage(wsId: string, packageId: string, previewId: string): Promise<SkillPackageRemoved | null> {
+    const raw = await this.fetch<unknown>(`/api/skill-packages/${encodeURIComponent(packageId)}`, {
+      method: "DELETE",
+      headers: this.workspacePinnedHeaders(wsId),
+      body: JSON.stringify({ preview_id: previewId }),
+    });
+    return parseWithFallback(raw, SkillPackageRemovedSchema, null, {
+      endpoint: "DELETE /api/skill-packages/:id",
+    });
+  }
+
+  async createSkillFolder(wsId: string, data: { name: string; parent_id?: string }): Promise<SkillFolder | null> {
+    const raw = await this.fetch<unknown>("/api/skill-folders", {
+      method: "POST",
+      headers: this.workspacePinnedHeaders(wsId),
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, SkillFolderSchema, null, {
+      endpoint: "POST /api/skill-folders",
+    });
+  }
+
+  async updateSkillFolder(wsId: string, folderId: string, data: { name?: string; parent_id?: string }): Promise<SkillFolder | null> {
+    const raw = await this.fetch<unknown>(`/api/skill-folders/${encodeURIComponent(folderId)}`, {
+      method: "PATCH",
+      headers: this.workspacePinnedHeaders(wsId),
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, SkillFolderSchema, null, {
+      endpoint: "PATCH /api/skill-folders/:id",
+    });
+  }
+
+  async deleteSkillFolder(wsId: string, folderId: string): Promise<SkillFolderDeleted | null> {
+    const raw = await this.fetch<unknown>(`/api/skill-folders/${encodeURIComponent(folderId)}`, {
+      method: "DELETE",
+      headers: this.workspacePinnedHeaders(wsId),
+    });
+    return parseWithFallback(raw, SkillFolderDeletedSchema, null, {
+      endpoint: "DELETE /api/skill-folders/:id",
+    });
+  }
+
+  // An empty folder_id clears the placement (the skill becomes uncategorized);
+  // detach keeps the folder but drops the package/source association.
+  async setSkillPlacement(wsId: string, skillId: string, folderId: string): Promise<SkillPlacementUpdated | null> {
+    const raw = await this.fetch<unknown>(`/api/skill-placements/${encodeURIComponent(skillId)}`, {
+      method: "PUT",
+      headers: this.workspacePinnedHeaders(wsId),
+      body: JSON.stringify({ folder_id: folderId }),
+    });
+    return parseWithFallback(raw, SkillPlacementUpdatedSchema, null, {
+      endpoint: "PUT /api/skill-placements/:skillId",
+    });
+  }
+
+  async detachSkillPlacement(wsId: string, skillId: string): Promise<SkillPlacementUpdated | null> {
+    const raw = await this.fetch<unknown>(`/api/skill-placements/${encodeURIComponent(skillId)}/detach`, {
+      method: "POST",
+      headers: this.workspacePinnedHeaders(wsId),
+    });
+    return parseWithFallback(raw, SkillPlacementUpdatedSchema, null, {
+      endpoint: "POST /api/skill-placements/:skillId/detach",
+    });
+  }
 
   // Personal Access Tokens
   async listPersonalAccessTokens(): Promise<PersonalAccessToken[]> {

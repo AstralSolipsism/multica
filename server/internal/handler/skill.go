@@ -132,7 +132,8 @@ type SkillSearchCandidateResponse struct {
 
 type SkillWithFilesResponse struct {
 	SkillResponse
-	Files []SkillFileResponse `json:"files"`
+	Files       []SkillFileResponse     `json:"files"`
+	Diagnostics []SkillImportDiagnostic `json:"diagnostics,omitempty"`
 }
 
 // SkillWithFileMetadataResponse is `GET /api/skills/{id}?include=metadata`:
@@ -784,6 +785,7 @@ const (
 type importedSkill struct {
 	name        string
 	description string
+	diagnostics []SkillImportDiagnostic
 	content     string // SKILL.md body
 	files       []importedFile
 	bundleSize  int            // running sum of file content bytes for cap enforcement
@@ -908,6 +910,8 @@ type githubTreeResponse struct {
 }
 
 type githubTreeEntry struct {
+	Mode string `json:"mode"`
+	SHA  string `json:"sha"`
 	Path string `json:"path"`
 	Type string `json:"type"` // "blob" or "tree"
 	Size int64  `json:"size"` // blob byte size (absent/0 for tree entries)
@@ -1241,8 +1245,11 @@ func fetchFromSkillsSh(ctx context.Context, httpClient *http.Client, rawURL stri
 	}
 
 	result := newSkillsShImportedSkill(skillMdBody, skillName, rawURL, owner, repo)
+	result.origin["path"] = skillDir
+	result.origin["ref"] = defaultBranch
 
 	if truncated {
+		result.diagnostics = append(result.diagnostics, SkillImportDiagnostic{Code: "tree_incomplete", Message: "Repository tree is incomplete; outside references could not be completed", Retryable: true})
 		// The tree is incomplete, so it can't drive enumeration; use the legacy
 		// per-directory crawl scoped to the resolved skill directory.
 		if err := addSupportingFilesViaCrawl(ctx, httpClient, result, owner, repo, defaultBranch, skillDir); err != nil {
@@ -1252,6 +1259,9 @@ func fetchFromSkillsSh(ctx context.Context, httpClient *http.Client, rawURL stri
 	}
 
 	if err := addSupportingFilesFromTree(ctx, httpClient, result, tree, rawPrefix, skillDir); err != nil {
+		return nil, err
+	}
+	if err := labrastroCompleteFromTree(ctx, httpClient, result, tree, rawPrefix, skillDir); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -1502,7 +1512,7 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 	}
 	var eligible []treeFile
 	for _, entry := range tree {
-		if entry.Type != "blob" {
+		if !labrastroRegularBlob(entry) {
 			continue
 		}
 		if basePath != "" && !strings.HasPrefix(entry.Path, basePath) {
@@ -1744,7 +1754,7 @@ func collectGitHubSkillMdPaths(ctx context.Context, httpClient *http.Client, ent
 func extractSkillMdPaths(entries []githubTreeEntry) []string {
 	paths := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.Type != "blob" || (!strings.HasSuffix(entry.Path, "/SKILL.md") && entry.Path != "SKILL.md") {
+		if !labrastroRegularBlob(entry) || (!strings.HasSuffix(entry.Path, "/SKILL.md") && entry.Path != "SKILL.md") {
 			continue
 		}
 		paths = append(paths, entry.Path)
@@ -2051,10 +2061,10 @@ func fetchFromGitHub(ctx context.Context, httpClient *http.Client, rawURL string
 	skillMdBody, err := fetchRawFile(ctx, httpClient, buildRawGitHubURL(rawPrefix, skillMdPath))
 	if err != nil {
 		if spec.skillDir == "" {
-			return nil, fmt.Errorf("SKILL.md not found at the root of %s/%s@%s. For multi-skill repositories, point to a specific directory using github.com/%s/%s/tree/%s/<skill-dir>",
+			return nil, fmt.Errorf("SKILL.md not found at the root of %s/%s@%s. For multi-skill repositories, use multica skill package import <url> or point to github.com/%s/%s/tree/%s/<skill-dir>",
 				spec.owner, spec.repo, spec.ref, spec.owner, spec.repo, spec.ref)
 		}
-		return nil, fmt.Errorf("SKILL.md not found at %s in %s/%s@%s: %w",
+		return nil, fmt.Errorf("SKILL.md not found at %s in %s/%s@%s: %w; use multica skill package import <url> for a multi-skill repository",
 			skillMdPath, spec.owner, spec.repo, spec.ref, err)
 	}
 
@@ -2091,8 +2101,12 @@ func fetchFromGitHub(ctx context.Context, httpClient *http.Client, rawURL string
 		if err := addSupportingFilesFromTree(ctx, httpClient, result, tree, rawPrefix, spec.skillDir); err != nil {
 			return nil, err
 		}
+		if err := labrastroCompleteFromTree(ctx, httpClient, result, tree, rawPrefix, spec.skillDir); err != nil {
+			return nil, err
+		}
 		return result, nil
 	}
+	result.diagnostics = append(result.diagnostics, SkillImportDiagnostic{Code: "tree_incomplete", Message: "Repository tree unavailable or truncated; outside references could not be completed", Retryable: true})
 	if err := addSupportingFilesViaCrawl(ctx, httpClient, result, spec.owner, spec.repo, spec.ref, spec.skillDir); err != nil {
 		return nil, err
 	}
@@ -2201,7 +2215,7 @@ func skillImportConflictReason() string {
 }
 
 func (h *Handler) createImportedSkillWithName(ctx context.Context, workspaceID, creatorID pgtype.UUID, name string, imported *importedSkill, config map[string]any, files []CreateSkillFileRequest) (SkillWithFilesResponse, error) {
-	return h.createSkillWithFiles(ctx, skillCreateInput{
+	resp, err := h.createSkillWithFiles(ctx, skillCreateInput{
 		WorkspaceID: workspaceID,
 		CreatorID:   creatorID,
 		Name:        name,
@@ -2210,6 +2224,8 @@ func (h *Handler) createImportedSkillWithName(ctx context.Context, workspaceID, 
 		Config:      config,
 		Files:       files,
 	})
+	resp.Diagnostics = imported.diagnostics
+	return resp, err
 }
 
 func (h *Handler) createRenamedImportedSkill(ctx context.Context, workspaceID, creatorID pgtype.UUID, baseName string, imported *importedSkill, config map[string]any, files []CreateSkillFileRequest) (SkillWithFilesResponse, error) {
@@ -2277,6 +2293,7 @@ func (h *Handler) resolveImportSkillConflict(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		actorType, actorID := h.resolveActor(r, creatorID, workspaceID)
+		resp.Diagnostics = imported.diagnostics
 		h.publish(protocol.EventSkillUpdated, workspaceID, actorType, actorID, map[string]any{"skill": resp})
 		writeJSON(w, http.StatusOK, SkillImportResult{Status: "updated", Skill: &resp})
 	case importOnConflictRename:
@@ -2370,8 +2387,7 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 		imported, err = fetchFromGitHub(ctx, httpClient, normalized)
 	}
 	if err != nil {
-		status, msg := importFetchErrorResponse(ctx, err)
-		writeError(w, status, msg)
+		writeSkillFetchError(w, ctx, err)
 		return
 	}
 

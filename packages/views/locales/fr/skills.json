@@ -296,6 +296,7 @@
       "files_one": "{{count}} fichier",
       "files_other": "{{count}} fichiers",
       "missing_skill_md": "Ce dossier n'est pas un skill : il ne contient pas de fichier SKILL.md.",
+      "multiple_skills": "Cette sélection contient plusieurs skills. Choisissez un dossier ou une archive contenant un seul skill, ou utilisez « Importer un paquet » sur la page des skills avec une URL de dépôt GitHub ou skills.sh.",
       "too_large": "Ce skill est trop volumineux pour être importé.",
       "empty": "Le dossier est vide.",
       "too_many_files": "Ce skill contient trop de fichiers pour être importé.",

@@ -2368,6 +2368,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Put("/{sessionId}/draft", h.SaveAgentBuilderDraft)
 			})
 
+			h.RegisterLabrastroSkillRoutes(r)
+
 			// Skills
 			r.Route("/api/skills", func(r chi.Router) {
 				r.Get("/", h.ListSkills)

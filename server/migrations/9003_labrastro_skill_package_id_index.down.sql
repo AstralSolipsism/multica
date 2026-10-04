@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_labrastro_skill_package_id;

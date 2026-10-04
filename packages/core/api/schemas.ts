@@ -1,4 +1,6 @@
 import { DispatchOutcomeSchema } from "./dispatch-schemas";
+import { SkillImportDiagnosticSchema } from "./labrastro-skill-schemas";
+export * from "./labrastro-skill-schemas";
 import { z } from "zod";
 import { normalizeIssueStatusCategory } from "../issues/config/status";
 import type {
@@ -3545,6 +3547,7 @@ export const EMPTY_SKILL_SUMMARY: SkillSummary = {
 export const SkillSchema = SkillSummarySchema.extend({
   content: z.string().optional().default(""),
   files: z.array(SkillFileSchema).optional().default([]),
+  diagnostics: z.array(SkillImportDiagnosticSchema).nullable().optional().catch(null),
 }).loose();
 
 export const EMPTY_SKILL: Skill = {

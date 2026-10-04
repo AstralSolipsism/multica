@@ -692,6 +692,19 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 		{
 			file: "references/skill-import.md",
 			want: []string{
+				"multica skill package import <url> --dry-run --output json",
+				"multica skill package list --output json",
+				"multica skill package get <package-id> --output json",
+				"multica skill package rescan <package-id> --apply --output json",
+				"/api/skill-packages/preview",
+				"/api/skill-packages/apply",
+				"nonzero exit",
+				"new or detached candidates require",
+				"existing Labrastro release channel",
+				"work limit remains 45 seconds",
+				"at least 60 seconds",
+				"MULTICA_HTTP_TIMEOUT",
+				"Skills page; the CLI has no detach command",
 				"multica skill import --url <url> --output json",
 				"/api/skills/import",
 				"clawhub.ai",
@@ -715,6 +728,7 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"`set` is the replacement path",
 			},
 			notWant: []string{
+				"The single supported path",
 				"multica agent skills set <agent-id> --skill-ids <skill-id>",
 				"merge the new skill id with the existing ids",
 			},

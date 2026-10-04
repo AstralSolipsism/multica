@@ -44,6 +44,15 @@ export function SkillMultiSelect({
     onChange(next);
   };
 
+  const toggleMany = (list: SkillSummary[], selected: boolean) => {
+    const next = new Set(selectedIds);
+    for (const skill of list) {
+      if (selected) next.add(skill.id);
+      else next.delete(skill.id);
+    }
+    onChange(next);
+  };
+
   if (!expanded) {
     return (
       <div>
@@ -92,9 +101,11 @@ export function SkillMultiSelect({
 
       <div className="mt-1.5">
         <SkillPickerList
+          tree
           skills={workspaceSkills}
           selectedIds={selectedIds}
           onToggle={toggle}
+          onToggleMany={toggleMany}
           loading={isLoading}
           emptyMessage={t(($) => $.create_dialog.skills_section.list_empty_multi)}
         />

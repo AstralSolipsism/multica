@@ -132,6 +132,12 @@ func parseSkillArchive(data []byte, filename string) (*importedSkill, error) {
 		return nil, fmt.Errorf("archive does not contain a SKILL.md")
 	}
 
+	for candidate := range skillMdEntries {
+		if rootPrefix != "" && !strings.HasPrefix(candidate, rootPrefix) {
+			return nil, fmt.Errorf("archive contains multiple skills; use multica skill package import <repository-url>")
+		}
+	}
+
 	content, err := readZipFile(skillMd, maxImportFileSize)
 	if err != nil {
 		return nil, fmt.Errorf("read SKILL.md: %w", err)

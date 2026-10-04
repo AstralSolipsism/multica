@@ -939,6 +939,16 @@ export interface SkillSummary {
 export interface Skill extends SkillSummary {
   content: string;
   files: SkillFile[];
+  /** Import/refresh only; null means diagnostic data could not be parsed. */
+  diagnostics?: SkillImportDiagnostic[] | null;
+}
+
+export interface SkillImportDiagnostic {
+  code: string;
+  path?: string;
+  target?: string;
+  message: string;
+  retryable: boolean;
 }
 
 export interface SkillFile {
