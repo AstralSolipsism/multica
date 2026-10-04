@@ -47,7 +47,13 @@ function makeAdapter(): NavigationAdapter {
   };
 }
 
-function makeCtx(packagedIds: string[] = []) {
+function readOnly(row: SkillRow): SkillRow {
+  return { ...row, canEdit: false };
+}
+
+// `unplacedIds` have no placement at all (ordinary skills); every other id
+// not in `packagedIds` is placed without a package (detached or custom).
+function makeCtx(packagedIds: string[] = [], unplacedIds: string[] = []) {
   const onMove = vi.fn();
   const onDetach = vi.fn();
   const ctx: SkillActionsContext = {
@@ -59,13 +65,18 @@ function makeCtx(packagedIds: string[] = []) {
       placementFor: (skillId) =>
         packagedIds.includes(skillId)
           ? { package_id: "p1" }
-          : { package_id: null },
+          : unplacedIds.includes(skillId)
+            ? null
+            : { package_id: null },
       onMove,
       onDetach,
     },
   };
   return { ctx, onMove, onDetach };
 }
+
+const NO_PERMISSION_HINT = "You don't have permission to move every selected skill.";
+const PACKAGED_HINT = "Packaged skills can't be moved. Detach from the package first.";
 
 function renderWithNav(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -123,5 +134,70 @@ describe("SkillBatchToolbar move gating (OL-104 rework)", () => {
     expect(move.hasAttribute("disabled")).toBe(false);
     await userEvent.click(move);
     expect(onMove).toHaveBeenCalledWith(rows);
+  });
+
+  // Permission gate (OL-107 review): any selected skill the user cannot edit
+  // blocks the whole move, whatever its package state, and the tooltip says
+  // why. The server would reject those items.
+  it.each([
+    ["ordinary", ["s1", "s2"]],
+    ["detached", []],
+  ])(
+    "disables batch move for a read-only %s selection with the permission hint",
+    async (_kind, unplacedIds) => {
+      const { ctx, onMove } = makeCtx([], unplacedIds);
+      renderWithNav(
+        <SkillBatchToolbar
+          rows={[readOnly(makeRow("s1")), readOnly(makeRow("s2"))]}
+          ctx={ctx}
+          onClear={vi.fn()}
+        />,
+      );
+      const move = await screen.findByRole("button", { name: "Move" });
+      expect(move.hasAttribute("disabled")).toBe(true);
+      await userEvent.click(move);
+      expect(onMove).not.toHaveBeenCalled();
+
+      await userEvent.hover(move.parentElement!);
+      expect(await screen.findByText(NO_PERMISSION_HINT, {}, { timeout: 3000 })).toBeTruthy();
+      expect(screen.queryByText(PACKAGED_HINT)).toBeNull();
+    },
+  );
+
+  it("disables batch move for a mix of editable and read-only skills", async () => {
+    const { ctx, onMove } = makeCtx([], ["s1"]);
+    renderWithNav(
+      <SkillBatchToolbar
+        rows={[makeRow("s1"), readOnly(makeRow("s2"))]}
+        ctx={ctx}
+        onClear={vi.fn()}
+      />,
+    );
+    const move = await screen.findByRole("button", { name: "Move" });
+    expect(move.hasAttribute("disabled")).toBe(true);
+    await userEvent.click(move);
+    expect(onMove).not.toHaveBeenCalled();
+
+    await userEvent.hover(move.parentElement!);
+    expect(await screen.findByText(NO_PERMISSION_HINT, {}, { timeout: 3000 })).toBeTruthy();
+  });
+
+  it("names the packaged block first when the batch is also read-only", async () => {
+    const { ctx, onMove } = makeCtx(["s2"]);
+    renderWithNav(
+      <SkillBatchToolbar
+        rows={[readOnly(makeRow("s1")), makeRow("s2")]}
+        ctx={ctx}
+        onClear={vi.fn()}
+      />,
+    );
+    const move = await screen.findByRole("button", { name: "Move" });
+    expect(move.hasAttribute("disabled")).toBe(true);
+    await userEvent.click(move);
+    expect(onMove).not.toHaveBeenCalled();
+
+    await userEvent.hover(move.parentElement!);
+    expect(await screen.findByText(PACKAGED_HINT, {}, { timeout: 3000 })).toBeTruthy();
+    expect(screen.queryByText(NO_PERMISSION_HINT)).toBeNull();
   });
 });

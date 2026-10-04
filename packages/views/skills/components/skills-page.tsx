@@ -1,17 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   AlertTriangle,
   Download,
-  Folder,
   HardDrive,
   Lock,
-  PackagePlus,
   Pencil,
   Plus,
-  X,
 } from "lucide-react";
 import { SkillIcon } from "../lib/skill-icon";
 import type {
@@ -21,11 +18,9 @@ import type {
   Skill,
   SkillSummary,
 } from "@multica/core/types";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { toast } from "sonner";
 import { useAuthStore } from "@multica/core/auth";
-import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
@@ -34,10 +29,6 @@ import {
   selectSkillAssignments,
   skillListOptions,
 } from "@multica/core/workspace/queries";
-import {
-  invalidateSkillPackageQueries,
-  skillFolderTreeOptions,
-} from "@multica/core/skills/package-queries";
 import { runtimeDisplayLabel, runtimeListOptions } from "@multica/core/runtimes";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { Button } from "@multica/ui/components/ui/button";
@@ -73,14 +64,13 @@ import { canEditSkill } from "../hooks/use-can-edit-skill";
 import { originSourceUrl, readOrigin } from "../lib/origin";
 import { rowMatchesFilters, type SkillRow } from "./skill-list-filter";
 import { CreateSkillDialog } from "./create-skill-dialog";
-import { ImportPackageDialog } from "./package-import-dialog";
-import { MoveSkillsDialog } from "./move-skills-dialog";
-import { SkillFolderTreePanel } from "./skill-folder-tree-panel";
+// Labrastro fork: folder tree, package import and move/detach wiring (OL-104).
 import {
-  buildFolderSkillIndex,
-  placementBySkillId,
-  type FolderSelection,
-} from "../lib/skill-folder-tree";
+  pruneToFolder,
+  SkillFolderTreeLayout,
+  SkillPackageImportAction,
+  useSkillsPageFolderTree,
+} from "./skills-page-folder-tree";
 import {
   useSkillsViewStore,
   DEFAULT_HIDDEN_COLUMNS,
@@ -188,7 +178,6 @@ function PageHeaderBar({
   onImportPackage: () => void;
 }) {
   const { t, i18n } = useT("skills");
-  const { t: tPkg } = useT("skill-packages");
   return (
     <CollectionPageHeader
       icon={SkillIcon}
@@ -201,16 +190,12 @@ function PageHeaderBar({
       }}
       actions={
         <>
-          <CollectionPageHeaderAction
-            icon={PackagePlus}
-            label={tPkg(($) => $.import.action)}
-            onClick={onImportPackage}
-          />
-          <CollectionPageHeaderAction
-            icon={Plus}
-            label={t(($) => $.page.new_skill)}
-            onClick={onCreate}
-          />
+          <SkillPackageImportAction onClick={onImportPackage} />
+        <CollectionPageHeaderAction
+          icon={Plus}
+          label={t(($) => $.page.new_skill)}
+          onClick={onCreate}
+        />
         </>
       }
     />
@@ -606,14 +591,12 @@ function LoadingSkeleton() {
 
 export default function SkillsPage() {
   const { t } = useT("skills");
-  const { t: tPkg } = useT("skill-packages");
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
   const rowLink = useRowLink();
   const timeAgo = useTimeAgo();
   const currentUserId = useAuthStore((s) => s.user?.id ?? null);
-  const qc = useQueryClient();
 
   const {
     data: skills = [],
@@ -630,24 +613,12 @@ export default function SkillsPage() {
   const { data: runtimes = [], error: runtimesError } = useQuery(
     runtimeListOptions(wsId),
   );
-  // Folder tree (OL-104): undefined while loading, null when the response
-  // was unreadable — the list then renders unfiltered, exactly as before.
-  const {
-    data: folderTree,
-    error: folderTreeError,
-    refetch: refetchFolderTree,
-  } = useQuery(skillFolderTreeOptions(wsId));
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     new Set(),
   );
   const [search, setSearch] = useState("");
-  const [folderSelection, setFolderSelection] = useState<FolderSelection>({
-    kind: "all",
-  });
-  const [moveRows, setMoveRows] = useState<SkillRow[] | null>(null);
 
   // Persisted view preferences (per workspace, per user/device). Header sort
   // buttons and the toolbar's display panel mutate the SAME store, so both
@@ -693,44 +664,19 @@ export default function SkillsPage() {
     members.find((m: MemberWithUser) => m.user_id === currentUserId)?.role ??
     null;
   const isAdmin = myRole === "owner" || myRole === "admin";
-
-  const placementsBySkill = useMemo(
-    () => (folderTree ? placementBySkillId(folderTree.placements) : null),
-    [folderTree],
-  );
-
-  const handleDetach = async (row: SkillRow) => {
-    try {
-      const result = await api.detachSkillPlacement(wsId, row.skill.id);
-      if (result === null) {
-        toast.error(tPkg(($) => $.detach.failed));
-        return;
-      }
-      await invalidateSkillPackageQueries(qc, wsId);
-      toast.success(tPkg(($) => $.detach.done));
-    } catch (err) {
-      toast.error(
-        err instanceof Error && err.message
-          ? err.message
-          : tPkg(($) => $.detach.failed),
-      );
-    }
-  };
+  const skillFolders = useSkillsPageFolderTree({
+    wsId,
+    currentUserId,
+    isAdmin,
+    onMoved: () => setSelectedIds(new Set()),
+  });
 
   const actionsCtx: SkillActionsContext = {
     wsId,
     agents,
     currentUserId,
     isAdmin,
-    // Only a readable tree unlocks the move/detach row actions; without it
-    // the rows keep their pre-tree flat behavior.
-    treeActions: placementsBySkill
-      ? {
-          placementFor: (skillId) => placementsBySkill.get(skillId) ?? null,
-          onMove: (rows) => setMoveRows(rows),
-          onDetach: (row) => void handleDetach(row),
-        }
-      : undefined,
+    treeActions: skillFolders.treeActions,
   };
 
   // Full assembled set — toolbar option lists and counts derive from this.
@@ -754,34 +700,12 @@ export default function SkillsPage() {
     });
   }, [skills, assignments, membersById, runtimesById, currentUserId, myRole]);
 
-  // Visible rows: name search + filters + folder selection, then sort. The
-  // folder index is built once per tree instead of per row per render.
-  const folderSkillIndex = useMemo(
-    () => (folderTree ? buildFolderSkillIndex(folderTree) : null),
-    [folderTree],
-  );
-
-  // A selected folder that disappears (deleted here or by another member)
-  // drops the filter back to All instead of silently emptying the list.
-  useEffect(() => {
-    if (folderSelection.kind !== "folder" || !folderTree) return;
-    if (!folderTree.folders.some((f) => f.id === folderSelection.folderId)) {
-      setFolderSelection({ kind: "all" });
-    }
-  }, [folderTree, folderSelection]);
-
+  // Visible rows: name search + filters, then sort.
   const rows = useMemo<SkillRow[]>(() => {
-    const filtered = allRows.filter((row) => {
-      if (!rowMatchesFilters(row, filters, search)) return false;
-      if (!folderSkillIndex || folderSelection.kind === "all") return true;
-      if (folderSelection.kind === "uncategorized") {
-        return !folderSkillIndex.placed.has(row.skill.id);
-      }
-      return (
-        folderSkillIndex.byFolder.get(folderSelection.folderId)?.has(row.skill.id) ??
-        false
-      );
-    });
+    const filtered = allRows.filter((row) =>
+      rowMatchesFilters(row, filters, search),
+    );
+    pruneToFolder(filtered, skillFolders.rowFilter);
 
     const dir = sortDirection === "asc" ? 1 : -1;
     filtered.sort((a, b) => {
@@ -805,7 +729,7 @@ export default function SkillsPage() {
       );
     });
     return filtered;
-  }, [allRows, search, filters, sortField, sortDirection, folderSkillIndex, folderSelection]);
+  }, [allRows, search, filters, sortField, sortDirection, skillFolders.rowFilter]);
 
   // Row virtualization — Linear-style: the virtualizer only does the math
   // (visible index range + offsets); the DOM stays ours. Offsets become
@@ -839,11 +763,7 @@ export default function SkillsPage() {
   if (listError) {
     return (
       <div className="flex flex-1 min-h-0 flex-col">
-        <PageHeaderBar
-          totalCount={0}
-          onCreate={() => setCreateOpen(true)}
-          onImportPackage={() => setImportOpen(true)}
-        />
+        <PageHeaderBar totalCount={0} onCreate={() => setCreateOpen(true)} onImportPackage={skillFolders.openImport} />
         <CollectionPageState
           role="alert"
           tone="destructive"
@@ -893,7 +813,7 @@ export default function SkillsPage() {
       <PageHeaderBar
         totalCount={totalCount}
         onCreate={() => setCreateOpen(true)}
-        onImportPackage={() => setImportOpen(true)}
+        onImportPackage={skillFolders.openImport}
       />
 
       {supportingQueryDown && (
@@ -915,22 +835,7 @@ export default function SkillsPage() {
           <EmptyState onCreate={() => setCreateOpen(true)} />
         </div>
       ) : (
-        // The folder panel joins the list above the grid's own @container,
-        // so the existing two-zone column behavior is untouched. Below
-        // @2xl the panel hides, matching the column-collapse tradeoff.
-        <div className="flex min-h-0 flex-1 @container">
-          <SkillFolderTreePanel
-            wsId={wsId}
-            tree={folderTree}
-            treeError={!!folderTreeError}
-            onRetryTree={() => refetchFolderTree()}
-            selection={folderSelection}
-            onSelect={setFolderSelection}
-            currentUserId={currentUserId}
-            isAdmin={isAdmin}
-            className="hidden @2xl:flex"
-          />
-          <div className="flex min-w-0 flex-1 flex-col">
+        <SkillFolderTreeLayout panel={skillFolders.panel}>
           <SkillListToolbar
             search={search}
             onSearchChange={setSearch}
@@ -946,26 +851,7 @@ export default function SkillsPage() {
             allRows={allRows}
             visibleCount={rows.length}
           />
-          {/* The folder panel hides below @2xl; an active folder filter
-              must stay visible (and clearable) there. */}
-          {folderSelection.kind !== "all" && (
-            <div className="flex shrink-0 items-center gap-1.5 border-b px-6 py-1.5 text-caption text-muted-foreground @2xl:hidden">
-              <Folder className="h-3 w-3 shrink-0" />
-              <span className="min-w-0 flex-1 truncate">
-                {folderSelection.kind === "uncategorized"
-                  ? tPkg(($) => $.tree.uncategorized)
-                  : (folderTree?.folders.find((f) => f.id === folderSelection.folderId)?.name ?? "")}
-              </span>
-              <button
-                type="button"
-                aria-label={tPkg(($) => $.tree.clear_filter)}
-                onClick={() => setFolderSelection({ kind: "all" })}
-                className="shrink-0 rounded-xs p-0.5 transition-colors hover:bg-accent"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          )}
+          {skillFolders.filterChip}
           <div
             ref={listScrollRef}
             className="min-h-0 flex-1 overflow-auto @container"
@@ -1049,8 +935,7 @@ export default function SkillsPage() {
             </ListGridBody>
           </ListGrid>
           </div>
-          </div>
-        </div>
+        </SkillFolderTreeLayout>
       )}
 
       <SkillBatchToolbar
@@ -1065,23 +950,7 @@ export default function SkillsPage() {
           onCreated={handleCreated}
         />
       )}
-      {importOpen && (
-        <ImportPackageDialog
-          wsId={wsId}
-          open
-          onOpenChange={(v) => { if (!v) setImportOpen(false); }}
-        />
-      )}
-      {moveRows && folderTree && (
-        <MoveSkillsDialog
-          wsId={wsId}
-          tree={folderTree}
-          rows={moveRows}
-          open
-          onOpenChange={(v) => { if (!v) setMoveRows(null); }}
-          onMoved={() => setSelectedIds(new Set())}
-        />
-      )}
+      {skillFolders.dialogs}
     </div>
   );
 }

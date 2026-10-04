@@ -391,6 +391,13 @@ Their PR descriptions and actual diffs from the shared `28eb1e838` base were
 checked; both retain 60-second client/proxy budgets. This documents source
 alignment, not combined runtime acceptance or independent approval of #58.
 
+OL-107 then moved the fork logic of `client.ts`, `skills-page.tsx`,
+`skill-list-actions.tsx`, `refresh-skill-dialog.tsx` and
+`create-skill-dialog.tsx` into fork modules; their rows below list the
+remaining mounts. In those five files every original upstream line is still
+byte-identical to `803cfcf18`, except the modified lines named in each row
+(`git diff 803cfcf18 -- <file>` shows the rest as pure insertions).
+
 Handwritten hooks in existing upstream files:
 
 | File | Required change |
@@ -403,13 +410,13 @@ Handwritten hooks in existing upstream files:
 | `server/cmd/server/testdata/labrastro-external-routes.tsv` | 14 deny-by-default route entries |
 | `server/internal/handler/workspace.go` | One transactional fork tree cleanup step |
 | `packages/core/api/schemas.ts`, `packages/core/types/agent.ts` | Optional old-response diagnostics and exported new schemas |
-| `packages/core/api/client.ts` | Workspace-pinned folder/package/placement methods with zod/`parseWithFallback`; `importSkill` changes from `Promise<Skill>` to `Promise<Skill \| null>`, so malformed responses remain indeterminate |
+| `packages/core/api/client.ts` | Two mounts only: the `installLabrastroSkillApi` import and its call after the class. The 15 workspace-pinned folder/package/placement methods (zod/`parseWithFallback`, null on malformed responses) and `importSkillParsed` (`Promise<Skill \| null>`, so a malformed import stays indeterminate) live in fork `packages/core/api/labrastro-skill-api.ts`, typed onto `ApiClient` by module augmentation. Upstream `importSkill` keeps its `Promise<Skill>` contract |
 | `packages/core/package.json`, `packages/core/skills/index.ts` | Export the new `skills/package-queries` entry and query hooks |
 | `packages/core/types/index.ts` | Export `SkillImportDiagnostic` for UI consumers |
-| `packages/views/skills/components/skills-page.tsx` | Folder tree, subtree filtering, package-import and move dialogs, detach wiring and workspace query invalidation; the toolbar entry is here, not a separate `skill-list-toolbar.tsx` edit |
-| `packages/views/skills/components/skill-list-actions.tsx` | Row/batch move and detach permissions plus batch refresh diagnostic results |
-| `packages/views/skills/components/create-skill-dialog.tsx` | URL/archive diagnostics and malformed-result handling; map local `multiple_skills` and server sibling-archive errors to the same localized recovery |
-| `packages/views/skills/components/refresh-skill-dialog.tsx` | Single-refresh success diagnostics, detail-cache update and notice dismissal |
+| `packages/views/skills/components/skills-page.tsx` | `useSkillsPageFolderTree` call, `treeActions` context field, `pruneToFolder` in the rows memo, `onImportPackage` header prop with `SkillPackageImportAction`, `SkillFolderTreeLayout` around the list, filter-strip and dialog slots. Modified upstream lines: the rows memo dependency list, the one-line error-state header, and the list fragment's open/close tags. Query, selection, detach, panel, strip and dialogs live in fork `skills-page-folder-tree.tsx`; the toolbar entry is here, not a separate `skill-list-toolbar.tsx` edit |
+| `packages/views/skills/components/skill-list-actions.tsx` | `treeActions?: SkillTreeActions` context field; `SkillTreeRowMenuItems` and `SkillTreeBatchMoveAction` mounts (fork `skill-tree-actions.tsx`); `useBatchRefreshNotices` mounts in `UpdateSkillsDialog` (fork `refresh-skill-notices.tsx`). Modified upstream line: `const refreshed = await api.refreshSkill(...)` keeps the result |
+| `packages/views/skills/components/create-skill-dialog.tsx` | `useImportNotices` mounts in the URL and local forms, the unreadable-result guard and the `multiple_skills` prepare-error key. Modified upstream lines: the `importSkillParsed` call and the archive error expression, now prefixed by `localArchiveImportError` so local `multiple_skills` and server sibling-archive errors share one localized recovery. Notice view and wording live in fork `create-skill-notices.tsx` |
+| `packages/views/skills/components/refresh-skill-dialog.tsx` | `useRefreshSkillNotices` mounts only: hook call, `hold` after the detail-cache update, and the notice-view return; notice state and dismissal live in fork `refresh-skill-notices.tsx` |
 | `packages/views/agents/components/skill-picker-list.tsx` | Thin tree-mode dispatch and optional batch-toggle props; tree implementation lives in fork `skills/components/skill-picker-tree.tsx`, retaining the upstream flat picker |
 | `packages/views/agents/components/skill-add-dialog.tsx`, `skill-multi-select.tsx` (same directory) | Opt in to the tree picker and batch toggle using the caller's filtered skills |
 | `packages/views/locales/index.ts`, `packages/views/i18n/resources-types.ts` | Register the `skill-packages` namespace and translation typing |
@@ -423,7 +430,10 @@ Handwritten hooks in existing upstream files:
 New handwritten modules include the server `labrastro_skill_*.go` handlers and
 migrator hooks, `packages/core/api/labrastro-skill-schemas.ts` (extended by #60),
 `packages/core/skills/package-queries.ts`, package/folder/move dialogs and tree
-models under `packages/views/skills/`, `skill-diagnostics-notice.tsx`, the five
+models under `packages/views/skills/`, `skill-diagnostics-notice.tsx`, the
+OL-107 extraction modules (`packages/core/api/labrastro-skill-api.ts`,
+`skills-page-folder-tree.tsx`, `skill-tree-actions.tsx`,
+`refresh-skill-notices.tsx`, `create-skill-notices.tsx`), the five
 `skill-packages.json` locale files, and
 `server/cmd/multica/cmd_labrastro_skill_package.go` (registered with `init()`;
 `cli.AtLeastAPITimeout(60*time.Second)` on both HTTP client and request context).
@@ -436,18 +446,25 @@ The fork `package-apply-stage.tsx` distinguishes stale source/preview errors
 unreadable/null/body-less responses. Its five locale files provide separate
 titles. Structured server details remain visible; explicit repreview and query
 invalidation remain, with no automatic write retry or blanket 5xx zero-write
-claim. Single and batch refresh diagnostic mounts remain in the upstream files
-listed above; batch results include diagnostic `path`/`target`.
+claim. Single and batch refresh diagnostics live in fork
+`refresh-skill-notices.tsx`, mounted from the upstream dialogs listed above;
+batch results include diagnostic `path`/`target`.
 
 New fork tests include `apps/web/next.config.test.ts` (60,000 ms and API rewrite),
-the core package API/query tests, tree/model/dialog/picker suites and the two
-binding-entry tests. Extended upstream suites are `pack-archive.test.ts`,
-`create-skill-dialog.test.tsx`, `refresh-skill-dialog.test.tsx`,
-`skill-list-actions.test.tsx`, and `skills-page.source-link.test.tsx` in their
-implementation directories. The `labrastro-skill-schemas.ts` inferred-type
-extensions are changes to an existing **fork** file, not an upstream hook.
-Only picker extraction is in this round; further isolation of `skills-page`,
-`skill-list-actions`, `refresh-skill-dialog` and `client.ts` is deferred to OL-107.
+the core package API/query tests, tree/model/dialog/picker suites, the two
+binding-entry tests, and `create-skill-notices.test.tsx`,
+`refresh-skill-notices.test.tsx` and `refresh-skill-notices.batch.test.tsx`.
+OL-107 moved those three suites' cases verbatim out of
+`create-skill-dialog.test.tsx`, `refresh-skill-dialog.test.tsx` and
+`skill-list-actions.test.tsx`, which match `803cfcf18` again. Extended
+upstream suites are `pack-archive.test.ts` (sibling-root cases) and
+`skills-page.source-link.test.tsx` (the folder-tree query, query-client and
+`package-queries` mocks the page now needs) in their implementation
+directories. The `labrastro-skill-schemas.ts` inferred-type extensions are
+changes to an existing **fork** file, not an upstream hook. OL-107 finished
+the isolation the picker started: `skills-page`, `skill-list-actions`,
+`refresh-skill-dialog`, `create-skill-dialog` and `client.ts` keep only the
+mounts listed above.
 
 Generated sqlc output is separate from those handwritten hooks:
 

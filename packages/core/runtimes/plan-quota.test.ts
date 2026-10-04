@@ -216,9 +216,9 @@ describe("formatCompactDuration", () => {
     expect(formatCompactDuration(26 * 3600 * 1000)).toBe("26h");
   });
 
-  it("formats sub-hour durations as mm:ss", () => {
+  it("formats sub-hour durations with explicit units", () => {
     expect(formatCompactDuration(110 * 1000)).toBe("1m 50s");
-    expect(formatCompactDuration(30 * 1000)).toBe("00:30");
+    expect(formatCompactDuration(30 * 1000)).toBe("30s");
   });
 
   it("clamps negative and non-finite input to zero", () => {
