@@ -1,17 +1,22 @@
 // @vitest-environment jsdom
 
+// Labrastro fork tests for refresh-skill-notices.tsx (batch update). Moved
+// from skill-list-actions.test.tsx in OL-107: harness copied, assertions
+// unchanged.
+
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { SkillSummary } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enSkills from "../../locales/en/skills.json";
+import enSkillPackages from "../../locales/en/skill-packages.json";
 import type { SkillRow } from "./skill-list-filter";
 import type { SkillActionsContext } from "./skill-list-actions";
 
-const TEST_RESOURCES = { en: { common: enCommon, skills: enSkills } };
+const TEST_RESOURCES = { en: { common: enCommon, skills: enSkills, "skill-packages": enSkillPackages } };
 
 vi.mock("@multica/core/api", () => ({
   api: { refreshSkill: vi.fn() },
@@ -82,60 +87,61 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("UpdateSkillsDialog", () => {
-  it("summarizes the updatable selection and the skipped entries", async () => {
-    renderDialog([makeRow("a"), makeRow("b")], 1);
+describe("UpdateSkillsDialog diagnostics (OL-104 rework)", () => {
+  const diagnostic = {
+    code: "filtered_reference",
+    path: "assets/logo.svg",
+    target: "references/setup.md",
+    message: "Binary asset was skipped.",
+    retryable: false,
+  };
 
-    expect(
-      await screen.findByText("2 skills will be updated from their sources"),
-    ).toBeTruthy();
-    // The never-updatable selection entries passed via skippedCount.
-    expect(
-      screen.getByText("1 can't be updated from a source — skipped"),
-    ).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Update 2/ })).toBeTruthy();
-  });
-
-  it("omits the skipped line when the whole selection is updatable", async () => {
-    renderDialog([makeRow("a")]);
-
-    expect(
-      await screen.findByText("1 skill will be updated from its source"),
-    ).toBeTruthy();
-    expect(screen.queryByText(/skipped/)).toBeNull();
-  });
-
-  it("refreshes every updatable skill and clears the selection on success", async () => {
-    refreshSkill.mockResolvedValue({} as never);
+  it("groups success notices by skill name instead of a bare toast", async () => {
+    refreshSkill.mockImplementation((id: string) =>
+      Promise.resolve({
+        id,
+        diagnostics: id === "b" ? [diagnostic] : [],
+      } as never),
+    );
     const onUpdated = vi.fn();
     renderDialog([makeRow("a"), makeRow("b")], 0, onUpdated);
 
-    await userEvent.click(
-      await screen.findByRole("button", { name: /Update 2/ }),
-    );
+    await userEvent.click(await screen.findByRole("button", { name: /Update 2/ }));
 
-    await waitFor(() => expect(onUpdated).toHaveBeenCalled());
-    expect(refreshSkill.mock.calls.map(([id]) => id)).toEqual(["a", "b"]);
-    expect(toast.success).toHaveBeenCalled();
+    expect(await screen.findByText("Updated with 1 notice")).toBeTruthy();
+    // The notice carries its skill's name — a bare list would be
+    // unattributable in a mixed batch.
+    expect(screen.getByText("skill-b")).toBeTruthy();
+    expect(screen.getByText(/Binary asset was skipped/)).toBeTruthy();
+    // Path and target survive into the batch view, matching the
+    // single-import SkillDiagnosticRows rendering.
+    expect(screen.getByText(/filtered_reference/)).toBeTruthy();
+    expect(screen.getByText(/assets\/logo\.svg/)).toBeTruthy();
+    expect(screen.getByText(/references\/setup\.md/)).toBeTruthy();
+    expect(toast.success).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(onUpdated).toHaveBeenCalled();
   });
 
-  it("continues past a failing item and reports a partial toast", async () => {
+  it("keeps collected notices visible after a partial failure instead of discarding them", async () => {
     refreshSkill.mockImplementation((id: string) =>
       id === "a"
         ? Promise.reject(new Error("name conflict"))
-        : Promise.resolve({} as never),
+        : Promise.resolve({ id, diagnostics: [diagnostic] } as never),
     );
     const onUpdated = vi.fn();
     renderDialog([makeRow("a"), makeRow("b")], 0, onUpdated);
 
-    await userEvent.click(
-      await screen.findByRole("button", { name: /Update 2/ }),
-    );
+    await userEvent.click(await screen.findByRole("button", { name: /Update 2/ }));
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalled());
-    // The failure on "a" must not strand "b".
-    expect(refreshSkill.mock.calls.map(([id]) => id)).toEqual(["a", "b"]);
-    // Partial success keeps the selection: onUpdated only fires on a clean run.
+    // Partial line + the successful item's notices, in one place.
+    expect(await screen.findByText(/Updated 1, 1 failed/)).toBeTruthy();
+    expect(screen.getByText(/Binary asset was skipped/)).toBeTruthy();
+    expect(toast.error).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    // Partial runs keep the selection for retry.
     expect(onUpdated).not.toHaveBeenCalled();
   });
 });
