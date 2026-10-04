@@ -117,12 +117,14 @@ func parseAntigravityRemoteQuota(body io.Reader, observedAt time.Time) (*protoco
 		Buckets []struct {
 			ModelID           string   `json:"modelId"`
 			RemainingFraction *float64 `json:"remainingFraction"`
+			ResetTime         string   `json:"resetTime"`
 		} `json:"buckets"`
 	}
 	if err := json.NewDecoder(body).Decode(&response); err != nil {
 		return nil, errors.New("antigravity quota: invalid response")
 	}
 	remaining := make(map[string]float64)
+	earliestReset := make(map[string]time.Time)
 	for _, bucket := range response.Buckets {
 		fraction := bucket.RemainingFraction
 		if fraction == nil || !(*fraction >= 0 && *fraction <= 1) {
@@ -139,6 +141,11 @@ func parseAntigravityRemoteQuota(body io.Reader, observedAt time.Time) (*protoco
 		}
 		if current, ok := remaining[group]; !ok || *fraction < current {
 			remaining[group] = *fraction
+		}
+		if t, err := time.Parse(time.RFC3339, bucket.ResetTime); err == nil {
+			if current, ok := earliestReset[group]; !ok || t.Before(current) {
+				earliestReset[group] = t
+			}
 		}
 	}
 	if len(remaining) == 0 {
@@ -163,10 +170,16 @@ func parseAntigravityRemoteQuota(body io.Reader, observedAt time.Time) (*protoco
 		if displayName == "" {
 			displayName = group
 		}
+		var resetsAt *int64
+		if t, ok := earliestReset[group]; ok {
+			unix := t.Unix()
+			resetsAt = &unix
+		}
 		quota.Windows = append(quota.Windows, protocol.RuntimePlanQuotaWindow{
 			Name:        displayName,
 			Group:       group,
 			UsedPercent: &used,
+			ResetsAt:    resetsAt,
 		})
 		if fraction == 0 {
 			quota.Status = protocol.PlanQuotaStatusLimited
