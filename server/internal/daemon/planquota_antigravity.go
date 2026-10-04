@@ -163,23 +163,27 @@ func parseAntigravityRemoteQuota(body io.Reader, observedAt time.Time) (*protoco
 			continue
 		}
 		used := (1 - fraction) * 100
-		displayName := map[string]string{
-			"gemini":     "Gemini",
-			"claude_gpt": "Claude + GPT",
-		}[group]
-		if displayName == "" {
-			displayName = group
-		}
 		var resetsAt *int64
+		var windowMinutes *int64
 		if t, ok := earliestReset[group]; ok {
 			unix := t.Unix()
 			resetsAt = &unix
+			// Infer the window kind from how far out the reset is so the UI
+			// renders "5h" or "week" instead of falling back to the group name.
+			untilReset := time.Until(t)
+			if untilReset > 0 && untilReset <= 6*time.Hour {
+				minutes := int64(300) // 5h rolling window
+				windowMinutes = &minutes
+			} else if untilReset > 6*time.Hour {
+				minutes := int64(10080) // weekly window
+				windowMinutes = &minutes
+			}
 		}
 		quota.Windows = append(quota.Windows, protocol.RuntimePlanQuotaWindow{
-			Name:        displayName,
-			Group:       group,
-			UsedPercent: &used,
-			ResetsAt:    resetsAt,
+			Group:        group,
+			UsedPercent:  &used,
+			ResetsAt:     resetsAt,
+			WindowMinutes: windowMinutes,
 		})
 		if fraction == 0 {
 			quota.Status = protocol.PlanQuotaStatusLimited
