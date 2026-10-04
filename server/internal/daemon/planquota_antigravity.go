@@ -156,8 +156,15 @@ func parseAntigravityRemoteQuota(body io.Reader, observedAt time.Time) (*protoco
 			continue
 		}
 		used := (1 - fraction) * 100
+		displayName := map[string]string{
+			"gemini":     "Gemini",
+			"claude_gpt": "Claude + GPT",
+		}[group]
+		if displayName == "" {
+			displayName = group
+		}
 		quota.Windows = append(quota.Windows, protocol.RuntimePlanQuotaWindow{
-			Name:        group,
+			Name:        displayName,
 			Group:       group,
 			UsedPercent: &used,
 		})
