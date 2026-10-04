@@ -537,9 +537,7 @@ type Daemon struct {
 
 	// planQuotaCache holds each runtime's latest observed provider
 	// plan/rate-limit snapshot (runtimeID -> planQuotaCacheEntry), recorded
-	// at task completion (agent backends that report one), by the
-	// antigravity quota probe (antigravityQuotaLoop), by the per-task
-	// antigravity sampler (antigravity_task_sample.go), or by a quota
+	// at task completion (agent backends that report one) or by a quota
 	// collector, and attached to that
 	// runtime's next heartbeat. Entries are deleted when the runtime leaves
 	// the local set.
@@ -2279,7 +2277,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.gcLoop(ctx)
 	go d.autoUpdateLoop(ctx)
 	go d.tokenRenewalLoop(ctx)
-	go d.antigravityQuotaLoop(ctx)
 
 	// Host CPU/memory sampler feeding the heartbeat's metrics attachment.
 	// The sampler was constructed in New, before any heartbeat reader could
@@ -2288,13 +2285,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.hostMetrics.run(ctx)
 
 	// Plan-quota collectors feed the heartbeat plan_quota channel for
-	// providers whose quota lives behind an official programmatic API rather
+	// providers whose quota lives behind a programmatic API rather
 	// than inside the agent session. Kimi probes its local Server API and
 	// self-gates on the token file and a registered kimi runtime; ZenMux
 	// polls the Management API only when the operator configured a key, and
 	// reports only to runtimes explicitly linked via MULTICA_ZENMUX_LINK (the
 	// loop also runs link-only so a removed association is actively cleared).
 	go d.kimiPlanQuotaLoop(ctx)
+	// Antigravity polls Google's remote API using the CLI-managed OAuth
+	// token; it no longer needs a running task or a local language server.
+	go d.antigravityPlanQuotaLoop(ctx)
 	// ZenMux self-gates like Kimi: it always starts so removed associations
 	// are actively cleared, and polls only with key + link configured.
 	go d.zenmuxPlanQuotaLoop(ctx)
@@ -8900,14 +8900,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Shared across the resume-retry below so the retry's transcript rows
 	// keep ascending seq values for the same task.
 	var msgSeq atomic.Int32
-	// Sample the antigravity quota service while this task's agy process is
-	// alive (antigravity_task_sample.go): the periodic loop only records a
-	// snapshot when its 5-minute tick lands inside a process lifetime, which
-	// short one-shot turns routinely fall between. The sampler stops itself
-	// on the first success, when the process exits for good, and at its
-	// discovery window; this cancel covers the task ending first.
-	stopAntigravityQuotaSampler := d.maybeStartAntigravityTaskSampler(ctx, provider)
-	defer stopAntigravityQuotaSampler()
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
 	if err != nil {
 		return TaskResult{}, err

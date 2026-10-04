@@ -38,6 +38,10 @@ import (
 //     actually has — a shape drift must never silently hide a window again
 //     (the OL-45 incident: weekly exhausted while the page showed a healthy
 //     5-hour window).
+//   - Kimi 2.1.1 replaces summary/limits with data.quota.usages, keyed by
+//     limit5h and limit7d, with usedRatio and RFC3339 resetAt per window.
+//     The presence of quota selects this shape; older servers keep the
+//     summary/limits union above.
 //
 // Credential safety (OL-5 R1, converged design): there is exactly ONE
 // credential gate, and it is bound to the actual connection. Immediately
@@ -312,6 +316,16 @@ type kimiUsageData struct {
 	Message string              `json:"message,omitempty"`
 	Summary *kimiUsageLimitRow  `json:"summary,omitempty"`
 	Limits  []kimiUsageLimitRow `json:"limits,omitempty"`
+	Quota   *kimiUsageQuota     `json:"quota,omitempty"`
+}
+
+type kimiUsageQuota struct {
+	Usages map[string]*kimiQuotaUsage `json:"usages"`
+}
+
+type kimiQuotaUsage struct {
+	UsedRatio *float64 `json:"usedRatio"`
+	ResetAt   string   `json:"resetAt"`
 }
 
 type kimiUsageLimitRow struct {
@@ -604,6 +618,9 @@ func kimiUsageToPlanQuota(data *kimiUsageData, observedAt time.Time) *protocol.R
 	if data == nil {
 		return nil
 	}
+	if data.Quota != nil {
+		return kimiQuotaUsagesToPlanQuota(data.Quota, observedAt)
+	}
 	rows := mergeKimiUsageRows(data)
 	if len(rows) == 0 {
 		return nil
@@ -659,6 +676,45 @@ func kimiUsageToPlanQuota(data *kimiUsageData, observedAt time.Time) *protocol.R
 	}
 	if limited {
 		quota.Status = protocol.PlanQuotaStatusLimited
+	}
+	return quota
+}
+
+// kimiQuotaUsagesToPlanQuota maps only the known 2.1.1 subscription windows.
+// Missing/invalid fractions are unknown, never an unused allowance. A lone
+// weekly window keeps its secondary identity, independent of map order.
+func kimiQuotaUsagesToPlanQuota(data *kimiUsageQuota, observedAt time.Time) *protocol.RuntimePlanQuota {
+	quota := &protocol.RuntimePlanQuota{
+		Provider:   "kimi",
+		Status:     protocol.PlanQuotaStatusOK,
+		ObservedAt: observedAt.Unix(),
+		Source:     protocol.PlanQuotaSourceDaemon,
+	}
+	for _, spec := range []struct {
+		key     string
+		name    string
+		minutes int64
+	}{
+		{"limit5h", "primary", 300},
+		{"limit7d", "secondary", 10080},
+	} {
+		row := data.Usages[spec.key]
+		if row == nil || row.UsedRatio == nil || !(*row.UsedRatio >= 0 && *row.UsedRatio <= 1) {
+			continue
+		}
+		used := *row.UsedRatio * 100
+		quota.Windows = append(quota.Windows, protocol.RuntimePlanQuotaWindow{
+			Name:          spec.name,
+			UsedPercent:   &used,
+			WindowMinutes: &spec.minutes,
+			ResetsAt:      unixSecondsPtr(row.ResetAt),
+		})
+		if used >= 100 {
+			quota.Status = protocol.PlanQuotaStatusLimited
+		}
+	}
+	if len(quota.Windows) == 0 {
+		return nil
 	}
 	return quota
 }

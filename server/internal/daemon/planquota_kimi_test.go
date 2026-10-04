@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -143,6 +144,99 @@ func TestKimiCollect_Success(t *testing.T) {
 	}
 	if collector.port != port {
 		t.Fatalf("remembered port = %d", collector.port)
+	}
+}
+
+func TestKimiCollect_QuotaUsages(t *testing.T) {
+	srv := newKimiTestServer(t, `{"code":0,"msg":"success","data":{"kind":"ok","quota":{"usages":{
+		"limit5h":{"usedRatio":0.062572,"resetAt":"2026-10-03T18:44:02Z"},
+		"limit7d":{"usedRatio":0.169414,"resetAt":"2026-10-04T07:44:02Z"}
+	}}},"request_id":"private-request"}`, 0, nil)
+	defer srv.Close()
+	port := serverPort(t, srv)
+	collector := newKimiTestCollector(kimiTestHome(t, port), port)
+	started := time.Now().Unix()
+	quota, err := collector.collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quota == nil || len(quota.Windows) != 2 {
+		t.Fatalf("Kimi 2.1.1 must report both windows: %+v", quota)
+	}
+	if quota.Provider != "kimi" || quota.Source != protocol.PlanQuotaSourceDaemon || quota.Status != protocol.PlanQuotaStatusOK || quota.ObservedAt < started {
+		t.Fatalf("snapshot metadata = %+v", quota)
+	}
+	for i, want := range []struct {
+		name    string
+		minutes int64
+		used    float64
+		reset   string
+	}{
+		{"primary", 300, 6.2572, "2026-10-03T18:44:02Z"},
+		{"secondary", 10080, 16.9414, "2026-10-04T07:44:02Z"},
+	} {
+		w := quota.Windows[i]
+		reset, _ := time.Parse(time.RFC3339, want.reset)
+		if w.Name != want.name || w.WindowMinutes == nil || *w.WindowMinutes != want.minutes || w.UsedPercent == nil || math.Abs(*w.UsedPercent-want.used) > 1e-8 || w.ResetsAt == nil || *w.ResetsAt != reset.Unix() {
+			t.Errorf("window %d = %+v, want %+v", i, w, want)
+		}
+	}
+}
+
+func TestKimiQuotaUsagesBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		usages  string
+		window  string
+		used    float64
+		limited bool
+	}{
+		{"zero is observed", `{"limit5h":{"usedRatio":0}}`, "primary", 0, false},
+		{"exhausted weekly only", `{"limit7d":{"usedRatio":1}}`, "secondary", 100, true},
+		{"invalid reset keeps percentage", `{"limit5h":{"usedRatio":0.5,"resetAt":"unknown"}}`, "primary", 50, false},
+		{"absent ratio is unknown", `{"limit5h":{"resetAt":"2026-10-03T18:44:02Z"}}`, "", 0, false},
+		{"null ratio is unknown", `{"limit5h":{"usedRatio":null}}`, "", 0, false},
+		{"null row", `{"limit5h":null}`, "", 0, false},
+		{"negative ratio", `{"limit5h":{"usedRatio":-0.1}}`, "", 0, false},
+		{"ratio above one", `{"limit5h":{"usedRatio":1.1}}`, "", 0, false},
+		{"unknown window", `{"limit1d":{"usedRatio":0.5}}`, "", 0, false},
+		{"empty usages", `{}`, "", 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var data kimiUsageData
+			if err := json.Unmarshal([]byte(`{"kind":"ok","quota":{"usages":`+tc.usages+`}}`), &data); err != nil {
+				t.Fatal(err)
+			}
+			quota := kimiUsageToPlanQuota(&data, time.Unix(1791050400, 0))
+			if tc.window == "" {
+				if quota != nil {
+					t.Fatalf("unusable data reported a snapshot: %+v", quota)
+				}
+				return
+			}
+			if quota == nil || len(quota.Windows) != 1 {
+				t.Fatalf("want one window, got %+v", quota)
+			}
+			w := quota.Windows[0]
+			if w.Name != tc.window || w.UsedPercent == nil || *w.UsedPercent != tc.used || w.ResetsAt != nil {
+				t.Fatalf("window = %+v", w)
+			}
+			if (quota.Status == protocol.PlanQuotaStatusLimited) != tc.limited {
+				t.Fatalf("status = %q", quota.Status)
+			}
+		})
+	}
+}
+
+func TestKimiQuotaUsagesTakesPrecedenceOverLegacyRows(t *testing.T) {
+	var data kimiUsageData
+	if err := json.Unmarshal([]byte(`{"kind":"ok","quota":{"usages":{"limit5h":{"usedRatio":1}}},
+		"limits":[{"window":{"duration":5,"unit":"hour"},"used":0,"limit":100}]}`), &data); err != nil {
+		t.Fatal(err)
+	}
+	quota := kimiUsageToPlanQuota(&data, time.Now())
+	if quota == nil || quota.Status != protocol.PlanQuotaStatusLimited || len(quota.Windows) != 1 || *quota.Windows[0].UsedPercent != 100 {
+		t.Fatalf("legacy data masked the new response: %+v", quota)
 	}
 }
 

@@ -84,18 +84,14 @@ type HealthResponse struct {
 	// older consumers see no change. Diagnostic only: nothing keys off it.
 	ReloadPendingReason string            `json:"reload_pending_reason,omitempty"`
 	Workspaces          []healthWorkspace `json:"workspaces"`
-	// AntigravityQuota carries the local Antigravity plan-quota probe's last
-	// attempt. Every probe failure is silent in the daemon's main flows by
-	// contract, so this is the only place that answers "why does my
-	// antigravity runtime show no quota" without daemon debug logs. Nil until
-	// the first probe attempt, so machines that never run antigravity see no
-	// change.
+	// AntigravityQuota carries the remote collector's last attempt. Nil
+	// until its first attempt, so machines without this provider omit it.
 	AntigravityQuota *healthAntigravityQuota `json:"antigravity_quota,omitempty"`
 }
 
 // healthAntigravityQuota is one snapshot of the Antigravity plan-quota
-// probe's last attempt. LastSkipReason uses the stable codes from
-// antigravity_task_sample.go and is empty exactly when the last attempt
+// collector's last attempt. LastSkipReason uses the stable codes from
+// planquota_antigravity_diagnostics.go and is empty exactly when the last attempt
 // recorded a snapshot; LastSuccessAt stays empty until the first success.
 type healthAntigravityQuota struct {
 	LastAttemptAt  string `json:"last_attempt_at,omitempty"`

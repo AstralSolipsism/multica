@@ -34,6 +34,58 @@ its actual stream fields against `claude_plan_quota_test.go`, including missing
 windows and reset timestamps. A successful synthetic parser test does not prove
 the current account emitted a sample.
 
+## Kimi Code
+
+The daemon polls the local `kimi web` Server API every two minutes. Port
+discovery, the local `server.token` and the connection peer ownership check
+are unchanged. Kimi 0.40 responses use the union of `data.summary` and
+`data.limits`; Kimi 2.1.1 responses use `data.quota.usages.limit5h` and
+`limit7d`, converting `usedRatio` to a percentage and `resetAt` to Unix seconds.
+The response structure selects the parser, without invoking the CLI.
+
+An explicit zero is a valid observation. Missing, unknown or invalid new-format
+usage rows do not manufacture unused quota. The weekly row retains its identity
+when the five-hour row is absent. Quota responses take precedence when both
+response formats are present; wallet balances never enter the snapshot.
+
+## Antigravity
+
+The daemon polls `POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota`
+with the exact JSON body `{}` and `User-Agent: antigravity-cli/<detected version>`.
+This is an internal Google API, verified with agy 1.2.16 in OL-108; future CLI
+upgrades need a live check. Its model buckets do not disclose a five-hour/weekly
+split or reset times. The snapshot contains one row per known pool, with no
+invented duration or reset countdown:
+
+- Gemini: minimum `remainingFraction` across `gemini-*` models.
+- Claude + GPT: minimum across `claude-*` and `gpt-*` models.
+
+Fractions are converted to used percentages; an exhausted model marks the
+snapshot limited. Missing/invalid fractions and unknown model families are
+omitted. A response without usable buckets fails collection and preserves the
+last successful observation.
+
+The access token is read on every round from
+`~/.gemini/antigravity-cli/antigravity-oauth-token`: its `token` string contains
+another JSON document with `access_token`. agy owns token refresh; keep the
+existing `agy remote-control` watchdog active and signed in. The collector does
+not start tasks, refresh credentials or probe local RPC listeners. It sends the
+token only to Google's endpoint and refuses redirects. Neither token nor account
+metadata appears in heartbeat payloads or diagnostics.
+
+One account request feeds all registered local Antigravity runtimes every two
+minutes (with startup jitter), including idle machines. HTTP 429 backs off up to
+30 minutes. Failures keep the actual last observation time. `/health` reports
+`oauth_token_unavailable`, `authorization_rejected`, `rate_limited`,
+`collection_failed`, `not_registered` or `no_version`; success clears the reason.
+
+After deploying the daemon build, verify the Kimi cards on main and agent-2 and
+the Antigravity card on GCP show an `observed_at` less than five minutes old during
+normal successful polling. Collector smoke tests below verify data acquisition
+only; UI acceptance also requires the updated daemon's heartbeat to reach the
+server. Rolling back the daemon build restores the prior collectors and their
+known incompatibility with these CLI versions; no data migration is involved.
+
 ## Zhipu / GLM
 
 The backend's existing GLM account collector and API are unchanged. Web and Desktop
@@ -48,3 +100,11 @@ never-successful collection remains absent rather than showing a zero balance.
 - Shared runtime quota component tests and `packages/core/runtimes/plan-quota.test.ts`.
 - Check the actual runtime CLI, build seed, Web/Desktop and update-channel identities
   on deployment. Let a normal Claude task supply the first account observation.
+
+On an authorized provider host, run these read-only quota smoke tests from
+`server/` (they access the signed-in account but do not start an agent task):
+
+```sh
+MULTICA_RUN_REAL_AGENT_SMOKE=1 go test -tags=agentintegration ./internal/daemon -run '^TestKimiPlanQuotaLive$' -count=1 -v
+MULTICA_RUN_REAL_AGENT_SMOKE=1 go test -tags=agentintegration ./internal/daemon -run '^TestAntigravityPlanQuotaLive$' -count=1 -v
+```
