@@ -58,18 +58,14 @@ func (c *antigravityPlanQuotaCollector) readToken() (string, error) {
 		return "", fmt.Errorf("%w: cannot read token file", errAntigravityQuotaToken)
 	}
 	var envelope struct {
-		Token string `json:"token"`
+		Token struct {
+			AccessToken string `json:"access_token"`
+		} `json:"token"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return "", fmt.Errorf("%w: invalid token file", errAntigravityQuotaToken)
 	}
-	var token struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.Unmarshal([]byte(envelope.Token), &token); err != nil {
-		return "", fmt.Errorf("%w: invalid nested token", errAntigravityQuotaToken)
-	}
-	accessToken := strings.TrimSpace(token.AccessToken)
+	accessToken := strings.TrimSpace(envelope.Token.AccessToken)
 	if accessToken == "" {
 		return "", fmt.Errorf("%w: missing access token", errAntigravityQuotaToken)
 	}

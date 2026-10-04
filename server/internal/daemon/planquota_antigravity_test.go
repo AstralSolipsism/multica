@@ -24,7 +24,7 @@ func writeAntigravityTestToken(t *testing.T, home, token string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outer, err := json.Marshal(map[string]string{"token": string(inner), "email": "private@example.com"})
+	outer, err := json.Marshal(map[string]any{"token": json.RawMessage(inner), "email": "private@example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestAntigravityCollectUnknownVersionSendsNothing(t *testing.T) {
 }
 
 func TestAntigravityTokenMalformedOrMissingSendsNothing(t *testing.T) {
-	for _, body := range []string{"missing-file", "", `{}`, `{"token":null}`, `{"token":{}}`, `{"token":"not-json"}`, `{"token":"{}"}`, `{"token":"{\"access_token\":\" \"}"}`} {
+	for _, body := range []string{"missing-file", "", `{}`, `{"token":null}`, `{"token":{}}`, `{"token":{"access_token":""}}`, `{"token":{"access_token":"  "}}`} {
 		t.Run(body, func(t *testing.T) {
 			home := t.TempDir()
 			writeAntigravityTestToken(t, home, "ya29.placeholder")
