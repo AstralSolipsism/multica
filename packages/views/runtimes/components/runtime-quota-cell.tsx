@@ -94,6 +94,7 @@ export interface QuotaWindowView {
   remainingPercent: number | null;
   tone: QuotaTone;
   resetInMs: number | null;
+  resetsAt: number | null;
   group: string | null;
 }
 
@@ -110,11 +111,12 @@ export function quotaGroupLabel(group: string, t: RuntimesT): string {
 export type RuntimeQuotaView =
   | { kind: "not_reported" }
   | { kind: "stale"; ageMs: number }
-  | { kind: "limited"; windows: QuotaWindowView[]; resetInMs: number | null }
+  | { kind: "limited"; windows: QuotaWindowView[]; resetInMs: number | null; resetsAt: number | null }
   | {
       kind: "ok";
       windows: QuotaWindowView[];
       resetInMs: number | null;
+  resetsAt: number | null;
       observedAgeMs: number;
     };
 
@@ -145,22 +147,34 @@ export function buildRuntimeQuotaView(
       tone: quotaTone(remaining, quota.status),
       resetInMs:
         window.resets_at != null ? window.resets_at * 1000 - now : null,
+      resetsAt: window.resets_at != null ? window.resets_at * 1000 : null,
       group: quotaWindowGroup(window),
     };
   });
   const resetInMs = soonestResetMs(windows);
+  const resetsAt = soonestResetAt(windows);
   if (
     quota.status === "limited" &&
     windows.every((window) => window.remainingPercent == null)
   ) {
-    return { kind: "limited", windows, resetInMs };
+    return { kind: "limited", windows, resetInMs, resetsAt };
   }
   return {
     kind: "ok",
     windows,
     resetInMs,
+    resetsAt,
     observedAgeMs: now - quota.observed_at * 1000,
   };
+}
+
+function soonestResetAt(windows: QuotaWindowView[]): number | null {
+  let best: number | null = null;
+  for (const window of windows) {
+    if (window.resetsAt == null) continue;
+    if (best == null || window.resetsAt < best) best = window.resetsAt;
+  }
+  return best;
 }
 
 function soonestResetMs(windows: QuotaWindowView[]): number | null {
@@ -215,7 +229,7 @@ export function RuntimeQuotaCell({
         {view.resetInMs != null && (
           <span className="text-micro tabular-nums text-faint-foreground">
             {t(($) => $.quota.resets_in, {
-              time: formatCompactDuration(view.resetInMs),
+              time: view.resetsAt != null ? formatResetDatetime(view.resetsAt) : formatCompactDuration(view.resetInMs),
             })}
           </span>
         )}
@@ -242,12 +256,26 @@ export function RuntimeQuotaCell({
       {view.resetInMs != null && (
         <span className="text-micro tabular-nums text-faint-foreground">
           {t(($) => $.quota.resets_in, {
-            time: formatCompactDuration(view.resetInMs),
+            time: view.resetsAt != null ? formatResetDatetime(view.resetsAt) : formatCompactDuration(view.resetInMs),
           })}
         </span>
       )}
     </div>
   );
+}
+
+function formatResetDatetime(ms: number): string {
+  const date = new Date(ms);
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  if (sameDay) {
+    return `${hours}:${minutes}`;
+  }
+  return `${month}-${String(day).padStart(2, "0")} ${hours}:${minutes}`;
 }
 
 function QuotaWindowRow({ window }: { window: QuotaWindowView }) {
@@ -332,7 +360,7 @@ export function RuntimeQuotaCard({
             {view.resetInMs != null && (
               <p className="mt-1 text-micro tabular-nums text-muted-foreground">
                 {t(($) => $.quota.resets_in, {
-                  time: formatCompactDuration(view.resetInMs),
+                  time: view.resetsAt != null ? formatResetDatetime(view.resetsAt) : formatCompactDuration(view.resetInMs),
                 })}
               </p>
             )}

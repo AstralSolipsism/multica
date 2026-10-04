@@ -468,7 +468,7 @@
     "group_claude_gpt": "Claude + GPT",
     "group_claude_models": "特定モデル",
     "remaining": "残り {{percent}}%",
-    "resets_in": "{{time}}後にリセット",
+    "resets_in": "{{time}} にリセット",
     "exhausted": "レート制限中",
     "not_reported": "未報告",
     "stale": "期限切れデータ",

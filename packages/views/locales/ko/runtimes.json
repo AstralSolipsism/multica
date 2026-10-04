@@ -468,7 +468,7 @@
     "group_claude_gpt": "Claude + GPT",
     "group_claude_models": "특정 모델",
     "remaining": "{{percent}}% 남음",
-    "resets_in": "{{time}} 후 재설정",
+    "resets_in": "{{time}} 초기화",
     "exhausted": "속도 제한됨",
     "not_reported": "보고되지 않음",
     "stale": "오래된 데이터",
