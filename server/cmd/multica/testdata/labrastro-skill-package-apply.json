@@ -1,0 +1,28 @@
+{
+  "package": {
+    "id": "10000000-0000-4000-8000-000000000001",
+    "workspace_id": "20000000-0000-4000-8000-000000000001",
+    "owner_repo": "example/skills",
+    "subdirectory": "",
+    "source_url": "https://github.com/example/skills/tree/main",
+    "ref": "main",
+    "root_folder_id": "30000000-0000-4000-8000-000000000001",
+    "created_by": "40000000-0000-4000-8000-000000000001",
+    "revision": 1,
+    "candidates": [
+      {"path": "skills/selected", "name": "selected", "description": "Manifest default", "digest": "offline-digest"},
+      {"path": "skills/optional", "name": "optional", "description": "Not in manifest"},
+      {"path": "skills/packaged", "name": "packaged", "description": "Owned by another package"},
+      {"path": "skills/broken", "name": "broken", "description": "Required reference unavailable"}
+    ]
+  },
+  "results": [
+    {"path": "skills/selected", "status": "created", "skill_id": "50000000-0000-4000-8000-000000000001", "retryable": false, "diagnostics": []},
+    {"path": "skills/optional", "status": "skipped", "code": "not_selected", "retryable": false, "diagnostics": []},
+    {"path": "skills/packaged", "status": "skipped", "code": "not_selected", "retryable": false, "diagnostics": []},
+    {"path": "skills/broken", "status": "skipped", "code": "not_selected", "retryable": false, "diagnostics": [{"code": "required_reference_unavailable", "path": "SKILL.md", "target": "references/guide.md", "message": "Required reference could not be downloaded", "retryable": true}]}
+  ],
+  "failed": false,
+  "diagnostics": [],
+  "future_field": {"preserved": true}
+}

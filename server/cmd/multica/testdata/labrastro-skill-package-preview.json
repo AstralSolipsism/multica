@@ -1,0 +1,18 @@
+{
+  "preview_id": "offline-preview-token",
+  "source": {
+    "url": "https://github.com/example/skills/tree/main",
+    "owner_repo": "example/skills",
+    "subdirectory": "",
+    "ref": "main",
+    "revision": "offline-source-revision"
+  },
+  "candidates": [
+    {"path": "skills/selected", "name": "selected", "description": "Manifest default", "state": "new", "default_selected": true, "can_write": true, "file_count": 1, "bytes": 256, "shared_files": [], "diagnostics": []},
+    {"path": "skills/optional", "name": "optional", "description": "Not in manifest", "state": "new", "default_selected": false, "can_write": true, "file_count": 0, "bytes": 64, "shared_files": [], "diagnostics": []},
+    {"path": "skills/packaged", "name": "packaged", "description": "Owned by another package", "state": "conflict", "conflict": "already_packaged", "default_selected": false, "can_write": false, "file_count": 0, "bytes": 64, "shared_files": [], "diagnostics": []},
+    {"path": "skills/broken", "name": "broken", "description": "Required reference unavailable", "state": "failed", "default_selected": false, "can_write": false, "file_count": 0, "bytes": 0, "shared_files": [], "diagnostics": [{"code": "required_reference_unavailable", "path": "SKILL.md", "target": "references/guide.md", "message": "Required reference could not be downloaded", "retryable": true}]}
+  ],
+  "diagnostics": [],
+  "future_field": {"preserved": true}
+}
