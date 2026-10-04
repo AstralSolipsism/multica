@@ -252,12 +252,20 @@ export function RuntimeQuotaCell({
 
 function QuotaWindowRow({ window }: { window: QuotaWindowView }) {
   const { t } = useT("runtimes");
-  const label = formatQuotaWindowLabel(window.windowMinutes, t) ?? window.name;
+  let label = formatQuotaWindowLabel(window.windowMinutes, t) ?? window.name;
+  // In grouped rendering (antigravity pools), the group label above already
+  // identifies the pool. Skip the row label when it would duplicate the
+  // group name (the backend used to set Name = group ID).
+  if (window.group != null && (label === window.group || label === quotaGroupLabel(window.group, t))) {
+    label = "";
+  }
   return (
     <span className="flex items-center gap-1.5">
-      <span className="w-6 shrink-0 truncate text-micro text-muted-foreground">
-        {label}
-      </span>
+      {label !== "" && (
+        <span className="w-6 shrink-0 truncate text-micro text-muted-foreground">
+          {label}
+        </span>
+      )}
       {window.remainingPercent == null ? (
         <span className="text-micro text-faint-foreground">
           {t(($) => $.machine.metrics.unavailable)}
