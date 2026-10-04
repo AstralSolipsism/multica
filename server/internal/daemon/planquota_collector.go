@@ -9,13 +9,13 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// Plan-quota collectors: daemon-integrated pollers that turn official
-// programmatic provider APIs (Kimi Code's local Server API, ZenMux's
-// Management API) into protocol.RuntimePlanQuota snapshots. Snapshots flow
+// Plan-quota collectors: daemon-integrated pollers that turn programmatic
+// provider APIs (Kimi Code's local Server API, Antigravity's remote quota API,
+// ZenMux's Management API) into protocol.RuntimePlanQuota snapshots. Snapshots flow
 // through the existing planQuotaCache -> heartbeat plan_quota channel; no
-// new wire surface is added. Credentials (Kimi's local server token,
-// ZenMux's Management API key) are read from daemon-local configuration and
-// never leave this machine — the snapshot shape carries no account ids,
+// new wire surface is added. Credentials are read from daemon-local
+// configuration and sent only to their provider endpoint, never to the
+// Multica server — the snapshot shape carries no account ids,
 // plan names, credit balances, or tokens by construction.
 //
 // Failure semantics are fail-soft everywhere: a collector that cannot reach
