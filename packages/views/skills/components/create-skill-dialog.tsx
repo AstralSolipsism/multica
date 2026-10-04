@@ -340,7 +340,7 @@ function UrlForm({
     setLoading(true);
     setError("");
     try {
-      const skill = await api.importSkill({ url: trimmed });
+      const skill = await api.importSkillParsed({ url: trimmed });
       if (!skill) {
         // Unreadable import result: indeterminate — the skill may or may
         // not exist. Never navigate as if it succeeded.
