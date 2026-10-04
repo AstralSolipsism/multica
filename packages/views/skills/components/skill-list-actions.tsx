@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 import {
+  AlertTriangle,
   Check,
   ChevronRight,
   ExternalLink,
+  FolderInput,
   Loader2,
   MoreHorizontal,
+  PackageX,
   Plus,
   RotateCw,
   Search,
@@ -15,7 +18,7 @@ import {
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { Agent, SkillSummary } from "@multica/core/types";
+import type { Agent, SkillImportDiagnostic, SkillSummary } from "@multica/core/types";
 import { api } from "@multica/core/api";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -64,6 +67,16 @@ export interface SkillActionsContext {
   currentUserId: string | null;
   /** Workspace owner/admin — may manage every agent, not only their own. */
   isAdmin: boolean;
+  /** Folder-tree extras (OL-104). Present when the workspace folder tree
+   *  loaded; absent callers keep the pre-tree flat behavior. */
+  treeActions?: {
+    /** Package/source association for a skill, when placed by a package. */
+    placementFor: (skillId: string) => { package_id: string | null } | null;
+    /** Open the move-to-folder dialog for the given rows. */
+    onMove: (rows: SkillRow[]) => void;
+    /** Detach a packaged skill from its package (keeps folder + skill). */
+    onDetach: (row: SkillRow) => void;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -543,20 +556,33 @@ export function UpdateSkillsDialog({
   onUpdated?: () => void;
 }) {
   const { t } = useT("skills");
+  const { t: tPkg } = useT("skill-packages");
   const qc = useQueryClient();
   const [updating, setUpdating] = useState(false);
   const [progress, setProgress] = useState(0);
+  // Diagnostics collected from successful refreshes (OL-104), each tagged
+  // with its skill so a mixed batch stays readable. Shown in the dialog
+  // instead of closing silently — including after a partial failure, where
+  // they would otherwise be discarded with the error toast.
+  const [notices, setNotices] = useState<{
+    items: { skillName: string; diagnostic: SkillImportDiagnostic }[];
+    partial: { done: number; failed: number } | null;
+  } | null>(null);
 
   const handleConfirm = async () => {
     setUpdating(true);
     let updated = 0;
     let failed = 0;
+    const collected: { skillName: string; diagnostic: SkillImportDiagnostic }[] = [];
     try {
       for (const row of rows) {
         setProgress(updated + failed + 1);
         try {
-          await api.refreshSkill(row.skill.id);
+          const refreshed = await api.refreshSkill(row.skill.id);
           updated++;
+          for (const diagnostic of refreshed.diagnostics ?? []) {
+            collected.push({ skillName: row.skill.name, diagnostic });
+          }
         } catch {
           failed++;
         }
@@ -564,9 +590,15 @@ export function UpdateSkillsDialog({
       qc.invalidateQueries({ queryKey: workspaceKeys.skills(ctx.wsId) });
       qc.invalidateQueries({ queryKey: workspaceKeys.agents(ctx.wsId) });
       if (failed === 0) {
-        toast.success(t(($) => $.actions.updated_toast, { count: updated }));
-        onOpenChange(false);
-        onUpdated?.();
+        if (collected.length > 0) {
+          setNotices({ items: collected, partial: null });
+        } else {
+          toast.success(t(($) => $.actions.updated_toast, { count: updated }));
+          onOpenChange(false);
+          onUpdated?.();
+        }
+      } else if (collected.length > 0) {
+        setNotices({ items: collected, partial: { done: updated, failed } });
       } else {
         toast.error(
           t(($) => $.actions.update_partial_toast, { count: updated, failed }),
@@ -578,6 +610,62 @@ export function UpdateSkillsDialog({
       setProgress(0);
     }
   };
+
+  if (notices) {
+    return (
+      <Dialog open={open} onOpenChange={(v) => { if (!v) setNotices(null); onOpenChange(v); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t(($) => $.actions.update_dialog_title)}</DialogTitle>
+          </DialogHeader>
+          <div className="rounded-md bg-warning/10 px-3 py-2 text-caption text-muted-foreground">
+            <div className="mb-1.5 flex items-center gap-1.5 text-foreground">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" />
+              {tPkg(($) => $.diagnostics.refreshed_with_notices, { count: notices.items.length })}
+            </div>
+            {notices.partial && (
+              <p className="mb-1.5">
+                {t(($) => $.actions.update_partial_toast, {
+                  count: notices.partial.done,
+                  failed: notices.partial.failed,
+                })}
+              </p>
+            )}
+            <ul className="space-y-1.5">
+              {notices.items.map((item, i) => (
+                <li key={`${item.skillName}-${i}`} className="text-caption">
+                  <span className="font-medium text-foreground">{item.skillName}</span>
+                  <span className="text-muted-foreground">
+                    {` · ${item.diagnostic.message}`}
+                  </span>
+                  <span className="ml-1.5 text-muted-foreground">
+                    {item.diagnostic.code}
+                    {item.diagnostic.path ? ` · ${item.diagnostic.path}` : ""}
+                    {item.diagnostic.target ? ` · ${item.diagnostic.target}` : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              onClick={() => {
+                const completed = !notices.partial;
+                setNotices(null);
+                onOpenChange(false);
+                // A partial run keeps the selection for retry; only a clean
+                // run clears it.
+                if (completed) onUpdated?.();
+              }}
+            >
+              {tPkg(($) => $.diagnostics.continue)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog
@@ -659,6 +747,7 @@ export function SkillRowActions({
 }) {
   const { t } = useT("skills");
   const { t: tCommon } = useT("common");
+  const { t: tPkg } = useT("skill-packages");
   const paths = useWorkspacePaths();
   const intentNavigate = useIntentNavigate();
   const [addOpen, setAddOpen] = useState(false);
@@ -667,6 +756,8 @@ export function SkillRowActions({
 
   const origin = readOrigin(row.skill);
   const canRefresh = row.canEdit && isRefreshableOrigin(origin);
+  const treeActions = ctx.treeActions;
+  const isPackaged = treeActions?.placementFor(row.skill.id)?.package_id != null;
 
   return (
     <span
@@ -703,6 +794,31 @@ export function SkillRowActions({
             <Plus className="size-3.5" />
             {t(($) => $.actions.add_to_agent)}
           </DropdownMenuItem>
+          {treeActions && row.canEdit && !isPackaged && (
+            <DropdownMenuItem onClick={() => treeActions.onMove([row])}>
+              <FolderInput className="size-3.5" />
+              {tPkg(($) => $.move_skills.title, { count: 1 })}
+            </DropdownMenuItem>
+          )}
+          {treeActions && row.canEdit && isPackaged && (
+            <>
+              {/* The server refuses to move a packaged skill (409
+                  managed_skill): it must be detached first. */}
+              <DropdownMenuItem disabled>
+                <FolderInput className="size-3.5" />
+                <span className="flex min-w-0 flex-col">
+                  <span>{tPkg(($) => $.move_skills.title, { count: 1 })}</span>
+                  <span className="text-caption text-muted-foreground">
+                    {tPkg(($) => $.move_skills.packaged_hint)}
+                  </span>
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => treeActions.onDetach(row)}>
+                <PackageX className="size-3.5" />
+                {tPkg(($) => $.detach.action)}
+              </DropdownMenuItem>
+            </>
+          )}
           {canRefresh && (
             <DropdownMenuItem onClick={() => setRefreshOpen(true)}>
               <RotateCw className="size-3.5" />
@@ -762,15 +878,39 @@ export function SkillBatchToolbar({
   onClear: () => void;
 }) {
   const { t } = useT("skills");
+  const { t: tPkg } = useT("skill-packages");
   const [addOpen, setAddOpen] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   if (rows.length === 0) return null;
 
+  const treeActions = ctx.treeActions;
   const allDeletable = rows.every((r) => r.canEdit);
+  // A mixed batch containing any packaged skill cannot move: the server
+  // rejects those items, so the whole action is disabled with the reason.
+  const anyPackaged = treeActions
+    ? rows.some((r) => treeActions.placementFor(r.skill.id)?.package_id != null)
+    : false;
+  const moveDisabled = !allDeletable || anyPackaged;
+  const moveHint = anyPackaged
+    ? tPkg(($) => $.move_skills.packaged_hint)
+    : tPkg(($) => $.move_skills.no_permission);
   const updatable = rows.filter(
     (r) => r.canEdit && isRefreshableOrigin(readOrigin(r.skill)),
+  );
+
+  const moveButton = (
+    <Button
+      variant="ghost"
+      size="sm"
+      disabled={moveDisabled}
+      onClick={() => treeActions?.onMove(rows)}
+      className={cn(moveDisabled && "pointer-events-none")}
+    >
+      <FolderInput className="mr-1 size-3.5" />
+      {tPkg(($) => $.move_skills.confirm)}
+    </Button>
   );
 
   const updateButton = (
@@ -827,6 +967,21 @@ export function SkillBatchToolbar({
           <Plus className="mr-1 size-3.5" />
           {t(($) => $.actions.add_to_agent)}
         </Button>
+
+        {treeActions && (
+          !moveDisabled ? (
+            moveButton
+          ) : (
+            <Tooltip>
+              <TooltipTrigger
+                render={<span className="inline-flex">{moveButton}</span>}
+              />
+              <TooltipContent side="top">
+                {moveHint}
+              </TooltipContent>
+            </Tooltip>
+          )
+        )}
 
         {updatable.length > 0 ? (
           updateButton

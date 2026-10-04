@@ -8,6 +8,9 @@ import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { Input } from "@multica/ui/components/ui/input";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
+// Fork integration (OL-104): the tree mode lives in a fork-owned file so
+// upstream changes to this flat list merge without touching picker logic.
+import { SkillPickerTree } from "../../skills/components/skill-picker-tree";
 
 interface SkillPickerListProps {
   /** Skills to show. Callers filter (e.g. exclude already-attached
@@ -21,6 +24,15 @@ interface SkillPickerListProps {
 
   /** Fires on every row click. Caller updates `selectedIds`. */
   onToggle: (skill: SkillSummary) => void;
+
+  /** Fires from a folder's tri-state checkbox with every visible selectable
+   *  skill under it. Required for folder checkboxes in tree mode. */
+  onToggleMany?: (skills: SkillSummary[], selected: boolean) => void;
+
+  /** Group skills into the workspace folder tree (OL-104). Folders prune to
+   *  the caller-provided skills; package candidates that were never imported
+   *  show as gray, unbindable rows. Flat list stays the default. */
+  tree?: boolean;
 
   /** Show the search input at the top. Default true. */
   searchable?: boolean;
@@ -49,7 +61,12 @@ interface SkillPickerListProps {
  * Rows truncate the name + description columns inside `flex-1 min-w-0`
  * so long text doesn't push the Checkbox out of view.
  */
-export function SkillPickerList({
+export function SkillPickerList(props: SkillPickerListProps) {
+  if (props.tree) return <SkillPickerTree {...props} />;
+  return <FlatSkillPickerList {...props} />;
+}
+
+function FlatSkillPickerList({
   skills,
   selectedIds,
   onToggle,

@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Loader2, RotateCw } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { Skill, SkillSummary } from "@multica/core/types";
+import type { Skill, SkillImportDiagnostic, SkillSummary } from "@multica/core/types";
 import { api } from "@multica/core/api";
 import {
   skillDetailOptions,
@@ -27,6 +27,7 @@ import {
 import { midTruncate } from "../../common/github-url";
 import { useT } from "../../i18n";
 import { originSourceUrl, type OriginInfo } from "../lib/origin";
+import { SkillDiagnosticsNotice } from "./skill-diagnostics-notice";
 
 /** Human name of the hosted source a refresh re-downloads from. */
 export function useRefreshSourceLabel(origin: OriginInfo | null): string {
@@ -59,31 +60,46 @@ export function RefreshSkillDialog({
   onRefreshed?: (updated: Skill) => void;
 }) {
   const { t } = useT("skills");
+  const { t: tPkg } = useT("skill-packages");
   const qc = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
+  // Diagnostics carried by a successful refresh (OL-104): kept visible in
+  // the dialog instead of closing on a bare success toast.
+  const [notices, setNotices] = useState<SkillImportDiagnostic[] | null>(null);
+  const refreshedRef = useRef<Skill | null>(null);
   const source = useRefreshSourceLabel(origin);
   // Only a validated URL becomes a link; an injected or mismatched
   // source_url renders nothing rather than a live anchor in a confirm dialog.
   const sourceUrl = originSourceUrl(origin);
 
+  const finishWith = (updated: Skill) => {
+    if (updated.id === skill.id) {
+      qc.setQueryData(skillDetailOptions(wsId, skill.id).queryKey, updated);
+    } else {
+      // Schema fallback (malformed response): drop the stale cache instead
+      // of seeding it with the empty placeholder.
+      qc.invalidateQueries({
+        queryKey: skillDetailOptions(wsId, skill.id).queryKey,
+      });
+    }
+    qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId), exact: true });
+    qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+  };
+
   const handleConfirm = async () => {
     setRefreshing(true);
     try {
       const updated = await api.refreshSkill(skill.id);
-      if (updated.id === skill.id) {
-        qc.setQueryData(skillDetailOptions(wsId, skill.id).queryKey, updated);
+      finishWith(updated);
+      const diagnostics = updated.id === skill.id ? (updated.diagnostics ?? []) : [];
+      if (diagnostics.length > 0) {
+        refreshedRef.current = updated;
+        setNotices(diagnostics);
       } else {
-        // Schema fallback (malformed response): drop the stale cache instead
-        // of seeding it with the empty placeholder.
-        qc.invalidateQueries({
-          queryKey: skillDetailOptions(wsId, skill.id).queryKey,
-        });
+        toast.success(t(($) => $.detail.refresh.toast_success, { source }));
+        onOpenChange(false);
+        if (updated.id === skill.id) onRefreshed?.(updated);
       }
-      qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId), exact: true });
-      qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
-      toast.success(t(($) => $.detail.refresh.toast_success, { source }));
-      onOpenChange(false);
-      if (updated.id === skill.id) onRefreshed?.(updated);
     } catch (e) {
       toast.error(
         e instanceof Error && e.message
@@ -94,6 +110,42 @@ export function RefreshSkillDialog({
       setRefreshing(false);
     }
   };
+
+  if (notices) {
+    return (
+      <Dialog
+        open={open}
+        onOpenChange={(v) => {
+          if (!v) setNotices(null);
+          onOpenChange(v);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t(($) => $.detail.refresh.dialog.title)}</DialogTitle>
+          </DialogHeader>
+          <SkillDiagnosticsNotice
+            title={tPkg(($) => $.diagnostics.refreshed_with_notices, { count: notices.length })}
+            diagnostics={notices}
+          />
+          <DialogFooter>
+            <Button
+              type="button"
+              onClick={() => {
+                const updated = refreshedRef.current;
+                refreshedRef.current = null;
+                setNotices(null);
+                onOpenChange(false);
+                if (updated && updated.id === skill.id) onRefreshed?.(updated);
+              }}
+            >
+              {tPkg(($) => $.diagnostics.continue)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog

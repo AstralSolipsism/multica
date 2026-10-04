@@ -38,7 +38,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
-    if (options.queryKey?.[0] === "skills") {
+    const key = options.queryKey ?? [];
+    if (key[0] === "skills") {
       return {
         data: mocks.skills,
         isLoading: false,
@@ -46,8 +47,20 @@ vi.mock("@tanstack/react-query", () => ({
         refetch: vi.fn(),
       };
     }
+    if (key.includes("skill-folders")) {
+      return {
+        data: { folders: [], placements: [], packages: [] },
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      };
+    }
     return { data: [], isLoading: false, error: null, refetch: vi.fn() };
   },
+  useQueryClient: () => ({
+    invalidateQueries: vi.fn(),
+    setQueryData: vi.fn(),
+  }),
 }));
 
 // Render every row so the anchor under test is always mounted.
@@ -87,6 +100,11 @@ vi.mock("@multica/core/workspace/queries", () => ({
   agentListOptions: () => ({ queryKey: ["agents"] }),
   memberListOptions: () => ({ queryKey: ["members"] }),
   selectSkillAssignments: () => new Map(),
+}));
+
+vi.mock("@multica/core/skills/package-queries", () => ({
+  skillFolderTreeOptions: () => ({ queryKey: ["workspaces", "ws-1", "skill-folders"] }),
+  invalidateSkillPackageQueries: vi.fn(),
 }));
 
 vi.mock("@multica/core/runtimes", () => ({

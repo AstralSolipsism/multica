@@ -18,6 +18,7 @@ export type SkillArchiveEntry = {
 
 export type PreparedSkillArchiveError =
   | "missing_skill_md"
+  | "multiple_skills"
   | "empty"
   | "too_large"
   | "too_many_files";
@@ -167,6 +168,16 @@ export function selectSkillArchiveMembers(
   if (!skillMd) return { ok: false, error: "missing_skill_md" };
   if (skillMd.size > MAX_SKILL_FILE_BYTES) {
     return { ok: false, error: "too_large" };
+  }
+
+  // A SKILL.md outside the selected root means the upload holds several
+  // sibling skills. The prefix filter below would silently drop them (OL-106),
+  // so reject up front — mirroring the server's archive check. SKILL.md files
+  // nested *inside* the root keep the existing single-skill semantics.
+  for (const file of normalized) {
+    if (!isSkillMdPath(file.path)) continue;
+    if (skillMd.prefix === "" || file.path.startsWith(skillMd.prefix)) continue;
+    return { ok: false, error: "multiple_skills" };
   }
 
   const selected: SkillArchiveMemberMeta[] = [];

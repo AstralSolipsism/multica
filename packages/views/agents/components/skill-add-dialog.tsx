@@ -74,6 +74,17 @@ export function SkillAddDialog({
     });
   };
 
+  const handleToggleMany = (list: SkillSummary[], selected: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const skill of list) {
+        if (selected) next.add(skill.id);
+        else next.delete(skill.id);
+      }
+      return next;
+    });
+  };
+
   const handleConfirm = async () => {
     if (selectedIds.size === 0) return;
     setSaving(true);
@@ -104,9 +115,11 @@ export function SkillAddDialog({
         </DialogHeader>
 
         <SkillPickerList
+          tree
           skills={availableSkills}
           selectedIds={selectedIds}
           onToggle={handleToggle}
+          onToggleMany={handleToggleMany}
           loading={isLoading}
           emptyMessage={
             workspaceSkills.length === 0

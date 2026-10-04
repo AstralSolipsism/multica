@@ -59,6 +59,7 @@ export type {
   SkillImportResult,
   UpdateSkillRequest,
   SetAgentSkillsRequest,
+  SkillImportDiagnostic,
   RuntimeUsage,
   RuntimeHourlyActivity,
   RuntimeUsageByAgent,
