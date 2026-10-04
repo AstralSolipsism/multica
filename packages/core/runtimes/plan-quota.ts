@@ -172,17 +172,20 @@ export function quotaWindowLabel(
   return { unit: "minutes", value: windowMinutes };
 }
 
-/** Compact duration for reset countdowns / snapshot ages: "2h13m" at the
- *  hour scale, mm:ss under an hour ("01:50"). */
+/** Compact duration for reset countdowns / snapshot ages: "2h 13m" at the
+ *  hour scale, explicit units under an hour ("7m 2s", "45s"). */
 export function formatCompactDuration(ms: number): string {
   const clamped = Number.isFinite(ms) ? Math.max(0, ms) : 0;
   const totalSeconds = Math.floor(clamped / 1000);
   const hours = Math.floor(totalSeconds / 3600);
   if (hours > 0) {
     const minutes = Math.floor((totalSeconds % 3600) / 60);
-    return minutes > 0 ? `${hours}h${minutes}m` : `${hours}h`;
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
   }
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  if (minutes > 0) {
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  }
+  return `${seconds}s`;
 }

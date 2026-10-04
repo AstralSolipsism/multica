@@ -211,19 +211,19 @@ describe("quotaWindowLabel", () => {
 
 describe("formatCompactDuration", () => {
   it("formats hours as XhYYm, dropping zero minutes", () => {
-    expect(formatCompactDuration((2 * 3600 + 13 * 60) * 1000)).toBe("2h13m");
+    expect(formatCompactDuration((2 * 3600 + 13 * 60) * 1000)).toBe("2h 13m");
     expect(formatCompactDuration(3600 * 1000)).toBe("1h");
     expect(formatCompactDuration(26 * 3600 * 1000)).toBe("26h");
   });
 
   it("formats sub-hour durations as mm:ss", () => {
-    expect(formatCompactDuration(110 * 1000)).toBe("01:50");
+    expect(formatCompactDuration(110 * 1000)).toBe("1m 50s");
     expect(formatCompactDuration(30 * 1000)).toBe("00:30");
   });
 
   it("clamps negative and non-finite input to zero", () => {
-    expect(formatCompactDuration(-5)).toBe("00:00");
-    expect(formatCompactDuration(Number.NaN)).toBe("00:00");
+    expect(formatCompactDuration(-5)).toBe("0s");
+    expect(formatCompactDuration(Number.NaN)).toBe("0s");
   });
 });
 
