@@ -285,6 +285,14 @@ func (h *Handler) labrastroPackageOperation(w http.ResponseWriter, r *http.Reque
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), importFetchTimeout)
 	defer cancel()
+	writePackageError := func(err error) {
+		// Database failures after cancellation do not establish a conflict
+		// or permission change, even when a query wrapped the context error.
+		if ctx.Err() != nil {
+			err = labrastroSkillError(http.StatusGatewayTimeout, "source_timeout", "skill package request timed out or was canceled; preview again")
+		}
+		labrastroWriteSkillError(w, err)
+	}
 	src, err := newLabrastroSkillSource(ctx, &http.Client{Timeout: 30 * time.Second}, req.URL, uuidToString(a.ws))
 	if err != nil {
 		var api *labrastroSkillAPIError
@@ -297,7 +305,7 @@ func (h *Handler) labrastroPackageOperation(w http.ResponseWriter, r *http.Reque
 	}
 	snap, err := labrastroReadPackageSnapshot(ctx, h.Queries, a)
 	if err != nil {
-		labrastroWriteSkillError(w, err)
+		writePackageError(err)
 		return
 	}
 	p := labrastroFindPackage(snap, src)
@@ -378,7 +386,7 @@ func (h *Handler) labrastroPackageOperation(w http.ResponseWriter, r *http.Reque
 	// supplies permission claims, a target id, candidate content or provenance.
 	tx, q, _, err := h.labrastroSkillTx(ctx, a)
 	if err != nil {
-		labrastroWriteSkillError(w, err)
+		writePackageError(err)
 		return
 	}
 	defer tx.Rollback(ctx)
@@ -387,7 +395,7 @@ func (h *Handler) labrastroPackageOperation(w http.ResponseWriter, r *http.Reque
 		err = labrastroStalePreview()
 	}
 	if err != nil {
-		labrastroWriteSkillError(w, err)
+		writePackageError(err)
 		return
 	}
 	if len(selected) == 0 && p == nil {
@@ -418,7 +426,7 @@ func (h *Handler) labrastroPackageOperation(w http.ResponseWriter, r *http.Reque
 		err = tx.Commit(ctx)
 	}
 	if err != nil {
-		labrastroWriteSkillError(w, err)
+		writePackageError(err)
 		return
 	}
 	response := labrastroPackageResponse(*p)
@@ -461,6 +469,12 @@ func labrastroCandidateCache(candidates []LabrastroSkillCandidate) []byte {
 func (h *Handler) labrastroApplyCandidate(ctx context.Context, r *http.Request, a labrastroSkillActor, p db.LabrastroSkillPackage, src *labrastroSkillSource, snap labrastroPackageSnapshot, raw []LabrastroSkillCandidate, c LabrastroSkillCandidate, req labrastroPackageRequest) LabrastroPackageItemResult {
 	result := LabrastroPackageItemResult{Path: c.Path, Status: "failed", SkillID: c.SkillID, Diagnostics: c.Diagnostics}
 	fail := func(code, reason string, retry bool) LabrastroPackageItemResult {
+		// The deadline can expire inside any query or commit, not just
+		// between candidates. Preserve earlier successes in the report.
+		if err := ctx.Err(); err != nil {
+			result.Status = "failed"
+			code, reason, retry = "source_timeout", err.Error(), true
+		}
 		result.Code = code
 		result.Reason = reason
 		result.Retryable = retry
