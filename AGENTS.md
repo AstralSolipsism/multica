@@ -70,6 +70,8 @@ Installed desktop clients may talk to newer backends. Preserve response compatib
 
 ## Database and Migration Rules
 
+- New fork migrations use the 9001+ range; preserve all released stems, and use full stems in documentation references. Register fork concurrent-index recovery in `server/cmd/migrate/labrastro_migrations.go`, including both the catalog and the direction's hook map; SQL files are discovered automatically.
+- When a fork migration redefines an upstream function, add a definition-inventory test (see `server/internal/migrations/labrastro_wakeup_capture_inventory_test.go`) that fails on new upstream definitions. Verify both fresh-install and upgrade execution orders; add a new fork migration to reapply the retained behavior after upstream changes.
 - Do not add foreign keys, cascading deletes, or cascading updates. Validate relationships and clean up dependents in application code, using a transaction when the operation must be atomic.
 - Every migration-created index, including indexes on new tables, uses `CREATE [UNIQUE] INDEX CONCURRENTLY`. Each concurrent index build gets its own single-statement migration file; the runner executes files outside an explicit transaction.
 - Conditionally skipped migrations are still recorded in `schema_migrations`. Later DDL touching conditional objects must be idempotent (`IF EXISTS` / `IF NOT EXISTS`); document recovery if the missing object would break runtime behavior.

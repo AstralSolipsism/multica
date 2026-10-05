@@ -45,15 +45,19 @@ normalized set. The output describes the pre-normalization audit and proposed
 impact, not a claim that a later database still matches it. Run a fresh read-only
 audit after normalization.
 
-Migrations 463–466 add the audit table and separate concurrent indexes. They do
-not rewrite relation rows and add no foreign keys. Migration 466 stops on
+Migrations `463_issue_dependency_audit`, `464_issue_dependency_audit_id_index`,
+`465_issue_dependency_audit_workspace_index` and
+`466_issue_dependency_blocked_by_index` add the audit table and separate
+concurrent indexes. They do not rewrite relation rows and add no foreign keys.
+`466_issue_dependency_blocked_by_index` stops on
 duplicate canonical pairs; the failure preserves data. After audited repair,
 the migration runner's registered hook removes an INVALID leftover index before
 retry, avoiding an `IF NOT EXISTS` false success. The index only covers
 `type='blocked_by'`; a successful index build does not verify historical
 `blocks` semantics or the graph. Audit remains required.
 
-Check for canonical duplicates **before deploying migration 466**, not only
+Check for canonical duplicates **before deploying
+`466_issue_dependency_blocked_by_index`**, not only
 before enabling compound writes: they prevent the unique index from building.
 Other unverified rows are preserved by these migrations. Compound dependency
 writes are enabled in production; `DependencyService.WritesEnabled` is an
@@ -71,7 +75,8 @@ and keep them stopped until verification finishes. There is no production
 configuration switch that disables relation writes. Use the deployment's normal
 service stop/start commands and the explicitly selected maintenance database.
 To undo only normalization, remove the canonical unique index using the
-single-statement migration-466 down SQL outside a transaction, then restore:
+single-statement `466_issue_dependency_blocked_by_index.down.sql` outside a
+transaction, then restore:
 
 ```sh
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/migrations/466_issue_dependency_blocked_by_index.down.sql
@@ -85,8 +90,8 @@ inserts only missing original rows in one transaction. A stale or different
 graph is rejected, so later edits are never overwritten by this command. A
 database restored under a different name or independently modified after
 normalization needs an explicitly reviewed recovery plan/full database backup.
-Restoring duplicate rows means the canonical unique index cannot be rebuilt
-until those duplicates are normalized again. Review the recovery audit, repair
+Restoring duplicate rows means `466_issue_dependency_blocked_by_index` cannot
+be reapplied until those duplicates are normalized again. Review the recovery audit, repair
 or normalize as needed (using a new backup filename), then run the index's up SQL
 explicitly: dropping it with the down SQL does not reset the migration ledger.
 
@@ -109,7 +114,7 @@ index validity. Restart the services only after the index is valid and the final
 audit succeeds.
 
 The dependency down migrations remove the added indexes but deliberately retain
-`issue_dependency_audit` and all historical relation rows. Reapplying 463 is
-idempotent and retains the audit data. Workspace deletion remains the explicit
+`issue_dependency_audit` and all historical relation rows. Reapplying
+`463_issue_dependency_audit` is idempotent and retains the audit data. Workspace deletion remains the explicit
 owner-level cleanup path. Stored historical admission records do not enable an
 execution policy.
