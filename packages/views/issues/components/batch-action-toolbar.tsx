@@ -16,7 +16,7 @@ import {
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
-import type { IssueBatchUpdateResult } from "@multica/core/api";
+import { errorCode, type IssueBatchUpdateResult } from "@multica/core/api";
 import { commonIssueFields } from "@multica/core/issues/batch";
 import { useBatchUpdateIssues, useBatchDeleteIssues } from "@multica/core/issues/mutations";
 import { useModalStore } from "@multica/core/modals";
@@ -136,9 +136,11 @@ export function BatchActionToolbar({
       }
     } catch (err) {
       toast.error(
-        err instanceof Error && err.message
-          ? err.message
-          : t(($) => $.batch.update_failed),
+        errorCode(err) === "response_unreadable"
+          ? t(($) => $.batch.update_failed)
+          : err instanceof Error && err.message
+            ? err.message
+            : t(($) => $.batch.update_failed),
       );
     }
   };

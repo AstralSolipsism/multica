@@ -8,17 +8,8 @@ import type { MessageSourceKind, MessageTargetType } from "../api/labrastro-mess
 // nullability follow the wire, not the early design samples.
 // ---------------------------------------------------------------------------
 
-/** Source scopes owned by the OL-27 surface. `run`/automation routes stay on
- * the OL-25 autopilot-scoped API and never appear here. */
 export type { MessageSourceKind } from "../api/labrastro-message-delivery-schemas";
 
-/**
- * A personal/team route row. Same stored shape as the automation route plus
- * `source_kind`, `project_id`, `event_types` and `last_disabled_at`;
- * `autopilot_id` is always null (no virtual automation), and this surface has
- * NO `conditions`/`content_mode` — every source record inside the eligibility
- * window is forwarded or explicitly suppressed.
- */
 export type { MessageSourceRoute } from "../api/labrastro-message-delivery-schemas";
 
 export type { ListMessageSourceRoutesResponse } from "../api/labrastro-message-delivery-schemas";
@@ -39,9 +30,6 @@ export interface SaveMessageSourceRouteRequest {
   expected_revision?: number;
 }
 
-/** Workspace-admin consent for one team (scope, project range, bot, target).
- * `project_id` null is the explicit workspace-wide grant — never interchangeable
- * with a project grant, and activity/comment approvals never cover each other. */
 export type { MessageSourceApprovedTarget } from "../api/labrastro-message-delivery-schemas";
 
 export type { ListMessageSourceApprovedTargetsResponse } from "../api/labrastro-message-delivery-schemas";
@@ -56,26 +44,18 @@ export interface ApproveMessageSourceTargetRequest {
   target_message_id?: string;
 }
 
-/** GET /api/message-event-catalog — what the config UI may offer. */
 export type { MessageEventCatalogPersonalEvent } from "../api/labrastro-message-delivery-schemas";
 
 export type { MessageEventCatalogTeamEvent } from "../api/labrastro-message-delivery-schemas";
 
 export type { MessageEventCatalog } from "../api/labrastro-message-delivery-schemas";
 
-/**
- * Records-page row for a source route. Same projection as the automation
- * listing (no snapshots), plus `source_scope` / `source_project_id`; run
- * fields stay null — source records are located by `source_ref_id`.
- */
 export type { MessageSourceDelivery } from "../api/labrastro-message-delivery-schemas";
 
 export type { ListMessageRouteDeliveriesResponse } from "../api/labrastro-message-delivery-schemas";
 
-/** Frozen content for inbox/activity/comment sources (detail endpoint only). */
 export type { MessageSourceContentSnapshot } from "../api/labrastro-message-delivery-schemas";
 
-/** Source-record locator (detail endpoint only). A locator, never a grant. */
 export type { MessageSourceRef } from "../api/labrastro-message-delivery-schemas";
 
 export type { GetMessageRouteDeliveryResponse } from "../api/labrastro-message-delivery-schemas";

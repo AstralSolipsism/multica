@@ -67,13 +67,16 @@ it("forwards page_size/q/cursor unchanged and never constructs a cursor", async 
 
 it("throws on malformed pages so the picker shows its failure state instead of merging unverified rows", async () => {
   stubFetch({ items: [{ name: "no id" }], has_more: false, next_cursor: "" });
-  await expect(client.listLarkTargetChats("ws", "inst")).rejects.toThrow();
+  await expect(client.listLarkTargetChats("ws", "inst"))
+    .rejects.toMatchObject({ body: { code: "response_unreadable" } });
 
   stubFetch({ items: [{ message_id: "om_x", chat_id: "oc_a" }], has_more: false, next_cursor: "" });
-  await expect(client.listLarkMessageAnchors("ws", "inst", "oc_a")).rejects.toThrow();
+  await expect(client.listLarkMessageAnchors("ws", "inst", "oc_a"))
+    .rejects.toMatchObject({ body: { code: "response_unreadable" } });
 
   stubFetch({ chat_list_supported: "yes" });
-  await expect(client.getLarkTargetCapabilities("ws", "inst")).rejects.toThrow();
+  await expect(client.getLarkTargetCapabilities("ws", "inst"))
+    .rejects.toMatchObject({ body: { code: "response_unreadable" } });
 });
 
 it("defaults descriptive chat fields so drift degrades a row instead of failing the page", async () => {

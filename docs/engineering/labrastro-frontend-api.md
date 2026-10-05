@@ -52,10 +52,12 @@ the regression suite exercises all five module-first import orders.
 result. It emits `ApiError` with `body.code = response_unreadable` and status
 0. Configuration/consent reads cannot become a verified empty configuration.
 The dependency writes and batch-update result keep their existing shape-only
-validation and now expose this code instead of English UI sentences.
+validation and expose the same code. Error messages retain endpoint diagnostics
+for debugging; views select localized failure copy from the code.
 
 `parseConfirmedWrite` is OL-118's existing helper extracted from the client.
 Malformed shapes or failed operation evidence emit `response_unconfirmed`.
+Every caller must supply its confirmation predicate explicitly.
 Message writes still require the returned route/delivery/approval ID;
 revocations still require `revoked === true`. Lark writes retain their
 schema-only confirmation contract: a validated `conversation: null` is a
@@ -74,12 +76,18 @@ re-exported from the schemas. Request-only interfaces remain handwritten:
 they describe different payloads, not mirrors of response schemas. Inferred
 output types include defaults actually supplied by parsing, such as
 `requested_by: null`; test fixtures must represent those parsed outputs.
+Field contract comments live on schema properties so inferred types preserve
+their editor documentation; type-level comments live on the inferred aliases.
 
 Views own localized failure copy. Lark discovery maps unreadable responses to
 the existing picker translation; private-chat and conversation authorization
 map unreadable/unconfirmed codes into the fork `lark` namespace in all five
-locales. Dependency views already fall back through `clientErrorMessage` to
-the fork `dependencies` namespace, which cannot expose a status-0 diagnostic.
+locales. The dependency editor uses `clientErrorMessage` with a localized
+fallback in the fork `dependencies` namespace. Issue creation, the batch toolbar
+and run confirmation explicitly map `response_unreadable` to their existing
+`create_issue.toast_failed`, `batch.update_failed` and `run_confirm.toast_failed`
+translations before considering `err.message`. These paths keep core endpoint
+diagnostics out of user-facing failure toasts.
 The existing bounded discovery-read retry policy is preserved for the new
 coded error class. No upstream locale file is modified.
 
@@ -94,6 +102,9 @@ coded error class. No upstream locale file is modified.
 | `packages/core/api/schemas.ts` | Re-exports message/quota/skill schemas. The pre-existing `IssueSchema.dispatch` and `SkillSchema.diagnostics` extensions and their imports remain: these fields extend upstream entities and are not standalone schemas. |
 | `packages/core/types/lark.ts` | Re-exports schema-inferred installation/list and fork discovery/conversation types; device-flow response interfaces remain unchanged. |
 | `packages/views/settings/components/lark-conversation-form.tsx` | Uses the fork `lark` copy for unconfirmed authorization responses; drafts and mutation ownership are unchanged. |
+| `packages/views/modals/create-issue.tsx` | Maps unreadable dependency-create responses to the existing localized failure copy while preserving the draft. |
+| `packages/views/issues/components/batch-action-toolbar.tsx` | Maps unreadable batch-update responses to the existing localized failure copy while preserving the selection. |
+| `packages/views/modals/run-confirm.tsx` | Maps unreadable batch-update responses to the existing localized failure copy and leaves the dialog open. |
 
 The three methods stay in place because upstream callers already use their
 names. Renaming them would require sweeping callers and could leave some
@@ -119,7 +130,9 @@ client, including message delivery/contracts, Lark discovery/conversations,
 dependency/graph, quota/runtime and skill-package suites. The new helper suite
 covers collisions, descriptors, module import order and shared parser policy.
 Lark query tests cover retry preservation; views tests cover error localization
-and retaining an unconfirmed draft/dialog.
+and retaining an unconfirmed draft/dialog or batch selection. Malformed-response
+tests assert each Lark/dependency method's error code, including compound create
+and update responses, because those codes control localized copy and read retry.
 
 Run the complete core/views suites, the root typecheck, and frontend lint:
 

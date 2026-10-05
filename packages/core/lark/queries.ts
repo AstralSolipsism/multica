@@ -85,11 +85,12 @@ export const LARK_MESSAGE_ANCHORS_PAGE_SIZE = 20;
 
 /** Discovery errors are mostly stable answers for this caller (403/404/409)
  * — retrying them just delays the picker's honest state. Only genuine
- * transient failures (network, provider rate limit, 5xx) earn a retry. */
+ * transient failures (network, unreadable response, provider rate limit, 5xx)
+ * earn a retry. */
 function isTransientDiscoveryError(err: unknown): boolean {
   if (!(err instanceof ApiError)) return true;
-  // These were ordinary Errors before fork parsers gained stable codes.
-  // Keep the existing read retry policy while views localize the failure.
+  // An unreadable response does not establish a stable permission/availability
+  // answer. Discovery is read-only, so a bounded retry can recover a valid page.
   if (errorCode(err) === "response_unreadable") return true;
   return err.status === 429 || err.status >= 500;
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { buildIssueStatusCatalog } from "@multica/core/issue-statuses";
+import { ApiError } from "@multica/core/api";
 import {
   configureShortcutPlatform,
   createShortcutChord,
@@ -303,5 +304,21 @@ describe("RunConfirmModal", () => {
     await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith("boom"));
     expect(onClose).not.toHaveBeenCalled();
     expect(mockToast.success).not.toHaveBeenCalled();
+  });
+
+  it("localizes an unreadable batch response and keeps confirmation available", async () => {
+    const diagnostic = "Unreadable response from POST /api/issues/batch-update";
+    mockBatch.mockRejectedValueOnce(new ApiError(diagnostic, 0, "", {
+      code: "response_unreadable",
+    }));
+    const onClose = vi.fn();
+    render(<RunConfirmModal onClose={onClose} data={{ ...single, issueIds: ["issue-1", "issue-2"] }} />);
+    fireEvent.click(confirmButton());
+
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith("failed"));
+    expect(mockToast.error).not.toHaveBeenCalledWith(diagnostic);
+    expect(mockToast.success).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(confirmButton()).not.toBeDisabled();
   });
 });

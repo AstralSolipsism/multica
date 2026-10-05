@@ -8,7 +8,8 @@ const labrastroLarkApi = {
     const raw = await clientFetch<unknown>(this, `/api/workspaces/${workspaceId}/lark/installations/${installationId}/conversation`, {
       method: "PUT", body: JSON.stringify({ scope: "workspace", chats }),
     });
-    parseConfirmedWrite(raw, LarkConversationResponseSchema, "setLarkConversation");
+    // Schema validation is the confirmation evidence; null confirms revocation.
+    parseConfirmedWrite(raw, LarkConversationResponseSchema, "setLarkConversation", () => true);
   },
 
   // Lark target discovery (OL-72 contract): read-only group / message-anchor
@@ -90,7 +91,8 @@ const labrastroLarkApi = {
       `/api/workspaces/${workspaceId}/lark/installations/${installationId}/private-chat-candidates/confirm`,
       { method: "POST", body: JSON.stringify({ scope: "workspace", candidate_ids: candidateIds }) },
     );
-    const parsed = parseConfirmedWrite(raw, LarkConversationResponseSchema, "confirmLarkPrivateChatCandidates");
+    // The validated envelope is authoritative, including a null conversation.
+    const parsed = parseConfirmedWrite(raw, LarkConversationResponseSchema, "confirmLarkPrivateChatCandidates", () => true);
     return parsed.conversation;
   },
 };

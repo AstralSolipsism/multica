@@ -6,8 +6,6 @@ export type { LarkConversationGrant } from "../lark/schema";
 // discovery for the group / message-anchor / conversation-grant pickers; it
 // never saves or approves a target.
 
-/** What the configured transport can do — describes the transport, not the
- * current provider permission grants (those surface as errors on list calls). */
 export type { LarkTargetCapabilities } from "../lark/schema";
 
 // --- Private chat discovery (OL-75 contract, OL-76 frontend) ---
@@ -18,33 +16,20 @@ export type { LarkTargetCapabilities } from "../lark/schema";
 
 export type { LarkPrivateChatCandidateSender } from "../lark/schema";
 
-/** One observed private chat awaiting human confirmation. Confirmation
- * identity is the server-issued candidate `id`; conversation identity is
- * (installation_id, chat_id). Never substitute one for the other. */
 export type { LarkPrivateChatCandidate } from "../lark/schema";
 
 export type { LarkPrivateChatCandidateList } from "../lark/schema";
 
-/** One joined group as returned by the discovery list. Identity is
- * (installation_id, chat_id); name/description are NOT unique. */
 export type { LarkDiscoveredChat } from "../lark/schema";
 
 export type { LarkChatsPage } from "../lark/schema";
 
 export type { LarkMessageAnchorSender } from "../lark/schema";
 
-/** One selectable message anchor. `summary` is pre-flattened plain text
- * (never HTML/Markdown); `create_time` is an epoch-millisecond string. */
 export type { LarkMessageAnchor } from "../lark/schema";
 
 export type { LarkAnchorsPage } from "../lark/schema";
 
-/** A Lark Bot installation bound to a single Multica agent.
- *
- * Wire shape mirrors `LarkInstallationResponse` in
- * `server/internal/handler/lark.go`. New fields the backend adds in the
- * future MUST default to optional so older desktop builds keep parsing
- * the response — see CLAUDE.md → API Response Compatibility. */
 export type { LarkInstallation } from "../lark/schema";
 
 export type { ListLarkInstallationsResponse } from "../lark/schema";

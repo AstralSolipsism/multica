@@ -49,7 +49,7 @@ export function parseConfirmedWrite<T>(
   raw: unknown,
   schema: ZodType<T>,
   endpoint: string,
-  confirmed: (value: T) => boolean = () => true,
+  confirmed: (value: T) => boolean,
 ): T {
   const parsed = parseWithFallback<T | null>(raw, schema, null, { endpoint });
   if (parsed === null || !confirmed(parsed)) {
