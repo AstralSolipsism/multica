@@ -108,5 +108,14 @@
       "unsupported": "This server cannot discover private chats yet. Enter the ID manually.",
       "generic": "Could not load the private chat list. Retry."
     }
+  },
+  "help": {
+    "discord": "Feishu group"
+  },
+  "sidebar": {
+    "discord_card": {
+      "title": "Feishu group",
+      "dismiss": "Dismiss"
+    }
   }
 }

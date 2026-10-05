@@ -70,8 +70,7 @@ function DagCanvasInner({
   onRevealIssues,
   onFocusGroup,
 }: DagCanvasProps) {
-  const { t } = useT("issues"),
-    storeApi = useViewStoreApi();
+  const storeApi = useViewStoreApi();
   const { t: tDag } = useT("dag");
   const selectedNodeId = useViewStore((s) => s.dagSelectedNodeId);
   const { getViewport, setViewport, getInternalNode, viewportInitialized } = useReactFlow<

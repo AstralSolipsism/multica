@@ -32,7 +32,7 @@
     "download_desktop": "桌面端",
     "docs": "文档",
     "changelog": "更新日志",
-    "discord": "飞书群",
+    "discord": "Discord",
     "feedback": "反馈",
     "server_version": "服务器版本 {{version}}"
   },
@@ -58,7 +58,7 @@
     "show_fewer_pins": "收起",
     "unread_overflow": "99+",
     "discord_card": {
-      "title": "加入飞书群",
+      "title": "加入 Discord",
       "dismiss": "关闭"
     }
   }

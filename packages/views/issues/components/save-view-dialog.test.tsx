@@ -32,9 +32,12 @@ vi.mock("./filter-chips-bar", () => ({
   FilterChipList: ({ trailing }: { trailing?: React.ReactNode }) => trailing,
 }));
 
-function renderFields(sortBy: IssueViewState["sortBy"]) {
+function renderFields(
+  sortBy: IssueViewState["sortBy"],
+  state: Partial<IssueViewState> = {},
+) {
   const store = createStore<IssueViewState>()(viewStoreSlice);
-  store.setState({ sortBy, sortDirection: "asc" });
+  store.setState({ sortBy, sortDirection: "asc", ...state });
   renderWithI18n(
     <ViewStoreProvider store={store}>
       <DraftDefinitionFields />
@@ -65,6 +68,25 @@ describe("DraftDefinitionFields ordering", () => {
     expect(
       screen.queryByRole("button", { name: "Reverse workflow order" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("DraftDefinitionFields DAG labels", () => {
+  it.each([
+    ["LR", "Left to right"],
+    ["TB", "Top to bottom"],
+  ] as const)("renders the graph layout, grouping and %s direction", async (dagDirection, label) => {
+    const user = userEvent.setup();
+    renderFields("position", { viewMode: "dag", dagDirection });
+
+    const summary = screen.getByRole("button", { name: /Default display/ });
+    expect(summary).toHaveTextContent(`Graph · Issue groups · ${label}`);
+    await user.click(summary);
+
+    expect(screen.getByRole("combobox", { name: "Layout" })).toHaveTextContent("Graph");
+    expect(screen.getByRole("combobox", { name: "Direction" })).toHaveTextContent(label);
+    await user.click(screen.getByRole("combobox", { name: "Layout" }));
+    expect(screen.getByRole("option", { name: "Graph" })).toBeInTheDocument();
   });
 });
 

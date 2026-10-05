@@ -108,5 +108,14 @@
       "unsupported": "이 서버에서는 아직 개인 채팅을 발견할 수 없습니다. ID를 직접 입력하세요.",
       "generic": "개인 채팅 목록을 불러올 수 없습니다. 다시 시도하세요."
     }
+  },
+  "help": {
+    "discord": "Feishu 그룹"
+  },
+  "sidebar": {
+    "discord_card": {
+      "title": "Feishu 그룹",
+      "dismiss": "닫기"
+    }
   }
 }

@@ -54,11 +54,11 @@ import type messageDelivery from "../locales/en/message-delivery.json";
 declare global {
   interface I18nResources {
     common: typeof common;
-    "quota": typeof quota;
-    "lark": typeof lark;
+    quota: typeof quota;
+    lark: typeof lark;
     "fork-ui": typeof forkUi;
-    "dependencies": typeof dependencies;
-    "dag": typeof dag;
+    dependencies: typeof dependencies;
+    dag: typeof dag;
     "autopilot-delivery": typeof autopilotDelivery;
     "agent-config": typeof agentConfig;
     auth: typeof auth;

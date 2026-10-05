@@ -27,6 +27,7 @@ import { useT } from "../i18n";
 
 export function HelpLauncher() {
   const { t } = useT("layout");
+  const { t: tLark } = useT("lark");
   const serverVersion = useConfigStore((state) => state.serverVersion);
   const [qrOpen, setQrOpen] = useState(false);
   // Web-only: offering "download the desktop app" inside the desktop app is
@@ -75,7 +76,7 @@ export function HelpLauncher() {
           )}
           <DropdownMenuItem onClick={() => setQrOpen(true)}>
             <QrCode className="h-3.5 w-3.5" />
-            {t(($) => $.help.discord)}
+            {tLark(($) => $.help.discord)}
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => useModalStore.getState().open("feedback")}

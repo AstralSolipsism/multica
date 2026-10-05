@@ -107,7 +107,6 @@ const LAYOUT_LABEL_KEY = {
   table: "table",
   swimlane: "swimlane",
   gantt: "gantt",
-  dag: "dag",
 } as const;
 
 const GROUPING_LABEL_KEY = {
@@ -187,9 +186,11 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
     workspaceProperties.find((p) => `property:${p.id}` === key)?.name ??
     t(($) => $.save_view.custom_property);
 
-  const layoutLabel = viewMode === "dag"
-    ? tDag(($) => $.view.dag)
-    : t(($) => $.view[LAYOUT_LABEL_KEY[viewMode]]);
+  const layoutLabelOf = (mode: ViewMode) =>
+    mode === "dag"
+      ? tDag(($) => $.view.dag)
+      : t(($) => $.view[LAYOUT_LABEL_KEY[mode]]);
+  const layoutLabel = layoutLabelOf(viewMode);
   const groupingLabel =
     viewMode === "board"
       ? grouping in GROUPING_LABEL_KEY
@@ -280,9 +281,7 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
                   ] as const
                 ).map((mode) => ({
                   value: mode as string,
-                  label: mode === "dag"
-                    ? tDag(($) => $.view.dag)
-                    : t(($) => $.view[LAYOUT_LABEL_KEY[mode]]),
+                  label: layoutLabelOf(mode),
                 }))}
                 value={viewMode}
                 onValueChange={(v) => {
@@ -304,9 +303,7 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
                       ] as const
                     ).map((mode) => (
                       <SelectItem key={mode} value={mode}>
-                        {mode === "dag"
-                          ? tDag(($) => $.view.dag)
-                          : t(($) => $.view[LAYOUT_LABEL_KEY[mode]])}
+                        {layoutLabelOf(mode)}
                       </SelectItem>
                     ))}
                   </SelectGroup>

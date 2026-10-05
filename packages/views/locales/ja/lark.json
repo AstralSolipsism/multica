@@ -108,5 +108,14 @@
       "unsupported": "このサーバーでは個別チャットの検出をまだ利用できません。ID を手動で入力してください。",
       "generic": "個別チャットのリストを読み込めませんでした。もう一度お試しください。"
     }
+  },
+  "help": {
+    "discord": "Feishu グループ"
+  },
+  "sidebar": {
+    "discord_card": {
+      "title": "Feishu グループ",
+      "dismiss": "閉じる"
+    }
   }
 }

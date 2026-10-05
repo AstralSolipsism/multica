@@ -108,5 +108,14 @@
       "unsupported": "当前服务端暂不支持私聊发现，请手动输入 ID。",
       "generic": "无法加载私聊列表，请重试。"
     }
+  },
+  "help": {
+    "discord": "飞书群"
+  },
+  "sidebar": {
+    "discord_card": {
+      "title": "加入飞书群",
+      "dismiss": "关闭"
+    }
   }
 }

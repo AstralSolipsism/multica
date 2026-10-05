@@ -25,14 +25,15 @@ helper from core.
 
 Fork additions live outside upstream dictionaries. The migration from the
 shared upstream revision `2ea01ae4e` preserves every string, interpolation and
-locale-specific plural form. The six dictionaries `issues`, `settings`,
-`agents`, `modals`, `runtimes` and `autopilots` match that revision byte for byte.
+locale-specific plural form. The seven dictionaries `issues`, `settings`,
+`agents`, `modals`, `runtimes`, `autopilots` and `layout` match that revision
+byte for byte.
 
 | Namespace | Copy moved from upstream dictionaries |
 | --- | --- |
 | `dependencies` | `issues.dependencies.*` becomes `detail.*`; prerequisite actions, blocked-trigger copy, and modal additions retain their key paths. |
 | `dag` | `issues.dag.*` moves to the namespace root; `issues.view.dag` and `issues.view.tooltip_dag` retain their `view.*` paths. |
-| `lark` | Fork additions under `settings.lark.*` move to the root; conversation attribution, rejected wakeup input, and the community QR dialog retain their key paths. |
+| `lark` | Fork additions under `settings.lark.*` move to the root; conversation attribution, rejected wakeup input, the community QR dialog, `layout.help.discord` and `layout.sidebar.discord_card.{title,dismiss}` retain their key paths without the original namespace prefix. |
 | `quota` | `runtimes.quota.*` moves to the root; `runtimes.list.col_quota` becomes `column_label`. |
 | `autopilot-delivery` | `autopilots.deliveries.filter.*` becomes `filter.*`. |
 | `agent-config` | Agent configuration additions retain their key paths. |
