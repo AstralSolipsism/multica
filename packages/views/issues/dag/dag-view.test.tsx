@@ -233,6 +233,8 @@ describe("DagView", () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
+    qc.clear();
   });
 
   it("shows a loading state until the first complete graph arrives", () => {
@@ -555,6 +557,144 @@ describe("DagView", () => {
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
     expect(store.getState().dagCollapsedIds).toContain("issue:hidden");
   });
+
+  it("waits for a fresh snapshot before pruning a fold missing from a settled stale cache", async () => {
+    store.getState().setDagCollapsedIds(["issue:hidden"]);
+    const graph = makeGraph([makeNode("a")]);
+    const surface = (isStale: boolean) => (
+      <QueryClientProvider client={qc}>
+        <ViewStoreProvider store={store}>
+          <DagView
+            graphQuery={graphQuery({ data: graph, isStale })}
+            hasActiveFilters={false}
+            membershipComplete
+            layoutRunnerFactory={syncLayoutRunner}
+          />
+        </ViewStoreProvider>
+      </QueryClientProvider>
+    );
+    const view = render(surface(true));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    expect(store.getState().dagCollapsedIds).toEqual(["issue:hidden"]);
+    view.rerender(surface(false));
+    await waitFor(() => expect(store.getState().dagCollapsedIds).toEqual([]));
+  });
+
+  it("cancels a stalled expand-all, restores the exact folds, and ignores its late layout", async () => {
+    const backup = ["issue:one"];
+    store.getState().setDagCollapsedIds(backup);
+    store.getState().setDagIndependentExpanded(true);
+    const graph = makeGraph([
+      makeNode("one"),
+      makeNode("a", { parentIssueId: "one" }),
+      makeNode("two"),
+      makeNode("b", { parentIssueId: "two" }),
+      makeNode("solo"),
+    ]);
+    const pending: { request: DagLayoutRequest; done: (response: DagLayoutResponse) => void }[] = [];
+    const runner = {
+      prepare: vi.fn(),
+      terminate: vi.fn(),
+      execute: (request: DagLayoutRequest, done: (response: DagLayoutResponse) => void) => {
+        pending.push({ request, done });
+      },
+    };
+    const finish = (index: number) => {
+      const { request, done } = pending[index]!;
+      done({
+        requestId: request.requestId,
+        positions: Object.fromEntries(
+          request.nodes.map((node, i) => [node.id, { x: i * 100, y: 40 }]),
+        ),
+        groups: {},
+        routes: {},
+        ports: {},
+        elapsedMs: 1,
+      });
+    };
+    renderDagView(graphQuery({ data: graph }), false, () => runner);
+    act(() => finish(0));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    const committed = canvasSpy.mock.calls.at(-1)![0].positions;
+    vi.useFakeTimers();
+    act(() => screen.getByRole("button", { name: /dag.expand_all/ }).click());
+    expect(store.getState().dagCollapsedIds).toEqual([]);
+    expect(pending).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /dag.layout_cancel/ })).toBeNull();
+    act(() => vi.advanceTimersByTime(5500));
+    act(() => screen.getByRole("button", { name: /dag.layout_cancel/ }).click());
+    expect(runner.terminate).toHaveBeenCalledOnce();
+    expect(store.getState().dagCollapsedIds).toEqual(backup);
+    expect(store.getState().dagIndependentExpanded).toBe(true);
+    expect(pending).toHaveLength(3);
+    act(() => finish(1));
+    expect(canvasSpy.mock.calls.at(-1)![0].positions).toBe(committed);
+    act(() => finish(2));
+    const restored = canvasSpy.mock.calls.at(-1)![0];
+    expect(restored.positions.has("a")).toBe(false);
+    expect(restored.positions.has("b")).toBe(true);
+    expect(restored.positions.has("solo")).toBe(true);
+    expect(screen.queryByRole("button", { name: /dag.layout_cancel/ })).toBeNull();
+  });
+
+  it.each(["issue:line", "independent:root"])(
+    "focuses a folded %s only after its expanded layout commits",
+    async (groupId) => {
+      store.getState().setDagCollapsedIds(["issue:line"]);
+      const graph = makeGraph([
+        makeNode("line"),
+        makeNode("child", { parentIssueId: "line" }),
+        makeNode("solo"),
+      ]);
+      const pending: { request: DagLayoutRequest; done: (response: DagLayoutResponse) => void }[] =
+        [];
+      const factory = () => ({
+        prepare: vi.fn(),
+        terminate: vi.fn(),
+        execute: (request: DagLayoutRequest, done: (response: DagLayoutResponse) => void) =>
+          pending.push({ request, done }),
+      });
+      const finish = () => {
+        const { request, done } = pending.at(-1)!;
+        done({
+          requestId: request.requestId,
+          positions: Object.fromEntries(
+            request.nodes.map((node, i) => [node.id, { x: i * 100, y: 40 }]),
+          ),
+          groups: {},
+          routes: {},
+          ports: {},
+          elapsedMs: 1,
+        });
+      };
+      renderDagView(graphQuery({ data: graph }), false, factory);
+      act(finish);
+      await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+      const original = canvasSpy.mock.calls.at(-1)![0];
+      act(() => original.onFocusGroup(groupId));
+      expect(canvasSpy.mock.calls.at(-1)![0].focusRequest).toBeNull();
+      expect(canvasSpy.mock.calls.at(-1)![0].projection).toBe(original.projection);
+      if (groupId === "issue:line") expect(store.getState().dagCollapsedIds).toEqual([]);
+      else {
+        expect(store.getState().dagIndependentExpanded).toBe(true);
+        expect(store.getState().dagCollapsedIds).toEqual(["issue:line"]);
+      }
+      act(finish);
+      expect(canvasSpy.mock.calls.at(-1)![0].focusRequest).toEqual({
+        issueIds: [],
+        groupId,
+        nonce: 1,
+      });
+      // Already expanded groups focus immediately, without another layout.
+      act(() => canvasSpy.mock.calls.at(-1)![0].onFocusGroup(groupId));
+      expect(canvasSpy.mock.calls.at(-1)![0].focusRequest).toEqual({
+        issueIds: [],
+        groupId,
+        nonce: 2,
+      });
+      expect(pending).toHaveLength(2);
+    },
+  );
 
   it("keeps parent status, own stage and child run state in its group header", () => {
     const graph = makeGraph([

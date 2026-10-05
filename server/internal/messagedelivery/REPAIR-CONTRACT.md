@@ -87,8 +87,8 @@ approval. Existing diagnostic rows with no actor fail closed when replayed;
 request a new diagnostic to establish fresh authority.
 
 The migration was exercised on an empty database and on a database originally
-migrated from the previous PR head. Rollback of 463 deletes only unsent unknown
-markers, restores the earlier checks, and removes the two new columns. It must
+migrated from the previous PR head. Rollback of
+`463_labrastro_message_repair_state` deletes only unsent unknown markers, restores the earlier checks, and removes the two new columns. It must
 be paired with the older binary, with delivery workers stopped. Reapplying it
 rediscovers suppressed unknown markers. It does not restore source evidence or
 infer consent that never existed.

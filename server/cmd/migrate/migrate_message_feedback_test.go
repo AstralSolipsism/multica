@@ -62,6 +62,29 @@ func TestMessageFeedbackPopulatedUpgradeRollbackAndIndexRecovery(t *testing.T) {
 		t.Fatalf("invalid-index retry: %v", err)
 	}
 	assertIndexValidity(t, pool, schema, "uq_labrastro_message_feedback_identity", true)
+	// A committed index whose ledger write was lost must survive replay with
+	// the same OID. Cleanup removes only invalid indexes, never valid ones.
+	for _, version := range versions[1:] {
+		index := concurrentIndexCleanups[version]
+		var before, after uint32
+		if err := pool.QueryRow(ctx, `SELECT to_regclass($1)::oid`, index).Scan(&before); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM schema_migrations WHERE version=$1`, version); err != nil {
+			t.Fatal(err)
+		}
+		if err := run("up", []string{version}); err != nil {
+			t.Fatalf("replay %s with valid index: %v", version, err)
+		}
+		if err := pool.QueryRow(ctx, `SELECT to_regclass($1)::oid`, index).Scan(&after); err != nil {
+			t.Fatal(err)
+		}
+		if before != after {
+			t.Fatalf("replay %s replaced valid index: OID %d -> %d", version, before, after)
+		}
+		assertIndexReadyAndValid(t, pool, schema, index, true)
+		count(`SELECT count(*) FROM schema_migrations WHERE version='`+version+`'`, 1)
+	}
 	count(`SELECT count(*) FROM labrastro_message_feedback`, 1)
 	count(`SELECT count(*) FROM labrastro_message_delivery WHERE content_snapshot->>'text'='historical result'`, 3)
 	count(`SELECT count(*) FROM labrastro_message_receipt`, 3)

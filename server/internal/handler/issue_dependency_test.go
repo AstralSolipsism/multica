@@ -87,9 +87,12 @@ func TestDependencyMultiProjectReadWriteAndVersion(t *testing.T) {
 	}
 	fx.Exec(t, "UPDATE issue SET status='done',revision=revision+1 WHERE id=$1", a)
 	ready := dependencies(t, h, fx, b)
-	if len(ready.Unsatisfied) != 0 || ready.DependencyVersion == v.DependencyVersion {
-		t.Fatal("completion did not update readiness/version")
+	if len(ready.Unsatisfied) != 0 || ready.DependencyVersion != v.DependencyVersion {
+		t.Fatal("completion did not refresh the summary or invalidated a structural version")
 	}
+	// A display-only change does not reject an edit based on the same graph.
+	testutil.Call(t, h.UpdateIssueWithDependencies, dependencyRequest(fx, http.MethodPatch, b, map[string]any{"blocked_by": []string{a, c}, "expected_dependency_version": v.DependencyVersion}, "jwt")).Want(http.StatusOK)
+	replaceDependencies(t, h, fx, b, []string{a}, "jwt", http.StatusOK)
 	var failure map[string]any
 	testutil.Call(t, h.UpdateIssueWithDependencies, dependencyRequest(fx, http.MethodPatch, b, map[string]any{"blocked_by": []string{}, "expected_dependency_version": v.DependencyVersion, "title": "must roll back"}, "jwt")).Want(http.StatusConflict).JSON(&failure)
 	if failure["reason_code"] != "dependency_version_conflict" {
@@ -385,8 +388,8 @@ func TestDependencyDeepHierarchyAndTextOnlyEdit(t *testing.T) {
 		last = dependencyIssue(t, fx, "descendant", testutil.Cols{"parent_issue_id": last})
 	}
 	testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, root, map[string]any{"parent_issue_id": last}, "jwt")).Want(http.StatusConflict)
-	// A plain title edit joins the structure queue but still avoids loading and
-	// locking the full graph. Hold an unrelated row without the structure lock.
+	// A plain title edit does not load or lock the full graph. Hold an unrelated
+	// row without the structure lock.
 	tx, err := testPool.Begin(context.Background())
 	if err != nil {
 		t.Fatal(err)

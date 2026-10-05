@@ -365,12 +365,38 @@ to external channels.
 
 Do not describe these downs as lossless:
 
+- `452_labrastro_message_tables` drops routes, delivery history/dedup identities
+  and receipts. Up recreates empty tables, not the removed data.
+- `459_labrastro_message_approved_target` drops target approvals and their
+  consent/audit history; up cannot reconstruct those approvals.
+- `551_channel_conversation_root` drops frozen root references and their
+  stamping trigger/function. Up derives roots only from surviving ancestry;
+  references whose parents were pruned cannot be recovered by a down/up cycle.
 - `551_pr_merge_status` removes the selected PR-merge status setting. Its up
   migration also writes the legacy `pr_auto_complete_enabled=false` setting
   in affected workspaces; down does not restore the previous value.
 - `555_wakeup_system_rule` removes system wakeups and their receipts.
 - `557_wakeup_conditions` drops condition, fire-limit/count and pause data.
 - `558_issue_child_event` removes the child-event history/queue.
+- `9001_labrastro_skill_packages` drops skill folders, packages and placements,
+  including their source/placement metadata. Up recreates empty tables.
+
+OL-127 retains these shipped down behaviors and documents their data loss
+rather than adding new refusal guards. This preserves intentional rollback
+semantics; it does not make rollback a recovery mechanism. Use a backup and the
+matching binary for restoration, with affected workers/dispatch stopped.
+In particular, the CLI can reach `551_channel_conversation_root` and
+`9001_labrastro_skill_packages`; do not assume another migration will stop it.
+
+OL-127 also adds `IF NOT EXISTS` to the released index ups
+`475_labrastro_message_feedback_identity_index`,
+`476_labrastro_message_feedback_pending_index` and
+`477_labrastro_message_feedback_comment_index`. Databases that already recorded
+these full stems skip their SQL and are unaffected. If SQL committed but its
+ledger entry was lost, replay preserves the valid index and records the stem.
+The registered cleanup hooks still drop INVALID leftovers before retry, so
+`IF NOT EXISTS` cannot silently accept an interrupted build through the runner.
+Index definitions and names are unchanged.
 
 ## Verification commands and limits
 
