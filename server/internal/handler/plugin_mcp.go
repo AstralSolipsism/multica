@@ -131,7 +131,7 @@ func (h *Handler) ResolvePluginMCPCredential(w http.ResponseWriter, r *http.Requ
 	if !h.requirePluginsV1(w, r) {
 		return
 	}
-	_, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, chi.URLParam(r, "id"))
+	_, workspaceID, ok := h.requireDaemonPluginTaskAccess(w, r)
 	if !ok {
 		return
 	}

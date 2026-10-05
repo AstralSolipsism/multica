@@ -71,6 +71,27 @@ func TestExternalConversationDenialKeepsIndependentReceipts(t *testing.T) {
 	}
 }
 
+func TestExternalConversationOriginOnlyReceiptIsDenied(t *testing.T) {
+	f, s, w, issue, _ := deniedReceiptFixture(t, []string{"comment.created"})
+	// The source-change trigger repairs lineage. Clear only the root in a
+	// second update to simulate a malformed historical row without disabling it.
+	f.fx.Exec(t, "UPDATE agent_task_queue SET originator_source='channel_integration' WHERE id=$1", f.root)
+	f.fx.Exec(t, "UPDATE agent_task_queue SET conversation_root_task_id=NULL WHERE id=$1", f.root)
+	f.fx.Comment(t, issue, "malformed external source", testutil.Cols{"author_type": "agent", "author_id": f.agent, "source_task_id": f.root})
+	if err := s.TickWorkspaces(context.Background(), policyUUID(t, testWorkspaceID)); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE context->>'wakeup_id'=$1", util.UUIDToString(w.ID)); n != 0 {
+		t.Fatal("origin-only external source was promoted to a first-party run")
+	}
+	if n := f.fx.Count(t, "SELECT count(*) FROM issue_wakeup_receipt WHERE wakeup_id=$1 AND event_type='comment.created' AND processed_at IS NOT NULL AND task_id IS NULL", w.ID); n != 1 {
+		t.Fatal("origin-only receipt was not durably rejected")
+	}
+	if n := f.fx.Count(t, "SELECT count(*) FROM activity_log WHERE issue_id=$1 AND details->>'outcome'='rejected'", issue); n != 1 {
+		t.Fatal("origin-only rejection was not audited")
+	}
+}
+
 func TestExternalConversationDenialCommitsDespiteOccupiedSlot(t *testing.T) {
 	for _, status := range []string{"queued", "dispatched", "deferred"} {
 		t.Run(status, func(t *testing.T) {
@@ -115,48 +136,52 @@ func TestExternalConversationDenialCommitsDespiteOccupiedSlot(t *testing.T) {
 }
 
 func TestExternalConversationSystemSlotCommitsDenial(t *testing.T) {
-	f, s, _, parent, agent := deniedReceiptFixture(t, []string{"comment.created"})
-	ctx := context.Background()
-	f.fx.Exec(t, "UPDATE issue SET assignee_type='agent',assignee_id=$2 WHERE id=$1", parent, agent)
-	f.fx.Exec(t, "UPDATE agent SET permission_mode='public_to' WHERE id=$1", agent)
-	f.fx.Insert(t, "agent_invocation_target", testutil.Cols{"agent_id": agent, "target_type": "workspace", "target_id": testWorkspaceID})
-	first := f.fx.Issue(t, "external stage", testutil.Cols{"parent_issue_id": parent, "stage": 1})
-	second := f.fx.Issue(t, "human stage", testutil.Cols{"parent_issue_id": parent, "stage": 2})
-	if err := s.ProcessChildEvents(ctx, policyUUID(t, parent)); err != nil {
-		t.Fatal(err)
-	}
-	var wid string
-	f.fx.QueryRow(t, "SELECT id::text FROM issue_wakeup WHERE issue_id=$1 AND system_rule='child_done'", parent).Scan(&wid)
-	slotContext, _ := json.Marshal(map[string]any{"wakeup_id": wid, "channel_issue_media_pending": true})
-	blocking := f.fx.Task(t, agent, testutil.Cols{"issue_id": parent, "runtime_id": f.runtime, "status": "queued", "originator_source": "direct_human", "originator_user_id": testUserID, "accountable_user_id": testUserID, "context": string(slotContext)})
-	req := testutil.WithHeaders(testutil.JSONRequest("PUT", "/api/issues/"+first, map[string]any{"status": "done"}), "Authorization", "Bearer "+f.token)
-	testutil.Call(t, testServer.Config.Handler.ServeHTTP, req).Want(200)
-	if n := f.fx.Count(t, "SELECT count(*) FROM issue_wakeup_receipt WHERE wakeup_id=$1 AND event_type='condition.met' AND processed_at IS NULL", wid); n != 1 {
-		t.Fatal("first authorized stage did not wait on the occupied slot")
-	}
-	f.fx.Exec(t, "UPDATE agent_task_queue SET status='deferred' WHERE id=$1", blocking)
-	// A later evaluation has independent human causes; the earlier stage
-	// now fails authorization. Both outcomes must survive the deferred slot.
-	f.fx.Exec(t, "UPDATE agent SET permission_mode='private' WHERE id=$1", agent)
-	f.fx.Exec(t, "UPDATE issue SET status='done' WHERE id=$1", second)
-	if err := s.ProcessChildEvents(ctx, policyUUID(t, parent)); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.TickWorkspaces(ctx, policyUUID(t, testWorkspaceID)); err != nil {
-		t.Fatal(err)
-	}
-	if n := f.fx.Count(t, "SELECT count(*) FROM activity_log WHERE issue_id=$1 AND details->>'outcome'='rejected' AND (details->>'receipt_count')::int=1", parent); n != 1 {
-		t.Fatal("system slot rolled back rejection")
-	}
-	if n := f.fx.Count(t, "SELECT count(*) FROM issue_wakeup_receipt WHERE wakeup_id=$1 AND event_type='condition.met' AND processed_at IS NULL", wid); n != 1 {
-		t.Fatal("system slot consumed independent human condition")
-	}
-	f.fx.Exec(t, "UPDATE agent_task_queue SET status='completed',completed_at=now() WHERE id=$1", blocking)
-	if err := s.TickWorkspaces(ctx, policyUUID(t, testWorkspaceID)); err != nil {
-		t.Fatal(err)
-	}
-	if n := f.fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE context->>'wakeup_id'=$1 AND status='queued' AND conversation_root_task_id IS NULL", wid); n != 1 {
-		t.Fatal("human stage did not dispatch after slot release")
+	for _, status := range []string{"deferred", "dispatched"} {
+		t.Run(status, func(t *testing.T) {
+			f, s, _, parent, agent := deniedReceiptFixture(t, []string{"comment.created"})
+			ctx := context.Background()
+			f.fx.Exec(t, "UPDATE issue SET assignee_type='agent',assignee_id=$2 WHERE id=$1", parent, agent)
+			f.fx.Exec(t, "UPDATE agent SET permission_mode='public_to' WHERE id=$1", agent)
+			f.fx.Insert(t, "agent_invocation_target", testutil.Cols{"agent_id": agent, "target_type": "workspace", "target_id": testWorkspaceID})
+			first := f.fx.Issue(t, "external stage", testutil.Cols{"parent_issue_id": parent, "stage": 1})
+			second := f.fx.Issue(t, "human stage", testutil.Cols{"parent_issue_id": parent, "stage": 2})
+			if err := s.ProcessChildEvents(ctx, policyUUID(t, parent)); err != nil {
+				t.Fatal(err)
+			}
+			var wid string
+			f.fx.QueryRow(t, "SELECT id::text FROM issue_wakeup WHERE issue_id=$1 AND system_rule='child_done'", parent).Scan(&wid)
+			slotContext, _ := json.Marshal(map[string]any{"wakeup_id": wid, "channel_issue_media_pending": true})
+			blocking := f.fx.Task(t, agent, testutil.Cols{"issue_id": parent, "runtime_id": f.runtime, "status": "queued", "originator_source": "direct_human", "originator_user_id": testUserID, "accountable_user_id": testUserID, "context": string(slotContext)})
+			req := testutil.WithHeaders(testutil.JSONRequest("PUT", "/api/issues/"+first, map[string]any{"status": "done"}), "Authorization", "Bearer "+f.token)
+			testutil.Call(t, testServer.Config.Handler.ServeHTTP, req).Want(200)
+			if n := f.fx.Count(t, "SELECT count(*) FROM issue_wakeup_receipt WHERE wakeup_id=$1 AND event_type='condition.met' AND processed_at IS NULL", wid); n != 1 {
+				t.Fatal("first authorized stage did not wait on the occupied slot")
+			}
+			f.fx.Exec(t, "UPDATE agent_task_queue SET status=$2,dispatched_at=now() WHERE id=$1", blocking, status)
+			// A later evaluation has independent human causes; the earlier stage
+			// now fails authorization. Both outcomes must survive the occupied slot.
+			f.fx.Exec(t, "UPDATE agent SET permission_mode='private' WHERE id=$1", agent)
+			f.fx.Exec(t, "UPDATE issue SET status='done' WHERE id=$1", second)
+			if err := s.ProcessChildEvents(ctx, policyUUID(t, parent)); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.TickWorkspaces(ctx, policyUUID(t, testWorkspaceID)); err != nil {
+				t.Fatal(err)
+			}
+			if n := f.fx.Count(t, "SELECT count(*) FROM activity_log WHERE issue_id=$1 AND details->>'outcome'='rejected' AND (details->>'receipt_count')::int=1", parent); n != 1 {
+				t.Fatal("system slot rolled back rejection")
+			}
+			if n := f.fx.Count(t, "SELECT count(*) FROM issue_wakeup_receipt WHERE wakeup_id=$1 AND event_type='condition.met' AND processed_at IS NULL", wid); n != 1 {
+				t.Fatal("system slot consumed independent human condition")
+			}
+			f.fx.Exec(t, "UPDATE agent_task_queue SET status='completed',completed_at=now() WHERE id=$1", blocking)
+			if err := s.TickWorkspaces(ctx, policyUUID(t, testWorkspaceID)); err != nil {
+				t.Fatal(err)
+			}
+			if n := f.fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE context->>'wakeup_id'=$1 AND status='queued' AND conversation_root_task_id IS NULL", wid); n != 1 {
+				t.Fatal("human stage did not dispatch after slot release")
+			}
+		})
 	}
 }
 

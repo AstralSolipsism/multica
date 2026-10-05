@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // The daemon's end of the agent trigger.
@@ -25,12 +27,26 @@ type invokeAgentHookRequest struct {
 	Input          json.RawMessage `json:"input,omitempty"`
 }
 
+// Daemon credentials are independent of task-token HTTP policy. Enforce the
+// conversation boundary again before any plugin invocation or secret lookup.
+func (h *Handler) requireDaemonPluginTaskAccess(w http.ResponseWriter, r *http.Request) (db.AgentTaskQueue, string, bool) {
+	task, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return db.AgentTaskQueue{}, "", false
+	}
+	if channel.IsConversationTask(task) {
+		writeError(w, http.StatusForbidden, "external conversations cannot use plugins")
+		return db.AgentTaskQueue{}, "", false
+	}
+	return task, workspaceID, true
+}
+
 // InvokeAgentPluginHook — POST /api/daemon/tasks/{id}/plugin-hooks
 func (h *Handler) InvokeAgentPluginHook(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePluginsV1(w, r) {
 		return
 	}
-	task, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, chi.URLParam(r, "id"))
+	task, workspaceID, ok := h.requireDaemonPluginTaskAccess(w, r)
 	if !ok {
 		return
 	}

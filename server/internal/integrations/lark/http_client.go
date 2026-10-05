@@ -394,11 +394,17 @@ func (c *httpAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 	// Lark's `text` msg_type expects content = JSON-encoded {"text": "..."}.
 	// json.Marshal handles the escape of newlines / quotes / unicode so
 	// the agent's reply round-trips intact.
-	contentBytes, err := json.Marshal(map[string]string{"text": p.Text})
+	var content any = map[string]string{"text": p.Text}
+	msgType := "text"
+	if p.Literal {
+		msgType = "post"
+		content = literalChatReply(p.Text, p.VerifiedMentions)
+	}
+	contentBytes, err := json.Marshal(content)
 	if err != nil {
 		return "", fmt.Errorf("lark http client: encode text content: %w", err)
 	}
-	path, body := outboundMessageRequest(p.ChatID, "text", string(contentBytes), p.ReplyTarget)
+	path, body := outboundMessageRequest(p.ChatID, msgType, string(contentBytes), p.ReplyTarget)
 	if p.OpenID != "" {
 		path = "/open-apis/im/v1/messages?receive_id_type=open_id"
 		body["receive_id"] = string(p.OpenID)

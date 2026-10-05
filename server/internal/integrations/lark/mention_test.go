@@ -29,6 +29,9 @@ func TestPrependMentionDegradesWithoutIdentity(t *testing.T) {
 	// "ou_" + hex, so a value like this is a bug upstream, not a name.
 	for _, openID := range []string{
 		"",
+		"all",
+		"ALL",
+		"ou_",
 		`ou_x" onclick="`,
 		"ou_x<br>",
 		"ou_x ou_y",
