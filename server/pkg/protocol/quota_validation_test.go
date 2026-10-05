@@ -101,6 +101,10 @@ func TestValidateRuntimePlanQuota(t *testing.T) {
 		if err := ValidateRuntimePlanQuota(q, now); err == nil {
 			t.Fatal("expected error for empty window name")
 		}
+		q.Windows[0].Name = strings.Repeat("x", PlanQuotaMaxWindowName)
+		if err := ValidateRuntimePlanQuota(q, now); err != nil {
+			t.Fatalf("validate at window name boundary: %v", err)
+		}
 		q.Windows[0].Name = strings.Repeat("x", PlanQuotaMaxWindowName+1)
 		if err := ValidateRuntimePlanQuota(q, now); err == nil {
 			t.Fatal("expected error for oversized window name")
@@ -146,6 +150,10 @@ func TestValidateRuntimePlanQuota(t *testing.T) {
 		q.Windows[0].Group = "gemini"
 		if err := ValidateRuntimePlanQuota(q, now); err != nil {
 			t.Fatalf("validate with group: %v", err)
+		}
+		q.Windows[0].Group = strings.Repeat("x", PlanQuotaMaxGroupName)
+		if err := ValidateRuntimePlanQuota(q, now); err != nil {
+			t.Fatalf("validate at group boundary: %v", err)
 		}
 		q.Windows[0].Group = strings.Repeat("x", PlanQuotaMaxGroupName+1)
 		if err := ValidateRuntimePlanQuota(q, now); err == nil {

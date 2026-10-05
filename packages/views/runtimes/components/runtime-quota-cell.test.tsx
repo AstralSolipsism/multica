@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AgentRuntime } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
@@ -88,6 +88,21 @@ describe("quota displays after reset", () => {
     expect(tooltip).toHaveTextContent("Claude + GPT");
     expect(tooltip).toHaveTextContent("Reset, awaiting refresh");
     expect(tooltip).toHaveTextContent("75%");
+  });
+
+  it("hides stale balances and reset countdowns in the machine chip tooltip", async () => {
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    const runtime = quotaRuntime();
+    runtime.plan_quota!.observed_at = NOW_SEC - 2 * 3600;
+    const machine = buildRuntimeMachines([runtime], { now: NOW })[0]!;
+    renderWithI18n(<MachineQuotaChips machine={machine} now={NOW} />);
+    await userEvent.hover(screen.getByLabelText(/: Stale data$/, { selector: '[data-slot="tooltip-trigger"]' }));
+    const tooltip = (await screen.findByText("Gemini · 5h")).closest<HTMLElement>('[data-slot="tooltip-content"]');
+    expect(tooltip).toHaveTextContent("Gemini");
+    expect(tooltip).toHaveTextContent("Claude + GPT");
+    expect(within(tooltip!).getAllByText("Stale data")).toHaveLength(2);
+    expect(tooltip).not.toHaveTextContent("%");
+    expect(tooltip).not.toHaveTextContent("resets at");
   });
 });
 

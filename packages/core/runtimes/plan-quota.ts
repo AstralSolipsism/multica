@@ -17,6 +17,8 @@ export type QuotaTone = "ok" | "warning" | "destructive";
 const QUOTA_STALE_MS = 24 * 3600 * 1000;
 // Collectors poll every two minutes and can back off for up to 30 minutes.
 const COLLECTOR_QUOTA_STALE_MS = 3600 * 1000;
+// Matches the daemon's Kimi, Antigravity and ZenMux quota collectors.
+const COLLECTOR_QUOTA_PROVIDERS = ["kimi", "antigravity", "zenmux"];
 
 /**
  * Sanitize a raw `plan_quota` payload. A malformed snapshot returns null
@@ -107,7 +109,7 @@ export function windowRemainingPercent(
 /** Polling providers go stale after an hour; task-reported and unknown
  *  providers keep the 24h allowance for idle periods between tasks. */
 export function isQuotaStale(quota: RuntimePlanQuota, nowMs: number): boolean {
-  const staleMs = ["kimi", "antigravity", "zenmux"].includes(quota.provider)
+  const staleMs = COLLECTOR_QUOTA_PROVIDERS.includes(quota.provider)
     ? COLLECTOR_QUOTA_STALE_MS
     : QUOTA_STALE_MS;
   return nowMs - quota.observed_at * 1000 > staleMs;

@@ -25,6 +25,15 @@ passed stays visible as "Reset, awaiting refresh" without its old percentage.
 Machine chips show waiting or stale states instead of disappearing; their
 tooltips retain every reported window. No new quota is inferred from a reset.
 
+A machine chip shows "Reset, awaiting refresh" when any window has reset: the
+remaining quota in that window is unknown, so the chip cannot summarize the
+account's usable allowance. Other windows' current percentages remain visible
+in the tooltip and detail views until the snapshot becomes stale. For Codex and
+Claude, which report quota with tasks, a five-hour reset therefore also hides
+the weekly percentage from the machine chip until the next task reports quota.
+Without a new task this can last for hours; once the observation is more than
+24 hours old, the chip and its tooltip show "Stale data" instead.
+
 ## Claude Code
 
 The Claude adapter consumes `rate_limit_event` from the existing non-interactive

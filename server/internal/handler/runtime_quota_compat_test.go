@@ -74,10 +74,11 @@ func TestHeartbeatAcceptsUnnamedAntigravityGroups(t *testing.T) {
 }
 
 func TestHeartbeatQuotaDropsCountEveryTimeAndWarnPerRuntime(t *testing.T) {
-	var logs bytes.Buffer
+	var logs quotaTestLogBuffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
+	slog.Warn("unrelated background warning")
 	h := &Handler{Metrics: obsmetrics.NewBusinessMetrics(), planQuotaDropLogs: &planQuotaDropLogLimiter{}}
 	rt := db.AgentRuntime{ID: parseUUID("00000000-0000-0000-0000-000000000001")}
 	now := time.Now()
@@ -88,25 +89,49 @@ func TestHeartbeatQuotaDropsCountEveryTimeAndWarnPerRuntime(t *testing.T) {
 	}
 	rt.ID = parseUUID("00000000-0000-0000-0000-000000000002")
 	h.storeHeartbeatPlanQuotaAt(context.Background(), rt, invalid, now)
-	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("wanted 3 warnings for 5 drops, got %s", logs.String())
-	}
+	logOutput := logs.String()
+	lines := strings.Split(strings.TrimSpace(logOutput), "\n")
+	dropWarnings := 0
 	for _, line := range lines {
 		var record map[string]any
 		if err := json.Unmarshal([]byte(line), &record); err != nil {
 			t.Fatal(err)
 		}
+		if record["msg"] != "heartbeat plan_quota dropped: invalid" {
+			continue
+		}
+		dropWarnings++
 		runtimeID, _ := record["runtime_id"].(string)
 		reason, _ := record["error"].(string)
 		if record["level"] != "WARN" || record["provider"] != "antigravity" || runtimeID == "" || !strings.Contains(reason, "observed_at") {
 			t.Fatalf("missing diagnostic context: %v", record)
 		}
 	}
+	if dropWarnings != 3 {
+		t.Fatalf("wanted 3 warnings for 5 drops, got %d: %s", dropWarnings, logOutput)
+	}
 	family := obsmetrics.GatherForTest(t, h.Metrics)["multica_runtime_plan_quota_dropped_total"]
 	if family == nil || len(family.GetMetric()) != 1 || family.GetMetric()[0].GetCounter().GetValue() != 5 {
 		t.Fatalf("missing drops (including suppressed warnings): %v", family)
 	}
+}
+
+// The default logger can receive concurrent writes from background goroutines.
+type quotaTestLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *quotaTestLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *quotaTestLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func TestPlanQuotaDropLogLimiterConcurrentAndExpiry(t *testing.T) {
