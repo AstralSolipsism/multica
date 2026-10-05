@@ -36,9 +36,11 @@ the current account emitted a sample.
 
 ## Kimi Code
 
-The daemon polls the local `kimi web` Server API every two minutes. Port
-discovery, the local `server.token` and the connection peer ownership check
-are unchanged. Kimi 0.40 responses use the union of `data.summary` and
+The daemon polls the local `kimi web` Server API every two minutes. It requires
+a same-user connection peer before sending the local `server.token`; Linux
+ownership checks reject unaccepted sockets (`inode=0`). When the daemon runs
+as root (`euid=0`), Kimi collection and credential delivery are disabled, with
+one startup warning. Kimi 0.40 responses use the union of `data.summary` and
 `data.limits`; Kimi 2.1.1 responses use `data.quota.usages.limit5h` and
 `limit7d`, converting `usedRatio` to a percentage and `resetAt` to Unix seconds.
 The response structure selects the parser, without invoking the CLI.
@@ -53,12 +55,20 @@ response formats are present; wallet balances never enter the snapshot.
 The daemon polls `POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota`
 with the exact JSON body `{}` and `User-Agent: antigravity-cli/<detected version>`.
 This is an internal Google API, verified with agy 1.2.16 in OL-108; future CLI
-upgrades need a live check. Its model buckets do not disclose a five-hour/weekly
-split or reset times. The snapshot contains one row per known pool, with no
-invented duration or reset countdown:
+upgrades need a live check. The snapshot contains one row per known pool:
 
 - Gemini: minimum `remainingFraction` across `gemini-*` models.
 - Claude + GPT: minimum across `claude-*` and `gpt-*` models.
+
+Each pool uses the earliest valid `resetTime` among its usable buckets. Without
+a valid reset, both the reset timestamp and window duration remain absent.
+The current [retrieveUserQuota bucket contract](https://github.com/google-gemini/gemini-cli/blob/fb972b2f87fe7d5b06d37eac711490162d98de2c/packages/core/src/code_assist/types.ts#L255-L265)
+has no explicit window kind or duration (`tokenType` identifies the metered
+resource). Until that metadata is available, a positive reset within six hours
+of `observed_at` is labeled 5h
+(300 minutes); a later reset is labeled weekly (10080 minutes). This heuristic
+can misclassify a weekly window in its final six hours, or quotas with other
+periods. Reset timestamps are preserved even when no duration can be inferred.
 
 Fractions are converted to used percentages; an exhausted model marks the
 snapshot limited. Missing/invalid fractions and unknown model families are

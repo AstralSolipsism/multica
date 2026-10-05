@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 
 	messagedelivery "github.com/multica-ai/multica/server/internal/messagedelivery"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -292,7 +291,7 @@ func NewDeliverySender(installations *InstallationService, client DeliveryAPICli
 	return &DeliverySender{installations: installations, client: client}
 }
 
-// Send performs one shard send. SendRequest.Text is the frozen shard body;
+// Send performs one shard send. SendRequest.Message is the typed frozen shard;
 // the target came from the decision's snapshot and the worker has already
 // re-validated the installation — this adapter only dials.
 func (s *DeliverySender) Send(ctx context.Context, req messagedelivery.SendRequest) (messagedelivery.SendResult, error) {
@@ -330,19 +329,13 @@ func (s *DeliverySender) Send(ctx context.Context, req messagedelivery.SendReque
 // member → open_id DM, group → chat send, topic → reply to the anchor
 // message threaded into its 话题.
 func deliveryParams(req messagedelivery.SendRequest, creds InstallationCredentials) (DeliveryMessageParams, error) {
-	if req.SourceURL != "" && !strings.Contains(req.Text, req.SourceURL) {
-		req.Text += "\n\nSource: " + req.SourceURL
-	}
-	if req.SourceRunID != "" {
-		req.Text += "\nRun: " + req.SourceRunID
-	}
-	contentBytes, err := json.Marshal(map[string]string{"text": req.Text})
+	contentBytes, err := json.Marshal(newDeliveryPost(req.Message))
 	if err != nil {
-		return DeliveryMessageParams{}, fmt.Errorf("encode text content: %w", err)
+		return DeliveryMessageParams{}, fmt.Errorf("encode post content: %w", err)
 	}
 	base := DeliveryMessageParams{
 		InstallationID: creds,
-		MsgType:        "text",
+		MsgType:        "post",
 		Content:        string(contentBytes),
 		UUID:           req.SendUUID,
 	}
@@ -371,6 +364,35 @@ func deliveryParams(req messagedelivery.SendRequest, creds InstallationCredentia
 		return DeliveryMessageParams{}, fmt.Errorf("unknown target type %q", req.Target.Type)
 	}
 	return base, nil
+}
+
+type deliveryPostNode struct {
+	Tag  string `json:"tag"`
+	Text string `json:"text"`
+	Href string `json:"href,omitempty"`
+}
+
+type deliveryPost struct {
+	ZhCN struct {
+		Title   string               `json:"title"`
+		Content [][]deliveryPostNode `json:"content"`
+	} `json:"zh_cn"`
+}
+
+// newDeliveryPost is the only delivery content encoder. A post text node does
+// not parse text-message <at> syntax or Markdown links; un_escape stays false
+// (the provider default). Never infer node types or links from source text.
+func newDeliveryPost(message messagedelivery.Message) deliveryPost {
+	var post deliveryPost
+	post.ZhCN.Content = [][]deliveryPostNode{{{Tag: "text", Text: string(message.Body)}}}
+	if message.Source != "" {
+		// The URL is its own label: a source cannot masquerade as another site.
+		post.ZhCN.Content = append(post.ZhCN.Content, []deliveryPostNode{
+			{Tag: "text", Text: "Source: "},
+			{Tag: "a", Text: string(message.Source), Href: string(message.Source)},
+		})
+	}
+	return post
 }
 
 // classifyDeliverySendError sorts a transport-layer send failure into the
