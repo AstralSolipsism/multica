@@ -6,6 +6,8 @@ This decision supersedes the provisional analysis documents outside this reposit
 Source baseline: `AstralSolipsism/multica@430d785f4ad3d37088807b313ad22691d472803a`.
 Upstream integration target: `multica-ai/multica@12f8f3f31111564e5e1b9aac3f7f916e8bba4039`.
 
+For each future sync, complete the [upstream sync checklist](upstream-sync-checklist.md).
+
 | Capability | Confirmed disposition |
 | --- | --- |
 | Dispatch, claim, retry, recovery, lifecycle categories and wakeups | Adopt upstream behavior; remove fork prerequisite execution admission and one-shot early-dispatch approvals. |

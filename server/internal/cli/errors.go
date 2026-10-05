@@ -66,11 +66,11 @@ const (
 
 // Tiered process exit codes. Stable so users can branch on them in scripts.
 const (
-	ExitGeneric         = 1 // anything not covered below
-	ExitNetwork         = 2 // any KindNetwork*
-	ExitAuth            = 3 // 401 / 403
-	ExitNotFound        = 4 // 404
-	ExitValidation      = 5 // 400 / 422
+	ExitGeneric    = 1 // anything not covered below
+	ExitNetwork    = 2 // any KindNetwork*
+	ExitAuth       = 3 // 401 / 403
+	ExitNotFound   = 4 // 404
+	ExitValidation = 5 // 400 / 422
 )
 
 // ProjectFileError preserves feature-specific semantics through main's error

@@ -18,34 +18,42 @@ function filterFiles(files) {
 for (const [name, files, selected] of [
   ["readme only", ["README.md"], []],
   ["docs only", ["apps/docs/content/docs/guide.mdx"], ["quality"]],
-  ["web changelog", ["apps/web/features/landing/i18n/en.ts"], ["frontend", "quality"]],
+  ["web changelog", ["apps/web/features/landing/i18n/en.ts"], ["frontend", "quality", "e2e"]],
   ["UI Lab", ["apps/ui-lab/src/app.tsx"], ["frontend", "quality"]],
   ["mobile UI", ["apps/mobile/app/index.tsx"], ["quality"]],
-  ["migration only", ["server/migrations/999_example.up.sql"], ["backend", "sqlc"]],
-  ["agent process code", ["server/pkg/agent/cursor_background.go"], ["backend", "runtime"]],
-  ["daemon dependency", ["server/internal/skill/service.go"], ["backend", "runtime"]],
-  ["native test compilation dependency", ["server/pkg/db/generated/issues.sql.go"], ["backend", "sqlc", "runtime"]],
-  ["Go dependencies", ["server/go.mod", "server/go.sum"], ["backend", "runtime"]],
+  ["migration only", ["server/migrations/999_example.up.sql"], ["backend", "sqlc", "e2e"]],
+  ["agent process code", ["server/pkg/agent/cursor_background.go"], ["backend", "runtime", "e2e"]],
+  ["daemon dependency", ["server/internal/skill/service.go"], ["backend", "runtime", "e2e"]],
+  ["native test compilation dependency", ["server/pkg/db/generated/issues.sql.go"], ["backend", "sqlc", "runtime", "e2e"]],
+  ["Go dependencies", ["server/go.mod", "server/go.sum"], ["backend", "runtime", "e2e"]],
   ["Helm only", ["deploy/helm/multica/templates/deployment.yaml"], ["scripts"]],
   ["container entrypoint", ["docker/entrypoint.sh"], ["scripts"]],
   ["selfhost config", [".env.example"], ["scripts", "installer"]],
   ["shell installer", ["scripts/install.sh"], ["scripts", "installer"]],
   ["PowerShell installer", ["scripts/install.ps1.test.ps1"], ["installer"]],
+  ["Go format gate", ["scripts/check-gofmt.sh"], ["backend"]],
+  ["Go format regression", ["scripts/check-gofmt.test.sh"], ["backend"]],
+  ["retained E2E harness", ["scripts/test-retained-e2e.sh"], ["e2e"]],
+  ["retained E2E harness regression", ["scripts/test-retained-e2e.test.sh"], ["e2e"]],
+  ["retained E2E config", ["playwright.retained.config.ts"], ["e2e"]],
+  ["onboarding browser regression", ["e2e/onboarding-smoke.spec.ts"], ["e2e"]],
+  ["DAG browser regression", ["e2e/dag-task-lines.spec.ts"], ["e2e"]],
+  ["browser fixtures", ["e2e/fixtures.ts"], ["e2e"]],
   ["cleanup script", ["scripts/drop-database.sh"], ["scripts"]],
   ["performance harness", ["scripts/perf-compare.test.sh"], ["scripts"]],
-  ["reserved slug source", ["server/internal/handler/reserved_slugs.json"], ["backend", "runtime", "scripts"]],
-  ["reserved slug output", ["packages/core/paths/reserved-slugs.ts"], ["frontend", "quality", "scripts"]],
-  ["integration key gates", ["server/cmd/server/router.go"], ["backend", "runtime", "scripts"]],
-  ["cross-module runtime contract", ["packages/core/runtimes/cli-version.ts"], ["frontend", "backend", "runtime", "quality"]],
-  ["lockfile", ["pnpm-lock.yaml"], ["frontend", "quality"]],
-  ["package patch", ["patches/example.patch"], ["frontend", "quality"]],
+  ["reserved slug source", ["server/internal/handler/reserved_slugs.json"], ["backend", "runtime", "scripts", "e2e"]],
+  ["reserved slug output", ["packages/core/paths/reserved-slugs.ts"], ["frontend", "quality", "scripts", "e2e"]],
+  ["integration key gates", ["server/cmd/server/router.go"], ["backend", "runtime", "scripts", "e2e"]],
+  ["cross-module runtime contract", ["packages/core/runtimes/cli-version.ts"], ["frontend", "backend", "runtime", "quality", "e2e"]],
+  ["lockfile", ["pnpm-lock.yaml"], ["frontend", "quality", "e2e"]],
+  ["package patch", ["patches/example.patch"], ["frontend", "quality", "e2e"]],
   ["radius policy", ["scripts/check-ui-radius-tokens.mjs"], ["quality"]],
   ["brand source guard", ["scripts/check-branding.mjs"], ["quality"]],
   ["brand guard tests", ["scripts/check-branding.test.mjs"], ["quality"]],
   ["shared branding policy", ["scripts/branding-policy.json"], ["quality", "backend"]],
   ["shared quality action", [".github/actions/frontend-quality/action.yml"], ["frontend", "quality"]],
-  ["new bitmap", ["apps/web/public/hero.png"], ["frontend", "quality", "images"]],
-  ["mixed docs and migration", ["apps/docs/content/guide.mdx", "server/migrations/999_example.up.sql"], ["quality", "backend", "sqlc"]],
+  ["new bitmap", ["apps/web/public/hero.png"], ["frontend", "quality", "images", "e2e"]],
+  ["mixed docs and migration", ["apps/docs/content/guide.mdx", "server/migrations/999_example.up.sql"], ["quality", "backend", "sqlc", "e2e"]],
   ["CI configuration", [".github/ci-paths.json"], Object.keys(filters)],
 ]) {
   test(`PR and main select only affected scopes: ${name}`, () => {
@@ -170,6 +178,37 @@ test("the backend gate owns the three-platform installer matrix", () => {
   assert.equal(productionMapping("backend").installer, "installer");
   assert.match(jobs.installer, /^        os: \[ubuntu-latest, macos-latest, windows-latest\]$/m);
   assert.doesNotMatch(jobs.installer, /continue-on-error:/);
+});
+
+test("required aggregates own the format and isolated browser gates", () => {
+  assert.equal(productionMapping("backend")["backend-format"], "backend");
+  assert.match(jobs["backend-format"], /^        run: bash scripts\/check-gofmt\.test\.sh$/m);
+  assert.match(jobs["backend-format"], /^        run: bash scripts\/check-gofmt\.sh$/m);
+  assert.equal(productionMapping("frontend")["retained-e2e-tests"], "e2e");
+  assert.match(jobs["retained-e2e-tests"], /POSTGRES_DB: labrastro_e2e/);
+  assert.match(jobs["retained-e2e-tests"], /^        run: bash scripts\/test-retained-e2e\.sh$/m);
+  assert.match(jobs.changes, /^          bash scripts\/test-retained-e2e\.test\.sh$/m);
+  assert.doesNotMatch(jobs["backend-format"] + jobs["retained-e2e-tests"], /continue-on-error:/);
+});
+
+test("the unique required check fails on either failed, cancelled, skipped or missing aggregate", () => {
+  const source = jobs["ci-required"];
+  assert.equal(field(source, /^    name: (.+)$/m), "CI required");
+  assert.equal(field(source, /^    needs: \[(.+)\]$/m), "frontend, backend");
+  assert.match(source, /^    if: \$\{\{ always\(\) \}\}$/m);
+  assert.match(source, /^          FRONTEND_RESULT: \$\{\{ needs\.frontend\.result \}\}$/m);
+  assert.match(source, /^          BACKEND_RESULT: \$\{\{ needs\.backend\.result \}\}$/m);
+  assert.doesNotMatch(source, /continue-on-error:/);
+  const command = field(source, /^        run: (.+)$/m);
+  for (const frontend of ["success", "failure", "cancelled", "skipped", ""]) {
+    for (const backend of ["success", "failure", "cancelled", "skipped", ""]) {
+      const result = spawnSync("bash", ["-c", command], {
+        env: { ...process.env, FRONTEND_RESULT: frontend, BACKEND_RESULT: backend },
+      });
+      assert.equal(result.status === 0, frontend === "success" && backend === "success",
+        `frontend=${frontend}, backend=${backend}`);
+    }
+  }
 });
 
 test("quality checks have exactly one runner and reuse the product build install", () => {
