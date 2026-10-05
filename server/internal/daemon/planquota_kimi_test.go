@@ -779,7 +779,7 @@ func TestKimiGetUsage_RootCannotReuseConnection(t *testing.T) {
 	}
 }
 
-func TestKimiRootProductionGatesAndDiagnostic(t *testing.T) {
+func TestKimiRootProductionGate(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root to exercise the production euid wiring")
 	}
@@ -787,12 +787,33 @@ func TestKimiRootProductionGatesAndDiagnostic(t *testing.T) {
 	if quota, err := collector.collect(context.Background()); quota != nil || !errors.Is(err, errKimiCredentialsDisabledForRoot) {
 		t.Fatalf("production root gate: quota=%+v err=%v", quota, err)
 	}
+}
+
+type kimiLoopTrackingContext struct {
+	context.Context
+	doneCalls int
+}
+
+func (c *kimiLoopTrackingContext) Done() <-chan struct{} {
+	c.doneCalls++
+	return c.Context.Done()
+}
+
+func TestKimiPlanQuotaLoopRootDiagnostic(t *testing.T) {
+	originalGeteuid := kimiGeteuid
+	kimiGeteuid = func() int { return 0 }
+	t.Cleanup(func() { kimiGeteuid = originalGeteuid })
+
 	var logs strings.Builder
 	d := &Daemon{logger: slog.New(slog.NewTextHandler(&logs, nil))}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // A missing startup gate must not leave this test polling forever.
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx := &kimiLoopTrackingContext{Context: cancelled}
 	d.kimiPlanQuotaLoop(ctx)
-	if !strings.Contains(logs.String(), "credential delivery disabled for root (euid=0)") || strings.Count(logs.String(), "\n") != 1 {
+	if ctx.doneCalls != 0 {
+		t.Fatalf("root entered the polling loop (%d context checks)", ctx.doneCalls)
+	}
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "credential delivery disabled for root (euid=0)") || strings.Count(logs.String(), "\n") != 1 {
 		t.Fatalf("want one root diagnostic, got %q", logs.String())
 	}
 }
