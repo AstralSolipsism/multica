@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -20,12 +21,35 @@ type dependencyWriteFields struct {
 	DependencyOverride        json.RawMessage `json:"dependency_override"`
 }
 
+// The write envelopes keep fork fields out of upstream request structs while
+// exposing the complete decoded wire shape to request-inventory checks.
+type CreateIssueWriteRequest struct {
+	CreateIssueRequest
+	dependencyWriteFields
+}
+
+func (req *CreateIssueWriteRequest) UnmarshalJSON(body []byte) error {
+	// Preserve the upstream duplicate-key check. Decoding an embedded type
+	// with UnmarshalJSON alone would otherwise swallow the dependency fields.
+	if err := json.Unmarshal(body, &req.CreateIssueRequest); err != nil {
+		return err
+	}
+	return json.Unmarshal(body, &req.dependencyWriteFields)
+}
+
+type UpdateIssueWriteRequest struct {
+	UpdateIssueRequest
+	dependencyWriteFields
+}
+
+type dependencyEndpointKey struct{}
+
 func (h *Handler) CreateIssueWithDependencies(w http.ResponseWriter, r *http.Request) {
 	if !h.IssueService.Dependencies.WritesEnabled {
 		writeDependencyError(w, &service.DependencyError{Code: "not_found", Message: "dependency writes are not enabled"})
 		return
 	}
-	h.createIssue(w, r, true)
+	h.CreateIssue(w, r.WithContext(context.WithValue(r.Context(), dependencyEndpointKey{}, true)))
 }
 
 func (h *Handler) UpdateIssueWithDependencies(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +57,66 @@ func (h *Handler) UpdateIssueWithDependencies(w http.ResponseWriter, r *http.Req
 		writeDependencyError(w, &service.DependencyError{Code: "not_found", Message: "dependency writes are not enabled"})
 		return
 	}
-	h.updateIssue(w, r, true)
+	h.UpdateIssue(w, r.WithContext(context.WithValue(r.Context(), dependencyEndpointKey{}, true)))
+}
+
+func (h *Handler) prepareIssueCreate(w http.ResponseWriter, r *http.Request, req *CreateIssueRequest) (*http.Request, bool) {
+	var decoded CreateIssueWriteRequest
+	if err := json.NewDecoder(r.Body).Decode(&decoded); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return r, false
+	}
+	*req = decoded.CreateIssueRequest
+	if req.Title == "" {
+		writeError(w, http.StatusBadRequest, "title is required")
+		return r, false
+	}
+	return h.prepareDependencyWrite(w, r, decoded.dependencyWriteFields, true)
+}
+
+func (h *Handler) prepareIssueUpdate(w http.ResponseWriter, r *http.Request, body []byte, req *UpdateIssueRequest) (*http.Request, bool) {
+	var decoded UpdateIssueWriteRequest
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return r, false
+	}
+	*req = decoded.UpdateIssueRequest
+	return h.prepareDependencyWrite(w, r, decoded.dependencyWriteFields, false)
+}
+
+func (h *Handler) prepareDependencyWrite(w http.ResponseWriter, r *http.Request, fields dependencyWriteFields, creating bool) (*http.Request, bool) {
+	compound, _ := r.Context().Value(dependencyEndpointKey{}).(bool)
+	write, ok := h.parseDependencyWrite(w, r, fields, compound, creating)
+	if !ok {
+		return r, false
+	}
+	return r.WithContext(service.WithDependencyWrite(r.Context(), write)), true
+}
+
+func issueWriteNeedsStructureLock(ctx context.Context, rawFields map[string]json.RawMessage) bool {
+	_, parentTouched := rawFields["parent_issue_id"]
+	return service.DependencyWriteFromContext(ctx).NeedsStructureLock(parentTouched)
+}
+
+func (h *Handler) beforeIssueWrite(ctx context.Context, q *db.Queries, ws pgtype.UUID, rawFields map[string]json.RawMessage) (*service.IssueDependencyWrite, error) {
+	_, parentTouched := rawFields["parent_issue_id"]
+	return h.IssueService.Dependencies.BeforeIssueWrite(ctx, q, ws, service.DependencyWriteFromContext(ctx), parentTouched)
+}
+
+func (h *Handler) beforeIssueDelete(ctx context.Context, q *db.Queries, issues []db.Issue) error {
+	if len(issues) == 0 {
+		return nil
+	}
+	ws := issues[0].WorkspaceID
+	for _, issue := range issues {
+		if issue.WorkspaceID != ws {
+			return errors.New("issues belong to different workspaces")
+		}
+	}
+	// Deletion cannot add a cycle. Existing foreign keys remove incident edges;
+	// the upstream detach path emits child updates. Only serialize structure
+	// writes here, without loading a graph for unused delete/detach audit rows.
+	return h.IssueService.Dependencies.LockWrite(ctx, q, ws)
 }
 
 func (h *Handler) parseDependencyWrite(w http.ResponseWriter, r *http.Request, fields dependencyWriteFields, compound, creating bool) (service.DependencyWrite, bool) {
@@ -170,11 +253,17 @@ func writeDependencyError(w http.ResponseWriter, err error) bool {
 	return true
 }
 
-func (h *Handler) fillDependencyResponse(r *http.Request, issue db.Issue, resp *IssueResponse) {
-	snapshot, err := h.IssueService.Dependencies.Read(r.Context(), issue.WorkspaceID, uuidToString(issue.ID))
-	if err != nil {
-		slog.Warn("dependency response refresh failed", "error", err)
-		return
+func (h *Handler) fillIssueDependencyResponse(r *http.Request, issue db.Issue, snapshot *service.DependencySnapshot, resp *IssueResponse) {
+	if snapshot == nil {
+		if !service.DependencyWriteFromContext(r.Context()).IncludeView {
+			return
+		}
+		var err error
+		snapshot, err = h.IssueService.Dependencies.Read(r.Context(), issue.WorkspaceID, uuidToString(issue.ID))
+		if err != nil {
+			slog.Warn("dependency response refresh failed", "error", err)
+			return
+		}
 	}
 	view := h.dependencyView(r, snapshot, issue.ID)
 	resp.Dependencies = &view

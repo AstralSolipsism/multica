@@ -41,21 +41,23 @@ type IssueService struct {
 	// cmd/server/router.go after construction; nil in tests / self-hosted
 	// without the metrics listener — obsmetrics.RecordEvent treats a nil
 	// Metrics as "PostHog only", so leaving it unset is safe.
-	Metrics      *obsmetrics.BusinessMetrics
-	TaskService  *TaskService
-	Dependencies *DependencyService
+	Metrics     *obsmetrics.BusinessMetrics
+	TaskService *TaskService
 	// Entitlements supplies Cloud's effective issue-count instruction. Nil is
 	// the self-hosted unlimited path.
 	Entitlements entitlement.Provider
+
+	Dependencies *DependencyService
 }
 
 func NewIssueService(q *db.Queries, tx TxStarter, bus *events.Bus, ac analytics.Client, ts *TaskService) *IssueService {
 	return &IssueService{
-		Queries:      q,
-		TxStarter:    tx,
-		Bus:          bus,
-		Analytics:    ac,
-		TaskService:  ts,
+		Queries:     q,
+		TxStarter:   tx,
+		Bus:         bus,
+		Analytics:   ac,
+		TaskService: ts,
+
 		Dependencies: NewDependencyService(q, tx),
 	}
 }
@@ -98,7 +100,6 @@ type IssueCreateParams struct {
 	// Its immutable snapshot and cloned attachment rows commit in the same
 	// transaction as the new issue.
 	SourceContext *SourceContextCapture
-	BlockedBy     *[]pgtype.UUID
 }
 
 // IssueCreateOpts groups optional knobs for IssueService.Create. Most
@@ -198,9 +199,8 @@ var ErrSourceContextAlreadyAttached = errors.New("source context is already atta
 //   - On ErrActiveDuplicate: DuplicateIssue is the row that blocked the
 //     create; Issue and Attachments are zero.
 type IssueCreateResult struct {
-	Dependencies *DependencySnapshot
-	Issue        db.Issue
-	Attachments  []db.Attachment
+	Issue       db.Issue
+	Attachments []db.Attachment
 	// AssignedTaskID is populated when Create enqueues the automatic task for
 	// an agent assignee, including a task deferred by AssignedAgentRunFireAt.
 	AssignedTaskID pgtype.UUID
@@ -211,6 +211,8 @@ type IssueCreateResult struct {
 	// understood label_ids (see the create handler's compatibility contract).
 	Labels         []db.IssueLabel
 	DuplicateIssue *db.Issue
+
+	Dependencies *DependencySnapshot
 }
 
 // Create runs the full issue-creation pipeline atomically end-to-end:
@@ -254,16 +256,9 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		return IssueCreateResult{}, err
 	}
 
-	var dependencyBefore, dependencyAfter *DependencySnapshot
-	// A new leaf without explicit prerequisites cannot introduce a cycle.
-	if p.BlockedBy != nil {
-		if err := s.Dependencies.LockWrite(ctx, qtx, p.WorkspaceID); err != nil {
-			return IssueCreateResult{}, err
-		}
-		dependencyBefore, err = s.Dependencies.LoadForWrite(ctx, qtx, p.WorkspaceID)
-		if err != nil {
-			return IssueCreateResult{}, err
-		}
+	dependencyWrite, err := s.beforeIssueCreate(ctx, qtx, p.WorkspaceID)
+	if err != nil {
+		return IssueCreateResult{}, err
 	}
 
 	if p.SourceContext != nil {
@@ -435,11 +430,9 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		return IssueCreateResult{}, fmt.Errorf("create issue: %w", err)
 	}
 
-	if dependencyBefore != nil {
-		dependencyAfter, _, err = s.Dependencies.Apply(ctx, qtx, dependencyBefore, issue, DependencyWrite{Creating: true, BlockedBy: p.BlockedBy})
-		if err != nil {
-			return IssueCreateResult{}, err
-		}
+	issue, dependencyAfter, err := dependencyWrite.AfterIssueWrite(ctx, qtx, issue, 0)
+	if err != nil {
+		return IssueCreateResult{}, err
 	}
 	if p.SourceContext != nil {
 		if _, err := PersistSourceContext(ctx, qtx, *p.SourceContext, issue.ID, pgtype.UUID{}); err != nil {
