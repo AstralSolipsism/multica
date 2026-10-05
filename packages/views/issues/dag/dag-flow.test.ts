@@ -1,7 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
 import { toFlowNodes, selectFlowNodes, toFlowEdges } from "./dag-flow";
-import { anchorShift } from "./dag-viewport";
 import { canvasFixture } from "./dag-test-fixtures";
 
 function nodeInput() {
@@ -156,7 +155,7 @@ describe("toFlowEdges", () => {
     ).toMatchObject({ color: "var(--muted-foreground)" });
   });
 
-  it("marks a single folded-endpoint dependency as aggregate as well as multiple original pairs", () => {
+  it("marks one or several original pairs between two folded groups as aggregate", () => {
     const args = input(["issue:one", "issue:two"]);
     expect(toFlowEdges(args)[0]!.data).toMatchObject({
       aggregate: true,
@@ -164,8 +163,27 @@ describe("toFlowEdges", () => {
     });
     const edge = args.projection.edges[0]!;
     edge.sourceEdgeIds = ["a-c"];
+    edge.sources = [{ edgeId: "a-c", source: "a", target: "c" }];
     expect(toFlowEdges(args)[0]!.data!.aggregate).toBe(true);
   });
+
+  it.each([
+    { side: "source", folded: "issue:one", source: "issue:one", target: "c" },
+    { side: "target", folded: "issue:two", source: "a", target: "issue:two" },
+  ])(
+    "marks a single original pair with only the $side folded as aggregate",
+    ({ folded, source, target }) => {
+      const args = input([folded]);
+      const edge = args.projection.edges.find((e) => e.source === source && e.target === target)!;
+      // Keep one original pair so only the folded endpoint can make this aggregate.
+      edge.sourceEdgeIds = ["a-c"];
+      edge.sources = [{ edgeId: "a-c", source: "a", target: "c" }];
+      const mapped = toFlowEdges(args).find((e) => e.id === edge.id)!;
+      expect(mapped).toMatchObject({ source, target, data: { aggregate: true } });
+      expect(mapped.data!.model.sourceEdgeIds).toHaveLength(1);
+      expect(mapped.data!.model.sources).toHaveLength(1);
+    },
+  );
 
   it("omits unrouted edges and missing endpoints rather than inventing geometry", () => {
     const args = input();
@@ -173,25 +191,4 @@ describe("toFlowEdges", () => {
     args.positions.delete("c");
     expect(toFlowEdges(args)).toEqual([]);
   });
-});
-
-describe("anchorShift", () => {
-  it.each([0.5, 1, 1.6])(
-    "keeps the anchor's screen coordinates at zoom %s",
-    (zoom) => {
-      const saved = { x: 120, y: 240 },
-        next = { x: 310, y: 70 };
-      const viewport = { x: -83, y: 97, zoom };
-      const shifted = anchorShift(saved, next, viewport);
-      expect(shifted.x + next.x * zoom).toBeCloseTo(
-        viewport.x + saved.x * zoom,
-      );
-      expect(shifted.y + next.y * zoom).toBeCloseTo(
-        viewport.y + saved.y * zoom,
-      );
-      expect(shifted.zoom).toBe(zoom);
-      expect(viewport).toEqual({ x: -83, y: 97, zoom });
-      expect(anchorShift(saved, saved, viewport)).toEqual(viewport);
-    },
-  );
 });

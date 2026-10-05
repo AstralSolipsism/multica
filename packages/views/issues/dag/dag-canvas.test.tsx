@@ -170,6 +170,17 @@ function headerScreenPoint(id: string) {
 }
 
 describe("DAG canvas viewport", () => {
+  it("saves the settled viewport after zooming without opening an issue", async () => {
+    const h = harness();
+    h.mount();
+    await h.ready();
+    fireEvent.click(screen.getByRole("button", { name: "Zoom Out" }));
+    await waitFor(() => expect(h.store.getState().dagViewport?.zoom).toBeCloseTo(1 / 1.2));
+    const saved = h.store.getState().dagViewport!;
+    expect(viewportTransform()).toBe(`translate(${saved.x}px,${saved.y}px) scale(${saved.zoom})`);
+    expect(h.callbacks.onOpenIssue).not.toHaveBeenCalled();
+  });
+
   it.each(["double-click", "detail action", "parent detail"])(
     "restores a non-default transform after %s, unmount and remount",
     async (action) => {
@@ -249,6 +260,32 @@ describe("DAG canvas viewport", () => {
 });
 
 describe("DAG canvas interactions", () => {
+  it.each([
+    { side: "source", folded: "issue:one", source: "issue:one", target: "c" },
+    { side: "target", folded: "issue:two", source: "a", target: "issue:two" },
+  ])(
+    "inspects a single original pair with only the $side folded as aggregate",
+    async ({ folded, source, target }) => {
+      const fixture = canvasFixture([folded]);
+      const model = fixture.projection.edges.find((e) => e.source === source && e.target === target)!;
+      model.sourceEdgeIds = ["a-c"];
+      model.sources = [{ edgeId: "a-c", source: "a", target: "c" }];
+      const h = harness(fixture);
+      h.mount();
+      await h.ready();
+      const edge = await screen.findByTestId(`rf__edge-${model.id}`);
+      expect(edge.querySelector(".react-flow__edge-path")).toHaveStyle({ strokeDasharray: "6 3" });
+      expect(screen.queryByRole("button", { name: "1 dependency" })).toBeNull();
+      fireEvent.click(edge);
+      const inspector = screen.getByRole("dialog", { name: "Dependency details" });
+      expect(inspector).toHaveTextContent("Aggregated dependencies");
+      const pairs = within(inspector).getAllByRole("listitem");
+      expect(pairs).toHaveLength(1);
+      expect(pairs[0]).toHaveTextContent("T-A · Task a");
+      expect(pairs[0]).toHaveTextContent("T-C · Task c");
+    },
+  );
+
   it("switches between direct selection and explicit prerequisite/dependent neighborhoods", async () => {
     const h = harness();
     h.mount();
@@ -333,6 +370,7 @@ describe("DAG canvas interactions", () => {
         /unknown|restricted|Running|Queued/i,
       ),
     ).toBeNull();
+    expect(within(nodeElement("a")).queryByText(/open prerequisite/)).toBeNull();
   });
 
   it("selects direct dependencies and the containing stage while unrelated cards remain readable", async () => {
@@ -392,6 +430,8 @@ describe("DAG canvas interactions", () => {
       y: 93,
       zoom: 1.35,
     });
+    fireEvent.click(within(pairs[0]!).getByRole("button", { name: "T-C · Task c" }));
+    expect(h.callbacks.onOpenIssue.mock.calls).toEqual([["a"], ["c"]]);
     fireEvent.click(
       within(inspector).getByRole("button", { name: "Clear selection" }),
     );
@@ -452,5 +492,18 @@ describe("DAG canvas interactions", () => {
       expect(headerScreenPoint("issue:two")).toEqual({ x: 24, y: 24 }),
     );
     expect(h.store.getState().dagSelectedNodeId).toBe("issue:two");
+  });
+
+  it("focuses an issue through its folded representative without expanding the group", async () => {
+    const h = harness(canvasFixture(["issue:one"]));
+    const view = h.mount();
+    await h.ready();
+    expect(nodeElement("b")).toBeNull();
+    view.rerender(h.surface({ focusRequest: { issueIds: ["b"], nonce: 1 } }));
+    await waitFor(() => expect(headerScreenPoint("issue:one")).toEqual({ x: 24, y: 24 }));
+    expect(h.store.getState().dagSelectedNodeId).toBe("issue:one");
+    expect(nodeElement("issue:one").querySelector("[data-collapsed]"))
+      .toHaveAttribute("data-collapsed", "true");
+    expect(h.callbacks.onToggleCollapsed).not.toHaveBeenCalled();
   });
 });
