@@ -58,32 +58,9 @@ func newLabrastroSkillSource(ctx context.Context, client *http.Client, raw, work
 	if workspace == "" {
 		return nil, fmt.Errorf("skill package source requires a workspace")
 	}
-	normalized := strings.TrimSpace(raw)
-	if !strings.Contains(normalized, "://") {
-		normalized = "https://" + normalized
-	}
-	u, err := url.Parse(normalized)
+	spec, err := labrastroParsePackageURL(raw)
 	if err != nil {
-		return nil, labrastroSkillError(400, "invalid_source", "invalid repository URL")
-	}
-	if u.Scheme != "https" || u.User != nil || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" {
-		return nil, labrastroSkillError(400, "invalid_source", "expected an HTTPS repository or tree URL without credentials, query or fragment")
-	}
-	if strings.EqualFold(u.Hostname(), "skills.sh") || strings.EqualFold(u.Hostname(), "www.skills.sh") {
-		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-		if len(parts) != 2 {
-			return nil, labrastroSkillError(400, "invalid_source", "skill packages require skills.sh/owner/repo")
-		}
-		normalized = "https://github.com/" + strings.Join(parts, "/")
-	} else if !strings.EqualFold(u.Hostname(), "github.com") && !strings.EqualFold(u.Hostname(), "www.github.com") {
-		return nil, labrastroSkillError(400, "invalid_source", "skill packages support GitHub and skills.sh repositories")
-	}
-	spec, err := parseGitHubURL(normalized)
-	if err != nil {
-		return nil, labrastroSkillError(400, "invalid_source", err.Error())
-	}
-	if strings.Contains(u.Path, "/blob/") {
-		return nil, labrastroSkillError(400, "invalid_source", "use a repository or tree directory URL")
+		return nil, err
 	}
 	if err := resolveGitHubRefAndPath(ctx, client, &spec); err != nil {
 		return nil, err
@@ -113,20 +90,59 @@ func newLabrastroSkillSource(ctx context.Context, client *http.Client, raw, work
 	}
 	// Persist the resolved ref, not a bare repository URL whose default branch
 	// may change between rescans. The commit remains request-local only.
-	normalized = buildRawGitHubURL("https://github.com/"+spec.owner+"/"+spec.repo+"/tree/"+escapeRefPath(spec.ref), spec.skillDir)
+	normalized := buildRawGitHubURL("https://github.com/"+spec.owner+"/"+spec.repo+"/tree/"+escapeRefPath(spec.ref), spec.skillDir)
 	s := &labrastroSkillSource{spec: spec, URL: normalized, commit: commit.SHA, rootTree: commit.Commit.Tree.SHA, client: client, entries: map[string]githubTreeEntry{}, directories: map[string]map[string]githubTreeEntry{}, workspace: workspace, blobs: labrastroPackageBlobs, semaphore: make(chan struct{}, treeDownloadConcurrency)}
 	s.rawPrefix = fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s", url.PathEscape(spec.owner), url.PathEscape(spec.repo), commit.SHA)
+	if err := s.loadTree(ctx); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+func labrastroParsePackageURL(raw string) (githubSpec, error) {
+	normalized := strings.TrimSpace(raw)
+	if !strings.Contains(normalized, "://") {
+		normalized = "https://" + normalized
+	}
+	u, err := url.Parse(normalized)
+	if err != nil {
+		return githubSpec{}, labrastroSkillError(400, "invalid_source", "invalid repository URL")
+	}
+	if u.Scheme != "https" || u.User != nil || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" {
+		return githubSpec{}, labrastroSkillError(400, "invalid_source", "expected an HTTPS repository or tree URL without credentials, query or fragment")
+	}
+	if strings.EqualFold(u.Hostname(), "skills.sh") || strings.EqualFold(u.Hostname(), "www.skills.sh") {
+		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(parts) != 2 {
+			return githubSpec{}, labrastroSkillError(400, "invalid_source", "skill packages require skills.sh/owner/repo")
+		}
+		normalized = "https://github.com/" + strings.Join(parts, "/")
+	} else if !strings.EqualFold(u.Hostname(), "github.com") && !strings.EqualFold(u.Hostname(), "www.github.com") {
+		return githubSpec{}, labrastroSkillError(400, "invalid_source", "skill packages support GitHub and skills.sh repositories")
+	}
+	spec, err := parseGitHubURL(normalized)
+	if err != nil {
+		return githubSpec{}, labrastroSkillError(400, "invalid_source", err.Error())
+	}
+	if strings.Contains(u.Path, "/blob/") {
+		return githubSpec{}, labrastroSkillError(400, "invalid_source", "use a repository or tree directory URL")
+	}
+	return spec, nil
+}
+
+func (s *labrastroSkillSource) loadTree(ctx context.Context) error {
+	spec := s.spec
 	treeID := s.rootTree
 	if spec.skillDir != "" {
 		dir := ""
 		for _, part := range strings.Split(spec.skillDir, "/") {
 			entries, err := s.directory(ctx, dir, treeID)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			e, ok := entries[part]
 			if !ok || e.Type != "tree" || e.SHA == "" {
-				return nil, labrastroSkillError(400, "invalid_source", fmt.Sprintf("source subdirectory %s is not a regular directory", spec.skillDir))
+				return labrastroSkillError(400, "invalid_source", fmt.Sprintf("source subdirectory %s is not a regular directory", spec.skillDir))
 			}
 			dir = path.Join(dir, part)
 			treeID = e.SHA
@@ -134,17 +150,17 @@ func newLabrastroSkillSource(ctx context.Context, client *http.Client, raw, work
 	}
 	entries, err := s.tree(ctx, treeID, true)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, e := range entries {
 		if !labrastroSafeRepoPath(e.Path) {
-			return nil, fmt.Errorf("invalid path in repository tree")
+			return labrastroSkillError(400, "invalid_source", fmt.Sprintf("unsupported repository path %q; use a source with portable file names", e.Path))
 		}
 		e.Path = path.Join(spec.skillDir, e.Path)
 		s.entries[e.Path] = e
 	}
 	s.fullTree = spec.skillDir == ""
-	return s, nil
+	return nil
 }
 
 func (s *labrastroSkillSource) tree(ctx context.Context, sha string, recursive bool) ([]githubTreeEntry, error) {
@@ -349,7 +365,11 @@ func labrastroBundleDigest(s *importedSkill) string {
 
 func (s *labrastroSkillSource) candidates(ctx context.Context) ([]LabrastroSkillCandidate, []SkillImportDiagnostic, error) {
 	paths := []string{}
+	skipped := []SkillImportDiagnostic{}
 	for p, e := range s.entries {
+		if path.Base(p) == "SKILL.md" && !labrastroRegularBlob(e) {
+			skipped = append(skipped, SkillImportDiagnostic{Code: "filtered_reference", Path: p, Message: "nonregular SKILL.md is not a package candidate"})
+		}
 		if path.Base(p) == "SKILL.md" && labrastroRegularBlob(e) {
 			dir := path.Dir(p)
 			if dir == "." {
@@ -366,6 +386,8 @@ func (s *labrastroSkillSource) candidates(ctx context.Context) ([]LabrastroSkill
 	if err != nil {
 		return nil, nil, err
 	}
+	sort.Slice(skipped, func(i, j int) bool { return skipped[i].Path < skipped[j].Path })
+	diags = append(diags, skipped...)
 	result := make([]LabrastroSkillCandidate, len(paths))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(labrastroCandidateConcurrency)

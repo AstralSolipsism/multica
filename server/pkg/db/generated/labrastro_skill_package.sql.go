@@ -324,6 +324,70 @@ func (q *Queries) LabrastroGetSkillPackage(ctx context.Context, arg LabrastroGet
 	return i, err
 }
 
+const labrastroGetSkillPlacement = `-- name: LabrastroGetSkillPlacement :one
+SELECT workspace_id, skill_id, folder_id, package_id, source_path FROM labrastro_skill_placement WHERE workspace_id=$1 AND skill_id=$2
+`
+
+type LabrastroGetSkillPlacementParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	SkillID     pgtype.UUID `json:"skill_id"`
+}
+
+func (q *Queries) LabrastroGetSkillPlacement(ctx context.Context, arg LabrastroGetSkillPlacementParams) (LabrastroSkillPlacement, error) {
+	row := q.db.QueryRow(ctx, labrastroGetSkillPlacement, arg.WorkspaceID, arg.SkillID)
+	var i LabrastroSkillPlacement
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.SkillID,
+		&i.FolderID,
+		&i.PackageID,
+		&i.SourcePath,
+	)
+	return i, err
+}
+
+const labrastroGetSkillState = `-- name: LabrastroGetSkillState :one
+SELECT s.id,s.workspace_id,s.name,s.description,s.config,s.created_by,s.updated_at,
+encode(sha256(convert_to(s.content,'UTF8')),'hex') AS content_hash,
+COALESCE((SELECT jsonb_agg(jsonb_build_array(f.path,encode(sha256(convert_to(f.content,'UTF8')),'hex')) ORDER BY f.path)
+FROM skill_file f WHERE f.skill_id=s.id),'[]'::jsonb)::jsonb AS file_hashes
+FROM skill s WHERE s.workspace_id=$1 AND s.id=$2
+`
+
+type LabrastroGetSkillStateParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ID          pgtype.UUID `json:"id"`
+}
+
+type LabrastroGetSkillStateRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Config      []byte             `json:"config"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ContentHash string             `json:"content_hash"`
+	FileHashes  []byte             `json:"file_hashes"`
+}
+
+func (q *Queries) LabrastroGetSkillState(ctx context.Context, arg LabrastroGetSkillStateParams) (LabrastroGetSkillStateRow, error) {
+	row := q.db.QueryRow(ctx, labrastroGetSkillState, arg.WorkspaceID, arg.ID)
+	var i LabrastroGetSkillStateRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Description,
+		&i.Config,
+		&i.CreatedBy,
+		&i.UpdatedAt,
+		&i.ContentHash,
+		&i.FileHashes,
+	)
+	return i, err
+}
+
 const labrastroListSkillFolders = `-- name: LabrastroListSkillFolders :many
 SELECT id, workspace_id, parent_id, name, package_id, package_path, created_at, updated_at FROM labrastro_skill_folder WHERE workspace_id = $1 ORDER BY name, id
 `
