@@ -543,27 +543,12 @@ func (q *Queries) LockIssuesForDependencyAdmission(ctx context.Context, workspac
 	return err
 }
 
-const lockIssuesForDependencyWrite = `-- name: LockIssuesForDependencyWrite :exec
-WITH locked AS MATERIALIZED (
-    SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR UPDATE
-)
-SELECT count(*) FROM locked
-`
-
-// The first implementation serializes structural edits per workspace. Lock
-// status rows in UUID order before inspecting unfinished constraints.
-func (q *Queries) LockIssuesForDependencyWrite(ctx context.Context, workspaceID pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, lockIssuesForDependencyWrite, workspaceID)
-	return err
-}
-
 const lockWorkspaceForDependencyAdmission = `-- name: LockWorkspaceForDependencyAdmission :one
 SELECT id FROM workspace WHERE id = $1 FOR KEY SHARE
 `
 
-// Fence workspace deletion, but let structural writers reach the advisory
-// lock's wait queue. SHARE conflicts with their NO KEY UPDATE counter lock
-// and a continuous stream of admissions can starve them before that queue.
+// Fence workspace deletion without conflicting with the create counter's
+// NO KEY UPDATE lock. Structural writers serialize on the advisory lock.
 func (q *Queries) LockWorkspaceForDependencyAdmission(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, lockWorkspaceForDependencyAdmission, id)
 	var id_2 pgtype.UUID
