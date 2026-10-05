@@ -15,9 +15,6 @@ import { parseWithFallback, setSchemaLogger } from "./schema";
 import { noopLogger } from "../logger";
 import {
   EMPTY_LIST_MESSAGE_ROUTE_DELIVERIES_RESPONSE,
-  EMPTY_LIST_MESSAGE_SOURCE_ROUTES_RESPONSE,
-  EMPTY_MESSAGE_EVENT_CATALOG,
-  EMPTY_MESSAGE_SOURCE_ROUTE,
   GetMessageRouteDeliveryResponseSchema,
   ListMessageRouteDeliveriesResponseSchema,
   ListMessageSourceApprovedTargetsResponseSchema,
@@ -95,12 +92,6 @@ describe("MessageSourceRouteSchema", () => {
     expect(parsed.source_kind).toBe("digest");
     expect(parsed.target_type).toBe("channel");
   });
-
-  it("the conservative fallback never reports an enabled saved rule", () => {
-    expect(EMPTY_MESSAGE_SOURCE_ROUTE.enabled).toBe(false);
-    expect(EMPTY_MESSAGE_SOURCE_ROUTE.revision).toBe(0);
-    expect(EMPTY_MESSAGE_SOURCE_ROUTE.id).toBe("");
-  });
 });
 
 describe("ListMessageSourceRoutesResponseSchema", () => {
@@ -110,11 +101,11 @@ describe("ListMessageSourceRoutesResponseSchema", () => {
     const parsed = parseWithFallback(
       { routes: [INBOX_ROUTE, { nope: true }] },
       ListMessageSourceRoutesResponseSchema,
-      EMPTY_LIST_MESSAGE_SOURCE_ROUTES_RESPONSE,
+      null,
       { endpoint: "test" },
     );
     // A malformed row must not present half-guessed configuration as real.
-    expect(parsed.routes).toEqual([]);
+    expect(parsed).toBeNull();
     expect(warn).toHaveBeenCalled();
   });
 });
@@ -141,9 +132,8 @@ describe("MessageEventCatalogSchema", () => {
     expect(parsed.team.map((t) => t.source_kind)).toEqual(["activity", "comment"]);
   });
 
-  it("the empty catalog fallback offers nothing rather than guessed events", () => {
-    expect(EMPTY_MESSAGE_EVENT_CATALOG.personal.event_types).toEqual([]);
-    expect(EMPTY_MESSAGE_EVENT_CATALOG.team).toEqual([]);
+  it("keeps an unreadable catalog indeterminate instead of offering an all-events scope", () => {
+    expect(parseWithFallback({}, MessageEventCatalogSchema, null, { endpoint: "test" })).toBeNull();
   });
 });
 

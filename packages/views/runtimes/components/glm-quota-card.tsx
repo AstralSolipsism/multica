@@ -1,6 +1,6 @@
 "use client";
 
-import type { GlmQuotaStatus } from "@multica/core/api";
+import type { GlmQuotaStatus, GlmQuotaWindow } from "@multica/core/api";
 import { quotaTone, type QuotaTone } from "@multica/core/runtimes";
 import {
   Tooltip,
@@ -25,15 +25,6 @@ const CHIP_TONE_CLASS: Record<QuotaTone, string> = {
   ok: "bg-success/10 text-success",
   warning: "bg-warning/10 text-warning",
   destructive: "bg-destructive/10 text-destructive",
-};
-
-export type GlmQuotaWindow = {
-  type: string;
-  used_percent?: number;
-  usage?: number;
-  current_value?: number;
-  remaining?: number;
-  resets_at?: number;
 };
 
 // Remaining percent per window: the provider's percentage is *used*, and

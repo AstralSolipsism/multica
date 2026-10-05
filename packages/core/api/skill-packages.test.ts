@@ -3,6 +3,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiError } from "./client";
 
+// The active route deliberately belongs to another workspace: omitting the
+// empty slug override would let the server select it ahead of the pinned ID.
+vi.mock("../platform/workspace-storage", () => ({ getCurrentSlug: () => "other-workspace" }));
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -95,6 +99,32 @@ afterEach(() => {
 });
 
 describe("skill package API workspace pinning", () => {
+  it.each([
+    { name: "importSkillParsed", call: (c: ApiClient) => c.importSkillParsed(WS, { url: "https://github.com/o/r" }) },
+    { name: "getSkillFolderTree", call: (c: ApiClient) => c.getSkillFolderTree(WS) },
+    { name: "listSkillPackages", call: (c: ApiClient) => c.listSkillPackages(WS) },
+    { name: "getSkillPackage", call: (c: ApiClient) => c.getSkillPackage(WS, "pkg-1") },
+    { name: "previewSkillPackage", call: (c: ApiClient) => c.previewSkillPackage(WS, { url: "https://github.com/o/r" }) },
+    { name: "applySkillPackage", call: (c: ApiClient) => c.applySkillPackage(WS, { preview_id: "token-1" }) },
+    { name: "rescanSkillPackage", call: (c: ApiClient) => c.rescanSkillPackage(WS, "pkg-1") },
+    { name: "applySkillPackageRescan", call: (c: ApiClient) => c.applySkillPackageRescan(WS, "pkg-1", { preview_id: "token-1" }) },
+    { name: "getSkillPackageDeletePreview", call: (c: ApiClient) => c.getSkillPackageDeletePreview(WS, "pkg-1") },
+    { name: "dissolveSkillPackage", call: (c: ApiClient) => c.dissolveSkillPackage(WS, "pkg-1", "token-1") },
+    { name: "deleteSkillPackage", call: (c: ApiClient) => c.deleteSkillPackage(WS, "pkg-1", "token-1") },
+    { name: "createSkillFolder", call: (c: ApiClient) => c.createSkillFolder(WS, { name: "Folder" }) },
+    { name: "updateSkillFolder", call: (c: ApiClient) => c.updateSkillFolder(WS, "folder-1", { name: "Folder" }) },
+    { name: "deleteSkillFolder", call: (c: ApiClient) => c.deleteSkillFolder(WS, "folder-1") },
+    { name: "setSkillPlacement", call: (c: ApiClient) => c.setSkillPlacement(WS, "skill-1", "folder-1") },
+    { name: "detachSkillPlacement", call: (c: ApiClient) => c.detachSkillPlacement(WS, "skill-1") },
+  ])("$name pins the explicit workspace even after a route switch", async ({ call }) => {
+    const fetchMock = stubFetch(null);
+    await call(new ApiClient("https://api.example.test"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(lastRequest(fetchMock).headers).toMatchObject({
+      "X-Workspace-ID": WS, "X-Workspace-Slug": "",
+    });
+  });
+
   it("pins X-Workspace-ID and clears the slug header on tree reads", async () => {
     const fetchMock = stubFetch({ folders: [folder], placements: [placement], packages: [pkg] });
     const client = new ApiClient("https://api.example.test");

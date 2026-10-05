@@ -9,13 +9,32 @@ const ConversationGrantSchema = z.object({
 
 export const LarkConversationResponseSchema = z.object({ conversation: ConversationGrantSchema.nullable() });
 
+// List reads preserve installations even when a newer server adds a grant
+// scope or chat kind. Unreadable grants are never equivalent to no grant.
+const ConversationGrantReadSchema = z.object({
+  id: z.string(),
+  authorized_by: z.string(),
+  scope: z.enum(["workspace", "unreadable"]).catch("unreadable"),
+  chats: z.array(z.object({
+    chat_id: z.string(),
+    chat_type: z.enum(["group", "p2p", "unreadable"]).catch("unreadable"),
+  }).catch({ chat_id: "", chat_type: "unreadable" })),
+}).catch({ id: "", authorized_by: "", scope: "unreadable", chats: [] });
+
+// Saving replaces the whole chat set. The server omits conversation when
+// there is no grant; null has the same meaning. Callers gate writes separately
+// on conversation_supported and the installation query's availability.
+export function isEditableLarkConversation(grant: unknown): boolean {
+  return grant == null || ConversationGrantSchema.safeParse(grant).success;
+}
+
 export const LarkInstallationsSchema = z.object({
   installations: z.array(z.object({
     id: z.string(), workspace_id: z.string(), agent_id: z.string(), app_id: z.string(),
     bot_open_id: z.string(), installer_user_id: z.string(), status: z.string(),
     installed_at: z.string(), created_at: z.string(), updated_at: z.string(),
     tenant_key: z.string().nullable().optional(), region: z.string().optional(),
-    conversation: ConversationGrantSchema.nullable().optional(),
+    conversation: ConversationGrantReadSchema.nullable().optional(),
   })),
   configured: z.boolean(),
   install_supported: z.boolean().optional(),

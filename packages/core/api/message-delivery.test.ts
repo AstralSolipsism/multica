@@ -18,9 +18,6 @@ import { noopLogger } from "../logger";
 import {
   ApproveMessageTargetResponseSchema,
   EMPTY_LIST_MESSAGE_DELIVERIES_RESPONSE,
-  EMPTY_LIST_MESSAGE_ROUTES_RESPONSE,
-  EMPTY_MESSAGE_DELIVERY,
-  EMPTY_MESSAGE_ROUTE,
   GetMessageDeliveryResponseSchema,
   ListMessageApprovedTargetsResponseSchema,
   ListMessageDeliveriesResponseSchema,
@@ -87,14 +84,14 @@ describe("MessageRouteSchema", () => {
 });
 
 describe("ListMessageRoutesResponseSchema", () => {
-  it("defaults an empty list", () => {
+  it("does not infer an empty list from a missing routes field", () => {
     const parsed = parseWithFallback(
       {},
       ListMessageRoutesResponseSchema,
-      EMPTY_LIST_MESSAGE_ROUTES_RESPONSE,
+      null,
       { endpoint: "test" },
     );
-    expect(parsed.routes).toEqual([]);
+    expect(parsed).toBeNull();
   });
 
   it("falls back the whole response when a row is malformed", () => {
@@ -103,11 +100,11 @@ describe("ListMessageRoutesResponseSchema", () => {
     const parsed = parseWithFallback(
       { routes: [ROUTE, { nope: true }] },
       ListMessageRoutesResponseSchema,
-      EMPTY_LIST_MESSAGE_ROUTES_RESPONSE,
+      null,
       { endpoint: "test" },
     );
     // A malformed row must not present half-guessed configuration as real.
-    expect(parsed.routes).toEqual([]);
+    expect(parsed).toBeNull();
     expect(warn).toHaveBeenCalled();
   });
 });
@@ -246,8 +243,6 @@ describe("GetMessageDeliveryResponseSchema", () => {
     expect(fallback.delivery.status).toBe("unknown");
     expect(fallback.content_snapshot).toBeNull();
     expect(fallback.receipts).toEqual([]);
-    expect(EMPTY_MESSAGE_DELIVERY.status).toBe("unknown");
-    expect(EMPTY_MESSAGE_ROUTE.enabled).toBe(false);
   });
 });
 
@@ -269,10 +264,9 @@ describe("Approved-target and receipt wrappers", () => {
     expect(parsed.approved_target.target_key).toBe("group:oc_1");
   });
 
-  it("lists default to empty", () => {
-    expect(
-      ListMessageApprovedTargetsResponseSchema.parse({}).approved_targets,
-    ).toEqual([]);
+  it("requires an explicit approvals list", () => {
+    expect(ListMessageApprovedTargetsResponseSchema.safeParse({}).success).toBe(false);
+    expect(ListMessageApprovedTargetsResponseSchema.parse({ approved_targets: [] }).approved_targets).toEqual([]);
   });
 
   it("parses the revoke response with the cancelled count", () => {

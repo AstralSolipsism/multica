@@ -27,12 +27,12 @@ vi.mock("@multica/core/api", async (importOriginal) => {
 const initial: LarkInstallation = {
   id: "inst", workspace_id: "ws", agent_id: "agent", app_id: "app", bot_open_id: "bot",
   installer_user_id: "owner", status: "active", installed_at: "", created_at: "", updated_at: "",
-  conversation: { id: "old", authorized_by: "owner", scope: "workspace", chats: [
+  conversation: { id: "00000000-0000-4000-8000-000000000002", authorized_by: "00000000-0000-4000-8000-000000000004", scope: "workspace", chats: [
     { chat_id: "oc_group", chat_type: "group" }, { chat_id: "oc_previously_revoked", chat_type: "p2p" },
   ] },
 };
 const confirmed: LarkConversationGrant = {
-  id: "new", authorized_by: "owner", scope: "workspace", chats: [
+  id: "00000000-0000-4000-8000-000000000003", authorized_by: "00000000-0000-4000-8000-000000000004", scope: "workspace", chats: [
     { chat_id: "oc_group", chat_type: "group" },
     { chat_id: "oc_added_elsewhere", chat_type: "p2p" },
     { chat_id: "oc_alice", chat_type: "p2p" },

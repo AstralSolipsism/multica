@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useSetLarkConversation } from "@multica/core/lark";
+import { isEditableLarkConversation, useSetLarkConversation } from "@multica/core/lark";
 import type { LarkConversationGrant, LarkInstallation } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Textarea } from "@multica/ui/components/ui/textarea";
@@ -56,7 +56,8 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
   // PUT committed after a confirm would drop the freshly authorized chats,
   // and a late confirm response must not land while a PUT is in flight.
   const [confirmBusy, setConfirmBusy] = useState(false);
-  const blocked = disabled || mutation.isPending || confirmBusy;
+  const unreadable = !isEditableLarkConversation(installation.conversation);
+  const blocked = disabled || unreadable || mutation.isPending || confirmBusy;
 
   // The authoritative saved grant the current draft derives from. When a
   // newer grant arrives — the confirm mutation's cache write, a WS-driven
@@ -67,9 +68,9 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
   const baselineRef = useRef<LarkConversationGrant | null | undefined>(installation.conversation);
   useEffect(() => {
     const incoming = installation.conversation;
-    // undefined = the field is absent (server drift): no authoritative value
-    // to re-baseline against, keep the draft and the baseline.
-    if (incoming === undefined || incoming === baselineRef.current) return;
+    // Unreadable grants cannot re-baseline a draft; an omitted grant means
+    // all saved chats were revoked and must be removed from its baseline.
+    if (!isEditableLarkConversation(incoming) || incoming === baselineRef.current) return;
     const baseline = baselineRef.current;
     baselineRef.current = incoming;
     if (sameConversationChats(incoming?.chats, baseline?.chats)) return;
@@ -207,7 +208,7 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
       <Button size="sm" disabled={blocked || overLimit || (groups.length === 0 && directs.length === 0)} onClick={() => void save(false)}>{t($ => $.lark.conversation_save)}</Button>
       <Button size="sm" variant="outline" disabled={blocked} onClick={() => void save(true)}>{t($ => $.lark.conversation_revoke)}</Button>
     </div>
-    {disabled && <p role="status">{t($ => $.lark.conversation_unavailable)}</p>}
+    {(disabled || unreadable) && <p role="status">{t($ => $.lark.conversation_unavailable)}</p>}
     {mutation.isError && <p role="alert">{mutation.error.message}</p>}
     {saved && <p role="status">{t($ => $.lark.conversation_saved)}</p>}
   </details>;
