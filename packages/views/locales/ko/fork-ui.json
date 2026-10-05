@@ -2,9 +2,6 @@
   "issues": {
     "detail": {
       "more_actions": "태스크 작업"
-    },
-    "batch": {
-      "update_partial": "{{total}}개 중 {{failed}}개를 업데이트하지 못했습니다"
     }
   },
   "runtimes": {

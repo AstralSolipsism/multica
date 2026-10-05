@@ -2,9 +2,6 @@
   "issues": {
     "detail": {
       "more_actions": "タスク操作"
-    },
-    "batch": {
-      "update_partial": "{{total}} 件中 {{failed}} 件を更新できませんでした"
     }
   },
   "runtimes": {

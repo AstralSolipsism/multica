@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -28,7 +28,6 @@ import { issueStatusCategory } from "@multica/core/issues";
 import {
   issueDependenciesOptions,
   issueDetailOptions,
-  issueKeys,
   issueSearchOptions,
 } from "@multica/core/issues/queries";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
@@ -127,7 +126,6 @@ function EditDependenciesBody({
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
   const openModal = useModalStore((s) => s.open);
-  const qc = useQueryClient();
   const updateIssue = useUpdateIssue();
 
   const { data: issue } = useQuery(issueDetailOptions(wsId, issueId));
@@ -260,19 +258,14 @@ function EditDependenciesBody({
       const details = dependencyErrorDetails(err);
       switch (details?.reasonCode) {
         case "dependency_version_conflict": {
-          // Someone else edited first: re-base onto the projection the server
-          // just sent (or a refetch) — by MERGING the user's intent, not by
-          // keeping the stale selection. The diff against the reviewed
+          // Someone else edited first: refetch the projection and merge the
+          // user's intent. The diff against the reviewed
           // baseline (what the user added / removed) is applied to the fresh
           // set, so a prerequisite another editor added meanwhile survives
           // the retry and is visibly listed before the user confirms again.
           setNotice({ kind: "conflict" });
-          const fresh =
-            details.dependencies ??
-            (await depsQuery.refetch()).data ??
-            null;
+          const fresh = (await depsQuery.refetch()).data ?? null;
           if (fresh) {
-            qc.setQueryData(issueKeys.dependencies(wsId, issueId), fresh);
             setForm((prev) => {
               if (!prev) return prev;
               const baseline = new Set(prev.baselineIds);

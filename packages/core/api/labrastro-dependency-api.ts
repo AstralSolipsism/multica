@@ -9,14 +9,10 @@ import { DependencyViewSchema, dependencyMutationToWire, IssueWithDependenciesSc
 export interface DependencyErrorDetails {
   /** The machine-readable dependency refusal (`dependency_ancestor_conflict`, …). */
   reasonCode: string;
-  /** The dependency projection the server attached to the refusal, when it
-   *  sent one — the authoritative replacement for whatever the UI displayed
-   *  before the rejected write. null = unknown, never "all satisfied". */
-  dependencies: DependencyView | null;
 }
 
 // dependencyErrorDetails reads the structured body a `with-dependencies`
-// refusal carries ({ error, reason_code, dependencies? } — see
+// refusal carries ({ error, reason_code } — see
 // writeDependencyError in server/internal/handler/issue_dependency.go). It
 // returns null for non-dependency errors so callers keep their generic
 // handling; a `reason_code` that is not a dependency code is not ours to
@@ -25,17 +21,11 @@ export function dependencyErrorDetails(err: unknown): DependencyErrorDetails | n
   if (!(err instanceof ApiError) || !err.body || typeof err.body !== "object") {
     return null;
   }
-  const body = err.body as { reason_code?: unknown; dependencies?: unknown };
+  const body = err.body as { reason_code?: unknown };
   if (typeof body.reason_code !== "string" || !body.reason_code.startsWith("dependency_")) {
     return null;
   }
-  const dependencies =
-    body.dependencies === undefined
-      ? null
-      : parseWithFallback<DependencyView | null>(body.dependencies, DependencyViewSchema, null, {
-          endpoint: "with-dependencies error body",
-        });
-  return { reasonCode: body.reason_code, dependencies };
+  return { reasonCode: body.reason_code };
 }
 
 const labrastroDependencyApi = {

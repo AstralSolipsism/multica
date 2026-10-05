@@ -43,21 +43,10 @@ describe("dependency API boundary", () => {
     expect(mock).toHaveBeenCalledTimes(1);
   });
 
-  it("preserves structured partial-batch rejections", async () => {
-    respond({ updated: 1, results: [
-      { issue_id: "a", updated: true },
-      { issue_id: "b", updated: false, reason_code: "dependency_ancestor_conflict", dependencies: { ...view, has_restricted_blockers: true } },
-    ] });
-    const result = await new ApiClient("https://api.example.test").batchUpdateIssues(["a", "b"], { status: "todo" });
-    expect(result.updated).toBe(1);
-    expect(result.results?.[1]?.reasonCode).toBe("dependency_ancestor_conflict");
-    expect(dependencyReadiness(result.results?.[1]?.dependencies)).toBe("blocked");
-  });
-
-  it.each([{ updated: 1 }, { updated: 1, results: [{ updated: true }] }])("keeps unavailable batch diagnostics unknown: %j", async (body) => {
-    respond(body);
+  it("reads the batch update total", async () => {
+    respond({ updated: 1 });
     expect(await new ApiClient("https://api.example.test").batchUpdateIssues(["a"], {}))
-      .toEqual({ updated: 1, results: null });
+      .toEqual({ updated: 1 });
   });
 
   it("rejects a malformed batch total without claiming success", async () => {

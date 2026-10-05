@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { CreateIssueRequest, Issue, UpdateIssueRequest } from "../types";
 import { IssueSchema } from "./schemas";
-import { DispatchOutcomeSchema } from "./dispatch-schemas";
 
 const prerequisiteSchema = z.object({
   issue_id: z.string().min(1),
@@ -54,23 +53,6 @@ export const IssueWithDependenciesSchema = IssueSchema.extend({
 
 export const IssueBatchUpdateSchema = z.object({
   updated: z.number().int().nonnegative(),
-  // Older servers only report the total. Incomplete item diagnostics stay
-  // unknown while retaining that authoritative total.
-  results: z.array(z.object({
-    dispatch: DispatchOutcomeSchema.nullable().catch(null),
-    issue_id: z.string().min(1),
-    updated: z.boolean(),
-    reason_code: z.string().optional(),
-    error: z.string().optional(),
-    dependencies: DependencyViewSchema.nullable().catch(null),
-  }).transform((item) => ({
-    dispatch: item.dispatch,
-    issueId: item.issue_id,
-    updated: item.updated,
-    reasonCode: item.reason_code,
-    error: item.error,
-    dependencies: item.dependencies,
-  }))).nullable().catch(null),
 });
 export type IssueBatchUpdateResult = z.infer<typeof IssueBatchUpdateSchema>;
 

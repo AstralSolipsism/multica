@@ -57,7 +57,7 @@ it("REREVIEW refreshes dependencies after a normal batch status write without a 
   const key = issueKeys.dependencies("review-ws", "dependent");
   client.setQueryData(key, { unsatisfied: [] });
   client.setQueryData(issueKeys.detail("review-ws", "upstream"), upstream);
-  const batchUpdateIssues = vi.fn().mockResolvedValue({ updated: 1, results: null });
+  const batchUpdateIssues = vi.fn().mockResolvedValue({ updated: 1 });
   setApiInstance({ batchUpdateIssues } as unknown as ApiClient);
   let reads = 0;
   const observer = new QueryObserver(client, {

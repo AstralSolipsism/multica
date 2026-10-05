@@ -20,22 +20,22 @@
     "retry": "Retry"
   },
   "create_issue": {
-    "prerequisite_chip": "After {{identifier}}",
+    "prerequisite_chip": "Prerequisite: {{identifier}}",
     "remove_prerequisite_aria": "Remove prerequisite {{identifier}}",
     "prerequisite_picker": {
       "title": "Add prerequisite",
-      "description": "Search for an issue that must be completed before the new issue can start"
+      "description": "Prerequisites are for coordination and do not prevent the new issue from starting."
     }
   },
   "edit_dependencies": {
     "title": "Edit prerequisites",
-    "description": "Choose which issues must be completed before this one starts.",
-    "description_for": "Choose which issues must be completed before {{identifier}} starts.",
+    "description": "Prerequisites are for coordination and do not prevent this issue from starting.",
+    "description_for": "Prerequisites are for coordination and do not prevent {{identifier}} from starting.",
     "direct_section": "Direct prerequisites",
     "empty_direct": "No direct prerequisites",
     "inherited_section": "Inherited prerequisites",
-    "inherited_hint": "Inherited constraints can only be changed on the source issue.",
-    "restricted_note": "Some prerequisites are hidden from you — they still block starting.",
+    "inherited_hint": "Inherited relations can only be changed on the source issue.",
+    "restricted_note": "Some prerequisites are hidden by permissions.",
     "self_badge": "This issue",
     "added_badge": "Added",
     "inherited_badge": "Inherited",
