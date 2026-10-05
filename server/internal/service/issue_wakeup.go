@@ -674,8 +674,8 @@ func (s *IssueWakeupService) tick(ctx context.Context, workspaceIDs []pgtype.UUI
 		if ctx.Err() != nil {
 			return errors.Join(append(errs, ctx.Err())...)
 		}
-		// Outcome writes must not turn a busy rule row into another batch-wide
-		// wait. Use the batch context, not dispatch's expired per-rule context.
+		// A failed dispatch still moves to the back of the scan when the rule
+		// is writable. Bound this diagnostic write independently of dispatch.
 		dispatch := s.dispatch
 		if w.SystemRule.Valid {
 			dispatch = s.dispatchSystem
@@ -686,11 +686,6 @@ func (s *IssueWakeupService) tick(ctx context.Context, workspaceIDs []pgtype.UUI
 			_ = s.Tasks.Queries.NoteWakeupFailure(outcomeCtx, db.NoteWakeupFailureParams{ID: w.ID, LastError: pgtype.Text{String: truncateForSummary(err.Error(), 500), Valid: true}})
 			cancel()
 		}
-		outcomeCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-		if touchErr := s.Tasks.Queries.TouchWakeupDispatch(outcomeCtx, w.ID); touchErr != nil {
-			errs = append(errs, touchErr)
-		}
-		cancel()
 	}
 	return errors.Join(errs...)
 }
@@ -741,6 +736,11 @@ func (s *IssueWakeupService) dispatch(ctx context.Context, prev db.IssueWakeup) 
 	}
 	w, err := q.LockIssueWakeup(ctx, prev.ID)
 	if err != nil {
+		return err
+	}
+	// Update scan order under the lock we already hold. A second write after
+	// commit can race another writer and report failure for a durable outcome.
+	if err = q.TouchWakeupDispatch(ctx, w.ID); err != nil {
 		return err
 	}
 	if w.Revision != prev.Revision {
