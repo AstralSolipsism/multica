@@ -36,14 +36,13 @@ import {
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
-import { useActorName } from "@multica/core/workspace/hooks";
 import { larkInstallationsOptions, larkKeys } from "@multica/core/lark";
 import { api, ApiError } from "@multica/core/api";
 import type { LarkInstallation, LarkInstallStatusResponse } from "@multica/core/types";
-import { ActorAvatar } from "../../common/actor-avatar";
 import { docsLocalePrefix } from "../../common/docs-locale";
-import { useLocale, useT } from "../../i18n";
+import { useT } from "../../i18n";
 import { LarkConversationForm } from "./lark-conversation-form";
+import { LarkInstallationList } from "./lark-installation-list";
 import { TeamSubscriptionsSection } from "../../message-delivery";
 
 // MUL-3083: the Lark (international, open.larksuite.com) "connect a Bot"
@@ -76,20 +75,10 @@ export function LarkTab() {
   const canManage =
     currentMember?.role === "owner" || currentMember?.role === "admin";
 
-  const { data, isLoading, isError, isFetching } = useQuery({
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
     ...larkInstallationsOptions(wsId),
     enabled: !!wsId,
   });
-  const installations = data?.installations ?? [];
-  const configured = data?.configured === true;
-  // install_supported tracks whether the device-flow install path is
-  // wired end-to-end on the server. When false, scan-to-bind would
-  // fail at the post-poll bot-info step, so we hide install entry
-  // points and surface a "coming soon" notice in their place rather
-  // than send users into a broken flow. Already-installed bots still
-  // appear in the listing below and remain manageable.
-  const installSupported = data?.install_supported === true;
-
   const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
 
@@ -110,74 +99,31 @@ export function LarkTab() {
 
   return (
     <div className="space-y-8">
-      {!configured ? (
-        <Card>
+      {isError && (
+        <Card role="alert">
           <CardContent className="space-y-2">
-            <p className="text-body font-medium">{t(($) => $.lark.not_enabled_title)}</p>
-            <p className="text-caption text-muted-foreground">
-              {t(($) => $.lark.not_enabled_description_prefix)}{" "}
-              <code className="rounded-xs bg-muted px-1 py-0.5 text-micro">
-                MULTICA_LARK_SECRET_KEY
-              </code>{" "}
-              {t(($) => $.lark.not_enabled_description_suffix)}{" "}
-              {t(($) => $.lark.not_enabled_self_host_hint)}
-            </p>
+            <p className="text-body text-destructive">{t(($) => $.lark.load_error)}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isFetching}
+              aria-busy={isFetching}
+              onClick={() => void refetch()}
+            >
+              {t(($) => $.lark.retry)}
+            </Button>
           </CardContent>
         </Card>
-      ) : !installSupported && installations.length === 0 ? (
-        // Device-flow install path is not wired (HTTP client is the stub
-        // or RegistrationService didn't initialize). We deliberately do
-        // NOT direct users to the agent-detail "Bind" button because the
-        // backend would reject it anyway. Existing installations still render
-        // via the branch below; this only hides the empty-state CTA
-        // when there is nothing to manage.
-        <Card>
-          <CardContent className="space-y-2">
-            <p className="text-body font-medium">{t(($) => $.lark.preview_title)}</p>
-            <p className="text-caption text-muted-foreground">
-              {t(($) => $.lark.preview_description)}
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <section className="space-y-3">
-          <h2 className="text-body font-semibold">{t(($) => $.lark.connected_bots)}</h2>
-          {isLoading ? (
-            <Card>
-              <CardContent>
-                <p className="text-body text-muted-foreground">{t(($) => $.lark.loading)}</p>
-              </CardContent>
-            </Card>
-          ) : installations.length === 0 ? (
-            <Card>
-              <CardContent className="space-y-2">
-                <p className="text-body font-medium">{t(($) => $.lark.empty_title)}</p>
-                <p className="text-caption text-muted-foreground">
-                  {t(($) => $.lark.empty_description_prefix)}{" "}
-                  <strong>{t(($) => $.lark.empty_description_cta)}</strong>{" "}
-                  {t(($) => $.lark.empty_description_suffix)}
-                </p>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardContent className="divide-y">
-                {installations.map((inst) => (
-                  <InstallationRow
-                    key={inst.id}
-                    installation={inst}
-                    canManage={canManage}
-                    conversationSupported={data?.conversation_supported === true || inst.conversation != null}
-                    conversationWritable={data?.conversation_supported === true && !isError && !isFetching}
-                    workspaceId={wsId}
-                    onDisconnect={() => setDisconnectTarget(inst.id)}
-                  />
-                ))}
-              </CardContent>
-            </Card>
-          )}
-        </section>
       )}
+      <LarkInstallationList
+        data={data}
+        isLoading={isLoading}
+        canManage={canManage}
+        conversationWritable={data?.conversation_supported === true && !isError && !isFetching}
+        workspaceId={wsId}
+        onDisconnect={setDisconnectTarget}
+      />
 
       {/* OL-28: team event subscriptions (activity/comment → group/topic).
           Self-gated on the member's role; a plain member sees an explanatory
@@ -211,74 +157,6 @@ export function LarkTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
-  );
-}
-
-function InstallationRow({
-  conversationSupported,
-  workspaceId,
-  conversationWritable,
-  installation,
-  canManage,
-  onDisconnect,
-}: {
-  installation: LarkInstallation;
-  workspaceId: string;
-  conversationWritable: boolean;
-  conversationSupported: boolean;
-  canManage: boolean;
-  onDisconnect: () => void;
-}) {
-  const { t } = useT("settings");
-  const locale = useLocale();
-  // The bot is bound 1:1 to a Multica Agent (per the (workspace_id,
-  // agent_id) UNIQUE in lark_installation). Render the Multica agent's
-  // identity here rather than the raw Lark app_id / bot_open_id — those
-  // mean nothing to product users. getAgentName falls back to
-  // "Unknown Agent" when the agent has been deleted; the Disconnect
-  // affordance below is the recovery path for that orphan row.
-  const { getAgentName } = useActorName();
-  const isActive = installation.status === "active";
-  const agentName = getAgentName(installation.agent_id);
-  return (
-    <div className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0">
-      <div className="flex items-start gap-3">
-        <ActorAvatar
-          actorType="agent"
-          actorId={installation.agent_id}
-          size="lg"
-          enableHoverCard
-          profileLink
-        />
-        <div className="space-y-1">
-          <p className="text-body font-medium">
-            {agentName}
-            <span className="ml-2 rounded-xs bg-muted px-1.5 py-0.5 text-micro text-muted-foreground">
-              {installation.region === "lark"
-                ? t(($) => $.lark.region_lark)
-                : t(($) => $.lark.region_feishu)}
-            </span>
-            {!isActive && (
-              <span className="ml-2 rounded-xs bg-muted px-1.5 py-0.5 text-micro text-muted-foreground">
-                {t(($) => $.lark.revoked_badge)}
-              </span>
-            )}
-          </p>
-          <p className="text-micro text-muted-foreground">
-            {t(($) => $.lark.installed_at_label, {
-              when: new Date(installation.installed_at).toLocaleString(locale),
-            })}
-          </p>
-          {canManage && isActive && conversationSupported && <LarkConversationForm workspaceId={workspaceId} installation={installation} disabled={!conversationWritable} />}
-        </div>
-      </div>
-      {canManage && isActive && (
-        <Button variant="outline" size="sm" onClick={onDisconnect}>
-          <Trash2 className="h-3 w-3" />
-          {t(($) => $.lark.disconnect)}
-        </Button>
-      )}
     </div>
   );
 }

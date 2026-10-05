@@ -10,6 +10,29 @@ import (
 	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
+func TestLabrastroPackageRejectsSelectionOutsidePreview(t *testing.T) {
+	for _, paths := range [][]string{{"missing"}, {"alpha", "missing"}} {
+		t.Run(strings.Join(paths, "+"), func(t *testing.T) {
+			fx := labrastroPackageDBFixture(t)
+			source := labrastroTestFixture(map[string]string{"alpha/SKILL.md": "---\nname: alpha\n---\nalpha"})
+			source.install(t)
+			preview := labrastroPreview(t, fx, testUserID, source.url())
+			var failure struct{ Error string }
+			labrastroCall(t, fx, testUserID, testHandler.LabrastroApplyPackage, "POST", map[string]any{
+				"url": source.url(), "preview_id": preview.PreviewID, "skills": paths,
+			}).Want(http.StatusBadRequest).JSON(&failure)
+			if failure.Error != "selected skill path is not in this preview" {
+				t.Fatalf("unexpected selection error: %+v", failure)
+			}
+			for _, table := range []string{"labrastro_skill_package", "labrastro_skill_folder", "labrastro_skill_placement", "skill"} {
+				if n := fx.Count(t, "SELECT count(*) FROM "+table+" WHERE workspace_id=$1", fx.WorkspaceID); n != 0 {
+					t.Fatalf("invalid selection wrote %d rows to %s", n, table)
+				}
+			}
+		})
+	}
+}
+
 func TestLabrastroPackageNewCandidatesRenameAtWriteTime(t *testing.T) {
 	fx := labrastroPackageDBFixture(t)
 	source := labrastroTestFixture(map[string]string{
