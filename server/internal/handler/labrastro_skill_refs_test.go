@@ -4,10 +4,142 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestLabrastroMarkdownPathSpans(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       []string
+	}{
+		{"inline", "prefix `a.md` and ``b`c.md`` plus `two words`", []string{"a.md", "b`c.md"}},
+		{"longer closer", "prefix ``a.md```b.md`", []string{"a.md", "b.md"}},
+		{"escaped opener", "prefix \\`ignored and \\``a.md`", []string{"a.md"}},
+		{"escaped closer", "prefix `a.md\\` [b](b.md)", []string{"a.md\\", "b.md"}},
+		{"links", "[a](a(b).md#c) [b](<b c.md>) [c](c\\(d\\).md \"title\")", []string{"a(b).md#c", "b c.md", "c\\(d\\).md"}},
+		{"definitions", "[a]: <a b.md>\r\n[b]: b.md \"title\"\n[x][a] `c.md`", []string{"a b.md", "b.md", "c.md"}},
+		{"overlapping definition", "[a]: `a.md`", []string{"`a.md`", "a.md"}},
+		{"containers", "> ```md\n> [no](no.md)\n> ```\n\n- ```md\n  `no.md`\n  ```\n\n[yes](yes.md)", []string{"yes.md"}},
+		{"indented", "    [no](no.md)\n\n[yes](yes.md)", []string{"yes.md"}},
+		{"empty and unterminated links", "[a]() [b](<>) [c](unterminated", []string{"unterminated"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spans, err := labrastroMarkdownPaths(t.Context(), tc.body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			last := -1
+			for _, span := range spans {
+				if span.start < last || span.end <= span.start || span.end > len(tc.body) {
+					t.Fatalf("invalid source span: %+v", span)
+				}
+				got = append(got, tc.body[span.start:span.end])
+				last = span.start
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("paths = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLabrastroMarkdownUnmatchedBackticks(t *testing.T) {
+	// The leading non-backtick byte keeps this from being a fenced code block.
+	body := "x" + strings.Repeat("`", (1<<20)-1)
+	start := time.Now()
+	spans, err := labrastroMarkdownPaths(t.Context(), body)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spans) != 0 {
+		t.Fatalf("unmatched backticks produced %d paths", len(spans))
+	}
+	if elapsed >= 2*time.Second {
+		t.Fatalf("1 MiB scan took %s; want less than 2s", elapsed)
+	}
+	t.Logf("1 MiB unmatched backticks: %s", elapsed)
+}
+
+func TestLabrastroMarkdownAdversarialLines(t *testing.T) {
+	var differentRuns strings.Builder
+	differentRuns.WriteByte('x')
+	for n := 1400; n > 0; n-- {
+		differentRuns.WriteString(strings.Repeat("`", n))
+		differentRuns.WriteByte('x')
+	}
+	for _, tc := range []struct {
+		name, body string
+		paths      int
+	}{
+		{"decreasing backtick runs", differentRuns.String(), 0},
+		{"unclosed angle links", strings.Repeat("][x](<", (1<<20)/6), 1},
+		{"unclosed nested links", strings.Repeat("](a(", (1<<20)/4), 1},
+		{"escaped link destination", "[x](" + strings.Repeat(`\(`, (1<<20)/2-2), 1},
+		{"reference label", "[" + strings.Repeat("[", (1<<20)-1), 0},
+		{"reference destination", "[x]: " + strings.Repeat("a", (1<<20)-5), 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start := time.Now()
+			spans, err := labrastroMarkdownPaths(t.Context(), tc.body)
+			elapsed := time.Since(start)
+			if err != nil || len(spans) != tc.paths {
+				t.Fatalf("paths = %d, error = %v; want %d paths", len(spans), err, tc.paths)
+			}
+			if elapsed >= 2*time.Second {
+				t.Fatalf("scan took %s; want less than 2s", elapsed)
+			}
+			t.Logf("%d bytes: %s", len(tc.body), elapsed)
+		})
+	}
+}
+
+func TestLabrastroMarkdownContextDeadline(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"long line", "x" + strings.Repeat("`", (1<<20)-1)},
+		{"fenced lines", "```\n" + strings.Repeat("[a](a.md)\n", 100000)},
+		{"container lines", strings.Repeat("> - [a](a.md)\n\n", 60000)},
+	} {
+		for _, budget := range []time.Duration{-time.Second, time.Millisecond} {
+			t.Run(tc.name+"/"+budget.String(), func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(t.Context(), budget)
+				defer cancel()
+				start := time.Now()
+				spans, err := labrastroMarkdownPaths(ctx, tc.body)
+				if !errors.Is(err, context.DeadlineExceeded) || spans != nil {
+					t.Fatalf("deadline returned %d paths and %v", len(spans), err)
+				}
+				if elapsed := time.Since(start); elapsed >= 2*time.Second {
+					t.Fatalf("deadline returned after %s; want less than 2s", elapsed)
+				}
+			})
+		}
+	}
+}
+
+func TestLabrastroReferenceCancellationWithinFile(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	r := &importedSkill{content: "[a](missing.md) [b](also-missing.md)"}
+	lookups := 0
+	err := labrastroCompleteReferences(ctx, r, "skills/demo", func(_ context.Context, p string) (githubTreeEntry, bool, error) {
+		lookups++
+		if strings.HasSuffix(p, "/missing.md") {
+			cancel()
+		}
+		return githubTreeEntry{}, false, nil
+	}, func(context.Context, string) ([]byte, error) {
+		t.Fatal("missing reference must not be fetched")
+		return nil, nil
+	})
+	if !errors.Is(err, context.Canceled) || lookups != 2 {
+		t.Fatalf("cancellation returned %v after %d lookups; want cancellation after 2", err, lookups)
+	}
+}
 
 func TestLabrastroReferenceClosure(t *testing.T) {
 	files := map[string]string{

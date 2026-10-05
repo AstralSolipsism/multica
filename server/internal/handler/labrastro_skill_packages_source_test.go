@@ -28,6 +28,61 @@ func labrastroPackageSnapshotHash(t *testing.T, fx *testutil.Fixture) string {
 	return labrastroJSONHash(snap)
 }
 
+func TestLabrastroPackagePreviewMarkdownDeadline(t *testing.T) {
+	fx := labrastroPackageDBFixture(t)
+	source := labrastroTestFixture(map[string]string{
+		"skills/demo/SKILL.md":  "x" + strings.Repeat("`", (1<<20)-1),
+		"skills/demo/notes.txt": "notes",
+	})
+	source.install(t)
+	// Warm only the large blob, without scanning it. The small support-file
+	// response below leaves a short, predictable budget for Markdown scanning.
+	src, err := newLabrastroSkillSource(t.Context(), source.client(), source.url(), fx.WorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.fetch(t.Context(), "skills/demo/SKILL.md"); err != nil {
+		t.Fatal(err)
+	}
+	before := labrastroPackageSnapshotHash(t, fx)
+	req := newRequestAsUser(testUserID, "POST", "/api/skill-packages/preview", map[string]any{"url": source.url()})
+	req.Header.Set("X-Workspace-ID", fx.WorkspaceID)
+	ctx, cancel := context.WithTimeout(req.Context(), 500*time.Millisecond)
+	defer cancel()
+	deadline, _ := ctx.Deadline()
+	reached := false
+	http.DefaultTransport = labrastroPackageTransport(func(r *http.Request) (*http.Response, error) {
+		response, err := (labrastroFixtureTransport{source}).RoundTrip(r)
+		if err == nil && r.URL.Host == "raw.githubusercontent.com" && strings.HasSuffix(r.URL.Path, "/notes.txt") {
+			reached = true
+			timer := time.NewTimer(time.Until(deadline) - 5*time.Millisecond)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+			}
+		}
+		return response, err
+	})
+	var failure struct {
+		Code      string `json:"code"`
+		Retryable bool   `json:"retryable"`
+	}
+	start := time.Now()
+	testutil.Call(t, testHandler.LabrastroPreviewPackage, req.WithContext(ctx)).Want(http.StatusGatewayTimeout).JSON(&failure)
+	elapsed := time.Since(start)
+	if !reached || failure.Code != "source_timeout" || !failure.Retryable {
+		t.Fatalf("wrong scan deadline response (reached=%v): %+v", reached, failure)
+	}
+	if elapsed >= 2*time.Second {
+		t.Fatalf("500ms preview deadline returned after %s; want less than 2s", elapsed)
+	}
+	if after := labrastroPackageSnapshotHash(t, fx); before != after {
+		t.Fatal("interrupted preview changed database state")
+	}
+	t.Logf("500ms preview deadline returned 504 in %s", elapsed)
+}
+
 func TestLabrastroPackageScanContextFailure(t *testing.T) {
 	for _, operation := range []string{"preview", "apply", "rescan"} {
 		for _, interruption := range []string{"deadline", "cancel"} {

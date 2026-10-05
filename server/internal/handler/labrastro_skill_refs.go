@@ -15,8 +15,8 @@ import (
 	"unicode/utf8"
 
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
-	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 )
 
@@ -75,20 +75,62 @@ type labrastroPathSpan struct{ start, end int }
 
 var labrastroReferenceDefinition = regexp.MustCompile(`^ {0,3}\[[^\]]+\]:\s*(<[^>]+>|[^\s]+)`)
 
+// Stop block parsing at a line boundary. Returning EOF from PeekLine instead
+// could invalidate a parser's repeated reads of the current line.
+type labrastroMarkdownReader struct {
+	text.Reader
+	ctx context.Context
+}
+
+func (r *labrastroMarkdownReader) AdvanceLine() {
+	if r.ctx.Err() != nil {
+		line, _ := r.Position()
+		end := len(r.Source())
+		r.SetPosition(line, text.NewSegment(end, end))
+	}
+	r.Reader.AdvanceLine()
+}
+
+func (r *labrastroMarkdownReader) SkipBlankLines() (text.Segment, int, bool) {
+	if r.ctx.Err() != nil {
+		return text.Segment{}, 0, false
+	}
+	return r.Reader.SkipBlankLines()
+}
+
 // Use the existing Markdown parser for code-block boundaries, including list
 // and blockquote containers. Blanking bytes preserves source offsets without
 // treating examples in nested fenced/indented code as real references.
-func labrastroMaskMarkdownCode(body string) string {
+func labrastroMaskMarkdownCode(ctx context.Context, body string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	source := []byte(body)
-	doc := goldmark.New().Parser().Parse(text.NewReader(source))
-	mask := func(start, end int) {
+	// Inline parsing does not affect code-block boundaries, and would repeat
+	// unbounded searches for unmatched code spans before our own scanner runs.
+	p := parser.NewParser(parser.WithBlockParsers(parser.DefaultBlockParsers()...),
+		parser.WithParagraphTransformers(parser.DefaultParagraphTransformers()...))
+	doc := p.Parse(&labrastroMarkdownReader{Reader: text.NewReader(source), ctx: ctx})
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	mask := func(start, end int) error {
 		for i := start; i < end; i++ {
+			if i%4096 == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
 			if source[i] != '\n' && source[i] != '\r' {
 				source[i] = ' '
 			}
 		}
+		return nil
 	}
-	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+	err := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if err := ctx.Err(); err != nil {
+			return ast.WalkStop, err
+		}
 		if !entering {
 			return ast.WalkContinue, nil
 		}
@@ -96,28 +138,89 @@ func labrastroMaskMarkdownCode(body string) string {
 		case *ast.FencedCodeBlock:
 			if block.Info != nil {
 				start := bytes.LastIndexByte(source[:block.Info.Segment.Start], '\n') + 1
-				mask(start, block.Info.Segment.Stop)
+				if err := mask(start, block.Info.Segment.Stop); err != nil {
+					return ast.WalkStop, err
+				}
 			}
 		case *ast.CodeBlock:
 		default:
 			return ast.WalkContinue, nil
 		}
 		for i := 0; i < n.Lines().Len(); i++ {
+			if err := ctx.Err(); err != nil {
+				return ast.WalkStop, err
+			}
 			line := n.Lines().At(i)
-			mask(line.Start, line.Stop)
+			if err := mask(line.Start, line.Stop); err != nil {
+				return ast.WalkStop, err
+			}
 		}
 		return ast.WalkSkipChildren, nil
 	})
-	return string(source)
+	if err != nil {
+		return "", err
+	}
+	return string(source), ctx.Err()
+}
+
+// Index the next closing run for every possible opener in linear time. The
+// existing scanner accepts a prefix of a longer closing run; a remaining
+// suffix (or an escaped first backtick) can then be an opener itself. Indexing
+// all suffix lengths preserves that behavior without repeated tail searches.
+func labrastroMarkdownBacktickClosers(ctx context.Context, line string) ([]int, error) {
+	var closers, next []int
+	for end := len(line); end > 0; {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if line[end-1] != '`' {
+			end--
+			continue
+		}
+		start := end - 1
+		for start > 0 && line[start-1] == '`' {
+			if start%4096 == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
+			start--
+		}
+		if closers == nil {
+			closers = make([]int, len(line))
+		}
+		n := end - start
+		if n >= len(next) {
+			next = append(next, make([]int, n+1-len(next))...)
+		}
+		for length := 1; length <= n; length++ {
+			if length%4096 == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
+			closers[end-length] = next[length]
+			next[length] = start
+		}
+		end = start
+	}
+	return closers, ctx.Err()
 }
 
 // Keep byte spans instead of reserializing Markdown: examples and formatting
 // are left byte-for-byte intact. Fences, indented code and non-path inline code
 // are deliberately excluded. Links include reference-style definitions.
-func labrastroMarkdownPaths(body string) []labrastroPathSpan {
+func labrastroMarkdownPaths(ctx context.Context, body string) ([]labrastroPathSpan, error) {
+	masked, err := labrastroMaskMarkdownCode(ctx, body)
+	if err != nil {
+		return nil, err
+	}
 	var spans []labrastroPathSpan
 	offset := 0
-	for _, line := range strings.SplitAfter(labrastroMaskMarkdownCode(body), "\n") {
+	for line := range strings.SplitAfterSeq(masked, "\n") {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if m := labrastroReferenceDefinition.FindStringSubmatchIndex(line); m != nil {
 			a, b := m[2], m[3]
 			if line[a] == '<' {
@@ -126,7 +229,14 @@ func labrastroMarkdownPaths(body string) []labrastroPathSpan {
 			}
 			spans = append(spans, labrastroPathSpan{offset + a, offset + b})
 		}
+		closers, err := labrastroMarkdownBacktickClosers(ctx, line)
+		if err != nil {
+			return nil, err
+		}
 		for i := 0; i < len(line); i++ {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if line[i] == '\\' {
 				i++
 				continue
@@ -134,16 +244,22 @@ func labrastroMarkdownPaths(body string) []labrastroPathSpan {
 			if line[i] == '`' {
 				n := 1
 				for i+n < len(line) && line[i+n] == '`' {
+					if n%4096 == 0 {
+						if err := ctx.Err(); err != nil {
+							return nil, err
+						}
+					}
 					n++
 				}
-				end := strings.Index(line[i+n:], strings.Repeat("`", n))
-				if end >= 0 {
-					a, b := i+n, i+n+end
+				if b := closers[i]; b > 0 {
+					a := i + n
 					token := line[a:b]
 					if token != "" && !strings.ContainsAny(token, " \t\n\r") {
 						spans = append(spans, labrastroPathSpan{offset + a, offset + b})
 					}
 					i = b + n - 1
+				} else {
+					i += n - 1
 				}
 				continue
 			}
@@ -152,6 +268,9 @@ func labrastroMarkdownPaths(body string) []labrastroPathSpan {
 			}
 			a := i + 2
 			for a < len(line) && (line[a] == ' ' || line[a] == '\t') {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				a++
 			}
 			if a == len(line) {
@@ -162,11 +281,17 @@ func labrastroMarkdownPaths(body string) []labrastroPathSpan {
 				a++
 				b = a
 				for b < len(line) && line[b] != '>' {
+					if err := ctx.Err(); err != nil {
+						return nil, err
+					}
 					b++
 				}
 			} else {
 				depth := 0
 				for b < len(line) {
+					if err := ctx.Err(); err != nil {
+						return nil, err
+					}
 					c := line[b]
 					if c == '\\' && b+1 < len(line) {
 						b += 2
@@ -195,13 +320,19 @@ func labrastroMarkdownPaths(body string) []labrastroPathSpan {
 		offset += len(line)
 	}
 	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
-	return spans
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return spans, nil
 }
 
 type labrastroRepoLookup func(context.Context, string) (githubTreeEntry, bool, error)
 type labrastroRepoFetch func(context.Context, string) ([]byte, error)
 
 func labrastroCompleteReferences(ctx context.Context, result *importedSkill, skillDir string, lookup labrastroRepoLookup, fetch labrastroRepoFetch) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	primary := path.Join(skillDir, "SKILL.md")
 	if entry, ok, err := lookup(ctx, primary); err != nil {
 		return err
@@ -213,6 +344,9 @@ func labrastroCompleteReferences(ctx context.Context, result *importedSkill, ski
 	owners := map[string]string{"SKILL.md": primary}
 	queue := []string{primary}
 	for _, f := range result.files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		p := path.Join(skillDir, f.path)
 		bodies[p] = f.content
 		outputs[p] = f.path
@@ -232,10 +366,16 @@ func labrastroCompleteReferences(ctx context.Context, result *importedSkill, ski
 			continue
 		}
 		body := bodies[src]
-		spans := labrastroMarkdownPaths(body)
+		spans, err := labrastroMarkdownPaths(ctx, body)
+		if err != nil {
+			return err
+		}
 		var out strings.Builder
 		last := 0
 		for _, span := range spans {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if span.start < last {
 				continue
 			}
@@ -330,6 +470,9 @@ func labrastroCompleteReferences(ctx context.Context, result *importedSkill, ski
 		// Enforce the final rewritten budget while expanding the closure.
 		var size int
 		for p, b := range bodies {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if len(b) > maxImportFileSize {
 				return fmt.Errorf("%w: rewritten %s exceeds file limit", errImportCapExceeded, p)
 			}
@@ -343,6 +486,9 @@ func labrastroCompleteReferences(ctx context.Context, result *importedSkill, ski
 	}
 	files := map[string]string{}
 	for src, body := range bodies {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if src == primary {
 			continue
 		}
@@ -361,6 +507,9 @@ func labrastroCompleteReferences(ctx context.Context, result *importedSkill, ski
 	}
 	sort.Strings(keys)
 	for _, p := range keys {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !validateFilePath(p) {
 			return fmt.Errorf("unsafe output path %s", p)
 		}
@@ -368,7 +517,7 @@ func labrastroCompleteReferences(ctx context.Context, result *importedSkill, ski
 			return err
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 func labrastroCompleteFromTree(ctx context.Context, client *http.Client, result *importedSkill, tree []githubTreeEntry, rawPrefix, skillDir string) error {
