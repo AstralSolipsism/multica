@@ -1,0 +1,62 @@
+{
+  "inspector": {
+    "section_profile_hint": "Manage how this agent appears across the workspace.",
+    "section_execution_hint": "Choose the runtime, model, reasoning level, speed, and parallel run limit.",
+    "section_access_hint": "Control who can run this agent and use its connected capabilities.",
+    "avatar_hint": "Shown in assignments, activity, and chat."
+  },
+  "creation_studio": {
+    "sections": {
+      "identity_hint": "Give the agent a recognizable name and a concise purpose.",
+      "behavior_hint": "Define how it should work and attach workspace skills it can rely on.",
+      "access_hint": "Control who can start runs with this agent. You can change this later."
+    },
+    "builder": {
+      "chat_hint": "Shape the requirements through conversation and refine the configuration beside it."
+    },
+    "choose_description": "Start with full control, or describe what you need and build it through conversation."
+  },
+  "create_dialog": {
+    "description_create": "Create a new AI agent for your workspace."
+  },
+  "tab_body": {
+    "custom_args": {
+      "empty_hint": "Add the first token to build the launch command."
+    },
+    "mcp_config": {
+      "dialog_description": "Choose a connection method and enter its settings. Switch to JSON for advanced configuration.",
+      "dialog_command_hint": "The executable that starts the server, from the server's install docs — e.g. npx, uvx, or an absolute path. Arguments go in the fields below, not here.",
+      "dialog_url_hint": "The MCP endpoint published by the service or given by your deployment admin — a homepage URL won't work here.",
+      "dialog_snippet_toggle": "Paste a config snippet",
+      "dialog_snippet_hint": "Paste what the server's install docs give you — a {\"mcpServers\": {...}} block, a single server object, a launch command line, or an endpoint URL. Applying only fills in the fields below; it never runs a command.",
+      "dialog_snippet_aria": "MCP config snippet",
+      "dialog_snippet_apply": "Fill in fields",
+      "dialog_snippet_empty": "Paste a snippet first.",
+      "dialog_snippet_invalid_json": "That JSON doesn't parse: {{error}}",
+      "dialog_snippet_not_object": "The snippet must be a JSON object.",
+      "dialog_snippet_no_servers": "The snippet's server list is empty.",
+      "dialog_snippet_multiple": "The snippet defines more than one server ({{names}}) — paste one at a time.",
+      "dialog_snippet_missing_target": "The snippet needs a command or a url.",
+      "dialog_snippet_unbalanced": "The command line has an unclosed quote.",
+      "dialog_snippet_unsupported": "The command line uses unsupported shell syntax (pipes, redirects, expansions, or a dangling backslash) — paste a single launch command."
+    },
+    "composio_mcp": {
+      "empty_hint": "You haven't connected any third-party services. Authorize one first, then come back here to allow it."
+    },
+    "runtime_config": {
+      "intro": "Choose how the OpenClaw runtime executes this agent's turns. Local mode runs the agent inside the daemon process. Gateway mode forwards each turn to an OpenClaw Gateway — useful when the daemon host is a lightweight coordinator and the agent should run on a more powerful machine.",
+      "gateway_hint": "Only used in Gateway mode. Every field is optional — a blank field is inherited from the daemon host's gateway config (`~/.openclaw/openclaw.json`, `gateway` section). A saved token is the exception: leaving it blank keeps the saved value.",
+      "host_hint": "The gateway address, from your deployment admin. Blank inherits the host's config.",
+      "token_hint": "Issued by the gateway — get it from your deployment admin or the gateway host's config. When none is set, blank inherits.",
+      "token_hint_saved": "A token is saved — leaving this field blank keeps it. Enter a new value to replace it."
+    },
+    "skills": {
+      "intro": "This is the agent's effective skill set. Workspace skills are managed here; inherited Codex and Claude Code skills can also be turned off per agent.",
+      "empty_hint": "Add workspace skills to share team knowledge with this agent.",
+      "add_dialog_description": "Select a workspace skill to assign to this agent."
+    },
+    "integrations": {
+      "intro": "Connect this agent to external chat platforms so people can work with it where they already are."
+    }
+  }
+}

@@ -1,18 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import enLayout from "../locales/en/layout.json";
+import { renderWithI18n } from "../test/i18n";
 import { JoinDiscordCard } from "./join-discord-card";
-
-// react-i18next isn't initialised in the views test env, so resolve the
-// selector against the real en/layout.json to assert on actual copy. The
-// enLayout import must precede the component import: the factory below runs
-// while ./join-discord-card pulls in ../i18n.
-vi.mock("../i18n", () => ({
-  useT: () => ({
-    t: (sel: (r: typeof enLayout) => string) => sel(enLayout),
-  }),
-}));
 
 const userId = { current: "user-1" as string | undefined };
 vi.mock("@multica/core/auth", () => ({
@@ -31,7 +21,7 @@ describe("JoinDiscordCard", () => {
   // contacts a third-party host.
   it("opens the group QR dialog instead of navigating", async () => {
     const user = userEvent.setup();
-    render(<JoinDiscordCard />);
+    renderWithI18n(<JoinDiscordCard />);
 
     expect(
       screen.queryByRole("link", { name: /Feishu group/i }),
@@ -45,27 +35,37 @@ describe("JoinDiscordCard", () => {
 
   it("hides and stays hidden after dismiss, persisting per user", async () => {
     const user = userEvent.setup();
-    const { unmount } = render(<JoinDiscordCard />);
+    const { unmount } = renderWithI18n(<JoinDiscordCard />);
 
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByText(/Feishu group/i)).not.toBeInTheDocument();
 
     // A fresh mount for the same user keeps the card hidden.
     unmount();
-    render(<JoinDiscordCard />);
+    renderWithI18n(<JoinDiscordCard />);
     expect(screen.queryByText(/Feishu group/i)).not.toBeInTheDocument();
   });
 
   it("keeps the card visible for a different user", async () => {
     const user = userEvent.setup();
-    const { unmount } = render(<JoinDiscordCard />);
+    const { unmount } = renderWithI18n(<JoinDiscordCard />);
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     unmount();
 
     userId.current = "user-2";
-    render(<JoinDiscordCard />);
+    renderWithI18n(<JoinDiscordCard />);
     expect(
       screen.getByRole("button", { name: /Feishu group/i }),
     ).toBeInTheDocument();
+  });
+
+  it("preserves the fork's French dismissal wording", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<JoinDiscordCard />, { locale: "fr" });
+
+    const community = screen.getByRole("button", { name: /Feishu/ });
+    await user.click(screen.getByRole("button", { name: "Masquer" }));
+
+    expect(community).not.toBeInTheDocument();
   });
 });

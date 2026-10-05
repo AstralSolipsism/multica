@@ -150,11 +150,7 @@
     "toast_ref_update_failed": "Impossible de mettre à jour la branche",
     "ref_error_commit": "Ceci est un commit, pas une branche. Les tâches livrent sur la branche depuis laquelle elles démarrent — pour une révision ponctuelle, utilisez multica repo checkout --ref.",
     "ref_default_label": "Branche par défaut",
-    "ref_default_tooltip": "Aucune branche définie — les tâches utilisent la branche par défaut du dépôt au moment voulu.",
-    "local_rename_tooltip": "Rename",
-    "local_rename_label": "Local directory label",
-    "toast_local_renamed": "Renamed",
-    "toast_local_rename_failed": "Failed to rename"
+    "ref_default_tooltip": "Aucune branche définie — les tâches utilisent la branche par défaut du dépôt au moment voulu."
   },
   "delete_dialog": {
     "title": "Supprimer le projet",

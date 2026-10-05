@@ -43,8 +43,7 @@
       "cancel": "キャンセル",
       "save": "保存",
       "saving": "保存中…",
-      "save_failed": "ステータスを保存できませんでした。",
-      "behavior_hint": "このステータスは「{{category}}」とまったく同じ挙動になります。"
+      "save_failed": "ステータスを保存できませんでした。"
     },
     "archive_dialog": {
       "retry": "アーカイブを再試行",
@@ -68,13 +67,7 @@
       "unstarted": "バックログや計画済みを含む、まだ始まっていない作業。",
       "started": "進行中、レビュー中、またはブロック中の作業。",
       "done": "完了した作業。",
-      "closed": "完了しないことになった作業。",
-      "backlog": "保留。ここに移動してもエージェントは起動しません。",
-      "todo": "待機中。ここに移動すると担当エージェントが起動します。",
-      "in_progress": "作業中。",
-      "in_review": "納品済み、レビュー待ち。オートパイロットの実行を完了します。",
-      "blocked": "外部依存でブロック中。",
-      "cancelled": "見送り。"
+      "closed": "完了しないことになった作業。"
     },
     "built_in_descriptions": {
       "backlog": "保留。ここに移動してもエージェントは起動しません。",
@@ -86,8 +79,24 @@
       "cancelled": "見送り。"
     },
     "pr_auto_complete_badge": "PR のマージで自動設定",
-    "description": "タスクが辿るワークフローを定義します。各ステータスの挙動は所属するカテゴリが決めます。",
     "built_in_locked": "組み込みステータスはシステムの動作に使われるため、編集やアーカイブはできません。並び順は変更できます。"
+  },
+  "wakeups": {
+    "description": "すべてのタスクに適用されるプラットフォームのルールです。各タスクの「ウェイクアップ」セクションで個別に変更できます。",
+    "child_done_title": "サブタスクが終わったとき",
+    "child_done_description": "あるステージが終わり、後のステージが待っているときに親タスクの担当者を起こし、すべてのサブタスクが終わったときにもう一度起こします。担当者がメンバーの場合は受信トレイに通知します。",
+    "enabled": "既定でオン",
+    "instruction": "既定の指示",
+    "instruction_hint": "起こしたエージェントに送られます。空欄のままなら下の組み込みの指示を使います。",
+    "instruction_placeholder": "空欄なら組み込みの指示を使います",
+    "builtin": "組み込みの指示",
+    "instruction_invalid": "指示は 4,000 バイト以内にしてください。",
+    "save": "保存",
+    "saving": "保存中…",
+    "save_error": "既定値を保存できませんでした。",
+    "customized_other": "進行中の {{count}} 件のタスクが個別の設定を使っており、この既定値に従いません。",
+    "admin_only": "既定値を変更できるのはオーナーと管理者だけです。",
+    "load_error": "ウェイクアップの既定値を読み込めませんでした。"
   },
   "quick_actions": {
     "title": "クイックアクション",
@@ -167,8 +176,7 @@
       "empty": "一致するタイムゾーンはありません"
     },
     "sticky_comment_bar": {
-      "title": "コメント欄を下部に固定",
-      "hint": "タスクのページをスクロールしても、コメントバーを常に下部に固定します。"
+      "title": "コメント欄を下部に固定"
     },
     "running_agent_reply": {
       "title": "実行中のエージェントに返信するとき",
@@ -177,7 +185,6 @@
       "hint": "既定の動作だけを決めます。送信前にメッセージごとに変更できます。"
     },
     "comments_title": "コメントとチャット",
-    "description": "Multica の使い方をカスタマイズします。",
     "region_title": "言語と地域",
     "appearance_title": "外観",
     "issue_fields_title": "タスク作成時に表示するフィールド",
@@ -325,6 +332,13 @@
     "floating_hint": "すべてのページにフローティングチャットボタンを表示します。"
   },
   "issue": {
+    "opening": {
+      "title": "タスクを開く",
+      "click": "カードや行をクリックしたときに開く画面",
+      "page": "ページ全体",
+      "peek": "サイドプレビュー",
+      "hint": "Shift+クリックでもう一方で開きます。"
+    },
     "description": "各作成ダイアログのツールバーに常時表示するフィールドを選択します。非表示のフィールドは ⋯ メニューから引き続き使用でき、値がある間は自動的に表示されます。",
     "fields": {
       "status": "ステータス",
@@ -334,15 +348,6 @@
       "project": "プロジェクト",
       "due_date": "期限",
       "start_date": "開始日"
-    },
-    "quick_create_description": "クイック作成ツールバーに表示するフィールド。",
-    "manual_create_description": "手動作成ツールバーに表示するフィールド。",
-    "opening": {
-      "title": "タスクを開く",
-      "click": "カードや行をクリックしたときに開く画面",
-      "page": "ページ全体",
-      "peek": "サイドプレビュー",
-      "hint": "Shift+クリックでもう一方で開きます。"
     }
   },
   "mcp": {
@@ -372,8 +377,7 @@
     "removed_toast": "共有 MCP サーバーを削除しました",
     "save_failed_toast": "共有 MCP サーバーを保存できませんでした",
     "rename_failed_toast": "共有 MCP サーバーの名前を変更できませんでした",
-    "remove_failed_toast": "共有 MCP サーバーを削除できませんでした",
-    "empty_description": "まずここにサーバーを追加し、使用するエージェントの MCP タブから割り当ててください。"
+    "remove_failed_toast": "共有 MCP サーバーを削除できませんでした"
   },
   "page": {
     "title": "設定",
@@ -503,10 +507,8 @@
       "deleted": "公開したプラグインを削除しました",
       "installed_version": "使用中",
       "review_install": "確認してインストール",
-      "review_upgrade": "確認してアップグレード",
-      "description": "プラグインパッケージをアップロードします。Multica が保存と配信を行うため、作者自身のサーバーは不要です。"
-    },
-    "description": "このワークスペースにプラグインを公開し、特定のバージョンをインストールして、何にアクセスできるかを確認します。"
+      "review_upgrade": "確認してアップグレード"
+    }
   },
   "properties": {
     "title": "プロパティ",
@@ -668,8 +670,7 @@
     "system": {
       "title": "システム通知",
       "description": "Multica がバックグラウンドにあるときにシステム通知を表示します。",
-      "label": "システム通知を表示",
-      "hint": "アプリにフォーカスがないときに、新しいインボックス項目について OS のバナーを表示します。"
+      "label": "システム通知を表示"
     },
     "browser": {
       "label": "ブラウザ通知",
@@ -812,11 +813,6 @@
     "feature_auto_link_label": "タスクと PR を自動リンク",
     "toast_failed": "GitHub 設定を更新できませんでした",
     "feature_auto_link_description": "タイトルかブランチ名にタスク番号（例: {{example}}）を含む PR、または説明に「Closes {{example}}」と書いた PR を、そのタスクに関連付けます。",
-    "page_description": "GitHub App を接続し、Pull request が Multica 内でどう表示されるかを制御し、エージェントがコミット履歴に残す情報を設定します。",
-    "connection_description_prefix": "タスクを Pull request に自動でリンクします。PR のブランチ名かタイトルに",
-    "connection_description_suffix": "があるか、本文に Closes MUL-123 と書かれていれば、対応するタスクにリンクされます。その closing keyword を含む PR がマージされたときだけ、タスクが次のステータスに移動します:",
-    "connection_description_done": "完了",
-    "connection_identifier_example": "MUL-123",
     "status_paused": "一時停止中",
     "pause": "GitHub 機能を一時停止",
     "resume": "GitHub 機能を再開"
@@ -937,105 +933,7 @@
     "install_error_installer_bind": "ボットは設置されましたが、Lark の身元情報を連携できませんでした。もう一度お試しいただくか、サポートにお問い合わせください。",
     "install_error_session_lost": "設置セッションが期限切れまたは失われました。もう一度スキャンしてやり直してください。",
     "install_error_forbidden": "このワークスペースに Lark ボットを設置する権限がなくなりました。ワークスペース管理者にお問い合わせください。",
-    "install_error_generic": "設置に失敗しました。もう一度お試しください。",
-    "install_scan_hint_feishu": "Feishu → スキャン → 新しい PersonalAgent を承認してください。",
-    "install_scan_hint_lark": "Lark → スキャン → 新しい PersonalAgent を承認してください。",
-    "conversation_title": "エージェントと会話",
-    "conversation_description": "参加者に Multica アカウントは不要です。エージェントが意見を確認・整理し、自分の名前でコメントします。処理時間とモデル使用量が発生し、各メッセージがそのままタスクに転記されるわけではありません。",
-    "conversation_groups": "グループのチャット ID（1 行に 1 つの oc_ ID、トピックは独立）",
-    "conversation_directs": "個別チャット ID（1 行に 1 つの oc_ ID）",
-    "conversation_scope": "あなたの呼び出し権限に従い、現在のワークスペースでの共同作業内容の閲覧、タスクの作成・更新、コメントと添付ファイルの操作のみ許可されます。会話の全参加者が入力できます。ウェイクアップ、自動化、認証情報、管理設定は対象外です。保存すると以前の実行の承認が無効になります。",
-    "conversation_save": "会話を承認",
-    "conversation_revoke": "会話の承認を取り消す",
-    "conversation_unavailable": "設定を取得できないか更新中です。下書きは保持されています。更新後に保存してください。",
-    "conversation_saved": "会話の承認を保存しました。",
-    "picker": {
-      "list_label": "参加中のグループ",
-      "search_label": "グループを検索",
-      "search_placeholder": "グループ名で検索",
-      "loading": "グループを読み込み中…",
-      "load_more": "さらにグループを読み込む",
-      "loading_more": "読み込み中…",
-      "empty": "ボットはまだどのグループにも参加していません。先に Feishu でグループに招待してください。",
-      "no_results": "「{{query}}」に一致する参加中のグループはありません。",
-      "external_badge": "外部",
-      "unnamed": "名前なしのグループ",
-      "show_id": "完全なチャット ID を表示",
-      "hide_id": "完全なチャット ID を隠す",
-      "selected_group": "選択中のグループ",
-      "clear": "選択をクリア",
-      "saved_group_missing": "現在保存されているグループは、このボットが参加しているグループの一覧にありません。置き換えるグループを選ぶか、そのままにしてください。",
-      "retry": "再試行",
-      "restart": "最初のページから読み込み直す",
-      "multi_add": "グループを追加",
-      "multi_done": "完了",
-      "multi_selected": "{{count}} / {{max}} 件の会話を選択中",
-      "multi_max": "会話は最大 {{max}} 件までです（グループとダイレクトチャットの合計）。",
-      "multi_remove": "{{name}} を削除",
-      "error": {
-        "forbidden": "グループやメッセージの参照には、ボットを所有するエージェントのオーナーまたはワークスペース管理者権限が必要です。",
-        "permission_denied": "Feishu アプリにグループまたはメッセージの読み取りスコープがありません。開発者コンソールで権限を追加するか、ID を手動で入力してください。",
-        "unsupported": "このサーバーではグループやメッセージの参照をまだ利用できません。ID を手動で入力してください。",
-        "unavailable": "一時的に参照できません（認証情報・ボット・ネットワークの問題）。再試行するか、ID を手動で入力してください。",
-        "rate_limited": "Feishu のレート制限に達しました。しばらく待ってから再試行してください。",
-        "invalid_cursor": "このページングセッションは期限切れです。最初のページから読み込み直してください。",
-        "chat_unavailable": "このグループは利用できないか、個人チャットであるか、ボットが参加していません。別のグループを選んでください。",
-        "message_unavailable": "一覧内のメッセージが削除または取り消されました。一覧を読み込み直してください。",
-        "installation_inactive": "このボットのインストールは無効か、エージェントがアーカイブされています。",
-        "installation_not_found": "このボットのインストールはこのワークスペースに存在しません。",
-        "invalid_response": "サーバーの応答を解釈できませんでした。再試行してください。",
-        "invalid_request": "リクエストが拒否されました。検索語を短くして再試行してください。",
-        "generic": "一覧を読み込めませんでした。再試行してください。"
-      }
-    },
-    "anchor": {
-      "list_label": "最近のメッセージ",
-      "pick_group_first": "上でグループを選択すると、その最近のメッセージを参照できます。",
-      "loading": "メッセージを読み込み中…",
-      "load_more": "以前のメッセージを読み込む",
-      "empty": "このグループに最近のメッセージはありません。",
-      "selected": "選択中のアンカー",
-      "saved_missing": "保存されているアンカーメッセージは最近の履歴にありません。新しいメッセージを選ぶか、そのままにしてください。",
-      "time_unknown": "時刻不明",
-      "sender_user": "ユーザー",
-      "sender_app": "アプリ",
-      "sender_anonymous": "匿名",
-      "sender_unknown": "不明な送信者"
-    },
-    "conversation_groups_label": "グループ",
-    "conversation_directs_label": "個別チャット",
-    "conversation_over_limit": "会話は最大 {{max}} 件までです（グループとダイレクトチャットの合計）。一部を削除してから保存してください。",
-    "private": {
-      "intro": "この Bot に個別メッセージを送った人が、確認待ちとしてここに表示されます。メッセージの送信は会話を検出可能にするだけで、下で承認して初めてエージェントがその会話の新しいメッセージに応答します。",
-      "loading": "個別チャットを読み込み中…",
-      "refresh": "更新",
-      "refreshing": "更新中…",
-      "list_label": "検出された個別チャット",
-      "empty_title": "検出された個別チャットはまだありません",
-      "empty_steps": "相手に Feishu でこの Bot との個別チャットを開き、任意のメッセージを送ってもらってから、ここに戻って更新してください。メッセージは会話をここに表示させるだけで、それ自体は承認ではありません。",
-      "pending_badge": "確認待ち",
-      "authorized_badge": "承認済み",
-      "name_unavailable": "名前を取得できません",
-      "id_only_hint": "「名前を取得できません」と表示された候補は、名前を読み取れませんでした（外部ユーザーまたは連絡先権限の不足）。チャット ID・ユーザー ID・最終メッセージ時刻を照合するか、相手にもう一度メッセージを送ってもらい、更新された時刻を確認してください。",
-      "last_seen": "最終メッセージ {{when}}",
-      "expires": "検出可能期限 {{when}}",
-      "show_user_id": "完全なユーザー ID を表示",
-      "hide_user_id": "完全なユーザー ID を隠す",
-      "confirm_selected": "選択した会話を承認 ({{count}})",
-      "confirm_scope": "選択した会話を現在の承認に追加し、既存のグループと個別チャットの承認は維持します。あなたの呼び出し権限に従う、このワークスペース内のタスク共同作業に限定されます。ウェイクアップ、自動化、認証情報、管理設定は対象外です。",
-      "confirmed": "承認を保存しました。エージェントはこれらの会話の新しいメッセージに応答します。以前のメッセージは再送されません。",
-      "error": {
-        "forbidden": "個別チャットの参照と承認には、ボットを所有するエージェントのオーナーまたはワークスペース管理者権限が必要です。",
-        "invocation_denied": "このボットは管理できますが、会話の承認にはこのエージェントの呼び出し権限も必要です。",
-        "limit_exceeded": "会話は最大 {{max}} 件までです（グループと個別チャットの合計）。先に保存済みの会話を削除してください。",
-        "candidate_unavailable": "選択した候補は期限切れか置き換えられました。リストを更新したので、もう一度選択してください。",
-        "invalid_request": "選択が拒否されました。リストを更新してもう一度お試しください。",
-        "installation_inactive": "このボットのインストールは無効か、エージェントがアーカイブされています。",
-        "installation_not_found": "このボットのインストールはこのワークスペースに存在しません。",
-        "unsupported": "このサーバーでは個別チャットの検出をまだ利用できません。ID を手動で入力してください。",
-        "generic": "個別チャットのリストを読み込めませんでした。もう一度お試しください。"
-      }
-    }
+    "install_error_generic": "設置に失敗しました。もう一度お試しください。"
   },
   "composio": {
     "page_description": "エージェントが使えるアプリに接続します。",
@@ -1170,8 +1068,7 @@
     "byo_submitting": "接続中…",
     "byo_cancel": "キャンセル",
     "byo_success_toast": "DingTalk ボットを接続しました",
-    "byo_failed_toast": "DingTalk ボットを接続できませんでした",
-    "groups_overview_description": "各接続に、エージェント、DingTalk ロボット、最近やり取りしたグループを表示します。"
+    "byo_failed_toast": "DingTalk ボットを接続できませんでした"
   },
   "wecom": {
     "section_title": "WeCom",
@@ -1326,8 +1223,7 @@
       "up_to_date": "最新バージョンを使用しています。",
       "downloading": "v{{version}} をバックグラウンドでダウンロード中です。インストールの準備が整うとお知らせします。",
       "check_now": "今すぐ確認",
-      "checking": "確認中…",
-      "description": "バックグラウンドでの自動アップデートを設定するか、新しいバージョンを手動で確認します。"
+      "checking": "確認中…"
     },
     "daemon": {
       "title": "デーモン",
@@ -1398,12 +1294,7 @@
       "waiting_logs": "ログを待機中…",
       "reconnect_failed": "デーモンに再接続できませんでした",
       "try_again_moment": "しばらくしてからもう一度お試しください。",
-      "try_again": "もう一度お試しください。",
-      "description": "ローカルエージェントのデーモンとデスクトップアプリの連携方法を設定します。",
-      "cli_install_windows_help": "Windows にはスクリプトインストーラーがありません。ワークスペース管理者に問い合わせるか、内部リリースソース（{{downloadsUrl}}/cli/v<バージョン>/、現在のバージョンは {{latestManifestUrl}} を参照）から該当バージョンの multica-cli-<バージョン>-windows-<アーキテクチャ>.zip をダウンロードし、multica.exe を PATH の通った場所に展開してください。",
-      "cli_install_windows_label": "Windows では手動インストールが必要です",
-      "diagnostics_description": "識別情報と接続の詳細です。バグ報告やランタイムが表示されない問題の調査に役立ちます。",
-      "waiting_logs_description": "新しいログがリアルタイムで表示されます。"
+      "try_again": "もう一度お試しください。"
     }
   },
   "members": {
@@ -1493,25 +1384,7 @@
     "status_connected": "接続済み",
     "status_not_connected": "未接続",
     "status_loading": "確認中...",
-    "status_unknown": "状態を取得できません",
-    "description": "ツールを接続して、各連携を管理します。"
-  },
-  "wakeups": {
-    "description": "すべてのタスクに適用されるプラットフォームのルールです。各タスクの「ウェイクアップ」セクションで個別に変更できます。",
-    "child_done_title": "サブタスクが終わったとき",
-    "child_done_description": "あるステージが終わり、後のステージが待っているときに親タスクの担当者を起こし、すべてのサブタスクが終わったときにもう一度起こします。担当者がメンバーの場合は受信トレイに通知します。",
-    "enabled": "既定でオン",
-    "instruction": "既定の指示",
-    "instruction_hint": "起こしたエージェントに送られます。空欄のままなら下の組み込みの指示を使います。",
-    "instruction_placeholder": "空欄なら組み込みの指示を使います",
-    "builtin": "組み込みの指示",
-    "instruction_invalid": "指示は 4,000 バイト以内にしてください。",
-    "save": "保存",
-    "saving": "保存中…",
-    "save_error": "既定値を保存できませんでした。",
-    "customized_other": "進行中の {{count}} 件のタスクが個別の設定を使っており、この既定値に従いません。",
-    "admin_only": "既定値を変更できるのはオーナーと管理者だけです。",
-    "load_error": "ウェイクアップの既定値を読み込めませんでした。"
+    "status_unknown": "状態を取得できません"
   },
   "pr_merge_status": {
     "label": "PR マージ後のタスクのステータス",

@@ -12,7 +12,7 @@ import type {
 // server/internal/messagedelivery/TARGET-DISCOVERY-CONTRACT.md — component
 // suites render the states, the matrices live in discovery.test.ts.
 
-/** Stable discovery error codes → keys under `settings:lark.picker.error`. */
+/** Stable discovery error codes → keys under `lark:picker.error`. */
 export type LarkDiscoveryErrorKey =
   | "forbidden"
   | "permission_denied"
@@ -117,7 +117,7 @@ export function chatIdSuffix(id: string): string {
 // --- Private chat candidates (OL-75 contract, OL-76 frontend) ---
 
 /** Stable candidate/confirmation error codes → keys under
- * `settings:lark.private.error`. */
+ * `lark:private.error`. */
 export type LarkPrivateChatErrorKey =
   | "forbidden"
   | "invocation_denied"

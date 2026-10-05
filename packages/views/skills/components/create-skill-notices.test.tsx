@@ -6,13 +6,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enSkills from "../../locales/en/skills.json";
-import enSkillPackages from "../../locales/en/skill-packages.json";
-
-const TEST_RESOURCES = {
-  en: { common: enCommon, skills: enSkills, "skill-packages": enSkillPackages },
-};
+import { RESOURCES } from "../../test/i18n";
 
 const mockImportSkillArchive = vi.hoisted(() => vi.fn());
 const mockPrepareFromPicker = vi.hoisted(() => vi.fn());
@@ -70,7 +64,7 @@ function renderDialog(onCreated = vi.fn(), onClose = vi.fn()) {
     onCreated,
     onClose,
     ...render(
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      <I18nProvider locale="en" resources={RESOURCES}>
         <QueryClientProvider client={queryClient}>
           <CreateSkillDialog onClose={onClose} onCreated={onCreated} />
         </QueryClientProvider>

@@ -30,8 +30,8 @@ export function LarkChatRow({
   onSelect: () => void;
   disabled?: boolean;
 }) {
-  const { t } = useT("settings");
-  const name = chat.name.trim() !== "" ? chat.name : t(($) => $.lark.picker.unnamed);
+  const { t } = useT("lark");
+  const name = chat.name.trim() !== "" ? chat.name : t(($) => $.picker.unnamed);
   return (
     <div
       role="option"
@@ -64,7 +64,7 @@ export function LarkChatRow({
           <span className="truncate text-body">{name}</span>
           {chat.external === true && (
             <Badge variant="secondary" className="shrink-0">
-              {t(($) => $.lark.picker.external_badge)}
+              {t(($) => $.picker.external_badge)}
             </Badge>
           )}
         </span>
@@ -92,13 +92,13 @@ export function LarkSelectedChatChip({
   onClear: () => void;
   disabled?: boolean;
 }) {
-  const { t } = useT("settings");
+  const { t } = useT("lark");
   const label = value.name.trim() !== "" ? value.name : value.chatId;
   return (
     <div className="flex items-center justify-between gap-2 rounded-md border border-primary/40 bg-primary/5 px-3 py-2">
       <span className="min-w-0">
         <span className="block text-micro text-muted-foreground">
-          {t(($) => $.lark.picker.selected_group)}
+          {t(($) => $.picker.selected_group)}
         </span>
         <span className="block truncate text-body font-medium">{label}</span>
         {value.name.trim() !== "" && <ChatIdDisclosure id={value.chatId} />}
@@ -109,7 +109,7 @@ export function LarkSelectedChatChip({
         className="shrink-0"
         onClick={onClear}
         disabled={disabled}
-        aria-label={t(($) => $.lark.picker.clear)}
+        aria-label={t(($) => $.picker.clear)}
       >
         <X className="h-3.5 w-3.5" />
       </Button>
@@ -136,7 +136,7 @@ export function LarkChatList({
   /** Extra per-row disable (e.g. the multi-select's conversation cap). */
   isRowDisabled?: (chat: LarkDiscoveredChat) => boolean;
 }) {
-  const { t } = useT("settings");
+  const { t } = useT("lark");
   return (
     <div className="space-y-2">
       {list.errorKey != null && (
@@ -149,7 +149,7 @@ export function LarkChatList({
       <div
         role="listbox"
         aria-multiselectable={checkbox === true || undefined}
-        aria-label={t(($) => $.lark.picker.list_label)}
+        aria-label={t(($) => $.picker.list_label)}
         className="max-h-56 divide-y overflow-y-auto rounded-md border"
       >
         {list.items.map((chat) => {
@@ -171,17 +171,17 @@ export function LarkChatList({
                 onChange={() => onToggle(chat)}
               />
               <LarkChatAvatar
-                name={chat.name.trim() !== "" ? chat.name : t(($) => $.lark.picker.unnamed)}
+                name={chat.name.trim() !== "" ? chat.name : t(($) => $.picker.unnamed)}
                 avatar={chat.avatar}
               />
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-1.5">
                   <span className="truncate text-body">
-                    {chat.name.trim() !== "" ? chat.name : t(($) => $.lark.picker.unnamed)}
+                    {chat.name.trim() !== "" ? chat.name : t(($) => $.picker.unnamed)}
                   </span>
                   {chat.external === true && (
                     <Badge variant="secondary" className="shrink-0">
-                      {t(($) => $.lark.picker.external_badge)}
+                      {t(($) => $.picker.external_badge)}
                     </Badge>
                   )}
                 </span>
@@ -205,14 +205,14 @@ export function LarkChatList({
         })}
         {list.isLoading && (
           <p className="px-3 py-4 text-center text-caption text-muted-foreground">
-            {t(($) => $.lark.picker.loading)}
+            {t(($) => $.picker.loading)}
           </p>
         )}
         {!list.isLoading && !list.hasMore && list.items.length === 0 && list.errorKey == null && (
           <p className="px-3 py-4 text-center text-caption text-muted-foreground">
             {list.query === ""
-              ? t(($) => $.lark.picker.empty)
-              : t(($) => $.lark.picker.no_results, { query: list.query })}
+              ? t(($) => $.picker.empty)
+              : t(($) => $.picker.no_results, { query: list.query })}
           </p>
         )}
       </div>
@@ -225,8 +225,8 @@ export function LarkChatList({
           onClick={list.fetchMore}
         >
           {list.isFetchingMore
-            ? t(($) => $.lark.picker.loading_more)
-            : t(($) => $.lark.picker.load_more)}
+            ? t(($) => $.picker.loading_more)
+            : t(($) => $.picker.load_more)}
         </Button>
       )}
     </div>
@@ -262,7 +262,7 @@ export function LarkChatPicker({
   fallback: React.ReactNode;
   enabled?: boolean;
 }) {
-  const { t } = useT("settings");
+  const { t } = useT("lark");
   const caps = useLarkTargetCapabilities(wsId, installationId, { enabled });
   const supported = caps.data?.chat_list_supported === true;
   const list = useLarkTargetChats(wsId, installationId, { enabled: enabled && supported });
@@ -270,7 +270,7 @@ export function LarkChatPicker({
   if (caps.isPending && enabled) {
     return (
       <p className="py-2 text-caption text-muted-foreground">
-        {t(($) => $.lark.picker.loading)}
+        {t(($) => $.picker.loading)}
       </p>
     );
   }
@@ -286,7 +286,7 @@ export function LarkChatPicker({
             <LarkSelectedChatChip value={value} onClear={() => onChange(null)} disabled={disabled} />
           )}
           <p className="text-caption text-muted-foreground">
-            {t(($) => $.lark.picker.error.forbidden)}
+            {t(($) => $.picker.error.forbidden)}
           </p>
         </div>
       );
@@ -295,8 +295,8 @@ export function LarkChatPicker({
       <div className="space-y-2">
         <p className="text-caption text-muted-foreground">
           {caps.isError
-            ? t(($) => $.lark.picker.error[larkDiscoveryErrorKey(caps.error)])
-            : t(($) => $.lark.picker.error.unsupported)}
+            ? t(($) => $.picker.error[larkDiscoveryErrorKey(caps.error)])
+            : t(($) => $.picker.error.unsupported)}
         </p>
         {fallback}
       </div>
@@ -325,8 +325,8 @@ export function LarkChatPicker({
         <Input
           value={list.search}
           onChange={(e) => list.setSearch(e.target.value)}
-          placeholder={t(($) => $.lark.picker.search_placeholder)}
-          aria-label={t(($) => $.lark.picker.search_label)}
+          placeholder={t(($) => $.picker.search_placeholder)}
+          aria-label={t(($) => $.picker.search_label)}
           className="pl-8"
           disabled={disabled}
         />
@@ -343,7 +343,7 @@ export function LarkChatPicker({
       />
       {savedMissing && (
         <p role="status" className="text-caption text-warning">
-          {t(($) => $.lark.picker.saved_group_missing)}
+          {t(($) => $.picker.saved_group_missing)}
         </p>
       )}
     </div>

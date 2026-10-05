@@ -149,11 +149,7 @@
     "toast_ref_update_failed": "ブランチを更新できませんでした",
     "ref_error_commit": "これはコミットであり、ブランチではありません。タスクは開始したブランチへ成果を返します。特定のリビジョンだけが必要な場合は multica repo checkout --ref を使ってください。",
     "ref_default_label": "デフォルトブランチ",
-    "ref_default_tooltip": "ブランチ未設定 — タスクはその時点のリポジトリのデフォルトブランチを使用します。",
-    "local_rename_tooltip": "名前を変更",
-    "local_rename_label": "ローカルディレクトリのラベル",
-    "toast_local_renamed": "名前を変更しました",
-    "toast_local_rename_failed": "名前を変更できませんでした"
+    "ref_default_tooltip": "ブランチ未設定 — タスクはその時点のリポジトリのデフォルトブランチを使用します。"
   },
   "delete_dialog": {
     "title": "プロジェクトを削除",

@@ -21,7 +21,7 @@ export const DagFlowEdgeLine = memo(function DagFlowEdgeLine({
   selected,
   markerEnd,
 }: EdgeProps<DagFlowEdge>) {
-  const { t } = useT("issues");
+  const { t } = useT("dag");
   if (!data?.route.length) return null;
   const path = dagRoutePath(data.route),
     label = dagRouteMidpoint(data.route);
@@ -50,10 +50,10 @@ export const DagFlowEdgeLine = memo(function DagFlowEdgeLine({
             type="button"
             className="nodrag nopan pointer-events-auto absolute z-10 rounded-md border bg-card px-1.5 py-0.5 text-micro text-muted-foreground shadow-xs hover:border-brand focus-visible:outline-brand"
             style={{ transform: `translate(-50%, -50%) translate(${label.x}px,${label.y}px)` }}
-            aria-label={t(($) => $.dag.edge_count, { count })}
+            aria-label={t(($) => $.edge_count, { count })}
             onClick={() => data.onSelect(id)}
           >
-            {t(($) => $.dag.edge_count, { count })}
+            {t(($) => $.edge_count, { count })}
           </button>
         </EdgeLabelRenderer>
       )}

@@ -62,7 +62,7 @@ describe("Desktop daemon localization with real resources", () => {
     renderWithLocale(<DaemonSettingsTab />, locale);
 
     const help = await screen.findByText(createI18n(locale, RESOURCES).getResource(
-      locale, "settings", "desktop.daemon.cli_install_windows_label",
+      locale, "fork-ui", "settings.desktop.daemon.cli_install_windows_label",
     ));
     expect(help).toHaveAttribute("title", expect.stringContaining(`https://multica.outlune.com/downloads/cli/v${version}/`));
     expect(help).toHaveAttribute("title", expect.stringContaining("https://multica.outlune.com/downloads/latest.json"));

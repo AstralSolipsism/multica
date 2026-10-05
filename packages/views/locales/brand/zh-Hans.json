@@ -1,25 +1,30 @@
 {
-  "settings": {
-    "preferences": {
-      "description": "调整你在 Labrastro 中的使用偏好。"
-    },
-    "plugins": {
-      "publish": {
-        "description": "上传插件产物包。Labrastro 负责存储和分发，作者不需要自己的服务器。"
+  "fork-ui": {
+    "settings": {
+      "preferences": {
+        "description": "调整你在 Labrastro 中的使用偏好。"
+      },
+      "plugins": {
+        "publish": {
+          "description": "上传插件产物包。Labrastro 负责存储和分发，作者不需要自己的服务器。"
+        }
+      },
+      "github": {
+        "page_description": "连接 GitHub App、控制 Pull Request 如何出现在 Labrastro 中，并决定智能体在 commit 记录里留下哪些痕迹。"
       }
-    },
+    }
+  },
+  "settings": {
     "notifications": {
       "system": {
         "description": "Labrastro 在后台时显示系统通知。"
       }
     },
     "github": {
-      "disconnect_confirm_description": "Labrastro 将不再接收该安装的 webhook。已有的 PR 镜像与关联会保留，再次连接即可恢复同步。",
-      "page_description": "连接 GitHub App、控制 Pull Request 如何出现在 Labrastro 中，并决定智能体在 commit 记录里留下哪些痕迹。"
+      "disconnect_confirm_description": "Labrastro 将不再接收该安装的 webhook。已有的 PR 镜像与关联会保留，再次连接即可恢复同步。"
     },
     "lark": {
-      "install_error_bot_info": "授权完成，但 Labrastro 无法获取 Bot 身份信息，请重试。",
-      "conversation_description": "这些会话的参与者无需 Labrastro 账号。智能体会澄清、整理意见，再以自己的身份回填评论；处理会有延迟和模型消耗，不会把每条消息立即逐字变成任务评论。"
+      "install_error_bot_info": "授权完成，但 Labrastro 无法获取 Bot 身份信息，请重试。"
     },
     "slack": {
       "byo_docs_link": "Step-by-step：把你的 Labrastro 智能体连接到 Slack"
@@ -36,6 +41,9 @@
       "disconnect_confirm_description": "机器人将停止接收本工作区的 Telegram 消息。Labrastro 中的会话记录会保留；之后可在同一智能体上重新连接。",
       "connect_docs_link": "分步指南：将 Labrastro 智能体连接到 Telegram"
     }
+  },
+  "lark": {
+    "conversation_description": "这些会话的参与者无需 Labrastro 账号。智能体会澄清、整理意见，再以自己的身份回填评论；处理会有延迟和模型消耗，不会把每条消息立即逐字变成任务评论。"
   },
   "common": {
     "lark_bind": {

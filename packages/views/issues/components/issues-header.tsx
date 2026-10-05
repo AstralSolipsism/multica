@@ -1925,6 +1925,7 @@ export function IssueDisplayControls({
   onTableFacetChange?: (facet: IssueTableFacetSpec | null) => void;
 }) {
   const { t } = useT("issues");
+  const { t: tDag } = useT("dag");
   const [tableGroupMenuOpen, setTableGroupMenuOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const viewMode = useViewStore((s) => s.viewMode);
@@ -2300,28 +2301,28 @@ export function IssueDisplayControls({
                 <>
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-caption font-medium text-muted-foreground">
-                      {t(($) => $.dag.direction_label)}
+                      {tDag(($) => $.direction_label)}
                     </span>
                     <Select
                       items={DAG_DIRECTION_OPTIONS.map((value) => ({
                         value: value as string,
-                        label: t(($) => $.dag[dagDirectionLabelKey(value)]),
+                        label: tDag(($) => $[dagDirectionLabelKey(value)]),
                       }))}
                       value={dagDirection}
                       onValueChange={(v) => {
                         if (v) act.setDagDirection(v as DagDirection);
                       }}
                     >
-                      <SelectTrigger size="sm" className="w-32" aria-label={t(($) => $.dag.direction_label)}>
+                      <SelectTrigger size="sm" className="w-32" aria-label={tDag(($) => $.direction_label)}>
                         <SelectValue>
-                          {t(($) => $.dag[dagDirectionLabelKey(dagDirection)])}
+                          {tDag(($) => $[dagDirectionLabelKey(dagDirection)])}
                         </SelectValue>
                       </SelectTrigger>
                       <SelectContent align="end">
                         <SelectGroup>
                           {DAG_DIRECTION_OPTIONS.map((value) => (
                             <SelectItem key={value} value={value}>
-                              {t(($) => $.dag[dagDirectionLabelKey(value)])}
+                              {tDag(($) => $[dagDirectionLabelKey(value)])}
                             </SelectItem>
                           ))}
                         </SelectGroup>
@@ -2478,7 +2479,7 @@ export function IssueDisplayControls({
                             : viewMode === "gantt" && allowGantt
                             ? t(($) => $.view.gantt)
                             : viewMode === "dag" && allowDag
-                            ? t(($) => $.view.dag)
+                            ? tDag(($) => $.view.dag)
                             : t(($) => $.view.list)}
                         </span>
                       </Button>
@@ -2496,7 +2497,7 @@ export function IssueDisplayControls({
                   : viewMode === "gantt" && allowGantt
                   ? t(($) => $.view.tooltip_gantt)
                   : viewMode === "dag" && allowDag
-                  ? t(($) => $.view.tooltip_dag)
+                  ? tDag(($) => $.view.tooltip_dag)
                   : t(($) => $.view.tooltip_list)}
               </TooltipContent>
             </Tooltip>
@@ -2536,7 +2537,7 @@ export function IssueDisplayControls({
                 {allowDag && (
                   <DropdownMenuRadioItem value="dag">
                     <Waypoints />
-                    {t(($) => $.view.dag)}
+                    {tDag(($) => $.view.dag)}
                   </DropdownMenuRadioItem>
                 )}
               </DropdownMenuRadioGroup>

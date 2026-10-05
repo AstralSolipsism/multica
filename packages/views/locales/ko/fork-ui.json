@@ -1,0 +1,216 @@
+{
+  "agents": {
+    "transcript": {
+      "antigravity_live_unavailable": "Antigravity는 현재 실시간 실행 이벤트를 제공하지 않습니다. 실행이 완료되면 실행 기록을 확인할 수 있습니다."
+    }
+  },
+  "auth": {
+    "web": {
+      "callback": {
+        "signing_in_description": "로그인을 완료하는 동안 잠시 기다려 주세요"
+      }
+    }
+  },
+  "autopilots": {
+    "dialog": {
+      "schedule_disabled_reason": "이 오토파일럿에는 여러 일정이 있습니다. 상세 페이지에서 수정하세요."
+    }
+  },
+  "billing": {
+    "workspace": {
+      "return": {
+        "portal_description": "아래에 최신 구독 정보를 표시합니다."
+      },
+      "subscription_notice": {
+        "canceled_description": "위 요금제 배지는 이 워크스페이스에 현재 적용되는 요금제를 보여 줍니다."
+      },
+      "current": {
+        "plan_description": "이 워크스페이스에 현재 적용되는 entitlement입니다.",
+        "billing_interval_description": "활성 구독에 저장된 결제 주기입니다.",
+        "period_end_description": "현재 구독 정보에 보고된 날짜입니다."
+      },
+      "management": {
+        "portal_description": "Stripe에서 이 워크스페이스의 구독을 관리합니다."
+      },
+      "limits": {
+        "description": "한도와 사용량은 서버의 현재 entitlement와 쿼터 집계에서 가져옵니다.",
+        "issues_description": "현재 태스크 사용량과 서버에서 반환한 유효 한도입니다.",
+        "autopilots_description": "현재 자동화 사용량과 서버에서 반환한 초기화 시각입니다."
+      },
+      "seats": {
+        "human_members_description": "구매한 용량을 사용 중인 확인된 사용자 멤버입니다. 멤버 변경 후 새로고침할 수 있습니다.",
+        "billed_description": "현재 Stripe를 통해 구매한 좌석 수입니다."
+      }
+    }
+  },
+  "editor": {
+    "image": {
+      "previous": "이전 이미지",
+      "next": "다음 이미지",
+      "sequence_position": "{{index}} / {{total}}"
+    }
+  },
+  "issues": {
+    "page": {
+      "empty_hint": "태스크를 만들어 시작하세요."
+    },
+    "actor_issues": {
+      "empty": {
+        "assigned": {
+          "description": "여기에 할당된 태스크가 이 보기로 표시됩니다."
+        },
+        "created": {
+          "description": "여기에서 만든 태스크가 이 보기로 표시됩니다."
+        }
+      }
+    },
+    "detail": {
+      "pull_requests_empty": "아직 연결된 Pull request가 없습니다. 이 태스크 식별자를 PR 브랜치 이름이나 제목에 넣거나, 본문에서 Closes 바로 뒤에 적으면 자동으로 연결됩니다.",
+      "more_actions": "태스크 작업"
+    },
+    "filtered_empty": {
+      "hint": "필터를 조정하거나 해제하면 이 보기의 태스크가 표시됩니다."
+    },
+    "batch": {
+      "update_partial": "{{total}}개 중 {{failed}}개를 업데이트하지 못했습니다"
+    }
+  },
+  "modals": {
+    "delete_issue": {
+      "hint": "워크스페이스 멤버라면 누구나 태스크를 삭제할 수 있습니다."
+    }
+  },
+  "onboarding": {
+    "step_nav": {
+      "workspace": {
+        "description": "이름과 URL 정하기."
+      },
+      "runtime": {
+        "description": "첫 번째 에이전트 팀원과 실행 환경."
+      }
+    },
+    "welcome": {
+      "lede_desktop": "끝나면 실제 에이전트가 첫 태스크에 답하고 있을 겁니다.",
+      "illustration_caption": "모든 태스크, 모든 스레드, 모든 결정이 팀과 에이전트에게 공유됩니다."
+    },
+    "source_backfill": {
+      "hint_ready": "좋습니다. 준비되면 제출을 눌러주세요."
+    },
+    "step_question": {
+      "hint_continue": "좋습니다. 준비되면 계속을 누르세요."
+    },
+    "step_workspace": {
+      "create_new_subtitle": "새로 시작합니다. 다른 업무 영역을 위한 별도 공간입니다."
+    },
+    "step_runtime": {
+      "found_lede": "이 컴퓨터에서 찾은 에이전트 런타임입니다. 나중에 바꾸거나 더 추가할 수 있습니다.",
+      "hint_skip_or_refresh": "설치 후 새로고침하거나 건너뛰고 워크스페이스로 들어가세요."
+    },
+    "step_platform": {
+      "cli_dialog_description": "데스크톱과 같은 연결을 터미널에서 설정합니다. 서버, 원격 개발 환경, headless 컴퓨터에 사용하세요."
+    }
+  },
+  "projects": {
+    "resources": {
+      "local_rename_tooltip": "이름 변경",
+      "local_rename_label": "로컬 디렉터리 라벨",
+      "toast_local_renamed": "이름을 변경했습니다",
+      "toast_local_rename_failed": "이름을 변경하지 못했습니다"
+    }
+  },
+  "runtimes": {
+    "machine": {
+      "metrics": {
+        "cpu": "CPU",
+        "memory": "메모리",
+        "stale": "오래된 데이터",
+        "unavailable": "--"
+      }
+    },
+    "connect": {
+      "live_listening_hint": "데몬이 시작되면 바로 감지합니다. 보통 1분 이내입니다."
+    },
+    "cloud_runtime": {
+      "create_hint": "이름, 인스턴스 유형, 디스크 크기를 선택하세요. 나머지는 Fleet이 적용합니다."
+    }
+  },
+  "settings": {
+    "issue_statuses": {
+      "editor": {
+        "behavior_hint": "이 상태는 \"{{category}}\"와 정확히 같게 동작합니다."
+      },
+      "categories": {
+        "backlog": "보류. 여기로 옮겨도 에이전트가 시작되지 않습니다.",
+        "todo": "대기 중. 여기로 옮기면 담당 에이전트가 시작됩니다.",
+        "in_progress": "진행 중.",
+        "in_review": "전달 완료, 리뷰 대기. 오토파일럿 실행을 마무리합니다.",
+        "blocked": "외부 의존성으로 중단됨.",
+        "cancelled": "진행하지 않기로 함."
+      },
+      "description": "태스크가 거치는 워크플로를 정의합니다. 각 상태의 동작은 속한 카테고리가 결정합니다."
+    },
+    "preferences": {
+      "sticky_comment_bar": {
+        "hint": "태스크 페이지를 스크롤할 때 댓글 입력창을 항상 하단에 고정합니다."
+      },
+      "description": "Multica 사용 환경을 맞춤 설정합니다."
+    },
+    "issue": {
+      "quick_create_description": "빠른 생성 툴바에 표시할 필드입니다.",
+      "manual_create_description": "직접 만들기 툴바에 표시할 필드입니다."
+    },
+    "mcp": {
+      "empty_description": "여기에 서버를 추가한 뒤, 사용할 에이전트의 MCP 탭에서 할당하세요."
+    },
+    "plugins": {
+      "publish": {
+        "description": "플러그인 패키지를 업로드하세요. Multica가 저장하고 제공하므로 작성자에게 별도의 서버가 필요하지 않습니다."
+      },
+      "description": "이 워크스페이스에 플러그인을 게시하고 특정 버전을 설치하며, 무엇에 접근할 수 있는지 확인합니다."
+    },
+    "notifications": {
+      "system": {
+        "hint": "앱에 포커스가 없을 때 새 인박스 항목에 대해 운영체제 배너를 표시합니다."
+      }
+    },
+    "github": {
+      "page_description": "GitHub App을 연결하고, Pull request가 Multica 안에서 표시되는 방식을 제어하며, 에이전트가 커밋 기록에 남기는 정보를 설정합니다.",
+      "connection_description_prefix": "태스크를 Pull request에 자동으로 연결합니다. PR의 브랜치 이름이나 제목에",
+      "connection_description_suffix": "이(가) 있거나 본문에 Closes MUL-123이 있으면 해당 태스크에 연결되고, 그 종료 키워드가 있는 PR이 병합될 때만 해당 태스크가",
+      "connection_description_done": "완료",
+      "connection_identifier_example": "MUL-123"
+    },
+    "desktop": {
+      "updates": {
+        "description": "자동 백그라운드 업데이트를 설정하거나 새 버전을 직접 확인합니다."
+      },
+      "daemon": {
+        "description": "로컬 에이전트 데몬이 데스크톱 앱과 동작하는 방식을 설정합니다.",
+        "cli_install_windows_help": "Windows에는 스크립트 설치 관리자가 없습니다. 워크스페이스 관리자에게 문의하거나, 내부 릴리스 소스({{downloadsUrl}}/cli/v<버전>/, 현재 버전은 {{latestManifestUrl}} 참고)에서 해당 버전의 multica-cli-<버전>-windows-<아키텍처>.zip을 내려받아 multica.exe를 PATH에 넣으세요.",
+        "cli_install_windows_label": "Windows는 수동 설치가 필요합니다",
+        "diagnostics_description": "식별 및 연결 세부 정보입니다. 버그를 신고하거나 런타임이 표시되지 않는 문제를 조사할 때 유용합니다.",
+        "waiting_logs_description": "새 로그가 실시간으로 표시됩니다."
+      }
+    },
+    "dingtalk": {
+      "groups_overview_description": "각 연결에 에이전트, DingTalk 로봇, 최근에 상호작용한 그룹을 표시합니다."
+    },
+    "integrations": {
+      "description": "도구를 연결하고 각 연동을 관리하세요."
+    }
+  },
+  "skills": {
+    "actions": {
+      "add_dialog_description": "선택한 스킬을 추가할 에이전트를 선택하세요."
+    },
+    "create": {
+      "local": {
+        "multiple_skills": "이 선택에는 여러 스킬이 포함되어 있습니다. 스킬이 하나만 있는 폴더나 압축 파일을 선택하거나, 스킬 페이지에서 \"패키지 가져오기\"를 사용해 GitHub 또는 skills.sh 저장소 URL을 입력하세요."
+      }
+    },
+    "runtime_import": {
+      "no_skills_hint": "이 런타임에는 아직 검색 가능한 로컬 스킬이 없습니다.",
+      "no_search_results_title": "일치하는 로컬 스킬이 없습니다"
+    }
+  }
+}

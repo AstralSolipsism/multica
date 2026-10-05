@@ -37,9 +37,9 @@ export const DagFlowGroupCard = memo(function DagFlowGroupCard({
   id,
   data,
 }: NodeProps<DagFlowGroup>) {
-  const { t } = useT("issues");
+  const { t } = useT("dag");
   const { model, group, bounds, direction } = data;
-  const title = group.independent ? t(($) => $.dag.independent_group) : model.title;
+  const title = group.independent ? t(($) => $.independent_group) : model.title;
   return (
     <div
       className={cn(
@@ -92,12 +92,12 @@ export const DagFlowGroupCard = memo(function DagFlowGroupCard({
             <span className="mt-1 flex items-center gap-2 text-micro text-muted-foreground">
               {data.showStage && model.issue?.stage != null && (
                 <span className="shrink-0 rounded-full bg-muted/60 px-1.5 py-0.5 tabular-nums">
-                  {t(($) => $.dag.stage_badge, { number: model.issue.stage })}
+                  {t(($) => $.stage_badge, { number: model.issue.stage })}
                 </span>
               )}
               {data.projectTitle && <span className="max-w-32 truncate">{data.projectTitle}</span>}
               <span className="shrink-0">
-                {t(($) => $.dag.group_progress, {
+                {t(($) => $.group_progress, {
                   done: group.completedCount,
                   count: group.taskCount,
                 })}
@@ -115,7 +115,7 @@ export const DagFlowGroupCard = memo(function DagFlowGroupCard({
           <DagRunBadge model={model} />
         </button>
         {bounds.stageConflict && (
-          <span title={t(($) => $.dag.stage_conflict)}>
+          <span title={t(($) => $.stage_conflict)}>
             <AlertTriangle className="size-3.5 text-warning" />
           </span>
         )}
@@ -123,8 +123,8 @@ export const DagFlowGroupCard = memo(function DagFlowGroupCard({
           className="nodrag nopan shrink-0"
           variant="ghost"
           size="icon-sm"
-          aria-label={t(($) => $.dag.focus_line)}
-          title={t(($) => $.dag.focus_line)}
+          aria-label={t(($) => $.focus_line)}
+          title={t(($) => $.focus_line)}
           onClick={() => data.onFocus(id)}
         >
           <Crosshair className="size-3.5" />
@@ -134,8 +134,8 @@ export const DagFlowGroupCard = memo(function DagFlowGroupCard({
             className="nodrag nopan shrink-0"
             variant="ghost"
             size="icon-sm"
-            aria-label={t(($) => $.dag.parent_details)}
-            title={t(($) => $.dag.parent_details)}
+            aria-label={t(($) => $.parent_details)}
+            title={t(($) => $.parent_details)}
             onClick={() => data.onOpen(model.issue!.id)}
           >
             <ExternalLink className="size-3.5" />
@@ -178,7 +178,7 @@ export const DagFlowGroupCard = memo(function DagFlowGroupCard({
                     active ? "text-brand" : "text-foreground",
                   )}
                 >
-                  {t(($) => $.dag.stage_badge, { number: band.stage })}
+                  {t(($) => $.stage_badge, { number: band.stage })}
                   {i < bounds.bands.length - 1 &&
                     (vertical ? (
                       <ArrowDown className="ml-2 size-3 text-faint-foreground" aria-hidden />

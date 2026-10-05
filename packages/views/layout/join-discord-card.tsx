@@ -35,7 +35,7 @@ import { useT } from "../i18n";
  * not just under it (MUL-5704).
  */
 export function JoinDiscordCard() {
-  const { t } = useT("layout");
+  const { t } = useT("lark");
   const userId = useAuthStore((s) => s.user?.id);
   const [dismissed, dismiss] = useDiscordCardDismissed(userId);
   const [qrOpen, setQrOpen] = useState(false);

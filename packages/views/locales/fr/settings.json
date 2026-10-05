@@ -43,8 +43,7 @@
       "cancel": "Annuler",
       "save": "Enregistrer",
       "saving": "Enregistrement…",
-      "save_failed": "L'état n'a pas pu être enregistré.",
-      "behavior_hint": "This status behaves exactly like {{category}}."
+      "save_failed": "L'état n'a pas pu être enregistré."
     },
     "archive_dialog": {
       "retry": "Réessayer l'archivage",
@@ -68,13 +67,7 @@
       "unstarted": "Travail non démarré, qu'il soit planifié ou dans le backlog.",
       "started": "Travail en cours, en relecture ou bloqué.",
       "done": "Travail terminé.",
-      "closed": "Travail qui ne sera pas terminé.",
-      "backlog": "Parked. Assigning an issue here never starts an agent run.",
-      "todo": "Queued. Moving an issue here starts the assigned agent.",
-      "in_progress": "Actively being worked on.",
-      "in_review": "Delivered, waiting on human review. Finalizes the autopilot run.",
-      "blocked": "Stalled on an external dependency.",
-      "cancelled": "Decided not to do."
+      "closed": "Travail qui ne sera pas terminé."
     },
     "built_in_descriptions": {
       "backlog": "En attente. Affecter une tâche ici ne démarre jamais un agent.",
@@ -86,8 +79,25 @@
       "cancelled": "Abandonné."
     },
     "pr_auto_complete_badge": "Définie à la fusion des PR",
-    "description": "Define the workflow your issues move through. Each status inherits its behavior from its category.",
     "built_in_locked": "Les états intégrés pilotent le comportement du système : ils ne peuvent être ni modifiés ni archivés, mais vous pouvez les réordonner."
+  },
+  "wakeups": {
+    "description": "Règles de la plateforme appliquées à chaque tâche. Chaque tâche peut les modifier dans sa section Réveils.",
+    "child_done_title": "À la fin des sous-tâches",
+    "child_done_description": "Réveille le responsable de la tâche parente quand une étape se termine alors qu’une étape suivante attend, puis une fois de plus quand toutes les sous-tâches sont fermées. Un responsable humain reçoit une notification à la place.",
+    "enabled": "Activé par défaut",
+    "instruction": "Instruction par défaut",
+    "instruction_hint": "Envoyée à l’agent réveillé. Laissez vide pour utiliser l’instruction intégrée ci-dessous.",
+    "instruction_placeholder": "Laisser vide pour l’instruction intégrée",
+    "builtin": "Instruction intégrée",
+    "instruction_invalid": "Limitez l’instruction à 4 000 octets.",
+    "save": "Enregistrer",
+    "saving": "Enregistrement…",
+    "save_error": "Impossible d’enregistrer la valeur par défaut.",
+    "customized_one": "{{count}} tâche ouverte a son propre réglage et ignore cette valeur par défaut.",
+    "customized_other": "{{count}} tâches ouvertes ont leur propre réglage et ignorent cette valeur par défaut.",
+    "admin_only": "Seuls les propriétaires et administrateurs peuvent modifier ces valeurs.",
+    "load_error": "Impossible de charger les valeurs par défaut des réveils."
   },
   "quick_actions": {
     "title": "Actions rapides",
@@ -167,8 +177,7 @@
       "empty": "Aucun fuseau horaire correspondant"
     },
     "sticky_comment_bar": {
-      "title": "Épingler la barre de commentaire en bas",
-      "hint": "Keep the comment bar pinned to the bottom while scrolling an issue page."
+      "title": "Épingler la barre de commentaire en bas"
     },
     "running_agent_reply": {
       "title": "En répondant à un agent en cours d'exécution",
@@ -177,7 +186,6 @@
       "hint": "Définit seulement le choix par défaut. Vous pouvez le modifier pour chaque message avant l'envoi."
     },
     "comments_title": "Commentaires et discussion",
-    "description": "Customize how you work in Multica.",
     "region_title": "Langue et région",
     "appearance_title": "Apparence",
     "issue_fields_title": "Champs affichés à la création de tâches",
@@ -325,6 +333,13 @@
     "floating_hint": "Afficher le bouton de chat flottant sur chaque page."
   },
   "issue": {
+    "opening": {
+      "title": "Ouverture des tâches",
+      "click": "Un clic sur une carte ou une ligne ouvre",
+      "page": "La page complète",
+      "peek": "L'aperçu latéral",
+      "hint": "Maj+clic ouvre l'autre."
+    },
     "description": "Choisissez les champs que chaque fenêtre de création garde dans sa barre d'outils. Les champs masqués restent accessibles depuis le menu ⋯ et réapparaissent tant qu'ils contiennent une valeur.",
     "fields": {
       "status": "Statut",
@@ -334,15 +349,6 @@
       "project": "Projet",
       "due_date": "Date d'échéance",
       "start_date": "Date de début"
-    },
-    "quick_create_description": "Fields shown in the quick create toolbar.",
-    "manual_create_description": "Fields shown in the manual create toolbar.",
-    "opening": {
-      "title": "Ouverture des tâches",
-      "click": "Un clic sur une carte ou une ligne ouvre",
-      "page": "La page complète",
-      "peek": "L'aperçu latéral",
-      "hint": "Maj+clic ouvre l'autre."
     }
   },
   "mcp": {
@@ -372,8 +378,7 @@
     "removed_toast": "Serveur MCP partagé retiré",
     "save_failed_toast": "Impossible d'enregistrer le serveur MCP partagé",
     "rename_failed_toast": "Impossible de renommer le serveur MCP partagé",
-    "remove_failed_toast": "Impossible de retirer le serveur MCP partagé",
-    "empty_description": "Add a server here, then assign it to the agents that should use it from their own MCP tab."
+    "remove_failed_toast": "Impossible de retirer le serveur MCP partagé"
   },
   "page": {
     "title": "Paramètres",
@@ -505,10 +510,8 @@
       "deleted": "Plugin publié supprimé",
       "installed_version": "Utilisés",
       "review_install": "Vérifier et installer",
-      "review_upgrade": "Vérifier et mettre à niveau",
-      "description": "Upload a plugin package. Multica stores and serves it, so a plugin author needs no server of their own."
-    },
-    "description": "Publish plugins into this workspace, then install a specific version and review exactly what it is allowed to reach."
+      "review_upgrade": "Vérifier et mettre à niveau"
+    }
   },
   "properties": {
     "title": "Propriétés",
@@ -671,8 +674,7 @@
     "system": {
       "title": "Notifications système",
       "description": "Afficher les notifications système lorsque Multica est en arrière-plan.",
-      "label": "Afficher les notifications système",
-      "hint": "Show a banner from your operating system for new inbox items when the app isn't focused."
+      "label": "Afficher les notifications système"
     },
     "browser": {
       "label": "Notifications du navigateur",
@@ -815,11 +817,6 @@
     "feature_auto_link_label": "Lier automatiquement tâches et PR",
     "toast_failed": "Échec de la mise à jour des paramètres GitHub",
     "feature_auto_link_description": "Lie une PR à la tâche dont l’identifiant, par ex. {{example}}, figure dans son titre ou sa branche, ou suit « Closes » dans sa description.",
-    "page_description": "Connect a GitHub App, control how Pull Requests show up inside Multica, and decide what your agents leave behind in commit history.",
-    "connection_description_prefix": "Link issues to pull requests automatically. A PR links when",
-    "connection_description_suffix": "is in its branch name or title, or its body says Closes MUL-123. Merging a PR with that closing keyword also moves the issue to",
-    "connection_description_done": "Done",
-    "connection_identifier_example": "MUL-123",
     "status_paused": "En pause",
     "pause": "Mettre en pause les fonctionnalités GitHub",
     "resume": "Reprendre les fonctionnalités GitHub"
@@ -940,105 +937,7 @@
     "install_error_installer_bind": "Le bot a été installé, mais votre identité Lark n'a pas pu être associée. Réessayez ou contactez le support.",
     "install_error_session_lost": "La session d'installation a expiré ou a été perdue. Scannez à nouveau pour recommencer.",
     "install_error_forbidden": "Vous n'avez plus la permission d'installer des bots Lark dans cet espace de travail. Demandez à un administrateur de l'espace de travail pour continuer.",
-    "install_error_generic": "Échec de l'installation. Réessayez.",
-    "install_scan_hint_feishu": "Feishu → Scan → authorize the new PersonalAgent.",
-    "install_scan_hint_lark": "Lark → Scan → authorize the new PersonalAgent.",
-    "conversation_title": "Agent conversations",
-    "conversation_description": "People in these conversations can talk to this agent without a Multica account. The agent clarifies and summarizes feedback, then posts comments in its own name. This takes time and model usage; messages are not copied verbatim into tasks.",
-    "conversation_groups": "Group chat IDs (one oc_ ID per line; topics remain separate)",
-    "conversation_directs": "Direct chat IDs (one oc_ ID per line)",
-    "conversation_scope": "L’accès est limité au contenu de collaboration, à la création et à la modification de tâches, aux commentaires et aux pièces jointes de cet espace de travail, selon vos droits d’appel. Tous les participants peuvent fournir des instructions. Les réveils, automatisations, identifiants et paramètres administratifs sont exclus. Enregistrer invalide les anciennes exécutions.",
-    "conversation_save": "Authorize conversations",
-    "conversation_revoke": "Revoke conversations",
-    "conversation_unavailable": "Configuration is unavailable or refreshing. Your draft is preserved; refresh before saving.",
-    "conversation_saved": "Conversation authorization saved.",
-    "picker": {
-      "list_label": "Joined groups",
-      "search_label": "Search groups",
-      "search_placeholder": "Search by group name",
-      "loading": "Loading groups…",
-      "load_more": "Load more groups",
-      "loading_more": "Loading…",
-      "empty": "The bot has not joined any group yet. Invite it to a group in Feishu first.",
-      "no_results": "No joined group matches “{{query}}”.",
-      "external_badge": "External",
-      "unnamed": "Unnamed group",
-      "show_id": "Show full chat ID",
-      "hide_id": "Hide full chat ID",
-      "selected_group": "Selected group",
-      "clear": "Clear selection",
-      "saved_group_missing": "The currently saved group is not among the groups this bot has joined. Pick a replacement or leave it unchanged.",
-      "retry": "Retry",
-      "restart": "Reload from the first page",
-      "multi_add": "Add groups",
-      "multi_done": "Done",
-      "multi_selected": "{{count}} of {{max}} conversations",
-      "multi_max": "At most {{max}} conversations (groups and direct chats combined).",
-      "multi_remove": "Remove {{name}}",
-      "error": {
-        "forbidden": "Browsing groups and messages requires the bot's agent owner or a workspace admin.",
-        "permission_denied": "The Feishu app is missing the group or message read scope. Update its permissions in the developer console, or enter the ID manually.",
-        "unsupported": "This server cannot browse groups or messages yet. Enter the ID manually.",
-        "unavailable": "Browsing is temporarily unavailable (credentials, bot or network). Retry, or enter the ID manually.",
-        "rate_limited": "Feishu rate limit reached. Wait a moment, then retry.",
-        "invalid_cursor": "This listing session expired. Reload from the first page.",
-        "chat_unavailable": "This group is unavailable, is a private chat, or the bot is not a member. Pick another group.",
-        "message_unavailable": "A message in this list was deleted or recalled. Reload the list.",
-        "installation_inactive": "This bot installation is inactive or its agent is archived.",
-        "installation_not_found": "This bot installation no longer exists in this workspace.",
-        "invalid_response": "The server returned an unreadable response. Retry.",
-        "invalid_request": "The request was rejected. Shorten the search and try again.",
-        "generic": "Could not load the list. Retry."
-      }
-    },
-    "anchor": {
-      "list_label": "Recent messages",
-      "pick_group_first": "Select a group above to browse its recent messages.",
-      "loading": "Loading messages…",
-      "load_more": "Load earlier messages",
-      "empty": "No recent messages in this group.",
-      "selected": "Selected anchor",
-      "saved_missing": "The saved anchor message is not in the recent history. Pick a new message or leave it unchanged.",
-      "time_unknown": "Unknown time",
-      "sender_user": "User",
-      "sender_app": "App",
-      "sender_anonymous": "Anonymous",
-      "sender_unknown": "Unknown sender"
-    },
-    "conversation_groups_label": "Groups",
-    "conversation_directs_label": "Direct chats",
-    "conversation_over_limit": "At most {{max}} conversations (groups and direct chats combined). Remove some before saving.",
-    "private": {
-      "intro": "People who message this bot privately appear here for review. Sending a message only makes the conversation discoverable — the agent answers new messages only after you authorize the conversation below.",
-      "loading": "Loading private chats…",
-      "refresh": "Refresh",
-      "refreshing": "Refreshing…",
-      "list_label": "Discovered private chats",
-      "empty_title": "No private chats discovered yet",
-      "empty_steps": "Ask the person to open a private chat with this bot in Feishu and send any message, then come back and refresh. The message only makes the conversation discoverable here — it grants no access by itself.",
-      "pending_badge": "Pending",
-      "authorized_badge": "Authorized",
-      "name_unavailable": "Name unavailable",
-      "id_only_hint": "Names marked unavailable could not be read (external user or missing contact permission). Match the chat and user IDs plus the last-message time, or have the intended person send a new message and compare the updated time.",
-      "last_seen": "Last message {{when}}",
-      "expires": "discoverable until {{when}}",
-      "show_user_id": "Show full user ID",
-      "hide_user_id": "Hide full user ID",
-      "confirm_selected": "Authorize selected ({{count}})",
-      "confirm_scope": "Les conversations sélectionnées sont ajoutées à l’autorisation actuelle ; les groupes et discussions privées existants restent autorisés. L’accès est limité à la collaboration sur les tâches de cet espace, selon vos droits d’appel. Les réveils, automatisations, identifiants et paramètres administratifs sont exclus.",
-      "confirmed": "Authorization saved. The agent now answers new messages in these conversations; earlier messages are not replayed.",
-      "error": {
-        "forbidden": "Viewing and authorizing private chats requires the bot's agent owner or a workspace admin.",
-        "invocation_denied": "You can manage this bot, but authorizing conversations also requires permission to invoke this agent.",
-        "limit_exceeded": "At most {{max}} conversations (groups and direct chats combined). Remove a saved conversation first.",
-        "candidate_unavailable": "A selected candidate expired or was replaced. The list has been refreshed — select again.",
-        "invalid_request": "The selection was rejected. Refresh the list and try again.",
-        "installation_inactive": "This bot installation is inactive or its agent is archived.",
-        "installation_not_found": "This bot installation no longer exists in this workspace.",
-        "unsupported": "This server cannot discover private chats yet. Enter the ID manually.",
-        "generic": "Could not load the private chat list. Retry."
-      }
-    }
+    "install_error_generic": "Échec de l'installation. Réessayez."
   },
   "composio": {
     "page_description": "Connectez des applications que vos agents peuvent utiliser.",
@@ -1174,8 +1073,7 @@
     "byo_submitting": "Connexion…",
     "byo_cancel": "Annuler",
     "byo_success_toast": "Bot DingTalk connecté",
-    "byo_failed_toast": "Impossible de connecter le bot DingTalk",
-    "groups_overview_description": "Each connection shows its Agent, DingTalk bot, and recently observed groups."
+    "byo_failed_toast": "Impossible de connecter le bot DingTalk"
   },
   "wecom": {
     "section_title": "WeCom",
@@ -1330,8 +1228,7 @@
       "up_to_date": "Vous avez la dernière version.",
       "downloading": "La v{{version}} se télécharge en arrière-plan — vous serez averti quand elle sera prête à installer.",
       "check_now": "Vérifier maintenant",
-      "checking": "Vérification…",
-      "description": "Control automatic background updates or check for a new version manually."
+      "checking": "Vérification…"
     },
     "daemon": {
       "title": "Démon",
@@ -1406,12 +1303,7 @@
       "waiting_logs": "En attente de journaux…",
       "reconnect_failed": "Impossible de reconnecter le démon",
       "try_again_moment": "Veuillez réessayer dans un instant.",
-      "try_again": "Veuillez réessayer.",
-      "description": "Configure how the local agent daemon behaves with the desktop app.",
-      "cli_install_windows_help": "Windows has no script installer. Ask your workspace administrator, or download the multica-cli-<version>-windows-<arch>.zip archive for the release you want from the internal release source ({{downloadsUrl}}/cli/v<version>/ — the current version is in {{latestManifestUrl}}) and extract multica.exe onto your PATH.",
-      "cli_install_windows_label": "Manual install required on Windows",
-      "diagnostics_description": "Identification and connection details. Useful when filing a bug report or investigating why a runtime isn't showing up.",
-      "waiting_logs_description": "New entries will appear in real time."
+      "try_again": "Veuillez réessayer."
     }
   },
   "members": {
@@ -1501,26 +1393,7 @@
     "status_connected": "Connecté",
     "status_not_connected": "Non connecté",
     "status_loading": "Vérification...",
-    "status_unknown": "État indisponible",
-    "description": "Connect your tools and manage each integration in one place."
-  },
-  "wakeups": {
-    "description": "Règles de la plateforme appliquées à chaque tâche. Chaque tâche peut les modifier dans sa section Réveils.",
-    "child_done_title": "À la fin des sous-tâches",
-    "child_done_description": "Réveille le responsable de la tâche parente quand une étape se termine alors qu’une étape suivante attend, puis une fois de plus quand toutes les sous-tâches sont fermées. Un responsable humain reçoit une notification à la place.",
-    "enabled": "Activé par défaut",
-    "instruction": "Instruction par défaut",
-    "instruction_hint": "Envoyée à l’agent réveillé. Laissez vide pour utiliser l’instruction intégrée ci-dessous.",
-    "instruction_placeholder": "Laisser vide pour l’instruction intégrée",
-    "builtin": "Instruction intégrée",
-    "instruction_invalid": "Limitez l’instruction à 4 000 octets.",
-    "save": "Enregistrer",
-    "saving": "Enregistrement…",
-    "save_error": "Impossible d’enregistrer la valeur par défaut.",
-    "customized_one": "{{count}} tâche ouverte a son propre réglage et ignore cette valeur par défaut.",
-    "customized_other": "{{count}} tâches ouvertes ont leur propre réglage et ignorent cette valeur par défaut.",
-    "admin_only": "Seuls les propriétaires et administrateurs peuvent modifier ces valeurs.",
-    "load_error": "Impossible de charger les valeurs par défaut des réveils."
+    "status_unknown": "État indisponible"
   },
   "pr_merge_status": {
     "label": "Après la fusion des PR, passer la tâche à",

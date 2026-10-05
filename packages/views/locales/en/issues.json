@@ -36,6 +36,9 @@
     "steer_step": "{{name}} added",
     "steer_step_read": "Read"
   },
+  "working_filter_error": {
+    "title": "Couldn't load issues with working agents"
+  },
   "status_catalog_error": {
     "title": "Couldn't load the status list",
     "hint": "Issues can't be shown until statuses load.",
@@ -116,8 +119,7 @@
     "breadcrumb_title": "Issues",
     "breadcrumb_workspace_fallback": "Workspace",
     "empty_title": "No issues yet",
-    "move_failed": "Failed to move issue",
-    "empty_hint": "Create an issue to get started."
+    "move_failed": "Failed to move issue"
   },
   "status": {
     "backlog": "Backlog",
@@ -249,9 +251,7 @@
     "list": "List",
     "table": "Table",
     "gantt": "Gantt",
-    "swimlane": "Swimlane",
-    "tooltip_dag": "Dependency graph view",
-    "dag": "Graph"
+    "swimlane": "Swimlane"
   },
   "table": {
     "select_all": "Select all visible issues",
@@ -341,12 +341,10 @@
     },
     "empty": {
       "assigned": {
-        "title": "No assigned issues",
-        "description": "Issues assigned here will appear in this view."
+        "title": "No assigned issues"
       },
       "created": {
-        "title": "No created issues",
-        "description": "Issues created here will appear in this view."
+        "title": "No created issues"
       }
     },
     "search_placeholder": "Search issues...",
@@ -374,6 +372,13 @@
     "no_value": "No value",
     "ordered_by": "Board ordered by {{field}}",
     "manual_reorder_hint": "Switch to Manual ordering to rearrange issues within a column."
+  },
+  "peek": {
+    "panel_label": "Issue preview",
+    "previous": "Previous issue",
+    "next": "Next issue",
+    "open_full_page": "Open full page",
+    "close": "Close preview"
   },
   "detail": {
     "not_found": "This issue does not exist or has been deleted in this workspace.",
@@ -419,6 +424,9 @@
     "pull_request_merge_ready": "Ready to merge",
     "pull_request_merge_blocked": "Blocked",
     "pull_request_merge_behind": "Behind base",
+    "pull_request_verdict_conflicting": "Conflicts",
+    "pull_request_verdict_ready": "Ready",
+    "pull_request_verdict_passed": "Checks passed",
     "pull_request_snapshot_stale": "Updated {{time}}",
     "pull_request_snapshot_stale_unknown": "Snapshot may be outdated",
     "pull_request_card_files_count_one": "{{count}} file",
@@ -476,12 +484,7 @@
     "project_directory_path_copied_with_branch": "Project directory path copied — work is on {{branch}}",
     "workdir_path_copy_failed": "Failed to copy workdir path",
     "workdir_path_unavailable": "No local workdir yet — issue has not been run by a local agent",
-    "pull_requests_empty_title": "No linked pull requests.",
-    "pull_requests_empty": "No linked pull requests yet. Put this issue's identifier in a PR's branch name or title, or write it after Closes in the PR body, to auto-link it.",
-    "more_actions": "Issue actions",
-    "pull_request_verdict_conflicting": "Conflicts",
-    "pull_request_verdict_ready": "Ready",
-    "pull_request_verdict_passed": "Checks passed"
+    "pull_requests_empty_title": "No linked pull requests."
   },
   "timeline": {
     "loading": "Loading..."
@@ -527,7 +530,6 @@
     "pr_auto_complete_enabled": "set this issue to change status when PRs merge again",
     "wakeup_created": "added a wakeup: {{condition}} · wake {{agent}}",
     "wakeup_triggered": "{{condition}} · woke {{agent}}",
-    "wakeup_triggered_rejected": "Wakeup input discarded: external conversation authorization is unavailable or sources conflict",
     "wakeup_triggered_merged": "{{condition}} · joined {{agent}}'s waiting run",
     "wakeup_triggered_acknowledged": "{{condition}} · {{agent}} did this itself; not woken again",
     "wakeup_triggered_manual": "{{name}} woke {{agent}} now",
@@ -650,11 +652,7 @@
     "recipient_count_other": "{{count}} agents will receive this",
     "steer_attachment_notice": "Only text can join a running run, so a message with files is handled after it.",
     "restart_send": "Stop and send",
-    "restart_failed": "Couldn't stop the current run. Your message wasn't sent.",
-    "trigger_blocked_dependency_unsatisfied": "Won't start — this issue has unfinished prerequisites",
-    "trigger_blocked_dependency_data_unverified": "Won't start — existing dependency data needs review first",
-    "trigger_blocked_short_dependency_unsatisfied": "Prerequisites unfinished",
-    "trigger_blocked_short_dependency_data_unverified": "Dependency data unverified"
+    "restart_failed": "Couldn't stop the current run. Your message wasn't sent."
   },
   "reply": {
     "placeholder": "Leave a reply...",
@@ -700,8 +698,7 @@
   },
   "filtered_empty": {
     "title": "No issues match these filters",
-    "clear_button": "Clear filters",
-    "hint": "Adjust or clear the filters to see the issues in this view."
+    "clear_button": "Clear filters"
   },
   "agent_live": {
     "is_working": "{{name}} is working",
@@ -752,8 +749,7 @@
       "source_rule_owner": "Autopilot rule publisher",
       "source_owner_fallback": "No precise owner — attributed to the agent owner",
       "source_backfill": "Backfilled attribution",
-      "source_unattributed": "No responsible member resolved",
-      "source_channel_integration": "Integration conversation authorization"
+      "source_unattributed": "No responsible member resolved"
     },
     "usage_total_tooltip": "Open the run timeline",
     "trigger_wakeup": "Wakeup · {{condition}}",
@@ -769,6 +765,39 @@
     "strip_aria": "Cumulative cost over time — open the run timeline",
     "strip_no_usage": "No usage recorded",
     "sparkline_now": "Now"
+  },
+  "runs_timeline": {
+    "title": "Runs",
+    "stat_spent": "Spent",
+    "stat_agent_time": "Agent time",
+    "stat_elapsed": "Elapsed",
+    "stat_runs": "Runs",
+    "count_failed_one": "{{count}} failed",
+    "count_failed_other": "{{count}} failed",
+    "count_cancelled_one": "{{count}} cancelled",
+    "count_cancelled_other": "{{count}} cancelled",
+    "count_active_one": "{{count}} active",
+    "count_active_other": "{{count}} active",
+    "legend_cumulative": "Cumulative cost",
+    "legend_run": "Run · width is duration",
+    "chart_aria_one": "Cumulative cost over time: {{cost}} across {{count}} run",
+    "chart_aria_other": "Cumulative cost over time: {{cost}} across {{count}} runs",
+    "day_today": "Today",
+    "day_yesterday": "Yesterday",
+    "day_runs_one": "{{count}} run",
+    "day_runs_other": "{{count}} runs",
+    "quoted": "“{{text}}”",
+    "cost_input": "Input",
+    "cost_output": "Output",
+    "cost_cache_read": "Cache read",
+    "cost_cache_write": "Cache write",
+    "cost_breakdown_aria": "Cost breakdown: {{cost}}",
+    "no_usage": "No usage recorded",
+    "tooltip_total": "Total so far {{cost}}",
+    "hover_no_run": "No run",
+    "hover_idle": "Idle {{duration}}",
+    "note_unmapped": "No price on file for {{models}}; their tokens are counted but their cost is not.",
+    "note_estimate": "Cost is estimated from published model rates, except where the provider reported its own figure."
   },
   "terminate_dialog": {
     "title": "Stop this run?",
@@ -794,8 +823,7 @@
     "delete_dialog_desc_one": "This action cannot be undone. This will permanently delete the selected issue and all associated data.",
     "delete_dialog_desc_other": "This action cannot be undone. This will permanently delete the selected issues and all associated data.",
     "delete_dialog_warning": "Any workspace member can delete issues.",
-    "cancel": "Cancel",
-    "update_partial": "Couldn't update {{failed}} of {{total}} issues"
+    "cancel": "Cancel"
   },
   "card": {
     "update_failed": "Failed to update issue",
@@ -829,8 +857,7 @@
     "remove_parent_issue_success": "Removed parent issue",
     "add_sub_issue": "Add sub-issue...",
     "delete_issue": "Delete issue",
-    "mark_duplicate": "Mark as duplicate...",
-    "edit_dependencies": "Edit prerequisites..."
+    "mark_duplicate": "Mark as duplicate..."
   },
   "pickers": {
     "custom_property": {
@@ -1378,151 +1405,6 @@
     "all_merged_to": "All PRs merged. The next merged PR moves this issue to {{status}}.",
     "issue_disabled": "PR merges won’t change this issue",
     "issue_disabled_action": "Turn on"
-  },
-  "dag": {
-    "loading": "Loading the complete dependency graph…",
-    "layout_pending": "Computing layout…",
-    "layout_cancel": "Cancel",
-    "error_title": "Couldn't load the dependency graph",
-    "error_unavailable": "This server version doesn't support the dependency graph yet — upgrade and try again.",
-    "error_forbidden": "You don't have access to this workspace's dependency graph.",
-    "error_unverified": "Dependency history isn't verified yet, so the graph can't be shown.",
-    "error_timeout": "The graph query timed out. Narrow the filters and try again.",
-    "error_retry": "Retry",
-    "stale_banner": "Refresh failed — showing the snapshot from {{time}}.",
-    "empty_title": "No issues match the current filters",
-    "empty_hint": "Adjust the filters to see the dependency graph.",
-    "empty_title_unfiltered": "No issues yet",
-    "empty_hint_unfiltered": "Created issues appear in the dependency graph.",
-    "context_badge": "Context",
-    "blocked_badge_one": "{{count}} open prerequisite",
-    "blocked_badge_other": "{{count}} open prerequisites",
-    "blocked_badge_restricted": "Includes prerequisites you can't see",
-    "readiness_unknown": "Prerequisites unknown",
-    "run_active": "Running",
-    "run_queued": "Queued",
-    "stage_badge": "Stage {{number}}",
-    "members_badge_one": "{{count}} issue",
-    "members_badge_other": "{{count}} issues",
-    "folded_children_one": "{{count}} sub-issue",
-    "folded_children_other": "{{count}} sub-issues",
-    "internal_edges_one": "{{count}} internal dependency",
-    "internal_edges_other": "{{count}} internal dependencies",
-    "blocked_members_one": "{{count}} blocked",
-    "blocked_members_other": "{{count}} blocked",
-    "context_count_one": "+{{count}} context",
-    "context_count_other": "+{{count}} context",
-    "expand": "Expand",
-    "collapse": "Collapse",
-    "expand_all": "Expand issue groups",
-    "collapse_all": "Collapse issue groups",
-    "open_detail": "Open detail",
-    "edit_dependencies": "Edit prerequisites",
-    "assign_issue": "Assign",
-    "focus_upstream": "Highlight prerequisites",
-    "focus_downstream": "Highlight dependents",
-    "focus_clear": "Clear",
-    "focus_upstream_active": "Prerequisite dependencies",
-    "focus_downstream_active": "Dependent issues",
-    "direction_label": "Direction",
-    "direction_lr": "Left to right",
-    "direction_tb": "Top to bottom",
-    "grouping_label": "Grouping",
-    "grouping_project": "By project",
-    "grouping_parent": "Issue groups",
-    "grouping_none": "None",
-    "no_project_group": "No project",
-    "edge_direct_title": "Direct prerequisite",
-    "edge_direct_description": "{{target}} lists {{source}} as a prerequisite",
-    "edge_aggregate_title": "Aggregated dependencies",
-    "edge_aggregate_description": "{{source}} → {{target}} summarizes {{count}} task dependencies",
-    "edge_aggregate_bidirectional": "Folded groups can show arrows in both directions — that doesn't mean the tasks form a dependency cycle.",
-    "edge_locate": "Locate",
-    "summary_matches_one": "{{count}} issue",
-    "summary_matches_other": "{{count}} issues",
-    "summary_context_one": "+{{count}} context",
-    "summary_context_other": "+{{count}} context",
-    "summary_edges_one": "{{count}} dependency",
-    "summary_edges_other": "{{count}} dependencies",
-    "restricted_context_hint": "Some graph context is hidden by permissions. Relations are informational.",
-    "context_only_hint": "No issues match the filters — showing prerequisite context only.",
-    "node_actions_label": "Node actions",
-    "edge_inspector_label": "Dependency details",
-    "clear_selection": "Clear selection",
-    "independent_group": "Independent issues",
-    "group_progress": "{{done}}/{{count}} completed",
-    "focus_line": "Focus issue group",
-    "parent_details": "Parent issue details",
-    "stage_conflict": "Stage order conflicts with dependencies; dependency order is shown",
-    "layout_error": "Unable to calculate the dependency layout",
-    "stage_legend": "Bands show stages",
-    "dependency_legend": "Issue arrows show dependencies",
-    "edge_count": "{{count}} dependencies",
-    "edge_count_one": "{{count}} dependency",
-    "edge_count_other": "{{count}} dependencies",
-    "edge_locate_source": "Locate prerequisite",
-    "edge_locate_target": "Locate dependent"
-  },
-  "dependencies": {
-    "section_title": "Prerequisites",
-    "unsatisfied_summary_one": "{{count}} prerequisite unfinished",
-    "unsatisfied_summary_other": "{{count}} prerequisites unfinished",
-    "restricted_note": "Some prerequisites are hidden by permissions. Relations do not prevent execution.",
-    "inherited_from": "Inherited from {{name}}",
-    "edit_source": "Edit source",
-    "blocking_section": "Dependents",
-    "edit_aria": "Edit prerequisites",
-    "remove_aria": "Remove prerequisite {{identifier}}",
-    "remove_conflict": "Prerequisites just changed — refreshed; try again",
-    "remove_failed": "Failed to update prerequisites",
-    "loading": "Loading prerequisites…",
-    "load_error": "Couldn't load prerequisites",
-    "unknown_state": "Prerequisite state is unavailable — refresh before editing",
-    "retry": "Retry",
-    "blocked_without_visible": "Hidden prerequisites"
-  },
-  "working_filter_error": {
-    "title": "Couldn't load issues with working agents"
-  },
-  "peek": {
-    "panel_label": "Issue preview",
-    "previous": "Previous issue",
-    "next": "Next issue",
-    "open_full_page": "Open full page",
-    "close": "Close preview"
-  },
-  "runs_timeline": {
-    "title": "Runs",
-    "stat_spent": "Spent",
-    "stat_agent_time": "Agent time",
-    "stat_elapsed": "Elapsed",
-    "stat_runs": "Runs",
-    "count_failed_one": "{{count}} failed",
-    "count_failed_other": "{{count}} failed",
-    "count_cancelled_one": "{{count}} cancelled",
-    "count_cancelled_other": "{{count}} cancelled",
-    "count_active_one": "{{count}} active",
-    "count_active_other": "{{count}} active",
-    "legend_cumulative": "Cumulative cost",
-    "legend_run": "Run · width is duration",
-    "chart_aria_one": "Cumulative cost over time: {{cost}} across {{count}} run",
-    "chart_aria_other": "Cumulative cost over time: {{cost}} across {{count}} runs",
-    "day_today": "Today",
-    "day_yesterday": "Yesterday",
-    "day_runs_one": "{{count}} run",
-    "day_runs_other": "{{count}} runs",
-    "quoted": "“{{text}}”",
-    "cost_input": "Input",
-    "cost_output": "Output",
-    "cost_cache_read": "Cache read",
-    "cost_cache_write": "Cache write",
-    "cost_breakdown_aria": "Cost breakdown: {{cost}}",
-    "no_usage": "No usage recorded",
-    "tooltip_total": "Total so far {{cost}}",
-    "hover_no_run": "No run",
-    "hover_idle": "Idle {{duration}}",
-    "note_unmapped": "No price on file for {{models}}; their tokens are counted but their cost is not.",
-    "note_estimate": "Cost is estimated from published model rates, except where the provider reported its own figure."
   },
   "deliverables": {
     "section_title": "Deliverables",

@@ -1,0 +1,121 @@
+{
+  "activity": {
+    "wakeup_triggered_rejected": "已丢弃此次唤醒输入：外部会话授权不可用或来源冲突"
+  },
+  "execution_log": {
+    "attribution": {
+      "source_channel_integration": "集成会话授权"
+    }
+  },
+  "feishu_qr": {
+    "title": "飞书群二维码",
+    "hint": "使用飞书扫码加入群聊"
+  },
+  "install_scan_hint_feishu": "飞书 → 扫一扫 → 授权新 PersonalAgent。",
+  "install_scan_hint_lark": "Lark → 扫一扫 → 授权新 PersonalAgent。",
+  "conversation_title": "与智能体交流",
+  "conversation_description": "这些会话的参与者无需 Multica 账号。智能体会澄清、整理意见，再以自己的身份回填评论；处理会有延迟和模型消耗，不会把每条消息立即逐字变成任务评论。",
+  "conversation_groups": "群聊 ID（每行一个 oc_ ID，群内各话题独立）",
+  "conversation_directs": "私聊 ID（每行一个 oc_ ID）",
+  "conversation_scope": "这些会话的所有参与者都可提供输入。智能体仅能在当前工作区读取协作内容、创建或更新任务、处理评论和附件，并遵守你的调用权限。唤醒、自动化、凭据及管理设置不在授权范围内。保存会使旧运行授权失效。",
+  "conversation_save": "授权这些会话",
+  "conversation_revoke": "撤销会话授权",
+  "conversation_unavailable": "配置不可用或正在刷新。草稿已保留，读取恢复后才能保存。",
+  "conversation_saved": "会话授权已保存。",
+  "picker": {
+    "list_label": "已加入的群聊",
+    "search_label": "搜索群聊",
+    "search_placeholder": "按群名称搜索",
+    "loading": "正在加载群聊...",
+    "load_more": "加载更多群聊",
+    "loading_more": "正在加载...",
+    "empty": "机器人尚未加入任何群聊。请先在飞书中把它邀请进群。",
+    "no_results": "没有名称匹配\"{{query}}\"的已加入群聊。",
+    "external_badge": "外部",
+    "unnamed": "未命名群聊",
+    "show_id": "显示完整群 ID",
+    "hide_id": "收起完整群 ID",
+    "selected_group": "已选群聊",
+    "clear": "清除选择",
+    "saved_group_missing": "当前已保存的群不在该机器人已加入的群列表中。请选择替换目标，或保持不变。",
+    "retry": "重试",
+    "restart": "从第一页重新加载",
+    "multi_add": "添加群聊",
+    "multi_done": "完成",
+    "multi_selected": "已选 {{count}} / {{max}} 个会话",
+    "multi_max": "最多 {{max}} 个会话（群聊与私聊合计）。",
+    "multi_remove": "移除 {{name}}",
+    "error": {
+      "forbidden": "浏览群聊和消息需要机器人所属智能体的负责人或工作区管理员权限。",
+      "permission_denied": "飞书应用缺少群或消息读取权限。请在开发者后台补齐权限，或手动输入 ID。",
+      "unsupported": "当前服务端暂不支持浏览群聊和消息，请手动输入 ID。",
+      "unavailable": "暂时无法浏览（凭据、机器人或网络不可用）。请重试，或手动输入 ID。",
+      "rate_limited": "已达到飞书限流。请稍候重试。",
+      "invalid_cursor": "当前翻页会话已过期，请从第一页重新加载。",
+      "chat_unavailable": "该群不可用、为私聊会话，或机器人尚未入群。请改选其他群。",
+      "message_unavailable": "列表中的某条消息已被删除或撤回，请重新加载列表。",
+      "installation_inactive": "该机器人安装已失效或其智能体已归档。",
+      "installation_not_found": "该机器人安装在当前工作区已不存在。",
+      "invalid_response": "服务端响应无法解析，请重试。",
+      "invalid_request": "请求被拒绝。请缩短搜索词后重试。",
+      "generic": "列表加载失败，请重试。"
+    }
+  },
+  "anchor": {
+    "list_label": "最近消息",
+    "pick_group_first": "先在上方选择群聊，再浏览其中的最近消息。",
+    "loading": "正在加载消息...",
+    "load_more": "加载更早的消息",
+    "empty": "该群暂无最近消息。",
+    "selected": "已选锚点",
+    "saved_missing": "已保存的锚点消息不在最近历史中。请选择新消息，或保持不变。",
+    "time_unknown": "时间未知",
+    "sender_user": "用户",
+    "sender_app": "应用",
+    "sender_anonymous": "匿名",
+    "sender_unknown": "未知发送者"
+  },
+  "conversation_groups_label": "群聊",
+  "conversation_directs_label": "私聊",
+  "conversation_over_limit": "最多 {{max}} 个会话（群聊与私聊合计）。请先移除一部分再保存。",
+  "private": {
+    "intro": "私聊过这个 Bot 的人会出现在这里等待确认。发消息只是让会话被发现——只有你在下方授权后，智能体才会处理该会话的新消息。",
+    "loading": "正在加载私聊...",
+    "refresh": "刷新",
+    "refreshing": "正在刷新...",
+    "list_label": "发现的私聊",
+    "empty_title": "还没有发现私聊",
+    "empty_steps": "请对方在飞书中打开与这个 Bot 的私聊并发送任意消息，然后回到这里刷新。消息只是让会话出现在这里，本身不构成授权。",
+    "pending_badge": "待确认",
+    "authorized_badge": "已授权",
+    "name_unavailable": "姓名不可用",
+    "id_only_hint": "标记为\"姓名不可用\"的候选无法读取姓名（对方是外部用户或应用缺少通讯录权限）。请对照会话 ID、用户 ID 和最后消息时间辨认；也可以让对方重新发一条消息，比对更新后的时间。",
+    "last_seen": "最后消息 {{when}}",
+    "expires": "可发现至 {{when}}",
+    "show_user_id": "显示完整用户 ID",
+    "hide_user_id": "收起完整用户 ID",
+    "confirm_selected": "授权所选（{{count}}）",
+    "confirm_scope": "所选会话会追加到现有授权，保留原有群聊和私聊。仅开放当前工作区内的任务协作，并遵守你的调用权限，不开放唤醒、自动化、凭据及管理设置。",
+    "confirmed": "授权已保存。智能体将处理这些会话的新消息；之前的消息不会重放。",
+    "error": {
+      "forbidden": "查看和授权私聊需要机器人所属智能体的负责人或工作区管理员权限。",
+      "invocation_denied": "你可以管理这个 Bot，但授权会话还需要此智能体的调用权限。",
+      "limit_exceeded": "最多 {{max}} 个会话（群聊与私聊合计）。请先移除一个已授权会话。",
+      "candidate_unavailable": "所选候选已过期或被替换。列表已刷新，请重新选择。",
+      "invalid_request": "选择被服务端拒绝。请刷新列表后重试。",
+      "installation_inactive": "该机器人安装已失效或其智能体已归档。",
+      "installation_not_found": "该机器人安装在当前工作区已不存在。",
+      "unsupported": "当前服务端暂不支持私聊发现，请手动输入 ID。",
+      "generic": "无法加载私聊列表，请重试。"
+    }
+  },
+  "help": {
+    "discord": "飞书群"
+  },
+  "sidebar": {
+    "discord_card": {
+      "title": "加入飞书群",
+      "dismiss": "关闭"
+    }
+  }
+}

@@ -107,7 +107,6 @@ const LAYOUT_LABEL_KEY = {
   table: "table",
   swimlane: "swimlane",
   gantt: "gantt",
-  dag: "dag",
 } as const;
 
 const GROUPING_LABEL_KEY = {
@@ -160,6 +159,7 @@ const ROW_LABEL = "w-16 shrink-0 text-caption text-muted-foreground";
  *  board fallback. */
 export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean }) {
   const { t } = useT("issues");
+  const { t: tDag } = useT("dag");
   const wsId = useWorkspaceId();
   const viewMode = useViewStore((s) => s.viewMode);
   const grouping = useViewStore((s) => s.grouping);
@@ -186,7 +186,11 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
     workspaceProperties.find((p) => `property:${p.id}` === key)?.name ??
     t(($) => $.save_view.custom_property);
 
-  const layoutLabel = t(($) => $.view[LAYOUT_LABEL_KEY[viewMode]]);
+  const layoutLabelOf = (mode: ViewMode) =>
+    mode === "dag"
+      ? tDag(($) => $.view.dag)
+      : t(($) => $.view[LAYOUT_LABEL_KEY[mode]]);
+  const layoutLabel = layoutLabelOf(viewMode);
   const groupingLabel =
     viewMode === "board"
       ? grouping in GROUPING_LABEL_KEY
@@ -195,11 +199,11 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
       : viewMode === "swimlane"
         ? t(($) => $.display[SWIMLANE_LABEL_KEY[swimlaneGrouping]])
         : viewMode === "dag"
-          ? t(($) => $.dag.grouping_parent)
+          ? tDag(($) => $.grouping_parent)
           : null;
   const dagDirectionLabel =
     viewMode === "dag"
-      ? t(($) => $.dag[dagDirectionLabelKey(dagDirection)])
+      ? tDag(($) => $[dagDirectionLabelKey(dagDirection)])
       : null;
   const sortLabel =
     viewMode === "dag"
@@ -277,7 +281,7 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
                   ] as const
                 ).map((mode) => ({
                   value: mode as string,
-                  label: t(($) => $.view[LAYOUT_LABEL_KEY[mode]]),
+                  label: layoutLabelOf(mode),
                 }))}
                 value={viewMode}
                 onValueChange={(v) => {
@@ -299,7 +303,7 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
                       ] as const
                     ).map((mode) => (
                       <SelectItem key={mode} value={mode}>
-                        {t(($) => $.view[LAYOUT_LABEL_KEY[mode]])}
+                        {layoutLabelOf(mode)}
                       </SelectItem>
                     ))}
                   </SelectGroup>
@@ -387,28 +391,28 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
               <>
                 <div className="flex items-center gap-3">
                   <Label className={ROW_LABEL}>
-                    {t(($) => $.dag.direction_label)}
+                    {tDag(($) => $.direction_label)}
                   </Label>
                   <Select
                     items={DAG_DIRECTION_OPTIONS.map((value) => ({
                       value: value as string,
-                      label: t(($) => $.dag[dagDirectionLabelKey(value)]),
+                      label: tDag(($) => $[dagDirectionLabelKey(value)]),
                     }))}
                     value={dagDirection}
                     onValueChange={(v) => {
                       if (v) act.setDagDirection(v as DagDirection);
                     }}
                   >
-                    <SelectTrigger size="sm" className="w-64" aria-label={t(($) => $.dag.direction_label)}>
+                    <SelectTrigger size="sm" className="w-64" aria-label={tDag(($) => $.direction_label)}>
                       <SelectValue>
-                        {t(($) => $.dag[dagDirectionLabelKey(dagDirection)])}
+                        {tDag(($) => $[dagDirectionLabelKey(dagDirection)])}
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent align="start">
                       <SelectGroup>
                         {DAG_DIRECTION_OPTIONS.map((value) => (
                           <SelectItem key={value} value={value}>
-                            {t(($) => $.dag[dagDirectionLabelKey(value)])}
+                            {tDag(($) => $[dagDirectionLabelKey(value)])}
                           </SelectItem>
                         ))}
                       </SelectGroup>

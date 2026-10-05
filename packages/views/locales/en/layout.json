@@ -32,7 +32,7 @@
     "download_desktop": "Desktop app",
     "docs": "Docs",
     "changelog": "Change log",
-    "discord": "Feishu group",
+    "discord": "Discord",
     "feedback": "Feedback",
     "server_version": "Server version {{version}}"
   },
@@ -58,12 +58,8 @@
     "show_fewer_pins": "Show fewer",
     "unread_overflow": "99+",
     "discord_card": {
-      "title": "Feishu group",
+      "title": "Join our Discord",
       "dismiss": "Dismiss"
     }
-  },
-  "feishu_qr": {
-    "title": "Feishu group QR code",
-    "hint": "Scan with Feishu to join the group"
   }
 }

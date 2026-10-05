@@ -1,0 +1,121 @@
+{
+  "activity": {
+    "wakeup_triggered_rejected": "Entrée de réveil ignorée : autorisation de conversation externe indisponible ou sources en conflit"
+  },
+  "execution_log": {
+    "attribution": {
+      "source_channel_integration": "Integration conversation authorization"
+    }
+  },
+  "feishu_qr": {
+    "title": "Code QR du groupe Feishu",
+    "hint": "Scannez avec Feishu pour rejoindre le groupe"
+  },
+  "install_scan_hint_feishu": "Feishu → Scan → authorize the new PersonalAgent.",
+  "install_scan_hint_lark": "Lark → Scan → authorize the new PersonalAgent.",
+  "conversation_title": "Agent conversations",
+  "conversation_description": "People in these conversations can talk to this agent without a Multica account. The agent clarifies and summarizes feedback, then posts comments in its own name. This takes time and model usage; messages are not copied verbatim into tasks.",
+  "conversation_groups": "Group chat IDs (one oc_ ID per line; topics remain separate)",
+  "conversation_directs": "Direct chat IDs (one oc_ ID per line)",
+  "conversation_scope": "L’accès est limité au contenu de collaboration, à la création et à la modification de tâches, aux commentaires et aux pièces jointes de cet espace de travail, selon vos droits d’appel. Tous les participants peuvent fournir des instructions. Les réveils, automatisations, identifiants et paramètres administratifs sont exclus. Enregistrer invalide les anciennes exécutions.",
+  "conversation_save": "Authorize conversations",
+  "conversation_revoke": "Revoke conversations",
+  "conversation_unavailable": "Configuration is unavailable or refreshing. Your draft is preserved; refresh before saving.",
+  "conversation_saved": "Conversation authorization saved.",
+  "picker": {
+    "list_label": "Joined groups",
+    "search_label": "Search groups",
+    "search_placeholder": "Search by group name",
+    "loading": "Loading groups…",
+    "load_more": "Load more groups",
+    "loading_more": "Loading…",
+    "empty": "The bot has not joined any group yet. Invite it to a group in Feishu first.",
+    "no_results": "No joined group matches “{{query}}”.",
+    "external_badge": "External",
+    "unnamed": "Unnamed group",
+    "show_id": "Show full chat ID",
+    "hide_id": "Hide full chat ID",
+    "selected_group": "Selected group",
+    "clear": "Clear selection",
+    "saved_group_missing": "The currently saved group is not among the groups this bot has joined. Pick a replacement or leave it unchanged.",
+    "retry": "Retry",
+    "restart": "Reload from the first page",
+    "multi_add": "Add groups",
+    "multi_done": "Done",
+    "multi_selected": "{{count}} of {{max}} conversations",
+    "multi_max": "At most {{max}} conversations (groups and direct chats combined).",
+    "multi_remove": "Remove {{name}}",
+    "error": {
+      "forbidden": "Browsing groups and messages requires the bot's agent owner or a workspace admin.",
+      "permission_denied": "The Feishu app is missing the group or message read scope. Update its permissions in the developer console, or enter the ID manually.",
+      "unsupported": "This server cannot browse groups or messages yet. Enter the ID manually.",
+      "unavailable": "Browsing is temporarily unavailable (credentials, bot or network). Retry, or enter the ID manually.",
+      "rate_limited": "Feishu rate limit reached. Wait a moment, then retry.",
+      "invalid_cursor": "This listing session expired. Reload from the first page.",
+      "chat_unavailable": "This group is unavailable, is a private chat, or the bot is not a member. Pick another group.",
+      "message_unavailable": "A message in this list was deleted or recalled. Reload the list.",
+      "installation_inactive": "This bot installation is inactive or its agent is archived.",
+      "installation_not_found": "This bot installation no longer exists in this workspace.",
+      "invalid_response": "The server returned an unreadable response. Retry.",
+      "invalid_request": "The request was rejected. Shorten the search and try again.",
+      "generic": "Could not load the list. Retry."
+    }
+  },
+  "anchor": {
+    "list_label": "Recent messages",
+    "pick_group_first": "Select a group above to browse its recent messages.",
+    "loading": "Loading messages…",
+    "load_more": "Load earlier messages",
+    "empty": "No recent messages in this group.",
+    "selected": "Selected anchor",
+    "saved_missing": "The saved anchor message is not in the recent history. Pick a new message or leave it unchanged.",
+    "time_unknown": "Unknown time",
+    "sender_user": "User",
+    "sender_app": "App",
+    "sender_anonymous": "Anonymous",
+    "sender_unknown": "Unknown sender"
+  },
+  "conversation_groups_label": "Groups",
+  "conversation_directs_label": "Direct chats",
+  "conversation_over_limit": "At most {{max}} conversations (groups and direct chats combined). Remove some before saving.",
+  "private": {
+    "intro": "People who message this bot privately appear here for review. Sending a message only makes the conversation discoverable — the agent answers new messages only after you authorize the conversation below.",
+    "loading": "Loading private chats…",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing…",
+    "list_label": "Discovered private chats",
+    "empty_title": "No private chats discovered yet",
+    "empty_steps": "Ask the person to open a private chat with this bot in Feishu and send any message, then come back and refresh. The message only makes the conversation discoverable here — it grants no access by itself.",
+    "pending_badge": "Pending",
+    "authorized_badge": "Authorized",
+    "name_unavailable": "Name unavailable",
+    "id_only_hint": "Names marked unavailable could not be read (external user or missing contact permission). Match the chat and user IDs plus the last-message time, or have the intended person send a new message and compare the updated time.",
+    "last_seen": "Last message {{when}}",
+    "expires": "discoverable until {{when}}",
+    "show_user_id": "Show full user ID",
+    "hide_user_id": "Hide full user ID",
+    "confirm_selected": "Authorize selected ({{count}})",
+    "confirm_scope": "Les conversations sélectionnées sont ajoutées à l’autorisation actuelle ; les groupes et discussions privées existants restent autorisés. L’accès est limité à la collaboration sur les tâches de cet espace, selon vos droits d’appel. Les réveils, automatisations, identifiants et paramètres administratifs sont exclus.",
+    "confirmed": "Authorization saved. The agent now answers new messages in these conversations; earlier messages are not replayed.",
+    "error": {
+      "forbidden": "Viewing and authorizing private chats requires the bot's agent owner or a workspace admin.",
+      "invocation_denied": "You can manage this bot, but authorizing conversations also requires permission to invoke this agent.",
+      "limit_exceeded": "At most {{max}} conversations (groups and direct chats combined). Remove a saved conversation first.",
+      "candidate_unavailable": "A selected candidate expired or was replaced. The list has been refreshed — select again.",
+      "invalid_request": "The selection was rejected. Refresh the list and try again.",
+      "installation_inactive": "This bot installation is inactive or its agent is archived.",
+      "installation_not_found": "This bot installation no longer exists in this workspace.",
+      "unsupported": "This server cannot discover private chats yet. Enter the ID manually.",
+      "generic": "Could not load the private chat list. Retry."
+    }
+  },
+  "help": {
+    "discord": "Groupe Feishu"
+  },
+  "sidebar": {
+    "discord_card": {
+      "title": "Groupe Feishu",
+      "dismiss": "Masquer"
+    }
+  }
+}

@@ -44,10 +44,7 @@
     "image_copied": "画像をコピーしました",
     "copy_image_failed": "画像をコピーできませんでした",
     "canvas_label": "画像キャンバス。ドラッグで移動、スクロールで拡大縮小、ダブルクリックで実際のサイズに切り替えできます。",
-    "unavailable": "この画像は表示できないためスキップしました。",
-    "previous": "前の画像",
-    "next": "次の画像",
-    "sequence_position": "{{index}} / {{total}}"
+    "unavailable": "この画像は表示できないためスキップしました。"
   },
   "canvas": {
     "zoom_in": "拡大",

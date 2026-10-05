@@ -34,21 +34,21 @@ export function LarkDiscoveryErrorAlert({
   onRetry?: () => void;
   onRestart?: () => void;
 }) {
-  const { t } = useT("settings");
+  const { t } = useT("lark");
   return (
     <Alert variant="destructive">
       <AlertDescription className="flex items-center justify-between gap-2">
-        <span>{t(($) => $.lark.picker.error[errorKey])}</span>
+        <span>{t(($) => $.picker.error[errorKey])}</span>
         {errorKey === "invalid_cursor" ? (
           <Button size="sm" variant="outline" onClick={onRestart}>
             <RefreshCw className="h-3 w-3" />
-            {t(($) => $.lark.picker.restart)}
+            {t(($) => $.picker.restart)}
           </Button>
         ) : (
           onRetry && (
             <Button size="sm" variant="outline" onClick={onRetry}>
               <RefreshCw className="h-3 w-3" />
-              {t(($) => $.lark.picker.retry)}
+              {t(($) => $.picker.retry)}
             </Button>
           )
         )}
@@ -66,7 +66,7 @@ export function ChatIdDisclosure({ id, showLabel, hideLabel }: {
   showLabel?: string;
   hideLabel?: string;
 }) {
-  const { t } = useT("settings");
+  const { t } = useT("lark");
   const [open, setOpen] = useState(false);
   return (
     <span className="inline-flex min-w-0 items-center gap-0.5">
@@ -76,7 +76,7 @@ export function ChatIdDisclosure({ id, showLabel, hideLabel }: {
       <button
         type="button"
         className="shrink-0 rounded-xs p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-        aria-label={open ? (hideLabel ?? t(($) => $.lark.picker.hide_id)) : (showLabel ?? t(($) => $.lark.picker.show_id))}
+        aria-label={open ? (hideLabel ?? t(($) => $.picker.hide_id)) : (showLabel ?? t(($) => $.picker.show_id))}
         aria-expanded={open}
         onClick={(e) => {
           e.stopPropagation();
@@ -99,7 +99,7 @@ export function LarkSelectionChips({ selected, onRemove, disabled }: {
   onRemove: (chatId: string) => void;
   disabled?: boolean;
 }) {
-  const { t } = useT("settings");
+  const { t } = useT("lark");
   return (
     <div className="flex flex-wrap gap-1.5">
       {selected.map((sel) => {
@@ -114,7 +114,7 @@ export function LarkSelectionChips({ selected, onRemove, disabled }: {
             <button
               type="button"
               className="shrink-0 rounded-xs p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-              aria-label={t(($) => $.lark.picker.multi_remove, { name: label })}
+              aria-label={t(($) => $.picker.multi_remove, { name: label })}
               disabled={disabled}
               onClick={() => onRemove(sel.chatId)}
             >

@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configStore } from "@multica/core/config";
-import enLayout from "../locales/en/layout.json";
+import { RESOURCES } from "../test/i18n";
 import { isDesktopShell } from "../platform/local-directory";
 import { HelpLauncher } from "./help-launcher";
 
@@ -15,14 +15,14 @@ vi.mock("../platform/local-directory", () => ({
 }));
 
 // react-i18next isn't initialised in the views test env, so resolve the
-// selector against the real en/layout.json to assert on actual copy.
+// selector against the assembled namespace to assert on actual copy.
 vi.mock("../i18n", () => ({
-  useT: () => ({
+  useT: (namespace: string) => ({
     t: (
-      sel: (r: typeof enLayout) => string,
+      sel: (r: unknown) => string,
       vars?: Record<string, string>,
     ) => {
-      const template = sel(enLayout);
+      const template = sel(RESOURCES.en[namespace]);
       return vars
         ? template.replace(/\{\{(\w+)\}\}/g, (_, key) => String(vars[key] ?? ""))
         : template;

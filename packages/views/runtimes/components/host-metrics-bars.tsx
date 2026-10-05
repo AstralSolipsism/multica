@@ -18,16 +18,16 @@ export function HostMetricsBars({
   memoryPercent: number | null;
   stale: boolean;
 }) {
-  const { t } = useT("runtimes");
+  const { t } = useT("fork-ui");
   return (
     <span className="flex w-full items-center gap-4">
       <MetricBar
-        label={t(($) => $.machine.metrics.cpu)}
+        label={t(($) => $.runtimes.machine.metrics.cpu)}
         percent={cpuPercent}
         stale={stale}
       />
       <MetricBar
-        label={t(($) => $.machine.metrics.memory)}
+        label={t(($) => $.runtimes.machine.metrics.memory)}
         percent={memoryPercent}
         stale={stale}
       />
@@ -44,9 +44,9 @@ function MetricBar({
   percent: number | null;
   stale: boolean;
 }) {
-  const { t } = useT("runtimes");
+  const { t } = useT("fork-ui");
   const tone = metricsTone(percent);
-  const staleLabel = t(($) => $.machine.metrics.stale);
+  const staleLabel = t(($) => $.runtimes.machine.metrics.stale);
   return (
     <span
       className="flex min-w-0 flex-1 flex-col gap-1"
@@ -56,7 +56,7 @@ function MetricBar({
         <span className="text-micro text-muted-foreground">{label}</span>
         {percent == null ? (
           <span className="text-micro text-faint-foreground">
-            {t(($) => $.machine.metrics.unavailable)}
+            {t(($) => $.runtimes.machine.metrics.unavailable)}
           </span>
         ) : stale ? (
           <span
@@ -97,23 +97,23 @@ export function HostMetricsInline({
   memoryPercent: number | null;
   stale: boolean;
 }) {
-  const { t } = useT("runtimes");
+  const { t } = useT("fork-ui");
   return (
     <>
       {cpuPercent != null && (
         <MetricInline
-          label={t(($) => $.machine.metrics.cpu)}
+          label={t(($) => $.runtimes.machine.metrics.cpu)}
           percent={cpuPercent}
           stale={stale}
-          staleLabel={t(($) => $.machine.metrics.stale)}
+          staleLabel={t(($) => $.runtimes.machine.metrics.stale)}
         />
       )}
       {memoryPercent != null && (
         <MetricInline
-          label={t(($) => $.machine.metrics.memory)}
+          label={t(($) => $.runtimes.machine.metrics.memory)}
           percent={memoryPercent}
           stale={stale}
-          staleLabel={t(($) => $.machine.metrics.stale)}
+          staleLabel={t(($) => $.runtimes.machine.metrics.stale)}
         />
       )}
     </>

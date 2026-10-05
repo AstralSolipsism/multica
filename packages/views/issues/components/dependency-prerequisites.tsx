@@ -81,7 +81,7 @@ function PrerequisiteRow({
   /** Inherited rows only: switch to editing the source ancestor's edges. */
   onEditSource?: (ancestorId: string) => void;
 }) {
-  const { t } = useT("issues");
+  const { t } = useT("dependencies");
   const paths = useWorkspacePaths();
   const statusLabel = useStatusLabel(wsId)(prerequisite.status);
   const satisfied = prerequisite.satisfied === true;
@@ -137,7 +137,7 @@ function PrerequisiteRow({
           {!satisfied && <span className="text-warning">{statusLabel}</span>}
           {ancestorLabel && (
             <span className="text-muted-foreground">
-              {t(($) => $.dependencies.inherited_from, { name: ancestorLabel })}
+              {t(($) => $.detail.inherited_from, { name: ancestorLabel })}
             </span>
           )}
           {onEditSource && sourceId && (
@@ -146,7 +146,7 @@ function PrerequisiteRow({
               onClick={() => onEditSource(sourceId)}
               className="rounded-sm px-1.5 py-0.5 text-primary transition-colors hover:bg-accent"
             >
-              {t(($) => $.dependencies.edit_source)}
+              {t(($) => $.detail.edit_source)}
             </button>
           )}
         </div>
@@ -155,10 +155,10 @@ function PrerequisiteRow({
         <button
           type="button"
           disabled={removeDisabled}
-          title={t(($) => $.dependencies.remove_aria, {
+          title={t(($) => $.detail.remove_aria, {
             identifier: prerequisite.identifier ?? "",
           })}
-          aria-label={t(($) => $.dependencies.remove_aria, {
+          aria-label={t(($) => $.detail.remove_aria, {
             identifier: prerequisite.identifier ?? "",
           })}
           onClick={() => onRemove(prerequisite)}

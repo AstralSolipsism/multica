@@ -1,25 +1,30 @@
 {
-  "settings": {
-    "preferences": {
-      "description": "Labrastro の使い方をカスタマイズします。"
-    },
-    "plugins": {
-      "publish": {
-        "description": "プラグインパッケージをアップロードします。Labrastro が保存と配信を行うため、作者自身のサーバーは不要です。"
+  "fork-ui": {
+    "settings": {
+      "preferences": {
+        "description": "Labrastro の使い方をカスタマイズします。"
+      },
+      "plugins": {
+        "publish": {
+          "description": "プラグインパッケージをアップロードします。Labrastro が保存と配信を行うため、作者自身のサーバーは不要です。"
+        }
+      },
+      "github": {
+        "page_description": "GitHub App を接続し、Pull request が Labrastro 内でどう表示されるかを制御し、エージェントがコミット履歴に残す情報を設定します。"
       }
-    },
+    }
+  },
+  "settings": {
     "notifications": {
       "system": {
         "description": "Labrastro がバックグラウンドにあるときにシステム通知を表示します。"
       }
     },
     "github": {
-      "disconnect_confirm_description": "Labrastro はこのインストールの Webhook 受信を停止します。既存の PR ミラーとリンクは保持され、いつでも再接続して更新を再開できます。",
-      "page_description": "GitHub App を接続し、Pull request が Labrastro 内でどう表示されるかを制御し、エージェントがコミット履歴に残す情報を設定します。"
+      "disconnect_confirm_description": "Labrastro はこのインストールの Webhook 受信を停止します。既存の PR ミラーとリンクは保持され、いつでも再接続して更新を再開できます。"
     },
     "lark": {
-      "install_error_bot_info": "承認はされましたが、Labrastro がボットの識別子を取得できませんでした。もう一度お試しください。",
-      "conversation_description": "参加者に Labrastro アカウントは不要です。エージェントが意見を確認・整理し、自分の名前でコメントします。処理時間とモデル使用量が発生し、各メッセージがそのままタスクに転記されるわけではありません。"
+      "install_error_bot_info": "承認はされましたが、Labrastro がボットの識別子を取得できませんでした。もう一度お試しください。"
     },
     "slack": {
       "byo_docs_link": "Step-by-step：Labrastro エージェントを Slack に接続する"
@@ -36,6 +41,9 @@
       "disconnect_confirm_description": "ボットはこのワークスペースの Telegram メッセージを受信しなくなります。Labrastro 内のチャット履歴は保持され、同じエージェントから再接続できます。",
       "connect_docs_link": "手順ガイド：Labrastro エージェントを Telegram に接続する"
     }
+  },
+  "lark": {
+    "conversation_description": "参加者に Labrastro アカウントは不要です。エージェントが意見を確認・整理し、自分の名前でコメントします。処理時間とモデル使用量が発生し、各メッセージがそのままタスクに転記されるわけではありません。"
   },
   "common": {
     "lark_bind": {

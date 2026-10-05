@@ -43,8 +43,7 @@
       "cancel": "취소",
       "save": "저장",
       "saving": "저장 중…",
-      "save_failed": "상태를 저장하지 못했습니다.",
-      "behavior_hint": "이 상태는 \"{{category}}\"와 정확히 같게 동작합니다."
+      "save_failed": "상태를 저장하지 못했습니다."
     },
     "archive_dialog": {
       "retry": "보관 다시 시도",
@@ -68,13 +67,7 @@
       "unstarted": "백로그와 계획된 작업을 포함하여 아직 시작하지 않은 작업입니다.",
       "started": "진행 중이거나 리뷰 또는 차단 상태인 작업입니다.",
       "done": "완료된 작업입니다.",
-      "closed": "완료하지 않기로 한 작업입니다.",
-      "backlog": "보류. 여기로 옮겨도 에이전트가 시작되지 않습니다.",
-      "todo": "대기 중. 여기로 옮기면 담당 에이전트가 시작됩니다.",
-      "in_progress": "진행 중.",
-      "in_review": "전달 완료, 리뷰 대기. 오토파일럿 실행을 마무리합니다.",
-      "blocked": "외부 의존성으로 중단됨.",
-      "cancelled": "진행하지 않기로 함."
+      "closed": "완료하지 않기로 한 작업입니다."
     },
     "built_in_descriptions": {
       "backlog": "보류. 여기로 옮겨도 에이전트가 시작되지 않습니다.",
@@ -86,8 +79,24 @@
       "cancelled": "진행하지 않기로 함."
     },
     "pr_auto_complete_badge": "PR 병합 시 자동 설정",
-    "description": "태스크가 거치는 워크플로를 정의합니다. 각 상태의 동작은 속한 카테고리가 결정합니다.",
     "built_in_locked": "기본 상태는 시스템 동작에 쓰이므로 편집하거나 보관할 수 없습니다. 순서는 바꿀 수 있습니다."
+  },
+  "wakeups": {
+    "description": "모든 태스크에 적용되는 플랫폼 규칙입니다. 각 태스크의 깨우기 섹션에서 따로 바꿀 수 있습니다.",
+    "child_done_title": "하위 태스크가 끝나면",
+    "child_done_description": "한 단계가 끝나고 다음 단계가 기다리고 있으면 상위 태스크 담당자를 깨우고, 모든 하위 태스크가 끝나면 한 번 더 깨웁니다. 담당자가 멤버면 받은편지함으로 알립니다.",
+    "enabled": "기본으로 켜기",
+    "instruction": "기본 지시",
+    "instruction_hint": "깨운 에이전트에게 전달됩니다. 비워 두면 아래 기본 제공 지시를 사용합니다.",
+    "instruction_placeholder": "비워 두면 기본 제공 지시를 사용합니다",
+    "builtin": "기본 제공 지시",
+    "instruction_invalid": "지시는 4,000바이트 이내로 입력하세요.",
+    "save": "저장",
+    "saving": "저장 중…",
+    "save_error": "기본값을 저장하지 못했습니다.",
+    "customized_other": "진행 중인 태스크 {{count}}개가 자체 설정을 사용해 이 기본값을 따르지 않습니다.",
+    "admin_only": "소유자와 관리자만 기본값을 바꿀 수 있습니다.",
+    "load_error": "깨우기 기본값을 불러오지 못했습니다."
   },
   "quick_actions": {
     "title": "퀵 액션",
@@ -167,8 +176,7 @@
       "empty": "일치하는 시간대가 없습니다"
     },
     "sticky_comment_bar": {
-      "title": "댓글 입력란을 하단에 고정",
-      "hint": "태스크 페이지를 스크롤할 때 댓글 입력창을 항상 하단에 고정합니다."
+      "title": "댓글 입력란을 하단에 고정"
     },
     "running_agent_reply": {
       "title": "실행 중인 에이전트에 답장할 때",
@@ -177,7 +185,6 @@
       "hint": "기본값만 정합니다. 보내기 전에 메시지마다 바꿀 수 있습니다."
     },
     "comments_title": "댓글 및 채팅",
-    "description": "Multica 사용 환경을 맞춤 설정합니다.",
     "region_title": "언어 및 지역",
     "appearance_title": "모양",
     "issue_fields_title": "태스크 생성 시 표시할 필드",
@@ -325,6 +332,13 @@
     "floating_hint": "모든 페이지에 플로팅 채팅 버튼을 표시합니다."
   },
   "issue": {
+    "opening": {
+      "title": "태스크 열기",
+      "click": "카드나 행을 클릭하면 열리는 곳",
+      "page": "전체 페이지",
+      "peek": "사이드 미리보기",
+      "hint": "Shift+클릭하면 다른 쪽으로 열립니다."
+    },
     "description": "각 생성 방식의 툴바에 항상 표시할 필드를 선택합니다. 숨긴 필드는 ⋯ 메뉴에서 계속 사용할 수 있으며, 값이 있는 동안에는 자동으로 표시됩니다.",
     "fields": {
       "status": "상태",
@@ -334,15 +348,6 @@
       "project": "프로젝트",
       "due_date": "마감일",
       "start_date": "시작일"
-    },
-    "quick_create_description": "빠른 생성 툴바에 표시할 필드입니다.",
-    "manual_create_description": "직접 만들기 툴바에 표시할 필드입니다.",
-    "opening": {
-      "title": "태스크 열기",
-      "click": "카드나 행을 클릭하면 열리는 곳",
-      "page": "전체 페이지",
-      "peek": "사이드 미리보기",
-      "hint": "Shift+클릭하면 다른 쪽으로 열립니다."
     }
   },
   "mcp": {
@@ -372,8 +377,7 @@
     "removed_toast": "공유 MCP 서버를 제거했습니다",
     "save_failed_toast": "공유 MCP 서버를 저장하지 못했습니다",
     "rename_failed_toast": "공유 MCP 서버 이름을 변경하지 못했습니다",
-    "remove_failed_toast": "공유 MCP 서버를 제거하지 못했습니다",
-    "empty_description": "여기에 서버를 추가한 뒤, 사용할 에이전트의 MCP 탭에서 할당하세요."
+    "remove_failed_toast": "공유 MCP 서버를 제거하지 못했습니다"
   },
   "page": {
     "title": "설정",
@@ -503,10 +507,8 @@
       "deleted": "게시된 플러그인을 삭제했습니다",
       "installed_version": "사용 중",
       "review_install": "확인 후 설치",
-      "review_upgrade": "확인 후 업그레이드",
-      "description": "플러그인 패키지를 업로드하세요. Multica가 저장하고 제공하므로 작성자에게 별도의 서버가 필요하지 않습니다."
-    },
-    "description": "이 워크스페이스에 플러그인을 게시하고 특정 버전을 설치하며, 무엇에 접근할 수 있는지 확인합니다."
+      "review_upgrade": "확인 후 업그레이드"
+    }
   },
   "properties": {
     "title": "속성",
@@ -668,8 +670,7 @@
     "system": {
       "title": "시스템 알림",
       "description": "Multica가 백그라운드에 있을 때 시스템 알림을 표시합니다.",
-      "label": "시스템 알림 표시",
-      "hint": "앱에 포커스가 없을 때 새 인박스 항목에 대해 운영체제 배너를 표시합니다."
+      "label": "시스템 알림 표시"
     },
     "browser": {
       "label": "브라우저 알림",
@@ -812,11 +813,6 @@
     "feature_auto_link_label": "태스크와 PR 자동 연결",
     "toast_failed": "GitHub 설정을 업데이트하지 못했습니다",
     "feature_auto_link_description": "제목이나 브랜치 이름에 태스크 번호(예: {{example}})가 있거나 설명에 \"Closes {{example}}\"가 있는 PR을 해당 태스크에 연결합니다.",
-    "page_description": "GitHub App을 연결하고, Pull request가 Multica 안에서 표시되는 방식을 제어하며, 에이전트가 커밋 기록에 남기는 정보를 설정합니다.",
-    "connection_description_prefix": "태스크를 Pull request에 자동으로 연결합니다. PR의 브랜치 이름이나 제목에",
-    "connection_description_suffix": "이(가) 있거나 본문에 Closes MUL-123이 있으면 해당 태스크에 연결되고, 그 종료 키워드가 있는 PR이 병합될 때만 해당 태스크가",
-    "connection_description_done": "완료",
-    "connection_identifier_example": "MUL-123",
     "status_paused": "일시 중지됨",
     "pause": "GitHub 기능 일시 중지",
     "resume": "GitHub 기능 재개"
@@ -967,8 +963,7 @@
       "up_to_date": "최신 버전입니다.",
       "downloading": "v{{version}}을(를) 백그라운드에서 다운로드 중입니다. 설치 준비가 끝나면 알림을 드립니다.",
       "check_now": "지금 확인",
-      "checking": "확인 중...",
-      "description": "자동 백그라운드 업데이트를 설정하거나 새 버전을 직접 확인합니다."
+      "checking": "확인 중..."
     },
     "daemon": {
       "title": "데몬",
@@ -1039,12 +1034,7 @@
       "waiting_logs": "로그를 기다리는 중...",
       "reconnect_failed": "데몬에 다시 연결하지 못했습니다",
       "try_again_moment": "잠시 후 다시 시도하세요.",
-      "try_again": "다시 시도하세요.",
-      "description": "로컬 에이전트 데몬이 데스크톱 앱과 동작하는 방식을 설정합니다.",
-      "cli_install_windows_help": "Windows에는 스크립트 설치 관리자가 없습니다. 워크스페이스 관리자에게 문의하거나, 내부 릴리스 소스({{downloadsUrl}}/cli/v<버전>/, 현재 버전은 {{latestManifestUrl}} 참고)에서 해당 버전의 multica-cli-<버전>-windows-<아키텍처>.zip을 내려받아 multica.exe를 PATH에 넣으세요.",
-      "cli_install_windows_label": "Windows는 수동 설치가 필요합니다",
-      "diagnostics_description": "식별 및 연결 세부 정보입니다. 버그를 신고하거나 런타임이 표시되지 않는 문제를 조사할 때 유용합니다.",
-      "waiting_logs_description": "새 로그가 실시간으로 표시됩니다."
+      "try_again": "다시 시도하세요."
     }
   },
   "members": {
@@ -1203,105 +1193,7 @@
     "install_error_installer_bind": "봇은 설치되었지만 Lark 신원을 연결하지 못했어요. 다시 시도하거나 지원팀에 문의하세요.",
     "install_error_session_lost": "설치 세션이 만료되었거나 유실되었어요. 다시 스캔해 처음부터 진행하세요.",
     "install_error_forbidden": "이 워크스페이스에 Lark 봇을 설치할 권한이 더 이상 없어요. 워크스페이스 관리자에게 문의하세요.",
-    "install_error_generic": "설치에 실패했어요. 다시 시도하세요.",
-    "install_scan_hint_feishu": "Feishu → 스캔 → 새 PersonalAgent를 승인하세요.",
-    "install_scan_hint_lark": "Lark → 스캔 → 새 PersonalAgent를 승인하세요.",
-    "conversation_title": "에이전트와 대화",
-    "conversation_description": "참여자는 Multica 계정이 없어도 됩니다. 에이전트가 의견을 확인하고 정리한 뒤 자신의 이름으로 댓글을 남깁니다. 처리 시간과 모델 사용량이 발생하며 모든 메시지가 그대로 작업에 복사되지는 않습니다.",
-    "conversation_groups": "그룹 채팅 ID (줄마다 oc_ ID 하나, 주제별 대화 분리)",
-    "conversation_directs": "개인 채팅 ID (줄마다 oc_ ID 하나)",
-    "conversation_scope": "내 호출 권한에 따라 현재 작업 공간의 협업 내용 읽기, 작업 생성 및 수정, 댓글과 첨부 파일만 사용할 수 있습니다. 대화의 모든 참여자가 입력할 수 있습니다. 깨우기, 자동화, 인증 정보 및 관리 설정은 제외됩니다. 저장하면 이전 실행의 권한이 무효화됩니다.",
-    "conversation_save": "대화 승인",
-    "conversation_revoke": "대화 승인 취소",
-    "conversation_unavailable": "설정을 읽을 수 없거나 새로 고치는 중입니다. 초안은 유지됩니다. 새로 고친 후 저장하세요.",
-    "conversation_saved": "대화 승인을 저장했습니다.",
-    "picker": {
-      "list_label": "참여 중인 그룹",
-      "search_label": "그룹 검색",
-      "search_placeholder": "그룹 이름으로 검색",
-      "loading": "그룹을 불러오는 중…",
-      "load_more": "그룹 더 불러오기",
-      "loading_more": "불러오는 중…",
-      "empty": "봇이 아직 참여한 그룹이 없습니다. 먼저 Feishu에서 그룹에 초대하세요.",
-      "no_results": "“{{query}}”와 일치하는 참여 중인 그룹이 없습니다.",
-      "external_badge": "외부",
-      "unnamed": "이름 없는 그룹",
-      "show_id": "전체 채팅 ID 표시",
-      "hide_id": "전체 채팅 ID 숨기기",
-      "selected_group": "선택된 그룹",
-      "clear": "선택 지우기",
-      "saved_group_missing": "현재 저장된 그룹이 이 봇이 참여한 그룹 목록에 없습니다. 교체할 그룹을 선택하거나 그대로 두세요.",
-      "retry": "다시 시도",
-      "restart": "첫 페이지부터 다시 불러오기",
-      "multi_add": "그룹 추가",
-      "multi_done": "완료",
-      "multi_selected": "{{count}}/{{max}}개 대화 선택됨",
-      "multi_max": "대화는 최대 {{max}}개까지입니다(그룹과 개인 채팅 합산).",
-      "multi_remove": "{{name}} 제거",
-      "error": {
-        "forbidden": "그룹과 메시지를 탐색하려면 봇 소유 에이전트의 소유자 또는 워크스페이스 관리자 권한이 필요합니다.",
-        "permission_denied": "Feishu 앱에 그룹 또는 메시지 읽기 권한이 없습니다. 개발자 콘솔에서 권한을 추가하거나 ID를 직접 입력하세요.",
-        "unsupported": "이 서버에서는 아직 그룹과 메시지를 탐색할 수 없습니다. ID를 직접 입력하세요.",
-        "unavailable": "일시적으로 탐색할 수 없습니다(자격 증명, 봇 또는 네트워크 문제). 다시 시도하거나 ID를 직접 입력하세요.",
-        "rate_limited": "Feishu 요청 한도에 도달했습니다. 잠시 후 다시 시도하세요.",
-        "invalid_cursor": "이 페이지 세션이 만료되었습니다. 첫 페이지부터 다시 불러오세요.",
-        "chat_unavailable": "이 그룹을 사용할 수 없거나, 개인 채팅이거나, 봇이 멤버가 아닙니다. 다른 그룹을 선택하세요.",
-        "message_unavailable": "목록의 메시지가 삭제되거나 회수되었습니다. 목록을 다시 불러오세요.",
-        "installation_inactive": "이 봇 설치가 비활성화되었거나 에이전트가 보관되었습니다.",
-        "installation_not_found": "이 봇 설치가 이 워크스페이스에 더 이상 존재하지 않습니다.",
-        "invalid_response": "서버 응답을 해석할 수 없습니다. 다시 시도하세요.",
-        "invalid_request": "요청이 거부되었습니다. 검색어를 줄여 다시 시도하세요.",
-        "generic": "목록을 불러오지 못했습니다. 다시 시도하세요."
-      }
-    },
-    "anchor": {
-      "list_label": "최근 메시지",
-      "pick_group_first": "위에서 그룹을 선택하면 최근 메시지를 탐색할 수 있습니다.",
-      "loading": "메시지를 불러오는 중…",
-      "load_more": "이전 메시지 불러오기",
-      "empty": "이 그룹에 최근 메시지가 없습니다.",
-      "selected": "선택된 앵커",
-      "saved_missing": "저장된 앵커 메시지가 최근 기록에 없습니다. 새 메시지를 선택하거나 그대로 두세요.",
-      "time_unknown": "시간 알 수 없음",
-      "sender_user": "사용자",
-      "sender_app": "앱",
-      "sender_anonymous": "익명",
-      "sender_unknown": "알 수 없는 발신자"
-    },
-    "conversation_groups_label": "그룹",
-    "conversation_directs_label": "개인 채팅",
-    "conversation_over_limit": "대화는 최대 {{max}}개까지입니다(그룹과 개인 채팅 합산). 일부를 제거한 후 저장하세요.",
-    "private": {
-      "intro": "이 봇에게 개인 메시지를 보낸 사람이 확인 대기 상태로 여기에 표시됩니다. 메시지를 보낸 것은 대화가 발견되게 할 뿐이며, 아래에서 승인해야 에이전트가 해당 대화의 새 메시지에 응답합니다.",
-      "loading": "개인 채팅을 불러오는 중…",
-      "refresh": "새로 고침",
-      "refreshing": "새로 고치는 중…",
-      "list_label": "발견된 개인 채팅",
-      "empty_title": "아직 발견된 개인 채팅이 없습니다",
-      "empty_steps": "상대방이 Feishu에서 이 봇과의 개인 채팅을 열고 아무 메시지나 보낸 후, 여기로 돌아와 새로 고치세요. 메시지는 대화를 여기에 표시할 뿐, 그 자체로 승인은 아닙니다.",
-      "pending_badge": "확인 대기",
-      "authorized_badge": "승인됨",
-      "name_unavailable": "이름을 가져올 수 없음",
-      "id_only_hint": "\"이름을 가져올 수 없음\"으로 표시된 후보는 이름을 읽을 수 없습니다(외부 사용자이거나 연락처 권한 부족). 채팅 ID, 사용자 ID, 마지막 메시지 시간을 대조하거나, 상대방에게 새 메시지를 보내게 한 뒤 갱신된 시간을 비교하세요.",
-      "last_seen": "마지막 메시지 {{when}}",
-      "expires": "발견 가능 기한 {{when}}",
-      "show_user_id": "전체 사용자 ID 표시",
-      "hide_user_id": "전체 사용자 ID 숨기기",
-      "confirm_selected": "선택한 대화 승인 ({{count}})",
-      "confirm_scope": "선택한 대화를 현재 승인에 추가하며 기존 그룹과 개인 채팅의 승인은 유지합니다. 내 호출 권한에 따라 이 작업 공간의 작업 협업만 허용됩니다. 깨우기, 자동화, 인증 정보 및 관리 설정은 제외됩니다.",
-      "confirmed": "승인이 저장되었습니다. 에이전트가 이 대화의 새 메시지에 응답합니다. 이전 메시지는 다시 재생되지 않습니다.",
-      "error": {
-        "forbidden": "개인 채팅을 보고 승인하려면 봇 소유 에이전트의 소유자 또는 워크스페이스 관리자 권한이 필요합니다.",
-        "invocation_denied": "이 봇을 관리할 수 있지만, 대화를 승인하려면 이 에이전트의 호출 권한도 필요합니다.",
-        "limit_exceeded": "대화는 최대 {{max}}개까지입니다(그룹과 개인 채팅 합산). 먼저 저장된 대화를 제거하세요.",
-        "candidate_unavailable": "선택한 후보가 만료되었거나 교체되었습니다. 목록을 새로 고쳤으니 다시 선택하세요.",
-        "invalid_request": "선택이 거부되었습니다. 목록을 새로 고친 후 다시 시도하세요.",
-        "installation_inactive": "이 봇 설치가 비활성이거나 에이전트가 보관되었습니다.",
-        "installation_not_found": "이 봇 설치가 현재 작업 공간에 더 이상 존재하지 않습니다.",
-        "unsupported": "이 서버에서는 아직 개인 채팅을 발견할 수 없습니다. ID를 직접 입력하세요.",
-        "generic": "개인 채팅 목록을 불러올 수 없습니다. 다시 시도하세요."
-      }
-    }
+    "install_error_generic": "설치에 실패했어요. 다시 시도하세요."
   },
   "composio": {
     "page_description": "에이전트가 사용할 앱을 연결하세요.",
@@ -1436,8 +1328,7 @@
     "byo_submitting": "연결 중…",
     "byo_cancel": "취소",
     "byo_success_toast": "DingTalk 봇을 연결했어요",
-    "byo_failed_toast": "DingTalk 봇을 연결하지 못했어요",
-    "groups_overview_description": "각 연결에 에이전트, DingTalk 로봇, 최근에 상호작용한 그룹을 표시합니다."
+    "byo_failed_toast": "DingTalk 봇을 연결하지 못했어요"
   },
   "wecom": {
     "section_title": "WeCom",
@@ -1493,25 +1384,7 @@
     "status_connected": "연결됨",
     "status_not_connected": "연결되지 않음",
     "status_loading": "확인 중...",
-    "status_unknown": "상태를 확인할 수 없음",
-    "description": "도구를 연결하고 각 연동을 관리하세요."
-  },
-  "wakeups": {
-    "description": "모든 태스크에 적용되는 플랫폼 규칙입니다. 각 태스크의 깨우기 섹션에서 따로 바꿀 수 있습니다.",
-    "child_done_title": "하위 태스크가 끝나면",
-    "child_done_description": "한 단계가 끝나고 다음 단계가 기다리고 있으면 상위 태스크 담당자를 깨우고, 모든 하위 태스크가 끝나면 한 번 더 깨웁니다. 담당자가 멤버면 받은편지함으로 알립니다.",
-    "enabled": "기본으로 켜기",
-    "instruction": "기본 지시",
-    "instruction_hint": "깨운 에이전트에게 전달됩니다. 비워 두면 아래 기본 제공 지시를 사용합니다.",
-    "instruction_placeholder": "비워 두면 기본 제공 지시를 사용합니다",
-    "builtin": "기본 제공 지시",
-    "instruction_invalid": "지시는 4,000바이트 이내로 입력하세요.",
-    "save": "저장",
-    "saving": "저장 중…",
-    "save_error": "기본값을 저장하지 못했습니다.",
-    "customized_other": "진행 중인 태스크 {{count}}개가 자체 설정을 사용해 이 기본값을 따르지 않습니다.",
-    "admin_only": "소유자와 관리자만 기본값을 바꿀 수 있습니다.",
-    "load_error": "깨우기 기본값을 불러오지 못했습니다."
+    "status_unknown": "상태를 확인할 수 없음"
   },
   "pr_merge_status": {
     "label": "PR 병합 후 태스크 상태",

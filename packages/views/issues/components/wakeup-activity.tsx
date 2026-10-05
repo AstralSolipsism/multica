@@ -7,6 +7,7 @@ import type { useWakeupText } from "./wakeup-presentation";
 import { conditionIcon } from "./wakeups-section";
 
 type IssuesT = ReturnType<typeof useT<"issues">>["t"];
+type LarkT = ReturnType<typeof useT<"lark">>["t"];
 type WakeupText = ReturnType<typeof useWakeupText>;
 type ActorName = (type: string, id: string) => string;
 
@@ -91,6 +92,7 @@ function previewOf(stored: StoredPreview, getActorName: ActorName): WakeupPrevie
 export function formatWakeupActivity(
   entry: TimelineEntry,
   t: IssuesT,
+  tLark: LarkT,
   text: WakeupText,
   getActorName: ActorName,
 ): string {
@@ -102,7 +104,7 @@ export function formatWakeupActivity(
     case "wakeup_created":
       return t(($) => $.activity.wakeup_created, { condition, agent });
     case "wakeup_triggered": {
-      if (details.outcome === "rejected") return t(($) => $.activity.wakeup_triggered_rejected);
+      if (details.outcome === "rejected") return tLark(($) => $.activity.wakeup_triggered_rejected);
       if (details.rule === "child_done") {
         const count = details.total ?? 1;
         const closed = details.stage

@@ -35,6 +35,9 @@
     "steer_step": "{{name}}이(가) 추가",
     "steer_step_read": "읽음"
   },
+  "working_filter_error": {
+    "title": "에이전트가 작업 중인 태스크를 불러오지 못했습니다"
+  },
   "status_catalog_error": {
     "title": "상태 목록을 불러오지 못했습니다",
     "hint": "상태를 불러와야 태스크를 표시할 수 있습니다.",
@@ -114,8 +117,7 @@
     "breadcrumb_title": "태스크",
     "breadcrumb_workspace_fallback": "워크스페이스",
     "empty_title": "아직 태스크가 없습니다",
-    "move_failed": "태스크를 이동하지 못했습니다",
-    "empty_hint": "태스크를 만들어 시작하세요."
+    "move_failed": "태스크를 이동하지 못했습니다"
   },
   "status": {
     "backlog": "백로그",
@@ -245,9 +247,7 @@
     "list": "리스트",
     "table": "테이블",
     "gantt": "간트",
-    "swimlane": "스윔레인",
-    "tooltip_dag": "의존성 그래프 보기",
-    "dag": "의존성 그래프"
+    "swimlane": "스윔레인"
   },
   "table": {
     "select_all": "표시된 모든 태스크 선택",
@@ -337,12 +337,10 @@
     },
     "empty": {
       "assigned": {
-        "title": "할당된 태스크가 없습니다",
-        "description": "여기에 할당된 태스크가 이 보기로 표시됩니다."
+        "title": "할당된 태스크가 없습니다"
       },
       "created": {
-        "title": "생성한 태스크가 없습니다",
-        "description": "여기에서 만든 태스크가 이 보기로 표시됩니다."
+        "title": "생성한 태스크가 없습니다"
       }
     },
     "search_placeholder": "태스크 검색...",
@@ -370,6 +368,13 @@
     "no_value": "값 없음",
     "ordered_by": "{{field}} 기준으로 정렬된 보드",
     "manual_reorder_hint": "열 안의 순서를 바꾸려면 정렬을 '수동'으로 전환하세요."
+  },
+  "peek": {
+    "panel_label": "태스크 미리보기",
+    "previous": "이전 태스크",
+    "next": "다음 태스크",
+    "open_full_page": "전체 페이지로 열기",
+    "close": "미리보기 닫기"
   },
   "detail": {
     "not_found": "이 워크스페이스에 해당 태스크가 없거나 삭제되었습니다.",
@@ -415,6 +420,9 @@
     "pull_request_merge_ready": "병합 가능",
     "pull_request_merge_blocked": "차단됨",
     "pull_request_merge_behind": "기준 브랜치보다 뒤처짐",
+    "pull_request_verdict_conflicting": "충돌",
+    "pull_request_verdict_ready": "병합 가능",
+    "pull_request_verdict_passed": "검사 통과",
     "pull_request_snapshot_stale": "{{time}} 업데이트됨",
     "pull_request_snapshot_stale_unknown": "스냅샷이 오래되었을 수 있습니다",
     "pull_request_card_files_count_other": "파일 {{count}}개",
@@ -471,12 +479,7 @@
     "project_directory_path_copied_with_branch": "프로젝트 디렉터리 경로를 복사했습니다 — 작업은 {{branch}} 브랜치에 있습니다",
     "workdir_path_copy_failed": "작업 디렉터리 경로를 복사하지 못했습니다",
     "workdir_path_unavailable": "아직 로컬 작업 디렉터리가 없습니다. 로컬 에이전트가 이 태스크를 실행하지 않았습니다",
-    "pull_requests_empty_title": "연결된 PR이 없습니다.",
-    "pull_requests_empty": "아직 연결된 Pull request가 없습니다. 이 태스크 식별자를 PR 브랜치 이름이나 제목에 넣거나, 본문에서 Closes 바로 뒤에 적으면 자동으로 연결됩니다.",
-    "more_actions": "태스크 작업",
-    "pull_request_verdict_conflicting": "충돌",
-    "pull_request_verdict_ready": "병합 가능",
-    "pull_request_verdict_passed": "검사 통과"
+    "pull_requests_empty_title": "연결된 PR이 없습니다."
   },
   "timeline": {
     "loading": "불러오는 중..."
@@ -518,7 +521,6 @@
     "pr_auto_complete_enabled": "이 태스크의 PR 병합 후 상태 변경을 다시 켰습니다",
     "wakeup_created": "깨우기를 추가했습니다: {{condition}} · {{agent}} 깨우기",
     "wakeup_triggered": "{{condition}} · {{agent}}을(를) 깨웠습니다",
-    "wakeup_triggered_rejected": "깨우기 입력을 삭제했습니다: 외부 대화 권한을 사용할 수 없거나 입력 출처가 충돌합니다",
     "wakeup_triggered_merged": "{{condition}} · {{agent}}의 대기 중인 실행에 합쳤습니다",
     "wakeup_triggered_acknowledged": "{{condition}} · {{agent}} 자신의 작업이라 다시 깨우지 않았습니다",
     "wakeup_triggered_manual": "{{name}}이(가) {{agent}}을(를) 바로 깨웠습니다",
@@ -631,11 +633,7 @@
     "recipient_count_other": "에이전트 {{count}}개가 받습니다",
     "steer_attachment_notice": "실행 중에는 텍스트만 추가할 수 있어, 파일이 있는 메시지는 이번 실행 후에 처리됩니다.",
     "restart_send": "중지하고 보내기",
-    "restart_failed": "현재 실행을 중지하지 못했습니다. 메시지는 보내지 않았습니다.",
-    "trigger_blocked_dependency_unsatisfied": "시작되지 않습니다 — 이 태스크에 미완료된 선행 조건이 있습니다",
-    "trigger_blocked_dependency_data_unverified": "시작되지 않습니다 — 종속 데이터를 먼저 검토해야 합니다",
-    "trigger_blocked_short_dependency_unsatisfied": "선행 조건 미완료",
-    "trigger_blocked_short_dependency_data_unverified": "종속 데이터 미검토"
+    "restart_failed": "현재 실행을 중지하지 못했습니다. 메시지는 보내지 않았습니다."
   },
   "reply": {
     "placeholder": "답글 남기기...",
@@ -674,8 +672,7 @@
   },
   "filtered_empty": {
     "title": "필터 조건에 맞는 태스크가 없습니다",
-    "clear_button": "필터 해제",
-    "hint": "필터를 조정하거나 해제하면 이 보기의 태스크가 표시됩니다."
+    "clear_button": "필터 해제"
   },
   "agent_live": {
     "is_working": "{{name}} 작업 중",
@@ -724,8 +721,7 @@
       "source_rule_owner": "오토파일럿 규칙 게시자",
       "source_owner_fallback": "정확한 담당자 없음 — 에이전트 소유자에게 귀속",
       "source_backfill": "백필된 귀속",
-      "source_unattributed": "책임 멤버를 확인할 수 없음",
-      "source_channel_integration": "연동 대화 승인"
+      "source_unattributed": "책임 멤버를 확인할 수 없음"
     },
     "usage_total_tooltip": "실행 타임라인 열기",
     "trigger_wakeup": "깨우기 · {{condition}}",
@@ -739,6 +735,34 @@
     "strip_aria": "시간에 따른 누적 비용 — 실행 타임라인 열기",
     "strip_no_usage": "사용량 기록 없음",
     "sparkline_now": "지금"
+  },
+  "runs_timeline": {
+    "title": "실행 기록",
+    "stat_spent": "비용",
+    "stat_agent_time": "에이전트 작업",
+    "stat_elapsed": "경과 시간",
+    "stat_runs": "실행",
+    "count_failed_other": "실패 {{count}}회",
+    "count_cancelled_other": "취소 {{count}}회",
+    "count_active_other": "진행 중 {{count}}회",
+    "legend_cumulative": "누적 비용",
+    "legend_run": "실행 · 너비는 소요 시간",
+    "chart_aria_other": "시간에 따른 누적 비용: 실행 {{count}}회, 총 {{cost}}",
+    "day_today": "오늘",
+    "day_yesterday": "어제",
+    "day_runs_other": "실행 {{count}}회",
+    "quoted": "“{{text}}”",
+    "cost_input": "입력",
+    "cost_output": "출력",
+    "cost_cache_read": "캐시 읽기",
+    "cost_cache_write": "캐시 쓰기",
+    "cost_breakdown_aria": "비용 내역: {{cost}}",
+    "no_usage": "사용량 기록 없음",
+    "tooltip_total": "누적 {{cost}}",
+    "hover_no_run": "실행 없음",
+    "hover_idle": "유휴 {{duration}}",
+    "note_unmapped": "{{models}}의 가격 정보가 없어 토큰은 집계되지만 비용은 포함되지 않습니다.",
+    "note_estimate": "비용은 공개된 모델 요금 기준 추정치이며, 제공자가 자체 비용을 보고한 경우는 그 값을 사용합니다."
   },
   "terminate_dialog": {
     "title": "이 실행을 중지할까요?",
@@ -760,8 +784,7 @@
     "delete_dialog_title_other": "태스크 {{count}}개를 삭제할까요?",
     "delete_dialog_desc_other": "이 작업은 되돌릴 수 없습니다. 선택한 태스크와 관련 데이터가 영구 삭제됩니다.",
     "delete_dialog_warning": "워크스페이스 멤버라면 누구나 태스크를 삭제할 수 있습니다.",
-    "cancel": "취소",
-    "update_partial": "{{total}}개 중 {{failed}}개를 업데이트하지 못했습니다"
+    "cancel": "취소"
   },
   "card": {
     "update_failed": "태스크를 업데이트하지 못했습니다",
@@ -795,8 +818,7 @@
     "remove_parent_issue_success": "상위 태스크를 제거했습니다",
     "add_sub_issue": "하위 태스크 추가...",
     "delete_issue": "태스크 삭제",
-    "mark_duplicate": "중복으로 표시...",
-    "edit_dependencies": "선행 조건 편집..."
+    "mark_duplicate": "중복으로 표시..."
   },
   "pickers": {
     "custom_property": {
@@ -1339,135 +1361,6 @@
     "all_merged_to": "PR이 모두 병합되었습니다. 다음 PR이 병합되면 {{status}}(으)로 변경합니다.",
     "issue_disabled": "이 태스크는 PR 병합 시 상태를 바꾸지 않음",
     "issue_disabled_action": "다시 켜기"
-  },
-  "dag": {
-    "loading": "전체 의존성 그래프를 불러오는 중…",
-    "layout_pending": "레이아웃 계산 중…",
-    "layout_cancel": "취소",
-    "error_title": "의존성 그래프를 불러오지 못했습니다",
-    "error_unavailable": "현재 서버 버전은 의존성 그래프를 지원하지 않습니다. 업그레이드 후 다시 시도하세요.",
-    "error_forbidden": "이 워크스페이스의 의존성 그래프를 볼 권한이 없습니다.",
-    "error_unverified": "의존성 기록 데이터가 아직 검증되지 않아 그래프를 표시할 수 없습니다.",
-    "error_timeout": "그래프 조회 시간이 초과되었습니다. 필터 범위를 좁혀 다시 시도하세요.",
-    "error_retry": "다시 시도",
-    "stale_banner": "새로고침에 실패하여 {{time}} 스냅샷을 표시 중입니다.",
-    "empty_title": "현재 필터에 맞는 태스크가 없습니다",
-    "empty_hint": "필터를 조정하면 의존성 그래프를 볼 수 있습니다.",
-    "empty_title_unfiltered": "아직 태스크가 없습니다",
-    "empty_hint_unfiltered": "태스크를 만들면 의존성 그래프에서 확인할 수 있습니다.",
-    "context_badge": "컨텍스트",
-    "blocked_badge_other": "미완료 선행 조건 {{count}}개",
-    "blocked_badge_restricted": "볼 수 없는 선행 조건이 포함되어 있습니다",
-    "readiness_unknown": "선행 조건 상태 알 수 없음",
-    "run_active": "실행 중",
-    "run_queued": "대기 중",
-    "stage_badge": "단계 {{number}}",
-    "members_badge_other": "태스크 {{count}}개",
-    "folded_children_other": "하위 태스크 {{count}}개",
-    "internal_edges_other": "내부 의존성 {{count}}개",
-    "blocked_members_other": "{{count}}개 차단됨",
-    "context_count_other": "+컨텍스트 {{count}}개",
-    "expand": "펼치기",
-    "collapse": "접기",
-    "expand_all": "태스크 그룹 펼치기",
-    "collapse_all": "태스크 그룹 접기",
-    "open_detail": "상세 열기",
-    "edit_dependencies": "선행 관계 편집",
-    "assign_issue": "할당 시작",
-    "focus_upstream": "선행 의존성 강조",
-    "focus_downstream": "후속 의존성 강조",
-    "focus_clear": "지우기",
-    "focus_upstream_active": "선행 의존성",
-    "focus_downstream_active": "후속 의존성",
-    "direction_label": "방향",
-    "direction_lr": "왼쪽에서 오른쪽",
-    "direction_tb": "위에서 아래로",
-    "grouping_label": "그룹화",
-    "grouping_project": "프로젝트별",
-    "grouping_parent": "태스크 그룹",
-    "grouping_none": "그룹 없음",
-    "no_project_group": "프로젝트 없음",
-    "edge_direct_title": "직접 선행 조건",
-    "edge_direct_description": "{{target}}의 선행 항목은 {{source}}입니다",
-    "edge_aggregate_title": "집계된 의존성",
-    "edge_aggregate_description": "{{source}} → {{target}}에 태스크 의존성 {{count}}개가 요약되어 있습니다",
-    "edge_aggregate_bidirectional": "그룹을 접으면 양방향 화살표가 표시될 수 있지만, 태스크 간 의존성 순환을 의미하지는 않습니다.",
-    "edge_locate": "위치 보기",
-    "summary_matches_other": "태스크 {{count}}개",
-    "summary_context_other": "+컨텍스트 {{count}}개",
-    "summary_edges_other": "의존성 {{count}}개",
-    "restricted_context_hint": "일부 정보는 권한으로 숨겨집니다. 관계는 참고용입니다.",
-    "context_only_hint": "필터에 맞는 태스크가 없어 선행 컨텍스트만 표시합니다.",
-    "node_actions_label": "노드 작업",
-    "edge_inspector_label": "의존성 상세",
-    "clear_selection": "선택 지우기",
-    "independent_group": "독립 태스크",
-    "group_progress": "{{count}}개 중 {{done}}개 완료",
-    "focus_line": "태스크 그룹에 초점",
-    "parent_details": "상위 태스크 상세",
-    "stage_conflict": "단계 순서와 의존성이 달라 의존성 순서로 표시합니다",
-    "layout_error": "의존성 레이아웃을 계산할 수 없습니다",
-    "stage_legend": "구역은 단계를 표시",
-    "dependency_legend": "화살표는 의존성을 표시",
-    "edge_count": "의존성 {{count}}개",
-    "edge_locate_source": "선행 태스크 찾기",
-    "edge_locate_target": "후속 태스크 찾기",
-    "edge_count_other": "의존성 {{count}}개"
-  },
-  "dependencies": {
-    "section_title": "선행 조건",
-    "unsatisfied_summary_other": "선행 조건 {{count}}개 미완료",
-    "restricted_note": "일부 선행 항목은 권한으로 숨겨집니다. 관계는 실행을 제한하지 않습니다.",
-    "inherited_from": "{{name}}에서 상속됨",
-    "edit_source": "원본 편집",
-    "blocking_section": "후속 작업",
-    "edit_aria": "선행 조건 편집",
-    "remove_aria": "선행 {{identifier}} 제거",
-    "remove_conflict": "선행 조건이 방금 변경되었습니다. 새로고침했습니다. 다시 시도하세요",
-    "remove_failed": "선행 조건 업데이트에 실패했습니다",
-    "loading": "선행 조건 불러오는 중...",
-    "load_error": "선행 조건을 불러오지 못했습니다",
-    "unknown_state": "선행 조건 상태를 사용할 수 없습니다. 새로고침 후 편집하세요",
-    "retry": "다시 시도",
-    "blocked_without_visible": "숨겨진 선행 항목"
-  },
-  "working_filter_error": {
-    "title": "에이전트가 작업 중인 태스크를 불러오지 못했습니다"
-  },
-  "peek": {
-    "panel_label": "태스크 미리보기",
-    "previous": "이전 태스크",
-    "next": "다음 태스크",
-    "open_full_page": "전체 페이지로 열기",
-    "close": "미리보기 닫기"
-  },
-  "runs_timeline": {
-    "title": "실행 기록",
-    "stat_spent": "비용",
-    "stat_agent_time": "에이전트 작업",
-    "stat_elapsed": "경과 시간",
-    "stat_runs": "실행",
-    "count_failed_other": "실패 {{count}}회",
-    "count_cancelled_other": "취소 {{count}}회",
-    "count_active_other": "진행 중 {{count}}회",
-    "legend_cumulative": "누적 비용",
-    "legend_run": "실행 · 너비는 소요 시간",
-    "chart_aria_other": "시간에 따른 누적 비용: 실행 {{count}}회, 총 {{cost}}",
-    "day_today": "오늘",
-    "day_yesterday": "어제",
-    "day_runs_other": "실행 {{count}}회",
-    "quoted": "“{{text}}”",
-    "cost_input": "입력",
-    "cost_output": "출력",
-    "cost_cache_read": "캐시 읽기",
-    "cost_cache_write": "캐시 쓰기",
-    "cost_breakdown_aria": "비용 내역: {{cost}}",
-    "no_usage": "사용량 기록 없음",
-    "tooltip_total": "누적 {{cost}}",
-    "hover_no_run": "실행 없음",
-    "hover_idle": "유휴 {{duration}}",
-    "note_unmapped": "{{models}}의 가격 정보가 없어 토큰은 집계되지만 비용은 포함되지 않습니다.",
-    "note_estimate": "비용은 공개된 모델 요금 기준 추정치이며, 제공자가 자체 비용을 보고한 경우는 그 값을 사용합니다."
   },
   "deliverables": {
     "section_title": "산출물",

@@ -35,7 +35,7 @@ export function FeishuQrDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { t } = useT("layout");
+  const { t } = useT("lark");
   const navigation = useOptionalNavigation();
   const qrUrl = navigation ? navigation.getShareableUrl(QR_PATH) : QR_PATH;
 

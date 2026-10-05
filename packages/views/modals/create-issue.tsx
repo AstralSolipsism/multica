@@ -215,6 +215,7 @@ export function ManualCreatePanel({
   setIsExpanded: (v: boolean) => void;
 }) {
   const { t } = useT("modals");
+  const { t: tDependencies } = useT("dependencies");
   const { t: tIssues } = useT("issues");
   const { t: tEditor } = useT("editor");
   const { t: tProjects } = useT("projects");
@@ -1242,7 +1243,7 @@ export function ManualCreatePanel({
                 >
                   <div className="flex items-center gap-1.5 py-1 pl-2.5">
                     <Workflow className="size-3 text-muted-foreground" />
-                    <span>{t(($) => $.create_issue.prerequisite_chip, { identifier: blockedByLabelOf(b, i) })}</span>
+                    <span>{tDependencies(($) => $.create_issue.prerequisite_chip, { identifier: blockedByLabelOf(b, i) })}</span>
                   </div>
                   <button
                     type="button"
@@ -1250,7 +1251,7 @@ export function ManualCreatePanel({
                       updateBlockedBy(blockedByIds.filter((x) => x !== b))
                     }
                     className="p-1 pr-2 text-muted-foreground hover:text-foreground cursor-pointer"
-                    aria-label={t(($) => $.create_issue.remove_prerequisite_aria, { identifier: blockedByLabelOf(b, i) })}
+                    aria-label={tDependencies(($) => $.create_issue.remove_prerequisite_aria, { identifier: blockedByLabelOf(b, i) })}
                   >
                     <XIcon className="size-3" />
                   </button>
@@ -1330,7 +1331,7 @@ export function ManualCreatePanel({
                       {t(($) => $.create_issue.set_parent)}
                     </DropdownMenuItem>
                   ))}
-                  {!anchorCommentId && <DropdownMenuItem onClick={() => setBlockedByPickerOpen(true)}><Workflow className="size-3.5" />{t(($) => $.create_issue.prerequisite_picker.title)}</DropdownMenuItem>}
+                  {!anchorCommentId && <DropdownMenuItem onClick={() => setBlockedByPickerOpen(true)}><Workflow className="size-3.5" />{tDependencies(($) => $.create_issue.prerequisite_picker.title)}</DropdownMenuItem>}
                   <DropdownMenuItem onClick={() => setChildPickerOpen(true)}>
                     <ArrowDown className="h-3.5 w-3.5" />
                     {t(($) => $.create_issue.add_subissue)}
@@ -1414,8 +1415,8 @@ export function ManualCreatePanel({
             <IssuePickerModal
               open={blockedByPickerOpen}
               onOpenChange={setBlockedByPickerOpen}
-              title={t(($) => $.create_issue.prerequisite_picker.title)}
-              description={t(($) => $.create_issue.prerequisite_picker.description)}
+              title={tDependencies(($) => $.create_issue.prerequisite_picker.title)}
+              description={tDependencies(($) => $.create_issue.prerequisite_picker.description)}
               excludeIds={[
                 ...blockedByIds,
                 ...childIssues.map((c) => c.id),

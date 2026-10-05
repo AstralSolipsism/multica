@@ -36,6 +36,9 @@
     "steer_step": "{{name}} a ajouté",
     "steer_step_read": "Lu"
   },
+  "working_filter_error": {
+    "title": "Impossible de charger les tâches en cours de traitement par les agents"
+  },
   "status_catalog_error": {
     "title": "Impossible de charger la liste des états",
     "hint": "Les tâches ne peuvent pas s’afficher tant que les statuts ne sont pas chargés.",
@@ -116,8 +119,7 @@
     "breadcrumb_title": "Tâches",
     "breadcrumb_workspace_fallback": "Espace de travail",
     "empty_title": "Aucune tâche pour l'instant",
-    "move_failed": "Échec du déplacement de la tâche",
-    "empty_hint": "Create an issue to get started."
+    "move_failed": "Échec du déplacement de la tâche"
   },
   "status": {
     "backlog": "À planifier",
@@ -249,9 +251,7 @@
     "list": "Liste",
     "table": "Grille",
     "gantt": "Gantt",
-    "swimlane": "Couloirs",
-    "tooltip_dag": "Dependency graph view",
-    "dag": "Graph"
+    "swimlane": "Couloirs"
   },
   "table": {
     "select_all": "Sélectionner toutes les tâches visibles",
@@ -341,12 +341,10 @@
     },
     "empty": {
       "assigned": {
-        "title": "Aucune tâche assignée",
-        "description": "Issues assigned here will appear in this view."
+        "title": "Aucune tâche assignée"
       },
       "created": {
-        "title": "Aucune tâche créée",
-        "description": "Issues created here will appear in this view."
+        "title": "Aucune tâche créée"
       }
     },
     "search_placeholder": "Rechercher des tâches...",
@@ -374,6 +372,13 @@
     "no_value": "Aucune valeur",
     "ordered_by": "Tableau trié par {{field}}",
     "manual_reorder_hint": "Passez au tri Manuel pour réorganiser les tâches dans une colonne."
+  },
+  "peek": {
+    "panel_label": "Aperçu de la tâche",
+    "previous": "Tâche précédente",
+    "next": "Tâche suivante",
+    "open_full_page": "Ouvrir la page complète",
+    "close": "Fermer l'aperçu"
   },
   "detail": {
     "not_found": "Cette tâche n'existe pas ou a été supprimée dans cet espace de travail.",
@@ -419,6 +424,9 @@
     "pull_request_merge_ready": "Prête à fusionner",
     "pull_request_merge_blocked": "Bloquée",
     "pull_request_merge_behind": "En retard sur la base",
+    "pull_request_verdict_conflicting": "Conflits",
+    "pull_request_verdict_ready": "Prête",
+    "pull_request_verdict_passed": "Vérifications OK",
     "pull_request_snapshot_stale": "Mis à jour {{time}}",
     "pull_request_snapshot_stale_unknown": "L'instantané est peut-être périmé",
     "pull_request_card_files_count_one": "{{count}} fichier",
@@ -476,12 +484,7 @@
     "project_directory_path_copied_with_branch": "Chemin du répertoire du projet copié — le travail se trouve sur {{branch}}",
     "workdir_path_copy_failed": "Échec de la copie du chemin du répertoire de travail",
     "workdir_path_unavailable": "Aucun répertoire de travail local — cette tâche n'a pas encore été traitée par un agent local",
-    "pull_requests_empty_title": "Aucune pull request associée.",
-    "pull_requests_empty": "No linked pull requests yet. Put this issue's identifier in a PR's branch name or title, or write it after Closes in the PR body, to auto-link it.",
-    "more_actions": "Issue actions",
-    "pull_request_verdict_conflicting": "Conflits",
-    "pull_request_verdict_ready": "Prête",
-    "pull_request_verdict_passed": "Vérifications OK"
+    "pull_requests_empty_title": "Aucune pull request associée."
   },
   "timeline": {
     "loading": "Chargement..."
@@ -527,7 +530,6 @@
     "pr_auto_complete_enabled": "a de nouveau fait changer le statut de cette tâche à la fusion des PR",
     "wakeup_created": "a ajouté un réveil : {{condition}} · réveiller {{agent}}",
     "wakeup_triggered": "{{condition}} · {{agent}} réveillé",
-    "wakeup_triggered_rejected": "Entrée de réveil ignorée : autorisation de conversation externe indisponible ou sources en conflit",
     "wakeup_triggered_merged": "{{condition}} · ajouté à l’exécution en attente de {{agent}}",
     "wakeup_triggered_acknowledged": "{{condition}} · déclenché par {{agent}} lui-même ; pas de nouveau réveil",
     "wakeup_triggered_manual": "{{name}} a réveillé {{agent}} maintenant",
@@ -650,11 +652,7 @@
     "recipient_count_other": "{{count}} agents recevront ce message",
     "steer_attachment_notice": "Seul du texte peut rejoindre une exécution en cours : un message avec des fichiers sera traité après.",
     "restart_send": "Arrêter et envoyer",
-    "restart_failed": "Impossible d'arrêter l'exécution en cours. Votre message n'a pas été envoyé.",
-    "trigger_blocked_dependency_unsatisfied": "Won't start — this issue has unfinished prerequisites",
-    "trigger_blocked_dependency_data_unverified": "Won't start — existing dependency data needs review first",
-    "trigger_blocked_short_dependency_unsatisfied": "Prerequisites unfinished",
-    "trigger_blocked_short_dependency_data_unverified": "Dependency data unverified"
+    "restart_failed": "Impossible d'arrêter l'exécution en cours. Votre message n'a pas été envoyé."
   },
   "reply": {
     "placeholder": "Laisser une réponse...",
@@ -700,8 +698,7 @@
   },
   "filtered_empty": {
     "title": "Aucune tâche ne correspond à ces filtres",
-    "clear_button": "Effacer les filtres",
-    "hint": "Adjust or clear the filters to see the issues in this view."
+    "clear_button": "Effacer les filtres"
   },
   "agent_live": {
     "is_working": "{{name}} travaille",
@@ -752,8 +749,7 @@
       "source_rule_owner": "Auteur de la règle d'automatisation",
       "source_owner_fallback": "Aucun responsable précis — attribué au propriétaire de l'agent",
       "source_backfill": "Attribution reconstituée",
-      "source_unattributed": "Aucun membre responsable identifié",
-      "source_channel_integration": "Integration conversation authorization"
+      "source_unattributed": "Aucun membre responsable identifié"
     },
     "usage_total_tooltip": "Ouvrir la chronologie des exécutions",
     "trigger_wakeup": "Réveil · {{condition}}",
@@ -769,6 +765,39 @@
     "strip_aria": "Coût cumulé dans le temps — ouvrir la chronologie",
     "strip_no_usage": "Aucune consommation enregistrée",
     "sparkline_now": "Maintenant"
+  },
+  "runs_timeline": {
+    "title": "Exécutions",
+    "stat_spent": "Dépensé",
+    "stat_agent_time": "Travail d'agent",
+    "stat_elapsed": "Écoulé",
+    "stat_runs": "Exécutions",
+    "count_failed_one": "{{count}} en échec",
+    "count_failed_other": "{{count}} en échec",
+    "count_cancelled_one": "{{count}} annulée",
+    "count_cancelled_other": "{{count}} annulées",
+    "count_active_one": "{{count}} en cours",
+    "count_active_other": "{{count}} en cours",
+    "legend_cumulative": "Coût cumulé",
+    "legend_run": "Exécution · largeur = durée",
+    "chart_aria_one": "Coût cumulé dans le temps : {{cost}} pour {{count}} exécution",
+    "chart_aria_other": "Coût cumulé dans le temps : {{cost}} pour {{count}} exécutions",
+    "day_today": "Aujourd'hui",
+    "day_yesterday": "Hier",
+    "day_runs_one": "{{count}} exécution",
+    "day_runs_other": "{{count}} exécutions",
+    "quoted": "« {{text}} »",
+    "cost_input": "Entrée",
+    "cost_output": "Sortie",
+    "cost_cache_read": "Lecture du cache",
+    "cost_cache_write": "Écriture du cache",
+    "cost_breakdown_aria": "Détail du coût : {{cost}}",
+    "no_usage": "Aucune consommation enregistrée",
+    "tooltip_total": "Cumul : {{cost}}",
+    "hover_no_run": "Aucune exécution",
+    "hover_idle": "Inactif {{duration}}",
+    "note_unmapped": "Aucun tarif connu pour {{models}} ; leurs tokens sont comptés, mais pas leur coût.",
+    "note_estimate": "Le coût est estimé d'après les tarifs publiés des modèles, sauf lorsque le fournisseur a communiqué son propre chiffre."
   },
   "terminate_dialog": {
     "title": "Arrêter cette exécution ?",
@@ -794,8 +823,7 @@
     "delete_dialog_desc_one": "Cette action est irréversible. La tâche sélectionnée et toutes ses données associées seront définitivement supprimées.",
     "delete_dialog_desc_other": "Cette action est irréversible. Les tâches sélectionnées et toutes leurs données associées seront définitivement supprimées.",
     "delete_dialog_warning": "Tout membre de l'espace de travail peut supprimer des tâches.",
-    "cancel": "Annuler",
-    "update_partial": "Couldn't update {{failed}} of {{total}} issues"
+    "cancel": "Annuler"
   },
   "card": {
     "update_failed": "Échec de la mise à jour de la tâche",
@@ -829,8 +857,7 @@
     "remove_parent_issue_success": "Tâche parente retirée",
     "add_sub_issue": "Ajouter une sous-tâche...",
     "delete_issue": "Supprimer la tâche",
-    "mark_duplicate": "Marquer comme doublon...",
-    "edit_dependencies": "Edit prerequisites..."
+    "mark_duplicate": "Marquer comme doublon..."
   },
   "pickers": {
     "custom_property": {
@@ -1378,151 +1405,6 @@
     "all_merged_to": "Toutes les PR sont fusionnées. La prochaine PR fusionnée fera passer la tâche à {{status}}.",
     "issue_disabled": "Les fusions de PR ne changent pas cette tâche",
     "issue_disabled_action": "Réactiver"
-  },
-  "dag": {
-    "loading": "Loading the complete dependency graph…",
-    "layout_pending": "Computing layout…",
-    "layout_cancel": "Cancel",
-    "error_title": "Couldn't load the dependency graph",
-    "error_unavailable": "This server version doesn't support the dependency graph yet — upgrade and try again.",
-    "error_forbidden": "You don't have access to this workspace's dependency graph.",
-    "error_unverified": "Dependency history isn't verified yet, so the graph can't be shown.",
-    "error_timeout": "The graph query timed out. Narrow the filters and try again.",
-    "error_retry": "Retry",
-    "stale_banner": "Refresh failed — showing the snapshot from {{time}}.",
-    "empty_title": "No issues match the current filters",
-    "empty_hint": "Adjust the filters to see the dependency graph.",
-    "empty_title_unfiltered": "No issues yet",
-    "empty_hint_unfiltered": "Created issues appear in the dependency graph.",
-    "context_badge": "Context",
-    "blocked_badge_one": "{{count}} open prerequisite",
-    "blocked_badge_other": "{{count}} open prerequisites",
-    "blocked_badge_restricted": "Includes prerequisites you can't see",
-    "readiness_unknown": "Prerequisites unknown",
-    "run_active": "Running",
-    "run_queued": "Queued",
-    "stage_badge": "Stage {{number}}",
-    "members_badge_one": "{{count}} issue",
-    "members_badge_other": "{{count}} issues",
-    "folded_children_one": "{{count}} sub-issue",
-    "folded_children_other": "{{count}} sub-issues",
-    "internal_edges_one": "{{count}} internal dependency",
-    "internal_edges_other": "{{count}} internal dependencies",
-    "blocked_members_one": "{{count}} blocked",
-    "blocked_members_other": "{{count}} blocked",
-    "context_count_one": "+{{count}} context",
-    "context_count_other": "+{{count}} context",
-    "expand": "Expand",
-    "collapse": "Collapse",
-    "expand_all": "Développer les groupes",
-    "collapse_all": "Réduire les groupes",
-    "open_detail": "Open detail",
-    "edit_dependencies": "Edit prerequisites",
-    "assign_issue": "Assign",
-    "focus_upstream": "Afficher les prérequis",
-    "focus_downstream": "Afficher les dépendants",
-    "focus_clear": "Clear",
-    "focus_upstream_active": "Prérequis",
-    "focus_downstream_active": "Tâches dépendantes",
-    "direction_label": "Direction",
-    "direction_lr": "Left to right",
-    "direction_tb": "Top to bottom",
-    "grouping_label": "Grouping",
-    "grouping_project": "By project",
-    "grouping_parent": "Groupes de tâches",
-    "grouping_none": "None",
-    "no_project_group": "No project",
-    "edge_direct_title": "Direct prerequisite",
-    "edge_direct_description": "{{target}} indique {{source}} comme prérequis",
-    "edge_aggregate_title": "Aggregated dependencies",
-    "edge_aggregate_description": "{{source}} → {{target}} summarizes {{count}} task dependencies",
-    "edge_aggregate_bidirectional": "Folded groups can show arrows in both directions — that doesn't mean the tasks form a dependency cycle.",
-    "edge_locate": "Locate",
-    "summary_matches_one": "{{count}} issue",
-    "summary_matches_other": "{{count}} issues",
-    "summary_context_one": "+{{count}} context",
-    "summary_context_other": "+{{count}} context",
-    "summary_edges_one": "{{count}} dependency",
-    "summary_edges_other": "{{count}} dependencies",
-    "restricted_context_hint": "Certains éléments du graphe sont masqués. Les relations sont informatives.",
-    "context_only_hint": "No issues match the filters — showing prerequisite context only.",
-    "node_actions_label": "Node actions",
-    "edge_inspector_label": "Dependency details",
-    "clear_selection": "Clear selection",
-    "independent_group": "Tâches indépendantes",
-    "group_progress": "{{done}}/{{count}} terminées",
-    "focus_line": "Centrer sur le groupe",
-    "parent_details": "Détails de la tâche parente",
-    "stage_conflict": "L’ordre des étapes contredit les dépendances ; l’ordre des dépendances est affiché",
-    "layout_error": "Impossible de calculer la disposition des dépendances",
-    "stage_legend": "Les bandes indiquent les étapes",
-    "dependency_legend": "Les flèches indiquent les dépendances",
-    "edge_count": "{{count}} dépendances",
-    "edge_locate_source": "Localiser le prérequis",
-    "edge_locate_target": "Localiser le dépendant",
-    "edge_count_other": "{{count}} dépendances",
-    "edge_count_one": "{{count}} dépendance"
-  },
-  "dependencies": {
-    "section_title": "Prerequisites",
-    "unsatisfied_summary_one": "{{count}} prerequisite unfinished",
-    "unsatisfied_summary_other": "{{count}} prerequisites unfinished",
-    "restricted_note": "Certains prérequis sont masqués par les permissions. Les relations ne bloquent pas l’exécution.",
-    "inherited_from": "Inherited from {{name}}",
-    "edit_source": "Edit source",
-    "blocking_section": "Tâches dépendantes",
-    "edit_aria": "Edit prerequisites",
-    "remove_aria": "Remove prerequisite {{identifier}}",
-    "remove_conflict": "Prerequisites just changed — refreshed; try again",
-    "remove_failed": "Failed to update prerequisites",
-    "loading": "Loading prerequisites…",
-    "load_error": "Couldn't load prerequisites",
-    "unknown_state": "Prerequisite state is unavailable — refresh before editing",
-    "retry": "Retry",
-    "blocked_without_visible": "Prérequis masqués"
-  },
-  "working_filter_error": {
-    "title": "Impossible de charger les tâches en cours de traitement par les agents"
-  },
-  "peek": {
-    "panel_label": "Aperçu de la tâche",
-    "previous": "Tâche précédente",
-    "next": "Tâche suivante",
-    "open_full_page": "Ouvrir la page complète",
-    "close": "Fermer l'aperçu"
-  },
-  "runs_timeline": {
-    "title": "Exécutions",
-    "stat_spent": "Dépensé",
-    "stat_agent_time": "Travail d'agent",
-    "stat_elapsed": "Écoulé",
-    "stat_runs": "Exécutions",
-    "count_failed_one": "{{count}} en échec",
-    "count_failed_other": "{{count}} en échec",
-    "count_cancelled_one": "{{count}} annulée",
-    "count_cancelled_other": "{{count}} annulées",
-    "count_active_one": "{{count}} en cours",
-    "count_active_other": "{{count}} en cours",
-    "legend_cumulative": "Coût cumulé",
-    "legend_run": "Exécution · largeur = durée",
-    "chart_aria_one": "Coût cumulé dans le temps : {{cost}} pour {{count}} exécution",
-    "chart_aria_other": "Coût cumulé dans le temps : {{cost}} pour {{count}} exécutions",
-    "day_today": "Aujourd'hui",
-    "day_yesterday": "Hier",
-    "day_runs_one": "{{count}} exécution",
-    "day_runs_other": "{{count}} exécutions",
-    "quoted": "« {{text}} »",
-    "cost_input": "Entrée",
-    "cost_output": "Sortie",
-    "cost_cache_read": "Lecture du cache",
-    "cost_cache_write": "Écriture du cache",
-    "cost_breakdown_aria": "Détail du coût : {{cost}}",
-    "no_usage": "Aucune consommation enregistrée",
-    "tooltip_total": "Cumul : {{cost}}",
-    "hover_no_run": "Aucune exécution",
-    "hover_idle": "Inactif {{duration}}",
-    "note_unmapped": "Aucun tarif connu pour {{models}} ; leurs tokens sont comptés, mais pas leur coût.",
-    "note_estimate": "Le coût est estimé d'après les tarifs publiés des modèles, sauf lorsque le fournisseur a communiqué son propre chiffre."
   },
   "deliverables": {
     "section_title": "Livrables",

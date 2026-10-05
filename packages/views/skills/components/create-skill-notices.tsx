@@ -88,9 +88,13 @@ export function useImportNotices(onCreated: (skill: Skill) => void): {
  * sentence the handler sends, and an Error without a message falls back to
  * the generic failure text.
  */
-export function localArchiveImportError(err: unknown, t: TFunction<"skills">): string | null {
+export function localArchiveImportError(
+  err: unknown,
+  t: TFunction<"skills">,
+  tForkUi: TFunction<"fork-ui">,
+): string | null {
   const message = err instanceof Error ? err.message : "";
-  if (isMultipleSkillsError(message)) return t(($) => $.create.local.multiple_skills);
+  if (isMultipleSkillsError(message)) return tForkUi(($) => $.skills.create.local.multiple_skills);
   if (err instanceof Error && !message) return t(($) => $.create.local.fallback_error);
   return null;
 }

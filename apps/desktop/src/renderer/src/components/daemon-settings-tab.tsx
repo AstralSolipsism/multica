@@ -49,6 +49,7 @@ function DiagnosticsRow({
 
 export function DaemonSettingsTab() {
   const { t } = useT("settings");
+  const { t: tForkUi } = useT("fork-ui");
   const [prefs, setPrefs] = useState<DaemonPrefs>({ autoStart: true, autoStop: false });
   const [cliInstalled, setCliInstalled] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
@@ -177,12 +178,12 @@ export function DaemonSettingsTab() {
               // install guide, which would install an uncustomized CLI.
               <span
                 className="inline-flex items-center text-caption text-muted-foreground"
-                title={t(($) => $.desktop.daemon.cli_install_windows_help, {
+                title={tForkUi(($) => $.settings.desktop.daemon.cli_install_windows_help, {
                   downloadsUrl: DOWNLOAD_BASE_URL,
                   latestManifestUrl: LATEST_MANIFEST_URL,
                 })}
               >
-                {t(($) => $.desktop.daemon.cli_install_windows_label)}
+                {tForkUi(($) => $.settings.desktop.daemon.cli_install_windows_label)}
               </span>
             ) : (
               <Button

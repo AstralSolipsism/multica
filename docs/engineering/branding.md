@@ -19,7 +19,33 @@ The locale tests also reject missing keys, changed interpolation parameters and
 upstream sentence changes hidden behind an outdated override. They exercise the
 real i18next resources; locale parity continues to check the effective bundle.
 Mobile owns its two separate overlays and reuses the pure `mergeResources`
-helper from core. Moving other fork copy into its own namespace remains T12.
+helper from core.
+
+## Fork translation namespaces
+
+Fork additions live outside upstream dictionaries. The migration from the
+shared upstream revision `2ea01ae4e` preserves every string, interpolation and
+locale-specific plural form. The seven dictionaries `issues`, `settings`,
+`agents`, `modals`, `runtimes`, `autopilots` and `layout` match that revision
+byte for byte.
+
+| Namespace | Copy moved from upstream dictionaries |
+| --- | --- |
+| `dependencies` | `issues.dependencies.*` becomes `detail.*`; prerequisite actions, blocked-trigger copy, and modal additions retain their key paths. |
+| `dag` | `issues.dag.*` moves to the namespace root; `issues.view.dag` and `issues.view.tooltip_dag` retain their `view.*` paths. |
+| `lark` | Fork additions under `settings.lark.*` move to the root; conversation attribution, rejected wakeup input, the community QR dialog, `layout.help.discord` and `layout.sidebar.discord_card.{title,dismiss}` retain their key paths without the original namespace prefix. |
+| `quota` | `runtimes.quota.*` moves to the root; `runtimes.list.col_quota` becomes `column_label`. |
+| `autopilot-delivery` | `autopilots.deliveries.filter.*` becomes `filter.*`. |
+| `agent-config` | Agent configuration additions retain their key paths. |
+| `fork-ui` | Other fork additions are grouped under their original namespace, such as `settings.desktop.daemon.*` or `skills.create.local.*`. |
+
+Add future fork copy to the appropriate owned namespace. Register new namespaces
+in `packages/views/locales/index.ts` and
+`packages/views/i18n/resources-types.ts` for all five locales. They enter the
+same `UPSTREAM_RESOURCES` bundle before `applyBrandOverrides` runs; web, desktop
+and tests continue to use `RESOURCES`. When a branded key moves, move its
+explicit override to the same namespace and path. Do not retain old-key aliases
+or add namespace fallbacks.
 
 ## Guards and exceptions
 

@@ -196,7 +196,8 @@ function QuotaChip({
   /** false renders the bare pill (ghost measuring row, "+N" popover). */
   interactive?: boolean;
 }) {
-  const { t } = useT("runtimes");
+  const { t } = useT("quota");
+  const { t: tForkUi } = useT("fork-ui");
   const runtime = machine.runtimes.find((r) => r.id === chip.runtimeId);
   const label = runtime ? runtimeRowLabel(runtime, machine.title) : chip.provider;
   // The chip reads as [logo] [remaining bar] [remaining %]: the fixed-width
@@ -209,13 +210,13 @@ function QuotaChip({
   const state = quotaChipState(chip);
   const text =
     state.kind === "limited"
-      ? t(($) => $.quota.exhausted)
+      ? t(($) => $.exhausted)
       : state.kind === "unavailable"
-        ? t(($) => $.machine.metrics.unavailable)
+        ? tForkUi(($) => $.runtimes.machine.metrics.unavailable)
         : `${Math.round(state.percent)}%`;
   const ariaText =
     state.kind === "percent"
-      ? t(($) => $.quota.remaining, { percent: Math.round(state.percent) })
+      ? t(($) => $.remaining, { percent: Math.round(state.percent) })
       : text;
   const pill = (
     <span
@@ -254,7 +255,8 @@ function QuotaChipTooltip({
   label: string;
   now: number;
 }) {
-  const { t } = useT("runtimes");
+  const { t } = useT("quota");
+  const { t: tForkUi } = useT("fork-ui");
   const quota = parsePlanQuota(runtime?.plan_quota);
   if (!quota) return null;
   const nowSec = Math.floor(now / 1000);
@@ -283,12 +285,12 @@ function QuotaChipTooltip({
             </span>
             <span className="tabular-nums">
               {remaining == null
-                ? t(($) => $.machine.metrics.unavailable)
+                ? tForkUi(($) => $.runtimes.machine.metrics.unavailable)
                 : `${Math.round(remaining)}%`}
             </span>
             {resetsInMs != null && resetsInMs > 0 && (
               <span className="tabular-nums text-faint-foreground">
-                {t(($) => $.quota.resets_in, {
+                {t(($) => $.resets_in, {
                   time: formatCompactDuration(resetsInMs),
                 })}
               </span>
@@ -298,10 +300,10 @@ function QuotaChipTooltip({
       })}
       <span className="text-faint-foreground">
         {quota.source === "external"
-          ? t(($) => $.quota.source_external)
-          : t(($) => $.quota.source_daemon)}
+          ? t(($) => $.source_external)
+          : t(($) => $.source_daemon)}
         {" · "}
-        {t(($) => $.quota.observed_ago, {
+        {t(($) => $.observed_ago, {
           time: formatCompactDuration(observedAgeMs),
         })}
       </span>

@@ -23,10 +23,10 @@ vi.mock("@xyflow/react", async (importOriginal) => ({
   useUpdateNodeInternals: () => () => undefined,
 }));
 
-// t($ => $.path.to.key, params) → "path.to.key {params}" so assertions can
+// t($ => $.path.to.key, params) → "namespace:path.to.key {params}" so assertions can
 // pin the exact locale key each state renders.
 const mockTranslate = vi.hoisted(() =>
-  vi.fn((selector: (resources: unknown) => unknown, params?: unknown) => {
+  vi.fn((selector: (resources: unknown) => unknown, params?: unknown, namespace?: string) => {
     const path: string[] = [];
     const proxy: unknown = new Proxy(
       {},
@@ -38,13 +38,16 @@ const mockTranslate = vi.hoisted(() =>
       },
     );
     selector(proxy);
-    return path.join(".") + (params ? ` ${JSON.stringify(params)}` : "");
+    return `${namespace}:${path.join(".")}` + (params ? ` ${JSON.stringify(params)}` : "");
   }),
 );
 
 vi.mock("../../i18n", () => ({
   useLocale: () => "en",
-  useT: () => ({ t: mockTranslate, i18n: { language: "en" } }),
+  useT: (namespace: string) => ({
+    t: (selector: (resources: unknown) => unknown, params?: unknown) => mockTranslate(selector, params, namespace),
+    i18n: { language: "en" },
+  }),
 }));
 
 const mockPush = vi.hoisted(() => vi.fn());
@@ -239,7 +242,7 @@ describe("DagView", () => {
 
   it("shows a loading state until the first complete graph arrives", () => {
     renderDagView(graphQuery({ isPending: true }));
-    expect(screen.getByRole("status")).toHaveTextContent("dag.loading");
+    expect(screen.getByRole("status")).toHaveTextContent("dag:loading");
   });
 
   it("maps 404/405 to capability-unavailable without a retry affordance", () => {
@@ -249,7 +252,7 @@ describe("DagView", () => {
         error: new ApiError("Not found", 404, "not_found"),
       }),
     );
-    expect(screen.getByRole("alert")).toHaveTextContent("dag.error_unavailable");
+    expect(screen.getByRole("alert")).toHaveTextContent("dag:error_unavailable");
     expect(screen.queryByRole("button")).toBeNull();
   });
 
@@ -262,7 +265,7 @@ describe("DagView", () => {
         refetch,
       }),
     );
-    expect(screen.getByRole("alert")).toHaveTextContent("dag.error_timeout");
+    expect(screen.getByRole("alert")).toHaveTextContent("dag:error_timeout");
     screen.getByRole("button").click();
     expect(refetch).toHaveBeenCalledOnce();
   });
@@ -270,7 +273,7 @@ describe("DagView", () => {
   it("shows the filtered-empty state and clears filters from it", async () => {
     store.getState().toggleStatusFilter("todo");
     renderDagView(graphQuery({ data: makeGraph([]) }), true);
-    expect(screen.getByText(/dag\.empty_title/)).toBeTruthy();
+    expect(screen.getByText(/dag:empty_title/)).toBeTruthy();
     screen.getByRole("button").click();
     expect(store.getState().statusFilters).toEqual([]);
   });
@@ -396,10 +399,10 @@ describe("DagView", () => {
     const refetch = vi.fn();
     renderDagView(graphQuery({ data: graph, isError: true, error: new Error("boom"), refetch }));
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
-    expect(screen.getByRole("alert").textContent).toContain("dag.stale_banner");
+    expect(screen.getByRole("alert").textContent).toContain("dag:stale_banner");
     const retry = screen
       .getAllByRole("button")
-      .find((b) => b.textContent?.includes("dag.error_retry"));
+      .find((b) => b.textContent?.includes("dag:error_retry"));
     expect(retry).toBeTruthy();
     retry!.click();
     expect(refetch).toHaveBeenCalledOnce();
@@ -511,7 +514,7 @@ describe("DagView", () => {
     const retained = canvasSpy.mock.calls.at(-1)![0];
     expect(retained.projection).toBe(original.projection);
     expect(retained.geometry.routes[retained.projection.edges[0]!.id]).toBeDefined();
-    act(() => screen.getByRole("button", { name: /dag.error_retry/ }).click());
+    act(() => screen.getByRole("button", { name: /dag:error_retry/ }).click());
     await complete();
     const replaced = canvasSpy.mock.calls.at(-1)![0];
     expect(replaced.projection.edges[0]!.source).toBe("a");
@@ -531,7 +534,7 @@ describe("DagView", () => {
       );
       await waitFor(() =>
         expect(screen.getByRole("alert")).toHaveTextContent(
-          status === 403 ? "dag.error_forbidden" : "dag.error_unavailable",
+          status === 403 ? "dag:error_forbidden" : "dag:error_unavailable",
         ),
       );
       expect(screen.queryByTestId("dag-canvas")).toBeNull();
@@ -548,7 +551,7 @@ describe("DagView", () => {
       }),
     );
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
-    expect(screen.getByRole("alert").textContent).toContain("dag.stale_banner");
+    expect(screen.getByRole("alert").textContent).toContain("dag:stale_banner");
   });
 
   it("preserves a folded task line omitted by the current filter (review F3)", async () => {
@@ -747,10 +750,10 @@ describe("DagView", () => {
         />
       </DagPortUpdateProvider></ReactFlowProvider>,
     );
-    expect(screen.getByText("dag.run_active")).toBeTruthy();
+    expect(screen.getByText("dag:run_active")).toBeTruthy();
     expect(document.querySelector('[data-dag-parent-status="done"] svg')).not.toBeNull();
-    expect(screen.getByText('dag.stage_badge {"number":3}')).toBeTruthy();
-    expect(screen.queryByText("dag.run_queued")).toBeNull();
+    expect(screen.getByText('dag:stage_badge {"number":3}')).toBeTruthy();
+    expect(screen.queryByText("dag:run_queued")).toBeNull();
   });
 
   it("keeps a feature fold when a status filter hides its children (review F3)", async () => {
@@ -819,7 +822,7 @@ describe("DagView", () => {
 
     const expand = screen
       .getAllByRole("button")
-      .find((b) => b.textContent?.includes("dag.expand_all"))!;
+      .find((b) => b.textContent?.includes("dag:expand_all"))!;
     act(() => expand.click());
     expect(store.getState().dagCollapsedIds).toEqual([]);
     const lastProps = canvasSpy.mock.calls.at(-1)![0];
@@ -830,7 +833,7 @@ describe("DagView", () => {
 
     const collapse = screen
       .getAllByRole("button")
-      .find((b) => b.textContent?.includes("dag.collapse_all"))!;
+      .find((b) => b.textContent?.includes("dag:collapse_all"))!;
     act(() => collapse.click());
     expect(store.getState().dagCollapsedIds).toEqual(expect.arrayContaining(["issue:f1"]));
   });
@@ -842,14 +845,14 @@ describe("DagView", () => {
     ]);
     renderDagView(graphQuery({ data: graph }));
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
-    act(() => screen.getByRole("button", { name: /dag.expand_all/ }).click());
+    act(() => screen.getByRole("button", { name: /dag:expand_all/ }).click());
     expect(store.getState().dagIndependentExpanded).toBe(false);
     expect(canvasSpy.mock.calls.at(-1)![0].projection.nodes.some((n) => n.id === "solo")).toBe(
       false,
     );
     act(() => canvasSpy.mock.calls.at(-1)![0].onToggleCollapsed("independent:root"));
     expect(store.getState().dagIndependentExpanded).toBe(true);
-    act(() => screen.getByRole("button", { name: /dag.collapse_all/ }).click());
+    act(() => screen.getByRole("button", { name: /dag:collapse_all/ }).click());
     expect(store.getState().dagIndependentExpanded).toBe(true);
     expect(canvasSpy.mock.calls.at(-1)![0].projection.nodes.some((n) => n.id === "solo")).toBe(
       true,
@@ -873,9 +876,9 @@ describe("DagView", () => {
       prepare: vi.fn(),
     terminate: vi.fn(),
     }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("dag.layout_error"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("dag:layout_error"));
     expect(screen.queryByTestId("dag-canvas")).toBeNull();
-    act(() => screen.getByRole("button", { name: /dag.error_retry/ }).click());
+    act(() => screen.getByRole("button", { name: /dag:error_retry/ }).click());
     await waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
   });
 });

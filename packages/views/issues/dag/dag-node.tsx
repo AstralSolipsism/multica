@@ -34,7 +34,7 @@ export type DagFlowNodeData = {
 export type DagFlowNode = Node<DagFlowNodeData, "dagNode">;
 
 export function DagRunBadge({ model }: { model: DagVisibleNode }) {
-  const { t } = useT("issues");
+  const { t } = useT("dag");
   if (model.runState === "none") return null;
   const running = model.runState === "running";
   return (
@@ -43,16 +43,16 @@ export function DagRunBadge({ model }: { model: DagVisibleNode }) {
         "inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-micro font-medium",
         running ? "bg-brand/10 text-brand" : "bg-muted/70 text-muted-foreground",
       )}
-      title={running ? t(($) => $.dag.run_active) : t(($) => $.dag.run_queued)}
+      title={running ? t(($) => $.run_active) : t(($) => $.run_queued)}
     >
       <Loader2 className={cn("size-3", running && "animate-spin")} />
-      {running ? t(($) => $.dag.run_active) : t(($) => $.dag.run_queued)}
+      {running ? t(($) => $.run_active) : t(($) => $.run_queued)}
     </span>
   );
 }
 
 function DependencyBadge({ model }: { model: DagVisibleNode }) {
-  const { t } = useT("issues");
+  const { t } = useT("dag");
   if (model.kind !== "issue" || !model.issue) return null;
   const readiness = issueGraphReadiness(model.issue.dependencySummary ?? undefined);
   if (readiness === "ready") return null;
@@ -60,10 +60,10 @@ function DependencyBadge({ model }: { model: DagVisibleNode }) {
     return (
       <span
         className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted/70 px-1.5 py-0.5 text-micro text-muted-foreground"
-        title={t(($) => $.dag.readiness_unknown)}
+        title={t(($) => $.readiness_unknown)}
       >
         <CircleHelp className="size-3" />
-        {t(($) => $.dag.readiness_unknown)}
+        {t(($) => $.readiness_unknown)}
       </span>
     );
   }
@@ -72,10 +72,10 @@ function DependencyBadge({ model }: { model: DagVisibleNode }) {
   return (
     <span
       className="inline-flex shrink-0 items-center gap-1 rounded-full bg-warning/10 px-1.5 py-0.5 text-micro font-medium text-warning"
-      title={restricted ? t(($) => $.dag.blocked_badge_restricted) : undefined}
+      title={restricted ? t(($) => $.blocked_badge_restricted) : undefined}
     >
       <AlertTriangle className="size-3" />
-      {t(($) => $.dag.blocked_badge, {
+      {t(($) => $.blocked_badge, {
         count: summary?.visibleUnsatisfiedCount ?? 0,
       })}
     </span>
@@ -123,7 +123,7 @@ function NodeShell({
  */
 export const DagFlowNodeCard = memo(
   function DagFlowNodeCard({ data, selected }: NodeProps<DagFlowNode>) {
-    const { t } = useT("issues");
+    const { t } = useT("dag");
     const { model } = data;
 
     const issue = model.issue!;
@@ -144,7 +144,7 @@ export const DagFlowNodeCard = memo(
           <DagRunBadge model={model} />
           {model.role === "context" && (
             <span className="ml-auto shrink-0 rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground">
-              {t(($) => $.dag.context_badge)}
+              {t(($) => $.context_badge)}
             </span>
           )}
         </div>
@@ -155,7 +155,7 @@ export const DagFlowNodeCard = memo(
           ) : null}
           {data.showStage && issue.stage != null && (
             <span className="shrink-0 rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground tabular-nums">
-              {t(($) => $.dag.stage_badge, { number: issue.stage })}
+              {t(($) => $.stage_badge, { number: issue.stage })}
             </span>
           )}
           {data.projectTitle && (

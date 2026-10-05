@@ -6,15 +6,12 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Agent } from "@multica/core/types";
-import enCommon from "../../../locales/en/common.json";
-import enAgents from "../../../locales/en/agents.json";
+import { RESOURCES } from "../../../test/i18n";
 import { RuntimeConfigTab } from "./runtime-config-tab";
-
-const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
 
 function Wrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="en" resources={RESOURCES}>
       {children}
     </I18nProvider>
   );

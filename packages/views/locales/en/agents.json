@@ -199,11 +199,7 @@
     "edit_description_title": "Edit description",
     "description_placeholder": "What does this agent do?",
     "save": "Save",
-    "cancel": "Cancel",
-    "section_profile_hint": "Manage how this agent appears across the workspace.",
-    "section_execution_hint": "Choose the runtime, model, reasoning level, speed, and parallel run limit.",
-    "section_access_hint": "Control who can run this agent and use its connected capabilities.",
-    "avatar_hint": "Shown in assignments, activity, and chat."
+    "cancel": "Cancel"
   },
   "overview": {
     "agent_context": "Agent",
@@ -319,10 +315,7 @@
       "behavior": "Behavior & capabilities",
       "execution": "Execution",
       "execution_hint": "Unspecified options use the runtime defaults.",
-      "access": "Access",
-      "identity_hint": "Give the agent a recognizable name and a concise purpose.",
-      "behavior_hint": "Define how it should work and attach workspace skills it can rely on.",
-      "access_hint": "Control who can start runs with this agent. You can change this later."
+      "access": "Access"
     },
     "thinking_label": "Thinking",
     "speed_label": "Speed",
@@ -362,8 +355,7 @@
       "prompt_assistant": "Help our team plan and write projects",
       "thinking": "Updating the draft…",
       "placeholder": "Describe the agent you need…",
-      "send": "Send message",
-      "chat_hint": "Shape the requirements through conversation and refine the configuration beside it."
+      "send": "Send message"
     },
     "live_draft": "Agent configuration",
     "live_draft_hint": "You can edit the draft directly.",
@@ -384,8 +376,7 @@
       "discard_cancel": "Keep editing",
       "banner": "You have {{count}} unfinished draft(s)",
       "pick_hint": "Pick one to continue."
-    },
-    "choose_description": "Start with full control, or describe what you need and build it through conversation."
+    }
   },
   "create_dialog": {
     "title_create": "Create Agent",
@@ -450,8 +441,7 @@
       "remove_aria": "Remove avatar",
       "select_image_toast": "Please select an image file.",
       "upload_failed_toast": "Avatar upload failed"
-    },
-    "description_create": "Create a new AI agent for your workspace."
+    }
   },
   "conversation_starters": {
     "label": "Conversation starters",
@@ -531,8 +521,7 @@
       "edit_aria": "Edit argument {{index}}",
       "remove_aria": "Remove argument {{index}}",
       "saved_toast": "Custom arguments saved",
-      "save_failed_toast": "Failed to save custom arguments",
-      "empty_hint": "Add the first token to build the launch command."
+      "save_failed_toast": "Failed to save custom arguments"
     },
     "mcp_config": {
       "managed_title": "Managed by Multica",
@@ -632,22 +621,7 @@
       "save_failed_toast": "Failed to save MCP config",
       "redacted_title": "Configured — hidden from your view",
       "redacted_hint": "Only the agent owner or a workspace admin can read this config.",
-      "dialog_json_help": "Edit the full server configuration as JSON.",
-      "dialog_description": "Choose a connection method and enter its settings. Switch to JSON for advanced configuration.",
-      "dialog_command_hint": "The executable that starts the server, from the server's install docs — e.g. npx, uvx, or an absolute path. Arguments go in the fields below, not here.",
-      "dialog_url_hint": "The MCP endpoint published by the service or given by your deployment admin — a homepage URL won't work here.",
-      "dialog_snippet_toggle": "Paste a config snippet",
-      "dialog_snippet_hint": "Paste what the server's install docs give you — a {\"mcpServers\": {...}} block, a single server object, a launch command line, or an endpoint URL. Applying only fills in the fields below; it never runs a command.",
-      "dialog_snippet_aria": "MCP config snippet",
-      "dialog_snippet_apply": "Fill in fields",
-      "dialog_snippet_empty": "Paste a snippet first.",
-      "dialog_snippet_invalid_json": "That JSON doesn't parse: {{error}}",
-      "dialog_snippet_not_object": "The snippet must be a JSON object.",
-      "dialog_snippet_no_servers": "The snippet's server list is empty.",
-      "dialog_snippet_multiple": "The snippet defines more than one server ({{names}}) — paste one at a time.",
-      "dialog_snippet_missing_target": "The snippet needs a command or a url.",
-      "dialog_snippet_unbalanced": "The command line has an unclosed quote.",
-      "dialog_snippet_unsupported": "The command line uses unsupported shell syntax (pipes, redirects, expansions, or a dangling backslash) — paste a single launch command."
+      "dialog_json_help": "Edit the full server configuration as JSON."
     },
     "composio_mcp": {
       "subtitle": "Check a toolkit to let this agent mount it as an MCP server — but only when you (its creator) are the one who triggered the run, directly or down a sub-agent chain.",
@@ -662,8 +636,7 @@
       "redacted_title": "Configured — hidden from your view",
       "redacted_hint": "Only the agent's creator can view or change which apps it may use.",
       "shared_warning": "This agent is shared. People who can run this agent may use the Composio apps you enable here. Use Private or narrow the access list if these apps expose sensitive data.",
-      "workspace_warning": "Public to workspace: any workspace member may use these Composio apps through this agent.",
-      "empty_hint": "You haven't connected any third-party services. Authorize one first, then come back here to allow it."
+      "workspace_warning": "Public to workspace: any workspace member may use these Composio apps through this agent."
     },
     "runtime_config": {
       "mode_label": "Routing mode",
@@ -682,12 +655,7 @@
       "tls_label": "Use TLS",
       "tls_hint": "Dial https:// instead of http://",
       "saved_toast": "Routing config saved",
-      "save_failed_toast": "Failed to save routing config",
-      "intro": "Choose how the OpenClaw runtime executes this agent's turns. Local mode runs the agent inside the daemon process. Gateway mode forwards each turn to an OpenClaw Gateway — useful when the daemon host is a lightweight coordinator and the agent should run on a more powerful machine.",
-      "gateway_hint": "Only used in Gateway mode. Every field is optional — a blank field is inherited from the daemon host's gateway config (`~/.openclaw/openclaw.json`, `gateway` section). A saved token is the exception: leaving it blank keeps the saved value.",
-      "host_hint": "The gateway address, from your deployment admin. Blank inherits the host's config.",
-      "token_hint": "Issued by the gateway — get it from your deployment admin or the gateway host's config. When none is set, blank inherits.",
-      "token_hint_saved": "A token is saved — leaving this field blank keeps it. Enter a new value to replace it."
+      "save_failed_toast": "Failed to save routing config"
     },
     "skills": {
       "assigned_title": "Assigned to agent",
@@ -730,14 +698,10 @@
       "add_dialog_confirm_one": "Add {{count}} skill",
       "add_dialog_confirm_other": "Add {{count}} skills",
       "add_dialog_cancel": "Cancel",
-      "add_failed_toast": "Failed to add skill",
-      "intro": "This is the agent's effective skill set. Workspace skills are managed here; inherited Codex and Claude Code skills can also be turned off per agent.",
-      "empty_hint": "Add workspace skills to share team knowledge with this agent.",
-      "add_dialog_description": "Select a workspace skill to assign to this agent."
+      "add_failed_toast": "Failed to add skill"
     },
     "integrations": {
-      "members_note": "Only workspace owners and admins can manage this connection. You can view connected bots in Settings → Integrations.",
-      "intro": "Connect this agent to external chat platforms so people can work with it where they already are."
+      "members_note": "Only workspace owners and admins can manage this connection. You can view connected bots in Settings → Integrations."
     },
     "activity": {
       "status": {
@@ -886,6 +850,7 @@
     "status_cancelled": "Cancelled",
     "status_waiting": "Waiting",
     "trigger_initial": "Initial run",
+    "trigger_text": "Trigger",
     "trigger_comment": "From a comment",
     "trigger_autopilot": "Autopilot",
     "trigger_retry": "Retry",
@@ -947,8 +912,6 @@
     "tool_kind_write": "Edits",
     "tool_kind_read": "Reads",
     "tool_kind_misc": "Other",
-    "antigravity_live_unavailable": "Antigravity does not currently provide live execution events. The transcript will be available after the run completes.",
-    "trigger_text": "Trigger",
     "trigger_wakeup": "Wakeup"
   },
   "task_failure": {
