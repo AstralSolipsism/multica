@@ -98,17 +98,32 @@ func TestExternalConversationDenialCommitsDespiteOccupiedSlot(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			f, s, w, issue, agent := deniedReceiptFixture(t, []string{"comment.created", "issue.updated"})
 			ctx := context.Background()
+			// Keep another rule ready after w so this tick commits more than once.
+			nextIssue := policyWakeIssue(t, f, "")
+			next, err := s.Create(ctx, policyUUID(t, nextIssue), policyUUID(t, testUserID), pgtype.UUID{}, service.WakeupInput{
+				AgentID: agent, Kind: "event", EventTypes: []string{"comment.created"}, Instruction: "expire", ExpiresInSeconds: 3600,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.fx.Exec(t, "UPDATE issue_wakeup SET expires_at=now()-interval '1 second' WHERE id=$1", next.ID)
+			f.fx.Exec(t, "UPDATE issue_wakeup SET updated_at=now()-interval '1 day' WHERE id=$1", w.ID)
 			// Another writer can acquire the rule immediately after dispatch
 			// commits. Tick must not reacquire that row to record its scan order.
 			var writer pgx.Tx
+			commits := 0
 			s.Tasks.TxStarter = receiptCommitProbe{TxStarter: testPool, afterCommit: func() {
-				var err error
-				writer, err = testPool.Begin(ctx)
+				commits++
+				if writer != nil {
+					return
+				}
+				tx, err := testPool.Begin(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
-				t.Cleanup(func() { _ = writer.Rollback(ctx) })
-				if _, err := writer.Exec(ctx, "SELECT id FROM issue_wakeup WHERE id=$1 FOR UPDATE", w.ID); err != nil {
+				writer = tx
+				t.Cleanup(func() { _ = tx.Rollback(ctx) })
+				if _, err := tx.Exec(ctx, "SELECT id FROM issue_wakeup WHERE id=$1 FOR UPDATE NOWAIT", w.ID); err != nil {
 					t.Fatal(err)
 				}
 			}}
@@ -127,6 +142,9 @@ func TestExternalConversationDenialCommitsDespiteOccupiedSlot(t *testing.T) {
 			}
 			if writer == nil {
 				t.Fatal("dispatch did not commit")
+			}
+			if commits < 2 {
+				t.Fatalf("expected multiple dispatch commits in one tick, got %d", commits)
 			}
 			if err := writer.Rollback(ctx); err != nil {
 				t.Fatal(err)

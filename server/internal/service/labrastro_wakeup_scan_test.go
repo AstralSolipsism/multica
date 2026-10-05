@@ -2,11 +2,55 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestWakeupFailedDispatchAdvancesScanOrder(t *testing.T) {
+	f, s, issue, agent := conditionFixture(t)
+	ctx := context.Background()
+	w := wakeCreate(t, f, s, issue, WakeupInput{
+		AgentID: agent, Kind: "event", EventTypes: []string{"comment.created"}, Instruction: "check", ExpiresInSeconds: 3600,
+	})
+	f.Exec(t, "UPDATE issue_wakeup SET expires_at=now()-interval '1 second',updated_at=now()-interval '1 day' WHERE id=$1", w.ID)
+	before, err := f.q.LocklessWakeup(ctx, w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Block dispatch before it can lock the rule or touch its scan order.
+	// The rule remains writable by the independent failure diagnostic.
+	holder, err := f.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Rollback(ctx)
+	if _, err := holder.Exec(ctx, "SELECT id FROM issue WHERE id=$1 FOR UPDATE NOWAIT", issue); err != nil {
+		t.Fatal(err)
+	}
+	tickErr := s.TickWorkspaces(ctx, parseTestUUID(t, f.WorkspaceID))
+	if err := holder.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var lockErr *pgconn.PgError
+	if !errors.As(tickErr, &lockErr) || lockErr.Code != "55P03" {
+		t.Fatalf("expected dispatch lock timeout, got %v", tickErr)
+	}
+	after, err := f.q.LocklessWakeup(ctx, w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.LastError.Valid || after.LastError.String == "" {
+		t.Error("failed dispatch did not record its error")
+	}
+	if !after.UpdatedAt.Time.After(before.UpdatedAt.Time) {
+		t.Errorf("failed dispatch kept scan priority: before=%v after=%v", before.UpdatedAt.Time, after.UpdatedAt.Time)
+	}
+}
 
 func TestWakeupStaleSnapshotAdvancesScanOrder(t *testing.T) {
 	for _, system := range []bool{false, true} {

@@ -674,14 +674,14 @@ func (s *IssueWakeupService) tick(ctx context.Context, workspaceIDs []pgtype.UUI
 		if ctx.Err() != nil {
 			return errors.Join(append(errs, ctx.Err())...)
 		}
-		// A failed dispatch still moves to the back of the scan when the rule
-		// is writable. Bound this diagnostic write independently of dispatch.
 		dispatch := s.dispatch
 		if w.SystemRule.Valid {
 			dispatch = s.dispatchSystem
 		}
 		if err = dispatch(ctx, w); err != nil {
 			errs = append(errs, fmt.Errorf("wakeup %s: %w", util.UUIDToString(w.ID), err))
+			// A failed dispatch still moves to the back of the scan when the rule
+			// is writable. Bound this diagnostic write independently of dispatch.
 			outcomeCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 			_ = s.Tasks.Queries.NoteWakeupFailure(outcomeCtx, db.NoteWakeupFailureParams{ID: w.ID, LastError: pgtype.Text{String: truncateForSummary(err.Error(), 500), Valid: true}})
 			cancel()
