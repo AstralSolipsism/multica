@@ -3,9 +3,8 @@
 SELECT id FROM workspace WHERE id = $1 FOR NO KEY UPDATE;
 
 -- name: LockWorkspaceForDependencyAdmission :one
--- Fence workspace deletion, but let structural writers reach the advisory
--- lock's wait queue. SHARE conflicts with their NO KEY UPDATE counter lock
--- and a continuous stream of admissions can starve them before that queue.
+-- Fence workspace deletion without conflicting with the create counter's
+-- NO KEY UPDATE lock. Structural writers serialize on the advisory lock.
 SELECT id FROM workspace WHERE id = $1 FOR KEY SHARE;
 
 -- name: LockIssuesForDependencyAdmission :exec
@@ -49,14 +48,6 @@ SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg('workspace_id')::uuid::te
 
 -- name: LockIssueDependencyStructureShared :exec
 SELECT pg_advisory_xact_lock_shared(hashtextextended(sqlc.arg('workspace_id')::uuid::text || ':issue_dependency', 0));
-
--- name: LockIssuesForDependencyWrite :exec
--- The first implementation serializes structural edits per workspace. Lock
--- status rows in UUID order before inspecting unfinished constraints.
-WITH locked AS MATERIALIZED (
-    SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR UPDATE
-)
-SELECT count(*) FROM locked;
 
 -- name: ListIssueDependencyNodes :many
 SELECT id, parent_issue_id, status, revision, title, number FROM issue

@@ -68,20 +68,81 @@ func TestDependencyProjectionAndSignedVersion(t *testing.T) {
 	n.Status = "done"
 	n.Revision++
 	s.Model.Issues[n.ID] = n
-	if version == s.Version("target") {
-		t.Fatal("prerequisite completion did not invalidate version")
+	if version != s.Version("target") {
+		t.Fatal("prerequisite completion invalidated a structural edit version")
 	}
 	if s.View("target", func(id string) bool { return id == "target" }).HasRestrictedBlockers {
 		t.Fatal("a hidden completed prerequisite is not a blocker")
 	}
 	version = s.Version("target")
 	s.Catalog = []db.IssueStatus{{Key: "custom", Category: "done"}}
-	if version == s.Version("target") {
-		t.Fatal("catalog mutation did not invalidate version")
+	if version != s.Version("target") {
+		t.Fatal("catalog mutation invalidated a structural edit version")
 	}
 	version = s.Version("target")
 	s.service = &DependencyService{SigningKey: []byte("another-test-key")}
 	if version == s.Version("target") {
 		t.Fatal("dependency version was not keyed")
+	}
+}
+
+func TestDependencyVersionOnlyTracksStructure(t *testing.T) {
+	base := DependencySnapshot{service: &DependencyService{SigningKey: []byte("test-only-signing-key")}, Model: issuedependency.Model{
+		Issues: map[string]issuedependency.Issue{
+			"target": {ID: "target", ParentID: "parent"}, "parent": {ID: "parent"}, "root": {ID: "root"},
+			"a": {ID: "a"}, "b": {ID: "b"}, "other": {ID: "other"},
+		},
+		Edges: []issuedependency.Edge{
+			{ID: "direct", IssueID: "target", DependsOnID: "a", Type: "blocked_by"},
+			{ID: "inherited", IssueID: "parent", DependsOnID: "b", Type: "blocked_by"},
+		},
+	}}
+	for _, tc := range []struct {
+		name   string
+		change bool
+		mutate func(*DependencySnapshot)
+	}{
+		{"issue display and revisions", false, func(s *DependencySnapshot) {
+			for id, n := range s.Model.Issues {
+				n.Title, n.Status, n.Category, n.Revision, n.Number = "Renamed", "custom_done", "done", 100, 42
+				s.Model.Issues[id] = n
+			}
+		}},
+		{"catalog", false, func(s *DependencySnapshot) { s.Catalog = []db.IssueStatus{{Key: "custom_done", Category: "done"}} }},
+		{"unrelated edge", false, func(s *DependencySnapshot) {
+			s.Model.Edges = append(s.Model.Edges, issuedependency.Edge{ID: "other-edge", IssueID: "other", DependsOnID: "a", Type: "blocked_by"})
+		}},
+		{"incoming edge", false, func(s *DependencySnapshot) {
+			s.Model.Edges = append(s.Model.Edges, issuedependency.Edge{ID: "incoming", IssueID: "other", DependsOnID: "target", Type: "blocked_by"})
+		}},
+		{"related edge", false, func(s *DependencySnapshot) {
+			s.Model.Edges = append(s.Model.Edges, issuedependency.Edge{ID: "related", IssueID: "target", DependsOnID: "other", Type: "related"})
+		}},
+		{"target parent", true, func(s *DependencySnapshot) {
+			n := s.Model.Issues["target"]
+			n.ParentID = "root"
+			s.Model.Issues[n.ID] = n
+		}},
+		{"ancestor chain", true, func(s *DependencySnapshot) {
+			n := s.Model.Issues["parent"]
+			n.ParentID = "root"
+			s.Model.Issues[n.ID] = n
+		}},
+		{"edge endpoint", true, func(s *DependencySnapshot) { s.Model.Edges[0].DependsOnID = "b" }},
+		{"edge identity", true, func(s *DependencySnapshot) { s.Model.Edges[0].ID = "recreated" }},
+		{"edge provenance", true, func(s *DependencySnapshot) { s.Model.Edges[0].IssueID = "parent" }},
+		{"inherited edge removal", true, func(s *DependencySnapshot) { s.Model.Edges = s.Model.Edges[:1] }},
+		{"direct edge addition", true, func(s *DependencySnapshot) {
+			s.Model.Edges = append(s.Model.Edges, issuedependency.Edge{ID: "also-direct", IssueID: "target", DependsOnID: "b", Type: "blocked_by"})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := base
+			snapshot.Model = base.Model.Clone()
+			tc.mutate(&snapshot)
+			if changed := snapshot.Version("target") != base.Version("target"); changed != tc.change {
+				t.Fatalf("version changed=%v, want %v", changed, tc.change)
+			}
+		})
 	}
 }

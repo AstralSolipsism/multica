@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -54,12 +53,11 @@ type DependencySnapshot struct {
 	service     *DependencyService
 }
 
-// LockWrite must precede any issue, attachment, queue or agent-capacity lock.
+// LockWrite serializes structural relation writes; graph reads use MVCC.
 // Workspace ownership -> catalog -> structure -> attachments (if any)
-// -> sorted issue rows. Attachment binders already lock attachments before issues.
-// Structural relation writes serialize per workspace; graph reads use MVCC.
-// Create takes its counter lock before this sequence. Other writers must not
-// take that exclusive row lock: they all need to reach the structure wait queue.
+// -> affected issue rows. The catalog lock preserves the order for compound
+// edits that also set a custom status. Create takes its counter lock first.
+// Ordinary content/status writes do not need the structure lock.
 func (s *DependencyService) LockWrite(ctx context.Context, q *db.Queries, ws pgtype.UUID) error {
 	if _, err := q.LockWorkspaceForDependencyAdmission(ctx, ws); err != nil {
 		return err
@@ -73,13 +71,9 @@ func (s *DependencyService) LockWrite(ctx context.Context, q *db.Queries, ws pgt
 	return nil
 }
 
-// LoadForWrite follows LockWrite and any attachment locks the caller needs.
-// A status update that commits first is observed; one that arrives later waits
-// until the structural edit commits or rolls back.
+// LoadForWrite follows LockWrite. The advisory lock protects structural inputs;
+// informational status/title projections need no workspace-wide row locks.
 func (s *DependencyService) LoadForWrite(ctx context.Context, q *db.Queries, ws pgtype.UUID) (*DependencySnapshot, error) {
-	if err := q.LockIssuesForDependencyWrite(ctx, ws); err != nil {
-		return nil, err
-	}
 	return s.Load(ctx, q, ws)
 }
 
@@ -164,33 +158,25 @@ func (s *DependencySnapshot) Version(id string) string {
 }
 
 func (s *DependencySnapshot) version(id string, ps []issuedependency.Prerequisite) string {
-	type catalogEntry struct {
-		Key      string
-		Category string
+	type relationSource struct {
+		IssueID       string
+		SourceEdges   []string
+		InheritedFrom []string
 	}
-	var catalog []catalogEntry
-	for _, c := range s.Catalog {
-		catalog = append(catalog, catalogEntry{c.Key, c.Category})
-	}
-	sort.Slice(catalog, func(i, j int) bool { return catalog[i].Key < catalog[j].Key })
-	var ancestors, prerequisites []issuedependency.Issue
-	for _, a := range s.Model.Ancestors(id) {
-		ancestors = append(ancestors, s.Model.Issues[a])
-	}
+	sources := make([]relationSource, 0, len(ps))
 	for _, p := range ps {
-		prerequisites = append(prerequisites, s.Model.Issues[p.IssueID])
+		sources = append(sources, relationSource{p.IssueID, p.SourceEdges, p.InheritedFrom})
 	}
-	// JSON of these concrete structs cannot fail. HMAC keeps hidden endpoints
-	// opaque; revisions invalidate stale edits even after a status changes back.
+	// Prerequisite projections sort their structural sources at the boundary.
+	// Keep display fields and revisions out: ordinary edits do not change the
+	// relations being replaced. HMAC keeps hidden endpoints and sources opaque.
 	payload, _ := json.Marshal(struct {
-		Workspace     string
-		Ancestors     []issuedependency.Issue
-		Prerequisites []issuedependency.Issue
-		Sources       []issuedependency.Prerequisite
-		Catalog       []catalogEntry
-	}{util.UUIDToString(s.WorkspaceID), ancestors, prerequisites, ps, catalog})
+		Workspace string
+		Ancestors []string
+		Sources   []relationSource
+	}{util.UUIDToString(s.WorkspaceID), s.Model.Ancestors(id), sources})
 	mac := hmac.New(sha256.New, s.service.SigningKey)
-	mac.Write([]byte("issue-dependency-v1\x00"))
+	mac.Write([]byte("issue-dependency-v2\x00"))
 	mac.Write(payload)
 	return hex.EncodeToString(mac.Sum(nil))
 }
@@ -412,51 +398,4 @@ func (s *DependencyService) audit(ctx context.Context, q *db.Queries, ws, id pgt
 		}
 	}
 	return q.RecordIssueDependencyAudit(ctx, db.RecordIssueDependencyAuditParams{ID: dbid.NewV7(), WorkspaceID: ws, IssueID: id, ActorID: actor, CredentialKind: identity.CredentialKind, Action: action, BeforeState: []byte(before), AfterState: []byte(after)})
-}
-
-func (s *DependencyService) Delete(ctx context.Context, q *db.Queries, before *DependencySnapshot, ids []pgtype.UUID) error {
-	next := before.Model.Clone()
-	deleted := map[string]bool{}
-	for _, id := range ids {
-		key := util.UUIDToString(id)
-		if _, exists := before.Model.Issues[key]; !exists {
-			return dependencyError("not_found", "issue not found")
-		}
-		deleted[key] = true
-		delete(next.Issues, key)
-	}
-	for id, n := range next.Issues {
-		if deleted[n.ParentID] {
-			n.ParentID = ""
-			next.Issues[id] = n
-		}
-	}
-	kept := next.Edges[:0]
-	for _, e := range next.Edges {
-		if !deleted[e.IssueID] && !deleted[e.DependsOnID] {
-			kept = append(kept, e)
-		}
-	}
-	next.Edges = kept
-	// Deletion removes incident edges and cannot introduce new graph cycles.
-	// Historical graph anomalies must not prevent ordinary upstream deletion.
-	for _, id := range next.IDs() {
-		if before.Model.Issues[id].ParentID == next.Issues[id].ParentID {
-			continue
-		}
-		childID, err := util.ParseUUID(id)
-		if err != nil {
-			return err
-		}
-		if err := s.audit(ctx, q, before.WorkspaceID, childID, "detach_on_delete", relationState(before.Model, id), relationState(next, id)); err != nil {
-			return fmt.Errorf("audit dependency detachment: %w", err)
-		}
-	}
-	for _, id := range ids {
-		key := util.UUIDToString(id)
-		if err := s.audit(ctx, q, before.WorkspaceID, id, "delete", relationState(before.Model, key), relationState(next, key)); err != nil {
-			return fmt.Errorf("audit dependency deletion: %w", err)
-		}
-	}
-	return q.DeleteIssueDependencies(ctx, db.DeleteIssueDependenciesParams{WorkspaceID: before.WorkspaceID, IssueIds: ids})
 }

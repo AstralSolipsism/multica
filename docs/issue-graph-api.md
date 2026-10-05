@@ -208,7 +208,25 @@ failure returns 500 `graph_query_failed`; an exhausted 8-second query deadline
 returns 504 `graph_query_timeout`. Successful responses are `private, no-store`.
 Schema parsing rejects incomplete or structurally malformed topology as a
 whole, tolerates additive fields and degrades only optional summaries to
-unknown. Ordinary endpoints and the Stage 2 compound-write gate are unchanged.
+unknown. Compound dependency writes are enabled in production and validate graph
+structure; dependency summaries do not control assignment or execution.
+
+The opaque `dependency_version` used for relation edits covers the target's
+ancestor chain and its direct/inherited `blocked_by` edge sources. Issue titles,
+statuses, revisions and the status catalog do not invalidate it; those changes
+still refresh graph/detail displays. Structural changes to that relation view
+return 409 when a caller submits an older `expected_dependency_version`. Deploying
+the structural-only version format invalidates previously issued edit tokens
+once, requiring clients to refresh before retrying.
+
+Structural edits serialize with the workspace's transaction-scoped advisory
+lock, without locking every issue row. Ordinary content edits and creation
+without `blocked_by` do not take that lock or load a dependency snapshot.
+Deletion keeps the structure lock while detaching surviving children and
+removing incident edges, but does not load or validate the full graph. Only
+explicit relation edits and reparenting write dependency audit entries; deletion
+uses the existing issue deletion/child update events, without building graph
+snapshots solely for audit rows that have no reader.
 
 Backend regression suites are `TestIssueGraph*`, `TestDependency*` and the
 shared Issue Table filter tests. Client tests cover the API boundary, query
@@ -228,3 +246,11 @@ excluding authentication, fixture setup, response decoding, network and
 browser rendering. Total allocation is a
 conservative per-request allocation measure, not process RSS or DB memory.
 These test sizes are measurements, not product limits.
+
+`TestDependencyWriteScale` measures reparenting, child creation without
+`blocked_by`, and deletion at 20,000 issues and 200 canonical edges. Enable it
+with `ISSUE_DEPENDENCY_WRITE_BENCHMARK=1`; set
+`ISSUE_DEPENDENCY_WRITE_BENCHMARK_PATH` to an absolute output path for the JSON
+samples. Each operation has one warm-up and 20 measured requests through the
+real handlers, including transaction commits and excluding fixture setup,
+cleanup, authentication and network time.
