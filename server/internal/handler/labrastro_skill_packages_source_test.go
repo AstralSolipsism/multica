@@ -28,6 +28,165 @@ func labrastroPackageSnapshotHash(t *testing.T, fx *testutil.Fixture) string {
 	return labrastroJSONHash(snap)
 }
 
+func TestLabrastroPackagePreviewMarkdownDeadline(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"backticks", "x" + strings.Repeat("`", (1<<20)-1)},
+		{"nested containers", strings.Repeat(">", 1<<17)},
+		{"reference definitions", strings.Repeat("[x]:a\n", (1<<20)/6)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			labrastroPreviewMarkdownDeadline(t, tc.body)
+		})
+	}
+}
+
+func labrastroPreviewMarkdownDeadline(t *testing.T, body string) {
+	t.Helper()
+	fx := labrastroPackageDBFixture(t)
+	source := labrastroTestFixture(map[string]string{
+		"skills/demo/SKILL.md":  body,
+		"skills/demo/notes.txt": "notes",
+	})
+	source.install(t)
+	// Warm only the large blob, without scanning it. The small support-file
+	// response below leaves a short, predictable budget for Markdown scanning.
+	src, err := newLabrastroSkillSource(t.Context(), source.client(), source.url(), fx.WorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.fetch(t.Context(), "skills/demo/SKILL.md"); err != nil {
+		t.Fatal(err)
+	}
+	before := labrastroPackageSnapshotHash(t, fx)
+	req := newRequestAsUser(testUserID, "POST", "/api/skill-packages/preview", map[string]any{"url": source.url()})
+	req.Header.Set("X-Workspace-ID", fx.WorkspaceID)
+	ctx, cancel := context.WithTimeout(req.Context(), 500*time.Millisecond)
+	defer cancel()
+	deadline, _ := ctx.Deadline()
+	reached := false
+	http.DefaultTransport = labrastroPackageTransport(func(r *http.Request) (*http.Response, error) {
+		response, err := (labrastroFixtureTransport{source}).RoundTrip(r)
+		if err == nil && r.URL.Host == "raw.githubusercontent.com" && strings.HasSuffix(r.URL.Path, "/notes.txt") {
+			reached = true
+			timer := time.NewTimer(time.Until(deadline) - 5*time.Millisecond)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+			}
+		}
+		return response, err
+	})
+	var failure struct {
+		Code      string `json:"code"`
+		Retryable bool   `json:"retryable"`
+	}
+	start := time.Now()
+	testutil.Call(t, testHandler.LabrastroPreviewPackage, req.WithContext(ctx)).Want(http.StatusGatewayTimeout).JSON(&failure)
+	elapsed := time.Since(start)
+	if !reached || failure.Code != "source_timeout" || !failure.Retryable {
+		t.Fatalf("wrong scan deadline response (reached=%v): %+v", reached, failure)
+	}
+	if elapsed >= 2*time.Second {
+		t.Fatalf("500ms preview deadline returned after %s; want less than 2s", elapsed)
+	}
+	if after := labrastroPackageSnapshotHash(t, fx); before != after {
+		t.Fatal("interrupted preview changed database state")
+	}
+	t.Logf("500ms preview deadline returned 504 in %s", elapsed)
+}
+
+func TestLabrastroMarkdownParagraphLimitResponses(t *testing.T) {
+	for _, file := range []string{"skills/demo/SKILL.md", "references/guide.md"} {
+		t.Run(file, func(t *testing.T) {
+			fx := labrastroPackageDBFixture(t)
+			const header = "---\nname: demo\n---\n"
+			files := map[string]string{"skills/demo/SKILL.md": header + "[guide](../../references/guide.md)"}
+			files[file] = strings.Repeat("[x]:a\n", (maxImportFileSize-len(header))/6)
+			location := "at line 1 "
+			if file == "skills/demo/SKILL.md" {
+				files[file] = header + files[file]
+				location = "at line 4 "
+			}
+			source := labrastroTestFixture(files)
+			source.install(t)
+			before := labrastroPackageSnapshotHash(t, fx)
+			start := time.Now()
+			preview := labrastroPreview(t, fx, testUserID, source.url())
+			elapsed := time.Since(start)
+			if len(preview.Candidates) != 1 {
+				t.Fatalf("preview returned %d candidates, want one failed candidate", len(preview.Candidates))
+			}
+			c := preview.Candidates[0]
+			if c.State != "failed" || c.CanWrite || c.DefaultSelected || len(c.Diagnostics) != 1 || c.Diagnostics[0].Code != "limit_exceeded" || c.Diagnostics[0].Retryable || c.Diagnostics[0].Path != file {
+				t.Fatalf("paragraph limit lost candidate diagnostic: %+v", c)
+			}
+			if !strings.Contains(c.Diagnostics[0].Message, location) {
+				t.Fatalf("paragraph limit lost preview source line: %+v", c.Diagnostics[0])
+			}
+			if elapsed >= 2*time.Second {
+				t.Fatalf("paragraph limit preview took %s; want less than 2s", elapsed)
+			}
+			var failure struct {
+				Code        string                  `json:"code"`
+				Retryable   bool                    `json:"retryable"`
+				Diagnostics []SkillImportDiagnostic `json:"diagnostics"`
+			}
+			labrastroCall(t, fx, testUserID, testHandler.ImportSkill, "POST", map[string]string{"url": source.url() + "/tree/main/skills/demo"}).Want(http.StatusRequestEntityTooLarge).JSON(&failure)
+			if failure.Code != "limit_exceeded" || failure.Retryable || len(failure.Diagnostics) != 1 || failure.Diagnostics[0].Path != file {
+				t.Fatalf("legacy import lost paragraph-limit diagnostic: %+v", failure)
+			}
+			if !strings.Contains(failure.Diagnostics[0].Message, location) {
+				t.Fatalf("paragraph limit lost legacy import source line: %+v", failure.Diagnostics[0])
+			}
+			if after := labrastroPackageSnapshotHash(t, fx); before != after {
+				t.Fatal("rejected Markdown changed database state")
+			}
+			t.Logf("paragraph limit preview returned failed candidate in %s; legacy import returned 413", elapsed)
+		})
+	}
+}
+
+func TestLabrastroLongTableImport(t *testing.T) {
+	for _, operation := range []string{"package", "legacy"} {
+		t.Run(operation, func(t *testing.T) {
+			fx := labrastroPackageDBFixture(t)
+			const target = "../../../references/entry.md"
+			catalog := "| Entry |\n| --- |\n" + strings.Repeat("| [entry]("+target+") |\n", 5000)
+			source := labrastroTestFixture(map[string]string{
+				"skills/demo/SKILL.md":              "---\nname: demo\n---\n[catalog](references/catalog.md)",
+				"skills/demo/references/catalog.md": catalog,
+				"references/entry.md":               "shared entry",
+			})
+			source.install(t)
+			var imported SkillWithFilesResponse
+			if operation == "package" {
+				preview := labrastroPreview(t, fx, testUserID, source.url())
+				if len(preview.Candidates) != 1 || !preview.Candidates[0].CanWrite || !preview.Candidates[0].DefaultSelected {
+					t.Fatalf("long table blocked package preview: %+v", preview.Candidates)
+				}
+				report := labrastroApply(t, fx, testUserID, source.url(), preview.PreviewID, nil)
+				if report.Failed || len(report.Results) != 1 || report.Results[0].Status != "created" {
+					t.Fatalf("long table blocked package import: %+v", report)
+				}
+				labrastroCall(t, fx, testUserID, testHandler.GetSkill, "GET", nil, "id", report.Results[0].SkillID).Want(http.StatusOK).JSON(&imported)
+			} else {
+				labrastroCall(t, fx, testUserID, testHandler.ImportSkill, "POST", map[string]string{"url": source.url() + "/tree/main/skills/demo"}).Want(http.StatusCreated).JSON(&imported)
+			}
+			files := map[string]string{}
+			for _, file := range imported.Files {
+				files[file.Path] = file.Content
+			}
+			if len(files) != 2 || files["_shared/references/entry.md"] != "shared entry" {
+				t.Fatalf("table reference did not import its shared file: %d files, entry %q", len(files), files["_shared/references/entry.md"])
+			}
+			if files["references/catalog.md"] != strings.ReplaceAll(catalog, target, "../_shared/references/entry.md") {
+				t.Fatal("imported table lost content or did not rewrite every reference")
+			}
+		})
+	}
+}
+
 func TestLabrastroPackageScanContextFailure(t *testing.T) {
 	for _, operation := range []string{"preview", "apply", "rescan"} {
 		for _, interruption := range []string{"deadline", "cancel"} {
