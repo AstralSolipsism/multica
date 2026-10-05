@@ -116,7 +116,26 @@ assign/promote. Scheduler dispatch additionally classifies persisted child
 event and wakeup receipt source tasks, so a lock timeout cannot turn the same
 external action into a first-party run. Event wakeups created by members use
 the external source's grantor and root when an external action fires them.
-Missing source history, revoked grants and conflicting roots fail closed.
+Missing external grant evidence, revoked grants and conflicting roots fail
+closed. Rejection consumes that input batch without a task and records a
+timeline outcome; it does not disable the rule or roll the receipts back for
+endless retries. A later independent human event can still fire. A coalesced
+batch cannot be separated into its original events, so the entire rejected
+batch is discarded. Infrastructure errors still roll back and retry.
+
+Captured null roots distinguish first-party source history from required
+external roots. Pruned ordinary event or registration tasks retain first-party
+behavior. An agent-created parent's surviving origin is revalidated when a
+human closes its children; missing ordinary origin history uses the existing
+attribution fallback. A parked (`backlog`) parent's system rule retains hints
+but is excluded from scheduler readiness until the parent is resumed.
+
+External event runs can be claimed by a grantor distinct from the wakeup's
+creator only when their persisted trigger evidence names that rule. Claim
+still checks the live conversation grant and the rule creator's invocation
+authority. Optional MCP credentials are prepared for the grantor before
+dispatch takes database locks; dispatch rechecks the principal under lock and
+retries if it changed while credentials were being prepared.
 
 Migration `9009_labrastro_wakeup_conversation_provenance` retains a bounded
 external-root summary in the existing receipt payload when events coalesce;
@@ -126,6 +145,14 @@ merging require the same human and conversation root. External quick-create
 origins must be the current task or a persisted execution ancestor, in addition
 to the existing agent/context/workspace checks. Unrelated and sibling origins
 return 403. These checks do not broaden the HTTP allowlist.
+
+Upstream sync must also run
+`TestLabrastroWakeupCaptureMigrationInventory`. It inventories every migration
+that defines `capture_issue_wakeup`. If upstream adds a replacement, add a new
+fork migration that composes the new upstream behavior with conversation-root
+capture, then validate both fresh installation and upgrading a database that
+already applied 9009. Updating the inventory alone is insufficient: fresh and
+upgraded databases otherwise execute the replacements in different orders.
 
 The lookup resolves the real production Chi route, with a separate route
 context. A newly added literal `/api/issues/future-secret` cannot inherit the

@@ -331,6 +331,7 @@ func consumeConditionHints(ctx context.Context, tx pgx.Tx, id pgtype.UUID) (bool
 			return false, causes, err
 		}
 		causes.TaskIDs = append(causes.TaskIDs, source.TaskIDs...)
+		causes.Changes = append(causes.Changes, source.Changes...)
 		if source.TaskID != "" {
 			causes.TaskIDs = append(causes.TaskIDs, source.TaskID)
 		}

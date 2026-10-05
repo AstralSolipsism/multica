@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -707,8 +708,16 @@ func (s *IssueWakeupService) dispatch(ctx context.Context, prev db.IssueWakeup) 
 		return readErr
 	}
 	var overlay runtimeMCPOverlayData
+	var overlayUser pgtype.UUID
 	if candidate.ID.Valid && s.authorize(ctx, s.Tasks.Queries, prev.WorkspaceID, prev.CreatedBy, candidate) == nil {
-		overlay = s.Tasks.buildRuntimeMCPOverlay(ctx, prev.CreatedBy, candidate)
+		snapshot, err := s.Tasks.Queries.GetIssue(ctx, prev.IssueID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		overlayUser, overlay, err = s.prepareWakeupOverlay(ctx, prev, snapshot, candidate)
+		if err != nil {
+			return err
+		}
 	}
 	tx, err := s.Tasks.TxStarter.Begin(ctx)
 	if err != nil {
@@ -974,6 +983,20 @@ func (s *IssueWakeupService) dispatch(ctx context.Context, prev db.IssueWakeup) 
 		next = pgtype.Timestamptz{}
 	}
 	authority, err := s.wakeupRunAuthority(ctx, q, issue, agent, w, receipts)
+	if errors.Is(err, channel.ErrConversationDenied) {
+		if err = rejectWakeupReceipts(ctx, q, receipts, note); err != nil {
+			return err
+		}
+		if err = q.AdvanceIssueWakeup(ctx, db.AdvanceIssueWakeupParams{ID: w.ID, Enabled: w.Enabled && !timedOut, NextFireAt: next}); err != nil {
+			return err
+		}
+		if timedOut {
+			if err = markTimedOut(); err != nil {
+				return err
+			}
+		}
+		return commit()
+	}
 	if err != nil {
 		return err
 	}
@@ -1069,8 +1092,8 @@ func (s *IssueWakeupService) dispatch(ctx context.Context, prev db.IssueWakeup) 
 		if err = guardIssueNotInTriage(ctx, q, issue.ID, OriginNamed); err != nil {
 			return err
 		}
-		if authority.UserID != w.CreatedBy {
-			overlay = s.Tasks.buildRuntimeMCPOverlay(ctx, authority.UserID, agent)
+		if overlayUser != authority.UserID {
+			return commit()
 		}
 		contextJSON, _ := json.Marshal(map[string]any{"wakeup_id": util.UUIDToString(w.ID), "wakeup_revision": w.Revision, "wakeup_evidence": evidence, "wakeup_chain": chain})
 		task, err = q.CreateWakeupTask(ctx, db.CreateWakeupTaskParams{ID: dbid.NewV7(), AgentID: w.AgentID, RuntimeID: agent.RuntimeID, IssueID: w.IssueID, Priority: priorityToInt(issue.Priority), TriggerCommentID: w.ParentCommentID, TriggerSummary: pgtype.Text{String: "Wakeup: " + truncateForSummary(w.Instruction, 160), Valid: true}, HandoffNote: pgtype.Text{String: noteText, Valid: true}, OriginatorUserID: authority.UserID, AccountableUserID: authority.AccountableUserID, OriginatorSource: pgtype.Text{String: string(authority.Source), Valid: true}, TriggerEvidenceKind: pgtype.Text{String: "issue_wakeup", Valid: true}, TriggerEvidenceRefID: w.ID, DelegatedFromTaskID: authority.DelegatedFromTaskID, WakeupContext: contextJSON, RuntimeMcpOverlay: overlay.Overlay, RuntimeConnectedApps: overlay.ConnectedApps})
@@ -1217,7 +1240,11 @@ func (s *IssueWakeupService) CheckClaim(ctx context.Context, task db.AgentTaskQu
 		}
 		return err
 	}
-	if w.DisabledAt.Valid || w.Revision != source.Revision || w.IssueID != task.IssueID || w.AgentID != task.AgentID || w.CreatedBy != task.OriginatorUserID {
+	// A verified external event runs as its grantor, while the subscription's
+	// creator must still be authorized below. Only this rule's own dispatched
+	// run can use that exception; an arbitrary rooted task cannot claim it.
+	fromConversation := task.ConversationRootTaskID.Valid && task.TriggerEvidenceKind.String == "issue_wakeup" && task.TriggerEvidenceRefID == w.ID
+	if w.DisabledAt.Valid || w.Revision != source.Revision || w.IssueID != task.IssueID || w.AgentID != task.AgentID || (w.CreatedBy != task.OriginatorUserID && !fromConversation) {
 		return ErrWakeupForbidden
 	}
 	agent, err := s.Tasks.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: w.AgentID, WorkspaceID: w.WorkspaceID})

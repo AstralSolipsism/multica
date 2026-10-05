@@ -527,6 +527,7 @@
     "pr_auto_complete_enabled": "a de nouveau fait changer le statut de cette tâche à la fusion des PR",
     "wakeup_created": "a ajouté un réveil : {{condition}} · réveiller {{agent}}",
     "wakeup_triggered": "{{condition}} · {{agent}} réveillé",
+    "wakeup_triggered_rejected": "Entrée de réveil ignorée : autorisation de conversation externe indisponible ou sources en conflit",
     "wakeup_triggered_merged": "{{condition}} · ajouté à l’exécution en attente de {{agent}}",
     "wakeup_triggered_acknowledged": "{{condition}} · déclenché par {{agent}} lui-même ; pas de nouveau réveil",
     "wakeup_triggered_manual": "{{name}} a réveillé {{agent}} maintenant",

@@ -1000,10 +1000,13 @@ WITH candidates AS (
  SELECT wakeup_id FROM issue_wakeup_receipt WHERE processed_at IS NULL
 )
 SELECT w.id, w.workspace_id, w.issue_id, w.agent_id, w.created_by, w.source_task_id, w.parent_comment_id, w.instruction, w.kind, w.mode, w.event_types, w.filter_agent_id, w.filter_task_id, w.interval_seconds, w.cron_expression, w.timezone, w.next_fire_at, w.enabled, w.disabled_at, w.revision, w.last_task_id, w.last_error, w.created_at, w.updated_at, w.filter_actor_type, w.filter_actor_id, w.expires_at, w.expiry_seconds, w.on_timeout, w.timed_out_at, w.system_rule, w.customized_at, w.condition, w.condition_state, w.max_fires, w.fire_count, w.paused_reason FROM candidates c JOIN issue_wakeup w ON w.id=c.id
-WHERE $1::uuid[] IS NULL OR w.workspace_id = ANY($1::uuid[])
+WHERE ($1::uuid[] IS NULL OR w.workspace_id = ANY($1::uuid[]))
+AND NOT (w.system_rule IS NOT NULL AND EXISTS (SELECT 1 FROM issue i WHERE i.id=w.issue_id AND i.status='backlog'))
 ORDER BY w.updated_at,w.id LIMIT 100
 `
 
+// Parked parents retain their evidence without repeatedly taking a batch slot.
+// Their pending hints become eligible immediately when the parent is resumed.
 func (q *Queries) ListReadyWakeups(ctx context.Context, workspaceIds []pgtype.UUID) ([]IssueWakeup, error) {
 	rows, err := q.db.Query(ctx, listReadyWakeups, workspaceIds)
 	if err != nil {
@@ -1121,6 +1124,47 @@ func (q *Queries) ListWakeupChains(ctx context.Context, ids []pgtype.UUID) ([]Li
 	for rows.Next() {
 		var i ListWakeupChainsRow
 		if err := rows.Scan(&i.ID, &i.WakeupID, &i.Chain); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWakeupReceiptSources = `-- name: ListWakeupReceiptSources :many
+SELECT id, wakeup_id, revision, event_key, event_type, payload, task_id, processed_at, created_at, coalesce_key FROM issue_wakeup_receipt WHERE wakeup_id= $1 AND revision= $2 AND processed_at IS NULL ORDER BY created_at,id LIMIT 100
+`
+
+type ListWakeupReceiptSourcesParams struct {
+	WakeupID pgtype.UUID `json:"wakeup_id"`
+	Revision int64       `json:"revision"`
+}
+
+// Credential preparation must not hold receipt or issue locks during network IO.
+func (q *Queries) ListWakeupReceiptSources(ctx context.Context, arg ListWakeupReceiptSourcesParams) ([]IssueWakeupReceipt, error) {
+	rows, err := q.db.Query(ctx, listWakeupReceiptSources, arg.WakeupID, arg.Revision)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueWakeupReceipt{}
+	for rows.Next() {
+		var i IssueWakeupReceipt
+		if err := rows.Scan(
+			&i.ID,
+			&i.WakeupID,
+			&i.Revision,
+			&i.EventKey,
+			&i.EventType,
+			&i.Payload,
+			&i.TaskID,
+			&i.ProcessedAt,
+			&i.CreatedAt,
+			&i.CoalesceKey,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

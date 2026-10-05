@@ -30,6 +30,15 @@ function helpers() {
 }
 
 describe("wakeup timeline entries", () => {
+  it("explains rejected inputs without claiming a run started", () => {
+    const { t, text } = helpers();
+    for (const details of [{ wakeup: reply }, { rule: "child_done" }]) {
+      expect(formatWakeupActivity(entry("wakeup_triggered", { ...details, outcome: "rejected" }), t, text, getActorName)).toBe(
+        "已丢弃此次唤醒输入：外部会话授权不可用或来源冲突",
+      );
+    }
+  });
+
   it("reads each entry as one sentence", () => {
     const { t, text } = helpers();
     const read = (e: TimelineEntry) => formatWakeupActivity(e, t, text, getActorName);

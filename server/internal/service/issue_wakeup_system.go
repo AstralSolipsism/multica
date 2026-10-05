@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -399,6 +401,10 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	if err != nil {
 		return err
 	}
+	overlayUser, overlay, err := s.prepareWakeupOverlay(ctx, prev, snapshot, target.Agent)
+	if err != nil {
+		return err
+	}
 	headSHA := s.Tasks.ResolveIssueReviewSHAParam(ctx, prev.IssueID)
 	tx, err := s.Tasks.TxStarter.Begin(ctx)
 	if err != nil {
@@ -477,6 +483,13 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 		return err
 	}
 	state := w.ConditionState
+	// An attach/reopen followed by a close can arrive in one sweep. It starts
+	// a new all-closed cycle even when the intermediate open state was never
+	// polled. Keep the normal fingerprint otherwise: a rejected condition
+	// must not retry without fresh causes and shed its external authority.
+	if state == "all" && (slices.Contains(causes.Changes, "attached") || slices.Contains(causes.Changes, "reopened")) {
+		state = ""
+	}
 	switch {
 	case met && fingerprint != state:
 		if err = recordConditionMet(ctx, q, w, observed, causes, now); err != nil {
@@ -588,6 +601,12 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 		instruction.Instruction = ChildDoneInstruction(w.Instruction, nil)
 	}
 	authority, err := s.wakeupRunAuthority(ctx, q, issue, agent, w, receipts)
+	if errors.Is(err, channel.ErrConversationDenied) {
+		if err = rejectWakeupReceipts(ctx, q, receipts, note); err != nil {
+			return err
+		}
+		return commit()
+	}
 	if err != nil {
 		return err
 	}
@@ -650,7 +669,9 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	if err = guardIssueNotInTriage(ctx, q, issue.ID, OriginDerived); err != nil {
 		return err
 	}
-	overlay := s.Tasks.buildRuntimeMCPOverlay(ctx, attr.UserID, agent)
+	if overlayUser != attr.UserID {
+		return commit()
+	}
 	source, delegatedFrom, _, _ := attributionCreateParams(attr)
 	contextJSON, _ := json.Marshal(map[string]any{"wakeup_id": util.UUIDToString(w.ID), "wakeup_revision": w.Revision, "wakeup_evidence": evidence, "wakeup_system": SystemRuleChildDone})
 	task, err = q.CreateWakeupTask(ctx, db.CreateWakeupTaskParams{

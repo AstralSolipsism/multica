@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
-	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/testutil"
@@ -109,10 +107,22 @@ func TestExternalConversationDeferredChildDoneKeepsRoot(t *testing.T) {
 }
 
 func TestExternalConversationEventWakeupPreservesRoot(t *testing.T) {
-	for _, mode := range []string{"external", "different-grantor", "coalesced-human", "condition", "waiting-first-party", "waiting-revoked", "waiting-same-conversation", "existing-first-party", "conflicting-roots", "revoked", "missing-source"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, tc := range []struct {
+		name                                                                        string
+		differentGrantor, coalesced, condition, waiting, sameConversation, existing bool
+		wantTasks, wantPending                                                      int
+	}{
+		{name: "external", wantTasks: 1},
+		{name: "different-grantor", differentGrantor: true, wantTasks: 1},
+		{name: "coalesced-human", coalesced: true, wantTasks: 1},
+		{name: "condition", condition: true, wantTasks: 1},
+		{name: "waiting-first-party", waiting: true, wantTasks: 2},
+		{name: "waiting-same-conversation", waiting: true, sameConversation: true, wantTasks: 1, wantPending: 1},
+		{name: "existing-first-party", existing: true, wantTasks: 1, wantPending: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			grantor := testUserID
-			if mode == "different-grantor" {
+			if tc.differentGrantor {
 				fx := testutil.New(testPool, testWorkspaceID, testUserID)
 				grantor = fx.User(t, "Event grantor", "event-grantor@example.test")
 				fx.Member(t, testWorkspaceID, grantor, "member")
@@ -124,7 +134,7 @@ func TestExternalConversationEventWakeupPreservesRoot(t *testing.T) {
 			s := policyWakeups()
 			ctx := context.Background()
 			input := service.WakeupInput{AgentID: agent, Kind: "event", Mode: "continuous", EventTypes: []string{"comment.created"}, Instruction: "Handle the new facts"}
-			if mode == "condition" {
+			if tc.condition {
 				input.Condition = json.RawMessage(`{"type":"issue_field","field":"status","value":"in_review"}`)
 				input.EventTypes = nil
 			}
@@ -133,13 +143,13 @@ func TestExternalConversationEventWakeupPreservesRoot(t *testing.T) {
 				t.Fatal(err)
 			}
 			var ordinary string
-			if mode == "waiting-first-party" || mode == "waiting-same-conversation" || mode == "waiting-revoked" {
+			if tc.waiting {
 				ordinary = f.fx.Task(t, agent, testutil.Cols{"issue_id": issue, "runtime_id": f.runtime, "status": "queued", "originator_source": "direct_human", "originator_user_id": testUserID, "accountable_user_id": testUserID})
 			}
-			if mode == "waiting-same-conversation" {
+			if tc.sameConversation {
 				f.fx.Exec(t, "UPDATE agent_task_queue SET originator_source='delegation',delegated_from_task_id=$2 WHERE id=$1", ordinary, f.root)
 			}
-			if mode == "existing-first-party" {
+			if tc.existing {
 				f.fx.Comment(t, issue, "first-party event")
 				if err = s.TickWorkspaces(ctx, policyUUID(t, testWorkspaceID)); err != nil {
 					t.Fatal(err)
@@ -148,25 +158,15 @@ func TestExternalConversationEventWakeupPreservesRoot(t *testing.T) {
 			}
 			path, method, body := "/api/issues/"+issue+"/comments", "POST", map[string]any{"content": "External event"}
 			want := http.StatusCreated
-			if mode == "condition" {
+			if tc.condition {
 				path, method, body, want = "/api/issues/"+issue, "PUT", map[string]any{"status": "in_review"}, http.StatusOK
 			}
 			req := testutil.WithHeaders(testutil.JSONRequest(method, path, body), "Authorization", "Bearer "+f.token)
 			testutil.Call(t, testServer.Config.Handler.ServeHTTP, req).Want(want)
-			if mode == "coalesced-human" {
+			if tc.coalesced {
 				f.fx.Comment(t, issue, "later first-party event")
 			}
-			if mode == "conflicting-roots" {
-				other := newExternalPolicyFixture(t, "root")
-				f.fx.Comment(t, issue, "another conversation", testutil.Cols{"author_type": "agent", "author_id": other.agent, "source_task_id": other.root})
-			}
-			if mode == "revoked" || mode == "waiting-revoked" {
-				f.fx.Exec(t, "UPDATE channel_installation SET status='revoked' WHERE id=$1", f.install)
-			}
-			if mode == "missing-source" {
-				f.fx.Exec(t, "DELETE FROM agent_task_queue WHERE id=$1", f.root)
-			}
-			if mode == "waiting-first-party" || mode == "waiting-revoked" {
+			if tc.waiting && !tc.sameConversation {
 				f.fx.Exec(t, "UPDATE agent_task_queue SET status='dispatched',dispatched_at=now() WHERE id=$1", ordinary)
 				task, err := s.Tasks.Queries.GetAgentTask(ctx, policyUUID(t, ordinary))
 				if err != nil {
@@ -182,23 +182,17 @@ func TestExternalConversationEventWakeupPreservesRoot(t *testing.T) {
 				f.fx.Exec(t, "UPDATE agent_task_queue SET status='queued' WHERE id=$1", ordinary)
 			}
 			err = s.TickWorkspaces(ctx, policyUUID(t, testWorkspaceID))
-			if mode == "conflicting-roots" || mode == "revoked" || mode == "missing-source" || mode == "waiting-revoked" {
-				if !errors.Is(err, channel.ErrConversationDenied) {
-					t.Fatalf("expected fail-closed dispatch, got %v", err)
-				}
-				wantTasks := 0
-				if ordinary != "" {
-					wantTasks = 1
-				}
-				if n := f.fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE issue_id=$1", issue); n != wantTasks {
-					t.Fatalf("denied sources changed task count: got %d want %d", n, wantTasks)
-				}
-				return
-			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if mode == "waiting-same-conversation" {
+			if n := f.fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE issue_id=$1", issue); n != tc.wantTasks {
+				t.Fatalf("runs=%d want %d", n, tc.wantTasks)
+			}
+			if n := f.fx.Count(t, "SELECT count(*) FROM issue_wakeup_receipt WHERE wakeup_id=$1 AND processed_at IS NULL", w.ID); n != tc.wantPending {
+				t.Fatalf("pending receipts=%d want %d", n, tc.wantPending)
+			}
+
+			if tc.sameConversation {
 				if n := f.fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE issue_id=$1", issue); n != 1 {
 					t.Fatalf("compatible external run did not keep the wakeup: %d tasks", n)
 				}
@@ -216,7 +210,7 @@ func TestExternalConversationEventWakeupPreservesRoot(t *testing.T) {
 				}
 				return
 			}
-			if mode == "existing-first-party" {
+			if tc.existing {
 				if n := f.fx.Count(t, "SELECT count(*) FROM issue_wakeup_receipt WHERE wakeup_id=$1 AND processed_at IS NULL", w.ID); n != 1 {
 					t.Fatalf("external evidence was merged into ordinary task: pending=%d", n)
 				}

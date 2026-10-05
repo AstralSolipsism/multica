@@ -527,6 +527,7 @@
     "pr_auto_complete_enabled": "set this issue to change status when PRs merge again",
     "wakeup_created": "added a wakeup: {{condition}} · wake {{agent}}",
     "wakeup_triggered": "{{condition}} · woke {{agent}}",
+    "wakeup_triggered_rejected": "Wakeup input discarded: external conversation authorization is unavailable or sources conflict",
     "wakeup_triggered_merged": "{{condition}} · joined {{agent}}'s waiting run",
     "wakeup_triggered_acknowledged": "{{condition}} · {{agent}} did this itself; not woken again",
     "wakeup_triggered_manual": "{{name}} woke {{agent}} now",
