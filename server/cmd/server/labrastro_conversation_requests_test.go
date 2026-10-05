@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -60,7 +61,7 @@ func TestExternalConversationRequestInventory(t *testing.T) {
 		kind, fields := "no-body", "-"
 		if request != nil {
 			typ := reflect.TypeOf(request)
-			kind = typ.String()
+			kind = externalRequestTypeName(typ)
 			fields = strings.Join(externalRequestFields(typ, ""), ",")
 		}
 		fmt.Fprintf(&catalog, "%s\t%s\t%s\n", key, kind, fields)
@@ -90,7 +91,7 @@ func externalRequestFields(typ reflect.Type, prefix string) []string {
 		typ = typ.Elem()
 	}
 	if typ.Kind() != reflect.Struct {
-		return []string{prefix + "*=" + typ.String()}
+		return []string{prefix + "*=" + externalRequestTypeName(typ)}
 	}
 	var fields []string
 	for i := 0; i < typ.NumField(); i++ {
@@ -108,7 +109,7 @@ func externalRequestFields(typ reflect.Type, prefix string) []string {
 			name = field.Name
 		}
 		path := prefix + name
-		fields = append(fields, path+"="+field.Type.String()+"["+tag+"]")
+		fields = append(fields, path+"="+externalRequestTypeName(field.Type)+"["+tag+"]")
 		child := field.Type
 		for child.Kind() == reflect.Pointer || child.Kind() == reflect.Slice || child.Kind() == reflect.Array || child.Kind() == reflect.Map {
 			child = child.Elem()
@@ -119,6 +120,29 @@ func externalRequestFields(typ reflect.Type, prefix string) []string {
 	}
 	slices.Sort(fields)
 	return fields
+}
+
+// Go 1.27 aliases json.RawMessage to jsontext.Value. The inventory tracks the
+// request contract, not the implementation name chosen by the JSON toolchain.
+func externalRequestTypeName(typ reflect.Type) string {
+	if typ == reflect.TypeFor[json.RawMessage]() {
+		return "json.RawMessage"
+	}
+	if typ.Name() != "" {
+		return typ.String()
+	}
+	switch typ.Kind() {
+	case reflect.Pointer:
+		return "*" + externalRequestTypeName(typ.Elem())
+	case reflect.Slice:
+		return "[]" + externalRequestTypeName(typ.Elem())
+	case reflect.Array:
+		return "[" + strconv.Itoa(typ.Len()) + "]" + externalRequestTypeName(typ.Elem())
+	case reflect.Map:
+		return "map[" + externalRequestTypeName(typ.Key()) + "]" + externalRequestTypeName(typ.Elem())
+	default:
+		return typ.String()
+	}
 }
 
 // Multipart has no request struct. Read its literal field accesses from the
@@ -141,7 +165,7 @@ func externalUploadFields(t *testing.T) []string {
 				return true
 			}
 			selector, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || (selector.Sel.Name != "FormValue" && selector.Sel.Name != "FormFile") {
+			if !ok || (selector.Sel.Name != "FormValue" && selector.Sel.Name != "PostFormValue" && selector.Sel.Name != "FormFile") {
 				return true
 			}
 			if len(call.Args) != 1 {

@@ -71,6 +71,27 @@ func TestExternalConversationDenialKeepsIndependentReceipts(t *testing.T) {
 	}
 }
 
+func TestExternalConversationOriginOnlyReceiptIsDenied(t *testing.T) {
+	f, s, w, issue, _ := deniedReceiptFixture(t, []string{"comment.created"})
+	// The source-change trigger repairs lineage. Clear only the root in a
+	// second update to simulate a malformed historical row without disabling it.
+	f.fx.Exec(t, "UPDATE agent_task_queue SET originator_source='channel_integration' WHERE id=$1", f.root)
+	f.fx.Exec(t, "UPDATE agent_task_queue SET conversation_root_task_id=NULL WHERE id=$1", f.root)
+	f.fx.Comment(t, issue, "malformed external source", testutil.Cols{"author_type": "agent", "author_id": f.agent, "source_task_id": f.root})
+	if err := s.TickWorkspaces(context.Background(), policyUUID(t, testWorkspaceID)); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE context->>'wakeup_id'=$1", util.UUIDToString(w.ID)); n != 0 {
+		t.Fatal("origin-only external source was promoted to a first-party run")
+	}
+	if n := f.fx.Count(t, "SELECT count(*) FROM issue_wakeup_receipt WHERE wakeup_id=$1 AND event_type='comment.created' AND processed_at IS NOT NULL AND task_id IS NULL", w.ID); n != 1 {
+		t.Fatal("origin-only receipt was not durably rejected")
+	}
+	if n := f.fx.Count(t, "SELECT count(*) FROM activity_log WHERE issue_id=$1 AND details->>'outcome'='rejected'", issue); n != 1 {
+		t.Fatal("origin-only rejection was not audited")
+	}
+}
+
 func TestExternalConversationDenialCommitsDespiteOccupiedSlot(t *testing.T) {
 	for _, status := range []string{"queued", "dispatched", "deferred"} {
 		t.Run(status, func(t *testing.T) {
