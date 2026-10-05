@@ -6,14 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
-	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -391,8 +389,7 @@ func childDoneFacts(receipts []db.IssueWakeupReceipt) map[string]any {
 func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWakeup) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	// Resolve the target and optional credentials before taking locks, then
-	// confirm the target under them.
+	// Resolve the target before taking locks, then confirm it under them.
 	snapshot, err := s.Tasks.Queries.GetIssue(ctx, prev.IssueID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
@@ -401,10 +398,7 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	if err != nil {
 		return err
 	}
-	overlayUser, overlay, err := s.prepareWakeupOverlay(ctx, prev, snapshot, target.Agent)
-	if err != nil {
-		return err
-	}
+
 	headSHA := s.Tasks.ResolveIssueReviewSHAParam(ctx, prev.IssueID)
 	tx, err := s.Tasks.TxStarter.Begin(ctx)
 	if err != nil {
@@ -483,13 +477,7 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 		return err
 	}
 	state := w.ConditionState
-	// An attach/reopen followed by a close can arrive in one sweep. It starts
-	// a new all-closed cycle even when the intermediate open state was never
-	// polled. Keep the normal fingerprint otherwise: a rejected condition
-	// must not retry without fresh causes and shed its external authority.
-	if state == "all" && (slices.Contains(causes.Changes, "attached") || slices.Contains(causes.Changes, "reopened")) {
-		state = ""
-	}
+
 	switch {
 	case met && fingerprint != state:
 		if err = recordConditionMet(ctx, q, w, observed, causes, now); err != nil {
@@ -554,6 +542,24 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	if len(receipts) == 0 {
 		return commit()
 	}
+	agent := current.Agent
+	var task db.AgentTaskQueue
+	var authority wakeupAuthority
+	taskExists := false
+	if agent.ID.Valid {
+		task, err = q.FindPendingWakeupTask(ctx, util.UUIDToString(w.ID))
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		taskExists = err == nil
+		authority, receipts, err = s.selectWakeupReceipts(ctx, q, issue, agent, w, receipts, task, note)
+		if err != nil {
+			return err
+		}
+		if len(receipts) == 0 || (taskExists && task.Status == "dispatched") {
+			return commit()
+		}
+	}
 	ids := receiptIDs(receipts)
 	facts := childDoneFacts(receipts)
 	if current.Type != "none" {
@@ -584,36 +590,14 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 		}
 		return commit()
 	}
-	agent := current.Agent
-	task, err := q.FindPendingWakeupTask(ctx, util.UUIDToString(w.ID))
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return err
-	}
-	taskExists := err == nil
-	if taskExists && task.Status == "dispatched" {
-		// A claimed prompt is immutable; the new facts wait for the next run.
-		return tx.Commit(ctx)
-	}
+
 	instruction := w
 	if ws, e := q.GetWorkspace(ctx, issue.WorkspaceID); e == nil {
 		instruction.Instruction = ChildDoneInstruction(w.Instruction, ws.Settings)
 	} else {
 		instruction.Instruction = ChildDoneInstruction(w.Instruction, nil)
 	}
-	authority, err := s.wakeupRunAuthority(ctx, q, issue, agent, w, receipts)
-	if errors.Is(err, channel.ErrConversationDenied) {
-		if err = rejectWakeupReceipts(ctx, q, receipts, note); err != nil {
-			return err
-		}
-		return commit()
-	}
-	if err != nil {
-		return err
-	}
-	if taskExists && !authority.matches(task) {
-		// Inputs with different consent wait for a separate run.
-		return commit()
-	}
+
 	noteText, evidence := mergeWakeupEvidence(instruction, task, receipts)
 	if taskExists {
 		task, err = q.ReplaceWakeupEvidence(ctx, db.ReplaceWakeupEvidenceParams{ID: task.ID, HandoffNote: pgtype.Text{String: noteText, Valid: true}, WakeupEvidence: evidence})
@@ -669,9 +653,14 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	if err = guardIssueNotInTriage(ctx, q, issue.ID, OriginDerived); err != nil {
 		return err
 	}
-	if overlayUser != attr.UserID {
+	occupied, err := q.WakeupPendingSlotOccupied(ctx, db.WakeupPendingSlotOccupiedParams{IssueID: issue.ID, AgentID: agent.ID, WakeupID: w.ID})
+	if err != nil {
+		return err
+	}
+	if occupied {
 		return commit()
 	}
+	overlay := s.Tasks.buildRuntimeMCPOverlay(ctx, attr.UserID, agent)
 	source, delegatedFrom, _, _ := attributionCreateParams(attr)
 	contextJSON, _ := json.Marshal(map[string]any{"wakeup_id": util.UUIDToString(w.ID), "wakeup_revision": w.Revision, "wakeup_evidence": evidence, "wakeup_system": SystemRuleChildDone})
 	task, err = q.CreateWakeupTask(ctx, db.CreateWakeupTaskParams{

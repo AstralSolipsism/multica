@@ -56,7 +56,6 @@ type wakeupSources struct {
 	Conflict   bool     `json:"conversation_roots_conflict"`
 	Incomplete bool     `json:"sources_incomplete"`
 	Count      int64    `json:"coalesced_count"`
-	Changes    []string `json:"changes"`
 }
 
 type wakeupAuthority struct {
@@ -175,45 +174,86 @@ func (s *IssueWakeupService) wakeupRunAuthority(ctx context.Context, q *db.Queri
 	return wakeupAuthority{Result: base}, err
 }
 
-// Denial is a terminal outcome for these inputs, not a scheduler failure. Keep
-// the rule enabled so a later independent human event can still fire it. A
-// coalesced batch cannot safely be split back into its original source events.
+// Denial is terminal for these receipts, not for other inputs of the rule.
+// Only a single coalesced receipt is inseparable into its original events.
 func rejectWakeupReceipts(ctx context.Context, q *db.Queries, receipts []db.IssueWakeupReceipt, note func(string, map[string]any) error) error {
+	if len(receipts) == 0 {
+		return nil
+	}
 	if err := q.ConsumeWakeupReceipts(ctx, db.ConsumeWakeupReceiptsParams{Ids: receiptIDs(receipts)}); err != nil {
 		return err
 	}
 	details := wakeupTriggerDetails(db.AgentTaskQueue{}, receipts)
 	delete(details, "task_id")
 	details["outcome"], details["reason"] = "rejected", "External conversation authorization unavailable or conflicting."
+	details["receipt_count"] = len(receipts)
 	return note(wakeupActivityTriggered, details)
 }
 
-// Prepare credentials from a read-only snapshot, outside the dispatch locks.
-// Dispatch reclassifies locked inputs and retries if their principal changed.
-func (s *IssueWakeupService) prepareWakeupOverlay(ctx context.Context, w db.IssueWakeup, issue db.Issue, agent db.Agent) (pgtype.UUID, runtimeMCPOverlayData, error) {
-	if !agent.ID.Valid {
-		return pgtype.UUID{}, runtimeMCPOverlayData{}, nil
-	}
-	receipts, err := s.Tasks.Queries.ListWakeupReceiptSources(ctx, db.ListWakeupReceiptSourcesParams{WakeupID: w.ID, Revision: w.Revision})
-	if err != nil {
-		return pgtype.UUID{}, runtimeMCPOverlayData{}, err
-	}
-	authority, err := s.wakeupRunAuthority(ctx, s.Tasks.Queries, issue, agent, w, receipts)
-	if errors.Is(err, channel.ErrConversationDenied) {
-		return pgtype.UUID{}, runtimeMCPOverlayData{}, nil
-	}
-	if err != nil {
-		return pgtype.UUID{}, runtimeMCPOverlayData{}, err
-	}
-	return authority.UserID, s.Tasks.buildRuntimeMCPOverlay(ctx, authority.UserID, agent), nil
+type wakeupReceiptGroup struct {
+	Authority wakeupAuthority
+	Receipts  []db.IssueWakeupReceipt
 }
 
-// A denied external wakeup must neither join nor prevent an independently
-// authorized run from starting. Infrastructure errors still retry the claim.
-func (s *IssueWakeupService) wakeupMayJoin(ctx context.Context, q *db.Queries, issue db.Issue, agent db.Agent, task db.AgentTaskQueue, w db.IssueWakeup, receipts []db.IssueWakeupReceipt) (bool, error) {
-	authority, err := s.wakeupRunAuthority(ctx, q, issue, agent, w, receipts)
-	if errors.Is(err, channel.ErrConversationDenied) {
-		return false, nil
+// Classify each receipt independently before selecting a group. A condition.met
+// receipt already combines all hints from one evaluation and stays indivisible.
+func (s *IssueWakeupService) groupWakeupReceipts(ctx context.Context, q *db.Queries, issue db.Issue, agent db.Agent, w db.IssueWakeup, receipts []db.IssueWakeupReceipt) ([]wakeupReceiptGroup, []db.IssueWakeupReceipt, error) {
+	var groups []wakeupReceiptGroup
+	var rejected []db.IssueWakeupReceipt
+	type key struct{ user, root pgtype.UUID }
+	byAuthority := map[key]int{}
+	for _, receipt := range receipts {
+		authority, err := s.wakeupRunAuthority(ctx, q, issue, agent, w, []db.IssueWakeupReceipt{receipt})
+		if errors.Is(err, channel.ErrConversationDenied) {
+			rejected = append(rejected, receipt)
+			continue
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		k := key{authority.UserID, authority.RootTaskID}
+		index, ok := byAuthority[k]
+		if !ok {
+			index = len(groups)
+			byAuthority[k] = index
+			groups = append(groups, wakeupReceiptGroup{Authority: authority})
+		}
+		groups[index].Receipts = append(groups[index].Receipts, receipt)
 	}
-	return err == nil && authority.matches(task), err
+	return groups, rejected, nil
+}
+
+// Preserve capture order unless a pending/claiming run determines the authority.
+// A missing match leaves every valid group pending, never borrows its consent.
+func selectWakeupGroup(groups []wakeupReceiptGroup, task db.AgentTaskQueue) wakeupReceiptGroup {
+	for _, group := range groups {
+		if !task.ID.Valid || group.Authority.matches(task) {
+			return group
+		}
+	}
+	return wakeupReceiptGroup{}
+}
+
+// All denied receipts share one timeline entry per pass. A later slot conflict
+// must commit this outcome and leave the selected valid inputs for another pass.
+func (s *IssueWakeupService) selectWakeupReceipts(ctx context.Context, q *db.Queries, issue db.Issue, agent db.Agent, w db.IssueWakeup, receipts []db.IssueWakeupReceipt, task db.AgentTaskQueue, note func(string, map[string]any) error) (wakeupAuthority, []db.IssueWakeupReceipt, error) {
+	groups, rejected, err := s.groupWakeupReceipts(ctx, q, issue, agent, w, receipts)
+	if err != nil {
+		return wakeupAuthority{}, nil, err
+	}
+	if err = rejectWakeupReceipts(ctx, q, rejected, note); err != nil {
+		return wakeupAuthority{}, nil, err
+	}
+	group := selectWakeupGroup(groups, task)
+	return group.Authority, group.Receipts, nil
+}
+
+// Claims only reserve their matching group. Rejections stay with dispatch so a
+// failed/retried claim neither loses inputs nor publishes uncommitted activities.
+func (s *IssueWakeupService) wakeupJoinReceipts(ctx context.Context, q *db.Queries, issue db.Issue, agent db.Agent, task db.AgentTaskQueue, w db.IssueWakeup, receipts []db.IssueWakeupReceipt) ([]db.IssueWakeupReceipt, error) {
+	groups, _, err := s.groupWakeupReceipts(ctx, q, issue, agent, w, receipts)
+	if err != nil {
+		return nil, err
+	}
+	return selectWakeupGroup(groups, task).Receipts, nil
 }

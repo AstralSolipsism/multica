@@ -86,9 +86,6 @@ WHERE (sqlc.narg('workspace_ids')::uuid[] IS NULL OR w.workspace_id = ANY(sqlc.n
 -- Their pending hints become eligible immediately when the parent is resumed.
 AND NOT (w.system_rule IS NOT NULL AND EXISTS (SELECT 1 FROM issue i WHERE i.id=w.issue_id AND i.status='backlog'))
 ORDER BY w.updated_at,w.id LIMIT 100;
--- name: ListWakeupReceiptSources :many
--- Credential preparation must not hold receipt or issue locks during network IO.
-SELECT * FROM issue_wakeup_receipt WHERE wakeup_id= @wakeup_id AND revision= @revision AND processed_at IS NULL ORDER BY created_at,id LIMIT 100;
 -- name: ListPendingWakeupReceipts :many
 SELECT * FROM issue_wakeup_receipt WHERE wakeup_id= @wakeup_id AND revision= @revision AND processed_at IS NULL ORDER BY created_at,id LIMIT 100 FOR UPDATE;
 
@@ -114,6 +111,14 @@ UPDATE issue_wakeup_receipt SET processed_at=now() WHERE wakeup_id= @id AND proc
 UPDATE issue_wakeup SET enabled= @enabled,next_fire_at=sqlc.narg(next_fire_at),last_task_id=COALESCE(sqlc.narg(last_task_id),last_task_id),last_error=sqlc.narg(last_error),updated_at=clock_timestamp() WHERE id= @id;
 -- name: FindPendingWakeupTask :one
 SELECT * FROM agent_task_queue WHERE context->>'wakeup_id'= @wakeup_id::text AND status IN ('queued','dispatched') ORDER BY created_at LIMIT 1 FOR UPDATE;
+
+-- name: WakeupPendingSlotOccupied :one
+-- Mirror idx_one_pending_task_per_issue_agent_thread, including media holds.
+-- Migration 516 sets a wakeup run's comment_thread_id to its rule ID.
+SELECT EXISTS(SELECT 1 FROM agent_task_queue
+ WHERE issue_id = @issue_id AND agent_id = @agent_id AND comment_thread_id = @wakeup_id
+ AND (status IN ('queued','dispatched')
+      OR (status='deferred' AND context->>'channel_issue_media_pending'='true')));
 
 -- name: CreateWakeupTask :one
 -- Fenced against workspace teardown: lock_task_owner_rows (migration 284)

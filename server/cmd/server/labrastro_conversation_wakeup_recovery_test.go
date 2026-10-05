@@ -31,10 +31,11 @@ func TestExternalConversationRejectedWakeupRecovers(t *testing.T) {
 			f.fx.Comment(t, issue, "other conversation", testutil.Cols{"author_type": "agent", "author_id": other.agent, "source_task_id": other.root})
 			f.fx.Comment(t, issue, "first conversation again", testutil.Cols{"author_type": "agent", "author_id": f.agent, "source_task_id": f.root})
 		}},
-		{name: "distinct-receipt-conflict", change: func(t *testing.T, f externalPolicyFixture, issue string) {
+		{name: "receipt-internal-conflict", change: func(t *testing.T, f externalPolicyFixture, issue string) {
 			other := newExternalPolicyFixture(t, "root")
-			req := testutil.WithHeaders(testutil.JSONRequest("PUT", "/api/issues/"+issue, map[string]any{"title": "Different external event"}), "Authorization", "Bearer "+other.token)
-			testutil.Call(t, testServer.Config.Handler.ServeHTTP, req).Want(200)
+			// A combined condition can list different sources without a captured
+			// root or conflict flag. Its source-task check must stand on its own.
+			f.fx.Exec(t, "UPDATE issue_wakeup_receipt SET payload=jsonb_build_object('source_task_ids',jsonb_build_array($2::text,$3::text)) WHERE wakeup_id IN (SELECT id FROM issue_wakeup WHERE issue_id=$1)", issue, f.root, other.root)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -128,6 +129,9 @@ func TestExternalConversationRejectedChildDoneRecovers(t *testing.T) {
 		t.Fatalf("rejection not audited: %d", n)
 	}
 	other := fx.Issue(t, "member child", testutil.Cols{"parent_issue_id": parent})
+	if err := s.ProcessChildEvents(ctx, policyUUID(t, parent)); err != nil {
+		t.Fatal(err)
+	}
 	fx.Exec(t, "UPDATE issue SET status='done' WHERE id=$1", other)
 	if err := s.ProcessChildEvents(ctx, policyUUID(t, parent)); err != nil {
 		t.Fatal(err)

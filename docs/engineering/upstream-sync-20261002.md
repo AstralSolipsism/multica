@@ -117,25 +117,45 @@ event and wakeup receipt source tasks, so a lock timeout cannot turn the same
 external action into a first-party run. Event wakeups created by members use
 the external source's grantor and root when an external action fires them.
 Missing external grant evidence, revoked grants and conflicting roots fail
-closed. Rejection consumes that input batch without a task and records a
-timeline outcome; it does not disable the rule or roll the receipts back for
-endless retries. A later independent human event can still fire. A coalesced
-batch cannot be separated into its original events, so the entire rejected
-batch is discarded. Infrastructure errors still roll back and retry.
+closed. Each receipt is classified independently. Rejection consumes only the
+denied receipts without a task and records one timeline outcome per pass, with
+the receipt count. Independent member events, manual triggers and timeout inputs
+remain eligible in that same pass. Valid receipts are grouped by human and
+conversation root; dispatch selects the pending task's group, or the earliest
+group when there is no pending task. Other valid groups wait. Self-acknowledgement,
+loop checks, manual exemptions, claims and trigger evidence use only that group.
+Once/max-fires limits still apply after a firing; rejection does not count as one
+or clear a once condition's fallback poll. A pending-slot conflict commits the
+rejections and retains valid inputs for dispatch or claim joining. The slot check
+follows migration 516's rule-ID thread scope and includes deferred media holds.
+Timeout activities report whether the timeout input was actually assigned to a
+run in that pass. Infrastructure errors still roll back and retry.
+
+A single coalesced receipt cannot be separated into its original events, so an
+internal conflict rejects that entire receipt. Condition evaluation also combines
+all hints from that pass into one `condition.met` receipt: if a human and a denied
+external source both contribute, the whole condition receipt is rejected and its
+fingerprint retained. A causeless poll cannot retry that fact as first-party input.
+This also applies to hints retained while a parent is in backlog. The distinction
+between condition facts and instructions is a separate T10 product decision.
 
 Captured null roots distinguish first-party source history from required
 external roots. Pruned ordinary event or registration tasks retain first-party
 behavior. An agent-created parent's surviving origin is revalidated when a
-human closes its children; missing ordinary origin history uses the existing
-attribution fallback. A parked (`backlog`) parent's system rule retains hints
+human closes its children. A missing parent origin uses the existing attribution
+fallback: absence does not prove that origin was first-party; persisting the
+issue's conversation root remains T10 work. For child hints without a captured
+root, a missing source task fails closed. A parked (`backlog`) parent's system rule retains hints
 but is excluded from scheduler readiness until the parent is resumed.
 
 External event runs can be claimed by a grantor distinct from the wakeup's
 creator only when their persisted trigger evidence names that rule. Claim
 still checks the live conversation grant and the rule creator's invocation
-authority. Optional MCP credentials are prepared for the grantor before
-dispatch takes database locks; dispatch rechecks the principal under lock and
-retries if it changed while credentials were being prepared.
+authority. Composio credentials use the agent owner's connections; originator is
+an audit field, not a credential selector. Overlay construction keeps upstream's
+placement: before locks for ordinary dispatch, only when creating a task for
+system dispatch. The upstream `all`/`stage:N` condition fingerprint transitions
+are unchanged.
 
 Migration `9009_labrastro_wakeup_conversation_provenance` retains a bounded
 external-root summary in the existing receipt payload when events coalesce;

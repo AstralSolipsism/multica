@@ -1134,47 +1134,6 @@ func (q *Queries) ListWakeupChains(ctx context.Context, ids []pgtype.UUID) ([]Li
 	return items, nil
 }
 
-const listWakeupReceiptSources = `-- name: ListWakeupReceiptSources :many
-SELECT id, wakeup_id, revision, event_key, event_type, payload, task_id, processed_at, created_at, coalesce_key FROM issue_wakeup_receipt WHERE wakeup_id= $1 AND revision= $2 AND processed_at IS NULL ORDER BY created_at,id LIMIT 100
-`
-
-type ListWakeupReceiptSourcesParams struct {
-	WakeupID pgtype.UUID `json:"wakeup_id"`
-	Revision int64       `json:"revision"`
-}
-
-// Credential preparation must not hold receipt or issue locks during network IO.
-func (q *Queries) ListWakeupReceiptSources(ctx context.Context, arg ListWakeupReceiptSourcesParams) ([]IssueWakeupReceipt, error) {
-	rows, err := q.db.Query(ctx, listWakeupReceiptSources, arg.WakeupID, arg.Revision)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []IssueWakeupReceipt{}
-	for rows.Next() {
-		var i IssueWakeupReceipt
-		if err := rows.Scan(
-			&i.ID,
-			&i.WakeupID,
-			&i.Revision,
-			&i.EventKey,
-			&i.EventType,
-			&i.Payload,
-			&i.TaskID,
-			&i.ProcessedAt,
-			&i.CreatedAt,
-			&i.CoalesceKey,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listWakeupRuns = `-- name: ListWakeupRuns :many
 SELECT t.id,t.status,t.created_at,t.started_at,t.completed_at,
  COALESCE(t.context->'wakeup_checkin'->>'note','')::text AS checkin_note,
@@ -1888,4 +1847,26 @@ func (q *Queries) TryLockIssueWakeup(ctx context.Context, id pgtype.UUID) (Issue
 		&i.PausedReason,
 	)
 	return i, err
+}
+
+const wakeupPendingSlotOccupied = `-- name: WakeupPendingSlotOccupied :one
+SELECT EXISTS(SELECT 1 FROM agent_task_queue
+ WHERE issue_id = $1 AND agent_id = $2 AND comment_thread_id = $3
+ AND (status IN ('queued','dispatched')
+      OR (status='deferred' AND context->>'channel_issue_media_pending'='true')))
+`
+
+type WakeupPendingSlotOccupiedParams struct {
+	IssueID  pgtype.UUID `json:"issue_id"`
+	AgentID  pgtype.UUID `json:"agent_id"`
+	WakeupID pgtype.UUID `json:"wakeup_id"`
+}
+
+// Mirror idx_one_pending_task_per_issue_agent_thread, including media holds.
+// Migration 516 sets a wakeup run's comment_thread_id to its rule ID.
+func (q *Queries) WakeupPendingSlotOccupied(ctx context.Context, arg WakeupPendingSlotOccupiedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, wakeupPendingSlotOccupied, arg.IssueID, arg.AgentID, arg.WakeupID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }

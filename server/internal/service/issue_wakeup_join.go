@@ -281,7 +281,7 @@ func (s *IssueWakeupService) reserveForRun(ctx context.Context, q *db.Queries, i
 		return nil, nil, err
 	}
 	var receipts []db.IssueWakeupReceipt
-	var held, free []pgtype.UUID
+	var held []pgtype.UUID
 	for _, r := range pending {
 		if len(w.Condition) > 0 && r.EventType != wakeupConditionEventType && r.EventType != wakeupTimeoutEventType && r.EventType != wakeupManualEventType {
 			continue
@@ -290,7 +290,6 @@ func (s *IssueWakeupService) reserveForRun(ctx context.Context, q *db.Queries, i
 		case task.ID:
 			held = append(held, r.ID)
 		case pgtype.UUID{}:
-			free = append(free, r.ID)
 		default:
 			continue
 		}
@@ -312,13 +311,38 @@ func (s *IssueWakeupService) reserveForRun(ctx context.Context, q *db.Queries, i
 		}
 		return release()
 	}
-	instruction, ok, err := s.mayJoin(ctx, q, issue, task, w, receipts)
+	instruction, receipts, err := s.mayJoin(ctx, q, issue, task, w, receipts)
 	if err != nil {
 		return nil, nil, err
 	}
-	if !ok {
+	if len(receipts) == 0 {
 		return release()
 	}
+	// Revalidation can exclude receipts previously held by this claim. Release
+	// only those; reserve only free inputs from the selected authority group.
+	selectedHeld := map[pgtype.UUID]bool{}
+	var free []pgtype.UUID
+	for _, receipt := range receipts {
+		if receipt.TaskID == task.ID {
+			selectedHeld[receipt.ID] = true
+		} else {
+			free = append(free, receipt.ID)
+		}
+	}
+	var releaseIDs, keepHeld []pgtype.UUID
+	for _, id := range held {
+		if selectedHeld[id] {
+			keepHeld = append(keepHeld, id)
+		} else {
+			releaseIDs = append(releaseIDs, id)
+		}
+	}
+	if len(releaseIDs) > 0 {
+		if err = q.ReleaseWakeupReceipts(ctx, releaseIDs); err != nil {
+			return nil, nil, err
+		}
+	}
+	held = keepHeld
 	if self, err := acknowledgedBySelf(ctx, q, w, task.AgentID, issue.ID, receipts); err != nil || self {
 		if err != nil {
 			return nil, nil, err
@@ -342,44 +366,44 @@ func (s *IssueWakeupService) reserveForRun(ctx context.Context, q *db.Queries, i
 
 // mayJoin reports whether the run is one the rule's own run would be: the
 // same agent, run as the same person, who may still use the agent. It returns
-// the instruction the run gets.
-func (s *IssueWakeupService) mayJoin(ctx context.Context, q *db.Queries, issue db.Issue, task db.AgentTaskQueue, w db.IssueWakeup, receipts []db.IssueWakeupReceipt) (string, bool, error) {
+// the instruction and only the receipts that this run may take along.
+func (s *IssueWakeupService) mayJoin(ctx context.Context, q *db.Queries, issue db.Issue, task db.AgentTaskQueue, w db.IssueWakeup, receipts []db.IssueWakeupReceipt) (string, []db.IssueWakeupReceipt, error) {
 	agent, err := q.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: task.AgentID, WorkspaceID: w.WorkspaceID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, nil
+		return "", nil, nil
 	}
 	if err != nil {
-		return "", false, err
+		return "", nil, err
 	}
 	if !w.SystemRule.Valid {
 		if w.AgentID != task.AgentID || (w.Mode == "once" && w.LastTaskID.Valid) {
-			return "", false, nil
+			return "", nil, nil
 		}
 		if err := s.authorize(ctx, q, w.WorkspaceID, w.CreatedBy, agent); err != nil {
 			if errors.Is(err, ErrWakeupForbidden) {
 				err = nil
 			}
-			return "", false, err
+			return "", nil, err
 		}
-		ok, err := s.wakeupMayJoin(ctx, q, issue, agent, task, w, receipts)
-		return w.Instruction, ok, err
+		selected, err := s.wakeupJoinReceipts(ctx, q, issue, agent, task, w, receipts)
+		return w.Instruction, selected, err
 	}
 	if !w.Enabled || issuestatus.Effective(ctx, q, issue.WorkspaceID, issue.Status) == "backlog" {
-		return "", false, nil
+		return "", nil, nil
 	}
 	target, err := resolveWakeTarget(ctx, q, issue)
 	if err != nil || target.Agent.ID != task.AgentID {
-		return "", false, err
+		return "", nil, err
 	}
-	ok, err := s.wakeupMayJoin(ctx, q, issue, agent, task, w, receipts)
-	if err != nil || !ok {
-		return "", false, err
+	selected, err := s.wakeupJoinReceipts(ctx, q, issue, agent, task, w, receipts)
+	if err != nil || len(selected) == 0 {
+		return "", nil, err
 	}
 	var settings []byte
 	if ws, err := q.GetWorkspace(ctx, issue.WorkspaceID); err == nil {
 		settings = ws.Settings
 	}
-	return ChildDoneInstruction(w.Instruction, settings), true, nil
+	return ChildDoneInstruction(w.Instruction, settings), selected, nil
 }
 
 // takenRun is a run that took some of a rule's inputs along and has started.

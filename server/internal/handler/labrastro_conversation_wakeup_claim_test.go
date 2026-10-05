@@ -4,18 +4,12 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/featureflags"
-	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/testutil"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/featureflag"
 )
 
 func TestConversationEventWakeupClaimUsesGrantor(t *testing.T) {
@@ -38,11 +32,6 @@ func TestConversationEventWakeupClaimUsesGrantor(t *testing.T) {
 			wid := createRule(t, issue, target, pgtype.UUID{}, service.WakeupInput{Kind: "event", Mode: "continuous", EventTypes: []string{"comment.created"}, Instruction: "Handle"})
 			commentOn(t, issue, "external comment", extAgent, root)
 			tasks := service.NewTaskService(testHandler.Queries, testPool, testHandler.Hub, testHandler.Bus)
-			builder := &conversationOverlayProbe{t: t, issue: issue, rule: wid, grantor: grantor, agent: target}
-			tasks.Composio = builder
-			flags := featureflag.NewStaticProvider()
-			flags.Set(featureflags.ComposioMCPApps, featureflag.Rule{Default: true})
-			tasks.FeatureFlags = featureflag.NewService(flags)
 			if err := (&service.IssueWakeupService{Tasks: tasks}).TickWorkspaces(ctx, parseUUID(testWorkspaceID)); err != nil {
 				t.Fatal(err)
 			}
@@ -57,12 +46,6 @@ func TestConversationEventWakeupClaimUsesGrantor(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if builder.calls != 1 {
-				t.Fatalf("expected grantor credential preparation, got %d calls", builder.calls)
-			}
-			if !strings.Contains(string(task.RuntimeMcpOverlay), grantor) || len(task.RuntimeConnectedApps) == 0 {
-				t.Fatalf("wrong stored grantor credentials: %s %s", task.RuntimeMcpOverlay, task.RuntimeConnectedApps)
-			}
 			switch mode {
 			case "creator-lost-invocation":
 				dbfx.Exec(t, "UPDATE agent SET owner_id=$2,permission_mode='private' WHERE id=$1", target, grantor)
@@ -73,7 +56,6 @@ func TestConversationEventWakeupClaimUsesGrantor(t *testing.T) {
 			}
 			req := newDaemonTokenRequest("POST", "/claim", nil, testWorkspaceID, "e3h")
 			h := *testHandler
-			h.FeatureFlags = tasks.FeatureFlags
 			resp, _, _, _, _, failure := h.buildClaimedTaskResponse(req, &task, rt, uuidToString(task.RuntimeID), testWorkspaceID)
 			var status, errMsg string
 			dbfx.QueryRow(t, "SELECT status, COALESCE(error,'') FROM agent_task_queue WHERE id=$1", taskID).Scan(&status, &errMsg)
@@ -81,38 +63,12 @@ func TestConversationEventWakeupClaimUsesGrantor(t *testing.T) {
 				if failure != nil || status == "failed" || root2 != root || uuidToString(task.OriginatorUserID) != grantor {
 					t.Fatalf("grantor claim failed: %+v %s %q root=%s", failure, status, errMsg, root2)
 				}
-				if resp.Agent == nil || !strings.Contains(string(resp.Agent.McpConfig), grantor) {
-					t.Fatal("claim lost grantor overlay")
+				if resp.Agent == nil {
+					t.Fatal("claim lost execution agent")
 				}
 			} else if failure == nil || status != "failed" {
 				t.Fatalf("unauthorized claim succeeded: %+v %s", failure, status)
 			}
 		})
 	}
-}
-
-// The provider tries the same rows dispatch locks. NOWAIT makes an accidental
-// network call under those locks fail immediately instead of hanging the test.
-type conversationOverlayProbe struct {
-	t                           *testing.T
-	issue, rule, grantor, agent string
-	calls                       int
-}
-
-func (p *conversationOverlayProbe) BuildTaskOverlay(ctx context.Context, user pgtype.UUID, agent db.Agent) (runtimeapps.MCPOverlayResult, error) {
-	p.calls++
-	if uuidToString(user) != p.grantor || uuidToString(agent.ID) != p.agent {
-		p.t.Fatalf("borrowed rule creator credentials: %s", uuidToString(user))
-	}
-	tx, err := testPool.Begin(ctx)
-	if err != nil {
-		p.t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	for _, row := range []struct{ table, id string }{{"issue", p.issue}, {"issue_wakeup", p.rule}, {"agent", p.agent}} {
-		if _, err = tx.Exec(ctx, "SELECT id FROM "+row.table+" WHERE id=$1 FOR UPDATE NOWAIT", row.id); err != nil {
-			p.t.Fatalf("credential lookup held %s lock: %v", row.table, err)
-		}
-	}
-	return runtimeapps.MCPOverlayResult{MCPOverlay: json.RawMessage(fmt.Sprintf(`{"mcpServers":{"composio":{"type":"http","url":"https://example.test/%s"}}}`, p.grantor)), ConnectedApps: []runtimeapps.ConnectedApp{{Provider: "composio", ServerName: "composio", ToolkitSlug: "test"}}}, nil
 }
