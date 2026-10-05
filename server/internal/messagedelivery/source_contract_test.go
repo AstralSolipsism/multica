@@ -148,7 +148,7 @@ func TestSourceAssignmentRetryKeepsFrozenTransition(t *testing.T) {
 	if len(requests) != 2 {
 		t.Fatalf("send requests=%d, want one original and one retry", len(requests))
 	}
-	if requests[0].Text != requests[1].Text || requests[0].SendUUID != requests[1].SendUUID || !strings.Contains(requests[1].Text, "Agent Original agent") {
+	if requests[0].Message != requests[1].Message || requests[0].SendUUID != requests[1].SendUUID || !strings.Contains(string(requests[1].Message.Body), "Agent Original agent") {
 		t.Fatalf("retry changed body or send identity: %+v", requests)
 	}
 }

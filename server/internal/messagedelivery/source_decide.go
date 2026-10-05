@@ -473,7 +473,7 @@ func (s *Service) insertSourceDecision(ctx context.Context, d sourceDecision) er
 		Status:          d.status,
 		ContentSnapshot: contentJSON,
 		TargetSnapshot:  targetJSON,
-		ShardTotal:      int32(len(splitShards(d.content.Text))),
+		ShardTotal:      int32(len(splitShards(NewMessage(d.content.Text, d.content.Link)))),
 		SourceRef:       refJSON,
 		TargetKey:       d.targetKey,
 		InstallationID:  d.installationID,
@@ -527,8 +527,6 @@ func buildInboxContent(row db.ListLabrastroMessageInboxSourceCandidatesRow, issu
 	}
 	if appURL != "" && workspaceSlug != "" && issueIdent != "" {
 		snap.Link = strings.TrimRight(appURL, "/") + "/" + workspaceSlug + "/issues/" + issueIdent
-		b.WriteString("\n")
-		b.WriteString(snap.Link)
 	}
 	snap.Text = b.String()
 	return snap
@@ -560,13 +558,9 @@ func buildTeamContent(kind, action, actor, change, issueTitle, issueIdent, appUR
 		who += " "
 	}
 	snap.Summary = who + verb + ": " + headline
-	var b strings.Builder
-	b.WriteString(snap.Summary)
 	if appURL != "" && workspaceSlug != "" && issueIdent != "" {
 		snap.Link = strings.TrimRight(appURL, "/") + "/" + workspaceSlug + "/issues/" + issueIdent
-		b.WriteString("\n")
-		b.WriteString(snap.Link)
 	}
-	snap.Text = b.String()
+	snap.Text = snap.Summary
 	return snap
 }
