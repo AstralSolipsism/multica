@@ -208,6 +208,30 @@ and first-party transcript access remains workspace-scoped. A task deleted
 between credential and authorization lookups returns 401; transient lookup
 failures retain 503.
 
+Feishu reply mentions follow the owner's T10 ruling: an additional personal
+notification requires an explicit request in the current trigger and server
+verification. Put `/mention @Alice @Bob` (using Feishu's native user picker) on
+the first line, then the question on the next line. `回复时提醒：@Alice` is also
+accepted; a native bot mention may precede the directive. Ordinary references
+to people, names or raw IDs, quoted instructions and forwarded/history messages
+do not grant notification authority. Rich-text messages support the same
+directive in their first text/mention paragraph, not a code block or link.
+
+The reply reads only the message ID frozen in its task delivery. It verifies
+the message's chat, sender, thread, live/deleted status and native mention
+metadata, then resolves the requested personal open_ids through Feishu's
+contact API. Missing identity/scope, lookup failure or timeout removes only
+the additional mentions; the answer still sends. IDs are deduplicated and
+`all` is never accepted, including as a malformed saved sender. The existing
+server-generated mention of the triggering sender remains independent.
+
+The server constructs all active mention nodes. Model bodies containing `<`
+or `&` use a rich-text post with literal text nodes and entity unescaping off;
+this preserves the original body without executing raw or encoded at tags.
+Such replies show Markdown source literally, including code or URLs with those
+characters. Other replies retain their existing text/Markdown rendering.
+Native reply routing and classified chat-level fallback retain this protection.
+
 The production route inventory currently contains **457 user-authenticated
 routes: 60 allowed and 397 denied**, plus 69 routes with separate authentication
 or public/capability handling. The test calls every denied user route with a

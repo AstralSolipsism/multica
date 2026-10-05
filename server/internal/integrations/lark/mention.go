@@ -30,13 +30,17 @@ import "strings"
 const mentionSeparator = " "
 
 // safeMentionOpenID guards the open_id before it is interpolated into text
-// content or card JSON. Real Feishu ids are "ou_" + hex, so anything
-// carrying quotes, angle brackets, or whitespace is not an id we should be
-// embedding — returning "" makes the caller send without a mention instead
-// of emitting broken markup or malformed card JSON.
+// content or card JSON. Require a personal open_id, never the reserved "all"
+// target, and reject punctuation that could escape the attribute. Returning
+// "" makes the caller send without a mention.
 func safeMentionOpenID(openID string) string {
-	if openID == "" || strings.ContainsAny(openID, "<>\"'`\\ \t\r\n") {
+	if !strings.HasPrefix(openID, "ou_") || len(openID) == 3 {
 		return ""
+	}
+	for _, c := range openID[3:] {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_') {
+			return ""
+		}
 	}
 	return openID
 }
