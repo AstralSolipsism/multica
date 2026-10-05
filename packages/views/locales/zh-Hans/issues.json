@@ -518,6 +518,7 @@
     "pr_auto_complete_enabled": "恢复了此任务合并后改状态",
     "wakeup_created": "添加了唤醒：{{condition}}唤醒 {{agent}}",
     "wakeup_triggered": "{{condition}}，唤醒了 {{agent}}",
+    "wakeup_triggered_rejected": "已丢弃此次唤醒输入：外部会话授权不可用或来源冲突",
     "wakeup_triggered_merged": "{{condition}}，并入了 {{agent}} 待开始的运行",
     "wakeup_triggered_acknowledged": "{{condition}}，由 {{agent}} 自己触发，未重复唤醒",
     "wakeup_triggered_manual": "{{name}} 立即唤醒了 {{agent}}",

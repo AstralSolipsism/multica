@@ -16,8 +16,10 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/testutil"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 type externalRoute struct{ method, pattern, auth, decision string }
@@ -92,18 +94,22 @@ type externalPolicyFixture struct {
 }
 
 func newExternalPolicyFixture(t *testing.T, lineage string) externalPolicyFixture {
+	return externalPolicyFixtureForGrantor(t, lineage, testUserID)
+}
+
+func externalPolicyFixtureForGrantor(t *testing.T, lineage, grantor string) externalPolicyFixture {
 	t.Helper()
 	fx := testutil.New(testPool, testWorkspaceID, testUserID)
 	f := externalPolicyFixture{fx: fx}
 	f.runtime = fx.Runtime(t, "policy runtime")
-	f.agent = fx.Agent(t, "policy agent", f.runtime)
-	f.root = fx.Task(t, f.agent, testutil.Cols{"runtime_id": f.runtime, "status": "running", "originator_source": "channel_integration", "originator_user_id": testUserID, "accountable_user_id": testUserID})
-	config := fmt.Sprintf(`{"chat_id":"oc_policy","conversation":{"id":%q,"authorized_by":%q,"scope":"workspace","chats":[{"chat_id":"oc_policy","chat_type":"group"}]}}`, f.root, testUserID)
+	f.agent = fx.Agent(t, "policy agent "+f.runtime, f.runtime, testutil.Cols{"owner_id": grantor})
+	f.root = fx.Task(t, f.agent, testutil.Cols{"runtime_id": f.runtime, "status": "running", "originator_source": "channel_integration", "originator_user_id": grantor, "accountable_user_id": grantor})
+	config := fmt.Sprintf(`{"chat_id":"oc_policy","conversation":{"id":%q,"authorized_by":%q,"scope":"workspace","chats":[{"chat_id":"oc_policy","chat_type":"group"}]}}`, f.root, grantor)
 	f.install = fx.Insert(t, "channel_installation", testutil.Cols{"workspace_id": testWorkspaceID, "agent_id": f.agent, "channel_type": "feishu", "installer_user_id": testUserID, "status": "active", "config": config})
 	fx.InsertNoID(t, "channel_task_delivery", testutil.Cols{"task_id": f.root, "binding_id": f.root, "installation_id": f.install, "channel_type": "feishu", "channel_chat_id": "oc_policy", "chat_type": "group", "route_revision": 1, "config": config}, "task_id=$1", f.root)
 	id := f.root
 	if lineage != "root" {
-		cols := testutil.Cols{"runtime_id": f.runtime, "status": "running", "originator_user_id": testUserID, "accountable_user_id": testUserID, "originator_source": "delegation", "delegated_from_task_id": f.root}
+		cols := testutil.Cols{"runtime_id": f.runtime, "status": "running", "originator_user_id": grantor, "accountable_user_id": grantor, "originator_source": "delegation", "delegated_from_task_id": f.root}
 		if lineage == "retry" {
 			cols["originator_source"], cols["retry_of_task_id"] = "retry", f.root
 		}
@@ -118,6 +124,66 @@ func newExternalPolicyFixture(t *testing.T, lineage string) externalPolicyFixtur
 	}
 	f.token = mintAgentTaskToken(t, f.agent, id, testUserID)
 	return f
+}
+
+func TestExternalConversationUsesGrantorIdentity(t *testing.T) {
+	fx := testutil.New(testPool, testWorkspaceID, testUserID)
+	grantor := fx.User(t, "Conversation grantor", "policy-grantor@example.test")
+	fx.Member(t, testWorkspaceID, grantor, "member")
+	for _, lineage := range []string{"root", "delegation", "retry", "deleted-parent"} {
+		t.Run(lineage, func(t *testing.T) {
+			f := externalPolicyFixtureForGrantor(t, lineage, grantor)
+			issue := fx.Issue(t, "Grantor permissions")
+			for _, method := range []string{"PUT", "DELETE", "DELETE-keep-replies"} {
+				t.Run(method, func(t *testing.T) {
+					other := fx.Comment(t, issue, "Another member's comment")
+					own := fx.Comment(t, issue, "Agent's own comment", testutil.Cols{"author_type": "agent", "author_id": f.agent, "source_task_id": f.root})
+					verb, suffix, want := method, "", 204
+					if method == "PUT" {
+						want = 200
+					} else if method == "DELETE-keep-replies" {
+						verb, suffix = "DELETE", "/keep-replies"
+					}
+					for _, tc := range []struct {
+						id     string
+						status int
+					}{{other, 403}, {own, want}} {
+						req := testutil.WithHeaders(testutil.JSONRequest(verb, "/api/comments/"+tc.id+suffix, map[string]any{"content": "changed"}), "Authorization", "Bearer "+f.token)
+						testutil.Call(t, testServer.Config.Handler.ServeHTTP, req).Want(tc.status)
+					}
+				})
+			}
+			attachment := fx.Insert(t, "attachment", testutil.Cols{"workspace_id": testWorkspaceID, "issue_id": issue, "filename": "another.txt", "url": "/uploads/another.txt", "size_bytes": 1, "content_type": "text/plain", "uploader_type": "member", "uploader_id": testUserID})
+			req := testutil.WithHeaders(testutil.JSONRequest("DELETE", "/api/attachments/"+attachment, nil), "Authorization", "Bearer "+f.token)
+			testutil.Call(t, testServer.Config.Handler.ServeHTTP, req).Want(403)
+			// Both identity representations agree; first-party token users stay intact.
+			ordinaryTask := fx.Task(t, f.agent, testutil.Cols{"runtime_id": f.runtime, "status": "running", "originator_source": "direct_human", "originator_user_id": grantor, "accountable_user_id": grantor})
+			ordinaryToken := mintAgentTaskToken(t, f.agent, ordinaryTask, testUserID)
+			for _, tc := range []struct{ token, user, agent string }{{f.token, grantor, f.agent}, {ordinaryToken, testUserID, f.agent}, {testToken, testUserID, ""}} {
+				router := chi.NewRouter()
+				router.Use(middleware.Auth(db.New(testPool), nil, nil, nil))
+				router.Get("/api/issues", func(w http.ResponseWriter, r *http.Request) {
+					identity, ok := auth.IdentityFromContext(r.Context())
+					if r.Header.Get("X-User-ID") != tc.user || (tc.agent != "" && (!ok || identity.UserID != tc.user || identity.AgentID != tc.agent)) {
+						t.Errorf("wrong principal: identity=%+v header=%s want=%s", identity, r.Header.Get("X-User-ID"), tc.user)
+					}
+				})
+				req = testutil.WithHeaders(testutil.JSONRequest("GET", "/api/issues", nil), "Authorization", "Bearer "+tc.token, "X-User-ID", testUserID)
+				testutil.Call(t, router.ServeHTTP, req).Want(200)
+			}
+
+		})
+	}
+}
+
+func TestExternalConversationInactiveInstallationAtRouter(t *testing.T) {
+	f := newExternalPolicyFixture(t, "root")
+	if w := policyRequest(t, f.token, "GET", "/api/issues", nil); w.Code != 200 {
+		t.Fatalf("active installation: %d %s", w.Code, w.Body.String())
+	}
+	f.fx.Exec(t, "UPDATE channel_installation SET status='revoked' WHERE id=$1", f.install)
+	req := testutil.WithHeaders(testutil.JSONRequest("GET", "/api/issues", nil), "Authorization", "Bearer "+f.token)
+	testutil.Call(t, testServer.Config.Handler.ServeHTTP, req).Want(403)
 }
 
 func policyRequest(t *testing.T, token, method, path string, body any) *httptest.ResponseRecorder {
@@ -188,7 +254,10 @@ func TestExternalConversationAncestryAndRevocationAtRouter(t *testing.T) {
 }
 
 func TestExternalConversationIssueCollaborationThroughRouter(t *testing.T) {
-	f := newExternalPolicyFixture(t, "deleted-parent")
+	fx := testutil.New(testPool, testWorkspaceID, testUserID)
+	grantor := fx.User(t, "Collaboration grantor", "collaboration-grantor@example.test")
+	fx.Member(t, testWorkspaceID, grantor, "member")
+	f := externalPolicyFixtureForGrantor(t, "deleted-parent", grantor)
 	w := policyRequest(t, f.token, "POST", "/api/issues", map[string]any{"title": "external policy collaboration", "status": "todo"})
 	if w.Code != 201 {
 		t.Fatalf("create issue: %d %s", w.Code, w.Body.String())
@@ -251,13 +320,19 @@ func TestExternalConversationIssueCollaborationThroughRouter(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if w := policyRequest(t, f.token, "DELETE", "/api/attachments/"+attachment.ID, nil); w.Code != 204 {
+		if w := policyRequest(t, testToken, "DELETE", "/api/attachments/"+attachment.ID, nil); w.Code != 204 {
 			t.Errorf("delete fixture attachment: %d", w.Code)
 		}
 	})
 	if w := policyRequest(t, f.token, "GET", "/api/attachments/"+attachment.ID+"/content", nil); w.Code != 200 {
 		t.Fatalf("read attachment: %d", w.Code)
 	}
+	// Uploads retain agent authorship. The existing deletion policy recognizes
+	// member uploaders or admins, so a non-admin grantor cannot delete agent uploads.
+	if w := policyRequest(t, f.token, "DELETE", "/api/attachments/"+attachment.ID, nil); w.Code != 403 {
+		t.Fatalf("agent upload deletion should follow the grantor's role: %d", w.Code)
+	}
+
 }
 
 func TestExternalConversationDelegatedIssueCarriesGrant(t *testing.T) {

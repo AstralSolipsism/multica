@@ -2382,7 +2382,7 @@ func claimResponseAgentIdentityMatches(resp AgentTaskResponse) bool {
 func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, runtimeID, runtimeWorkspaceID string) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, issueSnapshot []byte, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp = taskToResponse(*task, runtimeWorkspaceID)
-	if err := channel.AuthorizeConversationTask(r.Context(), h.Queries, *task, parseUUID(runtimeWorkspaceID)); err != nil {
+	if _, err := channel.AuthorizeConversationTask(r.Context(), h.Queries, *task, parseUUID(runtimeWorkspaceID)); err != nil {
 		if !errors.Is(err, channel.ErrConversationDenied) {
 			return resp, nil, nil, 0, 0, h.rejectClaimSourceLoad(r.Context(), task, err, "conversation", "")
 		}

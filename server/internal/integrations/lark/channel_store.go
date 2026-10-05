@@ -416,5 +416,6 @@ func (s *ChannelStore) AuthorizeConversationTask(ctx context.Context, taskID, wo
 	if err != nil {
 		return err
 	}
-	return channel.AuthorizeConversationTask(ctx, s.Queries, task, workspaceID)
+	_, err = channel.AuthorizeConversationTask(ctx, s.Queries, task, workspaceID)
+	return err
 }

@@ -363,10 +363,10 @@ func TestConversationDuplicateReplicasAndRevocation(t *testing.T) {
 		t.Fatalf("duplicate intake %d/%d", inputs, runs)
 	}
 	task := f.task(t)
-	if err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, task, parseUUID(testWorkspaceID)); err != nil {
+	if _, err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, task, parseUUID(testWorkspaceID)); err != nil {
 		t.Fatal(err)
 	}
-	if err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, task, parseUUID(f.issue)); !errors.Is(err, channel.ErrConversationDenied) {
+	if _, err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, task, parseUUID(f.issue)); !errors.Is(err, channel.ErrConversationDenied) {
 		t.Fatal("cross-workspace grant admitted")
 	}
 	token := f.token(t, task)
@@ -415,7 +415,7 @@ func TestConversationReorderedInputAndFirstPartyContinuation(t *testing.T) {
 	if memberTask.OriginatorSource.String != "direct_human" {
 		t.Fatalf("first-party origin = %s", memberTask.OriginatorSource.String)
 	}
-	if err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, memberTask, parseUUID(testWorkspaceID)); err != nil {
+	if _, err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, memberTask, parseUUID(testWorkspaceID)); err != nil {
 		t.Fatalf("fresh member action borrowed external consent: %v", err)
 	}
 	if n := dbfx.Count(t, `SELECT count(*) FROM channel_task_delivery WHERE task_id=$1`, memberTask.ID); n != 0 {
@@ -523,7 +523,7 @@ func TestConversationPrivateInvocationAndDelegatedRevocation(t *testing.T) {
 		t.Fatal("normal comment tool lost integration lineage")
 	}
 	dbfx.Exec(t, `UPDATE channel_installation SET config=config-'conversation' WHERE id=$1`, f.install)
-	if err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, child, parseUUID(testWorkspaceID)); !errors.Is(err, channel.ErrConversationDenied) {
+	if _, err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, child, parseUUID(testWorkspaceID)); !errors.Is(err, channel.ErrConversationDenied) {
 		t.Fatalf("delegation escaped revocation: %v", err)
 	}
 }

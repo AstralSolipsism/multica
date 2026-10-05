@@ -66,6 +66,20 @@ chat session or accepting a turn:
    Frozen grants and the conversation-root reference continue to govern
    retries, delegation and revocation.
 
+For external task tokens, `channel.AuthorizeConversationTask` returns the
+validated frozen grantor. The fork middleware helper uses that user for both
+`X-User-ID` and `auth.Identity.UserID`; the runtime owner's token-row user is
+not the collaboration principal. Agent/task identity remains the executing
+agent/task. Membership, administrative permissions and temporary-user disable
+checks therefore apply to the grantor. Ordinary member credentials and
+first-party task tokens retain their existing identity behavior.
+
+Comment edits and deletion (including keep-replies) now require the agent's
+own authorship or the grantor's admin role. Attachment deletion uses the
+grantor's role and the existing member-uploader check. That endpoint does not
+recognize agent uploaders, so a non-admin grantor cannot delete even an agent's
+own upload; uploads and downloads still work and retain agent authorship.
+
 Workspace administration does not authorize private-agent invocation. The
 existing ownership/`public_to` rules are retained for the grantor rather than
 replaced with the external speaker's optional account binding.
@@ -96,13 +110,69 @@ webhook credentials, MCP configuration or credential lists. Denials return
 
 An additional real-router regression found that assigning an existing
 member-created issue from an external task lost its ancestry: the new run had a
-NULL root and would receive ordinary task authority. A request-scoped external
-task context now reaches the **shared issue-run attribution function**, which
-classifies that assign/promote as delegation from the actual caller. Existing
-comment-source classification and first-party behavior remain. This second
-shared boundary is necessary to make the allowed operations preserve the
-policy; an HTTP method allowlist alone cannot do that. It adds no per-feature
-denial checks or new persistence model.
+NULL root and would receive ordinary task authority. Request-scoped external
+task context reaches the shared issue-run attribution function for immediate
+assign/promote. Scheduler dispatch additionally classifies persisted child
+event and wakeup receipt source tasks, so a lock timeout cannot turn the same
+external action into a first-party run. Event wakeups created by members use
+the external source's grantor and root when an external action fires them.
+Missing external grant evidence, revoked grants and conflicting roots fail
+closed. Each receipt is classified independently. Rejection consumes only the
+denied receipts without a task and records one timeline outcome per pass, with
+the receipt count. Independent member events, manual triggers and timeout inputs
+remain eligible in that same pass. Valid receipts are grouped by human and
+conversation root; dispatch selects the pending task's group, or the earliest
+group when there is no pending task. Other valid groups wait. Self-acknowledgement,
+loop checks, manual exemptions, claims and trigger evidence use only that group.
+Once/max-fires limits still apply after a firing; rejection does not count as one
+or clear a once condition's fallback poll. A pending-slot conflict commits the
+rejections and retains valid inputs for dispatch or claim joining. The slot check
+follows migration 516's rule-ID thread scope and includes deferred media holds.
+Timeout activities report whether the timeout input was actually assigned to a
+run in that pass. Infrastructure errors still roll back and retry.
+
+A single coalesced receipt cannot be separated into its original events, so an
+internal conflict rejects that entire receipt. Condition evaluation also combines
+all hints from that pass into one `condition.met` receipt: if a human and a denied
+external source both contribute, the whole condition receipt is rejected and its
+fingerprint retained. A causeless poll cannot retry that fact as first-party input.
+This also applies to hints retained while a parent is in backlog. The distinction
+between condition facts and instructions is a separate T10 product decision.
+
+Captured null roots distinguish first-party source history from required
+external roots. Pruned ordinary event or registration tasks retain first-party
+behavior. An agent-created parent's surviving origin is revalidated when a
+human closes its children. A missing parent origin uses the existing attribution
+fallback: absence does not prove that origin was first-party; persisting the
+issue's conversation root remains T10 work. For child hints without a captured
+root, a missing source task fails closed. A parked (`backlog`) parent's system rule retains hints
+but is excluded from scheduler readiness until the parent is resumed.
+
+External event runs can be claimed by a grantor distinct from the wakeup's
+creator only when their persisted trigger evidence names that rule. Claim
+still checks the live conversation grant and the rule creator's invocation
+authority. Composio credentials use the agent owner's connections; originator is
+an audit field, not a credential selector. Overlay construction keeps upstream's
+placement: before locks for ordinary dispatch, only when creating a task for
+system dispatch. The upstream `all`/`stage:N` condition fingerprint transitions
+are unchanged.
+
+Migration `9009_labrastro_wakeup_conversation_provenance` retains a bounded
+external-root summary in the existing receipt payload when events coalesce;
+a later human event cannot erase it. Condition receipts retain known sources
+even when other changes have no source task. Wakeup joining and queued-input
+merging require the same human and conversation root. External quick-create
+origins must be the current task or a persisted execution ancestor, in addition
+to the existing agent/context/workspace checks. Unrelated and sibling origins
+return 403. These checks do not broaden the HTTP allowlist.
+
+Upstream sync must also run
+`TestLabrastroWakeupCaptureMigrationInventory`. It inventories every migration
+that defines `capture_issue_wakeup`. If upstream adds a replacement, add a new
+fork migration that composes the new upstream behavior with conversation-root
+capture, then validate both fresh installation and upgrading a database that
+already applied 9009. Updating the inventory alone is insufficient: fresh and
+upgraded databases otherwise execute the replacements in different orders.
 
 The lookup resolves the real production Chi route, with a separate route
 context. A newly added literal `/api/issues/future-secret` cannot inherit the
@@ -110,8 +180,8 @@ permission of `/api/issues/{id}`. Missing routing context and unknown methods or
 routes fail closed. Existing daemon and plugin credential boundaries remain
 separate; the external task token gains no daemon or plugin credential.
 
-The production route inventory currently contains **443 user-authenticated
-routes: 60 allowed and 383 denied**, plus 69 routes with separate authentication
+The production route inventory currently contains **457 user-authenticated
+routes: 60 allowed and 397 denied**, plus 69 routes with separate authentication
 or public/capability handling. The test calls every denied user route with a
 real, otherwise-valid external task token and requires the central error code.
 It also records method, route, authentication boundary and decision in
@@ -159,6 +229,10 @@ removing 564 means the final implementation does not track consent on historical
 manual wakeup rules. Do not deploy this version with such rules still active.
 Before reopening external conversation grants, an operator must:
 
+- Run agents with external-conversation grants on isolated runtimes. The runtime
+  host's `~/.multica/config.json` stores the owner's CLI token; an agent with
+  local shell access can use that credential to bypass the task-token HTTP
+  allowlist. Grantor identity and HTTP policy are not host isolation.
 - Pause external conversation input and drain/cancel its in-flight work while
   retiring the old rules, including queued tasks and joined wakeup instructions.
 - Disable external-origin or unverified manual wakeups, Autopilots and team

@@ -81,7 +81,10 @@ WITH candidates AS (
  SELECT wakeup_id FROM issue_wakeup_receipt WHERE processed_at IS NULL
 )
 SELECT w.* FROM candidates c JOIN issue_wakeup w ON w.id=c.id
-WHERE sqlc.narg('workspace_ids')::uuid[] IS NULL OR w.workspace_id = ANY(sqlc.narg('workspace_ids')::uuid[])
+WHERE (sqlc.narg('workspace_ids')::uuid[] IS NULL OR w.workspace_id = ANY(sqlc.narg('workspace_ids')::uuid[]))
+-- Parked parents retain their evidence without repeatedly taking a batch slot.
+-- Their pending hints become eligible immediately when the parent is resumed.
+AND NOT (w.system_rule IS NOT NULL AND EXISTS (SELECT 1 FROM issue i WHERE i.id=w.issue_id AND i.status='backlog'))
 ORDER BY w.updated_at,w.id LIMIT 100;
 -- name: ListPendingWakeupReceipts :many
 SELECT * FROM issue_wakeup_receipt WHERE wakeup_id= @wakeup_id AND revision= @revision AND processed_at IS NULL ORDER BY created_at,id LIMIT 100 FOR UPDATE;
@@ -108,6 +111,14 @@ UPDATE issue_wakeup_receipt SET processed_at=now() WHERE wakeup_id= @id AND proc
 UPDATE issue_wakeup SET enabled= @enabled,next_fire_at=sqlc.narg(next_fire_at),last_task_id=COALESCE(sqlc.narg(last_task_id),last_task_id),last_error=sqlc.narg(last_error),updated_at=clock_timestamp() WHERE id= @id;
 -- name: FindPendingWakeupTask :one
 SELECT * FROM agent_task_queue WHERE context->>'wakeup_id'= @wakeup_id::text AND status IN ('queued','dispatched') ORDER BY created_at LIMIT 1 FOR UPDATE;
+
+-- name: WakeupPendingSlotOccupied :one
+-- Mirror idx_one_pending_task_per_issue_agent_thread, including media holds.
+-- Migration 516 sets a wakeup run's comment_thread_id to its rule ID.
+SELECT EXISTS(SELECT 1 FROM agent_task_queue
+ WHERE issue_id = @issue_id AND agent_id = @agent_id AND comment_thread_id = @wakeup_id
+ AND (status IN ('queued','dispatched')
+      OR (status='deferred' AND context->>'channel_issue_media_pending'='true')));
 
 -- name: CreateWakeupTask :one
 -- Fenced against workspace teardown: lock_task_owner_rows (migration 284)
@@ -234,7 +245,9 @@ ORDER BY w.updated_at DESC LIMIT 200;
 -- person. A rule that fires meanwhile keeps its inputs for that run instead
 -- of queuing another.
 SELECT id FROM agent_task_queue WHERE issue_id= @issue_id AND agent_id= @agent_id AND status='queued'
- AND originator_user_id= @originator_user_id::uuid ORDER BY created_at,id LIMIT 1;
+ AND originator_user_id= @originator_user_id::uuid
+ AND conversation_root_task_id IS NOT DISTINCT FROM sqlc.narg(conversation_root_task_id)::uuid
+ ORDER BY created_at,id LIMIT 1;
 
 -- name: ListWaitingWakeups :many
 -- Rules on the issue with inputs a run of this agent can take along: the

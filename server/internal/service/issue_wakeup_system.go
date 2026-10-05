@@ -220,9 +220,10 @@ func (s *IssueWakeupService) processChildEvents(ctx context.Context, parentID pg
 		changes = append(changes, kind)
 	}
 	hint := map[string]any{"changes": changes}
-	if allSourced && len(sources) > 0 {
+	if len(sources) > 0 {
 		hint["source_task_ids"] = sources
 	}
+	hint["sources_incomplete"] = !allSourced
 	payload, _ := json.Marshal(hint)
 	key := "children:" + util.UUIDToString(events[len(events)-1].ID)
 	for _, w := range rules {
@@ -388,8 +389,7 @@ func childDoneFacts(receipts []db.IssueWakeupReceipt) map[string]any {
 func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWakeup) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	// Resolve the target and optional credentials before taking locks, then
-	// confirm the target under them.
+	// Resolve the target before taking locks, then confirm it under them.
 	snapshot, err := s.Tasks.Queries.GetIssue(ctx, prev.IssueID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
@@ -398,6 +398,7 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	if err != nil {
 		return err
 	}
+
 	headSHA := s.Tasks.ResolveIssueReviewSHAParam(ctx, prev.IssueID)
 	tx, err := s.Tasks.TxStarter.Begin(ctx)
 	if err != nil {
@@ -460,9 +461,7 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	// A parked parent holds: nothing fires and nothing is marked as seen, so
 	// a stage that closed meanwhile wakes the assignee once it leaves backlog.
 	if issuestatus.Effective(ctx, q, issue.WorkspaceID, issue.Status) == "backlog" {
-		if _, _, err = consumeConditionHints(ctx, tx, w.ID); err != nil {
-			return err
-		}
+		// Keep the persisted causes until this parent can dispatch.
 		return tx.Commit(ctx)
 	}
 	var now time.Time
@@ -478,6 +477,7 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 		return err
 	}
 	state := w.ConditionState
+
 	switch {
 	case met && fingerprint != state:
 		if err = recordConditionMet(ctx, q, w, observed, causes, now); err != nil {
@@ -542,6 +542,24 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	if len(receipts) == 0 {
 		return commit()
 	}
+	agent := current.Agent
+	var task db.AgentTaskQueue
+	var authority wakeupAuthority
+	taskExists := false
+	if agent.ID.Valid {
+		task, err = q.FindPendingWakeupTask(ctx, util.UUIDToString(w.ID))
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		taskExists = err == nil
+		authority, receipts, err = s.selectWakeupReceipts(ctx, q, issue, agent, w, receipts, task, note)
+		if err != nil {
+			return err
+		}
+		if len(receipts) == 0 || (taskExists && task.Status == "dispatched") {
+			return commit()
+		}
+	}
 	ids := receiptIDs(receipts)
 	facts := childDoneFacts(receipts)
 	if current.Type != "none" {
@@ -572,22 +590,14 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 		}
 		return commit()
 	}
-	agent := current.Agent
-	task, err := q.FindPendingWakeupTask(ctx, util.UUIDToString(w.ID))
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return err
-	}
-	taskExists := err == nil
-	if taskExists && task.Status == "dispatched" {
-		// A claimed prompt is immutable; the new facts wait for the next run.
-		return tx.Commit(ctx)
-	}
+
 	instruction := w
 	if ws, e := q.GetWorkspace(ctx, issue.WorkspaceID); e == nil {
 		instruction.Instruction = ChildDoneInstruction(w.Instruction, ws.Settings)
 	} else {
 		instruction.Instruction = ChildDoneInstruction(w.Instruction, nil)
 	}
+
 	noteText, evidence := mergeWakeupEvidence(instruction, task, receipts)
 	if taskExists {
 		task, err = q.ReplaceWakeupEvidence(ctx, db.ReplaceWakeupEvidenceParams{ID: task.ID, HandoffNote: pgtype.Text{String: noteText, Valid: true}, WakeupEvidence: evidence})
@@ -616,11 +626,8 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 		}
 		return commit()
 	}
-	attr, err := s.childDoneRunAs(ctx, issue, agent)
-	if err != nil {
-		return err
-	}
-	waiting, err := hasWaitingRun(ctx, q, issue.ID, agent.ID, attr.UserID)
+	attr := authority.Result
+	waiting, err := hasWaitingRun(ctx, q, issue.ID, agent.ID, authority)
 	if err != nil {
 		return err
 	}
@@ -645,6 +652,13 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	}
 	if err = guardIssueNotInTriage(ctx, q, issue.ID, OriginDerived); err != nil {
 		return err
+	}
+	occupied, err := q.WakeupPendingSlotOccupied(ctx, db.WakeupPendingSlotOccupiedParams{IssueID: issue.ID, AgentID: agent.ID, WakeupID: w.ID})
+	if err != nil {
+		return err
+	}
+	if occupied {
+		return commit()
 	}
 	overlay := s.Tasks.buildRuntimeMCPOverlay(ctx, attr.UserID, agent)
 	source, delegatedFrom, _, _ := attributionCreateParams(attr)

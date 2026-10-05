@@ -1,11 +1,28 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+// External requests execute as the frozen grantor, never the runtime owner
+// stored on the token. Ordinary task credentials retain their original user.
+func conversationTaskUser(ctx context.Context, q *db.Queries, task db.AgentTaskQueue, workspaceID pgtype.UUID, tokenUser string) (string, error) {
+	subject, err := channel.AuthorizeConversationTask(ctx, q, task, workspaceID)
+	if err != nil {
+		return "", err
+	}
+	if subject.UserID.Valid {
+		return uuidToString(subject.UserID), nil
+	}
+	return tokenUser, nil
+}
 
 // External conversations may use issue collaboration, not the runtime owner's
 // account or durable configuration. Match the PRODUCTION route template, never

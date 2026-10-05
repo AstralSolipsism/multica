@@ -685,20 +685,28 @@ func (q *Queries) FindPendingWakeupTask(ctx context.Context, wakeupID string) (A
 
 const findWaitingIssueRun = `-- name: FindWaitingIssueRun :one
 SELECT id FROM agent_task_queue WHERE issue_id= $1 AND agent_id= $2 AND status='queued'
- AND originator_user_id= $3::uuid ORDER BY created_at,id LIMIT 1
+ AND originator_user_id= $3::uuid
+ AND conversation_root_task_id IS NOT DISTINCT FROM $4::uuid
+ ORDER BY created_at,id LIMIT 1
 `
 
 type FindWaitingIssueRunParams struct {
-	IssueID          pgtype.UUID `json:"issue_id"`
-	AgentID          pgtype.UUID `json:"agent_id"`
-	OriginatorUserID pgtype.UUID `json:"originator_user_id"`
+	IssueID                pgtype.UUID `json:"issue_id"`
+	AgentID                pgtype.UUID `json:"agent_id"`
+	OriginatorUserID       pgtype.UUID `json:"originator_user_id"`
+	ConversationRootTaskID pgtype.UUID `json:"conversation_root_task_id"`
 }
 
 // A run of the agent on the issue that has not been claimed and runs as this
 // person. A rule that fires meanwhile keeps its inputs for that run instead
 // of queuing another.
 func (q *Queries) FindWaitingIssueRun(ctx context.Context, arg FindWaitingIssueRunParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, findWaitingIssueRun, arg.IssueID, arg.AgentID, arg.OriginatorUserID)
+	row := q.db.QueryRow(ctx, findWaitingIssueRun,
+		arg.IssueID,
+		arg.AgentID,
+		arg.OriginatorUserID,
+		arg.ConversationRootTaskID,
+	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -992,10 +1000,13 @@ WITH candidates AS (
  SELECT wakeup_id FROM issue_wakeup_receipt WHERE processed_at IS NULL
 )
 SELECT w.id, w.workspace_id, w.issue_id, w.agent_id, w.created_by, w.source_task_id, w.parent_comment_id, w.instruction, w.kind, w.mode, w.event_types, w.filter_agent_id, w.filter_task_id, w.interval_seconds, w.cron_expression, w.timezone, w.next_fire_at, w.enabled, w.disabled_at, w.revision, w.last_task_id, w.last_error, w.created_at, w.updated_at, w.filter_actor_type, w.filter_actor_id, w.expires_at, w.expiry_seconds, w.on_timeout, w.timed_out_at, w.system_rule, w.customized_at, w.condition, w.condition_state, w.max_fires, w.fire_count, w.paused_reason FROM candidates c JOIN issue_wakeup w ON w.id=c.id
-WHERE $1::uuid[] IS NULL OR w.workspace_id = ANY($1::uuid[])
+WHERE ($1::uuid[] IS NULL OR w.workspace_id = ANY($1::uuid[]))
+AND NOT (w.system_rule IS NOT NULL AND EXISTS (SELECT 1 FROM issue i WHERE i.id=w.issue_id AND i.status='backlog'))
 ORDER BY w.updated_at,w.id LIMIT 100
 `
 
+// Parked parents retain their evidence without repeatedly taking a batch slot.
+// Their pending hints become eligible immediately when the parent is resumed.
 func (q *Queries) ListReadyWakeups(ctx context.Context, workspaceIds []pgtype.UUID) ([]IssueWakeup, error) {
 	rows, err := q.db.Query(ctx, listReadyWakeups, workspaceIds)
 	if err != nil {
@@ -1836,4 +1847,26 @@ func (q *Queries) TryLockIssueWakeup(ctx context.Context, id pgtype.UUID) (Issue
 		&i.PausedReason,
 	)
 	return i, err
+}
+
+const wakeupPendingSlotOccupied = `-- name: WakeupPendingSlotOccupied :one
+SELECT EXISTS(SELECT 1 FROM agent_task_queue
+ WHERE issue_id = $1 AND agent_id = $2 AND comment_thread_id = $3
+ AND (status IN ('queued','dispatched')
+      OR (status='deferred' AND context->>'channel_issue_media_pending'='true')))
+`
+
+type WakeupPendingSlotOccupiedParams struct {
+	IssueID  pgtype.UUID `json:"issue_id"`
+	AgentID  pgtype.UUID `json:"agent_id"`
+	WakeupID pgtype.UUID `json:"wakeup_id"`
+}
+
+// Mirror idx_one_pending_task_per_issue_agent_thread, including media holds.
+// Migration 516 sets a wakeup run's comment_thread_id to its rule ID.
+func (q *Queries) WakeupPendingSlotOccupied(ctx context.Context, arg WakeupPendingSlotOccupiedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, wakeupPendingSlotOccupied, arg.IssueID, arg.AgentID, arg.WakeupID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
