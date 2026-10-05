@@ -14,14 +14,14 @@ import (
 // External requests execute as the frozen grantor, never the runtime owner
 // stored on the token. Ordinary task credentials retain their original user.
 func conversationTaskUser(ctx context.Context, q *db.Queries, task db.AgentTaskQueue, workspaceID pgtype.UUID, tokenUser string) (string, error) {
+	if !channel.IsConversationTask(task) {
+		return tokenUser, nil
+	}
 	subject, err := channel.AuthorizeConversationTask(ctx, q, task, workspaceID)
 	if err != nil {
 		return "", err
 	}
-	if subject.UserID.Valid {
-		return uuidToString(subject.UserID), nil
-	}
-	return tokenUser, nil
+	return uuidToString(subject.UserID), nil
 }
 
 // External conversations may use issue collaboration, not the runtime owner's

@@ -14,6 +14,12 @@ import (
 
 const ConversationOrigin = "channel_integration"
 
+// IsConversationTask includes delegated/retried descendants and malformed roots.
+// A missing root must never turn an external task into a first-party task.
+func IsConversationTask(task db.AgentTaskQueue) bool {
+	return task.ConversationRootTaskID.Valid || task.OriginatorSource.String == ConversationOrigin
+}
+
 var ErrConversationDenied = errors.New("channel conversation authorization is unavailable")
 
 // ConversationGrant is explicit consent to let these external conversations
@@ -107,11 +113,11 @@ type ConversationSubject struct {
 // Ordinary task history may be deleted without changing its copied human
 // authority; an external task still checks its one frozen grant and live consent.
 func AuthorizeConversationTask(ctx context.Context, q *db.Queries, task db.AgentTaskQueue, workspaceID pgtype.UUID) (ConversationSubject, error) {
-	if !task.ConversationRootTaskID.Valid {
-		if task.OriginatorSource.String == ConversationOrigin {
-			return ConversationSubject{}, ErrConversationDenied
-		}
+	if !IsConversationTask(task) {
 		return ConversationSubject{}, nil
+	}
+	if !task.ConversationRootTaskID.Valid {
+		return ConversationSubject{}, ErrConversationDenied
 	}
 	executingAgent, originator := task.AgentID, task.OriginatorUserID
 	root := task

@@ -2411,7 +2411,8 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// Agent-trigger plugin hooks, as tools. A failure here degrades to no
 	// tools rather than failing the claim: a plugin that cannot be listed must
 	// not stop an agent from working on the issue.
-	if h.PluginService != nil && h.pluginsV1Enabled(r.Context()) {
+	externalConversation := channel.IsConversationTask(*task)
+	if !externalConversation && h.PluginService != nil && h.pluginsV1Enabled(r.Context()) {
 		if tools, toolErr := h.PluginService.AgentHookTools(r.Context(), parseUUID(runtimeWorkspaceID)); toolErr != nil {
 			slog.Warn("plugins: could not list agent hook tools", "workspace_id", runtimeWorkspaceID, "error", toolErr)
 		} else {
@@ -2432,7 +2433,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// comment input. Comment tasks replace this with the ids actually embedded
 	// in the capability-aware response built below.
 	deliveredCommentIDs = []pgtype.UUID{}
-	composioMCPEnabled := h.composioMCPAppsEnabled(r.Context())
+	composioMCPEnabled := !externalConversation && h.composioMCPAppsEnabled(r.Context())
 	if composioMCPEnabled {
 		resp.ConnectedApps = parseRuntimeConnectedAppsForClaim(task.RuntimeConnectedApps, task.ID)
 	}
@@ -2593,6 +2594,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// place a claimed task's agent payload is assembled.
 	if agent.SystemKey.String == service.MikaSystemKey {
 		resp.Agent.Instructions = service.ComposeMikaInstructions(agent.Name, agent.Instructions)
+	}
+	if externalConversation {
+		resp.Agent.Instructions += "\n\n" + conversationInstructions
 	}
 	if useSkillRefs {
 		_, skillRefs, err := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID, agent.SystemKey.String, legacySkillRedirects)
@@ -3128,9 +3132,6 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// snapshot and remain private to Multica after /new rotates the route.
 		delivery, deliveryErr := h.Queries.GetChannelTaskDelivery(r.Context(), task.ID)
 		if deliveryErr == nil {
-			if task.OriginatorSource.String == channel.ConversationOrigin {
-				resp.Agent.Instructions += "\n\n" + conversationInstructions
-			}
 			resp.ChatChannelType = delivery.ChannelType
 			resp.ChatType = delivery.ChatType
 			resp.ChatChannelDeliversFiles = h.channelDeliversFiles(delivery.ChannelType)
@@ -5867,6 +5868,13 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 	// Mismatch stays a 404 rather than a 403: a task in another workspace must
 	// be indistinguishable from one that does not exist.
 	if wsID == "" || wsID != middleware.WorkspaceIDFromContext(r.Context()) {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	// A workspace grant permits issue collaboration, not unrelated transcripts.
+	// Keep the same 404 as a missing task so other conversations stay private.
+	if caller, external := channel.ConversationTaskFromContext(r.Context()); external &&
+		(!caller.ConversationRootTaskID.Valid || task.ConversationRootTaskID != caller.ConversationRootTaskID) {
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}

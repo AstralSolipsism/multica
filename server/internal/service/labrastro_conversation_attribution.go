@@ -127,7 +127,7 @@ func conversationAttributionFromSources(ctx context.Context, q *db.Queries, work
 		if err != nil {
 			return result, false, err
 		}
-		if !task.ConversationRootTaskID.Valid && task.OriginatorSource.String != channel.ConversationOrigin {
+		if !channel.IsConversationTask(task) {
 			continue
 		}
 		// Validate the target agent's invocation rights under the same grant.

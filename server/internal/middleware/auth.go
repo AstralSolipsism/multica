@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -127,13 +128,15 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				}
 				if taskErr != nil {
 					status := http.StatusServiceUnavailable
-					if errors.Is(taskErr, channel.ErrConversationDenied) {
+					if errors.Is(taskErr, pgx.ErrNoRows) {
+						status = http.StatusUnauthorized
+					} else if errors.Is(taskErr, channel.ErrConversationDenied) {
 						status = http.StatusForbidden
 					}
 					http.Error(w, `{"error":"task authorization unavailable"}`, status)
 					return
 				}
-				if (task.ConversationRootTaskID.Valid || task.OriginatorSource.String == channel.ConversationOrigin) && !allowExternalConversationRequest(r) {
+				if channel.IsConversationTask(task) && !allowExternalConversationRequest(r) {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusForbidden)
 					w.Write([]byte(`{"error":"external conversations may only use issue collaboration endpoints","code":"external_conversation_forbidden"}`))

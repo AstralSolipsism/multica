@@ -14,6 +14,10 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+type ReactionRequest struct {
+	Emoji string `json:"emoji"`
+}
+
 type ReactionResponse struct {
 	ID              string `json:"id"`
 	CommentID       string `json:"comment_id"`
@@ -78,9 +82,7 @@ func (h *Handler) AddReaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Emoji string `json:"emoji"`
-	}
+	var req ReactionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -168,9 +170,7 @@ func (h *Handler) RemoveReaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Emoji string `json:"emoji"`
-	}
+	var req ReactionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
