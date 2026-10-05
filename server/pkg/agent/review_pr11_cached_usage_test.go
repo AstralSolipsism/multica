@@ -26,12 +26,12 @@ echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"cache-thr
 `)
 	result, _ := executeFakeCodexCollectingMessagesWithConfig(t, fakePath, Config{
 		Logger: slog.Default(),
-		Env: map[string]string{"CODEX_HOME": t.TempDir()},
+		Env:    map[string]string{"CODEX_HOME": t.TempDir()},
 	}, ExecOptions{
-		Model: "test-model",
-		Cwd: t.TempDir(),
-		Timeout: 5*time.Second,
-		SemanticInactivityTimeout: 5*time.Second,
+		Model:                     "test-model",
+		Cwd:                       t.TempDir(),
+		Timeout:                   5 * time.Second,
+		SemanticInactivityTimeout: 5 * time.Second,
 	}, 10*time.Second)
 	if result.Status != "completed" {
 		t.Fatalf("expected completed fixture, got %+v", result)
