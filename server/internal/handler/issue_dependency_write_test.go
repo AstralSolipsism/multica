@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestDependencyStructureWriteAllowsUnrelatedOrdinaryWrites(t *testing.T) {
@@ -173,6 +175,18 @@ func TestDependencyOrdinaryWritesPreserveConcurrentNullableChanges(t *testing.T)
 			child := dependencyIssue(t, fx, "Child", testutil.Cols{"parent_issue_id": oldParent})
 			project := fx.Project(t, "Concurrent project")
 			writer := *h
+			// Capture only this writer's events, not the interleaved request's.
+			writer.Bus = events.New()
+			var payloads []map[string]any
+			writer.Bus.Subscribe(protocol.EventIssueUpdated, func(e events.Event) {
+				payload, ok := e.Payload.(map[string]any)
+				if !ok {
+					return
+				}
+				if issue, ok := payload["issue"].(IssueResponse); ok && issue.ID == child {
+					payloads = append(payloads, payload)
+				}
+			})
 			interleaved := false
 			writer.TxStarter = dependencyWriteTestStarter{inner: h.TxStarter, beforeBegin: func(ctx context.Context) {
 				if interleaved {
@@ -182,12 +196,16 @@ func TestDependencyOrdinaryWritesPreserveConcurrentNullableChanges(t *testing.T)
 				// The first request already loaded/pre-filled its nullable fields.
 				body := map[string]any{"parent_issue_id": newParent, "project_id": project, "stage": 2,
 					"assignee_type": "member", "assignee_id": fx.UserID, "start_date": "2026-10-01", "due_date": "2026-10-10"}
+				if batch {
+					body["status"] = "in_progress"
+				}
 				testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, child, body, "jwt")).Want(http.StatusOK)
 				// Restoring the old parent would now create an ancestor dependency.
 				replaceDependencies(t, h, fx, oldParent, []string{child}, "jwt", http.StatusOK)
 			}}
 			updates := map[string]any{"priority": "high", "due_date": nil}
 			if batch {
+				updates["status"] = "in_progress"
 				var result struct{ Updated int }
 				testutil.Call(t, writer.BatchUpdateIssues, dependencyRequest(fx, http.MethodPost, "", map[string]any{"issue_ids": []string{child}, "updates": updates}, "jwt")).Want(http.StatusOK).JSON(&result)
 				if result.Updated != 1 {
@@ -207,8 +225,61 @@ func TestDependencyOrdinaryWritesPreserveConcurrentNullableChanges(t *testing.T)
 			if row.Priority != "high" || row.DueDate.Valid {
 				t.Fatal("explicit priority/deadline patch was not applied")
 			}
+			if len(payloads) != 1 {
+				t.Fatalf("got %d writer issue:updated events, want 1", len(payloads))
+			}
+			event := payloads[0]
+			if batch {
+				if row.Status != "in_progress" || event["status_changed"] != false {
+					t.Fatalf("batch repeated the concurrent status change: status=%s status_changed=%v", row.Status, event["status_changed"])
+				}
+			} else {
+				if event["due_date_changed"] != true || event["start_date_changed"] != false {
+					t.Errorf("incorrect date changes: due_date_changed=%v start_date_changed=%v", event["due_date_changed"], event["start_date_changed"])
+				}
+				for field, want := range map[string]string{"prev_due_date": "2026-10-10", "prev_start_date": "2026-10-01"} {
+					if got, ok := event[field].(*string); !ok || got == nil || *got != want {
+						t.Errorf("%s = %v, want %s from the locked row", field, event[field], want)
+					}
+				}
+			}
 			dependencies(t, h, fx, child) // The graph remains valid after the race.
 		})
+	}
+}
+
+func TestDependencyOrdinaryWriteRejectsConcurrentRevisionChange(t *testing.T) {
+	h, fx := dependencyFixture(t)
+	id := dependencyIssue(t, fx, "Original title")
+	writer := *h
+	writer.Bus = events.New()
+	eventCount := 0
+	writer.Bus.Subscribe(protocol.EventIssueUpdated, func(events.Event) { eventCount++ })
+	interleaved := false
+	writer.TxStarter = dependencyWriteTestStarter{inner: h.TxStarter, beforeBegin: func(ctx context.Context) {
+		if interleaved {
+			return
+		}
+		interleaved = true
+		testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, id, map[string]any{"priority": "high"}, "jwt")).Want(http.StatusOK)
+	}}
+	var conflict struct {
+		Code             string `json:"code"`
+		ExpectedRevision int64  `json:"expected_revision"`
+		ActualRevision   int64  `json:"actual_revision"`
+	}
+	testutil.Call(t, writer.UpdateIssue, dependencyRequest(fx, http.MethodPut, id, map[string]any{
+		"title": "Rejected stale title", "expected_revision": 1,
+	}, "jwt")).Want(http.StatusConflict).JSON(&conflict)
+	if !interleaved || conflict.Code != "revision_conflict" || conflict.ExpectedRevision != 1 || conflict.ActualRevision != 2 {
+		t.Fatalf("unexpected concurrent revision conflict: %+v (interleaved=%v)", conflict, interleaved)
+	}
+	row, err := h.Queries.GetIssue(context.Background(), parseUUID(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Title != "Original title" || row.Priority != "high" || row.Revision != 2 || eventCount != 0 {
+		t.Fatalf("rejected write changed the issue or emitted an event: title=%q priority=%s revision=%d events=%d", row.Title, row.Priority, row.Revision, eventCount)
 	}
 }
 

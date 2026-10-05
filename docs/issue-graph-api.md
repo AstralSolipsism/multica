@@ -220,8 +220,10 @@ the structural-only version format invalidates previously issued edit tokens
 once, requiring clients to refresh before retrying.
 
 Structural edits serialize with the workspace's transaction-scoped advisory
-lock, without locking every issue row. Ordinary content edits and creation
-without `blocked_by` do not take that lock or load a dependency snapshot.
+lock, without locking every issue row. Ordinary content edits and ordinary
+(non-`with-dependencies`) creation without `blocked_by` do not take that lock or
+load a dependency snapshot. `POST /api/issues/with-dependencies` defaults omitted
+`blocked_by` to `[]`, so it still takes the lock and loads a snapshot.
 Deletion keeps the structure lock while detaching surviving children and
 removing incident edges, but does not load or validate the full graph. Only
 explicit relation edits and reparenting write dependency audit entries; deletion

@@ -190,7 +190,7 @@ func (h *Handler) resolveIssueStatusKey(w http.ResponseWriter, r *http.Request, 
 
 // resolveIssueStatusKeyKind is resolveIssueStatusKey plus whether the target is
 // a CUSTOM status. Callers use that to decide whether the write needs the
-// shared catalog lock — see runWithIssueStatusGuard.
+// shared catalog lock — see assertIssueStatusStillActive.
 func (h *Handler) resolveIssueStatusKeyKind(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, status string) (string, bool, bool) {
 	entry, err := issuestatus.Resolve(r.Context(), h.Queries, workspaceID, status)
 	if err != nil {
@@ -254,31 +254,6 @@ func assertIssueStatusStillActive(ctx context.Context, qtx *db.Queries, workspac
 		return err
 	}
 	return nil
-}
-
-// runWithIssueStatusGuard runs an issue write that lands on a custom status
-// inside a transaction that re-verifies the status under the shared catalog
-// lock (see assertIssueStatusStillActive). Request writes also carry trusted
-// wakeup actor identity in transaction-local settings, including built-in targets.
-func (h *Handler) runWithIssueStatusGuard(ctx context.Context, workspaceID pgtype.UUID, statusKey string, fn func(q *db.Queries) error) error {
-	_, hasActor := ctx.Value(wakeupActorKey{}).(wakeupActor)
-	if !hasActor && (statusKey == "" || issuestatus.IsBuiltIn(statusKey)) {
-		return fn(h.Queries)
-	}
-	tx, err := h.beginWakeupWrite(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	qtx := h.Queries.WithTx(tx)
-	if err := assertIssueStatusStillActive(ctx, qtx, workspaceID, statusKey); err != nil {
-		return err
-	}
-	if err := fn(qtx); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
 }
 
 // updateIssueWithStatusGuard refreshes untouched nullable fields under the issue
@@ -3673,8 +3648,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 			return db.Issue{}, db.Issue{}, false, err
 		}
 	}
-	// This path opens its own transaction, so it carries the archive-race guard
-	// itself rather than going through runWithIssueStatusGuard. The catalog lock
+	// Recheck the target custom status in this transaction. The catalog lock
 	// must precede both attachment and issue row locks everywhere. (MUL-6243)
 	if err := assertIssueStatusStillActive(ctx, qtx, workspaceID, statusKey); err != nil {
 		return db.Issue{}, db.Issue{}, false, err

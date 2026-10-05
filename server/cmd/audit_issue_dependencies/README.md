@@ -16,11 +16,12 @@ all issues and relations, including dangling or cross-workspace endpoints.
 It does not infer that an empty development database represents production.
 
 Unverified data blocks that workspace's dependency API, not ordinary assignment,
-content edits, creation without `blocked_by`, or deletion. Reparenting checks the
-affected parent/canonical dependency component; unknown `blocks` and `related`
-rows stay inert and remain available to this audit. Invalid canonical data in
-that component requires repair before reparenting. Dependencies are informational
-and never gate execution. A successful ordinary operation is not a clean audit.
+content edits, ordinary (non-`with-dependencies`) creation without `blocked_by`,
+or deletion. Reparenting checks the affected parent/canonical dependency
+component; unknown `blocks` and `related` rows stay inert and remain available
+to this audit. Invalid canonical data in that component requires repair before
+reparenting. Dependencies are informational and never gate execution. A successful
+ordinary operation is not a clean audit.
 
 ## Normalization and migration
 
@@ -89,12 +90,23 @@ until those duplicates are normalized again. Review the recovery audit, repair
 or normalize as needed (using a new backup filename), then run the index's up SQL
 explicitly: dropping it with the down SQL does not reset the migration ledger.
 
+If a previous index build failed or was interrupted, first run the down SQL
+again to remove the INVALID leftover index, then retry the up SQL. The manual
+path does not run the migration runner's cleanup hook; `IF NOT EXISTS` can
+otherwise report success while leaving the index unusable.
+
 ```sh
+# Required before retrying a failed or interrupted index build:
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/migrations/466_issue_dependency_blocked_by_index.down.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/migrations/466_issue_dependency_blocked_by_index.up.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT indisvalid FROM pg_index WHERE indexrelid = 'idx_issue_dependency_blocked_by'::regclass;"
 go -C server run ./cmd/audit_issue_dependencies > dependency-final-audit.json
 ```
 
-Restart the services only after the index build and final audit succeed.
+The validity query must return `t`. A missing index or `f` means recovery is
+incomplete, even if the up SQL exited successfully; the audit checks rows, not
+index validity. Restart the services only after the index is valid and the final
+audit succeeds.
 
 The dependency down migrations remove the added indexes but deliberately retain
 `issue_dependency_audit` and all historical relation rows. Reapplying 463 is
