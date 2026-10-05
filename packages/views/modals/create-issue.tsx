@@ -81,6 +81,7 @@ import { useAttachLabelToIssue } from "@multica/core/labels";
 import { propertyListOptions } from "@multica/core/properties";
 import {
   ApiError,
+  errorCode,
   DuplicateIssueErrorBodySchema,
   type DuplicateIssueErrorBody,
   parseWithFallback,
@@ -765,9 +766,11 @@ export function ManualCreatePanel({
         }
       }
       toast.error(
-        err instanceof Error && err.message
-          ? err.message
-          : t(($) => $.create_issue.toast_failed),
+        errorCode(err) === "response_unreadable"
+          ? t(($) => $.create_issue.toast_failed)
+          : err instanceof Error && err.message
+            ? err.message
+            : t(($) => $.create_issue.toast_failed),
       );
       return false;
     }

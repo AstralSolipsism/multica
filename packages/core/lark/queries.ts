@@ -1,5 +1,5 @@
 import { infiniteQueryOptions, queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "../api";
+import { api, ApiError, errorCode } from "../api";
 import type { ListLarkInstallationsResponse } from "../types";
 
 /** Query key namespace for everything Lark-installation-related. Realtime
@@ -85,9 +85,13 @@ export const LARK_MESSAGE_ANCHORS_PAGE_SIZE = 20;
 
 /** Discovery errors are mostly stable answers for this caller (403/404/409)
  * — retrying them just delays the picker's honest state. Only genuine
- * transient failures (network, provider rate limit, 5xx) earn a retry. */
+ * transient failures (network, unreadable response, provider rate limit, 5xx)
+ * earn a retry. */
 function isTransientDiscoveryError(err: unknown): boolean {
   if (!(err instanceof ApiError)) return true;
+  // An unreadable response does not establish a stable permission/availability
+  // answer. Discovery is read-only, so a bounded retry can recover a valid page.
+  if (errorCode(err) === "response_unreadable") return true;
   return err.status === 429 || err.status >= 500;
 }
 

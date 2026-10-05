@@ -101,6 +101,7 @@ beforeEach(() => {
   mutation.mutateAsync.mockReset().mockResolvedValue({});
   mutation.isPending = false;
   mutation.isError = false;
+  mutation.error = new Error("failed");
   capsMock.mockReset().mockResolvedValue(CAPS);
   chatsMock.mockReset().mockResolvedValue({
     items: [
@@ -134,6 +135,15 @@ beforeEach(() => {
     chats: [{ chat_id: "oc_dm_alice", chat_type: "p2p" }],
   });
   installationsMock.mockReset().mockResolvedValue({ installations: [installation], configured: true, conversation_supported: true });
+});
+
+it("localizes an unconfirmed save without exposing the core diagnostic", async () => {
+  mutation.isError = true;
+  mutation.error = new ApiError("Unconfirmed response from setLarkConversation", 0, "", { code: "response_unconfirmed" });
+  renderWithI18n(view(false), { locale: "zh-Hans" });
+  await userEvent.setup().click(await screen.findByText("与智能体交流"));
+  expect(screen.getByRole("alert")).toHaveTextContent("无法确认会话授权是否已保存。请刷新并检查当前配置。");
+  expect(screen.queryByText(/Unconfirmed response/)).not.toBeInTheDocument();
 });
 
 afterEach(() => {

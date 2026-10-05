@@ -12,6 +12,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
+import { ApiError } from "@multica/core/api";
 import enCommon from "../locales/en/common.json";
 import enModals from "../locales/en/modals.json";
 import enEditor from "../locales/en/editor.json";
@@ -291,32 +292,12 @@ vi.mock("@multica/core/properties", async (importOriginal) => {
 });
 
 
-// Hoisted ApiError class so both the vi.mock factory and the tests below
-// can construct/instanceof-check the same identity. vi.mock is hoisted, so
-// a normal `class` declaration above it would still be in the TDZ at mock
-// evaluation time.
-const { ApiError } = vi.hoisted(() => {
-  class ApiErrorImpl extends Error {
-    readonly status: number;
-    readonly statusText: string;
-    readonly body?: unknown;
-    constructor(message: string, status: number, statusText: string, body?: unknown) {
-      super(message);
-      this.name = "ApiError";
-      this.status = status;
-      this.statusText = statusText;
-      this.body = body;
-    }
-  }
-  return { ApiError: ApiErrorImpl };
-});
-
 vi.mock("@multica/core/api", async () => {
-  // Pull real `parseWithFallback` + `DuplicateIssueErrorBodySchema` from the
-  // schema modules so the drift-fallback branch in create-issue.tsx runs the
-  // actual validation logic (not a stub). Only `ApiError` is local — the
-  // component imports it from this module and the cross-realm `instanceof`
-  // check requires a single class identity.
+  // Keep parsing and error-code extraction real, with one ApiError identity
+  // shared by the component, errorCode and the test fixtures.
+  const { ApiError, errorCode } = await vi.importActual<typeof import("@multica/core/api/client")>(
+    "@multica/core/api/client",
+  );
   const { parseWithFallback } = await vi.importActual<typeof import("@multica/core/api/schema")>(
     "@multica/core/api/schema",
   );
@@ -331,6 +312,7 @@ vi.mock("@multica/core/api", async () => {
       uploadFile: mockApiUploadFile,
     },
     ApiError,
+    errorCode,
     parseWithFallback,
     DuplicateIssueErrorBodySchema,
   };
@@ -726,6 +708,28 @@ describe("CreateIssueModal", () => {
     expect(mockCreateIssue.mock.calls[0]?.[0]).toMatchObject({ blockedBy: ["prerequisite-a", "prerequisite-z"] });
     expect(mockCreateIssue.mock.calls[0]?.[0]).not.toHaveProperty("dependencyOverride");
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("localizes an unreadable dependency create response and preserves the draft", async () => {
+    mockDraftStore.draft.manual.blockedBy = ["prerequisite-a"];
+    const diagnostic = "Unreadable response from POST /api/issues/with-dependencies";
+    mockCreateIssue.mockRejectedValueOnce(new ApiError(diagnostic, 0, "", {
+      code: "response_unreadable",
+    }));
+    const onClose = vi.fn();
+    renderModal(<CreateIssueModal onClose={onClose} />);
+    fireEvent.change(screen.getByPlaceholderText("Issue title"), {
+      target: { value: "Keep this draft" },
+    });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Create Issue" }));
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith(enModals.create_issue.toast_failed));
+    expect(mockToastError).not.toHaveBeenCalledWith(diagnostic);
+    expect(mockToastCustom).not.toHaveBeenCalled();
+    expect(mockClearDraft).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText("Issue title")).toHaveValue("Keep this draft");
+    expect(mockDraftStore.draft.manual.blockedBy).toEqual(["prerequisite-a"]);
   });
 
   it("clears informational prerequisites after create another", async () => {

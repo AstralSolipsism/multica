@@ -106,7 +106,9 @@
       "installation_inactive": "该机器人安装已失效或其智能体已归档。",
       "installation_not_found": "该机器人安装在当前工作区已不存在。",
       "unsupported": "当前服务端暂不支持私聊发现，请手动输入 ID。",
-      "generic": "无法加载私聊列表，请重试。"
+      "generic": "无法加载私聊列表，请重试。",
+      "unreadable": "无法读取私聊列表。请刷新后再授权。",
+      "unconfirmed": "无法确认会话授权是否已保存。请刷新并检查当前配置。"
     }
   },
   "help": {

@@ -1,10 +1,4 @@
-export interface LarkConversationGrant {
-  id: string;
-  authorized_by: string;
-  /** Read fallback only; forms must not replace an unreadable grant. */
-  scope: "workspace" | "unreadable";
-  chats: { chat_id: string; chat_type: "group" | "p2p" | "unreadable" }[];
-}
+export type { LarkConversationGrant } from "../lark/schema";
 
 // --- Target discovery (OL-72 contract, OL-74 frontend) ---
 // Wire shapes mirror server/internal/messagedelivery/TARGET-DISCOVERY-CONTRACT.md
@@ -12,22 +6,7 @@ export interface LarkConversationGrant {
 // discovery for the group / message-anchor / conversation-grant pickers; it
 // never saves or approves a target.
 
-/** What the configured transport can do — describes the transport, not the
- * current provider permission grants (those surface as errors on list calls). */
-export interface LarkTargetCapabilities {
-  chat_list_supported: boolean;
-  message_anchor_list_supported: boolean;
-  region: string;
-  scope_status: string;
-  max_chat_page_size: number;
-  max_message_page_size: number;
-  /** OL-75 private-chat discovery. Optional: a server predating OL-75 omits
-   * them, which the UI must read as "not supported" (=== true checks). */
-  private_chat_candidates_supported?: boolean;
-  private_chat_identity_lookup_supported?: boolean;
-  max_private_chat_candidates?: number;
-  private_chat_candidate_retention_seconds?: number;
-}
+export type { LarkTargetCapabilities } from "../lark/schema";
 
 // --- Private chat discovery (OL-75 contract, OL-76 frontend) ---
 // Wire shapes mirror server/internal/messagedelivery/PRIVATE-CHAT-DISCOVERY-CONTRACT.md
@@ -35,134 +14,25 @@ export interface LarkTargetCapabilities {
 // An observation is NOT consent: it becomes an authorized conversation only
 // through an explicit human confirmation.
 
-export interface LarkPrivateChatCandidateSender {
-  /** "user" for real candidates; anonymous/app senders never qualify. */
-  type: string;
-  /** App-scoped open ID (ou_…). Identity evidence only — never a platform
-   * member, never a selectable target by itself. */
-  id?: string;
-  id_type?: string;
-}
+export type { LarkPrivateChatCandidateSender } from "../lark/schema";
 
-/** One observed private chat awaiting human confirmation. Confirmation
- * identity is the server-issued candidate `id`; conversation identity is
- * (installation_id, chat_id). Never substitute one for the other. */
-export interface LarkPrivateChatCandidate {
-  id: string;
-  chat_id: string;
-  chat_type: string;
-  sender: LarkPrivateChatCandidateSender;
-  /** Plain-text contact name, "" when the provider did not return one.
-   * Never fabricated client-side. */
-  display_name: string;
-  /** "name_available" | "id_only"; unknown values must be treated as id_only. */
-  identity_status: string;
-  /** "pending" | "authorized" — saved consent state, not provider
-   * reachability; unknown values must be treated as pending. */
-  authorization_status: string;
-  first_seen_at: string;
-  last_seen_at: string;
-  expires_at: string;
-}
+export type { LarkPrivateChatCandidate } from "../lark/schema";
 
-export interface LarkPrivateChatCandidateList {
-  items: LarkPrivateChatCandidate[];
-  max_candidates: number;
-  retention_seconds: number;
-}
+export type { LarkPrivateChatCandidateList } from "../lark/schema";
 
-/** One joined group as returned by the discovery list. Identity is
- * (installation_id, chat_id); name/description are NOT unique. */
-export interface LarkDiscoveredChat {
-  chat_id: string;
-  name: string;
-  description: string;
-  avatar: string;
-  external: boolean;
-  /** Provider status string ("normal", …). Unknown/new values are retained;
-   * they never prove sending is allowed. */
-  chat_status: string;
-}
+export type { LarkDiscoveredChat } from "../lark/schema";
 
-export interface LarkChatsPage {
-  items: LarkDiscoveredChat[];
-  /** false always pairs with next_cursor ""; a short or empty items page does
-   * NOT imply completion — keep paging while has_more is true. */
-  has_more: boolean;
-  /** Opaque signed continuation, valid ~30 min, bound to
-   * workspace/installation/caller/query/page-size. Never construct or store
-   * it as target identity. */
-  next_cursor: string;
-}
+export type { LarkChatsPage } from "../lark/schema";
 
-export interface LarkMessageAnchorSender {
-  /** "user" | "app" | "anonymous" | "unknown"; anonymous/unknown carry no id. */
-  type: string;
-  id?: string;
-  id_type?: string;
-}
+export type { LarkMessageAnchorSender } from "../lark/schema";
 
-/** One selectable message anchor. `summary` is pre-flattened plain text
- * (never HTML/Markdown); `create_time` is an epoch-millisecond string. */
-export interface LarkMessageAnchor {
-  message_id: string;
-  chat_id: string;
-  message_type: string;
-  summary: string;
-  create_time: string;
-  thread_id?: string;
-  sender: LarkMessageAnchorSender;
-}
+export type { LarkMessageAnchor } from "../lark/schema";
 
-export interface LarkAnchorsPage {
-  items: LarkMessageAnchor[];
-  has_more: boolean;
-  next_cursor: string;
-}
+export type { LarkAnchorsPage } from "../lark/schema";
 
-/** A Lark Bot installation bound to a single Multica agent.
- *
- * Wire shape mirrors `LarkInstallationResponse` in
- * `server/internal/handler/lark.go`. New fields the backend adds in the
- * future MUST default to optional so older desktop builds keep parsing
- * the response — see CLAUDE.md → API Response Compatibility. */
-export interface LarkInstallation {
-  conversation?: LarkConversationGrant | null;
-  id: string;
-  workspace_id: string;
-  agent_id: string;
-  app_id: string;
-  tenant_key?: string | null;
-  bot_open_id: string;
-  installer_user_id: string;
-  status: "active" | "revoked" | string;
-  /** Which Lark cloud the bot lives on: "feishu" (mainland) or "lark"
-   * (international). Auto-detected at install time. Optional so an older
-   * desktop build parsing a newer server — or a newer build hitting a
-   * server that predates the field — defaults to Feishu in the UI
-   * (see CLAUDE.md → API Response Compatibility). */
-  region?: "feishu" | "lark" | string;
-  installed_at: string;
-  created_at: string;
-  updated_at: string;
-}
+export type { LarkInstallation } from "../lark/schema";
 
-export interface ListLarkInstallationsResponse {
-  conversation_supported?: boolean;
-  installations: LarkInstallation[];
-  /** Whether the deployment has the at-rest secret key configured. When
-   * false the Bind button must be disabled and the panel renders an
-   * empty / "ask the operator to enable Lark" state. */
-  configured: boolean;
-  /** Whether new installs via the device-flow scan-to-bind path can
-   * complete end-to-end — i.e. the device-flow RegistrationService is
-   * wired AND the real Lark HTTP APIClient (not the no-op stub) is in
-   * place. When false the install entry points are hidden and the
-   * panel surfaces a "coming soon" notice. Optional so older desktop
-   * builds receiving a server that does not yet emit the field
-   * default to `undefined`, treated as not supported. */
-  install_supported?: boolean;
-}
+export type { ListLarkInstallationsResponse } from "../lark/schema";
 
 /** First half of the device-flow install: the server has opened a
  * registration session against accounts.feishu.cn and returned the QR
