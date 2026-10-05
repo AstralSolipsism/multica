@@ -12,7 +12,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	messagedelivery "github.com/multica-ai/multica/server/internal/messagedelivery"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // assembleMessageDelivery builds the module and mounts it on the handler.
@@ -51,29 +50,7 @@ func assembleMessageDelivery(h *handler.Handler, bus *events.Bus) {
 		slog.Info("messagedelivery: lark integration not configured; deliveries will be recorded but not sent")
 	}
 
-	// EventBus wakeup: a latency hint only. The subscription body touches
-	// nothing but the notify channel — publishing stays on the run-sync
-	// goroutine — and every wakeup the channel drops is recovered by the
-	// compensation scanner, which re-derives the missing set from
-	// persisted rows.
-	bus.Subscribe(protocol.EventAutopilotRunDone, func(events.Event) {
-		svc.Notify()
-	})
-
-	// OL-27: the three persisted personal/team sources wake the decide
-	// scan the same way. The wakeups are hints; the compensation scanner
-	// re-derives every missing decision from the persisted records, so a
-	// lost event, a crash between the source commit and the decision
-	// insert, or a second replica is always recovered.
-	bus.Subscribe(protocol.EventInboxNew, func(events.Event) {
-		svc.NotifyDecide()
-	})
-	bus.Subscribe(protocol.EventActivityCreated, func(events.Event) {
-		svc.NotifyDecide()
-	})
-	bus.Subscribe(protocol.EventCommentCreated, func(events.Event) {
-		svc.NotifyDecide()
-	})
+	svc.SubscribeEvents(bus)
 
 	h.MessageDelivery = svc
 	if h.ChannelRouter != nil {

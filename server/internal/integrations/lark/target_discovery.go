@@ -240,29 +240,17 @@ func discoveryError(err error) error {
 	if errors.As(err, &syntax) || errors.As(err, &shape) {
 		return ErrDiscoveryResponse
 	}
-	code := larkErrorCode(err)
-	switch code {
-	case 230001, 232001:
+	switch classifyLarkFailure(err) {
+	case larkInvalidRequest:
 		return ErrDiscoveryInvalidRequest
-	case 230002, 230013, 230073, 232006, 232009, 232010, 232011:
+	case larkChatUnavailable:
 		return ErrDiscoveryChat
-	case 230011, 230019, 230110:
+	case larkMessageUnavailable:
 		return ErrDiscoveryMessage
-	case 230027, 232033, 99991672, 99991676, 99991679:
+	case larkPermissionDenied:
 		return ErrDiscoveryPermission
-	case 230020, 99991400, 99991403:
+	case larkRateLimited:
 		return ErrDiscoveryRateLimited
-	case 230006, 232004, 232025, 232034:
-		return ErrDiscoveryUnavailable
-	}
-	var status *larkAPIStatusError
-	if errors.As(err, &status) {
-		switch status.StatusCode {
-		case http.StatusTooManyRequests:
-			return ErrDiscoveryRateLimited
-		case http.StatusForbidden:
-			return ErrDiscoveryPermission
-		}
 	}
 	return ErrDiscoveryUnavailable
 }
