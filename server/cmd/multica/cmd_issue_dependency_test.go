@@ -151,7 +151,7 @@ func TestDependencyCLIFailureSemantics(t *testing.T) {
 			t.Run(tc.name+"/"+action, func(t *testing.T) {
 				var writes atomic.Int32
 				view := dependencyCLIView()
-				payload := map[string]any{"error": "request refused", "reason_code": tc.reason, "dependencies": view, "future_field": strings.Repeat("x", 6000)}
+				payload := map[string]any{"error": "request refused", "reason_code": tc.reason, "future_field": strings.Repeat("x", 6000)}
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.Method == "GET" {
 						_ = json.NewEncoder(w).Encode(view)

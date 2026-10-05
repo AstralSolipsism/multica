@@ -787,6 +787,7 @@ func TestKimiRootProductionGate(t *testing.T) {
 	if quota, err := collector.collect(context.Background()); quota != nil || !errors.Is(err, errKimiCredentialsDisabledForRoot) {
 		t.Fatalf("production root gate: quota=%+v err=%v", quota, err)
 	}
+	assertKimiRootLoopDisabled(t)
 }
 
 type kimiLoopTrackingContext struct {
@@ -804,6 +805,11 @@ func TestKimiPlanQuotaLoopRootDiagnostic(t *testing.T) {
 	kimiGeteuid = func() int { return 0 }
 	t.Cleanup(func() { kimiGeteuid = originalGeteuid })
 
+	assertKimiRootLoopDisabled(t)
+}
+
+func assertKimiRootLoopDisabled(t *testing.T) {
+	t.Helper()
 	var logs strings.Builder
 	d := &Daemon{logger: slog.New(slog.NewTextHandler(&logs, nil))}
 	cancelled, cancel := context.WithCancel(context.Background())

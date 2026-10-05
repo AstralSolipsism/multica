@@ -27,9 +27,8 @@ Fork additions live outside upstream dictionaries. The initial migration from th
 shared upstream revision `2ea01ae4e` preserved every string, interpolation and
 locale-specific plural form; unused fork keys have since been removed in all
 five locales, including their brand overrides. The seven dictionaries `issues`,
-`settings`,
-`agents`, `modals`, `runtimes`, `autopilots` and `layout` match that revision
-byte for byte.
+`settings`, `agents`, `modals`, `runtimes`, `autopilots` and `layout` match that
+revision byte for byte.
 
 | Namespace | Copy moved from upstream dictionaries |
 | --- | --- |
