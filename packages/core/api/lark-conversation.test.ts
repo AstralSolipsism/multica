@@ -90,8 +90,8 @@ it("keeps older installations readable without enabling unadvertised conversatio
 
 it("rejects malformed reads and ambiguous save responses so drafts remain unsaved", async () => {
   vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ conversation: true, installations: "broken", configured: true })))));
-  await expect(client.listLarkInstallations("ws")).rejects.toThrow("could not be read");
-  await expect(client.setLarkConversation("ws", "inst", [])).rejects.toThrow("Could not verify");
+  await expect(client.listLarkInstallations("ws")).rejects.toMatchObject({ body: { code: "response_unreadable" } });
+  await expect(client.setLarkConversation("ws", "inst", [])).rejects.toMatchObject({ body: { code: "response_unconfirmed" } });
 });
 
 it("revokes only the chosen installation without submitting a client-selected grantor", async () => {

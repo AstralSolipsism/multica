@@ -351,6 +351,21 @@ describe("EditDependenciesModal", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("permission error"));
   });
 
+  it("keeps an unreadable write open and uses the localized failure copy", async () => {
+    const onClose = vi.fn();
+    mocks.save.mockRejectedValueOnce(new ApiError("Unreadable response from POST /api/issues", 0, "", {
+      code: "response_unreadable",
+    }));
+    render(<EditDependenciesModal onClose={onClose} data={{ issueId: "issue-1" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "remove-MUL-9" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("save failed"));
+    expect(screen.queryByText(/Unreadable response/)).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mocks.toast.success).not.toHaveBeenCalled();
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+  });
+
   it("lists inherited prerequisites read-only and jumps to the source editor", () => {
     mocks.deps.view = view({
       inheritedBlockedBy: [

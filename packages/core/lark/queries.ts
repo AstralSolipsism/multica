@@ -1,5 +1,5 @@
 import { infiniteQueryOptions, queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "../api";
+import { api, ApiError, errorCode } from "../api";
 import type { ListLarkInstallationsResponse } from "../types";
 
 /** Query key namespace for everything Lark-installation-related. Realtime
@@ -88,6 +88,9 @@ export const LARK_MESSAGE_ANCHORS_PAGE_SIZE = 20;
  * transient failures (network, provider rate limit, 5xx) earn a retry. */
 function isTransientDiscoveryError(err: unknown): boolean {
   if (!(err instanceof ApiError)) return true;
+  // These were ordinary Errors before fork parsers gained stable codes.
+  // Keep the existing read retry policy while views localize the failure.
+  if (errorCode(err) === "response_unreadable") return true;
   return err.status === 429 || err.status >= 500;
 }
 

@@ -63,7 +63,7 @@ describe("dependency API boundary", () => {
   it("rejects a malformed batch total without claiming success", async () => {
     respond({ updated: "all" });
     await expect(new ApiClient("https://api.example.test").batchUpdateIssues(["a"], {}))
-      .rejects.toThrow("Invalid batch update response");
+      .rejects.toMatchObject({ body: { code: "response_unreadable" } });
   });
 
   it.each([{}, null, { ...view, blocked_by: "broken" }, { ...view, dependency_version: "" },

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { errorCode } from "@multica/core/api";
 import { isEditableLarkConversation, useSetLarkConversation } from "@multica/core/lark";
 import type { LarkConversationGrant, LarkInstallation } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
@@ -209,7 +210,9 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
       <Button size="sm" variant="outline" disabled={blocked} onClick={() => void save(true)}>{t($ => $.conversation_revoke)}</Button>
     </div>
     {(disabled || unreadable) && <p role="status">{t($ => $.conversation_unavailable)}</p>}
-    {mutation.isError && <p role="alert">{mutation.error.message}</p>}
+    {mutation.isError && <p role="alert">{errorCode(mutation.error) === "response_unconfirmed"
+      ? t(($) => $.private.error.unconfirmed)
+      : mutation.error.message}</p>}
     {saved && <p role="status">{t($ => $.conversation_saved)}</p>}
   </details>;
 }

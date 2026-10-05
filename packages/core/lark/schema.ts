@@ -127,3 +127,27 @@ export const LarkPrivateChatCandidatesSchema = z.object({
   max_candidates: z.number().optional().default(50),
   retention_seconds: z.number().optional().default(604800),
 });
+
+export type ListLarkInstallationsResponse = z.infer<typeof LarkInstallationsSchema>;
+
+export type LarkInstallation = ListLarkInstallationsResponse["installations"][number];
+
+export type LarkAnchorsPage = z.infer<typeof LarkAnchorsPageSchema>;
+
+export type LarkMessageAnchor = z.infer<typeof LarkMessageAnchorSchema>;
+
+export type LarkMessageAnchorSender = LarkMessageAnchor["sender"];
+
+export type LarkChatsPage = z.infer<typeof LarkChatsPageSchema>;
+
+export type LarkDiscoveredChat = z.infer<typeof LarkDiscoveredChatSchema>;
+
+export type LarkPrivateChatCandidateList = z.infer<typeof LarkPrivateChatCandidatesSchema>;
+
+export type LarkPrivateChatCandidate = z.infer<typeof LarkPrivateChatCandidateSchema>;
+
+export type LarkPrivateChatCandidateSender = LarkPrivateChatCandidate["sender"];
+
+export type LarkTargetCapabilities = z.infer<typeof LarkTargetCapabilitiesSchema>;
+
+export type LarkConversationGrant = z.infer<typeof ConversationGrantReadSchema>;
