@@ -155,14 +155,6 @@ var ValidTargetTypes = map[string]bool{
 	TargetTopic:  true,
 }
 
-// Terminal run statuses the module reads as deliverable sources. Skipped
-// runs are terminal too and get a suppressed decision, never a send.
-var terminalRunStatuses = map[string]bool{
-	"completed": true,
-	"failed":    true,
-	"skipped":   true,
-}
-
 // TargetKey is the canonical identity of a delivery target. Two routes with
 // the same key are the same destination for dedup purposes, no matter how
 // they were entered.

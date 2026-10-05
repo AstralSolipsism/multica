@@ -547,6 +547,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// into one agent run instead of one per message (MUL-2968).
 	channelRouter.EnableRunBatching(engine.DefaultChatRunBatchWindow)
 	h.ChannelRouter = channelRouter
+	channelRouter.SetConversationHandler(h.HandleChannelConversation)
 	// Media intent-ledger reconciler: settles uploaded-but-unbound objects.
 	// Built ONLY when a storage backend exists — store is nil when S3 is not
 	// configured and the local upload dir failed to initialize, and a
@@ -2212,56 +2213,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					})
 					r.Post("/collaborators", h.AddAutopilotCollaborator)
 					r.Delete("/collaborators/{userId}", h.RemoveAutopilotCollaborator)
-
-					// Labrastro result-push routes + delivery records
-					// (OL-25). Authorization is per-handler through the same
-					// autopilot write gate; see
-					// internal/handler/labrastro_message_delivery.go.
-					r.Get("/message-routes", h.ListMessageRoutes)
-					r.Post("/message-routes", h.CreateMessageRoute)
-					r.Route("/message-routes/{routeId}", func(r chi.Router) {
-						r.Put("/", h.UpdateMessageRoute)
-						r.Delete("/", h.DeleteMessageRoute)
-						r.Post("/enable", h.SetMessageRouteEnabled)
-						r.Post("/test-send", h.TestMessageRoute)
-					})
-					// Approved external targets: workspace-admin consent per
-					// (automation, bot, target). Approval is categorically
-					// above automation write permission; the handler
-					// re-checks owner/admin inside.
-					r.Get("/message-approved-targets", h.ListMessageApprovedTargets)
-					r.Post("/message-approved-targets", h.ApproveMessageTarget)
-					r.Delete("/message-approved-targets/{targetId}", h.RevokeMessageTarget)
-					r.Get("/message-deliveries", h.ListMessageDeliveries)
-					r.Route("/message-deliveries/{deliveryId}", func(r chi.Router) {
-						r.Get("/", h.GetMessageDelivery)
-						r.Post("/retry", h.RetryMessageDelivery)
-					})
 				})
 			})
 
-			// Labrastro personal/team notification sources (OL-27).
-			// Same module, separate scope surface; see
-			// internal/handler/labrastro_message_sources.go.
-			r.Get("/api/message-event-catalog", h.GetMessageEventCatalog)
-			r.Route("/api/message-routes", func(r chi.Router) {
-				r.Get("/", h.ListMessageSourceRoutes)
-				r.Post("/", h.CreateMessageSourceRoute)
-				r.Route("/{routeId}", func(r chi.Router) {
-					r.Put("/", h.UpdateMessageSourceRoute)
-					r.Delete("/", h.DeleteMessageSourceRoute)
-					r.Post("/enable", h.SetMessageSourceRouteEnabled)
-					r.Post("/test-send", h.TestMessageSourceRoute)
-					r.Get("/message-deliveries", h.ListMessageRouteDeliveries)
-					r.Route("/message-deliveries/{deliveryId}", func(r chi.Router) {
-						r.Get("/", h.GetMessageRouteDelivery)
-						r.Post("/retry", h.RetryMessageRouteDelivery)
-					})
-				})
-			})
-			r.Get("/api/message-approved-targets", h.ListMessageSourceApprovedTargets)
-			r.Post("/api/message-approved-targets", h.ApproveMessageSourceTarget)
-			r.Delete("/api/message-approved-targets/{targetId}", h.RevokeMessageSourceTarget)
+			h.RegisterLabrastroMessageRoutes(r)
 
 			// Pins
 			r.Route("/api/pins", func(r chi.Router) {

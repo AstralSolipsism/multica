@@ -53,8 +53,8 @@ statuses or error codes. Code lives in:
 | `sending` | lease held while checking gates and sending shards; a crashed claim is conservatively recovered as `uncertain` |
 | `sent` | every shard accepted, receipts recorded |
 | `failed` | definitive failure; `error_code` says why |
-| `uncertain` | a dialed send may have landed (lost response / lost receipt), or a crashed claim left no reliable verdict; only manual verify-and-retry resolves it |
-| `cancelled` | route disabled/deleted, source archived/deleted, or installation revoked before the send started |
+| `uncertain` | a dialed send may have landed (lost response / lost receipt), or a crashed claim left no reliable verdict; requires manual verification, and retry remains subject to current send gates and the disable fence |
+| `cancelled` | further sending stopped by route, source or installation gates; earlier shards may already have been accepted |
 | `suppressed` | condition mismatch (incl. skipped runs) or unknown historical origin; recorded so the source is not rescanned |
 
 ### Source semantics
@@ -386,6 +386,15 @@ Delivery `error_code` values recorded by the pipeline:
   source/consent loss cancels, and definite invalid destinations fail. The
   synchronous diagnostic send records transient failures as `failed`, available
   for explicit retry.
+- **Manual retries retain the original decision time.** For every scope,
+  including run routes, disabling a route (explicitly or by editing it) or
+  revoking its installation fences all decisions made at or before that stop.
+  Re-enabling the route or restoring the installation does not clear the fence.
+  A manual retry of an older `failed` or `uncertain` delivery is accepted into
+  `queued`, then cancelled before sending with `route_disabled` and
+  `delivery predates the last route disable`. No additional shard is sent;
+  any previously accepted shards still require manual verification. This also
+  applies to retrying a failed notification after reinstalling the bot.
 - **Shared Feishu classification.** Sending, target verification and discovery
   share one provider error taxonomy. Rate-limit codes `230020`, `99991400` and
   `99991403` (and HTTP 429) are transient; installation credential lookup
@@ -428,14 +437,17 @@ Delivery `error_code` values recorded by the pipeline:
 - **Test sends.** A synchronous test send carries a bounded lease like a
   claimed row and writes its outcome on a detached context: an interrupted
   test send is recovered by the expiry sweep to `uncertain` and is then
-  retryable — it can never strand in `sending`.
+  available for manual retry subject to the same send gates and disable fence
+  — it can never strand in `sending`.
 - **Exactly-once send is bounded, not absolute.** Retries replay the fixed
   per-shard `send_uuid`, carried in the request BODY per Lark's
   `CreateMessageReqBody` (the platform's dedup window is finite, ~1h).
-  Beyond the verifiable window the delivery stays `uncertain` until a human
-  resolves it. Shards already carrying an `external_message_id` are never
-  re-sent, and a worker re-validates its lease against the database clock before starting
-  each new shard. All result writes require the same live token and expiry.
+  Beyond the verifiable window an `uncertain` outcome requires human
+  verification; a retry can still be cancelled by the disable fence without
+  resolving whether the earlier send landed. Shards already carrying an
+  `external_message_id` are never re-sent, and a worker re-validates its lease
+  against the database clock before starting each new shard. All result writes
+  require the same live token and expiry.
   Accepted late receipts can be recorded on a bounded detached context, but
   cannot renew a lease, overwrite a new owner or create an automatic retry.
 - **No side effects on execution.** Delivery never triggers runs, consumes
@@ -604,22 +616,35 @@ sweeper.
 
 ### Lifecycle stop paths
 
+The handler mounts both HTTP surfaces through `RegisterLabrastroMessageRoutes`.
+Route creation, edits and enable/disable writes share `routes.go`, while
+`decisions.go` locks and checks the route scope, revision and eligibility window
+before inserting either a run or a personal/team decision. Source-specific
+authority and content rules stay at their existing boundaries.
+
 - Route disabled/deleted → queued sends cancelled transactionally. A disabled
-  source route also fences old in-flight claims from starting another shard.
+  route in any scope, including run, records `last_disabled_at`. The send gate
+  cancels decisions whose original `created_at` is at or before that fence,
+  including old in-flight claims and later manual retries of `failed` or
+  `uncertain` deliveries, even after re-enabling the route.
 - Installation revoked → `lifecycle.StopInstallation` disables routes and
-  cancels queued sends for ALL scopes (installation-keyed).
-- **Member removal** → `revokeAndRemoveMember` disables the departing
+  cancels queued sends for ALL scopes (installation-keyed). It records the same
+  disable fence; reinstalling the bot and re-enabling a route cannot revive its
+  pre-revocation decisions. A manual retry can be queued but is cancelled at
+  the send gate with `route_disabled` (`delivery predates the last route disable`).
+- **Member removal** → `lifecycle.StopMember` disables the departing
   member's personal routes and cancels their queued private deliveries in
   the same transaction. Team routes authored by them keep their audit trail
   but the continuous-authorization gate cancels their sends.
-- **Project deletion** → `DeleteProject` disables the project-scoped team
+- **Project deletion** → `lifecycle.StopProject` disables the project-scoped team
   routes, revokes project approvals, and cancels decisions by their frozen
   `source_project_id` inside the delete transaction. Route and approval writes
   take a compatible project lock after external verification; deletion cannot
   leave a newly saved active orphan. A route edited to another project does
   not hide its older decisions from this cleanup.
-- Workspace deletion → the OL-25 sweep covers the new rows (all keyed by
-  `workspace_id`).
+- Workspace deletion → `lifecycle.SweepWorkspace` removes feedback, approvals,
+  receipts, deliveries and routes in that order under the caller's transaction
+  and workspace lock (all keyed by `workspace_id`).
 
 ## OL-27 HTTP API
 

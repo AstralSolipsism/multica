@@ -9,17 +9,18 @@
 -- =====================
 
 -- name: CreateLabrastroMessageRoute :one
+-- All scopes use the same write; personal/team routes pass NULL autopilot_id.
 INSERT INTO labrastro_message_route (
     id, workspace_id, autopilot_id, installation_id, channel_type,
     target_type, target_user_id, target_chat_id, target_message_id,
     target_thread_id, target_key, conditions, content_mode,
-    enabled, revision, created_by, updated_by, effective_from
+    enabled, revision, created_by, updated_by, effective_from, source_kind, project_id, event_types
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, sqlc.narg('target_user_id'), sqlc.narg('target_chat_id'),
     sqlc.narg('target_message_id'), sqlc.narg('target_thread_id'),
     $7, $8, $9,
-    $10, 1, $11, $11, now()
+    $10, 1, $11, $11, now(), sqlc.arg('source_kind'), sqlc.narg('project_id'), sqlc.arg('event_types')
 ) RETURNING *;
 
 -- name: GetLabrastroMessageRoute :one
@@ -30,13 +31,6 @@ WHERE id = $1 AND workspace_id = $2;
 -- name: ListLabrastroMessageRoutesByAutopilot :many
 SELECT * FROM labrastro_message_route
 WHERE workspace_id = $1 AND autopilot_id = $2
-ORDER BY created_at, id;
-
--- name: ListEnabledLabrastroMessageRoutesByAutopilot :many
--- The enqueue decision set: only enabled rules decide, and only for runs
--- completing at or after the rule's effective_from boundary.
-SELECT * FROM labrastro_message_route
-WHERE workspace_id = $1 AND autopilot_id = $2 AND enabled = true
 ORDER BY created_at, id;
 
 -- name: UpdateLabrastroMessageRoute :one
@@ -55,37 +49,51 @@ SET installation_id = sqlc.arg('installation_id'),
     target_key = sqlc.arg('target_key'),
     conditions = sqlc.arg('conditions'),
     content_mode = sqlc.arg('content_mode'),
+    project_id = sqlc.narg('project_id'),
+    event_types = sqlc.arg('event_types'),
     enabled = sqlc.arg('enabled'),
+    last_disabled_at = CASE WHEN NOT sqlc.arg('enabled')::boolean AND enabled
+        THEN clock_timestamp() ELSE last_disabled_at END,
     revision = revision + 1,
     updated_by = sqlc.arg('updated_by'),
     updated_at = now(),
     -- Enabling through an edit restarts the eligibility boundary with the
     -- same semantics as an explicit enable: no backfill of the disabled
-    -- window. Staying enabled keeps the existing boundary.
+    -- window. Run edits retain their boundary; personal/team destination and
+    -- filter changes start a new window, preserving their existing semantics.
     effective_from = CASE
-        WHEN sqlc.arg('enabled')::boolean AND NOT enabled THEN now()
+        WHEN (sqlc.arg('enabled')::boolean AND NOT enabled)
+          OR (source_kind <> 'run' AND (installation_id IS DISTINCT FROM sqlc.arg('installation_id')
+            OR target_key IS DISTINCT FROM sqlc.arg('target_key')
+            OR project_id IS DISTINCT FROM sqlc.narg('project_id')
+            OR event_types IS DISTINCT FROM sqlc.arg('event_types')))
+        THEN clock_timestamp()
         ELSE effective_from
     END
 WHERE id = sqlc.arg('id')
   AND workspace_id = sqlc.arg('workspace_id')
+  AND source_kind = sqlc.arg('source_kind')
   AND revision = sqlc.arg('expected_revision')
 RETURNING *;
 
 -- name: SetLabrastroMessageRouteEnabled :one
 -- Enable/disable with revision bump. Disable keeps history; the queued
--- deliveries are cancelled by the service layer. Enable resets
--- effective_from so the disabled window is never backfilled.
+-- deliveries are cancelled by the service layer. Only a disabled-to-enabled
+-- transition resets effective_from so the disabled window is never backfilled.
 UPDATE labrastro_message_route
 SET enabled = sqlc.arg('enabled'),
+    last_disabled_at = CASE WHEN NOT sqlc.arg('enabled')::boolean AND enabled
+        THEN clock_timestamp() ELSE last_disabled_at END,
     revision = revision + 1,
     updated_by = sqlc.arg('updated_by'),
     updated_at = now(),
     effective_from = CASE
-        WHEN sqlc.arg('enabled')::boolean THEN now()
+        WHEN sqlc.arg('enabled')::boolean AND NOT enabled THEN clock_timestamp()
         ELSE effective_from
     END
 WHERE id = sqlc.arg('id')
   AND workspace_id = sqlc.arg('workspace_id')
+  AND source_kind = sqlc.arg('source_kind')
   AND revision = sqlc.arg('expected_revision')
 RETURNING *;
 
@@ -106,13 +114,13 @@ INSERT INTO labrastro_message_delivery (
     id, workspace_id, route_id, route_revision, autopilot_id, run_id,
     dedup_key, source_kind, status, content_snapshot, target_snapshot,
     shard_total, source_ref, target_key, installation_id, error_code,
-    lease_token, lease_expires_at, requested_by, source_scope, source_project_id
+    lease_token, lease_expires_at, requested_by, source_scope, source_project_id, source_ref_id
 ) VALUES (
     $1, $2, sqlc.narg('route_id'), sqlc.narg('route_revision'), $3,
     sqlc.narg('run_id'), $4, $5, $6, $7, $8, $9, sqlc.narg('source_ref'),
     $10, $11, sqlc.narg('error_code'),
     sqlc.narg('lease_token'), sqlc.narg('lease_expires_at'), sqlc.narg('requested_by'),
-    COALESCE(sqlc.narg('source_scope')::text, 'run'), sqlc.narg('source_project_id')
+    COALESCE(sqlc.narg('source_scope')::text, 'run'), sqlc.narg('source_project_id'), sqlc.narg('source_ref_id')
 )
 ON CONFLICT (dedup_key) DO NOTHING
 RETURNING *;
@@ -422,7 +430,8 @@ WHERE id = $1;
 -- delivery decision. Suppressed/cancelled decisions count — a source the
 -- module has already judged is never re-decided. Full-missing-set scan by
 -- design: a monotonic cursor would skip runs that committed late, so the
--- NOT EXISTS shrinking set IS the cursor.
+-- NOT EXISTS shrinking set IS the cursor. Optional run_id narrows the same
+-- candidate path for a direct enqueue without changing compensation semantics.
 SELECT sqlc.embed(r), sqlc.embed(a), sqlc.embed(rt),
     COALESCE(r.task_id, CASE WHEN r.issue_id IS NULL THEN (
         SELECT t.id FROM agent_task_queue t
@@ -435,6 +444,7 @@ JOIN labrastro_message_route rt
  AND rt.workspace_id = a.workspace_id
  AND rt.enabled = true
 WHERE r.status IN ('completed', 'failed', 'skipped')
+  AND (sqlc.narg('run_id')::uuid IS NULL OR r.id = sqlc.narg('run_id')::uuid)
   AND a.status <> 'archived'
   AND r.completed_at >= rt.effective_from
   AND NOT EXISTS (
@@ -692,7 +702,7 @@ WHERE autopilot_id = $1 AND workspace_id = $2 AND status = 'queued';
 -- name: DisableLabrastroMessageRoutesByInstallation :exec
 UPDATE labrastro_message_route
 SET enabled = false,
-    last_disabled_at = CASE WHEN source_kind <> 'run' THEN clock_timestamp() ELSE last_disabled_at END,
+    last_disabled_at = clock_timestamp(),
     revision = revision + 1, updated_at = now()
 WHERE workspace_id = $1 AND installation_id = $2 AND enabled;
 
@@ -709,81 +719,6 @@ ORDER BY ci.id FOR UPDATE OF ci;
 -- queries add the source-scoped configuration, the candidate scans over the
 -- three persisted source records, the team target approvals and the
 -- lifecycle stop paths. Shared delivery/cleanup queries above also serve runs.
-
--- name: CreateLabrastroMessageSourceRoute :one
--- Personal/team route. autopilot_id stays NULL — a non-run route never
--- impersonates an automation id. Revision 1, effective_from now (the same
--- "only sources from enabling on" boundary the run routes use).
-INSERT INTO labrastro_message_route (
-    id, workspace_id, autopilot_id, installation_id, channel_type,
-    target_type, target_user_id, target_chat_id, target_message_id,
-    target_thread_id, target_key, source_kind, project_id, event_types,
-    enabled, revision, created_by, updated_by, effective_from
-) VALUES (
-    $1, $2, NULL, $3, $4,
-    $5, sqlc.narg('target_user_id'), sqlc.narg('target_chat_id'),
-    sqlc.narg('target_message_id'), sqlc.narg('target_thread_id'),
-    $6, $7, sqlc.narg('project_id'), $8,
-    $9, 1, $10, $10, now()
-) RETURNING *;
-
--- name: UpdateLabrastroMessageSourceRoute :one
--- Revision-guarded edit of a personal/team route. The source scope kind
--- never changes through an edit — a route is created as one scope and dies
--- as it. Enabling through an edit restarts the eligibility boundary with
--- the same semantics as an explicit enable.
-UPDATE labrastro_message_route
-SET installation_id = sqlc.arg('installation_id'),
-    channel_type = sqlc.arg('channel_type'),
-    target_type = sqlc.arg('target_type'),
-    target_user_id = sqlc.narg('target_user_id'),
-    target_chat_id = sqlc.narg('target_chat_id'),
-    target_message_id = sqlc.narg('target_message_id'),
-    target_thread_id = sqlc.narg('target_thread_id'),
-    target_key = sqlc.arg('target_key'),
-    project_id = sqlc.narg('project_id'),
-    event_types = sqlc.arg('event_types'),
-    enabled = sqlc.arg('enabled'),
-    last_disabled_at = CASE WHEN NOT sqlc.arg('enabled')::boolean AND enabled
-        THEN clock_timestamp() ELSE last_disabled_at END,
-    revision = revision + 1,
-    updated_by = sqlc.arg('updated_by'),
-    updated_at = now(),
-    effective_from = CASE
-        WHEN (sqlc.arg('enabled')::boolean AND NOT enabled)
-          OR installation_id IS DISTINCT FROM sqlc.arg('installation_id')
-          OR target_key IS DISTINCT FROM sqlc.arg('target_key')
-          OR project_id IS DISTINCT FROM sqlc.narg('project_id')
-          OR event_types IS DISTINCT FROM sqlc.arg('event_types')
-        THEN clock_timestamp()
-        ELSE effective_from
-    END
-WHERE id = sqlc.arg('id')
-  AND workspace_id = sqlc.arg('workspace_id')
-  AND source_kind = sqlc.arg('source_kind')
-  AND revision = sqlc.arg('expected_revision')
-RETURNING *;
-
--- name: SetLabrastroMessageSourceRouteEnabled :one
--- Same enable/disable contract as the run routes: disable keeps history and
--- the service layer cancels queued sends; enable resets effective_from so
--- the disabled window is never backfilled.
-UPDATE labrastro_message_route
-SET enabled = sqlc.arg('enabled'),
-    last_disabled_at = CASE WHEN NOT sqlc.arg('enabled')::boolean AND enabled
-        THEN clock_timestamp() ELSE last_disabled_at END,
-    revision = revision + 1,
-    updated_by = sqlc.arg('updated_by'),
-    updated_at = now(),
-    effective_from = CASE
-        WHEN sqlc.arg('enabled')::boolean AND NOT enabled THEN clock_timestamp()
-        ELSE effective_from
-    END
-WHERE id = sqlc.arg('id')
-  AND workspace_id = sqlc.arg('workspace_id')
-  AND source_kind = sqlc.arg('source_kind')
-  AND revision = sqlc.arg('expected_revision')
-RETURNING *;
 
 -- name: ListLabrastroMessageSourceRoutes :many
 -- Resolve current membership and visibility together; personal config is self-only.
@@ -959,30 +894,6 @@ SELECT COALESCE(CASE sqlc.arg('source_kind')::text
     WHEN 'comment' THEN (SELECT id FROM comment ORDER BY id DESC LIMIT 1)
 END, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS upper_id;
 
--- ---- decision insert ----
-
--- name: CreateLabrastroMessageSourceDelivery :many
--- The exactly-once decision insert for a persisted source: ON CONFLICT DO
--- NOTHING against the global dedup unique index; empty result means the
--- (source, target) pair was already decided. The dedup key namespace is
--- built by the service as
---   <kind>:<workspace_id>:<source_ref_id>:<installation_id>:<target_key>
--- so it carries workspace + source kind + original record id + installation
--- + normalized target — and deliberately NOT the subscriber list, the route
--- id, the revision or any web-client state.
-INSERT INTO labrastro_message_delivery (
-    id, workspace_id, route_id, route_revision, autopilot_id, run_id,
-    source_ref_id, dedup_key, source_kind, status, content_snapshot,
-    target_snapshot, shard_total, source_ref, target_key, installation_id,
-    error_code, source_scope, source_project_id
-) VALUES (
-    $1, $2, $3, $4, NULL, NULL,
-    $5, $6, $7, $8, $9, $10, $11, $12,
-    $13, $14, sqlc.narg('error_code'), sqlc.arg('source_scope'), sqlc.narg('source_project_id')
-)
-ON CONFLICT (dedup_key) DO NOTHING
-RETURNING *;
-
 -- ---- delivery records for source routes ----
 
 -- name: ListLabrastroMessageDeliveriesByRoute :many
@@ -1133,7 +1044,7 @@ WHERE workspace_id = sqlc.arg('workspace_id')
   AND status = 'queued'
 RETURNING id;
 
--- name: LockLabrastroMessageSourceRoute :one
+-- name: LockLabrastroMessageRoute :one
 -- SHARE conflicts with configuration edits/deletion until a decision commits.
 SELECT * FROM labrastro_message_route
 WHERE id = $1 AND workspace_id = $2

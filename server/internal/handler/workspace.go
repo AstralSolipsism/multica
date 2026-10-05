@@ -18,6 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/messagedelivery/lifecycle"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -1297,27 +1298,8 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return qtx.DeleteWorkspaceAutopilots(ctx, requester.WorkspaceID) },
 		},
 		{
-			// OL-25 message-delivery data. After the autopilot sweep so a
-			// route can never name an automation that outlived it, before
-			// the workspace row. Receipts → deliveries → routes keeps the
-			// documented dependency order readable; there are no FKs to
-			// enforce it.
 			name: "delete labrastro message delivery data",
-			run: func() error {
-				if err := qtx.DeleteLabrastroFeedbackByWorkspace(ctx, requester.WorkspaceID); err != nil {
-					return err
-				}
-				if err := qtx.DeleteLabrastroMessageApprovedTargetsByWorkspace(ctx, requester.WorkspaceID); err != nil {
-					return err
-				}
-				if err := qtx.DeleteLabrastroMessageReceiptsByWorkspace(ctx, requester.WorkspaceID); err != nil {
-					return err
-				}
-				if err := qtx.DeleteLabrastroMessageDeliveriesByWorkspace(ctx, requester.WorkspaceID); err != nil {
-					return err
-				}
-				return qtx.DeleteLabrastroMessageRoutesByWorkspace(ctx, requester.WorkspaceID)
-			},
+			run:  func() error { return lifecycle.SweepWorkspace(ctx, qtx, requester.WorkspaceID) },
 		},
 		{
 			name: "delete pull requests",
