@@ -503,10 +503,10 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	}
 	multicaConfigRoot := filepath.Join(envRoot, "multica-config")
 	if err := os.MkdirAll(multicaConfigRoot, 0o700); err != nil {
-		return nil, fmt.Errorf("execenv: create task-local Multica config directory: %w", err)
+		return nil, fmt.Errorf("execenv: create task-local Labrastro config directory: %w", err)
 	}
 	if err := os.Chmod(multicaConfigRoot, 0o700); err != nil {
-		return nil, fmt.Errorf("execenv: restrict task-local Multica config directory: %w", err)
+		return nil, fmt.Errorf("execenv: restrict task-local Labrastro config directory: %w", err)
 	}
 
 	// Worktree mode: build the task's own checkout of the user's repo inside
@@ -841,11 +841,11 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	if env.RootDir != "" {
 		env.MulticaConfigRoot = filepath.Join(env.RootDir, "multica-config")
 		if err := os.MkdirAll(env.MulticaConfigRoot, 0o700); err != nil {
-			logger.Warn("execenv: restore task-local Multica config directory failed; forcing fresh prepare", "error", err)
+			logger.Warn("execenv: restore task-local Labrastro config directory failed; forcing fresh prepare", "error", err)
 			return nil
 		}
 		if err := os.Chmod(env.MulticaConfigRoot, 0o700); err != nil {
-			logger.Warn("execenv: restrict task-local Multica config directory failed; forcing fresh prepare", "error", err)
+			logger.Warn("execenv: restrict task-local Labrastro config directory failed; forcing fresh prepare", "error", err)
 			return nil
 		}
 	}

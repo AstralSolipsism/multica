@@ -1,5 +1,7 @@
 "use client";
 
+import { DOWNLOAD_BASE_URL } from "@multica/core/deployment";
+
 import { useEffect, useState } from "react";
 import type { SupportedLocale } from "@multica/core/i18n";
 
@@ -7,7 +9,7 @@ import type { SupportedLocale } from "@multica/core/i18n";
 // /downloads source. Ports the functional core of the old marketing download
 // page (OS detection, per-platform assets, CLI one-liner) without the landing
 // chrome that Stage 1 removed.
-const DOWNLOADS = "https://multica.outlune.com/downloads";
+const DOWNLOADS = DOWNLOAD_BASE_URL;
 const CLI_INSTALL = `curl -fsSL ${DOWNLOADS}/install.sh | bash`;
 const CLI_VERSIONED = (v: string, f: string) =>
   `${DOWNLOADS}/cli/v${v}/${f}`;

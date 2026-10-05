@@ -177,7 +177,7 @@
       "hint": "기본값만 정합니다. 보내기 전에 메시지마다 바꿀 수 있습니다."
     },
     "comments_title": "댓글 및 채팅",
-    "description": "Labrastro 사용 환경을 맞춤 설정합니다.",
+    "description": "Multica 사용 환경을 맞춤 설정합니다.",
     "region_title": "언어 및 지역",
     "appearance_title": "모양",
     "issue_fields_title": "태스크 생성 시 표시할 필드",
@@ -504,7 +504,7 @@
       "installed_version": "사용 중",
       "review_install": "확인 후 설치",
       "review_upgrade": "확인 후 업그레이드",
-      "description": "플러그인 패키지를 업로드하세요. Labrastro가 저장하고 제공하므로 작성자에게 별도의 서버가 필요하지 않습니다."
+      "description": "플러그인 패키지를 업로드하세요. Multica가 저장하고 제공하므로 작성자에게 별도의 서버가 필요하지 않습니다."
     },
     "description": "이 워크스페이스에 플러그인을 게시하고 특정 버전을 설치하며, 무엇에 접근할 수 있는지 확인합니다."
   },
@@ -812,7 +812,7 @@
     "feature_auto_link_label": "태스크와 PR 자동 연결",
     "toast_failed": "GitHub 설정을 업데이트하지 못했습니다",
     "feature_auto_link_description": "제목이나 브랜치 이름에 태스크 번호(예: {{example}})가 있거나 설명에 \"Closes {{example}}\"가 있는 PR을 해당 태스크에 연결합니다.",
-    "page_description": "GitHub App을 연결하고, Pull request가 Labrastro 안에서 표시되는 방식을 제어하며, 에이전트가 커밋 기록에 남기는 정보를 설정합니다.",
+    "page_description": "GitHub App을 연결하고, Pull request가 Multica 안에서 표시되는 방식을 제어하며, 에이전트가 커밋 기록에 남기는 정보를 설정합니다.",
     "connection_description_prefix": "태스크를 Pull request에 자동으로 연결합니다. PR의 브랜치 이름이나 제목에",
     "connection_description_suffix": "이(가) 있거나 본문에 Closes MUL-123이 있으면 해당 태스크에 연결되고, 그 종료 키워드가 있는 PR이 병합될 때만 해당 태스크가",
     "connection_description_done": "완료",
@@ -1041,7 +1041,7 @@
       "try_again_moment": "잠시 후 다시 시도하세요.",
       "try_again": "다시 시도하세요.",
       "description": "로컬 에이전트 데몬이 데스크톱 앱과 동작하는 방식을 설정합니다.",
-      "cli_install_windows_help": "Windows에는 스크립트 설치 관리자가 없습니다. 워크스페이스 관리자에게 문의하거나, 내부 릴리스 소스(https://multica.outlune.com/downloads/cli/v<버전>/, 현재 버전은 https://multica.outlune.com/downloads/latest.json 참고)에서 해당 버전의 multica-cli-<버전>-windows-<아키텍처>.zip을 내려받아 multica.exe를 PATH에 넣으세요.",
+      "cli_install_windows_help": "Windows에는 스크립트 설치 관리자가 없습니다. 워크스페이스 관리자에게 문의하거나, 내부 릴리스 소스({{downloadsUrl}}/cli/v<버전>/, 현재 버전은 {{latestManifestUrl}} 참고)에서 해당 버전의 multica-cli-<버전>-windows-<아키텍처>.zip을 내려받아 multica.exe를 PATH에 넣으세요.",
       "cli_install_windows_label": "Windows는 수동 설치가 필요합니다",
       "diagnostics_description": "식별 및 연결 세부 정보입니다. 버그를 신고하거나 런타임이 표시되지 않는 문제를 조사할 때 유용합니다.",
       "waiting_logs_description": "새 로그가 실시간으로 표시됩니다."
@@ -1207,7 +1207,7 @@
     "install_scan_hint_feishu": "Feishu → 스캔 → 새 PersonalAgent를 승인하세요.",
     "install_scan_hint_lark": "Lark → 스캔 → 새 PersonalAgent를 승인하세요.",
     "conversation_title": "에이전트와 대화",
-    "conversation_description": "참여자는 Labrastro 계정이 없어도 됩니다. 에이전트가 의견을 확인하고 정리한 뒤 자신의 이름으로 댓글을 남깁니다. 처리 시간과 모델 사용량이 발생하며 모든 메시지가 그대로 작업에 복사되지는 않습니다.",
+    "conversation_description": "참여자는 Multica 계정이 없어도 됩니다. 에이전트가 의견을 확인하고 정리한 뒤 자신의 이름으로 댓글을 남깁니다. 처리 시간과 모델 사용량이 발생하며 모든 메시지가 그대로 작업에 복사되지는 않습니다.",
     "conversation_groups": "그룹 채팅 ID (줄마다 oc_ ID 하나, 주제별 대화 분리)",
     "conversation_directs": "개인 채팅 ID (줄마다 oc_ ID 하나)",
     "conversation_scope": "내 호출 권한에 따라 현재 작업 공간의 협업 내용 읽기, 작업 생성 및 수정, 댓글과 첨부 파일만 사용할 수 있습니다. 대화의 모든 참여자가 입력할 수 있습니다. 깨우기, 자동화, 인증 정보 및 관리 설정은 제외됩니다. 저장하면 이전 실행의 권한이 무효화됩니다.",

@@ -27,7 +27,7 @@ body: removing the key drops the link. After merge or close, existing links stay
 ### Default for code-changing issue work
 
 When an issue run changes code in a checked-out GitHub repo, the default handoff
-is to open or update a PR before posting the final Multica issue comment, unless
+is to open or update a PR before posting the final Labrastro issue comment, unless
 the user explicitly asked for a local-only change or no PR. This is a default, not
 an unconditional command: if no code changed, say no PR is needed; if PR creation
 is blocked by auth, failing tests, or missing remote state, report that blocker
@@ -68,7 +68,7 @@ default. An explicit target is preserved. Old clients' off/on switch maps to
 
 ## Reading a linked PR's real state
 
-When a step depends on PR state, query Multica's link table — do not infer it
+When a step depends on PR state, query Labrastro's link table — do not infer it
 from branch names, GitHub search, memory, or stale values left on the issue by
 an earlier run.
 

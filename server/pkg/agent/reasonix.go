@@ -598,7 +598,7 @@ func selectReasonixPermissionOption(params json.RawMessage) (optionID string, gr
 	}
 
 	if reasonixPermissionIsQuestion(p) {
-		reason := "Reasonix requested interactive user input, which is unavailable in an unattended Multica task"
+		reason := "Reasonix requested interactive user input, which is unavailable in an unattended Labrastro task"
 		if title := strings.TrimSpace(p.ToolCall.Title); title != "" {
 			reason += ": " + clipReasonixPermissionTitle(title)
 		}

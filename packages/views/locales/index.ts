@@ -1,6 +1,7 @@
 import frMessageDelivery from "./fr/message-delivery.json";
 import jaMessageDelivery from "./ja/message-delivery.json";
 import type { LocaleResources, SupportedLocale } from "@multica/core/i18n";
+import { applyBrandOverrides } from "./brand-overrides";
 import enCommon from "./en/common.json";
 import enAuth from "./en/auth.json";
 import enSettings from "./en/settings.json";
@@ -138,7 +139,7 @@ import frBilling from "./fr/billing.json";
 // Single source of truth for the resource bundle. Both apps (web layout +
 // desktop App.tsx) import from here so adding a locale or namespace happens
 // in exactly one place.
-export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
+export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
   en: {
     common: enCommon,
     auth: enAuth,
@@ -285,3 +286,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     "message-delivery": frMessageDelivery,
   },
 };
+
+// Web SSR, hydration, desktop and hot resource reloads all consume this same
+// effective bundle. Keep upstream keys intact; only the fork owns the overlay.
+export const RESOURCES = applyBrandOverrides(UPSTREAM_RESOURCES);

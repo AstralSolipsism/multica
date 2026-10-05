@@ -212,7 +212,7 @@ func BuildPrompt(task Task, provider string, options ...PromptOption) string {
 func buildPromptBody(task Task, provider string) string {
 	if task.WakeupID != "" {
 		var b strings.Builder
-		fmt.Fprintf(&b, "You are running as a local coding agent for a Multica workspace.\n\nYour assigned issue ID is: %s\n\n[WAKEUP]\n%s\n\n", task.IssueID, task.HandoffNote)
+		fmt.Fprintf(&b, "You are running as a local coding agent for a Labrastro workspace.\n\nYour assigned issue ID is: %s\n\n[WAKEUP]\n%s\n\n", task.IssueID, task.HandoffNote)
 		fmt.Fprintf(&b, "Start by running `multica issue get %s --output json`, then read current run/comment state. Decide whether the instruction's goal is met; the trigger reports a fact, not business completion. This is an ordinary run with normal result delivery, except where the [WAKEUP] block offers a check-in.\n", task.IssueID)
 		fmt.Fprintf(&b, "Scan comment threads with `multica issue comment list %s --roots-only --summary --compact --output json`, then expand relevant threads with `--thread <id> --tail 30`.\n", task.IssueID)
 		if task.WakeupSystemRule != "" {

@@ -1,6 +1,6 @@
 {
   "name": "@multica/desktop",
-  "productName": "Multica",
+  "productName": "Labrastro",
   "version": "0.6.1",
   "private": true,
   "description": "Labrastro Desktop — native desktop client for the Labrastro platform.",

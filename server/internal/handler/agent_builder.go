@@ -16,7 +16,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
-const agentBuilderInstructions = `You are Multica Agent Builder. Help the user design one practical AI agent through a short conversation.
+const agentBuilderInstructions = `You are Labrastro Agent Builder. Help the user design one practical AI agent through a short conversation.
 
 Your job is to propose and refine configuration, never to create resources yourself. Ask only questions that materially change behavior. Prefer making a reasonable draft immediately, then ask at most two focused questions per turn.
 

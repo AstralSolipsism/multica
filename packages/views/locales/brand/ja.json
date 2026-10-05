@@ -1,0 +1,221 @@
+{
+  "settings": {
+    "preferences": {
+      "description": "Labrastro の使い方をカスタマイズします。"
+    },
+    "plugins": {
+      "publish": {
+        "description": "プラグインパッケージをアップロードします。Labrastro が保存と配信を行うため、作者自身のサーバーは不要です。"
+      }
+    },
+    "notifications": {
+      "system": {
+        "description": "Labrastro がバックグラウンドにあるときにシステム通知を表示します。"
+      }
+    },
+    "github": {
+      "disconnect_confirm_description": "Labrastro はこのインストールの Webhook 受信を停止します。既存の PR ミラーとリンクは保持され、いつでも再接続して更新を再開できます。",
+      "page_description": "GitHub App を接続し、Pull request が Labrastro 内でどう表示されるかを制御し、エージェントがコミット履歴に残す情報を設定します。"
+    },
+    "lark": {
+      "install_error_bot_info": "承認はされましたが、Labrastro がボットの識別子を取得できませんでした。もう一度お試しください。",
+      "conversation_description": "参加者に Labrastro アカウントは不要です。エージェントが意見を確認・整理し、自分の名前でコメントします。処理時間とモデル使用量が発生し、各メッセージがそのままタスクに転記されるわけではありません。"
+    },
+    "slack": {
+      "byo_docs_link": "Step-by-step：Labrastro エージェントを Slack に接続する"
+    },
+    "dingtalk": {
+      "group_forget_description": "Labrastro の一覧からのみ削除します。会話やメッセージは残り、ボットが再度 @メンションされると一覧に戻ります。",
+      "byo_docs_link": "Step-by-step：Labrastro エージェントを DingTalk に接続する"
+    },
+    "wecom": {
+      "byo_bot_name_placeholder": "例: Labrastro Bot",
+      "byo_conflict_other_workspace": "このボットは別の Labrastro ワークスペースに接続済みです。先にそちらで切断してから接続してください。"
+    },
+    "telegram": {
+      "disconnect_confirm_description": "ボットはこのワークスペースの Telegram メッセージを受信しなくなります。Labrastro 内のチャット履歴は保持され、同じエージェントから再接続できます。",
+      "connect_docs_link": "手順ガイド：Labrastro エージェントを Telegram に接続する"
+    }
+  },
+  "common": {
+    "lark_bind": {
+      "needs_auth_description": "連携を完了するには Labrastro にログインしてください。リンク内のトークンが Lark アカウントを現在の Labrastro ユーザーに紐付けるため、先にログインが必要です。",
+      "error_already_bound": "この Lark アカウントはすでに別の Labrastro ユーザーに連携されています。アカウントを移すには、まず明示的に連携を解除する必要があります。",
+      "error_not_member": "現在ログイン中の Labrastro アカウントは、このワークスペースのメンバーではありません。"
+    },
+    "slack_bind": {
+      "needs_auth_description": "連携を完了するには Labrastro にサインインしてください。リンク内のトークンが、あなたの Slack アカウントをこの Labrastro ユーザーに紐付けるため、先にログインが必要です。",
+      "error_already_bound": "この Slack アカウントは別の Labrastro ユーザーに連携済みです。移行するにはまず明示的に解除する必要があります。",
+      "error_not_member": "サインインしている Labrastro アカウントはこのワークスペースのメンバーではありません。"
+    },
+    "dingtalk_bind": {
+      "needs_auth_description": "連携を完了するには Labrastro にサインインしてください。リンク内のトークンが、あなたの DingTalk アカウントをこの Labrastro ユーザーに紐付けるため、先にログインが必要です。",
+      "error_already_bound": "この DingTalk アカウントは別の Labrastro ユーザーに連携済みです。移行するにはまず明示的に解除する必要があります。",
+      "error_not_member": "サインインしている Labrastro アカウントはこのワークスペースのメンバーではありません。"
+    },
+    "telegram_bind": {
+      "needs_auth_description": "リンクを完了するには Labrastro にサインインしてください。リンク内のトークンはあなたの Telegram アカウントをこの Labrastro ユーザーに紐付けるため、先にログインが必要です。",
+      "error_already_bound": "この Telegram アカウントは別の Labrastro ユーザーにリンク済みです。アカウントの移行には先に明示的なリンク解除が必要です。",
+      "error_not_member": "サインイン中の Labrastro アカウントはこのワークスペースのメンバーではありません。"
+    },
+    "wecom_bind": {
+      "page_title": "Labrastro アカウントをリンク",
+      "needs_auth_description": "リンクを完了するには Labrastro にサインインしてください。トークンは WeCom の ID を、サインイン中の Labrastro ユーザーに紐付けます。",
+      "error_already_bound": "この WeCom ID は別の Labrastro ユーザーにリンクされています。アカウントの移行には明示的な解除が必要です。",
+      "error_not_member": "サインインしている Labrastro アカウントはこのワークスペースのメンバーではありません。"
+    },
+    "not_found": {
+      "back_to_multica": "Labrastroに戻る"
+    }
+  },
+  "runtimes": {
+    "mika_setup": {
+      "title": "ランタイムの準備ができました。Mizuki と始めましょう。",
+      "description": "Mizuki にタスクの整理とエージェントの調整を任せましょう。",
+      "action": "Mizuki と始める",
+      "failed": "Mizuki を開始できませんでした",
+      "dialog_title": "Mizuki をどこで実行しますか？"
+    },
+    "connect": {
+      "step1_label": "Labrastro CLI をインストール"
+    },
+    "update": {
+      "managed_by_desktop_title": "CLI バイナリは Labrastro Desktop で管理されています。CLI をアップグレードするには Desktop を更新してください。",
+      "local_build_title": "このランタイムはリリース版ではないバージョンを報告しているため、Labrastro はアップグレードの有無を判断できません。マシン上で直接更新してください。"
+    },
+    "profiles": {
+      "empty_description": "ベースプロトコルファミリーを選び、Labrastro が実行するコマンドを指定します。"
+    }
+  },
+  "workspace": {
+    "new_page": {
+      "title": "Labrastroへようこそ"
+    },
+    "creation_disabled": {
+      "description": "このLabrastro instanceでは新しいワークスペースを作成できません。既存のワークスペースへの招待を管理者に依頼してください。"
+    }
+  },
+  "autopilots": {
+    "add_trigger_dialog": {
+      "webhook_help": "保存すると Labrastro が Webhook URL を生成します。その URL に任意の JSON を POST すると、このオートパイロットが実行されます。"
+    },
+    "dialog": {
+      "webhook_help_create": "このオートパイロットを作成すると、Labrastro が Webhook URL を生成します。その URL に任意の JSON を POST すると実行されます。"
+    }
+  },
+  "issues": {
+    "pickers": {
+      "custom_property": {
+        "unknown_value_hint": "この値は新しいバージョンの Labrastro で設定されており、ここでは編集できません。アプリを更新するか、値をクリアしてください"
+      }
+    },
+    "pr_automation": {
+      "link_not_found": "Labrastro はまだこの PR を受け取っていません。リポジトリが接続されているか確認してください。"
+    }
+  },
+  "billing": {
+    "return_page": {
+      "go_to_app": "Labrastro を開く"
+    }
+  },
+  "auth": {
+    "signin": {
+      "title": "Labrastroにログイン"
+    },
+    "cli": {
+      "description": "CLIが{{email}}としてLabrastroにアクセスすることを許可します"
+    },
+    "web": {
+      "desktop_handoff": {
+        "opening_title": "Labrastroを開いています",
+        "opening_description": "自動で開かない場合は「Labrastro Desktop を開く」をクリックしてください。",
+        "open_button": "Labrastro Desktopを開く"
+      }
+    },
+    "desktop": {
+      "recovery": {
+        "title": "Labrastro に再接続しています"
+      }
+    }
+  },
+  "chat": {
+    "fab": {
+      "running": "Labrastro が作業中です...",
+      "default": "Labrastro に質問"
+    },
+    "empty_state": {
+      "returning_title_default": "Labrastro へようこそ"
+    }
+  },
+  "onboarding": {
+    "step_nav": {
+      "wordmark": "Labrastro",
+      "runtime": {
+        "label": "Mizuki を知る"
+      }
+    },
+    "welcome": {
+      "wordmark": "Labrastro へようこそ"
+    },
+    "source_backfill": {
+      "lede": "Labrastro を知ったきっかけを教えてください。"
+    },
+    "questions": {
+      "source": {
+        "question": "Labrastro をどこで知りましたか?"
+      }
+    },
+    "cli_install": {
+      "step1_label": "Labrastro CLI をインストール"
+    },
+    "welcome_after_onboarding": {
+      "skip": {
+        "title": "Labrastro へようこそ!",
+        "subtitle": "ランタイム接続を案内するタスクを 1 つ追加しました。準備できたら Runtimes から Mizuki と始められます。",
+        "cards": {
+          "install_runtime": {
+            "subtitle": "Codex または Kimi をインストールし、Runtimes から Mizuki の案内チャットを始めてください。"
+          }
+        }
+      }
+    },
+    "step_workspace": {
+      "creation_disabled_lede": "この Labrastro インスタンスでは新しいワークスペースを作成できません。管理者からワークスペースに招待されたら、招待を承諾して更新し、続けてください。"
+    },
+    "step_runtime": {
+      "found_headline": "Mizuki はどこで動かしますか？",
+      "hint_pick": "Mizuki と始めるには、上でエージェントランタイムを選んでください。",
+      "continue": "Mizuki と始める"
+    },
+    "step_platform": {
+      "lede": "コンピュータに接続して Mizuki を使い始めましょう。"
+    },
+    "errors": {
+      "mika_setup_failed": "Mizuki ワークスペースを開始できませんでした"
+    },
+    "mika_intro": {
+      "headline": "最初のエージェント仲間、Mizuki を紹介します。",
+      "name": "Mizuki",
+      "blurb": "やりたいことを Mizuki に伝えると、タスクになり、適したエージェントが担当します。"
+    }
+  },
+  "projects": {
+    "resources": {
+      "mode_worktree_needs_server_upgrade": "接続中の Labrastro サーバーが古いため並行実行に対応できません。このままでは、このフォルダ内で直接実行されます。サーバーを更新してから有効にしてください。"
+    }
+  },
+  "agents": {
+    "tab_body": {
+      "instructions": {
+        "system_layer_label": "Labrastro が管理",
+        "system_layer_hint": "Labrastro のリリースごとに更新されます。編集はできず、下に書いた内容が上書きされることもありません。",
+        "workspace_notes_intro": "チームのコンテキストや好みを下に追加してください。Labrastro がこのエージェント向けに管理している指示の上に適用されます。Markdown が使えます。"
+      },
+      "mcp_config": {
+        "managed_title": "Labrastro で管理",
+        "managed_empty": "Labrastro で管理されている MCP Server はありません。",
+        "runtime_overridden_badge": "Labrastro で上書き"
+      }
+    }
+  }
+}

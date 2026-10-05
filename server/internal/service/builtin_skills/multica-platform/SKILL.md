@@ -1,11 +1,11 @@
 ---
 name: multica-platform
-description: "Use for Multica platform actions the runtime brief does not fully cover: issue and PR contracts, explicit prerequisites and complete graphs, charts and files in comments, mentions, agents, squads, autopilots, projects, runtimes, skill import. Not for the product code you are working on."
+description: "Use for Labrastro platform actions the runtime brief does not fully cover: issue and PR contracts, explicit prerequisites and complete graphs, charts and files in comments, mentions, agents, squads, autopilots, projects, runtimes, skill import. Not for the product code you are working on."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(git *), Bash(gh *)
 ---
 
-# Operating Multica
+# Operating Labrastro
 
 Your runtime brief owns the per-turn workflow: which issue you are on, when to
 comment, what status to write. This skill owns the platform contracts behind

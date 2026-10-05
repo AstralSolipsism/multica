@@ -1,3 +1,4 @@
+import { DEPLOYMENT_URL } from "@multica/core/deployment";
 import type { Metadata } from "next";
 import type { SupportedLocale } from "@multica/core/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
@@ -17,7 +18,7 @@ const DESKTOP_ASSET_DIR = "/downloads/desktop";
 type DesktopFeed = { version: string | null; url: string | null };
 
 async function fetchDesktopFeed(): Promise<DesktopFeed> {
-  const base = process.env.MULTICA_APP_URL ?? "https://multica.outlune.com";
+  const base = process.env.MULTICA_APP_URL ?? DEPLOYMENT_URL;
   try {
     const res = await fetch(`${base}${DESKTOP_FEED_PATH}`, {
       next: { revalidate: 300 },

@@ -18,6 +18,7 @@
   ],
   "backend": [
     "server/**",
+    "scripts/branding-policy.json",
     "packages/core/runtimes/cli-version.ts",
     "scripts/agent-cli-command-names.txt",
     "scripts/go-test-with-agent-cli-guard.sh",
@@ -68,6 +69,7 @@
     "turbo.json",
     "knip.jsonc",
     "scripts/*.mjs",
+    "scripts/branding-policy.json",
     "scripts/check-ui-wildcard-exports.test.sh",
     ".github/workflows/mobile-verify.yml",
     ".github/workflows/ci.yml",

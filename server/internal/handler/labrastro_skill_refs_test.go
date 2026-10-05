@@ -4,10 +4,371 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/text"
 )
+
+func TestLabrastroMarkdownPathSpans(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       []string
+	}{
+		{"inline", "prefix `a.md` and ``b`c.md`` plus `two words`", []string{"a.md", "b`c.md"}},
+		{"three backticks", "x ```a.md``` y", []string{"a.md"}},
+		{"four backticks", "x ````a```b.md```` y", []string{"a```b.md"}},
+		{"longer closer", "prefix ``a.md```b.md`", []string{"a.md", "b.md"}},
+		{"escaped opener", "prefix \\`ignored and \\``a.md`", []string{"a.md"}},
+		{"escaped closer", "prefix `a.md\\` [b](b.md)", []string{"a.md\\", "b.md"}},
+		{"links", "[a](a(b).md#c) [b](<b c.md>) [c](c\\(d\\).md \"title\")", []string{"a(b).md#c", "b c.md", "c\\(d\\).md"}},
+		{"definitions", "[a]: <a b.md>\r\n[b]: b.md \"title\"\n[x][a] `c.md`", []string{"a b.md", "b.md", "c.md"}},
+		{"overlapping definition", "[a]: `a.md`", []string{"`a.md`", "a.md"}},
+		{"containers", "> ```md\n> [no](no.md)\n> ```\n\n- ```md\n  `no.md`\n  ```\n\n[yes](yes.md)", []string{"yes.md"}},
+		{"indented", "    [no](no.md)\n\n[yes](yes.md)", []string{"yes.md"}},
+		{"definition before setext heading", "[foo]: /url\n===\n    [path](path.md)", []string{"/url", "path.md"}},
+		{"empty and unterminated links", "[a]() [b](<>) [c](unterminated", []string{"unterminated"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spans, err := labrastroMarkdownPaths(t.Context(), tc.body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			last := -1
+			for _, span := range spans {
+				if span.start < last || span.end <= span.start || span.end > len(tc.body) {
+					t.Fatalf("invalid source span: %+v", span)
+				}
+				got = append(got, tc.body[span.start:span.end])
+				last = span.start
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("paths = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLabrastroMarkdownUnmatchedBackticks(t *testing.T) {
+	// The leading non-backtick byte keeps this from being a fenced code block.
+	body := "x" + strings.Repeat("`", (1<<20)-1)
+	start := time.Now()
+	spans, err := labrastroMarkdownPaths(t.Context(), body)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spans) != 0 {
+		t.Fatalf("unmatched backticks produced %d paths", len(spans))
+	}
+	if elapsed >= 2*time.Second {
+		t.Fatalf("1 MiB scan took %s; want less than 2s", elapsed)
+	}
+	t.Logf("1 MiB unmatched backticks: %s", elapsed)
+}
+
+func TestLabrastroMarkdownAdversarialLines(t *testing.T) {
+	var differentRuns strings.Builder
+	differentRuns.WriteByte('x')
+	for n := 1400; n > 0; n-- {
+		differentRuns.WriteString(strings.Repeat("`", n))
+		differentRuns.WriteByte('x')
+	}
+	for _, tc := range []struct {
+		name, body string
+		paths      int
+	}{
+		{"decreasing backtick runs", differentRuns.String(), 0},
+		{"unclosed angle links", strings.Repeat("][x](<", (1<<20)/6), 1},
+		{"unclosed nested links", strings.Repeat("](a(", (1<<20)/4), 1},
+		{"escaped link destination", "[x](" + strings.Repeat(`\(`, (1<<20)/2-2), 1},
+		{"reference label", "[" + strings.Repeat("[", (1<<20)-1), 0},
+		{"reference destination", "[x]: " + strings.Repeat("a", (1<<20)-5), 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start := time.Now()
+			spans, err := labrastroMarkdownPaths(t.Context(), tc.body)
+			elapsed := time.Since(start)
+			if err != nil || len(spans) != tc.paths {
+				t.Fatalf("paths = %d, error = %v; want %d paths", len(spans), err, tc.paths)
+			}
+			if elapsed >= 2*time.Second {
+				t.Fatalf("scan took %s; want less than 2s", elapsed)
+			}
+			t.Logf("%d bytes: %s", len(tc.body), elapsed)
+		})
+	}
+}
+
+func TestLabrastroMarkdownContextDeadline(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"long line", "x" + strings.Repeat("`", (1<<20)-1)},
+		{"fenced lines", "```\n" + strings.Repeat("[a](a.md)\n", 100000)},
+		{"container lines", strings.Repeat("> - [a](a.md)\n\n", 60000)},
+	} {
+		for _, budget := range []time.Duration{-time.Second, time.Millisecond} {
+			t.Run(tc.name+"/"+budget.String(), func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(t.Context(), budget)
+				defer cancel()
+				start := time.Now()
+				spans, err := labrastroMarkdownPaths(ctx, tc.body)
+				if !errors.Is(err, context.DeadlineExceeded) || spans != nil {
+					t.Fatalf("deadline returned %d paths and %v", len(spans), err)
+				}
+				if elapsed := time.Since(start); elapsed >= 2*time.Second {
+					t.Fatalf("deadline returned after %s; want less than 2s", elapsed)
+				}
+			})
+		}
+	}
+}
+
+func TestLabrastroMarkdownReaderCancellation(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("LineOffset/canceled=%t", canceled), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			r := &labrastroMarkdownReader{Reader: text.NewReader([]byte("\tx\n")), ctx: ctx}
+			r.Advance(1)
+			if canceled {
+				cancel()
+				defer func() {
+					abort, ok := recover().(labrastroMarkdownAbort)
+					if !ok || !errors.Is(abort.err, context.Canceled) {
+						t.Fatalf("LineOffset did not abort with cancellation: %+v", abort)
+					}
+				}()
+				r.LineOffset()
+				t.Fatal("canceled LineOffset returned normally")
+			}
+			if offset := r.LineOffset(); offset != 4 {
+				t.Fatalf("LineOffset after tab = %d, want 4", offset)
+			}
+		})
+		t.Run(fmt.Sprintf("AdvanceLine/canceled=%t", canceled), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			r := &labrastroMarkdownReader{Reader: text.NewReader([]byte("first\nsecond\n")), ctx: ctx}
+			if canceled {
+				cancel()
+			}
+			r.AdvanceLine()
+			line, _ := r.PeekLine()
+			if canceled {
+				if line != nil {
+					t.Fatalf("canceled AdvanceLine left %q readable; want EOF", line)
+				}
+			} else if string(line) != "second\n" {
+				t.Fatalf("AdvanceLine returned %q, want second line", line)
+			}
+		})
+		t.Run(fmt.Sprintf("SkipBlankLines/canceled=%t", canceled), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			r := &labrastroMarkdownReader{Reader: text.NewReader([]byte("\n \t\nremaining\n")), ctx: ctx}
+			if canceled {
+				cancel()
+			}
+			_, skipped, ok := r.SkipBlankLines()
+			if canceled {
+				if ok {
+					t.Fatal("canceled SkipBlankLines reported another line")
+				}
+			} else {
+				line, _ := r.PeekLine()
+				if !ok || skipped != 2 || string(line) != "remaining\n" {
+					t.Fatalf("SkipBlankLines = (%q, %d, %t), want (remaining, 2, true)", line, skipped, ok)
+				}
+			}
+		})
+	}
+}
+
+type labrastroPanickingContext struct {
+	context.Context
+	value any
+}
+
+func (c labrastroPanickingContext) Err() error { panic(c.value) }
+
+func TestLabrastroMarkdownUnexpectedPanic(t *testing.T) {
+	unexpected := errors.New("unexpected parser failure")
+	defer func() {
+		if got := recover(); got != unexpected {
+			t.Fatalf("unexpected panic = %v, want original panic %v", got, unexpected)
+		}
+	}()
+	_, _ = labrastroMarkdownPaths(labrastroPanickingContext{t.Context(), unexpected}, "text")
+	t.Fatal("unexpected panic was swallowed")
+}
+
+type labrastroTestParagraphTransformer func(*ast.Paragraph, text.Reader, parser.Context)
+
+func (f labrastroTestParagraphTransformer) Transform(node *ast.Paragraph, reader text.Reader, pc parser.Context) {
+	f(node, reader, pc)
+}
+
+func TestLabrastroMarkdownParagraphCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	paragraph := ast.NewParagraph()
+	for range 4097 {
+		paragraph.Lines().Append(text.NewSegment(0, 6))
+	}
+	transformer := &labrastroMarkdownParagraphTransformer{
+		ctx: ctx,
+		ParagraphTransformer: labrastroTestParagraphTransformer(func(*ast.Paragraph, text.Reader, parser.Context) {
+			t.Fatal("canceled paragraph reached reference extraction")
+		}),
+	}
+	defer func() {
+		abort, ok := recover().(labrastroMarkdownAbort)
+		if !ok || !errors.Is(abort.err, context.Canceled) {
+			t.Fatalf("paragraph did not abort with cancellation: %+v", abort)
+		}
+	}()
+	transformer.Transform(paragraph, text.NewReader([]byte("[x]:a\n")), parser.NewContext())
+	t.Fatal("canceled paragraph returned normally")
+}
+
+func TestLabrastroMarkdownCancellationBetweenNestedLines(t *testing.T) {
+	// Parsing the whole document exceeds the budget, so a check only after
+	// Parse returns cannot satisfy the deadline. The reader must interrupt it.
+	body := strings.Repeat(strings.Repeat(">", 8192)+"\n", 96)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	spans, err := labrastroMarkdownPaths(ctx, body)
+	elapsed := time.Since(start)
+	if !errors.Is(err, context.DeadlineExceeded) || spans != nil {
+		t.Fatalf("deadline returned %d paths and %v", len(spans), err)
+	}
+	if elapsed >= 2*time.Second {
+		t.Fatalf("deadline returned after %s; want less than 2s", elapsed)
+	}
+	t.Logf("canceled nested lines: %s", elapsed)
+}
+
+func TestLabrastroMarkdownNestedContainersDeadline(t *testing.T) {
+	for _, size := range []int{1 << 16, 1 << 20} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			body := strings.Repeat(">", size)
+			ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
+			defer cancel()
+			start := time.Now()
+			spans, err := labrastroMarkdownPaths(ctx, body)
+			elapsed := time.Since(start)
+			if !errors.Is(err, context.DeadlineExceeded) || spans != nil {
+				t.Fatalf("deadline returned %d paths and %v", len(spans), err)
+			}
+			if elapsed >= 2*time.Second {
+				t.Fatalf("deadline returned after %s; want less than 2s", elapsed)
+			}
+			t.Logf("%d nested containers canceled in %s", size, elapsed)
+		})
+	}
+}
+
+func TestLabrastroMarkdownParagraphLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		paths      int
+		limited    bool
+	}{
+		{"at limit", strings.Repeat("[x]:a\n", 4096), 4096, false},
+		{"over limit", strings.Repeat("[x]:a\n", 4097), 0, true},
+		{"one MiB", strings.Repeat("[x]:a\n", (1<<20)/6), 0, true},
+		{"blockquote", strings.Repeat("> [x]:a\n", 4097), 0, true},
+		{"list", "- [x]:a\n" + strings.Repeat("  [x]:a\n", 4096), 0, true},
+		{"plain prose", strings.Repeat("text\n", 4097), 0, false},
+		{"vocabulary", strings.Repeat("term [guide](guide.md)\n", 5000), 5000, false},
+		{"quoted vocabulary", strings.Repeat("> term [guide](guide.md)\n", 5000), 5000, false},
+		{"definitions after prose", "text\n" + strings.Repeat("[x]:a\n", 4097), 4097, false},
+		{"indented definitions", strings.Repeat("   [x]:a\n", 4097), 0, true},
+		{"definitions with titles", strings.Repeat("[x]:a \"title\"\n", 4097), 0, true},
+		{"unclosed label", "[\n" + strings.Repeat("text\n", 4096), 0, true},
+		{"multiline definitions", strings.Repeat("[x]:\na\n", 2049), 0, true},
+		{"separate paragraphs", strings.Repeat("[x]:a\n", 4096) + "\n" + strings.Repeat("[x]:a\n", 4096), 8192, false},
+		{"fenced code", "```\n" + strings.Repeat("[x]:a\n", 4097) + "```\n", 0, false},
+		{"indented code", strings.Repeat("    [x]:a\n", 4097), 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start := time.Now()
+			spans, err := labrastroMarkdownPaths(t.Context(), tc.body)
+			elapsed := time.Since(start)
+			if tc.limited {
+				if !isCapError(err) || spans != nil {
+					t.Fatalf("paragraph limit returned %d paths and %v", len(spans), err)
+				}
+			} else if err != nil || len(spans) != tc.paths {
+				t.Fatalf("paths = %d, error = %v; want %d paths", len(spans), err, tc.paths)
+			}
+			if elapsed >= 2*time.Second {
+				t.Fatalf("paragraph scan took %s; want less than 2s", elapsed)
+			}
+			t.Logf("%d bytes scanned in %s", len(tc.body), elapsed)
+		})
+	}
+}
+
+func TestLabrastroMarkdownLongTables(t *testing.T) {
+	const header = "| Entry |\n| --- |\n"
+	const row = "| [entry](references/entry.md) |\n"
+	for _, rows := range []int{5000, (maxImportFileSize - len(header)) / len(row)} {
+		t.Run(fmt.Sprint(rows), func(t *testing.T) {
+			body := header + strings.Repeat(row, rows)
+			start := time.Now()
+			spans, err := labrastroMarkdownPaths(t.Context(), body)
+			elapsed := time.Since(start)
+			if err != nil || len(spans) != rows {
+				t.Fatalf("table returned %d paths and %v; want %d paths", len(spans), err, rows)
+			}
+			for i, span := range spans {
+				wantStart := len(header) + i*len(row) + len("| [entry](")
+				if span.start != wantStart || body[span.start:span.end] != "references/entry.md" {
+					t.Fatalf("row %d: wrong table path span %+v", i, span)
+				}
+			}
+			if elapsed >= 2*time.Second {
+				t.Fatalf("table scan took %s; want less than 2s", elapsed)
+			}
+			t.Logf("%d-row table (%d bytes) scanned in %s", rows, len(body), elapsed)
+		})
+	}
+}
+
+func TestLabrastroMarkdownParagraphLimitLocation(t *testing.T) {
+	body := "# Catalog\r\n\r\n" + strings.Repeat(">   [x]:a\r\n", 4097)
+	_, err := labrastroMarkdownPaths(t.Context(), body)
+	if !isCapError(err) || !strings.Contains(err.Error(), "possible reference definition at line 3 exceeds 4096 lines") {
+		t.Fatalf("paragraph limit lost its starting source line: %v", err)
+	}
+}
+
+func TestLabrastroReferenceCancellationWithinFile(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	r := &importedSkill{content: "[a](missing.md) [b](also-missing.md)"}
+	lookups := 0
+	err := labrastroCompleteReferences(ctx, r, "skills/demo", func(_ context.Context, p string) (githubTreeEntry, bool, error) {
+		lookups++
+		if strings.HasSuffix(p, "/missing.md") {
+			cancel()
+		}
+		return githubTreeEntry{}, false, nil
+	}, func(context.Context, string) ([]byte, error) {
+		t.Fatal("missing reference must not be fetched")
+		return nil, nil
+	})
+	if !errors.Is(err, context.Canceled) || lookups != 2 {
+		t.Fatalf("cancellation returned %v after %d lookups; want cancellation after 2", err, lookups)
+	}
+}
 
 func TestLabrastroReferenceClosure(t *testing.T) {
 	files := map[string]string{

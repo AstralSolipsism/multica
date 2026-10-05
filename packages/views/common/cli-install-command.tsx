@@ -1,5 +1,7 @@
 "use client";
 
+import { CLI_INSTALL_PS1_URL, CLI_INSTALL_SH_URL } from "@multica/core/deployment";
+
 import type { ReactNode } from "react";
 import {
   Tabs,
@@ -19,9 +21,9 @@ import {
  */
 export const CLI_INSTALL_COMMANDS = {
   macosLinux:
-    "curl -fsSL https://multica.outlune.com/downloads/install.sh | bash",
+    `curl -fsSL ${CLI_INSTALL_SH_URL} | bash`,
   windows:
-    "irm https://multica.outlune.com/downloads/install.ps1 | iex",
+    `irm ${CLI_INSTALL_PS1_URL} | iex`,
 } as const;
 
 export type CliInstallPlatform = keyof typeof CLI_INSTALL_COMMANDS;
