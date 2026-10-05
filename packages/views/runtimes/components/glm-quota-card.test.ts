@@ -1,10 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
+import type { GlmQuotaWindow } from "@multica/core/api";
 import {
   glmFormatResetIn,
   glmWindowRemainingPercent,
   glmWorstFirst,
-  type GlmQuotaWindow,
 } from "./glm-quota-card";
 
 describe("glmWindowRemainingPercent", () => {

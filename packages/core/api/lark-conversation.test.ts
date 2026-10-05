@@ -1,9 +1,62 @@
 // @vitest-environment node
 import { afterEach, expect, it, vi } from "vitest";
 import { ApiClient } from "./client";
+import { isEditableLarkConversation } from "../lark/schema";
 
 afterEach(() => vi.unstubAllGlobals());
 const client = new ApiClient("https://example.test");
+
+const grant = {
+  id: "00000000-0000-4000-8000-000000000001",
+  authorized_by: "00000000-0000-4000-8000-000000000002",
+  scope: "workspace",
+  chats: [{ chat_id: "oc_group", chat_type: "group" }],
+};
+
+it.each([
+  { ...grant, scope: "future_scope" },
+  { ...grant, chats: [...grant.chats, { chat_id: "oc_future", chat_type: "future_type" }] },
+  { ...grant, chats: [...grant.chats, null] },
+  { ...grant, chats: "broken" },
+  { ...grant, id: "future-id-format" },
+  { ...grant, authorized_by: "future-actor-format" },
+  true,
+])("isolates an unreadable conversation without losing installations: %j", async (conversation) => {
+  const installation = {
+    id: "inst", workspace_id: "ws", agent_id: "agent", app_id: "cli_test",
+    bot_open_id: "ou_bot", installer_user_id: "user", status: "active",
+    installed_at: "", created_at: "", updated_at: "",
+  };
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+    installations: [
+      { ...installation, conversation },
+      { ...installation, id: "other", conversation: grant },
+    ],
+    configured: true, conversation_supported: true,
+  }))));
+  const result = await client.listLarkInstallations("ws");
+  expect(result.installations.map((item) => item.id)).toEqual(["inst", "other"]);
+  expect(isEditableLarkConversation(result.installations[0]?.conversation)).toBe(false);
+  expect(result.installations[1]?.conversation).toEqual(grant);
+  expect(isEditableLarkConversation(result.installations[1]?.conversation)).toBe(true);
+});
+
+it("marks unknown scope and chat kinds explicitly unreadable", async () => {
+  const { LarkInstallationsSchema } = await import("../lark/schema");
+  const parsed = LarkInstallationsSchema.parse({
+    installations: [{
+      id: "inst", workspace_id: "ws", agent_id: "agent", app_id: "app",
+      bot_open_id: "bot", installer_user_id: "user", status: "active",
+      installed_at: "", created_at: "", updated_at: "",
+      conversation: { ...grant, scope: "future", chats: [{ chat_id: "oc_future", chat_type: "future" }] },
+    }], configured: true,
+  });
+  expect(parsed.installations[0]?.conversation).toMatchObject({
+    scope: "unreadable", chats: [{ chat_id: "oc_future", chat_type: "unreadable" }],
+  });
+  expect(isEditableLarkConversation(null)).toBe(true);
+  expect(isEditableLarkConversation(undefined)).toBe(false);
+});
 
 it("keeps older installations readable without enabling unadvertised conversation writes", async () => {
   const installation = {

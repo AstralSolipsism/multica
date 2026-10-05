@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ApiError } from "@multica/core/api";
 import { larkInstallationsOptions } from "@multica/core/lark";
+import { ApiClient } from "@multica/core/api/client";
 import type { LarkInstallation } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { LarkConversationForm } from "./lark-conversation-form";
@@ -59,6 +60,7 @@ const PRIVATE_CAPS = {
 };
 
 const installation: LarkInstallation = {
+  conversation: null,
   id: "inst", workspace_id: "ws", agent_id: "agent", app_id: "app",
   bot_open_id: "bot", installer_user_id: "owner", status: "active",
   installed_at: "", created_at: "", updated_at: "",
@@ -128,15 +130,75 @@ beforeEach(() => {
     retention_seconds: 604800,
   });
   confirmMock.mockReset().mockResolvedValue({
-    id: "grant",
-    authorized_by: "owner",
+    id: "00000000-0000-4000-8000-000000000001",
+    authorized_by: "00000000-0000-4000-8000-000000000004",
     scope: "workspace",
     chats: [{ chat_id: "oc_dm_alice", chat_type: "p2p" }],
   });
   installationsMock.mockReset().mockResolvedValue({ installations: [installation], configured: true });
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+it("keeps other installations visible but blocks replacement of an unreadable grant", async () => {
+  const grant = {
+    id: "00000000-0000-4000-8000-000000000001",
+    authorized_by: "00000000-0000-4000-8000-000000000004",
+    scope: "workspace",
+    chats: [{ chat_id: "oc_existing", chat_type: "group" }, { chat_id: "oc_future", chat_type: "future" }],
+  };
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+    installations: [
+      { ...installation, conversation: grant },
+      { ...installation, id: "other" },
+    ], configured: true, conversation_supported: true,
+  }))));
+  installationsMock.mockImplementation(() => new ApiClient("https://api.example.test").listLarkInstallations("ws"));
+  function Installations() {
+    const { data } = useQuery(larkInstallationsOptions("ws"));
+    return data?.installations.map((inst) => <div key={inst.id}>
+      <span>{inst.id}</span>
+      {inst.id === "inst" && <LarkConversationForm workspaceId="ws" installation={inst} disabled={false} />}
+    </div>);
+  }
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderWithI18n(<QueryClientProvider client={qc}><Installations /></QueryClientProvider>);
+  await screen.findByText("other");
+  const user = await openForm();
+  expect(screen.getByRole("status")).toHaveTextContent("Configuration is unavailable");
+  const save = screen.getByRole("button", { name: "Authorize conversations" });
+  const revoke = screen.getByRole("button", { name: "Revoke conversations" });
+  expect(save).toBeDisabled();
+  expect(revoke).toBeDisabled();
+  await user.click(save);
+  await user.click(revoke);
+  expect(mutation.mutateAsync).not.toHaveBeenCalled();
+  qc.clear();
+});
+
+it("retains the last readable grant and local edits through an unreadable refresh", async () => {
+  const readable: LarkInstallation = { ...installation, conversation: {
+    id: "00000000-0000-4000-8000-000000000001",
+    authorized_by: "00000000-0000-4000-8000-000000000004",
+    scope: "workspace", chats: [{ chat_id: "oc_existing", chat_type: "p2p" }],
+  } };
+  const { rerender } = renderWithI18n(view(false, readable));
+  const user = await openForm();
+  const directs = await screen.findByLabelText(/Direct chat IDs/);
+  await user.type(directs, "\noc_local");
+  rerender(view(false, { ...readable, conversation: { ...readable.conversation!, scope: "unreadable", chats: [] } }));
+  expect(screen.getByRole("button", { name: "Authorize conversations" })).toBeDisabled();
+  expect(directs).toHaveValue("oc_existing\noc_local");
+  rerender(view(false, { ...readable, conversation: { ...readable.conversation! } }));
+  await user.click(screen.getByRole("button", { name: "Authorize conversations" }));
+  expect(mutation.mutateAsync).toHaveBeenCalledWith([
+    { chat_id: "oc_existing", chat_type: "p2p" },
+    { chat_id: "oc_local", chat_type: "p2p" },
+  ]);
+});
 
 it("preserves the edited conversations and blocks save/revoke while configuration cannot be verified", async () => {
   const { rerender } = renderWithI18n(view(false));
@@ -177,7 +239,7 @@ it("revokes everything and clears the draft", async () => {
   const granted: LarkInstallation = {
     ...installation,
     conversation: {
-      id: "grant", authorized_by: "owner", scope: "workspace",
+      id: "00000000-0000-4000-8000-000000000001", authorized_by: "00000000-0000-4000-8000-000000000004", scope: "workspace",
       chats: [
         { chat_id: "oc_saved", chat_type: "group" },
         { chat_id: "oc_dm", chat_type: "p2p" },
@@ -215,7 +277,7 @@ it("blocks saving past the 50-conversation cap with an inline hint", async () =>
   const granted: LarkInstallation = {
     ...installation,
     conversation: {
-      id: "grant", authorized_by: "owner", scope: "workspace",
+      id: "00000000-0000-4000-8000-000000000001", authorized_by: "00000000-0000-4000-8000-000000000004", scope: "workspace",
       chats: Array.from({ length: 50 }, (_, i) => ({ chat_id: `oc_${i}`, chat_type: "group" as const })),
     },
   };
@@ -262,7 +324,7 @@ it("keeps a saved private chat revocable even when it is not a candidate", async
   const granted: LarkInstallation = {
     ...installation,
     conversation: {
-      id: "grant", authorized_by: "owner", scope: "workspace",
+      id: "00000000-0000-4000-8000-000000000001", authorized_by: "00000000-0000-4000-8000-000000000004", scope: "workspace",
       chats: [{ chat_id: "oc_dm_old", chat_type: "p2p" }],
     },
   };

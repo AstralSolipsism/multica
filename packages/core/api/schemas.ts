@@ -73,14 +73,9 @@ import type {
   MessageDelivery,
   MessageRoute,
   GetMessageDeliveryResponse,
-  ListMessageApprovedTargetsResponse,
   ListMessageDeliveriesResponse,
-  ListMessageRoutesResponse,
   GetMessageRouteDeliveryResponse,
   ListMessageRouteDeliveriesResponse,
-  ListMessageSourceApprovedTargetsResponse,
-  ListMessageSourceRoutesResponse,
-  MessageEventCatalog,
   MessageSourceApprovedTarget,
   MessageSourceDelivery,
   MessageSourceRoute,
@@ -801,28 +796,34 @@ export interface AppConfigResponse {
 // Account-level GLM (Zhipu) Coding Plan quota snapshot from the server-side
 // collector. Windows mirror the provider's limit entries (TOKENS_LIMIT 5h
 // token window, TIME_LIMIT monthly tool credits, CREDIT_LIMIT pools).
-export interface GlmQuotaWindow {
-  type: string;
-  used_percent?: number;
-  usage?: number;
-  current_value?: number;
-  remaining?: number;
-  resets_at?: number;
-}
+export const GlmQuotaWindowSchema = z.object({
+  type: z.string(),
+  used_percent: z.number().optional(),
+  usage: z.number().optional(),
+  current_value: z.number().optional(),
+  remaining: z.number().optional(),
+  resets_at: z.number().optional(),
+});
+export type GlmQuotaWindow = z.infer<typeof GlmQuotaWindowSchema>;
 
-export interface GlmQuotaSnapshot {
-  level?: string;
-  windows: GlmQuotaWindow[];
-  observed_at: number;
-}
+export const GlmQuotaSnapshotSchema = z.object({
+  level: z.string().optional().catch(undefined),
+  // One unreadable provider window must not hide the other balances or
+  // fabricate a healthy quota for the unreadable window.
+  windows: z.array(GlmQuotaWindowSchema.nullable().catch(null))
+    .transform((windows) => windows.filter((window) => window !== null)),
+  observed_at: z.number(),
+});
+export type GlmQuotaSnapshot = z.infer<typeof GlmQuotaSnapshotSchema>;
 
-export interface GlmQuotaStatus {
-  enabled: boolean;
-  quota?: GlmQuotaSnapshot | null;
-  stale?: boolean;
-  last_error?: string;
-  anchor_device?: string;
-}
+export const GlmQuotaStatusSchema = z.object({
+  enabled: z.boolean(),
+  quota: GlmQuotaSnapshotSchema.nullable().optional().catch(null),
+  stale: z.boolean().optional().catch(undefined),
+  last_error: z.string().optional().catch(undefined),
+  anchor_device: z.string().optional().catch(undefined),
+});
+export type GlmQuotaStatus = z.infer<typeof GlmQuotaStatusSchema>;
 
 // ---------------------------------------------------------------------------
 // Schemas for the highest-risk API endpoints — those whose responses drive
@@ -3847,7 +3848,7 @@ export const MessageRouteSchema = z.object({
 }).loose();
 
 export const ListMessageRoutesResponseSchema = z.object({
-  routes: z.array(MessageRouteSchema).default([]),
+  routes: z.array(MessageRouteSchema),
 }).loose();
 
 export const MessageRouteResponseSchema = z.object({
@@ -3890,7 +3891,7 @@ export const MessageApprovedTargetSchema = z.object({
 }).loose();
 
 export const ListMessageApprovedTargetsResponseSchema = z.object({
-  approved_targets: z.array(MessageApprovedTargetSchema).default([]),
+  approved_targets: z.array(MessageApprovedTargetSchema),
 }).loose();
 
 export const ApproveMessageTargetResponseSchema = z.object({
@@ -4086,7 +4087,7 @@ export const MessageSourceRouteSchema = z.object({
 }).loose();
 
 export const ListMessageSourceRoutesResponseSchema = z.object({
-  routes: z.array(MessageSourceRouteSchema).default([]),
+  routes: z.array(MessageSourceRouteSchema),
 }).loose();
 
 export const MessageSourceRouteResponseSchema = z.object({
@@ -4133,7 +4134,7 @@ export const MessageSourceApprovedTargetSchema = z.object({
 }).loose();
 
 export const ListMessageSourceApprovedTargetsResponseSchema = z.object({
-  approved_targets: z.array(MessageSourceApprovedTargetSchema).default([]),
+  approved_targets: z.array(MessageSourceApprovedTargetSchema),
 }).loose();
 
 export const ApproveMessageSourceTargetResponseSchema = z.object({
@@ -4164,7 +4165,7 @@ export const MessageEventCatalogSchema = z.object({
         group: z.string().default(""),
         label: z.string().default(""),
       }).loose(),
-    ).default([]),
+    ),
   }).loose(),
   team: z.array(
     z.object({
@@ -4174,15 +4175,10 @@ export const MessageEventCatalogSchema = z.object({
           event: z.string(),
           label: z.string().default(""),
         }).loose(),
-      ).default([]),
+      ),
     }).loose(),
-  ).default([]),
+  ),
 }).loose();
-
-export const EMPTY_MESSAGE_EVENT_CATALOG: MessageEventCatalog = {
-  personal: { source_kind: "inbox", target_type: "member", event_types: [] },
-  team: [],
-};
 
 export const MessageSourceDeliverySchema = z.object({
   id: z.string(),
@@ -4297,27 +4293,11 @@ export function emptyMessageRouteDeliveryDetail(
   };
 }
 
-export const EMPTY_LIST_MESSAGE_ROUTES_RESPONSE: ListMessageRoutesResponse = {
-  routes: [],
-};
-
-export const EMPTY_LIST_MESSAGE_APPROVED_TARGETS_RESPONSE: ListMessageApprovedTargetsResponse = {
-  approved_targets: [],
-};
-
 export const EMPTY_LIST_MESSAGE_DELIVERIES_RESPONSE: ListMessageDeliveriesResponse = {
   deliveries: [],
   limit: 0,
   offset: 0,
   applied_run_id: null,
-};
-
-export const EMPTY_LIST_MESSAGE_SOURCE_ROUTES_RESPONSE: ListMessageSourceRoutesResponse = {
-  routes: [],
-};
-
-export const EMPTY_LIST_MESSAGE_SOURCE_APPROVED_TARGETS_RESPONSE: ListMessageSourceApprovedTargetsResponse = {
-  approved_targets: [],
 };
 
 export const EMPTY_LIST_MESSAGE_ROUTE_DELIVERIES_RESPONSE: ListMessageRouteDeliveriesResponse = {
