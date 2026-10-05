@@ -21,6 +21,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
+import { finished } from "node:stream/promises";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -121,7 +122,10 @@ async function makeTargetFixture(distRoot, targetKey, overrides = {}) {
       version: overrides.appVersion ?? VERSION,
     }),
   );
-  await modules.asar.createPackage(asarSrc, join(resources, "app.asar"));
+  // asar 3 returns the ended write stream before its buffered writes finish.
+  // Verification reads synchronously, so wait for the actual file completion.
+  const archive = await modules.asar.createPackage(asarSrc, join(resources, "app.asar"));
+  await finished(archive);
   writeFileSync(join(resources, "LICENSE"), "license text\n");
   writeFileSync(join(resources, "NOTICE"), "notice text\n");
 

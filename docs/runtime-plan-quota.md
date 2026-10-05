@@ -76,9 +76,9 @@ omitted. A response without usable buckets fails collection and preserves the
 last successful observation.
 
 The access token is read on every round from
-`~/.gemini/antigravity-cli/antigravity-oauth-token`: its `token` string contains
-another JSON document with `access_token`. agy owns token refresh; keep the
-existing `agy remote-control` watchdog active and signed in. The collector does
+`~/.gemini/antigravity-cli/antigravity-oauth-token`: its `token` object contains
+an `access_token` string (`{"token":{"access_token":"…"}}`). agy owns token
+refresh; keep the existing `agy remote-control` watchdog active and signed in. The collector does
 not start tasks, refresh credentials or probe local RPC listeners. It sends the
 token only to Google's endpoint and refuses redirects. Neither token nor account
 metadata appears in heartbeat payloads or diagnostics.

@@ -3,6 +3,9 @@ package handler
 import "testing"
 
 func TestLabrastroCandidateDecisionTable(t *testing.T) {
+	if got := len(labrastroCandidateDecisions); got != 27 {
+		t.Fatalf("decision table has %d entries, want 27", got)
+	}
 	anyStrategy := []string{"skip", "rename", "overwrite"}
 	for _, tc := range []struct {
 		state, conflict string

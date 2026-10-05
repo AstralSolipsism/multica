@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/testutil"
@@ -97,6 +98,35 @@ func TestExternalConversationDenialCommitsDespiteOccupiedSlot(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			f, s, w, issue, agent := deniedReceiptFixture(t, []string{"comment.created", "issue.updated"})
 			ctx := context.Background()
+			// Keep another rule ready after w so this tick commits more than once.
+			nextIssue := policyWakeIssue(t, f, "")
+			next, err := s.Create(ctx, policyUUID(t, nextIssue), policyUUID(t, testUserID), pgtype.UUID{}, service.WakeupInput{
+				AgentID: agent, Kind: "event", EventTypes: []string{"comment.created"}, Instruction: "expire", ExpiresInSeconds: 3600,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.fx.Exec(t, "UPDATE issue_wakeup SET expires_at=now()-interval '1 second' WHERE id=$1", next.ID)
+			f.fx.Exec(t, "UPDATE issue_wakeup SET updated_at=now()-interval '1 day' WHERE id=$1", w.ID)
+			// Another writer can acquire the rule immediately after dispatch
+			// commits. Tick must not reacquire that row to record its scan order.
+			var writer pgx.Tx
+			commits := 0
+			s.Tasks.TxStarter = receiptCommitProbe{TxStarter: testPool, afterCommit: func() {
+				commits++
+				if writer != nil {
+					return
+				}
+				tx, err := testPool.Begin(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				writer = tx
+				t.Cleanup(func() { _ = tx.Rollback(ctx) })
+				if _, err := tx.Exec(ctx, "SELECT id FROM issue_wakeup WHERE id=$1 FOR UPDATE NOWAIT", w.ID); err != nil {
+					t.Fatal(err)
+				}
+			}}
 			// A different principal occupies the real unique-index slot.
 			occupant := f.fx.User(t, "Slot occupant", "slot@example.test")
 			slotContext, _ := json.Marshal(map[string]any{"wakeup_id": util.UUIDToString(w.ID), "channel_issue_media_pending": true})
@@ -110,6 +140,16 @@ func TestExternalConversationDenialCommitsDespiteOccupiedSlot(t *testing.T) {
 			if err := s.TickWorkspaces(ctx, policyUUID(t, testWorkspaceID)); err != nil {
 				t.Fatalf("occupied slot rolled back rejection: %v", err)
 			}
+			if writer == nil {
+				t.Fatal("dispatch did not commit")
+			}
+			if commits < 2 {
+				t.Fatalf("expected multiple dispatch commits in one tick, got %d", commits)
+			}
+			if err := writer.Rollback(ctx); err != nil {
+				t.Fatal(err)
+			}
+			s.Tasks.TxStarter = testPool
 			if n := f.fx.Count(t, "SELECT count(*) FROM issue_wakeup_receipt WHERE wakeup_id=$1 AND event_type='comment.created' AND processed_at IS NOT NULL AND task_id IS NULL", w.ID); n != 1 {
 				t.Fatal("denial was rolled back")
 			}
@@ -133,6 +173,32 @@ func TestExternalConversationDenialCommitsDespiteOccupiedSlot(t *testing.T) {
 			}
 		})
 	}
+}
+
+type receiptCommitProbe struct {
+	service.TxStarter
+	afterCommit func()
+}
+
+func (p receiptCommitProbe) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := p.TxStarter.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return receiptCommitTx{Tx: tx, afterCommit: p.afterCommit}, nil
+}
+
+type receiptCommitTx struct {
+	pgx.Tx
+	afterCommit func()
+}
+
+func (tx receiptCommitTx) Commit(ctx context.Context) error {
+	if err := tx.Tx.Commit(ctx); err != nil {
+		return err
+	}
+	tx.afterCommit()
+	return nil
 }
 
 func TestExternalConversationSystemSlotCommitsDenial(t *testing.T) {

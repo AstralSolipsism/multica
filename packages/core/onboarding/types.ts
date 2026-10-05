@@ -1,5 +1,6 @@
 export type OnboardingStep =
   | "welcome"
+  | "about_you"
   | "workspace"
   | "runtime";
 

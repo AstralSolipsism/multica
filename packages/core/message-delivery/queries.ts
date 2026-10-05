@@ -124,32 +124,6 @@ export function messageDeliveriesInfiniteOptions(
 }
 
 /**
- * Single-page records read (compatibility surface used by the detail-refresh
- * regression and by callers that only need the first page). Paged views use
- * messageDeliveriesInfiniteOptions instead.
- */
-export function messageDeliveriesOptions(
-  wsId: string,
-  autopilotId: string,
-  params?: { status?: string; runId?: string; limit?: number; offset?: number },
-  options?: { enabled?: boolean },
-) {
-  return queryOptions({
-    queryKey: [
-      ...messageDeliveryKeys.deliveries(wsId, autopilotId, params?.status, params?.runId),
-      "page",
-      params?.limit ?? 0,
-      params?.offset ?? 0,
-    ] as const,
-    queryFn: () => api.listMessageDeliveries(autopilotId, params),
-    enabled: options?.enabled ?? true,
-    retry: false,
-    refetchInterval: (query) =>
-      query.state.data?.deliveries.some((d) => isInFlight(d.status)) ? 5_000 : 30_000,
-  });
-}
-
-/**
  * Full delivery detail: frozen content/target snapshots, source_ref locator
  * and the per-shard receipt ledger.
  *

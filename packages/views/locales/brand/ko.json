@@ -1,19 +1,4 @@
 {
-  "fork-ui": {
-    "settings": {
-      "preferences": {
-        "description": "Labrastro 사용 환경을 맞춤 설정합니다."
-      },
-      "plugins": {
-        "publish": {
-          "description": "플러그인 패키지를 업로드하세요. Labrastro가 저장하고 제공하므로 작성자에게 별도의 서버가 필요하지 않습니다."
-        }
-      },
-      "github": {
-        "page_description": "GitHub App을 연결하고, Pull request가 Labrastro 안에서 표시되는 방식을 제어하며, 에이전트가 커밋 기록에 남기는 정보를 설정합니다."
-      }
-    }
-  },
   "settings": {
     "notifications": {
       "system": {
@@ -171,6 +156,9 @@
     "questions": {
       "source": {
         "question": "Labrastro를 어디서 알게 되셨나요?"
+      },
+      "use_case": {
+        "question": "Labrastro를 무엇에 쓰고 싶으신가요?"
       }
     },
     "cli_install": {

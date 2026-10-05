@@ -94,9 +94,6 @@ UPDATE labrastro_skill_placement SET package_id=NULL,source_path=NULL WHERE work
 -- name: LabrastroDetachSkill :exec
 UPDATE labrastro_skill_placement SET package_id=NULL,source_path=NULL WHERE workspace_id=$1 AND skill_id=$2;
 
--- name: LabrastroDeletePackageFolders :exec
-DELETE FROM labrastro_skill_folder WHERE workspace_id=$1 AND package_id=$2;
-
 -- name: LabrastroDeleteWorkspaceSkillTree :exec
 WITH placements AS (
     DELETE FROM labrastro_skill_placement p WHERE p.workspace_id=$1

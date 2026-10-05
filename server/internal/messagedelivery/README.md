@@ -24,7 +24,7 @@ statuses or error codes. Code lives in:
 | `server/internal/integrations/lark/labrastro_delivery.go` | Feishu proactive send (open_id / chat_id / topic reply + fixed UUID) |
 | `server/cmd/server/labrastro_messaging.go` | the single assembly point (sender selection, EventBus wakeup) |
 | `server/pkg/db/queries/labrastro_message.sql` | all SQL; generated code via `make sqlc` |
-| `server/migrations/*_labrastro_*.sql` (`452_labrastro_message_tables` through `478_labrastro_feedback_retirement`) | tables + concurrent indexes |
+| `server/migrations/`: the `labrastro` stems from `452_labrastro_message_tables` through `478_labrastro_feedback_retirement`, plus `9010_labrastro_message_delivery_run_index` through `9015_labrastro_message_source_watermark` (see [SCANNING.md](SCANNING.md)) | tables + concurrent indexes |
 
 ## Concepts
 
@@ -876,10 +876,13 @@ Delivery `error_code` additions recorded by the pipeline:
 
 ### Upgrade and rollback
 
-Apply the `labrastro` migrations
-`467_labrastro_message_sources` through `473_labrastro_message_project_approval_index` before running this binary.
+Apply all pending migrations before running this binary, including the scanner
+migrations `9010_labrastro_message_delivery_run_index` through
+`9015_labrastro_message_source_watermark` (see [SCANNING.md](SCANNING.md)).
+The personal/team source upgrade and rollback notes below cover the `labrastro`
+stems from `467_labrastro_message_sources` through `473_labrastro_message_project_approval_index`.
 Stop delivery workers
-while upgrading a populated preview deployment (`467_labrastro_message_sources`
+while upgrading a populated preview deployment (the `labrastro` migrations from `467_labrastro_message_sources`
 through `470_labrastro_message_approved_target_source_active_index`): old rows
 cannot prove their historical project consent or last-disable boundary.
 `471_labrastro_message_source_scope`

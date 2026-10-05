@@ -78,7 +78,6 @@ function sameIdSet(a: string[], b: string[]): boolean {
 type Notice =
   | { kind: "conflict" }
   | { kind: "structure" }
-  | { kind: "permission" }
   | { kind: "unverified" }
   | { kind: "generic"; message?: string };
 
@@ -299,9 +298,6 @@ function EditDependenciesBody({
         case "dependency_ancestor_conflict":
           setNotice({ kind: "structure" });
           break;
-        case "dependency_change_not_allowed":
-          setNotice({ kind: "permission" });
-          break;
         case "dependency_data_unverified":
           setNotice({ kind: "unverified" });
           break;
@@ -314,7 +310,12 @@ function EditDependenciesBody({
   };
 
   const inherited = view?.inheritedBlockedBy ?? [];
-  const selectedItems = form ? [...form.selected.values()] : [];
+  // Selection and the reviewed version are draft state. Display fields come
+  // from the latest projection, even when its structural version is unchanged.
+  const selectedItems = useMemo(() => {
+    const current = new Map(view?.blockedBy.map((p) => [p.issueId, p]));
+    return form ? [...form.selected.values()].map((p) => current.get(p.issueId) ?? p) : [];
+  }, [form, view]);
   const malformed = depsQuery.isSuccess && depsQuery.data === null;
 
   return (
@@ -336,7 +337,6 @@ function EditDependenciesBody({
             <AlertDescription>
               {notice.kind === "conflict" && tDependencies(($) => $.edit_dependencies.conflict_notice)}
               {notice.kind === "structure" && tDependencies(($) => $.edit_dependencies.error_structure)}
-              {notice.kind === "permission" && tDependencies(($) => $.edit_dependencies.error_permission)}
               {notice.kind === "unverified" && tDependencies(($) => $.edit_dependencies.error_unverified)}
               {notice.kind === "generic" &&
                 (notice.message ?? tDependencies(($) => $.edit_dependencies.error_generic))}

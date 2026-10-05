@@ -1,19 +1,4 @@
 {
-  "fork-ui": {
-    "settings": {
-      "preferences": {
-        "description": "Labrastro の使い方をカスタマイズします。"
-      },
-      "plugins": {
-        "publish": {
-          "description": "プラグインパッケージをアップロードします。Labrastro が保存と配信を行うため、作者自身のサーバーは不要です。"
-        }
-      },
-      "github": {
-        "page_description": "GitHub App を接続し、Pull request が Labrastro 内でどう表示されるかを制御し、エージェントがコミット履歴に残す情報を設定します。"
-      }
-    }
-  },
   "settings": {
     "notifications": {
       "system": {
@@ -171,6 +156,9 @@
     "questions": {
       "source": {
         "question": "Labrastro をどこで知りましたか?"
+      },
+      "use_case": {
+        "question": "Labrastro を何に使いたいですか?"
       }
     },
     "cli_install": {

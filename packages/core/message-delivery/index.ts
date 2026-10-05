@@ -4,7 +4,6 @@ export {
   messageRoutesOptions,
   messageApprovedTargetsOptions,
   messageDeliveriesInfiniteOptions,
-  messageDeliveriesOptions,
   messageDeliveryOptions,
 } from "./queries";
 export {

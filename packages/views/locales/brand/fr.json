@@ -1,19 +1,4 @@
 {
-  "fork-ui": {
-    "settings": {
-      "preferences": {
-        "description": "Customize how you work in Labrastro."
-      },
-      "plugins": {
-        "publish": {
-          "description": "Upload a plugin package. Labrastro stores and serves it, so a plugin author needs no server of their own."
-        }
-      },
-      "github": {
-        "page_description": "Connect a GitHub App, control how Pull Requests show up inside Labrastro, and decide what your agents leave behind in commit history."
-      }
-    }
-  },
   "settings": {
     "notifications": {
       "system": {
@@ -171,6 +156,9 @@
     "questions": {
       "source": {
         "question": "Comment avez-vous connu Labrastro ?"
+      },
+      "use_case": {
+        "question": "Pour quoi voulez-vous utiliser Labrastro ?"
       }
     },
     "cli_install": {

@@ -123,6 +123,7 @@ func TestChannelConversationRootMigrationAncestry(t *testing.T) {
 				want string
 			}{
 				{`UPDATE agent_task_queue SET originator_source='delegation', delegated_from_task_id=$2 WHERE id=$1`, []any{ids["ordinary_task_tree"], ids["channel"]}, "channel"},
+				{`UPDATE agent_task_queue SET retry_of_task_id=id WHERE id=$1`, []any{ids["ordinary_task_tree"]}, "ordinary_task_tree"},
 				{`UPDATE agent_task_queue SET retry_of_task_id=$2 WHERE id=$1`, []any{ids["ordinary_task_tree"], ids["ordinary"]}, ""},
 				{`UPDATE agent_task_queue SET originator_source=originator_source, conversation_root_task_id=$2 WHERE id=$1`, []any{ids["ordinary_task_tree"], ids["channel"]}, ""},
 				{`UPDATE agent_task_queue SET retry_of_task_id=$2 WHERE id=$1`, []any{ids["ordinary_task_tree"], ids["missing"]}, "ordinary_task_tree"},

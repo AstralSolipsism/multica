@@ -1,9 +1,25 @@
 # Complete issue graph API (OL-40)
 
-This additive API and headless data layer implement the OL-38 v2 graph
-contract on top of OL-39 persistence. OL-43/T6 can consume them from the
-existing shared Issue surface. Dependencies are informational: this API does
-not gate assignment or execution. See the [confirmed synchronization scope](engineering/upstream-sync-20260926.md).
+This API and headless data layer implement the OL-38 v2 graph contract on top
+of OL-39 persistence for the shared Issue surface.
+
+## Informational dependency policy
+
+The dependency execution policy was retired by the confirmed
+[upstream synchronization decisions](engineering/upstream-sync-20260926.md).
+
+Dependency edges, inherited relation summaries, graph views and versioned edits
+remain available for planning. They do not block assignment, enqueue, claim,
+retry, comments, automation, or Squad execution. These use upstream rules.
+There is no one-shot dependency override, human-only relation removal, or
+dependency-specific dispatch result. Historical migrations and stored records
+remain to preserve existing databases; they do not activate the retired policy.
+
+The current [CLI and API contract](../server/internal/service/builtin_skills/multica-platform/references/issue-dependencies.md)
+documents informational relations and graph validation. Regression coverage is
+in `dependency_informational_test.go`, `dependency_cli_test.go`,
+`issue_dependency_test.go`, and the issue graph tests. No real agent CLI is
+required or permitted by the default tests.
 
 ## Request and authorization
 
@@ -171,7 +187,7 @@ workspace/scope/filters/focus in the query key and pass cancellation to fetch.
 They never use another scope's data as a placeholder. Server graphs stay in
 React Query; local folding/selection/layout state can be stored separately.
 
-Use these distinct states in T6:
+The shared Issue surface distinguishes these states:
 
 - No complete graph yet: loading/unavailable, not a complete empty graph.
 - Successful graph with zero matches: an actual empty subject set; context can

@@ -7,47 +7,8 @@ SELECT id FROM workspace WHERE id = $1 FOR NO KEY UPDATE;
 -- NO KEY UPDATE lock. Structural writers serialize on the advisory lock.
 SELECT id FROM workspace WHERE id = $1 FOR KEY SHARE;
 
--- name: LockIssuesForDependencyAdmission :exec
--- Drain all ordered row locks on the server without sending unused IDs.
-WITH locked AS MATERIALIZED (
-    SELECT id FROM issue WHERE workspace_id = $1 ORDER BY id FOR SHARE
-)
-SELECT count(*) FROM locked;
-
--- name: LockIssueAdmissionNodes :many
--- Structure/catalog locks precede this read. Refresh every status/revision
--- used by the known target after its sorted row locks have been acquired.
-SELECT id, parent_issue_id, status, revision, title, number FROM issue
-WHERE workspace_id = sqlc.arg('workspace_id')
-  AND id = ANY(sqlc.arg('issue_ids')::uuid[])
-ORDER BY id FOR SHARE;
-
--- name: SetTaskDependencyAdmission :one
-UPDATE agent_task_queue SET dependency_admission = $2 WHERE id = $1 RETURNING *;
-
--- name: ListQueuedDependencyTargets :one
--- This is an unlocked candidate read. ClaimAgentTask must only select covered
--- targets after the service has taken their ordered status locks.
-SELECT coalesce(array_agg(DISTINCT t.issue_id) FILTER (WHERE t.issue_id IS NOT NULL), '{}')::uuid[] AS issue_ids,
-       coalesce(bool_or(t.issue_id IS NULL AND t.autopilot_run_id IS NOT NULL), false)::bool AS has_unbound_autopilot
-FROM agent_task_queue t JOIN agent a ON a.id = t.agent_id
-WHERE t.agent_id = sqlc.arg('agent_id') AND a.workspace_id = sqlc.arg('workspace_id')
-AND t.status = 'queued';
-
--- name: GetTaskByDependencyRequest :one
-SELECT * FROM agent_task_queue WHERE dependency_admission->>'request_id' = $1::text;
-
--- name: RejectTaskDependencyAdmission :one
-UPDATE agent_task_queue SET status='failed', completed_at=now(),
-    error=$2, failure_reason=$3, prepare_lease_expires_at=NULL
-WHERE id=$1 AND status IN ('queued','deferred','dispatched') AND started_at IS NULL
-RETURNING *;
-
 -- name: LockIssueDependencyStructure :exec
 SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg('workspace_id')::uuid::text || ':issue_dependency', 0));
-
--- name: LockIssueDependencyStructureShared :exec
-SELECT pg_advisory_xact_lock_shared(hashtextextended(sqlc.arg('workspace_id')::uuid::text || ':issue_dependency', 0));
 
 -- name: ListIssueDependencyNodes :many
 SELECT id, parent_issue_id, status, revision, title, number FROM issue
@@ -88,11 +49,6 @@ WHERE i.workspace_id = sqlc.arg('workspace_id') AND i.id = sqlc.arg('issue_id')
 AND d.issue_id = i.id AND d.type = 'blocked_by'
 AND NOT (d.depends_on_issue_id = ANY(sqlc.arg('retained_ids')::uuid[]));
 
--- name: DeleteIssueDependencies :exec
-DELETE FROM issue_dependency d USING issue i
-WHERE i.workspace_id = sqlc.arg('workspace_id') AND i.id = ANY(sqlc.arg('issue_ids')::uuid[])
-AND (d.issue_id = i.id OR d.depends_on_issue_id = i.id);
-
 -- name: RecordIssueDependencyAudit :exec
 INSERT INTO issue_dependency_audit (id, workspace_id, issue_id, actor_id, credential_kind, action, before_state, after_state)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
@@ -100,21 +56,3 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
 -- name: TouchIssueDependencyRevision :one
 UPDATE issue SET revision = revision + 1, updated_at = now(), last_activity_at = now()
 WHERE workspace_id = $1 AND id = $2 RETURNING *;
-
--- name: GetPendingTaskForIssueAndAgent :one
-SELECT * FROM agent_task_queue WHERE issue_id=$1 AND agent_id=$2
-AND (status IN ('queued','dispatched') OR (status='deferred' AND context->>'channel_issue_media_pending'='true'))
-AND (COALESCE(sqlc.narg('head_sha')::text,'')='' OR context->>'head_sha'=sqlc.narg('head_sha')::text)
-ORDER BY created_at,id LIMIT 1;
-
--- name: HasDependencyConfirmationRequest :one
--- Keep a denial tombstone in the existing relation audit after issue/task
--- deletion, so a still-signed create request cannot resurrect its execution.
-SELECT EXISTS (SELECT 1 FROM issue_dependency_audit WHERE workspace_id=$1
-AND action='dispatch_confirmation' AND after_state->>'request_id'=sqlc.arg('request_id')::text);
-
--- name: LockAutopilotRunForDependencyAdmission :one
-SELECT * FROM autopilot_run WHERE id=$1 FOR UPDATE;
-
--- name: BindTaskDependencyIssue :one
-UPDATE agent_task_queue SET issue_id=$2 WHERE id=$1 AND issue_id IS NULL RETURNING *;

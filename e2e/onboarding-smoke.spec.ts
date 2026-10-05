@@ -91,11 +91,15 @@ test("onboarding — zh-Hans renders Chinese labels", async ({ page, context, ba
   await page.screenshot({ path: testInfo.outputPath("03-workspace-zh.png") });
 });
 
-for (const pathname of ["/about", "/homepage"]) {
+for (const pathname of [
+  "/about", "/homepage", "/changelog", "/contact-sales", "/usecases",
+  "/usecases/auto-data-analysis", "/usecases/auto-data-analysis.en", "/%61bout", "/ABOUT",
+]) {
   test("retired marketing route " + pathname + " shows not found", async ({ page }) => {
-    await page.goto(pathname);
-    // The async layout can start a 200 stream before notFound renders.
-    // Assert the user-visible boundary and noindex, not only the transport code.
+    const response = await page.goto(pathname);
+    // The proxy now retires the route before the upstream page can stream.
+    // Keep the visible boundary and noindex assertions as well as the status.
+    expect(response?.status()).toBe(404);
     await expect(page.getByText("404", { exact: true })).toBeVisible();
     await expect(page.locator('meta[name="robots"][content*="noindex"]').first()).toBeAttached();
   });
@@ -105,7 +109,7 @@ test("sitemap excludes retired marketing routes", async ({ request }) => {
   const response = await request.get("/sitemap.xml");
   expect(response.ok()).toBe(true);
   const xml = await response.text();
-  for (const route of ["about", "homepage", "changelog", "contact-sales"]) {
+  for (const route of ["about", "homepage", "changelog", "contact-sales", "usecases"]) {
     expect(xml).not.toContain("/" + route + "</loc>");
   }
 });

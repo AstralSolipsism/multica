@@ -16,6 +16,10 @@
     { "value": "# Multica identity defaults; explicit worktree settings below take precedence.", "reason": "Persisted Git config prefix checked for idempotency; changing it duplicates includes in existing worktrees." }
   ],
   "sourceExceptions": [
+    { "path": "apps/web/app/(landing)/about/page.tsx", "reason": "Upstream metadata retained byte-for-byte; /about is blocked by the fork route policy and covered by the retained 404 E2E gate." },
+    { "path": "apps/web/app/(landing)/homepage/page.tsx", "reason": "Upstream metadata retained byte-for-byte; /homepage is blocked by the fork route policy and covered by the retained 404 E2E gate." },
+    { "path": "apps/web/app/(landing)/changelog/page.tsx", "reason": "Upstream metadata retained byte-for-byte; /changelog is blocked by the fork route policy and covered by the retained 404 E2E gate." },
+    { "path": "apps/web/app/(landing)/contact-sales/page.tsx", "reason": "Upstream metadata retained byte-for-byte; /contact-sales is blocked by the fork route policy and covered by the retained 404 E2E gate." },
     { "path": "apps/web/features/landing/i18n/en.ts", "reason": "Upstream legal/privacy notices and retired marketing dictionary; retained product pages use the shared app resources or internal download copy." },
     { "path": "apps/web/features/landing/i18n/zh.ts", "reason": "Chinese upstream legal/privacy notices and retired marketing dictionary." },
     { "path": "apps/web/features/landing/i18n/ja.ts", "reason": "Japanese upstream legal/privacy notices and retired marketing dictionary." },

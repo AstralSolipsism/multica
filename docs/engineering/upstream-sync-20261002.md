@@ -95,8 +95,8 @@ retry, revocation, delivery and provider tests also ran.
 
 External Feishu tasks and their descendants now pass one capability check in
 `server/internal/middleware/auth.go`. The check uses the persisted task ancestry
-already introduced by the shipped Fork migration 551, after validating the live
-conversation grant. It does not rely on caller-supplied actor or task headers.
+already introduced by the shipped fork migration `551_channel_conversation_root`,
+after validating the live conversation grant. It does not rely on caller-supplied actor or task headers.
 Normal member credentials and first-party task tokens keep upstream behavior.
 
 `labrastro_conversation_policy.go` owns a small, explicit method/route allowlist:

@@ -431,6 +431,9 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	if err != nil {
 		return err
 	}
+	if err = q.TouchWakeupDispatch(ctx, w.ID); err != nil {
+		return err
+	}
 	if w.Revision != prev.Revision {
 		return tx.Commit(ctx)
 	}

@@ -2,6 +2,9 @@
   "step_nav": {
     "wordmark": "Multica",
     "label": "Étapes de prise en main",
+    "about_you": {
+      "label": "À propos de vous"
+    },
     "workspace": {
       "label": "Espace de travail"
     },
@@ -56,6 +59,9 @@
     "save_failed_toast": "Échec de l'enregistrement"
   },
   "questions": {
+    "about_you": {
+      "question": "Parlez-nous un peu de vous."
+    },
     "source": {
       "question": "Comment avez-vous connu Multica ?",
       "friends_colleagues": "Amis ou collègues",
@@ -72,6 +78,32 @@
       "dont_remember": "Je ne m'en souviens pas",
       "other": "Autre",
       "other_placeholder": "ex. un podcast que j'écoute"
+    },
+    "role": {
+      "question": "Qu'est-ce qui vous décrit le mieux ?",
+      "engineer": "Ingénieur / développeur",
+      "product": "Chef de produit",
+      "designer": "Designer",
+      "founder": "Fondateur / dirigeant",
+      "marketing": "Marketing / croissance",
+      "writer": "Rédacteur / contenu",
+      "research": "Chercheur / analyste",
+      "ops": "Opérations / gestion de projet",
+      "student": "Étudiant / usage personnel",
+      "other": "Autre",
+      "other_placeholder": "ex. enseignant, responsable support"
+    },
+    "use_case": {
+      "question": "Pour quoi voulez-vous utiliser Multica ?",
+      "ship_code": "Livrer du code avec des agents IA",
+      "manage_team": "Gérer les tâches de mon équipe",
+      "personal_tasks": "Organiser mes propres tâches",
+      "plan_research": "Planifier, réfléchir, faire des recherches",
+      "write_publish": "Écrire, réviser, publier",
+      "automate_ops": "Automatiser les opérations et les processus",
+      "evaluate": "Je découvre simplement",
+      "other": "Autre",
+      "other_placeholder": "ex. coordination d'un groupe d'étude"
     }
   },
   "option_card": {
@@ -180,6 +212,9 @@
     "empty_skip_title": "Passer pour l'instant",
     "empty_skip_subtitle": "Les agents ne peuvent pas travailler sans runtime connecté.",
     "empty_skip_action": "Ignorer",
+    "empty_waitlist_title": "Utiliser un ordinateur cloud",
+    "empty_waitlist_subtitle": "Nous ferons tourner un ordinateur pour vous dans le cloud. Pas encore actif.",
+    "empty_waitlist_action": "Bientôt disponible",
     "skip": "Passer pour l'instant",
     "refresh": "Actualiser",
     "refreshing": "Actualisation…",
@@ -199,6 +234,9 @@
     "cli_title": "Connecter depuis le terminal",
     "cli_subtitle": "Connectez un serveur, une machine de développement distante, ou tout ordinateur sans interface graphique. Terminal requis.",
     "cli_action": "Afficher les étapes",
+    "cloud_title": "Utiliser un ordinateur cloud",
+    "cloud_subtitle": "Nous ferons tourner un ordinateur pour vous dans le cloud. Pas encore actif.",
+    "cloud_action": "Bientôt disponible",
     "cli_dialog_title": "Connecter depuis le terminal",
     "cli_dialog_pick_hint": "Choisissez un ordinateur ci-dessus.",
     "cli_dialog_connect": "Connecter et continuer",

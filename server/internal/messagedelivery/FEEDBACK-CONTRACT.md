@@ -57,7 +57,7 @@ An already accepted side effect or a local tool running on a daemon cannot be
 recalled. This is not a filesystem/network sandbox for agent runtimes.
 
 Every task-token API request reads its task after authenticating the token.
-Migration 551 adds a nullable `conversation_root_task_id` derived reference.
+Migration `551_channel_conversation_root` adds a nullable `conversation_root_task_id` derived reference.
 The database copies it on external retry/delegation; ordinary task roots remain
 NULL. Ordinary status/lease/result updates do not recompute it. Authorization
 checks load only the referenced external root's frozen delivery and live grant.

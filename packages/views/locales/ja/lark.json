@@ -11,8 +11,6 @@
     "title": "Feishu グループの QR コード",
     "hint": "Feishu でスキャンしてグループに参加"
   },
-  "install_scan_hint_feishu": "Feishu → スキャン → 新しい PersonalAgent を承認してください。",
-  "install_scan_hint_lark": "Lark → スキャン → 新しい PersonalAgent を承認してください。",
   "conversation_title": "エージェントと会話",
   "conversation_description": "参加者に Multica アカウントは不要です。エージェントが意見を確認・整理し、自分の名前でコメントします。処理時間とモデル使用量が発生し、各メッセージがそのままタスクに転記されるわけではありません。",
   "conversation_groups": "グループのチャット ID（1 行に 1 つの oc_ ID、トピックは独立）",
