@@ -15,12 +15,13 @@ IDs, workspace graph violations and a proposed normalized row set. It audits
 all issues and relations, including dangling or cross-workspace endpoints.
 It does not infer that an empty development database represents production.
 
-Unverified data blocks that workspace's dependency API/enablement, not unrelated
-ordinary issue operations. Legacy operations check the affected parent/canonical
-dependency component; unknown `blocks` and `related` rows stay inert and remain
-available to this audit. Invalid canonical data in the affected component still
-requires repair before changing its structure or admitting execution. Do not
-interpret a successful ordinary assignment or deletion as a clean audit.
+Unverified data blocks that workspace's dependency API, not ordinary assignment,
+content edits, ordinary (non-`with-dependencies`) creation without `blocked_by`,
+or deletion. Reparenting checks the affected parent/canonical dependency
+component; unknown `blocks` and `related` rows stay inert and remain available
+to this audit. Invalid canonical data in that component requires repair before
+reparenting. Dependencies are informational and never gate execution. A successful
+ordinary operation is not a clean audit.
 
 ## Normalization and migration
 
@@ -54,8 +55,9 @@ retry, avoiding an `IF NOT EXISTS` false success. The index only covers
 
 Check for canonical duplicates **before deploying migration 466**, not only
 before enabling compound writes: they prevent the unique index from building.
-Other unverified rows are preserved by these migrations. Deployment does not
-enable dependency writes or provide OL-41's atomic enqueue/claim integration.
+Other unverified rows are preserved by these migrations. Compound dependency
+writes are enabled in production; `DependencyService.WritesEnabled` is an
+in-process switch used by tests, not an operator-configurable recovery gate.
 
 The integration sample contains two identical canonical rows and one `related`
 row: 3 original rows → 2 normalized rows, exactly 1 removed duplicate; recovery
@@ -64,12 +66,17 @@ an existing backup are tested as refusal cases.
 
 ## Recovery
 
-Keep relation writes disabled and stop concurrent mutation while recovering.
-To undo only normalization, first remove the canonical unique index using its
-single-statement migration-466 down SQL, outside a transaction, then run:
+Stop every server/worker process that can mutate this database before recovery
+and keep them stopped until verification finishes. There is no production
+configuration switch that disables relation writes. Use the deployment's normal
+service stop/start commands and the explicitly selected maintenance database.
+To undo only normalization, remove the canonical unique index using the
+single-statement migration-466 down SQL outside a transaction, then restore:
 
 ```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/migrations/466_issue_dependency_blocked_by_index.down.sql
 go -C server run ./cmd/audit_issue_dependencies -restore dependency-backup.json > dependency-restore.json
+go -C server run ./cmd/audit_issue_dependencies > dependency-recovery-audit.json
 ```
 
 Restoration requires backup schema version 1, the same database name and an
@@ -78,12 +85,31 @@ inserts only missing original rows in one transaction. A stale or different
 graph is rejected, so later edits are never overwritten by this command. A
 database restored under a different name or independently modified after
 normalization needs an explicitly reviewed recovery plan/full database backup.
-Restoring duplicate rows means migration 466 cannot be reapplied until those
-duplicates are normalized again.
+Restoring duplicate rows means the canonical unique index cannot be rebuilt
+until those duplicates are normalized again. Review the recovery audit, repair
+or normalize as needed (using a new backup filename), then run the index's up SQL
+explicitly: dropping it with the down SQL does not reset the migration ledger.
 
-Full Stage-2 down migrations remove the added indexes but deliberately retain
+If a previous index build failed or was interrupted, first run the down SQL
+again to remove the INVALID leftover index, then retry the up SQL. The manual
+path does not run the migration runner's cleanup hook; `IF NOT EXISTS` can
+otherwise report success while leaving the index unusable.
+
+```sh
+# Required before retrying a failed or interrupted index build:
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/migrations/466_issue_dependency_blocked_by_index.down.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/migrations/466_issue_dependency_blocked_by_index.up.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT indisvalid FROM pg_index WHERE indexrelid = 'idx_issue_dependency_blocked_by'::regclass;"
+go -C server run ./cmd/audit_issue_dependencies > dependency-final-audit.json
+```
+
+The validity query must return `t`. A missing index or `f` means recovery is
+incomplete, even if the up SQL exited successfully; the audit checks rows, not
+index validity. Restart the services only after the index is valid and the final
+audit succeeds.
+
+The dependency down migrations remove the added indexes but deliberately retain
 `issue_dependency_audit` and all historical relation rows. Reapplying 463 is
 idempotent and retains the audit data. Workspace deletion remains the explicit
-owner-level cleanup path. A rollback after future dependency execution has been
-enabled must also stop/drain dependent execution; retaining data alone cannot
-make an older dispatcher enforce prerequisites.
+owner-level cleanup path. Stored historical admission records do not enable an
+execution policy.

@@ -190,7 +190,7 @@ func (h *Handler) resolveIssueStatusKey(w http.ResponseWriter, r *http.Request, 
 
 // resolveIssueStatusKeyKind is resolveIssueStatusKey plus whether the target is
 // a CUSTOM status. Callers use that to decide whether the write needs the
-// shared catalog lock — see runWithIssueStatusGuard.
+// shared catalog lock — see assertIssueStatusStillActive.
 func (h *Handler) resolveIssueStatusKeyKind(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, status string) (string, bool, bool) {
 	entry, err := issuestatus.Resolve(r.Context(), h.Queries, workspaceID, status)
 	if err != nil {
@@ -256,50 +256,37 @@ func assertIssueStatusStillActive(ctx context.Context, qtx *db.Queries, workspac
 	return nil
 }
 
-// runWithIssueStatusGuard runs an issue write that lands on a custom status
-// inside a transaction that re-verifies the status under the shared catalog
-// lock (see assertIssueStatusStillActive). Request writes also carry trusted
-// wakeup actor identity in transaction-local settings, including built-in targets.
-func (h *Handler) runWithIssueStatusGuard(ctx context.Context, workspaceID pgtype.UUID, statusKey string, fn func(q *db.Queries) error) error {
-	_, hasActor := ctx.Value(wakeupActorKey{}).(wakeupActor)
-	if !hasActor && (statusKey == "" || issuestatus.IsBuiltIn(statusKey)) {
-		return fn(h.Queries)
-	}
+// updateIssueWithStatusGuard refreshes untouched nullable fields under the issue
+// row lock, so an ordinary edit cannot restore a concurrent hierarchy change.
+func (h *Handler) updateIssueWithStatusGuard(ctx context.Context, workspaceID pgtype.UUID, statusKey string, params db.UpdateIssueParams, rawFields map[string]json.RawMessage) (db.Issue, db.Issue, error) {
 	tx, err := h.beginWakeupWrite(ctx)
 	if err != nil {
-		return err
+		return db.Issue{}, db.Issue{}, err
 	}
 	defer tx.Rollback(ctx)
-
-	qtx := h.Queries.WithTx(tx)
-	if err := assertIssueStatusStillActive(ctx, qtx, workspaceID, statusKey); err != nil {
-		return err
+	q := h.Queries.WithTx(tx)
+	if err := assertIssueStatusStillActive(ctx, q, workspaceID, statusKey); err != nil {
+		return db.Issue{}, db.Issue{}, err
 	}
-	if err := fn(qtx); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
-// updateIssueWithStatusGuard writes params under the status-archive guard.
-func (h *Handler) updateIssueWithStatusGuard(ctx context.Context, workspaceID pgtype.UUID, statusKey string, params db.UpdateIssueParams) (db.Issue, error) {
-	var issue db.Issue
-	var cancelledWakeups []db.AgentTaskQueue
-	err := h.runWithIssueStatusGuard(ctx, workspaceID, statusKey, func(q *db.Queries) error {
-		if params.DuplicateOfIssueID.Valid {
-			if err := lockAndCheckDuplicateMark(ctx, q, workspaceID, params.ID, params.DuplicateOfIssueID); err != nil {
-				return err
-			}
+	if params.DuplicateOfIssueID.Valid {
+		if err := lockAndCheckDuplicateMark(ctx, q, workspaceID, params.ID, params.DuplicateOfIssueID); err != nil {
+			return db.Issue{}, db.Issue{}, err
 		}
-		var innerErr error
-		issue, cancelledWakeups, innerErr = updateIssueStoppingWakeups(ctx, q, params)
-		return innerErr
-	})
+	}
+	current, err := q.LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{ID: params.ID, WorkspaceID: workspaceID})
 	if err != nil {
-		return issue, err
+		return db.Issue{}, db.Issue{}, err
+	}
+	refreshUntouchedNullableIssueParams(&params, current, rawFields)
+	issue, cancelledWakeups, err := updateIssueStoppingWakeups(ctx, q, params)
+	if err != nil {
+		return db.Issue{}, current, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.Issue{}, current, err
 	}
 	h.broadcastCancelledWakeups(ctx, workspaceID, cancelledWakeups)
-	return issue, nil
+	return issue, current, nil
 }
 
 // updateIssueStoppingWakeups writes params and, when the write moves the issue
@@ -3661,8 +3648,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 			return db.Issue{}, db.Issue{}, false, err
 		}
 	}
-	// This path opens its own transaction, so it carries the archive-race guard
-	// itself rather than going through runWithIssueStatusGuard. The catalog lock
+	// Recheck the target custom status in this transaction. The catalog lock
 	// must precede both attachment and issue row locks everywhere. (MUL-6243)
 	if err := assertIssueStatusStillActive(ctx, qtx, workspaceID, statusKey); err != nil {
 		return db.Issue{}, db.Issue{}, false, err
@@ -4032,7 +4018,11 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 			prevIssue = lockedPrev
 		}
 	} else {
-		issue, err = h.updateIssueWithStatusGuard(r.Context(), prevIssue.WorkspaceID, statusKeyForGuard, params)
+		var lockedPrev db.Issue
+		issue, lockedPrev, err = h.updateIssueWithStatusGuard(r.Context(), prevIssue.WorkspaceID, statusKeyForGuard, params, rawFields)
+		if lockedPrev.ID.Valid {
+			prevIssue = lockedPrev
+		}
 	}
 	if err != nil {
 		if writeDependencyError(w, err) {
@@ -4438,23 +4428,18 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLs(ctx context.Context, issu
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
 	workspaceID := issues[0].WorkspaceID
-	ids := make([]pgtype.UUID, 0, len(issues))
 	for _, issue := range issues {
 		if issue.WorkspaceID != workspaceID {
 			return issueDeleteResult{}, errors.New("issues belong to different workspaces")
 		}
-		ids = append(ids, issue.ID)
 	}
 	if err := h.IssueService.Dependencies.LockWrite(ctx, qtx, workspaceID); err != nil {
 		return issueDeleteResult{}, err
 	}
-	before, err := h.IssueService.Dependencies.LoadForWrite(ctx, qtx, workspaceID)
-	if err != nil {
-		return issueDeleteResult{}, err
-	}
-	if err := h.IssueService.Dependencies.Delete(ctx, qtx, before, ids); err != nil {
-		return issueDeleteResult{}, err
-	}
+	// Deletion cannot add a cycle. Existing foreign keys remove incident edges;
+	// DetachedChildren below drives child update events. No consumer reads the
+	// old delete/detach dependency audit entries, so do not load a full graph
+	// solely to produce them. Keep the structure lock to serialize graph edits.
 
 	result := issueDeleteResult{}
 	for _, issue := range issues {
@@ -4853,7 +4838,11 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 				prevIssue = lockedPrev
 			}
 		} else {
-			issue, err = h.updateIssueWithStatusGuard(r.Context(), wsUUID, batchStatusKey, params)
+			var lockedPrev db.Issue
+			issue, lockedPrev, err = h.updateIssueWithStatusGuard(r.Context(), wsUUID, batchStatusKey, params, rawUpdates)
+			if lockedPrev.ID.Valid {
+				prevIssue = lockedPrev
+			}
 		}
 		if err != nil {
 			// The archive race is a property of the batch's shared target
