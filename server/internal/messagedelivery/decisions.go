@@ -37,18 +37,17 @@ type sourceDecision struct {
 	ref             sourceRef
 }
 
-// insertSourceDecision records the decision inside the parent-integrity
-// transaction (the workspace FOR SHARE lock, review R3): a workspace
-// deletion either committed first (the row is gone — the source no longer
-// exists) or lands after and sweeps the row. ON CONFLICT DO NOTHING against
-// the global dedup index is the exactly-once guarantee across replicas and
-// repeated scans.
 func (s *Service) insertSourceDecision(ctx context.Context, d sourceDecision) error {
 	d.shardTotal = len(splitShards(NewMessage(d.content.Text, d.content.Link)))
 	_, err := s.insertDecision(ctx, d)
 	return err
 }
 
+// insertDecision records any scope's decision inside the parent-integrity
+// transaction: a workspace deletion either committed first (the source no
+// longer exists) or lands after and sweeps the row. Route locking and revision
+// checks reject stale candidates. ON CONFLICT DO NOTHING against the global
+// dedup index prevents duplicate decisions across replicas and repeated scans.
 func (s *Service) insertDecision(ctx context.Context, d sourceDecision) (int, error) {
 	contentJSON, err := json.Marshal(d.content)
 	if err != nil {

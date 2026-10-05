@@ -3722,8 +3722,8 @@ type SetLabrastroMessageRouteEnabledParams struct {
 }
 
 // Enable/disable with revision bump. Disable keeps history; the queued
-// deliveries are cancelled by the service layer. Enable resets
-// effective_from so the disabled window is never backfilled.
+// deliveries are cancelled by the service layer. Only a disabled-to-enabled
+// transition resets effective_from so the disabled window is never backfilled.
 func (q *Queries) SetLabrastroMessageRouteEnabled(ctx context.Context, arg SetLabrastroMessageRouteEnabledParams) (LabrastroMessageRoute, error) {
 	row := q.db.QueryRow(ctx, setLabrastroMessageRouteEnabled,
 		arg.Enabled,

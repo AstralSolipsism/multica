@@ -434,8 +434,8 @@ func (s *Service) UpdateRoute(ctx context.Context, route db.LabrastroMessageRout
 
 // SetRouteEnabled flips a route's enabled flag under optimistic
 // concurrency. Disable stops new enqueues (rules only decide while enabled)
-// and cancels queued sends; enable resets the eligibility boundary so the
-// disabled window is never backfilled.
+// and cancels queued sends; transitioning from disabled to enabled resets
+// the eligibility boundary so the disabled window is never backfilled.
 func (s *Service) SetRouteEnabled(ctx context.Context, route db.LabrastroMessageRoute, member db.Member, enabled bool, expectedRevision int32) (db.LabrastroMessageRoute, error) {
 	return s.setRouteEnabled(ctx, route, member, enabled, expectedRevision)
 }
@@ -445,7 +445,7 @@ func (s *Service) SetRouteEnabled(ctx context.Context, route db.LabrastroMessage
 // audit — deleting a rule never rewrites history.
 func (s *Service) DeleteRoute(ctx context.Context, route db.LabrastroMessageRoute) error {
 	return s.withParentLock(ctx, route.WorkspaceID, func(q *db.Queries) error {
-		// Delete takes the row lock before cancelling: source decisions hold
+		// Delete takes the row lock before cancelling: all decisions hold
 		// SHARE on this row until insertion, so no late candidate can escape.
 		if err := q.DeleteLabrastroMessageRoute(ctx, db.DeleteLabrastroMessageRouteParams{ID: route.ID, WorkspaceID: route.WorkspaceID}); err != nil {
 			return err

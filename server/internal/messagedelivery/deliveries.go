@@ -86,7 +86,9 @@ func (s *Service) GetDeliveryRecords(ctx context.Context, workspaceID, deliveryI
 // RetryDelivery re-queues a failed or uncertain delivery for one more pass.
 // The fixed per-shard send UUIDs make the replay idempotent inside the
 // platform's dedup window; shards whose receipt already carries an external
-// message id are skipped, not re-sent.
+// message id are skipped, not re-sent. Retrying retains the original decision
+// time: a subsequent route disable or installation revocation still fences
+// this delivery at the send gate, even after the route is re-enabled.
 func (s *Service) RetryDelivery(ctx context.Context, workspaceID, autopilotID, deliveryID pgtype.UUID) (db.LabrastroMessageDelivery, error) {
 	d, err := s.Queries.GetLabrastroMessageDelivery(ctx, db.GetLabrastroMessageDeliveryParams{
 		ID: deliveryID, WorkspaceID: workspaceID,

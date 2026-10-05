@@ -77,7 +77,10 @@ func (s *Service) updateRoute(ctx context.Context, route db.LabrastroMessageRout
 		}
 		return nil
 	})
-	return updated, s.routeWriteError(ctx, route, expectedRevision, "update message route", err)
+	if err != nil {
+		return db.LabrastroMessageRoute{}, s.routeWriteError(ctx, route, expectedRevision, "update message route", err)
+	}
+	return updated, nil
 }
 
 // setRouteEnabled shares the transaction, cancellation and revision handling
@@ -113,7 +116,10 @@ func (s *Service) setRouteEnabled(ctx context.Context, route db.LabrastroMessage
 	} else {
 		err = s.withParentLock(ctx, route.WorkspaceID, write)
 	}
-	return updated, s.routeWriteError(ctx, route, expectedRevision, "set message route enabled", err)
+	if err != nil {
+		return db.LabrastroMessageRoute{}, s.routeWriteError(ctx, route, expectedRevision, "set message route enabled", err)
+	}
+	return updated, nil
 }
 
 func (s *Service) routeWriteError(ctx context.Context, route db.LabrastroMessageRoute, expectedRevision int32, operation string, err error) error {

@@ -78,8 +78,8 @@ RETURNING *;
 
 -- name: SetLabrastroMessageRouteEnabled :one
 -- Enable/disable with revision bump. Disable keeps history; the queued
--- deliveries are cancelled by the service layer. Enable resets
--- effective_from so the disabled window is never backfilled.
+-- deliveries are cancelled by the service layer. Only a disabled-to-enabled
+-- transition resets effective_from so the disabled window is never backfilled.
 UPDATE labrastro_message_route
 SET enabled = sqlc.arg('enabled'),
     last_disabled_at = CASE WHEN NOT sqlc.arg('enabled')::boolean AND enabled
