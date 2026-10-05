@@ -21,10 +21,11 @@ const ConversationGrantReadSchema = z.object({
   }).catch({ chat_id: "", chat_type: "unreadable" })),
 }).catch({ id: "", authorized_by: "", scope: "unreadable", chats: [] });
 
-// Saving replaces the whole chat set. Only an explicit null (no grant) or a
-// fully understood grant is safe to edit; missing data stays indeterminate.
+// Saving replaces the whole chat set. The server omits conversation when
+// there is no grant; null has the same meaning. Callers gate writes separately
+// on conversation_supported and the installation query's availability.
 export function isEditableLarkConversation(grant: unknown): boolean {
-  return grant === null || ConversationGrantSchema.safeParse(grant).success;
+  return grant == null || ConversationGrantSchema.safeParse(grant).success;
 }
 
 export const LarkInstallationsSchema = z.object({

@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
 import { expect, it, beforeEach, afterEach, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ApiError } from "@multica/core/api";
-import { larkInstallationsOptions } from "@multica/core/lark";
+import { larkInstallationsOptions, larkKeys } from "@multica/core/lark";
 import { ApiClient } from "@multica/core/api/client";
 import type { LarkInstallation } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
@@ -60,7 +60,6 @@ const PRIVATE_CAPS = {
 };
 
 const installation: LarkInstallation = {
-  conversation: null,
   id: "inst", workspace_id: "ws", agent_id: "agent", app_id: "app",
   bot_open_id: "bot", installer_user_id: "owner", status: "active",
   installed_at: "", created_at: "", updated_at: "",
@@ -79,13 +78,12 @@ function view(disabled: boolean, inst: LarkInstallation = installation) {
 // installations query, so the confirm mutation's cache write flows back in
 // as props and the draft re-baselines from the returned grant.
 function QueryDrivenForm() {
-  const { data } = useQuery(larkInstallationsOptions("ws"));
+  const { data, isError, isFetching } = useQuery(larkInstallationsOptions("ws"));
   const inst = data?.installations[0];
-  return inst ? <LarkConversationForm workspaceId="ws" installation={inst} disabled={false} /> : null;
+  return inst ? <LarkConversationForm workspaceId="ws" installation={inst} disabled={data?.conversation_supported !== true || isError || isFetching} /> : null;
 }
 
-function viewQueryDriven() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function viewQueryDriven(qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   return (
     <QueryClientProvider client={qc}>
       <QueryDrivenForm />
@@ -135,12 +133,66 @@ beforeEach(() => {
     scope: "workspace",
     chats: [{ chat_id: "oc_dm_alice", chat_type: "p2p" }],
   });
-  installationsMock.mockReset().mockResolvedValue({ installations: [installation], configured: true });
+  installationsMock.mockReset().mockResolvedValue({ installations: [installation], configured: true, conversation_supported: true });
 });
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+it("authorizes an installation without a grant and authorizes it again after revocation", async () => {
+  let current = installation;
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+    installations: [current], configured: true, conversation_supported: true,
+  }))));
+  installationsMock.mockImplementation(() => new ApiClient("https://api.example.test").listLarkInstallations("ws"));
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderWithI18n(viewQueryDriven(qc));
+  const user = await openForm();
+  const directs = await screen.findByLabelText(/Direct chat IDs/);
+  await user.type(directs, "oc_dm");
+  await user.click(screen.getByRole("button", { name: "Authorize conversations" }));
+  expect(mutation.mutateAsync).toHaveBeenNthCalledWith(1, [{ chat_id: "oc_dm", chat_type: "p2p" }]);
+
+  current = { ...installation, conversation: {
+    id: "00000000-0000-4000-8000-000000000001",
+    authorized_by: "00000000-0000-4000-8000-000000000004",
+    scope: "workspace", chats: [{ chat_id: "oc_dm", chat_type: "p2p" }],
+  } };
+  await act(async () => { await qc.refetchQueries({ queryKey: larkKeys.installations("ws") }); });
+  await user.click(screen.getByRole("button", { name: "Revoke conversations" }));
+  expect(mutation.mutateAsync).toHaveBeenNthCalledWith(2, []);
+  // The actual server omits the field after revocation, just as on first install.
+  current = installation;
+  await act(async () => { await qc.refetchQueries({ queryKey: larkKeys.installations("ws") }); });
+  await user.type(directs, "oc_next");
+  await user.click(screen.getByRole("button", { name: "Authorize conversations" }));
+  expect(mutation.mutateAsync).toHaveBeenNthCalledWith(3, [{ chat_id: "oc_next", chat_type: "p2p" }]);
+  qc.clear();
+});
+
+it("re-baselines when a refresh omits a revoked grant without resurrecting its chats", async () => {
+  let current: LarkInstallation = { ...installation, conversation: {
+    id: "00000000-0000-4000-8000-000000000001",
+    authorized_by: "00000000-0000-4000-8000-000000000004",
+    scope: "workspace", chats: [{ chat_id: "oc_existing", chat_type: "p2p" }],
+  } };
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+    installations: [current], configured: true, conversation_supported: true,
+  }))));
+  installationsMock.mockImplementation(() => new ApiClient("https://api.example.test").listLarkInstallations("ws"));
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderWithI18n(viewQueryDriven(qc));
+  const user = await openForm();
+  const directs = await screen.findByLabelText(/Direct chat IDs/);
+  await user.type(directs, "\noc_local");
+  current = installation;
+  await act(async () => { await qc.refetchQueries({ queryKey: larkKeys.installations("ws") }); });
+  await waitFor(() => expect(directs).toHaveValue("oc_local"));
+  await user.click(screen.getByRole("button", { name: "Authorize conversations" }));
+  expect(mutation.mutateAsync).toHaveBeenCalledWith([{ chat_id: "oc_local", chat_type: "p2p" }]);
+  qc.clear();
 });
 
 it("keeps other installations visible but blocks replacement of an unreadable grant", async () => {
@@ -200,24 +252,32 @@ it("retains the last readable grant and local edits through an unreadable refres
   ]);
 });
 
-it("preserves the edited conversations and blocks save/revoke while configuration cannot be verified", async () => {
+it.each([
+  { label: /Direct chat IDs/, chatType: "p2p" },
+  { label: /Group chat IDs/, chatType: "group" },
+])("keeps $chatType drafts editable and focused while unverifiable configuration blocks writes", async ({ label, chatType }) => {
+  capsMock.mockRejectedValue(new ApiError("Not Found", 404, "Not Found"));
   const { rerender } = renderWithI18n(view(false));
   const user = await openForm();
 
-  // The default caps mock lacks OL-75 fields, so direct chats use the
-  // manual-entry fallback (candidate-mode tests are below).
-  const directs = screen.getByLabelText(/Direct chat IDs/);
-  await user.type(directs, "oc_dm");
+  const input = await screen.findByLabelText(label);
+  await user.type(input, "oc_manual");
 
   rerender(view(true));
-  expect(directs).toHaveValue("oc_dm");
+  expect(input).toHaveValue("oc_manual");
+  expect(input).toBeEnabled();
+  expect(input).toHaveFocus();
+  await user.type(input, "\noc_local");
   expect(screen.getByRole("button", { name: "Authorize conversations" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Revoke conversations" })).toBeDisabled();
   expect(mutation.mutateAsync).not.toHaveBeenCalled();
 
   rerender(view(false));
   await user.click(screen.getByRole("button", { name: "Authorize conversations" }));
-  expect(mutation.mutateAsync).toHaveBeenCalledWith([{ chat_id: "oc_dm", chat_type: "p2p" }]);
+  expect(mutation.mutateAsync).toHaveBeenCalledWith([
+    { chat_id: "oc_manual", chat_type: chatType },
+    { chat_id: "oc_local", chat_type: chatType },
+  ]);
 });
 
 it("authorizes picked groups plus direct chats in one save", async () => {

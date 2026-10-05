@@ -68,7 +68,8 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
   const baselineRef = useRef<LarkConversationGrant | null | undefined>(installation.conversation);
   useEffect(() => {
     const incoming = installation.conversation;
-    // An absent or unreadable grant cannot re-baseline a full-list draft.
+    // Unreadable grants cannot re-baseline a draft; an omitted grant means
+    // all saved chats were revoked and must be removed from its baseline.
     if (!isEditableLarkConversation(incoming) || incoming === baselineRef.current) return;
     const baseline = baselineRef.current;
     baselineRef.current = incoming;
@@ -167,7 +168,7 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
             value={groupsText}
             onChange={e => applyGroupsText(e.target.value)}
             rows={2}
-            disabled={blocked}
+            disabled={mutation.isPending}
             aria-label={t($ => $.lark.conversation_groups)}
             placeholder={t($ => $.lark.conversation_groups)}
           />
@@ -190,7 +191,7 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
             value={directsText}
             onChange={e => applyDirectsText(e.target.value)}
             rows={2}
-            disabled={blocked}
+            disabled={mutation.isPending}
             aria-label={t($ => $.lark.conversation_directs)}
             placeholder={t($ => $.lark.conversation_directs)}
           />

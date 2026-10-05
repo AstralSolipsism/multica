@@ -69,16 +69,11 @@ import type {
   ListGitHubRepositoriesResponse,
   ListLabelsResponse,
   ListWebhookDeliveriesResponse,
-  MessageApprovedTarget,
-  MessageDelivery,
-  MessageRoute,
   GetMessageDeliveryResponse,
   ListMessageDeliveriesResponse,
   GetMessageRouteDeliveryResponse,
   ListMessageRouteDeliveriesResponse,
-  MessageSourceApprovedTarget,
   MessageSourceDelivery,
-  MessageSourceRoute,
   IssueStatusEntry,
   ListIssueStatusesResponse,
   NotificationPreferenceResponse,
@@ -3855,29 +3850,6 @@ export const MessageRouteResponseSchema = z.object({
   route: MessageRouteSchema,
 }).loose();
 
-export const EMPTY_MESSAGE_ROUTE: MessageRoute = {
-  id: "",
-  workspace_id: "",
-  autopilot_id: "",
-  installation_id: "",
-  channel_type: "feishu",
-  target_type: "member",
-  target_user_id: null,
-  target_chat_id: null,
-  target_message_id: null,
-  target_thread_id: null,
-  target_key: "",
-  conditions: "success",
-  content_mode: "summary",
-  enabled: false,
-  revision: 0,
-  created_by: "",
-  updated_by: "",
-  effective_from: "",
-  created_at: "",
-  updated_at: "",
-};
-
 export const MessageApprovedTargetSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
@@ -3897,18 +3869,6 @@ export const ListMessageApprovedTargetsResponseSchema = z.object({
 export const ApproveMessageTargetResponseSchema = z.object({
   approved_target: MessageApprovedTargetSchema,
 }).loose();
-
-export const EMPTY_MESSAGE_APPROVED_TARGET: MessageApprovedTarget = {
-  id: "",
-  workspace_id: "",
-  autopilot_id: "",
-  installation_id: "",
-  target_key: "",
-  target_type: "group",
-  approved_by: "",
-  approved_at: "",
-  revoked_at: null,
-};
 
 export const RevokeMessageTargetResponseSchema = z.object({
   revoked: z.boolean().default(false),
@@ -3955,29 +3915,6 @@ export const ListMessageDeliveriesResponseSchema = z.object({
 export const MessageDeliveryResponseSchema = z.object({
   delivery: MessageDeliverySchema,
 }).loose();
-
-export const EMPTY_MESSAGE_DELIVERY: MessageDelivery = {
-  id: "",
-  workspace_id: "",
-  route_id: "",
-  route_revision: 0,
-  autopilot_id: "",
-  run_id: null,
-  source_kind: "unknown",
-  status: "unknown",
-  attempts: 0,
-  next_attempt_at: null,
-  error_code: null,
-  last_error: null,
-  shard_total: 0,
-  installation_id: "",
-  target_key: "",
-  delivered_at: null,
-  first_attempt_at: null,
-  created_at: "",
-  updated_at: "",
-  requested_by: null,
-};
 
 export const MessageDeliveryContentSnapshotSchema = z.object({
   text: z.string().optional(),
@@ -4094,31 +4031,6 @@ export const MessageSourceRouteResponseSchema = z.object({
   route: MessageSourceRouteSchema,
 }).loose();
 
-export const EMPTY_MESSAGE_SOURCE_ROUTE: MessageSourceRoute = {
-  id: "",
-  workspace_id: "",
-  autopilot_id: null,
-  source_kind: "inbox",
-  installation_id: "",
-  channel_type: "feishu",
-  target_type: "member",
-  target_user_id: null,
-  target_chat_id: null,
-  target_message_id: null,
-  target_thread_id: null,
-  target_key: "",
-  project_id: null,
-  event_types: [],
-  enabled: false,
-  revision: 0,
-  created_by: "",
-  updated_by: "",
-  effective_from: "",
-  last_disabled_at: null,
-  created_at: "",
-  updated_at: "",
-};
-
 export const MessageSourceApprovedTargetSchema = z.object({
   id: z.string(),
   workspace_id: z.string().default(""),
@@ -4140,20 +4052,6 @@ export const ListMessageSourceApprovedTargetsResponseSchema = z.object({
 export const ApproveMessageSourceTargetResponseSchema = z.object({
   approved_target: MessageSourceApprovedTargetSchema,
 }).loose();
-
-export const EMPTY_MESSAGE_SOURCE_APPROVED_TARGET: MessageSourceApprovedTarget = {
-  id: "",
-  workspace_id: "",
-  autopilot_id: null,
-  source_kind: "activity",
-  project_id: null,
-  installation_id: "",
-  target_key: "",
-  target_type: "group",
-  approved_by: "",
-  approved_at: "",
-  revoked_at: null,
-};
 
 export const MessageEventCatalogSchema = z.object({
   personal: z.object({

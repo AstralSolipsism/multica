@@ -18,8 +18,6 @@ import { noopLogger } from "../logger";
 import {
   ApproveMessageTargetResponseSchema,
   EMPTY_LIST_MESSAGE_DELIVERIES_RESPONSE,
-  EMPTY_MESSAGE_DELIVERY,
-  EMPTY_MESSAGE_ROUTE,
   GetMessageDeliveryResponseSchema,
   ListMessageApprovedTargetsResponseSchema,
   ListMessageDeliveriesResponseSchema,
@@ -245,8 +243,6 @@ describe("GetMessageDeliveryResponseSchema", () => {
     expect(fallback.delivery.status).toBe("unknown");
     expect(fallback.content_snapshot).toBeNull();
     expect(fallback.receipts).toEqual([]);
-    expect(EMPTY_MESSAGE_DELIVERY.status).toBe("unknown");
-    expect(EMPTY_MESSAGE_ROUTE.enabled).toBe(false);
   });
 });
 

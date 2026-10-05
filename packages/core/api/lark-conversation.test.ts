@@ -54,8 +54,25 @@ it("marks unknown scope and chat kinds explicitly unreadable", async () => {
   expect(parsed.installations[0]?.conversation).toMatchObject({
     scope: "unreadable", chats: [{ chat_id: "oc_future", chat_type: "unreadable" }],
   });
-  expect(isEditableLarkConversation(null)).toBe(true);
-  expect(isEditableLarkConversation(undefined)).toBe(false);
+});
+
+it.each([null, undefined])("treats %j as no conversation grant", (conversation) => {
+  expect(isEditableLarkConversation(conversation)).toBe(true);
+});
+
+it("allows the server's omitted conversation field when conversation authorization is supported", async () => {
+  const installation = {
+    id: "inst", workspace_id: "ws", agent_id: "agent", app_id: "app",
+    bot_open_id: "bot", installer_user_id: "user", status: "active",
+    installed_at: "", created_at: "", updated_at: "",
+  };
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+    installations: [installation], configured: true, conversation_supported: true,
+  }))));
+  const result = await client.listLarkInstallations("ws");
+  expect(result.conversation_supported).toBe(true);
+  expect(result.installations[0]).not.toHaveProperty("conversation");
+  expect(isEditableLarkConversation(result.installations[0]?.conversation)).toBe(true);
 });
 
 it("keeps older installations readable without enabling unadvertised conversation writes", async () => {
