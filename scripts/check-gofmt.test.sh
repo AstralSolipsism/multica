@@ -51,6 +51,11 @@ expect_failure server/pkg/fixture/fork.go
 gofmt -w server/pkg/fixture/fork.go
 bash "$repo_root/scripts/check-gofmt.sh"
 
+# Same basename in another directory is a different file and stays checked.
+cp "$upstream" server/pkg/fixture/upstream_test.go
+expect_failure server/pkg/fixture/upstream_test.go
+rm server/pkg/fixture/upstream_test.go
+
 # Editing an exempted upstream path puts it back under the gate automatically.
 printf 'package fixture\nfunc upstream(){println("fork edit")}\n' > "$upstream"
 expect_failure "$upstream"
@@ -61,13 +66,25 @@ expect_failure "$upstream"
 cp "$fixture/original" "$upstream"
 bash "$repo_root/scripts/check-gofmt.sh"
 
+# Stale entries for removed files are harmless. Leave only formatted files in
+# the tree so an unrelated gofmt failure cannot mask invalid-manifest handling.
+mv "$upstream" "$fixture/upstream"
+bash "$repo_root/scripts/check-gofmt.sh"
+
 # A missing or invalid manifest must fail, not silently disable the check.
 mv "$manifest" "$fixture/manifest"
 expect_failure "$manifest"
-printf 'not-a-blob %s\n' "$upstream" > "$manifest"
-expect_failure 'Invalid gofmt upstream exception'
-printf '%s server/internal/fixture/*.go\n' "$blob" > "$manifest"
-expect_failure 'Invalid gofmt upstream exception'
+for entry in "g${blob:1} $upstream" "${blob:1} $upstream" \
+  "$blob $upstream extra" "$blob pkg/fixture/upstream_test.go" \
+  "$blob server/internal/fixture/*.go"; do
+  printf '%s\n' "$entry" > "$manifest"
+  expect_failure 'Invalid gofmt upstream exception'
+done
 mv "$fixture/manifest" "$manifest"
+mv "$fixture/upstream" "$upstream"
+
+# The last exception still applies when its line has no trailing newline.
+printf '%s %s' "$blob" "$upstream" > "$manifest"
 bash "$repo_root/scripts/check-gofmt.sh"
+cmp "$upstream" "$fixture/original"
 echo "gofmt gate checks fork changes, preserves exact upstream snapshots and rejects invalid Go."
