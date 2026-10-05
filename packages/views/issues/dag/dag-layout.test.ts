@@ -265,8 +265,16 @@ describe("free chains alongside task lines", () => {
       const edges = [edge("a", "b"), edge("b", "c"), edge("c", collapsed ? "line" : "child")];
       const result = await layoutDagProjection(nodes, edges, direction, [group("line", collapsed)]);
       const axis = direction === "LR" ? "x" : "y";
+      const crossAxis = direction === "LR" ? "y" : "x";
+      const minimumGap = direction === "LR" ? 248 : 116;
       expect(result.positions.a![axis]).toBeLessThan(result.positions.b![axis]);
       expect(result.positions.b![axis]).toBeLessThan(result.positions.c![axis]);
+      for (const [source, target] of [["a", "b"], ["b", "c"]]) {
+        const from = result.positions[source!]!;
+        const to = result.positions[target!]!;
+        expect(to[axis] - from[axis]).toBeGreaterThanOrEqual(minimumGap);
+        expect(Math.abs(to[crossAxis] - from[crossAxis])).toBeLessThan(1);
+      }
       expect(Object.keys(result.groups)).toEqual(["line"]);
       expect(Object.keys(result.positions).sort()).toEqual(nodes.map((n) => n.id).sort());
       routeEndpoints(result, edges);
