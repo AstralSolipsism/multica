@@ -20,6 +20,7 @@
     "server/**",
     "scripts/check-gofmt.sh",
     "scripts/check-gofmt.test.sh",
+    "scripts/gofmt-upstream-exceptions.txt",
     "scripts/branding-policy.json",
     "packages/core/runtimes/cli-version.ts",
     "scripts/agent-cli-command-names.txt",
