@@ -171,6 +171,9 @@
     "questions": {
       "source": {
         "question": "你是从哪里了解到 Labrastro 的？"
+      },
+      "use_case": {
+        "question": "你打算用 Labrastro 做什么？"
       }
     },
     "cli_install": {

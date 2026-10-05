@@ -124,6 +124,7 @@ Workspace-scoped queries filter by `workspace_id`; membership gates access and `
 ## Change and Delivery Rules
 
 - Preserve the [retained fork product constraints](docs/engineering/upstream-sync-20260926.md#retained-fork-product-constraints) during upstream syncs. An upstream-first merge must not restore removed marketing flows or replace their absence tests with upstream expectations.
+- Keep retired marketing implementations upstream-compatible behind the documented fork route, step-list and mount gates; do not delete them to enforce absence.
 
 
 - Keep changes scoped; reuse existing patterns. Code comments are English.

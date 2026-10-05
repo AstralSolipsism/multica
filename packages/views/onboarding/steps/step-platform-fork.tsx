@@ -1,5 +1,7 @@
 "use client";
 
+import { SHOW_CLOUD_PROMOTION } from "../labrastro-marketing";
+
 import { useEffect, useState, type ReactNode } from "react";
 import { ArrowRight, Download, Loader2 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
@@ -38,6 +40,8 @@ import { useT } from "../../i18n";
  *      probe. When a runtime appears and the user selects it, the
  *      dialog's "Connect & continue" button fires `onNext(runtime)`
  *      and advances the flow.
+ *   3. **Cloud computer** — alt card, "Coming soon" badge. Not yet
+ *      available; rendered as a static, non-actionable preview.
  *
  * Footer is simplified — no Continue button, since the CLI dialog
  * owns that advancement itself. Only Skip remains.
@@ -121,7 +125,14 @@ export function StepPlatformFork({
             onAction={handleOpenCli}
           />
 
-
+          {SHOW_CLOUD_PROMOTION && (
+            <ForkAlt
+              title={t(($) => $.step_platform.cloud_title)}
+              subtitle={t(($) => $.step_platform.cloud_subtitle)}
+              actionLabel={t(($) => $.step_platform.cloud_action)}
+              disabled
+            />
+          )}
         </div>
 
       </div>
@@ -199,36 +210,51 @@ function ForkPrimary({ onClick }: { onClick: () => void }) {
 }
 
 /**
- * Alt card with a right-side outline button that fires `onAction`
- * (opens a dialog).
+ * Alt card with a right-side action. When `disabled`, the action
+ * renders as a static badge (used for "Coming soon" paths that aren't
+ * yet wired up); otherwise it's an outline button that fires
+ * `onAction` and typically opens a dialog.
  */
 function ForkAlt({
   title,
   subtitle,
   actionLabel,
   onAction,
+  disabled = false,
 }: {
   title: string;
   subtitle: ReactNode;
   actionLabel: ReactNode;
   onAction?: () => void;
+  disabled?: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border bg-card px-5 py-4">
+    <div
+      className={cn(
+        "flex items-center justify-between gap-4 rounded-lg border bg-card px-5 py-4",
+        disabled && "opacity-70",
+      )}
+    >
       <div className="min-w-0">
         <div className="text-body font-medium text-foreground">{title}</div>
         <div className="mt-1 text-caption leading-[1.5] text-muted-foreground">
           {subtitle}
         </div>
       </div>
-      <Button
-        variant="outline"
-        size="sm"
-        className="shrink-0"
-        onClick={onAction}
-      >
-        {actionLabel}
-      </Button>
+      {disabled ? (
+        <span className="shrink-0 rounded-full border bg-muted px-3 py-1 text-caption font-medium text-muted-foreground">
+          {actionLabel}
+        </span>
+      ) : (
+        <Button
+          variant="outline"
+          size="sm"
+          className="shrink-0"
+          onClick={onAction}
+        >
+          {actionLabel}
+        </Button>
+      )}
     </div>
   );
 }
@@ -356,8 +382,9 @@ function formatElapsed(seconds: number) {
  *   2. Progressively reveal troubleshooting hints as elapsed time
  *      crosses thresholds — so a user who stalls mid-setup gets
  *      useful guidance without being dogpiled at t=0.
- *   3. At the 90s+ "stalled" tier, point the user at the Skip path,
- *      also available in the desktop empty state when no runtime registers.
+ *   3. At the 90s+ "stalled" tier, point the user at alternate paths
+ *      (Skip / Cloud waitlist) — parallels desktop's EmptyView, which
+ *      already exposes the same two exits when no runtime registers.
  *
  * Elapsed-time counter only ticks while the dialog is open so reopen
  * after closing resets the staging.
@@ -384,7 +411,7 @@ function CliWaitingStatus({ dialogOpen }: { dialogOpen: boolean }) {
   //   45–90s means "probably an error in the terminal", 90s+ means
   //   "nothing's coming through, suggest alt paths" (the stalled tier
   //   parallels desktop StepRuntimeConnect's EmptyView — by that point
-  //   it's worth pointing the user at Skip).
+  //   it's worth pointing the user at Skip or Cloud waitlist).
   const stage: "normal" | "midway" | "slow" | "stalled" =
     elapsed < 15
       ? "normal"

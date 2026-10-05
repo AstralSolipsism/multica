@@ -2,6 +2,9 @@
   "step_nav": {
     "wordmark": "Multica",
     "label": "Onboarding steps",
+    "about_you": {
+      "label": "About you"
+    },
     "workspace": {
       "label": "Workspace"
     },
@@ -56,6 +59,9 @@
     "save_failed_toast": "Failed to save"
   },
   "questions": {
+    "about_you": {
+      "question": "Tell us a bit about you."
+    },
     "source": {
       "question": "How did you hear about Multica?",
       "friends_colleagues": "Friends or colleagues",
@@ -72,6 +78,32 @@
       "dont_remember": "Don't remember",
       "other": "Other",
       "other_placeholder": "e.g. a podcast I listen to"
+    },
+    "role": {
+      "question": "Which best describes you?",
+      "engineer": "Engineer / developer",
+      "product": "Product manager",
+      "designer": "Designer",
+      "founder": "Founder / exec",
+      "marketing": "Marketing / growth",
+      "writer": "Writer / content",
+      "research": "Researcher / analyst",
+      "ops": "Operations / project mgmt",
+      "student": "Student / personal use",
+      "other": "Other",
+      "other_placeholder": "e.g. teacher, support lead"
+    },
+    "use_case": {
+      "question": "What do you want to use Multica for?",
+      "ship_code": "Ship code with AI agents",
+      "manage_team": "Manage tasks for my team",
+      "personal_tasks": "Organize my own tasks",
+      "plan_research": "Plan, brainstorm, research",
+      "write_publish": "Write, edit, publish",
+      "automate_ops": "Automate ops & workflows",
+      "evaluate": "Just exploring",
+      "other": "Other",
+      "other_placeholder": "e.g. study group coordination"
     }
   },
   "option_card": {
@@ -180,6 +212,9 @@
     "empty_skip_title": "Skip for now",
     "empty_skip_subtitle": "Agents can't run until a runtime is connected.",
     "empty_skip_action": "Skip",
+    "empty_waitlist_title": "Use a cloud computer",
+    "empty_waitlist_subtitle": "We'll run a computer for you in the cloud. Not live yet.",
+    "empty_waitlist_action": "Coming soon",
     "skip": "Skip for now",
     "refresh": "Refresh",
     "refreshing": "Refreshing…",
@@ -199,6 +234,9 @@
     "cli_title": "Connect from the terminal",
     "cli_subtitle": "Connect a server, remote dev box, or any headless computer. Terminal required.",
     "cli_action": "Show steps",
+    "cloud_title": "Use a cloud computer",
+    "cloud_subtitle": "We'll run a computer for you in the cloud. Not live yet.",
+    "cloud_action": "Coming soon",
     "cli_dialog_title": "Connect from the terminal",
     "cli_dialog_pick_hint": "Pick a computer above.",
     "cli_dialog_connect": "Connect & continue",

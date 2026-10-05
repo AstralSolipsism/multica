@@ -6,6 +6,7 @@ import {
 } from "./lib/locale-routing";
 import { runtimeRewriteDestination } from "./config/runtime-urls";
 import { isOfficialMarketingHost } from "./lib/public-host";
+import { retiredMarketingResponse } from "./lib/labrastro-marketing";
 
 // Old workspace-scoped route segments that existed before the URL refactor
 // (pre-#1131). Any URL with these as the FIRST segment is a legacy URL that
@@ -47,6 +48,9 @@ function nextWithLocale(req: NextRequest): NextResponse {
 // change is the runtime — proxy is forced to nodejs and cannot opt into
 // edge.
 export function proxy(req: NextRequest) {
+  const retiredResponse = retiredMarketingResponse(req);
+  if (retiredResponse) return retiredResponse;
+
   const { pathname } = req.nextUrl;
   const runtimeDestination = runtimeRewriteDestination(pathname, process.env);
   if (runtimeDestination) {
@@ -122,6 +126,7 @@ export const config = {
     "/uploads/:path*",
     "/docs/:path*",
     "/ws",
-    "/((?!api|v1|_next/static|_next/image|favicon.ico|.*\\.).*)",
+    // Include dotted slugs: retired route trees must not bypass the boundary.
+    "/((?!api|v1|_next/static|_next/image|favicon.ico).*)",
   ],
 };
