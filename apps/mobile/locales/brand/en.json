@@ -1,0 +1,20 @@
+{
+  "settings": {
+    "account": {
+      "sign_out_message": "You'll need to sign in again to use Labrastro on this device."
+    }
+  },
+  "auth": {
+    "login": {
+      "title": "Sign in to Labrastro"
+    },
+    "verify": {
+      "network": "Can't reach Labrastro. Check your connection and retry."
+    }
+  },
+  "inbox": {
+    "detail": {
+      "review_billing_web": "Open Labrastro on the web to review billing options."
+    }
+  }
+}

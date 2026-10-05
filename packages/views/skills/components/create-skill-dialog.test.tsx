@@ -10,12 +10,14 @@ const TEST_RESOURCES = {
 };
 
 const mockImportSkillArchive = vi.hoisted(() => vi.fn());
+const mockImportSkillParsed = vi.hoisted(() => vi.fn());
 const mockPrepareFromPicker = vi.hoisted(() => vi.fn());
 const mockWrap = vi.hoisted(() => vi.fn());
 
 vi.mock("@multica/core/api", () => ({
   api: {
     importSkillArchive: (...args: unknown[]) => mockImportSkillArchive(...args),
+    importSkillParsed: (...args: unknown[]) => mockImportSkillParsed(...args),
   },
 }));
 
@@ -104,7 +106,7 @@ function renderDialog(onCreated = vi.fn(), onClose = vi.fn()) {
   };
 }
 
-describe("CreateSkillDialog local import", () => {
+describe("CreateSkillDialog imports", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrepareFromPicker.mockResolvedValue(PREPARED_OK);
@@ -123,6 +125,34 @@ describe("CreateSkillDialog local import", () => {
       created_by: "user-1",
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
+    });
+  });
+
+  it("pins URL imports to the current workspace", async () => {
+    mockImportSkillParsed.mockResolvedValue({
+      id: "skill-1",
+      workspace_id: "ws-1",
+      name: "review-helper",
+      description: "Reviews code changes",
+      content: "# Review Helper",
+      config: {},
+      files: [],
+      created_by: "user-1",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    const { onCreated } = renderDialog();
+    fireEvent.click(screen.getByRole("button", { name: /Import from URL/i }));
+    fireEvent.change(screen.getByLabelText("Skill URL"), {
+      target: { value: "https://github.com/owner/repo" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Import$/i }));
+
+    await waitFor(() => {
+      expect(mockImportSkillParsed).toHaveBeenCalledWith("ws-1", {
+        url: "https://github.com/owner/repo",
+      });
+      expect(onCreated).toHaveBeenCalled();
     });
   });
 

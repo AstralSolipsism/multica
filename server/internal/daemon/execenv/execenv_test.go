@@ -5738,7 +5738,7 @@ func TestBuildMetaSkillContentOmitsRequestingUserWhenEmpty(t *testing.T) {
 // change whenever a different person causes the next run on the same issue.
 func TestOnBehalfOfBlock(t *testing.T) {
 	t.Parallel()
-	const want = "## On Behalf Of\n\nYou are acting on behalf of **Bohan** (bohan@example.com). Apply any person-specific privacy or access rules in your instructions to this person. Your Multica credentials and access remain scoped to the runtime owner; do not assume this person can access everything you can.\n\n"
+	const want = "## On Behalf Of\n\nYou are acting on behalf of **Bohan** (bohan@example.com). Apply any person-specific privacy or access rules in your instructions to this person. Your Labrastro credentials and access remain scoped to the runtime owner; do not assume this person can access everything you can.\n\n"
 	if got := BuildOnBehalfOfBlock("Bohan", "bohan@example.com"); got != want {
 		t.Errorf("on-behalf-of block = %q, want %q", got, want)
 	}

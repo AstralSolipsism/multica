@@ -131,11 +131,11 @@ func opencodeModelArg(model, thinkingLevel string) (string, bool) {
 // process topology cancellation depends on, so it is not something to fold into
 // a compatibility fix.
 var ErrOpenCodeV2MCPUnsupported = errors.New(
-	"opencode: Multica-managed MCP servers cannot be delivered to an OpenCode 2.x runtime yet. " +
+	"opencode: Labrastro-managed MCP servers cannot be delivered to an OpenCode 2.x runtime yet. " +
 		"2.x accepts MCP configuration only through a file in the task working directory, where " +
 		"the agent's own commits would capture the servers' credentials. " +
 		"To run this task: point the agent at an OpenCode 1.x runtime, or remove the MCP servers " +
-		"Multica supplies it — these can come from the agent's MCP configuration, workspace MCP " +
+		"Labrastro supplies it — these can come from the agent's MCP configuration, workspace MCP " +
 		"servers bound to the agent, the workspace's integration tools, or an installed plugin's " +
 		"hook tools")
 

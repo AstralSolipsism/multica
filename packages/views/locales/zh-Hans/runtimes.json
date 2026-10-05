@@ -33,8 +33,7 @@
     "action": "和 Mika 开始",
     "failed": "无法启动 Mika",
     "dialog_title": "让 Mika 在哪台电脑上运行？",
-    "cancel": "取消",
-    "dialog_description": "选择 Mizuki 使用的运行时。之后可以在设置里更改。"
+    "cancel": "取消"
   },
   "machine": {
     "search_placeholder": "搜索机器...",

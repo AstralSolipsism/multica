@@ -305,7 +305,7 @@ func RuntimeUnusableNotice(agentName string, verdict AgentVerdict) string {
 func runtimeProfileMissingNotice(name string) string {
 	return fmt.Sprintf(
 		"%s could not start: the DeepSeek Harness CLI is installed on that machine, but the `multica` runtime profile it needs is not, so this trigger was not queued.\n\n"+
-			"The profile supplies the protocol Multica drives — the CLI itself is fine, and reinstalling it changes nothing. On that machine, either add the Multica DSH runtime bundle to the profile with `dsh plugin --profile multica add`, or set `MULTICA_DSH_PROFILE_BUNDLE` for the daemon so it installs the bundle itself. See the agent runtime install docs for the bundle to use.\n\n"+
+			"The profile supplies the protocol Labrastro drives — the CLI itself is fine, and reinstalling it changes nothing. On that machine, either add the Labrastro DSH runtime bundle to the profile with `dsh plugin --profile multica add`, or set `MULTICA_DSH_PROFILE_BUNDLE` for the daemon so it installs the bundle itself. See the agent runtime install docs for the bundle to use.\n\n"+
 			"The runtime registers on its own within a couple of minutes after that; trigger the agent again then.",
 		name,
 	)

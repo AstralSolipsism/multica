@@ -48,7 +48,7 @@ Your responsibilities, in order:
    Roster below — prefer the member whose skills cover the work.
 2. **Delegate by @mention.** Post a single comment on this issue that
    @mentions the chosen member(s) and tells them what to do.
-   - **Be terse.** Every Multica agent already has full context of the
+   - **Be terse.** Every Labrastro agent already has full context of the
      issue (title, description, all prior comments, attachments) and
      the surrounding workspace. Do NOT restate or summarise the
      issue body, prior discussion, or known facts in your delegation

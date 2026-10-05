@@ -297,7 +297,7 @@ func validateTaskLocalProfile(profile string) error {
 		return nil
 	}
 	if profile == "." || profile == ".." || filepath.IsAbs(profile) || strings.ContainsAny(profile, `/\\`) || filepath.Clean(profile) != profile {
-		return fmt.Errorf("invalid task-local Multica profile name %q", profile)
+		return fmt.Errorf("invalid task-local Labrastro profile name %q", profile)
 	}
 	return nil
 }

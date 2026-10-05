@@ -883,7 +883,7 @@ func (s *Service) buildDecisionPayload(ctx context.Context, ap db.Autopilot, in 
 	if sourceKind == SourceKindUnknown {
 		return target, content, ref, 0, nil
 	}
-	shards := splitShards(content.Text)
+	shards := splitShards(NewMessage(content.Text, content.Link))
 	return target, content, ref, len(shards), nil
 }
 

@@ -33,8 +33,7 @@
     "action": "Commencer avec Mika",
     "failed": "Impossible de démarrer Mika",
     "dialog_title": "Où Mika doit-il s'exécuter ?",
-    "cancel": "Annuler",
-    "dialog_description": "Pick the runtime Mizuki will use. You can change it later in settings."
+    "cancel": "Annuler"
   },
   "machine": {
     "search_placeholder": "Rechercher des machines…",

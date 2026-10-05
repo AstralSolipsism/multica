@@ -1,3 +1,4 @@
+import { DEPLOYMENT_URL, DEPLOYMENT_WS_URL } from "@multica/core/deployment";
 export interface RuntimeConfig {
   schemaVersion: 1;
   apiUrl: string;
@@ -15,9 +16,9 @@ export type RuntimeConfigResult =
 
 export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = Object.freeze({
   schemaVersion: 1,
-  apiUrl: "https://multica.outlune.com",
-  wsUrl: "wss://multica.outlune.com/ws",
-  appUrl: "https://multica.outlune.com",
+  apiUrl: DEPLOYMENT_URL,
+  wsUrl: DEPLOYMENT_WS_URL,
+  appUrl: DEPLOYMENT_URL,
 });
 
 const LOCAL_DEV_RUNTIME_CONFIG: RuntimeConfig = Object.freeze({

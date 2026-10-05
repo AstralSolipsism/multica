@@ -40,6 +40,9 @@ for (const [name, files, selected] of [
   ["lockfile", ["pnpm-lock.yaml"], ["frontend", "quality"]],
   ["package patch", ["patches/example.patch"], ["frontend", "quality"]],
   ["radius policy", ["scripts/check-ui-radius-tokens.mjs"], ["quality"]],
+  ["brand source guard", ["scripts/check-branding.mjs"], ["quality"]],
+  ["brand guard tests", ["scripts/check-branding.test.mjs"], ["quality"]],
+  ["shared branding policy", ["scripts/branding-policy.json"], ["quality", "backend"]],
   ["shared quality action", [".github/actions/frontend-quality/action.yml"], ["frontend", "quality"]],
   ["new bitmap", ["apps/web/public/hero.png"], ["frontend", "quality", "images"]],
   ["mixed docs and migration", ["apps/docs/content/guide.mdx", "server/migrations/999_example.up.sql"], ["quality", "backend", "sqlc"]],
@@ -184,6 +187,7 @@ test("quality checks have exactly one runner and reuse the product build install
     }
   }
   const action = readFileSync(new URL("../.github/actions/frontend-quality/action.yml", import.meta.url), "utf8");
+  assert.match(action, /node --test scripts\/check-branding\.test\.mjs\n\s+node scripts\/check-branding\.mjs/);
   assert.match(action, /run: pnpm knip/);
   assert.match(action, /continue-on-error: true/);
   assert.doesNotMatch(action, /pnpm install/);

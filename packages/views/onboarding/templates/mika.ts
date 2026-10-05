@@ -15,20 +15,20 @@ export interface MikaOnboardingDefinition {
 }
 
 /**
- * Mika's name, description, avatar, permissions, and system instructions are
+ * Mizuki's name, description, avatar, permissions, and system instructions are
  * NOT here — they are server constants delivered by `POST /api/agents/mika`.
- * Keeping them out of the client is what lets Multica update Mika's prompt by
- * deploying, and stops a client from minting an agent that claims Mika's
+ * Keeping them out of the client is what lets Labrastro update Mizuki's prompt by
+ * deploying, and stops a client from minting an agent that claims Mizuki's
  * identity.
  *
  * The chat title stays client-side: it names a session this member is opening,
  * in the language they are currently using.
  */
 const MIKA_CHAT_TITLE: LocalizedText = {
-  en: "Getting started with Mika",
-  zh: "和 Mika 开始",
-  ko: "Mika와 시작하기",
-  ja: "Mika と始める",
+  en: "Getting started with Mizuki",
+  zh: "和 Mizuki 开始",
+  ko: "Mizuki와 시작하기",
+  ja: "Mizuki と始める",
 };
 
 export function getMikaOnboarding(

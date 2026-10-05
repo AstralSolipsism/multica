@@ -177,7 +177,7 @@
       "hint": "Sets the default only. You can still change it for any message before sending."
     },
     "comments_title": "Comments & chat",
-    "description": "Customize how you work in Labrastro.",
+    "description": "Customize how you work in Multica.",
     "region_title": "Language & region",
     "appearance_title": "Appearance",
     "issue_fields_title": "Fields shown when creating issues",
@@ -506,7 +506,7 @@
       "installed_version": "In use",
       "review_install": "Review and install",
       "review_upgrade": "Review and upgrade",
-      "description": "Upload a plugin package. Labrastro stores and serves it, so a plugin author needs no server of their own."
+      "description": "Upload a plugin package. Multica stores and serves it, so a plugin author needs no server of their own."
     },
     "description": "Publish plugins into this workspace, then install a specific version and review exactly what it is allowed to reach."
   },
@@ -815,7 +815,7 @@
     "feature_auto_link_label": "Auto-link issues and PRs",
     "toast_failed": "Failed to update GitHub settings",
     "feature_auto_link_description": "Links a PR to the issue whose ID, e.g. {{example}}, is in its title or branch name, or follows “Closes” in its description.",
-    "page_description": "Connect a GitHub App, control how Pull Requests show up inside Labrastro, and decide what your agents leave behind in commit history.",
+    "page_description": "Connect a GitHub App, control how Pull Requests show up inside Multica, and decide what your agents leave behind in commit history.",
     "connection_description_prefix": "Link issues to pull requests automatically. A PR links when",
     "connection_description_suffix": "is in its branch name or title, or its body says Closes MUL-123. Merging a PR with that closing keyword also moves the issue to",
     "connection_description_done": "Done",
@@ -944,7 +944,7 @@
     "install_scan_hint_feishu": "Feishu → Scan → authorize the new PersonalAgent.",
     "install_scan_hint_lark": "Lark → Scan → authorize the new PersonalAgent.",
     "conversation_title": "Agent conversations",
-    "conversation_description": "People in these conversations can talk to this agent without a Labrastro account. The agent clarifies and summarizes feedback, then posts comments in its own name. This takes time and model usage; messages are not copied verbatim into tasks.",
+    "conversation_description": "People in these conversations can talk to this agent without a Multica account. The agent clarifies and summarizes feedback, then posts comments in its own name. This takes time and model usage; messages are not copied verbatim into tasks.",
     "conversation_groups": "Group chat IDs (one oc_ ID per line; topics remain separate)",
     "conversation_directs": "Direct chat IDs (one oc_ ID per line)",
     "conversation_scope": "Only collaboration content, issue creation and updates, comments, and attachments in this workspace are available, under your invocation rights. Everyone in these conversations may provide input. Wakeups, automation, credentials, and administrative settings are excluded. Saving invalidates old runs.",
@@ -1408,7 +1408,7 @@
       "try_again_moment": "Please try again in a moment.",
       "try_again": "Please try again.",
       "description": "Configure how the local agent daemon behaves with the desktop app.",
-      "cli_install_windows_help": "Windows has no script installer. Ask your workspace administrator, or download the multica-cli-<version>-windows-<arch>.zip archive for the release you want from the internal release source (https://multica.outlune.com/downloads/cli/v<version>/ — the current version is in https://multica.outlune.com/downloads/latest.json) and extract multica.exe onto your PATH.",
+      "cli_install_windows_help": "Windows has no script installer. Ask your workspace administrator, or download the multica-cli-<version>-windows-<arch>.zip archive for the release you want from the internal release source ({{downloadsUrl}}/cli/v<version>/ — the current version is in {{latestManifestUrl}}) and extract multica.exe onto your PATH.",
       "cli_install_windows_label": "Manual install required on Windows",
       "diagnostics_description": "Identification and connection details. Useful when filing a bug report or investigating why a runtime isn't showing up.",
       "waiting_logs_description": "New entries will appear in real time."

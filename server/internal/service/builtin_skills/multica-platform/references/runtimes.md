@@ -40,7 +40,7 @@ update runtimes, or check out arbitrary repos just to test.
 
 `runtime usage` reports what the provider CLI reported. Claude and CodeBuddy
 usage prefers the CLI's final per-model totals. If a run ends without usable
-final usage, Multica can recover only main-loop input and cache tokens: split
+final usage, Labrastro can recover only main-loop input and cache tokens: split
 assistant events with the same response ID count once. Output tokens stay zero
 when no final count is available; that does not establish that the model
 produced no output. Subagent totals require final per-model usage. Streams that
@@ -117,14 +117,14 @@ ref by default for the current task; an explicit
 
 ## Task CLI boundary
 
-The daemon injects a task-scoped `mat_` credential for Multica API commands and
-a private task-local Multica configuration root. Inside that managed task
+The daemon injects a task-scoped `mat_` credential for Labrastro API commands and
+a private task-local Labrastro configuration root. Inside that managed task
 context:
 
 - API commands such as `issue list`, `issue get`, and `issue runs` use the
-  injected task identity and never fall back to the daemon Owner's saved Multica
+  injected task identity and never fall back to the daemon Owner's saved Labrastro
   profile.
-- `config show` and `config set` operate only on task-local Multica state. A
+- `config show` and `config set` operate only on task-local Labrastro state. A
   missing task config root fails closed.
 - `auth status` may verify the task identity but omits all token material from
   its output.

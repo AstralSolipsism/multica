@@ -109,9 +109,11 @@ func (c *antigravityPlanQuotaCollector) collect(ctx context.Context, version str
 	}
 }
 
-// The remote API reports model buckets, without a 5h/weekly split or reset
-// times. Use the most constrained model in each known pool and leave those
-// metadata fields absent rather than inventing a window the API did not send.
+// The remote API reports model buckets with optional reset times. Use the most
+// constrained model and earliest valid reset in each known pool. Window identity
+// is not part of retrieveUserQuota's BucketInfo contract (modelId, tokenType,
+// remainingAmount, remainingFraction, resetTime); tokenType names the metered
+// resource, not the period. Prefer explicit window metadata if that API adds it.
 func parseAntigravityRemoteQuota(body io.Reader, observedAt time.Time) (*protocol.RuntimePlanQuota, error) {
 	var response struct {
 		Buckets []struct {
@@ -168,9 +170,12 @@ func parseAntigravityRemoteQuota(body io.Reader, observedAt time.Time) (*protoco
 		if t, ok := earliestReset[group]; ok {
 			unix := t.Unix()
 			resetsAt = &unix
-			// Infer the window kind from how far out the reset is so the UI
-			// renders "5h" or "week" instead of falling back to the group name.
-			untilReset := time.Until(t)
+			// Without explicit window metadata, use the remaining time as a
+			// heuristic. A weekly window in its last six hours will look like
+			// a 5h window; other periods can also be misclassified. The reset
+			// timestamp itself remains authoritative. Anchor the heuristic to
+			// this observation so replaying a response gives the same result.
+			untilReset := t.Sub(observedAt)
 			if untilReset > 0 && untilReset <= 6*time.Hour {
 				minutes := int64(300) // 5h rolling window
 				windowMinutes = &minutes
@@ -180,9 +185,9 @@ func parseAntigravityRemoteQuota(body io.Reader, observedAt time.Time) (*protoco
 			}
 		}
 		quota.Windows = append(quota.Windows, protocol.RuntimePlanQuotaWindow{
-			Group:        group,
-			UsedPercent:  &used,
-			ResetsAt:     resetsAt,
+			Group:         group,
+			UsedPercent:   &used,
+			ResetsAt:      resetsAt,
 			WindowMinutes: windowMinutes,
 		})
 		if fraction == 0 {
