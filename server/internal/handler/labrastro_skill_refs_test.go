@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yuin/goldmark/text"
 )
 
 func TestLabrastroMarkdownPathSpans(t *testing.T) {
@@ -16,6 +18,8 @@ func TestLabrastroMarkdownPathSpans(t *testing.T) {
 		want       []string
 	}{
 		{"inline", "prefix `a.md` and ``b`c.md`` plus `two words`", []string{"a.md", "b`c.md"}},
+		{"three backticks", "x ```a.md``` y", []string{"a.md"}},
+		{"four backticks", "x ````a```b.md```` y", []string{"a```b.md"}},
 		{"longer closer", "prefix ``a.md```b.md`", []string{"a.md", "b.md"}},
 		{"escaped opener", "prefix \\`ignored and \\``a.md`", []string{"a.md"}},
 		{"escaped closer", "prefix `a.md\\` [b](b.md)", []string{"a.md\\", "b.md"}},
@@ -24,6 +28,7 @@ func TestLabrastroMarkdownPathSpans(t *testing.T) {
 		{"overlapping definition", "[a]: `a.md`", []string{"`a.md`", "a.md"}},
 		{"containers", "> ```md\n> [no](no.md)\n> ```\n\n- ```md\n  `no.md`\n  ```\n\n[yes](yes.md)", []string{"yes.md"}},
 		{"indented", "    [no](no.md)\n\n[yes](yes.md)", []string{"yes.md"}},
+		{"definition before setext heading", "[foo]: /url\n===\n    [path](path.md)", []string{"/url", "path.md"}},
 		{"empty and unterminated links", "[a]() [b](<>) [c](unterminated", []string{"unterminated"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -119,6 +124,65 @@ func TestLabrastroMarkdownContextDeadline(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestLabrastroMarkdownReaderCancellation(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("AdvanceLine/canceled=%t", canceled), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			r := &labrastroMarkdownReader{Reader: text.NewReader([]byte("first\nsecond\n")), ctx: ctx}
+			if canceled {
+				cancel()
+			}
+			r.AdvanceLine()
+			line, _ := r.PeekLine()
+			if canceled {
+				if line != nil {
+					t.Fatalf("canceled AdvanceLine left %q readable; want EOF", line)
+				}
+			} else if string(line) != "second\n" {
+				t.Fatalf("AdvanceLine returned %q, want second line", line)
+			}
+		})
+		t.Run(fmt.Sprintf("SkipBlankLines/canceled=%t", canceled), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			r := &labrastroMarkdownReader{Reader: text.NewReader([]byte("\n \t\nremaining\n")), ctx: ctx}
+			if canceled {
+				cancel()
+			}
+			_, skipped, ok := r.SkipBlankLines()
+			if canceled {
+				if ok {
+					t.Fatal("canceled SkipBlankLines reported another line")
+				}
+			} else {
+				line, _ := r.PeekLine()
+				if !ok || skipped != 2 || string(line) != "remaining\n" {
+					t.Fatalf("SkipBlankLines = (%q, %d, %t), want (remaining, 2, true)", line, skipped, ok)
+				}
+			}
+		})
+	}
+}
+
+func TestLabrastroMarkdownCancellationBetweenNestedLines(t *testing.T) {
+	// Each line takes noticeable parser work, so a check only after Parse
+	// returns cannot satisfy the deadline. The reader must stop between lines.
+	body := strings.Repeat(strings.Repeat(">", 8192)+"\n", 96)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	spans, err := labrastroMarkdownPaths(ctx, body)
+	elapsed := time.Since(start)
+	if !errors.Is(err, context.DeadlineExceeded) || spans != nil {
+		t.Fatalf("deadline returned %d paths and %v", len(spans), err)
+	}
+	if elapsed >= 2*time.Second {
+		t.Fatalf("deadline returned after %s; want less than 2s", elapsed)
+	}
+	t.Logf("canceled nested lines: %s", elapsed)
 }
 
 func TestLabrastroReferenceCancellationWithinFile(t *testing.T) {
