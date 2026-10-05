@@ -201,7 +201,9 @@ function createContext(
     looseIds.has(n.id) ? { ...n, groupId: ROOT_FLOW } : n,
   );
   if (loose.length) {
-    members.push({ id: ROOT_FLOW, width: 0, height: 0 });
+    members.splice(members.findIndex((node) => looseIds.has(node.id)), 0, {
+      id: ROOT_FLOW, width: 0, height: 0,
+    });
     groups.set(ROOT_FLOW, {
       id: ROOT_FLOW,
       parentId: null,

@@ -259,6 +259,32 @@ describe("ELK task-line layout", () => {
 });
 
 describe("free chains alongside task lines", () => {
+  it.each(["LR", "TB"] as const)("keeps the free chain in its original row and independent tasks last under %s", async (direction) => {
+    const nodes = [node("one"), node("b1"), node("b2"), node("two"), node("c1", "two"), node("c2", "two"), node("independent")];
+    const edges = [edge("b1", "b2"), edge("b2", "c1"), edge("c1", "c2")];
+    const result = await layoutDagProjection(nodes, edges, direction, [
+      group("one", true), group("two"), { ...group("independent", true), independent: true },
+    ]);
+    const crossAxis = direction === "LR" ? "y" : "x";
+    const crossSize = direction === "LR" ? "height" : "width";
+    expect(result.groups.one![crossAxis] + result.groups.one![crossSize]).toBeLessThan(result.positions.b1![crossAxis]);
+    expect(result.positions.b1![crossAxis] + nodes[1]![crossSize]).toBeLessThan(result.groups.two![crossAxis]);
+    expect(result.groups.two![crossAxis] + result.groups.two![crossSize]).toBeLessThan(result.groups.independent![crossAxis]);
+    routeEndpoints(result, edges);
+    expectNoCardIntersections(result, nodes, edges);
+  });
+
+  it.each(["LR", "TB"] as const)("aligns root row slots for differently sized task lines under %s", async (direction) => {
+    const result = await layoutDagProjection(
+      [node("one"), node("two"), node("a", "two"), node("b", "two"), node("c", "two")],
+      [edge("a", "b"), edge("b", "c")],
+      direction,
+      [group("one", true), group("two")],
+    );
+    const axis = direction === "LR" ? "x" : "y";
+    expect(result.groups.one![axis]).toBeCloseTo(result.groups.two![axis]);
+  });
+
   it.each(["LR", "TB"] as const)("retains the dependency direction and real cross-line routes under %s", async (direction) => {
     for (const collapsed of [false, true]) {
       const nodes = [node("line"), ...(!collapsed ? [node("child", "line")] : []), node("c"), node("b"), node("a")];
