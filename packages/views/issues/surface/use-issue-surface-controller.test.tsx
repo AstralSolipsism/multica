@@ -1948,10 +1948,9 @@ describe("useIssueSurfaceController", () => {
       hasRestrictedContext: false,
     };
 
-    it("review F3: preserves a feature fold when agents scope excludes its member-assigned child", async () => {
-      const { pruneDagCollapsedIds } = await import("../dag/dag-projection");
+    it("review F3: preserves an expansion when agents scope excludes its member-assigned child", async () => {
       // The same workspace:agents surface previously contained F and its
-      // child C, both assigned to agents, and the user folded F. C was then
+      // child C, both assigned to agents, and the user expanded F. C was then
       // assigned to a member: it is outside the query, not deleted/reparented.
       const graph = {
         ...graphFixture,
@@ -1972,7 +1971,7 @@ describe("useIssueSurfaceController", () => {
       } as unknown as ApiClient);
       const store = getIssueSurfaceViewStore("workspace:agents");
       store.getState().setViewMode("dag");
-      store.getState().setDagCollapsedIds(["issue:feature"]);
+      store.getState().setDagExpandedIds(["issue:feature"]);
       const { result } = renderHook(
         () => useIssueSurfaceController({
           scope: { type: "workspace", actorKind: "agents" },
@@ -1985,16 +1984,11 @@ describe("useIssueSurfaceController", () => {
         kind: "workspace", assignee_types: ["agent", "squad"],
       });
       expect(result.current.hasActiveFilters).toBe(false);
-      const response = result.current.dagGraph.data!;
-      expect(pruneDagCollapsedIds(
-        store.getState().dagCollapsedIds!, response,
-        result.current.dagMembershipComplete && !response.hasRestrictedContext,
-      )).toContain("issue:feature");
+      expect(store.getState().dagExpandedIds).toContain("issue:feature");
     });
 
     it("review round 4 F3: project scope cannot prove that a cross-project child disappeared", async () => {
-      const { pruneDagCollapsedIds } = await import("../dag/dag-projection");
-      // F and C were both in P1 when issue:F was folded. C then moved to P2
+      // F and C were both in P1 when issue:F was expanded. C then moved to P2
       // without changing its parent F. The P1 query now returns only F;
       // its complete=true is transaction completeness, not global membership.
       const graph = {
@@ -2012,7 +2006,7 @@ describe("useIssueSurfaceController", () => {
       } as unknown as ApiClient);
       const store = getIssueSurfaceViewStore("project:p1");
       store.getState().setViewMode("dag");
-      store.getState().setDagCollapsedIds(["issue:feature"]);
+      store.getState().setDagExpandedIds(["issue:feature"]);
       const { result } = renderHook(
         () => useIssueSurfaceController({
           scope: { type: "project", projectId: "p1" },
@@ -2025,11 +2019,7 @@ describe("useIssueSurfaceController", () => {
         kind: "project", project_id: "p1",
       });
       expect(result.current.hasActiveFilters).toBe(false);
-      const response = result.current.dagGraph.data!;
-      expect(pruneDagCollapsedIds(
-        store.getState().dagCollapsedIds!, response,
-        result.current.dagMembershipComplete && !response.hasRestrictedContext,
-      )).toContain("issue:feature");
+      expect(store.getState().dagExpandedIds).toContain("issue:feature");
     });
 
     it("keeps the graph query off in list-shaped modes", async () => {
@@ -2091,6 +2081,14 @@ describe("useIssueSurfaceController", () => {
       // DAG owns its empty/loading states; the surface never asserts them.
       expect(result.current.isEmpty).toBe(false);
       expect(result.current.facetCountsExact).toBe(false);
+      expect(result.current.isRefreshing).toBe(false);
+      let finishRefresh!: (graph: typeof graphFixture) => void;
+      getIssueGraph.mockImplementationOnce(() => new Promise((resolve) => { finishRefresh = resolve; }));
+      act(() => result.current.dagGraph.refetch());
+      await waitFor(() => expect(result.current.isRefreshing).toBe(true));
+      expect(result.current.dagGraph.isPending).toBe(false);
+      act(() => finishRefresh(graphFixture));
+      await waitFor(() => expect(result.current.isRefreshing).toBe(false));
     });
 
     it("falls back when the surface never opted into dag", async () => {

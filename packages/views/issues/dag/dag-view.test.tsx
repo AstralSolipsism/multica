@@ -5,14 +5,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createStore, type StoreApi } from "zustand/vanilla";
-import { ApiError, type IssueGraph, type IssueGraphNode } from "@multica/core/api";
+import { ApiError, type IssueGraph } from "@multica/core/api";
 import { viewStoreSlice, type IssueViewState } from "@multica/core/issues/stores/view-store";
 import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-context";
 import ELK from "elkjs/lib/elk.bundled.js";
 import { layoutDagProjection, type DagLayoutRequest, type DagLayoutResponse } from "./dag-layout";
 import { DagView, type DagGraphQueryState } from "./dag-view";
 import type { DagCanvasProps } from "./dag-canvas";
+import { graphNode as makeNode, issueGraph as makeGraph } from "./dag-test-fixtures";
 import { computeDagProjection } from "./dag-projection";
+import * as layoutInputs from "./dag-layout-inputs";
+import * as canvasSnapshots from "./dag-canvas-snapshot";
 import { DagFlowGroupCard } from "./dag-group";
 import { DagPortUpdateProvider } from "./dag-ports";
 import { ReactFlowProvider } from "@xyflow/react";
@@ -97,7 +100,6 @@ function syncLayoutRunner() {
         groups: {},
         routes: {},
         ports: {},
-        elapsedMs: 1,
       });
     },
     prepare: vi.fn(),
@@ -116,7 +118,7 @@ function realLayoutRunner() {
         request.groups,
         layoutEngine,
       ).then(
-        (result) => onDone({ ...result, requestId: request.requestId, elapsedMs: 1 }),
+        (result) => onDone({ ...result, requestId: request.requestId }),
         (error: Error) =>
           onDone({
             requestId: request.requestId,
@@ -124,7 +126,6 @@ function realLayoutRunner() {
             groups: {},
             routes: {},
             ports: {},
-            elapsedMs: 1,
             error: error.message,
           }),
       );
@@ -134,71 +135,12 @@ function realLayoutRunner() {
   };
 }
 
-function makeNode(id: string, partial: Partial<IssueGraphNode> = {}): IssueGraphNode {
-  return {
-    id,
-    identifier: `T-${id.toUpperCase()}`,
-    title: `Task ${id}`,
-    status: "todo",
-    statusCategory: "todo",
-    revision: 1,
-    parentIssueId: null,
-    hasRestrictedParent: false,
-    projectId: null,
-    stage: null,
-    priority: "none",
-    assignee: null,
-    role: "match",
-    runSummary: {
-      queued: 0,
-      dispatched: 0,
-      running: 0,
-      waitingLocalDirectory: 0,
-      capturedAt: "2026-09-10T00:00:00Z",
-    },
-    dependencySummary: {
-      visibleUnsatisfiedCount: 0,
-      hasRestrictedBlockers: false,
-      dependencyVersion: `v-${id}`,
-    },
-    ...partial,
-  };
-}
-
-function makeGraph(
-  nodes: IssueGraphNode[],
-  edges: { id: string; source: string; target: string }[] = [],
-): IssueGraph {
-  return {
-    schemaVersion: 1,
-    snapshotId: "snap-1",
-    topologyId: "topo-1",
-    capturedAt: "2026-09-10T00:00:00Z",
-    complete: true,
-    scope: { type: "workspace", projectId: null },
-    focusIssueId: null,
-    matchedCount: nodes.length,
-    contextCount: 0,
-    nodes,
-    edges: edges.map((e) => ({
-      sourceEdgeId: e.id,
-      source: e.source,
-      target: e.target,
-      type: "blocked_by" as const,
-    })),
-    projects: [{ id: "proj-1", title: "Account" }],
-    hasRestrictedContext: false,
-  };
-}
-
 function graphQuery(partial: Partial<DagGraphQueryState>): DagGraphQueryState {
   return {
     data: undefined,
     isPending: false,
     isError: false,
     error: null,
-    isFetching: false,
-    isStale: false,
     refetch: vi.fn(),
     ...partial,
   };
@@ -219,7 +161,6 @@ describe("DagView", () => {
           <DagView
             graphQuery={query}
             hasActiveFilters={hasActiveFilters}
-            membershipComplete={!hasActiveFilters}
             layoutRunnerFactory={layoutRunnerFactory}
           />
         </ViewStoreProvider>
@@ -236,6 +177,7 @@ describe("DagView", () => {
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     vi.useRealTimers();
     qc.clear();
   });
@@ -278,7 +220,7 @@ describe("DagView", () => {
     expect(store.getState().statusFilters).toEqual([]);
   });
 
-  it("renders the default-folded projection and seeds the fold preference", async () => {
+  it("renders default-folded lines without initializing stored preferences", async () => {
     const graph = makeGraph(
       [
         makeNode("f1", { projectId: "proj-1" }),
@@ -295,11 +237,11 @@ describe("DagView", () => {
     const ids = props.projection.nodes.map((node) => node.id).sort();
     expect(ids).toEqual(["b1", "issue:f1"]);
     expect(props.positions.has("issue:f1")).toBe(true);
-    expect(store.getState().dagCollapsedIds).toEqual(expect.arrayContaining(["issue:f1"]));
+    expect(store.getState().dagExpandedIds).toEqual([]);
   });
 
   it("expands a stage-only task line into ordered columns without dependency arrows", async () => {
-    store.getState().setDagCollapsedIds(["issue:line"]);
+    store.getState().setDagExpandedIds([]);
     const graph = makeGraph([
       makeNode("line"),
       makeNode("first-a", { parentIssueId: "line", stage: 1 }),
@@ -324,7 +266,7 @@ describe("DagView", () => {
   });
 
   it("uses the folded task's own stage without leaking its children's stage numbers", async () => {
-    store.getState().setDagCollapsedIds(["issue:nested"]);
+    store.getState().setDagExpandedIds(["issue:line"]);
     renderDagView(
       graphQuery({
         data: makeGraph([
@@ -345,7 +287,7 @@ describe("DagView", () => {
   });
 
   it("relayouts stage edits but keeps positions for status-only refreshes", async () => {
-    store.getState().setDagCollapsedIds([]);
+    store.getState().setDagExpandedIds(["issue:line"]);
     const runner = realLayoutRunner();
     const execute = vi.spyOn(runner, "execute");
     const initial = makeGraph([
@@ -359,7 +301,6 @@ describe("DagView", () => {
           <DagView
             graphQuery={graphQuery({ data: graph })}
             hasActiveFilters={false}
-            membershipComplete
             layoutRunnerFactory={() => runner}
           />
         </ViewStoreProvider>
@@ -394,6 +335,87 @@ describe("DagView", () => {
     expect(execute).toHaveBeenCalledTimes(callsBeforeRefresh + 1);
   });
 
+  it("keeps the mounted canvas during topology replacement and removes stale issue data immediately", async () => {
+    const inputSpy = vi.spyOn(layoutInputs, "dagLayoutInputs");
+    const snapshotSpy = vi.spyOn(canvasSnapshots, "selectCanvasSnapshot");
+    store.getState().setDagIndependentExpanded(true);
+    const initial = makeGraph([makeNode("a"), makeNode("b")], [{ id: "ab", source: "a", target: "b" }]);
+    const requests: { request: DagLayoutRequest; done: (response: DagLayoutResponse) => void }[] = [];
+    const runner = {
+      prepare: vi.fn(), terminate: vi.fn(),
+      execute: (request: DagLayoutRequest, done: (response: DagLayoutResponse) => void) => requests.push({ request, done }),
+    };
+    const surface = (graph: IssueGraph) => <QueryClientProvider client={qc}><ViewStoreProvider store={store}>
+      <DagView graphQuery={graphQuery({ data: graph })} hasActiveFilters={false} layoutRunnerFactory={() => runner} />
+    </ViewStoreProvider></QueryClientProvider>;
+    const view = render(surface(initial));
+    const finish = () => {
+      const { request, done } = requests.at(-1)!;
+      done({ requestId: request.requestId, positions: Object.fromEntries(request.nodes.map((n, i) => [n.id, { x: i * 300, y: 10 }])), groups: {}, routes: {}, ports: {} });
+    };
+    act(finish);
+    const canvas = await screen.findByTestId("dag-canvas");
+    const committed = canvasSpy.mock.calls.at(-1)![0].positions;
+    const replacement = { ...makeGraph([makeNode("b", { title: "Updated B" }), makeNode("c")], [{ id: "bc", source: "b", target: "c" }]), topologyId: "changed" };
+    vi.useFakeTimers();
+    view.rerender(surface(replacement));
+    expect(screen.getByTestId("dag-canvas")).toBe(canvas);
+    const pending = canvasSpy.mock.calls.at(-1)![0];
+    expect(pending.positions).toBe(committed);
+    expect(pending.projection.nodes.map((n) => n.id)).toEqual(["b"]);
+    expect(pending.projection.nodes[0]!.title).toBe("Updated B");
+    expect(pending.graph.nodes.some((n) => n.id === "a")).toBe(false);
+    expect(pending.projection.edges).toEqual([]);
+    const inputCalls = inputSpy.mock.calls.length;
+    const snapshotCalls = snapshotSpy.mock.calls.length;
+    act(() => vi.advanceTimersByTime(1500));
+    expect(canvasSpy.mock.calls.at(-1)![0].projection).toBe(pending.projection);
+    expect(inputSpy).toHaveBeenCalledTimes(inputCalls);
+    expect(snapshotSpy).toHaveBeenCalledTimes(snapshotCalls);
+    expect(requests).toHaveLength(2);
+    act(finish);
+    expect(screen.getByTestId("dag-canvas")).toBe(canvas);
+    expect(canvasSpy.mock.calls.at(-1)![0].projection.nodes.map((n) => n.id)).toEqual(["b", "c"]);
+  });
+
+  it("folds newly discovered lines while preserving existing expansions", async () => {
+    const graph = makeGraph([makeNode("one"), makeNode("a", { parentIssueId: "one" })]);
+    const surface = (data: IssueGraph) => <QueryClientProvider client={qc}><ViewStoreProvider store={store}>
+      <DagView graphQuery={graphQuery({ data })} hasActiveFilters={false} layoutRunnerFactory={syncLayoutRunner} />
+    </ViewStoreProvider></QueryClientProvider>;
+    const view = render(surface(graph));
+    await screen.findByTestId("dag-canvas");
+    act(() => screen.getByRole("button", { name: /dag:expand_all/ }).click());
+    view.rerender(surface({ ...graph, nodes: [...graph.nodes, makeNode("two"), makeNode("b", { parentIssueId: "two" })] }));
+    expect(store.getState().dagExpandedIds).toEqual(["issue:one"]);
+    expect(canvasSpy.mock.calls.at(-1)![0].projection.nodes.map((n) => n.id)).toEqual(["issue:one", "a", "issue:two"]);
+  });
+
+  it("clears expand-all rollback after success before a later layout is cancelled", async () => {
+    const requests: { request: DagLayoutRequest; done: (response: DagLayoutResponse) => void }[] = [];
+    const runner = {
+      prepare: vi.fn(), terminate: vi.fn(),
+      execute: (request: DagLayoutRequest, done: (response: DagLayoutResponse) => void) => requests.push({ request, done }),
+    };
+    const graph = makeGraph([makeNode("one"), makeNode("a", { parentIssueId: "one" })]);
+    renderDagView(graphQuery({ data: graph }), false, () => runner);
+    const finish = () => {
+      const { request, done } = requests.at(-1)!;
+      done({ requestId: request.requestId, positions: Object.fromEntries(request.nodes.map((n, i) => [n.id, { x: i * 300, y: 10 }])), groups: {}, routes: {}, ports: {} });
+    };
+    act(finish);
+    await screen.findByTestId("dag-canvas");
+    act(() => screen.getByRole("button", { name: /dag:expand_all/ }).click());
+    act(finish);
+    expect(store.getState().dagExpandedIds).toEqual(["issue:one"]);
+    vi.useFakeTimers();
+    act(() => store.getState().setDagDirection("TB"));
+    act(() => vi.advanceTimersByTime(5500));
+    act(() => screen.getByRole("button", { name: /dag:layout_cancel/ }).click());
+    expect(store.getState().dagExpandedIds).toEqual(["issue:one"]);
+    expect(runner.terminate).toHaveBeenCalledOnce();
+  });
+
   it("marks a refresh failure while keeping the last snapshot visible", async () => {
     const graph = makeGraph([makeNode("a1")]);
     const refetch = vi.fn();
@@ -409,7 +431,7 @@ describe("DagView", () => {
   });
 
   it("keeps direction paired with committed positions while a replacement layout is pending", async () => {
-    store.getState().setDagCollapsedIds([]);
+    store.getState().setDagExpandedIds([]);
     const pending: { request: DagLayoutRequest; done: (response: DagLayoutResponse) => void }[] =
       [];
     const runner = {
@@ -425,7 +447,6 @@ describe("DagView", () => {
           <DagView
             graphQuery={graphQuery({ data: makeGraph([makeNode("a1")]) })}
             hasActiveFilters={false}
-            membershipComplete
             layoutRunnerFactory={() => runner}
           />
         </ViewStoreProvider>
@@ -438,7 +459,6 @@ describe("DagView", () => {
         groups: {},
         routes: {},
         ports: {},
-        elapsedMs: 1,
       }),
     );
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
@@ -454,7 +474,6 @@ describe("DagView", () => {
         groups: {},
         routes: {},
         ports: {},
-        elapsedMs: 2,
       }),
     );
     expect(canvasSpy.mock.calls.at(-1)![0].direction).toBe("TB");
@@ -490,7 +509,7 @@ describe("DagView", () => {
         request.groups,
         layoutEngine,
       );
-      await act(async () => done({ ...result, requestId: request.requestId, elapsedMs: 1 }));
+      await act(async () => done({ ...result, requestId: request.requestId }));
     };
     await complete();
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
@@ -507,7 +526,6 @@ describe("DagView", () => {
         groups: {},
         routes: {},
         ports: {},
-        elapsedMs: 1,
         error: "layout failed",
       }),
     );
@@ -522,7 +540,7 @@ describe("DagView", () => {
     expect(replaced.geometry.routes[replaced.projection.edges[0]!.id]).toBeDefined();
   });
 
-  it.each([403, 404])(
+  it.each([403, 404, 405, 422])(
     "hides the cached graph after access loss (%s) instead of showing it stale",
     async (status) => {
       renderDagView(
@@ -534,7 +552,7 @@ describe("DagView", () => {
       );
       await waitFor(() =>
         expect(screen.getByRole("alert")).toHaveTextContent(
-          status === 403 ? "dag:error_forbidden" : "dag:error_unavailable",
+          status === 403 ? "dag:error_forbidden" : status === 422 ? "dag:error_unverified" : "dag:error_unavailable",
         ),
       );
       expect(screen.queryByTestId("dag-canvas")).toBeNull();
@@ -554,38 +572,37 @@ describe("DagView", () => {
     expect(screen.getByRole("alert").textContent).toContain("dag:stale_banner");
   });
 
-  it("preserves a folded task line omitted by the current filter (review F3)", async () => {
-    store.getState().setDagCollapsedIds(["issue:feature", "issue:hidden"]);
+  it("preserves an expanded task line omitted by the current filter (review F3)", async () => {
+    store.getState().setDagExpandedIds(["issue:feature", "issue:hidden"]);
     renderDagView(graphQuery({ data: makeGraph([makeNode("a", { projectId: "proj-1" })]) }), true);
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
-    expect(store.getState().dagCollapsedIds).toContain("issue:hidden");
+    expect(store.getState().dagExpandedIds).toContain("issue:hidden");
   });
 
-  it("waits for a fresh snapshot before pruning a fold missing from a settled stale cache", async () => {
-    store.getState().setDagCollapsedIds(["issue:hidden"]);
+  it("keeps an inert expansion when a fresh membership snapshot replaces the cache", async () => {
+    store.getState().setDagExpandedIds(["issue:hidden"]);
     const graph = makeGraph([makeNode("a")]);
-    const surface = (isStale: boolean) => (
+    const surface = (data: IssueGraph) => (
       <QueryClientProvider client={qc}>
         <ViewStoreProvider store={store}>
           <DagView
-            graphQuery={graphQuery({ data: graph, isStale })}
+            graphQuery={graphQuery({ data })}
             hasActiveFilters={false}
-            membershipComplete
             layoutRunnerFactory={syncLayoutRunner}
           />
         </ViewStoreProvider>
       </QueryClientProvider>
     );
-    const view = render(surface(true));
+    const view = render(surface(graph));
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
-    expect(store.getState().dagCollapsedIds).toEqual(["issue:hidden"]);
-    view.rerender(surface(false));
-    await waitFor(() => expect(store.getState().dagCollapsedIds).toEqual([]));
+    expect(store.getState().dagExpandedIds).toEqual(["issue:hidden"]);
+    view.rerender(surface({ ...graph, snapshotId: "fresh" }));
+    expect(store.getState().dagExpandedIds).toEqual(["issue:hidden"]);
   });
 
   it("cancels a stalled expand-all, restores the exact folds, and ignores its late layout", async () => {
-    const backup = ["issue:one"];
-    store.getState().setDagCollapsedIds(backup);
+    const backup = ["issue:two"];
+    store.getState().setDagExpandedIds(backup);
     store.getState().setDagIndependentExpanded(true);
     const graph = makeGraph([
       makeNode("one"),
@@ -612,7 +629,6 @@ describe("DagView", () => {
         groups: {},
         routes: {},
         ports: {},
-        elapsedMs: 1,
       });
     };
     renderDagView(graphQuery({ data: graph }), false, () => runner);
@@ -620,14 +636,14 @@ describe("DagView", () => {
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
     const committed = canvasSpy.mock.calls.at(-1)![0].positions;
     vi.useFakeTimers();
-    act(() => screen.getByRole("button", { name: /dag.expand_all/ }).click());
-    expect(store.getState().dagCollapsedIds).toEqual([]);
+    act(() => screen.getByRole("button", { name: /dag:expand_all/ }).click());
+    expect(new Set(store.getState().dagExpandedIds)).toEqual(new Set(["issue:one", "issue:two"]));
     expect(pending).toHaveLength(2);
-    expect(screen.queryByRole("button", { name: /dag.layout_cancel/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /dag:layout_cancel/ })).toBeNull();
     act(() => vi.advanceTimersByTime(5500));
-    act(() => screen.getByRole("button", { name: /dag.layout_cancel/ }).click());
+    act(() => screen.getByRole("button", { name: /dag:layout_cancel/ }).click());
     expect(runner.terminate).toHaveBeenCalledOnce();
-    expect(store.getState().dagCollapsedIds).toEqual(backup);
+    expect(store.getState().dagExpandedIds).toEqual(backup);
     expect(store.getState().dagIndependentExpanded).toBe(true);
     expect(pending).toHaveLength(3);
     act(() => finish(1));
@@ -637,13 +653,13 @@ describe("DagView", () => {
     expect(restored.positions.has("a")).toBe(false);
     expect(restored.positions.has("b")).toBe(true);
     expect(restored.positions.has("solo")).toBe(true);
-    expect(screen.queryByRole("button", { name: /dag.layout_cancel/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /dag:layout_cancel/ })).toBeNull();
   });
 
   it.each(["issue:line", "independent:root"])(
     "focuses a folded %s only after its expanded layout commits",
     async (groupId) => {
-      store.getState().setDagCollapsedIds(["issue:line"]);
+      store.getState().setDagExpandedIds([]);
       const graph = makeGraph([
         makeNode("line"),
         makeNode("child", { parentIssueId: "line" }),
@@ -667,7 +683,6 @@ describe("DagView", () => {
           groups: {},
           routes: {},
           ports: {},
-          elapsedMs: 1,
         });
       };
       renderDagView(graphQuery({ data: graph }), false, factory);
@@ -677,10 +692,10 @@ describe("DagView", () => {
       act(() => original.onFocusGroup(groupId));
       expect(canvasSpy.mock.calls.at(-1)![0].focusRequest).toBeNull();
       expect(canvasSpy.mock.calls.at(-1)![0].projection).toBe(original.projection);
-      if (groupId === "issue:line") expect(store.getState().dagCollapsedIds).toEqual([]);
+      if (groupId === "issue:line") expect(store.getState().dagExpandedIds).toEqual(["issue:line"]);
       else {
         expect(store.getState().dagIndependentExpanded).toBe(true);
-        expect(store.getState().dagCollapsedIds).toEqual(["issue:line"]);
+        expect(store.getState().dagExpandedIds).toEqual([]);
       }
       act(finish);
       expect(canvasSpy.mock.calls.at(-1)![0].focusRequest).toEqual({
@@ -698,6 +713,40 @@ describe("DagView", () => {
       expect(pending).toHaveLength(2);
     },
   );
+
+  it.each(["group", "issues"] as const)("lets a newer immediate %s focus supersede a pending reveal", async (target) => {
+    store.getState().setDagExpandedIds(["issue:two"]);
+    const graph = makeGraph([
+      makeNode("one"), makeNode("a", { parentIssueId: "one" }),
+      makeNode("two"), makeNode("b", { parentIssueId: "two" }),
+    ]);
+    const requests: { request: DagLayoutRequest; done: (response: DagLayoutResponse) => void }[] = [];
+    const runner = {
+      prepare: vi.fn(), terminate: vi.fn(),
+      execute: (request: DagLayoutRequest, done: (response: DagLayoutResponse) => void) => requests.push({ request, done }),
+    };
+    const finish = () => {
+      const { request, done } = requests.at(-1)!;
+      done({ requestId: request.requestId, positions: Object.fromEntries(request.nodes.map((n, i) => [n.id, { x: i * 300, y: 10 }])), groups: {}, routes: {}, ports: {} });
+    };
+    renderDagView(graphQuery({ data: graph }), false, () => runner);
+    act(finish);
+    await screen.findByTestId("dag-canvas");
+    act(() => canvasSpy.mock.calls.at(-1)![0].onFocusGroup("issue:one"));
+    expect(requests).toHaveLength(2);
+    expect(canvasSpy.mock.calls.at(-1)![0].focusRequest).toBeNull();
+    act(() => {
+      const props = canvasSpy.mock.calls.at(-1)![0];
+      if (target === "group") props.onFocusGroup("issue:two");
+      else props.onRevealIssues(["b"]);
+    });
+    const immediate = canvasSpy.mock.calls.at(-1)![0].focusRequest;
+    expect(immediate).toEqual(target === "group"
+      ? { issueIds: [], groupId: "issue:two", nonce: 1 }
+      : { issueIds: ["b"], nonce: 1 });
+    act(finish);
+    expect(canvasSpy.mock.calls.at(-1)![0].focusRequest).toBe(immediate);
+  });
 
   it("keeps parent status, own stage and child run state in its group header", () => {
     const graph = makeGraph([
@@ -735,7 +784,6 @@ describe("DagView", () => {
               projectTitle: null,
               statusColor: null,
               focused: false,
-              dimmed: false,
               ports: [],
               showStage: true,
               group: projection.groups[0]!,
@@ -756,10 +804,9 @@ describe("DagView", () => {
     expect(screen.queryByText("dag:run_queued")).toBeNull();
   });
 
-  it("keeps a feature fold when a status filter hides its children (review F3)", async () => {
-    store.getState().setDagCollapsedIds(["issue:feature"]);
-    // membershipComplete=false mirrors a filtered request: the feature is
-    // present, its done child is filtered out — the fold must survive.
+  it("keeps an expansion when a status filter hides its children (review F3)", async () => {
+    store.getState().setDagExpandedIds(["issue:feature"]);
+    // The feature is present but its child is filtered out; the expansion survives.
     renderDagView(
       graphQuery({
         data: makeGraph([makeNode("feature")]),
@@ -767,29 +814,30 @@ describe("DagView", () => {
       true,
     );
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
-    expect(store.getState().dagCollapsedIds).toContain("issue:feature");
+    expect(store.getState().dagExpandedIds).toContain("issue:feature");
   });
 
-  it("prunes a genuinely childless feature fold on a complete graph", async () => {
-    store.getState().setDagCollapsedIds(["issue:feature"]);
+  it("keeps a childless expansion inert without synthesizing a group", async () => {
+    store.getState().setDagExpandedIds(["issue:feature"]);
     renderDagView(graphQuery({ data: makeGraph([makeNode("feature")]) }), false);
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
-    expect(store.getState().dagCollapsedIds).not.toContain("issue:feature");
+    expect(store.getState().dagExpandedIds).toContain("issue:feature");
+    expect(canvasSpy.mock.calls.at(-1)![0].projection.groups.some((g) => g.id === "issue:feature")).toBe(false);
   });
 
   it.each([
-    { label: "while refreshing", state: { isFetching: true } },
+    { label: "from a cached response", state: {} },
     {
       label: "after a refresh failure",
       state: { isError: true, error: new ApiError("Unavailable", 500, "unavailable") },
     },
   ])(
-    "review round 5 F3: keeps a newer fold against old full-graph cache $label",
+    "review round 5 F3: keeps a newer expansion against old full-graph cache $label",
     async ({ state }) => {
       // The inactive, unfiltered query still caches G0: feature had no child.
       const oldFullGraph = makeGraph([makeNode("feature")]);
       // While a filter was active, a child was created and that active query
-      // refreshed to G1. The user then folded the newly visible feature.
+      // refreshed to G1. The user then expanded the newly visible feature.
       const newerFilteredGraph = {
         ...makeGraph([makeNode("feature"), makeNode("child", { parentIssueId: "feature" })]),
         snapshotId: "snap-2",
@@ -798,17 +846,17 @@ describe("DagView", () => {
       };
       const filtered = renderDagView(graphQuery({ data: newerFilteredGraph }), true);
       await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
-      act(() => store.getState().setDagCollapsedIds(["issue:feature"]));
-      expect(store.getState().dagCollapsedIds).toContain("issue:feature");
+      act(() => store.getState().setDagExpandedIds(["issue:feature"]));
+      expect(store.getState().dagExpandedIds).toContain("issue:feature");
       filtered.unmount();
       canvasSpy.mockClear();
 
       // Clearing the filter returns the invalidated G0 cache while its own
       // query fetches G1 (or retains G0 after a failed refresh). An old complete
-      // transaction cannot disprove a fold chosen against the newer graph.
+      // transaction cannot disprove an expansion chosen against the newer graph.
       renderDagView(graphQuery({ data: oldFullGraph, ...state }));
       await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
-      expect(store.getState().dagCollapsedIds).toContain("issue:feature");
+      expect(store.getState().dagExpandedIds).toContain("issue:feature");
     },
   );
 
@@ -824,7 +872,7 @@ describe("DagView", () => {
       .getAllByRole("button")
       .find((b) => b.textContent?.includes("dag:expand_all"))!;
     act(() => expand.click());
-    expect(store.getState().dagCollapsedIds).toEqual([]);
+    expect(store.getState().dagExpandedIds).toEqual(["issue:f1"]);
     const lastProps = canvasSpy.mock.calls.at(-1)![0];
     expect(lastProps.projection.nodes.map((n: { id: string }) => n.id).sort()).toEqual([
       "a1",
@@ -835,8 +883,27 @@ describe("DagView", () => {
       .getAllByRole("button")
       .find((b) => b.textContent?.includes("dag:collapse_all"))!;
     act(() => collapse.click());
-    expect(store.getState().dagCollapsedIds).toEqual(expect.arrayContaining(["issue:f1"]));
+    expect(store.getState().dagExpandedIds).toEqual([]);
   });
+  it("preserves hidden expansions when expanding all and clears them only on explicit collapse all", async () => {
+    store.getState().setDagExpandedIds(["issue:hidden"]);
+    const visible = makeGraph([makeNode("line"), makeNode("child", { parentIssueId: "line" })]);
+    renderDagView(graphQuery({ data: visible }), true);
+    await screen.findByTestId("dag-canvas");
+    const collapse = screen.getByRole("button", { name: /dag:collapse_all/ });
+    expect(collapse).toBeEnabled();
+    act(() => screen.getByRole("button", { name: /dag:expand_all/ }).click());
+    expect(store.getState().dagExpandedIds).toEqual(["issue:hidden", "issue:line"]);
+    act(() => canvasSpy.mock.calls.at(-1)![0].onToggleCollapsed("issue:line"));
+    expect(store.getState().dagExpandedIds).toEqual(["issue:hidden"]);
+    expect(collapse).toBeEnabled();
+    const visibleIds = canvasSpy.mock.calls.at(-1)![0].projection.nodes.map((node) => node.id);
+    act(() => collapse.click());
+    expect(store.getState().dagExpandedIds).toEqual([]);
+    expect(collapse).toBeDisabled();
+    expect(canvasSpy.mock.calls.at(-1)![0].projection.nodes.map((node) => node.id)).toEqual(visibleIds);
+  });
+
   it("global task-line expansion never changes the independent group's personal state", async () => {
     const graph = makeGraph([
       makeNode("root"),
@@ -867,7 +934,6 @@ describe("DagView", () => {
         groups: {},
         routes: {},
         ports: {},
-        elapsedMs: 1,
         error: "layout failed",
       }),
     );

@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { VIEW_MODE_CAPABILITIES, availableViewModes } from "@multica/core/issues/surface/view-mode";
+import { DagDirectionSelect } from "../dag/dag-direction-select";
+import { useViewModeLabels } from "./view-mode-meta";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Plus } from "lucide-react";
@@ -54,8 +57,6 @@ import {
   type SortField,
   type SwimlaneGrouping,
   type ViewMode,
-  type DagDirection,
-  DAG_DIRECTION_OPTIONS,
   dagDirectionLabelKey,
 } from "@multica/core/issues/stores/view-store";
 import {
@@ -99,14 +100,6 @@ const MY_VARIANT_HINT_KEY = {
   assigned: "hint_my_assigned",
   created: "hint_my_created",
   involved: "hint_my_involved",
-} as const;
-
-const LAYOUT_LABEL_KEY = {
-  list: "list",
-  board: "board",
-  table: "table",
-  swimlane: "swimlane",
-  gantt: "gantt",
 } as const;
 
 const GROUPING_LABEL_KEY = {
@@ -186,10 +179,8 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
     workspaceProperties.find((p) => `property:${p.id}` === key)?.name ??
     t(($) => $.save_view.custom_property);
 
-  const layoutLabelOf = (mode: ViewMode) =>
-    mode === "dag"
-      ? tDag(($) => $.view.dag)
-      : t(($) => $.view[LAYOUT_LABEL_KEY[mode]]);
+  const { labelOf: layoutLabelOf } = useViewModeLabels();
+  const viewModes = availableViewModes({ allowGantt: false, allowDag }, ["list", "board", "table", "swimlane", "dag"]);
   const layoutLabel = layoutLabelOf(viewMode);
   const groupingLabel =
     viewMode === "board"
@@ -198,21 +189,21 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
         : propertyName(grouping)
       : viewMode === "swimlane"
         ? t(($) => $.display[SWIMLANE_LABEL_KEY[swimlaneGrouping]])
-        : viewMode === "dag"
+        : VIEW_MODE_CAPABILITIES[viewMode].direction
           ? tDag(($) => $.grouping_parent)
           : null;
   const dagDirectionLabel =
-    viewMode === "dag"
+    VIEW_MODE_CAPABILITIES[viewMode].direction
       ? tDag(($) => $[dagDirectionLabelKey(dagDirection)])
       : null;
   const sortLabel =
-    viewMode === "dag"
+    !VIEW_MODE_CAPABILITIES[viewMode].ordering
       ? null
       : sortBy in SORT_LABEL_KEY
         ? t(($) => $.display[SORT_LABEL_KEY[sortBy as keyof typeof SORT_LABEL_KEY]])
         : propertyName(sortBy);
   const sortDirectionLabel =
-    viewMode === "dag" || sortBy === "position"
+    !VIEW_MODE_CAPABILITIES[viewMode].ordering || sortBy === "position"
       ? null
       : t(($) => $.display[sortDirectionLabelKey(sortBy, sortDirection)]);
   const displaySummary = [
@@ -268,18 +259,7 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
             <div className="flex items-center gap-3">
               <Label className={ROW_LABEL}>{t(($) => $.save_view.layout_label)}</Label>
               <Select
-                items={(
-                  [
-                    "list",
-                    "board",
-                    "table",
-                    "swimlane",
-                    // Only surfaces whose modes render DAG may save it — a
-                    // my-scope view would reopen on the board fallback and
-                    // misdescribe itself. (OL-43 F7)
-                    ...(allowDag ? (["dag"] as const) : []),
-                  ] as const
-                ).map((mode) => ({
+                items={viewModes.map((mode) => ({
                   value: mode as string,
                   label: layoutLabelOf(mode),
                 }))}
@@ -293,15 +273,7 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
                 </SelectTrigger>
                 <SelectContent align="start">
                   <SelectGroup>
-                    {(
-                      [
-                        "list",
-                        "board",
-                        "table",
-                        "swimlane",
-                        ...(allowDag ? (["dag"] as const) : []),
-                      ] as const
-                    ).map((mode) => (
+                    {viewModes.map((mode) => (
                       <SelectItem key={mode} value={mode}>
                         {layoutLabelOf(mode)}
                       </SelectItem>
@@ -387,44 +359,25 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
                 </Select>
               </div>
             )}
-            {viewMode === "dag" && (
+            {VIEW_MODE_CAPABILITIES[viewMode].direction && (
               <>
                 <div className="flex items-center gap-3">
                   <Label className={ROW_LABEL}>
                     {tDag(($) => $.direction_label)}
                   </Label>
-                  <Select
-                    items={DAG_DIRECTION_OPTIONS.map((value) => ({
-                      value: value as string,
-                      label: tDag(($) => $[dagDirectionLabelKey(value)]),
-                    }))}
+                  <DagDirectionSelect
                     value={dagDirection}
-                    onValueChange={(v) => {
-                      if (v) act.setDagDirection(v as DagDirection);
-                    }}
-                  >
-                    <SelectTrigger size="sm" className="w-64" aria-label={tDag(($) => $.direction_label)}>
-                      <SelectValue>
-                        {tDag(($) => $[dagDirectionLabelKey(dagDirection)])}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent align="start">
-                      <SelectGroup>
-                        {DAG_DIRECTION_OPTIONS.map((value) => (
-                          <SelectItem key={value} value={value}>
-                            {tDag(($) => $[dagDirectionLabelKey(value)])}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
+                    onChange={act.setDagDirection}
+                    className="w-64"
+                    align="start"
+                  />
                 </div>
 
               </>
             )}
             {/* The graph endpoint ignores sort — DAG drafts omit ordering
                 rather than save a no-op default. */}
-            {viewMode !== "dag" && (
+            {VIEW_MODE_CAPABILITIES[viewMode].ordering && (
             <div className="flex items-center gap-3">
               <Label className={ROW_LABEL}>
                 {t(($) => $.display.ordering_section)}

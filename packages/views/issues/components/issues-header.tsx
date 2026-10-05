@@ -1,9 +1,11 @@
 "use client";
 
 import { cloneElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { VIEW_MODE_CAPABILITIES, availableViewModes, visibleViewMode } from "@multica/core/issues/surface/view-mode";
+import { DagDirectionSelect } from "../dag/dag-direction-select";
+import { VIEW_MODE_META, useViewModeLabels } from "./view-mode-meta";
 import {
   CalendarDays,
-  ChartGantt,
   ChevronDown,
   CircleDashed,
   CircleDot,
@@ -11,17 +13,13 @@ import {
   Filter,
   FolderKanban,
   FolderMinus,
-  List,
   Rows3,
   SignalHigh,
   SlidersHorizontal,
   Tag,
-  Table2,
   User,
   UserMinus,
   UserPen,
-  Waves,
-  Waypoints,
 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Spinner } from "@multica/ui/components/ui/spinner";
@@ -99,9 +97,6 @@ import {
   type SwimlaneGrouping,
   type TableGrouping,
   type ViewMode,
-  type DagDirection,
-  DAG_DIRECTION_OPTIONS,
-  dagDirectionLabelKey,
 } from "@multica/core/issues/stores/view-store";
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import { FilterChipsBar } from "./filter-chips-bar";
@@ -1908,7 +1903,7 @@ export function IssueDisplayControls({
    *  the trigger count only counts additions on top. */
   viewBaseline?: IssueViewBaseline;
   // Only Project Detail renders <GanttView>; other surfaces (global /issues,
-  // /my-issues, actor panel) ignore viewMode === "gantt" and would silently
+  // /my-issues, actor panel) ignore a persisted Gantt mode and would silently
   // fall back to List if the option were exposed there. Keep Gantt opt-in.
   allowGantt?: boolean;
   /** DAG mode is likewise opt-in per surface: only surfaces whose `modes`
@@ -1928,7 +1923,11 @@ export function IssueDisplayControls({
   const { t: tDag } = useT("dag");
   const [tableGroupMenuOpen, setTableGroupMenuOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
-  const viewMode = useViewStore((s) => s.viewMode);
+  const storedViewMode = useViewStore((s) => s.viewMode);
+  const viewMode = visibleViewMode(storedViewMode, { allowGantt, allowDag });
+  const viewModes = availableViewModes({ allowGantt, allowDag });
+  const { labelOf, tooltipOf } = useViewModeLabels();
+  const ViewIcon = VIEW_MODE_META[viewMode].icon;
   const statusFilters = useViewStore((s) => s.statusFilters);
   const priorityFilters = useViewStore((s) => s.priorityFilters);
   const assigneeFilters = useViewStore((s) => s.assigneeFilters);
@@ -2297,37 +2296,17 @@ export function IssueDisplayControls({
                   />
                 </label>
               )}
-              {viewMode === "dag" && (
+              {VIEW_MODE_CAPABILITIES[viewMode].direction && (
                 <>
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-caption font-medium text-muted-foreground">
                       {tDag(($) => $.direction_label)}
                     </span>
-                    <Select
-                      items={DAG_DIRECTION_OPTIONS.map((value) => ({
-                        value: value as string,
-                        label: tDag(($) => $[dagDirectionLabelKey(value)]),
-                      }))}
+                    <DagDirectionSelect
                       value={dagDirection}
-                      onValueChange={(v) => {
-                        if (v) act.setDagDirection(v as DagDirection);
-                      }}
-                    >
-                      <SelectTrigger size="sm" className="w-32" aria-label={tDag(($) => $.direction_label)}>
-                        <SelectValue>
-                          {tDag(($) => $[dagDirectionLabelKey(dagDirection)])}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent align="end">
-                        <SelectGroup>
-                          {DAG_DIRECTION_OPTIONS.map((value) => (
-                            <SelectItem key={value} value={value}>
-                              {tDag(($) => $[dagDirectionLabelKey(value)])}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+                      onChange={act.setDagDirection}
+                      className="w-32"
+                    />
                   </div>
 
                 </>
@@ -2335,7 +2314,7 @@ export function IssueDisplayControls({
               {/* Sort is a list-shaped concept: the graph endpoint ignores it
                   and ELK owns node order, so the control hides in DAG mode
                   rather than pretending to apply. */}
-              {viewMode !== "dag" && (
+              {VIEW_MODE_CAPABILITIES[viewMode].ordering && (
               <div>
                 <span className="text-caption font-medium text-muted-foreground">
                   {t(($) => $.display.ordering_section)}
@@ -2456,31 +2435,9 @@ export function IssueDisplayControls({
                   <TooltipTrigger
                     render={
                       <Button variant="outline" size="sm" className={controlButtonClass}>
-                        {viewMode === "board" ? (
-                          <Columns3 className="size-3.5" />
-                        ) : viewMode === "table" ? (
-                          <Table2 className="size-3.5" />
-                        ) : viewMode === "swimlane" ? (
-                          <Waves className="size-3.5" />
-                        ) : viewMode === "gantt" && allowGantt ? (
-                          <ChartGantt className="size-3.5" />
-                        ) : viewMode === "dag" && allowDag ? (
-                          <Waypoints className="size-3.5" />
-                        ) : (
-                          <List className="size-3.5" />
-                        )}
+                        <ViewIcon className="size-3.5" />
                         <span className="hidden md:inline">
-                          {viewMode === "board"
-                            ? t(($) => $.view.board)
-                            : viewMode === "table"
-                            ? t(($) => $.view.table)
-                            : viewMode === "swimlane"
-                            ? t(($) => $.view.swimlane)
-                            : viewMode === "gantt" && allowGantt
-                            ? t(($) => $.view.gantt)
-                            : viewMode === "dag" && allowDag
-                            ? tDag(($) => $.view.dag)
-                            : t(($) => $.view.list)}
+                          {labelOf(viewMode)}
                         </span>
                       </Button>
                     }
@@ -2488,17 +2445,7 @@ export function IssueDisplayControls({
                 }
               />
               <TooltipContent side="bottom">
-                {viewMode === "board"
-                  ? t(($) => $.view.tooltip_board)
-                  : viewMode === "table"
-                  ? t(($) => $.view.tooltip_table)
-                  : viewMode === "swimlane"
-                  ? t(($) => $.view.tooltip_swimlane)
-                  : viewMode === "gantt" && allowGantt
-                  ? t(($) => $.view.tooltip_gantt)
-                  : viewMode === "dag" && allowDag
-                  ? tDag(($) => $.view.tooltip_dag)
-                  : t(($) => $.view.tooltip_list)}
+                {tooltipOf(viewMode)}
               </TooltipContent>
             </Tooltip>
             <DropdownMenuContent align="end" className="w-auto">
@@ -2512,34 +2459,15 @@ export function IssueDisplayControls({
                   setViewMenuOpen(false);
                 }}
               >
-                <DropdownMenuRadioItem value="board" onPointerEnter={() => preloadIssueView("board")} onFocus={() => preloadIssueView("board")}>
-                  <Columns3 />
-                  {t(($) => $.view.board)}
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="list">
-                  <List />
-                  {t(($) => $.view.list)}
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="table" onPointerEnter={() => preloadIssueView("table")} onFocus={() => preloadIssueView("table")}>
-                  <Table2 />
-                  {t(($) => $.view.table)}
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="swimlane" onPointerEnter={() => preloadIssueView("swimlane")} onFocus={() => preloadIssueView("swimlane")}>
-                  <Waves />
-                  {t(($) => $.view.swimlane)}
-                </DropdownMenuRadioItem>
-                {allowGantt && (
-                  <DropdownMenuRadioItem value="gantt" onPointerEnter={() => preloadIssueView("gantt")} onFocus={() => preloadIssueView("gantt")}>
-                    <ChartGantt />
-                    {t(($) => $.view.gantt)}
-                  </DropdownMenuRadioItem>
-                )}
-                {allowDag && (
-                  <DropdownMenuRadioItem value="dag">
-                    <Waypoints />
-                    {tDag(($) => $.view.dag)}
-                  </DropdownMenuRadioItem>
-                )}
+                {viewModes.map((mode) => {
+                  const Icon = VIEW_MODE_META[mode].icon;
+                  return (
+                    <DropdownMenuRadioItem key={mode} value={mode} onPointerEnter={() => preloadIssueView(mode)} onFocus={() => preloadIssueView(mode)}>
+                      <Icon />
+                      {labelOf(mode)}
+                    </DropdownMenuRadioItem>
+                  );
+                })}
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>

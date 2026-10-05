@@ -91,7 +91,17 @@ parent's descendants into unrelated project representatives. A line expands
 in its own row (LR) or column (TB). Completed issues remain in that structure;
 explicit query filters continue to apply.
 
-First entry folds task lines. Unparented issues without visible relations and
+Task lines fold by default, including lines discovered after the first visit.
+Personal preferences persist only expanded task-line IDs (`dagExpandedIds`).
+Legacy `dagCollapsedIds` are reset once: an incomplete graph cannot safely
+invert a collapsed list. Direction, viewport and independent-group expansion
+remain intact. Missing expansion IDs are inert and survive filtered or stale
+reads; they never create nodes or reveal inaccessible data.
+**Expand issue groups** preserves these hidden expansion preferences.
+**Collapse issue groups** explicitly clears every task-line expansion, including
+hidden ones, so it stays enabled while any stored expansion remains.
+
+Unparented issues without visible relations and
 without unknown/restricted relationship information form a separate
 **Independent issues** container. It starts folded, uses the same canvas and
 cards, and expands into a compact grid. Its preference is independent of

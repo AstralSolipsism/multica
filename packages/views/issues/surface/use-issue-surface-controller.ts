@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { hashKey, keepPreviousData, useQuery } from "@tanstack/react-query";
-import { api, type IssueGraph } from "@multica/core/api";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { api } from "@multica/core/api";
 import type {
   Issue,
   IssueStatus,
@@ -20,7 +20,10 @@ import { statusFilterColumns, visibleStatusKeys } from "@multica/core/issues";
 import { dateOnlyToLocalDate } from "@multica/core/issues/date";
 import type { IssueSortParam } from "@multica/core/issues/queries";
 import { issueTableFacetsOptions } from "@multica/core/issues/queries";
-import { issueGraphOptions } from "@multica/core/issues";
+import type { DagGraphQueryState } from "../dag/dag-view";
+import { supportsDagScope, useDagSurfaceGraph } from "../dag/use-dag-surface-graph";
+import { useStableByContent } from "./use-stable-by-content";
+import { VIEW_MODE_CAPABILITIES } from "@multica/core/issues/surface/view-mode";
 import {
   buildIssueSurfaceQueryPlan,
   type IssueSurfaceQueryPlan,
@@ -74,25 +77,7 @@ export interface IssueSurfaceController {
   allowDag: boolean;
   /** Complete-graph query state for DAG mode; only active while dag is the
    *  effective mode. `isPending` is false when dag is not selected. */
-  dagGraph: {
-    data: IssueGraph | undefined;
-    isPending: boolean;
-    isError: boolean;
-    error: Error | null;
-    isFetching: boolean;
-    /** React Query freshness: an invalidated snapshot refetching in the
-     *  background stays stale until the fresh graph lands. */
-    isStale: boolean;
-    refetch: () => void;
-  };
-  /**
-   * True only when the graph request reads the FULL authorized membership:
-   * no filter field, no search, and sub-issues included. Fold-preference
-   * pruning is legal only under this — a narrowed graph cannot tell a deleted
-   * issue from a filtered-out one. `hasRestrictedContext` is checked by the
-   * view against the response itself.
-   */
-  dagMembershipComplete: boolean;
+  dagGraph: DagGraphQueryState;
   surfaceIssues: Issue[];
   projectIssues: Issue[];
   issues: Issue[];
@@ -203,35 +188,6 @@ function useDebouncedTableSearch(value: string, delayMs = 250) {
  * default alone was enough to rebuild the derived Sets, the table query spec,
  * and the branch query list once per render (MUL-5477). */
 const EMPTY_LIST: never[] = [];
-
-/** Placeholder spec for surfaces whose scope the graph endpoint cannot serve
- *  (my/actor). The query stays `enabled: false`, so this never fetches — it
- *  exists because `issueGraphOptions` validates the scope at construction. */
-const DAG_UNSUPPORTED_SCOPE_SPEC: IssueTableQuerySpec = {
-  scope: { kind: "workspace" },
-  filters: {},
-  sort: { field: "position", direction: "asc" },
-};
-
-/**
- * Pin a derived value's identity to its CONTENT.
- *
- * `tableQuerySpec` is rebuilt from 17 dependencies, so any one of them losing
- * referential stability hands every consumer a new object even though the query
- * it describes is unchanged. Consumers use it as a memo dependency and, in the
- * Table's case, as the source of a `useQueries` list — so a new-but-equal spec
- * rebuilt that list on every render.
- *
- * Hashed with TanStack's own `hashKey` rather than `JSON.stringify` so this
- * agrees exactly with how the same spec is hashed into a `queryKey`: object
- * keys are sorted, so two specs that resolve to one query also resolve to one
- * identity here.
- */
-function useStableByContent<T>(value: T): T {
-  const contentKey = hashKey([value]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- identity follows the content hash, not the reference
-  return useMemo(() => value, [contentKey]);
-}
 
 export function useIssueSurfaceController({
   scope,
@@ -358,22 +314,7 @@ export function useIssueSurfaceController({
       : grouping;
   const usesGantt = effectiveViewMode === "gantt" && !!projectId;
   const usesTable = effectiveViewMode === "table";
-  // DAG draws the complete graph through its own query, so every list-shaped
-  // branch/facet request stays off while the mode is active — and the graph
-  // only loads once the mode is actually selected. Custom status filters
-  // still hold the graph until the catalog resolves them (MUL-6243).
-  const usesDagScope = scope.type === "workspace" || scope.type === "project";
-  const usesDag = effectiveViewMode === "dag" && usesDagScope;
-  // The agents/members tab narrows graph membership through
-  // scope.assignee_types exactly like a filter does: a node outside it is
-  // outside the QUERY, not deleted. A project graph narrows it too — the
-  // context closure adds ancestors/prerequisites but never unrelated
-  // descendants, so a cross-project child that kept its parent is absent
-  // without being gone. Completeness (and the fold pruning it licenses) must
-  // cover both axes; only the full workspace scope can prove membership.
-  const dagScopeNarrowsMembership =
-    scope.type === "project" ||
-    (usesDagScope && assigneeTypesForActorKind(scope.actorKind) != null);
+  const usesDag = VIEW_MODE_CAPABILITIES[effectiveViewMode].graph && supportsDagScope(scope);
   const activeSearch = usesTable ? tableSearch : search;
   const debouncedActiveSearch = useDebouncedTableSearch(activeSearch);
   const usesServerStatusSurface =
@@ -589,18 +530,7 @@ export function useIssueSurfaceController({
   // them for a query that did not change.
   const tableQuerySpec = useStableByContent(derivedTableQuerySpec);
 
-  // The complete graph is the DAG mode's ONLY data source — no list pages or
-  // Gantt windows feed it (OL-38 §7). Its key binds workspace, scope, filters
-  // and search; sort is ignored server-side. `issueGraphOptions` rejects
-  // non-workspace/project scopes by throwing, so those scopes substitute a
-  // valid-but-disabled spec: `usesDag` is false there and nothing fetches.
-  const dagGraphSpec = usesDagScope
-    ? tableQuerySpec
-    : DAG_UNSUPPORTED_SCOPE_SPEC;
-  const dagGraphQuery = useQuery({
-    ...issueGraphOptions(wsId, dagGraphSpec),
-    enabled: usesDag && !statusFilterUnresolved,
-  });
+  const dagSurface = useDagSurfaceGraph(wsId, scope, effectiveViewMode, tableQuerySpec, statusFilterUnresolved);
 
   const [activeTableFacet, setActiveTableFacet] =
     useState<IssueTableFacetSpec | null>(null);
@@ -921,22 +851,10 @@ export function useIssueSurfaceController({
     createDefaults: resolvedCreateDefaults,
     viewMode: effectiveViewMode,
     allowGantt: allowedModes.has("gantt") && !!projectId,
-    allowDag: allowedModes.has("dag") && usesDagScope,
-    dagGraph: {
-      data: dagGraphQuery.data ?? undefined,
-      isPending: usesDag && dagGraphQuery.isPending,
-      isError: dagGraphQuery.isError,
-      error: dagGraphQuery.error,
-      isFetching: dagGraphQuery.isFetching,
-      isStale: dagGraphQuery.isStale,
-      refetch: () => void dagGraphQuery.refetch(),
-    },
-    dagMembershipComplete:
-      !dagScopeNarrowsMembership &&
-      !hasActiveFilters &&
-      showSubIssues &&
-      debouncedActiveSearch === "",
+    allowDag: allowedModes.has("dag") && supportsDagScope(scope),
+    dagGraph: dagSurface.graph,
     ...surfaceData,
+    isRefreshing: surfaceData.isRefreshing || dagSurface.isRefreshing,
     isLoading: data.isLoading || workingFilterPending,
     workingAgents,
     hasActiveFilters,

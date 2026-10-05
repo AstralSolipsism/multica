@@ -27,7 +27,6 @@ export interface DagLayoutState<T> {
   direction: DagDirection;
   pending: boolean;
   pendingSince: number | null;
-  lastElapsedMs: number | null;
   error: string | null;
   cancel: () => void;
   retry: () => void;
@@ -38,7 +37,7 @@ export function createWorkerRunner(): DagLayoutRunner {
   let active: { requestId: number; onDone: (response: DagLayoutResponse) => void } | null = null;
   let failure: string | null = null;
   const fail = (requestId: number, error: string): DagLayoutResponse => ({
-    requestId, positions: {}, groups: {}, routes: {}, ports: {}, elapsedMs: 0, error,
+    requestId, positions: {}, groups: {}, routes: {}, ports: {}, error,
   });
   const stop = () => {
     worker?.terminate();
@@ -86,9 +85,6 @@ export function createWorkerRunner(): DagLayoutRunner {
   };
 }
 let nextRequestId = 1;
-export const EMPTY_LAYOUT_NODES: DagLayoutNodeInput[] = [];
-export const EMPTY_LAYOUT_EDGES: DagLayoutEdgeInput[] = [];
-export const EMPTY_LAYOUT_GROUPS: DagLayoutGroupInput[] = [];
 
 /** The latest complete geometry wins. The worker owns ELK and can be stopped
  * outright; status/title/selection updates never change its topology input. */
@@ -109,7 +105,6 @@ export function useDagLayout<T>(
     result: DagLayoutResult;
     snapshot: T | undefined;
     direction: DagDirection;
-    elapsedMs: number;
   } | null>(null);
   const [pendingSince, setPendingSince] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -147,7 +142,6 @@ export function useDagLayout<T>(
         result: response,
         snapshot: requestedSnapshot,
         direction: request.direction,
-        elapsedMs: response.elapsedMs,
       });
     });
   }, [input, revision]);
@@ -162,7 +156,6 @@ export function useDagLayout<T>(
     direction: committed?.direction ?? direction,
     pending: pendingSince !== null,
     pendingSince,
-    lastElapsedMs: committed?.elapsedMs ?? null,
     error,
     cancel: () => {
       liveRequest.current = 0;

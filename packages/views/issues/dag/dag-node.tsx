@@ -27,8 +27,6 @@ export type DagFlowNodeData = {
   statusColor: string | null;
   /** In the highlighted upstream/downstream neighborhood of the selection. */
   focused: boolean;
-  /** A focus neighborhood is active and this node is outside it. */
-  dimmed: boolean;
 };
 
 export type DagFlowNode = Node<DagFlowNodeData, "dagNode">;
@@ -99,7 +97,7 @@ function NodeShell({
         "nopan flex flex-col gap-1 rounded-lg border bg-card px-2.5 py-2 text-left shadow-xs transition-opacity",
         selected ? "border-brand ring-2 ring-brand/30" : "border-border hover:border-foreground/30",
         data.model.issue?.statusCategory === "done" && "bg-muted/10",
-        !data.dimmed && data.focused && "border-brand/60",
+        data.focused && "border-brand/60",
         data.model.role === "context" && "border-dashed",
         className,
       )}

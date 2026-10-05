@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { VIEW_MODE_CAPABILITIES } from "@multica/core/issues/surface/view-mode";
 import type { StoreApi } from "zustand/vanilla";
 import type { IssueViewState } from "@multica/core/issues/stores/view-store";
 import type { IssueViewBaseline } from "@multica/core/issue-views/baseline";
@@ -250,7 +251,7 @@ function IssueSurfaceContent({
     batchToolbar !== "never" &&
     // DAG has no row/card selection — batch actions stay with list-shaped
     // modes.
-    controller.viewMode !== "dag" &&
+    VIEW_MODE_CAPABILITIES[controller.viewMode].batchSelection &&
     (batchToolbar === "always" ||
       controller.viewMode === "list" ||
       controller.viewMode === "table");
@@ -271,12 +272,7 @@ function IssueSurfaceContent({
             workingAgents={controller.workingAgents}
             allowGantt={controller.allowGantt}
             allowDag={controller.allowDag}
-            isRefreshing={
-              controller.isRefreshing ||
-              (controller.viewMode === "dag" &&
-                controller.dagGraph.isFetching &&
-                !controller.dagGraph.isPending)
-            }
+            isRefreshing={controller.isRefreshing}
             facetCountsExact={
               controller.facetCountsExact
             }
@@ -385,7 +381,6 @@ function IssueSurfaceContent({
               <DagView
                 graphQuery={controller.dagGraph}
                 hasActiveFilters={controller.hasActiveFilters}
-                membershipComplete={controller.dagMembershipComplete}
               />
             )}
             {controller.viewMode === "swimlane" && (

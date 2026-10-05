@@ -3,7 +3,7 @@ import type { DagDirection } from "@multica/core/issues/stores/view-store";
 import type { DagFlowNode, DagFlowNodeData } from "./dag-node";
 import type { DagFlowGroup } from "./dag-group";
 import type { DagFlowEdge } from "./dag-edge";
-import type { DagProjection } from "./dag-projection";
+import type { DagProjection, DagVisibleEdge, DagVisibleGroup } from "./dag-projection";
 import type { DagLayoutResult, DagPoint, DagPort } from "./dag-layout";
 import { dagNodeSize } from "./dag-constants";
 
@@ -67,7 +67,6 @@ export function toFlowNodes({
       showStage:
         !model.groupId || !geometry.groups[model.groupId]?.bands.length,
       focused: false,
-      dimmed: false,
     };
     const size = bounds ?? dagNodeSize(model.kind);
     const shared = {
@@ -166,10 +165,7 @@ export function toFlowEdges({
     const focused = focusSet
       ? focusSet.has(model.source) && focusSet.has(model.target)
       : model.source === selectedNodeId || model.target === selectedNodeId;
-    const aggregate =
-      model.sourceEdgeIds.length > 1 ||
-      groupModels.get(model.source)?.collapsed === true ||
-      groupModels.get(model.target)?.collapsed === true;
+    const aggregate = isAggregateEdge(model, groupModels);
     return [
       {
         id: model.id,
@@ -193,4 +189,8 @@ export function toFlowEdges({
       },
     ];
   });
+}
+
+export function isAggregateEdge(edge: DagVisibleEdge, groups: ReadonlyMap<string, DagVisibleGroup>): boolean {
+  return edge.sourceEdgeIds.length > 1 || groups.get(edge.source)?.collapsed === true || groups.get(edge.target)?.collapsed === true;
 }

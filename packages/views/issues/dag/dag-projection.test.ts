@@ -1,77 +1,16 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import type { IssueGraph, IssueGraphNode } from "@multica/core/api";
+import { graphNode as makeNode, issueGraph as makeGraph } from "./dag-test-fixtures";
 import {
   computeDagProjection,
   dagFeatureRepId,
   dagFocusNeighborhood,
   DAG_INDEPENDENT_GROUP,
   defaultDagCollapsedIds,
-  pruneDagCollapsedIds,
   repsToRevealIssues,
 } from "./dag-projection";
 const P1 = "proj-1";
 const P2 = "proj-2";
-
-function makeNode(id: string, partial: Partial<IssueGraphNode> = {}): IssueGraphNode {
-  return {
-    id,
-    identifier: `T-${id.toUpperCase()}`,
-    title: `Task ${id}`,
-    status: "todo",
-    statusCategory: "todo",
-    revision: 1,
-    parentIssueId: null,
-    hasRestrictedParent: false,
-    projectId: null,
-    stage: null,
-    priority: "none",
-    assignee: null,
-    role: "match",
-    runSummary: {
-      queued: 0,
-      dispatched: 0,
-      running: 0,
-      waitingLocalDirectory: 0,
-      capturedAt: "2026-09-10T00:00:00Z",
-    },
-    dependencySummary: {
-      visibleUnsatisfiedCount: 0,
-      hasRestrictedBlockers: false,
-      dependencyVersion: `v-${id}`,
-    },
-    ...partial,
-  };
-}
-
-function makeGraph(
-  nodes: IssueGraphNode[],
-  edges: { id: string; source: string; target: string }[],
-): IssueGraph {
-  return {
-    schemaVersion: 1,
-    snapshotId: "snap-1",
-    topologyId: "topo-1",
-    capturedAt: "2026-09-10T00:00:00Z",
-    complete: true,
-    scope: { type: "workspace", projectId: null },
-    focusIssueId: null,
-    matchedCount: nodes.filter((n) => n.role === "match").length,
-    contextCount: nodes.filter((n) => n.role === "context").length,
-    nodes,
-    edges: edges.map((e) => ({
-      sourceEdgeId: e.id,
-      source: e.source,
-      target: e.target,
-      type: "blocked_by" as const,
-    })),
-    projects: [
-      { id: P1, title: "Account" },
-      { id: P2, title: "Orders" },
-    ],
-    hasRestrictedContext: false,
-  };
-}
 
 describe("task-line projection", () => {
   function fixture() {
@@ -282,18 +221,13 @@ describe("task-line projection", () => {
     expect(view.representatives.size).toBe(2);
     expect(JSON.stringify(graph)).toBe(before);
   });
-  it("retains known parent folds when a filter omits their children", () => {
+  it("derives collapsed lines from current membership, with no stored synthetic parents", () => {
     const graph = makeGraph([makeNode("root")], []);
-    expect(pruneDagCollapsedIds(["issue:root", "issue:absent"], graph, false)).toEqual([
-      "issue:root",
-      "issue:absent",
-    ]);
-    expect(computeDagProjection(graph, ["issue:root"]).groups[0]?.id).toBe("issue:root");
+    expect(defaultDagCollapsedIds(graph)).toEqual([]);
+    expect(computeDagProjection(graph, defaultDagCollapsedIds(graph)).groups.some((g) => g.id === "issue:root")).toBe(false);
   });
-  it("prunes only absent/childless folds on complete membership reads", () => {
-    expect(
-      pruneDagCollapsedIds(["issue:one", "issue:solo", "issue:absent"], fixture(), true),
-    ).toEqual(["issue:one"]);
+  it("lists only task lines, excluding absent and childless issues", () => {
+    expect(defaultDagCollapsedIds(fixture()).sort()).toEqual(["issue:one", "issue:two"]);
   });
   it("reveals only ancestor folds, never an unrelated line", () => {
     const graph = fixture();

@@ -1,9 +1,6 @@
 import { lazy } from "react";
 
-function once<T>(load: () => Promise<T>) {
-  let pending: Promise<T> | undefined;
-  return () => (pending ??= load().catch((error) => { pending = undefined; throw error; }));
-}
+import { once } from "./once";
 
 const loaders = {
   board: once(() => import("../components/board-view").then((module) => ({ default: module.BoardView }))),

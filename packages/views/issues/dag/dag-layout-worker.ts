@@ -16,10 +16,9 @@ const engine = new ELK({
 
 self.onmessage = async (event) => {
   const { requestId, nodes, edges, groups, direction } = event.data;
-  const started = Date.now();
   try {
     const result = await layoutDagProjection(nodes, edges, direction, groups, engine);
-    self.postMessage({ ...result, requestId, elapsedMs: Date.now() - started });
+    self.postMessage({ ...result, requestId });
   } catch (error) {
     self.postMessage({
       requestId,
@@ -27,7 +26,6 @@ self.onmessage = async (event) => {
       groups: {},
       routes: {},
       ports: {},
-      elapsedMs: Date.now() - started,
       error: error instanceof Error ? error.message : "DAG layout failed",
     });
   }

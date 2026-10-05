@@ -39,7 +39,7 @@ export function graphNode(
 
 export function issueGraph(
   nodes: IssueGraphNode[],
-  edges: [source: string, target: string][] = [],
+  edges: ([source: string, target: string] | { id: string; source: string; target: string })[] = [],
 ): IssueGraph {
   return {
     schemaVersion: 1,
@@ -49,15 +49,13 @@ export function issueGraph(
     complete: true,
     scope: { type: "workspace", projectId: null },
     focusIssueId: null,
-    matchedCount: nodes.length,
-    contextCount: 0,
+    matchedCount: nodes.filter((n) => n.role === "match").length,
+    contextCount: nodes.filter((n) => n.role === "context").length,
     nodes,
-    edges: edges.map(([source, target]) => ({
-      sourceEdgeId: `${source}-${target}`,
-      source,
-      target,
-      type: "blocked_by",
-    })),
+    edges: edges.map((edge) => {
+      const { id, source, target } = Array.isArray(edge) ? { id: `${edge[0]}-${edge[1]}`, source: edge[0], target: edge[1] } : edge;
+      return { sourceEdgeId: id, source, target, type: "blocked_by" as const };
+    }),
     projects: [
       { id: "p1", title: "Project One" },
       { id: "p2", title: "Project Two" },

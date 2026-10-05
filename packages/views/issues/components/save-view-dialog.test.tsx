@@ -88,7 +88,7 @@ describe("DraftDefinitionFields DAG labels", () => {
     expect(screen.getByRole("combobox", { name: "Layout" })).toHaveTextContent("Graph");
     expect(screen.getByRole("combobox", { name: "Direction" })).toHaveTextContent(label);
     await user.click(screen.getByRole("combobox", { name: "Layout" }));
-    expect(screen.getByRole("option", { name: "Graph" })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "Graph" })).toBeInTheDocument();
   });
 });
 
@@ -135,7 +135,7 @@ describe("saved DAG view defaults", () => {
     store.setState({
       viewMode: "dag",
       dagDirection: "LR",
-      dagCollapsedIds: ["issue:private-fold"],
+      dagExpandedIds: ["issue:private-fold"],
       dagIndependentExpanded: true,
       dagViewport: { x: -123, y: 89, zoom: 1.4 },
       dagSelectedNodeId: "a",
@@ -149,7 +149,7 @@ describe("saved DAG view defaults", () => {
     await user.click(screen.getByRole("button", { name: /Default display/ }));
     expect(screen.queryByRole("combobox", { name: "Ordering" })).toBeNull();
     await user.click(screen.getByRole("combobox", { name: "Direction" }));
-    await user.click(screen.getByRole("option", { name: "Top to bottom" }));
+    await user.click(await screen.findByRole("option", { name: "Top to bottom" }));
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Create view" }));
     expect(createView).toHaveBeenCalledOnce();
@@ -160,7 +160,7 @@ describe("saved DAG view defaults", () => {
       display: { viewMode: "dag", dagDirection: "TB", dagGrouping: "parent" },
     });
     for (const key of [
-      "dagCollapsedIds",
+      "dagExpandedIds",
       "dagViewport",
       "dagSelectedNodeId",
       "dagIndependentExpanded",
@@ -169,7 +169,7 @@ describe("saved DAG view defaults", () => {
       expect(payload.query).not.toHaveProperty(key);
     }
     expect(store.getState().dagDirection).toBe("LR");
-    expect(store.getState().dagCollapsedIds).toEqual(["issue:private-fold"]);
+    expect(store.getState().dagExpandedIds).toEqual(["issue:private-fold"]);
   });
 
   it("hides Graph in the default-display editor when the surface disallows it", async () => {
@@ -182,6 +182,7 @@ describe("saved DAG view defaults", () => {
     );
     await user.click(screen.getByRole("button", { name: /Default display/ }));
     await user.click(screen.getByRole("combobox", { name: "Layout" }));
+    expect(await screen.findByRole("option", { name: "List" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Graph" })).toBeNull();
   });
 });
