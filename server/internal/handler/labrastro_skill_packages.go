@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"path"
@@ -11,11 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type labrastroPackageRequest struct {
@@ -80,7 +76,7 @@ func labrastroStateDigest(s db.LabrastroListSkillStatesRow) string {
 	sort.Slice(files, func(i, j int) bool { return files[i][0] < files[j][0] })
 	return labrastroJSONHash([]any{s.Name, s.Description, s.ContentHash, files})
 }
-func labrastroSourceIdentity(config []byte, src *labrastroSkillSource, candidates []LabrastroSkillCandidate) (string, bool) {
+func labrastroSourceIdentity(config []byte, src *labrastroSkillSource, legacyPaths map[string][]string) (string, bool) {
 	var v struct {
 		Origin struct {
 			Type  string  `json:"type"`
@@ -108,12 +104,7 @@ func labrastroSourceIdentity(config []byte, src *labrastroSkillSource, candidate
 		if err != nil || !strings.EqualFold(owner, src.spec.owner) || !strings.EqualFold(repo, src.spec.repo) {
 			return "", false
 		}
-		matches := []string{}
-		for _, candidate := range candidates {
-			if path.Base(candidate.Path) == slug || candidate.Name == slug {
-				matches = append(matches, candidate.Path)
-			}
-		}
+		matches := legacyPaths[slug]
 		if len(matches) == 1 {
 			return matches[0], true
 		}
@@ -153,6 +144,21 @@ func labrastroResolveCandidates(a labrastroSkillActor, s labrastroPackageSnapsho
 			byPath[place.SourcePath.String] = byID[uuidToString(place.SkillID)]
 		}
 	}
+	// Resolve provenance once per skill, including legacy slug ambiguity.
+	legacyPaths := map[string][]string{}
+	for _, c := range raw {
+		base := path.Base(c.Path)
+		legacyPaths[base] = append(legacyPaths[base], c.Path)
+		if c.Name != base {
+			legacyPaths[c.Name] = append(legacyPaths[c.Name], c.Path)
+		}
+	}
+	bySource := map[string][]db.LabrastroListSkillStatesRow{}
+	for _, st := range s.States {
+		if dir, ok := labrastroSourceIdentity(st.Config, src, legacyPaths); ok {
+			bySource[dir] = append(bySource[dir], st)
+		}
+	}
 	for i := range result {
 		c := &result[i]
 		present[c.Path] = true
@@ -164,12 +170,7 @@ func labrastroResolveCandidates(a labrastroSkillActor, s labrastroPackageSnapsho
 		if target, found = byPath[c.Path]; found {
 			own = true
 		} else {
-			matches := []db.LabrastroListSkillStatesRow{}
-			for _, st := range s.States {
-				if dir, ok := labrastroSourceIdentity(st.Config, src, raw); ok && dir == c.Path {
-					matches = append(matches, st)
-				}
-			}
+			matches := bySource[c.Path]
 			if len(matches) > 1 {
 				c.State = "conflict"
 				c.Conflict = "ambiguous_source"
@@ -244,211 +245,40 @@ func (h *Handler) labrastroPackageOperation(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	var req labrastroPackageRequest
-	if !labrastroDecode(w, r, &req) {
+	req, requested, apply, ok := h.labrastroPackageInput(w, r, a, apply, rescan)
+	if !ok {
 		return
-	}
-	if req.All && req.Skills != nil {
-		writeError(w, 400, "all and skills are mutually exclusive")
-		return
-	}
-	if req.OnConflict != "" && req.OnConflict != "skip" && req.OnConflict != "rename" && req.OnConflict != "overwrite" {
-		writeError(w, 400, "on_conflict must be skip, rename or overwrite")
-		return
-	}
-	if req.OnConflict == "" {
-		req.OnConflict = "skip"
-	}
-	var requested pgtype.UUID
-	if rescan {
-		requested, ok = parseUUIDOrBadRequest(w, chi.URLParam(r, "packageId"), "package_id")
-		if !ok {
-			return
-		}
-		p, err := h.Queries.LabrastroGetSkillPackage(r.Context(), db.LabrastroGetSkillPackageParams{WorkspaceID: a.ws, ID: requested})
-		if err != nil {
-			labrastroWriteSkillError(w, err)
-			return
-		}
-		m, err := h.getWorkspaceMember(r.Context(), uuidToString(a.user), uuidToString(a.ws))
-		if err == nil {
-			err = labrastroRequirePackageOwner(p, a, m)
-		}
-		if err != nil {
-			labrastroWriteSkillError(w, err)
-			return
-		}
-		if req.URL == "" {
-			req.URL = p.SourceUrl
-		}
-		apply = req.Apply
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), importFetchTimeout)
 	defer cancel()
-	writePackageError := func(err error) {
-		// Database failures after cancellation do not establish a conflict
-		// or permission change, even when a query wrapped the context error.
-		if ctx.Err() != nil {
-			err = labrastroSkillError(http.StatusGatewayTimeout, "source_timeout", "skill package request timed out or was canceled; preview again")
-		}
-		labrastroWriteSkillError(w, err)
-	}
 	src, err := newLabrastroSkillSource(ctx, &http.Client{Timeout: 30 * time.Second}, req.URL, uuidToString(a.ws))
 	if err != nil {
-		var api *labrastroSkillAPIError
-		if errors.As(err, &api) {
-			labrastroWriteSkillError(w, err)
-		} else {
-			writeSkillFetchError(w, ctx, err)
-		}
+		labrastroWritePackageSourceError(w, ctx, err)
 		return
 	}
-	snap, err := labrastroReadPackageSnapshot(ctx, h.Queries, a)
-	if err != nil {
-		writePackageError(err)
+	scan, ok := h.labrastroScanPackage(w, ctx, a, src, requested)
+	if !ok {
 		return
 	}
-	p := labrastroFindPackage(snap, src)
-	if requested.Valid && (p == nil || p.ID != requested) {
-		labrastroWriteSkillError(w, labrastroSkillError(409, "source_changed", "rescan cannot change repository identity or subdirectory"))
-		return
-	}
-	if p != nil {
-		if err = labrastroRequirePackageOwner(*p, a, snap.Member); err != nil {
-			labrastroWriteSkillError(w, err)
-			return
-		}
-	}
-	raw, diags, err := src.candidates(ctx)
-	// A last-candidate download failure can be returned as a failed row.
-	// Cancellation/deadline must win over both that row and fingerprint checks.
-	if ctx.Err() != nil {
-		labrastroWriteSkillError(w, labrastroSkillError(http.StatusGatewayTimeout, "source_timeout", "skill package source scan timed out or was canceled; preview again"))
-		return
-	}
-	if err != nil {
-		writeSkillFetchError(w, ctx, err)
-		return
-	}
-	if diags == nil {
-		diags = []SkillImportDiagnostic{}
-	}
-	candidates := labrastroResolveCandidates(a, snap, src, raw, p)
-	fingerprint := labrastroPreviewFingerprint(a, snap, src, candidates)
 	if !apply {
-		preview := LabrastroPackagePreview{PreviewID: labrastroSignPreview(fingerprint, time.Now().Add(15*time.Minute).Unix()), Source: map[string]string{"url": src.URL, "owner_repo": src.spec.owner + "/" + src.spec.repo, "subdirectory": src.spec.skillDir, "ref": src.spec.ref, "revision": src.commit}, Candidates: candidates, Diagnostics: diags}
-		if p != nil {
-			response := labrastroPackageResponse(*p)
-			preview.Package = &response
-		}
-		writeJSON(w, 200, preview)
+		writeJSON(w, 200, scan.preview())
 		return
 	}
-	if !labrastroValidatePreview(req.PreviewID, fingerprint) {
-		// A valid token with an incomplete re-scan cannot prove source or
-		// permission changes. Matching previews with failed candidates still
-		// proceed to best-effort item reporting; invalid/expired tokens stay 409.
-		hash, _, _ := strings.Cut(req.PreviewID, ".")
-		if labrastroValidatePreview(req.PreviewID, hash) {
-			for _, c := range raw {
-				if c.State != "failed" {
-					continue
-				}
-				for _, d := range c.Diagnostics {
-					if d.Retryable {
-						writeSkillFetchError(w, ctx, fmt.Errorf("%w: could not revalidate candidate %q: %s; preview again", errImportSourceUnavailable, c.Path, d.Message))
-						return
-					}
-				}
-			}
-		}
-		labrastroWriteSkillError(w, labrastroStalePreview())
+	if err = labrastroCheckPackagePreview(req.PreviewID, scan.fingerprint, scan.raw); err != nil {
+		labrastroWritePackageSourceError(w, ctx, err)
 		return
 	}
-	selected := map[string]bool{}
-	for _, p := range req.Skills {
-		selected[p] = true
-	}
-	known := map[string]bool{}
-	for _, c := range candidates {
-		known[c.Path] = true
-		if req.All || req.Skills == nil && c.DefaultSelected {
-			selected[c.Path] = true
-		}
-	}
-	for p := range selected {
-		if !known[p] {
-			writeError(w, 400, "selected skill path is not in this preview")
-			return
-		}
-	}
-	// Re-read under the workspace lock after network IO. The client never
-	// supplies permission claims, a target id, candidate content or provenance.
-	tx, q, _, err := h.labrastroSkillTx(ctx, a)
+	selected, err := labrastroSelectCandidates(req, scan.candidates)
 	if err != nil {
-		writePackageError(err)
+		writeError(w, 400, err.Error())
 		return
 	}
-	defer tx.Rollback(ctx)
-	current, err := labrastroReadPackageSnapshot(ctx, q, a)
-	if err == nil && labrastroPreviewFingerprint(a, current, src, labrastroResolveCandidates(a, current, src, raw, labrastroFindPackage(current, src))) != fingerprint {
-		err = labrastroStalePreview()
-	}
+	p, err := h.labrastroCommitPackageMetadata(ctx, a, scan, len(selected) > 0)
 	if err != nil {
-		writePackageError(err)
+		labrastroWritePackageError(w, ctx, err)
 		return
 	}
-	if len(selected) == 0 && p == nil {
-		tx.Rollback(ctx)
-		results := []LabrastroPackageItemResult{}
-		for _, c := range candidates {
-			results = append(results, LabrastroPackageItemResult{Path: c.Path, Status: "skipped", Code: "not_selected", Diagnostics: c.Diagnostics})
-		}
-		writeJSON(w, 200, LabrastroPackageApplyResult{Results: results, Diagnostics: diags})
-		return
-	}
-	cache := labrastroCandidateCache(raw)
-	if p == nil {
-		rootID, packageID := labrastroNewID(), labrastroNewID()
-		name := labrastroPackageRootName(src.spec.owner+"/"+src.spec.repo, current.Folders)
-		_, err = q.LabrastroCreateSkillFolder(ctx, db.LabrastroCreateSkillFolderParams{ID: rootID, WorkspaceID: a.ws, Name: name, PackageID: packageID, PackagePath: pgtype.Text{String: "", Valid: true}})
-		if err == nil {
-			created, e := q.LabrastroCreateSkillPackage(ctx, db.LabrastroCreateSkillPackageParams{ID: packageID, WorkspaceID: a.ws, OwnerRepo: src.spec.owner + "/" + src.spec.repo, Subdirectory: src.spec.skillDir, SourceUrl: src.URL, SourceRef: src.spec.ref, RootFolderID: rootID, CreatedBy: a.user, Candidates: cache})
-			p = &created
-			err = e
-		}
-	} else {
-		updated, e := q.LabrastroApplySkillPackage(ctx, db.LabrastroApplySkillPackageParams{WorkspaceID: a.ws, ID: p.ID, SourceUrl: src.URL, SourceRef: src.spec.ref, Candidates: cache})
-		p = &updated
-		err = e
-	}
-	if err == nil {
-		err = tx.Commit(ctx)
-	}
-	if err != nil {
-		writePackageError(err)
-		return
-	}
-	response := labrastroPackageResponse(*p)
-	report := LabrastroPackageApplyResult{Package: &response, Results: []LabrastroPackageItemResult{}, Diagnostics: diags}
-	for _, c := range candidates {
-		item := LabrastroPackageItemResult{Path: c.Path, SkillID: c.SkillID, Status: "skipped", Diagnostics: c.Diagnostics}
-		if c.State == "removed" {
-			item.Status = "retained"
-			item.Code = "source_removed"
-		} else if !selected[c.Path] {
-			item.Code = "not_selected"
-		} else if c.State == "unchanged" {
-			item.Status = "unchanged"
-		} else {
-			item = h.labrastroApplyCandidate(ctx, r, a, *p, src, snap, raw, c, req)
-		}
-		if item.Status == "failed" {
-			report.Failed = true
-		}
-		report.Results = append(report.Results, item)
-	}
-	writeJSON(w, 200, report)
+	writeJSON(w, 200, h.labrastroApplyPackageItems(ctx, r, a, p, scan, selected, req))
 }
 
 func labrastroCandidateCache(candidates []LabrastroSkillCandidate) []byte {
@@ -464,196 +294,6 @@ func labrastroCandidateCache(candidates []LabrastroSkillCandidate) []byte {
 	}
 	body, _ := json.Marshal(rows)
 	return body
-}
-
-func (h *Handler) labrastroApplyCandidate(ctx context.Context, r *http.Request, a labrastroSkillActor, p db.LabrastroSkillPackage, src *labrastroSkillSource, snap labrastroPackageSnapshot, raw []LabrastroSkillCandidate, c LabrastroSkillCandidate, req labrastroPackageRequest) LabrastroPackageItemResult {
-	result := LabrastroPackageItemResult{Path: c.Path, Status: "failed", SkillID: c.SkillID, Diagnostics: c.Diagnostics}
-	fail := func(code, reason string, retry bool) LabrastroPackageItemResult {
-		// The deadline can expire inside any query or commit, not just
-		// between candidates. Preserve earlier successes in the report.
-		if err := ctx.Err(); err != nil {
-			result.Status = "failed"
-			code, reason, retry = "source_timeout", err.Error(), true
-		}
-		result.Code = code
-		result.Reason = reason
-		result.Retryable = retry
-		return result
-	}
-	if err := ctx.Err(); err != nil {
-		return fail("source_timeout", err.Error(), true)
-	}
-	if c.State == "failed" {
-		if len(c.Diagnostics) > 0 {
-			d := c.Diagnostics[0]
-			return fail(d.Code, d.Message, d.Retryable)
-		}
-		return fail("candidate_failed", "candidate could not be fetched; preview again", true)
-	}
-	if c.Conflict == "already_packaged" || c.Conflict == "ambiguous_source" {
-		if req.OnConflict == "skip" {
-			result.Status = "skipped"
-		}
-		return fail(c.Conflict, "detach from the other package or resolve the ambiguous source first", false)
-	}
-	if c.State == "conflict" && req.OnConflict == "skip" {
-		result.Status = "skipped"
-		return fail(c.Conflict, "existing skill left unchanged", false)
-	}
-	if c.Conflict == "forbidden" && req.Skills == nil && !req.All {
-		result.Status = "skipped"
-		return fail("forbidden", "permission required to adopt or update this skill", false)
-	}
-	bundle, err := src.bundle(ctx, c.Path)
-	if err != nil {
-		var detail *labrastroImportError
-		if errors.As(err, &detail) {
-			result.Diagnostics = append(result.Diagnostics, detail.Diagnostic)
-			return fail(detail.Diagnostic.Code, err.Error(), detail.Diagnostic.Retryable)
-		}
-		return fail("source_unavailable", err.Error(), !isCapError(err))
-	}
-	if labrastroBundleDigest(bundle) != c.Digest {
-		return fail("source_changed", "candidate changed since preview", true)
-	}
-	tx, q, m, err := h.labrastroSkillTx(ctx, a)
-	if err != nil {
-		return fail("permission_changed", "could not enter workspace transaction", true)
-	}
-	defer tx.Rollback(ctx)
-	current, err := q.LabrastroGetSkillPackage(ctx, db.LabrastroGetSkillPackageParams{WorkspaceID: a.ws, ID: p.ID})
-	if err != nil {
-		return fail("preview_stale", "package was removed", true)
-	}
-	if current.Revision != p.Revision || current.SourceUrl != p.SourceUrl || current.SourceRef != p.SourceRef {
-		return fail("preview_stale", "package source changed during apply", true)
-	}
-	if err = labrastroRequirePackageOwner(current, a, m); err != nil {
-		return fail("forbidden", err.Error(), false)
-	}
-	name := sanitizeNullBytes(bundle.name)
-	var target db.Skill
-	var original db.LabrastroListSkillStatesRow
-	// Rename creates an independent skill. A name-only collision does not
-	// grant or require permission to modify the existing skill or its placement.
-	hasTarget := c.SkillID != "" && !(c.Conflict == "name_conflict" && req.OnConflict == "rename")
-	overwrite := c.State == "conflict" && req.OnConflict == "overwrite"
-	if hasTarget {
-		target, err = q.LabrastroLockSkill(ctx, db.LabrastroLockSkillParams{WorkspaceID: a.ws, ID: parseUUID(c.SkillID)})
-		if err != nil {
-			return fail("preview_stale", "target disappeared", true)
-		}
-		for _, st := range snap.States {
-			if st.ID == target.ID {
-				original = st
-				break
-			}
-		}
-		states, e := q.LabrastroListSkillStates(ctx, a.ws)
-		if e != nil {
-			return fail("operation_failed", "could not recheck target", true)
-		}
-		for _, st := range states {
-			if st.ID == target.ID && labrastroJSONHash(st) != labrastroJSONHash(original) {
-				return fail("preview_stale", "target changed since preview", true)
-			}
-		}
-		places, e := q.LabrastroListSkillPlacements(ctx, a.ws)
-		if e != nil {
-			return fail("operation_failed", "could not recheck placement", true)
-		}
-		for _, place := range places {
-			if place.SkillID == target.ID && place.PackageID.Valid && (overwrite || place.PackageID != p.ID || place.SourcePath.String != c.Path) {
-				return fail("already_packaged", "target belongs to another package or path", false)
-			}
-		}
-		if labrastroPlacementFor(target.ID, places) != labrastroPlacementFor(target.ID, snap.Places) {
-			return fail("preview_stale", "target placement changed since preview", true)
-		}
-		if overwrite {
-			if !canOverwriteSkillByLocalImport(uuidToString(a.user), target) {
-				return fail("forbidden", "only the skill creator can overwrite a different source", false)
-			}
-		} else if !labrastroCanManage(target.CreatedBy, a, m) {
-			return fail("forbidden", "only the skill creator or workspace admin can adopt/update", false)
-		}
-		if c.State == "changed" || c.State == "adoptable" {
-			// Use the last successfully persisted source frontmatter. Package
-			// summaries also advance for failed/deselected items, so comparing
-			// only their names would forget an upstream rename on a later retry.
-			previousName, _ := src.metadata(target.Content, c.Path)
-			if sanitizeNullBytes(previousName) == name {
-				name = target.Name
-			}
-		}
-	}
-	if !hasTarget && c.State == "conflict" && req.OnConflict == "rename" {
-		for suffix := 2; suffix < maxImportRenameAttempts+2; suffix++ {
-			candidate := fmt.Sprintf("%s-%d", name, suffix)
-			_, err = q.GetSkillByWorkspaceAndName(ctx, db.GetSkillByWorkspaceAndNameParams{WorkspaceID: a.ws, Name: candidate})
-			if errors.Is(err, pgx.ErrNoRows) {
-				name = candidate
-				break
-			}
-			if err != nil {
-				return fail("operation_failed", "could not choose a new name", true)
-			}
-		}
-	}
-	folder, err := labrastroPackageFolder(ctx, q, a.ws, p, c.Path, raw)
-	if err != nil {
-		return fail("folder_conflict", "could not place candidate in the managed tree", false)
-	}
-	var written SkillWithFilesResponse
-	if hasTarget {
-		allow := func(uid string, s db.Skill) bool {
-			if overwrite {
-				return canOverwriteSkillByLocalImport(uid, s)
-			}
-			return labrastroCanManage(s.CreatedBy, a, m)
-		}
-		written, err = overwriteSkillWithFilesInTx(ctx, q, skillOverwriteInput{WorkspaceID: a.ws, TargetSkillID: target.ID, UserID: uuidToString(a.user), NewName: name, AllowOverwrite: allow, Description: bundle.description, Content: bundle.content, Config: mergeSkillConfigOrigin(target.Config, bundle.origin), Files: importedSkillFileRequests(bundle)})
-	} else {
-		written, err = createSkillWithFilesInTx(ctx, q, skillCreateInput{WorkspaceID: a.ws, CreatorID: a.user, Name: name, Description: bundle.description, Content: bundle.content, Config: map[string]any{"origin": bundle.origin}, Files: importedSkillFileRequests(bundle)})
-	}
-	if err != nil {
-		if isUniqueViolation(err) || errors.Is(err, errSkillOverwriteNameConflict) {
-			return fail("name_conflict", "another skill has the imported name", false)
-		}
-		return fail("item_failed", "skill contents and placement rolled back", true)
-	}
-	if err = q.LabrastroPlaceSkill(ctx, db.LabrastroPlaceSkillParams{WorkspaceID: a.ws, SkillID: parseUUID(written.ID), FolderID: folder, PackageID: p.ID, SourcePath: pgtype.Text{String: c.Path, Valid: true}}); err != nil {
-		return fail("placement_conflict", "skill contents and placement rolled back", true)
-	}
-	if err = q.LabrastroPruneSkillPackageFolders(ctx, db.LabrastroPruneSkillPackageFoldersParams{WorkspaceID: a.ws, PackageID: p.ID, KeepRoot: true}); err != nil {
-		return fail("placement_conflict", "skill contents and placement rolled back", true)
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return fail("item_failed", "skill transaction did not commit; preview again", true)
-	}
-	result.SkillID = written.ID
-	result.Status = "created"
-	event := protocol.EventSkillCreated
-	if hasTarget {
-		result.Status = "updated"
-		event = protocol.EventSkillUpdated
-		if c.State == "adoptable" {
-			result.Status = "adopted"
-		}
-	}
-	actorType, actorID := h.resolveActor(r, uuidToString(a.user), uuidToString(a.ws))
-	written.Diagnostics = bundle.diagnostics
-	h.publish(event, uuidToString(a.ws), actorType, actorID, map[string]any{"skill": written})
-	return result
-}
-
-func labrastroPlacementFor(id pgtype.UUID, places []db.LabrastroSkillPlacement) db.LabrastroSkillPlacement {
-	for _, p := range places {
-		if p.SkillID == id {
-			return p
-		}
-	}
-	return db.LabrastroSkillPlacement{}
 }
 
 func labrastroPackageRootName(base string, folders []db.LabrastroSkillFolder) string {

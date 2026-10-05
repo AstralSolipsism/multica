@@ -331,6 +331,15 @@ func labrastroMarkdownPaths(ctx context.Context, body string) ([]labrastroPathSp
 type labrastroRepoLookup func(context.Context, string) (githubTreeEntry, bool, error)
 type labrastroRepoFetch func(context.Context, string) ([]byte, error)
 
+type labrastroReferenceCompletion struct {
+	result                  *importedSkill
+	skillDir, primary       string
+	lookup                  labrastroRepoLookup
+	fetch                   labrastroRepoFetch
+	bodies, outputs, owners map[string]string
+	queue                   []string
+}
+
 func labrastroCompleteReferences(ctx context.Context, result *importedSkill, skillDir string, lookup labrastroRepoLookup, fetch labrastroRepoFetch) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -341,162 +350,198 @@ func labrastroCompleteReferences(ctx context.Context, result *importedSkill, ski
 	} else if ok && !labrastroRegularBlob(entry) {
 		return labrastroImportFailure("filtered_reference", primary, primary, fmt.Errorf("SKILL.md must be a regular file"), false)
 	}
-	bodies := map[string]string{primary: result.content}
-	outputs := map[string]string{primary: "SKILL.md"}
-	owners := map[string]string{"SKILL.md": primary}
-	queue := []string{primary}
+	r := &labrastroReferenceCompletion{
+		result: result, skillDir: skillDir, primary: primary, lookup: lookup, fetch: fetch,
+		bodies: map[string]string{primary: result.content}, outputs: map[string]string{primary: "SKILL.md"},
+		owners: map[string]string{"SKILL.md": primary}, queue: []string{primary},
+	}
 	for _, f := range result.files {
 		p := path.Join(skillDir, f.path)
-		bodies[p] = f.content
-		outputs[p] = f.path
-		owners[f.path] = p
-		queue = append(queue, p)
+		r.bodies[p], r.outputs[p], r.owners[f.path] = f.content, f.path, p
+		r.queue = append(r.queue, p)
 	}
-	diagnostic := func(code, src, target, msg string) {
-		result.diagnostics = append(result.diagnostics, SkillImportDiagnostic{Code: code, Path: src, Target: target, Message: msg})
-	}
-	for cursor := 0; cursor < len(queue); cursor++ {
+	for cursor := 0; cursor < len(r.queue); cursor++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		src := queue[cursor]
-		ext := strings.ToLower(path.Ext(src))
-		if ext != ".md" && ext != ".mdx" {
-			continue
-		}
-		body := bodies[src]
-		spans, err := labrastroMarkdownPaths(ctx, body)
-		if err != nil {
-			if isCapError(err) {
-				return labrastroImportFailure("limit_exceeded", src, "", err, false)
-			}
+		if err := r.rewrite(ctx, r.queue[cursor]); err != nil {
 			return err
 		}
-		var out strings.Builder
-		last := 0
-		for _, span := range spans {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if span.start < last {
-				continue
-			}
-			raw := body[span.start:span.end]
-			targetPart, anchor, _ := strings.Cut(raw, "#")
-			if targetPart == "" || strings.ContainsAny(targetPart, ":?\n\r") || strings.HasPrefix(targetPart, "//") {
-				continue
-			}
-			decoded, err := url.PathUnescape(targetPart)
-			if err != nil {
-				continue
-			}
-			decoded = strings.NewReplacer(`\(`, "(", `\)`, ")", `\ `, " ").Replace(decoded)
-			if strings.HasPrefix(decoded, "/") || strings.Contains(decoded, "\\") {
-				continue
-			}
-			target := path.Clean(path.Join(path.Dir(src), decoded))
-			if !labrastroSafeRepoPath(target) {
-				diagnostic("path_outside_repository", src, target, "reference leaves the repository; left unchanged")
-				continue
-			}
-			entry, exists, err := lookup(ctx, target)
-			if err != nil {
-				return labrastroImportFailure("tree_unavailable", src, target, err, true)
-			}
-			if !exists {
-				continue
-			}
-			// Local directories already retain their layout and support files.
-			// Leave these references intact without a misleading filter warning.
-			if entry.Type == "tree" && labrastroInside(src, skillDir) && (target == skillDir || labrastroInside(target, skillDir)) {
-				continue
-			}
-			if !labrastroRegularBlob(entry) || !labrastroTextPath(target) {
-				diagnostic("filtered_reference", src, target, "symlink, submodule, directory or filtered asset; left unchanged")
-				continue
-			}
-			if strings.EqualFold(path.Base(target), "SKILL.md") && target != primary {
-				diagnostic("cross_skill_reference", src, target, "another skill is not copied; left unchanged")
-				continue
-			}
-			dest := strings.TrimPrefix(target, skillDir+"/")
-			if skillDir == "" {
-				dest = target
-			}
-			if !labrastroInside(target, skillDir) {
-				dest = path.Join("_shared", target)
-			}
-			if _, ok := bodies[target]; !ok {
-				if len(bodies)-1 >= maxImportFileCount || entry.size() > maxImportFileSize {
-					return labrastroImportFailure("limit_exceeded", src, target, fmt.Errorf("%w: reference exceeds bundle limits", errImportCapExceeded), false)
-				}
-				data, err := fetch(ctx, target)
-				if err != nil {
-					return labrastroImportFailure("required_reference_unavailable", src, target, fmt.Errorf("required reference %s: %w", target, err), !isCapError(err))
-				}
-				if !utf8.Valid(data) || strings.ContainsRune(string(data), '\x00') {
-					diagnostic("filtered_reference", src, target, "binary content is not copied; left unchanged")
-					continue
-				}
-				if old, ok := owners[dest]; ok && bodies[old] != string(data) {
-					return labrastroImportFailure("shared_path_conflict", src, dest, fmt.Errorf("shared file conflicts with existing output %s", dest), false)
-				}
-				bodies[target] = string(data)
-				outputs[target] = dest
-				owners[dest] = target
-				queue = append(queue, target)
-			}
-			// Recalculate even for a back-reference to the original skill.
-			rel, err := filepath.Rel(path.Dir(outputs[src]), dest)
-			if err != nil {
-				return err
-			}
-			rel = filepath.ToSlash(rel)
-			if outputs[src] == strings.TrimPrefix(src, skillDir+"/") && labrastroInside(target, skillDir) {
-				continue
-			}
-			if strings.ContainsAny(targetPart, "%\\") {
-				rel = (&url.URL{Path: rel}).EscapedPath()
-			}
-			if strings.Contains(raw, "#") {
-				rel += "#" + anchor
-			}
-			out.WriteString(body[last:span.start])
-			out.WriteString(rel)
-			last = span.end
-		}
-		if last > 0 {
-			out.WriteString(body[last:])
-			bodies[src] = out.String()
-		}
-		// Enforce the final rewritten budget while expanding the closure.
-		var size int
-		for p, b := range bodies {
-			if len(b) > maxImportFileSize {
-				return fmt.Errorf("%w: rewritten %s exceeds file limit", errImportCapExceeded, p)
-			}
-			if p != primary {
-				size += len(b)
-			}
-		}
-		if size > maxImportTotalSize {
-			return fmt.Errorf("%w: completed bundle exceeds byte limit", errImportCapExceeded)
-		}
 	}
-	files := map[string]string{}
-	for src, body := range bodies {
-		if src == primary {
+	return r.finish(ctx)
+}
+
+func (r *labrastroReferenceCompletion) diagnostic(code, src, target, msg string) {
+	r.result.diagnostics = append(r.result.diagnostics, SkillImportDiagnostic{Code: code, Path: src, Target: target, Message: msg})
+}
+
+func (r *labrastroReferenceCompletion) rewrite(ctx context.Context, src string) error {
+	ext := strings.ToLower(path.Ext(src))
+	if ext != ".md" && ext != ".mdx" {
+		return nil
+	}
+	body := r.bodies[src]
+	spans, err := labrastroMarkdownPaths(ctx, body)
+	if err != nil {
+		if isCapError(err) {
+			return labrastroImportFailure("limit_exceeded", src, "", err, false)
+		}
+		return err
+	}
+	var out strings.Builder
+	last := 0
+	for _, span := range spans {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if span.start < last {
 			continue
 		}
-		dest := outputs[src]
+		replacement, replace, err := r.reference(ctx, src, body[span.start:span.end])
+		if err != nil {
+			return err
+		}
+		if !replace {
+			continue
+		}
+		out.WriteString(body[last:span.start])
+		out.WriteString(replacement)
+		last = span.end
+	}
+	if last > 0 {
+		out.WriteString(body[last:])
+		r.bodies[src] = out.String()
+	}
+	return r.checkBudget()
+}
+
+func (r *labrastroReferenceCompletion) resolve(ctx context.Context, src, targetPart string) (string, githubTreeEntry, bool, error) {
+	var entry githubTreeEntry
+	if targetPart == "" || strings.ContainsAny(targetPart, ":?\n\r") || strings.HasPrefix(targetPart, "//") {
+		return "", entry, false, nil
+	}
+	decoded, err := url.PathUnescape(targetPart)
+	if err != nil {
+		return "", entry, false, nil
+	}
+	decoded = strings.NewReplacer(`\(`, "(", `\)`, ")", `\ `, " ").Replace(decoded)
+	if strings.HasPrefix(decoded, "/") || strings.Contains(decoded, "\\") {
+		return "", entry, false, nil
+	}
+	target := path.Clean(path.Join(path.Dir(src), decoded))
+	if !labrastroSafeRepoPath(target) {
+		r.diagnostic("path_outside_repository", src, target, "reference leaves the repository; left unchanged")
+		return target, entry, false, nil
+	}
+	entry, exists, err := r.lookup(ctx, target)
+	if err != nil {
+		return target, entry, false, labrastroImportFailure("tree_unavailable", src, target, err, true)
+	}
+	if !exists {
+		return target, entry, false, nil
+	}
+	// Local directories already retain their layout and support files.
+	if entry.Type == "tree" && labrastroInside(src, r.skillDir) && (target == r.skillDir || labrastroInside(target, r.skillDir)) {
+		return target, entry, false, nil
+	}
+	if !labrastroRegularBlob(entry) || !labrastroTextPath(target) {
+		r.diagnostic("filtered_reference", src, target, "symlink, submodule, directory or filtered asset; left unchanged")
+		return target, entry, false, nil
+	}
+	if strings.EqualFold(path.Base(target), "SKILL.md") && target != r.primary {
+		r.diagnostic("cross_skill_reference", src, target, "another skill is not copied; left unchanged")
+		return target, entry, false, nil
+	}
+	return target, entry, true, nil
+}
+
+func (r *labrastroReferenceCompletion) reference(ctx context.Context, src, raw string) (string, bool, error) {
+	targetPart, anchor, hasAnchor := strings.Cut(raw, "#")
+	target, entry, exists, err := r.resolve(ctx, src, targetPart)
+	if err != nil || !exists {
+		return "", false, err
+	}
+	dest := target
+	if r.skillDir != "" {
+		dest = strings.TrimPrefix(target, r.skillDir+"/")
+	}
+	if !labrastroInside(target, r.skillDir) {
+		dest = path.Join("_shared", target)
+	}
+	if copied, err := r.copyReference(ctx, src, target, dest, entry); err != nil || !copied {
+		return "", false, err
+	}
+	// Recalculate even for a back-reference to the original skill.
+	rel, err := filepath.Rel(path.Dir(r.outputs[src]), dest)
+	if err != nil {
+		return "", false, err
+	}
+	rel = filepath.ToSlash(rel)
+	if r.outputs[src] == strings.TrimPrefix(src, r.skillDir+"/") && labrastroInside(target, r.skillDir) {
+		return "", false, nil
+	}
+	if strings.ContainsAny(targetPart, "%\\") {
+		rel = (&url.URL{Path: rel}).EscapedPath()
+	}
+	if hasAnchor {
+		rel += "#" + anchor
+	}
+	return rel, true, nil
+}
+
+func (r *labrastroReferenceCompletion) copyReference(ctx context.Context, src, target, dest string, entry githubTreeEntry) (bool, error) {
+	if _, ok := r.bodies[target]; ok {
+		return true, nil
+	}
+	if len(r.bodies)-1 >= maxImportFileCount || entry.size() > maxImportFileSize {
+		return false, labrastroImportFailure("limit_exceeded", src, target, fmt.Errorf("%w: reference exceeds bundle limits", errImportCapExceeded), false)
+	}
+	data, err := r.fetch(ctx, target)
+	if err != nil {
+		return false, labrastroImportFailure("required_reference_unavailable", src, target, fmt.Errorf("required reference %s: %w", target, err), !isCapError(err))
+	}
+	if !utf8.Valid(data) || strings.ContainsRune(string(data), '\x00') {
+		r.diagnostic("filtered_reference", src, target, "binary content is not copied; left unchanged")
+		return false, nil
+	}
+	if old, ok := r.owners[dest]; ok && r.bodies[old] != string(data) {
+		return false, labrastroImportFailure("shared_path_conflict", src, dest, fmt.Errorf("shared file conflicts with existing output %s", dest), false)
+	}
+	r.bodies[target], r.outputs[target], r.owners[dest] = string(data), dest, target
+	r.queue = append(r.queue, target)
+	return true, nil
+}
+
+func (r *labrastroReferenceCompletion) checkBudget() error {
+	// Enforce the final rewritten budget while expanding the closure.
+	var size int
+	for p, b := range r.bodies {
+		if len(b) > maxImportFileSize {
+			return fmt.Errorf("%w: rewritten %s exceeds file limit", errImportCapExceeded, p)
+		}
+		if p != r.primary {
+			size += len(b)
+		}
+	}
+	if size > maxImportTotalSize {
+		return fmt.Errorf("%w: completed bundle exceeds byte limit", errImportCapExceeded)
+	}
+	return nil
+}
+
+func (r *labrastroReferenceCompletion) finish(ctx context.Context) error {
+	files := map[string]string{}
+	for src, body := range r.bodies {
+		if src == r.primary {
+			continue
+		}
+		dest := r.outputs[src]
 		if old, ok := files[dest]; ok && old != body {
 			return labrastroImportFailure("shared_path_conflict", src, dest, fmt.Errorf("rewritten shared file conflicts at %s", dest), false)
 		}
 		files[dest] = body
 	}
-	result.content = bodies[primary]
-	result.files = nil
-	result.bundleSize = 0
+	r.result.content, r.result.files, r.result.bundleSize = r.bodies[r.primary], nil, 0
 	keys := make([]string, 0, len(files))
 	for p := range files {
 		keys = append(keys, p)
@@ -506,7 +551,7 @@ func labrastroCompleteReferences(ctx context.Context, result *importedSkill, ski
 		if !validateFilePath(p) {
 			return fmt.Errorf("unsafe output path %s", p)
 		}
-		if err := result.addFile(p, files[p]); err != nil {
+		if err := r.result.addFile(p, files[p]); err != nil {
 			return err
 		}
 	}

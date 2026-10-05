@@ -17,6 +17,16 @@ COALESCE((SELECT jsonb_agg(jsonb_build_array(f.path,encode(sha256(convert_to(f.c
 FROM skill_file f WHERE f.skill_id=s.id),'[]'::jsonb)::jsonb AS file_hashes
 FROM skill s WHERE s.workspace_id=$1 ORDER BY s.id;
 
+-- name: LabrastroGetSkillState :one
+SELECT s.id,s.workspace_id,s.name,s.description,s.config,s.created_by,s.updated_at,
+encode(sha256(convert_to(s.content,'UTF8')),'hex') AS content_hash,
+COALESCE((SELECT jsonb_agg(jsonb_build_array(f.path,encode(sha256(convert_to(f.content,'UTF8')),'hex')) ORDER BY f.path)
+FROM skill_file f WHERE f.skill_id=s.id),'[]'::jsonb)::jsonb AS file_hashes
+FROM skill s WHERE s.workspace_id=$1 AND s.id=$2;
+
+-- name: LabrastroGetSkillPlacement :one
+SELECT * FROM labrastro_skill_placement WHERE workspace_id=$1 AND skill_id=$2;
+
 -- name: LabrastroListSkillFolders :many
 SELECT * FROM labrastro_skill_folder WHERE workspace_id = $1 ORDER BY name, id;
 
