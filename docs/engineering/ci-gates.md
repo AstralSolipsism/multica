@@ -1,10 +1,12 @@
 # CI gates
 
-The `CI` workflow keeps `frontend` and `backend` as stable required checks.
+The `CI` workflow keeps `frontend` and `backend` as its scope aggregates.
 `scripts/ci-scope.mjs` validates the path decision and every dependency result:
 selected jobs must succeed and only unselected jobs may be skipped. Daily and
-manual runs select all scopes. Branch protection must require the aggregates,
-not just the jobs that ran on the last PR.
+manual runs select all scopes. Branch protection must require **`CI required`**:
+it always runs and requires both aggregates to succeed, rejecting failed,
+cancelled, skipped or missing results. The release workflow also has a `backend`
+job, so its skipped packaging result must not be mistaken for the CI gate.
 
 ## Go formatting
 
@@ -33,7 +35,7 @@ migrations to the job's disposable PostgreSQL 17 service, and runs exactly
 credentials, API `127.0.0.1:18080`, Web `127.0.0.1:13000` and database
 `labrastro_e2e` on `127.0.0.1:15432`. It overwrites inherited application/database
 URLs and disables email delivery and telemetry; no production secret is needed.
-No daemon, agent, production account or production database participates.
+No daemon/agent process, production account or production database participates.
 
 Use a disposable checkout without root `.env`/`.env.worktree` or Web dotenv
 overrides. The runner rejects those files before building or migrating.
@@ -73,7 +75,7 @@ an existing-account smoke test does not satisfy this gate.
 ## Main branch protection
 
 A repository administrator must configure `main` to require a pull request and
-successful `frontend` and `backend` checks from GitHub Actions, with branches
+the successful **`CI required`** check from GitHub Actions, with branches
 up to date before merge. Enforce the rule for administrators and bypass-capable
 roles as well; leave no direct-push/bypass allowance, force pushes or deletions.
 Preserve any stronger existing requirements. Dismiss stale review approvals

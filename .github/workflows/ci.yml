@@ -581,6 +581,21 @@ jobs:
           JOB_SCOPES: '{"backend-format":"backend","backend-tests":"backend","backend-agent-tests":"backend","sqlc-check":"sqlc","go-vulnerability-scan":"backend","macos-runtime":"full","windows-execenv":"runtime","script-checks":"scripts","installer":"installer"}'
         run: node scripts/ci-scope.mjs gate
 
+  # release.yml also has a job named backend. Use a unique required context so
+  # its intentionally skipped packaging job cannot stand in for CI validation.
+  ci-required:
+    name: CI required
+    needs: [frontend, backend]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require both validated aggregates
+        env:
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+        run: test "$FRONTEND_RESULT" = success && test "$BACKEND_RESULT" = success
+
   windows-execenv:
     # The environment-preparation deadline owns a process tree, not just a Go
     # process. This Windows runtime test verifies Job Object cancellation kills

@@ -190,6 +190,26 @@ test("required aggregates own the format and isolated browser gates", () => {
   assert.doesNotMatch(jobs["backend-format"] + jobs["retained-e2e-tests"], /continue-on-error:/);
 });
 
+test("the unique required check fails on either failed, cancelled, skipped or missing aggregate", () => {
+  const source = jobs["ci-required"];
+  assert.equal(field(source, /^    name: (.+)$/m), "CI required");
+  assert.equal(field(source, /^    needs: \[(.+)\]$/m), "frontend, backend");
+  assert.match(source, /^    if: \$\{\{ always\(\) \}\}$/m);
+  assert.match(source, /^          FRONTEND_RESULT: \$\{\{ needs\.frontend\.result \}\}$/m);
+  assert.match(source, /^          BACKEND_RESULT: \$\{\{ needs\.backend\.result \}\}$/m);
+  assert.doesNotMatch(source, /continue-on-error:/);
+  const command = field(source, /^        run: (.+)$/m);
+  for (const frontend of ["success", "failure", "cancelled", "skipped", ""]) {
+    for (const backend of ["success", "failure", "cancelled", "skipped", ""]) {
+      const result = spawnSync("bash", ["-c", command], {
+        env: { ...process.env, FRONTEND_RESULT: frontend, BACKEND_RESULT: backend },
+      });
+      assert.equal(result.status === 0, frontend === "success" && backend === "success",
+        `frontend=${frontend}, backend=${backend}`);
+    }
+  }
+});
+
 test("quality checks have exactly one runner and reuse the product build install", () => {
   const invocation = "uses: ./.github/actions/frontend-quality";
   const owners = Object.entries(jobs).filter(([, source]) => source.includes(invocation)).map(([job]) => job);

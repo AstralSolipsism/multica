@@ -72,7 +72,7 @@ Use one row per existing write route in the PR, not a single blanket approval:
   `e2e/onboarding-smoke.spec.ts` and `e2e/dag-task-lines.spec.ts`. Record the exact
   head SHA, run URL, test outcomes and report artifact. A skipped, failed or
   missing selected job is not a pass; never substitute a production smoke run.
-- [ ] Require `frontend` and `backend` on the final PR head, with the branch
+- [ ] Require `CI required` (both validated aggregates) on the final PR head, with the branch
   protection settings in [CI gates](ci-gates.md#main-branch-protection).
   Follow the workspace review rule, including two sequential expert approvals
   for CI/release changes. Leave merge to the reviewer; migration/deployment,
