@@ -44,16 +44,19 @@ normalized set. The output describes the pre-normalization audit and proposed
 impact, not a claim that a later database still matches it. Run a fresh read-only
 audit after normalization.
 
-Migrations 463–466 add the audit table and separate concurrent indexes. They do
-not rewrite relation rows and add no foreign keys. Migration 466 stops on
+Migrations `463_issue_dependency_audit`, `464_issue_dependency_audit_id_index`,
+`465_issue_dependency_audit_workspace_index` and
+`466_issue_dependency_blocked_by_index` add the audit table and separate
+concurrent indexes. They do not rewrite relation rows and add no foreign keys.
+`466_issue_dependency_blocked_by_index` stops on
 duplicate canonical pairs; the failure preserves data. After audited repair,
 the migration runner's registered hook removes an INVALID leftover index before
 retry, avoiding an `IF NOT EXISTS` false success. The index only covers
 `type='blocked_by'`; a successful index build does not verify historical
 `blocks` semantics or the graph. Audit remains required.
 
-Check for canonical duplicates **before deploying migration 466**, not only
-before enabling compound writes: they prevent the unique index from building.
+Check for canonical duplicates **before deploying
+`466_issue_dependency_blocked_by_index`**, not only before enabling compound writes: they prevent the unique index from building.
 Other unverified rows are preserved by these migrations. Deployment does not
 enable dependency writes or provide OL-41's atomic enqueue/claim integration.
 
@@ -66,7 +69,8 @@ an existing backup are tested as refusal cases.
 
 Keep relation writes disabled and stop concurrent mutation while recovering.
 To undo only normalization, first remove the canonical unique index using its
-single-statement migration-466 down SQL, outside a transaction, then run:
+single-statement `466_issue_dependency_blocked_by_index.down.sql`, outside a
+transaction, then run:
 
 ```sh
 go -C server run ./cmd/audit_issue_dependencies -restore dependency-backup.json > dependency-restore.json
@@ -78,12 +82,12 @@ inserts only missing original rows in one transaction. A stale or different
 graph is rejected, so later edits are never overwritten by this command. A
 database restored under a different name or independently modified after
 normalization needs an explicitly reviewed recovery plan/full database backup.
-Restoring duplicate rows means migration 466 cannot be reapplied until those
-duplicates are normalized again.
+Restoring duplicate rows means `466_issue_dependency_blocked_by_index` cannot
+be reapplied until those duplicates are normalized again.
 
 Full Stage-2 down migrations remove the added indexes but deliberately retain
-`issue_dependency_audit` and all historical relation rows. Reapplying 463 is
-idempotent and retains the audit data. Workspace deletion remains the explicit
+`issue_dependency_audit` and all historical relation rows. Reapplying
+`463_issue_dependency_audit` is idempotent and retains the audit data. Workspace deletion remains the explicit
 owner-level cleanup path. A rollback after future dependency execution has been
 enabled must also stop/drain dependent execution; retaining data alone cannot
 make an older dispatcher enforce prerequisites.

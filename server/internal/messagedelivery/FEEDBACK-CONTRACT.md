@@ -140,8 +140,8 @@ is introduced.
    are unsupported: an old binary can still write new feedback. Take a database
    backup and inventory legacy `pending` rows with their comment/Chat/run IDs.
 2. Apply the additive migration `478_labrastro_feedback_retirement.up.sql`
-   with the normal runner after migrations through 477. It marks old pending
-   rows `retired` with a retirement notice and sets missing `acknowledged_at`.
+   with the normal runner after `477_labrastro_message_feedback_comment_index`.
+   It marks old pending rows `retired` with a retirement notice and sets missing `acknowledged_at`.
    Complete/rejected rows keep their outcome. It does not delete comments,
    receipts, source data, Chat/run anchors or inbound replay identities.
    Reconciliation recognizes the explicit status, never the notice wording.
@@ -159,8 +159,8 @@ is introduced.
    and an authorized fresh message creates an agent Chat/run. Then check the
    resulting normal agent comment and its provenance before wider rollout.
 
-Rollback must keep migration 478 and all historical audit data. Its down
-migration refuses intentionally: restoring legacy recovery would silently
+Rollback must keep `478_labrastro_feedback_retirement` and all historical audit
+data. Its down migration refuses intentionally: restoring legacy recovery would silently
 re-enable member impersonation. If rolling the application back, keep Feishu
 inbound **and** legacy feedback workers disabled on the older binary; prefer a
 forward fix. Do not treat downgrading schema, deleting tombstones or clearing
