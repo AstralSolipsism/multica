@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 
@@ -55,6 +56,31 @@ func TestDependencyPlanPreservesInputAndCanonicalEdges(t *testing.T) {
 	cleared, err := planRelationChange(before, proposed, &clear)
 	if err != nil || !reflect.DeepEqual(cleared.Next.Edges, before.Edges[2:]) {
 		t.Fatalf("explicit empty replacement failed to clear direct prerequisites: %+v, %v", cleared, err)
+	}
+}
+
+func TestDependencyPlanRejectsMissingEndpoints(t *testing.T) {
+	before := issuedependency.Model{Issues: map[string]issuedependency.Issue{"target": {ID: "target"}}}
+	for _, tc := range []struct {
+		name        string
+		issue       issuedependency.Issue
+		replacement *[]issuedependency.Edge
+		message     string
+	}{
+		{name: "parent", issue: issuedependency.Issue{ID: "target", ParentID: "missing"}, message: "parent issue not found"},
+		{name: "prerequisite", issue: before.Issues["target"], replacement: &[]issuedependency.Edge{{ID: "new-edge", IssueID: "target", DependsOnID: "missing", Type: "blocked_by"}}, message: "prerequisite not found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := before.Clone()
+			_, err := planRelationChange(before, tc.issue, tc.replacement)
+			var dependencyErr *DependencyError
+			if !errors.As(err, &dependencyErr) || dependencyErr.Code != "not_found" || dependencyErr.Message != tc.message {
+				t.Fatalf("missing %s error = %v, want not_found: %s", tc.name, err, tc.message)
+			}
+			if !reflect.DeepEqual(before, original) {
+				t.Fatal("failed planning mutated the original snapshot")
+			}
+		})
 	}
 }
 

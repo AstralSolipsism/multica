@@ -259,6 +259,8 @@ func assertIssueStatusStillActive(ctx context.Context, qtx *db.Queries, workspac
 
 // updateIssueWithStatusGuard refreshes untouched nullable fields under the issue
 // row lock, so an ordinary edit cannot restore a concurrent hierarchy change.
+// Structural writes use updateIssueAtomically so single and batch updates share
+// the dependency hooks and their transaction locks.
 func (h *Handler) updateIssueWithStatusGuard(ctx context.Context, workspaceID pgtype.UUID, statusKey string, params db.UpdateIssueParams, rawFields map[string]json.RawMessage) (db.Issue, db.Issue, error) {
 	if issueWriteNeedsStructureLock(ctx, rawFields) {
 		issue, current, _, err := h.updateIssueAtomically(ctx, workspaceID, params, rawFields, nil, nil, nil, statusKey)

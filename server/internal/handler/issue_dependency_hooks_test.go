@@ -3,10 +3,13 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
@@ -67,6 +70,9 @@ func TestDependencyWriteHooksUseCallerTransaction(t *testing.T) {
 			if err != nil || noOp.Revision != issue.Revision {
 				t.Fatalf("no-op relation replacement bumped revision: %+v, %v", noOp, err)
 			}
+			if err := tx.QueryRow(ctx, "SELECT count(*) FROM issue_dependency_audit WHERE issue_id=$1", issue.ID).Scan(&audits); err != nil || audits != 1 {
+				t.Fatalf("no-op relation replacement added an audit: count=%d, %v", audits, err)
+			}
 			if err := tx.Rollback(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -84,6 +90,21 @@ func TestDependencyWriteHooksUseCallerTransaction(t *testing.T) {
 	}
 }
 
+func TestDependencyWriteResponseIncludesViewOnlyForCompoundEndpoint(t *testing.T) {
+	h, fx := dependencyFixture(t)
+	a := dependencyIssue(t, fx, "Prerequisite")
+	b := dependencyIssue(t, fx, "Dependent")
+	var compound IssueResponse
+	replaceDependencies(t, h, fx, b, []string{a}, "jwt", http.StatusOK).JSON(&compound)
+	if compound.Dependencies == nil || len(compound.Dependencies.BlockedBy) != 1 || compound.Dependencies.BlockedBy[0].IssueID != a {
+		t.Fatalf("compound PATCH omitted the updated dependencies.blocked_by: %+v", compound.Dependencies)
+	}
+	ordinary := testutil.Call(t, h.UpdateIssue, dependencyRequest(fx, http.MethodPut, b, map[string]any{"title": "Renamed"}, "jwt")).Want(http.StatusOK).Map()
+	if _, present := ordinary["dependencies"]; present {
+		t.Fatalf("ordinary PUT included dependencies: %v", ordinary["dependencies"])
+	}
+}
+
 func TestDependencyWriteHookGuardsExplicitNullParent(t *testing.T) {
 	ctx := context.Background()
 	if issueWriteNeedsStructureLock(ctx, map[string]json.RawMessage{"title": json.RawMessage(`"rename"`)}) {
@@ -91,6 +112,55 @@ func TestDependencyWriteHookGuardsExplicitNullParent(t *testing.T) {
 	}
 	if !issueWriteNeedsStructureLock(ctx, map[string]json.RawMessage{"parent_issue_id": json.RawMessage(`null`)}) {
 		t.Fatal("detaching a parent bypassed structural validation")
+	}
+}
+
+func TestDependencyDeleteHookHoldsStructureLockUntilTransactionEnds(t *testing.T) {
+	h, fx := dependencyFixture(t)
+	id := dependencyIssue(t, fx, "Deleting")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	q := h.Queries.WithTx(tx)
+	issue, err := q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: parseUUID(id), WorkspaceID: parseUUID(fx.WorkspaceID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.beforeIssueDelete(ctx, q, []db.Issue{issue}); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := testPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	var locked bool
+	defer func() {
+		if locked {
+			if _, err := conn.Exec(context.Background(), "SELECT pg_advisory_unlock(hashtextextended($1::uuid::text || ':issue_dependency', 0))", fx.WorkspaceID); err != nil {
+				t.Errorf("release observer lock: %v", err)
+			}
+		}
+	}()
+	const tryLock = "SELECT pg_try_advisory_lock(hashtextextended($1::uuid::text || ':issue_dependency', 0))"
+	if err := conn.QueryRow(ctx, tryLock, fx.WorkspaceID).Scan(&locked); err != nil {
+		t.Fatal(err)
+	}
+	if locked {
+		t.Fatal("delete hook did not hold the structure lock against another connection")
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRow(ctx, tryLock, fx.WorkspaceID).Scan(&locked); err != nil {
+		t.Fatal(err)
+	}
+	if !locked {
+		t.Fatal("structure lock remained held after the delete transaction ended")
 	}
 }
 
