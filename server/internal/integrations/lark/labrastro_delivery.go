@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 
@@ -152,9 +153,8 @@ func (c *httpAPIClient) GetDeliveryMessageChat(ctx context.Context, creds Instal
 }
 
 // GetDeliveryChatInfo proves the bot can see one chat via
-// GET /open-apis/im/v1/chats/{chat_id}. A definitive "no such chat / bot
-// not a member" verdict maps to ErrDeliveryTargetUnreachable; anything
-// else (transport, scopes) surfaces as-is so the caller can fail closed.
+// GET /open-apis/im/v1/chats/{chat_id}. It returns provider errors unchanged;
+// VerifyGroupTarget classifies them once at the delivery-module boundary.
 func (c *httpAPIClient) GetDeliveryChatInfo(ctx context.Context, creds InstallationCredentials, chatID string) error {
 	if chatID == "" {
 		return errors.New("lark delivery: missing chat id")
@@ -174,8 +174,7 @@ func (c *httpAPIClient) GetDeliveryChatInfo(ctx context.Context, creds Installat
 		if isTokenError(resp.Code) {
 			c.invalidateToken(creds.AppID)
 		}
-		err := &APIError{Op: "delivery chat info", Code: resp.Code, Msg: resp.Msg}
-		return classifyVerifyError(err)
+		return &APIError{Op: "delivery chat info", Code: resp.Code, Msg: resp.Msg}
 	}
 	return nil
 }
@@ -213,10 +212,9 @@ func (s *DeliverySender) VerifyTopicTarget(ctx context.Context, req messagedeliv
 	return anchorChat, nil
 }
 
-// classifyVerifyError sorts a verification failure into the three verdicts
-// the delivery module distinguishes: definitive unreachable (save/send
-// refused), definitive mismatch (handled by the caller), or unknown (the
-// caller must fail closed and retry before sending).
+// classifyVerifyError distinguishes definitive target/permission refusals from
+// transient provider failures. An unknown transport verdict is returned to the
+// caller, which must fail closed and retry before sending unverified.
 func classifyVerifyError(err error) error {
 	if errors.Is(err, messagedelivery.ErrTargetUnreachable) {
 		return err
@@ -252,11 +250,11 @@ func (s *DeliverySender) resolveInstallation(ctx context.Context, workspaceID, i
 	}
 	inst, err := s.installations.GetInWorkspace(ctx, instID, wsID)
 	if err != nil {
-		class := messagedelivery.ClassTransient
 		if errors.Is(err, ErrInstallationNotFound) {
-			class = messagedelivery.ClassPermanent
+			return InstallationCredentials{}, Installation{}, &messagedelivery.SendError{Class: messagedelivery.ClassPermanent, Err: ErrInstallationNotFound}
 		}
-		return InstallationCredentials{}, Installation{}, &messagedelivery.SendError{Class: class, Err: fmt.Errorf("load installation: %w", err)}
+		slog.Warn("lark delivery: load installation failed", "installation_id", installationID, "error", err)
+		return InstallationCredentials{}, Installation{}, &messagedelivery.SendError{Class: messagedelivery.ClassTransient, Err: errors.New("load installation failed")}
 	}
 	if inst.Status != "active" {
 		return InstallationCredentials{}, Installation{}, &messagedelivery.SendError{Class: messagedelivery.ClassPermanent, Err: ErrInstallationRevoked}
@@ -403,7 +401,8 @@ func newDeliveryPost(message messagedelivery.Message) deliveryPost {
 // PERMANENT: retrying cannot help. Transport failures and Lark's explicit
 // "still in flight" code are AMBIGUOUS: the message may exist, so only a
 // verify-then-retry with the same UUID may resolve it. Rate limits and
-// gateway 5xx are TRANSIENT: nothing was accepted, back off and retry.
+// provider-coded 5xx refusals are TRANSIENT: back off and retry. A gateway
+// failure without a provider verdict remains ambiguous.
 func classifyDeliverySendError(err error) error {
 	class := messagedelivery.ClassPermanent
 	switch classifyLarkFailure(err) {

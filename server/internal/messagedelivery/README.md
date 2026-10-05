@@ -380,21 +380,31 @@ Delivery `error_code` values recorded by the pipeline:
   receipt-claim database errors, failed target verification without a definitive
   refusal, and cancellation before dialing are transient. Regular deliveries
   return to `queued` with backoff and fail at the configured attempt limit;
-  they do not become `uncertain`. Definite source/consent loss cancels, and
-  definite invalid destinations fail. The synchronous diagnostic send records
-  transient failures as `failed`, available for explicit retry.
+  they do not become `uncertain` if the outcome can be persisted. A database
+  outage that also prevents the retry write leaves the claim in `sending`;
+  lease expiry then conservatively recovers it as `uncertain`. Definite
+  source/consent loss cancels, and definite invalid destinations fail. The
+  synchronous diagnostic send records transient failures as `failed`, available
+  for explicit retry.
 - **Shared Feishu classification.** Sending, target verification and discovery
   share one provider error taxonomy. Rate-limit codes `230020`, `99991400` and
   `99991403` (and HTTP 429) are transient; installation credential lookup
-  database errors are also transient. Missing/revoked installations and invalid
-  credentials remain definitive failures.
+  database errors are also transient. Missing/revoked installations and local
+  credential decryption failures remain definitive failures. Codes `230006`,
+  `232004`, `232025` and `232034` remain permanent refusals for sending and
+  verification, while discovery reports them as unavailable. Token-acquisition
+  transport/provider failures still use the existing conservative ambiguous
+  send classification; the local-credential guarantee does not cover them.
+  Internal database errors are logged; delivery records use generic descriptions.
 - **Bounded shutdown.** Worker cancellation stops new claims and shards. A
   shard already entering the sender has a detached 20s context; its receipt and
   the delivery outcome each have a separate 5s write budget. The server joins
   delivery workers for 30s. Accepted shards retain their receipts; a cancelled
   remaining shard is retried without replaying accepted shards. A genuine
   post-dial timeout or lost receipt still becomes `uncertain`; a process crash
-  remains subject to conservative lease-expiry recovery.
+  remains subject to conservative lease-expiry recovery. Deployment stop grace
+  must allow the full drain budget; an earlier forced kill can still leave an
+  unresolved claim for lease-expiry recovery.
 - **Compensation.** A scanner pass (default 30s) (1) parks expired send
   claims as `uncertain`, (2) feeds three PERSISTED source classes whose
   automation run missed the terminal event to the EXISTING sync logic

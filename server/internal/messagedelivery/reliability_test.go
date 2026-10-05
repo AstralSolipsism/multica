@@ -1,8 +1,10 @@
 package messagedelivery
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +74,8 @@ func TestWorkerPreSendReadFailuresRetry(t *testing.T) {
 			}
 			fault := &failingDeliveryRead{DBTX: testPool, name: name}
 			svc.Queries = db.New(fault)
+			var logs bytes.Buffer
+			svc.Log = slog.New(slog.NewTextHandler(&logs, nil))
 			if name == "receipt_transaction" {
 				svc.Tx = failedReceiptTransaction{}
 			}
@@ -81,9 +85,12 @@ func TestWorkerPreSendReadFailuresRetry(t *testing.T) {
 			if name != "receipt_transaction" && fault.hits == 0 {
 				t.Fatal("fault was never exercised")
 			}
-			status, attempts, code, _ := deliveryStatus(t, delivery)
+			status, attempts, code, detail := deliveryStatus(t, delivery)
 			if status != DeliveryStatusQueued || code != ErrorCodeSendTransient || attempts != 1 || sender.count() != 0 {
 				t.Fatalf("known unsent failure: status=%s code=%s attempts=%d sends=%d", status, code, attempts, sender.count())
+			}
+			if detail == "" || strings.Contains(detail, "injected") || !strings.Contains(logs.String(), "injected") {
+				t.Fatalf("database error must appear only in logs: detail=%q logs=%s", detail, logs.String())
 			}
 			// The same delivery remains recoverable once the database recovers.
 			svc.Queries = db.New(testPool)
@@ -96,6 +103,95 @@ func TestWorkerPreSendReadFailuresRetry(t *testing.T) {
 				t.Fatalf("recovered status=%s sends=%d", status, sender.count())
 			}
 		})
+	}
+}
+
+func TestWorkerDefinitiveVerificationFailureDoesNotRetry(t *testing.T) {
+	ctx := context.Background()
+	fx := newMDFixture(t, "verification-rejected", nil)
+	fx.groupRoute(t, "oc_verification_rejected")
+	run := fx.run(t, "completed", nil)
+	sender := &fakeSender{}
+	svc := newTestService(sender, nil)
+	if n, err := svc.EnqueueRunDeliveries(ctx, uuidOf(t, run)); err != nil || n != 1 {
+		t.Fatalf("enqueue: %d %v", n, err)
+	}
+	svc.Verifier = &fakeVerifier{groupErr: &SendError{Class: ClassPermanent, Err: errors.New("provider denied access")}}
+	if worked, err := svc.ProcessNext(ctx); err != nil || !worked {
+		t.Fatalf("process: %v %v", worked, err)
+	}
+	id := firstDeliveryForRun(t, run)
+	status, attempts, code, _ := deliveryStatus(t, id)
+	if status != DeliveryStatusFailed || code != ErrorCodeSendRejected || attempts != 1 || sender.count() != 0 {
+		t.Fatalf("rejected verification: status=%s code=%s attempts=%d sends=%d", status, code, attempts, sender.count())
+	}
+	// Even after the backoff window, a definitive refusal is never reclaimed.
+	testFx.Exec(t, `UPDATE labrastro_message_delivery SET next_attempt_at=now() WHERE id=$1`, id)
+	if worked, err := svc.ProcessNext(ctx); worked || err != nil || sender.count() != 0 {
+		t.Fatalf("retried refusal: %v %v sends=%d", worked, err, sender.count())
+	}
+}
+
+func TestDiagnosticSourceReadFailureIsTransient(t *testing.T) {
+	fx := newMDFixture(t, "test-send-read-failure", nil)
+	fx.bindMember(t, testUID, "ou_test_send_failure")
+	route := loadRoute(t, fx.memberTargetRoute(t, "member", testUID, nil))
+	sender := &fakeSender{}
+	svc := newTestService(sender, nil)
+	fault := &failingDeliveryRead{DBTX: testPool, name: "GetAutopilotInWorkspace"}
+	svc.Queries = db.New(fault)
+	d, err := svc.TestSend(context.Background(), route, loadMember(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fault.hits == 0 || d.Status != DeliveryStatusFailed || d.ErrorCode.String != ErrorCodeSendTransient || sender.count() != 0 {
+		t.Fatalf("diagnostic read failure: hits=%d status=%s code=%s sends=%d", fault.hits, d.Status, d.ErrorCode.String, sender.count())
+	}
+}
+
+type cancelAfterLeaseRead struct {
+	db.DBTX
+	cancel context.CancelFunc
+}
+
+func (f cancelAfterLeaseRead) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	row := f.DBTX.QueryRow(ctx, sql, args...)
+	if strings.HasPrefix(sql, "-- name: GetLabrastroMessageDeliveryLease ") {
+		return cancelAfterRow{Row: row, cancel: f.cancel}
+	}
+	return row
+}
+
+type cancelAfterRow struct {
+	pgx.Row
+	cancel context.CancelFunc
+}
+
+func (r cancelAfterRow) Scan(dest ...any) error {
+	err := r.Row.Scan(dest...)
+	r.cancel()
+	return err
+}
+
+func TestWorkerCancellationAfterLeaseCheckDoesNotDial(t *testing.T) {
+	fx := newMDFixture(t, "cancel-before-dial", nil)
+	fx.bindMember(t, testUID, "ou_cancel_before_dial")
+	fx.memberTargetRoute(t, "member", testUID, nil)
+	run := fx.run(t, "completed", nil)
+	sender := &fakeSender{}
+	svc := newTestService(sender, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if n, err := svc.EnqueueRunDeliveries(ctx, uuidOf(t, run)); err != nil || n != 1 {
+		t.Fatalf("enqueue: %d %v", n, err)
+	}
+	svc.Queries = db.New(cancelAfterLeaseRead{DBTX: testPool, cancel: cancel})
+	if worked, err := svc.ProcessNext(ctx); err != nil || !worked {
+		t.Fatalf("process: %v %v", worked, err)
+	}
+	status, attempts, code, _ := deliveryStatus(t, firstDeliveryForRun(t, run))
+	if ctx.Err() == nil || status != DeliveryStatusQueued || code != ErrorCodeSendTransient || attempts != 1 || sender.count() != 0 {
+		t.Fatalf("pre-dial cancellation: ctx=%v status=%s code=%s attempts=%d sends=%d", ctx.Err(), status, code, attempts, sender.count())
 	}
 }
 

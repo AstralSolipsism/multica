@@ -30,7 +30,10 @@ func rejectGate(status, code, detail string) *gateResult {
 	return &gateResult{class: gateRejected, status: status, errorCode: code, detail: detail}
 }
 
-func retryGate(detail string) *gateResult {
+func (s *Service) retryGate(detail string, err error) *gateResult {
+	if err != nil {
+		s.logger().Warn("messagedelivery: pre-send check failed", "operation", detail, "error", err)
+	}
 	return &gateResult{class: gateTransient, detail: detail}
 }
 
@@ -41,7 +44,7 @@ func (g *gateResult) outcome() sendOutcome {
 	return sendOutcome{status: g.status, errorCode: g.errorCode, detail: g.detail}
 }
 
-type sourceGate func(*Service, context.Context, db.LabrastroMessageDelivery, db.LabrastroMessageRoute, targetSnapshot) *gateResult
+type sourceGate func(*Service, context.Context, db.LabrastroMessageDelivery, db.LabrastroMessageRoute) *gateResult
 
 var sourceGates = map[string]sourceGate{
 	SourceKindRunOnly:     (*Service).gateRunSource,
@@ -52,7 +55,7 @@ var sourceGates = map[string]sourceGate{
 	SourceKindComment:     (*Service).gateTeamSource,
 }
 
-func (s *Service) gateRunSource(ctx context.Context, d db.LabrastroMessageDelivery, route db.LabrastroMessageRoute, _ targetSnapshot) *gateResult {
+func (s *Service) gateRunSource(ctx context.Context, d db.LabrastroMessageDelivery, route db.LabrastroMessageRoute) *gateResult {
 	if route.AutopilotID != d.AutopilotID {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeSourceMissing, "source mismatch")
 	}
@@ -61,7 +64,7 @@ func (s *Service) gateRunSource(ctx context.Context, d db.LabrastroMessageDelive
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeSourceMissing, "source automation deleted")
 	}
 	if err != nil {
-		return retryGate("load source: " + err.Error())
+		return s.retryGate("load source failed", err)
 	}
 	return s.gateRunAuthority(ctx, ap, route.UpdatedBy)
 }
@@ -74,7 +77,7 @@ func (s *Service) gateRunAuthority(ctx context.Context, ap db.Autopilot, userID 
 	case errors.Is(err, ErrAuthorizationLost):
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member no longer holds source write permission")
 	case err != nil:
-		return retryGate("check source authority: " + err.Error())
+		return s.retryGate("check source authority failed", err)
 	default:
 		return nil
 	}
@@ -103,7 +106,7 @@ func (s *Service) gateClaimed(ctx context.Context, d db.LabrastroMessageDelivery
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeRouteDeleted, "route deleted before send")
 	}
 	if err != nil {
-		return retryGate("load route failed")
+		return s.retryGate("load route failed", err)
 	}
 	if !route.Enabled {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeRouteDisabled, "route disabled before send")
@@ -118,14 +121,14 @@ func (s *Service) gateClaimed(ctx context.Context, d db.LabrastroMessageDelivery
 		if _, err := s.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: d.SourceProjectID, WorkspaceID: d.WorkspaceID}); errors.Is(err, pgx.ErrNoRows) {
 			return rejectGate(DeliveryStatusCancelled, ErrorCodeSourceMissing, "approved source project no longer exists")
 		} else if err != nil {
-			return retryGate("load source project failed")
+			return s.retryGate("load source project failed", err)
 		}
 	}
 	gate, ok := sourceGates[d.SourceKind]
 	if !ok {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeSourceMissing, "unsupported delivery source")
 	}
-	if out := gate(s, ctx, d, route, snap); out != nil {
+	if out := gate(s, ctx, d, route); out != nil {
 		return out
 	}
 	return s.gateInstallation(ctx, d, snap)
@@ -135,7 +138,7 @@ func (s *Service) gateInstallation(ctx context.Context, d db.LabrastroMessageDel
 	if _, err := s.Queries.GetWorkspace(ctx, d.WorkspaceID); errors.Is(err, pgx.ErrNoRows) {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeSourceMissing, "source workspace unavailable")
 	} else if err != nil {
-		return retryGate("load workspace: " + err.Error())
+		return s.retryGate("load workspace failed", err)
 	}
 	instID, err := util.ParseUUID(snap.Installation)
 	if err != nil || instID != d.InstallationID {
@@ -146,7 +149,7 @@ func (s *Service) gateInstallation(ctx context.Context, d db.LabrastroMessageDel
 		return rejectGate(DeliveryStatusFailed, ErrorCodeInstallationMissing, "installation no longer exists")
 	}
 	if err != nil {
-		return retryGate("load installation failed")
+		return s.retryGate("load installation failed", err)
 	}
 	if inst.Status != "active" {
 		return rejectGate(DeliveryStatusFailed, ErrorCodeInstallationRevoked, "installation revoked")
@@ -159,17 +162,14 @@ func (s *Service) gateInstallation(ctx context.Context, d db.LabrastroMessageDel
 // requesting member (d.requested_by) — never the route's last editor, and
 // a historical row without an actor fails closed. No source record is
 // involved.
-func (s *Service) gateTestSendSource(ctx context.Context, d db.LabrastroMessageDelivery, route db.LabrastroMessageRoute, _ targetSnapshot) *gateResult {
+func (s *Service) gateTestSendSource(ctx context.Context, d db.LabrastroMessageDelivery, route db.LabrastroMessageRoute) *gateResult {
 	if route.SourceKind == RouteSourceRun || route.AutopilotID.Valid {
 		ap, err := s.Queries.GetAutopilotInWorkspace(ctx, db.GetAutopilotInWorkspaceParams{ID: route.AutopilotID, WorkspaceID: route.WorkspaceID})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return rejectGate(DeliveryStatusCancelled, ErrorCodeSourceMissing, "source automation deleted")
 		}
 		if err != nil {
-			return retryGate("load source failed")
-		}
-		if ap.Status == "archived" {
-			return rejectGate(DeliveryStatusCancelled, ErrorCodeSourceArchived, "source automation archived")
+			return s.retryGate("load source failed", err)
 		}
 		return s.gateRunAuthority(ctx, ap, d.RequestedBy)
 	}
@@ -183,7 +183,7 @@ func (s *Service) gateTestSendSource(ctx context.Context, d db.LabrastroMessageD
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member is no longer a workspace member")
 	}
 	if err != nil {
-		return retryGate("load authorizing member failed")
+		return s.retryGate("load authorizing member failed", err)
 	}
 	if route.SourceKind != RouteSourceInbox && member.Role != "owner" && member.Role != "admin" {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member no longer holds workspace admin")
@@ -197,7 +197,7 @@ func (s *Service) gateTestSendSource(ctx context.Context, d db.LabrastroMessageD
 // a preference that flipped after the decision stops the send here. A
 // preference lookup failure re-queues the delivery (transient): unreadable
 // state must never read as "not muted".
-func (s *Service) gateInboxSource(ctx context.Context, d db.LabrastroMessageDelivery, route db.LabrastroMessageRoute, snap targetSnapshot) *gateResult {
+func (s *Service) gateInboxSource(ctx context.Context, d db.LabrastroMessageDelivery, route db.LabrastroMessageRoute) *gateResult {
 	if !d.SourceRefID.Valid {
 		return rejectGate(DeliveryStatusFailed, ErrorCodeSendRejected, "personal delivery without a source record")
 	}
@@ -206,7 +206,7 @@ func (s *Service) gateInboxSource(ctx context.Context, d db.LabrastroMessageDeli
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeSourceMissing, "inbox item no longer exists")
 	}
 	if err != nil {
-		return retryGate("load inbox item failed")
+		return s.retryGate("load inbox item failed", err)
 	}
 	if item.WorkspaceID != d.WorkspaceID || item.RecipientType != "member" || item.RecipientID != route.TargetUserID {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeSourceMissing, "inbox item no longer belongs to the route recipient")
@@ -216,11 +216,11 @@ func (s *Service) gateInboxSource(ctx context.Context, d db.LabrastroMessageDeli
 	}); errors.Is(err, pgx.ErrNoRows) {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "recipient is no longer a workspace member")
 	} else if err != nil {
-		return retryGate("load recipient membership failed")
+		return s.retryGate("load recipient membership failed", err)
 	}
 	muted, err := s.inboxMuted(ctx, d.WorkspaceID, item.RecipientID, item.Type)
 	if err != nil {
-		return retryGate("check notification preference: " + err.Error())
+		return s.retryGate("check notification preference failed", err)
 	}
 	if muted {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeRecipientMuted, "recipient muted this notification category after the decision")
@@ -233,7 +233,7 @@ func (s *Service) gateInboxSource(ctx context.Context, d db.LabrastroMessageDeli
 // matches the delivery's frozen project range, and the member who LAST SAVED the
 // route still holds workspace owner/admin — the same continuous
 // authorization the automation source applies to its authorizer.
-func (s *Service) gateTeamSource(ctx context.Context, d db.LabrastroMessageDelivery, route db.LabrastroMessageRoute, _ targetSnapshot) *gateResult {
+func (s *Service) gateTeamSource(ctx context.Context, d db.LabrastroMessageDelivery, route db.LabrastroMessageRoute) *gateResult {
 	if !d.SourceRefID.Valid {
 		return rejectGate(DeliveryStatusFailed, ErrorCodeSendRejected, "team delivery without a source record")
 	}
@@ -246,7 +246,7 @@ func (s *Service) gateTeamSource(ctx context.Context, d db.LabrastroMessageDeliv
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeSourceMissing, "source issue no longer exists")
 	}
 	if err != nil {
-		return retryGate("load source issue failed")
+		return s.retryGate("load source issue failed", err)
 	}
 	if issue.WorkspaceID != d.WorkspaceID || (d.SourceProjectID.Valid && issue.ProjectID != d.SourceProjectID) {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeConditionMismatch, "source issue left the decision's project scope")
@@ -258,7 +258,7 @@ func (s *Service) gateTeamSource(ctx context.Context, d db.LabrastroMessageDeliv
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member is no longer a workspace admin")
 	}
 	if err != nil {
-		return retryGate("load authorizing member failed")
+		return s.retryGate("load authorizing member failed", err)
 	}
 	if authorizer.Role != "owner" && authorizer.Role != "admin" {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member no longer holds workspace admin")
@@ -276,7 +276,7 @@ func (s *Service) teamSourceIssue(ctx context.Context, d db.LabrastroMessageDeli
 			return pgtype.UUID{}, rejectGate(DeliveryStatusCancelled, ErrorCodeSourceMissing, "activity record no longer exists")
 		}
 		if err != nil {
-			return pgtype.UUID{}, retryGate("load activity record failed")
+			return pgtype.UUID{}, s.retryGate("load activity record failed", err)
 		}
 		if activity.WorkspaceID != d.WorkspaceID {
 			return pgtype.UUID{}, rejectGate(DeliveryStatusCancelled, ErrorCodeSourceMissing, "activity belongs to another workspace")
@@ -288,7 +288,7 @@ func (s *Service) teamSourceIssue(ctx context.Context, d db.LabrastroMessageDeli
 			return pgtype.UUID{}, rejectGate(DeliveryStatusCancelled, ErrorCodeSourceMissing, "comment no longer exists")
 		}
 		if err != nil {
-			return pgtype.UUID{}, retryGate("load comment failed")
+			return pgtype.UUID{}, s.retryGate("load comment failed", err)
 		}
 		if comment.DeletedAt.Valid {
 			return pgtype.UUID{}, rejectGate(DeliveryStatusCancelled, ErrorCodeSourceMissing, "comment was deleted")
@@ -315,20 +315,20 @@ func (s *Service) reverifyTarget(ctx context.Context, d db.LabrastroMessageDeliv
 	// SCOPE follows the delivery's frozen source_scope: a team delivery checks the
 	// team scope's own approval, never an automation's.
 	if (snap.TargetType == TargetGroup || snap.TargetType == TargetTopic) && s.Verifier == nil {
-		return retryGate("target verifier unavailable")
+		return s.retryGate("target verifier unavailable", nil)
 	}
 	switch snap.TargetType {
 	case TargetGroup:
 		if err := s.Verifier.VerifyGroupTarget(ctx, req); err != nil {
-			return refuseVerification(err)
+			return s.refuseVerification(err)
 		}
 		if err := s.deliveryTargetApproved(ctx, d, snap); err != nil {
-			return refuseApproval(err)
+			return s.refuseApproval(err)
 		}
 	case TargetTopic:
 		verified, err := s.Verifier.VerifyTopicTarget(ctx, req)
 		if err != nil {
-			return refuseVerification(err)
+			return s.refuseVerification(err)
 		}
 		if verified != snap.ChatID {
 			// The anchor moved to a different chat between decision and
@@ -337,7 +337,7 @@ func (s *Service) reverifyTarget(ctx context.Context, d db.LabrastroMessageDeliv
 				"anchor now lives in chat "+verified+", route pinned "+snap.ChatID)
 		}
 		if err := s.deliveryTargetApproved(ctx, d, snap); err != nil {
-			return refuseApproval(err)
+			return s.refuseApproval(err)
 		}
 	}
 	return nil
@@ -362,18 +362,18 @@ func (s *Service) deliveryTargetApproved(ctx context.Context, d db.LabrastroMess
 // missing approval cancels the delivery — the workspace withdrew its
 // consent, and queued siblings are cancelled by the revoke path with the
 // same reason.
-func refuseApproval(err error) *gateResult {
+func (s *Service) refuseApproval(err error) *gateResult {
 	var notApproved *TargetNotApprovedError
 	if errors.As(err, &notApproved) {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeTargetNotApproved, err.Error())
 	}
-	return retryGate("check approval: " + err.Error())
+	return s.retryGate("check approval failed", err)
 }
 
 // refuseVerification maps verification errors to send outcomes: a
-// definitive refusal fails explainably; an unknown verdict (transport,
-// scopes) retries without sending unverified.
-func refuseVerification(err error) *gateResult {
+// definitive refusal (including missing scopes) fails explainably; an unknown
+// transport verdict retries without sending unverified.
+func (s *Service) refuseVerification(err error) *gateResult {
 	var unreachable *TargetUnreachableError
 	var mismatch *TargetAnchorMismatchError
 	switch {
@@ -390,5 +390,5 @@ func refuseVerification(err error) *gateResult {
 	if errors.As(err, &sendErr) && sendErr.Class == ClassPermanent {
 		return rejectGate(DeliveryStatusFailed, ErrorCodeSendRejected, err.Error())
 	}
-	return retryGate("verify target: " + err.Error())
+	return s.retryGate("verify target failed", err)
 }

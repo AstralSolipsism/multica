@@ -336,14 +336,14 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 	shards := splitShards(NewMessage(content.Text, sourceURL))
 	for i, shard := range shards {
 		if err := ctx.Err(); err != nil {
-			return retryGate("cancelled before shard: " + err.Error()).outcome()
+			return s.retryGate("cancelled before shard", err).outcome()
 		}
 		receipt, err := s.claimShardReceipt(ctx, d, i, len(shards))
 		if err != nil {
 			if errors.Is(err, errParentGone) {
 				return sendOutcome{lost: true, detail: "workspace deleted before shard receipt"}
 			}
-			return retryGate(fmt.Sprintf("claim receipt for shard %d: %v", i, err)).outcome()
+			return s.retryGate("claim shard receipt failed", err).outcome()
 		}
 		// Already-accepted shards are never re-sent — this is what makes
 		// a resumed multi-shard send safe after a partial pass.
@@ -363,7 +363,7 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 		// final lease-guarded write could never account for.
 		held, err := s.holdsLease(ctx, d)
 		if err != nil {
-			return retryGate("check lease: " + err.Error()).outcome()
+			return s.retryGate("check lease failed", err).outcome()
 		}
 		if !held {
 			return sendOutcome{lost: true,
@@ -412,7 +412,7 @@ func (s *Service) resolveShardAddress(ctx context.Context, d db.LabrastroMessage
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Target{}, rejectGate(DeliveryStatusFailed, ErrorCodeMemberUnbound, "member has no binding on this installation")
 		} else if err != nil {
-			return Target{}, retryGate("resolve member binding: " + err.Error())
+			return Target{}, s.retryGate("resolve member binding failed", err)
 		}
 		address.OpenID = binding.ChannelUserID
 	}
@@ -431,7 +431,7 @@ const (
 
 func (s *Service) sendShard(ctx context.Context, d db.LabrastroMessageDelivery, snap targetSnapshot, address Target, message Message, receipt db.LabrastroMessageReceipt, index, total int) sendOutcome {
 	if err := ctx.Err(); err != nil {
-		return retryGate("cancelled before dialing: " + err.Error()).outcome()
+		return s.retryGate("cancelled before dialing", err).outcome()
 	}
 	sendCtx, cancelSend := context.WithTimeout(context.WithoutCancel(ctx), shardSendTimeout)
 	defer cancelSend()
@@ -459,10 +459,11 @@ func (s *Service) sendShard(ctx context.Context, d db.LabrastroMessageDelivery, 
 	})
 	cancelReceipt()
 	if receiptErr != nil {
+		s.logger().Error("messagedelivery: record shard receipt failed", "delivery_id", util.UUIDToString(d.ID), "shard", index, "error", receiptErr)
 		// The platform ACCEPTED the shard but the receipt write
 		// failed — the delivery is now uncertain, not sent.
 		return sendOutcome{status: DeliveryStatusUncertain, errorCode: ErrorCodeSendAmbiguous,
-			detail: fmt.Sprintf("record receipt for shard %d: %v", index, receiptErr)}
+			detail: "record shard receipt failed"}
 	}
 	return sendOutcome{status: DeliveryStatusSent}
 }

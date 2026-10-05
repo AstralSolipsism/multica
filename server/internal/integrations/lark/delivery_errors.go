@@ -35,7 +35,9 @@ func classifyLarkFailure(err error) larkFailure {
 	case 230020, 99991400, 99991403:
 		return larkRateLimited
 	case 230006, 232004, 232025, 232034:
-		return larkUnavailable
+		// Keep these business refusals permanent for sends and verification;
+		// discovery still presents them as unavailable. They are not 5xx retries.
+		return larkRejected
 	case 230049, codeTenantTokenInvalid, codeAppTokenInvalid:
 		// In-flight response or credentials rejected after the client's refresh:
 		// keep the existing conservative send treatment.
