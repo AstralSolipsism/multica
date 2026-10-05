@@ -121,11 +121,16 @@ func (t *labrastroMarkdownParagraphTransformer) Transform(node *ast.Paragraph, r
 	if err := t.ctx.Err(); err != nil {
 		panic(labrastroMarkdownAbort{err})
 	}
-	// Goldmark uses its own BlockReader here and copies all remaining lines
-	// after each reference definition. Bound that work before entering it,
-	// including definitions that span multiple lines or live in containers.
+	// Goldmark only extracts definitions at the paragraph's start, copying
+	// all remaining lines after each one. Use its whitespace/container rules
+	// to bound that work without rejecting long prose or tables.
 	if node.Lines().Len() > labrastroMaxMarkdownParagraphLines {
-		panic(labrastroMarkdownAbort{fmt.Errorf("%w: Markdown paragraph exceeds %d lines; split it with blank lines", errImportCapExceeded, labrastroMaxMarkdownParagraphLines)})
+		block := text.NewBlockReader(reader.Source(), node.Lines())
+		block.SkipSpaces()
+		if block.Peek() == '[' {
+			line := bytes.Count(reader.Source()[:node.Lines().At(0).Start], []byte{'\n'}) + 1
+			panic(labrastroMarkdownAbort{fmt.Errorf("%w: Markdown paragraph starting with a possible reference definition at line %d exceeds %d lines; split it with blank lines", errImportCapExceeded, line, labrastroMaxMarkdownParagraphLines)})
+		}
 	}
 	t.ParagraphTransformer.Transform(node, reader, pc)
 }

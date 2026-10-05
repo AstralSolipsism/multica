@@ -285,7 +285,7 @@ errors retain `error` and add `code`, `diagnostics`, `retryable`.
 | `tree_incomplete` | Package scan fails on truncation; use an actual smaller subtree. Legacy GitHub single import may succeed via its existing directory crawl with this warning. |
 | `tree_unavailable`, `source_unavailable`, `source_timeout` | Source cannot be read; retry with a fresh preview. skills.sh tree request failure remains fatal/retryable. |
 | `required_reference_unavailable`, `support_file_unavailable` | A required external reference or package support download failed; item fails, never saves a partial bundle. |
-| `limit_exceeded` | 1 MiB per final file; 4,096 lines per Markdown paragraph; 256 support files, 8 MiB support contents per skill; shrink source/bundle or split long paragraphs. |
+| `limit_exceeded` | 1 MiB per final file; 4,096 lines per Markdown paragraph starting with a possible reference definition (first non-whitespace byte `[`); 256 support files, 8 MiB support contents per skill; shrink source/bundle or split the indicated paragraph. |
 | `shared_path_conflict` | `_shared` destination conflicts with existing or rewritten content; fix source before retrying. |
 | `cross_skill_reference` | Other skills' SKILL.md files are not copied; reference remains unchanged. |
 | `filtered_reference` | External directory, symlink/submodule, binary or license asset skipped. References between original skill files and their own directories remain unchanged without a warning. A nonregular primary SKILL.md fails import. |
@@ -315,13 +315,18 @@ The proxy setting applies to all configured rewrites, not just package APIs.
 
 Markdown reference scanning checks cancellation while opening nested containers
 within a line, as well as between lines and files. A paragraph with more than
-4,096 source lines fails with `limit_exceeded` before reference-definition
-extraction, whose repeated line copying is otherwise quadratic. This limit also
-applies to syntactically valid long paragraphs, including those inside lists or
-blockquotes; blank lines separate paragraphs. Fenced and indented code blocks
-are exempt. Package previews retain the failed candidate with a non-retryable
-diagnostic; single-skill import uses its existing HTTP 413 response. Canceled
-scans retain the existing timeout classification and return no partial spans.
+4,096 source lines fails with `limit_exceeded` only if its first non-whitespace
+byte is `[`, which can begin a reference definition. This check uses Goldmark's
+paragraph contents and whitespace rules, including inside lists and blockquotes.
+It bounds reference-definition extraction, whose repeated line copying is
+otherwise quadratic. Ordinary prose, tables and quoted text with a different
+first byte remain unrestricted by this paragraph limit; fenced and indented
+code blocks are exempt. The check is conservative: an opening `[` still triggers
+the limit even if it does not form a valid definition. Blank lines separate
+paragraphs. The non-retryable diagnostic identifies the file and the paragraph's
+starting line. Package previews retain the failed candidate; single-skill import
+uses its existing HTTP 413 response. Canceled scans retain the existing timeout
+classification and return no partial spans.
 
 A package request resolves the ref to a commit **on every call**, then reads the
 current tree. Ref/commit resolution is never cached. Full scans use one

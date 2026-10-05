@@ -285,7 +285,13 @@ func TestLabrastroMarkdownParagraphLimit(t *testing.T) {
 		{"one MiB", strings.Repeat("[x]:a\n", (1<<20)/6), 0, true},
 		{"blockquote", strings.Repeat("> [x]:a\n", 4097), 0, true},
 		{"list", "- [x]:a\n" + strings.Repeat("  [x]:a\n", 4096), 0, true},
-		{"plain prose", strings.Repeat("text\n", 4097), 0, true},
+		{"plain prose", strings.Repeat("text\n", 4097), 0, false},
+		{"vocabulary", strings.Repeat("term [guide](guide.md)\n", 5000), 5000, false},
+		{"quoted vocabulary", strings.Repeat("> term [guide](guide.md)\n", 5000), 5000, false},
+		{"definitions after prose", "text\n" + strings.Repeat("[x]:a\n", 4097), 4097, false},
+		{"indented definitions", strings.Repeat("   [x]:a\n", 4097), 0, true},
+		{"definitions with titles", strings.Repeat("[x]:a \"title\"\n", 4097), 0, true},
+		{"unclosed label", "[\n" + strings.Repeat("text\n", 4096), 0, true},
 		{"multiline definitions", strings.Repeat("[x]:\na\n", 2049), 0, true},
 		{"separate paragraphs", strings.Repeat("[x]:a\n", 4096) + "\n" + strings.Repeat("[x]:a\n", 4096), 8192, false},
 		{"fenced code", "```\n" + strings.Repeat("[x]:a\n", 4097) + "```\n", 0, false},
@@ -307,6 +313,40 @@ func TestLabrastroMarkdownParagraphLimit(t *testing.T) {
 			}
 			t.Logf("%d bytes scanned in %s", len(tc.body), elapsed)
 		})
+	}
+}
+
+func TestLabrastroMarkdownLongTables(t *testing.T) {
+	const header = "| Entry |\n| --- |\n"
+	const row = "| [entry](references/entry.md) |\n"
+	for _, rows := range []int{5000, (maxImportFileSize - len(header)) / len(row)} {
+		t.Run(fmt.Sprint(rows), func(t *testing.T) {
+			body := header + strings.Repeat(row, rows)
+			start := time.Now()
+			spans, err := labrastroMarkdownPaths(t.Context(), body)
+			elapsed := time.Since(start)
+			if err != nil || len(spans) != rows {
+				t.Fatalf("table returned %d paths and %v; want %d paths", len(spans), err, rows)
+			}
+			for i, span := range spans {
+				wantStart := len(header) + i*len(row) + len("| [entry](")
+				if span.start != wantStart || body[span.start:span.end] != "references/entry.md" {
+					t.Fatalf("row %d: wrong table path span %+v", i, span)
+				}
+			}
+			if elapsed >= 2*time.Second {
+				t.Fatalf("table scan took %s; want less than 2s", elapsed)
+			}
+			t.Logf("%d-row table (%d bytes) scanned in %s", rows, len(body), elapsed)
+		})
+	}
+}
+
+func TestLabrastroMarkdownParagraphLimitLocation(t *testing.T) {
+	body := "# Catalog\r\n\r\n" + strings.Repeat(">   [x]:a\r\n", 4097)
+	_, err := labrastroMarkdownPaths(t.Context(), body)
+	if !isCapError(err) || !strings.Contains(err.Error(), "possible reference definition at line 3 exceeds 4096 lines") {
+		t.Fatalf("paragraph limit lost its starting source line: %v", err)
 	}
 }
 
