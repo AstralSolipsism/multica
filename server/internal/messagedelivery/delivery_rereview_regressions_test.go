@@ -268,8 +268,8 @@ func TestRereviewFailedTaskRawReasonStaysOutOfStatusCard(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, req := range sender.requests() {
-		if strings.Contains(req.Text, "synthetic-private-path") {
-			t.Fatalf("raw task failure entered external status card for run %s: %q", run, req.Text)
+		if strings.Contains(string(req.Message.Body), "synthetic-private-path") {
+			t.Fatalf("raw task failure entered external status card for run %s: %q", run, req.Message.Body)
 		}
 	}
 	if sender.count() != 1 {

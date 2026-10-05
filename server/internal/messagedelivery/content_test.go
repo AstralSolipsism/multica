@@ -82,7 +82,7 @@ func TestBuildRunOnlyContent(t *testing.T) {
 
 func TestBuildCreateIssueContent(t *testing.T) {
 	done := buildCreateIssueContent("Fix bugs", "completed", "ENG-12", "in_review", "https://app.example.com", "eng")
-	want := "Fix bugs — task ENG-12 reached its first terminal state as in_review\nhttps://app.example.com/eng/issues/ENG-12"
+	want := "Fix bugs — task ENG-12 reached its first terminal state as in_review"
 	if done.Text != want {
 		t.Fatalf("text = %q, want %q", done.Text, want)
 	}
@@ -124,19 +124,22 @@ func TestSplitShards_DeterministicAndRuneSafe(t *testing.T) {
 	// Build a body with multi-byte runes so a byte-boundary split would
 	// corrupt UTF-8.
 	long := strings.Repeat("多字节文本—", 3000) // 15000 runes
-	shards := splitShards(long)
+	shards := splitShards(NewMessage(long, "https://app.example.test/eng/issues/ENG-12"))
 	if len(shards) < 2 {
 		t.Fatalf("long body must split, got %d shard(s)", len(shards))
 	}
 	var rebuilt strings.Builder
 	for i, shard := range shards {
-		if !utf8.ValidString(shard) {
+		if !utf8.ValidString(string(shard.Body)) {
 			t.Fatalf("shard %d is not valid UTF-8", i)
 		}
-		if utf8.RuneCountInString(shard) > shardRunes {
+		if utf8.RuneCountInString(string(shard.Body)) > shardRunes {
 			t.Fatalf("shard %d exceeds the shard size", i)
 		}
-		rebuilt.WriteString(shard)
+		if shard.Source != "https://app.example.test/eng/issues/ENG-12" {
+			t.Fatalf("shard %d lost or split the source link", i)
+		}
+		rebuilt.WriteString(string(shard.Body))
 	}
 	if !strings.HasPrefix(long, rebuilt.String()) && rebuilt.Len() > 0 {
 		// The last shard may carry the truncation marker; everything up
@@ -146,7 +149,7 @@ func TestSplitShards_DeterministicAndRuneSafe(t *testing.T) {
 		}
 	}
 	// Deterministic: same input, same plan.
-	again := splitShards(long)
+	again := splitShards(NewMessage(long, "https://app.example.test/eng/issues/ENG-12"))
 	if len(again) != len(shards) {
 		t.Fatalf("shard count drifted: %d vs %d", len(again), len(shards))
 	}
@@ -159,18 +162,18 @@ func TestSplitShards_DeterministicAndRuneSafe(t *testing.T) {
 
 func TestSplitShards_TruncatesBeyondBudget(t *testing.T) {
 	huge := strings.Repeat("x", shardRunes*maxShards*2)
-	shards := splitShards(huge)
+	shards := splitShards(NewMessage(huge, ""))
 	if len(shards) != maxShards {
 		t.Fatalf("shard count = %d, want the cap %d", len(shards), maxShards)
 	}
-	if !strings.HasSuffix(shards[len(shards)-1], truncatedMarker) {
+	if !strings.HasSuffix(string(shards[len(shards)-1].Body), truncatedMarker) {
 		t.Fatal("overflowed content must carry the truncation marker")
 	}
 }
 
 func TestSplitShards_ShortBodyStaysWhole(t *testing.T) {
-	shards := splitShards("short")
-	if len(shards) != 1 || shards[0] != "short" {
+	shards := splitShards(NewMessage("short", ""))
+	if len(shards) != 1 || shards[0].Body != "short" {
 		t.Fatalf("short body = %v", shards)
 	}
 }

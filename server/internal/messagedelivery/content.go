@@ -137,35 +137,34 @@ func buildCreateIssueContent(autopilotTitle, runStatus, issueIdent, issueStatus,
 	snap.Summary = b.String()
 	if appURL != "" && workspaceSlug != "" && issueIdent != "" {
 		snap.Link = strings.TrimRight(appURL, "/") + "/" + workspaceSlug + "/issues/" + issueIdent
-		b.WriteString("\n")
-		b.WriteString(snap.Link)
 	}
 	snap.Text = b.String()
 	return snap
 }
 
-// splitShards splits the frozen text into the stable shard plan. Pure
-// function of the input: the same text always yields the same shard count
-// and boundaries, so a retry cannot renumber or re-split a message. Splits
-// fall on rune boundaries; UTF-8 sequences are never cut.
-func splitShards(text string) []string {
+// splitShards splits only the literal body, before any provider encoding. Each
+// shard retains a whole source link; JSON escapes and link nodes are never cut.
+// Body boundaries remain the same for already-frozen snapshots, so a retry can
+// still resume from existing receipts without renumbering or re-splitting.
+func splitShards(message Message) []Message {
+	text := string(message.Body)
 	if text == "" {
-		return []string{""}
+		return []Message{message}
 	}
 	if utf8.RuneCountInString(text) <= shardRunes {
-		return []string{text}
+		return []Message{message}
 	}
 
-	shards := make([]string, 0, maxShards)
+	shards := make([]Message, 0, maxShards)
 	remaining := text
 	for runeCount := utf8.RuneCountInString(remaining); runeCount > 0; runeCount = utf8.RuneCountInString(remaining) {
 		if len(shards) == maxShards-1 {
 			// Last allowed shard: take everything left, truncated to fit.
-			shards = append(shards, truncateRunes(remaining, shardRunes)+truncatedMarker)
+			shards = append(shards, Message{Body: PlainText(truncateRunes(remaining, shardRunes) + truncatedMarker), Source: message.Source})
 			return shards
 		}
 		cut := shardAtRune(remaining, shardRunes)
-		shards = append(shards, strings.TrimRight(remaining[:cut], "\n"))
+		shards = append(shards, Message{Body: PlainText(strings.TrimRight(remaining[:cut], "\n")), Source: message.Source})
 		remaining = remaining[cut:]
 	}
 	return shards

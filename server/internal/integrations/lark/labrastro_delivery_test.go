@@ -20,7 +20,7 @@ func TestDeliveryParams_TargetAddressing(t *testing.T) {
 
 	member, err := deliveryParams(messagedelivery.SendRequest{
 		Target:   messagedelivery.Target{Type: messagedelivery.TargetMember, OpenID: "ou_1"},
-		Text:     "hello",
+		Message:  messagedelivery.NewMessage("hello", ""),
 		SendUUID: "uuid-1",
 	}, creds)
 	if err != nil {
@@ -38,7 +38,7 @@ func TestDeliveryParams_TargetAddressing(t *testing.T) {
 
 	group, err := deliveryParams(messagedelivery.SendRequest{
 		Target:   messagedelivery.Target{Type: messagedelivery.TargetGroup, ChatID: "oc_1"},
-		Text:     "hello",
+		Message:  messagedelivery.NewMessage("hello", ""),
 		SendUUID: "uuid-2",
 	}, creds)
 	if err != nil {
@@ -50,7 +50,7 @@ func TestDeliveryParams_TargetAddressing(t *testing.T) {
 
 	topic, err := deliveryParams(messagedelivery.SendRequest{
 		Target:   messagedelivery.Target{Type: messagedelivery.TargetTopic, ChatID: "oc_2", MessageID: "om_9"},
-		Text:     "hello",
+		Message:  messagedelivery.NewMessage("hello", ""),
 		SendUUID: "uuid-3",
 	}, creds)
 	if err != nil {
@@ -67,10 +67,68 @@ func TestDeliveryParams_TargetAddressing(t *testing.T) {
 	// something to guess at.
 	if _, err := deliveryParams(messagedelivery.SendRequest{
 		Target:   messagedelivery.Target{Type: messagedelivery.TargetMember},
-		Text:     "hello",
+		Message:  messagedelivery.NewMessage("hello", ""),
 		SendUUID: "uuid-4",
 	}, creds); err == nil {
 		t.Fatal("member target without open_id must be refused")
+	}
+}
+
+func TestDeliveryParamsUntrustedContentIsPlainText(t *testing.T) {
+	const body = `<at user_id="all"></at> <at user_id="ou_victim">name</at> [x](https://evil.example) &lt;at user_id="all"&gt;all&lt;/at&gt;` + "\n" + `"}],[{"tag":"at","user_id":"all"}]`
+	const source = "https://app.example.test/ws/issues/MD-1"
+	params, err := deliveryParams(messagedelivery.SendRequest{
+		Target:  messagedelivery.Target{Type: messagedelivery.TargetGroup, ChatID: "oc_safe"},
+		Message: messagedelivery.NewMessage(body, source),
+	}, InstallationCredentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLiteralDeliveryPost(t, params.MsgType, params.Content, body, source)
+}
+
+// Decode the wire format independently of the production structs: arbitrary
+// node fields or a switch back to the text/Markdown parsers must fail here.
+func assertLiteralDeliveryPost(t *testing.T, msgType, content, body, source string) {
+	t.Helper()
+	if msgType != "post" {
+		t.Fatalf("untrusted content must use post, got %q", msgType)
+	}
+	var post struct {
+		ZhCN struct {
+			Content [][]map[string]any `json:"content"`
+		} `json:"zh_cn"`
+	}
+	if err := json.Unmarshal([]byte(content), &post); err != nil {
+		t.Fatal(err)
+	}
+	var text strings.Builder
+	links := 0
+	for _, line := range post.ZhCN.Content {
+		for _, node := range line {
+			switch node["tag"] {
+			case "text":
+				if node["un_escape"] == true || node["href"] != nil || node["user_id"] != nil {
+					t.Fatalf("text acquired active markup: %+v", node)
+				}
+				text.WriteString(node["text"].(string))
+			case "a":
+				links++
+				if node["href"] != source || node["text"] != source {
+					t.Fatalf("untrusted link or disguised source: %+v", node)
+				}
+			default:
+				t.Fatalf("unexpected active node: %+v", node)
+			}
+		}
+	}
+	wantText, wantLinks := body, 0
+	if source != "" {
+		wantText += "Source: "
+		wantLinks = 1
+	}
+	if text.String() != wantText || links != wantLinks {
+		t.Fatalf("body or source lost: %s", content)
 	}
 }
 
@@ -132,7 +190,7 @@ func TestDeliverySenderWithoutTransportIsPermanent(t *testing.T) {
 		WorkspaceID:    "ws",
 		InstallationID: "inst",
 		Target:         messagedelivery.Target{Type: messagedelivery.TargetGroup, ChatID: "oc"},
-		Text:           "hi",
+		Message:        messagedelivery.NewMessage("hi", ""),
 		SendUUID:       "u",
 	})
 	var sendErr *messagedelivery.SendError
@@ -200,7 +258,7 @@ func TestDeliveryParamsOrdinarySourceLink(t *testing.T) {
 			if alreadyLinked {
 				body += "\n" + link
 			}
-			req := messagedelivery.SendRequest{Target: messagedelivery.Target{Type: messagedelivery.TargetGroup, ChatID: "oc_test"}, Text: body, SourceURL: link, SourceRunID: "run-id", SendUUID: "fixed-send-id"}
+			req := messagedelivery.SendRequest{Target: messagedelivery.Target{Type: messagedelivery.TargetGroup, ChatID: "oc_test"}, Message: messagedelivery.NewMessage(body, link), SendUUID: "fixed-send-id"}
 			first, err := deliveryParams(req, InstallationCredentials{})
 			if err != nil {
 				t.Fatal(err)
@@ -209,19 +267,65 @@ func TestDeliveryParamsOrdinarySourceLink(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var content map[string]string
-			if err := json.Unmarshal([]byte(first.Content), &content); err != nil {
-				t.Fatal(err)
-			}
-			if strings.Count(content["text"], link) != 1 || !strings.Contains(content["text"], "Run: run-id") {
-				t.Fatalf("missing or repeated source: %s", content["text"])
-			}
+			// An untrusted copy of the URL must neither become an active link
+			// nor suppress the separately generated source link.
+			assertLiteralDeliveryPost(t, first.MsgType, first.Content, body, link)
 			if first.Content != second.Content || first.UUID != second.UUID {
 				t.Fatal("retry changed frozen content or send identity")
 			}
-			if strings.Contains(content["text"], "signature") || strings.Contains(content["text"], "Verified notification") {
+			if strings.Contains(first.Content, "signature") || strings.Contains(first.Content, "Verified notification") || strings.Contains(first.Content, "Run: ") {
 				t.Fatal("retired source verification returned")
 			}
 		})
 	}
+}
+
+func TestDeliveryPostWireFormat(t *testing.T) {
+	const source = "https://app.example.test/ws/issues/MD-1"
+	for _, target := range []messagedelivery.Target{
+		{Type: messagedelivery.TargetMember, OpenID: "ou_target"},
+		{Type: messagedelivery.TargetGroup, ChatID: "oc_target"},
+		{Type: messagedelivery.TargetTopic, ChatID: "oc_target", MessageID: "om_anchor"},
+	} {
+		for _, tc := range []struct{ name, body string }{
+			{"mentions", `<at user_id="all"></at> <at user_id="ou_victim">victim</at> [x](https://evil.example)`},
+			{"entities", `&lt;at user_id="all"&gt;&lt;/at&gt; \u003cat user_id="all"\u003e`},
+			{"json", `"}],[{"tag":"at","user_id":"all"}]`},
+			{"unicode", strings.Repeat("多🙂<&\"\\", 500)},
+			{"empty", ""},
+		} {
+			t.Run(target.Type+"/"+tc.name, func(t *testing.T) {
+				fake := newLarkFake(t)
+				fake.stubToken("safe_post_token", 3600)
+				reply := map[string]any{"code": 0, "data": map[string]any{"message_id": "om_post"}}
+				fake.stubSend(reply, func(_ *http.Request, wire map[string]string) {
+					assertLiteralDeliveryPost(t, wire["msg_type"], wire["content"], tc.body, source)
+				})
+				fake.stubReply(reply, func(_ *http.Request, _ string, wire map[string]any) {
+					assertLiteralDeliveryPost(t, wire["msg_type"].(string), wire["content"].(string), tc.body, source)
+				})
+				params, err := deliveryParams(messagedelivery.SendRequest{
+					Target: target, Message: messagedelivery.NewMessage(tc.body, source), SendUUID: "stable-post-id",
+				}, testCreds())
+				if err != nil {
+					t.Fatal(err)
+				}
+				id, err := newTestClient(fake, time.Now).SendDeliveryMessage(context.Background(), testCreds(), params)
+				if err != nil || id != "om_post" {
+					t.Fatalf("post send = %q, %v", id, err)
+				}
+			})
+		}
+	}
+}
+
+func TestDeliveryPostWithoutSource(t *testing.T) {
+	params, err := deliveryParams(messagedelivery.SendRequest{
+		Target:  messagedelivery.Target{Type: messagedelivery.TargetGroup, ChatID: "oc_target"},
+		Message: messagedelivery.NewMessage(`[x](https://evil.example)`, ""),
+	}, InstallationCredentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLiteralDeliveryPost(t, params.MsgType, params.Content, `[x](https://evil.example)`, "")
 }
