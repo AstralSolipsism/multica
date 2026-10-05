@@ -88,7 +88,7 @@ describe("DraftDefinitionFields DAG labels", () => {
     expect(screen.getByRole("combobox", { name: "Layout" })).toHaveTextContent("Graph");
     expect(screen.getByRole("combobox", { name: "Direction" })).toHaveTextContent(label);
     await user.click(screen.getByRole("combobox", { name: "Layout" }));
-    expect(screen.getByRole("option", { name: "Graph" })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "Graph" })).toBeInTheDocument();
   });
 });
 
@@ -149,7 +149,7 @@ describe("saved DAG view defaults", () => {
     await user.click(screen.getByRole("button", { name: /Default display/ }));
     expect(screen.queryByRole("combobox", { name: "Ordering" })).toBeNull();
     await user.click(screen.getByRole("combobox", { name: "Direction" }));
-    await user.click(screen.getByRole("option", { name: "Top to bottom" }));
+    await user.click(await screen.findByRole("option", { name: "Top to bottom" }));
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Create view" }));
     expect(createView).toHaveBeenCalledOnce();
@@ -182,6 +182,7 @@ describe("saved DAG view defaults", () => {
     );
     await user.click(screen.getByRole("button", { name: /Default display/ }));
     await user.click(screen.getByRole("combobox", { name: "Layout" }));
+    expect(await screen.findByRole("option", { name: "List" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Graph" })).toBeNull();
   });
 });

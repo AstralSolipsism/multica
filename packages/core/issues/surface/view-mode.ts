@@ -56,6 +56,7 @@ export function visibleViewMode(
   mode: ViewMode,
   { allowGantt, allowDag }: { allowGantt: boolean; allowDag: boolean },
 ): ViewMode {
+  if (!Object.hasOwn(VIEW_MODE_CAPABILITIES, mode)) return "list";
   if (mode === "gantt" && !allowGantt) return "list";
   if (mode === "dag" && !allowDag) return "list";
   return mode;

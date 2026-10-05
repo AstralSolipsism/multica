@@ -824,6 +824,9 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
   const merged = {
     ...current,
     ...p,
+    viewMode: p.viewMode && Object.hasOwn(VIEW_MODE_CAPABILITIES, p.viewMode)
+      ? p.viewMode
+      : current.viewMode,
     ...sanitizeDagPersisted(p, current),
     hiddenStatuses: statusesFromStorage(p.hiddenStatuses ?? legacy?.hiddenStatusCategories, current.hiddenStatuses, p.hiddenStatuses === undefined),
     listCollapsedStatuses: statusesFromStorage(p.listCollapsedStatuses, current.listCollapsedStatuses, p.hiddenStatuses === undefined),

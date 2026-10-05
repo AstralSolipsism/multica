@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
+import { visibleViewMode, type ViewMode } from "../surface/view-mode";
 import { createStore } from "zustand/vanilla";
 import {
   mergeViewStatePersisted,
@@ -62,6 +63,16 @@ describe("dag view preferences", () => {
     }
     const saved = viewStorePersistOptions("test").partialize({ ...current, dagExpandedIds: ["issue:y"] });
     expect(mergeViewStatePersisted(saved, current).dagExpandedIds).toEqual(["issue:y"]);
+  });
+
+  it("falls back safely when persisted view modes are no longer supported", () => {
+    const current = makeStore().getState();
+    for (const viewMode of ["unknown", "toString", null]) {
+      expect(mergeViewStatePersisted({ viewMode }, current).viewMode).toBe("board");
+      expect(visibleViewMode(viewMode as ViewMode, { allowDag: true, allowGantt: true })).toBe("list");
+    }
+    expect(visibleViewMode("dag", { allowDag: false, allowGantt: false })).toBe("list");
+    expect(visibleViewMode("dag", { allowDag: true, allowGantt: false })).toBe("dag");
   });
 
   it("merge degrades unknown enum values to the defaults", () => {
