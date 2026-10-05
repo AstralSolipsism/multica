@@ -35,10 +35,10 @@ import (
 // (the UI ages it out) and records last_error for the status endpoint.
 
 const (
-	glmQuotaDefaultBaseURL   = "https://open.bigmodel.cn"
-	glmQuotaDefaultInterval  = 5 * time.Minute
-	glmQuotaRequestTimeout   = 15 * time.Second
-	glmQuotaPath             = "/api/monitor/usage/quota/limit"
+	glmQuotaDefaultBaseURL  = "https://open.bigmodel.cn"
+	glmQuotaDefaultInterval = 5 * time.Minute
+	glmQuotaRequestTimeout  = 15 * time.Second
+	glmQuotaPath            = "/api/monitor/usage/quota/limit"
 	// Stale after a day without a successful poll — mirrors the runtime
 	// plan-quota aging so both surfaces degrade the same way.
 	glmQuotaStaleAfter = 24 * time.Hour
@@ -80,18 +80,18 @@ type GlmQuotaStatus struct {
 // are typed; usageDetails is deliberately dropped (per-tool usage is not
 // displayed and keeps the payload small).
 type glmQuotaRaw struct {
-	Code    int  `json:"code"`
+	Code    int   `json:"code"`
 	Success *bool `json:"success"`
 	Data    struct {
 		Limits []struct {
-			Type         string    `json:"type"`
-			Unit         *float64  `json:"unit"`
-			Number       *float64  `json:"number"`
-			Usage        *float64  `json:"usage"`
-			CurrentValue *float64  `json:"currentValue"`
-			Remaining    *float64  `json:"remaining"`
-			Percentage   *float64  `json:"percentage"`
-			NextResetMs  *float64  `json:"nextResetTime"`
+			Type         string   `json:"type"`
+			Unit         *float64 `json:"unit"`
+			Number       *float64 `json:"number"`
+			Usage        *float64 `json:"usage"`
+			CurrentValue *float64 `json:"currentValue"`
+			Remaining    *float64 `json:"remaining"`
+			Percentage   *float64 `json:"percentage"`
+			NextResetMs  *float64 `json:"nextResetTime"`
 		} `json:"limits"`
 		Level string `json:"level"`
 	} `json:"data"`

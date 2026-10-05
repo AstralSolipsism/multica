@@ -6,6 +6,8 @@ This decision supersedes the provisional analysis documents outside this reposit
 Source baseline: `AstralSolipsism/multica@430d785f4ad3d37088807b313ad22691d472803a`.
 Upstream integration target: `multica-ai/multica@12f8f3f31111564e5e1b9aac3f7f916e8bba4039`.
 
+For each future sync, complete the [upstream sync checklist](upstream-sync-checklist.md).
+
 | Capability | Confirmed disposition |
 | --- | --- |
 | Dispatch, claim, retry, recovery, lifecycle categories and wakeups | Adopt upstream behavior; remove fork prerequisite execution admission and one-shot early-dispatch approvals. |
@@ -66,6 +68,16 @@ using that capability requires a supporting kernel. No production kernel change
 or weaker process-killing fallback is part of this synchronization.
 
 ## Retained fork product constraints
+
+`467_autopilot_trigger_creator_from_autopilot` was deliberately rewritten in both
+directions by OL-49 (`245b1cf07`). Its up now changes column comments only: it must not
+infer a legacy trigger's execution principal from the autopilot's creator, who may never
+have created or authorized that trigger. The earlier `449_autopilot_trigger_created_by`
+publisher backfill remains as shipped; unresolved triggers fail closed and require
+explicit recreation by an authorized member. The down restores comments and does not
+undo or infer principals. Future syncs must preserve this fork version rather than
+directly adopting upstream's up or down SQL. Already-applied migrations are not rerun by
+this documentation change.
 
 User-visible branding must remain Labrastro / Mizuki, and the brand guards
 must not be relaxed. Keep fork translations in the per-locale brand overlays;

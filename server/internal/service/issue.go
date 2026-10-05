@@ -255,7 +255,8 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	}
 
 	var dependencyBefore, dependencyAfter *DependencySnapshot
-	if p.BlockedBy != nil || p.ParentIssueID.Valid {
+	// A new leaf without explicit prerequisites cannot introduce a cycle.
+	if p.BlockedBy != nil {
 		if err := s.Dependencies.LockWrite(ctx, qtx, p.WorkspaceID); err != nil {
 			return IssueCreateResult{}, err
 		}

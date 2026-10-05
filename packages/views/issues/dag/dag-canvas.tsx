@@ -3,7 +3,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import {
   Background,
   Controls,
-  MarkerType,
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
@@ -21,25 +20,24 @@ import type { DagDirection } from "@multica/core/issues/stores/view-store";
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import { useT } from "../../i18n";
 import { DagFlowEdgeLine, type DagFlowEdge } from "./dag-edge";
-import { dagNodeSize } from "./dag-constants";
+import { toFlowNodes, selectFlowNodes, toFlowEdges, type CanvasNode } from "./dag-flow";
 import {
+  anchorShift,
   constrainDagViewport,
   dagViewportTargets,
   dagViewportExtent,
   sameDagViewport,
 } from "./dag-viewport";
 import { DagIssueActions } from "./dag-issue-actions";
-import { DagFlowNodeCard, type DagFlowNode, type DagFlowNodeData } from "./dag-node";
-import { DagFlowGroupCard, type DagFlowGroup } from "./dag-group";
+import { DagFlowNodeCard } from "./dag-node";
+import { DagFlowGroupCard } from "./dag-group";
 import { dagFocusNeighborhood, type DagProjection, type DagVisibleEdge } from "./dag-projection";
-import type { DagLayoutResult, DagPoint, DagPort } from "./dag-layout";
+import type { DagLayoutResult, DagPoint } from "./dag-layout";
 
 import { DagPortUpdateProvider } from "./dag-ports";
 
 const nodeTypes = { dagNode: DagFlowNodeCard, dagGroup: DagFlowGroupCard };
 const edgeTypes = { dagEdge: DagFlowEdgeLine };
-const NO_PORTS: DagPort[] = [];
-type CanvasNode = DagFlowNode | DagFlowGroup;
 export interface DagCanvasCallbacks {
   onOpenIssue: (issueId: string) => void;
   onToggleCollapsed: (id: string) => void;
@@ -57,7 +55,7 @@ export interface DagCanvasProps extends DagCanvasCallbacks {
 }
 type FocusState = { nodeId: string; way: "upstream" | "downstream" } | null;
 
-function DagCanvasInner({
+export function DagCanvasInner({
   graph,
   projection,
   positions,
@@ -195,11 +193,7 @@ function DagCanvasInner({
     const next = saved ? positions.get(saved.id) : undefined;
     if (saved && next && next !== saved.position) {
       anchor.current = null;
-      nextViewport = {
-        ...current,
-        x: current.x + (saved.position.x - next.x) * current.zoom,
-        y: current.y + (saved.position.y - next.y) * current.zoom,
-      };
+      nextViewport = anchorShift(saved.position, next, current);
     } else if (saved && !next) anchor.current = null;
     const bounded = boundedViewport(nextViewport, saved?.id);
     if (!sameDagViewport(current, bounded)) void setViewport(bounded);
@@ -239,142 +233,51 @@ function DagCanvasInner({
     setViewport,
     viewportInitialized,
   ]);
-  const baseNodes = useMemo<CanvasNode[]>(
+  const baseNodes = useMemo(
     () =>
-      projection.nodes.flatMap((model): CanvasNode[] => {
-        const absolute = positions.get(model.id);
-        if (!absolute) return [];
-        const group = groupModels.get(model.id),
-          bounds = geometry.groups[model.id];
-        if (group && !bounds) return [];
-        const parent = model.groupId ? positions.get(model.groupId) : undefined;
-        const parentIssue = model.groupId ? models.get(model.groupId)?.issue : null;
-        const projectTitle =
-          model.issue?.projectId && (group || model.issue.projectId !== parentIssue?.projectId)
-            ? (projectNames.get(model.issue.projectId) ?? null)
-            : null;
-        const data: DagFlowNodeData = {
-          model,
-          projectTitle,
-          statusColor: model.issue ? statusColorOf(model.issue.status) : null,
-          ports: geometry.ports[model.id] ?? NO_PORTS,
-          showStage: !model.groupId || !geometry.groups[model.groupId]?.bands.length,
-          focused: false,
-          dimmed: false,
-        };
-        const size = bounds ?? dagNodeSize(model.kind);
-        const shared = {
-          id: model.id,
-          position: parent ? { x: absolute.x - parent.x, y: absolute.y - parent.y } : absolute,
-          parentId: model.groupId ?? undefined,
-          width: size.width,
-          height: size.height,
-          style: { width: size.width, height: size.height },
-          measured: getInternalNode(model.id)?.measured,
-          selected: false,
-          draggable: false,
-          connectable: false,
-        };
-        if (group && bounds)
-          return [
-            {
-              ...shared,
-              type: "dagGroup",
-              zIndex: 0,
-              data: {
-                ...data,
-                group,
-                bounds,
-                direction,
-                activeStage: null,
-                onToggle: toggle,
-                onFocus: onFocusGroup,
-                onOpen: openIssue,
-              },
-            },
-          ];
-        return [{ ...shared, type: "dagNode", zIndex: 2, data }];
+      toFlowNodes({
+        projection,
+        positions,
+        geometry,
+        direction,
+        projectNames,
+        statusColorOf,
+        measurements: new Map(
+          projection.nodes.map((node) => [node.id, getInternalNode(node.id)?.measured]),
+        ),
+        toggle,
+        onFocusGroup,
+        openIssue,
       }),
     [
-      direction,
+      projection,
+      positions,
       geometry,
+      direction,
+      projectNames,
+      statusColorOf,
       getInternalNode,
-      groupModels,
-      models,
+      toggle,
       onFocusGroup,
       openIssue,
-      positions,
-      projectNames,
-      projection,
-      statusColorOf,
-      toggle,
     ],
   );
-  const rfNodes = useMemo<CanvasNode[]>(
-    () =>
-      baseNodes.map((node) => {
-        const selected = selectedNodeId === node.id;
-        if (node.type === "dagGroup") {
-          const focused =
-            selectionContext.activeGroups.has(node.id) || focusSet?.has(node.id) === true;
-          return {
-            ...node,
-            selected,
-            data: {
-              ...node.data,
-              focused,
-              activeStage: selectionContext.stages.get(node.id) ?? null,
-            },
-          };
-        }
-        const focused = selected || focusSet?.has(node.id) === true;
-        return selected || focused ? { ...node, selected, data: { ...node.data, focused } } : node;
-      }),
-    [baseNodes, focusSet, selectedNodeId, selectionContext],
+  const rfNodes = useMemo(
+    () => selectFlowNodes(baseNodes, { selectedNodeId, focusSet, selectionContext }),
+    [baseNodes, selectedNodeId, focusSet, selectionContext],
   );
-  const rfEdges = useMemo<DagFlowEdge[]>(
+  const rfEdges = useMemo(
     () =>
-      projection.edges.flatMap((model): DagFlowEdge[] => {
-        const route = geometry.routes[model.id];
-        if (!route || !positions.has(model.source) || !positions.has(model.target)) return [];
-        const focused = focusSet
-          ? focusSet.has(model.source) && focusSet.has(model.target)
-          : model.source === selectedNodeId || model.target === selectedNodeId;
-        const aggregate =
-          model.sourceEdgeIds.length > 1 ||
-          groupModels.get(model.source)?.collapsed === true ||
-          groupModels.get(model.target)?.collapsed === true;
-        return [
-          {
-            id: model.id,
-            source: model.source,
-            target: model.target,
-            sourceHandle: `source:${model.id}`,
-            targetHandle: `target:${model.id}`,
-            type: "dagEdge",
-            zIndex: 1,
-            selected: selectedEdgeId === model.id,
-            data: { model, focused, aggregate, route, onSelect: selectEdge },
-            markerEnd: {
-              type: MarkerType.ArrowClosed,
-              width: 12,
-              height: 12,
-              color:
-                focused || selectedEdgeId === model.id ? "var(--brand)" : "var(--muted-foreground)",
-            },
-          },
-        ];
+      toFlowEdges({
+        projection,
+        positions,
+        geometry,
+        selectedNodeId,
+        selectedEdgeId,
+        focusSet,
+        selectEdge,
       }),
-    [
-      focusSet,
-      geometry.routes,
-      groupModels,
-      positions,
-      projection.edges,
-      selectEdge,
-      selectedEdgeId,
-      selectedNodeId,
-    ],
+    [projection, positions, geometry, selectedNodeId, selectedEdgeId, focusSet, selectEdge],
   );
   const selectedNode = selectedNodeId ? models.get(selectedNodeId) : undefined;
   const selectedGroup = selectedNodeId ? groupModels.get(selectedNodeId) : undefined;

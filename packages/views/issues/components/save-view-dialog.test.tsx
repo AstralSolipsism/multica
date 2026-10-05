@@ -10,6 +10,8 @@ import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-contex
 import { renderWithI18n } from "../../test/i18n";
 import { DraftDefinitionFields, SaveViewDialog } from "./save-view-dialog";
 
+const createView = vi.hoisted(() => vi.fn());
+
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-query")>()),
   useQuery: () => ({ data: [] }),
@@ -20,7 +22,7 @@ vi.mock("@multica/core/hooks", () => ({
 }));
 
 vi.mock("@multica/core/issue-views/mutations", () => ({
-  useCreateIssueView: () => ({ mutate: vi.fn(), isPending: false }),
+  useCreateIssueView: () => ({ mutate: createView, isPending: false }),
   useUpdateIssueView: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
@@ -122,5 +124,64 @@ describe("SaveViewDialog draft lifecycle", () => {
     rerender(dialog(true));
 
     expect(screen.getByLabelText("Name")).toHaveValue("");
+  });
+});
+
+describe("saved DAG view defaults", () => {
+  it("saves Graph direction and parent grouping without copying personal folds, viewport or selection", async () => {
+    createView.mockClear();
+    const user = userEvent.setup();
+    const store = createStore<IssueViewState>()(viewStoreSlice);
+    store.setState({
+      viewMode: "dag",
+      dagDirection: "LR",
+      dagCollapsedIds: ["issue:private-fold"],
+      dagIndependentExpanded: true,
+      dagViewport: { x: -123, y: 89, zoom: 1.4 },
+      dagSelectedNodeId: "a",
+    });
+    renderWithI18n(
+      <ViewStoreProvider store={store}>
+        <SaveViewDialog open onOpenChange={() => {}} scope={{ kind: "workspace" }} />
+      </ViewStoreProvider>,
+    );
+    await user.type(screen.getByLabelText("Name"), "Dependency view");
+    await user.click(screen.getByRole("button", { name: /Default display/ }));
+    expect(screen.queryByRole("combobox", { name: "Ordering" })).toBeNull();
+    await user.click(screen.getByRole("combobox", { name: "Direction" }));
+    await user.click(screen.getByRole("option", { name: "Top to bottom" }));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Create view" }));
+    expect(createView).toHaveBeenCalledOnce();
+    const payload = createView.mock.calls[0]![0];
+    expect(payload).toMatchObject({
+      name: "Dependency view",
+      scope_type: "workspace",
+      display: { viewMode: "dag", dagDirection: "TB", dagGrouping: "parent" },
+    });
+    for (const key of [
+      "dagCollapsedIds",
+      "dagViewport",
+      "dagSelectedNodeId",
+      "dagIndependentExpanded",
+    ]) {
+      expect(payload.display).not.toHaveProperty(key);
+      expect(payload.query).not.toHaveProperty(key);
+    }
+    expect(store.getState().dagDirection).toBe("LR");
+    expect(store.getState().dagCollapsedIds).toEqual(["issue:private-fold"]);
+  });
+
+  it("hides Graph in the default-display editor when the surface disallows it", async () => {
+    const user = userEvent.setup();
+    const store = createStore<IssueViewState>()(viewStoreSlice);
+    renderWithI18n(
+      <ViewStoreProvider store={store}>
+        <DraftDefinitionFields allowDag={false} />
+      </ViewStoreProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: /Default display/ }));
+    await user.click(screen.getByRole("combobox", { name: "Layout" }));
+    expect(screen.queryByRole("option", { name: "Graph" })).toBeNull();
   });
 });
