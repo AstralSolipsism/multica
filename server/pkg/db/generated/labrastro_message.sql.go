@@ -1778,7 +1778,7 @@ func (q *Queries) GetLabrastroMessageRoute(ctx context.Context, arg GetLabrastro
 
 const getLabrastroMessageScanCursor = `-- name: GetLabrastroMessageScanCursor :one
 
-SELECT scanner, cursor_ts, cursor_id, cycle_started_at, generation, updated_at, cycle_upper_id FROM labrastro_message_scan_cursor
+SELECT scanner, cursor_ts, cursor_id, cycle_started_at, generation, updated_at, cycle_upper_id, cycle_stable_at FROM labrastro_message_scan_cursor
 WHERE scanner = $1
 `
 
@@ -1796,6 +1796,7 @@ func (q *Queries) GetLabrastroMessageScanCursor(ctx context.Context, scanner str
 		&i.Generation,
 		&i.UpdatedAt,
 		&i.CycleUpperID,
+		&i.CycleStableAt,
 	)
 	return i, err
 }
@@ -1817,6 +1818,37 @@ func (q *Queries) GetLabrastroMessageScanUpperBound(ctx context.Context, scanIss
 	return upper_id, err
 }
 
+const getLabrastroMessageSourceScanHorizon = `-- name: GetLabrastroMessageSourceScanHorizon :one
+SELECT statement_timestamp()::timestamptz AS scan_through,
+    LEAST(statement_timestamp(),
+        COALESCE((SELECT min(CASE WHEN state IS NULL OR state = 'disabled'
+            THEN 'epoch'::timestamptz ELSE xact_start END)
+            FROM pg_catalog.pg_stat_activity
+            WHERE datname = current_database() AND usesysid IS NOT NULL), statement_timestamp()),
+        CASE WHEN current_setting('max_prepared_transactions')::integer > 0
+            THEN 'epoch'::timestamptz ELSE statement_timestamp() END
+    )::timestamptz AS stable_at
+`
+
+type GetLabrastroMessageSourceScanHorizonRow struct {
+	ScanThrough pgtype.Timestamptz `json:"scan_through"`
+	StableAt    pgtype.Timestamptz `json:"stable_at"`
+}
+
+// Source created_at defaults to transaction start, not commit time. There is
+// no enforced maximum transaction duration, so never advance past a writer
+// still in flight. An unobservable/disabled backend or enabled two-phase
+// commit has no trustworthy start bound: retain history. Prepared transactions
+// can disappear from activity before becoming visible in pg_prepared_xacts.
+// Userless maintenance workers (including autovacuum) cannot insert sources;
+// their hidden state must not pin an ordinary application's watermark.
+func (q *Queries) GetLabrastroMessageSourceScanHorizon(ctx context.Context) (GetLabrastroMessageSourceScanHorizonRow, error) {
+	row := q.db.QueryRow(ctx, getLabrastroMessageSourceScanHorizon)
+	var i GetLabrastroMessageSourceScanHorizonRow
+	err := row.Scan(&i.ScanThrough, &i.StableAt)
+	return i, err
+}
+
 const getLabrastroMessageSourceScanUpperBound = `-- name: GetLabrastroMessageSourceScanUpperBound :one
 SELECT COALESCE(CASE $1::text
     WHEN 'inbox' THEN (SELECT id FROM inbox_item ORDER BY id DESC LIMIT 1)
@@ -1826,8 +1858,8 @@ END, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS upper_id
 `
 
 // Freezes one cycle's immutable ID bound over the source table, including
-// non-candidates. Old IDs that become eligible later are revisited in the
-// next full cycle.
+// non-candidates. Late commits are revisited within the next time window;
+// IDs are never treated as a timestamp (the tables contain UUIDv4 and v7).
 func (q *Queries) GetLabrastroMessageSourceScanUpperBound(ctx context.Context, sourceKind string) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, getLabrastroMessageSourceScanUpperBound, sourceKind)
 	var upper_id pgtype.UUID
@@ -1839,7 +1871,7 @@ const initLabrastroMessageScanCursor = `-- name: InitLabrastroMessageScanCursor 
 INSERT INTO labrastro_message_scan_cursor (scanner)
 VALUES ($1)
 ON CONFLICT (scanner) DO NOTHING
-RETURNING scanner, cursor_ts, cursor_id, cycle_started_at, generation, updated_at, cycle_upper_id
+RETURNING scanner, cursor_ts, cursor_id, cycle_started_at, generation, updated_at, cycle_upper_id, cycle_stable_at
 `
 
 func (q *Queries) InitLabrastroMessageScanCursor(ctx context.Context, scanner string) (LabrastroMessageScanCursor, error) {
@@ -1853,6 +1885,7 @@ func (q *Queries) InitLabrastroMessageScanCursor(ctx context.Context, scanner st
 		&i.Generation,
 		&i.UpdatedAt,
 		&i.CycleUpperID,
+		&i.CycleStableAt,
 	)
 	return i, err
 }
@@ -1949,8 +1982,10 @@ LEFT JOIN labrastro_message_approved_target approval
  AND approval.project_id IS NOT DISTINCT FROM rt.project_id AND approval.revoked_at IS NULL
 WHERE al.action IN ('status_changed', 'assignee_changed')
   AND al.created_at >= rt.effective_from
-  AND al.id >= $1::uuid
-  AND al.id <= $2::uuid
+  AND al.created_at >= $1::timestamptz
+  AND al.created_at <= $2::timestamptz
+  AND al.id >= $3::uuid
+  AND al.id <= $4::uuid
   AND NOT EXISTS (
       SELECT 1 FROM labrastro_message_delivery d
       WHERE d.workspace_id = al.workspace_id
@@ -1962,13 +1997,15 @@ WHERE al.action IN ('status_changed', 'assignee_changed')
 ORDER BY al.id, rt.installation_id, rt.target_key,
     (((rt.project_id IS NULL OR rt.project_id = iss.project_id) AND (cardinality(rt.event_types) = 0 OR al.action = ANY(rt.event_types))) AND route_authorizer.role IN ('owner', 'admin') AND approval.id IS NOT NULL) DESC NULLS LAST,
     ((rt.project_id IS NULL OR rt.project_id = iss.project_id) AND (cardinality(rt.event_types) = 0 OR al.action = ANY(rt.event_types))) DESC NULLS LAST, rt.created_at, rt.id
-LIMIT $3
+LIMIT $5
 `
 
 type ListLabrastroMessageActivitySourceCandidatesParams struct {
-	AfterID pgtype.UUID `json:"after_id"`
-	UpperID pgtype.UUID `json:"upper_id"`
-	Limit   int32       `json:"limit"`
+	ScanFrom    pgtype.Timestamptz `json:"scan_from"`
+	ScanThrough pgtype.Timestamptz `json:"scan_through"`
+	AfterID     pgtype.UUID        `json:"after_id"`
+	UpperID     pgtype.UUID        `json:"upper_id"`
+	Limit       int32              `json:"limit"`
 }
 
 type ListLabrastroMessageActivitySourceCandidatesRow struct {
@@ -2006,7 +2043,13 @@ type ListLabrastroMessageActivitySourceCandidatesRow struct {
 }
 
 func (q *Queries) ListLabrastroMessageActivitySourceCandidates(ctx context.Context, arg ListLabrastroMessageActivitySourceCandidatesParams) ([]ListLabrastroMessageActivitySourceCandidatesRow, error) {
-	rows, err := q.db.Query(ctx, listLabrastroMessageActivitySourceCandidates, arg.AfterID, arg.UpperID, arg.Limit)
+	rows, err := q.db.Query(ctx, listLabrastroMessageActivitySourceCandidates,
+		arg.ScanFrom,
+		arg.ScanThrough,
+		arg.AfterID,
+		arg.UpperID,
+		arg.Limit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2136,8 +2179,10 @@ LEFT JOIN labrastro_message_approved_target approval
 WHERE c.type = 'comment'
   AND c.deleted_at IS NULL
   AND c.created_at >= rt.effective_from
-  AND c.id >= $1::uuid
-  AND c.id <= $2::uuid
+  AND c.created_at >= $1::timestamptz
+  AND c.created_at <= $2::timestamptz
+  AND c.id >= $3::uuid
+  AND c.id <= $4::uuid
   AND NOT EXISTS (
       SELECT 1 FROM labrastro_message_delivery d
       WHERE d.workspace_id = c.workspace_id
@@ -2149,13 +2194,15 @@ WHERE c.type = 'comment'
 ORDER BY c.id, rt.installation_id, rt.target_key,
     (((rt.project_id IS NULL OR rt.project_id = iss.project_id) AND (cardinality(rt.event_types) = 0 OR c.type = ANY(rt.event_types))) AND route_authorizer.role IN ('owner', 'admin') AND approval.id IS NOT NULL) DESC NULLS LAST,
     ((rt.project_id IS NULL OR rt.project_id = iss.project_id) AND (cardinality(rt.event_types) = 0 OR c.type = ANY(rt.event_types))) DESC NULLS LAST, rt.created_at, rt.id
-LIMIT $3
+LIMIT $5
 `
 
 type ListLabrastroMessageCommentSourceCandidatesParams struct {
-	AfterID pgtype.UUID `json:"after_id"`
-	UpperID pgtype.UUID `json:"upper_id"`
-	Limit   int32       `json:"limit"`
+	ScanFrom    pgtype.Timestamptz `json:"scan_from"`
+	ScanThrough pgtype.Timestamptz `json:"scan_through"`
+	AfterID     pgtype.UUID        `json:"after_id"`
+	UpperID     pgtype.UUID        `json:"upper_id"`
+	Limit       int32              `json:"limit"`
 }
 
 type ListLabrastroMessageCommentSourceCandidatesRow struct {
@@ -2196,7 +2243,13 @@ type ListLabrastroMessageCommentSourceCandidatesRow struct {
 // SQL, not a service filter): status_change comments would double the
 // activity status source, and progress/system entries are pipeline chatter.
 func (q *Queries) ListLabrastroMessageCommentSourceCandidates(ctx context.Context, arg ListLabrastroMessageCommentSourceCandidatesParams) ([]ListLabrastroMessageCommentSourceCandidatesRow, error) {
-	rows, err := q.db.Query(ctx, listLabrastroMessageCommentSourceCandidates, arg.AfterID, arg.UpperID, arg.Limit)
+	rows, err := q.db.Query(ctx, listLabrastroMessageCommentSourceCandidates,
+		arg.ScanFrom,
+		arg.ScanThrough,
+		arg.AfterID,
+		arg.UpperID,
+		arg.Limit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2453,18 +2506,11 @@ func (q *Queries) ListLabrastroMessageDeliveriesByRoute(ctx context.Context, arg
 
 const listLabrastroMessageDeliveryCandidateRoutes = `-- name: ListLabrastroMessageDeliveryCandidateRoutes :many
 
-SELECT
-    r.id AS run_id, r.autopilot_id, a.workspace_id AS run_workspace_id,
-    r.status AS run_status, r.completed_at AS run_completed_at,
-    r.issue_id AS run_issue_id, r.task_id AS run_task_id,
-    r.result AS run_result, r.failure_reason AS run_failure_reason,
-    r.reason_code AS run_reason_code,
-    a.execution_mode AS autopilot_execution_mode, a.title AS autopilot_title,
-    rt.id AS route_id, rt.revision AS route_revision,
-    rt.installation_id, rt.channel_type,
-    rt.target_type, rt.target_user_id, rt.target_chat_id,
-    rt.target_message_id, rt.target_thread_id, rt.target_key,
-    rt.conditions, rt.content_mode
+SELECT r.id, r.autopilot_id, r.trigger_id, r.source, r.status, r.issue_id, r.task_id, r.triggered_at, r.completed_at, r.failure_reason, r.trigger_payload, r.result, r.created_at, r.squad_id, r.planned_at, r.webhook_delivery_id, r.quota_reservation_id, r.reason_code, a.id, a.workspace_id, a.title, a.description, a.assignee_id, a.status, a.execution_mode, a.issue_title_template, a.created_by_type, a.created_by_id, a.last_run_at, a.created_at, a.updated_at, a.assignee_type, a.project_id, a.pause_reason, rt.id, rt.workspace_id, rt.autopilot_id, rt.installation_id, rt.channel_type, rt.target_type, rt.target_user_id, rt.target_chat_id, rt.target_message_id, rt.target_thread_id, rt.target_key, rt.conditions, rt.content_mode, rt.enabled, rt.revision, rt.created_by, rt.updated_by, rt.effective_from, rt.created_at, rt.updated_at, rt.source_kind, rt.project_id, rt.event_types, rt.last_disabled_at,
+    COALESCE(r.task_id, CASE WHEN r.issue_id IS NULL THEN (
+        SELECT t.id FROM agent_task_queue t
+        WHERE t.autopilot_run_id = r.id ORDER BY t.created_at LIMIT 1
+    ) END)::uuid AS source_task_id
 FROM autopilot_run r
 JOIN autopilot a ON a.id = r.autopilot_id
 JOIN labrastro_message_route rt
@@ -2485,30 +2531,10 @@ LIMIT $1
 `
 
 type ListLabrastroMessageDeliveryCandidateRoutesRow struct {
-	RunID                  pgtype.UUID        `json:"run_id"`
-	AutopilotID            pgtype.UUID        `json:"autopilot_id"`
-	RunWorkspaceID         pgtype.UUID        `json:"run_workspace_id"`
-	RunStatus              string             `json:"run_status"`
-	RunCompletedAt         pgtype.Timestamptz `json:"run_completed_at"`
-	RunIssueID             pgtype.UUID        `json:"run_issue_id"`
-	RunTaskID              pgtype.UUID        `json:"run_task_id"`
-	RunResult              []byte             `json:"run_result"`
-	RunFailureReason       pgtype.Text        `json:"run_failure_reason"`
-	RunReasonCode          pgtype.Text        `json:"run_reason_code"`
-	AutopilotExecutionMode string             `json:"autopilot_execution_mode"`
-	AutopilotTitle         string             `json:"autopilot_title"`
-	RouteID                pgtype.UUID        `json:"route_id"`
-	RouteRevision          int32              `json:"route_revision"`
-	InstallationID         pgtype.UUID        `json:"installation_id"`
-	ChannelType            string             `json:"channel_type"`
-	TargetType             string             `json:"target_type"`
-	TargetUserID           pgtype.UUID        `json:"target_user_id"`
-	TargetChatID           pgtype.Text        `json:"target_chat_id"`
-	TargetMessageID        pgtype.Text        `json:"target_message_id"`
-	TargetThreadID         pgtype.Text        `json:"target_thread_id"`
-	TargetKey              string             `json:"target_key"`
-	Conditions             string             `json:"conditions"`
-	ContentMode            string             `json:"content_mode"`
+	AutopilotRun          AutopilotRun          `json:"autopilot_run"`
+	Autopilot             Autopilot             `json:"autopilot"`
+	LabrastroMessageRoute LabrastroMessageRoute `json:"labrastro_message_route"`
+	SourceTaskID          pgtype.UUID           `json:"source_task_id"`
 }
 
 // =====================
@@ -2530,30 +2556,65 @@ func (q *Queries) ListLabrastroMessageDeliveryCandidateRoutes(ctx context.Contex
 	for rows.Next() {
 		var i ListLabrastroMessageDeliveryCandidateRoutesRow
 		if err := rows.Scan(
-			&i.RunID,
-			&i.AutopilotID,
-			&i.RunWorkspaceID,
-			&i.RunStatus,
-			&i.RunCompletedAt,
-			&i.RunIssueID,
-			&i.RunTaskID,
-			&i.RunResult,
-			&i.RunFailureReason,
-			&i.RunReasonCode,
-			&i.AutopilotExecutionMode,
-			&i.AutopilotTitle,
-			&i.RouteID,
-			&i.RouteRevision,
-			&i.InstallationID,
-			&i.ChannelType,
-			&i.TargetType,
-			&i.TargetUserID,
-			&i.TargetChatID,
-			&i.TargetMessageID,
-			&i.TargetThreadID,
-			&i.TargetKey,
-			&i.Conditions,
-			&i.ContentMode,
+			&i.AutopilotRun.ID,
+			&i.AutopilotRun.AutopilotID,
+			&i.AutopilotRun.TriggerID,
+			&i.AutopilotRun.Source,
+			&i.AutopilotRun.Status,
+			&i.AutopilotRun.IssueID,
+			&i.AutopilotRun.TaskID,
+			&i.AutopilotRun.TriggeredAt,
+			&i.AutopilotRun.CompletedAt,
+			&i.AutopilotRun.FailureReason,
+			&i.AutopilotRun.TriggerPayload,
+			&i.AutopilotRun.Result,
+			&i.AutopilotRun.CreatedAt,
+			&i.AutopilotRun.SquadID,
+			&i.AutopilotRun.PlannedAt,
+			&i.AutopilotRun.WebhookDeliveryID,
+			&i.AutopilotRun.QuotaReservationID,
+			&i.AutopilotRun.ReasonCode,
+			&i.Autopilot.ID,
+			&i.Autopilot.WorkspaceID,
+			&i.Autopilot.Title,
+			&i.Autopilot.Description,
+			&i.Autopilot.AssigneeID,
+			&i.Autopilot.Status,
+			&i.Autopilot.ExecutionMode,
+			&i.Autopilot.IssueTitleTemplate,
+			&i.Autopilot.CreatedByType,
+			&i.Autopilot.CreatedByID,
+			&i.Autopilot.LastRunAt,
+			&i.Autopilot.CreatedAt,
+			&i.Autopilot.UpdatedAt,
+			&i.Autopilot.AssigneeType,
+			&i.Autopilot.ProjectID,
+			&i.Autopilot.PauseReason,
+			&i.LabrastroMessageRoute.ID,
+			&i.LabrastroMessageRoute.WorkspaceID,
+			&i.LabrastroMessageRoute.AutopilotID,
+			&i.LabrastroMessageRoute.InstallationID,
+			&i.LabrastroMessageRoute.ChannelType,
+			&i.LabrastroMessageRoute.TargetType,
+			&i.LabrastroMessageRoute.TargetUserID,
+			&i.LabrastroMessageRoute.TargetChatID,
+			&i.LabrastroMessageRoute.TargetMessageID,
+			&i.LabrastroMessageRoute.TargetThreadID,
+			&i.LabrastroMessageRoute.TargetKey,
+			&i.LabrastroMessageRoute.Conditions,
+			&i.LabrastroMessageRoute.ContentMode,
+			&i.LabrastroMessageRoute.Enabled,
+			&i.LabrastroMessageRoute.Revision,
+			&i.LabrastroMessageRoute.CreatedBy,
+			&i.LabrastroMessageRoute.UpdatedBy,
+			&i.LabrastroMessageRoute.EffectiveFrom,
+			&i.LabrastroMessageRoute.CreatedAt,
+			&i.LabrastroMessageRoute.UpdatedAt,
+			&i.LabrastroMessageRoute.SourceKind,
+			&i.LabrastroMessageRoute.ProjectID,
+			&i.LabrastroMessageRoute.EventTypes,
+			&i.LabrastroMessageRoute.LastDisabledAt,
+			&i.SourceTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -2590,8 +2651,10 @@ JOIN workspace w ON w.id = i.workspace_id
 LEFT JOIN issue iss ON iss.id = i.issue_id
 WHERE i.recipient_type = 'member'
   AND i.created_at >= rt.effective_from
-  AND i.id >= $1::uuid
-  AND i.id <= $2::uuid
+  AND i.created_at >= $1::timestamptz
+  AND i.created_at <= $2::timestamptz
+  AND i.id >= $3::uuid
+  AND i.id <= $4::uuid
   AND NOT EXISTS (
       SELECT 1 FROM labrastro_message_delivery d
       WHERE d.workspace_id = i.workspace_id
@@ -2602,13 +2665,15 @@ WHERE i.recipient_type = 'member'
   )
 ORDER BY i.id, rt.installation_id, rt.target_key,
     (cardinality(rt.event_types) = 0 OR i.type = ANY(rt.event_types)) DESC NULLS LAST, rt.created_at, rt.id
-LIMIT $3
+LIMIT $5
 `
 
 type ListLabrastroMessageInboxSourceCandidatesParams struct {
-	AfterID pgtype.UUID `json:"after_id"`
-	UpperID pgtype.UUID `json:"upper_id"`
-	Limit   int32       `json:"limit"`
+	ScanFrom    pgtype.Timestamptz `json:"scan_from"`
+	ScanThrough pgtype.Timestamptz `json:"scan_through"`
+	AfterID     pgtype.UUID        `json:"after_id"`
+	UpperID     pgtype.UUID        `json:"upper_id"`
+	Limit       int32              `json:"limit"`
 }
 
 type ListLabrastroMessageInboxSourceCandidatesRow struct {
@@ -2646,9 +2711,16 @@ type ListLabrastroMessageInboxSourceCandidatesRow struct {
 // wins over every non-match; attribution is deterministic within that set.
 // The inclusive cursor drains all targets of the last source across pages.
 // NOT EXISTS removes completed targets, so no target cursor is required.
-// A later full cycle recovers sources that committed behind the cursor.
+// Each cycle scans only [stable watermark - overlap, cycle start]. The
+// next overlapping cycle recovers sources that committed behind the cursor.
 func (q *Queries) ListLabrastroMessageInboxSourceCandidates(ctx context.Context, arg ListLabrastroMessageInboxSourceCandidatesParams) ([]ListLabrastroMessageInboxSourceCandidatesRow, error) {
-	rows, err := q.db.Query(ctx, listLabrastroMessageInboxSourceCandidates, arg.AfterID, arg.UpperID, arg.Limit)
+	rows, err := q.db.Query(ctx, listLabrastroMessageInboxSourceCandidates,
+		arg.ScanFrom,
+		arg.ScanThrough,
+		arg.AfterID,
+		arg.UpperID,
+		arg.Limit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -3741,11 +3813,12 @@ SET cursor_ts = $1,
     cursor_id = $2,
     cycle_started_at = $3,
     cycle_upper_id = $4,
+    cycle_stable_at = $5,
     generation = generation + 1,
     updated_at = now()
-WHERE scanner = $5
-  AND generation = $6
-RETURNING scanner, cursor_ts, cursor_id, cycle_started_at, generation, updated_at, cycle_upper_id
+WHERE scanner = $6
+  AND generation = $7
+RETURNING scanner, cursor_ts, cursor_id, cycle_started_at, generation, updated_at, cycle_upper_id, cycle_stable_at
 `
 
 type SaveLabrastroMessageScanCursorParams struct {
@@ -3753,6 +3826,7 @@ type SaveLabrastroMessageScanCursorParams struct {
 	CursorID           pgtype.UUID        `json:"cursor_id"`
 	CycleStartedAt     pgtype.Timestamptz `json:"cycle_started_at"`
 	CycleUpperID       pgtype.UUID        `json:"cycle_upper_id"`
+	CycleStableAt      pgtype.Timestamptz `json:"cycle_stable_at"`
 	Scanner            string             `json:"scanner"`
 	ExpectedGeneration int64              `json:"expected_generation"`
 }
@@ -3767,6 +3841,7 @@ func (q *Queries) SaveLabrastroMessageScanCursor(ctx context.Context, arg SaveLa
 		arg.CursorID,
 		arg.CycleStartedAt,
 		arg.CycleUpperID,
+		arg.CycleStableAt,
 		arg.Scanner,
 		arg.ExpectedGeneration,
 	)
@@ -3779,6 +3854,7 @@ func (q *Queries) SaveLabrastroMessageScanCursor(ctx context.Context, arg SaveLa
 		&i.Generation,
 		&i.UpdatedAt,
 		&i.CycleUpperID,
+		&i.CycleStableAt,
 	)
 	return i, err
 }

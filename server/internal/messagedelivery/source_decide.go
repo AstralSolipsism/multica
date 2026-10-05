@@ -28,9 +28,11 @@ import (
 // pairs.
 func (s *Service) scanInboxSourceDecisions(ctx context.Context, cur scanCursor) (scanCursor, error) {
 	rows, err := s.Queries.ListLabrastroMessageInboxSourceCandidates(ctx, db.ListLabrastroMessageInboxSourceCandidatesParams{
-		AfterID: cur.id,
-		UpperID: cur.upperID,
-		Limit:   scanPageLimit,
+		ScanFrom:    pgtype.Timestamptz{Time: cur.ts.Add(-sourceScanOverlap), Valid: true},
+		ScanThrough: pgtype.Timestamptz{Time: cur.cycleStarted, Valid: true},
+		AfterID:     cur.id,
+		UpperID:     cur.upperID,
+		Limit:       scanPageLimit,
 	})
 	if err != nil {
 		return cur, err
@@ -171,9 +173,11 @@ func containsString(list []string, v string) bool {
 // judged here so a scoped-out pair is recorded, not rescanned forever.
 func (s *Service) scanActivitySourceDecisions(ctx context.Context, cur scanCursor) (scanCursor, error) {
 	rows, err := s.Queries.ListLabrastroMessageActivitySourceCandidates(ctx, db.ListLabrastroMessageActivitySourceCandidatesParams{
-		AfterID: cur.id,
-		UpperID: cur.upperID,
-		Limit:   scanPageLimit,
+		ScanFrom:    pgtype.Timestamptz{Time: cur.ts.Add(-sourceScanOverlap), Valid: true},
+		ScanThrough: pgtype.Timestamptz{Time: cur.cycleStarted, Valid: true},
+		AfterID:     cur.id,
+		UpperID:     cur.upperID,
+		Limit:       scanPageLimit,
 	})
 	if err != nil {
 		return cur, err
@@ -319,9 +323,11 @@ func actorName(actorType string, memberName, agentName pgtype.Text) string {
 // Only plain comments are sources (definitional SQL, see the query).
 func (s *Service) scanCommentSourceDecisions(ctx context.Context, cur scanCursor) (scanCursor, error) {
 	rows, err := s.Queries.ListLabrastroMessageCommentSourceCandidates(ctx, db.ListLabrastroMessageCommentSourceCandidatesParams{
-		AfterID: cur.id,
-		UpperID: cur.upperID,
-		Limit:   scanPageLimit,
+		ScanFrom:    pgtype.Timestamptz{Time: cur.ts.Add(-sourceScanOverlap), Valid: true},
+		ScanThrough: pgtype.Timestamptz{Time: cur.cycleStarted, Valid: true},
+		AfterID:     cur.id,
+		UpperID:     cur.upperID,
+		Limit:       scanPageLimit,
 	})
 	if err != nil {
 		return cur, err
