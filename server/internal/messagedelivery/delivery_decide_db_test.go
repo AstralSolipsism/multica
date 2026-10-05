@@ -230,8 +230,14 @@ func TestWorker_ShardResumeAfterTransientFailure(t *testing.T) {
 	}
 	// Shard 0 already carried a receipt, so the retry must NOT re-send
 	// it; shard 1 was transiently refused and is sent exactly twice.
+	var slug string
+	testFx.QueryRow(t, `SELECT slug FROM workspace WHERE id=$1`, testWSID).Scan(&slug)
+	wantSource := svc.AppURL + "/" + slug + "/autopilots/" + fx.autopilot
 	sendsByShard := map[int]int{}
 	for _, req := range sender.requests() {
+		if req.Message.Source != SourceLink(wantSource) {
+			t.Fatalf("run_only shard %d source = %q, want %q", req.ShardIndex, req.Message.Source, wantSource)
+		}
 		sendsByShard[req.ShardIndex]++
 	}
 	if sendsByShard[0] != 1 {
@@ -652,6 +658,12 @@ func TestTestSend_TargetAddressing(t *testing.T) {
 	req := reqs[0]
 	if req.Target.ChatID != "oc_topic" || req.Target.MessageID != "om_anchor" {
 		t.Fatalf("topic target = %+v", req.Target)
+	}
+	var slug string
+	testFx.QueryRow(t, `SELECT slug FROM workspace WHERE id=$1`, testWSID).Scan(&slug)
+	wantSource := svc.AppURL + "/" + slug + "/autopilots/" + fx.autopilot
+	if req.Message.Source != SourceLink(wantSource) {
+		t.Fatalf("test send source = %q, want %q", req.Message.Source, wantSource)
 	}
 	if req.SendUUID == "" {
 		t.Fatal("test send must carry an idempotency uuid")

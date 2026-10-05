@@ -280,9 +280,9 @@ func (t targetSnapshot) TargetKeyFor() string {
 
 // contentSnapshot is the JSON shape frozen into
 // labrastro_message_delivery.content_snapshot at decision time. Text is the
-// fully rendered message; shards are a pure function of it, so a retry can
-// never re-split the body differently. The OL-27 fields below stay empty
-// for automation-run deliveries.
+// literal body; Link is the separately rendered source URL. Body shards are a
+// pure function of Text, so a retry cannot re-split them differently. The OL-27
+// fields below stay empty for automation-run deliveries.
 type contentSnapshot struct {
 	Text      string `json:"text"`
 	Summary   string `json:"summary"`
