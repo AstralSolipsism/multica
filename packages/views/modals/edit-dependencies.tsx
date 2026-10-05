@@ -123,6 +123,7 @@ function EditDependenciesBody({
   onClose: () => void;
 }) {
   const { t } = useT("modals");
+  const { t: tDependencies } = useT("dependencies");
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
@@ -254,7 +255,7 @@ function EditDependenciesBody({
         blockedBy: [...form.selected.keys()].sort(),
         expectedDependencyVersion: form.version,
       });
-      toast.success(t(($) => $.edit_dependencies.toast_saved));
+      toast.success(tDependencies(($) => $.edit_dependencies.toast_saved));
       onClose();
     } catch (err) {
       const details = dependencyErrorDetails(err);
@@ -319,13 +320,13 @@ function EditDependenciesBody({
   return (
     <DialogContent className="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-lg">
       <DialogHeader className="shrink-0 px-4 pt-4 pb-3">
-        <DialogTitle>{t(($) => $.edit_dependencies.title)}</DialogTitle>
+        <DialogTitle>{tDependencies(($) => $.edit_dependencies.title)}</DialogTitle>
         <DialogDescription>
           {issue
-            ? t(($) => $.edit_dependencies.description_for, {
+            ? tDependencies(($) => $.edit_dependencies.description_for, {
                 identifier: issue.identifier,
               })
-            : t(($) => $.edit_dependencies.description)}
+            : tDependencies(($) => $.edit_dependencies.description)}
         </DialogDescription>
       </DialogHeader>
 
@@ -333,12 +334,12 @@ function EditDependenciesBody({
         {notice && (
           <Alert variant={notice.kind === "conflict" ? "default" : "destructive"}>
             <AlertDescription>
-              {notice.kind === "conflict" && t(($) => $.edit_dependencies.conflict_notice)}
-              {notice.kind === "structure" && t(($) => $.edit_dependencies.error_structure)}
-              {notice.kind === "permission" && t(($) => $.edit_dependencies.error_permission)}
-              {notice.kind === "unverified" && t(($) => $.edit_dependencies.error_unverified)}
+              {notice.kind === "conflict" && tDependencies(($) => $.edit_dependencies.conflict_notice)}
+              {notice.kind === "structure" && tDependencies(($) => $.edit_dependencies.error_structure)}
+              {notice.kind === "permission" && tDependencies(($) => $.edit_dependencies.error_permission)}
+              {notice.kind === "unverified" && tDependencies(($) => $.edit_dependencies.error_unverified)}
               {notice.kind === "generic" &&
-                (notice.message ?? t(($) => $.edit_dependencies.error_generic))}
+                (notice.message ?? tDependencies(($) => $.edit_dependencies.error_generic))}
             </AlertDescription>
           </Alert>
         )}
@@ -353,8 +354,8 @@ function EditDependenciesBody({
           <div className="flex flex-col items-center gap-2 py-6 text-center">
             <p className="text-body text-muted-foreground">
               {malformed
-                ? t(($) => $.edit_dependencies.unknown_state)
-                : t(($) => $.edit_dependencies.load_error)}
+                ? tDependencies(($) => $.edit_dependencies.unknown_state)
+                : tDependencies(($) => $.edit_dependencies.load_error)}
             </p>
             <Button
               type="button"
@@ -362,7 +363,7 @@ function EditDependenciesBody({
               size="sm"
               onClick={() => void depsQuery.refetch()}
             >
-              {t(($) => $.edit_dependencies.retry)}
+              {tDependencies(($) => $.edit_dependencies.retry)}
             </Button>
           </div>
         )}
@@ -371,11 +372,11 @@ function EditDependenciesBody({
           <>
             <div>
               <div className="mb-1 px-2 text-micro font-medium text-muted-foreground">
-                {t(($) => $.edit_dependencies.direct_section)}
+                {tDependencies(($) => $.edit_dependencies.direct_section)}
               </div>
               {selectedItems.length === 0 ? (
                 <p className="px-2 py-1.5 text-caption text-muted-foreground">
-                  {t(($) => $.edit_dependencies.empty_direct)}
+                  {tDependencies(($) => $.edit_dependencies.empty_direct)}
                 </p>
               ) : (
                 <PrerequisiteList
@@ -391,7 +392,7 @@ function EditDependenciesBody({
             {(inherited.length > 0 || view.hasRestrictedBlockers) && (
               <div>
                 <div className="mb-1 px-2 text-micro font-medium text-muted-foreground">
-                  {t(($) => $.edit_dependencies.inherited_section)}
+                  {tDependencies(($) => $.edit_dependencies.inherited_section)}
                 </div>
                 {inherited.length > 0 && (
                   <PrerequisiteList
@@ -404,11 +405,11 @@ function EditDependenciesBody({
                 )}
                 {view.hasRestrictedBlockers && (
                   <p className="px-2 py-1.5 text-caption text-muted-foreground">
-                    {t(($) => $.edit_dependencies.restricted_note)}
+                    {tDependencies(($) => $.edit_dependencies.restricted_note)}
                   </p>
                 )}
                 <p className="px-2 py-1 text-micro text-muted-foreground">
-                  {t(($) => $.edit_dependencies.inherited_hint)}
+                  {tDependencies(($) => $.edit_dependencies.inherited_hint)}
                 </p>
               </div>
             )}
@@ -459,17 +460,17 @@ function EditDependenciesBody({
                             <span className="truncate">{result.title}</span>
                             {isSelf && (
                               <span className="ml-auto shrink-0 text-micro text-muted-foreground">
-                                {t(($) => $.edit_dependencies.self_badge)}
+                                {tDependencies(($) => $.edit_dependencies.self_badge)}
                               </span>
                             )}
                             {isSelected && (
                               <span className="ml-auto shrink-0 text-micro text-muted-foreground">
-                                {t(($) => $.edit_dependencies.added_badge)}
+                                {tDependencies(($) => $.edit_dependencies.added_badge)}
                               </span>
                             )}
                             {isInherited && !isSelected && (
                               <span className="ml-auto shrink-0 text-micro text-muted-foreground">
-                                {t(($) => $.edit_dependencies.inherited_badge)}
+                                {tDependencies(($) => $.edit_dependencies.inherited_badge)}
                               </span>
                             )}
                           </CommandItem>
@@ -486,10 +487,10 @@ function EditDependenciesBody({
 
       <DialogFooter className="mx-0 mb-0 shrink-0 border-t px-4 py-3">
         <Button type="button" variant="outline" disabled={saving} onClick={onClose}>
-          {t(($) => $.edit_dependencies.cancel)}
+          {tDependencies(($) => $.edit_dependencies.cancel)}
         </Button>
         <Button type="button" disabled={!canSave} onClick={() => void save()}>
-          {saving ? <Spinner className="size-4" /> : t(($) => $.edit_dependencies.save)}
+          {saving ? <Spinner className="size-4" /> : tDependencies(($) => $.edit_dependencies.save)}
         </Button>
       </DialogFooter>
     </DialogContent>

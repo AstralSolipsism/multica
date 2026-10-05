@@ -150,11 +150,7 @@
     "toast_ref_update_failed": "Could not update the branch",
     "ref_error_commit": "That's a commit, not a branch. Tasks deliver back to the branch they start from — for a one-off revision, pass --ref to multica repo checkout.",
     "ref_default_label": "Default branch",
-    "ref_default_tooltip": "No branch set — tasks use whatever the repository's default branch is at the time.",
-    "local_rename_tooltip": "Rename",
-    "local_rename_label": "Local directory label",
-    "toast_local_renamed": "Renamed",
-    "toast_local_rename_failed": "Failed to rename"
+    "ref_default_tooltip": "No branch set — tasks use whatever the repository's default branch is at the time."
   },
   "delete_dialog": {
     "title": "Delete project",

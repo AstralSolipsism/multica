@@ -26,7 +26,7 @@ const MAX_CONVERSATION_CHATS = 50;
 export function LarkConversationForm({ workspaceId, installation, disabled }: {
   workspaceId: string; installation: LarkInstallation; disabled: boolean;
 }) {
-  const { t } = useT("settings");
+  const { t } = useT("lark");
   // Two representations of the same group set: the picker edits the array;
   // the legacy textarea (fallback when discovery is unsupported) edits the
   // text. Both are kept in sync so save always derives from the array. The
@@ -151,10 +151,10 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
     } catch { /* The mutation error stays visible with the draft intact. */ }
   }
   return <details className="mt-3 max-w-xl space-y-3 text-caption">
-    <summary className="cursor-pointer font-medium">{t($ => $.lark.conversation_title)}</summary>
-    <p className="text-muted-foreground">{t($ => $.lark.conversation_description)}</p>
+    <summary className="cursor-pointer font-medium">{t($ => $.conversation_title)}</summary>
+    <p className="text-muted-foreground">{t($ => $.conversation_description)}</p>
     <div className="block space-y-1">
-      <span>{t($ => $.lark.conversation_groups_label)}</span>
+      <span>{t($ => $.conversation_groups_label)}</span>
       <LarkChatMultiSelect
         wsId={workspaceId}
         installationId={installation.id}
@@ -169,14 +169,14 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
             onChange={e => applyGroupsText(e.target.value)}
             rows={2}
             disabled={mutation.isPending}
-            aria-label={t($ => $.lark.conversation_groups)}
-            placeholder={t($ => $.lark.conversation_groups)}
+            aria-label={t($ => $.conversation_groups)}
+            placeholder={t($ => $.conversation_groups)}
           />
         }
       />
     </div>
     <div className="block space-y-1">
-      <span>{t($ => $.lark.conversation_directs_label)}</span>
+      <span>{t($ => $.conversation_directs_label)}</span>
       <LarkPrivateChatSelect
         wsId={workspaceId}
         installationId={installation.id}
@@ -192,24 +192,24 @@ export function LarkConversationForm({ workspaceId, installation, disabled }: {
             onChange={e => applyDirectsText(e.target.value)}
             rows={2}
             disabled={mutation.isPending}
-            aria-label={t($ => $.lark.conversation_directs)}
-            placeholder={t($ => $.lark.conversation_directs)}
+            aria-label={t($ => $.conversation_directs)}
+            placeholder={t($ => $.conversation_directs)}
           />
         }
       />
     </div>
-    <p className="text-muted-foreground">{t($ => $.lark.conversation_scope)}</p>
+    <p className="text-muted-foreground">{t($ => $.conversation_scope)}</p>
     {overLimit && (
       <p role="alert" className="text-warning">
-        {t($ => $.lark.conversation_over_limit, { max: MAX_CONVERSATION_CHATS })}
+        {t($ => $.conversation_over_limit, { max: MAX_CONVERSATION_CHATS })}
       </p>
     )}
     <div className="flex flex-wrap gap-2">
-      <Button size="sm" disabled={blocked || overLimit || (groups.length === 0 && directs.length === 0)} onClick={() => void save(false)}>{t($ => $.lark.conversation_save)}</Button>
-      <Button size="sm" variant="outline" disabled={blocked} onClick={() => void save(true)}>{t($ => $.lark.conversation_revoke)}</Button>
+      <Button size="sm" disabled={blocked || overLimit || (groups.length === 0 && directs.length === 0)} onClick={() => void save(false)}>{t($ => $.conversation_save)}</Button>
+      <Button size="sm" variant="outline" disabled={blocked} onClick={() => void save(true)}>{t($ => $.conversation_revoke)}</Button>
     </div>
-    {(disabled || unreadable) && <p role="status">{t($ => $.lark.conversation_unavailable)}</p>}
+    {(disabled || unreadable) && <p role="status">{t($ => $.conversation_unavailable)}</p>}
     {mutation.isError && <p role="alert">{mutation.error.message}</p>}
-    {saved && <p role="status">{t($ => $.lark.conversation_saved)}</p>}
+    {saved && <p role="status">{t($ => $.conversation_saved)}</p>}
   </details>;
 }

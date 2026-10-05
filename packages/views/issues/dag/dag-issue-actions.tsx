@@ -16,7 +16,7 @@ export function DagIssueActions({
   issueId: string;
   onOpenIssue: (issueId: string) => void;
 }) {
-  const { t } = useT("issues");
+  const { t } = useT("dag");
   const wsId = useWorkspaceId();
   const detail = useQuery(issueDetailOptions(wsId, issueId));
   const issue = detail.isError ? null : (detail.data ?? null);
@@ -25,10 +25,10 @@ export function DagIssueActions({
   return (
     <>
       <Button size="sm" variant="ghost" onClick={() => onOpenIssue(issueId)}>
-        {t(($) => $.dag.open_detail)}
+        {t(($) => $.open_detail)}
       </Button>
       <Button size="sm" variant="ghost" disabled={!issue} onClick={actions.openEditDependencies}>
-        {t(($) => $.dag.edit_dependencies)}
+        {t(($) => $.edit_dependencies)}
       </Button>
       {issue ? (
         <AssigneePicker
@@ -36,16 +36,16 @@ export function DagIssueActions({
           assigneeId={issue.assignee_id}
           onUpdate={actions.updateField}
           triggerRender={<Button size="sm" variant="ghost" />}
-          trigger={t(($) => $.dag.assign_issue)}
+          trigger={t(($) => $.assign_issue)}
         />
       ) : (
         <Button size="sm" variant="ghost" disabled>
-          {t(($) => $.dag.assign_issue)}
+          {t(($) => $.assign_issue)}
         </Button>
       )}
       {detail.isError && (
         <Button size="sm" variant="ghost" onClick={() => void detail.refetch()}>
-          {t(($) => $.dag.error_retry)}
+          {t(($) => $.error_retry)}
         </Button>
       )}
     </>

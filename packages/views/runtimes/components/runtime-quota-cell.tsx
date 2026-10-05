@@ -21,25 +21,25 @@ import {
 import type { AgentRuntime } from "@multica/core/types";
 import { useT } from "../../i18n";
 
-type RuntimesT = ReturnType<typeof useT<"runtimes">>["t"];
+type QuotaT = ReturnType<typeof useT<"quota">>["t"];
 
 // A window's short translated label ("5h" / "wk"): maps the core
 // descriptor onto this namespace's strings. Null when the window carries no
 // duration — the caller falls back to the window's own name.
 export function formatQuotaWindowLabel(
   windowMinutes: number | null,
-  t: RuntimesT,
+  t: QuotaT,
 ): string | null {
   const descriptor = quotaWindowLabel(windowMinutes);
   if (descriptor == null) return null;
-  if (descriptor.unit === "weekly") return t(($) => $.quota.window_weekly);
+  if (descriptor.unit === "weekly") return t(($) => $.window_weekly);
   if (descriptor.unit === "days") {
-    return t(($) => $.quota.window_short_days, { value: descriptor.value });
+    return t(($) => $.window_short_days, { value: descriptor.value });
   }
   if (descriptor.unit === "hours") {
-    return t(($) => $.quota.window_short_hours, { value: descriptor.value });
+    return t(($) => $.window_short_hours, { value: descriptor.value });
   }
-  return t(($) => $.quota.window_short_minutes, { value: descriptor.value });
+  return t(($) => $.window_short_minutes, { value: descriptor.value });
 }
 
 // Tone → semantic classes for the quota bars (a small fill meter + a
@@ -101,10 +101,10 @@ export interface QuotaWindowView {
 // The translated label for a quota pool ("Gemini" / "Claude + GPT"). Pools
 // the i18n layer has no translation for fall back to the raw group key so a
 // future third pool stays readable instead of disappearing.
-export function quotaGroupLabel(group: string, t: RuntimesT): string {
-  if (group === "gemini") return t(($) => $.quota.group_gemini);
-  if (group === "claude_gpt") return t(($) => $.quota.group_claude_gpt);
-  if (group === "claude_models") return t(($) => $.quota.group_claude_models);
+export function quotaGroupLabel(group: string, t: QuotaT): string {
+  if (group === "gemini") return t(($) => $.group_gemini);
+  if (group === "claude_gpt") return t(($) => $.group_claude_gpt);
+  if (group === "claude_models") return t(($) => $.group_claude_models);
   return group;
 }
 
@@ -196,13 +196,13 @@ export function RuntimeQuotaCell({
   runtime: AgentRuntime;
   now: number;
 }) {
-  const { t } = useT("runtimes");
+  const { t } = useT("quota");
   const view = buildRuntimeQuotaView(runtime, now);
 
   if (view.kind === "not_reported") {
     return (
       <span className="text-caption text-faint-foreground">
-        {t(($) => $.quota.not_reported)}
+        {t(($) => $.not_reported)}
       </span>
     );
   }
@@ -210,10 +210,10 @@ export function RuntimeQuotaCell({
     return (
       <div className="flex w-full flex-col leading-tight">
         <span className="text-caption text-faint-foreground">
-          {t(($) => $.quota.stale)}
+          {t(($) => $.stale)}
         </span>
         <span className="text-micro tabular-nums text-faint-foreground">
-          {t(($) => $.quota.stale_hint, {
+          {t(($) => $.stale_hint, {
             time: formatCompactDuration(view.ageMs),
           })}
         </span>
@@ -224,11 +224,11 @@ export function RuntimeQuotaCell({
     return (
       <div className="flex w-full flex-col leading-tight">
         <span className="text-caption text-destructive">
-          {t(($) => $.quota.exhausted)}
+          {t(($) => $.exhausted)}
         </span>
         {view.resetInMs != null && (
           <span className="text-micro tabular-nums text-faint-foreground">
-            {t(($) => $.quota.resets_in, {
+            {t(($) => $.resets_in, {
               time: view.resetsAt != null ? formatResetDatetime(view.resetsAt) : formatCompactDuration(view.resetInMs),
             })}
           </span>
@@ -255,7 +255,7 @@ export function RuntimeQuotaCell({
       ))}
       {view.resetInMs != null && (
         <span className="text-micro tabular-nums text-faint-foreground">
-          {t(($) => $.quota.resets_in, {
+          {t(($) => $.resets_in, {
             time: view.resetsAt != null ? formatResetDatetime(view.resetsAt) : formatCompactDuration(view.resetInMs),
           })}
         </span>
@@ -279,7 +279,8 @@ function formatResetDatetime(ms: number): string {
 }
 
 function QuotaWindowRow({ window }: { window: QuotaWindowView }) {
-  const { t } = useT("runtimes");
+  const { t } = useT("quota");
+  const { t: tForkUi } = useT("fork-ui");
   let label = formatQuotaWindowLabel(window.windowMinutes, t) ?? window.name;
   // In grouped rendering (antigravity pools), the group label above already
   // identifies the pool. Skip the row label when it would duplicate the
@@ -296,7 +297,7 @@ function QuotaWindowRow({ window }: { window: QuotaWindowView }) {
       )}
       {window.remainingPercent == null ? (
         <span className="text-micro text-faint-foreground">
-          {t(($) => $.machine.metrics.unavailable)}
+          {tForkUi(($) => $.runtimes.machine.metrics.unavailable)}
         </span>
       ) : (
         <>
@@ -327,26 +328,26 @@ export function RuntimeQuotaCard({
   runtime: AgentRuntime;
   now: number;
 }) {
-  const { t } = useT("runtimes");
+  const { t } = useT("quota");
   const view = buildRuntimeQuotaView(runtime, now);
   return (
     <section className="rounded-lg border bg-card">
       <h3 className="border-b px-4 py-2.5 text-caption font-semibold">
-        {t(($) => $.quota.title)}
+        {t(($) => $.title)}
       </h3>
       <div className="space-y-3 p-4">
         {view.kind === "not_reported" && (
           <p className="text-caption text-faint-foreground">
-            {t(($) => $.quota.not_reported)}
+            {t(($) => $.not_reported)}
           </p>
         )}
         {view.kind === "stale" && (
           <div>
             <p className="text-caption text-faint-foreground">
-              {t(($) => $.quota.stale)}
+              {t(($) => $.stale)}
             </p>
             <p className="mt-1 text-micro tabular-nums text-faint-foreground">
-              {t(($) => $.quota.stale_hint, {
+              {t(($) => $.stale_hint, {
                 time: formatCompactDuration(view.ageMs),
               })}
             </p>
@@ -355,11 +356,11 @@ export function RuntimeQuotaCard({
         {view.kind === "limited" && (
           <div>
             <p className="text-caption font-medium text-destructive">
-              {t(($) => $.quota.exhausted)}
+              {t(($) => $.exhausted)}
             </p>
             {view.resetInMs != null && (
               <p className="mt-1 text-micro tabular-nums text-muted-foreground">
-                {t(($) => $.quota.resets_in, {
+                {t(($) => $.resets_in, {
                   time: view.resetsAt != null ? formatResetDatetime(view.resetsAt) : formatCompactDuration(view.resetInMs),
                 })}
               </p>
@@ -389,7 +390,7 @@ export function RuntimeQuotaCard({
               </div>
             ))}
             <p className="text-micro tabular-nums text-faint-foreground">
-              {t(($) => $.quota.observed_ago, {
+              {t(($) => $.observed_ago, {
                 time: formatCompactDuration(view.observedAgeMs),
               })}
             </p>
@@ -401,7 +402,8 @@ export function RuntimeQuotaCard({
 }
 
 function QuotaCardWindow({ window }: { window: QuotaWindowView }) {
-  const { t } = useT("runtimes");
+  const { t } = useT("quota");
+  const { t: tForkUi } = useT("fork-ui");
   const label = formatQuotaWindowLabel(window.windowMinutes, t) ?? window.name;
   return (
     <div className="space-y-1">
@@ -409,13 +411,13 @@ function QuotaCardWindow({ window }: { window: QuotaWindowView }) {
         <span className="text-caption text-muted-foreground">{label}</span>
         {window.remainingPercent == null ? (
           <span className="text-caption text-faint-foreground">
-            {t(($) => $.machine.metrics.unavailable)}
+            {tForkUi(($) => $.runtimes.machine.metrics.unavailable)}
           </span>
         ) : (
           <span
             className={`text-caption tabular-nums ${TONE_TEXT_CLASS[window.tone]}`}
           >
-            {t(($) => $.quota.remaining, {
+            {t(($) => $.remaining, {
               percent: Math.round(window.remainingPercent),
             })}
           </span>
@@ -430,7 +432,7 @@ function QuotaCardWindow({ window }: { window: QuotaWindowView }) {
       )}
       {window.resetInMs != null && window.resetInMs > 0 && (
         <p className="text-micro tabular-nums text-faint-foreground">
-          {t(($) => $.quota.resets_in, {
+          {t(($) => $.resets_in, {
             time: formatCompactDuration(window.resetInMs),
           })}
         </p>

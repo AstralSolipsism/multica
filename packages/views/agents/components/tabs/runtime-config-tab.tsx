@@ -86,6 +86,7 @@ export function RuntimeConfigTab({
   onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { t } = useT("agents");
+  const { t: tAgentConfig } = useT("agent-config");
 
   const original = useMemo<OpenclawRuntimeConfig>(
     () => parseOpenclawRuntimeConfig(agent.runtime_config),
@@ -187,7 +188,7 @@ export function RuntimeConfigTab({
           {t(($) => $.tab_body.runtime_config.gateway_legend)}
         </legend>
         <p className="text-caption text-muted-foreground">
-          {t(($) => $.tab_body.runtime_config.gateway_hint)}
+          {tAgentConfig(($) => $.tab_body.runtime_config.gateway_hint)}
         </p>
 
         <div className="space-y-1.5">
@@ -206,7 +207,7 @@ export function RuntimeConfigTab({
             id="openclaw-gw-host-hint"
             className="text-caption text-muted-foreground"
           >
-            {t(($) => $.tab_body.runtime_config.host_hint)}
+            {tAgentConfig(($) => $.tab_body.runtime_config.host_hint)}
           </p>
         </div>
 
@@ -265,8 +266,8 @@ export function RuntimeConfigTab({
                 saved token blank KEEPS it, while with none blank INHERITS.
                 Say which one applies instead of promising both. */}
             {state.tokenWasMasked
-              ? t(($) => $.tab_body.runtime_config.token_hint_saved)
-              : t(($) => $.tab_body.runtime_config.token_hint)}
+              ? tAgentConfig(($) => $.tab_body.runtime_config.token_hint_saved)
+              : tAgentConfig(($) => $.tab_body.runtime_config.token_hint)}
           </p>
         </div>
 

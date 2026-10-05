@@ -672,6 +672,7 @@ function ActivityBlock({
   locale: string;
 }) {
   const wakeupText = useWakeupText();
+  const { t: tLark } = useT("lark");
   if (!expanded) {
     const count = entries.length;
     return (
@@ -785,7 +786,7 @@ function ActivityBlock({
                   entry={entry}
                   text={
                     isWakeup
-                      ? formatWakeupActivity(entry, t, wakeupText, getActorName)
+                      ? formatWakeupActivity(entry, t, tLark, wakeupText, getActorName)
                       : formatActivity(entry, t, locale, getActorName, resolveStatusLabel)
                   }
                 />
@@ -1305,6 +1306,7 @@ export function IssueDetailSkeleton({
 export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = true, layoutId = "multica_issue_detail_layout", highlightCommentId, highlightRequestToken, leadingAction, variant = "page", trailingActions }: IssueDetailProps) {
   const isPeek = variant === "peek";
   const { t } = useT("issues");
+  const { t: tForkUi } = useT("fork-ui");
   const locale = useLocale();
   const timeAgo = useTimeAgo();
   const id = issueId;
@@ -3227,7 +3229,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                   variant="ghost"
                   size="icon-sm"
                   className="text-muted-foreground"
-                  aria-label={t(($) => $.detail.more_actions)}
+                  aria-label={tForkUi(($) => $.issues.detail.more_actions)}
                 >
                   <MoreHorizontal />
                 </Button>

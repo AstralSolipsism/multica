@@ -65,7 +65,7 @@ export function GlmQuotaCard({
   data: GlmQuotaStatus | undefined;
   now: number;
 }) {
-  const { t } = useT("runtimes");
+  const { t } = useT("quota");
   const timeAgo = useTimeAgo();
 
   // Unconfigured (no server key) hides the card entirely — the surface is
@@ -79,7 +79,7 @@ export function GlmQuotaCard({
     <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border bg-card px-3 py-2">
       <span className="flex items-center gap-2">
         <img src={staticAssetSrc(zhipuLogo)} alt="Zhipu" className="h-4 w-4" />
-        <span className="text-sm font-medium">{t(($) => $.quota.glm_title)}</span>
+        <span className="text-sm font-medium">{t(($) => $.glm_title)}</span>
         {data.quota.level ? (
           <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
             {data.quota.level}
@@ -92,15 +92,15 @@ export function GlmQuotaCard({
           const tone = quotaTone(remaining, "ok");
           const label =
             w.type === "TOKENS_LIMIT"
-              ? t(($) => $.quota.glm_window_tokens)
+              ? t(($) => $.glm_window_tokens)
               : w.type === "TIME_LIMIT"
-                ? t(($) => $.quota.glm_window_time)
+                ? t(($) => $.glm_window_time)
                 : w.type === "CREDIT_LIMIT"
-                  ? t(($) => $.quota.glm_window_credit)
-                  : t(($) => $.quota.glm_window_fallback, { type: w.type });
+                  ? t(($) => $.glm_window_credit)
+                  : t(($) => $.glm_window_fallback, { type: w.type });
           const reset =
             w.resets_at && w.resets_at > now
-              ? t(($) => $.quota.resets_in, {
+              ? t(($) => $.resets_in, {
                   time: glmFormatResetIn(w.resets_at - now),
                 })
               : null;
@@ -113,9 +113,9 @@ export function GlmQuotaCard({
                   >
                     <span className="text-muted-foreground">{label}</span>
                     {remaining != null ? (
-                      <span>{t(($) => $.quota.remaining, { percent: remaining })}</span>
+                      <span>{t(($) => $.remaining, { percent: remaining })}</span>
                     ) : (
-                      <span>{t(($) => $.quota.glm_unknown)}</span>
+                      <span>{t(($) => $.glm_unknown)}</span>
                     )}
                   </span>
                 }
@@ -129,10 +129,10 @@ export function GlmQuotaCard({
                   ) : null}
                   {reset ? <div>{reset}</div> : null}
                   <div className="text-muted-foreground">
-                    {t(($) => $.quota.observed_ago, {
+                    {t(($) => $.observed_ago, {
                       time: timeAgo(new Date(data.quota!.observed_at * 1000).toISOString()),
                     })}
-                    {data.stale ? ` · ${t(($) => $.quota.stale)}` : ""}
+                    {data.stale ? ` · ${t(($) => $.stale)}` : ""}
                   </div>
                 </div>
               </TooltipContent>

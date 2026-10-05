@@ -190,11 +190,7 @@
     "edit_description_title": "编辑描述",
     "description_placeholder": "这个智能体做什么？",
     "save": "保存",
-    "cancel": "取消",
-    "section_profile_hint": "管理该智能体在工作区内的展示方式。",
-    "section_execution_hint": "选择运行时、模型、思考强度、速度和并行运行上限。",
-    "section_access_hint": "控制谁可以运行该智能体并使用它已连接的能力。",
-    "avatar_hint": "显示在任务分配、动态和聊天中。"
+    "cancel": "取消"
   },
   "overview": {
     "agent_context": "智能体",
@@ -309,10 +305,7 @@
       "behavior": "行为与能力",
       "execution": "执行配置",
       "execution_hint": "未指定的选项沿用运行时默认值。",
-      "access": "访问权限",
-      "identity_hint": "为智能体设置容易识别的名称和简洁的用途。",
-      "behavior_hint": "定义它的工作方式，并添加可使用的工作区 skill。",
-      "access_hint": "控制谁可以运行此智能体，创建后仍可修改。"
+      "access": "访问权限"
     },
     "thinking_label": "思考",
     "speed_label": "速度",
@@ -352,8 +345,7 @@
       "prompt_assistant": "帮助团队规划和撰写项目",
       "thinking": "正在更新草稿…",
       "placeholder": "描述你需要的智能体…",
-      "send": "发送消息",
-      "chat_hint": "通过对话梳理需求，并持续完善右侧配置。"
+      "send": "发送消息"
     },
     "live_draft": "智能体配置",
     "live_draft_hint": "可直接修改草稿。",
@@ -374,8 +366,7 @@
       "discard_cancel": "继续编辑",
       "banner": "您有 {{count}} 条未完成的创建",
       "pick_hint": "选一条继续。"
-    },
-    "choose_description": "从空白配置开始，或者直接描述需求，通过对话完成创建。"
+    }
   },
   "create_dialog": {
     "title_create": "创建智能体",
@@ -439,8 +430,7 @@
       "remove_aria": "移除头像",
       "select_image_toast": "请选择图片文件。",
       "upload_failed_toast": "头像上传失败"
-    },
-    "description_create": "为工作区创建一个新的 AI 智能体。"
+    }
   },
   "conversation_starters": {
     "label": "对话开场建议",
@@ -519,8 +509,7 @@
       "edit_aria": "编辑参数 {{index}}",
       "remove_aria": "移除参数 {{index}}",
       "saved_toast": "已保存自定义参数",
-      "save_failed_toast": "保存自定义参数失败",
-      "empty_hint": "添加第一个 token，开始构建启动命令。"
+      "save_failed_toast": "保存自定义参数失败"
     },
     "mcp_config": {
       "managed_title": "由 Multica 管理",
@@ -620,22 +609,7 @@
       "save_failed_toast": "无法保存 MCP 配置",
       "redacted_title": "已配置，但当前不可见",
       "redacted_hint": "只有智能体 owner 或工作区 admin 可以查看此配置。",
-      "dialog_json_help": "以 JSON 编辑完整的服务器配置。",
-      "dialog_description": "选择连接方式并填写配置信息。如需编辑完整配置，可切换到 JSON。",
-      "dialog_command_hint": "启动此服务的可执行文件，取自该服务的安装文档，例如 npx、uvx 或绝对路径。参数请填在下方，不要写在这里。",
-      "dialog_url_hint": "由服务发布方或部署管理员提供的 MCP 端点，网站首页地址不能用在这里。",
-      "dialog_snippet_toggle": "粘贴配置片段",
-      "dialog_snippet_hint": "粘贴服务安装文档给出的内容：{\"mcpServers\": {...}} 配置块、单个服务配置对象、启动命令行或端点 URL。填入操作只会填写下方字段，绝不会执行命令。",
-      "dialog_snippet_aria": "MCP 配置片段",
-      "dialog_snippet_apply": "填入字段",
-      "dialog_snippet_empty": "请先粘贴配置片段。",
-      "dialog_snippet_invalid_json": "JSON 无法解析：{{error}}",
-      "dialog_snippet_not_object": "配置片段必须是 JSON 对象。",
-      "dialog_snippet_no_servers": "片段中的服务列表为空。",
-      "dialog_snippet_multiple": "片段包含多个服务（{{names}}），请一次只粘贴一个。",
-      "dialog_snippet_missing_target": "片段中需要包含 command 或 url。",
-      "dialog_snippet_unbalanced": "命令行中存在未闭合的引号。",
-      "dialog_snippet_unsupported": "命令行包含不支持的 shell 语法（管道、重定向、变量展开或末尾孤立的反斜杠），请只粘贴一条启动命令。"
+      "dialog_json_help": "以 JSON 编辑完整的服务器配置。"
     },
     "composio_mcp": {
       "subtitle": "勾选 toolkit，只在你自己（这个智能体的创建者）直接或通过下级智能体链路触发这个智能体时，才把它挂载为 MCP server。",
@@ -650,8 +624,7 @@
       "redacted_title": "已配置——对你隐藏",
       "redacted_hint": "只有该智能体的创建者才能查看或修改它可使用的应用。",
       "shared_warning": "该智能体已共享。能够运行该智能体的人可以通过它使用你在此启用的 Composio 应用。如果这些应用涉及敏感数据，请改用\"私有\"或缩小访问范围。",
-      "workspace_warning": "公开给工作区：工作区内任何成员都可以通过该智能体使用这些 Composio 应用。",
-      "empty_hint": "你还没连接任何第三方服务。先去授权一个，再回到这里勾选允许。"
+      "workspace_warning": "公开给工作区：工作区内任何成员都可以通过该智能体使用这些 Composio 应用。"
     },
     "runtime_config": {
       "mode_label": "路由模式",
@@ -670,12 +643,7 @@
       "tls_label": "启用 TLS",
       "tls_hint": "用 https:// 代替 http:// 连接",
       "saved_toast": "路由配置已保存",
-      "save_failed_toast": "保存路由配置失败",
-      "intro": "选择 OpenClaw 运行时执行该智能体每一回合的方式。Local 模式让智能体直接在守护进程内运行；Gateway 模式则把每一回合转发到一个 OpenClaw Gateway——适合守护进程宿主只是轻量协调机、希望真正算力落在更强的远端机器上的场景。",
-      "gateway_hint": "仅在 Gateway 模式下生效。所有字段均可留空——留空的字段会继承守护进程宿主的 Gateway 配置（`~/.openclaw/openclaw.json` 的 `gateway` 一节）。已保存的 Token 例外：留空会保留已保存的值。",
-      "host_hint": "Gateway 地址，由部署管理员提供；留空则继承宿主配置。",
-      "token_hint": "由 Gateway 颁发，可向部署管理员索取，或查看 Gateway 宿主的配置；未设置时留空即继承。",
-      "token_hint_saved": "已保存 Token——留空会保留当前值，输入新值即可替换。"
+      "save_failed_toast": "保存路由配置失败"
     },
     "skills": {
       "assigned_title": "分配给智能体",
@@ -717,14 +685,10 @@
       "add_dialog_confirm_default": "添加",
       "add_dialog_confirm_other": "添加 {{count}} 个 skill",
       "add_dialog_cancel": "取消",
-      "add_failed_toast": "添加 skill 失败",
-      "intro": "这里展示该智能体实际拥有的全部 skill。工作区 skill 可在此管理；从 Codex 和 Claude Code 继承的 skill 也可以按智能体单独关闭。",
-      "empty_hint": "添加工作区 skill，把团队知识共享给这个智能体。",
-      "add_dialog_description": "选择一个工作区 skill 分配给该智能体。"
+      "add_failed_toast": "添加 skill 失败"
     },
     "integrations": {
-      "members_note": "只有工作区的所有者和管理员可以管理此连接。你可以在\"设置 → 集成\"中查看已连接的 Bot。",
-      "intro": "把这个智能体连接到外部聊天平台，让大家在自己熟悉的工具里直接与它协作。"
+      "members_note": "只有工作区的所有者和管理员可以管理此连接。你可以在\"设置 → 集成\"中查看已连接的 Bot。"
     },
     "activity": {
       "status": {
@@ -871,6 +835,7 @@
     "status_cancelled": "已取消",
     "status_waiting": "等待中",
     "trigger_initial": "初次运行",
+    "trigger_text": "触发内容",
     "trigger_comment": "评论触发",
     "trigger_autopilot": "自动化",
     "trigger_retry": "重试",
@@ -928,8 +893,6 @@
     "tool_kind_write": "编辑",
     "tool_kind_read": "读取",
     "tool_kind_misc": "其他",
-    "antigravity_live_unavailable": "Antigravity 暂不提供实时执行事件。运行完成后即可查看执行记录。",
-    "trigger_text": "触发内容",
     "trigger_wakeup": "唤醒触发"
   },
   "task_failure": {

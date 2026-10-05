@@ -36,7 +36,7 @@ function AnchorRow({
   onSelect: () => void;
   disabled?: boolean;
 }) {
-  const { t } = useT("settings");
+  const { t } = useT("lark");
   const locale = useLocale();
   const ms = anchorTimeMs(anchor.create_time);
   return (
@@ -79,11 +79,11 @@ function AnchorRow({
       <span className="mt-0.5 block text-micro text-muted-foreground">
         {ms != null
           ? new Date(ms).toLocaleString(locale)
-          : t(($) => $.lark.anchor.time_unknown)}
+          : t(($) => $.anchor.time_unknown)}
         {" · "}
         {/* Only the provider-returned sender id with its type is shown; no
             contact lookup or inferred name exists (contract). */}
-        {t(($) => $.lark.anchor[senderLabelKey(anchor.sender.type)])}
+        {t(($) => $.anchor[senderLabelKey(anchor.sender.type)])}
         {anchor.sender.id ? ` · …${chatIdSuffix(anchor.sender.id)}` : ""}
       </span>
     </div>
@@ -99,12 +99,12 @@ function SelectedAnchorChip({
   onClear: () => void;
   disabled?: boolean;
 }) {
-  const { t } = useT("settings");
+  const { t } = useT("lark");
   return (
     <div className="flex items-center justify-between gap-2 rounded-md border border-primary/40 bg-primary/5 px-3 py-2">
       <span className="min-w-0">
         <span className="block text-micro text-muted-foreground">
-          {t(($) => $.lark.anchor.selected)}
+          {t(($) => $.anchor.selected)}
         </span>
         <span className="line-clamp-2 block text-body font-medium">
           {value.summary.trim() !== "" ? value.summary : value.messageId}
@@ -116,7 +116,7 @@ function SelectedAnchorChip({
         className="shrink-0"
         onClick={onClear}
         disabled={disabled}
-        aria-label={t(($) => $.lark.picker.clear)}
+        aria-label={t(($) => $.picker.clear)}
       >
         <X className="h-3.5 w-3.5" />
       </Button>
@@ -151,7 +151,7 @@ export function LarkAnchorPicker({
   fallback: React.ReactNode;
   enabled?: boolean;
 }) {
-  const { t } = useT("settings");
+  const { t } = useT("lark");
   const caps = useLarkTargetCapabilities(wsId, installationId, { enabled });
   const supported = caps.data?.message_anchor_list_supported === true;
   const list = useLarkMessageAnchors(wsId, installationId, chatId, {
@@ -161,14 +161,14 @@ export function LarkAnchorPicker({
   if (chatId === "") {
     return (
       <p className="text-caption text-muted-foreground">
-        {t(($) => $.lark.anchor.pick_group_first)}
+        {t(($) => $.anchor.pick_group_first)}
       </p>
     );
   }
   if (caps.isPending && enabled) {
     return (
       <p className="py-2 text-caption text-muted-foreground">
-        {t(($) => $.lark.anchor.loading)}
+        {t(($) => $.anchor.loading)}
       </p>
     );
   }
@@ -183,7 +183,7 @@ export function LarkAnchorPicker({
             <SelectedAnchorChip value={value} onClear={() => onChange(null)} disabled={disabled} />
           )}
           <p className="text-caption text-muted-foreground">
-            {t(($) => $.lark.picker.error.forbidden)}
+            {t(($) => $.picker.error.forbidden)}
           </p>
         </div>
       );
@@ -192,8 +192,8 @@ export function LarkAnchorPicker({
       <div className="space-y-2">
         <p className="text-caption text-muted-foreground">
           {caps.isError
-            ? t(($) => $.lark.picker.error[larkDiscoveryErrorKey(caps.error)])
-            : t(($) => $.lark.picker.error.unsupported)}
+            ? t(($) => $.picker.error[larkDiscoveryErrorKey(caps.error)])
+            : t(($) => $.picker.error.unsupported)}
         </p>
         {fallback}
       </div>
@@ -221,7 +221,7 @@ export function LarkAnchorPicker({
       )}
       <div
         role="listbox"
-        aria-label={t(($) => $.lark.anchor.list_label)}
+        aria-label={t(($) => $.anchor.list_label)}
         className="max-h-56 divide-y overflow-y-auto rounded-md border"
       >
         {list.items.map((anchor) => (
@@ -245,12 +245,12 @@ export function LarkAnchorPicker({
         ))}
         {list.isLoading && (
           <p className="px-3 py-4 text-center text-caption text-muted-foreground">
-            {t(($) => $.lark.anchor.loading)}
+            {t(($) => $.anchor.loading)}
           </p>
         )}
         {!list.isLoading && !list.hasMore && list.items.length === 0 && list.errorKey == null && (
           <p className="px-3 py-4 text-center text-caption text-muted-foreground">
-            {t(($) => $.lark.anchor.empty)}
+            {t(($) => $.anchor.empty)}
           </p>
         )}
       </div>
@@ -263,13 +263,13 @@ export function LarkAnchorPicker({
           onClick={list.fetchMore}
         >
           {list.isFetchingMore
-            ? t(($) => $.lark.picker.loading_more)
-            : t(($) => $.lark.anchor.load_more)}
+            ? t(($) => $.picker.loading_more)
+            : t(($) => $.anchor.load_more)}
         </Button>
       )}
       {savedMissing && (
         <p role="status" className="text-caption text-warning">
-          {t(($) => $.lark.anchor.saved_missing)}
+          {t(($) => $.anchor.saved_missing)}
         </p>
       )}
     </div>

@@ -1,0 +1,216 @@
+{
+  "agents": {
+    "transcript": {
+      "antigravity_live_unavailable": "Antigravity does not currently provide live execution events. The transcript will be available after the run completes."
+    }
+  },
+  "auth": {
+    "web": {
+      "callback": {
+        "signing_in_description": "Please wait while we complete your login"
+      }
+    }
+  },
+  "autopilots": {
+    "dialog": {
+      "schedule_disabled_reason": "This autopilot has multiple schedules — edit them in the detail page."
+    }
+  },
+  "billing": {
+    "workspace": {
+      "return": {
+        "portal_description": "The latest subscription snapshot is shown below."
+      },
+      "subscription_notice": {
+        "canceled_description": "The entitlement badge above shows the plan currently enforced for this workspace."
+      },
+      "current": {
+        "plan_description": "The entitlement currently enforced for this workspace.",
+        "billing_interval_description": "The interval stored for the active subscription.",
+        "period_end_description": "The date reported by the current subscription snapshot."
+      },
+      "management": {
+        "portal_description": "Open Stripe to manage this workspace's subscription."
+      },
+      "limits": {
+        "description": "Limits and usage come from the server's current entitlement and quota accounting.",
+        "issues_description": "Current issue usage and the effective limit reported by the server.",
+        "autopilots_description": "Current automation usage and reset time reported by the server."
+      },
+      "seats": {
+        "human_members_description": "Confirmed human members consuming purchased capacity. Refresh after a membership change to reconcile the count.",
+        "billed_description": "The seat quantity currently purchased through Stripe."
+      }
+    }
+  },
+  "editor": {
+    "image": {
+      "previous": "Previous image",
+      "next": "Next image",
+      "sequence_position": "{{index}} / {{total}}"
+    }
+  },
+  "issues": {
+    "page": {
+      "empty_hint": "Create an issue to get started."
+    },
+    "actor_issues": {
+      "empty": {
+        "assigned": {
+          "description": "Issues assigned here will appear in this view."
+        },
+        "created": {
+          "description": "Issues created here will appear in this view."
+        }
+      }
+    },
+    "detail": {
+      "pull_requests_empty": "No linked pull requests yet. Put this issue's identifier in a PR's branch name or title, or write it after Closes in the PR body, to auto-link it.",
+      "more_actions": "Issue actions"
+    },
+    "filtered_empty": {
+      "hint": "Adjust or clear the filters to see the issues in this view."
+    },
+    "batch": {
+      "update_partial": "Couldn't update {{failed}} of {{total}} issues"
+    }
+  },
+  "modals": {
+    "delete_issue": {
+      "hint": "Any workspace member can delete issues."
+    }
+  },
+  "onboarding": {
+    "step_nav": {
+      "workspace": {
+        "description": "Name it and pick its URL."
+      },
+      "runtime": {
+        "description": "Your first agent teammate, and where it runs."
+      }
+    },
+    "welcome": {
+      "lede_desktop": "By the end, a real agent will be replying to your first issue.",
+      "illustration_caption": "Every issue, every thread, every decision — shared by your team and agents."
+    },
+    "source_backfill": {
+      "hint_ready": "Looks good. Hit Submit when you're ready."
+    },
+    "step_question": {
+      "hint_continue": "Looks good. Hit Continue when you're ready."
+    },
+    "step_workspace": {
+      "create_new_subtitle": "Start fresh — a separate space for a different side of your work."
+    },
+    "step_runtime": {
+      "found_lede": "These are the agent runtimes we found on this computer. You can switch it or add more later.",
+      "hint_skip_or_refresh": "Refresh after installing one, or skip to enter your workspace."
+    },
+    "step_platform": {
+      "cli_dialog_description": "Same connection as Desktop, set up from the terminal. Use it for servers, remote dev boxes, or any headless computer."
+    }
+  },
+  "projects": {
+    "resources": {
+      "local_rename_tooltip": "Rename",
+      "local_rename_label": "Local directory label",
+      "toast_local_renamed": "Renamed",
+      "toast_local_rename_failed": "Failed to rename"
+    }
+  },
+  "runtimes": {
+    "machine": {
+      "metrics": {
+        "cpu": "CPU",
+        "memory": "Memory",
+        "stale": "Stale",
+        "unavailable": "--"
+      }
+    },
+    "connect": {
+      "live_listening_hint": "We'll detect it as soon as the daemon starts — usually under a minute."
+    },
+    "cloud_runtime": {
+      "create_hint": "Choose a name, instance type, and disk size. Fleet applies the rest."
+    }
+  },
+  "settings": {
+    "issue_statuses": {
+      "editor": {
+        "behavior_hint": "This status behaves exactly like {{category}}."
+      },
+      "categories": {
+        "backlog": "Parked. Assigning an issue here never starts an agent run.",
+        "todo": "Queued. Moving an issue here starts the assigned agent.",
+        "in_progress": "Actively being worked on.",
+        "in_review": "Delivered, waiting on human review. Finalizes the autopilot run.",
+        "blocked": "Stalled on an external dependency.",
+        "cancelled": "Decided not to do."
+      },
+      "description": "Define the workflow your issues move through. Each status inherits its behavior from its category."
+    },
+    "preferences": {
+      "sticky_comment_bar": {
+        "hint": "Keep the comment bar pinned to the bottom while scrolling an issue page."
+      },
+      "description": "Customize how you work in Multica."
+    },
+    "issue": {
+      "quick_create_description": "Fields shown in the quick create toolbar.",
+      "manual_create_description": "Fields shown in the manual create toolbar."
+    },
+    "mcp": {
+      "empty_description": "Add a server here, then assign it to the agents that should use it from their own MCP tab."
+    },
+    "plugins": {
+      "publish": {
+        "description": "Upload a plugin package. Multica stores and serves it, so a plugin author needs no server of their own."
+      },
+      "description": "Publish plugins into this workspace, then install a specific version and review exactly what it is allowed to reach."
+    },
+    "notifications": {
+      "system": {
+        "hint": "Show a banner from your operating system for new inbox items when the app isn't focused."
+      }
+    },
+    "github": {
+      "page_description": "Connect a GitHub App, control how Pull Requests show up inside Multica, and decide what your agents leave behind in commit history.",
+      "connection_description_prefix": "Link issues to pull requests automatically. A PR links when",
+      "connection_description_suffix": "is in its branch name or title, or its body says Closes MUL-123. Merging a PR with that closing keyword also moves the issue to",
+      "connection_description_done": "Done",
+      "connection_identifier_example": "MUL-123"
+    },
+    "dingtalk": {
+      "groups_overview_description": "Each connection shows its Agent, DingTalk bot, and recently observed groups."
+    },
+    "desktop": {
+      "updates": {
+        "description": "Control automatic background updates or check for a new version manually."
+      },
+      "daemon": {
+        "description": "Configure how the local agent daemon behaves with the desktop app.",
+        "cli_install_windows_help": "Windows has no script installer. Ask your workspace administrator, or download the multica-cli-<version>-windows-<arch>.zip archive for the release you want from the internal release source ({{downloadsUrl}}/cli/v<version>/ — the current version is in {{latestManifestUrl}}) and extract multica.exe onto your PATH.",
+        "cli_install_windows_label": "Manual install required on Windows",
+        "diagnostics_description": "Identification and connection details. Useful when filing a bug report or investigating why a runtime isn't showing up.",
+        "waiting_logs_description": "New entries will appear in real time."
+      }
+    },
+    "integrations": {
+      "description": "Connect your tools and manage each integration in one place."
+    }
+  },
+  "skills": {
+    "actions": {
+      "add_dialog_description": "Select the agents that should get the selected skills."
+    },
+    "create": {
+      "local": {
+        "multiple_skills": "This selection contains multiple skills. Pick a folder or archive with a single skill, or use \"Import package\" on the skills page with a GitHub or skills.sh repository URL."
+      }
+    },
+    "runtime_import": {
+      "no_skills_hint": "This runtime does not have any discoverable local skills yet.",
+      "no_search_results_title": "No matching local skills"
+    }
+  }
+}

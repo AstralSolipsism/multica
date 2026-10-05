@@ -74,11 +74,7 @@
       "workload_hint": "{{running}} en cours · {{queued}} en attente",
       "cli": "CLI",
       "cloud_worker": "Worker cloud",
-      "local_daemon": "Daemon local",
-      "cpu": "CPU",
-      "memory": "Memory",
-      "stale": "Stale",
-      "unavailable": "--"
+      "local_daemon": "Daemon local"
     },
     "rename": "Renommer la machine",
     "rename_dialog": {
@@ -224,8 +220,7 @@
     "success_title": "Ordinateur connecté",
     "success_description": "Ordinateur connecté. Vous pouvez maintenant créer un agent.",
     "view_runtime": "Voir le runtime",
-    "create_agent": "Créer un agent",
-    "live_listening_hint": "We'll detect it as soon as the daemon starts — usually under a minute."
+    "create_agent": "Créer un agent"
   },
   "cloud_runtime": {
     "action": "Cloud Runtime",
@@ -264,8 +259,7 @@
     "validation": {
       "instance_type_required": "Le type d'instance est obligatoire",
       "disk_size_invalid": "La taille du disque doit être un entier positif"
-    },
-    "create_hint": "Choose a name, instance type, and disk size. Fleet applies the rest."
+    }
   },
   "update": {
     "cli_version_label": "Version du CLI :",
@@ -325,8 +319,7 @@
     "pending_health_warning": "En attente de synchronisation du daemon",
     "pending_health_error": "Erreur d'enregistrement",
     "pending_health_disabled": "Désactivé",
-    "pending_cli_unknown": "en attente",
-    "col_quota": "Quota"
+    "pending_cli_unknown": "en attente"
   },
   "profiles": {
     "cta": "Ajouter un runtime",
@@ -472,30 +465,5 @@
     "table_cache_r": "Cache L",
     "table_cache_w": "Cache É",
     "no_data": "Aucune donnée de consommation pour l'instant"
-  },
-  "quota": {
-    "title": "Plan quota",
-    "window_short_minutes": "{{value}}m",
-    "window_short_hours": "{{value}}h",
-    "window_short_days": "{{value}}d",
-    "window_weekly": "wk",
-    "group_gemini": "Gemini",
-    "group_claude_gpt": "Claude + GPT",
-    "group_claude_models": "Modèles spécifiques",
-    "remaining": "{{percent}}% left",
-    "resets_in": "resets at {{time}}",
-    "exhausted": "Rate limited",
-    "not_reported": "Not reported",
-    "stale": "Stale data",
-    "stale_hint": "snapshot {{time}} ago",
-    "observed_ago": "updated {{time}} ago",
-    "source_daemon": "via daemon",
-    "source_external": "via external push",
-    "glm_title": "GLM plan balance",
-    "glm_window_tokens": "5-hour tokens",
-    "glm_window_time": "Monthly tool credits",
-    "glm_window_credit": "Credit window",
-    "glm_unknown": "balance unknown",
-    "glm_window_fallback": "{{type}}"
   }
 }

@@ -1,0 +1,216 @@
+{
+  "agents": {
+    "transcript": {
+      "antigravity_live_unavailable": "Antigravity は現在、リアルタイム実行イベントを提供していません。実行完了後に実行記録を確認できます。"
+    }
+  },
+  "auth": {
+    "web": {
+      "callback": {
+        "signing_in_description": "ログインが完了するまでお待ちください"
+      }
+    }
+  },
+  "autopilots": {
+    "dialog": {
+      "schedule_disabled_reason": "このオートパイロットには複数のスケジュールがあります。詳細ページで編集してください。"
+    }
+  },
+  "billing": {
+    "workspace": {
+      "return": {
+        "portal_description": "最新のサブスクリプション情報を下に表示しています。"
+      },
+      "subscription_notice": {
+        "canceled_description": "上のプランバッジは、このワークスペースに現在適用されているプランを示します。"
+      },
+      "current": {
+        "plan_description": "このワークスペースに現在適用されている entitlement です。",
+        "billing_interval_description": "有効なサブスクリプションに保存されている請求期間です。",
+        "period_end_description": "現在のサブスクリプション情報で報告された日付です。"
+      },
+      "management": {
+        "portal_description": "Stripe でこのワークスペースのサブスクリプションを管理します。"
+      },
+      "limits": {
+        "description": "上限と使用量は、サーバーの現在の entitlement とクォータ集計に基づきます。",
+        "issues_description": "現在のタスク使用量とサーバーから返された有効な上限です。",
+        "autopilots_description": "現在の自動化使用量とサーバーから返されたリセット時刻です。"
+      },
+      "seats": {
+        "human_members_description": "購入済みの容量を使用している確認済みユーザーメンバーです。メンバー変更後に更新できます。",
+        "billed_description": "Stripe で現在購入済みの席数です。"
+      }
+    }
+  },
+  "editor": {
+    "image": {
+      "previous": "前の画像",
+      "next": "次の画像",
+      "sequence_position": "{{index}} / {{total}}"
+    }
+  },
+  "issues": {
+    "page": {
+      "empty_hint": "タスクを作成して始めましょう。"
+    },
+    "actor_issues": {
+      "empty": {
+        "assigned": {
+          "description": "ここに割り当てられたタスクがこの表示に表示されます。"
+        },
+        "created": {
+          "description": "ここで作成したタスクがこの表示に表示されます。"
+        }
+      }
+    },
+    "detail": {
+      "pull_requests_empty": "まだリンクされた Pull request がありません。このタスクの識別子を PR のブランチ名かタイトルに入れるか、本文で Closes の直後に書くと、自動的にリンクされます。",
+      "more_actions": "タスク操作"
+    },
+    "filtered_empty": {
+      "hint": "フィルターを変更または解除すると、このビューのタスクが表示されます。"
+    },
+    "batch": {
+      "update_partial": "{{total}} 件中 {{failed}} 件を更新できませんでした"
+    }
+  },
+  "modals": {
+    "delete_issue": {
+      "hint": "ワークスペースのメンバーであれば誰でもタスクを削除できます。"
+    }
+  },
+  "onboarding": {
+    "step_nav": {
+      "workspace": {
+        "description": "名前と URL を決める。"
+      },
+      "runtime": {
+        "description": "最初のエージェント仲間と、その実行環境。"
+      }
+    },
+    "welcome": {
+      "lede_desktop": "完了するころには、実際のエージェントがあなたの最初のタスクに返信しています。",
+      "illustration_caption": "すべてのタスク、すべてのスレッド、すべての判断を、チームとエージェントで共有。"
+    },
+    "source_backfill": {
+      "hint_ready": "OK です。準備ができたら送信を押してください。"
+    },
+    "step_question": {
+      "hint_continue": "いい感じです。準備ができたら「続ける」を押してください。"
+    },
+    "step_workspace": {
+      "create_new_subtitle": "新しく始めましょう — 別の業務領域のための独立した場所です。"
+    },
+    "step_runtime": {
+      "found_lede": "このコンピュータで見つかったエージェントランタイムです。あとで切り替えたり追加したりできます。",
+      "hint_skip_or_refresh": "インストール後に更新するか、スキップしてワークスペースに入ってください。"
+    },
+    "step_platform": {
+      "cli_dialog_description": "デスクトップと同じ接続を、ターミナルからセットアップします。サーバー、リモート開発環境、ヘッドレスなコンピュータに使ってください。"
+    }
+  },
+  "projects": {
+    "resources": {
+      "local_rename_tooltip": "名前を変更",
+      "local_rename_label": "ローカルディレクトリのラベル",
+      "toast_local_renamed": "名前を変更しました",
+      "toast_local_rename_failed": "名前を変更できませんでした"
+    }
+  },
+  "runtimes": {
+    "machine": {
+      "metrics": {
+        "cpu": "CPU",
+        "memory": "メモリ",
+        "stale": "期限切れ",
+        "unavailable": "--"
+      }
+    },
+    "connect": {
+      "live_listening_hint": "デーモンが起動するとすぐに検出します — 通常は 1 分以内です。"
+    },
+    "cloud_runtime": {
+      "create_hint": "名前、インスタンスタイプ、ディスクサイズを選んでください。残りは Fleet が適用します。"
+    }
+  },
+  "settings": {
+    "issue_statuses": {
+      "editor": {
+        "behavior_hint": "このステータスは「{{category}}」とまったく同じ挙動になります。"
+      },
+      "categories": {
+        "backlog": "保留。ここに移動してもエージェントは起動しません。",
+        "todo": "待機中。ここに移動すると担当エージェントが起動します。",
+        "in_progress": "作業中。",
+        "in_review": "納品済み、レビュー待ち。オートパイロットの実行を完了します。",
+        "blocked": "外部依存でブロック中。",
+        "cancelled": "見送り。"
+      },
+      "description": "タスクが辿るワークフローを定義します。各ステータスの挙動は所属するカテゴリが決めます。"
+    },
+    "preferences": {
+      "sticky_comment_bar": {
+        "hint": "タスクのページをスクロールしても、コメントバーを常に下部に固定します。"
+      },
+      "description": "Multica の使い方をカスタマイズします。"
+    },
+    "issue": {
+      "quick_create_description": "クイック作成ツールバーに表示するフィールド。",
+      "manual_create_description": "手動作成ツールバーに表示するフィールド。"
+    },
+    "mcp": {
+      "empty_description": "まずここにサーバーを追加し、使用するエージェントの MCP タブから割り当ててください。"
+    },
+    "plugins": {
+      "publish": {
+        "description": "プラグインパッケージをアップロードします。Multica が保存と配信を行うため、作者自身のサーバーは不要です。"
+      },
+      "description": "このワークスペースにプラグインを公開し、特定のバージョンをインストールして、何にアクセスできるかを確認します。"
+    },
+    "notifications": {
+      "system": {
+        "hint": "アプリにフォーカスがないときに、新しいインボックス項目について OS のバナーを表示します。"
+      }
+    },
+    "github": {
+      "page_description": "GitHub App を接続し、Pull request が Multica 内でどう表示されるかを制御し、エージェントがコミット履歴に残す情報を設定します。",
+      "connection_description_prefix": "タスクを Pull request に自動でリンクします。PR のブランチ名かタイトルに",
+      "connection_description_suffix": "があるか、本文に Closes MUL-123 と書かれていれば、対応するタスクにリンクされます。その closing keyword を含む PR がマージされたときだけ、タスクが次のステータスに移動します:",
+      "connection_description_done": "完了",
+      "connection_identifier_example": "MUL-123"
+    },
+    "dingtalk": {
+      "groups_overview_description": "各接続に、エージェント、DingTalk ロボット、最近やり取りしたグループを表示します。"
+    },
+    "desktop": {
+      "updates": {
+        "description": "バックグラウンドでの自動アップデートを設定するか、新しいバージョンを手動で確認します。"
+      },
+      "daemon": {
+        "description": "ローカルエージェントのデーモンとデスクトップアプリの連携方法を設定します。",
+        "cli_install_windows_help": "Windows にはスクリプトインストーラーがありません。ワークスペース管理者に問い合わせるか、内部リリースソース（{{downloadsUrl}}/cli/v<バージョン>/、現在のバージョンは {{latestManifestUrl}} を参照）から該当バージョンの multica-cli-<バージョン>-windows-<アーキテクチャ>.zip をダウンロードし、multica.exe を PATH の通った場所に展開してください。",
+        "cli_install_windows_label": "Windows では手動インストールが必要です",
+        "diagnostics_description": "識別情報と接続の詳細です。バグ報告やランタイムが表示されない問題の調査に役立ちます。",
+        "waiting_logs_description": "新しいログがリアルタイムで表示されます。"
+      }
+    },
+    "integrations": {
+      "description": "ツールを接続して、各連携を管理します。"
+    }
+  },
+  "skills": {
+    "actions": {
+      "add_dialog_description": "選択したスキルを追加するエージェントを選んでください。"
+    },
+    "create": {
+      "local": {
+        "multiple_skills": "この選択には複数のスキルが含まれています。スキルが 1 つだけのフォルダまたはアーカイブを選び直すか、スキルページの「パッケージをインポート」で GitHub または skills.sh リポジトリの URL を指定してください。"
+      }
+    },
+    "runtime_import": {
+      "no_skills_hint": "このランタイムには、まだ検出可能なローカルスキルがありません。",
+      "no_search_results_title": "一致するローカルスキルはありません"
+    }
+  }
+}

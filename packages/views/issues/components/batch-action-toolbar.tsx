@@ -51,6 +51,7 @@ export function BatchActionToolbar({
   placement?: "fixed-bottom" | "inline";
 }) {
   const { t } = useT("issues");
+  const { t: tForkUi } = useT("fork-ui");
   const selection = useIssueSurfaceSelection();
   const selectedIds = selection.selectedIds;
   const clear = selection.clear;
@@ -108,7 +109,7 @@ export function BatchActionToolbar({
     const identifierOf = (id: string) =>
       selectedIssues.find((i) => i.id === id)?.identifier ?? id;
     toast.warning(
-      t(($) => $.batch.update_partial, {
+      tForkUi(($) => $.issues.batch.update_partial, {
         failed: failures.length,
         total: count,
       }),

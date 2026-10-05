@@ -72,6 +72,7 @@ function DagCanvasInner({
 }: DagCanvasProps) {
   const { t } = useT("issues"),
     storeApi = useViewStoreApi();
+  const { t: tDag } = useT("dag");
   const selectedNodeId = useViewStore((s) => s.dagSelectedNodeId);
   const { getViewport, setViewport, getInternalNode, viewportInitialized } = useReactFlow<
     CanvasNode,
@@ -127,11 +128,11 @@ function DagCanvasInner({
         projection.nodes.map((n) => [
           n.id,
           n.kind === "independent"
-            ? t(($) => $.dag.independent_group)
+            ? tDag(($) => $.independent_group)
             : `${n.identifier ?? ""} ${n.title}`.trim(),
         ]),
       ),
-    [projection, t],
+    [projection, tDag],
   );
   const focusSet = useMemo(
     () =>
@@ -444,7 +445,7 @@ function DagCanvasInner({
         <div
           className="absolute left-1/2 top-3 z-10 flex max-w-[min(720px,90%)] -translate-x-1/2 flex-wrap items-center gap-1 rounded-lg border bg-card px-2 py-1.5 shadow-md"
           role="toolbar"
-          aria-label={t(($) => $.dag.node_actions_label)}
+          aria-label={tDag(($) => $.node_actions_label)}
         >
           <span
             className="max-w-48 truncate px-1 text-caption font-medium"
@@ -464,14 +465,14 @@ function DagCanvasInner({
             variant="ghost"
             onClick={() => setFocus({ nodeId: selectedNode.id, way: "upstream" })}
           >
-            {t(($) => $.dag.focus_upstream)}
+            {tDag(($) => $.focus_upstream)}
           </Button>
           <Button
             size="sm"
             variant="ghost"
             onClick={() => setFocus({ nodeId: selectedNode.id, way: "downstream" })}
           >
-            {t(($) => $.dag.focus_downstream)}
+            {tDag(($) => $.focus_downstream)}
           </Button>
           {(selectedGroup || selectedNode.groupId) && (
             <Button
@@ -479,18 +480,18 @@ function DagCanvasInner({
               variant="ghost"
               onClick={() => onFocusGroup(selectedGroup?.id ?? selectedNode.groupId!)}
             >
-              {t(($) => $.dag.focus_line)}
+              {tDag(($) => $.focus_line)}
             </Button>
           )}
           {selectedGroup && (
             <Button size="sm" variant="ghost" onClick={() => toggle(selectedGroup.id)}>
-              {selectedGroup.collapsed ? t(($) => $.dag.expand) : t(($) => $.dag.collapse)}
+              {selectedGroup.collapsed ? tDag(($) => $.expand) : tDag(($) => $.collapse)}
             </Button>
           )}
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label={t(($) => $.dag.clear_selection)}
+            aria-label={tDag(($) => $.clear_selection)}
             onClick={() => selectNode(null)}
           >
             <X className="size-3.5" />
@@ -502,11 +503,11 @@ function DagCanvasInner({
           <Crosshair className="size-3.5 text-muted-foreground" />
           <span>
             {focus.way === "upstream"
-              ? t(($) => $.dag.focus_upstream_active)
-              : t(($) => $.dag.focus_downstream_active)}
+              ? tDag(($) => $.focus_upstream_active)
+              : tDag(($) => $.focus_downstream_active)}
           </span>
           <Button size="sm" variant="ghost" onClick={() => setFocus(null)}>
-            {t(($) => $.dag.focus_clear)}
+            {tDag(($) => $.focus_clear)}
           </Button>
         </div>
       )}
@@ -567,26 +568,26 @@ function EdgeInspector({
   onOpenIssue: (issueId: string) => void;
   onClose: () => void;
 }) {
-  const { t } = useT("issues");
+  const { t } = useT("dag");
   return (
     <div
       className="absolute right-3 top-3 z-10 flex w-80 flex-col gap-2 rounded-lg border bg-card p-3 shadow-md"
       role="dialog"
-      aria-label={t(($) => $.dag.edge_inspector_label)}
+      aria-label={t(($) => $.edge_inspector_label)}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-caption font-medium">
-            {aggregate ? t(($) => $.dag.edge_aggregate_title) : t(($) => $.dag.edge_direct_title)}
+            {aggregate ? t(($) => $.edge_aggregate_title) : t(($) => $.edge_direct_title)}
           </p>
           <p className="text-caption text-muted-foreground break-words">
             {aggregate
-              ? t(($) => $.dag.edge_aggregate_description, {
+              ? t(($) => $.edge_aggregate_description, {
                   source: nodeLabelById.get(edge.source) ?? "",
                   target: nodeLabelById.get(edge.target) ?? "",
                   count: edge.sourceEdgeIds.length,
                 })
-              : t(($) => $.dag.edge_direct_description, {
+              : t(($) => $.edge_direct_description, {
                   source: nodeLabelById.get(edge.source) ?? "",
                   target: nodeLabelById.get(edge.target) ?? "",
                 })}
@@ -595,7 +596,7 @@ function EdgeInspector({
         <Button
           size="icon-sm"
           variant="ghost"
-          aria-label={t(($) => $.dag.clear_selection)}
+          aria-label={t(($) => $.clear_selection)}
           onClick={onClose}
         >
           <X className="size-3.5" />
@@ -603,7 +604,7 @@ function EdgeInspector({
       </div>
       {aggregate && hasReverse && (
         <p className="rounded-md bg-muted/60 px-2 py-1 text-micro text-muted-foreground">
-          {t(($) => $.dag.edge_aggregate_bidirectional)}
+          {t(($) => $.edge_aggregate_bidirectional)}
         </p>
       )}
       {!aggregate && edge.sources[0] && (
@@ -617,7 +618,7 @@ function EdgeInspector({
             variant="ghost"
             onClick={() => onLocate([edge.sources[0]!.source, edge.sources[0]!.target])}
           >
-            {t(($) => $.dag.edge_locate)}
+            {t(($) => $.edge_locate)}
           </Button>
         </div>
       )}
@@ -653,7 +654,7 @@ function EdgeInspector({
                 className="shrink-0"
                 onClick={() => onLocate([source.source, source.target])}
               >
-                {t(($) => $.dag.edge_locate)}
+                {t(($) => $.edge_locate)}
               </Button>
             </li>
           ))}

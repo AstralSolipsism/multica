@@ -149,11 +149,7 @@
     "toast_ref_update_failed": "无法更新分支",
     "ref_error_commit": "这是一个 commit，不是分支。任务会交付回它起始的分支 —— 只需要某次修订，请用 multica repo checkout --ref。",
     "ref_default_label": "默认分支",
-    "ref_default_tooltip": "未设置分支 —— 任务使用仓库当时的默认分支。",
-    "local_rename_tooltip": "重命名",
-    "local_rename_label": "本地目录显示名",
-    "toast_local_renamed": "已重命名",
-    "toast_local_rename_failed": "重命名失败"
+    "ref_default_tooltip": "未设置分支 —— 任务使用仓库当时的默认分支。"
   },
   "delete_dialog": {
     "title": "删除项目",

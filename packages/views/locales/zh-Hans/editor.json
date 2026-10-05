@@ -44,10 +44,7 @@
     "image_copied": "已复制图片",
     "copy_image_failed": "无法复制图片",
     "canvas_label": "图片画布,拖动可平移,滚动可缩放,双击可切换实际大小。",
-    "unavailable": "这张图片已失效,已跳过。",
-    "previous": "上一张",
-    "next": "下一张",
-    "sequence_position": "第 {{index}} / {{total}} 张"
+    "unavailable": "这张图片已失效,已跳过。"
   },
   "canvas": {
     "zoom_in": "放大",

@@ -1,16 +1,14 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import enLayout from "../locales/en/layout.json";
+import { RESOURCES } from "../test/i18n";
 import { JoinDiscordCard } from "./join-discord-card";
 
 // react-i18next isn't initialised in the views test env, so resolve the
-// selector against the real en/layout.json to assert on actual copy. The
-// enLayout import must precede the component import: the factory below runs
-// while ./join-discord-card pulls in ../i18n.
+// selector against the assembled namespace to assert on actual copy.
 vi.mock("../i18n", () => ({
-  useT: () => ({
-    t: (sel: (r: typeof enLayout) => string) => sel(enLayout),
+  useT: (namespace: string) => ({
+    t: (sel: (r: unknown) => string) => sel(RESOURCES.en[namespace]),
   }),
 }));
 

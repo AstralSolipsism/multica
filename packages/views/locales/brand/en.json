@@ -1,25 +1,30 @@
 {
-  "settings": {
-    "preferences": {
-      "description": "Customize how you work in Labrastro."
-    },
-    "plugins": {
-      "publish": {
-        "description": "Upload a plugin package. Labrastro stores and serves it, so a plugin author needs no server of their own."
+  "fork-ui": {
+    "settings": {
+      "preferences": {
+        "description": "Customize how you work in Labrastro."
+      },
+      "plugins": {
+        "publish": {
+          "description": "Upload a plugin package. Labrastro stores and serves it, so a plugin author needs no server of their own."
+        }
+      },
+      "github": {
+        "page_description": "Connect a GitHub App, control how Pull Requests show up inside Labrastro, and decide what your agents leave behind in commit history."
       }
-    },
+    }
+  },
+  "settings": {
     "notifications": {
       "system": {
         "description": "Show system notifications when Labrastro is in the background."
       }
     },
     "github": {
-      "disconnect_confirm_description": "Labrastro will stop receiving webhooks for this installation. Existing PR mirrors and links are kept; reconnect any time to resume updates.",
-      "page_description": "Connect a GitHub App, control how Pull Requests show up inside Labrastro, and decide what your agents leave behind in commit history."
+      "disconnect_confirm_description": "Labrastro will stop receiving webhooks for this installation. Existing PR mirrors and links are kept; reconnect any time to resume updates."
     },
     "lark": {
-      "install_error_bot_info": "Authorized, but Labrastro couldn't fetch the Bot's identity. Try again.",
-      "conversation_description": "People in these conversations can talk to this agent without a Labrastro account. The agent clarifies and summarizes feedback, then posts comments in its own name. This takes time and model usage; messages are not copied verbatim into tasks."
+      "install_error_bot_info": "Authorized, but Labrastro couldn't fetch the Bot's identity. Try again."
     },
     "slack": {
       "byo_docs_link": "Step-by-step: connect your Labrastro agent to Slack"
@@ -36,6 +41,9 @@
       "disconnect_confirm_description": "The bot will stop receiving Telegram messages for this workspace. Chat history in Labrastro is kept; you can re-connect later from the same Agent.",
       "connect_docs_link": "Step-by-step: connect your Labrastro agent to Telegram"
     }
+  },
+  "lark": {
+    "conversation_description": "People in these conversations can talk to this agent without a Labrastro account. The agent clarifies and summarizes feedback, then posts comments in its own name. This takes time and model usage; messages are not copied verbatim into tasks."
   },
   "common": {
     "lark_bind": {

@@ -70,11 +70,7 @@
       "workload_hint": "実行中 {{running}} 件 · キュー待ち {{queued}} 件",
       "cli": "CLI",
       "cloud_worker": "クラウドワーカー",
-      "local_daemon": "ローカルデーモン",
-      "cpu": "CPU",
-      "memory": "メモリ",
-      "stale": "期限切れ",
-      "unavailable": "--"
+      "local_daemon": "ローカルデーモン"
     },
     "rename": "マシンの名前を変更",
     "rename_dialog": {
@@ -212,8 +208,7 @@
     "success_title": "コンピュータを接続しました",
     "success_description": "コンピュータに接続しました。エージェントを作成できます。",
     "view_runtime": "ランタイムを表示",
-    "create_agent": "エージェントを作成",
-    "live_listening_hint": "デーモンが起動するとすぐに検出します — 通常は 1 分以内です。"
+    "create_agent": "エージェントを作成"
   },
   "cloud_runtime": {
     "action": "クラウドランタイム",
@@ -252,8 +247,7 @@
     "validation": {
       "instance_type_required": "インスタンスタイプは必須です",
       "disk_size_invalid": "ディスクサイズは正の整数である必要があります"
-    },
-    "create_hint": "名前、インスタンスタイプ、ディスクサイズを選んでください。残りは Fleet が適用します。"
+    }
   },
   "update": {
     "cli_version_label": "CLI バージョン:",
@@ -312,8 +306,7 @@
     "pending_health_warning": "Daemon 同期待ち",
     "pending_health_error": "登録エラー",
     "pending_health_disabled": "無効",
-    "pending_cli_unknown": "待機中",
-    "col_quota": "クォータ"
+    "pending_cli_unknown": "待機中"
   },
   "profiles": {
     "cta": "ランタイムを追加",
@@ -456,30 +449,5 @@
     "table_cache_r": "キャッシュ R",
     "table_cache_w": "キャッシュ W",
     "no_data": "まだ使用量データがありません"
-  },
-  "quota": {
-    "title": "プランのクォータ",
-    "window_short_minutes": "{{value}}m",
-    "window_short_hours": "{{value}}h",
-    "window_short_days": "{{value}}d",
-    "window_weekly": "週",
-    "group_gemini": "Gemini",
-    "group_claude_gpt": "Claude + GPT",
-    "group_claude_models": "特定モデル",
-    "remaining": "残り {{percent}}%",
-    "resets_in": "{{time}} にリセット",
-    "exhausted": "レート制限中",
-    "not_reported": "未報告",
-    "stale": "期限切れデータ",
-    "stale_hint": "{{time}}前のスナップショット",
-    "observed_ago": "{{time}}前に更新",
-    "source_daemon": "デーモン経由",
-    "source_external": "外部プッシュ経由",
-    "glm_title": "GLM プラン残量",
-    "glm_window_tokens": "5時間トークン",
-    "glm_window_time": "月間ツールクレジット",
-    "glm_window_credit": "クレジット枠",
-    "glm_unknown": "残量不明",
-    "glm_window_fallback": "{{type}}"
   }
 }

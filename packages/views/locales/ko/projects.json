@@ -149,11 +149,7 @@
     "toast_ref_update_failed": "브랜치를 업데이트하지 못했습니다",
     "ref_error_commit": "이것은 브랜치가 아니라 커밋입니다. 작업은 시작한 브랜치로 결과를 전달합니다. 일회성 리비전이 필요하면 multica repo checkout --ref를 사용하세요.",
     "ref_default_label": "기본 브랜치",
-    "ref_default_tooltip": "브랜치가 설정되지 않음 — 작업은 그 시점의 저장소 기본 브랜치를 사용합니다.",
-    "local_rename_tooltip": "이름 변경",
-    "local_rename_label": "로컬 디렉터리 라벨",
-    "toast_local_renamed": "이름을 변경했습니다",
-    "toast_local_rename_failed": "이름을 변경하지 못했습니다"
+    "ref_default_tooltip": "브랜치가 설정되지 않음 — 작업은 그 시점의 저장소 기본 브랜치를 사용합니다."
   },
   "delete_dialog": {
     "title": "프로젝트 삭제",

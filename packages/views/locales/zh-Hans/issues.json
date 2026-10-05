@@ -35,6 +35,9 @@
     "steer_step": "{{name}} 插话",
     "steer_step_read": "已读取"
   },
+  "working_filter_error": {
+    "title": "无法加载智能体正在处理的任务"
+  },
   "status_catalog_error": {
     "title": "状态列表加载失败",
     "hint": "加载状态后才能显示任务。",
@@ -114,8 +117,7 @@
     "breadcrumb_title": "任务",
     "breadcrumb_workspace_fallback": "工作区",
     "empty_title": "还没有任务",
-    "move_failed": "移动任务失败",
-    "empty_hint": "创建一个任务开始使用。"
+    "move_failed": "移动任务失败"
   },
   "status": {
     "backlog": "待规划",
@@ -245,9 +247,7 @@
     "list": "列表",
     "table": "表格",
     "gantt": "甘特图",
-    "swimlane": "泳道",
-    "tooltip_dag": "依赖图视图",
-    "dag": "依赖图"
+    "swimlane": "泳道"
   },
   "table": {
     "select_all": "选择所有可见任务",
@@ -337,12 +337,10 @@
     },
     "empty": {
       "assigned": {
-        "title": "没有已分配的任务",
-        "description": "分配到这里的任务会显示在此视图中。"
+        "title": "没有已分配的任务"
       },
       "created": {
-        "title": "没有已创建的任务",
-        "description": "由这里创建的任务会显示在此视图中。"
+        "title": "没有已创建的任务"
       }
     },
     "search_placeholder": "搜索任务...",
@@ -370,6 +368,13 @@
     "no_value": "未设置",
     "ordered_by": "按{{field}}排序",
     "manual_reorder_hint": "切换到“手动”排序后，才能调整同一列内的顺序。"
+  },
+  "peek": {
+    "panel_label": "任务预览",
+    "previous": "上一个任务",
+    "next": "下一个任务",
+    "open_full_page": "打开完整页面",
+    "close": "关闭预览"
   },
   "detail": {
     "not_found": "这个任务不存在或已在该工作区被删除。",
@@ -415,6 +420,9 @@
     "pull_request_merge_ready": "可以合入",
     "pull_request_merge_blocked": "被阻止",
     "pull_request_merge_behind": "落后于基础分支",
+    "pull_request_verdict_conflicting": "有冲突",
+    "pull_request_verdict_ready": "可合入",
+    "pull_request_verdict_passed": "检查通过",
     "pull_request_snapshot_stale": "更新于 {{time}}",
     "pull_request_snapshot_stale_unknown": "快照可能已过期",
     "pull_request_card_files_count_other": "{{count}} 个文件",
@@ -471,12 +479,7 @@
     "workdir_path_unavailable": "暂无本地 workdir — 这个任务还没被本地智能体运行过",
     "unsubscribe_subtree_succeeded": "已取消订阅此任务及其子任务。",
     "subscription_update_failed": "无法更新订阅状态，请重试。",
-    "pull_requests_empty_title": "暂无关联 PR。",
-    "pull_requests_empty": "还没有关联的 PR。把本任务的 identifier 写进 PR 的分支名或标题，或者在正文里写在 Closes 后面，即可自动关联。",
-    "more_actions": "任务操作",
-    "pull_request_verdict_conflicting": "有冲突",
-    "pull_request_verdict_ready": "可合入",
-    "pull_request_verdict_passed": "检查通过"
+    "pull_requests_empty_title": "暂无关联 PR。"
   },
   "timeline": {
     "loading": "加载中…"
@@ -518,7 +521,6 @@
     "pr_auto_complete_enabled": "恢复了此任务合并后改状态",
     "wakeup_created": "添加了唤醒：{{condition}}唤醒 {{agent}}",
     "wakeup_triggered": "{{condition}}，唤醒了 {{agent}}",
-    "wakeup_triggered_rejected": "已丢弃此次唤醒输入：外部会话授权不可用或来源冲突",
     "wakeup_triggered_merged": "{{condition}}，并入了 {{agent}} 待开始的运行",
     "wakeup_triggered_acknowledged": "{{condition}}，由 {{agent}} 自己触发，未重复唤醒",
     "wakeup_triggered_manual": "{{name}} 立即唤醒了 {{agent}}",
@@ -631,11 +633,7 @@
     "recipient_count_other": "{{count}} 个智能体会收到",
     "steer_attachment_notice": "插话只支持文字，带附件的消息会在本轮结束后处理。",
     "restart_send": "停止并发送",
-    "restart_failed": "没能停止当前运行，消息还没有发送。",
-    "trigger_blocked_dependency_unsatisfied": "不会启动——该任务有未完成的前置",
-    "trigger_blocked_dependency_data_unverified": "不会启动——依赖数据需先完成核验",
-    "trigger_blocked_short_dependency_unsatisfied": "前置未完成",
-    "trigger_blocked_short_dependency_data_unverified": "依赖待核验"
+    "restart_failed": "没能停止当前运行，消息还没有发送。"
   },
   "reply": {
     "placeholder": "回复...",
@@ -674,8 +672,7 @@
   },
   "filtered_empty": {
     "title": "没有符合筛选条件的任务",
-    "clear_button": "清除筛选",
-    "hint": "调整或清除筛选条件，就能看到这个视图里的任务。"
+    "clear_button": "清除筛选"
   },
   "agent_live": {
     "is_working": "{{name}} 在工作",
@@ -724,8 +721,7 @@
       "source_rule_owner": "自动化规则发布者",
       "source_owner_fallback": "无精确责任人——归到智能体所有者",
       "source_backfill": "回填的归因",
-      "source_unattributed": "未解析到责任成员",
-      "source_channel_integration": "集成会话授权"
+      "source_unattributed": "未解析到责任成员"
     },
     "usage_total_tooltip": "打开运行时间线",
     "trigger_wakeup": "由唤醒触发 · {{condition}}",
@@ -739,6 +735,34 @@
     "strip_aria": "累计费用随时间的变化——打开运行时间线",
     "strip_no_usage": "没有用量记录",
     "sparkline_now": "现在"
+  },
+  "runs_timeline": {
+    "title": "运行记录",
+    "stat_spent": "已花费",
+    "stat_agent_time": "智能体工作",
+    "stat_elapsed": "历时",
+    "stat_runs": "运行次数",
+    "count_failed_other": "{{count}} 次失败",
+    "count_cancelled_other": "{{count}} 次取消",
+    "count_active_other": "{{count}} 次进行中",
+    "legend_cumulative": "累计费用",
+    "legend_run": "运行 · 宽度为时长",
+    "chart_aria_other": "累计费用随时间的变化：{{count}} 次运行，共 {{cost}}",
+    "day_today": "今天",
+    "day_yesterday": "昨天",
+    "day_runs_other": "{{count}} 次运行",
+    "quoted": "“{{text}}”",
+    "cost_input": "输入",
+    "cost_output": "输出",
+    "cost_cache_read": "缓存读",
+    "cost_cache_write": "缓存写",
+    "cost_breakdown_aria": "费用明细：{{cost}}",
+    "no_usage": "没有用量记录",
+    "tooltip_total": "累计 {{cost}}",
+    "hover_no_run": "没有运行",
+    "hover_idle": "空闲 {{duration}}",
+    "note_unmapped": "{{models}} 没有维护价格，token 已计入，费用未计入。",
+    "note_estimate": "费用按各模型公开价目估算；供应商回报实际费用时以回报值为准。"
   },
   "terminate_dialog": {
     "title": "确定停止本次运行？",
@@ -760,8 +784,7 @@
     "delete_dialog_title_other": "删除 {{count}} 个任务？",
     "delete_dialog_desc_other": "此操作无法撤销，所选任务及其全部关联数据都会被永久删除。",
     "delete_dialog_warning": "任何工作区成员都可以删除任务。",
-    "cancel": "取消",
-    "update_partial": "{{total}} 个任务中有 {{failed}} 个未能更新"
+    "cancel": "取消"
   },
   "card": {
     "update_failed": "更新任务失败",
@@ -795,8 +818,7 @@
     "remove_parent_issue_success": "已移除父任务",
     "add_sub_issue": "添加子任务...",
     "delete_issue": "删除任务",
-    "mark_duplicate": "标记为重复...",
-    "edit_dependencies": "编辑前置..."
+    "mark_duplicate": "标记为重复..."
   },
   "pickers": {
     "custom_property": {
@@ -1339,135 +1361,6 @@
     "all_merged_to": "PR 均已合并。之后有新 PR 合并时会改为 {{status}}。",
     "issue_disabled": "此任务合并后不改状态",
     "issue_disabled_action": "恢复"
-  },
-  "dag": {
-    "loading": "正在加载完整依赖图...",
-    "layout_pending": "正在计算布局...",
-    "layout_cancel": "取消",
-    "error_title": "依赖图加载失败",
-    "error_unavailable": "当前服务端版本暂不支持依赖图，请升级后重试。",
-    "error_forbidden": "你没有查看该工作区依赖图的权限。",
-    "error_unverified": "依赖历史数据尚未核验，暂时无法展示依赖图。",
-    "error_timeout": "依赖图查询超时，请缩小筛选范围后重试。",
-    "error_retry": "重试",
-    "stale_banner": "刷新失败，当前显示 {{time}} 的快照。",
-    "empty_title": "没有符合筛选条件的任务",
-    "empty_hint": "调整筛选条件后即可查看依赖图。",
-    "empty_title_unfiltered": "还没有任务",
-    "empty_hint_unfiltered": "创建任务后即可在依赖图中查看。",
-    "context_badge": "上下文",
-    "blocked_badge_other": "{{count}} 项前置未完成",
-    "blocked_badge_restricted": "包含你无权查看的前置",
-    "readiness_unknown": "前置状态未知",
-    "run_active": "运行中",
-    "run_queued": "排队中",
-    "stage_badge": "阶段 {{number}}",
-    "members_badge_other": "{{count}} 项任务",
-    "folded_children_other": "{{count}} 项子任务",
-    "internal_edges_other": "{{count}} 条内部依赖",
-    "blocked_members_other": "{{count}} 项受阻",
-    "context_count_other": "+{{count}} 项上下文",
-    "expand": "展开",
-    "collapse": "折叠",
-    "expand_all": "展开任务线",
-    "collapse_all": "折叠任务线",
-    "open_detail": "打开详情",
-    "edit_dependencies": "编辑前置关系",
-    "assign_issue": "发起指派",
-    "focus_upstream": "突出前置依赖",
-    "focus_downstream": "突出后续依赖",
-    "focus_clear": "清除",
-    "focus_upstream_active": "前置依赖",
-    "focus_downstream_active": "后续依赖",
-    "direction_label": "方向",
-    "direction_lr": "从左到右",
-    "direction_tb": "从上到下",
-    "grouping_label": "分组",
-    "grouping_project": "按项目",
-    "grouping_parent": "任务线",
-    "grouping_none": "不分组",
-    "no_project_group": "无项目",
-    "edge_direct_title": "直接前置",
-    "edge_direct_description": "{{target}} 将 {{source}} 列为前置",
-    "edge_aggregate_title": "汇总依赖",
-    "edge_aggregate_description": "{{source}} → {{target}} 汇总了 {{count}} 条任务依赖",
-    "edge_aggregate_bidirectional": "分组聚合后可能出现双向连线，不代表任务之间存在依赖环。",
-    "edge_locate": "定位",
-    "summary_matches_other": "{{count}} 项任务",
-    "summary_context_other": "+{{count}} 项上下文",
-    "summary_edges_other": "{{count}} 条依赖",
-    "restricted_context_hint": "部分图上下文因权限不可见；依赖关系仅供参考。",
-    "context_only_hint": "筛选未命中任务，当前仅显示前置上下文。",
-    "node_actions_label": "节点操作",
-    "edge_inspector_label": "依赖详情",
-    "clear_selection": "清除选择",
-    "independent_group": "独立任务",
-    "group_progress": "{{count}} 项 · 已完成 {{done}}",
-    "focus_line": "聚焦任务线",
-    "parent_details": "父任务详情",
-    "stage_conflict": "阶段顺序与真实依赖不一致，当前按依赖排列",
-    "layout_error": "依赖图布局计算失败",
-    "stage_legend": "分栏表示阶段",
-    "dependency_legend": "任务间箭头表示依赖",
-    "edge_count": "{{count}} 条依赖",
-    "edge_locate_source": "定位前置",
-    "edge_locate_target": "定位后续",
-    "edge_count_other": "{{count}} 条依赖"
-  },
-  "dependencies": {
-    "section_title": "前置",
-    "unsatisfied_summary_other": "{{count}} 项前置未完成",
-    "restricted_note": "部分前置因权限不可见；依赖关系仅供协作参考，不阻止执行。",
-    "inherited_from": "继承自 {{name}}",
-    "edit_source": "编辑来源",
-    "blocking_section": "后续任务",
-    "edit_aria": "编辑前置",
-    "remove_aria": "移除前置 {{identifier}}",
-    "remove_conflict": "前置刚刚发生变化——已刷新，请重试",
-    "remove_failed": "更新前置失败",
-    "loading": "正在加载前置...",
-    "load_error": "前置加载失败",
-    "unknown_state": "前置状态不可用——请刷新后再编辑",
-    "retry": "重试",
-    "blocked_without_visible": "存在不可见的前置"
-  },
-  "working_filter_error": {
-    "title": "无法加载智能体正在处理的任务"
-  },
-  "peek": {
-    "panel_label": "任务预览",
-    "previous": "上一个任务",
-    "next": "下一个任务",
-    "open_full_page": "打开完整页面",
-    "close": "关闭预览"
-  },
-  "runs_timeline": {
-    "title": "运行记录",
-    "stat_spent": "已花费",
-    "stat_agent_time": "智能体工作",
-    "stat_elapsed": "历时",
-    "stat_runs": "运行次数",
-    "count_failed_other": "{{count}} 次失败",
-    "count_cancelled_other": "{{count}} 次取消",
-    "count_active_other": "{{count}} 次进行中",
-    "legend_cumulative": "累计费用",
-    "legend_run": "运行 · 宽度为时长",
-    "chart_aria_other": "累计费用随时间的变化：{{count}} 次运行，共 {{cost}}",
-    "day_today": "今天",
-    "day_yesterday": "昨天",
-    "day_runs_other": "{{count}} 次运行",
-    "quoted": "“{{text}}”",
-    "cost_input": "输入",
-    "cost_output": "输出",
-    "cost_cache_read": "缓存读",
-    "cost_cache_write": "缓存写",
-    "cost_breakdown_aria": "费用明细：{{cost}}",
-    "no_usage": "没有用量记录",
-    "tooltip_total": "累计 {{cost}}",
-    "hover_no_run": "没有运行",
-    "hover_idle": "空闲 {{duration}}",
-    "note_unmapped": "{{models}} 没有维护价格，token 已计入，费用未计入。",
-    "note_estimate": "费用按各模型公开价目估算；供应商回报实际费用时以回报值为准。"
   },
   "deliverables": {
     "section_title": "产物",

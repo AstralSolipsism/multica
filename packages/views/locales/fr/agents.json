@@ -199,11 +199,7 @@
     "edit_description_title": "Modifier la description",
     "description_placeholder": "Que fait cet agent ?",
     "save": "Enregistrer",
-    "cancel": "Annuler",
-    "section_profile_hint": "Manage how this agent appears across the workspace.",
-    "section_execution_hint": "Choose the runtime, model, reasoning level, speed, and parallel run limit.",
-    "section_access_hint": "Control who can run this agent and use its connected capabilities.",
-    "avatar_hint": "Shown in assignments, activity, and chat."
+    "cancel": "Annuler"
   },
   "overview": {
     "agent_context": "Agent",
@@ -319,10 +315,7 @@
       "behavior": "Comportement et capacités",
       "execution": "Exécution",
       "execution_hint": "Les options non spécifiées utilisent les valeurs par défaut du runtime.",
-      "access": "Accès",
-      "identity_hint": "Give the agent a recognizable name and a concise purpose.",
-      "behavior_hint": "Define how it should work and attach workspace skills it can rely on.",
-      "access_hint": "Control who can start runs with this agent. You can change this later."
+      "access": "Accès"
     },
     "thinking_label": "Réflexion",
     "speed_label": "Vitesse",
@@ -362,8 +355,7 @@
       "prompt_assistant": "Aider notre équipe à planifier et rédiger des projets",
       "thinking": "Mise à jour du brouillon…",
       "placeholder": "Décrivez l'agent dont vous avez besoin…",
-      "send": "Envoyer le message",
-      "chat_hint": "Shape the requirements through conversation and refine the configuration beside it."
+      "send": "Envoyer le message"
     },
     "live_draft": "Configuration de l'agent",
     "live_draft_hint": "Vous pouvez modifier le brouillon directement.",
@@ -384,8 +376,7 @@
       "discard_cancel": "Continuer à modifier",
       "banner": "Vous avez {{count}} brouillon(s) inachevé(s)",
       "pick_hint": "Choisissez-en un pour continuer."
-    },
-    "choose_description": "Start with full control, or describe what you need and build it through conversation."
+    }
   },
   "create_dialog": {
     "title_create": "Créer un agent",
@@ -450,8 +441,7 @@
       "remove_aria": "Supprimer l'avatar",
       "select_image_toast": "Veuillez sélectionner un fichier image.",
       "upload_failed_toast": "Échec de l'envoi de l'avatar"
-    },
-    "description_create": "Create a new AI agent for your workspace."
+    }
   },
   "conversation_starters": {
     "label": "Amorces de conversation",
@@ -531,8 +521,7 @@
       "edit_aria": "Modifier l'argument {{index}}",
       "remove_aria": "Supprimer l'argument {{index}}",
       "saved_toast": "Arguments personnalisés enregistrés",
-      "save_failed_toast": "Échec de l'enregistrement des arguments personnalisés",
-      "empty_hint": "Add the first token to build the launch command."
+      "save_failed_toast": "Échec de l'enregistrement des arguments personnalisés"
     },
     "mcp_config": {
       "managed_title": "Géré par Multica",
@@ -632,22 +621,7 @@
       "save_failed_toast": "Échec de l'enregistrement de la configuration MCP",
       "redacted_title": "Configuré — masqué pour vous",
       "redacted_hint": "Seul le propriétaire de l'agent ou un administrateur de l'espace de travail peut lire cette configuration.",
-      "dialog_json_help": "Modifiez la configuration complète du serveur en JSON.",
-      "dialog_description": "Choose a connection method and enter its settings. Switch to JSON for advanced configuration.",
-      "dialog_command_hint": "The executable that starts the server, from the server's install docs — e.g. npx, uvx, or an absolute path. Arguments go in the fields below, not here.",
-      "dialog_url_hint": "The MCP endpoint published by the service or given by your deployment admin — a homepage URL won't work here.",
-      "dialog_snippet_toggle": "Paste a config snippet",
-      "dialog_snippet_hint": "Paste what the server's install docs give you — a {\"mcpServers\": {...}} block, a single server object, a launch command line, or an endpoint URL. Applying only fills in the fields below; it never runs a command.",
-      "dialog_snippet_aria": "MCP config snippet",
-      "dialog_snippet_apply": "Fill in fields",
-      "dialog_snippet_empty": "Paste a snippet first.",
-      "dialog_snippet_invalid_json": "That JSON doesn't parse: {{error}}",
-      "dialog_snippet_not_object": "The snippet must be a JSON object.",
-      "dialog_snippet_no_servers": "The snippet's server list is empty.",
-      "dialog_snippet_multiple": "The snippet defines more than one server ({{names}}) — paste one at a time.",
-      "dialog_snippet_missing_target": "The snippet needs a command or a url.",
-      "dialog_snippet_unbalanced": "The command line has an unclosed quote.",
-      "dialog_snippet_unsupported": "The command line uses unsupported shell syntax (pipes, redirects, expansions, or a dangling backslash) — paste a single launch command."
+      "dialog_json_help": "Modifiez la configuration complète du serveur en JSON."
     },
     "composio_mcp": {
       "subtitle": "Cochez une boîte à outils pour permettre à cet agent de la monter comme serveur MCP — mais uniquement lorsque c'est vous (son créateur) qui avez déclenché l'exécution, directement ou via une chaîne de sous-agents.",
@@ -662,8 +636,7 @@
       "redacted_title": "Configuré — masqué pour vous",
       "redacted_hint": "Seul le créateur de l'agent peut voir ou modifier les applications qu'il peut utiliser.",
       "shared_warning": "Cet agent est partagé. Les personnes qui peuvent l'exécuter pourront utiliser les applications Composio que vous activez ici. Passez en Privé ou restreignez la liste d'accès si ces applications exposent des données sensibles.",
-      "workspace_warning": "Public pour l'espace de travail : tout membre de l'espace de travail peut utiliser ces applications Composio via cet agent.",
-      "empty_hint": "You haven't connected any third-party services. Authorize one first, then come back here to allow it."
+      "workspace_warning": "Public pour l'espace de travail : tout membre de l'espace de travail peut utiliser ces applications Composio via cet agent."
     },
     "runtime_config": {
       "mode_label": "Mode de routage",
@@ -682,12 +655,7 @@
       "tls_label": "Utiliser TLS",
       "tls_hint": "Composer en https:// plutôt qu'en http://",
       "saved_toast": "Configuration de routage enregistrée",
-      "save_failed_toast": "Échec de l'enregistrement de la configuration de routage",
-      "intro": "Choose how the OpenClaw runtime executes this agent's turns. Local mode runs the agent inside the daemon process. Gateway mode forwards each turn to an OpenClaw Gateway — useful when the daemon host is a lightweight coordinator and the agent should run on a more powerful machine.",
-      "gateway_hint": "Only used in Gateway mode. Every field is optional — a blank field is inherited from the daemon host's gateway config (`~/.openclaw/openclaw.json`, `gateway` section). A saved token is the exception: leaving it blank keeps the saved value.",
-      "host_hint": "The gateway address, from your deployment admin. Blank inherits the host's config.",
-      "token_hint": "Issued by the gateway — get it from your deployment admin or the gateway host's config. When none is set, blank inherits.",
-      "token_hint_saved": "A token is saved — leaving this field blank keeps it. Enter a new value to replace it."
+      "save_failed_toast": "Échec de l'enregistrement de la configuration de routage"
     },
     "skills": {
       "assigned_title": "Assignés à l'agent",
@@ -730,14 +698,10 @@
       "add_dialog_confirm_one": "Ajouter {{count}} skill",
       "add_dialog_confirm_other": "Ajouter {{count}} skills",
       "add_dialog_cancel": "Annuler",
-      "add_failed_toast": "Échec de l'ajout du skill",
-      "intro": "This is the agent's effective skill set. Workspace skills are managed here; inherited Codex and Claude Code skills can also be turned off per agent.",
-      "empty_hint": "Add workspace skills to share team knowledge with this agent.",
-      "add_dialog_description": "Select a workspace skill to assign to this agent."
+      "add_failed_toast": "Échec de l'ajout du skill"
     },
     "integrations": {
-      "members_note": "Seuls les propriétaires et administrateurs de l'espace de travail peuvent gérer cette connexion. Vous pouvez voir les bots connectés dans Paramètres → Intégrations.",
-      "intro": "Connect this agent to external chat platforms so people can work with it where they already are."
+      "members_note": "Seuls les propriétaires et administrateurs de l'espace de travail peuvent gérer cette connexion. Vous pouvez voir les bots connectés dans Paramètres → Intégrations."
     },
     "activity": {
       "status": {
@@ -886,6 +850,7 @@
     "status_cancelled": "Annulée",
     "status_waiting": "En attente",
     "trigger_initial": "Exécution initiale",
+    "trigger_text": "Déclencheur",
     "trigger_comment": "Depuis un commentaire",
     "trigger_autopilot": "Automatisation",
     "trigger_retry": "Relance",
@@ -947,8 +912,6 @@
     "tool_kind_write": "Modifications",
     "tool_kind_read": "Lectures",
     "tool_kind_misc": "Autres",
-    "antigravity_live_unavailable": "Antigravity does not currently provide live execution events. The transcript will be available after the run completes.",
-    "trigger_text": "Déclencheur",
     "trigger_wakeup": "Réveil"
   },
   "task_failure": {

@@ -24,7 +24,7 @@ import { PrerequisiteList } from "./dependency-prerequisites";
  * on the source ancestor only.
  */
 export function IssueDependenciesSection({ issue }: { issue: Issue }) {
-  const { t } = useT("issues");
+  const { t } = useT("dependencies");
   const wsId = useWorkspaceId();
   const openModal = useModalStore((s) => s.open);
   const updateIssue = useUpdateIssue();
@@ -60,8 +60,8 @@ export function IssueDependenciesSection({ issue }: { issue: Issue }) {
       // toast only has to say why THIS removal did not happen.
       toast.error(
         details?.reasonCode === "dependency_version_conflict"
-            ? t(($) => $.dependencies.remove_conflict)
-            : t(($) => $.dependencies.remove_failed),
+            ? t(($) => $.detail.remove_conflict)
+            : t(($) => $.detail.remove_failed),
       );
     } finally {
       setRemovingId(null);
@@ -86,15 +86,15 @@ export function IssueDependenciesSection({ issue }: { issue: Issue }) {
           onClick={() => setOpen(!open)}
           aria-expanded={open}
         >
-          {t(($) => $.dependencies.section_title)}
+          {t(($) => $.detail.section_title)}
           <ChevronRight
             className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
           />
         </button>
         <button
           type="button"
-          title={t(($) => $.dependencies.edit_aria)}
-          aria-label={t(($) => $.dependencies.edit_aria)}
+          title={t(($) => $.detail.edit_aria)}
+          aria-label={t(($) => $.detail.edit_aria)}
           onClick={() => openModal("issue-edit-dependencies", { issueId: issue.id })}
           className="shrink-0 rounded-sm p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
@@ -107,7 +107,7 @@ export function IssueDependenciesSection({ issue }: { issue: Issue }) {
           {depsQuery.isLoading && (
             <div className="flex items-center gap-2 px-2 py-1.5 text-caption text-muted-foreground">
               <Spinner className="size-3" />
-              {t(($) => $.dependencies.loading)}
+              {t(($) => $.detail.loading)}
             </div>
           )}
 
@@ -115,15 +115,15 @@ export function IssueDependenciesSection({ issue }: { issue: Issue }) {
             <div className="flex items-center gap-2 px-2 py-1.5">
               <span className="flex-1 text-caption text-muted-foreground">
                 {view === null && !depsQuery.isError
-                  ? t(($) => $.dependencies.unknown_state)
-                  : t(($) => $.dependencies.load_error)}
+                  ? t(($) => $.detail.unknown_state)
+                  : t(($) => $.detail.load_error)}
               </span>
               <button
                 type="button"
                 onClick={() => void depsQuery.refetch()}
                 className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-primary hover:bg-accent"
               >
-                {t(($) => $.dependencies.retry)}
+                {t(($) => $.detail.retry)}
               </button>
             </div>
           )}
@@ -135,12 +135,12 @@ export function IssueDependenciesSection({ issue }: { issue: Issue }) {
                   <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
                   <span>
                     {unsatisfiedCount > 0 &&
-                      t(($) => $.dependencies.unsatisfied_summary, {
+                      t(($) => $.detail.unsatisfied_summary, {
                         count: unsatisfiedCount,
                       })}
                     {view.hasRestrictedBlockers && (
                       <span className="block text-micro">
-                        {t(($) => $.dependencies.restricted_note)}
+                        {t(($) => $.detail.restricted_note)}
                       </span>
                     )}
                   </span>
@@ -163,7 +163,7 @@ export function IssueDependenciesSection({ issue }: { issue: Issue }) {
               {view.blocking.length > 0 && (
                 <div>
                   <div className="px-2 pb-0.5 pt-1 text-micro font-medium text-muted-foreground">
-                    {t(($) => $.dependencies.blocking_section)}
+                    {t(($) => $.detail.blocking_section)}
                   </div>
                   <PrerequisiteList wsId={wsId} items={view.blocking} />
                 </div>

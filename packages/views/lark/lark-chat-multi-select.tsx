@@ -42,7 +42,7 @@ export function LarkChatMultiSelect({
   disabled?: boolean;
   fallback: React.ReactNode;
 }) {
-  const { t } = useT("settings");
+  const { t } = useT("lark");
   const [expanded, setExpanded] = useState(false);
   const caps = useLarkTargetCapabilities(wsId, installationId);
   const supported = caps.data?.chat_list_supported === true;
@@ -77,7 +77,7 @@ export function LarkChatMultiSelect({
         <div className="space-y-2">
           {selected.length > 0 && chips}
           <p className="text-caption text-muted-foreground">
-            {t(($) => $.lark.picker.error.forbidden)}
+            {t(($) => $.picker.error.forbidden)}
           </p>
         </div>
       );
@@ -87,14 +87,14 @@ export function LarkChatMultiSelect({
         {selected.length > 0 && chips}
         {caps.isPending ? (
           <p className="py-1 text-caption text-muted-foreground">
-            {t(($) => $.lark.picker.loading)}
+            {t(($) => $.picker.loading)}
           </p>
         ) : (
           <>
             <p className="text-caption text-muted-foreground">
               {caps.isError
-                ? t(($) => $.lark.picker.error[larkDiscoveryErrorKey(caps.error)])
-                : t(($) => $.lark.picker.error.unsupported)}
+                ? t(($) => $.picker.error[larkDiscoveryErrorKey(caps.error)])
+                : t(($) => $.picker.error.unsupported)}
             </p>
             {fallback}
           </>
@@ -107,7 +107,7 @@ export function LarkChatMultiSelect({
     <div className="space-y-2">
       {selected.length > 0 && chips}
       <p className="text-micro text-muted-foreground">
-        {t(($) => $.lark.picker.multi_selected, { count: selected.length + otherCount, max })}
+        {t(($) => $.picker.multi_selected, { count: selected.length + otherCount, max })}
       </p>
       {!expanded ? (
         <Button
@@ -117,7 +117,7 @@ export function LarkChatMultiSelect({
           disabled={disabled || atCap}
         >
           <Plus className="h-3 w-3" />
-          {t(($) => $.lark.picker.multi_add)}
+          {t(($) => $.picker.multi_add)}
         </Button>
       ) : (
         <div className="space-y-2 rounded-md border p-2">
@@ -126,8 +126,8 @@ export function LarkChatMultiSelect({
             <Input
               value={list.search}
               onChange={(e) => list.setSearch(e.target.value)}
-              placeholder={t(($) => $.lark.picker.search_placeholder)}
-              aria-label={t(($) => $.lark.picker.search_label)}
+              placeholder={t(($) => $.picker.search_placeholder)}
+              aria-label={t(($) => $.picker.search_label)}
               className="pl-8"
               disabled={disabled}
               autoFocus
@@ -135,7 +135,7 @@ export function LarkChatMultiSelect({
           </div>
           {atCap && (
             <p role="status" className="text-caption text-warning">
-              {t(($) => $.lark.picker.multi_max, { max })}
+              {t(($) => $.picker.multi_max, { max })}
             </p>
           )}
           <LarkChatList
@@ -148,7 +148,7 @@ export function LarkChatMultiSelect({
           />
           <div className="flex justify-end">
             <Button size="sm" variant="ghost" onClick={() => setExpanded(false)}>
-              {t(($) => $.lark.picker.multi_done)}
+              {t(($) => $.picker.multi_done)}
             </Button>
           </div>
         </div>

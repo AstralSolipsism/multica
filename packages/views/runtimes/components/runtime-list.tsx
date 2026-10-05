@@ -682,6 +682,7 @@ export function RuntimeList({
   machineTitle?: string;
 }) {
   const { t } = useT("runtimes");
+  const { t: tQuota } = useT("quota");
   const wsId = useWorkspaceId();
   const wsPaths = useWorkspacePaths();
   const rowLink = useRowLink();
@@ -777,7 +778,7 @@ export function RuntimeList({
             {t(($) => $.list.col_cost)}
           </ListGridHeaderCell>
           <ListGridHeaderCell className="hidden @2xl:flex">
-            {t(($) => $.list.col_quota)}
+            {tQuota(($) => $.column_label)}
           </ListGridHeaderCell>
           <ListGridHeaderCell className="hidden @2xl:flex">
             {t(($) => $.list.col_cli)}

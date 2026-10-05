@@ -35,6 +35,9 @@
     "steer_step": "{{name}} が追加",
     "steer_step_read": "既読"
   },
+  "working_filter_error": {
+    "title": "エージェントが作業中のタスクを読み込めませんでした"
+  },
   "status_catalog_error": {
     "title": "ステータス一覧を読み込めませんでした",
     "hint": "ステータスを読み込むまでタスクを表示できません。",
@@ -114,8 +117,7 @@
     "breadcrumb_title": "タスク",
     "breadcrumb_workspace_fallback": "ワークスペース",
     "empty_title": "まだタスクがありません",
-    "move_failed": "タスクを移動できませんでした",
-    "empty_hint": "タスクを作成して始めましょう。"
+    "move_failed": "タスクを移動できませんでした"
   },
   "status": {
     "backlog": "バックログ",
@@ -245,9 +247,7 @@
     "list": "リスト",
     "table": "テーブル",
     "gantt": "ガント",
-    "swimlane": "スイムレーン",
-    "tooltip_dag": "依存関係グラフビュー",
-    "dag": "依存グラフ"
+    "swimlane": "スイムレーン"
   },
   "table": {
     "select_all": "表示中のタスクをすべて選択",
@@ -337,12 +337,10 @@
     },
     "empty": {
       "assigned": {
-        "title": "割り当てられたタスクはありません",
-        "description": "ここに割り当てられたタスクがこの表示に表示されます。"
+        "title": "割り当てられたタスクはありません"
       },
       "created": {
-        "title": "作成したタスクはありません",
-        "description": "ここで作成したタスクがこの表示に表示されます。"
+        "title": "作成したタスクはありません"
       }
     },
     "search_placeholder": "タスクを検索...",
@@ -370,6 +368,13 @@
     "no_value": "値なし",
     "ordered_by": "{{field}} 順に並べたボード",
     "manual_reorder_hint": "列内の順序を変更するには、並び順を「手動」に切り替えてください。"
+  },
+  "peek": {
+    "panel_label": "タスクのプレビュー",
+    "previous": "前のタスク",
+    "next": "次のタスク",
+    "open_full_page": "ページ全体で開く",
+    "close": "プレビューを閉じる"
   },
   "detail": {
     "not_found": "このタスクはこのワークスペースに存在しないか、削除されています。",
@@ -415,6 +420,9 @@
     "pull_request_merge_ready": "マージ可能",
     "pull_request_merge_blocked": "ブロック中",
     "pull_request_merge_behind": "ベースブランチより遅れています",
+    "pull_request_verdict_conflicting": "コンフリクト",
+    "pull_request_verdict_ready": "マージ可能",
+    "pull_request_verdict_passed": "チェック成功",
     "pull_request_snapshot_stale": "{{time}}に更新",
     "pull_request_snapshot_stale_unknown": "スナップショットが古い可能性があります",
     "pull_request_card_files_count_other": "{{count}} ファイル",
@@ -471,12 +479,7 @@
     "project_directory_path_copied_with_branch": "プロジェクトディレクトリのパスをコピーしました — 作業は {{branch}} ブランチにあります",
     "workdir_path_copy_failed": "作業ディレクトリのパスをコピーできませんでした",
     "workdir_path_unavailable": "まだローカルの作業ディレクトリがありません。ローカルエージェントがこのタスクを実行していません",
-    "pull_requests_empty_title": "関連する PR はありません。",
-    "pull_requests_empty": "まだリンクされた Pull request がありません。このタスクの識別子を PR のブランチ名かタイトルに入れるか、本文で Closes の直後に書くと、自動的にリンクされます。",
-    "more_actions": "タスク操作",
-    "pull_request_verdict_conflicting": "コンフリクト",
-    "pull_request_verdict_ready": "マージ可能",
-    "pull_request_verdict_passed": "チェック成功"
+    "pull_requests_empty_title": "関連する PR はありません。"
   },
   "timeline": {
     "loading": "読み込み中..."
@@ -518,7 +521,6 @@
     "pr_auto_complete_enabled": "このタスクの PR マージ後のステータス変更を再開しました",
     "wakeup_created": "起動を追加しました：{{condition}} · {{agent}} を起こす",
     "wakeup_triggered": "{{condition}} · {{agent}} を起こしました",
-    "wakeup_triggered_rejected": "起動の入力を破棄しました：外部会話の権限が無効か、入力元が競合しています",
     "wakeup_triggered_merged": "{{condition}}（{{agent}} の開始待ちの実行に合流しました）",
     "wakeup_triggered_acknowledged": "{{condition}}（{{agent}} 自身の操作のため、再度は起こしていません）",
     "wakeup_triggered_manual": "{{name}} が {{agent}} を今すぐ起こしました",
@@ -631,11 +633,7 @@
     "recipient_count_other": "{{count}} 個のエージェントが受け取ります",
     "steer_attachment_notice": "実行中に追加できるのはテキストのみのため、ファイル付きのメッセージはこの実行の後に処理されます。",
     "restart_send": "停止して送信",
-    "restart_failed": "現在の実行を停止できませんでした。メッセージは送信されていません。",
-    "trigger_blocked_dependency_unsatisfied": "開始されません——このタスクには未完了の前提条件があります",
-    "trigger_blocked_dependency_data_unverified": "開始されません——依存データの確認が必要です",
-    "trigger_blocked_short_dependency_unsatisfied": "前提条件が未完了",
-    "trigger_blocked_short_dependency_data_unverified": "依存データ未確認"
+    "restart_failed": "現在の実行を停止できませんでした。メッセージは送信されていません。"
   },
   "reply": {
     "placeholder": "返信を残す...",
@@ -674,8 +672,7 @@
   },
   "filtered_empty": {
     "title": "フィルター条件に一致するタスクがありません",
-    "clear_button": "フィルターを解除",
-    "hint": "フィルターを変更または解除すると、このビューのタスクが表示されます。"
+    "clear_button": "フィルターを解除"
   },
   "agent_live": {
     "is_working": "{{name}} が作業中",
@@ -724,8 +721,7 @@
       "source_rule_owner": "オートパイロットのルール公開者",
       "source_owner_fallback": "正確な責任者なし — エージェント所有者に帰属",
       "source_backfill": "バックフィルされた帰属",
-      "source_unattributed": "責任メンバーを解決できません",
-      "source_channel_integration": "連携会話の承認"
+      "source_unattributed": "責任メンバーを解決できません"
     },
     "usage_total_tooltip": "実行タイムラインを開く",
     "trigger_wakeup": "起動 · {{condition}}",
@@ -739,6 +735,34 @@
     "strip_aria": "累計費用の推移 — 実行タイムラインを開く",
     "strip_no_usage": "使用量の記録なし",
     "sparkline_now": "現在"
+  },
+  "runs_timeline": {
+    "title": "実行履歴",
+    "stat_spent": "費用",
+    "stat_agent_time": "エージェント作業",
+    "stat_elapsed": "経過時間",
+    "stat_runs": "実行回数",
+    "count_failed_other": "失敗 {{count}}",
+    "count_cancelled_other": "キャンセル {{count}}",
+    "count_active_other": "進行中 {{count}}",
+    "legend_cumulative": "累計費用",
+    "legend_run": "実行 · 幅は所要時間",
+    "chart_aria_other": "累計費用の推移：{{count}} 回の実行で {{cost}}",
+    "day_today": "今日",
+    "day_yesterday": "昨日",
+    "day_runs_other": "{{count}} 回",
+    "quoted": "「{{text}}」",
+    "cost_input": "入力",
+    "cost_output": "出力",
+    "cost_cache_read": "キャッシュ読み取り",
+    "cost_cache_write": "キャッシュ書き込み",
+    "cost_breakdown_aria": "費用の内訳：{{cost}}",
+    "no_usage": "使用量の記録なし",
+    "tooltip_total": "累計 {{cost}}",
+    "hover_no_run": "実行なし",
+    "hover_idle": "アイドル {{duration}}",
+    "note_unmapped": "{{models}} は価格が未登録です。トークンは集計されますが費用は含まれません。",
+    "note_estimate": "費用は公開モデル料金からの概算です（プロバイダーが独自の費用を返した分を除く）。"
   },
   "terminate_dialog": {
     "title": "この実行を停止しますか？",
@@ -760,8 +784,7 @@
     "delete_dialog_title_other": "タスク {{count}} 件を削除しますか？",
     "delete_dialog_desc_other": "この操作は元に戻せません。選択したタスクと関連データがすべて完全に削除されます。",
     "delete_dialog_warning": "ワークスペースのメンバーであれば誰でもタスクを削除できます。",
-    "cancel": "キャンセル",
-    "update_partial": "{{total}} 件中 {{failed}} 件を更新できませんでした"
+    "cancel": "キャンセル"
   },
   "card": {
     "update_failed": "タスクを更新できませんでした",
@@ -795,8 +818,7 @@
     "remove_parent_issue_success": "親タスクを解除しました",
     "add_sub_issue": "サブタスクを追加...",
     "delete_issue": "タスクを削除",
-    "mark_duplicate": "重複としてマーク...",
-    "edit_dependencies": "前提条件を編集..."
+    "mark_duplicate": "重複としてマーク..."
   },
   "pickers": {
     "custom_property": {
@@ -1339,135 +1361,6 @@
     "all_merged_to": "PR はすべてマージ済みです。次に PR がマージされると {{status}} に変更します。",
     "issue_disabled": "このタスクは PR マージでステータスを変えません",
     "issue_disabled_action": "再開"
-  },
-  "dag": {
-    "loading": "依存関係グラフ全体を読み込み中…",
-    "layout_pending": "レイアウトを計算中…",
-    "layout_cancel": "キャンセル",
-    "error_title": "依存関係グラフを読み込めませんでした",
-    "error_unavailable": "現在のサーバーバージョンでは依存関係グラフに対応していません。アップグレードしてから再試行してください。",
-    "error_forbidden": "このワークスペースの依存関係グラフを表示する権限がありません。",
-    "error_unverified": "依存関係の履歴データが未検証のため、グラフを表示できません。",
-    "error_timeout": "グラフのクエリがタイムアウトしました。フィルターを絞って再試行してください。",
-    "error_retry": "再試行",
-    "stale_banner": "更新に失敗したため、{{time}} のスナップショットを表示しています。",
-    "empty_title": "現在のフィルターに一致するタスクがありません",
-    "empty_hint": "フィルターを調整すると依存関係グラフを表示できます。",
-    "empty_title_unfiltered": "タスクはまだありません",
-    "empty_hint_unfiltered": "タスクを作成すると依存関係グラフに表示されます。",
-    "context_badge": "コンテキスト",
-    "blocked_badge_other": "未完了の前提条件 {{count}} 件",
-    "blocked_badge_restricted": "表示できない前提条件を含みます",
-    "readiness_unknown": "前提条件の状態は不明です",
-    "run_active": "実行中",
-    "run_queued": "キュー待ち",
-    "stage_badge": "ステージ {{number}}",
-    "members_badge_other": "タスク {{count}} 件",
-    "folded_children_other": "サブタスク {{count}} 件",
-    "internal_edges_other": "内部依存 {{count}} 件",
-    "blocked_members_other": "{{count}} 件ブロック中",
-    "context_count_other": "+コンテキスト {{count}} 件",
-    "expand": "展開",
-    "collapse": "折りたたむ",
-    "expand_all": "タスク群を展開",
-    "collapse_all": "タスク群を折りたたむ",
-    "open_detail": "詳細を開く",
-    "edit_dependencies": "前提関係を編集",
-    "assign_issue": "割り当て開始",
-    "focus_upstream": "前提タスクを強調",
-    "focus_downstream": "後続タスクを強調",
-    "focus_clear": "クリア",
-    "focus_upstream_active": "前提の依存関係",
-    "focus_downstream_active": "後続の依存関係",
-    "direction_label": "方向",
-    "direction_lr": "左から右",
-    "direction_tb": "上から下",
-    "grouping_label": "グループ化",
-    "grouping_project": "プロジェクト別",
-    "grouping_parent": "タスク群",
-    "grouping_none": "なし",
-    "no_project_group": "プロジェクトなし",
-    "edge_direct_title": "直接の前提条件",
-    "edge_direct_description": "{{target}} の前提条件は {{source}} です",
-    "edge_aggregate_title": "集約された依存関係",
-    "edge_aggregate_description": "{{source}} → {{target}} は {{count}} 件のタスク依存を集約",
-    "edge_aggregate_bidirectional": "グループを折りたたむと双方向の矢印が表示されることがありますが、タスク間の依存循環を意味しません。",
-    "edge_locate": "特定",
-    "summary_matches_other": "タスク {{count}} 件",
-    "summary_context_other": "+コンテキスト {{count}} 件",
-    "summary_edges_other": "依存関係 {{count}} 件",
-    "restricted_context_hint": "権限により一部の情報は非表示です。依存関係は参考情報です。",
-    "context_only_hint": "フィルターに一致するタスクがないため、前提コンテキストのみ表示しています。",
-    "node_actions_label": "ノード操作",
-    "edge_inspector_label": "依存関係の詳細",
-    "clear_selection": "選択をクリア",
-    "independent_group": "独立タスク",
-    "group_progress": "{{count}} 件中 {{done}} 件完了",
-    "focus_line": "タスク群にフォーカス",
-    "parent_details": "親タスクの詳細",
-    "stage_conflict": "段階順序と依存関係が一致しないため、依存順序で表示しています",
-    "layout_error": "依存関係のレイアウトを計算できません",
-    "stage_legend": "区切りは段階を表示",
-    "dependency_legend": "矢印は依存関係を表示",
-    "edge_count": "{{count}} 件の依存関係",
-    "edge_locate_source": "前提タスクへ",
-    "edge_locate_target": "後続タスクへ",
-    "edge_count_other": "{{count}} 件の依存関係"
-  },
-  "dependencies": {
-    "section_title": "前提条件",
-    "unsatisfied_summary_other": "{{count}} 件の前提条件が未完了",
-    "restricted_note": "一部の前提条件は権限により非表示です。依存関係は実行を制限しません。",
-    "inherited_from": "{{name}} から継承",
-    "edit_source": "元を編集",
-    "blocking_section": "後続タスク",
-    "edit_aria": "前提条件を編集",
-    "remove_aria": "前提 {{identifier}} を削除",
-    "remove_conflict": "前提条件が変更されました——更新しました。もう一度お試しください",
-    "remove_failed": "前提条件の更新に失敗しました",
-    "loading": "前提条件を読み込み中...",
-    "load_error": "前提条件を読み込めませんでした",
-    "unknown_state": "前提条件の状態を取得できません——更新してから編集してください",
-    "retry": "再試行",
-    "blocked_without_visible": "非表示の前提条件"
-  },
-  "working_filter_error": {
-    "title": "エージェントが作業中のタスクを読み込めませんでした"
-  },
-  "peek": {
-    "panel_label": "タスクのプレビュー",
-    "previous": "前のタスク",
-    "next": "次のタスク",
-    "open_full_page": "ページ全体で開く",
-    "close": "プレビューを閉じる"
-  },
-  "runs_timeline": {
-    "title": "実行履歴",
-    "stat_spent": "費用",
-    "stat_agent_time": "エージェント作業",
-    "stat_elapsed": "経過時間",
-    "stat_runs": "実行回数",
-    "count_failed_other": "失敗 {{count}}",
-    "count_cancelled_other": "キャンセル {{count}}",
-    "count_active_other": "進行中 {{count}}",
-    "legend_cumulative": "累計費用",
-    "legend_run": "実行 · 幅は所要時間",
-    "chart_aria_other": "累計費用の推移：{{count}} 回の実行で {{cost}}",
-    "day_today": "今日",
-    "day_yesterday": "昨日",
-    "day_runs_other": "{{count}} 回",
-    "quoted": "「{{text}}」",
-    "cost_input": "入力",
-    "cost_output": "出力",
-    "cost_cache_read": "キャッシュ読み取り",
-    "cost_cache_write": "キャッシュ書き込み",
-    "cost_breakdown_aria": "費用の内訳：{{cost}}",
-    "no_usage": "使用量の記録なし",
-    "tooltip_total": "累計 {{cost}}",
-    "hover_no_run": "実行なし",
-    "hover_idle": "アイドル {{duration}}",
-    "note_unmapped": "{{models}} は価格が未登録です。トークンは集計されますが費用は含まれません。",
-    "note_estimate": "費用は公開モデル料金からの概算です（プロバイダーが独自の費用を返した分を除く）。"
   },
   "deliverables": {
     "section_title": "成果物",

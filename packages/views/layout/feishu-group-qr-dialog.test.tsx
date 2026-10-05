@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { NavigationProvider } from "../navigation";
 import type { NavigationAdapter } from "../navigation/types";
-import enLayout from "../locales/en/layout.json";
+import { RESOURCES } from "../test/i18n";
 import { FeishuQrDialog } from "./feishu-group-qr-dialog";
 
 // Regression test for the OL-14 review finding: the desktop renderer runs
@@ -13,8 +13,8 @@ import { FeishuQrDialog } from "./feishu-group-qr-dialog";
 // implementation: the URL follows the adapter, with and without config
 // state, and tracks an adapter change on re-render.
 vi.mock("../i18n", () => ({
-  useT: () => ({
-    t: (selector: (r: typeof enLayout) => string) => selector(enLayout),
+  useT: (namespace: string) => ({
+    t: (selector: (r: unknown) => string) => selector(RESOURCES.en[namespace]),
   }),
 }));
 

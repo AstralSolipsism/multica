@@ -60,7 +60,7 @@ export function LarkPrivateChatSelect({
    * its full-list save/revoke until the confirmation has landed. */
   onBusyChange?: (busy: boolean) => void;
 }) {
-  const { t } = useT("settings");
+  const { t } = useT("lark");
   const locale = useLocale();
   const caps = useLarkTargetCapabilities(wsId, installationId);
   const supported = caps.data?.private_chat_candidates_supported === true;
@@ -127,8 +127,8 @@ export function LarkPrivateChatSelect({
 
   const errorText = (key: LarkPrivateChatErrorKey): string =>
     key === "limit_exceeded"
-      ? t(($) => $.lark.private.error.limit_exceeded, { max })
-      : t(($) => $.lark.private.error[key]);
+      ? t(($) => $.private.error.limit_exceeded, { max })
+      : t(($) => $.private.error[key]);
 
   if (!supported) {
     // Forbidden is NOT a fallback case (OL-72 contract): explain the required
@@ -139,7 +139,7 @@ export function LarkPrivateChatSelect({
         <div className="space-y-2">
           {chips}
           <p className="text-caption text-muted-foreground">
-            {t(($) => $.lark.private.error.forbidden)}
+            {t(($) => $.private.error.forbidden)}
           </p>
         </div>
       );
@@ -149,14 +149,14 @@ export function LarkPrivateChatSelect({
         {chips}
         {caps.isPending ? (
           <p className="py-1 text-caption text-muted-foreground">
-            {t(($) => $.lark.private.loading)}
+            {t(($) => $.private.loading)}
           </p>
         ) : (
           <>
             <p className="text-caption text-muted-foreground">
               {caps.isError
                 ? errorText(larkPrivateChatErrorKey(caps.error))
-                : t(($) => $.lark.private.error.unsupported)}
+                : t(($) => $.private.error.unsupported)}
             </p>
             {fallback}
           </>
@@ -168,7 +168,7 @@ export function LarkPrivateChatSelect({
   const formatTime = (iso: string): string => {
     const ms = candidateTimeMs(iso);
     return ms == null
-      ? t(($) => $.lark.anchor.time_unknown)
+      ? t(($) => $.anchor.time_unknown)
       : new Date(ms).toLocaleString(locale);
   };
 
@@ -216,7 +216,7 @@ export function LarkPrivateChatSelect({
       <div className="space-y-2 rounded-md border p-2">
         <div className="flex items-start justify-between gap-2">
           <p className="text-caption text-muted-foreground">
-            {t(($) => $.lark.private.intro)}
+            {t(($) => $.private.intro)}
           </p>
           <Button
             size="sm"
@@ -230,8 +230,8 @@ export function LarkPrivateChatSelect({
           >
             <RefreshCw className={cn("h-3 w-3", list.isFetching && "animate-spin")} />
             {list.isFetching
-              ? t(($) => $.lark.private.refreshing)
-              : t(($) => $.lark.private.refresh)}
+              ? t(($) => $.private.refreshing)
+              : t(($) => $.private.refresh)}
           </Button>
         </div>
 
@@ -241,7 +241,7 @@ export function LarkPrivateChatSelect({
               <span>{errorText(list.errorKey)}</span>
               <Button size="sm" variant="outline" onClick={list.refresh} disabled={list.isFetching}>
                 <RefreshCw className="h-3 w-3" />
-                {t(($) => $.lark.picker.retry)}
+                {t(($) => $.picker.retry)}
               </Button>
             </AlertDescription>
           </Alert>
@@ -253,21 +253,21 @@ export function LarkPrivateChatSelect({
         )}
         {confirmedNote && !confirm.isError && (
           <p role="status" className="text-caption">
-            {t(($) => $.lark.private.confirmed)}
+            {t(($) => $.private.confirmed)}
           </p>
         )}
 
         {list.isLoading ? (
           <p className="px-1 py-2 text-caption text-muted-foreground">
-            {t(($) => $.lark.private.loading)}
+            {t(($) => $.private.loading)}
           </p>
         ) : list.errorKey == null && list.items.length === 0 ? (
           <div className="space-y-1 rounded-md border border-dashed px-3 py-3">
             <p className="text-caption font-medium">
-              {t(($) => $.lark.private.empty_title)}
+              {t(($) => $.private.empty_title)}
             </p>
             <p className="text-caption text-muted-foreground">
-              {t(($) => $.lark.private.empty_steps)}
+              {t(($) => $.private.empty_steps)}
             </p>
           </div>
         ) : (
@@ -275,12 +275,12 @@ export function LarkPrivateChatSelect({
             <>
               {hasIdOnly && (
                 <p className="text-micro text-muted-foreground">
-                  {t(($) => $.lark.private.id_only_hint)}
+                  {t(($) => $.private.id_only_hint)}
                 </p>
               )}
               <div
                 role="group"
-                aria-label={t(($) => $.lark.private.list_label)}
+                aria-label={t(($) => $.private.list_label)}
                 className="max-h-56 divide-y overflow-y-auto rounded-md border"
               >
                 {list.items.map((candidate) => {
@@ -296,7 +296,7 @@ export function LarkPrivateChatSelect({
                           <span className="truncate text-body">{name}</span>
                         ) : (
                           <span className="truncate text-body text-muted-foreground">
-                            {t(($) => $.lark.private.name_unavailable)}
+                            {t(($) => $.private.name_unavailable)}
                           </span>
                         )}
                         <Badge
@@ -304,22 +304,22 @@ export function LarkPrivateChatSelect({
                           className="shrink-0"
                         >
                           {isAuthorized
-                            ? t(($) => $.lark.private.authorized_badge)
-                            : t(($) => $.lark.private.pending_badge)}
+                            ? t(($) => $.private.authorized_badge)
+                            : t(($) => $.private.pending_badge)}
                         </Badge>
                       </span>
                       <span className="block text-caption text-muted-foreground">
-                        {t(($) => $.lark.private.last_seen, { when: formatTime(candidate.last_seen_at) })}
+                        {t(($) => $.private.last_seen, { when: formatTime(candidate.last_seen_at) })}
                         {" · "}
-                        {t(($) => $.lark.private.expires, { when: formatTime(candidate.expires_at) })}
+                        {t(($) => $.private.expires, { when: formatTime(candidate.expires_at) })}
                       </span>
                       <span className="flex flex-wrap items-center gap-x-2">
                         <ChatIdDisclosure id={candidate.chat_id} />
                         {candidate.sender.id != null && candidate.sender.id !== "" && (
                           <ChatIdDisclosure
                             id={candidate.sender.id}
-                            showLabel={t(($) => $.lark.private.show_user_id)}
-                            hideLabel={t(($) => $.lark.private.hide_user_id)}
+                            showLabel={t(($) => $.private.show_user_id)}
+                            hideLabel={t(($) => $.private.hide_user_id)}
                           />
                         )}
                       </span>
@@ -361,12 +361,12 @@ export function LarkPrivateChatSelect({
           <div className="space-y-1">
             {checked.size > 0 && (
               <p className="text-micro text-muted-foreground">
-                {t(($) => $.lark.private.confirm_scope)}
+                {t(($) => $.private.confirm_scope)}
               </p>
             )}
             {atCap && (
               <p role="status" className="text-caption text-warning">
-                {t(($) => $.lark.picker.multi_max, { max })}
+                {t(($) => $.picker.multi_max, { max })}
               </p>
             )}
             <div className="flex justify-end">
@@ -375,7 +375,7 @@ export function LarkPrivateChatSelect({
                 onClick={() => void confirmChecked()}
                 disabled={blocked || checked.size === 0 || wouldExceed}
               >
-                {t(($) => $.lark.private.confirm_selected, { count: checked.size })}
+                {t(($) => $.private.confirm_selected, { count: checked.size })}
               </Button>
             </div>
           </div>

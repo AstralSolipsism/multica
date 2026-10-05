@@ -108,6 +108,7 @@ export function IssueActionsMenuItems({
   onDeletedFallbackPath,
 }: IssueActionsMenuItemsProps) {
   const { t } = useT("issues");
+  const { t: tDependencies } = useT("dependencies");
   const wsId = useWorkspaceId();
   const statusOptions = useStatusOptions(wsId);
   const { categoryOf, colorOf, iconOf } = useIssueStatuses(wsId);
@@ -364,7 +365,7 @@ export function IssueActionsMenuItems({
           </P.Item>
           <P.Item onClick={openEditDependencies}>
             <Workflow className="h-3.5 w-3.5" />
-            {t(($) => $.actions.edit_dependencies)}
+            {tDependencies(($) => $.actions.edit_dependencies)}
           </P.Item>
         </P.SubContent>
       </P.Sub>

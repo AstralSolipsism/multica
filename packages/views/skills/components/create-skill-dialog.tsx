@@ -458,6 +458,7 @@ function LocalForm({
   onChooseArchive: () => void;
 }) {
   const { t } = useT("skills");
+  const { t: tForkUi } = useT("fork-ui");
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   const [loading, setLoading] = useState(false);
@@ -480,7 +481,7 @@ function LocalForm({
       onCreated(skill);
     } catch (err) {
       setError(
-        localArchiveImportError(err, t) ??
+        localArchiveImportError(err, t, tForkUi) ??
           (err instanceof Error ? err.message : t(($) => $.create.local.fallback_error)),
       );
       setLoading(false);
@@ -493,7 +494,7 @@ function LocalForm({
     prepared && !prepared.ok
       ? {
           missing_skill_md: t(($) => $.create.local.missing_skill_md),
-          multiple_skills: t(($) => $.create.local.multiple_skills),
+          multiple_skills: tForkUi(($) => $.skills.create.local.multiple_skills),
           too_large: t(($) => $.create.local.too_large),
           empty: t(($) => $.create.local.empty),
           too_many_files: t(($) => $.create.local.too_many_files),

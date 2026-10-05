@@ -43,8 +43,7 @@
       "cancel": "Cancel",
       "save": "Save",
       "saving": "Saving…",
-      "save_failed": "Could not save the status.",
-      "behavior_hint": "This status behaves exactly like {{category}}."
+      "save_failed": "Could not save the status."
     },
     "archive_dialog": {
       "retry": "Retry archive",
@@ -68,13 +67,7 @@
       "unstarted": "Work that has not started, whether planned or in the backlog.",
       "started": "Work that is active, under review, or blocked.",
       "done": "Work that has been finished.",
-      "closed": "Work that will not be completed.",
-      "backlog": "Parked. Assigning an issue here never starts an agent run.",
-      "todo": "Queued. Moving an issue here starts the assigned agent.",
-      "in_progress": "Actively being worked on.",
-      "in_review": "Delivered, waiting on human review. Finalizes the autopilot run.",
-      "blocked": "Stalled on an external dependency.",
-      "cancelled": "Decided not to do."
+      "closed": "Work that will not be completed."
     },
     "built_in_descriptions": {
       "backlog": "Parked. Assigning an issue here never starts an agent run.",
@@ -86,8 +79,25 @@
       "cancelled": "Decided not to do."
     },
     "pr_auto_complete_badge": "Set when PRs merge",
-    "description": "Define the workflow your issues move through. Each status inherits its behavior from its category.",
     "built_in_locked": "Built-in statuses drive system behavior, so they can't be edited or archived. You can still reorder them."
+  },
+  "wakeups": {
+    "description": "Platform rules that apply to every issue. Each issue can change them in its Wakeups section.",
+    "child_done_title": "When sub-issues finish",
+    "child_done_description": "Wakes the parent's assignee when a stage finishes and a later stage is waiting, and once more when every sub-issue is closed. A member assignee gets an inbox notification instead.",
+    "enabled": "On by default",
+    "instruction": "Default instruction",
+    "instruction_hint": "Sent to the woken agent. Leave empty to use the built-in instruction below.",
+    "instruction_placeholder": "Leave empty to use the built-in instruction",
+    "builtin": "Built-in instruction",
+    "instruction_invalid": "Keep the instruction within 4,000 bytes.",
+    "save": "Save",
+    "saving": "Saving…",
+    "save_error": "Could not save the default.",
+    "customized_one": "{{count}} open issue has its own setting and ignores this default.",
+    "customized_other": "{{count}} open issues have their own setting and ignore this default.",
+    "admin_only": "Only owners and admins can change these defaults.",
+    "load_error": "Could not load wakeup defaults."
   },
   "quick_actions": {
     "title": "Quick Actions",
@@ -167,8 +177,7 @@
       "empty": "No matching time zone"
     },
     "sticky_comment_bar": {
-      "title": "Pin comment bar to bottom",
-      "hint": "Keep the comment bar pinned to the bottom while scrolling an issue page."
+      "title": "Pin comment bar to bottom"
     },
     "running_agent_reply": {
       "title": "When replying to a running agent",
@@ -177,7 +186,6 @@
       "hint": "Sets the default only. You can still change it for any message before sending."
     },
     "comments_title": "Comments & chat",
-    "description": "Customize how you work in Multica.",
     "region_title": "Language & region",
     "appearance_title": "Appearance",
     "issue_fields_title": "Fields shown when creating issues",
@@ -325,6 +333,13 @@
     "floating_hint": "Show the floating chat button on every page."
   },
   "issue": {
+    "opening": {
+      "title": "Opening issues",
+      "click": "Clicking a card or row opens",
+      "page": "Full page",
+      "peek": "Side preview",
+      "hint": "Shift+Click opens the other one."
+    },
     "description": "Choose which fields each create dialog keeps on its toolbar. Hidden fields stay available from the ⋯ menu and reappear while they hold a value.",
     "fields": {
       "status": "Status",
@@ -334,15 +349,6 @@
       "project": "Project",
       "due_date": "Due date",
       "start_date": "Start date"
-    },
-    "quick_create_description": "Fields shown in the quick create toolbar.",
-    "manual_create_description": "Fields shown in the manual create toolbar.",
-    "opening": {
-      "title": "Opening issues",
-      "click": "Clicking a card or row opens",
-      "page": "Full page",
-      "peek": "Side preview",
-      "hint": "Shift+Click opens the other one."
     }
   },
   "mcp": {
@@ -372,8 +378,7 @@
     "removed_toast": "Shared MCP server removed",
     "save_failed_toast": "Could not save the shared MCP server",
     "rename_failed_toast": "Could not rename the shared MCP server",
-    "remove_failed_toast": "Could not remove the shared MCP server",
-    "empty_description": "Add a server here, then assign it to the agents that should use it from their own MCP tab."
+    "remove_failed_toast": "Could not remove the shared MCP server"
   },
   "page": {
     "title": "Settings",
@@ -505,10 +510,8 @@
       "deleted": "Published Plugin deleted",
       "installed_version": "In use",
       "review_install": "Review and install",
-      "review_upgrade": "Review and upgrade",
-      "description": "Upload a plugin package. Multica stores and serves it, so a plugin author needs no server of their own."
-    },
-    "description": "Publish plugins into this workspace, then install a specific version and review exactly what it is allowed to reach."
+      "review_upgrade": "Review and upgrade"
+    }
   },
   "properties": {
     "title": "Properties",
@@ -671,8 +674,7 @@
     "system": {
       "title": "System Notifications",
       "description": "Show system notifications when Multica is in the background.",
-      "label": "Show system notifications",
-      "hint": "Show a banner from your operating system for new inbox items when the app isn't focused."
+      "label": "Show system notifications"
     },
     "browser": {
       "label": "Browser notifications",
@@ -815,11 +817,6 @@
     "feature_auto_link_label": "Auto-link issues and PRs",
     "toast_failed": "Failed to update GitHub settings",
     "feature_auto_link_description": "Links a PR to the issue whose ID, e.g. {{example}}, is in its title or branch name, or follows “Closes” in its description.",
-    "page_description": "Connect a GitHub App, control how Pull Requests show up inside Multica, and decide what your agents leave behind in commit history.",
-    "connection_description_prefix": "Link issues to pull requests automatically. A PR links when",
-    "connection_description_suffix": "is in its branch name or title, or its body says Closes MUL-123. Merging a PR with that closing keyword also moves the issue to",
-    "connection_description_done": "Done",
-    "connection_identifier_example": "MUL-123",
     "status_paused": "Paused",
     "pause": "Pause GitHub features",
     "resume": "Resume GitHub features"
@@ -940,105 +937,7 @@
     "install_error_installer_bind": "Installed the bot, but could not bind your Lark identity. Try again or contact support.",
     "install_error_session_lost": "Install session expired or was lost. Scan again to start over.",
     "install_error_forbidden": "You no longer have permission to install Lark Bots in this workspace. Ask a workspace admin to continue.",
-    "install_error_generic": "Install failed. Try again.",
-    "install_scan_hint_feishu": "Feishu → Scan → authorize the new PersonalAgent.",
-    "install_scan_hint_lark": "Lark → Scan → authorize the new PersonalAgent.",
-    "conversation_title": "Agent conversations",
-    "conversation_description": "People in these conversations can talk to this agent without a Multica account. The agent clarifies and summarizes feedback, then posts comments in its own name. This takes time and model usage; messages are not copied verbatim into tasks.",
-    "conversation_groups": "Group chat IDs (one oc_ ID per line; topics remain separate)",
-    "conversation_directs": "Direct chat IDs (one oc_ ID per line)",
-    "conversation_scope": "Only collaboration content, issue creation and updates, comments, and attachments in this workspace are available, under your invocation rights. Everyone in these conversations may provide input. Wakeups, automation, credentials, and administrative settings are excluded. Saving invalidates old runs.",
-    "conversation_save": "Authorize conversations",
-    "conversation_revoke": "Revoke conversations",
-    "conversation_unavailable": "Configuration is unavailable or refreshing. Your draft is preserved; refresh before saving.",
-    "conversation_saved": "Conversation authorization saved.",
-    "picker": {
-      "list_label": "Joined groups",
-      "search_label": "Search groups",
-      "search_placeholder": "Search by group name",
-      "loading": "Loading groups…",
-      "load_more": "Load more groups",
-      "loading_more": "Loading…",
-      "empty": "The bot has not joined any group yet. Invite it to a group in Feishu first.",
-      "no_results": "No joined group matches “{{query}}”.",
-      "external_badge": "External",
-      "unnamed": "Unnamed group",
-      "show_id": "Show full chat ID",
-      "hide_id": "Hide full chat ID",
-      "selected_group": "Selected group",
-      "clear": "Clear selection",
-      "saved_group_missing": "The currently saved group is not among the groups this bot has joined. Pick a replacement or leave it unchanged.",
-      "retry": "Retry",
-      "restart": "Reload from the first page",
-      "multi_add": "Add groups",
-      "multi_done": "Done",
-      "multi_selected": "{{count}} of {{max}} conversations",
-      "multi_max": "At most {{max}} conversations (groups and direct chats combined).",
-      "multi_remove": "Remove {{name}}",
-      "error": {
-        "forbidden": "Browsing groups and messages requires the bot's agent owner or a workspace admin.",
-        "permission_denied": "The Feishu app is missing the group or message read scope. Update its permissions in the developer console, or enter the ID manually.",
-        "unsupported": "This server cannot browse groups or messages yet. Enter the ID manually.",
-        "unavailable": "Browsing is temporarily unavailable (credentials, bot or network). Retry, or enter the ID manually.",
-        "rate_limited": "Feishu rate limit reached. Wait a moment, then retry.",
-        "invalid_cursor": "This listing session expired. Reload from the first page.",
-        "chat_unavailable": "This group is unavailable, is a private chat, or the bot is not a member. Pick another group.",
-        "message_unavailable": "A message in this list was deleted or recalled. Reload the list.",
-        "installation_inactive": "This bot installation is inactive or its agent is archived.",
-        "installation_not_found": "This bot installation no longer exists in this workspace.",
-        "invalid_response": "The server returned an unreadable response. Retry.",
-        "invalid_request": "The request was rejected. Shorten the search and try again.",
-        "generic": "Could not load the list. Retry."
-      }
-    },
-    "anchor": {
-      "list_label": "Recent messages",
-      "pick_group_first": "Select a group above to browse its recent messages.",
-      "loading": "Loading messages…",
-      "load_more": "Load earlier messages",
-      "empty": "No recent messages in this group.",
-      "selected": "Selected anchor",
-      "saved_missing": "The saved anchor message is not in the recent history. Pick a new message or leave it unchanged.",
-      "time_unknown": "Unknown time",
-      "sender_user": "User",
-      "sender_app": "App",
-      "sender_anonymous": "Anonymous",
-      "sender_unknown": "Unknown sender"
-    },
-    "conversation_groups_label": "Groups",
-    "conversation_directs_label": "Direct chats",
-    "conversation_over_limit": "At most {{max}} conversations (groups and direct chats combined). Remove some before saving.",
-    "private": {
-      "intro": "People who message this bot privately appear here for review. Sending a message only makes the conversation discoverable — the agent answers new messages only after you authorize the conversation below.",
-      "loading": "Loading private chats…",
-      "refresh": "Refresh",
-      "refreshing": "Refreshing…",
-      "list_label": "Discovered private chats",
-      "empty_title": "No private chats discovered yet",
-      "empty_steps": "Ask the person to open a private chat with this bot in Feishu and send any message, then come back and refresh. The message only makes the conversation discoverable here — it grants no access by itself.",
-      "pending_badge": "Pending",
-      "authorized_badge": "Authorized",
-      "name_unavailable": "Name unavailable",
-      "id_only_hint": "Names marked unavailable could not be read (external user or missing contact permission). Match the chat and user IDs plus the last-message time, or have the intended person send a new message and compare the updated time.",
-      "last_seen": "Last message {{when}}",
-      "expires": "discoverable until {{when}}",
-      "show_user_id": "Show full user ID",
-      "hide_user_id": "Hide full user ID",
-      "confirm_selected": "Authorize selected ({{count}})",
-      "confirm_scope": "Selected conversations are added to the current grant; existing groups and direct chats remain authorized. Access is limited to issue collaboration in this workspace, under your invocation rights. Wakeups, automation, credentials, and administrative settings are excluded.",
-      "confirmed": "Authorization saved. The agent now answers new messages in these conversations; earlier messages are not replayed.",
-      "error": {
-        "forbidden": "Viewing and authorizing private chats requires the bot's agent owner or a workspace admin.",
-        "invocation_denied": "You can manage this bot, but authorizing conversations also requires permission to invoke this agent.",
-        "limit_exceeded": "At most {{max}} conversations (groups and direct chats combined). Remove a saved conversation first.",
-        "candidate_unavailable": "A selected candidate expired or was replaced. The list has been refreshed — select again.",
-        "invalid_request": "The selection was rejected. Refresh the list and try again.",
-        "installation_inactive": "This bot installation is inactive or its agent is archived.",
-        "installation_not_found": "This bot installation no longer exists in this workspace.",
-        "unsupported": "This server cannot discover private chats yet. Enter the ID manually.",
-        "generic": "Could not load the private chat list. Retry."
-      }
-    }
+    "install_error_generic": "Install failed. Try again."
   },
   "composio": {
     "page_description": "Connect apps your agents can use.",
@@ -1174,8 +1073,7 @@
     "byo_submitting": "Connecting…",
     "byo_cancel": "Cancel",
     "byo_success_toast": "DingTalk bot connected",
-    "byo_failed_toast": "Could not connect the DingTalk bot",
-    "groups_overview_description": "Each connection shows its Agent, DingTalk bot, and recently observed groups."
+    "byo_failed_toast": "Could not connect the DingTalk bot"
   },
   "wecom": {
     "section_title": "WeCom",
@@ -1330,8 +1228,7 @@
       "up_to_date": "You're on the latest version.",
       "downloading": "v{{version}} is downloading in the background — you'll be notified when it's ready to install.",
       "check_now": "Check now",
-      "checking": "Checking…",
-      "description": "Control automatic background updates or check for a new version manually."
+      "checking": "Checking…"
     },
     "daemon": {
       "title": "Daemon",
@@ -1406,12 +1303,7 @@
       "waiting_logs": "Waiting for logs…",
       "reconnect_failed": "Couldn't reconnect the daemon",
       "try_again_moment": "Please try again in a moment.",
-      "try_again": "Please try again.",
-      "description": "Configure how the local agent daemon behaves with the desktop app.",
-      "cli_install_windows_help": "Windows has no script installer. Ask your workspace administrator, or download the multica-cli-<version>-windows-<arch>.zip archive for the release you want from the internal release source ({{downloadsUrl}}/cli/v<version>/ — the current version is in {{latestManifestUrl}}) and extract multica.exe onto your PATH.",
-      "cli_install_windows_label": "Manual install required on Windows",
-      "diagnostics_description": "Identification and connection details. Useful when filing a bug report or investigating why a runtime isn't showing up.",
-      "waiting_logs_description": "New entries will appear in real time."
+      "try_again": "Please try again."
     }
   },
   "members": {
@@ -1501,26 +1393,7 @@
     "status_connected": "Connected",
     "status_not_connected": "Not connected",
     "status_loading": "Checking...",
-    "status_unknown": "Status unavailable",
-    "description": "Connect your tools and manage each integration in one place."
-  },
-  "wakeups": {
-    "description": "Platform rules that apply to every issue. Each issue can change them in its Wakeups section.",
-    "child_done_title": "When sub-issues finish",
-    "child_done_description": "Wakes the parent's assignee when a stage finishes and a later stage is waiting, and once more when every sub-issue is closed. A member assignee gets an inbox notification instead.",
-    "enabled": "On by default",
-    "instruction": "Default instruction",
-    "instruction_hint": "Sent to the woken agent. Leave empty to use the built-in instruction below.",
-    "instruction_placeholder": "Leave empty to use the built-in instruction",
-    "builtin": "Built-in instruction",
-    "instruction_invalid": "Keep the instruction within 4,000 bytes.",
-    "save": "Save",
-    "saving": "Saving…",
-    "save_error": "Could not save the default.",
-    "customized_one": "{{count}} open issue has its own setting and ignores this default.",
-    "customized_other": "{{count}} open issues have their own setting and ignore this default.",
-    "admin_only": "Only owners and admins can change these defaults.",
-    "load_error": "Could not load wakeup defaults."
+    "status_unknown": "Status unavailable"
   },
   "pr_merge_status": {
     "label": "After PRs merge, move the issue to",

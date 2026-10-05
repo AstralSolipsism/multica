@@ -1,0 +1,62 @@
+{
+  "inspector": {
+    "section_profile_hint": "管理该智能体在工作区内的展示方式。",
+    "section_execution_hint": "选择运行时、模型、思考强度、速度和并行运行上限。",
+    "section_access_hint": "控制谁可以运行该智能体并使用它已连接的能力。",
+    "avatar_hint": "显示在任务分配、动态和聊天中。"
+  },
+  "creation_studio": {
+    "sections": {
+      "identity_hint": "为智能体设置容易识别的名称和简洁的用途。",
+      "behavior_hint": "定义它的工作方式，并添加可使用的工作区 skill。",
+      "access_hint": "控制谁可以运行此智能体，创建后仍可修改。"
+    },
+    "builder": {
+      "chat_hint": "通过对话梳理需求，并持续完善右侧配置。"
+    },
+    "choose_description": "从空白配置开始，或者直接描述需求，通过对话完成创建。"
+  },
+  "create_dialog": {
+    "description_create": "为工作区创建一个新的 AI 智能体。"
+  },
+  "tab_body": {
+    "custom_args": {
+      "empty_hint": "添加第一个 token，开始构建启动命令。"
+    },
+    "mcp_config": {
+      "dialog_description": "选择连接方式并填写配置信息。如需编辑完整配置，可切换到 JSON。",
+      "dialog_command_hint": "启动此服务的可执行文件，取自该服务的安装文档，例如 npx、uvx 或绝对路径。参数请填在下方，不要写在这里。",
+      "dialog_url_hint": "由服务发布方或部署管理员提供的 MCP 端点，网站首页地址不能用在这里。",
+      "dialog_snippet_toggle": "粘贴配置片段",
+      "dialog_snippet_hint": "粘贴服务安装文档给出的内容：{\"mcpServers\": {...}} 配置块、单个服务配置对象、启动命令行或端点 URL。填入操作只会填写下方字段，绝不会执行命令。",
+      "dialog_snippet_aria": "MCP 配置片段",
+      "dialog_snippet_apply": "填入字段",
+      "dialog_snippet_empty": "请先粘贴配置片段。",
+      "dialog_snippet_invalid_json": "JSON 无法解析：{{error}}",
+      "dialog_snippet_not_object": "配置片段必须是 JSON 对象。",
+      "dialog_snippet_no_servers": "片段中的服务列表为空。",
+      "dialog_snippet_multiple": "片段包含多个服务（{{names}}），请一次只粘贴一个。",
+      "dialog_snippet_missing_target": "片段中需要包含 command 或 url。",
+      "dialog_snippet_unbalanced": "命令行中存在未闭合的引号。",
+      "dialog_snippet_unsupported": "命令行包含不支持的 shell 语法（管道、重定向、变量展开或末尾孤立的反斜杠），请只粘贴一条启动命令。"
+    },
+    "composio_mcp": {
+      "empty_hint": "你还没连接任何第三方服务。先去授权一个，再回到这里勾选允许。"
+    },
+    "runtime_config": {
+      "intro": "选择 OpenClaw 运行时执行该智能体每一回合的方式。Local 模式让智能体直接在守护进程内运行；Gateway 模式则把每一回合转发到一个 OpenClaw Gateway——适合守护进程宿主只是轻量协调机、希望真正算力落在更强的远端机器上的场景。",
+      "gateway_hint": "仅在 Gateway 模式下生效。所有字段均可留空——留空的字段会继承守护进程宿主的 Gateway 配置（`~/.openclaw/openclaw.json` 的 `gateway` 一节）。已保存的 Token 例外：留空会保留已保存的值。",
+      "host_hint": "Gateway 地址，由部署管理员提供；留空则继承宿主配置。",
+      "token_hint": "由 Gateway 颁发，可向部署管理员索取，或查看 Gateway 宿主的配置；未设置时留空即继承。",
+      "token_hint_saved": "已保存 Token——留空会保留当前值，输入新值即可替换。"
+    },
+    "skills": {
+      "intro": "这里展示该智能体实际拥有的全部 skill。工作区 skill 可在此管理；从 Codex 和 Claude Code 继承的 skill 也可以按智能体单独关闭。",
+      "empty_hint": "添加工作区 skill，把团队知识共享给这个智能体。",
+      "add_dialog_description": "选择一个工作区 skill 分配给该智能体。"
+    },
+    "integrations": {
+      "intro": "把这个智能体连接到外部聊天平台，让大家在自己熟悉的工具里直接与它协作。"
+    }
+  }
+}

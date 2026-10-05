@@ -182,11 +182,7 @@
     "edit_description_title": "説明を編集",
     "description_placeholder": "このエージェントは何をしますか？",
     "save": "保存",
-    "cancel": "キャンセル",
-    "section_profile_hint": "ワークスペース内でのエージェントの表示を管理します。",
-    "section_execution_hint": "ランタイム、モデル、思考レベル、速度、同時実行数を設定します。",
-    "section_access_hint": "このエージェントと接続済み機能を利用できる相手を管理します。",
-    "avatar_hint": "割り当て、アクティビティ、チャットに表示されます。"
+    "cancel": "キャンセル"
   },
   "overview": {
     "agent_context": "エージェント",
@@ -332,8 +328,7 @@
       "remove_aria": "アバターを削除",
       "select_image_toast": "画像ファイルを選択してください。",
       "upload_failed_toast": "アバターのアップロードに失敗しました"
-    },
-    "description_create": "ワークスペースに新しい AI エージェントを作成します。"
+    }
   },
   "conversation_starters": {
     "label": "会話の開始例",
@@ -412,8 +407,7 @@
       "edit_aria": "引数 {{index}} を編集",
       "remove_aria": "引数 {{index}} を削除",
       "saved_toast": "カスタム引数を保存しました",
-      "save_failed_toast": "カスタム引数を保存できませんでした",
-      "empty_hint": "最初のトークンを追加して、起動コマンドを作成します。"
+      "save_failed_toast": "カスタム引数を保存できませんでした"
     },
     "mcp_config": {
       "managed_title": "Multica で管理",
@@ -513,22 +507,7 @@
       "save_failed_toast": "MCP config を保存できませんでした",
       "redacted_title": "設定済み — あなたには非表示",
       "redacted_hint": "この config を読み取れるのは、エージェントのオーナーまたはワークスペースの admin のみです。",
-      "dialog_json_help": "サーバー設定全体を JSON で編集します。",
-      "dialog_description": "接続方式を選んで設定を入力します。高度な設定には JSON を使用できます。",
-      "dialog_command_hint": "Server を起動する実行ファイルで、そのサービスのインストール手順から取得します（例: npx、uvx、絶対パス）。引数はここではなく下の欄に入力してください。",
-      "dialog_url_hint": "サービス提供者またはデプロイ管理者が発行する MCP エンドポイントです。サービスのホームページ URL はここでは使えません。",
-      "dialog_snippet_toggle": "設定スニペットを貼り付け",
-      "dialog_snippet_hint": "サービスのインストール手順にある内容を貼り付けます — {\"mcpServers\": {...}} ブロック、単一の Server 設定オブジェクト、起動コマンド行、またはエンドポイント URL。適用しても下のフィールドに入力されるだけで、コマンドが実行されることはありません。",
-      "dialog_snippet_aria": "MCP 設定スニペット",
-      "dialog_snippet_apply": "フィールドに入力",
-      "dialog_snippet_empty": "先にスニペットを貼り付けてください。",
-      "dialog_snippet_invalid_json": "JSON を解析できません: {{error}}",
-      "dialog_snippet_not_object": "スニペットは JSON オブジェクトである必要があります。",
-      "dialog_snippet_no_servers": "スニペットの Server 一覧が空です。",
-      "dialog_snippet_multiple": "スニペットに複数の Server（{{names}}）が含まれています。一度に 1 つずつ貼り付けてください。",
-      "dialog_snippet_missing_target": "スニペットには command または url が必要です。",
-      "dialog_snippet_unbalanced": "コマンド行に閉じられていない引用符があります。",
-      "dialog_snippet_unsupported": "コマンド行にサポートされない shell 構文（パイプ、リダイレクト、展開、末尾の孤立したバックスラッシュ）が含まれています。単一の起動コマンドを貼り付けてください。"
+      "dialog_json_help": "サーバー設定全体を JSON で編集します。"
     },
     "composio_mcp": {
       "subtitle": "ツールキットにチェックを入れると、あなた（この agent の作成者）が直接または下位 agent のチェーン経由でこの agent をトリガーしたときに限り、MCP サーバーとしてマウントされます。",
@@ -543,8 +522,7 @@
       "redacted_title": "設定済み — あなたには非表示",
       "redacted_hint": "この agent が使用できるアプリを閲覧・変更できるのは作成者のみです。",
       "shared_warning": "このエージェントは共有されています。このエージェントを実行できる人は、ここで有効化した Composio アプリを利用できます。これらのアプリが機微なデータを扱う場合は、Private にするかアクセス範囲を絞ってください。",
-      "workspace_warning": "ワークスペースに公開：ワークスペースの全メンバーがこのエージェントを通じてこれらの Composio アプリを利用できます。",
-      "empty_hint": "サードパーティサービスをまだ接続していません。先に 1 つ認可してから、ここで許可してください。"
+      "workspace_warning": "ワークスペースに公開：ワークスペースの全メンバーがこのエージェントを通じてこれらの Composio アプリを利用できます。"
     },
     "runtime_config": {
       "mode_label": "ルーティングモード",
@@ -563,12 +541,7 @@
       "tls_label": "TLS を使用",
       "tls_hint": "http:// の代わりに https:// でダイヤル",
       "saved_toast": "ルーティング設定を保存しました",
-      "save_failed_toast": "ルーティング設定の保存に失敗しました",
-      "intro": "OpenClaw ランタイムがこのエージェントの各ターンをどのように実行するかを選択します。Local モードはエージェントを daemon プロセス内で実行します。Gateway モードは各ターンを OpenClaw Gateway に転送します — daemon のホストが軽量な調整役で、エージェントの実作業はより強力なマシンで動かしたい場合に有用です。",
-      "gateway_hint": "Gateway モードでのみ使用されます。すべてのフィールドは任意です — 空欄のフィールドは daemon ホストの Gateway 設定（`~/.openclaw/openclaw.json` の `gateway` セクション）から継承します。保存済みのトークンは例外で、空欄にすると保存値が保持されます。",
-      "host_hint": "Gateway のアドレスで、デプロイ管理者から取得します。空欄の場合はホスト側の設定を継承します。",
-      "token_hint": "Gateway が発行するトークンで、デプロイ管理者または Gateway ホストの設定から取得します。未設定の場合は空欄で継承します。",
-      "token_hint_saved": "トークンは保存済みです — 空欄のままだと現在の値を保持します。置き換えるには新しい値を入力してください。"
+      "save_failed_toast": "ルーティング設定の保存に失敗しました"
     },
     "skills": {
       "assigned_title": "エージェントに割り当て済み",
@@ -610,14 +583,10 @@
       "add_dialog_confirm_default": "追加",
       "add_dialog_confirm_other": "スキル {{count}} 件を追加",
       "add_dialog_cancel": "キャンセル",
-      "add_failed_toast": "スキルを追加できませんでした",
-      "intro": "このエージェントの有効なスキルです。Codex と Claude Code から継承したスキルも、エージェントごとに無効化できます。",
-      "empty_hint": "ワークスペースのスキルを追加して、チームの知識をこのエージェントと共有しましょう。",
-      "add_dialog_description": "このエージェントに割り当てるワークスペースのスキルを選択してください。"
+      "add_failed_toast": "スキルを追加できませんでした"
     },
     "integrations": {
-      "members_note": "この接続を管理できるのはワークスペースのオーナーと管理者のみです。接続済みの Bot は「設定 → 連携」で確認できます。",
-      "intro": "このエージェントを外部のチャットプラットフォームに接続し、普段使っているツールから直接やり取りできるようにします。"
+      "members_note": "この接続を管理できるのはワークスペースのオーナーと管理者のみです。接続済みの Bot は「設定 → 連携」で確認できます。"
     },
     "activity": {
       "status": {
@@ -764,6 +733,7 @@
     "status_cancelled": "キャンセル",
     "status_waiting": "待機中",
     "trigger_initial": "初回実行",
+    "trigger_text": "トリガー",
     "trigger_comment": "コメントから",
     "trigger_autopilot": "オートパイロット",
     "trigger_retry": "再試行",
@@ -821,8 +791,6 @@
     "tool_kind_write": "編集",
     "tool_kind_read": "読み取り",
     "tool_kind_misc": "その他",
-    "antigravity_live_unavailable": "Antigravity は現在、リアルタイム実行イベントを提供していません。実行完了後に実行記録を確認できます。",
-    "trigger_text": "トリガー",
     "trigger_wakeup": "起動"
   },
   "task_failure": {
@@ -927,10 +895,7 @@
       "behavior": "動作と機能",
       "execution": "実行設定",
       "execution_hint": "未指定の項目はランタイムの既定値を使います。",
-      "access": "アクセス",
-      "identity_hint": "識別しやすい名前と簡潔な目的を設定します。",
-      "behavior_hint": "動作方法を定義し、利用できるワークスペースのスキルを追加します。",
-      "access_hint": "このエージェントを実行できるユーザーを設定します。後から変更できます。"
+      "access": "アクセス"
     },
     "thinking_label": "思考",
     "speed_label": "速度",
@@ -970,8 +935,7 @@
       "prompt_assistant": "チームのプロジェクト計画と文章作成を支援",
       "thinking": "下書きを更新中…",
       "placeholder": "必要なエージェントを説明…",
-      "send": "メッセージを送信",
-      "chat_hint": "会話で要件を整理し、隣の設定を調整します。"
+      "send": "メッセージを送信"
     },
     "live_draft": "エージェント設定",
     "live_draft_hint": "下書きは直接編集できます。",
@@ -992,8 +956,7 @@
       "discard_cancel": "編集を続ける",
       "banner": "未完了の下書きが {{count}} 件あります",
       "pick_hint": "続きを選んでください。"
-    },
-    "choose_description": "すべて自分で設定するか、必要なものを説明して会話から作成できます。"
+    }
   },
   "actions": {
     "selected_other": "{{count}} 件選択中",

@@ -61,6 +61,7 @@ export function AttributionBadge({
   hideAvatar?: boolean;
 }) {
   const { t } = useT("issues");
+  const { t: tLark } = useT("lark");
   if (!attribution) return null;
 
   // Human-readable resolution source, defaulting to the raw label so a
@@ -77,7 +78,7 @@ export function AttributionBadge({
       sourceLabel = t(($) => $.execution_log.attribution.source_comment_source);
       break;
     case "channel_integration":
-      sourceLabel = t(($) => $.execution_log.attribution.source_channel_integration);
+      sourceLabel = tLark(($) => $.execution_log.attribution.source_channel_integration);
       break;
     case "trigger_owner":
       sourceLabel = t(($) => $.execution_log.attribution.source_trigger_owner);

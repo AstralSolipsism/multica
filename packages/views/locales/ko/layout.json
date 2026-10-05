@@ -61,9 +61,5 @@
       "title": "Feishu 그룹",
       "dismiss": "닫기"
     }
-  },
-  "feishu_qr": {
-    "title": "Feishu 그룹 QR 코드",
-    "hint": "Feishu로 스캔하여 그룹에 참여하세요"
   }
 }

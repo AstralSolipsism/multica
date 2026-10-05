@@ -43,8 +43,7 @@
       "cancel": "取消",
       "save": "保存",
       "saving": "保存中…",
-      "save_failed": "状态保存失败。",
-      "behavior_hint": "该状态的行为与「{{category}}」完全一致。"
+      "save_failed": "状态保存失败。"
     },
     "archive_dialog": {
       "retry": "重试归档",
@@ -68,13 +67,7 @@
       "unstarted": "尚未开始的工作，包括待规划和已规划的任务。",
       "started": "正在进行、审核中或已阻塞的工作。",
       "done": "已经完成的工作。",
-      "closed": "不再继续的工作。",
-      "backlog": "搁置。把任务移到这里不会启动智能体。",
-      "todo": "排队中。把任务移到这里会启动指派的智能体。",
-      "in_progress": "正在进行。",
-      "in_review": "已交付，等待人工审核。会结束自动化运行。",
-      "blocked": "被外部依赖阻塞。",
-      "cancelled": "决定不做。"
+      "closed": "不再继续的工作。"
     },
     "built_in_descriptions": {
       "backlog": "搁置。把任务移到这里不会启动智能体。",
@@ -86,8 +79,24 @@
       "cancelled": "决定不做。"
     },
     "pr_auto_complete_badge": "PR 合并后自动进入",
-    "description": "定义任务流转的工作流。每个状态的行为由它所属的分类决定。",
     "built_in_locked": "内置状态驱动系统行为，不能编辑或归档，但可以调整顺序。"
+  },
+  "wakeups": {
+    "description": "平台对所有任务生效的规则。每个任务可以在自己的「唤醒」区域单独修改。",
+    "child_done_title": "子任务结束时",
+    "child_done_description": "某个阶段的子任务全部结束、且后面还有阶段在等待时，唤醒父任务的负责人；全部子任务结束时再唤醒一次。负责人是成员时，改为发送收件箱通知。",
+    "enabled": "默认开启",
+    "instruction": "默认指令",
+    "instruction_hint": "发给被唤醒的智能体。留空则使用下方的内置指令。",
+    "instruction_placeholder": "留空则使用内置指令",
+    "builtin": "内置指令",
+    "instruction_invalid": "指令最多 4,000 字节。",
+    "save": "保存",
+    "saving": "保存中…",
+    "save_error": "无法保存默认值。",
+    "customized_other": "{{count}} 个进行中的任务使用了自己的设置，不跟随此默认值。",
+    "admin_only": "只有所有者和管理员可以修改默认值。",
+    "load_error": "无法加载唤醒默认值。"
   },
   "quick_actions": {
     "title": "快捷操作",
@@ -167,8 +176,7 @@
       "empty": "没有匹配的时区"
     },
     "sticky_comment_bar": {
-      "title": "固定底部评论栏",
-      "hint": "滚动任务页面时，评论栏始终固定在底部。"
+      "title": "固定底部评论栏"
     },
     "running_agent_reply": {
       "title": "回复正在运行的智能体时",
@@ -177,7 +185,6 @@
       "hint": "只决定默认选项，每条消息发送前仍可单独修改。"
     },
     "comments_title": "评论与聊天",
-    "description": "调整你在 Multica 中的使用偏好。",
     "region_title": "语言与地区",
     "appearance_title": "外观",
     "issue_fields_title": "创建任务时显示的字段",
@@ -325,6 +332,13 @@
     "floating_hint": "在每个页面显示悬浮聊天按钮。"
   },
   "issue": {
+    "opening": {
+      "title": "打开任务",
+      "click": "点击卡片或行时打开",
+      "page": "详情页",
+      "peek": "悬浮预览",
+      "hint": "按住 Shift 点击会打开另一种。"
+    },
     "description": "选择各创建方式的工具栏中常驻显示的字段。隐藏的字段仍可从 ⋯ 菜单使用，有值时会自动显示。",
     "fields": {
       "status": "状态",
@@ -334,15 +348,6 @@
       "project": "项目",
       "due_date": "截止日期",
       "start_date": "开始日期"
-    },
-    "quick_create_description": "快速创建工具栏中显示的字段。",
-    "manual_create_description": "手动创建工具栏中显示的字段。",
-    "opening": {
-      "title": "打开任务",
-      "click": "点击卡片或行时打开",
-      "page": "详情页",
-      "peek": "悬浮预览",
-      "hint": "按住 Shift 点击会打开另一种。"
     }
   },
   "mcp": {
@@ -372,8 +377,7 @@
     "removed_toast": "已移除共享 MCP Server",
     "save_failed_toast": "无法保存共享 MCP Server",
     "rename_failed_toast": "无法重命名共享 MCP Server",
-    "remove_failed_toast": "无法移除共享 MCP Server",
-    "empty_description": "先在这里添加 MCP Server，再前往对应智能体的 MCP 页面完成分配。"
+    "remove_failed_toast": "无法移除共享 MCP Server"
   },
   "page": {
     "title": "设置",
@@ -503,10 +507,8 @@
       "deleted": "已删除发布的插件",
       "installed_version": "使用中",
       "review_install": "查看并安装",
-      "review_upgrade": "查看并升级",
-      "description": "上传插件产物包。Multica 负责存储和分发，作者不需要自己的服务器。"
-    },
-    "description": "在这个工作区里发布插件，然后安装某个具体版本，并逐条确认它能访问什么。"
+      "review_upgrade": "查看并升级"
+    }
   },
   "properties": {
     "title": "属性",
@@ -668,8 +670,7 @@
     "system": {
       "title": "系统通知",
       "description": "Multica 在后台时显示系统通知。",
-      "label": "显示系统通知",
-      "hint": "App 未获得焦点时，新的收件箱条目通过操作系统弹出通知横幅。"
+      "label": "显示系统通知"
     },
     "browser": {
       "label": "浏览器通知",
@@ -812,11 +813,6 @@
     "feature_auto_link_label": "任务 ↔ PR 自动关联",
     "toast_failed": "更新 GitHub 设置失败",
     "feature_auto_link_description": "PR 标题或分支名含任务编号（如 {{example}}），或正文里写了 \"Closes {{example}}\" 时，自动关联到对应任务。",
-    "page_description": "连接 GitHub App、控制 Pull Request 如何出现在 Multica 中，并决定智能体在 commit 记录里留下哪些痕迹。",
-    "connection_description_prefix": "自动把任务关联到 Pull Request。只要 PR 的分支名或标题里出现",
-    "connection_description_suffix": "或正文里写了 Closes MUL-123，PR 就会关联到对应任务；只有带关闭关键字的 PR 合并后，任务才会转为",
-    "connection_description_done": "已完成",
-    "connection_identifier_example": "MUL-123",
     "status_paused": "已暂停",
     "pause": "暂停 GitHub 功能",
     "resume": "恢复 GitHub 功能"
@@ -937,105 +933,7 @@
     "install_error_installer_bind": "已安装 Bot，但未能绑定你的飞书身份。请重试或联系管理员。",
     "install_error_session_lost": "安装会话已失效或丢失，请重新扫码。",
     "install_error_forbidden": "你已没有在此工作区安装飞书 Bot 的权限，请联系工作区管理员。",
-    "install_error_generic": "安装失败，请重试。",
-    "install_scan_hint_feishu": "飞书 → 扫一扫 → 授权新 PersonalAgent。",
-    "install_scan_hint_lark": "Lark → 扫一扫 → 授权新 PersonalAgent。",
-    "conversation_title": "与智能体交流",
-    "conversation_description": "这些会话的参与者无需 Multica 账号。智能体会澄清、整理意见，再以自己的身份回填评论；处理会有延迟和模型消耗，不会把每条消息立即逐字变成任务评论。",
-    "conversation_groups": "群聊 ID（每行一个 oc_ ID，群内各话题独立）",
-    "conversation_directs": "私聊 ID（每行一个 oc_ ID）",
-    "conversation_scope": "这些会话的所有参与者都可提供输入。智能体仅能在当前工作区读取协作内容、创建或更新任务、处理评论和附件，并遵守你的调用权限。唤醒、自动化、凭据及管理设置不在授权范围内。保存会使旧运行授权失效。",
-    "conversation_save": "授权这些会话",
-    "conversation_revoke": "撤销会话授权",
-    "conversation_unavailable": "配置不可用或正在刷新。草稿已保留，读取恢复后才能保存。",
-    "conversation_saved": "会话授权已保存。",
-    "picker": {
-      "list_label": "已加入的群聊",
-      "search_label": "搜索群聊",
-      "search_placeholder": "按群名称搜索",
-      "loading": "正在加载群聊...",
-      "load_more": "加载更多群聊",
-      "loading_more": "正在加载...",
-      "empty": "机器人尚未加入任何群聊。请先在飞书中把它邀请进群。",
-      "no_results": "没有名称匹配\"{{query}}\"的已加入群聊。",
-      "external_badge": "外部",
-      "unnamed": "未命名群聊",
-      "show_id": "显示完整群 ID",
-      "hide_id": "收起完整群 ID",
-      "selected_group": "已选群聊",
-      "clear": "清除选择",
-      "saved_group_missing": "当前已保存的群不在该机器人已加入的群列表中。请选择替换目标，或保持不变。",
-      "retry": "重试",
-      "restart": "从第一页重新加载",
-      "multi_add": "添加群聊",
-      "multi_done": "完成",
-      "multi_selected": "已选 {{count}} / {{max}} 个会话",
-      "multi_max": "最多 {{max}} 个会话（群聊与私聊合计）。",
-      "multi_remove": "移除 {{name}}",
-      "error": {
-        "forbidden": "浏览群聊和消息需要机器人所属智能体的负责人或工作区管理员权限。",
-        "permission_denied": "飞书应用缺少群或消息读取权限。请在开发者后台补齐权限，或手动输入 ID。",
-        "unsupported": "当前服务端暂不支持浏览群聊和消息，请手动输入 ID。",
-        "unavailable": "暂时无法浏览（凭据、机器人或网络不可用）。请重试，或手动输入 ID。",
-        "rate_limited": "已达到飞书限流。请稍候重试。",
-        "invalid_cursor": "当前翻页会话已过期，请从第一页重新加载。",
-        "chat_unavailable": "该群不可用、为私聊会话，或机器人尚未入群。请改选其他群。",
-        "message_unavailable": "列表中的某条消息已被删除或撤回，请重新加载列表。",
-        "installation_inactive": "该机器人安装已失效或其智能体已归档。",
-        "installation_not_found": "该机器人安装在当前工作区已不存在。",
-        "invalid_response": "服务端响应无法解析，请重试。",
-        "invalid_request": "请求被拒绝。请缩短搜索词后重试。",
-        "generic": "列表加载失败，请重试。"
-      }
-    },
-    "anchor": {
-      "list_label": "最近消息",
-      "pick_group_first": "先在上方选择群聊，再浏览其中的最近消息。",
-      "loading": "正在加载消息...",
-      "load_more": "加载更早的消息",
-      "empty": "该群暂无最近消息。",
-      "selected": "已选锚点",
-      "saved_missing": "已保存的锚点消息不在最近历史中。请选择新消息，或保持不变。",
-      "time_unknown": "时间未知",
-      "sender_user": "用户",
-      "sender_app": "应用",
-      "sender_anonymous": "匿名",
-      "sender_unknown": "未知发送者"
-    },
-    "conversation_groups_label": "群聊",
-    "conversation_directs_label": "私聊",
-    "conversation_over_limit": "最多 {{max}} 个会话（群聊与私聊合计）。请先移除一部分再保存。",
-    "private": {
-      "intro": "私聊过这个 Bot 的人会出现在这里等待确认。发消息只是让会话被发现——只有你在下方授权后，智能体才会处理该会话的新消息。",
-      "loading": "正在加载私聊...",
-      "refresh": "刷新",
-      "refreshing": "正在刷新...",
-      "list_label": "发现的私聊",
-      "empty_title": "还没有发现私聊",
-      "empty_steps": "请对方在飞书中打开与这个 Bot 的私聊并发送任意消息，然后回到这里刷新。消息只是让会话出现在这里，本身不构成授权。",
-      "pending_badge": "待确认",
-      "authorized_badge": "已授权",
-      "name_unavailable": "姓名不可用",
-      "id_only_hint": "标记为\"姓名不可用\"的候选无法读取姓名（对方是外部用户或应用缺少通讯录权限）。请对照会话 ID、用户 ID 和最后消息时间辨认；也可以让对方重新发一条消息，比对更新后的时间。",
-      "last_seen": "最后消息 {{when}}",
-      "expires": "可发现至 {{when}}",
-      "show_user_id": "显示完整用户 ID",
-      "hide_user_id": "收起完整用户 ID",
-      "confirm_selected": "授权所选（{{count}}）",
-      "confirm_scope": "所选会话会追加到现有授权，保留原有群聊和私聊。仅开放当前工作区内的任务协作，并遵守你的调用权限，不开放唤醒、自动化、凭据及管理设置。",
-      "confirmed": "授权已保存。智能体将处理这些会话的新消息；之前的消息不会重放。",
-      "error": {
-        "forbidden": "查看和授权私聊需要机器人所属智能体的负责人或工作区管理员权限。",
-        "invocation_denied": "你可以管理这个 Bot，但授权会话还需要此智能体的调用权限。",
-        "limit_exceeded": "最多 {{max}} 个会话（群聊与私聊合计）。请先移除一个已授权会话。",
-        "candidate_unavailable": "所选候选已过期或被替换。列表已刷新，请重新选择。",
-        "invalid_request": "选择被服务端拒绝。请刷新列表后重试。",
-        "installation_inactive": "该机器人安装已失效或其智能体已归档。",
-        "installation_not_found": "该机器人安装在当前工作区已不存在。",
-        "unsupported": "当前服务端暂不支持私聊发现，请手动输入 ID。",
-        "generic": "无法加载私聊列表，请重试。"
-      }
-    }
+    "install_error_generic": "安装失败，请重试。"
   },
   "composio": {
     "page_description": "连接智能体可使用的应用。",
@@ -1170,8 +1068,7 @@
     "byo_submitting": "连接中…",
     "byo_cancel": "取消",
     "byo_success_toast": "钉钉机器人已连接",
-    "byo_failed_toast": "无法连接钉钉机器人",
-    "groups_overview_description": "每条连接显示智能体、钉钉机器人和近期有交互的群。"
+    "byo_failed_toast": "无法连接钉钉机器人"
   },
   "wecom": {
     "section_title": "企业微信",
@@ -1326,8 +1223,7 @@
       "up_to_date": "已是最新版本。",
       "downloading": "v{{version}} 正在后台下载——准备好安装时会通知你。",
       "check_now": "立即检查",
-      "checking": "检查中...",
-      "description": "控制后台自动更新，或手动检查新版本。"
+      "checking": "检查中..."
     },
     "daemon": {
       "title": "守护进程",
@@ -1398,12 +1294,7 @@
       "waiting_logs": "正在等待日志...",
       "reconnect_failed": "无法重新连接守护进程",
       "try_again_moment": "请稍后重试。",
-      "try_again": "请重试。",
-      "description": "配置本地智能体守护进程与桌面应用协同工作的方式。",
-      "cli_install_windows_help": "Windows 没有脚本安装器。请联系管理员获取安装包，或从内部发布站（{{downloadsUrl}}/cli/v<版本>/，当前版本号见 {{latestManifestUrl}}）下载对应版本的 multica-cli-<版本>-windows-<架构>.zip，解压后将 multica.exe 放入 PATH。",
-      "cli_install_windows_label": "Windows 需手动安装",
-      "diagnostics_description": "设备标识与连接详情，可用于提交错误报告或排查运行时未显示的问题。",
-      "waiting_logs_description": "新日志会实时显示在这里。"
+      "try_again": "请重试。"
     }
   },
   "members": {
@@ -1493,25 +1384,7 @@
     "status_connected": "已连接",
     "status_not_connected": "未连接",
     "status_loading": "正在检查...",
-    "status_unknown": "状态暂不可用",
-    "description": "连接常用工具，分别管理每项集成。"
-  },
-  "wakeups": {
-    "description": "平台对所有任务生效的规则。每个任务可以在自己的「唤醒」区域单独修改。",
-    "child_done_title": "子任务结束时",
-    "child_done_description": "某个阶段的子任务全部结束、且后面还有阶段在等待时，唤醒父任务的负责人；全部子任务结束时再唤醒一次。负责人是成员时，改为发送收件箱通知。",
-    "enabled": "默认开启",
-    "instruction": "默认指令",
-    "instruction_hint": "发给被唤醒的智能体。留空则使用下方的内置指令。",
-    "instruction_placeholder": "留空则使用内置指令",
-    "builtin": "内置指令",
-    "instruction_invalid": "指令最多 4,000 字节。",
-    "save": "保存",
-    "saving": "保存中…",
-    "save_error": "无法保存默认值。",
-    "customized_other": "{{count}} 个进行中的任务使用了自己的设置，不跟随此默认值。",
-    "admin_only": "只有所有者和管理员可以修改默认值。",
-    "load_error": "无法加载唤醒默认值。"
+    "status_unknown": "状态暂不可用"
   },
   "pr_merge_status": {
     "label": "PR 合并后，任务状态改为",

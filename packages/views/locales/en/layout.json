@@ -61,9 +61,5 @@
       "title": "Feishu group",
       "dismiss": "Dismiss"
     }
-  },
-  "feishu_qr": {
-    "title": "Feishu group QR code",
-    "hint": "Scan with Feishu to join the group"
   }
 }

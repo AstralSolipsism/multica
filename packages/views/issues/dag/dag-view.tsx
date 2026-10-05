@@ -71,6 +71,7 @@ export function DagView({
   layoutRunnerFactory,
 }: DagViewProps) {
   const { t } = useT("issues");
+  const { t: tDag } = useT("dag");
   const wsId = useWorkspaceId();
   const navigation = useNavigation();
   const paths = useWorkspacePaths();
@@ -322,7 +323,7 @@ export function DagView({
         role="status"
       >
         <Loader2 className="h-6 w-6 animate-spin text-faint-foreground" />
-        <p className="text-body">{t(($) => $.dag.loading)}</p>
+        <p className="text-body">{tDag(($) => $.loading)}</p>
       </div>
     );
   }
@@ -338,10 +339,10 @@ export function DagView({
       <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-3 text-muted-foreground">
         <FilterX className="h-10 w-10 text-faint-foreground" />
         <p className="text-body">
-          {hasActiveFilters ? t(($) => $.dag.empty_title) : t(($) => $.dag.empty_title_unfiltered)}
+          {hasActiveFilters ? tDag(($) => $.empty_title) : tDag(($) => $.empty_title_unfiltered)}
         </p>
         <p className="text-caption">
-          {hasActiveFilters ? t(($) => $.dag.empty_hint) : t(($) => $.dag.empty_hint_unfiltered)}
+          {hasActiveFilters ? tDag(($) => $.empty_hint) : tDag(($) => $.empty_hint_unfiltered)}
         </p>
         {hasActiveFilters && (
           <Button variant="outline" size="sm" className="mt-1" onClick={clearFilters}>
@@ -359,9 +360,9 @@ export function DagView({
         role="alert"
         className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground"
       >
-        <p>{t(($) => $.dag.layout_error)}</p>
+        <p>{tDag(($) => $.layout_error)}</p>
         <Button variant="outline" size="sm" onClick={layout.retry}>
-          {t(($) => $.dag.error_retry)}
+          {tDag(($) => $.error_retry)}
         </Button>
       </div>
     );
@@ -374,38 +375,38 @@ export function DagView({
         <span className="inline-flex items-center gap-1.5">
           <ListTree className="size-3.5" />
           <span className="tabular-nums">
-            {t(($) => $.dag.summary_matches, { count: graph.matchedCount })}
+            {tDag(($) => $.summary_matches, { count: graph.matchedCount })}
           </span>
           {graph.contextCount > 0 && (
             <span className="tabular-nums">
-              {t(($) => $.dag.summary_context, { count: graph.contextCount })}
+              {tDag(($) => $.summary_context, { count: graph.contextCount })}
             </span>
           )}
           <span className="tabular-nums">
-            {t(($) => $.dag.summary_edges, { count: graph.edges.length })}
+            {tDag(($) => $.summary_edges, { count: graph.edges.length })}
           </span>
         </span>
         {graph.hasRestrictedContext && (
           <span className="inline-flex items-center gap-1 text-warning">
             <AlertTriangle className="size-3" />
-            {t(($) => $.dag.restricted_context_hint)}
+            {tDag(($) => $.restricted_context_hint)}
           </span>
         )}
         {graph.matchedCount === 0 && graph.contextCount > 0 && (
-          <span>{t(($) => $.dag.context_only_hint)}</span>
+          <span>{tDag(($) => $.context_only_hint)}</span>
         )}
         <span className="inline-flex items-center gap-3 text-micro">
-          <span>{t(($) => $.dag.stage_legend)}</span>
-          <span>{t(($) => $.dag.dependency_legend)}</span>
+          <span>{tDag(($) => $.stage_legend)}</span>
+          <span>{tDag(($) => $.dependency_legend)}</span>
         </span>
         <span className="ml-auto flex items-center gap-1">
           {layout.pending && (
             <span className="inline-flex items-center gap-1.5" role="status">
               <Loader2 className="size-3 animate-spin" />
-              {t(($) => $.dag.layout_pending)}
+              {tDag(($) => $.layout_pending)}
               {layoutPendingLong && (
                 <Button size="sm" variant="ghost" onClick={cancelPendingLayout}>
-                  {t(($) => $.dag.layout_cancel)}
+                  {tDag(($) => $.layout_cancel)}
                 </Button>
               )}
             </span>
@@ -417,11 +418,11 @@ export function DagView({
             disabled={collapsedIds.length === 0}
           >
             <Expand className="size-3.5" />
-            {t(($) => $.dag.expand_all)}
+            {tDag(($) => $.expand_all)}
           </Button>
           <Button size="sm" variant="ghost" onClick={collapseAll} disabled={isDefaultFold}>
             <Shrink className="size-3.5" />
-            {t(($) => $.dag.collapse_all)}
+            {tDag(($) => $.collapse_all)}
           </Button>
         </span>
       </div>
@@ -431,9 +432,9 @@ export function DagView({
           role="alert"
           className="flex items-center gap-2 border-b px-3 py-2 text-caption text-warning"
         >
-          <span>{t(($) => $.dag.layout_error)}</span>
+          <span>{tDag(($) => $.layout_error)}</span>
           <Button size="sm" variant="ghost" onClick={layout.retry}>
-            {t(($) => $.dag.error_retry)}
+            {tDag(($) => $.error_retry)}
           </Button>
         </div>
       )}
@@ -444,17 +445,17 @@ export function DagView({
         >
           <AlertTriangle className="size-3.5 shrink-0" />
           <span className="min-w-0 flex-1">
-            {t(($) => $.dag.stale_banner, { time: graph.capturedAt })}
+            {tDag(($) => $.stale_banner, { time: graph.capturedAt })}
           </span>
           <Button size="sm" variant="ghost" onClick={graphQuery.refetch}>
-            {t(($) => $.dag.error_retry)}
+            {tDag(($) => $.error_retry)}
           </Button>
         </div>
       )}
 
       {firstLayoutPending ? (
         <div className="flex flex-1 min-h-0 flex-col gap-3 p-4" role="status">
-          <span className="sr-only">{t(($) => $.dag.layout_pending)}</span>
+          <span className="sr-only">{tDag(($) => $.layout_pending)}</span>
           <Skeleton className="h-20 w-56 rounded-lg" />
           <div className="flex gap-8">
             <Skeleton className="h-20 w-56 rounded-lg" />
@@ -470,7 +471,7 @@ export function DagView({
               role="status"
             >
               <Loader2 className="h-6 w-6 animate-spin text-faint-foreground" />
-              <span className="sr-only">{t(($) => $.dag.loading)}</span>
+              <span className="sr-only">{tDag(($) => $.loading)}</span>
             </div>
           }
         >
@@ -494,7 +495,7 @@ export function DagView({
 }
 
 function DagErrorState({ error, onRetry }: { error: Error | null; onRetry: () => void }) {
-  const { t } = useT("issues");
+  const { t } = useT("dag");
   const status = error instanceof ApiError ? error.status : null;
   const messageKey =
     status === 404 || status === 405
@@ -512,13 +513,13 @@ function DagErrorState({ error, onRetry }: { error: Error | null; onRetry: () =>
       role="alert"
     >
       <AlertTriangle className="h-10 w-10 text-faint-foreground" />
-      <p className="text-body">{t(($) => $.dag.error_title)}</p>
+      <p className="text-body">{t(($) => $.error_title)}</p>
       <p className="text-caption">
-        {messageKey ? t(($) => $.dag[messageKey]) : (error?.message ?? t(($) => $.dag.error_title))}
+        {messageKey ? t(($) => $[messageKey]) : (error?.message ?? t(($) => $.error_title))}
       </p>
       {status !== 403 && status !== 404 && status !== 405 && (
         <Button variant="outline" size="sm" className="mt-1" onClick={onRetry}>
-          {t(($) => $.dag.error_retry)}
+          {t(($) => $.error_retry)}
         </Button>
       )}
     </div>
