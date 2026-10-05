@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -96,6 +97,7 @@ func kimiTestHomeNoRegistry(t *testing.T) string {
 func newKimiTestCollector(home string, port int) *kimiPlanQuotaCollector {
 	c := newKimiPlanQuotaCollector(home)
 	c.identitySupported = func() bool { return true }
+	c.effectiveUID = func() int { return 1000 }
 	c.enumerateOwnedListenPorts = func() map[int]struct{} { return map[int]struct{}{port: {}} }
 	c.verifyConnPeer = func(net.Conn) bool { return true }
 	c.scanBase = port
@@ -301,7 +303,8 @@ func TestKimiCollect_ServerDown(t *testing.T) {
 func TestKimiCollect_MissingToken(t *testing.T) {
 	collector := newKimiPlanQuotaCollector(t.TempDir())
 	collector.identitySupported = func() bool { return true }
-	if _, err := collector.collect(context.Background()); err == nil {
+	collector.effectiveUID = func() int { return 1000 }
+	if _, err := collector.collect(context.Background()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("expected error when server.token is absent")
 	}
 }
@@ -734,6 +737,66 @@ func TestKimiCollect_UnsupportedPlatformSendsNothing(t *testing.T) {
 	}
 }
 
+func TestKimiCollect_RootSendsNothing(t *testing.T) {
+	var hits atomic.Int64
+	srv := newKimiTestServerCounted(t, kimiLimitsJSON(), 0, nil, &hits)
+	defer srv.Close()
+	port := serverPort(t, srv)
+	collector := newKimiTestCollector(kimiTestHome(t, port), port)
+	collector.effectiveUID = func() int { return 0 }
+	if quota, err := collector.collect(context.Background()); quota != nil || !errors.Is(err, errKimiCredentialsDisabledForRoot) {
+		t.Fatalf("root collection: quota=%+v err=%v", quota, err)
+	}
+	// Direct fetches must also fail before putting the bearer on the wire.
+	if data, err := collector.getUsage(context.Background(), srv.URL, "test-kimi-token"); data != nil || !errors.Is(err, errKimiCredentialsDisabledForRoot) {
+		t.Fatalf("root request: data=%+v err=%v", data, err)
+	}
+	// Root must be rejected before attempting to read even a missing token file.
+	collector.homeDir = t.TempDir()
+	if _, err := collector.collect(context.Background()); !errors.Is(err, errKimiCredentialsDisabledForRoot) {
+		t.Fatalf("root token-file gate: %v", err)
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("root sent %d credential-bearing requests", hits.Load())
+	}
+}
+
+func TestKimiGetUsage_RootCannotReuseConnection(t *testing.T) {
+	var hits atomic.Int64
+	srv := newKimiTestServerCounted(t, kimiLimitsJSON(), 0, nil, &hits)
+	defer srv.Close()
+	collector := newKimiTestCollector(t.TempDir(), serverPort(t, srv))
+	defer collector.client.CloseIdleConnections()
+	if _, err := collector.getUsage(context.Background(), srv.URL, "test-kimi-token"); err != nil {
+		t.Fatalf("non-root control request: %v", err)
+	}
+	collector.effectiveUID = func() int { return 0 }
+	if _, err := collector.getUsage(context.Background(), srv.URL, "test-kimi-token"); !errors.Is(err, errKimiCredentialsDisabledForRoot) {
+		t.Fatalf("root request on warm client: %v", err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("root sent another request: got %d, want only the control request", hits.Load())
+	}
+}
+
+func TestKimiRootProductionGatesAndDiagnostic(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root to exercise the production euid wiring")
+	}
+	collector := newKimiPlanQuotaCollector(kimiTestHomeNoRegistry(t))
+	if quota, err := collector.collect(context.Background()); quota != nil || !errors.Is(err, errKimiCredentialsDisabledForRoot) {
+		t.Fatalf("production root gate: quota=%+v err=%v", quota, err)
+	}
+	var logs strings.Builder
+	d := &Daemon{logger: slog.New(slog.NewTextHandler(&logs, nil))}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // A missing startup gate must not leave this test polling forever.
+	d.kimiPlanQuotaLoop(ctx)
+	if !strings.Contains(logs.String(), "credential delivery disabled for root (euid=0)") || strings.Count(logs.String(), "\n") != 1 {
+		t.Fatalf("want one root diagnostic, got %q", logs.String())
+	}
+}
+
 // The dialer itself: non-loopback targets refused, the round's owned set
 // fast-fails, and the peer proof is consulted after connecting.
 func TestKimiDialer(t *testing.T) {
@@ -824,7 +887,7 @@ func TestOwnedLoopbackListenPorts(t *testing.T) {
 // The established-peer proof parses the SERVER side of the exact 4-tuple.
 // Matrix includes the round-5 shape: our LISTEN on the port while the
 // ESTABLISHED row (the connection we actually hold) belongs to uid 65534.
-func TestEstablishedPeerOwnedByUID(t *testing.T) {
+func TestKimiEstablishedPeerOwnedByUID(t *testing.T) {
 	header := "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode"
 	row := func(local, rem, st string, uid int) string {
 		return fmt.Sprintf("   0: %s %s %s 00000000:00000000 00:00000000 00000000 %5d        0 12345 1 0000000000000000 100 0 0 10 0", local, rem, st, uid)
@@ -839,6 +902,24 @@ func TestEstablishedPeerOwnedByUID(t *testing.T) {
 	t.Run("ours", func(t *testing.T) {
 		if !establishedPeerOwnedByUID(58627, 40000, 1000, table(row(v4lo+":E503", v4lo+":9C40", "01", 1000))) {
 			t.Fatal("own established peer rejected")
+		}
+	})
+	t.Run("unaccepted root row is not ownership proof", func(t *testing.T) {
+		unaccepted := strings.Replace(row(v4lo+":E503", v4lo+":9C40", "01", 0), "0 12345 1", "0 0 1", 1)
+		if establishedPeerOwnedByUID(58627, 40000, 0, table(unaccepted)) {
+			t.Fatal("uid=0 inode=0 row accepted as root peer proof before accept")
+		}
+	})
+	t.Run("invalid or missing inode fails closed", func(t *testing.T) {
+		for _, inode := range []string{"0", "000", "-1", "invalid", "18446744073709551616"} {
+			entry := strings.Replace(row(v4lo+":E503", v4lo+":9C40", "01", 1000), "12345", inode, 1)
+			if establishedPeerOwnedByUID(58627, 40000, 1000, table(entry)) {
+				t.Errorf("invalid inode %q accepted", inode)
+			}
+		}
+		fields := strings.Fields(row(v4lo+":E503", v4lo+":9C40", "01", 1000))
+		if establishedPeerOwnedByUID(58627, 40000, 1000, table(strings.Join(fields[:9], " "))) {
+			t.Fatal("row without an inode accepted")
 		}
 	})
 	t.Run("foreign established row fails", func(t *testing.T) {

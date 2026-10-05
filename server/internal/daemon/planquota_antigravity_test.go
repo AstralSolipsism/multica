@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -255,6 +256,116 @@ func TestAntigravityRemoteBucketAggregation(t *testing.T) {
 			}
 			if (quota.Status == protocol.PlanQuotaStatusLimited) != limited {
 				t.Fatalf("status = %s", quota.Status)
+			}
+		})
+	}
+}
+
+func TestAntigravityRemoteEarliestResetPerGroup(t *testing.T) {
+	observedAt := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	buckets := []string{
+		`{"modelId":"gemini-pro","remainingFraction":0.2,"resetTime":"2020-01-01T05:00:00Z"}`,
+		`{"modelId":"gemini-flash","remainingFraction":0.6,"resetTime":"2020-01-01T02:00:00Z"}`,
+		`{"modelId":"gemini-lite","remainingFraction":0.8,"resetTime":"2020-01-01T04:00:00Z"}`,
+		`{"modelId":"claude-sonnet","remainingFraction":0.4,"resetTime":"2020-01-08T00:00:00Z"}`,
+		`{"modelId":"gpt-oss","remainingFraction":0.6,"resetTime":"2020-01-03T00:00:00Z"}`,
+		`{"modelId":"claude-opus","remainingFraction":0.3,"resetTime":"2020-01-06T00:00:00Z"}`,
+		`{"modelId":"gemini-invalid","remainingFraction":-1,"resetTime":"2020-01-01T01:00:00Z"}`,
+		`{"modelId":"claude-missing","resetTime":"2020-01-01T01:00:00Z"}`,
+		`{"modelId":"unknown-model","remainingFraction":0,"resetTime":"2020-01-01T01:00:00Z"}`,
+		`{"modelId":"gemini-no-reset","remainingFraction":0.5,"resetTime":"invalid"}`,
+	}
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reverse=%v", reverse), func(t *testing.T) {
+			ordered := append([]string(nil), buckets...)
+			if reverse {
+				for i, j := 0, len(ordered)-1; i < j; i, j = i+1, j-1 {
+					ordered[i], ordered[j] = ordered[j], ordered[i]
+				}
+			}
+			body := `{"buckets":[` + strings.Join(ordered, ",") + `]}`
+			quota, err := parseAntigravityRemoteQuota(strings.NewReader(body), observedAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(quota.Windows) != 2 || quota.ObservedAt != observedAt.Unix() {
+				t.Fatalf("quota = %+v", quota)
+			}
+			for i, want := range []struct {
+				group   string
+				used    float64
+				reset   time.Time
+				minutes int64
+			}{
+				{"gemini", 80, observedAt.Add(2 * time.Hour), 300},
+				{"claude_gpt", 70, observedAt.Add(48 * time.Hour), 10080},
+			} {
+				window := quota.Windows[i]
+				if window.Group != want.group || window.UsedPercent == nil || math.Abs(*window.UsedPercent-want.used) > 1e-8 {
+					t.Errorf("window = %+v, want %s used=%v", window, want.group, want.used)
+				}
+				if window.ResetsAt == nil || *window.ResetsAt != want.reset.Unix() {
+					t.Errorf("%s reset = %v, want earliest reset %s", want.group, window.ResetsAt, want.reset)
+				}
+				if window.WindowMinutes == nil || *window.WindowMinutes != want.minutes {
+					t.Errorf("%s window minutes = %v, want %d", want.group, window.WindowMinutes, want.minutes)
+				}
+			}
+		})
+	}
+}
+
+func TestAntigravityRemoteResetWindowBoundaries(t *testing.T) {
+	// A historical observation makes any accidental use of time.Now/Until fail.
+	observedAt := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name    string
+		until   time.Duration
+		minutes int64 // zero means no inferred window
+	}{
+		{"past reset", -time.Second, 0},
+		{"reset now", 0, 0},
+		{"positive reset", time.Second, 300},
+		{"below six hours", 6*time.Hour - time.Second, 300},
+		{"exactly six hours", 6 * time.Hour, 300},
+		{"above six hours", 6*time.Hour + time.Second, 10080},
+		{"seven days", 7 * 24 * time.Hour, 10080},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reset := observedAt.Add(tc.until)
+			body := fmt.Sprintf(`{"buckets":[{"modelId":"gemini-pro","remainingFraction":0.5,"resetTime":%q}]}`, reset.Format(time.RFC3339))
+			quota, err := parseAntigravityRemoteQuota(strings.NewReader(body), observedAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(quota.Windows) != 1 {
+				t.Fatalf("windows = %+v", quota.Windows)
+			}
+			window := quota.Windows[0]
+			if window.ResetsAt == nil || *window.ResetsAt != reset.Unix() {
+				t.Errorf("reset = %v, want %d", window.ResetsAt, reset.Unix())
+			}
+			if tc.minutes == 0 {
+				if window.WindowMinutes != nil {
+					t.Errorf("nonfuture reset inferred a window: %d", *window.WindowMinutes)
+				}
+			} else if window.WindowMinutes == nil || *window.WindowMinutes != tc.minutes {
+				t.Errorf("window minutes = %v, want %d", window.WindowMinutes, tc.minutes)
+			}
+		})
+	}
+}
+
+func TestAntigravityRemoteMissingOrInvalidReset(t *testing.T) {
+	for _, field := range []string{"", `,"resetTime":""`, `,"resetTime":"invalid"`, `,"resetTime":null`} {
+		t.Run(field, func(t *testing.T) {
+			body := `{"buckets":[{"modelId":"claude-sonnet","remainingFraction":0.5` + field + `}]}`
+			quota, err := parseAntigravityRemoteQuota(strings.NewReader(body), time.Unix(1577836800, 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(quota.Windows) != 1 || quota.Windows[0].ResetsAt != nil || quota.Windows[0].WindowMinutes != nil {
+				t.Fatalf("reset metadata invented: %+v", quota.Windows)
 			}
 		})
 	}
