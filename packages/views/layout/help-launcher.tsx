@@ -25,10 +25,6 @@ import { isDesktopShell } from "../platform/local-directory";
 import { FeishuQrDialog } from "./feishu-group-qr-dialog";
 import { useT } from "../i18n";
 
-// In-app route: this instance serves its own minimal download page listing
-// the internal release artifacts, so the entry works without leaving the app.
-const DOWNLOAD_URL = DOWNLOAD_PAGE_URL;
-
 export function HelpLauncher() {
   const { t } = useT("layout");
   const serverVersion = useConfigStore((state) => state.serverVersion);
@@ -64,7 +60,7 @@ export function HelpLauncher() {
               <DropdownMenuItem
                 render={
                   <a
-                    href={DOWNLOAD_URL}
+                    href={DOWNLOAD_PAGE_URL}
                     target="_blank"
                     rel="noopener noreferrer"
                   />

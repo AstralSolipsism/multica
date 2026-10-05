@@ -30,20 +30,19 @@ export function sourceViolations(path, source) {
 
 function* sources(directory) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    if (["node_modules", "dist", "out", ".next", ".source", ".turbo", "ios", "android"].includes(entry.name)) continue;
+    if (["node_modules", "dist", "out", ".next", ".source", ".turbo", "ios", "android", "test", "e2e"].includes(entry.name)) continue;
     const path = resolve(directory, entry.name);
     if (entry.isDirectory()) yield* sources(path);
     else if (/\.(?:[cm]?[jt]sx?|html|json)$/.test(entry.name)
-      && !/\.(?:test|spec|d)\./.test(entry.name)
-      && !path.includes("/test/") && !path.includes("/e2e/")) yield path;
+      && !/\.(?:test|spec|d)\./.test(entry.name)) yield path;
   }
 }
 
-export function checkSources() {
+export function checkSources(sourceRoot = root) {
   const violations = [];
   for (const directory of ["packages/core", "packages/ui", "packages/views", "apps/web", "apps/desktop", "apps/mobile"]) {
-    for (const path of sources(resolve(root, directory))) {
-      const name = relative(root, path).replaceAll("\\", "/");
+    for (const path of sources(resolve(sourceRoot, directory))) {
+      const name = relative(sourceRoot, path).replaceAll("\\", "/");
       if (policy.sourceExceptions.some((entry) => entry.path === name)) continue;
       // Raw upstream JSON is deliberately unchanged; effective bundles are
       // checked through real i18next in the views/mobile locale tests.
@@ -64,7 +63,7 @@ export function checkSources() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const violations = checkSources();
+  const violations = checkSources(process.argv[2]);
   if (violations.length) {
     console.error(`Retired product branding:\n${violations.join("\n")}`);
     process.exitCode = 1;

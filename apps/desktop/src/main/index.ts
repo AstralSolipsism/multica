@@ -555,13 +555,13 @@ function createIssueWindow(context: IssueWindowContext): void {
 // without fighting for the shared single-instance lock. The suffix is
 // appended to the app name + userData path, so each worktree gets its own
 // lock file. Default (no env var) keeps behavior unchanged — the common
-// single-worktree case still lands at "Labrastro Canary". The dev-only name
+// single-worktree case still lands at "Multica Canary". The dev-only name
 // keeps its historical value so existing developer profiles (locks, cached
 // PATs) survive the stage-2 production rebrand; only the packaged app is
 // renamed.
 const DEV_APP_NAME = process.env.DESKTOP_APP_SUFFIX
-  ? `Labrastro Canary ${process.env.DESKTOP_APP_SUFFIX}`
-  : "Labrastro Canary";
+  ? `Multica Canary ${process.env.DESKTOP_APP_SUFFIX}`
+  : "Multica Canary";
 
 if (is.dev) {
   app.setName(DEV_APP_NAME);

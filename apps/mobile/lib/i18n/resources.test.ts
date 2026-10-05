@@ -31,7 +31,32 @@ function flatten(value: unknown, prefix = ""): Set<string> {
   return keys;
 }
 
+function strings(value: unknown, prefix = ""): [string, string][] {
+  if (typeof value === "string") return [[prefix, value]];
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value).flatMap(([key, child]) =>
+    strings(child, prefix ? `${prefix}.${key}` : key),
+  );
+}
+
+const placeholders = (text: string) => [...text.matchAll(/{{\s*([^}]+)\s*}}/g)]
+  .map((match) => match[1]?.trim()).sort();
+
 describe("mobile i18n resources", () => {
+  it.each(["en", "zh-Hans"])("%s: overlays retain live upstream keys, interpolation and sentence meaning", (locale) => {
+    const upstream = Object.fromEntries(readLocale(locale).map(([file, value]) => [file.replace(/\.json$/, ""), value]));
+    const original = new Map(strings(upstream));
+    const overlay = JSON.parse(fs.readFileSync(path.join(LOCALES_ROOT, "brand", `${locale}.json`), "utf8"));
+    for (const [key, text] of strings(overlay)) {
+      const source = original.get(key);
+      expect(source, `stale override: ${locale}.${key}`).toBeTypeOf("string");
+      expect(placeholders(text), `${locale}.${key}`).toEqual(placeholders(source!));
+      expect(text, `review upstream copy change: ${locale}.${key}`).toBe(
+        source!.replace(/\bMultica\b/g, "Labrastro").replace(/\bMika\b/g, "Mizuki"),
+      );
+    }
+  });
+
   it("applies the fork overlay to every effective mobile locale", () => {
     for (const bundle of Object.values(resources)) {
       expect(JSON.stringify(bundle)).not.toMatch(/\b(?:Multica|Mika)\b/);

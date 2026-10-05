@@ -1,5 +1,6 @@
 {
   "allowedTokens": [
+    { "value": "Multica Canary", "reason": "Development-only app name determines developers' userData directories and must match dev-env.sh cleanup; preserved by the OL-15 decision." },
     { "value": "X-Multica-Next-Before-Id", "reason": "Existing pagination header consumed by installed CLI clients." },
     { "value": "X-Multica-Next-Before", "reason": "Existing pagination header consumed by installed CLI clients." },
     { "value": "X-Multica-Plugin-Installation", "reason": "Plugin authentication protocol shared with external plugins." },
