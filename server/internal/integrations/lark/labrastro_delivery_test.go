@@ -297,12 +297,16 @@ func TestDeliveryPostWireFormat(t *testing.T) {
 			t.Run(target.Type+"/"+tc.name, func(t *testing.T) {
 				fake := newLarkFake(t)
 				fake.stubToken("safe_post_token", 3600)
+				type wirePost struct{ msgType, content string }
+				captured := make(chan wirePost, 1)
 				reply := map[string]any{"code": 0, "data": map[string]any{"message_id": "om_post"}}
 				fake.stubSend(reply, func(_ *http.Request, wire map[string]string) {
-					assertLiteralDeliveryPost(t, wire["msg_type"], wire["content"], tc.body, source)
+					captured <- wirePost{wire["msg_type"], wire["content"]}
 				})
 				fake.stubReply(reply, func(_ *http.Request, _ string, wire map[string]any) {
-					assertLiteralDeliveryPost(t, wire["msg_type"].(string), wire["content"].(string), tc.body, source)
+					msgType, _ := wire["msg_type"].(string)
+					content, _ := wire["content"].(string)
+					captured <- wirePost{msgType, content}
 				})
 				params, err := deliveryParams(messagedelivery.SendRequest{
 					Target: target, Message: messagedelivery.NewMessage(tc.body, source), SendUUID: "stable-post-id",
@@ -313,6 +317,12 @@ func TestDeliveryPostWireFormat(t *testing.T) {
 				id, err := newTestClient(fake, time.Now).SendDeliveryMessage(context.Background(), testCreds(), params)
 				if err != nil || id != "om_post" {
 					t.Fatalf("post send = %q, %v", id, err)
+				}
+				select {
+				case wire := <-captured:
+					assertLiteralDeliveryPost(t, wire.msgType, wire.content, tc.body, source)
+				default:
+					t.Fatal("post request was not captured")
 				}
 			})
 		}

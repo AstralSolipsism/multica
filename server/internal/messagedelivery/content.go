@@ -28,7 +28,10 @@ const (
 	maxOutputRunes = 40_000
 
 	// shardRunes is the maximum body length of one outgoing message
-	// shard. Splits happen on rune boundaries only.
+	// shard. Splits happen on rune boundaries only. Feishu post requests
+	// are limited to 30 KB; nested JSON escaping can cost 7 bytes per rune
+	// (24.5 KB here), leaving room for the source link, truncation marker
+	// and envelope. Recheck the encoded request size before increasing it.
 	shardRunes = 3_500
 
 	// maxShards bounds the shard plan; content beyond it is truncated

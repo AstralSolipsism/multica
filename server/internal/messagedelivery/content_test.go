@@ -5,6 +5,10 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/jackc/pgx/v5/pgtype"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // The redaction boundary is the module's security contract: a task
@@ -111,6 +115,22 @@ func TestBuildCreateIssueContent(t *testing.T) {
 	}
 }
 
+func TestBuildInboxContent_KeepsSourceSeparate(t *testing.T) {
+	snapshot := buildInboxContent(db.ListLabrastroMessageInboxSourceCandidatesRow{
+		ItemTitle: "Assigned to you",
+		ItemBody:  pgtype.Text{String: "Review the delivery report", Valid: true},
+	}, "ENG-12", "https://app.example.com", "eng")
+	if snapshot.Link != "https://app.example.com/eng/issues/ENG-12" {
+		t.Fatalf("link = %q, want the workspace-scoped issue URL", snapshot.Link)
+	}
+	if strings.Contains(snapshot.Text, snapshot.Link) {
+		t.Fatalf("inbox body must not include the generated source link: %q", snapshot.Text)
+	}
+	if snapshot.Text != "Assigned to you\n\nReview the delivery report" {
+		t.Fatalf("inbox title/body changed: %q", snapshot.Text)
+	}
+}
+
 func TestIssueIdentifier(t *testing.T) {
 	if got := issueIdentifier("ENG", 42); got != "ENG-42" {
 		t.Fatalf("issueIdentifier = %q", got)
@@ -161,10 +181,16 @@ func TestSplitShards_DeterministicAndRuneSafe(t *testing.T) {
 }
 
 func TestSplitShards_TruncatesBeyondBudget(t *testing.T) {
+	const source = "https://app.example.com/eng/issues/ENG-12"
 	huge := strings.Repeat("x", shardRunes*maxShards*2)
-	shards := splitShards(NewMessage(huge, ""))
+	shards := splitShards(NewMessage(huge, source))
 	if len(shards) != maxShards {
 		t.Fatalf("shard count = %d, want the cap %d", len(shards), maxShards)
+	}
+	for i, shard := range shards {
+		if shard.Source != source {
+			t.Fatalf("shard %d source = %q, want %q", i, shard.Source, source)
+		}
 	}
 	if !strings.HasSuffix(string(shards[len(shards)-1].Body), truncatedMarker) {
 		t.Fatal("overflowed content must carry the truncation marker")
