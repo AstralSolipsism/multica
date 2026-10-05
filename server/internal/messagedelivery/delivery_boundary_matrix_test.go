@@ -95,7 +95,7 @@ func TestContractMissingVerifierFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, _, _, _ := deliveryStatus(t, firstDeliveryForRun(t, run))
-	if sender.count() != 0 || status != DeliveryStatusUncertain {
+	if sender.count() != 0 || status != DeliveryStatusQueued {
 		t.Fatalf("missing verifier: sends=%d status=%s", sender.count(), status)
 	}
 }

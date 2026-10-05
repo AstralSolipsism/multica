@@ -26,7 +26,11 @@ func sourceAuthority(ctx context.Context, q *db.Queries, ap db.Autopilot, userID
 	if err != nil {
 		return err
 	}
-	if !autopilotauth.CanWriteAutopilot(ctx, q, ap, member) ||
+	allowed, err := autopilotauth.CanWriteAutopilot(ctx, q, ap, member)
+	if err != nil {
+		return err
+	}
+	if !allowed ||
 		(admin && member.Role != "owner" && member.Role != "admin") {
 		return ErrAuthorizationLost
 	}

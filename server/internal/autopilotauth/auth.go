@@ -26,17 +26,17 @@ type Querier interface {
 // operations on the automation — editing it, triggering runs, configuring
 // delivery rules for it. The same predicate gates the CONTINUOUS execution
 // authorization of already-saved delivery rules: a rule spends the
-// authority of the member who last saved it, re-checked at send time.
-func CanWriteAutopilot(ctx context.Context, q Querier, ap db.Autopilot, member db.Member) bool {
+// authority of the member who last saved it, re-checked at send time. Database
+// errors stay distinct from a denied grant so a delivery can retry the read.
+func CanWriteAutopilot(ctx context.Context, q Querier, ap db.Autopilot, member db.Member) (bool, error) {
 	if member.Role == "owner" || member.Role == "admin" {
-		return true
+		return true, nil
 	}
 	if ap.CreatedByType == "member" && ap.CreatedByID == member.UserID {
-		return true
+		return true, nil
 	}
-	granted, err := q.IsAutopilotCollaborator(ctx, db.IsAutopilotCollaboratorParams{
+	return q.IsAutopilotCollaborator(ctx, db.IsAutopilotCollaboratorParams{
 		AutopilotID: ap.ID,
 		UserID:      member.UserID,
 	})
-	return err == nil && granted
 }

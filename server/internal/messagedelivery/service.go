@@ -60,7 +60,7 @@ type Service struct {
 	MaxSendAttempts int
 
 	notify chan struct{}
-	// decideNotify is the OL-27 source wakeup: inbox:new /
+	// decideNotify is the source wakeup: autopilot:run_done / inbox:new /
 	// activity:created / comment:created land here as a latency hint and
 	// the scan loop runs a decide pass over the persisted sources. Lossy
 	// by design — the periodic compensator is the guarantee.
@@ -611,8 +611,8 @@ func isUniqueViolation(err error) bool {
 
 // EnqueueRunDeliveries decides deliveries for one terminal run. Idempotent:
 // the unique dedup key collapses concurrent and repeated invocations into
-// one decision per (source, target). Called from the EventBus wakeup (a
-// latency hint) and, for anything the event missed, by the compensator.
+// one decision per (source, target). The decision scanner calls it on
+// EventBus wakeups and on periodic compensation passes.
 func (s *Service) EnqueueRunDeliveries(ctx context.Context, runID pgtype.UUID) (int, error) {
 	run, err := s.Queries.GetAutopilotRun(ctx, runID)
 	if err != nil {

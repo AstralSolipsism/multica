@@ -2,7 +2,6 @@ package messagedelivery
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strconv"
 	"sync"
@@ -73,8 +72,7 @@ func (s *Service) WaitWithTimeout(timeout time.Duration) bool {
 
 // Notify hints the send pool that new work exists. Non-blocking and
 // lossy-by-design: the poll loop and the compensator are the safety net.
-// The server assembly subscribes this to the EventBus's
-// autopilot:run_done event as a latency hint only.
+// Enqueue calls this after persisting new decisions.
 func (s *Service) Notify() {
 	if s == nil {
 		return
@@ -86,8 +84,8 @@ func (s *Service) Notify() {
 }
 
 // NotifyDecide hints the scan loop that new persisted sources may exist.
-// The server assembly subscribes it to inbox:new / activity:created /
-// comment:created — wakeups only; the compensation scanner re-derives the
+// The server assembly subscribes it to autopilot:run_done / inbox:new /
+// activity:created / comment:created — wakeups only; the compensation scanner re-derives the
 // missing set from persisted rows, so a lost event is always recovered.
 func (s *Service) NotifyDecide() {
 	if s == nil || s.decideNotify == nil {
@@ -121,6 +119,9 @@ func (s *Service) sendLoop(ctx context.Context) {
 
 // ProcessNext claims and processes ONE due delivery. Exported for tests.
 func (s *Service) ProcessNext(ctx context.Context) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	d, err := s.Queries.ClaimDueLabrastroMessageDelivery(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -149,7 +150,7 @@ func (s *Service) processClaimed(ctx context.Context, d db.LabrastroMessageDeliv
 		return
 	}
 
-	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outcomeWriteTimeout)
 	defer cancel()
 	ctx = writeCtx
 	switch out.status {
@@ -176,358 +177,6 @@ func (s *Service) processClaimed(ctx context.Context, d db.LabrastroMessageDeliv
 			detail:    "unclassified send outcome " + out.status,
 		})
 	}
-}
-
-// gateClaimed re-validates the world the decision was made in. A nil
-// outcome means "cleared to send"; a non-nil outcome carries the recorded
-// decision for a gate refusal. Every gate re-reads live state, which is
-// what makes rule deletion, source archival and bot revocation race-safe
-// without foreign keys. OL-27: the source checks branch per source kind —
-// the automation path judges the run's autopilot, the personal path judges
-// the recipient's membership and CURRENT mute state, the team path judges
-// the authorizer's admin role and the source record's existence.
-func (s *Service) gateClaimed(ctx context.Context, d db.LabrastroMessageDelivery) *sendOutcome {
-	refuse := func(status, code, detail string) *sendOutcome {
-		return &sendOutcome{status: status, errorCode: code, detail: detail}
-	}
-	var snap targetSnapshot
-	if err := json.Unmarshal(d.TargetSnapshot, &snap); err != nil {
-		return refuse(DeliveryStatusFailed, ErrorCodeSendRejected, "corrupt target snapshot")
-	}
-	// Verify remotely first; local consent/source checks below observe changes
-	// committed during that call. A missing verifier never bypasses approval.
-	if out := s.reverifyTarget(ctx, d, snap); out != nil {
-		return out
-	}
-	route, err := s.Queries.GetLabrastroMessageRoute(ctx, db.GetLabrastroMessageRouteParams{ID: d.RouteID, WorkspaceID: d.WorkspaceID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return refuse(DeliveryStatusCancelled, ErrorCodeRouteDeleted, "route deleted before send")
-	}
-	if err != nil {
-		return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load route failed")
-	}
-	if !route.Enabled {
-		return refuse(DeliveryStatusCancelled, ErrorCodeRouteDisabled, "route disabled before send")
-	}
-	if !d.SourceScope.Valid || d.SourceScope.String != route.SourceKind {
-		return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "delivery source scope is unavailable")
-	}
-	if route.LastDisabledAt.Valid && !d.CreatedAt.Time.After(route.LastDisabledAt.Time) {
-		return refuse(DeliveryStatusCancelled, ErrorCodeRouteDisabled, "delivery predates the last route disable")
-	}
-	if d.SourceProjectID.Valid {
-		if _, err := s.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: d.SourceProjectID, WorkspaceID: d.WorkspaceID}); errors.Is(err, pgx.ErrNoRows) {
-			return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "approved source project no longer exists")
-		} else if err != nil {
-			return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load source project failed")
-		}
-	}
-	// Source checks branch per scope. A TEST send carries no source record
-	// — it is judged against the scope of the route it exercised, with the
-	// requesting member as the authority; a real delivery is judged against
-	// its own source kind.
-	if d.SourceKind == SourceKindTestSend {
-		if out := s.gateTestSendSource(ctx, d, route); out != nil {
-			return out
-		}
-	} else {
-		switch d.SourceKind {
-		case SourceKindInbox:
-			if out := s.gateInboxSource(ctx, d, route, snap); out != nil {
-				return out
-			}
-		case SourceKindActivity, SourceKindComment:
-			if out := s.gateTeamSource(ctx, d, route); out != nil {
-				return out
-			}
-		default:
-			// Automation runs: the OL-25 source authority.
-			if route.AutopilotID != d.AutopilotID {
-				return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "source mismatch")
-			}
-			ap, err := s.Queries.GetAutopilotInWorkspace(ctx, db.GetAutopilotInWorkspaceParams{ID: d.AutopilotID, WorkspaceID: d.WorkspaceID})
-			if errors.Is(err, pgx.ErrNoRows) {
-				return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "source automation deleted")
-			}
-			if err != nil {
-				return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load source failed")
-			}
-			if ap.Status == "archived" {
-				return refuse(DeliveryStatusCancelled, ErrorCodeSourceArchived, "source automation archived")
-			}
-			if err := sourceAuthority(ctx, s.Queries, ap, route.UpdatedBy, false); err != nil {
-				return refuse(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member no longer holds source write permission")
-			}
-		}
-	}
-	if _, err := s.Queries.GetWorkspace(ctx, d.WorkspaceID); err != nil {
-		return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "source workspace unavailable")
-	}
-	instID, err := util.ParseUUID(snap.Installation)
-	if err != nil || instID != d.InstallationID {
-		return refuse(DeliveryStatusFailed, ErrorCodeInstallationMissing, "invalid installation snapshot")
-	}
-	inst, err := s.Queries.GetChannelInstallationInWorkspace(ctx, db.GetChannelInstallationInWorkspaceParams{ID: instID, WorkspaceID: d.WorkspaceID, ChannelType: snap.ChannelType})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return refuse(DeliveryStatusFailed, ErrorCodeInstallationMissing, "installation no longer exists")
-	}
-	if err != nil {
-		return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load installation failed")
-	}
-	if inst.Status != "active" {
-		return refuse(DeliveryStatusFailed, ErrorCodeInstallationRevoked, "installation revoked")
-	}
-	return nil
-}
-
-// gateTestSendSource authorizes a synchronous test send against the scope
-// of the route it exercised. The authority is the delivery's PERSISTED
-// requesting member (d.requested_by) — never the route's last editor, and
-// a historical row without an actor fails closed. No source record is
-// involved.
-func (s *Service) gateTestSendSource(ctx context.Context, d db.LabrastroMessageDelivery, route db.LabrastroMessageRoute) *sendOutcome {
-	refuse := func(status, code, detail string) *sendOutcome {
-		return &sendOutcome{status: status, errorCode: code, detail: detail}
-	}
-	if route.SourceKind == RouteSourceRun || route.AutopilotID.Valid {
-		ap, err := s.Queries.GetAutopilotInWorkspace(ctx, db.GetAutopilotInWorkspaceParams{ID: route.AutopilotID, WorkspaceID: route.WorkspaceID})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "source automation deleted")
-		}
-		if err != nil {
-			return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load source failed")
-		}
-		if ap.Status == "archived" {
-			return refuse(DeliveryStatusCancelled, ErrorCodeSourceArchived, "source automation archived")
-		}
-		if err := sourceAuthority(ctx, s.Queries, ap, d.RequestedBy, false); err != nil {
-			return refuse(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member no longer holds source write permission")
-		}
-		return nil
-	}
-	if !d.RequestedBy.Valid {
-		return refuse(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "diagnostic request carries no actor")
-	}
-	member, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
-		WorkspaceID: route.WorkspaceID, UserID: d.RequestedBy,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return refuse(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member is no longer a workspace member")
-	}
-	if err != nil {
-		return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load authorizing member failed")
-	}
-	if route.SourceKind != RouteSourceInbox && member.Role != "owner" && member.Role != "admin" {
-		return refuse(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member no longer holds workspace admin")
-	}
-	return nil
-}
-
-// gateInboxSource re-checks the personal source before sending: the inbox
-// item still exists and still belongs to the route's recipient, the
-// recipient is still a member, and the item's category is STILL not muted —
-// a preference that flipped after the decision stops the send here. A
-// preference lookup failure re-queues the delivery (transient): unreadable
-// state must never read as "not muted".
-func (s *Service) gateInboxSource(ctx context.Context, d db.LabrastroMessageDelivery, route db.LabrastroMessageRoute, snap targetSnapshot) *sendOutcome {
-	refuse := func(status, code, detail string) *sendOutcome {
-		return &sendOutcome{status: status, errorCode: code, detail: detail}
-	}
-	if !d.SourceRefID.Valid {
-		return refuse(DeliveryStatusFailed, ErrorCodeSendRejected, "personal delivery without a source record")
-	}
-	item, err := s.Queries.GetInboxItem(ctx, d.SourceRefID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "inbox item no longer exists")
-	}
-	if err != nil {
-		return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load inbox item failed")
-	}
-	if item.WorkspaceID != d.WorkspaceID || item.RecipientType != "member" || item.RecipientID != route.TargetUserID {
-		return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "inbox item no longer belongs to the route recipient")
-	}
-	if _, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
-		WorkspaceID: d.WorkspaceID, UserID: item.RecipientID,
-	}); errors.Is(err, pgx.ErrNoRows) {
-		return refuse(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "recipient is no longer a workspace member")
-	} else if err != nil {
-		return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load recipient membership failed")
-	}
-	muted, err := s.inboxMuted(ctx, d.WorkspaceID, item.RecipientID, item.Type)
-	if err != nil {
-		return refuse(DeliveryStatusFailed, ErrorCodeSendTransient, "check notification preference: "+err.Error())
-	}
-	if muted {
-		return refuse(DeliveryStatusCancelled, ErrorCodeRecipientMuted, "recipient muted this notification category after the decision")
-	}
-	return nil
-}
-
-// gateTeamSource re-checks a team source before sending: the canonical
-// record still exists (its issue may have been deleted), the issue still
-// matches the delivery's frozen project range, and the member who LAST SAVED the
-// route still holds workspace owner/admin — the same continuous
-// authorization the automation source applies to its authorizer.
-func (s *Service) gateTeamSource(ctx context.Context, d db.LabrastroMessageDelivery, route db.LabrastroMessageRoute) *sendOutcome {
-	refuse := func(status, code, detail string) *sendOutcome {
-		return &sendOutcome{status: status, errorCode: code, detail: detail}
-	}
-	if !d.SourceRefID.Valid {
-		return refuse(DeliveryStatusFailed, ErrorCodeSendRejected, "team delivery without a source record")
-	}
-	var issueID pgtype.UUID
-	switch d.SourceKind {
-	case SourceKindActivity:
-		activity, err := s.Queries.GetActivity(ctx, d.SourceRefID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "activity record no longer exists")
-		}
-		if err != nil {
-			return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load activity record failed")
-		}
-		if activity.WorkspaceID != d.WorkspaceID {
-			return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "activity belongs to another workspace")
-		}
-		issueID = activity.IssueID
-	case SourceKindComment:
-		comment, err := s.Queries.GetCommentInWorkspace(ctx, db.GetCommentInWorkspaceParams{ID: d.SourceRefID, WorkspaceID: d.WorkspaceID})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "comment no longer exists")
-		}
-		if err != nil {
-			return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load comment failed")
-		}
-		if comment.DeletedAt.Valid {
-			return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "comment was deleted")
-		}
-		issueID = comment.IssueID
-	}
-	{
-		issue, err := s.Queries.GetIssue(ctx, issueID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return refuse(DeliveryStatusCancelled, ErrorCodeSourceMissing, "source issue no longer exists")
-		}
-		if err != nil {
-			return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load source issue failed")
-		}
-		if issue.WorkspaceID != d.WorkspaceID || (d.SourceProjectID.Valid && issue.ProjectID != d.SourceProjectID) {
-			return refuse(DeliveryStatusCancelled, ErrorCodeConditionMismatch, "source issue left the decision's project scope")
-		}
-	}
-	authorizer, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
-		WorkspaceID: d.WorkspaceID, UserID: route.UpdatedBy,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return refuse(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member is no longer a workspace admin")
-	}
-	if err != nil {
-		return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "load authorizing member failed")
-	}
-	if authorizer.Role != "owner" && authorizer.Role != "admin" {
-		return refuse(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member no longer holds workspace admin")
-	}
-	return nil
-}
-
-// reverifyTarget re-proves an external target against the live platform
-// right before sending. nil means "cleared"; otherwise the recorded
-// decision for the verification verdict.
-func (s *Service) reverifyTarget(ctx context.Context, d db.LabrastroMessageDelivery, snap targetSnapshot) *sendOutcome {
-	refuse := func(status, code, detail string) *sendOutcome {
-		return &sendOutcome{status: status, errorCode: code, detail: detail}
-	}
-	req := VerifyTargetRequest{
-		WorkspaceID:    util.UUIDToString(d.WorkspaceID),
-		InstallationID: snap.Installation,
-		ChannelType:    snap.ChannelType,
-		ChatID:         snap.ChatID,
-		MessageID:      snap.MessageID,
-	}
-	// Approval is checked against the FROZEN target (delivery rows pin
-	// installation + target_key at decision time), never against the
-	// route's current configuration (repair contract §2). The approval
-	// SCOPE follows the delivery's frozen source_scope: a team delivery checks the
-	// team scope's own approval, never an automation's.
-	if (snap.TargetType == TargetGroup || snap.TargetType == TargetTopic) && s.Verifier == nil {
-		return refuse(DeliveryStatusUncertain, ErrorCodeSendAmbiguous, "target verifier unavailable")
-	}
-	switch snap.TargetType {
-	case TargetGroup:
-		if err := s.Verifier.VerifyGroupTarget(ctx, req); err != nil {
-			return refuseVerification(err)
-		}
-		if err := s.deliveryTargetApproved(ctx, d, snap); err != nil {
-			return refuseApproval(err)
-		}
-	case TargetTopic:
-		verified, err := s.Verifier.VerifyTopicTarget(ctx, req)
-		if err != nil {
-			return refuseVerification(err)
-		}
-		if verified != snap.ChatID {
-			// The anchor moved to a different chat between decision and
-			// send: refusing is the only correct outcome.
-			return refuse(DeliveryStatusFailed, ErrorCodeTopicAnchorMismatch,
-				"anchor now lives in chat "+verified+", route pinned "+snap.ChatID)
-		}
-		if err := s.deliveryTargetApproved(ctx, d, snap); err != nil {
-			return refuseApproval(err)
-		}
-	}
-	return nil
-}
-
-// deliveryTargetApproved keys the send-time approval check on the
-// delivery's OWN scope: team kinds check (workspace, source scope, project,
-// bot, target) approval; automation deliveries keep the OL-25 per-automation
-// check. An approval is never borrowed across scopes.
-func (s *Service) deliveryTargetApproved(ctx context.Context, d db.LabrastroMessageDelivery, snap targetSnapshot) error {
-	switch d.SourceScope.String {
-	case RouteSourceActivity, RouteSourceComment:
-		return s.sourceTargetApproved(ctx, d.WorkspaceID, d.SourceScope.String, d.SourceProjectID, d.InstallationID, snap.TargetKeyFor())
-	case RouteSourceRun:
-		return s.targetApproved(ctx, d.WorkspaceID, d.AutopilotID, d.InstallationID, snap.TargetKeyFor())
-	default:
-		return &TargetNotApprovedError{}
-	}
-}
-
-// refuseApproval maps the approval verdict to a send outcome: a revoked or
-// missing approval cancels the delivery — the workspace withdrew its
-// consent, and queued siblings are cancelled by the revoke path with the
-// same reason.
-func refuseApproval(err error) *sendOutcome {
-	var notApproved *TargetNotApprovedError
-	if errors.As(err, &notApproved) {
-		return &sendOutcome{status: DeliveryStatusCancelled,
-			errorCode: ErrorCodeTargetNotApproved, detail: err.Error()}
-	}
-	return &sendOutcome{status: DeliveryStatusUncertain,
-		errorCode: ErrorCodeSendAmbiguous, detail: "check approval: " + err.Error()}
-}
-
-// refuseVerification maps verification errors to send outcomes: a
-// definitive refusal fails explainably; an unknown verdict (transport,
-// scopes) parks the delivery as uncertain rather than sending unverified.
-func refuseVerification(err error) *sendOutcome {
-	var unreachable *TargetUnreachableError
-	var mismatch *TargetAnchorMismatchError
-	switch {
-	case errors.As(err, &mismatch):
-		return &sendOutcome{status: DeliveryStatusFailed,
-			errorCode: ErrorCodeTopicAnchorMismatch, detail: err.Error()}
-	case errors.As(err, &unreachable):
-		return &sendOutcome{status: DeliveryStatusFailed,
-			errorCode: ErrorCodeTargetUnreachable, detail: err.Error()}
-	case errors.Is(err, ErrTargetUnreachable):
-		return &sendOutcome{status: DeliveryStatusFailed,
-			errorCode: ErrorCodeTargetUnreachable, detail: err.Error()}
-	case errors.Is(err, ErrTargetAnchorMismatch):
-		return &sendOutcome{status: DeliveryStatusFailed,
-			errorCode: ErrorCodeTopicAnchorMismatch, detail: err.Error()}
-	}
-	return &sendOutcome{status: DeliveryStatusUncertain,
-		errorCode: ErrorCodeSendAmbiguous, detail: "verify target: " + err.Error()}
 }
 
 func (s *Service) completeClaimed(ctx context.Context, d db.LabrastroMessageDelivery, out sendOutcome) {
@@ -713,6 +362,9 @@ func (s *Service) decideSourcesErr(ctx context.Context) []error {
 // decideSourcesOnce runs one bounded decide pass over the persisted
 // sources — the body a wakeup or a periodic tick executes.
 func (s *Service) decideSourcesOnce(ctx context.Context) {
+	if err := s.decideMissing(ctx); err != nil {
+		s.logger().Error("messagedelivery: run decide scan", "error", err)
+	}
 	for _, err := range s.decideSourcesErr(ctx) {
 		s.logger().Error("messagedelivery: source decide scan", "error", err)
 	}

@@ -110,6 +110,33 @@ candidate, including failed candidates so their failures enter the report.
 ownership come from the server; client IDs, contents or permission claims are
 not accepted. Unknown request fields are rejected.
 
+Selected writable candidates use the explicit decision table in
+`server/internal/handler/labrastro_skill_decisions.go`:
+
+| Candidate state | Conflict | Strategy | Action | Skill permission |
+|---|---|---|---|---|
+| `new` | none | any | Create | Workspace member |
+| `changed`, `adoptable` | none or `forbidden` | any | Update or adopt the same source | Creator or owner/admin, checked under lock |
+| `conflict` | `name_conflict` | `skip` | Skip | None |
+| `conflict` | `name_conflict` | `rename` | Create with an available name | Workspace member; existing skill is untouched |
+| `conflict` | `name_conflict` | `overwrite` | Replace the unbound target | Target creator only |
+| `conflict` | `ambiguous_source`, `already_packaged` | `skip` | Skip | None |
+| `conflict` | `ambiguous_source`, `already_packaged` | `rename`, `overwrite` | Fail | No write allowed |
+| `failed` | none | any | Report source failure | No write allowed |
+
+Default selection skips forbidden same-source changes; explicit selection
+reports a permission failure. Removed candidates are retained, unchanged
+candidates remain unchanged, and unselected candidates are skipped before this
+table is applied. Unknown combinations fail closed. Package authorization is
+independent of the skill permission column and is rechecked for each write.
+Rename checks availability inside each item's transaction, including collisions
+between two newly discovered candidates in the same apply.
+
+Source identities (including legacy skills.sh slug matches) are indexed once
+per snapshot. Apply revalidates the full preview under the workspace lock, then
+each item rechecks only its target skill state, supporting-file hashes and
+placement. No target identity or permission is accepted from the client.
+
 ```json
 {
   "package":{
@@ -288,7 +315,8 @@ errors retain `error` and add `code`, `diagnostics`, `retryable`.
 | `limit_exceeded` | 1 MiB per final file; 4,096 lines per Markdown paragraph starting with a possible reference definition (first non-whitespace byte `[`); 256 support files, 8 MiB support contents per skill; shrink source/bundle or split the indicated paragraph. |
 | `shared_path_conflict` | `_shared` destination conflicts with existing or rewritten content; fix source before retrying. |
 | `cross_skill_reference` | Other skills' SKILL.md files are not copied; reference remains unchanged. |
-| `filtered_reference` | External directory, symlink/submodule, binary or license asset skipped. References between original skill files and their own directories remain unchanged without a warning. A nonregular primary SKILL.md fails import. |
+| `filtered_reference` | External directory, symlink/submodule, binary or license asset skipped. References between original skill files and their own directories remain unchanged without a warning. Package discovery skips nonregular SKILL.md entries with a path-specific diagnostic; direct single-skill import rejects a nonregular primary SKILL.md. |
+| `invalid_source` | Invalid source URL/subdirectory or an unsafe repository-tree path, including names containing `:` or `\`. HTTP 400, not retryable; correct the source or select a portable subtree. |
 | `path_outside_repository` | Reference escapes repository; unchanged. Missing example paths and remote links are also unchanged. |
 | `manifest_invalid`, `dot_directory_duplicate` | Invalid manifest disables defaults; a same-name dot-directory mirror is omitted in favor of the ordinary path. |
 | `preview_stale`, `source_changed` | Repreview; no blind write based on stale source, permissions or targets. |
@@ -304,6 +332,11 @@ failure; 504 for the source deadline; 500 for unexpected storage failure.
 Some legacy validation errors only have `error`; do not assume a code exists.
 Tree-specific codes include `folder_cycle`, `managed_folder`, `managed_skill`.
 `retryable` is advice to repreview, never permission to replay a write.
+
+Package discovery reports nonregular primary files without following them, so
+one symlink does not hide the other valid skills in a package and the omission
+is visible in preview diagnostics. Unsafe tree paths reject the source instead
+of silently dropping potentially required support files.
 
 ## Bounded work and integration points
 

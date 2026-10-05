@@ -635,7 +635,8 @@ func autopilotWriteByOwnership(ap db.Autopilot, member db.Member) bool {
 // predicate also gates whether webhook secrets are exposed on the read path,
 // since seeing a webhook token is equivalent to being able to trigger.
 func (h *Handler) memberCanWriteAutopilot(ctx context.Context, ap db.Autopilot, member db.Member) bool {
-	return autopilotauth.CanWriteAutopilot(ctx, h.Queries, ap, member)
+	allowed, err := autopilotauth.CanWriteAutopilot(ctx, h.Queries, ap, member)
+	return err == nil && allowed
 }
 
 // Stable, machine-readable refusal codes for the autopilot write surface. The
