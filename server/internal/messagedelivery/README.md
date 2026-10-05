@@ -24,7 +24,7 @@ statuses or error codes. Code lives in:
 | `server/internal/integrations/lark/labrastro_delivery.go` | Feishu proactive send (open_id / chat_id / topic reply + fixed UUID) |
 | `server/cmd/server/labrastro_messaging.go` | the single assembly point (sender selection, EventBus wakeup) |
 | `server/pkg/db/queries/labrastro_message.sql` | all SQL; generated code via `make sqlc` |
-| `server/migrations/452…470_labrastro_*` | tables + concurrent indexes |
+| `server/migrations/*_labrastro_*.sql` (`452_labrastro_message_tables` through `478_labrastro_feedback_retirement`) | tables + concurrent indexes |
 
 ## Concepts
 
@@ -704,7 +704,8 @@ whose deleted route prevented reconstruction. `source_kind="test_send"` does
 not imply automation authority. A project team diagnostic record, for example,
 contains `{"source_kind":"test_send","source_scope":"activity","source_project_id":"aa31…","autopilot_id":null}`.
 
-The persisted SQL/schema and returned fields are defined by migrations 467–473
+The persisted SQL/schema and returned fields are defined by the `labrastro` migrations
+`467_labrastro_message_sources` through `473_labrastro_message_project_approval_index`
 and `pkg/db/generated/models.go`; source-route projections live in
 `pkg/db/generated/labrastro_message.sql.go`. No client-side schema or frontend
 files change in this backend stage.
@@ -812,9 +813,13 @@ Delivery `error_code` additions recorded by the pipeline:
 
 ### Upgrade and rollback
 
-Apply migrations 467–473 before running this binary. Stop delivery workers
-while upgrading a populated 467–470 preview deployment: old rows cannot prove
-their historical project consent or last-disable boundary. Migration 471
+Apply the `labrastro` migrations
+`467_labrastro_message_sources` through `473_labrastro_message_project_approval_index` before running this binary.
+Stop delivery workers
+while upgrading a populated preview deployment (`467_labrastro_message_sources`
+through `470_labrastro_message_approved_target_source_active_index`): old rows
+cannot prove their historical project consent or last-disable boundary.
+`471_labrastro_message_source_scope`
 withdraws preview team approvals, disables team routes, cancels all unfinished
 non-run deliveries (including diagnostics), and clears their leases. It keeps
 sent/suppressed/cancelled history, receipts and dedup identities. Personal
@@ -823,16 +828,19 @@ configuration, approvals and deliveries are unchanged. Re-approve each desired
 team project/workspace range, then explicitly enable its route. Cancelled
 preview work is not automatically replayed.
 
-The project approval index in 473 uses `NULLS NOT DISTINCT`, keeping one active
-grant for each exact range, including the workspace range. Each concurrent
+The project approval index in `473_labrastro_message_project_approval_index` uses
+`NULLS NOT DISTINCT`, keeping one active grant for each exact range, including the workspace range. Each concurrent
 index build has its own migration and registered invalid-index retry cleanup.
 The migration regression deliberately fails the build with duplicates, then
 repairs and retries through the real runner.
 
-Downgrading 473 refuses BEFORE any DDL if an active project grant exists: revoke
-those grants first. After that precondition, 472 can restore the old workspace
-index and 471 withdraws remaining source activity before dropping scope fields.
-Downgrading 467 deletes all non-run deliveries INCLUDING test sends with null
+Downgrading `473_labrastro_message_project_approval_index` refuses BEFORE any DDL
+if an active project grant exists: revoke those grants first. After that
+precondition, `472_labrastro_message_drop_preview_approval_index` can restore the
+old workspace index and `471_labrastro_message_source_scope` withdraws remaining
+source activity before dropping scope fields.
+Downgrading `467_labrastro_message_sources` deletes all non-run deliveries
+INCLUDING test sends with null
 `autopilot_id`, their receipts, source routes and approvals. Export that audit
 history before a downgrade if it must be retained. Legacy automation records
 and receipts remain. The populated migration test covers upgrade, rejected
