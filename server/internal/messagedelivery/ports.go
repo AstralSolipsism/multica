@@ -54,14 +54,12 @@ func (e *SendError) Unwrap() error { return e.Err }
 // SendRequest is one shard going to one resolved target.
 type SendRequest struct {
 	DeliveryID     string
-	SourceURL      string
-	SourceRunID    string
 	WorkspaceID    string
 	InstallationID string
 	ChannelType    string
 	Target         Target
-	// Text is this shard's frozen body slice.
-	Text string
+	// Message contains this shard's literal body and its separate source link.
+	Message Message
 	// SendUUID is the idempotency key for THIS shard, fixed across
 	// retries. The platform's dedup window is finite (about an hour for
 	// Lark), so the UUID lowers duplication risk; it is not an

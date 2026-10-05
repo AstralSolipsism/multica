@@ -62,6 +62,9 @@ import (
 // (pid/image heuristics, a 401 handshake as identity) were removed: they
 // either proved something else or were reproducible by any local process,
 // and this gate subsumes them.
+// Credential delivery is disabled for root: the same-user boundary is only
+// appropriate for an unprivileged account. Unaccepted Linux sockets also
+// report uid=0, so an ESTABLISHED row must have a nonzero inode to prove a peer.
 //
 // Cost discipline: each round enumerates this user's loopback LISTEN ports
 // ONCE (one /proc read pair on Linux, one lsof run on macOS) and filters
@@ -85,6 +88,8 @@ const (
 // this at startup; collect double-checks so no path can bypass it).
 var errKimiIdentityUnsupportedForCollection = errors.New("kimi plan quota: platform cannot prove connection peer ownership")
 
+var errKimiCredentialsDisabledForRoot = errors.New("kimi plan quota: credential delivery disabled for root (euid=0)")
+
 // kimiPlanQuotaCollector holds the loop-round state: an HTTP client, the
 // kimi home directory, the last port that answered, and the current round's
 // owned-listen set. The probe functions are fields so tests can simulate
@@ -101,6 +106,8 @@ type kimiPlanQuotaCollector struct {
 	// identitySupported reports whether this platform can prove the
 	// connection peer at all. When false the collector fails closed.
 	identitySupported func() bool
+	// effectiveUID is read at each credential boundary, not cached at startup.
+	effectiveUID func() int
 	// enumerateOwnedListenPorts returns, in one enumeration per round, the
 	// loopback-serving LISTEN ports owned by this user.
 	enumerateOwnedListenPorts func() map[int]struct{}
@@ -119,6 +126,7 @@ func newKimiPlanQuotaCollector(homeDir string) *kimiPlanQuotaCollector {
 		scanBase:          kimiServerDefaultPort,
 		scanCount:         kimiServerMaxPorts,
 		identitySupported: kimiIdentitySupported,
+		effectiveUID:      os.Geteuid,
 	}
 	c.enumerateOwnedListenPorts = kimiEnumerateOwnedListenPorts
 	c.verifyConnPeer = kimiEstablishedPeerOwnedByUser
@@ -183,6 +191,9 @@ func (c *kimiPlanQuotaCollector) dial(ctx context.Context, network, addr string)
 // user's listeners once, find the live server port, fetch usage, normalize.
 // Any failure abandons the round.
 func (c *kimiPlanQuotaCollector) collect(ctx context.Context) (*protocol.RuntimePlanQuota, error) {
+	if c.effectiveUID() == 0 {
+		return nil, errKimiCredentialsDisabledForRoot
+	}
 	if !c.identitySupported() {
 		return nil, errKimiIdentityUnsupportedForCollection
 	}
@@ -342,6 +353,10 @@ type kimiUsageWindow struct {
 }
 
 func (c *kimiPlanQuotaCollector) getUsage(ctx context.Context, base, token string) (*kimiUsageData, error) {
+	// Gate each request, including requests that reuse an existing connection.
+	if c.effectiveUID() == 0 {
+		return nil, errKimiCredentialsDisabledForRoot
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/v1/oauth/usage", nil)
 	if err != nil {
 		return nil, err
@@ -446,9 +461,10 @@ func addrServesLoopbackV4Dial(hexAddr string) bool {
 // establishedPeerOwnedByUID locates the SERVER side of one exact loopback
 // connection in kernel TCP tables: st 01 (ESTABLISHED), local
 // 127.0.0.1:<serverPort> (or v4-mapped), remote 127.0.0.1:<ephemeralPort>.
-// That row's uid is the process that ACCEPTED the connection — the actual
-// peer — and it must equal uid. A row owned by another uid fails; no row at
-// all means the peer cannot be proven (fail closed). LISTEN rows are
+// A nonzero inode proves the socket has been accepted; before accept the
+// row has uid=0 inode=0, which must never prove ownership even for root.
+// The accepted row's uid must equal uid. A row owned by another uid fails;
+// no row at all means the peer cannot be proven (fail closed). LISTEN rows are
 // deliberately ignored: they say nothing about who accepted THIS connection.
 func establishedPeerOwnedByUID(serverPort, ephemeralPort, uid int, tables [][]byte) bool {
 	for _, table := range tables {
@@ -457,7 +473,7 @@ func establishedPeerOwnedByUID(serverPort, ephemeralPort, uid int, tables [][]by
 				continue
 			}
 			fields := strings.Fields(line)
-			if len(fields) < 8 || fields[3] != "01" { // 01 = ESTABLISHED
+			if len(fields) < 10 || fields[3] != "01" { // 01 = ESTABLISHED
 				continue
 			}
 			localAddr, localPort, ok := strings.Cut(fields[1], ":")
@@ -478,6 +494,10 @@ func establishedPeerOwnedByUID(serverPort, ephemeralPort, uid int, tables [][]by
 			}
 			if !addrIsLoopbackV4OrMapped(localAddr) || !addrIsLoopbackV4OrMapped(remAddr) {
 				continue
+			}
+			inode, err := strconv.ParseUint(fields[9], 10, 64)
+			if err != nil || inode == 0 {
+				return false
 			}
 			peerUID, err := strconv.Atoi(fields[7])
 			if err != nil {
@@ -822,9 +842,13 @@ func unixSecondsPtr(v any) *int64 {
 }
 
 // kimiPlanQuotaLoop is the daemon-loop entry point for the Kimi collector.
-// Platforms that cannot prove the connection peer run no loop at all —
-// fail closed, with one startup log.
+// Root and platforms that cannot prove the connection peer run no loop at
+// all — fail closed, with one startup log.
 func (d *Daemon) kimiPlanQuotaLoop(ctx context.Context) {
+	if os.Geteuid() == 0 {
+		d.logger.Warn("kimi plan quota collector disabled: credential delivery disabled for root (euid=0); runtimes stay not reported")
+		return
+	}
 	if !kimiIdentitySupported() {
 		d.logger.Warn("kimi plan quota collector disabled: this platform cannot prove connection peer ownership; runtimes stay not reported")
 		return
