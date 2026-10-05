@@ -7,7 +7,7 @@ import { IssueGraphSchema, type IssueGraph, type IssueGraphRequest } from "./iss
 import { DependencyViewSchema, dependencyMutationToWire, IssueWithDependenciesSchema, type DependencyView, type IssueWithDependencies, type CreateIssueWithDependenciesRequest, type UpdateIssueWithDependenciesRequest } from "./dependency-schemas";
 
 export interface DependencyErrorDetails {
-  /** The machine-readable dependency refusal (`dependency_unsatisfied`, …). */
+  /** The machine-readable dependency refusal (`dependency_ancestor_conflict`, …). */
   reasonCode: string;
   /** The dependency projection the server attached to the refusal, when it
    *  sent one — the authoritative replacement for whatever the UI displayed

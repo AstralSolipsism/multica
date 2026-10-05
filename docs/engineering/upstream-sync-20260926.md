@@ -45,8 +45,8 @@ Upstream migration 492 converts status categories to `unstarted`, `started`,
 becomes `started`. This is the accepted upstream classification, not a renamed
 status or a fork execution mapping.
 
-Migration 551 adds a derived conversation-root reference to external tasks and
-their retries/delegations. The existing frozen grant remains the sole consent
+Migration `551_channel_conversation_root` adds a derived conversation-root
+reference to external tasks and their retries/delegations. The existing frozen grant remains the sole consent
 record. Ordinary tasks retain upstream authority when an older parent task is
 deleted; external descendants still honor live revocation. The migration only
 backfills on first column creation, so replay cannot overwrite established

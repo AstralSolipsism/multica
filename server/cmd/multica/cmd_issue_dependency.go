@@ -280,9 +280,6 @@ func issueDependencyCommandError(cmd *cobra.Command, err error) error {
 	if dependencyPath && (httpErr.StatusCode == http.StatusNotFound || httpErr.StatusCode == http.StatusMethodNotAllowed) {
 		message += " Dependency API unavailable, disabled, or issue inaccessible. Check server support and access; no fallback write was sent."
 	}
-	if code == "dependency_unsatisfied" || code == "dependency_change_not_allowed" || code == "dependency_override_not_allowed" {
-		message += " Stop this dispatch/edit; suggest next steps or request human handling. Keep using your own credentials."
-	}
 	if code == "dependency_version_conflict" {
 		message += " Read dependencies again before deciding on a new edit; no automatic retry was sent."
 	}

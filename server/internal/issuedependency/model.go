@@ -346,44 +346,6 @@ func (m Model) IndexedPrerequisites() func(string) []Prerequisite {
 	}
 }
 
-// Weakened reports removal of an unfinished direct edge or loss of any
-// inherited unfinished prerequisite on a surviving issue. Completion writes
-// themselves remain governed by the existing status policy.
-func (m Model) Weakened(next Model) bool {
-	remaining := map[[2]string]bool{}
-	for _, e := range next.Edges {
-		if e.Type == "blocked_by" {
-			remaining[[2]string{e.IssueID, e.DependsOnID}] = true
-		}
-	}
-	for _, e := range m.Edges {
-		if _, survives := next.Issues[e.IssueID]; !survives {
-			continue
-		}
-		if e.Type == "blocked_by" && m.Issues[e.DependsOnID].Category != "done" && !remaining[[2]string{e.IssueID, e.DependsOnID}] {
-			return true
-		}
-	}
-	for id, node := range next.Issues {
-		old, existed := m.Issues[id]
-		if !existed || old.ParentID == node.ParentID {
-			continue
-		}
-		// Only a moved subtree root can lose inherited constraints. If it
-		// retains every prerequisite, so do all its unchanged descendants.
-		retained := map[string]bool{}
-		for _, p := range next.Prerequisites(id) {
-			retained[p.IssueID] = true
-		}
-		for _, p := range m.Prerequisites(id) {
-			if !p.Satisfied && !retained[p.IssueID] {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func unique(values []string) []string {
 	sort.Strings(values)
 	out := values[:0]

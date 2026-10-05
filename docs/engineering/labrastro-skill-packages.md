@@ -455,7 +455,6 @@ Handwritten hooks in existing upstream files:
 | `server/internal/handler/skill_create.go` | Extract transaction-injected overwrite helper; existing wrapper keeps commit behavior |
 | `server/internal/handler/skill_import_archive.go` | Reject sibling SKILL.md roots; nested content behavior retained |
 | `server/cmd/server/router.go` | One fork route registrar call |
-| `server/cmd/server/testdata/labrastro-external-routes.tsv` | 14 deny-by-default route entries |
 | `server/internal/handler/workspace.go` | One transactional fork tree cleanup step |
 | `packages/core/api/schemas.ts`, `packages/core/types/agent.ts` | Optional old-response diagnostics and exported new schemas |
 | `packages/core/api/client.ts` | Skill integration uses two mounts: the `installLabrastroApi` import and its call after the class (OL-130 aggregates the fork modules and checks method-name collisions; see [frontend API touchpoints](labrastro-frontend-api.md#upstream-touchpoints)). The 15 workspace-pinned folder/package/placement methods (zod/`parseWithFallback`, null on malformed responses) and `importSkillParsed` (`Promise<Skill \| null>`, so a malformed import stays indeterminate) live in fork `packages/core/api/labrastro-skill-api.ts`, typed onto `ApiClient` by module augmentation. Upstream `importSkill` keeps its `Promise<Skill>` contract |
@@ -496,6 +495,10 @@ invalidation remain, with no automatic write retry or blanket 5xx zero-write
 claim. Single and batch refresh diagnostics live in fork
 `refresh-skill-notices.tsx`, mounted from the upstream dialogs listed above;
 batch results include diagnostic `path`/`target`.
+
+The fork-created `server/cmd/server/testdata/labrastro-external-routes.tsv`
+records the 14 deny-by-default skill-package routes alongside other fork routes.
+It is not an upstream file.
 
 New fork tests include `apps/web/next.config.test.ts` (60,000 ms and API rewrite),
 the core package API/query tests, tree/model/dialog/picker suites, the two

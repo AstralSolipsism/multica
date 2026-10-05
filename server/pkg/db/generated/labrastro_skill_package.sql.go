@@ -144,20 +144,6 @@ func (q *Queries) LabrastroCreateSkillPackage(ctx context.Context, arg Labrastro
 	return i, err
 }
 
-const labrastroDeletePackageFolders = `-- name: LabrastroDeletePackageFolders :exec
-DELETE FROM labrastro_skill_folder WHERE workspace_id=$1 AND package_id=$2
-`
-
-type LabrastroDeletePackageFoldersParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	PackageID   pgtype.UUID `json:"package_id"`
-}
-
-func (q *Queries) LabrastroDeletePackageFolders(ctx context.Context, arg LabrastroDeletePackageFoldersParams) error {
-	_, err := q.db.Exec(ctx, labrastroDeletePackageFolders, arg.WorkspaceID, arg.PackageID)
-	return err
-}
-
 const labrastroDeletePackagePlacements = `-- name: LabrastroDeletePackagePlacements :exec
 DELETE FROM labrastro_skill_placement WHERE workspace_id=$1 AND package_id=$2
 `

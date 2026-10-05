@@ -73,24 +73,6 @@ const (
 	ExitValidation = 5 // 400 / 422
 )
 
-// ProjectFileError preserves feature-specific semantics through main's error
-// formatter without changing the exit contract of unrelated CLI commands.
-type ProjectFileError struct {
-	Code    string
-	Message string
-	Exit    int
-	Err     error
-}
-
-func (e *ProjectFileError) Error() string { return e.Message }
-func (e *ProjectFileError) Unwrap() error { return e.Err }
-
-// NewProjectFileValidationError shares the validation contract between file
-// commands and their HTTP client without duplicating error construction.
-func NewProjectFileValidationError(message string) error {
-	return &ProjectFileError{Code: "INVALID_REQUEST", Message: message, Exit: ExitValidation}
-}
-
 // IsNetwork reports whether the kind is a transport-layer failure.
 func (k ErrorKind) IsNetwork() bool {
 	switch k {
@@ -702,16 +684,11 @@ func debugEnabled() bool {
 
 // ExitCodeFor maps an error onto a tiered process exit code so callers can
 // branch in scripts: network=2, auth(401/403)=3, not-found(404)=4,
-// validation(400/422)=5, project-file conflict=6/unconfirmed=7, everything else=1.
+// validation(400/422)=5, everything else=1.
 func ExitCodeFor(err error) int {
 	if err == nil {
 		return 0
 	}
-	var fileErr *ProjectFileError
-	if errors.As(err, &fileErr) {
-		return fileErr.Exit
-	}
-
 	var netErr *NetworkError
 	if errors.As(err, &netErr) {
 		return ExitNetwork

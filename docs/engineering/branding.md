@@ -23,21 +23,25 @@ helper from core.
 
 ## Fork translation namespaces
 
-Fork additions live outside upstream dictionaries. The migration from the
-shared upstream revision `2ea01ae4e` preserves every string, interpolation and
-locale-specific plural form. The seven dictionaries `issues`, `settings`,
+Fork additions live outside upstream dictionaries. The initial migration from the
+shared upstream revision `2ea01ae4e` preserved every string, interpolation and
+locale-specific plural form; unused fork keys have since been removed in all
+five locales, including their brand overrides. The seven dictionaries `issues`,
+`settings`,
 `agents`, `modals`, `runtimes`, `autopilots` and `layout` match that revision
 byte for byte.
 
 | Namespace | Copy moved from upstream dictionaries |
 | --- | --- |
-| `dependencies` | `issues.dependencies.*` becomes `detail.*`; prerequisite actions, blocked-trigger copy, and modal additions retain their key paths. |
+| `dependencies` | `issues.dependencies.*` becomes `detail.*`; prerequisite actions and modal additions retain their key paths. |
 | `dag` | `issues.dag.*` moves to the namespace root; `issues.view.dag` and `issues.view.tooltip_dag` retain their `view.*` paths. |
 | `lark` | Fork additions under `settings.lark.*` move to the root; conversation attribution, rejected wakeup input, the community QR dialog, `layout.help.discord` and `layout.sidebar.discord_card.{title,dismiss}` retain their key paths without the original namespace prefix. |
 | `quota` | `runtimes.quota.*` moves to the root; `runtimes.list.col_quota` becomes `column_label`. |
-| `autopilot-delivery` | `autopilots.deliveries.filter.*` becomes `filter.*`. |
-| `agent-config` | Agent configuration additions retain their key paths. |
+| `agent-config` | OpenClaw gateway configuration hints retain their `tab_body.runtime_config.*` paths. |
 | `fork-ui` | Other fork additions are grouped under their original namespace, such as `settings.desktop.daemon.*` or `skills.create.local.*`. |
+
+The unused `autopilot-delivery` namespace and its registrations were removed;
+the upstream `autopilots` dictionary remains unchanged.
 
 Add future fork copy to the appropriate owned namespace. Register new namespaces
 in `packages/views/locales/index.ts` and

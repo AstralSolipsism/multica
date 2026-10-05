@@ -11,8 +11,6 @@
     "title": "飞书群二维码",
     "hint": "使用飞书扫码加入群聊"
   },
-  "install_scan_hint_feishu": "飞书 → 扫一扫 → 授权新 PersonalAgent。",
-  "install_scan_hint_lark": "Lark → 扫一扫 → 授权新 PersonalAgent。",
   "conversation_title": "与智能体交流",
   "conversation_description": "这些会话的参与者无需 Multica 账号。智能体会澄清、整理意见，再以自己的身份回填评论；处理会有延迟和模型消耗，不会把每条消息立即逐字变成任务评论。",
   "conversation_groups": "群聊 ID（每行一个 oc_ ID，群内各话题独立）",

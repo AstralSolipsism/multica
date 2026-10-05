@@ -32,7 +32,6 @@
     "bot_revoked": "机器人已失效",
     "member_unknown": "未知成员",
     "revision": "v{{revision}}",
-    "effective_from": "仅投递 {{time}} 之后完成的运行",
     "test_send": "发送测试",
     "test_sending": "发送中...",
     "test_toast": "测试消息：{{status}}",
@@ -48,8 +47,7 @@
     "toast_saved": "推送目标已保存",
     "toast_deleted": "推送目标已删除",
     "toast_enabled": "推送目标已启用",
-    "toast_disabled": "推送目标已停用",
-    "toast_conflict": "该配置已在别处被修改，已为你重新加载，请确认后重试。"
+    "toast_disabled": "推送目标已停用"
   },
   "editor": {
     "title_add": "添加推送目标",
@@ -68,7 +66,6 @@
     "enabled": "保存后立即启用",
     "approval_admin": "该目标尚未批准。保存时将以工作区管理员身份批准，并验证机器人可达。",
     "approval_member": "群聊和话题需工作区 owner/admin 批准后才能保存。",
-    "approval_pending": "待管理员批准——请联系工作区 owner/admin 在此自动化中批准该目标。",
     "save": "保存",
     "save_approve": "批准并保存",
     "saving": "保存中...",
@@ -92,8 +89,7 @@
       "confirm": "撤销",
       "revoking": "撤销中..."
     },
-    "toast_revoked": "批准已撤销，{{count}} 条排队投递已取消",
-    "toast_revoke_failed": "撤销失败"
+    "toast_revoked": "批准已撤销，{{count}} 条排队投递已取消"
   },
   "deliveries": {
     "title": "投递记录",
@@ -131,15 +127,11 @@
       "report": "报告内容",
       "content": "消息内容",
       "no_report_body": "（无报告正文）",
-      "summary": "摘要",
       "target": "目标",
-      "source": "来源",
       "view_issue": "查看任务",
       "receipts": "回执",
       "receipt_shard": "分片 {{index}}/{{total}}",
-      "external_message_id": "飞书消息 ID",
       "send_uuid": "去重 UUID",
-      "error": "失败原因",
       "created_at": "创建时间",
       "first_attempt_at": "首次尝试",
       "delivered_at": "平台接收时间",
@@ -155,7 +147,6 @@
       "action": "重试",
       "in_progress": "重试中...",
       "toast": "投递已重新排队",
-      "failed": "重试失败",
       "uncertain_title": "重试前请先核实",
       "uncertain_description": "该消息可能已送达飞书，但平台响应丢失。请先到目标处核实，确认未送达再重试。重试会沿用相同的去重 UUID，在平台去重窗口内已确认的消息不会重复发送。",
       "uncertain_confirm": "已核实，重试",
@@ -238,8 +229,6 @@
     "title_edit_team": "编辑订阅",
     "target_self_hint": "通知只投递到你自己的飞书私聊，收件人始终是你本人，无法更改。",
     "kind": "来源",
-    "kind_activity": "任务动态",
-    "kind_comment": "新评论",
     "kind_activity_hint": "转发任务的状态与负责人变更。",
     "kind_comment_hint": "仅转发普通新评论。",
     "project": "生效范围",
@@ -249,7 +238,6 @@
     "events_hint": "全部不勾选即转发所有事件；被排除的事件会记录为未投递。",
     "boundary_hint": "修改机器人、目标、范围或事件，或重新启用已停用的规则，都会从该时刻起重新计算生效边界；之前的历史不会补发。",
     "approval_admin": "该目标在此来源和范围下尚未批准。保存时将以工作区管理员身份批准，并验证机器人可达。",
-    "approval_member": "该目标在此来源和范围下需工作区 owner/admin 批准后才能保存。",
     "enable_hint": "批准目标不代表规则已启用，只有规则处于启用状态时才会投递事件。",
     "catalog_load_failed": "事件目录加载失败，无法确认事件范围，请重新加载后再保存。",
     "routes_refresh_failed": "规则列表刷新失败，当前状态未确认。草稿已保留，请待列表恢复后再保存。"

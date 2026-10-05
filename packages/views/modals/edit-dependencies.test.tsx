@@ -171,7 +171,6 @@ vi.mock("../i18n", () => ({
           inherited_badge: "Inherited",
           conflict_notice: "conflict refresh",
           error_structure: "cycle error",
-          error_permission: "permission error",
           error_unverified: "unverified",
           error_generic: "save failed",
           unknown_state: "unknown state",
@@ -335,20 +334,6 @@ describe("EditDependenciesModal", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("cycle error"));
     expect(onClose).not.toHaveBeenCalled();
     expect(mocks.toast.success).not.toHaveBeenCalled();
-  });
-
-  it("explains the permission refusal when removing an unfinished prerequisite", async () => {
-    mocks.save.mockRejectedValueOnce(
-      new ApiError("forbidden", 403, "Forbidden", {
-        error: "not allowed",
-        reason_code: "dependency_change_not_allowed",
-      }),
-    );
-    render(<EditDependenciesModal onClose={vi.fn()} data={{ issueId: "issue-1" }} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "remove-MUL-9" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("permission error"));
   });
 
   it("keeps an unreadable write open and uses the localized failure copy", async () => {
