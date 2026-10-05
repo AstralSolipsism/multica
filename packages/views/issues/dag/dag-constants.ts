@@ -11,3 +11,6 @@ export function dagNodeSize(kind: DagNodeKindForSize) {
     height: kind === "issue" ? DAG_NODE_HEIGHT : DAG_GROUP_HEADER_HEIGHT,
   };
 }
+
+export const DAG_GROUP_TB_MIN_WIDTH = 360;
+export const DAG_STAGE_HEADER_HEIGHT = 38;

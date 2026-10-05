@@ -110,6 +110,10 @@ for (const direction of ["LR", "TB"] as const) {
       await expect(
         page.locator(`[data-dag-group="issue:${lineA.id}"] [data-dag-stage]`),
       ).toHaveCount(2);
+      await testInfo.attach(`dag-expanded-${direction}`, {
+        body: await page.screenshot(),
+        contentType: "image/png",
+      });
       await bNode.click();
       await expect(page.locator(".react-flow__edge-path.stroke-brand")).toHaveCount(2);
       const active = await page

@@ -7,16 +7,18 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import type { IssueStatus, IssuePriority, ProjectStatus, PropertyFilterValue } from "../../types";
 import { PROJECT_STATUS_ORDER } from "../../projects/config";
 import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../../platform/workspace-storage";
+import { sanitizeDagPersisted } from "./dag-preferences";
 import { defaultStorage } from "../../platform/storage";
+import { VIEW_MODE_CAPABILITIES, type ViewMode } from "../surface/view-mode";
 
-export type ViewMode = "board" | "list" | "table" | "gantt" | "swimlane" | "dag";
+export type { ViewMode } from "../surface/view-mode";
 export type GanttZoom = "day" | "week" | "month";
 /** DAG canvas layout direction: left-to-right or top-to-bottom ranks. */
 export type DagDirection = "LR" | "TB";
 /** Historical shared-view values retained at the data boundary. The current
  * DAG canvas always renders task-line containers. New definitions use parent. */
 export type DagGrouping = "project" | "parent" | "none";
-/** Representative id namespaces inside `dagCollapsedIds`. */
+/** Representative id namespace inside `dagExpandedIds`. */
 export const DAG_ISSUE_REP_PREFIX = "issue:";
 
 /** Shared direction choices for the display controls and saved view dialog. */
@@ -217,7 +219,7 @@ export function defaultSortDirection(field: SortField): SortDirection {
 
 /** Only expose card controls that the active renderer can honor. */
 export function cardPropertyOptionsForView(viewMode: ViewMode) {
-  if (viewMode === "table" || viewMode === "gantt" || viewMode === "dag") return [];
+  if (!VIEW_MODE_CAPABILITIES[viewMode].cardProperties) return [];
   if (viewMode === "list") {
     return CARD_PROPERTY_OPTIONS.filter((option) => option.key !== "description");
   }
@@ -225,9 +227,10 @@ export function cardPropertyOptionsForView(viewMode: ViewMode) {
 }
 
 export function sortOptionsForView(
-  _viewMode: ViewMode,
+  viewMode: ViewMode,
   grouping: IssueGrouping,
 ) {
+  if (!VIEW_MODE_CAPABILITIES[viewMode].ordering) return [];
   if (grouping !== "status") {
     return SORT_OPTIONS.filter((option) => option.value !== "position");
   }
@@ -330,11 +333,8 @@ export interface IssueViewState {
   dagDirection: DagDirection;
   /** Shared-view metadata; see DagGrouping. */
   dagGrouping: DagGrouping;
-  /**
-   * Personal task-line folds (`issue:<id>`). Null initializes collapsed
-   * headers on first entry. Only complete, fresh membership can prune a fold.
-   */
-  dagCollapsedIds: string[] | null;
+  /** Personal expanded task lines. Unlisted and newly discovered lines fold by default. */
+  dagExpandedIds: string[];
   /** Independent tasks are deliberately excluded from global line expansion. */
   dagIndependentExpanded: boolean;
   dagViewport: { x: number; y: number; zoom: number } | null;
@@ -392,13 +392,10 @@ export interface IssueViewState {
   toggleTableHierarchy: () => void;
   setTableCalculation: (calculation: TableCalculation) => void;
   setDagDirection: (direction: DagDirection) => void;
-  setDagGrouping: (grouping: DagGrouping) => void;
-  /** Toggle one representative's folded state. Initializes the default
-   *  collapse first when the user has never folded this surface. */
-  toggleDagCollapsed: (representativeId: string, defaultCollapsed: string[]) => void;
-  /** Replace the folded set wholesale (expand/collapse all, first-paint
-   *  default). Passing the default marks the surface initialized. */
-  setDagCollapsedIds: (ids: string[] | null) => void;
+  /** Toggle a task-line expansion without needing a graph snapshot. */
+  toggleDagExpanded: (representativeId: string) => void;
+  /** Replace the expanded set. An empty list restores default folding. */
+  setDagExpandedIds: (ids: string[]) => void;
 }
 
 export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): IssueViewState => ({
@@ -437,7 +434,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   tableCalculation: "none",
   dagDirection: "LR",
   dagGrouping: "parent",
-  dagCollapsedIds: null,
+  dagExpandedIds: [],
   dagIndependentExpanded: false,
   dagViewport: null,
   dagSelectedNodeId: null,
@@ -703,16 +700,15 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
     set((state) => ({ tableHierarchy: !state.tableHierarchy })),
   setTableCalculation: (tableCalculation) => set({ tableCalculation }),
   setDagDirection: (dagDirection) => set({ dagDirection }),
-  setDagGrouping: (dagGrouping) => set({ dagGrouping }),
-  toggleDagCollapsed: (representativeId, defaultCollapsed) =>
+  toggleDagExpanded: (representativeId) =>
     set((state) => {
-      const current = state.dagCollapsedIds ?? defaultCollapsed;
+      const current = state.dagExpandedIds;
       const next = current.includes(representativeId)
         ? current.filter((id) => id !== representativeId)
         : [...current, representativeId];
-      return { dagCollapsedIds: next };
+      return { dagExpandedIds: next };
     }),
-  setDagCollapsedIds: (dagCollapsedIds) => set({ dagCollapsedIds }),
+  setDagExpandedIds: (dagExpandedIds) => set({ dagExpandedIds }),
 });
 
 export const viewStorePersistOptions = (name: string) => ({
@@ -758,7 +754,7 @@ export const viewStorePersistOptions = (name: string) => ({
     tableCalculation: state.tableCalculation,
     dagDirection: state.dagDirection,
     dagGrouping: state.dagGrouping,
-    dagCollapsedIds: state.dagCollapsedIds,
+    dagExpandedIds: state.dagExpandedIds,
     dagIndependentExpanded: state.dagIndependentExpanded,
     dagViewport: state.dagViewport,
   }),
@@ -779,7 +775,8 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
   persisted: unknown,
   current: T,
 ): T {
-  const p = (persisted ?? {}) as Partial<T>;
+  const { dagCollapsedIds: _legacyFolds, ...preferences } = (persisted ?? {}) as Partial<T> & { dagCollapsedIds?: unknown };
+  const p = preferences as Partial<T>;
   // Read the old category-named field once; new snapshots persist exact keys.
   const legacy = persisted as { hiddenStatusCategories?: unknown } | null;
   const statusesFromStorage = (value: unknown, fallback: IssueStatus[], legacyCategories = false) => {
@@ -827,11 +824,7 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
   const merged = {
     ...current,
     ...p,
-    dagIndependentExpanded: typeof p.dagIndependentExpanded === "boolean" ? p.dagIndependentExpanded : current.dagIndependentExpanded,
-    dagViewport: p.dagViewport === undefined ? current.dagViewport : isDagViewport(p.dagViewport) ? p.dagViewport : null,
-    dagDirection: p.dagDirection === "LR" || p.dagDirection === "TB" ? p.dagDirection : current.dagDirection,
-    dagGrouping: p.dagGrouping === "project" || p.dagGrouping === "parent" || p.dagGrouping === "none" ? p.dagGrouping : current.dagGrouping,
-    dagCollapsedIds: p.dagCollapsedIds === null || (Array.isArray(p.dagCollapsedIds) && p.dagCollapsedIds.every((id) => typeof id === "string")) ? p.dagCollapsedIds : current.dagCollapsedIds,
+    ...sanitizeDagPersisted(p, current),
     hiddenStatuses: statusesFromStorage(p.hiddenStatuses ?? legacy?.hiddenStatusCategories, current.hiddenStatuses, p.hiddenStatuses === undefined),
     listCollapsedStatuses: statusesFromStorage(p.listCollapsedStatuses, current.listCollapsedStatuses, p.hiddenStatuses === undefined),
     cardProperties: {
@@ -914,13 +907,4 @@ export function useClearFiltersOnWorkspaceChange(
     }
     prevIdRef.current = wsId;
   }, [wsId, store]);
-}
-
-function isDagViewport(value: unknown): value is { x: number; y: number; zoom: number } {
-  if (!value || typeof value !== "object") return false;
-  const viewport = value as Record<string, unknown>;
-  return typeof viewport.x === "number" && Number.isFinite(viewport.x) &&
-    typeof viewport.y === "number" && Number.isFinite(viewport.y) &&
-    typeof viewport.zoom === "number" && Number.isFinite(viewport.zoom) &&
-    viewport.zoom >= 0.08 && viewport.zoom <= 2;
 }

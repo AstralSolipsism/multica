@@ -257,3 +257,20 @@ describe("ELK task-line layout", () => {
     },
   );
 });
+
+describe("free chains alongside task lines", () => {
+  it.each(["LR", "TB"] as const)("retains the dependency direction and real cross-line routes under %s", async (direction) => {
+    for (const collapsed of [false, true]) {
+      const nodes = [node("line"), ...(!collapsed ? [node("child", "line")] : []), node("c"), node("b"), node("a")];
+      const edges = [edge("a", "b"), edge("b", "c"), edge("c", collapsed ? "line" : "child")];
+      const result = await layoutDagProjection(nodes, edges, direction, [group("line", collapsed)]);
+      const axis = direction === "LR" ? "x" : "y";
+      expect(result.positions.a![axis]).toBeLessThan(result.positions.b![axis]);
+      expect(result.positions.b![axis]).toBeLessThan(result.positions.c![axis]);
+      expect(Object.keys(result.groups)).toEqual(["line"]);
+      expect(Object.keys(result.positions).sort()).toEqual(nodes.map((n) => n.id).sort());
+      routeEndpoints(result, edges);
+      expectNoCardIntersections(result, nodes, edges);
+    }
+  });
+});

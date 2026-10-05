@@ -154,7 +154,6 @@ export function computeDagProjection(
   const independent = roots.filter(
     (n) =>
       !children.has(n.id) &&
-      !collapsed.has(dagFeatureRepId(n.id)) &&
       n.parentIssueId === null &&
       !n.hasRestrictedParent &&
       !incident.has(n.id) &&
@@ -180,7 +179,7 @@ export function computeDagProjection(
   }
   function visit(node: IssueGraphNode, groupId: string | null) {
     const nested = children.get(node.id);
-    if (!nested && !collapsed.has(dagFeatureRepId(node.id))) {
+    if (!nested) {
       representatives.set(node.id, node.id);
       nodes.push({
         id: node.id,
@@ -275,17 +274,6 @@ export function computeDagProjection(
   return { nodes, groups, edges, representatives, foldedNodeCount };
 }
 
-/** Prune only against a fresh, complete membership read, never a filtered view. */
-export function pruneDagCollapsedIds(
-  collapsedIds: readonly string[],
-  graph: IssueGraph,
-  membershipComplete: boolean,
-): string[] {
-  if (!membershipComplete) return [...collapsedIds];
-  const existing = new Set(defaultDagCollapsedIds(graph));
-  return collapsedIds.filter((id) => existing.has(id));
-}
-
 export function repsToRevealIssues(
   graph: IssueGraph,
   collapsedIds: readonly string[],
@@ -326,9 +314,8 @@ export function repsToRevealIssues(
  * - downstream: forward dependency edges from every reached issue, plus
  *   descent into children of AFFECTED issues only. Affected means reached as
  *   a waiter (forward-edge target) or as an inheritor (child of an affected
- *   issue); both arrival kinds requeue an already-processed seed so its
- *   descent still runs. An initial seed that is never affected keeps the
- *   narrow boundary — its children do not wait on it.
+ *   issue). Seeds already contain all descendants of a selected task line,
+ *   so visiting them again cannot extend the closure.
  *
  * The returned set holds canvas node ids.
  */
@@ -360,30 +347,27 @@ export function dagFocusNeighborhood(
   const selected = projection.nodes.find((candidate) => candidate.id === nodeId);
   const seeds = selected ? selected.memberIds : [nodeId];
 
-  const issueSeen = new Set<string>();
+  const issueSeen = new Set(seeds);
   // Downstream propagation state: a node that a forward edge (waiter) or a
   // descent (inheritor) reached carries the wait and passes it to children.
-  // Initial seeds are queued without it; either arrival kind (re)queues them.
+  // Seeds already cover their displayed members; only new arrivals propagate.
   const affected = new Set<string>();
-  const queue: string[] = [];
+  const queue = [...issueSeen];
   const markAffected = (id: string) => {
-    if (affected.has(id)) return;
+    if (issueSeen.has(id)) return;
+    issueSeen.add(id);
     affected.add(id);
     queue.push(id);
   };
-  for (const seed of seeds) {
-    if (!issueSeen.has(seed)) {
-      issueSeen.add(seed);
-      queue.push(seed);
-    }
-  }
   while (queue.length > 0) {
     const current = queue.shift()!;
     for (const next of edgeNext.get(current) ?? []) {
       const isNew = !issueSeen.has(next);
-      if (isNew) issueSeen.add(next);
       if (way === "downstream") markAffected(next);
-      else if (isNew) queue.push(next);
+      else if (isNew) {
+        issueSeen.add(next);
+        queue.push(next);
+      }
     }
     if (way === "upstream") {
       let ancestor = parentById.get(current) ?? null;
@@ -398,7 +382,6 @@ export function dagFocusNeighborhood(
       }
     } else if (affected.has(current)) {
       for (const child of childrenOf.get(current) ?? []) {
-        if (!issueSeen.has(child)) issueSeen.add(child);
         markAffected(child);
       }
     }

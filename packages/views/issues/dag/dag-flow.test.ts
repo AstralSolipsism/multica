@@ -47,7 +47,6 @@ describe("toFlowNodes", () => {
         statusColor: "#123456",
         showStage: false,
         focused: true,
-        dimmed: false,
       },
     });
     expect(a.data.ports).toBe(input.geometry.ports.a);
@@ -57,7 +56,7 @@ describe("toFlowNodes", () => {
     });
     expect(nodes.find((node) => node.id === "d")).toMatchObject({
       selected: false,
-      data: { focused: false, dimmed: false, ports: expect.any(Array) },
+      data: { focused: false, ports: expect.any(Array) },
     });
     expect(nodes.find((node) => node.id === "issue:one")).toMatchObject({
       type: "dagGroup",

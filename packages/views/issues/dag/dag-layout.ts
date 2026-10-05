@@ -1,10 +1,17 @@
-import type { ElkNode, ElkPort, ElkExtendedEdge, ELK as ElkEngine } from "elkjs/lib/elk-api";
+import type {
+  ElkNode,
+  ElkPort,
+  ElkExtendedEdge,
+  ELK as ElkEngine,
+} from "elkjs/lib/elk-api";
 import type { DagDirection } from "@multica/core/issues/stores/view-store";
 import {
   DAG_GROUP_HEADER_HEIGHT,
   DAG_GROUP_MIN_WIDTH,
   DAG_NODE_WIDTH,
   DAG_NODE_HEIGHT,
+  DAG_GROUP_TB_MIN_WIDTH,
+  DAG_STAGE_HEADER_HEIGHT,
 } from "./dag-constants";
 
 export interface DagLayoutNodeInput {
@@ -12,7 +19,6 @@ export interface DagLayoutNodeInput {
   width: number;
   height: number;
   groupId?: string | null;
-  parentIssueId?: string | null;
   stage?: number | null;
 }
 export interface DagLayoutGroupInput {
@@ -64,6 +70,11 @@ export interface DagLayoutResponse extends DagLayoutResult {
   error?: string;
 }
 
+import {
+  buildStagePreferenceGraph,
+  conflictingStageScopes,
+} from "./dag-stage-preferences";
+
 interface BoundaryPort extends ElkPort {
   edgeId: string;
   role: "source" | "target";
@@ -82,14 +93,73 @@ interface LocalLayout {
 }
 
 const PADDING = 28;
-const STAGE_HEIGHT = 38;
 const ROOT = "dag:layout-root";
+const ROOT_FLOW = "dag:root-flow";
+const AXIS = {
+  LR: {
+    coordinate: "x",
+    size: "width",
+    crossCoordinate: "y",
+    crossSize: "height",
+    flow: "RIGHT",
+    rows: "DOWN",
+    boundary: "SOUTH",
+    source: "EAST",
+    target: "WEST",
+    minWidth: DAG_GROUP_MIN_WIDTH,
+    columns: 3,
+    bandStart: 0,
+  },
+  TB: {
+    coordinate: "y",
+    size: "height",
+    crossCoordinate: "x",
+    crossSize: "width",
+    flow: "DOWN",
+    rows: "RIGHT",
+    boundary: "EAST",
+    source: "SOUTH",
+    target: "NORTH",
+    minWidth: DAG_GROUP_TB_MIN_WIDTH,
+    columns: 2,
+    bandStart: DAG_GROUP_HEADER_HEIGHT,
+  },
+} as const;
+type Axis = (typeof AXIS)[DagDirection];
+interface LayoutContext {
+  byId: Map<string, DagLayoutNodeInput>;
+  groups: Map<string, DagLayoutGroupInput>;
+  children: Map<string, DagLayoutNodeInput[]>;
+  validEdges: DagLayoutEdgeInput[];
+  ancestry: Map<string, string[]>;
+  hasTaskLines: boolean;
+  axis: Axis;
+  unsafeStages: Set<string>;
+  engine: Pick<ElkEngine, "layout">;
+}
+interface ScopeContext {
+  context: LayoutContext;
+  local: LocalLayout;
+  members: DagLayoutNodeInput[];
+  staged: DagLayoutNodeInput[];
+  allStaged: boolean;
+  internal: DagLayoutEdgeInput[];
+  root: boolean;
+  minWidth: number;
+  headerHeight: number;
+}
+type ScopeKind = "collapsed" | "grid" | "rootRows" | "rootFlow" | "line";
+interface ScopeGraph {
+  graph: ElkNode;
+  businessIds: Map<string, string>;
+}
 const point = (n: { x?: number; y?: number }): DagPoint => {
   if (!Number.isFinite(n.x) || !Number.isFinite(n.y))
     throw new Error("Incomplete DAG layout coordinates");
   return { x: n.x!, y: n.y! };
 };
-const same = (a: DagPoint, b: DagPoint) => Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 0.01;
+const same = (a: DagPoint, b: DagPoint) =>
+  Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 0.01;
 function section(edge: ElkExtendedEdge): DagPoint[] {
   const pieces = (edge.sections ?? []).map((s) => [
     s.startPoint,
@@ -113,463 +183,552 @@ function joinSections(input: DagPoint[][]): DagPoint[] {
   return path.filter((p, i) => i === 0 || !same(p, path[i - 1]!));
 }
 
-/** All geometry is produced in the existing worker. Each task-line layout has
- * boundary ports; a second ELK layout routes those ports between regular rows
- * (or columns). Joining matching port coordinates adds no hand-routed segments.
- * Boundary ports use the cross-flow side, so reserving a common row width/column
- * height never moves the ports or forces connectors through group headers. */
+function createContext(
+  nodes: DagLayoutNodeInput[],
+  edges: DagLayoutEdgeInput[],
+  direction: DagDirection,
+  groupInputs: DagLayoutGroupInput[],
+  engine: LayoutContext["engine"],
+): LayoutContext {
+  const groups = new Map(groupInputs.map((g) => [g.id, g]));
+  const hasTaskLines = groupInputs.some((g) => !g.independent && !g.parentId);
+  // Free dependency chains keep the selected direction inside one invisible row.
+  const loose = hasTaskLines
+    ? nodes.filter((n) => !n.groupId && !groups.has(n.id))
+    : [];
+  const looseIds = new Set(loose.map((n) => n.id));
+  const members = nodes.map((n) =>
+    looseIds.has(n.id) ? { ...n, groupId: ROOT_FLOW } : n,
+  );
+  if (loose.length) {
+    members.push({ id: ROOT_FLOW, width: 0, height: 0 });
+    groups.set(ROOT_FLOW, {
+      id: ROOT_FLOW,
+      parentId: null,
+      collapsed: false,
+      independent: true,
+    });
+  }
+  const byId = new Map(members.map((n) => [n.id, n]));
+  const children = new Map<string, DagLayoutNodeInput[]>();
+  for (const node of members) {
+    const owner =
+      node.groupId && groups.has(node.groupId) ? node.groupId : ROOT;
+    const list = children.get(owner) ?? [];
+    list.push(node);
+    children.set(owner, list);
+  }
+  const context: LayoutContext = {
+    byId,
+    groups,
+    children,
+    hasTaskLines,
+    engine,
+    axis: AXIS[direction],
+    ancestry: new Map(),
+    unsafeStages: new Set(),
+    validEdges: edges.filter(
+      (e) => byId.has(e.source) && byId.has(e.target) && e.source !== e.target,
+    ),
+  };
+  for (const id of byId.keys()) ancestry(context, id);
+  context.unsafeStages = conflictingStageScopes(
+    buildStagePreferenceGraph(
+      context.byId,
+      groups,
+      children,
+      context.validEdges,
+      (id, scope) => direct(context, id, scope),
+    ),
+  );
+  return context;
+}
+function ancestry(context: LayoutContext, id: string): string[] {
+  const cached = context.ancestry.get(id);
+  if (cached) return cached;
+  const result = [id],
+    seen = new Set(result);
+  let parent = context.byId.get(id)?.groupId;
+  while (parent && context.groups.has(parent) && !seen.has(parent)) {
+    result.push(parent);
+    seen.add(parent);
+    parent = context.byId.get(parent)?.groupId;
+  }
+  result.push(ROOT);
+  context.ancestry.set(id, result);
+  return result;
+}
+function direct(
+  context: LayoutContext,
+  id: string,
+  scope: string,
+): string | null {
+  const chain = context.ancestry.get(id)!,
+    i = chain.indexOf(scope);
+  if (i < 0) return null;
+  return i === 0 ? scope : chain[i - 1]!;
+}
+const boundaryId = (
+  scope: string,
+  edge: DagLayoutEdgeInput,
+  role: "source" | "target",
+) => `boundary:${scope}:${edge.id}:${role}`;
+function boundaryPorts(context: LayoutContext, scope: string): BoundaryPort[] {
+  if (scope === ROOT) return [];
+  const result: BoundaryPort[] = [];
+  for (const edge of context.validEdges) {
+    const a = direct(context, edge.source, scope),
+      b = direct(context, edge.target, scope);
+    const add = (role: "source" | "target", flow: "in" | "out") =>
+      result.push({
+        id: boundaryId(scope, edge, role),
+        edgeId: edge.id,
+        role,
+        flow,
+        width: 0,
+        height: 0,
+        layoutOptions: { "elk.port.side": context.axis.boundary },
+      });
+    if (a !== null && (b === null || a === scope))
+      add("source", b !== null ? "in" : "out");
+    if (b !== null && (a === null || b === scope))
+      add("target", a !== null ? "out" : "in");
+  }
+  return result;
+}
+function scopeContext(context: LayoutContext, id: string): ScopeContext {
+  const root = id === ROOT || id === ROOT_FLOW;
+  const members = context.children.get(id) ?? [];
+  const staged =
+    root || context.groups.get(id)?.independent
+      ? []
+      : members.filter((n) => n.stage != null);
+  const stageConflict = context.unsafeStages.has(id);
+  return {
+    context,
+    root,
+    members,
+    staged,
+    minWidth: root ? 0 : context.axis.minWidth,
+    headerHeight: root ? 0 : DAG_GROUP_HEADER_HEIGHT,
+    allStaged:
+      staged.length === members.length && staged.length > 0 && !stageConflict,
+    internal: context.validEdges.filter(
+      (e) =>
+        direct(context, e.source, id) !== null &&
+        direct(context, e.target, id) !== null,
+    ),
+    local: {
+      id,
+      width: 0,
+      height: 0,
+      positions: new Map(),
+      children: new Map(),
+      ports: boundaryPorts(context, id),
+      sections: new Map(),
+      bands: [],
+      stageConflict,
+    },
+  };
+}
+function classifyScope(scope: ScopeContext): ScopeKind {
+  const { context, local, root, internal, staged, members } = scope;
+  if (context.groups.get(local.id)?.collapsed) return "collapsed";
+  if (root)
+    return local.id === ROOT && context.hasTaskLines ? "rootRows" : "rootFlow";
+  if (
+    !internal.length &&
+    !local.ports.length &&
+    !staged.length &&
+    !members.some((m) => context.groups.has(m.id))
+  )
+    return "grid";
+  return "line";
+}
+function buildCollapsed({
+  local,
+  minWidth,
+  headerHeight,
+  context: { axis },
+}: ScopeContext): LocalLayout {
+  local.width = minWidth;
+  local.height = headerHeight;
+  local.ports.forEach((p, i) => {
+    p[axis.coordinate] =
+      16 + ((i + 1) * (local[axis.size] - 32)) / (local.ports.length + 1);
+    p[axis.crossCoordinate] = local[axis.crossSize];
+  });
+  return local;
+}
+function buildGrid({
+  local,
+  members,
+  minWidth,
+  headerHeight,
+  context: { axis },
+}: ScopeContext): LocalLayout {
+  const columns = Math.min(members.length, axis.columns);
+  members.forEach((member, i) =>
+    local.positions.set(member.id, {
+      x: PADDING + (i % columns) * (DAG_NODE_WIDTH + 16),
+      y:
+        headerHeight +
+        PADDING +
+        Math.floor(i / columns) * (DAG_NODE_HEIGHT + 16),
+    }),
+  );
+  local.width = Math.max(
+    minWidth,
+    columns * (DAG_NODE_WIDTH + 16) - 16 + PADDING * 2,
+  );
+  local.height =
+    headerHeight +
+    PADDING * 2 +
+    Math.ceil(members.length / Math.max(1, columns)) * (DAG_NODE_HEIGHT + 16) -
+    16;
+  return local;
+}
+function nodeSpecs({
+  members,
+  local,
+  allStaged,
+}: ScopeContext): Map<string, ElkNode> {
+  return new Map(
+    members.map((member) => {
+      const child = local.children.get(member.id);
+      return [
+        member.id,
+        {
+          id: member.id,
+          width: child?.width ?? member.width,
+          height: child?.height ?? member.height,
+          ports: child ? child.ports.map((p) => ({ ...p })) : [],
+          layoutOptions: {
+            "elk.portConstraints": child ? "FIXED_POS" : "FIXED_ORDER",
+            ...(allStaged
+              ? { "elk.partitioning.partition": String(member.stage) }
+              : {}),
+          },
+        },
+      ];
+    }),
+  );
+}
+function endpoint(
+  scope: ScopeContext,
+  specs: Map<string, ElkNode>,
+  unit: string,
+  edge: DagLayoutEdgeInput,
+  role: "source" | "target",
+): string {
+  const { context, local } = scope;
+  if (unit === local.id) return boundaryId(local.id, edge, role);
+  if (context.groups.has(unit)) return boundaryId(unit, edge, role);
+  const id = `task-port:${edge.id}:${role}`;
+  specs.get(unit)!.ports!.push({
+    id,
+    width: 0,
+    height: 0,
+    layoutOptions: { "elk.port.side": context.axis[role] },
+  });
+  return id;
+}
+function scopeEdges(
+  scope: ScopeContext,
+  specs: Map<string, ElkNode>,
+): { edges: ElkExtendedEdge[]; businessIds: Map<string, string> } {
+  const edges: ElkExtendedEdge[] = [],
+    businessIds = new Map<string, string>();
+  const {
+    context,
+    local: { id: scopeId },
+  } = scope;
+  for (const edge of context.validEdges) {
+    const a = direct(context, edge.source, scopeId),
+      b = direct(context, edge.target, scopeId);
+    if ((a === null && b === null) || (a !== null && a === b && a !== scopeId))
+      continue;
+    if ((a === scopeId && b === null) || (b === scopeId && a === null))
+      continue;
+    const source =
+      a === null
+        ? boundaryId(scopeId, edge, "target")
+        : endpoint(scope, specs, a, edge, "source");
+    const target =
+      b === null
+        ? boundaryId(scopeId, edge, "source")
+        : endpoint(scope, specs, b, edge, "target");
+    const id = `route:${scopeId}:${edge.id}`;
+    edges.push({ id, sources: [source], targets: [target] });
+    businessIds.set(id, edge.id);
+  }
+  return { edges, businessIds };
+}
+function addStageOrdering(
+  scope: ScopeContext,
+  specs: Map<string, ElkNode>,
+  edges: ElkExtendedEdge[],
+) {
+  if (scope.allStaged || scope.local.stageConflict) return;
+  const stages = [...new Set(scope.staged.map((n) => n.stage!))].sort(
+    (a, b) => a - b,
+  );
+  for (let i = 1; i < stages.length; i++) {
+    const id = `ordering:${scope.local.id}:${i}`;
+    specs.set(id, { id, width: 0, height: 0 });
+    for (const node of scope.staged) {
+      if (node.stage === stages[i - 1])
+        edges.push({
+          id: `${id}:from:${node.id}`,
+          sources: [node.id],
+          targets: [id],
+        });
+      if (node.stage === stages[i])
+        edges.push({
+          id: `${id}:to:${node.id}`,
+          sources: [id],
+          targets: [node.id],
+        });
+    }
+  }
+}
+function rootRows(specs: Map<string, ElkNode>, axis: Axis) {
+  const crossSize = Math.max(
+    0,
+    ...[...specs.values()].map((n) => n[axis.size]!),
+  );
+  let index = 0;
+  for (const spec of specs.values()) {
+    spec[axis.size] = crossSize;
+    spec.layoutOptions = {
+      ...spec.layoutOptions,
+      "elk.portConstraints": "FIXED_POS",
+      "elk.partitioning.partition": String(index++),
+    };
+  }
+}
+/** Pure graph construction; ELK execution and result reading are separate. */
+function buildScopeGraph(scope: ScopeContext, rows = false): ScopeGraph {
+  const { context, local, root, allStaged, minWidth, headerHeight } = scope;
+  const specs = nodeSpecs(scope);
+  const { edges, businessIds } = scopeEdges(scope, specs);
+  addStageOrdering(scope, specs, edges);
+  if (rows) rootRows(specs, context.axis);
+  else if (root)
+    for (const spec of specs.values()) {
+      if (context.groups.get(spec.id)?.independent)
+        spec.layoutOptions = {
+          ...spec.layoutOptions,
+          "elk.layered.layering.layerConstraint": "LAST",
+        };
+    }
+  const top =
+    headerHeight + PADDING + (allStaged ? DAG_STAGE_HEADER_HEIGHT : 0);
+  return {
+    businessIds,
+    graph: {
+      id: local.id,
+      children: [...specs.values()],
+      edges,
+      ports: local.ports.map((p) => ({ ...p })),
+      layoutOptions: {
+        "elk.algorithm": "layered",
+        "elk.direction": rows ? context.axis.rows : context.axis.flow,
+        "elk.edgeRouting": "ORTHOGONAL",
+        "elk.separateConnectedComponents": "false",
+        "elk.portConstraints": "FIXED_SIDE",
+        "elk.nodeSize.constraints": "MINIMUM_SIZE",
+        "elk.nodeSize.minimum": `(${minWidth},${headerHeight})`,
+        "elk.spacing.nodeNode": "24",
+        "elk.spacing.edgeNode": "18",
+        "elk.spacing.edgeEdge": "12",
+        "elk.layered.spacing.nodeNodeBetweenLayers": root ? "28" : "80",
+        "elk.layered.spacing.edgeEdgeBetweenLayers": "12",
+        "elk.layered.spacing.edgeNodeBetweenLayers": "18",
+        "elk.partitioning.activate": String(rows || allStaged),
+        "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+        "elk.layered.mergeEdges": "false",
+        "elk.padding": `[top=${top},left=${PADDING},bottom=${PADDING},right=${PADDING}]`,
+        ...(rows ? { "elk.layered.nodePlacement.strategy": "SIMPLE" } : {}),
+      },
+    },
+  };
+}
+async function runElk(scope: ScopeContext, graph: ElkNode): Promise<ElkNode> {
+  const { context, local } = scope;
+  if (!local.ports.length) return context.engine.layout(graph);
+  // Zero-size terminals give ELK the surrounding context for boundary ports.
+  const wrapper: ElkNode = {
+    id: `wrapper:${local.id}`,
+    layoutOptions: {
+      "elk.algorithm": "layered",
+      "elk.direction": graph.layoutOptions!["elk.direction"]!,
+      "elk.hierarchyHandling": "SEPARATE_CHILDREN",
+    },
+    children: [
+      graph,
+      ...local.ports.map((p) => ({
+        id: `terminal:${p.id}`,
+        width: 0,
+        height: 0,
+      })),
+    ],
+    edges: local.ports.map((p) => ({
+      id: `terminal-edge:${p.id}`,
+      sources: [p.flow === "out" ? p.id : `terminal:${p.id}`],
+      targets: [p.flow === "out" ? `terminal:${p.id}` : p.id],
+    })),
+  };
+  const result = await context.engine.layout(wrapper);
+  return result.children!.find((n) => n.id === local.id)!;
+}
+function stageBands({
+  staged,
+  local,
+  context: { axis },
+}: ScopeContext): DagStageBand[] {
+  const bands = [...new Set(staged.map((n) => n.stage!))]
+    .sort((a, b) => a - b)
+    .map((stage) => {
+      const members = staged.filter((n) => n.stage === stage);
+      return {
+        stage,
+        min: Math.min(
+          ...members.map((n) => local.positions.get(n.id)![axis.coordinate]),
+        ),
+        max: Math.max(
+          ...members.map(
+            (n) =>
+              local.positions.get(n.id)![axis.coordinate] +
+              (local.children.get(n.id)?.[axis.size] ?? n[axis.size]),
+          ),
+        ),
+      };
+    });
+  return bands.map((band, i) => ({
+    stage: band.stage,
+    start: i === 0 ? axis.bandStart : (bands[i - 1]!.max + band.min) / 2,
+    end:
+      i === bands.length - 1
+        ? local[axis.size]
+        : (band.max + bands[i + 1]!.min) / 2,
+  }));
+}
+function readScopeLayout(
+  scope: ScopeContext,
+  graph: ElkNode,
+  businessIds: Map<string, string>,
+): LocalLayout {
+  const { local, context, minWidth, headerHeight } = scope;
+  local.width = Math.max(minWidth, graph.width ?? 0);
+  local.height = Math.max(headerHeight, graph.height ?? 0);
+  for (const member of graph.children ?? [])
+    if (context.byId.has(member.id))
+      local.positions.set(member.id, point(member));
+  local.ports = local.ports.map((p) => {
+    const placed = graph.ports?.find((v) => v.id === p.id);
+    if (!placed) throw new Error("Missing DAG boundary port");
+    return { ...p, ...point(placed) };
+  });
+  for (const edge of graph.edges ?? []) {
+    const business = businessIds.get(edge.id);
+    if (business) local.sections.set(business, section(edge));
+  }
+  if (scope.allStaged) local.bands = stageBands(scope);
+  return local;
+}
+async function buildFlow(
+  scope: ScopeContext,
+  rows = false,
+): Promise<LocalLayout> {
+  const built = buildScopeGraph(scope, rows);
+  return readScopeLayout(
+    scope,
+    await runElk(scope, built.graph),
+    built.businessIds,
+  );
+}
+function buildRootRows(scope: ScopeContext) {
+  return buildFlow(scope, true);
+}
+function buildRootFlow(scope: ScopeContext) {
+  return buildFlow(scope);
+}
+function buildLine(scope: ScopeContext) {
+  return buildFlow(scope);
+}
+const BUILDERS = {
+  collapsed: buildCollapsed,
+  grid: buildGrid,
+  rootRows: buildRootRows,
+  rootFlow: buildRootFlow,
+  line: buildLine,
+} satisfies Record<
+  ScopeKind,
+  (scope: ScopeContext) => LocalLayout | Promise<LocalLayout>
+>;
+async function layoutScope(
+  context: LayoutContext,
+  id: string,
+): Promise<LocalLayout> {
+  const scope = scopeContext(context, id);
+  const kind = classifyScope(scope);
+  if (kind !== "collapsed")
+    for (const member of scope.members) {
+      if (context.groups.has(member.id))
+        scope.local.children.set(
+          member.id,
+          await layoutScope(context, member.id),
+        );
+    }
+  return BUILDERS[kind](scope);
+}
+function collectLayout(
+  layout: LocalLayout,
+  offset: DagPoint,
+  result: DagLayoutResult,
+  routeParts: Map<string, DagPoint[][]>,
+) {
+  if (layout.id !== ROOT && layout.id !== ROOT_FLOW)
+    result.groups[layout.id] = {
+      ...offset,
+      width: layout.width,
+      height: layout.height,
+      bands: layout.bands,
+      stageConflict: layout.stageConflict,
+    };
+  for (const [id, p] of layout.positions) {
+    const absolute = { x: offset.x + p.x, y: offset.y + p.y };
+    if (id !== ROOT_FLOW) result.positions[id] = absolute;
+    const child = layout.children.get(id);
+    if (child) collectLayout(child, absolute, result, routeParts);
+  }
+  for (const [id, points] of layout.sections) {
+    const parts = routeParts.get(id) ?? [];
+    parts.push(points.map((p) => ({ x: p.x + offset.x, y: p.y + offset.y })));
+    routeParts.set(id, parts);
+  }
+}
+/** Each task line owns boundary ports; root rows route between their fixed ports. */
 export async function layoutDagProjection(
   nodes: DagLayoutNodeInput[],
   edges: DagLayoutEdgeInput[],
   direction: DagDirection,
   groupInputs: DagLayoutGroupInput[],
-  engine: Pick<ElkEngine, "layout">,
+  engine: LayoutContext["engine"],
 ): Promise<DagLayoutResult> {
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const groups = new Map(groupInputs.map((g) => [g.id, g]));
-  const hasTaskLines = groupInputs.some((g) => !g.independent && !g.parentId);
-  const validEdges = edges.filter(
-    (e) => byId.has(e.source) && byId.has(e.target) && e.source !== e.target,
-  );
-  const children = new Map<string, DagLayoutNodeInput[]>();
-  for (const node of nodes) {
-    const owner = node.groupId && groups.has(node.groupId) ? node.groupId : ROOT;
-    const list = children.get(owner) ?? [];
-    list.push(node);
-    children.set(owner, list);
-  }
-  const parentOf = (id: string) => {
-    const idOfGroup = byId.get(id)?.groupId;
-    return idOfGroup && groups.has(idOfGroup) ? idOfGroup : ROOT;
+  const result: DagLayoutResult = {
+    positions: {},
+    groups: {},
+    routes: {},
+    ports: {},
   };
-  const pathMemo = new Map<string, string[]>();
-  function ancestry(id: string): string[] {
-    const cached = pathMemo.get(id);
-    if (cached) return cached;
-    const result = [id],
-      seen = new Set(result);
-    let parent = parentOf(id);
-    while (parent !== ROOT && !seen.has(parent)) {
-      result.push(parent);
-      seen.add(parent);
-      parent = parentOf(parent);
-    }
-    result.push(ROOT);
-    pathMemo.set(id, result);
-    return result;
-  }
-  function direct(id: string, scope: string): string | null {
-    const chain = ancestry(id),
-      i = chain.indexOf(scope);
-    return i < 0 ? null : i === 0 ? scope : chain[i - 1]!;
-  }
-  const adjacency = new Map<string, string[]>();
-  for (const e of validEdges) {
-    const list = adjacency.get(e.source) ?? [];
-    list.push(e.target);
-    adjacency.set(e.source, list);
-  }
-  // Analyze all display-only stage preferences together. A preference that
-  // participates in a cycle through other task lines must yield to real edges.
-  const planned = new Map(nodes.map((n) => [n.id, [...(adjacency.get(n.id) ?? [])]]));
-  const boundaryOwners = new Map<string, string>();
-  for (const scope of groups.keys()) {
-    if (groups.get(scope)?.independent) continue;
-    const members = children.get(scope) ?? [];
-    const memberStages = new Map(
-      members.filter((n) => n.stage != null).map((n) => [n.id, n.stage!]),
-    );
-    const stages = [...new Set(memberStages.values())].sort((a, b) => a - b);
-    if (stages.length < 2) continue;
-    const buckets = new Map<number, string[]>();
-    for (const n of nodes) {
-      const unit = direct(n.id, scope),
-        stage = unit ? memberStages.get(unit) : undefined;
-      if (stage == null) continue;
-      const bucket = buckets.get(stage) ?? [];
-      bucket.push(n.id);
-      buckets.set(stage, bucket);
-    }
-    for (let i = 1; i < stages.length; i++) {
-      const id = `stage-preference:${scope}:${i}`;
-      boundaryOwners.set(id, scope);
-      planned.set(id, [...(buckets.get(stages[i]!) ?? [])]);
-      for (const before of buckets.get(stages[i - 1]!) ?? []) planned.get(before)!.push(id);
-    }
-  }
-  // Iterative Kosaraju avoids recursion limits on long task chains.
-  const reverse = new Map<string, string[]>();
-  for (const id of planned.keys()) reverse.set(id, []);
-  for (const [id, next] of planned) for (const target of next) reverse.get(target)?.push(id);
-  const seen = new Set<string>(),
-    order: string[] = [];
-  for (const id of planned.keys()) {
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const stack = [{ id, cursor: 0 }];
-    while (stack.length) {
-      const top = stack[stack.length - 1]!,
-        next = planned.get(top.id) ?? [];
-      if (top.cursor === next.length) {
-        order.push(top.id);
-        stack.pop();
-        continue;
-      }
-      const target = next[top.cursor++]!;
-      if (!seen.has(target)) {
-        seen.add(target);
-        stack.push({ id: target, cursor: 0 });
-      }
-    }
-  }
-  const assigned = new Set<string>(),
-    unsafeStages = new Set<string>();
-  for (let i = order.length - 1; i >= 0; i--) {
-    const id = order[i]!;
-    if (assigned.has(id)) continue;
-    const component: string[] = [],
-      stack = [id];
-    assigned.add(id);
-    while (stack.length) {
-      const current = stack.pop()!;
-      component.push(current);
-      for (const next of reverse.get(current) ?? [])
-        if (!assigned.has(next)) {
-          assigned.add(next);
-          stack.push(next);
-        }
-    }
-    if (component.length > 1)
-      for (const item of component) {
-        const owner = boundaryOwners.get(item);
-        if (owner) unsafeStages.add(owner);
-      }
-  }
-  const boundaryId = (scope: string, edge: DagLayoutEdgeInput, role: "source" | "target") =>
-    `boundary:${scope}:${edge.id}:${role}`;
-  function boundaryPorts(scope: string): BoundaryPort[] {
-    if (scope === ROOT) return [];
-    const result: BoundaryPort[] = [];
-    for (const edge of validEdges) {
-      const a = direct(edge.source, scope),
-        b = direct(edge.target, scope);
-      if (a === null && b === null) continue;
-      if (a !== null && (b === null || a === scope))
-        result.push({
-          id: boundaryId(scope, edge, "source"),
-          edgeId: edge.id,
-          role: "source",
-          flow: b !== null ? "in" : "out",
-          width: 0,
-          height: 0,
-          layoutOptions: { "elk.port.side": direction === "LR" ? "SOUTH" : "EAST" },
-        });
-      if (b !== null && (a === null || b === scope))
-        result.push({
-          id: boundaryId(scope, edge, "target"),
-          edgeId: edge.id,
-          role: "target",
-          flow: a !== null ? "out" : "in",
-          width: 0,
-          height: 0,
-          layoutOptions: { "elk.port.side": direction === "LR" ? "SOUTH" : "EAST" },
-        });
-    }
-    return result;
-  }
-  async function layoutScope(scope: string): Promise<LocalLayout> {
-    const config = groups.get(scope),
-      members = children.get(scope) ?? [];
-    const local: LocalLayout = {
-      id: scope,
-      width: 0,
-      height: 0,
-      positions: new Map(),
-      children: new Map(),
-      ports: boundaryPorts(scope),
-      sections: new Map(),
-      bands: [],
-      stageConflict: false,
-    };
-    const minWidth = direction === "LR" ? DAG_GROUP_MIN_WIDTH : 360;
-    if (config?.collapsed) {
-      local.width = minWidth;
-      local.height = DAG_GROUP_HEADER_HEIGHT;
-      local.ports.forEach((p, i) => {
-        p.x =
-          direction === "LR"
-            ? 16 + ((i + 1) * (local.width - 32)) / (local.ports.length + 1)
-            : local.width;
-        p.y =
-          direction === "LR"
-            ? local.height
-            : 16 + ((i + 1) * (local.height - 32)) / (local.ports.length + 1);
-      });
-      return local;
-    }
-    for (const member of members)
-      if (groups.has(member.id)) local.children.set(member.id, await layoutScope(member.id));
-    const internal = validEdges.filter(
-      (e) => direct(e.source, scope) !== null && direct(e.target, scope) !== null,
-    );
-    const staged =
-      scope === ROOT || config?.independent ? [] : members.filter((n) => n.stage != null);
-    local.stageConflict = unsafeStages.has(scope);
-    // An unordered task group uses a compact grid, with no invented rank/phase.
-    if (
-      scope !== ROOT &&
-      !internal.length &&
-      !local.ports.length &&
-      !staged.length &&
-      !local.children.size
-    ) {
-      const columns = Math.min(members.length, direction === "LR" ? 3 : 2);
-      for (let i = 0; i < members.length; i++)
-        local.positions.set(members[i]!.id, {
-          x: PADDING + (i % columns) * (DAG_NODE_WIDTH + 16),
-          y: DAG_GROUP_HEADER_HEIGHT + PADDING + Math.floor(i / columns) * (DAG_NODE_HEIGHT + 16),
-        });
-      local.width = Math.max(minWidth, columns * (DAG_NODE_WIDTH + 16) - 16 + PADDING * 2);
-      local.height =
-        DAG_GROUP_HEADER_HEIGHT +
-        PADDING * 2 +
-        Math.ceil(members.length / Math.max(1, columns)) * (DAG_NODE_HEIGHT + 16) -
-        16;
-      return local;
-    }
-    const allStaged = staged.length === members.length && staged.length > 0 && !local.stageConflict;
-    const top =
-      scope === ROOT ? PADDING : DAG_GROUP_HEADER_HEIGHT + PADDING + (allStaged ? STAGE_HEIGHT : 0);
-    const flow =
-      scope === ROOT && hasTaskLines
-        ? direction === "LR"
-          ? "DOWN"
-          : "RIGHT"
-        : direction === "LR"
-          ? "RIGHT"
-          : "DOWN";
-    const nodeSpecs = new Map<string, ElkNode>();
-    for (const member of members) {
-      const child = local.children.get(member.id);
-      nodeSpecs.set(member.id, {
-        id: member.id,
-        width: child?.width ?? member.width,
-        height: child?.height ?? member.height,
-        ports: child ? child.ports.map((p) => ({ ...p })) : [],
-        layoutOptions: {
-          "elk.portConstraints": child ? "FIXED_POS" : "FIXED_ORDER",
-          ...(allStaged ? { "elk.partitioning.partition": String(member.stage) } : {}),
-        },
-      });
-    }
-    if (scope === ROOT && !hasTaskLines) {
-      for (const [id, spec] of nodeSpecs)
-        if (groups.get(id)?.independent) {
-          spec.layoutOptions = {
-            ...spec.layoutOptions,
-            "elk.layered.layering.layerConstraint": "LAST",
-          };
-        }
-    }
-    const elkEdges: ElkExtendedEdge[] = [];
-    const businessIds = new Map<string, string>();
-    function endpoint(unit: string, edge: DagLayoutEdgeInput, role: "source" | "target") {
-      if (unit === scope) return boundaryId(scope, edge, role);
-      const spec = nodeSpecs.get(unit)!;
-      if (groups.has(unit)) return boundaryId(unit, edge, role);
-      const id = `task-port:${edge.id}:${role}`;
-      const side =
-        scope === ROOT && hasTaskLines
-          ? "WEST"
-          : role === "source"
-            ? direction === "LR"
-              ? "EAST"
-              : "SOUTH"
-            : direction === "LR"
-              ? "WEST"
-              : "NORTH";
-      spec.ports!.push({ id, width: 0, height: 0, layoutOptions: { "elk.port.side": side } });
-      return id;
-    }
-    for (const edge of validEdges) {
-      const a = direct(edge.source, scope),
-        b = direct(edge.target, scope);
-      if ((a === null && b === null) || (a !== null && a === b && a !== scope)) continue;
-      // A container endpoint at its own boundary has no internal segment.
-      if ((a === scope && b === null) || (b === scope && a === null)) continue;
-      const source = a === null ? boundaryId(scope, edge, "target") : endpoint(a, edge, "source");
-      const target = b === null ? boundaryId(scope, edge, "source") : endpoint(b, edge, "target");
-      const id = `route:${scope}:${edge.id}`;
-      elkEdges.push({ id, sources: [source], targets: [target] });
-      businessIds.set(id, edge.id);
-    }
-    // Mixed staged/unstaged siblings retain stage preferences without assigning
-    // an artificial stage to the remaining nodes. These order edges never render.
-    if (scope !== ROOT && staged.length > 1 && !allStaged && !local.stageConflict) {
-      const stages = [...new Set(staged.map((n) => n.stage!))].sort((a, b) => a - b);
-      for (let i = 1; i < stages.length; i++) {
-        const id = `ordering:${scope}:${i}`;
-        nodeSpecs.set(id, { id, width: 0, height: 0 });
-        for (const node of staged) {
-          if (node.stage === stages[i - 1])
-            elkEdges.push({ id: `${id}:from:${node.id}`, sources: [node.id], targets: [id] });
-          if (node.stage === stages[i])
-            elkEdges.push({ id: `${id}:to:${node.id}`, sources: [id], targets: [node.id] });
-        }
-      }
-    }
-    if (scope === ROOT && hasTaskLines && nodeSpecs.size) {
-      const crossSize = Math.max(
-        ...[...nodeSpecs.values()].map((n) => (direction === "LR" ? n.width! : n.height!)),
-      );
-      let index = 0;
-      for (const spec of nodeSpecs.values()) {
-        if (direction === "LR") spec.width = crossSize;
-        else spec.height = crossSize;
-        if (!groups.has(spec.id)) {
-          const count = spec.ports?.length ?? 0,
-            height = byId.get(spec.id)!.height;
-          spec.ports?.forEach((p, i) => {
-            p.x = 0;
-            p.y = 14 + ((i + 1) * (height - 28)) / (count + 1);
-          });
-        }
-        spec.layoutOptions = {
-          ...spec.layoutOptions,
-          "elk.portConstraints": "FIXED_POS",
-          "elk.partitioning.partition": String(index++),
-        };
-      }
-    }
-    const layoutOptions = {
-      "elk.algorithm": "layered",
-      "elk.direction": flow,
-      "elk.edgeRouting": "ORTHOGONAL",
-      "elk.separateConnectedComponents": "false",
-      "elk.portConstraints": "FIXED_SIDE",
-      "elk.nodeSize.constraints": "MINIMUM_SIZE",
-      "elk.nodeSize.minimum": `(${scope === ROOT ? 0 : minWidth},${scope === ROOT ? 0 : DAG_GROUP_HEADER_HEIGHT})`,
-      "elk.spacing.nodeNode": "24",
-      "elk.spacing.edgeNode": "18",
-      "elk.spacing.edgeEdge": "12",
-      "elk.layered.spacing.nodeNodeBetweenLayers": scope === ROOT ? "28" : "80",
-      "elk.layered.spacing.edgeEdgeBetweenLayers": "12",
-      "elk.layered.spacing.edgeNodeBetweenLayers": "18",
-      "elk.partitioning.activate": String((scope === ROOT && hasTaskLines) || allStaged),
-      "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
-      "elk.layered.mergeEdges": "false",
-      "elk.padding": `[top=${top},left=${PADDING},bottom=${PADDING},right=${PADDING}]`,
-      ...(scope === ROOT && hasTaskLines ? { "elk.layered.nodePlacement.strategy": "SIMPLE" } : {}),
-    };
-    let graph: ElkNode = {
-      id: scope,
-      layoutOptions,
-      children: [...nodeSpecs.values()],
-      edges: elkEdges,
-      ports: local.ports.map((p) => ({ ...p })),
-    };
-    if (local.ports.length) {
-      // ELK requires the surrounding context to resolve a container's ports.
-      // Zero-size terminals provide that context only; they are never visible.
-      const terminals = local.ports.map((p) => ({ id: `terminal:${p.id}`, width: 0, height: 0 }));
-      const wrapper: ElkNode = {
-        id: `wrapper:${scope}`,
-        layoutOptions: {
-          "elk.algorithm": "layered",
-          "elk.direction": flow,
-          "elk.hierarchyHandling": "SEPARATE_CHILDREN",
-        },
-        children: [graph, ...terminals],
-        edges: local.ports.map((p) => ({
-          id: `terminal-edge:${p.id}`,
-          sources: [p.flow === "out" ? p.id : `terminal:${p.id}`],
-          targets: [p.flow === "out" ? `terminal:${p.id}` : p.id],
-        })),
-      };
-      const result = await engine.layout(wrapper);
-      graph = result.children!.find((n) => n.id === scope)!;
-    } else graph = await engine.layout(graph);
-    local.width = Math.max(scope === ROOT ? 0 : minWidth, graph.width ?? 0);
-    local.height = Math.max(scope === ROOT ? 0 : DAG_GROUP_HEADER_HEIGHT, graph.height ?? 0);
-    for (const member of graph.children ?? [])
-      if (byId.has(member.id)) local.positions.set(member.id, point(member));
-    local.ports = local.ports.map((p) => {
-      const placed = graph.ports?.find((v) => v.id === p.id);
-      if (!placed) throw new Error("Missing DAG boundary port");
-      return { ...p, ...point(placed) };
-    });
-    for (const edge of graph.edges ?? []) {
-      const business = businessIds.get(edge.id);
-      if (business) local.sections.set(business, section(edge));
-    }
-    if (allStaged) {
-      const bands = [...new Set(staged.map((n) => n.stage!))]
-        .sort((a, b) => a - b)
-        .map((stage) => {
-          const membersInStage = staged.filter((n) => n.stage === stage);
-          return {
-            stage,
-            min: Math.min(
-              ...membersInStage.map((n) =>
-                direction === "LR" ? local.positions.get(n.id)!.x : local.positions.get(n.id)!.y,
-              ),
-            ),
-            max: Math.max(
-              ...membersInStage.map((n) => {
-                const p = local.positions.get(n.id)!,
-                  child = local.children.get(n.id);
-                return direction === "LR"
-                  ? p.x + (child?.width ?? n.width)
-                  : p.y + (child?.height ?? n.height);
-              }),
-            ),
-          };
-        });
-      local.bands = bands.map((band, i) => ({
-        stage: band.stage,
-        start:
-          i === 0
-            ? direction === "LR"
-              ? 0
-              : DAG_GROUP_HEADER_HEIGHT
-            : (bands[i - 1]!.max + band.min) / 2,
-        end:
-          i === bands.length - 1
-            ? direction === "LR"
-              ? local.width
-              : local.height
-            : (band.max + bands[i + 1]!.min) / 2,
-      }));
-    }
-    return local;
-  }
-  const result: DagLayoutResult = { positions: {}, groups: {}, routes: {}, ports: {} };
   if (!nodes.length) return result;
-  const root = await layoutScope(ROOT),
+  const context = createContext(nodes, edges, direction, groupInputs, engine);
+  const root = await layoutScope(context, ROOT),
     routeParts = new Map<string, DagPoint[][]>();
-  function collect(layout: LocalLayout, offset: DagPoint) {
-    if (layout.id !== ROOT)
-      result.groups[layout.id] = {
-        ...offset,
-        width: layout.width,
-        height: layout.height,
-        bands: layout.bands,
-        stageConflict: layout.stageConflict,
-      };
-    for (const [id, p] of layout.positions) {
-      const absolute = { x: offset.x + p.x, y: offset.y + p.y };
-      result.positions[id] = absolute;
-      const child = layout.children.get(id);
-      if (child) collect(child, absolute);
-    }
-    for (const [id, points] of layout.sections) {
-      const parts = routeParts.get(id) ?? [];
-      parts.push(points.map((p) => ({ x: p.x + offset.x, y: p.y + offset.y })));
-      routeParts.set(id, parts);
-    }
-  }
-  collect(root, { x: 0, y: 0 });
-  for (const edge of validEdges) {
+  collectLayout(root, { x: 0, y: 0 }, result, routeParts);
+  for (const edge of context.validEdges) {
     const route = joinSections(routeParts.get(edge.id) ?? []);
     result.routes[edge.id] = route;
     for (const role of ["source", "target"] as const) {

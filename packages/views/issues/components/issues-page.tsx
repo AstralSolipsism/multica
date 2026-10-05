@@ -73,12 +73,7 @@ export function IssuesPage() {
             issues={controller.surfaceIssues}
             workingAgents={controller.workingAgents}
             allowDag={controller.allowDag}
-            isRefreshing={
-              controller.isRefreshing ||
-              (controller.viewMode === "dag" &&
-                controller.dagGraph.isFetching &&
-                !controller.dagGraph.isPending)
-            }
+            isRefreshing={controller.isRefreshing}
             facetCountsExact={controller.facetCountsExact}
             tableFacetCounts={controller.tableFacetCounts}
             onTableFacetChange={controller.setActiveTableFacet}

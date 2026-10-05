@@ -13,59 +13,55 @@ function makeStore() {
 }
 
 describe("dag view preferences", () => {
-  it("defaults to LR direction, task-line grouping and an uninitialized fold", () => {
+  it("defaults to LR direction, task-line grouping and no expanded lines", () => {
     const state = makeStore().getState();
     expect(state.dagDirection).toBe("LR");
     expect(state.dagGrouping).toBe("parent");
-    expect(state.dagCollapsedIds).toBeNull();
+    expect(state.dagExpandedIds).toEqual([]);
   });
-
-  it("toggles direction and grouping", () => {
+  it("changes direction", () => {
     const store = makeStore();
     store.getState().setDagDirection("TB");
-    store.getState().setDagGrouping("parent");
     expect(store.getState().dagDirection).toBe("TB");
-    expect(store.getState().dagGrouping).toBe("parent");
   });
-
-  it("first fold initializes from the default collapse, then toggles", () => {
+  it("toggles expansions without needing the current graph", () => {
     const store = makeStore();
-    store.getState().toggleDagCollapsed("project:p1", ["project:p1", "issue:f1"]);
-    expect(store.getState().dagCollapsedIds).toEqual(["issue:f1"]);
-    store.getState().toggleDagCollapsed("project:p2", ["project:p1", "issue:f1"]);
-    expect(store.getState().dagCollapsedIds).toEqual(["issue:f1", "project:p2"]);
+    store.getState().toggleDagExpanded("issue:one");
+    expect(store.getState().dagExpandedIds).toEqual(["issue:one"]);
+    store.getState().toggleDagExpanded("issue:two");
+    store.getState().toggleDagExpanded("issue:one");
+    expect(store.getState().dagExpandedIds).toEqual(["issue:two"]);
   });
-
-  it("setDagCollapsedIds replaces the fold wholesale, including re-arming the default", () => {
+  it("replaces expansions and restores the default with an empty list", () => {
     const store = makeStore();
-    store.getState().setDagCollapsedIds(["project:p1"]);
-    expect(store.getState().dagCollapsedIds).toEqual(["project:p1"]);
-    store.getState().setDagCollapsedIds(null);
-    expect(store.getState().dagCollapsedIds).toBeNull();
+    store.getState().setDagExpandedIds(["issue:one"]);
+    expect(store.getState().dagExpandedIds).toEqual(["issue:one"]);
+    store.getState().setDagExpandedIds([]);
+    expect(store.getState().dagExpandedIds).toEqual([]);
   });
-
-  it("partialize persists the dag preferences", () => {
-    const partialize = viewStorePersistOptions("test").partialize;
-    const snapshot = partialize(makeStore().getState());
-    expect(snapshot).toMatchObject({
-      dagDirection: "LR",
-      dagGrouping: "parent",
-      dagCollapsedIds: null,
-    });
+  it("persists expanded IDs and never writes the old collapsed list", () => {
+    const snapshot = viewStorePersistOptions("test").partialize(makeStore().getState());
+    expect(snapshot).toMatchObject({ dagDirection: "LR", dagGrouping: "parent", dagExpandedIds: [] });
+    expect(snapshot).not.toHaveProperty("dagCollapsedIds");
   });
-
-  it("merge keeps null, accepts arrays and rejects garbage", () => {
+  it("accepts and deduplicates expansion lists but rejects malformed preferences", () => {
     const current = makeStore().getState();
-    expect(
-      mergeViewStatePersisted({ dagCollapsedIds: null }, current).dagCollapsedIds,
-    ).toBeNull();
-    expect(
-      mergeViewStatePersisted({ dagCollapsedIds: ["issue:x"] }, current)
-        .dagCollapsedIds,
-    ).toEqual(["issue:x"]);
-    expect(
-      mergeViewStatePersisted({ dagCollapsedIds: "oops" }, current).dagCollapsedIds,
-    ).toBeNull();
+    expect(mergeViewStatePersisted({ dagExpandedIds: ["issue:x", "issue:x"] }, current).dagExpandedIds).toEqual(["issue:x"]);
+    for (const dagExpandedIds of [null, "oops", ["issue:x", 12]]) {
+      expect(mergeViewStatePersisted({ dagExpandedIds }, current).dagExpandedIds).toEqual([]);
+    }
+  });
+  it("resets legacy folds once while preserving other personal preferences", () => {
+    const current = makeStore().getState();
+    for (const dagCollapsedIds of [null, [], ["issue:x"]]) {
+      const merged = mergeViewStatePersisted({ dagCollapsedIds, dagDirection: "TB", dagIndependentExpanded: true }, current);
+      expect(merged.dagExpandedIds).toEqual([]);
+      expect(merged).not.toHaveProperty("dagCollapsedIds");
+      expect(merged.dagDirection).toBe("TB");
+      expect(merged.dagIndependentExpanded).toBe(true);
+    }
+    const saved = viewStorePersistOptions("test").partialize({ ...current, dagExpandedIds: ["issue:y"] });
+    expect(mergeViewStatePersisted(saved, current).dagExpandedIds).toEqual(["issue:y"]);
   });
 
   it("merge degrades unknown enum values to the defaults", () => {
@@ -97,7 +93,7 @@ describe("dag view preferences", () => {
     store.getState().setDagIndependentExpanded(true);
     store.getState().setDagViewport({ x: 40, y: -80, zoom: 1.1 });
     store.getState().setDagSelectedNodeId("task-a");
-    store.getState().setDagCollapsedIds([]);
+    store.getState().setDagExpandedIds([]);
     const saved = viewStorePersistOptions("test").partialize(store.getState());
     expect(saved).toMatchObject({ dagIndependentExpanded: true, dagViewport: { x: 40, y: -80, zoom: 1.1 } });
     expect(saved).not.toHaveProperty("dagSelectedNodeId");

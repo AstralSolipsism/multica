@@ -14,13 +14,14 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Crosshair, X } from "lucide-react";
+import { useTheme } from "@multica/ui/components/common/theme-provider";
 import { Button } from "@multica/ui/components/ui/button";
 import type { IssueGraph } from "@multica/core/api";
 import type { DagDirection } from "@multica/core/issues/stores/view-store";
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import { useT } from "../../i18n";
 import { DagFlowEdgeLine, type DagFlowEdge } from "./dag-edge";
-import { toFlowNodes, selectFlowNodes, toFlowEdges, type CanvasNode } from "./dag-flow";
+import { isAggregateEdge, toFlowNodes, selectFlowNodes, toFlowEdges, type CanvasNode } from "./dag-flow";
 import {
   anchorShift,
   constrainDagViewport,
@@ -75,7 +76,7 @@ export function DagCanvasInner({
     CanvasNode,
     DagFlowEdge
   >();
-  const colorMode = useDagColorMode();
+  const { resolvedTheme: colorMode } = useTheme();
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [focus, setFocus] = useState<FocusState>(null);
   const initialViewport = useRef(storeApi.getState().dagViewport ?? { x: 20, y: 20, zoom: 1 });
@@ -336,7 +337,7 @@ export function DagCanvasInner({
         minZoom={0.08}
         maxZoom={2}
         deleteKeyCode={null}
-        colorMode={colorMode}
+        colorMode={colorMode === "dark" ? "dark" : "light"}
         className="bg-background"
       >
         <Background gap={24} size={1} className="stroke-border/40" bgColor="transparent" />
@@ -416,11 +417,7 @@ export function DagCanvasInner({
       {selectedEdge && (
         <EdgeInspector
           edge={selectedEdge}
-          aggregate={
-            selectedEdge.sourceEdgeIds.length > 1 ||
-            groupModels.get(selectedEdge.source)?.collapsed === true ||
-            groupModels.get(selectedEdge.target)?.collapsed === true
-          }
+          aggregate={isAggregateEdge(selectedEdge, groupModels)}
           hasReverse={projection.edges.some(
             (e) => e.source === selectedEdge.target && e.target === selectedEdge.source,
           )}
@@ -434,23 +431,6 @@ export function DagCanvasInner({
     </div>
   );
 }
-function useDagColorMode(): "light" | "dark" {
-  const read = () =>
-    typeof document !== "undefined" && document.documentElement.classList.contains("dark")
-      ? ("dark" as const)
-      : ("light" as const);
-  const [mode, setMode] = useState<"light" | "dark">(read);
-  useEffect(() => {
-    const observer = new MutationObserver(() => setMode(read()));
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-    return () => observer.disconnect();
-  }, []);
-  return mode;
-}
-
 function EdgeInspector({
   edge,
   aggregate,

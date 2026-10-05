@@ -135,7 +135,7 @@ describe("saved DAG view defaults", () => {
     store.setState({
       viewMode: "dag",
       dagDirection: "LR",
-      dagCollapsedIds: ["issue:private-fold"],
+      dagExpandedIds: ["issue:private-fold"],
       dagIndependentExpanded: true,
       dagViewport: { x: -123, y: 89, zoom: 1.4 },
       dagSelectedNodeId: "a",
@@ -160,7 +160,7 @@ describe("saved DAG view defaults", () => {
       display: { viewMode: "dag", dagDirection: "TB", dagGrouping: "parent" },
     });
     for (const key of [
-      "dagCollapsedIds",
+      "dagExpandedIds",
       "dagViewport",
       "dagSelectedNodeId",
       "dagIndependentExpanded",
@@ -169,7 +169,7 @@ describe("saved DAG view defaults", () => {
       expect(payload.query).not.toHaveProperty(key);
     }
     expect(store.getState().dagDirection).toBe("LR");
-    expect(store.getState().dagCollapsedIds).toEqual(["issue:private-fold"]);
+    expect(store.getState().dagExpandedIds).toEqual(["issue:private-fold"]);
   });
 
   it("hides Graph in the default-display editor when the surface disallows it", async () => {

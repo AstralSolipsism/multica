@@ -20,7 +20,7 @@ import { DagRunBadge, type DagFlowNodeData } from "./dag-node";
 import type { IssueStatusCategory } from "@multica/core/types";
 import { StatusIcon } from "../components/status-icon";
 import { DagHandles } from "./dag-ports";
-import { DAG_GROUP_HEADER_HEIGHT, DAG_GROUP_HEADER_MAX_WIDTH } from "./dag-constants";
+import { DAG_GROUP_HEADER_HEIGHT, DAG_GROUP_HEADER_MAX_WIDTH, DAG_STAGE_HEADER_HEIGHT } from "./dag-constants";
 
 export type DagFlowGroupData = DagFlowNodeData & {
   group: DagVisibleGroup;
@@ -174,9 +174,10 @@ export const DagFlowGroupCard = memo(function DagFlowGroupCard({
               >
                 <div
                   className={cn(
-                    "relative flex h-9 items-center border-b bg-muted/45 px-4 text-body font-semibold",
+                    "relative flex items-center border-b bg-muted/45 px-4 text-body font-semibold",
                     active ? "text-brand" : "text-foreground",
                   )}
+                  style={{ height: DAG_STAGE_HEADER_HEIGHT }}
                 >
                   {t(($) => $.stage_badge, { number: band.stage })}
                   {i < bounds.bands.length - 1 &&
