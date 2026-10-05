@@ -1,7 +1,26 @@
 import { describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
+import { unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
 import { MULTICA_LOCALE_HEADER } from "./lib/locale-routing";
 import { config, proxy } from "./proxy";
+
+describe("proxy retired marketing boundary", () => {
+  it.each([
+    "/about", "/homepage", "/changelog", "/contact-sales", "/usecases",
+    "/usecases/auto-data-analysis", "/usecases/auto-data-analysis.en",
+    "/%61bout", "/ABOUT",
+  ])("returns a noindex 404 before %s can render, with or without a session", (path) => {
+    expect(unstable_doesMiddlewareMatch({ config, url: path })).toBe(true);
+    const sessions: Record<string, string>[] = [{}, { multica_logged_in: "1", last_workspace_slug: "acme" }];
+    for (const cookies of sessions) {
+      const response = proxy(makeRequest(`${path}?campaign=test`, cookies));
+      expect(response.status).toBe(404);
+      expect(response.headers.get("x-robots-tag")).toBe("noindex");
+      expect(response.headers.get("location")).toBeNull();
+      expect(response.headers.get("x-middleware-rewrite")).toBe("https://app.multica.test/_not-found");
+    }
+  });
+});
 
 function makeRequest(
   path: string,

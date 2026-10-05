@@ -171,6 +171,9 @@
     "questions": {
       "source": {
         "question": "Labrastro をどこで知りましたか?"
+      },
+      "use_case": {
+        "question": "Labrastro を何に使いたいですか?"
       }
     },
     "cli_install": {

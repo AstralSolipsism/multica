@@ -171,6 +171,9 @@
     "questions": {
       "source": {
         "question": "Comment avez-vous connu Labrastro ?"
+      },
+      "use_case": {
+        "question": "Pour quoi voulez-vous utiliser Labrastro ?"
       }
     },
     "cli_install": {
