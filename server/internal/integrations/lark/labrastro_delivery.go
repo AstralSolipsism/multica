@@ -175,11 +175,7 @@ func (c *httpAPIClient) GetDeliveryChatInfo(ctx context.Context, creds Installat
 			c.invalidateToken(creds.AppID)
 		}
 		err := &APIError{Op: "delivery chat info", Code: resp.Code, Msg: resp.Msg}
-		switch resp.Code {
-		case 230002, 230013, 230014: // unknown chat / bot outside visibility / bot not a member
-			return fmt.Errorf("%w: %v", messagedelivery.ErrTargetUnreachable, err)
-		}
-		return err
+		return classifyVerifyError(err)
 	}
 	return nil
 }
@@ -192,7 +188,7 @@ func (s *DeliverySender) VerifyGroupTarget(ctx context.Context, req messagedeliv
 		return err
 	}
 	if err := s.client.GetDeliveryChatInfo(ctx, creds, req.ChatID); err != nil {
-		return s.classifyVerifyError(err)
+		return classifyVerifyError(err)
 	}
 	return nil
 }
@@ -208,7 +204,7 @@ func (s *DeliverySender) VerifyTopicTarget(ctx context.Context, req messagedeliv
 	}
 	anchorChat, err := s.client.GetDeliveryMessageChat(ctx, creds, req.MessageID)
 	if err != nil {
-		return "", s.classifyVerifyError(err)
+		return "", classifyVerifyError(err)
 	}
 	if anchorChat != req.ChatID {
 		return "", fmt.Errorf("%w: anchor %s lives in chat %s, not declared %s",
@@ -220,17 +216,18 @@ func (s *DeliverySender) VerifyTopicTarget(ctx context.Context, req messagedeliv
 // classifyVerifyError sorts a verification failure into the three verdicts
 // the delivery module distinguishes: definitive unreachable (save/send
 // refused), definitive mismatch (handled by the caller), or unknown (the
-// caller must fail closed / go uncertain).
-func (s *DeliverySender) classifyVerifyError(err error) error {
+// caller must fail closed and retry before sending).
+func classifyVerifyError(err error) error {
 	if errors.Is(err, messagedelivery.ErrTargetUnreachable) {
 		return err
 	}
-	code, _, hasCode := larkErrorCodeMsg(err)
-	if hasCode {
-		switch code {
-		case 230002, 230011, 230013, 230014, 230019:
-			return fmt.Errorf("%w: %v", messagedelivery.ErrTargetUnreachable, err)
-		}
+	switch classifyLarkFailure(err) {
+	case larkChatUnavailable, larkMessageUnavailable:
+		return fmt.Errorf("%w: %v", messagedelivery.ErrTargetUnreachable, err)
+	case larkRateLimited, larkUnavailable:
+		return &messagedelivery.SendError{Class: messagedelivery.ClassTransient, Err: err}
+	case larkRejected, larkInvalidRequest, larkPermissionDenied:
+		return &messagedelivery.SendError{Class: messagedelivery.ClassPermanent, Err: err}
 	}
 	return err
 }
@@ -238,7 +235,7 @@ func (s *DeliverySender) classifyVerifyError(err error) error {
 // resolveInstallation centralizes the workspace-scoped installation lookup +
 // decrypt shared by Send and the verifier.
 func (s *DeliverySender) resolveInstallation(ctx context.Context, workspaceID, installationID string) (InstallationCredentials, Installation, error) {
-	if s == nil || s.client == nil {
+	if s == nil || s.client == nil || s.installations == nil {
 		return InstallationCredentials{}, Installation{}, &messagedelivery.SendError{
 			Class: messagedelivery.ClassPermanent,
 			Code:  messagedelivery.ErrorCodeSenderUnavailable,
@@ -247,22 +244,26 @@ func (s *DeliverySender) resolveInstallation(ctx context.Context, workspaceID, i
 	}
 	instID, err := util.ParseUUID(installationID)
 	if err != nil {
-		return InstallationCredentials{}, Installation{}, fmt.Errorf("installation id is not a uuid")
+		return InstallationCredentials{}, Installation{}, &messagedelivery.SendError{Class: messagedelivery.ClassPermanent, Err: errors.New("installation id is not a uuid")}
 	}
 	wsID, err := util.ParseUUID(workspaceID)
 	if err != nil {
-		return InstallationCredentials{}, Installation{}, fmt.Errorf("workspace id is not a uuid")
+		return InstallationCredentials{}, Installation{}, &messagedelivery.SendError{Class: messagedelivery.ClassPermanent, Err: errors.New("workspace id is not a uuid")}
 	}
 	inst, err := s.installations.GetInWorkspace(ctx, instID, wsID)
 	if err != nil {
-		return InstallationCredentials{}, Installation{}, fmt.Errorf("load installation: %w", err)
+		class := messagedelivery.ClassTransient
+		if errors.Is(err, ErrInstallationNotFound) {
+			class = messagedelivery.ClassPermanent
+		}
+		return InstallationCredentials{}, Installation{}, &messagedelivery.SendError{Class: class, Err: fmt.Errorf("load installation: %w", err)}
 	}
 	if inst.Status != "active" {
-		return InstallationCredentials{}, Installation{}, ErrInstallationRevoked
+		return InstallationCredentials{}, Installation{}, &messagedelivery.SendError{Class: messagedelivery.ClassPermanent, Err: ErrInstallationRevoked}
 	}
 	secret, err := s.installations.DecryptAppSecret(inst)
 	if err != nil {
-		return InstallationCredentials{}, Installation{}, fmt.Errorf("decrypt app_secret: %w", err)
+		return InstallationCredentials{}, Installation{}, &messagedelivery.SendError{Class: messagedelivery.ClassPermanent, Err: fmt.Errorf("decrypt app_secret: %w", err)}
 	}
 	creds := InstallationCredentials{
 		AppID:     inst.AppID,
@@ -295,7 +296,7 @@ func NewDeliverySender(installations *InstallationService, client DeliveryAPICli
 // the target came from the decision's snapshot and the worker has already
 // re-validated the installation — this adapter only dials.
 func (s *DeliverySender) Send(ctx context.Context, req messagedelivery.SendRequest) (messagedelivery.SendResult, error) {
-	if s == nil || s.client == nil {
+	if s == nil || s.client == nil || s.installations == nil {
 		return messagedelivery.SendResult{}, &messagedelivery.SendError{
 			Class: messagedelivery.ClassPermanent,
 			Code:  messagedelivery.ErrorCodeSenderUnavailable,
@@ -306,10 +307,7 @@ func (s *DeliverySender) Send(ctx context.Context, req messagedelivery.SendReque
 	// another workspace cannot be dialed.
 	creds, _, err := s.resolveInstallation(ctx, req.WorkspaceID, req.InstallationID)
 	if err != nil {
-		return messagedelivery.SendResult{}, &messagedelivery.SendError{
-			Class: messagedelivery.ClassPermanent,
-			Err:   err,
-		}
+		return messagedelivery.SendResult{}, err
 	}
 	params, err := deliveryParams(req, creds)
 	if err != nil {
@@ -317,6 +315,9 @@ func (s *DeliverySender) Send(ctx context.Context, req messagedelivery.SendReque
 			Class: messagedelivery.ClassPermanent,
 			Err:   err,
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return messagedelivery.SendResult{}, &messagedelivery.SendError{Class: messagedelivery.ClassTransient, Err: err}
 	}
 	messageID, err := s.client.SendDeliveryMessage(ctx, creds, params)
 	if err != nil {
@@ -404,42 +405,18 @@ func newDeliveryPost(message messagedelivery.Message) deliveryPost {
 // verify-then-retry with the same UUID may resolve it. Rate limits and
 // gateway 5xx are TRANSIENT: nothing was accepted, back off and retry.
 func classifyDeliverySendError(err error) error {
-	code, _, hasCode := larkErrorCodeMsg(err)
-	if !hasCode {
-		// No business verdict: network failure, timeout, or a non-Lark
-		// response. The request may still have been processed.
-		return &messagedelivery.SendError{Class: messagedelivery.ClassAmbiguous, Err: err}
+	class := messagedelivery.ClassPermanent
+	switch classifyLarkFailure(err) {
+	case larkUnknown:
+		class = messagedelivery.ClassAmbiguous
+	case larkRateLimited, larkUnavailable:
+		class = messagedelivery.ClassTransient
 	}
-	switch code {
-	case codeNoAvailability: // 230013: target outside the bot's scope
-		return &messagedelivery.SendError{Class: messagedelivery.ClassPermanent, Code: "230013", Err: err}
-	case 230011: // the anchor message was recalled; the topic is unreachable
-		return &messagedelivery.SendError{Class: messagedelivery.ClassPermanent, Code: "230011", Err: err}
-	case 230019: // the topic does not exist
-		return &messagedelivery.SendError{Class: messagedelivery.ClassPermanent, Code: "230019", Err: err}
-	case 230020: // rate limited
-		return &messagedelivery.SendError{Class: messagedelivery.ClassTransient, Err: err}
-	case 230049: // "message is being sent" — outcome unknown
-		return &messagedelivery.SendError{Class: messagedelivery.ClassAmbiguous, Err: err}
-	case codeTenantTokenInvalid, codeAppTokenInvalid:
-		// doAuthedJSON already refreshed and replayed once; a second
-		// credential rejection is an installation-health problem with an
-		// unknown in-flight state.
-		return &messagedelivery.SendError{Class: messagedelivery.ClassAmbiguous, Err: err}
+	out := &messagedelivery.SendError{Class: class, Err: err}
+	if code, _, ok := larkErrorCodeMsg(err); ok && class == messagedelivery.ClassPermanent {
+		out.Code = fmt.Sprintf("%d", code)
 	}
-	var statusErr *larkAPIStatusError
-	if errors.As(err, &statusErr) {
-		if statusErr.StatusCode == http.StatusTooManyRequests || statusErr.StatusCode >= 500 {
-			return &messagedelivery.SendError{Class: messagedelivery.ClassTransient, Err: err}
-		}
-	}
-	// Any other business code is a definitive refusal the platform
-	// already answered.
-	return &messagedelivery.SendError{
-		Class: messagedelivery.ClassPermanent,
-		Code:  fmt.Sprintf("%d", code),
-		Err:   err,
-	}
+	return out
 }
 
 // compile-time checks: the adapter satisfies the port; the real client

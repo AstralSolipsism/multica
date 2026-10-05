@@ -250,7 +250,7 @@ func (s *Service) executeTestSend(ctx context.Context, route db.LabrastroMessage
 	// caller must not prevent the outcome from being recorded) and under
 	// the SAME lease-ownership guard as every other result write: an
 	// expired-then-reclaimed row belongs to its new owner.
-	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outcomeWriteTimeout)
 	defer cancel()
 	if out.lost {
 		// Recovery owns this row. Return its persisted state without claiming
@@ -335,32 +335,15 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 	}
 	shards := splitShards(NewMessage(content.Text, sourceURL))
 	for i, shard := range shards {
-		// Claim (or re-read) the shard's receipt row. The send UUID is
-		// written once and never changes, so a retry replays the SAME
-		// idempotency key. The insert shares a transaction with the
-		// workspace parent lock (review R3), so a teardown that committed
-		// meanwhile refuses the receipt instead of landing in a deleted
-		// workspace.
-		var receipt db.LabrastroMessageReceipt
-		err := s.withParentLock(ctx, d.WorkspaceID, func(qtx *db.Queries) error {
-			var cErr error
-			receipt, cErr = qtx.ClaimLabrastroMessageReceipt(ctx, db.ClaimLabrastroMessageReceiptParams{
-				DeliveryID:     d.ID,
-				WorkspaceID:    d.WorkspaceID,
-				InstallationID: d.InstallationID,
-				ShardIndex:     int32(i),
-				ShardTotal:     int32(len(shards)),
-				SendUuid:       util.UUIDToString(dbid.NewV7()),
-			})
-			return cErr
-		})
+		if err := ctx.Err(); err != nil {
+			return retryGate("cancelled before shard: " + err.Error()).outcome()
+		}
+		receipt, err := s.claimShardReceipt(ctx, d, i, len(shards))
 		if err != nil {
 			if errors.Is(err, errParentGone) {
-				return sendOutcome{lost: true,
-					detail: "workspace deleted before shard receipt"}
+				return sendOutcome{lost: true, detail: "workspace deleted before shard receipt"}
 			}
-			return sendOutcome{status: DeliveryStatusUncertain, errorCode: ErrorCodeSendAmbiguous,
-				detail: fmt.Sprintf("claim receipt for shard %d: %v", i, err)}
+			return retryGate(fmt.Sprintf("claim receipt for shard %d: %v", i, err)).outcome()
 		}
 		// Already-accepted shards are never re-sent — this is what makes
 		// a resumed multi-shard send safe after a partial pass.
@@ -368,72 +351,118 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 			continue
 		}
 		if out := s.gateClaimed(ctx, d); out != nil {
-			return *out
+			return out.outcome()
 		}
-		// Live member resolution: the frozen open_id is a decision-time
-		// observation, never an authority. The binding on THIS installation is
-		// re-read before dialing, so unbinding (or a revoke) between decision
-		// and send fails explainably instead of misdelivering.
-		address := targetFromSnapshot(snap)
-		if snap.TargetType == TargetMember {
-			userID, err := util.ParseUUID(snap.UserID)
-			instID, instErr := util.ParseUUID(snap.Installation)
-			if err != nil || instErr != nil {
-				return sendOutcome{status: DeliveryStatusFailed, errorCode: ErrorCodeMemberUnbound,
-					detail: "member target snapshot is not resolvable"}
-			}
-			binding, err := s.Queries.GetChannelUserBindingForDelivery(ctx, db.GetChannelUserBindingForDeliveryParams{
-				WorkspaceID:    d.WorkspaceID,
-				InstallationID: instID,
-				MulticaUserID:  userID,
-			})
-			if errors.Is(err, pgx.ErrNoRows) {
-				return sendOutcome{status: DeliveryStatusFailed, errorCode: ErrorCodeMemberUnbound,
-					detail: "member has no binding on this installation"}
-			} else if err != nil {
-				return sendOutcome{status: DeliveryStatusUncertain, errorCode: ErrorCodeSendAmbiguous,
-					detail: "resolve member binding: " + err.Error()}
-			}
-			address.OpenID = binding.ChannelUserID
+		address, gate := s.resolveShardAddress(ctx, d, snap)
+		if gate != nil {
+			return gate.outcome()
 		}
-
 		// Lease ownership re-check BEFORE dialing a new shard (review
 		// R9): a worker whose claim expired — or whose row another
 		// replica already parked as uncertain — must not start sends its
 		// final lease-guarded write could never account for.
-		if !s.holdsLease(ctx, d) {
+		held, err := s.holdsLease(ctx, d)
+		if err != nil {
+			return retryGate("check lease: " + err.Error()).outcome()
+		}
+		if !held {
 			return sendOutcome{lost: true,
 				detail: fmt.Sprintf("lease lost before shard %d", i)}
 		}
-		res, err := s.Sender.Send(ctx, SendRequest{
-			DeliveryID:     util.UUIDToString(d.ID),
-			WorkspaceID:    util.UUIDToString(d.WorkspaceID),
-			InstallationID: snap.Installation,
-			ChannelType:    snap.ChannelType,
-			Target:         address,
-			Message:        shard,
-			SendUUID:       receipt.SendUuid,
-			ShardIndex:     i,
-			ShardTotal:     len(shards),
+		if out := s.sendShard(ctx, d, snap, address, shard, receipt, i, len(shards)); out.status != DeliveryStatusSent {
+			return out
+		}
+	}
+	return sendOutcome{status: DeliveryStatusSent}
+}
+
+// claimShardReceipt pins the idempotency UUID under the workspace parent lock.
+func (s *Service) claimShardReceipt(ctx context.Context, d db.LabrastroMessageDelivery, index, total int) (db.LabrastroMessageReceipt, error) {
+	var receipt db.LabrastroMessageReceipt
+	err := s.withParentLock(ctx, d.WorkspaceID, func(qtx *db.Queries) error {
+		var cErr error
+		receipt, cErr = qtx.ClaimLabrastroMessageReceipt(ctx, db.ClaimLabrastroMessageReceiptParams{
+			DeliveryID:     d.ID,
+			WorkspaceID:    d.WorkspaceID,
+			InstallationID: d.InstallationID,
+			ShardIndex:     int32(index),
+			ShardTotal:     int32(total),
+			SendUuid:       util.UUIDToString(dbid.NewV7()),
 		})
-		if err != nil {
-			return classifySendError(i, err)
+		return cErr
+	})
+	return receipt, err
+}
+
+// resolveShardAddress re-reads the live binding on this installation. A frozen
+// open_id is only a decision-time observation, never authority to send.
+func (s *Service) resolveShardAddress(ctx context.Context, d db.LabrastroMessageDelivery, snap targetSnapshot) (Target, *gateResult) {
+	address := targetFromSnapshot(snap)
+	if snap.TargetType == TargetMember {
+		userID, err := util.ParseUUID(snap.UserID)
+		instID, instErr := util.ParseUUID(snap.Installation)
+		if err != nil || instErr != nil {
+			return Target{}, rejectGate(DeliveryStatusFailed, ErrorCodeMemberUnbound, "member target snapshot is not resolvable")
 		}
-		if strings.TrimSpace(res.ExternalMessageID) == "" {
-			return sendOutcome{status: DeliveryStatusUncertain, errorCode: ErrorCodeSendAmbiguous, detail: "accepted shard has no external receipt id"}
-		}
-		receiptCtx, cancelReceipt := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		_, receiptErr := s.Queries.RecordLabrastroMessageReceiptExternalID(receiptCtx, db.RecordLabrastroMessageReceiptExternalIDParams{
-			ID:                receipt.ID,
-			ExternalMessageID: pgtype.Text{String: res.ExternalMessageID, Valid: true},
+		binding, err := s.Queries.GetChannelUserBindingForDelivery(ctx, db.GetChannelUserBindingForDeliveryParams{
+			WorkspaceID:    d.WorkspaceID,
+			InstallationID: instID,
+			MulticaUserID:  userID,
 		})
-		cancelReceipt()
-		if receiptErr != nil {
-			// The platform ACCEPTED the shard but the receipt write
-			// failed — the delivery is now uncertain, not sent.
-			return sendOutcome{status: DeliveryStatusUncertain, errorCode: ErrorCodeSendAmbiguous,
-				detail: fmt.Sprintf("record receipt for shard %d: %v", i, receiptErr)}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Target{}, rejectGate(DeliveryStatusFailed, ErrorCodeMemberUnbound, "member has no binding on this installation")
+		} else if err != nil {
+			return Target{}, retryGate("resolve member binding: " + err.Error())
 		}
+		address.OpenID = binding.ChannelUserID
+	}
+
+	return address, nil
+}
+
+// ShutdownTimeout includes one in-flight send, its receipt and final outcome.
+// Shutdown stops claims and new shards; only a shard already entering Send is
+// detached from cancellation, and every detached operation has a deadline.
+const (
+	shardSendTimeout    = 20 * time.Second
+	outcomeWriteTimeout = 5 * time.Second
+	ShutdownTimeout     = shardSendTimeout + 2*outcomeWriteTimeout
+)
+
+func (s *Service) sendShard(ctx context.Context, d db.LabrastroMessageDelivery, snap targetSnapshot, address Target, message Message, receipt db.LabrastroMessageReceipt, index, total int) sendOutcome {
+	if err := ctx.Err(); err != nil {
+		return retryGate("cancelled before dialing: " + err.Error()).outcome()
+	}
+	sendCtx, cancelSend := context.WithTimeout(context.WithoutCancel(ctx), shardSendTimeout)
+	defer cancelSend()
+	res, err := s.Sender.Send(sendCtx, SendRequest{
+		DeliveryID:     util.UUIDToString(d.ID),
+		WorkspaceID:    util.UUIDToString(d.WorkspaceID),
+		InstallationID: snap.Installation,
+		ChannelType:    snap.ChannelType,
+		Target:         address,
+		Message:        message,
+		SendUUID:       receipt.SendUuid,
+		ShardIndex:     index,
+		ShardTotal:     total,
+	})
+	if err != nil {
+		return classifySendError(index, err)
+	}
+	if strings.TrimSpace(res.ExternalMessageID) == "" {
+		return sendOutcome{status: DeliveryStatusUncertain, errorCode: ErrorCodeSendAmbiguous, detail: "accepted shard has no external receipt id"}
+	}
+	receiptCtx, cancelReceipt := context.WithTimeout(context.WithoutCancel(ctx), outcomeWriteTimeout)
+	_, receiptErr := s.Queries.RecordLabrastroMessageReceiptExternalID(receiptCtx, db.RecordLabrastroMessageReceiptExternalIDParams{
+		ID:                receipt.ID,
+		ExternalMessageID: pgtype.Text{String: res.ExternalMessageID, Valid: true},
+	})
+	cancelReceipt()
+	if receiptErr != nil {
+		// The platform ACCEPTED the shard but the receipt write
+		// failed — the delivery is now uncertain, not sent.
+		return sendOutcome{status: DeliveryStatusUncertain, errorCode: ErrorCodeSendAmbiguous,
+			detail: fmt.Sprintf("record receipt for shard %d: %v", index, receiptErr)}
 	}
 	return sendOutcome{status: DeliveryStatusSent}
 }
@@ -471,18 +500,21 @@ func (s *Service) withParentLock(ctx context.Context, workspaceID pgtype.UUID, f
 
 // holdsLease re-reads the delivery's live lease and reports whether the
 // calling worker still owns it: same token, still 'sending', not expired.
-func (s *Service) holdsLease(ctx context.Context, d db.LabrastroMessageDelivery) bool {
+func (s *Service) holdsLease(ctx context.Context, d db.LabrastroMessageDelivery) (bool, error) {
 	if !d.LeaseToken.Valid {
-		return false
+		return false, nil
 	}
 	row, err := s.Queries.GetLabrastroMessageDeliveryLease(ctx, d.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
-		return false
+		return false, err
 	}
 	if row.Status != DeliveryStatusSending || row.LeaseToken != d.LeaseToken {
-		return false
+		return false, nil
 	}
-	return row.LeaseActive
+	return row.LeaseActive, nil
 }
 
 // classifySendError maps a Sender error onto the delivery outcome.

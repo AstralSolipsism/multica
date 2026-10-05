@@ -48,8 +48,8 @@ type shutdownSequence struct {
 	JoinTelegram      func()
 
 	// JoinMessageDelivery waits for the Labrastro message-delivery send
-	// workers (OL-25) so an in-flight Feishu shard lands with its receipt
-	// instead of resolving to uncertain on the lease sweep.
+	// workers (OL-25). Cancellation stops new shards; an in-flight shard
+	// uses a bounded detached context to finish and record its receipt.
 	JoinMessageDelivery func()
 
 	// JoinChannelSupervisor waits for the per-installation goroutines so the

@@ -57,7 +57,7 @@ func assembleMessageDelivery(h *handler.Handler, bus *events.Bus) {
 	// compensation scanner, which re-derives the missing set from
 	// persisted rows.
 	bus.Subscribe(protocol.EventAutopilotRunDone, func(events.Event) {
-		svc.Notify()
+		svc.NotifyDecide()
 	})
 
 	// OL-27: the three persisted personal/team sources wake the decide

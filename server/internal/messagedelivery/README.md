@@ -50,10 +50,10 @@ statuses or error codes. Code lives in:
 | status | meaning |
 | --- | --- |
 | `queued` | decided, waiting to send |
-| `sending` | lease held, HTTP call in flight (crash → `uncertain`, never silently back to `queued`) |
+| `sending` | lease held while checking gates and sending shards; a crashed claim is conservatively recovered as `uncertain` |
 | `sent` | every shard accepted, receipts recorded |
 | `failed` | definitive failure; `error_code` says why |
-| `uncertain` | the send may have landed (lost response / lost receipt / crashed claim); only manual verify-and-retry resolves it |
+| `uncertain` | a dialed send may have landed (lost response / lost receipt), or a crashed claim left no reliable verdict; only manual verify-and-retry resolves it |
 | `cancelled` | route disabled/deleted, source archived/deleted, or installation revoked before the send started |
 | `suppressed` | condition mismatch (incl. skipped runs) or unknown historical origin; recorded so the source is not rescanned |
 
@@ -370,6 +370,31 @@ Delivery `error_code` values recorded by the pipeline:
 
 - **One decision per (source, target).** Unique index on `dedup_key`; the
   event wakeup, the compensator and other replicas race safely.
+- **Event wakeups decide before sending.** `autopilot:run_done`, `inbox:new`,
+  `activity:created` and `comment:created` notify the decision scanner through
+  a coalescing channel. The publisher does no database work. The scanner runs
+  one bounded pass over persisted sources, including terminal runs, and new
+  decisions wake the send pool. A lost event or backlog beyond the 200-pair run
+  batch is recovered by the periodic scan.
+- **Known unsent failures retry.** Gate, approval, binding, lease-read and
+  receipt-claim database errors, failed target verification without a definitive
+  refusal, and cancellation before dialing are transient. Regular deliveries
+  return to `queued` with backoff and fail at the configured attempt limit;
+  they do not become `uncertain`. Definite source/consent loss cancels, and
+  definite invalid destinations fail. The synchronous diagnostic send records
+  transient failures as `failed`, available for explicit retry.
+- **Shared Feishu classification.** Sending, target verification and discovery
+  share one provider error taxonomy. Rate-limit codes `230020`, `99991400` and
+  `99991403` (and HTTP 429) are transient; installation credential lookup
+  database errors are also transient. Missing/revoked installations and invalid
+  credentials remain definitive failures.
+- **Bounded shutdown.** Worker cancellation stops new claims and shards. A
+  shard already entering the sender has a detached 20s context; its receipt and
+  the delivery outcome each have a separate 5s write budget. The server joins
+  delivery workers for 30s. Accepted shards retain their receipts; a cancelled
+  remaining shard is retried without replaying accepted shards. A genuine
+  post-dial timeout or lost receipt still becomes `uncertain`; a process crash
+  remains subject to conservative lease-expiry recovery.
 - **Compensation.** A scanner pass (default 30s) (1) parks expired send
   claims as `uncertain`, (2) feeds three PERSISTED source classes whose
   automation run missed the terminal event to the EXISTING sync logic

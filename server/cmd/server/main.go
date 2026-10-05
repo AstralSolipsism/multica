@@ -25,6 +25,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/maintenance"
+	"github.com/multica-ai/multica/server/internal/messagedelivery"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/profiling"
 	"github.com/multica-ai/multica/server/internal/realtime"
@@ -942,9 +943,9 @@ func main() {
 		},
 		// Joined so an in-flight Feishu send finishes and its receipt
 		// lands before exit; otherwise the delivery waits out the lease
-		// and resolves to uncertain. Bounded like the webhook worker.
+		// and resolves to uncertain. The budget includes send and result writes.
 		JoinMessageDelivery: func() {
-			if h.MessageDelivery != nil && !h.MessageDelivery.WaitWithTimeout(5*time.Second) {
+			if h.MessageDelivery != nil && !h.MessageDelivery.WaitWithTimeout(messagedelivery.ShutdownTimeout) {
 				slog.Warn("message delivery worker did not exit within shutdown timeout")
 			}
 		},
