@@ -194,24 +194,22 @@ func (s *Service) executeTestSend(ctx context.Context, route db.LabrastroMessage
 	// whole test send, or lands after and sweeps the row — no orphan.
 	var d db.LabrastroMessageDelivery
 	err = s.withParentLock(ctx, route.WorkspaceID, func(qtx *db.Queries) error {
-		if IsSourceRouteScope(route.SourceKind) {
-			if route.ProjectID.Valid {
-				if _, err := qtx.LockLabrastroMessageSourceProject(ctx, db.LockLabrastroMessageSourceProjectParams{ID: route.ProjectID, WorkspaceID: route.WorkspaceID}); errors.Is(err, pgx.ErrNoRows) {
-					return ErrSourceUnavailable
-				} else if err != nil {
-					return err
-				}
-			}
-			current, err := qtx.LockLabrastroMessageSourceRoute(ctx, db.LockLabrastroMessageSourceRouteParams{ID: route.ID, WorkspaceID: route.WorkspaceID})
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrRouteNotFound
-			}
-			if err != nil {
+		if route.ProjectID.Valid {
+			if _, err := qtx.LockLabrastroMessageSourceProject(ctx, db.LockLabrastroMessageSourceProjectParams{ID: route.ProjectID, WorkspaceID: route.WorkspaceID}); errors.Is(err, pgx.ErrNoRows) {
+				return ErrSourceUnavailable
+			} else if err != nil {
 				return err
 			}
-			if current.Revision != route.Revision || !current.Enabled {
-				return ErrRouteRevisionConflict
-			}
+		}
+		current, err := qtx.LockLabrastroMessageRoute(ctx, db.LockLabrastroMessageRouteParams{ID: route.ID, WorkspaceID: route.WorkspaceID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrRouteNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if current.Revision != route.Revision || !current.Enabled {
+			return ErrRouteRevisionConflict
 		}
 		created, cErr := qtx.CreateLabrastroMessageDelivery(ctx, db.CreateLabrastroMessageDeliveryParams{
 			ID:              dbid.NewV7(),
@@ -336,14 +334,14 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 	shards := splitShards(NewMessage(content.Text, sourceURL))
 	for i, shard := range shards {
 		if err := ctx.Err(); err != nil {
-			return s.retryGate("cancelled before shard", err).outcome()
+			return s.retryGate(d.ID, "cancelled before shard", err).outcome()
 		}
 		receipt, err := s.claimShardReceipt(ctx, d, i, len(shards))
 		if err != nil {
 			if errors.Is(err, errParentGone) {
 				return sendOutcome{lost: true, detail: "workspace deleted before shard receipt"}
 			}
-			return s.retryGate("claim shard receipt failed", err).outcome()
+			return s.retryGate(d.ID, "claim shard receipt failed", err).outcome()
 		}
 		// Already-accepted shards are never re-sent — this is what makes
 		// a resumed multi-shard send safe after a partial pass.
@@ -363,7 +361,7 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 		// final lease-guarded write could never account for.
 		held, err := s.holdsLease(ctx, d)
 		if err != nil {
-			return s.retryGate("check lease failed", err).outcome()
+			return s.retryGate(d.ID, "check lease failed", err).outcome()
 		}
 		if !held {
 			return sendOutcome{lost: true,
@@ -412,7 +410,7 @@ func (s *Service) resolveShardAddress(ctx context.Context, d db.LabrastroMessage
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Target{}, rejectGate(DeliveryStatusFailed, ErrorCodeMemberUnbound, "member has no binding on this installation")
 		} else if err != nil {
-			return Target{}, s.retryGate("resolve member binding failed", err)
+			return Target{}, s.retryGate(d.ID, "resolve member binding failed", err)
 		}
 		address.OpenID = binding.ChannelUserID
 	}
@@ -431,7 +429,7 @@ const (
 
 func (s *Service) sendShard(ctx context.Context, d db.LabrastroMessageDelivery, snap targetSnapshot, address Target, message Message, receipt db.LabrastroMessageReceipt, index, total int) sendOutcome {
 	if err := ctx.Err(); err != nil {
-		return s.retryGate("cancelled before dialing", err).outcome()
+		return s.retryGate(d.ID, "cancelled before dialing", err).outcome()
 	}
 	sendCtx, cancelSend := context.WithTimeout(context.WithoutCancel(ctx), shardSendTimeout)
 	defer cancelSend()
@@ -467,10 +465,6 @@ func (s *Service) sendShard(ctx context.Context, d db.LabrastroMessageDelivery, 
 	}
 	return sendOutcome{status: DeliveryStatusSent}
 }
-
-// testSendLeaseTTL bounds a synchronous test send; it matches the claim
-// lease window so the expiry sweep's recovery contract applies uniformly.
-const testSendLeaseTTL = 2 * time.Minute
 
 // errParentGone reports that the workspace a guarded write depends on no
 // longer exists (the delete transaction committed first).

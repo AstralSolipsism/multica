@@ -53,6 +53,9 @@ writer role, or grant the application role `pg_read_all_stats` / `pg_monitor`
 when multiple roles connect to the database, and keep the default
 `max_prepared_transactions=0` for bounded steady-state scans. A very long open
 transaction also increases the scan window rather than risking missed delivery.
+When a newly captured horizon lags database time by at least ten minutes, the
+service logs its scanner, stable time and lag. Each service instance logs at
+most once per scanner per ten minutes; the warning never advances the horizon.
 
 This covers application inserts with database-generated timestamps, not manual
 backdated imports or restoring arbitrarily old deleted sources. For an explicit
@@ -94,5 +97,6 @@ the same decision and send path as other source wakeups.
 The run candidate query returns complete run, autopilot and route records plus
 the task-side reverse-link repair evidence. It feeds the shared source-facts,
 decision-input and decision-write functions directly, without reloading those
-records for each candidate. Live binding/content lookups and send-time gates
+records for each candidate. `EnqueueRunDeliveries` restricts this same query
+and decision loop to one run; it does not maintain a second route-selection path. Live binding/content lookups and send-time gates
 retain their existing authorization and transient-error behavior.

@@ -364,9 +364,6 @@ func (s *Service) ScanOnce(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
-// sourceScanners maps each OL-27 scanner cursor onto its candidate page —
-// see sourceScannerFuncs.
-
 // sourceScannerFuncs returns the scanner name → page function pairs.
 func (s *Service) sourceScannerFuncs() map[string]func(context.Context, scanCursor) (scanCursor, error) {
 	return map[string]func(context.Context, scanCursor) (scanCursor, error){
@@ -525,6 +522,7 @@ func (s *Service) loadCursorWithBound(ctx context.Context, scanner string, upper
 			return cur, err
 		}
 		cur.cycleStarted, cur.cycleStable = horizon.ScanThrough.Time, horizon.StableAt
+		s.warnSourceHorizon(scanner, horizon.ScanThrough.Time, horizon.StableAt.Time)
 	}
 	upper, err := upperBound()
 	if err != nil {
@@ -638,21 +636,28 @@ func (s *Service) syncStaleLinkedTaskFailures(ctx context.Context, cur scanCurso
 // suppressions and cancellations alike — shrink the set, so the scan is a
 // full missing-set sweep whose cost decays as sources are judged.
 func (s *Service) decideMissing(ctx context.Context) error {
-	candidates, err := s.Queries.ListLabrastroMessageDeliveryCandidateRoutes(ctx, scanBatchSize)
+	_, err := s.enqueueRunCandidates(ctx, pgtype.UUID{}, scanBatchSize)
+	return err
+}
+
+func (s *Service) enqueueRunCandidates(ctx context.Context, runID pgtype.UUID, limit int32) (int, error) {
+	candidates, err := s.Queries.ListLabrastroMessageDeliveryCandidateRoutes(ctx, db.ListLabrastroMessageDeliveryCandidateRoutesParams{RunID: runID, Limit: limit})
 	if err != nil {
-		return err
+		return 0, err
 	}
+	decided := 0
 	for _, c := range candidates {
-		// The candidate query carries the same complete rows used by direct
-		// enqueue, including the task-side link after a reverse-link crash.
 		run := c.AutopilotRun
 		run.TaskID = c.SourceTaskID
 		in := s.decisionInputFromSource(c.Autopilot, c.LabrastroMessageRoute, sourceFactsFromRun(run))
-		if n, err := s.decideDelivery(ctx, c.Autopilot, in); err != nil {
-			return err
-		} else if n > 0 {
+		n, err := s.decideDelivery(ctx, c.Autopilot, in)
+		if err != nil {
+			return decided, err
+		}
+		decided += n
+		if n > 0 {
 			s.Notify()
 		}
 	}
-	return nil
+	return decided, nil
 }

@@ -89,7 +89,7 @@ func TestWorkerPreSendReadFailuresRetry(t *testing.T) {
 			if status != DeliveryStatusQueued || code != ErrorCodeSendTransient || attempts != 1 || sender.count() != 0 {
 				t.Fatalf("known unsent failure: status=%s code=%s attempts=%d sends=%d", status, code, attempts, sender.count())
 			}
-			if detail == "" || strings.Contains(detail, "injected") || !strings.Contains(logs.String(), "injected") {
+			if detail == "" || strings.Contains(detail, "injected") || !strings.Contains(logs.String(), "injected") || !strings.Contains(logs.String(), "delivery_id="+delivery) {
 				t.Fatalf("database error must appear only in logs: detail=%q logs=%s", detail, logs.String())
 			}
 			// The same delivery remains recoverable once the database recovers.
@@ -495,5 +495,53 @@ func TestWorkerShutdownBetweenShardsPreservesProgress(t *testing.T) {
 	}
 	if len(receipts) != 1 || receipts[0].ExternalMessageID.String != "om_first_shard" {
 		t.Fatalf("accepted shard lost its receipt: %+v", receipts)
+	}
+}
+
+// An accepted send whose receipt cannot be persisted is ambiguous. It must
+// remain parked until an explicit retry, which reuses the same send UUID.
+func TestWorkerReceiptWriteFailureIsUncertain(t *testing.T) {
+	ctx := context.Background()
+	fx := newMDFixture(t, "receipt-write-failure", nil)
+	fx.bindMember(t, testUID, "ou_receipt_failure")
+	fx.memberTargetRoute(t, "receipt", testUID, nil)
+	run := fx.run(t, "completed", nil)
+	sender := &fakeSender{}
+	s := newTestService(sender, nil)
+	if err := s.decideMissing(ctx); err != nil {
+		t.Fatal(err)
+	}
+	id := uuidOf(t, firstDeliveryForRun(t, run))
+	fault := &failingDeliveryRead{DBTX: testPool, name: "RecordLabrastroMessageReceiptExternalID"}
+	s.Queries = db.New(fault)
+	claimed, err := s.Queries.ClaimLabrastroMessageDeliveryByID(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.processClaimed(ctx, claimed)
+	d, receipts, err := s.GetDelivery(ctx, claimed.WorkspaceID, claimed.AutopilotID, id)
+	if err != nil || fault.hits != 1 || sender.count() != 1 || d.Status != DeliveryStatusUncertain || d.ErrorCode.String != ErrorCodeSendAmbiguous {
+		t.Fatalf("receipt failure: status=%s code=%s hits=%d sends=%d err=%v", d.Status, d.ErrorCode.String, fault.hits, sender.count(), err)
+	}
+	if len(receipts) != 1 || receipts[0].ExternalMessageID.Valid || receipts[0].SendUuid != sender.requests()[0].SendUUID {
+		t.Fatalf("ambiguous receipt lost its identity: %+v", receipts)
+	}
+	s.Queries = db.New(testPool)
+	if err := s.decideMissing(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if worked, err := s.ProcessNext(ctx); err != nil || worked || sender.count() != 1 {
+		t.Fatalf("ambiguous send retried automatically: worked=%v sends=%d err=%v", worked, sender.count(), err)
+	}
+	if _, err := s.RetryDelivery(ctx, d.WorkspaceID, d.AutopilotID, d.ID); err != nil {
+		t.Fatal(err)
+	}
+	if worked, err := s.ProcessNext(ctx); err != nil || !worked {
+		t.Fatalf("explicit retry: worked=%v err=%v", worked, err)
+	}
+	d, receipts, err = s.GetDelivery(ctx, d.WorkspaceID, d.AutopilotID, d.ID)
+	requests := sender.requests()
+	if err != nil || d.Status != DeliveryStatusSent || len(requests) != 2 || requests[0].SendUUID != requests[1].SendUUID || len(receipts) != 1 || !receipts[0].ExternalMessageID.Valid {
+		t.Fatalf("retry did not reconcile the original receipt: status=%s receipts=%+v requests=%+v err=%v", d.Status, receipts, requests, err)
 	}
 }

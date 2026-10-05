@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,7 +16,6 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
 // txStarter starts the transactions parent-integrity-guarded writes run in.
@@ -66,6 +67,9 @@ type Service struct {
 	// by design — the periodic compensator is the guarantee.
 	decideNotify chan struct{}
 	done         chan struct{}
+
+	scanWarningMu sync.Mutex
+	scanWarnings  map[string]time.Time
 }
 
 // New builds the module. Call Run to start the worker and compensator.
@@ -406,35 +410,11 @@ func (s *Service) CreateRoute(ctx context.Context, ap db.Autopilot, member db.Me
 	if err != nil {
 		return db.LabrastroMessageRoute{}, err
 	}
-	var route db.LabrastroMessageRoute
-	err = s.withTargetWrite(ctx, ap.WorkspaceID, ap.ID, member, target, false, func(q *db.Queries) error {
-		var writeErr error
-		route, writeErr = q.CreateLabrastroMessageRoute(ctx, db.CreateLabrastroMessageRouteParams{
-			ID:              dbid.NewV7(),
-			WorkspaceID:     ap.WorkspaceID,
-			AutopilotID:     ap.ID,
-			InstallationID:  target.installation.ID,
-			ChannelType:     target.installation.ChannelType,
-			TargetType:      target.targetType,
-			TargetKey:       target.targetKey,
-			Conditions:      in.Conditions,
-			ContentMode:     in.ContentMode,
-			Enabled:         s.enabledOrDefault(in, true, false),
-			CreatedBy:       member.UserID,
-			TargetUserID:    target.userID,
-			TargetChatID:    target.chatID,
-			TargetMessageID: target.messageID,
-			TargetThreadID:  target.threadID,
-		})
-		return writeErr
+	return s.createRoute(ctx, ap.WorkspaceID, member, routeConfig{
+		scope: RouteSourceRun, autopilotID: ap.ID, target: target,
+		conditions: in.Conditions, contentMode: in.ContentMode,
+		enabled: s.enabledOrDefault(in, true, false),
 	})
-	if isUniqueViolation(err) {
-		return db.LabrastroMessageRoute{}, ErrRouteAlreadyExists
-	}
-	if err != nil {
-		return db.LabrastroMessageRoute{}, fmt.Errorf("create message route: %w", err)
-	}
-	return route, nil
 }
 
 // UpdateRoute edits a route under optimistic concurrency. Zero rows from a
@@ -445,50 +425,11 @@ func (s *Service) UpdateRoute(ctx context.Context, route db.LabrastroMessageRout
 	if err != nil {
 		return db.LabrastroMessageRoute{}, err
 	}
-	enabled := s.enabledOrDefault(in, false, route.Enabled)
-	var updated db.LabrastroMessageRoute
-	err = s.withTargetWrite(ctx, route.WorkspaceID, route.AutopilotID, member, target, false, func(q *db.Queries) error {
-		var writeErr error
-		updated, writeErr = q.UpdateLabrastroMessageRoute(ctx, db.UpdateLabrastroMessageRouteParams{
-			ID:               route.ID,
-			WorkspaceID:      route.WorkspaceID,
-			ExpectedRevision: expectedRevision,
-			InstallationID:   target.installation.ID,
-			ChannelType:      target.installation.ChannelType,
-			TargetType:       target.targetType,
-			TargetUserID:     target.userID,
-			TargetChatID:     target.chatID,
-			TargetMessageID:  target.messageID,
-			TargetThreadID:   target.threadID,
-			TargetKey:        target.targetKey,
-			Conditions:       in.Conditions,
-			ContentMode:      in.ContentMode,
-			Enabled:          enabled,
-			UpdatedBy:        member.UserID,
-		})
-		return writeErr
+	return s.updateRoute(ctx, route, member, expectedRevision, routeConfig{
+		scope: RouteSourceRun, autopilotID: route.AutopilotID, target: target,
+		conditions: in.Conditions, contentMode: in.ContentMode,
+		enabled: s.enabledOrDefault(in, false, route.Enabled),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		// Either the route vanished or the revision moved on; distinguish
-		// the two so a stale save is reported as a conflict, not a miss.
-		current, getErr := s.Queries.GetLabrastroMessageRoute(ctx, db.GetLabrastroMessageRouteParams{
-			ID: route.ID, WorkspaceID: route.WorkspaceID,
-		})
-		if getErr != nil {
-			return db.LabrastroMessageRoute{}, ErrRouteNotFound
-		}
-		if current.Revision != expectedRevision {
-			return db.LabrastroMessageRoute{}, ErrRouteRevisionConflict
-		}
-		return db.LabrastroMessageRoute{}, ErrRouteNotFound
-	}
-	if err != nil {
-		return db.LabrastroMessageRoute{}, fmt.Errorf("update message route: %w", err)
-	}
-	if route.Enabled && !enabled {
-		s.cancelRouteDeliveries(ctx, route.ID, ErrorCodeRouteDisabled, "route disabled by edit")
-	}
-	return updated, nil
 }
 
 // SetRouteEnabled flips a route's enabled flag under optimistic
@@ -496,47 +437,7 @@ func (s *Service) UpdateRoute(ctx context.Context, route db.LabrastroMessageRout
 // and cancels queued sends; enable resets the eligibility boundary so the
 // disabled window is never backfilled.
 func (s *Service) SetRouteEnabled(ctx context.Context, route db.LabrastroMessageRoute, member db.Member, enabled bool, expectedRevision int32) (db.LabrastroMessageRoute, error) {
-	var updated db.LabrastroMessageRoute
-	write := func(q *db.Queries) error {
-		var err error
-		updated, err = q.SetLabrastroMessageRouteEnabled(ctx, db.SetLabrastroMessageRouteEnabledParams{
-			ID:               route.ID,
-			WorkspaceID:      route.WorkspaceID,
-			ExpectedRevision: expectedRevision,
-			Enabled:          enabled,
-			UpdatedBy:        member.UserID,
-		})
-		return err
-	}
-	var err error
-	if enabled {
-		target, resolveErr := s.ResolveTarget(ctx, route.WorkspaceID, route.AutopilotID, routeInput(route))
-		if resolveErr != nil {
-			return updated, resolveErr
-		}
-		err = s.withTargetWrite(ctx, route.WorkspaceID, route.AutopilotID, member, target, false, write)
-	} else {
-		err = s.withParentLock(ctx, route.WorkspaceID, write)
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		current, getErr := s.Queries.GetLabrastroMessageRoute(ctx, db.GetLabrastroMessageRouteParams{
-			ID: route.ID, WorkspaceID: route.WorkspaceID,
-		})
-		if getErr != nil {
-			return db.LabrastroMessageRoute{}, ErrRouteNotFound
-		}
-		if current.Revision != expectedRevision {
-			return db.LabrastroMessageRoute{}, ErrRouteRevisionConflict
-		}
-		return db.LabrastroMessageRoute{}, ErrRouteNotFound
-	}
-	if err != nil {
-		return db.LabrastroMessageRoute{}, fmt.Errorf("set message route enabled: %w", err)
-	}
-	if !enabled {
-		s.cancelRouteDeliveries(ctx, route.ID, ErrorCodeRouteDisabled, "route disabled")
-	}
-	return updated, nil
+	return s.setRouteEnabled(ctx, route, member, enabled, expectedRevision)
 }
 
 // DeleteRoute removes the rule and cancels its queued sends. Decisions
@@ -560,42 +461,6 @@ func cancelRouteDeliveriesWith(ctx context.Context, q *db.Queries, routeID pgtyp
 	return err
 }
 
-func (s *Service) cancelRouteDeliveries(ctx context.Context, routeID pgtype.UUID, code, reason string) {
-	cancelled, err := s.Queries.CancelLabrastroMessageDeliveriesByRoute(ctx, db.CancelLabrastroMessageDeliveriesByRouteParams{
-		RouteID:   routeID,
-		ErrorCode: pgtype.Text{String: code, Valid: true},
-		LastError: pgtype.Text{String: reason, Valid: true},
-	})
-	if err != nil {
-		s.logger().Warn("messagedelivery: cancel queued deliveries for route",
-			"route_id", util.UUIDToString(routeID), "error", err)
-		return
-	}
-	for _, d := range cancelled {
-		s.logger().Info("messagedelivery: queued delivery cancelled",
-			"delivery_id", util.UUIDToString(d.ID),
-			"route_id", util.UUIDToString(routeID),
-			"reason_code", code,
-		)
-	}
-}
-
-// CancelInstallationDeliveries stops everything a disconnected bot had not
-// started sending. Wired to the installation revoke path; the worker's own
-// installation re-check covers the race where a claim lands in between.
-func (s *Service) CancelInstallationDeliveries(ctx context.Context, workspaceID, installationID pgtype.UUID) {
-	_, err := s.Queries.CancelLabrastroMessageDeliveriesByInstallation(ctx, db.CancelLabrastroMessageDeliveriesByInstallationParams{
-		WorkspaceID:    workspaceID,
-		InstallationID: installationID,
-		ErrorCode:      pgtype.Text{String: ErrorCodeInstallationRevoked, Valid: true},
-		LastError:      pgtype.Text{String: "installation revoked", Valid: true},
-	})
-	if err != nil {
-		s.logger().Warn("messagedelivery: cancel queued deliveries for installation",
-			"installation_id", util.UUIDToString(installationID), "error", err)
-	}
-}
-
 func isUniqueViolation(err error) bool {
 	if err == nil {
 		return false
@@ -609,63 +474,10 @@ func isUniqueViolation(err error) bool {
 
 // ---- delivery decisions ----
 
-// EnqueueRunDeliveries decides deliveries for one terminal run. Idempotent:
-// the unique dedup key collapses concurrent and repeated invocations into
-// one decision per (source, target). The decision scanner uses the same
-// source-facts and decision assembly with its already-loaded candidate rows.
+// EnqueueRunDeliveries uses the production candidate query and decision writer,
+// restricted to one run. The compensator uses the same path without a run filter.
 func (s *Service) EnqueueRunDeliveries(ctx context.Context, runID pgtype.UUID) (int, error) {
-	run, err := s.Queries.GetAutopilotRun(ctx, runID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, nil
-		}
-		return 0, fmt.Errorf("load run: %w", err)
-	}
-	if !terminalRunStatuses[run.Status] {
-		return 0, nil
-	}
-	ap, err := s.Queries.GetAutopilot(ctx, run.AutopilotID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, nil
-		}
-		return 0, fmt.Errorf("load autopilot: %w", err)
-	}
-	// An archived automation is a stopped source: no new decisions. The
-	// worker separately cancels anything still queued.
-	if ap.Status == "archived" {
-		return 0, nil
-	}
-	routes, err := s.Queries.ListEnabledLabrastroMessageRoutesByAutopilot(ctx, db.ListEnabledLabrastroMessageRoutesByAutopilotParams{
-		WorkspaceID: ap.WorkspaceID,
-		AutopilotID: ap.ID,
-	})
-	if err != nil {
-		return 0, fmt.Errorf("load routes: %w", err)
-	}
-
-	source := sourceFactsFromRun(run)
-	if !source.IssueIDValid && !source.TaskIDValid {
-		task, taskErr := s.Queries.GetAutopilotTaskByRun(ctx, run.ID)
-		if taskErr == nil {
-			source.TaskID, source.TaskIDValid = util.UUIDToString(task.ID), true
-		} else if !errors.Is(taskErr, pgx.ErrNoRows) {
-			return 0, fmt.Errorf("resolve source task: %w", taskErr)
-		}
-	}
-	decided := 0
-	for _, route := range routes {
-		in := s.decisionInputFromSource(ap, route, source)
-		n, err := s.decideDelivery(ctx, ap, in)
-		if err != nil {
-			return decided, err
-		}
-		decided += n
-	}
-	if decided > 0 {
-		s.Notify()
-	}
-	return decided, nil
+	return s.enqueueRunCandidates(ctx, runID, math.MaxInt32)
 }
 
 // sourceFactsFromRun assembles the persisted source evidence from a run row.
@@ -739,80 +551,15 @@ func (s *Service) decideDelivery(ctx context.Context, ap db.Autopilot, in decisi
 		errorCode = pgtype.Text{String: ErrorCodeConditionMismatch, Valid: true}
 	}
 
-	contentJSON, err := json.Marshal(content)
-	if err != nil {
-		return 0, fmt.Errorf("encode content snapshot: %w", err)
-	}
-	targetJSON, err := json.Marshal(target)
-	if err != nil {
-		return 0, fmt.Errorf("encode target snapshot: %w", err)
-	}
-	refJSON, err := json.Marshal(ref)
-	if err != nil {
-		return 0, fmt.Errorf("encode source ref: %w", err)
-	}
-
-	// Parent-integrity (review R3): the decision insert shares a short
-	// transaction with a FOR SHARE lock on the workspace row. The
-	// DeleteWorkspace flow takes that row FOR UPDATE before sweeping, so a
-	// stale compensator snapshot can never commit content-bearing rows
-	// into a deleted workspace: either the delete committed first (row
-	// gone, refuse) or this commit lands first (the delete sweeps it).
-	tx, err := s.Tx.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("begin decision tx: %w", err)
-	}
-	defer tx.Rollback(ctx)
-	qtx := s.Queries.WithTx(tx)
-	if _, err := qtx.LockWorkspaceForMessageDecision(ctx, ap.WorkspaceID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, nil // workspace gone; the source no longer exists
-		}
-		return 0, fmt.Errorf("lock decision parent: %w", err)
-	}
-	rows, err := qtx.CreateLabrastroMessageDelivery(ctx, db.CreateLabrastroMessageDeliveryParams{
-		ID:              dbid.NewV7(),
-		WorkspaceID:     ap.WorkspaceID,
-		RouteID:         in.Route.ID,
-		RouteRevision:   pgtype.Int4{Int32: in.Route.Revision, Valid: true},
-		AutopilotID:     ap.ID,
-		RunID:           mustUUID(in.RunID),
-		DedupKey:        DeliveryDedupKey(in.RunID, util.UUIDToString(in.Route.InstallationID), in.Route.TargetKey),
-		SourceKind:      sourceKindFromRun(in.Run.IssueIDValid, in.RunTaskIDValid, in.Run.Result, in.ExecutionMode),
-		Status:          status,
-		ContentSnapshot: contentJSON,
-		TargetSnapshot:  targetJSON,
-		ShardTotal:      int32(shardTotal),
-		SourceRef:       refJSON,
-		TargetKey:       in.Route.TargetKey,
-		InstallationID:  in.Route.InstallationID,
-		ErrorCode:       errorCode,
+	return s.insertDecision(ctx, sourceDecision{
+		scope: RouteSourceRun, workspaceID: util.UUIDToString(ap.WorkspaceID),
+		autopilotID: ap.ID, runID: mustUUID(in.RunID), sourceRefID: in.RunID,
+		sourceCreatedAt: in.RunCompletedAt,
+		routeID:         in.Route.ID, routeRevision: in.Route.Revision,
+		installationID: in.Route.InstallationID, targetKey: in.Route.TargetKey,
+		kind: ref.ExecutionMode, status: status, errorCode: errorCode.String,
+		target: target, content: content, ref: ref, shardTotal: shardTotal,
 	})
-	if err != nil && !isUniqueViolation(err) {
-		return 0, fmt.Errorf("insert delivery decision: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit delivery decision: %w", err)
-	}
-	// ON CONFLICT DO NOTHING also returns zero rows on duplicate; both
-	// shapes mean "already decided by someone else".
-	if len(rows) == 0 {
-		return 0, nil
-	}
-	if status == DeliveryStatusSuppressed {
-		s.logger().Info("messagedelivery: source suppressed by route condition",
-			"run_id", in.RunID,
-			"route_id", util.UUIDToString(in.Route.ID),
-			"reason_code", ErrorCodeConditionMismatch,
-		)
-		return 1, nil
-	}
-	s.logger().Info("messagedelivery: delivery decision created",
-		"delivery_id", util.UUIDToString(rows[0].ID),
-		"run_id", in.RunID,
-		"route_id", util.UUIDToString(in.Route.ID),
-	)
-	return 1, nil
 }
 
 // buildDecisionPayload renders the frozen content/target/ref triple. This

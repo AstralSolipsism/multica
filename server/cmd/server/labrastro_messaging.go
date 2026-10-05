@@ -2,8 +2,8 @@ package main
 
 // labrastro_messaging.go — assembly for the Labrastro message-delivery
 // module (OL-25). This is the ONE place that wires the module to the rest
-// of the server: main.go and router.go keep only the start/join calls, so
-// the next upstream sync has a single file to re-check for this feature.
+// of the server; router.go delegates HTTP registration to the handler,
+// and main.go owns the worker start/join calls.
 
 import (
 	"log/slog"
@@ -53,7 +53,4 @@ func assembleMessageDelivery(h *handler.Handler, bus *events.Bus) {
 	svc.SubscribeEvents(bus)
 
 	h.MessageDelivery = svc
-	if h.ChannelRouter != nil {
-		h.ChannelRouter.SetConversationHandler(h.HandleChannelConversation)
-	}
 }

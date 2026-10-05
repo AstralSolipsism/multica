@@ -604,22 +604,29 @@ sweeper.
 
 ### Lifecycle stop paths
 
+The handler mounts both HTTP surfaces through `RegisterLabrastroMessageRoutes`.
+Route creation, edits and enable/disable writes share `routes.go`, while
+`decisions.go` locks and checks the route scope, revision and eligibility window
+before inserting either a run or a personal/team decision. Source-specific
+authority and content rules stay at their existing boundaries.
+
 - Route disabled/deleted → queued sends cancelled transactionally. A disabled
-  source route also fences old in-flight claims from starting another shard.
+  route in any scope also fences old in-flight claims from starting another shard.
 - Installation revoked → `lifecycle.StopInstallation` disables routes and
   cancels queued sends for ALL scopes (installation-keyed).
-- **Member removal** → `revokeAndRemoveMember` disables the departing
+- **Member removal** → `lifecycle.StopMember` disables the departing
   member's personal routes and cancels their queued private deliveries in
   the same transaction. Team routes authored by them keep their audit trail
   but the continuous-authorization gate cancels their sends.
-- **Project deletion** → `DeleteProject` disables the project-scoped team
+- **Project deletion** → `lifecycle.StopProject` disables the project-scoped team
   routes, revokes project approvals, and cancels decisions by their frozen
   `source_project_id` inside the delete transaction. Route and approval writes
   take a compatible project lock after external verification; deletion cannot
   leave a newly saved active orphan. A route edited to another project does
   not hide its older decisions from this cleanup.
-- Workspace deletion → the OL-25 sweep covers the new rows (all keyed by
-  `workspace_id`).
+- Workspace deletion → `lifecycle.SweepWorkspace` removes feedback, approvals,
+  receipts, deliveries and routes in that order under the caller's transaction
+  and workspace lock (all keyed by `workspace_id`).
 
 ## OL-27 HTTP API
 

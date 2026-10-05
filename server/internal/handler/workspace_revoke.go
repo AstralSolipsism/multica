@@ -6,9 +6,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	messagedelivery "github.com/multica-ai/multica/server/internal/messagedelivery"
+	"github.com/multica-ai/multica/server/internal/messagedelivery/lifecycle"
 	"github.com/multica-ai/multica/server/internal/service"
-	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -222,22 +221,7 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 			return empty, err
 		}
 	}
-	// Personal notification forwarding stops with the membership (OL-27):
-	// the departing member's inbox routes are disabled and their queued
-	// private deliveries cancelled here, so removal cannot leave a rule
-	// that still forwards to (or from) someone outside the workspace.
-	if _, err := qtx.DisableLabrastroMessagePersonalRoutesByUser(ctx, db.DisableLabrastroMessagePersonalRoutesByUserParams{
-		WorkspaceID:  workspaceID,
-		TargetUserID: userID,
-	}); err != nil {
-		return empty, err
-	}
-	if _, err := qtx.CancelLabrastroMessageDeliveriesByPersonalRecipient(ctx, db.CancelLabrastroMessageDeliveriesByPersonalRecipientParams{
-		WorkspaceID: workspaceID,
-		TargetKey:   messagedelivery.TargetKey(messagedelivery.TargetMember, util.UUIDToString(userID), "", ""),
-		ErrorCode:   pgtype.Text{String: messagedelivery.ErrorCodeRouteDisabled, Valid: true},
-		LastError:   pgtype.Text{String: "member removed; personal route disabled", Valid: true},
-	}); err != nil {
+	if err := lifecycle.StopMember(ctx, qtx, workspaceID, userID); err != nil {
 		return empty, err
 	}
 	if err := qtx.DeleteMember(ctx, memberID); err != nil {

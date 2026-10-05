@@ -31,7 +31,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/notify"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
 // SourceRouteInput is the create/update payload for a personal/team route.
@@ -241,35 +240,10 @@ func (s *Service) CreateSourceRoute(ctx context.Context, member db.Member, in So
 	if err != nil {
 		return db.LabrastroMessageRoute{}, err
 	}
-	var route db.LabrastroMessageRoute
-	err = s.withSourceRouteWrite(ctx, member.WorkspaceID, in.Scope, member, target, true, func(q *db.Queries) error {
-		var writeErr error
-		route, writeErr = q.CreateLabrastroMessageSourceRoute(ctx, db.CreateLabrastroMessageSourceRouteParams{
-			ID:              dbid.NewV7(),
-			WorkspaceID:     member.WorkspaceID,
-			InstallationID:  target.installation.ID,
-			ChannelType:     target.installation.ChannelType,
-			TargetType:      target.targetType,
-			TargetUserID:    target.userID,
-			TargetChatID:    target.chatID,
-			TargetMessageID: target.messageID,
-			TargetThreadID:  target.threadID,
-			TargetKey:       target.targetKey,
-			SourceKind:      in.Scope,
-			ProjectID:       target.projectID,
-			EventTypes:      normalizeEventTypes(in.EventTypes),
-			Enabled:         s.enabledOrDefault(RouteInput{Enabled: in.Enabled}, true, false),
-			CreatedBy:       member.UserID,
-		})
-		return writeErr
+	return s.createRoute(ctx, member.WorkspaceID, member, routeConfig{
+		scope: in.Scope, target: target, conditions: ConditionSuccess, contentMode: ContentSummary,
+		eventTypes: in.EventTypes, enabled: s.enabledOrDefault(RouteInput{Enabled: in.Enabled}, true, false),
 	})
-	if isUniqueViolation(err) {
-		return db.LabrastroMessageRoute{}, ErrRouteAlreadyExists
-	}
-	if err != nil {
-		return db.LabrastroMessageRoute{}, fmt.Errorf("create message source route: %w", err)
-	}
-	return route, nil
 }
 
 // sourceScopeAuthority refuses team-scope configuration to a member below
@@ -328,52 +302,10 @@ func (s *Service) UpdateSourceRoute(ctx context.Context, route db.LabrastroMessa
 	if err != nil {
 		return db.LabrastroMessageRoute{}, err
 	}
-	enabled := s.enabledOrDefault(RouteInput{Enabled: in.Enabled}, false, route.Enabled)
-	var updated db.LabrastroMessageRoute
-	err = s.withSourceRouteWrite(ctx, route.WorkspaceID, route.SourceKind, member, target, true, func(q *db.Queries) error {
-		var writeErr error
-		updated, writeErr = q.UpdateLabrastroMessageSourceRoute(ctx, db.UpdateLabrastroMessageSourceRouteParams{
-			ID:               route.ID,
-			WorkspaceID:      route.WorkspaceID,
-			SourceKind:       route.SourceKind,
-			ExpectedRevision: expectedRevision,
-			InstallationID:   target.installation.ID,
-			ChannelType:      target.installation.ChannelType,
-			TargetType:       target.targetType,
-			TargetUserID:     target.userID,
-			TargetChatID:     target.chatID,
-			TargetMessageID:  target.messageID,
-			TargetThreadID:   target.threadID,
-			TargetKey:        target.targetKey,
-			ProjectID:        target.projectID,
-			EventTypes:       normalizeEventTypes(in.EventTypes),
-			Enabled:          enabled,
-			UpdatedBy:        member.UserID,
-		})
-		if writeErr != nil {
-			return writeErr
-		}
-		if !enabled {
-			return cancelRouteDeliveriesWith(ctx, q, route.ID, ErrorCodeRouteDisabled, "route disabled by edit")
-		}
-		return nil
+	return s.updateRoute(ctx, route, member, expectedRevision, routeConfig{
+		scope: route.SourceKind, target: target, conditions: route.Conditions, contentMode: route.ContentMode,
+		eventTypes: in.EventTypes, enabled: s.enabledOrDefault(RouteInput{Enabled: in.Enabled}, false, route.Enabled),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		current, getErr := s.Queries.GetLabrastroMessageRoute(ctx, db.GetLabrastroMessageRouteParams{
-			ID: route.ID, WorkspaceID: route.WorkspaceID,
-		})
-		if getErr != nil {
-			return db.LabrastroMessageRoute{}, ErrRouteNotFound
-		}
-		if current.Revision != expectedRevision {
-			return db.LabrastroMessageRoute{}, ErrRouteRevisionConflict
-		}
-		return db.LabrastroMessageRoute{}, ErrRouteNotFound
-	}
-	if err != nil {
-		return db.LabrastroMessageRoute{}, fmt.Errorf("update message source route: %w", err)
-	}
-	return updated, nil
 }
 
 // SetSourceRouteEnabled flips a personal/team route's enabled flag. Enable
@@ -384,51 +316,7 @@ func (s *Service) SetSourceRouteEnabled(ctx context.Context, route db.LabrastroM
 	if err := s.sourceRouteAuthority(ctx, route, member); err != nil {
 		return db.LabrastroMessageRoute{}, err
 	}
-	var updated db.LabrastroMessageRoute
-	write := func(q *db.Queries) error {
-		var err error
-		updated, err = q.SetLabrastroMessageSourceRouteEnabled(ctx, db.SetLabrastroMessageSourceRouteEnabledParams{
-			ID:               route.ID,
-			WorkspaceID:      route.WorkspaceID,
-			SourceKind:       route.SourceKind,
-			ExpectedRevision: expectedRevision,
-			Enabled:          enabled,
-			UpdatedBy:        member.UserID,
-		})
-		if err != nil {
-			return err
-		}
-		if !enabled {
-			return cancelRouteDeliveriesWith(ctx, q, route.ID, ErrorCodeRouteDisabled, "route disabled")
-		}
-		return nil
-	}
-	var err error
-	if enabled {
-		target, resolveErr := s.ResolveSourceTarget(ctx, route.WorkspaceID, route.SourceKind, sourceRouteInputFromRoute(route))
-		if resolveErr != nil {
-			return updated, resolveErr
-		}
-		err = s.withSourceRouteWrite(ctx, route.WorkspaceID, route.SourceKind, member, target, true, write)
-	} else {
-		err = s.withParentLock(ctx, route.WorkspaceID, write)
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		current, getErr := s.Queries.GetLabrastroMessageRoute(ctx, db.GetLabrastroMessageRouteParams{
-			ID: route.ID, WorkspaceID: route.WorkspaceID,
-		})
-		if getErr != nil {
-			return db.LabrastroMessageRoute{}, ErrRouteNotFound
-		}
-		if current.Revision != expectedRevision {
-			return db.LabrastroMessageRoute{}, ErrRouteRevisionConflict
-		}
-		return db.LabrastroMessageRoute{}, ErrRouteNotFound
-	}
-	if err != nil {
-		return db.LabrastroMessageRoute{}, fmt.Errorf("set message source route enabled: %w", err)
-	}
-	return updated, nil
+	return s.setRouteEnabled(ctx, route, member, enabled, expectedRevision)
 }
 
 // sourceRouteInputFromRoute rebuilds the payload a route currently holds —
