@@ -10,3 +10,4 @@ export {
   larkMessageAnchorsInfiniteOptions,
   larkPrivateChatCandidatesOptions,
 } from "./queries";
+export { isEditableLarkConversation } from "./schema";

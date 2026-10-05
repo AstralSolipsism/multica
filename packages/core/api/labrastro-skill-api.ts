@@ -34,7 +34,7 @@ import {
 
 declare module "./client" {
   interface ApiClient {
-    importSkillParsed(data: { url: string }): Promise<Skill | null>;
+    importSkillParsed(wsId: string, data: { url: string }): Promise<Skill | null>;
     getSkillFolderTree(wsId: string): Promise<SkillFolderTree | null>;
     listSkillPackages(wsId: string): Promise<SkillPackage[] | null>;
     getSkillPackage(wsId: string, packageId: string): Promise<SkillPackage | null>;
@@ -95,9 +95,10 @@ const labrastroSkillApi: Pick<ApiClient, LabrastroSkillApiMethod> & ThisType<Api
   // (null) rather than synthesizing a skill the server may not have made.
   // Upstream `importSkill` keeps its raw `Promise<Skill>` contract; the
   // fork's URL import calls this instead.
-  async importSkillParsed(data: { url: string }): Promise<Skill | null> {
+  async importSkillParsed(wsId: string, data: { url: string }): Promise<Skill | null> {
     const raw = await clientFetch<unknown>(this, "/api/skills/import", {
       method: "POST",
+      headers: workspacePinnedHeaders(wsId),
       body: JSON.stringify(data),
     });
     return parseWithFallback(raw, SkillSchema, null, {

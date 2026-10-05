@@ -32,6 +32,33 @@ func TestKimiEnumerateOwnedListenPorts_LiveSocket(t *testing.T) {
 	}
 }
 
+// Before accept, Linux reports uid=0 inode=0 even for an established socket.
+// That row must not prove ownership when the daemon itself happens to be root.
+func TestKimiEstablishedPeerProof_UnacceptedConnection(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	conn, err := net.DialTimeout("tcp", ln.Addr().String(), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if kimiEstablishedPeerOwnedByUser(conn) {
+		t.Fatal("unaccepted connection proved peer ownership")
+	}
+	// Accept assigns an inode and owner; the same connection now proves the uid.
+	peer, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = peer.Close() }()
+	if !kimiEstablishedPeerOwnedByUser(conn) {
+		t.Fatal("accepted same-user connection did not prove peer ownership")
+	}
+}
+
 // The production dialer (round enumeration + established-peer proof live)
 // against a real same-user server passes end to end, so the hardening does
 // not break the happy path.

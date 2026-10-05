@@ -2,6 +2,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@multica/core/api";
 import { EditDependenciesModal } from "./edit-dependencies";
 
 const mocks = vi.hoisted(() => ({
@@ -65,31 +66,10 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ setQueryData: mocks.setQueryData }),
 }));
 
-// Local mirror of the real dependencyErrorDetails contract (core/api is
-// mocked here because api.searchIssues must be stubbed): reason_code gated on
-// the dependency_ prefix, body projection passed through.
-class TestApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-    readonly body?: unknown,
-  ) {
-    super(message);
-  }
-}
-vi.mock("@multica/core/api", () => ({
-  api: { searchIssues: mocks.search },
-  clientErrorMessage: (err: unknown) =>
-    err instanceof TestApiError && err.status >= 400 && err.status < 500 ? err.message : undefined,
-  dependencyErrorDetails: (err: unknown) => {
-    if (!(err instanceof TestApiError) || !err.body || typeof err.body !== "object") return null;
-    const body = err.body as { reason_code?: unknown; dependencies?: unknown };
-    if (typeof body.reason_code !== "string" || !body.reason_code.startsWith("dependency_")) {
-      return null;
-    }
-    return { reasonCode: body.reason_code, dependencies: body.dependencies ?? null };
-  },
-}));
+vi.mock("@multica/core/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@multica/core/api")>();
+  return { ...actual, api: { ...actual.api, searchIssues: mocks.search } };
+});
 
 // The prerequisite rows have their own suite; here a thin list stub exposes
 // the add/remove/source actions the editor wires up.
@@ -307,13 +287,18 @@ describe("EditDependenciesModal", () => {
   it("REVIEW preserves a concurrently added prerequisite when retrying the user removal", async () => {
     // The server refused v1 and attached the current (v2) projection.
     mocks.save.mockRejectedValueOnce(
-      new TestApiError("conflict", 409, {
+      new ApiError("conflict", 409, "Conflict", {
         error: "version conflict",
         reason_code: "dependency_version_conflict",
-        dependencies: view({
-          blockedBy: [prereq("issue-8", "MUL-8")],
-          dependencyVersion: "v2",
-        }),
+        dependencies: {
+          blocked_by: [{
+            issue_id: "issue-8", identifier: "MUL-8", title: "MUL-8",
+            status: "in_progress", status_category: "in_progress", satisfied: false,
+            source_edges: ["edge-1"], inherited_from: [], descendant_count: 0,
+          }],
+          inherited_blocked_by: [], blocking: [], unsatisfied: [],
+          has_restricted_blockers: false, dependency_version: "v2",
+        },
       }),
     );
     render(<EditDependenciesModal onClose={vi.fn()} data={{ issueId: "issue-1" }} />);
@@ -338,7 +323,7 @@ describe("EditDependenciesModal", () => {
   it("explains a structural rejection and never closes the dialog", async () => {
     const onClose = vi.fn();
     mocks.save.mockRejectedValueOnce(
-      new TestApiError("cycle", 409, {
+      new ApiError("cycle", 409, "Conflict", {
         error: "cycle",
         reason_code: "dependency_cycle",
       }),
@@ -354,7 +339,7 @@ describe("EditDependenciesModal", () => {
 
   it("explains the permission refusal when removing an unfinished prerequisite", async () => {
     mocks.save.mockRejectedValueOnce(
-      new TestApiError("forbidden", 403, {
+      new ApiError("forbidden", 403, "Forbidden", {
         error: "not allowed",
         reason_code: "dependency_change_not_allowed",
       }),

@@ -227,7 +227,7 @@ func (s *Service) executeTestSend(ctx context.Context, route db.LabrastroMessage
 			Status:          DeliveryStatusQueued,
 			ContentSnapshot: contentJSON,
 			TargetSnapshot:  targetJSON,
-			ShardTotal:      int32(len(splitShards(content.Text))),
+			ShardTotal:      int32(len(splitShards(NewMessage(content.Text, content.Link)))),
 			SourceRef:       refJSON,
 			TargetKey:       route.TargetKey,
 			InstallationID:  route.InstallationID,
@@ -324,7 +324,6 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 			detail: "corrupt content snapshot: " + err.Error()}
 	}
 
-	shards := splitShards(content.Text)
 	sourceURL := content.Link
 	if sourceURL == "" {
 		sourceURL = s.AppURL
@@ -334,6 +333,7 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 			}
 		}
 	}
+	shards := splitShards(NewMessage(content.Text, sourceURL))
 	for i, shard := range shards {
 		// Claim (or re-read) the shard's receipt row. The send UUID is
 		// written once and never changes, so a retry replays the SAME
@@ -407,13 +407,11 @@ func (s *Service) sendDelivery(ctx context.Context, d db.LabrastroMessageDeliver
 		}
 		res, err := s.Sender.Send(ctx, SendRequest{
 			DeliveryID:     util.UUIDToString(d.ID),
-			SourceURL:      sourceURL,
-			SourceRunID:    util.UUIDToString(d.RunID),
 			WorkspaceID:    util.UUIDToString(d.WorkspaceID),
 			InstallationID: snap.Installation,
 			ChannelType:    snap.ChannelType,
 			Target:         address,
-			Text:           shard,
+			Message:        shard,
 			SendUUID:       receipt.SendUuid,
 			ShardIndex:     i,
 			ShardTotal:     len(shards),

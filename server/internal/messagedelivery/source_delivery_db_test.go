@@ -644,6 +644,9 @@ func TestSourceTestSend_RealPathWithSourceRoute(t *testing.T) {
 	if sender.count() != 1 {
 		t.Fatalf("test send dialed the platform %d times", sender.count())
 	}
+	if source := sender.requests()[0].Message.Source; source != SourceLink(ts.AppURL) {
+		t.Fatalf("source route test send source = %q, want AppURL %q", source, ts.AppURL)
+	}
 }
 
 // TestSourceWorker_EndToEndSendsThroughSharedChain ties it together: a team
