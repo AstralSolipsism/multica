@@ -309,46 +309,39 @@ func evaluateCondition(ctx context.Context, tx pgx.Tx, q *db.Queries, w db.Issue
 // They only prompt an early evaluation and never become run inputs.
 const conditionHintSQL = "wakeup_id=$1 AND processed_at IS NULL AND event_type NOT IN ('condition.met','wakeup.timeout','wakeup.manual')"
 
-// consumeConditionHints marks the pending hints processed. It also returns the
-// agent runs that caused them, or nil when any hint came from elsewhere (a
-// person, the platform, or several merged events), so a satisfied condition
-// can tell whether the target agent brought it about itself.
-func consumeConditionHints(ctx context.Context, tx pgx.Tx, id pgtype.UUID) (bool, []string, error) {
+// consumeConditionHints retains every known task source for authorization.
+// Incomplete provenance only disables self-acknowledgement; it must never erase
+// a known external cause when another hint came from a human or was coalesced.
+func consumeConditionHints(ctx context.Context, tx pgx.Tx, id pgtype.UUID) (bool, wakeupSources, error) {
 	rows, err := tx.Query(ctx, "UPDATE issue_wakeup_receipt SET processed_at=now() WHERE "+conditionHintSQL+" RETURNING payload", id)
 	if err != nil {
-		return false, nil, err
+		return false, wakeupSources{}, err
 	}
 	defer rows.Close()
-	hinted, complete := false, true
-	var causes []string
+	hinted := false
+	var causes wakeupSources
 	for rows.Next() {
 		var raw []byte
 		if err = rows.Scan(&raw); err != nil {
-			return false, nil, err
+			return false, causes, err
 		}
 		hinted = true
-		var p struct {
-			SourceTaskID  string   `json:"source_task_id"`
-			SourceTaskIDs []string `json:"source_task_ids"`
-			Count         int64    `json:"coalesced_count"`
+		var source wakeupSources
+		if err = json.Unmarshal(raw, &source); err != nil {
+			return false, causes, err
 		}
-		_ = json.Unmarshal(raw, &p)
-		switch {
-		case p.Count <= 1 && p.SourceTaskID != "":
-			causes = append(causes, p.SourceTaskID)
-		case len(p.SourceTaskIDs) > 0:
-			causes = append(causes, p.SourceTaskIDs...)
-		default:
-			complete = false
+		causes.TaskIDs = append(causes.TaskIDs, source.TaskIDs...)
+		if source.TaskID != "" {
+			causes.TaskIDs = append(causes.TaskIDs, source.TaskID)
 		}
+		if source.RootTaskID != "" {
+			causes.Conflict = causes.Conflict || (causes.RootTaskID != "" && causes.RootTaskID != source.RootTaskID)
+			causes.RootTaskID = source.RootTaskID
+		}
+		causes.Incomplete = causes.Incomplete || source.Incomplete || source.Count > 1 || (source.TaskID == "" && len(source.TaskIDs) == 0)
+		causes.Conflict = causes.Conflict || source.Conflict
 	}
-	if err = rows.Err(); err != nil {
-		return false, nil, err
-	}
-	if !complete {
-		causes = nil
-	}
-	return hinted, causes, nil
+	return hinted, causes, rows.Err()
 }
 
 // pollCondition evaluates a condition rule when it is due or a related event
@@ -542,12 +535,19 @@ func stageProgress(children []subIssue) (bool, string, map[string]any) {
 }
 
 // recordConditionMet turns a newly satisfied condition into one run input. It
-// names the agent runs whose changes satisfied it, when all of them are known.
-func recordConditionMet(ctx context.Context, q *db.Queries, w db.IssueWakeup, observed map[string]any, causes []string, now time.Time) error {
+// names all known source runs; only complete evidence permits self-acknowledgement.
+func recordConditionMet(ctx context.Context, q *db.Queries, w db.IssueWakeup, observed map[string]any, causes wakeupSources, now time.Time) error {
 	facts := map[string]any{"condition": json.RawMessage(w.Condition), "observed": observed, "observed_at": now.UTC().Format(time.RFC3339)}
-	if len(causes) > 0 {
-		facts["source_task_ids"] = causes
+	if len(causes.TaskIDs) > 0 {
+		facts["source_task_ids"] = causes.TaskIDs
 	}
+	// The grant anchor is authorization evidence, not another acting task for
+	// self-acknowledgement. It can belong to a different issue or chat entirely.
+	if causes.RootTaskID != "" {
+		facts["conversation_root_task_id"] = causes.RootTaskID
+	}
+	facts["sources_incomplete"] = causes.Incomplete
+	facts["conversation_roots_conflict"] = causes.Conflict
 	payload, _ := json.Marshal(facts)
 	_, err := q.RecordWakeupReceipt(ctx, db.RecordWakeupReceiptParams{ID: dbid.NewV7(), WakeupID: w.ID, Revision: w.Revision, EventKey: "condition:" + now.UTC().Format(time.RFC3339Nano), EventType: wakeupConditionEventType, Payload: payload})
 	return err

@@ -234,7 +234,9 @@ ORDER BY w.updated_at DESC LIMIT 200;
 -- person. A rule that fires meanwhile keeps its inputs for that run instead
 -- of queuing another.
 SELECT id FROM agent_task_queue WHERE issue_id= @issue_id AND agent_id= @agent_id AND status='queued'
- AND originator_user_id= @originator_user_id::uuid ORDER BY created_at,id LIMIT 1;
+ AND originator_user_id= @originator_user_id::uuid
+ AND conversation_root_task_id IS NOT DISTINCT FROM sqlc.narg(conversation_root_task_id)::uuid
+ ORDER BY created_at,id LIMIT 1;
 
 -- name: ListWaitingWakeups :many
 -- Rules on the issue with inputs a run of this agent can take along: the

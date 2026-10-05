@@ -10,7 +10,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -82,9 +81,11 @@ func acknowledgedBySelf(ctx context.Context, q *db.Queries, w db.IssueWakeup, ag
 			}
 			var p struct {
 				SourceTaskIDs []string `json:"source_task_ids"`
+				Incomplete    bool     `json:"sources_incomplete"`
+				Conflict      bool     `json:"conversation_roots_conflict"`
 			}
 			_ = json.Unmarshal(r.Payload, &p)
-			if len(p.SourceTaskIDs) == 0 {
+			if len(p.SourceTaskIDs) == 0 || p.Incomplete || p.Conflict {
 				return false, nil
 			}
 			for _, raw := range p.SourceTaskIDs {
@@ -124,23 +125,15 @@ func acknowledgedBySelf(ctx context.Context, q *db.Queries, w db.IssueWakeup, ag
 
 // hasWaitingRun reports whether a run of the agent that runs as this person
 // is waiting to start on the issue. A firing then keeps its inputs for it.
-func hasWaitingRun(ctx context.Context, q *db.Queries, issueID, agentID, runAs pgtype.UUID) (bool, error) {
-	if !runAs.Valid {
+func hasWaitingRun(ctx context.Context, q *db.Queries, issueID, agentID pgtype.UUID, authority wakeupAuthority) (bool, error) {
+	if !authority.UserID.Valid {
 		return false, nil
 	}
-	_, err := q.FindWaitingIssueRun(ctx, db.FindWaitingIssueRunParams{IssueID: issueID, AgentID: agentID, OriginatorUserID: runAs})
+	_, err := q.FindWaitingIssueRun(ctx, db.FindWaitingIssueRunParams{IssueID: issueID, AgentID: agentID, OriginatorUserID: authority.UserID, ConversationRootTaskID: authority.RootTaskID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	return err == nil, err
-}
-
-// childDoneRunAs is who a child_done run for this agent runs as: whoever
-// caused the parent to exist, as a run the parent's own assignment would
-// start.
-func (s *IssueWakeupService) childDoneRunAs(ctx context.Context, issue db.Issue, agent db.Agent) (attribution.Result, error) {
-	attr := s.Tasks.attributionForIssueTask(ctx, issue, pgtype.UUID{}, attribution.SourceDelegation, pgtype.UUID{})
-	return s.Tasks.applyAttributionFallback(ctx, attr, agent)
 }
 
 // joinedWakeupNote is what the run is told about a rule that joined it.
@@ -319,7 +312,7 @@ func (s *IssueWakeupService) reserveForRun(ctx context.Context, q *db.Queries, i
 		}
 		return release()
 	}
-	instruction, ok, err := s.mayJoin(ctx, q, issue, task, w)
+	instruction, ok, err := s.mayJoin(ctx, q, issue, task, w, receipts)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -350,7 +343,7 @@ func (s *IssueWakeupService) reserveForRun(ctx context.Context, q *db.Queries, i
 // mayJoin reports whether the run is one the rule's own run would be: the
 // same agent, run as the same person, who may still use the agent. It returns
 // the instruction the run gets.
-func (s *IssueWakeupService) mayJoin(ctx context.Context, q *db.Queries, issue db.Issue, task db.AgentTaskQueue, w db.IssueWakeup) (string, bool, error) {
+func (s *IssueWakeupService) mayJoin(ctx context.Context, q *db.Queries, issue db.Issue, task db.AgentTaskQueue, w db.IssueWakeup, receipts []db.IssueWakeupReceipt) (string, bool, error) {
 	agent, err := q.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: task.AgentID, WorkspaceID: w.WorkspaceID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, nil
@@ -359,7 +352,7 @@ func (s *IssueWakeupService) mayJoin(ctx context.Context, q *db.Queries, issue d
 		return "", false, err
 	}
 	if !w.SystemRule.Valid {
-		if w.AgentID != task.AgentID || w.CreatedBy != task.OriginatorUserID || (w.Mode == "once" && w.LastTaskID.Valid) {
+		if w.AgentID != task.AgentID || (w.Mode == "once" && w.LastTaskID.Valid) {
 			return "", false, nil
 		}
 		if err := s.authorize(ctx, q, w.WorkspaceID, w.CreatedBy, agent); err != nil {
@@ -368,7 +361,8 @@ func (s *IssueWakeupService) mayJoin(ctx context.Context, q *db.Queries, issue d
 			}
 			return "", false, err
 		}
-		return w.Instruction, true, nil
+		ok, err := s.wakeupMayJoin(ctx, q, issue, agent, task, w, receipts)
+		return w.Instruction, ok, err
 	}
 	if !w.Enabled || issuestatus.Effective(ctx, q, issue.WorkspaceID, issue.Status) == "backlog" {
 		return "", false, nil
@@ -377,8 +371,8 @@ func (s *IssueWakeupService) mayJoin(ctx context.Context, q *db.Queries, issue d
 	if err != nil || target.Agent.ID != task.AgentID {
 		return "", false, err
 	}
-	runAs, err := s.childDoneRunAs(ctx, issue, agent)
-	if err != nil || runAs.UserID != task.OriginatorUserID {
+	ok, err := s.wakeupMayJoin(ctx, q, issue, agent, task, w, receipts)
+	if err != nil || !ok {
 		return "", false, err
 	}
 	var settings []byte

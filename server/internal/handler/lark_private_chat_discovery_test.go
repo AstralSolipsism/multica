@@ -150,7 +150,7 @@ func TestPrivateChatDiscoveryConsentLifecycle(t *testing.T) {
 	if inputs, runs, _ := f.counts(t); inputs != 1 || runs != 1 {
 		t.Fatal("revoked conversation ran")
 	}
-	if err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, f.task(t), parseUUID(testWorkspaceID)); err == nil {
+	if _, err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, f.task(t), parseUUID(testWorkspaceID)); err == nil {
 		t.Fatal("revoked grant still authorizes task tools")
 	}
 }

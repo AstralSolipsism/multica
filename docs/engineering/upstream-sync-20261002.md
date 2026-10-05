@@ -66,6 +66,20 @@ chat session or accepting a turn:
    Frozen grants and the conversation-root reference continue to govern
    retries, delegation and revocation.
 
+For external task tokens, `channel.AuthorizeConversationTask` returns the
+validated frozen grantor. The fork middleware helper uses that user for both
+`X-User-ID` and `auth.Identity.UserID`; the runtime owner's token-row user is
+not the collaboration principal. Agent/task identity remains the executing
+agent/task. Membership, administrative permissions and temporary-user disable
+checks therefore apply to the grantor. Ordinary member credentials and
+first-party task tokens retain their existing identity behavior.
+
+Comment edits and deletion (including keep-replies) now require the agent's
+own authorship or the grantor's admin role. Attachment deletion uses the
+grantor's role and the existing member-uploader check. That endpoint does not
+recognize agent uploaders, so a non-admin grantor cannot delete even an agent's
+own upload; uploads and downloads still work and retain agent authorship.
+
 Workspace administration does not authorize private-agent invocation. The
 existing ownership/`public_to` rules are retained for the grantor rather than
 replaced with the external speaker's optional account binding.
@@ -96,13 +110,22 @@ webhook credentials, MCP configuration or credential lists. Denials return
 
 An additional real-router regression found that assigning an existing
 member-created issue from an external task lost its ancestry: the new run had a
-NULL root and would receive ordinary task authority. A request-scoped external
-task context now reaches the **shared issue-run attribution function**, which
-classifies that assign/promote as delegation from the actual caller. Existing
-comment-source classification and first-party behavior remain. This second
-shared boundary is necessary to make the allowed operations preserve the
-policy; an HTTP method allowlist alone cannot do that. It adds no per-feature
-denial checks or new persistence model.
+NULL root and would receive ordinary task authority. Request-scoped external
+task context reaches the shared issue-run attribution function for immediate
+assign/promote. Scheduler dispatch additionally classifies persisted child
+event and wakeup receipt source tasks, so a lock timeout cannot turn the same
+external action into a first-party run. Event wakeups created by members use
+the external source's grantor and root when an external action fires them.
+Missing source history, revoked grants and conflicting roots fail closed.
+
+Migration `9009_labrastro_wakeup_conversation_provenance` retains a bounded
+external-root summary in the existing receipt payload when events coalesce;
+a later human event cannot erase it. Condition receipts retain known sources
+even when other changes have no source task. Wakeup joining and queued-input
+merging require the same human and conversation root. External quick-create
+origins must be the current task or a persisted execution ancestor, in addition
+to the existing agent/context/workspace checks. Unrelated and sibling origins
+return 403. These checks do not broaden the HTTP allowlist.
 
 The lookup resolves the real production Chi route, with a separate route
 context. A newly added literal `/api/issues/future-secret` cannot inherit the
@@ -110,8 +133,8 @@ permission of `/api/issues/{id}`. Missing routing context and unknown methods or
 routes fail closed. Existing daemon and plugin credential boundaries remain
 separate; the external task token gains no daemon or plugin credential.
 
-The production route inventory currently contains **443 user-authenticated
-routes: 60 allowed and 383 denied**, plus 69 routes with separate authentication
+The production route inventory currently contains **457 user-authenticated
+routes: 60 allowed and 397 denied**, plus 69 routes with separate authentication
 or public/capability handling. The test calls every denied user route with a
 real, otherwise-valid external task token and requires the central error code.
 It also records method, route, authentication boundary and decision in
@@ -159,6 +182,10 @@ removing 564 means the final implementation does not track consent on historical
 manual wakeup rules. Do not deploy this version with such rules still active.
 Before reopening external conversation grants, an operator must:
 
+- Run agents with external-conversation grants on isolated runtimes. The runtime
+  host's `~/.multica/config.json` stores the owner's CLI token; an agent with
+  local shell access can use that credential to bypass the task-token HTTP
+  allowlist. Grantor identity and HTTP policy are not host isolation.
 - Pause external conversation input and drain/cancel its in-flight work while
   retiring the old rules, including queued tasks and joined wakeup instructions.
 - Disable external-origin or unverified manual wakeups, Autopilots and team

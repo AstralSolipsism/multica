@@ -445,6 +445,9 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			return IssueCreateResult{}, fmt.Errorf("persist source context: %w", err)
 		}
 	} else if p.OriginType.Valid && p.OriginType.String == "quick_create" && p.OriginID.Valid {
+		if err := validateConversationQuickCreateOrigin(ctx, qtx, p.WorkspaceID, p.OriginID); err != nil {
+			return IssueCreateResult{}, err
+		}
 		task, taskErr := qtx.GetAgentTaskInWorkspace(ctx, db.GetAgentTaskInWorkspaceParams{
 			ID: p.OriginID, WorkspaceID: p.WorkspaceID,
 		})

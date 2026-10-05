@@ -123,7 +123,7 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				userID := uuidToString(tt.UserID)
 				task, taskErr := queries.GetAgentTask(r.Context(), tt.TaskID)
 				if taskErr == nil {
-					taskErr = channel.AuthorizeConversationTask(r.Context(), queries, task, tt.WorkspaceID)
+					userID, taskErr = conversationTaskUser(r.Context(), queries, task, tt.WorkspaceID, userID)
 				}
 				if taskErr != nil {
 					status := http.StatusServiceUnavailable

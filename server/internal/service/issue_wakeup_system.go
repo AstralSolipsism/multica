@@ -220,9 +220,10 @@ func (s *IssueWakeupService) processChildEvents(ctx context.Context, parentID pg
 		changes = append(changes, kind)
 	}
 	hint := map[string]any{"changes": changes}
-	if allSourced && len(sources) > 0 {
+	if len(sources) > 0 {
 		hint["source_task_ids"] = sources
 	}
+	hint["sources_incomplete"] = !allSourced
 	payload, _ := json.Marshal(hint)
 	key := "children:" + util.UUIDToString(events[len(events)-1].ID)
 	for _, w := range rules {
@@ -460,9 +461,7 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	// A parked parent holds: nothing fires and nothing is marked as seen, so
 	// a stage that closed meanwhile wakes the assignee once it leaves backlog.
 	if issuestatus.Effective(ctx, q, issue.WorkspaceID, issue.Status) == "backlog" {
-		if _, _, err = consumeConditionHints(ctx, tx, w.ID); err != nil {
-			return err
-		}
+		// Keep the persisted causes until this parent can dispatch.
 		return tx.Commit(ctx)
 	}
 	var now time.Time
@@ -588,6 +587,14 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	} else {
 		instruction.Instruction = ChildDoneInstruction(w.Instruction, nil)
 	}
+	authority, err := s.wakeupRunAuthority(ctx, q, issue, agent, w, receipts)
+	if err != nil {
+		return err
+	}
+	if taskExists && !authority.matches(task) {
+		// Inputs with different consent wait for a separate run.
+		return commit()
+	}
 	noteText, evidence := mergeWakeupEvidence(instruction, task, receipts)
 	if taskExists {
 		task, err = q.ReplaceWakeupEvidence(ctx, db.ReplaceWakeupEvidenceParams{ID: task.ID, HandoffNote: pgtype.Text{String: noteText, Valid: true}, WakeupEvidence: evidence})
@@ -616,11 +623,8 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 		}
 		return commit()
 	}
-	attr, err := s.childDoneRunAs(ctx, issue, agent)
-	if err != nil {
-		return err
-	}
-	waiting, err := hasWaitingRun(ctx, q, issue.ID, agent.ID, attr.UserID)
+	attr := authority.Result
+	waiting, err := hasWaitingRun(ctx, q, issue.ID, agent.ID, authority)
 	if err != nil {
 		return err
 	}

@@ -685,20 +685,28 @@ func (q *Queries) FindPendingWakeupTask(ctx context.Context, wakeupID string) (A
 
 const findWaitingIssueRun = `-- name: FindWaitingIssueRun :one
 SELECT id FROM agent_task_queue WHERE issue_id= $1 AND agent_id= $2 AND status='queued'
- AND originator_user_id= $3::uuid ORDER BY created_at,id LIMIT 1
+ AND originator_user_id= $3::uuid
+ AND conversation_root_task_id IS NOT DISTINCT FROM $4::uuid
+ ORDER BY created_at,id LIMIT 1
 `
 
 type FindWaitingIssueRunParams struct {
-	IssueID          pgtype.UUID `json:"issue_id"`
-	AgentID          pgtype.UUID `json:"agent_id"`
-	OriginatorUserID pgtype.UUID `json:"originator_user_id"`
+	IssueID                pgtype.UUID `json:"issue_id"`
+	AgentID                pgtype.UUID `json:"agent_id"`
+	OriginatorUserID       pgtype.UUID `json:"originator_user_id"`
+	ConversationRootTaskID pgtype.UUID `json:"conversation_root_task_id"`
 }
 
 // A run of the agent on the issue that has not been claimed and runs as this
 // person. A rule that fires meanwhile keeps its inputs for that run instead
 // of queuing another.
 func (q *Queries) FindWaitingIssueRun(ctx context.Context, arg FindWaitingIssueRunParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, findWaitingIssueRun, arg.IssueID, arg.AgentID, arg.OriginatorUserID)
+	row := q.db.QueryRow(ctx, findWaitingIssueRun,
+		arg.IssueID,
+		arg.AgentID,
+		arg.OriginatorUserID,
+		arg.ConversationRootTaskID,
+	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err

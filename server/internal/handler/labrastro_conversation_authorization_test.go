@@ -103,7 +103,7 @@ func TestConversationLineageBoundaries(t *testing.T) {
 				if depth < 64 {
 					continue
 				}
-				err = channel.AuthorizeConversationTask(ctx, f.h.Queries, head, parseUUID(testWorkspaceID))
+				_, err = channel.AuthorizeConversationTask(ctx, f.h.Queries, head, parseUUID(testWorkspaceID))
 				if err != nil {
 					t.Fatalf("depth %d: %v", depth, err)
 				}
@@ -120,7 +120,7 @@ func TestConversationLineageBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := channel.AuthorizeConversationTask(ctx, f.h.Queries, ordinary, parseUUID(testWorkspaceID)); err != nil {
+	if _, err := channel.AuthorizeConversationTask(ctx, f.h.Queries, ordinary, parseUUID(testWorkspaceID)); err != nil {
 		t.Fatalf("ordinary chain was blocked: %v", err)
 	}
 	for _, missing := range []bool{false, true} {
@@ -134,13 +134,13 @@ func TestConversationLineageBoundaries(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := channel.AuthorizeConversationTask(ctx, f.h.Queries, task, parseUUID(testWorkspaceID)); !errors.Is(err, channel.ErrConversationDenied) {
+		if _, err := channel.AuthorizeConversationTask(ctx, f.h.Queries, task, parseUUID(testWorkspaceID)); !errors.Is(err, channel.ErrConversationDenied) {
 			t.Fatalf("missing=%v lineage should fail closed: %v", missing, err)
 		}
 	}
 	// A new human action is independently authorized even when its historical
 	// delegation anchor is no longer readable. No database access is needed.
-	if err := channel.AuthorizeConversationTask(ctx, nil, db.AgentTaskQueue{
+	if _, err := channel.AuthorizeConversationTask(ctx, nil, db.AgentTaskQueue{
 		OriginatorSource:    pgtype.Text{String: "direct_human", Valid: true},
 		DelegatedFromTaskID: root.ID,
 	}, parseUUID(testWorkspaceID)); err != nil {
@@ -218,11 +218,11 @@ func TestConversationRootSurvivesIntermediateIssueDeletion(t *testing.T) {
 			if task.ConversationRootTaskID.Valid != external {
 				t.Fatalf("wrong root stamp after parent deletion: %+v", task.ConversationRootTaskID)
 			}
-			if err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, task, parseUUID(testWorkspaceID)); err != nil {
+			if _, err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, task, parseUUID(testWorkspaceID)); err != nil {
 				t.Fatalf("ordinary retention changed valid authority: %v", err)
 			}
 			dbfx.Exec(t, "UPDATE channel_installation SET config=config-'conversation' WHERE id=$1", f.install)
-			err = channel.AuthorizeConversationTask(context.Background(), f.h.Queries, task, parseUUID(testWorkspaceID))
+			_, err = channel.AuthorizeConversationTask(context.Background(), f.h.Queries, task, parseUUID(testWorkspaceID))
 			if external && !errors.Is(err, channel.ErrConversationDenied) {
 				t.Fatalf("external descendant escaped revocation: %v", err)
 			}
@@ -247,7 +247,7 @@ func TestConversationMissingRootNeverBecomesOrdinary(t *testing.T) {
 	if task.ConversationRootTaskID != root.ID {
 		t.Fatal("root deletion cleared external provenance")
 	}
-	if err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, task, parseUUID(testWorkspaceID)); !errors.Is(err, channel.ErrConversationDenied) {
+	if _, err := channel.AuthorizeConversationTask(context.Background(), f.h.Queries, task, parseUUID(testWorkspaceID)); !errors.Is(err, channel.ErrConversationDenied) {
 		t.Fatalf("missing root granted authority: %v", err)
 	}
 }

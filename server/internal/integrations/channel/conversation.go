@@ -96,16 +96,22 @@ func conversationLookupError(err error) error {
 	return err
 }
 
+// ConversationSubject is the frozen grantor, returned only after live consent,
+// workspace membership and invocation rights have all been validated.
+type ConversationSubject struct {
+	UserID pgtype.UUID
+}
+
 // AuthorizeConversationTask checks only work carrying the persisted external
 // conversation root. The database copies this reference on retry/delegation.
 // Ordinary task history may be deleted without changing its copied human
 // authority; an external task still checks its one frozen grant and live consent.
-func AuthorizeConversationTask(ctx context.Context, q *db.Queries, task db.AgentTaskQueue, workspaceID pgtype.UUID) error {
+func AuthorizeConversationTask(ctx context.Context, q *db.Queries, task db.AgentTaskQueue, workspaceID pgtype.UUID) (ConversationSubject, error) {
 	if !task.ConversationRootTaskID.Valid {
 		if task.OriginatorSource.String == ConversationOrigin {
-			return ErrConversationDenied
+			return ConversationSubject{}, ErrConversationDenied
 		}
-		return nil
+		return ConversationSubject{}, nil
 	}
 	executingAgent, originator := task.AgentID, task.OriginatorUserID
 	root := task
@@ -113,33 +119,35 @@ func AuthorizeConversationTask(ctx context.Context, q *db.Queries, task db.Agent
 		var err error
 		root, err = q.GetAgentTask(ctx, task.ConversationRootTaskID)
 		if err != nil {
-			return conversationLookupError(err)
+			return ConversationSubject{}, conversationLookupError(err)
 		}
 	}
 	if root.OriginatorSource.String != ConversationOrigin || root.OriginatorUserID != originator {
-		return ErrConversationDenied
+		return ConversationSubject{}, ErrConversationDenied
 	}
 	delivery, err := q.GetChannelTaskDelivery(ctx, root.ID)
 	if err != nil {
-		return conversationLookupError(err)
+		return ConversationSubject{}, conversationLookupError(err)
 	}
 	cfg, err := ParseConversationConfig(delivery.Config)
 	if err != nil || cfg.Grant == nil || cfg.Grant.AuthorizedBy != util.UUIDToString(originator) {
-		return ErrConversationDenied
+		return ConversationSubject{}, ErrConversationDenied
 	}
 	inst, err := q.GetChannelInstallation(ctx, db.GetChannelInstallationParams{ID: delivery.InstallationID, ChannelType: string(TypeFeishu)})
 	if err != nil {
-		return conversationLookupError(err)
+		return ConversationSubject{}, conversationLookupError(err)
 	}
 	if inst.WorkspaceID != workspaceID || inst.AgentID != root.AgentID {
-		return ErrConversationDenied
+		return ConversationSubject{}, ErrConversationDenied
 	}
 	if err := AuthorizeConversation(ctx, q, inst, cfg.Grant, cfg.ChatID, delivery.ChatType); err != nil {
-		return err
+		return ConversationSubject{}, err
 	}
 	if executingAgent != inst.AgentID {
 		inst.AgentID = executingAgent
-		return AuthorizeConversation(ctx, q, inst, cfg.Grant, cfg.ChatID, delivery.ChatType)
+		if err := AuthorizeConversation(ctx, q, inst, cfg.Grant, cfg.ChatID, delivery.ChatType); err != nil {
+			return ConversationSubject{}, err
+		}
 	}
-	return nil
+	return ConversationSubject{UserID: originator}, nil
 }
