@@ -76,7 +76,7 @@ export function LarkTab() {
   const canManage =
     currentMember?.role === "owner" || currentMember?.role === "admin";
 
-  const { data, isLoading, isError, isFetching } = useQuery({
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
     ...larkInstallationsOptions(wsId),
     enabled: !!wsId,
   });
@@ -110,7 +110,30 @@ export function LarkTab() {
 
   return (
     <div className="space-y-8">
-      {!configured ? (
+      {isError && (
+        <Card role="alert">
+          <CardContent className="space-y-2">
+            <p className="text-body text-destructive">{t(($) => $.lark.load_error)}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isFetching}
+              aria-busy={isFetching}
+              onClick={() => void refetch()}
+            >
+              {t(($) => $.lark.retry)}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+      {isLoading ? (
+        <Card>
+          <CardContent>
+            <p className="text-body text-muted-foreground">{t(($) => $.lark.loading)}</p>
+          </CardContent>
+        </Card>
+      ) : !data ? null : !configured ? (
         <Card>
           <CardContent className="space-y-2">
             <p className="text-body font-medium">{t(($) => $.lark.not_enabled_title)}</p>
@@ -142,13 +165,7 @@ export function LarkTab() {
       ) : (
         <section className="space-y-3">
           <h2 className="text-body font-semibold">{t(($) => $.lark.connected_bots)}</h2>
-          {isLoading ? (
-            <Card>
-              <CardContent>
-                <p className="text-body text-muted-foreground">{t(($) => $.lark.loading)}</p>
-              </CardContent>
-            </Card>
-          ) : installations.length === 0 ? (
+          {installations.length === 0 ? (
             <Card>
               <CardContent className="space-y-2">
                 <p className="text-body font-medium">{t(($) => $.lark.empty_title)}</p>

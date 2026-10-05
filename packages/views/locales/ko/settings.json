@@ -1131,6 +1131,8 @@
     "preview_description": "이 배포 환경에서는 Lark 연결이 활성화되지 않았습니다. 관리자에게 문의하세요.",
     "connected_bots": "연결된 봇",
     "loading": "불러오는 중…",
+    "load_error": "연결된 봇을 불러올 수 없습니다.",
+    "retry": "다시 시도",
     "empty_title": "아직 연결된 봇이 없어요",
     "empty_description_prefix": "이 워크스페이스의 에이전트를 열고",
     "empty_description_cta": "Lark에 연결",

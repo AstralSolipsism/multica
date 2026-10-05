@@ -875,6 +875,8 @@
     "preview_description": "Les connexions Lark ne sont pas activées sur ce déploiement. Contactez votre administrateur.",
     "connected_bots": "Bots connectés",
     "loading": "Chargement…",
+    "load_error": "Impossible de charger les bots connectés.",
+    "retry": "Réessayer",
     "empty_title": "Aucun bot connecté pour l'instant",
     "empty_description_prefix": "Ouvrez un agent de cet espace de travail et cliquez sur",
     "empty_description_cta": "Associer à Lark",

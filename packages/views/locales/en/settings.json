@@ -875,6 +875,8 @@
     "preview_description": "Lark connections aren't enabled on this deployment. Contact your administrator.",
     "connected_bots": "Connected bots",
     "loading": "Loading…",
+    "load_error": "Could not load connected bots.",
+    "retry": "Retry",
     "empty_title": "No bots connected yet",
     "empty_description_prefix": "Open an Agent in this workspace and click",
     "empty_description_cta": "Bind to Lark",
