@@ -69,6 +69,16 @@ or weaker process-killing fallback is part of this synchronization.
 
 ## Retained fork product constraints
 
+`apps/web/tsconfig.json` keeps `declaration` and `declarationMap` set to
+`false`, unlike upstream. The lockfile resolves `fumadocs-mdx` through Zod
+4.4.3 while application code uses 4.3.6; declaration checking across those
+distinct type identities reports TS2742 for inferred Fumadocs exports. The
+Web app does not publish declaration files. Keep these flags until the
+dependency graph shares compatible Zod types, or the inferred exports have
+portable type annotations; restore them only after a clean install passes
+`pnpm typecheck` and the Web build with declaration checking enabled. This
+exception does not require changing dependency versions during sync.
+
 `467_autopilot_trigger_creator_from_autopilot` was deliberately rewritten in both
 directions by OL-49 (`245b1cf07`). Its up now changes column comments only: it must not
 infer a legacy trigger's execution principal from the autopilot's creator, who may never
