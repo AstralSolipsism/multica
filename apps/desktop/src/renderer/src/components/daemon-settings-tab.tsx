@@ -1,3 +1,4 @@
+import { CLI_INSTALL_SH_URL, DOWNLOAD_BASE_URL, LATEST_MANIFEST_URL } from "@multica/core/deployment";
 import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { AlertCircle, Info, LogIn } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
@@ -176,7 +177,10 @@ export function DaemonSettingsTab() {
               // install guide, which would install an uncustomized CLI.
               <span
                 className="inline-flex items-center text-caption text-muted-foreground"
-                title={t(($) => $.desktop.daemon.cli_install_windows_help)}
+                title={t(($) => $.desktop.daemon.cli_install_windows_help, {
+                  downloadsUrl: DOWNLOAD_BASE_URL,
+                  latestManifestUrl: LATEST_MANIFEST_URL,
+                })}
               >
                 {t(($) => $.desktop.daemon.cli_install_windows_label)}
               </span>
@@ -190,7 +194,7 @@ export function DaemonSettingsTab() {
                   // the upstream repo's install guide: installing that CLI
                   // would replace this customized deployment's binary.
                   window.desktopAPI.openExternal(
-                    "https://multica.outlune.com/downloads/install.sh",
+                    CLI_INSTALL_SH_URL,
                   )
                 }
               >

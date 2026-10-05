@@ -462,7 +462,7 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 			want: []string{
 				"multica issue pull-requests <issue-id> --output json",
 				"Default for code-changing issue work",
-				"open or update a PR before posting the final Multica issue comment",
+				"open or update a PR before posting the final Labrastro issue comment",
 				"This is a default, not",
 				"put a routable issue key in the PR **title**",
 				"body links nothing",

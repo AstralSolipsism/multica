@@ -30,7 +30,7 @@ extraResources:
   - from: ../../NOTICE
     to: NOTICE
 protocols:
-  - name: Multica
+  - name: Labrastro
     schemes:
       - multica
 asarUnpack:

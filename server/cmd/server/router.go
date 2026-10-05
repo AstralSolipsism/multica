@@ -470,7 +470,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		Observer: opts.BusinessMetrics,
 	})
 	if entitlementErr != nil {
-		slog.Error("entitlement policy client disabled by malformed Multica Cloud URL", "error", entitlementErr)
+		slog.Error("entitlement policy client disabled by malformed Labrastro Cloud URL", "error", entitlementErr)
 		opts.BusinessMetrics.RecordEntitlementConfigError()
 	} else if entitlementClient.Enabled() {
 		h.Entitlements = entitlementClient

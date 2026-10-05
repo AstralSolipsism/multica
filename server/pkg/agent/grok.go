@@ -666,7 +666,7 @@ func selectGrokAuthMethod(methods []string, haveAPIKey bool) (string, error) {
 	if len(advertised) == 0 {
 		return "", fmt.Errorf("Grok advertised no usable authentication methods; set XAI_API_KEY or run `grok login`")
 	}
-	return "", fmt.Errorf("Grok advertised unsupported authentication methods %q; update Multica or authenticate with XAI_API_KEY / `grok login`", advertised)
+	return "", fmt.Errorf("Grok advertised unsupported authentication methods %q; update Labrastro or authenticate with XAI_API_KEY / `grok login`", advertised)
 }
 
 // waitForGrokNotificationQuiescence gives the ACP stdout reader a bounded

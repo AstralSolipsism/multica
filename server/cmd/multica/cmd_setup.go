@@ -19,7 +19,7 @@ import (
 var setupCmd = &cobra.Command{
 	Use:   "setup",
 	Short: "Configure the CLI, authenticate, and start the daemon",
-	Long: `Configures the CLI to connect to Labrastro Cloud (multica.outlune.com), then
+	Long: `Configures the CLI to connect to Labrastro Cloud (` + cli.DefaultCloudHost + `), then
 authenticates via browser and starts the agent daemon.
 
 If a configuration already exists, you will be prompted before overwriting.
@@ -38,8 +38,8 @@ Use --profile to create an isolated configuration for a separate environment:
 
 var setupCloudCmd = &cobra.Command{
 	Use:   "cloud",
-	Short: "Configure the CLI for Labrastro Cloud (multica.outlune.com)",
-	Long: `Explicitly configures the CLI to connect to Labrastro Cloud (multica.outlune.com).
+	Short: "Configure the CLI for Labrastro Cloud (" + cli.DefaultCloudHost + ")",
+	Long: `Explicitly configures the CLI to connect to Labrastro Cloud (` + cli.DefaultCloudHost + `).
 
 If you run this command over SSH on a remote machine, keep the localhost
 callback and follow the SSH tunnel hint printed during browser login. If your

@@ -302,7 +302,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 
 		completionGuardError := ""
 		if sawBackgroundTask {
-			completionGuardError = "codebuddy emitted a background task system event; Multica-managed runs require foreground execution (set CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS=1)"
+			completionGuardError = "codebuddy emitted a background task system event; Labrastro-managed runs require foreground execution (set CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS=1)"
 		}
 		finalStatus, finalOutput, finalError := finalizeStreamResult(
 			"codebuddy",

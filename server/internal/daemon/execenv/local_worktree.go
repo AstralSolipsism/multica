@@ -822,7 +822,7 @@ func commitIdentityArgs(dir string) []string {
 		return nil
 	}
 	return []string{
-		"-c", "user.name=Multica Agent",
+		"-c", "user.name=Labrastro Agent",
 		"-c", "user.email=agent@multica.local",
 	}
 }
@@ -1076,7 +1076,7 @@ func writeBranchRecord(gitRoot, branch, userState, checkpoint string, owner bran
 func branchRecordMessage(owner branchOwner) string {
 	var b strings.Builder
 	b.WriteString("multica: task branch record\n\n")
-	b.WriteString("Written by Multica for a local_directory task running in worktree mode. Its\n")
+	b.WriteString("Written by Labrastro for a local_directory task running in worktree mode. Its\n")
 	b.WriteString("tree is the user's working directory as this branch last carried it, and its\n")
 	b.WriteString("second parent is the branch tip at that moment — together they let the next\n")
 	b.WriteString("turn replay only what changed since, and prove the branch is still the one\n")

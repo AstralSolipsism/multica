@@ -2556,23 +2556,23 @@ func builtinProbeNeedsConfirmation(verdict builtinProbeVerdict) bool {
 // builtinProbeMissingProfile drop. It names the repair because nothing else in
 // the daemon's output would: the CLI itself is installed, resolvable and
 // answers `--version`, so "not installed" is true only of the profile.
-const dshMissingProfileReason = "the Multica runtime profile is not installed; add the Multica DSH runtime bundle to the `multica` profile with `dsh plugin`, or set MULTICA_DSH_PROFILE_BUNDLE so the daemon installs it"
+const dshMissingProfileReason = "the Labrastro runtime profile is not installed; add the Labrastro DSH runtime bundle to the `multica` profile with `dsh plugin`, or set MULTICA_DSH_PROFILE_BUNDLE so the daemon installs it"
 
 // dshProfileInstallStartedReason replaces it when the operator configured a
 // bundle for the daemon to install (MULTICA_DSH_PROFILE_BUNDLE), so /health
 // separates "wait for the install" from "nothing is going to happen".
-const dshProfileInstallStartedReason = "the Multica runtime profile is not installed; installing the configured bundle now and re-probing when it finishes"
+const dshProfileInstallStartedReason = "the Labrastro runtime profile is not installed; installing the configured bundle now and re-probing when it finishes"
 
 // dshInstallGaveUpReason replaces the "installing now" detail once the
 // automatic install has stopped without producing a profile. It says the
 // attempt happened and ended, because a reader who saw the earlier "installing"
 // reason needs to know which of the two states they are looking at.
-const dshInstallGaveUpReason = "the automatic install did not make the Multica runtime profile available; check the profile installation and --probe output"
+const dshInstallGaveUpReason = "the automatic install did not make the Labrastro runtime profile available; check the profile installation and --probe output"
 
 // dshIncompatibleProfileReason is the /health reason for a profile that answers
 // with a protocol this daemon does not drive. It names both sides because
 // either can be the stale one.
-const dshIncompatibleProfileReason = "the Multica runtime profile answers with a protocol version this daemon does not drive; update the profile bundle or the daemon"
+const dshIncompatibleProfileReason = "the Labrastro runtime profile answers with a protocol version this daemon does not drive; update the profile bundle or the daemon"
 
 // dshProbeFailedReason is the transient reason: the probe did not answer with a
 // probe frame at all — a timeout, a failed exec, or unparseable output. It is
@@ -2782,7 +2782,7 @@ probeLoop:
 			switch probeDshMulticaProfile(ctx, resolved.Path) {
 			case dshProbeOK:
 			case dshProbeMissingProfile:
-				d.logger.Warn("skip registering runtime: DSH Multica runtime profile is not installed",
+				d.logger.Warn("skip registering runtime: DSH Labrastro runtime profile is not installed",
 					"name", name, "path", resolved.Path)
 				reason := dshMissingProfileReason
 				if d.startDshProfileProvision(resolved.Path) {
@@ -2790,7 +2790,7 @@ probeLoop:
 				}
 				return "", reason, builtinProbeMissingProfile
 			case dshProbeIncompatible:
-				d.logger.Warn("skip registering runtime: DSH Multica runtime profile speaks another protocol",
+				d.logger.Warn("skip registering runtime: DSH Labrastro runtime profile speaks another protocol",
 					"name", name, "path", resolved.Path)
 				return "", dshIncompatibleProfileReason, builtinProbeIncompatibleProfile
 			default:

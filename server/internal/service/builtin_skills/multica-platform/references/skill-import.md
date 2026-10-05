@@ -1,7 +1,7 @@
 # Importing skills
 
 Use this when the user already provided a skill URL, slug, or a clear intent to
-import a specific skill into the current Multica workspace. It does not help you
+import a specific skill into the current Labrastro workspace. It does not help you
 decide WHICH skill the user needs — if they only described a capability and no
 URL is known, external search may produce candidates, but importing starts only
 once a URL or concrete target exists.
@@ -20,7 +20,7 @@ once a URL or concrete target exists.
 
 ## The invariant
 
-A skill is installed for Multica only when it exists in the current workspace's
+A skill is installed for Labrastro only when it exists in the current workspace's
 skill database. Use the workspace import APIs through the CLI. Single-skill
 import accepts a hosted URL or an uploaded local archive (`.skill` / `.zip`):
 
@@ -42,7 +42,7 @@ part (the `.skill` / `.zip` bytes) and an `on_conflict` field. `--url` and
 `--file` are mutually exclusive; exactly one is required.
 
 Do not finish with `npx skills add`. That installs into an external/local skill
-environment, not the Multica workspace DB, so Multica cannot manage or bind it.
+environment, not the Labrastro workspace DB, so Labrastro cannot manage or bind it.
 
 ## Supported URL source families
 
@@ -344,13 +344,13 @@ column names the file.
 
 ## Incorrect to correct
 
-Incorrect (bypasses Multica):
+Incorrect (bypasses Labrastro):
 
 ```bash
 npx skills add https://skills.sh/owner/repo/skill
 ```
 
-The skill may exist locally, but Multica cannot manage it as a workspace skill.
+The skill may exist locally, but Labrastro cannot manage it as a workspace skill.
 
 Incorrect agent binding for a normal add (replaces every existing assignment):
 using `set` with only the new skill id wipes the agent's other skills. For an

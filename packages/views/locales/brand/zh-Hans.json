@@ -1,0 +1,221 @@
+{
+  "settings": {
+    "preferences": {
+      "description": "调整你在 Labrastro 中的使用偏好。"
+    },
+    "plugins": {
+      "publish": {
+        "description": "上传插件产物包。Labrastro 负责存储和分发，作者不需要自己的服务器。"
+      }
+    },
+    "notifications": {
+      "system": {
+        "description": "Labrastro 在后台时显示系统通知。"
+      }
+    },
+    "github": {
+      "disconnect_confirm_description": "Labrastro 将不再接收该安装的 webhook。已有的 PR 镜像与关联会保留，再次连接即可恢复同步。",
+      "page_description": "连接 GitHub App、控制 Pull Request 如何出现在 Labrastro 中，并决定智能体在 commit 记录里留下哪些痕迹。"
+    },
+    "lark": {
+      "install_error_bot_info": "授权完成，但 Labrastro 无法获取 Bot 身份信息，请重试。",
+      "conversation_description": "这些会话的参与者无需 Labrastro 账号。智能体会澄清、整理意见，再以自己的身份回填评论；处理会有延迟和模型消耗，不会把每条消息立即逐字变成任务评论。"
+    },
+    "slack": {
+      "byo_docs_link": "Step-by-step：把你的 Labrastro 智能体连接到 Slack"
+    },
+    "dingtalk": {
+      "group_forget_description": "该群会从 Labrastro 的群列表中移除，对话和消息记录不会删除。以后再次 @ 机器人时，群会重新出现。",
+      "byo_docs_link": "Step-by-step：把你的 Labrastro 智能体连接到钉钉"
+    },
+    "wecom": {
+      "byo_bot_name_placeholder": "例如 Labrastro Bot",
+      "byo_conflict_other_workspace": "该机器人已连接到另一个 Labrastro 工作区。请先在那边断开，再连接到这里。"
+    },
+    "telegram": {
+      "disconnect_confirm_description": "机器人将停止接收本工作区的 Telegram 消息。Labrastro 中的会话记录会保留；之后可在同一智能体上重新连接。",
+      "connect_docs_link": "分步指南：将 Labrastro 智能体连接到 Telegram"
+    }
+  },
+  "common": {
+    "lark_bind": {
+      "needs_auth_description": "需要登录 Labrastro 才能完成绑定。链接中的 token 会将你的飞书账号绑定到当前登录的 Labrastro 用户。",
+      "error_already_bound": "该飞书账号已绑定到其他 Labrastro 用户。账户转移需要先显式解绑。",
+      "error_not_member": "你登录的 Labrastro 账号不是当前工作区成员。"
+    },
+    "slack_bind": {
+      "needs_auth_description": "需要登录 Labrastro 才能完成关联。链接中的 token 会将你的 Slack 账号绑定到当前登录的 Labrastro 用户。",
+      "error_already_bound": "该 Slack 账号已关联到其他 Labrastro 用户。账户转移需要先显式解绑。",
+      "error_not_member": "你登录的 Labrastro 账号不是当前工作区成员。"
+    },
+    "dingtalk_bind": {
+      "needs_auth_description": "需要登录 Labrastro 才能完成关联。链接中的 token 会将你的钉钉账号绑定到当前登录的 Labrastro 用户。",
+      "error_already_bound": "该钉钉账号已关联到其他 Labrastro 用户。账户转移需要先显式解绑。",
+      "error_not_member": "你登录的 Labrastro 账号不是当前工作区成员。"
+    },
+    "telegram_bind": {
+      "needs_auth_description": "请先登录 Labrastro 完成绑定。链接中的 token 会把你的 Telegram 账号绑定到当前登录的 Labrastro 用户，因此需要先登录。",
+      "error_already_bound": "该 Telegram 账号已绑定到另一个 Labrastro 用户。如需转移账号，请先显式解绑。",
+      "error_not_member": "当前登录的 Labrastro 账号不是该工作区的成员。"
+    },
+    "wecom_bind": {
+      "page_title": "关联 Labrastro 账号",
+      "needs_auth_description": "需要登录 Labrastro 才能完成关联。链接中的 token 会将你在企业微信的身份绑定到当前登录的 Labrastro 用户。",
+      "error_already_bound": "该企业微信身份已关联到其他 Labrastro 用户。账户转移需要先显式解绑。",
+      "error_not_member": "你登录的 Labrastro 账号不是当前工作区成员。"
+    },
+    "not_found": {
+      "back_to_multica": "返回 Labrastro"
+    }
+  },
+  "runtimes": {
+    "mika_setup": {
+      "title": "运行时已准备好，和 Mizuki 开始。",
+      "description": "让 Mizuki 帮你安排任务和协调智能体。",
+      "action": "和 Mizuki 开始",
+      "failed": "无法启动 Mizuki",
+      "dialog_title": "让 Mizuki 在哪台电脑上运行？"
+    },
+    "connect": {
+      "step1_label": "安装 Labrastro CLI"
+    },
+    "update": {
+      "managed_by_desktop_title": "CLI 二进制由 Labrastro 桌面端管理——升级桌面端即可升级 CLI。",
+      "local_build_title": "该运行时报告的不是发布版本，Labrastro 无法判断是否有可升级的版本。请在这台机器上自行更新。"
+    },
+    "profiles": {
+      "empty_description": "选择一个基础协议族，然后指定 Labrastro 要运行的命令。"
+    }
+  },
+  "workspace": {
+    "new_page": {
+      "title": "欢迎使用 Labrastro"
+    },
+    "creation_disabled": {
+      "description": "该 Labrastro 实例不允许创建新的工作区，请联系管理员邀请你加入已有工作区。"
+    }
+  },
+  "autopilots": {
+    "add_trigger_dialog": {
+      "webhook_help": "保存后 Labrastro 会生成一个 Webhook URL。向它 POST 任意 JSON 即可触发本自动化。"
+    },
+    "dialog": {
+      "webhook_help_create": "自动化创建后 Labrastro 会生成一个 Webhook URL。向它 POST 任意 JSON 即可触发。"
+    }
+  },
+  "issues": {
+    "pickers": {
+      "custom_property": {
+        "unknown_value_hint": "该值由更新版本的 Labrastro 设置，当前版本无法编辑——请更新应用，或清除该值"
+      }
+    },
+    "pr_automation": {
+      "link_not_found": "Labrastro 还没有收到这个 PR。请确认它所在的仓库已连接。"
+    }
+  },
+  "billing": {
+    "return_page": {
+      "go_to_app": "前往 Labrastro"
+    }
+  },
+  "auth": {
+    "signin": {
+      "title": "登录 Labrastro"
+    },
+    "cli": {
+      "description": "允许 CLI 以 {{email}} 身份访问 Labrastro"
+    },
+    "web": {
+      "desktop_handoff": {
+        "opening_title": "正在打开 Labrastro",
+        "opening_description": "没有自动打开？点击“打开 Labrastro Desktop”。",
+        "open_button": "打开 Labrastro 桌面应用"
+      }
+    },
+    "desktop": {
+      "recovery": {
+        "title": "正在重新连接 Labrastro"
+      }
+    }
+  },
+  "chat": {
+    "fab": {
+      "running": "Labrastro 正在工作...",
+      "default": "问 Labrastro"
+    },
+    "empty_state": {
+      "returning_title_default": "欢迎使用 Labrastro"
+    }
+  },
+  "onboarding": {
+    "step_nav": {
+      "wordmark": "Labrastro",
+      "runtime": {
+        "label": "认识 Mizuki"
+      }
+    },
+    "welcome": {
+      "wordmark": "欢迎使用 Labrastro"
+    },
+    "source_backfill": {
+      "lede": "帮助我们了解你从哪里知道 Labrastro。"
+    },
+    "questions": {
+      "source": {
+        "question": "你是从哪里了解到 Labrastro 的？"
+      }
+    },
+    "cli_install": {
+      "step1_label": "安装 Labrastro CLI"
+    },
+    "welcome_after_onboarding": {
+      "skip": {
+        "title": "欢迎来到 Labrastro！",
+        "subtitle": "我们建了一个任务帮你连接运行时。准备好后，在 \"运行时\" 页面就能开始使用 Mizuki。",
+        "cards": {
+          "install_runtime": {
+            "subtitle": "安装 Codex 或 Kimi，然后从 \"运行时\" 页面进入 Mizuki 的引导对话。"
+          }
+        }
+      }
+    },
+    "step_workspace": {
+      "creation_disabled_lede": "该 Labrastro 实例不允许创建新的工作区。等管理员把你邀请到某个工作区后，接受邀请并刷新即可继续。"
+    },
+    "step_runtime": {
+      "found_headline": "让 Mizuki 在哪台电脑上运行？",
+      "hint_pick": "在上方选择一个智能体运行时，就可以开始使用 Mizuki。",
+      "continue": "开始使用 Mizuki"
+    },
+    "step_platform": {
+      "lede": "连接一台电脑，让 Mizuki 开始工作。"
+    },
+    "errors": {
+      "mika_setup_failed": "无法启动 Mizuki 工作区"
+    },
+    "mika_intro": {
+      "headline": "认识一下 Mizuki，你的第一个智能体队友。",
+      "name": "Mizuki",
+      "blurb": "把你想做的事告诉 Mizuki，它会变成一个任务，并交给合适的智能体处理。"
+    }
+  },
+  "projects": {
+    "resources": {
+      "mode_worktree_needs_server_upgrade": "当前 Labrastro 服务端版本过旧，无法支持并行运行——它会直接在这个文件夹里运行。升级服务端后即可开启。"
+    }
+  },
+  "agents": {
+    "tab_body": {
+      "instructions": {
+        "system_layer_label": "由 Labrastro 维护",
+        "system_layer_hint": "随 Labrastro 版本更新。你无法编辑这部分，你在下面写的内容也永远不会被覆盖。",
+        "workspace_notes_intro": "在下面补充你们团队的上下文和偏好，它们会叠加在 Labrastro 为这个智能体维护的指令之上。支持 Markdown。"
+      },
+      "mcp_config": {
+        "managed_title": "由 Labrastro 管理",
+        "managed_empty": "暂无由 Labrastro 管理的 MCP Server。",
+        "runtime_overridden_badge": "已由 Labrastro 覆盖"
+      }
+    }
+  }
+}

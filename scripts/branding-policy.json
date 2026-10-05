@@ -1,0 +1,34 @@
+{
+  "allowedTokens": [
+    { "value": "X-Multica-Next-Before-Id", "reason": "Existing pagination header consumed by installed CLI clients." },
+    { "value": "X-Multica-Next-Before", "reason": "Existing pagination header consumed by installed CLI clients." },
+    { "value": "X-Multica-Plugin-Installation", "reason": "Plugin authentication protocol shared with external plugins." },
+    { "value": "X-Multica-RateLimit-Scope", "reason": "Cloud rate-limit protocol header, not display copy." },
+    { "value": "X-Multica-Retryable", "reason": "Daemon checkout retry protocol used by installed clients." },
+    { "value": "X-Multica-Timestamp", "reason": "Signed plugin webhook protocol header." },
+    { "value": "X-Multica-Signature", "reason": "Signed plugin webhook protocol header." },
+    { "value": "Multica-Hooks/1", "reason": "Versioned webhook User-Agent identifying the existing wire protocol." },
+    { "value": "Multica-Workspace", "reason": "Persisted Git ownership trailer read to recognize existing worktrees." },
+    { "value": "Multica-Agent", "reason": "Persisted Git ownership trailer read to recognize existing worktrees." },
+    { "value": "Multica-Conversation", "reason": "Persisted Git ownership trailer read to recognize existing worktrees." },
+    { "value": "# Installed by the Multica daemon.", "reason": "Legacy cleanup sentinel; removing it would strand previously installed Git hooks." },
+    { "value": "# Multica identity defaults; explicit worktree settings below take precedence.", "reason": "Persisted Git config prefix checked for idempotency; changing it duplicates includes in existing worktrees." }
+  ],
+  "sourceExceptions": [
+    { "path": "apps/web/features/landing/i18n/en.ts", "reason": "Upstream legal/privacy notices and retired marketing dictionary; retained product pages use the shared app resources or internal download copy." },
+    { "path": "apps/web/features/landing/i18n/zh.ts", "reason": "Chinese upstream legal/privacy notices and retired marketing dictionary." },
+    { "path": "apps/web/features/landing/i18n/ja.ts", "reason": "Japanese upstream legal/privacy notices and retired marketing dictionary." },
+    { "path": "apps/web/features/landing/i18n/ko.ts", "reason": "Korean upstream legal/privacy notices and retired marketing dictionary." },
+    { "path": "apps/web/app/(landing)/licensing/page.tsx", "reason": "Upstream software licensing notice must retain its original legal subject." },
+    { "path": "apps/web/app/(landing)/privacy/page.tsx", "reason": "Upstream privacy notice identifies the upstream service; do not misattribute it to this deployment." }
+  ],
+  "identifierRules": [
+    { "value": "multica", "reason": "The lowercase executable name, resource paths, domains, API keys and database values remain compatible." },
+    { "value": "MULTICA_*", "reason": "Environment variable names are a stable configuration interface." },
+    { "value": "@multica/*", "reason": "Workspace package import names remain unchanged." },
+    { "value": "multica://", "reason": "Installed clients register this deep-link protocol." },
+    { "value": "https://github.com/multica-ai/multica", "reason": "Upstream repository attribution and source links remain accurate." },
+    { "value": "LICENSE / NOTICE / upstream docs", "reason": "Legal notices, attribution and upstream documentation describe the original project; they are not fork UI copy." },
+    { "value": "Mika* / Multica* identifiers", "reason": "Code symbols and type names are internal identifiers; only standalone names in string/JSX copy are guarded." }
+  ]
+}

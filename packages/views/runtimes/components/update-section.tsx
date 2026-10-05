@@ -1,3 +1,4 @@
+import { LATEST_MANIFEST_URL } from "@multica/core/deployment";
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Loader2,
@@ -18,7 +19,7 @@ import { useT } from "../../i18n";
 // uncustomized binary — so clients only ever compare against the feed this
 // deployment actually ships from.
 const INTERNAL_LATEST_MANIFEST_URL =
-  "https://multica.outlune.com/downloads/latest.json";
+  LATEST_MANIFEST_URL;
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 let cachedLatestVersion: string | null = null;

@@ -1,5 +1,7 @@
 "use client";
 
+import { DOWNLOAD_PAGE_URL } from "@multica/core/deployment";
+
 import { useState } from "react";
 import {
   ArrowUpRight,
@@ -25,7 +27,7 @@ import { useT } from "../i18n";
 
 // In-app route: this instance serves its own minimal download page listing
 // the internal release artifacts, so the entry works without leaving the app.
-const DOWNLOAD_URL = "https://multica.outlune.com/download";
+const DOWNLOAD_URL = DOWNLOAD_PAGE_URL;
 
 export function HelpLauncher() {
   const { t } = useT("layout");

@@ -1,11 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
 import { waitForPageText } from "./helpers";
-import { readFileSync } from "node:fs";
-
-const enOnboarding = JSON.parse(
-  readFileSync(new URL("../packages/views/locales/en/onboarding.json", import.meta.url), "utf8"),
-);
 
 // Smoke test for the onboarding flow: welcome → workspace → runtime.
 // The About-you questionnaire and the source question are intentionally
@@ -15,7 +10,7 @@ const enOnboarding = JSON.parse(
 // is always a fresh, un-onboarded user landing on /onboarding.
 
 const EMAIL = `onboarding-v4-${Date.now()}@localhost`;
-const RUNTIME_LABEL = enOnboarding.step_nav.runtime.label;
+const RUNTIME_LABEL = "Meet Mizuki";
 
 test.use({ viewport: { width: 1440, height: 900 } });
 
@@ -42,6 +37,8 @@ test("onboarding — welcome → workspace → runtime", async ({ page }, testIn
   await expect(page.getByRole("heading", { name: /Name your workspace/i })).toBeVisible({ timeout: 10000 });
   await expect(page.getByText("Which best describes you?")).toHaveCount(0);
   await expect(page.getByText("Tell us a bit about you.")).toHaveCount(0);
+  await expect(page.locator("aside")).toContainText("Labrastro");
+  await expect(page.locator("aside")).not.toContainText(/\b(?:Multica|Mika)\b/);
   // The rail names every step and marks the current one; the ordinal
   // counter it replaced is gone.
   await expect(page.locator('[data-slot="stepper-title"]')).toHaveText([

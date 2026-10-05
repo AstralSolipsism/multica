@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { resources } from "./resources";
 
 const LOCALES_ROOT = path.resolve(__dirname, "../../locales");
 
@@ -31,6 +32,13 @@ function flatten(value: unknown, prefix = ""): Set<string> {
 }
 
 describe("mobile i18n resources", () => {
+  it("applies the fork overlay to every effective mobile locale", () => {
+    for (const bundle of Object.values(resources)) {
+      expect(JSON.stringify(bundle)).not.toMatch(/\b(?:Multica|Mika)\b/);
+      expect(bundle.auth.login.title).toContain("Labrastro");
+    }
+  });
+
   it("has an English resource for every supported namespace and locale", () => {
     const enNamespaces = fs
       .readdirSync(path.join(LOCALES_ROOT, "en"))

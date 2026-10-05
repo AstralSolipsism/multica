@@ -1,3 +1,4 @@
+import { DOWNLOAD_BASE_URL } from "@multica/core/deployment";
 import { app } from "electron";
 import { execFile } from "child_process";
 import { createHash } from "crypto";
@@ -21,7 +22,7 @@ import { selectPlatformReleaseAssetName } from "./cli-release-asset";
 // install would replace this managed CLI with an uncustomized upstream
 // binary. A failed bootstrap surfaces to daemon-manager, which falls back to
 // whatever `multica` is already on PATH — never to a remote copy.
-export const INTERNAL_DOWNLOAD_BASE = "https://multica.outlune.com/downloads";
+export const INTERNAL_DOWNLOAD_BASE = DOWNLOAD_BASE_URL;
 
 /** URL of the version manifest the internal release source publishes. */
 export function latestManifestUrl(downloadBase: string): string {

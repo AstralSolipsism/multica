@@ -2,14 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enOnboarding from "../../locales/en/onboarding.json";
+import { SUPPORTED_LOCALES } from "@multica/core/i18n";
+import { RESOURCES } from "../../locales";
 import {
   StepHeading,
   StepShell,
 } from "./step-shell";
 
-const TEST_RESOURCES = { en: { common: enCommon, onboarding: enOnboarding } };
+const TEST_RESOURCES = RESOURCES;
 
 function renderShell(props: Partial<Parameters<typeof StepShell>[0]> = {}) {
   return render(
@@ -70,7 +70,7 @@ describe("onboarding step shell", () => {
 
     const compact = container.querySelector("main .md\\:hidden")!;
     expect(compact).not.toBeNull();
-    expect(compact.textContent).toContain("Meet Mika");
+    expect(compact.textContent).toContain("Meet Mizuki");
     expect(compact.querySelector("button")).not.toBeNull();
   });
 
@@ -95,6 +95,17 @@ describe("onboarding step shell", () => {
 });
 
 describe("onboarding progress rail", () => {
+  it.each(SUPPORTED_LOCALES)("renders fork branding on the %s sidebar", (locale) => {
+    const { container } = render(
+      <I18nProvider locale={locale} resources={RESOURCES}>
+        <StepShell currentStep="runtime"><div>step content</div></StepShell>
+      </I18nProvider>,
+    );
+    const sidebar = container.querySelector("aside")!;
+    expect(sidebar.textContent).toContain("Labrastro");
+    expect(sidebar.textContent).toContain("Mizuki");
+    expect(sidebar.textContent).not.toMatch(/\b(?:Multica|Mika)\b/);
+  });
 
   it("marks the current step for assistive tech", () => {
     const { container } = renderShell({ currentStep: "workspace" });

@@ -177,7 +177,7 @@
       "hint": "只决定默认选项，每条消息发送前仍可单独修改。"
     },
     "comments_title": "评论与聊天",
-    "description": "调整你在 Labrastro 中的使用偏好。",
+    "description": "调整你在 Multica 中的使用偏好。",
     "region_title": "语言与地区",
     "appearance_title": "外观",
     "issue_fields_title": "创建任务时显示的字段",
@@ -504,7 +504,7 @@
       "installed_version": "使用中",
       "review_install": "查看并安装",
       "review_upgrade": "查看并升级",
-      "description": "上传插件产物包。Labrastro 负责存储和分发，作者不需要自己的服务器。"
+      "description": "上传插件产物包。Multica 负责存储和分发，作者不需要自己的服务器。"
     },
     "description": "在这个工作区里发布插件，然后安装某个具体版本，并逐条确认它能访问什么。"
   },
@@ -812,7 +812,7 @@
     "feature_auto_link_label": "任务 ↔ PR 自动关联",
     "toast_failed": "更新 GitHub 设置失败",
     "feature_auto_link_description": "PR 标题或分支名含任务编号（如 {{example}}），或正文里写了 \"Closes {{example}}\" 时，自动关联到对应任务。",
-    "page_description": "连接 GitHub App、控制 Pull Request 如何出现在 Labrastro 中，并决定智能体在 commit 记录里留下哪些痕迹。",
+    "page_description": "连接 GitHub App、控制 Pull Request 如何出现在 Multica 中，并决定智能体在 commit 记录里留下哪些痕迹。",
     "connection_description_prefix": "自动把任务关联到 Pull Request。只要 PR 的分支名或标题里出现",
     "connection_description_suffix": "或正文里写了 Closes MUL-123，PR 就会关联到对应任务；只有带关闭关键字的 PR 合并后，任务才会转为",
     "connection_description_done": "已完成",
@@ -941,7 +941,7 @@
     "install_scan_hint_feishu": "飞书 → 扫一扫 → 授权新 PersonalAgent。",
     "install_scan_hint_lark": "Lark → 扫一扫 → 授权新 PersonalAgent。",
     "conversation_title": "与智能体交流",
-    "conversation_description": "这些会话的参与者无需 Labrastro 账号。智能体会澄清、整理意见，再以自己的身份回填评论；处理会有延迟和模型消耗，不会把每条消息立即逐字变成任务评论。",
+    "conversation_description": "这些会话的参与者无需 Multica 账号。智能体会澄清、整理意见，再以自己的身份回填评论；处理会有延迟和模型消耗，不会把每条消息立即逐字变成任务评论。",
     "conversation_groups": "群聊 ID（每行一个 oc_ ID，群内各话题独立）",
     "conversation_directs": "私聊 ID（每行一个 oc_ ID）",
     "conversation_scope": "这些会话的所有参与者都可提供输入。智能体仅能在当前工作区读取协作内容、创建或更新任务、处理评论和附件，并遵守你的调用权限。唤醒、自动化、凭据及管理设置不在授权范围内。保存会使旧运行授权失效。",
@@ -1400,7 +1400,7 @@
       "try_again_moment": "请稍后重试。",
       "try_again": "请重试。",
       "description": "配置本地智能体守护进程与桌面应用协同工作的方式。",
-      "cli_install_windows_help": "Windows 没有脚本安装器。请联系管理员获取安装包，或从内部发布站（https://multica.outlune.com/downloads/cli/v<版本>/，当前版本号见 https://multica.outlune.com/downloads/latest.json）下载对应版本的 multica-cli-<版本>-windows-<架构>.zip，解压后将 multica.exe 放入 PATH。",
+      "cli_install_windows_help": "Windows 没有脚本安装器。请联系管理员获取安装包，或从内部发布站（{{downloadsUrl}}/cli/v<版本>/，当前版本号见 {{latestManifestUrl}}）下载对应版本的 multica-cli-<版本>-windows-<架构>.zip，解压后将 multica.exe 放入 PATH。",
       "cli_install_windows_label": "Windows 需手动安装",
       "diagnostics_description": "设备标识与连接详情，可用于提交错误报告或排查运行时未显示的问题。",
       "waiting_logs_description": "新日志会实时显示在这里。"
