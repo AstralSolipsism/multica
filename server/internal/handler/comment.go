@@ -1484,6 +1484,14 @@ func keepRootConnected(byID map[string]db.Comment) []db.Comment {
 	return out
 }
 
+type UpdateCommentRequest struct {
+	Content          string    `json:"content"`
+	ContentBase      *string   `json:"content_base,omitempty"`
+	AttachmentIDs    *[]string `json:"attachment_ids"`
+	SuppressAgentIDs []string  `json:"suppress_agent_ids"`
+	ExpectedRevision *int64    `json:"expected_revision,omitempty"`
+}
+
 type CreateCommentRequest struct {
 	Content          string   `json:"content"`
 	Type             string   `json:"type"`
@@ -3407,13 +3415,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Content          string    `json:"content"`
-		ContentBase      *string   `json:"content_base,omitempty"`
-		AttachmentIDs    *[]string `json:"attachment_ids"`
-		SuppressAgentIDs []string  `json:"suppress_agent_ids"`
-		ExpectedRevision *int64    `json:"expected_revision,omitempty"`
-	}
+	var req UpdateCommentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return

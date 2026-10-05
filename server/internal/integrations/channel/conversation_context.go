@@ -12,7 +12,7 @@ type conversationTaskKey struct{}
 // enqueue attribution boundary. It is set only after live grant validation.
 // An issue's original creator is not the authority for a later external edit.
 func WithConversationTask(ctx context.Context, task db.AgentTaskQueue) context.Context {
-	if !task.ConversationRootTaskID.Valid {
+	if !IsConversationTask(task) {
 		return ctx
 	}
 	return context.WithValue(ctx, conversationTaskKey{}, task)
@@ -20,5 +20,5 @@ func WithConversationTask(ctx context.Context, task db.AgentTaskQueue) context.C
 
 func ConversationTaskFromContext(ctx context.Context) (db.AgentTaskQueue, bool) {
 	task, ok := ctx.Value(conversationTaskKey{}).(db.AgentTaskQueue)
-	return task, ok && task.ConversationRootTaskID.Valid
+	return task, ok && IsConversationTask(task)
 }

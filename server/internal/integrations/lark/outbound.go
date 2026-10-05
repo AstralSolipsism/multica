@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -421,7 +422,7 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 
 	switch e.Type {
 	case protocol.EventChatDone:
-		return p.sendChatReply(ctx, creds, binding, mentionOpenID(binding), e.Payload)
+		return p.sendChatReply(ctx, creds, binding, inst.BotOpenID, e.Payload)
 	case protocol.EventTaskFailed:
 		return p.fail(ctx, creds, binding, taskID, agentName, e.Payload)
 	}
@@ -481,11 +482,9 @@ func mentionOpenID(binding ChatSessionBinding) string {
 // edge cases like a chat task that just acknowledged a system event;
 // not emitting a message there is the right product call.
 //
-// mentionOpenID, when non-empty, prefixes the body with a native mention of
-// that member (see mention.go). The wire shape is chosen from the agent's own
-// content BEFORE the mention is attached, so a mention can never flip a plain
-// prose answer onto the card path.
-func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentials, binding ChatSessionBinding, mentionOpenID string, payload any) error {
+// Native mentions come only from the frozen sender and a verified current-turn
+// request. Model markup is never used to choose notification recipients.
+func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentials, binding ChatSessionBinding, botOpenID string, payload any) error {
 	content := chatDoneContent(payload)
 	if content == "" {
 		return nil
@@ -497,8 +496,24 @@ func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentia
 		return nil
 	}
 	target := threadReplyTarget(binding)
+	mentions := p.replyMentionIDs(ctx, creds, binding, botOpenID)
+	// Lark parses at tags in text and Markdown. Use its literal post text
+	// node for markup/encoded markup, preserving the body byte-for-byte.
+	// Ordinary Markdown without these introducers keeps its existing rendering.
+	if strings.ContainsAny(content, "<&") {
+		return sendWithReplyFallback(p.cfg.Logger, "send literal reply", target, func(t ReplyTarget) error {
+			_, err := p.client.SendTextMessage(ctx, SendTextParams{
+				InstallationID: creds, ChatID: outboundChatID(binding), Text: content,
+				Literal: true, VerifiedMentions: mentions, ReplyTarget: t,
+			})
+			return err
+		})
+	}
 	if containsMarkdown(content) {
-		markdown := prependMarkdownMention(mentionOpenID, content)
+		markdown := content
+		for i := len(mentions) - 1; i >= 0; i-- {
+			markdown = prependMarkdownMention(mentions[i], markdown)
+		}
 		return sendWithReplyFallback(p.cfg.Logger, "send markdown card", target, func(t ReplyTarget) error {
 			_, err := p.client.SendMarkdownCard(ctx, SendMarkdownCardParams{
 				InstallationID: creds,
@@ -509,7 +524,10 @@ func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentia
 			return err
 		})
 	}
-	text := prependTextMention(mentionOpenID, content)
+	text := content
+	for i := len(mentions) - 1; i >= 0; i-- {
+		text = prependTextMention(mentions[i], text)
+	}
 	return sendWithReplyFallback(p.cfg.Logger, "send text message", target, func(t ReplyTarget) error {
 		_, err := p.client.SendTextMessage(ctx, SendTextParams{
 			InstallationID: creds,

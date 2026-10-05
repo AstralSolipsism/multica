@@ -288,8 +288,8 @@ type PatchCardParams struct {
 }
 
 // SendTextParams is the input shape for posting a plain text message.
-// Text is sent verbatim to Lark; the client handles JSON encoding of
-// the `{"text": "..."}` content envelope Lark requires.
+// The client handles JSON encoding. Literal selects a post text node rather
+// than Lark's text-message markup parser.
 type SendTextParams struct {
 	InstallationID InstallationCredentials
 	ChatID         ChatID
@@ -297,6 +297,10 @@ type SendTextParams struct {
 	// exclusive with ChatID and ReplyTarget, so a refusal cannot reach a group.
 	OpenID OpenID
 	Text   string
+	// Literal renders Text as a post text node (un_escape=false), so model
+	// markup cannot create mentions. Only separately verified IDs become at nodes.
+	Literal          bool
+	VerifiedMentions []string
 	// ReplyTarget threads the text reply back into a Lark topic; see
 	// ReplyTarget. Empty keeps the chat-level send.
 	ReplyTarget ReplyTarget

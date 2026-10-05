@@ -136,23 +136,27 @@ internal conflict rejects that entire receipt. Condition evaluation also combine
 all hints from that pass into one `condition.met` receipt: if a human and a denied
 external source both contribute, the whole condition receipt is rejected and its
 fingerprint retained. A causeless poll cannot retry that fact as first-party input.
-This also applies to hints retained while a parent is in backlog. The distinction
-between condition facts and instructions is a separate T10 product decision.
+This also applies to hints retained while a parent is in backlog. T10 retains
+this indivisible condition receipt: splitting facts from instructions would need
+separately persisted, independently authorized evidence. Re-evaluating a rejected
+condition without its causes must not turn it into first-party input.
 
 Captured null roots distinguish first-party source history from required
 external roots. Pruned ordinary event or registration tasks retain first-party
 behavior. An agent-created parent's surviving origin is revalidated when a
-human closes its children. A missing parent origin uses the existing attribution
-fallback: absence does not prove that origin was first-party; persisting the
-issue's conversation root remains T10 work. For child hints without a captured
+human closes its children. T10 keeps the existing workspace attribution policy
+for a missing parent origin (fail-closed when configured, otherwise audit-only
+owner fallback with no originator). Absence does not prove that an origin was
+first-party; this change does not infer a replacement grant or add durable issue
+provenance. For child hints without a captured
 root, a missing source task fails closed. A parked (`backlog`) parent's system rule retains hints
 but is excluded from scheduler readiness until the parent is resumed.
 
 External event runs can be claimed by a grantor distinct from the wakeup's
 creator only when their persisted trigger evidence names that rule. Claim
 still checks the live conversation grant and the rule creator's invocation
-authority. Composio credentials use the agent owner's connections; originator is
-an audit field, not a credential selector. Overlay construction keeps upstream's
+authority. First-party Composio credentials use the agent owner's connections;
+originator is an audit field, not a credential selector. Overlay construction keeps upstream's
 placement: before locks for ordinary dispatch, only when creating a task for
 system dispatch. The upstream `all`/`stage:N` condition fingerprint transitions
 are unchanged.
@@ -180,6 +184,54 @@ permission of `/api/issues/{id}`. Missing routing context and unknown methods or
 routes fail closed. Existing daemon and plugin credential boundaries remain
 separate; the external task token gains no daemon or plugin credential.
 
+`channel.IsConversationTask` classifies a persisted conversation root, every
+descendant carrying its reference, and an origin-only malformed external task.
+Authentication, context propagation, wakeup source classification, claim
+assembly and daemon plugin authorization share this predicate. A malformed
+external task fails authorization instead of becoming first-party.
+
+Claims for these tasks omit plugin hook tools, plugin MCP connections,
+Composio connected-app metadata and per-task MCP overlays, including overlays
+already persisted by older servers or retries. Both daemon plugin endpoints
+(hook invocation and MCP credential resolution) independently deny these tasks
+before invoking a hook or looking up a secret. This applies even with PluginsV1
+and ComposioMCPApps enabled; their default-off values are not the boundary.
+Enqueue-time overlay preparation is unchanged, but those values never reach an
+external claim. Saved agent MCP configuration and explicitly bound workspace
+MCP servers still belong to the runtime trust boundary described below.
+
+The restricted instructions are injected for every external claim, including
+issue-backed descendants with no channel delivery row. Task transcripts remain
+on the allowlist, but an external caller can read only tasks sharing its
+persisted conversation root; other roots and ordinary tasks return 404. Member
+and first-party transcript access remains workspace-scoped. A task deleted
+between credential and authorization lookups returns 401; transient lookup
+failures retain 503.
+
+Feishu reply mentions follow the owner's T10 ruling: an additional personal
+notification requires an explicit request in the current trigger and server
+verification. Put `/mention @Alice @Bob` (using Feishu's native user picker) on
+the first line, then the question on the next line. `回复时提醒：@Alice` is also
+accepted; a native bot mention may precede the directive. Ordinary references
+to people, names or raw IDs, quoted instructions and forwarded/history messages
+do not grant notification authority. Rich-text messages support the same
+directive in their first text/mention paragraph, not a code block or link.
+
+The reply reads only the message ID frozen in its task delivery. It verifies
+the message's chat, sender, thread, live/deleted status and native mention
+metadata, then resolves the requested personal open_ids through Feishu's
+contact API. Missing identity/scope, lookup failure or timeout removes only
+the additional mentions; the answer still sends. IDs are deduplicated and
+`all` is never accepted, including as a malformed saved sender. The existing
+server-generated mention of the triggering sender remains independent.
+
+The server constructs all active mention nodes. Model bodies containing `<`
+or `&` use a rich-text post with literal text nodes and entity unescaping off;
+this preserves the original body without executing raw or encoded at tags.
+Such replies show Markdown source literally, including code or URLs with those
+characters. Other replies retain their existing text/Markdown rendering.
+Native reply routing and classified chat-level fallback retain this protection.
+
 The production route inventory currently contains **457 user-authenticated
 routes: 60 allowed and 397 denied**, plus 69 routes with separate authentication
 or public/capability handling. The test calls every denied user route with a
@@ -187,8 +239,14 @@ real, otherwise-valid external task token and requires the central error code.
 It also records method, route, authentication boundary and decision in
 `server/cmd/server/testdata/labrastro-external-routes.tsv`. New or changed routes
 fail the inventory check until reviewed, while the runtime already denies new
-routes. This detects route changes, not semantic changes inside an existing
-handler; upstream sync still requires reviewing the latter.
+routes. A second inventory,
+`server/cmd/server/testdata/labrastro-external-requests.tsv`, covers every allowed
+non-GET route. It reflects the production JSON request structs, including embedded
+dependency fields, field types and tag options; bodyless routes and the query
+map are explicit, and multipart fields are read from UploadFile's source.
+Adding or changing a field requires review before updating this snapshot.
+Neither inventory detects new side effects behind unchanged fields or changes
+to RawMessage/map validation; upstream sync still requires reviewing those.
 
 After reviewing a changed route, update and inspect the inventory explicitly:
 
@@ -196,6 +254,10 @@ After reviewing a changed route, update and inspect the inventory explicitly:
 LABRASTRO_UPDATE_ROUTE_INVENTORY=1 go -C server test ./cmd/server \
   -run '^TestExternalConversationRouteInventory$' -count=1
 git diff -- server/cmd/server/testdata/labrastro-external-routes.tsv
+
+LABRASTRO_UPDATE_REQUEST_INVENTORY=1 go -C server test ./cmd/server \
+  -run '^TestExternalConversationRequestInventory$' -count=1
+git diff -- server/cmd/server/testdata/labrastro-external-requests.tsv
 ```
 
 The Autopilot-specific gates and the wakeup consent extension from the earlier
