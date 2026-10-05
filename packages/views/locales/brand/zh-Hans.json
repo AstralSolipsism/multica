@@ -1,19 +1,4 @@
 {
-  "fork-ui": {
-    "settings": {
-      "preferences": {
-        "description": "调整你在 Labrastro 中的使用偏好。"
-      },
-      "plugins": {
-        "publish": {
-          "description": "上传插件产物包。Labrastro 负责存储和分发，作者不需要自己的服务器。"
-        }
-      },
-      "github": {
-        "page_description": "连接 GitHub App、控制 Pull Request 如何出现在 Labrastro 中，并决定智能体在 commit 记录里留下哪些痕迹。"
-      }
-    }
-  },
   "settings": {
     "notifications": {
       "system": {
@@ -171,6 +156,9 @@
     "questions": {
       "source": {
         "question": "你是从哪里了解到 Labrastro 的？"
+      },
+      "use_case": {
+        "question": "你打算用 Labrastro 做什么？"
       }
     },
     "cli_install": {

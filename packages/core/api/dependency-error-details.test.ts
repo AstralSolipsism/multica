@@ -15,17 +15,17 @@ const refusal = (body: unknown) => new ApiError("conflict", 409, "Conflict", bod
 
 describe("dependencyErrorDetails", () => {
   it.each([
-    null, undefined, "error", new Error("dependency_unsatisfied"),
-    { body: { reason_code: "dependency_unsatisfied" } },
-    refusal(null), refusal("dependency_unsatisfied"), refusal({}),
+    null, undefined, "error", new Error("dependency_ancestor_conflict"),
+    { body: { reason_code: "dependency_ancestor_conflict" } },
+    refusal(null), refusal("dependency_ancestor_conflict"), refusal({}),
     refusal({ reason_code: 42 }), refusal({ reason_code: "" }),
-    refusal({ code: "dependency_unsatisfied" }),
+    refusal({ code: "dependency_ancestor_conflict" }),
     refusal({ reason_code: "dispatch_blocked", dependencies: projection }),
   ])("does not reinterpret a non-dependency error: %j", (error) => {
     expect(dependencyErrorDetails(error)).toBeNull();
   });
 
-  it.each(["dependency_unsatisfied", "dependency_cycle", "dependency_version_conflict", "dependency_future_reason"])(
+  it.each(["dependency_ancestor_conflict", "dependency_cycle", "dependency_version_conflict", "dependency_future_reason"])(
     "keeps the reason and parses the wire projection for %s", (reasonCode) => {
       const result = dependencyErrorDetails(refusal({ reason_code: reasonCode, dependencies: projection }));
       expect(result).toEqual({
@@ -47,7 +47,7 @@ describe("dependencyErrorDetails", () => {
     { ...projection, blocked_by: [{ ...prerequisite, satisfied: true }] },
     { blockedBy: [], inheritedBlockedBy: [], blocking: [], unsatisfied: [], hasRestrictedBlockers: false, dependencyVersion: "v2" },
   ])("preserves the refusal but keeps unreadable dependencies unknown: %j", (dependencies) => {
-    expect(dependencyErrorDetails(refusal({ reason_code: "dependency_unsatisfied", dependencies })))
-      .toEqual({ reasonCode: "dependency_unsatisfied", dependencies: null });
+    expect(dependencyErrorDetails(refusal({ reason_code: "dependency_ancestor_conflict", dependencies })))
+      .toEqual({ reasonCode: "dependency_ancestor_conflict", dependencies: null });
   });
 });

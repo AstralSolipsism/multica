@@ -226,8 +226,6 @@ func dependencyHTTPStatus(code string) int {
 	switch code {
 	case "not_found":
 		return http.StatusNotFound
-	case "dependency_change_not_allowed", "dependency_override_not_allowed":
-		return http.StatusForbidden
 	case "dependency_data_unverified":
 		return http.StatusUnprocessableEntity
 	default:
@@ -241,9 +239,6 @@ func writeDependencyError(w http.ResponseWriter, err error) bool {
 		return false
 	}
 	body := map[string]any{"error": e.Message, "reason_code": e.Code}
-	if e.View != nil {
-		body["dependencies"] = e.View
-	}
 	// Data-unverified errors deliberately disclose no raw historical endpoints.
 	// Cycle witnesses here are from a validated, workspace-visible proposal.
 	if e.Violation != nil && e.Code != "dependency_data_unverified" {

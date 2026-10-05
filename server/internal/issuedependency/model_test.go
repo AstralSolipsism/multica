@@ -18,7 +18,7 @@ func model(parents map[string]string, edges ...[2]string) Model {
 	return m
 }
 
-func TestDependencyInheritanceAndWeakening(t *testing.T) {
+func TestDependencyInheritance(t *testing.T) {
 	m := model(map[string]string{"A": "", "A1": "A", "B": "", "B1": "B", "C": ""}, [2]string{"A", "B"}, [2]string{"C", "B1"}, [2]string{"A", "B1"})
 	if err := m.Validate(); err != nil {
 		t.Fatal(err)
@@ -27,18 +27,7 @@ func TestDependencyInheritanceAndWeakening(t *testing.T) {
 	if len(p) != 2 || len(p[0].SourceEdges) != 2 || len(p[0].InheritedFrom) != 1 {
 		t.Fatalf("lost deduplication or provenance: %+v", p)
 	}
-	next := m.Clone()
-	n := next.Issues["B1"]
-	n.ParentID = ""
-	next.Issues["B1"] = n
-	if m.Weakened(next) {
-		t.Fatal("the child's direct A prerequisite still protects it")
-	}
-	next.Edges = next.Edges[:1]
-	if !m.Weakened(next) {
-		t.Fatal("removing unfinished prerequisites must weaken constraints")
-	}
-	n = m.Issues["A"]
+	n := m.Issues["A"]
 	n.Category = "done"
 	m.Issues["A"] = n
 	if !m.Prerequisites("B")[0].Satisfied {

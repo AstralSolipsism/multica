@@ -1,62 +1,10 @@
 {
-  "inspector": {
-    "section_profile_hint": "ワークスペース内でのエージェントの表示を管理します。",
-    "section_execution_hint": "ランタイム、モデル、思考レベル、速度、同時実行数を設定します。",
-    "section_access_hint": "このエージェントと接続済み機能を利用できる相手を管理します。",
-    "avatar_hint": "割り当て、アクティビティ、チャットに表示されます。"
-  },
-  "create_dialog": {
-    "description_create": "ワークスペースに新しい AI エージェントを作成します。"
-  },
   "tab_body": {
-    "custom_args": {
-      "empty_hint": "最初のトークンを追加して、起動コマンドを作成します。"
-    },
-    "mcp_config": {
-      "dialog_description": "接続方式を選んで設定を入力します。高度な設定には JSON を使用できます。",
-      "dialog_command_hint": "Server を起動する実行ファイルで、そのサービスのインストール手順から取得します（例: npx、uvx、絶対パス）。引数はここではなく下の欄に入力してください。",
-      "dialog_url_hint": "サービス提供者またはデプロイ管理者が発行する MCP エンドポイントです。サービスのホームページ URL はここでは使えません。",
-      "dialog_snippet_toggle": "設定スニペットを貼り付け",
-      "dialog_snippet_hint": "サービスのインストール手順にある内容を貼り付けます — {\"mcpServers\": {...}} ブロック、単一の Server 設定オブジェクト、起動コマンド行、またはエンドポイント URL。適用しても下のフィールドに入力されるだけで、コマンドが実行されることはありません。",
-      "dialog_snippet_aria": "MCP 設定スニペット",
-      "dialog_snippet_apply": "フィールドに入力",
-      "dialog_snippet_empty": "先にスニペットを貼り付けてください。",
-      "dialog_snippet_invalid_json": "JSON を解析できません: {{error}}",
-      "dialog_snippet_not_object": "スニペットは JSON オブジェクトである必要があります。",
-      "dialog_snippet_no_servers": "スニペットの Server 一覧が空です。",
-      "dialog_snippet_multiple": "スニペットに複数の Server（{{names}}）が含まれています。一度に 1 つずつ貼り付けてください。",
-      "dialog_snippet_missing_target": "スニペットには command または url が必要です。",
-      "dialog_snippet_unbalanced": "コマンド行に閉じられていない引用符があります。",
-      "dialog_snippet_unsupported": "コマンド行にサポートされない shell 構文（パイプ、リダイレクト、展開、末尾の孤立したバックスラッシュ）が含まれています。単一の起動コマンドを貼り付けてください。"
-    },
-    "composio_mcp": {
-      "empty_hint": "サードパーティサービスをまだ接続していません。先に 1 つ認可してから、ここで許可してください。"
-    },
     "runtime_config": {
-      "intro": "OpenClaw ランタイムがこのエージェントの各ターンをどのように実行するかを選択します。Local モードはエージェントを daemon プロセス内で実行します。Gateway モードは各ターンを OpenClaw Gateway に転送します — daemon のホストが軽量な調整役で、エージェントの実作業はより強力なマシンで動かしたい場合に有用です。",
       "gateway_hint": "Gateway モードでのみ使用されます。すべてのフィールドは任意です — 空欄のフィールドは daemon ホストの Gateway 設定（`~/.openclaw/openclaw.json` の `gateway` セクション）から継承します。保存済みのトークンは例外で、空欄にすると保存値が保持されます。",
       "host_hint": "Gateway のアドレスで、デプロイ管理者から取得します。空欄の場合はホスト側の設定を継承します。",
       "token_hint": "Gateway が発行するトークンで、デプロイ管理者または Gateway ホストの設定から取得します。未設定の場合は空欄で継承します。",
       "token_hint_saved": "トークンは保存済みです — 空欄のままだと現在の値を保持します。置き換えるには新しい値を入力してください。"
-    },
-    "skills": {
-      "intro": "このエージェントの有効なスキルです。Codex と Claude Code から継承したスキルも、エージェントごとに無効化できます。",
-      "empty_hint": "ワークスペースのスキルを追加して、チームの知識をこのエージェントと共有しましょう。",
-      "add_dialog_description": "このエージェントに割り当てるワークスペースのスキルを選択してください。"
-    },
-    "integrations": {
-      "intro": "このエージェントを外部のチャットプラットフォームに接続し、普段使っているツールから直接やり取りできるようにします。"
     }
-  },
-  "creation_studio": {
-    "sections": {
-      "identity_hint": "識別しやすい名前と簡潔な目的を設定します。",
-      "behavior_hint": "動作方法を定義し、利用できるワークスペースのスキルを追加します。",
-      "access_hint": "このエージェントを実行できるユーザーを設定します。後から変更できます。"
-    },
-    "builder": {
-      "chat_hint": "会話で要件を整理し、隣の設定を調整します。"
-    },
-    "choose_description": "すべて自分で設定するか、必要なものを説明して会話から作成できます。"
   }
 }

@@ -11,8 +11,6 @@
     "title": "Feishu group QR code",
     "hint": "Scan with Feishu to join the group"
   },
-  "install_scan_hint_feishu": "Feishu → Scan → authorize the new PersonalAgent.",
-  "install_scan_hint_lark": "Lark → Scan → authorize the new PersonalAgent.",
   "conversation_title": "Agent conversations",
   "conversation_description": "People in these conversations can talk to this agent without a Multica account. The agent clarifies and summarizes feedback, then posts comments in its own name. This takes time and model usage; messages are not copied verbatim into tasks.",
   "conversation_groups": "Group chat IDs (one oc_ ID per line; topics remain separate)",

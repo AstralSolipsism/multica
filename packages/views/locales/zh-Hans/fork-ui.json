@@ -1,121 +1,10 @@
 {
-  "agents": {
-    "transcript": {
-      "antigravity_live_unavailable": "Antigravity 暂不提供实时执行事件。运行完成后即可查看执行记录。"
-    }
-  },
-  "auth": {
-    "web": {
-      "callback": {
-        "signing_in_description": "正在完成登录，请稍候"
-      }
-    }
-  },
-  "autopilots": {
-    "dialog": {
-      "schedule_disabled_reason": "该自动化有多个时间表——请到详情页编辑。"
-    }
-  },
-  "billing": {
-    "workspace": {
-      "return": {
-        "portal_description": "下方显示最新的订阅快照。"
-      },
-      "subscription_notice": {
-        "canceled_description": "上方套餐徽标显示这个工作区当前实际生效的套餐。"
-      },
-      "current": {
-        "plan_description": "这个工作区当前生效的 entitlement。",
-        "billing_interval_description": "当前订阅保存的付款周期。",
-        "period_end_description": "当前订阅快照报告的日期。"
-      },
-      "management": {
-        "portal_description": "前往 Stripe 管理这个工作区的订阅。"
-      },
-      "limits": {
-        "description": "限额和用量来自服务端当前 entitlement 与额度统计。",
-        "issues_description": "当前任务用量和服务端返回的生效限额。",
-        "autopilots_description": "当前自动化用量和服务端返回的重置时间。"
-      },
-      "seats": {
-        "human_members_description": "已确认占用已购容量的工作区成员。成员变化后可刷新对账。",
-        "billed_description": "当前通过 Stripe 购买的席位数量。"
-      }
-    }
-  },
-  "editor": {
-    "image": {
-      "previous": "上一张",
-      "next": "下一张",
-      "sequence_position": "第 {{index}} / {{total}} 张"
-    }
-  },
   "issues": {
-    "page": {
-      "empty_hint": "创建一个任务开始使用。"
-    },
-    "actor_issues": {
-      "empty": {
-        "assigned": {
-          "description": "分配到这里的任务会显示在此视图中。"
-        },
-        "created": {
-          "description": "由这里创建的任务会显示在此视图中。"
-        }
-      }
-    },
     "detail": {
-      "pull_requests_empty": "还没有关联的 PR。把本任务的 identifier 写进 PR 的分支名或标题，或者在正文里写在 Closes 后面，即可自动关联。",
       "more_actions": "任务操作"
-    },
-    "filtered_empty": {
-      "hint": "调整或清除筛选条件，就能看到这个视图里的任务。"
     },
     "batch": {
       "update_partial": "{{total}} 个任务中有 {{failed}} 个未能更新"
-    }
-  },
-  "modals": {
-    "delete_issue": {
-      "hint": "工作区任何成员都可以删除任务。"
-    }
-  },
-  "onboarding": {
-    "step_nav": {
-      "workspace": {
-        "description": "起个名字，定个网址。"
-      },
-      "runtime": {
-        "description": "你的第一个智能体队友，以及它在哪运行。"
-      }
-    },
-    "welcome": {
-      "lede_desktop": "走完这几步，就会有真实的智能体来回复你的第一个任务。",
-      "illustration_caption": "每个任务、每条对话、每个决策——团队和智能体共享同一份上下文。"
-    },
-    "source_backfill": {
-      "hint_ready": "看起来不错，准备好就点提交。"
-    },
-    "step_question": {
-      "hint_continue": "可以了。准备好就点继续。"
-    },
-    "step_workspace": {
-      "create_new_subtitle": "另起一个——把另一类工作放进单独的空间。"
-    },
-    "step_runtime": {
-      "found_lede": "以下是在这台电脑上找到的智能体运行时。之后可以随时切换，或添加更多。",
-      "hint_skip_or_refresh": "装好后点刷新，或跳过进入工作区。"
-    },
-    "step_platform": {
-      "cli_dialog_description": "和桌面端相同的连接，通过终端配置。适用于服务器、远程开发机或任意无头电脑。"
-    }
-  },
-  "projects": {
-    "resources": {
-      "local_rename_tooltip": "重命名",
-      "local_rename_label": "本地目录显示名",
-      "toast_local_renamed": "已重命名",
-      "toast_local_rename_failed": "重命名失败"
     }
   },
   "runtimes": {
@@ -126,91 +15,21 @@
         "stale": "数据过期",
         "unavailable": "--"
       }
-    },
-    "connect": {
-      "live_listening_hint": "守护进程一启动就会被识别，通常不到一分钟。"
-    },
-    "cloud_runtime": {
-      "create_hint": "只需要填写名称、实例规格和磁盘大小，其余配置由 Fleet 默认处理。"
     }
   },
   "settings": {
-    "issue_statuses": {
-      "editor": {
-        "behavior_hint": "该状态的行为与「{{category}}」完全一致。"
-      },
-      "categories": {
-        "backlog": "搁置。把任务移到这里不会启动智能体。",
-        "todo": "排队中。把任务移到这里会启动指派的智能体。",
-        "in_progress": "正在进行。",
-        "in_review": "已交付，等待人工审核。会结束自动化运行。",
-        "blocked": "被外部依赖阻塞。",
-        "cancelled": "决定不做。"
-      },
-      "description": "定义任务流转的工作流。每个状态的行为由它所属的分类决定。"
-    },
-    "preferences": {
-      "sticky_comment_bar": {
-        "hint": "滚动任务页面时，评论栏始终固定在底部。"
-      },
-      "description": "调整你在 Multica 中的使用偏好。"
-    },
-    "issue": {
-      "quick_create_description": "快速创建工具栏中显示的字段。",
-      "manual_create_description": "手动创建工具栏中显示的字段。"
-    },
-    "mcp": {
-      "empty_description": "先在这里添加 MCP Server，再前往对应智能体的 MCP 页面完成分配。"
-    },
-    "plugins": {
-      "publish": {
-        "description": "上传插件产物包。Multica 负责存储和分发，作者不需要自己的服务器。"
-      },
-      "description": "在这个工作区里发布插件，然后安装某个具体版本，并逐条确认它能访问什么。"
-    },
-    "notifications": {
-      "system": {
-        "hint": "App 未获得焦点时，新的收件箱条目通过操作系统弹出通知横幅。"
-      }
-    },
-    "github": {
-      "page_description": "连接 GitHub App、控制 Pull Request 如何出现在 Multica 中，并决定智能体在 commit 记录里留下哪些痕迹。",
-      "connection_description_prefix": "自动把任务关联到 Pull Request。只要 PR 的分支名或标题里出现",
-      "connection_description_suffix": "或正文里写了 Closes MUL-123，PR 就会关联到对应任务；只有带关闭关键字的 PR 合并后，任务才会转为",
-      "connection_description_done": "已完成",
-      "connection_identifier_example": "MUL-123"
-    },
-    "dingtalk": {
-      "groups_overview_description": "每条连接显示智能体、钉钉机器人和近期有交互的群。"
-    },
     "desktop": {
-      "updates": {
-        "description": "控制后台自动更新，或手动检查新版本。"
-      },
       "daemon": {
-        "description": "配置本地智能体守护进程与桌面应用协同工作的方式。",
         "cli_install_windows_help": "Windows 没有脚本安装器。请联系管理员获取安装包，或从内部发布站（{{downloadsUrl}}/cli/v<版本>/，当前版本号见 {{latestManifestUrl}}）下载对应版本的 multica-cli-<版本>-windows-<架构>.zip，解压后将 multica.exe 放入 PATH。",
-        "cli_install_windows_label": "Windows 需手动安装",
-        "diagnostics_description": "设备标识与连接详情，可用于提交错误报告或排查运行时未显示的问题。",
-        "waiting_logs_description": "新日志会实时显示在这里。"
+        "cli_install_windows_label": "Windows 需手动安装"
       }
-    },
-    "integrations": {
-      "description": "连接常用工具，分别管理每项集成。"
     }
   },
   "skills": {
-    "actions": {
-      "add_dialog_description": "选择要获得所选 skill 的智能体。"
-    },
     "create": {
       "local": {
         "multiple_skills": "所选内容包含多个 skill。请改选只含一个 skill 的文件夹或压缩包，或在技能页使用 \"导入技能包\"，填入 GitHub 或 skills.sh 仓库地址。"
       }
-    },
-    "runtime_import": {
-      "no_skills_hint": "这个运行时上还没有可发现的本地 skill。",
-      "no_search_results_title": "没有匹配的本地 skill"
     }
   }
 }

@@ -45,8 +45,8 @@ Upstream migration 492 converts status categories to `unstarted`, `started`,
 becomes `started`. This is the accepted upstream classification, not a renamed
 status or a fork execution mapping.
 
-Migration 551 adds a derived conversation-root reference to external tasks and
-their retries/delegations. The existing frozen grant remains the sole consent
+Migration `551_channel_conversation_root` adds a derived conversation-root
+reference to external tasks and their retries/delegations. The existing frozen grant remains the sole consent
 record. Ordinary tasks retain upstream authority when an older parent task is
 deleted; external descendants still honor live revocation. The migration only
 backfills on first column creation, so replay cannot overwrite established
@@ -95,6 +95,45 @@ their internal destinations. Source-backfill prompts remain unmounted. Retired p
 /about and /homepage remain unavailable; the sitemap excludes retired marketing
 routes, and the internal download page does not emit upstream organization
 promotion. Keep software license and attribution notices.
+
+Retire marketing at the fork-owned boundaries instead of deleting upstream
+implementations (OL-133):
+
+- `apps/web/lib/labrastro-marketing.ts` owns the retired public route trees
+  (`/about`, `/homepage`, `/changelog`, `/contact-sales`, `/usecases`, including
+  descendants). `proxy.ts` calls it before other routing and rewrites to Next's
+  not-found page with HTTP 404 and noindex; its matcher must include dotted
+  slugs. `sitemap.ts` filters upstream entries through the same policy and uses
+  the instance's deployment URL.
+- `packages/core/onboarding/step-order.ts` continues to exclude `about_you`.
+  The restored questionnaire, its handlers and translations remain upstream
+  code, but welcome/forward/back/rail navigation cannot enter the step. The
+  completion-time questionnaire flush is gated by the same step list so setup
+  never rewrites historical answers when the questionnaire is retired.
+- `packages/views/onboarding/labrastro-marketing.ts` disables the cloud-card
+  mounts in `step-platform-fork.tsx` and `step-runtime-connect.tsx` for both
+  Web and Desktop. Keep the upstream card implementations behind that gate.
+- Keep the help menu's internal download, feedback and Feishu entries, the
+  internal root/download pages, and the landing layout without upstream
+  Organization JSON-LD. These serve active fork behavior; restoring their
+  upstream versions would reintroduce promotion. The unused backend
+  contact-sales handler remains deleted and `/api/contact-sales` unregistered;
+  restoring it offers no routing benefit and would add unused server code.
+
+The initial restoration uses the fork/upstream common version
+`2ea01ae4ef55de4310b99af192d2dbd367832883`. The six retired page files, four
+use-case MDX files, `source.config.ts`, `use-cases-source.ts`,
+`use-case-locale-fallback.ts` and its test, `step-about-you.tsx` and its test,
+onboarding `types.ts`, and all five upstream `onboarding.json` files are
+byte-identical to that version. Flow/runtime components retain only the gates
+described above. Restored questionnaire branding lives in the existing fork
+brand overlays; retired page metadata has narrowly listed source-guard
+exceptions, backed by route 404 tests. Do not exempt active product copy.
+
+On future syncs, update the policy for newly introduced marketing routes or
+steps and verify absence at the entry points, as well as continued availability
+of the dormant upstream implementations. Existing absence tests must remain;
+the positive component tests for dormant code do not authorize mounting it.
 
 During an upstream merge, review the resulting user paths and their tests
 against these constraints. Do not replace a fork's absence assertion with an

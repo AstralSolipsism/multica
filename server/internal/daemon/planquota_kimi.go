@@ -841,11 +841,13 @@ func unixSecondsPtr(v any) *int64 {
 	}
 }
 
+var kimiGeteuid = os.Geteuid
+
 // kimiPlanQuotaLoop is the daemon-loop entry point for the Kimi collector.
 // Root and platforms that cannot prove the connection peer run no loop at
 // all — fail closed, with one startup log.
 func (d *Daemon) kimiPlanQuotaLoop(ctx context.Context) {
-	if os.Geteuid() == 0 {
+	if kimiGeteuid() == 0 {
 		d.logger.Warn("kimi plan quota collector disabled: credential delivery disabled for root (euid=0); runtimes stay not reported")
 		return
 	}

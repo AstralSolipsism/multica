@@ -22,7 +22,6 @@ import (
 type DependencyError struct {
 	Code      string
 	Message   string
-	View      *DependencyView
 	Violation *issuedependency.Violation
 }
 
@@ -237,11 +236,7 @@ type DependencyWrite struct {
 	BlockedBy       *[]pgtype.UUID
 	ExpectedVersion string
 	Creating        bool
-	SuppressRun     bool
 	IncludeView     bool
-	Probe           IssueTriggerProbe
-	ActorUserID     pgtype.UUID
-	HandoffNote     string
 }
 
 // Apply validates and persists relations against the proposed final issue row.

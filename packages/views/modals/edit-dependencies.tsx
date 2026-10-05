@@ -78,7 +78,6 @@ function sameIdSet(a: string[], b: string[]): boolean {
 type Notice =
   | { kind: "conflict" }
   | { kind: "structure" }
-  | { kind: "permission" }
   | { kind: "unverified" }
   | { kind: "generic"; message?: string };
 
@@ -299,9 +298,6 @@ function EditDependenciesBody({
         case "dependency_ancestor_conflict":
           setNotice({ kind: "structure" });
           break;
-        case "dependency_change_not_allowed":
-          setNotice({ kind: "permission" });
-          break;
         case "dependency_data_unverified":
           setNotice({ kind: "unverified" });
           break;
@@ -341,7 +337,6 @@ function EditDependenciesBody({
             <AlertDescription>
               {notice.kind === "conflict" && tDependencies(($) => $.edit_dependencies.conflict_notice)}
               {notice.kind === "structure" && tDependencies(($) => $.edit_dependencies.error_structure)}
-              {notice.kind === "permission" && tDependencies(($) => $.edit_dependencies.error_permission)}
               {notice.kind === "unverified" && tDependencies(($) => $.edit_dependencies.error_unverified)}
               {notice.kind === "generic" &&
                 (notice.message ?? tDependencies(($) => $.edit_dependencies.error_generic))}

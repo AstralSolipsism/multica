@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClient } from "./client";
 import { setApiInstance } from "./index";
 import { createQueryClient } from "../query-client";
-import { messageDeliveriesOptions } from "../message-delivery/queries";
+import { messageDeliveriesInfiniteOptions } from "../message-delivery/queries";
 import { autopilotKeys } from "../autopilots/queries";
 import { parseWithFallback, setSchemaLogger } from "./schema";
 import { noopLogger } from "../logger";
@@ -459,25 +459,23 @@ describe("OL-26 review regressions", () => {
 
   it("refreshes deliveries when the autopilot prefix is invalidated", async () => {
     const client = createQueryClient();
-    setApiInstance(response({ deliveries: [], limit: 50, offset: 0 }));
-    const options = messageDeliveriesOptions("workspace", "autopilot");
-    await client.fetchQuery(options);
+    setApiInstance(response({ deliveries: [], limit: 100, offset: 0 }));
+    const options = messageDeliveriesInfiniteOptions("workspace", "autopilot");
+    await client.fetchInfiniteQuery(options);
     // The worker wrote back a new delivery; the next realtime autopilot
     // event invalidates the shared prefix and the records refetch.
-    response({ deliveries: [runDelivery], limit: 50, offset: 0 });
+    response({ deliveries: [runDelivery], limit: 100, offset: 0 });
     await client.invalidateQueries({ queryKey: autopilotKeys.all("workspace") });
-    const actual = await client.fetchQuery(options);
+    const actual = await client.fetchInfiniteQuery(options);
     client.clear();
-    expect(actual.deliveries).toHaveLength(1);
+    expect(actual.pages[0]?.deliveries).toHaveLength(1);
   });
 
-  it("nests records keys under the autopilot prefix with status, run and page", () => {
+  it("nests records keys under the autopilot prefix with status and run", () => {
     expect(
-      messageDeliveriesOptions("workspace", "autopilot", {
+      messageDeliveriesInfiniteOptions("workspace", "autopilot", {
         status: "failed",
         runId: "run-1",
-        limit: 100,
-        offset: 200,
       }).queryKey,
     ).toEqual([
       "autopilots",
@@ -487,9 +485,36 @@ describe("OL-26 review regressions", () => {
       "deliveries",
       "failed",
       "run-1",
-      "page",
-      100,
-      200,
+    ]);
+  });
+
+  it("fetches successive delivery pages within the same filtered cache", async () => {
+    const requests: URL[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+      const url = new URL(input);
+      requests.push(url);
+      const offset = Number(url.searchParams.get("offset"));
+      const deliveries = offset === 0
+        ? Array.from({ length: 100 }, (_, i) => ({ ...runDelivery, id: `delivery-${i}` }))
+        : [{ ...runDelivery, id: "delivery-100" }];
+      return new Response(JSON.stringify({ deliveries, limit: 100, offset }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }));
+    setApiInstance(new ApiClient("https://api.example.test"));
+    const client = createQueryClient();
+    const options = messageDeliveriesInfiniteOptions("workspace", "autopilot", {
+      status: "sent", runId: "run-1",
+    });
+    // Asking for three pages must stop after the short second page.
+    const actual = await client.fetchInfiniteQuery({ ...options, pages: 3 });
+    client.clear();
+    expect(actual.pageParams).toEqual([0, 100]);
+    expect(actual.pages.map((page) => page.deliveries.length)).toEqual([100, 1]);
+    expect(actual.pages[1]?.deliveries[0]?.id).toBe("delivery-100");
+    expect(requests.map((url) => Object.fromEntries(url.searchParams))).toEqual([
+      { status: "sent", run_id: "run-1", limit: "100" },
+      { status: "sent", run_id: "run-1", limit: "100", offset: "100" },
     ]);
   });
 
