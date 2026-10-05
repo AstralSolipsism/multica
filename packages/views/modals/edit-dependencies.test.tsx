@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => ({
   search: vi.fn(),
   openModal: vi.fn(),
   push: vi.fn(),
-  setQueryData: vi.fn(),
   refetch: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
   searchResults: { issues: [] as unknown[] },
@@ -63,7 +62,6 @@ vi.mock("@tanstack/react-query", () => ({
       refetch: mocks.refetch,
     };
   },
-  useQueryClient: () => ({ setQueryData: mocks.setQueryData }),
 }));
 
 vi.mock("@multica/core/api", async (importOriginal) => {
@@ -284,22 +282,17 @@ describe("EditDependenciesModal", () => {
   });
 
   it("REVIEW preserves a concurrently added prerequisite when retrying the user removal", async () => {
-    // The server refused v1 and attached the current (v2) projection.
+    // The refusal carries only a reason; a new read supplies the v2 projection.
     mocks.save.mockRejectedValueOnce(
       new ApiError("conflict", 409, "Conflict", {
         error: "version conflict",
         reason_code: "dependency_version_conflict",
-        dependencies: {
-          blocked_by: [{
-            issue_id: "issue-8", identifier: "MUL-8", title: "MUL-8",
-            status: "in_progress", status_category: "in_progress", satisfied: false,
-            source_edges: ["edge-1"], inherited_from: [], descendant_count: 0,
-          }],
-          inherited_blocked_by: [], blocking: [], unsatisfied: [],
-          has_restricted_blockers: false, dependency_version: "v2",
-        },
       }),
     );
+    mocks.refetch.mockResolvedValueOnce({ data: view({
+      blockedBy: [prereq("issue-9", "MUL-9"), prereq("issue-8", "MUL-8")],
+      dependencyVersion: "v2",
+    }) });
     render(<EditDependenciesModal onClose={vi.fn()} data={{ issueId: "issue-1" }} />);
 
     // User removes MUL-9, saves, conflicts.
@@ -308,7 +301,9 @@ describe("EditDependenciesModal", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("conflict refresh"));
 
     // The user's removal survives the re-base; the retry carries the fresh version.
-    expect(mocks.setQueryData).toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByTestId("prereq-list-direct")).toHaveTextContent("MUL-8"));
+    expect(screen.queryByRole("button", { name: "remove-MUL-9" })).not.toBeInTheDocument();
+    expect(mocks.refetch).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(mocks.save).toHaveBeenLastCalledWith({

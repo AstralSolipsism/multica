@@ -23,18 +23,18 @@
     "remove_prerequisite_aria": "선행 {{identifier}} 제거",
     "prerequisite_picker": {
       "title": "선행 태스크 추가",
-      "description": "새 태스크를 시작하기 전에 완료해야 하는 태스크 검색"
+      "description": "선행 관계는 협업을 위한 참고 정보이며 새 태스크의 시작을 제한하지 않습니다."
     }
   },
   "edit_dependencies": {
     "title": "선행 조건 편집",
-    "description": "이 태스크를 시작하기 전에 완료해야 하는 태스크를 선택하세요.",
-    "description_for": "{{identifier}}을(를) 시작하기 전에 완료해야 하는 태스크를 선택하세요.",
+    "description": "선행 관계는 협업을 위한 참고 정보이며 이 태스크의 시작을 제한하지 않습니다.",
+    "description_for": "선행 관계는 협업을 위한 참고 정보이며 {{identifier}}의 시작을 제한하지 않습니다.",
     "direct_section": "직접 선행 조건",
     "empty_direct": "직접 선행 조건 없음",
     "inherited_section": "상속된 선행 조건",
-    "inherited_hint": "상속된 제약은 원본 태스크에서만 변경할 수 있습니다.",
-    "restricted_note": "볼 권한이 없는 선행 조건이 있으며, 시작은 계속 차단됩니다.",
+    "inherited_hint": "상속된 관계는 원본 태스크에서만 변경할 수 있습니다.",
+    "restricted_note": "일부 선행 태스크는 권한으로 숨겨집니다.",
     "self_badge": "현재 태스크",
     "added_badge": "추가됨",
     "inherited_badge": "상속됨",

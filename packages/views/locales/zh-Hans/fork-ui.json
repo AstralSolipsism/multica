@@ -2,9 +2,6 @@
   "issues": {
     "detail": {
       "more_actions": "任务操作"
-    },
-    "batch": {
-      "update_partial": "{{total}} 个任务中有 {{failed}} 个未能更新"
     }
   },
   "runtimes": {

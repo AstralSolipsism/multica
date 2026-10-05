@@ -2,9 +2,6 @@
   "issues": {
     "detail": {
       "more_actions": "Issue actions"
-    },
-    "batch": {
-      "update_partial": "Couldn't update {{failed}} of {{total}} issues"
     }
   },
   "runtimes": {

@@ -23,18 +23,18 @@
     "remove_prerequisite_aria": "前提 {{identifier}} を削除",
     "prerequisite_picker": {
       "title": "前提タスクを追加",
-      "description": "新しいタスクを開始する前に完了が必要なタスクを検索"
+      "description": "前提条件は連携のための情報であり、新しいタスクの開始を制限しません。"
     }
   },
   "edit_dependencies": {
     "title": "前提条件を編集",
-    "description": "このタスクを開始する前に完了が必要なタスクを選択します。",
-    "description_for": "{{identifier}} を開始する前に完了が必要なタスクを選択します。",
+    "description": "前提条件は連携のための情報であり、このタスクの開始を制限しません。",
+    "description_for": "前提条件は連携のための情報であり、{{identifier}} の開始を制限しません。",
     "direct_section": "直接の前提条件",
     "empty_direct": "直接の前提条件はありません",
     "inherited_section": "継承された前提条件",
-    "inherited_hint": "継承された制約は元のタスクでのみ変更できます。",
-    "restricted_note": "閲覧権限のない前提条件がありますが、開始は引き続きブロックされます。",
+    "inherited_hint": "継承された関係は元のタスクでのみ変更できます。",
+    "restricted_note": "一部の前提条件は権限により非表示です。",
     "self_badge": "このタスク",
     "added_badge": "追加済み",
     "inherited_badge": "継承済み",
