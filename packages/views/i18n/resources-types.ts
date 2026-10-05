@@ -9,7 +9,6 @@ import type lark from "../locales/en/lark.json";
 import type forkUi from "../locales/en/fork-ui.json";
 import type dependencies from "../locales/en/dependencies.json";
 import type dag from "../locales/en/dag.json";
-import type autopilotDelivery from "../locales/en/autopilot-delivery.json";
 import type agentConfig from "../locales/en/agent-config.json";
 import type auth from "../locales/en/auth.json";
 import type settings from "../locales/en/settings.json";
@@ -59,7 +58,6 @@ declare global {
     "fork-ui": typeof forkUi;
     dependencies: typeof dependencies;
     dag: typeof dag;
-    "autopilot-delivery": typeof autopilotDelivery;
     "agent-config": typeof agentConfig;
     auth: typeof auth;
     settings: typeof settings;

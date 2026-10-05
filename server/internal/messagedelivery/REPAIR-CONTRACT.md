@@ -110,7 +110,7 @@ go test -p 1 -count=1 -json -timeout=300s \
   ./internal/messagedelivery ./internal/handler ./internal/service \
   ./internal/integrations/lark ./internal/integrations/channel \
   ./internal/integrations/channel/engine ./cmd/migrate ./cmd/server \
-  ./internal/migrations ./internal/projectfile
+  ./internal/migrations
 go test -race -p 1 -count=1 -json -timeout=300s ./internal/messagedelivery
 go vet ./internal/messagedelivery/... ./internal/handler ./internal/service \
   ./internal/integrations/lark ./internal/integrations/channel \

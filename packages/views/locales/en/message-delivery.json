@@ -32,7 +32,6 @@
     "bot_revoked": "Bot revoked",
     "member_unknown": "Unknown member",
     "revision": "v{{revision}}",
-    "effective_from": "Delivers runs finished after {{time}}",
     "test_send": "Send test",
     "test_sending": "Sending...",
     "test_toast": "Test message {{status}}",
@@ -48,8 +47,7 @@
     "toast_saved": "Push target saved",
     "toast_deleted": "Push target deleted",
     "toast_enabled": "Push target enabled",
-    "toast_disabled": "Push target disabled",
-    "toast_conflict": "This configuration was changed elsewhere. It has been reloaded — review and try again."
+    "toast_disabled": "Push target disabled"
   },
   "editor": {
     "title_add": "Add push target",
@@ -68,7 +66,6 @@
     "enabled": "Enable immediately after saving",
     "approval_admin": "This target hasn't been approved yet. Saving approves it as a workspace admin and verifies the bot can reach it.",
     "approval_member": "Group chats and topics require approval by a workspace owner/admin before saving.",
-    "approval_pending": "Pending admin approval — ask a workspace owner/admin to approve this target here.",
     "save": "Save",
     "save_approve": "Approve and save",
     "saving": "Saving...",
@@ -92,8 +89,7 @@
       "confirm": "Revoke",
       "revoking": "Revoking..."
     },
-    "toast_revoked": "Approval revoked, {{count}} queued delivery(s) cancelled",
-    "toast_revoke_failed": "Revoke failed"
+    "toast_revoked": "Approval revoked, {{count}} queued delivery(s) cancelled"
   },
   "deliveries": {
     "title": "Delivery records",
@@ -131,15 +127,11 @@
       "report": "Report content",
       "content": "Message content",
       "no_report_body": "(no report body)",
-      "summary": "Summary",
       "target": "Target",
-      "source": "Source",
       "view_issue": "View task",
       "receipts": "Receipts",
       "receipt_shard": "Shard {{index}}/{{total}}",
-      "external_message_id": "Feishu message ID",
       "send_uuid": "Deduplication UUID",
-      "error": "Failure reason",
       "created_at": "Created",
       "first_attempt_at": "First attempt",
       "delivered_at": "Platform accepted",
@@ -155,7 +147,6 @@
       "action": "Retry",
       "in_progress": "Retrying...",
       "toast": "Delivery re-queued",
-      "failed": "Retry failed",
       "uncertain_title": "Verify before retrying",
       "uncertain_description": "This message may already have reached Feishu, but the platform's response was lost. Check the target first; retry only if it didn't arrive. A retry replays the same deduplication UUID, so within the platform's dedup window a confirmed message isn't sent twice.",
       "uncertain_confirm": "Checked — retry",
@@ -238,8 +229,6 @@
     "title_edit_team": "Edit subscription",
     "target_self_hint": "Notifications are delivered to your own Feishu direct message — the recipient is always you and can't be changed.",
     "kind": "Source",
-    "kind_activity": "Task activity",
-    "kind_comment": "New comments",
     "kind_activity_hint": "Forwards issue status and assignee changes.",
     "kind_comment_hint": "Forwards plain new comments only.",
     "project": "Scope",
@@ -249,7 +238,6 @@
     "events_hint": "Leave everything unchecked to forward all events. Excluded events are recorded as not delivered.",
     "boundary_hint": "Changing the bot, target, scope or events — or re-enabling a disabled rule — restarts delivery from that moment; earlier history is not backfilled.",
     "approval_admin": "This target isn't approved for this source and scope yet. Saving approves it as a workspace admin and verifies the bot can reach it.",
-    "approval_member": "This target needs a workspace owner/admin approval for this source and scope before it can be saved.",
     "enable_hint": "Approving a target doesn't enable the rule — events are delivered only while the rule is enabled.",
     "catalog_load_failed": "Couldn't load the event catalog, so the event scope can't be confirmed. Reload it before saving.",
     "routes_refresh_failed": "The rules list couldn't be refreshed, so the current state isn't confirmed. Your draft is kept — save after the list reloads."

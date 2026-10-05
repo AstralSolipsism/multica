@@ -140,9 +140,8 @@ func TestDependencyCLIFailureSemantics(t *testing.T) {
 		name, reason string
 		status, exit int
 	}{
-		{"blocked", "dependency_unsatisfied", 409, 1},
 		{"stale", "dependency_version_conflict", 409, 1},
-		{"remove_permission", "dependency_change_not_allowed", 403, 3},
+		{"permission", "forbidden", 403, 3},
 		{"cycle", "dependency_cycle", 409, 1},
 		{"unverified", "dependency_data_unverified", 422, 5},
 		{"old_404", "not_found", 404, 4},
@@ -152,7 +151,7 @@ func TestDependencyCLIFailureSemantics(t *testing.T) {
 			t.Run(tc.name+"/"+action, func(t *testing.T) {
 				var writes atomic.Int32
 				view := dependencyCLIView()
-				payload := map[string]any{"error": "request refused", "reason_code": tc.reason, "dependencies": view, "future_field": strings.Repeat("x", 6000)}
+				payload := map[string]any{"error": "request refused", "reason_code": tc.reason, "future_field": strings.Repeat("x", 6000)}
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.Method == "GET" {
 						_ = json.NewEncoder(w).Encode(view)
@@ -251,13 +250,13 @@ func TestDependencyCLICommentPartialSuccess(t *testing.T) {
 				posts.Add(1)
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(map[string]any{"id": dependencyCLIChild, "content": "saved", "trigger_outcomes": []any{
-					map[string]any{"status": "blocked", "reason_code": "dependency_unsatisfied", "target_id": dependencyCLIActor, "target_type": "agent"},
+					map[string]any{"status": "blocked", "reason_code": "invocation_not_allowed", "target_id": dependencyCLIActor, "target_type": "agent"},
 					map[string]any{"status": "queued", "reason_code": "queued", "target_id": dependencyCLIC, "target_type": "agent"},
 				}})
 			}))
 			defer server.Close()
 			out, stderr := callDependencyCLI(t, server.URL, 1, "issue", "comment", "add", dependencyCLIB, "--content-file", "./comment.md", "--output", output)
-			if posts.Load() != 1 || !strings.Contains(stderr, "1 target(s) not started") || !strings.Contains(stderr, "Do not repost") || !strings.Contains(stderr, "dependency_unsatisfied") {
+			if posts.Load() != 1 || !strings.Contains(stderr, "1 target(s) not started") || !strings.Contains(stderr, "Do not repost") || !strings.Contains(stderr, "invocation_not_allowed") {
 				t.Fatalf("posts=%d stderr=%s", posts.Load(), stderr)
 			}
 			if output == "json" && (!strings.Contains(out, "trigger_outcomes") || !strings.Contains(out, "queued") || !json.Valid([]byte(out))) {
@@ -307,40 +306,14 @@ func TestDependencyCLIInheritedRemovalDoesNotMutate(t *testing.T) {
 	}
 }
 
-func TestDependencyCLILegacyDispatchRefusals(t *testing.T) {
-	for _, args := range [][]string{{"issue", "status", dependencyCLIB, "todo", "--output", "json"}, {"issue", "rerun", dependencyCLIB}, {"issue", "assign", dependencyCLIB, "--to-id", dependencyCLIActor}} {
-		t.Run(args[1], func(t *testing.T) {
-			var requests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == "GET" {
-					actors := []map[string]any{}
-					if r.URL.Path == "/api/agents" {
-						actors = append(actors, map[string]any{"id": dependencyCLIActor, "name": "test agent"})
-					}
-					_ = json.NewEncoder(w).Encode(actors)
-					return
-				}
-				requests.Add(1)
-				w.WriteHeader(http.StatusConflict)
-				_ = json.NewEncoder(w).Encode(map[string]any{"error": "blocked", "reason_code": "dependency_unsatisfied", "dependencies": dependencyCLIView()})
-			}))
-			defer server.Close()
-			out, stderr := callDependencyCLI(t, server.URL, 1, args...)
-			if requests.Load() != 1 || !strings.Contains(out, "dependency_unsatisfied") || !strings.Contains(stderr, "request human handling") {
-				t.Fatalf("requests=%d out=%s stderr=%s", requests.Load(), out, stderr)
-			}
-		})
-	}
-}
-
 func TestDependencyCLIOversizedRefusals(t *testing.T) {
 	for _, tc := range []struct {
 		name, body   string
 		status, exit int
 	}{
-		{"large_json", `{"error":"` + strings.Repeat("x", 1<<20) + `","reason_code":"dependency_unsatisfied"}`, 403, 3},
+		{"large_json", `{"error":"` + strings.Repeat("x", 1<<20) + `","reason_code":"dependency_version_conflict"}`, 403, 3},
 		// A valid JSON prefix followed by excessive whitespace is still oversized.
-		{"valid_prefix", `{"reason_code":"dependency_unsatisfied"}` + strings.Repeat(" ", 1<<20), 409, 1},
+		{"valid_prefix", `{"reason_code":"dependency_version_conflict"}` + strings.Repeat(" ", 1<<20), 409, 1},
 	} {
 		for _, action := range []string{"create", "status"} {
 			for _, output := range []string{"json", "table"} {

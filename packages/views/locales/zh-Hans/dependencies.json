@@ -1,10 +1,4 @@
 {
-  "comment": {
-    "trigger_blocked_dependency_unsatisfied": "不会启动——该任务有未完成的前置",
-    "trigger_blocked_dependency_data_unverified": "不会启动——依赖数据需先完成核验",
-    "trigger_blocked_short_dependency_unsatisfied": "前置未完成",
-    "trigger_blocked_short_dependency_data_unverified": "依赖待核验"
-  },
   "actions": {
     "edit_dependencies": "编辑前置..."
   },
@@ -22,32 +16,15 @@
     "loading": "正在加载前置...",
     "load_error": "前置加载失败",
     "unknown_state": "前置状态不可用——请刷新后再编辑",
-    "retry": "重试",
-    "blocked_without_visible": "存在不可见的前置"
-  },
-  "run_confirm": {
-    "create_blocked": "前置未完成，创建后不会启动。",
-    "blocked_title": "前置未完成",
-    "blocked_one_time_note": "确认仅放行本次执行，不会授权后续重跑、子任务或其他任务。",
-    "override_assign": "仍然指派并启动",
-    "override_promote": "仍然移动并启动",
-    "override_unavailable": "当前登录身份无法提前放行未完成的前置。",
-    "stale_notice": "前置已变化——已展示最新状态，请重新确认。",
-    "expired_notice": "上一次确认已过期——已为你获取新的确认。",
-    "title_partial": "部分任务未能更新",
-    "close": "关闭"
+    "retry": "重试"
   },
   "create_issue": {
-    "add_prerequisite": "添加前置任务...",
     "prerequisite_chip": "前置：{{identifier}}",
     "remove_prerequisite_aria": "移除前置 {{identifier}}",
     "prerequisite_picker": {
       "title": "添加前置任务",
       "description": "搜索必须先完成、新任务才能开始的任务"
-    },
-    "dependency_structure_error": "这些前置会形成依赖环或祖先冲突。",
-    "dependency_unverified_error": "既有依赖数据需要先完成核验，才能继续编辑。",
-    "dependency_unsupported": "当前服务端版本尚不支持前置关系。"
+    }
   },
   "edit_dependencies": {
     "title": "编辑前置",
@@ -63,7 +40,6 @@
     "inherited_badge": "已继承",
     "conflict_notice": "前置在你编辑期间已变更，已展示最新状态——请确认后再保存。",
     "error_structure": "此修改会形成依赖环或祖先冲突。",
-    "error_permission": "移除未完成的前置需要有编辑权限的人工账号。",
     "error_unverified": "既有依赖数据需要先完成核验，才能继续编辑。",
     "error_generic": "保存前置失败。",
     "unknown_state": "前置状态不可用——请刷新后再编辑。",

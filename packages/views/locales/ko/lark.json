@@ -11,8 +11,6 @@
     "title": "Feishu 그룹 QR 코드",
     "hint": "Feishu로 스캔하여 그룹에 참여하세요"
   },
-  "install_scan_hint_feishu": "Feishu → 스캔 → 새 PersonalAgent를 승인하세요.",
-  "install_scan_hint_lark": "Lark → 스캔 → 새 PersonalAgent를 승인하세요.",
   "conversation_title": "에이전트와 대화",
   "conversation_description": "참여자는 Multica 계정이 없어도 됩니다. 에이전트가 의견을 확인하고 정리한 뒤 자신의 이름으로 댓글을 남깁니다. 처리 시간과 모델 사용량이 발생하며 모든 메시지가 그대로 작업에 복사되지는 않습니다.",
   "conversation_groups": "그룹 채팅 ID (줄마다 oc_ ID 하나, 주제별 대화 분리)",

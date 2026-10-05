@@ -46,11 +46,11 @@ describe("dependency API boundary", () => {
   it("preserves structured partial-batch rejections", async () => {
     respond({ updated: 1, results: [
       { issue_id: "a", updated: true },
-      { issue_id: "b", updated: false, reason_code: "dependency_unsatisfied", dependencies: { ...view, has_restricted_blockers: true } },
+      { issue_id: "b", updated: false, reason_code: "dependency_ancestor_conflict", dependencies: { ...view, has_restricted_blockers: true } },
     ] });
     const result = await new ApiClient("https://api.example.test").batchUpdateIssues(["a", "b"], { status: "todo" });
     expect(result.updated).toBe(1);
-    expect(result.results?.[1]?.reasonCode).toBe("dependency_unsatisfied");
+    expect(result.results?.[1]?.reasonCode).toBe("dependency_ancestor_conflict");
     expect(dependencyReadiness(result.results?.[1]?.dependencies)).toBe("blocked");
   });
 

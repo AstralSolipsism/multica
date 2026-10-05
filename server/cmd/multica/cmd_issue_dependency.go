@@ -253,8 +253,8 @@ func printIssueMutation(cmd *cobra.Command, result map[string]any) error {
 	return nil
 }
 
-// Called once at the process boundary so legacy assign/status/rerun paths also
-// preserve dependency refusals. JSON goes to stdout; guidance goes to stderr.
+// Called once at the process boundary to preserve issue/dependency error payloads.
+// JSON goes to stdout; guidance goes to stderr.
 func issueDependencyCommandError(cmd *cobra.Command, err error) error {
 	var httpErr *cli.HTTPError
 	if cmd == nil || !errors.As(err, &httpErr) {
@@ -280,23 +280,8 @@ func issueDependencyCommandError(cmd *cobra.Command, err error) error {
 	if dependencyPath && (httpErr.StatusCode == http.StatusNotFound || httpErr.StatusCode == http.StatusMethodNotAllowed) {
 		message += " Dependency API unavailable, disabled, or issue inaccessible. Check server support and access; no fallback write was sent."
 	}
-	if code == "dependency_unsatisfied" || code == "dependency_change_not_allowed" || code == "dependency_override_not_allowed" {
-		message += " Stop this dispatch/edit; suggest next steps or request human handling. Keep using your own credentials."
-	}
 	if code == "dependency_version_conflict" {
 		message += " Read dependencies again before deciding on a new edit; no automatic retry was sent."
-	}
-	if view, ok := payload["dependencies"].(map[string]any); ok {
-		if entries, ok := view["unsatisfied"].([]any); ok {
-			for _, raw := range entries {
-				if entry, ok := raw.(map[string]any); ok {
-					message += fmt.Sprintf("\nUnfinished: %s %s (%s)", strVal(entry, "issue_id"), strVal(entry, "title"), strVal(entry, "status"))
-				}
-			}
-		}
-		if restricted, _ := view["has_restricted_blockers"].(bool); restricted {
-			message += "\nAdditional unfinished prerequisites are restricted."
-		}
 	}
 	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
@@ -326,5 +311,5 @@ func commentDispatchError(result map[string]any) error {
 	if len(blocked) == 0 {
 		return nil
 	}
-	return fmt.Errorf("comment %s saved; %d target(s) not started: %s. Do not repost the comment. For unmet prerequisites, suggest next steps or request human handling", strVal(result, "id"), len(blocked), strings.Join(blocked, ", "))
+	return fmt.Errorf("comment %s saved; %d target(s) not started: %s. Do not repost the comment.", strVal(result, "id"), len(blocked), strings.Join(blocked, ", "))
 }

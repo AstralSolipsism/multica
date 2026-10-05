@@ -8,7 +8,6 @@ import enLark from "./en/lark.json";
 import enForkUi from "./en/fork-ui.json";
 import enDependencies from "./en/dependencies.json";
 import enDag from "./en/dag.json";
-import enAutopilotDelivery from "./en/autopilot-delivery.json";
 import enAgentConfig from "./en/agent-config.json";
 import enAuth from "./en/auth.json";
 import enSettings from "./en/settings.json";
@@ -42,7 +41,6 @@ import zhHansLark from "./zh-Hans/lark.json";
 import zhHansForkUi from "./zh-Hans/fork-ui.json";
 import zhHansDependencies from "./zh-Hans/dependencies.json";
 import zhHansDag from "./zh-Hans/dag.json";
-import zhHansAutopilotDelivery from "./zh-Hans/autopilot-delivery.json";
 import zhHansAgentConfig from "./zh-Hans/agent-config.json";
 import zhHansAuth from "./zh-Hans/auth.json";
 import zhHansSettings from "./zh-Hans/settings.json";
@@ -76,7 +74,6 @@ import koLark from "./ko/lark.json";
 import koForkUi from "./ko/fork-ui.json";
 import koDependencies from "./ko/dependencies.json";
 import koDag from "./ko/dag.json";
-import koAutopilotDelivery from "./ko/autopilot-delivery.json";
 import koAgentConfig from "./ko/agent-config.json";
 import koAuth from "./ko/auth.json";
 import koSettings from "./ko/settings.json";
@@ -110,7 +107,6 @@ import jaLark from "./ja/lark.json";
 import jaForkUi from "./ja/fork-ui.json";
 import jaDependencies from "./ja/dependencies.json";
 import jaDag from "./ja/dag.json";
-import jaAutopilotDelivery from "./ja/autopilot-delivery.json";
 import jaAgentConfig from "./ja/agent-config.json";
 import jaAuth from "./ja/auth.json";
 import jaSettings from "./ja/settings.json";
@@ -143,7 +139,6 @@ import frLark from "./fr/lark.json";
 import frForkUi from "./fr/fork-ui.json";
 import frDependencies from "./fr/dependencies.json";
 import frDag from "./fr/dag.json";
-import frAutopilotDelivery from "./fr/autopilot-delivery.json";
 import frAgentConfig from "./fr/agent-config.json";
 import frAuth from "./fr/auth.json";
 import frSettings from "./fr/settings.json";
@@ -182,7 +177,6 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     "fork-ui": enForkUi,
     dependencies: enDependencies,
     dag: enDag,
-    "autopilot-delivery": enAutopilotDelivery,
     "agent-config": enAgentConfig,
     auth: enAuth,
     settings: enSettings,
@@ -218,7 +212,6 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     "fork-ui": zhHansForkUi,
     dependencies: zhHansDependencies,
     dag: zhHansDag,
-    "autopilot-delivery": zhHansAutopilotDelivery,
     "agent-config": zhHansAgentConfig,
     auth: zhHansAuth,
     settings: zhHansSettings,
@@ -254,7 +247,6 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     "fork-ui": koForkUi,
     dependencies: koDependencies,
     dag: koDag,
-    "autopilot-delivery": koAutopilotDelivery,
     "agent-config": koAgentConfig,
     auth: koAuth,
     settings: koSettings,
@@ -290,7 +282,6 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     "fork-ui": jaForkUi,
     dependencies: jaDependencies,
     dag: jaDag,
-    "autopilot-delivery": jaAutopilotDelivery,
     "agent-config": jaAgentConfig,
     auth: jaAuth,
     settings: jaSettings,
@@ -326,7 +317,6 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     "fork-ui": frForkUi,
     dependencies: frDependencies,
     dag: frDag,
-    "autopilot-delivery": frAutopilotDelivery,
     "agent-config": frAgentConfig,
     auth: frAuth,
     settings: frSettings,

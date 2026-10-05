@@ -32,7 +32,6 @@
     "bot_revoked": "ボットは無効です",
     "member_unknown": "不明なメンバー",
     "revision": "v{{revision}}",
-    "effective_from": "{{time}} 以降に完了した実行のみ配信",
     "test_send": "テスト送信",
     "test_sending": "送信中...",
     "test_toast": "テストメッセージ: {{status}}",
@@ -48,8 +47,7 @@
     "toast_saved": "プッシュ先を保存しました",
     "toast_deleted": "プッシュ先を削除しました",
     "toast_enabled": "プッシュ先を有効にしました",
-    "toast_disabled": "プッシュ先を無効にしました",
-    "toast_conflict": "この設定は別の場所で変更されました。再読み込み済みです。確認してもう一度お試しください。"
+    "toast_disabled": "プッシュ先を無効にしました"
   },
   "editor": {
     "title_add": "プッシュ先を追加",
@@ -68,7 +66,6 @@
     "enabled": "保存後すぐに有効化",
     "approval_admin": "このターゲットはまだ承認されていません。保存時にワークスペース管理者として承認し、ボットの到達性を検証します。",
     "approval_member": "グループチャットとトピックは、保存前にワークスペースの owner/admin の承認が必要です。",
-    "approval_pending": "管理者の承認待ちです。ワークスペースの owner/admin にこの自動化でターゲットを承認してもらってください。",
     "save": "保存",
     "save_approve": "承認して保存",
     "saving": "保存中...",
@@ -92,8 +89,7 @@
       "confirm": "取り消す",
       "revoking": "取り消し中..."
     },
-    "toast_revoked": "承認を取り消しました。{{count}} 件のキュー済み配信をキャンセルしました",
-    "toast_revoke_failed": "取り消しに失敗しました"
+    "toast_revoked": "承認を取り消しました。{{count}} 件のキュー済み配信をキャンセルしました"
   },
   "deliveries": {
     "title": "配信記録",
@@ -131,15 +127,11 @@
       "report": "レポート内容",
       "content": "メッセージ内容",
       "no_report_body": "(レポート本文なし)",
-      "summary": "要約",
       "target": "ターゲット",
-      "source": "ソース",
       "view_issue": "タスクを表示",
       "receipts": "受領記録",
       "receipt_shard": "シャード {{index}}/{{total}}",
-      "external_message_id": "Feishu メッセージ ID",
       "send_uuid": "重複排除 UUID",
-      "error": "失敗理由",
       "created_at": "作成日時",
       "first_attempt_at": "初回試行",
       "delivered_at": "プラットフォーム受理",
@@ -155,7 +147,6 @@
       "action": "リトライ",
       "in_progress": "リトライ中...",
       "toast": "配信を再キューしました",
-      "failed": "リトライに失敗しました",
       "uncertain_title": "リトライ前に確認してください",
       "uncertain_description": "このメッセージは既に Feishu に届いている可能性がありますが、プラットフォームの応答が失われました。先にターゲットで確認し、届いていない場合のみリトライしてください。リトライは同じ重複排除 UUID を使うため、プラットフォームの重複排除期間内であれば確認済みのメッセージは二重送信されません。",
       "uncertain_confirm": "確認済み — リトライ",
@@ -238,8 +229,6 @@
     "title_edit_team": "購読を編集",
     "target_self_hint": "通知はあなた自身の Feishu DM にのみ配信されます。受信者は常にあなた本人で、変更できません。",
     "kind": "ソース",
-    "kind_activity": "タスクのアクティビティ",
-    "kind_comment": "新着コメント",
     "kind_activity_hint": "タスクのステータスと担当者の変更を転送します。",
     "kind_comment_hint": "通常の新着コメントのみを転送します。",
     "project": "範囲",
@@ -249,7 +238,6 @@
     "events_hint": "すべて未選択なら全イベントを転送します。除外されたイベントは未配信として記録されます。",
     "boundary_hint": "ボット・ターゲット・範囲・イベントの変更、または無効化したルールの再有効化は、その時点から配信をやり直します。それ以前の履歴は再送されません。",
     "approval_admin": "このターゲットはこのソースと範囲ではまだ承認されていません。保存時にワークスペース管理者として承認し、ボットの到達性を検証します。",
-    "approval_member": "このターゲットは、このソースと範囲についてワークスペースの owner/admin の承認を得るまで保存できません。",
     "enable_hint": "ターゲットを承認してもルールは有効になりません。ルールが有効な間だけイベントが配信されます。",
     "catalog_load_failed": "イベントカタログを読み込めなかったため、イベント範囲を確認できません。再読み込みしてから保存してください。",
     "routes_refresh_failed": "ルール一覧を再読み込みできなかったため、現在の状態を確認できません。下書きは保持されています。一覧の復旧後に保存してください。"
