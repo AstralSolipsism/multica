@@ -1,5 +1,5 @@
 import type { CoordinateExtent, Rect, Viewport } from "@xyflow/react";
-import type { DagLayoutResult } from "./dag-layout";
+import type { DagPoint, DagLayoutResult } from "./dag-layout";
 import {
   DAG_NODE_WIDTH,
   DAG_NODE_HEIGHT,
@@ -106,4 +106,13 @@ export function constrainDagViewport(
     }
   }
   return preferred ?? closest;
+}
+
+/** Translate a moved layout anchor back to its previous screen position. */
+export function anchorShift(saved: DagPoint, next: DagPoint, viewport: Viewport): Viewport {
+  return {
+    ...viewport,
+    x: viewport.x + (saved.x - next.x) * viewport.zoom,
+    y: viewport.y + (saved.y - next.y) * viewport.zoom,
+  };
 }

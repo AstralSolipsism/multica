@@ -131,15 +131,30 @@ for (const direction of ["LR", "TB"] as const) {
       await expect(page.getByRole("dialog")).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(page.getByRole("dialog")).toHaveCount(0);
+      // A default viewport would let a reset masquerade as successful restoration.
+      // Move both axes and change zoom before recording the navigation baseline.
+      const readViewport = () => page.locator(".react-flow__viewport").evaluate((element) => {
+        const matrix = new DOMMatrix(getComputedStyle(element).transform);
+        return { x: matrix.e, y: matrix.f, zoom: matrix.a };
+      });
+      const beforePan = await readViewport();
+      const panArea = (await page.locator("[data-dag-canvas]").boundingBox())!;
+      await page.mouse.move(panArea.x + panArea.width / 2, panArea.y + panArea.height / 2);
+      await page.mouse.wheel(64, 72);
+      await expect.poll(async () => (await readViewport()).x).not.toBe(beforePan.x);
+      await expect.poll(async () => (await readViewport()).y).not.toBe(beforePan.y);
+      await page.getByRole("button", { name: "Zoom Out", exact: true }).click();
+      await expect.poll(async () => (await readViewport()).zoom).not.toBe(beforePan.zoom);
+      const viewportBeforeDetails = await readViewport();
+      expect(viewportBeforeDetails.zoom).not.toBe(1);
+      expect(viewportBeforeDetails).not.toEqual({ x: 20, y: 20, zoom: 1 });
       await bNode.dblclick();
       // A dev server compiles the detail route on first navigation. Keep the
       // same readiness allowance as the initial workspace route above.
       await expect(page).toHaveURL(new RegExp(`/issues/${b.id}`), { timeout: 30_000 });
       await page.goBack();
       await expect(page.locator("[data-dag-issue]")).toHaveCount(4);
-      await expect
-        .poll(() => page.locator(".react-flow__viewport").getAttribute("style"))
-        .toBe(viewportBefore);
+      await expect.poll(readViewport).toEqual(viewportBeforeDetails);
       // Fold only task lines so the independent header can be reached at normal scale.
       await page.getByRole("button", { name: "Collapse issue groups", exact: true }).click();
       const independent = page.locator('[data-dag-group="independent:root"]');

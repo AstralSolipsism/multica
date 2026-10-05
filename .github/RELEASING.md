@@ -25,6 +25,11 @@ dispatch is disabled. Candidate dispatch runs Go tests, the live vulnerability
 scan, frontend tests/typechecks and packaging regressions before draft upload.
 There is no vulnerability bypass.
 
+The reviewed candidate must also pass the [retained product E2E gate](../docs/engineering/ci-gates.md#retained-product-e2e)
+for its exact source SHA. Keep the run URL and report in the release handoff;
+when hosted CI is unavailable, use the documented isolated-host gate before
+release. A skipped or missing browser result is not release evidence.
+
 PR [#42](https://github.com/AstralSolipsism/multica/pull/42), inspected at
 `cb4bf5cbfe11960bd8ab36edda22bc2c542f9214`, remains an unmerged historical patch.
 This change preserves its local-source image policy, operations ownership and

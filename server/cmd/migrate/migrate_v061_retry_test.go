@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,7 +84,7 @@ func TestV061ConcurrentIndexesRecoverAfterInterruption(t *testing.T) {
 			}
 			assertIndexValidity(t, pool, schema, index, false)
 			opts := runOptions{Direction: "up", Files: []string{path}, Hooks: preMigrationHooks,
-				SchemaMigrationsTable: schema + ".schema_migrations", AdvisoryLockKey: migrationAdvisoryLockKey}
+				SchemaMigrationsTable: schema + ".schema_migrations", AdvisoryLockKey: int64(rand.Uint64()&0x7fffffffffffffff) | 1}
 			if err := runMigrations(ctx, pool, opts); err != nil {
 				t.Fatal(err)
 			}
@@ -130,7 +131,7 @@ func TestV061SearchTriggerMigrationBoundsLockWait(t *testing.T) {
 	if _, err := holder.Exec(ctx, "INSERT INTO issue VALUES (gen_random_uuid(),gen_random_uuid())"); err != nil {
 		t.Fatal(err)
 	}
-	opts := runOptions{Direction: "up", Files: []string{path}, SchemaMigrationsTable: schema + ".schema_migrations", AdvisoryLockKey: migrationAdvisoryLockKey}
+	opts := runOptions{Direction: "up", Files: []string{path}, SchemaMigrationsTable: schema + ".schema_migrations", AdvisoryLockKey: int64(rand.Uint64()&0x7fffffffffffffff) | 1}
 	started := time.Now()
 	err = runMigrations(ctx, pool, opts)
 	var pgErr *pgconn.PgError

@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { Viewport } from "@xyflow/react";
 import {
+  anchorShift,
   constrainDagViewport,
   dagViewportTargets,
   dagViewportExtent,
@@ -113,5 +114,18 @@ describe("DAG viewport content bounds", () => {
     const view = { x: 10000, y: 10000, zoom: 1 };
     expect(constrainDagViewport(view, screen, [])).toBe(view);
     expect(constrainDagViewport(view, { width: 0, height: 0 }, [title])).toBe(view);
+  });
+});
+
+describe("anchorShift", () => {
+  it.each([0.5, 1, 1.6])("keeps the anchor's screen coordinates at zoom %s", (zoom) => {
+    const saved = { x: 120, y: 240 }, next = { x: 310, y: 70 };
+    const viewport = { x: -83, y: 97, zoom };
+    const shifted = anchorShift(saved, next, viewport);
+    expect(shifted.x + next.x * zoom).toBeCloseTo(viewport.x + saved.x * zoom);
+    expect(shifted.y + next.y * zoom).toBeCloseTo(viewport.y + saved.y * zoom);
+    expect(shifted.zoom).toBe(zoom);
+    expect(viewport).toEqual({ x: -83, y: 97, zoom });
+    expect(anchorShift(saved, saved, viewport)).toEqual(viewport);
   });
 });

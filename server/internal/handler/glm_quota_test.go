@@ -74,9 +74,9 @@ func TestParseGlmQuotaCreditPlanShape(t *testing.T) {
 // as errors, not as an empty-but-successful snapshot.
 func TestParseGlmQuotaBusinessFailure(t *testing.T) {
 	for name, body := range map[string]string{
-		"code":  `{"code":401,"msg":"unauthorized","success":false}`,
+		"code":    `{"code":401,"msg":"unauthorized","success":false}`,
 		"success": `{"code":200,"msg":"boom","success":false}`,
-		"empty": `{"code":200,"success":true,"data":{"limits":[]}}`,
+		"empty":   `{"code":200,"success":true,"data":{"limits":[]}}`,
 		"garbage": `not json at all`,
 	} {
 		if _, err := parseGlmQuotaBody([]byte(body), time.Now()); err == nil {

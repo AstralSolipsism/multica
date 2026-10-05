@@ -303,6 +303,110 @@ describe("task-line projection", () => {
 });
 
 describe("dependency focus on task lines", () => {
+  function focusFixture() {
+    return makeGraph(
+      [
+        makeNode("root"),
+        makeNode("child", { parentIssueId: "root" }),
+        makeNode("b"),
+        makeNode("c"),
+        makeNode("d"),
+        makeNode("unrelated"),
+      ],
+      [
+        { id: "rb", source: "root", target: "b" },
+        { id: "bc", source: "b", target: "c" },
+        { id: "cd", source: "child", target: "d" },
+      ],
+    );
+  }
+
+  it("walks downstream transitively without following parents or unrelated branches", () => {
+    const graph = focusFixture(),
+      view = computeDagProjection(graph, []);
+    expect([...dagFocusNeighborhood(view, graph, "b", "downstream")].sort()).toEqual(["b", "c"]);
+    expect([...dagFocusNeighborhood(view, graph, "child", "downstream")].sort()).toEqual([
+      "child",
+      "d",
+    ]);
+  });
+
+  it("includes upstream ancestors but excludes their downstream siblings", () => {
+    const graph = focusFixture(),
+      view = computeDagProjection(graph, []);
+    expect([...dagFocusNeighborhood(view, graph, "d", "upstream")].sort()).toEqual([
+      "child",
+      "d",
+      "issue:root",
+    ]);
+    expect([...dagFocusNeighborhood(view, graph, "b", "upstream")].sort()).toEqual([
+      "b",
+      "issue:root",
+    ]);
+  });
+
+  it("highlights folded ancestors instead of invisible child ids", () => {
+    const graph = focusFixture(),
+      view = computeDagProjection(graph, ["issue:root"]);
+    expect([...dagFocusNeighborhood(view, graph, "d", "upstream")].sort()).toEqual([
+      "d",
+      "issue:root",
+    ]);
+  });
+
+  it("seeds every member of a task-line header and follows their transitive outgoing edges", () => {
+    const graph = focusFixture(),
+      view = computeDagProjection(graph, ["issue:root"]);
+    expect([...dagFocusNeighborhood(view, graph, "issue:root", "downstream")].sort()).toEqual([
+      "b",
+      "c",
+      "d",
+      "issue:root",
+    ]);
+  });
+
+  it("propagates an inherited wait through expanded descendants to their external dependents", () => {
+    const graph = makeGraph(
+      [
+        makeNode("prerequisite"),
+        makeNode("root"),
+        makeNode("middle", { parentIssueId: "root" }),
+        makeNode("leaf", { parentIssueId: "middle" }),
+        makeNode("out"),
+        makeNode("unrelated"),
+      ],
+      [
+        { id: "pr", source: "prerequisite", target: "root" },
+        { id: "lo", source: "leaf", target: "out" },
+      ],
+    );
+    const view = computeDagProjection(graph, []);
+    expect([...dagFocusNeighborhood(view, graph, "prerequisite", "downstream")].sort()).toEqual([
+      "issue:middle",
+      "issue:root",
+      "leaf",
+      "out",
+      "prerequisite",
+    ]);
+  });
+
+  it.each(["upstream", "downstream"] as const)(
+    "terminates %s traversal on repeated dependency arrivals",
+    (way) => {
+      const graph = makeGraph(
+        [makeNode("a"), makeNode("b"), makeNode("c"), makeNode("out")],
+        [
+          { id: "ab", source: "a", target: "b" },
+          { id: "bc", source: "b", target: "c" },
+          { id: "ca", source: "c", target: "a" },
+        ],
+      );
+      expect(
+        [...dagFocusNeighborhood(computeDagProjection(graph, []), graph, "a", way)].sort(),
+      ).toEqual(["a", "b", "c"]);
+    },
+  );
+
   it("follows raw dependencies before mapping folded representatives", () => {
     const graph = makeGraph(
       [
