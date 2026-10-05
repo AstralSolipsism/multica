@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"slices"
 	"sort"
 	"strings"
@@ -59,7 +58,7 @@ type DependencySnapshot struct {
 // edits that also set a custom status. Create takes its counter lock first.
 // Ordinary content/status writes do not need the structure lock.
 func (s *DependencyService) LockWrite(ctx context.Context, q *db.Queries, ws pgtype.UUID) error {
-	if _, err := q.LockWorkspaceForDependencyAdmission(ctx, ws); err != nil {
+	if _, err := q.LockWorkspaceForDependencyStructure(ctx, ws); err != nil {
 		return err
 	}
 	if err := q.LockIssueStatusCatalogShared(ctx, ws); err != nil {
@@ -257,115 +256,26 @@ func (s *DependencyService) Apply(ctx context.Context, q *db.Queries, before *De
 		return nil, false, dependencyError("not_found", "issue not found")
 	}
 	old := before.Model.Issues[id]
-	structureChanged := write.Creating || write.BlockedBy != nil || old.ParentID != util.UUIDToString(issue.ParentIssueID)
 	if write.BlockedBy != nil && !s.WritesEnabled {
 		return nil, false, dependencyError("not_found", "dependency writes are not enabled")
 	}
 	if write.ExpectedVersion != "" && (write.Creating || !hmac.Equal([]byte(write.ExpectedVersion), []byte(before.Version(id)))) {
 		return nil, false, dependencyError("dependency_version_conflict", "dependencies changed; refresh before editing")
 	}
+	proposed := issuedependency.Issue{ID: id, ParentID: util.UUIDToString(issue.ParentIssueID), Status: issue.Status, Category: issuestatus.WireCategory(issue.Status, issuestatus.NewResolver(issue.WorkspaceID).Category(ctx, q, issue.Status)), Revision: issue.Revision, Title: issue.Title, Number: issue.Number}
+	change, err := planRelationChange(before.Model, proposed, replacementDependencyEdges(id, write.BlockedBy))
+	if err != nil {
+		return nil, false, err
+	}
+	if err := validationScopeFor(old, proposed, write).validate(before.Model, change.Next, id); err != nil {
+		return nil, false, err
+	}
+	if err := s.persistRelationChange(ctx, q, issue, change); err != nil {
+		return nil, false, err
+	}
 	next := *before
-	next.Model = before.Model.Clone()
-	next.Model.Issues[id] = issuedependency.Issue{ID: id, ParentID: util.UUIDToString(issue.ParentIssueID), Status: issue.Status, Category: issuestatus.WireCategory(issue.Status, issuestatus.NewResolver(issue.WorkspaceID).Category(ctx, q, issue.Status)), Revision: issue.Revision, Title: issue.Title, Number: issue.Number}
-	if parent := next.Model.Issues[id].ParentID; parent != "" {
-		if _, ok := next.Model.Issues[parent]; !ok {
-			return nil, false, dependencyError("not_found", "parent issue not found")
-		}
-	}
-	if write.BlockedBy != nil {
-		retained := map[string]bool{}
-		for _, uuid := range *write.BlockedBy {
-			p := util.UUIDToString(uuid)
-			if _, ok := next.Model.Issues[p]; !ok {
-				return nil, false, dependencyError("not_found", "prerequisite not found")
-			}
-			retained[p] = true
-		}
-		kept := make([]issuedependency.Edge, 0, len(next.Model.Edges)+len(retained))
-		for _, e := range next.Model.Edges {
-			if e.Type != "blocked_by" || e.IssueID != id {
-				kept = append(kept, e)
-				continue
-			}
-			if retained[e.DependsOnID] {
-				kept = append(kept, e)
-				delete(retained, e.DependsOnID)
-			}
-		}
-		keys := make([]string, 0, len(retained))
-		for p := range retained {
-			keys = append(keys, p)
-		}
-		sort.Strings(keys)
-		for _, p := range keys {
-			kept = append(kept, issuedependency.Edge{ID: util.UUIDToString(dbid.NewV7()), IssueID: id, DependsOnID: p, Type: "blocked_by"})
-		}
-		next.Model.Edges = kept
-	}
-	previousModel, nextModel := before.Model, next.Model
-	if structureChanged && !write.IncludeView && write.BlockedBy == nil && write.ExpectedVersion == "" {
-		// Reparent/create can join previously separate components. Keep the old
-		// component in the proposed model even after a subtree is detached.
-		previousModel, nextModel = legacyDependencyModels(before.Model, next.Model, id, next.Model.Issues[id].ParentID)
-	}
-	if structureChanged || write.IncludeView {
-		if err := previousModel.Validate(); err != nil {
-			return nil, false, dependencyError("dependency_data_unverified", "dependency data must be audited before use")
-		}
-		if err := nextModel.Validate(); err != nil {
-			var violation *issuedependency.Violation
-			if errors.As(err, &violation) {
-				return nil, false, &DependencyError{Code: violation.Code, Message: "the proposed dependency structure is invalid", Violation: violation}
-			}
-			return nil, false, err
-		}
-	}
-	beforeState, afterState := relationState(before.Model, id), relationState(next.Model, id)
-	changed := beforeState != afterState
-	// Ordinary reparenting must never rewrite or normalize historical rows.
-	if changed && write.BlockedBy != nil {
-		retained := []pgtype.UUID{}
-		for _, e := range next.Model.Edges {
-			if e.Type != "blocked_by" || e.IssueID != id {
-				continue
-			}
-			p, err := util.ParseUUID(e.DependsOnID)
-			if err != nil {
-				return nil, false, err
-			}
-			retained = append(retained, p)
-		}
-		if err := q.DeleteDirectIssueDependencies(ctx, db.DeleteDirectIssueDependenciesParams{WorkspaceID: issue.WorkspaceID, IssueID: issue.ID, RetainedIds: retained}); err != nil {
-			return nil, false, err
-		}
-		for _, e := range next.Model.Edges {
-			if e.Type != "blocked_by" || e.IssueID != id {
-				continue
-			}
-			edgeID, err := util.ParseUUID(e.ID)
-			if err != nil {
-				return nil, false, err
-			}
-			p, err := util.ParseUUID(e.DependsOnID)
-			if err != nil {
-				return nil, false, err
-			}
-			if err := q.InsertIssueDependency(ctx, db.InsertIssueDependencyParams{ID: edgeID, WorkspaceID: issue.WorkspaceID, IssueID: issue.ID, DependsOnIssueID: p}); err != nil {
-				return nil, false, err
-			}
-		}
-	}
-	if changed {
-		if err := s.audit(ctx, q, issue.WorkspaceID, issue.ID, "write", beforeState, afterState); err != nil {
-			return nil, false, err
-		}
-	}
-	return &next, changed, nil
-}
-
-func legacyDependencyModels(before, next issuedependency.Model, seeds ...string) (issuedependency.Model, issuedependency.Model) {
-	previous := before.ExecutionComponent(seeds...)
-	return previous, next.ExecutionComponent(append(previous.IDs(), seeds...)...)
+	next.Model = change.Next
+	return &next, change.changed(), nil
 }
 
 func relationState(m issuedependency.Model, id string) string {
