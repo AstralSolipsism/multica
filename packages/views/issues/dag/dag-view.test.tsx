@@ -14,6 +14,8 @@ import { DagView, type DagGraphQueryState } from "./dag-view";
 import type { DagCanvasProps } from "./dag-canvas";
 import { graphNode as makeNode, issueGraph as makeGraph } from "./dag-test-fixtures";
 import { computeDagProjection } from "./dag-projection";
+import * as layoutInputs from "./dag-layout-inputs";
+import * as canvasSnapshots from "./dag-canvas-snapshot";
 import { DagFlowGroupCard } from "./dag-group";
 import { DagPortUpdateProvider } from "./dag-ports";
 import { ReactFlowProvider } from "@xyflow/react";
@@ -98,7 +100,6 @@ function syncLayoutRunner() {
         groups: {},
         routes: {},
         ports: {},
-        elapsedMs: 1,
       });
     },
     prepare: vi.fn(),
@@ -117,7 +118,7 @@ function realLayoutRunner() {
         request.groups,
         layoutEngine,
       ).then(
-        (result) => onDone({ ...result, requestId: request.requestId, elapsedMs: 1 }),
+        (result) => onDone({ ...result, requestId: request.requestId }),
         (error: Error) =>
           onDone({
             requestId: request.requestId,
@@ -125,7 +126,6 @@ function realLayoutRunner() {
             groups: {},
             routes: {},
             ports: {},
-            elapsedMs: 1,
             error: error.message,
           }),
       );
@@ -141,8 +141,6 @@ function graphQuery(partial: Partial<DagGraphQueryState>): DagGraphQueryState {
     isPending: false,
     isError: false,
     error: null,
-    isFetching: false,
-    isStale: false,
     refetch: vi.fn(),
     ...partial,
   };
@@ -179,6 +177,7 @@ describe("DagView", () => {
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     vi.useRealTimers();
     qc.clear();
   });
@@ -337,6 +336,8 @@ describe("DagView", () => {
   });
 
   it("keeps the mounted canvas during topology replacement and removes stale issue data immediately", async () => {
+    const inputSpy = vi.spyOn(layoutInputs, "dagLayoutInputs");
+    const snapshotSpy = vi.spyOn(canvasSnapshots, "selectCanvasSnapshot");
     store.getState().setDagIndependentExpanded(true);
     const initial = makeGraph([makeNode("a"), makeNode("b")], [{ id: "ab", source: "a", target: "b" }]);
     const requests: { request: DagLayoutRequest; done: (response: DagLayoutResponse) => void }[] = [];
@@ -350,12 +351,13 @@ describe("DagView", () => {
     const view = render(surface(initial));
     const finish = () => {
       const { request, done } = requests.at(-1)!;
-      done({ requestId: request.requestId, positions: Object.fromEntries(request.nodes.map((n, i) => [n.id, { x: i * 300, y: 10 }])), groups: {}, routes: {}, ports: {}, elapsedMs: 1 });
+      done({ requestId: request.requestId, positions: Object.fromEntries(request.nodes.map((n, i) => [n.id, { x: i * 300, y: 10 }])), groups: {}, routes: {}, ports: {} });
     };
     act(finish);
     const canvas = await screen.findByTestId("dag-canvas");
     const committed = canvasSpy.mock.calls.at(-1)![0].positions;
     const replacement = { ...makeGraph([makeNode("b", { title: "Updated B" }), makeNode("c")], [{ id: "bc", source: "b", target: "c" }]), topologyId: "changed" };
+    vi.useFakeTimers();
     view.rerender(surface(replacement));
     expect(screen.getByTestId("dag-canvas")).toBe(canvas);
     const pending = canvasSpy.mock.calls.at(-1)![0];
@@ -364,6 +366,13 @@ describe("DagView", () => {
     expect(pending.projection.nodes[0]!.title).toBe("Updated B");
     expect(pending.graph.nodes.some((n) => n.id === "a")).toBe(false);
     expect(pending.projection.edges).toEqual([]);
+    const inputCalls = inputSpy.mock.calls.length;
+    const snapshotCalls = snapshotSpy.mock.calls.length;
+    act(() => vi.advanceTimersByTime(1500));
+    expect(canvasSpy.mock.calls.at(-1)![0].projection).toBe(pending.projection);
+    expect(inputSpy).toHaveBeenCalledTimes(inputCalls);
+    expect(snapshotSpy).toHaveBeenCalledTimes(snapshotCalls);
+    expect(requests).toHaveLength(2);
     act(finish);
     expect(screen.getByTestId("dag-canvas")).toBe(canvas);
     expect(canvasSpy.mock.calls.at(-1)![0].projection.nodes.map((n) => n.id)).toEqual(["b", "c"]);
@@ -392,7 +401,7 @@ describe("DagView", () => {
     renderDagView(graphQuery({ data: graph }), false, () => runner);
     const finish = () => {
       const { request, done } = requests.at(-1)!;
-      done({ requestId: request.requestId, positions: Object.fromEntries(request.nodes.map((n, i) => [n.id, { x: i * 300, y: 10 }])), groups: {}, routes: {}, ports: {}, elapsedMs: 1 });
+      done({ requestId: request.requestId, positions: Object.fromEntries(request.nodes.map((n, i) => [n.id, { x: i * 300, y: 10 }])), groups: {}, routes: {}, ports: {} });
     };
     act(finish);
     await screen.findByTestId("dag-canvas");
@@ -450,7 +459,6 @@ describe("DagView", () => {
         groups: {},
         routes: {},
         ports: {},
-        elapsedMs: 1,
       }),
     );
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
@@ -466,7 +474,6 @@ describe("DagView", () => {
         groups: {},
         routes: {},
         ports: {},
-        elapsedMs: 2,
       }),
     );
     expect(canvasSpy.mock.calls.at(-1)![0].direction).toBe("TB");
@@ -502,7 +509,7 @@ describe("DagView", () => {
         request.groups,
         layoutEngine,
       );
-      await act(async () => done({ ...result, requestId: request.requestId, elapsedMs: 1 }));
+      await act(async () => done({ ...result, requestId: request.requestId }));
     };
     await complete();
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
@@ -519,7 +526,6 @@ describe("DagView", () => {
         groups: {},
         routes: {},
         ports: {},
-        elapsedMs: 1,
         error: "layout failed",
       }),
     );
@@ -534,7 +540,7 @@ describe("DagView", () => {
     expect(replaced.geometry.routes[replaced.projection.edges[0]!.id]).toBeDefined();
   });
 
-  it.each([403, 404])(
+  it.each([403, 404, 405, 422])(
     "hides the cached graph after access loss (%s) instead of showing it stale",
     async (status) => {
       renderDagView(
@@ -546,7 +552,7 @@ describe("DagView", () => {
       );
       await waitFor(() =>
         expect(screen.getByRole("alert")).toHaveTextContent(
-          status === 403 ? "dag:error_forbidden" : "dag:error_unavailable",
+          status === 403 ? "dag:error_forbidden" : status === 422 ? "dag:error_unverified" : "dag:error_unavailable",
         ),
       );
       expect(screen.queryByTestId("dag-canvas")).toBeNull();
@@ -573,24 +579,24 @@ describe("DagView", () => {
     expect(store.getState().dagExpandedIds).toContain("issue:hidden");
   });
 
-  it("keeps an inert expansion through stale and fresh membership snapshots", async () => {
+  it("keeps an inert expansion when a fresh membership snapshot replaces the cache", async () => {
     store.getState().setDagExpandedIds(["issue:hidden"]);
     const graph = makeGraph([makeNode("a")]);
-    const surface = (isStale: boolean) => (
+    const surface = (data: IssueGraph) => (
       <QueryClientProvider client={qc}>
         <ViewStoreProvider store={store}>
           <DagView
-            graphQuery={graphQuery({ data: graph, isStale })}
+            graphQuery={graphQuery({ data })}
             hasActiveFilters={false}
             layoutRunnerFactory={syncLayoutRunner}
           />
         </ViewStoreProvider>
       </QueryClientProvider>
     );
-    const view = render(surface(true));
+    const view = render(surface(graph));
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
     expect(store.getState().dagExpandedIds).toEqual(["issue:hidden"]);
-    view.rerender(surface(false));
+    view.rerender(surface({ ...graph, snapshotId: "fresh" }));
     expect(store.getState().dagExpandedIds).toEqual(["issue:hidden"]);
   });
 
@@ -623,7 +629,6 @@ describe("DagView", () => {
         groups: {},
         routes: {},
         ports: {},
-        elapsedMs: 1,
       });
     };
     renderDagView(graphQuery({ data: graph }), false, () => runner);
@@ -678,7 +683,6 @@ describe("DagView", () => {
           groups: {},
           routes: {},
           ports: {},
-          elapsedMs: 1,
         });
       };
       renderDagView(graphQuery({ data: graph }), false, factory);
@@ -709,6 +713,40 @@ describe("DagView", () => {
       expect(pending).toHaveLength(2);
     },
   );
+
+  it.each(["group", "issues"] as const)("lets a newer immediate %s focus supersede a pending reveal", async (target) => {
+    store.getState().setDagExpandedIds(["issue:two"]);
+    const graph = makeGraph([
+      makeNode("one"), makeNode("a", { parentIssueId: "one" }),
+      makeNode("two"), makeNode("b", { parentIssueId: "two" }),
+    ]);
+    const requests: { request: DagLayoutRequest; done: (response: DagLayoutResponse) => void }[] = [];
+    const runner = {
+      prepare: vi.fn(), terminate: vi.fn(),
+      execute: (request: DagLayoutRequest, done: (response: DagLayoutResponse) => void) => requests.push({ request, done }),
+    };
+    const finish = () => {
+      const { request, done } = requests.at(-1)!;
+      done({ requestId: request.requestId, positions: Object.fromEntries(request.nodes.map((n, i) => [n.id, { x: i * 300, y: 10 }])), groups: {}, routes: {}, ports: {} });
+    };
+    renderDagView(graphQuery({ data: graph }), false, () => runner);
+    act(finish);
+    await screen.findByTestId("dag-canvas");
+    act(() => canvasSpy.mock.calls.at(-1)![0].onFocusGroup("issue:one"));
+    expect(requests).toHaveLength(2);
+    expect(canvasSpy.mock.calls.at(-1)![0].focusRequest).toBeNull();
+    act(() => {
+      const props = canvasSpy.mock.calls.at(-1)![0];
+      if (target === "group") props.onFocusGroup("issue:two");
+      else props.onRevealIssues(["b"]);
+    });
+    const immediate = canvasSpy.mock.calls.at(-1)![0].focusRequest;
+    expect(immediate).toEqual(target === "group"
+      ? { issueIds: [], groupId: "issue:two", nonce: 1 }
+      : { issueIds: ["b"], nonce: 1 });
+    act(finish);
+    expect(canvasSpy.mock.calls.at(-1)![0].focusRequest).toBe(immediate);
+  });
 
   it("keeps parent status, own stage and child run state in its group header", () => {
     const graph = makeGraph([
@@ -788,7 +826,7 @@ describe("DagView", () => {
   });
 
   it.each([
-    { label: "while refreshing", state: { isFetching: true } },
+    { label: "from a cached response", state: {} },
     {
       label: "after a refresh failure",
       state: { isError: true, error: new ApiError("Unavailable", 500, "unavailable") },
@@ -847,6 +885,25 @@ describe("DagView", () => {
     act(() => collapse.click());
     expect(store.getState().dagExpandedIds).toEqual([]);
   });
+  it("preserves hidden expansions when expanding all and clears them only on explicit collapse all", async () => {
+    store.getState().setDagExpandedIds(["issue:hidden"]);
+    const visible = makeGraph([makeNode("line"), makeNode("child", { parentIssueId: "line" })]);
+    renderDagView(graphQuery({ data: visible }), true);
+    await screen.findByTestId("dag-canvas");
+    const collapse = screen.getByRole("button", { name: /dag:collapse_all/ });
+    expect(collapse).toBeEnabled();
+    act(() => screen.getByRole("button", { name: /dag:expand_all/ }).click());
+    expect(store.getState().dagExpandedIds).toEqual(["issue:hidden", "issue:line"]);
+    act(() => canvasSpy.mock.calls.at(-1)![0].onToggleCollapsed("issue:line"));
+    expect(store.getState().dagExpandedIds).toEqual(["issue:hidden"]);
+    expect(collapse).toBeEnabled();
+    const visibleIds = canvasSpy.mock.calls.at(-1)![0].projection.nodes.map((node) => node.id);
+    act(() => collapse.click());
+    expect(store.getState().dagExpandedIds).toEqual([]);
+    expect(collapse).toBeDisabled();
+    expect(canvasSpy.mock.calls.at(-1)![0].projection.nodes.map((node) => node.id)).toEqual(visibleIds);
+  });
+
   it("global task-line expansion never changes the independent group's personal state", async () => {
     const graph = makeGraph([
       makeNode("root"),
@@ -877,7 +934,6 @@ describe("DagView", () => {
         groups: {},
         routes: {},
         ports: {},
-        elapsedMs: 1,
         error: "layout failed",
       }),
     );

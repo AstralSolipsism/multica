@@ -73,6 +73,8 @@ describe("dag view preferences", () => {
     }
     expect(visibleViewMode("dag", { allowDag: false, allowGantt: false })).toBe("list");
     expect(visibleViewMode("dag", { allowDag: true, allowGantt: false })).toBe("dag");
+    expect(visibleViewMode("gantt", { allowDag: true, allowGantt: false })).toBe("list");
+    expect(visibleViewMode("gantt", { allowDag: false, allowGantt: true })).toBe("gantt");
   });
 
   it("merge degrades unknown enum values to the defaults", () => {

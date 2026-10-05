@@ -34,8 +34,6 @@ export function useDagSurfaceGraph(
       isPending: enabled && query.isPending,
       isError: query.isError,
       error: query.error,
-      isFetching: query.isFetching,
-      isStale: query.isStale,
       refetch: () => {
         void query.refetch();
       },

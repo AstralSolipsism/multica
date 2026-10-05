@@ -1,5 +1,5 @@
 "use client";
-import { lazy, Suspense, useCallback, useEffect } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
 import { hashKey } from "@tanstack/react-query";
 import { AlertTriangle, FilterX, Loader2 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
@@ -34,9 +34,6 @@ export interface DagGraphQueryState {
   isPending: boolean;
   isError: boolean;
   error: Error | null;
-  isFetching: boolean;
-  /** Query freshness for surface status and diagnostics. */
-  isStale: boolean;
   refetch: () => void;
 }
 
@@ -67,9 +64,13 @@ export function DagView({
   const graph = graphQuery.data;
   const fold = useDagFoldState(graph);
   const { projection } = fold;
-  const inputs = useStableByContent(dagLayoutInputs(projection));
-  const layoutKey = hashKey([inputs, direction]);
-  const snapshot = { key: layoutKey, graph, projection };
+  const content = useMemo(() => {
+    const inputs = dagLayoutInputs(projection);
+    return { inputs, key: hashKey([inputs]) };
+  }, [projection]);
+  const inputs = useStableByContent(content.inputs, content.key);
+  const layoutKey = useMemo(() => `${direction}:${content.key}`, [direction, content.key]);
+  const snapshot = useMemo(() => ({ key: layoutKey, graph, projection }), [layoutKey, graph, projection]);
   const layout = useDagLayout(
     inputs.nodes,
     inputs.edges,
@@ -78,7 +79,10 @@ export function DagView({
     layoutRunnerFactory,
     snapshot,
   );
-  const canvasSnapshot = selectCanvasSnapshot(snapshot, layout.snapshot);
+  const canvasSnapshot = useMemo(
+    () => selectCanvasSnapshot(snapshot, layout.snapshot),
+    [snapshot, layout.snapshot],
+  );
   const expansion = useDagExpandAll(layout, layoutKey, fold.lineIds);
   const reveal = useDagRevealRequests(
     graph,

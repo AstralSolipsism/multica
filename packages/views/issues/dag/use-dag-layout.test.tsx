@@ -71,7 +71,7 @@ describe("prepared DAG workers", () => {
     const callback = vi.mocked(runner.execute).mock.calls[0]![1];
     view.rerender({ items: empty });
     expect(runner.terminate).toHaveBeenCalledOnce();
-    act(() => callback({ requestId: 0, positions: {}, groups: {}, routes: {}, ports: {}, elapsedMs: 1 } as DagLayoutResponse));
+    act(() => callback({ requestId: 0, positions: {}, groups: {}, routes: {}, ports: {} } as DagLayoutResponse));
     expect(view.result.current.positions).toBeNull();
   });
 });

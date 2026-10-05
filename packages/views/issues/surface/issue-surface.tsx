@@ -1,7 +1,7 @@
 "use client";
 
-import { VIEW_MODE_CAPABILITIES } from "@multica/core/issues/surface/view-mode";
 import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { VIEW_MODE_CAPABILITIES } from "@multica/core/issues/surface/view-mode";
 import type { StoreApi } from "zustand/vanilla";
 import type { IssueViewState } from "@multica/core/issues/stores/view-store";
 import type { IssueViewBaseline } from "@multica/core/issue-views/baseline";

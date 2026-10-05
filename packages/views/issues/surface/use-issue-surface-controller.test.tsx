@@ -2081,6 +2081,14 @@ describe("useIssueSurfaceController", () => {
       // DAG owns its empty/loading states; the surface never asserts them.
       expect(result.current.isEmpty).toBe(false);
       expect(result.current.facetCountsExact).toBe(false);
+      expect(result.current.isRefreshing).toBe(false);
+      let finishRefresh!: (graph: typeof graphFixture) => void;
+      getIssueGraph.mockImplementationOnce(() => new Promise((resolve) => { finishRefresh = resolve; }));
+      act(() => result.current.dagGraph.refetch());
+      await waitFor(() => expect(result.current.isRefreshing).toBe(true));
+      expect(result.current.dagGraph.isPending).toBe(false);
+      act(() => finishRefresh(graphFixture));
+      await waitFor(() => expect(result.current.isRefreshing).toBe(false));
     });
 
     it("falls back when the surface never opted into dag", async () => {

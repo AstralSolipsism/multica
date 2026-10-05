@@ -97,6 +97,9 @@ Legacy `dagCollapsedIds` are reset once: an incomplete graph cannot safely
 invert a collapsed list. Direction, viewport and independent-group expansion
 remain intact. Missing expansion IDs are inert and survive filtered or stale
 reads; they never create nodes or reveal inaccessible data.
+**Expand issue groups** preserves these hidden expansion preferences.
+**Collapse issue groups** explicitly clears every task-line expansion, including
+hidden ones, so it stays enabled while any stored expansion remains.
 
 Unparented issues without visible relations and
 without unknown/restricted relationship information form a separate

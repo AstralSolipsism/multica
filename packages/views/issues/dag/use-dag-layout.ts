@@ -37,7 +37,7 @@ export function createWorkerRunner(): DagLayoutRunner {
   let active: { requestId: number; onDone: (response: DagLayoutResponse) => void } | null = null;
   let failure: string | null = null;
   const fail = (requestId: number, error: string): DagLayoutResponse => ({
-    requestId, positions: {}, groups: {}, routes: {}, ports: {}, elapsedMs: 0, error,
+    requestId, positions: {}, groups: {}, routes: {}, ports: {}, error,
   });
   const stop = () => {
     worker?.terminate();

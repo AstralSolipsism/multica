@@ -1,9 +1,9 @@
 "use client";
 
-import { DagDirectionSelect } from "../dag/dag-direction-select";
-import { VIEW_MODE_CAPABILITIES, availableViewModes, visibleViewMode } from "@multica/core/issues/surface/view-mode";
-import { VIEW_MODE_META, useViewModeLabels } from "./view-mode-meta";
 import { cloneElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { VIEW_MODE_CAPABILITIES, availableViewModes, visibleViewMode } from "@multica/core/issues/surface/view-mode";
+import { DagDirectionSelect } from "../dag/dag-direction-select";
+import { VIEW_MODE_META, useViewModeLabels } from "./view-mode-meta";
 import {
   CalendarDays,
   ChevronDown,

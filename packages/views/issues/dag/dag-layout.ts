@@ -13,6 +13,10 @@ import {
   DAG_GROUP_TB_MIN_WIDTH,
   DAG_STAGE_HEADER_HEIGHT,
 } from "./dag-constants";
+import {
+  buildStagePreferenceGraph,
+  conflictingStageScopes,
+} from "./dag-stage-preferences";
 
 export interface DagLayoutNodeInput {
   id: string;
@@ -66,14 +70,8 @@ export interface DagLayoutRequest {
 }
 export interface DagLayoutResponse extends DagLayoutResult {
   requestId: number;
-  elapsedMs: number;
   error?: string;
 }
-
-import {
-  buildStagePreferenceGraph,
-  conflictingStageScopes,
-} from "./dag-stage-preferences";
 
 interface BoundaryPort extends ElkPort {
   edgeId: string;

@@ -27,7 +27,6 @@ export type DagFlowNodeData = {
   statusColor: string | null;
   /** In the highlighted upstream/downstream neighborhood of the selection. */
   focused: boolean;
-  /** A focus neighborhood is active and this node is outside it. */
 };
 
 export type DagFlowNode = Node<DagFlowNodeData, "dagNode">;

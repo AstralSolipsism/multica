@@ -1,9 +1,9 @@
 "use client";
 
-import { DagDirectionSelect } from "../dag/dag-direction-select";
-import { VIEW_MODE_CAPABILITIES, availableViewModes } from "@multica/core/issues/surface/view-mode";
-import { useViewModeLabels } from "./view-mode-meta";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { VIEW_MODE_CAPABILITIES, availableViewModes } from "@multica/core/issues/surface/view-mode";
+import { DagDirectionSelect } from "../dag/dag-direction-select";
+import { useViewModeLabels } from "./view-mode-meta";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Plus } from "lucide-react";
