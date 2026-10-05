@@ -10,6 +10,7 @@
   "group_claude_models": "Model-specific",
   "remaining": "{{percent}}% left",
   "resets_in": "resets at {{time}}",
+  "reset_awaiting_refresh": "Reset, awaiting refresh",
   "exhausted": "Rate limited",
   "not_reported": "Not reported",
   "stale": "Stale data",

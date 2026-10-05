@@ -15,6 +15,8 @@ import {
 export type QuotaTone = "ok" | "warning" | "destructive";
 
 const QUOTA_STALE_MS = 24 * 3600 * 1000;
+// Collectors poll every two minutes and can back off for up to 30 minutes.
+const COLLECTOR_QUOTA_STALE_MS = 3600 * 1000;
 
 /**
  * Sanitize a raw `plan_quota` payload. A malformed snapshot returns null
@@ -102,20 +104,32 @@ export function windowRemainingPercent(
   return 100 - window.used_percent;
 }
 
-/** Snapshots older than 24h are stale: the daemon is no longer feeding them,
- *  so the numbers can silently mislead. */
+/** Polling providers go stale after an hour; task-reported and unknown
+ *  providers keep the 24h allowance for idle periods between tasks. */
 export function isQuotaStale(quota: RuntimePlanQuota, nowMs: number): boolean {
-  return nowMs - quota.observed_at * 1000 > QUOTA_STALE_MS;
+  const staleMs = ["kimi", "antigravity", "zenmux"].includes(quota.provider)
+    ? COLLECTOR_QUOTA_STALE_MS
+    : QUOTA_STALE_MS;
+  return nowMs - quota.observed_at * 1000 > staleMs;
 }
 
-/** Windows whose reset time already passed carry no meaning anymore — the
- *  provider has reset the counter but we have no fresh snapshot. */
+/** A past reset invalidates the old balance, but the window must stay visible
+ *  as awaiting refresh until the provider reports its new balance. */
+export function isQuotaWindowAwaitingRefresh(
+  window: RuntimePlanQuotaWindow,
+  nowSec: number,
+): boolean {
+  return window.resets_at != null && window.resets_at <= nowSec;
+}
+
+/** Only for ranking current balances. Display callers must keep all windows
+ *  and use isQuotaWindowAwaitingRefresh to mark those awaiting new data. */
 export function activeQuotaWindows(
   quota: RuntimePlanQuota,
   nowSec: number,
 ): RuntimePlanQuotaWindow[] {
   return quota.windows.filter(
-    (window) => window.resets_at == null || window.resets_at > nowSec,
+    (window) => !isQuotaWindowAwaitingRefresh(window, nowSec),
   );
 }
 

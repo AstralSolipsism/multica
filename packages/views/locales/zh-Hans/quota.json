@@ -10,6 +10,7 @@
   "group_claude_models": "限定模型",
   "remaining": "剩 {{percent}}%",
   "resets_in": "{{time}} 重置",
+  "reset_awaiting_refresh": "已重置，等待刷新",
   "exhausted": "已限流",
   "not_reported": "未上报",
   "stale": "数据过期",

@@ -3,11 +3,11 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,67 +18,11 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// planQuotaMaxFutureSkew bounds how far a snapshot's observed_at may run
-// ahead of the server clock. Without it one reporter with a bad clock could
-// pin the row to a far-future observed_at and suppress every later snapshot
-// (the conditional write is "newer observed_at wins").
-const planQuotaMaxFutureSkew = 10 * time.Minute
-
 // planQuotaFreshnessThrottle caps how often a snapshot whose CONTENT is
 // unchanged (only observed_at moved — e.g. an external poller re-observing
 // the same values) rewrites the row. Content changes always write
 // immediately; freshness-only refreshes land at most once per window.
 const planQuotaFreshnessThrottleSeconds = 300
-
-// validateRuntimePlanQuota normalizes and validates an incoming plan-quota
-// snapshot against the wire contract. On success the quota's Status is
-// normalized ("ok" when empty) and nil is returned; any violation is a hard
-// error — callers either reject the request (push endpoint) or drop the
-// field (heartbeat).
-//
-// Provider defaulting is NOT done here: the heartbeat requires the daemon
-// to name its provider, while the push endpoint defaults it from the
-// runtime row before calling this.
-func validateRuntimePlanQuota(q *protocol.RuntimePlanQuota, now time.Time) error {
-	if q == nil {
-		return errors.New("plan quota: missing body")
-	}
-	if q.Provider == "" {
-		return errors.New("plan quota: provider is required")
-	}
-	switch q.Status {
-	case "":
-		q.Status = protocol.PlanQuotaStatusOK
-	case protocol.PlanQuotaStatusOK, protocol.PlanQuotaStatusLimited:
-	default:
-		return fmt.Errorf("plan quota: unsupported status %q", q.Status)
-	}
-	if q.ObservedAt <= 0 {
-		return errors.New("plan quota: observed_at must be positive unix seconds")
-	}
-	if q.ObservedAt > now.Add(planQuotaMaxFutureSkew).Unix() {
-		return errors.New("plan quota: observed_at is too far in the future")
-	}
-	if len(q.Windows) > protocol.PlanQuotaMaxWindows {
-		return fmt.Errorf("plan quota: at most %d windows allowed", protocol.PlanQuotaMaxWindows)
-	}
-	for i := range q.Windows {
-		w := &q.Windows[i]
-		if w.Name == "" || len(w.Name) > protocol.PlanQuotaMaxWindowName {
-			return fmt.Errorf("plan quota: window %d name must be 1..%d chars", i, protocol.PlanQuotaMaxWindowName)
-		}
-		if w.WindowMinutes != nil && (*w.WindowMinutes <= 0 || *w.WindowMinutes > protocol.PlanQuotaMaxWindowMinutes) {
-			return fmt.Errorf("plan quota: window %q window_minutes out of range", w.Name)
-		}
-		if w.UsedPercent != nil && (*w.UsedPercent < 0 || *w.UsedPercent > protocol.PlanQuotaMaxUsedPercent) {
-			return fmt.Errorf("plan quota: window %q used_percent out of range", w.Name)
-		}
-		if len(w.Group) > protocol.PlanQuotaMaxGroupName {
-			return fmt.Errorf("plan quota: window %q group must be at most %d chars", w.Name, protocol.PlanQuotaMaxGroupName)
-		}
-	}
-	return nil
-}
 
 // applyRuntimePlanQuota persists a validated plan-quota snapshot through the
 // conditional write (newer observed_at wins, content-change or throttled
@@ -124,18 +68,56 @@ func (h *Handler) applyRuntimePlanQuota(ctx context.Context, rt db.AgentRuntime,
 	return true, nil
 }
 
-// storeHeartbeatPlanQuota is the heartbeat-path entry point: a malformed
-// plan_quota field must never fail the beat, so validation and persistence
-// failures are logged at debug and swallowed. The daemon's own observations
-// always win the source label, whatever the payload claims.
+// Each runtime can warn once per interval on this server, across both
+// heartbeat transports. Expired entries are swept on use; no goroutine or
+// permanent per-runtime state is needed for a diagnostic log.
+const planQuotaDropLogInterval = 5 * time.Minute
+
+type planQuotaDropLogLimiter struct {
+	mu      sync.Mutex
+	next    map[string]time.Time
+	sweepAt time.Time
+}
+
+func (l *planQuotaDropLogLimiter) allow(runtimeID string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !now.Before(l.sweepAt) {
+		for id, next := range l.next {
+			if !now.Before(next) {
+				delete(l.next, id)
+			}
+		}
+		l.sweepAt = now.Add(planQuotaDropLogInterval)
+	}
+	if now.Before(l.next[runtimeID]) {
+		return false
+	}
+	if l.next == nil {
+		l.next = make(map[string]time.Time)
+	}
+	l.next[runtimeID] = now.Add(planQuotaDropLogInterval)
+	return true
+}
+
+// storeHeartbeatPlanQuota never fails the beat. Invalid snapshots count on
+// every drop and warn at most once per runtime per interval. The daemon's
+// own observations always win the source label, whatever the payload claims.
 func (h *Handler) storeHeartbeatPlanQuota(ctx context.Context, rt db.AgentRuntime, quota *protocol.RuntimePlanQuota) {
+	h.storeHeartbeatPlanQuotaAt(ctx, rt, quota, time.Now())
+}
+
+func (h *Handler) storeHeartbeatPlanQuotaAt(ctx context.Context, rt db.AgentRuntime, quota *protocol.RuntimePlanQuota, now time.Time) {
 	if quota == nil {
 		return
 	}
 	quota.Source = protocol.PlanQuotaSourceDaemon
-	if err := validateRuntimePlanQuota(quota, time.Now()); err != nil {
-		slog.Debug("heartbeat plan_quota dropped: invalid",
-			"runtime_id", uuidToString(rt.ID), "error", err)
+	if err := protocol.ValidateRuntimePlanQuota(quota, now); err != nil {
+		h.Metrics.RecordRuntimePlanQuotaDropped(quota.Provider)
+		if h.planQuotaDropLogs != nil && h.planQuotaDropLogs.allow(uuidToString(rt.ID), now) {
+			slog.Warn("heartbeat plan_quota dropped: invalid",
+				"runtime_id", uuidToString(rt.ID), "provider", quota.Provider, "error", err)
+		}
 		return
 	}
 	if _, err := h.applyRuntimePlanQuota(ctx, rt, quota); err != nil {
@@ -220,7 +202,7 @@ func (h *Handler) ReportRuntimeQuota(w http.ResponseWriter, r *http.Request) {
 	if quota.Provider == "" {
 		quota.Provider = rt.Provider
 	}
-	if err := validateRuntimePlanQuota(&quota, time.Now()); err != nil {
+	if err := protocol.ValidateRuntimePlanQuota(&quota, time.Now()); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

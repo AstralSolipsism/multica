@@ -131,6 +131,9 @@ func TestKimiCollect_Success(t *testing.T) {
 	if quota.Provider != "kimi" || quota.Source != protocol.PlanQuotaSourceDaemon || quota.Status != protocol.PlanQuotaStatusOK {
 		t.Fatalf("identity fields = %+v", quota)
 	}
+	if err := protocol.ValidateRuntimePlanQuota(quota, time.Now()); err != nil {
+		t.Fatalf("collector violates heartbeat contract: %v", err)
+	}
 	if quota.ObservedAt <= 0 {
 		t.Fatalf("observed_at = %d", quota.ObservedAt)
 	}
@@ -164,6 +167,9 @@ func TestKimiCollect_QuotaUsages(t *testing.T) {
 	}
 	if quota == nil || len(quota.Windows) != 2 {
 		t.Fatalf("Kimi 2.1.1 must report both windows: %+v", quota)
+	}
+	if err := protocol.ValidateRuntimePlanQuota(quota, time.Now()); err != nil {
+		t.Fatalf("Kimi 2.1.1 violates heartbeat contract: %v", err)
 	}
 	if quota.Provider != "kimi" || quota.Source != protocol.PlanQuotaSourceDaemon || quota.Status != protocol.PlanQuotaStatusOK || quota.ObservedAt < started {
 		t.Fatalf("snapshot metadata = %+v", quota)

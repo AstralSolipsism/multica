@@ -136,7 +136,7 @@ describe("buildRuntimeQuotaView", () => {
     } as NonNullable<AgentRuntime["plan_quota"]>;
   }
 
-  it("is not_reported when the snapshot is missing, malformed, or fully expired", () => {
+  it("is not_reported when the snapshot is missing, malformed, or windowless", () => {
     expect(buildRuntimeQuotaView(makeRuntime(), NOW).kind).toBe("not_reported");
     expect(
       buildRuntimeQuotaView(
@@ -146,23 +146,7 @@ describe("buildRuntimeQuotaView", () => {
         NOW,
       ).kind,
     ).toBe("not_reported");
-    expect(
-      buildRuntimeQuotaView(
-        makeRuntime({
-          plan_quota: makeQuota({
-            windows: [
-              {
-                name: "primary",
-                used_percent: 10,
-                window_minutes: 300,
-                resets_at: NOW_SEC - 5,
-              },
-            ],
-          }),
-        }),
-        NOW,
-      ).kind,
-    ).toBe("not_reported");
+    expect(buildRuntimeQuotaView(makeRuntime({ plan_quota: makeQuota({ windows: [] }) }), NOW).kind).toBe("not_reported");
   });
 
   it("is stale when the snapshot is older than 24h", () => {
@@ -171,6 +155,22 @@ describe("buildRuntimeQuotaView", () => {
       NOW,
     );
     expect(view).toEqual({ kind: "stale", ageMs: 25 * 3600 * 1000 });
+  });
+
+  it("keeps reset windows without letting a past reset become the next reset", () => {
+    const view = buildRuntimeQuotaView(makeRuntime({ plan_quota: makeQuota({
+      windows: [
+        { name: "primary", used_percent: 100, resets_at: NOW_SEC },
+        { name: "secondary", used_percent: 25, resets_at: NOW_SEC + 3600 },
+      ],
+    }) }), NOW);
+    expect(view).toMatchObject({
+      kind: "ok", resetsAt: NOW + 3600 * 1000, resetInMs: 3600 * 1000,
+      windows: [
+        { name: "primary", awaitingRefresh: true, remainingPercent: null, resetsAt: null },
+        { name: "secondary", awaitingRefresh: false, remainingPercent: 75 },
+      ],
+    });
   });
 
   it("maps each active window to remaining percent, tone, and the soonest reset", () => {
@@ -183,6 +183,7 @@ describe("buildRuntimeQuotaView", () => {
       windows: [
         {
           name: "primary",
+          awaitingRefresh: false,
           windowMinutes: 300,
           remainingPercent: 62,
           tone: "ok",
@@ -192,6 +193,7 @@ describe("buildRuntimeQuotaView", () => {
         },
         {
           name: "secondary",
+          awaitingRefresh: false,
           windowMinutes: 10080,
           remainingPercent: 12,
           tone: "warning",

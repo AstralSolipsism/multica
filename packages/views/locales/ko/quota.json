@@ -10,6 +10,7 @@
   "group_claude_models": "특정 모델",
   "remaining": "{{percent}}% 남음",
   "resets_in": "{{time}} 초기화",
+  "reset_awaiting_refresh": "초기화됨, 업데이트 대기 중",
   "exhausted": "속도 제한됨",
   "not_reported": "보고되지 않음",
   "stale": "오래된 데이터",

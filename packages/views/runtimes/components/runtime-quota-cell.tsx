@@ -7,10 +7,10 @@ import {
 } from "@multica/ui/components/ui/progress";
 import { cn } from "@multica/ui/lib/utils";
 import {
-  activeQuotaWindows,
   formatCompactDuration,
   groupQuotaWindows,
   isQuotaStale,
+  isQuotaWindowAwaitingRefresh,
   parsePlanQuota,
   quotaTone,
   quotaWindowGroup,
@@ -90,6 +90,7 @@ export function MiniMeterBar({
 
 export interface QuotaWindowView {
   name: string;
+  awaitingRefresh: boolean;
   windowMinutes: number | null;
   remainingPercent: number | null;
   tone: QuotaTone;
@@ -116,16 +117,14 @@ export type RuntimeQuotaView =
       kind: "ok";
       windows: QuotaWindowView[];
       resetInMs: number | null;
-  resetsAt: number | null;
+      resetsAt: number | null;
       observedAgeMs: number;
     };
 
 // Derive everything the quota cell / card renders from a runtime's raw
-// plan_quota snapshot. State precedence mirrors the product rules: a
-// missing or malformed snapshot and one whose windows all expired read as
-// "not reported"; a snapshot older than 24h reads as stale; "limited" with
-// no percentage data is the claude-style exhausted state (never a
-// fabricated percent).
+// plan_quota snapshot. Missing/malformed or windowless snapshots are not
+// reported. Staleness is provider-specific, and elapsed windows stay visible
+// awaiting refresh.
 export function buildRuntimeQuotaView(
   runtime: AgentRuntime,
   now: number,
@@ -136,18 +135,19 @@ export function buildRuntimeQuotaView(
     return { kind: "stale", ageMs: now - quota.observed_at * 1000 };
   }
   const nowSec = Math.floor(now / 1000);
-  const active = activeQuotaWindows(quota, nowSec);
-  if (active.length === 0) return { kind: "not_reported" };
-  const windows: QuotaWindowView[] = active.map((window) => {
-    const remaining = windowRemainingPercent(window);
+  if (quota.windows.length === 0) return { kind: "not_reported" };
+  const windows: QuotaWindowView[] = quota.windows.map((window) => {
+    const awaitingRefresh = isQuotaWindowAwaitingRefresh(window, nowSec);
+    const remaining = awaitingRefresh ? null : windowRemainingPercent(window);
     return {
       name: window.name,
+      awaitingRefresh,
       windowMinutes: window.window_minutes,
       remainingPercent: remaining,
-      tone: quotaTone(remaining, quota.status),
+      tone: awaitingRefresh ? "ok" : quotaTone(remaining, quota.status),
       resetInMs:
         window.resets_at != null ? window.resets_at * 1000 - now : null,
-      resetsAt: window.resets_at != null ? window.resets_at * 1000 : null,
+      resetsAt: !awaitingRefresh && window.resets_at != null ? window.resets_at * 1000 : null,
       group: quotaWindowGroup(window),
     };
   });
@@ -155,7 +155,7 @@ export function buildRuntimeQuotaView(
   const resetsAt = soonestResetAt(windows);
   if (
     quota.status === "limited" &&
-    windows.every((window) => window.remainingPercent == null)
+    windows.every((window) => !window.awaitingRefresh && window.remainingPercent == null)
   ) {
     return { kind: "limited", windows, resetInMs, resetsAt };
   }
@@ -186,7 +186,7 @@ function soonestResetMs(windows: QuotaWindowView[]): number | null {
   return best;
 }
 
-// The RuntimeList quota column cell: one row per active window (short
+// The RuntimeList quota column cell: one row per reported window (short
 // label + remaining-based mini bar + remaining percent) plus the soonest
 // reset countdown, or one of the degraded states.
 export function RuntimeQuotaCell({
@@ -295,7 +295,11 @@ function QuotaWindowRow({ window }: { window: QuotaWindowView }) {
           {label}
         </span>
       )}
-      {window.remainingPercent == null ? (
+      {window.awaitingRefresh ? (
+        <span className="text-micro text-faint-foreground">
+          {t(($) => $.reset_awaiting_refresh)}
+        </span>
+      ) : window.remainingPercent == null ? (
         <span className="text-micro text-faint-foreground">
           {tForkUi(($) => $.runtimes.machine.metrics.unavailable)}
         </span>
@@ -409,7 +413,11 @@ function QuotaCardWindow({ window }: { window: QuotaWindowView }) {
     <div className="space-y-1">
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-caption text-muted-foreground">{label}</span>
-        {window.remainingPercent == null ? (
+        {window.awaitingRefresh ? (
+          <span className="text-caption text-faint-foreground">
+            {t(($) => $.reset_awaiting_refresh)}
+          </span>
+        ) : window.remainingPercent == null ? (
           <span className="text-caption text-faint-foreground">
             {tForkUi(($) => $.runtimes.machine.metrics.unavailable)}
           </span>
