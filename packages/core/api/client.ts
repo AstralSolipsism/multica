@@ -373,9 +373,7 @@ import {
   CommentSubIssueTaskResponseSchema,
   ListWebhookDeliveriesResponseSchema,
   ApproveMessageTargetResponseSchema,
-  EMPTY_LIST_MESSAGE_APPROVED_TARGETS_RESPONSE,
   EMPTY_LIST_MESSAGE_DELIVERIES_RESPONSE,
-  EMPTY_LIST_MESSAGE_ROUTES_RESPONSE,
   GetMessageDeliveryResponseSchema,
   ListMessageApprovedTargetsResponseSchema,
   ListMessageDeliveriesResponseSchema,
@@ -383,18 +381,9 @@ import {
   MessageDeliveryResponseSchema,
   MessageRouteResponseSchema,
   RevokeMessageTargetResponseSchema,
-  EMPTY_MESSAGE_APPROVED_TARGET,
-  EMPTY_MESSAGE_DELIVERY,
-  EMPTY_MESSAGE_ROUTE,
   emptyMessageDeliveryDetail,
   ApproveMessageSourceTargetResponseSchema,
   EMPTY_LIST_MESSAGE_ROUTE_DELIVERIES_RESPONSE,
-  EMPTY_LIST_MESSAGE_SOURCE_APPROVED_TARGETS_RESPONSE,
-  EMPTY_LIST_MESSAGE_SOURCE_ROUTES_RESPONSE,
-  EMPTY_MESSAGE_EVENT_CATALOG,
-  EMPTY_MESSAGE_SOURCE_APPROVED_TARGET,
-  EMPTY_MESSAGE_SOURCE_DELIVERY,
-  EMPTY_MESSAGE_SOURCE_ROUTE,
   emptyMessageRouteDeliveryDetail,
   GetMessageRouteDeliveryResponseSchema,
   ListMessageRouteDeliveriesResponseSchema,
@@ -549,6 +538,7 @@ import {
   type IssueViewPreference,
   type CreateIssueViewRequest,
   type GlmQuotaStatus,
+  GlmQuotaStatusSchema,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -622,6 +612,35 @@ export class ApiError extends Error {
     this.statusText = statusText;
     this.body = body;
   }
+}
+
+// Configuration and consent reads must remain distinguishable from a verified
+// empty configuration. Callers render their existing query error state.
+function parseConfigurationRead<T>(raw: unknown, schema: ZodType<T>, endpoint: string): T {
+  const parsed = parseWithFallback<T | null>(raw, schema, null, { endpoint });
+  if (parsed === null) {
+    throw new ApiError(`Unreadable response from ${endpoint}`, 0, "", {
+      code: "response_unreadable",
+    });
+  }
+  return parsed;
+}
+
+// A successful HTTP status alone does not confirm a write. Check both the
+// response shape and its operation-specific evidence before resolving.
+function parseConfirmedWrite<T>(
+  raw: unknown,
+  schema: ZodType<T>,
+  endpoint: string,
+  confirmed: (value: T) => boolean,
+): T {
+  const parsed = parseWithFallback<T | null>(raw, schema, null, { endpoint });
+  if (parsed === null || !confirmed(parsed)) {
+    throw new ApiError(`Unconfirmed response from ${endpoint}`, 0, "", {
+      code: "response_unconfirmed",
+    });
+  }
+  return parsed;
 }
 
 function assertAgentConversationStartersWriteSupported(data: {
@@ -3159,7 +3178,10 @@ export class ApiClient {
   // GLM (Zhipu) Coding Plan balance — account-level, deployment-scoped.
   // The server answers enabled=false when no key is configured.
   async getGlmQuota(): Promise<GlmQuotaStatus> {
-    return this.fetch("/api/glm-quota");
+    const raw = await this.fetch<unknown>("/api/glm-quota");
+    return parseWithFallback<GlmQuotaStatus>(raw, GlmQuotaStatusSchema, { enabled: false }, {
+      endpoint: "GET /api/glm-quota",
+    });
   }
 
   // Workspaces
@@ -4924,12 +4946,7 @@ export class ApiClient {
   // a successful save).
   async listMessageRoutes(autopilotId: string): Promise<ListMessageRoutesResponse> {
     const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/message-routes`);
-    return parseWithFallback(
-      raw,
-      ListMessageRoutesResponseSchema,
-      EMPTY_LIST_MESSAGE_ROUTES_RESPONSE,
-      { endpoint: "GET /api/autopilots/:id/message-routes" },
-    );
+    return parseConfigurationRead(raw, ListMessageRoutesResponseSchema, "GET /api/autopilots/:id/message-routes");
   }
 
   // Create returns 201 with {route}; the revision starts at 1. Enabled
@@ -4943,17 +4960,9 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    const parsed = parseWithFallback(raw, MessageRouteResponseSchema,
-      { route: EMPTY_MESSAGE_ROUTE },
-      { endpoint: "POST /api/autopilots/:id/message-routes" });
-    if (!parsed.route.id) {
-      // A write whose response cannot be parsed must not masquerade as a
-      // saved rule: surface an explicit unconfirmed error instead of the
-      // empty fallback, so the UI never toasts "saved" on guesswork.
-      throw new ApiError("unparseable message-route write response", 0, "", {
-        code: "response_unconfirmed",
-      });
-    }
+    const parsed = parseConfirmedWrite(raw, MessageRouteResponseSchema,
+      "POST /api/autopilots/:id/message-routes",
+      (value) => Boolean(value.route.id));
     return parsed.route;
   }
 
@@ -4969,17 +4978,9 @@ export class ApiClient {
       `/api/autopilots/${autopilotId}/message-routes/${routeId}`,
       { method: "PUT", body: JSON.stringify(data) },
     );
-    const parsed = parseWithFallback(raw, MessageRouteResponseSchema,
-      { route: EMPTY_MESSAGE_ROUTE },
-      { endpoint: "PUT /api/autopilots/:id/message-routes/:routeId" });
-    if (!parsed.route.id) {
-      // A write whose response cannot be parsed must not masquerade as a
-      // saved rule: surface an explicit unconfirmed error instead of the
-      // empty fallback, so the UI never toasts "saved" on guesswork.
-      throw new ApiError("unparseable message-route write response", 0, "", {
-        code: "response_unconfirmed",
-      });
-    }
+    const parsed = parseConfirmedWrite(raw, MessageRouteResponseSchema,
+      "PUT /api/autopilots/:id/message-routes/:routeId",
+      (value) => Boolean(value.route.id));
     return parsed.route;
   }
 
@@ -4996,17 +4997,9 @@ export class ApiClient {
         body: JSON.stringify({ enabled, expected_revision: expectedRevision }),
       },
     );
-    const parsed = parseWithFallback(raw, MessageRouteResponseSchema,
-      { route: EMPTY_MESSAGE_ROUTE },
-      { endpoint: "POST /api/autopilots/:id/message-routes/:routeId/enable" });
-    if (!parsed.route.id) {
-      // A write whose response cannot be parsed must not masquerade as a
-      // saved rule: surface an explicit unconfirmed error instead of the
-      // empty fallback, so the UI never toasts "saved" on guesswork.
-      throw new ApiError("unparseable message-route write response", 0, "", {
-        code: "response_unconfirmed",
-      });
-    }
+    const parsed = parseConfirmedWrite(raw, MessageRouteResponseSchema,
+      "POST /api/autopilots/:id/message-routes/:routeId/enable",
+      (value) => Boolean(value.route.id));
     return parsed.route;
   }
 
@@ -5023,14 +5016,9 @@ export class ApiClient {
       `/api/autopilots/${autopilotId}/message-routes/${routeId}/test-send`,
       { method: "POST" },
     );
-    const parsed = parseWithFallback(raw, MessageDeliveryResponseSchema,
-      { delivery: EMPTY_MESSAGE_DELIVERY },
-      { endpoint: "POST /api/autopilots/:id/message-routes/:routeId/test-send" });
-    if (!parsed.delivery.id) {
-      throw new ApiError("unparseable delivery write response", 0, "", {
-        code: "response_unconfirmed",
-      });
-    }
+    const parsed = parseConfirmedWrite(raw, MessageDeliveryResponseSchema,
+      "POST /api/autopilots/:id/message-routes/:routeId/test-send",
+      (value) => Boolean(value.delivery.id));
     return parsed.delivery;
   }
 
@@ -5042,12 +5030,7 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(
       `/api/autopilots/${autopilotId}/message-approved-targets`,
     );
-    return parseWithFallback(
-      raw,
-      ListMessageApprovedTargetsResponseSchema,
-      EMPTY_LIST_MESSAGE_APPROVED_TARGETS_RESPONSE,
-      { endpoint: "GET /api/autopilots/:id/message-approved-targets" },
-    );
+    return parseConfigurationRead(raw, ListMessageApprovedTargetsResponseSchema, "GET /api/autopilots/:id/message-approved-targets");
   }
 
   async approveMessageTarget(
@@ -5058,14 +5041,9 @@ export class ApiClient {
       `/api/autopilots/${autopilotId}/message-approved-targets`,
       { method: "POST", body: JSON.stringify(data) },
     );
-    const parsed = parseWithFallback(raw, ApproveMessageTargetResponseSchema,
-      { approved_target: EMPTY_MESSAGE_APPROVED_TARGET },
-      { endpoint: "POST /api/autopilots/:id/message-approved-targets" });
-    if (!parsed.approved_target.id) {
-      throw new ApiError("unparseable approved-target write response", 0, "", {
-        code: "response_unconfirmed",
-      });
-    }
+    const parsed = parseConfirmedWrite(raw, ApproveMessageTargetResponseSchema,
+      "POST /api/autopilots/:id/message-approved-targets",
+      (value) => Boolean(value.approved_target.id));
     return parsed.approved_target;
   }
 
@@ -5080,11 +5058,11 @@ export class ApiClient {
       `/api/autopilots/${autopilotId}/message-approved-targets/${targetId}`,
       { method: "DELETE" },
     );
-    return parseWithFallback(
+    return parseConfirmedWrite(
       raw,
       RevokeMessageTargetResponseSchema,
-      { revoked: false, cancelled_deliveries: 0 },
-      { endpoint: "DELETE /api/autopilots/:id/message-approved-targets/:targetId" },
+      "DELETE /api/autopilots/:id/message-approved-targets/:targetId",
+      (value) => value.revoked === true,
     );
   }
 
@@ -5136,14 +5114,9 @@ export class ApiClient {
       `/api/autopilots/${autopilotId}/message-deliveries/${deliveryId}/retry`,
       { method: "POST" },
     );
-    const parsed = parseWithFallback(raw, MessageDeliveryResponseSchema,
-      { delivery: EMPTY_MESSAGE_DELIVERY },
-      { endpoint: "POST /api/autopilots/:id/message-deliveries/:deliveryId/retry" });
-    if (!parsed.delivery.id) {
-      throw new ApiError("unparseable delivery write response", 0, "", {
-        code: "response_unconfirmed",
-      });
-    }
+    const parsed = parseConfirmedWrite(raw, MessageDeliveryResponseSchema,
+      "POST /api/autopilots/:id/message-deliveries/:deliveryId/retry",
+      (value) => Boolean(value.delivery.id));
     return parsed.delivery;
   }
 
@@ -5160,12 +5133,7 @@ export class ApiClient {
   // forward, and which preference group each personal event is muted under.
   async getMessageEventCatalog(): Promise<MessageEventCatalog> {
     const raw = await this.fetch<unknown>("/api/message-event-catalog");
-    return parseWithFallback(
-      raw,
-      MessageEventCatalogSchema,
-      EMPTY_MESSAGE_EVENT_CATALOG,
-      { endpoint: "GET /api/message-event-catalog" },
-    );
+    return parseConfigurationRead(raw, MessageEventCatalogSchema, "GET /api/message-event-catalog");
   }
 
   // Lists the acting member's own inbox rules; an unfiltered list also
@@ -5177,12 +5145,7 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (sourceKind) search.set("source_kind", sourceKind);
     const raw = await this.fetch<unknown>(`/api/message-routes?${search}`);
-    return parseWithFallback(
-      raw,
-      ListMessageSourceRoutesResponseSchema,
-      EMPTY_LIST_MESSAGE_SOURCE_ROUTES_RESPONSE,
-      { endpoint: "GET /api/message-routes" },
-    );
+    return parseConfigurationRead(raw, ListMessageSourceRoutesResponseSchema, "GET /api/message-routes");
   }
 
   // Create returns 201 with {route}, revision 1. For source_kind=inbox the
@@ -5195,15 +5158,9 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    const parsed = parseWithFallback(raw, MessageSourceRouteResponseSchema,
-      { route: EMPTY_MESSAGE_SOURCE_ROUTE },
-      { endpoint: "POST /api/message-routes" });
-    if (!parsed.route.id) {
-      // Unconfirmed writes must not masquerade as a saved rule.
-      throw new ApiError("unparseable message-route write response", 0, "", {
-        code: "response_unconfirmed",
-      });
-    }
+    const parsed = parseConfirmedWrite(raw, MessageSourceRouteResponseSchema,
+      "POST /api/message-routes",
+      (value) => Boolean(value.route.id));
     return parsed.route;
   }
 
@@ -5217,14 +5174,9 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    const parsed = parseWithFallback(raw, MessageSourceRouteResponseSchema,
-      { route: EMPTY_MESSAGE_SOURCE_ROUTE },
-      { endpoint: "PUT /api/message-routes/:routeId" });
-    if (!parsed.route.id) {
-      throw new ApiError("unparseable message-route write response", 0, "", {
-        code: "response_unconfirmed",
-      });
-    }
+    const parsed = parseConfirmedWrite(raw, MessageSourceRouteResponseSchema,
+      "PUT /api/message-routes/:routeId",
+      (value) => Boolean(value.route.id));
     return parsed.route;
   }
 
@@ -5239,14 +5191,9 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify({ enabled, expected_revision: expectedRevision }),
     });
-    const parsed = parseWithFallback(raw, MessageSourceRouteResponseSchema,
-      { route: EMPTY_MESSAGE_SOURCE_ROUTE },
-      { endpoint: "POST /api/message-routes/:routeId/enable" });
-    if (!parsed.route.id) {
-      throw new ApiError("unparseable message-route write response", 0, "", {
-        code: "response_unconfirmed",
-      });
-    }
+    const parsed = parseConfirmedWrite(raw, MessageSourceRouteResponseSchema,
+      "POST /api/message-routes/:routeId/enable",
+      (value) => Boolean(value.route.id));
     return parsed.route;
   }
 
@@ -5260,14 +5207,9 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(`/api/message-routes/${routeId}/test-send`, {
       method: "POST",
     });
-    const parsed = parseWithFallback(raw, MessageSourceDeliveryResponseSchema,
-      { delivery: EMPTY_MESSAGE_SOURCE_DELIVERY },
-      { endpoint: "POST /api/message-routes/:routeId/test-send" });
-    if (!parsed.delivery.id) {
-      throw new ApiError("unparseable delivery write response", 0, "", {
-        code: "response_unconfirmed",
-      });
-    }
+    const parsed = parseConfirmedWrite(raw, MessageSourceDeliveryResponseSchema,
+      "POST /api/message-routes/:routeId/test-send",
+      (value) => Boolean(value.delivery.id));
     return parsed.delivery;
   }
 
@@ -5316,14 +5258,9 @@ export class ApiClient {
       `/api/message-routes/${routeId}/message-deliveries/${deliveryId}/retry`,
       { method: "POST" },
     );
-    const parsed = parseWithFallback(raw, MessageSourceDeliveryResponseSchema,
-      { delivery: EMPTY_MESSAGE_SOURCE_DELIVERY },
-      { endpoint: "POST /api/message-routes/:routeId/message-deliveries/:deliveryId/retry" });
-    if (!parsed.delivery.id) {
-      throw new ApiError("unparseable delivery write response", 0, "", {
-        code: "response_unconfirmed",
-      });
-    }
+    const parsed = parseConfirmedWrite(raw, MessageSourceDeliveryResponseSchema,
+      "POST /api/message-routes/:routeId/message-deliveries/:deliveryId/retry",
+      (value) => Boolean(value.delivery.id));
     return parsed.delivery;
   }
 
@@ -5332,12 +5269,7 @@ export class ApiClient {
   // the server answers 403 message_target_admin_required for plain members.
   async listMessageSourceApprovedTargets(): Promise<ListMessageSourceApprovedTargetsResponse> {
     const raw = await this.fetch<unknown>("/api/message-approved-targets");
-    return parseWithFallback(
-      raw,
-      ListMessageSourceApprovedTargetsResponseSchema,
-      EMPTY_LIST_MESSAGE_SOURCE_APPROVED_TARGETS_RESPONSE,
-      { endpoint: "GET /api/message-approved-targets" },
-    );
+    return parseConfigurationRead(raw, ListMessageSourceApprovedTargetsResponseSchema, "GET /api/message-approved-targets");
   }
 
   async approveMessageSourceTarget(
@@ -5347,14 +5279,9 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    const parsed = parseWithFallback(raw, ApproveMessageSourceTargetResponseSchema,
-      { approved_target: EMPTY_MESSAGE_SOURCE_APPROVED_TARGET },
-      { endpoint: "POST /api/message-approved-targets" });
-    if (!parsed.approved_target.id) {
-      throw new ApiError("unparseable approved-target write response", 0, "", {
-        code: "response_unconfirmed",
-      });
-    }
+    const parsed = parseConfirmedWrite(raw, ApproveMessageSourceTargetResponseSchema,
+      "POST /api/message-approved-targets",
+      (value) => Boolean(value.approved_target.id));
     return parsed.approved_target;
   }
 
@@ -5366,20 +5293,12 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(`/api/message-approved-targets/${targetId}`, {
       method: "DELETE",
     });
-    const parsed = parseWithFallback(
+    return parseConfirmedWrite(
       raw,
       RevokeMessageTargetResponseSchema,
-      { revoked: false, cancelled_deliveries: 0 },
-      { endpoint: "DELETE /api/message-approved-targets/:targetId" },
+      "DELETE /api/message-approved-targets/:targetId",
+      (value) => value.revoked === true,
     );
-    if (parsed.revoked !== true) {
-      // A 2xx that cannot confirm the revoke must not resolve as success —
-      // the UI would otherwise toast "revoked" while queued sends live on.
-      throw new ApiError("unconfirmed approved-target revoke response", 0, "", {
-        code: "response_unconfirmed",
-      });
-    }
-    return parsed;
   }
 
   // GitHub integration

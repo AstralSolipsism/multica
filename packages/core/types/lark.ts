@@ -1,8 +1,9 @@
 export interface LarkConversationGrant {
   id: string;
   authorized_by: string;
-  scope: "workspace";
-  chats: { chat_id: string; chat_type: "group" | "p2p" }[];
+  /** Read fallback only; forms must not replace an unreadable grant. */
+  scope: "workspace" | "unreadable";
+  chats: { chat_id: string; chat_type: "group" | "p2p" | "unreadable" }[];
 }
 
 // --- Target discovery (OL-72 contract, OL-74 frontend) ---

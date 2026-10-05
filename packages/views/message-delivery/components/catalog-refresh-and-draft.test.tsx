@@ -4,9 +4,10 @@
 // and QueryClient with local HTTP responses. No request leaves this process.
 
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { ApiClient } from "@multica/core/api/client";
 import { setApiInstance } from "@multica/core/api";
 import { createQueryClient } from "@multica/core/query-client";
@@ -14,6 +15,7 @@ import { messageSourceKeys } from "@multica/core/message-delivery";
 import type { MessageEventCatalog } from "@multica/core/types";
 import { TeamSubscriptionsSection } from "./team-subscriptions-section";
 import { PersonalFeishuPushSection } from "./personal-push-section";
+import { MessageDeliverySection } from "./message-delivery-section";
 import { renderWithI18n } from "../../test/i18n";
 import { NavigationProvider } from "../../navigation";
 
@@ -61,16 +63,23 @@ afterEach(() => {
   cleanup();
   for (const client of activeClients.splice(0)) client.clear();
   vi.unstubAllGlobals();
+  vi.clearAllMocks();
 });
 
-function setup(mode: "personal" | "team" = "team") {
+function setup(
+  mode: "personal" | "team" | "automation" = "team",
+  initial: { catalogMalformed?: boolean; routesMalformed?: boolean } = {},
+) {
   const client = createQueryClient();
   activeClients.push(client);
   const state = {
     catalogFailed: false,
+    catalogMalformed: false,
     approvalsFailed: false,
     routesFailed: false,
+    routesMalformed: false,
     approvals: [] as typeof APPROVAL[],
+    ...initial,
   };
   const createRequests = vi.fn();
   const response = (body: unknown, status = 200) =>
@@ -81,8 +90,14 @@ function setup(mode: "personal" | "team" = "team") {
     if (path === "/api/message-event-catalog") {
       return state.catalogFailed
         ? response({ error: "catalog unavailable" }, 500)
-        : response(CATALOG);
+        : response(state.catalogMalformed ? {} : CATALOG);
     }
+    if (path === "/api/autopilots/ap1/message-routes") return response({ routes: [] });
+    if (path === "/api/autopilots/ap1/message-approved-targets") {
+      return response({ approved_targets: [{ ...APPROVAL, autopilot_id: "ap1" }] });
+    }
+    if (path === "/api/autopilots/ap1/message-approved-targets/a1" && method === "DELETE") return response({});
+    if (path === "/api/workspaces/ws1/members") return response([]);
     if (path === "/api/message-approved-targets") {
       if (method === "POST") return response({ approved_target: APPROVAL }, 201);
       return state.approvalsFailed
@@ -97,7 +112,7 @@ function setup(mode: "personal" | "team" = "team") {
       }
       return state.routesFailed
         ? response({ error: "routes unavailable" }, 500)
-        : response({ routes: [] });
+        : response(state.routesMalformed ? {} : { routes: [] });
     }
     if (path === "/api/workspaces/ws1/lark/installations") {
       return response({
@@ -122,12 +137,62 @@ function setup(mode: "personal" | "team" = "team") {
         pathname: "/ws/settings", searchParams: new URLSearchParams(), hash: "",
         getShareableUrl: (path: string) => path,
       }}>
-        {mode === "team" ? <TeamSubscriptionsSection /> : <PersonalFeishuPushSection />}
+        {mode === "team" ? <TeamSubscriptionsSection /> : mode === "automation"
+          ? <MessageDeliverySection autopilotId="ap1" canWrite executionMode="run_only" />
+          : <PersonalFeishuPushSection />}
       </NavigationProvider>
     </QueryClientProvider>,
   );
   return { client, state, createRequests, fetch, user: userEvent.setup() };
 }
+
+it.each(["personal", "team"] as const)(
+  "%s: an unreadable initial catalog cannot be saved as event_types: []",
+  async (mode) => {
+    const harness = setup(mode, { catalogMalformed: true });
+    const add = await screen.findByRole("button", { name: mode === "team" ? "Add subscription" : "Set up push" });
+    await waitFor(() => expect(add).toBeEnabled());
+    await harness.user.click(add);
+    if (mode === "team") await harness.user.type(screen.getByPlaceholderText("oc_..."), "oc_team");
+    await screen.findByText(CATALOG_ERROR);
+    const save = screen.getByRole("button", { name: /^save$|approve.*save|save.*approve/i });
+    expect(save).toBeDisabled();
+    await harness.user.click(save);
+    expect(harness.createRequests).not.toHaveBeenCalled();
+  },
+);
+
+it("an unreadable personal route list shows an error instead of claiming push is not configured", async () => {
+  setup("personal", { routesMalformed: true });
+  await screen.findByText("Couldn't load the push configuration.");
+  expect(screen.queryByText(/Feishu push isn't set up yet/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Set up push" })).not.toBeInTheDocument();
+});
+
+it("a malformed catalog refresh blocks saving even when the cache retains the previous catalog", async () => {
+  const harness = setup();
+  await openEditor(harness, "team");
+  harness.state.catalogMalformed = true;
+  await act(async () => {
+    await harness.client.refetchQueries({ queryKey: messageSourceKeys.catalog("ws1") });
+  });
+  await screen.findByText(CATALOG_ERROR);
+  expect(screen.getByRole("button", { name: /approve.*save|save.*approve/i })).toBeDisabled();
+  expect(harness.createRequests).not.toHaveBeenCalled();
+});
+
+it("an unconfirmed automation approval revoke reports an error instead of success", async () => {
+  const harness = setup("automation");
+  await screen.findByText("group:oc_team");
+  await harness.user.click(screen.getByRole("button", { name: /^revoke$/i }));
+  await harness.user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: /^revoke$/i }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalled());
+  expect(toast.success).not.toHaveBeenCalled();
+  expect(harness.fetch).toHaveBeenCalledWith(
+    expect.stringContaining("/api/autopilots/ap1/message-approved-targets/a1"),
+    expect.objectContaining({ method: "DELETE" }),
+  );
+});
 
 async function openEditor(harness: ReturnType<typeof setup>, mode: "personal" | "team") {
   const add = await screen.findByRole("button", { name: mode === "team" ? "Add subscription" : "Set up push" });

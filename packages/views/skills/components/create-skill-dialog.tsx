@@ -310,7 +310,7 @@ function UrlForm({
     setLoading(true);
     setError("");
     try {
-      const skill = await api.importSkillParsed({ url: trimmed });
+      const skill = await api.importSkillParsed(wsId, { url: trimmed });
       if (!skill) {
         setError(importNotices.unreadableMessage);
         setLoading(false);
