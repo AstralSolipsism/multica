@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 )
 
@@ -128,6 +130,26 @@ func TestLabrastroMarkdownContextDeadline(t *testing.T) {
 
 func TestLabrastroMarkdownReaderCancellation(t *testing.T) {
 	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("LineOffset/canceled=%t", canceled), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			r := &labrastroMarkdownReader{Reader: text.NewReader([]byte("\tx\n")), ctx: ctx}
+			r.Advance(1)
+			if canceled {
+				cancel()
+				defer func() {
+					abort, ok := recover().(labrastroMarkdownAbort)
+					if !ok || !errors.Is(abort.err, context.Canceled) {
+						t.Fatalf("LineOffset did not abort with cancellation: %+v", abort)
+					}
+				}()
+				r.LineOffset()
+				t.Fatal("canceled LineOffset returned normally")
+			}
+			if offset := r.LineOffset(); offset != 4 {
+				t.Fatalf("LineOffset after tab = %d, want 4", offset)
+			}
+		})
 		t.Run(fmt.Sprintf("AdvanceLine/canceled=%t", canceled), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -167,9 +189,56 @@ func TestLabrastroMarkdownReaderCancellation(t *testing.T) {
 	}
 }
 
+type labrastroPanickingContext struct {
+	context.Context
+	value any
+}
+
+func (c labrastroPanickingContext) Err() error { panic(c.value) }
+
+func TestLabrastroMarkdownUnexpectedPanic(t *testing.T) {
+	unexpected := errors.New("unexpected parser failure")
+	defer func() {
+		if got := recover(); got != unexpected {
+			t.Fatalf("unexpected panic = %v, want original panic %v", got, unexpected)
+		}
+	}()
+	_, _ = labrastroMarkdownPaths(labrastroPanickingContext{t.Context(), unexpected}, "text")
+	t.Fatal("unexpected panic was swallowed")
+}
+
+type labrastroTestParagraphTransformer func(*ast.Paragraph, text.Reader, parser.Context)
+
+func (f labrastroTestParagraphTransformer) Transform(node *ast.Paragraph, reader text.Reader, pc parser.Context) {
+	f(node, reader, pc)
+}
+
+func TestLabrastroMarkdownParagraphCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	paragraph := ast.NewParagraph()
+	for range 4097 {
+		paragraph.Lines().Append(text.NewSegment(0, 6))
+	}
+	transformer := &labrastroMarkdownParagraphTransformer{
+		ctx: ctx,
+		ParagraphTransformer: labrastroTestParagraphTransformer(func(*ast.Paragraph, text.Reader, parser.Context) {
+			t.Fatal("canceled paragraph reached reference extraction")
+		}),
+	}
+	defer func() {
+		abort, ok := recover().(labrastroMarkdownAbort)
+		if !ok || !errors.Is(abort.err, context.Canceled) {
+			t.Fatalf("paragraph did not abort with cancellation: %+v", abort)
+		}
+	}()
+	transformer.Transform(paragraph, text.NewReader([]byte("[x]:a\n")), parser.NewContext())
+	t.Fatal("canceled paragraph returned normally")
+}
+
 func TestLabrastroMarkdownCancellationBetweenNestedLines(t *testing.T) {
-	// Each line takes noticeable parser work, so a check only after Parse
-	// returns cannot satisfy the deadline. The reader must stop between lines.
+	// Parsing the whole document exceeds the budget, so a check only after
+	// Parse returns cannot satisfy the deadline. The reader must interrupt it.
 	body := strings.Repeat(strings.Repeat(">", 8192)+"\n", 96)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
 	defer cancel()
@@ -183,6 +252,62 @@ func TestLabrastroMarkdownCancellationBetweenNestedLines(t *testing.T) {
 		t.Fatalf("deadline returned after %s; want less than 2s", elapsed)
 	}
 	t.Logf("canceled nested lines: %s", elapsed)
+}
+
+func TestLabrastroMarkdownNestedContainersDeadline(t *testing.T) {
+	for _, size := range []int{1 << 16, 1 << 20} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			body := strings.Repeat(">", size)
+			ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
+			defer cancel()
+			start := time.Now()
+			spans, err := labrastroMarkdownPaths(ctx, body)
+			elapsed := time.Since(start)
+			if !errors.Is(err, context.DeadlineExceeded) || spans != nil {
+				t.Fatalf("deadline returned %d paths and %v", len(spans), err)
+			}
+			if elapsed >= 2*time.Second {
+				t.Fatalf("deadline returned after %s; want less than 2s", elapsed)
+			}
+			t.Logf("%d nested containers canceled in %s", size, elapsed)
+		})
+	}
+}
+
+func TestLabrastroMarkdownParagraphLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		paths      int
+		limited    bool
+	}{
+		{"at limit", strings.Repeat("[x]:a\n", 4096), 4096, false},
+		{"over limit", strings.Repeat("[x]:a\n", 4097), 0, true},
+		{"one MiB", strings.Repeat("[x]:a\n", (1<<20)/6), 0, true},
+		{"blockquote", strings.Repeat("> [x]:a\n", 4097), 0, true},
+		{"list", "- [x]:a\n" + strings.Repeat("  [x]:a\n", 4096), 0, true},
+		{"plain prose", strings.Repeat("text\n", 4097), 0, true},
+		{"multiline definitions", strings.Repeat("[x]:\na\n", 2049), 0, true},
+		{"separate paragraphs", strings.Repeat("[x]:a\n", 4096) + "\n" + strings.Repeat("[x]:a\n", 4096), 8192, false},
+		{"fenced code", "```\n" + strings.Repeat("[x]:a\n", 4097) + "```\n", 0, false},
+		{"indented code", strings.Repeat("    [x]:a\n", 4097), 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start := time.Now()
+			spans, err := labrastroMarkdownPaths(t.Context(), tc.body)
+			elapsed := time.Since(start)
+			if tc.limited {
+				if !isCapError(err) || spans != nil {
+					t.Fatalf("paragraph limit returned %d paths and %v", len(spans), err)
+				}
+			} else if err != nil || len(spans) != tc.paths {
+				t.Fatalf("paths = %d, error = %v; want %d paths", len(spans), err, tc.paths)
+			}
+			if elapsed >= 2*time.Second {
+				t.Fatalf("paragraph scan took %s; want less than 2s", elapsed)
+			}
+			t.Logf("%d bytes scanned in %s", len(tc.body), elapsed)
+		})
+	}
 }
 
 func TestLabrastroReferenceCancellationWithinFile(t *testing.T) {

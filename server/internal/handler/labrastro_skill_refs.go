@@ -75,11 +75,23 @@ type labrastroPathSpan struct{ start, end int }
 
 var labrastroReferenceDefinition = regexp.MustCompile(`^ {0,3}\[[^\]]+\]:\s*(<[^>]+>|[^\s]+)`)
 
-// Stop block parsing at a line boundary. Returning EOF from PeekLine instead
-// could invalidate a parser's repeated reads of the current line.
+// Stop safely at line boundaries. Within a line, abort through a private
+// sentinel instead of changing the parser's repeated PeekLine reads to EOF.
 type labrastroMarkdownReader struct {
 	text.Reader
 	ctx context.Context
+}
+
+// Goldmark's Reader and ParagraphTransformer interfaces cannot return errors.
+// Only this private abort is recovered at the Markdown parsing boundary.
+type labrastroMarkdownAbort struct{ err error }
+
+func (r *labrastroMarkdownReader) LineOffset() int {
+	// Opening each nested container recalculates the offset from the line head.
+	if err := r.ctx.Err(); err != nil {
+		panic(labrastroMarkdownAbort{err})
+	}
+	return r.Reader.LineOffset()
 }
 
 func (r *labrastroMarkdownReader) AdvanceLine() {
@@ -98,18 +110,53 @@ func (r *labrastroMarkdownReader) SkipBlankLines() (text.Segment, int, bool) {
 	return r.Reader.SkipBlankLines()
 }
 
+const labrastroMaxMarkdownParagraphLines = 4096
+
+type labrastroMarkdownParagraphTransformer struct {
+	parser.ParagraphTransformer
+	ctx context.Context
+}
+
+func (t *labrastroMarkdownParagraphTransformer) Transform(node *ast.Paragraph, reader text.Reader, pc parser.Context) {
+	if err := t.ctx.Err(); err != nil {
+		panic(labrastroMarkdownAbort{err})
+	}
+	// Goldmark uses its own BlockReader here and copies all remaining lines
+	// after each reference definition. Bound that work before entering it,
+	// including definitions that span multiple lines or live in containers.
+	if node.Lines().Len() > labrastroMaxMarkdownParagraphLines {
+		panic(labrastroMarkdownAbort{fmt.Errorf("%w: Markdown paragraph exceeds %d lines; split it with blank lines", errImportCapExceeded, labrastroMaxMarkdownParagraphLines)})
+	}
+	t.ParagraphTransformer.Transform(node, reader, pc)
+}
+
 // Use the existing Markdown parser for code-block boundaries, including list
 // and blockquote containers. Blanking bytes preserves source offsets without
 // treating examples in nested fenced/indented code as real references.
-func labrastroMaskMarkdownCode(ctx context.Context, body string) (string, error) {
+func labrastroMaskMarkdownCode(ctx context.Context, body string) (masked string, err error) {
+	defer func() {
+		if value := recover(); value != nil {
+			if abort, ok := value.(labrastroMarkdownAbort); ok {
+				masked, err = "", abort.err
+			} else {
+				panic(value)
+			}
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	source := []byte(body)
 	// Inline parsing does not affect code-block boundaries, and would repeat
 	// unbounded searches for unmatched code spans before our own scanner runs.
+	transformers := parser.DefaultParagraphTransformers()
+	for i := range transformers {
+		transformers[i].Value = &labrastroMarkdownParagraphTransformer{
+			ParagraphTransformer: transformers[i].Value.(parser.ParagraphTransformer), ctx: ctx,
+		}
+	}
 	p := parser.NewParser(parser.WithBlockParsers(parser.DefaultBlockParsers()...),
-		parser.WithParagraphTransformers(parser.DefaultParagraphTransformers()...))
+		parser.WithParagraphTransformers(transformers...))
 	doc := p.Parse(&labrastroMarkdownReader{Reader: text.NewReader(source), ctx: ctx})
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -315,6 +362,9 @@ func labrastroCompleteReferences(ctx context.Context, result *importedSkill, ski
 		body := bodies[src]
 		spans, err := labrastroMarkdownPaths(ctx, body)
 		if err != nil {
+			if isCapError(err) {
+				return labrastroImportFailure("limit_exceeded", src, "", err, false)
+			}
 			return err
 		}
 		var out strings.Builder

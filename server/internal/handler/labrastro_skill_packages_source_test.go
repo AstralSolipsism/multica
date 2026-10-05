@@ -29,9 +29,22 @@ func labrastroPackageSnapshotHash(t *testing.T, fx *testutil.Fixture) string {
 }
 
 func TestLabrastroPackagePreviewMarkdownDeadline(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"backticks", "x" + strings.Repeat("`", (1<<20)-1)},
+		{"nested containers", strings.Repeat(">", 1<<17)},
+		{"reference definitions", strings.Repeat("[x]:a\n", (1<<20)/6)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			labrastroPreviewMarkdownDeadline(t, tc.body)
+		})
+	}
+}
+
+func labrastroPreviewMarkdownDeadline(t *testing.T, body string) {
+	t.Helper()
 	fx := labrastroPackageDBFixture(t)
 	source := labrastroTestFixture(map[string]string{
-		"skills/demo/SKILL.md":  "x" + strings.Repeat("`", (1<<20)-1),
+		"skills/demo/SKILL.md":  body,
 		"skills/demo/notes.txt": "notes",
 	})
 	source.install(t)
@@ -81,6 +94,49 @@ func TestLabrastroPackagePreviewMarkdownDeadline(t *testing.T) {
 		t.Fatal("interrupted preview changed database state")
 	}
 	t.Logf("500ms preview deadline returned 504 in %s", elapsed)
+}
+
+func TestLabrastroMarkdownParagraphLimitResponses(t *testing.T) {
+	for _, file := range []string{"skills/demo/SKILL.md", "references/guide.md"} {
+		t.Run(file, func(t *testing.T) {
+			fx := labrastroPackageDBFixture(t)
+			const header = "---\nname: demo\n---\n"
+			files := map[string]string{"skills/demo/SKILL.md": header + "[guide](../../references/guide.md)"}
+			files[file] = strings.Repeat("[x]:a\n", (maxImportFileSize-len(header))/6)
+			if file == "skills/demo/SKILL.md" {
+				files[file] = header + files[file]
+			}
+			source := labrastroTestFixture(files)
+			source.install(t)
+			before := labrastroPackageSnapshotHash(t, fx)
+			start := time.Now()
+			preview := labrastroPreview(t, fx, testUserID, source.url())
+			elapsed := time.Since(start)
+			if len(preview.Candidates) != 1 {
+				t.Fatalf("preview returned %d candidates, want one failed candidate", len(preview.Candidates))
+			}
+			c := preview.Candidates[0]
+			if c.State != "failed" || c.CanWrite || c.DefaultSelected || len(c.Diagnostics) != 1 || c.Diagnostics[0].Code != "limit_exceeded" || c.Diagnostics[0].Retryable || c.Diagnostics[0].Path != file {
+				t.Fatalf("paragraph limit lost candidate diagnostic: %+v", c)
+			}
+			if elapsed >= 2*time.Second {
+				t.Fatalf("paragraph limit preview took %s; want less than 2s", elapsed)
+			}
+			var failure struct {
+				Code        string                  `json:"code"`
+				Retryable   bool                    `json:"retryable"`
+				Diagnostics []SkillImportDiagnostic `json:"diagnostics"`
+			}
+			labrastroCall(t, fx, testUserID, testHandler.ImportSkill, "POST", map[string]string{"url": source.url() + "/tree/main/skills/demo"}).Want(http.StatusRequestEntityTooLarge).JSON(&failure)
+			if failure.Code != "limit_exceeded" || failure.Retryable || len(failure.Diagnostics) != 1 || failure.Diagnostics[0].Path != file {
+				t.Fatalf("legacy import lost paragraph-limit diagnostic: %+v", failure)
+			}
+			if after := labrastroPackageSnapshotHash(t, fx); before != after {
+				t.Fatal("rejected Markdown changed database state")
+			}
+			t.Logf("paragraph limit preview returned failed candidate in %s; legacy import returned 413", elapsed)
+		})
+	}
 }
 
 func TestLabrastroPackageScanContextFailure(t *testing.T) {
