@@ -20,10 +20,10 @@ import (
 // non-GET route must be classified, including DELETE bodies and bodyless writes.
 func TestExternalConversationRequestInventory(t *testing.T) {
 	requests := map[string]any{
-		"POST /api/issues":                                handler.CreateIssueRequest{},
-		"POST /api/issues/with-dependencies":              handler.CreateIssueRequest{},
-		"PUT /api/issues/{id}":                            handler.UpdateIssueRequest{},
-		"PATCH /api/issues/{id}/with-dependencies":        handler.UpdateIssueRequest{},
+		"POST /api/issues":                                handler.CreateIssueWriteRequest{},
+		"POST /api/issues/with-dependencies":              handler.CreateIssueWriteRequest{},
+		"PUT /api/issues/{id}":                            handler.UpdateIssueWriteRequest{},
+		"PATCH /api/issues/{id}/with-dependencies":        handler.UpdateIssueWriteRequest{},
 		"POST /api/issues/query":                          map[string]string{},
 		"POST /api/issues/{id}/comments":                  handler.CreateCommentRequest{},
 		"PUT /api/comments/{commentId}":                   handler.UpdateCommentRequest{},

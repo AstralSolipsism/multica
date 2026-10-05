@@ -543,14 +543,14 @@ func (q *Queries) LockIssuesForDependencyAdmission(ctx context.Context, workspac
 	return err
 }
 
-const lockWorkspaceForDependencyAdmission = `-- name: LockWorkspaceForDependencyAdmission :one
+const lockWorkspaceForDependencyStructure = `-- name: LockWorkspaceForDependencyStructure :one
 SELECT id FROM workspace WHERE id = $1 FOR KEY SHARE
 `
 
 // Fence workspace deletion without conflicting with the create counter's
 // NO KEY UPDATE lock. Structural writers serialize on the advisory lock.
-func (q *Queries) LockWorkspaceForDependencyAdmission(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, lockWorkspaceForDependencyAdmission, id)
+func (q *Queries) LockWorkspaceForDependencyStructure(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockWorkspaceForDependencyStructure, id)
 	var id_2 pgtype.UUID
 	err := row.Scan(&id_2)
 	return id_2, err

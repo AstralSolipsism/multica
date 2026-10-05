@@ -2,7 +2,7 @@
 -- Take the create counter's row lock first, avoiding a later lock upgrade.
 SELECT id FROM workspace WHERE id = $1 FOR NO KEY UPDATE;
 
--- name: LockWorkspaceForDependencyAdmission :one
+-- name: LockWorkspaceForDependencyStructure :one
 -- Fence workspace deletion without conflicting with the create counter's
 -- NO KEY UPDATE lock. Structural writers serialize on the advisory lock.
 SELECT id FROM workspace WHERE id = $1 FOR KEY SHARE;

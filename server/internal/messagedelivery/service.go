@@ -611,8 +611,8 @@ func isUniqueViolation(err error) bool {
 
 // EnqueueRunDeliveries decides deliveries for one terminal run. Idempotent:
 // the unique dedup key collapses concurrent and repeated invocations into
-// one decision per (source, target). The decision scanner calls it on
-// EventBus wakeups and on periodic compensation passes.
+// one decision per (source, target). The decision scanner uses the same
+// source-facts and decision assembly with its already-loaded candidate rows.
 func (s *Service) EnqueueRunDeliveries(ctx context.Context, runID pgtype.UUID) (int, error) {
 	run, err := s.Queries.GetAutopilotRun(ctx, runID)
 	if err != nil {

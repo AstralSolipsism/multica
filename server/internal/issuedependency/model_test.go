@@ -72,7 +72,7 @@ func TestDependencyInheritedCycleAndReparent(t *testing.T) {
 	}
 }
 
-func TestDependencyExecutionComponentPreservesCanonicalEvidence(t *testing.T) {
+func TestDependencyRelationComponentPreservesCanonicalEvidence(t *testing.T) {
 	for _, kind := range []string{"dangling", "duplicate", "missing_parent"} {
 		t.Run(kind, func(t *testing.T) {
 			m := model(map[string]string{"A": "", "A1": "A", "B": "", "B1": "B", "C": "", "D": "", "bad": "", "other": ""},
@@ -96,7 +96,7 @@ func TestDependencyExecutionComponentPreservesCanonicalEvidence(t *testing.T) {
 			if m.Validate() == nil {
 				t.Fatal("the complete workspace must remain unverified")
 			}
-			component := m.ExecutionComponent("B1")
+			component := m.RelationComponent("B1")
 			if err := component.Validate(); err != nil {
 				t.Fatalf("unrelated history blocked the valid component: %v", err)
 			}
@@ -107,7 +107,7 @@ func TestDependencyExecutionComponentPreservesCanonicalEvidence(t *testing.T) {
 			if len(ps) != 2 || ps[0].IssueID != "A1" || ps[1].IssueID != "C" {
 				t.Fatalf("component changed inherited readiness: %+v", ps)
 			}
-			if m.ExecutionComponent("bad").Validate() == nil || m.ExecutionComponent("B1", "bad").Validate() == nil {
+			if m.RelationComponent("bad").Validate() == nil || m.RelationComponent("B1", "bad").Validate() == nil {
 				t.Fatal("affected canonical corruption was hidden or normalized")
 			}
 			if !reflect.DeepEqual(m, original) {

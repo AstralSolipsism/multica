@@ -57,12 +57,12 @@ func (m Model) IDs() []string {
 	return ids
 }
 
-// ExecutionComponent selects the complete undirected parent/blocked_by closure
-// of seeds for legacy issue operations. Unknown relation types have no verified
-// execution meaning. They remain in storage and must still fail the full-model
+// RelationComponent selects the complete undirected parent/blocked_by closure
+// of seeds for ordinary hierarchy edits. Unknown relation types have no verified
+// structural meaning. They remain in storage and must still fail the full-model
 // audit used by dependency APIs. Missing endpoints and duplicate canonical rows
 // are retained here so Validate fails closed when they affect this component.
-func (m Model) ExecutionComponent(seeds ...string) Model {
+func (m Model) RelationComponent(seeds ...string) Model {
 	adj := make(map[string][]string)
 	connect := func(a, b string) {
 		adj[a] = append(adj[a], b)

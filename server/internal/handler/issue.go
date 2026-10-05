@@ -36,14 +36,13 @@ import (
 
 // IssueResponse is the JSON response for an issue.
 type IssueResponse struct {
-	Dependencies *service.DependencyView `json:"dependencies,omitempty"`
-	ID           string                  `json:"id"`
-	WorkspaceID  string                  `json:"workspace_id"`
-	Number       int32                   `json:"number"`
-	Identifier   string                  `json:"identifier"`
-	Title        string                  `json:"title"`
-	Description  *string                 `json:"description"`
-	Status       string                  `json:"status"`
+	ID          string  `json:"id"`
+	WorkspaceID string  `json:"workspace_id"`
+	Number      int32   `json:"number"`
+	Identifier  string  `json:"identifier"`
+	Title       string  `json:"title"`
+	Description *string `json:"description"`
+	Status      string  `json:"status"`
 	// StatusCategory encodes lifecycle using the legacy seven-value wire enum. It is
 	// omitted when an endpoint cannot resolve a custom status, so consumers must
 	// fall back to their catalog rather than treat a blank as "no category".
@@ -108,6 +107,8 @@ type IssueResponse struct {
 	SourceContext *sourceContextDetailResponse `json:"source_context,omitempty"`
 	// duplicateOfIssueID is the raw mark, kept off the wire; see DuplicateOf.
 	duplicateOfIssueID pgtype.UUID
+
+	Dependencies *service.DependencyView `json:"dependencies,omitempty"`
 }
 
 // IssueRefResponse names another issue inside a response: enough to render
@@ -258,7 +259,13 @@ func assertIssueStatusStillActive(ctx context.Context, qtx *db.Queries, workspac
 
 // updateIssueWithStatusGuard refreshes untouched nullable fields under the issue
 // row lock, so an ordinary edit cannot restore a concurrent hierarchy change.
+// Structural writes use updateIssueAtomically so single and batch updates share
+// the dependency hooks and their transaction locks.
 func (h *Handler) updateIssueWithStatusGuard(ctx context.Context, workspaceID pgtype.UUID, statusKey string, params db.UpdateIssueParams, rawFields map[string]json.RawMessage) (db.Issue, db.Issue, error) {
+	if issueWriteNeedsStructureLock(ctx, rawFields) {
+		issue, current, _, err := h.updateIssueAtomically(ctx, workspaceID, params, rawFields, nil, nil, nil, statusKey)
+		return issue, current, err
+	}
 	tx, err := h.beginWakeupWrite(ctx)
 	if err != nil {
 		return db.Issue{}, db.Issue{}, err
@@ -3012,7 +3019,6 @@ func readRuntimeCLIVersion(metadata []byte) string {
 }
 
 type CreateIssueRequest struct {
-	dependencyWriteFields
 	Title         string   `json:"title"`
 	Description   *string  `json:"description"`
 	Status        string   `json:"status"`
@@ -3167,25 +3173,14 @@ func duplicateIssueMessage(issue IssueResponse) string {
 	return issueguard.DuplicateMessage(issue.Identifier, issue.Title, issue.Status)
 }
 
-func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) { h.createIssue(w, r, false) }
-
-func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound bool) {
+func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	r = h.withWakeupActor(r)
 	var req CreateIssueRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	if req.Title == "" {
-		writeError(w, http.StatusBadRequest, "title is required")
-		return
-	}
-
-	dependencyWrite, ok := h.parseDependencyWrite(w, r, req.dependencyWriteFields, compound, true)
+	r, ok := h.prepareIssueCreate(w, r, &req)
 	if !ok {
 		return
 	}
+
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
@@ -3394,7 +3389,6 @@ func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound b
 	}
 
 	res, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
-		BlockedBy:      dependencyWrite.BlockedBy,
 		WorkspaceID:    wsUUID,
 		Title:          req.Title,
 		Description:    ptrToText(req.Description),
@@ -3489,10 +3483,7 @@ func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound b
 	slog.Info("issue created", append(logger.RequestAttrs(r), "issue_id", uuidToString(issue.ID), "title", issue.Title, "status", issue.Status, "workspace_id", workspaceID)...)
 
 	resp := issueToResponse(issue, prefix)
-	if res.Dependencies != nil {
-		view := h.dependencyView(r, res.Dependencies, issue.ID)
-		resp.Dependencies = &view
-	}
+	h.fillIssueDependencyResponse(r, issue, res.Dependencies, &resp)
 	fillCreated(&resp)
 	resp.Attachments = buildAttachmentResponses(res.Attachments)
 	// Echo the authoritative labels attached in the create transaction. Always
@@ -3504,7 +3495,6 @@ func (h *Handler) createIssue(w http.ResponseWriter, r *http.Request, compound b
 }
 
 type UpdateIssueRequest struct {
-	dependencyWriteFields
 	ExpectedRevision *int64  `json:"expected_revision,omitempty"`
 	Title            *string `json:"title"`
 	// TitleBase is the title adopted by the editor before producing Title. It
@@ -3630,7 +3620,7 @@ func refreshUntouchedNullableIssueParams(params *db.UpdateIssueParams, current d
 
 var errIssueFieldConflict = errors.New("issue text field conflict")
 
-func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.UUID, params db.UpdateIssueParams, rawFields map[string]json.RawMessage, titleBase, descriptionBase *string, attachmentIDs []pgtype.UUID, statusKey string, dependencyWrite service.DependencyWrite) (db.Issue, db.Issue, bool, error) {
+func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.UUID, params db.UpdateIssueParams, rawFields map[string]json.RawMessage, titleBase, descriptionBase *string, attachmentIDs []pgtype.UUID, statusKey string) (db.Issue, db.Issue, bool, error) {
 	if h.TxStarter == nil {
 		return db.Issue{}, db.Issue{}, false, errors.New("atomic issue update requires transaction starter")
 	}
@@ -3641,12 +3631,9 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 	defer tx.Rollback(ctx)
 
 	qtx := h.Queries.WithTx(tx)
-	_, parentTouched := rawFields["parent_issue_id"]
-	guardRelations := parentTouched || dependencyWrite.IncludeView || dependencyWrite.BlockedBy != nil || dependencyWrite.ExpectedVersion != ""
-	if guardRelations {
-		if err := h.IssueService.Dependencies.LockWrite(ctx, qtx, workspaceID); err != nil {
-			return db.Issue{}, db.Issue{}, false, err
-		}
+	dependencyWrite, err := h.beforeIssueWrite(ctx, qtx, workspaceID, rawFields)
+	if err != nil {
+		return db.Issue{}, db.Issue{}, false, err
 	}
 	// Recheck the target custom status in this transaction. The catalog lock
 	// must precede both attachment and issue row locks everywhere. (MUL-6243)
@@ -3659,13 +3646,6 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 			AttachmentIds: attachmentIDs,
 		}); err != nil {
 			return db.Issue{}, db.Issue{}, false, fmt.Errorf("lock issue attachments: %w", err)
-		}
-	}
-	var dependencyBefore *service.DependencySnapshot
-	if guardRelations {
-		dependencyBefore, err = h.IssueService.Dependencies.LoadForWrite(ctx, qtx, workspaceID)
-		if err != nil {
-			return db.Issue{}, db.Issue{}, false, err
 		}
 	}
 	if params.DuplicateOfIssueID.Valid {
@@ -3725,17 +3705,9 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 		return db.Issue{}, current, false, fmt.Errorf("update locked issue: %w", err)
 	}
 
-	if dependencyBefore != nil {
-		_, changed, relationErr := h.IssueService.Dependencies.Apply(ctx, qtx, dependencyBefore, issue, dependencyWrite)
-		if relationErr != nil {
-			return db.Issue{}, current, false, relationErr
-		}
-		if changed && issue.Revision == current.Revision {
-			issue, err = qtx.TouchIssueDependencyRevision(ctx, db.TouchIssueDependencyRevisionParams{WorkspaceID: workspaceID, ID: issue.ID})
-			if err != nil {
-				return db.Issue{}, current, false, err
-			}
-		}
+	issue, _, err = dependencyWrite.AfterIssueWrite(ctx, qtx, issue, current.Revision)
+	if err != nil {
+		return db.Issue{}, current, false, err
 	}
 	attachmentsChanged := false
 	if len(attachmentIDs) > 0 {
@@ -3766,9 +3738,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 	return issue, current, attachmentsChanged, nil
 }
 
-func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) { h.updateIssue(w, r, false) }
-
-func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound bool) {
+func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	r = h.withWakeupActor(r)
 	id := chi.URLParam(r, "id")
 	prevIssue, ok := h.loadIssueForUser(w, r, id)
@@ -3786,15 +3756,11 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 	}
 
 	var req UpdateIssueRequest
-	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	dependencyWrite, ok := h.parseDependencyWrite(w, r, req.dependencyWriteFields, compound, false)
+	r, ok = h.prepareIssueUpdate(w, r, bodyBytes, &req)
 	if !ok {
 		return
 	}
+
 	// Track which fields were explicitly present in JSON (even if null)
 	var rawFields map[string]json.RawMessage
 	json.Unmarshal(bodyBytes, &rawFields)
@@ -4008,11 +3974,10 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 
 	var issue db.Issue
 	attachmentsChanged := false
-	_, parentTouched := rawFields["parent_issue_id"]
-	if compound || parentTouched || req.Description != nil || req.TitleBase != nil || req.DescriptionBase != nil || len(attachmentIDs) > 0 {
+	if req.Description != nil || req.TitleBase != nil || req.DescriptionBase != nil || len(attachmentIDs) > 0 {
 		var lockedPrev db.Issue
 		issue, lockedPrev, attachmentsChanged, err = h.updateIssueAtomically(
-			r.Context(), prevIssue.WorkspaceID, params, rawFields, req.TitleBase, req.DescriptionBase, attachmentIDs, statusKeyForGuard, dependencyWrite,
+			r.Context(), prevIssue.WorkspaceID, params, rawFields, req.TitleBase, req.DescriptionBase, attachmentIDs, statusKeyForGuard,
 		)
 		if lockedPrev.ID.Valid {
 			prevIssue = lockedPrev
@@ -4055,9 +4020,7 @@ func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, compound b
 
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
-	if compound {
-		h.fillDependencyResponse(r, issue, &resp)
-	}
+	h.fillIssueDependencyResponse(r, issue, nil, &resp)
 	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
 
 	h.fillStatusCategory(r.Context(), issue.WorkspaceID, &resp)
@@ -4427,19 +4390,9 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLs(ctx context.Context, issu
 	}
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
-	workspaceID := issues[0].WorkspaceID
-	for _, issue := range issues {
-		if issue.WorkspaceID != workspaceID {
-			return issueDeleteResult{}, errors.New("issues belong to different workspaces")
-		}
-	}
-	if err := h.IssueService.Dependencies.LockWrite(ctx, qtx, workspaceID); err != nil {
+	if err := h.beforeIssueDelete(ctx, qtx, issues); err != nil {
 		return issueDeleteResult{}, err
 	}
-	// Deletion cannot add a cycle. Existing foreign keys remove incident edges;
-	// DetachedChildren below drives child update events. No consumer reads the
-	// old delete/detach dependency audit entries, so do not load a full graph
-	// solely to produce them. Keep the structure lock to serialize graph edits.
 
 	result := issueDeleteResult{}
 	for _, issue := range issues {
@@ -4825,14 +4778,13 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var issue db.Issue
-		_, parentTouched := rawUpdates["parent_issue_id"]
-		if parentTouched || req.Updates.Description != nil {
+		if req.Updates.Description != nil {
 			// One batch-level base cannot describe multiple issue documents.
 			// Preserve every marked channel-media block conservatively, matching
 			// legacy single-update clients that omit description_base.
 			var lockedPrev db.Issue
 			issue, lockedPrev, _, err = h.updateIssueAtomically(
-				r.Context(), prevIssue.WorkspaceID, params, rawUpdates, nil, nil, nil, batchStatusKey, service.DependencyWrite{},
+				r.Context(), prevIssue.WorkspaceID, params, rawUpdates, nil, nil, nil, batchStatusKey,
 			)
 			if err == nil {
 				prevIssue = lockedPrev
