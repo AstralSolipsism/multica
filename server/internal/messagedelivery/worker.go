@@ -476,7 +476,7 @@ func (s *Service) advanceScanner(ctx context.Context, scanner string, page func(
 		}
 		if last.id == cur.id && !last.nonempty {
 			// Exhausted this fixed bound. The next tick freezes a new bound.
-			if sourceScopeForScanner(scanner) != "" {
+			if cur.cycleStable.Valid {
 				cur.ts = cur.cycleStable.Time
 				cur.cycleStable = pgtype.Timestamptz{}
 			}

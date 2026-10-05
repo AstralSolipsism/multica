@@ -37,13 +37,20 @@ scanner cycles keeps the horizon behind its start until it commits. Database
 time avoids clock skew between application replicas. Source queries run after
 the horizon query on the primary, outside a long-lived snapshot transaction.
 
+Only sessions with a non-NULL `usesysid` constrain the horizon. Userless
+maintenance processes such as autovacuum cannot insert application sources;
+their activity fields may be hidden from ordinary roles, but they must not
+force a historical rescan. Client connections, walsenders and background
+workers with a user remain included even if their activity is hidden.
+
 Ordinary application connections can observe sessions of the same database
 role. If another role's session is not observable, activity tracking is
 disabled for a backend, or two-phase commit is enabled, the query conservatively
 pins the horizon to the epoch. Two-phase commit can move a transaction out of
 `pg_stat_activity`, so polling `pg_prepared_xacts` would not provide an atomic
 bound. Such deployments retain full-history scans; use a common observable
-writer role (or an appropriately provisioned monitoring role) and the default
+writer role, or grant the application role `pg_read_all_stats` / `pg_monitor`
+when multiple roles connect to the database, and keep the default
 `max_prepared_transactions=0` for bounded steady-state scans. A very long open
 transaction also increases the scan window rather than risking missed delivery.
 
@@ -51,6 +58,11 @@ This covers application inserts with database-generated timestamps, not manual
 backdated imports or restoring arbitrarily old deleted sources. For an explicit
 historical replay, stop the scanners and delete only the relevant source cursor
 row; deduplication preserves decisions that already exist.
+
+The database clock must also progress normally: a backward clock step larger
+than the overlap can place a new source behind a previously saved watermark.
+Use gradual clock synchronization; after a larger backward step, stop scanners
+and reset the affected source cursors before resuming.
 
 PostgreSQL references: [timestamp semantics](https://www.postgresql.org/docs/15/functions-datetime.html),
 [activity visibility and transaction starts](https://www.postgresql.org/docs/15/monitoring-stats.html).

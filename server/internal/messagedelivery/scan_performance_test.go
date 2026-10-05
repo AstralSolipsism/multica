@@ -67,6 +67,49 @@ func TestScanScheduleCoalescesAndRetainsTrailingWakeup(t *testing.T) {
 	})
 }
 
+func TestScanSchedulePeriodicPassCancelsPendingEvent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		notify := make(chan struct{}, 1)
+		var decisions, scans atomic.Int32
+		go runScanSchedule(ctx, 10*time.Second, time.Second, notify, func() {
+			// The pending event's deadline elapses during compensation.
+			time.Sleep(750 * time.Millisecond)
+			scans.Add(1)
+		}, func() { decisions.Add(1) })
+		time.Sleep(9500 * time.Millisecond)
+		notify <- struct{}{}
+		synctest.Wait()
+		if decisions.Load() != 1 {
+			t.Fatal("first event did not run")
+		}
+		time.Sleep(250 * time.Millisecond)
+		notify <- struct{}{}
+		synctest.Wait()
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if scans.Load() != 1 || decisions.Load() != 1 {
+			t.Fatal("pending event ran immediately after periodic compensation")
+		}
+		// A new event still runs after the full post-compensation interval.
+		notify <- struct{}{}
+		synctest.Wait()
+		time.Sleep(time.Second - time.Millisecond)
+		synctest.Wait()
+		if decisions.Load() != 1 {
+			t.Fatal("new event bypassed the post-compensation interval")
+		}
+		time.Sleep(time.Millisecond)
+		synctest.Wait()
+		if decisions.Load() != 2 {
+			t.Fatal("new event was lost")
+		}
+		cancel()
+		synctest.Wait()
+	})
+}
+
 func TestSourceWatermarksBoundHistoryAndSurviveRestart(t *testing.T) {
 	for _, scope := range []string{RouteSourceInbox, RouteSourceActivity, RouteSourceComment} {
 		t.Run(scope, func(t *testing.T) {
@@ -102,9 +145,10 @@ func TestSourceWatermarksBoundHistoryAndSurviveRestart(t *testing.T) {
 			// Removing the old decision makes revisiting old history observable.
 			testFx.Exec(t, "DELETE FROM labrastro_message_delivery WHERE source_ref_id=$1", old)
 			fresh := insert()
-			// Process restart and clock skew must use the persisted DB horizon.
+			// A slow replica clock must not exclude new rows while advancing
+			// the watermark to database time, including after a restart.
 			s = newTestService(nil, nil)
-			s.Now = func() time.Time { return time.Now().Add(24 * time.Hour) }
+			s.Now = func() time.Time { return time.Now().Add(-24 * time.Hour) }
 			for range 2 {
 				if errs := s.decideSourcesErr(ctx); len(errs) != 0 {
 					t.Fatal(errs)
@@ -190,6 +234,35 @@ func TestSourceWatermarkFailureAndStaleReplicaCannotAdvance(t *testing.T) {
 	}
 }
 
+func TestSourceScanBoundaryFailuresLeaveCursorUnchanged(t *testing.T) {
+	for _, name := range []string{"GetLabrastroMessageSourceScanHorizon", "GetLabrastroMessageSourceScanUpperBound"} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			resetScanCursor(t, scannerCommentSource)
+			s := newTestService(nil, nil)
+			emptyPage := func(_ context.Context, cur scanCursor) (scanCursor, error) { return cur, nil }
+			before, err := s.advanceScanner(ctx, scannerCommentSource, emptyPage)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fault := &failingDeliveryRead{DBTX: testPool, name: name}
+			s.Queries = db.New(fault)
+			if _, err := s.loadCursor(ctx, scannerCommentSource); err == nil || fault.hits != 1 {
+				t.Fatalf("boundary failure was not returned: hits=%d err=%v", fault.hits, err)
+			}
+			s.Queries = db.New(testPool)
+			row, err := s.Queries.GetLabrastroMessageScanCursor(ctx, scannerCommentSource)
+			if err != nil || cursorFromRow(row) != before {
+				t.Fatalf("failed boundary read changed the persisted cursor: %v", err)
+			}
+			after, err := s.advanceScanner(ctx, scannerCommentSource, emptyPage)
+			if err != nil || after.generation <= before.generation || after.ts.Before(before.ts) {
+				t.Fatalf("retry did not finish a new cycle: before=%+v after=%+v err=%v", before, after, err)
+			}
+		})
+	}
+}
+
 type scanQueryRecorder struct {
 	*pgxpool.Pool
 	queries []string
@@ -227,5 +300,30 @@ func TestDecideMissingUsesCandidateFactsWithoutReloadingEachRun(t *testing.T) {
 				t.Fatalf("candidate scan reloaded metadata with %s", name)
 			}
 		}
+	}
+}
+
+func TestDecideMissingRecoversTaskSideRunLink(t *testing.T) {
+	fx := newMDFixture(t, "candidate-reverse-link", nil)
+	fx.groupRoute(t, "oc_candidate_reverse_link")
+	// The task insert committed but the reverse run.task_id update was lost.
+	// No result or issue link may independently prove this is a run_only source.
+	run := fx.run(t, "completed", testutil.Cols{"task_id": nil, "issue_id": nil, "result": nil})
+	testFx.Task(t, testAgent, testutil.Cols{
+		"status": "completed", "completed_at": testutil.Raw("now()"), "autopilot_run_id": run,
+	})
+	s := newTestService(nil, nil)
+	for range 2 {
+		if err := s.decideMissing(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var kind, status string
+	testFx.QueryRow(t, `SELECT source_kind, status FROM labrastro_message_delivery WHERE run_id=$1`, run).Scan(&kind, &status)
+	if kind != SourceKindRunOnly || status != DeliveryStatusQueued {
+		t.Fatalf("task-backed source became %s/%s, want run_only/queued", kind, status)
+	}
+	if n := countDeliveries(t, "run_id=$1", run); n != 1 {
+		t.Fatalf("repeated compensation created %d decisions", n)
 	}
 }

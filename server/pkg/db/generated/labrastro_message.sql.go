@@ -1824,7 +1824,7 @@ SELECT statement_timestamp()::timestamptz AS scan_through,
         COALESCE((SELECT min(CASE WHEN state IS NULL OR state = 'disabled'
             THEN 'epoch'::timestamptz ELSE xact_start END)
             FROM pg_catalog.pg_stat_activity
-            WHERE datname = current_database()), statement_timestamp()),
+            WHERE datname = current_database() AND usesysid IS NOT NULL), statement_timestamp()),
         CASE WHEN current_setting('max_prepared_transactions')::integer > 0
             THEN 'epoch'::timestamptz ELSE statement_timestamp() END
     )::timestamptz AS stable_at
@@ -1840,6 +1840,8 @@ type GetLabrastroMessageSourceScanHorizonRow struct {
 // still in flight. An unobservable/disabled backend or enabled two-phase
 // commit has no trustworthy start bound: retain history. Prepared transactions
 // can disappear from activity before becoming visible in pg_prepared_xacts.
+// Userless maintenance workers (including autovacuum) cannot insert sources;
+// their hidden state must not pin an ordinary application's watermark.
 func (q *Queries) GetLabrastroMessageSourceScanHorizon(ctx context.Context) (GetLabrastroMessageSourceScanHorizonRow, error) {
 	row := q.db.QueryRow(ctx, getLabrastroMessageSourceScanHorizon)
 	var i GetLabrastroMessageSourceScanHorizonRow
