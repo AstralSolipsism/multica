@@ -1277,6 +1277,17 @@ func (d *Daemon) recordRuntimePlanQuota(runtimeID string, quota *protocol.Runtim
 	if runtimeID == "" || quota == nil {
 		return
 	}
+	// Validation normalizes status. Copy the snapshot so concurrent readers
+	// of an already-cached observation never see an in-place mutation.
+	normalized := *quota
+	if err := protocol.ValidateRuntimePlanQuota(&normalized, time.Now()); err != nil {
+		d.logger.Warn("runtime plan quota rejected", "runtime_id", runtimeID,
+			"provider", quota.Provider, "error", err)
+		return
+	}
+	if normalized.Status != quota.Status {
+		quota = &normalized
+	}
 	entry := planQuotaCacheEntry{quota: quota}
 	for {
 		previous, loaded := d.planQuotaCache.LoadOrStore(runtimeID, entry)

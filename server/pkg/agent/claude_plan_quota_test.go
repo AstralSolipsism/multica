@@ -46,6 +46,9 @@ func TestClaudePlanQuotaWindows(t *testing.T) {
 			if q == nil || len(q.Windows) != tc.count || q.Status != tc.status || q.Provider != "claude" || q.Source != "daemon" || q.ObservedAt != at.Unix() {
 				t.Fatalf("quota = %+v", q)
 			}
+			if err := protocol.ValidateRuntimePlanQuota(q, at); err != nil {
+				t.Fatalf("Claude violates heartbeat contract: %v", err)
+			}
 			for i, want := range tc.percentages {
 				got := q.Windows[i].UsedPercent
 				if want < 0 {

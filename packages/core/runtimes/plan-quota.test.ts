@@ -7,6 +7,7 @@ import {
   formatCompactDuration,
   groupQuotaWindows,
   isQuotaStale,
+  isQuotaWindowAwaitingRefresh,
   parsePlanQuota,
   quotaTone,
   quotaWindowGroup,
@@ -120,6 +121,12 @@ describe("windowRemainingPercent", () => {
 });
 
 describe("isQuotaStale", () => {
+  it.each(["kimi", "antigravity", "zenmux", "codex", "claude", "custom"])("uses the freshness boundary for %s", (provider) => {
+    const limitSec = ["kimi", "antigravity", "zenmux"].includes(provider) ? 3600 : 86400;
+    const quota = parsePlanQuota(makeQuota({ provider, observed_at: NOW_SEC - limitSec }))!;
+    expect(isQuotaStale(quota, NOW_MS)).toBe(false);
+    expect(isQuotaStale(quota, NOW_MS + 1)).toBe(true);
+  });
   it("is fresh within 24h and stale beyond it", () => {
     const fresh = parsePlanQuota(makeQuota({ observed_at: NOW_SEC - 23 * 3600 }));
     const stale = parsePlanQuota(makeQuota({ observed_at: NOW_SEC - 25 * 3600 }));
@@ -306,5 +313,18 @@ describe("quota window groups", () => {
       windows: [...antigravityWindows, { name: "x", used_percent: 99, window_minutes: 300, resets_at: null, group: "claude_gpt" }],
     }));
     expect(quota && worstQuotaWindow(quota, NOW_SEC)?.name).toBe("x");
+  });
+});
+
+describe("isQuotaWindowAwaitingRefresh", () => {
+  it("marks the reset boundary without removing windows or inventing a balance", () => {
+    const quota = parsePlanQuota(makeQuota({ windows: [
+      { name: "reset", resets_at: NOW_SEC, used_percent: 100 },
+      { name: "future", resets_at: NOW_SEC + 1, used_percent: 20 },
+      { name: "unknown", resets_at: null },
+    ] }))!;
+    expect(quota.windows.map((w) => isQuotaWindowAwaitingRefresh(w, NOW_SEC))).toEqual([true, false, false]);
+    expect(quota.windows).toHaveLength(3);
+    expect(worstQuotaWindow(quota, NOW_SEC)?.name).toBe("future");
   });
 });

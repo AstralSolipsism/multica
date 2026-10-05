@@ -52,6 +52,8 @@ const (
 // "not reported" — the server must never fabricate a 0 the provider did
 // not send.
 type RuntimePlanQuotaWindow struct {
+	// Name may be empty only when Group identifies the window. This accepts
+	// snapshots from deployed antigravity daemons; new reporters set both.
 	Name          string   `json:"name"`
 	UsedPercent   *float64 `json:"used_percent,omitempty"`
 	WindowMinutes *int64   `json:"window_minutes,omitempty"`

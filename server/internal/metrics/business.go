@@ -70,6 +70,7 @@ type BusinessMetrics struct {
 	entitlementDecision            *prometheus.CounterVec
 	entitlementVersionRegression   prometheus.Counter
 	autopilotQuotaDecision         *prometheus.CounterVec
+	runtimePlanQuotaDropped        *prometheus.CounterVec
 
 	// agentRuntimeLookup counts logical agent_runtime lookups by product
 	// source — one increment per requested runtime id, whether that id was
@@ -285,6 +286,10 @@ func NewBusinessMetrics() *BusinessMetrics {
 			Namespace: "multica", Subsystem: "autopilot_quota", Name: "decision_total",
 			Help: "Total autopilot quota admission outcomes.",
 		}, metricLabels("multica_autopilot_quota_decision_total")),
+		runtimePlanQuotaDropped: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "multica", Subsystem: "runtime_plan_quota", Name: "dropped_total",
+			Help: "Total invalid plan quota snapshots dropped by heartbeats, including log-suppressed drops.",
+		}, metricLabels("multica_runtime_plan_quota_dropped_total")),
 		agentRuntimeLookup: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: "multica", Subsystem: "agent_runtime", Name: "lookup_total",
 			Help: "Total logical agent_runtime lookups by product source and outcome (one per requested id, not per SQL query).",
@@ -352,6 +357,7 @@ func (m *BusinessMetrics) Collectors() []prometheus.Collector {
 		m.entitlementVersionRegression,
 		m.autopilotQuotaDecision,
 		m.agentRuntimeLookup,
+		m.runtimePlanQuotaDropped,
 		m.issueMetadataMutation,
 		m.issueMetadataMutationDuration,
 	}, m.events.collectors()...)
@@ -760,4 +766,13 @@ func (m *BusinessMetrics) prewarmFailureReasons() {
 			}
 		}
 	}
+}
+
+// RecordRuntimePlanQuotaDropped counts every invalid heartbeat snapshot.
+// Runtime IDs and free-form validation errors belong in logs, never labels.
+func (m *BusinessMetrics) RecordRuntimePlanQuotaDropped(provider string) {
+	if m == nil {
+		return
+	}
+	m.runtimePlanQuotaDropped.WithLabelValues(NormalizeRuntimeProvider(provider)).Inc()
 }

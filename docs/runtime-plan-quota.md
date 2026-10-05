@@ -3,6 +3,37 @@
 Subscription quota is the provider account's allowance, not task token usage or
 an estimate of money remaining. Runtimes sharing an account share its limits.
 
+## Heartbeat contract and freshness
+
+The server and daemon share `protocol.ValidateRuntimePlanQuota`. A window needs
+a name (up to 32 bytes) or a nonblank group (up to 32 bytes). This accepts the
+unnamed grouped snapshots sent by deployed Antigravity daemons over both HTTP
+and WebSocket heartbeats. New Antigravity snapshots set both name and group to
+the pool ID so older servers also accept them.
+
+Invalid heartbeat snapshots leave the last stored quota untouched. Every drop
+increments `multica_runtime_plan_quota_dropped_total{provider}`; warnings include
+runtime ID, provider and validation error, capped at one per runtime every five
+minutes per server process. External quota pushes still return HTTP 400 on
+invalid input. Conditional database writes and the five-minute freshness throttle
+are unchanged.
+
+The UI marks Kimi, Antigravity and ZenMux observations stale after one hour,
+longer than the collectors' maximum 30-minute rate-limit backoff. Codex, Claude
+and other providers retain the 24-hour threshold. A window whose reset has
+passed stays visible as "Reset, awaiting refresh" without its old percentage.
+Machine chips show waiting or stale states instead of disappearing; their
+tooltips retain every reported window. No new quota is inferred from a reset.
+
+A machine chip shows "Reset, awaiting refresh" when any window has reset: the
+remaining quota in that window is unknown, so the chip cannot summarize the
+account's usable allowance. Other windows' current percentages remain visible
+in the tooltip and detail views until the snapshot becomes stale. For Codex and
+Claude, which report quota with tasks, a five-hour reset therefore also hides
+the weekly percentage from the machine chip until the next task reports quota.
+Without a new task this can last for hours; once the observation is more than
+24 hours old, the chip and its tooltip show "Stale data" instead.
+
 ## Claude Code
 
 The Claude adapter consumes `rate_limit_event` from the existing non-interactive
@@ -14,7 +45,7 @@ stream-json execution. It makes no quota API request and starts no idle poller.
 - Utilization is a fraction; multiply by 100 for `used_percent`. Zero is a real
   observation, missing is unknown, and legitimate values above 100 are retained.
 - `resetsAt` is Unix seconds. Do not infer a refreshed allowance when a reset
-  passes. The existing UI expires that window until another observation arrives.
+  passes. Keep the window visible while waiting for another observation.
 - `allowed_warning` is not a rejection. Only `rejected` marks the snapshot limited.
 - Unknown windows, malformed observations and pay-as-you-go overage balances do
   not produce invented subscription percentages or overwrite the last valid data.

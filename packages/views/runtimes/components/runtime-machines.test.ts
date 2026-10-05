@@ -437,6 +437,7 @@ describe("runtime machine quota chips", () => {
         remainingPercent: 62,
         status: "limited",
         tone: "destructive",
+        freshness: "fresh",
       },
       {
         runtimeId: "rt-codex",
@@ -444,11 +445,12 @@ describe("runtime machine quota chips", () => {
         remainingPercent: 12,
         status: "ok",
         tone: "warning",
+        freshness: "fresh",
       },
     ]);
   });
 
-  it("excludes stale, malformed, and fully expired snapshots", () => {
+  it("retains stale and fully reset snapshots, excluding malformed ones", () => {
     const machines = buildRuntimeMachines(
       [
         makeRuntime({
@@ -475,8 +477,12 @@ describe("runtime machine quota chips", () => {
       { now: NOW },
     );
 
-    expect(machines[0]?.quotaChips).toHaveLength(1);
-    expect(machines[0]?.quotaChips[0]?.runtimeId).toBe("rt-fresh");
+    expect(machines[0]?.quotaChips).toHaveLength(3);
+    expect(machines[0]?.quotaChips).toEqual(expect.arrayContaining([
+      expect.objectContaining({ runtimeId: "rt-stale", freshness: "stale", remainingPercent: null }),
+      expect.objectContaining({ runtimeId: "rt-expired", freshness: "awaiting_refresh", remainingPercent: null }),
+      expect.objectContaining({ runtimeId: "rt-fresh", freshness: "fresh", remainingPercent: 62 }),
+    ]));
   });
 
   it("leaves chips empty for an offline machine", () => {

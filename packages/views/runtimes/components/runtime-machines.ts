@@ -1,7 +1,7 @@
 import {
-  activeQuotaWindows,
   deriveRuntimeHealth,
   isQuotaStale,
+  isQuotaWindowAwaitingRefresh,
   isSystemStatsStale,
   parsePlanQuota,
   pickMachineSystemStats,
@@ -30,6 +30,7 @@ export interface MachineQuotaChip {
   remainingPercent: number | null;
   status: RuntimePlanQuota["status"];
   tone: QuotaTone;
+  freshness: "fresh" | "stale" | "awaiting_refresh";
 }
 
 export interface RuntimeMachine {
@@ -320,9 +321,8 @@ function finalizeRuntimeMachine(
 }
 
 // Per-runtime quota chips for an online machine. A runtime contributes a
-// chip only when its snapshot parsed, is fresh (<=24h), and still has an
-// active (unexpired) window; the chip's percent is the worst active
-// window's remaining, so the chip shows whichever window throttles first.
+// chip when its snapshot parsed and has windows. Stale or reset windows
+// leave a visible state instead of disappearing or claiming a current balance.
 function machineQuotaChips(
   runtimes: AgentRuntime[],
   now: number,
@@ -332,16 +332,21 @@ function machineQuotaChips(
   for (const runtime of runtimes) {
     const quota = parsePlanQuota(runtime.plan_quota);
     if (!quota) continue;
-    if (isQuotaStale(quota, now)) continue;
-    if (activeQuotaWindows(quota, nowSec).length === 0) continue;
+    if (quota.windows.length === 0) continue;
+    const freshness = isQuotaStale(quota, now)
+      ? "stale"
+      : quota.windows.some((window) => isQuotaWindowAwaitingRefresh(window, nowSec))
+        ? "awaiting_refresh"
+        : "fresh";
     const worst = worstQuotaWindow(quota, nowSec);
-    const remaining = worst ? windowRemainingPercent(worst) : null;
+    const remaining = freshness === "fresh" && worst ? windowRemainingPercent(worst) : null;
     chips.push({
       runtimeId: runtime.id,
       provider: quota.provider || runtime.provider,
       remainingPercent: remaining,
       status: quota.status,
-      tone: quotaTone(remaining, quota.status),
+      tone: freshness === "fresh" ? quotaTone(remaining, quota.status) : "ok",
+      freshness,
     });
   }
   return chips;

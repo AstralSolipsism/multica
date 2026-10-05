@@ -3,8 +3,9 @@
 import type React from "react";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
-  activeQuotaWindows,
   formatCompactDuration,
+  isQuotaStale,
+  isQuotaWindowAwaitingRefresh,
   parsePlanQuota,
   quotaWindowGroup,
   windowRemainingPercent,
@@ -30,7 +31,7 @@ const CHIP_TONE_CLASS: Record<QuotaTone, string> = {
 // The gap between pills, kept in sync with the flex row's `gap-1.5`.
 const CHIP_GAP_PX = 6;
 
-// The machine row shows one pill per runtime carrying a fresh quota snapshot.
+// The machine row shows one pill per runtime carrying a quota snapshot.
 // Pills that do not fit collapse into a "+N" tooltip with their full breakdown.
 export function MachineQuotaChips({
   machine,
@@ -133,6 +134,8 @@ function useChipFlow(itemCount: number) {
     compute();
     const ro = new ResizeObserver(compute);
     if (containerRef.current) ro.observe(containerRef.current);
+    // Freshness text can change width without changing the number of chips.
+    if (ghostRef.current) ro.observe(ghostRef.current);
     return () => ro.disconnect();
   }, [itemCount]);
 
@@ -173,12 +176,14 @@ function OverflowPill({
 }
 
 // The single precedence decision behind a chip's visible text AND its
-// aria-label: limited beats percent beats unavailable (a limited runtime
-// can still carry a percentage — codex reports 100% used when limited).
+// aria-label: stale/reset data takes precedence over the old balance/status.
 export function quotaChipState(chip: MachineQuotaChip):
+  | { kind: "stale" }
+  | { kind: "awaiting_refresh" }
   | { kind: "limited" }
   | { kind: "unavailable" }
   | { kind: "percent"; percent: number } {
+  if (chip.freshness !== "fresh") return { kind: chip.freshness };
   if (chip.status === "limited") return { kind: "limited" };
   if (chip.remainingPercent == null) return { kind: "unavailable" };
   return { kind: "percent", percent: chip.remainingPercent };
@@ -209,11 +214,15 @@ function QuotaChip({
   // to screen readers too, not as "0% left".
   const state = quotaChipState(chip);
   const text =
-    state.kind === "limited"
-      ? t(($) => $.exhausted)
-      : state.kind === "unavailable"
-        ? tForkUi(($) => $.runtimes.machine.metrics.unavailable)
-        : `${Math.round(state.percent)}%`;
+    state.kind === "stale"
+      ? t(($) => $.stale)
+      : state.kind === "awaiting_refresh"
+        ? t(($) => $.reset_awaiting_refresh)
+        : state.kind === "limited"
+          ? t(($) => $.exhausted)
+          : state.kind === "unavailable"
+            ? tForkUi(($) => $.runtimes.machine.metrics.unavailable)
+            : `${Math.round(state.percent)}%`;
   const ariaText =
     state.kind === "percent"
       ? t(($) => $.remaining, { percent: Math.round(state.percent) })
@@ -221,7 +230,7 @@ function QuotaChip({
   const pill = (
     <span
       aria-label={`${label}: ${ariaText}`}
-      className={`inline-flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-micro font-medium tabular-nums ${CHIP_TONE_CLASS[chip.tone]}`}
+      className={`inline-flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-micro font-medium tabular-nums ${chip.freshness === "fresh" ? CHIP_TONE_CLASS[chip.tone] : "bg-muted text-muted-foreground"}`}
     >
       <ProviderLogo provider={chip.provider} className="h-3.5 w-3.5" />
       {state.kind === "percent" && (
@@ -260,13 +269,15 @@ function QuotaChipTooltip({
   const quota = parsePlanQuota(runtime?.plan_quota);
   if (!quota) return null;
   const nowSec = Math.floor(now / 1000);
-  const windows = activeQuotaWindows(quota, nowSec);
+  const windows = quota.windows;
   if (windows.length === 0) return null;
   const observedAgeMs = now - quota.observed_at * 1000;
+  const stale = isQuotaStale(quota, now);
   return (
     <span className="flex flex-col items-start gap-1">
       <span className="font-medium">{label}</span>
       {windows.map((window, index) => {
+        const awaitingRefresh = isQuotaWindowAwaitingRefresh(window, nowSec);
         const remaining = windowRemainingPercent(window);
         const windowLabel =
           formatQuotaWindowLabel(window.window_minutes, t) ?? window.name;
@@ -284,11 +295,15 @@ function QuotaChipTooltip({
               {group != null ? `${quotaGroupLabel(group, t)} · ${windowLabel}` : windowLabel}
             </span>
             <span className="tabular-nums">
-              {remaining == null
-                ? tForkUi(($) => $.runtimes.machine.metrics.unavailable)
-                : `${Math.round(remaining)}%`}
+              {stale
+                ? t(($) => $.stale)
+                : awaitingRefresh
+                  ? t(($) => $.reset_awaiting_refresh)
+                  : remaining == null
+                    ? tForkUi(($) => $.runtimes.machine.metrics.unavailable)
+                    : `${Math.round(remaining)}%`}
             </span>
-            {resetsInMs != null && resetsInMs > 0 && (
+            {!stale && resetsInMs != null && resetsInMs > 0 && (
               <span className="tabular-nums text-faint-foreground">
                 {t(($) => $.resets_in, {
                   time: formatCompactDuration(resetsInMs),

@@ -18,6 +18,21 @@ func TestPlanQuotaOlderRunCannotReplaceNewerObservation(t *testing.T) {
 	}
 }
 
+func TestPlanQuotaInvalidObservationCannotReplaceCache(t *testing.T) {
+	d := newQuotaLoopTestDaemon()
+	good := &protocol.RuntimePlanQuota{Provider: "codex", ObservedAt: 100, Status: "ok"}
+	d.recordRuntimePlanQuota("rt-codex", good)
+	invalid := &protocol.RuntimePlanQuota{Provider: "codex", ObservedAt: 200, Windows: []protocol.RuntimePlanQuotaWindow{{}}}
+	d.recordRuntimePlanQuota("rt-codex", invalid)
+	got, _ := d.planQuotaCache.Load("rt-codex")
+	if got.(planQuotaCacheEntry).quota != good {
+		t.Fatal("invalid observation replaced the last valid quota")
+	}
+	if invalid.Status != "" {
+		t.Fatal("validation mutated the caller's snapshot")
+	}
+}
+
 func TestPlanQuotaConcurrentObservationsKeepNewest(t *testing.T) {
 	d := newQuotaLoopTestDaemon()
 	var wg sync.WaitGroup

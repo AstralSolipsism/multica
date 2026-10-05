@@ -10,6 +10,7 @@
   "group_claude_models": "特定モデル",
   "remaining": "残り {{percent}}%",
   "resets_in": "{{time}} にリセット",
+  "reset_awaiting_refresh": "リセット済み、更新待ち",
   "exhausted": "レート制限中",
   "not_reported": "未報告",
   "stale": "期限切れデータ",

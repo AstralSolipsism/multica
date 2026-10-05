@@ -38,6 +38,7 @@ const (
 )
 
 var businessMetricLabels = map[string][]string{
+	"multica_runtime_plan_quota_dropped_total":         {labelProvider},
 	"multica_agent_task_enqueued_total":                {labelSource, labelRuntimeMode},
 	"multica_agent_task_dispatched_total":              {labelSource, labelRuntimeMode},
 	"multica_agent_task_started_total":                 {labelSource, labelRuntimeMode, labelProvider},
@@ -156,6 +157,7 @@ var (
 		"hermes":        "hermes",
 		"kiro":          "kiro",
 		"kimi":          "kimi",
+		"zenmux":        "zenmux",
 		"reasonix":      "reasonix",
 		"dim":           "dim",
 		"mcode":         "mcode",

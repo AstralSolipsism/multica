@@ -11,11 +11,17 @@ function chip(overrides: Partial<MachineQuotaChip> = {}): MachineQuotaChip {
     remainingPercent: 62,
     status: "ok",
     tone: "ok",
+    freshness: "fresh",
     ...overrides,
   };
 }
 
 describe("quotaChipState", () => {
+  it("does not describe stale or reset balances as current limits", () => {
+    for (const freshness of ["stale", "awaiting_refresh"] as const) {
+      expect(quotaChipState(chip({ freshness, status: "limited", remainingPercent: 0 }))).toEqual({ kind: freshness });
+    }
+  });
   it("pins the precedence shared by visible text and aria-label", () => {
     // A limited runtime can still carry a percentage (codex reports 100%
     // used when limited) — limited must win so screen readers never hear

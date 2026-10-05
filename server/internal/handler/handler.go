@@ -244,6 +244,7 @@ type Handler struct {
 	// hostMetricsPublish coalesces and throttles the per-machine telemetry
 	// broadcast fired when a stored host-metrics sample's content changes.
 	hostMetricsPublish *hostMetricsPublishTracker
+	planQuotaDropLogs  *planQuotaDropLogLimiter
 	HeartbeatScheduler HeartbeatScheduler
 	Storage            storage.Storage
 	CFSigner           *auth.CloudFrontSigner
@@ -540,6 +541,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
 	h.hostMetricsPublish = newHostMetricsPublishTracker()
+	h.planQuotaDropLogs = &planQuotaDropLogLimiter{}
 
 	// The default passthrough scheduler reports sweeper-race recoveries so the
 	// daemon:register refresh fires even without the production batched wiring.

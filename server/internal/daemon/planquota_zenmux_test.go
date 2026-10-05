@@ -70,6 +70,9 @@ func TestZenmuxCollect_Success(t *testing.T) {
 	if gotAuth != "Bearer zm-mgmt-key" {
 		t.Fatalf("authorization header = %q", gotAuth)
 	}
+	if err := protocol.ValidateRuntimePlanQuota(quota, time.Now()); err != nil {
+		t.Fatalf("collector violates heartbeat contract: %v", err)
+	}
 	if quota.Provider != "zenmux" || quota.Source != protocol.PlanQuotaSourceDaemon || quota.Status != protocol.PlanQuotaStatusOK {
 		t.Fatalf("identity fields = %+v", quota)
 	}

@@ -84,6 +84,14 @@ func TestAntigravityCollectRequestAndTokenRotation(t *testing.T) {
 		if math.Abs(*quota.Windows[0].UsedPercent-5.35276) > 1e-8 || *quota.Windows[1].UsedPercent != 100 {
 			t.Fatalf("wrong remaining-to-used conversion: %+v", quota.Windows)
 		}
+		if err := protocol.ValidateRuntimePlanQuota(quota, time.Now()); err != nil {
+			t.Fatalf("collector violates heartbeat contract: %v", err)
+		}
+		for _, window := range quota.Windows {
+			if window.Name == "" {
+				t.Fatal("new daemon must name windows for older servers")
+			}
+		}
 		encoded, err := json.Marshal(quota)
 		if err != nil {
 			t.Fatal(err)

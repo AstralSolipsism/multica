@@ -185,6 +185,7 @@ func parseAntigravityRemoteQuota(body io.Reader, observedAt time.Time) (*protoco
 			}
 		}
 		quota.Windows = append(quota.Windows, protocol.RuntimePlanQuotaWindow{
+			Name:          group,
 			Group:         group,
 			UsedPercent:   &used,
 			ResetsAt:      resetsAt,
