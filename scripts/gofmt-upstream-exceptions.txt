@@ -1,0 +1,15 @@
+# Unmodified upstream Go files that are not gofmt-clean.
+# Source: multica-ai/multica at 2ea01ae4ef55de4310b99af192d2dbd367832883
+# Format: Git blob ID, then a literal repository-relative Go path (no whitespace).
+# A changed file loses its exemption automatically. Never refresh a hash from fork content.
+# Reconcile with docs/engineering/upstream-sync-checklist.md on every upstream sync.
+f90234704257dffc4ed7345d9f9f4273d5215fdb server/internal/auth/cloud_pat_test.go
+ad7d259dec1d351b8482db2a81ef9e1a942c9fde server/internal/auth/membership_cache_test.go
+fa16c63ab8b87beda8104898b29b06a96e7d340d server/internal/integrations/lark/markdown_detect.go
+1b6a3136b98605d1148422be5a518f3b6479edc7 server/internal/integrations/lark/registration_test.go
+f028826a565d6312232ac4642b865731c40db2bd server/internal/integrations/lark/ws_chunk_assembler.go
+ac5ab5e9f87d68db7dbf13445285e2cf9bb03d90 server/internal/integrations/lark/ws_chunk_assembler_test.go
+31e8b12d48ef29d696024552dede3a9c3931fd65 server/internal/integrations/lark/ws_frame_test.go
+00ec25c99287b284ca0b85f14015884c486f9f5b server/internal/integrations/telegram/outbound.go
+624edfd23a69369105668bbbcfe1a90815401662 server/internal/middleware/daemon_auth_test.go
+620746cb12de71098d96282a23dc0c6331677b8f server/pkg/featureflag/eval_context_test.go

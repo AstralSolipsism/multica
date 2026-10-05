@@ -33,6 +33,7 @@ for (const [name, files, selected] of [
   ["PowerShell installer", ["scripts/install.ps1.test.ps1"], ["installer"]],
   ["Go format gate", ["scripts/check-gofmt.sh"], ["backend"]],
   ["Go format regression", ["scripts/check-gofmt.test.sh"], ["backend"]],
+  ["Go upstream format exceptions", ["scripts/gofmt-upstream-exceptions.txt"], ["backend"]],
   ["retained E2E harness", ["scripts/test-retained-e2e.sh"], ["e2e"]],
   ["retained E2E harness regression", ["scripts/test-retained-e2e.test.sh"], ["e2e"]],
   ["retained E2E config", ["playwright.retained.config.ts"], ["e2e"]],

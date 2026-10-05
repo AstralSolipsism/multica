@@ -57,6 +57,25 @@ Use one row per existing write route in the PR, not a single blanket approval:
   the tested starting schemas, migration order and final behavior before
   updating the inventory expectation.
 
+## Go formatting scope
+
+- [ ] Reconcile `scripts/gofmt-upstream-exceptions.txt` against the explicit
+  upstream commit being merged. List only unformatted upstream originals whose
+  resulting fork files are byte-identical. Record that full source commit and
+  obtain each blob ID with `git rev-parse "<upstream-sha>:<path>"`; compare it
+  with `git hash-object --no-filters -- "<path>"` before adding an exception.
+  Do not generate exemptions from the fork's current files or exempt an entire
+  directory. CI needs neither the upstream ref nor its history.
+- [ ] Remove exceptions for deleted files, upstream files that are now
+  formatted, or files the fork modifies. If upstream supplies new unformatted
+  originals, update the list using their upstream bytes and IDs instead of
+  reformatting them. A changed or renamed path is checked automatically until
+  its new upstream identity is reviewed; fork edits must always pass gofmt.
+- [ ] Run `bash scripts/check-gofmt.test.sh` and
+  `bash scripts/check-gofmt.sh`. Confirm the listed originals remain identical
+  to upstream after the check. Record list changes and the upstream commit in
+  the sync PR; manifest-only changes must still run `backend-format`.
+
 ## Product and delivery gates
 
 - [ ] Preserve the [branding overlay and guard contract](branding.md). Do not

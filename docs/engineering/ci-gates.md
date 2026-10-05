@@ -12,12 +12,33 @@ job, so its skipped packaging result must not be mistaken for the CI gate.
 ## Go formatting
 
 `backend-format` runs on the backend scope and feeds `backend`. It executes
-`bash scripts/check-gofmt.sh`, which fails on any output from `gofmt -l server/`
-or any formatter error. `bash scripts/check-gofmt.test.sh` proves that an
-unformatted file outside `server/cmd/` fails, formatting it passes, and invalid
-Go fails. The regression uses the same no-argument command as CI from a
-disposable checkout root. Run the same commands locally with the CI Go 1.26
-toolchain.
+`bash scripts/check-gofmt.sh` from the repository root. It recursively checks
+Go files throughout `server/`, including tests, and fails on unformatted files
+or formatter errors. Fork-owned files and fork edits to upstream files must
+be formatted; unmodified upstream files must not acquire fork-only whitespace
+changes just to satisfy this gate.
+
+`scripts/gofmt-upstream-exceptions.txt` records the paths and Git blob IDs of
+unformatted upstream originals, with the full upstream source commit in a
+comment. The gate skips a listed path only when `git hash-object --no-filters`
+matches that exact content. Editing or renaming the file automatically removes
+its exemption; a stale entry cannot hide an unformatted fork edit. The gate
+never rewrites files. Missing or malformed manifests fail closed, and manifest
+changes select the backend CI scope.
+
+This content-pinned list works with shallow checkouts and without network
+access or an upstream ref in CI. It requires explicit reconciliation during
+each [upstream sync](upstream-sync-checklist.md#go-formatting-scope): retain only
+byte-identical, unformatted upstream originals, and take hashes from the
+reviewed upstream commit, never from fork changes. The initial ten exceptions
+come from `2ea01ae4ef55de4310b99af192d2dbd367832883`.
+
+`bash scripts/check-gofmt.test.sh` proves that untouched upstream snapshots
+pass without rewriting, while new fork files, edits to an exempted path and
+syntax errors fail. Fixtures cover the repository's Go root, `server/cmd/`,
+nested tests and paths with spaces. The regression uses the same no-argument
+command as CI from a disposable root with no Git history. Run both commands
+locally with Git and the CI Go 1.26 toolchain on `PATH`.
 
 ## Retained product E2E
 
