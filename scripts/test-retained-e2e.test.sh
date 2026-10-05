@@ -5,6 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fixture="$(mktemp -d)"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/checkout/scripts" "$fixture/checkout/server" "$fixture/checkout/apps/web" "$fixture/bin"
+mkdir -p "$fixture/checkout/e2e"
+touch "$fixture/checkout/e2e/onboarding-smoke.spec.ts" "$fixture/checkout/e2e/dag-task-lines.spec.ts"
 cp "$repo_root/scripts/test-retained-e2e.sh" "$fixture/checkout/scripts/"
 export RETAINED_TEST_CALLS="$fixture/calls"
 
@@ -19,6 +21,7 @@ printf '%s %s\n' "$(basename "$0")" "$*" >> "$RETAINED_TEST_CALLS"
 [[ "$NEXT_PUBLIC_WS_URL" == 'ws://127.0.0.1:18080/ws' ]]
 [[ "$FRONTEND_ORIGIN" == 'http://127.0.0.1:13000' ]]
 [[ -z "$DATABASE_REPLICA_URL$SMTP_HOST$RESEND_API_KEY$REDIS_URL" ]]
+[[ "$DO_NOT_TRACK" == 1 && "$NEXT_TELEMETRY_DISABLED" == 1 && "$ANALYTICS_DISABLED" == 1 ]]
 [[ -z "${RETAINED_TEST_FAIL:-}" || "$*" != *"$RETAINED_TEST_FAIL"* ]]
 STUB
 cp "$fixture/bin/go" "$fixture/bin/pnpm"
@@ -27,6 +30,7 @@ export PATH="$fixture/bin:$PATH"
 export DATABASE_URL='postgres://must-not-be-used.invalid/app'
 export NEXT_PUBLIC_API_URL='https://must-not-be-used.invalid'
 export DATABASE_REPLICA_URL=invalid SMTP_HOST=invalid RESEND_API_KEY=invalid REDIS_URL=invalid
+export DO_NOT_TRACK=0 NEXT_TELEMETRY_DISABLED=0 ANALYTICS_DISABLED=0 POSTHOG_API_KEY=invalid
 
 runner="$fixture/checkout/scripts/test-retained-e2e.sh"
 bash "$runner"
@@ -52,6 +56,18 @@ for failure in 'go build' 'go run' 'web build' 'playwright test'; do
 done
 unset RETAINED_TEST_FAIL
 
+for spec in onboarding-smoke.spec.ts dag-task-lines.spec.ts; do
+  : > "$RETAINED_TEST_CALLS"
+  rm "$fixture/checkout/e2e/$spec"
+  if bash "$runner" > "$fixture/result" 2>&1; then
+    echo "Expected missing required spec to be rejected: $spec" >&2
+    exit 1
+  fi
+  [[ ! -s "$RETAINED_TEST_CALLS" ]]
+  grep -Fq "Required retained E2E spec is missing: e2e/$spec" "$fixture/result"
+  touch "$fixture/checkout/e2e/$spec"
+done
+
 for dotenv in .env .env.worktree apps/web/.env apps/web/.env.production.local; do
   : > "$RETAINED_TEST_CALLS"
   touch "$fixture/checkout/$dotenv"
@@ -63,4 +79,4 @@ for dotenv in .env .env.worktree apps/web/.env apps/web/.env.production.local; d
   grep -Fq "$dotenv" "$fixture/result"
   rm "$fixture/checkout/$dotenv"
 done
-echo "Retained E2E overrides endpoints, refuses dotenv files and propagates every phase failure."
+echo "Retained E2E enforces specs, endpoints and disabled telemetry; setup/build/browser failures stop the gate."

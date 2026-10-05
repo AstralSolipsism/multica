@@ -13,6 +13,15 @@ for file in .env .env.worktree apps/web/.env apps/web/.env.*; do
   fi
 done
 
+# A renamed or removed spec must fail before building, rather than silently
+# reducing Playwright's testMatch to the remaining file.
+for spec in e2e/onboarding-smoke.spec.ts e2e/dag-task-lines.spec.ts; do
+  if [[ ! -f "$spec" ]]; then
+    printf 'Required retained E2E spec is missing: %s\n' "$spec" >&2
+    exit 1
+  fi
+done
+
 # The CI job owns the PostgreSQL service at this endpoint. Local reproduction
 # must provision the same disposable database; never forward a production DB.
 export DATABASE_URL='postgres://labrastro_e2e:labrastro_e2e@127.0.0.1:15432/labrastro_e2e?sslmode=disable'
@@ -25,7 +34,7 @@ export NEXT_PUBLIC_WS_URL='ws://127.0.0.1:18080/ws'
 export REMOTE_API_URL="$NEXT_PUBLIC_API_URL" CORS_ALLOWED_ORIGINS="$FRONTEND_ORIGIN"
 export APP_ENV=test JWT_SECRET='retained-e2e-disposable-test-secret'
 export MULTICA_DEV_VERIFICATION_CODE='' RESEND_API_KEY='' SMTP_HOST='' REDIS_URL=''
-export DOCS_URL='' DO_NOT_TRACK=1 NEXT_TELEMETRY_DISABLED=1
+export DOCS_URL='' DO_NOT_TRACK=1 NEXT_TELEMETRY_DISABLED=1 ANALYTICS_DISABLED=1
 
 mkdir -p test-results/retained-e2e
 (

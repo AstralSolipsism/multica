@@ -3,7 +3,8 @@
 The `CI` workflow keeps `frontend` and `backend` as its scope aggregates.
 `scripts/ci-scope.mjs` validates the path decision and every dependency result:
 selected jobs must succeed and only unselected jobs may be skipped. Daily and
-manual runs select all scopes. Branch protection must require **`CI required`**:
+manual runs select all scopes. After this workflow has merged into `main`,
+branch protection must require **`CI required`**:
 it always runs and requires both aggregates to succeed, rejecting failed,
 cancelled, skipped or missing results. The release workflow also has a `backend`
 job, so its skipped packaging result must not be mistaken for the CI gate.
@@ -13,8 +14,10 @@ job, so its skipped packaging result must not be mistaken for the CI gate.
 `backend-format` runs on the backend scope and feeds `backend`. It executes
 `bash scripts/check-gofmt.sh`, which fails on any output from `gofmt -l server/`
 or any formatter error. `bash scripts/check-gofmt.test.sh` proves that an
-unformatted file fails, formatting it passes, and invalid Go fails. Run the same
-commands locally with the CI Go 1.26 toolchain.
+unformatted file outside `server/cmd/` fails, formatting it passes, and invalid
+Go fails. The regression uses the same no-argument command as CI from a
+disposable checkout root. Run the same commands locally with the CI Go 1.26
+toolchain.
 
 ## Retained product E2E
 
@@ -31,10 +34,15 @@ bash scripts/test-retained-e2e.sh
 
 The script builds the actual Go server and production Web app, applies all
 migrations to the job's disposable PostgreSQL 17 service, and runs exactly
-`onboarding-smoke.spec.ts` and `dag-task-lines.spec.ts`. It uses local test
+`onboarding-smoke.spec.ts` and `dag-task-lines.spec.ts`. Before any build or
+migration, it verifies that both required spec files exist; a rename or deletion
+fails the gate instead of silently running fewer files. It uses local test
 credentials, API `127.0.0.1:18080`, Web `127.0.0.1:13000` and database
 `labrastro_e2e` on `127.0.0.1:15432`. It overwrites inherited application/database
-URLs and disables email delivery and telemetry; no production secret is needed.
+URLs and disables email delivery, self-host/Next.js telemetry and PostHog
+analytics (`DO_NOT_TRACK=1`, `NEXT_TELEMETRY_DISABLED=1`,
+`ANALYTICS_DISABLED=1`), including when the shell supplies a PostHog key.
+No production secret is needed.
 No daemon/agent process, production account or production database participates.
 
 Use a disposable checkout without root `.env`/`.env.worktree` or Web dotenv
@@ -74,15 +82,27 @@ an existing-account smoke test does not satisfy this gate.
 
 ## Main branch protection
 
-A repository administrator must configure `main` to require a pull request and
-the successful **`CI required`** check from GitHub Actions, with branches
-up to date before merge. Enforce the rule for administrators and bypass-capable
-roles as well; leave no direct-push/bypass allowance, force pushes or deletions.
-Preserve any stronger existing requirements. Dismiss stale review approvals
-when new commits arrive and require conversation resolution. The workspace's
-two sequential expert reviews for high-risk changes are still required; they
-must both name the final head SHA in the issue even if the agents share one
-GitHub identity. GitHub approval count alone cannot express that workflow.
+A repository administrator must configure the following in this order:
+
+1. **Require a pull request: on. Required approvals: 0** (leave **Require
+   approvals** unchecked). Authors and reviewing agents share the GitHub
+   identity `AstralSolipsism`, which cannot approve its own PR. Requiring even
+   one GitHub approval with administrator enforcement would prevent every
+   agent-authored PR from merging. Dismissing stale GitHub approvals is therefore
+   not applicable. The workspace still requires two sequential expert reviews
+   for high-risk changes, each recording approval of the final head SHA in the
+   issue; a new head needs fresh review.
+2. **After this PR has merged into `main`**, require the successful
+   **`CI required`** check from GitHub Actions and require branches to be up to
+   date before merge. Before that merge, other PRs' merge refs do not contain
+   this job, so requiring it would block them on a check they cannot produce.
+   Update other open PR branches from the new `main` so their new runs include
+   the check.
+
+Enforce the rules for administrators and bypass-capable roles as well; leave
+no direct-push/bypass allowance, force pushes or deletions. This change adds no
+requirement to resolve GitHub review conversations; any such separate policy
+is Master's decision.
 
 After saving the rule, verify in GitHub that an ordinary direct update to main
 is disallowed and a PR with a failed/missing required aggregate cannot merge;
