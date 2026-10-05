@@ -151,6 +151,7 @@ function delivery(id: string, overrides: Partial<MessageSourceDelivery> = {}): M
     autopilot_id: null,
     run_id: null,
     source_ref_id: "inbox-1",
+    requested_by: null,
     source_kind: "inbox",
     source_scope: "inbox",
     source_project_id: null,

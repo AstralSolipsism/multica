@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { ApiError } from "@multica/core/api";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
+import enIssues from "../../locales/en/issues.json";
 import { BatchActionToolbar } from "./batch-action-toolbar";
 
 // MUL-4155: batch status changes must apply directly (no run-confirm modal),
@@ -30,8 +32,11 @@ vi.mock("@multica/core/modals", () => ({
   useModalStore: (selector: (s: { open: typeof openModal }) => unknown) => selector({ open: openModal }),
 }));
 
-vi.mock("../../i18n", () => ({ useT: () => ({ t: () => "label" }) }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("../../i18n", () => ({
+  useT: () => ({ t: (selector: (labels: typeof enIssues) => string) => selector(enIssues) }),
+}));
+const mockToast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+vi.mock("sonner", () => ({ toast: mockToast }));
 
 // Interactive picker stubs: each renders buttons that fire the real onUpdate the
 // toolbar passes in, so we exercise handleBatchStatus / handleBatchAssignee.
@@ -97,6 +102,9 @@ beforeEach(() => {
   batchUpdate.mockClear();
   batchDelete.mockClear();
   openModal.mockClear();
+  selection.clear.mockClear();
+  mockToast.error.mockClear();
+  mockToast.success.mockClear();
 });
 
 describe("BatchActionToolbar status routing (MUL-4155)", () => {
@@ -124,6 +132,21 @@ describe("BatchActionToolbar status routing (MUL-4155)", () => {
     expect(batchUpdate).not.toHaveBeenCalled();
   });
 
+  it("localizes an unreadable batch response and preserves the selection", async () => {
+    const diagnostic = "Unreadable response from POST /api/issues/batch-update";
+    batchUpdate.mockRejectedValueOnce(new ApiError(diagnostic, 0, "", {
+      code: "response_unreadable",
+    }));
+    render(<BatchActionToolbar issues={[makeIssue()]} />);
+    fireEvent.click(screen.getByTestId("status-done"));
+
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith(enIssues.batch.update_failed));
+    expect(mockToast.error).not.toHaveBeenCalledWith(diagnostic);
+    expect(mockToast.success).not.toHaveBeenCalled();
+    expect(selection.clear).not.toHaveBeenCalled();
+    expect(screen.getByTestId("status-done")).toBeInTheDocument();
+  });
+
   it("applies member assignment directly (never starts a run)", () => {
     render(<BatchActionToolbar issues={[makeIssue({ status: "todo" })]} />);
     fireEvent.click(screen.getByTestId("assign-member"));
@@ -136,7 +159,7 @@ describe("BatchActionToolbar status routing (MUL-4155)", () => {
 
   it("opens the dedicated delete confirmation, not the run-confirm modal", () => {
     render(<BatchActionToolbar issues={[makeIssue({ status: "todo" })]} />);
-    fireEvent.click(screen.getByText("label", { selector: "button.text-destructive" }));
+    fireEvent.click(screen.getByText(enIssues.batch.delete, { selector: "button.text-destructive" }));
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     expect(openModal).not.toHaveBeenCalled();
     expect(batchDelete).not.toHaveBeenCalled();

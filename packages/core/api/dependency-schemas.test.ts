@@ -63,7 +63,7 @@ describe("dependency API boundary", () => {
   it("rejects a malformed batch total without claiming success", async () => {
     respond({ updated: "all" });
     await expect(new ApiClient("https://api.example.test").batchUpdateIssues(["a"], {}))
-      .rejects.toThrow("Invalid batch update response");
+      .rejects.toMatchObject({ body: { code: "response_unreadable" } });
   });
 
   it.each([{}, null, { ...view, blocked_by: "broken" }, { ...view, dependency_version: "" },
@@ -108,7 +108,22 @@ describe("dependency API boundary", () => {
 
   it.each([404, 405])("never retries against the legacy create path after %i", async (status) => {
     const mock = respond({ error: "not found" }, status);
-    await expect(new ApiClient("https://api.example.test").createIssueWithDependencies({ title: "B", blockedBy: ["a"] })).rejects.toThrow();
+    await expect(new ApiClient("https://api.example.test").createIssueWithDependencies({ title: "B", blockedBy: ["a"] }))
+      .rejects.toMatchObject({ status });
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an unreadable dependency create response without retrying the write", async () => {
+    const mock = respond({ ...issue, id: undefined, dependencies: view }, 201);
+    await expect(new ApiClient("https://api.example.test").createIssueWithDependencies({ title: "B", blockedBy: ["a"] }))
+      .rejects.toMatchObject({ body: { code: "response_unreadable" } });
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an unreadable dependency update response without retrying the write", async () => {
+    const mock = respond({ ...issue, id: undefined, dependencies: view });
+    await expect(new ApiClient("https://api.example.test").updateIssueWithDependencies("b", { title: "B" }))
+      .rejects.toMatchObject({ body: { code: "response_unreadable" } });
     expect(mock).toHaveBeenCalledTimes(1);
   });
 

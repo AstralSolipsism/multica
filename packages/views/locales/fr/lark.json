@@ -106,7 +106,9 @@
       "installation_inactive": "This bot installation is inactive or its agent is archived.",
       "installation_not_found": "This bot installation no longer exists in this workspace.",
       "unsupported": "This server cannot discover private chats yet. Enter the ID manually.",
-      "generic": "Could not load the private chat list. Retry."
+      "generic": "Could not load the private chat list. Retry.",
+      "unreadable": "La liste des conversations privées est illisible. Actualisez-la avant d’autoriser des conversations.",
+      "unconfirmed": "Impossible de vérifier l’enregistrement de l’autorisation des conversations. Actualisez et vérifiez la configuration actuelle."
     }
   },
   "help": {

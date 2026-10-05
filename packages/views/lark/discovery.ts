@@ -51,6 +51,7 @@ export function larkDiscoveryErrorKey(err: unknown): LarkDiscoveryErrorKey {
     case "lark_installation_not_found":
       return "installation_not_found";
     case "lark_discovery_invalid_response":
+    case "response_unreadable":
       return "invalid_response";
     case "lark_discovery_invalid_request":
       return "invalid_request";
@@ -119,6 +120,8 @@ export function chatIdSuffix(id: string): string {
 /** Stable candidate/confirmation error codes → keys under
  * `lark:private.error`. */
 export type LarkPrivateChatErrorKey =
+  | "unreadable"
+  | "unconfirmed"
   | "forbidden"
   | "invocation_denied"
   | "limit_exceeded"
@@ -131,6 +134,10 @@ export type LarkPrivateChatErrorKey =
 
 export function larkPrivateChatErrorKey(err: unknown): LarkPrivateChatErrorKey {
   switch (errorCode(err)) {
+    case "response_unreadable":
+      return "unreadable";
+    case "response_unconfirmed":
+      return "unconfirmed";
     case "lark_discovery_forbidden":
       return "forbidden";
     case "lark_conversation_invocation_denied":

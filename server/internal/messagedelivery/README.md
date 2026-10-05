@@ -580,11 +580,14 @@ as a Feishu master switch.
 WAKEUPS only (a notify channel; the publisher's goroutine never does DB
 work). The guarantee comes from three persistent per-scanner cursors
 (`inbox_source_delivery`, `activity_source_delivery`, `comment_source_delivery`)
-with the same contract as the run-side scanners: fixed cycle upper bound
-per source table, per-tick row budget, compare-and-set generations, a
-completed cycle restarts from the beginning — so a source that commits
-after the cursor passed is decided in the next cycle, a failed page never
-advances the cursor, and one source class failing never starves the others.
+with fixed cycle bounds, a per-tick row budget and compare-and-set generations.
+After the initial historical pass, each source scans only its stable time
+watermark minus an overlap window through the cycle's database start time.
+The watermark holds behind open transactions, so a source that commits after
+the cursor passed is decided in a later window. A failed page never advances
+the cursor, and one source class failing never starves the others.
+Event bursts coalesce with a one-second minimum interval and a trailing pass.
+See [SCANNING.md](SCANNING.md) for transaction bounds, indexes and recovery.
 A source cursor includes its last source ID: completed decisions are excluded
 in SQL, so all destinations of one source drain even across multiple pages.
 The shared loop distinguishes a nonempty page at the same ID from exhaustion.

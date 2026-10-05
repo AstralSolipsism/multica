@@ -1,3 +1,5 @@
+import { ApiError, installLabrastroApi, parseRequiredResponse, IssueBatchUpdateSchema, type IssueBatchUpdateResult, LarkInstallationsSchema, RuntimeListSchema, EMPTY_RUNTIME_LIST } from "./labrastro-api";
+export { ApiError, dependencyErrorDetails, type DependencyErrorDetails } from "./labrastro-api";
 import type { ZodType } from "zod";
 import type { IssueWakeup, IssueWakeupInput, IssueWakeupSummaryRow, PausedWakeup, SystemWakeup, WakeupRun, WorkspaceSystemWakeup } from "../types/issue-wakeup";
 import type { WorkspaceWakeupPage, WorkspaceWakeupFilters } from "../types/issue-wakeup";
@@ -5,20 +7,6 @@ import { WorkspaceWakeupPageSchema, IssueWakeupSchema, IssueWakeupSummaryRowSche
 import type { InboxFilters } from "../inbox/filter-store";
 import type { ArchivedInboxPage, ArchivedInboxFacets } from "../types/inbox";
 import { configStore } from "../config";
-import { IssueGraphSchema, type IssueGraph, type IssueGraphRequest } from "./issue-graph-schemas";
-import {
-  DependencyViewSchema,
-  dependencyMutationToWire,
-  IssueWithDependenciesSchema,
-  IssueBatchUpdateSchema,
-  type DependencyView,
-  type IssueWithDependencies,
-  type CreateIssueWithDependenciesRequest,
-  type UpdateIssueWithDependenciesRequest,
-  type IssueBatchUpdateResult,
-} from "./dependency-schemas";
-// Labrastro fork: skill package/folder methods are installed from a fork module.
-import { installLabrastroSkillApi } from "./labrastro-skill-api";
 import type {
   Issue,
   IssuePriority,
@@ -171,26 +159,6 @@ import type {
   ListAutopilotRunsResponse,
   ListWebhookDeliveriesResponse,
   WebhookDelivery,
-  ApproveMessageTargetRequest,
-  ApproveMessageSourceTargetRequest,
-  GetMessageDeliveryResponse,
-  GetMessageRouteDeliveryResponse,
-  ListMessageApprovedTargetsResponse,
-  ListMessageDeliveriesResponse,
-  ListMessageRouteDeliveriesResponse,
-  ListMessageRoutesResponse,
-  ListMessageSourceApprovedTargetsResponse,
-  ListMessageSourceRoutesResponse,
-  MessageApprovedTarget,
-  MessageDelivery,
-  MessageEventCatalog,
-  MessageRoute,
-  MessageSourceApprovedTarget,
-  MessageSourceDelivery,
-  MessageSourceRoute,
-  RevokeMessageTargetResponse,
-  SaveMessageRouteRequest,
-  SaveMessageSourceRouteRequest,
   NotificationPreferenceResponse,
   NotificationPreferences,
   PluginHookResult,
@@ -217,11 +185,6 @@ import type {
   BeginLarkInstallResponse,
   LarkInstallStatusResponse,
   RedeemLarkBindingTokenResponse,
-  LarkTargetCapabilities,
-  LarkChatsPage,
-  LarkAnchorsPage,
-  LarkConversationGrant,
-  LarkPrivateChatCandidateList,
   ComposioToolkit,
   ComposioConnection,
   ComposioConnectInitResponse,
@@ -286,7 +249,6 @@ import { type Logger, noopLogger } from "../logger";
 import { createRequestId, createSafeId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
-import { LarkInstallationsSchema, LarkConversationResponseSchema, LarkTargetCapabilitiesSchema, LarkChatsPageSchema, LarkAnchorsPageSchema, LarkPrivateChatCandidatesSchema } from "../lark/schema";
 import {
   RuntimeProfileSchema,
   RuntimeProfileListSchema,
@@ -312,7 +274,6 @@ import {
   IssueTriggerPreviewSchema,
   CloudRuntimeNodeListSchema,
   CloudRuntimeNodeSchema,
-  RuntimeListSchema,
   AgentBuilderRuntimeSwitchSchema,
   AgentBuilderSessionSchema,
   AgentBuilderSessionListSchema,
@@ -333,7 +294,6 @@ import {
   EMPTY_PRIORITIZE_QUEUED_CHAT_TASK_RESPONSE,
   EMPTY_CLOUD_RUNTIME_NODE,
   EMPTY_CLOUD_RUNTIME_NODE_LIST,
-  EMPTY_RUNTIME_LIST,
   EMPTY_AGENT_BUILDER_SESSION,
   EMPTY_GROUPED_ISSUES_RESPONSE,
   EMPTY_ISSUE_TABLE_FACETS_RESPONSE,
@@ -372,26 +332,6 @@ import {
   SourceContextPreviewSchema,
   CommentSubIssueTaskResponseSchema,
   ListWebhookDeliveriesResponseSchema,
-  ApproveMessageTargetResponseSchema,
-  EMPTY_LIST_MESSAGE_DELIVERIES_RESPONSE,
-  GetMessageDeliveryResponseSchema,
-  ListMessageApprovedTargetsResponseSchema,
-  ListMessageDeliveriesResponseSchema,
-  ListMessageRoutesResponseSchema,
-  MessageDeliveryResponseSchema,
-  MessageRouteResponseSchema,
-  RevokeMessageTargetResponseSchema,
-  emptyMessageDeliveryDetail,
-  ApproveMessageSourceTargetResponseSchema,
-  EMPTY_LIST_MESSAGE_ROUTE_DELIVERIES_RESPONSE,
-  emptyMessageRouteDeliveryDetail,
-  GetMessageRouteDeliveryResponseSchema,
-  ListMessageRouteDeliveriesResponseSchema,
-  ListMessageSourceApprovedTargetsResponseSchema,
-  ListMessageSourceRoutesResponseSchema,
-  MessageEventCatalogSchema,
-  MessageSourceDeliveryResponseSchema,
-  MessageSourceRouteResponseSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByHourListSchema,
@@ -537,8 +477,6 @@ import {
   type IssueView,
   type IssueViewPreference,
   type CreateIssueViewRequest,
-  type GlmQuotaStatus,
-  GlmQuotaStatusSchema,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -594,52 +532,6 @@ export interface LoginResponse {
 function parseSearchIndexResponse<T>(raw: unknown, schema: ZodType, endpoint: string): T {
   const parsed = parseWithFallback<T | null>(raw, schema, null, { endpoint });
   if (parsed === null) throw new Error(`Malformed response from ${endpoint}`);
-  return parsed;
-}
-
-export class ApiError extends Error {
-  readonly status: number;
-  readonly statusText: string;
-  // Raw decoded JSON body (when the server returned one). Carries structured
-  // error fields like `code` so callers can branch on machine-readable
-  // identifiers instead of pattern-matching the human-readable message.
-  readonly body?: unknown;
-
-  constructor(message: string, status: number, statusText: string, body?: unknown) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.statusText = statusText;
-    this.body = body;
-  }
-}
-
-// Configuration and consent reads must remain distinguishable from a verified
-// empty configuration. Callers render their existing query error state.
-function parseConfigurationRead<T>(raw: unknown, schema: ZodType<T>, endpoint: string): T {
-  const parsed = parseWithFallback<T | null>(raw, schema, null, { endpoint });
-  if (parsed === null) {
-    throw new ApiError(`Unreadable response from ${endpoint}`, 0, "", {
-      code: "response_unreadable",
-    });
-  }
-  return parsed;
-}
-
-// A successful HTTP status alone does not confirm a write. Check both the
-// response shape and its operation-specific evidence before resolving.
-function parseConfirmedWrite<T>(
-  raw: unknown,
-  schema: ZodType<T>,
-  endpoint: string,
-  confirmed: (value: T) => boolean,
-): T {
-  const parsed = parseWithFallback<T | null>(raw, schema, null, { endpoint });
-  if (parsed === null || !confirmed(parsed)) {
-    throw new ApiError(`Unconfirmed response from ${endpoint}`, 0, "", {
-      code: "response_unconfirmed",
-    });
-  }
   return parsed;
 }
 
@@ -706,38 +598,6 @@ export function dispatchReasonCode(err: unknown): string | undefined {
     if (typeof code === "string" && code.length > 0) return code;
   }
   return undefined;
-}
-
-export interface DependencyErrorDetails {
-  /** The machine-readable dependency refusal (`dependency_unsatisfied`, …). */
-  reasonCode: string;
-  /** The dependency projection the server attached to the refusal, when it
-   *  sent one — the authoritative replacement for whatever the UI displayed
-   *  before the rejected write. null = unknown, never "all satisfied". */
-  dependencies: DependencyView | null;
-}
-
-// dependencyErrorDetails reads the structured body a `with-dependencies`
-// refusal carries ({ error, reason_code, dependencies? } — see
-// writeDependencyError in server/internal/handler/issue_dependency.go). It
-// returns null for non-dependency errors so callers keep their generic
-// handling; a `reason_code` that is not a dependency code is not ours to
-// interpret here (dispatchReasonCode already covers the admission family).
-export function dependencyErrorDetails(err: unknown): DependencyErrorDetails | null {
-  if (!(err instanceof ApiError) || !err.body || typeof err.body !== "object") {
-    return null;
-  }
-  const body = err.body as { reason_code?: unknown; dependencies?: unknown };
-  if (typeof body.reason_code !== "string" || !body.reason_code.startsWith("dependency_")) {
-    return null;
-  }
-  const dependencies =
-    body.dependencies === undefined
-      ? null
-      : parseWithFallback<DependencyView | null>(body.dependencies, DependencyViewSchema, null, {
-          endpoint: "with-dependencies error body",
-        });
-  return { reasonCode: body.reason_code, dependencies };
 }
 
 // clientErrorMessage returns the server's message only when it is a CLIENT
@@ -1307,19 +1167,6 @@ export class ApiClient {
     });
   }
 
-  async getIssueGraph(wsId: string, request: IssueGraphRequest, options?: { signal?: AbortSignal }): Promise<IssueGraph | null> {
-    const search = new URLSearchParams({ query: JSON.stringify(request.query) });
-    if (request.focusIssueId) search.set("focus_issue_id", request.focusIssueId);
-    const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(wsId)}/issues/graph?${search}`, {
-      signal: options?.signal,
-      // Pin both transport scope and cache identity, even across a route switch.
-      headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" },
-    });
-    return parseWithFallback<IssueGraph | null>(raw, IssueGraphSchema, null, {
-      endpoint: "GET /api/workspaces/:workspaceId/issues/graph",
-    });
-  }
-
   async listIssueTableGroups(params: IssueTableGroupsRequest): Promise<IssueTableGroupsResponse> {
     const raw = await this.fetch<unknown>("/api/issues/table/groups", {
       method: "POST",
@@ -1574,37 +1421,6 @@ export class ApiClient {
     return issue;
   }
 
-  async getIssueDependencies(id: string): Promise<DependencyView | null> {
-    const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(id)}/dependencies`);
-    return parseWithFallback<DependencyView | null>(raw, DependencyViewSchema, null, {
-      endpoint: "GET /api/issues/:id/dependencies",
-    });
-  }
-
-  async createIssueWithDependencies(data: CreateIssueWithDependenciesRequest): Promise<IssueWithDependencies> {
-    const raw = await this.fetch<unknown>("/api/issues/with-dependencies", {
-      method: "POST",
-      body: JSON.stringify(dependencyMutationToWire(data)),
-    });
-    const result = parseWithFallback<IssueWithDependencies | null>(raw, IssueWithDependenciesSchema, null, {
-      endpoint: "POST /api/issues/with-dependencies",
-    });
-    if (!result) throw new Error("Invalid issue response");
-    return result;
-  }
-
-  async updateIssueWithDependencies(id: string, data: UpdateIssueWithDependenciesRequest): Promise<IssueWithDependencies> {
-    const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(id)}/with-dependencies`, {
-      method: "PATCH",
-      body: JSON.stringify(dependencyMutationToWire(data)),
-    });
-    const result = parseWithFallback<IssueWithDependencies | null>(raw, IssueWithDependenciesSchema, null, {
-      endpoint: "PATCH /api/issues/:id/with-dependencies",
-    });
-    if (!result) throw new Error("Invalid issue response");
-    return result;
-  }
-
   async quickCreateIssue(data: {
     agent_id?: string;
     squad_id?: string;
@@ -1788,11 +1604,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify({ issue_ids: issueIds, updates }),
     });
-    const result = parseWithFallback<IssueBatchUpdateResult | null>(raw, IssueBatchUpdateSchema, null, {
-      endpoint: "POST /api/issues/batch-update",
-    });
-    if (!result) throw new Error("Invalid batch update response");
-    return result;
+    return parseRequiredResponse(raw, IssueBatchUpdateSchema, "POST /api/issues/batch-update");
   }
 
   async batchDeleteIssues(issueIds: string[]): Promise<{ deleted: number }> {
@@ -2183,10 +1995,6 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(`/api/runtimes?${search}`, {
       headers: workspaceHeader(workspaceSlug),
     });
-    // Boundary parse is deliberately shallow: RuntimeListSchema validates
-    // only the additive system_stats field per row (malformed → null) and
-    // passes everything else through, so a new server field never breaks
-    // older clients and one bad row cannot sink the list.
     return parseWithFallback(raw, RuntimeListSchema, EMPTY_RUNTIME_LIST, {
       endpoint: "GET /api/runtimes",
     });
@@ -3172,15 +2980,6 @@ export class ApiClient {
     const raw = await this.fetch<unknown>("/api/config");
     return parseWithFallback<AppConfigResponse>(raw, AppConfigSchema, EMPTY_APP_CONFIG, {
       endpoint: "GET /api/config",
-    });
-  }
-
-  // GLM (Zhipu) Coding Plan balance — account-level, deployment-scoped.
-  // The server answers enabled=false when no key is configured.
-  async getGlmQuota(): Promise<GlmQuotaStatus> {
-    const raw = await this.fetch<unknown>("/api/glm-quota");
-    return parseWithFallback<GlmQuotaStatus>(raw, GlmQuotaStatusSchema, { enabled: false }, {
-      endpoint: "GET /api/glm-quota",
     });
   }
 
@@ -4938,369 +4737,6 @@ export class ApiClient {
     );
   }
 
-  // Labrastro message delivery (OL-25 backend / OL-26 frontend) — the
-  // automation "结果推送" route configuration plus the delivery records and
-  // retry surface. Contract: server/internal/messagedelivery/README.md.
-  // These paths exist only on servers running OL-25+; older servers answer
-  // 404, which callers present as an "unsupported server" state (never as
-  // a successful save).
-  async listMessageRoutes(autopilotId: string): Promise<ListMessageRoutesResponse> {
-    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/message-routes`);
-    return parseConfigurationRead(raw, ListMessageRoutesResponseSchema, "GET /api/autopilots/:id/message-routes");
-  }
-
-  // Create returns 201 with {route}; the revision starts at 1. Enabled
-  // defaults to true server-side when omitted — the editor always sends it
-  // explicitly so the saved state matches what the user saw.
-  async createMessageRoute(
-    autopilotId: string,
-    data: SaveMessageRouteRequest,
-  ): Promise<MessageRoute> {
-    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/message-routes`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    const parsed = parseConfirmedWrite(raw, MessageRouteResponseSchema,
-      "POST /api/autopilots/:id/message-routes",
-      (value) => Boolean(value.route.id));
-    return parsed.route;
-  }
-
-  // Update and enable/disable are revision-guarded: a stale
-  // expected_revision is a 409 route_revision_conflict, never a silent
-  // overwrite. Callers surface that conflict instead of retrying blindly.
-  async updateMessageRoute(
-    autopilotId: string,
-    routeId: string,
-    data: SaveMessageRouteRequest,
-  ): Promise<MessageRoute> {
-    const raw = await this.fetch<unknown>(
-      `/api/autopilots/${autopilotId}/message-routes/${routeId}`,
-      { method: "PUT", body: JSON.stringify(data) },
-    );
-    const parsed = parseConfirmedWrite(raw, MessageRouteResponseSchema,
-      "PUT /api/autopilots/:id/message-routes/:routeId",
-      (value) => Boolean(value.route.id));
-    return parsed.route;
-  }
-
-  async setMessageRouteEnabled(
-    autopilotId: string,
-    routeId: string,
-    enabled: boolean,
-    expectedRevision: number,
-  ): Promise<MessageRoute> {
-    const raw = await this.fetch<unknown>(
-      `/api/autopilots/${autopilotId}/message-routes/${routeId}/enable`,
-      {
-        method: "POST",
-        body: JSON.stringify({ enabled, expected_revision: expectedRevision }),
-      },
-    );
-    const parsed = parseConfirmedWrite(raw, MessageRouteResponseSchema,
-      "POST /api/autopilots/:id/message-routes/:routeId/enable",
-      (value) => Boolean(value.route.id));
-    return parsed.route;
-  }
-
-  async deleteMessageRoute(autopilotId: string, routeId: string): Promise<void> {
-    await this.fetch(`/api/autopilots/${autopilotId}/message-routes/${routeId}`, {
-      method: "DELETE",
-    });
-  }
-
-  // Test-send runs the REAL send path synchronously with a synthetic
-  // message; the server refuses with 409 route_disabled on a disabled rule.
-  async testMessageRoute(autopilotId: string, routeId: string): Promise<MessageDelivery> {
-    const raw = await this.fetch<unknown>(
-      `/api/autopilots/${autopilotId}/message-routes/${routeId}/test-send`,
-      { method: "POST" },
-    );
-    const parsed = parseConfirmedWrite(raw, MessageDeliveryResponseSchema,
-      "POST /api/autopilots/:id/message-routes/:routeId/test-send",
-      (value) => Boolean(value.delivery.id));
-    return parsed.delivery;
-  }
-
-  // Approved targets are a workspace owner/admin consent surface; the server
-  // answers 403 message_target_admin_required for plain collaborators.
-  async listMessageApprovedTargets(
-    autopilotId: string,
-  ): Promise<ListMessageApprovedTargetsResponse> {
-    const raw = await this.fetch<unknown>(
-      `/api/autopilots/${autopilotId}/message-approved-targets`,
-    );
-    return parseConfigurationRead(raw, ListMessageApprovedTargetsResponseSchema, "GET /api/autopilots/:id/message-approved-targets");
-  }
-
-  async approveMessageTarget(
-    autopilotId: string,
-    data: ApproveMessageTargetRequest,
-  ): Promise<MessageApprovedTarget> {
-    const raw = await this.fetch<unknown>(
-      `/api/autopilots/${autopilotId}/message-approved-targets`,
-      { method: "POST", body: JSON.stringify(data) },
-    );
-    const parsed = parseConfirmedWrite(raw, ApproveMessageTargetResponseSchema,
-      "POST /api/autopilots/:id/message-approved-targets",
-      (value) => Boolean(value.approved_target.id));
-    return parsed.approved_target;
-  }
-
-  // Revoke cancels the route's queued sends in the same transaction; the
-  // response reports how many were cancelled. Platform-accepted sends are
-  // not recallable.
-  async revokeMessageTarget(
-    autopilotId: string,
-    targetId: string,
-  ): Promise<RevokeMessageTargetResponse> {
-    const raw = await this.fetch<unknown>(
-      `/api/autopilots/${autopilotId}/message-approved-targets/${targetId}`,
-      { method: "DELETE" },
-    );
-    return parseConfirmedWrite(
-      raw,
-      RevokeMessageTargetResponseSchema,
-      "DELETE /api/autopilots/:id/message-approved-targets/:targetId",
-      (value) => value.revoked === true,
-    );
-  }
-
-  // Delivery records page. The list projection carries no content/target
-  // snapshots — use getMessageDelivery for those.
-  async listMessageDeliveries(
-    autopilotId: string,
-    params?: { runId?: string; status?: string; limit?: number; offset?: number },
-  ): Promise<ListMessageDeliveriesResponse> {
-    const search = new URLSearchParams();
-    if (params?.runId !== undefined) search.set("run_id", params.runId);
-    if (params?.status) search.set("status", params.status);
-    if (params?.limit) search.set("limit", params.limit.toString());
-    if (params?.offset) search.set("offset", params.offset.toString());
-    const raw = await this.fetch<unknown>(
-      `/api/autopilots/${autopilotId}/message-deliveries?${search}`,
-    );
-    return parseWithFallback(
-      raw,
-      ListMessageDeliveriesResponseSchema,
-      EMPTY_LIST_MESSAGE_DELIVERIES_RESPONSE,
-      { endpoint: "GET /api/autopilots/:id/message-deliveries" },
-    );
-  }
-
-  async getMessageDelivery(
-    autopilotId: string,
-    deliveryId: string,
-  ): Promise<GetMessageDeliveryResponse> {
-    const raw = await this.fetch<unknown>(
-      `/api/autopilots/${autopilotId}/message-deliveries/${deliveryId}`,
-    );
-    return parseWithFallback(
-      raw,
-      GetMessageDeliveryResponseSchema,
-      emptyMessageDeliveryDetail(autopilotId, deliveryId),
-      { endpoint: "GET /api/autopilots/:id/message-deliveries/:deliveryId" },
-    );
-  }
-
-  // Retry is allowed from failed (cause fixed) and uncertain (operator
-  // verified in Feishu first); the replay reuses the fixed per-shard send
-  // UUIDs and skips shards that already carry an external message id.
-  async retryMessageDelivery(
-    autopilotId: string,
-    deliveryId: string,
-  ): Promise<MessageDelivery> {
-    const raw = await this.fetch<unknown>(
-      `/api/autopilots/${autopilotId}/message-deliveries/${deliveryId}/retry`,
-      { method: "POST" },
-    );
-    const parsed = parseConfirmedWrite(raw, MessageDeliveryResponseSchema,
-      "POST /api/autopilots/:id/message-deliveries/:deliveryId/retry",
-      (value) => Boolean(value.delivery.id));
-    return parsed.delivery;
-  }
-
-  // -----------------------------------------------------------------------
-  // Labrastro message delivery — OL-27 source surface: personal inbox
-  // forwarding ("推送到我的飞书") and team (activity/comment) subscriptions.
-  // Contract: server/internal/messagedelivery/README.md "OL-27 HTTP API";
-  // refusals: 403 route_not_self / message_no_originator / message_forbidden
-  // / message_target_admin_required. Servers without OL-27 answer 404, which
-  // callers present as an "unsupported server" state.
-  // -----------------------------------------------------------------------
-
-  // The config-UI catalog: which source kinds exist, which events each may
-  // forward, and which preference group each personal event is muted under.
-  async getMessageEventCatalog(): Promise<MessageEventCatalog> {
-    const raw = await this.fetch<unknown>("/api/message-event-catalog");
-    return parseConfigurationRead(raw, MessageEventCatalogSchema, "GET /api/message-event-catalog");
-  }
-
-  // Lists the acting member's own inbox rules; an unfiltered list also
-  // includes team rules for owners/admins. Explicitly requesting a team
-  // source_kind without that role is a 403 message_target_admin_required.
-  async listMessageSourceRoutes(
-    sourceKind?: string,
-  ): Promise<ListMessageSourceRoutesResponse> {
-    const search = new URLSearchParams();
-    if (sourceKind) search.set("source_kind", sourceKind);
-    const raw = await this.fetch<unknown>(`/api/message-routes?${search}`);
-    return parseConfigurationRead(raw, ListMessageSourceRoutesResponseSchema, "GET /api/message-routes");
-  }
-
-  // Create returns 201 with {route}, revision 1. For source_kind=inbox the
-  // server pins the recipient to the acting member — a caller-supplied
-  // target_user_id is ignored, never honored.
-  async createMessageSourceRoute(
-    data: SaveMessageSourceRouteRequest,
-  ): Promise<MessageSourceRoute> {
-    const raw = await this.fetch<unknown>("/api/message-routes", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    const parsed = parseConfirmedWrite(raw, MessageSourceRouteResponseSchema,
-      "POST /api/message-routes",
-      (value) => Boolean(value.route.id));
-    return parsed.route;
-  }
-
-  // Revision-guarded: a stale expected_revision is a 409
-  // route_revision_conflict, never a silent overwrite.
-  async updateMessageSourceRoute(
-    routeId: string,
-    data: SaveMessageSourceRouteRequest,
-  ): Promise<MessageSourceRoute> {
-    const raw = await this.fetch<unknown>(`/api/message-routes/${routeId}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
-    const parsed = parseConfirmedWrite(raw, MessageSourceRouteResponseSchema,
-      "PUT /api/message-routes/:routeId",
-      (value) => Boolean(value.route.id));
-    return parsed.route;
-  }
-
-  // Disabling cancels queued sends; enabling re-verifies the target and
-  // resets the eligibility boundary (the disabled window is not backfilled).
-  async setMessageSourceRouteEnabled(
-    routeId: string,
-    enabled: boolean,
-    expectedRevision: number,
-  ): Promise<MessageSourceRoute> {
-    const raw = await this.fetch<unknown>(`/api/message-routes/${routeId}/enable`, {
-      method: "POST",
-      body: JSON.stringify({ enabled, expected_revision: expectedRevision }),
-    });
-    const parsed = parseConfirmedWrite(raw, MessageSourceRouteResponseSchema,
-      "POST /api/message-routes/:routeId/enable",
-      (value) => Boolean(value.route.id));
-    return parsed.route;
-  }
-
-  async deleteMessageSourceRoute(routeId: string): Promise<void> {
-    await this.fetch(`/api/message-routes/${routeId}`, { method: "DELETE" });
-  }
-
-  // Test-send runs the REAL send path synchronously; a disabled rule is
-  // refused with 409 route_disabled.
-  async testMessageSourceRoute(routeId: string): Promise<MessageSourceDelivery> {
-    const raw = await this.fetch<unknown>(`/api/message-routes/${routeId}/test-send`, {
-      method: "POST",
-    });
-    const parsed = parseConfirmedWrite(raw, MessageSourceDeliveryResponseSchema,
-      "POST /api/message-routes/:routeId/test-send",
-      (value) => Boolean(value.delivery.id));
-    return parsed.delivery;
-  }
-
-  // Records page for one source route. No run filter exists on this surface
-  // (source records are not runs); statuses/pagination mirror the automation
-  // records API.
-  async listMessageRouteDeliveries(
-    routeId: string,
-    params?: { status?: string; limit?: number; offset?: number },
-  ): Promise<ListMessageRouteDeliveriesResponse> {
-    const search = new URLSearchParams();
-    if (params?.status) search.set("status", params.status);
-    if (params?.limit) search.set("limit", params.limit.toString());
-    if (params?.offset) search.set("offset", params.offset.toString());
-    const raw = await this.fetch<unknown>(
-      `/api/message-routes/${routeId}/message-deliveries?${search}`,
-    );
-    return parseWithFallback(
-      raw,
-      ListMessageRouteDeliveriesResponseSchema,
-      EMPTY_LIST_MESSAGE_ROUTE_DELIVERIES_RESPONSE,
-      { endpoint: "GET /api/message-routes/:routeId/message-deliveries" },
-    );
-  }
-
-  async getMessageRouteDelivery(
-    routeId: string,
-    deliveryId: string,
-  ): Promise<GetMessageRouteDeliveryResponse> {
-    const raw = await this.fetch<unknown>(
-      `/api/message-routes/${routeId}/message-deliveries/${deliveryId}`,
-    );
-    return parseWithFallback(
-      raw,
-      GetMessageRouteDeliveryResponseSchema,
-      emptyMessageRouteDeliveryDetail(deliveryId),
-      { endpoint: "GET /api/message-routes/:routeId/message-deliveries/:deliveryId" },
-    );
-  }
-
-  async retryMessageRouteDelivery(
-    routeId: string,
-    deliveryId: string,
-  ): Promise<MessageSourceDelivery> {
-    const raw = await this.fetch<unknown>(
-      `/api/message-routes/${routeId}/message-deliveries/${deliveryId}/retry`,
-      { method: "POST" },
-    );
-    const parsed = parseConfirmedWrite(raw, MessageSourceDeliveryResponseSchema,
-      "POST /api/message-routes/:routeId/message-deliveries/:deliveryId/retry",
-      (value) => Boolean(value.delivery.id));
-    return parsed.delivery;
-  }
-
-  // Team outbound-target approvals are a workspace owner/admin consent
-  // surface, scoped to the exact (source_kind, project range, bot, target);
-  // the server answers 403 message_target_admin_required for plain members.
-  async listMessageSourceApprovedTargets(): Promise<ListMessageSourceApprovedTargetsResponse> {
-    const raw = await this.fetch<unknown>("/api/message-approved-targets");
-    return parseConfigurationRead(raw, ListMessageSourceApprovedTargetsResponseSchema, "GET /api/message-approved-targets");
-  }
-
-  async approveMessageSourceTarget(
-    data: ApproveMessageSourceTargetRequest,
-  ): Promise<MessageSourceApprovedTarget> {
-    const raw = await this.fetch<unknown>("/api/message-approved-targets", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    const parsed = parseConfirmedWrite(raw, ApproveMessageSourceTargetResponseSchema,
-      "POST /api/message-approved-targets",
-      (value) => Boolean(value.approved_target.id));
-    return parsed.approved_target;
-  }
-
-  // Revoke soft-revokes the grant and cancels the scope's not-yet-started
-  // sends in one transaction; the response reports the cancelled count.
-  async revokeMessageSourceTarget(
-    targetId: string,
-  ): Promise<RevokeMessageTargetResponse> {
-    const raw = await this.fetch<unknown>(`/api/message-approved-targets/${targetId}`, {
-      method: "DELETE",
-    });
-    return parseConfirmedWrite(
-      raw,
-      RevokeMessageTargetResponseSchema,
-      "DELETE /api/message-approved-targets/:targetId",
-      (value) => value.revoked === true,
-    );
-  }
-
   // GitHub integration
   async getGitHubConnectURL(
     workspaceId: string,
@@ -5447,9 +4883,7 @@ export class ApiClient {
   // Lark integration
   async listLarkInstallations(workspaceId: string): Promise<ListLarkInstallationsResponse> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/lark/installations`);
-    const parsed = parseWithFallback<ListLarkInstallationsResponse | null>(raw, LarkInstallationsSchema, null, { endpoint: "listLarkInstallations" });
-    if (parsed === null) throw new Error("Conversation configuration could not be read. Refresh before saving.");
-    return parsed;
+    return parseRequiredResponse(raw, LarkInstallationsSchema, "listLarkInstallations");
   }
 
   async beginLarkInstall(
@@ -5475,105 +4909,10 @@ export class ApiClient {
     return this.fetch(`/api/workspaces/${workspaceId}/lark/install/${sessionId}/status`);
   }
 
-  async setLarkConversation(workspaceId: string, installationId: string, chats: { chat_id: string; chat_type: "group" | "p2p" }[]): Promise<void> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/lark/installations/${installationId}/conversation`, {
-      method: "PUT", body: JSON.stringify({ scope: "workspace", chats }),
-    });
-    const parsed = parseWithFallback<unknown>(raw, LarkConversationResponseSchema, null, { endpoint: "setLarkConversation" });
-    if (parsed === null) throw new Error("Could not verify saved conversation authorization. Refresh and check the current configuration.");
-  }
-
   async deleteLarkInstallation(workspaceId: string, installationId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/lark/installations/${installationId}`, {
       method: "DELETE",
     });
-  }
-
-  // Lark target discovery (OL-72 contract): read-only group / message-anchor
-  // listing behind the group, topic and conversation-grant pickers. Every
-  // response passes a schema before returning — a malformed page is thrown as
-  // an error so the picker shows its failure state instead of merging
-  // unverified rows. `cursor` is the opaque signed continuation from the
-  // previous page; it is forwarded unchanged, never constructed here.
-
-  async getLarkTargetCapabilities(
-    workspaceId: string,
-    installationId: string,
-  ): Promise<LarkTargetCapabilities> {
-    const raw = await this.fetch<unknown>(
-      `/api/workspaces/${workspaceId}/lark/installations/${installationId}/target-capabilities`,
-    );
-    const parsed = parseWithFallback<LarkTargetCapabilities | null>(raw, LarkTargetCapabilitiesSchema, null, { endpoint: "getLarkTargetCapabilities" });
-    if (parsed === null) throw new Error("Target capabilities could not be read. Retry before picking a target.");
-    return parsed;
-  }
-
-  async listLarkTargetChats(
-    workspaceId: string,
-    installationId: string,
-    opts: { pageSize?: number; q?: string; cursor?: string } = {},
-  ): Promise<LarkChatsPage> {
-    const search = new URLSearchParams();
-    if (opts.pageSize != null) search.set("page_size", String(opts.pageSize));
-    if (opts.q) search.set("q", opts.q);
-    if (opts.cursor) search.set("cursor", opts.cursor);
-    const qs = search.toString();
-    const raw = await this.fetch<unknown>(
-      `/api/workspaces/${workspaceId}/lark/installations/${installationId}/chats${qs ? `?${qs}` : ""}`,
-    );
-    const parsed = parseWithFallback<LarkChatsPage | null>(raw, LarkChatsPageSchema, null, { endpoint: "listLarkTargetChats" });
-    if (parsed === null) throw new Error("The group list could not be read. Retry before picking a group.");
-    return parsed;
-  }
-
-  async listLarkMessageAnchors(
-    workspaceId: string,
-    installationId: string,
-    chatId: string,
-    opts: { pageSize?: number; cursor?: string } = {},
-  ): Promise<LarkAnchorsPage> {
-    const search = new URLSearchParams();
-    if (opts.pageSize != null) search.set("page_size", String(opts.pageSize));
-    if (opts.cursor) search.set("cursor", opts.cursor);
-    const qs = search.toString();
-    const raw = await this.fetch<unknown>(
-      `/api/workspaces/${workspaceId}/lark/installations/${installationId}/chats/${encodeURIComponent(chatId)}/message-anchors${qs ? `?${qs}` : ""}`,
-    );
-    const parsed = parseWithFallback<LarkAnchorsPage | null>(raw, LarkAnchorsPageSchema, null, { endpoint: "listLarkMessageAnchors" });
-    if (parsed === null) throw new Error("The message list could not be read. Retry before picking an anchor.");
-    return parsed;
-  }
-
-  // Lark private chat discovery (OL-75 contract): observed private chats a
-  // human can authorize. The list is read-only — it never sends messages or
-  // changes consent; confirmation appends the selected candidates to the
-  // saved grant atomically server-side and returns the resulting full grant,
-  // which callers must treat as the authoritative saved state.
-
-  async listLarkPrivateChatCandidates(
-    workspaceId: string,
-    installationId: string,
-  ): Promise<LarkPrivateChatCandidateList> {
-    const raw = await this.fetch<unknown>(
-      `/api/workspaces/${workspaceId}/lark/installations/${installationId}/private-chat-candidates`,
-    );
-    const parsed = parseWithFallback<LarkPrivateChatCandidateList | null>(raw, LarkPrivateChatCandidatesSchema, null, { endpoint: "listLarkPrivateChatCandidates" });
-    if (parsed === null) throw new Error("The private chat list could not be read. Refresh before authorizing.");
-    return parsed;
-  }
-
-  async confirmLarkPrivateChatCandidates(
-    workspaceId: string,
-    installationId: string,
-    candidateIds: string[],
-  ): Promise<LarkConversationGrant | null> {
-    const raw = await this.fetch<unknown>(
-      `/api/workspaces/${workspaceId}/lark/installations/${installationId}/private-chat-candidates/confirm`,
-      { method: "POST", body: JSON.stringify({ scope: "workspace", candidate_ids: candidateIds }) },
-    );
-    const parsed = parseWithFallback<{ conversation: LarkConversationGrant | null } | null>(raw, LarkConversationResponseSchema, null, { endpoint: "confirmLarkPrivateChatCandidates" });
-    if (parsed === null) throw new Error("Could not verify saved conversation authorization. Refresh and check the current configuration.");
-    return parsed.conversation;
   }
 
   async redeemLarkBindingToken(token: string): Promise<RedeemLarkBindingTokenResponse> {
@@ -5880,5 +5219,5 @@ export class ApiClient {
   }
 }
 
-// Labrastro fork mount: adds the methods declared in ./labrastro-skill-api.
-installLabrastroSkillApi(ApiClient);
+// Labrastro fork methods retain the upstream transport and reject name collisions.
+installLabrastroApi(ApiClient);

@@ -36,6 +36,7 @@ describe("larkDiscoveryErrorKey", () => {
     [apiErr(409, "lark_installation_inactive"), "installation_inactive"],
     [apiErr(404, "lark_installation_not_found"), "installation_not_found"],
     [apiErr(502, "lark_discovery_invalid_response"), "invalid_response"],
+    [apiErr(0, "response_unreadable"), "invalid_response"],
     [apiErr(400, "lark_discovery_invalid_request"), "invalid_request"],
   ] as const)("%s → %s", (err, key) => {
     expect(larkDiscoveryErrorKey(err)).toBe(key);
@@ -106,6 +107,8 @@ describe("chatIdSuffix", () => {
 
 describe("larkPrivateChatErrorKey", () => {
   it.each([
+    [apiErr(0, "response_unreadable"), "unreadable"],
+    [apiErr(0, "response_unconfirmed"), "unconfirmed"],
     [apiErr(403, "lark_discovery_forbidden"), "forbidden"],
     [apiErr(403, "lark_conversation_invocation_denied"), "invocation_denied"],
     [apiErr(409, "lark_conversation_limit_exceeded"), "limit_exceeded"],

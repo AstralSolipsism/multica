@@ -74,10 +74,12 @@ it("defaults descriptive candidate fields so drift degrades a row instead of fai
 
 it("throws on candidates without identity fields so the picker shows its failure state", async () => {
   stubFetch({ items: [{ display_name: "no ids" }], max_candidates: 50, retention_seconds: 604800 });
-  await expect(client.listLarkPrivateChatCandidates("ws", "inst")).rejects.toThrow();
+  await expect(client.listLarkPrivateChatCandidates("ws", "inst"))
+    .rejects.toMatchObject({ body: { code: "response_unreadable" } });
 
   stubFetch({ max_candidates: "fifty" });
-  await expect(client.listLarkPrivateChatCandidates("ws", "inst")).rejects.toThrow();
+  await expect(client.listLarkPrivateChatCandidates("ws", "inst"))
+    .rejects.toMatchObject({ body: { code: "response_unreadable" } });
 });
 
 it("confirms candidates with the contract body and returns the saved grant", async () => {
@@ -99,7 +101,8 @@ it("confirms candidates with the contract body and returns the saved grant", asy
 
 it("throws on an unverifiable confirmation response instead of guessing the saved state", async () => {
   stubFetch({ conversation: { id: "not-a-grant" } });
-  await expect(client.confirmLarkPrivateChatCandidates("ws", "inst", [candidate.id])).rejects.toThrow();
+  await expect(client.confirmLarkPrivateChatCandidates("ws", "inst", [candidate.id]))
+    .rejects.toMatchObject({ body: { code: "response_unconfirmed" } });
 });
 
 it("reads the OL-75 capability fields and tolerates their absence on older servers", async () => {
