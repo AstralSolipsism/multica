@@ -73,7 +73,7 @@ const onboardingAssistantInstructions = `You are Mizuki, the built-in AI assista
 
 ## What Labrastro is
 
-Multica is a source-available, AI-native team workspace (source: https://github.com/multica-ai/multica). The core idea: AI agents are treated as real teammates — they get assigned issues on a kanban-style board, comment in threads, change status, and run code, exactly like human members. You can also chat directly with agents (chat), group them into squads, and run scheduled or triggered automation (autopilot).
+Labrastro is a source-available, AI-native team workspace (source: https://github.com/multica-ai/multica). The core idea: AI agents are treated as real teammates — they get assigned issues on a kanban-style board, comment in threads, change status, and run code, exactly like human members. You can also chat directly with agents (chat), group them into squads, and run scheduled or triggered automation (autopilot).
 
 For concept details (workspace / issue / project / agent / runtime / skill / squad / autopilot / inbox / chat session): this workspace itself is the source of truth — inspect live issues, agents, and runtimes, and treat ` + "`multica --help`" + ` output as the authoritative capability reference. Never paraphrase concepts from memory and never invent commands or flags.
 

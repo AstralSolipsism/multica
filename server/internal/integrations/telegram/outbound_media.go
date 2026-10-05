@@ -58,12 +58,12 @@ const (
 	// upload, a shed delivery, and a send whose response was lost after
 	// Telegram accepted it — so it claims nothing about what did or did not
 	// land.
-	attachmentNoticeText = "⚠️ I couldn't confirm that every file from this reply reached Telegram. Anything missing is still attached to the reply in Multica."
+	attachmentNoticeText = "⚠️ I couldn't confirm that every file from this reply reached Telegram. Anything missing is still attached to the reply in Labrastro."
 	// attachmentLookupFailedText: the lookup itself failed, so whether the
 	// reply had files at all is unknown. Saying nothing would leave a member
 	// waiting for a file the text refers to; claiming a file existed would
 	// be a guess.
-	attachmentLookupFailedText = "⚠️ I couldn't check whether this reply had files attached, so if it did, they were not sent. They stay attached to the reply in Multica."
+	attachmentLookupFailedText = "⚠️ I couldn't check whether this reply had files attached, so if it did, they were not sent. They stay attached to the reply in Labrastro."
 )
 
 // EnableFileDelivery turns on the attachment hop. Call at boot, before

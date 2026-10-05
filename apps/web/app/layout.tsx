@@ -1,3 +1,4 @@
+import { DEPLOYMENT_URL } from "@multica/core/deployment";
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { Inter, Geist_Mono, Source_Serif_4 } from "next/font/google";
@@ -73,7 +74,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://multica.outlune.com"),
+  metadataBase: new URL(DEPLOYMENT_URL),
   title: {
     default: SITE_TITLE,
     template: TITLE_TEMPLATE,

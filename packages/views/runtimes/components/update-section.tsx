@@ -1,3 +1,4 @@
+import { LATEST_MANIFEST_URL } from "@multica/core/deployment";
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Loader2,
@@ -12,13 +13,6 @@ import { api } from "@multica/core/api";
 import type { RuntimeUpdateStatus } from "@multica/core/types";
 import { useT } from "../../i18n";
 
-// Version checks read the internal Labrastro release manifest. This used to
-// poll the upstream GitHub Releases API, which would flag upstream builds as
-// "updates" and invite replacing this customized install with an
-// uncustomized binary — so clients only ever compare against the feed this
-// deployment actually ships from.
-const INTERNAL_LATEST_MANIFEST_URL =
-  "https://multica.outlune.com/downloads/latest.json";
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 let cachedLatestVersion: string | null = null;
@@ -29,7 +23,9 @@ async function fetchLatestVersion(): Promise<string | null> {
     return cachedLatestVersion;
   }
   try {
-    const resp = await fetch(INTERNAL_LATEST_MANIFEST_URL);
+    // Compare only against this deployment's release feed; an upstream build
+    // would replace the customized CLI with an uncustomized binary.
+    const resp = await fetch(LATEST_MANIFEST_URL);
     if (!resp.ok) return null;
     const data = await resp.json();
     cachedLatestVersion =

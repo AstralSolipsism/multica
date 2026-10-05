@@ -12,11 +12,11 @@ export interface BootstrapMikaInput {
    * explicitly instead of relying on the global current-workspace singleton:
    * this flow acts on a workspace the app has not navigated to yet, and on
    * desktop the tab system writes that singleton too — it reclaimed it
-   * mid-flow and Mika was created in the previously-active workspace.
+   * mid-flow and Mizuki was created in the previously-active workspace.
    */
   workspaceSlug: string;
   runtimeId: string;
-  /** Runtime model for Mika. Empty falls back to the runtime's own default. */
+  /** Runtime model for Mizuki. Empty falls back to the runtime's own default. */
   model?: string;
   /** Localized title for the opening conversation. */
   title: string;
@@ -29,12 +29,12 @@ export interface BootstrapMikaResult {
 }
 
 /**
- * Creates or reuses the workspace's Mika and starts its opening conversation.
+ * Creates or reuses the workspace's Mizuki and starts its opening conversation.
  *
  * Every step is idempotent server-side, so a retry, a double-submit, or two
  * clients racing the same workspace converge on one agent, one session, and
  * one opening turn — the agent and session under their own advisory locks, the
- * opening turn under the session lock. Nothing about Mika's configuration is
+ * opening turn under the session lock. Nothing about Mizuki's configuration is
  * decided here; the server owns it, which is why this can no longer drift from
  * the product definition the way a client-built payload could.
  */
@@ -62,7 +62,7 @@ export async function bootstrapMika(
   // failed attempt and its retry opened another (the title is localized).
   const chatSession = agent.onboarding_session;
   if (!chatSession) {
-    throw new Error("Mika onboarding session was not returned");
+    throw new Error("Mizuki onboarding session was not returned");
   }
 
   // Language only. Every workspace onboards from scratch — what this member

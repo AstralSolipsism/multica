@@ -1,5 +1,7 @@
 "use client";
 
+import { DOWNLOAD_PAGE_URL } from "@multica/core/deployment";
+
 import { useState } from "react";
 import {
   ArrowUpRight,
@@ -22,10 +24,6 @@ import { useConfigStore } from "@multica/core/config";
 import { isDesktopShell } from "../platform/local-directory";
 import { FeishuQrDialog } from "./feishu-group-qr-dialog";
 import { useT } from "../i18n";
-
-// In-app route: this instance serves its own minimal download page listing
-// the internal release artifacts, so the entry works without leaving the app.
-const DOWNLOAD_URL = "https://multica.outlune.com/download";
 
 export function HelpLauncher() {
   const { t } = useT("layout");
@@ -62,7 +60,7 @@ export function HelpLauncher() {
               <DropdownMenuItem
                 render={
                   <a
-                    href={DOWNLOAD_URL}
+                    href={DOWNLOAD_PAGE_URL}
                     target="_blank"
                     rel="noopener noreferrer"
                   />

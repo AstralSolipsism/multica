@@ -67,6 +67,13 @@ or weaker process-killing fallback is part of this synchronization.
 
 ## Retained fork product constraints
 
+User-visible branding must remain Labrastro / Mizuki, and the brand guards
+must not be relaxed. Keep fork translations in the per-locale brand overlays;
+validate the effective resources and server copy after every upstream sync.
+See [the overlay and guard contract](branding.md).
+Command names, environment variables, package/protocol identifiers, licenses,
+attribution and upstream repository links retain their technical/legal identity.
+
 Upstream-first capability updates do not revoke previously confirmed product
 choices. Keep OL-14's non-marketing experience unless the owner explicitly
 changes it: first-use setup has no source, role or use-case questionnaire; Web

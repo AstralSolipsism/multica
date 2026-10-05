@@ -33,8 +33,7 @@
     "action": "Mika와 시작",
     "failed": "Mika를 시작하지 못했습니다",
     "dialog_title": "Mika를 어디에서 실행할까요?",
-    "cancel": "취소",
-    "dialog_description": "Mizuki가 사용할 런타임을 선택하세요. 나중에 설정에서 변경할 수 있습니다."
+    "cancel": "취소"
   },
   "machine": {
     "search_placeholder": "기기 검색...",

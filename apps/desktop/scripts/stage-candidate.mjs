@@ -46,6 +46,7 @@
 // two targets emitting the same name with different bytes fails closed
 // instead of silently overwriting one architecture with another.
 
+import deployment from "../../../packages/core/deployment/origin.json" with { type: "json" };
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -73,7 +74,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(here, "..");
 const repoRoot = resolve(desktopRoot, "..", "..");
 
-export const INTERNAL_FEED_URL = "https://multica.outlune.com/downloads/desktop";
+export const INTERNAL_FEED_URL = `${deployment.origin}/downloads/desktop`;
 
 // The first candidate matrix covers Windows/Linux, both architectures.
 // macOS keeps its existing packaging contract in package.mjs and is staged

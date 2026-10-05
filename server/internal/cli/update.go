@@ -43,7 +43,7 @@ const ChecksumManifestName = "checksums.txt"
 //	<base>/latest.json                      → {"version": "v0.4.40-labrastro.2", ...}
 //	<base>/cli/<tag>/checksums.txt          → "<sha256>  <archive>" per line
 //	<base>/cli/<tag>/<archive>              → multica-cli-<ver>-<goos>-<goarch>.<ext>
-const DefaultDownloadBase = "https://multica.outlune.com/downloads"
+const DefaultDownloadBase = DefaultCloudURL + "/downloads"
 
 const DefaultUpdateDownloadTimeout = 120 * time.Second
 

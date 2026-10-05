@@ -1,3 +1,6 @@
+import { mergeResources } from "@multica/core/i18n";
+import enBrand from "@/locales/brand/en.json";
+import zhBrand from "@/locales/brand/zh-Hans.json";
 import authEn from "@/locales/en/auth.json";
 import chatEn from "@/locales/en/chat.json";
 import commonEn from "@/locales/en/common.json";
@@ -19,7 +22,7 @@ import projectsZh from "@/locales/zh-Hans/projects.json";
 import settingsZh from "@/locales/zh-Hans/settings.json";
 import workspaceZh from "@/locales/zh-Hans/workspace.json";
 
-export const resources = {
+const upstreamResources = {
   en: {
     auth: authEn,
     chat: chatEn,
@@ -45,3 +48,8 @@ export const resources = {
     workspace: workspaceZh,
   },
 } as const;
+
+export const resources = mergeResources(upstreamResources, {
+  en: enBrand,
+  "zh-Hans": zhBrand,
+});

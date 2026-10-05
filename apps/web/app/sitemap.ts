@@ -1,7 +1,8 @@
+import { DEPLOYMENT_URL } from "@multica/core/deployment";
 import type { MetadataRoute } from "next";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = "https://multica.outlune.com";
+  const baseUrl = DEPLOYMENT_URL;
 
   return [
     {
