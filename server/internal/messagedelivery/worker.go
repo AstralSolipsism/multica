@@ -22,6 +22,12 @@ const (
 	pollInterval = time.Second
 	// defaultScanEvery is the compensator cadence.
 	defaultScanEvery = 30 * time.Second
+	// Event bursts retain a trailing pass but cannot start decisions more
+	// often than once per second, including immediately after compensation.
+	decideMinInterval = time.Second
+	// This is overlap, not an assumed transaction timeout. The stable
+	// horizon also holds behind every open transaction (see SCANNING.md).
+	sourceScanOverlap = time.Minute
 	// scanBatchSize bounds each compensator pass.
 	scanBatchSize = 200
 )
@@ -288,21 +294,43 @@ func (s *Service) scanEvery() time.Duration {
 // terminals through the EXISTING sync logic, and decide any persisted
 // source (automation run or OL-27 inbox/activity/comment record) that still
 // lacks a decision for an enabled route target. A source-event wakeup
-// triggers a decide pass immediately — a latency hint only.
+// schedules a rate-limited decide pass — a latency hint only.
 func (s *Service) scanLoop(ctx context.Context) {
-	ticker := time.NewTicker(s.scanEvery())
+	runScanSchedule(ctx, s.scanEvery(), decideMinInterval, s.decideNotify, func() {
+		if err := s.ScanOnce(ctx); err != nil {
+			s.logger().Error("messagedelivery: compensation scan", "error", err)
+		}
+	}, func() { s.decideSourcesOnce(ctx) })
+}
+
+// runScanSchedule keeps one trailing event pass. Repeated events never reset
+// its deadline, so continuous traffic cannot starve either kind of scan.
+func runScanSchedule(ctx context.Context, every, minimum time.Duration, notify <-chan struct{}, scan, decide func()) {
+	ticker := time.NewTicker(every)
 	defer ticker.Stop()
+	timer := time.NewTimer(time.Hour)
+	timer.Stop()
+	defer timer.Stop()
+	var ready <-chan time.Time
+	var next time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-s.decideNotify:
-			s.decideSourcesOnce(ctx)
-			continue
+		case <-notify:
+			if ready == nil {
+				timer.Reset(max(0, time.Until(next)))
+				ready = timer.C
+			}
+		case <-ready:
+			ready = nil
+			decide()
+			next = time.Now().Add(minimum)
 		case <-ticker.C:
-		}
-		if err := s.ScanOnce(ctx); err != nil {
-			s.logger().Error("messagedelivery: compensation scan", "error", err)
+			timer.Stop()
+			ready = nil
+			scan()
+			next = time.Now().Add(minimum)
 		}
 	}
 }
@@ -421,6 +449,7 @@ type scanCursor struct {
 	upperID      pgtype.UUID
 	generation   int64
 	cycleStarted time.Time
+	cycleStable  pgtype.Timestamptz
 	// nonempty distinguishes another target page at the same source ID from exhaustion; never persisted.
 	nonempty bool
 }
@@ -430,7 +459,7 @@ var errScanCursorMoved = errors.New("scan cursor advanced by another replica")
 
 func cursorFromRow(row db.LabrastroMessageScanCursor) scanCursor {
 	return scanCursor{ts: row.CursorTs.Time, id: row.CursorID, upperID: row.CycleUpperID,
-		generation: row.Generation, cycleStarted: row.CycleStartedAt.Time}
+		generation: row.Generation, cycleStarted: row.CycleStartedAt.Time, cycleStable: row.CycleStableAt}
 }
 
 // Each page is persisted only AFTER its sync calls finish. Crashes replay at
@@ -447,6 +476,10 @@ func (s *Service) advanceScanner(ctx context.Context, scanner string, page func(
 		}
 		if last.id == cur.id && !last.nonempty {
 			// Exhausted this fixed bound. The next tick freezes a new bound.
+			if sourceScopeForScanner(scanner) != "" {
+				cur.ts = cur.cycleStable.Time
+				cur.cycleStable = pgtype.Timestamptz{}
+			}
 			cur.id, cur.upperID = scanCursorStart.id, pgtype.UUID{}
 			return s.saveCursor(ctx, scanner, cur)
 		}
@@ -481,14 +514,23 @@ func (s *Service) loadCursorWithBound(ctx context.Context, scanner string, upper
 		return scanCursorStart, err
 	}
 	cur := cursorFromRow(row)
-	if cur.upperID.Valid && cur.id.Valid {
+	isSource := sourceScopeForScanner(scanner) != ""
+	if cur.upperID.Valid && cur.id.Valid && (!isSource || cur.cycleStable.Valid) {
 		return cur, nil
+	}
+	cur.cycleStarted = s.now()
+	if isSource {
+		horizon, err := s.Queries.GetLabrastroMessageSourceScanHorizon(ctx)
+		if err != nil {
+			return cur, err
+		}
+		cur.cycleStarted, cur.cycleStable = horizon.ScanThrough.Time, horizon.StableAt
 	}
 	upper, err := upperBound()
 	if err != nil {
 		return cur, err
 	}
-	cur.id, cur.upperID, cur.cycleStarted = scanCursorStart.id, upper, s.now()
+	cur.id, cur.upperID = scanCursorStart.id, upper
 	return s.saveCursor(ctx, scanner, cur)
 }
 
@@ -511,6 +553,7 @@ func (s *Service) saveCursor(ctx context.Context, scanner string, cur scanCursor
 		Scanner: scanner, CursorTs: pgtype.Timestamptz{Time: cur.ts, Valid: true},
 		CursorID: cur.id, CycleUpperID: cur.upperID,
 		CycleStartedAt:     pgtype.Timestamptz{Time: cur.cycleStarted, Valid: true},
+		CycleStableAt:      cur.cycleStable,
 		ExpectedGeneration: cur.generation,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -599,14 +642,16 @@ func (s *Service) decideMissing(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	visited := make(map[pgtype.UUID]bool)
 	for _, c := range candidates {
-		if visited[c.RunID] {
-			continue
-		}
-		visited[c.RunID] = true
-		if _, err := s.EnqueueRunDeliveries(ctx, c.RunID); err != nil {
+		// The candidate query carries the same complete rows used by direct
+		// enqueue, including the task-side link after a reverse-link crash.
+		run := c.AutopilotRun
+		run.TaskID = c.SourceTaskID
+		in := s.decisionInputFromSource(c.Autopilot, c.LabrastroMessageRoute, sourceFactsFromRun(run))
+		if n, err := s.decideDelivery(ctx, c.Autopilot, in); err != nil {
 			return err
+		} else if n > 0 {
+			s.Notify()
 		}
 	}
 	return nil

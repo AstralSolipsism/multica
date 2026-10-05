@@ -1194,6 +1194,7 @@ type LabrastroMessageScanCursor struct {
 	Generation     int64              `json:"generation"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 	CycleUpperID   pgtype.UUID        `json:"cycle_upper_id"`
+	CycleStableAt  pgtype.Timestamptz `json:"cycle_stable_at"`
 }
 
 type LabrastroSkillFolder struct {

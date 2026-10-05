@@ -5,6 +5,9 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -196,6 +199,7 @@ func TestReviewOL27_DisableBetweenCandidateAndInsert(t *testing.T) {
 	testFx.Cleanup(t, `DELETE FROM labrastro_message_route WHERE id=$1`, route.ID)
 	sourceID := fx.inboxItem(t, testUID, "status_changed", fx.issue)
 	rows, err := s.Queries.ListLabrastroMessageInboxSourceCandidates(ctx, db.ListLabrastroMessageInboxSourceCandidatesParams{
+		ScanFrom: pgtype.Timestamptz{Time: time.Unix(0, 0), Valid: true}, ScanThrough: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		AfterID: scanCursorStart.id, UpperID: uuidOf(t, sourceID), Limit: 200,
 	})
 	if err != nil {

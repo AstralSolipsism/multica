@@ -423,18 +423,11 @@ WHERE id = $1;
 -- module has already judged is never re-decided. Full-missing-set scan by
 -- design: a monotonic cursor would skip runs that committed late, so the
 -- NOT EXISTS shrinking set IS the cursor.
-SELECT
-    r.id AS run_id, r.autopilot_id, a.workspace_id AS run_workspace_id,
-    r.status AS run_status, r.completed_at AS run_completed_at,
-    r.issue_id AS run_issue_id, r.task_id AS run_task_id,
-    r.result AS run_result, r.failure_reason AS run_failure_reason,
-    r.reason_code AS run_reason_code,
-    a.execution_mode AS autopilot_execution_mode, a.title AS autopilot_title,
-    rt.id AS route_id, rt.revision AS route_revision,
-    rt.installation_id, rt.channel_type,
-    rt.target_type, rt.target_user_id, rt.target_chat_id,
-    rt.target_message_id, rt.target_thread_id, rt.target_key,
-    rt.conditions, rt.content_mode
+SELECT sqlc.embed(r), sqlc.embed(a), sqlc.embed(rt),
+    COALESCE(r.task_id, CASE WHEN r.issue_id IS NULL THEN (
+        SELECT t.id FROM agent_task_queue t
+        WHERE t.autopilot_run_id = r.id ORDER BY t.created_at LIMIT 1
+    ) END)::uuid AS source_task_id
 FROM autopilot_run r
 JOIN autopilot a ON a.id = r.autopilot_id
 JOIN labrastro_message_route rt
@@ -606,6 +599,7 @@ SET cursor_ts = sqlc.arg('cursor_ts'),
     cursor_id = sqlc.arg('cursor_id'),
     cycle_started_at = sqlc.arg('cycle_started_at'),
     cycle_upper_id = sqlc.narg('cycle_upper_id'),
+    cycle_stable_at = sqlc.narg('cycle_stable_at'),
     generation = generation + 1,
     updated_at = now()
 WHERE scanner = sqlc.arg('scanner')
@@ -617,6 +611,22 @@ INSERT INTO labrastro_message_scan_cursor (scanner)
 VALUES (sqlc.arg('scanner'))
 ON CONFLICT (scanner) DO NOTHING
 RETURNING *;
+
+-- name: GetLabrastroMessageSourceScanHorizon :one
+-- Source created_at defaults to transaction start, not commit time. There is
+-- no enforced maximum transaction duration, so never advance past a writer
+-- still in flight. An unobservable/disabled backend or enabled two-phase
+-- commit has no trustworthy start bound: retain history. Prepared transactions
+-- can disappear from activity before becoming visible in pg_prepared_xacts.
+SELECT statement_timestamp()::timestamptz AS scan_through,
+    LEAST(statement_timestamp(),
+        COALESCE((SELECT min(CASE WHEN state IS NULL OR state = 'disabled'
+            THEN 'epoch'::timestamptz ELSE xact_start END)
+            FROM pg_catalog.pg_stat_activity
+            WHERE datname = current_database()), statement_timestamp()),
+        CASE WHEN current_setting('max_prepared_transactions')::integer > 0
+            THEN 'epoch'::timestamptz ELSE statement_timestamp() END
+    )::timestamptz AS stable_at;
 
 -- name: ListStaleLinkedIssueTaskFailures :many
 -- create_issue tasks reach the run through the ISSUE link (their own
@@ -789,7 +799,8 @@ ORDER BY r.created_at, r.id;
 -- wins over every non-match; attribution is deterministic within that set.
 -- The inclusive cursor drains all targets of the last source across pages.
 -- NOT EXISTS removes completed targets, so no target cursor is required.
--- A later full cycle recovers sources that committed behind the cursor.
+-- Each cycle scans only [stable watermark - overlap, cycle start]. The
+-- next overlapping cycle recovers sources that committed behind the cursor.
 
 -- name: ListLabrastroMessageInboxSourceCandidates :many
 SELECT DISTINCT ON (i.id, rt.installation_id, rt.target_key)
@@ -815,6 +826,8 @@ JOIN workspace w ON w.id = i.workspace_id
 LEFT JOIN issue iss ON iss.id = i.issue_id
 WHERE i.recipient_type = 'member'
   AND i.created_at >= rt.effective_from
+  AND i.created_at >= sqlc.arg('scan_from')::timestamptz
+  AND i.created_at <= sqlc.arg('scan_through')::timestamptz
   AND i.id >= sqlc.arg('after_id')::uuid
   AND i.id <= sqlc.arg('upper_id')::uuid
   AND NOT EXISTS (
@@ -863,6 +876,8 @@ LEFT JOIN labrastro_message_approved_target approval
  AND approval.project_id IS NOT DISTINCT FROM rt.project_id AND approval.revoked_at IS NULL
 WHERE al.action IN ('status_changed', 'assignee_changed')
   AND al.created_at >= rt.effective_from
+  AND al.created_at >= sqlc.arg('scan_from')::timestamptz
+  AND al.created_at <= sqlc.arg('scan_through')::timestamptz
   AND al.id >= sqlc.arg('after_id')::uuid
   AND al.id <= sqlc.arg('upper_id')::uuid
   AND NOT EXISTS (
@@ -915,6 +930,8 @@ LEFT JOIN labrastro_message_approved_target approval
 WHERE c.type = 'comment'
   AND c.deleted_at IS NULL
   AND c.created_at >= rt.effective_from
+  AND c.created_at >= sqlc.arg('scan_from')::timestamptz
+  AND c.created_at <= sqlc.arg('scan_through')::timestamptz
   AND c.id >= sqlc.arg('after_id')::uuid
   AND c.id <= sqlc.arg('upper_id')::uuid
   AND NOT EXISTS (
@@ -932,8 +949,8 @@ LIMIT sqlc.arg('limit');
 
 -- name: GetLabrastroMessageSourceScanUpperBound :one
 -- Freezes one cycle's immutable ID bound over the source table, including
--- non-candidates. Old IDs that become eligible later are revisited in the
--- next full cycle.
+-- non-candidates. Late commits are revisited within the next time window;
+-- IDs are never treated as a timestamp (the tables contain UUIDv4 and v7).
 SELECT COALESCE(CASE sqlc.arg('source_kind')::text
     WHEN 'inbox' THEN (SELECT id FROM inbox_item ORDER BY id DESC LIMIT 1)
     WHEN 'activity' THEN (SELECT id FROM activity_log ORDER BY id DESC LIMIT 1)

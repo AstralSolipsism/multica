@@ -42,6 +42,11 @@ func init() {
 		"9006_labrastro_skill_placement_source_index":               "idx_labrastro_skill_placement_source",
 		"9007_labrastro_skill_folder_source_index":                  "idx_labrastro_skill_folder_source",
 		"9008_labrastro_skill_folder_sibling_index":                 "idx_labrastro_skill_folder_sibling",
+		"9010_labrastro_message_delivery_run_index":                 "idx_labrastro_message_delivery_run",
+		"9011_labrastro_message_delivery_sending_index":             "idx_labrastro_message_delivery_sending",
+		"9012_labrastro_message_inbox_scan_index":                   "idx_labrastro_message_inbox_scan",
+		"9013_labrastro_message_activity_scan_index":                "idx_labrastro_message_activity_scan",
+		"9014_labrastro_message_comment_scan_index":                 "idx_labrastro_message_comment_scan",
 	} {
 		concurrentIndexCleanups[version] = index
 		preMigrationHooks[version] = cleanupInvalidConcurrentIndexHook(index)
