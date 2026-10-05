@@ -187,6 +187,7 @@ describe("buildRuntimeQuotaView", () => {
           remainingPercent: 62,
           tone: "ok",
           resetInMs: 3600 * 1000,
+          resetsAt: NOW + 3600 * 1000,
           group: null,
         },
         {
@@ -195,10 +196,12 @@ describe("buildRuntimeQuotaView", () => {
           remainingPercent: 12,
           tone: "warning",
           resetInMs: 3 * 24 * 3600 * 1000,
+          resetsAt: NOW + 3 * 24 * 3600 * 1000,
           group: null,
         },
       ],
       resetInMs: 3600 * 1000,
+      resetsAt: NOW + 3600 * 1000,
       observedAgeMs: 120 * 1000,
     });
   });
