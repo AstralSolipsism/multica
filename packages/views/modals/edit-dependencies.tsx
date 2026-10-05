@@ -314,7 +314,12 @@ function EditDependenciesBody({
   };
 
   const inherited = view?.inheritedBlockedBy ?? [];
-  const selectedItems = form ? [...form.selected.values()] : [];
+  // Selection and the reviewed version are draft state. Display fields come
+  // from the latest projection, even when its structural version is unchanged.
+  const selectedItems = useMemo(() => {
+    const current = new Map(view?.blockedBy.map((p) => [p.issueId, p]));
+    return form ? [...form.selected.values()].map((p) => current.get(p.issueId) ?? p) : [];
+  }, [form, view]);
   const malformed = depsQuery.isSuccess && depsQuery.data === null;
 
   return (
