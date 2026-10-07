@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -38,16 +37,31 @@ func writeAntigravityTestToken(t *testing.T, home, token string) {
 	}
 }
 
+// Skeleton of the agy 1.3.0 retrieveUserQuotaSummary response captured live
+// in OL-141: same field names and shape, fictional timestamps, no account
+// data. The trailing email/project keys exist to prove they never reach the
+// snapshot.
+func antigravitySummaryFixture() string {
+	return `{"groups":[
+		{"displayName":"Gemini Models","description":"private group blurb","buckets":[
+			{"bucketId":"gemini-weekly","window":"weekly","displayName":"Weekly Limit Remaining","remainingFraction":0.8008515,"resetTime":"2031-02-03T04:05:06Z","description":"private usage text"},
+			{"bucketId":"gemini-5h","window":"5h","displayName":"Five Hour Limit Remaining","remainingFraction":0.9916125,"resetTime":"2031-02-03T07:08:09Z","description":"private usage text"}]},
+		{"displayName":"Claude and GPT models","buckets":[
+			{"bucketId":"3p-weekly","window":"weekly","displayName":"Weekly Limit Remaining","remainingFraction":0,"resetTime":"2031-02-06T10:11:12Z","description":"private usage text"},
+			{"bucketId":"3p-5h","window":"5h","displayName":"Five Hour Limit Remaining","remainingFraction":1,"resetTime":"2031-02-03T06:54:32Z","description":"private usage text","disabled":true}]}],
+	"email":"private@example.com","cloudaicompanionProject":"private-project"}`
+}
+
 func TestAntigravityCollectRequestAndTokenRotation(t *testing.T) {
 	home := t.TempDir()
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := calls.Add(1)
-		wantToken, wantVersion := "ya29.first", "1.2.16"
+		wantToken, wantVersion := "ya29.first", "1.3.0"
 		if n == 2 {
-			wantToken, wantVersion = "ya29.refreshed", "1.2.17"
+			wantToken, wantVersion = "ya29.refreshed", "1.3.1"
 		}
-		if r.Method != http.MethodPost || r.URL.Path != "/v1internal:retrieveUserQuota" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1internal:retrieveUserQuotaSummary" {
 			t.Errorf("request = %s %s", r.Method, r.URL.Path)
 		}
 		if r.Header.Get("User-Agent") != "antigravity-cli/"+wantVersion {
@@ -62,43 +76,62 @@ func TestAntigravityCollectRequestAndTokenRotation(t *testing.T) {
 		if string(body) != "{}" {
 			t.Errorf("request body = %q; metadata fields cause HTTP 400", body)
 		}
-		_, _ = io.WriteString(w, `{"buckets":[
-			{"tokenType":"WTUS","modelId":"gemini-2.5-pro","remainingFraction":0.9464724},
-			{"tokenType":"WTUS","modelId":"claude-sonnet-4-6","remainingFraction":0}
-		],"email":"private@example.com","plan":"private-plan","credits":12345}`)
+		_, _ = io.WriteString(w, antigravitySummaryFixture())
 	}))
 	defer srv.Close()
 	c := newAntigravityPlanQuotaCollector(home)
-	c.endpoint = srv.URL + "/v1internal:retrieveUserQuota"
+	c.endpoint = srv.URL + "/v1internal:retrieveUserQuotaSummary"
 	for i, token := range []string{"ya29.first", "ya29.refreshed"} {
 		writeAntigravityTestToken(t, home, token)
-		version := []string{"agy version 1.2.16", "antigravity-cli v1.2.17"}[i]
+		version := []string{"agy version 1.3.0", "antigravity-cli v1.3.1"}[i]
 		started := time.Now().Unix()
 		quota, err := c.collect(context.Background(), version)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if quota.ObservedAt < started || quota.Provider != "antigravity" || quota.Source != protocol.PlanQuotaSourceDaemon || quota.Status != protocol.PlanQuotaStatusLimited || len(quota.Windows) != 2 {
+		if quota.ObservedAt < started || quota.Provider != "antigravity" || quota.Source != protocol.PlanQuotaSourceDaemon || quota.Status != protocol.PlanQuotaStatusLimited || len(quota.Windows) != 4 {
 			t.Fatalf("snapshot = %+v", quota)
 		}
-		if math.Abs(*quota.Windows[0].UsedPercent-5.35276) > 1e-8 || *quota.Windows[1].UsedPercent != 100 {
-			t.Fatalf("wrong remaining-to-used conversion: %+v", quota.Windows)
+		wantResets := map[string]int64{
+			"gemini_5h":         time.Date(2031, 2, 3, 7, 8, 9, 0, time.UTC).Unix(),
+			"gemini_weekly":     time.Date(2031, 2, 3, 4, 5, 6, 0, time.UTC).Unix(),
+			"claude_gpt_5h":     0, // fully replenished: rolling reset dropped
+			"claude_gpt_weekly": time.Date(2031, 2, 6, 10, 11, 12, 0, time.UTC).Unix(),
+		}
+		wantUsed := map[string]float64{"gemini_5h": 0.84, "gemini_weekly": 19.91, "claude_gpt_5h": 0, "claude_gpt_weekly": 100}
+		wantMinutes := map[string]int64{"gemini_5h": 300, "gemini_weekly": 10080, "claude_gpt_5h": 300, "claude_gpt_weekly": 10080}
+		wantGroup := map[string]string{"gemini_5h": "gemini", "gemini_weekly": "gemini", "claude_gpt_5h": "claude_gpt", "claude_gpt_weekly": "claude_gpt"}
+		for _, window := range quota.Windows {
+			if window.Group != wantGroup[window.Name] {
+				t.Fatalf("window %s group = %q", window.Name, window.Group)
+			}
+			if used, ok := wantUsed[window.Name]; !ok || window.UsedPercent == nil || math.Abs(*window.UsedPercent-used) > 1e-8 {
+				t.Fatalf("window %s used = %v, want %v", window.Name, window.UsedPercent, wantUsed[window.Name])
+			}
+			if minutes, ok := wantMinutes[window.Name]; !ok || window.WindowMinutes == nil || *window.WindowMinutes != minutes {
+				t.Fatalf("window %s minutes = %v", window.Name, window.WindowMinutes)
+			}
+			want, ok := wantResets[window.Name]
+			if !ok {
+				t.Fatalf("unexpected window %q", window.Name)
+			}
+			if want == 0 && window.ResetsAt != nil {
+				t.Fatalf("window %s invented a reset: %+v", window.Name, window)
+			}
+			if want != 0 && (window.ResetsAt == nil || *window.ResetsAt != want) {
+				t.Fatalf("window %s reset = %v, want %d", window.Name, window.ResetsAt, want)
+			}
 		}
 		if err := protocol.ValidateRuntimePlanQuota(quota, time.Now()); err != nil {
 			t.Fatalf("collector violates heartbeat contract: %v", err)
-		}
-		for _, window := range quota.Windows {
-			if window.Name == "" {
-				t.Fatal("new daemon must name windows for older servers")
-			}
 		}
 		encoded, err := json.Marshal(quota)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, forbidden := range []string{token, "private", "credits", "email", "claude-sonnet", "reset", "window_minutes"} {
+		for _, forbidden := range []string{token, "private", "Limit Remaining", "usage text", "disabled", "email", "cloudaicompanion", "bucketId", "resetTime"} {
 			if strings.Contains(string(encoded), forbidden) {
-				t.Errorf("snapshot contains private or invented field %q: %s", forbidden, encoded)
+				t.Errorf("snapshot contains response or account field %q: %s", forbidden, encoded)
 			}
 		}
 	}
@@ -132,7 +165,7 @@ func TestAntigravityTokenMalformedOrMissingSendsNothing(t *testing.T) {
 			defer srv.Close()
 			c := newAntigravityPlanQuotaCollector(home)
 			c.endpoint = srv.URL
-			quota, err := c.collect(context.Background(), "1.2.16")
+			quota, err := c.collect(context.Background(), "1.3.0")
 			if quota != nil || !errors.Is(err, errAntigravityQuotaToken) || calls.Load() != 0 {
 				t.Fatalf("quota=%+v err=%v requests=%d", quota, err, calls.Load())
 			}
@@ -152,7 +185,7 @@ func TestAntigravityCollectHTTPFailures(t *testing.T) {
 			defer srv.Close()
 			c := newAntigravityPlanQuotaCollector(home)
 			c.endpoint = srv.URL
-			quota, err := c.collect(context.Background(), "1.2.16")
+			quota, err := c.collect(context.Background(), "1.3.0")
 			if err == nil || quota != nil || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "private") {
 				t.Fatalf("quota=%+v err=%v", quota, err)
 			}
@@ -179,7 +212,7 @@ func TestAntigravityCollectRefusesRedirect(t *testing.T) {
 	writeAntigravityTestToken(t, home, "ya29.secret")
 	c := newAntigravityPlanQuotaCollector(home)
 	c.endpoint = srv.URL
-	if quota, err := c.collect(context.Background(), "1.2.16"); err == nil || quota != nil || leaked.Load() != 0 {
+	if quota, err := c.collect(context.Background(), "1.3.0"); err == nil || quota != nil || leaked.Load() != 0 {
 		t.Fatalf("redirect followed: quota=%+v err=%v target requests=%d", quota, err, leaked.Load())
 	}
 }
@@ -199,7 +232,7 @@ func TestAntigravityCollectCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, err := c.collect(ctx, "1.2.16"); done <- err }()
+	go func() { _, err := c.collect(ctx, "1.3.0"); done <- err }()
 	select {
 	case <-started:
 	case <-time.After(2 * time.Second):
@@ -216,165 +249,162 @@ func TestAntigravityCollectCancellation(t *testing.T) {
 	}
 }
 
-func TestAntigravityRemoteBucketAggregation(t *testing.T) {
+func TestAntigravityQuotaSummaryLiveSkeletonMapping(t *testing.T) {
+	now := time.Unix(1791050400, 0)
+	quota, err := parseAntigravityQuotaSummary(strings.NewReader(antigravitySummaryFixture()), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quota.ObservedAt != now.Unix() || quota.Status != protocol.PlanQuotaStatusLimited || len(quota.Windows) != 4 {
+		t.Fatalf("quota = %+v", quota)
+	}
+	wantOrder := []string{"gemini_5h", "gemini_weekly", "claude_gpt_5h", "claude_gpt_weekly"}
+	for i, name := range wantOrder {
+		if quota.Windows[i].Name != name {
+			t.Fatalf("order = %+v, want %v", quota.Windows, wantOrder)
+		}
+	}
+	if err := protocol.ValidateRuntimePlanQuota(quota, time.Unix(now.Unix(), 0)); err != nil {
+		t.Fatalf("summary snapshot violates heartbeat contract: %v", err)
+	}
+}
+
+func TestAntigravityQuotaSummaryParsing(t *testing.T) {
+	const unknownPool = `{"groups":[{"buckets":[
+		{"bucketId":"future-pool-5h","window":"5h","remainingFraction":0.5},
+		{"bucketId":"not-gemini-5h","window":"5h","remainingFraction":0.5},
+		{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.5,"resetTime":"2031-02-03T04:05:06Z"}]}]}`
+	for _, tc := range []struct {
+		name   string
+		body   string
+		verify func(*testing.T, *protocol.RuntimePlanQuota)
+	}{
+		{"unknown pool skipped", unknownPool, func(t *testing.T, quota *protocol.RuntimePlanQuota) {
+			if len(quota.Windows) != 1 || quota.Windows[0].Name != "gemini_5h" {
+				t.Fatalf("windows = %+v", quota.Windows)
+			}
+		}},
+		{"reversed groups and buckets keep order", reverseAntigravityGroups(antigravitySummaryFixture()), func(t *testing.T, quota *protocol.RuntimePlanQuota) {
+			want := []string{"gemini_5h", "gemini_weekly", "claude_gpt_5h", "claude_gpt_weekly"}
+			for i, name := range want {
+				if quota.Windows[i].Name != name {
+					t.Fatalf("order = %+v, want %v", quota.Windows, want)
+				}
+			}
+		}},
+		{"unknown window type keeps bucket without length", `{"groups":[{"buckets":[{"bucketId":"gemini-monthly","window":"monthly","remainingFraction":0.5,"resetTime":"2031-02-03T04:05:06Z"}]}]}`, func(t *testing.T, quota *protocol.RuntimePlanQuota) {
+			if len(quota.Windows) != 1 || quota.Windows[0].Name != "gemini-monthly" || quota.Windows[0].WindowMinutes != nil || quota.Windows[0].Group != "gemini" || quota.Windows[0].ResetsAt == nil {
+				t.Fatalf("window = %+v", quota.Windows[0])
+			}
+		}},
+		{"missing window type keeps bucket without length", `{"groups":[{"buckets":[{"bucketId":"3p-quarterly","remainingFraction":0.5}]}]}`, func(t *testing.T, quota *protocol.RuntimePlanQuota) {
+			if len(quota.Windows) != 1 || quota.Windows[0].Name != "3p-quarterly" || quota.Windows[0].WindowMinutes != nil {
+				t.Fatalf("window = %+v", quota.Windows[0])
+			}
+		}},
+		{"fractional second reset parses", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.5,"resetTime":"2031-02-03T04:05:06.125Z"}]}]}`, func(t *testing.T, quota *protocol.RuntimePlanQuota) {
+			want := time.Date(2031, 2, 3, 4, 5, 6, 0, time.UTC).Unix()
+			if quota.Windows[0].ResetsAt == nil || *quota.Windows[0].ResetsAt != want {
+				t.Fatalf("reset = %v", quota.Windows[0].ResetsAt)
+			}
+		}},
+		{"missing or invalid reset on used window tolerated", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.5},{"bucketId":"3p-5h","window":"5h","remainingFraction":0.4,"resetTime":"invalid"},{"bucketId":"3p-weekly","window":"weekly","remainingFraction":0.3,"resetTime":null}]}]}`, func(t *testing.T, quota *protocol.RuntimePlanQuota) {
+			for _, window := range quota.Windows {
+				if window.ResetsAt != nil {
+					t.Fatalf("reset metadata invented: %+v", window)
+				}
+			}
+		}},
+		{"zero remaining sets limited", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0,"resetTime":"2031-02-03T04:05:06Z"}]}]}`, func(t *testing.T, quota *protocol.RuntimePlanQuota) {
+			if quota.Status != protocol.PlanQuotaStatusLimited {
+				t.Fatalf("status = %s", quota.Status)
+			}
+		}},
+		{"full remaining stays ok", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":1,"resetTime":"2031-02-03T04:05:06Z"}]}]}`, func(t *testing.T, quota *protocol.RuntimePlanQuota) {
+			if quota.Status != protocol.PlanQuotaStatusOK || quota.Windows[0].ResetsAt != nil || *quota.Windows[0].UsedPercent != 0 {
+				t.Fatalf("quota = %+v", quota)
+			}
+		}},
+		{"small nonzero fractions stay ok", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.0001,"resetTime":"2031-02-03T04:05:06Z"},{"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.5,"resetTime":"2031-02-06T04:05:06Z"}]}]}`, func(t *testing.T, quota *protocol.RuntimePlanQuota) {
+			// Only an exactly-zero fraction is limited; a nearly exhausted
+			// pool must not paint the whole snapshot red.
+			if quota.Status != protocol.PlanQuotaStatusOK {
+				t.Fatalf("status = %s, want ok", quota.Status)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			quota, err := parseAntigravityQuotaSummary(strings.NewReader(tc.body), time.Unix(1791050400, 0))
+			if err != nil || quota == nil {
+				t.Fatalf("quota=%+v err=%v", quota, err)
+			}
+			tc.verify(t, quota)
+		})
+	}
+}
+
+func TestAntigravityQuotaSummaryRejectsDrift(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		body string
-		want map[string]float64
 	}{
-		{"minimum per group", `{"buckets":[
-			{"modelId":"gemini-pro","remainingFraction":0.9},
-			{"modelId":"claude-sonnet","remainingFraction":0.6},
-			{"modelId":"gemini-flash","remainingFraction":0.3},
-			{"modelId":"gpt-oss","remainingFraction":0.2},
-			{"modelId":"other-model","remainingFraction":0}
-		]}`, map[string]float64{"gemini": 70, "claude_gpt": 80}},
-		{"explicit zero and one", `{"buckets":[{"modelId":"gemini-pro","remainingFraction":1},{"modelId":"claude-sonnet","remainingFraction":0}]}`, map[string]float64{"gemini": 0, "claude_gpt": 100}},
-		{"missing group stays absent", `{"buckets":[{"modelId":"gpt-oss","remainingFraction":0.5}]}`, map[string]float64{"claude_gpt": 50}},
-		{"invalid rows ignored", `{"buckets":[{"modelId":"gemini-pro"},{"modelId":"gemini-pro","remainingFraction":null},{"modelId":"gemini-pro","remainingFraction":-1},{"modelId":"claude-sonnet","remainingFraction":2},{"modelId":"gpt-oss","remainingFraction":0.4}]}`, map[string]float64{"claude_gpt": 60}},
-		{"unknown models", `{"buckets":[{"modelId":"not-gemini-pro","remainingFraction":0}]}`, nil},
-		{"no fraction", `{"buckets":[{"modelId":"gemini-pro"}]}`, nil},
-		{"empty buckets", `{"buckets":[]}`, nil},
-		{"shape drift", `{"groups":[]}`, nil},
-		{"malformed JSON", `{`, nil},
-		{"wrong fraction type", `{"buckets":[{"modelId":"gemini-pro","remainingFraction":"0.5"}]}`, nil},
+		{"malformed json", `{`},
+		{"legacy per-model shape", `{"buckets":[{"modelId":"gemini-pro","remainingFraction":0.5}]}`},
+		{"wrong fraction type", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":"0.5"}]}]}`},
+		{"missing fraction on known pool", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h"}]}]}`},
+		{"fraction above one", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":2}]}]}`},
+		{"fraction below zero", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":-1}]}]}`},
+		{"null fraction on known pool", `{"groups":[{"buckets":[{"bucketId":"3p-5h","window":"5h","remainingFraction":null}]}]}`},
+		{"no groups", `{"groups":[]}`},
+		{"only unknown pools", `{"groups":[{"buckets":[{"bucketId":"future-pool-5h","window":"5h","remainingFraction":0.5}]}]}`},
+		{"duplicate window", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.5},{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.4}]}]}`},
+		{"known pool with one fraction-less bucket", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.5},{"bucketId":"gemini-weekly","window":"weekly"}]}]}`},
+		{"known pool with one out-of-range fraction", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":2},{"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.5}]}]}`},
+		{"oversized unknown-window name fails the wire contract", `{"groups":[{"buckets":[{"bucketId":"gemini-` + strings.Repeat("x", 40) + `","window":"monthly","remainingFraction":0.5}]}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			now := time.Unix(1791050400, 0)
-			quota, err := parseAntigravityRemoteQuota(strings.NewReader(tc.body), now)
-			if tc.want == nil {
-				if err == nil || quota != nil {
-					t.Fatalf("unusable response returned quota=%+v err=%v", quota, err)
-				}
-				return
+			quota, err := parseAntigravityQuotaSummary(strings.NewReader(tc.body), time.Unix(1791050400, 0))
+			if err == nil || quota != nil {
+				t.Fatalf("drift accepted: quota=%+v err=%v", quota, err)
 			}
-			if err != nil || quota == nil || len(quota.Windows) != len(tc.want) || quota.ObservedAt != now.Unix() {
-				t.Fatalf("quota=%+v err=%v", quota, err)
-			}
-			limited := false
-			for _, window := range quota.Windows {
-				want, ok := tc.want[window.Group]
-				if !ok || window.UsedPercent == nil || math.Abs(*window.UsedPercent-want) > 1e-8 || window.WindowMinutes != nil || window.ResetsAt != nil {
-					t.Fatalf("window=%+v, want=%v", window, tc.want)
-				}
-				limited = limited || want == 100
-			}
-			if len(quota.Windows) == 2 && quota.Windows[0].Group != "gemini" {
-				t.Fatal("unstable group order")
-			}
-			if (quota.Status == protocol.PlanQuotaStatusLimited) != limited {
-				t.Fatalf("status = %s", quota.Status)
+			if !errors.Is(err, errAntigravityQuotaShape) {
+				t.Fatalf("error = %v, want a shape diagnostic", err)
 			}
 		})
 	}
 }
 
-func TestAntigravityRemoteEarliestResetPerGroup(t *testing.T) {
-	observedAt := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	buckets := []string{
-		`{"modelId":"gemini-pro","remainingFraction":0.2,"resetTime":"2020-01-01T05:00:00Z"}`,
-		`{"modelId":"gemini-flash","remainingFraction":0.6,"resetTime":"2020-01-01T02:00:00Z"}`,
-		`{"modelId":"gemini-lite","remainingFraction":0.8,"resetTime":"2020-01-01T04:00:00Z"}`,
-		`{"modelId":"claude-sonnet","remainingFraction":0.4,"resetTime":"2020-01-08T00:00:00Z"}`,
-		`{"modelId":"gpt-oss","remainingFraction":0.6,"resetTime":"2020-01-03T00:00:00Z"}`,
-		`{"modelId":"claude-opus","remainingFraction":0.3,"resetTime":"2020-01-06T00:00:00Z"}`,
-		`{"modelId":"gemini-invalid","remainingFraction":-1,"resetTime":"2020-01-01T01:00:00Z"}`,
-		`{"modelId":"claude-missing","resetTime":"2020-01-01T01:00:00Z"}`,
-		`{"modelId":"unknown-model","remainingFraction":0,"resetTime":"2020-01-01T01:00:00Z"}`,
-		`{"modelId":"gemini-no-reset","remainingFraction":0.5,"resetTime":"invalid"}`,
-	}
-	for _, reverse := range []bool{false, true} {
-		t.Run(fmt.Sprintf("reverse=%v", reverse), func(t *testing.T) {
-			ordered := append([]string(nil), buckets...)
-			if reverse {
-				for i, j := 0, len(ordered)-1; i < j; i, j = i+1, j-1 {
-					ordered[i], ordered[j] = ordered[j], ordered[i]
-				}
-			}
-			body := `{"buckets":[` + strings.Join(ordered, ",") + `]}`
-			quota, err := parseAntigravityRemoteQuota(strings.NewReader(body), observedAt)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(quota.Windows) != 2 || quota.ObservedAt != observedAt.Unix() {
-				t.Fatalf("quota = %+v", quota)
-			}
-			for i, want := range []struct {
-				group   string
-				used    float64
-				reset   time.Time
-				minutes int64
-			}{
-				{"gemini", 80, observedAt.Add(2 * time.Hour), 300},
-				{"claude_gpt", 70, observedAt.Add(48 * time.Hour), 10080},
-			} {
-				window := quota.Windows[i]
-				if window.Group != want.group || window.UsedPercent == nil || math.Abs(*window.UsedPercent-want.used) > 1e-8 {
-					t.Errorf("window = %+v, want %s used=%v", window, want.group, want.used)
-				}
-				if window.ResetsAt == nil || *window.ResetsAt != want.reset.Unix() {
-					t.Errorf("%s reset = %v, want earliest reset %s", want.group, window.ResetsAt, want.reset)
-				}
-				if window.WindowMinutes == nil || *window.WindowMinutes != want.minutes {
-					t.Errorf("%s window minutes = %v, want %d", want.group, window.WindowMinutes, want.minutes)
-				}
-			}
-		})
+// The production endpoint is the pool-based summary API this collector is
+// built for; reverting to the legacy per-model endpoint would otherwise pass
+// every unit test.
+func TestAntigravityQuotaEndpointIsSummary(t *testing.T) {
+	const want = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+	if got := newAntigravityPlanQuotaCollector("").endpoint; got != want {
+		t.Fatalf("endpoint = %q, want %q", got, want)
 	}
 }
 
-func TestAntigravityRemoteResetWindowBoundaries(t *testing.T) {
-	// A historical observation makes any accidental use of time.Now/Until fail.
-	observedAt := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	for _, tc := range []struct {
-		name    string
-		until   time.Duration
-		minutes int64 // zero means no inferred window
-	}{
-		{"past reset", -time.Second, 0},
-		{"reset now", 0, 0},
-		{"positive reset", time.Second, 300},
-		{"below six hours", 6*time.Hour - time.Second, 300},
-		{"exactly six hours", 6 * time.Hour, 300},
-		{"above six hours", 6*time.Hour + time.Second, 10080},
-		{"seven days", 7 * 24 * time.Hour, 10080},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			reset := observedAt.Add(tc.until)
-			body := fmt.Sprintf(`{"buckets":[{"modelId":"gemini-pro","remainingFraction":0.5,"resetTime":%q}]}`, reset.Format(time.RFC3339))
-			quota, err := parseAntigravityRemoteQuota(strings.NewReader(body), observedAt)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(quota.Windows) != 1 {
-				t.Fatalf("windows = %+v", quota.Windows)
-			}
-			window := quota.Windows[0]
-			if window.ResetsAt == nil || *window.ResetsAt != reset.Unix() {
-				t.Errorf("reset = %v, want %d", window.ResetsAt, reset.Unix())
-			}
-			if tc.minutes == 0 {
-				if window.WindowMinutes != nil {
-					t.Errorf("nonfuture reset inferred a window: %d", *window.WindowMinutes)
-				}
-			} else if window.WindowMinutes == nil || *window.WindowMinutes != tc.minutes {
-				t.Errorf("window minutes = %v, want %d", window.WindowMinutes, tc.minutes)
-			}
-		})
+// reverseAntigravityGroups decodes the fixture, reverses group and bucket
+// slices, and re-encodes it: the parser must produce the same canonical order
+// regardless of how the endpoint happens to serialize its lists.
+func reverseAntigravityGroups(fixture string) string {
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(fixture), &doc); err != nil {
+		panic(err)
 	}
-}
-
-func TestAntigravityRemoteMissingOrInvalidReset(t *testing.T) {
-	for _, field := range []string{"", `,"resetTime":""`, `,"resetTime":"invalid"`, `,"resetTime":null`} {
-		t.Run(field, func(t *testing.T) {
-			body := `{"buckets":[{"modelId":"claude-sonnet","remainingFraction":0.5` + field + `}]}`
-			quota, err := parseAntigravityRemoteQuota(strings.NewReader(body), time.Unix(1577836800, 0))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(quota.Windows) != 1 || quota.Windows[0].ResetsAt != nil || quota.Windows[0].WindowMinutes != nil {
-				t.Fatalf("reset metadata invented: %+v", quota.Windows)
-			}
-		})
+	groups := doc["groups"].([]any)
+	for i, j := 0, len(groups)-1; i < j; i, j = i+1, j-1 {
+		groups[i], groups[j] = groups[j], groups[i]
 	}
+	for _, group := range groups {
+		buckets := group.(map[string]any)["buckets"].([]any)
+		for i, j := 0, len(buckets)-1; i < j; i, j = i+1, j-1 {
+			buckets[i], buckets[j] = buckets[j], buckets[i]
+		}
+	}
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
 }
