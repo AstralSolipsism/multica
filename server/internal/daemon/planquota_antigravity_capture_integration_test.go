@@ -32,7 +32,9 @@ import (
 // writes, no heartbeat, no agy tasks. Only whitelisted field values are
 // printed; every other field is listed by name so the response shape and its
 // casing remain visible. Tokens, full emails, project IDs and raw bodies are
-// never logged.
+// never logged. Step [7] additionally runs the production parser over the
+// live summary response, which doubles as the issue's pre-merge acceptance
+// evidence (third step).
 const maxCaptureRequests = 12
 
 var (
@@ -122,9 +124,8 @@ func TestAntigravityQuotaCaptureLive(t *testing.T) {
 		}
 	}
 
-	// [4] current per-model interface; keep the cloudcode-pa body for [7].
-	var platformBody []byte
-	var platformObserved time.Time
+	// [4] legacy per-model interface; kept as evidence for why it cannot
+	// back the four-window view (one WTUS number per model, no window type).
 	for _, host := range hosts {
 		t.Logf("[4] retrieveUserQuota on %s", host)
 		_, raw, ok := s.post(host, "/v1internal:retrieveUserQuota", "{}")
@@ -134,27 +135,28 @@ func TestAntigravityQuotaCaptureLive(t *testing.T) {
 		dumpCaptureJSON(t, raw, func(key string) bool {
 			return key == "modelid" || key == "tokentype" || key == "remainingfraction" || key == "resettime"
 		})
-		if host == hosts[0] {
-			platformBody, platformObserved = raw, time.Now()
-		}
 	}
 
 	// [5] pool-based summary interface; retry with the project id on failure.
+	var platformBody []byte
+	var platformObserved time.Time
 	for _, host := range hosts {
 		t.Logf("[5] retrieveUserQuotaSummary on %s", host)
 		_, raw, ok := s.post(host, "/v1internal:retrieveUserQuotaSummary", "{}")
-		if ok {
-			dumpCaptureJSON(t, raw, captureSummaryAllow)
-			continue
+		if !ok {
+			if projects[host] == "" {
+				t.Logf("  no project id available for %s; skipping project retry", host)
+				continue
+			}
+			t.Logf("[5] retrying retrieveUserQuotaSummary on %s with project id", host)
+			_, raw, ok = s.post(host, "/v1internal:retrieveUserQuotaSummary", captureProjectBody(projects[host]))
+			if !ok {
+				continue
+			}
 		}
-		if projects[host] == "" {
-			t.Logf("  no project id available for %s; skipping project retry", host)
-			continue
-		}
-		t.Logf("[5] retrying retrieveUserQuotaSummary on %s with project id", host)
-		_, raw, ok = s.post(host, "/v1internal:retrieveUserQuotaSummary", captureProjectBody(projects[host]))
-		if ok {
-			dumpCaptureJSON(t, raw, captureSummaryAllow)
+		dumpCaptureJSON(t, raw, captureSummaryAllow)
+		if host == hosts[0] {
+			platformBody, platformObserved = raw, time.Now()
 		}
 	}
 
@@ -177,10 +179,12 @@ func TestAntigravityQuotaCaptureLive(t *testing.T) {
 		}
 	}
 
-	// [7] what the platform would show today from the cloudcode-pa response.
+	// [7] what the platform will show: run the production parser over the
+	// live summary response (this is also the pre-merge acceptance the
+	// issue's step 3 requires).
 	if platformBody != nil {
-		t.Logf("[7] parseAntigravityRemoteQuota on %s retrieveUserQuota observed %s", hosts[0], formatCaptureInstant(platformObserved))
-		quota, err := parseAntigravityRemoteQuota(bytes.NewReader(platformBody), platformObserved)
+		t.Logf("[7] parseAntigravityQuotaSummary on %s retrieveUserQuotaSummary observed %s", hosts[0], formatCaptureInstant(platformObserved))
+		quota, err := parseAntigravityQuotaSummary(bytes.NewReader(platformBody), platformObserved)
 		if err != nil {
 			t.Logf("  parse error: %v", err)
 		} else {
@@ -200,7 +204,7 @@ func TestAntigravityQuotaCaptureLive(t *testing.T) {
 			}
 		}
 	} else {
-		t.Logf("[7] %s retrieveUserQuota response unavailable; cannot show current platform output", hosts[0])
+		t.Logf("[7] %s retrieveUserQuotaSummary response unavailable; cannot show the platform windows", hosts[0])
 	}
 
 	t.Logf("capture finished at %s; requests used %d/%d", formatCaptureInstant(time.Now()), s.count, maxCaptureRequests)

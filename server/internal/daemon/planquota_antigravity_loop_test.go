@@ -53,7 +53,7 @@ func TestAntigravityCollectorLoopRefreshesHeartbeatsWithoutTasks(t *testing.T) {
 			if round == 3 && (r.Header.Get("Authorization") != "Bearer ya29.refreshed" || r.Header.Get("User-Agent") != "antigravity-cli/1.2.17") {
 				t.Error("collector did not reload refreshed token and discovered version")
 			}
-			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"buckets":[{"modelId":"gemini-pro","remainingFraction":0.4}]}`))}, nil
+			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.4,"resetTime":"2031-01-01T00:00:00Z"}]}]}`))}, nil
 		})
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -103,7 +103,7 @@ func TestAntigravityCollectorLoopBacksOffRateLimits(t *testing.T) {
 			if round == 1 {
 				status = http.StatusTooManyRequests
 			}
-			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"buckets":[{"modelId":"gemini-pro","remainingFraction":1}]}`))}, nil
+			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":1}]}]}`))}, nil
 		})
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()

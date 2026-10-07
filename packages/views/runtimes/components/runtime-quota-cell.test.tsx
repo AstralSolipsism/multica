@@ -131,3 +131,57 @@ describe("MiniMeterBar", () => {
     expect(indicator?.className).not.toContain(TONE_BAR_CLASS.ok);
   });
 });
+
+describe("fully replenished windows (OL-141 four-window shape)", () => {
+  function fourWindowRuntime(): AgentRuntime {
+    const runtime = quotaRuntime();
+    runtime.plan_quota!.status = "limited";
+    runtime.plan_quota!.windows = [
+      { name: "gemini_5h", group: "gemini", used_percent: 1, window_minutes: 300, resets_at: NOW_SEC + 5 * 3600 },
+      { name: "gemini_weekly", group: "gemini", used_percent: 20, window_minutes: 10080, resets_at: NOW_SEC + 3600 },
+      // Fully replenished: no reset time, so no countdown and never the
+      // "reset, awaiting refresh" state.
+      { name: "claude_gpt_5h", group: "claude_gpt", used_percent: 0, window_minutes: 300, resets_at: null },
+      { name: "claude_gpt_weekly", group: "claude_gpt", used_percent: 100, window_minutes: 10080, resets_at: NOW_SEC + 3 * 24 * 3600 },
+    ];
+    return runtime;
+  }
+
+  it("renders all four pool windows in the list cell with one soonest countdown", () => {
+    renderWithI18n(<RuntimeQuotaCell runtime={fourWindowRuntime()} now={NOW} />);
+    expect(screen.getByText("Gemini")).toBeInTheDocument();
+    expect(screen.getByText("Claude + GPT")).toBeInTheDocument();
+    expect(screen.getAllByText("5h")).toHaveLength(2);
+    expect(screen.getAllByText("wk")).toHaveLength(2);
+    expect(screen.queryByText("Reset, awaiting refresh")).not.toBeInTheDocument();
+    // Only the view-level soonest reset line exists; the replenished window
+    // contributes no countdown of its own.
+    expect(screen.getAllByText(/resets at /)).toHaveLength(1);
+    expect(screen.getByText("100%")).toBeInTheDocument();
+    expect(screen.getAllByRole("progressbar")).toHaveLength(4);
+  });
+
+  it("renders per-window countdowns in the settings card, none for the replenished window", () => {
+    renderWithI18n(<RuntimeQuotaCard runtime={fourWindowRuntime()} now={NOW} />);
+    expect(screen.getByText("Gemini")).toBeInTheDocument();
+    expect(screen.getByText("Claude + GPT")).toBeInTheDocument();
+    expect(screen.queryByText("Reset, awaiting refresh")).not.toBeInTheDocument();
+    expect(screen.getAllByText(/resets at /)).toHaveLength(3);
+    expect(screen.getByText("100% left")).toBeInTheDocument();
+    expect(screen.getAllByRole("progressbar")).toHaveLength(4);
+  });
+
+  it("lists every window in the machine chip tooltip and keeps the chip on the exhausted pool", async () => {
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    const machine = buildRuntimeMachines([fourWindowRuntime()], { now: NOW })[0]!;
+    renderWithI18n(<MachineQuotaChips machine={machine} now={NOW} />);
+    await userEvent.hover(screen.getByLabelText(/: Rate limited$/, { selector: '[data-slot="tooltip-trigger"]' }));
+    const tooltip = (await screen.findByText("Gemini · 5h")).closest<HTMLElement>('[data-slot="tooltip-content"]');
+    for (const row of ["Gemini · 5h", "Gemini · wk", "Claude + GPT · 5h", "Claude + GPT · wk"]) {
+      expect(within(tooltip!).getByText(row)).toBeInTheDocument();
+    }
+    expect(tooltip).toHaveTextContent("100%");
+    expect(within(tooltip!).getAllByText(/resets at /)).toHaveLength(3);
+    expect(tooltip).not.toHaveTextContent("Reset, awaiting refresh");
+  });
+});

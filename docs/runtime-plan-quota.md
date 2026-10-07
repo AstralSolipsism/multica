@@ -83,49 +83,52 @@ response formats are present; wallet balances never enter the snapshot.
 
 ## Antigravity
 
-The daemon polls `POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota`
-with the exact JSON body `{}` and `User-Agent: antigravity-cli/<detected version>`.
-This is an internal Google API, verified with agy 1.2.16 in OL-108; future CLI
-upgrades need a live check. The snapshot contains one row per known pool:
+The daemon polls `POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`
+with the exact JSON body `{}` (no project id required) and
+`User-Agent: antigravity-cli/<detected version>`. This is the internal Google
+API the Antigravity client's own usage page reads; it was verified live
+against agy 1.3.0 in OL-141 on both `cloudcode-pa` and `daily-cloudcode-pa`
+(identical answers, so the daemon keeps `cloudcode-pa`). The response lists
+quota pools under `groups[]`, one bucket per pool and window:
 
-- Gemini: minimum `remainingFraction` across `gemini-*` models.
-- Claude + GPT: minimum across `claude-*` and `gpt-*` models.
+| Response field | Maps to |
+|---|---|
+| `groups[].buckets[].bucketId` — `gemini-5h`, `gemini-weekly`, `3p-5h`, `3p-weekly` | `Group`: `gemini-*` → `gemini`, `3p-*` → `claude_gpt`; `Name`: `<group>_5h` / `<group>_weekly`; other pools are skipped |
+| `groups[].buckets[].window` — `"5h"` or `"weekly"` | `WindowMinutes`: 300 / 10080; unrecognized or missing values keep the window without a duration — never inferred |
+| `groups[].buckets[].remainingFraction` | `UsedPercent = (1 - fraction) × 100`, two decimals |
+| `groups[].buckets[].resetTime` — RFC3339, fractional seconds tolerated | `ResetsAt`; dropped when the fraction is 1.0 |
 
-Each pool uses the earliest valid `resetTime` among its usable buckets. Without
-a valid reset, both the reset timestamp and window duration remain absent.
-The current [retrieveUserQuota bucket contract](https://github.com/google-gemini/gemini-cli/blob/fb972b2f87fe7d5b06d37eac711490162d98de2c/packages/core/src/code_assist/types.ts#L255-L265)
-has no explicit window kind or duration (`tokenType` identifies the metered
-resource). Until that metadata is available, a positive reset within six hours
-of `observed_at` is labeled 5h
-(300 minutes); a later reset is labeled weekly (10080 minutes). This heuristic
-can misclassify a weekly window in its final six hours, or quotas with other
-periods. Reset timestamps are preserved even when no duration can be inferred.
+Every recognized bucket maps to exactly one window: no aggregation across
+buckets and no period inference (the pre-OL-141 six-hour-distance heuristic is
+gone). A fully replenished window (fraction 1.0) reports a rolling `resetTime`
+of "now + period" that advances on every collection, so its reset timestamp is
+dropped — the UI shows no countdown and never an awaiting-refresh state for it.
+A bucket with fraction 0 marks the snapshot limited. A bucket the API flags
+`disabled` (the 5-hour limit does not apply while the weekly pool is
+exhausted) passes through verbatim: full fraction, no reset, unchanged period.
 
-Fractions are converted to used percentages; an exhausted model marks the
-snapshot limited. Missing/invalid fractions and unknown model families are
-omitted. A response without usable buckets fails collection and preserves the
-last successful observation.
+Malformed JSON, a known-pool bucket without a valid fraction, duplicate
+windows, or a response without any known pool fails the whole round
+(fail-closed): the platform keeps the last successful observation and
+`/health` shows `collection_failed`. The legacy per-model
+`retrieveUserQuota` endpoint is no longer queried and is never used as a
+fallback.
 
 The access token is read on every round from
 `~/.gemini/antigravity-cli/antigravity-oauth-token`: its `token` object contains
-an `access_token` string (`{"token":{"access_token":"…"}}`). agy owns token
-refresh; keep the existing `agy remote-control` watchdog active and signed in. The collector does
-not start tasks, refresh credentials or probe local RPC listeners. It sends the
-token only to Google's endpoint and refuses redirects. Neither token nor account
-metadata appears in heartbeat payloads or diagnostics.
+an `access_token` string (`{"token":{"access_token":"…"}}`); the location was
+reverified unchanged on agy 1.3.0. agy owns token refresh; keep the existing
+`agy remote-control` watchdog active and signed in. The collector does not
+start tasks, refresh credentials or probe local RPC listeners. It sends the
+token only to Google's endpoint and refuses redirects. Neither token nor
+account metadata appears in heartbeat payloads or diagnostics.
 
 One account request feeds all registered local Antigravity runtimes every two
 minutes (with startup jitter), including idle machines. HTTP 429 backs off up to
 30 minutes. Failures keep the actual last observation time. `/health` reports
 `oauth_token_unavailable`, `authorization_rejected`, `rate_limited`,
-`collection_failed`, `not_registered` or `no_version`; success clears the reason.
-
-After deploying the daemon build, verify the Kimi cards on main and agent-2 and
-the Antigravity card on GCP show an `observed_at` less than five minutes old during
-normal successful polling. Collector smoke tests below verify data acquisition
-only; UI acceptance also requires the updated daemon's heartbeat to reach the
-server. Rolling back the daemon build restores the prior collectors and their
-known incompatibility with these CLI versions; no data migration is involved.
+`collection_failed`, `not_registered` or `no_version`; success clears the
+reason.
 
 ## Zhipu / GLM
 

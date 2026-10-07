@@ -328,3 +328,34 @@ describe("isQuotaWindowAwaitingRefresh", () => {
     expect(worstQuotaWindow(quota, NOW_SEC)?.name).toBe("future");
   });
 });
+
+describe("fully replenished windows (OL-141 four-window shape)", () => {
+  // Shape emitted by the antigravity summary collector: one window per pool
+  // and period, where a fully replenished window carries no reset time (the
+  // rolling "now + period" the API reports would never hold still).
+  const fourWindows: RuntimePlanQuotaWindow[] = [
+    { name: "gemini_5h", used_percent: 1, window_minutes: 300, resets_at: NOW_SEC + 5 * 3600, group: "gemini" },
+    { name: "gemini_weekly", used_percent: 20, window_minutes: 10080, resets_at: NOW_SEC + 3600, group: "gemini" },
+    { name: "claude_gpt_5h", used_percent: 0, window_minutes: 300, resets_at: null, group: "claude_gpt" },
+    { name: "claude_gpt_weekly", used_percent: 100, window_minutes: 10080, resets_at: NOW_SEC + 3 * 24 * 3600, group: "claude_gpt" },
+  ];
+
+  it("keeps a fully replenished window active without inventing a reset", () => {
+    const quota = parsePlanQuota(makeQuota({ provider: "antigravity", status: "limited", windows: fourWindows }))!;
+    const replenished = quota.windows.find((window) => window.name === "claude_gpt_5h")!;
+    expect(isQuotaWindowAwaitingRefresh(replenished, NOW_SEC)).toBe(false);
+    expect(activeQuotaWindows(quota, NOW_SEC)).toHaveLength(4);
+  });
+
+  it("ranks the exhausted weekly window as worst, not the replenished 5h", () => {
+    const quota = parsePlanQuota(makeQuota({ provider: "antigravity", status: "limited", windows: fourWindows }))!;
+    expect(worstQuotaWindow(quota, NOW_SEC)?.name).toBe("claude_gpt_weekly");
+  });
+
+  it("groups both pools with 5h and weekly windows side by side", () => {
+    const groups = groupQuotaWindows(fourWindows);
+    expect(groups.map((entry) => entry.group)).toEqual(["gemini", "claude_gpt"]);
+    expect(groups[0]?.windows.map((window) => window.name)).toEqual(["gemini_5h", "gemini_weekly"]);
+    expect(groups[1]?.windows.map((window) => window.name)).toEqual(["claude_gpt_5h", "claude_gpt_weekly"]);
+  });
+});
