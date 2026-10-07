@@ -7,9 +7,10 @@ an estimate of money remaining. Runtimes sharing an account share its limits.
 
 The server and daemon share `protocol.ValidateRuntimePlanQuota`. A window needs
 a name (up to 32 bytes) or a nonblank group (up to 32 bytes). This accepts the
-unnamed grouped snapshots sent by deployed Antigravity daemons over both HTTP
-and WebSocket heartbeats. New Antigravity snapshots set both name and group to
-the pool ID so older servers also accept them.
+unnamed grouped snapshots sent by already-deployed Antigravity daemons over
+both HTTP and WebSocket heartbeats. New Antigravity snapshots name each window
+`<pool>_5h` / `<pool>_weekly` and set group to the pool ID; the non-empty name
+keeps older servers accepting them.
 
 Invalid heartbeat snapshots leave the last stored quota untouched. Every drop
 increments `multica_runtime_plan_quota_dropped_total{provider}`; warnings include
@@ -94,7 +95,7 @@ quota pools under `groups[]`, one bucket per pool and window:
 | Response field | Maps to |
 |---|---|
 | `groups[].buckets[].bucketId` — `gemini-5h`, `gemini-weekly`, `3p-5h`, `3p-weekly` | `Group`: `gemini-*` → `gemini`, `3p-*` → `claude_gpt`; `Name`: `<group>_5h` / `<group>_weekly`; other pools are skipped |
-| `groups[].buckets[].window` — `"5h"` or `"weekly"` | `WindowMinutes`: 300 / 10080; unrecognized or missing values keep the window without a duration — never inferred |
+| `groups[].buckets[].window` — `"5h"` or `"weekly"` | `WindowMinutes`: 300 / 10080; unrecognized or missing values keep the window without a duration and name it by the raw `bucketId` — never inferred |
 | `groups[].buckets[].remainingFraction` | `UsedPercent = (1 - fraction) × 100`, two decimals |
 | `groups[].buckets[].resetTime` — RFC3339, fractional seconds tolerated | `ResetsAt`; dropped when the fraction is 1.0 |
 
@@ -108,11 +109,13 @@ A bucket with fraction 0 marks the snapshot limited. A bucket the API flags
 exhausted) passes through verbatim: full fraction, no reset, unchanged period.
 
 Malformed JSON, a known-pool bucket without a valid fraction, duplicate
-windows, or a response without any known pool fails the whole round
+windows, a result that fails the shared wire contract (e.g. an oversized
+window name), or a response without any known pool fails the whole round
 (fail-closed): the platform keeps the last successful observation and
-`/health` shows `collection_failed`. The legacy per-model
-`retrieveUserQuota` endpoint is no longer queried and is never used as a
-fallback.
+`/health` shows `collection_failed`. A missing or unparsable `resetTime` on
+an otherwise valid bucket is tolerated — the window simply carries no
+countdown. The legacy per-model `retrieveUserQuota` endpoint is no longer
+queried and is never used as a fallback.
 
 The access token is read on every round from
 `~/.gemini/antigravity-cli/antigravity-oauth-token`: its `token` object contains
@@ -129,6 +132,16 @@ minutes (with startup jitter), including idle machines. HTTP 429 backs off up to
 `oauth_token_unavailable`, `authorization_rejected`, `rate_limited`,
 `collection_failed`, `not_registered` or `no_version`; success clears the
 reason.
+
+This is an internal Google API; future CLI upgrades need a live check — the
+capture test below exercises the same endpoints against the signed-in account.
+After deploying the daemon build, verify the Kimi cards on main and agent-2
+and the Antigravity card on GCP show an `observed_at` less than five minutes
+old during normal successful polling; that check is OL-141 acceptance 7 and
+completes OL-113's deployment acceptance. Collector smoke tests below verify
+data acquisition only; UI acceptance also requires the updated daemon's
+heartbeat to reach the server. Rolling back the daemon build restores the
+per-model endpoint and the six-hour inference; no data migration is involved.
 
 ## Zhipu / GLM
 

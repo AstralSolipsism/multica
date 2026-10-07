@@ -272,6 +272,7 @@ func TestAntigravityQuotaSummaryLiveSkeletonMapping(t *testing.T) {
 func TestAntigravityQuotaSummaryParsing(t *testing.T) {
 	const unknownPool = `{"groups":[{"buckets":[
 		{"bucketId":"future-pool-5h","window":"5h","remainingFraction":0.5},
+		{"bucketId":"not-gemini-5h","window":"5h","remainingFraction":0.5},
 		{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.5,"resetTime":"2031-02-03T04:05:06Z"}]}]}`
 	for _, tc := range []struct {
 		name   string
@@ -324,6 +325,13 @@ func TestAntigravityQuotaSummaryParsing(t *testing.T) {
 				t.Fatalf("quota = %+v", quota)
 			}
 		}},
+		{"small nonzero fractions stay ok", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.0001,"resetTime":"2031-02-03T04:05:06Z"},{"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.5,"resetTime":"2031-02-06T04:05:06Z"}]}]}`, func(t *testing.T, quota *protocol.RuntimePlanQuota) {
+			// Only an exactly-zero fraction is limited; a nearly exhausted
+			// pool must not paint the whole snapshot red.
+			if quota.Status != protocol.PlanQuotaStatusOK {
+				t.Fatalf("status = %s, want ok", quota.Status)
+			}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			quota, err := parseAntigravityQuotaSummary(strings.NewReader(tc.body), time.Unix(1791050400, 0))
@@ -350,6 +358,9 @@ func TestAntigravityQuotaSummaryRejectsDrift(t *testing.T) {
 		{"no groups", `{"groups":[]}`},
 		{"only unknown pools", `{"groups":[{"buckets":[{"bucketId":"future-pool-5h","window":"5h","remainingFraction":0.5}]}]}`},
 		{"duplicate window", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.5},{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.4}]}]}`},
+		{"known pool with one fraction-less bucket", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.5},{"bucketId":"gemini-weekly","window":"weekly"}]}]}`},
+		{"known pool with one out-of-range fraction", `{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":2},{"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.5}]}]}`},
+		{"oversized unknown-window name fails the wire contract", `{"groups":[{"buckets":[{"bucketId":"gemini-` + strings.Repeat("x", 40) + `","window":"monthly","remainingFraction":0.5}]}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			quota, err := parseAntigravityQuotaSummary(strings.NewReader(tc.body), time.Unix(1791050400, 0))
@@ -360,6 +371,16 @@ func TestAntigravityQuotaSummaryRejectsDrift(t *testing.T) {
 				t.Fatalf("error = %v, want a shape diagnostic", err)
 			}
 		})
+	}
+}
+
+// The production endpoint is the pool-based summary API this collector is
+// built for; reverting to the legacy per-model endpoint would otherwise pass
+// every unit test.
+func TestAntigravityQuotaEndpointIsSummary(t *testing.T) {
+	const want = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+	if got := newAntigravityPlanQuotaCollector("").endpoint; got != want {
+		t.Fatalf("endpoint = %q, want %q", got, want)
 	}
 }
 

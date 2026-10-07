@@ -118,22 +118,17 @@ func (c *antigravityPlanQuotaCollector) collect(ctx context.Context, version str
 
 // The summary endpoint reports one bucket per quota pool and window type
 // (OL-141 live capture against agy 1.3.0, matching the Antigravity client's
-// own usage page): bucketId names pool and period (gemini-5h, gemini-weekly,
-// 3p-5h, 3p-weekly), window states the period explicitly, and each bucket
-// carries its own remainingFraction and resetTime. Every recognized bucket
-// maps to exactly one window — no aggregation across buckets, no period
-// inference. Unknown pools are skipped; anything malformed inside a known
-// pool fails the whole round (fail-closed) so the platform keeps the last
-// snapshot instead of half-fresh data.
+// own usage page). Every recognized bucket maps to exactly one window — no
+// aggregation across buckets, no period inference. Unknown pools are skipped.
+// A known pool with an invalid remaining fraction, a duplicate window name,
+// or a result that fails the shared wire contract fails the whole round
+// (fail-closed) so the platform keeps the last snapshot. A missing or
+// unparsable resetTime on an otherwise valid bucket is deliberately
+// tolerated: the window simply carries no countdown.
 func parseAntigravityQuotaSummary(body io.Reader, observedAt time.Time) (*protocol.RuntimePlanQuota, error) {
 	var response struct {
 		Groups []struct {
-			Buckets []struct {
-				BucketID          string   `json:"bucketId"`
-				Window            string   `json:"window"`
-				RemainingFraction *float64 `json:"remainingFraction"`
-				ResetTime         string   `json:"resetTime"`
-			} `json:"buckets"`
+			Buckets []antigravitySummaryBucket `json:"buckets"`
 		} `json:"groups"`
 	}
 	if err := json.NewDecoder(body).Decode(&response); err != nil {
@@ -148,53 +143,21 @@ func parseAntigravityQuotaSummary(body io.Reader, observedAt time.Time) (*protoc
 	seen := make(map[string]bool)
 	for _, group := range response.Groups {
 		for _, bucket := range group.Buckets {
-			var pool string
-			switch {
-			case strings.HasPrefix(bucket.BucketID, "gemini-"):
-				pool = "gemini"
-			case strings.HasPrefix(bucket.BucketID, "3p-"):
-				pool = "claude_gpt"
-			default:
+			window, err := antigravityBucketWindow(bucket)
+			if err != nil {
+				return nil, err
+			}
+			if window == nil {
 				continue
-			}
-			if bucket.RemainingFraction == nil || !(*bucket.RemainingFraction >= 0 && *bucket.RemainingFraction <= 1) {
-				return nil, fmt.Errorf("%w: bucket %q lacks a valid remaining fraction", errAntigravityQuotaShape, bucket.BucketID)
-			}
-			window := protocol.RuntimePlanQuotaWindow{Group: pool}
-			switch bucket.Window {
-			case "5h":
-				window.Name = pool + "_5h"
-				minutes := int64(300)
-				window.WindowMinutes = &minutes
-			case "weekly":
-				window.Name = pool + "_weekly"
-				minutes := int64(10080)
-				window.WindowMinutes = &minutes
-			default:
-				// Unrecognized or missing period: keep the bucket
-				// identifiable via its raw id, never guess a length.
-				window.Name = bucket.BucketID
-			}
-			used := math.Round((1-*bucket.RemainingFraction)*10000) / 100
-			window.UsedPercent = &used
-			// A fully replenished window reports a rolling "now + period"
-			// reset that advances on every collection, so it carries no
-			// countdown; anything the provider does disclose is parsed with
-			// fractional-second tolerance and passed through verbatim.
-			if *bucket.RemainingFraction < 1 {
-				if reset, err := time.Parse(time.RFC3339Nano, bucket.ResetTime); err == nil {
-					unix := reset.Unix()
-					window.ResetsAt = &unix
-				}
 			}
 			if seen[window.Name] {
 				return nil, fmt.Errorf("%w: duplicate window %q", errAntigravityQuotaShape, window.Name)
 			}
 			seen[window.Name] = true
-			if *bucket.RemainingFraction == 0 {
+			if bucket.RemainingFraction != nil && *bucket.RemainingFraction == 0 {
 				quota.Status = protocol.PlanQuotaStatusLimited
 			}
-			quota.Windows = append(quota.Windows, window)
+			quota.Windows = append(quota.Windows, *window)
 		}
 	}
 	if len(quota.Windows) == 0 {
@@ -209,19 +172,80 @@ func parseAntigravityQuotaSummary(body io.Reader, observedAt time.Time) (*protoc
 		}
 		return quota.Windows[i].Name < quota.Windows[j].Name
 	})
+	// Gate the result through the shared wire contract before returning:
+	// drift the parser itself tolerates (e.g. an oversized legacy bucketId
+	// used as a window name) must fail this round here, otherwise the
+	// snapshot would be silently dropped downstream while /health records
+	// a success.
+	if err := protocol.ValidateRuntimePlanQuota(quota, observedAt); err != nil {
+		return nil, fmt.Errorf("%w: %v", errAntigravityQuotaShape, err)
+	}
 	return quota, nil
 }
 
+type antigravitySummaryBucket struct {
+	BucketID          string   `json:"bucketId"`
+	Window            string   `json:"window"`
+	RemainingFraction *float64 `json:"remainingFraction"`
+	ResetTime         string   `json:"resetTime"`
+}
+
+// antigravityBucketWindow maps one summary bucket to its window. A nil window
+// without error means the bucket belongs to no known pool and is skipped.
+func antigravityBucketWindow(bucket antigravitySummaryBucket) (*protocol.RuntimePlanQuotaWindow, error) {
+	var pool string
+	switch {
+	case strings.HasPrefix(bucket.BucketID, "gemini-"):
+		pool = "gemini"
+	case strings.HasPrefix(bucket.BucketID, "3p-"):
+		pool = "claude_gpt"
+	default:
+		return nil, nil
+	}
+	if bucket.RemainingFraction == nil || !(*bucket.RemainingFraction >= 0 && *bucket.RemainingFraction <= 1) {
+		return nil, fmt.Errorf("%w: bucket %q lacks a valid remaining fraction", errAntigravityQuotaShape, bucket.BucketID)
+	}
+	window := &protocol.RuntimePlanQuotaWindow{Group: pool}
+	switch bucket.Window {
+	case "5h":
+		window.Name = pool + "_5h"
+		minutes := int64(300)
+		window.WindowMinutes = &minutes
+	case "weekly":
+		window.Name = pool + "_weekly"
+		minutes := int64(10080)
+		window.WindowMinutes = &minutes
+	default:
+		// Unrecognized or missing period: keep the bucket identifiable via
+		// its raw id, never guess a length.
+		window.Name = bucket.BucketID
+	}
+	used := math.Round((1-*bucket.RemainingFraction)*10000) / 100
+	window.UsedPercent = &used
+	// A fully replenished window reports a rolling "now + period" reset
+	// that advances on every collection, so it carries no countdown;
+	// anything the provider does disclose is parsed with fractional-second
+	// tolerance and passed through verbatim.
+	if *bucket.RemainingFraction < 1 {
+		if reset, err := time.Parse(time.RFC3339Nano, bucket.ResetTime); err == nil {
+			unix := reset.Unix()
+			window.ResetsAt = &unix
+		}
+	}
+	return window, nil
+}
+
+// Known windows order pool-then-period; anything unrecognized trails.
 func antigravityWindowRank(window protocol.RuntimePlanQuotaWindow) int {
-	switch window.Name {
-	case "gemini_5h":
-		return 0
-	case "gemini_weekly":
-		return 1
-	case "claude_gpt_5h":
-		return 2
-	case "claude_gpt_weekly":
-		return 3
+	pool, known := map[string]int{"gemini": 0, "claude_gpt": 1}[window.Group]
+	if !known {
+		return 4
+	}
+	switch strings.TrimPrefix(window.Name, window.Group+"_") {
+	case "5h":
+		return pool * 2
+	case "weekly":
+		return pool*2 + 1
 	default:
 		return 4
 	}

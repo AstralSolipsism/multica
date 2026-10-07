@@ -285,8 +285,9 @@ func captureSummaryAllow(key string) bool {
 	case "bucketid", "displayname", "remainingfraction", "resettime", "description", "type", "kind", "group", "groupname":
 		return true
 	}
-	// The window-type field name is not confirmed yet, so accept anything
-	// window- or group-shaped; values there are quota metadata, not secrets.
+	// The window-type field is `window` ("5h"/"weekly", confirmed by the
+	// OL-141 capture); still accept anything window- or group-shaped so a
+	// renamed field shows up in the structure dump.
 	return captureWindowKeyRE.MatchString(key) || captureGroupKeyRE.MatchString(key)
 }
 
