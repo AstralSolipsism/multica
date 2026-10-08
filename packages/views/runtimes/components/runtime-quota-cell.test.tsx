@@ -1,108 +1,245 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { SupportedLocale } from "@multica/core/i18n";
 import type { AgentRuntime } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { buildRuntimeMachines } from "./runtime-machines";
 import { MachineQuotaChips } from "./machine-quota-chips";
+import { formatQuotaTime } from "./quota-time";
 import { MiniMeterBar, RuntimeQuotaCard, RuntimeQuotaCell, TONE_BAR_CLASS } from "./runtime-quota-cell";
+
+const viewer = vi.hoisted(() => ({ timezone: "Asia/Shanghai" as string | null }));
+
+vi.mock("@multica/core/auth", () => {
+  type AuthState = { user: { timezone: string | null } };
+  const state = (): AuthState => ({ user: { timezone: viewer.timezone } });
+  const useAuthStore = Object.assign(
+    (sel: (s: AuthState) => unknown) => sel(state()),
+    { getState: state },
+  );
+  return { useAuthStore };
+});
 
 const NOW_SEC = 1_800_000_000;
 const NOW = NOW_SEC * 1000;
+const HOUR = 3600;
+const DAY = 24 * HOUR;
 
+function at(sec: number, locale = "en", timeZone = "Asia/Shanghai") {
+  return formatQuotaTime(sec, NOW, timeZone, locale);
+}
+
+beforeEach(() => {
+  viewer.timezone = "Asia/Shanghai";
+});
 afterEach(() => vi.restoreAllMocks());
 
-function quotaRuntime(allReset = false): AgentRuntime {
+function quotaRuntime(provider: string, quota: Record<string, unknown>): AgentRuntime {
+  const title = provider[0]!.toUpperCase() + provider.slice(1);
   return {
-    id: "runtime-1", workspace_id: "workspace-1", daemon_id: "daemon-1",
-    name: "Antigravity (dev.local)", provider: "antigravity", runtime_mode: "local",
+    id: `runtime-${provider}`, workspace_id: "workspace-1", daemon_id: "daemon-1",
+    name: `${title} (dev.local)`, provider, runtime_mode: "local",
     status: "online", owner_id: "user-1", visibility: "private", device_info: "",
     metadata: {}, launch_header: "", last_seen_at: new Date(NOW).toISOString(),
     created_at: new Date(NOW).toISOString(), updated_at: new Date(NOW).toISOString(),
     plan_quota: {
-      provider: "antigravity", status: "limited", source: "daemon", observed_at: NOW_SEC - 60,
-      windows: [
-        { name: "", group: "gemini", used_percent: 100, window_minutes: 300, resets_at: NOW_SEC },
-        { name: "", group: "claude_gpt", used_percent: 25, window_minutes: 10080, resets_at: allReset ? NOW_SEC - 1 : NOW_SEC + 86400 },
-      ],
-    },
+      provider, status: "ok", source: "daemon", observed_at: NOW_SEC - 60, windows: [],
+      ...quota,
+    } as AgentRuntime["plan_quota"],
   };
 }
 
-describe("quota displays after reset", () => {
-  it.each([RuntimeQuotaCell, RuntimeQuotaCard])("keeps both groups and hides the reset balance in %s", (Component) => {
-    renderWithI18n(<Component runtime={quotaRuntime()} now={NOW} />);
+// Live 10-08 shapes, shifted onto NOW.
+function antigravityRuntime(): AgentRuntime {
+  return quotaRuntime("antigravity", {
+    status: "limited",
+    windows: [
+      { name: "gemini_5h", group: "gemini", used_percent: 0, window_minutes: 300, resets_at: null },
+      { name: "gemini_weekly", group: "gemini", used_percent: 0, window_minutes: 10080, resets_at: null },
+      { name: "claude_gpt_5h", group: "claude_gpt", used_percent: 0, window_minutes: 300, resets_at: null },
+      { name: "claude_gpt_weekly", group: "claude_gpt", used_percent: 100, window_minutes: 10080, resets_at: NOW_SEC + 2 * DAY },
+    ],
+  });
+}
+
+function claudeRuntime(): AgentRuntime {
+  return quotaRuntime("claude", {
+    observed_at: NOW_SEC - 4 * HOUR,
+    windows: [
+      { name: "five_hour", used_percent: 1, window_minutes: 300, resets_at: NOW_SEC - HOUR },
+      { name: "seven_day", used_percent: 14, window_minutes: 10080, resets_at: NOW_SEC + 4 * DAY },
+    ],
+  });
+}
+
+function kimiRuntime(): AgentRuntime {
+  return quotaRuntime("kimi", {
+    observed_at: NOW_SEC - 30 * HOUR,
+    windows: [
+      { name: "primary", used_percent: 0, window_minutes: 300, resets_at: NOW_SEC - 25 * HOUR },
+      { name: "secondary", used_percent: 20, window_minutes: 10080, resets_at: NOW_SEC + 3 * DAY },
+    ],
+  });
+}
+
+function renderChips(runtime: AgentRuntime, locale: SupportedLocale = "en") {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  const machine = buildRuntimeMachines([runtime], { now: NOW })[0]!;
+  return renderWithI18n(<MachineQuotaChips machine={machine} now={NOW} />, { locale });
+}
+
+function chipTrigger(label: RegExp) {
+  return screen.getByLabelText(label, { selector: '[data-slot="tooltip-trigger"]' });
+}
+
+describe("a used-up pool next to an untouched one (antigravity)", () => {
+  it("limits only that pool in the list cell", () => {
+    renderWithI18n(<RuntimeQuotaCell runtime={antigravityRuntime()} now={NOW} />);
     expect(screen.getByText("Gemini")).toBeInTheDocument();
     expect(screen.getByText("Claude + GPT")).toBeInTheDocument();
-    expect(screen.getByText("Reset, awaiting refresh")).toBeInTheDocument();
-    expect(screen.queryByText(/^0%/)).not.toBeInTheDocument();
-    expect(screen.getAllByRole("progressbar")).toHaveLength(1);
-    expect(screen.getByText(/75%/)).toBeInTheDocument();
+    const full = screen.getAllByText("100%");
+    expect(full).toHaveLength(2);
+    for (const value of full) expect(value).toHaveClass("text-success");
+    expect(screen.getByText("Not applicable now")).toBeInTheDocument();
+    expect(screen.getByText("0%")).toHaveClass("text-destructive");
+    expect(screen.getByText(`Rate limited · resets at ${at(NOW_SEC + 2 * DAY)}`)).toBeInTheDocument();
+    expect(screen.getAllByRole("progressbar")).toHaveLength(3);
   });
 
-  it.each([RuntimeQuotaCell, RuntimeQuotaCard])("does not call a fully reset snapshot unreported or exhausted in %s", (Component) => {
-    renderWithI18n(<Component runtime={quotaRuntime(true)} now={NOW} />);
-    expect(screen.getAllByText("Reset, awaiting refresh")).toHaveLength(2);
-    expect(screen.queryByText("Not reported")).not.toBeInTheDocument();
-    expect(screen.queryByText("Rate limited")).not.toBeInTheDocument();
-    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  it("states the recovery in the settings card and sets the 5h window aside", () => {
+    renderWithI18n(<RuntimeQuotaCard runtime={antigravityRuntime()} now={NOW} />);
+    expect(screen.getAllByText("100% left")).toHaveLength(2);
+    expect(screen.getByText("Not applicable now")).toBeInTheDocument();
+    expect(screen.getByText("0% left")).toBeInTheDocument();
+    expect(screen.getByText(`Rate limited · resets at ${at(NOW_SEC + 2 * DAY)}`)).toBeInTheDocument();
+    expect(screen.getByText(`resets at ${at(NOW_SEC + 2 * DAY)}`)).toBeInTheDocument();
+    expect(screen.getByText("updated 1m ago")).toBeInTheDocument();
   });
 
-  it("shows a collector snapshot as stale after an hour", () => {
-    renderWithI18n(<RuntimeQuotaCell runtime={quotaRuntime()} now={NOW + 3600 * 1000} />);
-    expect(screen.getByText("Stale data")).toBeInTheDocument();
-    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  it("gives each pool its own machine chip and tooltip rows", async () => {
+    renderChips(antigravityRuntime());
+    expect(chipTrigger(/ · Gemini: 100% left$/)).toHaveClass("text-success");
+    const limited = chipTrigger(/ · Claude \+ GPT: Rate limited$/);
+    await userEvent.hover(limited);
+    const tooltip = (await screen.findByText("Claude + GPT · 5h")).closest<HTMLElement>('[data-slot="tooltip-content"]')!;
+    const rows = within(tooltip);
+    expect(rows.getByText("Claude + GPT · 5h").parentElement).toHaveTextContent("Not applicable now");
+    expect(rows.getByText("Claude + GPT · wk").parentElement).toHaveTextContent(`0%resets at ${at(NOW_SEC + 2 * DAY)}`);
+    expect(rows.getByText("Gemini · wk").parentElement).toHaveTextContent("100%");
+  });
+});
+
+describe("a five-hour window past its reset (claude)", () => {
+  it("counts it as refilled and shows the weekly reset", () => {
+    renderWithI18n(<RuntimeQuotaCell runtime={claudeRuntime()} now={NOW} />);
+    expect(screen.getByText("100%")).toBeInTheDocument();
+    expect(screen.getByText("86%")).toBeInTheDocument();
+    expect(screen.getByText(`resets at ${at(NOW_SEC + 4 * DAY)}`)).toBeInTheDocument();
   });
 
+  it("notes when the window was refilled in the settings card", () => {
+    renderWithI18n(<RuntimeQuotaCard runtime={claudeRuntime()} now={NOW} />);
+    expect(screen.getByText("100% left")).toBeInTheDocument();
+    expect(screen.getByText(`reset at ${at(NOW_SEC - HOUR)}`)).toBeInTheDocument();
+    expect(screen.getByText("86% left")).toBeInTheDocument();
+    expect(screen.getByText(`resets at ${at(NOW_SEC + 4 * DAY)}`)).toBeInTheDocument();
+  });
+
+  it("puts the weekly balance on the machine chip", () => {
+    renderChips(claudeRuntime());
+    expect(chipTrigger(/: 86% left$/)).toHaveClass("text-success");
+  });
+});
+
+describe("an interrupted collector (kimi)", () => {
+  it("keeps the last balance uncolored and flags the interruption", () => {
+    renderWithI18n(<RuntimeQuotaCell runtime={kimiRuntime()} now={NOW} />);
+    expect(screen.getByText("80%")).toHaveClass("text-faint-foreground");
+    expect(screen.getByText(`Collection interrupted · last updated ${at(NOW_SEC - 30 * HOUR)}`)).toBeInTheDocument();
+  });
+
+  it("flags the machine chip and the settings card", () => {
+    renderChips(kimiRuntime());
+    expect(chipTrigger(/: 80% left · Collection interrupted$/)).toHaveClass("bg-muted");
+    renderWithI18n(<RuntimeQuotaCard runtime={kimiRuntime()} now={NOW} />);
+    expect(screen.getByText(`Collection interrupted · last updated ${at(NOW_SEC - 30 * HOUR)}`)).toBeInTheDocument();
+  });
+
+  it("never interrupts a task-reported snapshot that is merely old", () => {
+    renderWithI18n(
+      <RuntimeQuotaCell
+        runtime={quotaRuntime("codex", {
+          observed_at: NOW_SEC - 36 * HOUR,
+          windows: [{ name: "primary", used_percent: 59, window_minutes: 10080, resets_at: NOW_SEC + DAY }],
+        })}
+        now={NOW}
+      />,
+    );
+    expect(screen.getByText("41%")).toHaveClass("text-success");
+    expect(screen.queryByText(/Collection interrupted/)).not.toBeInTheDocument();
+  });
+});
+
+describe("reset times", () => {
+  it("follow the viewer's timezone preference", () => {
+    viewer.timezone = "America/New_York";
+    const { rerender } = renderWithI18n(<RuntimeQuotaCell runtime={claudeRuntime()} now={NOW} />);
+    const newYork = at(NOW_SEC + 4 * DAY, "en", "America/New_York");
+    expect(screen.getByText(`resets at ${newYork}`)).toBeInTheDocument();
+    viewer.timezone = "Asia/Shanghai";
+    rerender(<RuntimeQuotaCell runtime={claudeRuntime()} now={NOW} />);
+    expect(newYork).not.toBe(at(NOW_SEC + 4 * DAY));
+    expect(screen.getByText(`resets at ${at(NOW_SEC + 4 * DAY)}`)).toBeInTheDocument();
+  });
+
+  it("are never countdowns", () => {
+    renderWithI18n(<RuntimeQuotaCard runtime={claudeRuntime()} now={NOW} />);
+    expect(screen.queryByText(/resets at \d+h/)).not.toBeInTheDocument();
+  });
+});
+
+describe("translated states", () => {
   it.each([
-    ["zh-Hans", "已重置，等待刷新"],
-    ["ja", "リセット済み、更新待ち"],
-    ["ko", "초기화됨, 업데이트 대기 중"],
-    ["fr", "Réinitialisé, en attente de mise à jour"],
-  ] as const)("translates waiting state in %s", (locale, text) => {
-    renderWithI18n(<RuntimeQuotaCell runtime={quotaRuntime()} now={NOW} />, { locale });
-    expect(screen.getByText(text)).toBeInTheDocument();
+    ["zh-Hans", "暂不适用", `已限流 · ${at(NOW_SEC + 2 * DAY, "zh-Hans")} 重置`],
+    ["ja", "現在は適用外", `レート制限中 · ${at(NOW_SEC + 2 * DAY, "ja")} にリセット`],
+    ["ko", "현재 적용 안 됨", `속도 제한됨 · ${at(NOW_SEC + 2 * DAY, "ko")} 초기화`],
+    ["fr", "Ne s'applique pas pour l'instant", `Limite atteinte · réinitialisation : ${at(NOW_SEC + 2 * DAY, "fr")}`],
+  ] as const)("in %s", (locale, notApplicable, limited) => {
+    renderWithI18n(<RuntimeQuotaCell runtime={antigravityRuntime()} now={NOW} />, { locale });
+    expect(screen.getByText(notApplicable)).toBeInTheDocument();
+    expect(screen.getByText(limited)).toBeInTheDocument();
   });
 
-  it("keeps waiting and stale machine chips visible with matching accessible text", () => {
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    const runtime = quotaRuntime(true);
-    const machine = buildRuntimeMachines([runtime], { now: NOW })[0]!;
-    const { rerender } = renderWithI18n(<MachineQuotaChips machine={machine} now={NOW} />);
-    expect(screen.getByLabelText(/: Reset, awaiting refresh$/, { selector: '[data-slot="tooltip-trigger"]' })).toBeInTheDocument();
-    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
-    const later = NOW + 3600 * 1000;
-    rerender(<MachineQuotaChips machine={buildRuntimeMachines([runtime], { now: later })[0]!} now={later} />);
-    expect(screen.getByLabelText(/: Stale data$/, { selector: '[data-slot="tooltip-trigger"]' })).toBeInTheDocument();
+  it("reads the Chinese interruption and refill copy", () => {
+    renderWithI18n(<RuntimeQuotaCell runtime={kimiRuntime()} now={NOW} />, { locale: "zh-Hans" });
+    expect(screen.getByText(`采集中断 · 最后更新 ${at(NOW_SEC - 30 * HOUR, "zh-Hans")}`)).toBeInTheDocument();
+    renderWithI18n(<RuntimeQuotaCard runtime={claudeRuntime()} now={NOW} />, { locale: "zh-Hans" });
+    expect(screen.getByText(`已于 ${at(NOW_SEC - HOUR, "zh-Hans")} 重置`)).toBeInTheDocument();
+  });
+});
+
+describe("unmeasured windows", () => {
+  it("are unknown, or rate limited when the snapshot says so", () => {
+    const runtime = quotaRuntime("claude", {
+      windows: [{ name: "five_hour", used_percent: null, window_minutes: 300, resets_at: NOW_SEC + HOUR }],
+    });
+    const { unmount } = renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    expect(screen.getByText("Balance unknown")).toBeInTheDocument();
+    unmount();
+    runtime.plan_quota!.status = "limited";
+    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
+    expect(screen.getByText(`Rate limited · resets at ${at(NOW_SEC + HOUR)}`)).toBeInTheDocument();
+    expect(screen.getAllByText("Rate limited")).toHaveLength(1);
   });
 
-  it("keeps reset groups in the machine chip tooltip alongside current windows", async () => {
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    const machine = buildRuntimeMachines([quotaRuntime()], { now: NOW })[0]!;
-    renderWithI18n(<MachineQuotaChips machine={machine} now={NOW} />);
-    await userEvent.hover(screen.getByLabelText(/: Reset, awaiting refresh$/, { selector: '[data-slot="tooltip-trigger"]' }));
-    const tooltip = (await screen.findByText("Gemini · 5h")).closest('[data-slot="tooltip-content"]');
-    expect(tooltip).toHaveTextContent("Gemini");
-    expect(tooltip).toHaveTextContent("Claude + GPT");
-    expect(tooltip).toHaveTextContent("Reset, awaiting refresh");
-    expect(tooltip).toHaveTextContent("75%");
-  });
-
-  it("hides stale balances and reset countdowns in the machine chip tooltip", async () => {
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    const runtime = quotaRuntime();
-    runtime.plan_quota!.observed_at = NOW_SEC - 2 * 3600;
-    const machine = buildRuntimeMachines([runtime], { now: NOW })[0]!;
-    renderWithI18n(<MachineQuotaChips machine={machine} now={NOW} />);
-    await userEvent.hover(screen.getByLabelText(/: Stale data$/, { selector: '[data-slot="tooltip-trigger"]' }));
-    const tooltip = (await screen.findByText("Gemini · 5h")).closest<HTMLElement>('[data-slot="tooltip-content"]');
-    expect(tooltip).toHaveTextContent("Gemini");
-    expect(tooltip).toHaveTextContent("Claude + GPT");
-    expect(within(tooltip!).getAllByText("Stale data")).toHaveLength(2);
-    expect(tooltip).not.toHaveTextContent("%");
-    expect(tooltip).not.toHaveTextContent("resets at");
+  it("shows not reported without a snapshot", () => {
+    const runtime = quotaRuntime("claude", {});
+    runtime.plan_quota = null;
+    renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    expect(screen.getByText("Not reported")).toBeInTheDocument();
   });
 });
 
@@ -129,59 +266,5 @@ describe("MiniMeterBar", () => {
     const indicator = container.querySelector('[data-slot="progress-indicator"]');
     expect(indicator?.className).toContain("bg-muted-foreground/50");
     expect(indicator?.className).not.toContain(TONE_BAR_CLASS.ok);
-  });
-});
-
-describe("fully replenished windows (OL-141 four-window shape)", () => {
-  function fourWindowRuntime(): AgentRuntime {
-    const runtime = quotaRuntime();
-    runtime.plan_quota!.status = "limited";
-    runtime.plan_quota!.windows = [
-      { name: "gemini_5h", group: "gemini", used_percent: 1, window_minutes: 300, resets_at: NOW_SEC + 5 * 3600 },
-      { name: "gemini_weekly", group: "gemini", used_percent: 20, window_minutes: 10080, resets_at: NOW_SEC + 3600 },
-      // Fully replenished: no reset time, so no countdown and never the
-      // "reset, awaiting refresh" state.
-      { name: "claude_gpt_5h", group: "claude_gpt", used_percent: 0, window_minutes: 300, resets_at: null },
-      { name: "claude_gpt_weekly", group: "claude_gpt", used_percent: 100, window_minutes: 10080, resets_at: NOW_SEC + 3 * 24 * 3600 },
-    ];
-    return runtime;
-  }
-
-  it("renders all four pool windows in the list cell with one soonest countdown", () => {
-    renderWithI18n(<RuntimeQuotaCell runtime={fourWindowRuntime()} now={NOW} />);
-    expect(screen.getByText("Gemini")).toBeInTheDocument();
-    expect(screen.getByText("Claude + GPT")).toBeInTheDocument();
-    expect(screen.getAllByText("5h")).toHaveLength(2);
-    expect(screen.getAllByText("wk")).toHaveLength(2);
-    expect(screen.queryByText("Reset, awaiting refresh")).not.toBeInTheDocument();
-    // Only the view-level soonest reset line exists; the replenished window
-    // contributes no countdown of its own.
-    expect(screen.getAllByText(/resets at /)).toHaveLength(1);
-    expect(screen.getByText("100%")).toBeInTheDocument();
-    expect(screen.getAllByRole("progressbar")).toHaveLength(4);
-  });
-
-  it("renders per-window countdowns in the settings card, none for the replenished window", () => {
-    renderWithI18n(<RuntimeQuotaCard runtime={fourWindowRuntime()} now={NOW} />);
-    expect(screen.getByText("Gemini")).toBeInTheDocument();
-    expect(screen.getByText("Claude + GPT")).toBeInTheDocument();
-    expect(screen.queryByText("Reset, awaiting refresh")).not.toBeInTheDocument();
-    expect(screen.getAllByText(/resets at /)).toHaveLength(3);
-    expect(screen.getByText("100% left")).toBeInTheDocument();
-    expect(screen.getAllByRole("progressbar")).toHaveLength(4);
-  });
-
-  it("lists every window in the machine chip tooltip and keeps the chip on the exhausted pool", async () => {
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    const machine = buildRuntimeMachines([fourWindowRuntime()], { now: NOW })[0]!;
-    renderWithI18n(<MachineQuotaChips machine={machine} now={NOW} />);
-    await userEvent.hover(screen.getByLabelText(/: Rate limited$/, { selector: '[data-slot="tooltip-trigger"]' }));
-    const tooltip = (await screen.findByText("Gemini · 5h")).closest<HTMLElement>('[data-slot="tooltip-content"]');
-    for (const row of ["Gemini · 5h", "Gemini · wk", "Claude + GPT · 5h", "Claude + GPT · wk"]) {
-      expect(within(tooltip!).getByText(row)).toBeInTheDocument();
-    }
-    expect(tooltip).toHaveTextContent("100%");
-    expect(within(tooltip!).getAllByText(/resets at /)).toHaveLength(3);
-    expect(tooltip).not.toHaveTextContent("Reset, awaiting refresh");
   });
 });

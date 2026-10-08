@@ -85,13 +85,9 @@ vi.mock("@multica/core/runtimes", async () => {
     isRuntimeUsableForUser: actual.isRuntimeUsableForUser,
     // RuntimeDetail renders the quota card, whose helpers must exist on the
     // mock — run them for real (pure functions over the runtime fixture).
-    activeQuotaWindows: actual.activeQuotaWindows,
     formatCompactDuration: actual.formatCompactDuration,
-    isQuotaStale: actual.isQuotaStale,
+    planQuotaState: actual.planQuotaState,
     quotaWindowLabel: actual.quotaWindowLabel,
-    parsePlanQuota: actual.parsePlanQuota,
-    quotaTone: actual.quotaTone,
-    windowRemainingPercent: actual.windowRemainingPercent,
     deriveRuntimeHealth: () => "online",
   runtimeDisplayName: (rt: { name: string; custom_name?: string | null }) =>
     rt.custom_name?.trim() || rt.name,

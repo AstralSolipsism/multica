@@ -2,26 +2,35 @@
 import { describe, expect, it } from "vitest";
 import type { GlmQuotaWindow } from "@multica/core/api";
 import {
-  glmFormatResetIn,
   glmWindowRemainingPercent,
+  glmWindowResetPassed,
   glmWorstFirst,
 } from "./glm-quota-card";
+
+const NOW_SEC = 1_800_000_000;
 
 describe("glmWindowRemainingPercent", () => {
   it("derives remaining from the provider's used percentage", () => {
     const w: GlmQuotaWindow = { type: "TIME_LIMIT", used_percent: 16 };
-    expect(glmWindowRemainingPercent(w)).toBe(84);
+    expect(glmWindowRemainingPercent(w, NOW_SEC)).toBe(84);
   });
   it("computes from remaining/usage when percentage is absent (credit pools)", () => {
     const w: GlmQuotaWindow = { type: "CREDIT_LIMIT", usage: 500, remaining: 420 };
-    expect(glmWindowRemainingPercent(w)).toBe(84);
+    expect(glmWindowRemainingPercent(w, NOW_SEC)).toBe(84);
   });
   it("returns null when nothing is derivable", () => {
-    expect(glmWindowRemainingPercent({ type: "TOKENS_LIMIT" })).toBeNull();
+    expect(glmWindowRemainingPercent({ type: "TOKENS_LIMIT" }, NOW_SEC)).toBeNull();
   });
   it("never reports below zero or above one hundred", () => {
-    expect(glmWindowRemainingPercent({ type: "X", used_percent: 140 })).toBe(0);
-    expect(glmWindowRemainingPercent({ type: "X", usage: 10, remaining: 99 })).toBe(100);
+    expect(glmWindowRemainingPercent({ type: "X", used_percent: 140 }, NOW_SEC)).toBe(0);
+    expect(glmWindowRemainingPercent({ type: "X", usage: 10, remaining: 99 }, NOW_SEC)).toBe(100);
+  });
+  it("counts a window whose reset has passed as refilled", () => {
+    const w: GlmQuotaWindow = { type: "TOKENS_LIMIT", used_percent: 90, resets_at: NOW_SEC };
+    expect(glmWindowResetPassed(w, NOW_SEC)).toBe(true);
+    expect(glmWindowRemainingPercent(w, NOW_SEC)).toBe(100);
+    expect(glmWindowResetPassed(w, NOW_SEC - 1)).toBe(false);
+    expect(glmWindowRemainingPercent(w, NOW_SEC - 1)).toBe(10);
   });
 });
 
@@ -32,15 +41,13 @@ describe("glmWorstFirst", () => {
       { type: "B", used_percent: 90 },
       { type: "C" },
     ];
-    expect(glmWorstFirst(windows).map((w) => w.type)).toEqual(["B", "A", "C"]);
+    expect(glmWorstFirst(windows, NOW_SEC).map((w) => w.type)).toEqual(["B", "A", "C"]);
   });
-});
-
-describe("glmFormatResetIn", () => {
-  it("formats minutes, hours and days compactly", () => {
-    expect(glmFormatResetIn(45 * 60)).toBe("45m");
-    expect(glmFormatResetIn(3600)).toBe("1h");
-    expect(glmFormatResetIn(5040)).toBe("1h24m");
-    expect(glmFormatResetIn(3 * 86400)).toBe("3d");
+  it("ranks a refilled window as full", () => {
+    const windows: GlmQuotaWindow[] = [
+      { type: "TOKENS_LIMIT", used_percent: 95, resets_at: NOW_SEC - 60 },
+      { type: "TIME_LIMIT", used_percent: 40, resets_at: NOW_SEC + 86400 },
+    ];
+    expect(glmWorstFirst(windows, NOW_SEC).map((w) => w.type)).toEqual(["TIME_LIMIT", "TOKENS_LIMIT"]);
   });
 });

@@ -408,7 +408,7 @@ describe("runtime machine quota chips", () => {
     } as NonNullable<AgentRuntime["plan_quota"]>;
   }
 
-  it("builds one chip per runtime from the worst active window", () => {
+  it("builds one chip per runtime from its tightest constraint", () => {
     const machines = buildRuntimeMachines(
       [
         makeRuntime({
@@ -432,31 +432,63 @@ describe("runtime machine quota chips", () => {
 
     expect(machines[0]?.quotaChips).toEqual([
       {
+        key: "rt-claude",
         runtimeId: "rt-claude",
         provider: "claude",
-        remainingPercent: 62,
-        status: "limited",
+        group: null,
+        remainingPercent: null,
+        limited: true,
         tone: "destructive",
-        freshness: "fresh",
+        interrupted: false,
       },
       {
+        key: "rt-codex",
         runtimeId: "rt-codex",
         provider: "codex",
+        group: null,
         remainingPercent: 12,
-        status: "ok",
+        limited: false,
         tone: "warning",
-        freshness: "fresh",
+        interrupted: false,
       },
     ]);
   });
 
-  it("retains stale and fully reset snapshots, excluding malformed ones", () => {
+  it("splits independent pools into one chip each", () => {
     const machines = buildRuntimeMachines(
       [
         makeRuntime({
-          id: "rt-stale",
+          id: "rt-agy",
+          provider: "antigravity",
+          plan_quota: makeQuota({
+            provider: "antigravity",
+            status: "limited",
+            windows: [
+              { name: "gemini_5h", used_percent: 0, window_minutes: 300, resets_at: null, group: "gemini" },
+              { name: "claude_gpt_5h", used_percent: 0, window_minutes: 300, resets_at: null, group: "claude_gpt" },
+              { name: "claude_gpt_weekly", used_percent: 100, window_minutes: 10080, resets_at: NOW_SEC + 86400, group: "claude_gpt" },
+            ],
+          }),
+        }),
+      ],
+      { now: NOW },
+    );
+
+    expect(machines[0]?.quotaChips).toEqual([
+      expect.objectContaining({ key: "rt-agy:gemini", group: "gemini", limited: false, remainingPercent: 100, tone: "ok" }),
+      expect.objectContaining({ key: "rt-agy:claude_gpt", group: "claude_gpt", limited: true, tone: "destructive" }),
+    ]);
+  });
+
+  it("keeps old, reset and interrupted snapshots, excluding malformed ones", () => {
+    const machines = buildRuntimeMachines(
+      [
+        makeRuntime({
+          id: "rt-idle",
           provider: "codex",
-          plan_quota: makeQuota({ observed_at: NOW_SEC - 25 * 3600 }),
+          plan_quota: makeQuota({ observed_at: NOW_SEC - 36 * 3600, windows: [
+            { name: "primary", used_percent: 59, window_minutes: 10080, resets_at: NOW_SEC + 86400 },
+          ] }),
         }),
         makeRuntime({
           id: "rt-malformed",
@@ -464,24 +496,32 @@ describe("runtime machine quota chips", () => {
           plan_quota: "not-a-snapshot" as unknown as AgentRuntime["plan_quota"],
         }),
         makeRuntime({
-          id: "rt-expired",
-          provider: "copilot",
+          id: "rt-reset",
+          provider: "claude",
           plan_quota: makeQuota({
+            provider: "claude",
             windows: [
-              { name: "primary", used_percent: 10, window_minutes: 300, resets_at: NOW_SEC - 5 },
+              { name: "five_hour", used_percent: 1, window_minutes: 300, resets_at: NOW_SEC - 5 },
+              { name: "seven_day", used_percent: 14, window_minutes: 10080, resets_at: NOW_SEC + 4 * 86400 },
             ],
           }),
         }),
-        makeRuntime({ id: "rt-fresh", provider: "claude", plan_quota: makeQuota() }),
+        makeRuntime({
+          id: "rt-kimi",
+          provider: "kimi",
+          plan_quota: makeQuota({ provider: "kimi", observed_at: NOW_SEC - 2 * 3600 }),
+        }),
       ],
       { now: NOW },
     );
 
     expect(machines[0]?.quotaChips).toHaveLength(3);
     expect(machines[0]?.quotaChips).toEqual(expect.arrayContaining([
-      expect.objectContaining({ runtimeId: "rt-stale", freshness: "stale", remainingPercent: null }),
-      expect.objectContaining({ runtimeId: "rt-expired", freshness: "awaiting_refresh", remainingPercent: null }),
-      expect.objectContaining({ runtimeId: "rt-fresh", freshness: "fresh", remainingPercent: 62 }),
+      // Task-reported data stays current until its reset.
+      expect.objectContaining({ runtimeId: "rt-idle", interrupted: false, remainingPercent: 41 }),
+      // A passed five-hour reset leaves the weekly balance in charge.
+      expect.objectContaining({ runtimeId: "rt-reset", interrupted: false, remainingPercent: 86 }),
+      expect.objectContaining({ runtimeId: "rt-kimi", interrupted: true, remainingPercent: 62 }),
     ]));
   });
 

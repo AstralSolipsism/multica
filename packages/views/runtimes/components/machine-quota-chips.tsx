@@ -4,11 +4,7 @@ import type React from "react";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
   formatCompactDuration,
-  isQuotaStale,
-  isQuotaWindowAwaitingRefresh,
-  parsePlanQuota,
-  quotaWindowGroup,
-  windowRemainingPercent,
+  planQuotaState,
   type QuotaTone,
 } from "@multica/core/runtimes";
 import type { AgentRuntime } from "@multica/core/types";
@@ -18,8 +14,18 @@ import {
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
 import { runtimeRowLabel, type MachineQuotaChip, type RuntimeMachine } from "./runtime-machines";
-import { formatQuotaWindowLabel, MiniMeterBar, quotaGroupLabel } from "./runtime-quota-cell";
+import {
+  displayRemainingPercent,
+  formatQuotaWindowLabel,
+  MiniMeterBar,
+  MUTED_BAR_CLASS,
+  quotaGroupLabel,
+  quotaInterruptedText,
+  quotaWindowResetText,
+  quotaWindowValueText,
+} from "./runtime-quota-cell";
 import { ProviderLogo } from "./provider-logo";
+import { useQuotaTimeFormatter } from "./quota-time";
 import { useT } from "../../i18n";
 
 const CHIP_TONE_CLASS: Record<QuotaTone, string> = {
@@ -31,8 +37,9 @@ const CHIP_TONE_CLASS: Record<QuotaTone, string> = {
 // The gap between pills, kept in sync with the flex row's `gap-1.5`.
 const CHIP_GAP_PX = 6;
 
-// The machine row shows one pill per runtime carrying a quota snapshot.
-// Pills that do not fit collapse into a "+N" tooltip with their full breakdown.
+// The machine row shows one pill per runtime carrying a quota snapshot (one
+// per pool for independent pools). Pills that do not fit collapse into a "+N"
+// tooltip with their full breakdown.
 export function MachineQuotaChips({
   machine,
   now,
@@ -45,8 +52,8 @@ export function MachineQuotaChips({
   if (runtimeChips.length === 0) return null;
 
   // Keep the machine's runtime order so quota changes never reshuffle the row.
-  const hiddenRuntime = runtimeChips.slice(visibleCount);
-  const hiddenCount = hiddenRuntime.length;
+  const hiddenChips = runtimeChips.slice(visibleCount);
+  const hiddenCount = hiddenChips.length;
 
   return (
     <span
@@ -63,7 +70,7 @@ export function MachineQuotaChips({
       >
         {runtimeChips.map((chip) => (
           <QuotaChip
-            key={`ghost-${chip.runtimeId}`}
+            key={`ghost-${chip.key}`}
             chip={chip}
             machine={machine}
             now={now}
@@ -73,24 +80,34 @@ export function MachineQuotaChips({
         <OverflowPill count={99} />
       </span>
       {runtimeChips.slice(0, visibleCount).map((chip) => (
-        <QuotaChip key={chip.runtimeId} chip={chip} machine={machine} now={now} />
+        <QuotaChip key={chip.key} chip={chip} machine={machine} now={now} />
       ))}
       {hiddenCount > 0 && (
         <Tooltip>
           <TooltipTrigger render={<OverflowPill count={hiddenCount} />} />
           <TooltipContent>
             <span className="flex flex-col items-start gap-2">
-              {hiddenRuntime.map((chip) => {
-                const runtime = machine.runtimes.find((r) => r.id === chip.runtimeId);
+              {chipsByRuntime(hiddenChips).map(({ runtimeId, chips }) => {
+                const runtime = machine.runtimes.find((r) => r.id === runtimeId);
                 const label = runtime
                   ? runtimeRowLabel(runtime, machine.title)
-                  : chip.provider;
+                  : chips[0]!.provider;
                 return (
                   <span
-                    key={`hidden-${chip.runtimeId}`}
+                    key={`hidden-${runtimeId}`}
                     className="flex flex-col items-start gap-1"
                   >
-                    <QuotaChip chip={chip} machine={machine} now={now} interactive={false} />
+                    <span className="flex flex-wrap items-center gap-1">
+                      {chips.map((chip) => (
+                        <QuotaChip
+                          key={chip.key}
+                          chip={chip}
+                          machine={machine}
+                          now={now}
+                          interactive={false}
+                        />
+                      ))}
+                    </span>
                     <span className="text-xs">
                       <QuotaChipTooltip runtime={runtime} label={label} now={now} />
                     </span>
@@ -103,6 +120,20 @@ export function MachineQuotaChips({
       )}
     </span>
   );
+}
+
+// Hidden pills grouped by runtime, so a runtime split into pool pills lists
+// its windows once.
+function chipsByRuntime(
+  chips: MachineQuotaChip[],
+): { runtimeId: string; chips: MachineQuotaChip[] }[] {
+  const groups: { runtimeId: string; chips: MachineQuotaChip[] }[] = [];
+  for (const chip of chips) {
+    const last = groups[groups.length - 1];
+    if (last?.runtimeId === chip.runtimeId) last.chips.push(chip);
+    else groups.push({ runtimeId: chip.runtimeId, chips: [chip] });
+  }
+  return groups;
 }
 
 // Measures real widths and decides how many pills fit. The initial state
@@ -176,16 +207,13 @@ function OverflowPill({
 }
 
 // The single precedence decision behind a chip's visible text AND its
-// aria-label: stale/reset data takes precedence over the old balance/status.
+// aria-label: a limit outranks any percentage the snapshot still carries.
 export function quotaChipState(chip: MachineQuotaChip):
-  | { kind: "stale" }
-  | { kind: "awaiting_refresh" }
   | { kind: "limited" }
-  | { kind: "unavailable" }
+  | { kind: "unknown" }
   | { kind: "percent"; percent: number } {
-  if (chip.freshness !== "fresh") return { kind: chip.freshness };
-  if (chip.status === "limited") return { kind: "limited" };
-  if (chip.remainingPercent == null) return { kind: "unavailable" };
+  if (chip.limited) return { kind: "limited" };
+  if (chip.remainingPercent == null) return { kind: "unknown" };
   return { kind: "percent", percent: chip.remainingPercent };
 }
 
@@ -202,46 +230,54 @@ function QuotaChip({
   interactive?: boolean;
 }) {
   const { t } = useT("quota");
-  const { t: tForkUi } = useT("fork-ui");
   const runtime = machine.runtimes.find((r) => r.id === chip.runtimeId);
   const label = runtime ? runtimeRowLabel(runtime, machine.title) : chip.provider;
-  // The chip reads as [logo] [remaining bar] [remaining %]: the fixed-width
-  // bar fills with what is LEFT of the worst active window (fill drains as
-  // the quota drains), so the percent is unambiguous without a "left"
-  // wordmark; the tone colors both bar and number (green/amber/red).
+  const poolLabel = chip.group != null ? quotaGroupLabel(chip.group, t) : null;
+  // The chip reads as [logo] [pool] [remaining bar] [remaining %]: the bar
+  // fills with what is LEFT of the tightest constraint (fill drains as the
+  // quota drains), and the tone colors both bar and number. An interrupted
+  // collection keeps its last balance in neutral gray, flagged in words.
   // The aria-label follows the SAME precedence as the visible text: a
   // limited runtime that still reports a percentage reads as rate-limited
   // to screen readers too, not as "0% left".
   const state = quotaChipState(chip);
   const text =
-    state.kind === "stale"
-      ? t(($) => $.stale)
-      : state.kind === "awaiting_refresh"
-        ? t(($) => $.reset_awaiting_refresh)
-        : state.kind === "limited"
-          ? t(($) => $.exhausted)
-          : state.kind === "unavailable"
-            ? tForkUi(($) => $.runtimes.machine.metrics.unavailable)
-            : `${Math.round(state.percent)}%`;
-  const ariaText =
+    state.kind === "limited"
+      ? t(($) => $.exhausted)
+      : state.kind === "unknown"
+        ? t(($) => $.unknown)
+        : `${displayRemainingPercent(state.percent)}%`;
+  const ariaValue =
     state.kind === "percent"
-      ? t(($) => $.remaining, { percent: Math.round(state.percent) })
+      ? t(($) => $.remaining, { percent: displayRemainingPercent(state.percent) })
       : text;
+  const interruptedText = chip.interrupted ? t(($) => $.collection_interrupted) : null;
+  const ariaLabel = `${poolLabel != null ? `${label} · ${poolLabel}` : label}: ${ariaValue}${
+    interruptedText != null ? ` · ${interruptedText}` : ""
+  }`;
   const pill = (
     <span
-      aria-label={`${label}: ${ariaText}`}
-      className={`inline-flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-micro font-medium tabular-nums ${chip.freshness === "fresh" ? CHIP_TONE_CLASS[chip.tone] : "bg-muted text-muted-foreground"}`}
+      aria-label={ariaLabel}
+      className={`inline-flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-micro font-medium tabular-nums ${chip.interrupted ? "bg-muted text-muted-foreground" : CHIP_TONE_CLASS[chip.tone]}`}
     >
       <ProviderLogo provider={chip.provider} className="h-3.5 w-3.5" />
+      {poolLabel != null && <span>{poolLabel}</span>}
       {state.kind === "percent" && (
         <MiniMeterBar
           percent={state.percent}
           tone={chip.tone}
           ariaLabel={label}
           className="w-6 shrink-0"
+          barClassName={chip.interrupted ? MUTED_BAR_CLASS : undefined}
         />
       )}
       {text}
+      {interruptedText != null && (
+        <span className="font-normal">
+          {" · "}
+          {interruptedText}
+        </span>
+      )}
     </span>
   );
   if (!interactive) return pill;
@@ -265,62 +301,48 @@ function QuotaChipTooltip({
   now: number;
 }) {
   const { t } = useT("quota");
-  const { t: tForkUi } = useT("fork-ui");
-  const quota = parsePlanQuota(runtime?.plan_quota);
-  if (!quota) return null;
-  const nowSec = Math.floor(now / 1000);
-  const windows = quota.windows;
-  if (windows.length === 0) return null;
-  const observedAgeMs = now - quota.observed_at * 1000;
-  const stale = isQuotaStale(quota, now);
+  const formatTime = useQuotaTimeFormatter();
+  const state = runtime ? planQuotaState(runtime.plan_quota, now) : null;
+  if (!state) return null;
   return (
     <span className="flex flex-col items-start gap-1">
       <span className="font-medium">{label}</span>
-      {windows.map((window, index) => {
-        const awaitingRefresh = isQuotaWindowAwaitingRefresh(window, nowSec);
-        const remaining = windowRemainingPercent(window);
+      {state.pools.flatMap((pool) => pool.windows).map((window, index) => {
         const windowLabel =
-          formatQuotaWindowLabel(window.window_minutes, t) ?? window.name;
-        const resetsInMs =
-          window.resets_at != null ? window.resets_at * 1000 - now : null;
+          formatQuotaWindowLabel(window.windowMinutes, t) ?? window.name;
+        const value =
+          quotaWindowValueText(window, t) ??
+          `${displayRemainingPercent(window.remainingPercent ?? 0)}%`;
+        const reset = quotaWindowResetText(window, now, t, formatTime);
         // Reporters with several quota pools (antigravity) label each row so
         // the four buckets don't read as two duplicated window pairs.
-        const group = quotaWindowGroup(window);
         return (
           <span
             key={`${window.name}-${index}`}
             className="flex items-center gap-2 whitespace-nowrap"
           >
             <span className="text-muted-foreground">
-              {group != null ? `${quotaGroupLabel(group, t)} · ${windowLabel}` : windowLabel}
+              {window.group != null
+                ? `${quotaGroupLabel(window.group, t)} · ${windowLabel}`
+                : windowLabel}
             </span>
-            <span className="tabular-nums">
-              {stale
-                ? t(($) => $.stale)
-                : awaitingRefresh
-                  ? t(($) => $.reset_awaiting_refresh)
-                  : remaining == null
-                    ? tForkUi(($) => $.runtimes.machine.metrics.unavailable)
-                    : `${Math.round(remaining)}%`}
-            </span>
-            {!stale && resetsInMs != null && resetsInMs > 0 && (
-              <span className="tabular-nums text-faint-foreground">
-                {t(($) => $.resets_in, {
-                  time: formatCompactDuration(resetsInMs),
-                })}
-              </span>
+            <span className="tabular-nums">{value}</span>
+            {reset != null && (
+              <span className="tabular-nums text-faint-foreground">{reset}</span>
             )}
           </span>
         );
       })}
       <span className="text-faint-foreground">
-        {quota.source === "external"
+        {state.source === "external"
           ? t(($) => $.source_external)
           : t(($) => $.source_daemon)}
         {" · "}
-        {t(($) => $.observed_ago, {
-          time: formatCompactDuration(observedAgeMs),
-        })}
+        {state.interrupted
+          ? quotaInterruptedText(state.observedAt, now, t, formatTime)
+          : t(($) => $.observed_ago, {
+              time: formatCompactDuration(now - state.observedAt * 1000),
+            })}
       </span>
     </span>
   );
