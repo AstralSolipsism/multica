@@ -479,52 +479,99 @@ func lowerSizeCap(t *testing.T, limit *int64, size int64) {
 	t.Cleanup(func() { *limit = orig })
 }
 
+// newUploadFormRequest builds a multipart POST to target whose form carries
+// data in the "file" field, followed by alternating name/value text fields.
+func newUploadFormRequest(t *testing.T, target, filename string, data []byte, fields ...string) *http.Request {
+	t.Helper()
+	if len(fields)%2 != 0 {
+		t.Fatal("newUploadFormRequest needs name/value field pairs")
+	}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < len(fields); i += 2 {
+		if err := writer.WriteField(fields[i], fields[i+1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, target, &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-User-ID", testUserID)
+	return req
+}
+
+// malformedUploadFormRequest builds a multipart POST to target with no parts
+// in its body, so parsing fails without reaching any size cap.
+func malformedUploadFormRequest(target string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader("not a multipart body"))
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=absent")
+	req.Header.Set("X-User-ID", testUserID)
+	return req
+}
+
 // TestUploadFile_CapCountsTheFileNotTheForm pins maxUploadSize to the uploaded
-// file. The web client accepts any file up to MAX_FILE_SIZE, so counting the
-// multipart framing against the cap rejected files at or just under 100 MB
-// (OL-143).
+// file and keeps the body cap as a separate guard. The web client accepts any
+// file up to MAX_FILE_SIZE, so counting the multipart framing against the cap
+// rejected files at or just under 100 MB (OL-143).
 func TestUploadFile_CapCountsTheFileNotTheForm(t *testing.T) {
 	const fileCap = 1 << 20
 	lowerSizeCap(t, &maxUploadSize, fileCap)
 
+	// upload runs req against a fresh mockStorage and returns the sizes of the
+	// files that reached it.
+	upload := func(t *testing.T, req *http.Request, status int) []int {
+		t.Helper()
+		store := &mockStorage{}
+		origStorage := testHandler.Storage
+		testHandler.Storage = store
+		t.Cleanup(func() { testHandler.Storage = origStorage })
+
+		testutil.Call(t, testHandler.UploadFile, req).Want(status)
+		var stored []int
+		for _, data := range store.files {
+			stored = append(stored, len(data))
+		}
+		return stored
+	}
+
 	for _, tc := range []struct {
-		name   string
-		size   int
-		status int
-		stored []int
+		name    string
+		file    int // bytes in the file field
+		padding int // bytes in an extra text field
+		status  int
+		stored  []int
 	}{
-		{"file exactly at the cap", fileCap, http.StatusOK, []int{fileCap}},
-		{"file one byte over the cap", fileCap + 1, http.StatusRequestEntityTooLarge, nil},
-		{"form past the body cap", fileCap + multipartOverheadBytes + 1, http.StatusRequestEntityTooLarge, nil},
+		{"file exactly at the cap", fileCap, 0, http.StatusOK, []int{fileCap}},
+		{"file one byte over the cap", fileCap + 1, 0, http.StatusRequestEntityTooLarge, nil},
+		// The file is legal, so only the body cap can reject this form.
+		{"file at the cap in a form past the body cap", fileCap, multipartOverheadBytes, http.StatusRequestEntityTooLarge, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			store := &mockStorage{}
-			origStorage := testHandler.Storage
-			testHandler.Storage = store
-			t.Cleanup(func() { testHandler.Storage = origStorage })
-
-			var body bytes.Buffer
-			writer := multipart.NewWriter(&body)
-			part, err := writer.CreateFormFile("file", "sized.bin")
-			if err != nil {
-				t.Fatal(err)
+			req := newUploadFormRequest(t, "/api/upload-file", "sized.bin", make([]byte, tc.file),
+				"padding", strings.Repeat("x", tc.padding))
+			if past := req.ContentLength > fileCap+multipartOverheadBytes; past != (tc.padding > 0) {
+				t.Fatalf("form of %d bytes: past the body cap = %v, want only when padded", req.ContentLength, past)
 			}
-			part.Write(make([]byte, tc.size))
-			writer.Close()
-			req := httptest.NewRequest(http.MethodPost, "/api/upload-file", &body)
-			req.Header.Set("Content-Type", writer.FormDataContentType())
-			req.Header.Set("X-User-ID", testUserID)
-
-			testutil.Call(t, testHandler.UploadFile, req).Want(tc.status)
-			var stored []int
-			for _, data := range store.files {
-				stored = append(stored, len(data))
-			}
-			if !slices.Equal(stored, tc.stored) {
+			if stored := upload(t, req, tc.status); !slices.Equal(stored, tc.stored) {
 				t.Fatalf("stored upload sizes = %v, want %v", stored, tc.stored)
 			}
 		})
 	}
+
+	t.Run("malformed form", func(t *testing.T) {
+		if stored := upload(t, malformedUploadFormRequest("/api/upload-file"), http.StatusBadRequest); len(stored) != 0 {
+			t.Fatalf("a malformed form reached storage: %v", stored)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------

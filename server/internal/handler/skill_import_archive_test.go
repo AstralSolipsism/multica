@@ -455,31 +455,51 @@ func buildSkillArchiveOfSize(t *testing.T, name string, size int) []byte {
 
 // TestImportSkill_ArchiveCapCountsTheArchiveNotTheForm pins
 // maxImportArchiveUploadSize to the archive itself, which is what the web
-// client checks against MAX_SKILL_ARCHIVE_BYTES (OL-143).
+// client checks against MAX_SKILL_ARCHIVE_BYTES, and keeps the body cap as a
+// separate guard (OL-143).
 func TestImportSkill_ArchiveCapCountsTheArchiveNotTheForm(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test DB not configured")
 	}
 	const archiveCap = 1 << 20
 	lowerSizeCap(t, &maxImportArchiveUploadSize, archiveCap)
-	name := "archive-cap-" + t.Name()
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM skill WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
-	})
 
 	for _, tc := range []struct {
-		name   string
-		size   int
-		status int
+		name    string
+		archive int // bytes in the archive
+		padding int // bytes in an extra text field
+		status  int
+		created int
 	}{
-		{"archive exactly at the cap", archiveCap, http.StatusCreated},
-		{"archive one byte over the cap", archiveCap + 1, http.StatusRequestEntityTooLarge},
-		{"form past the body cap", archiveCap + multipartOverheadBytes + 1, http.StatusRequestEntityTooLarge},
+		{"archive exactly at the cap", archiveCap, 0, http.StatusCreated, 1},
+		{"archive one byte over the cap", archiveCap + 1, 0, http.StatusRequestEntityTooLarge, 0},
+		// The archive is legal, so only the body cap can reject this form.
+		{"archive at the cap in a form past the body cap", archiveCap, multipartOverheadBytes, http.StatusRequestEntityTooLarge, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			archive := buildSkillArchiveOfSize(t, name, tc.size)
-			req := newSkillArchiveImportRequest(testUserID, archive, name+".skill", "fail")
+			name := "archive-cap-" + strings.ReplaceAll(tc.name, " ", "-")
+			t.Cleanup(func() {
+				_, _ = testPool.Exec(context.Background(), `DELETE FROM skill WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
+			})
+			req := testutil.WithHeaders(
+				newUploadFormRequest(t, "/api/skills/import", name+".skill", buildSkillArchiveOfSize(t, name, tc.archive),
+					"on_conflict", "fail", "padding", strings.Repeat("x", tc.padding)),
+				"X-Workspace-ID", testWorkspaceID,
+			)
+			if past := req.ContentLength > archiveCap+multipartOverheadBytes; past != (tc.padding > 0) {
+				t.Fatalf("form of %d bytes: past the body cap = %v, want only when padded", req.ContentLength, past)
+			}
+
 			testutil.Call(t, testHandler.ImportSkill, req).Want(tc.status)
+			created := dbfx.Count(t, `SELECT count(*) FROM skill WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
+			if created != tc.created {
+				t.Fatalf("skills named %q = %d, want %d", name, created, tc.created)
+			}
 		})
 	}
+
+	t.Run("malformed form", func(t *testing.T) {
+		req := testutil.WithHeaders(malformedUploadFormRequest("/api/skills/import"), "X-Workspace-ID", testWorkspaceID)
+		testutil.Call(t, testHandler.ImportSkill, req).Want(http.StatusBadRequest)
+	})
 }
