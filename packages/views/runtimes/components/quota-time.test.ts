@@ -36,4 +36,9 @@ describe("formatQuotaTime", () => {
       formatQuotaTime(RESET_SEC, Date.UTC(2026, 9, 7), "Mars/Olympus_Mons", "en"),
     ).not.toThrow();
   });
+
+  it("gives no text for a time past the Date range", () => {
+    // Finite, so the wire schemas accept it, but no Date can hold it.
+    expect(formatQuotaTime(9_000_000_000_000, Date.UTC(2026, 9, 7), "Asia/Shanghai", "en")).toBeNull();
+  });
 });

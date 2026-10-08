@@ -221,6 +221,19 @@ describe("a limit that names no window", () => {
   });
 });
 
+describe("a reset time past the Date range", () => {
+  it("is left out instead of breaking the quota views", () => {
+    const runtime = quotaRuntime("claude", {
+      windows: [{ name: "five_hour", used_percent: 50, window_minutes: 300, resets_at: 9_000_000_000_000 }],
+    });
+    renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    expect(screen.getByText("50%")).toBeInTheDocument();
+    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
+    expect(screen.getByText("50% left")).toBeInTheDocument();
+    expect(screen.queryByText(/resets at/)).not.toBeInTheDocument();
+  });
+});
+
 describe("machine chips that do not fit", () => {
   it("list a runtime split into pool chips once under the overflow pill", async () => {
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(0);

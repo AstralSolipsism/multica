@@ -118,12 +118,13 @@ export function GlmQuotaCard({
                 : w.type === "CREDIT_LIMIT"
                   ? t(($) => $.glm_window_credit)
                   : t(($) => $.glm_window_fallback, { type: w.type });
+          const resetTime = w.resets_at != null ? formatTime(w.resets_at, now) : null;
           const reset =
-            w.resets_at == null
+            resetTime == null
               ? null
               : passed
-                ? t(($) => $.reset_passed, { time: formatTime(w.resets_at, now) })
-                : t(($) => $.resets_at, { time: formatTime(w.resets_at, now) });
+                ? t(($) => $.reset_passed, { time: resetTime })
+                : t(($) => $.resets_at, { time: resetTime });
           return (
             <Tooltip key={`${w.type}-${i}`}>
               <TooltipTrigger

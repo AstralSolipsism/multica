@@ -60,6 +60,18 @@ describe("GlmQuotaCard", () => {
     expect(reset.closest('[data-slot="tooltip-content"]')).not.toHaveTextContent("95 / 100");
   });
 
+  it("leaves out a reset time past the Date range", async () => {
+    renderWithI18n(
+      <GlmQuotaCard
+        data={status([{ type: "TOKENS_LIMIT", used_percent: 30, resets_at: 9_000_000_000_000 }])}
+        now={NOW}
+      />,
+    );
+    await userEvent.hover(chip("5-hour tokens"));
+    const updated = await screen.findByText("updated 2m ago");
+    expect(updated.closest('[data-slot="tooltip-content"]')).not.toHaveTextContent("resets at");
+  });
+
   it("flags an hour without a successful poll and keeps the balance", () => {
     renderWithI18n(
       <GlmQuotaCard

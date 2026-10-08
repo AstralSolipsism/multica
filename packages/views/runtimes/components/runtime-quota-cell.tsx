@@ -20,7 +20,7 @@ import { useT } from "../../i18n";
 import { useQuotaTimeFormatter } from "./quota-time";
 
 type QuotaT = ReturnType<typeof useT<"quota">>["t"];
-type FormatQuotaTime = (epochSec: number, nowMs: number) => string;
+type FormatQuotaTime = (epochSec: number, nowMs: number) => string | null;
 
 // A window's short translated label ("5h" / "wk"): maps the core
 // descriptor onto this namespace's strings. Null when the window carries no
@@ -108,10 +108,8 @@ export function quotaStatusText(
   t: QuotaT,
   formatTime: FormatQuotaTime,
 ): string | null {
-  const reset =
-    status.resetsAt != null
-      ? t(($) => $.resets_at, { time: formatTime(status.resetsAt, now) })
-      : null;
+  const time = status.resetsAt != null ? formatTime(status.resetsAt, now) : null;
+  const reset = time != null ? t(($) => $.resets_at, { time }) : null;
   if (!status.limited) return reset;
   return reset ? `${t(($) => $.exhausted)} · ${reset}` : t(($) => $.exhausted);
 }
@@ -123,9 +121,9 @@ export function quotaInterruptedText(
   t: QuotaT,
   formatTime: FormatQuotaTime,
 ): string {
-  return `${t(($) => $.collection_interrupted)} · ${t(($) => $.last_updated, {
-    time: formatTime(observedAt, now),
-  })}`;
+  const interrupted = t(($) => $.collection_interrupted);
+  const time = formatTime(observedAt, now);
+  return time != null ? `${interrupted} · ${t(($) => $.last_updated, { time })}` : interrupted;
 }
 
 // A window's own reset: the upcoming one, or the passed reset that refilled
@@ -137,13 +135,12 @@ export function quotaWindowResetText(
   formatTime: FormatQuotaTime,
 ): string | null {
   if (window.notApplicable) return null;
-  if (window.resetsAt != null) {
-    return t(($) => $.resets_at, { time: formatTime(window.resetsAt, now) });
-  }
-  if (window.resetPassedAt != null) {
-    return t(($) => $.reset_passed, { time: formatTime(window.resetPassedAt, now) });
-  }
-  return null;
+  const reset = window.resetsAt ?? window.resetPassedAt;
+  const time = reset != null ? formatTime(reset, now) : null;
+  if (time == null) return null;
+  return window.resetsAt != null
+    ? t(($) => $.resets_at, { time })
+    : t(($) => $.reset_passed, { time });
 }
 
 // The value of a window that shows no meter: set aside by its pool, used up

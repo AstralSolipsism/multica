@@ -11,13 +11,15 @@ const DAY_KEY_OPTIONS: Intl.DateTimeFormatOptions = {
 // Quota times (resets, last collection) read as wall-clock times in the
 // viewer's timezone: time only on the viewer's current day, month and day
 // otherwise. The wording (24-hour dial, month names) follows the UI locale.
+// Null for a finite time no Date can hold; the caller leaves it out.
 export function formatQuotaTime(
   epochSec: number,
   nowMs: number,
   timeZone: string,
   locale: string,
-): string {
+): string | null {
   const at = new Date(epochSec * 1000);
+  if (Number.isNaN(at.getTime())) return null;
   const sameDay = dayKey(at, timeZone) === dayKey(new Date(nowMs), timeZone);
   const options: Intl.DateTimeFormatOptions = sameDay
     ? { hour: "2-digit", minute: "2-digit" }
@@ -40,7 +42,7 @@ function dayKey(date: Date, timeZone: string): string {
 
 /** Formats quota times in the viewer's timezone (the stored preference, else
  *  the browser's) and the active UI language. */
-export function useQuotaTimeFormatter(): (epochSec: number, nowMs: number) => string {
+export function useQuotaTimeFormatter(): (epochSec: number, nowMs: number) => string | null {
   const { i18n } = useT("quota");
   const timeZone = useViewingTimezone();
   const locale = i18n.resolvedLanguage ?? i18n.language;
