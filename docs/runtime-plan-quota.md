@@ -33,12 +33,19 @@ apply one set of rules (`evaluatePlanQuota` in
   the inference.
 - **Pools.** Windows sharing a `group` form a pool; ungrouped windows form one
   pool. A used-up window limits its pool until the latest reset among the
-  pool's used-up windows. Used up means 100% used; a `limited` snapshot without
-  such a window names its windows without a percentage, else its most used
-  ones. While a pool is limited, windows that reset before it recovers, or
-  report no reset, are "Not applicable now". An unlimited pool is bound by its
-  least remaining window, the later reset winning a tie. Colors follow each pool
-  and window, never the snapshot status alone.
+  pool's used-up windows. Used up means at least 100% used; a `limited`
+  snapshot without such a window counts its windows without a percentage as
+  used up. While a pool is limited, every window that resets by the recovery,
+  or reports no reset, is "Not applicable now", used up or not; only the
+  used-up windows the recovery waits for keep their value. An unlimited pool
+  is bound by its least remaining window, the later reset winning a tie (an
+  unknown reset counts as later). Colors follow each pool and window, never
+  the snapshot status alone.
+- **A limit that names no window.** A `limited` snapshot whose windows all
+  carry a percentage below 100% is "Rate limited" as a whole. No window or pool
+  is guessed: there is no recovery time, independent pools are not split, and
+  no reset lifts the limit before the next observation replaces the snapshot.
+  Each window keeps its own balance and color.
 - **Single-value surfaces** (the list cell's status line, machine chips) show
   the tightest pool: "Rate limited · resets at …" with the latest recovery among
   limited pools, otherwise the least remaining window and its reset. When every

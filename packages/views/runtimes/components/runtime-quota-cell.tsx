@@ -327,6 +327,17 @@ export function RuntimeQuotaCard({
           </p>
         ) : (
           <>
+            {/* A limit that names no window belongs to no pool. */}
+            {state.unattributedLimit && (
+              <p
+                className={cn(
+                  "text-micro tabular-nums",
+                  state.interrupted ? "text-faint-foreground" : "text-destructive",
+                )}
+              >
+                {quotaStatusText(state.summary, now, t, formatTime)}
+              </p>
+            )}
             {/* Every pool gets its own section (the four antigravity
                 buckets read as Gemini 5h/weekly and Claude + GPT 5h/weekly);
                 a limited pool states when it recovers. */}

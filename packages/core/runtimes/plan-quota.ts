@@ -149,8 +149,9 @@ export interface QuotaWindowState {
   resetPassedAt: number | null;
   /** Used up: blocks its pool until it resets. */
   exhausted: boolean;
-  /** A used-up sibling keeps the pool blocked past this window's own reset,
-   *  so this window's balance does not matter until the pool recovers. */
+  /** Its limited pool recovers no earlier than this window resets (or the
+   *  window reports no reset), so its balance does not matter until then.
+   *  Never set on the used-up windows the recovery waits for. */
   notApplicable: boolean;
   tone: QuotaTone;
 }
@@ -186,6 +187,10 @@ export interface PlanQuotaState {
   /** Every window names its pool and no pool constrains another
    *  (antigravity's gemini and claude_gpt): summarize each pool on its own. */
   independentPools: boolean;
+  /** Limited, yet no window was used up when observed and every window has
+   *  a percentage: the limit belongs to no window or pool, so the snapshot
+   *  is limited as a whole, with no recovery time, until it is replaced. */
+  unattributedLimit: boolean;
   summary: QuotaSummary;
   /** A collector stopped reporting: the last balance stays, flagged. */
   interrupted: boolean;
@@ -194,10 +199,12 @@ export interface PlanQuotaState {
 /**
  * Derive the display state of a snapshot. A passed reset refills its window
  * (100%, no next reset). Per pool, a used-up window limits the pool until
- * the latest reset among its used-up windows; siblings that reset before
- * then, or never report a reset, are not applicable meanwhile. A pool
+ * the latest reset among its used-up windows; every other window that
+ * resets by then, or reports no reset, is not applicable meanwhile. A pool
  * without a used-up window is bound by its least remaining window, the
- * later reset winning a tie.
+ * later reset winning a tie. A limited snapshot that names no used-up
+ * window is limited as a whole: no window is guessed, so nothing tells when
+ * it recovers.
  */
 export function evaluatePlanQuota(
   quota: RuntimePlanQuota,
@@ -205,6 +212,7 @@ export function evaluatePlanQuota(
 ): PlanQuotaState {
   const nowSec = Math.floor(nowMs / 1000);
   const usedUp = usedUpAtObservation(quota);
+  const unattributedLimit = quota.status === "limited" && usedUp.size === 0;
   const pools = groupQuotaWindows(quota.windows).map(({ group, windows }) =>
     evaluateQuotaPool(group, windows, usedUp, nowSec),
   );
@@ -213,10 +221,15 @@ export function evaluatePlanQuota(
     source: quota.source,
     observedAt: quota.observed_at,
     pools,
+    // A limit that belongs to no pool cannot be split across pools.
     independentPools:
+      !unattributedLimit &&
       quota.windows.length > 0 &&
       quota.windows.every((window) => quotaWindowGroup(window) != null),
-    summary: summarizeQuotaPools(pools),
+    unattributedLimit,
+    summary: unattributedLimit
+      ? { limited: true, remainingPercent: null, resetsAt: null, tone: "destructive" }
+      : summarizeQuotaPools(pools),
     interrupted: isQuotaCollectionInterrupted(quota, nowMs),
   };
 }
@@ -230,8 +243,8 @@ export function planQuotaState(raw: unknown, nowMs: number): PlanQuotaState | nu
 }
 
 // Windows that were used up when observed. A full window always counts. A
-// limited snapshot without one still names its limit: by the windows that
-// carry no percentage, failing that by the most used ones.
+// limited snapshot without one counts its windows that carry no percentage;
+// with none of those either, its limit names no window.
 function usedUpAtObservation(
   quota: RuntimePlanQuota,
 ): Set<RuntimePlanQuotaWindow> {
@@ -239,10 +252,7 @@ function usedUpAtObservation(
     (window) => window.used_percent != null && window.used_percent >= 100,
   );
   if (full.length > 0 || quota.status !== "limited") return new Set(full);
-  const unmeasured = quota.windows.filter((window) => window.used_percent == null);
-  if (unmeasured.length > 0) return new Set(unmeasured);
-  const mostUsed = Math.max(...quota.windows.map((window) => window.used_percent ?? 0));
-  return new Set(quota.windows.filter((window) => window.used_percent === mostUsed));
+  return new Set(quota.windows.filter((window) => window.used_percent == null));
 }
 
 function evaluateQuotaPool(
@@ -265,9 +275,12 @@ function evaluateQuotaPool(
   const limited = exhausted.length > 0;
   const recoverAt = latestReset(exhausted.map((entry) => entry.resetsAt));
   const states = observed.map((entry): QuotaWindowState => {
+    // The used-up windows resetting last hold the pool. Any other window,
+    // used up or not, that resets by then or reports no reset is set aside.
+    const holdsPool = entry.exhausted && recoverAt != null && entry.resetsAt === recoverAt;
     const notApplicable =
       limited &&
-      !entry.exhausted &&
+      !holdsPool &&
       (entry.resetsAt == null || (recoverAt != null && entry.resetsAt <= recoverAt));
     return {
       name: entry.window.name,
@@ -278,10 +291,10 @@ function evaluateQuotaPool(
       resetPassedAt: entry.passed ? entry.window.resets_at : null,
       exhausted: entry.exhausted,
       notApplicable,
-      tone: entry.exhausted
-        ? "destructive"
-        : notApplicable
-          ? "ok"
+      tone: notApplicable
+        ? "ok"
+        : entry.exhausted
+          ? "destructive"
           : quotaTone(entry.remaining),
     };
   });

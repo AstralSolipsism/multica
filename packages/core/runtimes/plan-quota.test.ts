@@ -177,8 +177,8 @@ describe("evaluatePlanQuota", () => {
     window_minutes?: number | null;
     group?: string | null;
   };
-  function evaluate(windows: Window[], overrides: Record<string, unknown> = {}) {
-    return evaluatePlanQuota(parsePlanQuota(makeQuota({ windows, ...overrides }))!, NOW_MS);
+  function evaluate(windows: Window[], overrides: Record<string, unknown> = {}, nowMs = NOW_MS) {
+    return evaluatePlanQuota(parsePlanQuota(makeQuota({ windows, ...overrides }))!, nowMs);
   }
   const HOUR = 3600;
   const DAY = 24 * HOUR;
@@ -224,6 +224,14 @@ describe("evaluatePlanQuota", () => {
     expect(state.summary.resetsAt).toBe(NOW_SEC + 3 * DAY);
   });
 
+  it("lets an unknown reset win a tie, since it may come last", () => {
+    const state = evaluate([
+      { name: "five_hour", used_percent: 70, resets_at: NOW_SEC + HOUR },
+      { name: "daily", used_percent: 70, resets_at: null },
+    ]);
+    expect(state.summary).toMatchObject({ remainingPercent: 30, resetsAt: null });
+  });
+
   it("limits the pool until a used-up weekly resets and sets the five-hour aside", () => {
     const state = evaluate([
       { name: "five_hour", used_percent: 50, resets_at: NOW_SEC + 2 * HOUR },
@@ -248,23 +256,42 @@ describe("evaluatePlanQuota", () => {
     expect(pool.windows[1]).toMatchObject({ notApplicable: false, remainingPercent: 30, tone: "ok" });
   });
 
-  it("waits for the latest used-up window and treats a shared reset as not applicable", () => {
+  it("waits for the latest used-up window and sets aside the rest that reset by then", () => {
     const state = evaluate([
-      { name: "five_hour", used_percent: 100, resets_at: NOW_SEC + 2 * HOUR },
-      { name: "seven_day", used_percent: 100, resets_at: NOW_SEC + 3 * DAY },
-      { name: "boundary", used_percent: 10, resets_at: NOW_SEC + 3 * DAY },
+      { name: "five_hour", used_percent: 100, resets_at: NOW_SEC + HOUR },
+      { name: "seven_day", used_percent: 100, resets_at: NOW_SEC + DAY },
+      { name: "boundary", used_percent: 10, resets_at: NOW_SEC + DAY },
     ]);
-    expect(state.pools[0]!.resetsAt).toBe(NOW_SEC + 3 * DAY);
-    expect(state.pools[0]!.windows.map((window) => window.notApplicable)).toEqual([false, false, true]);
+    const pool = state.pools[0]!;
+    expect(pool.resetsAt).toBe(NOW_SEC + DAY);
+    expect(pool.windows.map((window) => [window.name, window.exhausted, window.notApplicable])).toEqual([
+      ["five_hour", true, true],
+      ["seven_day", true, false],
+      ["boundary", false, true],
+    ]);
   });
 
   it("does not know when a pool recovers if a used-up window has no reset", () => {
     const state = evaluate([
       { name: "seven_day", used_percent: 100, resets_at: null },
-      { name: "five_hour", used_percent: 40, resets_at: NOW_SEC + HOUR },
+      { name: "five_hour", used_percent: 100, resets_at: NOW_SEC + HOUR },
+      { name: "daily", used_percent: 40, resets_at: NOW_SEC + 2 * HOUR },
     ]);
     expect(state.pools[0]).toMatchObject({ limited: true, resetsAt: null });
-    expect(state.pools[0]!.windows[1]!.notApplicable).toBe(false);
+    expect(state.summary).toMatchObject({ limited: true, resetsAt: null });
+    // A window without a reset is set aside, used up or not; a known reset
+    // cannot be placed before an unknown recovery, so it stays on show.
+    expect(state.pools[0]!.windows.map((window) => window.notApplicable)).toEqual([true, false, false]);
+  });
+
+  it("counts more than 100% used as used up", () => {
+    // Claude retains legitimate overshoot, e.g. a weekly window at 110%.
+    const state = evaluate([
+      { name: "seven_day", used_percent: 110, resets_at: NOW_SEC + DAY },
+      { name: "five_hour", used_percent: 20, resets_at: NOW_SEC + 2 * DAY },
+    ], { provider: "claude", status: "limited" });
+    expect(state.pools[0]!.windows.map((window) => window.exhausted)).toEqual([true, false]);
+    expect(state.summary).toMatchObject({ limited: true, resetsAt: NOW_SEC + DAY });
   });
 
   it("evaluates independent antigravity pools separately", () => {
@@ -303,17 +330,46 @@ describe("evaluatePlanQuota", () => {
     expect(state.summary).toMatchObject({ limited: true, resetsAt: NOW_SEC + 110 });
   });
 
-  it("attributes a limited snapshot to its most used window when all are measured", () => {
-    const state = evaluate([
+  it("limits the whole snapshot when the limit names no window", () => {
+    // Claude rejected a request while every window read below 100%.
+    const windows = [
       { name: "five_hour", used_percent: 98, resets_at: NOW_SEC + HOUR },
       { name: "seven_day", used_percent: 40, resets_at: NOW_SEC + 3 * DAY },
-    ], { provider: "claude", status: "limited" });
-    expect(state.pools[0]!.windows.map((window) => window.exhausted)).toEqual([true, false]);
-    expect(state.summary).toMatchObject({ limited: true, resetsAt: NOW_SEC + HOUR });
+    ];
+    const state = evaluate(windows, { provider: "claude", status: "limited" });
+    expect(state.unattributedLimit).toBe(true);
+    expect(state.summary).toEqual({ limited: true, remainingPercent: null, resetsAt: null, tone: "destructive" });
+    // No window is guessed: each keeps its own balance and color.
+    expect(state.pools[0]).toMatchObject({ limited: false, remainingPercent: 2, resetsAt: NOW_SEC + HOUR });
+    expect(state.pools[0]!.windows.map((window) => [window.exhausted, window.notApplicable, window.tone])).toEqual([
+      [false, false, "destructive"],
+      [false, false, "ok"],
+    ]);
+  });
+
+  it("lifts no unattributed limit when a window resets", () => {
+    const windows = [
+      { name: "five_hour", used_percent: 98, resets_at: NOW_SEC + HOUR },
+      { name: "seven_day", used_percent: 40, resets_at: NOW_SEC + 3 * DAY },
+    ];
+    const state = evaluate(windows, { provider: "claude", status: "limited" }, (NOW_SEC + HOUR + 1) * 1000);
+    expect(state.pools[0]!.windows[0]).toMatchObject({ remainingPercent: 100, resetPassedAt: NOW_SEC + HOUR });
+    expect(state.summary).toMatchObject({ limited: true, resetsAt: null });
+  });
+
+  it("keeps an unattributed limit whole across independent pools", () => {
+    const state = evaluate([
+      { name: "gemini_weekly", used_percent: 40, resets_at: NOW_SEC + DAY, group: "gemini" },
+      { name: "claude_gpt_weekly", used_percent: 90, resets_at: NOW_SEC + 2 * DAY, group: "claude_gpt" },
+    ], { provider: "antigravity", status: "limited" });
+    expect(state.independentPools).toBe(false);
+    expect(state.pools.map((pool) => pool.limited)).toEqual([false, false]);
+    expect(state.summary).toMatchObject({ limited: true, resetsAt: null });
   });
 
   it("does not limit an ok snapshot without a full window", () => {
     const state = evaluate([{ name: "primary", used_percent: null, resets_at: NOW_SEC + HOUR }]);
+    expect(state.unattributedLimit).toBe(false);
     expect(state.summary).toEqual({ limited: false, remainingPercent: null, resetsAt: null, tone: "ok" });
   });
 

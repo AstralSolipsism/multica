@@ -154,6 +154,88 @@ describe("a five-hour window past its reset (claude)", () => {
   });
 });
 
+describe("windows set aside by a limited pool", () => {
+  // The weekly window holds the pool for three days. The 5h window already
+  // refilled and the daily one resets tomorrow: neither shows its reset.
+  function setAsideRuntime(): AgentRuntime {
+    return quotaRuntime("claude", {
+      status: "limited",
+      windows: [
+        { name: "five_hour", used_percent: 50, window_minutes: 300, resets_at: NOW_SEC - HOUR },
+        { name: "daily", used_percent: 30, window_minutes: 1440, resets_at: NOW_SEC + DAY },
+        { name: "seven_day", used_percent: 100, window_minutes: 10080, resets_at: NOW_SEC + 3 * DAY },
+      ],
+    });
+  }
+
+  it("show neither their own reset nor their refill in the settings card", () => {
+    renderWithI18n(<RuntimeQuotaCard runtime={setAsideRuntime()} now={NOW} />);
+    expect(screen.getAllByText("Not applicable now")).toHaveLength(2);
+    expect(screen.queryByText(`reset at ${at(NOW_SEC - HOUR)}`)).not.toBeInTheDocument();
+    expect(screen.queryByText(`resets at ${at(NOW_SEC + DAY)}`)).not.toBeInTheDocument();
+    expect(screen.getByText(`resets at ${at(NOW_SEC + 3 * DAY)}`)).toBeInTheDocument();
+  });
+
+  it("show neither in the machine chip tooltip", async () => {
+    renderChips(setAsideRuntime());
+    await userEvent.hover(chipTrigger(/: Rate limited$/));
+    const tooltip = (await screen.findByText("1d")).closest<HTMLElement>('[data-slot="tooltip-content"]')!;
+    const rows = within(tooltip);
+    expect(rows.getByText("5h").parentElement).toHaveTextContent(/^5hNot applicable now$/);
+    expect(rows.getByText("1d").parentElement).toHaveTextContent(/^1dNot applicable now$/);
+    expect(rows.getByText("wk").parentElement).toHaveTextContent(`0%resets at ${at(NOW_SEC + 3 * DAY)}`);
+  });
+});
+
+describe("a limit that names no window", () => {
+  // Claude rejected a request while every window read below 100%.
+  function unattributedRuntime(): AgentRuntime {
+    return quotaRuntime("claude", {
+      status: "limited",
+      windows: [
+        { name: "five_hour", used_percent: 98, window_minutes: 300, resets_at: NOW_SEC + HOUR },
+        { name: "seven_day", used_percent: 40, window_minutes: 10080, resets_at: NOW_SEC + 3 * DAY },
+      ],
+    });
+  }
+
+  it("limits the list cell without a recovery time", () => {
+    renderWithI18n(<RuntimeQuotaCell runtime={unattributedRuntime()} now={NOW} />);
+    expect(screen.getByText("2%")).toHaveClass("text-destructive");
+    expect(screen.getByText("60%")).toHaveClass("text-success");
+    expect(screen.getByText("Rate limited")).toHaveClass("text-destructive");
+    expect(screen.queryByText(/resets at/)).not.toBeInTheDocument();
+  });
+
+  it("states the limit in the settings card and keeps each window's reset", () => {
+    renderWithI18n(<RuntimeQuotaCard runtime={unattributedRuntime()} now={NOW} />);
+    expect(screen.getByText("Rate limited")).toHaveClass("text-destructive");
+    expect(screen.getByText("2% left")).toBeInTheDocument();
+    expect(screen.getByText(`resets at ${at(NOW_SEC + HOUR)}`)).toBeInTheDocument();
+    expect(screen.queryByText("Not applicable now")).not.toBeInTheDocument();
+  });
+
+  it("limits the machine chip", () => {
+    renderChips(unattributedRuntime());
+    expect(chipTrigger(/: Rate limited$/)).toHaveClass("text-destructive");
+  });
+});
+
+describe("machine chips that do not fit", () => {
+  it("list a runtime split into pool chips once under the overflow pill", async () => {
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(0);
+    const machine = buildRuntimeMachines([antigravityRuntime()], { now: NOW })[0]!;
+    renderWithI18n(<MachineQuotaChips machine={machine} now={NOW} />);
+    await userEvent.hover(screen.getByText("+2"));
+    const tooltip = (await screen.findByText("Claude + GPT · 5h")).closest<HTMLElement>('[data-slot="tooltip-content"]')!;
+    const rows = within(tooltip);
+    expect(rows.getByLabelText(/ · Gemini: 100% left$/)).toBeInTheDocument();
+    expect(rows.getByLabelText(/ · Claude \+ GPT: Rate limited$/)).toBeInTheDocument();
+    expect(rows.getAllByText("Claude + GPT · 5h")).toHaveLength(1);
+    expect(rows.getAllByText(/^via daemon/)).toHaveLength(1);
+  });
+});
+
 describe("an interrupted collector (kimi)", () => {
   it("keeps the last balance uncolored and flags the interruption", () => {
     renderWithI18n(<RuntimeQuotaCell runtime={kimiRuntime()} now={NOW} />);
