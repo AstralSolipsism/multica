@@ -35,7 +35,9 @@ var extContentTypes = map[string]string{
 	".wasm": "application/wasm",
 }
 
-const maxUploadSize = 100 << 20 // 100 MB
+// maxUploadSize caps one uploaded file. It is a variable so tests can lower it
+// rather than send 100 MB bodies.
+var maxUploadSize int64 = 100 << 20 // 100 MB
 
 const defaultAttachmentDownloadURLTTL = 30 * time.Minute
 
@@ -390,10 +392,17 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 
 	workspaceID := h.resolveWorkspaceID(r)
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	// The cap covers the whole multipart body, so it leaves room for the form's
+	// own framing; the file itself is held to maxUploadSize once read.
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize+multipartOverheadBytes)
 
 	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
-		writeError(w, http.StatusBadRequest, "file too large or invalid multipart form")
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "file exceeds 100 MB limit")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "invalid multipart form")
 		return
 	}
 	defer r.MultipartForm.RemoveAll()
@@ -426,6 +435,10 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	data, err := io.ReadAll(file)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to read file")
+		return
+	}
+	if int64(len(data)) > maxUploadSize {
+		writeError(w, http.StatusRequestEntityTooLarge, "file exceeds 100 MB limit")
 		return
 	}
 

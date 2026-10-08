@@ -48,6 +48,13 @@ const nextConfig: NextConfig = {
     // through the proxy would be cut at 30s and its per-item report lost.
     // 60s matches the CLI client timeout and stays above the server deadline.
     proxyTimeout: 60_000,
+    // proxy.ts matches /api/**, so Next buffers every proxied request body and
+    // silently truncates it past this size (10 MB by default). Uploads above
+    // that reached the backend as a cut multipart body and the browser only
+    // saw "Failed to fetch". Cover the 100 MB upload cap
+    // (packages/core/constants/upload.ts, server/internal/handler/file.go)
+    // plus multipart framing so the backend stays the one enforcing it.
+    proxyClientMaxBodySize: 101 * 1024 * 1024,
   },
   transpilePackages: ["@multica/core", "@multica/ui", "@multica/views"],
   ...(allowedDevOrigins && allowedDevOrigins.length > 0
