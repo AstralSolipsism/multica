@@ -70,9 +70,13 @@ the current account emitted a sample.
 
 The daemon polls the local `kimi web` Server API every two minutes. It requires
 a same-user connection peer before sending the local `server.token`; Linux
-ownership checks reject unaccepted sockets (`inode=0`). When the daemon runs
-as root (`euid=0`), Kimi collection and credential delivery are disabled, with
-one startup warning. Kimi 0.40 responses use the union of `data.summary` and
+ownership checks reject unaccepted sockets (`inode=0`), even though those rows
+report `uid=0`. Root daemons collect by default under the same rule: the accepted
+peer must also belong to root. This preserves the local user account boundary;
+another root process can already read the `0600` token file. Unsupported
+platforms still disable collection when peer ownership cannot be proven.
+
+Kimi 0.40 responses use the union of `data.summary` and
 `data.limits`; Kimi 2.1.1 responses use `data.quota.usages.limit5h` and
 `limit7d`, converting `usedRatio` to a percentage and `resetAt` to Unix seconds.
 The response structure selects the parser, without invoking the CLI.

@@ -62,9 +62,10 @@ import (
 // (pid/image heuristics, a 401 handshake as identity) were removed: they
 // either proved something else or were reproducible by any local process,
 // and this gate subsumes them.
-// Credential delivery is disabled for root: the same-user boundary is only
-// appropriate for an unprivileged account. Unaccepted Linux sockets also
-// report uid=0, so an ESTABLISHED row must have a nonzero inode to prove a peer.
+// This boundary also applies to root: only a root-owned peer may receive the
+// token, which root processes can already read from the 0600 file. Unaccepted
+// Linux sockets report uid=0 regardless of the listener's owner, so an
+// ESTABLISHED row must have a nonzero inode before its uid can prove a peer.
 //
 // Cost discipline: each round enumerates this user's loopback LISTEN ports
 // ONCE (one /proc read pair on Linux, one lsof run on macOS) and filters
@@ -88,8 +89,6 @@ const (
 // this at startup; collect double-checks so no path can bypass it).
 var errKimiIdentityUnsupportedForCollection = errors.New("kimi plan quota: platform cannot prove connection peer ownership")
 
-var errKimiCredentialsDisabledForRoot = errors.New("kimi plan quota: credential delivery disabled for root (euid=0)")
-
 // kimiPlanQuotaCollector holds the loop-round state: an HTTP client, the
 // kimi home directory, the last port that answered, and the current round's
 // owned-listen set. The probe functions are fields so tests can simulate
@@ -106,8 +105,6 @@ type kimiPlanQuotaCollector struct {
 	// identitySupported reports whether this platform can prove the
 	// connection peer at all. When false the collector fails closed.
 	identitySupported func() bool
-	// effectiveUID is read at each credential boundary, not cached at startup.
-	effectiveUID func() int
 	// enumerateOwnedListenPorts returns, in one enumeration per round, the
 	// loopback-serving LISTEN ports owned by this user.
 	enumerateOwnedListenPorts func() map[int]struct{}
@@ -126,7 +123,6 @@ func newKimiPlanQuotaCollector(homeDir string) *kimiPlanQuotaCollector {
 		scanBase:          kimiServerDefaultPort,
 		scanCount:         kimiServerMaxPorts,
 		identitySupported: kimiIdentitySupported,
-		effectiveUID:      os.Geteuid,
 	}
 	c.enumerateOwnedListenPorts = kimiEnumerateOwnedListenPorts
 	c.verifyConnPeer = kimiEstablishedPeerOwnedByUser
@@ -191,9 +187,6 @@ func (c *kimiPlanQuotaCollector) dial(ctx context.Context, network, addr string)
 // user's listeners once, find the live server port, fetch usage, normalize.
 // Any failure abandons the round.
 func (c *kimiPlanQuotaCollector) collect(ctx context.Context) (*protocol.RuntimePlanQuota, error) {
-	if c.effectiveUID() == 0 {
-		return nil, errKimiCredentialsDisabledForRoot
-	}
 	if !c.identitySupported() {
 		return nil, errKimiIdentityUnsupportedForCollection
 	}
@@ -353,10 +346,6 @@ type kimiUsageWindow struct {
 }
 
 func (c *kimiPlanQuotaCollector) getUsage(ctx context.Context, base, token string) (*kimiUsageData, error) {
-	// Gate each request, including requests that reuse an existing connection.
-	if c.effectiveUID() == 0 {
-		return nil, errKimiCredentialsDisabledForRoot
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/v1/oauth/usage", nil)
 	if err != nil {
 		return nil, err
@@ -841,16 +830,10 @@ func unixSecondsPtr(v any) *int64 {
 	}
 }
 
-var kimiGeteuid = os.Geteuid
-
 // kimiPlanQuotaLoop is the daemon-loop entry point for the Kimi collector.
-// Root and platforms that cannot prove the connection peer run no loop at
-// all — fail closed, with one startup log.
+// Platforms that cannot prove the connection peer run no loop at all —
+// fail closed, with one startup log.
 func (d *Daemon) kimiPlanQuotaLoop(ctx context.Context) {
-	if kimiGeteuid() == 0 {
-		d.logger.Warn("kimi plan quota collector disabled: credential delivery disabled for root (euid=0); runtimes stay not reported")
-		return
-	}
 	if !kimiIdentitySupported() {
 		d.logger.Warn("kimi plan quota collector disabled: this platform cannot prove connection peer ownership; runtimes stay not reported")
 		return

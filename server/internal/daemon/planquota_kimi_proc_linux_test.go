@@ -3,15 +3,175 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+// Exercise the full credential path as root, including the OL-117 attack:
+// a stale owned-listener snapshot followed by a foreign process delaying
+// accept. Synchronize accept around the real /proc proof so both sides of
+// the race are deterministic. Only synthetic credentials leave the test.
+func TestKimiCollect_RootPeerCredentials(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to exercise production euid and foreign-uid peers")
+	}
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 unavailable")
+	}
+	const helper = `import json, socket, sys
+ls = socket.socket()
+ls.bind(("127.0.0.1", 0)); ls.listen(1)
+print(json.dumps({"port": ls.getsockname()[1]}), flush=True)
+sys.stdin.readline()
+conn, _ = ls.accept()
+ls.close()
+print(json.dumps({"accepted": True}), flush=True)
+conn.settimeout(5)
+data = b""
+while b"\r\n\r\n" not in data:
+    chunk = conn.recv(4096)
+    if not chunk: break
+    data += chunk
+if data:
+    body = sys.argv[1].encode()
+    conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body)
+conn.close()
+print(json.dumps({"received": len(data), "authenticated": b"Authorization: Bearer test-kimi-token\r\n" in data}), flush=True)
+`
+	for _, tc := range []struct {
+		name              string
+		uid               uint32
+		acceptBeforeProof bool
+		wantSuccess       bool
+	}{
+		{"root accepted", 0, true, true},
+		{"root unaccepted", 0, false, false},
+		{"foreign accepted", 65534, true, false},
+		{"foreign delayed accept", 65534, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, python, "-u", "-c", helper, kimiLimitsJSON())
+			cmd.Dir = "/"
+			cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: tc.uid, Gid: tc.uid}}
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			stdin, err := cmd.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if cmd.ProcessState == nil {
+					cancel()
+					_ = cmd.Wait()
+				}
+			}()
+			decoder := json.NewDecoder(stdout)
+			var ready struct{ Port int }
+			if err := decoder.Decode(&ready); err != nil || ready.Port <= 0 {
+				t.Fatalf("peer readiness: port=%d err=%v", ready.Port, err)
+			}
+			accept := func() error {
+				if _, err := io.WriteString(stdin, "accept\n"); err != nil {
+					return err
+				}
+				var ack struct{ Accepted bool }
+				if err := decoder.Decode(&ack); err != nil {
+					return err
+				}
+				if !ack.Accepted {
+					return fmt.Errorf("helper did not accept connection")
+				}
+				return nil
+			}
+
+			collector := newKimiPlanQuotaCollector(kimiTestHome(t, ready.Port))
+			defer collector.client.CloseIdleConnections()
+			collector.scanBase, collector.scanCount = ready.Port, 1
+			if tc.uid != 0 {
+				// Model ownership changing after the once-per-round LISTEN scan.
+				collector.enumerateOwnedListenPorts = func() map[int]struct{} {
+					return map[int]struct{}{ready.Port: {}}
+				}
+			}
+			verify := collector.verifyConnPeer
+			proofs := make(chan error, 1)
+			collector.verifyConnPeer = func(conn net.Conn) bool {
+				if tc.acceptBeforeProof {
+					if err := accept(); err != nil {
+						proofs <- err
+						return false
+					}
+				}
+				owned := verify(conn)
+				var acceptErr error
+				if !tc.acceptBeforeProof {
+					acceptErr = accept()
+				}
+				proofs <- acceptErr
+				return owned && acceptErr == nil
+			}
+			quota, collectErr := collector.collect(ctx)
+			select {
+			case err := <-proofs:
+				if err != nil {
+					t.Fatalf("synchronize peer accept: %v", err)
+				}
+			default:
+				t.Fatalf("collection never reached the connection proof: %v", collectErr)
+			}
+			var evidence struct {
+				Received      int
+				Authenticated bool
+			}
+			if err := decoder.Decode(&evidence); err != nil {
+				t.Fatalf("read peer evidence: %v", err)
+			}
+			if err := cmd.Wait(); err != nil {
+				t.Fatalf("peer helper: %v; stderr: %s", err, stderr.String())
+			}
+			if tc.wantSuccess {
+				if collectErr != nil || quota == nil {
+					t.Fatalf("root collection: quota=%+v err=%v", quota, collectErr)
+				}
+				if quota.Status != protocol.PlanQuotaStatusOK || quota.ObservedAt <= 0 || len(quota.Windows) != 2 {
+					t.Fatalf("root quota snapshot: %+v", quota)
+				}
+				if !evidence.Authenticated {
+					t.Fatal("accepted root peer did not receive the credential")
+				}
+			} else {
+				if evidence.Received != 0 {
+					t.Fatalf("unproven peer received %d bytes", evidence.Received)
+				}
+				if collectErr == nil || quota != nil {
+					t.Fatalf("unproven peer collected: quota=%+v err=%v", quota, collectErr)
+				}
+			}
+		})
+	}
+}
 
 // Real /proc integration for the per-round enumeration (the fixture matrix
 // in planquota_kimi_test.go covers parsing; this proves the live path).
