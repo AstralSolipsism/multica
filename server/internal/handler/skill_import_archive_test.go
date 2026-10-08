@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 // buildTestZip packs the given path->content map into an in-memory zip and
@@ -414,5 +416,70 @@ func TestImportSkill_ArchiveUploadRejectsNonZip(t *testing.T) {
 	testHandler.ImportSkill(w, newSkillArchiveImportRequest(testUserID, []byte("not a zip at all"), "bad.skill", "fail"))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+}
+
+// buildSkillArchiveOfSize returns a valid skill archive of exactly size bytes.
+// The padding is a stored entry outside the skill folder, which the importer
+// skips, so archives built here differ only in their upload size.
+func buildSkillArchiveOfSize(t *testing.T, name string, size int) []byte {
+	t.Helper()
+	build := func(padding int) []byte {
+		var buf bytes.Buffer
+		zw := zip.NewWriter(&buf)
+		skillMd, err := zw.Create(name + "/SKILL.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := skillMd.Write([]byte(skillMdWithName(name, "Sized archive"))); err != nil {
+			t.Fatal(err)
+		}
+		pad, err := zw.CreateHeader(&zip.FileHeader{Name: "padding.bin", Method: zip.Store})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pad.Write(make([]byte, padding)); err != nil {
+			t.Fatal(err)
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return buf.Bytes()
+	}
+	archive := build(size - len(build(0)))
+	if len(archive) != size {
+		t.Fatalf("archive is %d bytes, want %d", len(archive), size)
+	}
+	return archive
+}
+
+// TestImportSkill_ArchiveCapCountsTheArchiveNotTheForm pins
+// maxImportArchiveUploadSize to the archive itself, which is what the web
+// client checks against MAX_SKILL_ARCHIVE_BYTES (OL-143).
+func TestImportSkill_ArchiveCapCountsTheArchiveNotTheForm(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test DB not configured")
+	}
+	const archiveCap = 1 << 20
+	lowerSizeCap(t, &maxImportArchiveUploadSize, archiveCap)
+	name := "archive-cap-" + t.Name()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM skill WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
+	})
+
+	for _, tc := range []struct {
+		name   string
+		size   int
+		status int
+	}{
+		{"archive exactly at the cap", archiveCap, http.StatusCreated},
+		{"archive one byte over the cap", archiveCap + 1, http.StatusRequestEntityTooLarge},
+		{"form past the body cap", archiveCap + multipartOverheadBytes + 1, http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			archive := buildSkillArchiveOfSize(t, name, tc.size)
+			req := newSkillArchiveImportRequest(testUserID, archive, name+".skill", "fail")
+			testutil.Call(t, testHandler.ImportSkill, req).Want(tc.status)
+		})
 	}
 }

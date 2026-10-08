@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/storage"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -464,6 +466,64 @@ func TestUploadFile_RejectsForeignChatSession(t *testing.T) {
 	testHandler.UploadFile(w, req)
 	if w.Code != http.StatusNotFound && w.Code != http.StatusForbidden && w.Code != http.StatusBadRequest {
 		t.Fatalf("UploadFile with unknown chat_session_id: expected 4xx, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// lowerSizeCap sets *limit to size until the test ends, so a boundary test can
+// send small bodies. At the real caps each case costs seconds and gigabytes
+// under -race.
+func lowerSizeCap(t *testing.T, limit *int64, size int64) {
+	t.Helper()
+	orig := *limit
+	*limit = size
+	t.Cleanup(func() { *limit = orig })
+}
+
+// TestUploadFile_CapCountsTheFileNotTheForm pins maxUploadSize to the uploaded
+// file. The web client accepts any file up to MAX_FILE_SIZE, so counting the
+// multipart framing against the cap rejected files at or just under 100 MB
+// (OL-143).
+func TestUploadFile_CapCountsTheFileNotTheForm(t *testing.T) {
+	const fileCap = 1 << 20
+	lowerSizeCap(t, &maxUploadSize, fileCap)
+
+	for _, tc := range []struct {
+		name   string
+		size   int
+		status int
+		stored []int
+	}{
+		{"file exactly at the cap", fileCap, http.StatusOK, []int{fileCap}},
+		{"file one byte over the cap", fileCap + 1, http.StatusRequestEntityTooLarge, nil},
+		{"form past the body cap", fileCap + multipartOverheadBytes + 1, http.StatusRequestEntityTooLarge, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &mockStorage{}
+			origStorage := testHandler.Storage
+			testHandler.Storage = store
+			t.Cleanup(func() { testHandler.Storage = origStorage })
+
+			var body bytes.Buffer
+			writer := multipart.NewWriter(&body)
+			part, err := writer.CreateFormFile("file", "sized.bin")
+			if err != nil {
+				t.Fatal(err)
+			}
+			part.Write(make([]byte, tc.size))
+			writer.Close()
+			req := httptest.NewRequest(http.MethodPost, "/api/upload-file", &body)
+			req.Header.Set("Content-Type", writer.FormDataContentType())
+			req.Header.Set("X-User-ID", testUserID)
+
+			testutil.Call(t, testHandler.UploadFile, req).Want(tc.status)
+			var stored []int
+			for _, data := range store.files {
+				stored = append(stored, len(data))
+			}
+			if !slices.Equal(stored, tc.stored) {
+				t.Fatalf("stored upload sizes = %v, want %v", stored, tc.stored)
+			}
+		})
 	}
 }
 

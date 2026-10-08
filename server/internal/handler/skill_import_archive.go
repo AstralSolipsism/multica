@@ -3,6 +3,7 @@ package handler
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,8 +19,9 @@ import (
 // archive import path. The decompressed bundle is still held to the existing
 // per-file / total / file-count caps (maxImportFileSize, maxImportTotalSize,
 // maxImportFileCount); this outer cap just stops a client from streaming an
-// unbounded compressed body before those decompression limits can apply.
-const maxImportArchiveUploadSize = 16 << 20 // 16 MiB
+// unbounded compressed body before those decompression limits can apply. It is
+// a variable so tests can lower it rather than send 16 MiB bodies.
+var maxImportArchiveUploadSize int64 = 16 << 20 // 16 MiB
 
 // isMultipartForm reports whether the request carries a multipart/form-data
 // body (an uploaded skill archive) rather than the JSON URL-import body.
@@ -34,9 +36,17 @@ func isMultipartForm(r *http.Request) bool {
 // produces structured (status / skill / existing_skill) results — there is no
 // legacy pre-on_conflict client for it to stay compatible with.
 func (h *Handler) importSkillFromArchive(w http.ResponseWriter, r *http.Request, workspaceID string, workspaceUUID, creatorUUID pgtype.UUID, creatorID string) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxImportArchiveUploadSize)
+	// The cap covers the whole multipart body, so it leaves room for the form's
+	// own framing; the archive itself is held to maxImportArchiveUploadSize once
+	// read.
+	r.Body = http.MaxBytesReader(w, r.Body, maxImportArchiveUploadSize+multipartOverheadBytes)
 	if err := r.ParseMultipartForm(maxImportArchiveUploadSize); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid multipart upload or file exceeds the size limit")
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "skill archive exceeds 16 MiB limit")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "invalid multipart upload")
 		return
 	}
 	defer func() {
@@ -65,6 +75,10 @@ func (h *Handler) importSkillFromArchive(w http.ResponseWriter, r *http.Request,
 	data, err := io.ReadAll(file)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to read uploaded file")
+		return
+	}
+	if int64(len(data)) > maxImportArchiveUploadSize {
+		writeError(w, http.StatusRequestEntityTooLarge, "skill archive exceeds 16 MiB limit")
 		return
 	}
 
