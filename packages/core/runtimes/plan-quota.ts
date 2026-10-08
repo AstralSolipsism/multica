@@ -1,7 +1,8 @@
 // Pure helpers for the runtime plan-quota snapshot (`RuntimeDevice.plan_quota`
-// — optional, older backends omit it). Every function degrades to "no data"
-// (null / empty) instead of throwing or inventing numbers; the UI layers the
-// not-reported / stale / limited states on top of these primitives.
+// — optional, older backends omit it). Parsing degrades to "no data" (null /
+// empty) instead of throwing or inventing numbers. evaluatePlanQuota derives
+// what the UI shows: a window whose reset has passed counts as refilled, and a
+// used-up window blocks the rest of its pool until it resets.
 
 import type {
   RuntimePlanQuota,
@@ -14,9 +15,8 @@ import {
 
 export type QuotaTone = "ok" | "warning" | "destructive";
 
-const QUOTA_STALE_MS = 24 * 3600 * 1000;
 // Collectors poll every two minutes and can back off for up to 30 minutes.
-const COLLECTOR_QUOTA_STALE_MS = 3600 * 1000;
+const COLLECTOR_QUOTA_INTERRUPTED_MS = 3600 * 1000;
 // Matches the daemon's Kimi, Antigravity and ZenMux quota collectors.
 const COLLECTOR_QUOTA_PROVIDERS = ["kimi", "antigravity", "zenmux"];
 
@@ -106,63 +106,269 @@ export function windowRemainingPercent(
   return 100 - window.used_percent;
 }
 
-/** Polling providers go stale after an hour; task-reported and unknown
- *  providers keep the 24h allowance for idle periods between tasks. */
-export function isQuotaStale(quota: RuntimePlanQuota, nowMs: number): boolean {
-  const staleMs = COLLECTOR_QUOTA_PROVIDERS.includes(quota.provider)
-    ? COLLECTOR_QUOTA_STALE_MS
-    : QUOTA_STALE_MS;
-  return nowMs - quota.observed_at * 1000 > staleMs;
-}
-
-/** A past reset invalidates the old balance, but the window must stay visible
- *  as awaiting refresh until the provider reports its new balance. */
-export function isQuotaWindowAwaitingRefresh(
-  window: RuntimePlanQuotaWindow,
-  nowSec: number,
+/** A polled observation older than an hour means collection stopped. The
+ *  last balance stays visible but is no longer current. */
+export function isCollectorObservationInterrupted(
+  observedAtSec: number,
+  nowMs: number,
 ): boolean {
-  return window.resets_at != null && window.resets_at <= nowSec;
+  return nowMs - observedAtSec * 1000 > COLLECTOR_QUOTA_INTERRUPTED_MS;
 }
 
-/** Only for ranking current balances. Display callers must keep all windows
- *  and use isQuotaWindowAwaitingRefresh to mark those awaiting new data. */
-export function activeQuotaWindows(
+/** Only polling collectors can be interrupted. Task-reported providers
+ *  observe quota while a task runs, so no new observation means no usage:
+ *  their last balance holds until its reset time. */
+export function isQuotaCollectionInterrupted(
   quota: RuntimePlanQuota,
-  nowSec: number,
-): RuntimePlanQuotaWindow[] {
-  return quota.windows.filter(
-    (window) => !isQuotaWindowAwaitingRefresh(window, nowSec),
+  nowMs: number,
+): boolean {
+  return (
+    COLLECTOR_QUOTA_PROVIDERS.includes(quota.provider) &&
+    isCollectorObservationInterrupted(quota.observed_at, nowMs)
   );
 }
 
-/** The active window with the lowest remaining percentage — the one that
- *  throttles first. Windows without a percentage can't be ranked; if none
- *  carry one, returns null. */
-export function worstQuotaWindow(
-  quota: RuntimePlanQuota,
-  nowSec: number,
-): RuntimePlanQuotaWindow | null {
-  let worst: RuntimePlanQuotaWindow | null = null;
-  let worstRemaining = Infinity;
-  for (const window of activeQuotaWindows(quota, nowSec)) {
-    const remaining = windowRemainingPercent(window);
-    if (remaining == null) continue;
-    if (remaining < worstRemaining) {
-      worstRemaining = remaining;
-      worst = window;
-    }
-  }
-  return worst;
-}
-
-export function quotaTone(
-  remaining: number | null,
-  status: RuntimePlanQuota["status"],
-): QuotaTone {
-  if (status === "limited") return "destructive";
+export function quotaTone(remaining: number | null): QuotaTone {
   if (remaining != null && remaining <= 10) return "destructive";
   if (remaining != null && remaining <= 20) return "warning";
   return "ok";
+}
+
+/** One window after reset inference and the pool rules. Times are unix
+ *  seconds. */
+export interface QuotaWindowState {
+  name: string;
+  group: string | null;
+  windowMinutes: number | null;
+  /** 100 once the reset has passed; null when the provider sent no
+   *  percentage. */
+  remainingPercent: number | null;
+  /** The upcoming reset; null once it has passed or when unknown. */
+  resetsAt: number | null;
+  /** The passed reset that refilled the window; null otherwise. */
+  resetPassedAt: number | null;
+  /** Used up: blocks its pool until it resets. */
+  exhausted: boolean;
+  /** Its limited pool recovers no earlier than this window resets (or the
+   *  window reports no reset), so its balance does not matter until then.
+   *  Never set on the used-up windows the recovery waits for. */
+  notApplicable: boolean;
+  tone: QuotaTone;
+}
+
+/** Windows sharing a quota pool: one per group, ungrouped windows form one. */
+export interface QuotaPoolState {
+  group: string | null;
+  windows: QuotaWindowState[];
+  limited: boolean;
+  /** The binding window's remaining percent; null when limited or when no
+   *  window carries a percentage. */
+  remainingPercent: number | null;
+  /** Limited: when the pool recovers, i.e. the latest reset among its
+   *  used-up windows (null if one is unknown). Otherwise the binding
+   *  window's reset. */
+  resetsAt: number | null;
+  tone: QuotaTone;
+}
+
+/** The tightest constraint across pools, for single-value surfaces. */
+export interface QuotaSummary {
+  limited: boolean;
+  remainingPercent: number | null;
+  resetsAt: number | null;
+  tone: QuotaTone;
+}
+
+export interface PlanQuotaState {
+  provider: string;
+  source: string;
+  observedAt: number;
+  pools: QuotaPoolState[];
+  /** Every window names its pool and no pool constrains another
+   *  (antigravity's gemini and claude_gpt): summarize each pool on its own. */
+  independentPools: boolean;
+  /** Limited, yet no window was used up when observed and every window has
+   *  a percentage: the limit belongs to no window or pool, so the snapshot
+   *  is limited as a whole, with no recovery time, until it is replaced. */
+  unattributedLimit: boolean;
+  summary: QuotaSummary;
+  /** A collector stopped reporting: the last balance stays, flagged. */
+  interrupted: boolean;
+}
+
+/**
+ * Derive the display state of a snapshot. A passed reset refills its window
+ * (100%, no next reset). Per pool, a used-up window limits the pool until
+ * the latest reset among its used-up windows; every other window that
+ * resets by then, or reports no reset, is not applicable meanwhile. A pool
+ * without a used-up window is bound by its least remaining window, the
+ * later reset winning a tie. A limited snapshot that names no used-up
+ * window is limited as a whole: no window is guessed, so nothing tells when
+ * it recovers.
+ */
+export function evaluatePlanQuota(
+  quota: RuntimePlanQuota,
+  nowMs: number,
+): PlanQuotaState {
+  const nowSec = Math.floor(nowMs / 1000);
+  const usedUp = usedUpAtObservation(quota);
+  const unattributedLimit = quota.status === "limited" && usedUp.size === 0;
+  const pools = groupQuotaWindows(quota.windows).map(({ group, windows }) =>
+    evaluateQuotaPool(group, windows, usedUp, nowSec),
+  );
+  return {
+    provider: quota.provider,
+    source: quota.source,
+    observedAt: quota.observed_at,
+    pools,
+    // A limit that belongs to no pool cannot be split across pools.
+    independentPools:
+      !unattributedLimit &&
+      quota.windows.length > 0 &&
+      quota.windows.every((window) => quotaWindowGroup(window) != null),
+    unattributedLimit,
+    summary: unattributedLimit
+      ? { limited: true, remainingPercent: null, resetsAt: null, tone: "destructive" }
+      : summarizeQuotaPools(pools),
+    interrupted: isQuotaCollectionInterrupted(quota, nowMs),
+  };
+}
+
+/** A raw `plan_quota` payload's display state; null when nothing usable was
+ *  reported (missing, malformed or windowless). */
+export function planQuotaState(raw: unknown, nowMs: number): PlanQuotaState | null {
+  const quota = parsePlanQuota(raw);
+  if (!quota || quota.windows.length === 0) return null;
+  return evaluatePlanQuota(quota, nowMs);
+}
+
+// Windows that were used up when observed. A full window always counts. A
+// limited snapshot without one counts its windows that carry no percentage;
+// with none of those either, its limit names no window.
+function usedUpAtObservation(
+  quota: RuntimePlanQuota,
+): Set<RuntimePlanQuotaWindow> {
+  const full = quota.windows.filter(
+    (window) => window.used_percent != null && window.used_percent >= 100,
+  );
+  if (full.length > 0 || quota.status !== "limited") return new Set(full);
+  return new Set(quota.windows.filter((window) => window.used_percent == null));
+}
+
+function evaluateQuotaPool(
+  group: string | null,
+  windows: RuntimePlanQuotaWindow[],
+  usedUp: Set<RuntimePlanQuotaWindow>,
+  nowSec: number,
+): QuotaPoolState {
+  const observed = windows.map((window) => {
+    const passed = window.resets_at != null && window.resets_at <= nowSec;
+    return {
+      window,
+      passed,
+      exhausted: !passed && usedUp.has(window),
+      remaining: passed ? 100 : windowRemainingPercent(window),
+      resetsAt: passed ? null : window.resets_at,
+    };
+  });
+  const exhausted = observed.filter((entry) => entry.exhausted);
+  const limited = exhausted.length > 0;
+  const recoverAt = latestReset(exhausted.map((entry) => entry.resetsAt));
+  const states = observed.map((entry): QuotaWindowState => {
+    // The used-up windows resetting last hold the pool. Any other window,
+    // used up or not, that resets by then or reports no reset is set aside.
+    const holdsPool = entry.exhausted && recoverAt != null && entry.resetsAt === recoverAt;
+    const notApplicable =
+      limited &&
+      !holdsPool &&
+      (entry.resetsAt == null || (recoverAt != null && entry.resetsAt <= recoverAt));
+    return {
+      name: entry.window.name,
+      group,
+      windowMinutes: entry.window.window_minutes,
+      remainingPercent: entry.remaining,
+      resetsAt: entry.resetsAt,
+      resetPassedAt: entry.passed ? entry.window.resets_at : null,
+      exhausted: entry.exhausted,
+      notApplicable,
+      tone: notApplicable
+        ? "ok"
+        : entry.exhausted
+          ? "destructive"
+          : quotaTone(entry.remaining),
+    };
+  });
+  if (limited) {
+    return {
+      group,
+      windows: states,
+      limited,
+      remainingPercent: null,
+      resetsAt: recoverAt,
+      tone: "destructive",
+    };
+  }
+  const binding = tightest(states);
+  return {
+    group,
+    windows: states,
+    limited,
+    remainingPercent: binding?.remainingPercent ?? null,
+    resetsAt: binding?.resetsAt ?? null,
+    tone: quotaTone(binding?.remainingPercent ?? null),
+  };
+}
+
+function summarizeQuotaPools(pools: QuotaPoolState[]): QuotaSummary {
+  const limited = pools.filter((pool) => pool.limited);
+  if (limited.length > 0) {
+    return {
+      limited: true,
+      remainingPercent: null,
+      resetsAt: latestReset(limited.map((pool) => pool.resetsAt)),
+      tone: "destructive",
+    };
+  }
+  const binding = tightest(pools);
+  return {
+    limited: false,
+    remainingPercent: binding?.remainingPercent ?? null,
+    resetsAt: binding?.resetsAt ?? null,
+    tone: quotaTone(binding?.remainingPercent ?? null),
+  };
+}
+
+// The latest of a set of resets; null when the set is empty or any one is
+// unknown, since the last of them decides recovery.
+function latestReset(resets: (number | null)[]): number | null {
+  if (resets.length === 0 || resets.some((reset) => reset == null)) return null;
+  return Math.max(...(resets as number[]));
+}
+
+// The entry with the least remaining percent; on a tie, the later reset binds
+// longer (an unknown reset counts as latest). Entries without a percentage
+// cannot be ranked.
+function tightest<T extends { remainingPercent: number | null; resetsAt: number | null }>(
+  entries: T[],
+): T | null {
+  let best: T | null = null;
+  for (const entry of entries) {
+    if (entry.remainingPercent == null) continue;
+    if (
+      best == null ||
+      entry.remainingPercent < best.remainingPercent! ||
+      (entry.remainingPercent === best.remainingPercent &&
+        resetsLater(entry.resetsAt, best.resetsAt))
+    ) {
+      best = entry;
+    }
+  }
+  return best;
+}
+
+function resetsLater(a: number | null, b: number | null): boolean {
+  if (a == null) return b != null;
+  return b != null && a > b;
 }
 
 /** Structured short label for a quota window: 300 → {unit:"hours",value:5}

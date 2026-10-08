@@ -19,21 +19,47 @@ minutes per server process. External quota pushes still return HTTP 400 on
 invalid input. Conditional database writes and the five-minute freshness throttle
 are unchanged.
 
-The UI marks Kimi, Antigravity and ZenMux observations stale after one hour,
-longer than the collectors' maximum 30-minute rate-limit backoff. Codex, Claude
-and other providers retain the 24-hour threshold. A window whose reset has
-passed stays visible as "Reset, awaiting refresh" without its old percentage.
-Machine chips show waiting or stale states instead of disappearing; their
-tooltips retain every reported window. No new quota is inferred from a reset.
+## Display rules
 
-A machine chip shows "Reset, awaiting refresh" when any window has reset: the
-remaining quota in that window is unknown, so the chip cannot summarize the
-account's usable allowance. Other windows' current percentages remain visible
-in the tooltip and detail views until the snapshot becomes stale. For Codex and
-Claude, which report quota with tasks, a five-hour reset therefore also hides
-the weekly percentage from the machine chip until the next task reports quota.
-Without a new task this can last for hours; once the observation is more than
-24 hours old, the chip and its tooltip show "Stale data" instead.
+The runtime list cell, runtime settings card, machine chips and the GLM card
+apply one set of rules (`evaluatePlanQuota` in
+`packages/core/runtimes/plan-quota.ts`):
+
+- **Reset times** are wall-clock times in the viewer's timezone (the
+  Preferences timezone, else the browser's): the time alone on the viewer's
+  current day, month and day otherwise. There are no countdowns.
+- **A passed reset refills its window.** The window counts as 100% with no next
+  reset, and its row notes when it was refilled. The next observation replaces
+  the inference.
+- **Pools.** Windows sharing a `group` form a pool; ungrouped windows form one
+  pool. A used-up window limits its pool until the latest reset among the
+  pool's used-up windows. Used up means at least 100% used; a `limited`
+  snapshot without such a window counts its windows without a percentage as
+  used up. While a pool is limited, every window that resets by the recovery,
+  or reports no reset, is "Not applicable now", used up or not; only the
+  used-up windows the recovery waits for keep their value. An unlimited pool
+  is bound by its least remaining window, the later reset winning a tie (an
+  unknown reset counts as later). Colors follow each pool and window, never
+  the snapshot status alone.
+- **A limit that names no window.** A `limited` snapshot whose windows all
+  carry a percentage below 100% is "Rate limited" as a whole. No window or pool
+  is guessed: there is no recovery time, independent pools are not split, and
+  no reset lifts the limit before the next observation replaces the snapshot.
+  Each window keeps its own balance and color.
+- **Single-value surfaces** (the list cell's status line, machine chips) show
+  the tightest pool: "Rate limited · resets at …" with the latest recovery among
+  limited pools, otherwise the least remaining window and its reset. When every
+  window is grouped (Antigravity), the pools are independent: each gets its own
+  chip and status line. Claude's model-specific pools still merge into the
+  runtime's single value, since an agent using that model is blocked.
+- **Freshness.** Task-reported providers (Codex, Claude and others) never age
+  out: no task means no usage, so the last balance holds until its reset.
+  Collectors (Kimi, Antigravity, ZenMux) and the server's GLM collector show
+  "Collection interrupted" after an hour without a successful poll, longer than
+  the collectors' 30-minute maximum backoff. The last balance stays visible,
+  uncolored, with the absolute time of the last update.
+- Runtimes sharing one account are not detected and no account information is
+  read; each runtime shows its own observations.
 
 ## Claude Code
 
@@ -45,8 +71,8 @@ stream-json execution. It makes no quota API request and starts no idle poller.
   reported, model-specific weekly observations from response headers.
 - Utilization is a fraction; multiply by 100 for `used_percent`. Zero is a real
   observation, missing is unknown, and legitimate values above 100 are retained.
-- `resetsAt` is Unix seconds. Do not infer a refreshed allowance when a reset
-  passes. Keep the window visible while waiting for another observation.
+- `resetsAt` is Unix seconds. The daemon reports only what it observed; the UI
+  refills a window whose reset has passed (see Display rules).
 - `allowed_warning` is not a rejection. Only `rejected` marks the snapshot limited.
 - Unknown windows, malformed observations and pay-as-you-go overage balances do
   not produce invented subscription percentages or overwrite the last valid data.
@@ -57,9 +83,9 @@ The final result also retains the latest snapshot, including failed executions.
 Older concurrent task results cannot replace a newer cached observation.
 Quota events do not become task transcript messages or watchdog progress.
 
-No task means no fresh Claude observation. Keep the actual observation timestamp;
-the existing stale and reset rules apply. A runtime's displayed allowance belongs
-to its logged-in account; do not sum allowances across runtimes.
+No task means no fresh Claude observation and no usage from this runtime. Keep
+the actual observation timestamp; the display rules apply. A runtime's displayed
+allowance belongs to its logged-in account; do not sum allowances across runtimes.
 
 `unifiedWindows` is an internal CLI extension. When upgrading Claude Code, verify
 its actual stream fields against `claude_plan_quota_test.go`, including missing
@@ -107,10 +133,11 @@ Every recognized bucket maps to exactly one window: no aggregation across
 buckets and no period inference (the pre-OL-141 six-hour-distance heuristic is
 gone). A fully replenished window (fraction 1.0) reports a rolling `resetTime`
 of "now + period" that advances on every collection, so its reset timestamp is
-dropped — the UI shows no countdown and never an awaiting-refresh state for it.
-A bucket with fraction 0 marks the snapshot limited. A bucket the API flags
-`disabled` (the 5-hour limit does not apply while the weekly pool is
-exhausted) passes through verbatim: full fraction, no reset, unchanged period.
+dropped and the UI shows no reset time for it. A bucket with fraction 0 marks
+the snapshot limited. A bucket the API flags `disabled` (the 5-hour limit does
+not apply while the weekly pool is exhausted) passes through verbatim: full
+fraction, no reset, unchanged period. The UI shows it as not applicable while
+its pool's weekly window is used up.
 
 Malformed JSON, a known-pool bucket without a valid fraction, duplicate
 windows, a result that fails the shared wire contract (e.g. an oversized
@@ -118,7 +145,7 @@ window name), or a response without any known pool fails the whole round
 (fail-closed): the platform keeps the last successful observation and
 `/health` shows `collection_failed`. A missing or unparsable `resetTime` on
 an otherwise valid bucket is tolerated — the window simply carries no
-countdown. The legacy per-model `retrieveUserQuota` endpoint is no longer
+reset time. The legacy per-model `retrieveUserQuota` endpoint is no longer
 queried and is never used as a fallback.
 
 The access token is read on every round from
@@ -153,6 +180,8 @@ The backend's existing GLM account collector and API are unchanged. Web and Desk
 show its card once above the runtime list, including an empty list. Its display
 does not depend on `anchor_device` or a runtime's provider/login. Unconfigured or
 never-successful collection remains absent rather than showing a zero balance.
+Reset times, refilled windows and the one-hour "Collection interrupted" rule
+follow the display rules; the UI does not use the endpoint's 24-hour `stale` flag.
 
 ## Focused verification
 

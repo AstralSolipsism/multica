@@ -1,17 +1,12 @@
 import {
   deriveRuntimeHealth,
-  isQuotaStale,
-  isQuotaWindowAwaitingRefresh,
   isSystemStatsStale,
-  parsePlanQuota,
   pickMachineSystemStats,
-  quotaTone,
-  windowRemainingPercent,
-  worstQuotaWindow,
+  planQuotaState,
   type QuotaTone,
   type RuntimeHealth,
 } from "@multica/core/runtimes";
-import type { AgentRuntime, RuntimePlanQuota } from "@multica/core/types";
+import type { AgentRuntime } from "@multica/core/types";
 import { formatDeviceInfo } from "../utils";
 
 export type RuntimeMachineSection = "local" | "remote" | "cloud";
@@ -22,15 +17,20 @@ export interface RuntimeWorkloadSummary {
   queuedCount: number;
 }
 
-/** One runtime's plan-quota summary as rendered on the machine row: the
- *  worst active window's remaining percent plus the tone to render it in. */
+/** One quota pill on the machine row: a runtime's tightest constraint, or
+ *  one pill per pool when its pools are independent (antigravity). */
 export interface MachineQuotaChip {
+  /** Unique per runtime and pool. */
+  key: string;
   runtimeId: string;
   provider: string;
+  /** The pool this pill summarizes; null when it covers the whole runtime. */
+  group: string | null;
   remainingPercent: number | null;
-  status: RuntimePlanQuota["status"];
+  limited: boolean;
   tone: QuotaTone;
-  freshness: "fresh" | "stale" | "awaiting_refresh";
+  /** The collector stopped: the last balance stays, uncolored and flagged. */
+  interrupted: boolean;
 }
 
 export interface RuntimeMachine {
@@ -320,34 +320,33 @@ function finalizeRuntimeMachine(
   };
 }
 
-// Per-runtime quota chips for an online machine. A runtime contributes a
-// chip when its snapshot parsed and has windows. Stale or reset windows
-// leave a visible state instead of disappearing or claiming a current balance.
+// Quota pills for an online machine: one per runtime with a usable snapshot,
+// split per pool when the pools are independent. Interrupted collections
+// keep their last balance instead of disappearing.
 function machineQuotaChips(
   runtimes: AgentRuntime[],
   now: number,
 ): MachineQuotaChip[] {
-  const nowSec = Math.floor(now / 1000);
   const chips: MachineQuotaChip[] = [];
   for (const runtime of runtimes) {
-    const quota = parsePlanQuota(runtime.plan_quota);
-    if (!quota) continue;
-    if (quota.windows.length === 0) continue;
-    const freshness = isQuotaStale(quota, now)
-      ? "stale"
-      : quota.windows.some((window) => isQuotaWindowAwaitingRefresh(window, nowSec))
-        ? "awaiting_refresh"
-        : "fresh";
-    const worst = worstQuotaWindow(quota, nowSec);
-    const remaining = freshness === "fresh" && worst ? windowRemainingPercent(worst) : null;
-    chips.push({
-      runtimeId: runtime.id,
-      provider: quota.provider || runtime.provider,
-      remainingPercent: remaining,
-      status: quota.status,
-      tone: freshness === "fresh" ? quotaTone(remaining, quota.status) : "ok",
-      freshness,
-    });
+    const state = planQuotaState(runtime.plan_quota, now);
+    if (!state) continue;
+    const provider = state.provider || runtime.provider;
+    const parts = state.independentPools
+      ? state.pools.map((pool) => ({ group: pool.group, status: pool }))
+      : [{ group: null, status: state.summary }];
+    for (const { group, status } of parts) {
+      chips.push({
+        key: group == null ? runtime.id : `${runtime.id}:${group}`,
+        runtimeId: runtime.id,
+        provider,
+        group,
+        remainingPercent: status.remainingPercent,
+        limited: status.limited,
+        tone: status.tone,
+        interrupted: state.interrupted,
+      });
+    }
   }
   return chips;
 }

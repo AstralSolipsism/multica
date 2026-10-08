@@ -3,17 +3,17 @@
 import { describe, expect, it } from "vitest";
 import type { RuntimePlanQuotaWindow } from "../types";
 import {
-  activeQuotaWindows,
+  evaluatePlanQuota,
   formatCompactDuration,
   groupQuotaWindows,
-  isQuotaStale,
-  isQuotaWindowAwaitingRefresh,
+  isCollectorObservationInterrupted,
+  isQuotaCollectionInterrupted,
   parsePlanQuota,
+  planQuotaState,
   quotaTone,
   quotaWindowGroup,
   quotaWindowLabel,
   windowRemainingPercent,
-  worstQuotaWindow,
 } from "./plan-quota";
 
 const NOW_SEC = 1_800_000_000; // 2027-01-15T06:40:00Z
@@ -120,81 +120,283 @@ describe("windowRemainingPercent", () => {
   });
 });
 
-describe("isQuotaStale", () => {
-  it.each(["kimi", "antigravity", "zenmux", "codex", "claude", "custom"])("uses the freshness boundary for %s", (provider) => {
-    const limitSec = ["kimi", "antigravity", "zenmux"].includes(provider) ? 3600 : 86400;
-    const quota = parsePlanQuota(makeQuota({ provider, observed_at: NOW_SEC - limitSec }))!;
-    expect(isQuotaStale(quota, NOW_MS)).toBe(false);
-    expect(isQuotaStale(quota, NOW_MS + 1)).toBe(true);
-  });
-  it("is fresh within 24h and stale beyond it", () => {
-    const fresh = parsePlanQuota(makeQuota({ observed_at: NOW_SEC - 23 * 3600 }));
-    const stale = parsePlanQuota(makeQuota({ observed_at: NOW_SEC - 25 * 3600 }));
-    expect(fresh && isQuotaStale(fresh, NOW_MS)).toBe(false);
-    expect(stale && isQuotaStale(stale, NOW_MS)).toBe(true);
-  });
-});
-
-describe("activeQuotaWindows", () => {
-  it("drops windows whose reset time has passed, keeps null resets", () => {
-    const quota = parsePlanQuota(
-      makeQuota({
-        windows: [
-          { name: "expired", used_percent: 10, window_minutes: 300, resets_at: NOW_SEC - 5 },
-          { name: "live", used_percent: 10, window_minutes: 300, resets_at: NOW_SEC + 5 },
-          { name: "open", used_percent: 10, window_minutes: null, resets_at: null },
-        ],
-      }),
-    );
-    expect(quota && activeQuotaWindows(quota, NOW_SEC).map((w) => w.name)).toEqual([
-      "live",
-      "open",
-    ]);
-  });
-});
-
-describe("worstQuotaWindow", () => {
-  it("picks the active window with the lowest remaining percent", () => {
-    const quota = parsePlanQuota(makeQuota());
-    expect(quota && worstQuotaWindow(quota, NOW_SEC)?.name).toBe("primary");
+describe("collection interruption", () => {
+  it.each(["kimi", "antigravity", "zenmux"])("flags %s after an hour without a poll", (provider) => {
+    const quota = parsePlanQuota(makeQuota({ provider, observed_at: NOW_SEC - 3600 }))!;
+    expect(isQuotaCollectionInterrupted(quota, NOW_MS)).toBe(false);
+    expect(isQuotaCollectionInterrupted(quota, NOW_MS + 1)).toBe(true);
   });
 
-  it("ignores expired windows and windows without a percentage", () => {
-    const quota = parsePlanQuota(
-      makeQuota({
-        windows: [
-          { name: "expired", used_percent: 99, window_minutes: 300, resets_at: NOW_SEC - 5 },
-          { name: "no-data", used_percent: null, window_minutes: 300, resets_at: NOW_SEC + 5 },
-          { name: "live", used_percent: 50, window_minutes: 300, resets_at: NOW_SEC + 5 },
-        ],
-      }),
-    );
-    expect(quota && worstQuotaWindow(quota, NOW_SEC)?.name).toBe("live");
+  it.each(["codex", "claude", "custom"])("never flags task-reported %s snapshots", (provider) => {
+    // No task means no usage: the last observation stays valid until reset.
+    const quota = parsePlanQuota(makeQuota({ provider, observed_at: NOW_SEC - 30 * 86400 }))!;
+    expect(isQuotaCollectionInterrupted(quota, NOW_MS)).toBe(false);
   });
 
-  it("returns null when no active window carries a percentage", () => {
-    const quota = parsePlanQuota(
-      makeQuota({
-        windows: [
-          { name: "no-data", used_percent: null, window_minutes: 300, resets_at: NOW_SEC + 5 },
-        ],
-      }),
-    );
-    expect(quota && worstQuotaWindow(quota, NOW_SEC)).toBeNull();
+  it("applies the same hour to any polled observation", () => {
+    expect(isCollectorObservationInterrupted(NOW_SEC - 3600, NOW_MS)).toBe(false);
+    expect(isCollectorObservationInterrupted(NOW_SEC - 3601, NOW_MS)).toBe(true);
   });
 });
 
 describe("quotaTone", () => {
-  it("is destructive when limited, at <=10% remaining", () => {
-    expect(quotaTone(50, "limited")).toBe("destructive");
-    expect(quotaTone(10, "ok")).toBe("destructive");
-    expect(quotaTone(0, "ok")).toBe("destructive");
+  it("is destructive at <=10% remaining", () => {
+    expect(quotaTone(10)).toBe("destructive");
+    expect(quotaTone(0)).toBe("destructive");
   });
 
   it("is warning at <=20% remaining, ok otherwise", () => {
-    expect(quotaTone(20, "ok")).toBe("warning");
-    expect(quotaTone(21, "ok")).toBe("ok");
-    expect(quotaTone(null, "ok")).toBe("ok");
+    expect(quotaTone(20)).toBe("warning");
+    expect(quotaTone(21)).toBe("ok");
+    expect(quotaTone(null)).toBe("ok");
+  });
+});
+
+describe("planQuotaState", () => {
+  it("is null when the snapshot is missing, malformed, or windowless", () => {
+    expect(planQuotaState(null, NOW_MS)).toBeNull();
+    expect(planQuotaState("garbage", NOW_MS)).toBeNull();
+    expect(planQuotaState(makeQuota({ windows: [] }), NOW_MS)).toBeNull();
+  });
+
+  it("evaluates a usable snapshot", () => {
+    expect(planQuotaState(makeQuota(), NOW_MS)?.summary).toEqual({
+      limited: false,
+      remainingPercent: 62,
+      resetsAt: NOW_SEC + 3600,
+      tone: "ok",
+    });
+  });
+});
+
+describe("evaluatePlanQuota", () => {
+  type Window = {
+    name: string;
+    used_percent: number | null;
+    resets_at: number | null;
+    window_minutes?: number | null;
+    group?: string | null;
+  };
+  function evaluate(windows: Window[], overrides: Record<string, unknown> = {}, nowMs = NOW_MS) {
+    return evaluatePlanQuota(parsePlanQuota(makeQuota({ windows, ...overrides }))!, nowMs);
+  }
+  const HOUR = 3600;
+  const DAY = 24 * HOUR;
+
+  it("refills a window once its reset has passed", () => {
+    const state = evaluate([
+      { name: "at", used_percent: 99, resets_at: NOW_SEC },
+      { name: "next", used_percent: 99, resets_at: NOW_SEC + 1 },
+    ]);
+    const [at, next] = state.pools[0]!.windows;
+    expect(at).toMatchObject({ remainingPercent: 100, resetsAt: null, resetPassedAt: NOW_SEC, tone: "ok" });
+    expect(next).toMatchObject({ remainingPercent: 1, resetsAt: NOW_SEC + 1, resetPassedAt: null });
+  });
+
+  it("shows the weekly balance once the five-hour window has reset", () => {
+    // Claude on agent-ops-host-149: the 5h reset passed, weekly has 86% left.
+    const state = evaluate([
+      { name: "five_hour", used_percent: 1, window_minutes: 300, resets_at: NOW_SEC - 60 },
+      { name: "seven_day", used_percent: 14, window_minutes: 10080, resets_at: NOW_SEC + 4 * DAY },
+    ], { provider: "claude" });
+    expect(state.summary).toEqual({
+      limited: false,
+      remainingPercent: 86,
+      resetsAt: NOW_SEC + 4 * DAY,
+      tone: "ok",
+    });
+    expect(state.pools[0]!.windows.some((window) => window.notApplicable)).toBe(false);
+  });
+
+  it("binds on the least remaining window, not the soonest reset", () => {
+    const state = evaluate([
+      { name: "five_hour", used_percent: 1, resets_at: NOW_SEC + 4 * HOUR },
+      { name: "seven_day", used_percent: 15, resets_at: NOW_SEC + 4 * DAY },
+    ]);
+    expect(state.summary).toMatchObject({ remainingPercent: 85, resetsAt: NOW_SEC + 4 * DAY });
+  });
+
+  it("lets the later reset win a tie", () => {
+    const state = evaluate([
+      { name: "five_hour", used_percent: 70, resets_at: NOW_SEC + HOUR },
+      { name: "seven_day", used_percent: 70, resets_at: NOW_SEC + 3 * DAY },
+    ]);
+    expect(state.summary.resetsAt).toBe(NOW_SEC + 3 * DAY);
+  });
+
+  it("lets an unknown reset win a tie, since it may come last", () => {
+    const state = evaluate([
+      { name: "five_hour", used_percent: 70, resets_at: NOW_SEC + HOUR },
+      { name: "daily", used_percent: 70, resets_at: null },
+    ]);
+    expect(state.summary).toMatchObject({ remainingPercent: 30, resetsAt: null });
+  });
+
+  it("limits the pool until a used-up weekly resets and sets the five-hour aside", () => {
+    const state = evaluate([
+      { name: "five_hour", used_percent: 50, resets_at: NOW_SEC + 2 * HOUR },
+      { name: "seven_day", used_percent: 100, resets_at: NOW_SEC + 3 * DAY },
+    ]);
+    const pool = state.pools[0]!;
+    expect(pool).toMatchObject({ limited: true, resetsAt: NOW_SEC + 3 * DAY, remainingPercent: null, tone: "destructive" });
+    expect(pool.windows.map((window) => [window.name, window.exhausted, window.notApplicable])).toEqual([
+      ["five_hour", false, true],
+      ["seven_day", true, false],
+    ]);
+    expect(state.summary).toEqual({ limited: true, remainingPercent: null, resetsAt: NOW_SEC + 3 * DAY, tone: "destructive" });
+  });
+
+  it("keeps a window that resets after recovery applicable", () => {
+    const state = evaluate([
+      { name: "five_hour", used_percent: 100, resets_at: NOW_SEC + 2 * HOUR },
+      { name: "seven_day", used_percent: 70, resets_at: NOW_SEC + 4 * DAY },
+    ]);
+    const pool = state.pools[0]!;
+    expect(pool).toMatchObject({ limited: true, resetsAt: NOW_SEC + 2 * HOUR });
+    expect(pool.windows[1]).toMatchObject({ notApplicable: false, remainingPercent: 30, tone: "ok" });
+  });
+
+  it("waits for the latest used-up window and sets aside the rest that reset by then", () => {
+    const state = evaluate([
+      { name: "five_hour", used_percent: 100, resets_at: NOW_SEC + HOUR },
+      { name: "seven_day", used_percent: 100, resets_at: NOW_SEC + DAY },
+      { name: "boundary", used_percent: 10, resets_at: NOW_SEC + DAY },
+    ]);
+    const pool = state.pools[0]!;
+    expect(pool.resetsAt).toBe(NOW_SEC + DAY);
+    expect(pool.windows.map((window) => [window.name, window.exhausted, window.notApplicable])).toEqual([
+      ["five_hour", true, true],
+      ["seven_day", true, false],
+      ["boundary", false, true],
+    ]);
+  });
+
+  it("does not know when a pool recovers if a used-up window has no reset", () => {
+    const state = evaluate([
+      { name: "seven_day", used_percent: 100, resets_at: null },
+      { name: "five_hour", used_percent: 100, resets_at: NOW_SEC + HOUR },
+      { name: "daily", used_percent: 40, resets_at: NOW_SEC + 2 * HOUR },
+    ]);
+    expect(state.pools[0]).toMatchObject({ limited: true, resetsAt: null });
+    expect(state.summary).toMatchObject({ limited: true, resetsAt: null });
+    // A window without a reset is set aside, used up or not; a known reset
+    // cannot be placed before an unknown recovery, so it stays on show.
+    expect(state.pools[0]!.windows.map((window) => window.notApplicable)).toEqual([true, false, false]);
+  });
+
+  it("counts more than 100% used as used up", () => {
+    // Claude retains legitimate overshoot, e.g. a weekly window at 110%.
+    const state = evaluate([
+      { name: "seven_day", used_percent: 110, resets_at: NOW_SEC + DAY },
+      { name: "five_hour", used_percent: 20, resets_at: NOW_SEC + 2 * DAY },
+    ], { provider: "claude", status: "limited" });
+    expect(state.pools[0]!.windows.map((window) => window.exhausted)).toEqual([true, false]);
+    expect(state.summary).toMatchObject({ limited: true, resetsAt: NOW_SEC + DAY });
+  });
+
+  it("evaluates independent antigravity pools separately", () => {
+    // Live 10-08 shape: the claude_gpt weekly pool is used up and the API
+    // disables its 5h bucket; gemini is untouched.
+    const state = evaluate([
+      { name: "gemini_5h", used_percent: 0, window_minutes: 300, resets_at: null, group: "gemini" },
+      { name: "gemini_weekly", used_percent: 0, window_minutes: 10080, resets_at: null, group: "gemini" },
+      { name: "claude_gpt_5h", used_percent: 0, window_minutes: 300, resets_at: null, group: "claude_gpt" },
+      { name: "claude_gpt_weekly", used_percent: 100, window_minutes: 10080, resets_at: NOW_SEC + 2 * DAY, group: "claude_gpt" },
+    ], { provider: "antigravity", status: "limited" });
+    expect(state.independentPools).toBe(true);
+    const [gemini, claudeGpt] = state.pools;
+    expect(gemini).toMatchObject({ group: "gemini", limited: false, remainingPercent: 100, resetsAt: null, tone: "ok" });
+    expect(gemini!.windows.every((window) => window.tone === "ok" && !window.notApplicable)).toBe(true);
+    expect(claudeGpt).toMatchObject({ group: "claude_gpt", limited: true, resetsAt: NOW_SEC + 2 * DAY });
+    expect(claudeGpt!.windows.map((window) => window.notApplicable)).toEqual([true, false]);
+    expect(state.summary).toMatchObject({ limited: true, resetsAt: NOW_SEC + 2 * DAY });
+  });
+
+  it("lifts a limit once the used-up window has reset", () => {
+    const state = evaluate([
+      { name: "claude_gpt_weekly", used_percent: 100, resets_at: NOW_SEC - 1, group: "claude_gpt" },
+      { name: "claude_gpt_5h", used_percent: 0, resets_at: null, group: "claude_gpt" },
+    ], { provider: "antigravity", status: "limited" });
+    expect(state.pools[0]).toMatchObject({ limited: false, remainingPercent: 100 });
+    expect(state.summary.limited).toBe(false);
+  });
+
+  it("attributes a limited snapshot to windows without a percentage", () => {
+    const state = evaluate([
+      { name: "primary", used_percent: null, resets_at: NOW_SEC + 110 },
+      { name: "secondary", used_percent: 60, resets_at: NOW_SEC + 3 * DAY },
+    ], { status: "limited" });
+    expect(state.pools[0]!.windows.map((window) => window.exhausted)).toEqual([true, false]);
+    expect(state.summary).toMatchObject({ limited: true, resetsAt: NOW_SEC + 110 });
+  });
+
+  it("limits the whole snapshot when the limit names no window", () => {
+    // Claude rejected a request while every window read below 100%.
+    const windows = [
+      { name: "five_hour", used_percent: 98, resets_at: NOW_SEC + HOUR },
+      { name: "seven_day", used_percent: 40, resets_at: NOW_SEC + 3 * DAY },
+    ];
+    const state = evaluate(windows, { provider: "claude", status: "limited" });
+    expect(state.unattributedLimit).toBe(true);
+    expect(state.summary).toEqual({ limited: true, remainingPercent: null, resetsAt: null, tone: "destructive" });
+    // No window is guessed: each keeps its own balance and color.
+    expect(state.pools[0]).toMatchObject({ limited: false, remainingPercent: 2, resetsAt: NOW_SEC + HOUR });
+    expect(state.pools[0]!.windows.map((window) => [window.exhausted, window.notApplicable, window.tone])).toEqual([
+      [false, false, "destructive"],
+      [false, false, "ok"],
+    ]);
+  });
+
+  it("lifts no unattributed limit when a window resets", () => {
+    const windows = [
+      { name: "five_hour", used_percent: 98, resets_at: NOW_SEC + HOUR },
+      { name: "seven_day", used_percent: 40, resets_at: NOW_SEC + 3 * DAY },
+    ];
+    const state = evaluate(windows, { provider: "claude", status: "limited" }, (NOW_SEC + HOUR + 1) * 1000);
+    expect(state.pools[0]!.windows[0]).toMatchObject({ remainingPercent: 100, resetPassedAt: NOW_SEC + HOUR });
+    expect(state.summary).toMatchObject({ limited: true, resetsAt: null });
+  });
+
+  it("keeps an unattributed limit whole across independent pools", () => {
+    const state = evaluate([
+      { name: "gemini_weekly", used_percent: 40, resets_at: NOW_SEC + DAY, group: "gemini" },
+      { name: "claude_gpt_weekly", used_percent: 90, resets_at: NOW_SEC + 2 * DAY, group: "claude_gpt" },
+    ], { provider: "antigravity", status: "limited" });
+    expect(state.independentPools).toBe(false);
+    expect(state.pools.map((pool) => pool.limited)).toEqual([false, false]);
+    expect(state.summary).toMatchObject({ limited: true, resetsAt: null });
+  });
+
+  it("does not limit an ok snapshot without a full window", () => {
+    const state = evaluate([{ name: "primary", used_percent: null, resets_at: NOW_SEC + HOUR }]);
+    expect(state.unattributedLimit).toBe(false);
+    expect(state.summary).toEqual({ limited: false, remainingPercent: null, resetsAt: null, tone: "ok" });
+  });
+
+  it("merges model-specific Claude pools into the single summary", () => {
+    const state = evaluate([
+      { name: "five_hour", used_percent: 10, resets_at: NOW_SEC + HOUR },
+      { name: "seven_day", used_percent: 20, resets_at: NOW_SEC + 3 * DAY },
+      { name: "seven_day_opus", used_percent: 100, resets_at: NOW_SEC + 2 * DAY, group: "Opus" },
+    ], { provider: "claude" });
+    expect(state.independentPools).toBe(false);
+    expect(state.pools.map((pool) => [pool.group, pool.limited])).toEqual([["Opus", true], [null, false]]);
+    expect(state.summary).toMatchObject({ limited: true, resetsAt: NOW_SEC + 2 * DAY });
+  });
+
+  it("takes the tightest pool when none is limited", () => {
+    const state = evaluate([
+      { name: "gemini_weekly", used_percent: 50, resets_at: NOW_SEC + DAY, group: "gemini" },
+      { name: "claude_gpt_weekly", used_percent: 85, resets_at: NOW_SEC + 2 * DAY, group: "claude_gpt" },
+    ], { provider: "antigravity" });
+    expect(state.summary).toEqual({ limited: false, remainingPercent: 15, resetsAt: NOW_SEC + 2 * DAY, tone: "warning" });
+  });
+
+  it("reports collector interruption with the observation time", () => {
+    const kimi = evaluatePlanQuota(parsePlanQuota(makeQuota({ provider: "kimi", observed_at: NOW_SEC - 2 * HOUR }))!, NOW_MS);
+    expect(kimi).toMatchObject({ interrupted: true, observedAt: NOW_SEC - 2 * HOUR, provider: "kimi" });
+    const codex = evaluatePlanQuota(parsePlanQuota(makeQuota({ observed_at: NOW_SEC - 2 * DAY }))!, NOW_MS);
+    expect(codex.interrupted).toBe(false);
   });
 });
 
@@ -304,29 +506,6 @@ describe("quota window groups", () => {
     ]);
     expect(groups.map((entry) => entry.group)).toEqual(["gemini", null]);
   });
-
-  it("never ranks the most-constrained bucket by group", () => {
-    // The chip's "worst bucket" metric stays group-blind: whichever pool is
-    // closest to exhausting throttles first, regardless of its label.
-    const quota = parsePlanQuota(makeQuota({
-      status: "ok",
-      windows: [...antigravityWindows, { name: "x", used_percent: 99, window_minutes: 300, resets_at: null, group: "claude_gpt" }],
-    }));
-    expect(quota && worstQuotaWindow(quota, NOW_SEC)?.name).toBe("x");
-  });
-});
-
-describe("isQuotaWindowAwaitingRefresh", () => {
-  it("marks the reset boundary without removing windows or inventing a balance", () => {
-    const quota = parsePlanQuota(makeQuota({ windows: [
-      { name: "reset", resets_at: NOW_SEC, used_percent: 100 },
-      { name: "future", resets_at: NOW_SEC + 1, used_percent: 20 },
-      { name: "unknown", resets_at: null },
-    ] }))!;
-    expect(quota.windows.map((w) => isQuotaWindowAwaitingRefresh(w, NOW_SEC))).toEqual([true, false, false]);
-    expect(quota.windows).toHaveLength(3);
-    expect(worstQuotaWindow(quota, NOW_SEC)?.name).toBe("future");
-  });
 });
 
 describe("fully replenished windows (OL-141 four-window shape)", () => {
@@ -339,18 +518,6 @@ describe("fully replenished windows (OL-141 four-window shape)", () => {
     { name: "claude_gpt_5h", used_percent: 0, window_minutes: 300, resets_at: null, group: "claude_gpt" },
     { name: "claude_gpt_weekly", used_percent: 100, window_minutes: 10080, resets_at: NOW_SEC + 3 * 24 * 3600, group: "claude_gpt" },
   ];
-
-  it("keeps a fully replenished window active without inventing a reset", () => {
-    const quota = parsePlanQuota(makeQuota({ provider: "antigravity", status: "limited", windows: fourWindows }))!;
-    const replenished = quota.windows.find((window) => window.name === "claude_gpt_5h")!;
-    expect(isQuotaWindowAwaitingRefresh(replenished, NOW_SEC)).toBe(false);
-    expect(activeQuotaWindows(quota, NOW_SEC)).toHaveLength(4);
-  });
-
-  it("ranks the exhausted weekly window as worst, not the replenished 5h", () => {
-    const quota = parsePlanQuota(makeQuota({ provider: "antigravity", status: "limited", windows: fourWindows }))!;
-    expect(worstQuotaWindow(quota, NOW_SEC)?.name).toBe("claude_gpt_weekly");
-  });
 
   it("groups both pools with 5h and weekly windows side by side", () => {
     const groups = groupQuotaWindows(fourWindows);

@@ -8,20 +8,19 @@ import {
 import { cn } from "@multica/ui/lib/utils";
 import {
   formatCompactDuration,
-  groupQuotaWindows,
-  isQuotaStale,
-  isQuotaWindowAwaitingRefresh,
-  parsePlanQuota,
-  quotaTone,
-  quotaWindowGroup,
+  planQuotaState,
   quotaWindowLabel,
-  windowRemainingPercent,
+  type QuotaPoolState,
+  type QuotaSummary,
   type QuotaTone,
+  type QuotaWindowState,
 } from "@multica/core/runtimes";
 import type { AgentRuntime } from "@multica/core/types";
 import { useT } from "../../i18n";
+import { useQuotaTimeFormatter } from "./quota-time";
 
 type QuotaT = ReturnType<typeof useT<"quota">>["t"];
+type FormatQuotaTime = (epochSec: number, nowMs: number) => string | null;
 
 // A window's short translated label ("5h" / "wk"): maps the core
 // descriptor onto this namespace's strings. Null when the window carries no
@@ -56,6 +55,9 @@ export const TONE_TEXT_CLASS: Record<QuotaTone, string> = {
   destructive: "text-destructive",
 };
 
+// An interrupted collection keeps its last fill without a health color.
+export const MUTED_BAR_CLASS = "bg-muted-foreground/50";
+
 // Thin fill meter for the quota-remaining and host-metrics bars. The caller
 // owns the null state ("--" / omit) — the bar itself never renders one.
 // barClassName overrides the tone's fill color for states that are not
@@ -88,17 +90,6 @@ export function MiniMeterBar({
   );
 }
 
-export interface QuotaWindowView {
-  name: string;
-  awaitingRefresh: boolean;
-  windowMinutes: number | null;
-  remainingPercent: number | null;
-  tone: QuotaTone;
-  resetInMs: number | null;
-  resetsAt: number | null;
-  group: string | null;
-}
-
 // The translated label for a quota pool ("Gemini" / "Claude + GPT"). Pools
 // the i18n layer has no translation for fall back to the raw group key so a
 // future third pool stays readable instead of disappearing.
@@ -109,86 +100,66 @@ export function quotaGroupLabel(group: string, t: QuotaT): string {
   return group;
 }
 
-export type RuntimeQuotaView =
-  | { kind: "not_reported" }
-  | { kind: "stale"; ageMs: number }
-  | { kind: "limited"; windows: QuotaWindowView[]; resetInMs: number | null; resetsAt: number | null }
-  | {
-      kind: "ok";
-      windows: QuotaWindowView[];
-      resetInMs: number | null;
-      resetsAt: number | null;
-      observedAgeMs: number;
-    };
-
-// Derive everything the quota cell / card renders from a runtime's raw
-// plan_quota snapshot. Missing/malformed or windowless snapshots are not
-// reported. Staleness is provider-specific, and elapsed windows stay visible
-// awaiting refresh.
-export function buildRuntimeQuotaView(
-  runtime: AgentRuntime,
+// "Rate limited · resets at 17:06" for a limited pool or summary, otherwise
+// the binding window's reset. Null when there is nothing to say.
+export function quotaStatusText(
+  status: QuotaPoolState | QuotaSummary,
   now: number,
-): RuntimeQuotaView {
-  const quota = parsePlanQuota(runtime.plan_quota);
-  if (!quota) return { kind: "not_reported" };
-  if (isQuotaStale(quota, now)) {
-    return { kind: "stale", ageMs: now - quota.observed_at * 1000 };
-  }
-  const nowSec = Math.floor(now / 1000);
-  if (quota.windows.length === 0) return { kind: "not_reported" };
-  const windows: QuotaWindowView[] = quota.windows.map((window) => {
-    const awaitingRefresh = isQuotaWindowAwaitingRefresh(window, nowSec);
-    const remaining = awaitingRefresh ? null : windowRemainingPercent(window);
-    return {
-      name: window.name,
-      awaitingRefresh,
-      windowMinutes: window.window_minutes,
-      remainingPercent: remaining,
-      tone: awaitingRefresh ? "ok" : quotaTone(remaining, quota.status),
-      resetInMs:
-        window.resets_at != null ? window.resets_at * 1000 - now : null,
-      resetsAt: !awaitingRefresh && window.resets_at != null ? window.resets_at * 1000 : null,
-      group: quotaWindowGroup(window),
-    };
-  });
-  const resetInMs = soonestResetMs(windows);
-  const resetsAt = soonestResetAt(windows);
-  if (
-    quota.status === "limited" &&
-    windows.every((window) => !window.awaitingRefresh && window.remainingPercent == null)
-  ) {
-    return { kind: "limited", windows, resetInMs, resetsAt };
-  }
-  return {
-    kind: "ok",
-    windows,
-    resetInMs,
-    resetsAt,
-    observedAgeMs: now - quota.observed_at * 1000,
-  };
+  t: QuotaT,
+  formatTime: FormatQuotaTime,
+): string | null {
+  const time = status.resetsAt != null ? formatTime(status.resetsAt, now) : null;
+  const reset = time != null ? t(($) => $.resets_at, { time }) : null;
+  if (!status.limited) return reset;
+  return reset ? `${t(($) => $.exhausted)} · ${reset}` : t(($) => $.exhausted);
 }
 
-function soonestResetAt(windows: QuotaWindowView[]): number | null {
-  let best: number | null = null;
-  for (const window of windows) {
-    if (window.resetsAt == null) continue;
-    if (best == null || window.resetsAt < best) best = window.resetsAt;
-  }
-  return best;
+// "Collection interrupted · last updated Oct 7, 13:20".
+export function quotaInterruptedText(
+  observedAt: number,
+  now: number,
+  t: QuotaT,
+  formatTime: FormatQuotaTime,
+): string {
+  const interrupted = t(($) => $.collection_interrupted);
+  const time = formatTime(observedAt, now);
+  return time != null ? `${interrupted} · ${t(($) => $.last_updated, { time })}` : interrupted;
 }
 
-function soonestResetMs(windows: QuotaWindowView[]): number | null {
-  let best: number | null = null;
-  for (const window of windows) {
-    if (window.resetInMs == null || window.resetInMs <= 0) continue;
-    if (best == null || window.resetInMs < best) best = window.resetInMs;
-  }
-  return best;
+// A window's own reset: the upcoming one, or the passed reset that refilled
+// it. A window set aside by its limited pool shows neither.
+export function quotaWindowResetText(
+  window: QuotaWindowState,
+  now: number,
+  t: QuotaT,
+  formatTime: FormatQuotaTime,
+): string | null {
+  if (window.notApplicable) return null;
+  const reset = window.resetsAt ?? window.resetPassedAt;
+  const time = reset != null ? formatTime(reset, now) : null;
+  if (time == null) return null;
+  return window.resetsAt != null
+    ? t(($) => $.resets_at, { time })
+    : t(($) => $.reset_passed, { time });
+}
+
+// The value of a window that shows no meter: set aside by its pool, used up
+// without a reported percentage, or simply unmeasured. Null when the window
+// has a percentage to show.
+export function quotaWindowValueText(window: QuotaWindowState, t: QuotaT): string | null {
+  if (window.notApplicable) return t(($) => $.not_applicable);
+  if (window.remainingPercent != null) return null;
+  return window.exhausted ? t(($) => $.exhausted) : t(($) => $.unknown);
+}
+
+// Providers may report more than 100% used.
+export function displayRemainingPercent(remaining: number): number {
+  return Math.max(0, Math.round(remaining));
 }
 
 // The RuntimeList quota column cell: one row per reported window (short
-// label + remaining-based mini bar + remaining percent) plus the soonest
-// reset countdown, or one of the degraded states.
+// label + remaining-based mini bar + remaining percent), then the reset or
+// limit of the tightest constraint — per pool when pools are independent.
 export function RuntimeQuotaCell({
   runtime,
   now,
@@ -197,90 +168,97 @@ export function RuntimeQuotaCell({
   now: number;
 }) {
   const { t } = useT("quota");
-  const view = buildRuntimeQuotaView(runtime, now);
+  const formatTime = useQuotaTimeFormatter();
+  const state = planQuotaState(runtime.plan_quota, now);
 
-  if (view.kind === "not_reported") {
+  if (!state) {
     return (
       <span className="text-caption text-faint-foreground">
         {t(($) => $.not_reported)}
       </span>
     );
   }
-  if (view.kind === "stale") {
-    return (
-      <div className="flex w-full flex-col leading-tight">
-        <span className="text-caption text-faint-foreground">
-          {t(($) => $.stale)}
-        </span>
-        <span className="text-micro tabular-nums text-faint-foreground">
-          {t(($) => $.stale_hint, {
-            time: formatCompactDuration(view.ageMs),
-          })}
-        </span>
-      </div>
-    );
-  }
-  if (view.kind === "limited") {
-    return (
-      <div className="flex w-full flex-col leading-tight">
-        <span className="text-caption text-destructive">
-          {t(($) => $.exhausted)}
-        </span>
-        {view.resetInMs != null && (
-          <span className="text-micro tabular-nums text-faint-foreground">
-            {t(($) => $.resets_in, {
-              time: view.resetsAt != null ? formatResetDatetime(view.resetsAt) : formatCompactDuration(view.resetInMs),
-            })}
-          </span>
-        )}
-      </div>
-    );
-  }
+  const summaryStatus = state.independentPools
+    ? null
+    : quotaStatusText(state.summary, now, t, formatTime);
   return (
     <div className="flex w-full flex-col gap-0.5 leading-tight">
       {/* Grouped rendering kicks in only for reporters that label pools
           (antigravity's two quota groups); ungrouped snapshots fall into one
-          unlabeled bucket and render exactly as before. */}
-      {groupQuotaWindows(view.windows).map(({ group, windows: groupWindows }) => (
-        <span key={group ?? "ungrouped"} className="flex flex-col gap-0.5">
-          {group != null && (
-            <span className="truncate text-micro text-faint-foreground">
-              {quotaGroupLabel(group, t)}
-            </span>
-          )}
-          {groupWindows.map((window, index) => (
-            <QuotaWindowRow key={`${window.name}-${index}`} window={window} />
-          ))}
-        </span>
-      ))}
-      {view.resetInMs != null && (
+          unlabeled pool. */}
+      {state.pools.map((pool) => {
+        const poolStatus = state.independentPools
+          ? quotaStatusText(pool, now, t, formatTime)
+          : null;
+        return (
+          <span key={pool.group ?? "ungrouped"} className="flex flex-col gap-0.5">
+            {pool.group != null && (
+              <span className="truncate text-micro text-faint-foreground">
+                {quotaGroupLabel(pool.group, t)}
+              </span>
+            )}
+            {pool.windows.map((window, index) => (
+              <QuotaWindowRow
+                key={`${window.name}-${index}`}
+                window={window}
+                interrupted={state.interrupted}
+              />
+            ))}
+            {poolStatus && (
+              <QuotaStatusLine
+                text={poolStatus}
+                limited={pool.limited}
+                interrupted={state.interrupted}
+              />
+            )}
+          </span>
+        );
+      })}
+      {summaryStatus && (
+        <QuotaStatusLine
+          text={summaryStatus}
+          limited={state.summary.limited}
+          interrupted={state.interrupted}
+        />
+      )}
+      {state.interrupted && (
         <span className="text-micro tabular-nums text-faint-foreground">
-          {t(($) => $.resets_in, {
-            time: view.resetsAt != null ? formatResetDatetime(view.resetsAt) : formatCompactDuration(view.resetInMs),
-          })}
+          {quotaInterruptedText(state.observedAt, now, t, formatTime)}
         </span>
       )}
     </div>
   );
 }
 
-function formatResetDatetime(ms: number): string {
-  const date = new Date(ms);
-  const now = new Date();
-  const sameDay = date.toDateString() === now.toDateString();
-  const month = date.getMonth() + 1;
-  const day = date.getDate();
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  if (sameDay) {
-    return `${hours}:${minutes}`;
-  }
-  return `${month}-${String(day).padStart(2, "0")} ${hours}:${minutes}`;
+function QuotaStatusLine({
+  text,
+  limited,
+  interrupted,
+}: {
+  text: string;
+  limited: boolean;
+  interrupted: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        "text-micro tabular-nums",
+        limited && !interrupted ? "text-destructive" : "text-faint-foreground",
+      )}
+    >
+      {text}
+    </span>
+  );
 }
 
-function QuotaWindowRow({ window }: { window: QuotaWindowView }) {
+function QuotaWindowRow({
+  window,
+  interrupted,
+}: {
+  window: QuotaWindowState;
+  interrupted: boolean;
+}) {
   const { t } = useT("quota");
-  const { t: tForkUi } = useT("fork-ui");
   let label = formatQuotaWindowLabel(window.windowMinutes, t) ?? window.name;
   // In grouped rendering (antigravity pools), the group label above already
   // identifies the pool. Skip the row label when it would duplicate the
@@ -288,6 +266,7 @@ function QuotaWindowRow({ window }: { window: QuotaWindowView }) {
   if (window.group != null && (label === window.group || label === quotaGroupLabel(window.group, t))) {
     label = "";
   }
+  const valueText = quotaWindowValueText(window, t);
   return (
     <span className="flex items-center gap-1.5">
       {label !== "" && (
@@ -295,14 +274,8 @@ function QuotaWindowRow({ window }: { window: QuotaWindowView }) {
           {label}
         </span>
       )}
-      {window.awaitingRefresh ? (
-        <span className="text-micro text-faint-foreground">
-          {t(($) => $.reset_awaiting_refresh)}
-        </span>
-      ) : window.remainingPercent == null ? (
-        <span className="text-micro text-faint-foreground">
-          {tForkUi(($) => $.runtimes.machine.metrics.unavailable)}
-        </span>
+      {valueText != null || window.remainingPercent == null ? (
+        <span className="text-micro text-faint-foreground">{valueText}</span>
       ) : (
         <>
           <MiniMeterBar
@@ -310,11 +283,15 @@ function QuotaWindowRow({ window }: { window: QuotaWindowView }) {
             tone={window.tone}
             ariaLabel={label}
             className="w-8 shrink-0"
+            barClassName={interrupted ? MUTED_BAR_CLASS : undefined}
           />
           <span
-            className={`text-micro tabular-nums ${TONE_TEXT_CLASS[window.tone]}`}
+            className={cn(
+              "text-micro tabular-nums",
+              interrupted ? "text-faint-foreground" : TONE_TEXT_CLASS[window.tone],
+            )}
           >
-            {Math.round(window.remainingPercent)}%
+            {displayRemainingPercent(window.remainingPercent)}%
           </span>
         </>
       )}
@@ -323,8 +300,8 @@ function QuotaWindowRow({ window }: { window: QuotaWindowView }) {
 }
 
 // The runtime settings page's full quota card, between the hero card and
-// the usage section. Same states as the list cell, plus the snapshot age
-// in the footer.
+// the usage section. Same rules as the list cell, with each window's own
+// reset and the snapshot age in the footer.
 export function RuntimeQuotaCard({
   runtime,
   now,
@@ -333,70 +310,76 @@ export function RuntimeQuotaCard({
   now: number;
 }) {
   const { t } = useT("quota");
-  const view = buildRuntimeQuotaView(runtime, now);
+  const formatTime = useQuotaTimeFormatter();
+  const state = planQuotaState(runtime.plan_quota, now);
   return (
     <section className="rounded-lg border bg-card">
       <h3 className="border-b px-4 py-2.5 text-caption font-semibold">
         {t(($) => $.title)}
       </h3>
       <div className="space-y-3 p-4">
-        {view.kind === "not_reported" && (
+        {state == null ? (
           <p className="text-caption text-faint-foreground">
             {t(($) => $.not_reported)}
           </p>
-        )}
-        {view.kind === "stale" && (
-          <div>
-            <p className="text-caption text-faint-foreground">
-              {t(($) => $.stale)}
-            </p>
-            <p className="mt-1 text-micro tabular-nums text-faint-foreground">
-              {t(($) => $.stale_hint, {
-                time: formatCompactDuration(view.ageMs),
-              })}
-            </p>
-          </div>
-        )}
-        {view.kind === "limited" && (
-          <div>
-            <p className="text-caption font-medium text-destructive">
-              {t(($) => $.exhausted)}
-            </p>
-            {view.resetInMs != null && (
-              <p className="mt-1 text-micro tabular-nums text-muted-foreground">
-                {t(($) => $.resets_in, {
-                  time: view.resetsAt != null ? formatResetDatetime(view.resetsAt) : formatCompactDuration(view.resetInMs),
-                })}
+        ) : (
+          <>
+            {/* A limit that names no window belongs to no pool. */}
+            {state.unattributedLimit && (
+              <p
+                className={cn(
+                  "text-micro tabular-nums",
+                  state.interrupted ? "text-faint-foreground" : "text-destructive",
+                )}
+              >
+                {quotaStatusText(state.summary, now, t, formatTime)}
               </p>
             )}
-          </div>
-        )}
-        {view.kind === "ok" && (
-          <>
-            {/* Every pool gets its own labeled section (the four antigravity
+            {/* Every pool gets its own section (the four antigravity
                 buckets read as Gemini 5h/weekly and Claude + GPT 5h/weekly);
-                ungrouped reporters keep the flat single list. */}
-            {groupQuotaWindows(view.windows).map(({ group, windows: groupWindows }) => (
-              <div key={group ?? "ungrouped"} className="space-y-3">
-                {group != null && (
-                  <p className="text-micro font-medium text-muted-foreground">
-                    {quotaGroupLabel(group, t)}
-                  </p>
-                )}
-                <div className="space-y-3">
-                  {groupWindows.map((window, index) => (
-                    <QuotaCardWindow
-                      key={`${window.name}-${index}`}
-                      window={window}
-                    />
-                  ))}
+                a limited pool states when it recovers. */}
+            {state.pools.map((pool) => {
+              const status = pool.limited
+                ? quotaStatusText(pool, now, t, formatTime)
+                : null;
+              return (
+                <div key={pool.group ?? "ungrouped"} className="space-y-3">
+                  {(pool.group != null || status != null) && (
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="text-micro font-medium text-muted-foreground">
+                        {pool.group != null ? quotaGroupLabel(pool.group, t) : null}
+                      </p>
+                      {status != null && (
+                        <p
+                          className={cn(
+                            "text-micro tabular-nums",
+                            state.interrupted ? "text-faint-foreground" : "text-destructive",
+                          )}
+                        >
+                          {status}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  <div className="space-y-3">
+                    {pool.windows.map((window, index) => (
+                      <QuotaCardWindow
+                        key={`${window.name}-${index}`}
+                        window={window}
+                        now={now}
+                        interrupted={state.interrupted}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             <p className="text-micro tabular-nums text-faint-foreground">
-              {t(($) => $.observed_ago, {
-                time: formatCompactDuration(view.observedAgeMs),
-              })}
+              {state.interrupted
+                ? quotaInterruptedText(state.observedAt, now, t, formatTime)
+                : t(($) => $.observed_ago, {
+                    time: formatCompactDuration(now - state.observedAt * 1000),
+                  })}
             </p>
           </>
         )}
@@ -405,45 +388,58 @@ export function RuntimeQuotaCard({
   );
 }
 
-function QuotaCardWindow({ window }: { window: QuotaWindowView }) {
+function QuotaCardWindow({
+  window,
+  now,
+  interrupted,
+}: {
+  window: QuotaWindowState;
+  now: number;
+  interrupted: boolean;
+}) {
   const { t } = useT("quota");
-  const { t: tForkUi } = useT("fork-ui");
+  const formatTime = useQuotaTimeFormatter();
   const label = formatQuotaWindowLabel(window.windowMinutes, t) ?? window.name;
+  const valueText = quotaWindowValueText(window, t);
+  const reset = quotaWindowResetText(window, now, t, formatTime);
   return (
     <div className="space-y-1">
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-caption text-muted-foreground">{label}</span>
-        {window.awaitingRefresh ? (
-          <span className="text-caption text-faint-foreground">
-            {t(($) => $.reset_awaiting_refresh)}
-          </span>
-        ) : window.remainingPercent == null ? (
-          <span className="text-caption text-faint-foreground">
-            {tForkUi(($) => $.runtimes.machine.metrics.unavailable)}
+        {valueText != null || window.remainingPercent == null ? (
+          <span
+            className={cn(
+              "text-caption",
+              window.exhausted && !window.notApplicable && !interrupted
+                ? "text-destructive"
+                : "text-faint-foreground",
+            )}
+          >
+            {valueText}
           </span>
         ) : (
           <span
-            className={`text-caption tabular-nums ${TONE_TEXT_CLASS[window.tone]}`}
+            className={cn(
+              "text-caption tabular-nums",
+              interrupted ? "text-faint-foreground" : TONE_TEXT_CLASS[window.tone],
+            )}
           >
             {t(($) => $.remaining, {
-              percent: Math.round(window.remainingPercent),
+              percent: displayRemainingPercent(window.remainingPercent),
             })}
           </span>
         )}
       </div>
-      {window.remainingPercent != null && (
+      {valueText == null && window.remainingPercent != null && (
         <MiniMeterBar
           percent={window.remainingPercent}
           tone={window.tone}
           ariaLabel={label}
+          barClassName={interrupted ? MUTED_BAR_CLASS : undefined}
         />
       )}
-      {window.resetInMs != null && window.resetInMs > 0 && (
-        <p className="text-micro tabular-nums text-faint-foreground">
-          {t(($) => $.resets_in, {
-            time: formatCompactDuration(window.resetInMs),
-          })}
-        </p>
+      {reset != null && (
+        <p className="text-micro tabular-nums text-faint-foreground">{reset}</p>
       )}
     </div>
   );

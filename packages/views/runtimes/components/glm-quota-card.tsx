@@ -1,13 +1,20 @@
 "use client";
 
 import type { GlmQuotaStatus, GlmQuotaWindow } from "@multica/core/api";
-import { quotaTone, type QuotaTone } from "@multica/core/runtimes";
+import {
+  formatCompactDuration,
+  isCollectorObservationInterrupted,
+  quotaTone,
+  type QuotaTone,
+} from "@multica/core/runtimes";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
-import { useT, useTimeAgo } from "../../i18n";
+import { useT } from "../../i18n";
+import { useQuotaTimeFormatter } from "./quota-time";
+import { quotaInterruptedText } from "./runtime-quota-cell";
 import zhipuLogo from "./zhipu-logo.svg";
 
 // Next.js exposes static imports as objects while Vite exposes URL strings;
@@ -27,10 +34,19 @@ const CHIP_TONE_CLASS: Record<QuotaTone, string> = {
   destructive: "bg-destructive/10 text-destructive",
 };
 
+// A window whose reset has passed counts as refilled, like runtime quota.
+export function glmWindowResetPassed(w: GlmQuotaWindow, nowSec: number): boolean {
+  return w.resets_at != null && w.resets_at <= nowSec;
+}
+
 // Remaining percent per window: the provider's percentage is *used*, and
 // credit windows may omit it while carrying remaining/usage — compute from
 // whichever pair exists. Null means "not derivable" (chip shows unknown).
-export function glmWindowRemainingPercent(w: GlmQuotaWindow): number | null {
+export function glmWindowRemainingPercent(
+  w: GlmQuotaWindow,
+  nowSec: number,
+): number | null {
+  if (glmWindowResetPassed(w, nowSec)) return 100;
   if (w.used_percent != null) return Math.max(0, 100 - w.used_percent);
   if (w.remaining != null && w.usage != null && w.usage > 0) {
     return Math.max(0, Math.min(100, Math.round((w.remaining / w.usage) * 100)));
@@ -40,22 +56,15 @@ export function glmWindowRemainingPercent(w: GlmQuotaWindow): number | null {
 
 // Worst window first: the lowest remaining percent leads, so the card's
 // first chip is the one a viewer would act on.
-export function glmWorstFirst(windows: GlmQuotaWindow[]): GlmQuotaWindow[] {
+export function glmWorstFirst(
+  windows: GlmQuotaWindow[],
+  nowSec: number,
+): GlmQuotaWindow[] {
   return [...windows].sort(
     (a, b) =>
-      (glmWindowRemainingPercent(a) ?? 101) - (glmWindowRemainingPercent(b) ?? 101),
+      (glmWindowRemainingPercent(a, nowSec) ?? 101) -
+      (glmWindowRemainingPercent(b, nowSec) ?? 101),
   );
-}
-
-// Compact "1h23m" style countdown for reset tooltips; locale-agnostic
-// digits keep it terse next to the existing resets_in phrasing.
-export function glmFormatResetIn(seconds: number): string {
-  const m = Math.max(0, Math.round(seconds / 60));
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  const rem = m % 60;
-  if (h < 24) return rem ? `${h}h${rem}m` : `${h}h`;
-  return `${Math.floor(h / 24)}d`;
 }
 
 export function GlmQuotaCard({
@@ -66,14 +75,19 @@ export function GlmQuotaCard({
   now: number;
 }) {
   const { t } = useT("quota");
-  const timeAgo = useTimeAgo();
+  const formatTime = useQuotaTimeFormatter();
 
   // Unconfigured (no server key) hides the card entirely — the surface is
   // opt-in per deployment.
   if (!data || !data.enabled || !data.quota) return null;
 
-  const windows = glmWorstFirst(data.quota.windows ?? []);
+  const nowSec = Math.floor(now / 1000);
+  const windows = glmWorstFirst(data.quota.windows ?? [], nowSec);
   if (windows.length === 0) return null;
+  const observedAt = data.quota.observed_at;
+  // The server polls every five minutes; an hour of silence means the
+  // collector stopped, the same rule as the runtime collectors.
+  const interrupted = isCollectorObservationInterrupted(observedAt, now);
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border bg-card px-3 py-2">
@@ -85,11 +99,17 @@ export function GlmQuotaCard({
             {data.quota.level}
           </span>
         ) : null}
+        {interrupted ? (
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {quotaInterruptedText(observedAt, now, t, formatTime)}
+          </span>
+        ) : null}
       </span>
       <span className="flex flex-wrap items-center gap-1.5">
         {windows.map((w, i) => {
-          const remaining = glmWindowRemainingPercent(w);
-          const tone = quotaTone(remaining, "ok");
+          const passed = glmWindowResetPassed(w, nowSec);
+          const remaining = glmWindowRemainingPercent(w, nowSec);
+          const tone = quotaTone(remaining);
           const label =
             w.type === "TOKENS_LIMIT"
               ? t(($) => $.glm_window_tokens)
@@ -98,41 +118,44 @@ export function GlmQuotaCard({
                 : w.type === "CREDIT_LIMIT"
                   ? t(($) => $.glm_window_credit)
                   : t(($) => $.glm_window_fallback, { type: w.type });
+          const resetTime = w.resets_at != null ? formatTime(w.resets_at, now) : null;
           const reset =
-            w.resets_at && w.resets_at > now
-              ? t(($) => $.resets_in, {
-                  time: glmFormatResetIn(w.resets_at - now),
-                })
-              : null;
+            resetTime == null
+              ? null
+              : passed
+                ? t(($) => $.reset_passed, { time: resetTime })
+                : t(($) => $.resets_at, { time: resetTime });
           return (
             <Tooltip key={`${w.type}-${i}`}>
               <TooltipTrigger
                 render={
                   <span
-                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${CHIP_TONE_CLASS[tone]}`}
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${interrupted ? "bg-muted text-muted-foreground" : CHIP_TONE_CLASS[tone]}`}
                   >
                     <span className="text-muted-foreground">{label}</span>
                     {remaining != null ? (
                       <span>{t(($) => $.remaining, { percent: remaining })}</span>
                     ) : (
-                      <span>{t(($) => $.glm_unknown)}</span>
+                      <span>{t(($) => $.unknown)}</span>
                     )}
                   </span>
                 }
               />
               <TooltipContent>
                 <div className="space-y-0.5 text-xs">
-                  {w.remaining != null && w.usage != null ? (
+                  {/* A refilled window's old counters no longer apply. */}
+                  {!passed && w.remaining != null && w.usage != null ? (
                     <div>
                       {w.current_value ?? 0} / {w.usage}
                     </div>
                   ) : null}
                   {reset ? <div>{reset}</div> : null}
                   <div className="text-muted-foreground">
-                    {t(($) => $.observed_ago, {
-                      time: timeAgo(new Date(data.quota!.observed_at * 1000).toISOString()),
-                    })}
-                    {data.stale ? ` · ${t(($) => $.stale)}` : ""}
+                    {interrupted
+                      ? quotaInterruptedText(observedAt, now, t, formatTime)
+                      : t(($) => $.observed_ago, {
+                          time: formatCompactDuration(now - observedAt * 1000),
+                        })}
                   </div>
                 </div>
               </TooltipContent>
