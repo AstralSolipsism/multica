@@ -1,0 +1,14 @@
+diff --git a/out/differentialDownloader/multipleRangeDownloader.js b/out/differentialDownloader/multipleRangeDownloader.js
+index 56adc38fe831b39d8430ad8aabe8fd7a35c36b9f..344993bc0a8a6938036cff1b9d799c46ebfe6130 100644
+--- a/out/differentialDownloader/multipleRangeDownloader.js
++++ b/out/differentialDownloader/multipleRangeDownloader.js
+@@ -74,6 +74,9 @@ function doExecuteTasks(differentialDownloader, options, out, resolve, reject) {
+     const requestOptions = differentialDownloader.createRequestOptions();
+     requestOptions.headers.Range = ranges.substring(0, ranges.length - 2);
+     const request = differentialDownloader.httpExecutor.createRequest(requestOptions, response => {
++        // Electron destroys the response with the net error when the connection drops mid-body. Without a listener that
++        // error becomes an uncaught exception in the main process instead of failing the differential download.
++        response.on("error", reject);
+         if (!checkIsRangesSupported(response, reject)) {
+             return;
+         }
