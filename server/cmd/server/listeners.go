@@ -78,6 +78,7 @@ func projectOutbound(eventType string, payload any) any {
 // horizontal-scaling plan tracked in MUL-1138.
 func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 	// Personal events should NOT be broadcast to the whole workspace.
+	registerLabrastroYSKListeners(bus, b)
 	personalEvents := map[string]bool{
 		protocol.EventInboxNew:           true,
 		protocol.EventInboxRead:          true,
@@ -90,6 +91,8 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 		protocol.EventChatSessionCreated: true,
 		protocol.EventChatSessionUpdated: true,
 	}
+
+	personalEvents[protocol.EventIssueTipStateChanged] = true
 
 	// Helper: marshal event and send to a specific user.
 	sendToRecipient := func(b realtime.Broadcaster, e events.Event, recipientID string) {

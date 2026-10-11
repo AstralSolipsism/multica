@@ -181,6 +181,9 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 	}); err != nil {
 		return empty, err
 	}
+	if err := qtx.LabrastroYSKDeleteMember(ctx, db.LabrastroYSKDeleteMemberParams{WorkspaceID: workspaceID, UserID: userID}); err != nil {
+		return empty, err
+	}
 	if err := qtx.DeleteIssueViewPreferencesByUser(ctx, db.DeleteIssueViewPreferencesByUserParams{
 		WorkspaceID: workspaceID,
 		UserID:      userID,
