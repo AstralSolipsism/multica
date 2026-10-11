@@ -163,4 +163,13 @@ describe("dag view preferences", () => {
     expect(saved).not.toHaveProperty("dagFocus");
   });
 
+  it("clears the focus when another node is selected", () => {
+    const store = makeStore();
+    store.getState().setDagSelectedNodeId("a");
+    store.getState().setDagFocus({ nodeId: "a", way: "downstream" });
+    store.getState().setDagSelectedNodeId("b");
+    expect(store.getState().dagFocus).toBeNull();
+    expect(store.getState().dagSelectedNodeId).toBe("b");
+  });
+
 });

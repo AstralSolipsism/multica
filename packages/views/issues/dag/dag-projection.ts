@@ -58,6 +58,9 @@ export interface DagProjection {
    *  (`lines`, holding `lineTasks` tasks in total) and standalone tasks
    *  (`singles`). All zero while the switch is on. */
   hiddenCompleted: { lines: number; lineTasks: number; singles: number };
+  /** Rep ids of the lines the completed filter hides, including nested
+   *  sub-lines — batch expand/collapse must leave these untouched. */
+  hiddenLineIds: readonly string[];
 }
 
 export function dagFeatureRepId(issueId: string): string {
@@ -109,22 +112,10 @@ function summarize(members: IssueGraphNode[]) {
   };
 }
 
-/** Task-line containers are independent of project membership. Only authorized
- * nodes enter the model. A missing parent is never synthesized or named.
- *
- * With `showCompleted` off, finished work hides at the top level: a task line
- * whose parent and every nested member sit in a done/closed category hides as
- * a whole, and so does a standalone finished task. A line with anything still
- * open stays fully visible. Exception: a cancelled task that still blocks
- * visible unfinished work (the server only treats done as satisfied, so a
- * cancelled prerequisite stalls its downstream forever) stays on the canvas as
- * a lone context-styled card — even when that pulls it out of a hidden line. */
-export function computeDagProjection(
-  graph: IssueGraph,
-  collapsedIds: readonly string[],
-  independentExpanded = false,
-  showCompleted = false,
-): DagProjection {
+/** The display forest the projection walks: parent links repaired for display
+ *  (cycles and missing parents broken at the edge), children and roots sorted
+ *  by identifier. The source graph is never mutated. */
+function dagDisplayForest(graph: IssueGraph) {
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const parentOf = new Map(
     graph.nodes.map((n) => [
@@ -135,7 +126,6 @@ export function computeDagProjection(
     ]),
   );
   // Bound traversal even if an inconsistent hierarchy slips through a read.
-  // This repairs only the display forest; the source graph stays untouched.
   const visited = new Set<string>();
   for (const node of graph.nodes) {
     const path = new Set<string>();
@@ -166,6 +156,120 @@ export function computeDagProjection(
     a.id.localeCompare(b.id);
   roots.sort(compare);
   for (const list of children.values()) list.sort(compare);
+  return { byId, parentOf, children, roots };
+}
+
+function dagDescendants(
+  children: ReadonlyMap<string, IssueGraphNode[]>,
+  root: IssueGraphNode,
+): IssueGraphNode[] {
+  const result: IssueGraphNode[] = [];
+  const stack = [root];
+  while (stack.length) {
+    const next = stack.pop()!;
+    result.push(next);
+    const nested = children.get(next.id);
+    if (nested) for (let i = nested.length - 1; i >= 0; i--) stack.push(nested[i]!);
+  }
+  return result;
+}
+
+export interface DagCompletedVisibility {
+  /** Roots of task lines whose every member sits in a done/closed category. */
+  hiddenRoots: ReadonlySet<string>;
+  /** Standalone finished tasks (including independent-group members). */
+  hiddenSingles: ReadonlySet<string>;
+  /** Hidden cancelled tasks kept visible because they still block visible
+   *  unfinished work. The server only treats done as satisfied, so a
+   *  cancelled prerequisite stalls its downstream forever. */
+  keptCancelled: ReadonlySet<string>;
+  /** Rep ids of the hidden lines, including lines nested inside them. */
+  hiddenLineIds: readonly string[];
+}
+
+const EMPTY_COMPLETED_VISIBILITY: DagCompletedVisibility = {
+  hiddenRoots: new Set(),
+  hiddenSingles: new Set(),
+  keptCancelled: new Set(),
+  hiddenLineIds: [],
+};
+
+/** What the "show completed" switch hides, decided at the top level: a task
+ *  line hides only when its parent and every nested member are done/closed; a
+ *  standalone finished task hides on its own. The walk that keeps cancelled
+ *  blockers visible starts from visible UNFINISHED tasks and propagates only
+ *  through hidden cancelled ones — a done or visible-cancelled intermediate
+ *  already accounts for its own downstream, so the chain stops there. */
+export function dagCompletedVisibility(
+  graph: IssueGraph,
+  forest: ReturnType<typeof dagDisplayForest> = dagDisplayForest(graph),
+): DagCompletedVisibility {
+  const { byId, children, roots } = forest;
+  const finished = (n: IssueGraphNode) => {
+    const category = normalizeIssueStatusCategory(n.statusCategory);
+    return category === "done" || category === "closed";
+  };
+  const hiddenRoots = new Set<string>();
+  const hiddenSingles = new Set<string>();
+  for (const root of roots) {
+    if (children.has(root.id)) {
+      if (dagDescendants(children, root).every(finished)) hiddenRoots.add(root.id);
+    } else if (finished(root)) hiddenSingles.add(root.id);
+  }
+  const keptCancelled = new Set<string>();
+  if (hiddenRoots.size || hiddenSingles.size) {
+    const hiddenScope = new Set<string>();
+    for (const id of hiddenRoots)
+      for (const member of dagDescendants(children, byId.get(id)!)) hiddenScope.add(member.id);
+    for (const id of hiddenSingles) hiddenScope.add(id);
+    const backEdges = new Map<string, string[]>();
+    for (const edge of graph.edges) {
+      const list = backEdges.get(edge.target) ?? [];
+      list.push(edge.source);
+      backEdges.set(edge.target, list);
+    }
+    const queue = graph.nodes
+      .filter((n) => !hiddenScope.has(n.id) && !finished(n))
+      .map((n) => n.id);
+    const seen = new Set(queue);
+    while (queue.length) {
+      const target = queue.shift()!;
+      for (const source of backEdges.get(target) ?? []) {
+        if (seen.has(source)) continue;
+        seen.add(source);
+        const node = byId.get(source);
+        if (node && hiddenScope.has(source) && normalizeIssueStatusCategory(node.statusCategory) === "closed") {
+          keptCancelled.add(source);
+          queue.push(source);
+        }
+      }
+    }
+  }
+  const hiddenLineIds: string[] = [];
+  for (const rootId of hiddenRoots)
+    for (const member of dagDescendants(children, byId.get(rootId)!))
+      if (children.has(member.id)) hiddenLineIds.push(dagFeatureRepId(member.id));
+  return { hiddenRoots, hiddenSingles, keptCancelled, hiddenLineIds };
+}
+
+/** Task-line containers are independent of project membership. Only authorized
+ * nodes enter the model. A missing parent is never synthesized or named.
+ *
+ * With `showCompleted` off, finished work hides at the top level: a task line
+ * whose parent and every nested member sit in a done/closed category hides as
+ * a whole, and so does a standalone finished task. A line with anything still
+ * open stays fully visible. Exception: a cancelled task that still blocks
+ * visible unfinished work (the server only treats done as satisfied, so a
+ * cancelled prerequisite stalls its downstream forever) stays on the canvas as
+ * a lone context-styled card — even when that pulls it out of a hidden line. */
+export function computeDagProjection(
+  graph: IssueGraph,
+  collapsedIds: readonly string[],
+  independentExpanded = false,
+  showCompleted = false,
+): DagProjection {
+  const forest = dagDisplayForest(graph);
+  const { children, roots } = forest;
   const incident = new Set(graph.edges.flatMap((e) => [e.source, e.target]));
   const collapsed = new Set(collapsedIds);
   const independent = roots.filter(
@@ -183,64 +287,11 @@ export function computeDagProjection(
   const groups: DagVisibleGroup[] = [];
   const representatives = new Map<string, string>();
   let foldedNodeCount = 0;
-  function descendants(root: IssueGraphNode): IssueGraphNode[] {
-    const result: IssueGraphNode[] = [];
-    const stack = [root];
-    while (stack.length) {
-      const next = stack.pop()!;
-      result.push(next);
-      const nested = children.get(next.id);
-      if (nested) for (let i = nested.length - 1; i >= 0; i--) stack.push(nested[i]!);
-    }
-    return result;
-  }
+  const descendants = (root: IssueGraphNode) => dagDescendants(children, root);
   const hiddenCompleted = { lines: 0, lineTasks: 0, singles: 0 };
-  const hiddenRoots = new Set<string>();
-  const hiddenSingles = new Set<string>();
-  const keptCancelled = new Set<string>();
-  if (!showCompleted) {
-    const categoryOf = (n: IssueGraphNode) => normalizeIssueStatusCategory(n.statusCategory);
-    const finished = (n: IssueGraphNode) => {
-      const category = categoryOf(n);
-      return category === "done" || category === "closed";
-    };
-    for (const root of roots) {
-      if (children.has(root.id)) {
-        if (descendants(root).every(finished)) hiddenRoots.add(root.id);
-      } else if (finished(root)) hiddenSingles.add(root.id);
-    }
-    if (hiddenRoots.size || hiddenSingles.size) {
-      const hiddenScope = new Set<string>();
-      for (const id of hiddenRoots)
-        for (const member of descendants(byId.get(id)!)) hiddenScope.add(member.id);
-      for (const id of hiddenSingles) hiddenScope.add(id);
-      // A cancelled task keeps blocking until its dependents see a done
-      // prerequisite, so the walk back from visible unfinished work stops at
-      // anything done and only propagates through hidden cancelled tasks.
-      const backEdges = new Map<string, string[]>();
-      for (const edge of graph.edges) {
-        const list = backEdges.get(edge.target) ?? [];
-        list.push(edge.source);
-        backEdges.set(edge.target, list);
-      }
-      const queue = graph.nodes
-        .filter((n) => !hiddenScope.has(n.id) && !finished(n))
-        .map((n) => n.id);
-      const seen = new Set(queue);
-      while (queue.length) {
-        const target = queue.shift()!;
-        for (const source of backEdges.get(target) ?? []) {
-          if (seen.has(source)) continue;
-          seen.add(source);
-          const node = byId.get(source);
-          if (node && hiddenScope.has(source) && categoryOf(node) === "closed") {
-            keptCancelled.add(source);
-            queue.push(source);
-          }
-        }
-      }
-    }
-  }
+  const { hiddenRoots, hiddenSingles, keptCancelled, hiddenLineIds } = showCompleted
+    ? EMPTY_COMPLETED_VISIBILITY
+    : dagCompletedVisibility(graph, forest);
   /** A kept cancelled task renders as one flat card, never as a container —
    *  its line stays hidden and its children with it. */
   function pushKeptNode(node: IssueGraphNode, groupId: string | null) {
@@ -318,9 +369,9 @@ export function computeDagProjection(
     }
     visit(node, null);
   }
-  const shownIndependent = independent.filter(
-    (n) => !hiddenSingles.has(n.id) || keptCancelled.has(n.id),
-  );
+  // Independent members never join keptCancelled: the group requires no edges
+  // and no blockers, so a hidden independent task can never still block work.
+  const shownIndependent = independent.filter((n) => !hiddenSingles.has(n.id));
   hiddenCompleted.singles += independent.length - shownIndependent.length;
   if (shownIndependent.length) {
     const id = DAG_INDEPENDENT_GROUP;
@@ -343,11 +394,7 @@ export function computeDagProjection(
       collapsible: true,
       ...summarize(shownIndependent),
     });
-    if (independentExpanded)
-      for (const node of shownIndependent) {
-        if (keptCancelled.has(node.id)) pushKeptNode(node, id);
-        else visit(node, id);
-      }
+    if (independentExpanded) for (const node of shownIndependent) visit(node, id);
     else {
       foldedNodeCount += shownIndependent.length;
       for (const node of shownIndependent) representatives.set(node.id, id);
@@ -375,10 +422,11 @@ export function computeDagProjection(
         ]
       : [];
   });
-  return { nodes, groups, edges, representatives, foldedNodeCount, hiddenCompleted };
+  return { nodes, groups, edges, representatives, foldedNodeCount, hiddenCompleted, hiddenLineIds };
 }
 
-export function repsToRevealIssues(  graph: IssueGraph,
+export function repsToRevealIssues(
+  graph: IssueGraph,
   collapsedIds: readonly string[],
   issueIds: readonly string[],
 ): string[] {

@@ -71,6 +71,6 @@
   "focus_hidden_tasks_one": "{{count}} more hidden task on this chain",
   "focus_hidden_tasks_other": "{{count}} more hidden tasks on this chain",
   "show_completed_enable": "Turn on “Show completed”",
-  "hidden_completed_tooltip_one": "Hiding {{count}} issue group ({{tasks}} issues) and {{singles}} standalone issues",
-  "hidden_completed_tooltip_other": "Hiding {{count}} issue groups ({{tasks}} issues) and {{singles}} standalone issues"
+  "hidden_completed_tooltip_one": "Hiding {{count}} issue group ({{tasks}}) + {{singles}} standalone",
+  "hidden_completed_tooltip_other": "Hiding {{count}} issue groups ({{tasks}}) + {{singles}} standalone"
 }

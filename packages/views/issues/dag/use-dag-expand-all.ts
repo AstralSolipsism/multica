@@ -7,8 +7,8 @@ const CANCEL_AFTER_MS = 5000;
 export function useDagExpandAll(
   layout: DagLayoutState<CanvasSnapshot>,
   key: string,
-  lineIds: string[],
-  hiddenLineIds: string[] = [],
+  lineIds: readonly string[],
+  hiddenLineIds: readonly string[] = [],
 ) {
   const store = useViewStoreApi();
   const backup = useRef<{ ids: string[]; previousKey: string } | null>(null);

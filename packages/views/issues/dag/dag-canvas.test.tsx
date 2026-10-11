@@ -17,7 +17,7 @@ import {
 } from "@multica/core/issues/stores/view-store";
 import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-context";
 import { renderWithI18n } from "../../test/i18n";
-import { DagCanvasInner, type DagCanvasProps } from "./dag-canvas";
+import { DagCanvasInner, type DagCanvasApi, type DagCanvasProps } from "./dag-canvas";
 import { DagPortUpdateProvider } from "./dag-ports";
 import { canvasFixture } from "./dag-test-fixtures";
 
@@ -132,7 +132,7 @@ function harness(initial = canvasFixture()) {
     store,
     callbacks,
     surface,
-    mount: () => renderWithI18n(surface()),
+    mount: (data: Partial<DagCanvasProps> = {}) => renderWithI18n(surface(data)),
     ready: () => waitFor(() => expect(flow.viewportInitialized).toBe(true)),
     // Simulate navigation during a pan before its debounced move-end has saved
     // the viewport. Otherwise onMoveEnd masks removal of openIssue's save.
@@ -159,6 +159,48 @@ function headerScreenPoint(id: string) {
 }
 
 describe("DAG canvas viewport", () => {
+  it("registers the canvas api on mount and clears it on unmount", async () => {
+    const h = harness();
+    const registered: (DagCanvasApi | null)[] = [];
+    const view = h.mount({ registerCanvasApi: (api) => registered.push(api) });
+    await h.ready();
+    expect(registered.at(-1)).toMatchObject({
+      getViewport: expect.any(Function),
+      toggleLine: expect.any(Function),
+    });
+    view.unmount();
+    expect(registered.at(-1)).toBeNull();
+  });
+
+  it("keeps the header anchored when folded through the registered api", async () => {
+    const h = harness();
+    let api: DagCanvasApi | null = null;
+    const registerCanvasApi = (next: DagCanvasApi | null) => {
+      api = next;
+    };
+    h.store.getState().setDagViewport({ x: 60, y: 45, zoom: 1.25 });
+    const view = h.mount({ registerCanvasApi });
+    await h.ready();
+    const before = headerScreenPoint("issue:one");
+    act(() => api!.toggleLine("issue:one"));
+    expect(h.callbacks.onToggleCollapsed).toHaveBeenCalledWith("issue:one");
+    const next = canvasFixture(["issue:one"], "LR");
+    // A relayout moves the anchor, exactly like the header-button path.
+    const position = { x: 275, y: 55 };
+    next.positions.set("issue:one", position);
+    next.geometry.positions["issue:one"] = position;
+    Object.assign(next.geometry.groups["issue:one"]!, position);
+    view.rerender(h.surface({ ...next, registerCanvasApi }));
+    await waitFor(() => {
+      expect(headerScreenPoint("issue:one").x).toBeCloseTo(before.x);
+      expect(headerScreenPoint("issue:one").y).toBeCloseTo(before.y);
+    });
+    expect(viewportTransform()).toContain("scale(1.25)");
+    expect(
+      nodeElement("issue:one").querySelector("[data-collapsed]"),
+    ).toHaveAttribute("data-collapsed", "true");
+  });
+
   it("saves the settled viewport after zooming without opening an issue", async () => {
     const h = harness();
     h.mount();

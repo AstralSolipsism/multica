@@ -64,5 +64,5 @@
   "cancelled_blocking": "已取消，仍在阻塞",
   "focus_hidden_tasks_other": "链路上还有 {{count}} 个已隐藏任务",
   "show_completed_enable": "打开“显示已完成”",
-  "hidden_completed_tooltip_other": "已隐藏 {{count}} 条任务线（{{tasks}} 个任务）和 {{singles}} 个单独任务"
+  "hidden_completed_tooltip_other": "已隐藏 {{count}} 条任务线（{{tasks}} 个任务）+ {{singles}} 个单独任务"
 }

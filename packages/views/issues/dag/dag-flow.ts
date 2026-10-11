@@ -3,14 +3,9 @@ import type { DagDirection } from "@multica/core/issues/stores/view-store";
 import type { DagFlowNode, DagFlowNodeData } from "./dag-node";
 import type { DagFlowGroup } from "./dag-group";
 import type { DagFlowEdge } from "./dag-edge";
-import {
-  isAggregateEdge,
-  type DagProjection,
-} from "./dag-projection";
+import { isAggregateEdge, type DagProjection } from "./dag-projection";
 import type { DagLayoutResult, DagPoint, DagPort } from "./dag-layout";
 import { dagNodeSize } from "./dag-constants";
-
-export { isAggregateEdge };
 
 export type CanvasNode = DagFlowNode | DagFlowGroup;
 const NO_PORTS: DagPort[] = [];

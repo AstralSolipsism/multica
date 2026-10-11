@@ -566,3 +566,72 @@ describe("completed visibility", () => {
     expect(view.hiddenCompleted.singles).toBe(0);
   });
 });
+
+describe("completed visibility edge cases", () => {
+  it("does not keep a cancelled task whose only visible downstream is finished (M21)", () => {
+    // The done member of a still-open line is visible but already satisfied:
+    // a cancelled prerequisite of THAT task blocks nothing unfinished.
+    const graph = makeGraph(
+      [
+        makeNode("root"),
+        makeNode("done-member", {
+          parentIssueId: "root",
+          status: "done",
+          statusCategory: "done",
+        }),
+        makeNode("c", { status: "cancelled", statusCategory: "closed" }),
+      ],
+      [{ id: "cd", source: "c", target: "done-member" }],
+    );
+    const view = computeDagProjection(graph, ["issue:root"], false, false);
+    expect(view.nodes.some((n) => n.id === "c")).toBe(false);
+    expect(view.hiddenCompleted.singles).toBe(1);
+  });
+
+  it("stops the blocker walk at a visible cancelled intermediate (M3)", () => {
+    // b is cancelled but visible inside its still-open line, and already
+    // accounts for blocking v itself; c1 only blocks the finished b.
+    const graph = makeGraph(
+      [
+        makeNode("root"),
+        makeNode("b", {
+          parentIssueId: "root",
+          status: "cancelled",
+          statusCategory: "closed",
+        }),
+        makeNode("v"),
+        makeNode("c1", { status: "cancelled", statusCategory: "closed" }),
+      ],
+      [
+        { id: "e1", source: "c1", target: "b" },
+        { id: "e2", source: "b", target: "v" },
+      ],
+    );
+    const view = computeDagProjection(graph, [], false, false);
+    expect(view.nodes.some((n) => n.id === "c1")).toBe(false);
+    expect(view.hiddenCompleted.singles).toBe(1);
+  });
+
+  it("reports hidden line ids including nested sub-lines", () => {
+    const graph = makeGraph([
+      makeNode("top", { status: "done", statusCategory: "done" }),
+      makeNode("mid", {
+        parentIssueId: "top",
+        status: "done",
+        statusCategory: "done",
+      }),
+      makeNode("leaf", {
+        parentIssueId: "mid",
+        status: "done",
+        statusCategory: "done",
+      }),
+      makeNode("live"),
+      makeNode("live-child", { parentIssueId: "live" }),
+    ]);
+    const view = computeDagProjection(graph, [], false, false);
+    expect(view.hiddenLineIds.slice().sort()).toEqual(["issue:mid", "issue:top"]);
+    // Everything shows again with the switch on, and nothing reports hidden.
+    const shown = computeDagProjection(graph, [], false, true);
+    expect(shown.hiddenLineIds).toEqual([]);
+  });
+});

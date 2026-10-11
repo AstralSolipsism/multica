@@ -40,6 +40,15 @@ export interface DagCanvasCallbacks {
   onToggleCollapsed: (id: string) => void;
   onFocusGroup: (id: string) => void;
 }
+/** What the canvas exposes to the toolbar, which lives outside the React Flow
+ *  tree: the live viewport getter (so opening an issue can persist an
+ *  in-flight pan) and the anchored line toggle (so a fold keeps the line
+ *  header at its screen position). */
+export interface DagCanvasApi {
+  getViewport: () => Viewport;
+  toggleLine: (id: string) => void;
+}
+
 export interface DagCanvasProps extends DagCanvasCallbacks {
   graph: IssueGraph;
   projection: DagProjection;
@@ -48,10 +57,7 @@ export interface DagCanvasProps extends DagCanvasCallbacks {
   direction: DagDirection;
   statusColorOf: (statusKey: string) => string | null;
   focusRequest: { issueIds: string[]; groupId?: string; nonce: number } | null;
-  /** The toolbar lives outside the React Flow tree but must save the live
-   *  (possibly in-flight) viewport before navigating to an issue. The canvas
-   *  registers its getter here. */
-  registerViewport?: (getter: (() => Viewport) | null) => void;
+  registerCanvasApi?: (api: DagCanvasApi | null) => void;
 }
 
 export function DagCanvasInner({
@@ -62,10 +68,10 @@ export function DagCanvasInner({
   direction,
   statusColorOf,
   focusRequest,
-  registerViewport,
   onOpenIssue,
   onToggleCollapsed,
   onFocusGroup,
+  registerCanvasApi,
 }: DagCanvasProps) {
   const storeApi = useViewStoreApi();
   const selectedNodeId = useViewStore((s) => s.dagSelectedNodeId);
@@ -76,10 +82,6 @@ export function DagCanvasInner({
     DagFlowEdge
   >();
   const { resolvedTheme: colorMode } = useTheme();
-  useEffect(() => {
-    registerViewport?.(getViewport);
-    return () => registerViewport?.(null);
-  }, [getViewport, registerViewport]);
   const initialViewport = useRef(storeApi.getState().dagViewport ?? { x: 20, y: 20, zoom: 1 });
   const anchor = useRef<{ id: string; position: DagPoint } | null>(null);
   const handledFocus = useRef(0);
@@ -165,6 +167,10 @@ export function DagCanvasInner({
     },
     [onToggleCollapsed, positions],
   );
+  useEffect(() => {
+    registerCanvasApi?.({ getViewport, toggleLine: toggle });
+    return () => registerCanvasApi?.(null);
+  }, [getViewport, toggle, registerCanvasApi]);
   // Preserve the toggled header when possible, then recover only if the
   // committed content/size no longer admits the current viewport.
   useLayoutEffect(() => {

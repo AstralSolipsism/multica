@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import type { IssueGraph } from "@multica/core/api";
 import {
@@ -21,11 +21,15 @@ const issueSelection = vi.hoisted(() => ({
     retryDetail: vi.fn(),
   },
 }));
+const assignSpy = vi.hoisted(() =>
+  vi.fn<(props: { issue: unknown; open?: boolean; anchor?: unknown }) => void>(),
+);
 vi.mock("./dag-issue-actions", () => ({
   useDagIssueSelection: () => issueSelection.current,
-  DagAssignAction: ({ issue }: { issue: unknown }) => (
-    <button disabled={!issue}>Assign</button>
-  ),
+  DagAssignAction: (props: { issue: unknown; open?: boolean; anchor?: unknown }) => {
+    assignSpy(props);
+    return props.anchor ? null : <button disabled={!props.issue}>Assign</button>;
+  },
 }));
 
 function fixtureGraph() {
@@ -105,6 +109,26 @@ describe("DagToolbar idle zone", () => {
     expect(region).toHaveTextContent("6 issues");
     expect(region).toHaveTextContent("4 dependencies");
     expect(region).toHaveTextContent("Select a task or dependency to see its actions");
+  });
+
+  it("excludes tasks hidden by the completed filter from the stats", () => {
+    const graph = makeGraph(
+      [
+        makeNode("done-line", { status: "done", statusCategory: "done" }),
+        makeNode("done-child", {
+          parentIssueId: "done-line",
+          status: "done",
+          statusCategory: "done",
+        }),
+        makeNode("live"),
+        makeNode("live-child", { parentIssueId: "live" }),
+      ],
+      [["live", "done-child"]],
+    );
+    harness(graph);
+    const region = screen.getByRole("region", { name: "Selection" });
+    expect(region).toHaveTextContent("2 issues");
+    expect(region).toHaveTextContent("0 dependencies");
   });
 
   it("keeps the right-hand view controls with the completed toggle badge", () => {
@@ -294,7 +318,20 @@ describe("DagToolbar edge selection", () => {
 });
 
 describe("DagToolbar overflow", () => {
-  it("collapses rightmost actions into the more menu when the zone overflows", async () => {
+  /** Stub per-element widths: the capacity hook measures intrinsic content
+   *  widths (offsetWidth) against the zone's clientWidth. */
+  function stubMetrics() {
+    const widths = new WeakMap<Element, number>();
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return widths.get(this) ?? 0;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return widths.get(this) ?? 0;
+      },
+    );
     // Base UI overlays observe too, so key the stub by the observed element.
     const roByElement = new Map<Element, ResizeObserverCallback>();
     vi.stubGlobal(
@@ -310,40 +347,56 @@ describe("DagToolbar overflow", () => {
         disconnect() {}
       },
     );
-    const { store } = harness(fixtureGraph(), {}, (s) => s.getState().setDagExpandedIds(["issue:one", "issue:two"]));
+    return { widths, roByElement };
+  }
+
+  function stubZone(widths: WeakMap<Element, number>, zoneWidth: number) {
+    const zone = document.querySelector("[data-dag-zone]") as HTMLElement;
+    for (const el of zone.querySelectorAll("[data-dag-action]")) widths.set(el, 90);
+    for (const el of zone.querySelectorAll("[data-dag-fixed]")) widths.set(el, 60);
+    widths.set(zone.querySelector("[data-dag-label]")!, 200);
+    widths.set(zone, zoneWidth);
+    return zone;
+  }
+
+  it("collapses rightmost actions into More on narrow widths and restores them with room", () => {
+    const { widths, roByElement } = stubMetrics();
+    const { store } = harness(fixtureGraph(), {}, (s) =>
+      s.getState().setDagExpandedIds(["issue:one", "issue:two"]),
+    );
     act(() => store.getState().setDagSelectedNodeId("a"));
-    const zone = document.querySelector("[role='region'] > div") as HTMLElement;
-    expect(zone).not.toBeNull();
-    const metrics = { clientWidth: 100, scrollWidth: 600 };
-    Object.defineProperty(zone, "clientWidth", { get: () => metrics.clientWidth });
-    Object.defineProperty(zone, "scrollWidth", { get: () => metrics.scrollWidth });
+    const zone = stubZone(widths, 1000);
+    const fire = () => act(() => roByElement.get(zone)?.([], {} as ResizeObserver));
+    fire();
+    // fixed: More 60 + clear 60 + label reserve 96 = 216; actions 90+4 each.
+    expect(within(zone).getByRole("button", { name: "Open detail" })).toBeInTheDocument();
+    expect(within(zone).getByRole("button", { name: "Assign" })).toBeInTheDocument();
+    // Narrow: fits 216 + 3*94 = 498 ≤ 500, the fourth would exceed it.
+    stubZone(widths, 500);
+    fire();
+    expect(within(zone).queryByRole("button", { name: "Assign" })).toBeNull();
+    expect(within(zone).queryByRole("button", { name: "Edit prerequisites" })).toBeNull();
+    expect(within(zone).getByRole("button", { name: "Highlight dependents" })).toBeInTheDocument();
+    // Room returns: everything leaves the menu again.
+    stubZone(widths, 1920);
+    fire();
+    expect(within(zone).getByRole("button", { name: "Assign" })).toBeInTheDocument();
+    expect(within(zone).getByRole("button", { name: "Edit prerequisites" })).toBeInTheDocument();
+  });
+
+  it("opens the assign picker controlled from the overflowed menu entry", async () => {
+    const { widths, roByElement } = stubMetrics();
+    issueSelection.current.issue = { id: "a", assignee_type: null, assignee_id: null };
+    const { store } = harness(fixtureGraph(), {}, (s) =>
+      s.getState().setDagExpandedIds(["issue:one", "issue:two"]),
+    );
+    act(() => store.getState().setDagSelectedNodeId("a"));
+    const zone = stubZone(widths, 500);
     act(() => roByElement.get(zone)?.([], {} as ResizeObserver));
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("button", { name: "Open detail" }),
-      ).toBeNull(),
-    );
-    // Everything collapsed: the menu carries the standing actions now.
-    fireEvent.click(screen.getByRole("button", { name: "More" }));
-    expect(
-      await screen.findByRole("menuitem", { name: "Open detail" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("menuitem", { name: "Edit prerequisites" }),
-    ).toBeInTheDocument();
-    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-    // Room returns step by step: actions move back into the bar.
-    metrics.scrollWidth = 200;
-    for (const width of [400, 600, 800, 1000, 1200]) {
-      metrics.clientWidth = width;
-      act(() => roByElement.get(zone)?.([], {} as ResizeObserver));
-    }
-    const region = screen.getByRole("region", { name: "Selection" });
-    await waitFor(() =>
-      expect(
-        within(region).getByRole("button", { name: "Open detail" }),
-      ).toBeInTheDocument(),
-    );
+    expect(within(zone).queryByRole("button", { name: "Assign" })).toBeNull();
+    assignSpy.mockClear();
+    fireEvent.click(within(zone).getByRole("button", { name: "More" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Assign" }));
+    expect(assignSpy.mock.calls.at(-1)![0]).toMatchObject({ open: true });
   });
 });

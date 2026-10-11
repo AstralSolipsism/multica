@@ -18,6 +18,7 @@ import { computeDagProjection } from "./dag-projection";
 import * as layoutInputs from "./dag-layout-inputs";
 import * as canvasSnapshots from "./dag-canvas-snapshot";
 import { DagFlowGroupCard } from "./dag-group";
+import { DagFlowNodeCard } from "./dag-node";
 import { DagPortUpdateProvider } from "./dag-ports";
 import { ReactFlowProvider } from "@xyflow/react";
 
@@ -829,6 +830,50 @@ describe("DagView", () => {
     expect(screen.queryByText("dag:run_queued")).toBeNull();
   });
 
+  it("renders a kept cancelled card dashed with the still-blocking marker", () => {
+    const graph = makeGraph(
+      [
+        makeNode("c", { status: "cancelled", statusCategory: "closed" }),
+        makeNode("v"),
+      ],
+      [{ id: "cv", source: "c", target: "v" }],
+    );
+    const projection = computeDagProjection(graph, [], false, false),
+      model = projection.nodes.find((n) => n.id === "c")!;
+    expect(model.cancelledBlocking).toBe(true);
+    render(
+      <ReactFlowProvider><DagPortUpdateProvider>
+        <DagFlowNodeCard
+          {...({
+            id: model.id,
+            type: "dagNode",
+            selected: false,
+            draggable: false,
+            dragging: false,
+            selectable: true,
+            deletable: false,
+            isConnectable: false,
+            zIndex: 2,
+            positionAbsoluteX: 0,
+            positionAbsoluteY: 0,
+            data: {
+              model,
+              projectTitle: null,
+              statusColor: null,
+              focused: false,
+              ports: [],
+              showStage: false,
+            },
+          } as Parameters<typeof DagFlowNodeCard>[0])}
+        />
+      </DagPortUpdateProvider></ReactFlowProvider>,
+    );
+    const card = document.querySelector('[data-dag-issue="T-C"]')!;
+    expect(card.className).toContain("border-dashed");
+    expect(screen.getByText("dag:cancelled_blocking")).toBeTruthy();
+    expect(screen.queryByText("dag:context_badge")).toBeNull();
+  });
+
   it("keeps an expansion when a status filter hides its children (review F3)", async () => {
     store.getState().setDagExpandedIds(["issue:feature"]);
     // The feature is present but its child is filtered out; the expansion survives.
@@ -916,13 +961,16 @@ describe("DagView", () => {
     renderDagView(graphQuery({ data: visible }), true);
     await screen.findByTestId("dag-canvas");
     const collapse = screen.getByRole("button", { name: /dag:collapse_all/ });
-    expect(collapse).toBeEnabled();
+    // Only an inert expansion exists — nothing visible to collapse.
+    expect(collapse).toBeDisabled();
     act(() => screen.getByRole("button", { name: /dag:expand_all/ }).click());
     expect(store.getState().dagExpandedIds).toEqual(["issue:hidden", "issue:line"]);
+    expect(collapse).toBeEnabled();
     act(() => canvasSpy.mock.calls.at(-1)![0].onToggleCollapsed("issue:line"));
     expect(store.getState().dagExpandedIds).toEqual(["issue:hidden"]);
-    expect(collapse).toBeEnabled();
+    expect(collapse).toBeDisabled();
     const visibleIds = canvasSpy.mock.calls.at(-1)![0].projection.nodes.map((node) => node.id);
+    act(() => screen.getByRole("button", { name: /dag:expand_all/ }).click());
     act(() => collapse.click());
     expect(store.getState().dagExpandedIds).toEqual([]);
     expect(collapse).toBeDisabled();
@@ -1043,12 +1091,70 @@ describe("DagView", () => {
     const collapse = screen
       .getAllByRole("button")
       .find((b) => b.textContent?.includes("dag:collapse_all"))!;
-    act(() => collapse.click());
-    expect(store.getState().dagExpandedIds).toEqual(["issue:done-line"]);
+    // Only a hidden line is expanded — nothing visible for collapse to act on.
+    expect(collapse).toBeDisabled();
     act(() => expand.click());
     expect(new Set(store.getState().dagExpandedIds)).toEqual(
       new Set(["issue:done-line", "issue:live"]),
     );
+  });
+
+  it("keeps a hidden folded line folded through expand all (M12)", async () => {
+    const graph = makeGraph([
+      makeNode("done-line", { status: "done", statusCategory: "done" }),
+      makeNode("done-child", {
+        parentIssueId: "done-line",
+        status: "done",
+        statusCategory: "done",
+      }),
+      makeNode("live"),
+      makeNode("live-child", { parentIssueId: "live" }),
+    ]);
+    renderDagView(graphQuery({ data: graph }));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    act(() =>
+      screen
+        .getAllByRole("button")
+        .find((b) => b.textContent?.includes("dag:expand_all"))!
+        .click(),
+    );
+    expect(store.getState().dagExpandedIds).toEqual(["issue:live"]);
+    // Re-showing completed work does not unfold the line expand-all skipped.
+    act(() =>
+      screen
+        .getAllByRole("button")
+        .find((b) => b.textContent?.includes("issues:gantt.show_completed"))!
+        .click(),
+    );
+    await waitFor(() =>
+      expect(
+        canvasSpy.mock.calls.at(-1)![0].projection.nodes.map((n: { id: string }) => n.id).sort(),
+      ).toEqual(["issue:done-line", "issue:live", "live-child"]),
+    );
+  });
+
+  it("expands and collapses nested sub-lines with the batch buttons", async () => {
+    const graph = makeGraph([
+      makeNode("top"),
+      makeNode("mid", { parentIssueId: "top" }),
+      makeNode("leaf", { parentIssueId: "mid" }),
+    ]);
+    renderDagView(graphQuery({ data: graph }));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    act(() =>
+      screen
+        .getAllByRole("button")
+        .find((b) => b.textContent?.includes("dag:expand_all"))!
+        .click(),
+    );
+    expect(store.getState().dagExpandedIds.slice().sort()).toEqual(["issue:mid", "issue:top"]);
+    act(() =>
+      screen
+        .getAllByRole("button")
+        .find((b) => b.textContent?.includes("dag:collapse_all"))!
+        .click(),
+    );
+    expect(store.getState().dagExpandedIds).toEqual([]);
   });
 
   it("saves the live viewport when the toolbar opens an issue detail", async () => {
@@ -1059,7 +1165,10 @@ describe("DagView", () => {
     renderDagView(graphQuery({ data: graph }));
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
     act(() =>
-      canvasSpy.mock.calls.at(-1)![0].registerViewport?.(() => ({ x: -47, y: 93, zoom: 1.35 })),
+      canvasSpy.mock.calls.at(-1)![0].registerCanvasApi?.({
+        getViewport: () => ({ x: -47, y: 93, zoom: 1.35 }),
+        toggleLine: vi.fn(),
+      }),
     );
     act(() => store.getState().setDagSelectedNodeId("issue:root"));
     const buttons = await screen.findAllByRole("button");

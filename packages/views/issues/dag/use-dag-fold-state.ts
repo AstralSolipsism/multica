@@ -31,18 +31,24 @@ export function useDagFoldState(graph: IssueGraph | undefined) {
     [graph, collapsedIds, independentExpanded, showCompleted],
   );
   // Batch expand/collapse act on visible lines only: a line the completed
-  // filter hides keeps its fold state untouched until it reappears.
-  const visibleLineIds = useMemo(
-    () => projection?.groups.filter((g) => !g.independent).map((g) => g.id) ?? [],
+  // filter hides keeps its fold state untouched until it reappears. The
+  // projection reports the hidden lines itself — folded-away nested sub-lines
+  // are absent from its groups but are still visible lines.
+  const hiddenLineIds = useMemo(
+    () => projection?.hiddenLineIds ?? [],
     [projection],
   );
+  const visibleLineIds = useMemo(() => {
+    const hidden = new Set(hiddenLineIds);
+    return lineIds.filter((id) => !hidden.has(id));
+  }, [lineIds, hiddenLineIds]);
   const visibleCollapsedIds = useMemo(
     () => visibleLineIds.filter((id) => !expandedIds.includes(id)),
     [visibleLineIds, expandedIds],
   );
-  const hiddenLineIds = useMemo(
-    () => lineIds.filter((id) => !visibleLineIds.includes(id)),
-    [lineIds, visibleLineIds],
+  const visibleExpandedIds = useMemo(
+    () => visibleLineIds.filter((id) => expandedIds.includes(id)),
+    [visibleLineIds, expandedIds],
   );
   const onToggleCollapsed = useCallback(
     (id: string) => {
@@ -58,6 +64,7 @@ export function useDagFoldState(graph: IssueGraph | undefined) {
     lineIds,
     visibleLineIds,
     visibleCollapsedIds,
+    visibleExpandedIds,
     hiddenLineIds,
     collapsedIds,
     projection,
