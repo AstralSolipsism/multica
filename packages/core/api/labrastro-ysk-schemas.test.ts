@@ -1,8 +1,14 @@
 // @vitest-environment node
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { ApiClient, ApiError } from "./client";
-import { isTipShownToMe, IssueTipListSchema } from "./labrastro-ysk-schemas";
+import {
+  isTipShownToMe,
+  type IssueTip,
+  IssueTipListSchema,
+  IssueTipSchema,
+} from "./labrastro-ysk-schemas";
+import type { IssueTipChangedPayload } from "../types";
 
 const client = new ApiClient("https://api.example.test");
 
@@ -106,6 +112,24 @@ describe("issue tip list schema", () => {
     expect(isTipShownToMe({ status: "overturned", user_state: null })).toBe(false);
     expect(isTipShownToMe({ status: "valid", user_state: { state: "known", feedback: null } })).toBe(false);
   });
+
+  it("a WS event's raw tip is not assignable to a parsed IssueTip (parse before caching)", () => {
+    // OL-211: these events are broadcast workspace-wide and never carry
+    // `user_state`, so the raw payload's user_state is `undefined`, not
+    // `null`. Writing payload.tip straight into a cache would make
+    // isTipShownToMe see undefined !== null and hide every fresh tip.
+    // The type-level assertion below checks IssueTipChangedPayload itself,
+    // so a regression (tip typed as IssueTip or any) fails compilation.
+    const payload = {
+      tip: { ...tip, tag: "you_should_know" as const, status: "valid" as const },
+    } satisfies IssueTipChangedPayload;
+    expectTypeOf<IssueTipChangedPayload["tip"]>().not.toExtend<IssueTip>();
+    // Parsing is required before use; it yields a full IssueTip…
+    expectTypeOf(IssueTipSchema.parse(payload.tip)).toEqualTypeOf<IssueTip>();
+    // …but it normalizes the absent user_state to null — it does not restore
+    // the viewer's own state, which cache writes must preserve separately.
+    expect(IssueTipSchema.parse(payload.tip).user_state).toBeNull();
+  });
 });
 
 describe("listIssueTips", () => {
@@ -118,7 +142,7 @@ describe("listIssueTips", () => {
     expect(String(url)).toBe("https://api.example.test/api/issues/i1/tips?status=all");
   });
 
-  it.each([null, {}, { tips: "bad" }, [[]]] )(
+  it.each([null, {}, { tips: "bad" }, [[]]])(
     "rejects an unreadable response: %j",
     async (body) => {
       respond(body);

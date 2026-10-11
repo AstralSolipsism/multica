@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
@@ -81,6 +81,16 @@ describe("useYouShouldKnowEnabled", () => {
       ).toBeDefined(),
     );
     expect(result.current.personalEnabled).toBe(false);
+    expect(result.current.enabled).toBe(false);
+  });
+
+  it("no workspace → preference query never fires", async () => {
+    currentWorkspace = null;
+    const { result } = renderHook(() => useYouShouldKnowEnabled(), {
+      wrapper: Wrapper,
+    });
+    await act(async () => {});
+    expect(getNotificationPreferences).not.toHaveBeenCalled();
     expect(result.current.enabled).toBe(false);
   });
 
