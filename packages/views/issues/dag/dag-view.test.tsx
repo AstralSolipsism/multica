@@ -961,16 +961,13 @@ describe("DagView", () => {
     renderDagView(graphQuery({ data: visible }), true);
     await screen.findByTestId("dag-canvas");
     const collapse = screen.getByRole("button", { name: /dag:collapse_all/ });
-    // Only an inert expansion exists — nothing visible to collapse.
-    expect(collapse).toBeDisabled();
+    expect(collapse).toBeEnabled();
     act(() => screen.getByRole("button", { name: /dag:expand_all/ }).click());
     expect(store.getState().dagExpandedIds).toEqual(["issue:hidden", "issue:line"]);
-    expect(collapse).toBeEnabled();
     act(() => canvasSpy.mock.calls.at(-1)![0].onToggleCollapsed("issue:line"));
     expect(store.getState().dagExpandedIds).toEqual(["issue:hidden"]);
-    expect(collapse).toBeDisabled();
+    expect(collapse).toBeEnabled();
     const visibleIds = canvasSpy.mock.calls.at(-1)![0].projection.nodes.map((node) => node.id);
-    act(() => screen.getByRole("button", { name: /dag:expand_all/ }).click());
     act(() => collapse.click());
     expect(store.getState().dagExpandedIds).toEqual([]);
     expect(collapse).toBeDisabled();
@@ -1057,6 +1054,42 @@ describe("DagView", () => {
       lineTasks: 0,
       singles: 0,
     });
+  });
+
+  it("disables collapse-all when only completed-hidden lines are expanded", async () => {
+    const graph = makeGraph([
+      makeNode("done-line", { status: "done", statusCategory: "done" }),
+      makeNode("done-child", {
+        parentIssueId: "done-line",
+        status: "done",
+        statusCategory: "done",
+      }),
+      makeNode("live"),
+      makeNode("live-child", { parentIssueId: "live" }),
+    ]);
+    store.getState().setDagExpandedIds(["issue:done-line"]);
+    renderDagView(graphQuery({ data: graph }));
+    await screen.findByTestId("dag-canvas");
+    expect(screen.getByRole("button", { name: /dag:collapse_all/ })).toBeDisabled();
+  });
+
+  it("routes toolbar line folds through the registered canvas api", async () => {
+    const graph = makeGraph([
+      makeNode("root"),
+      makeNode("child", { parentIssueId: "root" }),
+    ]);
+    renderDagView(graphQuery({ data: graph }));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    const api = { getViewport: vi.fn(), toggleLine: vi.fn() };
+    act(() => canvasSpy.mock.calls.at(-1)![0].registerCanvasApi?.(api));
+    act(() => toolbarSpy.mock.calls.at(-1)![0].onToggleCollapsed("issue:root"));
+    expect(api.toggleLine).toHaveBeenCalledWith("issue:root");
+    // The api owns the anchored fold; the store is the api's business.
+    expect(store.getState().dagExpandedIds).toEqual([]);
+    // Without a registered canvas the view falls back to the fold handler.
+    act(() => canvasSpy.mock.calls.at(-1)![0].registerCanvasApi?.(null));
+    act(() => toolbarSpy.mock.calls.at(-1)![0].onToggleCollapsed("issue:root"));
+    expect(store.getState().dagExpandedIds).toEqual(["issue:root"]);
   });
 
   it("batch expand and collapse only act on visible lines", async () => {

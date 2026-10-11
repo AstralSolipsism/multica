@@ -71,6 +71,6 @@
   "focus_hidden_tasks_one": "{{count}} tâche masquée sur cette chaîne",
   "focus_hidden_tasks_other": "{{count}} tâches masquées sur cette chaîne",
   "show_completed_enable": "Activer « Afficher les tâches terminées »",
-  "hidden_completed_tooltip_one": "{{count}} groupe masqué ({{tasks}}) + {{singles}} individuelle",
-  "hidden_completed_tooltip_other": "{{count}} groupes masqués ({{tasks}}) + {{singles}} individuelles"
+  "hidden_completed_tooltip_one": "{{count}} groupe masqué ({{tasks}}) + {{singles}} hors groupe",
+  "hidden_completed_tooltip_other": "{{count}} groupes masqués ({{tasks}}) + {{singles}} hors groupe"
 }

@@ -196,7 +196,7 @@ export function DagView({
         projection={projection}
         pending={layout.pending}
         expandAllDisabled={fold.visibleCollapsedIds.length === 0}
-        collapseAllDisabled={fold.visibleExpandedIds.length === 0}
+        collapseAllDisabled={fold.collapseAllDisabled}
         onOpenIssue={onOpenIssue}
         onRevealIssues={reveal.onRevealIssues}
         onFocusGroup={reveal.onFocusGroup}

@@ -46,10 +46,13 @@ export function useDagFoldState(graph: IssueGraph | undefined) {
     () => visibleLineIds.filter((id) => !expandedIds.includes(id)),
     [visibleLineIds, expandedIds],
   );
-  const visibleExpandedIds = useMemo(
-    () => visibleLineIds.filter((id) => expandedIds.includes(id)),
-    [visibleLineIds, expandedIds],
-  );
+  // Disabled only when a click could not change anything: every expansion
+  // belongs to a completed-hidden line (collapse-all preserves those). Inert
+  // expansions stay reachable — collapse-all is their only escape hatch.
+  const collapseAllDisabled = useMemo(() => {
+    const hidden = new Set(hiddenLineIds);
+    return expandedIds.every((id) => hidden.has(id));
+  }, [expandedIds, hiddenLineIds]);
   const onToggleCollapsed = useCallback(
     (id: string) => {
       const state = store.getState();
@@ -64,7 +67,7 @@ export function useDagFoldState(graph: IssueGraph | undefined) {
     lineIds,
     visibleLineIds,
     visibleCollapsedIds,
-    visibleExpandedIds,
+    collapseAllDisabled,
     hiddenLineIds,
     collapsedIds,
     projection,

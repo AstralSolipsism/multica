@@ -187,9 +187,11 @@ export function DagNodeSelection({
         </span>
       ))}
       {detailFailed && (
-        <Button size="sm" variant="ghost" onClick={retryDetail}>
-          {tDag(($) => $.error_retry)}
-        </Button>
+        <span data-dag-fixed className="inline-flex shrink-0">
+          <Button size="sm" variant="ghost" onClick={retryDetail}>
+            {tDag(($) => $.error_retry)}
+          </Button>
+        </span>
       )}
       {hasMenu && (
         <span data-dag-fixed className="relative inline-flex shrink-0">

@@ -44,17 +44,22 @@ export function useActionCapacity(actionKeys: readonly string[], resetKey: strin
         (sum, el) => sum + el.offsetWidth,
         0,
       );
-      const labelWidth = Math.min(
-        zone.querySelector<HTMLElement>("[data-dag-label]")?.offsetWidth ?? 0,
-        LABEL_RESERVE_PX,
-      );
+      // The reservation must use the label's full content width: offsetWidth
+      // is the ALREADY-squeezed render width, which shrinks together with the
+      // reservation and would let the label vanish before anything collapses.
+      const labelEl = zone.querySelector<HTMLElement>("[data-dag-label]");
+      const labelWidth = Math.min(labelEl?.scrollWidth ?? 0, LABEL_RESERVE_PX);
+      const gap =
+        parseFloat(getComputedStyle(zone).columnGap) || ITEM_GAP_PX;
       setVisibleCount((current) => {
-        let used = fixedWidth + labelWidth;
+        // Gaps apply to every zone child — label, actions and fixed parts.
+        const gaps = gap * (zone.childElementCount - 1);
+        let used = fixedWidth + labelWidth + gaps;
         let fits = 0;
         for (const key of actionKeys) {
           const width = widthsRef.current.get(key) ?? 0;
-          if (used + width + ITEM_GAP_PX > zone.clientWidth) break;
-          used += width + ITEM_GAP_PX;
+          if (used + width > zone.clientWidth) break;
+          used += width;
           fits += 1;
         }
         if (fits < current) return fits;

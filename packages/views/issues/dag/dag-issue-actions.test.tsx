@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import type { Issue } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { DagAssignAction, useDagIssueSelection } from "./dag-issue-actions";
@@ -34,8 +34,13 @@ vi.mock("../components/pickers/assignee-picker", () => ({
   },
 }));
 
+const lastSelection = vi.hoisted(() => ({
+  current: null as null | { retryDetail: () => void },
+}));
+
 function HookProbe({ issueId }: { issueId: string | null }) {
   const result = useDagIssueSelection(issueId);
+  lastSelection.current = result;
   return (
     <output
       data-testid="probe"
@@ -76,7 +81,10 @@ describe("useDagIssueSelection", () => {
     const refetch = vi.fn();
     queryState.current = { data: null, isError: true, refetch };
     render(<HookProbe issueId="i-2" />);
-    expect(screen.getByTestId("probe")).toHaveAttribute("data-failed", "true");
+    const probe = screen.getByTestId("probe");
+    expect(probe).toHaveAttribute("data-failed", "true");
+    act(() => lastSelection.current!.retryDetail());
+    expect(refetch).toHaveBeenCalledOnce();
   });
 });
 

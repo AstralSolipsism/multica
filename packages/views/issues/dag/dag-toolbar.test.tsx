@@ -318,18 +318,32 @@ describe("DagToolbar edge selection", () => {
 });
 
 describe("DagToolbar overflow", () => {
-  /** Stub per-element widths: the capacity hook measures intrinsic content
-   *  widths (offsetWidth) against the zone's clientWidth. */
+  /** Widths answered by attribute: the capacity hook measures intrinsic
+   *  content widths (offsetWidth / the label's scrollWidth) against the
+   *  zone's clientWidth. Elements mounted later (the focus hint) get sizes
+   *  too, which per-element stubbing cannot provide. */
   function stubMetrics() {
-    const widths = new WeakMap<Element, number>();
+    const sizes = { zone: 1000, labelRender: 200, labelFull: 200, action: 90, fixed: 60 };
+    const widthOf = (el: HTMLElement) => {
+      if (el.hasAttribute("data-dag-zone")) return sizes.zone;
+      if (el.hasAttribute("data-dag-label")) return sizes.labelRender;
+      if (el.hasAttribute("data-dag-action")) return sizes.action;
+      if (el.hasAttribute("data-dag-fixed")) return sizes.fixed;
+      return 0;
+    };
     vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(
       function (this: HTMLElement) {
-        return widths.get(this) ?? 0;
+        return widthOf(this);
       },
     );
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
       function (this: HTMLElement) {
-        return widths.get(this) ?? 0;
+        return widthOf(this);
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.hasAttribute("data-dag-label") ? sizes.labelFull : widthOf(this);
       },
     );
     // Base UI overlays observe too, so key the stub by the observed element.
@@ -347,55 +361,131 @@ describe("DagToolbar overflow", () => {
         disconnect() {}
       },
     );
-    return { widths, roByElement };
+    const zone = () => document.querySelector("[data-dag-zone]") as HTMLElement;
+    const fire = () => act(() => roByElement.get(zone())?.([], {} as ResizeObserver));
+    const actionIds = () =>
+      [...zone().querySelectorAll("[data-dag-action]")].map((el) =>
+        el.getAttribute("data-dag-action"),
+      );
+    return { sizes, zone, fire, actionIds };
   }
 
-  function stubZone(widths: WeakMap<Element, number>, zoneWidth: number) {
-    const zone = document.querySelector("[data-dag-zone]") as HTMLElement;
-    for (const el of zone.querySelectorAll("[data-dag-action]")) widths.set(el, 90);
-    for (const el of zone.querySelectorAll("[data-dag-fixed]")) widths.set(el, 60);
-    widths.set(zone.querySelector("[data-dag-label]")!, 200);
-    widths.set(zone, zoneWidth);
-    return zone;
-  }
-
+  // With action=90, fixed=60 (More + ✕) and a 200px label (96 reserved):
+  // base usage is 120 + 96 + 7 gaps·4 = 244, then +90 per action.
   it("collapses rightmost actions into More on narrow widths and restores them with room", () => {
-    const { widths, roByElement } = stubMetrics();
+    const m = stubMetrics();
     const { store } = harness(fixtureGraph(), {}, (s) =>
       s.getState().setDagExpandedIds(["issue:one", "issue:two"]),
     );
     act(() => store.getState().setDagSelectedNodeId("a"));
-    const zone = stubZone(widths, 1000);
-    const fire = () => act(() => roByElement.get(zone)?.([], {} as ResizeObserver));
-    fire();
-    // fixed: More 60 + clear 60 + label reserve 96 = 216; actions 90+4 each.
-    expect(within(zone).getByRole("button", { name: "Open detail" })).toBeInTheDocument();
-    expect(within(zone).getByRole("button", { name: "Assign" })).toBeInTheDocument();
-    // Narrow: fits 216 + 3*94 = 498 ≤ 500, the fourth would exceed it.
-    stubZone(widths, 500);
-    fire();
-    expect(within(zone).queryByRole("button", { name: "Assign" })).toBeNull();
-    expect(within(zone).queryByRole("button", { name: "Edit prerequisites" })).toBeNull();
-    expect(within(zone).getByRole("button", { name: "Highlight dependents" })).toBeInTheDocument();
-    // Room returns: everything leaves the menu again.
-    stubZone(widths, 1920);
-    fire();
-    expect(within(zone).getByRole("button", { name: "Assign" })).toBeInTheDocument();
-    expect(within(zone).getByRole("button", { name: "Edit prerequisites" })).toBeInTheDocument();
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit", "assign"]);
+    m.sizes.zone = 500;
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream"]);
+    m.sizes.zone = 1920;
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit", "assign"]);
+  });
+
+  it("reserves the label's full width before collapsing any action", () => {
+    const m = stubMetrics();
+    // The full label needs 200px; the reservation caps at 96.
+    const { store } = harness(fixtureGraph(), {}, (s) =>
+      s.getState().setDagExpandedIds(["issue:one", "issue:two"]),
+    );
+    act(() => store.getState().setDagSelectedNodeId("a"));
+    m.sizes.zone = 714;
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit", "assign"]);
+    m.sizes.zone = 690;
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit"]);
+    // A short label reserves only its real width: 40 < 96, so all five fit
+    // at fixed 120 + 40 + gaps 28 + 450 = 638.
+    act(() => store.getState().setDagSelectedNodeId(null));
+    m.sizes.labelFull = 40;
+    m.sizes.labelRender = 40;
+    act(() => store.getState().setDagSelectedNodeId("a"));
+    m.sizes.zone = 638;
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit", "assign"]);
+  });
+
+  it("collapses when the hidden-chain hint appears and restores when it clears", () => {
+    const m = stubMetrics();
+    const graph = makeGraph(
+      [
+        makeNode("one"),
+        makeNode("a", { parentIssueId: "one" }),
+        makeNode("h", { status: "done", statusCategory: "done" }),
+      ],
+      [["h", "a"]],
+    );
+    const { store } = harness(graph, {}, (s) => s.getState().setDagExpandedIds(["issue:one"]));
+    act(() => store.getState().setDagSelectedNodeId("a"));
+    // Zone 750: 5 actions fit (694 used); the hint adds 64 → only 4 fit.
+    m.sizes.zone = 750;
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit", "assign"]);
+    act(() => store.getState().setDagFocus({ nodeId: "a", way: "upstream" }));
+    expect(screen.getByRole("region", { name: "Selection" })).toHaveTextContent(
+      "1 more hidden task on this chain",
+    );
+    expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit"]);
+    act(() => store.getState().setDagFocus(null));
+    expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit", "assign"]);
+  });
+
+  it("does not restore while the slack stays below the hysteresis", () => {
+    const m = stubMetrics();
+    const { store } = harness(fixtureGraph(), {}, (s) =>
+      s.getState().setDagExpandedIds(["issue:one", "issue:two"]),
+    );
+    act(() => store.getState().setDagSelectedNodeId("a"));
+    m.sizes.zone = 500;
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream"]);
+    // A third action would fit (514 ≤ 520), but only by 6px of slack.
+    m.sizes.zone = 520;
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream"]);
+    // Once the slack clears the hysteresis, the action comes back.
+    m.sizes.zone = 580;
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream", "downstream"]);
+  });
+
+  it("refits from the full action set after the selection changes", () => {
+    const m = stubMetrics();
+    const graph = makeGraph([
+      makeNode("one"),
+      makeNode("a", { parentIssueId: "one" }),
+      makeNode("solo"),
+    ]);
+    const { store } = harness(graph, {}, (s) => s.getState().setDagExpandedIds(["issue:one"]));
+    // The independent group has two actions; both fit at 700.
+    m.sizes.zone = 700;
+    act(() => store.getState().setDagSelectedNodeId("independent:root"));
+    m.fire();
+    expect(m.actionIds()).toEqual(["upstream", "downstream"]);
+    // Selecting a task must not inherit the smaller visible count.
+    act(() => store.getState().setDagSelectedNodeId("a"));
+    expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit", "assign"]);
   });
 
   it("opens the assign picker controlled from the overflowed menu entry", async () => {
-    const { widths, roByElement } = stubMetrics();
+    const m = stubMetrics();
     issueSelection.current.issue = { id: "a", assignee_type: null, assignee_id: null };
     const { store } = harness(fixtureGraph(), {}, (s) =>
       s.getState().setDagExpandedIds(["issue:one", "issue:two"]),
     );
     act(() => store.getState().setDagSelectedNodeId("a"));
-    const zone = stubZone(widths, 500);
-    act(() => roByElement.get(zone)?.([], {} as ResizeObserver));
-    expect(within(zone).queryByRole("button", { name: "Assign" })).toBeNull();
+    m.sizes.zone = 500;
+    m.fire();
+    expect(m.actionIds()).not.toContain("assign");
     assignSpy.mockClear();
-    fireEvent.click(within(zone).getByRole("button", { name: "More" }));
+    fireEvent.click(within(m.zone()).getByRole("button", { name: "More" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Assign" }));
     expect(assignSpy.mock.calls.at(-1)![0]).toMatchObject({ open: true });
   });
