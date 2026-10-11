@@ -217,6 +217,69 @@ describe('labrastro-ysk hooks', () => {
     expect(world.forks.map((prompt) => (prompt.includes('Up to 3 tips') ? 'light' : 'heads_up'))).toEqual(['light', 'heads_up'])
   })
 
+  test('an answer from a given-up fork is ignored, so a run sends one heads-up at most', async ($, on) => {
+    const world = setUp(on)
+    await start($)
+    for (let i = 0; i <= 2; i++) {
+      await step($, i)
+      await world.settle()
+    }
+    const releases: Array<(result: ModelForkResult) => void> = []
+    world.answer = () => new Promise<ModelForkResult>((resolve) => { releases.push(resolve) })
+    // The check at step 5 hangs; at step 35 it is given up and step 35 checks again.
+    for (let i = 3; i <= 35; i++) await step($, i)
+    expect(releases).toHaveLength(2)
+    const headsUp = (title: string, line: string) => ({ isAnswered: true as const, text: JSON.stringify({ heads_up: { title, line, explanation: 'It matters.' } }), usage: USAGE })
+    releases[1]?.(headsUp('Cost', 'The agent reruns the full suite'))
+    await world.settle()
+    releases[0]?.(headsUp('Data loss', 'The agent deletes the old table'))
+    await world.settle()
+    expect(world.logs.map((line) => JSON.parse(line) as { kind: string; tips: Array<{ title: string }> })).toMatchObject([{ kind: 'heads_up', tips: [{ title: 'Cost' }] }])
+  })
+
+  test('a light answer that arrives after its fork was given up is ignored', async ($, on) => {
+    const world = setUp(on)
+    const releases: Array<(result: ModelForkResult) => void> = []
+    world.answer = () => new Promise<ModelForkResult>((resolve) => { releases.push(resolve) })
+    await start($)
+    for (let i = 0; i <= 32; i++) await step($, i) // light at 2, given up at 32 by a heads-up check
+    expect(releases).toHaveLength(2)
+    releases[0]?.({ isAnswered: true, text: LIGHT_REPLY, usage: USAGE })
+    await world.settle()
+    expect(world.logs).toEqual([])
+  })
+
+  test('a given-up fork still counts while no newer fork has started', async ($, on) => {
+    const world = setUp(on, { context: JSON.stringify({ ...JSON.parse(CONTEXT), check_every_steps: 0 }) })
+    let release: (result: ModelForkResult) => void = () => {}
+    world.answer = () => new Promise<ModelForkResult>((resolve) => { release = resolve })
+    await start($)
+    for (let i = 0; i <= 40; i++) await step($, i) // no heads-up checks, so nothing replaces the light fork
+    expect(world.forks).toHaveLength(1)
+    release({ isAnswered: true, text: LIGHT_REPLY, usage: USAGE })
+    await world.settle()
+    expect(kinds(world.logs)).toEqual(['light'])
+  })
+
+  test('a heads-up never repeats a tip this run already sent, and the question lists them', async ($, on) => {
+    const world = setUp(on)
+    world.answer = (prompt) => ({
+      isAnswered: true,
+      text: prompt.includes('Up to 3 tips')
+        ? LIGHT_REPLY
+        : JSON.stringify({ heads_up: { title: 'SMS login', line: 'The Engineer agent adds SMS codes', explanation: 'Users sign in with a code.' } }),
+      usage: USAGE,
+    })
+    await start($)
+    for (let i = 0; i <= 5; i++) {
+      await step($, i)
+      await world.settle()
+    }
+    expect(kinds(world.logs)).toEqual(['light'])
+    expect(world.forks[0]).toContain('Tips already shown during this run, as JSON: []')
+    expect(world.forks[1]).toContain('Tips already shown during this run, as JSON: [{"tag":"you_should_know","line":"The Engineer agent adds SMS codes"}]')
+  })
+
   test('fork failures produce no tips and leave the steps alone', async ($, on) => {
     const world = setUp(on)
     const failures: Array<() => ModelForkResult | Promise<ModelForkResult>> = [

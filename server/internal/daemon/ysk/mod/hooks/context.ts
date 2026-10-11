@@ -24,11 +24,6 @@ export type YskContext = {
 }
 
 const DEFAULT_LIMITS: Limits = { line: 40, title: 12, explanation: 200 }
-const MAX_LIGHT_TIPS = 10
-const MAX_EXISTING_TIPS = 200
-const MAX_KNOWN_TOPICS = 50
-const MAX_COMMENT_CHARS = 500
-const MAX_TOPIC_CHARS = 200
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -63,7 +58,9 @@ function parseLimits(value: unknown): Limits {
 
 /**
  * Reads the context file's text. Anything that is not a version-1 context
- * turns the mod off for the session; malformed entries inside one are dropped.
+ * turns the mod off for the session. Malformed entries inside one are
+ * dropped; everything else is kept as the server sent it, since the server
+ * owns the protocol's limits.
  */
 export function parseContext(raw: string): YskContext | undefined {
   let value: unknown
@@ -89,20 +86,17 @@ export function parseContext(raw: string): YskContext | undefined {
   if (Array.isArray(value.known_topics)) {
     for (const topic of value.known_topics) {
       const t = text(topic)
-      if (t !== '') knownTopics.push(clip(t, MAX_TOPIC_CHARS))
+      if (t !== '') knownTopics.push(t)
     }
   }
 
-  const lightTipCount = isCount(value.light_tip_count) ? Math.min(value.light_tip_count, MAX_LIGHT_TIPS) : 0
-  const checkEverySteps = isCount(value.check_every_steps) ? value.check_every_steps : 0
-
   return {
     issueIdentifier: text(value.issue_identifier),
-    latestHumanComment: clip(text(value.latest_human_comment), MAX_COMMENT_CHARS),
-    existingTips: existingTips.slice(-MAX_EXISTING_TIPS),
-    knownTopics: knownTopics.slice(-MAX_KNOWN_TOPICS),
-    lightTipCount,
-    checkEverySteps,
+    latestHumanComment: text(value.latest_human_comment),
+    existingTips,
+    knownTopics,
+    lightTipCount: isCount(value.light_tip_count) ? value.light_tip_count : 0,
+    checkEverySteps: isCount(value.check_every_steps) ? value.check_every_steps : 0,
     limits: parseLimits(value.limits),
   }
 }

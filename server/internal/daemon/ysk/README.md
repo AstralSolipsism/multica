@@ -29,7 +29,12 @@ Measured on Claude Code 2.1.292 in the daemon's `-p` stream-json mode:
   whose fork can see a tool result, normally step 2, where the issue the agent
   read with its first tool call is visible.
 - After that a heads-up check runs every `check_every_steps` main steps until
-  one is found. One fork runs at a time.
+  one is found. A new fork starts only when the previous one has answered or
+  has been open for 30 main steps; once a newer fork has started, the older
+  one's answer is ignored, so a run sends one heads-up at most.
+- Tips the run has sent join the issue's tips and the person's known topics:
+  later questions list them, and an answer repeating any of them (ignoring
+  width, case and whitespace) is dropped.
 - A fork reads the main thread's prompt cache up to the previous request; only
   the newest step's content is billed uncached.
 - The daemon closes stdin on `result`, so a fork still running then is dropped.

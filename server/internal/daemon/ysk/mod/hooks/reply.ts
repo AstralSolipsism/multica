@@ -65,18 +65,36 @@ function tipFrom(value: unknown, tag: TipTag, limits: Limits): Tip | undefined {
   return { tag, line, title, explanation }
 }
 
+/**
+ * The key two tips are compared by: character width, case and whitespace do
+ * not count, so "60 秒，" and "60秒," are the same tip.
+ */
+export function tipKey(line: string): string {
+  return line.normalize('NFKC').replace(/\s+/gu, '').toLowerCase()
+}
+
+/**
+ * What the reader already has: the issue's tips, the topics the person knows
+ * and the tips this run has already sent (`earlier`), which the context file
+ * predates.
+ */
+function shownKeys(ctx: YskContext, earlier: readonly Tip[]): Set<string> {
+  const lines = [...ctx.existingTips.map((tip) => tip.line), ...ctx.knownTopics, ...earlier.map((tip) => tip.line)]
+  return new Set(lines.map(tipKey))
+}
+
 /** The first batch, or undefined when the reply holds nothing to report. */
-export function lightBatch(text: string, ctx: YskContext, step: number): Batch | undefined {
+export function lightBatch(text: string, ctx: YskContext, step: number, earlier: readonly Tip[] = []): Batch | undefined {
   const reply = replyObject(text)
   if (reply === undefined) return undefined
 
-  const seen = new Set(ctx.existingTips.map((tip) => tip.line))
+  const seen = shownKeys(ctx, earlier)
   const tips: Tip[] = []
   for (const candidate of Array.isArray(reply.tips) ? reply.tips : []) {
     if (tips.length >= ctx.lightTipCount) break
     const tip = tipFrom(candidate, 'you_should_know', ctx.limits)
-    if (tip === undefined || seen.has(tip.line)) continue
-    seen.add(tip.line)
+    if (tip === undefined || seen.has(tipKey(tip.line))) continue
+    seen.add(tipKey(tip.line))
     tips.push(tip)
   }
 
@@ -100,13 +118,16 @@ export type HeadsUpOutcome =
   | { kind: 'unreadable' }
   /** The model looked and found nothing worth a heads-up. */
   | { kind: 'none' }
+  /** The heads-up says what the reader already has; the checks go on. */
+  | { kind: 'repeat' }
   | { kind: 'found'; batch: Batch }
 
-export function headsUpOutcome(text: string, ctx: YskContext, step: number): HeadsUpOutcome {
+export function headsUpOutcome(text: string, ctx: YskContext, step: number, earlier: readonly Tip[] = []): HeadsUpOutcome {
   const reply = replyObject(text)
   if (reply === undefined || !('heads_up' in reply)) return { kind: 'unreadable' }
   if (reply.heads_up === null) return { kind: 'none' }
   const tip = tipFrom(reply.heads_up, 'heads_up', ctx.limits)
-  if (tip === undefined || ctx.existingTips.some((shown) => shown.line === tip.line)) return { kind: 'unreadable' }
+  if (tip === undefined) return { kind: 'unreadable' }
+  if (shownKeys(ctx, earlier).has(tipKey(tip.line))) return { kind: 'repeat' }
   return { kind: 'found', batch: { ysk: 1, kind: 'heads_up', tips: [tip], overturned: [], step } }
 }

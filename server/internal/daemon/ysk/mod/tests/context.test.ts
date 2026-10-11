@@ -33,7 +33,7 @@ describe('parseContext', () => {
     expect(parseContext(JSON.stringify({ ...valid, version: undefined }))).toBeUndefined()
   })
 
-  test('drops malformed entries and fills missing numbers', () => {
+  test('drops malformed entries and fills missing limits', () => {
     const context = parseContext(JSON.stringify({
       version: 1,
       existing_tips: [{ id: '', line: 'no id' }, { id: 'x' }, 'tip', { id: 'ok', line: ' kept ' }],
@@ -44,22 +44,23 @@ describe('parseContext', () => {
     }))
     expect(context?.existingTips).toEqual([{ id: 'ok', tag: '', line: 'kept' }])
     expect(context?.knownTopics).toEqual(['a', 'b'])
-    expect(context?.lightTipCount).toBe(10)
+    expect(context?.lightTipCount).toBe(99)
     expect(context?.checkEverySteps).toBe(0)
     expect(context?.limits).toEqual({ line: 40, title: 12, explanation: 150 })
     expect(context?.issueIdentifier).toBe('')
     expect(context?.latestHumanComment).toBe('')
   })
 
-  test('caps the human comment and topic lists', () => {
-    const context = parseContext(JSON.stringify({
-      ...valid,
-      latest_human_comment: '字'.repeat(600),
-      known_topics: Array.from({ length: 60 }, (_, i) => `topic ${i}`),
-    }))
-    expect(charCount(context?.latestHumanComment ?? '')).toBe(500)
-    expect(context?.knownTopics).toHaveLength(50)
-    expect(context?.knownTopics[49]).toBe('topic 59')
+  // The server owns the protocol's limits; the mod keeps what it was sent.
+  test('keeps every tip, topic and the whole comment it was sent', () => {
+    const tips = Array.from({ length: 201 }, (_, i) => ({ id: `tip-${i}`, tag: 'you_should_know', line: `Existing fact ${i}` }))
+    const topics = Array.from({ length: 60 }, (_, i) => `topic ${i}`)
+    const context = parseContext(JSON.stringify({ ...valid, existing_tips: tips, known_topics: topics, latest_human_comment: '字'.repeat(600) }))
+    expect(context?.existingTips).toHaveLength(201)
+    expect(context?.existingTips[0]).toEqual({ id: 'tip-0', tag: 'you_should_know', line: 'Existing fact 0' })
+    expect(context?.existingTips[200]?.id).toBe('tip-200')
+    expect(context?.knownTopics).toEqual(topics)
+    expect(charCount(context?.latestHumanComment ?? '')).toBe(600)
   })
 })
 

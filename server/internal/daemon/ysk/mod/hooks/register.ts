@@ -1,7 +1,7 @@
 import type { EngineInterface, ModelForkResult, Register } from 'claude-code'
 import { parseContext, type YskContext } from './context'
 import { headsUpPrompt, lightPrompt } from './prompts'
-import { headsUpOutcome, lightBatch, type Batch } from './reply'
+import { headsUpOutcome, lightBatch, type Batch, type Tip } from './reply'
 
 // labrastro-ysk: "You should know" tips for the people watching a Labrastro
 // agent. The daemon loads this mod only when the workspace turned the feature
@@ -14,7 +14,8 @@ import { headsUpOutcome, lightBatch, type Batch } from './reply'
 // the agent's own work is untouched whatever happens here.
 
 // A fork answers within a step or two. One still open after this many main
-// steps is treated as lost, so it no longer holds back the next check.
+// steps is given up: the next check may start, and once it has, the old
+// fork's answer is ignored.
 const FORK_STALE_STEPS = 30
 
 /**
@@ -69,8 +70,15 @@ export class Schedule {
     return id
   }
 
-  forkSettled(id: number): void {
-    if (this.fork?.id === id) this.fork = undefined
+  /**
+   * Called when fork `id` answers. Returns whether its answer still counts:
+   * false when a newer fork has started since, which happens only after this
+   * one was given up.
+   */
+  forkSettled(id: number): boolean {
+    if (this.fork?.id !== id) return false
+    this.fork = undefined
+    return true
   }
 
   foundHeadsUp(): void {
@@ -119,31 +127,42 @@ function emit($: EngineInterface, batch: Batch): void {
   $.ui.log(JSON.stringify(batch))
 }
 
-function settle($: EngineInterface, ctx: YskContext, plan: Schedule, ask: 'light' | 'heads_up', step: number, result: ModelForkResult): void {
+/** Takes one fork's answer; `sent` holds the tips this run has emitted. */
+function settle($: EngineInterface, ctx: YskContext, plan: Schedule, sent: Tip[], ask: 'light' | 'heads_up', step: number, result: ModelForkResult): void {
   if (!result.isAnswered) {
     const reason = result.reason === 'api-error' ? `api-error ${result.status ?? 'no status'} ${result.error}` : result.reason
     debug($, `${ask} fork at step ${step}: ${reason}`)
     return
   }
   if (ask === 'light') {
-    const batch = lightBatch(result.text, ctx, step)
-    if (batch === undefined) debug($, `light fork at step ${step}: nothing usable`)
-    else emit($, batch)
+    const batch = lightBatch(result.text, ctx, step, sent)
+    if (batch === undefined) {
+      debug($, `light fork at step ${step}: nothing usable`)
+      return
+    }
+    emit($, batch)
+    sent.push(...batch.tips)
     return
   }
-  const outcome = headsUpOutcome(result.text, ctx, step)
+  // Only the current fork's answer reaches here and no check starts once a
+  // heads-up is found, so a run sends one heads-up at most.
+  const outcome = headsUpOutcome(result.text, ctx, step, sent)
   if (outcome.kind !== 'found') {
     debug($, `heads-up fork at step ${step}: ${outcome.kind}`)
     return
   }
   plan.foundHeadsUp()
   emit($, outcome.batch)
+  sent.push(...outcome.batch.tips)
 }
 
 export const register: Register = (on) => {
   let context: YskContext | undefined
   let agentName = ''
   let schedule: Schedule | undefined
+  // Tips this run has emitted: shown to readers already, so later questions
+  // and answers leave them out.
+  const sent: Tip[] = []
 
   on('session.start', async ($, e, next) => {
     try {
@@ -170,15 +189,18 @@ export const register: Register = (on) => {
     try {
       const ask = plan.decide(step)
       if (ask !== undefined) {
-        const prompt = ask === 'light' ? lightPrompt(ctx, agentName) : headsUpPrompt(ctx, agentName)
+        const prompt = ask === 'light' ? lightPrompt(ctx, agentName, sent) : headsUpPrompt(ctx, agentName, sent)
         const fork = plan.forkStarted(step)
         // Not awaited: the main thread's request goes out at once, and the
         // answer is logged whenever it arrives.
         void $.model.fork({ prompt }).then(
           (result) => {
-            plan.forkSettled(fork)
+            if (!plan.forkSettled(fork)) {
+              debug($, `${ask} fork at step ${step} answered after it was given up; ignored`)
+              return
+            }
             try {
-              settle($, ctx, plan, ask, step, result)
+              settle($, ctx, plan, sent, ask, step, result)
             } catch (error) {
               debug($, `${ask} fork at step ${step}: ${String(error)}`)
             }
