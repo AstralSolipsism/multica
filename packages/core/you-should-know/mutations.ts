@@ -13,7 +13,15 @@ interface SetTipStateVariables {
 
 interface SetTipStateContext {
   /** [queryKey, cached list] pairs captured before the optimistic patch. */
-  snapshots: [readonly unknown[], IssueTipList][];
+  snapshots: [readonly unknown[], IssueTipList | undefined][];
+}
+
+/** True when both states carry the same state+feedback pair (null-safe). */
+function isSameUserState(
+  a: IssueTipUserState | null | undefined,
+  b: IssueTipUserState,
+): boolean {
+  return a?.state === b.state && a?.feedback === b.feedback;
 }
 
 /**
@@ -35,9 +43,9 @@ export function useSetTipState() {
     onMutate: async ({ tipId, request }) => {
       // Cancel in-flight refetches so a stale response cannot overwrite the
       // optimistic patch.
-      const snapshots = qc
-        .getQueriesData<IssueTipList>({ queryKey: youShouldKnowKeys.all(wsId) })
-        .map(([key, data]) => [key, data] as [readonly unknown[], IssueTipList]);
+      const snapshots = qc.getQueriesData<IssueTipList>({
+        queryKey: youShouldKnowKeys.all(wsId),
+      });
       await Promise.all(
         snapshots.map(([key]) => qc.cancelQueries({ queryKey: key })),
       );
@@ -65,11 +73,7 @@ export function useSetTipState() {
           return {
             ...old,
             tips: old.tips.map((tip) => {
-              if (
-                tip.id !== tipId ||
-                tip.user_state?.state !== optimistic.state ||
-                tip.user_state?.feedback !== optimistic.feedback
-              ) {
+              if (tip.id !== tipId || !isSameUserState(tip.user_state, optimistic)) {
                 return tip;
               }
               // Restore only `user_state` so server updates (status etc.)

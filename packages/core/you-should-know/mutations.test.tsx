@@ -117,6 +117,62 @@ describe("useSetTipState", () => {
     expect(result.current.error).toBeInstanceOf(Error);
   });
 
+  it("dismiss succeeds then feedback fails → tip stays dismissed (no resurrection)", async () => {
+    // OL-211: kills the "always roll back to null" mutation — a tip the user
+    // acted on must not reappear because a follow-up request failed.
+    setTipState
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("feedback failed"));
+    const { result } = renderHook(() => useSetTipState(), { wrapper: Wrapper });
+
+    await act(async () => {
+      result.current.mutate({ tipId: "t1", request: { state: "dismissed", feedback: null } });
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    await act(async () => {
+      result.current.mutate({ tipId: "t1", request: { state: "dismissed", feedback: "helpful" } });
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    // The rollback restores the snapshot taken before the second patch —
+    // which already held the first mutation's dismissed state.
+    expect(activeTip("t1")?.user_state).toEqual({ state: "dismissed", feedback: null });
+  });
+
+  it("rollback restores only user_state, keeping concurrent row updates", async () => {
+    // OL-211: kills the "roll back the whole row" mutation — a status update
+    // that lands while the request is in flight must survive the failure.
+    const request = deferred<void>();
+    setTipState.mockReturnValueOnce(request.promise);
+    const { result } = renderHook(() => useSetTipState(), { wrapper: Wrapper });
+
+    await act(async () => {
+      result.current.mutate({ tipId: "t1", request: { state: "dismissed", feedback: null } });
+    });
+
+    // A WS update overturns the tip while the request is in flight.
+    await act(async () => {
+      qc.setQueryData<IssueTipList>(youShouldKnowKeys.active(WS), (old) =>
+        old
+          ? {
+              ...old,
+              tips: old.tips.map((t) => (t.id === "t1" ? { ...t, status: "overturned" } : t)),
+            }
+          : old,
+      );
+    });
+
+    await act(async () => {
+      request.reject(new Error("boom"));
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const tip = activeTip("t1");
+    expect(tip?.status).toBe("overturned");
+    expect(tip?.user_state).toBeNull();
+  });
+
   it("a queued second mutation overwrites the first and failure of the first does not clobber it", async () => {
     const first = deferred<void>();
     const second = deferred<void>();

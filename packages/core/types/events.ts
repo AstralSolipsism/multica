@@ -7,7 +7,8 @@ import type { TimelineEntry } from "./activity";
 import type { Workspace, MemberWithUser, Invitation } from "./workspace";
 import type { Project } from "./project";
 import type { Label } from "./label";
-import type { IssueTip } from "../api/labrastro-ysk-schemas";
+import type { z } from "zod";
+import type { IssueTipSchema } from "../api/labrastro-ysk-schemas";
 
 // WebSocket event types (matching Go server protocol/events.go)
 export type WSEventType =
@@ -136,8 +137,14 @@ export interface IssueDeletedPayload {
 // workspace-wide like comment:created; the state payload goes to the acting
 // user only. Shapes follow the OL-188 server implementation (PR #95,
 // docs/engineering/labrastro-ysk-api.md).
+//
+// `tip` is the RAW server JSON, not a parsed IssueTip: the server omits
+// `user_state` entirely when the viewer has not acted on the tip, so the key
+// is absent (undefined), never null. Writing it into a cache un-parsed would
+// make isTipShownToMe (`user_state === null`) treat a fresh tip as already
+// handled. Parse with IssueTipSchema first — the type mismatch is the guard.
 export interface IssueTipChangedPayload {
-  tip: IssueTip;
+  tip: z.input<typeof IssueTipSchema>;
 }
 
 export interface IssueTipStateChangedPayload {
