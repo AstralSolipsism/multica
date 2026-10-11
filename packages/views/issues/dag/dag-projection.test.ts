@@ -258,8 +258,8 @@ describe("dependency focus on task lines", () => {
   it("walks downstream transitively without following parents or unrelated branches", () => {
     const graph = focusFixture(),
       view = computeDagProjection(graph, []);
-    expect([...dagFocusNeighborhood(view, graph, "b", "downstream")].sort()).toEqual(["b", "c"]);
-    expect([...dagFocusNeighborhood(view, graph, "child", "downstream")].sort()).toEqual([
+    expect([...dagFocusNeighborhood(view, graph, "b", "downstream").nodeIds].sort()).toEqual(["b", "c"]);
+    expect([...dagFocusNeighborhood(view, graph, "child", "downstream").nodeIds].sort()).toEqual([
       "child",
       "d",
     ]);
@@ -268,12 +268,12 @@ describe("dependency focus on task lines", () => {
   it("includes upstream ancestors but excludes their downstream siblings", () => {
     const graph = focusFixture(),
       view = computeDagProjection(graph, []);
-    expect([...dagFocusNeighborhood(view, graph, "d", "upstream")].sort()).toEqual([
+    expect([...dagFocusNeighborhood(view, graph, "d", "upstream").nodeIds].sort()).toEqual([
       "child",
       "d",
       "issue:root",
     ]);
-    expect([...dagFocusNeighborhood(view, graph, "b", "upstream")].sort()).toEqual([
+    expect([...dagFocusNeighborhood(view, graph, "b", "upstream").nodeIds].sort()).toEqual([
       "b",
       "issue:root",
     ]);
@@ -282,7 +282,7 @@ describe("dependency focus on task lines", () => {
   it("highlights folded ancestors instead of invisible child ids", () => {
     const graph = focusFixture(),
       view = computeDagProjection(graph, ["issue:root"]);
-    expect([...dagFocusNeighborhood(view, graph, "d", "upstream")].sort()).toEqual([
+    expect([...dagFocusNeighborhood(view, graph, "d", "upstream").nodeIds].sort()).toEqual([
       "d",
       "issue:root",
     ]);
@@ -291,7 +291,7 @@ describe("dependency focus on task lines", () => {
   it("seeds every member of a task-line header and follows their transitive outgoing edges", () => {
     const graph = focusFixture(),
       view = computeDagProjection(graph, ["issue:root"]);
-    expect([...dagFocusNeighborhood(view, graph, "issue:root", "downstream")].sort()).toEqual([
+    expect([...dagFocusNeighborhood(view, graph, "issue:root", "downstream").nodeIds].sort()).toEqual([
       "b",
       "c",
       "d",
@@ -315,7 +315,7 @@ describe("dependency focus on task lines", () => {
       ],
     );
     const view = computeDagProjection(graph, []);
-    expect([...dagFocusNeighborhood(view, graph, "prerequisite", "downstream")].sort()).toEqual([
+    expect([...dagFocusNeighborhood(view, graph, "prerequisite", "downstream").nodeIds].sort()).toEqual([
       "issue:middle",
       "issue:root",
       "leaf",
@@ -336,7 +336,7 @@ describe("dependency focus on task lines", () => {
         ],
       );
       expect(
-        [...dagFocusNeighborhood(computeDagProjection(graph, []), graph, "a", way)].sort(),
+        [...dagFocusNeighborhood(computeDagProjection(graph, []), graph, "a", way).nodeIds].sort(),
       ).toEqual(["a", "b", "c"]);
     },
   );
@@ -356,7 +356,7 @@ describe("dependency focus on task lines", () => {
       ],
     );
     const view = computeDagProjection(graph, ["issue:root", "issue:middle"]);
-    const seen = dagFocusNeighborhood(view, graph, "up", "downstream");
+    const seen = dagFocusNeighborhood(view, graph, "up", "downstream").nodeIds;
     expect([...seen]).toEqual(expect.arrayContaining(["up", "issue:root", "out"]));
     expect(seen.has("leaf")).toBe(false);
   });
@@ -372,7 +372,7 @@ describe("dependency focus on task lines", () => {
         ],
       );
       const view = computeDagProjection(graph, ["issue:root"]);
-      expect(dagFocusNeighborhood(view, graph, "issue:root", way).has("outside")).toBe(true);
+      expect(dagFocusNeighborhood(view, graph, "issue:root", way).nodeIds.has("outside")).toBe(true);
     },
   );
   it("recursively includes prerequisites of reached ancestors", () => {
@@ -390,15 +390,179 @@ describe("dependency focus on task lines", () => {
       ],
     );
     const view = computeDagProjection(graph, []);
-    expect([...dagFocusNeighborhood(view, graph, "child", "upstream")]).toEqual(
+    expect([...dagFocusNeighborhood(view, graph, "child", "upstream").nodeIds]).toEqual(
       expect.arrayContaining(["child", "issue:root", "dependency", "issue:dep-parent", "up"]),
     );
   });
   it("does not turn parentage alone into a downstream dependency", () => {
     const graph = makeGraph([makeNode("parent"), makeNode("kid", { parentIssueId: "parent" })], []);
     const view = computeDagProjection(graph, []);
-    expect([...dagFocusNeighborhood(view, graph, "parent", "downstream")]).toEqual([
+    expect([...dagFocusNeighborhood(view, graph, "parent", "downstream").nodeIds]).toEqual([
       dagFeatureRepId("parent"),
     ]);
+  });
+});
+
+describe("completed visibility", () => {
+  const done = (id: string, extra: Partial<Parameters<typeof makeNode>[1]> = {}) =>
+    makeNode(id, { status: "done", statusCategory: "done", ...extra });
+  const cancelled = (id: string, extra: Partial<Parameters<typeof makeNode>[1]> = {}) =>
+    makeNode(id, { status: "cancelled", statusCategory: "closed", ...extra });
+
+  it("hides a fully finished task line as a whole, including nested sub-lines", () => {
+    const graph = makeGraph([
+      done("root"),
+      done("child", { parentIssueId: "root" }),
+      cancelled("leaf", { parentIssueId: "child" }),
+    ]);
+    const view = computeDagProjection(graph, [], false, false);
+    expect(view.nodes).toEqual([]);
+    expect(view.groups).toEqual([]);
+    expect(view.hiddenCompleted).toEqual({ lines: 1, lineTasks: 3, singles: 0 });
+    expect(view.representatives.size).toBe(0);
+  });
+
+  it("keeps a line whose parent is done but a member is still open", () => {
+    const graph = makeGraph([
+      done("root"),
+      makeNode("child", { parentIssueId: "root" }),
+      done("done-sibling", { parentIssueId: "root" }),
+    ]);
+    const view = computeDagProjection(graph, ["issue:root"], false, false);
+    expect(view.nodes.map((n) => n.id)).toEqual(["issue:root"]);
+    expect(view.hiddenCompleted).toEqual({ lines: 0, lineTasks: 0, singles: 0 });
+    // Expanding the line shows its completed members: they were never hidden.
+    const expanded = computeDagProjection(graph, [], false, false);
+    expect(expanded.nodes.map((n) => n.id)).toEqual(["issue:root", "child", "done-sibling"]);
+  });
+
+  it("hides standalone finished tasks, one by one inside the independent group", () => {
+    const graph = makeGraph([
+      done("solo-done"),
+      makeNode("solo-live"),
+      makeNode("solo-live-2"),
+    ]);
+    const view = computeDagProjection(graph, [], true, false);
+    expect(view.hiddenCompleted).toEqual({ lines: 0, lineTasks: 0, singles: 1 });
+    const group = view.groups.find((g) => g.independent)!;
+    expect(group.memberIds).toEqual(["solo-live", "solo-live-2"]);
+    expect(view.nodes.some((n) => n.id === "solo-done")).toBe(false);
+    // Everything finished: the empty independent group disappears with them.
+    const allDone = computeDagProjection(
+      makeGraph([done("a"), cancelled("b")]),
+      [],
+      true,
+      false,
+    );
+    expect(allDone.nodes).toEqual([]);
+    expect(allDone.hiddenCompleted).toEqual({ lines: 0, lineTasks: 0, singles: 2 });
+  });
+
+  it("keeps a cancelled prerequisite of visible unfinished work as a marked lone card", () => {
+    const graph = makeGraph(
+      [cancelled("c"), makeNode("v")],
+      [{ id: "cv", source: "c", target: "v" }],
+    );
+    const view = computeDagProjection(graph, [], false, false);
+    const kept = view.nodes.find((n) => n.id === "c");
+    expect(kept).toMatchObject({
+      kind: "issue",
+      groupId: null,
+      collapsible: false,
+      cancelledBlocking: true,
+    });
+    expect(view.hiddenCompleted).toEqual({ lines: 0, lineTasks: 0, singles: 0 });
+    expect(view.edges.map((e) => e.id)).toEqual(["c→v"]);
+  });
+
+  it("pulls a still-blocking cancelled member out of a hidden line as a single card", () => {
+    const graph = makeGraph(
+      [
+        done("root"),
+        cancelled("child", { parentIssueId: "root" }),
+        done("sibling", { parentIssueId: "root" }),
+        makeNode("v"),
+      ],
+      [{ id: "cv", source: "child", target: "v" }],
+    );
+    const view = computeDagProjection(graph, ["issue:root"], false, false);
+    expect(view.groups).toEqual([]);
+    expect(view.nodes.map((n) => n.id).sort()).toEqual(["child", "v"]);
+    expect(view.nodes.find((n) => n.id === "child")?.cancelledBlocking).toBe(true);
+    expect(view.hiddenCompleted).toEqual({ lines: 1, lineTasks: 2, singles: 0 });
+    expect(view.edges.map((e) => e.id)).toEqual(["child→v"]);
+  });
+
+  it("keeps a cancelled chain upstream through other kept cancelled tasks", () => {
+    const graph = makeGraph(
+      [cancelled("c1"), cancelled("c2"), makeNode("v")],
+      [
+        { id: "e1", source: "c1", target: "c2" },
+        { id: "e2", source: "c2", target: "v" },
+      ],
+    );
+    const view = computeDagProjection(graph, [], false, false);
+    expect(view.nodes.map((n) => n.id).sort()).toEqual(["c1", "c2", "v"]);
+    expect(view.hiddenCompleted.singles).toBe(0);
+  });
+
+  it("does not keep a cancelled task whose downstream is already done", () => {
+    const graph = makeGraph(
+      [cancelled("c"), done("mid"), makeNode("v")],
+      [
+        { id: "e1", source: "c", target: "mid" },
+        { id: "e2", source: "mid", target: "v" },
+      ],
+    );
+    const view = computeDagProjection(graph, [], false, false);
+    // "mid" is done, so it satisfies v; c blocks nothing visible anymore.
+    expect(view.nodes.map((n) => n.id)).toEqual(["v"]);
+    expect(view.hiddenCompleted).toEqual({ lines: 0, lineTasks: 0, singles: 2 });
+  });
+
+  it("drops edges touching hidden nodes and does not count kept cards as hidden", () => {
+    const graph = makeGraph(
+      [done("h1"), makeNode("v1"), makeNode("v2")],
+      [
+        { id: "e1", source: "h1", target: "v1" },
+        { id: "e2", source: "v1", target: "v2" },
+      ],
+    );
+    const view = computeDagProjection(graph, [], false, false);
+    expect(view.nodes.map((n) => n.id).sort()).toEqual(["v1", "v2"]);
+    expect(view.edges.map((e) => e.id)).toEqual(["v1→v2"]);
+  });
+
+  it("counts hidden tasks in the focus neighborhood without revealing them", () => {
+    const graph = makeGraph(
+      [done("a"), makeNode("b"), makeNode("c", { parentIssueId: "b" })],
+      [{ id: "ab", source: "a", target: "b" }],
+    );
+    const view = computeDagProjection(graph, ["issue:b"], false, false);
+    const focus = dagFocusNeighborhood(view, graph, "issue:b", "upstream");
+    expect([...focus.nodeIds].sort()).toEqual(["issue:b"]);
+    expect(focus.hiddenIssueCount).toBe(1);
+    // Nothing hidden once the switch is on.
+    const shown = computeDagProjection(graph, ["issue:b"], false, true);
+    expect(dagFocusNeighborhood(shown, graph, "issue:b", "upstream").hiddenIssueCount).toBe(0);
+  });
+
+  it("keeps everything when showCompleted is on", () => {
+    const graph = makeGraph([
+      done("root"),
+      done("child", { parentIssueId: "root" }),
+      cancelled("solo"),
+    ]);
+    const view = computeDagProjection(graph, ["issue:root"], false, true);
+    expect(view.nodes.map((n) => n.id).sort()).toEqual(["independent:root", "issue:root"]);
+    expect(view.hiddenCompleted).toEqual({ lines: 0, lineTasks: 0, singles: 0 });
+    expect(view.nodes.some((n) => n.cancelledBlocking)).toBe(false);
+  });
+
+  it("treats an unresolved status category as unfinished and keeps it visible", () => {
+    const graph = makeGraph([makeNode("custom", { statusCategory: "custom-stage" })]);
+    const view = computeDagProjection(graph, [], true, false);
+    expect(view.nodes.map((n) => n.id).sort()).toEqual(["custom", "independent:root"]);
+    expect(view.hiddenCompleted.singles).toBe(0);
   });
 });

@@ -98,7 +98,7 @@ function NodeShell({
         selected ? "border-brand ring-2 ring-brand/30" : "border-border hover:border-foreground/30",
         data.model.issue?.statusCategory === "done" && "bg-muted/10",
         data.focused && "border-brand/60",
-        data.model.role === "context" && "border-dashed",
+        (data.model.role === "context" || data.model.cancelledBlocking) && "border-dashed",
         className,
       )}
       style={{ width: DAG_NODE_WIDTH, height: DAG_NODE_HEIGHT }}
@@ -140,10 +140,16 @@ export const DagFlowNodeCard = memo(
             className="size-3.5"
           />
           <DagRunBadge model={model} />
-          {model.role === "context" && (
-            <span className="ml-auto shrink-0 rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground">
-              {t(($) => $.context_badge)}
+          {model.cancelledBlocking ? (
+            <span className="ml-auto shrink-0 rounded-full bg-warning/10 px-1.5 py-0.5 text-micro font-medium text-warning">
+              {t(($) => $.cancelled_blocking)}
             </span>
+          ) : (
+            model.role === "context" && (
+              <span className="ml-auto shrink-0 rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground">
+                {t(($) => $.context_badge)}
+              </span>
+            )
           )}
         </div>
         <div className="line-clamp-2 text-body leading-snug">{model.title}</div>

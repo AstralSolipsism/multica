@@ -8,6 +8,7 @@ export function useDagExpandAll(
   layout: DagLayoutState<CanvasSnapshot>,
   key: string,
   lineIds: string[],
+  hiddenLineIds: string[] = [],
 ) {
   const store = useViewStoreApi();
   const backup = useRef<{ ids: string[]; previousKey: string } | null>(null);
@@ -34,8 +35,14 @@ export function useDagExpandAll(
   }, [store, key, lineIds]);
   const collapseAll = useCallback(() => {
     backup.current = null;
-    store.getState().setDagExpandedIds([]);
-  }, [store]);
+    const state = store.getState();
+    // Only visible lines collapse: an expansion belonging to a line the
+    // completed filter hides survives until that line reappears. Inert ids
+    // (no current line) still reset, keeping collapse-all a working escape.
+    if (!hiddenLineIds.length) return state.setDagExpandedIds([]);
+    const hidden = new Set(hiddenLineIds);
+    state.setDagExpandedIds(state.dagExpandedIds.filter((id) => hidden.has(id)));
+  }, [store, hiddenLineIds]);
   const cancelPendingLayout = useCallback(() => {
     layout.cancel();
     if (backup.current) {

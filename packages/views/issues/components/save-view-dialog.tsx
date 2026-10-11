@@ -650,9 +650,11 @@ export function SaveViewDialog({
         ganttShowCompleted: state.ganttShowCompleted,
         // DAG defaults seed the first open; folded representatives stay a
         // per-user surface preference and are never part of the view
-        // definition.
+        // definition. Views saved before dagShowCompleted existed fall back
+        // to the default (hidden) when the seed is sanitized.
         dagDirection: state.dagDirection,
         dagGrouping: "parent",
+        dagShowCompleted: state.dagShowCompleted,
       },
     };
     if (editView) {

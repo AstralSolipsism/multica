@@ -15,6 +15,12 @@ export type { ViewMode } from "../surface/view-mode";
 export type GanttZoom = "day" | "week" | "month";
 /** DAG canvas layout direction: left-to-right or top-to-bottom ranks. */
 export type DagDirection = "LR" | "TB";
+/** Direction of a DAG neighborhood highlight, anchored at a canvas node. */
+export type DagFocusWay = "upstream" | "downstream";
+export interface DagFocusState {
+  nodeId: string;
+  way: DagFocusWay;
+}
 /** Historical shared-view values retained at the data boundary. The current
  * DAG canvas always renders task-line containers. New definitions use parent. */
 export type DagGrouping = "project" | "parent" | "none";
@@ -337,12 +343,23 @@ export interface IssueViewState {
   dagExpandedIds: string[];
   /** Independent tasks are deliberately excluded from global line expansion. */
   dagIndependentExpanded: boolean;
+  /** DAG's own display switch: show task lines and single tasks that already
+   *  reached a done/closed category. Off by default — finished work hides. */
+  dagShowCompleted: boolean;
   dagViewport: { x: number; y: number; zoom: number } | null;
   /** Session selection; excluded from persisted/shared view definitions. */
   dagSelectedNodeId: string | null;
+  /** Session edge selection; mutually exclusive with `dagSelectedNodeId`. */
+  dagSelectedEdgeId: string | null;
+  /** Session neighborhood highlight anchored at the selected node. */
+  dagFocus: DagFocusState | null;
   setDagIndependentExpanded: (expanded: boolean) => void;
   setDagViewport: (viewport: { x: number; y: number; zoom: number }) => void;
   setDagSelectedNodeId: (id: string | null) => void;
+  /** Select an edge: clears node selection and focus. `null` clears only the edge. */
+  setDagSelectedEdgeId: (id: string | null) => void;
+  setDagFocus: (focus: DagFocusState | null) => void;
+  toggleDagShowCompleted: () => void;
   setViewMode: (mode: ViewMode) => void;
   setGanttZoom: (zoom: GanttZoom) => void;
   toggleGanttShowCompleted: () => void;
@@ -436,11 +453,24 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   dagGrouping: "parent",
   dagExpandedIds: [],
   dagIndependentExpanded: false,
+  dagShowCompleted: false,
   dagViewport: null,
   dagSelectedNodeId: null,
+  dagSelectedEdgeId: null,
+  dagFocus: null,
   setDagIndependentExpanded: (dagIndependentExpanded) => set({ dagIndependentExpanded }),
   setDagViewport: (dagViewport) => set({ dagViewport }),
-  setDagSelectedNodeId: (dagSelectedNodeId) => set({ dagSelectedNodeId }),
+  setDagSelectedNodeId: (dagSelectedNodeId) =>
+    set({ dagSelectedNodeId, dagSelectedEdgeId: null, dagFocus: null }),
+  setDagSelectedEdgeId: (dagSelectedEdgeId) =>
+    set(
+      dagSelectedEdgeId
+        ? { dagSelectedEdgeId, dagSelectedNodeId: null, dagFocus: null }
+        : { dagSelectedEdgeId: null },
+    ),
+  setDagFocus: (dagFocus) => set({ dagFocus }),
+  toggleDagShowCompleted: () =>
+    set((state) => ({ dagShowCompleted: !state.dagShowCompleted })),
 
   setViewMode: (mode) =>
     set((state) => ({
@@ -756,6 +786,7 @@ export const viewStorePersistOptions = (name: string) => ({
     dagGrouping: state.dagGrouping,
     dagExpandedIds: state.dagExpandedIds,
     dagIndependentExpanded: state.dagIndependentExpanded,
+    dagShowCompleted: state.dagShowCompleted,
     dagViewport: state.dagViewport,
   }),
   // Default Zustand merge is shallow, so a persisted `cardProperties` snapshot

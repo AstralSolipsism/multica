@@ -127,4 +127,40 @@ describe("dag view preferences", () => {
     expect(merged.dagViewport).toEqual({ x: -240, y: -100, zoom: 1 });
   });
 
+  it("defaults dagShowCompleted to hidden and toggles it", () => {
+    const store = makeStore();
+    expect(store.getState().dagShowCompleted).toBe(false);
+    store.getState().toggleDagShowCompleted();
+    expect(store.getState().dagShowCompleted).toBe(true);
+  });
+
+  it("persists dagShowCompleted and degrades malformed values to the default", () => {
+    const store = makeStore();
+    store.getState().toggleDagShowCompleted();
+    const saved = viewStorePersistOptions("test").partialize(store.getState());
+    expect(saved).toMatchObject({ dagShowCompleted: true });
+    const current = makeStore().getState();
+    expect(mergeViewStatePersisted({ dagShowCompleted: true }, current).dagShowCompleted).toBe(true);
+    for (const dagShowCompleted of ["yes", 1, null]) {
+      expect(mergeViewStatePersisted({ dagShowCompleted }, current).dagShowCompleted).toBe(false);
+    }
+    // A saved view written before the field existed falls back to hidden.
+    expect(mergeViewStatePersisted({ viewMode: "dag" }, current).dagShowCompleted).toBe(false);
+  });
+
+  it("keeps edge selection and focus session-only and mutually exclusive", () => {
+    const store = makeStore();
+    store.getState().setDagSelectedNodeId("task-a");
+    store.getState().setDagFocus({ nodeId: "task-a", way: "upstream" });
+    store.getState().setDagSelectedEdgeId("a→b");
+    expect(store.getState().dagSelectedNodeId).toBeNull();
+    expect(store.getState().dagFocus).toBeNull();
+    expect(store.getState().dagSelectedEdgeId).toBe("a→b");
+    store.getState().setDagSelectedNodeId("task-b");
+    expect(store.getState().dagSelectedEdgeId).toBeNull();
+    const saved = viewStorePersistOptions("test").partialize(store.getState());
+    expect(saved).not.toHaveProperty("dagSelectedEdgeId");
+    expect(saved).not.toHaveProperty("dagFocus");
+  });
+
 });

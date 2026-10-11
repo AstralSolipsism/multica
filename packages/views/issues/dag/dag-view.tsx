@@ -1,7 +1,8 @@
 "use client";
-import { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef } from "react";
 import { hashKey } from "@tanstack/react-query";
 import { AlertTriangle, FilterX, Loader2 } from "lucide-react";
+import type { Viewport } from "@xyflow/react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import type { IssueGraph } from "@multica/core/api";
@@ -58,6 +59,10 @@ export function DagView({
   const storeApi = useViewStoreApi();
   const direction = useViewStore((s) => s.dagDirection);
   const baseline = useViewBaseline();
+  const viewportGetter = useRef<(() => Viewport) | null>(null);
+  const registerViewport = useCallback((getter: (() => Viewport) | null) => {
+    viewportGetter.current = getter;
+  }, []);
   useEffect(() => {
     void loadDagCanvas().catch(() => undefined);
   }, []);
@@ -83,7 +88,7 @@ export function DagView({
     () => selectCanvasSnapshot(snapshot, layout.snapshot),
     [snapshot, layout.snapshot],
   );
-  const expansion = useDagExpandAll(layout, layoutKey, fold.lineIds);
+  const expansion = useDagExpandAll(layout, layoutKey, fold.visibleLineIds, fold.hiddenLineIds);
   const reveal = useDagRevealRequests(
     graph,
     projection,
@@ -92,8 +97,14 @@ export function DagView({
     layoutKey,
   );
   const onOpenIssue = useCallback(
-    (issueId: string) => navigation.push(paths.issueDetail(issueId)),
-    [navigation, paths],
+    (issueId: string) => {
+      // Toolbar opens land here too: persist the live viewport first so an
+      // in-flight pan survives the round-trip to the issue detail.
+      const viewport = viewportGetter.current?.();
+      if (viewport) storeApi.getState().setDagViewport(viewport);
+      navigation.push(paths.issueDetail(issueId));
+    },
+    [navigation, paths, storeApi],
   );
   const clearFilters = useCallback(() => {
     const state = storeApi.getState();
@@ -171,9 +182,14 @@ export function DagView({
     <div className="flex flex-1 min-h-0 flex-col">
       <DagToolbar
         graph={graph}
+        projection={projection}
         pending={layout.pending}
-        collapsedIds={fold.collapsedIds}
-        expandedIds={fold.expandedIds}
+        expandAllDisabled={fold.visibleCollapsedIds.length === 0}
+        collapseAllDisabled={fold.expandedIds.length === 0}
+        onOpenIssue={onOpenIssue}
+        onRevealIssues={reveal.onRevealIssues}
+        onFocusGroup={reveal.onFocusGroup}
+        onToggleCollapsed={fold.onToggleCollapsed}
         {...expansion}
       />
 
@@ -233,9 +249,9 @@ export function DagView({
             direction={layout.direction}
             statusColorOf={catalog.colorOf}
             focusRequest={reveal.focusRequest}
+            registerViewport={registerViewport}
             onOpenIssue={onOpenIssue}
             onToggleCollapsed={fold.onToggleCollapsed}
-            onRevealIssues={reveal.onRevealIssues}
             onFocusGroup={reveal.onFocusGroup}
           />
         </Suspense>
