@@ -31,6 +31,7 @@ export function useSettingsSearchIndex(
   pages: readonly SettingsSearchPage[],
 ): SettingsSearchIndexEntry[] {
   const { t } = useT("settings");
+  const { t: tYsk } = useT("you-should-know");
   return useMemo(() => {
     const visible = new Set(pages.map((page) => page.value));
     const rows: SettingsSearchIndexEntry[] = [
@@ -106,6 +107,13 @@ export function useSettingsSearchIndex(
         anchor: "browser",
         title: t(($) => $.notifications.browser.label),
       },
+      // Fork (OL-187 §8): the personal YSK switch mirrors the workspace row.
+      // Its own anchor matches the SettingsRow inside the personal toggle.
+      {
+        tab: "notifications",
+        anchor: "you-should-know",
+        title: tYsk(($) => $.settings.personal_label),
+      },
       {
         tab: "tokens",
         title: t(($) => $.page.tabs.tokens),
@@ -123,6 +131,13 @@ export function useSettingsSearchIndex(
       },
       // Workspace
       { tab: "workspace", anchor: "name", title: t(($) => $.workspace.name_label) },
+      // Fork (OL-187 §8): the workspace YSK switch. Anchor matches the
+      // SettingsSection the workspace toggle renders.
+      {
+        tab: "workspace",
+        anchor: "you-should-know",
+        title: tYsk(($) => $.settings.workspace_label),
+      },
       { tab: "workspace", anchor: "description", title: t(($) => $.workspace.description_label) },
       {
         tab: "workspace",
@@ -224,5 +239,5 @@ export function useSettingsSearchIndex(
       ...pageEntries,
       ...rows.filter((row) => row.anchor || row.integration),
     ].filter((entry) => visible.has(entry.tab));
-  }, [pages, t]);
+  }, [pages, t, tYsk]);
 }

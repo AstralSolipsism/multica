@@ -9,6 +9,7 @@ import { Switch } from "@multica/ui/components/ui/switch";
 import { toast } from "sonner";
 import { useT } from "../../i18n";
 import { PersonalFeishuPushSection } from "../../message-delivery";
+import { YouShouldKnowPersonalRow } from "../../you-should-know/settings/personal-toggle";
 import { BrowserNotificationSetting } from "./browser-notification-setting";
 import {
   SettingsCard,
@@ -84,6 +85,9 @@ export function NotificationsTab() {
                 </SettingsRow>
               );
             })}
+          {/* Fork feature (OL-187 §8): personal YSK switch; hidden while the
+              workspace switch is off — see the component. */}
+          <YouShouldKnowPersonalRow />
         </SettingsCard>
       </SettingsSection>
 

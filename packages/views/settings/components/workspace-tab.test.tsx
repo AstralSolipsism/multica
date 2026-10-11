@@ -28,6 +28,8 @@ const membersRef = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({ data: membersRef.current, isFetched: true }),
+  // The YSK workspace toggle imports a chain that calls queryOptions.
+  queryOptions: <T,>(opts: T) => opts,
   useQueryClient: () => ({
     setQueryData: vi.fn(),
     getQueryData: vi.fn(() => []),
@@ -58,6 +60,16 @@ vi.mock("@multica/core/issues/invalidation", () => ({
 vi.mock("@multica/core/workspace/mutations", () => ({
   useLeaveWorkspace: () => ({ mutateAsync: vi.fn() }),
   useDeleteWorkspace: () => ({ mutateAsync: vi.fn() }),
+}));
+
+// The YSK toggle reads this hook; this suite's blanket react-query mock has
+// no notion of the preferences query it issues.
+vi.mock("@multica/core/you-should-know", () => ({
+  useYouShouldKnowEnabled: () => ({
+    workspaceEnabled: false,
+    personalEnabled: false,
+    enabled: false,
+  }),
 }));
 
 vi.mock("@multica/core/api", () => ({
