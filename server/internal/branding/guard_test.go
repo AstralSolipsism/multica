@@ -79,7 +79,8 @@ func isEmbeddedInstruction(name string) bool {
 			return true
 		}
 	}
-	return false
+	// The labrastro-ysk mod's prompts reach Claude as text, like a skill.
+	return strings.HasPrefix(name, "internal/daemon/ysk/mod/")
 }
 
 func scanServer(root string) ([]string, error) {
@@ -175,6 +176,7 @@ func TestScanServerTraversesProductionSourcesAndEmbeddedInstructions(t *testing.
 		"internal/service/builtin_skills/setup/SKILL.md":           "Configure Multica",
 		"internal/service/builtin_skills/setup/testdata/prompt.md": "Start with Mika",
 		"internal/service/builtin_skills_legacy/intro.txt":         "Meet Mika",
+		"internal/daemon/ysk/mod/hooks/prompts.ts":                 "export const ask = 'Side request from Multica'",
 	}
 	for name, content := range files {
 		writeFixture(t, root, name, content)

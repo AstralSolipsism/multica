@@ -140,6 +140,10 @@ type ExecOptions struct {
 	// through Claude Code's --settings flag. It currently carries restrictive
 	// runtime-skill overrides only; other providers ignore it.
 	ClaudeSettingsPath string
+	// OnYouShouldKnow receives each tips batch the labrastro-ysk mod logs
+	// (Claude only, see labrastro_ysk.go). It runs on the stream reader and
+	// must return promptly. The batches never become task messages.
+	OnYouShouldKnow func(json.RawMessage)
 }
 
 // runContext derives the execution context for an agent subprocess from the
