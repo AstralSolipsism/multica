@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { VIEW_MODE_CAPABILITIES } from "@multica/core/issues/surface/view-mode";
+import { VIEW_MODE_CAPABILITIES, type ViewMode } from "@multica/core/issues/surface/view-mode";
 import type { StoreApi } from "zustand/vanilla";
 import type { IssueViewState } from "@multica/core/issues/stores/view-store";
 import type { IssueViewBaseline } from "@multica/core/issue-views/baseline";
@@ -50,6 +50,11 @@ import {
 export interface IssueSurfaceRenderContext {
   controller: IssueSurfaceController;
   issues: Issue[];
+  /** Issues the CURRENT view has loaded (OL-193): table pages rows in
+   *  through `tableLoadedIssues`, Gantt renders its filtered list, DAG has
+   *  no row anchors so the summary covers the graph's nodes. Drives the
+   *  You-should-know summary anchor scope in the headers. */
+  summaryScopeIssues: readonly Pick<Issue, "id" | "identifier">[];
 }
 
 interface IssueSurfaceComponentProps extends IssueSurfaceProps {
@@ -60,6 +65,37 @@ interface IssueSurfaceComponentProps extends IssueSurfaceProps {
   showClientEmpty?: (context: IssueSurfaceRenderContext) => boolean;
   batchToolbar?: "always" | "list" | "never";
   contentClassName?: string;
+}
+
+/** Stable empty list for the DAG-with-no-data summary scope case. */
+const NO_SCOPE_ISSUES: readonly Pick<Issue, "id" | "identifier">[] = [];
+
+/**
+ * The issues the CURRENT view has loaded, for the YSK summary anchor scope
+ * (OL-193). `surfaceIssues` is empty in table mode (rows page in through
+ * TableView's own query) and unfiltered in gantt mode; DAG renders no row
+ * anchors at all, so the summary covers the graph's nodes — otherwise tips
+ * for graphed issues would have no visible position.
+ */
+export function summaryScopeIssuesForViewMode(
+  viewMode: ViewMode,
+  sources: {
+    surfaceIssues: readonly Issue[];
+    tableLoadedIssues: readonly Issue[];
+    filteredGanttIssues: readonly Issue[];
+    dagNodes: readonly Pick<Issue, "id" | "identifier">[] | undefined;
+  },
+): readonly Pick<Issue, "id" | "identifier">[] {
+  switch (viewMode) {
+    case "table":
+      return sources.tableLoadedIssues;
+    case "gantt":
+      return sources.filteredGanttIssues;
+    case "dag":
+      return sources.dagNodes ?? NO_SCOPE_ISSUES;
+    default:
+      return sources.surfaceIssues;
+  }
 }
 
 /** An explicit, caller-owned store bypasses saved views and persisted surfaces. */
@@ -233,9 +269,28 @@ function IssueSurfaceContent({
         : controller.swimlaneIssues,
     [clientFilter, controller.swimlaneIssues],
   );
+  // YSK summary anchor scope (OL-193) — see summaryScopeIssuesForViewMode.
+  const summaryScopeIssues = useMemo<
+    readonly Pick<Issue, "id" | "identifier">[]
+  >(
+    () =>
+      summaryScopeIssuesForViewMode(controller.viewMode, {
+        surfaceIssues: controller.surfaceIssues,
+        tableLoadedIssues,
+        filteredGanttIssues: controller.filteredGanttIssues,
+        dagNodes: controller.dagGraph.data?.nodes,
+      }),
+    [
+      controller.viewMode,
+      controller.surfaceIssues,
+      controller.filteredGanttIssues,
+      controller.dagGraph.data,
+      tableLoadedIssues,
+    ],
+  );
   const renderContext = useMemo(
-    () => ({ controller, issues }),
-    [controller, issues],
+    () => ({ controller, issues, summaryScopeIssues }),
+    [controller, issues, summaryScopeIssues],
   );
   const openCreateIssue = useCallback(
     (defaults?: IssueCreateDefaults) => {
@@ -270,6 +325,7 @@ function IssueSurfaceContent({
           <IssuesHeader
             scopedIssues={controller.surfaceIssues}
             workingAgents={controller.workingAgents}
+            tipAnchorScopeIssues={summaryScopeIssues}
             allowGantt={controller.allowGantt}
             allowDag={controller.allowDag}
             isRefreshing={controller.isRefreshing}

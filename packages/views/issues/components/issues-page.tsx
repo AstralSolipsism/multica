@@ -18,6 +18,7 @@ import { IssuesHeader } from "./issues-header";
 function IssuesSurfaceHeader({
   issues,
   workingAgents,
+  tipAnchorScopeIssues,
   allowDag,
   isRefreshing,
   facetCountsExact,
@@ -26,6 +27,7 @@ function IssuesSurfaceHeader({
 }: {
   issues: Issue[];
   workingAgents: WorkingAgentSummary[] | undefined;
+  tipAnchorScopeIssues: readonly Pick<Issue, "id" | "identifier">[];
   allowDag?: boolean;
   isRefreshing: boolean;
   facetCountsExact: boolean;
@@ -47,6 +49,7 @@ function IssuesSurfaceHeader({
       <IssuesHeader
         scopedIssues={issues}
         workingAgents={workingAgents}
+        tipAnchorScopeIssues={tipAnchorScopeIssues}
         allowDag={allowDag}
         dateFilter={dateFilter}
         onDateFilterChange={setDateFilter}
@@ -68,10 +71,11 @@ export function IssuesPage() {
         scope={{ type: "workspace", actorKind: scope }}
         modes={["board", "list", "table", "swimlane", "dag"]}
         batchToolbar="list"
-        renderHeader={({ controller }) => (
+        renderHeader={({ controller, summaryScopeIssues }) => (
           <IssuesSurfaceHeader
             issues={controller.surfaceIssues}
             workingAgents={controller.workingAgents}
+            tipAnchorScopeIssues={summaryScopeIssues}
             allowDag={controller.allowDag}
             isRefreshing={controller.isRefreshing}
             facetCountsExact={controller.facetCountsExact}

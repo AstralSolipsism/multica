@@ -1,6 +1,6 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ShimmerText } from "@multica/ui/components/common/shimmer-text";
 import {
@@ -10,6 +10,10 @@ import {
 } from "@multica/ui/components/ui/hover-card";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { workspaceWorkingAgentsOptions } from "@multica/core/agents";
+import type {
+  TipAnchorDescriptor,
+  TipAnchorScope,
+} from "@multica/core/you-should-know/anchors";
 import { AgentAvatarStack } from "../../agents/components/agent-avatar-stack";
 import { WorkingAgentsHoverContent } from "./workspace-agent-working-chip";
 import { useT } from "../../i18n";
@@ -17,6 +21,9 @@ import { useT } from "../../i18n";
 interface SubIssuesAgentWorkingChipProps {
   /** Parent issue whose direct children this chip aggregates over. */
   parentIssueId: string;
+  /** You-should-know summary anchor scope (OL-193): the detail page's child
+   *  issues as id → identifier, memoized by the caller. */
+  tipAnchorScope?: TipAnchorScope;
 }
 
 /**
@@ -40,11 +47,22 @@ interface SubIssuesAgentWorkingChipProps {
 export const SubIssuesAgentWorkingChip = memo(
   function SubIssuesAgentWorkingChip({
     parentIssueId,
+    tipAnchorScope,
   }: SubIssuesAgentWorkingChipProps) {
     const { t } = useT("issues");
     const wsId = useWorkspaceId();
     const { data: agents = [] } = useQuery(
       workspaceWorkingAgentsOptions(wsId, "issue", undefined, parentIssueId),
+    );
+
+    // YSK summary anchor (OL-193). Memoized — descriptors must be stable.
+    // Hooked before the empty-agent early return on purpose (Rules of Hooks).
+    const tipAnchor = useMemo<TipAnchorDescriptor | undefined>(
+      () =>
+        agents.length > 0 && tipAnchorScope
+          ? { level: "summary", scope: tipAnchorScope }
+          : undefined,
+      [agents.length, tipAnchorScope],
     );
 
     if (agents.length === 0) return null;
@@ -58,7 +76,12 @@ export const SubIssuesAgentWorkingChip = memo(
             <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-muted/60 px-2 py-0.5" />
           }
         >
-          <AgentAvatarStack agentIds={agentIds} size="xs" max={3} />
+          <AgentAvatarStack
+            agentIds={agentIds}
+            size="xs"
+            max={3}
+            tipAnchor={tipAnchor}
+          />
           <ShimmerText className="text-micro font-medium tabular-nums">
             {t(($) => $.agent_activity.chip_agents_working, {
               count: agentIds.length,

@@ -3,8 +3,11 @@
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { AVATAR_SIZE_PX, type AvatarSize } from "@multica/ui/lib/avatar-size";
 import { useActorName } from "@multica/core/workspace/hooks";
+import type { TipAnchorDescriptor } from "@multica/core/you-should-know/anchors";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
+import { useTipAnchor } from "../../you-should-know/anchors/use-tip-anchor";
+import { TipAnchorDot } from "../../you-should-know/anchors/tip-anchor-dot";
 
 interface AgentAvatarStackProps {
   // Agent ids to render, in display order. The component does NOT dedupe —
@@ -21,6 +24,12 @@ interface AgentAvatarStackProps {
   // signal a queued-only state (no running task) — same heads, weakened
   // visual.
   opacity?: "full" | "half";
+  // You-should-know tip anchor (OL-193). Opt-in: when set, the stack
+  // registers itself with the page's tip anchor registry and can light a
+  // dot. Callers must pass it explicitly — new upstream usages must never
+  // grow a bubble surface by accident. Without a registry provider this is
+  // inert.
+  tipAnchor?: TipAnchorDescriptor;
   className?: string;
 }
 
@@ -39,10 +48,12 @@ export function AgentAvatarStack({
   size = "sm",
   max = 3,
   opacity = "full",
+  tipAnchor,
   className,
 }: AgentAvatarStackProps) {
   const { getActorName, getActorInitials, getActorAvatarUrl } = useActorName();
   const { t } = useT("agents");
+  const { ref: tipAnchorRef, showDot } = useTipAnchor(tipAnchor);
   if (agentIds.length === 0) return null;
 
   const visible = agentIds.slice(0, max);
@@ -53,8 +64,11 @@ export function AgentAvatarStack({
 
   return (
     <span
+      ref={tipAnchorRef}
       className={cn(
         "inline-flex items-center",
+        // The dot positions off this wrapper's corner.
+        showDot && "relative",
         opacity === "half" && "opacity-50",
         className,
       )}
@@ -93,6 +107,7 @@ export function AgentAvatarStack({
           +{overflow}
         </span>
       )}
+      {showDot && <TipAnchorDot />}
     </span>
   );
 }

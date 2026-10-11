@@ -10,6 +10,11 @@ import { toast } from "sonner";
 import { useResolvedExpandStore } from "@multica/core/issues/stores/resolved-expand-store";
 import { useCommentCollapseStore } from "@multica/core/issues/stores";
 import {
+  createTipAnchorRegistry,
+  type TipAnchorRegistry,
+} from "@multica/core/you-should-know/anchors";
+import { TipAnchorRegistryProvider } from "../../you-should-know/anchors/tip-anchor-context";
+import {
   DEFAULT_SUB_ISSUE_ROW_PROPERTIES,
   useSubIssueDisplayStore,
 } from "@multica/core/issues/stores/sub-issue-display-store";
@@ -3577,5 +3582,122 @@ describe("groupSubIssuesByStage", () => {
   it("omits the unstaged group when every child is staged", () => {
     const groups = groupSubIssuesByStage([child("s1", 1), child("s2", 2)]);
     expect(groups.map((g) => g.stage)).toEqual([1, 2]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// YSK tip anchors (OL-193): sub-issue rows register row-level anchors; the
+// sub-issues header chip registers a summary anchor over the child issues.
+// ---------------------------------------------------------------------------
+
+describe("tip anchors (OL-193)", () => {
+  const subIssueFixture = (overrides: Partial<Issue>): Issue => ({
+    ...mockIssue,
+    parent_issue_id: "issue-1",
+    assignee_type: null,
+    assignee_id: null,
+    due_date: null,
+    priority: "none",
+    ...overrides,
+  });
+
+  function renderWithTipRegistry(registry: TipAnchorRegistry) {
+    const queryClient = createTestQueryClient();
+    return render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={queryClient}>
+          <TipAnchorRegistryProvider registry={registry}>
+            <IssueDetail issueId="issue-1" />
+          </TipAnchorRegistryProvider>
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+  }
+
+  it("registers a row anchor per running sub-issue and a summary anchor on the sub-issues chip", async () => {
+    mockApiObj.listChildIssues.mockResolvedValue({
+      issues: [
+        subIssueFixture({ id: "child-1", number: 11, identifier: "TES-11", title: "Fix login flow" }),
+        subIssueFixture({ id: "child-2", number: 12, identifier: "TES-12", title: "Ship dashboards" }),
+      ],
+    });
+    // child-1 has a running agent; child-2 has nothing.
+    mockApiObj.getAgentTaskSnapshot.mockResolvedValue([
+      {
+        id: "task-1",
+        agent_id: "agent-1",
+        runtime_id: "runtime-1",
+        issue_id: "child-1",
+        status: "running",
+        priority: 0,
+        dispatched_at: null,
+        started_at: "2026-06-08T08:00:00Z",
+        completed_at: null,
+        result: null,
+        error: null,
+        created_at: "2026-06-08T08:00:00Z",
+      },
+    ]);
+    // The sub-issues chip reads the working-agents projection.
+    mockApiObj.getWorkspaceWorkingAgents.mockResolvedValue([
+      { id: "agent-1", name: "Claude Agent", avatar_url: null, running_task_count: 1, issue_ids: ["child-1"] },
+    ]);
+
+    const registry = createTipAnchorRegistry();
+    renderWithTipRegistry(registry);
+
+    await screen.findByText("Fix login flow");
+    await waitFor(() => {
+      const descriptors = Object.values(registry.getState().anchors).map(
+        (anchor) => anchor.descriptor,
+      );
+      expect(descriptors).toContainEqual({ level: "row", issueId: "child-1" });
+      expect(descriptors).toContainEqual({
+        level: "summary",
+        scope: { "child-1": "TES-11", "child-2": "TES-12" },
+      });
+    });
+    // child-2 is idle: no row anchor for it.
+    const descriptors = Object.values(registry.getState().anchors).map(
+      (anchor) => anchor.descriptor,
+    );
+    expect(descriptors).not.toContainEqual({ level: "row", issueId: "child-2" });
+  });
+
+  it("does not register a row anchor for a sub-issue whose task is only queued", async () => {
+    mockApiObj.listChildIssues.mockResolvedValue({
+      issues: [
+        subIssueFixture({ id: "child-1", number: 11, identifier: "TES-11", title: "Fix login flow" }),
+      ],
+    });
+    mockApiObj.getAgentTaskSnapshot.mockResolvedValue([
+      {
+        id: "task-1",
+        agent_id: "agent-1",
+        runtime_id: "runtime-1",
+        issue_id: "child-1",
+        status: "queued",
+        priority: 0,
+        dispatched_at: null,
+        started_at: null,
+        completed_at: null,
+        result: null,
+        error: null,
+        created_at: "2026-06-08T08:00:00Z",
+      },
+    ]);
+
+    const registry = createTipAnchorRegistry();
+    renderWithTipRegistry(registry);
+
+    await screen.findByText("Fix login flow");
+    // Let effects settle, then assert nothing row-level registered.
+    await waitFor(() =>
+      expect(mockApiObj.getAgentTaskSnapshot).toHaveBeenCalled(),
+    );
+    const descriptors = Object.values(registry.getState().anchors).map(
+      (anchor) => anchor.descriptor,
+    );
+    expect(descriptors).not.toContainEqual({ level: "row", issueId: "child-1" });
   });
 });

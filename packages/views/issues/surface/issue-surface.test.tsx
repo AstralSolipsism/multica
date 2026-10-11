@@ -25,7 +25,12 @@ import type {
   ListIssuesResponse,
   WorkspaceWorkingAgent,
 } from "@multica/core/types";
-import { IssueSurface, IssueSurfaceWithStore } from "./issue-surface";
+import {
+  IssueSurface,
+  IssueSurfaceWithStore,
+  summaryScopeIssuesForViewMode,
+  type IssueSurfaceRenderContext,
+} from "./issue-surface";
 import { createIssueStatusListStore } from "@multica/core/issue-statuses";
 import { baselineFromQuery } from "@multica/core/issue-views/baseline";
 import { useActiveIssueViewStore } from "@multica/core/issue-views/active-view-store";
@@ -108,6 +113,19 @@ vi.mock("@multica/core/paths", async () => {
     useWorkspacePaths: () => actual.paths.workspace("test"),
   };
 });
+
+// Captures the props the surface hands the DEFAULT IssuesHeader, so the
+// table-mode tip anchor scope wiring (OL-193) is pinned end to end.
+const issuesHeaderProps = vi.hoisted(() => ({
+  current: undefined as Record<string, unknown> | undefined,
+}));
+
+vi.mock("../components/issues-header", () => ({
+  IssuesHeader: (props: Record<string, unknown>) => {
+    issuesHeaderProps.current = props;
+    return null;
+  },
+}));
 
 function makeIssue(id: string, title: string, projectId: string): Issue {
   return {
@@ -990,5 +1008,150 @@ describe("IssueSurface — status catalog failure", () => {
     // Still no blocking error, and the surface never stopped fetching.
     expect(screen.queryByRole("alert")).toBeNull();
     expect(rowRequests.length).toBeGreaterThanOrEqual(before);
+  });
+});
+
+describe("summaryScopeIssues (OL-193)", () => {
+  it("picks the per-view loaded issues", () => {
+    const listed = [makeIssue("l1", "Listed", "p")];
+    const tabled = [makeIssue("t1", "Tabled", "p")];
+    const gantt = [makeIssue("g1", "Gantt", "p")];
+    const dagNodes = [{ id: "d1", identifier: "MUL-d1" }];
+    const pick = (mode: Parameters<typeof summaryScopeIssuesForViewMode>[0]) =>
+      summaryScopeIssuesForViewMode(mode, {
+        surfaceIssues: listed,
+        tableLoadedIssues: tabled,
+        filteredGanttIssues: gantt,
+        dagNodes,
+      });
+    expect(pick("list")).toBe(listed);
+    expect(pick("board")).toBe(listed);
+    expect(pick("swimlane")).toBe(listed);
+    expect(pick("table")).toBe(tabled);
+    expect(pick("gantt")).toBe(gantt);
+    expect(pick("dag")).toEqual(dagNodes);
+    // DAG without graph data yet covers nothing — not the wrong issues.
+    expect(
+      summaryScopeIssuesForViewMode("dag", {
+        surfaceIssues: listed,
+        tableLoadedIssues: tabled,
+        filteredGanttIssues: gantt,
+        dagNodes: undefined,
+      }),
+    ).toEqual([]);
+  });
+
+  it("feeds the header the table's loaded rows in table mode", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const store = getIssueSurfaceViewStore("project:ysk-scope");
+    store.getState().setViewMode("table");
+
+    const row = makeIssue("t1", "Table-loaded row", "ysk-scope");
+    setApiInstance({
+      listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+      listIssues: vi.fn(() => never()),
+      listIssueTableRows: async () => ({
+        query_fingerprint: "sha256:ysk",
+        group_key: null,
+        parent_id: null,
+        total: 1,
+        rows: [{ issue: row, direct_child_count: 0 }],
+        branch_total: 1,
+        next_cursor: null,
+      }),
+      listIssueTableFacets: vi.fn(() => never()),
+      listGroupedIssues: vi.fn(() => never()),
+      listProjects: vi.fn(() => never()),
+      getAgentTaskSnapshot: vi.fn(() => never<AgentTask[]>()),
+      getWorkspaceWorkingAgents: vi.fn(() => never<WorkspaceWorkingAgent[]>()),
+      getChildIssueProgress: vi.fn(() => never()),
+      listProperties: vi.fn(() => never()),
+      listMembers: vi.fn(() => never()),
+      listAgents: vi.fn(() => never()),
+      listSquads: vi.fn(() => never()),
+    } as unknown as ApiClient);
+
+    const contexts: IssueSurfaceRenderContext[] = [];
+    render(
+      <QueryClientProvider client={qc}>
+        <IssueSurface
+          scope={{ type: "project", projectId: "ysk-scope" }}
+          modes={["table"]}
+          renderHeader={(ctx) => {
+            contexts.push(ctx);
+            return null;
+          }}
+          renderLoading={() => <div data-testid="surface-loading" />}
+          batchToolbar="never"
+        />
+      </QueryClientProvider>,
+    );
+
+    // The row text renders once TableView's query resolves (virtual mocked).
+    await screen.findByText("MUL-t1");
+    const last = contexts[contexts.length - 1]!;
+    expect(last.summaryScopeIssues.map((i) => i.id)).toEqual(["t1"]);
+    // ...while the controller's surfaceIssues stays empty in table mode —
+    // the regression this guards: the scope used to come from there.
+    expect(last.controller.surfaceIssues).toEqual([]);
+    cleanup();
+    qc.clear();
+    pruneIssueSurfaceViewStates([]);
+  });
+
+  it("feeds the table's loaded rows to the DEFAULT header as tipAnchorScopeIssues", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const store = getIssueSurfaceViewStore("project:ysk-scope-default");
+    store.getState().setViewMode("table");
+
+    const row = makeIssue("t9", "Default-header table row", "ysk-scope-default");
+    setApiInstance({
+      listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+      listIssues: vi.fn(() => never()),
+      listIssueTableRows: async () => ({
+        query_fingerprint: "sha256:ysk-default",
+        group_key: null,
+        parent_id: null,
+        total: 1,
+        rows: [{ issue: row, direct_child_count: 0 }],
+        branch_total: 1,
+        next_cursor: null,
+      }),
+      listIssueTableFacets: vi.fn(() => never()),
+      listGroupedIssues: vi.fn(() => never()),
+      listProjects: vi.fn(() => never()),
+      getAgentTaskSnapshot: vi.fn(() => never<AgentTask[]>()),
+      getWorkspaceWorkingAgents: vi.fn(() => never<WorkspaceWorkingAgent[]>()),
+      getChildIssueProgress: vi.fn(() => never()),
+      listProperties: vi.fn(() => never()),
+      listMembers: vi.fn(() => never()),
+      listAgents: vi.fn(() => never()),
+      listSquads: vi.fn(() => never()),
+    } as unknown as ApiClient);
+
+    // No renderHeader prop: the surface renders its stock IssuesHeader
+    // (mocked above to capture props). Passing controller.surfaceIssues here
+    // would hand the chip an EMPTY list in table mode.
+    render(
+      <QueryClientProvider client={qc}>
+        <IssueSurface
+          scope={{ type: "project", projectId: "ysk-scope-default" }}
+          modes={["table"]}
+          renderLoading={() => <div data-testid="surface-loading" />}
+          batchToolbar="never"
+        />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(
+        (issuesHeaderProps.current?.tipAnchorScopeIssues as { id: string }[] | undefined)?.map(
+          (issue) => issue.id,
+        ),
+      ).toEqual(["t9"]),
+    );
+    cleanup();
+    qc.clear();
+    pruneIssueSurfaceViewStates([]);
   });
 });

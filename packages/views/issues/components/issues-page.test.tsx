@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -257,6 +257,8 @@ const mockListSquads = vi.hoisted(() =>
   ]),
 );
 vi.mock("@multica/core/api", () => ({
+  ApiError: class ApiError extends Error {},
+  errorCode: () => undefined,
   api: {
     getBaseUrl: () => "http://127.0.0.1:8080",
     listIssues: (...args: any[]) => mockListIssues(...args),
@@ -290,7 +292,7 @@ vi.mock("@multica/core/api", () => ({
 
 // Mock view store
 const mockViewState = {
-  viewMode: "board" as "board" | "list",
+  viewMode: "board" as "board" | "list" | "table",
   grouping: "status" as "status" | "assignee",
   statusFilters: [] as string[],
   priorityFilters: [] as string[],
@@ -314,6 +316,9 @@ const mockViewState = {
     { key: "due_date", width: 140 },
     { key: "labels", width: 220 },
   ],
+  tableGrouping: "none" as const,
+  tableHierarchy: true,
+  showSubIssues: true,
   listCollapsedStatuses: [] as string[],
   hiddenStatuses: [] as string[],
   setViewMode: vi.fn(),
@@ -342,6 +347,21 @@ vi.mock("@multica/core/issues/stores/view-store", () => ({
   PROPERTY_VIEW_PREFIX: "property:",
   propertyIdFromViewKey: (key: string) =>
     key.startsWith("property:") ? key.slice("property:".length) : null,
+  TABLE_SYSTEM_COLUMNS: [
+    "title",
+    "identifier",
+    "status",
+    "priority",
+    "assignee",
+    "labels",
+    "project",
+    "start_date",
+    "due_date",
+    "created_at",
+    "updated_at",
+    "child_progress",
+    "creator",
+  ],
   viewStorePersistOptions: () => ({ name: "test", storage: undefined, partialize: (s: any) => s }),
   mergeViewStatePersisted: (_p: unknown, c: any) => c,
   viewStoreSlice: vi.fn(),
@@ -411,6 +431,19 @@ vi.mock("@multica/core/issues/stores/issues-scope-store", () => ({
   useIssuesScope: () => mockScope,
 }));
 
+// Captures the props IssuesHeader hands to the agents-working chip, so the
+// table-mode tip anchor scope wiring (OL-193) can be asserted end to end.
+const workingChipProps = vi.hoisted(() => ({
+  current: undefined as Record<string, unknown> | undefined,
+}));
+
+vi.mock("./workspace-agent-working-chip", () => ({
+  WorkspaceAgentWorkingChip: (props: Record<string, unknown>) => {
+    workingChipProps.current = props;
+    return null;
+  },
+}));
+
 vi.mock("@multica/core/issues/stores/selection-store", () => ({
   useIssueSelectionStore: Object.assign(
     (selector?: any) => {
@@ -466,14 +499,24 @@ vi.mock("@dnd-kit/core", () => {
     useDroppable: () => ({ setNodeRef: stableSetNodeRef, isOver: false }),
     pointerWithin: vi.fn(),
     closestCenter: vi.fn(),
+    // TableView's keyboard-drag plumbing.
+    KeyboardSensor: class {},
+    useDndContext: () => ({ active: null }),
   };
 });
+
+vi.mock("@dnd-kit/modifiers", () => ({
+  restrictToHorizontalAxis: vi.fn(),
+  restrictToVerticalAxis: vi.fn(),
+  restrictToWindowEdges: vi.fn(),
+}));
 
 vi.mock("@dnd-kit/sortable", () => ({
   SortableContext: ({ children }: any) => children,
   verticalListSortingStrategy: {},
   horizontalListSortingStrategy: {},
   arrayMove: vi.fn(),
+  sortableKeyboardCoordinates: vi.fn(),
   useSortable: () => ({
     attributes: {},
     listeners: {},
@@ -853,6 +896,30 @@ describe("IssuesPage (shared)", () => {
     expect(screen.queryByText("Design landing page")).not.toBeInTheDocument();
     expect(mockListIssues).toHaveBeenCalledWith(
       expect.objectContaining({ assignee_types: ["member"] }),
+    );
+  });
+
+  it("feeds the agents-working chip the table-loaded issues as its tip anchor scope in table mode (OL-193)", async () => {
+    // Regression: the chip's summary scope must come from the issues the
+    // current view has loaded. In table mode controller.surfaceIssues is
+    // EMPTY — passing it along would scope the summary to nothing.
+    mockViewState.viewMode = "table";
+    mockListIssueTableRows.mockResolvedValue({
+      query_fingerprint: "test",
+      group_key: null,
+      parent_id: null,
+      total: 1,
+      rows: [{ issue: mockIssues[0]!, direct_child_count: 0 }],
+      branch_total: 1,
+      next_cursor: null,
+    });
+
+    renderWithQuery(<IssuesPage />);
+
+    await waitFor(() =>
+      expect(workingChipProps.current?.tipAnchorScope).toEqual({
+        "issue-1": "TES-1",
+      }),
     );
   });
 });
