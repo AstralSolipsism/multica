@@ -125,6 +125,7 @@ import { NO_PROPERTY_VALUE } from "../utils/filter";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import { WorkspaceAgentWorkingChip } from "./workspace-agent-working-chip";
+import { tipAnchorScopeFromIssues } from "../../you-should-know/anchors/tip-anchor-scope";
 import { preloadIssueView } from "../surface/issue-view-loaders";
 import { TableColumnPicker } from "./table-column-picker";
 
@@ -1294,6 +1295,12 @@ export function IssuesHeader({
   const toggleAgentRunningFilter = useViewStore(
     (s) => s.toggleAgentRunningFilter,
   );
+  // YSK summary anchor scope (OL-193): the surface's loaded issues, memoized
+  // so the chip's anchor descriptor stays stable across renders.
+  const tipAnchorScope = useMemo(
+    () => tipAnchorScopeFromIssues(scopedIssues),
+    [scopedIssues],
+  );
   const SCOPE_LABEL_KEY: Record<IssuesScope, "all_label" | "members_label" | "agents_label"> = {
     all: "all_label",
     members: "members_label",
@@ -1380,6 +1387,7 @@ export function IssuesHeader({
             value={agentRunningFilter}
             onToggle={toggleAgentRunningFilter}
             agents={workingAgents}
+            tipAnchorScope={tipAnchorScope}
           />
           <IssueDisplayControls
             scopedIssues={scopedIssues}

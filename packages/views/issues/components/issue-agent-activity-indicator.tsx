@@ -12,6 +12,7 @@ import {
 import { useWorkspaceId } from "@multica/core/hooks";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import type { AgentTask, IssueWakeupSummaryRow, PausedWakeup } from "@multica/core/types";
+import type { TipAnchorDescriptor } from "@multica/core/you-should-know/anchors";
 import { pausedWakeupsOptions, workspaceWakeupSummariesOptions } from "@multica/core/issues/wakeups";
 import { cn } from "@multica/ui/lib/utils";
 import type { AvatarSize } from "@multica/ui/lib/avatar-size";
@@ -51,6 +52,11 @@ interface IssueAgentActivityIndicatorProps {
   // Whether hovering opens the activity card. Opt OUT where the card's only
   // incremental information is not worth a popup (Inbox — see below).
   hoverCard?: boolean;
+  // You-should-know tip anchor (OL-193). Opt-in per surface: pass it on
+  // issue rows (list / board / table / sub-issue rows) so the stack
+  // registers as a `row`-level anchor while a task is RUNNING (queued-only
+  // never registers). Inbox deliberately does not pass it.
+  tipAnchor?: boolean;
 }
 
 /**
@@ -95,6 +101,7 @@ export const IssueAgentActivityIndicator = memo(
     issueId,
     size = "xs",
     hoverCard = true,
+    tipAnchor = false,
   }: IssueAgentActivityIndicatorProps) {
     const { t } = useT("issues");
     const wsId = useWorkspaceId();
@@ -141,12 +148,20 @@ export const IssueAgentActivityIndicator = memo(
       };
     }, [groups]);
 
+    const isRunning = opacity === "full";
+    // YSK row-level anchor (OL-193): only while a task is actually running —
+    // a queued-only stack never registers. Memoized: anchor descriptors must
+    // not churn the registry on every render.
+    const tipAnchorDescriptor = useMemo<TipAnchorDescriptor | undefined>(
+      () => (tipAnchor && isRunning ? { level: "row", issueId } : undefined),
+      [tipAnchor, isRunning, issueId],
+    );
+
     const wakeupCount = wakeups[0]?.active_count ?? 0;
     const hasTasks = agentIds.length > 0;
     const hoverTasks = [...groups.running, ...groups.queued];
     const wakeupTriggered = hoverTasks.some((task) => !!task.wakeup_id);
     if (!hasTasks && !wakeupCount && !paused) return null;
-    const isRunning = opacity === "full";
     // One sentence of what the issue waits for; a paused rule speaks up only
     // when nothing else is waiting, because it needs someone to look.
     const waitingLabel = wakeups[0]
@@ -167,6 +182,7 @@ export const IssueAgentActivityIndicator = memo(
           size={size}
           opacity={opacity}
           max={3}
+          tipAnchor={tipAnchorDescriptor}
         />
         <ShimmerText
           active={isRunning}

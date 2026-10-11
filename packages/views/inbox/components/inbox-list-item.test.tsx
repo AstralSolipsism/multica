@@ -37,20 +37,25 @@ vi.mock("../../issues/components", () => ({
     />
   ),
 }));
+const indicatorProps = vi.hoisted(() => ({
+  current: undefined as Record<string, unknown> | undefined,
+}));
+
 vi.mock("../../issues/components/issue-agent-activity-indicator", () => ({
-  IssueAgentActivityIndicator: ({
-    issueId,
-    hoverCard,
-  }: {
+  IssueAgentActivityIndicator: (props: {
     issueId: string;
     hoverCard?: boolean;
-  }) => (
-    <span
-      data-testid="issue-agent-activity"
-      data-issue-id={issueId}
-      data-hover-card={hoverCard === false ? "false" : "true"}
-    />
-  ),
+  }) => {
+    indicatorProps.current = props as Record<string, unknown>;
+    const { issueId, hoverCard } = props;
+    return (
+      <span
+        data-testid="issue-agent-activity"
+        data-issue-id={issueId}
+        data-hover-card={hoverCard === false ? "false" : "true"}
+      />
+    );
+  },
 }));
 vi.mock("../../common/actor-avatar", () => ({
   ActorAvatar: ({
@@ -189,6 +194,12 @@ describe("InboxListItem issue activity", () => {
     expect(
       getByTestId("issue-agent-activity").getAttribute("data-hover-card"),
     ).toBe("false");
+  });
+
+  it("never opts into tip anchoring — the inbox shows no YSK bubble (OL-193)", () => {
+    renderRow({ item: item(), view: "inbox" });
+    expect(indicatorProps.current).toBeDefined();
+    expect(indicatorProps.current).not.toHaveProperty("tipAnchor");
   });
 
   it("omits issue activity for a notification without an issue", () => {

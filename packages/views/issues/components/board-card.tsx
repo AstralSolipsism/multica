@@ -205,7 +205,7 @@ export const BoardCardContent = memo(function BoardCardContent({
           <p className="text-caption text-muted-foreground truncate">{issue.identifier}</p>
           <IssueDuplicateOfMarker issue={issue} insideLink />
         </div>
-        <IssueAgentActivityIndicator issueId={issue.id} />
+        <IssueAgentActivityIndicator issueId={issue.id} tipAnchor />
       </div>
 
       {/* Row 2: Title */}

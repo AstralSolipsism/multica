@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -20,6 +20,7 @@ import { type MyIssuesScope } from "@multica/core/issues/stores/my-issues-view-s
 import { useViewStore } from "@multica/core/issues/stores/view-store-context";
 import { useT } from "../../i18n";
 import { WorkspaceAgentWorkingChip } from "../../issues/components/workspace-agent-working-chip";
+import { tipAnchorScopeFromIssues } from "../../you-should-know/anchors/tip-anchor-scope";
 import {
   IssueDisplayControls,
 } from "../../issues/components/issues-header";
@@ -93,6 +94,12 @@ export function MyIssuesHeader({
   const toggleAgentRunningFilter = useViewStore(
     (s) => s.toggleAgentRunningFilter,
   );
+  // YSK summary anchor scope (OL-193): the surface's loaded issues, memoized
+  // so the chip's anchor descriptor stays stable across renders.
+  const tipAnchorScope = useMemo(
+    () => tipAnchorScopeFromIssues(allIssues),
+    [allIssues],
+  );
   const scopeLabel = SCOPES.find((s) => s.value === scope)?.label ?? SCOPES[0]?.label;
 
   return (
@@ -165,6 +172,7 @@ export function MyIssuesHeader({
             value={agentRunningFilter}
             onToggle={toggleAgentRunningFilter}
             agents={workingAgents}
+            tipAnchorScope={tipAnchorScope}
           />
           <IssueDisplayControls
             scopedIssues={allIssues}

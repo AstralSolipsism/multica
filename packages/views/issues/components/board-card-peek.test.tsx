@@ -55,8 +55,15 @@ vi.mock("../actions", () => ({
   IssueActionsContextMenu: ({ children }: { children: ReactNode }) => children,
 }));
 
+const indicatorProps = vi.hoisted(() => ({
+  current: undefined as Record<string, unknown> | undefined,
+}));
+
 vi.mock("./issue-agent-activity-indicator", () => ({
-  IssueAgentActivityIndicator: () => null,
+  IssueAgentActivityIndicator: (props: Record<string, unknown>) => {
+    indicatorProps.current = props;
+    return null;
+  },
 }));
 
 vi.mock("./custom-status-chip", () => ({
@@ -198,5 +205,13 @@ describe("DraggableBoardCard side peek", () => {
     // No handler claims the gesture: AppLink leaves it to the browser.
     expect(fireEvent.click(link(), { shiftKey: true })).toBe(true);
     expect(navigation.push).not.toHaveBeenCalled();
+  });
+
+  it("opts the activity indicator into row-level tip anchoring (OL-193)", () => {
+    renderCard();
+    expect(indicatorProps.current).toMatchObject({
+      issueId: "issue-1",
+      tipAnchor: true,
+    });
   });
 });

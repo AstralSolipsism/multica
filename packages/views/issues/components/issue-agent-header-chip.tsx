@@ -13,6 +13,7 @@ import { BorderBeam } from "@multica/ui/components/common/border-beam";
 import { api } from "@multica/core/api";
 import { issueKeys } from "@multica/core/issues/queries";
 import type { AgentTask } from "@multica/core/types";
+import type { TipAnchorDescriptor } from "@multica/core/you-should-know/anchors";
 import { TranscriptButton } from "../../common/task-transcript";
 import { AgentAvatarStack } from "../../agents/components/agent-avatar-stack";
 import { ActiveTaskRow } from "./execution-log-section";
@@ -145,6 +146,12 @@ function ActiveChip({
   const activeTasks = [...running, ...queued];
   const agentIds = [...new Set(activeTasks.map((task) => task.agent_id))];
   const anyRunning = running.length > 0;
+  // YSK detail-header anchor (OL-193): only while a task is actually running;
+  // a queued-only chip never registers.
+  const tipAnchor = useMemo<TipAnchorDescriptor | undefined>(
+    () => (anyRunning ? { level: "detail_header", issueId } : undefined),
+    [anyRunning, issueId],
+  );
   const isSingle = agentIds.length === 1;
   // Copy must follow the actual state: "is working" only when something is
   // truly running. With nothing running (queued / dispatched / parked on a
@@ -200,6 +207,7 @@ function ActiveChip({
             size="sm"
             max={3}
             opacity={anyRunning ? "full" : "half"}
+            tipAnchor={tipAnchor}
           />
           <span
             className={cn(
