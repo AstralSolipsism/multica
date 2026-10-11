@@ -65,6 +65,21 @@ describe('lightBatch', () => {
     expect(batch?.tips.map((t) => t.line)).toEqual(['First', 'Second'])
   })
 
+  test('drops a line or title that breaks across rows, and any NUL', () => {
+    const text = JSON.stringify({
+      tips: [
+        tip('Two\nrows'),
+        tip('Fine', 'Two\rrows'),
+        tip('Fine', 'Title', 'Nul \u0000 inside'),
+        tip('Kept', 'Title', 'An explanation\nmay wrap.'),
+      ],
+      overturned: [{ tip_id: 'tip-1', reason: 'nul \u0000' }],
+    })
+    const batch = lightBatch(text, context, 1)
+    expect(batch?.tips.map((t) => t.line)).toEqual(['Kept'])
+    expect(batch?.overturned).toEqual([])
+  })
+
   test('keeps only overturned ids of shown tips, once each, with a clipped reason', () => {
     const text = JSON.stringify({
       tips: [],

@@ -123,7 +123,9 @@ func TestYouShouldKnowReporterPostsTheBatchAsIs(t *testing.T) {
 	client.SetToken("daemon-token")
 	d := &Daemon{client: client}
 	batch := json.RawMessage(`{"ysk":1,"kind":"heads_up","tips":[{"tag":"heads_up","line":"l","title":"t","explanation":"e"}],"overturned":[],"step":8}`)
-	d.youShouldKnowReporter("task-1", slog.Default())(batch)
+	report, flush := d.youShouldKnowReporter("task-1", slog.Default())
+	report(batch)
+	flush()
 
 	select {
 	case req := <-got:
@@ -174,7 +176,8 @@ func TestYouShouldKnowReporterOnlyLogsAFailedPost(t *testing.T) {
 
 	var logs syncBuffer
 	d := &Daemon{client: NewClient(srv.URL)}
-	d.youShouldKnowReporter("task-1", slog.New(slog.NewTextHandler(&logs, nil)))(json.RawMessage(`{"ysk":1,"kind":"light"}`))
+	report, _ := d.youShouldKnowReporter("task-1", slog.New(slog.NewTextHandler(&logs, nil)))
+	report(json.RawMessage(`{"ysk":1,"kind":"light"}`))
 
 	deadline := time.Now().Add(5 * time.Second)
 	for !strings.Contains(logs.String(), "tips report failed") {
@@ -182,6 +185,65 @@ func TestYouShouldKnowReporterOnlyLogsAFailedPost(t *testing.T) {
 			t.Fatalf("no failure logged; logs: %s", logs.String())
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The server keeps tips only while the task is active, so the end of a run
+// waits for posts still in flight, but never for long.
+func TestYouShouldKnowFlushWaitsForPostsInFlight(t *testing.T) {
+	release := make(chan struct{})
+	received := make(chan struct{}, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- struct{}{}
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	d := &Daemon{client: NewClient(srv.URL)}
+	report, flush := d.youShouldKnowReporter("task-1", slog.Default())
+	report(json.RawMessage(`{"ysk":1,"kind":"light"}`))
+	<-received
+
+	flushed := make(chan struct{})
+	go func() {
+		flush()
+		close(flushed)
+	}()
+	select {
+	case <-flushed:
+		t.Fatal("flush returned while a post was still in flight")
+	case <-time.After(100 * time.Millisecond):
+	}
+	release <- struct{}{}
+	select {
+	case <-flushed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("flush did not return after the post finished")
+	}
+}
+
+func TestYouShouldKnowFlushGivesUpAfterItsBound(t *testing.T) {
+	previous := youShouldKnowFlushTimeout
+	youShouldKnowFlushTimeout = 50 * time.Millisecond
+	defer func() { youShouldKnowFlushTimeout = previous }()
+
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	d := &Daemon{client: NewClient(srv.URL)}
+	report, flush := d.youShouldKnowReporter("task-1", slog.Default())
+	report(json.RawMessage(`{"ysk":1,"kind":"light"}`))
+	start := time.Now()
+	flush()
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("flush waited %v past its bound", elapsed)
 	}
 }
 

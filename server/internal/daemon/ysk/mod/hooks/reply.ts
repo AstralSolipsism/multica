@@ -60,6 +60,8 @@ function tipFrom(value: unknown, tag: TipTag, limits: Limits): Tip | undefined {
   if (charCount(line) > limits.line || charCount(title) > limits.title || charCount(explanation) > limits.explanation) {
     return undefined
   }
+  // The line and title are shown on one row; no field may carry a NUL.
+  if (/[\r\n]/.test(line + title) || (line + title + explanation).includes('\u0000')) return undefined
   return { tag, line, title, explanation }
 }
 
@@ -84,7 +86,7 @@ export function lightBatch(text: string, ctx: YskContext, step: number): Batch |
     if (!isRecord(candidate)) continue
     const tipID = field(candidate, 'tip_id')
     const reason = field(candidate, 'reason')
-    if (!known.has(tipID) || reason === '') continue
+    if (!known.has(tipID) || reason === '' || reason.includes('\u0000')) continue
     known.delete(tipID)
     overturned.push({ tip_id: tipID, reason: clip(reason, ctx.limits.explanation) })
   }

@@ -3,6 +3,7 @@ package protocol
 import "encoding/json"
 
 const (
+	DaemonCapabilityYouShouldKnowV1     = "you-should-know-v1"
 	DaemonCapabilitySkillBundlesV1      = "skill-bundles-v1"
 	DaemonCapabilityCoalescedCommentsV1 = "coalesced-comments-v1"
 	DaemonCapabilityExecutionManifestV1 = "execution-manifest-v1"
@@ -71,9 +72,6 @@ const (
 	// It is persisted when this exact task enters running; absence always means
 	// unsupported so mixed server/daemon versions fail closed.
 	DaemonCapabilityTaskSupplementV1 = "task-supplement-v1"
-	// DaemonCapabilityYouShouldKnowV1 advertises that the daemon can load the
-	// labrastro-ysk tips mod into a Claude task and forward its tips (OL-187).
-	DaemonCapabilityYouShouldKnowV1 = "you-should-know-v1"
 
 	TaskSupplementFailureTurnNotStarted   = "turn_not_started"
 	TaskSupplementFailureProviderRejected = "provider_rejected"
