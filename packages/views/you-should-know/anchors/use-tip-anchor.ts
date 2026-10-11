@@ -93,7 +93,7 @@ export function useTipAnchor(
       observer.disconnect();
       state().unregister(id);
     };
-  }, [registry, element, id, descriptorKey !== null, measure]);
+  }, [registry, element, id, registering, measure]);
 
   // Content updates: re-register in place (keeps visibility and display
   // state). Runs after the lifecycle effect on mount; the registry's own

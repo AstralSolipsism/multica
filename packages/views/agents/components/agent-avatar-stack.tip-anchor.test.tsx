@@ -9,12 +9,20 @@ import {
 import { renderWithI18n } from "../../test/i18n";
 import { TipAnchorRegistryProvider } from "../../you-should-know/anchors/tip-anchor-context";
 
+// Counts useActorName calls — one per AgentAvatarStack render — so a test can
+// prove a plain stack mounts without the extra render a state-setting ref
+// would cause.
+const renderCount = vi.hoisted(() => ({ count: 0 }));
+
 vi.mock("@multica/core/workspace/hooks", () => ({
-  useActorName: () => ({
-    getActorName: (_type: string, id: string) => `Agent ${id}`,
-    getActorInitials: () => "AG",
-    getActorAvatarUrl: () => null,
-  }),
+  useActorName: () => {
+    renderCount.count += 1;
+    return {
+      getActorName: (_type: string, id: string) => `Agent ${id}`,
+      getActorInitials: () => "AG",
+      getActorAvatarUrl: () => null,
+    };
+  },
 }));
 
 import { AgentAvatarStack } from "./agent-avatar-stack";
@@ -85,6 +93,7 @@ function registeredAnchors() {
 beforeEach(() => {
   registry = createTipAnchorRegistry();
   MockIntersectionObserver.instances = [];
+  renderCount.count = 0;
   vi.unstubAllGlobals();
 });
 
@@ -279,6 +288,26 @@ describe("AgentAvatarStack tip anchor registration", () => {
     top = 240;
     expect(measure()).toBe(240);
     vi.restoreAllMocks();
+  });
+});
+
+describe("AgentAvatarStack render cost", () => {
+  it("mounts a plain stack (no provider, no descriptor) without an extra render", () => {
+    renderStack(<AgentAvatarStack agentIds={["agent-1"]} />, {
+      withProvider: false,
+    });
+    expect(renderCount.count).toBe(1);
+  });
+
+  it("mounts a descriptor-carrying stack without a provider without an extra render", () => {
+    renderStack(
+      <AgentAvatarStack
+        agentIds={["agent-1"]}
+        tipAnchor={{ level: "row", issueId: "issue-1" }}
+      />,
+      { withProvider: false },
+    );
+    expect(renderCount.count).toBe(1);
   });
 });
 

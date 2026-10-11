@@ -235,6 +235,26 @@ describe("scheduleTips — rotation queue", () => {
     expect(result.queue.map((entry) => entry.tipId)).toEqual(["earlier", "later"]);
   });
 
+  it("stays deterministic when a creation time is missing or unparseable", () => {
+    const row = anchor({ level: "row", issueId: "issue-1" });
+    // The schema tolerates "" (NaN on Date.parse): the comparator must not
+    // treat that as "equal everywhere" — it falls back to 0 and the id
+    // tiebreak decides.
+    const noTime = tip({ id: "b-no-time", issue_id: "issue-1", created_at: "" });
+    const alsoNoTime = tip({ id: "a-no-time", issue_id: "issue-1", created_at: "" });
+    const timed = tip({ id: "timed", issue_id: "issue-1", created_at: "2026-10-01T00:00:00Z" });
+    const result = scheduleTips({
+      anchors: [row],
+      tips: [noTime, timed, alsoNoTime],
+    });
+    // Missing times sort as 0 (oldest first); equal keys fall to the id order.
+    expect(result.queue.map((entry) => entry.tipId)).toEqual([
+      "a-no-time",
+      "b-no-time",
+      "timed",
+    ]);
+  });
+
   it("assigns dwell by tag: 8s for you-should-know, 15s for heads-up", () => {
     const rowA = anchor({ level: "row", issueId: "issue-1" });
     const rowB = anchor({ level: "row", issueId: "issue-2" });

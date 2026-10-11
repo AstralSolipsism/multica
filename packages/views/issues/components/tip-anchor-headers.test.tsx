@@ -162,6 +162,26 @@ describe("MyIssuesHeader tip anchor scope (OL-193)", () => {
     });
   });
 
+  it("follows tipAnchorScopeIssues even when allIssues is empty (table mode)", () => {
+    // Table mode pages rows through TableView's own query, so the header's
+    // allIssues is EMPTY there — the scope must come from the surface's
+    // per-view loaded-issues list instead.
+    renderWithI18n(
+      <MyIssuesHeader
+        allIssues={[]}
+        workingAgents={undefined}
+        tipAnchorScopeIssues={ISSUES}
+        scope="all"
+        onScopeChange={() => {}}
+        onTableFacetChange={() => {}}
+      />,
+    );
+    expect(chipProps.current?.tipAnchorScope).toEqual({
+      i1: "OL-1",
+      i2: "OL-2",
+    });
+  });
+
   it("keeps the scope referentially stable across re-renders", () => {
     const props = {
       allIssues: ISSUES,

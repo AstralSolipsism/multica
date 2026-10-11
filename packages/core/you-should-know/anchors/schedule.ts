@@ -94,8 +94,11 @@ function compareQueueEntries(
   if (top !== 0) return top;
   // Oldest tip first: tips are consumed in the order they were generated.
   // Date.parse, not string compare: RFC3339Nano trims trailing zeros in the
-  // fractional seconds, which breaks lexicographic ordering.
-  const created = Date.parse(a.tip.created_at) - Date.parse(b.tip.created_at);
+  // fractional seconds, which breaks lexicographic ordering. Unparseable or
+  // empty timestamps (the schema tolerates "") fall back to 0 so the
+  // comparator stays deterministic instead of yielding NaN-as-equal.
+  const created =
+    (Date.parse(a.tip.created_at) || 0) - (Date.parse(b.tip.created_at) || 0);
   if (created !== 0) return created;
   return a.tip.id.localeCompare(b.tip.id);
 }
