@@ -8683,6 +8683,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		agentCustomEnv = task.Agent.CustomEnv
 	}
 	layerCustomEnvAndHermesHome(agentEnv, agentCustomEnv, env.HermesHome, d.logger)
+	youShouldKnow := prepareYouShouldKnow(task, provider, resolvedVersion, env, agentEnv, taskLog)
 	if provider == "reasonix" {
 		reasonixStateHome, err := prepareReasonixTaskStateHome(d.cfg.Profile, task.RuntimeID, task.AgentID)
 		if err != nil {
@@ -8839,6 +8840,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		OpenclawMode:           openclawMode,
 		ClaudeSettingsPath:     env.ClaudeSettingsPath,
 		QwenpawWorkspace:       env.QwenpawWorkspace,
+	}
+	if youShouldKnow {
+		var flushTips func()
+		execOpts.OnYouShouldKnow, flushTips = d.youShouldKnowReporter(task.ID, taskLog)
+		defer flushTips()
 	}
 	// Some providers do not reliably load the per-task runtime config files we
 	// write into the task workdir:
