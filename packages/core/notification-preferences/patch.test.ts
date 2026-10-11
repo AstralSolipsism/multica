@@ -56,6 +56,39 @@ describe("notification preference patches", () => {
     ).toEqual({ comments: "muted", mentions: "muted" });
   });
 
+  it("carries the you_should_know group like any other preference", () => {
+    // Same regression shape as mentions: dropping the key from
+    // NOTIFICATION_GROUP_KEYS would silently send an empty patch.
+    expect(
+      deriveNotificationPreferencePatch(
+        {},
+        { you_should_know: "muted" },
+      ),
+    ).toEqual({ you_should_know: "muted" });
+
+    expect(
+      deriveNotificationPreferencePatch(
+        { you_should_know: "muted" },
+        {},
+      ),
+    ).toEqual({ you_should_know: "all" });
+
+    expect(
+      applyNotificationPreferencePatch(
+        {},
+        { you_should_know: "muted" },
+      ),
+    ).toEqual({ you_should_know: "muted" });
+
+    expect(
+      rollbackNotificationPreferencePatch(
+        { you_should_know: "muted" },
+        { you_should_know: "muted" },
+        {},
+      ),
+    ).toEqual({});
+  });
+
   it("does not roll back a key that a later mutation already changed", () => {
     expect(
       rollbackNotificationPreferencePatch(

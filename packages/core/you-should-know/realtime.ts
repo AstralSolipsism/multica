@@ -5,7 +5,7 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { WSClient } from "../api/ws-client";
 import { getCurrentWsId } from "../platform/workspace-storage";
 import { youShouldKnowKeys } from "./queries";
-import type { IssueTip, IssueTipList, IssueTipMyState } from "../api/labrastro-ysk-schemas";
+import type { IssueTipList, IssueTipUserState } from "../api/labrastro-ysk-schemas";
 import type {
   IssueTipChangedPayload,
   IssueTipStateChangedPayload,
@@ -14,12 +14,12 @@ import type {
 /** Debounce window for task-lifecycle invalidations of the active list. */
 const ACTIVE_REFRESH_DEBOUNCE_MS = 750;
 
-/** Patch `my_state` on one tip across every cached YSK list. */
+/** Patch `user_state` on one tip across every cached YSK list. */
 function applyTipStateToCaches(
   qc: QueryClient,
   wsId: string,
   tipId: string,
-  myState: IssueTipMyState | null,
+  userState: IssueTipUserState | null,
 ) {
   for (const [key] of qc.getQueriesData<IssueTipList>({
     queryKey: youShouldKnowKeys.all(wsId),
@@ -28,8 +28,8 @@ function applyTipStateToCaches(
       old
         ? {
             ...old,
-            tips: old.tips.map((tip): IssueTip =>
-              tip.id === tipId ? { ...tip, my_state: myState } : tip,
+            tips: old.tips.map((tip) =>
+              tip.id === tipId ? { ...tip, user_state: userState } : tip,
             ),
           }
         : old,
@@ -40,9 +40,12 @@ function applyTipStateToCaches(
 /**
  * Keeps the You Should Know caches in sync with WS events (OL-187 §13 H).
  *
- * - `issue_tip:created` / `issue_tip:updated`: invalidate the issue's tip
- *   lists and the active list; without `issue_id`, invalidate all YSK queries.
- * - `issue_tip_state:changed`: patch `my_state` in place when the payload
+ * - `issue_tip:created` / `issue_tip:updated`: each event carries the tip;
+ *   invalidate that issue's tip lists (both status variants) plus the active
+ *   list. These events broadcast workspace-wide, so scoping keeps other
+ *   issues' mounted queries untouched. Without a usable `issue_id` in the
+ *   payload, fall back to invalidating all YSK queries.
+ * - `issue_tip_state:changed`: patch `user_state` in place when the payload
  *   carries `tip_id` + `state` (this is what makes a tip vanish in every
  *   other tab of the same user); otherwise invalidate.
  * - task lifecycle events: debounced active-list refresh — whenever an agent
@@ -58,14 +61,13 @@ export function useYouShouldKnowRealtimeSync(ws: WSClient | null): void {
     const onTipChanged = (payload: unknown) => {
       const wsId = getCurrentWsId();
       if (!wsId) return;
-      const { issue_id: issueId } = payload as IssueTipChangedPayload;
+      const issueId = (payload as IssueTipChangedPayload)?.tip?.issue_id;
       if (!issueId) {
         qc.invalidateQueries({ queryKey: youShouldKnowKeys.all(wsId) });
         return;
       }
-      // The issue sub-keys live under the workspace prefix, so one broad
-      // invalidate covers both the issue lists and the active list.
-      qc.invalidateQueries({ queryKey: youShouldKnowKeys.all(wsId) });
+      qc.invalidateQueries({ queryKey: youShouldKnowKeys.issueAnyStatus(wsId, issueId) });
+      qc.invalidateQueries({ queryKey: youShouldKnowKeys.active(wsId) });
     };
 
     const onTipStateChanged = (payload: unknown) => {

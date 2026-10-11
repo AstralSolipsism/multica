@@ -17,11 +17,13 @@ All paths below are relative to `packages/core/api/` unless noted otherwise.
 | `labrastro-dependency-api.ts` | 4 methods: issue graph, dependency read, compound create/update; also `dependencyErrorDetails` and its public type |
 | `labrastro-quota-api.ts` | `getGlmQuota` |
 | `labrastro-skill-api.ts` | The existing 16 skill/package/folder/placement methods |
-| `labrastro-api.ts` | One mount for all five modules after the upstream class definition |
+| `labrastro-ysk-api.ts` | 3 methods: `listIssueTips`, `listActiveTips`, `setTipState` (OL-192) |
+| `labrastro-api.ts` | One mount for all modules after the upstream class definition |
 | `labrastro-api-helpers.ts` | Upstream transport bridge, collision-checked installation and shared response policies |
 | `labrastro-api-error.ts` | The unchanged `ApiError` class, shared without a runtime import of `client.ts` |
 | `labrastro-message-delivery-schemas.ts` | Message response schemas, inferred response types and existing fallbacks |
 | `labrastro-quota-schemas.ts` | GLM, plan-quota, host metrics and shallow runtime-list schemas |
+| `labrastro-ysk-schemas.ts` | You Should Know tip schemas with row-level degradation (OL-192) |
 | `../lark/schema.ts` | Existing fork Lark schemas, now also the source of inferred response types |
 | `dependency-schemas.ts`, `issue-graph-schemas.ts` | Existing fork dependency/graph contracts; no schema changes |
 
@@ -43,7 +45,7 @@ this runtime guard.
 exports. It remains available from both `@multica/core/api` and
 `@multica/core/api/client`. Keeping its implementation independent of the
 client prevents a cycle when a fork module is imported before `client.ts`;
-the regression suite exercises all five module-first import orders.
+the regression suite exercises every module-first import order.
 
 ## Response and type contracts
 

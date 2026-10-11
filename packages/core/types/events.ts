@@ -7,6 +7,7 @@ import type { TimelineEntry } from "./activity";
 import type { Workspace, MemberWithUser, Invitation } from "./workspace";
 import type { Project } from "./project";
 import type { Label } from "./label";
+import type { IssueTip } from "../api/labrastro-ysk-schemas";
 
 // WebSocket event types (matching Go server protocol/events.go)
 export type WSEventType =
@@ -133,19 +134,21 @@ export interface IssueDeletedPayload {
 
 // You Should Know (YSK) tips. The created/updated payloads are emitted
 // workspace-wide like comment:created; the state payload goes to the acting
-// user only. Field names follow OL-187 §13 H (server: OL-188).
+// user only. Shapes follow the OL-188 server implementation (PR #95,
+// docs/engineering/labrastro-ysk-api.md).
 export interface IssueTipChangedPayload {
-  tip_id: string;
-  issue_id?: string;
+  tip: IssueTip;
 }
 
 export interface IssueTipStateChangedPayload {
+  workspace_id: string;
+  issue_id: string;
   tip_id: string;
-  /** Present when the event carries the resolved per-user state. */
-  state?: "known" | "dismissed";
-  feedback?: "helpful" | "not_relevant" | "not_understood" | null;
+  user_id: string;
+  state: "known" | "dismissed";
+  feedback: "helpful" | "not_relevant" | "not_understood" | null;
+  updated_at: string | null;
 }
-
 
 export interface IssueLabelsChangedPayload {
   issue_id: string;

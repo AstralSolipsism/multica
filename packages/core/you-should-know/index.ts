@@ -10,7 +10,7 @@ export { isTipShownToMe } from "../api/labrastro-ysk-schemas";
 export type {
   IssueTip,
   IssueTipList,
-  IssueTipMyState,
+  IssueTipUserState,
   IssueTipTag,
   IssueTipStatus,
   SetTipStateRequest,

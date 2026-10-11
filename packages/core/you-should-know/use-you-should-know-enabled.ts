@@ -24,7 +24,8 @@ export interface YouShouldKnowEnabled {
  */
 export function useYouShouldKnowEnabled(): YouShouldKnowEnabled {
   const workspace = useCurrentWorkspace();
-  const { data } = useQuery(notificationPreferenceOptions(workspace?.id ?? ""));
+  const wsId = workspace?.id ?? "";
+  const { data } = useQuery({ ...notificationPreferenceOptions(wsId), enabled: !!wsId });
 
   return useMemo(() => {
     const settings = (workspace?.settings ?? {}) as Record<string, unknown>;

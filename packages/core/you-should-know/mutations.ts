@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useWorkspaceId } from "../hooks";
 import { youShouldKnowKeys } from "./queries";
-import type { IssueTipList, SetTipStateRequest } from "../api/labrastro-ysk-schemas";
+import type { IssueTipList, IssueTipUserState, SetTipStateRequest } from "../api/labrastro-ysk-schemas";
 
 interface SetTipStateVariables {
   tipId: string;
@@ -19,9 +19,10 @@ interface SetTipStateContext {
 /**
  * Optimistically writes this user's state onto the tip in every cached YSK
  * list (active + per-issue). On failure rolls back only rows that still match
- * the optimistic value; on settle invalidates, but only when no other
- * mutation of this hook is still queued (same contract as
- * useUpdateNotificationPreferences).
+ * this mutation's optimistic value (state AND feedback — "dismiss, then pick
+ * a feedback" queues two mutations with the same state); on settle
+ * invalidates, but only when no other mutation of this hook is still queued
+ * (same contract as useUpdateNotificationPreferences).
  */
 export function useSetTipState() {
   const qc = useQueryClient();
@@ -47,7 +48,7 @@ export function useSetTipState() {
                 ...old,
                 tips: old.tips.map((tip) =>
                   tip.id === tipId
-                    ? { ...tip, my_state: { state: request.state, feedback: request.feedback } }
+                    ? { ...tip, user_state: { state: request.state, feedback: request.feedback } }
                     : tip,
                 ),
               }
@@ -57,18 +58,24 @@ export function useSetTipState() {
       return { snapshots };
     },
     onError: (_error, { tipId, request }, context) => {
+      const optimistic: IssueTipUserState = { state: request.state, feedback: request.feedback };
       for (const [key, snapshot] of context?.snapshots ?? []) {
         qc.setQueryData<IssueTipList>(key, (old) => {
           if (!old) return snapshot ?? old;
           return {
             ...old,
             tips: old.tips.map((tip) => {
-              // A later mutation that already changed this row wins.
-              if (tip.id !== tipId || tip.my_state?.state !== request.state) {
+              if (
+                tip.id !== tipId ||
+                tip.user_state?.state !== optimistic.state ||
+                tip.user_state?.feedback !== optimistic.feedback
+              ) {
                 return tip;
               }
+              // Restore only `user_state` so server updates (status etc.)
+              // that arrived meanwhile are kept.
               const restored = snapshot?.tips.find((t) => t.id === tipId);
-              return restored ?? tip;
+              return { ...tip, user_state: restored?.user_state ?? null };
             }),
           };
         });

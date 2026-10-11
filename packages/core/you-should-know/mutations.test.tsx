@@ -21,7 +21,9 @@ const WS = "ws-1";
 function makeTip(id: string, overrides: Partial<IssueTipList["tips"][number]> = {}) {
   return {
     id,
+    workspace_id: WS,
     issue_id: "i1",
+    issue_identifier: "LAB-1",
     task_id: "r1",
     agent_id: "a1",
     anchor_comment_id: null,
@@ -32,8 +34,8 @@ function makeTip(id: string, overrides: Partial<IssueTipList["tips"][number]> = 
     status: "valid" as const,
     overturned_by_task_id: null,
     overturned_by_comment_id: null,
-    overturn_reason: null,
-    my_state: null,
+    overturned_reason: null,
+    user_state: null,
     created_at: "",
     updated_at: "",
     ...overrides,
@@ -71,7 +73,11 @@ describe("useSetTipState", () => {
     return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
   }
 
-  it("optimistically writes my_state into every cached list", async () => {
+  function activeTip(id: string) {
+    return qc.getQueryData<IssueTipList>(youShouldKnowKeys.active(WS))?.tips.find((t) => t.id === id);
+  }
+
+  it("optimistically writes user_state into every cached list", async () => {
     const { result } = renderHook(() => useSetTipState(), { wrapper: Wrapper });
     await act(async () => {
       result.current.mutate({ tipId: "t1", request: { state: "known", feedback: null } });
@@ -83,10 +89,10 @@ describe("useSetTipState", () => {
       youShouldKnowKeys.issue(WS, "i1", "valid"),
     ]) {
       const tips = qc.getQueryData<IssueTipList>(key)?.tips;
-      expect(tips?.find((t) => t.id === "t1")?.my_state).toEqual(expected);
-      // other tips untouched (only the "valid" issue list lacks t2)
+      expect(tips?.find((t) => t.id === "t1")?.user_state).toEqual(expected);
+      // other tips untouched (only the active list has t2)
       if (tips?.some((t) => t.id === "t2")) {
-        expect(tips.find((t) => t.id === "t2")?.my_state).toBeNull();
+        expect(tips.find((t) => t.id === "t2")?.user_state).toBeNull();
       }
     }
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -104,7 +110,7 @@ describe("useSetTipState", () => {
       youShouldKnowKeys.issue(WS, "i1", "all"),
     ]) {
       expect(
-        qc.getQueryData<IssueTipList>(key)?.tips.find((t) => t.id === "t1")?.my_state,
+        qc.getQueryData<IssueTipList>(key)?.tips.find((t) => t.id === "t1")?.user_state,
       ).toBeNull();
     }
     // error surfaces to the caller
@@ -121,31 +127,86 @@ describe("useSetTipState", () => {
       result.current.mutate({ tipId: "t1", request: { state: "known", feedback: null } });
     });
     // first optimistic patch visible immediately
-    expect(
-      qc.getQueryData<IssueTipList>(youShouldKnowKeys.active(WS))?.tips.find((t) => t.id === "t1")?.my_state,
-    ).toEqual({ state: "known", feedback: null });
+    expect(activeTip("t1")?.user_state).toEqual({ state: "known", feedback: null });
 
     // queue the second mutation while the first is in flight (scope serializes)
     await act(async () => {
       result.current.mutate({ tipId: "t1", request: { state: "dismissed", feedback: "not_relevant" } });
     });
     // second optimistic patch lands while first still pending
-    expect(
-      qc.getQueryData<IssueTipList>(youShouldKnowKeys.active(WS))?.tips.find((t) => t.id === "t1")?.my_state,
-    ).toEqual({ state: "dismissed", feedback: "not_relevant" });
+    expect(activeTip("t1")?.user_state).toEqual({ state: "dismissed", feedback: "not_relevant" });
 
     // first fails — its rollback must not revert the second mutation's value
     await act(async () => {
       first.reject(new Error("first failed"));
     });
-    expect(
-      qc.getQueryData<IssueTipList>(youShouldKnowKeys.active(WS))?.tips.find((t) => t.id === "t1")?.my_state,
-    ).toEqual({ state: "dismissed", feedback: "not_relevant" });
+    expect(activeTip("t1")?.user_state).toEqual({ state: "dismissed", feedback: "not_relevant" });
 
     await act(async () => {
       second.resolve(undefined);
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("dismiss then feedback keeps the second optimistic value when the first request fails", async () => {
+    // OL-187 §6 flow: "Dismiss" first, then pick a feedback — both requests
+    // carry state "dismissed" and differ only in feedback.
+    const first = deferred<void>();
+    const second = deferred<void>();
+    setTipState.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const { result } = renderHook(() => useSetTipState(), { wrapper: Wrapper });
+
+    await act(async () => {
+      result.current.mutate({ tipId: "t1", request: { state: "dismissed", feedback: null } });
+    });
+    await act(async () => {
+      result.current.mutate({ tipId: "t1", request: { state: "dismissed", feedback: "helpful" } });
+    });
+    expect(activeTip("t1")?.user_state).toEqual({ state: "dismissed", feedback: "helpful" });
+
+    await act(async () => {
+      first.reject(new Error("first failed"));
+    });
+    expect(activeTip("t1")?.user_state).toEqual({ state: "dismissed", feedback: "helpful" });
+
+    await act(async () => {
+      second.resolve(undefined);
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("serializes queued requests and invalidates once after both settle", async () => {
+    const first = deferred<void>();
+    const second = deferred<void>();
+    setTipState.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    const { result } = renderHook(() => useSetTipState(), { wrapper: Wrapper });
+
+    await act(async () => {
+      result.current.mutate({ tipId: "t1", request: { state: "dismissed", feedback: null } });
+    });
+    await act(async () => {
+      result.current.mutate({ tipId: "t1", request: { state: "dismissed", feedback: "helpful" } });
+    });
+
+    // scope: the second request is not sent until the first completes
+    expect(setTipState).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      first.resolve(undefined);
+    });
+    // first settled while the second is still queued — no invalidation yet,
+    // a refetch now would clobber the queued optimistic value
+    expect(spy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      second.resolve(undefined);
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: youShouldKnowKeys.all(WS) }),
+    );
   });
 
   it("refetches active + issue queries after settle", async () => {

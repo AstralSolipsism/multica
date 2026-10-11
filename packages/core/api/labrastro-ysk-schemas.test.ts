@@ -14,21 +14,24 @@ function respond(body: unknown, status = 200) {
 
 afterEach(() => vi.unstubAllGlobals());
 
+// Matches the OL-188 server response (PR #95 labrastroTipResponse JSON tags).
 const tip = {
   id: "t1",
+  workspace_id: "ws-1",
   issue_id: "i1",
+  issue_identifier: "LAB-1",
   task_id: "r1",
   agent_id: "a1",
   anchor_comment_id: null,
   tag: "you_should_know",
   line: "The deploy script drops the db",
-  title: null,
-  explanation: null,
+  title: "",
+  explanation: "",
   status: "valid",
   overturned_by_task_id: null,
   overturned_by_comment_id: null,
-  overturn_reason: null,
-  my_state: null,
+  overturned_reason: null,
+  user_state: undefined,
   created_at: "2026-10-11T00:00:00Z",
   updated_at: "2026-10-11T00:00:00Z",
 };
@@ -45,48 +48,77 @@ describe("issue tip list schema", () => {
     expect(parsed.tips.map((t) => t.id)).toEqual(["t1"]);
   });
 
-  it("defaults missing optional fields", () => {
+  it("drops a row whose line is missing (no empty-bodied bubbles)", () => {
     const parsed = IssueTipListSchema.parse({
-      tips: [{ id: "t1", issue_id: "i1", task_id: "r1", agent_id: "a1", tag: "heads_up", line: "x", status: "valid" }],
+      tips: [tip, { ...tip, id: "t2", line: undefined }],
+    });
+    expect(parsed.tips.map((t) => t.id)).toEqual(["t1"]);
+  });
+
+  it("defaults missing optional fields and normalizes empty strings to null", () => {
+    const parsed = IssueTipListSchema.parse({
+      tips: [{
+        id: "t1",
+        workspace_id: "ws-1",
+        issue_id: "i1",
+        issue_identifier: "LAB-1",
+        task_id: "r1",
+        agent_id: "a1",
+        tag: "heads_up",
+        line: "x",
+        status: "valid",
+      }],
     });
     expect(parsed.tips[0]).toMatchObject({
       anchor_comment_id: null,
       title: null,
       explanation: null,
       overturned_by_task_id: null,
-      overturn_reason: null,
-      my_state: null,
+      overturned_reason: null,
+      user_state: null,
       created_at: "",
     });
   });
 
-  it("keeps a known my_state and nulls an unreadable one", () => {
+  it("keeps a known user_state, normalizes an omitted one to null", () => {
     const parsed = IssueTipListSchema.parse({
       tips: [
-        { ...tip, my_state: { state: "known", feedback: "helpful" } },
-        { ...tip, id: "t2", my_state: { state: "wat" } },
+        { ...tip, user_state: { state: "known", feedback: "helpful" } },
+        tip,
       ],
     });
-    expect(parsed.tips[0]?.my_state).toEqual({ state: "known", feedback: "helpful" });
-    expect(parsed.tips[1]?.my_state).toBeNull();
+    expect(parsed.tips[0]?.user_state).toEqual({ state: "known", feedback: "helpful" });
+    expect(parsed.tips[1]?.user_state).toBeNull();
   });
 
-  it("isTipShownToMe only for valid tips without my_state", () => {
-    expect(isTipShownToMe({ status: "valid", my_state: null })).toBe(true);
-    expect(isTipShownToMe({ status: "overturned", my_state: null })).toBe(false);
-    expect(isTipShownToMe({ status: "valid", my_state: { state: "known", feedback: null } })).toBe(false);
+  it("degrades only an unknown feedback, keeping the state readable", () => {
+    const parsed = IssueTipListSchema.parse({
+      tips: [
+        { ...tip, user_state: { state: "dismissed", feedback: "meh" } },
+      ],
+    });
+    // The tip stays dismissed — a user who acted on it must not see it again.
+    expect(parsed.tips[0]?.user_state).toEqual({ state: "dismissed", feedback: null });
+  });
+
+  it("isTipShownToMe only for valid tips without user_state", () => {
+    expect(isTipShownToMe({ status: "valid", user_state: null })).toBe(true);
+    expect(isTipShownToMe({ status: "overturned", user_state: null })).toBe(false);
+    expect(isTipShownToMe({ status: "valid", user_state: { state: "known", feedback: null } })).toBe(false);
   });
 });
 
 describe("listIssueTips", () => {
   it("requests the status filter and parses tips", async () => {
     const fetch = respond({ tips: [tip] });
-    await expect(client.listIssueTips("i1", "all")).resolves.toEqual({ tips: [tip] });
+    await expect(client.listIssueTips("i1", "all")).resolves.toEqual({
+      tips: [{ ...tip, title: null, explanation: null, user_state: null }],
+    });
     const url = fetch.mock.calls[0]?.[0];
     expect(String(url)).toBe("https://api.example.test/api/issues/i1/tips?status=all");
   });
 
-  it.each([null, {}, { tips: "bad" }, []])(
+  it.each([null, {}, { tips: "bad" }, [[]]] )(
     "rejects an unreadable response: %j",
     async (body) => {
       respond(body);
@@ -100,7 +132,9 @@ describe("listIssueTips", () => {
 describe("listActiveTips", () => {
   it("parses the active list", async () => {
     const fetch = respond({ tips: [tip] });
-    await expect(client.listActiveTips()).resolves.toEqual({ tips: [tip] });
+    await expect(client.listActiveTips()).resolves.toEqual({
+      tips: [{ ...tip, title: null, explanation: null, user_state: null }],
+    });
     expect(String(fetch.mock.calls[0]?.[0])).toBe("https://api.example.test/api/tips/active");
   });
 
