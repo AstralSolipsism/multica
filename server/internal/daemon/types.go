@@ -178,6 +178,10 @@ type Task struct {
 	// Empty or non-task-scoped values are fatal for writable agent tasks; the
 	// daemon must not fall back to its own token. See MUL-3292.
 	AuthToken string `json:"auth_token,omitempty"`
+	// YouShouldKnow is the run context for the labrastro-ysk tips mod
+	// (OL-187), sent only when the workspace has the feature on. The daemon
+	// hands it to the mod as received; see labrastro_ysk.go.
+	YouShouldKnow json.RawMessage `json:"you_should_know,omitempty"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata the daemon
