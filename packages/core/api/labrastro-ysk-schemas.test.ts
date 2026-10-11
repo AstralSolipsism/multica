@@ -4,7 +4,7 @@ import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { ApiClient, ApiError } from "./client";
 import {
   isTipShownToMe,
-  IssueTip,
+  type IssueTip,
   IssueTipListSchema,
   IssueTipSchema,
 } from "./labrastro-ysk-schemas";
@@ -114,18 +114,20 @@ describe("issue tip list schema", () => {
   });
 
   it("a WS event's raw tip is not assignable to a parsed IssueTip (parse before caching)", () => {
-    // OL-211: the server omits `user_state` when the viewer has not acted, so
-    // the raw payload's user_state is `undefined`, not `null`. If this guard
-    // regressed (payload tip typed as parsed IssueTip), writing payload.tip
-    // straight into a cache would make isTipShownToMe see undefined !== null
-    // and hide every fresh tip. expectTypeOf fails compilation on regression.
+    // OL-211: these events are broadcast workspace-wide and never carry
+    // `user_state`, so the raw payload's user_state is `undefined`, not
+    // `null`. Writing payload.tip straight into a cache would make
+    // isTipShownToMe see undefined !== null and hide every fresh tip.
+    // The type-level assertion below checks IssueTipChangedPayload itself,
+    // so a regression (tip typed as IssueTip or any) fails compilation.
     const payload = {
       tip: { ...tip, tag: "you_should_know" as const, status: "valid" as const },
     } satisfies IssueTipChangedPayload;
-    expectTypeOf(payload.tip).not.toMatchTypeOf<IssueTip>();
-    // Parsing is the sanctioned bridge from wire to cache…
+    expectTypeOf<IssueTipChangedPayload["tip"]>().not.toExtend<IssueTip>();
+    // Parsing is required before use; it yields a full IssueTip…
     expectTypeOf(IssueTipSchema.parse(payload.tip)).toEqualTypeOf<IssueTip>();
-    // …and it normalizes the absent key the display logic depends on.
+    // …but it normalizes the absent user_state to null — it does not restore
+    // the viewer's own state, which cache writes must preserve separately.
     expect(IssueTipSchema.parse(payload.tip).user_state).toBeNull();
   });
 });

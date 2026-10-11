@@ -5,9 +5,9 @@ import { api } from "../api";
 export const youShouldKnowKeys = {
   all: (wsId: string) => ["you-should-know", wsId] as const,
   active: (wsId: string) => ["you-should-know", wsId, "active"] as const,
+  /** Prefix covering both status variants of one issue's tip lists. */
   issueAnyStatus: (wsId: string, issueId: string) =>
     ["you-should-know", wsId, "issue", issueId] as const,
-  /** Prefix covering both status variants of one issue's tip lists. */
   issue: (wsId: string, issueId: string, status: "valid" | "all") =>
     ["you-should-know", wsId, "issue", issueId, status] as const,
 };

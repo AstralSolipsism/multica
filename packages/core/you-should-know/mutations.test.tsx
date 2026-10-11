@@ -187,16 +187,16 @@ describe("useSetTipState", () => {
 
     // queue the second mutation while the first is in flight (scope serializes)
     await act(async () => {
-      result.current.mutate({ tipId: "t1", request: { state: "dismissed", feedback: "not_relevant" } });
+      result.current.mutate({ tipId: "t1", request: { state: "dismissed", feedback: null } });
     });
     // second optimistic patch lands while first still pending
-    expect(activeTip("t1")?.user_state).toEqual({ state: "dismissed", feedback: "not_relevant" });
+    expect(activeTip("t1")?.user_state).toEqual({ state: "dismissed", feedback: null });
 
     // first fails — its rollback must not revert the second mutation's value
     await act(async () => {
       first.reject(new Error("first failed"));
     });
-    expect(activeTip("t1")?.user_state).toEqual({ state: "dismissed", feedback: "not_relevant" });
+    expect(activeTip("t1")?.user_state).toEqual({ state: "dismissed", feedback: null });
 
     await act(async () => {
       second.resolve(undefined);

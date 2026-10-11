@@ -138,11 +138,14 @@ export interface IssueDeletedPayload {
 // user only. Shapes follow the OL-188 server implementation (PR #95,
 // docs/engineering/labrastro-ysk-api.md).
 //
-// `tip` is the RAW server JSON, not a parsed IssueTip: the server omits
-// `user_state` entirely when the viewer has not acted on the tip, so the key
-// is absent (undefined), never null. Writing it into a cache un-parsed would
-// make isTipShownToMe (`user_state === null`) treat a fresh tip as already
-// handled. Parse with IssueTipSchema first — the type mismatch is the guard.
+// `tip` is the RAW server JSON, not a parsed IssueTip: these events are
+// broadcast workspace-wide and never carry `user_state` — the key is absent
+// (undefined), never null. Writing it into a cache un-parsed would make
+// isTipShownToMe (`user_state === null`) treat a fresh tip as already
+// handled. To apply one to a cache, parse with IssueTipSchema first and keep
+// the cached row's own `user_state` (parsing normalizes the absent key to
+// null, which would wipe the viewer's state on `issue_tip:updated`);
+// realtime.ts currently only invalidates.
 export interface IssueTipChangedPayload {
   tip: z.input<typeof IssueTipSchema>;
 }
