@@ -4,17 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
-	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -44,20 +40,13 @@ func labrastroYSKPreferenceDefaults(prefs map[string]string) map[string]string {
 
 // Called only by the shared claim builder, after its workspace/source gates.
 // taskToResponse and all human/agent-readable task projections leave this nil.
-func (h *Handler) labrastroYSKClaimContext(r *http.Request, task db.AgentTaskQueue, runtime db.AgentRuntime, resp AgentTaskResponse) *protocol.YouShouldKnowContext {
+func (h *Handler) labrastroYSKClaimContext(r *http.Request, task db.AgentTaskQueue, runtime db.AgentRuntime, settings []byte, identifier string) *protocol.YouShouldKnowContext {
 	if !task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || runtime.Provider != "claude" ||
-		!requestHasClientCapability(r, protocol.DaemonCapabilityYouShouldKnowV1) {
+		!requestHasClientCapability(r, protocol.DaemonCapabilityYouShouldKnowV1) || !labrastroYSKEnabled(settings) {
 		return nil
 	}
 	ctx := r.Context()
-	ws, err := h.Queries.GetWorkspace(ctx, runtime.WorkspaceID)
-	if err != nil || !labrastroYSKEnabled(ws.Settings) {
-		if err != nil {
-			slog.Warn("ysk: claim context omitted", "task_id", uuidToString(task.ID), "error", err)
-		}
-		return nil
-	}
-	result, err := h.labrastroYSKLoadContext(ctx, task, runtime.WorkspaceID, resp.IssueIdentifier)
+	result, err := h.labrastroYSKLoadContext(ctx, task, runtime.WorkspaceID, identifier)
 	if err != nil {
 		slog.Warn("ysk: claim context omitted", "task_id", uuidToString(task.ID), "error", err)
 		return nil
@@ -172,7 +161,7 @@ func (h *Handler) LabrastroListIssueTips(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	h.labrastroYSKList(w, r, db.LabrastroYSKListTipsParams{WorkspaceID: ws, UserID: user, IssueID: issue.ID, IncludeInvalid: status == "all"})
+	h.labrastroYSKList(w, r, ws, user, issue.ID, status == "all")
 }
 
 func (h *Handler) LabrastroListActiveTips(w http.ResponseWriter, r *http.Request) {
@@ -180,27 +169,42 @@ func (h *Handler) LabrastroListActiveTips(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	h.labrastroYSKList(w, r, db.LabrastroYSKListTipsParams{WorkspaceID: ws, UserID: user, ActiveOnly: true})
+	h.labrastroYSKList(w, r, ws, user, pgtype.UUID{}, false)
 }
 
-func (h *Handler) labrastroYSKList(w http.ResponseWriter, r *http.Request, params db.LabrastroYSKListTipsParams) {
-	ws, err := h.Queries.GetWorkspace(r.Context(), params.WorkspaceID)
+func (h *Handler) labrastroYSKList(w http.ResponseWriter, r *http.Request, workspaceID, userID, issueID pgtype.UUID, includeInvalid bool) {
+	ctx := r.Context()
+	ws, err := h.Queries.GetWorkspace(ctx, workspaceID)
 	if err != nil {
 		h.labrastroYSKError(w, err)
 		return
 	}
-	rows, err := h.Queries.LabrastroYSKListTips(r.Context(), params)
-	if err != nil {
-		h.labrastroYSKError(w, err)
-		return
-	}
-	tips := make([]LabrastroTipResponse, 0, len(rows))
-	for _, row := range rows {
-		tip := labrastroTipResponse(row.LabrastroIssueTip, service.IssueIdentifier(ws.IssuePrefix, row.IssueNumber))
-		if row.UserState.Valid {
-			tip.UserState = &LabrastroTipState{State: row.UserState.String, Feedback: textToPtr(row.UserFeedback), UpdatedAt: timestampToNanoPtr(row.StateUpdatedAt)}
+	tips := []LabrastroTipResponse{}
+	appendTip := func(t db.LabrastroIssueTip, number int32, state, feedback pgtype.Text, updatedAt pgtype.Timestamptz) {
+		tip := labrastroTipResponse(t, service.IssueIdentifier(ws.IssuePrefix, number))
+		if state.Valid {
+			tip.UserState = &LabrastroTipState{State: state.String, Feedback: textToPtr(feedback), UpdatedAt: timestampToNanoPtr(updatedAt)}
 		}
 		tips = append(tips, tip)
+	}
+	if issueID.Valid {
+		rows, err := h.Queries.LabrastroYSKListIssueTips(ctx, db.LabrastroYSKListIssueTipsParams{WorkspaceID: workspaceID, UserID: userID, IssueID: issueID, IncludeInvalid: includeInvalid})
+		if err != nil {
+			h.labrastroYSKError(w, err)
+			return
+		}
+		for _, row := range rows {
+			appendTip(row.LabrastroIssueTip, row.IssueNumber, row.UserState, row.UserFeedback, row.StateUpdatedAt)
+		}
+	} else {
+		rows, err := h.Queries.LabrastroYSKListActiveTips(ctx, db.LabrastroYSKListActiveTipsParams{WorkspaceID: workspaceID, UserID: userID})
+		if err != nil {
+			h.labrastroYSKError(w, err)
+			return
+		}
+		for _, row := range rows {
+			appendTip(row.LabrastroIssueTip, row.IssueNumber, row.UserState, row.UserFeedback, row.StateUpdatedAt)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tips": tips})
 }
@@ -275,34 +279,6 @@ func (h *Handler) LabrastroSetTipState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
-type labrastroYSKReport struct {
-	Version    int                    `json:"ysk"`
-	Kind       string                 `json:"kind"`
-	Step       int                    `json:"step"`
-	Tips       []labrastroYSKInputTip `json:"tips"`
-	Overturned []struct {
-		TipID  string `json:"tip_id"`
-		Reason string `json:"reason"`
-	} `json:"overturned"`
-}
-
-type labrastroYSKInputTip struct {
-	Tag         string `json:"tag"`
-	Line        string `json:"line"`
-	Title       string `json:"title"`
-	Explanation string `json:"explanation"`
-}
-
-func labrastroYSKValidText(s string, limit int) bool {
-	return utf8.ValidString(s) && !strings.ContainsRune(s, 0) && strings.TrimSpace(s) != "" && utf8.RuneCountInString(s) <= limit
-}
-
-func labrastroYSKValidTip(t labrastroYSKInputTip, kind string) bool {
-	return ((kind == "light" && t.Tag == "you_should_know") || (kind == "heads_up" && t.Tag == "heads_up")) &&
-		labrastroYSKValidText(t.Line, 40) && labrastroYSKValidText(t.Title, 12) && labrastroYSKValidText(t.Explanation, 200) &&
-		!strings.ContainsAny(t.Line+t.Title, "\r\n")
-}
-
 // The daemon posts only side-channel results. It receives no tip data back.
 func (h *Handler) LabrastroReportTaskTips(w http.ResponseWriter, r *http.Request) {
 	task, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, chi.URLParam(r, "taskId"))
@@ -321,14 +297,12 @@ func (h *Handler) LabrastroReportTaskTips(w http.ResponseWriter, r *http.Request
 		slog.Warn("ysk: report discarded", "task_id", uuidToString(task.ID), "reason", reason)
 		w.WriteHeader(http.StatusNoContent)
 	}
-	var req labrastroYSKReport
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
-	if err := decoder.Decode(&req); err != nil {
-		drop("invalid JSON")
-		return
+	req, rejected := labrastroYSKParseReport(http.MaxBytesReader(w, r.Body, 64<<10))
+	for _, reason := range rejected {
+		slog.Warn("ysk: report content discarded", "task_id", uuidToString(task.ID), "reason", reason)
 	}
-	if err := decoder.Decode(new(any)); err != io.EOF || req.Version != 1 || req.Step < 1 || (req.Kind != "light" && req.Kind != "heads_up") {
-		drop("invalid report envelope")
+	if req == nil {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if !task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || runtime.Provider != "claude" {
@@ -366,60 +340,17 @@ func (h *Handler) LabrastroReportTaskTips(w http.ResponseWriter, r *http.Request
 		h.labrastroYSKError(w, err)
 		return
 	}
-	if task.Status != "running" && task.Status != "dispatched" {
-		drop("task no longer active")
+	if reason, err := labrastroYSKReportSource(ctx, q, task, runtime.WorkspaceID); err != nil {
+		h.labrastroYSKError(w, err)
+		return
+	} else if reason != "" {
+		drop(reason)
 		return
 	}
-	if task.TriggerCommentID.Valid {
-		comment, err := q.GetCommentInWorkspace(ctx, db.GetCommentInWorkspaceParams{ID: task.TriggerCommentID, WorkspaceID: runtime.WorkspaceID})
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			h.labrastroYSKError(w, err)
-			return
-		}
-		if err != nil || comment.DeletedAt.Valid || comment.IssueID != task.IssueID ||
-			(task.DispatchedAt.Valid && comment.UpdatedAt.Time.After(task.DispatchedAt.Time)) {
-			drop("source comment changed")
-			return
-		}
-	}
-	var created, updated []db.LabrastroIssueTip
-	for _, input := range req.Tips {
-		if !labrastroYSKValidTip(input, req.Kind) {
-			slog.Warn("ysk: invalid tip discarded", "task_id", uuidToString(task.ID))
-			continue
-		}
-		tip, err := q.LabrastroYSKCreateTip(ctx, db.LabrastroYSKCreateTipParams{
-			WorkspaceID: runtime.WorkspaceID, IssueID: task.IssueID, TaskID: task.ID, AgentID: task.AgentID, AnchorCommentID: task.TriggerCommentID,
-			Tag: input.Tag, Line: input.Line, Title: input.Title, Explanation: input.Explanation,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			continue // A retry or a run that has already reached its tip quota.
-		}
-		if err != nil {
-			h.labrastroYSKError(w, err)
-			return
-		}
-		created = append(created, tip)
-	}
-	if req.Kind == "light" {
-		for _, overturned := range req.Overturned {
-			id, err := util.ParseUUID(overturned.TipID)
-			if err != nil || strings.TrimSpace(overturned.Reason) == "" || strings.ContainsRune(overturned.Reason, 0) {
-				slog.Warn("ysk: invalid overturn discarded", "task_id", uuidToString(task.ID))
-				continue
-			}
-			tip, err := q.LabrastroYSKOverturnTip(ctx, db.LabrastroYSKOverturnTipParams{
-				WorkspaceID: runtime.WorkspaceID, IssueID: task.IssueID, ID: id, TaskID: task.ID, CommentID: task.TriggerCommentID, Reason: pgtype.Text{String: overturned.Reason, Valid: true},
-			})
-			if errors.Is(err, pgx.ErrNoRows) {
-				continue
-			}
-			if err != nil {
-				h.labrastroYSKError(w, err)
-				return
-			}
-			updated = append(updated, tip)
-		}
+	created, updated, err := labrastroYSKPersistReport(ctx, q, task, runtime.WorkspaceID, req)
+	if err != nil {
+		h.labrastroYSKError(w, err)
+		return
 	}
 	issue, err := q.GetIssue(ctx, task.IssueID)
 	if err != nil {

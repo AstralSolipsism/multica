@@ -285,35 +285,31 @@ func (q *Queries) LabrastroYSKLatestHumanComment(ctx context.Context, arg Labras
 	return content, err
 }
 
-const labrastroYSKListTips = `-- name: LabrastroYSKListTips :many
+const labrastroYSKListActiveTips = `-- name: LabrastroYSKListActiveTips :many
+WITH running AS MATERIALIZED (
+    SELECT DISTINCT q.issue_id FROM agent_task_queue q
+    JOIN agent a ON a.id = q.agent_id
+    WHERE a.workspace_id = $1 AND q.status = 'running'
+      AND q.issue_id IS NOT NULL AND q.chat_session_id IS NULL AND q.autopilot_run_id IS NULL
+      AND a.kind = 'user' AND a.archived_at IS NULL
+)
 SELECT t.id, t.workspace_id, t.issue_id, t.task_id, t.agent_id, t.anchor_comment_id, t.tag, t.line, t.title, t.explanation, t.status, t.overturned_by_task_id, t.overturned_by_comment_id, t.overturned_reason, t.created_at, t.updated_at, s.state AS user_state, s.feedback AS user_feedback,
        s.updated_at AS state_updated_at, i.number AS issue_number
-FROM labrastro_issue_tip t
+FROM running r
+JOIN labrastro_issue_tip t ON t.workspace_id = $1
+    AND t.issue_id = r.issue_id AND t.status = 'valid'
 JOIN issue i ON i.id = t.issue_id AND i.workspace_id = t.workspace_id
 LEFT JOIN labrastro_issue_tip_state s ON s.workspace_id = t.workspace_id
-    AND s.tip_id = t.id AND s.user_id = $1
-WHERE t.workspace_id = $2
-  AND ($3::uuid IS NULL OR t.issue_id = $3)
-  AND ($4::boolean OR t.status = 'valid')
-  AND (NOT $5::boolean OR EXISTS (
-      SELECT 1 FROM agent_task_queue q
-      JOIN agent a ON a.id = q.agent_id AND a.workspace_id = t.workspace_id
-      WHERE q.issue_id = t.issue_id AND q.status = 'running'
-        AND q.chat_session_id IS NULL AND q.autopilot_run_id IS NULL
-        AND a.kind = 'user' AND a.archived_at IS NULL
-  ))
+    AND s.tip_id = t.id AND s.user_id = $2
 ORDER BY t.created_at DESC, t.id DESC
 `
 
-type LabrastroYSKListTipsParams struct {
-	UserID         pgtype.UUID `json:"user_id"`
-	WorkspaceID    pgtype.UUID `json:"workspace_id"`
-	IssueID        pgtype.UUID `json:"issue_id"`
-	IncludeInvalid bool        `json:"include_invalid"`
-	ActiveOnly     bool        `json:"active_only"`
+type LabrastroYSKListActiveTipsParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
 }
 
-type LabrastroYSKListTipsRow struct {
+type LabrastroYSKListActiveTipsRow struct {
 	LabrastroIssueTip LabrastroIssueTip  `json:"labrastro_issue_tip"`
 	UserState         pgtype.Text        `json:"user_state"`
 	UserFeedback      pgtype.Text        `json:"user_feedback"`
@@ -321,21 +317,89 @@ type LabrastroYSKListTipsRow struct {
 	IssueNumber       int32              `json:"issue_number"`
 }
 
-func (q *Queries) LabrastroYSKListTips(ctx context.Context, arg LabrastroYSKListTipsParams) ([]LabrastroYSKListTipsRow, error) {
-	rows, err := q.db.Query(ctx, labrastroYSKListTips,
+func (q *Queries) LabrastroYSKListActiveTips(ctx context.Context, arg LabrastroYSKListActiveTipsParams) ([]LabrastroYSKListActiveTipsRow, error) {
+	rows, err := q.db.Query(ctx, labrastroYSKListActiveTips, arg.WorkspaceID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LabrastroYSKListActiveTipsRow{}
+	for rows.Next() {
+		var i LabrastroYSKListActiveTipsRow
+		if err := rows.Scan(
+			&i.LabrastroIssueTip.ID,
+			&i.LabrastroIssueTip.WorkspaceID,
+			&i.LabrastroIssueTip.IssueID,
+			&i.LabrastroIssueTip.TaskID,
+			&i.LabrastroIssueTip.AgentID,
+			&i.LabrastroIssueTip.AnchorCommentID,
+			&i.LabrastroIssueTip.Tag,
+			&i.LabrastroIssueTip.Line,
+			&i.LabrastroIssueTip.Title,
+			&i.LabrastroIssueTip.Explanation,
+			&i.LabrastroIssueTip.Status,
+			&i.LabrastroIssueTip.OverturnedByTaskID,
+			&i.LabrastroIssueTip.OverturnedByCommentID,
+			&i.LabrastroIssueTip.OverturnedReason,
+			&i.LabrastroIssueTip.CreatedAt,
+			&i.LabrastroIssueTip.UpdatedAt,
+			&i.UserState,
+			&i.UserFeedback,
+			&i.StateUpdatedAt,
+			&i.IssueNumber,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const labrastroYSKListIssueTips = `-- name: LabrastroYSKListIssueTips :many
+SELECT t.id, t.workspace_id, t.issue_id, t.task_id, t.agent_id, t.anchor_comment_id, t.tag, t.line, t.title, t.explanation, t.status, t.overturned_by_task_id, t.overturned_by_comment_id, t.overturned_reason, t.created_at, t.updated_at, s.state AS user_state, s.feedback AS user_feedback,
+       s.updated_at AS state_updated_at, i.number AS issue_number
+FROM labrastro_issue_tip t
+JOIN issue i ON i.id = t.issue_id AND i.workspace_id = t.workspace_id
+LEFT JOIN labrastro_issue_tip_state s ON s.workspace_id = t.workspace_id
+    AND s.tip_id = t.id AND s.user_id = $1
+WHERE t.workspace_id = $2
+  AND t.issue_id = $3
+  AND ($4::boolean OR t.status = 'valid')
+ORDER BY t.created_at DESC, t.id DESC
+`
+
+type LabrastroYSKListIssueTipsParams struct {
+	UserID         pgtype.UUID `json:"user_id"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	IssueID        pgtype.UUID `json:"issue_id"`
+	IncludeInvalid bool        `json:"include_invalid"`
+}
+
+type LabrastroYSKListIssueTipsRow struct {
+	LabrastroIssueTip LabrastroIssueTip  `json:"labrastro_issue_tip"`
+	UserState         pgtype.Text        `json:"user_state"`
+	UserFeedback      pgtype.Text        `json:"user_feedback"`
+	StateUpdatedAt    pgtype.Timestamptz `json:"state_updated_at"`
+	IssueNumber       int32              `json:"issue_number"`
+}
+
+func (q *Queries) LabrastroYSKListIssueTips(ctx context.Context, arg LabrastroYSKListIssueTipsParams) ([]LabrastroYSKListIssueTipsRow, error) {
+	rows, err := q.db.Query(ctx, labrastroYSKListIssueTips,
 		arg.UserID,
 		arg.WorkspaceID,
 		arg.IssueID,
 		arg.IncludeInvalid,
-		arg.ActiveOnly,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []LabrastroYSKListTipsRow{}
+	items := []LabrastroYSKListIssueTipsRow{}
 	for rows.Next() {
-		var i LabrastroYSKListTipsRow
+		var i LabrastroYSKListIssueTipsRow
 		if err := rows.Scan(
 			&i.LabrastroIssueTip.ID,
 			&i.LabrastroIssueTip.WorkspaceID,

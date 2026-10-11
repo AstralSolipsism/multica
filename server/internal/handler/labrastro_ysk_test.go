@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -126,7 +125,7 @@ func TestLabrastroYSKClaimGatesAndIsolation(t *testing.T) {
 			r := f.request("POST", nil)
 			r.Header.Set("X-Client-Capabilities", tc.capability)
 			resp := taskToResponse(task, f.WorkspaceID)
-			resp.YouShouldKnow = f.h.labrastroYSKClaimContext(r, task, runtime, resp)
+			resp.YouShouldKnow = f.h.labrastroYSKClaimContext(r, task, runtime, []byte(tc.settings), resp.IssueIdentifier)
 			encoded, _ := json.Marshal(resp)
 			if (resp.YouShouldKnow != nil) != tc.enabled || strings.Contains(string(encoded), `"you_should_know":`) != tc.enabled {
 				t.Fatalf("claim gate enabled=%v response=%s", tc.enabled, encoded)
@@ -140,12 +139,21 @@ func TestLabrastroYSKClaimGatesAndIsolation(t *testing.T) {
 }
 
 func TestLabrastroYSKSingleAndBatchClaims(t *testing.T) {
-	for _, batch := range []bool{false, true} {
-		t.Run(fmt.Sprint("batch=", batch), func(t *testing.T) {
+	for _, tc := range []struct {
+		batch  bool
+		source string
+	}{{false, "direct_human"}, {true, "direct_human"}, {false, "owner_fallback"}, {true, "owner_fallback"}} {
+		t.Run(fmt.Sprintf("batch=%v/%s", tc.batch, tc.source), func(t *testing.T) {
+			batch := tc.batch
 			f := newYSKFixture(t)
 			accountable := f.User(t, "represented member", uuid.NewString()+"@example.com")
 			f.Member(t, f.WorkspaceID, accountable, "member")
-			f.Exec(t, `UPDATE agent_task_queue SET status='queued', started_at=NULL, dispatched_at=NULL, accountable_user_id=$2, originator_user_id=$2 WHERE id=$1`, f.task, accountable)
+			var originator any = accountable
+			if tc.source == "owner_fallback" {
+				originator = nil
+			}
+			f.Exec(t, `UPDATE agent_task_queue SET status='queued', started_at=NULL, dispatched_at=NULL,
+				accountable_user_id=$2, originator_user_id=$3, originator_source=$4 WHERE id=$1`, f.task, accountable, originator, tc.source)
 			f.Exec(t, `UPDATE agent SET visibility='workspace', permission_mode='public_to' WHERE id=$1`, f.agent)
 			f.Exec(t, `UPDATE agent_runtime SET visibility='public' WHERE id=$1`, f.runtime)
 			f.InsertNoID(t, "agent_invocation_target", testutil.Cols{"agent_id": f.agent, "target_type": "workspace", "target_id": f.WorkspaceID}, "agent_id=$1", f.agent)
@@ -380,8 +388,28 @@ func TestLabrastroYSKStatesKnownTopicBoundAndMemberIsolation(t *testing.T) {
 		t.Fatal("inactive issue leaked into active tips")
 	}
 	f.Exec(t, `UPDATE agent_task_queue SET status='running' WHERE id=$1`, f.task)
+	f.Task(t, f.agent, testutil.Cols{"issue_id": f.issue, "runtime_id": f.runtime, "status": "running"})
 	if len(f.list(t, true, false, testUserID)) != 60 {
-		t.Fatal("active list missing current tips")
+		t.Fatal("active list lost or duplicated tips for an issue with multiple running tasks")
+	}
+}
+
+func TestLabrastroYSKReportRejectsSelfOverturnAndForeignAnchor(t *testing.T) {
+	f := newYSKFixture(t)
+	id := f.tip(t, "same run must not overturn itself")
+	f.report(t, labrastroYSKReport{Version: 1, Kind: "light", Step: 1,
+		Overturned: []labrastroYSKInputOverturn{{TipID: id, Reason: "still the same run"}}})
+	if f.Count(t, `SELECT count(*) FROM labrastro_issue_tip WHERE id=$1 AND status='valid'`, id) != 1 {
+		t.Fatal("report overturned its own run's tip")
+	}
+	otherIssue := f.Issue(t, "other issue")
+	comment := f.Comment(t, otherIssue, "belongs elsewhere")
+	// Keep the timestamp eligible so only the issue ownership check rejects it.
+	f.Exec(t, `UPDATE comment SET updated_at=(SELECT dispatched_at FROM agent_task_queue WHERE id=$2)-interval '1 second' WHERE id=$1`, comment, f.task)
+	f.Exec(t, `UPDATE agent_task_queue SET trigger_comment_id=$2 WHERE id=$1`, f.task, comment)
+	f.report(t, labrastroYSKReport{Version: 1, Kind: "light", Step: 1, Tips: []labrastroYSKInputTip{yskInput("wrong comment anchor")}})
+	if f.Count(t, `SELECT count(*) FROM labrastro_issue_tip WHERE task_id=$1`, f.task) != 1 {
+		t.Fatal("report accepted a comment from another issue")
 	}
 }
 
@@ -486,30 +514,21 @@ func TestLabrastroYSKStateWriteLosesToMemberRevocation(t *testing.T) {
 	if err = q.LockSubscriberWrites(ctx, db.LockSubscriberWritesParams{WorkspaceID: parseUUID(f.WorkspaceID), UserID: parseUUID(user)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = tx.Exec(ctx, `DELETE FROM member WHERE workspace_id=$1 AND user_id=$2`, f.WorkspaceID, user); err != nil {
+	// Pause revocation after cleanup but BEFORE deleting the member. A member
+	// row lock alone cannot protect this interval against recreated YSK data.
+	if err = q.LabrastroYSKDeleteMember(ctx, db.LabrastroYSKDeleteMemberParams{WorkspaceID: parseUUID(f.WorkspaceID), UserID: parseUUID(user)}); err != nil {
 		t.Fatal(err)
 	}
-	pid := holderBackendPID(t, ctx, tx)
-	done := make(chan int, 1)
 	r := f.request("POST", map[string]any{"state": "known"}, "tipId", id)
 	r.Header.Set("X-User-ID", user)
-	go func() { w := httptest.NewRecorder(); f.h.LabrastroSetTipState(w, r); done <- w.Code }()
-	if !waitForWaiterBlockedBy(t, pid, 10*time.Second) {
-		t.Fatal("state writer did not serialize with revocation")
-	}
-	if err = tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case code := <-done:
-		if code != 404 {
-			t.Fatalf("revoked state writer returned %d", code)
+	yskAssertBlockedRequest(t, tx, f.h.LabrastroSetTipState, r, func() {
+		if _, err = tx.Exec(ctx, `DELETE FROM member WHERE workspace_id=$1 AND user_id=$2`, f.WorkspaceID, user); err != nil {
+			t.Fatal(err)
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("state writer did not finish")
-	}
-	if f.Count(t, `SELECT count(*) FROM labrastro_issue_tip_state WHERE workspace_id=$1`, f.WorkspaceID) != 0 {
-		t.Fatal("state resurrected after revocation")
+	}, 404)
+	if f.Count(t, `SELECT count(*) FROM labrastro_issue_tip_state WHERE workspace_id=$1`, f.WorkspaceID) != 0 ||
+		f.Count(t, `SELECT count(*) FROM labrastro_known_topic WHERE workspace_id=$1`, f.WorkspaceID) != 0 {
+		t.Fatal("personal data resurrected after revocation")
 	}
 }
 

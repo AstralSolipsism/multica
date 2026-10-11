@@ -13,7 +13,7 @@ SELECT topic FROM labrastro_known_topic
 WHERE workspace_id = $1 AND user_id = $2
 ORDER BY updated_at DESC, topic LIMIT 50;
 
--- name: LabrastroYSKListTips :many
+-- name: LabrastroYSKListIssueTips :many
 SELECT sqlc.embed(t), s.state AS user_state, s.feedback AS user_feedback,
        s.updated_at AS state_updated_at, i.number AS issue_number
 FROM labrastro_issue_tip t
@@ -21,15 +21,26 @@ JOIN issue i ON i.id = t.issue_id AND i.workspace_id = t.workspace_id
 LEFT JOIN labrastro_issue_tip_state s ON s.workspace_id = t.workspace_id
     AND s.tip_id = t.id AND s.user_id = sqlc.arg(user_id)
 WHERE t.workspace_id = sqlc.arg(workspace_id)
-  AND (sqlc.narg(issue_id)::uuid IS NULL OR t.issue_id = sqlc.narg(issue_id))
+  AND t.issue_id = sqlc.arg(issue_id)
   AND (sqlc.arg(include_invalid)::boolean OR t.status = 'valid')
-  AND (NOT sqlc.arg(active_only)::boolean OR EXISTS (
-      SELECT 1 FROM agent_task_queue q
-      JOIN agent a ON a.id = q.agent_id AND a.workspace_id = t.workspace_id
-      WHERE q.issue_id = t.issue_id AND q.status = 'running'
-        AND q.chat_session_id IS NULL AND q.autopilot_run_id IS NULL
-        AND a.kind = 'user' AND a.archived_at IS NULL
-  ))
+ORDER BY t.created_at DESC, t.id DESC;
+
+-- name: LabrastroYSKListActiveTips :many
+WITH running AS MATERIALIZED (
+    SELECT DISTINCT q.issue_id FROM agent_task_queue q
+    JOIN agent a ON a.id = q.agent_id
+    WHERE a.workspace_id = sqlc.arg(workspace_id) AND q.status = 'running'
+      AND q.issue_id IS NOT NULL AND q.chat_session_id IS NULL AND q.autopilot_run_id IS NULL
+      AND a.kind = 'user' AND a.archived_at IS NULL
+)
+SELECT sqlc.embed(t), s.state AS user_state, s.feedback AS user_feedback,
+       s.updated_at AS state_updated_at, i.number AS issue_number
+FROM running r
+JOIN labrastro_issue_tip t ON t.workspace_id = sqlc.arg(workspace_id)
+    AND t.issue_id = r.issue_id AND t.status = 'valid'
+JOIN issue i ON i.id = t.issue_id AND i.workspace_id = t.workspace_id
+LEFT JOIN labrastro_issue_tip_state s ON s.workspace_id = t.workspace_id
+    AND s.tip_id = t.id AND s.user_id = sqlc.arg(user_id)
 ORDER BY t.created_at DESC, t.id DESC;
 
 -- name: LabrastroYSKGetTip :one

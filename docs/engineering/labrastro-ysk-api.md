@@ -43,7 +43,10 @@ context (`X-Workspace-ID` or slug).
 - `GET /api/issues/{issueId}/tips?status=valid|all`: defaults to `valid`;
   accepts the usual issue UUID or identifier.
 - `GET /api/tips/active`: valid tips on issues with a running user agent, with
-  the same running-task criteria as `/api/working-agents` for issue work.
+  the same running-task criteria as `/api/working-agents` for issue work. A
+  dedicated query selects distinct running issue IDs first and looks up their
+  tips through the workspace/issue index; completed issues' valid history is
+  not scanned on each refresh.
 - `POST /api/tips/{tipId}/state`: accepts OL-187 G's `state` and optional nullable
   `feedback`. Returns the personal event payload described below. `known` stores
   the tip's `line` as a topic, refreshing duplicates and retaining the latest 50
@@ -96,8 +99,16 @@ type TipStateChanged = {
 
 Comment edits and deletes invalidate anchored tips in the same transaction and
 publish updates only after commit. Deleted comments keep their historical UUID
-on the tips, including when the comment becomes a thread tombstone. Issue
-deletion removes tips and their personal states; workspace deletion removes all
+on the tips, including when the comment becomes a thread tombstone.
+
+Source-change detection currently has a conservative admission boundary: a
+comment's `updated_at` later than task dispatch rejects new reports. Resolving
+or reopening a comment also advances that timestamp, so it rejects subsequent
+reports from an already running task while leaving existing tips valid. Editing
+comment attachments invalidates tips through the comment revision; standalone
+`DELETE /api/attachments/{id}` does not change that revision or invalidate tips.
+
+Issue deletion removes tips and their personal states; workspace deletion removes all
 YSK data; member removal clears that member's states and topics. The independent
 known-topic list survives an individual issue deletion.
 
