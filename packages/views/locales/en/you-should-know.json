@@ -1,0 +1,42 @@
+{
+  "tag": {
+    "you_should_know": "You should know",
+    "heads_up": "Heads up"
+  },
+  "card": {
+    "learn_more": "Learn more",
+    "already_know": "I already know",
+    "dismiss": "Dismiss",
+    "got_it": "Got it",
+    "discuss": "Discuss in comments"
+  },
+  "feedback": {
+    "helpful": "Helpful",
+    "not_relevant": "Not relevant",
+    "not_understood": "Didn't understand"
+  },
+  "bubble": {
+    "marker_tooltip": "A bystander assistant keeps watch while agents work",
+    "settings_hint": "You can turn this off in personal settings"
+  },
+  "archive": {
+    "title": "You should know",
+    "filter_valid": "Valid",
+    "filter_invalid": "No longer valid",
+    "search_placeholder": "Search this issue",
+    "group_description": "Issue description",
+    "group_comment": "Comment",
+    "overturned_by_comment": "Overturned by this comment",
+    "overturned": "Overturned",
+    "source_changed": "Source changed",
+    "no_results": "No matching tips"
+  },
+  "settings": {
+    "title": "You should know",
+    "workspace_label": "Show bystander tips while agents work",
+    "personal_label": "You should know"
+  },
+  "errors": {
+    "state_failed": "Couldn't save. Try again."
+  }
+}

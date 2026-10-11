@@ -1,0 +1,42 @@
+{
+  "tag": {
+    "you_should_know": "알아두세요",
+    "heads_up": "주의하세요"
+  },
+  "card": {
+    "learn_more": "자세히 보기",
+    "already_know": "이미 알고 있어요",
+    "dismiss": "닫기",
+    "got_it": "이해했어요",
+    "discuss": "댓글에서 이야기하기"
+  },
+  "feedback": {
+    "helpful": "도움이 됐어요",
+    "not_relevant": "관련 없어요",
+    "not_understood": "이해하기 어려워요"
+  },
+  "bubble": {
+    "marker_tooltip": "에이전트가 작업하는 동안 보조 어시스턴트가 지켜봅니다",
+    "settings_hint": "개인 설정에서 끌 수 있어요"
+  },
+  "archive": {
+    "title": "You should know",
+    "filter_valid": "유효함",
+    "filter_invalid": "더 이상 유효하지 않음",
+    "search_placeholder": "이 태스크에서 검색",
+    "group_description": "태스크 설명",
+    "group_comment": "댓글",
+    "overturned_by_comment": "이 댓글로 뒤집혔어요",
+    "overturned": "뒤집혔어요",
+    "source_changed": "원문이 변경되었어요",
+    "no_results": "일치하는 힌트가 없어요"
+  },
+  "settings": {
+    "title": "You should know",
+    "workspace_label": "에이전트가 작업하는 동안 보조 힌트 표시",
+    "personal_label": "You should know"
+  },
+  "errors": {
+    "state_failed": "저장하지 못했어요. 다시 시도해 주세요"
+  }
+}

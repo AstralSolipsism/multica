@@ -7,6 +7,7 @@ import type { TimelineEntry } from "./activity";
 import type { Workspace, MemberWithUser, Invitation } from "./workspace";
 import type { Project } from "./project";
 import type { Label } from "./label";
+import type { IssueTip } from "../api/labrastro-ysk-schemas";
 
 // WebSocket event types (matching Go server protocol/events.go)
 export type WSEventType =
@@ -91,7 +92,10 @@ export type WSEventType =
   | "github_installation:deleted"
   | "pull_request:linked"
   | "pull_request:updated"
-  | "pull_request:unlinked";
+  | "pull_request:unlinked"
+  | "issue_tip:created"
+  | "issue_tip:updated"
+  | "issue_tip_state:changed";
 
 export interface WSMessage<T = unknown> {
   type: WSEventType;
@@ -126,6 +130,24 @@ export interface IssueUpdatedPayload {
 
 export interface IssueDeletedPayload {
   issue_id: string;
+}
+
+// You Should Know (YSK) tips. The created/updated payloads are emitted
+// workspace-wide like comment:created; the state payload goes to the acting
+// user only. Shapes follow the OL-188 server implementation (PR #95,
+// docs/engineering/labrastro-ysk-api.md).
+export interface IssueTipChangedPayload {
+  tip: IssueTip;
+}
+
+export interface IssueTipStateChangedPayload {
+  workspace_id: string;
+  issue_id: string;
+  tip_id: string;
+  user_id: string;
+  state: "known" | "dismissed";
+  feedback: "helpful" | "not_relevant" | "not_understood" | null;
+  updated_at: string | null;
 }
 
 export interface IssueLabelsChangedPayload {
@@ -655,6 +677,9 @@ export interface WSEventPayloadMap {
   "pull_request:linked": unknown;
   "pull_request:updated": unknown;
   "pull_request:unlinked": unknown;
+  "issue_tip:created": IssueTipChangedPayload;
+  "issue_tip:updated": IssueTipChangedPayload;
+  "issue_tip_state:changed": IssueTipStateChangedPayload;
 }
 
 /**

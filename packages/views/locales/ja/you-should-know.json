@@ -1,0 +1,42 @@
+{
+  "tag": {
+    "you_should_know": "知っておきたいこと",
+    "heads_up": "ご注意"
+  },
+  "card": {
+    "learn_more": "詳しく見る",
+    "already_know": "すでに知っている",
+    "dismiss": "閉じる",
+    "got_it": "理解しました",
+    "discuss": "コメントで話す"
+  },
+  "feedback": {
+    "helpful": "役に立った",
+    "not_relevant": "関係ない",
+    "not_understood": "わかりにくい"
+  },
+  "bubble": {
+    "marker_tooltip": "エージェントの作業中に補助アシスタントが見守っています",
+    "settings_hint": "個人設定でオフにできます"
+  },
+  "archive": {
+    "title": "You should know",
+    "filter_valid": "有効",
+    "filter_invalid": "無効化済み",
+    "search_placeholder": "このタスク内を検索",
+    "group_description": "タスクの説明",
+    "group_comment": "コメント",
+    "overturned_by_comment": "このコメントによって覆されました",
+    "overturned": "覆されました",
+    "source_changed": "原文が変更されました",
+    "no_results": "一致するヒントはありません"
+  },
+  "settings": {
+    "title": "You should know",
+    "workspace_label": "エージェントの作業中に補助ヒントを表示",
+    "personal_label": "You should know"
+  },
+  "errors": {
+    "state_failed": "保存できませんでした。もう一度お試しください"
+  }
+}
