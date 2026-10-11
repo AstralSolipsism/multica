@@ -177,24 +177,62 @@ describe("scheduleTips — rotation queue", () => {
     expect(result.queue.map((entry) => entry.tipId)).toEqual(["hu", "light"]);
   });
 
-  it("orders same-tag tips by primary level, then page position, then creation time", () => {
-    const summary = anchor({ level: "summary", scope: SUMMARY_SCOPE }, { top: 5 });
+  it("orders same-tag tips by primary level, even against page position", () => {
+    // The summary sits highest on the page, the row in the middle, the detail
+    // header lowest — level must still win over position at every boundary.
+    const summary = anchor(
+      { level: "summary", scope: { "issue-1": "OL-1", "issue-2": "OL-2", "issue-3": "OL-3" } },
+      { top: 5 },
+    );
+    const row = anchor({ level: "row", issueId: "issue-1" }, { top: 100 });
+    const header = anchor({ level: "detail_header", issueId: "issue-2" }, { top: 400 });
+    const result = scheduleTips({
+      anchors: [summary, row, header],
+      tips: [
+        tip({ id: "rowTip", issue_id: "issue-1" }),
+        tip({ id: "headerTip", issue_id: "issue-2" }),
+        tip({ id: "summaryTip", issue_id: "issue-3" }),
+      ],
+    });
+    expect(result.queue.map((entry) => entry.tipId)).toEqual([
+      "headerTip",
+      "rowTip",
+      "summaryTip",
+    ]);
+    expect(result.queue.map((entry) => entry.level)).toEqual([
+      "detail_header",
+      "row",
+      "summary",
+    ]);
+  });
+
+  it("orders same-tag same-level tips by page position, then creation time", () => {
     const rowLow = anchor({ level: "row", issueId: "issue-1" }, { top: 300 });
     const rowHigh = anchor({ level: "row", issueId: "issue-2" }, { top: 100 });
     const older = tip({ id: "older", issue_id: "issue-1", created_at: "2026-10-01T00:00:00Z" });
     const newer = tip({ id: "newer", issue_id: "issue-1", created_at: "2026-10-02T00:00:00Z" });
     const other = tip({ id: "other", issue_id: "issue-2" });
     const result = scheduleTips({
-      anchors: [summary, rowLow, rowHigh],
+      anchors: [rowLow, rowHigh],
       tips: [newer, older, other],
     });
     // row (top 100) before row (top 300); the two tips sharing the lower row
-    // go oldest first; the summary primary trails the rows.
+    // go oldest first.
     expect(result.queue.map((entry) => entry.tipId)).toEqual([
       "other",
       "older",
       "newer",
     ]);
+  });
+
+  it("compares creation times as timestamps, not strings (RFC3339Nano trims zeros)", () => {
+    const row = anchor({ level: "row", issueId: "issue-1" });
+    // "31.1Z" is 100ms into the second; "31.123456Z" is ~123ms. String compare
+    // puts ".123456Z" first ("2" < "Z"), i.e. the LATER tip first.
+    const earlier = tip({ id: "earlier", issue_id: "issue-1", created_at: "2026-10-01T00:00:31.1Z" });
+    const later = tip({ id: "later", issue_id: "issue-1", created_at: "2026-10-01T00:00:31.123456Z" });
+    const result = scheduleTips({ anchors: [row], tips: [later, earlier] });
+    expect(result.queue.map((entry) => entry.tipId)).toEqual(["earlier", "later"]);
   });
 
   it("assigns dwell by tag: 8s for you-should-know, 15s for heads-up", () => {

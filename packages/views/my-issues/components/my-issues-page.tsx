@@ -39,12 +39,13 @@ export function MyIssuesPage() {
           }}
           modes={["board", "list", "table", "swimlane"]}
           batchToolbar="list"
-          renderHeader={({ controller }) => (
+          renderHeader={({ controller, summaryScopeIssues }) => (
             <>
               {renderTitle(controller.isRefreshing)}
               <MyIssuesHeader
                 allIssues={controller.surfaceIssues}
                 workingAgents={controller.workingAgents}
+                tipAnchorScopeIssues={summaryScopeIssues}
                 scope={scope}
                 onScopeChange={setScope}
                 facetCountsExact={controller.facetCountsExact}

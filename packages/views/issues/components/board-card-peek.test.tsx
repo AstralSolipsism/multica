@@ -11,7 +11,7 @@ import {
   IssuePeekIdContext,
   type IssuePeekActions,
 } from "../surface/peek-context";
-import { DraggableBoardCard } from "./board-card";
+import { BoardCardContent, DraggableBoardCard } from "./board-card";
 
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-query")>()),
@@ -212,6 +212,20 @@ describe("DraggableBoardCard side peek", () => {
     expect(indicatorProps.current).toMatchObject({
       issueId: "issue-1",
       tipAnchor: true,
+    });
+  });
+
+  it("leaves tip anchoring off for bare content — the drag overlay must not register a second row anchor", () => {
+    // BoardCardContent is what board-view's and swimlane-view's DragOverlay
+    // render while dragging; only the real card (DraggableBoardCard) opts in.
+    render(
+      <NavigationProvider value={navigation}>
+        <BoardCardContent issue={issue} />
+      </NavigationProvider>,
+    );
+    expect(indicatorProps.current).toMatchObject({
+      issueId: "issue-1",
+      tipAnchor: false,
     });
   });
 });

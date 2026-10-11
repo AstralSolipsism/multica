@@ -113,7 +113,20 @@ beforeEach(() => {
 describe("IssuesHeader tip anchor scope (OL-193)", () => {
   it("passes the surface's loaded issues as the summary scope", () => {
     renderWithI18n(
-      <IssuesHeader scopedIssues={ISSUES} workingAgents={undefined} />,
+      <IssuesHeader scopedIssues={ISSUES} workingAgents={undefined} tipAnchorScopeIssues={ISSUES} />,
+    );
+    expect(chipProps.current?.tipAnchorScope).toEqual({
+      i1: "OL-1",
+      i2: "OL-2",
+    });
+  });
+
+  it("follows tipAnchorScopeIssues even when scopedIssues is empty (table mode)", () => {
+    // Table mode pages rows through TableView's own query, so the header's
+    // scopedIssues is EMPTY there — the scope must come from the surface's
+    // per-view loaded-issues list instead.
+    renderWithI18n(
+      <IssuesHeader scopedIssues={[]} workingAgents={undefined} tipAnchorScopeIssues={ISSUES} />,
     );
     expect(chipProps.current?.tipAnchorScope).toEqual({
       i1: "OL-1",
@@ -123,10 +136,10 @@ describe("IssuesHeader tip anchor scope (OL-193)", () => {
 
   it("keeps the scope referentially stable across re-renders", () => {
     const { rerender } = renderWithI18n(
-      <IssuesHeader scopedIssues={ISSUES} workingAgents={undefined} />,
+      <IssuesHeader scopedIssues={ISSUES} workingAgents={undefined} tipAnchorScopeIssues={ISSUES} />,
     );
     const first = chipProps.current?.tipAnchorScope;
-    rerender(<IssuesHeader scopedIssues={ISSUES} workingAgents={undefined} />);
+    rerender(<IssuesHeader scopedIssues={ISSUES} workingAgents={undefined} tipAnchorScopeIssues={ISSUES} />);
     expect(chipProps.current?.tipAnchorScope).toBe(first);
   });
 });
@@ -137,6 +150,7 @@ describe("MyIssuesHeader tip anchor scope (OL-193)", () => {
       <MyIssuesHeader
         allIssues={ISSUES}
         workingAgents={undefined}
+        tipAnchorScopeIssues={ISSUES}
         scope="all"
         onScopeChange={() => {}}
         onTableFacetChange={() => {}}
@@ -152,6 +166,7 @@ describe("MyIssuesHeader tip anchor scope (OL-193)", () => {
     const props = {
       allIssues: ISSUES,
       workingAgents: undefined,
+      tipAnchorScopeIssues: ISSUES,
       scope: "all" as const,
       onScopeChange: () => {},
       onTableFacetChange: () => {},

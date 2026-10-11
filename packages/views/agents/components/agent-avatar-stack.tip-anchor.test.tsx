@@ -26,6 +26,7 @@ class MockIntersectionObserver {
   static instances: MockIntersectionObserver[] = [];
   readonly callback: IntersectionObserverCallback;
   observed = new Set<Element>();
+  disconnected = false;
   constructor(callback: IntersectionObserverCallback) {
     this.callback = callback;
     MockIntersectionObserver.instances.push(this);
@@ -37,6 +38,7 @@ class MockIntersectionObserver {
     this.observed.delete(element);
   }
   disconnect() {
+    this.disconnected = true;
     this.observed.clear();
   }
   emit(element: Element, isIntersecting: boolean, top = 0) {
@@ -132,7 +134,7 @@ describe("AgentAvatarStack tip anchor registration", () => {
     expect(registeredAnchors()).toHaveLength(0);
   });
 
-  it("unregisters when the anchor unmounts", () => {
+  it("unregisters when the anchor unmounts (no-observer fallback path)", () => {
     const { unmount } = renderStack(
       <AgentAvatarStack
         agentIds={["agent-1"]}
@@ -142,6 +144,23 @@ describe("AgentAvatarStack tip anchor registration", () => {
     expect(registeredAnchors()).toHaveLength(1);
     unmount();
     expect(registeredAnchors()).toHaveLength(0);
+  });
+
+  it("unregisters and disconnects the observer on unmount (IO path)", () => {
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+    const { unmount } = renderStack(
+      <AgentAvatarStack
+        agentIds={["agent-1"]}
+        tipAnchor={{ level: "row", issueId: "issue-1" }}
+      />,
+    );
+    const observer = MockIntersectionObserver.instances[0]!;
+    const element = [...observer.observed][0]!;
+    act(() => observer.emit(element, true));
+    expect(registeredAnchors()).toHaveLength(1);
+    unmount();
+    expect(registeredAnchors()).toHaveLength(0);
+    expect(observer.disconnected).toBe(true);
   });
 
   it("unregisters when the stack renders nothing (no agents left)", () => {
@@ -179,22 +198,46 @@ describe("AgentAvatarStack tip anchor registration", () => {
     expect(listener).not.toHaveBeenCalled();
   });
 
-  it("re-registers when the descriptor's content changes", () => {
+  it("updates a changed descriptor in place — visibility, bubble and dots survive", () => {
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+    const scope = { "issue-1": "OL-1" };
     const { rerender } = renderStack(
       <AgentAvatarStack
         agentIds={["agent-1"]}
-        tipAnchor={{ level: "row", issueId: "issue-1" }}
+        tipAnchor={{ level: "summary", scope }}
       />,
     );
+    const observer = MockIntersectionObserver.instances[0]!;
+    const element = [...observer.observed][0]!;
+    act(() => observer.emit(element, true));
+    const id = Object.keys(registry.getState().anchors)[0]!;
+    act(() =>
+      registry.getState().setDisplay({ bubbleAnchorId: id, dotAnchorIds: [id] }),
+    );
+
+    // The summary's scope grows (infinite scroll paged another issue in).
+    const nextScope = { "issue-1": "OL-1", "issue-2": "OL-2" };
     rerender(
       <AgentAvatarStack
         agentIds={["agent-1"]}
-        tipAnchor={{ level: "row", issueId: "issue-2" }}
+        tipAnchor={{ level: "summary", scope: nextScope }}
       />,
     );
-    const anchors = registeredAnchors();
-    expect(anchors).toHaveLength(1);
-    expect(anchors[0]!.descriptor).toEqual({ level: "row", issueId: "issue-2" });
+
+    const anchors = registry.getState().anchors;
+    // Same anchor, still visible, bubble and dots untouched, scope updated.
+    expect(Object.keys(anchors)).toEqual([id]);
+    expect(anchors[id]).toMatchObject({
+      descriptor: { level: "summary", scope: nextScope },
+      visible: true,
+    });
+    expect(registry.getState().display).toEqual({
+      bubbleAnchorId: id,
+      dotAnchorIds: [id],
+    });
+    // No second observer: the lifecycle effect did not re-run.
+    expect(MockIntersectionObserver.instances).toHaveLength(1);
+    expect(observer.disconnected).toBe(false);
   });
 
   it("reports viewport visibility through IntersectionObserver", () => {
@@ -210,14 +253,32 @@ describe("AgentAvatarStack tip anchor registration", () => {
     const id = Object.keys(registry.getState().anchors)[0]!;
     // Until the first entry arrives the anchor is registered but not visible.
     expect(registry.getState().anchors[id]!.visible).toBe(false);
-    act(() => observer.emit(element, true, 120));
-    expect(registry.getState().anchors[id]).toMatchObject({
-      visible: true,
-      top: 120 + window.scrollY,
-    });
+    act(() => observer.emit(element, true));
+    expect(registry.getState().anchors[id]!.visible).toBe(true);
     // A virtualized row scrolling out flips it back to not visible.
     act(() => observer.emit(element, false));
     expect(registry.getState().anchors[id]!.visible).toBe(false);
+  });
+
+  it("measures the page position live instead of caching it", () => {
+    renderStack(
+      <AgentAvatarStack
+        agentIds={["agent-1"]}
+        tipAnchor={{ level: "row", issueId: "issue-1" }}
+      />,
+    );
+    const id = Object.keys(registry.getState().anchors)[0]!;
+    const measure = registry.getState().anchors[id]!.measure;
+    // Lists scroll inside inner containers, so a stored coordinate goes stale
+    // on every scroll; measure() must read the element's CURRENT rect.
+    let top = 100;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => ({ top }) as DOMRect,
+    );
+    expect(measure()).toBe(100);
+    top = 240;
+    expect(measure()).toBe(240);
+    vi.restoreAllMocks();
   });
 });
 
@@ -240,6 +301,29 @@ describe("AgentAvatarStack tip dot", () => {
       registry.getState().setDisplay({ bubbleAnchorId: id, dotAnchorIds: [] }),
     );
     expect(screen.queryByTestId("tip-anchor-dot")).not.toBeInTheDocument();
+  });
+
+  it("lights the dot only on the marked anchor, not on every anchor", () => {
+    renderStack(
+      <>
+        <AgentAvatarStack
+          agentIds={["agent-1"]}
+          tipAnchor={{ level: "row", issueId: "issue-1" }}
+        />
+        <AgentAvatarStack
+          agentIds={["agent-2"]}
+          tipAnchor={{ level: "row", issueId: "issue-2" }}
+        />
+      </>,
+    );
+    const [firstId] = Object.keys(registry.getState().anchors);
+    act(() =>
+      registry.getState().setDisplay({
+        bubbleAnchorId: null,
+        dotAnchorIds: [firstId!],
+      }),
+    );
+    expect(screen.getAllByTestId("tip-anchor-dot")).toHaveLength(1);
   });
 
   it("never lights a dot for a stack without a tipAnchor prop", () => {

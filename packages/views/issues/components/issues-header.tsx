@@ -1192,6 +1192,7 @@ export function ViewRefreshIndicator({ active }: { active: boolean }) {
 export function IssuesHeader({
   scopedIssues,
   workingAgents,
+  tipAnchorScopeIssues,
   allowGantt = false,
   allowDag = false,
   dateFilter = null,
@@ -1206,6 +1207,10 @@ export function IssuesHeader({
   /** See IssueSurfaceController.workingAgents — the surface-scoped projection
    *  behind the agents-working chip. */
   workingAgents: WorkingAgentSummary[] | undefined;
+  /** Issues the current view has loaded, for the YSK summary anchor scope
+   *  (OL-193). Differs from `scopedIssues` in table (server-paged) and DAG
+   *  (graph nodes) modes; the surface computes it per view. */
+  tipAnchorScopeIssues: readonly Pick<Issue, "id" | "identifier">[];
   allowGantt?: boolean;
   /** Surface offers DAG mode (its `modes` include "dag"). */
   allowDag?: boolean;
@@ -1295,11 +1300,12 @@ export function IssuesHeader({
   const toggleAgentRunningFilter = useViewStore(
     (s) => s.toggleAgentRunningFilter,
   );
-  // YSK summary anchor scope (OL-193): the surface's loaded issues, memoized
-  // so the chip's anchor descriptor stays stable across renders.
+  // YSK summary anchor scope (OL-193): the issues the current view has
+  // loaded, computed by the surface. Memoized so the chip's anchor
+  // descriptor stays stable across renders.
   const tipAnchorScope = useMemo(
-    () => tipAnchorScopeFromIssues(scopedIssues),
-    [scopedIssues],
+    () => tipAnchorScopeFromIssues(tipAnchorScopeIssues),
+    [tipAnchorScopeIssues],
   );
   const SCOPE_LABEL_KEY: Record<IssuesScope, "all_label" | "members_label" | "agents_label"> = {
     all: "all_label",

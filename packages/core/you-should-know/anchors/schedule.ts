@@ -60,6 +60,28 @@ function placementFor(
   };
 }
 
+/** Rule 1: each tip's primary position is its most specific visible
+ *  candidate; same-level ties go to the anchor higher up the page. Tips
+ *  without any visible candidate are unplaceable and drop out. */
+function computePlacements(
+  visibleAnchors: Candidate[],
+  tips: readonly SchedulableTip[],
+): { placement: TipPlacement; tip: SchedulableTip; top: number }[] {
+  const topByAnchorId = new Map<string, number>();
+  for (const { anchor } of visibleAnchors) topByAnchorId.set(anchor.id, anchor.top);
+
+  const placed: { placement: TipPlacement; tip: SchedulableTip; top: number }[] = [];
+  for (const tip of tips) {
+    const candidates = visibleAnchors.filter(({ anchor }) =>
+      isTipAnchorCandidate(anchor.descriptor, tip),
+    );
+    if (candidates.length === 0) continue;
+    const placement = placementFor(tip, candidates);
+    placed.push({ placement, tip, top: topByAnchorId.get(placement.anchorId)! });
+  }
+  return placed;
+}
+
 function compareQueueEntries(
   a: { tip: SchedulableTip; placement: TipPlacement; top: number },
   b: { tip: SchedulableTip; placement: TipPlacement; top: number },
@@ -71,16 +93,57 @@ function compareQueueEntries(
   const top = a.top - b.top;
   if (top !== 0) return top;
   // Oldest tip first: tips are consumed in the order they were generated.
-  const created = a.tip.created_at.localeCompare(b.tip.created_at);
+  // Date.parse, not string compare: RFC3339Nano trims trailing zeros in the
+  // fractional seconds, which breaks lexicographic ordering.
+  const created = Date.parse(a.tip.created_at) - Date.parse(b.tip.created_at);
   if (created !== 0) return created;
   return a.tip.id.localeCompare(b.tip.id);
 }
 
+/** Rule 4: one page-wide queue — heads-up first, then primary level, page
+ *  position, creation time. Rule 6: a still-valid current tip keeps the head
+ *  (with its freshly computed placement, so the bubble follows when a more
+ *  specific anchor appears — the tip itself is what must not be interrupted). */
+function buildQueue(
+  placed: { placement: TipPlacement; tip: SchedulableTip; top: number }[],
+  current: { tipId: string } | null | undefined,
+): TipQueueEntry[] {
+  const ordered = placed.slice().sort(compareQueueEntries);
+  const pinned = current
+    ? ordered.find((entry) => entry.tip.id === current.tipId)
+    : undefined;
+  return (pinned
+    ? [pinned, ...ordered.filter((entry) => entry !== pinned)]
+    : ordered
+  ).map((entry) => ({
+    tipId: entry.tip.id,
+    anchorId: entry.placement.anchorId,
+    level: entry.placement.level,
+    issueIdentifier: entry.placement.issueIdentifier,
+    dwellMs: TIP_DWELL_MS[entry.tip.tag],
+  }));
+}
+
+/** Rule 3: dots mark every candidate of a displayable tip except the anchor
+ *  the bubble is (or will be) on — the queue head. */
+function computeDots(
+  placements: readonly TipPlacement[],
+  bubbleAnchorId: string | null,
+): string[] {
+  const dots = new Set<string>();
+  for (const placement of placements) {
+    for (const anchorId of placement.candidateAnchorIds) {
+      if (anchorId !== bubbleAnchorId) dots.add(anchorId);
+    }
+  }
+  return [...dots];
+}
+
 /**
  * Page-level tip scheduling (OL-193, OL-187 §6). Pure: the provider feeds in
- * the registered anchors and the viewer's tips, and gets back where each
- * tip's bubble primarily shows, which anchors light a dot, and the single
- * page-wide rotation queue.
+ * the registered anchors (measured just before the call) and the viewer's
+ * tips, and gets back where each tip's bubble primarily shows, which anchors
+ * light a dot, and the single page-wide rotation queue.
  *
  * Rules:
  * 1. A tip's candidates are its issue's visible detail header, its issue's
@@ -105,57 +168,18 @@ export function scheduleTips(input: TipScheduleInput): TipSchedule {
     if (anchor.visible) visibleAnchors.push({ anchor, order });
   });
 
-  const placements: TipPlacement[] = [];
-  const placementByTipId = new Map<string, TipPlacement>();
-  const topByAnchorId = new Map<string, number>();
-  for (const { anchor } of visibleAnchors) topByAnchorId.set(anchor.id, anchor.top);
+  const placed = computePlacements(visibleAnchors, tips);
+  const queue = buildQueue(placed, current);
+  const dotAnchorIds = computeDots(
+    placed.map((entry) => entry.placement),
+    queue[0]?.anchorId ?? null,
+  );
 
-  for (const tip of tips) {
-    const candidates = visibleAnchors.filter(({ anchor }) =>
-      isTipAnchorCandidate(anchor.descriptor, tip),
-    );
-    if (candidates.length === 0) continue;
-    const placement = placementFor(tip, candidates);
-    placements.push(placement);
-    placementByTipId.set(tip.id, placement);
-  }
-
-  const ordered = placements
-    .map((placement) => ({
-      tip: tips.find((tip) => tip.id === placement.tipId)!,
-      placement,
-      top: topByAnchorId.get(placement.anchorId) ?? Number.POSITIVE_INFINITY,
-    }))
-    .sort(compareQueueEntries);
-
-  // Rule 6: pin a still-valid current tip at the head. Its placement is the
-  // freshly computed one, so the bubble follows when a more specific anchor
-  // appears — the tip itself is what must not be interrupted.
-  const pinned = current
-    ? ordered.find((entry) => entry.tip.id === current.tipId)
-    : undefined;
-  const queue: TipQueueEntry[] = (pinned
-    ? [pinned, ...ordered.filter((entry) => entry !== pinned)]
-    : ordered
-  ).map((entry) => ({
-    tipId: entry.tip.id,
-    anchorId: entry.placement.anchorId,
-    level: entry.placement.level,
-    issueIdentifier: entry.placement.issueIdentifier,
-    dwellMs: TIP_DWELL_MS[entry.tip.tag],
-  }));
-
-  // Rule 3: dots mark every candidate of a displayable tip except the anchor
-  // the bubble is (or will be) on — the queue head.
-  const bubbleAnchorId = queue[0]?.anchorId ?? null;
-  const dots = new Set<string>();
-  for (const placement of placements) {
-    for (const anchorId of placement.candidateAnchorIds) {
-      if (anchorId !== bubbleAnchorId) dots.add(anchorId);
-    }
-  }
-
-  return { placements, dotAnchorIds: [...dots], queue };
+  return {
+    placements: placed.map((entry) => entry.placement),
+    dotAnchorIds,
+    queue,
+  };
 }
 
 /**

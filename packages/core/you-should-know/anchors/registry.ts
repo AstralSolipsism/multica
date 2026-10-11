@@ -11,16 +11,19 @@ export interface TipAnchorRegistryState {
   anchors: Record<string, RegisteredTipAnchor>;
   /** Display state the page-level provider writes back after scheduling. */
   display: TipAnchorDisplayState;
+  /**
+   * Register an anchor, or update an existing one's descriptor/measure in
+   * place. Re-registering an id keeps its visibility and never touches the
+   * display state — a descriptor change (e.g. a summary scope growing by one
+   * issue) must not interrupt the bubble or clear dots.
+   */
   register: (anchor: {
     id: string;
     descriptor: TipAnchorDescriptor;
-    top: number;
+    measure: () => number;
   }) => void;
-  /** Update an anchor's viewport visibility and page position. */
-  setAnchorGeometry: (
-    id: string,
-    geometry: { visible: boolean; top: number },
-  ) => void;
+  /** Update an anchor's viewport visibility. */
+  setAnchorVisible: (id: string, visible: boolean) => void;
   unregister: (id: string) => void;
   setDisplay: (display: TipAnchorDisplayState) => void;
 }
@@ -53,37 +56,39 @@ export function createTipAnchorRegistry(): TipAnchorRegistry {
   return createStore<TipAnchorRegistryState>()((set, get) => ({
     anchors: {},
     display: INITIAL_DISPLAY,
-    register: ({ id, descriptor, top }) => {
+    register: ({ id, descriptor, measure }) => {
       const existing = get().anchors[id];
-      // Re-registration with identical content (e.g. StrictMode remount
-      // replays) must not notify subscribers.
-      if (
-        existing &&
-        tipAnchorDescriptorKey(existing.descriptor) ===
-          tipAnchorDescriptorKey(descriptor) &&
-        existing.top === top
-      ) {
+      if (existing) {
+        // Identical re-registration (StrictMode replays, effect re-runs)
+        // must not notify subscribers.
+        if (
+          tipAnchorDescriptorKey(existing.descriptor) ===
+            tipAnchorDescriptorKey(descriptor) &&
+          existing.measure === measure
+        ) {
+          return;
+        }
+        // In-place update: keep visibility, keep display references.
+        set((s) => ({
+          anchors: {
+            ...s.anchors,
+            [id]: { ...existing, descriptor, measure },
+          },
+        }));
         return;
       }
       set((s) => ({
         anchors: {
           ...s.anchors,
-          // Preserve live geometry across a same-id re-register.
-          [id]: {
-            id,
-            descriptor,
-            top,
-            visible: existing?.visible ?? false,
-          },
+          [id]: { id, descriptor, measure, visible: false },
         },
       }));
     },
-    setAnchorGeometry: (id, { visible, top }) => {
+    setAnchorVisible: (id, visible) => {
       const existing = get().anchors[id];
-      if (!existing || (existing.visible === visible && existing.top === top))
-        return;
+      if (!existing || existing.visible === visible) return;
       set((s) => ({
-        anchors: { ...s.anchors, [id]: { ...existing, visible, top } },
+        anchors: { ...s.anchors, [id]: { ...existing, visible } },
       }));
     },
     unregister: (id) => {

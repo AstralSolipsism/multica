@@ -33,10 +33,14 @@ export interface RegisteredTipAnchor {
   /** Whether the anchor is inside the viewport (IntersectionObserver). */
   visible: boolean;
   /**
-   * Vertical page position in document coordinates (px), used to break ties
-   * between same-level anchors. `Number.POSITIVE_INFINITY` until measured.
+   * Measures the anchor's current viewport-top (px) on demand. NOT a cached
+   * value: the app scrolls inner containers rather than the window, so any
+   * stored position goes stale on the next scroll. The scheduler's caller
+   * measures all visible anchors in one pass right before scheduling — only
+   * visible anchors ever compete, and viewport coordinates taken at the same
+   * instant are mutually comparable.
    */
-  top: number;
+  measure: () => number;
 }
 
 /** Display state written back into the registry by the page-level provider. */
@@ -58,7 +62,11 @@ export interface SchedulableTip {
   created_at: string;
 }
 
-/** Anchor view accepted by the scheduler. */
+/**
+ * Anchor view accepted by the scheduler: a measured snapshot. `top` is the
+ * viewport-top measured by the caller just before scheduling (see
+ * RegisteredTipAnchor.measure).
+ */
 export interface TipScheduleAnchor {
   id: string;
   descriptor: TipAnchorDescriptor;

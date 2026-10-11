@@ -46,6 +46,7 @@ const SAVE_VARIANT: Record<MyIssuesScope, Extract<SaveViewScope, { kind: "my" }>
 export function MyIssuesHeader({
   allIssues,
   workingAgents,
+  tipAnchorScopeIssues,
   scope,
   onScopeChange,
   facetCountsExact = true,
@@ -57,6 +58,10 @@ export function MyIssuesHeader({
    *  working-agents endpoint for its own relation-scoped count; the surface
    *  projection now covers the relation AND every active filter. */
   workingAgents: WorkingAgentSummary[] | undefined;
+  /** Issues the current view has loaded, for the YSK summary anchor scope
+   *  (OL-193). Differs from `allIssues` in table mode (server-paged rows);
+   *  the surface computes it per view. */
+  tipAnchorScopeIssues: readonly Pick<Issue, "id" | "identifier">[];
   scope: MyIssuesScope;
   onScopeChange: (scope: MyIssuesScope) => void;
   /** See IssueDisplayControls.facetCountsExact. */
@@ -94,11 +99,12 @@ export function MyIssuesHeader({
   const toggleAgentRunningFilter = useViewStore(
     (s) => s.toggleAgentRunningFilter,
   );
-  // YSK summary anchor scope (OL-193): the surface's loaded issues, memoized
-  // so the chip's anchor descriptor stays stable across renders.
+  // YSK summary anchor scope (OL-193): the issues the current view has
+  // loaded, computed by the surface. Memoized so the chip's anchor
+  // descriptor stays stable across renders.
   const tipAnchorScope = useMemo(
-    () => tipAnchorScopeFromIssues(allIssues),
-    [allIssues],
+    () => tipAnchorScopeFromIssues(tipAnchorScopeIssues),
+    [tipAnchorScopeIssues],
   );
   const scopeLabel = SCOPES.find((s) => s.value === scope)?.label ?? SCOPES[0]?.label;
 

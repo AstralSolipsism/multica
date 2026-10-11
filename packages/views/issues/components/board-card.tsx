@@ -59,11 +59,16 @@ export const BoardCardContent = memo(function BoardCardContent({
   editable = false,
   childProgress,
   project,
+  tipAnchor = false,
 }: {
   issue: Issue;
   editable?: boolean;
   childProgress?: ChildProgress;
   project?: Project;
+  // YSK row-level tip anchor (OL-193). Only the real board card opts in —
+  // the DragOverlay copy (board-view / swimlane-view) must not register a
+  // second row anchor for the same issue while it follows the pointer.
+  tipAnchor?: boolean;
 }) {
   const { t } = useT("issues");
   const locale = useLocale();
@@ -205,7 +210,7 @@ export const BoardCardContent = memo(function BoardCardContent({
           <p className="text-caption text-muted-foreground truncate">{issue.identifier}</p>
           <IssueDuplicateOfMarker issue={issue} insideLink />
         </div>
-        <IssueAgentActivityIndicator issueId={issue.id} tipAnchor />
+        <IssueAgentActivityIndicator issueId={issue.id} tipAnchor={tipAnchor} />
       </div>
 
       {/* Row 2: Title */}
@@ -416,6 +421,7 @@ export const DraggableBoardCard = memo(function DraggableBoardCard({
             editable
             childProgress={childProgress}
             project={project}
+            tipAnchor
           />
         </AppLink>
       </div>

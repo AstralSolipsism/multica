@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 import {
   createTipAnchorRegistry,
@@ -14,13 +14,13 @@ import { useTipAnchorRegistry } from "./tip-anchor-context";
 // shape instead of conditionally calling useStore.
 const NO_REGISTRY = createTipAnchorRegistry();
 
-function measureTop(element: HTMLElement): number {
-  return element.getBoundingClientRect().top + window.scrollY;
-}
-
 export interface UseTipAnchorResult {
-  /** Attach to the anchor's wrapper element. */
-  ref: (element: HTMLElement | null) => void;
+  /**
+   * Attach to the anchor's wrapper element. Undefined unless there is both a
+   * registry and a descriptor — attaching a state-setting ref unconditionally
+   * would cost every avatar stack in the app an extra render per mount.
+   */
+  ref: ((element: HTMLElement | null) => void) | undefined;
   /** Whether this anchor should render the low-contrast tip dot. */
   showDot: boolean;
 }
@@ -31,11 +31,18 @@ export interface UseTipAnchorResult {
  *
  * - Without a provider in context the hook is a no-op (the feature ships
  *   dark until the page-level provider lands).
- * - Registration follows the element: no element (empty stack), no anchor;
- *   unmounting (e.g. a virtualized row scrolling off) unregisters.
- * - Visibility and page position come from an IntersectionObserver; where
- *   the platform lacks one (jsdom, old webviews) the anchor reports visible
- *   so tips degrade to "always candidate" instead of vanishing.
+ * - Registration lifecycle is keyed on registry + element + whether a
+ *   descriptor exists; descriptor CONTENT changes update the registration
+ *   in place, so a growing summary scope never drops visibility, the bubble,
+ *   or dots (scheduling rule 6: re-scheduling must not interrupt).
+ * - Visibility comes from an IntersectionObserver; where the platform lacks
+ *   one (jsdom, old webviews) the anchor reports visible so tips degrade to
+ *   "always candidate" instead of vanishing. Unmounting (e.g. a virtualized
+ *   row scrolling off) unregisters on both paths.
+ * - Page position is NOT cached: lists here scroll inside inner containers,
+ *   so any stored coordinate goes stale on the next scroll. The registry
+ *   keeps a `measure()` thunk and the scheduler's caller measures visible
+ *   anchors in one pass right before scheduling.
  */
 export function useTipAnchor(
   descriptor: TipAnchorDescriptor | undefined,
@@ -43,46 +50,65 @@ export function useTipAnchor(
   const registry = useTipAnchorRegistry();
   const id = useId();
   const [element, setElement] = useState<HTMLElement | null>(null);
+  const elementRef = useRef<HTMLElement | null>(null);
+  const attachRef = useCallback((el: HTMLElement | null) => {
+    elementRef.current = el;
+    setElement(el);
+  }, []);
+  // Stable measure thunk: reads whatever element is currently attached.
+  const measure = useCallback(
+    () => elementRef.current?.getBoundingClientRect().top ?? 0,
+    [],
+  );
 
-  // The effect keys off the descriptor's content, not its identity — a caller
-  // that re-creates the object every render must not churn the registry.
-  const descriptorKey = descriptor ? tipAnchorDescriptorKey(descriptor) : null;
+  // Keyed on content, not identity — a caller that re-creates the object
+  // every render must not churn the registry. Only computed while registering:
+  // serializing a large summary scope on every idle render is wasted work.
+  const registering = registry !== null && descriptor !== undefined;
+  const descriptorKey = useMemo(
+    () => (registering && descriptor ? tipAnchorDescriptorKey(descriptor) : null),
+    [registering, descriptor],
+  );
   const descriptorRef = useRef(descriptor);
   descriptorRef.current = descriptor;
 
+  // Lifecycle: register, observe, unregister on unmount. Deliberately NOT
+  // keyed on descriptorKey — content changes are effect B's job.
   useEffect(() => {
-    const current = descriptorRef.current;
-    if (!registry || !element || !current) return;
+    if (!registry || !element || !descriptorRef.current) return;
     const state = registry.getState;
-    state().register({ id, descriptor: current, top: measureTop(element) });
+    state().register({ id, descriptor: descriptorRef.current, measure });
 
     if (typeof IntersectionObserver !== "function") {
-      state().setAnchorGeometry(id, {
-        visible: true,
-        top: measureTop(element),
-      });
+      state().setAnchorVisible(id, true);
       return () => state().unregister(id);
     }
     const observer = new IntersectionObserver((entries) => {
       const entry = entries[entries.length - 1];
       if (!entry) return;
-      state().setAnchorGeometry(id, {
-        visible: entry.isIntersecting,
-        top: entry.boundingClientRect.top + window.scrollY,
-      });
+      state().setAnchorVisible(id, entry.isIntersecting);
     });
     observer.observe(element);
     return () => {
       observer.disconnect();
       state().unregister(id);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- descriptor identity is keyed on its serialized content; id is stable per mount.
-  }, [registry, element, descriptorKey, id]);
+  }, [registry, element, id, descriptorKey !== null, measure]);
+
+  // Content updates: re-register in place (keeps visibility and display
+  // state). Runs after the lifecycle effect on mount; the registry's own
+  // idempotence makes that a no-op.
+  useEffect(() => {
+    const current = descriptorRef.current;
+    if (!registry || !current) return;
+    if (!registry.getState().anchors[id]) return;
+    registry.getState().register({ id, descriptor: current, measure });
+  }, [registry, descriptorKey, id, measure]);
 
   const showDot = useStore(
     registry ?? NO_REGISTRY,
     (s) => descriptorKey !== null && s.display.dotAnchorIds.includes(id),
   );
 
-  return { ref: setElement, showDot };
+  return { ref: registering ? attachRef : undefined, showDot };
 }
