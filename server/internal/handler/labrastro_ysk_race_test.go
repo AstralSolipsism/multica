@@ -99,3 +99,30 @@ func TestLabrastroYSKReportWaitsForWorkspaceDeletion(t *testing.T) {
 		t.Fatal("report left orphan tips after workspace deletion")
 	}
 }
+
+func TestLabrastroYSKStateWriteWaitsForWorkspaceDeletion(t *testing.T) {
+	f := newYSKFixture(t)
+	id := f.tip(t, "do not leave orphan personal data")
+	ctx := context.Background()
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	q := f.h.Queries.WithTx(tx)
+	if _, err = q.LockWorkspaceForDelete(ctx, parseUUID(f.WorkspaceID)); err != nil {
+		t.Fatal(err)
+	}
+	if err = q.LabrastroYSKDeleteWorkspace(ctx, parseUUID(f.WorkspaceID)); err != nil {
+		t.Fatal(err)
+	}
+	yskAssertBlockedRequest(t, tx, f.h.LabrastroSetTipState, f.request("POST", map[string]any{"state": "known"}, "tipId", id), func() {
+		if _, err = tx.Exec(ctx, `DELETE FROM workspace WHERE id=$1`, f.WorkspaceID); err != nil {
+			t.Fatal(err)
+		}
+	}, 404)
+	if f.Count(t, `SELECT count(*) FROM labrastro_issue_tip_state WHERE workspace_id=$1`, f.WorkspaceID) != 0 ||
+		f.Count(t, `SELECT count(*) FROM labrastro_known_topic WHERE workspace_id=$1`, f.WorkspaceID) != 0 {
+		t.Fatal("state write left personal data after workspace deletion")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestLabrastroYSKParseReportEnvelope(t *testing.T) {
@@ -124,8 +125,11 @@ func TestLabrastroYSKParseReportFiltersOverturns(t *testing.T) {
 			if report == nil || (len(report.Overturned) == 1) != tc.valid || (len(rejected) == 0) != tc.valid {
 				t.Fatalf("valid=%v report=%+v rejected=%v", tc.valid, report, rejected)
 			}
-			if tc.valid && report.Overturned[0] != item {
-				t.Fatalf("changed valid overturn: %+v", report.Overturned[0])
+			if tc.valid {
+				want := labrastroYSKParsedOverturn{TipID: pgtype.UUID{Bytes: uuid.MustParse(tc.id), Valid: true}, Reason: tc.reason}
+				if report.Overturned[0] != want {
+					t.Fatalf("parsed overturn = %+v, want %+v", report.Overturned[0], want)
+				}
 			}
 		})
 	}

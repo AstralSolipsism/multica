@@ -34,6 +34,16 @@ type labrastroYSKInputOverturn struct {
 	Reason string `json:"reason"`
 }
 
+type labrastroYSKParsedReport struct {
+	Tips       []labrastroYSKInputTip
+	Overturned []labrastroYSKParsedOverturn
+}
+
+type labrastroYSKParsedOverturn struct {
+	TipID  pgtype.UUID
+	Reason string
+}
+
 func labrastroYSKValidText(s string, limit int) bool {
 	return utf8.ValidString(s) && !strings.ContainsRune(s, 0) && strings.TrimSpace(s) != "" && utf8.RuneCountInString(s) <= limit
 }
@@ -46,7 +56,7 @@ func labrastroYSKValidTip(t labrastroYSKInputTip, kind string) bool {
 
 // Parsing has no database or logging side effects. A nil report rejects the
 // envelope; otherwise valid entries survive alongside content-free diagnostics.
-func labrastroYSKParseReport(body io.Reader) (*labrastroYSKReport, []string) {
+func labrastroYSKParseReport(body io.Reader) (*labrastroYSKParsedReport, []string) {
 	var req labrastroYSKReport
 	decoder := json.NewDecoder(body)
 	if err := decoder.Decode(&req); err != nil {
@@ -56,26 +66,23 @@ func labrastroYSKParseReport(body io.Reader) (*labrastroYSKReport, []string) {
 		return nil, []string{"invalid report envelope"}
 	}
 	var rejected []string
-	tips := req.Tips[:0]
+	report := &labrastroYSKParsedReport{Tips: req.Tips[:0]}
 	for _, tip := range req.Tips {
 		if !labrastroYSKValidTip(tip, req.Kind) {
 			rejected = append(rejected, "invalid tip")
 			continue
 		}
-		tips = append(tips, tip)
+		report.Tips = append(report.Tips, tip)
 	}
-	req.Tips = tips
-	overturned := req.Overturned[:0]
 	for _, item := range req.Overturned {
-		_, err := util.ParseUUID(item.TipID)
+		id, err := util.ParseUUID(item.TipID)
 		if req.Kind != "light" || err != nil || strings.TrimSpace(item.Reason) == "" || strings.ContainsRune(item.Reason, 0) {
 			rejected = append(rejected, "invalid overturn")
 			continue
 		}
-		overturned = append(overturned, item)
+		report.Overturned = append(report.Overturned, labrastroYSKParsedOverturn{TipID: id, Reason: item.Reason})
 	}
-	req.Overturned = overturned
-	return &req, rejected
+	return report, rejected
 }
 
 // The caller holds the issue lock and has re-read the task after taking it.
@@ -99,7 +106,7 @@ func labrastroYSKReportSource(ctx context.Context, q *db.Queries, task db.AgentT
 
 // Only parsed reports reach persistence. The issue lock serializes quotas,
 // invalidation and deletion; publication happens after the caller commits.
-func labrastroYSKPersistReport(ctx context.Context, q *db.Queries, task db.AgentTaskQueue, workspaceID pgtype.UUID, req *labrastroYSKReport) (created, updated []db.LabrastroIssueTip, err error) {
+func labrastroYSKPersistReport(ctx context.Context, q *db.Queries, task db.AgentTaskQueue, workspaceID pgtype.UUID, req *labrastroYSKParsedReport) (created, updated []db.LabrastroIssueTip, err error) {
 	for _, input := range req.Tips {
 		tip, err := q.LabrastroYSKCreateTip(ctx, db.LabrastroYSKCreateTipParams{
 			WorkspaceID: workspaceID, IssueID: task.IssueID, TaskID: task.ID, AgentID: task.AgentID, AnchorCommentID: task.TriggerCommentID,
@@ -115,7 +122,7 @@ func labrastroYSKPersistReport(ctx context.Context, q *db.Queries, task db.Agent
 	}
 	for _, overturned := range req.Overturned {
 		tip, err := q.LabrastroYSKOverturnTip(ctx, db.LabrastroYSKOverturnTipParams{
-			WorkspaceID: workspaceID, IssueID: task.IssueID, ID: parseUUID(overturned.TipID), TaskID: task.ID,
+			WorkspaceID: workspaceID, IssueID: task.IssueID, ID: overturned.TipID, TaskID: task.ID,
 			CommentID: task.TriggerCommentID, Reason: pgtype.Text{String: overturned.Reason, Valid: true},
 		})
 		if errors.Is(err, pgx.ErrNoRows) {

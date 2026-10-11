@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/testutil"
@@ -108,6 +109,7 @@ func TestLabrastroYSKClaimGatesAndIsolation(t *testing.T) {
 		{"other provider", `{"you_should_know_enabled":true}`, "codex", protocol.DaemonCapabilityYouShouldKnowV1, false},
 		{"old daemon", `{"you_should_know_enabled":true}`, "claude", "", false},
 		{"substring", `{"you_should_know_enabled":true}`, "claude", "x-you-should-know-v1", false},
+		{"no issue", `{"you_should_know_enabled":true}`, "claude", protocol.DaemonCapabilityYouShouldKnowV1, false},
 		{"enabled", `{"you_should_know_enabled":true}`, "claude", protocol.DaemonCapabilityYouShouldKnowV1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -122,6 +124,9 @@ func TestLabrastroYSKClaimGatesAndIsolation(t *testing.T) {
 				t.Fatal(err)
 			}
 			runtime.Provider = tc.provider
+			if tc.name == "no issue" {
+				task.IssueID = pgtype.UUID{}
+			}
 			r := f.request("POST", nil)
 			r.Header.Set("X-Client-Capabilities", tc.capability)
 			resp := taskToResponse(task, f.WorkspaceID)
@@ -547,6 +552,9 @@ func TestLabrastroYSKAPIGuardsAndNoAgentProjection(t *testing.T) {
 	testutil.Call(t, f.h.LabrastroSetTipState, f.request("POST", map[string]any{"state": "known"}, "tipId", foreignID)).Want(404)
 	testutil.Call(t, f.h.LabrastroSetTipState, f.request("POST", map[string]any{"state": "unknown"}, "tipId", id)).Want(400)
 	testutil.Call(t, f.h.LabrastroSetTipState, f.request("POST", map[string]any{"state": "known", "feedback": "bad"}, "tipId", id)).Want(400)
+	invalidStatus := f.request("GET", nil, "id", f.issue)
+	invalidStatus.URL.RawQuery = "status=unsupported"
+	testutil.Call(t, f.h.LabrastroListIssueTips, invalidStatus).Want(400)
 	outsider := f.User(t, "outsider", uuid.NewString()+"@example.com")
 	r := f.request("GET", nil)
 	r.Header.Set("X-User-ID", outsider)
