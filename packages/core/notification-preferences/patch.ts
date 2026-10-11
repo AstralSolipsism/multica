@@ -12,6 +12,7 @@ const NOTIFICATION_GROUP_KEYS: readonly NotificationGroupKey[] = [
   "updates",
   "agent_activity",
   "system_notifications",
+  "you_should_know",
 ];
 
 function preferenceValue(

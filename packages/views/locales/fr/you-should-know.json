@@ -1,0 +1,42 @@
+{
+  "tag": {
+    "you_should_know": "You should know",
+    "heads_up": "Heads up"
+  },
+  "card": {
+    "learn_more": "En savoir plus",
+    "already_know": "Je le savais déjà",
+    "dismiss": "Fermer",
+    "got_it": "Compris",
+    "discuss": "En discuter dans les commentaires"
+  },
+  "feedback": {
+    "helpful": "Utile",
+    "not_relevant": "Sans rapport",
+    "not_understood": "Pas clair"
+  },
+  "bubble": {
+    "marker_tooltip": "Un assistant observateur surveille le travail des agents",
+    "settings_hint": "Vous pouvez le désactiver dans les paramètres personnels"
+  },
+  "archive": {
+    "title": "You should know",
+    "filter_valid": "Valable",
+    "filter_invalid": "Plus valable",
+    "search_placeholder": "Rechercher dans cette tâche",
+    "group_description": "Description de la tâche",
+    "group_comment": "Commentaire",
+    "overturned_by_comment": "Invalidé par ce commentaire",
+    "overturned": "Invalidé",
+    "source_changed": "Source modifiée",
+    "no_results": "Aucune astuce correspondante"
+  },
+  "settings": {
+    "title": "You should know",
+    "workspace_label": "Afficher les astuces de l'observateur pendant le travail des agents",
+    "personal_label": "You should know"
+  },
+  "errors": {
+    "state_failed": "Échec de l'enregistrement. Réessayez."
+  }
+}

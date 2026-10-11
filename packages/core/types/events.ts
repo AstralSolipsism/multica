@@ -91,7 +91,10 @@ export type WSEventType =
   | "github_installation:deleted"
   | "pull_request:linked"
   | "pull_request:updated"
-  | "pull_request:unlinked";
+  | "pull_request:unlinked"
+  | "issue_tip:created"
+  | "issue_tip:updated"
+  | "issue_tip_state:changed";
 
 export interface WSMessage<T = unknown> {
   type: WSEventType;
@@ -127,6 +130,22 @@ export interface IssueUpdatedPayload {
 export interface IssueDeletedPayload {
   issue_id: string;
 }
+
+// You Should Know (YSK) tips. The created/updated payloads are emitted
+// workspace-wide like comment:created; the state payload goes to the acting
+// user only. Field names follow OL-187 §13 H (server: OL-188).
+export interface IssueTipChangedPayload {
+  tip_id: string;
+  issue_id?: string;
+}
+
+export interface IssueTipStateChangedPayload {
+  tip_id: string;
+  /** Present when the event carries the resolved per-user state. */
+  state?: "known" | "dismissed";
+  feedback?: "helpful" | "not_relevant" | "not_understood" | null;
+}
+
 
 export interface IssueLabelsChangedPayload {
   issue_id: string;
@@ -655,6 +674,9 @@ export interface WSEventPayloadMap {
   "pull_request:linked": unknown;
   "pull_request:updated": unknown;
   "pull_request:unlinked": unknown;
+  "issue_tip:created": IssueTipChangedPayload;
+  "issue_tip:updated": IssueTipChangedPayload;
+  "issue_tip_state:changed": IssueTipStateChangedPayload;
 }
 
 /**

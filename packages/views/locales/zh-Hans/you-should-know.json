@@ -1,0 +1,42 @@
+{
+  "tag": {
+    "you_should_know": "你该知道",
+    "heads_up": "提个醒"
+  },
+  "card": {
+    "learn_more": "了解更多",
+    "already_know": "我已经知道",
+    "dismiss": "关闭",
+    "got_it": "明白了",
+    "discuss": "去评论区聊"
+  },
+  "feedback": {
+    "helpful": "有帮助",
+    "not_relevant": "不相关",
+    "not_understood": "没看懂"
+  },
+  "bubble": {
+    "marker_tooltip": "旁观助手在智能体工作时帮你盯着",
+    "settings_hint": "可在个人设置里关闭"
+  },
+  "archive": {
+    "title": "You should know",
+    "filter_valid": "有效",
+    "filter_invalid": "已失效",
+    "search_placeholder": "在本任务内搜索",
+    "group_description": "任务描述",
+    "group_comment": "评论",
+    "overturned_by_comment": "已被这条评论推翻",
+    "overturned": "已被推翻",
+    "source_changed": "来源已变",
+    "no_results": "没有匹配的提示"
+  },
+  "settings": {
+    "title": "You should know",
+    "workspace_label": "智能体工作时显示旁观提示",
+    "personal_label": "You should know"
+  },
+  "errors": {
+    "state_failed": "没有保存成功，请重试"
+  }
+}
