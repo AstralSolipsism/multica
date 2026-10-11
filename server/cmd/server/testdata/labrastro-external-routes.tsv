@@ -165,6 +165,7 @@ POST	/api/daemon/tasks/{taskId}/start	daemon-auth	separate-auth
 GET	/api/daemon/tasks/{taskId}/status	daemon-auth	separate-auth
 POST	/api/daemon/tasks/{taskId}/supplements/claim	daemon-auth	separate-auth
 POST	/api/daemon/tasks/{taskId}/supplements/{commentId}/ack	daemon-auth	separate-auth
+POST	/api/daemon/tasks/{taskId}/tips	daemon-auth	separate-auth
 POST	/api/daemon/tasks/{taskId}/usage	daemon-auth	separate-auth
 POST	/api/daemon/tasks/{taskId}/wait-local-directory	daemon-auth	separate-auth
 GET	/api/daemon/workspaces	daemon-auth	separate-auth
@@ -275,6 +276,7 @@ POST	/api/issues/{id}/tasks/{taskId}/cancel	user-auth	deny
 POST	/api/issues/{id}/tasks/{taskId}/supplements	user-auth	deny
 POST	/api/issues/{id}/tasks/{taskId}/supplements/{commentId}/retry	user-auth	deny
 GET	/api/issues/{id}/timeline	user-auth	allow
+GET	/api/issues/{id}/tips	user-auth	deny
 POST	/api/issues/{id}/unsubscribe	user-auth	deny
 POST	/api/issues/{id}/unsubscribe/subtree	user-auth	deny
 GET	/api/issues/{id}/usage	user-auth	deny
@@ -417,6 +419,8 @@ POST	/api/tasks/{taskId}/cancel	user-auth	deny
 GET	/api/tasks/{taskId}/messages	user-auth	allow
 POST	/api/tasks/{taskId}/retry-source-context	user-auth	deny
 POST	/api/telegram/binding/redeem	user-auth	deny
+GET	/api/tips/active	user-auth	deny
+POST	/api/tips/{tipId}/state	user-auth	deny
 GET	/api/tokens/	user-auth	deny
 POST	/api/tokens/	user-auth	deny
 POST	/api/tokens/current/renew	user-auth	deny

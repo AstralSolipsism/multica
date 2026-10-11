@@ -1073,6 +1073,41 @@ type IssueWakeupReceipt struct {
 	CoalesceKey pgtype.Text        `json:"coalesce_key"`
 }
 
+type LabrastroIssueTip struct {
+	ID                    pgtype.UUID        `json:"id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	IssueID               pgtype.UUID        `json:"issue_id"`
+	TaskID                pgtype.UUID        `json:"task_id"`
+	AgentID               pgtype.UUID        `json:"agent_id"`
+	AnchorCommentID       pgtype.UUID        `json:"anchor_comment_id"`
+	Tag                   string             `json:"tag"`
+	Line                  string             `json:"line"`
+	Title                 string             `json:"title"`
+	Explanation           string             `json:"explanation"`
+	Status                string             `json:"status"`
+	OverturnedByTaskID    pgtype.UUID        `json:"overturned_by_task_id"`
+	OverturnedByCommentID pgtype.UUID        `json:"overturned_by_comment_id"`
+	OverturnedReason      pgtype.Text        `json:"overturned_reason"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LabrastroIssueTipState struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	TipID       pgtype.UUID        `json:"tip_id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	State       string             `json:"state"`
+	Feedback    pgtype.Text        `json:"feedback"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LabrastroKnownTopic struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	Topic       string             `json:"topic"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type LabrastroMessageApprovedTarget struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`

@@ -3577,7 +3577,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// quick-create) so every agent running in the workspace sees the same
 	// shared context. Empty string when the owner hasn't set one; the daemon
 	// skips rendering the heading in that case.
+	var yskWorkspaceSettings []byte
 	if ws, err := h.Queries.GetWorkspace(r.Context(), parseUUID(resp.WorkspaceID)); err == nil {
+		yskWorkspaceSettings = ws.Settings
 		resp.WorkspaceSlug = ws.Slug
 		if issueNumber > 0 {
 			resp.IssueIdentifier = service.IssueIdentifier(ws.IssuePrefix, issueNumber)
@@ -3713,6 +3715,8 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		resp.InitiatorName = originator.Name
 		resp.InitiatorEmail = originator.Email
 	}
+
+	resp.YouShouldKnow = h.labrastroYSKClaimContext(r, *task, runtime, yskWorkspaceSettings, resp.IssueIdentifier)
 
 	return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount, nil
 }
