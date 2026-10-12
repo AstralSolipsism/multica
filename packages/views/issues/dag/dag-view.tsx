@@ -1,5 +1,5 @@
 "use client";
-import { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef } from "react";
 import { hashKey } from "@tanstack/react-query";
 import { AlertTriangle, FilterX, Loader2 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
@@ -25,6 +25,7 @@ import { useDagRevealRequests } from "./use-dag-reveal-requests";
 import { useDagExpandAll } from "./use-dag-expand-all";
 import { DagToolbar } from "./dag-toolbar";
 import { DagErrorState, graphErrorPolicy } from "./dag-error-state";
+import type { DagCanvasApi } from "./dag-canvas";
 
 const loadDagCanvas = once(() => import("./dag-canvas"));
 const DagCanvas = lazy(loadDagCanvas);
@@ -58,6 +59,10 @@ export function DagView({
   const storeApi = useViewStoreApi();
   const direction = useViewStore((s) => s.dagDirection);
   const baseline = useViewBaseline();
+  const canvasApi = useRef<DagCanvasApi | null>(null);
+  const registerCanvasApi = useCallback((api: DagCanvasApi | null) => {
+    canvasApi.current = api;
+  }, []);
   useEffect(() => {
     void loadDagCanvas().catch(() => undefined);
   }, []);
@@ -83,7 +88,7 @@ export function DagView({
     () => selectCanvasSnapshot(snapshot, layout.snapshot),
     [snapshot, layout.snapshot],
   );
-  const expansion = useDagExpandAll(layout, layoutKey, fold.lineIds);
+  const expansion = useDagExpandAll(layout, layoutKey, fold.visibleLineIds, fold.hiddenLineIds);
   const reveal = useDagRevealRequests(
     graph,
     projection,
@@ -92,8 +97,25 @@ export function DagView({
     layoutKey,
   );
   const onOpenIssue = useCallback(
-    (issueId: string) => navigation.push(paths.issueDetail(issueId)),
-    [navigation, paths],
+    (issueId: string) => {
+      // Toolbar opens land here too: persist the live viewport first so an
+      // in-flight pan survives the round-trip to the issue detail.
+      const viewport = canvasApi.current?.getViewport();
+      if (viewport) storeApi.getState().setDagViewport(viewport);
+      navigation.push(paths.issueDetail(issueId));
+    },
+    [navigation, paths, storeApi],
+  );
+  // Line folds from the toolbar go through the canvas so the header keeps its
+  // screen position; before the canvas mounts there is no viewport to anchor.
+  const foldToggleCollapsed = fold.onToggleCollapsed;
+  const onToggleCollapsed = useCallback(
+    (id: string) => {
+      const api = canvasApi.current;
+      if (api) api.toggleLine(id);
+      else foldToggleCollapsed(id);
+    },
+    [foldToggleCollapsed],
   );
   const clearFilters = useCallback(() => {
     const state = storeApi.getState();
@@ -171,9 +193,14 @@ export function DagView({
     <div className="flex flex-1 min-h-0 flex-col">
       <DagToolbar
         graph={graph}
+        projection={projection}
         pending={layout.pending}
-        collapsedIds={fold.collapsedIds}
-        expandedIds={fold.expandedIds}
+        expandAllDisabled={fold.visibleCollapsedIds.length === 0}
+        collapseAllDisabled={fold.collapseAllDisabled}
+        onOpenIssue={onOpenIssue}
+        onRevealIssues={reveal.onRevealIssues}
+        onFocusGroup={reveal.onFocusGroup}
+        onToggleCollapsed={onToggleCollapsed}
         {...expansion}
       />
 
@@ -233,9 +260,9 @@ export function DagView({
             direction={layout.direction}
             statusColorOf={catalog.colorOf}
             focusRequest={reveal.focusRequest}
+            registerCanvasApi={registerCanvasApi}
             onOpenIssue={onOpenIssue}
             onToggleCollapsed={fold.onToggleCollapsed}
-            onRevealIssues={reveal.onRevealIssues}
             onFocusGroup={reveal.onFocusGroup}
           />
         </Suspense>

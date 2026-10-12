@@ -137,8 +137,11 @@ describe("saved DAG view defaults", () => {
       dagDirection: "LR",
       dagExpandedIds: ["issue:private-fold"],
       dagIndependentExpanded: true,
+      dagShowCompleted: true,
       dagViewport: { x: -123, y: 89, zoom: 1.4 },
       dagSelectedNodeId: "a",
+      dagSelectedEdgeId: "a→b",
+      dagFocus: { nodeId: "a", way: "upstream" },
     });
     renderWithI18n(
       <ViewStoreProvider store={store}>
@@ -157,12 +160,19 @@ describe("saved DAG view defaults", () => {
     expect(payload).toMatchObject({
       name: "Dependency view",
       scope_type: "workspace",
-      display: { viewMode: "dag", dagDirection: "TB", dagGrouping: "parent" },
+      display: {
+        viewMode: "dag",
+        dagDirection: "TB",
+        dagGrouping: "parent",
+        dagShowCompleted: true,
+      },
     });
     for (const key of [
       "dagExpandedIds",
       "dagViewport",
       "dagSelectedNodeId",
+      "dagSelectedEdgeId",
+      "dagFocus",
       "dagIndependentExpanded",
     ]) {
       expect(payload.display).not.toHaveProperty(key);

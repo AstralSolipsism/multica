@@ -12,11 +12,13 @@ import ELK from "elkjs/lib/elk.bundled.js";
 import { layoutDagProjection, type DagLayoutRequest, type DagLayoutResponse } from "./dag-layout";
 import { DagView, type DagGraphQueryState } from "./dag-view";
 import type { DagCanvasProps } from "./dag-canvas";
+import type { DagToolbarProps } from "./dag-toolbar";
 import { graphNode as makeNode, issueGraph as makeGraph } from "./dag-test-fixtures";
 import { computeDagProjection } from "./dag-projection";
 import * as layoutInputs from "./dag-layout-inputs";
 import * as canvasSnapshots from "./dag-canvas-snapshot";
 import { DagFlowGroupCard } from "./dag-group";
+import { DagFlowNodeCard } from "./dag-node";
 import { DagPortUpdateProvider } from "./dag-ports";
 import { ReactFlowProvider } from "@xyflow/react";
 
@@ -79,6 +81,19 @@ vi.mock("@multica/core/paths", async () => {
   };
 });
 
+// Detail fetching/editing is outside the view contract; keep the action slot inert.
+vi.mock("./dag-issue-actions", () => ({
+  useDagIssueSelection: () => ({
+    issue: null,
+    actions: { openEditDependencies: vi.fn(), updateField: vi.fn() },
+    detailFailed: false,
+    retryDetail: vi.fn(),
+  }),
+  DagAssignAction: ({ issue }: { issue: unknown }) => (
+    <button disabled={!issue}>Assign</button>
+  ),
+}));
+
 const canvasSpy = vi.hoisted(() => vi.fn<(props: DagCanvasProps) => void>());
 vi.mock("./dag-canvas", () => ({
   default: (props: DagCanvasProps) => {
@@ -86,6 +101,17 @@ vi.mock("./dag-canvas", () => ({
     return <div data-testid="dag-canvas" />;
   },
 }));
+
+const toolbarSpy = vi.hoisted(() => vi.fn<(props: DagToolbarProps) => void>());
+vi.mock("./dag-toolbar", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("./dag-toolbar")>();
+  return {
+    DagToolbar: (props: DagToolbarProps) => {
+      toolbarSpy(props);
+      return <mod.DagToolbar {...props} />;
+    },
+  };
+});
 
 function syncLayoutRunner() {
   return {
@@ -172,6 +198,7 @@ describe("DagView", () => {
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     store = createStore<IssueViewState>()(viewStoreSlice);
     canvasSpy.mockClear();
+    toolbarSpy.mockClear();
     mockTranslate.mockClear();
   });
 
@@ -515,7 +542,7 @@ describe("DagView", () => {
     await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
     const original = canvasSpy.mock.calls.at(-1)![0];
     expect(original.projection.edges).toHaveLength(1);
-    act(() => original.onRevealIssues(["a", "b"]));
+    act(() => toolbarSpy.mock.calls.at(-1)![0].onRevealIssues(["a", "b"]));
     expect(canvasSpy.mock.calls.at(-1)![0].focusRequest).toBeNull();
     expect(canvasSpy.mock.calls.at(-1)![0].projection).toBe(original.projection);
     const latest = requests.at(-1)!;
@@ -736,9 +763,8 @@ describe("DagView", () => {
     expect(requests).toHaveLength(2);
     expect(canvasSpy.mock.calls.at(-1)![0].focusRequest).toBeNull();
     act(() => {
-      const props = canvasSpy.mock.calls.at(-1)![0];
-      if (target === "group") props.onFocusGroup("issue:two");
-      else props.onRevealIssues(["b"]);
+      if (target === "group") canvasSpy.mock.calls.at(-1)![0].onFocusGroup("issue:two");
+      else toolbarSpy.mock.calls.at(-1)![0].onRevealIssues(["b"]);
     });
     const immediate = canvasSpy.mock.calls.at(-1)![0].focusRequest;
     expect(immediate).toEqual(target === "group"
@@ -802,6 +828,50 @@ describe("DagView", () => {
     expect(document.querySelector('[data-dag-parent-status="done"] svg')).not.toBeNull();
     expect(screen.getByText('dag:stage_badge {"number":3}')).toBeTruthy();
     expect(screen.queryByText("dag:run_queued")).toBeNull();
+  });
+
+  it("renders a kept cancelled card dashed with the still-blocking marker", () => {
+    const graph = makeGraph(
+      [
+        makeNode("c", { status: "cancelled", statusCategory: "closed" }),
+        makeNode("v"),
+      ],
+      [{ id: "cv", source: "c", target: "v" }],
+    );
+    const projection = computeDagProjection(graph, [], false, false),
+      model = projection.nodes.find((n) => n.id === "c")!;
+    expect(model.cancelledBlocking).toBe(true);
+    render(
+      <ReactFlowProvider><DagPortUpdateProvider>
+        <DagFlowNodeCard
+          {...({
+            id: model.id,
+            type: "dagNode",
+            selected: false,
+            draggable: false,
+            dragging: false,
+            selectable: true,
+            deletable: false,
+            isConnectable: false,
+            zIndex: 2,
+            positionAbsoluteX: 0,
+            positionAbsoluteY: 0,
+            data: {
+              model,
+              projectTitle: null,
+              statusColor: null,
+              focused: false,
+              ports: [],
+              showStage: false,
+            },
+          } as Parameters<typeof DagFlowNodeCard>[0])}
+        />
+      </DagPortUpdateProvider></ReactFlowProvider>,
+    );
+    const card = document.querySelector('[data-dag-issue="T-C"]')!;
+    expect(card.className).toContain("border-dashed");
+    expect(screen.getByText("dag:cancelled_blocking")).toBeTruthy();
+    expect(screen.queryByText("dag:context_badge")).toBeNull();
   });
 
   it("keeps an expansion when a status filter hides its children (review F3)", async () => {
@@ -946,5 +1016,198 @@ describe("DagView", () => {
     expect(screen.queryByTestId("dag-canvas")).toBeNull();
     act(() => screen.getByRole("button", { name: /dag:error_retry/ }).click());
     await waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+  });
+
+  it("hides finished lines and singles until the toolbar show-completed toggle is on", async () => {
+    const graph = makeGraph([
+      makeNode("done-line", { status: "done", statusCategory: "done" }),
+      makeNode("done-child", {
+        parentIssueId: "done-line",
+        status: "done",
+        statusCategory: "done",
+      }),
+      makeNode("live"),
+      makeNode("live-child", { parentIssueId: "live" }),
+      makeNode("solo-done", { status: "cancelled", statusCategory: "closed" }),
+    ]);
+    renderDagView(graphQuery({ data: graph }));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    const visibleIds = () =>
+      canvasSpy.mock.calls.at(-1)![0].projection.nodes.map((n: { id: string }) => n.id).sort();
+    expect(visibleIds()).toEqual(["issue:live"]);
+    expect(canvasSpy.mock.calls.at(-1)![0].projection.hiddenCompleted).toEqual({
+      lines: 1,
+      lineTasks: 2,
+      singles: 1,
+    });
+    const toggle = screen
+      .getAllByRole("button")
+      .find((b) => b.textContent?.includes("issues:gantt.show_completed"))!;
+    expect(toggle.textContent).toContain("3");
+    act(() => toggle.click());
+    expect(store.getState().dagShowCompleted).toBe(true);
+    await waitFor(() =>
+      expect(visibleIds()).toEqual(["independent:root", "issue:done-line", "issue:live"]),
+    );
+    expect(canvasSpy.mock.calls.at(-1)![0].projection.hiddenCompleted).toEqual({
+      lines: 0,
+      lineTasks: 0,
+      singles: 0,
+    });
+  });
+
+  it("disables collapse-all when only completed-hidden lines are expanded", async () => {
+    const graph = makeGraph([
+      makeNode("done-line", { status: "done", statusCategory: "done" }),
+      makeNode("done-child", {
+        parentIssueId: "done-line",
+        status: "done",
+        statusCategory: "done",
+      }),
+      makeNode("live"),
+      makeNode("live-child", { parentIssueId: "live" }),
+    ]);
+    store.getState().setDagExpandedIds(["issue:done-line"]);
+    renderDagView(graphQuery({ data: graph }));
+    await screen.findByTestId("dag-canvas");
+    expect(screen.getByRole("button", { name: /dag:collapse_all/ })).toBeDisabled();
+  });
+
+  it("routes toolbar line folds through the registered canvas api", async () => {
+    const graph = makeGraph([
+      makeNode("root"),
+      makeNode("child", { parentIssueId: "root" }),
+    ]);
+    renderDagView(graphQuery({ data: graph }));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    const api = { getViewport: vi.fn(), toggleLine: vi.fn() };
+    act(() => canvasSpy.mock.calls.at(-1)![0].registerCanvasApi?.(api));
+    act(() => toolbarSpy.mock.calls.at(-1)![0].onToggleCollapsed("issue:root"));
+    expect(api.toggleLine).toHaveBeenCalledWith("issue:root");
+    // The api owns the anchored fold; the store is the api's business.
+    expect(store.getState().dagExpandedIds).toEqual([]);
+    // Without a registered canvas the view falls back to the fold handler.
+    act(() => canvasSpy.mock.calls.at(-1)![0].registerCanvasApi?.(null));
+    act(() => toolbarSpy.mock.calls.at(-1)![0].onToggleCollapsed("issue:root"));
+    expect(store.getState().dagExpandedIds).toEqual(["issue:root"]);
+  });
+
+  it("batch expand and collapse only act on visible lines", async () => {
+    const graph = makeGraph([
+      makeNode("done-line", { status: "done", statusCategory: "done" }),
+      makeNode("done-child", {
+        parentIssueId: "done-line",
+        status: "done",
+        statusCategory: "done",
+      }),
+      makeNode("live"),
+      makeNode("live-child", { parentIssueId: "live" }),
+    ]);
+    store.getState().toggleDagShowCompleted();
+    renderDagView(graphQuery({ data: graph }));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    act(() => canvasSpy.mock.calls.at(-1)![0].onToggleCollapsed("issue:done-line"));
+    expect(store.getState().dagExpandedIds).toEqual(["issue:done-line"]);
+    const toggle = () =>
+      screen
+        .getAllByRole("button")
+        .find((b) => b.textContent?.includes("issues:gantt.show_completed"))!;
+    act(() => toggle().click());
+    await waitFor(() =>
+      expect(canvasSpy.mock.calls.at(-1)![0].projection.nodes.map((n: { id: string }) => n.id)).toEqual([
+        "issue:live",
+      ]),
+    );
+    const expand = screen
+      .getAllByRole("button")
+      .find((b) => b.textContent?.includes("dag:expand_all"))!;
+    const collapse = screen
+      .getAllByRole("button")
+      .find((b) => b.textContent?.includes("dag:collapse_all"))!;
+    // Only a hidden line is expanded — nothing visible for collapse to act on.
+    expect(collapse).toBeDisabled();
+    act(() => expand.click());
+    expect(new Set(store.getState().dagExpandedIds)).toEqual(
+      new Set(["issue:done-line", "issue:live"]),
+    );
+  });
+
+  it("keeps a hidden folded line folded through expand all (M12)", async () => {
+    const graph = makeGraph([
+      makeNode("done-line", { status: "done", statusCategory: "done" }),
+      makeNode("done-child", {
+        parentIssueId: "done-line",
+        status: "done",
+        statusCategory: "done",
+      }),
+      makeNode("live"),
+      makeNode("live-child", { parentIssueId: "live" }),
+    ]);
+    renderDagView(graphQuery({ data: graph }));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    act(() =>
+      screen
+        .getAllByRole("button")
+        .find((b) => b.textContent?.includes("dag:expand_all"))!
+        .click(),
+    );
+    expect(store.getState().dagExpandedIds).toEqual(["issue:live"]);
+    // Re-showing completed work does not unfold the line expand-all skipped.
+    act(() =>
+      screen
+        .getAllByRole("button")
+        .find((b) => b.textContent?.includes("issues:gantt.show_completed"))!
+        .click(),
+    );
+    await waitFor(() =>
+      expect(
+        canvasSpy.mock.calls.at(-1)![0].projection.nodes.map((n: { id: string }) => n.id).sort(),
+      ).toEqual(["issue:done-line", "issue:live", "live-child"]),
+    );
+  });
+
+  it("expands and collapses nested sub-lines with the batch buttons", async () => {
+    const graph = makeGraph([
+      makeNode("top"),
+      makeNode("mid", { parentIssueId: "top" }),
+      makeNode("leaf", { parentIssueId: "mid" }),
+    ]);
+    renderDagView(graphQuery({ data: graph }));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    act(() =>
+      screen
+        .getAllByRole("button")
+        .find((b) => b.textContent?.includes("dag:expand_all"))!
+        .click(),
+    );
+    expect(store.getState().dagExpandedIds.slice().sort()).toEqual(["issue:mid", "issue:top"]);
+    act(() =>
+      screen
+        .getAllByRole("button")
+        .find((b) => b.textContent?.includes("dag:collapse_all"))!
+        .click(),
+    );
+    expect(store.getState().dagExpandedIds).toEqual([]);
+  });
+
+  it("saves the live viewport when the toolbar opens an issue detail", async () => {
+    const graph = makeGraph([
+      makeNode("root"),
+      makeNode("child", { parentIssueId: "root" }),
+    ]);
+    renderDagView(graphQuery({ data: graph }));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    act(() =>
+      canvasSpy.mock.calls.at(-1)![0].registerCanvasApi?.({
+        getViewport: () => ({ x: -47, y: 93, zoom: 1.35 }),
+        toggleLine: vi.fn(),
+      }),
+    );
+    act(() => store.getState().setDagSelectedNodeId("issue:root"));
+    const buttons = await screen.findAllByRole("button");
+    const open = buttons.find((b) => b.textContent?.includes("dag:open_detail"));
+    act(() => open!.click());
+    expect(store.getState().dagViewport).toEqual({ x: -47, y: 93, zoom: 1.35 });
+    expect(mockPush).toHaveBeenCalledWith("/test/issues/root");
   });
 });

@@ -6,6 +6,7 @@ type DagPreferences = Pick<
   | "dagGrouping"
   | "dagExpandedIds"
   | "dagIndependentExpanded"
+  | "dagShowCompleted"
   | "dagViewport"
 >;
 
@@ -35,6 +36,10 @@ export function sanitizeDagPersisted(
       typeof p.dagIndependentExpanded === "boolean"
         ? p.dagIndependentExpanded
         : current.dagIndependentExpanded,
+    dagShowCompleted:
+      typeof p.dagShowCompleted === "boolean"
+        ? p.dagShowCompleted
+        : current.dagShowCompleted,
     dagExpandedIds:
       Array.isArray(p.dagExpandedIds) &&
       p.dagExpandedIds.every((id) => typeof id === "string")

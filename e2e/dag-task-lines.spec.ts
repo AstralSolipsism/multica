@@ -87,8 +87,12 @@ for (const direction of ["LR", "TB"] as const) {
       }
       await expect(page.getByRole("button", { name: "2 dependencies", exact: true })).toBeVisible();
       await page.getByRole("button", { name: "2 dependencies", exact: true }).click();
-      await expect(page.getByRole("dialog").locator("li")).toHaveCount(2);
-      await page.getByRole("dialog").getByRole("button", { name: "Clear selection" }).click();
+      // The edge details now live in the toolbar's selection zone, not a canvas overlay.
+      const selectionRegion = page.getByRole("region", { name: "Selection" });
+      await selectionRegion.getByRole("button", { name: "Summary of 2 dependencies" }).click();
+      await expect(page.locator('[data-slot="popover-content"]').getByRole("listitem")).toHaveCount(2);
+      await page.keyboard.press("Escape");
+      await selectionRegion.getByRole("button", { name: "Clear selection" }).click();
       const viewportBefore = await page.locator(".react-flow__viewport").getAttribute("style");
       await page.getByRole("button", { name: "Expand issue groups", exact: true }).click();
       await expect(page.locator("[data-dag-issue]")).toHaveCount(4);
@@ -114,8 +118,18 @@ for (const direction of ["LR", "TB"] as const) {
         body: await page.screenshot(),
         contentType: "image/png",
       });
+      const canvasTop = async () =>
+        (await page.locator("[data-dag-canvas]").boundingBox())!.y;
+      const toolbarHeight = async () =>
+        (await page.locator("[data-dag-toolbar]").boundingBox())!.height;
+      const canvasTopBeforeSelect = await canvasTop();
+      expect(await toolbarHeight()).toBe(40);
       await bNode.click();
       await expect(page.locator(".react-flow__edge-path.stroke-brand")).toHaveCount(2);
+      // Selecting a node lights the toolbar's selection zone in place — the
+      // bar must stay one row tall and the canvas must not shift.
+      expect(await toolbarHeight()).toBe(40);
+      expect(await canvasTop()).toBe(canvasTopBeforeSelect);
       const active = await page
         .locator(".react-flow__edge-path.stroke-brand")
         .first()
@@ -132,9 +146,9 @@ for (const direction of ["LR", "TB"] as const) {
       const edge = page.locator(".react-flow__edge").first();
       await edge.focus();
       await page.keyboard.press("Enter");
-      await expect(page.getByRole("dialog")).toBeVisible();
+      await expect(selectionRegion).toContainText("Dependency");
       await page.keyboard.press("Escape");
-      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(selectionRegion).toContainText("Select a task or dependency");
       // A default viewport would let a reset masquerade as successful restoration.
       // Move both axes and change zoom before recording the navigation baseline.
       const readViewport = () => page.locator(".react-flow__viewport").evaluate((element) => {
@@ -203,7 +217,10 @@ for (const direction of ["LR", "TB"] as const) {
       await expect.poll(visibleContent).toBeGreaterThan(0);
       await page.getByRole("button", { name: "Collapse issue groups", exact: true }).click();
       await expect(page.locator("[data-dag-issue]")).toHaveCount(1);
-      await page.getByRole("toolbar").getByRole("button", { name: "Collapse", exact: true }).click();
+      // The independent group stayed selected from the earlier header click;
+      // its fold action lives in the toolbar's More menu now.
+      await selectionRegion.getByRole("button", { name: "More" }).click();
+      await page.getByRole("menuitem", { name: "Collapse this group" }).click();
       await expect(page.locator("[data-dag-issue]")).toHaveCount(0);
       await expect.poll(visibleContent).toBeGreaterThan(0);
       expect(await zoom()).toBe(originalZoom);
