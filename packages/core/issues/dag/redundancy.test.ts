@@ -33,6 +33,28 @@ describe("redundancy", () => {
     expect(dependency).toMatchObject({ redundant: true, retained: false });
   });
 
+  it("finds alternatives longer than two hops with bounded BFS", () => {
+    const graph = g([
+      n("root"), ...["s", "a", "b", "t"].map((id) => n(id, { parentIssueId: "root" })),
+    ], [["s", "a"], ["a", "b"], ["b", "t"], ["s", "t"]]);
+    const line = computeDagLine(createDagModelIndex(graph), "root")!;
+    expect(line.dependencies.find((edge) => edge.id === "s-t")).toMatchObject({
+      redundant: true, retained: false, hiddenByDefault: true,
+    });
+  });
+
+  it("never retains a satisfied redundant dependency even when every alternative crosses a done task", () => {
+    const graph = g([
+      n("root"), n("s", { parentIssueId: "root", status: "done", statusCategory: "done" }),
+      n("mid", { parentIssueId: "root", status: "done", statusCategory: "done" }),
+      n("t", { parentIssueId: "root" }),
+    ], [["s", "mid"], ["mid", "t"], ["s", "t"]]);
+    const line = computeDagLine(createDagModelIndex(graph), "root")!;
+    expect(line.dependencies.find((edge) => edge.id === "s-t")).toMatchObject({
+      state: "satisfied", redundant: true, retained: false, hiddenByDefault: true,
+    });
+  });
+
   it("does not invent a dependency on the parent's status", () => {
     const graph = g([n("root"), n("parent", { parentIssueId: "root" }), n("child", { parentIssueId: "parent" }), n("target", { parentIssueId: "root" })], [["parent", "target"], ["child", "target"]]);
     expect(computeDagLine(createDagModelIndex(graph), "root")!.dependencies.every((edge) => !edge.redundant)).toBe(true);
@@ -53,6 +75,37 @@ describe("redundancy", () => {
   it("never disconnects a cyclic read by hiding mutually justifying alternatives", () => {
     const graph = g([n("root"), ...["s", "a", "b"].map((id) => n(id, { parentIssueId: "root" }))], [["s", "a"], ["s", "b"], ["a", "b"], ["b", "a"]]);
     expect(computeDagLine(createDagModelIndex(graph), "root")!.dependencies.every((edge) => !edge.hiddenByDefault)).toBe(true);
+  });
+
+  it("keeps even an otherwise redundant edge when another part of the line contains a cycle", () => {
+    const nodes = [n("root"), ...["s", "a", "t", "x", "y"].map((id) => n(id, { parentIssueId: "root" }))];
+    const edges: [string, string][] = [["s", "a"], ["a", "t"], ["s", "t"]];
+    const acyclic = computeDagLine(createDagModelIndex(g(nodes, edges)), "root")!;
+    expect(acyclic.dependencies.find((edge) => edge.id === "s-t")?.redundant).toBe(true);
+
+    const cyclic = computeDagLine(createDagModelIndex(g(nodes, [...edges, ["x", "y"], ["y", "x"]])), "root")!;
+    expect(cyclic.dependencies).toHaveLength(5);
+    for (const edge of cyclic.dependencies) {
+      expect(edge).toMatchObject({ redundant: false, retained: false, hiddenByDefault: false });
+    }
+  });
+
+  it("does not invent a dependency on the parent's status when using bitset reachability", () => {
+    const nodes = [
+      n("root"), n("s", { parentIssueId: "root" }), n("t", { parentIssueId: "root" }),
+      n("parent", { parentIssueId: "root" }), n("child", { parentIssueId: "parent" }),
+    ];
+    const edges: [string, string][] = [["s", "t"], ["parent", "t"], ["child", "t"]];
+    // The many long alternatives select the bitset path instead of bounded BFS.
+    for (let i = 0; i < 100; i++) {
+      nodes.push(n(`mid${i}`, { parentIssueId: "root", status: "done", statusCategory: "done" }));
+      edges.push(["s", `mid${i}`], [`mid${i}`, i === 99 ? "t" : `mid${i + 1}`]);
+    }
+    const line = computeDagLine(createDagModelIndex(g(nodes, edges)), "root")!;
+    expect(line.dependencies.find((edge) => edge.id === "s-t")).toMatchObject({ redundant: true, retained: true });
+    expect(line.dependencies.find((edge) => edge.id === "parent-t")).toMatchObject({
+      redundant: false, retained: false, hiddenByDefault: false,
+    });
   });
 
   it("handles many long alternatives and retains a wait only until one entire path is live", () => {

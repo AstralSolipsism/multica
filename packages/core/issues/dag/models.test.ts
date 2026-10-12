@@ -163,6 +163,65 @@ describe("line and focus models", () => {
     expect(computeDagLine(createDagModelIndex(fixture()), "missing")).toBeNull();
   });
 
+  it("groups an external standalone task as an issue and does not give it a line model", () => {
+    const index = createDagModelIndex(g([
+      n("a"), n("a1", { parentIssueId: "a" }), n("solo"),
+    ], [["solo", "a1"]]));
+    expect(computeDagLine(index, "a")!.upstream[0]).toMatchObject({ id: "solo", kind: "issue" });
+    expect(computeDagLine(index, "solo")).toBeNull();
+  });
+
+  it("counts only done descendants in line frame progress", () => {
+    const index = createDagModelIndex(g([
+      n("root"), n("a", { parentIssueId: "root", ...done }),
+      n("b", { parentIssueId: "root", ...closed }), n("c", { parentIssueId: "root" }),
+    ]));
+    expect(computeDagLine(index, "root")!.frames[0]!.progress).toEqual({ completed: 1, total: 3 });
+  });
+
+  it("keeps reached tasks in nested line frames and marks grouping-only ancestors as context", () => {
+    const index = createDagModelIndex(g([
+      n("root"), n("sub", { parentIssueId: "root" }), n("child", { parentIssueId: "sub" }), n("source"),
+    ], [["source", "child"]]));
+    const focus = computeDagFocus(index, "source", true);
+    const line = focus.groups.find((group) => group.lineId === "root")!;
+    expect(line.tasks.map((task) => [task.issue.id, task.parentId])).toEqual([["child", "sub"]]);
+    expect(line.frames.find((frame) => frame.id === "root")).toMatchObject({
+      parentId: null, frameIds: ["sub"], taskIds: [], contextOnly: true,
+    });
+    expect(line.frames.find((frame) => frame.id === "sub")).toMatchObject({
+      parentId: "root", frameIds: [], taskIds: ["child"], contextOnly: true,
+    });
+    expect(line.frames).toHaveLength(2);
+  });
+
+  it("excludes hidden closure members from both upstream and downstream ids", () => {
+    const index = createDagModelIndex(g([
+      n("up", done), n("up-child", { parentIssueId: "up", ...done }), n("target"),
+      n("down", done), n("down-child", { parentIssueId: "down", ...done }),
+    ], [["up-child", "target"], ["target", "down"]]));
+    const hidden = computeDagFocus(index, "target");
+    expect(hidden.upstreamIds).toEqual(new Set(["target"]));
+    expect(hidden.downstreamIds).toEqual(new Set(["target"]));
+    expect(hidden.hiddenIssueCount).toBe(4);
+
+    const shown = computeDagFocus(index, "target", true);
+    expect(shown.upstreamIds).toEqual(new Set(["target", "up", "up-child"]));
+    expect(shown.downstreamIds).toEqual(new Set(["target", "down", "down-child"]));
+    expect(shown.hiddenIssueCount).toBe(0);
+  });
+
+  it("gives a kept cancelled task its own focus group when its line is hidden", () => {
+    const index = createDagModelIndex(g([
+      n("hidden", done), n("cancelled", { parentIssueId: "hidden", ...closed }), n("target"),
+    ], [["cancelled", "target"]]));
+    const focus = computeDagFocus(index, "target");
+    expect(focus.groups.map((group) => group.lineId).sort()).toEqual(["cancelled", "target"]);
+    expect(focus.groups.find((group) => group.lineId === "cancelled")).toMatchObject({
+      frames: [], tasks: [{ issue: { id: "cancelled" }, parentId: null, role: "context", cancelledBlocking: true }],
+    });
+  });
+
   it.each(["a", "sub", "x", "y", "solo"])("matches the existing raw focus closures for %s", (id) => {
     const graph = fixture(), index = createDagModelIndex(graph), projection = computeDagProjection(graph, [], true, true);
     const focused = computeDagFocus(index, id, true);
