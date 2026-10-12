@@ -108,6 +108,8 @@ import { ResolvedThreadBar } from "./resolved-thread-bar";
 import { ThreadMinimap, type ThreadMinimapThread } from "./thread-minimap";
 import { collectThreadParticipants, collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
+import { tipAnchorScopeFromIssues } from "../../you-should-know/anchors/tip-anchor-scope";
+import { YouShouldKnowArchiveSection } from "../../you-should-know/archive/archive-section";
 import { IssueWakeupHeaderChip } from "./issue-wakeup-header-chip";
 import { ExecutionLogSection } from "./execution-log-section";
 import { WakeupsSection } from "./wakeups-section";
@@ -940,7 +942,7 @@ function SubIssueRow({
           <span className="text-micro text-muted-foreground tabular-nums font-medium shrink-0">
             {child.identifier}
           </span>
-          <IssueAgentActivityIndicator issueId={child.id} />
+          <IssueAgentActivityIndicator issueId={child.id} tipAnchor />
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span
               className={cn(
@@ -2072,6 +2074,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // this answer, so a defaulted or stale empty array must not count as "no
   // sub-issues" (MUL-5714).
   const childCountKnown = childIssuesLoaded && !childIssuesFetching;
+  // YSK summary anchor scope for the sub-issues chip (OL-193): the loaded
+  // child issues as id → identifier, memoized for descriptor stability.
+  const subIssuesTipAnchorScope = useMemo(
+    () => tipAnchorScopeFromIssues(childIssues),
+    [childIssues],
+  );
   // Parent's children — used to render the "x/y" progress next to the
   // "Sub-issue of …" breadcrumb under the title.
   const { data: parentChildIssues = [] } = useQuery({
@@ -2940,6 +2948,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           while there are none. */}
       <DeliverablesSection files={deliverableFiles} onOpenOverview={openOverview} />
 
+      {/* You should know archive (fork, OL-187 §7) — every tip agents left
+          here, grouped by anchor comment. Self-contained; hides itself while
+          either switch is off or the issue has no tips. Jumps reuse the
+          minimap's target helper so virtualized/collapsed threads scroll. */}
+      <YouShouldKnowArchiveSection
+        issueId={id}
+        identifier={issue.identifier}
+        onJumpToComment={jumpToMinimapTarget}
+      />
+
       {/* Execution log — active runs + collapsed past runs, each carrying its
           own token spend, with the issue total on the section header.
           Self-contained; owns its own collapse state and WS subscriptions.
@@ -3576,7 +3594,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                   </div>
                   {/* issue.id, not the route param — the endpoint takes a
                       UUID and the route may carry a human-readable id. */}
-                  <SubIssuesAgentWorkingChip parentIssueId={issue.id} />
+                  <SubIssuesAgentWorkingChip
+                    parentIssueId={issue.id}
+                    tipAnchorScope={subIssuesTipAnchorScope}
+                  />
                   <input
                     type="checkbox"
                     checked={allChildrenSelected}

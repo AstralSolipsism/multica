@@ -7,6 +7,11 @@ import { api } from "@multica/core/api";
 import { chatKeys } from "@multica/core/chat/queries";
 import type { AgentTask } from "@multica/core/types";
 import type { TaskMessagePayload } from "@multica/core/types/events";
+import {
+  createTipAnchorRegistry,
+  type TipAnchorRegistry,
+} from "@multica/core/you-should-know/anchors";
+import { TipAnchorRegistryProvider } from "../../you-should-know/anchors/tip-anchor-context";
 import { renderWithI18n } from "../../test/i18n";
 
 const mockState = vi.hoisted(() => ({
@@ -381,5 +386,48 @@ describe("IssueAgentHeaderChip", () => {
     renderWithI18n(<IssueAgentHeaderChip issueId="issue-1" />);
 
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+});
+
+describe("IssueAgentHeaderChip tip anchor (OL-193)", () => {
+  function registeredDescriptors(registry: TipAnchorRegistry) {
+    return Object.values(registry.getState().anchors).map(
+      (anchor) => anchor.descriptor,
+    );
+  }
+
+  it("registers a detail_header anchor while a task is running", () => {
+    mockState.tasks = [makeTask({})];
+    const registry = createTipAnchorRegistry();
+    renderWithI18n(
+      <TipAnchorRegistryProvider registry={registry}>
+        <IssueAgentHeaderChip issueId="issue-1" />
+      </TipAnchorRegistryProvider>,
+    );
+    expect(registeredDescriptors(registry)).toEqual([
+      { level: "detail_header", issueId: "issue-1" },
+    ]);
+  });
+
+  it("does not register when the issue is only queued", () => {
+    mockState.tasks = [makeTask({ status: "queued" })];
+    const registry = createTipAnchorRegistry();
+    renderWithI18n(
+      <TipAnchorRegistryProvider registry={registry}>
+        <IssueAgentHeaderChip issueId="issue-1" />
+      </TipAnchorRegistryProvider>,
+    );
+    // The chip renders its queued state, but no anchor registers.
+    expect(screen.getByRole("button", { name: "Walt is queued" })).toBeInTheDocument();
+    expect(registeredDescriptors(registry)).toEqual([]);
+  });
+
+  it("registers nothing when no provider is mounted, and renders as usual", () => {
+    mockState.tasks = [makeTask({})];
+    renderWithI18n(<IssueAgentHeaderChip issueId="issue-1" />);
+    expect(
+      screen.getByRole("button", { name: "Walt is working" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("tip-anchor-dot")).not.toBeInTheDocument();
   });
 });

@@ -636,7 +636,7 @@ export function InlineTitle({
       <span className="min-w-16 shrink-0 text-caption text-muted-foreground">
         {row.issue.identifier}
       </span>
-      <IssueAgentActivityIndicator issueId={row.issue.id} />
+      <IssueAgentActivityIndicator issueId={row.issue.id} tipAnchor />
       {editing ? (
         <Input
           autoFocus

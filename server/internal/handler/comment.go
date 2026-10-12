@@ -3519,6 +3519,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	var comment db.Comment
 	var issueRevision int64
+	var tipUpdates []db.LabrastroIssueTip
 	transactionalEdit := replaceAttachments || (oldContent != req.Content && strictContentEdit)
 	if transactionalEdit {
 		// Strict body edits, attachment-set edits, and cancellation of tasks built
@@ -3559,6 +3560,9 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		}
+		if err == nil && comment.Revision != existing.Revision {
+			tipUpdates, err = qtx.LabrastroYSKInvalidateComment(r.Context(), db.LabrastroYSKInvalidateCommentParams{WorkspaceID: existing.WorkspaceID, AnchorCommentID: existing.ID})
+		}
 		if err == nil {
 			err = tx.Commit(r.Context())
 		}
@@ -3568,7 +3572,11 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	} else {
 		var updated db.UpdateCommentRow
 		updated, err = wakeupWrite(h, r, func(q *db.Queries) (db.UpdateCommentRow, error) {
-			return q.UpdateComment(r.Context(), updateParams)
+			updated, err := q.UpdateComment(r.Context(), updateParams)
+			if err == nil && updated.Revision != existing.Revision {
+				tipUpdates, err = q.LabrastroYSKInvalidateComment(r.Context(), db.LabrastroYSKInvalidateCommentParams{WorkspaceID: existing.WorkspaceID, AnchorCommentID: existing.ID})
+			}
+			return updated, err
 		})
 		if err == nil {
 			comment = updated.Comment()
@@ -3601,6 +3609,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update comment")
 		return
 	}
+	h.labrastroYSKPublishSourceChanges(r.Context(), tipUpdates, actorType, actorID)
 	retriggerEditedComment := func() []CommentTriggerOutcome {
 		if oldContent == comment.Content {
 			return nil
@@ -3726,6 +3735,7 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.labrastroYSKPublishSourceChanges(r.Context(), deleted.TipUpdates, actorType, actorID)
 	h.deleteS3Objects(r.Context(), deleted.AttachmentURLs)
 	slog.Info("comment deleted", append(logger.RequestAttrs(r),
 		"comment_id", commentId,
@@ -3762,6 +3772,7 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 
 // commentDeletion is the committed outcome of deleteComment.
 type commentDeletion struct {
+	TipUpdates []db.LabrastroIssueTip
 	// Tombstone is the cleared row when the comment still had replies.
 	Tombstone *db.Comment
 	// RemovedIDs lists every row removed outright: the comment itself when it
@@ -3848,6 +3859,10 @@ func (h *Handler) deleteComment(ctx context.Context, commentID, workspaceID pgty
 		ID:          commentID,
 		WorkspaceID: workspaceID,
 	})
+	if err != nil {
+		return out, err
+	}
+	out.TipUpdates, err = qtx.LabrastroYSKInvalidateComment(ctx, db.LabrastroYSKInvalidateCommentParams{WorkspaceID: target.WorkspaceID, AnchorCommentID: target.ID})
 	if err != nil {
 		return out, err
 	}

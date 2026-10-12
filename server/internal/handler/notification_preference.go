@@ -25,6 +25,7 @@ var validNotifGroups = map[string]bool{
 	"updates":              true,
 	"agent_activity":       true,
 	"system_notifications": true,
+	"you_should_know":      true,
 }
 
 // validNotifValues is the set of allowed preference values per group.
@@ -48,7 +49,7 @@ func (h *Handler) GetNotificationPreferences(w http.ResponseWriter, r *http.Requ
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"workspace_id": workspaceID,
-				"preferences":  map[string]any{},
+				"preferences":  labrastroYSKPreferenceDefaults(nil),
 			})
 			return
 		}
@@ -64,7 +65,7 @@ func (h *Handler) GetNotificationPreferences(w http.ResponseWriter, r *http.Requ
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"workspace_id": workspaceID,
-		"preferences":  prefs,
+		"preferences":  labrastroYSKPreferenceDefaults(prefs),
 	})
 }
 
@@ -115,7 +116,7 @@ func writeNotificationPreferenceResponse(
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"workspace_id": workspaceID,
-		"preferences":  prefs,
+		"preferences":  labrastroYSKPreferenceDefaults(prefs),
 	})
 }
 

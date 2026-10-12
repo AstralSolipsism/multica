@@ -1,5 +1,7 @@
 import frMessageDelivery from "./fr/message-delivery.json";
+import frYouShouldKnow from "./fr/you-should-know.json";
 import jaMessageDelivery from "./ja/message-delivery.json";
+import jaYouShouldKnow from "./ja/you-should-know.json";
 import type { LocaleResources, SupportedLocale } from "@multica/core/i18n";
 import { applyBrandOverrides } from "./brand-overrides";
 import enCommon from "./en/common.json";
@@ -35,6 +37,7 @@ import enUi from "./en/ui.json";
 import enSquads from "./en/squads.json";
 import enBilling from "./en/billing.json";
 import enMessageDelivery from "./en/message-delivery.json";
+import enYouShouldKnow from "./en/you-should-know.json";
 import zhHansCommon from "./zh-Hans/common.json";
 import zhHansQuota from "./zh-Hans/quota.json";
 import zhHansLark from "./zh-Hans/lark.json";
@@ -68,6 +71,7 @@ import zhHansUi from "./zh-Hans/ui.json";
 import zhHansSquads from "./zh-Hans/squads.json";
 import zhHansBilling from "./zh-Hans/billing.json";
 import zhHansMessageDelivery from "./zh-Hans/message-delivery.json";
+import zhHansYouShouldKnow from "./zh-Hans/you-should-know.json";
 import koCommon from "./ko/common.json";
 import koQuota from "./ko/quota.json";
 import koLark from "./ko/lark.json";
@@ -101,6 +105,7 @@ import koUi from "./ko/ui.json";
 import koSquads from "./ko/squads.json";
 import koBilling from "./ko/billing.json";
 import koMessageDelivery from "./ko/message-delivery.json";
+import koYouShouldKnow from "./ko/you-should-know.json";
 import jaCommon from "./ja/common.json";
 import jaQuota from "./ja/quota.json";
 import jaLark from "./ja/lark.json";
@@ -204,6 +209,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     squads: enSquads,
     billing: enBilling,
     "message-delivery": enMessageDelivery,
+    "you-should-know": enYouShouldKnow,
   },
   "zh-Hans": {
     common: zhHansCommon,
@@ -239,6 +245,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     squads: zhHansSquads,
     billing: zhHansBilling,
     "message-delivery": zhHansMessageDelivery,
+    "you-should-know": zhHansYouShouldKnow,
   },
   ko: {
     common: koCommon,
@@ -274,6 +281,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     squads: koSquads,
     billing: koBilling,
     "message-delivery": koMessageDelivery,
+    "you-should-know": koYouShouldKnow,
   },
   ja: {
     common: jaCommon,
@@ -309,6 +317,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     squads: jaSquads,
     billing: jaBilling,
     "message-delivery": jaMessageDelivery,
+    "you-should-know": jaYouShouldKnow,
   },
   fr: {
     common: frCommon,
@@ -344,6 +353,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     squads: frSquads,
     billing: frBilling,
     "message-delivery": frMessageDelivery,
+    "you-should-know": frYouShouldKnow,
   },
 };
 

@@ -20,6 +20,7 @@ import {
   subscribeToCurrentSlug,
 } from "../platform/workspace-storage";
 import { useLocalSearchIndexSync } from "../search-index/hooks";
+import { useYouShouldKnowRealtimeSync } from "../you-should-know/realtime";
 import { createLogger } from "../logger";
 import { useRealtimeSync, type RealtimeSyncStores } from "./use-realtime-sync";
 
@@ -129,6 +130,9 @@ export function WSProvider({
 
   // Keeps this workspace's local search index attached and caught up.
   useLocalSearchIndexSync(wsClient, user?.id ?? null, wsId, wsSlug);
+
+  // Keeps You Should Know tip caches fresh across tabs and reconnects.
+  useYouShouldKnowRealtimeSync(wsClient);
 
   const subscribe = useCallback(
     (event: WSEventType, handler: EventHandler) => {

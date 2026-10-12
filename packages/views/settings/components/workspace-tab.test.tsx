@@ -28,6 +28,8 @@ const membersRef = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({ data: membersRef.current, isFetched: true }),
+  // The YSK workspace toggle imports a chain that calls queryOptions.
+  queryOptions: <T,>(opts: T) => opts,
   useQueryClient: () => ({
     setQueryData: vi.fn(),
     getQueryData: vi.fn(() => []),
@@ -58,6 +60,16 @@ vi.mock("@multica/core/issues/invalidation", () => ({
 vi.mock("@multica/core/workspace/mutations", () => ({
   useLeaveWorkspace: () => ({ mutateAsync: vi.fn() }),
   useDeleteWorkspace: () => ({ mutateAsync: vi.fn() }),
+}));
+
+// The YSK toggle reads this hook; this suite's blanket react-query mock has
+// no notion of the preferences query it issues.
+vi.mock("@multica/core/you-should-know", () => ({
+  useYouShouldKnowEnabled: () => ({
+    workspaceEnabled: false,
+    personalEnabled: false,
+    enabled: false,
+  }),
 }));
 
 vi.mock("@multica/core/api", () => ({
@@ -228,5 +240,21 @@ describe("WorkspaceTab — automatic updates", () => {
     expect(screen.queryByDisplayValue("Test Workspace")).toBeNull();
     expect(screen.getByText("Test Workspace")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Change prefix..." })).toBeNull();
+  });
+
+  it("disables the You should know workspace switch for regular members", () => {
+    membersRef.current = [
+      { user_id: "user-1", role: "member" },
+      { user_id: "user-2", role: "owner", name: "Grace Hopper" },
+    ];
+    render(<WorkspaceTab />, { wrapper: I18nWrapper });
+
+    // The fork's YSK section renders for members too, but its switch is
+    // read-only (server enforces it; the UI must not offer a dead toggle).
+    const yskSwitch = document.querySelector(
+      '[data-settings-anchor="you-should-know"] [role="switch"]',
+    );
+    expect(yskSwitch).not.toBeNull();
+    expect(yskSwitch).toHaveAttribute("aria-disabled", "true");
   });
 });
