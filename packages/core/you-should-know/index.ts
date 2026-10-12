@@ -4,7 +4,10 @@ export {
   issueTipsOptions,
 } from "./queries";
 export { useSetTipState } from "./mutations";
-export { useYouShouldKnowEnabled } from "./use-you-should-know-enabled";
+export {
+  isYouShouldKnowWorkspaceEnabled,
+  useYouShouldKnowEnabled,
+} from "./use-you-should-know-enabled";
 export { useYouShouldKnowRealtimeSync } from "./realtime";
 export {
   createTipDisplayLedger,

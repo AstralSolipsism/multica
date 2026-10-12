@@ -9,7 +9,7 @@ import type { ReactNode } from "react";
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
 import type { NotificationPreferenceResponse } from "../types";
-import { useYouShouldKnowEnabled } from "./use-you-should-know-enabled";
+import { useYouShouldKnowEnabled, isYouShouldKnowWorkspaceEnabled } from "./use-you-should-know-enabled";
 
 vi.mock("../paths", () => ({
   useCurrentWorkspace: () => currentWorkspace,
@@ -24,6 +24,23 @@ function withPreferences(preferences: Record<string, string>): Promise<unknown> 
   // Simulates a loaded preference query.
   return Promise.resolve({ workspace_id: "ws-1", preferences });
 }
+
+describe("isYouShouldKnowWorkspaceEnabled", () => {
+  // A missing key means OFF — the feature is opt-in per workspace. This is
+  // the only place the default is asserted; both hooks read this function.
+  it("missing or falsy settings key → off", () => {
+    expect(isYouShouldKnowWorkspaceEnabled(null)).toBe(false);
+    expect(isYouShouldKnowWorkspaceEnabled(undefined)).toBe(false);
+    expect(isYouShouldKnowWorkspaceEnabled({ settings: {} })).toBe(false);
+    expect(isYouShouldKnowWorkspaceEnabled({ settings: { you_should_know_enabled: false } })).toBe(false);
+  });
+
+  it("explicit true → on", () => {
+    expect(
+      isYouShouldKnowWorkspaceEnabled({ settings: { you_should_know_enabled: true } }),
+    ).toBe(true);
+  });
+});
 
 describe("useYouShouldKnowEnabled", () => {
   let qc: QueryClient;
