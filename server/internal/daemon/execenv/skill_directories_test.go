@@ -35,31 +35,60 @@ func TestWrittenSkillDirectoriesIncludeEveryCollision(t *testing.T) {
 }
 
 func TestPrepareAndReuseReturnSkillDirectories(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("HERMES_HOME", t.TempDir())
 	task := TaskContextForEnv{ChatSessionID: "chat", AgentSkills: []SkillContextForEnv{{ID: "selected", Name: "Review Code", Content: "Use references/file.txt"}}}
-	root := t.TempDir()
-	env, err := Prepare(PrepareParams{WorkspacesRoot: root, WorkspaceID: "workspace", TaskID: "task-skill-directories", Provider: "kimi", Task: task}, testLogger())
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := filepath.Join(env.WorkDir, ".agents", "skills", "review-code")
-	if env.SkillDirectories["selected"] != want {
-		t.Fatalf("Prepare directories=%v", env.SkillDirectories)
-	}
-	// The isolated preparer returns JSON, not the in-process slice/map.
-	encoded, err := json.Marshal(env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var decoded Environment
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if decoded.SkillDirectories["selected"] != want {
-		t.Fatal("helper response lost directory")
-	}
-	reused := Reuse(ReuseParams{WorkspacesRoot: root, WorkDir: env.WorkDir, Provider: "kimi", Task: task}, testLogger())
-	if reused == nil || reused.SkillDirectories["selected"] != want {
-		t.Fatalf("Reuse directories=%+v", reused)
+	for _, provider := range []string{"kimi", "codex", "hermes"} {
+		t.Run(provider, func(t *testing.T) {
+			root := t.TempDir()
+			sourceHome := t.TempDir()
+			env, err := Prepare(PrepareParams{WorkspacesRoot: root, WorkspaceID: "workspace", TaskID: "task-skill-directories", Provider: provider, HermesSourceHome: sourceHome, Task: task}, testLogger())
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := filepath.Join(env.WorkDir, ".agents", "skills", "review-code")
+			switch provider {
+			case "codex":
+				want = filepath.Join(env.RootDir, "codex-home", "skills", "review-code")
+				if filepath.Dir(filepath.Dir(want)) != env.CodexHome {
+					t.Fatalf("Codex skill is outside the private home: %+v", env)
+				}
+			case "hermes":
+				want = filepath.Join(env.RootDir, "hermes-home", "skills", "review-code")
+				if filepath.Dir(filepath.Dir(want)) != env.HermesHome {
+					t.Fatalf("Hermes skill is outside the overlay: %+v", env)
+				}
+			}
+			if env.SkillDirectories["selected"] != want {
+				t.Fatalf("Prepare directories=%v", env.SkillDirectories)
+			}
+			// The isolated preparer returns JSON, not the in-process slice/map.
+			encoded, err := json.Marshal(env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded Environment
+			if err := json.Unmarshal(encoded, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if decoded.SkillDirectories["selected"] != want {
+				t.Fatal("helper response lost directory")
+			}
+			for _, stage := range []string{"Prepare", "Reuse"} {
+				if stage == "Reuse" {
+					env = Reuse(ReuseParams{WorkspacesRoot: root, WorkDir: env.WorkDir, Provider: provider, HermesSourceHome: sourceHome, Task: task}, testLogger())
+				}
+				if env == nil || env.SkillDirectories["selected"] != want {
+					t.Fatalf("%s directories=%+v", stage, env)
+				}
+				body, err := os.ReadFile(filepath.Join(env.SkillDirectories["selected"], "SKILL.md"))
+				if err != nil || !strings.Contains(string(body), "Use references/file.txt") {
+					t.Fatalf("%s mapping does not locate the selected body: %s, %v", stage, body, err)
+				}
+			}
+		})
 	}
 }
 

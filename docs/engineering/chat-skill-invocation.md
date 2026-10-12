@@ -20,6 +20,9 @@ the existing textual hint is retained.
 No native command or body injection is generated without verified member input.
 Blockquotes, code blocks and inline code do not select skills. Issue descriptions,
 comments, wakeups and autopilot payloads never enter this path.
+Known agent/system input and quoted skill links also no longer receive the old
+`Explicitly selected skills` hint. This is the intentional trust-boundary change;
+ordinary messages without selector links keep their previous input unchanged.
 
 `Environment.SkillDirectories` is returned through the preparation helper's JSON
 response. Prepare and Reuse populate it from successful writes, including Codex's
@@ -31,7 +34,7 @@ unchanged; only this turn's selected-skill hint uses these resolved directories.
 
 | Runtime | Native capability check | Input |
 | --- | --- | --- |
-| Claude | SDK initialize response advertises the first selected command; slash commands are not disabled | Two text blocks: platform context and extra skill bodies first, then `/directory-name ` plus the user's message. Only the first skill uses native expansion. |
+| Claude | SDK initialize response advertises the first selected command with project scope (`description` ends in ` (project)`); slash commands are not disabled | Two text blocks: platform context and extra skill bodies first, then `/directory-name ` plus the user's message. Only the first skill uses native expansion. |
 | Codex | `skills/list` returns the exact installed SKILL.md path/name with `enabled: true` | Append `$directory-name` for each recognized selection. Inject missing/disabled/unrecognized entries. |
 | Antigravity | Effective executable's `--help` advertises `--disable-slash-commands`; effective args do not disable commands | Start `-p` with `/directory-name` and a newline. Inject additional selections. |
 | Kimi | No native dependency in production | Inject every selected body and absolute skill directory. Retain the backend's existing inline runtime brief and single ACP text block. |
@@ -49,6 +52,13 @@ explicitly disabled slash commands use the injected input. No model turn is
 retried just to discover a capability, so fallback cannot repeat tool effects.
 Claude shares its existing initialization exchange when task supplements are
 enabled; skill discovery alone does not enable supplement hooks.
+
+Claude personal skills can shadow a project skill with the same name. Personal,
+plugin or unknown command scopes therefore use the selected body's injection;
+an SDK format change also takes this safe fallback. Antigravity's help probe
+does not expose command origins: a same-name global skill can still shadow the
+installed project skill according to agy's own precedence. Its smoke check
+verifies expansion, but cannot establish origin for arbitrary colliding names.
 
 ## Kimi decision
 
@@ -70,6 +80,11 @@ deferred native/injection decision or dependency on the Hermes home rollout.
 Default Go tests use fake executables and require no runtime account. Real smoke
 tests are opt-in and may consume account quota. Run the specific provider after
 an upgrade in a test environment with that CLI's authentication configured:
+
+Claude's smoke copies file-based configuration into a temporary config directory,
+including `~/.claude.json` when `CLAUDE_CONFIG_DIR` is unset. Credentials stored
+only in a macOS keychain cannot be copied this way; use a configured Linux test
+host with `.credentials.json` or an authentication token environment variable.
 
 ```bash
 cd server
@@ -100,3 +115,10 @@ native command record, but its response check could not run without login.
 Antigravity was absent, and the installed Hermes launcher pointed to a missing
 bootstrap executable. Those response checks require a configured test host;
 these results do not claim production verification (OL-204 owns that stage).
+
+The daemon regression `TestRunTaskExplicitSkillFirstTurnAndFreshRetry` captures
+the actual fake-Claude wire input after preparation and after a rejected resume.
+It checks native selection on all attempts and exactly one transcript-recovery
+notice on the fresh retry. Environment tests verify both Prepare and Reuse
+directory maps for Kimi, Codex's private home and Hermes's overlay. Missing or
+relative installation paths retain the text hint and original selector link.

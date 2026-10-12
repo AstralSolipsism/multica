@@ -61,6 +61,12 @@ func TestExplicitSkillRealSmoke(t *testing.T) {
 				skillParent = filepath.Join(cwd, ".claude", "skills")
 				home := filepath.Join(root, "claude-home")
 				copySkillSmokeConfig(t, "CLAUDE_CONFIG_DIR", ".claude", home, []string{"settings.json", ".credentials.json", ".claude.json"})
+				if os.Getenv("CLAUDE_CONFIG_DIR") == "" {
+					// Without a config-dir override, Claude's global state lives
+					// beside ~/.claude, not inside it. Copy into the isolated dir;
+					// never update the original account or project configuration.
+					copySkillSmokeConfig(t, "HOME", "", home, []string{".claude.json"})
+				}
 				config.Env["CLAUDE_CONFIG_DIR"] = home
 			case "codex":
 				home := filepath.Join(root, "codex-home")

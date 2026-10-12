@@ -1625,17 +1625,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		turnParams := map[string]any{
 			"threadId": threadID,
 		}
-		turnPrompt := prompt
-		if opts.SkillInvocation != nil {
-			probeCtx, probeCancel := context.WithTimeout(runCtx, 5*time.Second)
-			catalog, probeErr := c.request(probeCtx, "skills/list", map[string]any{"cwds": []string{opts.Cwd}})
-			probeCancel()
-			if probeErr == nil {
-				turnPrompt = opts.SkillInvocation.codexPrompt(catalog)
-			} else {
-				b.cfg.Logger.Warn("Codex skill discovery unavailable; injecting selected skills", "error", probeErr)
-			}
-		}
+		turnPrompt := b.skillTurnPrompt(runCtx, c, prompt, opts)
 		turnParams["input"] = codexTurnInput(turnPrompt, opts.ResumeExpected, resumed, opts.ResumeContinuityNotice)
 		// Per-turn reasoning override. Mirrors the per-thread injection in
 		// startOrResumeThread; keeping both in sync is enforced by the

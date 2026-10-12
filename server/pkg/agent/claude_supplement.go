@@ -25,6 +25,8 @@ var claudeSupplementEvents = []string{"UserPromptSubmit", "PreToolUse", "PostToo
 // instead insert context while the provider is waiting at a turn boundary.
 // A Stop hook with pending input continues the same loop; an empty Stop closes
 // admission before releasing Claude. No supplement is ever a new user prompt.
+// The same SDK control session discovers commands without installing hooks when
+// only explicit skills need initialization.
 // Wire contract: anthropics/claude-agent-sdk-python, _internal/query.py.
 type claudeSupplementSession struct {
 	ctx         context.Context
@@ -70,7 +72,7 @@ func (s *claudeSupplementSession) initialize(w io.Writer, timeout time.Duration,
 	case err := <-s.initialized:
 		return err
 	case <-ctx.Done():
-		return fmt.Errorf("claude supplement initialization: %w", ctx.Err())
+		return fmt.Errorf("claude SDK initialization: %w", ctx.Err())
 	}
 }
 
@@ -81,7 +83,8 @@ func (s *claudeSupplementSession) handleResponse(raw json.RawMessage) {
 		Error     string `json:"error"`
 		Response  struct {
 			Commands []struct {
-				Name string `json:"name"`
+				Name        string `json:"name"`
+				Description string `json:"description"`
 			} `json:"commands"`
 		} `json:"response"`
 	}
@@ -90,12 +93,16 @@ func (s *claudeSupplementSession) handleResponse(raw json.RawMessage) {
 	}
 	var err error
 	if response.Subtype != "success" {
-		err = fmt.Errorf("claude supplement initialization rejected: %s", response.Error)
+		err = fmt.Errorf("claude SDK initialization rejected: %s", response.Error)
 	} else {
 		s.mu.Lock()
 		s.commands = make(map[string]bool, len(response.Response.Commands))
 		for _, command := range response.Response.Commands {
-			s.commands[command.Name] = true
+			// Claude resolves personal skills ahead of project skills with the
+			// same name. Only an explicitly project-scoped catalog entry can
+			// authorize native expansion of our installed skill. Unknown scope
+			// (including a changed SDK format) safely falls back to injection.
+			s.commands[command.Name] = strings.HasSuffix(command.Description, " (project)")
 		}
 		s.mu.Unlock()
 	}

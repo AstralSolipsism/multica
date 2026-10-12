@@ -85,6 +85,20 @@ func (s *SkillInvocation) codexPrompt(catalog json.RawMessage) string {
 	return injectExplicitSkills(prompt, fallback)
 }
 
+func (b *codexBackend) skillTurnPrompt(ctx context.Context, client *codexClient, prompt string, opts ExecOptions) string {
+	if opts.SkillInvocation == nil {
+		return prompt
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	catalog, err := client.request(probeCtx, "skills/list", map[string]any{"cwds": []string{opts.Cwd}})
+	if err != nil {
+		b.cfg.Logger.Warn("Codex skill discovery unavailable; injecting selected skills", "error", err)
+		return opts.SkillInvocation.FallbackPrompt()
+	}
+	return opts.SkillInvocation.codexPrompt(catalog)
+}
+
 func (s *SkillInvocation) antigravityPrompt(supported bool) string {
 	if !supported || len(s.Skills) == 0 {
 		return s.FallbackPrompt()

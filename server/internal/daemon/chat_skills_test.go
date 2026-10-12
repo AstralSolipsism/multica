@@ -99,6 +99,27 @@ func TestBuildRuntimePromptPreservesOrdinaryMessages(t *testing.T) {
 	}
 }
 
+func TestBuildRuntimePromptMissingInstallationKeepsHint(t *testing.T) {
+	link := "[/review](slash://skill/one)"
+	for _, tc := range []struct {
+		name string
+		dirs map[string]string
+	}{
+		{"older preparation helper", nil},
+		{"missing directory", map[string]string{}},
+		{"relative directory", map[string]string{"one": filepath.Join("skills", "review-code")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, provider := range []string{"claude", "codex", "antigravity", "hermes"} {
+				prompt, invocation := buildRuntimePrompt(chatSkillTask(link), provider, tc.dirs)
+				if invocation != nil || strings.Contains(prompt, "FIRST BODY") || !strings.Contains(prompt, "Explicitly selected skills:\n- ") || !strings.Contains(prompt, "User message:\n"+link) {
+					t.Errorf("%s missing installation must retain hint and original link: invocation=%+v prompt=%s", provider, invocation, prompt)
+				}
+			}
+		})
+	}
+}
+
 func TestBuildRuntimePromptRetainsUnselectedAndQuotedLinks(t *testing.T) {
 	task := chatSkillTask("[/one](slash://skill/one) [/missing](slash://skill/nope)\n> [/same](slash://skill/one)\n> [/two](slash://skill/two)")
 	task.ChatMessage = "System kickoff [/two](slash://skill/two)\n\n" + task.ChatMessage
@@ -118,7 +139,7 @@ func TestChatSkillHintsDoNotPromoteKnownNonMemberOrQuotedInput(t *testing.T) {
 	for _, message := range []string{"", "> [/review](slash://skill/one)", "`[/review](slash://skill/one)`"} {
 		task := chatSkillTask("[/review](slash://skill/one)")
 		task.ChatSkillMessage = &message
-		if got := buildChatPrompt(task); strings.Contains(got, "Explicitly selected skills:") {
+		if got := buildChatPrompt(task, promptOpts{}); strings.Contains(got, "Explicitly selected skills:") {
 			t.Errorf("non-member or quoted content earned an explicit hint: %s", got)
 		}
 	}

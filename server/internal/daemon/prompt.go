@@ -231,7 +231,7 @@ func buildPromptBody(task Task, provider string, opts promptOpts) string {
 		return b.String()
 	}
 	if task.ChatSessionID != "" {
-		return buildChatPromptWithOptions(task, opts)
+		return buildChatPrompt(task, opts)
 	}
 	if task.TriggerCommentID != "" {
 		return buildCommentPrompt(task, provider)
@@ -604,11 +604,7 @@ func commentReplyThreads(task Task) []execenv.ThreadReplyTarget {
 }
 
 // buildChatPrompt constructs a prompt for interactive chat tasks.
-func buildChatPrompt(task Task) string {
-	return buildChatPromptWithOptions(task, promptOpts{})
-}
-
-func buildChatPromptWithOptions(task Task, opts promptOpts) string {
+func buildChatPrompt(task Task, opts promptOpts) string {
 	// Legacy compatibility for historical proactive-introduction sessions.
 	// New agent creation no longer creates a chat or runs this prompt.
 	if task.ChatIntro {
@@ -684,9 +680,9 @@ func buildChatPromptWithOptions(task Task, opts promptOpts) string {
 		b.WriteString("\n")
 	}
 	if task.Agent != nil && len(task.Agent.Skills) > 0 {
-		refs := chatSkillRefs(task)
-		if opts.chatSkillRefs != nil {
-			refs = opts.chatSkillRefs
+		refs := opts.chatSkillRefs
+		if refs == nil {
+			refs = uniqueSlashSkillRefs(chatSkillMatches(task))
 		}
 		if len(refs) > 0 {
 			agentSkills := make(map[string]string, len(task.Agent.Skills))

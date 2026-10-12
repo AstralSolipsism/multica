@@ -122,19 +122,30 @@ func TestClaudeExplicitSkillsExecute(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fixture")
 	}
-	for _, supported := range []bool{true, false} {
-		t.Run(map[bool]string{true: "native", false: "fallback"}[supported], func(t *testing.T) {
+	for _, tc := range []struct {
+		name, description string
+		rejected, native  bool
+	}{
+		{name: "project command", description: "Bound skill (project)", native: true},
+		{name: "personal skill shadows project", description: "Personal review (user)"},
+		{name: "plugin command", description: "Plugin review (plugin)"},
+		{name: "unknown command origin", description: "Review code"},
+		{name: "missing command origin"},
+		{name: "unsupported initialization", rejected: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			s := testSkillInvocation(t)
 			dir := t.TempDir()
 			capture := filepath.Join(dir, "input.json")
 			path := filepath.Join(dir, "fake-claude")
 			response := `{"subtype":"error","request_id":"multica-supplement-initialize","error":"unsupported"}`
-			if supported {
-				response = `{"subtype":"success","request_id":"multica-supplement-initialize","response":{"commands":[{"name":"first-multica"}]}}`
+			if !tc.rejected {
+				response = fmt.Sprintf(`{"subtype":"success","request_id":"multica-supplement-initialize","response":{"commands":[{"name":"first-multica","description":%q}]}}`, tc.description)
 			}
-			script := "#!/bin/sh\nread init\nprintf '%s\\n' '{\"type\":\"control_response\",\"response\":" + response + "}'\nIFS= read -r input\nprintf '%s\\n' \"$input\" > \"$CAPTURE\"\nprintf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"done\"}'\ncat >/dev/null\n"
+			script := "#!/bin/sh\nIFS= read -r init\nprintf '%s\\n' \"$init\" > \"$INIT_CAPTURE\"\nprintf '%s\\n' '{\"type\":\"control_response\",\"response\":" + response + "}'\nIFS= read -r input\nprintf '%s\\n' \"$input\" > \"$CAPTURE\"\nprintf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"done\"}'\ncat >/dev/null\n"
 			writeTestExecutable(t, path, []byte(script))
-			backend := &claudeBackend{cfg: Config{ExecutablePath: path, Logger: slog.Default(), Env: map[string]string{"CAPTURE": capture, "IS_SANDBOX": "1"}}}
+			initCapture := filepath.Join(dir, "initialize.json")
+			backend := &claudeBackend{cfg: Config{ExecutablePath: path, Logger: slog.Default(), Env: map[string]string{"CAPTURE": capture, "INIT_CAPTURE": initCapture, "IS_SANDBOX": "1"}}}
 			session, err := backend.Execute(t.Context(), s.FallbackPrompt(), ExecOptions{SkillInvocation: s, Timeout: 10 * time.Second})
 			if err != nil {
 				t.Fatal(err)
@@ -154,7 +165,20 @@ func TestClaudeExplicitSkillsExecute(t *testing.T) {
 			if err := json.Unmarshal(wire, &input); err != nil {
 				t.Fatal(err)
 			}
-			if supported {
+			initWire, err := os.ReadFile(initCapture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var init struct {
+				Request struct{ Hooks map[string]json.RawMessage }
+			}
+			if err := json.Unmarshal(initWire, &init); err != nil {
+				t.Fatal(err)
+			}
+			if len(init.Request.Hooks) != 0 {
+				t.Errorf("skill discovery enabled supplement hooks: %s", initWire)
+			}
+			if tc.native {
 				if len(input.Message.Content) != 2 || !strings.HasPrefix(input.Message.Content[1].Text, "/first-multica ") {
 					t.Fatalf("native input=%s", wire)
 				}

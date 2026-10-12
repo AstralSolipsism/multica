@@ -11,11 +11,14 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
-// activeSlashSkillLinks limits the existing slash-link grammar to real Markdown
+// activeSlashSkillMatches limits the existing slash-link grammar to real Markdown
 // links outside quotations/code. A copied issue excerpt is never a selection.
-func activeSlashSkillLinks(message string) map[int]bool {
+func activeSlashSkillMatches(message string) []slashSkillMatch {
+	matches := slashSkillMatches(message)
+	if len(matches) == 0 {
+		return matches
+	}
 	source := []byte(message)
-	matches := slashSkillRe.FindAllStringSubmatchIndex(message, -1)
 	active := make(map[int]bool)
 	doc := goldmark.DefaultParser().Parse(text.NewReader(source))
 	_ = ast.Walk(doc, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
@@ -32,8 +35,8 @@ func activeSlashSkillLinks(message string) map[int]bool {
 		_ = ast.Walk(link, func(child ast.Node, entering bool) (ast.WalkStatus, error) {
 			if value, ok := child.(*ast.Text); ok && entering {
 				for _, match := range matches {
-					if match[0] <= value.Segment.Start && value.Segment.Stop <= match[1] {
-						active[match[0]] = true
+					if match.start <= value.Segment.Start && value.Segment.Stop <= match.end {
+						active[match.start] = true
 					}
 				}
 			}
@@ -41,51 +44,49 @@ func activeSlashSkillLinks(message string) map[int]bool {
 		})
 		return ast.WalkSkipChildren, nil
 	})
-	return active
+	selected := matches[:0]
+	for _, match := range matches {
+		if active[match.start] {
+			selected = append(selected, match)
+		}
+	}
+	return selected
 }
 
-func chatSkillRefs(task Task) []SlashSkillRef {
+func chatSkillMatches(task Task) []slashSkillMatch {
 	if task.ChatSkillMessage == nil {
 		// Legacy servers did not distinguish the sender from the originator.
 		// Keep their existing hint, but never issue a native command/injection.
-		return ExtractSlashSkills(task.ChatMessage)
+		return slashSkillMatches(task.ChatMessage)
 	}
-	message := *task.ChatSkillMessage
-	if len(ExtractSlashSkills(message)) == 0 {
-		return nil
-	}
-	active := activeSlashSkillLinks(message)
-	var selected strings.Builder
-	for _, match := range slashSkillRe.FindAllStringSubmatchIndex(message, -1) {
-		if active[match[0]] {
-			selected.WriteString(message[match[0]:match[1]])
-			selected.WriteByte('\n')
-		}
-	}
-	return ExtractSlashSkills(selected.String())
+	return activeSlashSkillMatches(*task.ChatSkillMessage)
+}
+
+func memberSkillTurn(task Task) bool {
+	return task.ChatSessionID != "" && !task.ChatIntro && task.ChatSkillMessage != nil && *task.ChatSkillMessage != "" && task.WakeupID == "" && task.IssueID == "" && task.AutopilotRunID == "" && task.Agent != nil
 }
 
 // buildRuntimePrompt keeps ordinary inputs byte-for-byte unchanged. Only the
 // server's authenticated member input can earn a structured invocation; a
 // human originator on an issue/agent/system task is insufficient.
 func buildRuntimePrompt(task Task, provider string, directories map[string]string, options ...PromptOption) (string, *agent.SkillInvocation) {
-	options = append(options, func(o *promptOpts) { o.skillDirectories = directories })
+	matches := chatSkillMatches(task)
+	refs := uniqueSlashSkillRefs(matches)
+	options = append(options, func(o *promptOpts) {
+		o.skillDirectories = directories
+		o.chatSkillRefs = refs
+	})
 	prompt := BuildPrompt(task, provider, options...)
-	if task.ChatSessionID == "" || task.ChatIntro || task.ChatSkillMessage == nil || *task.ChatSkillMessage == "" || task.WakeupID != "" || task.IssueID != "" || task.AutopilotRunID != "" || task.Agent == nil {
+	if !memberSkillTurn(task) || len(refs) == 0 {
 		return prompt, nil
 	}
 	skillMessage := *task.ChatSkillMessage
-	refs := chatSkillRefs(task)
-	if len(refs) == 0 {
-		return prompt, nil
-	}
 	// Direct chat input is a contiguous suffix of the claimed batch; an older
 	// or inconsistent server payload must not let this field replace user text.
 	start := strings.LastIndex(task.ChatMessage, skillMessage)
 	if start < 0 {
 		return prompt, nil
 	}
-	active := activeSlashSkillLinks(skillMessage)
 	assigned := make(map[string]SkillData, len(task.Agent.Skills))
 	for _, skill := range task.Agent.Skills {
 		assigned[skill.ID] = skill
@@ -108,21 +109,25 @@ func buildRuntimePrompt(task Task, provider string, directories map[string]strin
 	}
 	// Strip only selected links in the actual member text. Unknown IDs and
 	// quoted links remain visible, and cannot become a leading CLI command.
-	var user strings.Builder
-	end := 0
-	for _, match := range slashSkillRe.FindAllStringSubmatchIndex(skillMessage, -1) {
-		if !active[match[0]] || !selected[skillMessage[match[4]:match[5]]] {
-			continue
-		}
-		user.WriteString(skillMessage[end:match[0]])
-		end = match[1]
-	}
-	user.WriteString(skillMessage[end:])
-	options = append(options, func(o *promptOpts) { o.chatSkillRefs = refs })
-	task.ChatMessage = task.ChatMessage[:start] + user.String() + task.ChatMessage[start+len(skillMessage):]
+	user := stripSelectedSkillLinks(skillMessage, matches, selected)
+	task.ChatMessage = task.ChatMessage[:start] + user + task.ChatMessage[start+len(skillMessage):]
 	invocation.UserMessage = task.ChatMessage
 	invocation.Prompt = BuildPrompt(task, provider, options...)
 	options = append(options, func(o *promptOpts) { o.omitChatMessage = true })
 	invocation.PlatformPrompt = BuildPrompt(task, provider, options...)
 	return invocation.FallbackPrompt(), invocation
+}
+
+func stripSelectedSkillLinks(message string, matches []slashSkillMatch, selected map[string]bool) string {
+	var user strings.Builder
+	end := 0
+	for _, match := range matches {
+		if !selected[match.ref.ID] {
+			continue
+		}
+		user.WriteString(message[end:match.start])
+		end = match.end
+	}
+	user.WriteString(message[end:])
+	return user.String()
 }
