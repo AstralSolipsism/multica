@@ -11,19 +11,22 @@ import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useCommentDraftStore } from "@multica/core/issues/stores";
-import { tipDisplayLedger } from "@multica/core/you-should-know";
+import { tipDisplayLedger, youShouldKnowKeys } from "@multica/core/you-should-know";
 import {
   elapse,
   flush,
+  getBubble,
   makeTip,
   mockLayout,
   renderWithYsk,
   settle,
+  WS_ID,
 } from "../../test/you-should-know";
 import {
   bubbleText,
   bubbleToggle,
   cardButton,
+  controllableIntersectionObserver,
   feedbackButton,
   feedbackRow,
   installFakeTipServer,
@@ -58,6 +61,7 @@ vi.mock("@multica/core/workspace/hooks", () => ({
 
 let serveTips: ReturnType<typeof installFakeTipServer>["serveTips"];
 let servePair: ReturnType<typeof installFakeTipServer>["servePair"];
+let addTip: ReturnType<typeof installFakeTipServer>["addTip"];
 const originalMatchMedia = window.matchMedia;
 
 beforeEach(() => {
@@ -65,7 +69,7 @@ beforeEach(() => {
   mockLayout();
   for (const fn of Object.values(apiMock)) fn.mockReset();
   toastError.mockReset();
-  ({ serveTips, servePair } = installFakeTipServer(apiMock));
+  ({ serveTips, servePair, addTip } = installFakeTipServer(apiMock));
   localStorage.clear();
   tipDisplayLedger.setState({ users: {} });
   useCommentDraftStore.setState({ drafts: {} });
@@ -286,5 +290,214 @@ describe("tip layers — keyboard and focus", () => {
     await flush();
     expect(bubbleText()).toContain("Second line");
     expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
+  });
+});
+
+describe("tip layers — focus when the feedback row ends", () => {
+  it("hands focus to the next bubble when a reason is picked before the re-schedule", async () => {
+    // Review regression: the dismissed tip is still the rotation's current
+    // one, so its successor only shows a re-schedule later.
+    servePair();
+    renderWithYsk(<RowAnchor issueId="issue-1" />);
+    await settle();
+    openCard();
+    act(() => cardButton("Dismiss").focus());
+    fireEvent.click(cardButton("Dismiss"));
+    await flush();
+    expect(feedbackButton("Helpful")).toHaveFocus();
+    fireEvent.click(feedbackButton("Helpful"));
+    await settle();
+    expect(bubbleText()).toContain("Second line");
+    expect(bubbleToggle()).toHaveFocus();
+  });
+
+  it("hands focus to whichever bubble actually takes the row's place", async () => {
+    servePair();
+    const { queryClient } = renderWithYsk(<RowAnchor issueId="issue-1" />);
+    await settle();
+    openCard();
+    act(() => cardButton("Dismiss").focus());
+    fireEvent.click(cardButton("Dismiss"));
+    await flush();
+    fireEvent.click(feedbackButton("Helpful"));
+    // A heads-up lands (as a realtime event would bring it) before the
+    // re-schedule, and goes first.
+    addTip(makeTip({ id: "heads", tag: "heads_up", line: "Heads line" }));
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: youShouldKnowKeys.active(WS_ID) });
+    });
+    await settle();
+    expect(bubbleText()).toContain("Heads line");
+    expect(bubbleToggle()).toHaveFocus();
+  });
+
+  it("hands focus to the restored bubble when a pending dismissal fails", async () => {
+    // Review regression.
+    serveTips(makeTip({ id: "first", line: "First line" }));
+    let rejectDismiss!: (reason: Error) => void;
+    apiMock.setTipState.mockImplementationOnce(
+      () => new Promise<void>((_resolve, reject) => (rejectDismiss = reject)),
+    );
+    renderWithYsk(<RowAnchor issueId="issue-1" />);
+    await settle();
+    openCard();
+    act(() => cardButton("Dismiss").focus());
+    fireEvent.click(cardButton("Dismiss"));
+    await settle();
+    expect(feedbackButton("Helpful")).toHaveFocus();
+
+    await act(async () => rejectDismiss(new Error("500")));
+    await settle();
+    expect(feedbackRow()).toBeNull();
+    expect(bubbleText()).toContain("First line");
+    expect(bubbleToggle()).toHaveFocus();
+  });
+
+  it("hands focus on when the row it sat in ends with its anchor going off screen", async () => {
+    const observers = controllableIntersectionObserver();
+    serveTips(
+      makeTip({ id: "first", issue_id: "issue-1", line: "First line" }),
+      makeTip({ id: "second", issue_id: "issue-2", line: "Second line" }),
+    );
+    renderWithYsk(
+      <>
+        <RowAnchor issueId="issue-1" top={300} />
+        <RowAnchor issueId="issue-2" top={340} />
+      </>,
+    );
+    observers.showAll();
+    await settle();
+    openCard();
+    act(() => cardButton("Dismiss").focus());
+    fireEvent.click(cardButton("Dismiss"));
+    await settle();
+    expect(feedbackButton("Helpful")).toHaveFocus();
+
+    observers.set("row-issue-1", false);
+    await settle();
+    expect(feedbackRow()).toBeNull();
+    expect(bubbleText()).toContain("Second line");
+    expect(bubbleToggle()).toHaveFocus();
+  });
+
+  it("gives focus to no later tip when nothing took the row's place", async () => {
+    serveTips(makeTip({ id: "first", line: "First line" }));
+    const { queryClient } = renderWithYsk(<RowAnchor issueId="issue-1" />);
+    await settle();
+    openCard();
+    act(() => cardButton("Dismiss").focus());
+    fireEvent.click(cardButton("Dismiss"));
+    await settle();
+    fireEvent.click(feedbackButton("Helpful"));
+    await settle();
+    expect(feedbackRow()).toBeNull();
+    expect(document.body).toHaveFocus();
+
+    // A tip arriving later rotates in like any other: it takes no focus.
+    await elapse(5_000);
+    act(() => {
+      queryClient.setQueryData(youShouldKnowKeys.active(WS_ID), {
+        tips: [makeTip({ id: "later", line: "Later line" })],
+      });
+    });
+    await settle();
+    expect(bubbleText()).toContain("Later line");
+    expect(document.body).toHaveFocus();
+  });
+
+  it("lets the hand-off lapse when its replacement never shows", async () => {
+    serveTips(
+      makeTip({ id: "first", issue_id: "issue-1", line: "First line" }),
+      makeTip({ id: "second", issue_id: "issue-2", line: "Second line" }),
+    );
+    const view = renderWithYsk(
+      <>
+        <RowAnchor issueId="issue-1" top={300} />
+        <RowAnchor issueId="issue-2" top={340} />
+      </>,
+    );
+    await settle();
+    openCard();
+    act(() => cardButton("Dismiss").focus());
+    fireEvent.click(cardButton("Dismiss"));
+    await flush();
+    // Picked before the re-schedule: the second tip is waiting to take over...
+    fireEvent.click(feedbackButton("Helpful"));
+    // ...but its row goes away before it can show.
+    view.rerender(<RowAnchor issueId="issue-1" top={300} />);
+    await settle();
+    expect(getBubble()).toBeNull();
+    expect(document.body).toHaveFocus();
+
+    // When it does come back, it rotates in like any other tip.
+    view.rerender(
+      <>
+        <RowAnchor issueId="issue-1" top={300} />
+        <RowAnchor issueId="issue-2" top={340} />
+      </>,
+    );
+    await settle();
+    expect(bubbleText()).toContain("Second line");
+    expect(document.body).toHaveFocus();
+  });
+
+  it("spends the hand-off on the bubble that took over, so the next tip in rotation takes none", async () => {
+    serveTips(
+      makeTip({ id: "first", line: "First line", created_at: "2026-10-11T08:00:00Z" }),
+      makeTip({ id: "second", line: "Second line", created_at: "2026-10-11T09:00:00Z" }),
+      makeTip({ id: "third", line: "Third line", created_at: "2026-10-11T10:00:00Z" }),
+    );
+    renderWithYsk(<RowAnchor issueId="issue-1" />);
+    await settle();
+    openCard();
+    act(() => cardButton("Dismiss").focus());
+    fireEvent.click(cardButton("Dismiss"));
+    // The second tip is already queued behind the row: it shows in the very
+    // commit the row leaves, without the rotation moving.
+    await settle();
+    fireEvent.click(feedbackButton("Helpful"));
+    await flush();
+    expect(bubbleText()).toContain("Second line");
+    expect(bubbleToggle()).toHaveFocus();
+
+    act(() => bubbleToggle().blur());
+    await elapse(8_000);
+    expect(bubbleText()).toContain("Third line");
+    expect(document.body).toHaveFocus();
+  });
+
+  it("leaves focus where it was after a pointer-only I already know", async () => {
+    servePair();
+    renderWithYsk(<RowAnchor issueId="issue-1" />);
+    await settle();
+    openCard();
+    act(() => cardButton("Learn more").blur());
+    fireEvent.click(cardButton("I already know"));
+    await flush();
+    expect(bubbleText()).toContain("Second line");
+    expect(document.body).toHaveFocus();
+  });
+
+  it("hands focus to nothing while the tips read is failing", async () => {
+    servePair();
+    const { queryClient } = renderWithYsk(<RowAnchor issueId="issue-1" />);
+    await settle();
+    openCard();
+    act(() => cardButton("Dismiss").focus());
+    fireEvent.click(cardButton("Dismiss"));
+    await settle();
+    // The server stops answering: the cached second tip is no longer vouched
+    // for, so nothing is waiting to replace the row.
+    apiMock.listActiveTips.mockRejectedValueOnce(new Error("unavailable"));
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: youShouldKnowKeys.active(WS_ID) });
+    });
+    await settle();
+    expect(feedbackButton("Helpful")).toHaveFocus();
+    fireEvent.click(feedbackButton("Helpful"));
+    // The save's refetch brings the tips back; the second tip shows, unfocused.
+    await settle();
+    expect(bubbleText()).toContain("Second line");
+    expect(document.body).toHaveFocus();
   });
 });

@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useStore } from "zustand";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -18,16 +18,16 @@ import {
   isTipShownToMe,
   tipDisplayLedger,
   tipDisplayOrdinal,
+  youShouldKnowKeys,
   type IssueTip,
+  type IssueTipList,
 } from "@multica/core/you-should-know";
 import {
   INITIAL_TIP_ROTATION,
   measureTipAnchors,
   rotateTips,
   shouldShowSettingsHint,
-  type RegisteredTipAnchor,
   type TipAnchorDisplayState,
-  type TipAnchorLevel,
   type TipAnchorRegistry,
 } from "@multica/core/you-should-know/anchors";
 import { youShouldKnowSettingsHref } from "../settings-anchor";
@@ -41,6 +41,8 @@ import { TipBubble } from "./tip-bubble";
 import { TipFeedbackRow } from "./tip-feedback-row";
 import { tipLayerHasFocus } from "./tip-layer";
 import { useDwellTimer } from "./use-dwell-timer";
+import { useFeedbackSession } from "./use-feedback-session";
+import { useFocusHandoff } from "./use-focus-handoff";
 import { useTipActions } from "./use-tip-actions";
 
 const NO_TIPS: IssueTip[] = [];
@@ -64,12 +66,22 @@ export const TIP_SYNC_SETTLE_MS = 120;
  * bubble is ambient, never an error surface. Realtime updates arrive through
  * useYouShouldKnowRealtimeSync, mounted app-wide.
  */
+function displayableTips(data: IssueTipList | undefined, failed: boolean): readonly IssueTip[] {
+  return failed || !data ? NO_TIPS : data.tips.filter(isTipShownToMe);
+}
+
 function useDisplayableTips(wsId: string): readonly IssueTip[] {
   const { data, isError } = useQuery(activeTipsOptions(wsId));
-  return useMemo(
-    () => (isError || !data ? NO_TIPS : data.tips.filter(isTipShownToMe)),
-    [data, isError],
-  );
+  return useMemo(() => displayableTips(data, isError), [data, isError]);
+}
+
+/**
+ * The same, read from the cache this instant — ahead of the render that will
+ * carry it (an optimistic hide or its rollback lands there first).
+ */
+function readDisplayableTips(qc: QueryClient, wsId: string): readonly IssueTip[] {
+  const state = qc.getQueryState<IssueTipList>(youShouldKnowKeys.active(wsId));
+  return displayableTips(state?.data, state?.status === "error");
 }
 
 /**
@@ -151,46 +163,6 @@ function useSettingsHint(
   return { showHint, reportVisible };
 }
 
-/** The feedback row standing where a dismissed tip's bubble was. */
-interface PendingFeedback {
-  tipId: string;
-  /** The anchor the dismissed tip's bubble rode; the row stays there. */
-  anchorId: string;
-  level: TipAnchorLevel;
-  /** Dismissed after "Learn more" — the narrower set of reasons. */
-  expanded: boolean;
-  /** Focus was in the card: the row takes it over. */
-  takeFocus: boolean;
-}
-
-/**
- * The pending feedback row and the live rect of its anchor. A row whose
- * anchor went away (the page changed, the agent stopped) has nothing to
- * stand beside: it is dropped, releasing the rotation.
- */
-function usePendingFeedback(anchors: Readonly<Record<string, RegisteredTipAnchor>>) {
-  const [feedback, setFeedback] = useState<PendingFeedback | null>(null);
-  const measure = feedback ? (anchors[feedback.anchorId]?.measure ?? null) : null;
-  useEffect(() => {
-    if (feedback && !measure) setFeedback(null);
-  }, [feedback, measure]);
-  return { feedback, measure, setFeedback };
-}
-
-/**
- * A flag that stays up for exactly one commit: raised by an action that
- * removes the tip layer holding keyboard focus, it lets the bubble mounted
- * by that same commit take focus over — and nothing mounted later.
- */
-function useFocusPulse(): [boolean, (raise: boolean) => void] {
-  const [pulse, setPulse] = useState(false);
-  // A bubble mounted in the pulse's commit read it on its first render.
-  useEffect(() => {
-    if (pulse) setPulse(false);
-  }, [pulse]);
-  return [pulse, setPulse];
-}
-
 /**
  * Registry display while the feedback row stands in for the bubble: the row's
  * anchor holds the bubble slot, and the tip waiting behind the row gets a dot
@@ -213,7 +185,7 @@ export function feedbackRowDisplay(
  * schedules them over the registered anchors, rotates the single bubble,
  * writes "bubble here, dots there" back into the registry for the anchors to
  * render, and carries out the card's actions. After "Dismiss" the feedback
- * row takes the bubble's place until it is answered or times out.
+ * row takes the bubble's place until it ends (useFeedbackSession).
  *
  * Mounted by YouShouldKnowProvider only while the feature is on for this
  * viewer, as a sibling of the page — so the layers it renders are never
@@ -233,6 +205,7 @@ export function TipBubbleHost({
   held: boolean;
 }) {
   const wsId = useWorkspaceId();
+  const qc = useQueryClient();
   const userId = useAuthStore((state) => state.user?.id ?? null);
   const paths = useWorkspacePaths();
   const tips = useDisplayableTips(wsId);
@@ -257,31 +230,53 @@ export function TipBubbleHost({
   // acted on, or the read failed: re-schedule once the burst settles.
   useSettledResync(() => reschedule("sync"), anchors, tips);
   const advance = useCallback(() => reschedule("advance"), [reschedule]);
-
-  const { feedback, measure: feedbackMeasure, setFeedback } = usePendingFeedback(anchors);
-  const [focusPulse, raiseFocusPulse] = useFocusPulse();
+  // Whether some tip will take the screen once the feedback row is gone,
+  // judged on this instant's tips and anchors (the next re-schedule decides
+  // which): a row that held keyboard focus hands it on only then.
+  const rotationRef = useRef(rotation);
+  rotationRef.current = rotation;
+  const successorWaits = useCallback(
+    () =>
+      rotateTips(rotationRef.current, {
+        type: "sync",
+        anchors: measureTipAnchors(registry.getState().anchors),
+        tips: readDisplayableTips(qc, wsId),
+      }).tipId !== null,
+    [registry, qc, wsId],
+  );
 
   const bubbleAnchorId = rotation.entry?.anchorId ?? null;
-  const feedbackAnchorId = feedback?.anchorId ?? null;
+  const tip = tips.find((candidate) => candidate.id === rotation.tipId);
+  const measure = bubbleAnchorId ? (anchors[bubbleAnchorId]?.measure ?? null) : null;
+
+  // A row that held focus hands it to the bubble that replaces it. (Called
+  // after render, once `handoff` below exists.)
+  const feedback = useFeedbackSession(anchors, (hadFocus) => {
+    if (hadFocus && successorWaits()) handoff.arm();
+  });
+  const { session } = feedback;
+  const bubble = tip && rotation.entry && measure
+    ? { tip, entry: rotation.entry, measure }
+    : null;
+  const handoff = useFocusHandoff(rotation, bubble?.tip.id ?? null);
+
+  const rowAnchorId = session?.anchorId ?? null;
   useEffect(() => {
     registry
       .getState()
       .setDisplay(
-        feedbackAnchorId === null
+        rowAnchorId === null
           ? { bubbleAnchorId, dotAnchorIds: rotation.dotAnchorIds }
-          : feedbackRowDisplay(feedbackAnchorId, bubbleAnchorId, rotation.dotAnchorIds),
+          : feedbackRowDisplay(rowAnchorId, bubbleAnchorId, rotation.dotAnchorIds),
       );
-  }, [registry, bubbleAnchorId, rotation.dotAnchorIds, feedbackAnchorId]);
-
-  const tip = tips.find((candidate) => candidate.id === rotation.tipId);
-  const measure = bubbleAnchorId ? (anchors[bubbleAnchorId]?.measure ?? null) : null;
+  }, [registry, bubbleAnchorId, rotation.dotAnchorIds, rowAnchorId]);
 
   const [engaged, setEngaged] = useState(false);
   const typing = useEditableFocus();
   const pageHidden = useDocumentHidden();
   const reducedMotion = usePrefersReducedMotion();
   // Overlays are judged against whichever layer is up: the row or the bubble.
-  const { modalOpen, anchorPopupOpen } = useOverlayState(feedback ? feedbackMeasure : measure);
+  const { modalOpen, anchorPopupOpen } = useOverlayState(session ? session.measure : measure);
 
   const suppressed = modalOpen || anchorPopupOpen;
   const paused = engaged || typing || pageHidden || suppressed || held;
@@ -290,68 +285,64 @@ export function TipBubbleHost({
   const { showHint, reportVisible } = useSettingsHint(userId, tip?.id ?? null, pageHidden);
 
   // While the feedback row shows it is the page's only bubble.
-  if (feedback) {
-    if (!feedbackMeasure) return null;
+  if (session) {
     return (
       <TipFeedbackRow
-        key={feedback.tipId}
-        measure={feedbackMeasure}
-        level={feedback.level}
-        expanded={feedback.expanded}
-        takeFocus={feedback.takeFocus}
+        key={session.tip.id}
+        measure={session.measure}
+        level={session.level}
+        expanded={session.expanded}
+        takeFocus={session.takeFocus}
         suppressed={suppressed}
         reducedMotion={reducedMotion}
         onPick={(option) => {
-          raiseFocusPulse(tipLayerHasFocus());
-          actions.sendFeedback(feedback.tipId, option);
-          setFeedback(null);
+          actions.sendFeedback(session.tip.id, option);
+          feedback.end(session.tip.id);
         }}
-        onExpire={() => {
-          raiseFocusPulse(tipLayerHasFocus());
-          setFeedback(null);
-        }}
+        onExpire={() => feedback.end(session.tip.id)}
       />
     );
   }
-
-  if (!tip || !rotation.entry || !measure) return null;
-  const entry = rotation.entry;
+  if (!bubble) return null;
+  const { entry } = bubble;
 
   return (
     <TipBubble
       // A new tip remounts the bubble, replaying its single fade-in.
-      key={tip.id}
-      tip={tip}
-      measure={measure}
+      key={bubble.tip.id}
+      tip={bubble.tip}
+      measure={bubble.measure}
       level={entry.level}
       issueIdentifier={entry.issueIdentifier}
       settingsHref={showHint ? youShouldKnowSettingsHref(paths.settings()) : null}
       suppressed={suppressed}
       reducedMotion={reducedMotion}
-      takeFocus={focusPulse}
+      takeFocus={handoff.pending}
       onEngagedChange={setEngaged}
       onVisibleChange={reportVisible}
       onKnown={() => {
-        raiseFocusPulse(tipLayerHasFocus());
-        actions.markKnown(tip.id);
-        // Straight on to the next tip, in this same commit: no gap while the
-        // optimistic update lands, and the next bubble can take focus over.
+        // `advance` below puts the next tip up in this same commit.
+        if (tipLayerHasFocus()) handoff.arm();
+        actions.markKnown(bubble.tip.id);
+        // Straight on to the next tip: no gap while the optimistic update
+        // lands and the next re-schedule comes round.
         advance();
       }}
       onDismiss={(expanded) => {
-        setFeedback({
-          tipId: tip.id,
+        feedback.start({
+          tip: bubble.tip,
           anchorId: entry.anchorId,
+          measure: bubble.measure,
           level: entry.level,
           expanded,
           takeFocus: tipLayerHasFocus(),
         });
-        void actions.dismiss(tip.id).then((saved) => {
+        void actions.dismiss(bubble.tip.id).then((saved) => {
           // The tip is back: no reason left to ask for.
-          if (!saved) setFeedback((current) => (current?.tipId === tip.id ? null : current));
+          if (!saved) feedback.end(bubble.tip.id);
         });
       }}
-      onDiscuss={() => actions.discuss(tip, entry.level === "detail_header")}
+      onDiscuss={() => actions.discuss(bubble.tip, entry.level === "detail_header")}
     />
   );
 }

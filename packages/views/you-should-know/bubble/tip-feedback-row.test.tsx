@@ -25,9 +25,11 @@ import {
   bubbleText,
   cachedState,
   cardButton,
+  controllableIntersectionObserver,
   dotIn,
   feedbackButton,
   feedbackRow,
+  HeaderAnchor,
   installFakeTipServer,
   openCard,
   RowAnchor,
@@ -340,5 +342,54 @@ describe("feedback row — failures", () => {
     expect(cachedState(queryClient, "first")).toEqual({ state: "dismissed", feedback: null });
     await settle();
     expect(getBubble()).toBeNull();
+  });
+});
+
+describe("feedback row — when its anchor gives out", () => {
+  it("ends when its anchor is clipped by an inner scroll container", async () => {
+    // Review regression: the anchor stays inside the window, so floating-ui
+    // still places the row, but its IntersectionObserver reports it hidden.
+    const observers = controllableIntersectionObserver();
+    serveTips(
+      makeTip({ id: "first", issue_id: "issue-1", line: "First line" }),
+      makeTip({ id: "second", issue_id: "issue-2", line: "Second line" }),
+    );
+    renderWithYsk(
+      <>
+        <RowAnchor issueId="issue-1" top={300} />
+        <RowAnchor issueId="issue-2" top={340} />
+      </>,
+    );
+    observers.showAll();
+    await settle();
+    openCard();
+    fireEvent.click(cardButton("Dismiss"));
+    await settle();
+    expect(feedbackRow()).toBeVisible();
+
+    observers.set("row-issue-1", false);
+    await settle();
+    expect(feedbackRow()).toBeNull();
+    // Nothing is held behind a row nobody can see.
+    expect(bubbleText()).toContain("Second line");
+  });
+
+  it("ends when the same mounted header now stands for another issue", async () => {
+    // Review regression: a detail header re-pointed in place keeps its anchor id.
+    serveTips(
+      makeTip({ id: "first", issue_id: "issue-1", line: "First line" }),
+      makeTip({ id: "second", issue_id: "issue-2", line: "Second line" }),
+    );
+    const view = renderWithYsk(<HeaderAnchor issueId="issue-1" />);
+    await settle();
+    openCard();
+    fireEvent.click(cardButton("Dismiss"));
+    await settle();
+    expect(feedbackRow()).not.toBeNull();
+
+    view.rerender(<HeaderAnchor issueId="issue-2" />);
+    await settle();
+    expect(feedbackRow()).toBeNull();
+    expect(bubbleText()).toContain("Second line");
   });
 });
