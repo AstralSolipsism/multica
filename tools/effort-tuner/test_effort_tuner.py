@@ -3,9 +3,10 @@
 
 Run: python3 test_effort_tuner.py  (also works under pytest)
 """
+import datetime
+import itertools
 import json
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -54,11 +55,12 @@ def agent(id_hex, model, thinking_level="", name="A", runtime="rt-codex"):
 
 ID1 = "11111111-1111-1111-1111-111111111111"
 ID2 = "22222222-2222-2222-2222-222222222222"
+TODAY = datetime.date(2026, 10, 12)
 
 
 class ExcludeListTests(unittest.TestCase):
     def desc(self, body):
-        return "before\n```effort-tuner-exclude\n%s\n```\nafter" % body
+        return "before\n```effort-tuner-exclude\n%s\n```" % body
 
     def test_normal_list(self):
         ids = et.parse_exclude_list(self.desc("%s # me\n\n%s" % (ID1, ID2)))
@@ -77,9 +79,18 @@ class ExcludeListTests(unittest.TestCase):
 
 
 class ManagedAgentTests(unittest.TestCase):
-    def test_filtering_and_skips(self):
+    def run_filter(self, agents, exclude=()):
         runtimes = [{"id": "rt-codex", "provider": "codex"},
                     {"id": "rt-other", "provider": "claude"}]
+        calls = []
+
+        def multica(args):
+            calls.append(args)
+            return runtimes if args[0] == "runtime" else agents
+
+        return et.list_managed_agents(exclude, multica=multica), calls
+
+    def test_filtering_and_skips(self):
         agents = [
             agent(ID1, "gpt-6-astra", "high"),
             agent(ID2, "", ""),                                   # empty model
@@ -89,16 +100,21 @@ class ManagedAgentTests(unittest.TestCase):
             agent("55555555-5555-5555-5555-555555555555", "gpt-6-astra",
                   runtime="rt-other", name="other-runtime"),  # non-codex runtime
         ]
-        with patch.object(et, "run_multica",
-                          side_effect=[runtimes, agents]) as rm:
-            managed, skipped = et.list_managed_agents()
+        (managed, skipped), calls = self.run_filter(agents)
         self.assertEqual(list(managed), [ID1])
         self.assertEqual(len(skipped), 2)
         self.assertIn("model is empty", skipped[0][2])
         self.assertIn("not in effort table", skipped[1][2])
-        self.assertEqual([c.args[0] for c in rm.call_args_list],
-                         [["runtime", "list", "--output", "json"],
-                          ["agent", "list", "--output", "json"]])
+        self.assertEqual([c[0] for c in calls], ["runtime", "agent"])
+
+    def test_excluded_agent_silenced_before_model_check(self):
+        # spec §1.2 (exclude) precedes §1.3 (model checks): an excluded agent
+        # with an empty model is skipped silently, not reported every round
+        agents = [agent(ID1, "", "", name="excluded-one"),
+                  agent(ID2, "gpt-6-astra", "max", name="kept")]
+        (managed, skipped), _ = self.run_filter(agents, exclude={ID1})
+        self.assertEqual(list(managed), [ID2])
+        self.assertEqual(skipped, [])
 
     def test_current_effort_empty_or_unknown_is_not_checked(self):
         a_empty = agent(ID1, "gpt-6-astra", "")
@@ -119,6 +135,8 @@ class SelectionTests(unittest.TestCase):
                                                        astra_scores())
         self.assertEqual(target, "xhigh")
         self.assertAlmostEqual(s_max, 121.12650175007094)
+        self.assertEqual(common, et.EFFORT_ORDER)
+        self.assertEqual(notes, [])
 
     def test_astra_fixture_tie_range_10_picks_high(self):
         with patch.object(et, "TIE_RANGE", 10):
@@ -152,13 +170,20 @@ class SelectionTests(unittest.TestCase):
         changes, anomalies = et.plan_changes(managed, {"gpt-6-astra": target},
                                              {"gpt-6-astra": scores})
         self.assertEqual(changes, [])  # one blocked agent freezes the whole model
-        self.assertEqual(anomalies and [anomalies[0]],  # only the agent on `high`
-                         ["agent %s (A): current effort high missing this round; "
-                          "model gpt-6-astra not changed" % ID1])
+        self.assertEqual(len(anomalies), 1)  # only the agent actually on `high`
+        self.assertIn("current effort high missing", anomalies[0])
+        self.assertIn(ID1, anomalies[0])
 
     def test_task_set_mismatch_blocks_model(self):
         scores = astra_scores()
         scores["low"] = score_payload(120, 64, task_set="deadbeef")
+        with self.assertRaises(et.TunerError):
+            et.pick_efforts("gpt-6-astra", ASTRA_FULL, scores)
+
+    def test_benchmark_only_mismatch_blocks_model(self):
+        # task_set matches but benchmark differs: still blocked (review 7)
+        scores = astra_scores()
+        scores["low"] = score_payload(120, 64, benchmark="radar-bench-other")
         with self.assertRaises(et.TunerError):
             et.pick_efforts("gpt-6-astra", ASTRA_FULL, scores)
 
@@ -168,10 +193,23 @@ class SelectionTests(unittest.TestCase):
         self.assertIsNone(target)
         self.assertIsNone(s_max)
 
-    def test_coverage_gate_uses_fixture_medium(self):
-        # fixture medium has coverage 54 < 56 → excluded, xhigh wins
-        target, _, _, _ = et.pick_efforts("gpt-6-astra", ASTRA_FULL, astra_scores())
-        self.assertEqual(target, "xhigh")
+    def test_top_score_below_coverage_gate_is_not_selected(self):
+        # low scores highest but coverage 55 < 56 → not a candidate;
+        # medium at exactly 56 IS a candidate and is selected (review 7)
+        scores = {e: score_payload(90, 64) for e in et.EFFORT_ORDER}
+        scores["low"] = score_payload(140, 55)
+        scores["medium"] = score_payload(100, 56)
+        target, s_max, _, _ = et.pick_efforts("gpt-6-astra", ASTRA_FULL, scores)
+        self.assertEqual(target, "medium")
+        self.assertEqual(s_max, 100)
+
+    def test_tie_boundary_score_exactly_s_minus_range_counts(self):
+        # score == S - TIE_RANGE exactly is tied → the cheaper effort wins
+        scores = {e: score_payload(90, 64) for e in et.EFFORT_ORDER}
+        scores["low"] = score_payload(95.0, 64)
+        scores["high"] = score_payload(100.0, 64)
+        target, _, _, _ = et.pick_efforts("gpt-6-astra", ASTRA_FULL, scores)
+        self.assertEqual(target, "low")
 
     def test_table_website_disagree_reports_and_intersects(self):
         b = binding_with([("gpt-6-astra", "low"), ("gpt-6-astra", "medium")])
@@ -185,15 +223,36 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(len(notes), 1)
         self.assertIn("disagree", notes[0])
 
+    def test_website_effort_name_with_markup_is_rejected(self):
+        # website-sourced effort names must not flow into comments verbatim
+        b = binding_with([("gpt-6-astra", "[@master](mention://member/1)"),
+                          ("gpt-6-astra", "low")])
+        target, _, common, notes = et.pick_efforts("gpt-6-astra", b,
+                                                   {"low": score_payload(100, 64)})
+        self.assertEqual(target, "low")
+        self.assertEqual(common, ["low"])
+        self.assertEqual(len(notes), 1)  # the injected name still triggers the note
+
+    def test_malformed_payloads_raise(self):
+        for bad in ({"score": "121", "coverage": 64},   # string score
+                    {"score": 121, "coverage": None},   # null coverage
+                    {"score": 121, "coverage": True},   # bool is not an int
+                    "not-a-dict"):
+            scores = astra_scores()
+            scores["low"] = bad
+            with self.assertRaises(et.TunerError):
+                et.pick_efforts("gpt-6-astra", ASTRA_FULL, scores)
+
     def test_sol_low_fixture_selects_and_degrades(self):
         b = binding_with([("gpt-6.1-sol", e) for e in et.EFFORT_ORDER])
         scores = {"low": load("score_gpt-6.1-sol_low.json")}
         target, s_max, _, _ = et.pick_efforts("gpt-6.1-sol", b, scores)
         self.assertEqual(target, "low")
-        # 81.8 vs valid 7-day peak 84.2: below threshold, no alert. The two
-        # early points score 112.5/110 at coverage 12/15 — had they counted,
-        # this WOULD alert, so IsNone proves the coverage filter works.
-        self.assertIsNone(et.degrade_check("gpt-6.1-sol", scores, s_max))
+        # 81.8 vs 7-day peak 84.2 (window anchored at 10-12): below threshold,
+        # no alert. The two early points score 112.5/110 at coverage 12/15 —
+        # had they counted, this WOULD alert, so IsNone proves the filter works.
+        self.assertIsNone(et.degrade_check("gpt-6.1-sol", scores, s_max,
+                                           today=TODAY))
 
     def test_luna_model_has_no_ultra(self):
         self.assertNotIn("ultra", et.MODEL_EFFORTS["gpt-6-luna"])
@@ -208,7 +267,7 @@ class DegradeTests(unittest.TestCase):
             self.points("2026-10-10T00:00:00.000Z", 130.0, 10),   # filtered out
             self.points("2026-10-11T00:00:00.000Z", 60.0, 64),
         ])}
-        peak, day = et.degrade_peak(scores)
+        peak, day = et.degrade_peak(scores, today=TODAY)
         self.assertEqual((peak, day), (60.0, "2026-10-11"))
 
     def test_peak_takes_max_across_efforts_and_days(self):
@@ -216,23 +275,56 @@ class DegradeTests(unittest.TestCase):
             "low": score_payload(50, 64, points=[self.points("2026-10-09T00:00:00.000Z", 100.0, 64)]),
             "high": score_payload(50, 64, points=[self.points("2026-10-10T00:00:00.000Z", 120.0, 64)]),
         }
-        peak, day = et.degrade_peak(scores)
+        peak, day = et.degrade_peak(scores, today=TODAY)
         self.assertEqual((peak, day), (120.0, "2026-10-10"))
 
     def test_alert_at_threshold_not_below(self):
         scores = {"high": score_payload(100.0, 64, points=[
             self.points("2026-10-11T00:00:00.000Z", 110.0, 64)])}
-        self.assertIsNotNone(et.degrade_check("m", scores, 100.0))  # exactly -10
-        self.assertIsNone(et.degrade_check("m", scores, 100.1))     # above threshold
+        self.assertIsNotNone(et.degrade_check("m", scores, 100.0, today=TODAY))  # exactly -10
+        self.assertIsNone(et.degrade_check("m", scores, 100.1, today=TODAY))     # above threshold
+
+    def test_window_anchored_on_today_not_latest_bucket(self):
+        # review 3: latest bucket 10-09, today 10-12 → window 10-06..10-12;
+        # the 121 peak on 10-04 is outside and must not trigger an alert
+        scores = {"high": score_payload(110.0, 64, points=[
+            self.points("2026-10-09T00:00:00.000Z", 110.0, 64),
+            self.points("2026-10-04T00:00:00.000Z", 121.0, 64),
+        ])}
+        self.assertIsNone(et.degrade_check("m", scores, 110.0, today=TODAY))
+
+    def test_stale_data_never_alerts(self):
+        # every point older than the window → no peak, no alert
+        scores = {"high": score_payload(100.0, 64, points=[
+            self.points("2026-10-04T00:00:00.000Z", 121.0, 64)])}
+        self.assertIsNone(et.degrade_check("m", scores, 100.0, today=TODAY))
 
     def test_window_is_seven_days(self):
         scores = {"low": score_payload(100.0, 64, points=[
-            self.points("2026-10-11T00:00:00.000Z", 95.0, 64),
-            self.points("2026-10-05T00:00:00.000Z", 140.0, 64),  # 7th day back: inside
-            self.points("2026-10-04T00:00:00.000Z", 150.0, 64),  # 8th day back: outside
+            self.points("2026-10-12T00:00:00.000Z", 95.0, 64),
+            self.points("2026-10-06T00:00:00.000Z", 140.0, 64),  # 7th day back: inside
+            self.points("2026-10-05T00:00:00.000Z", 150.0, 64),  # 8th day back: outside
         ])}
-        peak, _ = et.degrade_peak(scores)
+        peak, _ = et.degrade_peak(scores, today=TODAY)
         self.assertEqual(peak, 140.0)
+
+    def test_boundary_coverage_point_counts(self):
+        # coverage exactly 56 counts toward the peak (review 7)
+        scores = {"low": score_payload(50, 64, points=[
+            self.points("2026-10-10T00:00:00.000Z", 130.0, 55),  # filtered out
+            self.points("2026-10-11T00:00:00.000Z", 120.0, 56),
+        ])}
+        peak, _ = et.degrade_peak(scores, today=TODAY)
+        self.assertEqual(peak, 120.0)
+
+    def test_future_and_malformed_points_ignored(self):
+        scores = {"low": score_payload(50, 64, points=[
+            self.points("2026-10-15T00:00:00.000Z", 200.0, 64),  # future: outside
+            {"at": "2026-10-11T00:00:00.000Z", "score": "abc", "coverage": 64},
+            {"at": "2026-10-11T00:00:00.000Z", "score": 90.0, "coverage": None},
+        ])}
+        peak, day = et.degrade_peak(scores, today=TODAY)
+        self.assertEqual((peak, day), (None, None))
 
 
 class CommentTests(unittest.TestCase):
@@ -250,8 +342,15 @@ class CommentTests(unittest.TestCase):
         body = et.render_comment([(ID1, "A", "high", "xhigh")], [], [],
                                  {"m": {"low": None, "high": score_payload(90.5, 60)}},
                                  {"m": ["low", "high"]})
-        self.assertIn("m/low: missing this round", body)
-        self.assertIn("m/high: score 90.5, coverage 60/64", body)
+        self.assertIn("`m/low`: missing this round", body)
+        self.assertIn("`m/high`: score 90.5, coverage 60/64", body)
+
+    def test_anomaly_names_blocked_agents(self):
+        # review 5: the anomaly section says which agents stayed untouched
+        body = et.render_comment([], ["mismatch for gpt-6-astra；本轮未改该模型的 agent：%s (A)" % ID1],
+                                 [], {}, {})
+        self.assertIn("本轮未改", body)
+        self.assertIn(ID1, body)
 
 
 class FetchTests(unittest.TestCase):
@@ -267,7 +366,7 @@ class FetchTests(unittest.TestCase):
         site = {"m": ["low", "high"]}
         with patch.object(et, "http_get_json", side_effect=fake_get), \
              patch.object(et, "time") as mtime:
-            mtime.monotonic.side_effect = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+            mtime.monotonic.side_effect = itertools.count()
             results = et.fetch_round({"m"}, site, deadline=5)
         self.assertEqual(calls.count(calls[0]), 2)   # low retried exactly once
         self.assertEqual(results["m"]["low"], {"score": 1})
@@ -276,16 +375,273 @@ class FetchTests(unittest.TestCase):
     def test_budget_exhaustion_returns_missing(self):
         with patch.object(et, "http_get_json", return_value={"score": 1}), \
              patch.object(et, "time") as mtime:
-            mtime.monotonic.side_effect = itertools_count()
+            mtime.monotonic.side_effect = itertools.count()
             results = et.fetch_round({"m"}, {"m": ["low", "high"]}, deadline=0)
-        # low squeaks through (0 > 0 is false); the budget check kills high
+        self.assertEqual(results, {"m": {"low": None, "high": None}})  # zero budget → no request
+
+    def test_request_timeout_capped_by_deadline(self):
+        # review 4a: a request issued with little budget left gets a timeout
+        # capped to the remaining time, not the full 130s
+        seen = []
+
+        def fake_get(url, timeout=None):
+            seen.append(timeout)
+            return {"score": 1}
+
+        with patch.object(et, "http_get_json", side_effect=fake_get), \
+             patch.object(et, "time") as mtime:
+            mtime.monotonic.side_effect = iter([1000, 1001])  # 1s before deadline
+            results = et.fetch_round({"m"}, {"m": ["low"]}, deadline=1001)
+        self.assertEqual(seen, [1])
         self.assertEqual(results["m"]["low"], {"score": 1})
-        self.assertIsNone(results["m"].get("high"))
+
+    def test_binding_retry(self):
+        calls = []
+
+        def fake_get(url, timeout=None):
+            calls.append(url)
+            if len(calls) == 1:
+                raise OSError("524")
+            return {"model_efforts": []}
+
+        with patch.object(et, "http_get_json", side_effect=fake_get), \
+             patch.object(et, "time") as mtime:
+            mtime.monotonic.side_effect = itertools.count()
+            binding = et.fetch_binding(deadline=100)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(binding, {"model_efforts": []})
+
+    def test_binding_failure_returns_none(self):
+        with patch.object(et, "http_get_json", side_effect=OSError("524")), \
+             patch.object(et, "time") as mtime:
+            mtime.monotonic.side_effect = itertools.count()
+            self.assertIsNone(et.fetch_binding(deadline=100))
 
 
-def itertools_count():
-    import itertools
-    return iter(itertools.count())
+# ---- end-to-end round tests with a fake multica and fake HTTP (review 6) ----
+
+def issue_json(desc):
+    return {"description": desc}
+
+
+DESC = "rules\n```effort-tuner-exclude\n%s\n```" % ID2
+
+
+class FakeMultica:
+    """Records multica calls; serves runtime/agent/issue data from fixtures."""
+
+    def __init__(self, agents, issue=None, update_fails=(), readback=None):
+        self.agents = agents
+        self.issue = issue if issue is not None else issue_json(DESC)
+        self.update_fails = set(update_fails)
+        self.readback = dict(readback or {})   # agent_id -> value returned by get
+        self.comments = []
+        self.calls = []
+        self.applied = {}   # agent_id -> thinking_level after a successful update
+
+    def __call__(self, args):
+        self.calls.append(args)
+        head = args[0]
+        if head == "runtime":
+            return [{"id": "rt-codex", "provider": "codex"}]
+        if head == "agent" and args[1] == "list":
+            return self.agents
+        if head == "agent" and args[1] == "get":
+            return {"thinking_level": self.readback.get(args[2], self.applied.get(args[2]))}
+        if head == "agent" and args[1] == "update":
+            if args[2] in self.update_fails:
+                raise et.TunerError("multica agent update failed: 403 denied")
+            i = args.index("--thinking-level")
+            self.applied[args[2]] = args[i + 1]
+            return {}
+        if head == "issue" and args[1] == "get":
+            return self.issue
+        if head == "issue" and args[1] == "comment":
+            i = args.index("--content-file")
+            with open(args[i + 1], encoding="utf-8") as fh:
+                self.comments.append(fh.read())
+            return {}
+        raise AssertionError("unexpected call: %r" % (args,))
+
+
+class FakeHTTP:
+    """Callable fake HTTP: serves the binding then per-effort fixture scores.
+
+    score_overrides maps effort -> payload-or-None (None = always fail).
+    """
+
+    def __init__(self, binding, score_overrides=None):
+        self.binding = binding
+        self.overrides = score_overrides or {}
+        self.calls = []
+
+    def __call__(self, url, timeout=None):
+        self.calls.append(url)
+        if "radar-bench-binding" in url:
+            return self.binding
+        effort = url.split("effort=")[1].split("&")[0]
+        if effort in self.overrides:
+            payload = self.overrides[effort]
+            if payload is None:
+                raise OSError("524")
+            return payload
+        return load("score_gpt-6-astra_%s.json" % effort)
+
+
+def http_for(binding, score_overrides=None):
+    return FakeHTTP(binding, score_overrides)
+
+
+class RoundTests(unittest.TestCase):
+    def setUp(self):
+        self.agents = [agent(ID1, "gpt-6-astra", "max", name="one"),
+                       agent(ID2, "gpt-6-astra", "xhigh", name="excluded")]
+        self.binding = binding_with([("gpt-6-astra", e) for e in et.EFFORT_ORDER])
+
+    def run_round(self, fake_multica, http, dry_run=False, cwd=None):
+        import os
+        import tempfile
+        tmp = cwd or tempfile.mkdtemp()
+        old = os.getcwd()
+        os.chdir(tmp)
+        try:
+            code = et.run_round("OL-252", dry_run=dry_run,
+                                multica=fake_multica, http_get=http,
+                                today=TODAY)
+            leftover = (Path(tmp) / "effort-tuner-comment.md").exists()
+        finally:
+            os.chdir(old)
+        return code, leftover
+
+    def test_baseline_writes_and_posts_one_comment_via_content_file(self):
+        m = FakeMultica(self.agents)
+        http = http_for(self.binding)
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertEqual(code, 0)
+        self.assertFalse(leftover)   # comment file cleaned up after posting
+        # agent one: max → xhigh; agent two is excluded, untouched
+        updates = [c for c in m.calls if c[:2] == ["agent", "update"]]
+        self.assertEqual(updates, [["agent", "update", ID1, "--thinking-level", "xhigh"]])
+        # posted once, via --content-file, to the tracking issue
+        comment_calls = [c for c in m.calls if c[:3] == ["issue", "comment", "add"]]
+        self.assertEqual(comment_calls,
+                         [["issue", "comment", "add", "OL-252",
+                           "--content-file", "effort-tuner-comment.md"]])
+        self.assertEqual(len(m.comments), 1)
+        self.assertIn("max → xhigh", m.comments[0])
+
+    def test_dry_run_neither_updates_nor_comments(self):
+        m = FakeMultica(self.agents)
+        http = http_for(self.binding)
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http, dry_run=True)
+        self.assertEqual(code, 0)
+        self.assertFalse(any(c[:2] == ["agent", "update"] for c in m.calls))
+        self.assertEqual(m.comments, [])
+        # no fetch for the excluded agent's model list, but scores were fetched
+        self.assertTrue(any("effort=low" in u for u in http.calls))
+
+    def test_excluded_agent_not_written_and_not_reported(self):
+        m = FakeMultica(self.agents)
+        http = http_for(self.binding)
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertFalse(any(ID2 in c for c in m.calls if c[:2] == ["agent", "update"]))
+        body = m.comments[0]
+        self.assertNotIn(ID2, body)
+
+    def test_invalid_exclude_list_changes_nothing_and_reports(self):
+        m = FakeMultica(self.agents, issue=issue_json("no block at all"))
+        http = http_for(self.binding)
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertEqual(code, 0)
+        # nothing fetched, nothing written, exactly one anomaly comment
+        self.assertEqual(http.calls, [])
+        self.assertFalse(any(c[:2] == ["agent", "update"] for c in m.calls))
+        self.assertEqual(len(m.comments), 1)
+        self.assertIn("本轮未改任何 agent", m.comments[0])
+
+    def test_write_error_continues_and_reports(self):
+        # review 1: agent one's update succeeds, agent three's fails —
+        # the round continues, both the applied change and the failure land
+        # in the same comment
+        three = "33333333-3333-3333-3333-333333333333"
+        agents = self.agents + [agent(three, "gpt-6-astra", "medium", name="three")]
+        m = FakeMultica(agents, update_fails={three})
+        http = http_for(self.binding)
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertEqual(code, 0)
+        updates = [c for c in m.calls if c[:2] == ["agent", "update"]]
+        self.assertEqual(len(updates), 2)          # both agents attempted
+        self.assertEqual(len(m.comments), 1)       # comment still posted
+        self.assertIn(ID1, m.comments[0])          # applied change recorded
+        self.assertIn("失败", m.comments[0])
+        self.assertIn(three, m.comments[0])
+
+    def test_readback_mismatch_continues_and_reports(self):
+        three = "33333333-3333-3333-3333-333333333333"
+        agents = self.agents + [agent(three, "gpt-6-astra", "medium", name="three")]
+        m = FakeMultica(agents, readback={three: "medium"})  # did not stick
+        http = http_for(self.binding)
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(m.comments), 1)
+        self.assertIn("回读为 medium", m.comments[0])
+
+    def test_binding_failure_blocks_round_gracefully(self):
+        m = FakeMultica(self.agents)
+        calls = []
+
+        def get(url, timeout=None):
+            calls.append(url)
+            raise OSError("524")
+
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, get)
+        self.assertEqual(code, 0)
+        self.assertFalse(any(c[:2] == ["agent", "update"] for c in m.calls))
+        self.assertEqual(len(m.comments), 1)
+        self.assertIn("binding 抓取失败", m.comments[0])
+        self.assertIn("本轮未改任何 agent", m.comments[0])
+
+    def test_task_set_mismatch_names_affected_agents(self):
+        # review 5: a benchmark mismatch lists the model's managed agents
+        # as untouched in the same comment
+        m = FakeMultica(self.agents)
+        poisoned = dict(load("score_gpt-6-astra_xhigh.json"))
+        poisoned["task_set_sha256"] = "deadbeef"
+        http = http_for(self.binding, {"xhigh": poisoned})
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertEqual(code, 0)
+        self.assertFalse(any(c[:2] == ["agent", "update"] for c in m.calls))
+        self.assertEqual(len(m.comments), 1)
+        self.assertIn("mismatch", m.comments[0])
+        self.assertIn(ID1, m.comments[0])          # affected agent named
+        self.assertNotIn(ID2, m.comments[0])       # excluded agent not dragged in
+
+    def test_quiet_round_posts_no_comment(self):
+        # everything already at target: no changes, no anomalies → no comment
+        agents = [agent(ID1, "gpt-6-astra", "xhigh", name="one")]
+        m = FakeMultica(agents)
+        http = http_for(self.binding)
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertEqual(code, 0)
+        self.assertEqual(m.comments, [])
 
 
 if __name__ == "__main__":

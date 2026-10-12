@@ -15,7 +15,7 @@ import sys
 import time
 import urllib.request
 import uuid
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 
 # ---- tunables (spec OL-259 §4.5) ----
 TIE_RANGE = 5            # efforts scoring >= S - TIE_RANGE count as tied
@@ -28,7 +28,8 @@ SCORE_URL = ("https://codexradar.com/api/radar-bench-score"
 USER_AGENT = "labrastro-effort-tuner/1"
 REQUEST_TIMEOUT_S = 130   # cold-cache requests hang ~2min then return 524
 FETCH_BUDGET_S = int(os.environ.get("EFFORT_TUNER_BUDGET_S", "600"))
-# ^ whole fetch round capped at 10 minutes by default; env-overridable for ops
+# ^ whole fetch round (binding + every score request, retries included) is
+# capped by this deadline; env-overridable for ops
 MULTICA = "multica"
 EXCLUDE_BLOCK = "effort-tuner-exclude"
 COMMENT_FILE = "effort-tuner-comment.md"
@@ -44,6 +45,10 @@ MODEL_EFFORTS = {
     "gpt-6-luna": EFFORT_ORDER[:-1],
     "gpt-5.6-luna": EFFORT_ORDER[:-1],
 }
+
+# website-sourced effort names must look like plain identifiers before they
+# are allowed into any message (they end up in issue comments)
+EFFORT_NAME_RE = re.compile(r"^[a-z0-9._-]+$")
 
 
 class TunerError(Exception):
@@ -85,18 +90,24 @@ def parse_exclude_list(description):
     return ids
 
 
-def list_managed_agents():
-    """Active agents on codex runtimes, keyed by ID, plus per-agent anomalies.
+def list_managed_agents(exclude=(), multica=None):
+    """Active agents on codex runtimes, keyed by ID, plus per-agent skip notes.
 
-    Agents with an empty model or a model outside MODEL_EFFORTS are reported
-    and left alone: the daemon drops the effort setting for an empty model.
+    Excluded agents are dropped before any model check (spec §1.2 precedes
+    §1.3), so excluding an agent also silences its model problems. Agents with
+    an empty model or a model outside MODEL_EFFORTS are reported and left
+    alone: the daemon drops the effort setting for an empty model.
     """
-    runtimes = run_multica(["runtime", "list", "--output", "json"])
+    if multica is None:
+        multica = globals()["run_multica"]
+    runtimes = multica(["runtime", "list", "--output", "json"])
     codex = {r["id"] for r in runtimes if r.get("provider") == "codex"}
-    agents = run_multica(["agent", "list", "--output", "json"])
+    agents = multica(["agent", "list", "--output", "json"])
     managed, skipped = {}, []
     for a in agents:
         if a.get("runtime_id") not in codex or a.get("archived_at"):
+            continue
+        if a["id"] in exclude:
             continue
         if not a.get("model"):
             skipped.append((a["id"], a.get("name", ""), "model is empty"))
@@ -108,30 +119,59 @@ def list_managed_agents():
     return managed, skipped
 
 
-def pick_efforts(model, binding, scores):
-    """Selection rule (spec §4). Returns (target, S, common_efforts, notes).
+def common_efforts_for(model, binding):
+    """Efforts present in both the script table and the website binding.
 
-    target is None when no effort qualifies (model untouched this round).
-    Raises TunerError when candidate efforts disagree with the binding's
-    benchmark / task_set_sha256.
+    Returns (common, note) — common is cheapest-first; note is a disagreement
+    message (spec §3) or None. Single source of truth for "both sides have
+    it": used for the fetch list and inside pick_efforts.
     """
     table = MODEL_EFFORTS[model]
     site = sorted({e["effort"] for e in (binding.get("model_efforts") or [])
                    if e.get("model") == model and e.get("effort")})
-    common = [e for e in EFFORT_ORDER if e in table and e in site]
-    notes = []
+    common = [e for e in table if e in site and EFFORT_NAME_RE.fullmatch(e)]
+    note = None
     if set(table) != set(site):
-        notes.append("effort table and website disagree for %s (script=%s website=%s)"
-                     % (model, sorted(table), site))
+        note = ("effort table and website disagree for %s "
+                "(script=`%s` website=`%s`)" % (model, sorted(table), site))
+    return common, note
+
+
+def check_payload(model, effort, s):
+    """Raise TunerError when a fetched score payload cannot be interpreted."""
+    if not isinstance(s, dict):
+        raise TunerError("malformed payload for %s/%s: %r" % (model, effort, s))
+    score, cov = s.get("score"), s.get("coverage")
+    if isinstance(score, bool) or (score is not None
+                                   and not isinstance(score, (int, float))):
+        raise TunerError("score for %s/%s is not a number: %r" % (model, effort, score))
+    if isinstance(cov, bool) or not isinstance(cov, int):
+        raise TunerError("coverage for %s/%s is not an integer: %r" % (model, effort, cov))
+
+
+def pick_efforts(model, binding, scores):
+    """Selection rule (spec §4). Returns (target, S, common_efforts, notes).
+
+    target is None when no effort qualifies (model untouched this round).
+    Raises TunerError when a payload is malformed or candidate efforts
+    disagree with the binding's benchmark / task_set_sha256.
+    """
+    common, note = common_efforts_for(model, binding)
+    notes = [note] if note else []
     ref = (binding.get("benchmark"), binding.get("task_set_sha256"))
     candidates = []
     for e in common:
         s = scores.get(e)
-        if s is None or s.get("score") is None or s.get("coverage", 0) < COVERAGE_MIN:
+        if s is None:
+            continue
+        check_payload(model, e, s)
+        if s.get("score") is None or s.get("coverage") < COVERAGE_MIN:
             continue
         if (s.get("benchmark"), s.get("task_set_sha256")) != ref:
-            raise TunerError("benchmark/task_set mismatch for %s/%s: got %r, binding has %r"
-                             % (model, e, (s.get("benchmark"), s.get("task_set_sha256")), ref))
+            raise TunerError("benchmark/task_set mismatch for %s/%s: got `%r`, "
+                             "binding has `%r`"
+                             % (model, e, (s.get("benchmark"), s.get("task_set_sha256")),
+                                ref))
         candidates.append(e)
     if not candidates:
         return None, None, common, notes
@@ -141,33 +181,40 @@ def pick_efforts(model, binding, scores):
     return target, s_max, common, notes
 
 
-def degrade_peak(scores):
-    """Peak score over the last HISTORY_WINDOW_DAYS UTC days.
+def degrade_peak(scores, today):
+    """Peak score over the last HISTORY_WINDOW_DAYS UTC days ending at today.
 
     Per UTC day, the max score across efforts among coverage-filtered points;
-    the window is anchored on the latest day present in the data (deterministic
-    for tests; the live feed's last bucket is at most a day old).
+    the window is [today-6, today] regardless of how stale the data is.
+    Malformed history points are skipped (the degrade alert is advisory).
     Returns (peak, day) or (None, None).
     """
     days = {}
     for s in scores.values():
-        for p in (s or {}).get("history", {}).get("points", []):
-            if p.get("coverage", 0) < COVERAGE_MIN or p.get("score") is None:
+        if not isinstance(s, dict):
+            continue
+        for p in s.get("history", {}).get("points", []):
+            cov, score = p.get("coverage"), p.get("score")
+            if isinstance(cov, bool) or not isinstance(cov, int) or cov < COVERAGE_MIN:
+                continue
+            if isinstance(score, bool) or not isinstance(score, (int, float)):
                 continue
             day = (p.get("at") or "")[:10]
             if day:
-                days.setdefault(day, []).append(p["score"])
+                days.setdefault(day, []).append(score)
     if not days:
         return None, None
-    cutoff = (date.fromisoformat(max(days)) - timedelta(days=HISTORY_WINDOW_DAYS - 1)).isoformat()
-    window = {d: v for d, v in days.items() if d >= cutoff}
+    cutoff = (today - timedelta(days=HISTORY_WINDOW_DAYS - 1)).isoformat()
+    window = {d: v for d, v in days.items() if cutoff <= d <= today.isoformat()}
+    if not window:
+        return None, None
     peak_day = max(window, key=lambda d: max(window[d]))
     return max(window[peak_day]), peak_day
 
 
-def degrade_check(model, scores, s_max):
+def degrade_check(model, scores, s_max, today):
     """Alert string when S fell DEGRADE_THRESHOLD below the 7-day peak."""
-    peak, peak_day = degrade_peak(scores)
+    peak, peak_day = degrade_peak(scores, today)
     if peak is None or s_max is None or s_max > peak - DEGRADE_THRESHOLD:
         return None
     return ("degrade: %s best %.1f vs 7-day peak %.1f on %s (down %.1f pts)"
@@ -199,34 +246,54 @@ def plan_changes(managed, targets, scores):
     return changes, anomalies
 
 
-def fetch_round(models, site_efforts, deadline):
+def fetch_round(models, site_efforts, deadline, http_get=None):
     """Sequential fetch, one retry pass, bounded by the overall deadline.
 
+    Each request's timeout is capped by the time left before the deadline, so
+    the whole round (this plus the binding fetch) stays inside FETCH_BUDGET_S.
     Returns {model: {effort: payload-or-None}} — None = missing this round.
     """
-    results, failed = {}, []
+    if http_get is None:
+        http_get = globals()["http_get_json"]
+    results, failed = {}, {}
 
     def attempt(model, effort):
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None  # out of budget: treated as missing, like a failed fetch
         try:
-            return http_get_json(SCORE_URL.format(model=model, effort=effort))
+            return http_get(SCORE_URL.format(model=model, effort=effort),
+                            timeout=min(REQUEST_TIMEOUT_S, left))
         except Exception as exc:  # timeouts, 524s, DNS — all retryable
             print("fetch %s/%s failed: %s" % (model, effort, exc), file=sys.stderr)
             return None
 
     for model in sorted(models):
+        results.setdefault(model, {})
         for effort in site_efforts.get(model, ()):  # cheapest-first table order
-            if time.monotonic() > deadline:
-                print("fetch budget exhausted; remaining efforts treated as missing",
-                      file=sys.stderr)
-                return results
-            results.setdefault(model, {})[effort] = attempt(model, effort)
+            results[model][effort] = attempt(model, effort)
             if results[model][effort] is None:
-                failed.append((model, effort))
-    for model, effort in failed:  # one retry pass after everything else
-        if time.monotonic() > deadline:
-            break
-        results[model][effort] = attempt(model, effort)
+                failed.setdefault(model, []).append(effort)
+    for model, efforts in failed.items():  # one retry pass after everything else
+        for effort in efforts:
+            results[model][effort] = attempt(model, effort)
     return results
+
+
+def fetch_binding(deadline, http_get=None):
+    """Fetch the binding doc with one retry; None when both attempts fail."""
+    if http_get is None:
+        http_get = globals()["http_get_json"]
+    for attempt_no in (1, 2):
+        left = deadline - time.monotonic()
+        if left <= 0:
+            break
+        try:
+            return http_get(BINDING_URL, timeout=min(REQUEST_TIMEOUT_S, left))
+        except Exception as exc:
+            print("binding fetch failed (attempt %d): %s" % (attempt_no, exc),
+                  file=sys.stderr)
+    return None
 
 
 def fmt_score(x):
@@ -236,7 +303,7 @@ def fmt_score(x):
 def render_comment(changes, anomalies, alerts, scores, common_by_model):
     lines = []
     if changes:
-        lines.append("**effort changes**")
+        lines.append("**换档**")
         lines.extend("- %s (%s): %s → %s" % c for c in changes)
         lines.append("")
         lines.append("scores (max 150):")
@@ -244,9 +311,9 @@ def render_comment(changes, anomalies, alerts, scores, common_by_model):
             for e in common_by_model[model]:
                 s = scores.get(model, {}).get(e)
                 if s is None:
-                    lines.append("- %s/%s: missing this round" % (model, e))
+                    lines.append("- `%s/%s`: missing this round" % (model, e))
                 else:
-                    lines.append("- %s/%s: score %s, coverage %s/64"
+                    lines.append("- `%s/%s`: score %s, coverage %s/64"
                                  % (model, e, fmt_score(s.get("score")), s.get("coverage")))
         lines.append("")
         lines.append("params: tie_range=%d coverage_min=%d degrade_threshold=%d window=%dd"
@@ -254,7 +321,7 @@ def render_comment(changes, anomalies, alerts, scores, common_by_model):
     if anomalies:
         if lines:
             lines.append("")
-        lines.append("**anomalies**")
+        lines.append("**异常**")
         lines.extend("- " + a for a in anomalies)
     if alerts:
         if lines:
@@ -264,6 +331,119 @@ def render_comment(changes, anomalies, alerts, scores, common_by_model):
     return "\n".join(lines).strip() or None
 
 
+def apply_changes(changes, dry_run=False, multica=None):
+    """Write per-agent effort changes (spec §5.2). Returns (applied, issues).
+
+    A failed update or a mismatched read-back is recorded as an issue and the
+    round moves on to the next agent; already-applied changes are kept and
+    listed in the comment.
+    """
+    if multica is None:
+        multica = globals()["run_multica"]
+    applied, issues = [], []
+    for agent_id, name, old, new in changes:
+        if dry_run:
+            print("dry-run: would set %s (%s) thinking_level %s → %s"
+                  % (agent_id, name, old, new))
+            applied.append((agent_id, name, old, new))
+            continue
+        try:
+            multica(["agent", "update", agent_id, "--thinking-level", new])
+            after = multica(["agent", "get", agent_id, "--output", "json"])
+        except TunerError as exc:
+            issues.append("agent %s (%s) 改为 %s 失败：%s" % (agent_id, name, new, exc))
+            continue
+        got = after.get("thinking_level") or ""
+        if got != new:
+            issues.append("agent %s (%s) 改为 %s 失败：回读为 %s"
+                          % (agent_id, name, new, got or "(empty)"))
+            continue
+        applied.append((agent_id, name, old, new))
+        print("changed %s (%s): %s → %s" % (agent_id, name, old, new))
+    return applied, issues
+
+
+def run_round(tracking_issue, dry_run=False, multica=None, http_get=None, today=None):
+    """One full round: read, fetch, decide, write, report. Returns exit code.
+
+    multica / http_get / today are injection points for the offline tests.
+    """
+    if multica is None:
+        multica = globals()["run_multica"]
+    if http_get is None:
+        http_get = globals()["http_get_json"]
+    if today is None:
+        today = datetime.now(timezone.utc).date()
+    issues = []
+
+    def finish(changes, alerts, scores, common_by_model):
+        body = render_comment(changes, issues, alerts, scores, common_by_model)
+        if body is None:
+            print("nothing to report")
+            return 0
+        if dry_run:
+            print("dry-run: comment not sent:")
+            print(body)
+            return 0
+        with open(COMMENT_FILE, "w", encoding="utf-8") as fh:
+            fh.write(body + "\n")
+        try:
+            multica(["issue", "comment", "add", tracking_issue,
+                     "--content-file", COMMENT_FILE])
+        finally:
+            os.remove(COMMENT_FILE)
+        print("comment posted to %s:" % tracking_issue)
+        print(body)
+        return 0
+
+    issue = multica(["issue", "get", tracking_issue, "--output", "json"])
+    try:
+        exclude = parse_exclude_list(issue.get("description") or "")
+    except TunerError as exc:
+        # spec §1.2: nothing is changed at all this round; the error is reported
+        issues.append("%s；本轮未改任何 agent" % exc)
+        return finish([], [], [], {})
+
+    managed, skipped = list_managed_agents(exclude, multica=multica)
+    for agent_id, name, why in skipped:
+        issues.append("agent %s (%s) skipped: %s；本轮未改该 agent" % (agent_id, name, why))
+
+    targets, common_by_model, alerts, scores = {}, {}, [], {}
+    changes = []
+    if managed:
+        deadline = time.monotonic() + FETCH_BUDGET_S
+        binding = fetch_binding(deadline, http_get=http_get)
+        if binding is None:
+            issues.append("binding 抓取失败；本轮未改任何 agent")
+            return finish([], [], [], {})
+        models = {a["model"] for a in managed.values()}
+        fetch_lists = {m: common_efforts_for(m, binding)[0] for m in models}
+        scores = fetch_round(models, fetch_lists, deadline, http_get=http_get)
+        for model in sorted(models):
+            model_agents = ["%s (%s)" % (a["id"], a.get("name", ""))
+                            for a in managed.values() if a["model"] == model]
+            try:
+                target, s_max, common, notes = pick_efforts(model, binding,
+                                                            scores.get(model, {}))
+            except TunerError as exc:
+                issues.append("%s；本轮未改该模型的 agent：%s"
+                              % (exc, "、".join(model_agents)))
+                continue
+            issues.extend(notes)
+            targets[model] = target
+            common_by_model[model] = common
+            if target is not None:
+                alert = degrade_check(model, scores.get(model, {}), s_max, today)
+                if alert:
+                    alerts.append(alert)
+        changes, plan_issues = plan_changes(managed, targets, scores)
+        issues.extend(plan_issues)
+
+    applied, write_issues = apply_changes(changes, dry_run=dry_run, multica=multica)
+    issues.extend(write_issues)
+    return finish(applied, alerts, scores, common_by_model)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--tracking-issue", required=True,
@@ -271,83 +451,12 @@ def main(argv=None):
     p.add_argument("--dry-run", action="store_true",
                    help="fetch and compute as usual, print the result, change nothing")
     args = p.parse_args(argv)
-
-    issues = []
-    issue = run_multica(["issue", "get", args.tracking_issue, "--output", "json"])
     try:
-        exclude = parse_exclude_list(issue.get("description") or "")
+        return run_round(args.tracking_issue, dry_run=args.dry_run)
     except TunerError as exc:
-        # spec §1.2: nothing is changed at all this round; the error is reported
-        issues.append(str(exc))
-        managed, targets, scores, common_by_model = {}, {}, {}, {}
-        changes, alerts = [], []
-    else:
-        managed, skipped = list_managed_agents()
-        for agent_id, name, why in skipped:
-            issues.append("agent %s (%s) skipped: %s" % (agent_id, name, why))
-        for agent_id in exclude:
-            managed.pop(agent_id, None)
-        targets, common_by_model, alerts, changes = {}, {}, [], []
-        scores = {}
-        if managed:
-            deadline = time.monotonic() + FETCH_BUDGET_S
-            binding = http_get_json(BINDING_URL)
-            site_efforts = {}
-            for e in binding.get("model_efforts", []):
-                if e.get("model") in MODEL_EFFORTS and e.get("effort"):
-                    efforts = site_efforts.setdefault(e["model"], [])
-                    if e["effort"] not in efforts and e["effort"] in MODEL_EFFORTS[e["model"]]:
-                        efforts.append(e["effort"])
-            for m in site_efforts:  # keep script table order (cheapest first)
-                site_efforts[m] = [e for e in MODEL_EFFORTS[m] if e in site_efforts[m]]
-            models = {a["model"] for a in managed.values()}
-            scores = fetch_round(models, site_efforts, deadline)
-            for model in sorted(models):
-                try:
-                    target, s_max, common, notes = pick_efforts(model, binding,
-                                                                scores.get(model, {}))
-                except TunerError as exc:
-                    issues.append(str(exc))
-                    continue
-                issues.extend(notes)
-                targets[model] = target
-                common_by_model[model] = common
-                if target is not None:
-                    alert = degrade_check(model, scores.get(model, {}), s_max)
-                    if alert:
-                        alerts.append(alert)
-            changes, plan_issues = plan_changes(managed, targets, scores)
-            issues.extend(plan_issues)
-
-    for agent_id, name, old, new in changes:
-        if args.dry_run:
-            print("dry-run: would set %s (%s) thinking_level %s → %s"
-                  % (agent_id, name, old, new))
-        else:
-            run_multica(["agent", "update", agent_id, "--thinking-level", new])
-            after = run_multica(["agent", "get", agent_id, "--output", "json"])
-            if (after.get("thinking_level") or "") != new:
-                raise TunerError("agent %s: update to %s did not stick (read back %r)"
-                                 % (agent_id, new, after.get("thinking_level")))
-
-    body = render_comment(changes, issues, alerts, scores, common_by_model)
-    if body:
-        if args.dry_run:
-            print("dry-run: comment not sent:")
-            print(body)
-        else:
-            with open(COMMENT_FILE, "w", encoding="utf-8") as fh:
-                fh.write(body + "\n")
-            run_multica(["issue", "comment", "add", args.tracking_issue,
-                         "--content-file", COMMENT_FILE])
-    else:
-        print("nothing to report")
-    return 0
+        print("error: %s" % exc, file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except TunerError as exc:
-        print("error: %s" % exc, file=sys.stderr)
-        sys.exit(1)
+    sys.exit(main())
