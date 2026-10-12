@@ -390,7 +390,9 @@ describe("DagToolbar overflow", () => {
 
   it("reserves the label's full width before collapsing any action", () => {
     const m = stubMetrics();
-    // The full label needs 200px; the reservation caps at 96.
+    // The full label needs 200px while the rendered one reads 40 — the
+    // reservation must follow the full width, never the squeezed render.
+    m.sizes.labelRender = 40;
     const { store } = harness(fixtureGraph(), {}, (s) =>
       s.getState().setDagExpandedIds(["issue:one", "issue:two"]),
     );
