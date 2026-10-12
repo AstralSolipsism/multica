@@ -882,6 +882,15 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		if err := removeReusedManagedSkillDirs(env.RootDir, skillsDirPath(params.WorkDir, params.Provider)); err != nil {
 			logger.Warn("execenv: reclaim managed skill dirs on reuse failed", "error", err)
 		}
+		if params.Provider == "kimi" {
+			// Older daemons wrote Kimi skills under .kimi/skills. Reclaim only
+			// manifest-owned skill dirs there, including prior-run scratch,
+			// before refreshing into the current discovery root. User skills
+			// absent from the manifest remain untouched.
+			if err := removeReusedManagedSkillDirs(env.RootDir, filepath.Join(params.WorkDir, ".kimi", "skills")); err != nil {
+				logger.Warn("execenv: reclaim legacy Kimi skill dirs on reuse failed", "error", err)
+			}
+		}
 		if err := CleanupSidecars(env.RootDir); err != nil {
 			logger.Warn("execenv: roll back prior sidecars on reuse failed", "error", err)
 		}
