@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTipAnchorRegistry } from "./registry";
 
-const measure = () => 0;
+const measure = () => ({ top: 0, left: 0, width: 0, height: 0 });
 
 describe("createTipAnchorRegistry", () => {
   it("registers and unregisters anchors", () => {

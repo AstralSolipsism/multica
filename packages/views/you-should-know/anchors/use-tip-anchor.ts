@@ -6,6 +6,7 @@ import {
   createTipAnchorRegistry,
   tipAnchorDescriptorKey,
   type TipAnchorDescriptor,
+  type TipAnchorRect,
 } from "@multica/core/you-should-know/anchors";
 import { useTipAnchorRegistry } from "./tip-anchor-context";
 
@@ -13,6 +14,8 @@ import { useTipAnchorRegistry } from "./tip-anchor-context";
 // dot selector it serves always reads false. Lets the hook keep a constant
 // shape instead of conditionally calling useStore.
 const NO_REGISTRY = createTipAnchorRegistry();
+
+const DETACHED_RECT: TipAnchorRect = { top: 0, left: 0, width: 0, height: 0 };
 
 export interface UseTipAnchorResult {
   /**
@@ -41,8 +44,9 @@ export interface UseTipAnchorResult {
  *   row scrolling off) unregisters on both paths.
  * - Page position is NOT cached: lists here scroll inside inner containers,
  *   so any stored coordinate goes stale on the next scroll. The registry
- *   keeps a `measure()` thunk and the scheduler's caller measures visible
- *   anchors in one pass right before scheduling.
+ *   keeps a `measure()` thunk returning the live rect; the scheduler's caller
+ *   measures visible anchors in one pass right before scheduling, and the
+ *   bubble tracks the same thunk while it is on screen.
  */
 export function useTipAnchor(
   descriptor: TipAnchorDescriptor | undefined,
@@ -55,11 +59,14 @@ export function useTipAnchor(
     elementRef.current = el;
     setElement(el);
   }, []);
-  // Stable measure thunk: reads whatever element is currently attached.
-  const measure = useCallback(
-    () => elementRef.current?.getBoundingClientRect().top ?? 0,
-    [],
-  );
+  // Stable measure thunk: reads whatever element is currently attached, as a
+  // plain rect (core holds no DOM types). The scheduler takes its top; the
+  // bubble positions off the whole rect.
+  const measure = useCallback((): TipAnchorRect => {
+    const rect = elementRef.current?.getBoundingClientRect();
+    if (!rect) return DETACHED_RECT;
+    return { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
+  }, []);
 
   // Keyed on content, not identity — a caller that re-creates the object
   // every render must not churn the registry. Only computed while registering:

@@ -5,11 +5,12 @@ import type { TipAnchorRegistry } from "@multica/core/you-should-know/anchors";
 
 /**
  * Per-page tip anchor registry (OL-193). The page-level You-should-know
- * provider (a later milestone) creates the instance and hands it down here;
- * anchor hosts (`AgentAvatarStack` via `useTipAnchor`) register into it.
+ * provider creates the instance and hands it down here; anchor hosts
+ * (`AgentAvatarStack` via `useTipAnchor`) register into it.
  *
- * Default null: without a provider the whole feature is inert — anchors do
- * not register and nothing renders differently.
+ * Null — the default, and what the provider passes while the feature is off
+ * for this viewer — makes the whole feature inert: anchors do not register
+ * and nothing renders differently.
  */
 const TipAnchorRegistryContext = createContext<TipAnchorRegistry | null>(null);
 
@@ -17,7 +18,7 @@ export function TipAnchorRegistryProvider({
   registry,
   children,
 }: {
-  registry: TipAnchorRegistry;
+  registry: TipAnchorRegistry | null;
   children: React.ReactNode;
 }) {
   return (

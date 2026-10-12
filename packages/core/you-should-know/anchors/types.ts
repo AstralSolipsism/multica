@@ -25,6 +25,17 @@ export type TipAnchorDescriptor =
   | { level: "row"; issueId: string }
   | { level: "summary"; scope: TipAnchorScope };
 
+/**
+ * An anchor's viewport rect in px. A plain object rather than a DOMRect so
+ * core stays DOM-free; the views layer converts it for floating-ui.
+ */
+export interface TipAnchorRect {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+}
+
 /** One anchor as held by the registry. */
 export interface RegisteredTipAnchor {
   /** Unique per mounted anchor element (React useId of the registering stack). */
@@ -33,14 +44,15 @@ export interface RegisteredTipAnchor {
   /** Whether the anchor is inside the viewport (IntersectionObserver). */
   visible: boolean;
   /**
-   * Measures the anchor's current viewport-top (px) on demand. NOT a cached
+   * Measures the anchor's current viewport rect on demand. NOT a cached
    * value: the app scrolls inner containers rather than the window, so any
    * stored position goes stale on the next scroll. The scheduler's caller
-   * measures all visible anchors in one pass right before scheduling — only
-   * visible anchors ever compete, and viewport coordinates taken at the same
-   * instant are mutually comparable.
+   * measures all visible anchors in one pass right before scheduling (see
+   * `measureTipAnchors`) — only visible anchors ever compete, and viewport
+   * coordinates taken at the same instant are mutually comparable. The
+   * bubble positions itself off the same thunk.
    */
-  measure: () => number;
+  measure: () => TipAnchorRect;
 }
 
 /** Display state written back into the registry by the page-level provider. */
@@ -65,7 +77,7 @@ export interface SchedulableTip {
 /**
  * Anchor view accepted by the scheduler: a measured snapshot. `top` is the
  * viewport-top measured by the caller just before scheduling (see
- * RegisteredTipAnchor.measure).
+ * RegisteredTipAnchor.measure and `measureTipAnchors`).
  */
 export interface TipScheduleAnchor {
   id: string;

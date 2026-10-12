@@ -95,6 +95,14 @@ vi.mock("@multica/views/layout", () => ({
   WorkspacePresencePrefetch: () => null,
 }));
 
+// The provider's own behavior is covered in packages/views; here it only
+// marks where the layout mounts it.
+vi.mock("@multica/views/you-should-know", () => ({
+  YouShouldKnowProvider: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="ysk-provider">{children}</div>
+  ),
+}));
+
 vi.mock("@/stores/tab-store", () => ({
   useTabStore: Object.assign(() => null, {
     getState: () => ({ validateWorkspaceSlugs: vi.fn() }),
@@ -147,6 +155,11 @@ beforeEach(() => {
 });
 
 describe("WorkspaceRouteLayout", () => {
+  it("mounts the You-should-know provider around the tab's workspace routes (OL-194)", () => {
+    const { getByTestId } = renderLayout();
+    expect(getByTestId("ysk-provider")).toContainElement(getByTestId("outlet"));
+  });
+
   it("keeps workspace content mounted when a background refetch fails", async () => {
     const { queryByTestId, queryClient } = renderLayout();
     expect(queryByTestId("outlet")).not.toBeNull();

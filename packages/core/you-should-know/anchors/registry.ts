@@ -4,6 +4,7 @@ import type {
   RegisteredTipAnchor,
   TipAnchorDescriptor,
   TipAnchorDisplayState,
+  TipAnchorRect,
 } from "./types";
 
 export interface TipAnchorRegistryState {
@@ -20,7 +21,7 @@ export interface TipAnchorRegistryState {
   register: (anchor: {
     id: string;
     descriptor: TipAnchorDescriptor;
-    measure: () => number;
+    measure: () => TipAnchorRect;
   }) => void;
   /** Update an anchor's viewport visibility. */
   setAnchorVisible: (id: string, visible: boolean) => void;
