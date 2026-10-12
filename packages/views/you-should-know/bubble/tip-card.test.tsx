@@ -1,29 +1,21 @@
 // @vitest-environment jsdom
 
 /**
- * The bubble's card, its buttons and the feedback row (OL-196), through the
- * real provider and host: what each button does, both feedback sets, the
- * feedback row's timeout, "Discuss in comments", rollback on failure,
- * keyboard and focus, and a state change arriving from another tab. A small
- * fake server answers the tips list with the states it was sent, like the
- * real one. Fake timers drive dwell and timeouts.
+ * The bubble's card and its buttons (OL-196), through the real provider and
+ * host: opening and closing, Learn more, I already know / Got it, Discuss in
+ * comments, a failed save, a state change from another tab, and motion. The
+ * feedback row and focus hand-offs have their own suites. A fake server
+ * answers the tips list with the states it was sent; fake timers drive dwell.
  */
 
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useCommentDraftStore } from "@multica/core/issues/stores";
 import { setCurrentWorkspace } from "@multica/core/platform";
 import {
   tipDisplayLedger,
   useYouShouldKnowRealtimeSync,
-  youShouldKnowKeys,
-  type IssueTip,
-  type IssueTipList,
-  type IssueTipUserState,
-  type SetTipStateRequest,
 } from "@multica/core/you-should-know";
-import type { TipAnchorDescriptor } from "@multica/core/you-should-know/anchors";
 import {
   createNavigation,
   elapse,
@@ -36,7 +28,19 @@ import {
   WS_ID,
   WS_SLUG,
 } from "../../test/you-should-know";
-import { TIP_FEEDBACK_TIMEOUT_MS } from "./tip-feedback-row";
+import {
+  bubbleText,
+  bubbleToggle,
+  cachedState,
+  cardButton,
+  cardButtonNames,
+  feedbackRow,
+  HeaderAnchor,
+  installFakeTipServer,
+  openCard,
+  preferReducedMotion,
+  RowAnchor,
+} from "../../test/you-should-know-layers";
 
 const apiMock = vi.hoisted(() => ({
   listActiveTips: vi.fn(),
@@ -63,142 +67,16 @@ vi.mock("@multica/core/workspace/hooks", () => ({
   }),
 }));
 
-import { AgentAvatarStack } from "../../agents/components/agent-avatar-stack";
-
-// --- Fake server --------------------------------------------------------
-
-const server = {
-  tips: [] as IssueTip[],
-  states: new Map<string, IssueTipUserState>(),
-};
-
-function serveTips(...tips: IssueTip[]) {
-  server.tips = tips;
-  server.states.clear();
-}
-
-function servePair() {
-  serveTips(
-    makeTip({ id: "first", line: "First line", created_at: "2026-10-11T08:00:00Z" }),
-    makeTip({ id: "second", line: "Second line", created_at: "2026-10-11T09:00:00Z" }),
-  );
-}
-
-function cachedState(
-  queryClient: ReturnType<typeof renderWithYsk>["queryClient"],
-  tipId: string,
-): IssueTipUserState | null | undefined {
-  return queryClient
-    .getQueryData<IssueTipList>(youShouldKnowKeys.active(WS_ID))
-    ?.tips.find((tip) => tip.id === tipId)?.user_state;
-}
-
-// --- Page fixtures -------------------------------------------------------
-
-function Anchor({
-  testId,
-  rect,
-  descriptor,
-}: {
-  testId: string;
-  rect: string;
-  descriptor: TipAnchorDescriptor;
-}) {
-  return (
-    <div data-testid={testId} data-test-rect={rect}>
-      <AgentAvatarStack agentIds={["agent-1"]} tipAnchor={descriptor} />
-    </div>
-  );
-}
-
-function RowAnchor({ issueId, top = 300 }: { issueId: string; top?: number }) {
-  return (
-    <Anchor
-      testId={`row-${issueId}`}
-      rect={`100,${top},40,16`}
-      descriptor={{ level: "row", issueId }}
-    />
-  );
-}
-
-function HeaderAnchor({ issueId }: { issueId: string }) {
-  return (
-    <Anchor
-      testId={`header-${issueId}`}
-      rect="1000,40,60,20"
-      descriptor={{ level: "detail_header", issueId }}
-    />
-  );
-}
-
-// --- Layer queries ---------------------------------------------------------
-
-function bubbleText(): string {
-  return getBubble()?.textContent ?? "";
-}
-
-/** The bubble line: the button that opens and closes the card. */
-function bubbleToggle(): HTMLButtonElement {
-  const toggle = getBubble()?.querySelector<HTMLButtonElement>("button[aria-expanded]");
-  if (!toggle) throw new Error("no bubble on the page");
-  return toggle;
-}
-
-function openCard() {
-  fireEvent.click(bubbleToggle());
-  expect(bubbleToggle()).toHaveAttribute("aria-expanded", "true");
-}
-
-function cardButton(name: string): HTMLElement {
-  return within(getBubble()!).getByRole("button", { name });
-}
-
-function cardButtonNames(): string[] {
-  const card = within(getBubble()!).queryByRole("group");
-  return card ? within(card).getAllByRole("button").map((button) => button.textContent ?? "") : [];
-}
-
-function feedbackRow(): HTMLElement | null {
-  return document.querySelector<HTMLElement>("[data-ysk-feedback]");
-}
-
-function feedbackButton(name: string): HTMLElement {
-  return within(feedbackRow()!).getByRole("button", { name });
-}
-
-function dotIn(testId: string): HTMLElement | null {
-  return within(screen.getByTestId(testId)).queryByTestId("tip-anchor-dot");
-}
-
+let serveTips: ReturnType<typeof installFakeTipServer>["serveTips"];
+let servePair: ReturnType<typeof installFakeTipServer>["servePair"];
 const originalMatchMedia = window.matchMedia;
-
-function preferReducedMotion() {
-  window.matchMedia = ((query: string) => ({
-    matches: query.includes("prefers-reduced-motion"),
-    media: query,
-    onchange: null,
-    addListener: () => {},
-    removeListener: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => false,
-  })) as typeof window.matchMedia;
-}
 
 beforeEach(() => {
   vi.useFakeTimers();
   mockLayout();
   for (const fn of Object.values(apiMock)) fn.mockReset();
   toastError.mockReset();
-  apiMock.listActiveTips.mockImplementation(async () => ({
-    tips: server.tips.map((tip) => ({
-      ...tip,
-      user_state: server.states.get(tip.id) ?? tip.user_state,
-    })),
-  }));
-  apiMock.setTipState.mockImplementation(async (tipId: string, request: SetTipStateRequest) => {
-    server.states.set(tipId, { state: request.state, feedback: request.feedback });
-  });
+  ({ serveTips, servePair } = installFakeTipServer(apiMock));
   localStorage.clear();
   tipDisplayLedger.setState({ users: {} });
   useCommentDraftStore.setState({ drafts: {} });
@@ -208,6 +86,7 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   window.matchMedia = originalMatchMedia;
 });
 
@@ -428,199 +307,6 @@ describe("tip card — I already know and Got it", () => {
   });
 });
 
-describe("tip card — Dismiss and the feedback row", () => {
-  it("saves dismissed and leaves Helpful / Not relevant / Didn't understand in the bubble's place", async () => {
-    servePair();
-    const { queryClient } = renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    const placement = getBubble()!.getAttribute("data-placement");
-    openCard();
-    fireEvent.click(cardButton("Dismiss"));
-    await flush();
-
-    expect(apiMock.setTipState).toHaveBeenCalledExactlyOnceWith("first", {
-      state: "dismissed",
-      feedback: null,
-    });
-    expect(cachedState(queryClient, "first")).toEqual({ state: "dismissed", feedback: null });
-    expect(getBubble()).toBeNull();
-    const row = feedbackRow()!;
-    expect(row).toHaveAttribute("data-level", "row");
-    expect(row).toHaveAttribute("data-placement", placement);
-    expect(within(row).getByRole("group", { name: "Feedback on this tip" })).toBeInTheDocument();
-    expect(within(row).getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "Helpful",
-      "Not relevant",
-      "Didn't understand",
-    ]);
-  });
-
-  it("offers Helpful / Didn't understand when dismissed after Learn more", async () => {
-    servePair();
-    renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    fireEvent.click(cardButton("Learn more"));
-    fireEvent.click(cardButton("Dismiss"));
-    await flush();
-    expect(apiMock.setTipState).toHaveBeenCalledExactlyOnceWith("first", {
-      state: "dismissed",
-      feedback: null,
-    });
-    expect(within(feedbackRow()!).getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "Helpful",
-      "Didn't understand",
-    ]);
-  });
-
-  it("is the page's only bubble while it shows: the next tip waits, with a dot on its anchor", async () => {
-    serveTips(
-      makeTip({ id: "first", issue_id: "issue-1", line: "First line" }),
-      makeTip({ id: "second", issue_id: "issue-2", line: "Second line" }),
-    );
-    renderWithYsk(
-      <>
-        <RowAnchor issueId="issue-1" top={300} />
-        <RowAnchor issueId="issue-2" top={340} />
-      </>,
-    );
-    await settle();
-    expect(bubbleText()).toContain("First line");
-    openCard();
-    fireEvent.click(cardButton("Dismiss"));
-    await settle();
-
-    await elapse(15_000);
-    expect(getBubble()).toBeNull();
-    expect(document.querySelectorAll("[data-ysk-feedback]")).toHaveLength(1);
-    expect(dotIn("row-issue-2")).not.toBeNull();
-    expect(dotIn("row-issue-1")).toBeNull();
-    // Waiting is not being shown: the next tip is not counted yet.
-    expect(tipDisplayLedger.getState().users["user-1"]?.ordinals).toEqual({ first: 1 });
-  });
-
-  it("sends the picked reason with the dismissal, closes the row and hands over to the next tip", async () => {
-    servePair();
-    const { queryClient } = renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    fireEvent.click(cardButton("Dismiss"));
-    await settle();
-
-    fireEvent.click(feedbackButton("Not relevant"));
-    await flush();
-    expect(apiMock.setTipState).toHaveBeenCalledTimes(2);
-    expect(apiMock.setTipState).toHaveBeenLastCalledWith("first", {
-      state: "dismissed",
-      feedback: "not_relevant",
-    });
-    expect(cachedState(queryClient, "first")).toEqual({
-      state: "dismissed",
-      feedback: "not_relevant",
-    });
-    expect(feedbackRow()).toBeNull();
-    expect(bubbleText()).toContain("Second line");
-    // The next tip gets its whole dwell: it never ran behind the row.
-    await elapse(7_999);
-    expect(bubbleText()).toContain("Second line");
-  });
-
-  it("keeps the next tip's dwell from running behind it", async () => {
-    serveTips(
-      makeTip({ id: "first", line: "First line", created_at: "2026-10-11T08:00:00Z" }),
-      makeTip({ id: "second", line: "Second line", created_at: "2026-10-11T09:00:00Z" }),
-      makeTip({ id: "third", line: "Third line", created_at: "2026-10-11T10:00:00Z" }),
-    );
-    renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    fireEvent.click(cardButton("Dismiss"));
-    await settle();
-    await elapse(15_000);
-    fireEvent.click(feedbackButton("Helpful"));
-    await flush();
-    act(() => (document.activeElement as HTMLElement | null)?.blur());
-
-    // Second was next before the row and still is, with its whole 8s.
-    expect(bubbleText()).toContain("Second line");
-    await elapse(7_999);
-    expect(bubbleText()).toContain("Second line");
-    await elapse(1);
-    expect(bubbleText()).toContain("Third line");
-  });
-
-  it("leaves after 20 seconds without a pick, sending nothing more", async () => {
-    servePair();
-    renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    fireEvent.click(cardButton("Dismiss"));
-    await flush();
-
-    await elapse(TIP_FEEDBACK_TIMEOUT_MS - 1);
-    expect(feedbackRow()).not.toBeNull();
-    expect(getBubble()).toBeNull();
-    await elapse(1);
-    expect(feedbackRow()).toBeNull();
-    expect(apiMock.setTipState).toHaveBeenCalledTimes(1);
-    expect(bubbleText()).toContain("Second line");
-  });
-
-  it("ignores the second click of a double-click on Dismiss", async () => {
-    servePair();
-    renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    fireEvent.click(cardButton("Dismiss"), { detail: 1 });
-    // The second click arrives once the row has taken the card's place.
-    await flush();
-    fireEvent.click(feedbackButton("Didn't understand"), { detail: 2 });
-    await flush();
-    expect(apiMock.setTipState).toHaveBeenCalledTimes(1);
-    expect(feedbackRow()).not.toBeNull();
-  });
-
-  it("hides under a modal layer, as the bubble does", async () => {
-    // A lone tip: once it is dismissed, no other tip is waiting behind the row.
-    serveTips(makeTip({ id: "first" }));
-    renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    fireEvent.click(cardButton("Dismiss"));
-    await settle();
-    expect(feedbackRow()).toHaveStyle({ visibility: "visible" });
-
-    const inert = document.createElement("div");
-    await act(async () => {
-      inert.setAttribute("data-base-ui-inert", "");
-      document.body.appendChild(inert);
-    });
-    expect(feedbackRow()).toHaveStyle({ visibility: "hidden" });
-    await act(async () => {
-      inert.remove();
-    });
-    expect(feedbackRow()).toHaveStyle({ visibility: "visible" });
-  });
-
-  it("goes away with its anchor", async () => {
-    servePair();
-    const view = renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    fireEvent.click(cardButton("Dismiss"));
-    await settle();
-    expect(feedbackRow()).not.toBeNull();
-
-    view.rerender(<div />);
-    await settle();
-    expect(feedbackRow()).toBeNull();
-    // Nothing is left holding the rotation once an anchor comes back.
-    view.rerender(<RowAnchor issueId="issue-1" />);
-    await settle();
-    expect(bubbleText()).toContain("Second line");
-  });
-});
-
 describe("tip card — Discuss in comments", () => {
   it("quotes the tip after the issue's comment draft and opens the issue, leaving the tip as it was", async () => {
     useCommentDraftStore.getState().setDraft("new:issue-1", "My notes");
@@ -729,279 +415,6 @@ describe("tip card — failures", () => {
     expect(bubbleText()).toContain("First line");
   });
 
-  it("drops the feedback row and brings the tip back when Dismiss fails", async () => {
-    serveTips(makeTip({ id: "first", line: "First line" }));
-    apiMock.setTipState.mockRejectedValueOnce(new Error("500"));
-    const { queryClient } = renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    fireEvent.click(cardButton("Dismiss"));
-    await flush();
-
-    expect(toastError).toHaveBeenCalledExactlyOnceWith("Couldn't save. Try again.");
-    expect(feedbackRow()).toBeNull();
-    expect(cachedState(queryClient, "first")).toBeNull();
-    await settle();
-    expect(bubbleText()).toContain("First line");
-  });
-
-  it("keeps the tip dismissed and says so when the reason fails to save", async () => {
-    serveTips(makeTip({ id: "first", line: "First line" }));
-    const { queryClient } = renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    fireEvent.click(cardButton("Dismiss"));
-    await settle();
-    apiMock.setTipState.mockRejectedValueOnce(new Error("500"));
-    fireEvent.click(feedbackButton("Helpful"));
-    await flush();
-
-    expect(toastError).toHaveBeenCalledExactlyOnceWith("Couldn't save. Try again.");
-    expect(feedbackRow()).toBeNull();
-    // Rolled back to the dismissal without a reason — still hidden.
-    expect(cachedState(queryClient, "first")).toEqual({ state: "dismissed", feedback: null });
-    await settle();
-    expect(getBubble()).toBeNull();
-  });
-});
-
-describe("tip card — failures, out of order", () => {
-  it("leaves the current feedback row alone when an earlier dismissal fails late", async () => {
-    servePair();
-    let rejectFirst!: (error: Error) => void;
-    apiMock.setTipState.mockImplementationOnce(
-      () => new Promise<void>((_resolve, reject) => (rejectFirst = reject)),
-    );
-    renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    fireEvent.click(cardButton("Dismiss"));
-    await settle();
-    // The reason queues behind the dismissal still in flight; the next tip
-    // takes over and is dismissed in turn.
-    fireEvent.click(feedbackButton("Helpful"));
-    await settle();
-    expect(bubbleText()).toContain("Second line");
-    openCard();
-    fireEvent.click(cardButton("Dismiss"));
-    await flush();
-    expect(feedbackRow()).not.toBeNull();
-
-    await act(async () => rejectFirst(new Error("500")));
-    await flush();
-    expect(toastError).toHaveBeenCalledTimes(1);
-    expect(feedbackRow()).not.toBeNull();
-    expect(apiMock.setTipState).toHaveBeenLastCalledWith("second", {
-      state: "dismissed",
-      feedback: null,
-    });
-  });
-});
-
-describe("tip card — keyboard and focus", () => {
-  // user-event awaits a zero-delay timeout through Testing Library's async
-  // wrapper, which only Jest's fake clock advances by itself: let this one
-  // follow real time too.
-  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
-
-  it("runs on the keyboard: Enter opens, Tab walks the buttons, Space and Enter act", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    serveTips(
-      makeTip({ id: "first", line: "First line", explanation: "Because.", created_at: "2026-10-11T08:00:00Z" }),
-      makeTip({ id: "second", line: "Second line", created_at: "2026-10-11T09:00:00Z" }),
-    );
-    renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-
-    act(() => bubbleToggle().focus());
-    await user.keyboard("{Enter}");
-    expect(bubbleToggle()).toHaveAttribute("aria-expanded", "true");
-    expect(cardButton("Learn more")).toHaveFocus();
-    await user.tab();
-    expect(cardButton("I already know")).toHaveFocus();
-    await user.tab();
-    expect(cardButton("Dismiss")).toHaveFocus();
-    await user.tab({ shift: true });
-    await user.tab({ shift: true });
-    expect(cardButton("Learn more")).toHaveFocus();
-
-    await user.keyboard(" ");
-    expect(screen.getByText("Because.").parentElement).toHaveFocus();
-    await user.tab();
-    expect(cardButton("Got it")).toHaveFocus();
-    await user.keyboard("{Enter}");
-    await flush();
-    expect(apiMock.setTipState).toHaveBeenCalledExactlyOnceWith("first", {
-      state: "known",
-      feedback: null,
-    });
-    // Focus stays in the tip layer: on the bubble that took over.
-    expect(bubbleText()).toContain("Second line");
-    expect(bubbleToggle()).toHaveFocus();
-  });
-
-  it("moves keyboard focus onto the feedback row, then onto the next bubble after a pick", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    servePair();
-    renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    act(() => bubbleToggle().focus());
-    await user.keyboard("{Enter}");
-    await user.tab();
-    await user.tab();
-    expect(cardButton("Dismiss")).toHaveFocus();
-    await user.keyboard("{Enter}");
-    await settle();
-    expect(feedbackButton("Helpful")).toHaveFocus();
-
-    await user.tab();
-    expect(feedbackButton("Not relevant")).toHaveFocus();
-    await user.keyboard("{Enter}");
-    await flush();
-    expect(apiMock.setTipState).toHaveBeenLastCalledWith("first", {
-      state: "dismissed",
-      feedback: "not_relevant",
-    });
-    expect(bubbleText()).toContain("Second line");
-    expect(bubbleToggle()).toHaveFocus();
-  });
-
-  it("hands focus to the next bubble when the feedback row it sat in times out", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    servePair();
-    renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    act(() => bubbleToggle().focus());
-    await user.keyboard("{Enter}");
-    await user.tab();
-    await user.tab();
-    await user.keyboard("{Enter}");
-    await settle();
-    expect(feedbackButton("Helpful")).toHaveFocus();
-
-    await elapse(TIP_FEEDBACK_TIMEOUT_MS);
-    expect(feedbackRow()).toBeNull();
-    expect(bubbleToggle()).toHaveFocus();
-  });
-
-  it("moves focus onto the feedback row only once it is on screen", async () => {
-    servePair();
-    renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    act(() => cardButton("Dismiss").focus());
-    fireEvent.click(cardButton("Dismiss"));
-    // Not placed yet, so still hidden — and a hidden element cannot take focus.
-    expect(feedbackRow()).toHaveStyle({ visibility: "hidden" });
-    expect(document.body).toHaveFocus();
-    await flush();
-    expect(feedbackRow()).toHaveStyle({ visibility: "visible" });
-    expect(feedbackButton("Helpful")).toHaveFocus();
-  });
-
-  it("does not pull focus back once the user has moved it elsewhere", async () => {
-    servePair();
-    renderWithYsk(
-      <>
-        <RowAnchor issueId="issue-1" />
-        <button type="button">Elsewhere</button>
-      </>,
-    );
-    await settle();
-    openCard();
-    act(() => cardButton("Dismiss").focus());
-    fireEvent.click(cardButton("Dismiss"));
-    act(() => screen.getByRole("button", { name: "Elsewhere" }).focus());
-    await flush();
-    expect(feedbackRow()).toHaveStyle({ visibility: "visible" });
-    expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
-  });
-
-  it("takes focus once: not again when the row shows again after a modal", async () => {
-    servePair();
-    renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    act(() => cardButton("Dismiss").focus());
-    fireEvent.click(cardButton("Dismiss"));
-    await flush();
-    expect(feedbackButton("Helpful")).toHaveFocus();
-    act(() => feedbackButton("Helpful").blur());
-
-    const inert = document.createElement("div");
-    await act(async () => {
-      inert.setAttribute("data-base-ui-inert", "");
-      document.body.appendChild(inert);
-    });
-    await act(async () => {
-      inert.remove();
-    });
-    expect(feedbackRow()).toHaveStyle({ visibility: "visible" });
-    expect(document.body).toHaveFocus();
-  });
-
-  it("hands focus only to the bubble that replaces the layer, not to the ones rotating in later", async () => {
-    serveTips(
-      makeTip({ id: "first", line: "First line", created_at: "2026-10-11T08:00:00Z" }),
-      makeTip({ id: "second", line: "Second line", created_at: "2026-10-11T09:00:00Z" }),
-      makeTip({ id: "third", line: "Third line", created_at: "2026-10-11T10:00:00Z" }),
-    );
-    renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    act(() => cardButton("I already know").focus());
-    fireEvent.click(cardButton("I already know"));
-    await flush();
-    expect(bubbleText()).toContain("Second line");
-    expect(bubbleToggle()).toHaveFocus();
-
-    act(() => bubbleToggle().blur());
-    await elapse(8_000);
-    expect(bubbleText()).toContain("Third line");
-    expect(document.body).toHaveFocus();
-  });
-
-  it("pulls focus into neither the row nor the next bubble after clicks that left it on the page", async () => {
-    servePair();
-    renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    // A pointer that does not focus what it clicks (Safari): focus stays on
-    // the page body throughout.
-    act(() => cardButton("Learn more").blur());
-    fireEvent.click(cardButton("Dismiss"));
-    await settle();
-    expect(feedbackRow()).toHaveStyle({ visibility: "visible" });
-    expect(document.body).toHaveFocus();
-
-    fireEvent.click(feedbackButton("Helpful"));
-    await settle();
-    expect(bubbleText()).toContain("Second line");
-    expect(document.body).toHaveFocus();
-  });
-
-  it("leaves focus alone when the layer did not have it", async () => {
-    servePair();
-    renderWithYsk(
-      <>
-        <RowAnchor issueId="issue-1" />
-        <button type="button">Elsewhere</button>
-      </>,
-    );
-    await settle();
-    openCard();
-    act(() => screen.getByRole("button", { name: "Elsewhere" }).focus());
-    // A pointer-only activation (focus stayed outside the card).
-    fireEvent.click(cardButton("Dismiss"));
-    await settle();
-    expect(feedbackRow()).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
-
-    fireEvent.click(feedbackButton("Helpful"));
-    await flush();
-    expect(bubbleText()).toContain("Second line");
-    expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
-  });
 });
 
 describe("tip card — another tab", () => {
@@ -1130,3 +543,4 @@ describe("tip card — motion", () => {
     }
   });
 });
+
