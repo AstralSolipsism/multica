@@ -14,7 +14,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 import type { DagDirection } from "@multica/core/issues/stores/view-store";
-import type { DagVisibleGroup } from "./dag-projection";
+import type { DagVisibleGroup } from "@multica/core/issues/dag";
 import type { DagGroupBounds } from "./dag-layout";
 import { DagRunBadge, type DagFlowNodeData } from "./dag-node";
 import type { IssueStatusCategory } from "@multica/core/types";

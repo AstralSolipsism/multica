@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { IssueGraph } from "@multica/core/api";
 import { selectCanvasSnapshot, type CanvasSnapshot } from "./dag-canvas-snapshot";
-import { computeDagProjection } from "./dag-projection";
+import { computeDagProjection } from "@multica/core/issues/dag";
 import { graphNode, issueGraph } from "./dag-test-fixtures";
 
 function snapshot(graph: IssueGraph, key: string, collapsed: string[] = []): CanvasSnapshot {

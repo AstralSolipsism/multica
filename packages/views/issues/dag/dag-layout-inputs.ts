@@ -1,4 +1,4 @@
-import type { DagProjection } from "./dag-projection";
+import type { DagProjection } from "@multica/core/issues/dag";
 import type {
   DagLayoutNodeInput,
   DagLayoutGroupInput,

@@ -9,7 +9,7 @@ import {
 } from "@multica/ui/components/ui/popover";
 import { useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import { useT } from "../../i18n";
-import type { DagVisibleEdge } from "./dag-projection";
+import type { DagVisibleEdge } from "@multica/core/issues/dag";
 
 /** The selection zone's edge state: a direct dependency gets its label,
  *  locate and clear; an aggregate opens the original pair list from the bar. */

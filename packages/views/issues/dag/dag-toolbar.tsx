@@ -29,7 +29,7 @@ import {
 import { useT } from "../../i18n";
 import { DagNodeSelection } from "./dag-selection-node";
 import { DagEdgeSelection } from "./dag-selection-edge";
-import { isAggregateEdge, type DagProjection } from "./dag-projection";
+import { isAggregateEdge, type DagProjection } from "@multica/core/issues/dag";
 
 export interface DagToolbarProps {
   graph: IssueGraph;

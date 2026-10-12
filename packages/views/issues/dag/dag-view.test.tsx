@@ -14,7 +14,7 @@ import { DagView, type DagGraphQueryState } from "./dag-view";
 import type { DagCanvasProps } from "./dag-canvas";
 import type { DagToolbarProps } from "./dag-toolbar";
 import { graphNode as makeNode, issueGraph as makeGraph } from "./dag-test-fixtures";
-import { computeDagProjection } from "./dag-projection";
+import { computeDagProjection } from "@multica/core/issues/dag";
 import * as layoutInputs from "./dag-layout-inputs";
 import * as canvasSnapshots from "./dag-canvas-snapshot";
 import { DagFlowGroupCard } from "./dag-group";
