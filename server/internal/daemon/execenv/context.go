@@ -139,7 +139,7 @@ func writeWorkspacesRootMarkerAtomic(path string, data []byte) error {
 // OpenClaw:    skills → {workDir}/skills/{name}/SKILL.md  (native discovery — paired with a per-task synthesized openclaw-config.json that pins agents.defaults.workspace to workDir; see openclaw_config.go)
 // Pi:          skills → {workDir}/.pi/skills/{name}/SKILL.md  (native discovery)
 // Cursor:      skills → {workDir}/.cursor/skills/{name}/SKILL.md  (native discovery)
-// Kimi:        skills → {workDir}/.kimi/skills/{name}/SKILL.md  (native discovery)
+// Kimi:        skills → {workDir}/.agents/skills/{name}/SKILL.md  (native discovery)
 // Reasonix:    skills → {workDir}/.reasonix/skills/{name}/SKILL.md  (native discovery)
 // DSH:         skills → {workDir}/.dsh/skills/{name}/SKILL.md  (native discovery)
 // Kiro:        skills → {workDir}/.kiro/skills/{name}/SKILL.md  (native discovery)
@@ -382,9 +382,12 @@ func skillsDirPath(workDir, provider string) string {
 		// Cursor natively discovers skills from .cursor/skills/ in the workdir.
 		return filepath.Join(workDir, ".cursor", "skills")
 	case "kimi":
-		// Kimi Code CLI auto-discovers project-level skills from .kimi/skills/
-		// in the workdir. See https://moonshotai.github.io/kimi-cli/en/customization/skills.html
-		return filepath.Join(workDir, ".kimi", "skills")
+		// Kimi Code scans .agents/skills and .kimi-code/skills at the project
+		// root (the workdir when no ancestor has .git). Prefer the shared
+		// .agents convention to avoid coupling to a branded directory name;
+		// Kimi Code 2.x no longer scans the former .kimi/skills location.
+		// See https://www.kimi.com/code/docs/en/kimi-code-cli/customization/skills.html
+		return filepath.Join(workDir, ".agents", "skills")
 	case "reasonix":
 		// Reasonix discovers project skills from .reasonix/skills/ and loads
 		// AGENTS.md independently, so repository memory and task skills coexist.
