@@ -269,7 +269,7 @@ describe("AgentAvatarStack tip anchor registration", () => {
     expect(registry.getState().anchors[id]!.visible).toBe(false);
   });
 
-  it("measures the page position live instead of caching it", () => {
+  it("measures the live rect instead of caching a position", () => {
     renderStack(
       <AgentAvatarStack
         agentIds={["agent-1"]}
@@ -279,14 +279,16 @@ describe("AgentAvatarStack tip anchor registration", () => {
     const id = Object.keys(registry.getState().anchors)[0]!;
     const measure = registry.getState().anchors[id]!.measure;
     // Lists scroll inside inner containers, so a stored coordinate goes stale
-    // on every scroll; measure() must read the element's CURRENT rect.
+    // on every scroll; measure() must read the element's CURRENT rect, and
+    // hand it over as a plain object (core holds no DOM types).
     let top = 100;
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-      () => ({ top }) as DOMRect,
+      () => new DOMRect(40, top, 36, 20),
     );
-    expect(measure()).toBe(100);
+    expect(measure()).toEqual({ top: 100, left: 40, width: 36, height: 20 });
     top = 240;
-    expect(measure()).toBe(240);
+    expect(measure()).toEqual({ top: 240, left: 40, width: 36, height: 20 });
+    expect(measure()).not.toBeInstanceOf(DOMRect);
     vi.restoreAllMocks();
   });
 });

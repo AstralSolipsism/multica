@@ -4,6 +4,7 @@ export type {
   TipAnchorDescriptor,
   TipAnchorDisplayState,
   TipAnchorLevel,
+  TipAnchorRect,
   TipAnchorScope,
   TipPlacement,
   TipQueueEntry,
@@ -18,3 +19,10 @@ export {
   type TipAnchorRegistryState,
 } from "./registry";
 export { scheduleTips, shouldShowSettingsHint, TIP_DWELL_MS } from "./schedule";
+export {
+  INITIAL_TIP_ROTATION,
+  measureTipAnchors,
+  rotateTips,
+  type TipRotation,
+  type TipRotationEvent,
+} from "./rotation";

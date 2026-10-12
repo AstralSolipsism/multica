@@ -63,7 +63,8 @@
     "./attachments": "./attachments/index.ts",
     "./locales": "./locales/index.ts",
     "./locales/*": "./locales/*",
-    "./issues/visuals": "./issues/components/visuals.ts"
+    "./issues/visuals": "./issues/components/visuals.ts",
+    "./you-should-know": "./you-should-know/index.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

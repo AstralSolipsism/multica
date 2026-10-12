@@ -6,6 +6,14 @@ export {
 export { useSetTipState } from "./mutations";
 export { useYouShouldKnowEnabled } from "./use-you-should-know-enabled";
 export { useYouShouldKnowRealtimeSync } from "./realtime";
+export {
+  createTipDisplayLedger,
+  tipDisplayLedger,
+  TIP_DISPLAY_LEDGER_KEY,
+  type TipDisplayHistory,
+  type TipDisplayLedger,
+  type TipDisplayLedgerState,
+} from "./display-ledger";
 export { isTipShownToMe } from "../api/labrastro-ysk-schemas";
 export type {
   IssueTip,
