@@ -241,4 +241,20 @@ describe("WorkspaceTab — automatic updates", () => {
     expect(screen.getByText("Test Workspace")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Change prefix..." })).toBeNull();
   });
+
+  it("disables the You should know workspace switch for regular members", () => {
+    membersRef.current = [
+      { user_id: "user-1", role: "member" },
+      { user_id: "user-2", role: "owner", name: "Grace Hopper" },
+    ];
+    render(<WorkspaceTab />, { wrapper: I18nWrapper });
+
+    // The fork's YSK section renders for members too, but its switch is
+    // read-only (server enforces it; the UI must not offer a dead toggle).
+    const yskSwitch = document.querySelector(
+      '[data-settings-anchor="you-should-know"] [role="switch"]',
+    );
+    expect(yskSwitch).not.toBeNull();
+    expect(yskSwitch).toHaveAttribute("aria-disabled", "true");
+  });
 });

@@ -10,17 +10,23 @@ const state = vi.hoisted(() => ({
   personalEnabled: true,
   preferences: { you_should_know: undefined } as Record<string, unknown>,
   savedPatch: undefined as unknown,
+  updateWorkspaceError: null as Error | null,
+  mutateError: null as Error | null,
 }));
 
 const mockUpdateWorkspace = vi.hoisted(() => vi.fn());
 const mockMutate = vi.hoisted(() => vi.fn());
+const mockToastError = vi.hoisted(() => vi.fn());
 
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => ({
     id: "ws-1",
     name: "Acme",
-    settings: { you_should_know_enabled: state.workspaceEnabled },
+    settings: {
+      you_should_know_enabled: state.workspaceEnabled,
+      github_enabled: true,
+    },
   }),
   useWorkspacePaths: () => ({ issueDetail: (id: string) => `/issues/${id}` }),
 }));
@@ -55,7 +61,9 @@ vi.mock("@multica/core/notification-preferences/mutations", () => ({
     mutateAsync: vi.fn(),
   }),
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: mockToastError },
+}));
 
 import { YouShouldKnowWorkspaceSection } from "./workspace-toggle";
 import { YouShouldKnowPersonalRow } from "./personal-toggle";
@@ -81,10 +89,19 @@ beforeEach(() => {
   state.personalEnabled = true;
   state.preferences = {};
   state.savedPatch = undefined;
-  mockUpdateWorkspace.mockImplementation(async (_id: string, payload: object) => payload);
-  mockMutate.mockImplementation((prefs: Record<string, unknown>) => {
-    state.savedPatch = prefs;
-  });
+  state.updateWorkspaceError = null;
+  state.mutateError = null;
+  mockUpdateWorkspace.mockImplementation(
+    async (_id: string, payload: object) => {
+      if (state.updateWorkspaceError) throw state.updateWorkspaceError;
+      return payload;
+    },
+  );
+  mockMutate.mockImplementation(
+    (_prefs: Record<string, unknown>, options?: { onError?: (e: Error) => void }) => {
+      if (state.mutateError) options?.onError?.(state.mutateError);
+    },
+  );
 });
 
 afterEach(cleanup);
@@ -108,8 +125,21 @@ describe("YouShouldKnowWorkspaceSection", () => {
 
     await waitFor(() => {
       expect(mockUpdateWorkspace).toHaveBeenCalledWith("ws-1", {
-        settings: { you_should_know_enabled: false },
+        settings: expect.objectContaining({
+          you_should_know_enabled: false,
+          github_enabled: true,
+        }),
       });
+    });
+  });
+
+  it("shows a toast when saving the workspace switch fails", async () => {
+    state.updateWorkspaceError = new Error("boom");
+    withQuery(<YouShouldKnowWorkspaceSection canManage />);
+    fireEvent.click(screen.getByRole("switch", { name: /bystander tips/ }));
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith("boom");
     });
   });
 
@@ -135,12 +165,58 @@ describe("YouShouldKnowWorkspaceSection", () => {
     expect(screen.getByText("workspace#you-should-know:Show bystander tips while agents work")).toBeInTheDocument();
     expect(screen.getByText("notifications#you-should-know:You should know")).toBeInTheDocument();
 
-    // The anchor the entries point at exists on the workspace page.
+    // The anchors the entries point at exist on the rendered pages.
     cleanup();
     withQuery(<YouShouldKnowWorkspaceSection canManage />);
     expect(
       document.querySelector('[data-settings-anchor="you-should-know"]'),
     ).not.toBeNull();
+    cleanup();
+    withQuery(<YouShouldKnowPersonalRow />);
+    expect(
+      document.querySelector('[data-settings-anchor="you-should-know"]'),
+    ).not.toBeNull();
+  });
+
+  it("drops the personal entry from the search index while the workspace switch is off", () => {
+    state.workspaceEnabled = false;
+    function IndexProbe() {
+      const index = useSettingsSearchIndex([
+        { value: "workspace", label: "Workspace" },
+        { value: "notifications", label: "Notifications" },
+      ]);
+      return <ul>{index.map((e) => <li key={`${e.tab}#${e.anchor ?? ""}`}>{`${e.tab}#${e.anchor ?? ""}`}</li>)}</ul>;
+    }
+    const { unmount } = renderWithI18n(<IndexProbe />);
+
+    expect(screen.queryByText(/^notifications#you-should-know/)).toBeNull();
+    // The workspace entry stays: that is the row an admin searches for to
+    // turn the feature on.
+    expect(screen.getByText(/^workspace#you-should-know/)).toBeInTheDocument();
+    unmount();
+  });
+
+  it("finds the workspace switch by the feature name", async () => {
+    const { searchSettings } = await import("../../settings/components/settings-search");
+    function IndexProbe() {
+      const index = useSettingsSearchIndex([
+        { value: "workspace", label: "Workspace" },
+        { value: "notifications", label: "Notifications" },
+      ]);
+      return (
+        <ul>
+          {searchSettings(index, "You should know").map((e) => (
+            <li key={`${e.tab}#${e.anchor ?? ""}`}>{`${e.tab}#${e.anchor ?? ""}`}</li>
+          ))}
+        </ul>
+      );
+    }
+    renderWithI18n(<IndexProbe />);
+
+    // The feature name reaches the workspace row through its section-title
+    // description, and the personal row by its own label.
+    expect(screen.getByText("workspace#you-should-know")).toBeInTheDocument();
+    expect(screen.getByText("notifications#you-should-know")).toBeInTheDocument();
   });
 });
 
@@ -171,5 +247,13 @@ describe("YouShouldKnowPersonalRow", () => {
       expect.not.objectContaining({ you_should_know: expect.anything() }),
       expect.anything(),
     );
+  });
+
+  it("shows a toast when saving the preference fails", () => {
+    state.mutateError = new Error("pref boom");
+    withQuery(<YouShouldKnowPersonalRow />);
+    fireEvent.click(screen.getByRole("switch", { name: "You should know" }));
+
+    expect(mockToastError).toHaveBeenCalledWith("pref boom");
   });
 });

@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
   workspaceEnabled: true,
   personalEnabled: true,
   pushed: [] as string[],
+  jumped: [] as string[],
 }));
 
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
@@ -38,7 +39,7 @@ vi.mock("../../navigation", () => ({
   useNavigation: () => ({ push: (href: string) => state.pushed.push(href) }),
 }));
 
-import { YouShouldKnowArchiveSection } from "./archive-section";
+import { YouShouldKnowArchiveSection, groupTips } from "./archive-section";
 
 function tip(overrides: Partial<IssueTip> = {}): IssueTip {
   return {
@@ -64,7 +65,7 @@ function tip(overrides: Partial<IssueTip> = {}): IssueTip {
   };
 }
 
-function renderSection(tips: IssueTip[]) {
+function renderSection(tips: IssueTip[], onJumpToComment?: (id: string) => void) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -73,7 +74,11 @@ function renderSection(tips: IssueTip[]) {
   });
   return renderWithI18n(
     <QueryClientProvider client={queryClient}>
-      <YouShouldKnowArchiveSection issueId="issue-1" identifier="OL-1" />
+      <YouShouldKnowArchiveSection
+        issueId="issue-1"
+        identifier="OL-1"
+        onJumpToComment={onJumpToComment}
+      />
     </QueryClientProvider>,
   );
 }
@@ -84,6 +89,7 @@ beforeEach(() => {
   state.workspaceEnabled = true;
   state.personalEnabled = true;
   state.pushed = [];
+  state.jumped = [];
 });
 
 afterEach(cleanup);
@@ -111,6 +117,74 @@ describe("YouShouldKnowArchiveSection — grouping and order", () => {
     expect(state.pushed).toContain("/issues/OL-1#comment-c-1");
   });
 
+  it("jumps via the callback when the mount provides one, falling back to the URL otherwise", () => {
+    // With a callback: group header and overturned-by link both route
+    // through it — the URL fallback cannot reach virtualized comments.
+    renderSection(
+      [
+        tip({ anchor_comment_id: "c-1" }),
+        tip({
+          id: "o",
+          anchor_comment_id: "c-2",
+          line: "Was true",
+          status: "overturned",
+          overturned_by_comment_id: "c-9",
+        }),
+      ],
+      (id) => state.jumped.push(id),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Comment ·/ }));
+    expect(state.jumped).toEqual(["c-1"]);
+    expect(state.pushed).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "No longer valid" }));
+    fireEvent.click(screen.getByRole("button", { name: "Overturned by this comment" }));
+    expect(state.jumped).toEqual(["c-1", "c-9"]);
+    expect(state.pushed).toEqual([]);
+  });
+
+  it("groups and orders by the earliest tip when tips arrive in server order (newest first)", () => {
+    // The server returns newest-first (ORDER BY created_at DESC): the same
+    // comment's newer tip arrives before its older one, so "earliest" must
+    // be computed, not inherited from arrival order.
+    renderSection([
+      tip({ id: "x-new", anchor_comment_id: "c-x", created_at: "2026-10-05T10:00:00Z" }),
+      tip({ id: "y", anchor_comment_id: "c-y", created_at: "2026-10-03T10:00:00Z" }),
+      tip({ id: "x-old", anchor_comment_id: "c-x", created_at: "2026-10-01T10:00:00Z" }),
+    ]);
+
+    // X sorts by its EARLIEST tip (10-01), so Y (10-03) comes first.
+    const labels = screen.getAllByText(/^Comment ·/).map((el) => el.textContent);
+    expect(labels).toEqual(["Comment · Oct 3", "Comment · Oct 1"]);
+  });
+
+  it("groups by earliest tip via groupTips regardless of input order", () => {
+    const groups = groupTips([
+      tip({ id: "x-new", anchor_comment_id: "c-x", created_at: "2026-10-05T10:00:00Z" }),
+      tip({ id: "y", anchor_comment_id: "c-y", created_at: "2026-10-03T10:00:00Z" }),
+      tip({ id: "x-old", anchor_comment_id: "c-x", created_at: "2026-10-01T10:00:00Z" }),
+    ]);
+    expect(groups.map((g) => [g.key, g.time])).toEqual([
+      ["c-y", "2026-10-03T10:00:00Z"],
+      ["c-x", "2026-10-01T10:00:00Z"],
+    ]);
+  });
+
+  it("labels groups with the viewer's local day, not the UTC day slice", () => {
+    // 22:30 UTC on Oct 11 is already Oct 12 east of UTC+1:30. The label
+    // must agree with the comment card's local timestamp.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2026-10-12T06:30:00Z"));
+    try {
+      vi.stubEnv("TZ", "Asia/Shanghai");
+      renderSection([tip({ anchor_comment_id: "c-1", created_at: "2026-10-11T22:30:00Z" })]);
+      expect(screen.getByText(/^Comment ·/).textContent).toBe("Comment · Oct 12");
+    } finally {
+      vi.unstubAllEnvs();
+      vi.useRealTimers();
+    }
+  });
+
   it("does not link the description group", () => {
     renderSection([tip({ anchor_comment_id: null })]);
     expect(screen.getByText("Issue description").closest("button")).toBeNull();
@@ -130,6 +204,8 @@ describe("YouShouldKnowArchiveSection — filter and search", () => {
     renderSection([valid, invalid]);
     expect(screen.getByText("Valid tip")).toBeInTheDocument();
     expect(screen.queryByText("Invalid tip")).toBeNull();
+    // Valid rows render without the greying class.
+    expect(screen.getByText("Valid tip").closest("div")).not.toHaveClass("opacity-60");
 
     fireEvent.click(screen.getByRole("button", { name: "No longer valid" }));
     expect(screen.queryByText("Valid tip")).toBeNull();
@@ -186,6 +262,8 @@ describe("YouShouldKnowArchiveSection — invalid tips", () => {
     const row = screen.getByText("Was true").closest("[data-invalid]");
     expect(row).not.toBeNull();
     expect(row).toHaveAttribute("data-invalid", "true");
+    // The greying is the visual signal; data-invalid alone is not enough.
+    expect(row).toHaveClass("opacity-60");
 
     const link = screen.getByRole("button", { name: "Overturned by this comment" });
     fireEvent.click(link);

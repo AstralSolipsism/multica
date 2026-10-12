@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useT } from "../../i18n";
 import type { SettingsSearchEntry } from "./settings-search";
 import { CHANNEL_INTEGRATIONS } from "./settings-navigation";
+import { useYouShouldKnowSearchEntries } from "../../you-should-know/settings/use-ysk-search-entries";
 
 const NOTIFICATION_GROUPS = [
   "assignments",
@@ -32,6 +33,8 @@ export function useSettingsSearchIndex(
 ): SettingsSearchIndexEntry[] {
   const { t } = useT("settings");
   const { t: tYsk } = useT("you-should-know");
+  // Fork (OL-187 §8): the personal YSK entry follows the workspace switch.
+  const yskEntries = useYouShouldKnowSearchEntries();
   return useMemo(() => {
     const visible = new Set(pages.map((page) => page.value));
     const rows: SettingsSearchIndexEntry[] = [
@@ -108,12 +111,9 @@ export function useSettingsSearchIndex(
         title: t(($) => $.notifications.browser.label),
       },
       // Fork (OL-187 §8): the personal YSK switch mirrors the workspace row.
-      // Its own anchor matches the SettingsRow inside the personal toggle.
-      {
-        tab: "notifications",
-        anchor: "you-should-know",
-        title: tYsk(($) => $.settings.personal_label),
-      },
+      // Entries come from useYouShouldKnowSearchEntries so the personal row's
+      // entry disappears with the row while the workspace switch is off.
+      ...yskEntries,
       {
         tab: "tokens",
         title: t(($) => $.page.tabs.tokens),
@@ -132,11 +132,14 @@ export function useSettingsSearchIndex(
       // Workspace
       { tab: "workspace", anchor: "name", title: t(($) => $.workspace.name_label) },
       // Fork (OL-187 §8): the workspace YSK switch. Anchor matches the
-      // SettingsSection the workspace toggle renders.
+      // SettingsSection the workspace toggle renders; the section title in
+      // the description makes the feature name find the row (the label alone
+      // reads "Show bystander tips…", which nobody searches for verbatim).
       {
         tab: "workspace",
         anchor: "you-should-know",
         title: tYsk(($) => $.settings.workspace_label),
+        description: tYsk(($) => $.settings.title),
       },
       { tab: "workspace", anchor: "description", title: t(($) => $.workspace.description_label) },
       {
@@ -239,5 +242,5 @@ export function useSettingsSearchIndex(
       ...pageEntries,
       ...rows.filter((row) => row.anchor || row.integration),
     ].filter((entry) => visible.has(entry.tab));
-  }, [pages, t, tYsk]);
+  }, [pages, t, tYsk, yskEntries]);
 }

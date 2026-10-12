@@ -4,7 +4,6 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight } from "lucide-react";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { formatDateOnly } from "@multica/core/issues/date";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
   issueTipsOptions,
@@ -51,12 +50,16 @@ export function groupTips(tips: readonly IssueTip[]): TipGroup[] {
       groups.set(key, group);
     }
     group.tips.push(tip);
-    if (tip.created_at && (!group.time || tip.created_at < group.time)) {
+    // RFC3339Nano strings don't order lexicographically (trailing fractional
+    // zeros are trimmed), so compare as instants via Date.parse.
+    const tipMs = Date.parse(tip.created_at);
+    const groupMs = Date.parse(group.time);
+    if (!Number.isNaN(tipMs) && (Number.isNaN(groupMs) || tipMs < groupMs)) {
       group.time = tip.created_at;
     }
   }
-  return [...groups.values()].sort((a, b) =>
-    a.time < b.time ? 1 : a.time > b.time ? -1 : 0,
+  return [...groups.values()].sort(
+    (a, b) => Date.parse(b.time) - Date.parse(a.time),
   );
 }
 
@@ -81,10 +84,18 @@ function tipMatchesQuery(tip: IssueTip, needle: string): boolean {
 export function YouShouldKnowArchiveSection({
   issueId,
   identifier,
+  onJumpToComment,
 }: {
   issueId: string;
   /** Used to build comment deep links; links are skipped without it. */
   identifier?: string;
+  /**
+   * Jump to a comment inside this issue page. The mount point passes the
+   * timeline's jump helper, which handles virtualized, collapsed and
+   * resolved threads — a plain URL hash change scrolls nothing there.
+   * Falls back to a URL push when absent.
+   */
+  onJumpToComment?: (commentId: string) => void;
 }) {
   const { t } = useT("you-should-know");
   const wsId = useWorkspaceId();
@@ -168,6 +179,7 @@ export function YouShouldKnowArchiveSection({
                 key={group.key || "description"}
                 group={group}
                 identifier={identifier}
+                onJumpToComment={onJumpToComment}
               />
             ))
           )}
@@ -180,9 +192,11 @@ export function YouShouldKnowArchiveSection({
 function ArchiveGroup({
   group,
   identifier,
+  onJumpToComment,
 }: {
   group: TipGroup;
   identifier?: string;
+  onJumpToComment?: (commentId: string) => void;
 }) {
   const { t } = useT("you-should-know");
   const locale = useLocale();
@@ -194,11 +208,17 @@ function ArchiveGroup({
     group.commentId !== null && identifier
       ? `${paths.issueDetail(identifier)}#comment-${group.commentId}`
       : null;
-  const when = formatDateOnly(
-    group.time,
-    { month: "short", day: "numeric" },
-    locale,
-  );
+  // `created_at` is an instant (not a calendar day): render it in the
+  // viewer's timezone so the group label agrees with the comment card's
+  // local timestamp instead of the UTC day slice. Empty or unparseable
+  // values render no date rather than "Invalid Date".
+  const timeMs = group.time ? Date.parse(group.time) : NaN;
+  const when = Number.isNaN(timeMs)
+    ? ""
+    : new Date(timeMs).toLocaleDateString(locale, {
+        month: "short",
+        day: "numeric",
+      });
   const label =
     group.commentId === null
       ? t(($) => $.archive.group_description)
@@ -206,13 +226,19 @@ function ArchiveGroup({
         ? `${t(($) => $.archive.group_comment)} · ${when}`
         : t(($) => $.archive.group_comment);
 
+  const jump = () => {
+    if (!group.commentId) return;
+    if (onJumpToComment) onJumpToComment(group.commentId);
+    else if (href) navigation.push(href);
+  };
+
   return (
     <div>
       {href ? (
         <button
           type="button"
           className="flex w-full items-center rounded-xs px-1 py-0.5 text-left text-micro font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-          onClick={() => navigation.push(href)}
+          onClick={jump}
         >
           <span className="truncate">{label}</span>
         </button>
@@ -223,7 +249,12 @@ function ArchiveGroup({
       )}
       <div className="space-y-0.5">
         {group.tips.map((tip) => (
-          <ArchiveTip key={tip.id} tip={tip} identifier={identifier} />
+          <ArchiveTip
+            key={tip.id}
+            tip={tip}
+            identifier={identifier}
+            onJumpToComment={onJumpToComment}
+          />
         ))}
       </div>
     </div>
@@ -233,9 +264,11 @@ function ArchiveGroup({
 function ArchiveTip({
   tip,
   identifier,
+  onJumpToComment,
 }: {
   tip: IssueTip;
   identifier?: string;
+  onJumpToComment?: (commentId: string) => void;
 }) {
   const { t } = useT("you-should-know");
   const [expanded, setExpanded] = useState(false);
@@ -266,7 +299,13 @@ function ArchiveTip({
           {tip.explanation ? <p>{tip.explanation}</p> : null}
         </div>
       )}
-      {invalid && <InvalidNote tip={tip} identifier={identifier} />}
+      {invalid && (
+        <InvalidNote
+          tip={tip}
+          identifier={identifier}
+          onJumpToComment={onJumpToComment}
+        />
+      )}
     </div>
   );
 }
@@ -275,9 +314,11 @@ function ArchiveTip({
 function InvalidNote({
   tip,
   identifier,
+  onJumpToComment,
 }: {
   tip: IssueTip;
   identifier?: string;
+  onJumpToComment?: (commentId: string) => void;
 }) {
   const { t } = useT("you-should-know");
   const navigation = useNavigation();
@@ -290,17 +331,19 @@ function InvalidNote({
   const text = t(($) =>
     commentId ? $.archive.overturned_by_comment : $.archive.overturned,
   );
+  const jump = () => {
+    if (!commentId) return;
+    if (onJumpToComment) onJumpToComment(commentId);
+    else if (identifier)
+      navigation.push(`${paths.issueDetail(identifier)}#comment-${commentId}`);
+  };
   return (
     <Note>
       {commentId && identifier ? (
         <button
           type="button"
           className="underline underline-offset-2 hover:text-foreground"
-          onClick={() =>
-            navigation.push(
-              `${paths.issueDetail(identifier)}#comment-${commentId}`,
-            )
-          }
+          onClick={jump}
         >
           {text}
         </button>
