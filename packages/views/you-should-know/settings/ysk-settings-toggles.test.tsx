@@ -7,6 +7,9 @@ import { renderWithI18n } from "../../test/i18n";
 
 const state = vi.hoisted(() => ({
   workspaceEnabled: true,
+  // Omits you_should_know_enabled from the workspace settings entirely —
+  // the "key never set" case (a workspace created before the feature).
+  missingWorkspaceKey: false,
   personalEnabled: true,
   preferences: { you_should_know: undefined } as Record<string, unknown>,
   savedPatch: undefined as unknown,
@@ -23,10 +26,12 @@ vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => ({
     id: "ws-1",
     name: "Acme",
-    settings: {
-      you_should_know_enabled: state.workspaceEnabled,
-      github_enabled: true,
-    },
+    settings: state.missingWorkspaceKey
+      ? { github_enabled: true }
+      : {
+          you_should_know_enabled: state.workspaceEnabled,
+          github_enabled: true,
+        },
   }),
   useWorkspacePaths: () => ({ issueDetail: (id: string) => `/issues/${id}` }),
 }));
@@ -86,6 +91,7 @@ beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
   state.workspaceEnabled = true;
+  state.missingWorkspaceKey = false;
   state.personalEnabled = true;
   state.preferences = {};
   state.savedPatch = undefined;
@@ -192,6 +198,25 @@ describe("YouShouldKnowWorkspaceSection", () => {
     expect(screen.queryByText(/^notifications#you-should-know/)).toBeNull();
     // The workspace entry stays: that is the row an admin searches for to
     // turn the feature on.
+    expect(screen.getByText(/^workspace#you-should-know/)).toBeInTheDocument();
+    unmount();
+  });
+
+  // OL-269: workspaces created before the feature (or whose settings were
+  // never written) have no you_should_know_enabled key — that must count as
+  // off, exactly like an explicit false.
+  it("drops the personal entry when the settings key is missing entirely", () => {
+    state.missingWorkspaceKey = true;
+    function IndexProbe() {
+      const index = useSettingsSearchIndex([
+        { value: "workspace", label: "Workspace" },
+        { value: "notifications", label: "Notifications" },
+      ]);
+      return <ul>{index.map((e) => <li key={`${e.tab}#${e.anchor ?? ""}`}>{`${e.tab}#${e.anchor ?? ""}`}</li>)}</ul>;
+    }
+    const { unmount } = renderWithI18n(<IndexProbe />);
+
+    expect(screen.queryByText(/^notifications#you-should-know/)).toBeNull();
     expect(screen.getByText(/^workspace#you-should-know/)).toBeInTheDocument();
     unmount();
   });

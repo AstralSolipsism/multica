@@ -54,6 +54,18 @@ vi.mock("@multica/core/hooks", () => ({
 // Mocks
 // ---------------------------------------------------------------------------
 
+// The YSK archive mount must keep passing the timeline jump helper; when
+// this line disappears in an upstream merge, group jumps silently fall back
+// to the unreliable URL navigation (OL-269). Capture props instead of
+// rendering so the assertion does not depend on the section's own gating.
+const archiveSectionProps = vi.hoisted(() => ({ current: null as unknown }));
+vi.mock("../../you-should-know/archive/archive-section", () => ({
+  YouShouldKnowArchiveSection: (props: unknown) => {
+    archiveSectionProps.current = props;
+    return null;
+  },
+}));
+
 vi.mock("./issue-dependencies-section", () => ({
   IssueDependenciesSection: ({ issue }: { issue: { id: string } }) => (
     <div data-testid="issue-dependencies-section" data-issue-id={issue.id} />
@@ -3548,6 +3560,19 @@ describe("IssueDetail (shared)", () => {
     const rendered = Array.from(container.querySelectorAll("[id^='comment-']")).map((el) => el.id)
       .filter((id) => ["comment-confirm", "comment-step2", "comment-aside", "comment-step3"].includes(id));
     expect(rendered).toEqual(["comment-confirm", "comment-step2", "comment-aside", "comment-step3"]);
+  });
+
+  // OL-269: the archive mount must pass the timeline's jump helper so group
+  // headers scroll virtualized/collapsed threads; a lost line here silently
+  // falls back to URL navigation, which scrolls nothing.
+  it("passes the timeline jump helper to the YSK archive section", async () => {
+    renderIssueDetail();
+    await screen.findByText("Started working on this");
+    expect(archiveSectionProps.current).toEqual({
+      issueId: "issue-1",
+      identifier: "TES-1",
+      onJumpToComment: expect.any(Function),
+    });
   });
 
 });
