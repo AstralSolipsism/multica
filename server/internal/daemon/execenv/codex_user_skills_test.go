@@ -171,7 +171,7 @@ func TestHydrateCodexSkillsWipeKeepsUserSkillContent(t *testing.T) {
 
 	// Twice: Prepare hydrates, then a follow-up task on the same env re-hydrates.
 	for i := 0; i < 2; i++ {
-		if err := hydrateCodexSkills(codexHome, workspaceSkills, nil, testLogger()); err != nil {
+		if err := hydrateCodexSkills(codexHome, workspaceSkills, nil, testLogger(), nil); err != nil {
 			t.Fatalf("hydrateCodexSkills run %d: %v", i+1, err)
 		}
 	}
@@ -203,7 +203,7 @@ func TestHydrateCodexSkillsNeverWritesThroughAUserSkillLink(t *testing.T) {
 	}
 	// writeSkillFiles runs without the pre-filter that hydrateCodexSkills
 	// applies, which is exactly the case allocateCollisionFreeSkillDir guards.
-	if err := writeSkillFiles(skillsDir, []SkillContextForEnv{{Name: "alpha", Content: "workspace version"}}, nil); err != nil {
+	if err := writeSkillFiles(skillsDir, []SkillContextForEnv{{Name: "alpha", Content: "workspace version"}}, nil, nil); err != nil {
 		t.Fatalf("writeSkillFiles: %v", err)
 	}
 

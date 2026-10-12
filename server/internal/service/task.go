@@ -2419,7 +2419,15 @@ func (s *TaskService) SendDirectChatMessage(
 		}
 		out.Queued = queued
 
+		// Record the direct sender, not the run's accountable human: an agent
+		// using the chat API can have a human originator too. Old tasks without
+		// this stamp keep text-only skill hints. Retries copy the task context.
+		chatContext, err := json.Marshal(map[string]string{"chat_input_actor_type": uploaderType})
+		if err != nil {
+			return fmt.Errorf("encode chat sender: %w", err)
+		}
 		task, err := qtx.CreateChatTask(ctx, db.CreateChatTaskParams{
+			Context:              chatContext,
 			ID:                   dbid.NewV7(),
 			AgentID:              session.AgentID,
 			RuntimeID:            carrier.RuntimeID,

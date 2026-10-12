@@ -37,7 +37,7 @@ func TestWriteSkillFilesIgnoresBundledSkillMd(t *testing.T) {
 	// enforces refuse-to-overwrite, so a duplicate SKILL.md would error here
 	// if it were not skipped.
 	manifest := &sidecarManifest{}
-	if err := writeSkillFiles(skillsDir, skills, manifest); err != nil {
+	if err := writeSkillFiles(skillsDir, skills, manifest, nil); err != nil {
 		t.Fatalf("writeSkillFiles errored on a bundled SKILL.md: %v", err)
 	}
 

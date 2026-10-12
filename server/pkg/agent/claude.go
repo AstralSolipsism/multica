@@ -120,6 +120,10 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	if opts.EnableTaskSupplement {
 		supplements = newClaudeSupplementSession(runCtx)
 	}
+	initializer := supplements
+	if initializer == nil && opts.SkillInvocation != nil {
+		initializer = newClaudeSupplementSession(runCtx)
+	}
 	var closeStdinOnce sync.Once
 	closeStdin := func() {
 		closeStdinOnce.Do(func() { _ = stdin.Close() })
@@ -169,13 +173,20 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	// timeout.
 	writeDone := make(chan error, 1)
 	go func() {
-		if supplements != nil {
-			if initErr := supplements.initialize(inputWriter, claudeSupplementHandshakeTimeout); initErr != nil {
-				b.cfg.Logger.Warn("Claude additional messages unavailable; continuing normally", "error", initErr)
-				supplements.end()
+		var commands map[string]bool
+		if initializer != nil {
+			if initErr := initializer.initialize(inputWriter, claudeSupplementHandshakeTimeout, opts.EnableTaskSupplement); initErr != nil {
+				b.cfg.Logger.Warn("Claude initialization unavailable; continuing with text input", "error", initErr)
+				initializer.end()
+			} else if !slashCommandsDisabled(b.cfg.LaunchPrefix, opts.ExtraArgs, opts.CustomArgs) {
+				commands = initializer.availableCommands()
 			}
 		}
-		err := writeClaudeInput(inputWriter, prompt)
+		blocks := []string{prompt}
+		if opts.SkillInvocation != nil {
+			blocks = opts.SkillInvocation.claudeTextBlocks(commands)
+		}
+		err := writeClaudeInput(inputWriter, blocks...)
 		if err != nil {
 			closeStdin()
 			if supplements != nil {
@@ -333,8 +344,8 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 					}
 				}(msg, reply)
 			case "control_response":
-				if supplements != nil {
-					supplements.handleResponse(msg.Response)
+				if initializer != nil {
+					initializer.handleResponse(msg.Response)
 				}
 			}
 		}
@@ -1149,8 +1160,8 @@ func buildClaudeArgs(opts ExecOptions, logger *slog.Logger) []string {
 	return args
 }
 
-func writeClaudeInput(w io.Writer, prompt string) error {
-	data, err := buildClaudeInput(prompt)
+func writeClaudeInput(w io.Writer, prompts ...string) error {
+	data, err := buildClaudeInput(prompts...)
 	if err != nil {
 		return err
 	}
@@ -1160,17 +1171,16 @@ func writeClaudeInput(w io.Writer, prompt string) error {
 	return nil
 }
 
-func buildClaudeInput(prompt string) ([]byte, error) {
+func buildClaudeInput(prompts ...string) ([]byte, error) {
+	content := make([]map[string]string, 0, len(prompts))
+	for _, prompt := range prompts {
+		content = append(content, map[string]string{"type": "text", "text": prompt})
+	}
 	payload := map[string]any{
 		"type": "user",
 		"message": map[string]any{
-			"role": "user",
-			"content": []map[string]string{
-				{
-					"type": "text",
-					"text": prompt,
-				},
-			},
+			"role":    "user",
+			"content": content,
 		},
 	}
 	data, err := json.Marshal(payload)

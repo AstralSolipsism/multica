@@ -368,7 +368,7 @@ func hermesProfileDir(root, name string) (home string, mustExist bool, err error
 // database task-local. The returned hermesSessionMount reports both what got
 // mounted and whether the store actually holds a transcript, so the caller never
 // tells a task it can resume history that is not there.
-func prepareHermesHome(hermesHome, sourceHome string, sourceMustExist bool, workspaceSkills []SkillContextForEnv, env map[string]string, memoryStore, sessionStore string, logger *slog.Logger) (sessions hermesSessionMount, err error) {
+func prepareHermesHome(hermesHome, sourceHome string, sourceMustExist bool, workspaceSkills []SkillContextForEnv, env map[string]string, memoryStore, sessionStore string, logger *slog.Logger, installed map[string]string) (sessions hermesSessionMount, err error) {
 	sharedHome := strings.TrimSpace(sourceHome)
 	if sharedHome == "" {
 		sharedHome = platformDefaultHermesHome()
@@ -421,7 +421,7 @@ func prepareHermesHome(hermesHome, sourceHome string, sourceMustExist bool, work
 	if err := writeDerivedHermesEnv(sharedHome, hermesHome); err != nil {
 		return hermesSessionMount{}, fmt.Errorf("derive hermes .env: %w", err)
 	}
-	if err := writeHermesBoundSkills(hermesHome, workspaceSkills, logger); err != nil {
+	if err := writeHermesBoundSkills(hermesHome, workspaceSkills, logger, installed); err != nil {
 		return hermesSessionMount{}, err
 	}
 	return sessions, nil
@@ -770,7 +770,7 @@ func computeHermesExternalDirs(sharedHome string, existing []string, env map[str
 // skill removed since the last run can't linger, then writes only the
 // Multica-bound skills. They keep their natural slug (no user skills share this
 // dir) and therefore take precedence over any same-named external skill.
-func writeHermesBoundSkills(hermesHome string, workspaceSkills []SkillContextForEnv, logger *slog.Logger) error {
+func writeHermesBoundSkills(hermesHome string, workspaceSkills []SkillContextForEnv, logger *slog.Logger, installed map[string]string) error {
 	skillsDir := filepath.Join(hermesHome, "skills")
 	if err := os.RemoveAll(skillsDir); err != nil {
 		return fmt.Errorf("clear hermes skills dir: %w", err)
@@ -783,7 +783,7 @@ func writeHermesBoundSkills(hermesHome string, workspaceSkills []SkillContextFor
 	}
 	// Skills live under env.RootDir/hermes-home, which the GC loop (cloud) or
 	// env teardown (local_directory) wipes wholesale — no sidecar manifest.
-	return writeSkillFiles(skillsDir, workspaceSkills, nil)
+	return writeSkillFiles(skillsDir, workspaceSkills, nil, installed)
 }
 
 // existingHermesExternalDirs reads the raw skills.external_dirs entries from a

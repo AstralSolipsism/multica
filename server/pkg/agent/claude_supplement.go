@@ -34,6 +34,7 @@ type claudeSupplementSession struct {
 	ended       bool
 	pending     []*claudeSupplementInput
 	initialized chan error
+	commands    map[string]bool
 }
 
 type claudeSupplementInput struct {
@@ -47,15 +48,17 @@ func newClaudeSupplementSession(ctx context.Context) *claudeSupplementSession {
 	return &claudeSupplementSession{ctx: ctx, initialized: make(chan error, 1)}
 }
 
-func (s *claudeSupplementSession) initialize(w io.Writer, timeout time.Duration) error {
+func (s *claudeSupplementSession) initialize(w io.Writer, timeout time.Duration, installHooks bool) error {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, timeout)
 	defer cancel()
 	hooks := make(map[string]any, len(claudeSupplementEvents))
-	for _, event := range claudeSupplementEvents {
-		hooks[event] = []any{map[string]any{"hookCallbackIds": []string{"multica-supplement-" + event}}}
+	if installHooks {
+		for _, event := range claudeSupplementEvents {
+			hooks[event] = []any{map[string]any{"hookCallbackIds": []string{"multica-supplement-" + event}}}
+		}
 	}
 	if err := writeClaudeFrame(w, map[string]any{
 		"type": "control_request", "request_id": claudeSupplementInitializeID,
@@ -76,6 +79,11 @@ func (s *claudeSupplementSession) handleResponse(raw json.RawMessage) {
 		RequestID string `json:"request_id"`
 		Subtype   string `json:"subtype"`
 		Error     string `json:"error"`
+		Response  struct {
+			Commands []struct {
+				Name string `json:"name"`
+			} `json:"commands"`
+		} `json:"response"`
 	}
 	if json.Unmarshal(raw, &response) != nil || response.RequestID != claudeSupplementInitializeID {
 		return
@@ -83,11 +91,24 @@ func (s *claudeSupplementSession) handleResponse(raw json.RawMessage) {
 	var err error
 	if response.Subtype != "success" {
 		err = fmt.Errorf("claude supplement initialization rejected: %s", response.Error)
+	} else {
+		s.mu.Lock()
+		s.commands = make(map[string]bool, len(response.Response.Commands))
+		for _, command := range response.Response.Commands {
+			s.commands[command.Name] = true
+		}
+		s.mu.Unlock()
 	}
 	select {
 	case s.initialized <- err:
 	default:
 	}
+}
+
+func (s *claudeSupplementSession) availableCommands() map[string]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.commands
 }
 
 func (s *claudeSupplementSession) ready() bool {

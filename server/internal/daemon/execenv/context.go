@@ -156,7 +156,7 @@ func writeWorkspacesRootMarkerAtomic(path string, data []byte) error {
 // state for local_directory tasks. Callers that don't need cleanup —
 // cloud-mode tasks whose envRoot is wiped wholesale by the GC loop — may
 // pass nil to skip the bookkeeping entirely.
-func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
+func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest *sidecarManifest, installed map[string]string) error {
 	if err := writeTaskContextMarker(workDir, ctx, manifest); err != nil {
 		return err
 	}
@@ -173,7 +173,7 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 			}
 			// Codex skills are written to codex-home in Prepare; skip here.
 			if provider != "codex" {
-				if err := writeSkillFiles(skillsDir, ctx.AgentSkills, manifest); err != nil {
+				if err := writeSkillFiles(skillsDir, ctx.AgentSkills, manifest, installed); err != nil {
 					return fmt.Errorf("write skill files: %w", err)
 				}
 			}
@@ -570,6 +570,13 @@ func isFrontmatterValidYAML(content string) bool {
 	return yaml.Unmarshal([]byte(fmBody), &m) == nil
 }
 
+// SkillBody removes a complete frontmatter block for explicit prompt injection.
+// Malformed/unclosed frontmatter is preserved instead of dropping skill text.
+func SkillBody(content string) string {
+	_, body, _ := frontmatterParts(content)
+	return body
+}
+
 // frontmatterParts splits content into the raw YAML frontmatter body (the text
 // between the opening `---` line and the closing `---` line) and the document
 // body that follows the closing delimiter. ok is false when content has no
@@ -936,7 +943,9 @@ func sanitizeSkillName(name string) string {
 // overwrite user bytes (the bug PR #3444 review caught) or skip the
 // skill entirely (which would silently drop a Multica skill the agent
 // expects to see).
-func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *sidecarManifest) error {
+// installed, when non-nil, receives each successful write's absolute directory
+// by skill ID, so explicit invocation never has to repeat the allocator.
+func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *sidecarManifest, installed map[string]string) error {
 	if err := recordMkdirAll(skillsDir, 0o755, manifest); err != nil {
 		return fmt.Errorf("create skills dir: %w", err)
 	}
@@ -992,6 +1001,9 @@ func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *si
 			if err := recordWriteFile(fpath, []byte(f.Content), 0o644, manifest); err != nil {
 				return err
 			}
+		}
+		if installed != nil && skill.ID != "" {
+			installed[skill.ID] = dir
 		}
 	}
 

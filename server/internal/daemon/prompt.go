@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
@@ -89,6 +90,9 @@ func buildJoinedWakeupsBlock(notes string) string {
 type promptOpts struct {
 	sharedLocalDirectory    bool
 	worktreeReplayConflicts []string
+	skillDirectories        map[string]string
+	omitChatMessage         bool
+	chatSkillRefs           []SlashSkillRef
 }
 
 // PromptOption tunes per-turn prompt copy with run-scoped context.
@@ -196,7 +200,7 @@ func BuildPrompt(task Task, provider string, options ...PromptOption) string {
 	for _, apply := range options {
 		apply(&opts)
 	}
-	body := buildPromptBody(task, provider)
+	body := buildPromptBody(task, provider, opts)
 	// Run-scoped context is appended, never prepended: everything ahead of it
 	// is stable across runs of a resumed session, and appending keeps it after
 	// the cached prefix (MUL-5377).
@@ -209,7 +213,7 @@ func BuildPrompt(task Task, provider string, options ...PromptOption) string {
 	return body
 }
 
-func buildPromptBody(task Task, provider string) string {
+func buildPromptBody(task Task, provider string, opts promptOpts) string {
 	if task.WakeupID != "" {
 		var b strings.Builder
 		fmt.Fprintf(&b, "You are running as a local coding agent for a Labrastro workspace.\n\nYour assigned issue ID is: %s\n\n[WAKEUP]\n%s\n\n", task.IssueID, task.HandoffNote)
@@ -227,7 +231,7 @@ func buildPromptBody(task Task, provider string) string {
 		return b.String()
 	}
 	if task.ChatSessionID != "" {
-		return buildChatPrompt(task)
+		return buildChatPromptWithOptions(task, opts)
 	}
 	if task.TriggerCommentID != "" {
 		return buildCommentPrompt(task, provider)
@@ -601,6 +605,10 @@ func commentReplyThreads(task Task) []execenv.ThreadReplyTarget {
 
 // buildChatPrompt constructs a prompt for interactive chat tasks.
 func buildChatPrompt(task Task) string {
+	return buildChatPromptWithOptions(task, promptOpts{})
+}
+
+func buildChatPromptWithOptions(task Task, opts promptOpts) string {
 	// Legacy compatibility for historical proactive-introduction sessions.
 	// New agent creation no longer creates a chat or runs this prompt.
 	if task.ChatIntro {
@@ -676,11 +684,17 @@ func buildChatPrompt(task Task) string {
 		b.WriteString("\n")
 	}
 	if task.Agent != nil && len(task.Agent.Skills) > 0 {
-		refs := ExtractSlashSkills(task.ChatMessage)
+		refs := chatSkillRefs(task)
+		if opts.chatSkillRefs != nil {
+			refs = opts.chatSkillRefs
+		}
 		if len(refs) > 0 {
 			agentSkills := make(map[string]string, len(task.Agent.Skills))
 			for _, s := range task.Agent.Skills {
 				agentSkills[s.ID] = s.Name
+				if dir := opts.skillDirectories[s.ID]; dir != "" {
+					agentSkills[s.ID] = filepath.Base(dir)
+				}
 			}
 
 			selected := make([]string, 0, len(refs))
@@ -706,7 +720,9 @@ func buildChatPrompt(task Task) string {
 			}
 		}
 	}
-	fmt.Fprintf(&b, "User message:\n%s\n", task.ChatMessage)
+	if !opts.omitChatMessage {
+		fmt.Fprintf(&b, "User message:\n%s\n", task.ChatMessage)
+	}
 	// List attachments by id + filename so the agent can fetch them via
 	// the CLI. We deliberately do NOT inline the URL: chat attachments
 	// live behind a signed CDN with a short TTL, so by the time the agent
