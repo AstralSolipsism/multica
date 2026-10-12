@@ -12,6 +12,7 @@ import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceSeen } from "@multica/views/workspace/use-workspace-seen";
 import { WelcomeAfterOnboarding } from "@multica/views/workspace/welcome-after-onboarding";
 import { WorkspacePresencePrefetch } from "@multica/views/layout";
+import { YouShouldKnowProvider } from "@multica/views/you-should-know";
 import { useTabStore } from "@/stores/tab-store";
 import { useWindowOverlayStore } from "@/stores/window-overlay-store";
 
@@ -177,7 +178,7 @@ export function WorkspaceRouteLayout() {
   return (
     <WorkspaceSlugProvider slug={workspaceSlug}>
       <WorkspacePresencePrefetch />
-      <Outlet />
+      <YouShouldKnowProvider><Outlet /></YouShouldKnowProvider>
       {/* Reads the welcome-store transient signal parked by
        *  OnboardingFlow.handleRuntimeNext. Suppressed while a WindowOverlay
        *  (onboarding / accept-invite / new-workspace) is open so the modal

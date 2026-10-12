@@ -50,6 +50,14 @@ vi.mock("@multica/views/platform", () => ({
   DragStrip: () => null,
 }));
 
+// The provider's own behavior is covered in packages/views; here it only
+// marks where the window mounts it.
+vi.mock("@multica/views/you-should-know", () => ({
+  YouShouldKnowProvider: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="ysk-provider">{children}</div>
+  ),
+}));
+
 vi.mock("../pages/issue-detail-page", () => ({
   IssueDetailPage: () => <div data-testid="issue-detail" />,
 }));
@@ -93,6 +101,17 @@ beforeEach(() => {
 });
 
 describe("IssueWindow", () => {
+  it("mounts the You-should-know provider around the issue detail (OL-194)", async () => {
+    state.ready = true;
+    state.workspaces = [{ id: "ws-1", slug: "acme" }];
+
+    render(<IssueWindow context={context} />);
+
+    expect(await screen.findByTestId("ysk-provider")).toContainElement(
+      screen.getByTestId("issue-detail"),
+    );
+  });
+
   it("keeps loading after an initial workspace-list failure", async () => {
     render(<IssueWindow context={context} />);
 
