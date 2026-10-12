@@ -821,6 +821,111 @@ describe("YouShouldKnowProvider — settings hint", () => {
     expect(tipDisplayLedger.getState().users["user-1"]?.ordinals).toEqual({ first: 1, second: 2 });
   });
 
+  it("does not count a tip rotated onto an anchor whose own popup is open until it shows", async () => {
+    serveTips(
+      makeTip({ id: "first", issue_id: "issue-1", line: "First line" }),
+      makeTip({ id: "second", issue_id: "issue-2", line: "Second line" }),
+    );
+    renderWithYsk(
+      <>
+        <RowAnchor issueId="issue-1" />
+        <RowAnchor issueId="issue-2" top={340} />
+      </>,
+    );
+    await settle();
+    expect(bubbleText()).toContain("First line");
+    expect(tipDisplayLedger.getState().users["user-1"]?.ordinals).toEqual({ first: 1 });
+
+    // The next tip's row has its hover card open. The first tip still shows
+    // and keeps its clock (it only yields to its own anchor's popup).
+    const trigger = screen.getByTestId("row-issue-2");
+    await act(async () => {
+      trigger.setAttribute("data-popup-open", "");
+    });
+    expect(getBubble()).toHaveStyle({ visibility: "visible" });
+
+    // Rotating straight to the second tip: its bubble yields to that popup,
+    // so the first tip's receipt must not count it.
+    await elapse(8_000);
+    expect(bubbleText()).toContain("Second line");
+    expect(getBubble()).toHaveStyle({ visibility: "hidden" });
+    expect(tipDisplayLedger.getState().users["user-1"]?.ordinals).toEqual({ first: 1 });
+
+    await act(async () => {
+      trigger.removeAttribute("data-popup-open");
+    });
+    expect(getBubble()).toHaveStyle({ visibility: "visible" });
+    expect(tipDisplayLedger.getState().users["user-1"]?.ordinals).toEqual({
+      first: 1,
+      second: 2,
+    });
+  });
+
+  it("does not count a tip rotated onto an anchor that floating-ui finds clipped", async () => {
+    serveTips(
+      makeTip({ id: "first", issue_id: "issue-1", line: "First line" }),
+      makeTip({ id: "second", issue_id: "issue-2", line: "Second line" }),
+    );
+    // An observer callback can lag a scroll: scheduling still sees the second
+    // row as visible, but floating-ui measures it below the viewport.
+    renderWithYsk(
+      <>
+        <RowAnchor issueId="issue-1" />
+        <RowAnchor issueId="issue-2" top={900} />
+      </>,
+    );
+    await settle();
+    expect(bubbleText()).toContain("First line");
+    expect(tipDisplayLedger.getState().users["user-1"]?.ordinals).toEqual({ first: 1 });
+
+    await elapse(8_000);
+    expect(bubbleText()).toContain("Second line");
+    expect(getBubble()).toHaveStyle({ visibility: "hidden" });
+    expect(tipDisplayLedger.getState().users["user-1"]?.ordinals).toEqual({ first: 1 });
+  });
+
+  it("does not count a returning tip on the receipt of an earlier, unseen showing", async () => {
+    let visibility: DocumentVisibilityState = "hidden";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    const tip = makeTip({ id: "first", line: "First line" });
+    serveTips(tip);
+    const { queryClient } = renderWithYsk(<RowAnchor issueId="issue-1" />);
+    await settle();
+    // On screen, but the page is in the background: not counted.
+    expect(getBubble()).toHaveStyle({ visibility: "visible" });
+    expect(tipDisplayLedger.getState().users["user-1"]).toBeUndefined();
+
+    // The tip goes away and the user comes back to the page.
+    act(() => {
+      queryClient.setQueryData(youShouldKnowKeys.active(WS_ID), { tips: [] });
+    });
+    await settle();
+    expect(getBubble()).toBeNull();
+    visibility = "visible";
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    // It returns while a dialog covers the page: still unseen, so uncounted.
+    const inert = document.createElement("div");
+    await act(async () => {
+      inert.setAttribute("data-base-ui-inert", "");
+      document.body.appendChild(inert);
+    });
+    act(() => {
+      queryClient.setQueryData(youShouldKnowKeys.active(WS_ID), { tips: [tip] });
+    });
+    await settle();
+    expect(getBubble()).toHaveStyle({ visibility: "hidden" });
+    expect(tipDisplayLedger.getState().users["user-1"]).toBeUndefined();
+
+    await act(async () => {
+      inert.remove();
+    });
+    await settle();
+    expect(tipDisplayLedger.getState().users["user-1"]?.ordinals).toEqual({ first: 1 });
+  });
+
   it("returns on every tenth distinct tip; rotation back to a seen tip does not count", async () => {
     tipDisplayLedger.setState({ users: { "user-1": { count: 8, ordinals: {} } } });
     serveTips(

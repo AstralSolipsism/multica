@@ -93,18 +93,44 @@ function useSettledResync(resync: () => void, anchors: unknown, tips: unknown): 
 }
 
 /**
- * Counts a tip as displayed once the user can actually see it — the bubble is
- * positioned, not clipped or covered, and the page is in view — and returns
+ * Folds one bubble's visibility receipt into "which tip is on screen". A
+ * receipt names the tip whose bubble sent it: `true` claims the screen for
+ * that tip, `false` releases it only if that same tip still holds it — so a
+ * late `false` from a bubble that already left never clears the receipt of
+ * the bubble that replaced it.
+ */
+export function acknowledgeVisibility(
+  current: string | null,
+  tipId: string,
+  visible: boolean,
+): string | null {
+  if (visible) return tipId;
+  return current === tipId ? null : current;
+}
+
+/**
+ * Counts a tip as displayed once the user can actually see it, and returns
  * whether its bubble carries the "you can turn this off in personal
- * settings" line (1st–3rd and every 10th distinct tip, OL-187 §6). The line
- * is laid out from the ordinal the tip would get, so it is there on the first
- * visible frame; recording assigns exactly that ordinal, idempotently per tip.
+ * settings" line (1st–3rd and every 10th distinct tip, OL-187 §6).
+ *
+ * "Can see it" comes from the bubble's own receipt — positioned, not clipped,
+ * not covered — and it must be the receipt of `tipId` itself, with the page
+ * in view. A bare "the bubble is visible" flag would let a direct rotation
+ * A → B count B on A's leftover receipt before B's bubble has even placed.
+ * The line is laid out from the ordinal the tip would get, so it is there on
+ * the first visible frame; recording assigns exactly that ordinal,
+ * idempotently per tip.
  */
 function useSettingsHint(
   userId: string | null,
   tipId: string | null,
-  onScreen: boolean,
-): boolean {
+  pageHidden: boolean,
+): { showHint: boolean; reportVisible: (tipId: string, visible: boolean) => void } {
+  const [visibleTipId, setVisibleTipId] = useState<string | null>(null);
+  const reportVisible = useCallback((reportedTipId: string, visible: boolean) => {
+    setVisibleTipId((current) => acknowledgeVisibility(current, reportedTipId, visible));
+  }, []);
+  const onScreen = tipId !== null && visibleTipId === tipId && !pageHidden;
   const history = useStore(tipDisplayLedger, (state) =>
     userId ? state.users[userId] : undefined,
   );
@@ -112,8 +138,10 @@ function useSettingsHint(
     if (!userId || !tipId || !onScreen) return;
     tipDisplayLedger.getState().recordDisplay(userId, tipId);
   }, [userId, tipId, onScreen]);
-  if (!userId || !tipId) return false;
-  return shouldShowSettingsHint(tipDisplayOrdinal(history, tipId));
+  const showHint =
+    userId !== null && tipId !== null &&
+    shouldShowSettingsHint(tipDisplayOrdinal(history, tipId));
+  return { showHint, reportVisible };
 }
 
 /**
@@ -173,7 +201,6 @@ export function TipBubbleHost({
   const measure = bubbleAnchorId ? (anchors[bubbleAnchorId]?.measure ?? null) : null;
 
   const [engaged, setEngaged] = useState(false);
-  const [bubbleVisible, setBubbleVisible] = useState(false);
   const typing = useEditableFocus();
   const pageHidden = useDocumentHidden();
   const reducedMotion = usePrefersReducedMotion();
@@ -183,11 +210,7 @@ export function TipBubbleHost({
   const paused = engaged || typing || pageHidden || suppressed || held;
   useDwellTimer(rotation.seq, rotation.entry?.dwellMs ?? null, paused, advance);
 
-  const showHint = useSettingsHint(
-    userId,
-    tip?.id ?? null,
-    bubbleVisible && !pageHidden,
-  );
+  const { showHint, reportVisible } = useSettingsHint(userId, tip?.id ?? null, pageHidden);
 
   if (!tip || !rotation.entry || !measure) return null;
 
@@ -195,6 +218,7 @@ export function TipBubbleHost({
     <TipBubble
       // A new tip remounts the bubble, replaying its single fade-in.
       key={tip.id}
+      tipId={tip.id}
       measure={measure}
       level={rotation.entry.level}
       tag={tip.tag}
@@ -204,7 +228,7 @@ export function TipBubbleHost({
       suppressed={suppressed}
       reducedMotion={reducedMotion}
       onEngagedChange={setEngaged}
-      onVisibleChange={setBubbleVisible}
+      onVisibleChange={reportVisible}
     />
   );
 }

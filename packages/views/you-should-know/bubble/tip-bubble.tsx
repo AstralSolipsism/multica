@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
   autoUpdate,
@@ -66,6 +66,8 @@ function toClientRect(rect: TipAnchorRect) {
 }
 
 export interface TipBubbleProps {
+  /** The tip on display; visibility receipts name it. */
+  tipId: string;
   /** Live rect of the anchor the bubble rides (see RegisteredTipAnchor.measure). */
   measure: () => TipAnchorRect;
   level: TipAnchorLevel;
@@ -80,8 +82,11 @@ export interface TipBubbleProps {
   reducedMotion: boolean;
   /** Pointer over, or keyboard focus inside, the bubble. */
   onEngagedChange: (engaged: boolean) => void;
-  /** Positioned, not clipped and not suppressed — the user can see it. */
-  onVisibleChange: (visible: boolean) => void;
+  /**
+   * Visibility receipt for this bubble's tip: positioned, not clipped and not
+   * suppressed means the user can see it.
+   */
+  onVisibleChange: (tipId: string, visible: boolean) => void;
   /** Activating the bubble opens the tip's card (OL-196); until then a no-op. */
   onActivate?: () => void;
 }
@@ -165,6 +170,7 @@ function useAnchoredPosition(
  * menus, popovers, dialogs and tooltips (z-50).
  */
 export function TipBubble({
+  tipId,
   measure,
   level,
   tag,
@@ -184,7 +190,11 @@ export function TipBubble({
   const [focusInside, setFocusInside] = useState(false);
   const visible = placed && !clipped && !suppressed;
   useReported(pointerInside || focusInside, onEngagedChange);
-  useReported(visible, onVisibleChange);
+  const reportVisible = useCallback(
+    (value: boolean) => onVisibleChange(tipId, value),
+    [tipId, onVisibleChange],
+  );
+  useReported(visible, reportVisible);
 
   return createPortal(
     <div
