@@ -543,4 +543,3 @@ describe("tip card — motion", () => {
     }
   });
 });
-
