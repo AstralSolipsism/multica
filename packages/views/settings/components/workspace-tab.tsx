@@ -57,6 +57,7 @@ import {
   type SettingsSaveStatus,
 } from "./settings-layout";
 import { useAutoSave } from "./use-auto-save";
+import { YouShouldKnowWorkspaceSection } from "../../you-should-know/settings/workspace-toggle";
 
 interface WorkspaceDetailsDraft {
   name: string;
@@ -476,6 +477,10 @@ export function WorkspaceTab() {
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>
+
+      {/* You should know — fork feature; own section so upstream edits to the
+          general card stay untouched. */}
+      <YouShouldKnowWorkspaceSection canManage={canManageWorkspace} />
 
       {/* Danger Zone — gated on the member query settling so the owner-only
           Delete button and the sole-owner Leave guidance don't flash in

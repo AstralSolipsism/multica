@@ -109,6 +109,7 @@ import { ThreadMinimap, type ThreadMinimapThread } from "./thread-minimap";
 import { collectThreadParticipants, collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
 import { tipAnchorScopeFromIssues } from "../../you-should-know/anchors/tip-anchor-scope";
+import { YouShouldKnowArchiveSection } from "../../you-should-know/archive/archive-section";
 import { IssueWakeupHeaderChip } from "./issue-wakeup-header-chip";
 import { ExecutionLogSection } from "./execution-log-section";
 import { WakeupsSection } from "./wakeups-section";
@@ -2946,6 +2947,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       {/* Deliverables — the files this issue's comments delivered. Hidden
           while there are none. */}
       <DeliverablesSection files={deliverableFiles} onOpenOverview={openOverview} />
+
+      {/* You should know archive (fork, OL-187 §7) — every tip agents left
+          here, grouped by anchor comment. Self-contained; hides itself while
+          either switch is off or the issue has no tips. Jumps reuse the
+          minimap's target helper so virtualized/collapsed threads scroll. */}
+      <YouShouldKnowArchiveSection
+        issueId={id}
+        identifier={issue.identifier}
+        onJumpToComment={jumpToMinimapTarget}
+      />
 
       {/* Execution log — active runs + collapsed past runs, each carrying its
           own token spend, with the issue total on the section header.
