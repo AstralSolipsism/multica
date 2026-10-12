@@ -268,7 +268,7 @@ func writeSidecarManifest(envRoot string, m *sidecarManifest) error {
 // (.agent_context/, .multica/, .claude/skills/, .github/skills/,
 // .opencode/skills/, .codeartsdoer/skills/, skills/, .pi/skills/,
 // .omp/mcp.json, .omp/skills/, .cursor/skills/,
-// .kimi/skills/, .reasonix/skills/, .kiro/skills/, .agents/skills/, fallback
+// .reasonix/skills/, .kiro/skills/, .agents/skills/, fallback
 // .agent_context/skills/). The two together restore the workdir to
 // byte-exact pre-task state.
 func CleanupSidecars(envRoot string) error {
