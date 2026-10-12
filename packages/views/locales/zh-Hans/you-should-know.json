@@ -13,7 +13,8 @@
   "feedback": {
     "helpful": "有帮助",
     "not_relevant": "不相关",
-    "not_understood": "没看懂"
+    "not_understood": "没看懂",
+    "label": "对这条提示的反馈"
   },
   "bubble": {
     "marker_tooltip": "旁观助手在智能体工作时帮你盯着",

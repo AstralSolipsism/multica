@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 
 /**
- * Click isolation (OL-194): the bubble is rendered by the page-level provider
- * and portaled to <body>, never as a React child of its anchor. Portal events
- * still bubble along the React tree, so a bubble rendered inside the anchor
- * would hand its clicks to whatever wraps the anchor. Each case mounts the
- * real anchor host, puts the bubble on it, clicks the bubble, and checks the
- * host did not react — with a control click proving the host does react to
- * clicks of its own.
+ * Click isolation (OL-194, OL-196): the bubble, the card it opens into and
+ * the feedback row are rendered by the page-level provider and portaled to
+ * <body>, never as React children of their anchor. Portal events still bubble
+ * along the React tree, so a layer rendered inside the anchor would hand its
+ * clicks to whatever wraps the anchor. Each case mounts the real anchor host,
+ * puts the bubble on it, clicks the bubble (and every button of its card and
+ * feedback row), and checks the host did not react — with a control click
+ * proving the host does react to clicks of its own.
  */
 
 import { cleanup, fireEvent, screen, within } from "@testing-library/react";
@@ -18,6 +19,7 @@ import type { AgentTask } from "@multica/core/types";
 import { tipDisplayLedger } from "@multica/core/you-should-know";
 import {
   createYskQueryClient,
+  flush,
   getBubble,
   makeTip,
   mockLayout,
@@ -34,6 +36,7 @@ const apiMock = vi.hoisted(() => ({
   listIssueWakeupSummaries: vi.fn(),
   listPausedWakeups: vi.fn(),
   listTasksByIssue: vi.fn(),
+  setTipState: vi.fn(),
 }));
 
 vi.mock("@multica/core/api", () => ({ api: apiMock }));
@@ -108,6 +111,34 @@ function clickBubble() {
   fireEvent.click(within(bubble!).getByRole("button"));
 }
 
+function clickCardButton(name: string) {
+  fireEvent.click(within(getBubble()!).getByRole("button", { name }));
+}
+
+/**
+ * Opens the card and presses through it — Learn more, then Dismiss — and
+ * then a reason on the feedback row, calling `expectUntouched` after every
+ * click.
+ */
+async function clickThroughCard(expectUntouched: () => void) {
+  clickBubble();
+  expectUntouched();
+  clickCardButton("Learn more");
+  expectUntouched();
+  clickCardButton("Dismiss");
+  expectUntouched();
+  await flush();
+  const row = document.querySelector<HTMLElement>("[data-ysk-feedback]");
+  expect(row).not.toBeNull();
+  fireEvent.click(within(row!).getByRole("button", { name: "Helpful" }));
+  await flush();
+  expectUntouched();
+  expect(apiMock.setTipState).toHaveBeenLastCalledWith("tip-1", {
+    state: "dismissed",
+    feedback: "helpful",
+  });
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   mockLayout();
@@ -119,6 +150,7 @@ beforeEach(() => {
   apiMock.listIssueWakeupSummaries.mockResolvedValue([]);
   apiMock.listPausedWakeups.mockResolvedValue([]);
   apiMock.listTasksByIssue.mockResolvedValue([RUNNING_TASK]);
+  apiMock.setTipState.mockResolvedValue(undefined);
   localStorage.clear();
   tipDisplayLedger.setState({ users: {} });
 });
@@ -199,5 +231,87 @@ describe("bubble click isolation", () => {
     fireEvent.click(trigger);
     await settle();
     expect(trigger).toHaveAttribute("aria-expanded", "true");
+  });
+});
+
+describe("card click isolation", () => {
+  function RowWithLink() {
+    // Same nesting as list-row.tsx: the activity indicator inside the row's AppLink.
+    return (
+      <div data-test-rect="80,300,600,36">
+        <AppLink href="/acme/issues/issue-1">
+          <span>OL-1</span>
+          <IssueAgentActivityIndicator issueId="issue-1" tipAnchor />
+        </AppLink>
+      </div>
+    );
+  }
+
+  it("keeps every card and feedback click off the issue row's link", async () => {
+    const { navigation } = renderWithYsk(<RowWithLink />, {
+      queryClient: queryClientWithRunningTask(),
+    });
+    await settle();
+    expect(getBubble()).toHaveAttribute("data-level", "row");
+
+    await clickThroughCard(() => expect(navigation.push).not.toHaveBeenCalled());
+  });
+
+  it("navigates once, on its own, for Discuss in comments — and I already know never navigates", async () => {
+    const { navigation } = renderWithYsk(<RowWithLink />, {
+      queryClient: queryClientWithRunningTask(),
+    });
+    await settle();
+    clickBubble();
+    clickCardButton("Learn more");
+    clickCardButton("Discuss in comments");
+    // Only the card's own move to the issue (by identifier): the row link,
+    // which points at the UUID, never fired.
+    expect(navigation.push).toHaveBeenCalledExactlyOnceWith("/acme/issues/OL-1");
+
+    clickBubble();
+    clickCardButton("I already know");
+    await flush();
+    expect(navigation.push).toHaveBeenCalledTimes(1);
+    expect(apiMock.setTipState).toHaveBeenLastCalledWith("tip-1", {
+      state: "known",
+      feedback: null,
+    });
+  });
+
+  it("keeps every card and feedback click off the header's agents-working filter", async () => {
+    const onToggle = vi.fn();
+    renderWithYsk(
+      <div data-test-rect="900,20,160,28">
+        <WorkspaceAgentWorkingChip
+          value={false}
+          onToggle={onToggle}
+          agents={[{ id: "agent-1", running_task_count: 1 }]}
+          tipAnchorScope={{ "issue-1": "OL-1" }}
+        />
+      </div>,
+      { queryClient: queryClientWithRunningTask() },
+    );
+    await settle();
+    expect(getBubble()).toHaveAttribute("data-level", "summary");
+
+    await clickThroughCard(() => expect(onToggle).not.toHaveBeenCalled());
+  });
+
+  it("keeps every card and feedback click off the detail header chip's popover", async () => {
+    renderWithYsk(
+      <div data-test-rect="1000,40,180,28">
+        <IssueAgentHeaderChip issueId="issue-1" />
+      </div>,
+      { queryClient: queryClientWithRunningTask() },
+    );
+    await settle();
+    expect(getBubble()).toHaveAttribute("data-level", "detail_header");
+    const trigger = screen.getByRole("button", { name: "Agent agent-1 is working" });
+
+    await clickThroughCard(() => {
+      expect(trigger).toHaveAttribute("aria-expanded", "false");
+      expect(trigger).not.toHaveAttribute("data-popup-open");
+    });
   });
 });

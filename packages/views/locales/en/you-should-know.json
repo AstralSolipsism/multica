@@ -13,7 +13,8 @@
   "feedback": {
     "helpful": "Helpful",
     "not_relevant": "Not relevant",
-    "not_understood": "Didn't understand"
+    "not_understood": "Didn't understand",
+    "label": "Feedback on this tip"
   },
   "bubble": {
     "marker_tooltip": "A bystander assistant keeps watch while agents work",

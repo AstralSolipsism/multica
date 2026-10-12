@@ -13,7 +13,8 @@
   "feedback": {
     "helpful": "役に立った",
     "not_relevant": "関係ない",
-    "not_understood": "わかりにくい"
+    "not_understood": "わかりにくい",
+    "label": "このヒントへのフィードバック"
   },
   "bubble": {
     "marker_tooltip": "エージェントの作業中に補助アシスタントが見守っています",

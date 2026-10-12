@@ -25,6 +25,14 @@ import type {
 } from "@multica/core/you-should-know/anchors";
 import { cn } from "@multica/ui/lib/utils";
 
+/** Root markers of the page's two tip layers: the bubble (with its card) and the feedback row. */
+const TIP_LAYER_SELECTOR = "[data-ysk-bubble], [data-ysk-feedback]";
+
+/** Whether keyboard focus sits inside one of the page's tip layers. */
+export function tipLayerHasFocus(): boolean {
+  return document.activeElement?.closest(TIP_LAYER_SELECTOR) != null;
+}
+
 /**
  * Preferred side per anchor level; flip/shift take over when it lacks room.
  * The detail header and the summary chips sit at the top of their surface,
@@ -122,6 +130,29 @@ function useAnchoredPosition(
 
 const IGNORE_VISIBILITY = () => {};
 
+/** Nothing holds keyboard focus: it fell back to the page body. */
+function focusIsFree(): boolean {
+  return document.activeElement === null || document.activeElement === document.body;
+}
+
+/**
+ * Focuses `target` the first time the layer is on screen. A fresh layer stays
+ * `visibility: hidden` until floating-ui has placed it, and a hidden element
+ * cannot take focus — so a focus call at mount would be silently dropped.
+ * Skipped if focus has meanwhile landed anywhere but the page body.
+ */
+function useFocusWhenShown(
+  visible: boolean,
+  target: RefObject<HTMLElement | null> | undefined,
+): void {
+  const doneRef = useRef(false);
+  useEffect(() => {
+    if (!visible || !target || doneRef.current) return;
+    doneRef.current = true;
+    if (focusIsFree()) target.current?.focus({ preventScroll: true });
+  }, [visible, target]);
+}
+
 export interface TipLayerProps
   extends Omit<HTMLAttributes<HTMLDivElement>, "className" | "style" | "children"> {
   /** Live rect of the anchor the layer rides (see RegisteredTipAnchor.measure). */
@@ -135,11 +166,18 @@ export interface TipLayerProps
    * suppressed.
    */
   onVisibleChange?: (visible: boolean) => void;
+  /**
+   * Takes over keyboard focus once the layer first shows — for a layer that
+   * replaces one the focus was in.
+   */
+  initialFocus?: RefObject<HTMLElement | null>;
   children: ReactNode;
 }
 
 /**
- * One floating tip layer beside an anchor (OL-194): the page's bubble.
+ * One floating tip layer beside an anchor (OL-194, OL-196): the bubble that
+ * grows into its card, or the feedback row left in its place after
+ * "Dismiss".
  *
  * Portaled to <body> and rendered by the page-level provider — never inside
  * the anchor. React bubbles portal events along the component tree, so a
@@ -162,6 +200,7 @@ export function TipLayer({
   suppressed,
   reducedMotion,
   onVisibleChange = IGNORE_VISIBILITY,
+  initialFocus,
   children,
   ...rootProps
 }: TipLayerProps) {
@@ -169,6 +208,7 @@ export function TipLayer({
   const { placed, clipped } = useAnchoredPosition(floatingRef, measure, level);
   const visible = placed && !clipped && !suppressed;
   useReported(visible, onVisibleChange);
+  useFocusWhenShown(visible, initialFocus);
 
   return createPortal(
     <div

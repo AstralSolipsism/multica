@@ -6,6 +6,7 @@ import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { notificationPreferenceKeys } from "@multica/core/notification-preferences/queries";
 import type { NotificationPreferenceResponse, Workspace } from "@multica/core/types";
 import { workspaceKeys } from "@multica/core/workspace/queries";
+import type { SupportedLocale } from "@multica/core/i18n";
 import type { IssueTip } from "@multica/core/you-should-know";
 import { NavigationProvider, type NavigationAdapter } from "../navigation";
 import { YouShouldKnowProvider } from "../you-should-know";
@@ -107,7 +108,12 @@ export function renderWithYsk(
   {
     queryClient = createYskQueryClient(),
     navigation = createNavigation(),
-  }: { queryClient?: QueryClient; navigation?: NavigationAdapter } = {},
+    locale,
+  }: {
+    queryClient?: QueryClient;
+    navigation?: NavigationAdapter;
+    locale?: SupportedLocale;
+  } = {},
 ): YskRenderResult {
   const wrap = (node: ReactElement) => (
     <QueryClientProvider client={queryClient}>
@@ -118,7 +124,7 @@ export function renderWithYsk(
       </WorkspaceSlugProvider>
     </QueryClientProvider>
   );
-  const view = renderWithI18n(wrap(ui));
+  const view = renderWithI18n(wrap(ui), { locale });
   return {
     ...view,
     queryClient,
@@ -127,7 +133,8 @@ export function renderWithYsk(
   };
 }
 
-async function flush(): Promise<void> {
+/** Flushes effects, query results and floating-ui positioning, without moving the clock. */
+export async function flush(): Promise<void> {
   for (let i = 0; i < 3; i += 1) {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
