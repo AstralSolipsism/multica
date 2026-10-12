@@ -230,6 +230,43 @@ describe("YouShouldKnowProvider — switches", () => {
     expect(screen.getByTestId("row-issue-1")).toBeInTheDocument();
   });
 
+  it("drops cached tips when a refetch fails, and brings them back once it succeeds", async () => {
+    serveTips(makeTip());
+    const { queryClient } = renderWithYsk(
+      <>
+        <Anchor
+          testId="summary"
+          rect="900,10,60,20"
+          descriptor={{ level: "summary", scope: SCOPE }}
+        />
+        <RowAnchor issueId="issue-1" />
+      </>,
+    );
+    await settle();
+    expect(getBubble()).not.toBeNull();
+    expect(dotIn("summary")).not.toBeNull();
+
+    // The server stops answering. TanStack Query keeps the cached tips, but the
+    // query is in error: nothing may rotate on data it no longer vouches for.
+    apiMock.listActiveTips.mockRejectedValue(new Error("server unavailable"));
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: youShouldKnowKeys.active(WS_ID) });
+    });
+    await settle();
+    expect(queryClient.getQueryState(youShouldKnowKeys.active(WS_ID))?.status).toBe("error");
+    expect(getBubble()).toBeNull();
+    expect(screen.queryByTestId("tip-anchor-dot")).not.toBeInTheDocument();
+
+    // It answers again (a realtime invalidation, a reconnect): the tip returns.
+    serveTips(makeTip());
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: youShouldKnowKeys.active(WS_ID) });
+    });
+    await settle();
+    expect(bubbleText()).toContain("The agent put the feature behind a flag");
+    expect(dotIn("summary")).not.toBeNull();
+  });
+
   it("rotates only valid tips the viewer has not acted on", async () => {
     serveTips(
       makeTip({ id: "known", line: "Known line", user_state: { state: "known", feedback: null } }),
@@ -462,6 +499,22 @@ describe("YouShouldKnowProvider — pausing", () => {
     expect(bubbleText()).toContain("Second line");
   });
 
+  it("pauses while keyboard focus is on the bubble and resumes with the time left", async () => {
+    servePair();
+    renderWithYsk(<RowAnchor issueId="issue-1" />);
+    await settle();
+    await elapse(3_000);
+    const button = within(getBubble()!).getByRole("button");
+    act(() => button.focus());
+    await elapse(30_000);
+    expect(bubbleText()).toContain("First line");
+    act(() => button.blur());
+    await elapse(4_999);
+    expect(bubbleText()).toContain("First line");
+    await elapse(1);
+    expect(bubbleText()).toContain("Second line");
+  });
+
   it("pauses while the user is typing in an input", async () => {
     servePair();
     renderWithYsk(
@@ -582,20 +635,30 @@ describe("YouShouldKnowProvider — overlays", () => {
     expect(getBubble()).toHaveStyle({ visibility: "visible" });
   });
 
-  it("hides while a modal layer is open", async () => {
-    serveTips(makeTip());
+  it("hides and pauses while a modal layer is open, then resumes with the time left", async () => {
+    serveTips(
+      makeTip({ id: "first", line: "First line", created_at: "2026-10-11T08:00:00Z" }),
+      makeTip({ id: "second", line: "Second line", created_at: "2026-10-11T09:00:00Z" }),
+    );
     renderWithYsk(<RowAnchor issueId="issue-1" />);
     await settle();
+    await elapse(3_000);
     const inert = document.createElement("div");
     await act(async () => {
       inert.setAttribute("data-base-ui-inert", "");
       document.body.appendChild(inert);
     });
     expect(getBubble()).toHaveStyle({ visibility: "hidden" });
+    await elapse(30_000);
+    expect(bubbleText()).toContain("First line");
     await act(async () => {
       inert.remove();
     });
     expect(getBubble()).toHaveStyle({ visibility: "visible" });
+    await elapse(4_999);
+    expect(bubbleText()).toContain("First line");
+    await elapse(1);
+    expect(bubbleText()).toContain("Second line");
   });
 });
 
@@ -657,6 +720,105 @@ describe("YouShouldKnowProvider — settings hint", () => {
       await elapse(8_000);
     }
     expect(hints).toEqual([true, true, true, false]);
+  });
+
+  it("counts a tip only once it can be seen — not while a modal covers it", async () => {
+    serveTips(makeTip());
+    renderWithYsk(
+      <>
+        <RowAnchor issueId="issue-1" />
+        <div data-testid="modal-marker" data-base-ui-inert="" />
+      </>,
+    );
+    await settle();
+    expect(getBubble()).toHaveStyle({ visibility: "hidden" });
+    expect(tipDisplayLedger.getState().users["user-1"]).toBeUndefined();
+
+    await act(async () => {
+      screen.getByTestId("modal-marker").removeAttribute("data-base-ui-inert");
+    });
+    await settle();
+    expect(getBubble()).toHaveStyle({ visibility: "visible" });
+    expect(tipDisplayLedger.getState().users["user-1"]?.count).toBe(1);
+  });
+
+  it("counts a tip only once the page is in view", async () => {
+    let visibility: DocumentVisibilityState = "hidden";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    serveTips(makeTip());
+    renderWithYsk(<RowAnchor issueId="issue-1" />);
+    await settle();
+    expect(getBubble()).not.toBeNull();
+    expect(tipDisplayLedger.getState().users["user-1"]).toBeUndefined();
+
+    visibility = "visible";
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await settle();
+    expect(tipDisplayLedger.getState().users["user-1"]?.count).toBe(1);
+  });
+
+  it("gives the first tip the user actually sees the initial hint, however many were replaced unseen", async () => {
+    serveTips(makeTip({ id: "hidden-1" }));
+    const { queryClient } = renderWithYsk(
+      <>
+        <RowAnchor issueId="issue-1" />
+        <div data-testid="modal-marker" data-base-ui-inert="" />
+      </>,
+    );
+    await settle();
+    // Tips come and go while a modal covers the page.
+    for (const id of ["hidden-2", "hidden-3", "first-visible"]) {
+      act(() => {
+        queryClient.setQueryData(youShouldKnowKeys.active(WS_ID), {
+          tips: [makeTip({ id })],
+        });
+      });
+      await settle();
+      expect(getBubble()).toHaveStyle({ visibility: "hidden" });
+    }
+
+    await act(async () => {
+      screen.getByTestId("modal-marker").removeAttribute("data-base-ui-inert");
+    });
+    await settle();
+    expect(getBubble()).toHaveStyle({ visibility: "visible" });
+    expect(hintLink()).not.toBeNull();
+    expect(tipDisplayLedger.getState().users["user-1"]).toEqual({
+      count: 1,
+      ordinals: { "first-visible": 1 },
+    });
+  });
+
+  it("does not count the next tip while it waits behind a modal after the shown one went away", async () => {
+    const first = makeTip({ id: "first", line: "First line", created_at: "2026-10-11T08:00:00Z" });
+    const second = makeTip({ id: "second", line: "Second line", created_at: "2026-10-11T09:00:00Z" });
+    serveTips(first, second);
+    const { queryClient } = renderWithYsk(<RowAnchor issueId="issue-1" />);
+    await settle();
+    expect(bubbleText()).toContain("First line");
+
+    // The tip on screen is dismissed elsewhere and a dialog opens before the
+    // next one takes over: the next tip is not seen yet, so not counted.
+    act(() => {
+      queryClient.setQueryData(youShouldKnowKeys.active(WS_ID), { tips: [second] });
+    });
+    const inert = document.createElement("div");
+    await act(async () => {
+      inert.setAttribute("data-base-ui-inert", "");
+      document.body.appendChild(inert);
+    });
+    await settle();
+    expect(bubbleText()).toContain("Second line");
+    expect(getBubble()).toHaveStyle({ visibility: "hidden" });
+    expect(tipDisplayLedger.getState().users["user-1"]?.ordinals).toEqual({ first: 1 });
+
+    await act(async () => {
+      inert.remove();
+    });
+    await settle();
+    expect(tipDisplayLedger.getState().users["user-1"]?.ordinals).toEqual({ first: 1, second: 2 });
   });
 
   it("returns on every tenth distinct tip; rotation back to a seen tip does not count", async () => {

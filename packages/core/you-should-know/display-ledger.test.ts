@@ -1,7 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import type { StorageAdapter } from "../types/storage";
-import { createTipDisplayLedger, TIP_DISPLAY_LEDGER_KEY } from "./display-ledger";
+import {
+  createTipDisplayLedger,
+  TIP_DISPLAY_LEDGER_KEY,
+  tipDisplayOrdinal,
+} from "./display-ledger";
 
 function memoryStorage(initial: Record<string, string> = {}): StorageAdapter & {
   values: Map<string, string>;
@@ -29,6 +33,19 @@ describe("tip display ledger", () => {
     expect(recordDisplay("u1", "tip-a")).toBe(1);
     expect(recordDisplay("u1", "tip-c")).toBe(3);
     expect(ledger.getState().users["u1"]!.count).toBe(3);
+  });
+
+  it("peeks the ordinal a tip would get without recording it", () => {
+    const ledger = createTipDisplayLedger(memoryStorage());
+    expect(tipDisplayOrdinal(undefined, "tip-a")).toBe(1);
+    ledger.getState().recordDisplay("u1", "tip-a");
+    const history = ledger.getState().users["u1"];
+    // Known tips keep theirs; an unseen tip would be next.
+    expect(tipDisplayOrdinal(history, "tip-a")).toBe(1);
+    expect(tipDisplayOrdinal(history, "tip-b")).toBe(2);
+    expect(ledger.getState().users["u1"]!.count).toBe(1);
+    // Recording then assigns exactly the peeked ordinal.
+    expect(ledger.getState().recordDisplay("u1", "tip-b")).toBe(2);
   });
 
   it("keeps separate counts per user", () => {

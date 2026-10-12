@@ -3,7 +3,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -18,6 +17,7 @@ import {
   activeTipsOptions,
   isTipShownToMe,
   tipDisplayLedger,
+  tipDisplayOrdinal,
   type IssueTip,
 } from "@multica/core/you-should-know";
 import {
@@ -50,6 +50,73 @@ const NO_TIPS: IssueTip[] = [];
 export const TIP_SYNC_SETTLE_MS = 120;
 
 /**
+ * The viewer's displayable tips: valid, and not yet known or dismissed by
+ * them. Any failed read is "no tips" — the first load (a server without the
+ * endpoint answers 404) and equally a refetch that fails after tips were
+ * cached: TanStack Query keeps the last data on a refetch error, but the
+ * bubble must not keep rotating tips the server no longer vouches for. The
+ * bubble is ambient, never an error surface. Realtime updates arrive through
+ * useYouShouldKnowRealtimeSync, mounted app-wide.
+ */
+function useDisplayableTips(wsId: string): readonly IssueTip[] {
+  const { data, isError } = useQuery(activeTipsOptions(wsId));
+  return useMemo(
+    () => (isError || !data ? NO_TIPS : data.tips.filter(isTipShownToMe)),
+    [data, isError],
+  );
+}
+
+/**
+ * Calls `resync` once per burst of anchor/tip changes, TIP_SYNC_SETTLE_MS
+ * after the burst starts (a throttle, not a debounce: continuous changes —
+ * scrolling a long list — still re-schedule every window).
+ */
+function useSettledResync(resync: () => void, anchors: unknown, tips: unknown): void {
+  const resyncRef = useRef(resync);
+  resyncRef.current = resync;
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    // A pending resync reads the latest anchors and tips when it fires.
+    if (timerRef.current !== null) return;
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      resyncRef.current();
+    }, TIP_SYNC_SETTLE_MS);
+  }, [anchors, tips]);
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+      timerRef.current = null;
+    },
+    [],
+  );
+}
+
+/**
+ * Counts a tip as displayed once the user can actually see it — the bubble is
+ * positioned, not clipped or covered, and the page is in view — and returns
+ * whether its bubble carries the "you can turn this off in personal
+ * settings" line (1st–3rd and every 10th distinct tip, OL-187 §6). The line
+ * is laid out from the ordinal the tip would get, so it is there on the first
+ * visible frame; recording assigns exactly that ordinal, idempotently per tip.
+ */
+function useSettingsHint(
+  userId: string | null,
+  tipId: string | null,
+  onScreen: boolean,
+): boolean {
+  const history = useStore(tipDisplayLedger, (state) =>
+    userId ? state.users[userId] : undefined,
+  );
+  useEffect(() => {
+    if (!userId || !tipId || !onScreen) return;
+    tipDisplayLedger.getState().recordDisplay(userId, tipId);
+  }, [userId, tipId, onScreen]);
+  if (!userId || !tipId) return false;
+  return shouldShowSettingsHint(tipDisplayOrdinal(history, tipId));
+}
+
+/**
  * The page's tip runtime (OL-194): reads the viewer's active tips, schedules
  * them over the registered anchors, rotates the single bubble, and writes
  * "bubble here, dots there" back into the registry for the anchors to render.
@@ -73,51 +140,27 @@ export function TipBubbleHost({
   const wsId = useWorkspaceId();
   const userId = useAuthStore((state) => state.user?.id ?? null);
   const paths = useWorkspacePaths();
-
-  // A failed read (a server without the endpoint answers 404) is simply "no
-  // tips": the bubble is ambient, never an error surface. Realtime updates
-  // arrive through useYouShouldKnowRealtimeSync, mounted app-wide.
-  const { data } = useQuery(activeTipsOptions(wsId));
-  const tips = useMemo(
-    () => (data?.tips ?? NO_TIPS).filter(isTipShownToMe),
-    [data],
-  );
+  const tips = useDisplayableTips(wsId);
   const anchors = useStore(registry, (state) => state.anchors);
   const [rotation, dispatch] = useReducer(rotateTips, INITIAL_TIP_ROTATION);
 
-  // Anchors mounted, scrolled into view, or changed scope; tips arrived or
-  // were acted on: re-schedule once the burst settles (TIP_SYNC_SETTLE_MS).
-  // Visible anchors are measured together, right before scheduling.
+  // Visible anchors are measured together, right before scheduling; both the
+  // settled resync and the dwell-end advance read the latest tips.
   const tipsRef = useRef(tips);
   tipsRef.current = tips;
-  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    // A pending sync reads the latest anchors and tips when it fires.
-    if (syncTimerRef.current !== null) return;
-    syncTimerRef.current = setTimeout(() => {
-      syncTimerRef.current = null;
+  const reschedule = useCallback(
+    (type: "sync" | "advance") =>
       dispatch({
-        type: "sync",
+        type,
         anchors: measureTipAnchors(registry.getState().anchors),
         tips: tipsRef.current,
-      });
-    }, TIP_SYNC_SETTLE_MS);
-  }, [registry, anchors, tips]);
-  useEffect(
-    () => () => {
-      if (syncTimerRef.current !== null) clearTimeout(syncTimerRef.current);
-      syncTimerRef.current = null;
-    },
-    [],
+      }),
+    [registry],
   );
-
-  const advance = useCallback(() => {
-    dispatch({
-      type: "advance",
-      anchors: measureTipAnchors(registry.getState().anchors),
-      tips: tipsRef.current,
-    });
-  }, [registry]);
+  // Anchors mounted, scrolled into view, or changed scope; tips arrived, were
+  // acted on, or the read failed: re-schedule once the burst settles.
+  useSettledResync(() => reschedule("sync"), anchors, tips);
+  const advance = useCallback(() => reschedule("advance"), [reschedule]);
 
   const bubbleAnchorId = rotation.entry?.anchorId ?? null;
   useEffect(() => {
@@ -130,6 +173,7 @@ export function TipBubbleHost({
   const measure = bubbleAnchorId ? (anchors[bubbleAnchorId]?.measure ?? null) : null;
 
   const [engaged, setEngaged] = useState(false);
+  const [bubbleVisible, setBubbleVisible] = useState(false);
   const typing = useEditableFocus();
   const pageHidden = useDocumentHidden();
   const reducedMotion = usePrefersReducedMotion();
@@ -139,17 +183,11 @@ export function TipBubbleHost({
   const paused = engaged || typing || pageHidden || suppressed || held;
   useDwellTimer(rotation.seq, rotation.entry?.dwellMs ?? null, paused, advance);
 
-  // "You can turn this off in personal settings" rides on the 1st–3rd and
-  // every 10th distinct tip this user has seen. A layout effect so the line
-  // is there on the bubble's first paint; the ledger is idempotent per tip,
-  // so re-running (StrictMode, remounts) never counts twice.
-  const [hint, setHint] = useState<{ tipId: string; show: boolean } | null>(null);
-  useLayoutEffect(() => {
-    if (!rotation.tipId || !userId) return;
-    const ordinal = tipDisplayLedger.getState().recordDisplay(userId, rotation.tipId);
-    setHint({ tipId: rotation.tipId, show: shouldShowSettingsHint(ordinal) });
-  }, [rotation.tipId, userId]);
-  const showHint = hint !== null && hint.tipId === rotation.tipId && hint.show;
+  const showHint = useSettingsHint(
+    userId,
+    tip?.id ?? null,
+    bubbleVisible && !pageHidden,
+  );
 
   if (!tip || !rotation.entry || !measure) return null;
 
@@ -166,6 +204,7 @@ export function TipBubbleHost({
       suppressed={suppressed}
       reducedMotion={reducedMotion}
       onEngagedChange={setEngaged}
+      onVisibleChange={setBubbleVisible}
     />
   );
 }

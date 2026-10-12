@@ -67,14 +67,20 @@ function sameIds(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((id, i) => id === b[i]);
 }
 
+const ENTRY_FIELDS = ["tipId", "anchorId", "level", "issueIdentifier", "dwellMs"] as const;
+
 function sameEntry(a: TipQueueEntry | null, b: TipQueueEntry | null): boolean {
   if (a === null || b === null) return a === b;
+  return ENTRY_FIELDS.every((field) => a[field] === b[field]);
+}
+
+function sameRotation(a: TipRotation, b: TipRotation): boolean {
   return (
     a.tipId === b.tipId &&
-    a.anchorId === b.anchorId &&
-    a.level === b.level &&
-    a.issueIdentifier === b.issueIdentifier &&
-    a.dwellMs === b.dwellMs
+    a.seq === b.seq &&
+    sameIds(a.shown, b.shown) &&
+    sameEntry(a.entry, b.entry) &&
+    sameIds(a.dotAnchorIds, b.dotAnchorIds)
   );
 }
 
@@ -97,6 +103,27 @@ function pickNext(
 }
 
 /**
+ * Which tip the bubble shows after `type`, given the fresh queue `order`.
+ * A sync keeps a still-displayable current tip; an advance marks it shown
+ * and moves on. A current tip that is no longer displayable is replaced on
+ * either event.
+ */
+function chooseTip(
+  state: TipRotation,
+  type: TipRotationEvent["type"],
+  order: readonly TipQueueEntry[],
+): { tipId: string | null; shown: readonly string[] } {
+  const live = new Set(order.map((entry) => entry.tipId));
+  // Tips that left the page (dismissed, overturned, anchor gone) drop out of
+  // the cycle's memory; one that comes back simply counts as unseen.
+  const shown = state.shown.filter((id) => live.has(id));
+  const current = state.tipId !== null && live.has(state.tipId) ? state.tipId : null;
+  if (current === null) return pickNext(order, shown, state.tipId);
+  if (type === "sync") return { tipId: current, shown };
+  return pickNext(order, shown.includes(current) ? shown : [...shown, current], current);
+}
+
+/**
  * Rotation reducer for the page bubble (OL-187 §6, OL-194). Pure: the
  * provider measures anchors (`measureTipAnchors`), passes the viewer's
  * displayable tips, and renders whatever comes back.
@@ -110,23 +137,7 @@ function pickNext(
  */
 export function rotateTips(state: TipRotation, event: TipRotationEvent): TipRotation {
   const { anchors, tips } = event;
-  const order = scheduleTips({ anchors, tips }).queue;
-  const live = new Set(order.map((entry) => entry.tipId));
-  // Tips that left the page (dismissed, overturned, anchor gone) drop out of
-  // the cycle's memory; one that comes back simply counts as unseen.
-  let shown: readonly string[] = state.shown.filter((id) => live.has(id));
-  const current = state.tipId !== null && live.has(state.tipId) ? state.tipId : null;
-
-  let tipId: string | null;
-  if (event.type === "sync" && current !== null) {
-    tipId = current;
-  } else {
-    if (event.type === "advance" && current !== null && !shown.includes(current)) {
-      shown = [...shown, current];
-    }
-    ({ tipId, shown } = pickNext(order, shown, state.tipId));
-  }
-
+  const { tipId, shown } = chooseTip(state, event.type, scheduleTips({ anchors, tips }).queue);
   const pinned =
     tipId === null ? null : scheduleTips({ anchors, tips, current: { tipId } });
   const next: TipRotation = {
@@ -137,12 +148,5 @@ export function rotateTips(state: TipRotation, event: TipRotationEvent): TipRota
     entry: pinned?.queue[0] ?? null,
     dotAnchorIds: pinned?.dotAnchorIds ?? [],
   };
-
-  const unchanged =
-    next.tipId === state.tipId &&
-    next.seq === state.seq &&
-    sameIds(next.shown, state.shown) &&
-    sameEntry(next.entry, state.entry) &&
-    sameIds(next.dotAnchorIds, state.dotAnchorIds);
-  return unchanged ? state : next;
+  return sameRotation(state, next) ? state : next;
 }

@@ -9,6 +9,7 @@ export { useYouShouldKnowRealtimeSync } from "./realtime";
 export {
   createTipDisplayLedger,
   tipDisplayLedger,
+  tipDisplayOrdinal,
   TIP_DISPLAY_LEDGER_KEY,
   type TipDisplayHistory,
   type TipDisplayLedger,

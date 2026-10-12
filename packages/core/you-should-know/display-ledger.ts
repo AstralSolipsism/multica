@@ -24,10 +24,11 @@ export interface TipDisplayHistory {
 export interface TipDisplayLedgerState {
   users: Readonly<Record<string, TipDisplayHistory>>;
   /**
-   * The tip's ordinal among the distinct tips shown to `userId`, assigning
-   * the next one the first time the tip is seen. Re-displays of the same tip
-   * (rotation coming back to it, re-renders, remounts, reloads) return the
-   * ordinal it already has instead of counting again.
+   * Records that `tipId` was shown to `userId` and returns its ordinal among
+   * the distinct tips they have seen, assigning the next one the first time.
+   * Re-displays of the same tip (rotation coming back to it, re-renders,
+   * remounts, reloads) return the ordinal it already has instead of counting
+   * again. Call it once the bubble is actually on screen.
    */
   recordDisplay: (userId: string, tipId: string) => number;
 }
@@ -40,24 +41,45 @@ function isCount(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 // Storage is user-editable and survives app versions: keep only well-formed
 // entries rather than trusting the blob.
+function readHistory(value: unknown): TipDisplayHistory | null {
+  if (!isRecord(value) || !isCount(value.count)) return null;
+  const ordinals = isRecord(value.ordinals)
+    ? Object.fromEntries(
+        Object.entries(value.ordinals).filter((entry): entry is [string, number] =>
+          isCount(entry[1]),
+        ),
+      )
+    : {};
+  return { count: value.count, ordinals };
+}
+
 function readUsers(persisted: unknown): Record<string, TipDisplayHistory> {
-  const users = (persisted as { users?: unknown } | null)?.users;
-  if (typeof users !== "object" || users === null) return {};
+  const users = isRecord(persisted) ? persisted.users : undefined;
+  if (!isRecord(users)) return {};
   const result: Record<string, TipDisplayHistory> = {};
   for (const [userId, value] of Object.entries(users)) {
-    const history = value as Partial<TipDisplayHistory> | null;
-    if (!history || !isCount(history.count)) continue;
-    const ordinals: Record<string, number> = {};
-    if (typeof history.ordinals === "object" && history.ordinals !== null) {
-      for (const [tipId, ordinal] of Object.entries(history.ordinals)) {
-        if (isCount(ordinal)) ordinals[tipId] = ordinal;
-      }
-    }
-    result[userId] = { count: history.count, ordinals };
+    const history = readHistory(value);
+    if (history) result[userId] = history;
   }
   return result;
+}
+
+/**
+ * The ordinal `tipId` has in this history, or would get if it were shown
+ * next. Lets the bubble lay out its settings hint before the display is
+ * recorded — recording waits until the bubble is actually on screen.
+ */
+export function tipDisplayOrdinal(
+  history: TipDisplayHistory | undefined,
+  tipId: string,
+): number {
+  return history?.ordinals[tipId] ?? (history?.count ?? 0) + 1;
 }
 
 /**
@@ -75,10 +97,9 @@ export function createTipDisplayLedger(storage: StorageAdapter): TipDisplayLedge
         users: {},
         recordDisplay: (userId, tipId) => {
           const history = get().users[userId] ?? EMPTY_HISTORY;
-          const known = history.ordinals[tipId];
-          if (known !== undefined) return known;
+          const ordinal = tipDisplayOrdinal(history, tipId);
+          if (history.ordinals[tipId] !== undefined) return ordinal;
 
-          const ordinal = history.count + 1;
           // Oldest ordinals age out first.
           const kept = Object.entries(history.ordinals)
             .sort((a, b) => b[1] - a[1])

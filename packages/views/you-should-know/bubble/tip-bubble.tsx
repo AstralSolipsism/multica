@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
   autoUpdate,
@@ -80,56 +80,36 @@ export interface TipBubbleProps {
   reducedMotion: boolean;
   /** Pointer over, or keyboard focus inside, the bubble. */
   onEngagedChange: (engaged: boolean) => void;
+  /** Positioned, not clipped and not suppressed — the user can see it. */
+  onVisibleChange: (visible: boolean) => void;
   /** Activating the bubble opens the tip's card (OL-196); until then a no-op. */
   onActivate?: () => void;
 }
 
 /**
- * The page's single You-should-know bubble (OL-187 §6, OL-194):
- * `✦ Tag · line`, with the issue identifier before the line on a summary.
- *
- * Rendered by the page-level provider and portaled to <body> — never inside
- * the anchor. React bubbles portal events along the component tree, so a
- * bubble rendered under an anchor would hand its clicks to the row link or
- * header chip button wrapping that anchor.
- *
- * Positioned with floating-ui like CommentSelectionBubble: the anchor is a
- * virtual element over the registry's live rect, re-read every frame because
- * lists scroll inner containers and reflow without a window event. `hide()`
- * drops the bubble once the anchor leaves the viewport; an anchor scrolled out
- * of an inner container is reported invisible by its IntersectionObserver,
- * and the provider re-schedules the tip away from it.
- *
- * Stacking: z-40 — above page panels (the issue peek is z-30) and below
- * menus, popovers, dialogs and tooltips (z-50).
+ * Mirrors a bubble state to the host, and reports `false` on unmount: a
+ * bubble that goes away (its tip left) is neither hovered nor visible, and
+ * never sees the pointerleave or blur that would have said so.
  */
-export function TipBubble({
-  measure,
-  level,
-  tag,
-  line,
-  issueIdentifier,
-  settingsHref,
-  suppressed,
-  reducedMotion,
-  onEngagedChange,
-  onActivate,
-}: TipBubbleProps) {
-  const { t } = useT("you-should-know");
-  const floatingRef = useRef<HTMLDivElement>(null);
+function useReported(value: boolean, report: (value: boolean) => void): void {
+  useEffect(() => {
+    report(value);
+  }, [value, report]);
+  useEffect(() => () => report(false), [report]);
+}
+
+/**
+ * Keeps the floating bubble beside its anchor with floating-ui; returns
+ * whether it has a position yet and whether `hide()` found the anchor
+ * clipped out of view.
+ */
+function useAnchoredPosition(
+  floatingRef: RefObject<HTMLDivElement | null>,
+  measure: () => TipAnchorRect,
+  level: TipAnchorLevel,
+): { placed: boolean; clipped: boolean } {
   const [placed, setPlaced] = useState(false);
   const [clipped, setClipped] = useState(false);
-  const [pointerInside, setPointerInside] = useState(false);
-  const [focusInside, setFocusInside] = useState(false);
-  const engaged = pointerInside || focusInside;
-
-  useEffect(() => {
-    onEngagedChange(engaged);
-  }, [engaged, onEngagedChange]);
-  // A bubble that unmounts under the pointer (its tip went away) never sees
-  // pointerleave; release the pause on the way out.
-  useEffect(() => () => onEngagedChange(false), [onEngagedChange]);
-
   useEffect(() => {
     const floating = floatingRef.current;
     if (!floating) return;
@@ -161,9 +141,50 @@ export function TipBubble({
       active = false;
       cleanup();
     };
-  }, [measure, level]);
+  }, [floatingRef, measure, level]);
+  return { placed, clipped };
+}
 
+/**
+ * The page's single You-should-know bubble (OL-187 §6, OL-194):
+ * `✦ Tag · line`, with the issue identifier before the line on a summary.
+ *
+ * Rendered by the page-level provider and portaled to <body> — never inside
+ * the anchor. React bubbles portal events along the component tree, so a
+ * bubble rendered under an anchor would hand its clicks to the row link or
+ * header chip button wrapping that anchor.
+ *
+ * Positioned with floating-ui like CommentSelectionBubble: the anchor is a
+ * virtual element over the registry's live rect, re-read every frame because
+ * lists scroll inner containers and reflow without a window event. `hide()`
+ * drops the bubble once the anchor leaves the viewport; an anchor scrolled out
+ * of an inner container is reported invisible by its IntersectionObserver,
+ * and the provider re-schedules the tip away from it.
+ *
+ * Stacking: z-40 — above page panels (the issue peek is z-30) and below
+ * menus, popovers, dialogs and tooltips (z-50).
+ */
+export function TipBubble({
+  measure,
+  level,
+  tag,
+  line,
+  issueIdentifier,
+  settingsHref,
+  suppressed,
+  reducedMotion,
+  onEngagedChange,
+  onVisibleChange,
+  onActivate,
+}: TipBubbleProps) {
+  const { t } = useT("you-should-know");
+  const floatingRef = useRef<HTMLDivElement>(null);
+  const { placed, clipped } = useAnchoredPosition(floatingRef, measure, level);
+  const [pointerInside, setPointerInside] = useState(false);
+  const [focusInside, setFocusInside] = useState(false);
   const visible = placed && !clipped && !suppressed;
+  useReported(pointerInside || focusInside, onEngagedChange);
+  useReported(visible, onVisibleChange);
 
   return createPortal(
     <div
