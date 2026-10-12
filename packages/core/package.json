@@ -48,6 +48,7 @@
     "./issues/date": "./issues/date.ts",
     "./issues/ws-updaters": "./issues/ws-updaters.ts",
     "./issues/surface/*": "./issues/surface/*.ts",
+    "./issues/testing/issue-graph-fixture": "./issues/testing/issue-graph-fixture.ts",
     "./issues/config": "./issues/config/index.ts",
     "./issues/config/status": "./issues/config/status.ts",
     "./issues/config/priority": "./issues/config/priority.ts",

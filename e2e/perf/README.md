@@ -1,20 +1,22 @@
-# UI performance scenario
+# UI performance scenarios
 
-One browser scenario: typing a comment on a long issue thread while three agent
-runs stream progress. It exists because of MUL-7227, where a summary animation
-replaced a DOM node per streamed message and typing a comment slowed to a crawl.
-Component tests could not see it — they run in jsdom, which has no style
-recalculation, no layout and no main-thread contention.
+Two browser scenarios, both run against the real Next.js production build
+with fully synthetic HTTP and WebSocket — no API server, database, daemon,
+agent or account involved. Nothing disables animations or trims the DOM: the
+cost being measured lives in that machinery.
 
-## What it runs against
+1. **Comment typing under live agent runs** (`typing-under-live-runs.spec.ts`)
+   — exists because of MUL-7227, where a summary animation replaced a DOM
+   node per streamed message and typing a comment slowed to a crawl.
+   Component tests could not see it — they run in jsdom, which has no style
+   recalculation, no layout and no main-thread contention.
+2. **DAG view** (`dag-view.spec.ts`, OL-278) — measures the issues page's
+   dependency-graph view against synthetic graph datasets (OL-183's shapes):
+   fetch, parse+validate, layout, first-interactive, pan/zoom frame rate and
+   card-click response.
 
-The real Next.js production build, the real page, the real shell and CSS, the
-real ProseMirror composer. Only HTTP and the WebSocket are synthetic, so there
-is no API server, database, daemon, agent or account involved. Nothing disables
-animations or trims the DOM: the cost being measured lives in that machinery.
-
-It covers the renderer shared by Web and Desktop. Electron's own main-process
-behaviour is not exercised here.
+It covers the renderer shared by Web and Desktop. Electron's own
+main-process behaviour is not exercised here.
 
 ## Running it
 
@@ -25,6 +27,18 @@ pnpm exec playwright test --config=playwright.perf.config.ts
 # PLAYWRIGHT_BASE_URL defaults to http://localhost:3000
 # PERF_REPORT_PATH=<file> also writes the JSON report
 ```
+
+Running only the DAG scenario, with a dataset and optional 4× CPU throttle:
+
+```bash
+PERF_DATASET=stress-5000 PERF_THROTTLE_CPU=4 PERF_REPORT_PATH=dag-report.json \
+  pnpm exec playwright test --config=playwright.perf.config.ts e2e/perf/dag-view.spec.ts
+```
+
+`PERF_DATASET` picks one of the synthetic graphs (see below);
+`PERF_THROTTLE_CPU` (default 1) applies CDP CPU throttling — use 4 for a
+low-end-machine sample. Reports land in `PERF_REPORT_PATH` and on stdout as
+`PERF_REPORT {…}`.
 
 Comparing two refs — this builds and measures each one, in sequence:
 
@@ -40,6 +54,56 @@ success, on failure and on cancellation.
 The ordinary e2e suite ignores this directory; it needs a production build and
 a machine that is not busy doing anything else.
 
+## DAG datasets
+
+`packages/core/issues/testing/issue-graph-fixture.ts` generates the graphs
+deterministically (fixed seeds; byte-identical output per dataset), and
+`packages/core/issues/testing/issue-graph-fixture.test.ts` pins the shape:
+passes `IssueGraphSchema`, exact node counts, depth ≤ 4, ~20% cross-line
+dependencies, OL-183's unfinished budget for `accept-5000` (≤ 800) and
+OL-184's stress shape (~2,400 unfinished).
+
+| Dataset | Nodes | Shape |
+| --- | --- | --- |
+| `accept-5000` | 5,000 | OL-183 acceptance: ≤ 800 unfinished, over half the lines fully done (hidden by default) |
+| `stress-5000` | 5,000 | OL-184 stress: ~2,400 unfinished |
+| `1000` / `2500` / `10000` | 1,000 / 2,500 / 10,000 | stress shape, scale curve |
+| `big-line` | 1,000 | one single line of 1,000 tasks |
+
+Every dataset: six projects (tooling → art/server/audio → client → level),
+lines of 30–40 tasks with 2–3 sub-line layers, 1–2 in-line prerequisites per
+task, cancelled-but-still-blocking cases, run summaries on in-progress tasks,
+and fully-done lines the default view hides.
+
+## What the DAG scenario measures
+
+The page under test is `/{workspace}/issues` with the DAG view preselected
+(through the persisted surface-view preference). All requests are answered
+from a fixed route table; anything unknown invalidates the sample.
+
+| Report field | Definition |
+| --- | --- |
+| `fetch_ms` | Graph request sent → response ended (route handler). Local synthetic transport — real-network numbers are OL-275's. |
+| `parse_ms` | `JSON.parse` of the exact graph bytes, measured in-page. zod validation runs inside the app's query path and is part of `first_interactive_ms`. |
+| `layout_ms` | The layout pipeline's contribution to first load; the committed layout is proven by the pending skeleton disappearing. |
+| `first_interactive_ms` | Navigation start → canvas has rendered cards AND the layout-pending skeleton is gone AND the toolbar is visible. This is the "first screen operable" number. |
+| `pan` / `zoom` | Scripted drag / Ctrl+wheel gestures, ~4 s each; rAF frame intervals → p50 ms, p95 ms, avg FPS. |
+| `click` | Click a card → toolbar selection label shows it; ≥ 3 samples → p50/p95 ms. |
+
+Outcomes that are not durations are reported as strings: `timeout` when a
+budget expired, `invalid` when nothing rendered or the sample was
+contaminated (unmocked requests, page errors). A report never shows a fast
+number for an empty page.
+
+The report records machine info (browser, Node, platform, CPU count) and
+`throttle_cpu`; `fixture_stats` carries the dataset's shape statistics and
+`fixture_digest` identifies the exact bytes.
+
+Adding steps (e.g. "enter a task line" timing): put the step in
+`e2e/perf/dag-view.spec.ts` between the section markers, emit one more report
+field, and document it in the table above. Keep the invariant — every field
+is a number or `timeout`/`invalid`, never a silent zero.
+
 ## When to run it
 
 Nothing runs this automatically. The routine guard is the component test from
@@ -49,8 +113,10 @@ replacing the summary's DOM node — and runs with the normal suite.
 Run the comparison yourself, or through the **UI performance report** workflow
 (`workflow_dispatch`, base and head refs as inputs), when a change touches
 summary animation, long lists, transcript rendering or global styles — and
-attach the report to the PR. The cost of doing it by hand instead of on every
-PR is that a regression outside those areas will not be caught automatically.
+attach the report to the PR. Run the DAG scenario when a change touches the
+DAG view, the graph API client, or the layout worker. The cost of doing it by
+hand instead of on every PR is that a regression outside those areas will not
+be caught automatically.
 
 ## What it costs
 
@@ -59,13 +125,20 @@ for the two production builds, 26 s for the two measurements, the rest install
 and startup — plus checkout, dependency and Chromium setup around it. The job is
 capped at 15 minutes. Locally, a repeat comparison whose builds come out of the
 turbo cache takes under a minute; the report says when a build was restored.
+The DAG scenario adds roughly half a minute per dataset on an idle machine;
+large datasets on the current view can exceed every budget and report
+`timeout` — that is the baseline being measured, not a harness failure.
 
 ## Reading the result
 
-`typing_elapsed_ms` is the primary number: how long the user waits from the
-first keystroke until the editor holds the whole string, main-thread queueing
-included. `recalc_style_ms`, `layout_ms`, `task_ms` and the long-task counters
-say where the time went.
+`typing_elapsed_ms` is the primary number of the typing scenario: how long
+the user waits from the first keystroke until the editor holds the whole
+string, main-thread queueing included. `recalc_style_ms`, `layout_ms`,
+`task_ms` and the long-task counters say where the time went.
+
+For the DAG scenario, `first_interactive_ms` is the primary number, with
+`pan`/`zoom`/`click` as the interaction budget (OL-183: first screen
+operable within 2 s, pan/zoom ≥ 30 FPS, click under 100 ms).
 
 Two things are not the same as a fast run, and the scenario reports them as
 `invalid` or `timeout` rather than as a duration: messages that never reached
@@ -80,10 +153,13 @@ than that before it can be trusted.
 
 ## Changing the fixture
 
-`fixtures/typing-under-live-runs.ts` generates every byte the scenario feeds the
-product, and the report carries the fixture version and a digest of it. Bump
-`FIXTURE_VERSION` whenever the generated bytes change — two runs are only
-comparable when the digests match, which the comparison report states.
+`fixtures/typing-under-live-runs.ts` generates every byte the typing scenario
+feeds the product, and the report carries the fixture version and a digest of
+it. Bump `FIXTURE_VERSION` whenever the generated bytes change — two runs are
+only comparable when the digests match, which the comparison report states.
+
+The DAG scenario's data comes from the shared generator above; bump
+`ISSUE_GRAPH_FIXTURE_VERSION` there whenever the generated graphs change.
 
 Do not add DOM to the page to keep the pressure up. A future virtualization
 change that legitimately renders fewer nodes should show up as fewer nodes.
