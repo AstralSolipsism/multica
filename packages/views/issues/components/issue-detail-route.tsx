@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useCanonicalIssue } from "@multica/core/issues/canonical-id";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -50,16 +50,22 @@ export function parseCommentHighlightHash(hash: string): string | undefined {
   return match?.[1];
 }
 
+/**
+ * The `#comment-…` fragment the current URL carries, read through the
+ * navigation adapter rather than `window.location`.
+ *
+ * `window.location.hash` is wrong here on both platforms:
+ *  - web: an in-app `router.push` commits the new URL only after the new page
+ *    renders (Next's HistoryUpdater), and a same-page push fires no
+ *    `hashchange` — a mount-time read sees the PREVIOUS page's fragment, or
+ *    never sees the new one;
+ *  - desktop: the renderer is a MemoryRouter over a `file://` page, so
+ *    `window.location.hash` is always empty. Only the tab URL holds it.
+ * The adapter reports the fragment of the location it actually navigated to
+ * and re-renders when it changes, which covers both in-app push kinds.
+ */
 function useCommentHighlightHash(): { hash: string; commentId?: string } {
-  const read = () => typeof window === "undefined" ? "" : window.location.hash;
-  const [hash, setHash] = useState(read);
-
-  useEffect(() => {
-    const onHashChange = () => setHash(read());
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
-  }, []);
-
+  const { hash } = useNavigation();
   return { hash, commentId: parseCommentHighlightHash(hash) };
 }
 

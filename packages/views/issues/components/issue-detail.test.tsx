@@ -2537,6 +2537,138 @@ describe("IssueDetail (shared)", () => {
     });
   });
 
+  // OL-270 — an in-app `#comment-…` push re-renders this same mounted detail
+  // with a new `highlightCommentId` (web's /issues/[id] route does not
+  // remount). That jump must reuse the minimap path (Virtuoso scroll-by-index,
+  // unfold resolved threads) instead of flattening the timeline for one jump;
+  // only an ARRIVAL (mount or issue switch) owns the flat deep-link landing.
+  describe("highlight change on an already-mounted detail", () => {
+    const detailTree = (
+      queryClient: QueryClient,
+      highlight?: string,
+      issueId = "issue-1",
+      token?: number,
+    ) => (
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={queryClient}>
+          <IssueDetail issueId={issueId} highlightCommentId={highlight} highlightRequestToken={token} />
+        </QueryClientProvider>
+      </I18nProvider>
+    );
+
+    it("jumps through Virtuoso without flattening the timeline", async () => {
+      const queryClient = createTestQueryClient();
+      const { rerender } = render(detailTree(queryClient));
+      await waitFor(() => expect(document.getElementById("comment-comment-1")).not.toBeNull());
+      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
+
+      rerender(detailTree(queryClient, "comment-2"));
+
+      // The minimap jump drives Virtuoso by index (comment-2 is items[1]) and
+      // still flashes the landed row — virtualization never turns off.
+      await waitFor(() =>
+        expect(scrollToIndexSpy).toHaveBeenCalledWith(expect.objectContaining({ index: 1 })),
+      );
+      await waitFor(() => expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
+      ).toBe(true));
+      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
+    });
+
+    it("expands a folded resolved thread to reach a same-page reply target", async () => {
+      mockApiObj.listTimeline.mockResolvedValue([
+        ...mockTimeline,
+        {
+          type: "comment",
+          id: "comment-3",
+          actor_type: "member",
+          actor_id: "user-1",
+          content: "Resolved root",
+          parent_id: null,
+          created_at: "2026-01-18T00:00:00Z",
+          updated_at: "2026-01-18T00:00:00Z",
+          comment_type: "comment",
+          resolved_at: "2026-01-19T00:00:00Z",
+        } as TimelineEntry,
+        {
+          type: "comment",
+          id: "reply-1",
+          actor_type: "member",
+          actor_id: "user-1",
+          content: "Reply inside resolved thread",
+          parent_id: "comment-3",
+          created_at: "2026-01-18T01:00:00Z",
+          updated_at: "2026-01-18T01:00:00Z",
+          comment_type: "comment",
+        } as TimelineEntry,
+      ]);
+      const queryClient = createTestQueryClient();
+      const { rerender } = render(detailTree(queryClient));
+      // The resolved thread starts folded: its reply has no row yet.
+      await waitFor(() => expect(document.getElementById("comment-comment-1")).not.toBeNull());
+      expect(document.getElementById("comment-reply-1")).toBeNull();
+
+      rerender(detailTree(queryClient, "reply-1"));
+
+      await waitFor(() => expect(document.getElementById("comment-reply-1")).not.toBeNull());
+      await waitFor(() => expect(
+        document.getElementById("comment-reply-1")?.className,
+      ).toContain(highlightedCommentBackgroundClass));
+      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
+    });
+
+    it("replays the jump when the host bumps highlightRequestToken", async () => {
+      const queryClient = createTestQueryClient();
+      const { rerender } = render(detailTree(queryClient));
+      await waitFor(() => expect(document.getElementById("comment-comment-1")).not.toBeNull());
+
+      rerender(detailTree(queryClient, "comment-2", "issue-1", 1));
+      await waitFor(() =>
+        expect(scrollToIndexSpy).toHaveBeenCalledWith(expect.objectContaining({ index: 1 })),
+      );
+      // …and a re-click on the already-open row jumps again.
+      scrollToIndexSpy.mockClear();
+      rerender(detailTree(queryClient, "comment-2", "issue-1", 2));
+      await waitFor(() =>
+        expect(scrollToIndexSpy).toHaveBeenCalledWith(expect.objectContaining({ index: 1 })),
+      );
+      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
+    });
+
+    it("keeps the flat deep-link landing when the issue switches under the detail", async () => {
+      const issue2: Issue = { ...mockIssue, id: "issue-2", identifier: "TES-2", title: "Second issue" };
+      const timeline2: TimelineEntry[] = [
+        { ...mockTimeline[0]!, id: "comment-b", content: "Target in the second issue" },
+      ];
+      mockApiObj.getIssue.mockImplementation((id: string) =>
+        Promise.resolve(id === "issue-2" ? issue2 : mockIssue),
+      );
+      mockApiObj.listTimeline.mockImplementation((issueId: string) =>
+        Promise.resolve(issueId === "issue-2" ? timeline2 : mockTimeline),
+      );
+
+      const queryClient = createTestQueryClient();
+      const { rerender } = render(detailTree(queryClient, "comment-2"));
+      // Arrival highlight: flat landing, no Virtuoso instance.
+      await waitFor(() => expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
+      ).toBe(true));
+      expect(screen.queryByTestId("virtuoso-mock")).toBeNull();
+
+      // Cross-page jump (A → B#comment-b): the route swaps issueId under the
+      // mounted detail. The new arrival must land flat again — the minimap
+      // path's scrollToIndex never fires for it.
+      scrollToIndexSpy.mockClear();
+      rerender(detailTree(queryClient, "comment-b", "issue-2"));
+      await waitFor(() => expect(document.getElementById("comment-comment-b")).not.toBeNull());
+      await waitFor(() => expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-b")),
+      ).toBe(true));
+      expect(screen.queryByTestId("virtuoso-mock")).toBeNull();
+      expect(scrollToIndexSpy).not.toHaveBeenCalled();
+    });
+  });
+
   it("marks a reply-resolved thread as resolved on the quick-jump rail", async () => {
     // A resolution on a REPLY leaves the thread expanded, so it flattens to a
     // plain `comment` item, not a `resolved-bar`. The rail must still read it

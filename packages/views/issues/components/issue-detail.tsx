@@ -1526,6 +1526,32 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // landing effect below replays on an already-mounted detail.
   const lastHighlightRequestTokenRef = useRef(highlightRequestToken);
 
+  // The (issue, highlight) pair this detail ARRIVED with — its own mount or
+  // the last issue switch under it. Only that pair gets the flat deep-link
+  // landing (every comment mounted, real heights, direct scrollTop landing).
+  // A highlight that CHANGES while the same issue stays mounted is a
+  // same-page `#comment-…` navigation: the landing effect hands it to the
+  // minimap jump instead, which lands through Virtuoso without flattening the
+  // timeline for a one-shot jump. Web's /issues/[id] route does not remount
+  // on issueId change, so the arrival must be tracked, not read from mount.
+  const [arrival, setArrival] = useState(() => ({ issueId: id, highlightCommentId }));
+  if (arrival.issueId !== id) {
+    setArrival({ issueId: id, highlightCommentId });
+  }
+  const isArrivalHighlight =
+    !!highlightCommentId && arrival.highlightCommentId === highlightCommentId;
+
+  // A different issue under this mounted detail starts a fresh landing
+  // context: re-arm the highlight guard so the new URL's `#comment-…` lands
+  // even when the same comment id was already landed on the previous issue.
+  // Declared before the landing effect so the reset runs first in one commit.
+  const previousIssueIdRef = useRef(id);
+  useEffect(() => {
+    if (previousIssueIdRef.current === id) return;
+    previousIssueIdRef.current = id;
+    didHighlightRef.current = null;
+  }, [id]);
+
   // Issue data from TQ — uses detail query, seeded from list cache if available.
   // Only seed when description is present; the list API omits it, so a partial
   // list row must not masquerade as a hydrated issue detail.
@@ -1839,9 +1865,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     [items, timelineView.threadReplies],
   );
 
-  // When the timeline renders flat (deep-link or in-page find), there is no
-  // Virtuoso instance — minimap jumps drive the scroll container directly.
-  const isFlatTimeline = !!highlightCommentId || find.open;
+  // When the timeline renders flat (arrival deep-link or in-page find), there
+  // is no Virtuoso instance — minimap jumps drive the scroll container
+  // directly. A highlight that changed on an already-mounted detail (same-page
+  // `#comment-…` navigation) is NOT an arrival: it jumps through Virtuoso and
+  // leaves virtualization on.
+  const isFlatTimeline = isArrivalHighlight || find.open;
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   // Scroll a freshly posted comment into view, aligned so its bottom sits just
   // above the sticky composer (never behind it). A reply lives inside its root
@@ -2148,9 +2177,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
   // Deep-link landing. Semantically equivalent to navigating to
   // `#comment-${id}`: find the element with that id, scrollIntoView it.
-  // When `highlightCommentId` is set the timeline below renders flat (no
-  // virtualization), so every comment id is in the DOM by the time this
-  // effect runs after commit.
+  // When the highlight is the one this detail ARRIVED with (mount or issue
+  // switch), the timeline below renders flat (no virtualization), so every
+  // comment id is in the DOM by the time this effect runs after commit.
   //
   // For a reply inside a folded resolved thread, the reply is not in items
   // (only the resolved-bar root is). Auto-expand the thread first; the
@@ -2176,6 +2205,19 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     // clears the entry, so this only ever suppresses a *repeat* landing.
     if (consumedHighlightRef.current === highlightCommentId) {
       didHighlightRef.current = highlightCommentId;
+      return;
+    }
+
+    // A highlight that is NOT the arrival's own changed on an already-mounted
+    // detail — a same-page `#comment-…` push, or a new notification selection
+    // for this issue. The timeline stayed virtualized for it (a one-shot jump
+    // must not pay the flat cold-mount), so land through the minimap jump,
+    // which drives Virtuoso by index and unfolds collapses and resolved
+    // threads on the way.
+    if (!isArrivalHighlight) {
+      didHighlightRef.current = highlightCommentId;
+      writeViewState(issueHighlightMementoKey(id), highlightCommentId);
+      jumpToMinimapTarget(highlightCommentId);
       return;
     }
 
@@ -2258,7 +2300,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       cancelAnimationFrame(rafId);
       clearTimeout(fade);
     };
-  }, [highlightCommentId, highlightRequestToken, id, writeViewState, items, targetIdx, scrollContainerEl, replyToRoot, expandedResolved, timelineView, toggleResolvedExpand]);
+  }, [highlightCommentId, highlightRequestToken, isArrivalHighlight, jumpToMinimapTarget, id, writeViewState, items, targetIdx, scrollContainerEl, replyToRoot, expandedResolved, timelineView, toggleResolvedExpand]);
 
   const descEditorRef = useRef<ContentEditorRef>(null);
   const descriptionEditingRef = useRef(false);
@@ -3817,25 +3859,29 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               <TimelineSkeleton />
             ) : (
               // Two render modes:
-              //   - `highlightCommentId` set (came from inbox deep-link) →
-              //     render flat. Every comment mounts, every height is real,
-              //     the target id is in the DOM the instant the useEffect
-              //     above runs `scrollIntoView`. No virtualization estimate
-              //     errors, no spacer reflow drift. Pays cold-mount cost
-              //     proportional to items.length (markdown + lowlight per
-              //     comment), which is acceptable in the deep-link case —
+              //   - arrival deep link (`isArrivalHighlight`: the
+              //     `#comment-…` this detail was opened or issue-switched
+              //     with) → render flat. Every comment mounts, every height
+              //     is real, the target id is in the DOM the instant the
+              //     useEffect above runs its landing. No virtualization
+              //     estimate errors, no spacer reflow drift. Pays cold-mount
+              //     cost proportional to items.length (markdown + lowlight
+              //     per comment), which is acceptable in the deep-link case —
               //     the user has explicit intent to land on a specific item.
               //   - `find.open` (in-page Cmd/Ctrl+F) → also render flat, so
               //     every comment is in the DOM for the find walk to match
               //     and highlight. Same explicit-intent cold-mount trade-off.
               //   - otherwise → Virtuoso. Browsing mode, virtualization
-              //     wins on first-paint perf for long timelines.
+              //     wins on first-paint perf for long timelines. A highlight
+              //     that changed on this already-mounted detail (same-page
+              //     `#comment-…` push) stays here — the landing effect jumps
+              //     through Virtuoso instead of flattening for one jump.
               //
               // The split is deliberate: virtualization and "land precisely
               // on a target" have fundamentally opposed contracts (estimated
               // heights vs real heights). Trying to satisfy both in one
               // path is what produced the bug history this PR closes.
-              !highlightCommentId && !find.open ? (
+              !isFlatTimeline ? (
                 !scrollContainerEl ? (
                   // Skeleton while the callback ref populates so the gap
                   // between IssueDetail mount and Virtuoso mount doesn't
