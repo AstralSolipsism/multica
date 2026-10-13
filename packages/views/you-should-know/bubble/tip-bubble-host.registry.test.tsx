@@ -12,10 +12,15 @@ const apiMock = vi.hoisted(() => ({
   listWorkspaces: vi.fn(),
 }));
 vi.mock("@multica/core/api", () => ({ api: apiMock }));
-vi.mock("@multica/core/auth", () => ({
-  useAuthStore: (selector: (state: { user: { id: string } }) => unknown) =>
-    selector({ user: { id: "user-1" } }),
-}));
+vi.mock("@multica/core/auth", () => {
+  const state = { user: { id: "user-1" } };
+  return {
+    useAuthStore: Object.assign(
+      (selector: (snapshot: typeof state) => unknown) => selector(state),
+      { getState: () => state },
+    ),
+  };
+});
 vi.mock("@multica/core/workspace/hooks", () => ({
   useActorName: () => ({
     getActorName: () => "Agent",
