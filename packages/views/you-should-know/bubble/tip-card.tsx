@@ -63,13 +63,12 @@ export interface TipCardProps {
   onKnown: () => void;
   /** `expanded`: dismissed after "Learn more" (it narrows the feedback). */
   onDismiss: (expanded: boolean) => void;
-  onDiscuss: () => void;
 }
 
 /**
  * The card the bubble opens into (OL-187 §6, OL-196), with the original's
  * buttons: Learn more / I already know / Dismiss, and once "Learn more" has
- * shown the title and explanation, Got it / Discuss in comments / Dismiss.
+ * shown the title and explanation, Got it / Dismiss.
  *
  * Mounted only while the card is open, so it always opens on the first set.
  * Focus moves in when it opens — onto its first button — and onto the
@@ -83,7 +82,6 @@ export function TipCard({
   reducedMotion,
   onKnown,
   onDismiss,
-  onDiscuss,
 }: TipCardProps) {
   const { t } = useT("you-should-know");
   const [expanded, setExpanded] = useState(false);
@@ -118,9 +116,6 @@ export function TipCard({
               onActivate={onKnown}
             >
               {t(($) => $.card.got_it)}
-            </TipLayerButton>
-            <TipLayerButton reducedMotion={reducedMotion} onActivate={onDiscuss}>
-              {t(($) => $.card.discuss)}
             </TipLayerButton>
           </>
         ) : (

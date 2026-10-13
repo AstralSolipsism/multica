@@ -2,8 +2,8 @@
 
 /**
  * The bubble's card and its buttons (OL-196), through the real provider and
- * host: opening and closing, Learn more, I already know / Got it, Discuss in
- * comments, a failed save, a state change from another tab, and motion. The
+ * host: opening and closing, Learn more, I already know / Got it, a failed
+ * save, a state change from another tab, and motion. The
  * feedback row and focus hand-offs have their own suites. A fake server
  * answers the tips list with the states it was sent; fake timers drive dwell.
  */
@@ -17,7 +17,6 @@ import {
   useYouShouldKnowRealtimeSync,
 } from "@multica/core/you-should-know";
 import {
-  createNavigation,
   elapse,
   flush,
   getBubble,
@@ -35,7 +34,6 @@ import {
   cardButton,
   cardButtonNames,
   feedbackRow,
-  HeaderAnchor,
   installFakeTipServer,
   openCard,
   preferReducedMotion,
@@ -198,7 +196,7 @@ describe("tip card — Learn more", () => {
     fireEvent.click(cardButton("Learn more"));
     expect(screen.getByText("Old API kept")).toBeInTheDocument();
     const explanation = screen.getByText("Clients still call it, so it stays until they move.");
-    expect(cardButtonNames()).toEqual(["Got it", "Discuss in comments", "Dismiss"]);
+    expect(cardButtonNames()).toEqual(["Got it", "Dismiss"]);
     expect(explanation.parentElement).toHaveFocus();
   });
 
@@ -217,7 +215,7 @@ describe("tip card — Learn more", () => {
     await settle();
     openCard();
     fireEvent.click(cardButton("Learn more"));
-    expect(cardButtonNames()).toEqual(["Got it", "Discuss in comments", "Dismiss"]);
+    expect(cardButtonNames()).toEqual(["Got it", "Dismiss"]);
     expect(cardButton("Got it")).toHaveFocus();
   });
 
@@ -252,7 +250,7 @@ describe("tip card — Learn more", () => {
     fireEvent.click(cardButton("Got it"), { detail: 2 });
     await flush();
     expect(apiMock.setTipState).not.toHaveBeenCalled();
-    expect(cardButtonNames()).toEqual(["Got it", "Discuss in comments", "Dismiss"]);
+    expect(cardButtonNames()).toEqual(["Got it", "Dismiss"]);
   });
 });
 
@@ -304,98 +302,6 @@ describe("tip card — I already know and Got it", () => {
     await settle();
     expect(getBubble()).toBeNull();
     expect(screen.queryByTestId("tip-anchor-dot")).not.toBeInTheDocument();
-  });
-});
-
-describe("tip card — Discuss in comments", () => {
-  it("quotes the tip after the issue's comment draft and opens the issue, leaving the tip as it was", async () => {
-    useCommentDraftStore.getState().setDraft("new:issue-1", "My notes");
-    serveTips(
-      makeTip({
-        id: "first",
-        line: "Kept the old API",
-        explanation: "Clients still call it.",
-      }),
-    );
-    const { navigation } = renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    fireEvent.click(cardButton("Learn more"));
-    fireEvent.click(cardButton("Discuss in comments"));
-    await settle();
-
-    expect(useCommentDraftStore.getState().getDraft("new:issue-1")).toBe(
-      [
-        "My notes",
-        "",
-        "> ✦ You should know · Kept the old API",
-        ">",
-        "> Clients still call it.",
-      ].join("\n"),
-    );
-    expect(navigation.push).toHaveBeenCalledExactlyOnceWith("/acme/issues/OL-1");
-    expect(apiMock.setTipState).not.toHaveBeenCalled();
-    // The tip stays in rotation; only the card closed.
-    expect(bubbleText()).toContain("Kept the old API");
-    expect(bubbleToggle()).toHaveAttribute("aria-expanded", "false");
-  });
-
-  it("starts a draft when there is none", async () => {
-    serveTips(makeTip({ id: "first", line: "Kept the old API", explanation: null }));
-    renderWithYsk(<RowAnchor issueId="issue-1" />);
-    await settle();
-    openCard();
-    fireEvent.click(cardButton("Learn more"));
-    fireEvent.click(cardButton("Discuss in comments"));
-    expect(useCommentDraftStore.getState().getDraft("new:issue-1")).toBe(
-      "> ✦ You should know · Kept the old API",
-    );
-  });
-
-  it("stays on the page when the issue's detail is already open on it", async () => {
-    serveTips(makeTip({ id: "first", issue_id: "issue-1" }));
-    // e.g. the issue peek over a list: the bubble rides its detail header.
-    const { navigation } = renderWithYsk(<HeaderAnchor issueId="issue-1" />);
-    await settle();
-    expect(getBubble()).toHaveAttribute("data-level", "detail_header");
-    openCard();
-    fireEvent.click(cardButton("Learn more"));
-    fireEvent.click(cardButton("Discuss in comments"));
-    expect(useCommentDraftStore.getState().getDraft("new:issue-1")).toContain("> ✦ You should know");
-    expect(navigation.push).not.toHaveBeenCalled();
-  });
-
-  it("stays on the issue's own page, by identifier or UUID", async () => {
-    for (const pathname of [`/${WS_SLUG}/issues/OL-1`, `/${WS_SLUG}/issues/issue-1`]) {
-      serveTips(makeTip({ id: "first", issue_id: "issue-1" }));
-      const navigation = createNavigation({ pathname });
-      renderWithYsk(<RowAnchor issueId="issue-1" />, { navigation });
-      await settle();
-      openCard();
-      fireEvent.click(cardButton("Learn more"));
-      fireEvent.click(cardButton("Discuss in comments"));
-      expect(navigation.push).not.toHaveBeenCalled();
-      cleanup();
-    }
-  });
-
-  it("quotes the tag in the interface language", async () => {
-    serveTips(
-      makeTip({
-        id: "first",
-        tag: "heads_up",
-        line: "改了公共接口",
-        explanation: "调用方要一起升级。",
-      }),
-    );
-    renderWithYsk(<RowAnchor issueId="issue-1" />, { locale: "zh-Hans" });
-    await settle();
-    openCard();
-    fireEvent.click(cardButton("了解更多"));
-    fireEvent.click(cardButton("去评论区聊"));
-    expect(useCommentDraftStore.getState().getDraft("new:issue-1")).toBe(
-      ["> ✦ 提个醒 · 改了公共接口", ">", "> 调用方要一起升级。"].join("\n"),
-    );
   });
 });
 

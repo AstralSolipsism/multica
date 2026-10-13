@@ -6,7 +6,6 @@ import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { notificationPreferenceKeys } from "@multica/core/notification-preferences/queries";
 import type { NotificationPreferenceResponse, Workspace } from "@multica/core/types";
 import { workspaceKeys } from "@multica/core/workspace/queries";
-import type { SupportedLocale } from "@multica/core/i18n";
 import type { IssueTip } from "@multica/core/you-should-know";
 import { NavigationProvider, type NavigationAdapter } from "../navigation";
 import { YouShouldKnowProvider } from "../you-should-know";
@@ -108,12 +107,7 @@ export function renderWithYsk(
   {
     queryClient = createYskQueryClient(),
     navigation = createNavigation(),
-    locale,
-  }: {
-    queryClient?: QueryClient;
-    navigation?: NavigationAdapter;
-    locale?: SupportedLocale;
-  } = {},
+  }: { queryClient?: QueryClient; navigation?: NavigationAdapter } = {},
 ): YskRenderResult {
   const wrap = (node: ReactElement) => (
     <QueryClientProvider client={queryClient}>
@@ -124,7 +118,7 @@ export function renderWithYsk(
       </WorkspaceSlugProvider>
     </QueryClientProvider>
   );
-  const view = renderWithI18n(wrap(ui), { locale });
+  const view = renderWithI18n(wrap(ui));
   return {
     ...view,
     queryClient,

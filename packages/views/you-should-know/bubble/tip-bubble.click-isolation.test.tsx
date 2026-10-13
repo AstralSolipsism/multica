@@ -257,22 +257,15 @@ describe("card click isolation", () => {
     await clickThroughCard(() => expect(navigation.push).not.toHaveBeenCalled());
   });
 
-  it("navigates once, on its own, for Discuss in comments — and I already know never navigates", async () => {
+  it("keeps I already know off the issue row's link", async () => {
     const { navigation } = renderWithYsk(<RowWithLink />, {
       queryClient: queryClientWithRunningTask(),
     });
     await settle();
     clickBubble();
-    clickCardButton("Learn more");
-    clickCardButton("Discuss in comments");
-    // Only the card's own move to the issue (by identifier): the row link,
-    // which points at the UUID, never fired.
-    expect(navigation.push).toHaveBeenCalledExactlyOnceWith("/acme/issues/OL-1");
-
-    clickBubble();
     clickCardButton("I already know");
     await flush();
-    expect(navigation.push).toHaveBeenCalledTimes(1);
+    expect(navigation.push).not.toHaveBeenCalled();
     expect(apiMock.setTipState).toHaveBeenLastCalledWith("tip-1", {
       state: "known",
       feedback: null,

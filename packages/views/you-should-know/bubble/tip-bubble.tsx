@@ -55,28 +55,23 @@ export interface TipBubbleProps {
   onKnown: () => void;
   /** "Dismiss"; `expanded` when it came after "Learn more". */
   onDismiss: (expanded: boolean) => void;
-  /** "Discuss in comments". */
-  onDiscuss: () => void;
 }
 
 /**
  * Whether the bubble is open into its card. An open card holds the rotation.
- * Closing it from the bubble — a second click on the bubble line, or Escape
- * anywhere in it — hands focus back to the bubble line; an action that
- * closes it decides where focus goes itself.
+ * Closing it — a second click on the bubble line, or Escape anywhere in it —
+ * hands focus back to the bubble line. The card's actions remove the bubble
+ * itself, and the host decides where focus goes then.
  */
 function useCardDisclosure(toggleRef: RefObject<HTMLButtonElement | null>) {
   const [open, setOpen] = useState(false);
   useHoldTipRotation(open);
-  const close = useCallback(
-    (returnFocus: boolean) => {
-      setOpen(false);
-      if (returnFocus) toggleRef.current?.focus({ preventScroll: true });
-    },
-    [toggleRef],
-  );
+  const close = useCallback(() => {
+    setOpen(false);
+    toggleRef.current?.focus({ preventScroll: true });
+  }, [toggleRef]);
   const toggle = useCallback(() => {
-    if (open) close(true);
+    if (open) close();
     else setOpen(true);
   }, [open, close]);
   const onKeyDown = useCallback(
@@ -84,11 +79,11 @@ function useCardDisclosure(toggleRef: RefObject<HTMLButtonElement | null>) {
       if (!open || event.key !== "Escape") return;
       // Kept from page-level Escape handlers (closing the issue peek).
       event.stopPropagation();
-      close(true);
+      close();
     },
     [open, close],
   );
-  return { open, close, toggle, onKeyDown };
+  return { open, toggle, onKeyDown };
 }
 
 /**
@@ -110,7 +105,6 @@ export function TipBubble({
   onVisibleChange,
   onKnown,
   onDismiss,
-  onDiscuss,
 }: TipBubbleProps) {
   const { t } = useT("you-should-know");
   const toggleRef = useRef<HTMLButtonElement>(null);
@@ -189,10 +183,6 @@ export function TipBubble({
           reducedMotion={reducedMotion}
           onKnown={onKnown}
           onDismiss={onDismiss}
-          onDiscuss={() => {
-            card.close(false);
-            onDiscuss();
-          }}
         />
       )}
       {settingsHref && (

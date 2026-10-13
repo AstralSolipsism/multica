@@ -342,7 +342,6 @@ export function TipBubbleHost({
           if (!saved) feedback.end(bubble.tip.id);
         });
       }}
-      onDiscuss={() => actions.discuss(bubble.tip, entry.level === "detail_header")}
     />
   );
 }
