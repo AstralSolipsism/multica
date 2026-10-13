@@ -2074,10 +2074,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     rafId = requestAnimationFrame(align);
     return () => cancelAnimationFrame(rafId);
   }, [pendingReplyJump, scrollContainerEl, flashJumpTarget]);
-  // Anchor-comment creation times for the YSK archive group labels (OL-346).
-  // The timeline is fetched in full, so anchor comments resolve here; the
-  // archive section falls back to a group's earliest tip time for any id
-  // missing from the lookup.
+  // Anchor-comment creation times for the YSK archive group labels and order
+  // (OL-346, OL-387). The timeline is fetched in full, so anchor comments
+  // resolve here; the archive section falls back to a group's earliest tip
+  // time for any id missing from the lookup.
   const archiveCommentTime = useMemo(() => commentTimeLookup(timeline), [timeline]);
   const jumpToMinimapTarget = useCallback(
     (commentId: string) =>

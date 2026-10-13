@@ -181,6 +181,30 @@ describe("YouShouldKnowArchiveSection — grouping and order", () => {
     ]);
   });
 
+  it("sorts groups by labelTime via groupTips, falling back to the earliest tip", () => {
+    // c-early's tip is newer than c-late's, but the comment times decide the
+    // order; c-unknown has no lookup entry and sorts by its earliest tip.
+    const commentTime = (id: string) =>
+      id === "c-early"
+        ? "2026-10-13T08:00:00Z"
+        : id === "c-late"
+          ? "2026-10-13T08:30:00Z"
+          : undefined;
+    const groups = groupTips(
+      [
+        tip({ id: "a", anchor_comment_id: "c-early", created_at: "2026-10-13T09:00:00Z" }),
+        tip({ id: "b", anchor_comment_id: "c-late", created_at: "2026-10-13T08:35:00Z" }),
+        tip({ id: "c", anchor_comment_id: "c-unknown", created_at: "2026-10-13T08:10:00Z" }),
+      ],
+      commentTime,
+    );
+    expect(groups.map((g) => [g.key, g.labelTime])).toEqual([
+      ["c-late", "2026-10-13T08:30:00Z"],
+      ["c-unknown", "2026-10-13T08:10:00Z"],
+      ["c-early", "2026-10-13T08:00:00Z"],
+    ]);
+  });
+
   it("labels groups with the viewer's local day, not the UTC day slice", () => {
     // 22:30 UTC on Oct 11 is already Oct 12 east of UTC+1:30. The label
     // must agree with the comment card's local timestamp.
@@ -216,10 +240,75 @@ describe("YouShouldKnowArchiveSection — grouping and order", () => {
       commentTime,
     );
 
-    // Group order still follows the earliest tip (b's tip is the newer one);
-    // only the label time comes from the comment.
+    // Group order follows the same comment time the labels show (OL-387):
+    // c-afternoon (8:20) sorts above c-morning (1:00).
     const labels = screen.getAllByText(/^Comment ·/).map((el) => el.textContent);
     expect(labels).toEqual(["Comment · Oct 13, 8:20 AM", "Comment · Oct 13, 1:00 AM"]);
+  });
+
+  it("orders groups by the label time so out-of-order runs never invert the labels (OL-387)", () => {
+    // Two comments trigger runs that finish out of order: c-late's tip lands
+    // before c-early's. Sorting by the earliest tip (pre-OL-387) put the
+    // "8:00" label above the "8:30" one; sorting by the label time keeps the
+    // visible times descending.
+    const commentTime = (id: string) =>
+      ({
+        "c-early": "2026-10-13T08:00:00Z",
+        "c-late": "2026-10-13T08:30:00Z",
+      })[id];
+    renderSection(
+      [
+        tip({ id: "a", anchor_comment_id: "c-early", created_at: "2026-10-13T09:00:00Z" }),
+        tip({ id: "b", anchor_comment_id: "c-late", created_at: "2026-10-13T08:35:00Z" }),
+      ],
+      undefined,
+      commentTime,
+    );
+
+    const labels = screen.getAllByText(/^Comment ·/).map((el) => el.textContent);
+    expect(labels).toEqual(["Comment · Oct 13, 8:30 AM", "Comment · Oct 13, 8:00 AM"]);
+  });
+
+  it("re-sorts and relabels when the comment-time lookup updates after first render", () => {
+    // Cold load: the sidebar mounts while the timeline is still fetching, so
+    // the lookup is empty and groups order by their earliest tip. When the
+    // timeline arrives the mount passes a NEW lookup — grouping must
+    // recompute, or the OL-346 labels and the OL-387 order stay stale until
+    // the tips refetch.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(youShouldKnowKeys.issue("ws-1", "issue-1", "all"), {
+      tips: [
+        tip({ id: "a", anchor_comment_id: "c-early", created_at: "2026-10-13T09:00:00Z" }),
+        tip({ id: "b", anchor_comment_id: "c-late", created_at: "2026-10-13T08:35:00Z" }),
+      ],
+    });
+    const ui = (commentTime: (id: string) => string | undefined) => (
+      <QueryClientProvider client={queryClient}>
+        <YouShouldKnowArchiveSection
+          issueId="issue-1"
+          identifier="OL-1"
+          commentTime={commentTime}
+        />
+      </QueryClientProvider>
+    );
+    const labels = () => screen.getAllByText(/^Comment ·/).map((el) => el.textContent);
+
+    // Timeline still loading: fall back to the earliest tip times.
+    const { rerender } = renderWithI18n(ui(() => undefined));
+    expect(labels()).toEqual(["Comment · Oct 13, 9:00 AM", "Comment · Oct 13, 8:35 AM"]);
+
+    // Timeline loaded: re-sort and relabel by the comments' own times.
+    rerender(
+      ui((id) =>
+        ({
+          "c-early": "2026-10-13T08:00:00Z",
+          "c-late": "2026-10-13T08:30:00Z",
+        })[id],
+      ),
+    );
+    expect(labels()).toEqual(["Comment · Oct 13, 8:30 AM", "Comment · Oct 13, 8:00 AM"]);
   });
 
   it("falls back to the group's earliest tip time when the comment is not loaded", () => {

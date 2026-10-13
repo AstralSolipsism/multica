@@ -25,17 +25,28 @@ interface TipGroup {
   /** `anchor_comment_id`, or "" for the issue-description group. */
   key: string;
   commentId: string | null;
-  /** Earliest tip creation time in the group (ISO); groups sort by it. */
+  /** Earliest tip creation time in the group (ISO); the label's fallback. */
   time: string;
+  /**
+   * Time the group sorts and labels by (ISO): the anchor comment's own
+   * creation time when `commentTime` resolves it, else `time`. Computed once
+   * here so the order can never disagree with the rendered label (OL-387).
+   */
+  labelTime: string;
   tips: IssueTip[];
 }
 
 /**
  * Group tips by their anchor comment. The issue-description group is keyed by
  * "" and keeps `commentId: null`. Tips inside a group stay in server order
- * (newest first); groups themselves sort newest-first by their earliest tip.
+ * (newest first); groups themselves sort newest-first by their label time —
+ * the anchor comment's creation time when known, else the group's earliest
+ * tip (OL-387, superseding OL-195's earliest-tip order).
  */
-export function groupTips(tips: readonly IssueTip[]): TipGroup[] {
+export function groupTips(
+  tips: readonly IssueTip[],
+  commentTime?: (commentId: string) => string | undefined,
+): TipGroup[] {
   const groups = new Map<string, TipGroup>();
   for (const tip of tips) {
     const key = tip.anchor_comment_id ?? "";
@@ -45,6 +56,9 @@ export function groupTips(tips: readonly IssueTip[]): TipGroup[] {
         key,
         commentId: tip.anchor_comment_id,
         time: tip.created_at,
+        // Placeholder to satisfy the type; recomputed for every group below
+        // once `time` is final.
+        labelTime: tip.created_at,
         tips: [],
       };
       groups.set(key, group);
@@ -58,9 +72,24 @@ export function groupTips(tips: readonly IssueTip[]): TipGroup[] {
       group.time = tip.created_at;
     }
   }
+  for (const group of groups.values()) {
+    group.labelTime = labelTimeOf(group, commentTime);
+  }
   return [...groups.values()].sort(
-    (a, b) => Date.parse(b.time) - Date.parse(a.time),
+    (a, b) => Date.parse(b.labelTime) - Date.parse(a.labelTime),
   );
+}
+
+/**
+ * The group's label time: the anchor comment's own creation time when the
+ * lookup resolves to a parseable instant, else the group's earliest tip.
+ */
+function labelTimeOf(
+  group: TipGroup,
+  commentTime?: (commentId: string) => string | undefined,
+): string {
+  const commentAt = group.commentId ? commentTime?.(group.commentId) : undefined;
+  return commentAt && !Number.isNaN(Date.parse(commentAt)) ? commentAt : group.time;
 }
 
 function tipMatchesFilter(tip: IssueTip, filter: TipFilter): boolean {
@@ -99,9 +128,9 @@ export function YouShouldKnowArchiveSection({
   onJumpToComment?: (commentId: string) => void;
   /**
    * Comment creation time (ISO) by comment id, from the issue's loaded
-   * timeline. Comment-group labels take their time from it so two same-day
-   * comment groups stay distinguishable; ids outside the map fall back to
-   * the group's earliest tip time.
+   * timeline. Comment groups sort and label by it so two same-day comment
+   * groups stay distinguishable and the order can never disagree with the
+   * labels; ids outside the map fall back to the group's earliest tip time.
    */
   commentTime?: (commentId: string) => string | undefined;
 }) {
@@ -114,7 +143,7 @@ export function YouShouldKnowArchiveSection({
   const [query, setQuery] = useState("");
 
   const tips = useMemo(() => data?.tips ?? [], [data]);
-  const groups = useMemo(() => groupTips(tips), [tips]);
+  const groups = useMemo(() => groupTips(tips, commentTime), [tips, commentTime]);
 
   if (!enabled || tips.length === 0) return null;
 
@@ -188,7 +217,6 @@ export function YouShouldKnowArchiveSection({
                 group={group}
                 identifier={identifier}
                 onJumpToComment={onJumpToComment}
-                commentTime={commentTime}
               />
             ))
           )}
@@ -202,12 +230,10 @@ function ArchiveGroup({
   group,
   identifier,
   onJumpToComment,
-  commentTime,
 }: {
   group: TipGroup;
   identifier?: string;
   onJumpToComment?: (commentId: string) => void;
-  commentTime?: (commentId: string) => string | undefined;
 }) {
   const { t } = useT("you-should-know");
   const locale = useLocale();
@@ -219,16 +245,12 @@ function ArchiveGroup({
     group.commentId !== null && identifier
       ? `${paths.issueDetail(identifier)}#comment-${group.commentId}`
       : null;
-  // The label carries the comment's own creation time down to the minute so
-  // two same-day comment groups read differently (OL-346). An anchor comment
-  // missing from the loaded timeline (deleted or never fetched) falls back
-  // to the group's earliest tip time. Like the comment card, the instant
-  // renders in the viewer's timezone; empty or unparseable values render no
-  // date rather than "Invalid Date".
-  const commentAt = group.commentId ? commentTime?.(group.commentId) : undefined;
-  const labelTime =
-    commentAt && !Number.isNaN(Date.parse(commentAt)) ? commentAt : group.time;
-  const timeMs = labelTime ? Date.parse(labelTime) : NaN;
+  // The label renders the group's labelTime — the anchor comment's own
+  // creation time down to the minute when known, else the group's earliest
+  // tip time — which is also the sort key (OL-346, OL-387). Like the comment
+  // card, the instant renders in the viewer's timezone; empty or unparseable
+  // values render no date rather than "Invalid Date".
+  const timeMs = group.labelTime ? Date.parse(group.labelTime) : NaN;
   const when = Number.isNaN(timeMs)
     ? ""
     : new Date(timeMs).toLocaleString(locale, {
