@@ -9,10 +9,11 @@
  * The composer and the message list are stubbed: their own suites cover them.
  */
 
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createChatStore, registerChatStore, useChatStore } from "@multica/core/chat";
 import { setCurrentWorkspace } from "@multica/core/platform";
+import { workspaceKeys } from "@multica/core/workspace/queries";
 import type {
   Agent,
   ChatMessage,
@@ -421,3 +422,43 @@ describe("the Chat page on a side chat", () => {
     expect(navigation.replace).not.toHaveBeenCalledWith("/acme/chat");
   });
 });
+
+describe("a cold load of a side chat", () => {
+  afterEach(() => setCurrentWorkspace(null, null));
+
+  // The agent and member directories are known, the session list is not:
+  // a fallback would name Sigma, the member's remembered agent.
+  function coldClient() {
+    const queryClient = createYskQueryClient();
+    queryClient.setQueryData(workspaceKeys.agents(WS_ID), [sigma, lambda]);
+    queryClient.setQueryData(workspaceKeys.members(WS_ID), [me]);
+    return queryClient;
+  }
+
+  it.each([
+    ["the floating chat", "/acme/issues/OL-1"],
+    ["the Chat page", "/acme/chat"],
+  ])("names nobody on %s until the session is known, then its own agent", async (_surface, pathname) => {
+    let answerList!: (rows: ChatSession[]) => void;
+    apiMock.listChatSessions.mockReturnValue(new Promise((resolve) => (answerList = resolve)));
+    const onPage = pathname === "/acme/chat";
+    if (onPage) setCurrentWorkspace(WS_SLUG, WS_ID);
+    useChatStore.getState().setActiveSession("side-1");
+    useChatStore.getState().setOpen(true);
+    const navigation = createNavigation({
+      pathname,
+      searchParams: new URLSearchParams(onPage ? "session=side-1" : ""),
+    });
+    renderWithYsk(onPage ? <ChatPage /> : <ChatWindow />, { queryClient: coldClient(), navigation });
+
+    await waitFor(() => expect(useChatStore.getState().activeSessionId).toBe("side-1"));
+    expect(composer()).toHaveAttribute("data-agent", "");
+    expect(screen.queryByText("Sigma")).toBeNull();
+
+    // The list answers without it (no visible message yet); the record does.
+    await act(async () => answerList([]));
+    await waitFor(() => expect(composer()).toHaveAttribute("data-agent", "Lambda"));
+    expect(useChatStore.getState().activeSessionId).toBe("side-1");
+  });
+});
+

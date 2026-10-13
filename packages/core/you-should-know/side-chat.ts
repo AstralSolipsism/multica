@@ -100,8 +100,9 @@ export interface TipSideChatLookup {
   /** The list lacks the active id and its side-chat lookup has not answered yet. */
   pending: boolean;
   /**
-   * The session alone names the agent — a side chat, or one still being
-   * looked up — so a surface must not fall back to another agent.
+   * The session alone names the agent — a side chat, or a session whose
+   * identity is not known yet — so a surface must not fall back to another
+   * agent.
    */
   pinsAgent: boolean;
 }
@@ -112,9 +113,10 @@ export interface TipSideChatLookup {
  * from it. A record seeded by the open flow answers at once; others are
  * fetched once the loaded list has confirmed the id is not one of its rows.
  *
- * While the list itself loads nothing is pinned, as for any chat: the agent
- * shown is then the remembered one until the rows arrive. Sends are not
- * affected — they address the session, which carries its own agent.
+ * Until either answers, the active session's agent is unknown, so it is
+ * pinned to nobody rather than to the remembered or first agent — a cold
+ * load of a side chat must not name somebody else. New-chat preferences and
+ * drafts are left alone.
  */
 export function useTipSideChatLookup(
   wsId: string,
@@ -152,5 +154,11 @@ export function useTipSideChatLookup(
     !sideChat &&
     !gone &&
     (detail.status === "pending" || detail.status === "error");
-  return { currentSession, pending, pinsAgent: pending || !!currentSession?.tip_source };
+  // The list has not answered either: whose session this is stays unknown.
+  const unresolved = lookupId !== "" && !sessionsLoaded && !justSent && !sideChat;
+  return {
+    currentSession,
+    pending,
+    pinsAgent: pending || unresolved || !!currentSession?.tip_source,
+  };
 }

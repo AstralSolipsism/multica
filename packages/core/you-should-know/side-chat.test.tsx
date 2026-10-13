@@ -73,6 +73,31 @@ function Wrapper({ children }: { children: ReactNode }) {
 }
 
 describe("useOpenTipChat", () => {
+  it("is not overwritten by an older detail request that lands after the open", async () => {
+    // A fetch of the record started first (a reconnect refetch, say) and is
+    // still out when the open unarchives the chat.
+    let answerOld!: (value: ChatSession) => void;
+    const older = qc
+      .fetchQuery({
+        queryKey: chatKeys.session(WS, "side-1"),
+        queryFn: () => new Promise<ChatSession>((resolve) => (answerOld = resolve)),
+      })
+      .catch(() => null);
+    const opened = session({ status: "active", tip_source: source });
+    apiMock.openTipChat.mockResolvedValueOnce(opened);
+    const { result } = renderHook(() => useOpenTipChat(), { wrapper: Wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync("tip-1");
+    });
+    await act(async () => {
+      answerOld(session({ status: "archived", tip_source: source }));
+      await older;
+    });
+
+    expect(qc.getQueryData(chatKeys.session(WS, "side-1"))).toEqual(opened);
+  });
+
   it("opens through the API and seeds the detail entry, leaving the tip's state alone", async () => {
     const opened = session({ tip_source: source });
     apiMock.openTipChat.mockResolvedValueOnce(opened);
@@ -188,10 +213,26 @@ describe("useTipSideChatLookup", () => {
     );
   });
 
-  it("does not ask while the list is still loading", () => {
-    const { result } = lookup("side-1", [], false);
-    expect(result.current).toEqual({ currentSession: null, pending: false, pinsAgent: false });
+  it("pins nobody while the list is still loading, without asking yet", () => {
+    // A cold load: whose session this is stays unknown until the list (or
+    // the record) answers, so no remembered or first agent may stand in.
+    const { result, rerender } = lookup("side-1", [], false);
+    expect(result.current).toEqual({ currentSession: null, pending: false, pinsAgent: true });
     expect(apiMock.getChatSession).not.toHaveBeenCalled();
+
+    // The list answers with the session: its row decides.
+    const row = session({ id: "side-1" });
+    rerender({ id: "side-1", rows: [row], loaded: true });
+    expect(result.current).toEqual({ currentSession: row, pending: false, pinsAgent: false });
+  });
+
+  it("does not pin a chat just created by sending, even before the list loads", () => {
+    qc.setQueryData(chatKeys.pendingTask("new-1"), {
+      task_id: "11111111-1111-4111-8111-111111111111",
+      status: "queued",
+    });
+    const { result } = lookup("new-1", [], false);
+    expect(result.current.pinsAgent).toBe(false);
   });
 
   it("neither looks up nor pins a chat this client just created by sending", () => {
