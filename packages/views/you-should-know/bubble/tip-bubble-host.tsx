@@ -27,7 +27,6 @@ import {
   measureTipAnchors,
   rotateTips,
   shouldShowSettingsHint,
-  type TipAnchorDisplayState,
   type TipAnchorRegistry,
 } from "@multica/core/you-should-know/anchors";
 import { youShouldKnowSettingsHref } from "../settings-anchor";
@@ -40,10 +39,13 @@ import {
 import { TipBubble } from "./tip-bubble";
 import { TipFeedbackRow } from "./tip-feedback-row";
 import { tipLayerHasFocus } from "./tip-layer";
+import { deriveTipLayerState, feedbackRowDisplay } from "./tip-layer-state";
 import { useDwellTimer } from "./use-dwell-timer";
 import { useFeedbackSession } from "./use-feedback-session";
 import { useFocusHandoff } from "./use-focus-handoff";
 import { useTipActions } from "./use-tip-actions";
+
+export { feedbackRowDisplay } from "./tip-layer-state";
 
 const NO_TIPS: IssueTip[] = [];
 
@@ -164,23 +166,6 @@ function useSettingsHint(
 }
 
 /**
- * Registry display while the feedback row stands in for the bubble: the row's
- * anchor holds the bubble slot, and the tip waiting behind the row gets a dot
- * on its own anchor like any other tip that is not on screen.
- */
-export function feedbackRowDisplay(
-  rowAnchorId: string,
-  waitingAnchorId: string | null,
-  dotAnchorIds: readonly string[],
-): TipAnchorDisplayState {
-  const dots = waitingAnchorId === null ? dotAnchorIds : [...dotAnchorIds, waitingAnchorId];
-  return {
-    bubbleAnchorId: rowAnchorId,
-    dotAnchorIds: dots.filter((id) => id !== rowAnchorId),
-  };
-}
-
-/**
  * The page's tip runtime (OL-194, OL-196): reads the viewer's active tips,
  * schedules them over the registered anchors, rotates the single bubble,
  * writes "bubble here, dots there" back into the registry for the anchors to
@@ -245,47 +230,44 @@ export function TipBubbleHost({
     [registry, qc, wsId],
   );
 
-  const bubbleAnchorId = rotation.entry?.anchorId ?? null;
-  const tip = tips.find((candidate) => candidate.id === rotation.tipId);
-  const measure = bubbleAnchorId ? (anchors[bubbleAnchorId]?.measure ?? null) : null;
-
   // A row that held focus hands it to the bubble that replaces it. (Called
   // after render, once `handoff` below exists.)
   const feedback = useFeedbackSession(anchors, (hadFocus) => {
     if (hadFocus && successorWaits()) handoff.arm();
   });
-  const { session } = feedback;
-  const bubble = tip && rotation.entry && measure
-    ? { tip, entry: rotation.entry, measure }
-    : null;
-  const handoff = useFocusHandoff(rotation, bubble?.tip.id ?? null);
+  const layer = useMemo(
+    () => deriveTipLayerState({ rotation, tips, anchors, session: feedback.session }),
+    [rotation, tips, anchors, feedback.session],
+  );
+  const handoff = useFocusHandoff(rotation, layer.handoffBubbleKey);
 
-  const rowAnchorId = session?.anchorId ?? null;
+  // Unregister clears stale slots/dots before the settled resync. Depend on
+  // registry inputs so unrelated layer changes never republish that schedule.
+  const { kind: displayKind, anchorId, waitingAnchorId, dotAnchorIds } = layer.display;
   useEffect(() => {
-    registry
-      .getState()
-      .setDisplay(
-        rowAnchorId === null
-          ? { bubbleAnchorId, dotAnchorIds: rotation.dotAnchorIds }
-          : feedbackRowDisplay(rowAnchorId, bubbleAnchorId, rotation.dotAnchorIds),
-      );
-  }, [registry, bubbleAnchorId, rotation.dotAnchorIds, rowAnchorId]);
+    registry.getState().setDisplay(
+      displayKind === "feedback"
+        ? feedbackRowDisplay(anchorId, waitingAnchorId, dotAnchorIds)
+        : { bubbleAnchorId: anchorId, dotAnchorIds },
+    );
+  }, [registry, displayKind, anchorId, waitingAnchorId, dotAnchorIds]);
 
   const [engaged, setEngaged] = useState(false);
   const typing = useEditableFocus();
   const pageHidden = useDocumentHidden();
   const reducedMotion = usePrefersReducedMotion();
   // Overlays are judged against whichever layer is up: the row or the bubble.
-  const { modalOpen, anchorPopupOpen } = useOverlayState(session ? session.measure : measure);
+  const { modalOpen, anchorPopupOpen } = useOverlayState(layer.measure);
 
   const suppressed = modalOpen || anchorPopupOpen;
   const paused = engaged || typing || pageHidden || suppressed || held;
   useDwellTimer(rotation.seq, rotation.entry?.dwellMs ?? null, paused, advance);
 
-  const { showHint, reportVisible } = useSettingsHint(userId, tip?.id ?? null, pageHidden);
+  const { showHint, reportVisible } = useSettingsHint(userId, layer.rotationTipId, pageHidden);
 
   // While the feedback row shows it is the page's only bubble.
-  if (session) {
+  if (layer.kind === "feedback") {
+    const { session } = layer;
     return (
       <TipFeedbackRow
         key={session.tip.id}
@@ -303,15 +285,15 @@ export function TipBubbleHost({
       />
     );
   }
-  if (!bubble) return null;
-  const { entry } = bubble;
+  if (layer.kind === "none") return null;
+  const { tip, entry, measure } = layer;
 
   return (
     <TipBubble
       // A new tip remounts the bubble, replaying its single fade-in.
-      key={bubble.tip.id}
-      tip={bubble.tip}
-      measure={bubble.measure}
+      key={tip.id}
+      tip={tip}
+      measure={measure}
       level={entry.level}
       issueIdentifier={entry.issueIdentifier}
       settingsHref={showHint ? youShouldKnowSettingsHref(paths.settings()) : null}
@@ -323,23 +305,23 @@ export function TipBubbleHost({
       onKnown={() => {
         // `advance` below puts the next tip up in this same commit.
         if (tipLayerHasFocus()) handoff.arm();
-        actions.markKnown(bubble.tip.id);
+        actions.markKnown(tip.id);
         // Straight on to the next tip: no gap while the optimistic update
         // lands and the next re-schedule comes round.
         advance();
       }}
       onDismiss={(expanded) => {
         feedback.start({
-          tip: bubble.tip,
+          tip,
           anchorId: entry.anchorId,
-          measure: bubble.measure,
+          measure,
           level: entry.level,
           expanded,
           takeFocus: tipLayerHasFocus(),
         });
-        void actions.dismiss(bubble.tip.id).then((saved) => {
+        void actions.dismiss(tip.id).then((saved) => {
           // The tip is back: no reason left to ask for.
-          if (!saved) feedback.end(bubble.tip.id);
+          if (!saved) feedback.end(tip.id);
         });
       }}
     />
