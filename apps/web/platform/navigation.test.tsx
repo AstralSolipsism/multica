@@ -16,14 +16,24 @@ const router = vi.hoisted(() => ({
   prefetch: vi.fn(),
 }));
 
+// Mutable so a test can render the destination route before window.location
+// commits — Next 16 writes history in HistoryUpdater's insertion effect,
+// one commit AFTER the new page renders.
+const nav = vi.hoisted(() => ({ pathname: "/acme/issues" }));
+
 vi.mock("next/navigation", () => ({
   useRouter: () => router,
-  usePathname: () => "/acme/issues",
+  usePathname: () => nav.pathname,
   useSearchParams: () => new URLSearchParams(),
 }));
 
 import { WebNavigationProvider } from "./navigation";
-import { useNavigation, type NavigationAdapter } from "@multica/views/navigation";
+import { WebScrollRestorationProvider } from "./scroll-restoration";
+import {
+  useNavigation,
+  type NavigationAdapter,
+} from "@multica/views/navigation";
+import { useScrollRestorationAdapter } from "@multica/views/platform";
 
 function navigate(path: string) {
   window.dispatchEvent(
@@ -155,5 +165,167 @@ describe("WebNavigationProvider hash", () => {
     });
 
     expect(adapter().hash).toBe("#comment-c2");
+  });
+});
+
+/**
+ * OL-270 — Next commits the pushed URL only when the destination renders
+ * (HistoryUpdater's insertion effect), so a first render of the destination
+ * reads the PREVIOUS page's fragment from `window.location.hash`. The adapter
+ * records the target of every push/replace and reports the target's fragment
+ * while the URL hasn't caught up; once committed, the store read rules again.
+ */
+describe("WebNavigationProvider pending navigation hash", () => {
+  function setWindowUrl(path: string) {
+    window.history.replaceState({}, "", path);
+  }
+
+  function renderShellAdapter() {
+    let adapter: NavigationAdapter | null = null;
+    function Probe() {
+      adapter = useNavigation();
+      return null;
+    }
+    // A fresh element per rerender: React bails out of an identical element
+    // object, and the pathname mock isn't reactive on its own.
+    const tree = () => (
+      <WebNavigationProvider>
+        <Probe />
+      </WebNavigationProvider>
+    );
+    const view = render(tree());
+    return {
+      get: () => adapter!,
+      // Force the commit the way Next's router state change would.
+      commit: () => view.rerender(tree()),
+    };
+  }
+
+  beforeEach(() => {
+    nav.pathname = "/acme/issues";
+    setWindowUrl("/acme/issues");
+  });
+
+  afterEach(() => {
+    nav.pathname = "/acme/issues";
+    setWindowUrl("/acme/issues");
+  });
+
+  it("reports the pushed target's fragment on the destination's first render", () => {
+    setWindowUrl("/acme/issues/A#comment-c1");
+    nav.pathname = "/acme/issues/A";
+    const view = renderShellAdapter();
+
+    act(() => view.get().push("/acme/issues/B#comment-c2"));
+    // Next renders the destination BEFORE committing the URL: pathname moves,
+    // window.location still holds the previous page.
+    nav.pathname = "/acme/issues/B";
+    act(() => view.commit());
+
+    expect(view.get().hash).toBe("#comment-c2");
+
+    // The commit catches up; the reported fragment stays the target's.
+    nav.pathname = "/acme/issues/B";
+    act(() => {
+      window.history.pushState({}, "", "/acme/issues/B#comment-c2");
+      view.commit();
+    });
+    expect(view.get().hash).toBe("#comment-c2");
+  });
+
+  it("reports the fragment of a same-page push before the URL commits", () => {
+    setWindowUrl("/acme/issues/A");
+    nav.pathname = "/acme/issues/A";
+    const view = renderShellAdapter();
+
+    act(() => view.get().push("/acme/issues/A#comment-c9"));
+    act(() => view.commit());
+
+    expect(view.get().hash).toBe("#comment-c9");
+
+    act(() => {
+      window.history.pushState({}, "", "/acme/issues/A#comment-c9");
+      view.commit();
+    });
+    expect(view.get().hash).toBe("#comment-c9");
+  });
+
+  it("reports no fragment when the push target has none, even from a #comment page", () => {
+    setWindowUrl("/acme/issues/A#comment-c1");
+    nav.pathname = "/acme/issues/A";
+    const view = renderShellAdapter();
+
+    act(() => view.get().push("/acme/issues/B"));
+    nav.pathname = "/acme/issues/B";
+    act(() => view.commit());
+
+    expect(view.get().hash).toBe("");
+  });
+
+  it("does not leak the pending target into the page still being left", () => {
+    setWindowUrl("/acme/issues/A#comment-c1");
+    nav.pathname = "/acme/issues/A";
+    const view = renderShellAdapter();
+
+    // The transition is in flight: React still renders the OLD page
+    // (pathname unchanged) while the push is recorded.
+    act(() => view.get().push("/acme/issues/B#comment-c2"));
+    act(() => view.commit());
+
+    expect(view.get().hash).toBe("#comment-c1");
+  });
+
+  it("drops the pending record when a popstate commits a different entry", () => {
+    setWindowUrl("/acme/issues/A");
+    nav.pathname = "/acme/issues/A";
+    const view = renderShellAdapter();
+
+    act(() => view.get().push("/acme/issues/B#comment-c2"));
+    nav.pathname = "/acme/issues/B";
+    act(() => view.commit());
+    expect(view.get().hash).toBe("#comment-c2");
+
+    // The user goes back before the push commits: the popstate entry's own
+    // fragment rules, not the aborted push's.
+    nav.pathname = "/acme/issues/A";
+    act(() => {
+      window.history.pushState({}, "", "/acme/issues/A#comment-c7");
+      window.dispatchEvent(new Event("popstate"));
+      view.commit();
+    });
+    expect(view.get().hash).toBe("#comment-c7");
+  });
+
+  it("clears the destination route's landed memento on a #comment push, and only then", () => {
+    nav.pathname = "/acme/issues/TES-2";
+    setWindowUrl("/acme/issues/TES-2");
+    let scroll: ReturnType<typeof useScrollRestorationAdapter> = null;
+    let adapter: NavigationAdapter | null = null;
+    function Probe() {
+      adapter = useNavigation();
+      scroll = useScrollRestorationAdapter();
+      return null;
+    }
+    render(
+      <WebScrollRestorationProvider>
+        <WebNavigationProvider>
+          <Probe />
+        </WebNavigationProvider>
+      </WebScrollRestorationProvider>,
+    );
+    act(() => scroll!.setViewState!("highlight:i2", "c1"));
+
+    // A plain push (no comment anchor) keeps the record…
+    act(() => adapter!.push("/acme/issues/TES-2#activity"));
+    expect(scroll!.getViewState!("highlight:i2")).toBe("c1");
+
+    // …and a push with a comment deep link clears it.
+    act(() => adapter!.push("/acme/issues/TES-2#comment-c1"));
+    expect(scroll!.getViewState!("highlight:i2")).toBeUndefined();
+
+    // A replace (the canonical UUID→identifier rewrite) must NOT clear.
+    act(() => scroll!.setViewState!("highlight:i2", "c1"));
+    act(() => adapter!.replace("/acme/issues/TES-2#comment-c1"));
+    expect(scroll!.getViewState!("highlight:i2")).toBe("c1");
   });
 });

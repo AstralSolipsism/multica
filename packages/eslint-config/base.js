@@ -19,6 +19,10 @@ export default [
       "import-x/no-extraneous-dependencies": ["error", {
         devDependencies: [
           "**/*.test.{ts,tsx}",
+          // Shared vi.mock/render harnesses imported BY test files (OL-270):
+          // not tests themselves, but pure test infrastructure.
+          "**/*.test-harness*.{ts,tsx}",
+          // (e.g. .test-harness.tsx and .test-harness-state.ts)
           "**/*.spec.{ts,tsx}",
           "**/test/**",
           "**/tests/**",

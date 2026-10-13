@@ -925,6 +925,87 @@ describe("commitViewState", () => {
   });
 });
 
+describe("clearViewStateEntries", () => {
+  it("deletes only the addressed route's entries matching the prefix", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    const tabId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
+    store.commitViewState(tabId, "/acme/issues/TES-2", "highlight:i1", "c1");
+    store.commitViewState(tabId, "/acme/issues/TES-2", "highlight:i2", "c2");
+    store.commitViewState(tabId, "/acme/issues/TES-2", "other:i3", "c3");
+    store.commitViewState(tabId, "/acme/inbox", "highlight:i1", "c9");
+
+    store.clearViewStateEntries(tabId, "/acme/issues/TES-2", "highlight:");
+
+    expect(useTabStore.getState().byWorkspace.acme.tabs[0].memento.view).toEqual({
+      "/acme/issues/TES-2::other:i3": "c3",
+      "/acme/inbox::highlight:i1": "c9",
+    });
+  });
+
+  it("skips the store write when nothing matches", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    const tabId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
+    store.commitViewState(tabId, "/acme/inbox", "highlight:i1", "c1");
+    const before = useTabStore.getState().byWorkspace.acme;
+
+    store.clearViewStateEntries(tabId, "/acme/inbox", "other:");
+
+    expect(useTabStore.getState().byWorkspace.acme).toBe(before);
+  });
+});
+
+describe("migrateViewStateRoute", () => {
+  it("carries the prefix's entries over, overwrite-style: target entries the source lacks are dropped", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    const tabId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
+    const uuid = "cb240efb-154c-42a8-ae92-42b02676feca";
+    store.commitViewState(tabId, `/acme/issues/${uuid}`, "highlight:i1", "c1");
+    // A stale landing record under the identifier spelling from an earlier
+    // visit — the source has no counterpart, so it must not survive.
+    store.commitViewState(tabId, "/acme/issues/TES-2", "highlight:i2", "old");
+    // Other routes and other entry families are untouched.
+    store.commitViewState(tabId, "/acme/inbox", "highlight:i9", "c9");
+    store.commitViewState(tabId, `/acme/issues/${uuid}`, "other:i3", "c3");
+
+    store.migrateViewStateRoute(tabId, `/acme/issues/${uuid}`, "/acme/issues/TES-2", "highlight:");
+
+    expect(useTabStore.getState().byWorkspace.acme.tabs[0].memento.view).toEqual({
+      "/acme/issues/TES-2::highlight:i1": "c1",
+      "/acme/inbox::highlight:i9": "c9",
+      "/acme/issues/cb240efb-154c-42a8-ae92-42b02676feca::other:i3": "c3",
+    });
+  });
+
+  it("deletes the target's record outright when the source route was cleared", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    const tabId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
+    const uuid = "cb240efb-154c-42a8-ae92-42b02676feca";
+    // The fresh push cleared the UUID route; the identifier route still holds
+    // a stale record from an earlier visit.
+    store.commitViewState(tabId, "/acme/issues/TES-2", "highlight:i2", "old");
+
+    store.migrateViewStateRoute(tabId, `/acme/issues/${uuid}`, "/acme/issues/TES-2", "highlight:");
+
+    expect(useTabStore.getState().byWorkspace.acme.tabs[0].memento.view).toEqual({});
+  });
+
+  it("is a no-op when from and to are the same route", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    const tabId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
+    store.commitViewState(tabId, "/acme/inbox", "highlight:i1", "c1");
+    const before = useTabStore.getState().byWorkspace.acme;
+
+    store.migrateViewStateRoute(tabId, "/acme/inbox", "/acme/inbox", "highlight:");
+
+    expect(useTabStore.getState().byWorkspace.acme).toBe(before);
+  });
+});
+
 describe("bulk tab closing", () => {
   it("closes other unpinned tabs, preserves pinned tabs, and activates the target", () => {
     const store = useTabStore.getState();

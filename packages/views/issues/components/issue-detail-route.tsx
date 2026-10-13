@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useCanonicalIssue } from "@multica/core/issues/canonical-id";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { parseCommentHighlightHash } from "../comment-deep-link";
 import { useNavigation } from "../../navigation";
 import { IssueDetail, IssueDetailSkeleton, IssueNotFound } from "./issue-detail";
+
+export { parseCommentHighlightHash } from "../comment-deep-link";
 
 interface IssueDetailRouteProps {
   /**
@@ -23,6 +26,9 @@ interface IssueDetailRouteProps {
  *
  * A replace, not a push: the UUID URL is the same page, and a history entry
  * for it would make Back bounce the user between two spellings of one issue.
+ * The adapter's `replaceCanonical` hook lets each platform fix up deep-link
+ * landing records for the respelling (web clears so the remounted instance
+ * re-lands; desktop migrates so the surviving instance stays landed).
  */
 export function useCanonicalIssueUrl(
   routeId: string,
@@ -41,25 +47,30 @@ export function useCanonicalIssueUrl(
     if (!canonicalHref || routeId === identifier) return;
     if (replacedRef.current === canonicalHref) return;
     replacedRef.current = canonicalHref;
-    navigation.replace(canonicalHref);
+    (navigation.replaceCanonical ?? navigation.replace)(canonicalHref);
   }, [canonicalHref, identifier, routeId, navigation]);
 }
 
-export function parseCommentHighlightHash(hash: string): string | undefined {
-  const match = /^#comment-([A-Za-z0-9_-]+)$/.exec(hash);
-  return match?.[1];
-}
-
+/**
+ * The `#comment-…` fragment the current URL carries, read through the
+ * navigation adapter rather than `window.location`.
+ *
+ * `window.location.hash` is wrong here on both platforms:
+ *  - web: an in-app `router.push` commits the new URL only after the new page
+ *    renders (Next's HistoryUpdater), and a same-page push fires no
+ *    `hashchange` — a mount-time read sees the PREVIOUS page's fragment, or
+ *    never sees the new one. The web adapter compensates: it records every
+ *    push/replace target and reports ITS fragment while the URL commit is
+ *    still pending, so the value is accurate from the destination's first
+ *    render. Hydration is the one frame-late case left (the server snapshot
+ *    is "") — `IssueDetail` captures its deep-link arrival when the issue
+ *    and timeline first become ready, never at mount, so it still lands.
+ *  - desktop: the renderer is a MemoryRouter over a `file://` page, so
+ *    `window.location.hash` is always empty; the adapter's hash comes from
+ *    the tab URL and is frame-accurate.
+ */
 function useCommentHighlightHash(): { hash: string; commentId?: string } {
-  const read = () => typeof window === "undefined" ? "" : window.location.hash;
-  const [hash, setHash] = useState(read);
-
-  useEffect(() => {
-    const onHashChange = () => setHash(read());
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
-  }, []);
-
+  const { hash } = useNavigation();
   return { hash, commentId: parseCommentHighlightHash(hash) };
 }
 
