@@ -493,32 +493,17 @@ func TestLabrastroYSKBatchPreservesGenerationOrder(t *testing.T) {
 	f := newYSKFixture(t)
 	f.report(t, labrastroYSKReport{Version: 1, Kind: "light", Step: 1,
 		Tips: []labrastroYSKInputTip{yskInput("第一条"), yskInput("第二条"), yskInput("第三条")}})
-	var created []pgtype.Timestamptz
-	rows, err := f.Pool.Query(context.Background(),
-		`SELECT created_at FROM labrastro_issue_tip WHERE task_id=$1 ORDER BY created_at`, f.task)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var ts pgtype.Timestamptz
-		if err := rows.Scan(&ts); err != nil {
-			t.Fatal(err)
-		}
-		created = append(created, ts)
-	}
-	if len(created) != 3 {
-		t.Fatalf("expected 3 tips, got %d", len(created))
-	}
-	for i := 1; i < len(created); i++ {
-		if !created[i].Time.After(created[i-1].Time) {
-			t.Fatalf("created_at not strictly increasing: %v then %v", created[i-1], created[i])
-		}
-	}
-	// Newest first means reverse of report order.
+	// Newest first means reverse of report order; CreatedAt is the RFC3339Nano
+	// string the API returns, so this also proves the sub-millisecond digits
+	// survive the round trip (string compare works for equal-length nanos).
 	tips := f.list(t, false, false, testUserID)
 	if len(tips) != 3 || tips[0].Line != "第三条" || tips[1].Line != "第二条" || tips[2].Line != "第一条" {
 		t.Fatalf("tips not in reverse report order: %+v", tips)
+	}
+	for i := 1; i < len(tips); i++ {
+		if tips[i-1].CreatedAt == nil || tips[i].CreatedAt == nil || *tips[i-1].CreatedAt <= *tips[i].CreatedAt {
+			t.Fatalf("created_at not strictly decreasing: %v then %v", tips[i-1].CreatedAt, tips[i].CreatedAt)
+		}
 	}
 }
 
