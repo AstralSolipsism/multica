@@ -5,6 +5,8 @@ import { ApiError } from "@multica/core/api";
 import type { InboxItem } from "@multica/core/types";
 import { useInboxFilterStore } from "@multica/core/inbox/filter-store";
 import { InboxPage } from "./inbox-page";
+import { createTipAnchorRegistry } from "@multica/core/you-should-know/anchors";
+import { TipAnchorRegistryProvider } from "../../you-should-know/anchors/tip-anchor-context";
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -117,13 +119,19 @@ vi.mock("@multica/core/inbox/mutations", () => {
 const issueDetailProps = vi.hoisted(
   () => [] as Array<Record<string, unknown>>,
 );
-vi.mock("../../issues/components/issue-detail", () => ({
-  IssueDetail: (props: Record<string, unknown>) => {
-    issueDetailProps.push(props);
-    return null;
-  },
-  issueHighlightMementoKey: (issueId: string) => `highlight:${issueId}`,
-}));
+// The tip anchor registry the embedded detail would register its anchors in.
+const issueDetailTipRegistry = vi.hoisted(() => ({ current: undefined as unknown }));
+vi.mock("../../issues/components/issue-detail", async () => {
+  const { useTipAnchorRegistry } = await import("../../you-should-know/anchors/tip-anchor-context");
+  return {
+    IssueDetail: (props: Record<string, unknown>) => {
+      issueDetailProps.push(props);
+      issueDetailTipRegistry.current = useTipAnchorRegistry();
+      return null;
+    },
+    issueHighlightMementoKey: (issueId: string) => `highlight:${issueId}`,
+  };
+});
 
 const replace = vi.fn();
 let searchParams = new URLSearchParams();
@@ -432,6 +440,20 @@ describe("InboxPage", () => {
     render(<InboxPage />);
     expect(queryCalls.find((q) => q.queryKey.includes("list"))?.enabled).toBe(false);
     expect(queryCalls.find((q) => q.queryKey.includes("pages"))?.enabled).toBe(true);
+  });
+
+  it("gives the embedded issue detail no tip anchor registry — the inbox shows no tips (OL-197)", () => {
+    reset();
+    searchParams = new URLSearchParams("view=archived&issue=old-issue");
+    listData.archived = [item({ id: "recent", archived: true })];
+    listData.lookup = [item({ id: "older", issue_id: "old-issue", archived: true })];
+    render(
+      <TipAnchorRegistryProvider registry={createTipAnchorRegistry()}>
+        <InboxPage />
+      </TipAnchorRegistryProvider>,
+    );
+    expect(issueDetailProps.at(-1)).toMatchObject({ issueId: "old-issue" });
+    expect(issueDetailTipRegistry.current).toBeNull();
   });
 
   it("opens a deep-linked archive group outside the loaded pages with its comment anchor", () => {
