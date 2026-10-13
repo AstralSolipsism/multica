@@ -612,7 +612,7 @@ Run 'make down' here first — a leftover instance answers /health with 200 and 
 
   launched_at="$(now_epoch)"
   # COMMIT is passed as a make argument, not an environment variable: a
-  # variable on the outer make command line (e.g. COMMIT=<short> make up)
+  # variable on the outer make command line (e.g. make up COMMIT=<short>)
   # travels into this inner make through MAKEFLAGS and outranks the
   # environment, re-desyncing the injected commit from the one
   # checkout_commit just compared against.

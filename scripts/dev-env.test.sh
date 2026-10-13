@@ -322,7 +322,7 @@ launch_args="$tmp_dir/api-launch-args"
   BACKEND_PORT=19999
   port_free() { :; }
   now_epoch() { printf '0'; }
-  launch_detached() { printf '%s\n' "\$*" > "$launch_args"; exit 0; }
+  launch_detached() { printf '%q ' "\$@" > "$launch_args"; printf '\n' >> "$launch_args"; exit 0; }
   start_api
 PROBE
   chmod +x "$api_identity_repo/launch-probe.sh"
@@ -372,7 +372,7 @@ zombie_setup() {
     if [ -f "$zombie_marker" ]; then printf 'Zs'; else printf 'Sl'; fi
   }
   kill() {
-    [ "$1" = "-TERM" ] || [ "$1" = -TERM ] && : > "$zombie_marker"
+    [ "$1" = "-TERM" ] && : > "$zombie_marker"
     return 0
   }
   sleep() { :; }
@@ -416,20 +416,26 @@ assert_stop_zombie_launcher
 
 # 3. Same for the listener re-check after the process-group kill: a listener
 #    that zombifies must be released without a still-running warning.
+#    The stub's variable is TEST_LISTENER: stop_component declares a local
+#    `listener`, and bash's dynamic scoping would shadow it inside the stub.
 assert_stop_zombie_listener() (
   # shellcheck disable=SC1090
   source "$root_dir/scripts/dev-env.sh"
   STATE_DIR="$tmp_dir/stop-zombie-listener"
   mkdir -p "$STATE_DIR"
   BACKEND_PORT=18080 FRONTEND_PORT=13000 DESKTOP_RENDERER_PORT=5174
-  local listener=888 output
+  local TEST_LISTENER=888 output
   # no launcher pid file: the recorded listener alone proves ownership
-  printf '%s\n' "$listener" > "$(listener_pid_file web)"
+  printf '%s\n' "$TEST_LISTENER" > "$(listener_pid_file web)"
   zombie_setup
-  port_listener_pid() { printf '%s' "$listener"; }
+  port_listener_pid() { printf '%s' "$TEST_LISTENER"; }
   output="$(stop_component web 2>&1)" || fail "stop_component failed on a listener that zombified"
   case "$output" in
     *still\ running*) fail "stop_component reported a zombie listener as still running: $output" ;;
+  esac
+  case "$output" in
+    *"released :13000 (pid $TEST_LISTENER)"*) ;;
+    *) fail "listener branch never ran (no 'released :13000' line): $output" ;;
   esac
   [ -f "$(listener_pid_file web)" ] && fail "stop_component kept the listener pid file of a zombie"
   return 0
@@ -489,6 +495,31 @@ PROBE_ROOT="$root_dir" bash "$restart_case/probe.sh" > "$out" 2>&1 || status=$?
 [ "$status" -ne 0 ] || fail "start_api exited 0 after a failed restart stop"
 require_contains "$out" "still running"
 require_contains "$out" "is busy"
+
+# start_desktop's "stale identity; restarting it" path must survive a failed
+# stop the same way start_api does: warn, then continue to the port check
+# instead of aborting silently. Fresh bash, set -e armed.
+desktop_restart_case="$tmp_dir/desktop-restart-failed-stop"
+mkdir -p "$desktop_restart_case"
+cat > "$desktop_restart_case/probe.sh" <<'PROBE'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$PROBE_ROOT/scripts/dev-env.sh"
+DESKTOP_RENDERER_PORT=5999
+NAME=probe
+component_pid() { printf '123'; }
+curl() { return 1; }
+desktop_env_matches() { return 1; }
+stop_component() { warn "desktop launcher pid 123 is still running"; return 1; }
+port_free() { return 1; }
+describe_port_owner() { printf 'pid 123 (electron)'; }
+start_desktop
+PROBE
+status=0
+PROBE_ROOT="$root_dir" bash "$desktop_restart_case/probe.sh" > "$out" 2>&1 || status=$?
+[ "$status" -ne 0 ] || fail "start_desktop exited 0 after a failed restart stop"
+require_contains "$out" "still running"
+require_contains "$out" "renderer port 5999 is busy"
 
 # A failed stop during a launch abort must print why it died instead of letting
 # set -e exit silently — the original `make up` failure mode (OL-347).
