@@ -3135,8 +3135,17 @@ describe("IssueDetail (shared)", () => {
 
   // OL-269: the archive mount must pass the timeline's jump helper so group
   // headers scroll virtualized/collapsed threads; a lost line here silently
-  // falls back to URL navigation, which scrolls nothing.
+  // falls back to URL navigation, which scrolls nothing. expect.any(Function)
+  // is not enough — jumpToThread (roots only) also satisfies it — so the
+  // captured prop is called with a REPLY id and must take the reply landing
+  // path: a reply never appears in `items`, so the roots-only helper would
+  // return without scrolling anything.
   it("passes the timeline jump helper to the YSK archive section", async () => {
+    const reply = {
+      ...mockTimeline[1]!, id: "archive-reply", parent_id: "comment-1",
+      content: "Reply the archive points at", created_at: "2026-01-18T00:00:00Z", updated_at: "2026-01-18T00:00:00Z",
+    };
+    mockApiObj.listTimeline.mockResolvedValue([mockTimeline[0]!, reply]);
     renderIssueDetail();
     await screen.findByText("Started working on this");
     expect(archiveSectionProps.current).toEqual({
@@ -3144,6 +3153,23 @@ describe("IssueDetail (shared)", () => {
       identifier: "TES-1",
       onJumpToComment: expect.any(Function),
     });
+
+    scrollToIndexSpy.mockClear();
+    const { onJumpToComment } = archiveSectionProps.current as {
+      onJumpToComment: (commentId: string) => void;
+    };
+    act(() => onJumpToComment("archive-reply"));
+
+    // Virtualized reply jump: scrolls the thread root's row into view…
+    await waitFor(() =>
+      expect(scrollToIndexSpy).toHaveBeenCalledWith({ index: 0, align: "start", offset: -16 }),
+    );
+    // …and the landing effect flashes the reply itself.
+    await waitFor(() =>
+      expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-archive-reply")),
+      ).toBe(true),
+    );
   });
 
 });

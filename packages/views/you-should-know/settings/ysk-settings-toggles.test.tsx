@@ -157,15 +157,17 @@ describe("YouShouldKnowWorkspaceSection", () => {
     );
   });
 
+  // Shared probe: the index hook needs a component body. One copy serves
+  // every index-shape test below.
+  function IndexProbe() {
+    const index = useSettingsSearchIndex([
+      { value: "workspace", label: "Workspace" },
+      { value: "notifications", label: "Notifications" },
+    ]);
+    return <ul>{index.map((e) => <li key={`${e.tab}#${e.anchor ?? ""}`}>{`${e.tab}#${e.anchor ?? ""}:${e.title}`}</li>)}</ul>;
+  }
+
   it("anchors both toggles for the settings search", () => {
-    // Probe component: the index hook needs a component body.
-    function IndexProbe() {
-      const index = useSettingsSearchIndex([
-        { value: "workspace", label: "Workspace" },
-        { value: "notifications", label: "Notifications" },
-      ]);
-      return <ul>{index.map((e) => <li key={`${e.tab}#${e.anchor ?? ""}`}>{`${e.tab}#${e.anchor ?? ""}:${e.title}`}</li>)}</ul>;
-    }
     renderWithI18n(<IndexProbe />);
 
     expect(screen.getByText("workspace#you-should-know:Show bystander tips while agents work")).toBeInTheDocument();
@@ -184,36 +186,19 @@ describe("YouShouldKnowWorkspaceSection", () => {
     ).not.toBeNull();
   });
 
-  it("drops the personal entry from the search index while the workspace switch is off", () => {
-    state.workspaceEnabled = false;
-    function IndexProbe() {
-      const index = useSettingsSearchIndex([
-        { value: "workspace", label: "Workspace" },
-        { value: "notifications", label: "Notifications" },
-      ]);
-      return <ul>{index.map((e) => <li key={`${e.tab}#${e.anchor ?? ""}`}>{`${e.tab}#${e.anchor ?? ""}`}</li>)}</ul>;
-    }
-    const { unmount } = renderWithI18n(<IndexProbe />);
-
-    expect(screen.queryByText(/^notifications#you-should-know/)).toBeNull();
-    // The workspace entry stays: that is the row an admin searches for to
-    // turn the feature on.
-    expect(screen.getByText(/^workspace#you-should-know/)).toBeInTheDocument();
-    unmount();
-  });
-
   // OL-269: workspaces created before the feature (or whose settings were
   // never written) have no you_should_know_enabled key — that must count as
-  // off, exactly like an explicit false.
-  it("drops the personal entry when the settings key is missing entirely", () => {
-    state.missingWorkspaceKey = true;
-    function IndexProbe() {
-      const index = useSettingsSearchIndex([
-        { value: "workspace", label: "Workspace" },
-        { value: "notifications", label: "Notifications" },
-      ]);
-      return <ul>{index.map((e) => <li key={`${e.tab}#${e.anchor ?? ""}`}>{`${e.tab}#${e.anchor ?? ""}`}</li>)}</ul>;
-    }
+  // off, exactly like an explicit false. The personal entry follows the
+  // workspace gate; the workspace entry stays (that is the row an admin
+  // searches for to turn the feature on).
+  it.each([
+    { name: "while the workspace switch is off", missingKey: false },
+    { name: "when the settings key is missing entirely", missingKey: true },
+  ])("drops the personal entry $name", ({ missingKey }) => {
+    // The mocked hook state must agree with the mocked settings bag, or the
+    // test would assert a combination the real gate can never produce.
+    state.workspaceEnabled = false;
+    state.missingWorkspaceKey = missingKey;
     const { unmount } = renderWithI18n(<IndexProbe />);
 
     expect(screen.queryByText(/^notifications#you-should-know/)).toBeNull();
@@ -223,7 +208,7 @@ describe("YouShouldKnowWorkspaceSection", () => {
 
   it("finds the workspace switch by the feature name", async () => {
     const { searchSettings } = await import("../../settings/components/settings-search");
-    function IndexProbe() {
+    function SearchProbe() {
       const index = useSettingsSearchIndex([
         { value: "workspace", label: "Workspace" },
         { value: "notifications", label: "Notifications" },
@@ -236,7 +221,7 @@ describe("YouShouldKnowWorkspaceSection", () => {
         </ul>
       );
     }
-    renderWithI18n(<IndexProbe />);
+    renderWithI18n(<SearchProbe />);
 
     // The feature name reaches the workspace row through its section-title
     // description, and the personal row by its own label.
