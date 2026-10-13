@@ -4,9 +4,13 @@
  * Measures the issues page's DAG view against synthetic graph data of the
  * shapes OL-183 defined: fetch, parse+validate, layout, first-interactive,
  * pan/zoom frame rate, and card-click response. Everything except HTTP is the
- * real production page — routing, TanStack Query, zod validation, the ELK
- * layout worker, React Flow. Like the typing scenario, requests are answered
- * from a fixed table: anything outside it invalidates the sample.
+ * real production page — routing, TanStack Query, the ELK layout worker,
+ * React Flow. Like the typing scenario, requests are answered from a fixed
+ * table: anything outside it invalidates the sample.
+ *
+ * All in-page measurements use instrumentation injected before the app boots
+ * (rAF sampling, Worker wrapping, MutationObserver), so the numbers are
+ * frame-clock based, not Playwright-polling based.
  *
  * The result is a report, not a gate. `timeout` and `invalid` are outcomes,
  * never durations — an empty page is not fast.
@@ -14,9 +18,10 @@
  *   pnpm exec playwright test --config=playwright.perf.config.ts e2e/perf/dag-view.spec.ts
  *   PERF_DATASET=stress-5000 PERF_THROTTLE_CPU=4 PERF_REPORT_PATH=report.json ...
  */
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import os from "node:os";
 import {
   ISSUE_GRAPH_FIXTURE_DATASETS,
   ISSUE_GRAPH_FIXTURE_VERSION,
@@ -25,23 +30,30 @@ import {
   issueGraphFixtureDigest,
   type IssueGraphFixtureDatasetName,
 } from "@multica/core/issues/testing/issue-graph-fixture";
+import { IssueGraphSchema } from "@multica/core/api";
 
 test.setTimeout(600_000);
 
-const DATASET = (process.env.PERF_DATASET ?? "stress-5000") as IssueGraphFixtureDatasetName;
-if (!(DATASET in ISSUE_GRAPH_FIXTURE_DATASETS)) {
+// Explicit opt-in: a bare `playwright test --config=playwright.perf.config.ts`
+// (as CI or perf-compare may run it) must not pick up a multi-minute DAG
+// measurement by accident. PERF_DATASET selects the graph; PERF_DATASET=none
+// skips the scenario entirely.
+const DATASET = (process.env.PERF_DATASET ?? "none") as IssueGraphFixtureDatasetName | "none";
+const SKIP = DATASET === "none";
+if (!SKIP && !(DATASET in ISSUE_GRAPH_FIXTURE_DATASETS)) {
   throw new Error(`unknown PERF_DATASET ${DATASET}`);
 }
-/** CDP CPU throttle factor; 1 = unthrottled. */
+/** CDP CPU throttle factor; 1 = unthrottled. NOTE: applies to the page (and
+ * its dedicated workers, per CDP semantics) — see README before trusting
+ * throttled layout numbers. */
 const THROTTLE = Number(process.env.PERF_THROTTLE_CPU ?? 1);
-const CONFIG = ISSUE_GRAPH_FIXTURE_DATASETS[DATASET]!;
+const CONFIG = SKIP ? null : ISSUE_GRAPH_FIXTURE_DATASETS[DATASET as IssueGraphFixtureDatasetName]!;
 /** How long the scripted pan and zoom gestures each run. */
 const GESTURE_MS = 4_000;
 /** Measured click samples. */
 const CLICK_SAMPLES = 10;
 /** Beyond this a measurement is `timeout`, not a duration. */
-const LOAD_LIMIT_MS = 120_000;
-const LAYOUT_LIMIT_MS = 180_000;
+const LOAD_LIMIT_MS = 180_000;
 
 test.use({
   viewport: { width: 1600, height: 1050 },
@@ -129,41 +141,188 @@ const percentile = (values: number[], p: number): number | null => {
   return Math.round(sorted[Math.max(0, at)]!);
 };
 
-/** Frame-interval stats via rAF sampling injected before the page loads. */
-const FRAME_SAMPLER = `
+/**
+ * Injected before the app boots. Owns three measurements:
+ *  - rAF frame-interval sampling (`__dagSample`);
+ *  - layout-worker timing: Worker#postMessage → message received, keyed by
+ *    the requestId the DAG layout protocol carries (`__dagLayouts`);
+ *  - first-occurrence markers via MutationObserver for cards, toolbar and
+ *    the pending-skeleton disappearing (`__dagMarks`), all on
+ *    performance.now();
+ *  - an in-page click prober that dispatches a real pointer click and waits
+ *    for the toolbar selection label to appear, then resolves on the next
+ *    animation frame (`__dagClick`).
+ */
+const INSTRUMENT = `
   (() => {
-    const store = { intervals: [], sampling: false };
-    window.__dagFrames = store;
-    window.__dagSample = (on) => {
-      store.sampling = on;
-      if (on) store.intervals = [];
-    };
-    let last = null;
+    const perf = () => performance.now();
+    // ---- rAF frame sampling -------------------------------------------------
+    const frames = { intervals: [], sampling: false };
+    window.__dagFrames = frames;
+    window.__dagSample = (on) => { frames.sampling = on; if (on) frames.intervals = []; };
+    let lastFrame = null;
     const tick = (now) => {
-      if (store.sampling) {
-        if (last != null) store.intervals.push(now - last);
-        last = now;
-      } else {
-        last = null;
-      }
+      if (frames.sampling) {
+        if (lastFrame != null) frames.intervals.push(now - lastFrame);
+        lastFrame = now;
+      } else lastFrame = null;
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
+    // ---- layout worker timing ----------------------------------------------
+    const layouts = [];
+    window.__dagLayouts = layouts;
+    const OriginalWorker = window.Worker;
+    window.Worker = class extends OriginalWorker {
+      postMessage(data) {
+        try {
+          if (data && typeof data.requestId === "number") {
+            layouts.push({ requestId: data.requestId, postedAt: perf(), doneAt: null, committedAt: null });
+          }
+        } catch {}
+        return super.postMessage(data);
+      }
+    };
+    // The response arrives on the worker's message event; "committed" is the
+    // next frame after the app applied it. Polled from the click prober's rAF
+    // loop below — cheap enough and avoids patching addEventListener.
+    const drainLayouts = () => {
+      const pending = layouts.filter((l) => l.doneAt == null);
+      if (!pending.length) return;
+      const open = pending.filter((l) => l.doneAt == null);
+      for (const record of open) record.doneAtMaybe = true;
+      requestAnimationFrame(drainLayouts);
+    };
+    requestAnimationFrame(drainLayouts);
+    // ---- first-occurrence markers -------------------------------------------
+    const marks = { firstCardAt: null, toolbarAt: null, skeletonGoneAt: null, graphCanvasAt: null };
+    window.__dagMarks = marks;
+    const has = (sel) => !!document.querySelector(sel);
+    const observe = () => {
+      if (marks.firstCardAt == null && has('[data-dag-group],[data-dag-issue]')) marks.firstCardAt = perf();
+      if (marks.toolbarAt == null && has('[data-dag-toolbar]')) marks.toolbarAt = perf();
+      if (marks.graphCanvasAt == null && has('[data-dag-canvas]')) marks.graphCanvasAt = perf();
+      if (marks.firstCardAt != null && marks.skeletonGoneAt == null && !has('[data-slot="skeleton"]')) {
+        marks.skeletonGoneAt = perf();
+      }
+      if (marks.skeletonGoneAt != null && marks.toolbarAt != null) return; // observer can stop
+      setTimeout(observe, 16);
+    };
+    observe();
+    // Layout commit frame: resolve the newest unanswered layout on the frame
+    // after the skeleton-gone mark moves (the app applied the result).
+    const commitWatcher = () => {
+      const open = layouts.filter((l) => l.committedAt == null);
+      for (const record of open) {
+        if (marks.skeletonGoneAt != null && record.postedAt <= marks.skeletonGoneAt) {
+          record.committedAt = marks.skeletonGoneAt;
+        }
+      }
+      requestAnimationFrame(commitWatcher);
+    };
+    requestAnimationFrame(commitWatcher);
+    // A worker message marks doneAt: patch addEventListener on workers we
+    // construct is awkward post-construction; instead watch for the React
+    // commit via skeleton. doneAt = the frame the skeleton disappeared, which
+    // bounds postMessage→commit from above (the commit IS the response).
+    // ---- in-page click prober ------------------------------------------------
+    window.__dagClick = (x, y) => new Promise((resolve) => {
+      const startedAt = perf();
+      let settled = false;
+      const finish = (outcome, at) => {
+        if (settled) return;
+        settled = true;
+        observer.disconnect();
+        resolve({ outcome, elapsed: Math.round(at - startedAt) });
+      };
+      const labelSeen = () => !!document.querySelector('[data-dag-toolbar] [data-dag-label]');
+      const observer = new MutationObserver(() => {
+        if (labelSeen()) {
+          // Resolved when the label is on screen AND the next frame ran.
+          requestAnimationFrame(() => finish("selected", perf()));
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      const target = document.elementFromPoint(x, y);
+      // 'view: window' is required: d3's drag/zoom handlers read
+      // event.view.document, which is null on dispatched events without it.
+      const opts = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, view: window, pointerId: 1, isPrimary: true };
+      target?.dispatchEvent(new PointerEvent("pointerdown", { ...opts, pointerType: "mouse" }));
+      target?.dispatchEvent(new MouseEvent("mousedown", opts));
+      target?.dispatchEvent(new PointerEvent("pointerup", { ...opts, pointerType: "mouse" }));
+      target?.dispatchEvent(new MouseEvent("mouseup", opts));
+      target?.dispatchEvent(new MouseEvent("click", opts));
+      setTimeout(() => finish("timeout", perf()), 10_000);
+      void labelSeen;
+    });
+    // Clear selection the same way a user would: click empty canvas pane.
+    window.__dagClearSelection = () => new Promise((resolve) => {
+      const pane = document.querySelector(".react-flow__pane");
+      if (!pane) { resolve(false); return; }
+      const rect = pane.getBoundingClientRect();
+      const x = rect.x + 8, y = rect.y + rect.height - 8;
+      const opts = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, view: window, pointerId: 2 };
+      pane.dispatchEvent(new PointerEvent("pointerdown", { ...opts, pointerId: 2, pointerType: "mouse" }));
+      pane.dispatchEvent(new MouseEvent("mousedown", opts));
+      pane.dispatchEvent(new PointerEvent("pointerup", { ...opts, pointerId: 2, pointerType: "mouse" }));
+      pane.dispatchEvent(new MouseEvent("mouseup", opts));
+      pane.dispatchEvent(new MouseEvent("click", opts));
+      const started = perf();
+      const check = () => {
+        if (!document.querySelector('[data-dag-toolbar] [data-dag-label]')) resolve(true);
+        else if (perf() - started > 5_000) resolve(false);
+        else requestAnimationFrame(check);
+      };
+      check();
+    });
+    // Locate a point on the bare pane (empty canvas) near the centre.
+    window.__dagPanePoint = () => {
+      const pane = document.querySelector(".react-flow__pane");
+      if (!pane) return null;
+      const rect = pane.getBoundingClientRect();
+      for (let radius = 0; radius <= Math.min(rect.width, rect.height) / 2; radius += 24) {
+        for (const [dx, dy] of [[0, 0], [radius, 0], [-radius, 0], [0, radius], [0, -radius]]) {
+          const x = rect.x + rect.width / 2 + dx;
+          const y = Math.min(rect.y + rect.height - 40, rect.y + rect.height / 2 + dy);
+          const hit = document.elementFromPoint(x, y);
+          if (hit === pane) return { x, y };
+        }
+      }
+      return null;
+    };
+    // Cards actually visible in the viewport, with a body point that is not
+    // the 76px group header (the fold toggle lives there).
+    window.__dagVisibleCards = () => {
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const cards = [...document.querySelectorAll('.react-flow__node')]
+        .filter((el) => el.querySelector('[data-dag-group],[data-dag-issue]'));
+      const out = [];
+      for (const el of cards) {
+        const rect = el.getBoundingClientRect();
+        if (rect.bottom < 0 || rect.top > vh || rect.right < 0 || rect.left > vw) continue;
+        const x = rect.x + Math.min(rect.width / 2, 124);
+        const y = rect.y + Math.min(rect.height - 12, 96);
+        const hit = document.elementFromPoint(x, y);
+        if (hit && (el === hit || el.contains(hit))) out.push({ x, y, id: el.getAttribute("data-id") });
+      }
+      return out;
+    };
+    // Live viewport transform, for pan verification.
+    window.__dagViewport = () =>
+      document.querySelector(".react-flow__viewport")?.getAttribute("style") ?? null;
   })();
 `;
 
-test(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) => {
+const dagTest = SKIP ? test.skip : test;
+dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) => {
   const origin = new URL(baseURL ?? "http://localhost:3000").origin;
-  const graph = buildIssueGraphFixture(CONFIG);
+  const graph = buildIssueGraphFixture(CONFIG!);
   const stats = analyzeIssueGraphFixture(graph);
   const graphJson = JSON.stringify(graph);
   const details = new Map(graph.nodes.map((n) => [n.id, issueDetail(n)]));
   const unknownRequests: string[] = [];
   const pageErrors: string[] = [];
   const external: string[] = [];
-  /** Fetch timing: request sent → response ended, from the route handler. */
-  let fetchDoneAt: number | null = null;
-  let fetchStartAt: number | null = null;
   let graphBodyBytes = 0;
 
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -190,7 +349,7 @@ test(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) => 
       }),
     );
   }, WORKSPACE_SLUG);
-  await context.addInitScript(FRAME_SAMPLER);
+  await context.addInitScript(INSTRUMENT);
 
   await context.route("**/*", async (route) => {
     const url = new URL(route.request().url());
@@ -200,11 +359,8 @@ test(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) => 
     }
     if (!url.pathname.startsWith("/api/")) return route.continue();
     if (url.pathname === `/api/workspaces/${WORKSPACE_ID}/issues/graph`) {
-      fetchStartAt ??= Date.now();
       graphBodyBytes = Buffer.byteLength(graphJson);
-      await route.fulfill({ status: 200, contentType: "application/json", body: graphJson });
-      fetchDoneAt = Date.now();
-      return;
+      return route.fulfill({ status: 200, contentType: "application/json", body: graphJson });
     }
     const detail = /^\/api\/issues\/([0-9a-f-]+)$/.exec(url.pathname);
     if (detail && details.has(detail[1]!)) return route.fulfill(json(details.get(detail[1]!)));
@@ -242,8 +398,8 @@ test(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) => 
         return route.fulfill(json({}));
     }
   });
-  // The graph page has no socket dependency to prove liveness; the canvas DOM
-  // does that. A stubbed socket keeps the realtime layer out of the numbers.
+  // A stubbed socket keeps the realtime layer out of the numbers; the canvas
+  // DOM proves liveness.
   await context.routeWebSocket((url) => url.pathname === "/ws", (ws) => {
     ws.onMessage(() => {});
   });
@@ -255,84 +411,76 @@ test(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) => 
 
   const invalid: string[] = [];
   const timedOut: Record<string, true> = {};
-  const remaining = (limit: number, since: number) => Math.max(0, limit - (Date.now() - since));
-  async function bounded<T>(work: Promise<T>, label: string, limit: number, since: number): Promise<T | null> {
-    const budget = remaining(limit, since);
-    if (budget <= 0) { timedOut[label] = true; return null; }
-    let timer: NodeJS.Timeout | undefined;
-    const expired = new Promise<null>((done) => { timer = setTimeout(() => done(null), budget); });
-    const value = await Promise.race([work.then((v) => v, () => null), expired]);
-    clearTimeout(timer);
-    if (value === null) timedOut[label] = true;
-    return value;
-  }
 
   // ---- 1. Navigate: fetch → parse → layout → first interactive ------------
   const navStart = Date.now();
   await page.goto(`${origin}/${WORKSPACE_SLUG}/issues`, { waitUntil: "domcontentloaded", timeout: LOAD_LIMIT_MS });
 
-  // The view must actually be the DAG: the canvas container is its marker.
-  const canvas = page.locator("[data-dag-canvas]");
-  const toolbar = page.locator("[data-dag-toolbar]");
-  const dagVisible = await bounded(
-    expect(canvas).toBeVisible({ timeout: LOAD_LIMIT_MS }).then(() => true as const),
-    "canvas", LOAD_LIMIT_MS, navStart,
-  );
-  let firstInteractiveMs: number | null = null;
-  if (dagVisible) {
-    // First interactive = cards on the canvas AND no pending layout skeleton.
-    // Collapsed lines render group cards; expanded render task cards; either
-    // counts. The layout-pending state is the skeleton block, whose absence
-    // plus a toolbar means the first layout committed.
-    const interactive = await bounded(
-      (async () => {
-        await expect(page.locator("[data-dag-group], [data-dag-issue]").first()).toBeVisible({ timeout: LOAD_LIMIT_MS });
-        await expect(page.locator('[data-slot="skeleton"]')).toHaveCount(0, { timeout: LOAD_LIMIT_MS });
-        await expect(toolbar).toBeVisible({ timeout: LOAD_LIMIT_MS });
-        await expect(page.locator(".react-flow__node").first()).toBeVisible({ timeout: LOAD_LIMIT_MS });
-        return true as const;
-      })().catch(() => null),
-      "first_interactive", LOAD_LIMIT_MS, navStart,
-    );
-    if (interactive) firstInteractiveMs = Date.now() - navStart;
-  } else {
-    invalid.push("DAG canvas never rendered");
+  // First interactive, measured in-page: canvas rendered, cards appeared,
+  // pending skeleton gone, toolbar visible. Poll the marks until all four
+  // exist or the budget expires.
+  let marks: { firstCardAt: number | null; toolbarAt: number | null; skeletonGoneAt: number | null; graphCanvasAt: number | null };
+  try {
+    marks = await page.waitForFunction(
+      () => {
+        const m = (window as unknown as { __dagMarks: Record<string, number | null> }).__dagMarks;
+        return m.firstCardAt != null && m.skeletonGoneAt != null && m.toolbarAt != null
+          ? (m as unknown) : false;
+      },
+      undefined,
+      { timeout: LOAD_LIMIT_MS },
+    ).then((handle) => handle.jsonValue() as unknown as typeof marks);
+  } catch {
+    marks = await page.evaluate(() => (window as unknown as { __dagMarks: typeof marks }).__dagMarks);
+    // "Nothing rendered" (canvas or cards never appeared) is an invalid
+    // sample, not a slow one: an empty page must never read as either fast
+    // or merely tardy. Only a page that got as far as cards and then stalled
+    // past the budget counts as a timeout.
+    if (marks.graphCanvasAt == null) invalid.push("DAG canvas never rendered");
+    else if (marks.firstCardAt == null) invalid.push("canvas rendered but no cards appeared");
+    else timedOut.first_interactive = true;
   }
+  const firstInteractiveMs = marks.firstCardAt != null && marks.skeletonGoneAt != null && marks.toolbarAt != null
+    ? Math.round(Math.max(marks.firstCardAt, marks.skeletonGoneAt, marks.toolbarAt))
+    : null;
 
-  // Parse timing: the page's own resource timing for the graph response gives
-  // JSON arrival; zod validation cost is measured in-page on the same bytes.
+  // Fetch timing from the page's own resource timing (single request).
   const resourceTiming = await page.evaluate(() =>
-    performance.getEntriesByType("resource").map((e) => ({
-      name: e.name, start: e.startTime, end: (e as PerformanceResourceTiming).responseEnd,
-    })).filter((e) => e.name.includes("/issues/graph")),
+    performance.getEntriesByType("resource")
+      .map((e) => ({ name: e.name, start: e.startTime, end: (e as PerformanceResourceTiming).responseEnd }))
+      .filter((e) => e.name.includes("/issues/graph")),
   );
-  const parseMs = await page.evaluate(async (text) => {
+  const graphTiming = resourceTiming[0];
+  const fetchMs = graphTiming ? Math.round(graphTiming.end - graphTiming.start) : null;
+
+  // Parse + validate: JSON.parse AND IssueGraphSchema.parse on the same
+  // bytes, in Node (the schema is the same module the app bundles; recorded
+  // here because the app's own in-flight validation is not observable
+  // separately — see README).
+  const validateMs = (() => {
     const started = performance.now();
-    JSON.parse(text);
+    IssueGraphSchema.parse(JSON.parse(graphJson));
     return Math.round(performance.now() - started);
-  }, graphJson).catch(() => null);
+  })();
+  const parseMs = (() => {
+    const started = performance.now();
+    JSON.parse(graphJson);
+    return Math.round(performance.now() - started);
+  })();
 
-  // Layout timing: worker postMessage → commit. Measured by watching the
-  // layout-pending marker disappear after data arrival; on a slow machine the
-  // pending skeleton IS the layout request in flight.
-  const layoutPendingGone = firstInteractiveMs != null ? firstInteractiveMs : null;
+  // Layout timing: worker postMessage → result committed, per requestId.
+  const layouts = await page.evaluate(
+    () => (window as unknown as { __dagLayouts: { requestId: number; postedAt: number; committedAt: number | null }[] }).__dagLayouts,
+  );
+  const committed = layouts.filter((l) => l.committedAt != null);
+  const layoutMs = committed.length
+    ? Math.round(Math.max(...committed.map((l) => l.committedAt! - l.postedAt)))
+    : null;
 
-  // If the canvas never came up, everything else is moot.
-  if (!dagVisible) {
-    const report = {
-      status: timedOut.canvas ? "timeout" : "invalid",
-      invalid, timed_out_at: Object.keys(timedOut),
-      dataset: DATASET, fixture_version: ISSUE_GRAPH_FIXTURE_VERSION,
-      fixture_digest: issueGraphFixtureDigest(graph),
-      fixture_stats: stats, throttle_cpu: THROTTLE,
-      first_interactive_ms: null, parse_ms: parseMs, layout_ms: null,
-      fetch_ms: fetchStartAt != null && fetchDoneAt != null ? fetchDoneAt - fetchStartAt : null,
-      page_errors: pageErrors, unmocked_requests: unknownRequests,
-    };
-    emit(report);
-    if (timedOut.canvas) throw new Error(`canvas never rendered within ${LOAD_LIMIT_MS}ms`);
-    expect(invalid.join(" | ")).toBe("");
-    return;
+  // Per-measurement outcomes. Gestures only make sense once cards exist.
+  const cardsPresent = marks.firstCardAt != null;
+  if (!cardsPresent) {
+    if (invalid.length === 0) invalid.push("no cards: gestures and clicks not measurable");
   }
 
   // ---- 2. Pan and zoom frame rate ------------------------------------------
@@ -347,86 +495,128 @@ test(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) => 
     await page.evaluate(() => {
       (window as unknown as { __dagSample: (on: boolean) => void }).__dagSample(false);
     });
-    const frames = intervals.filter((i) => i > 0 && i < 1_000);
+    // Every interval counts, including stalls: a janked gesture must show up
+    // as a long max, not a trimmed average.
+    const frames = intervals.filter((i) => i > 0);
     if (frames.length < 10) return null;
     const avg = frames.reduce((a, b) => a + b, 0) / frames.length;
     return {
       frames: frames.length,
       p50_ms: percentile(frames, 50),
       p95_ms: percentile(frames, 95),
+      max_ms: Math.round(Math.max(...frames)),
+      long_frames_100ms: frames.filter((i) => i >= 100).length,
       avg_fps: Math.round((1000 / avg) * 10) / 10,
     };
   };
 
-  const box = await canvas.boundingBox();
-  const cx = (box?.x ?? 800) + (box?.width ?? 800) / 2;
-  const cy = (box?.y ?? 400) + (box?.height ?? 600) / 2;
-
-  const pan = await frameStats(async () => {
-    await page.mouse.move(cx, cy);
-    await page.mouse.down();
-    const panStart = Date.now();
-    let step = 0;
-    while (Date.now() - panStart < GESTURE_MS) {
-      // Diagonal sweep, direction reversing every ~800ms.
-      const phase = Math.floor((Date.now() - panStart) / 800) % 2 === 0 ? 1 : -1;
-      await page.mouse.move(cx + step * phase, cy + step * phase * 0.6, { steps: 4 });
-      step = (step + 14) % 120;
-      await page.waitForTimeout(16);
+  /** "invalid" when the gesture provably did nothing (the viewport transform
+   * never changed at any sampled moment), "timeout" when frames never came,
+   * stats otherwise. The transform is sampled throughout the gesture, not
+   * only at the end: an alternating zoom that returns to its start must still
+   * count as a real gesture. */
+  const gesture = async (label: string, run: () => Promise<void>) => {
+    if (!cardsPresent) return "invalid" as const;
+    const before = await page.evaluate(() => (window as unknown as { __dagViewport: () => string | null }).__dagViewport());
+    const seen = new Set<string>([before ?? "null"]);
+    const sampler = setInterval(() => {
+      void page.evaluate(() => (window as unknown as { __dagViewport: () => string | null }).__dagViewport())
+        .then((style) => seen.add(style ?? "null"))
+        .catch(() => undefined);
+    }, 100);
+    const result = await frameStats(run);
+    clearInterval(sampler);
+    if (result === null) {
+      timedOut[label] = true;
+      return "timeout" as const;
     }
-    await page.mouse.up();
-  });
+    if (seen.size <= 1) return "invalid" as const;
+    return result;
+  };
 
-  const zoom = await frameStats(async () => {
-    const zoomStart = Date.now();
-    let tick = 0;
-    while (Date.now() - zoomStart < GESTURE_MS) {
-      // Ctrl+wheel is the canvas's zoom activation key.
-      await page.keyboard.down("Control");
-      await page.mouse.wheel(0, tick % 2 === 0 ? -120 : 120);
-      await page.keyboard.up("Control");
-      tick += 1;
-      await page.waitForTimeout(90);
-    }
-  });
-
-  // ---- 3. Click response ----------------------------------------------------
-  // With onlyRenderVisibleElements the off-screen cards are not mounted, so
-  // the sample set is what the viewport actually shows.
-  const nodeCards = page.locator(".react-flow__node[data-id]").filter({ has: page.locator("[data-dag-group], [data-dag-issue]") });
-  const visibleCards = nodeCards.filter({ visible: true });
-  const cardCount = await visibleCards.count();
-  const selectionLabel = page.locator("[data-dag-toolbar] [data-dag-label]");
-  const clickSamples: number[] = [];
-  for (let i = 0; i < CLICK_SAMPLES && cardCount > 0; i++) {
-    const index = Math.floor((i * cardCount) / CLICK_SAMPLES);
-    const card = visibleCards.nth(index);
-    if (!(await card.count())) continue;
-    const started = Date.now();
-    // A card body click selects it (the header button toggles folds instead).
-    await card.click({ timeout: 10_000, position: { x: 30, y: 30 } }).catch(() => {});
-    // Click response ends when the toolbar's selection zone shows the card.
-    try {
-      await expect
-        .poll(async () => (await selectionLabel.count())
-          ? await selectionLabel.first().innerText().catch(() => "")
-          : "", { timeout: 10_000 })
-        .not.toBe("");
-      clickSamples.push(Date.now() - started);
-    } catch {
-      // Sample unusable; keep going so the report still carries the rest.
-    }
-    // Clear selection so the next sample starts from the same state.
-    await page.keyboard.press("Escape");
-    await page.waitForTimeout(50);
+  // Pan starts from a bare-pane point (cards carry `nopan`).
+  const panePoint = await page.evaluate(() => (window as unknown as { __dagPanePoint: () => { x: number; y: number } | null }).__dagPanePoint());
+  let pan: Record<string, number | null> | string;
+  let zoom: Record<string, number | null> | string;
+  if (!cardsPresent) {
+    pan = "invalid";
+    zoom = "invalid";
+  } else if (!panePoint) {
+    invalid.push("no empty canvas point found: pan not measurable");
+    pan = "invalid";
+    zoom = "invalid";
+  } else {
+    pan = await gesture("pan", async () => {
+      await page.mouse.move(panePoint.x, panePoint.y);
+      await page.mouse.down();
+      const panStart = Date.now();
+      let step = 0;
+      while (Date.now() - panStart < GESTURE_MS) {
+        const phase = Math.floor((Date.now() - panStart) / 800) % 2 === 0 ? 1 : -1;
+        await page.mouse.move(panePoint.x + step * phase, panePoint.y + step * phase * 0.6, { steps: 4 });
+        step = (step + 14) % 120;
+        await page.waitForTimeout(16);
+      }
+      await page.mouse.up();
+    });
+    zoom = await gesture("zoom", async () => {
+      // The wheel must land with the pointer on the canvas: hover a bare-pane
+      // point first, exactly like a user would.
+      await page.mouse.move(panePoint.x, panePoint.y);
+      const zoomStart = Date.now();
+      let tick = 0;
+      while (Date.now() - zoomStart < GESTURE_MS) {
+        // Ctrl+wheel is the canvas's zoom activation key.
+        await page.keyboard.down("Control");
+        await page.mouse.wheel(0, tick % 2 === 0 ? -120 : 120);
+        await page.keyboard.up("Control");
+        tick += 1;
+        await page.waitForTimeout(90);
+      }
+    });
   }
 
+  // ---- 3. Click response ----------------------------------------------------
+  // In-page: real pointer events on visible cards' bodies (never the 76px
+  // group header), timed from pointerdown to the frame after the toolbar's
+  // selection label appears. Each sample starts from a cleared selection.
+  const clickSamples: number[] = [];
+  let clickOutcome: Record<string, number | null> | string = "invalid";
+  if (cardsPresent) {
+    let anySelected = false;
+    let anyTimeout = false;
+    for (let i = 0; i < CLICK_SAMPLES; i++) {
+      const cards = await page.evaluate(() => (window as unknown as { __dagVisibleCards: () => { x: number; y: number }[] }).__dagVisibleCards());
+      if (!cards.length) break;
+      const card = cards[Math.floor((i * cards.length) / CLICK_SAMPLES)]!;
+      // Clear any previous selection first, and prove it is gone.
+      await page.evaluate(() => (window as unknown as { __dagClearSelection: () => Promise<boolean> }).__dagClearSelection());
+      const result = await page.evaluate(
+        ({ x, y }) => (window as unknown as { __dagClick: (x: number, y: number) => Promise<{ outcome: string; elapsed: number }> }).__dagClick(x, y),
+        card,
+      );
+      if (result.outcome === "selected") {
+        clickSamples.push(result.elapsed);
+        anySelected = true;
+      } else {
+        anyTimeout = true;
+      }
+    }
+    clickOutcome = clickSamples.length >= 3
+      ? { samples: clickSamples.length, p50_ms: percentile(clickSamples, 50), p95_ms: percentile(clickSamples, 95) }
+      : anySelected ? "timeout" : anyTimeout ? "timeout" : "invalid";
+    if (clickOutcome === "timeout") timedOut.click = true;
+  }
+
+  // ---- 4. Collect ------------------------------------------------------------
+  if (unknownRequests.length) invalid.push(`unmocked requests: ${[...new Set(unknownRequests)].slice(0, 5).join(", ")}`);
   if (external.length) invalid.push(`external requests: ${external.join(", ")}`);
   if (pageErrors.length) invalid.push(`page errors: ${pageErrors.slice(0, 3).join(" | ")}`);
 
-  const status = Object.keys(timedOut).length ? "timeout" : invalid.length ? "invalid" : "ok";
+  const cpus = os.cpus();
   emit({
-    status, invalid,
+    status: Object.keys(timedOut).length ? "timeout" : invalid.length ? "invalid" : "ok",
+    invalid,
     timed_out_at: Object.keys(timedOut),
     dataset: DATASET,
     fixture_version: ISSUE_GRAPH_FIXTURE_VERSION,
@@ -438,20 +628,20 @@ test(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) => 
       browser_version: page.context().browser()?.version() ?? "unknown",
       platform: process.platform,
       arch: process.arch,
-      cpus: (await import("node:os")).cpus().length,
+      cpus: cpus.length,
+      cpu_model: cpus[0]?.model ?? "unknown",
+      memory_gb: Math.round(os.totalmem() / 1024 ** 3),
     },
-    fetch_ms: fetchStartAt != null && fetchDoneAt != null ? fetchDoneAt - fetchStartAt : null,
+    fetch_ms: fetchMs,
     fetch_body_bytes: graphBodyBytes,
     parse_ms: parseMs,
-    resource_timing: resourceTiming.slice(0, 1),
-    layout_ms: layoutPendingGone,
+    parse_and_validate_ms: validateMs,
+    layout_ms: layoutMs,
+    layout_requests: layouts.length,
     first_interactive_ms: firstInteractiveMs,
-    pan: pan ?? "invalid",
-    zoom: zoom ?? "invalid",
-    click: clickSamples.length >= 3
-      ? { samples: clickSamples.length, p50_ms: percentile(clickSamples, 50), p95_ms: percentile(clickSamples, 95) }
-      : (cardCount === 0 ? "invalid" : "timeout"),
-    rendered_nodes: cardCount,
+    pan,
+    zoom,
+    click: clickOutcome,
     unmocked_requests: [...new Set(unknownRequests)].slice(0, 10),
     page_errors: pageErrors.slice(0, 5),
   });

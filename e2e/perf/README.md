@@ -23,7 +23,8 @@ main-process behaviour is not exercised here.
 Against a frontend you already have running:
 
 ```bash
-pnpm exec playwright test --config=playwright.perf.config.ts
+# typing scenario only (what the comparison measures)
+pnpm exec playwright test --config=playwright.perf.config.ts e2e/perf/typing-under-live-runs.spec.ts
 # PLAYWRIGHT_BASE_URL defaults to http://localhost:3000
 # PERF_REPORT_PATH=<file> also writes the JSON report
 ```
@@ -35,9 +36,11 @@ PERF_DATASET=stress-5000 PERF_THROTTLE_CPU=4 PERF_REPORT_PATH=dag-report.json \
   pnpm exec playwright test --config=playwright.perf.config.ts e2e/perf/dag-view.spec.ts
 ```
 
-`PERF_DATASET` picks one of the synthetic graphs (see below);
-`PERF_THROTTLE_CPU` (default 1) applies CDP CPU throttling — use 4 for a
-low-end-machine sample. Reports land in `PERF_REPORT_PATH` and on stdout as
+`PERF_DATASET` picks one of the synthetic graphs (see below); unset or `none`,
+the DAG scenario is skipped — a bare perf run measures the typing scenario
+only, and `perf-compare.mjs` pins itself to the typing spec for the same
+reason. `PERF_THROTTLE_CPU` (default 1) applies CDP CPU throttling — see the
+caveat below. Reports land in `PERF_REPORT_PATH` and on stdout as
 `PERF_REPORT {…}`.
 
 Comparing two refs — this builds and measures each one, in sequence:
@@ -69,11 +72,16 @@ OL-184's stress shape (~2,400 unfinished).
 | `stress-5000` | 5,000 | OL-184 stress: ~2,400 unfinished |
 | `1000` / `2500` / `10000` | 1,000 / 2,500 / 10,000 | stress shape, scale curve |
 | `big-line` | 1,000 | one single line of 1,000 tasks |
+| `empty` | 0 | harness self-check: the scenario must report `invalid`, never numbers |
 
 Every dataset: six projects (tooling → art/server/audio → client → level),
 lines of 30–40 tasks with 2–3 sub-line layers, 1–2 in-line prerequisites per
-task, cancelled-but-still-blocking cases, run summaries on in-progress tasks,
-and fully-done lines the default view hides.
+task, cross-line prerequisites strictly down the production flow
+(tooling lines get none), no ancestor↔descendant edges (the backend refuses
+them), dependency summaries computed the backend way (ancestral closure,
+`done`-only satisfaction), nodes/edges/projects sorted by id like the real
+endpoint, cancelled-but-still-blocking cases, run summaries on in-progress
+tasks, and fully-done lines the default view hides.
 
 ## What the DAG scenario measures
 
@@ -83,21 +91,32 @@ from a fixed route table; anything unknown invalidates the sample.
 
 | Report field | Definition |
 | --- | --- |
-| `fetch_ms` | Graph request sent → response ended (route handler). Local synthetic transport — real-network numbers are OL-275's. |
-| `parse_ms` | `JSON.parse` of the exact graph bytes, measured in-page. zod validation runs inside the app's query path and is part of `first_interactive_ms`. |
-| `layout_ms` | The layout pipeline's contribution to first load; the committed layout is proven by the pending skeleton disappearing. |
-| `first_interactive_ms` | Navigation start → canvas has rendered cards AND the layout-pending skeleton is gone AND the toolbar is visible. This is the "first screen operable" number. |
-| `pan` / `zoom` | Scripted drag / Ctrl+wheel gestures, ~4 s each; rAF frame intervals → p50 ms, p95 ms, avg FPS. |
-| `click` | Click a card → toolbar selection label shows it; ≥ 3 samples → p50/p95 ms. |
+| `fetch_ms` | Graph request sent → response ended, from the page's own resource timing (one request). Local synthetic transport — real-network numbers are OL-275's. |
+| `parse_ms` / `parse_and_validate_ms` | `JSON.parse` alone, and `JSON.parse` + `IssueGraphSchema.parse`, on the exact graph bytes. Measured in the Playwright process against the same schema module the app bundles — the app's in-flight validation is not separately observable. |
+| `layout_ms` | Layout worker `postMessage` → result committed (next frame after the pending skeleton disappears), per requestId — instrumentation wraps `Worker` before the app boots. Max over the run's committed layout requests. |
+| `first_interactive_ms` | Navigation start → canvas has rendered cards AND the layout-pending skeleton is gone AND the toolbar is visible, each timestamped in-page (MutationObserver + performance.now), not by Playwright polling. |
+| `pan` / `zoom` | Scripted drag / Ctrl+wheel gestures, ~4 s each. Pan starts from a verified bare-pane point (cards are `nopan`) and is discarded as `invalid` if the viewport transform never changed; rAF frame intervals → p50/p95/max ms, long-frame count, avg FPS. Stalled frames are counted, not trimmed. |
+| `click` | In-page: real pointer events on a visible card's body (never the group header), timed from pointerdown to the frame after the toolbar's selection label appears; every sample starts from a cleared selection. ≥ 3 samples → p50/p95 ms, else `timeout`/`invalid`. |
 
 Outcomes that are not durations are reported as strings: `timeout` when a
 budget expired, `invalid` when nothing rendered or the sample was
 contaminated (unmocked requests, page errors). A report never shows a fast
 number for an empty page.
 
-The report records machine info (browser, Node, platform, CPU count) and
-`throttle_cpu`; `fixture_stats` carries the dataset's shape statistics and
-`fixture_digest` identifies the exact bytes.
+Outcomes: if the canvas renders but no card ever appears, the report is
+`invalid` (not a timeout) and no gesture or click numbers are produced;
+unmocked API requests, external requests and page errors also make the sample
+`invalid`; a per-measurement budget expiry lands in `timed_out_at` and the
+overall `status` becomes `timeout`.
+
+The report records machine info (browser, Node, platform, CPU count, CPU
+model, memory) and `throttle_cpu`; `fixture_stats` carries the dataset's
+shape statistics and `fixture_digest` identifies the exact bytes.
+
+**CPU-throttle caveat**: `PERF_THROTTLE_CPU` uses CDP
+`Emulation.setCPUThrottlingRate` on the page session. Whether it extends to
+the ELK layout worker has not been verified — treat throttled `layout_ms` as
+page-side only until that is checked on your setup.
 
 Adding steps (e.g. "enter a task line" timing): put the step in
 `e2e/perf/dag-view.spec.ts` between the section markers, emit one more report
