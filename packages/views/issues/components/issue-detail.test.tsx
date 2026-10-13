@@ -3143,7 +3143,10 @@ describe("IssueDetail (shared)", () => {
   it("passes the timeline jump helper to the YSK archive section", async () => {
     const reply = {
       ...mockTimeline[1]!, id: "archive-reply", parent_id: "comment-1",
-      content: "Reply the archive points at", created_at: "2026-01-18T00:00:00Z", updated_at: "2026-01-18T00:00:00Z",
+      content: "Reply the archive points at", created_at: "2026-01-18T00:00:00Z",
+      // Distinct from created_at so the commentTime assertion below fails if
+      // the lookup reads the edit time instead of the creation time.
+      updated_at: "2026-01-18T05:00:00Z",
     };
     mockApiObj.listTimeline.mockResolvedValue([mockTimeline[0]!, reply]);
     renderIssueDetail();

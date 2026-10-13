@@ -234,6 +234,18 @@ describe("YouShouldKnowArchiveSection — grouping and order", () => {
     expect(screen.getByText(/^Comment ·/).textContent).toBe("Comment · Oct 13, 9:01 AM");
   });
 
+  it("falls back to the group's earliest tip time when the comment time is unparseable", () => {
+    renderSection(
+      [
+        tip({ id: "a", anchor_comment_id: "c-bad", created_at: "2026-10-13T09:05:00Z" }),
+        tip({ id: "b", anchor_comment_id: "c-bad", created_at: "2026-10-13T09:01:00Z" }),
+      ],
+      undefined,
+      () => "not-a-date",
+    );
+    expect(screen.getByText(/^Comment ·/).textContent).toBe("Comment · Oct 13, 9:01 AM");
+  });
+
   it("does not link the description group", () => {
     renderSection([tip({ anchor_comment_id: null })]);
     expect(screen.getByText("Issue description").closest("button")).toBeNull();
