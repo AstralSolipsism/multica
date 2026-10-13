@@ -14,3 +14,9 @@ export function dagNodeSize(kind: DagNodeKindForSize) {
 
 export const DAG_GROUP_TB_MIN_WIDTH = 360;
 export const DAG_STAGE_HEADER_HEIGHT = 38;
+
+// Stage 8 geometry. Change this policy here when adding another direction.
+export const DAG_FLOW = { direction: "RIGHT", inputSide: "WEST", outputSide: "EAST" } as const;
+export const DAG_OVERVIEW_SIZE = { width: 280, height: 140 } as const;
+export const DAG_EXTERNAL_SIZE = { width: 184, height: 76 } as const;
+export const DAG_LAYOUT_DEADLINE_MS = 3000;

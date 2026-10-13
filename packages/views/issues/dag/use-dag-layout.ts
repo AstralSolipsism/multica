@@ -9,6 +9,7 @@ import type {
   DagLayoutResponse,
   DagLayoutResult,
 } from "./dag-layout";
+import { createDagWorkerChannels } from "./dag-worker-runner";
 import type { DagDirection } from "@multica/core/issues/stores/view-store";
 
 export type DagLayoutExecutor = (
@@ -33,55 +34,14 @@ export interface DagLayoutState<T> {
 }
 
 export function createWorkerRunner(): DagLayoutRunner {
-  let worker: Worker | null = null;
-  let active: { requestId: number; onDone: (response: DagLayoutResponse) => void } | null = null;
-  let failure: string | null = null;
-  const fail = (requestId: number, error: string): DagLayoutResponse => ({
-    requestId, positions: {}, groups: {}, routes: {}, ports: {}, error,
-  });
-  const stop = () => {
-    worker?.terminate();
-    worker = null;
-    active = null;
-    failure = null;
-  };
-  const prepare = () => {
-    if (worker || failure) return;
-    try {
-      const instance = new Worker(new URL("./dag-layout-worker.ts", import.meta.url), { type: "module" });
-      worker = instance;
-      instance.addEventListener("message", (event: MessageEvent<DagLayoutResponse>) => {
-        if (worker !== instance || !active || event.data?.requestId !== active.requestId) return;
-        const pending = active!;
-        active = null;
-        pending.onDone(event.data);
-      });
-      instance.addEventListener("error", (event) => {
-        if (worker !== instance) return;
-        failure = event.message || "DAG worker failed";
-        instance.terminate();
-        worker = null;
-        const pending = active;
-        active = null;
-        if (pending) pending.onDone(fail(pending.requestId, failure));
-      });
-    } catch (error) {
-      failure = error instanceof Error ? error.message : "DAG worker failed";
-    }
-  };
+  const channels = createDagWorkerChannels<DagLayoutRequest, DagLayoutResponse>(
+    () => new Worker(new URL("./dag-layout-worker.ts", import.meta.url), { type: "module" }),
+    (requestId, error) => ({ requestId, positions: {}, groups: {}, routes: {}, ports: {}, error }),
+  );
   return {
-    prepare,
-    execute(request, onDone) {
-      if (active) stop();
-      prepare();
-      if (failure) {
-        onDone(fail(request.requestId, failure));
-        return;
-      }
-      active = { requestId: request.requestId, onDone };
-      worker!.postMessage(request);
-    },
-    terminate: stop,
+    prepare: () => channels.prepare("projection"),
+    execute: (request, onDone) => channels.execute("projection", request, onDone),
+    terminate: () => channels.terminate(),
   };
 }
 let nextRequestId = 1;
