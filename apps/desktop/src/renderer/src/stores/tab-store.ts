@@ -252,6 +252,30 @@ interface TabStore {
     value: string | undefined,
   ) => void;
   /**
+   * Delete every view-state entry of one route whose entry key starts with
+   * `entryKeyPrefix`. The navigation layer clears a route's "comment
+   * highlight already landed" record this way when a fresh in-app push
+   * carries a `#comment-…` deep link — the push is new landing intent, while
+   * the record exists only to stop a restore (tab switch back) re-jumping.
+   */
+  clearViewStateEntries: (
+    tabId: string,
+    routeKey: string,
+    entryKeyPrefix: string,
+  ) => void;
+  /**
+   * Re-key all of a route's view-state entries onto another pathname. The
+   * canonical UUID→identifier rewrite `replace`s the URL of the same issue;
+   * without this, records written under the UUID spelling (a landing that ran
+   * before the rewrite committed) are orphaned and a later restore remount
+   * reads an empty entry under the identifier spelling.
+   */
+  migrateViewStateRoute: (
+    tabId: string,
+    fromRouteKey: string,
+    toRouteKey: string,
+  ) => void;
+  /**
    * Force-remount the active tab at the same URL: bump mountGeneration.
    * Query invalidation for the current page's scope is handled by the
    * Coordinator (it watches this counter) so this action stays pure state.
@@ -1129,6 +1153,68 @@ export const useTabStore = create<TabStore>()(
           }
         }
 
+        const nextTabs = [...group.tabs];
+        nextTabs[index] = {
+          ...current,
+          memento: { ...current.memento, view: nextView },
+        };
+        set({
+          byWorkspace: {
+            ...byWorkspace,
+            [slug]: { ...group, tabs: nextTabs },
+          },
+        });
+      },
+
+      clearViewStateEntries(tabId, routeKey, entryKeyPrefix) {
+        const { byWorkspace } = get();
+        const hit = findTabLocation(byWorkspace, tabId);
+        if (!hit) return;
+        const { slug, group, index } = hit;
+        const current = group.tabs[index];
+
+        const prefix = scrollMementoKey(routeKey, entryKeyPrefix);
+        const keys = Object.keys(current.memento.view);
+        if (!keys.some((key) => key.startsWith(prefix))) return;
+
+        const nextView = { ...current.memento.view };
+        for (const key of keys) {
+          if (key.startsWith(prefix)) delete nextView[key];
+        }
+        const nextTabs = [...group.tabs];
+        nextTabs[index] = {
+          ...current,
+          memento: { ...current.memento, view: nextView },
+        };
+        set({
+          byWorkspace: {
+            ...byWorkspace,
+            [slug]: { ...group, tabs: nextTabs },
+          },
+        });
+      },
+
+      migrateViewStateRoute(tabId, fromRouteKey, toRouteKey) {
+        if (fromRouteKey === toRouteKey) return;
+        const { byWorkspace } = get();
+        const hit = findTabLocation(byWorkspace, tabId);
+        if (!hit) return;
+        const { slug, group, index } = hit;
+        const current = group.tabs[index];
+
+        const fromPrefix = `${fromRouteKey}::`;
+        const keys = Object.keys(current.memento.view);
+        if (!keys.some((key) => key.startsWith(fromPrefix))) return;
+
+        const nextView: Record<string, string> = {};
+        for (const key of keys) {
+          if (key.startsWith(fromPrefix)) {
+            nextView[`${toRouteKey}::${key.slice(fromPrefix.length)}`] =
+              current.memento.view[key]!;
+          } else {
+            nextView[key] = current.memento.view[key]!;
+          }
+        }
         const nextTabs = [...group.tabs];
         nextTabs[index] = {
           ...current,

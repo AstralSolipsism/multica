@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { useRestoredScrollOffset } from "@multica/views/platform";
+import { useRestoredScrollOffset, useScrollRestorationAdapter } from "@multica/views/platform";
 import { WebScrollRestorationProvider } from "./scroll-restoration";
+
+// The provider keys memento entries by React's pathname. Tests drive it
+// through this mock; `window.location` is manipulated separately to simulate
+// Next committing the URL a frame AFTER the new route renders.
+const nav = vi.hoisted(() => ({ pathname: "/acme/issues" }));
+vi.mock("next/navigation", () => ({
+  usePathname: () => nav.pathname,
+}));
 
 function ScrollProbe({ containerKey }: { containerKey: string }) {
   const restored = useRestoredScrollOffset(containerKey);
@@ -98,5 +106,36 @@ describe("WebScrollRestorationProvider", () => {
 
     scrollContainer(screen.getByTestId("plain"), 480);
     expect(screen.getByTestId("restored").textContent).toBe("none");
+  });
+
+  // OL-270: the canonical UUID→identifier rewrite remounts the issue detail
+  // while window.location still shows the UUID spelling (Next commits the URL
+  // a frame later). Entries must key by the route React renders, or the
+  // remounted view inherits whatever the previous route stored.
+  it("keys view-state entries by the route React renders, not the uncommitted address bar", () => {
+    let adapter: ReturnType<typeof useScrollRestorationAdapter> = null;
+    function Probe() {
+      adapter = useScrollRestorationAdapter();
+      return null;
+    }
+
+    // The remounted (identifier) route renders before the URL commits.
+    window.history.replaceState({}, "", "/acme/issues/cb240efb-154c-42a8-ae92-42b02676feca");
+    nav.pathname = "/acme/issues/OL-1";
+    const view = render(
+      <WebScrollRestorationProvider>
+        <Probe />
+      </WebScrollRestorationProvider>,
+    );
+    adapter!.setViewState!("highlight:i1", "c1");
+
+    // The address bar catches up; the entry must still be found.
+    window.history.replaceState({}, "", "/acme/issues/OL-1");
+    view.rerender(
+      <WebScrollRestorationProvider>
+        <Probe />
+      </WebScrollRestorationProvider>,
+    );
+    expect(adapter!.getViewState!("highlight:i1")).toBe("c1");
   });
 });

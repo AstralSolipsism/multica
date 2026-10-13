@@ -58,11 +58,15 @@ export function parseCommentHighlightHash(hash: string): string | undefined {
  *  - web: an in-app `router.push` commits the new URL only after the new page
  *    renders (Next's HistoryUpdater), and a same-page push fires no
  *    `hashchange` — a mount-time read sees the PREVIOUS page's fragment, or
- *    never sees the new one;
+ *    never sees the new one. The web adapter compensates: it records every
+ *    push/replace target and reports ITS fragment while the URL commit is
+ *    still pending, so the value is accurate from the destination's first
+ *    render. Hydration is the one frame-late case left (the server snapshot
+ *    is "") — `IssueDetail` captures its deep-link arrival when the issue
+ *    and timeline first become ready, never at mount, so it still lands.
  *  - desktop: the renderer is a MemoryRouter over a `file://` page, so
- *    `window.location.hash` is always empty. Only the tab URL holds it.
- * The adapter reports the fragment of the location it actually navigated to
- * and re-renders when it changes, which covers both in-app push kinds.
+ *    `window.location.hash` is always empty; the adapter's hash comes from
+ *    the tab URL and is frame-accurate.
  */
 function useCommentHighlightHash(): { hash: string; commentId?: string } {
   const { hash } = useNavigation();

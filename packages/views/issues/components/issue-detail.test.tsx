@@ -2537,9 +2537,12 @@ describe("IssueDetail (shared)", () => {
     });
   });
 
-  // OL-270 — an in-app `#comment-…` push re-renders this same mounted detail
-  // with a new `highlightCommentId` (web's /issues/[id] route does not
-  // remount). That jump must reuse the minimap path (Virtuoso scroll-by-index,
+  // OL-270 — an in-app `#comment-…` push changes `highlightCommentId` on a
+  // MOUNTED detail when the route instance is reused: desktop (its
+  // IssueDetailRoute has no key) and same-page pushes on both platforms.
+  // (Web's /issues/[id] page DOES remount on cross-issue pushes — measured on
+  // Next 16.3.4 — so the prop-change path there is the same-page one.)
+  // Such a jump must reuse the minimap path (Virtuoso scroll-by-index,
   // unfold resolved threads) instead of flattening the timeline for one jump;
   // only an ARRIVAL (mount or issue switch) owns the flat deep-link landing.
   describe("highlight change on an already-mounted detail", () => {

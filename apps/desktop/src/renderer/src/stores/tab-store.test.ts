@@ -925,6 +925,67 @@ describe("commitViewState", () => {
   });
 });
 
+describe("clearViewStateEntries", () => {
+  it("deletes only the addressed route's entries matching the prefix", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    const tabId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
+    store.commitViewState(tabId, "/acme/issues/TES-2", "highlight:i1", "c1");
+    store.commitViewState(tabId, "/acme/issues/TES-2", "highlight:i2", "c2");
+    store.commitViewState(tabId, "/acme/issues/TES-2", "other:i3", "c3");
+    store.commitViewState(tabId, "/acme/inbox", "highlight:i1", "c9");
+
+    store.clearViewStateEntries(tabId, "/acme/issues/TES-2", "highlight:");
+
+    expect(useTabStore.getState().byWorkspace.acme.tabs[0].memento.view).toEqual({
+      "/acme/issues/TES-2::other:i3": "c3",
+      "/acme/inbox::highlight:i1": "c9",
+    });
+  });
+
+  it("skips the store write when nothing matches", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    const tabId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
+    store.commitViewState(tabId, "/acme/inbox", "highlight:i1", "c1");
+    const before = useTabStore.getState().byWorkspace.acme;
+
+    store.clearViewStateEntries(tabId, "/acme/inbox", "other:");
+
+    expect(useTabStore.getState().byWorkspace.acme).toBe(before);
+  });
+});
+
+describe("migrateViewStateRoute", () => {
+  it("re-keys the route's entries onto the new pathname", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    const tabId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
+    const uuid = "cb240efb-154c-42a8-ae92-42b02676feca";
+    store.commitViewState(tabId, `/acme/issues/${uuid}`, "highlight:i1", "c1");
+    store.commitViewState(tabId, "/acme/inbox", "highlight:i9", "c9");
+
+    store.migrateViewStateRoute(tabId, `/acme/issues/${uuid}`, "/acme/issues/TES-2");
+
+    expect(useTabStore.getState().byWorkspace.acme.tabs[0].memento.view).toEqual({
+      "/acme/issues/TES-2::highlight:i1": "c1",
+      "/acme/inbox::highlight:i9": "c9",
+    });
+  });
+
+  it("is a no-op when from and to are the same route", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    const tabId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
+    store.commitViewState(tabId, "/acme/inbox", "highlight:i1", "c1");
+    const before = useTabStore.getState().byWorkspace.acme;
+
+    store.migrateViewStateRoute(tabId, "/acme/inbox", "/acme/inbox");
+
+    expect(useTabStore.getState().byWorkspace.acme).toBe(before);
+  });
+});
+
 describe("bulk tab closing", () => {
   it("closes other unpinned tabs, preserves pinned tabs, and activates the target", () => {
     const store = useTabStore.getState();

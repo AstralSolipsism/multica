@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import {
   ScrollRestorationProvider,
   type ScrollRestorationAdapter,
@@ -53,18 +54,48 @@ function mementoKey(pathname: string, containerKey: string): string {
   return `${pathname}::${containerKey}`;
 }
 
+/**
+ * Delete every view-state entry under `pathname` whose entry key starts with
+ * `entryKeyPrefix`. The navigation layer calls this when a fresh in-app push
+ * carries a `#comment-…` deep link: the push is new landing intent, so the
+ * destination route's "highlight already landed" record must not suppress it.
+ * (The record exists to stop a RESTORE — a tab switch back — from re-jumping,
+ * not to lock the route out of ever landing again.)
+ */
+export function clearViewStateEntries(
+  pathname: string,
+  entryKeyPrefix: string,
+): void {
+  const prefix = mementoKey(pathname, entryKeyPrefix);
+  for (const key of [...savedViewState.keys()]) {
+    if (key.startsWith(prefix)) savedViewState.delete(key);
+  }
+}
+
 export function WebScrollRestorationProvider({
   children,
 }: {
   children: ReactNode;
 }) {
+  // Key entries by React's pathname, not `window.location.pathname`: Next
+  // commits the URL in HistoryUpdater's insertion effect, so during the
+  // destination route's first render (and its mount-time memento reads) the
+  // address bar still shows the PREVIOUS route. A view that mounts mid-commit
+  // — e.g. the canonical rewrite remounting the issue detail — must key its
+  // reads by the route React is actually rendering, or it inherits whatever
+  // the previous route's pathname stored. The capture listener keys by the
+  // same ref so both sides always agree on which mounted tree they describe.
+  const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
+
   useEffect(() => {
     const onScroll = (e: Event) => {
       const el = e.target;
       if (!(el instanceof HTMLElement)) return;
       const raw = el.getAttribute("data-tab-scroll-root");
       if (raw === null) return;
-      const key = mementoKey(window.location.pathname, raw || "main");
+      const key = mementoKey(pathnameRef.current, raw || "main");
       const suppressed = suppressedUntil.get(key);
       if (suppressed !== undefined) {
         if (performance.now() < suppressed) return;
@@ -91,7 +122,7 @@ export function WebScrollRestorationProvider({
   const adapter = useMemo<ScrollRestorationAdapter>(
     () => ({
       get(containerKey) {
-        const key = mementoKey(window.location.pathname, containerKey);
+        const key = mementoKey(pathnameRef.current, containerKey);
         const saved = savedOffsets.get(key);
         if (saved) {
           // The caller is about to restore this offset — shield the memento
@@ -102,11 +133,11 @@ export function WebScrollRestorationProvider({
       },
       getViewState(entryKey) {
         return savedViewState.get(
-          mementoKey(window.location.pathname, entryKey),
+          mementoKey(pathnameRef.current, entryKey),
         );
       },
       setViewState(entryKey, value) {
-        const key = mementoKey(window.location.pathname, entryKey);
+        const key = mementoKey(pathnameRef.current, entryKey);
         if (value === undefined) savedViewState.delete(key);
         else savedViewState.set(key, value);
       },
