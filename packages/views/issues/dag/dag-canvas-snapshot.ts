@@ -1,5 +1,5 @@
 import type { IssueGraph } from "@multica/core/api";
-import type { DagProjection } from "./dag-projection";
+import type { DagProjection } from "@multica/core/issues/dag";
 
 export interface CanvasSnapshot {
   key: string;

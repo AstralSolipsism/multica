@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { IssueGraph } from "@multica/core/api";
 import { useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
-import { repsToRevealIssues, type DagProjection } from "./dag-projection";
+import { repsToRevealIssues, type DagProjection } from "@multica/core/issues/dag";
 import type { DagLayoutState } from "./use-dag-layout";
 import type { CanvasSnapshot } from "./dag-canvas-snapshot";
 import type { DagCanvasProps } from "./dag-canvas";

@@ -28,7 +28,7 @@ import {
 } from "./dag-viewport";
 import { DagFlowNodeCard } from "./dag-node";
 import { DagFlowGroupCard } from "./dag-group";
-import { dagFocusNeighborhood, type DagProjection } from "./dag-projection";
+import { dagFocusNeighborhood, type DagProjection } from "@multica/core/issues/dag";
 import type { DagLayoutResult, DagPoint } from "./dag-layout";
 
 import { DagPortUpdateProvider } from "./dag-ports";

@@ -8,7 +8,7 @@ import {
   computeDagProjection,
   defaultDagCollapsedIds,
   DAG_INDEPENDENT_GROUP,
-} from "./dag-projection";
+} from "@multica/core/issues/dag";
 
 export function useDagFoldState(graph: IssueGraph | undefined) {
   const store = useViewStoreApi();
