@@ -26,8 +26,8 @@ function withPreferences(preferences: Record<string, string>): Promise<unknown> 
 }
 
 describe("isYouShouldKnowWorkspaceEnabled", () => {
-  // A missing key means OFF — the feature is opt-in per workspace. This is
-  // the only place the default is asserted; both hooks read this function.
+  // A missing key means OFF — the feature is opt-in per workspace. Both hooks
+  // and the settings-search entries read this function.
   it("missing or falsy settings key → off", () => {
     expect(isYouShouldKnowWorkspaceEnabled(null)).toBe(false);
     expect(isYouShouldKnowWorkspaceEnabled(undefined)).toBe(false);
@@ -39,6 +39,18 @@ describe("isYouShouldKnowWorkspaceEnabled", () => {
     expect(
       isYouShouldKnowWorkspaceEnabled({ settings: { you_should_know_enabled: true } }),
     ).toBe(true);
+  });
+
+  // Strict `=== true`: the backend (labrastroYSKEnabled) treats non-boolean
+  // truthy values as off, so Boolean(...) here would fork the two gates —
+  // e.g. a settings bag patched by hand would enable the UI but not the API.
+  it("non-boolean truthy values → off (matches the backend gate)", () => {
+    expect(
+      isYouShouldKnowWorkspaceEnabled({ settings: { you_should_know_enabled: "true" } }),
+    ).toBe(false);
+    expect(
+      isYouShouldKnowWorkspaceEnabled({ settings: { you_should_know_enabled: 1 } }),
+    ).toBe(false);
   });
 });
 

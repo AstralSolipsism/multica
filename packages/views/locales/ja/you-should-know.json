@@ -34,8 +34,10 @@
   },
   "settings": {
     "title": "You should know",
-    "workspace_label": "エージェントの作業中に補助ヒントを表示",
-    "personal_label": "You should know"
+    "workspace_label": "エージェントの作業中に補助ヒントを生成",
+    "workspace_description": "オフにするとヒントは生成されず、そのためのトークンも消費されません。",
+    "personal_label": "自分に補助ヒントを表示",
+    "personal_description": "自分に表示されるかどうかだけが変わります。生成を停止するには、ワークスペースの管理者にワークスペース設定のスイッチをオフにしてもらってください。"
   },
   "errors": {
     "state_failed": "保存できませんでした。もう一度お試しください"

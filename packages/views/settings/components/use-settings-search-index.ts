@@ -32,7 +32,6 @@ export function useSettingsSearchIndex(
   pages: readonly SettingsSearchPage[],
 ): SettingsSearchIndexEntry[] {
   const { t } = useT("settings");
-  const { t: tYsk } = useT("you-should-know");
   // Fork (OL-187 §8): the personal YSK entry follows the workspace switch.
   const yskEntries = useYouShouldKnowSearchEntries();
   return useMemo(() => {
@@ -110,7 +109,7 @@ export function useSettingsSearchIndex(
         anchor: "browser",
         title: t(($) => $.notifications.browser.label),
       },
-      // Fork (OL-187 §8): the personal YSK switch mirrors the workspace row.
+      // Fork (OL-187 §8): YSK switch entries live with the feature.
       // Entries come from useYouShouldKnowSearchEntries so the personal row's
       // entry disappears with the row while the workspace switch is off.
       ...yskEntries,
@@ -131,16 +130,6 @@ export function useSettingsSearchIndex(
       },
       // Workspace
       { tab: "workspace", anchor: "name", title: t(($) => $.workspace.name_label) },
-      // Fork (OL-187 §8): the workspace YSK switch. Anchor matches the
-      // SettingsSection the workspace toggle renders; the section title in
-      // the description makes the feature name find the row (the label alone
-      // reads "Show bystander tips…", which nobody searches for verbatim).
-      {
-        tab: "workspace",
-        anchor: "you-should-know",
-        title: tYsk(($) => $.settings.workspace_label),
-        description: tYsk(($) => $.settings.title),
-      },
       { tab: "workspace", anchor: "description", title: t(($) => $.workspace.description_label) },
       {
         tab: "workspace",
@@ -242,5 +231,5 @@ export function useSettingsSearchIndex(
       ...pageEntries,
       ...rows.filter((row) => row.anchor || row.integration),
     ].filter((entry) => visible.has(entry.tab));
-  }, [pages, t, tYsk, yskEntries]);
+  }, [pages, t, yskEntries]);
 }
