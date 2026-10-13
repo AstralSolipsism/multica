@@ -476,6 +476,43 @@ describe("DagToolbar overflow", () => {
     expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit", "assign"]);
   });
 
+  it("resets the visible count when switching to a node with the same action set", () => {
+    const m = stubMetrics();
+    const { store } = harness(fixtureGraph(), {}, (s) =>
+      s.getState().setDagExpandedIds(["issue:one", "issue:two"]),
+    );
+    act(() => store.getState().setDagSelectedNodeId("a"));
+    // Collapse to two actions, then widen just short of the restore
+    // hysteresis: a third action fits (514 ≤ 520) but the slack stays
+    // below 48px, so the count holds.
+    m.sizes.zone = 500;
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream"]);
+    m.sizes.zone = 520;
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream"]);
+    // Switching to another task with the same five actions must reset the
+    // count, so the refit puts back the action the hysteresis withheld.
+    act(() => store.getState().setDagSelectedNodeId("b"));
+    expect(m.actionIds()).toEqual(["open", "upstream", "downstream"]);
+  });
+
+  it("counts the detail-failure retry button toward the fixed width", () => {
+    const m = stubMetrics();
+    issueSelection.current.detailFailed = true;
+    const { store } = harness(fixtureGraph(), {}, (s) =>
+      s.getState().setDagExpandedIds(["issue:one", "issue:two"]),
+    );
+    act(() => store.getState().setDagSelectedNodeId("a"));
+    const region = screen.getByRole("region", { name: "Selection" });
+    expect(within(region).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    // The retry button adds 60px of fixed width: 180 fixed + 96 label + 32
+    // gaps leaves room for four actions (668 ≤ 700) but not five (758).
+    m.sizes.zone = 700;
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit"]);
+  });
+
   it("opens the assign picker controlled from the overflowed menu entry", async () => {
     const m = stubMetrics();
     issueSelection.current.issue = { id: "a", assignee_type: null, assignee_id: null };
