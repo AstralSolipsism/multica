@@ -1,7 +1,6 @@
 import type { IssueTip } from "@multica/core/you-should-know";
 import type {
   RegisteredTipAnchor,
-  TipAnchorDisplayState,
   TipAnchorRect,
   TipQueueEntry,
   TipRotation,
@@ -42,23 +41,6 @@ export type TipLayerState = TipLayerProjection & (
       display: Extract<TipLayerDisplay, { kind: "feedback" }>;
     }
 );
-
-/**
- * Registry display while the feedback row stands in for the bubble: the row's
- * anchor holds the bubble slot, and the tip waiting behind the row gets a dot
- * on its own anchor like any other tip that is not on screen.
- */
-export function feedbackRowDisplay(
-  rowAnchorId: string,
-  waitingAnchorId: string | null,
-  dotAnchorIds: readonly string[],
-): TipAnchorDisplayState {
-  const dots = waitingAnchorId === null ? dotAnchorIds : [...dotAnchorIds, waitingAnchorId];
-  return {
-    bubbleAnchorId: rowAnchorId,
-    dotAnchorIds: dots.filter((id) => id !== rowAnchorId),
-  };
-}
 
 /**
  * Feedback owns the screen until its session ends. Rotation can meanwhile

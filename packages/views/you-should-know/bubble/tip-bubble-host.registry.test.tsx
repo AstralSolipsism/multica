@@ -2,7 +2,8 @@ import { act, cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { TipAnchorRegistry } from "@multica/core/you-should-know/anchors";
 import { tipDisplayLedger } from "@multica/core/you-should-know";
-import { flush, makeTip, mockLayout, renderWithYsk, settle } from "../../test/you-should-know";
+import { flush, getBubble, makeTip, mockLayout, renderWithYsk, settle } from "../../test/you-should-know";
+import { RowAnchor } from "../../test/you-should-know-layers";
 import { useTipAnchorRegistry } from "../anchors/tip-anchor-context";
 
 const apiMock = vi.hoisted(() => ({
@@ -49,6 +50,28 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+it("drops the bubble with its anchor before the settled resync", async () => {
+  apiMock.listActiveTips.mockResolvedValue({
+    tips: [
+      makeTip({ id: "first", issue_id: "issue-1", line: "First line" }),
+      makeTip({ id: "second", issue_id: "issue-2", line: "Second line" }),
+    ],
+  });
+  const view = renderWithYsk(
+    <>
+      <RowAnchor issueId="issue-1" top={300} />
+      <RowAnchor issueId="issue-2" top={340} />
+    </>,
+  );
+  await settle();
+  expect(getBubble()).toHaveTextContent("First line");
+  view.rerender(<RowAnchor issueId="issue-2" top={340} />);
+  await flush();
+  expect(getBubble()).toBeNull();
+  await settle();
+  expect(getBubble()).toHaveTextContent("Second line");
 });
 
 it("preserves registry cleanup until the settled resync after an anchor is reused", async () => {

@@ -27,6 +27,7 @@ import {
   measureTipAnchors,
   rotateTips,
   shouldShowSettingsHint,
+  type TipAnchorDisplayState,
   type TipAnchorRegistry,
 } from "@multica/core/you-should-know/anchors";
 import { youShouldKnowSettingsHref } from "../settings-anchor";
@@ -39,13 +40,11 @@ import {
 import { TipBubble } from "./tip-bubble";
 import { TipFeedbackRow } from "./tip-feedback-row";
 import { tipLayerHasFocus } from "./tip-layer";
-import { deriveTipLayerState, feedbackRowDisplay } from "./tip-layer-state";
+import { deriveTipLayerState } from "./tip-layer-state";
 import { useDwellTimer } from "./use-dwell-timer";
 import { useFeedbackSession } from "./use-feedback-session";
 import { useFocusHandoff } from "./use-focus-handoff";
 import { useTipActions } from "./use-tip-actions";
-
-export { feedbackRowDisplay } from "./tip-layer-state";
 
 const NO_TIPS: IssueTip[] = [];
 
@@ -166,6 +165,23 @@ function useSettingsHint(
 }
 
 /**
+ * Registry display while the feedback row stands in for the bubble: the row's
+ * anchor holds the bubble slot, and the tip waiting behind the row gets a dot
+ * on its own anchor like any other tip that is not on screen.
+ */
+export function feedbackRowDisplay(
+  rowAnchorId: string,
+  waitingAnchorId: string | null,
+  dotAnchorIds: readonly string[],
+): TipAnchorDisplayState {
+  const dots = waitingAnchorId === null ? dotAnchorIds : [...dotAnchorIds, waitingAnchorId];
+  return {
+    bubbleAnchorId: rowAnchorId,
+    dotAnchorIds: dots.filter((id) => id !== rowAnchorId),
+  };
+}
+
+/**
  * The page's tip runtime (OL-194, OL-196): reads the viewer's active tips,
  * schedules them over the registered anchors, rotates the single bubble,
  * writes "bubble here, dots there" back into the registry for the anchors to
@@ -235,10 +251,7 @@ export function TipBubbleHost({
   const feedback = useFeedbackSession(anchors, (hadFocus) => {
     if (hadFocus && successorWaits()) handoff.arm();
   });
-  const layer = useMemo(
-    () => deriveTipLayerState({ rotation, tips, anchors, session: feedback.session }),
-    [rotation, tips, anchors, feedback.session],
-  );
+  const layer = deriveTipLayerState({ rotation, tips, anchors, session: feedback.session });
   const handoff = useFocusHandoff(rotation, layer.handoffBubbleKey);
 
   // Unregister clears stale slots/dots before the settled resync. Depend on
