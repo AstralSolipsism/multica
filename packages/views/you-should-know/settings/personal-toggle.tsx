@@ -50,6 +50,7 @@ export function YouShouldKnowPersonalRow() {
     <SettingsRow
       anchor="you-should-know"
       label={t(($) => $.settings.personal_label)}
+      description={t(($) => $.settings.personal_description)}
     >
       <Switch
         checked={enabled}

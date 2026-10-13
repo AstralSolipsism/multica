@@ -34,8 +34,10 @@
   },
   "settings": {
     "title": "You should know",
-    "workspace_label": "에이전트가 작업하는 동안 보조 힌트 표시",
-    "personal_label": "You should know"
+    "workspace_label": "에이전트가 작업하는 동안 보조 힌트 생성",
+    "workspace_description": "끄면 힌트가 생성되지 않으며, 이를 위한 토큰도 소비되지 않습니다.",
+    "personal_label": "나에게 보조 힌트 표시",
+    "personal_description": "나에게 보이는지 여부만 바뀝니다. 힌트 생성을 중지하려면 워크스페이스 관리자에게 워크스페이스 설정의 스위치를 꺼 달라고 요청하세요."
   },
   "errors": {
     "state_failed": "저장하지 못했어요. 다시 시도해 주세요"

@@ -32,7 +32,7 @@ var (
 // `you_should_know` and the local Claude Code can run it, adding the variables
 // that load it to agentEnv. It reports whether the mod is in; when it is not,
 // nothing was written and agentEnv is unchanged.
-func prepareYouShouldKnow(task Task, provider, cliVersion string, env *execenv.Environment, agentEnv map[string]string, logger *slog.Logger) bool {
+func prepareYouShouldKnow(ctx context.Context, task Task, provider, cliVersion string, env *execenv.Environment, agentEnv map[string]string, logger *slog.Logger) bool {
 	if provider != "claude" || len(task.YouShouldKnow) == 0 || env == nil || env.MulticaConfigRoot == "" {
 		return false
 	}
@@ -53,6 +53,7 @@ func prepareYouShouldKnow(task Task, provider, cliVersion string, env *execenv.E
 	for key, value := range vars {
 		agentEnv[key] = value
 	}
+	registerYouShouldKnowStop(ctx, env.MulticaConfigRoot, logger)
 	return true
 }
 
