@@ -181,9 +181,9 @@ first user message makes it appear in the list. No `explicitly_created_at`
 marker is set. Mika's `onboarding_kickoff` retains its kind and opening behavior
 while sharing the hidden-input lifecycle.
 
-Storage migrations: `9024_labrastro_tip_chat`,
-`9025_labrastro_tip_chat_identity_index`, and
-`9026_labrastro_tip_chat_session_index`. No foreign keys or cascades are added;
+Storage migrations: `9025_labrastro_tip_chat`,
+`9026_labrastro_tip_chat_identity_index`, and
+`9027_labrastro_tip_chat_session_index`. No foreign keys or cascades are added;
 each index has its own concurrent migration and invalid-index recovery hook.
 
 ## Events and lifetime
@@ -216,9 +216,12 @@ comment attachments invalidates tips through the comment revision; standalone
 `DELETE /api/attachments/{id}` does not change that revision or invalidate tips.
 
 Issue deletion removes tips and their personal states; workspace deletion removes all
-YSK data; member removal clears that member's states and topics. The independent
-known-topic list survives an individual issue deletion.
+YSK data, including side-chat source mappings. Member removal clears that member's
+states, topics, and side-chat source mappings. The independent known-topic list
+and existing side-chat source snapshots survive an individual issue deletion.
 
 Tables and indexes are installed by `9016_labrastro_ysk` through
-`9024_labrastro_ysk_tip_created_at`. All indexes have their own concurrent
-migration and recovery registration. There are no foreign keys or cascades.
+`9024_labrastro_ysk_tip_created_at`, followed by `9025_labrastro_tip_chat`,
+`9026_labrastro_tip_chat_identity_index`, and `9027_labrastro_tip_chat_session_index`.
+All indexes have their own concurrent migration and recovery registration.
+There are no foreign keys or cascades.

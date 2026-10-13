@@ -12,7 +12,7 @@ func TestLabrastroTipChatMigrationsRoundTrip(t *testing.T) {
 	admin := openTestPool(t)
 	schema := createScratchSchema(t, ctx, admin, "migrate_tip_chat")
 	pool := openTestPoolWithSearchPath(t, schema)
-	stems := []string{"9024_labrastro_tip_chat", "9025_labrastro_tip_chat_identity_index", "9026_labrastro_tip_chat_session_index"}
+	stems := []string{"9025_labrastro_tip_chat", "9026_labrastro_tip_chat_identity_index", "9027_labrastro_tip_chat_session_index"}
 	options := runOptions{SchemaMigrationsTable: schema + ".schema_migrations", AdvisoryLockKey: int64(rand.Uint64()&0x7fffffffffffffff) | 1}
 	for _, direction := range []string{"up", "down", "up"} {
 		versions := slices.Clone(stems)
