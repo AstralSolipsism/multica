@@ -34,8 +34,10 @@
   },
   "settings": {
     "title": "You should know",
-    "workspace_label": "智能体工作时显示旁观提示",
-    "personal_label": "You should know"
+    "workspace_label": "智能体工作时生成旁观提示",
+    "workspace_description": "关闭后不再生成，也不再为此花费 token。",
+    "personal_label": "在我这里显示旁观提示",
+    "personal_description": "只影响你自己能不能看到。要停止生成，请工作区管理员关闭工作区设置里的开关。"
   },
   "errors": {
     "state_failed": "没有保存成功，请重试"

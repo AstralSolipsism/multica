@@ -104,14 +104,25 @@ export function pluginDirsWithout(dirs: string, root: string): string | undefine
  * run context: nothing the agent starts afterwards (a shell, a nested
  * `claude`) should find the context file or load this mod a second time.
  */
-async function loadContext($: EngineInterface): Promise<YskContext | undefined> {
+async function loadContext($: EngineInterface): Promise<{ context: YskContext | undefined; stopFile: string } | undefined> {
   const path = await $.env.get('MULTICA_YSK_CONTEXT_FILE')
   if (path === undefined || path === '') return undefined
   await $.env.set('MULTICA_YSK_CONTEXT_FILE', undefined)
   const dirs = await $.env.get('CLAUDE_CODE_PLUGIN_DIRS')
   if (dirs !== undefined) await $.env.set('CLAUDE_CODE_PLUGIN_DIRS', pluginDirsWithout(dirs, $.plugin.root))
   const raw = await $.fs.read(path)
-  return typeof raw === 'string' ? parseContext(raw) : undefined
+  return { context: typeof raw === 'string' ? parseContext(raw) : undefined, stopFile: path.replace(/[^\\/]*$/, 'stop') }
+}
+
+async function stopRequested($: EngineInterface, path: string | undefined): Promise<boolean> {
+  if (path === undefined) return false
+  try {
+    // The empty marker is enough. Missing is normal; all read failures leave
+    // generation enabled, without affecting the main request.
+    return typeof await $.fs.read(path) === 'string'
+  } catch {
+    return false
+  }
 }
 
 function debug($: EngineInterface, message: string): void {
@@ -160,13 +171,18 @@ export const register: Register = (on) => {
   let context: YskContext | undefined
   let agentName = ''
   let schedule: Schedule | undefined
+  let stopFile: string | undefined
+  let stopped = false
   // Tips this run has emitted: shown to readers already, so later questions
   // and answers leave them out.
   const sent: Tip[] = []
 
   on('session.start', async ($, e, next) => {
     try {
-      context = await loadContext($)
+      const loaded = await loadContext($)
+      context = loaded?.context
+      stopFile = loaded?.stopFile
+      stopped = false
       agentName = ((await $.env.get('MULTICA_AGENT_NAME')) ?? '').trim()
       schedule = context === undefined ? undefined : new Schedule(context.checkEverySteps)
       if (context === undefined) debug($, 'no usable run context; staying off')
@@ -181,14 +197,14 @@ export const register: Register = (on) => {
   on('turn.step', async function* ($, e, next) {
     const ctx = context
     const plan = schedule
-    if (e.agentId !== undefined || ctx === undefined || plan === undefined) {
+    if (e.agentId !== undefined || ctx === undefined || plan === undefined || stopped) {
       return yield* next(e)
     }
 
     const step = plan.begin()
     try {
       const ask = plan.decide(step)
-      if (ask !== undefined) {
+      if (ask !== undefined && !(stopped = await stopRequested($, stopFile))) {
         const prompt = ask === 'light' ? lightPrompt(ctx, agentName, sent) : headsUpPrompt(ctx, agentName, sent)
         const fork = plan.forkStarted(step)
         // Not awaited: the main thread's request goes out at once, and the
