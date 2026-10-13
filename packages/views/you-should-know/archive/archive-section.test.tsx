@@ -65,7 +65,11 @@ function tip(overrides: Partial<IssueTip> = {}): IssueTip {
   };
 }
 
-function renderSection(tips: IssueTip[], onJumpToComment?: (id: string) => void) {
+function renderSection(
+  tips: IssueTip[],
+  onJumpToComment?: (id: string) => void,
+  commentTime?: (id: string) => string | undefined,
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -78,6 +82,7 @@ function renderSection(tips: IssueTip[], onJumpToComment?: (id: string) => void)
         issueId="issue-1"
         identifier="OL-1"
         onJumpToComment={onJumpToComment}
+        commentTime={commentTime}
       />
     </QueryClientProvider>,
   );
@@ -90,9 +95,15 @@ beforeEach(() => {
   state.personalEnabled = true;
   state.pushed = [];
   state.jumped = [];
+  // Group labels carry an hour:minute, so pin the timezone to keep the
+  // expected strings stable (the viewer's-TZ test re-stubs per case).
+  vi.stubEnv("TZ", "UTC");
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllEnvs();
+});
 
 describe("YouShouldKnowArchiveSection — grouping and order", () => {
   it("groups by anchor comment, newest group first, description group included", () => {
@@ -105,7 +116,7 @@ describe("YouShouldKnowArchiveSection — grouping and order", () => {
 
     // Groups sort by their EARLIEST tip: description (10-03) > c-new (10-02) > c-old (10-01).
     const labels = screen.getAllByText(/^Issue description$|^Comment ·/).map((el) => el.textContent);
-    expect(labels).toEqual(["Issue description", "Comment · Oct 2", "Comment · Oct 1"]);
+    expect(labels).toEqual(["Issue description", "Comment · Oct 2, 10:00 AM", "Comment · Oct 1, 10:00 AM"]);
     // Both c-old tips render inside their group.
     expect(screen.getByText("First tip")).toBeInTheDocument();
     expect(screen.getByText("Second tip")).toBeInTheDocument();
@@ -155,7 +166,7 @@ describe("YouShouldKnowArchiveSection — grouping and order", () => {
 
     // X sorts by its EARLIEST tip (10-01), so Y (10-03) comes first.
     const labels = screen.getAllByText(/^Comment ·/).map((el) => el.textContent);
-    expect(labels).toEqual(["Comment · Oct 3", "Comment · Oct 1"]);
+    expect(labels).toEqual(["Comment · Oct 3, 10:00 AM", "Comment · Oct 1, 10:00 AM"]);
   });
 
   it("groups by earliest tip via groupTips regardless of input order", () => {
@@ -178,11 +189,61 @@ describe("YouShouldKnowArchiveSection — grouping and order", () => {
     try {
       vi.stubEnv("TZ", "Asia/Shanghai");
       renderSection([tip({ anchor_comment_id: "c-1", created_at: "2026-10-11T22:30:00Z" })]);
-      expect(screen.getByText(/^Comment ·/).textContent).toBe("Comment · Oct 12");
+      expect(screen.getByText(/^Comment ·/).textContent).toBe("Comment · Oct 12, 6:30 AM");
     } finally {
       vi.unstubAllEnvs();
       vi.useRealTimers();
     }
+  });
+
+  it("labels same-day comment groups by the comment's own time so they read apart", () => {
+    // OL-346 (YSK-36): two same-day comments each triggered a run and the
+    // archive showed two identical "Comment · <day>" rows. The mount's
+    // comment-time lookup supplies each comment's own created_at, which
+    // differs from its earliest tip time — the label must follow the
+    // comment, not the tip.
+    const commentTime = (id: string) =>
+      ({
+        "c-morning": "2026-10-13T01:00:00Z",
+        "c-afternoon": "2026-10-13T08:20:00Z",
+      })[id];
+    renderSection(
+      [
+        tip({ id: "a", anchor_comment_id: "c-morning", created_at: "2026-10-13T01:05:00Z" }),
+        tip({ id: "b", anchor_comment_id: "c-afternoon", created_at: "2026-10-13T08:25:00Z" }),
+      ],
+      undefined,
+      commentTime,
+    );
+
+    // Group order still follows the earliest tip (b's tip is the newer one);
+    // only the label time comes from the comment.
+    const labels = screen.getAllByText(/^Comment ·/).map((el) => el.textContent);
+    expect(labels).toEqual(["Comment · Oct 13, 8:20 AM", "Comment · Oct 13, 1:00 AM"]);
+  });
+
+  it("falls back to the group's earliest tip time when the comment is not loaded", () => {
+    renderSection(
+      [
+        tip({ id: "a", anchor_comment_id: "c-gone", created_at: "2026-10-13T09:05:00Z" }),
+        tip({ id: "b", anchor_comment_id: "c-gone", created_at: "2026-10-13T09:01:00Z" }),
+      ],
+      undefined,
+      () => undefined,
+    );
+    expect(screen.getByText(/^Comment ·/).textContent).toBe("Comment · Oct 13, 9:01 AM");
+  });
+
+  it("falls back to the group's earliest tip time when the comment time is unparseable", () => {
+    renderSection(
+      [
+        tip({ id: "a", anchor_comment_id: "c-bad", created_at: "2026-10-13T09:05:00Z" }),
+        tip({ id: "b", anchor_comment_id: "c-bad", created_at: "2026-10-13T09:01:00Z" }),
+      ],
+      undefined,
+      () => "not-a-date",
+    );
+    expect(screen.getByText(/^Comment ·/).textContent).toBe("Comment · Oct 13, 9:01 AM");
   });
 
   it("does not link the description group", () => {
