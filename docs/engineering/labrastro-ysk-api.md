@@ -190,7 +190,9 @@ each index has its own concurrent migration and invalid-index recovery hook.
 
 "Ask about this" on the card and in the issue archive calls `useOpenTipChat`,
 which retries `tip_source_changed` once and seeds the opened session's detail
-cache. It never writes tip state or a composer draft. The floating chat opens
+cache, cancelling an older fetch of that record so it cannot land afterwards
+with the pre-open status. It never writes tip state, a composer draft or the
+new-chat agent preference. The floating chat opens
 the session when it is enabled and the Chat page is not showing; otherwise the
 client navigates to `/<slug>/chat?session=<id>`. Refusal codes, and the same
 checks made locally from the agent and member lists, disable the button and
@@ -200,17 +202,24 @@ Because the list omits a hidden-only side chat, the floating chat and the Chat
 page controller resolve their active session with `useTipSideChatLookup`: a
 listed row, otherwise the session detail (`GET /api/chat/sessions/{id}`),
 accepted only when it carries `tip_source`. The stale-session reset waits for
-that lookup. For a side chat, or while its lookup is pending, a surface never
-falls back to the selected or first available agent. Those surfaces show
+that lookup. A surface never falls back to the selected or first available
+agent for a side chat, while its lookup is pending, or while the active
+session is still unresolved because the list has not answered (a cold load).
+The one exception is a chat this client has just created by sending, which
+waits for the list as before. Those surfaces show
 `tip_source` as the pinned banner and offer three common questions until a
 visible message exists. `useYouShouldKnowRealtimeSync` applies
 `chat:session_updated` and `chat:session_deleted` to that detail cache too.
 
 A dedicated desktop issue window cannot route to Chat. It invokes
-`window:open-chat-session` with `{ workspaceSlug, sessionId }`. Main accepts
-only issue windows of the current account and queues `chat:open-session` for
-the main renderer, which opens the session as above, switching workspace when
-needed (`apps/desktop/src/shared/chat-session-handoff.ts`).
+`window:open-chat-session` with `{ workspaceSlug, sessionId }`. In main,
+`createChatSessionHandoff` (`apps/desktop/src/main/chat-session-handoff.ts`)
+accepts only an open issue window that has confirmed the main window's account.
+It queues `chat:open-session` for the main renderer and drops a waiting session
+when that account changes. The main renderer opens the session as above. For
+another workspace it first switches the window to that workspace's tabs, then
+applies the same floating-chat-or-Chat-page rule once the workspace is on
+screen; going elsewhere meanwhile drops the request.
 
 ## Events and lifetime
 
