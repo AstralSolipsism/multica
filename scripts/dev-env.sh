@@ -99,7 +99,7 @@ acquire_lock() {
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
     local holder=""
     holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
-    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+    if [ -n "$holder" ] && ! process_alive "$holder"; then
       rm -rf "$LOCK_DIR"
       continue
     fi
@@ -203,8 +203,23 @@ EOF
 # The trailing `|| true` is load-bearing on macOS's bash 3.2: `x="$(fn)"` inside
 # a function aborts the script under `set -e` when fn's last command fails, and
 # "no process is listening" is the normal answer here, not an error.
+#
+# lsof alone is not enough: it silently skips any process whose comm contains an
+# unmatched `(` — next-server sets its title to "next-server (v16.3.4)", which
+# /proc truncates to "next-server (v1", and the web listener becomes invisible.
+# ss reports the same listeners (its socket-to-pid mapping comes from
+# /proc/net/tcp{,6} plus netlink, not from parsing comm), so when lsof finds
+# nothing the port is cross-checked against ss before being called free.
 port_listener_pid() {
-  lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -1 || true
+  local pid
+  pid="$(lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+  if [ -z "$pid" ] && command -v ss >/dev/null 2>&1; then
+    # Plain grep, not grep -P: BusyBox grep lacks PCRE and would only fail
+    # into the || true, silently disabling the fallback.
+    pid="$(ss -ltnpH "sport = :$1" 2>/dev/null | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2 || true)"
+  fi
+  [ -n "$pid" ] || return 0
+  printf '%s' "$pid"
 }
 
 port_free() { [ -z "$(port_listener_pid "$1")" ]; }
@@ -430,13 +445,23 @@ pid_file()  { printf '%s/%s.pid' "$STATE_DIR" "$1"; }
 listener_pid_file() { printf '%s/%s.listener.pid' "$STATE_DIR" "$1"; }
 log_file()  { printf '%s/%s.log' "$LOG_DIR" "$1"; }
 
+# kill -0 succeeds on a zombie: a launcher whose parent (a finished run's
+# shell) never reaps it still "responds", so a later stop would treat the
+# corpse as running and fail forever. A defunct process no longer owns any
+# port, so it counts as dead even while its unreaped entry lingers in the
+# process table.
+process_alive() {
+  kill -0 "$1" 2>/dev/null || return 1
+  [ "$(ps -p "$1" -o stat= 2>/dev/null | tr -d ' ' | cut -c1)" != "Z" ]
+}
+
 component_pid() {
   local file
   file="$(pid_file "$1")"
   [ -f "$file" ] || return 1
   local pid
   pid="$(cat "$file")"
-  kill -0 "$pid" 2>/dev/null || return 1
+  process_alive "$pid" || return 1
   printf '%s' "$pid"
 }
 
@@ -454,6 +479,15 @@ launch_detached() {
 }
 
 health_json() { curl -sf --max-time 3 "http://localhost:${BACKEND_PORT}/health" 2>/dev/null; }
+
+# stop_component already warns why it failed, so abort_launch only has to keep
+# a failed stop from aborting the script before the reason prints: under set -e
+# a bare `stop_component X; die …` exits silently on the stop's non-zero
+# return, which is how `make up` died with no explanation (OL-347).
+abort_launch() {
+  stop_component "$1" || true
+  die "$2"
+}
 
 json_field() {
   node -e '
@@ -473,8 +507,13 @@ api_started_after() {
   [ "$epoch" -ge $(($2 - 5)) ]
 }
 
+# The launch line injects checkout_commit's value into the api as a make
+# argument on api-dev (COMMIT=<sha>, whose -X main.commit ends up in /health),
+# so this must return exactly the same form the launch passes: any other shape
+# never equals the reported commit and api_identity_matches rejects — and
+# stops — the freshly launched api.
 checkout_commit() {
-  git -C "${DIR:-$REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || printf 'unknown'
+  git -C "${DIR:-$REPO_ROOT}" rev-parse HEAD 2>/dev/null || printf 'unknown'
 }
 
 process_group_id() {
@@ -558,7 +597,10 @@ start_api() {
     fi
     if health_belongs_to_api "$health"; then
       warn "api on :$BACKEND_PORT is ours but not commit $expected_commit; restarting it."
-      stop_component api
+      # Best effort: a stop that fails warns inside stop_component, and the
+      # port check below then dies naming the surviving owner instead of
+      # letting set -e abort the script with no explanation at all.
+      stop_component api || true
     else
       die "Port $BACKEND_PORT answers /health, but its pid/commit does not match this environment. Refusing to reuse or kill it."
     fi
@@ -569,7 +611,12 @@ Run 'make down' here first — a leftover instance answers /health with 200 and 
   fi
 
   launched_at="$(now_epoch)"
-  launch_detached api make -C "$REPO_ROOT" -s api-dev ENV_FILE="$ENV_FILE"
+  # COMMIT is passed as a make argument, not an environment variable: a
+  # variable on the outer make command line (e.g. make up COMMIT=<short>)
+  # travels into this inner make through MAKEFLAGS and outranks the
+  # environment, re-desyncing the injected commit from the one
+  # checkout_commit just compared against.
+  launch_detached api make -C "$REPO_ROOT" -s api-dev ENV_FILE="$ENV_FILE" COMMIT="$expected_commit"
   info "api launching (pid $(cat "$(pid_file api)")), log: $(log_file api)"
 
   while [ "$waited" -lt 300 ]; do
@@ -578,12 +625,10 @@ Run 'make down' here first — a leftover instance answers /health with 200 and 
       # A 200 is not enough: pid, process group, commit and launch time all have
       # to identify the process this environment just started.
       if ! api_identity_matches "$health" "$expected_commit" "$launched_at"; then
-        stop_component api
-        die "Something else is serving :$BACKEND_PORT, or the launched api did not report pid/commit/started_at for commit $expected_commit."
+        abort_launch api "Something else is serving :$BACKEND_PORT, or the launched api did not report pid/commit/started_at for commit $expected_commit."
       fi
       if ! record_component_listener api "$BACKEND_PORT" >/dev/null; then
-        stop_component api
-        die "The API listener changed while its identity was being recorded."
+        abort_launch api "The API listener changed while its identity was being recorded."
       fi
       ok "api healthy at http://localhost:$BACKEND_PORT (pid $(json_field "$health" pid), commit $expected_commit)"
       return 0
@@ -615,8 +660,7 @@ start_web() {
     if curl -sf --max-time 15 "http://localhost:${FRONTEND_PORT}" >/dev/null 2>&1; then
       listener="$(record_component_listener web "$FRONTEND_PORT" || true)"
       if [ -z "$listener" ]; then
-        stop_component web
-        die "Web on :$FRONTEND_PORT is not descended from the process this environment launched."
+        abort_launch web "Web on :$FRONTEND_PORT is not descended from the process this environment launched."
       fi
       ok "web serving http://localhost:$FRONTEND_PORT (pid ${listener:-?})"
       return 0
@@ -765,7 +809,7 @@ start_desktop() {
   fi
   if component_pid desktop >/dev/null; then
     warn "desktop launcher exists but its renderer/backend identity is stale; restarting it."
-    stop_component desktop
+    stop_component desktop || true
   fi
   if ! port_free "$DESKTOP_RENDERER_PORT"; then
     die "Desktop renderer port $DESKTOP_RENDERER_PORT is busy: $(describe_port_owner "$DESKTOP_RENDERER_PORT")."
@@ -787,8 +831,7 @@ EOF
     if curl -sf --max-time 10 "http://localhost:${DESKTOP_RENDERER_PORT}" >/dev/null 2>&1; then
       listener="$(port_listener_pid "$DESKTOP_RENDERER_PORT")"
       if ! listener_pid_belongs_to_component desktop "$listener" || ! desktop_env_matches; then
-        stop_component desktop
-        die "Desktop renderer on :$DESKTOP_RENDERER_PORT does not belong to this environment."
+        abort_launch desktop "Desktop renderer on :$DESKTOP_RENDERER_PORT does not belong to this environment."
       fi
       # Electron can bring Vite up and then crash during renderer bootstrap.
       # Require a short stable window before the environment claims readiness.
@@ -797,8 +840,7 @@ EOF
       if ! component_pid desktop >/dev/null || [ "$stable_listener" != "$listener" ] \
         || ! curl -sf --max-time 10 "http://localhost:${DESKTOP_RENDERER_PORT}" >/dev/null 2>&1; then
         tail -20 "$(log_file desktop)" | sed 's/^/    /' >&2 || true
-        stop_component desktop
-        die "desktop exited during renderer bootstrap. Log: $(log_file desktop)"
+        abort_launch desktop "desktop exited during renderer bootstrap. Log: $(log_file desktop)"
       fi
       printf '%s\n' "$listener" > "$(listener_pid_file desktop)"
       ok "desktop ready (launcher $(component_pid desktop), renderer pid ${listener:-?}, backend :$BACKEND_PORT)"
@@ -809,8 +851,7 @@ EOF
     sleep 2
     waited=$((waited + 2))
   done
-  stop_component desktop
-  die "desktop renderer never became ready on :$DESKTOP_RENDERER_PORT. Log: $(log_file desktop)"
+  abort_launch desktop "desktop renderer never became ready on :$DESKTOP_RENDERER_PORT. Log: $(log_file desktop)"
 }
 
 desktop_env_matches() {
@@ -840,7 +881,7 @@ stop_component() {
         fi
       else
         pid="$(cat "$PROFILE_DIR/daemon.pid" 2>/dev/null || true)"
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        if [ -n "$pid" ] && process_alive "$pid"; then
           warn "cannot stop daemon pid $pid because no usable multica binary was found"
           return 1
         fi
@@ -873,11 +914,11 @@ stop_component() {
     # down together instead of leaving the real listener orphaned.
     kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
     sleep 1
-    if kill -0 "$pid" 2>/dev/null; then
+    if process_alive "$pid"; then
       kill -KILL -"$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
       sleep 1
     fi
-    if kill -0 "$pid" 2>/dev/null; then
+    if process_alive "$pid"; then
       warn "$name launcher pid $pid is still running"
       return 1
     fi
@@ -898,11 +939,11 @@ stop_component() {
         || { [ -n "$launcher" ] && [ "$(process_group_id "$listener")" = "$launcher" ]; }; then
         kill -TERM "$listener" 2>/dev/null || true
         sleep 1
-        if kill -0 "$listener" 2>/dev/null; then
+        if process_alive "$listener"; then
           kill -KILL "$listener" 2>/dev/null || true
           sleep 1
         fi
-        if kill -0 "$listener" 2>/dev/null; then
+        if process_alive "$listener"; then
           warn "$name listener pid $listener is still running"
           return 1
         fi
@@ -1269,11 +1310,14 @@ cmd_down() {
   export PORT="$BACKEND_PORT" FRONTEND_PORT DATABASE_URL POSTGRES_DB="$DB_NAME"
 
   step "Stopping $NAME: $requested"
-  local comp
+  local comp failures=0
   for comp in $requested; do
     case " $ALL_COMPONENTS " in *" $comp "*) ;; *) die "Unknown component '$comp'. Valid: $ALL_COMPONENTS" ;; esac
-    stop_component "$comp"
+    stop_component "$comp" || failures=$((failures + 1))
   done
+  if [ "$failures" -gt 0 ]; then
+    die "$failures component(s) of $NAME could not be stopped; see the warnings above."
+  fi
   printf '\n%s✓ %s stopped.%s Database, profile and slot kept — `make up` restarts in seconds.\n' "$C_GREEN" "$NAME" "$C_OFF"
 }
 
