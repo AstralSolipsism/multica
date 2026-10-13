@@ -163,6 +163,8 @@ import {
   useRestoredViewState,
   useViewStateWriter,
 } from "../../platform";
+import { issueHighlightMementoKey } from "../comment-deep-link";
+import { decideCommentLanding } from "./comment-landing";
 import { cn } from "@multica/ui/lib/utils";
 import { PAGE_GUTTER } from "../../layout/page-header";
 
@@ -181,20 +183,10 @@ import {
   useRightSidebarShortcut,
 } from "../../layout/animated-right-sidebar";
 
-/**
- * Memento entry recording that the comment-highlight deep link for this
- * issue already landed on the current route (value: the consumed comment
- * id). Lets a remount that merely restores the view (tab switch back) skip
- * the jump-and-highlight, while a fresh deep-link intent — an inbox
- * selection (see InboxPage.handleSelect) or an in-app `#comment-…` push,
- * which the platform navigation layer clears on dispatch — runs it again.
- */
-export function issueHighlightMementoKey(issueId: string): string {
-  return `highlight:${issueId}`;
-}
-
-/** Shared prefix of every `issueHighlightMementoKey` entry, for prefix clears. */
-export const ISSUE_HIGHLIGHT_MEMENTO_PREFIX = "highlight:";
+export {
+  issueHighlightMementoKey,
+  ISSUE_HIGHLIGHT_MEMENTO_PREFIX,
+} from "../comment-deep-link";
 
 // Shared by the subscribe button and the unsubscribe menu trigger so the two
 // stay one control visually — they occupy the same slot and only differ in
@@ -2214,6 +2206,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // (no virtualization), so every comment id is in the DOM by the time this
   // effect runs after commit.
   //
+  // The branch work is a pure decision — `decideCommentLanding` (table-tested
+  // in comment-landing.test.ts) — gathered from live values each run; this
+  // effect only executes it: refs, the memento write and the scroll driving
+  // stay here.
+  //
   // For a reply inside a folded resolved thread, the reply is not in items
   // (only the resolved-bar root is). Auto-expand the thread first; the
   // effect re-runs once items re-flatten.
@@ -2223,7 +2220,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // ref populates only on the post-loading render, so it's the signal that
   // the timeline (and the deep-link target id) has actually rendered.
   useEffect(() => {
-    if (!highlightCommentId || items.length === 0) return;
     // An explicit replay request (re-click on the already-open notification
     // row): the host cleared the memento entry and bumped the token, so
     // re-arm the landing guard and fall through to the jump.
@@ -2231,73 +2227,92 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       lastHighlightRequestTokenRef.current = highlightRequestToken;
       didHighlightRef.current = null;
     }
-    if (didHighlightRef.current === highlightCommentId) return;
-    // The deep link already landed before this mount (memento entry — a tab
-    // switch back or an in-tab return). The restored scroll offset is the
-    // state the user left, and the jump must not fight it. A fresh selection
-    // clears the entry, so this only ever suppresses a *repeat* landing.
-    if (consumedHighlightRef.current === highlightCommentId) {
-      didHighlightRef.current = highlightCommentId;
-      return;
-    }
 
-    // A highlight that is NOT the arrival's own changed on an already-mounted
-    // detail — a same-page `#comment-…` push, or a new notification selection
-    // for this issue. The timeline stayed virtualized for it (a one-shot jump
-    // must not pay the flat cold-mount), so land through the minimap jump,
-    // which drives Virtuoso by index and unfolds collapses and resolved
-    // threads on the way.
-    //
-    // Consume the guards only once the jump can actually run: the target must
-    // be in this issue's items (a fragment from the previous page's URL is
-    // not), the scroll container must exist, and a virtualized timeline needs
-    // its Virtuoso instance. Otherwise return and wait for the next deps
-    // change — scrollToIndex on an unmounted Virtuoso is a silent no-op that
-    // would swallow the jump with the guards already consumed.
-    if (!isArrivalHighlight) {
-      if (targetIdx < 0 || !scrollContainerEl) return;
-      if (!isFlatTimeline && !virtuosoRef.current) return;
-      didHighlightRef.current = highlightCommentId;
-      writeViewState(issueHighlightMementoKey(id), highlightCommentId);
-      // A jump that lands while the arrival is still uncaptured (a same-page
-      // push inside the loading window) spends it: when readiness flips, the
-      // capture must not resurrect the fragment as a flat landing.
-      if (!arrival.captured) {
-        setArrival({ issueId: id, captured: true, highlightCommentId: undefined });
-      }
-      jumpToMinimapTarget(highlightCommentId);
-      return;
-    }
-
-    const rootId = replyToRoot.get(highlightCommentId);
-    if (rootId && rootId !== highlightCommentId) {
-      // Root resolved → the whole thread is a folded bar.
-      const rootItem = items[targetIdx];
-      if (rootItem?.kind === "resolved-bar" || (rootItem?.kind === "run" && rootItem.entry?.resolved_at && !expandedResolved.has(rootId))) {
-        toggleResolvedExpand(rootId, true);
-        return;
-      }
-      // A reply is the resolution → the other replies fold behind the
-      // "N comments" bar; expand if the target is one of those folded replies.
-      if ((rootItem?.kind === "comment" || rootItem?.kind === "run") && rootItem.entry && !expandedResolved.has(rootId)) {
-        const resolution = deriveThreadResolution(
-          rootItem.entry,
-          timelineView.threadReplies.get(rootId) ?? EMPTY_REPLIES,
-        );
-        if (resolution.kind === "reply" && resolution.resolutionId !== highlightCommentId) {
-          toggleResolvedExpand(rootId, true);
-          return;
+    // Arrival only: a folded resolved thread hiding the target must expand
+    // before the landing can find its anchor.
+    let resolvedBarrierRootId: string | null = null;
+    if (isArrivalHighlight && highlightCommentId) {
+      const rootId = replyToRoot.get(highlightCommentId);
+      if (rootId && rootId !== highlightCommentId) {
+        const rootItem = items[targetIdx];
+        // Root resolved → the whole thread is a folded bar.
+        if (rootItem?.kind === "resolved-bar" || (rootItem?.kind === "run" && rootItem.entry?.resolved_at && !expandedResolved.has(rootId))) {
+          resolvedBarrierRootId = rootId;
+        // A reply is the resolution → the other replies fold behind the
+        // "N comments" bar; expand if the target is one of those folded replies.
+        } else if ((rootItem?.kind === "comment" || rootItem?.kind === "run") && rootItem.entry && !expandedResolved.has(rootId)) {
+          const resolution = deriveThreadResolution(
+            rootItem.entry,
+            timelineView.threadReplies.get(rootId) ?? EMPTY_REPLIES,
+          );
+          if (resolution.kind === "reply" && resolution.resolutionId !== highlightCommentId) {
+            resolvedBarrierRootId = rootId;
+          }
         }
       }
     }
 
+    const decision = decideCommentLanding({
+      highlightCommentId,
+      hasItems: items.length > 0,
+      alreadyLandedFor: didHighlightRef.current,
+      consumedId: consumedHighlightRef.current,
+      isArrival: isArrivalHighlight,
+      targetInItems: targetIdx >= 0,
+      scrollContainerReady: !!scrollContainerEl,
+      virtuosoMounted: !!virtuosoRef.current,
+      flat: isFlatTimeline,
+      resolvedBarrierRootId,
+    });
+
+    switch (decision.kind) {
+      case "wait":
+      case "skip":
+        return;
+      // The deep link already landed before this mount (memento entry — a tab
+      // switch back or an in-tab return). The restored scroll offset is the
+      // state the user left, and the jump must not fight it. A fresh selection
+      // clears the entry, so this only ever suppresses a *repeat* landing.
+      case "skip-consumed":
+        didHighlightRef.current = highlightCommentId!;
+        return;
+      // A highlight that is NOT the arrival's own changed on an
+      // already-mounted detail — a same-page `#comment-…` push, or a new
+      // notification selection for this issue. The timeline stayed
+      // virtualized for it (a one-shot jump must not pay the flat
+      // cold-mount), so land through the minimap jump, which drives Virtuoso
+      // by index and unfolds collapses and resolved threads on the way.
+      // `decideCommentLanding` already gated this on the jump being able to
+      // run, so the guards are only consumed now.
+      case "jump": {
+        const commentId = highlightCommentId!;
+        didHighlightRef.current = commentId;
+        writeViewState(issueHighlightMementoKey(id), commentId);
+        // A jump that lands while the arrival is still uncaptured (a
+        // same-page push inside the loading window) spends it: when readiness
+        // flips, the capture must not resurrect the fragment as a flat
+        // landing.
+        if (!arrival.captured) {
+          setArrival({ issueId: id, captured: true, highlightCommentId: undefined });
+        }
+        jumpToMinimapTarget(commentId);
+        return;
+      }
+      case "expand-resolved":
+        toggleResolvedExpand(decision.rootId, true);
+        return;
+      case "land":
+        break;
+    }
+
+    const rootId = replyToRoot.get(highlightCommentId!);
     // A deleted reply renders nothing, so the id a notification or share link
     // carries has no anchor to scroll to and no row to flash. Land on the
     // comment above where it was; the id itself stays this landing's identity
     // for the guards and the memento below.
-    const threadRootId = rootId ?? highlightCommentId;
+    const threadRootId = rootId ?? highlightCommentId!;
     const landingId = commentLandingTarget(
-      highlightCommentId,
+      highlightCommentId!,
       threadRootId,
       timelineView.threadReplies.get(threadRootId) ?? EMPTY_REPLIES,
     );
@@ -2305,11 +2320,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     const container = scrollContainerEl;
     if (!el || !container) return;
 
-    didHighlightRef.current = highlightCommentId;
+    const commentId = highlightCommentId!;
+    didHighlightRef.current = commentId;
     // Record the landing in the memento so a remount that merely restores
     // this view (tab switch back) skips the jump instead of replaying it
     // over the restored scroll position.
-    writeViewState(issueHighlightMementoKey(id), highlightCommentId);
+    writeViewState(issueHighlightMementoKey(id), commentId);
 
     // Center the target comment WITHIN its own scroll container by driving the
     // container's scrollTop directly — never native scrollIntoView. Native

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import {
   ScrollRestorationProvider,
@@ -83,11 +83,20 @@ export function WebScrollRestorationProvider({
   // address bar still shows the PREVIOUS route. A view that mounts mid-commit
   // — e.g. the canonical rewrite remounting the issue detail — must key its
   // reads by the route React is actually rendering, or it inherits whatever
-  // the previous route's pathname stored. The capture listener keys by the
-  // same ref so both sides always agree on which mounted tree they describe.
+  // the previous route's pathname stored.
+  //
+  // Two channels, two timing rules (OL-270 review): the ADAPTER closures
+  // capture the render-time `pathname` (a discarded transition render builds
+  // a discarded adapter, so a never-committed route never leaks into reads);
+  // the scroll LISTENER is registered once and reads a ref that only layout
+  // effects move — i.e. the last COMMITTED pathname — so a scroll event from
+  // the outgoing page during a navigation render is never filed under the
+  // incoming route.
   const pathname = usePathname();
-  const pathnameRef = useRef(pathname);
-  pathnameRef.current = pathname;
+  const committedPathnameRef = useRef(pathname);
+  useLayoutEffect(() => {
+    committedPathnameRef.current = pathname;
+  }, [pathname]);
 
   useEffect(() => {
     const onScroll = (e: Event) => {
@@ -95,7 +104,7 @@ export function WebScrollRestorationProvider({
       if (!(el instanceof HTMLElement)) return;
       const raw = el.getAttribute("data-tab-scroll-root");
       if (raw === null) return;
-      const key = mementoKey(pathnameRef.current, raw || "main");
+      const key = mementoKey(committedPathnameRef.current, raw || "main");
       const suppressed = suppressedUntil.get(key);
       if (suppressed !== undefined) {
         if (performance.now() < suppressed) return;
@@ -122,7 +131,7 @@ export function WebScrollRestorationProvider({
   const adapter = useMemo<ScrollRestorationAdapter>(
     () => ({
       get(containerKey) {
-        const key = mementoKey(pathnameRef.current, containerKey);
+        const key = mementoKey(pathname, containerKey);
         const saved = savedOffsets.get(key);
         if (saved) {
           // The caller is about to restore this offset — shield the memento
@@ -133,16 +142,16 @@ export function WebScrollRestorationProvider({
       },
       getViewState(entryKey) {
         return savedViewState.get(
-          mementoKey(pathnameRef.current, entryKey),
+          mementoKey(pathname, entryKey),
         );
       },
       setViewState(entryKey, value) {
-        const key = mementoKey(pathnameRef.current, entryKey);
+        const key = mementoKey(pathname, entryKey);
         if (value === undefined) savedViewState.delete(key);
         else savedViewState.set(key, value);
       },
     }),
-    [],
+    [pathname],
   );
 
   return (

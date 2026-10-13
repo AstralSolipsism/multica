@@ -15,7 +15,7 @@ export default [
   ...reactConfig,
   {
     files: ["**/*.tsx"],
-    ignores: ["**/*.test.tsx", "test/**"],
+    ignores: ["**/*.test.tsx", "**/*.test-harness*.tsx", "test/**"],
     plugins: { i18next },
     rules: {
       "i18next/no-literal-string": [
@@ -27,7 +27,7 @@ export default [
   {
     // Toasts are fired from hooks (`.ts`) as often as from components.
     files: ["**/*.{ts,tsx}"],
-    ignores: ["**/*.test.{ts,tsx}", "test/**"],
+    ignores: ["**/*.test.{ts,tsx}", "**/*.test-harness*.{ts,tsx}", "test/**"],
     rules: {
       "no-restricted-syntax": [
         "error",

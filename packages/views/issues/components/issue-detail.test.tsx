@@ -1,10 +1,35 @@
-import { forwardRef, useEffect, useRef, useState, useImperativeHandle } from "react";
+/**
+ * IssueDetail component tests. The mock harness (editor, virtuoso, API,
+ * stores, i18n) lives in ./issue-detail.test-harness, shared with the
+ * platform deep-link integration suites in apps/ (OL-270), so a mock update
+ * lands everywhere. Import it FIRST: it registers the vi.mock calls the
+ * component under test must see.
+ */
+import {
+  archiveSectionProps,
+  contentEditorMounts,
+  createTestQueryClient,
+  descriptionSelectionAction,
+  hasHighlightedCommentBackground,
+  highlightedCommentBackgroundClass,
+  mockApiObj,
+  mockIssue,
+  mockOpenModal,
+  mockTimeline,
+  mockViewport,
+  readonlyContentRenders,
+  renderIssueDetail,
+  renderIssueDetailWithHighlight,
+  renderIssueDetailWithStatusCatalog,
+  scrollIntoViewSpy,
+  scrollToIndexSpy,
+  TEST_RESOURCES,
+} from "./issue-detail.test-harness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { AgentTask, Attachment, Issue, IssueStatusEntry, Label, TimelineEntry } from "@multica/core/types";
 import { issueKeys } from "@multica/core/issues/queries";
-import { issueStatusKeys } from "@multica/core/issue-statuses";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { toast } from "sonner";
 import { useResolvedExpandStore } from "@multica/core/issues/stores/resolved-expand-store";
@@ -14,716 +39,13 @@ import {
   type TipAnchorRegistry,
 } from "@multica/core/you-should-know/anchors";
 import { TipAnchorRegistryProvider } from "../../you-should-know/anchors/tip-anchor-context";
+import { ScrollRestorationProvider, type ScrollRestorationAdapter } from "../../platform";
+import enIssues from "../../locales/en/issues.json";
 import {
   DEFAULT_SUB_ISSUE_ROW_PROPERTIES,
   useSubIssueDisplayStore,
 } from "@multica/core/issues/stores/sub-issue-display-store";
-import enAgents from "../../locales/en/agents.json";
-import enCommon from "../../locales/en/common.json";
-import enIssues from "../../locales/en/issues.json";
-
-const TEST_RESOURCES = { en: { agents: enAgents, common: enCommon, issues: enIssues } };
-
-const mockViewport = vi.hoisted(() => ({ isMobile: false }));
-
-// Counts MockContentEditor mounts. This pins the description to exactly one
-// eager editor per issue and catches stale editor reuse across issue switches.
-const contentEditorMounts = vi.hoisted(() => ({ count: 0 }));
-// Every ReadonlyContent render, by content. A comment card renders its body
-// through it, so this counts card renders without reaching into the card.
-const readonlyContentRenders = vi.hoisted(() => [] as string[]);
-const descriptionSelectionAction = vi.hoisted(() => ({ current: undefined as { label: string; onSelect: () => void } | undefined }));
-// Stable empty-attachments reference: the real store returns a shared constant
-// so the `useCommentDraftStore(s => s.getAttachments(key))` selector keeps a
-// stable identity. A fresh `[]` per call would loop useSyncExternalStore.
-const emptyDraftAttachments = vi.hoisted(() => [] as unknown[]);
-
-vi.mock("@multica/ui/hooks/use-mobile", () => ({
-  useIsMobile: () => mockViewport.isMobile,
-}));
-
-// useWorkspaceId() derives from useCurrentWorkspace (relative import inside
-// @multica/core/hooks.tsx). vi.mock("@multica/core/paths") only intercepts
-// the bare-specifier, not the internal relative import. Mock the hooks module
-// directly so the bridge hook returns the test UUID.
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-1",
-}));
-
-// ---------------------------------------------------------------------------
-// Mocks
-// ---------------------------------------------------------------------------
-
-// The YSK archive mount must keep passing the timeline jump helper; when
-// this line disappears in an upstream merge, group jumps silently fall back
-// to the unreliable URL navigation (OL-269). Capture props instead of
-// rendering so the assertion does not depend on the section's own gating.
-const archiveSectionProps = vi.hoisted(() => ({ current: null as unknown }));
-vi.mock("../../you-should-know/archive/archive-section", () => ({
-  YouShouldKnowArchiveSection: (props: unknown) => {
-    archiveSectionProps.current = props;
-    return null;
-  },
-}));
-
-vi.mock("./issue-dependencies-section", () => ({
-  IssueDependenciesSection: ({ issue }: { issue: { id: string } }) => (
-    <div data-testid="issue-dependencies-section" data-issue-id={issue.id} />
-  ),
-}));
-
-// Mock @multica/core/auth
-const mockAuthUser = { id: "user-1", email: "test@test.com", name: "Test User" };
-vi.mock("@multica/core/auth", () => ({
-  useAuthStore: Object.assign(
-    (selector?: any) => {
-      const state = { user: mockAuthUser, isAuthenticated: true };
-      return selector ? selector(state) : state;
-    },
-    { getState: () => ({ user: mockAuthUser, isAuthenticated: true }) },
-  ),
-  registerAuthStore: vi.fn(),
-  createAuthStore: vi.fn(),
-}));
-
-// Mock @multica/core/workspace/hooks
-vi.mock("@multica/core/workspace/hooks", () => ({
-  useActorName: () => ({
-    getMemberName: (id: string) => (id === "user-1" ? "Test User" : "Unknown"),
-    getAgentName: (id: string) => (id === "agent-1" ? "Claude Agent" : "Unknown Agent"),
-    getActorName: (type: string, id: string) => {
-      if (type === "member" && id === "user-1") return "Test User";
-      if (type === "agent" && id === "agent-1") return "Claude Agent";
-      return "Unknown";
-    },
-    getActorInitials: (type: string) => (type === "member" ? "TU" : "CA"),
-    getActorAvatarUrl: () => null,
-  }),
-}));
-
-// Mock workspace queries
-vi.mock("@multica/core/workspace/queries", () => ({
-  memberListOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "members"],
-    queryFn: () => Promise.resolve([{ user_id: "user-1", name: "Test User", email: "test@test.com", role: "admin" }]),
-  }),
-  agentListOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "agents"],
-    queryFn: () => Promise.resolve([]),
-  }),
-  squadListOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "squads"],
-    queryFn: () => Promise.resolve([]),
-  }),
-  assigneeFrequencyOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "assignee-frequency"],
-    queryFn: () => Promise.resolve([]),
-  }),
-  workspaceListOptions: () => ({
-    queryKey: ["workspaces"],
-    queryFn: () => Promise.resolve([{ id: "ws-1", name: "Test WS", slug: "test" }]),
-  }),
-}));
-
-// Mock @multica/core/paths — after the URL-driven workspace refactor,
-// useCurrentWorkspace / useWorkspacePaths derive from the workspace slug in
-// URL Context. Tests don't mount a real route, so we short-circuit to fixtures.
-vi.mock("@multica/core/paths", async () => {
-  const actual = await vi.importActual<typeof import("@multica/core/paths")>(
-    "@multica/core/paths",
-  );
-  return {
-    ...actual,
-    useCurrentWorkspace: () => ({ id: "ws-1", name: "Test WS", slug: "test" }),
-    useWorkspacePaths: () => actual.paths.workspace("test"),
-  };
-});
-
-// Mock navigation
-vi.mock("../../navigation", () => ({
-  AppLink: ({ children, href, ...props }: any) => (
-    <a href={href} {...props}>
-      {children}
-    </a>
-  ),
-  useNavigation: () => ({
-    push: vi.fn(),
-    pathname: "/issues/issue-1",
-    getShareableUrl: (p: string) => `https://app.multica.com${p}`,
-  }),
-  useBackOrReplace: () => vi.fn(),
-  NavigationProvider: ({ children }: { children: React.ReactNode }) => children,
-}));
-
-// Mock editor components (Tiptap requires real DOM)
-vi.mock("../../editor", async () => ({
-  // Real lazy-mount controller (pure React, no Tiptap) so readonly-first
-  // shell → activate → ready flows behave exactly as in production.
-  ...(await vi.importActual<typeof import("../../editor/use-lazy-editor")>(
-    "../../editor/use-lazy-editor",
-  )),
-  // Real submit gate (pure React) — see comment-composers.test.tsx.
-  ...(await vi.importActual<typeof import("../../editor/use-upload-gate")>(
-    "../../editor/use-upload-gate",
-  )),
-  // Real await-then-render submit hook (pure React) so comment/reply/edit
-  // composers run the production submit path.
-  ...(await vi.importActual<typeof import("../../editor/use-composer-submit")>(
-    "../../editor/use-composer-submit",
-  )),
-  useEditorUpload: () => ({
-    uploadWithToast: vi.fn(),
-    upload: vi.fn(),
-    uploading: false,
-  }),
-  useFileDropZone: () => ({ isDragOver: false, dropZoneProps: {} }),
-  FileDropOverlay: () => null,
-  // No-op so comment-card's AttachmentList can render without hitting the
-  // real API singleton; tests that care about download wiring should write
-  // dedicated specs against `use-download-attachment.test.tsx`.
-  useDownloadAttachment: () => vi.fn(),
-  // Inert preview hook — comment-card's AttachmentList uses it to gate the
-  // Eye button. Dedicated coverage lives in attachment-preview-modal.test.tsx.
-  useAttachmentPreview: () => ({
-    open: vi.fn(),
-    tryOpen: () => false,
-    modal: null,
-  }),
-  // Pass-through: the detail page wraps its column in the preview-sequence
-  // provider, but paging between files is covered in
-  // preview-sequence-context.test.tsx against the real provider.
-  PreviewSequenceProvider: ({ children }: { children: React.ReactNode }) =>
-    children,
-  usePreviewSequence: () => ({ openAt: () => false }),
-  collectPreviewSequence: () => [],
-  // Comment attachments render as their filename — the viewer and file cards
-  // have their own suites.
-  AttachmentDownloadProvider: ({ children }: { children: React.ReactNode }) =>
-    children,
-  Attachment: ({ attachment }: { attachment: { filename?: string } }) => (
-    <span data-testid="comment-attachment">{attachment.filename}</span>
-  ),
-  isPreviewable: () => false,
-  ReadonlyContent: ({ content }: { content: string }) => {
-    readonlyContentRenders.push(content);
-    return <div data-testid="readonly-content">{content}</div>;
-  },
-  ContentEditor: forwardRef(function MockContentEditor(
-    {
-      defaultValue,
-      value: syncedValue,
-      onUpdate,
-      placeholder,
-      flushPendingOnUnmount,
-      onReady,
-      selectionAction,
-    }: any,
-    ref: any,
-  ) {
-    const initialValue = syncedValue ?? defaultValue ?? "";
-    if (syncedValue !== undefined) descriptionSelectionAction.current = selectionAction;
-    const valueRef = useRef(initialValue);
-    const baseRef = useRef(initialValue);
-    const [editorValue, setEditorValue] = useState(initialValue);
-    // Mirrors the real editor's dirty guard: once the user has typed, an
-    // external `value` change is refused so it cannot clobber unsaved bytes.
-    // Only the imperative adoptContent channel lands after that point.
-    const dirtyRef = useRef(false);
-    useEffect(() => {
-      contentEditorMounts.count += 1;
-      onReady?.();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-    useEffect(() => {
-      if (syncedValue === undefined || dirtyRef.current) return;
-      valueRef.current = syncedValue;
-      baseRef.current = syncedValue;
-      setEditorValue(syncedValue);
-    }, [syncedValue]);
-    useImperativeHandle(ref, () => ({
-      getMarkdown: () => valueRef.current,
-      clearContent: () => {
-        valueRef.current = "";
-        dirtyRef.current = false;
-        setEditorValue("");
-      },
-      // The real handle applies content the `value` prop cannot land (a dirty
-      // editor refuses external syncs) and does so without emitting an update.
-      adoptContent: (markdown: string) => {
-        valueRef.current = markdown;
-        baseRef.current = markdown;
-        dirtyRef.current = false;
-        setEditorValue(markdown);
-      },
-      focus: () => {},
-      focusAtCoords: () => {},
-      // The top-level composer blurs after a posted comment (afterAccepted).
-      blur: () => {},
-      // Read by the submit-time upload gate; no uploads are exercised here.
-      hasActiveUploads: () => false,
-      // Placeholder rebuild contract: the real handle draws a card for an
-      // upload the document is not showing and reports whether it landed.
-      // Mocks track ids only — no document to draw into.
-      insertUploadPlaceholder: () => true,
-      settleUploadPlaceholder: () => false,
-      uploadFile: () => {},
-    }));
-    return (
-      <textarea
-        value={editorValue}
-        onChange={(e) => {
-          valueRef.current = e.target.value;
-          dirtyRef.current = true;
-          setEditorValue(e.target.value);
-          onUpdate?.(e.target.value, baseRef.current);
-        }}
-        placeholder={placeholder}
-        data-testid="rich-text-editor"
-        data-flush-on-unmount={flushPendingOnUnmount ? "true" : undefined}
-      />
-    );
-  }),
-  TitleEditor: forwardRef(function MockTitleEditor(
-    { defaultValue, placeholder, onBlur, onChange, onReady }: any,
-    ref: any,
-  ) {
-    const valueRef = useRef(defaultValue || "");
-    const [value, setValue] = useState(defaultValue || "");
-    useEffect(() => {
-      onReady?.();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-    useImperativeHandle(ref, () => ({
-      getText: () => valueRef.current,
-      focus: () => {},
-      focusAtCoords: () => {},
-    }));
-    return (
-      <input
-        value={value}
-        onChange={(e) => {
-          valueRef.current = e.target.value;
-          setValue(e.target.value);
-          onChange?.(e.target.value);
-        }}
-        onBlur={() => onBlur?.(valueRef.current)}
-        placeholder={placeholder}
-        data-testid="title-editor"
-      />
-    );
-  }),
-}));
-
-// Mock common components
-vi.mock("../../common/actor-avatar", () => ({
-  ActorAvatar: ({ actorType, actorId }: any) => (
-    <span data-testid="actor-avatar">
-      {actorType}:{actorId}
-    </span>
-  ),
-}));
-
-vi.mock("../../projects/components/project-picker", () => ({
-  ProjectPicker: () => <span data-testid="project-picker">Project</span>,
-}));
-
-// Mock api
-const mockApiObj = vi.hoisted(() => ({
-  getIssue: vi.fn(),
-  listTimeline: vi.fn().mockResolvedValue([]),
-  listComments: vi.fn().mockResolvedValue([]),
-  createComment: vi.fn(),
-  updateComment: vi.fn(),
-  deleteComment: vi.fn(),
-  deleteIssue: vi.fn(),
-  updateIssue: vi.fn(),
-  listIssueSubscribers: vi.fn().mockResolvedValue([]),
-  subscribeToIssue: vi.fn().mockResolvedValue(undefined),
-  unsubscribeFromIssue: vi.fn().mockResolvedValue(undefined),
-  unsubscribeFromIssueSubtree: vi.fn().mockResolvedValue(undefined),
-  getActiveTasksForIssue: vi.fn().mockResolvedValue({ tasks: [] }),
-  listTasksByIssue: vi.fn().mockResolvedValue([]),
-  rerunIssue: vi.fn(),
-  listTaskMessages: vi.fn().mockResolvedValue([]),
-  listChildIssues: vi.fn().mockResolvedValue({ issues: [] }),
-  getChildIssueProgress: vi.fn().mockResolvedValue({ progress: [] }),
-  getAgentTaskSnapshot: vi.fn().mockResolvedValue([]),
-  // The sub-issues header chip reads this narrowed to the parent issue.
-  getWorkspaceWorkingAgents: vi.fn().mockResolvedValue([]),
-  listProperties: vi.fn().mockResolvedValue({ properties: [], total: 0 }),
-  listIssues: vi.fn().mockResolvedValue({ issues: [], total: 0 }),
-  uploadFile: vi.fn(),
-  listIssueReactions: vi.fn().mockResolvedValue([]),
-  addIssueReaction: vi.fn(),
-  removeIssueReaction: vi.fn(),
-  listAttachments: vi.fn().mockResolvedValue([]),
-  addCommentReaction: vi.fn(),
-  removeCommentReaction: vi.fn(),
-  listMembers: vi.fn().mockResolvedValue([{ user_id: "user-1", name: "Test User", email: "test@test.com", role: "admin" }]),
-  listAgents: vi.fn().mockResolvedValue([]),
-  getAgent: vi.fn().mockResolvedValue(null),
-  listRuntimes: vi.fn().mockResolvedValue([]),
-  getProject: vi.fn(),
-  listProjects: vi.fn().mockResolvedValue({ projects: [] }),
-}));
-
-vi.mock("@multica/core/api", () => ({
-  api: mockApiObj,
-  getApi: () => mockApiObj,
-  setApiInstance: vi.fn(),
-  errorCode: (error: unknown) =>
-    typeof error === "object" && error !== null && "body" in error
-      ? (error as { body?: { code?: string } }).body?.code
-      : undefined,
-}));
-
-// Mock issue config
-// Use the real status configuration so category fixtures cannot drift.
-
-// Mock recent issues store
-const mockRecordVisit = vi.fn();
-vi.mock("@multica/core/issues/stores", async () => ({
-  // Real store, not a stub: resolved-thread expand/collapse behavior under
-  // test runs through it. Deep import keeps the persisted sibling stores
-  // (which need localStorage) out of this mock.
-  ...(await vi.importActual<
-    typeof import("@multica/core/issues/stores/resolved-expand-store")
-  >("@multica/core/issues/stores/resolved-expand-store")),
-  // Real store: sub-issue display tests drive it with setState, and the
-  // component reads it through the barrel — both must hit the same instance.
-  ...(await vi.importActual<
-    typeof import("@multica/core/issues/stores/sub-issue-display-store")
-  >("@multica/core/issues/stores/sub-issue-display-store")),
-  // Real store, in-memory (no localStorage): backs the sub-issues section's
-  // collapsed state.
-  ...(await vi.importActual<
-    typeof import("@multica/core/issues/stores/sub-issues-collapse-store")
-  >("@multica/core/issues/stores/sub-issues-collapse-store")),
-  useRecentIssuesStore: Object.assign(
-    (selector?: any) => {
-      const state = { byWorkspace: {}, recordVisit: mockRecordVisit, pruneWorkspaces: vi.fn() };
-      return selector ? selector(state) : state;
-    },
-    {
-      getState: () => ({
-        byWorkspace: {},
-        recordVisit: mockRecordVisit,
-        pruneWorkspaces: vi.fn(),
-      }),
-    },
-  ),
-  selectRecentIssues: () => () => [],
-  // Reactive in-memory stand-in: a quick-jump to a reply reopens a thread the
-  // reader collapsed, so the card has to re-render when `toggle` runs.
-  useCommentCollapseStore: (await vi.importActual<typeof import("zustand")>("zustand")).create<{
-    collapsedByIssue: Record<string, string[]>;
-    isCollapsed: (issueId: string, commentId: string) => boolean;
-    toggle: (issueId: string, commentId: string) => void;
-  }>()((set, get) => ({
-    collapsedByIssue: {},
-    isCollapsed: (issueId, commentId) => get().collapsedByIssue[issueId]?.includes(commentId) ?? false,
-    toggle: (issueId, commentId) =>
-      set((s) => {
-        const current = s.collapsedByIssue[issueId] ?? [];
-        return {
-          collapsedByIssue: {
-            ...s.collapsedByIssue,
-            [issueId]: current.includes(commentId)
-              ? current.filter((c) => c !== commentId)
-              : [...current, commentId],
-          },
-        };
-      }),
-  })),
-  useCommentDraftStore: Object.assign(
-    (selector?: any) => {
-      const state = {
-        drafts: {} as Record<string, { content: string; attachments: unknown[]; updatedAt: number }>,
-        getDraft: () => undefined,
-        getAnnotations: () => emptyDraftAttachments,
-        getAttachments: () => emptyDraftAttachments,
-        getUploads: () => emptyDraftAttachments,
-        setDraft: () => {},
-        setAttachments: () => {},
-        addUpload: () => {},
-        settleUpload: () => {},
-        failUpload: () => {},
-        removeUpload: () => {},
-        clearDraft: () => {},
-      };
-      return selector ? selector(state) : state;
-    },
-    {
-      getState: () => ({
-        drafts: {} as Record<string, { content: string; attachments: unknown[]; updatedAt: number }>,
-        getDraft: () => undefined,
-        getAnnotations: () => emptyDraftAttachments,
-        getAttachments: () => emptyDraftAttachments,
-        getUploads: () => emptyDraftAttachments,
-        setDraft: () => {},
-        setAttachments: () => {},
-        addUpload: () => {},
-        settleUpload: () => {},
-        failUpload: () => {},
-        removeUpload: () => {},
-        clearDraft: () => {},
-      }),
-    },
-  ),
-  useCommentComposerStore: Object.assign(
-    (selector?: any) => {
-      const state = { sticky: true, runningAgentReply: "steer", toggleSticky: () => {} };
-      return selector ? selector(state) : state;
-    },
-    {
-      getState: () => ({ sticky: true, runningAgentReply: "steer", toggleSticky: () => {} }),
-    },
-  ),
-}));
-
-// Mock react-virtuoso: jsdom has no real layout, so the real Virtuoso would
-// compute a 0-height viewport and render nothing. The mock renders every item
-// inline so id="comment-..." nodes are always present in the DOM — this
-// matches the production cold-path where `initialItemCount` force-mounts
-// items[0..targetIdx], giving the deep-link effect a real target node.
-//
-// scrollIntoViewSpy: the deep-link effect no longer calls native
-// scrollIntoView (it drives the timeline container's scrollTop directly to
-// avoid scrolling ancestor overflow:hidden boxes — see issue-detail.tsx). We
-// keep a no-op stub on the prototype so any stray scrollIntoView call from
-// other components doesn't throw; deep-link tests assert the highlight
-// background instead, which is mechanism-independent and observable without
-// layout.
-const scrollIntoViewSpy = vi.hoisted(() => vi.fn());
-const scrollToIndexSpy = vi.hoisted(() => vi.fn());
-
-vi.mock("react-virtuoso", () => ({
-  Virtuoso: forwardRef(function MockVirtuoso(
-    { data, itemContent, computeItemKey }: {
-      data: unknown[];
-      itemContent: (i: number, item: unknown) => unknown;
-      computeItemKey: (i: number, item: unknown) => React.Key;
-    },
-    ref: any,
-  ) {
-    useImperativeHandle(ref, () => ({
-      // Real Virtuoso ref methods are not exercised by tests in this file
-      // since the deep-link cold-path drives the container's scrollTop on the
-      // real DOM node, not Virtuoso's imperative API.
-      scrollIntoView: vi.fn(),
-      scrollToIndex: scrollToIndexSpy,
-    }));
-    return (
-      <div data-testid="virtuoso-mock">
-        {data.map((item, i) => (
-          <div key={computeItemKey(i, item)}>{itemContent(i, item) as React.ReactElement}</div>
-        ))}
-      </div>
-    );
-  }),
-}));
-
-// jsdom's HTMLElement.prototype.scrollIntoView is a no-op stub; replace it
-// with a spy so the deep-link effect's call can be observed.
-beforeEach(() => {
-  scrollIntoViewSpy.mockClear();
-  scrollToIndexSpy.mockClear();
-  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-    configurable: true,
-    writable: true,
-    value: scrollIntoViewSpy,
-  });
-  // The resolved-expand store is module-global (not per-mount like the old
-  // useState); reset so one test's expansions can't leak into the next.
-  useResolvedExpandStore.setState({ expandedByIssue: {} });
-  useCommentCollapseStore.setState({ collapsedByIssue: {} });
-});
-
-// Mock modals
-const mockOpenModal = vi.hoisted(() => vi.fn());
-vi.mock("@multica/core/modals", () => ({
-  useModalStore: Object.assign(
-    (selector?: (state: { open: typeof mockOpenModal }) => unknown) => {
-      const state = { open: mockOpenModal };
-      return selector ? selector(state) : state;
-    },
-    { getState: () => ({ open: mockOpenModal }) },
-  ),
-}));
-
-// Mock core/hooks/use-file-upload
-vi.mock("@multica/core/hooks/use-file-upload", () => ({
-  useFileUpload: () => ({ uploadWithToast: vi.fn().mockResolvedValue("https://example.com/file.png") }),
-}));
-
-// Mock realtime
-vi.mock("@multica/core/realtime", () => ({
-  useWSEvent: vi.fn(),
-  useWSReconnect: vi.fn(),
-  useWS: () => ({ subscribe: vi.fn(() => () => {}), onReconnect: vi.fn(() => () => {}) }),
-  WSProvider: ({ children }: { children: React.ReactNode }) => children,
-  useRealtimeSync: () => {},
-}));
-
-// Mock sonner
-vi.mock("sonner", () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
-}));
-
-// Mock react-resizable-panels (used by @multica/ui/components/ui/resizable)
-vi.mock("react-resizable-panels", () => ({
-  Group: ({ children, ...props }: any) => <div data-testid="panel-group" {...props}>{children}</div>,
-  Panel: ({ children, ...props }: any) => <div data-testid="panel" {...props}>{children}</div>,
-  Separator: ({ children, ...props }: any) => <div data-testid="panel-handle" {...props}>{children}</div>,
-  useDefaultLayout: () => ({ defaultLayout: undefined, onLayoutChanged: vi.fn() }),
-  usePanelRef: () => ({ current: { isCollapsed: () => false, expand: vi.fn(), collapse: vi.fn() } }),
-}));
-
-// ---------------------------------------------------------------------------
-// Test data
-// ---------------------------------------------------------------------------
-
-const mockIssue: Issue = {
-  id: "issue-1",
-  workspace_id: "ws-1",
-  number: 1,
-  identifier: "TES-1",
-  title: "Implement authentication",
-  description: "Add JWT auth to the backend",
-  status: "in_progress",
-  priority: "high",
-  assignee_type: "member",
-  assignee_id: "user-1",
-  creator_type: "member",
-  creator_id: "user-1",
-  parent_issue_id: null,
-  project_id: null,
-  position: 0,
-  stage: null,
-  start_date: null,
-  due_date: "2026-06-01T00:00:00Z",
-  metadata: {},
-  properties: {},
-  created_at: "2026-01-15T00:00:00Z",
-  updated_at: "2026-01-20T00:00:00Z",
-  revision: 3,
-};
-
-const mockTimeline: TimelineEntry[] = [
-  {
-    type: "comment",
-    id: "comment-1",
-    actor_type: "member",
-    actor_id: "user-1",
-    content: "Started working on this",
-    parent_id: null,
-    created_at: "2026-01-16T00:00:00Z",
-    updated_at: "2026-01-16T00:00:00Z",
-    comment_type: "comment",
-  },
-  {
-    type: "comment",
-    id: "comment-2",
-    actor_type: "agent",
-    actor_id: "agent-1",
-    content: "I can help with this",
-    parent_id: null,
-    created_at: "2026-01-17T00:00:00Z",
-    updated_at: "2026-01-17T00:00:00Z",
-    comment_type: "comment",
-  },
-];
-
-// ---------------------------------------------------------------------------
-// Import component under test (after mocks)
-// ---------------------------------------------------------------------------
-
 import { IssueDetail, groupSubIssuesByStage } from "./issue-detail";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function createTestQueryClient() {
-  return new QueryClient({
-    defaultOptions: {
-      queries: { retry: false, gcTime: 0 },
-      mutations: { retry: false },
-    },
-  });
-}
-
-function renderIssueDetail(issueId = "issue-1") {
-  const queryClient = createTestQueryClient();
-  return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
-      <QueryClientProvider client={queryClient}>
-        <IssueDetail issueId={issueId} />
-      </QueryClientProvider>
-    </I18nProvider>,
-  );
-}
-
-/**
- * Renders with the workspace status catalog already in cache, so custom
- * statuses resolve to their real name, category and color. Seeding the query
- * (rather than stubbing the hook) keeps the shipped resolvers in the path; the
- * generous staleTime on the catalog query means it is never refetched. Every
- * other test runs without it — the cold-catalog case. (MUL-6243)
- */
-function renderIssueDetailWithStatusCatalog(
-  entries: IssueStatusEntry[],
-  issueId = "issue-1",
-) {
-  const queryClient = createTestQueryClient();
-  queryClient.setQueryData(issueStatusKeys.list("ws-1"), { statuses: entries });
-  return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
-      <QueryClientProvider client={queryClient}>
-        <IssueDetail issueId={issueId} />
-      </QueryClientProvider>
-    </I18nProvider>,
-  );
-}
-
-function renderIssueDetailWithHighlight(
-  highlightCommentId: string,
-  issueId = "issue-1",
-  options: { seedTimeline?: boolean } = {},
-) {
-  const queryClient = createTestQueryClient();
-  if (options.seedTimeline) {
-    // Pre-populate the timeline cache so the first render sees timeline.length>0.
-    // This reproduces the inbox-click race: timeline data is available before
-    // the issue itself has finished loading, so the effect that scrolls to
-    // the comment fires once with `loading=true` (skeleton still rendered,
-    // no comment DOM) and must re-fire when `loading` flips to false.
-    queryClient.setQueryData(["issues", "timeline", issueId], mockTimeline);
-  }
-  const result = render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
-      <QueryClientProvider client={queryClient}>
-        <IssueDetail issueId={issueId} highlightCommentId={highlightCommentId} />
-      </QueryClientProvider>
-    </I18nProvider>,
-  );
-  return { ...result, queryClient };
-}
-
-const highlightedCommentBackgroundClass =
-  "bg-[color-mix(in_srgb,var(--card)_95%,var(--brand)_5%)]";
-
-function hasHighlightedCommentBackground(root: ParentNode | null): boolean {
-  if (!root) return false;
-
-  const elements = root instanceof Element
-    ? [root, ...Array.from(root.querySelectorAll("[class]"))]
-    : Array.from(root.querySelectorAll("[class]"));
-
-  return elements.some(
-    (el) => typeof el.className === "string" && el.className.includes(highlightedCommentBackgroundClass),
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -2399,6 +1721,10 @@ describe("IssueDetail (shared)", () => {
           hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
         ).toBe(true);
       });
+      // The arrival landing owns the FLAT timeline: no Virtuoso instance —
+      // if the arrival ever degrades into the virtualized jump path, long
+      // timelines lose the precise landing (I1).
+      expect(screen.queryByTestId("virtuoso-mock")).toBeNull();
     });
 
     it("highlights only the target root comment, not the whole thread", async () => {
@@ -2551,13 +1877,17 @@ describe("IssueDetail (shared)", () => {
       highlight?: string,
       issueId = "issue-1",
       token?: number,
-    ) => (
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
-        <QueryClientProvider client={queryClient}>
-          <IssueDetail issueId={issueId} highlightCommentId={highlight} highlightRequestToken={token} />
-        </QueryClientProvider>
-      </I18nProvider>
-    );
+      adapter?: ScrollRestorationAdapter,
+    ) => {
+      const detail = <IssueDetail issueId={issueId} highlightCommentId={highlight} highlightRequestToken={token} />;
+      return (
+        <I18nProvider locale="en" resources={TEST_RESOURCES}>
+          <QueryClientProvider client={queryClient}>
+            {adapter ? <ScrollRestorationProvider adapter={adapter}>{detail}</ScrollRestorationProvider> : detail}
+          </QueryClientProvider>
+        </I18nProvider>
+      );
+    };
 
     it("jumps through Virtuoso without flattening the timeline", async () => {
       const queryClient = createTestQueryClient();
@@ -2670,6 +2000,107 @@ describe("IssueDetail (shared)", () => {
       expect(screen.queryByTestId("virtuoso-mock")).toBeNull();
       expect(scrollToIndexSpy).not.toHaveBeenCalled();
     });
+
+    it("lands when the highlight arrives while the issue is still loading (timeline first)", async () => {
+      // The timeline query resolves before the issue one: the landing must
+      // not be swallowed by guards consumed while Virtuoso wasn't mounted —
+      // with readiness-captured arrival this resolves through the flat
+      // landing; assert the user-visible outcome.
+      const issueResolvers: Array<(v: Issue) => void> = [];
+      mockApiObj.getIssue.mockImplementation(() => new Promise<Issue>((r) => { issueResolvers.push(r); }));
+      const queryClient = createTestQueryClient();
+      const { rerender } = render(detailTree(queryClient));
+      rerender(detailTree(queryClient, "comment-2"));
+      await waitFor(() => expect(mockApiObj.listTimeline).toHaveBeenCalled());
+      await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+      await act(async () => {
+        issueResolvers.splice(0).forEach((r) => r(mockIssue));
+        mockApiObj.getIssue.mockResolvedValue(mockIssue);
+      });
+      await waitFor(() => expect(document.getElementById("comment-comment-2")).not.toBeNull());
+      await waitFor(() => expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
+      ).toBe(true));
+    });
+
+    it("does not flatten the timeline for a fragment whose target is not in this issue", async () => {
+      // A stale `#comment-…` from the previous page's URL (web's one-commit
+      // window) names a comment that doesn't exist here — AC5: no flat
+      // cold-mount for it.
+      const queryClient = createTestQueryClient();
+      queryClient.setQueryData(issueKeys.timeline("issue-1"), mockTimeline);
+      render(detailTree(queryClient, "comment-from-somewhere-else"));
+      await waitFor(() => expect(screen.getAllByText("Implement authentication").length).toBeGreaterThan(0));
+      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
+    });
+
+    it("does not re-flatten when the arrival anchor is revisited after a same-page jump", async () => {
+      // Arrive on #comment-1 (flat landing), same-page jump to comment-2,
+      // then back to comment-1 (browser back): the arrival is one-shot —
+      // the return is a jump, not another flat cold-mount.
+      const queryClient = createTestQueryClient();
+      const { rerender } = render(detailTree(queryClient, "comment-1"));
+      await waitFor(() => expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-1")),
+      ).toBe(true));
+      expect(screen.queryByTestId("virtuoso-mock")).toBeNull();
+
+      rerender(detailTree(queryClient, "comment-2"));
+      await waitFor(() => expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument());
+
+      rerender(detailTree(queryClient, "comment-1"));
+      await act(async () => { await new Promise((r) => setTimeout(r, 100)); });
+      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
+    });
+
+    it("lands after an issue switch even when the new highlight committed one frame early", async () => {
+      // Desktop shape: the tab URL (and with it the adapter's hash) updates
+      // synchronously while the router reconciles in a transition — the OLD
+      // issue can commit one frame with the NEW highlight before the issueId
+      // prop follows. The target isn't in the old issue's items, so nothing
+      // is consumed there; after the switch the landing must still run.
+      const issue2: Issue = { ...mockIssue, id: "issue-2", identifier: "TES-3", title: "Second issue" };
+      const timeline2: TimelineEntry[] = [
+        { ...mockTimeline[0]!, id: "comment-b2", content: "Target in the second issue" },
+      ];
+      mockApiObj.getIssue.mockImplementation((id: string) =>
+        Promise.resolve(id === "issue-2" ? issue2 : mockIssue),
+      );
+      mockApiObj.listTimeline.mockImplementation((issueId: string) =>
+        Promise.resolve(issueId === "issue-2" ? timeline2 : mockTimeline),
+      );
+      const queryClient = createTestQueryClient();
+      const { rerender } = render(detailTree(queryClient));
+      await waitFor(() => expect(document.getElementById("comment-comment-1")).not.toBeNull());
+      rerender(detailTree(queryClient, "comment-b2", "issue-1"));
+      rerender(detailTree(queryClient, "comment-b2", "issue-2"));
+      await waitFor(() => expect(document.getElementById("comment-comment-b2")).not.toBeNull());
+      await waitFor(() => expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-b2")),
+      ).toBe(true));
+    });
+
+    it("does not re-jump when the view remounts from a restore (tab switch back)", async () => {
+      const view = new Map<string, string>();
+      const adapter: ScrollRestorationAdapter = {
+        get: () => undefined,
+        getViewState: (k) => view.get(k),
+        setViewState: (k, v) => { if (v === undefined) view.delete(k); else view.set(k, v); },
+      };
+      const queryClient = createTestQueryClient();
+      const first = render(detailTree(queryClient, undefined, "issue-1", undefined, adapter));
+      await waitFor(() => expect(document.getElementById("comment-comment-1")).not.toBeNull());
+      first.rerender(detailTree(queryClient, "comment-2", "issue-1", undefined, adapter));
+      await waitFor(() => expect(scrollToIndexSpy).toHaveBeenCalled());
+      // Let the flash fade fully, then remount the way a tab-switch-back
+      // restore does — same URL, memento intact: no second jump, no flash.
+      await act(async () => { await new Promise((r) => setTimeout(r, 2600)); });
+      first.unmount();
+      render(detailTree(queryClient, "comment-2", "issue-1", undefined, adapter));
+      await waitFor(() => expect(document.getElementById("comment-comment-2")).not.toBeNull());
+      await act(async () => { await new Promise((r) => setTimeout(r, 300)); });
+      expect(hasHighlightedCommentBackground(document.getElementById("comment-comment-2"))).toBe(false);
+    }, 10000);
   });
 
   it("marks a reply-resolved thread as resolved on the quick-jump rail", async () => {

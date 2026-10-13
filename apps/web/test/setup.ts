@@ -20,6 +20,21 @@ if (typeof window !== "undefined") {
     document.elementFromPoint = () => null;
   }
 
+  // jsdom doesn't provide matchMedia; useIsMobile() relies on it.
+  if (typeof window.matchMedia !== "function") {
+    window.matchMedia = (query: string) =>
+      ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList;
+  }
+
   // jsdom 29 / Node.js 22+ may not provide a proper Web Storage API.
   // Create a proper localStorage mock if methods are missing.
   if (

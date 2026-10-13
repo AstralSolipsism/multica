@@ -50,7 +50,8 @@ import {
   useInboxFilterStore,
 } from "@multica/core/inbox/filter-store";
 
-import { IssueDetail, issueHighlightMementoKey } from "../../issues/components/issue-detail";
+import { IssueDetail } from "../../issues/components/issue-detail";
+import { issueHighlightMementoKey } from "../../issues/comment-deep-link";
 import { useViewStateWriter } from "../../platform";
 import { ErrorBoundary } from "@multica/ui/components/common/error-boundary";
 import { useNavigation, useReportNavigating } from "../../navigation";

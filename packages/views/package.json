@@ -14,6 +14,7 @@
     "./common/cli-install-command": "./common/cli-install-command.tsx",
     "./editor": "./editor/index.ts",
     "./issues/components": "./issues/components/index.ts",
+    "./issues/comment-deep-link": "./issues/comment-deep-link.ts",
     "./issues/hooks": "./issues/hooks/index.ts",
     "./issues/utils/filter": "./issues/utils/filter.ts",
     "./issues/utils/sort": "./issues/utils/sort.ts",
@@ -64,7 +65,8 @@
     "./locales": "./locales/index.ts",
     "./locales/*": "./locales/*",
     "./issues/visuals": "./issues/components/visuals.ts",
-    "./you-should-know": "./you-should-know/index.ts"
+    "./you-should-know": "./you-should-know/index.ts",
+    "./issues/components/issue-detail.test-harness": "./issues/components/issue-detail.test-harness.tsx"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

@@ -7,7 +7,7 @@ import {
 import {
   ISSUE_HIGHLIGHT_MEMENTO_PREFIX,
   parseCommentHighlightHash,
-} from "@multica/views/issues/components";
+} from "@multica/views/issues/comment-deep-link";
 import { useAuthStore } from "@multica/core/auth";
 import { isReservedSlug } from "@multica/core/paths";
 import {
@@ -119,6 +119,18 @@ function clearCommentHighlightMemento(path: string): void {
 }
 
 /**
+ * `tryRouteToOtherWorkspace` plus the deep-link record clear: the switch
+ * activates (or creates) the destination tab, so the clear runs after it and
+ * targets that tab. Deliberately NOT inside the store's `switchWorkspace` —
+ * that also serves non-push flows where clearing would be wrong.
+ */
+function routeToOtherWorkspaceWithFreshLanding(path: string): boolean {
+  if (!tryRouteToOtherWorkspace(path)) return false;
+  clearCommentHighlightMemento(path);
+  return true;
+}
+
+/**
  * Execute a content link (the `multica:navigate` event fired by the shared
  * editor/markdown link handler) with the disposition the click resolved to:
  * a plain click navigates in place — the same thing a plain click means on
@@ -138,6 +150,9 @@ export function routeContentLinkPath(
   const slug = extractWorkspaceSlug(path);
   if (slug && slug !== store.activeWorkspaceSlug) {
     store.switchWorkspace(slug, path);
+    // The switch activated (or created) the destination tab; a comment deep
+    // link is fresh landing intent there too.
+    clearCommentHighlightMemento(path);
     return;
   }
   if (disposition === "push") {
@@ -218,12 +233,17 @@ export function DesktopNavigationProvider({
         const store = useTabStore.getState();
         const active = getActiveTab(store);
         if (active && active.url === path) return;
-        if (tryRouteToOtherWorkspace(path)) return;
+        if (routeToOtherWorkspaceWithFreshLanding(path)) return;
         if (tryRouteToPinnedNewTab(path)) return;
         clearCommentHighlightMemento(path);
         store.navigateActiveSession(path);
       },
       replace: (path: string) => {
+        if (tryRouteToOverlay(path)) return;
+        if (tryRouteToOtherWorkspace(path)) return;
+        useTabStore.getState().navigateActiveSession(path, { replace: true });
+      },
+      replaceCanonical: (path: string) => {
         if (tryRouteToOverlay(path)) return;
         if (tryRouteToOtherWorkspace(path)) return;
         const store = useTabStore.getState();
@@ -232,12 +252,21 @@ export function DesktopNavigationProvider({
         const toPathname = splitTabUrl(path).pathname;
         store.navigateActiveSession(path, { replace: true });
         // The canonical UUID→identifier rewrite re-spells the same issue's
-        // URL: carry the route's view-state records (the comment-highlight
-        // landing record) over so a later restore remount still finds them.
+        // URL while the SAME detail instance survives (desktop does not
+        // remount): carry the route's landing record over, overwrite-style —
+        // a record the fresh push already cleared must not resurrect from the
+        // identifier spelling's older visits, or the second click never
+        // lands. (Web instead clears on rewrite: it remounts and must
+        // re-land.)
         if (active && fromPathname && fromPathname !== toPathname) {
           useTabStore
             .getState()
-            .migrateViewStateRoute(active.id, fromPathname, toPathname);
+            .migrateViewStateRoute(
+              active.id,
+              fromPathname,
+              toPathname,
+              ISSUE_HIGHLIGHT_MEMENTO_PREFIX,
+            );
         }
       },
       back: () => {
@@ -277,6 +306,9 @@ export function DesktopNavigationProvider({
         const store = useTabStore.getState();
         if (slug && slug !== store.activeWorkspaceSlug) {
           store.switchWorkspace(slug, path);
+          // Same fresh-landing clear as a push: the destination tab may have
+          // landed this comment link before.
+          clearCommentHighlightMemento(path);
           return;
         }
         store.openTab(path, title ?? "", { activate: opts?.activate });

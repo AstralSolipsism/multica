@@ -4,8 +4,11 @@ import { useEffect, useRef } from "react";
 import { useCanonicalIssue } from "@multica/core/issues/canonical-id";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { parseCommentHighlightHash } from "../comment-deep-link";
 import { useNavigation } from "../../navigation";
 import { IssueDetail, IssueDetailSkeleton, IssueNotFound } from "./issue-detail";
+
+export { parseCommentHighlightHash } from "../comment-deep-link";
 
 interface IssueDetailRouteProps {
   /**
@@ -23,6 +26,9 @@ interface IssueDetailRouteProps {
  *
  * A replace, not a push: the UUID URL is the same page, and a history entry
  * for it would make Back bounce the user between two spellings of one issue.
+ * The adapter's `replaceCanonical` hook lets each platform fix up deep-link
+ * landing records for the respelling (web clears so the remounted instance
+ * re-lands; desktop migrates so the surviving instance stays landed).
  */
 export function useCanonicalIssueUrl(
   routeId: string,
@@ -41,13 +47,8 @@ export function useCanonicalIssueUrl(
     if (!canonicalHref || routeId === identifier) return;
     if (replacedRef.current === canonicalHref) return;
     replacedRef.current = canonicalHref;
-    navigation.replace(canonicalHref);
+    (navigation.replaceCanonical ?? navigation.replace)(canonicalHref);
   }, [canonicalHref, identifier, routeId, navigation]);
-}
-
-export function parseCommentHighlightHash(hash: string): string | undefined {
-  const match = /^#comment-([A-Za-z0-9_-]+)$/.exec(hash);
-  return match?.[1];
 }
 
 /**

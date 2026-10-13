@@ -264,16 +264,19 @@ interface TabStore {
     entryKeyPrefix: string,
   ) => void;
   /**
-   * Re-key all of a route's view-state entries onto another pathname. The
-   * canonical UUID→identifier rewrite `replace`s the URL of the same issue;
-   * without this, records written under the UUID spelling (a landing that ran
-   * before the rewrite committed) are orphaned and a later restore remount
-   * reads an empty entry under the identifier spelling.
+   * Carry a route's view-state entries onto another pathname, scoped to one
+   * entry-key prefix and OVERWRITE-style: after the move, the target route's
+   * entries under the prefix mirror the source route's — target entries with
+   * no source counterpart are deleted. Used by the canonical UUID→identifier
+   * rewrite (the adapter's `replaceCanonical`): a landing record written under
+   * the UUID spelling must follow the route, and one the fresh push already
+   * cleared must not resurrect from the target's older visits.
    */
   migrateViewStateRoute: (
     tabId: string,
     fromRouteKey: string,
     toRouteKey: string,
+    entryKeyPrefix: string,
   ) => void;
   /**
    * Force-remount the active tab at the same URL: bump mountGeneration.
@@ -1194,7 +1197,7 @@ export const useTabStore = create<TabStore>()(
         });
       },
 
-      migrateViewStateRoute(tabId, fromRouteKey, toRouteKey) {
+      migrateViewStateRoute(tabId, fromRouteKey, toRouteKey, entryKeyPrefix) {
         if (fromRouteKey === toRouteKey) return;
         const { byWorkspace } = get();
         const hit = findTabLocation(byWorkspace, tabId);
@@ -1202,19 +1205,29 @@ export const useTabStore = create<TabStore>()(
         const { slug, group, index } = hit;
         const current = group.tabs[index];
 
-        const fromPrefix = `${fromRouteKey}::`;
+        const fromPrefix = scrollMementoKey(fromRouteKey, entryKeyPrefix);
+        const toPrefix = scrollMementoKey(toRouteKey, entryKeyPrefix);
         const keys = Object.keys(current.memento.view);
-        if (!keys.some((key) => key.startsWith(fromPrefix))) return;
+        const moving = new Map<string, string>();
+        for (const key of keys) {
+          if (key.startsWith(fromPrefix)) {
+            moving.set(`${toPrefix}${key.slice(fromPrefix.length)}`, current.memento.view[key]!);
+          }
+        }
+        const hasTargetEntries = keys.some(
+          (key) => key.startsWith(toPrefix) && !moving.has(key),
+        );
+        // Nothing to carry and nothing stale to drop — skip the write.
+        if (moving.size === 0 && !hasTargetEntries) return;
 
         const nextView: Record<string, string> = {};
         for (const key of keys) {
-          if (key.startsWith(fromPrefix)) {
-            nextView[`${toRouteKey}::${key.slice(fromPrefix.length)}`] =
-              current.memento.view[key]!;
-          } else {
-            nextView[key] = current.memento.view[key]!;
-          }
+          if (key.startsWith(fromPrefix)) continue; // moved below (or dropped)
+          if (key.startsWith(toPrefix)) continue; // overwritten by the source's
+          nextView[key] = current.memento.view[key]!;
         }
+        for (const [key, value] of moving) nextView[key] = value;
+
         const nextTabs = [...group.tabs];
         nextTabs[index] = {
           ...current,

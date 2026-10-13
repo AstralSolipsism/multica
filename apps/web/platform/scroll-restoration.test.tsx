@@ -119,23 +119,35 @@ describe("WebScrollRestorationProvider", () => {
       return null;
     }
 
-    // The remounted (identifier) route renders before the URL commits.
+    // A visit on the UUID spelling stores its record under the UUID route.
     window.history.replaceState({}, "", "/acme/issues/cb240efb-154c-42a8-ae92-42b02676feca");
-    nav.pathname = "/acme/issues/OL-1";
-    const view = render(
+    nav.pathname = "/acme/issues/cb240efb-154c-42a8-ae92-42b02676feca";
+    const first = render(
       <WebScrollRestorationProvider>
         <Probe />
       </WebScrollRestorationProvider>,
     );
     adapter!.setViewState!("highlight:i1", "c1");
 
-    // The address bar catches up; the entry must still be found.
-    window.history.replaceState({}, "", "/acme/issues/OL-1");
-    view.rerender(
+    // The rewrite's remounted instance renders the IDENTIFIER route while the
+    // address bar still shows the UUID spelling: reading the record in that
+    // window must NOT find the UUID route's entry (S1).
+    nav.pathname = "/acme/issues/OL-1";
+    first.rerender(
       <WebScrollRestorationProvider>
         <Probe />
       </WebScrollRestorationProvider>,
     );
-    expect(adapter!.getViewState!("highlight:i1")).toBe("c1");
+    expect(adapter!.getViewState!("highlight:i1")).toBeUndefined();
+
+    // Writes land under the rendered route too, and survive the commit.
+    adapter!.setViewState!("highlight:i2", "c2");
+    window.history.replaceState({}, "", "/acme/issues/OL-1");
+    first.rerender(
+      <WebScrollRestorationProvider>
+        <Probe />
+      </WebScrollRestorationProvider>,
+    );
+    expect(adapter!.getViewState!("highlight:i2")).toBe("c2");
   });
 });

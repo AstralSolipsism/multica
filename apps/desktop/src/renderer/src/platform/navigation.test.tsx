@@ -203,7 +203,7 @@ describe("comment deep-link memento handling", () => {
     expect(acmeGroup().tabs[0].memento.view).toEqual({});
   });
 
-  it("carries view-state records over when replace re-spells the route (canonical rewrite)", () => {
+  it("carries view-state records over only on replaceCanonical (the canonical rewrite)", () => {
     const getAdapter = renderProvider();
     const tabId = acmeGroup().activeTabId;
     // The tab is sitting on the UUID spelling, as after a source-context jump…
@@ -211,14 +211,42 @@ describe("comment deep-link memento handling", () => {
     // …and the landing wrote its record under that spelling.
     useTabStore.getState().commitViewState(tabId, `/acme/issues/${UUID_B}`, "highlight:i2", "c1");
 
-    getAdapter().replace("/acme/issues/TES-2#comment-c1");
+    getAdapter().replaceCanonical!("/acme/issues/TES-2#comment-c1");
 
     expect(acmeGroup().tabs[0].memento.view).toEqual({
       "/acme/issues/TES-2::highlight:i2": "c1",
     });
   });
 
-  it("does not clear the record on replace (the canonical rewrite keeps it)", () => {
+  it("migrating is overwrite-style: a record the fresh push cleared does not resurrect", () => {
+    const getAdapter = renderProvider();
+    const tabId = acmeGroup().activeTabId;
+    // Visit 1 landed and the record was migrated onto the identifier route…
+    useTabStore.getState().commitViewState(tabId, "/acme/issues/TES-2", "highlight:i2", "c1");
+    // …visit 2 is a fresh UUID push (clears the UUID route's records — none —
+    // and must NOT see the identifier one back).
+
+    getAdapter().push(`/acme/issues/${UUID_B}#comment-c1`);
+    getAdapter().replaceCanonical!("/acme/issues/TES-2#comment-c1");
+
+    expect(acmeGroup().tabs[0].memento.view).toEqual({});
+  });
+
+  it("does not migrate or clear the record on a plain replace", () => {
+    const getAdapter = renderProvider();
+    const tabId = acmeGroup().activeTabId;
+    getAdapter().push(`/acme/issues/${UUID_B}`);
+    useTabStore.getState().commitViewState(tabId, `/acme/issues/${UUID_B}`, "highlight:i2", "c1");
+
+    getAdapter().replace("/acme/issues/TES-2#comment-c1");
+
+    // Untouched: only `replaceCanonical` carries records across a respelling.
+    expect(acmeGroup().tabs[0].memento.view).toEqual({
+      "/acme/issues/cb240efb-154c-42a8-ae92-42b02676feca::highlight:i2": "c1",
+    });
+  });
+
+  it("does not clear the record when replaceCanonical carries no comment anchor", () => {
     const getAdapter = renderProvider();
     const tabId = acmeGroup().activeTabId;
     getAdapter().push("/acme/issues/TES-2");
