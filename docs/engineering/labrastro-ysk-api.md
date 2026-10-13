@@ -57,7 +57,9 @@ report carry strictly increasing `created_at` in report order
 (`9024_labrastro_ysk_tip_created_at` defaults both timestamp columns to
 `clock_timestamp()`, so consecutive inserts in the same transaction differ at
 microsecond granularity); the RFC3339Nano `created_at` strings preserve those
-digits and clients should compare them at full precision. Each tip has:
+digits and clients should compare them at full precision — parse them first,
+not string-compare, since trailing zeros are trimmed (`.173Z` sorts after
+`.173221Z` as text). Each tip has:
 
 ```ts
 type Tip = {

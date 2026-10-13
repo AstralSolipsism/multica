@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -494,15 +495,27 @@ func TestLabrastroYSKBatchPreservesGenerationOrder(t *testing.T) {
 	f.report(t, labrastroYSKReport{Version: 1, Kind: "light", Step: 1,
 		Tips: []labrastroYSKInputTip{yskInput("第一条"), yskInput("第二条"), yskInput("第三条")}})
 	// Newest first means reverse of report order; CreatedAt is the RFC3339Nano
-	// string the API returns, so this also proves the sub-millisecond digits
-	// survive the round trip (string compare works for equal-length nanos).
+	// string the API returns, so asserting on it also proves the sub-millisecond
+	// digits survive the round trip. Compare parsed times, not strings:
+	// RFC3339Nano trims trailing zeros, so ".173Z" string-sorts after ".173221Z".
 	tips := f.list(t, false, false, testUserID)
 	if len(tips) != 3 || tips[0].Line != "第三条" || tips[1].Line != "第二条" || tips[2].Line != "第一条" {
 		t.Fatalf("tips not in reverse report order: %+v", tips)
 	}
-	for i := 1; i < len(tips); i++ {
-		if tips[i-1].CreatedAt == nil || tips[i].CreatedAt == nil || *tips[i-1].CreatedAt <= *tips[i].CreatedAt {
-			t.Fatalf("created_at not strictly decreasing: %v then %v", tips[i-1].CreatedAt, tips[i].CreatedAt)
+	parsed := make([]time.Time, len(tips))
+	for i, tip := range tips {
+		if tip.CreatedAt == nil {
+			t.Fatalf("tip %d has no created_at", i)
+		}
+		ts, err := time.Parse(time.RFC3339Nano, *tip.CreatedAt)
+		if err != nil {
+			t.Fatalf("created_at %q: %v", *tip.CreatedAt, err)
+		}
+		parsed[i] = ts
+	}
+	for i := 1; i < len(parsed); i++ {
+		if !parsed[i-1].After(parsed[i]) {
+			t.Fatalf("created_at not strictly decreasing: %s then %s", *tips[i-1].CreatedAt, *tips[i].CreatedAt)
 		}
 	}
 }
