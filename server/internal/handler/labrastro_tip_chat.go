@@ -252,8 +252,7 @@ func labrastroTipChatOpening(ctx context.Context, q *db.Queries, tip db.Labrastr
 	if err != nil {
 		return "", err
 	}
-	description := []rune(issue.Description.String)
-	excerpt := string(description[:min(len(description), 500)])
+	var excerpt string
 	if tip.AnchorCommentID.Valid {
 		excerpt, err = q.LabrastroTipChatAnchorExcerpt(ctx, db.LabrastroTipChatAnchorExcerptParams{WorkspaceID: tip.WorkspaceID, IssueID: issue.ID, ID: tip.AnchorCommentID})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -261,6 +260,9 @@ func labrastroTipChatOpening(ctx context.Context, q *db.Queries, tip db.Labrastr
 		} else if err != nil {
 			return "", err
 		}
+	} else {
+		description := []rune(issue.Description.String)
+		excerpt = string(description[:min(len(description), 500)])
 	}
 	task, err := q.GetAgentTask(ctx, tip.TaskID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
