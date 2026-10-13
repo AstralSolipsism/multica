@@ -186,6 +186,32 @@ Storage migrations: `9025_labrastro_tip_chat`,
 `9027_labrastro_tip_chat_session_index`. No foreign keys or cascades are added;
 each index has its own concurrent migration and invalid-index recovery hook.
 
+#### Web and desktop clients (OL-362)
+
+"Ask about this" on the card and in the issue archive calls `useOpenTipChat`,
+which retries `tip_source_changed` once and seeds the opened session's detail
+cache. It never writes tip state or a composer draft. The floating chat opens
+the session when it is enabled and the Chat page is not showing; otherwise the
+client navigates to `/<slug>/chat?session=<id>`. Refusal codes, and the same
+checks made locally from the agent and member lists, disable the button and
+explain why.
+
+Because the list omits a hidden-only side chat, the floating chat and the Chat
+page controller resolve their active session with `useTipSideChatLookup`: a
+listed row, otherwise the session detail (`GET /api/chat/sessions/{id}`),
+accepted only when it carries `tip_source`. The stale-session reset waits for
+that lookup. For a side chat, or while its lookup is pending, a surface never
+falls back to the selected or first available agent. Those surfaces show
+`tip_source` as the pinned banner and offer three common questions until a
+visible message exists. `useYouShouldKnowRealtimeSync` applies
+`chat:session_updated` and `chat:session_deleted` to that detail cache too.
+
+A dedicated desktop issue window cannot route to Chat. It invokes
+`window:open-chat-session` with `{ workspaceSlug, sessionId }`. Main accepts
+only issue windows of the current account and queues `chat:open-session` for
+the main renderer, which opens the session as above, switching workspace when
+needed (`apps/desktop/src/shared/chat-session-handoff.ts`).
+
 ## Events and lifetime
 
 `issue_tip:created` and `issue_tip:updated` carry `{ "tip": Tip }` with no
