@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { getCurrentSlug } from "@multica/core/platform";
-import { paths } from "@multica/core/paths";
+import { useRequiredWorkspaceSlug } from "@multica/core/paths";
 import { useT } from "@multica/views/i18n";
-import { useNavigation } from "@multica/views/navigation";
 import { useOpenChatSession, type OpenChatSession } from "@multica/views/you-should-know";
+import { useTabStore } from "@/stores/tab-store";
+import type { ChatSessionHandoff } from "../../../shared/chat-session-handoff";
 
 /**
  * Issue window end of the chat handoff (OL-362): "Ask about this" opens the
@@ -33,37 +34,54 @@ export function useMainWindowChatOpener(workspaceSlug: string): OpenChatSession 
 
 /**
  * Main window end of the chat handoff (OL-362). Main focuses (or recreates)
- * this window and delivers the session once this listener is installed. A
- * session of the workspace on screen opens like an "Ask about this" here — the
- * floating chat when available, otherwise the Chat page; one from another
- * workspace goes to that workspace's Chat page, the adapter switching to it.
+ * this window and delivers the session once this listener is installed. It
+ * opens like an "Ask about this" here — the floating chat when available,
+ * otherwise the Chat page. A session of another workspace first switches the
+ * window to that workspace (its tabs as they were), then opens by the same
+ * rule once that workspace is on screen; going somewhere else meanwhile
+ * drops it.
  *
  * Mount inside the workspace slug provider, only while a workspace is shown:
  * until then main keeps the request queued.
  */
 export function DesktopChatSessionBridge() {
+  const slug = useRequiredWorkspaceSlug();
   const openChatSession = useOpenChatSession();
-  const { push } = useNavigation();
-  // The adapter changes with the active tab's location; keep the main-process
+  // The opener changes with the active tab's location; keep the main-process
   // subscription stable across navigations.
-  const latest = useRef({ openChatSession, push });
+  const latest = useRef(openChatSession);
   useEffect(() => {
-    latest.current = { openChatSession, push };
-  }, [openChatSession, push]);
+    latest.current = openChatSession;
+  }, [openChatSession]);
+  const waiting = useRef<{ handoff: ChatSessionHandoff; from: string | null } | null>(null);
 
   useEffect(() => {
     if (window.desktopAPI.windowContext?.kind === "issue") return undefined;
     // Optional call keeps renderer HMR safe while an old preload is attached.
-    return window.desktopAPI.onOpenChatSession?.(({ workspaceSlug, sessionId }) => {
-      if (workspaceSlug === getCurrentSlug()) {
-        latest.current.openChatSession(sessionId);
+    return window.desktopAPI.onOpenChatSession?.((handoff) => {
+      const current = getCurrentSlug();
+      if (handoff.workspaceSlug === current) {
+        waiting.current = null;
+        latest.current(handoff.sessionId);
         return;
       }
-      latest.current.push(
-        `${paths.workspace(workspaceSlug).chat()}?session=${encodeURIComponent(sessionId)}`,
-      );
+      waiting.current = { handoff, from: current };
+      useTabStore.getState().switchWorkspace(handoff.workspaceSlug);
     });
   }, []);
+
+  // This provider follows the workspace on screen, so a landed switch shows
+  // up here; the chat store already writes to that workspace's slots.
+  useEffect(() => {
+    const entry = waiting.current;
+    if (!entry) return;
+    if (slug === entry.handoff.workspaceSlug) {
+      waiting.current = null;
+      openChatSession(entry.handoff.sessionId);
+    } else if (slug !== entry.from) {
+      waiting.current = null;
+    }
+  }, [slug, openChatSession]);
 
   return null;
 }

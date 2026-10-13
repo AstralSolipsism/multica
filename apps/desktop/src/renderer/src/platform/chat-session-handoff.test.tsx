@@ -7,6 +7,7 @@ import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { setCurrentWorkspace } from "@multica/core/platform";
 import type { StorageAdapter } from "@multica/core/types";
 import { NavigationProvider, type NavigationAdapter } from "@multica/views/navigation";
+import { useTabStore } from "@/stores/tab-store";
 import type { ChatSessionHandoff } from "../../../shared/chat-session-handoff";
 import { DesktopChatSessionBridge, useMainWindowChatOpener } from "./chat-session-handoff";
 
@@ -52,19 +53,33 @@ function navigationAt(pathname: string): NavigationAdapter {
   };
 }
 
-function renderBridge(navigation: NavigationAdapter) {
-  return render(
-    <WorkspaceSlugProvider slug="acme">
+function bridgeIn(slug: string, navigation: NavigationAdapter) {
+  return (
+    <WorkspaceSlugProvider slug={slug}>
       <NavigationProvider value={navigation}>
         <DesktopChatSessionBridge />
       </NavigationProvider>
-    </WorkspaceSlugProvider>,
+    </WorkspaceSlugProvider>
   );
 }
 
+function renderBridge(navigation: NavigationAdapter) {
+  return render(bridgeIn("acme", navigation));
+}
+
+/** What the shell does once a workspace switch lands: the slug moves, providers follow. */
+async function land(view: ReturnType<typeof render>, slug: string, navigation: NavigationAdapter) {
+  await act(async () => setCurrentWorkspace(slug, `ws-${slug}`));
+  view.rerender(bridgeIn(slug, navigation));
+}
+
+/** Persisted chat state, per workspace slot. */
+let values: Map<string, string>;
+
 beforeEach(() => {
   setCurrentWorkspace("acme", "ws-1");
-  const values = new Map<string, string>();
+  useTabStore.setState({ activeWorkspaceSlug: "acme", byWorkspace: {} });
+  values = new Map<string, string>();
   const storage: StorageAdapter = {
     getItem: (key) => values.get(key) ?? null,
     setItem: (key, value) => {
@@ -116,15 +131,48 @@ describe("DesktopChatSessionBridge (main window)", () => {
     expect(navigation.push).toHaveBeenCalledExactlyOnceWith(`/acme/chat?session=${SESSION}`);
   });
 
-  it("switches to the session's workspace when the window shows another one", () => {
+  it("switches to another workspace's session, then opens it in the floating chat there", async () => {
     const api = stubDesktopAPI("main");
-    const navigation = navigationAt("/acme/issues");
-    renderBridge(navigation);
+    const view = renderBridge(navigationAt("/acme/issues"));
 
     api.deliver({ workspaceSlug: "beta", sessionId: SESSION });
+    // The window restores that workspace's tabs; nothing opens on this one.
+    expect(useTabStore.getState().activeWorkspaceSlug).toBe("beta");
+    expect(useChatStore.getState()).toMatchObject({ isOpen: false, activeSessionId: null });
 
-    expect(navigation.push).toHaveBeenCalledExactlyOnceWith(`/beta/chat?session=${SESSION}`);
-    expect(useChatStore.getState().activeSessionId).toBeNull();
+    const there = navigationAt("/beta/issues");
+    await land(view, "beta", there);
+
+    expect(useChatStore.getState()).toMatchObject({ isOpen: true, activeSessionId: SESSION });
+    expect(values.get("multica:chat:activeSessionId:beta")).toBe(SESSION);
+    expect(values.get("multica:chat:activeSessionId:acme")).toBeUndefined();
+    expect(there.push).not.toHaveBeenCalled();
+  });
+
+  it("switches to another workspace's session, then goes to its Chat page when the floating chat is off", async () => {
+    const api = stubDesktopAPI("main");
+    useChatStore.getState().setFloatingChatEnabled(false);
+    const view = renderBridge(navigationAt("/acme/issues"));
+
+    api.deliver({ workspaceSlug: "beta", sessionId: SESSION });
+    const there = navigationAt("/beta/issues");
+    await land(view, "beta", there);
+
+    expect(there.push).toHaveBeenCalledExactlyOnceWith(`/beta/chat?session=${SESSION}`);
+    expect(useChatStore.getState().isOpen).toBe(false);
+  });
+
+  it("drops another workspace's session when the member goes somewhere else first", async () => {
+    const api = stubDesktopAPI("main");
+    const view = renderBridge(navigationAt("/acme/issues"));
+
+    api.deliver({ workspaceSlug: "beta", sessionId: SESSION });
+    await land(view, "gamma", navigationAt("/gamma/issues"));
+    const later = navigationAt("/beta/issues");
+    await land(view, "beta", later);
+
+    expect(useChatStore.getState()).toMatchObject({ isOpen: false, activeSessionId: null });
+    expect(later.push).not.toHaveBeenCalled();
   });
 
   it("does not listen in a dedicated issue window", () => {
