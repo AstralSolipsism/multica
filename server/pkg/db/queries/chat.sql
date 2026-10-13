@@ -30,11 +30,16 @@ WHERE cs.id = $1
   AND cs.workspace_id = $2
   AND (
     cs.explicitly_created_at IS NOT NULL
+    OR EXISTS (
+      SELECT 1 FROM labrastro_tip_chat source
+      WHERE source.chat_session_id = cs.id AND source.workspace_id = cs.workspace_id
+        AND source.user_id = cs.creator_id
+    )
     OR
     EXISTS (
       SELECT 1 FROM chat_message AS public_message
       WHERE public_message.chat_session_id = cs.id
-        AND public_message.message_kind != 'channel_command'
+        AND public_message.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
     )
   );
 
@@ -57,7 +62,7 @@ LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind
     FROM chat_message m
    WHERE m.chat_session_id = cs.id
-     AND m.message_kind != 'channel_command'
+     AND m.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
    ORDER BY m.created_at DESC
    LIMIT 1
 ) lm ON true
@@ -94,7 +99,7 @@ LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind
     FROM chat_message m
    WHERE m.chat_session_id = cs.id
-     AND m.message_kind != 'channel_command'
+     AND m.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
    ORDER BY m.created_at DESC
    LIMIT 1
 ) lm ON true
@@ -186,7 +191,7 @@ WHERE session.id = @id
     SELECT 1 FROM chat_message AS message
     WHERE message.chat_session_id = session.id
       AND message.role = 'user'
-      AND message.message_kind != 'channel_command'
+      AND message.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
   )
 RETURNING *;
 
@@ -203,7 +208,7 @@ WHERE session.id = @id
     SELECT 1 FROM chat_message AS message
     WHERE message.chat_session_id = session.id
       AND message.role = 'user'
-      AND message.message_kind != 'channel_command'
+      AND message.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
   )
 RETURNING *;
 
@@ -217,13 +222,13 @@ WHERE session.id = @id
     WHERE message.id = @message_id
       AND message.chat_session_id = session.id
       AND message.role = 'user'
-      AND message.message_kind != 'channel_command'
+      AND message.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
   )
   AND NOT EXISTS (
     SELECT 1 FROM chat_message AS other_message
     WHERE other_message.chat_session_id = session.id
       AND other_message.role = 'user'
-      AND other_message.message_kind != 'channel_command'
+      AND other_message.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
       AND other_message.id != @message_id
   )
 RETURNING *;
@@ -778,10 +783,11 @@ RETURNING task.*;
 DELETE FROM chat_message
 WHERE task_id = $1
   AND role = 'user'
-  AND message_kind <> 'onboarding_kickoff'
+  AND message_kind NOT IN ('onboarding_kickoff', 'hidden_context')
 RETURNING *;
 
 -- name: ReleaseOnboardingKickoffFromTask :exec
+-- Shared hidden-input lifecycle: includes generic hidden_context side chats.
 -- Hands an adopted kickoff on to the session's next un-started turn when its
 -- own turn dies (terminal failure, cancel, edit), falling back to unowned when
 -- there is no such turn.
@@ -821,7 +827,7 @@ SET task_id = (
 )
 WHERE task_id = $1
   AND role = 'user'
-  AND message_kind = 'onboarding_kickoff';
+  AND message_kind IN ('onboarding_kickoff', 'hidden_context');
 
 -- name: ListChatMessages :many
 -- IMPORTANT: the visible-head selector below is also used by
@@ -836,7 +842,7 @@ WHERE task_id = $1
 -- claimed during the backoff and then becomes the visible claimed head.
 SELECT message.* FROM chat_message AS message
 WHERE message.chat_session_id = $1
-  AND message.message_kind != 'channel_command'
+  AND message.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
   AND NOT (
     message.role = 'user'
     AND EXISTS (
@@ -1024,7 +1030,7 @@ WITH latest_visible AS (
       -- moving it to dispatch time reverses that, and because the batch's two
       -- rows would then share one timestamp, their order falls to random UUIDs
       -- (MUL-5827).
-      AND claimed_input.message_kind <> 'onboarding_kickoff'
+      AND claimed_input.message_kind NOT IN ('onboarding_kickoff', 'hidden_context')
 )
 UPDATE chat_message AS claimed_input
 SET created_at = GREATEST(
@@ -1053,7 +1059,7 @@ WHERE queued_input.chat_session_id = $1
   -- Same exclusion, same reason as ReanchorClaimedDirectChatInput: the hidden
   -- kickoff has no visible position to fix, and moving it would put the
   -- product's context after the member's message inside one input batch.
-  AND queued_input.message_kind <> 'onboarding_kickoff'
+  AND queued_input.message_kind NOT IN ('onboarding_kickoff', 'hidden_context')
   AND queued_input.created_at <= sqlc.arg('assistant_created_at')::timestamptz
   AND EXISTS (
     SELECT 1
@@ -1086,6 +1092,8 @@ WHERE queued_input.chat_session_id = $1
 SELECT message.* FROM chat_message AS message
 WHERE message.chat_session_id = $1
   AND message.message_kind != 'channel_command'
+  AND (COALESCE(sqlc.narg(include_hidden)::boolean, false)
+       OR message.message_kind NOT IN ('onboarding_kickoff', 'hidden_context'))
   AND NOT (
     message.role = 'user'
     AND EXISTS (
@@ -1384,6 +1392,7 @@ LEFT JOIN LATERAL (
     FROM chat_message AS input
     WHERE input.task_id = COALESCE(task.chat_input_task_id, task.id)
       AND input.role = 'user'
+      AND input.message_kind NOT IN ('onboarding_kickoff', 'hidden_context')
     ORDER BY input.created_at ASC, input.id ASC
     LIMIT 1
 ) AS message ON TRUE
@@ -1516,7 +1525,7 @@ SELECT EXISTS (
     SELECT 1 FROM chat_message
     WHERE chat_session_id = $1
       AND role = 'user'
-      AND message_kind != 'channel_command'
+      AND message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
 ) AS has_public_user_message;
 
 -- name: CreateChatDraftRestore :one
@@ -1674,6 +1683,7 @@ VALUES (
 RETURNING *;
 
 -- name: AdoptOrphanOnboardingKickoff :exec
+-- Shared hidden-input lifecycle: includes generic hidden_context side chats.
 -- Hands the session's unowned kickoff row to the member's first real turn.
 --
 -- The kickoff is written with no task_id (nothing runs for the opening any
@@ -1689,7 +1699,7 @@ UPDATE chat_message
 SET task_id = $2
 WHERE chat_session_id = $1
   AND role = 'user'
-  AND message_kind = 'onboarding_kickoff'
+  AND message_kind IN ('onboarding_kickoff', 'hidden_context')
   AND task_id IS NULL;
 
 -- name: GetLatestAssistantChatMessageForSession :one

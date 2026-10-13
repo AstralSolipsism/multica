@@ -4,6 +4,7 @@ export * from "./labrastro-skill-schemas";
 export * from "./labrastro-message-delivery-schemas";
 export * from "./labrastro-quota-schemas";
 import { z } from "zod";
+import { TipChatSourceSchema } from "./labrastro-ysk-schemas";
 import { normalizeIssueStatusCategory } from "../issues/config/status";
 import type {
   AgentBuilderRuntimeSwitch,
@@ -2051,6 +2052,7 @@ export const ChatSessionSchema: z.ZodType<ChatSession> = z.object({
   last_message: ChatLastMessageSchema.nullable().optional().catch(undefined),
   pinned: z.boolean().optional(),
   channel_source: ChatChannelSourceSchema.optional().catch(undefined),
+  tip_source: TipChatSourceSchema.optional().catch(undefined),
   is_current_channel_route: z.boolean().optional().catch(undefined),
   created_at: z.string().default(""),
   updated_at: z.string().default(""),

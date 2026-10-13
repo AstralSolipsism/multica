@@ -242,6 +242,10 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+	if err := h.labrastroHydrateTipChatSources(r, resp); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load chat source")
+		return
+	}
 	if err := h.hydrateChatSessionChannelMetadata(r.Context(), resp); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load chat channel metadata")
 		return
@@ -335,6 +339,10 @@ func (h *Handler) GetChatSession(w http.ResponseWriter, r *http.Request) {
 	// hydrateChatSessionChannelMetadata mutates the slice element, so retain a
 	// concrete slice here rather than passing a temporary value to writeJSON.
 	responses := []ChatSessionResponse{resp}
+	if err := h.labrastroHydrateTipChatSources(r, responses); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load chat source")
+		return
+	}
 	if err := h.hydrateChatSessionChannelMetadata(r.Context(), responses); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load chat channel metadata")
 		return
@@ -759,6 +767,10 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := qtx.LabrastroDeleteTipChatSession(r.Context(), session.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete chat source")
+		return
+	}
 	if err := qtx.DeleteChatSession(r.Context(), db.DeleteChatSessionParams{
 		ID:          session.ID,
 		WorkspaceID: session.WorkspaceID,
@@ -1005,7 +1017,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// is the default/original title observed here and drives the CAS so a
 	// manual rename mid-generation is never clobbered.
 	shouldGenerateTitle := shouldGenerateFirstMessageTitle(hadUserMessage, currentTitle, sent.InitialTitle, channelBacked, channelSourceKnown)
-	if shouldGenerateTitle {
+	if shouldGenerateTitle && h.labrastroAllowChatAutoTitle(r.Context(), session.ID) {
 		h.maybeGenerateChatTitleAsync(workspaceID, userID, session.ID, currentTitle, req.Content)
 	}
 
@@ -1223,12 +1235,10 @@ func (h *Handler) ListChatMessagesPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A session can contain one server-authored onboarding kickoff. Fetch one
-	// extra row beyond the normal lookahead so hiding it cannot make a visible
-	// page appear shorter or lose its next cursor.
+	// Hidden input is excluded in SQL before applying the page limit.
 	messages, err := h.Queries.ListChatMessagesPage(r.Context(), db.ListChatMessagesPageParams{
 		ChatSessionID:   session.ID,
-		Limit:           int32(limit + 2),
+		Limit:           int32(limit + 1),
 		BeforeCreatedAt: beforeCreatedAt,
 		BeforeID:        beforeID,
 	})
@@ -1923,6 +1933,8 @@ type ChatSessionResponse struct {
 	// Pinned marks a chat the user has stuck to the top of the list. Populated
 	// by list endpoints and by the pin/unpin + single-session responses.
 	Pinned bool `json:"pinned"`
+	// TipSource is the private snapshot saved when a member opens a YSK tip.
+	TipSource *LabrastroTipChatSource `json:"tip_source,omitempty"`
 	// ChannelSource is present only for Chats created from an external channel.
 	// IsCurrentChannelRoute distinguishes the active route generation from an
 	// older Chat that remains readable and writable in Multica.
@@ -1984,7 +1996,7 @@ type ChatLastMessage struct {
 // buildChatLastMessage assembles the preview from list-row columns; returns nil
 // when there is no last message (the LEFT JOIN produced a NULL timestamp).
 func buildChatLastMessage(at pgtype.Timestamptz, content, role string, failure pgtype.Text, kind string) *ChatLastMessage {
-	if !at.Valid || kind == protocol.ChatMessageKindOnboardingKickoff {
+	if !at.Valid || protocol.IsHiddenChatMessageKind(kind) {
 		return nil
 	}
 	return &ChatLastMessage{
@@ -2061,7 +2073,7 @@ func chatMessageToResponse(m db.ChatMessage, attachments []AttachmentResponse) C
 func visibleChatMessages(messages []db.ChatMessage) []db.ChatMessage {
 	visible := make([]db.ChatMessage, 0, len(messages))
 	for _, message := range messages {
-		if message.MessageKind == protocol.ChatMessageKindOnboardingKickoff {
+		if protocol.IsHiddenChatMessageKind(message.MessageKind) {
 			continue
 		}
 		visible = append(visible, message)
@@ -2095,6 +2107,8 @@ func normalizeMessageKind(kind string) string {
 	switch kind {
 	case protocol.ChatMessageKindNoResponse:
 		return protocol.ChatMessageKindNoResponse
+	case protocol.ChatMessageKindHiddenContext:
+		return protocol.ChatMessageKindHiddenContext
 	case protocol.ChatMessageKindOnboardingKickoff:
 		return protocol.ChatMessageKindOnboardingKickoff
 	case protocol.ChatMessageKindOnboardingOpening:

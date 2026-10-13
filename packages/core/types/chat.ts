@@ -107,6 +107,8 @@ export interface ChatSession {
   /** Present for Chats created by an external Channel. Historical Chats keep
    *  their source even after a newer route generation becomes current. */
   channel_source?: ChatChannelSource;
+  /** Private YSK provenance, absent on ordinary sessions and machine reads. */
+  tip_source?: import("../api/labrastro-ysk-schemas").TipChatSource;
   /** Absent for first-party Chats. */
   is_current_channel_route?: boolean;
   created_at: string;
