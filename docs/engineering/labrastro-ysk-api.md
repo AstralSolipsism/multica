@@ -76,7 +76,14 @@ context (`X-Workspace-ID` or slug).
   the tip's `line` as a topic, refreshing duplicates and retaining the latest 50
   per workspace/member. `dismissed` does not change known topics.
 
-Both GET routes return `{ "tips": [...] }`, newest first. Each tip has:
+Both GET routes return `{ "tips": [...] }`, newest first. Tips from one
+report carry strictly increasing `created_at` in report order
+(`9024_labrastro_ysk_tip_created_at` defaults both timestamp columns to
+`clock_timestamp()`, so consecutive inserts in the same transaction differ at
+microsecond granularity); the RFC3339Nano `created_at` strings preserve those
+digits and clients should compare them at full precision — parse them first,
+not string-compare, since trailing zeros are trimmed (`.173Z` sorts after
+`.173221Z` as text). Each tip has:
 
 ```ts
 type Tip = {
@@ -137,5 +144,5 @@ YSK data; member removal clears that member's states and topics. The independent
 known-topic list survives an individual issue deletion.
 
 Tables and indexes are installed by `9016_labrastro_ysk` through
-`9023_labrastro_ysk_topic_identity_index`. All indexes have their own concurrent
+`9024_labrastro_ysk_tip_created_at`. All indexes have their own concurrent
 migration and recovery registration. There are no foreign keys or cascades.
