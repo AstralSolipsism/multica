@@ -116,8 +116,9 @@ describe("YouShouldKnowWorkspaceSection", () => {
   it("reads the workspace switch; default off is rendered as off", async () => {
     state.workspaceEnabled = false;
     withQuery(<YouShouldKnowWorkspaceSection canManage />);
-    const toggle = screen.getByRole("switch", { name: "Show bystander tips while agents work" });
+    const toggle = screen.getByRole("switch", { name: "Generate bystander tips while agents work" });
     expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByText("When off, no tips are generated and no tokens are spent on them.")).toBeInTheDocument();
 
     state.workspaceEnabled = true;
     cleanup();
@@ -170,8 +171,8 @@ describe("YouShouldKnowWorkspaceSection", () => {
   it("anchors both toggles for the settings search", () => {
     renderWithI18n(<IndexProbe />);
 
-    expect(screen.getByText("workspace#you-should-know:Show bystander tips while agents work")).toBeInTheDocument();
-    expect(screen.getByText("notifications#you-should-know:You should know")).toBeInTheDocument();
+    expect(screen.getByText("workspace#you-should-know:Generate bystander tips while agents work")).toBeInTheDocument();
+    expect(screen.getByText("notifications#you-should-know:Show bystander tips to me")).toBeInTheDocument();
 
     // The anchors the entries point at exist on the rendered pages.
     cleanup();
@@ -223,8 +224,7 @@ describe("YouShouldKnowWorkspaceSection", () => {
     }
     renderWithI18n(<SearchProbe />);
 
-    // The feature name reaches the workspace row through its section-title
-    // description, and the personal row by its own label.
+    // Both entries retain the feature name alongside their descriptions.
     expect(screen.getByText("workspace#you-should-know")).toBeInTheDocument();
     expect(screen.getByText("notifications#you-should-know")).toBeInTheDocument();
   });
@@ -239,7 +239,8 @@ describe("YouShouldKnowPersonalRow", () => {
 
   it("defaults to on and saves muted on first toggle off", () => {
     withQuery(<YouShouldKnowPersonalRow />);
-    const toggle = screen.getByRole("switch", { name: "You should know" });
+    const toggle = screen.getByRole("switch", { name: "Show bystander tips to me" });
+    expect(screen.getByText("Only affects what you see. To stop generating tips, a workspace admin can turn off the workspace setting.")).toBeInTheDocument();
     expect(toggle).toHaveAttribute("aria-checked", "true");
 
     fireEvent.click(toggle);
@@ -252,7 +253,7 @@ describe("YouShouldKnowPersonalRow", () => {
   it("turning it back on omits the key (default all)", () => {
     state.preferences = { you_should_know: "muted" };
     withQuery(<YouShouldKnowPersonalRow />);
-    fireEvent.click(screen.getByRole("switch", { name: "You should know" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Show bystander tips to me" }));
     expect(mockMutate).toHaveBeenCalledWith(
       expect.not.objectContaining({ you_should_know: expect.anything() }),
       expect.anything(),
@@ -262,7 +263,7 @@ describe("YouShouldKnowPersonalRow", () => {
   it("shows a toast when saving the preference fails", () => {
     state.mutateError = new Error("pref boom");
     withQuery(<YouShouldKnowPersonalRow />);
-    fireEvent.click(screen.getByRole("switch", { name: "You should know" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Show bystander tips to me" }));
 
     expect(mockToastError).toHaveBeenCalledWith("pref boom");
   });

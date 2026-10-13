@@ -47,7 +47,10 @@ export function YouShouldKnowWorkspaceSection({ canManage }: { canManage: boolea
   return (
     <SettingsSection title={t(($) => $.settings.title)} anchor="you-should-know">
       <SettingsCard>
-        <SettingsRow label={t(($) => $.settings.workspace_label)}>
+        <SettingsRow
+          label={t(($) => $.settings.workspace_label)}
+          description={t(($) => $.settings.workspace_description)}
+        >
           <Switch
             checked={workspaceEnabled}
             disabled={!canManage || saving}
