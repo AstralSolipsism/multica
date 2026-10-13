@@ -507,11 +507,11 @@ api_started_after() {
   [ "$epoch" -ge $(($2 - 5)) ]
 }
 
-# The launch line injects checkout_commit's value into the api via
-# COMMIT=<sha> make api-dev (whose -X main.commit ends up in /health), so this
-# must return exactly the same form the launch passes: any other shape never
-# equals the reported commit and api_identity_matches rejects — and stops —
-# the freshly launched api.
+# The launch line injects checkout_commit's value into the api as a make
+# argument on api-dev (COMMIT=<sha>, whose -X main.commit ends up in /health),
+# so this must return exactly the same form the launch passes: any other shape
+# never equals the reported commit and api_identity_matches rejects — and
+# stops — the freshly launched api.
 checkout_commit() {
   git -C "${DIR:-$REPO_ROOT}" rev-parse HEAD 2>/dev/null || printf 'unknown'
 }
@@ -611,11 +611,12 @@ Run 'make down' here first — a leftover instance answers /health with 200 and 
   fi
 
   launched_at="$(now_epoch)"
-  # COMMIT is passed explicitly so an inherited COMMIT env var or a make
-  # command-line override cannot desync the injected commit from the one
-  # checkout_commit just compared against — a short-SHA override would
-  # retrigger the exact identity failure this launch is guarding against.
-  launch_detached api env "COMMIT=$expected_commit" make -C "$REPO_ROOT" -s api-dev ENV_FILE="$ENV_FILE"
+  # COMMIT is passed as a make argument, not an environment variable: a
+  # variable on the outer make command line (e.g. COMMIT=<short> make up)
+  # travels into this inner make through MAKEFLAGS and outranks the
+  # environment, re-desyncing the injected commit from the one
+  # checkout_commit just compared against.
+  launch_detached api make -C "$REPO_ROOT" -s api-dev ENV_FILE="$ENV_FILE" COMMIT="$expected_commit"
   info "api launching (pid $(cat "$(pid_file api)")), log: $(log_file api)"
 
   while [ "$waited" -lt 300 ]; do

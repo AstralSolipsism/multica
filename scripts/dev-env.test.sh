@@ -277,10 +277,11 @@ fi
 
 # The health payload an api process reports must match the checkout's commit
 # for the process to count as ours. start_api injects checkout_commit's value
-# into the launch (COMMIT=<sha> make api-dev, whose -X main.commit ends up in
-# /health), so the comparison and the injection share one source: a short SHA
-# injected behind our back never equals the reported one and start_api kills
-# its own freshly launched api as a foreign process.
+# into the launch as a make argument (COMMIT=<sha> make api-dev, whose
+# -X main.commit ends up in /health), so the comparison and the injection
+# share one source: a short SHA injected behind our back never equals the
+# reported one and start_api kills its own freshly launched api as a foreign
+# process.
 api_identity_repo="$tmp_dir/api-identity-repo"
 mkdir -p "$api_identity_repo"
 git -C "$api_identity_repo" init -q
@@ -306,14 +307,17 @@ launch_args="$tmp_dir/api-launch-args"
     fail "api identity accepted a commit that is not this checkout's"
   fi
 
-  # Prove the launch pins the same value the comparison uses. Heredoc into a
-  # fresh bash: start_api's own stop-and-die paths must run under a real set -e.
+  # Prove the launch pins the same value the comparison uses, as a make
+  # argument: a COMMIT on the outer make command line travels into the inner
+  # make through MAKEFLAGS and outranks environment forms, so only an argument
+  # reliably wins. Heredoc into a fresh bash: start_api's own stop-and-die
+  # paths must run under a real set -e.
   cat > "$api_identity_repo/launch-probe.sh" <<PROBE
   #!/usr/bin/env bash
   set -euo pipefail
   source "$root_dir/scripts/dev-env.sh"
   DIR="$api_identity_repo"
-  REPO_ROOT="$api_identity_repo"
+  REPO_ROOT="$root_dir"
   ENV_FILE=.env.example
   BACKEND_PORT=19999
   port_free() { :; }
@@ -325,7 +329,18 @@ PROBE
   if ! BACKEND_PORT=19999 bash "$api_identity_repo/launch-probe.sh" > "$out" 2>&1; then
     fail "launch probe failed: $(cat "$out")"
   fi
-  require_contains "$launch_args" "COMMIT=$expected"
+  # Re-run the captured make command dry, with a hostile COMMIT riding in
+  # MAKEFLAGS exactly as `make up ... COMMIT=<short>` would propagate it.
+  # Whatever make would actually inject must be the compared commit.
+  launch_cmd="$tmp_dir/launch-cmd"
+  sed 's/^api //' "$launch_args" > "$launch_cmd"
+  if ! MAKEFLAGS=" -- COMMIT=deadbee" bash -c 'cd "$0" && eval "$(cat "$1") -n"' \
+      "$root_dir" "$launch_cmd" > "$out" 2>&1; then
+    fail "dry-run of the launch command failed: $(cat "$out")"
+  fi
+  injected="$(sed -n 's/.*main.commit=\([^"]*\).*/\1/p' "$out" | head -1)"
+  [ "$injected" = "$expected" ] \
+    || fail "launch would inject commit '$injected' under a MAKEFLAGS COMMIT override, want '$expected'"
 )
 
 # kill -0 alone counts a zombie launcher as running, which makes stop_component
@@ -344,49 +359,98 @@ PROBE
   process_alive $$ || fail "process_alive rejected a live process (bare stat)"
 )
 
-# A zombie launcher must also read as gone where components are looked up:
-# component_pid gates the "already running" fast paths in start_*.
-zombie_pid_file="$tmp_dir/zombie-pid-file"
+# A zombie launcher must also read as gone where components are looked up.
+# kill is stubbed so kill -0 always succeeds (as it does on a real zombie);
+# the marker file carries the TERM delivery into $(...) subshells, where a
+# shell variable set inside kill would not be visible.
+zombie_marker="$tmp_dir/zombie-term-marker"
+zombie_setup() {
+  # runs inside the sourcing subshell: installs the shared stubs
+  rm -f "$zombie_marker"
+  ps() {
+    # stat= before TERM: live; after: defunct, with flags
+    if [ -f "$zombie_marker" ]; then printf 'Zs'; else printf 'Sl'; fi
+  }
+  kill() {
+    [ "$1" = "-TERM" ] || [ "$1" = -TERM ] && : > "$zombie_marker"
+    return 0
+  }
+  sleep() { :; }
+}
+
+# 1. component_pid gates the "already running" fast paths in start_*: a
+#    launcher that already zombified must read as gone.
 (
   # shellcheck disable=SC1090
   source "$root_dir/scripts/dev-env.sh"
   STATE_DIR="$tmp_dir/zombie-component"
   mkdir -p "$STATE_DIR"
   printf '4242\n' > "$(pid_file api)"
-  ps() { printf 'Zs'; }
+  zombie_setup
+  : > "$zombie_marker"
   if component_pid api >/dev/null; then
     fail "component_pid accepted a zombie launcher"
   fi
 )
 
-# A launcher that turns zombie between TERM and the liveness re-check must not
-# be reported as still running: stop_component returns 0 and stays quiet.
-assert_stop_reads_zombie_as_dead() (
+# 2. A launcher that zombifies between TERM and the liveness re-check must not
+#    be reported as still running. No listener on the port.
+assert_stop_zombie_launcher() (
   # shellcheck disable=SC1090
   source "$root_dir/scripts/dev-env.sh"
-  STATE_DIR="$tmp_dir/stop-zombie"
+  STATE_DIR="$tmp_dir/stop-zombie-launcher"
   mkdir -p "$STATE_DIR"
   BACKEND_PORT=18080 FRONTEND_PORT=13000 DESKTOP_RENDERER_PORT=5174
-  local pid=777
+  local pid=777 output
   printf '%s\n' "$pid" > "$(pid_file web)"
-  kill_calls=0
-  ps() {
-    # stat= before the first signal: live; after: defunct
-    if [ "$kill_calls" -gt 0 ]; then printf 'Zs'; else printf 'Sl'; fi
-  }
-  process_group_id() { printf '%s' "$pid"; }
+  zombie_setup
   port_listener_pid() { :; }
-  kill() { kill_calls=$((kill_calls + 1)); }
-  sleep() { :; }
-  local output
   output="$(stop_component web 2>&1)" || fail "stop_component failed on a launcher that zombified"
   case "$output" in
-    *still\ running*) fail "stop_component reported a zombie as still running: $output" ;;
+    *still\ running*) fail "stop_component reported a zombie launcher as still running: $output" ;;
   esac
   [ -f "$(pid_file web)" ] && fail "stop_component kept the pid file of a zombie launcher"
   return 0
 )
-assert_stop_reads_zombie_as_dead
+assert_stop_zombie_launcher
+
+# 3. Same for the listener re-check after the process-group kill: a listener
+#    that zombifies must be released without a still-running warning.
+assert_stop_zombie_listener() (
+  # shellcheck disable=SC1090
+  source "$root_dir/scripts/dev-env.sh"
+  STATE_DIR="$tmp_dir/stop-zombie-listener"
+  mkdir -p "$STATE_DIR"
+  BACKEND_PORT=18080 FRONTEND_PORT=13000 DESKTOP_RENDERER_PORT=5174
+  local listener=888 output
+  # no launcher pid file: the recorded listener alone proves ownership
+  printf '%s\n' "$listener" > "$(listener_pid_file web)"
+  zombie_setup
+  port_listener_pid() { printf '%s' "$listener"; }
+  output="$(stop_component web 2>&1)" || fail "stop_component failed on a listener that zombified"
+  case "$output" in
+    *still\ running*) fail "stop_component reported a zombie listener as still running: $output" ;;
+  esac
+  [ -f "$(listener_pid_file web)" ] && fail "stop_component kept the listener pid file of a zombie"
+  return 0
+)
+assert_stop_zombie_listener
+
+# A SIGKILLed lock holder zombified by an unreaping PID 1 must not wedge
+# acquire_lock: the stale lock is taken over instead of waiting out the 10s.
+(
+  # shellcheck disable=SC1090
+  source "$root_dir/scripts/dev-env.sh"
+  LOCK_DIR="$tmp_dir/zombie-lock.d"
+  mkdir -p "$LOCK_DIR"
+  printf '4242\n' > "$LOCK_DIR/pid"
+  ps() { printf 'Zs'; }
+  kill() { return 0; }
+  sleep() { fail "acquire_lock waited on a zombie lock holder"; }
+  acquire_lock || fail "acquire_lock refused a dead holder's lock"
+  [ "$(cat "$LOCK_DIR/pid")" = "$$" ] || fail "acquire_lock did not take over the stale lock"
+  rm -rf "$LOCK_DIR"
+)
 
 # The lsof fallback: lsof silently skips processes whose comm contains an
 # unmatched `(` (next-server truncates to "next-server (v1"), so port_listener_pid
@@ -399,6 +463,32 @@ assert_stop_reads_zombie_as_dead
   found="$(port_listener_pid 13000)"
   [ "$found" = 4242 ] || fail "ss fallback lost the listener: got '$found', want 4242"
 )
+
+# The "ours but not commit X; restarting it" path in start_api: the stop that
+# precedes the relaunch must not abort the script silently when it fails.
+# Runs in a fresh bash so set -e stays armed inside start_api; asserts the
+# stop's warning AND the port-busy die both print.
+restart_case="$tmp_dir/restart-failed-stop"
+mkdir -p "$restart_case"
+cat > "$restart_case/probe.sh" <<'PROBE'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$PROBE_ROOT/scripts/dev-env.sh"
+BACKEND_PORT=19999
+health_json() { printf '{"pid":1,"commit":"stale","started_at":"2026-01-01T00:00:00Z"}'; }
+component_pid() { printf '123'; }
+health_belongs_to_api() { return 0; }
+api_identity_matches() { return 1; }
+stop_component() { warn "api launcher pid 123 is still running"; return 1; }
+port_free() { return 1; }
+describe_port_owner() { printf 'pid 123 (server)'; }
+start_api
+PROBE
+status=0
+PROBE_ROOT="$root_dir" bash "$restart_case/probe.sh" > "$out" 2>&1 || status=$?
+[ "$status" -ne 0 ] || fail "start_api exited 0 after a failed restart stop"
+require_contains "$out" "still running"
+require_contains "$out" "is busy"
 
 # A failed stop during a launch abort must print why it died instead of letting
 # set -e exit silently — the original `make up` failure mode (OL-347).
