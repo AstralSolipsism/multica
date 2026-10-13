@@ -85,7 +85,7 @@ func TestReuseKimiMigratesManagedSkills(t *testing.T) {
 		{Name: "multica-platform", Content: "Old platform skill."},
 		{Name: "removed-skill", Content: "No longer bound."},
 	}
-	if err := writeSkillFiles(legacyRoot, oldSkills, manifest); err != nil {
+	if err := writeSkillFiles(legacyRoot, oldSkills, manifest, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeSidecarManifest(envRoot, manifest); err != nil {

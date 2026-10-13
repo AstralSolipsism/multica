@@ -157,7 +157,7 @@ func TestSkillListingNamesMatchDirectoriesOnBatchSlugCollision(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	if err := writeSkillFiles(dir, skills, nil); err != nil {
+	if err := writeSkillFiles(dir, skills, nil, nil); err != nil {
 		t.Fatalf("writeSkillFiles failed: %v", err)
 	}
 
@@ -208,7 +208,7 @@ func TestBatchSlugAllocationCountsHiddenSkills(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	if err := writeSkillFiles(dir, skills, nil); err != nil {
+	if err := writeSkillFiles(dir, skills, nil, nil); err != nil {
 		t.Fatalf("writeSkillFiles failed: %v", err)
 	}
 
@@ -277,7 +277,7 @@ Hidden body.`,
 		},
 	}
 
-	if err := writeContextFiles(dir, "", ctx, nil); err != nil {
+	if err := writeContextFiles(dir, "", ctx, nil, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
