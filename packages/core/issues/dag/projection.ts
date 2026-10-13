@@ -1,7 +1,10 @@
-import type { IssueGraph, IssueGraphNode } from "@multica/core/api";
-import { projectIssueGraph } from "@multica/core/issues";
-import { normalizeIssueStatusCategory } from "@multica/core/issues/config/status";
-import { DAG_ISSUE_REP_PREFIX } from "@multica/core/issues/stores/view-store";
+import { createDagTraversal, dagDependencyClosure } from "./traversal";
+import type { IssueGraph, IssueGraphNode } from "../../api/issue-graph-schemas";
+import { projectIssueGraph } from "../graph";
+import { normalizeIssueStatusCategory } from "../config/status";
+import { DAG_ISSUE_REP_PREFIX } from "../stores/view-store";
+
+const identifierCollator = new Intl.Collator(undefined, { numeric: true });
 
 export const DAG_INDEPENDENT_GROUP = "independent:root";
 export type DagNodeKind = "issue" | "feature" | "independent";
@@ -115,7 +118,7 @@ function summarize(members: IssueGraphNode[]) {
 /** The display forest the projection walks: parent links repaired for display
  *  (cycles and missing parents broken at the edge), children and roots sorted
  *  by identifier. The source graph is never mutated. */
-function dagDisplayForest(graph: IssueGraph) {
+export function dagDisplayForest(graph: IssueGraph) {
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const parentOf = new Map(
     graph.nodes.map((n) => [
@@ -152,14 +155,14 @@ function dagDisplayForest(graph: IssueGraph) {
     }
   }
   const compare = (a: IssueGraphNode, b: IssueGraphNode) =>
-    a.identifier.localeCompare(b.identifier, undefined, { numeric: true }) ||
+    identifierCollator.compare(a.identifier, b.identifier) ||
     a.id.localeCompare(b.id);
   roots.sort(compare);
   for (const list of children.values()) list.sort(compare);
   return { byId, parentOf, children, roots };
 }
 
-function dagDescendants(
+export function dagDescendants(
   children: ReadonlyMap<string, IssueGraphNode[]>,
   root: IssueGraphNode,
 ): IssueGraphNode[] {
@@ -228,12 +231,21 @@ export function dagCompletedVisibility(
       list.push(edge.source);
       backEdges.set(edge.target, list);
     }
+    const unfinishedSubtrees = new Set<string>();
+    for (const node of graph.nodes) {
+      if (finished(node)) continue;
+      let current: string | null = node.id;
+      while (current && !unfinishedSubtrees.has(current)) {
+        unfinishedSubtrees.add(current);
+        current = forest.parentOf.get(current) ?? null;
+      }
+    }
     const queue = graph.nodes
-      .filter((n) => !hiddenScope.has(n.id) && !finished(n))
+      .filter((n) => !hiddenScope.has(n.id) && unfinishedSubtrees.has(n.id))
       .map((n) => n.id);
     const seen = new Set(queue);
-    while (queue.length) {
-      const target = queue.shift()!;
+    for (let cursor = 0; cursor < queue.length; cursor++) {
+      const target = queue[cursor]!;
       for (const source of backEdges.get(target) ?? []) {
         if (seen.has(source)) continue;
         seen.add(source);
@@ -250,6 +262,24 @@ export function dagCompletedVisibility(
     for (const member of dagDescendants(children, byId.get(rootId)!))
       if (children.has(member.id)) hiddenLineIds.push(dagFeatureRepId(member.id));
   return { hiddenRoots, hiddenSingles, keptCancelled, hiddenLineIds };
+}
+
+/** Independent tasks have no hierarchy, dependency endpoints or unknown /
+ * restricted prerequisites. Keep this definition shared by both views. */
+export function dagIndependentIssueIds(graph: IssueGraph, forest = dagDisplayForest(graph)): Set<string> {
+  const { roots, children } = forest;
+  const incident = new Set(graph.edges.flatMap((e) => [e.source, e.target]));
+  const independent = roots.filter(
+    (n) =>
+      !children.has(n.id) &&
+      n.parentIssueId === null &&
+      !n.hasRestrictedParent &&
+      !incident.has(n.id) &&
+      n.dependencySummary != null &&
+      !n.dependencySummary.hasRestrictedBlockers &&
+      n.dependencySummary.visibleUnsatisfiedCount === 0,
+  );
+  return new Set(independent.map((n) => n.id));
 }
 
 /** Task-line containers are independent of project membership. Only authorized
@@ -270,19 +300,9 @@ export function computeDagProjection(
 ): DagProjection {
   const forest = dagDisplayForest(graph);
   const { children, roots } = forest;
-  const incident = new Set(graph.edges.flatMap((e) => [e.source, e.target]));
   const collapsed = new Set(collapsedIds);
-  const independent = roots.filter(
-    (n) =>
-      !children.has(n.id) &&
-      n.parentIssueId === null &&
-      !n.hasRestrictedParent &&
-      !incident.has(n.id) &&
-      n.dependencySummary != null &&
-      !n.dependencySummary.hasRestrictedBlockers &&
-      n.dependencySummary.visibleUnsatisfiedCount === 0,
-  );
-  const independentIds = new Set(independent.map((n) => n.id));
+  const independentIds = dagIndependentIssueIds(graph, forest);
+  const independent = roots.filter((node) => independentIds.has(node.id));
   const nodes: DagVisibleNode[] = [];
   const groups: DagVisibleGroup[] = [];
   const representatives = new Map<string, string>();
@@ -491,67 +511,9 @@ export function dagFocusNeighborhood(
   nodeId: string,
   way: "upstream" | "downstream",
 ): { nodeIds: Set<string>; hiddenIssueCount: number } {
-  const backEdges = new Map<string, string[]>();
-  const fwdEdges = new Map<string, string[]>();
-  const push = (map: Map<string, string[]>, from: string, to: string) => {
-    const list = map.get(from) ?? [];
-    list.push(to);
-    map.set(from, list);
-  };
-  const childrenOf = new Map<string, string[]>();
-  const parentById = new Map<string, string | null>();
-  for (const node of graph.nodes) {
-    parentById.set(node.id, node.parentIssueId);
-    if (node.parentIssueId) push(childrenOf, node.parentIssueId, node.id);
-  }
-  for (const edge of graph.edges) {
-    push(fwdEdges, edge.source, edge.target);
-    push(backEdges, edge.target, edge.source);
-  }
-  const edgeNext = way === "upstream" ? backEdges : fwdEdges;
-
   const selected = projection.nodes.find((candidate) => candidate.id === nodeId);
   const seeds = selected ? selected.memberIds : [nodeId];
-
-  const issueSeen = new Set(seeds);
-  // Downstream propagation state: a node that a forward edge (waiter) or a
-  // descent (inheritor) reached carries the wait and passes it to children.
-  // Seeds already cover their displayed members; only new arrivals propagate.
-  const affected = new Set<string>();
-  const queue = [...issueSeen];
-  const markAffected = (id: string) => {
-    if (issueSeen.has(id)) return;
-    issueSeen.add(id);
-    affected.add(id);
-    queue.push(id);
-  };
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    for (const next of edgeNext.get(current) ?? []) {
-      const isNew = !issueSeen.has(next);
-      if (way === "downstream") markAffected(next);
-      else if (isNew) {
-        issueSeen.add(next);
-        queue.push(next);
-      }
-    }
-    if (way === "upstream") {
-      let ancestor = parentById.get(current) ?? null;
-      const guard = new Set<string>();
-      while (ancestor !== null && !guard.has(ancestor)) {
-        guard.add(ancestor);
-        if (!issueSeen.has(ancestor)) {
-          issueSeen.add(ancestor);
-          queue.push(ancestor);
-        }
-        ancestor = parentById.get(ancestor) ?? null;
-      }
-    } else if (affected.has(current)) {
-      for (const child of childrenOf.get(current) ?? []) {
-        markAffected(child);
-      }
-    }
-  }
+  const issueSeen = dagDependencyClosure(createDagTraversal(graph, dagDisplayForest(graph)), seeds, way);
 
   const visibleIds = new Set(projection.nodes.map((node) => node.id));
   const nodeIds = new Set<string>();

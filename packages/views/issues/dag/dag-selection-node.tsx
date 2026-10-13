@@ -19,7 +19,7 @@ import {
 } from "@multica/core/issues/stores/view-store-context";
 import { useT } from "../../i18n";
 import { DagAssignAction, useDagIssueSelection } from "./dag-issue-actions";
-import { dagFocusNeighborhood, type DagProjection, type DagVisibleGroup, type DagVisibleNode } from "./dag-projection";
+import { dagFocusNeighborhood, type DagProjection, type DagVisibleGroup, type DagVisibleNode } from "@multica/core/issues/dag";
 import { useActionCapacity } from "./use-action-capacity";
 
 type ActionKey = "open" | "upstream" | "downstream" | "edit" | "assign";

@@ -1624,8 +1624,9 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		// still readable, which this package cannot see (MUL-5722).
 		turnParams := map[string]any{
 			"threadId": threadID,
-			"input":    codexTurnInput(prompt, opts.ResumeExpected, resumed, opts.ResumeContinuityNotice),
 		}
+		turnPrompt := b.skillTurnPrompt(runCtx, c, prompt, opts)
+		turnParams["input"] = codexTurnInput(turnPrompt, opts.ResumeExpected, resumed, opts.ResumeContinuityNotice)
 		// Per-turn reasoning override. Mirrors the per-thread injection in
 		// startOrResumeThread; keeping both in sync is enforced by the
 		// shared `codexReasoningInjection` fixture in codex_test.go (see

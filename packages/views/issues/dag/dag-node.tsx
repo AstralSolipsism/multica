@@ -13,7 +13,7 @@ import { StatusIcon } from "../components/status-icon";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { useT } from "../../i18n";
-import type { DagVisibleNode } from "./dag-projection";
+import type { DagVisibleNode } from "@multica/core/issues/dag";
 import { DAG_NODE_HEIGHT, DAG_NODE_WIDTH } from "./dag-constants";
 
 /** Display data for one canvas node. Kept flat and value-typed so React

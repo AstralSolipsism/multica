@@ -2,7 +2,7 @@
 import { memo } from "react";
 import { BaseEdge, EdgeLabelRenderer, type Edge, type EdgeProps } from "@xyflow/react";
 import { cn } from "@multica/ui/lib/utils";
-import type { DagVisibleEdge } from "./dag-projection";
+import type { DagVisibleEdge } from "@multica/core/issues/dag";
 import type { DagPoint } from "./dag-layout";
 import { dagRouteMidpoint, dagRoutePath } from "./dag-route";
 import { useT } from "../../i18n";

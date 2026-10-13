@@ -21,7 +21,7 @@ import { dateOnlyToLocalDate } from "@multica/core/issues/date";
 import type { IssueSortParam } from "@multica/core/issues/queries";
 import { issueTableFacetsOptions } from "@multica/core/issues/queries";
 import type { DagGraphQueryState } from "../dag/dag-view";
-import { supportsDagScope, useDagSurfaceGraph } from "../dag/use-dag-surface-graph";
+import { supportsDagScope, useDagSurfaceGraph } from "@multica/core/issues/dag";
 import { useStableByContent } from "./use-stable-by-content";
 import { VIEW_MODE_CAPABILITIES } from "@multica/core/issues/surface/view-mode";
 import {

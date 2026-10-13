@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { graphNode as makeNode, issueGraph as makeGraph } from "./dag-test-fixtures";
+import { graphNode as makeNode, issueGraph as makeGraph } from "./test-fixtures";
 import {
   computeDagProjection,
   dagFeatureRepId,
@@ -8,7 +8,7 @@ import {
   DAG_INDEPENDENT_GROUP,
   defaultDagCollapsedIds,
   repsToRevealIssues,
-} from "./dag-projection";
+} from "./projection";
 const P1 = "proj-1";
 const P2 = "proj-2";
 
