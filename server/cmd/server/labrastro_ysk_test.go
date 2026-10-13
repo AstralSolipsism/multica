@@ -62,6 +62,7 @@ func TestLabrastroYSKRouterRejectsTaskTokens(t *testing.T) {
 		{"GET", fmt.Sprintf("/api/issues/%s/tips", issue)},
 		{"GET", "/api/tips/active"},
 		{"POST", fmt.Sprintf("/api/tips/%s/state", tip)},
+		{"POST", fmt.Sprintf("/api/tips/%s/chat", tip)},
 	} {
 		req, err := http.NewRequest(tc.method, testServer.URL+tc.path, nil)
 		if err != nil {

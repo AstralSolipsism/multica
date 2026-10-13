@@ -96,6 +96,7 @@ func (h *Handler) chatMessageHistory(r *http.Request, scope chatHistoryScope) (c
 		})
 	} else {
 		messages, err = h.Queries.ListChatMessagesPage(r.Context(), db.ListChatMessagesPageParams{
+			IncludeHidden: pgtype.Bool{Bool: true, Valid: true},
 			ChatSessionID: scope.sessionID, Limit: int32(limit),
 			BeforeCreatedAt: beforeCreatedAt, BeforeID: beforeID,
 		})

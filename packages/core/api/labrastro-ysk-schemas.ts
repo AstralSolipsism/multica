@@ -9,6 +9,24 @@ export type IssueTipTag = (typeof ISSUE_TIP_TAGS)[number];
 export const ISSUE_TIP_STATUSES = ["valid", "overturned", "source_changed"] as const;
 export type IssueTipStatus = (typeof ISSUE_TIP_STATUSES)[number];
 
+/** Immutable snapshot saved when a member first opens a tip's side chat. */
+export const TipChatSourceSchema = z.object({
+  tip_id: z.string().min(1),
+  issue_id: z.string().min(1),
+  issue_identifier: z.string().min(1),
+  source_task_id: z.string().min(1),
+  tip: z.object({
+    tag: z.enum(ISSUE_TIP_TAGS),
+    line: z.string(),
+    title: z.string(),
+    explanation: z.string(),
+    status: z.enum(ISSUE_TIP_STATUSES),
+    overturned_reason: z.string().nullable().default(null),
+    overturned_by_comment_id: z.string().nullable().default(null),
+  }).loose(),
+}).loose();
+export type TipChatSource = z.infer<typeof TipChatSourceSchema>;
+
 export const TIP_FEEDBACK_VALUES = ["helpful", "not_relevant", "not_understood"] as const;
 export type TipFeedback = (typeof TIP_FEEDBACK_VALUES)[number];
 

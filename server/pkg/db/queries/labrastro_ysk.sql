@@ -103,7 +103,9 @@ WITH states AS (
 DELETE FROM labrastro_issue_tip t WHERE t.workspace_id = $1 AND t.issue_id = $2;
 
 -- name: LabrastroYSKDeleteWorkspace :exec
-WITH states AS (
+WITH chats AS (
+    DELETE FROM labrastro_tip_chat WHERE workspace_id = $1
+), states AS (
     DELETE FROM labrastro_issue_tip_state s WHERE s.workspace_id = $1
 ), topics AS (
     DELETE FROM labrastro_known_topic k WHERE k.workspace_id = $1
@@ -111,7 +113,9 @@ WITH states AS (
 DELETE FROM labrastro_issue_tip t WHERE t.workspace_id = $1;
 
 -- name: LabrastroYSKDeleteMember :exec
-WITH states AS (
+WITH chats AS (
+    DELETE FROM labrastro_tip_chat WHERE workspace_id = $1 AND user_id = $2
+), states AS (
     DELETE FROM labrastro_issue_tip_state s WHERE s.workspace_id = $1 AND s.user_id = $2
 )
 DELETE FROM labrastro_known_topic k WHERE k.workspace_id = $1 AND k.user_id = $2;
