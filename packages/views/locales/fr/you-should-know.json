@@ -8,7 +8,7 @@
     "already_know": "Je le savais déjà",
     "dismiss": "Fermer",
     "got_it": "Compris",
-    "discuss": "En discuter dans les commentaires"
+    "ask": "Poser une question"
   },
   "feedback": {
     "helpful": "Utile",
@@ -32,6 +32,23 @@
     "source_changed": "Source modifiée",
     "no_results": "Aucune astuce correspondante"
   },
+  "side_chat": {
+    "banner_label": "Astuce à l'origine de cette discussion",
+    "open_issue": "Ouvrir {{identifier}}",
+    "independent_note": "Cette discussion est à part. Elle n'interrompt pas le travail en cours de {{agent}}.",
+    "starters_label": "Questions fréquentes",
+    "starters": {
+      "more": "Dites-m'en plus",
+      "why": "Pourquoi est-ce important ?",
+      "impact": "Quelles en seront les conséquences ?"
+    },
+    "blocked": {
+      "invocation_not_allowed": "Vous n'avez pas accès à la discussion avec {{agent}}",
+      "agent_archived": "{{agent}} est archivé",
+      "agent_no_runtime": "{{agent}} n'est associé à aucun runtime"
+    },
+    "unknown_agent": "cet agent"
+  },
   "settings": {
     "title": "You should know",
     "workspace_label": "Générer des astuces de l’observateur pendant le travail des agents",
@@ -40,6 +57,7 @@
     "personal_description": "Cela ne change que ce que vous voyez. Pour arrêter la génération des astuces, un administrateur peut désactiver l’option dans les paramètres de l’espace de travail."
   },
   "errors": {
-    "state_failed": "Échec de l'enregistrement. Réessayez."
+    "state_failed": "Échec de l'enregistrement. Réessayez.",
+    "open_chat_failed": "Impossible d'ouvrir la discussion. Réessayez."
   }
 }

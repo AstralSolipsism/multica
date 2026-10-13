@@ -13,6 +13,7 @@ import type { IssueTip } from "@multica/core/you-should-know";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
+import { AskAboutTipButton } from "../side-chat/ask-about-tip-button";
 
 /**
  * A click handler that ignores the second click of a double-click. The tip
@@ -58,7 +59,7 @@ export interface TipCardProps {
   id: string;
   /** The bubble line that toggles the card; it names the card. */
   labelledBy: string;
-  tip: Pick<IssueTip, "title" | "explanation">;
+  tip: Pick<IssueTip, "id" | "agent_id" | "title" | "explanation">;
   reducedMotion: boolean;
   onKnown: () => void;
   /** `expanded`: dismissed after "Learn more" (it narrows the feedback). */
@@ -68,7 +69,8 @@ export interface TipCardProps {
 /**
  * The card the bubble opens into (OL-187 §6, OL-196), with the original's
  * buttons: Learn more / I already know / Dismiss, and once "Learn more" has
- * shown the title and explanation, Got it / Dismiss.
+ * shown the title and explanation, Got it / Ask about this / Dismiss
+ * (OL-288: asking opens a side chat with the tip's agent).
  *
  * Mounted only while the card is open, so it always opens on the first set.
  * Focus moves in when it opens — onto its first button — and onto the
@@ -117,6 +119,7 @@ export function TipCard({
             >
               {t(($) => $.card.got_it)}
             </TipLayerButton>
+            <AskAboutTipButton tip={tip} />
           </>
         ) : (
           <>

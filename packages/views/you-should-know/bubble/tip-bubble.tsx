@@ -28,7 +28,7 @@ import { useHoldTipRotation } from "./tip-rotation-hold";
 
 export interface TipBubbleProps {
   /** The tip on display; visibility receipts name it. */
-  tip: Pick<IssueTip, "id" | "tag" | "line" | "title" | "explanation">;
+  tip: Pick<IssueTip, "id" | "agent_id" | "tag" | "line" | "title" | "explanation">;
   /** Live rect of the anchor the bubble rides (see RegisteredTipAnchor.measure). */
   measure: () => TipAnchorRect;
   level: TipAnchorLevel;

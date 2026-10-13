@@ -7,6 +7,7 @@ import { createTipAnchorRegistry } from "@multica/core/you-should-know/anchors";
 import { TipAnchorRegistryProvider } from "./anchors/tip-anchor-context";
 import { TipBubbleHost } from "./bubble/tip-bubble-host";
 import { TipRotationHoldContext } from "./bubble/tip-rotation-hold";
+import { SideChatOpenerContext, type OpenChatSession } from "./side-chat/open-chat-session";
 
 /**
  * Page-level You-should-know provider (OL-194): owns the page's tip anchor
@@ -20,8 +21,17 @@ import { TipRotationHoldContext } from "./bubble/tip-rotation-hold";
  * yet) — or on a narrow, mobile-width window. Children always render in the
  * same tree position, so toggling never remounts the page; the registry is
  * simply withheld, which keeps every anchor out of it.
+ *
+ * `openSideChat` decides where "Ask about this" shows the chat it opens; by
+ * default this window's floating chat or Chat page (useOpenChatSession).
  */
-export function YouShouldKnowProvider({ children }: { children: ReactNode }) {
+export function YouShouldKnowProvider({
+  children,
+  openSideChat,
+}: {
+  children: ReactNode;
+  openSideChat?: OpenChatSession;
+}) {
   const { enabled } = useYouShouldKnowEnabled();
   const isMobile = useIsMobile();
   // useIsMobile() reads false until its effect has measured the window. Wait
@@ -46,11 +56,13 @@ export function YouShouldKnowProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <TipRotationHoldContext.Provider value={active ? hold : null}>
-      <TipAnchorRegistryProvider registry={active ? registry : null}>
-        {children}
-        {active && <TipBubbleHost registry={registry} held={holds > 0} />}
-      </TipAnchorRegistryProvider>
-    </TipRotationHoldContext.Provider>
+    <SideChatOpenerContext.Provider value={openSideChat ?? null}>
+      <TipRotationHoldContext.Provider value={active ? hold : null}>
+        <TipAnchorRegistryProvider registry={active ? registry : null}>
+          {children}
+          {active && <TipBubbleHost registry={registry} held={holds > 0} />}
+        </TipAnchorRegistryProvider>
+      </TipRotationHoldContext.Provider>
+    </SideChatOpenerContext.Provider>
   );
 }

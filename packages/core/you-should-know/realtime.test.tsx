@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 
 import type { WSClient } from "../api/ws-client";
 import type { IssueTipList } from "../api/labrastro-ysk-schemas";
+import { chatKeys } from "../chat/queries";
 import { youShouldKnowKeys } from "./queries";
 import { useYouShouldKnowRealtimeSync } from "./realtime";
 
@@ -220,6 +221,37 @@ describe("useYouShouldKnowRealtimeSync", () => {
     expect(spy).toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: youShouldKnowKeys.all(WS) }),
     );
+  });
+
+  it("keeps a side chat's detail entry in step with renames and archiving", () => {
+    const detail = {
+      id: "s1", workspace_id: WS, agent_id: "a1", creator_id: "u1", title: "LAB-1 · Title",
+      status: "active" as const, has_unread: false, created_at: "", updated_at: "",
+    };
+    qc.setQueryData(chatKeys.session(WS, "s1"), detail);
+    renderHook(() => useYouShouldKnowRealtimeSync(ws as unknown as WSClient), {
+      wrapper: Wrapper,
+    });
+    act(() => {
+      ws.emit("chat:session_updated", { chat_session_id: "s1", title: "Renamed", updated_at: "u2" });
+    });
+    expect(qc.getQueryData(chatKeys.session(WS, "s1"))).toEqual({
+      ...detail, title: "Renamed", updated_at: "u2",
+    });
+    act(() => {
+      ws.emit("chat:session_updated", { chat_session_id: "s1", title: "Renamed", status: "archived" });
+    });
+    expect(qc.getQueryData(chatKeys.session(WS, "s1"))).toMatchObject({ status: "archived" });
+    // An unrelated session is not created out of an event.
+    act(() => {
+      ws.emit("chat:session_updated", { chat_session_id: "s2", title: "Other" });
+    });
+    expect(qc.getQueryData(chatKeys.session(WS, "s2"))).toBeUndefined();
+
+    act(() => {
+      ws.emit("chat:session_deleted", { chat_session_id: "s1" });
+    });
+    expect(qc.getQueryData(chatKeys.session(WS, "s1"))).toBeUndefined();
   });
 
   it("unsubscribes on unmount", () => {
