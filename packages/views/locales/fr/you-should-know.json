@@ -13,7 +13,8 @@
   "feedback": {
     "helpful": "Utile",
     "not_relevant": "Sans rapport",
-    "not_understood": "Pas clair"
+    "not_understood": "Pas clair",
+    "label": "Avis sur cette astuce"
   },
   "bubble": {
     "marker_tooltip": "Un assistant observateur surveille le travail des agents",

@@ -13,7 +13,8 @@
   "feedback": {
     "helpful": "도움이 됐어요",
     "not_relevant": "관련 없어요",
-    "not_understood": "이해하기 어려워요"
+    "not_understood": "이해하기 어려워요",
+    "label": "이 힌트에 대한 피드백"
   },
   "bubble": {
     "marker_tooltip": "에이전트가 작업하는 동안 보조 어시스턴트가 지켜봅니다",

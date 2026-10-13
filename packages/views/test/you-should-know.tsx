@@ -127,7 +127,8 @@ export function renderWithYsk(
   };
 }
 
-async function flush(): Promise<void> {
+/** Flushes effects, query results and floating-ui positioning, without moving the clock. */
+export async function flush(): Promise<void> {
   for (let i = 0; i < 3; i += 1) {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
