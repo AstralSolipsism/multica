@@ -1,3 +1,5 @@
+import { OPEN_CHAT_SESSION_CHANNEL } from "./chat-session-handoff";
+
 /**
  * Main-process messages that must wait until the main renderer has installed
  * the matching listener. A BrowserWindow finishing `loadURL` is not enough:
@@ -28,6 +30,7 @@ export const MAIN_RENDERER_MESSAGE_CHANNELS = [
   "inbox:open",
   "settings:open",
   TAB_SELECTION_SHORTCUT_CHANNEL,
+  OPEN_CHAT_SESSION_CHANNEL,
 ] as const;
 
 export type MainRendererMessageChannel =

@@ -8,7 +8,7 @@
     "already_know": "我已经知道",
     "dismiss": "关闭",
     "got_it": "明白了",
-    "discuss": "去评论区聊"
+    "ask": "追问"
   },
   "feedback": {
     "helpful": "有帮助",
@@ -32,6 +32,23 @@
     "source_changed": "来源已变",
     "no_results": "没有匹配的提示"
   },
+  "side_chat": {
+    "banner_label": "这次旁聊针对的提示",
+    "open_issue": "打开 {{identifier}}",
+    "independent_note": "这是独立的旁聊，不会打断 {{agent}} 手上的工作。",
+    "starters_label": "常用问题",
+    "starters": {
+      "more": "再讲细一点",
+      "why": "为什么要注意这个？",
+      "impact": "会有什么影响？"
+    },
+    "blocked": {
+      "invocation_not_allowed": "你没有和 {{agent}} 对话的权限",
+      "agent_archived": "{{agent}} 已归档",
+      "agent_no_runtime": "{{agent}} 还没有绑定运行时"
+    },
+    "unknown_agent": "这个智能体"
+  },
   "settings": {
     "title": "You should know",
     "workspace_label": "智能体工作时生成旁观提示",
@@ -40,6 +57,7 @@
     "personal_description": "只影响你自己能不能看到。要停止生成，请工作区管理员关闭工作区设置里的开关。"
   },
   "errors": {
-    "state_failed": "没有保存成功，请重试"
+    "state_failed": "没有保存成功，请重试",
+    "open_chat_failed": "没能打开旁聊，请重试"
   }
 }

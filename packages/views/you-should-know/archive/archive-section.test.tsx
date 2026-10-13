@@ -20,7 +20,19 @@ vi.mock("@multica/core/paths", () => ({
     name: "Acme",
     settings: { you_should_know_enabled: state.workspaceEnabled },
   }),
-  useWorkspacePaths: () => ({ issueDetail: (id: string) => `/issues/${id}` }),
+  useWorkspacePaths: () => ({
+    issueDetail: (id: string) => `/issues/${id}`,
+    chat: () => "/chat",
+  }),
+}));
+// "Ask about this" reads who the viewer may chat with. Opening the side chat
+// is covered with the real providers in side-chat/ask-about-tip.test.tsx.
+vi.mock("@multica/core/auth", () => ({
+  useAuthStore: (selector: (state: { user: { id: string } }) => unknown) =>
+    selector({ user: { id: "user-1" } }),
+}));
+vi.mock("@multica/core/api", () => ({
+  api: { listAgents: async () => [], listMembers: async () => [] },
 }));
 vi.mock("@multica/core/you-should-know", async () => {
   const actual = await vi.importActual<typeof import("@multica/core/you-should-know")>(
@@ -36,7 +48,10 @@ vi.mock("@multica/core/you-should-know", async () => {
   };
 });
 vi.mock("../../navigation", () => ({
-  useNavigation: () => ({ push: (href: string) => state.pushed.push(href) }),
+  useNavigation: () => ({
+    pathname: "/issues/OL-1",
+    push: (href: string) => state.pushed.push(href),
+  }),
 }));
 
 import { YouShouldKnowArchiveSection, groupTips } from "./archive-section";
@@ -462,5 +477,21 @@ describe("YouShouldKnowArchiveSection — visibility", () => {
       expect(screen.getByText("Blue-green")).toBeInTheDocument();
       expect(screen.getByText("Two environments, one live.")).toBeInTheDocument();
     });
+  });
+
+  it("offers Ask about this on an expanded tip, a no-longer-valid one included", async () => {
+    renderSection([
+      tip({ id: "v", line: "Still true" }),
+      tip({ id: "o", line: "Was true", status: "overturned", overturned_reason: "Reverted" }),
+    ]);
+    expect(screen.queryByRole("button", { name: "Ask about this" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /Still true/ }));
+    expect(screen.getAllByRole("button", { name: "Ask about this" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "No longer valid" }));
+    fireEvent.click(screen.getByRole("button", { name: /Was true/ }));
+    const ask = screen.getByRole("button", { name: "Ask about this" });
+    // Outside the greyed-out block, so it does not read as disabled.
+    expect(ask.closest("[data-invalid]")).toBeNull();
   });
 });

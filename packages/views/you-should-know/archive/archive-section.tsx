@@ -13,6 +13,7 @@ import {
 import { Input } from "@multica/ui/components/ui/input";
 import { useLocale, useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
+import { AskAboutTipButton } from "../side-chat/ask-about-tip-button";
 
 type TipFilter = "valid" | "invalid";
 
@@ -318,35 +319,44 @@ function ArchiveTip({
   );
 
   return (
-    <div data-invalid={invalid || undefined} className={invalid ? "opacity-60" : undefined}>
-      {/* Collapsed: "✦ tag · one-liner". Clicking reveals title+explanation. */}
-      <button
-        type="button"
-        aria-expanded={expanded}
-        className="flex w-full items-start gap-1 rounded-xs px-1 py-1 text-left text-caption transition-colors hover:bg-accent/50"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <span aria-hidden className="shrink-0">{TIP_MARK}</span>
-        <span className="shrink-0 font-medium">{tagLabel}</span>
-        <span aria-hidden className="shrink-0 text-faint-foreground">·</span>
-        <span className="min-w-0 flex-1">{tip.line}</span>
-      </button>
+    <>
+      <div data-invalid={invalid || undefined} className={invalid ? "opacity-60" : undefined}>
+        {/* Collapsed: "✦ tag · one-liner". Clicking reveals title+explanation. */}
+        <button
+          type="button"
+          aria-expanded={expanded}
+          className="flex w-full items-start gap-1 rounded-xs px-1 py-1 text-left text-caption transition-colors hover:bg-accent/50"
+          onClick={() => setExpanded(!expanded)}
+        >
+          <span aria-hidden className="shrink-0">{TIP_MARK}</span>
+          <span className="shrink-0 font-medium">{tagLabel}</span>
+          <span aria-hidden className="shrink-0 text-faint-foreground">·</span>
+          <span className="min-w-0 flex-1">{tip.line}</span>
+        </button>
+        {expanded && (
+          <div className="pb-1 pl-6 pr-1 text-caption text-muted-foreground">
+            {tip.title ? (
+              <p className="font-medium text-foreground">{tip.title}</p>
+            ) : null}
+            {tip.explanation ? <p>{tip.explanation}</p> : null}
+          </div>
+        )}
+        {invalid && (
+          <InvalidNote
+            tip={tip}
+            identifier={identifier}
+            onJumpToComment={onJumpToComment}
+          />
+        )}
+      </div>
+      {/* Every tip can be asked about, the no-longer-valid ones too (OL-288
+          §2) — outside the greyed block, which would read as disabled. */}
       {expanded && (
-        <div className="pb-1 pl-6 pr-1 text-caption text-muted-foreground">
-          {tip.title ? (
-            <p className="font-medium text-foreground">{tip.title}</p>
-          ) : null}
-          {tip.explanation ? <p>{tip.explanation}</p> : null}
+        <div className="pb-1 pl-4">
+          <AskAboutTipButton tip={tip} />
         </div>
       )}
-      {invalid && (
-        <InvalidNote
-          tip={tip}
-          identifier={identifier}
-          onJumpToComment={onJumpToComment}
-        />
-      )}
-    </div>
+    </>
   );
 }
 

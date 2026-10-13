@@ -36,6 +36,8 @@ import { NoAgentBanner } from "./components/no-agent-banner";
 import { ArchivedAgentBanner } from "./components/archived-agent-banner";
 import { AgentAccessRevokedBanner } from "./components/agent-access-revoked-banner";
 import { RuntimeRequiredBanner } from "./components/runtime-required-banner";
+import { TipSideChatBanner } from "../you-should-know/side-chat/tip-side-chat-banner";
+import { TipSideChatStarters } from "../you-should-know/side-chat/tip-side-chat-starters";
 
 /**
  * Chat tab — the first-class two-pane surface (thread list on the left,
@@ -263,6 +265,12 @@ export function ChatPage() {
           onArchive={handleArchive}
         />
       )}
+      {c.currentSession?.tip_source && (
+        <TipSideChatBanner
+          source={c.currentSession.tip_source}
+          agentName={c.activeAgent?.name ?? null}
+        />
+      )}
       {c.showSkeleton ? (
         <ChatMessageSkeleton />
       ) : c.hasMessages ? (
@@ -293,6 +301,17 @@ export function ChatPage() {
               : undefined
           }
           quickActionsPendingMessageId={quickActionsPending?.message_id ?? null}
+        />
+      ) : c.currentSession?.tip_source ? (
+        <TipSideChatStarters
+          onPick={(prompt) => c.handleSend(prompt)}
+          disabled={
+            c.isSessionArchived ||
+            c.isAgentArchived ||
+            c.isAgentAccessRevoked ||
+            !c.isAgentRuntimeBound ||
+            c.noAgent
+          }
         />
       ) : (
         <EmptyState

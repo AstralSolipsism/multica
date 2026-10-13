@@ -45,6 +45,10 @@ const apiMock = vi.hoisted(() => ({
   setTipState: vi.fn(),
   getNotificationPreferences: vi.fn(),
   listWorkspaces: vi.fn(),
+  // "Ask about this" reads who the viewer may chat with; the side chat
+  // itself has its own suite (side-chat/ask-about-tip.test.tsx).
+  listAgents: vi.fn(),
+  listMembers: vi.fn(),
 }));
 
 vi.mock("@multica/core/api", () => ({ api: apiMock }));
@@ -75,6 +79,8 @@ beforeEach(() => {
   for (const fn of Object.values(apiMock)) fn.mockReset();
   toastError.mockReset();
   ({ serveTips, servePair } = installFakeTipServer(apiMock));
+  apiMock.listAgents.mockResolvedValue([]);
+  apiMock.listMembers.mockResolvedValue([]);
   localStorage.clear();
   tipDisplayLedger.setState({ users: {} });
   useCommentDraftStore.setState({ drafts: {} });
@@ -196,7 +202,7 @@ describe("tip card — Learn more", () => {
     fireEvent.click(cardButton("Learn more"));
     expect(screen.getByText("Old API kept")).toBeInTheDocument();
     const explanation = screen.getByText("Clients still call it, so it stays until they move.");
-    expect(cardButtonNames()).toEqual(["Got it", "Dismiss"]);
+    expect(cardButtonNames()).toEqual(["Got it", "Ask about this", "Dismiss"]);
     expect(explanation.parentElement).toHaveFocus();
   });
 
@@ -215,7 +221,7 @@ describe("tip card — Learn more", () => {
     await settle();
     openCard();
     fireEvent.click(cardButton("Learn more"));
-    expect(cardButtonNames()).toEqual(["Got it", "Dismiss"]);
+    expect(cardButtonNames()).toEqual(["Got it", "Ask about this", "Dismiss"]);
     expect(cardButton("Got it")).toHaveFocus();
   });
 
@@ -250,7 +256,7 @@ describe("tip card — Learn more", () => {
     fireEvent.click(cardButton("Got it"), { detail: 2 });
     await flush();
     expect(apiMock.setTipState).not.toHaveBeenCalled();
-    expect(cardButtonNames()).toEqual(["Got it", "Dismiss"]);
+    expect(cardButtonNames()).toEqual(["Got it", "Ask about this", "Dismiss"]);
   });
 });
 

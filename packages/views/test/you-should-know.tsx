@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 import { vi } from "vitest";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { notificationPreferenceKeys } from "@multica/core/notification-preferences/queries";
+import type { SupportedLocale } from "@multica/core/i18n";
 import type { NotificationPreferenceResponse, Workspace } from "@multica/core/types";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import type { IssueTip } from "@multica/core/you-should-know";
@@ -107,18 +108,26 @@ export function renderWithYsk(
   {
     queryClient = createYskQueryClient(),
     navigation = createNavigation(),
-  }: { queryClient?: QueryClient; navigation?: NavigationAdapter } = {},
+    openSideChat,
+    locale,
+  }: {
+    queryClient?: QueryClient;
+    navigation?: NavigationAdapter;
+    /** The provider's side-chat opener (a desktop issue window passes one). */
+    openSideChat?: (sessionId: string) => void;
+    locale?: SupportedLocale;
+  } = {},
 ): YskRenderResult {
   const wrap = (node: ReactElement) => (
     <QueryClientProvider client={queryClient}>
       <WorkspaceSlugProvider slug={WS_SLUG}>
         <NavigationProvider value={navigation}>
-          <YouShouldKnowProvider>{node}</YouShouldKnowProvider>
+          <YouShouldKnowProvider openSideChat={openSideChat}>{node}</YouShouldKnowProvider>
         </NavigationProvider>
       </WorkspaceSlugProvider>
     </QueryClientProvider>
   );
-  const view = renderWithI18n(wrap(ui));
+  const view = renderWithI18n(wrap(ui), { locale });
   return {
     ...view,
     queryClient,
