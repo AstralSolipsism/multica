@@ -51,10 +51,22 @@ vi.mock("@multica/views/platform", () => ({
 }));
 
 // The provider's own behavior is covered in packages/views; here it only
-// marks where the window mounts it.
+// marks where the window mounts it and plays an "Ask about this" through the
+// side-chat opener the window gives it.
 vi.mock("@multica/views/you-should-know", () => ({
-  YouShouldKnowProvider: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="ysk-provider">{children}</div>
+  YouShouldKnowProvider: ({
+    children,
+    openSideChat,
+  }: {
+    children: React.ReactNode;
+    openSideChat?: (sessionId: string) => void;
+  }) => (
+    <div data-testid="ysk-provider">
+      <button type="button" onClick={() => openSideChat?.("session-1")}>
+        open side chat
+      </button>
+      {children}
+    </div>
   ),
 }));
 
@@ -110,6 +122,23 @@ describe("IssueWindow", () => {
     expect(await screen.findByTestId("ysk-provider")).toContainElement(
       screen.getByTestId("issue-detail"),
     );
+  });
+
+  it("opens the provider's side chats in the main window (OL-362)", async () => {
+    state.ready = true;
+    state.workspaces = [{ id: "ws-1", slug: "acme" }];
+    const openChatSessionInMainWindow = vi.fn(async () => ({ ok: true }));
+    (window as unknown as { desktopAPI: Record<string, unknown> }).desktopAPI = {
+      openChatSessionInMainWindow,
+    };
+
+    render(<IssueWindow context={context} />);
+    fireEvent.click(await screen.findByRole("button", { name: "open side chat" }));
+
+    expect(openChatSessionInMainWindow).toHaveBeenCalledExactlyOnceWith({
+      workspaceSlug: "acme",
+      sessionId: "session-1",
+    });
   });
 
   it("keeps loading after an initial workspace-list failure", async () => {

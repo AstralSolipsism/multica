@@ -62,6 +62,11 @@ import {
   NotificationGate,
   parseNativeNotificationPayload,
 } from "./notification-gate";
+import {
+  OPEN_CHAT_SESSION_CHANNEL,
+  OPEN_CHAT_SESSION_REQUEST_CHANNEL,
+} from "../shared/chat-session-handoff";
+import { handleChatSessionHandoff } from "./chat-session-handoff";
 
 // Guards against registering the will-download handler more than once on the
 // same session. window.webContents.session is shared, and createWindow() can
@@ -682,6 +687,19 @@ if (!gotTheLock) {
       return { ok: true } as const;
     });
 
+    // Labrastro (OL-362): an issue window hands a YSK side chat to the main
+    // window, which owns the floating chat and the Chat page.
+    ipcMain.handle(OPEN_CHAT_SESSION_REQUEST_CHANNEL, (event, request: unknown) => {
+      const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+      return handleChatSessionHandoff(request, {
+        fromCurrentIssueWindow:
+          !!sourceWindow &&
+          issueWindows.has(sourceWindow) &&
+          authSessionCoordinator.isCurrentIssueSession(sourceWindow),
+        deliver: (handoff) => dispatchToMainRenderer(OPEN_CHAT_SESSION_CHANNEL, handoff),
+      });
+    });
+
     ipcMain.handle("file:download-url", (event, url: string) => {
       const sourceWindow = BrowserWindow.fromWebContents(event.sender);
       if (!sourceWindow) {
@@ -761,6 +779,7 @@ if (!gotTheLock) {
         if (accountInvalidated) {
           authSessionGeneration += 1;
           mainRendererMessages.clear("inbox:open");
+          mainRendererMessages.clear(OPEN_CHAT_SESSION_CHANNEL);
         }
         return;
       }

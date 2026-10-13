@@ -17,6 +17,10 @@ import type {
   LocalRuntimeProbe,
 } from "../shared/daemon-types";
 import type { TabSelectionShortcutKey } from "../shared/main-renderer-messages";
+import type {
+  ChatSessionHandoff,
+  ChatSessionHandoffResult,
+} from "../shared/chat-session-handoff";
 
 interface DesktopAPI {
   /** App version + normalized OS, captured synchronously at preload time. */
@@ -120,6 +124,16 @@ interface DesktopAPI {
   openIssueWindow: (
     request: IssueWindowRequest,
   ) => Promise<{ ok: true } | { ok: false; reason: "invalid_request" }>;
+  /** From a dedicated issue window: bring the main window forward on a chat
+   *  session. Main accepts it only from issue windows of the current account. */
+  openChatSessionInMainWindow: (
+    handoff: ChatSessionHandoff,
+  ) => Promise<ChatSessionHandoffResult>;
+  /** Main window: listen for chat sessions handed over by issue windows.
+   *  Returns an unsubscribe function. */
+  onOpenChatSession: (
+    callback: (handoff: ChatSessionHandoff) => void,
+  ) => () => void;
 }
 
 type DaemonReauthResult =
