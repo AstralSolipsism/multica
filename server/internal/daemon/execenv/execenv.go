@@ -128,6 +128,8 @@ type PrepareParams struct {
 
 // TaskContextForEnv is the subset of task context used for writing context files.
 type TaskContextForEnv struct {
+	TaskID           string
+	RunNotes         RunNotesForEnv // read through tools, never embedded in the runtime brief
 	IssueID          string
 	TriggerCommentID string // comment that triggered this task (empty for on_assign)
 	TriggerThreadID  string // root comment ID for the triggering thread; falls back to TriggerCommentID when empty
@@ -254,6 +256,9 @@ type SkillContextForEnv struct {
 	Description string
 	Content     string
 	Files       []SkillFileContextForEnv
+	// ExplicitlySelected is set only by the authenticated member chat path.
+	// It affects installation, never the stable skill listing or slug allocation.
+	ExplicitlySelected bool
 }
 
 // SkillFileContextForEnv represents a supporting file within a skill.
@@ -878,7 +883,7 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	//      which would otherwise keep the canonical slug occupied and push the
 	//      refresh back to issue-review-multica.
 	//   2. CleanupSidecars rolls back the remaining sidecar files (project
-	//      resources today, plus any issue_context.md recorded by a manifest
+	//      resources and run notes, plus any issue_context.md recorded by a manifest
 	//      an older build wrote — legacy upgrade cleanup, not a live writer)
 	//      and the manifest itself.
 	//
@@ -886,7 +891,8 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	// daemon skips anyway) or when no prior manifest exists (older build).
 	if env.RootDir != "" {
 		if err := removeReusedManagedSkillDirs(env.RootDir, skillsDirPath(params.WorkDir, params.Provider)); err != nil {
-			logger.Warn("execenv: reclaim managed skill dirs on reuse failed", "error", err)
+			logger.Warn("execenv: reclaim managed skill dirs on reuse failed; forcing fresh prepare", "error", err)
+			return nil
 		}
 		if params.Provider == "kimi" {
 			// Older daemons wrote Kimi skills under .kimi/skills. Reclaim only
@@ -898,7 +904,8 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 			}
 		}
 		if err := CleanupSidecars(env.RootDir); err != nil {
-			logger.Warn("execenv: roll back prior sidecars on reuse failed", "error", err)
+			logger.Warn("execenv: roll back prior sidecars on reuse failed; forcing fresh prepare", "error", err)
+			return nil
 		}
 	}
 
@@ -914,7 +921,8 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	// case to avoid creating a stray manifest at the filesystem root.
 	manifest := &sidecarManifest{}
 	if err := writeContextFiles(params.WorkDir, params.Provider, params.Task, manifest, env.SkillDirectories); err != nil {
-		logger.Warn("execenv: refresh context files failed", "error", err)
+		logger.Warn("execenv: refresh context files failed; forcing fresh prepare", "error", err)
+		return nil
 	}
 	if err := prepareOmpMcpConfig(params.WorkDir, params.Provider, params.McpConfig, manifest); err != nil {
 		logger.Warn("execenv: refresh omp mcp config failed; forcing fresh prepare", "error", err)
@@ -939,7 +947,8 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		} else {
 			env.CodexHome = codexHome
 			if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, params.Task.DisabledRuntimeSkills, logger, env.SkillDirectories); err != nil {
-				logger.Warn("execenv: refresh codex skills failed", "error", err)
+				logger.Warn("execenv: refresh codex skills failed; forcing fresh prepare", "error", err)
+				return nil
 			}
 		}
 	}
@@ -947,7 +956,8 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	if params.Provider == "claude" && env.RootDir != "" {
 		settingsPath, err := prepareClaudeSkillSettings(env.RootDir, params.Task.DisabledRuntimeSkills, params.Task.AgentSkills)
 		if err != nil {
-			logger.Warn("execenv: refresh claude skill settings failed", "error", err)
+			logger.Warn("execenv: refresh claude skill settings failed; forcing fresh prepare", "error", err)
+			return nil
 		} else {
 			env.ClaudeSettingsPath = settingsPath
 		}
@@ -1081,7 +1091,7 @@ func hydrateCodexSkills(codexHome string, workspaceSkills []SkillContextForEnv, 
 		logger.Warn("execenv: seed user codex skills failed", "error", err)
 	}
 	if len(workspaceSkills) > 0 {
-		if err := writeSkillFiles(skillsDir, workspaceSkills, nil, installed); err != nil {
+		if err := writeSkillFiles(skillsDir, "codex", workspaceSkills, nil, installed); err != nil {
 			return err
 		}
 	}

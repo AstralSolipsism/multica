@@ -63,7 +63,39 @@ func chatSkillMatches(task Task) []slashSkillMatch {
 }
 
 func memberSkillTurn(task Task) bool {
-	return task.ChatSessionID != "" && !task.ChatIntro && task.ChatSkillMessage != nil && *task.ChatSkillMessage != "" && task.WakeupID == "" && task.IssueID == "" && task.AutopilotRunID == "" && task.Agent != nil
+	return task.ChatSessionID != "" && !task.ChatIntro && task.ChatSkillMessage != nil && *task.ChatSkillMessage != "" && task.WakeupID == "" && task.IssueID == "" && task.TriggerCommentID == "" && task.AutopilotRunID == "" && task.Agent != nil
+}
+
+// selectedMemberSkills is shared by environment preparation and invocation.
+// A human originator, quoted link, or a forged label never authorizes installing
+// a user-only workspace skill. IDs must resolve in this agent's assigned set.
+func selectedMemberSkills(task Task) map[string]bool {
+	selected := make(map[string]bool)
+	if !memberSkillTurn(task) || !strings.HasSuffix(task.ChatMessage, *task.ChatSkillMessage) {
+		return selected
+	}
+	assigned := make(map[string]bool, len(task.Agent.Skills))
+	for _, skill := range task.Agent.Skills {
+		assigned[skill.ID] = true
+	}
+	for _, match := range activeSlashSkillMatches(*task.ChatSkillMessage) {
+		if assigned[match.ref.ID] {
+			selected[match.ref.ID] = true
+		}
+	}
+	return selected
+}
+
+func taskSkillsForEnv(task Task) []execenv.SkillContextForEnv {
+	if task.Agent == nil {
+		return nil
+	}
+	skills := convertSkillsForEnv(task.Agent.Skills)
+	selected := selectedMemberSkills(task)
+	for i := range skills {
+		skills[i].ExplicitlySelected = selected[skills[i].ID]
+	}
+	return skills
 }
 
 // buildRuntimePrompt keeps ordinary inputs byte-for-byte unchanged. Only the
@@ -77,16 +109,13 @@ func buildRuntimePrompt(task Task, provider string, directories map[string]strin
 		o.chatSkillRefs = refs
 	})
 	prompt := BuildPrompt(task, provider, options...)
-	if !memberSkillTurn(task) || len(refs) == 0 {
+	eligible := selectedMemberSkills(task)
+	if len(eligible) == 0 {
 		return prompt, nil
 	}
 	skillMessage := *task.ChatSkillMessage
-	// Direct chat input is a contiguous suffix of the claimed batch; an older
-	// or inconsistent server payload must not let this field replace user text.
-	start := strings.LastIndex(task.ChatMessage, skillMessage)
-	if start < 0 {
-		return prompt, nil
-	}
+	// selectedMemberSkills already verified this authenticated suffix.
+	start := len(task.ChatMessage) - len(skillMessage)
 	assigned := make(map[string]SkillData, len(task.Agent.Skills))
 	for _, skill := range task.Agent.Skills {
 		assigned[skill.ID] = skill
@@ -96,7 +125,7 @@ func buildRuntimePrompt(task Task, provider string, directories map[string]strin
 	for _, ref := range refs {
 		skill, ok := assigned[ref.ID]
 		dir := directories[ref.ID]
-		if !ok || !filepath.IsAbs(dir) {
+		if !ok || !eligible[ref.ID] || !filepath.IsAbs(dir) {
 			continue
 		}
 		invocation.Skills = append(invocation.Skills, agent.ExplicitSkill{

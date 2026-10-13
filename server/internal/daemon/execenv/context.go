@@ -119,7 +119,7 @@ func writeWorkspacesRootMarkerAtomic(path string, data []byte) error {
 }
 
 // writeContextFiles writes the task's sidecar files: the task-context marker,
-// agent skills in the appropriate provider-native location, and project
+// tool-readable run notes, agent skills in the provider-native location, and project
 // resources.
 //
 // It deliberately writes no per-task Markdown brief. There used to be an
@@ -160,6 +160,9 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 	if err := writeTaskContextMarker(workDir, ctx, manifest); err != nil {
 		return err
 	}
+	if err := writeRunNotes(workDir, ctx, manifest); err != nil {
+		return err
+	}
 
 	if len(ctx.AgentSkills) > 0 {
 		// Hermes materializes skills into its per-task HERMES_HOME/skills during
@@ -173,7 +176,7 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 			}
 			// Codex skills are written to codex-home in Prepare; skip here.
 			if provider != "codex" {
-				if err := writeSkillFiles(skillsDir, ctx.AgentSkills, manifest, installed); err != nil {
+				if err := writeSkillFiles(skillsDir, provider, ctx.AgentSkills, manifest, installed); err != nil {
 					return fmt.Errorf("write skill files: %w", err)
 				}
 			}
@@ -945,7 +948,7 @@ func sanitizeSkillName(name string) string {
 // expects to see).
 // installed, when non-nil, receives each successful write's absolute directory
 // by skill ID, so explicit invocation never has to repeat the allocator.
-func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *sidecarManifest, installed map[string]string) error {
+func writeSkillFiles(skillsDir, provider string, skills []SkillContextForEnv, manifest *sidecarManifest, installed map[string]string) error {
 	if err := recordMkdirAll(skillsDir, 0o755, manifest); err != nil {
 		return fmt.Errorf("create skills dir: %w", err)
 	}
@@ -959,6 +962,9 @@ func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *si
 	batchSlugs := resolveSkillSlugs(skills)
 
 	for i, skill := range skills {
+		if !skill.ExplicitlySelected && runtimeUserOnlySkill(provider, skill) {
+			continue
+		}
 		slug, dir, err := allocateCollisionFreeSkillDir(skillsDir, batchSlugs[i])
 		if err != nil {
 			return fmt.Errorf("allocate skill dir for %q: %w", skill.Name, err)

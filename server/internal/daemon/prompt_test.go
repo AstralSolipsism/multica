@@ -2246,7 +2246,7 @@ func TestPromptCarriesJoinedWakeups(t *testing.T) {
 		"comment":    {IssueID: "issue-1", TriggerCommentID: "c1", TriggerCommentContent: "please look", WakeupJoined: note},
 	} {
 		out := BuildPrompt(task, "claude")
-		if !strings.Contains(out, "[WAKEUP — joined this run]\n"+note) {
+		if !strings.Contains(out, "[WAKEUP — joined this run]\n") || !strings.Contains(out, "joined_wakeups field") || strings.Contains(out, note) {
 			t.Errorf("%s prompt lacks the joined wakeup:\n%s", name, out)
 		}
 	}

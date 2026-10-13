@@ -5910,7 +5910,7 @@ func TestInjectRuntimeConfigBriefOmitsResumedThreadAnchor(t *testing.T) {
 		}
 	}
 
-	hint := BuildResumedCommentsHint(issueID, triggerID, "thread-root-1")
+	hint := BuildResumedCommentsHint(issueID, triggerID, "thread-root-1", true)
 	for _, want := range []string{
 		"triggering comment is already included above",
 		"No other new comments on this issue since your last run",

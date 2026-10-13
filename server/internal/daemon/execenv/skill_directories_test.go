@@ -19,7 +19,7 @@ func TestWrittenSkillDirectoriesIncludeEveryCollision(t *testing.T) {
 		{ID: "two", Name: "A-B", Content: "second"},
 	}
 	installed := map[string]string{}
-	if err := writeSkillFiles(root, skills, nil, installed); err != nil {
+	if err := writeSkillFiles(root, "", skills, nil, installed); err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]string{"one": filepath.Join(root, "a-b-multica"), "two": filepath.Join(root, "a-b-multica-multica")}

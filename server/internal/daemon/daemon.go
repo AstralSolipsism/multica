@@ -7896,16 +7896,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	phaseRecorder.Mark(taskPhaseSkillsReady)
 
 	agentName := "agent"
-	var skills []SkillData
 	var instructions string
 	agentName = task.Agent.Name
-	skills = task.Agent.Skills
 	instructions = task.Agent.Instructions
 
 	// Prepare isolated execution environment.
 	// Repos are passed as metadata only — the agent checks them out on demand
 	// via `multica repo checkout <url>`.
 	taskCtx := execenv.TaskContextForEnv{
+		TaskID:              task.ID,
+		RunNotes:            execenv.RunNotesForEnv{Handoff: task.HandoffNote, JoinedWakeups: task.WakeupJoined},
 		IssueID:             task.IssueID,
 		TriggerCommentID:    task.TriggerCommentID,
 		TriggerThreadID:     task.TriggerThreadID,
@@ -7921,7 +7921,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		AgentID:                          task.AgentID,
 		AgentName:                        agentName,
 		AgentInstructions:                instructions,
-		AgentSkills:                      convertSkillsForEnv(skills),
+		AgentSkills:                      taskSkillsForEnv(task),
 		DisabledRuntimeSkills:            convertDisabledRuntimeSkillsForEnv(task.Agent, task.RuntimeID, provider),
 		Repos:                            convertReposForEnv(task.Repos),
 		ProjectID:                        task.ProjectID,

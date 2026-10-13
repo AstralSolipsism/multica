@@ -1,10 +1,36 @@
 package execenv
 
 import (
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// Only omit skills the selected runtime already leaves out of its model
+// catalog. Claude's frontmatter flag does not hide a skill in Codex, and
+// Codex's policy file does not hide one in Claude. The brief is left unchanged.
+func runtimeUserOnlySkill(provider string, skill SkillContextForEnv) bool {
+	switch provider {
+	case "claude":
+		return skillDisablesModelInvocation(skill.Content)
+	case "codex":
+		for _, file := range skill.Files {
+			if filepath.ToSlash(filepath.Clean(file.Path)) != "agents/openai.yaml" {
+				continue
+			}
+			var config struct {
+				Policy struct {
+					AllowImplicitInvocation *bool `yaml:"allow_implicit_invocation"`
+				} `yaml:"policy"`
+			}
+			if yaml.Unmarshal([]byte(file.Content), &config) == nil && config.Policy.AllowImplicitInvocation != nil {
+				return !*config.Policy.AllowImplicitInvocation
+			}
+		}
+	}
+	return false
+}
 
 // modelVisibleSkills returns the skills a model may invoke, with Name
 // normalized to the on-disk slug.
@@ -17,8 +43,8 @@ import (
 // identifier that does not resolve (MUL-5529).
 //
 // Slugs come from resolveSkillSlugs over the *unfiltered* batch, because
-// writeSkillFiles lays down every skill — including the ones hidden here — and
-// each one consumes a slug. Filtering first would shift the suffixes and make
+// writeSkillFiles reserves a slug for every skill, even when a user-only skill
+// is not installed this turn. Filtering first would shift the suffixes and make
 // the listing disagree with the directories.
 //
 // Known gap: resolveSkillSlugs cannot see the filesystem, so a skill that

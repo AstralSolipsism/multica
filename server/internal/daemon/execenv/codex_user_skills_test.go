@@ -203,7 +203,7 @@ func TestHydrateCodexSkillsNeverWritesThroughAUserSkillLink(t *testing.T) {
 	}
 	// writeSkillFiles runs without the pre-filter that hydrateCodexSkills
 	// applies, which is exactly the case allocateCollisionFreeSkillDir guards.
-	if err := writeSkillFiles(skillsDir, []SkillContextForEnv{{Name: "alpha", Content: "workspace version"}}, nil, nil); err != nil {
+	if err := writeSkillFiles(skillsDir, "", []SkillContextForEnv{{Name: "alpha", Content: "workspace version"}}, nil, nil); err != nil {
 		t.Fatalf("writeSkillFiles: %v", err)
 	}
 

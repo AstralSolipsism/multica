@@ -157,7 +157,7 @@ func TestSkillListingNamesMatchDirectoriesOnBatchSlugCollision(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	if err := writeSkillFiles(dir, skills, nil, nil); err != nil {
+	if err := writeSkillFiles(dir, "", skills, nil, nil); err != nil {
 		t.Fatalf("writeSkillFiles failed: %v", err)
 	}
 
@@ -196,7 +196,7 @@ func TestSkillListingNamesMatchDirectoriesOnBatchSlugCollision(t *testing.T) {
 	}
 }
 
-// Hidden skills still occupy a directory, so they must still consume a slug.
+// Hidden skills still reserve a directory name, so they must consume a slug.
 // Allocating over the filtered list instead of the full batch would shift every
 // later suffix and desynchronize the listing from disk.
 func TestBatchSlugAllocationCountsHiddenSkills(t *testing.T) {
@@ -208,7 +208,7 @@ func TestBatchSlugAllocationCountsHiddenSkills(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	if err := writeSkillFiles(dir, skills, nil, nil); err != nil {
+	if err := writeSkillFiles(dir, "", skills, nil, nil); err != nil {
 		t.Fatalf("writeSkillFiles failed: %v", err)
 	}
 

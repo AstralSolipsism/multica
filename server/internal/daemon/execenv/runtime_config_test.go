@@ -358,7 +358,7 @@ func TestCommentHintsCarryNoModality(t *testing.T) {
 	hints := map[string]string{
 		"cold":    BuildColdCommentsHint(issueID, "trigger-1", "thread-root-1"),
 		"warm":    BuildNewCommentsHint(issueID, "trigger-1", "thread-root-1", "2026-05-28T11:00:00Z", 4),
-		"resumed": BuildResumedCommentsHint(issueID, "trigger-1", "thread-root-1"),
+		"resumed": BuildResumedCommentsHint(issueID, "trigger-1", "thread-root-1", true),
 	}
 	for name, hint := range hints {
 		if hint == "" {
@@ -414,7 +414,7 @@ func TestColdCommentsHintPointsAtTriggeringThread(t *testing.T) {
 func TestResumedCommentsHintSkipsDefaultThreadRead(t *testing.T) {
 	t.Parallel()
 	const issueID = "55555555-6666-7777-8888-999999999999"
-	hint := BuildResumedCommentsHint(issueID, "trigger-1", "thread-root-1")
+	hint := BuildResumedCommentsHint(issueID, "trigger-1", "thread-root-1", true)
 
 	for _, want := range []string{
 		"triggering comment is already included above",

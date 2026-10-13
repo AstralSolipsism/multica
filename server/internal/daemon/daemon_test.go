@@ -1145,6 +1145,7 @@ func TestBuildPromptCommentTriggered(t *testing.T) {
 		IssueID:               issueID,
 		TriggerCommentID:      commentID,
 		TriggerCommentContent: commentContent,
+		TriggerAuthorType:     "member",
 		Agent:                 &AgentData{Name: "Test"},
 	}, "claude")
 

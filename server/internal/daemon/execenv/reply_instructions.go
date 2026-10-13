@@ -87,7 +87,7 @@ func BuildNewCommentsHint(issueID, triggerCommentID, triggerThreadID, newComment
 // BuildResumedCommentsHint returns the comment-reading pointer for the WARM
 // path where the server COMPUTED an issue-wide delta this claim and it came
 // back empty: the daemon is resuming a prior provider session, the triggering
-// comment body has already been injected into the per-turn prompt, and no
+// comment body or tool-reading pointer is in the per-turn prompt, and no
 // other comment arrived since the last run (beyond that trigger and the
 // agent's own replies).
 //
@@ -104,7 +104,7 @@ func BuildNewCommentsHint(issueID, triggerCommentID, triggerThreadID, newComment
 // none of them looked at the issue. Claiming the scan is answered from one of
 // those would delete the very fallback the mandatory scan exists to be; that
 // path renders BuildResumedUnknownDeltaCommentsHint instead.
-func BuildResumedCommentsHint(issueID, triggerCommentID, triggerThreadID string) string {
+func BuildResumedCommentsHint(issueID, triggerCommentID, triggerThreadID string, triggerIncluded bool) string {
 	threadID := activeThreadID(triggerThreadID, triggerCommentID)
 	if issueID == "" || threadID == "" {
 		return ""
@@ -113,7 +113,7 @@ func BuildResumedCommentsHint(issueID, triggerCommentID, triggerThreadID string)
 	// command below already carries the thread anchor, and the trigger comment
 	// id reaches the agent as the reply cookbook's `--parent` value.
 	return fmt.Sprintf(
-		"You're resuming the prior session, and the triggering comment is already included above. "+
+		resumedTriggerHint(triggerIncluded)+
 			"No other new comments on this issue since your last run — this turn's issue-wide delta is empty, "+
 			"which answers the scan workflow step 2 requires. "+
 			"Triggering thread in full, if resumed memory is not enough for the reply: "+
@@ -126,26 +126,26 @@ func BuildResumedCommentsHint(issueID, triggerCommentID, triggerThreadID string)
 // a resumed run whose issue-wide delta this claim does NOT carry: the count
 // query or its anchor lookup failed, or the server predates the delta fields.
 //
-// The session context is real, so the hint still says the trigger is injected
+// The session context is real, so the hint describes the trigger's delivery
 // and offers the thread read. What it must not do is imply anything about the
 // rest of the issue: nothing here looked. Workflow step 2's scan is mandatory
 // by default and only an affirmative server report may waive it, so this hint
 // hands the scan over as a command instead of waiving it (MUL-6984).
-func BuildResumedUnknownDeltaCommentsHint(issueID, triggerCommentID, triggerThreadID string) string {
+func BuildResumedUnknownDeltaCommentsHint(issueID, triggerCommentID, triggerThreadID string, triggerIncluded bool) string {
 	threadID := activeThreadID(triggerThreadID, triggerCommentID)
 	if issueID == "" {
 		return ""
 	}
 	if threadID == "" {
 		return fmt.Sprintf(
-			"You're resuming the prior session, and the triggering comment is already included above. "+
+			resumedTriggerHint(triggerIncluded)+
 				"This turn carries no issue-wide comment delta, so nothing here answers the scan workflow step 2 requires — run it: "+
 				"`multica issue comment list %s --roots-only --summary --compact --output json`.\n\n",
 			issueID,
 		)
 	}
 	return fmt.Sprintf(
-		"You're resuming the prior session, and the triggering comment is already included above. "+
+		resumedTriggerHint(triggerIncluded)+
 			"This turn carries no issue-wide comment delta, so nothing here answers the scan workflow step 2 requires — run it: "+
 			"`multica issue comment list %s --roots-only --summary --compact --output json`, "+
 			"and expand what its `last_activity_at` shows has moved. "+
@@ -153,6 +153,13 @@ func BuildResumedUnknownDeltaCommentsHint(issueID, triggerCommentID, triggerThre
 			"`multica issue comment list %s --thread %s --tail 30 --compact --output json`.\n\n",
 		issueID, issueID, threadID,
 	)
+}
+
+func resumedTriggerHint(included bool) string {
+	if included {
+		return "You're resuming the prior session, and the triggering comment is already included above. "
+	}
+	return "You're resuming the prior session. The triggering comment is referenced above; read it with the supplied command even if no other comments arrived. "
 }
 
 // BuildColdCommentsHint returns the comment-reading pointer for a run whose

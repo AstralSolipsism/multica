@@ -60,12 +60,17 @@ func TestPrepareClaudeSkillSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clear settings: %v", err)
 	}
-	if cleared != "" {
-		t.Fatalf("cleared settings path = %q, want empty", cleared)
+	if cleared != path {
+		t.Fatalf("base deny settings must remain: %q", cleared)
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("stale settings file still exists: %v", err)
+	data, err = os.ReadFile(cleared)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if strings.Contains(string(data), "Skill(review)") || !strings.Contains(string(data), "Skill(batch)") {
+		t.Fatalf("wrong reset settings: %s", data)
+	}
+
 }
 
 func TestEnsureCodexDisabledSkillsConfig(t *testing.T) {
@@ -111,8 +116,12 @@ func TestRuntimeSkillPoliciesYieldToWorkspaceSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareClaudeSkillSettings: %v", err)
 	}
-	if settingsPath != "" {
-		t.Fatalf("workspace-owned Claude skill was disabled via %q", settingsPath)
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "Skill(review)") {
+		t.Fatalf("workspace-owned Claude skill disabled: %s", data)
 	}
 
 	configPath := filepath.Join(root, "config.toml")

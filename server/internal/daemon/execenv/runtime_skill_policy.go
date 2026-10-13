@@ -11,6 +11,17 @@ import (
 
 const claudeRuntimeSkillSettingsFile = "claude-runtime-skill-settings.json"
 
+// Built-in prompt skills marked disableModelInvocation in Claude Code 2.1.292 / 2.1.296.
+// Keep this list constant across dispatches, including member chat turns: a
+// prior turn's user text can remain in a resumed session. The opt-in upgrade
+// smoke test requires an inventory review when the Claude version changes.
+// verify is conditionally user-only; it remains denied across feature gates.
+// Local/local-jsx commands cannot be called with Skill and are excluded.
+var claudeUserOnlyBuiltinSkills = []string{
+	"batch", "debug", "design", "design-sync", "doctor", "insights",
+	"run-skill-generator", "slides", "statusline", "team-onboarding", "verify",
+}
+
 // RuntimeSkillRefForEnv identifies a runtime-local skill for provider-specific
 // task environment filtering. Provider and runtime are already selected by the
 // task, so only the discovery root and provider-native key are needed here.
@@ -31,12 +42,6 @@ func cleanRuntimeSkillKey(key string) (string, bool) {
 
 func prepareClaudeSkillSettings(envRoot string, disabled []RuntimeSkillRefForEnv, workspaceSkills []SkillContextForEnv) (string, error) {
 	path := filepath.Join(envRoot, claudeRuntimeSkillSettingsFile)
-	if len(disabled) == 0 {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return "", err
-		}
-		return "", nil
-	}
 
 	overrides := make(map[string]string)
 	deny := make([]string, 0, len(disabled)*2)
@@ -47,6 +52,10 @@ func prepareClaudeSkillSettings(envRoot string, disabled []RuntimeSkillRefForEnv
 		}
 		seenDeny[rule] = struct{}{}
 		deny = append(deny, rule)
+	}
+	for _, name := range claudeUserOnlyBuiltinSkills {
+		addDeny("Skill(" + name + ")")
+		addDeny("Skill(" + name + " *)")
 	}
 	for _, skill := range disabled {
 		key, ok := cleanRuntimeSkillKey(skill.Key)
@@ -70,12 +79,6 @@ func prepareClaudeSkillSettings(envRoot string, disabled []RuntimeSkillRefForEnv
 		}
 		addDeny("Skill(" + invocationName + ")")
 		addDeny("Skill(" + invocationName + " *)")
-	}
-	if len(overrides) == 0 && len(deny) == 0 {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return "", err
-		}
-		return "", nil
 	}
 	payload := map[string]any{
 		"skillOverrides": overrides,

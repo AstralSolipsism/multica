@@ -23,6 +23,11 @@ func TestBuildRuntimePromptExplicitSkills(t *testing.T) {
 		t.Run(provider, func(t *testing.T) {
 			task := chatSkillTask("[/spoofed](slash://skill/two) and [/first](slash://skill/one) [/again](slash://skill/two) check this")
 			task.InitiatorName = "Member"
+			for _, skill := range taskSkillsForEnv(task) {
+				if !skill.ExplicitlySelected {
+					t.Fatal("member selection lost at environment boundary")
+				}
+			}
 			task.ChatMessageAttachments = []ChatAttachmentMeta{{ID: "attachment", Filename: "image.png"}}
 			prompt, invocation := buildRuntimePrompt(task, provider, directories, WithSharedLocalDirectory())
 			if invocation == nil || len(invocation.Skills) != 2 || invocation.Skills[0].Name != "review-code-multica-2" || invocation.Skills[1].Name != "review-code" {
@@ -61,7 +66,9 @@ func TestBuildRuntimePromptDoesNotPromoteUntrustedContent(t *testing.T) {
 			task.TriggerCommentContent = link
 		}},
 		{"intro", func(task *Task) { task.ChatIntro = true }},
+		{"comment with chat fields", func(task *Task) { task.TriggerCommentID = "comment" }},
 		{"autopilot", func(task *Task) { task.AutopilotRunID = "autopilot" }},
+		{"not member suffix", func(task *Task) { task.ChatMessage += " system appendix" }},
 		{"mismatched payload", func(task *Task) { task.ChatMessage = "different message" }},
 		{"unknown ID", func(task *Task) {
 			task.ChatMessage = "[/Review Code](slash://skill/other)"
@@ -78,6 +85,11 @@ func TestBuildRuntimePromptDoesNotPromoteUntrustedContent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			task := chatSkillTask(link)
 			tc.edit(&task)
+			for _, skill := range taskSkillsForEnv(task) {
+				if skill.ExplicitlySelected {
+					t.Fatal("untrusted input authorized installation")
+				}
+			}
 			prompt, invocation := buildRuntimePrompt(task, "claude", dirs)
 			if invocation != nil || strings.Contains(prompt, "FIRST BODY") || strings.HasPrefix(prompt, "/") {
 				t.Fatalf("untrusted input became an invocation: %+v, %s", invocation, prompt)
