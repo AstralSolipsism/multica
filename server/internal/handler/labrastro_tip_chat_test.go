@@ -163,6 +163,41 @@ func TestLabrastroTipChatConcurrentOpens(t *testing.T) {
 	}
 }
 
+func TestLabrastroTipChatSourceRetentionAndCleanup(t *testing.T) {
+	f := newTipChatFixture(t)
+	tip := f.tip(t, "retained source")
+	session := f.openTipChat(t, tip, 201)
+	testutil.Call(t, f.h.DeleteIssue, f.request("DELETE", nil, "id", f.issue)).Want(204)
+	var detail ChatSessionResponse
+	testutil.Call(t, f.tipChatHandler(f.h.GetChatSession), f.request("GET", nil, "sessionId", session.ID)).Want(200).JSON(&detail)
+	if detail.TipSource == nil || detail.TipSource.TipID != tip || detail.TipSource.Tip.Line != "retained source" {
+		t.Fatal("deleting the issue lost the side chat's historical source")
+	}
+	testutil.Call(t, f.h.DeleteWorkspace, f.request("DELETE", nil, "id", f.WorkspaceID)).Want(204)
+	if f.Count(t, `SELECT count(*) FROM labrastro_tip_chat WHERE workspace_id=$1`, f.WorkspaceID) != 0 ||
+		f.Count(t, `SELECT count(*) FROM chat_session WHERE workspace_id=$1`, f.WorkspaceID) != 0 {
+		t.Fatal("workspace deletion left private side chat data")
+	}
+}
+
+func TestLabrastroTipChatMemberRemovalClearsOnlyTheirSource(t *testing.T) {
+	f := newTipChatFixture(t)
+	user := f.User(t, "departing viewer", uuid.NewString()+"@example.test")
+	member := f.Member(t, f.WorkspaceID, user, "member")
+	f.Exec(t, `UPDATE agent SET visibility='workspace',permission_mode='public_to' WHERE id=$1`, f.agent)
+	f.InsertNoID(t, "agent_invocation_target", testutil.Cols{"agent_id": f.agent, "target_type": "workspace", "target_id": f.WorkspaceID}, "agent_id=$1", f.agent)
+	tip := f.tip(t, "member cleanup")
+	f.openTipChat(t, tip, 201)
+	r := f.request("POST", nil, "tipId", tip)
+	r.Header.Set("X-User-ID", user)
+	testutil.Call(t, f.h.LabrastroOpenTipChat, r).Want(201)
+	testutil.Call(t, f.h.DeleteMember, f.request("DELETE", nil, "id", f.WorkspaceID, "memberId", member)).Want(204)
+	if f.Count(t, `SELECT count(*) FROM labrastro_tip_chat WHERE workspace_id=$1 AND user_id=$2`, f.WorkspaceID, user) != 0 ||
+		f.Count(t, `SELECT count(*) FROM labrastro_tip_chat WHERE workspace_id=$1 AND user_id=$2`, f.WorkspaceID, testUserID) != 1 {
+		t.Fatal("member removal failed to scope private source cleanup")
+	}
+}
+
 func TestLabrastroTipChatAccess(t *testing.T) {
 	for _, tc := range []struct {
 		name, code string
