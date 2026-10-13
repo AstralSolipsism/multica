@@ -276,17 +276,22 @@ if bash -c 'source "$1"; api_started_after '\''{"status":"ok"}'\'' 1' _ "$root_d
 fi
 
 # The health payload an api process reports must match the checkout's commit
-# for the process to count as ours. The Makefile injects the full SHA via
-# -X main.commit, so checkout_commit must produce the same form: a short SHA
-# never equals the reported one and start_api kills its own freshly launched
-# api as a foreign process.
+# for the process to count as ours. start_api injects checkout_commit's value
+# into the launch (COMMIT=<sha> make api-dev, whose -X main.commit ends up in
+# /health), so the comparison and the injection share one source: a short SHA
+# injected behind our back never equals the reported one and start_api kills
+# its own freshly launched api as a foreign process.
 api_identity_repo="$tmp_dir/api-identity-repo"
 mkdir -p "$api_identity_repo"
 git -C "$api_identity_repo" init -q
 git -C "$api_identity_repo" -c user.email=dev@localhost -c user.name=dev \
-  commit -q --allow-empty -m "identity fixture"
+  -c commit.gpgsign=false commit -q --allow-empty -m "identity fixture"
 api_identity_full_sha="$(git -C "$api_identity_repo" rev-parse HEAD)"
 
+# The launch line must pin COMMIT itself: an inherited COMMIT env var or a
+# make command-line override (the OL-197 workaround was exactly that) would
+# otherwise re-desync the injected commit from the compared one.
+launch_args="$tmp_dir/api-launch-args"
 (
   # shellcheck disable=SC1090
   source "$root_dir/scripts/dev-env.sh"
@@ -300,20 +305,119 @@ api_identity_full_sha="$(git -C "$api_identity_repo" rev-parse HEAD)"
   if api_identity_matches "$foreign" "$expected"; then
     fail "api identity accepted a commit that is not this checkout's"
   fi
+
+  # Prove the launch pins the same value the comparison uses. Heredoc into a
+  # fresh bash: start_api's own stop-and-die paths must run under a real set -e.
+  cat > "$api_identity_repo/launch-probe.sh" <<PROBE
+  #!/usr/bin/env bash
+  set -euo pipefail
+  source "$root_dir/scripts/dev-env.sh"
+  DIR="$api_identity_repo"
+  REPO_ROOT="$api_identity_repo"
+  ENV_FILE=.env.example
+  BACKEND_PORT=19999
+  port_free() { :; }
+  now_epoch() { printf '0'; }
+  launch_detached() { printf '%s\n' "\$*" > "$launch_args"; exit 0; }
+  start_api
+PROBE
+  chmod +x "$api_identity_repo/launch-probe.sh"
+  if ! BACKEND_PORT=19999 bash "$api_identity_repo/launch-probe.sh" > "$out" 2>&1; then
+    fail "launch probe failed: $(cat "$out")"
+  fi
+  require_contains "$launch_args" "COMMIT=$expected"
 )
 
 # kill -0 alone counts a zombie launcher as running, which makes stop_component
-# fail forever on a corpse nothing reaps. A defunct process must read as dead.
+# fail forever on a corpse nothing reaps. A defunct process must read as dead —
+# including with trailing flags, as real zombies often report (Zs).
 (
   # shellcheck disable=SC1090
   source "$root_dir/scripts/dev-env.sh"
-  ps() { printf 'Z'; }
+  ps() { printf 'Zs'; }
   if process_alive $$; then
-    fail "process_alive accepted a zombie"
+    fail "process_alive accepted a zombie (stat Zs)"
   fi
-  ps() { printf 'S'; }
+  ps() { printf 'Sl'; }
   process_alive $$ || fail "process_alive rejected a live process"
+  ps() { printf 'S'; }
+  process_alive $$ || fail "process_alive rejected a live process (bare stat)"
 )
+
+# A zombie launcher must also read as gone where components are looked up:
+# component_pid gates the "already running" fast paths in start_*.
+zombie_pid_file="$tmp_dir/zombie-pid-file"
+(
+  # shellcheck disable=SC1090
+  source "$root_dir/scripts/dev-env.sh"
+  STATE_DIR="$tmp_dir/zombie-component"
+  mkdir -p "$STATE_DIR"
+  printf '4242\n' > "$(pid_file api)"
+  ps() { printf 'Zs'; }
+  if component_pid api >/dev/null; then
+    fail "component_pid accepted a zombie launcher"
+  fi
+)
+
+# A launcher that turns zombie between TERM and the liveness re-check must not
+# be reported as still running: stop_component returns 0 and stays quiet.
+assert_stop_reads_zombie_as_dead() (
+  # shellcheck disable=SC1090
+  source "$root_dir/scripts/dev-env.sh"
+  STATE_DIR="$tmp_dir/stop-zombie"
+  mkdir -p "$STATE_DIR"
+  BACKEND_PORT=18080 FRONTEND_PORT=13000 DESKTOP_RENDERER_PORT=5174
+  local pid=777
+  printf '%s\n' "$pid" > "$(pid_file web)"
+  kill_calls=0
+  ps() {
+    # stat= before the first signal: live; after: defunct
+    if [ "$kill_calls" -gt 0 ]; then printf 'Zs'; else printf 'Sl'; fi
+  }
+  process_group_id() { printf '%s' "$pid"; }
+  port_listener_pid() { :; }
+  kill() { kill_calls=$((kill_calls + 1)); }
+  sleep() { :; }
+  local output
+  output="$(stop_component web 2>&1)" || fail "stop_component failed on a launcher that zombified"
+  case "$output" in
+    *still\ running*) fail "stop_component reported a zombie as still running: $output" ;;
+  esac
+  [ -f "$(pid_file web)" ] && fail "stop_component kept the pid file of a zombie launcher"
+  return 0
+)
+assert_stop_reads_zombie_as_dead
+
+# The lsof fallback: lsof silently skips processes whose comm contains an
+# unmatched `(` (next-server truncates to "next-server (v1"), so port_listener_pid
+# must consult ss before reporting a port free.
+(
+  # shellcheck disable=SC1090
+  source "$root_dir/scripts/dev-env.sh"
+  lsof() { :; }
+  ss() { printf 'LISTEN 0 511 *:13000 *:* users:(("next-server (v1",pid=4242,fd=21))\n'; }
+  found="$(port_listener_pid 13000)"
+  [ "$found" = 4242 ] || fail "ss fallback lost the listener: got '$found', want 4242"
+)
+
+# A failed stop during a launch abort must print why it died instead of letting
+# set -e exit silently — the original `make up` failure mode (OL-347).
+# Runs in a fresh bash: putting the call on the left of || would defuse set -e
+# inside the function and hide the silent abort it exists to catch.
+abort_case="$tmp_dir/abort-launch"
+mkdir -p "$abort_case"
+cat > "$abort_case/probe.sh" <<PROBE
+#!/usr/bin/env bash
+set -euo pipefail
+source "$root_dir/scripts/dev-env.sh"
+stop_component() { warn "\$1 launcher pid 123 is still running"; return 1; }
+abort_launch api "the recorded reason"
+PROBE
+status=0
+bash "$abort_case/probe.sh" > "$out" 2>&1 || status=$?
+[ "$status" -ne 0 ] || fail "abort_launch exited 0 while its stop failed"
+require_contains "$out" "still running"
+require_contains "$out" "the recorded reason"
 
 # Listener ownership follows the process tree, not only the launcher's process
 # group. Turbo/pnpm can create a nested process group for Next while keeping the
@@ -328,6 +432,31 @@ assert_nested_listener_is_recorded
 # process group. An unrelated port occupant never receives a signal.
 assert_stop_handles_listener nested 420 310 200 "" 420
 assert_stop_handles_listener external 999 999 1 888
+
+# A stop failure in `down` must not abort the run silently: the remaining
+# components still get stopped and the failure is summed up at the end. Runs in
+# a fresh bash with only web's stop failing, so daemon and desktop must still
+# be handled in the output.
+write_manifest "down-fails-905" "$root_dir" 905
+down_probe="$tmp_dir/down-probe"
+mkdir -p "$down_probe"
+cat > "$down_probe/probe.sh" <<'PROBE'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$PROBE_ROOT/scripts/dev-env.sh"
+stop_component() {
+  if [ "$1" = web ]; then warn "web launcher pid 123 is still running"; return 1; fi
+  info "$1 was not running"
+}
+cmd_down down-fails-905 --components api,web,daemon,desktop
+PROBE
+status=0
+PROBE_ROOT="$root_dir" bash "$down_probe/probe.sh" > "$out" 2>&1 || status=$?
+[ "$status" -ne 0 ] || fail "down exited 0 while stopping web failed"
+require_contains "$out" "could not be stopped"
+require_contains "$out" "api was not running"
+require_contains "$out" "daemon was not running"
+require_contains "$out" "desktop was not running"
 
 # ---------------------------------------------------------------------------
 # Unknown names and components fail loudly instead of doing something else.

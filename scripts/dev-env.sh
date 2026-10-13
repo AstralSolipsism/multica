@@ -99,7 +99,7 @@ acquire_lock() {
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
     local holder=""
     holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
-    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+    if [ -n "$holder" ] && ! process_alive "$holder"; then
       rm -rf "$LOCK_DIR"
       continue
     fi
@@ -214,7 +214,9 @@ port_listener_pid() {
   local pid
   pid="$(lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
   if [ -z "$pid" ] && command -v ss >/dev/null 2>&1; then
-    pid="$(ss -ltnpH "sport = :$1" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1 || true)"
+    # Plain grep, not grep -P: BusyBox grep lacks PCRE and would only fail
+    # into the || true, silently disabling the fallback.
+    pid="$(ss -ltnpH "sport = :$1" 2>/dev/null | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2 || true)"
   fi
   [ -n "$pid" ] || return 0
   printf '%s' "$pid"
@@ -445,8 +447,9 @@ log_file()  { printf '%s/%s.log' "$LOG_DIR" "$1"; }
 
 # kill -0 succeeds on a zombie: a launcher whose parent (a finished run's
 # shell) never reaps it still "responds", so a later stop would treat the
-# corpse as running and fail forever. A defunct process owns no port and no
-# process tree, so it counts as dead.
+# corpse as running and fail forever. A defunct process no longer owns any
+# port, so it counts as dead even while its unreaped entry lingers in the
+# process table.
 process_alive() {
   kill -0 "$1" 2>/dev/null || return 1
   [ "$(ps -p "$1" -o stat= 2>/dev/null | tr -d ' ' | cut -c1)" != "Z" ]
@@ -477,6 +480,15 @@ launch_detached() {
 
 health_json() { curl -sf --max-time 3 "http://localhost:${BACKEND_PORT}/health" 2>/dev/null; }
 
+# stop_component already warns why it failed, so abort_launch only has to keep
+# a failed stop from aborting the script before the reason prints: under set -e
+# a bare `stop_component X; die …` exits silently on the stop's non-zero
+# return, which is how `make up` died with no explanation (OL-347).
+abort_launch() {
+  stop_component "$1" || true
+  die "$2"
+}
+
 json_field() {
   node -e '
     let payload;
@@ -495,10 +507,11 @@ api_started_after() {
   [ "$epoch" -ge $(($2 - 5)) ]
 }
 
-# The Makefile injects the full commit SHA into the api via -X main.commit, and
-# /health reports it verbatim. checkout_commit must return the same form: a
-# short SHA never equals the reported one, so api_identity_matches would reject
-# the freshly launched api as a foreign process and stop it.
+# The launch line injects checkout_commit's value into the api via
+# COMMIT=<sha> make api-dev (whose -X main.commit ends up in /health), so this
+# must return exactly the same form the launch passes: any other shape never
+# equals the reported commit and api_identity_matches rejects — and stops —
+# the freshly launched api.
 checkout_commit() {
   git -C "${DIR:-$REPO_ROOT}" rev-parse HEAD 2>/dev/null || printf 'unknown'
 }
@@ -598,7 +611,11 @@ Run 'make down' here first — a leftover instance answers /health with 200 and 
   fi
 
   launched_at="$(now_epoch)"
-  launch_detached api make -C "$REPO_ROOT" -s api-dev ENV_FILE="$ENV_FILE"
+  # COMMIT is passed explicitly so an inherited COMMIT env var or a make
+  # command-line override cannot desync the injected commit from the one
+  # checkout_commit just compared against — a short-SHA override would
+  # retrigger the exact identity failure this launch is guarding against.
+  launch_detached api env "COMMIT=$expected_commit" make -C "$REPO_ROOT" -s api-dev ENV_FILE="$ENV_FILE"
   info "api launching (pid $(cat "$(pid_file api)")), log: $(log_file api)"
 
   while [ "$waited" -lt 300 ]; do
@@ -607,12 +624,10 @@ Run 'make down' here first — a leftover instance answers /health with 200 and 
       # A 200 is not enough: pid, process group, commit and launch time all have
       # to identify the process this environment just started.
       if ! api_identity_matches "$health" "$expected_commit" "$launched_at"; then
-        stop_component api || warn "Could not stop the mismatched api launcher."
-        die "Something else is serving :$BACKEND_PORT, or the launched api did not report pid/commit/started_at for commit $expected_commit."
+        abort_launch api "Something else is serving :$BACKEND_PORT, or the launched api did not report pid/commit/started_at for commit $expected_commit."
       fi
       if ! record_component_listener api "$BACKEND_PORT" >/dev/null; then
-        stop_component api || warn "Could not stop the api launcher."
-        die "The API listener changed while its identity was being recorded."
+        abort_launch api "The API listener changed while its identity was being recorded."
       fi
       ok "api healthy at http://localhost:$BACKEND_PORT (pid $(json_field "$health" pid), commit $expected_commit)"
       return 0
@@ -644,8 +659,7 @@ start_web() {
     if curl -sf --max-time 15 "http://localhost:${FRONTEND_PORT}" >/dev/null 2>&1; then
       listener="$(record_component_listener web "$FRONTEND_PORT" || true)"
       if [ -z "$listener" ]; then
-        stop_component web || warn "Could not stop the web launcher."
-        die "Web on :$FRONTEND_PORT is not descended from the process this environment launched."
+        abort_launch web "Web on :$FRONTEND_PORT is not descended from the process this environment launched."
       fi
       ok "web serving http://localhost:$FRONTEND_PORT (pid ${listener:-?})"
       return 0
@@ -794,7 +808,7 @@ start_desktop() {
   fi
   if component_pid desktop >/dev/null; then
     warn "desktop launcher exists but its renderer/backend identity is stale; restarting it."
-    stop_component desktop || warn "Could not stop the desktop launcher."
+    stop_component desktop || true
   fi
   if ! port_free "$DESKTOP_RENDERER_PORT"; then
     die "Desktop renderer port $DESKTOP_RENDERER_PORT is busy: $(describe_port_owner "$DESKTOP_RENDERER_PORT")."
@@ -816,8 +830,7 @@ EOF
     if curl -sf --max-time 10 "http://localhost:${DESKTOP_RENDERER_PORT}" >/dev/null 2>&1; then
       listener="$(port_listener_pid "$DESKTOP_RENDERER_PORT")"
       if ! listener_pid_belongs_to_component desktop "$listener" || ! desktop_env_matches; then
-        stop_component desktop || warn "Could not stop the desktop launcher."
-        die "Desktop renderer on :$DESKTOP_RENDERER_PORT does not belong to this environment."
+        abort_launch desktop "Desktop renderer on :$DESKTOP_RENDERER_PORT does not belong to this environment."
       fi
       # Electron can bring Vite up and then crash during renderer bootstrap.
       # Require a short stable window before the environment claims readiness.
@@ -826,8 +839,7 @@ EOF
       if ! component_pid desktop >/dev/null || [ "$stable_listener" != "$listener" ] \
         || ! curl -sf --max-time 10 "http://localhost:${DESKTOP_RENDERER_PORT}" >/dev/null 2>&1; then
         tail -20 "$(log_file desktop)" | sed 's/^/    /' >&2 || true
-        stop_component desktop || warn "Could not stop the desktop launcher."
-        die "desktop exited during renderer bootstrap. Log: $(log_file desktop)"
+        abort_launch desktop "desktop exited during renderer bootstrap. Log: $(log_file desktop)"
       fi
       printf '%s\n' "$listener" > "$(listener_pid_file desktop)"
       ok "desktop ready (launcher $(component_pid desktop), renderer pid ${listener:-?}, backend :$BACKEND_PORT)"
@@ -838,8 +850,7 @@ EOF
     sleep 2
     waited=$((waited + 2))
   done
-  stop_component desktop || warn "Could not stop the desktop launcher."
-  die "desktop renderer never became ready on :$DESKTOP_RENDERER_PORT. Log: $(log_file desktop)"
+  abort_launch desktop "desktop renderer never became ready on :$DESKTOP_RENDERER_PORT. Log: $(log_file desktop)"
 }
 
 desktop_env_matches() {
