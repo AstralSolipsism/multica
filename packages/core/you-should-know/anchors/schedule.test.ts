@@ -235,6 +235,36 @@ describe("scheduleTips — rotation queue", () => {
     expect(result.queue.map((entry) => entry.tipId)).toEqual(["earlier", "later"]);
   });
 
+  it("orders same-millisecond tips by fractional digits 4-9 (one report, generation order)", () => {
+    const row = anchor({ level: "row", issueId: "issue-1" });
+    // One report batch: the server's clock_timestamp() inserts land ~0.2-0.4 ms
+    // apart inside a single millisecond (OL-345). Ids are random uuids, so give
+    // them ids that sort in the OPPOSITE of generation order — only sub-ms
+    // digits can produce the right queue.
+    const first = tip({ id: "z-generated-first", issue_id: "issue-1", created_at: "2026-10-01T00:00:31.103100Z" });
+    const second = tip({ id: "m-generated-second", issue_id: "issue-1", created_at: "2026-10-01T00:00:31.103400Z" });
+    const third = tip({ id: "a-generated-third", issue_id: "issue-1", created_at: "2026-10-01T00:00:31.103769Z" });
+    const result = scheduleTips({
+      anchors: [row],
+      tips: [third, first, second],
+    });
+    expect(result.queue.map((entry) => entry.tipId)).toEqual([
+      "z-generated-first",
+      "m-generated-second",
+      "a-generated-third",
+    ]);
+  });
+
+  it("treats trailing-zero-trimmed fractions as equal and falls back to id", () => {
+    const row = anchor({ level: "row", issueId: "issue-1" });
+    // RFC3339Nano trims trailing zeros: ".1034Z" and ".103400Z" are the same
+    // instant, so the id tiebreak still decides between them.
+    const trimmed = tip({ id: "b-trimmed", issue_id: "issue-1", created_at: "2026-10-01T00:00:31.1034Z" });
+    const padded = tip({ id: "a-padded", issue_id: "issue-1", created_at: "2026-10-01T00:00:31.103400Z" });
+    const result = scheduleTips({ anchors: [row], tips: [trimmed, padded] });
+    expect(result.queue.map((entry) => entry.tipId)).toEqual(["a-padded", "b-trimmed"]);
+  });
+
   it("stays deterministic when a creation time is missing or unparseable", () => {
     const row = anchor({ level: "row", issueId: "issue-1" });
     // The schema tolerates "" (NaN on Date.parse): the comparator must not

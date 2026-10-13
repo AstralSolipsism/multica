@@ -34,6 +34,19 @@ interface Candidate {
   order: number;
 }
 
+/**
+ * Sub-millisecond ordering key of an RFC3339Nano timestamp: fractional-second
+ * digits 4–9 as an integer. `Date.parse` stops at milliseconds, but tips from
+ * one report land ~0.2–0.4 ms apart inside a single millisecond (the server's
+ * `clock_timestamp()` values, OL-345), so the microsecond digits decide their
+ * order. Missing or millisecond-only fractions key as 0.
+ */
+function subMillisecondKey(timestamp: string): number {
+  const fraction = /\d{2}:\d{2}:\d{2}\.(\d+)/.exec(timestamp)?.[1];
+  if (!fraction) return 0;
+  return Number(fraction.slice(3, 9).padEnd(6, "0"));
+}
+
 function compareCandidates(a: Candidate, b: Candidate): number {
   const level = LEVEL_RANK[a.anchor.descriptor.level] - LEVEL_RANK[b.anchor.descriptor.level];
   if (level !== 0) return level;
@@ -100,6 +113,10 @@ function compareQueueEntries(
   const created =
     (Date.parse(a.tip.created_at) || 0) - (Date.parse(b.tip.created_at) || 0);
   if (created !== 0) return created;
+  // Same millisecond: keep comparing the fractional digits 4–9 — tips from one
+  // report differ only there, and must not drop to the random-uuid tiebreak.
+  const subMillis = subMillisecondKey(a.tip.created_at) - subMillisecondKey(b.tip.created_at);
+  if (subMillis !== 0) return subMillis;
   return a.tip.id.localeCompare(b.tip.id);
 }
 
