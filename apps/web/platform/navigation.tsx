@@ -110,8 +110,12 @@ function NavigationProviderInner({
     () => "",
   );
   const pending = pendingNavRef.current;
+  // null on the server: this provider wraps the whole app, and reading
+  // `window` during SSR throws every request into client rendering (#419).
   const windowUrl =
-    window.location.pathname + window.location.search + window.location.hash;
+    typeof window === "undefined"
+      ? null
+      : window.location.pathname + window.location.search + window.location.hash;
   const hash =
     pending && pending.from === windowUrl && pending.pathname === pathname
       ? pending.hash

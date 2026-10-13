@@ -2021,6 +2021,11 @@ describe("IssueDetail (shared)", () => {
       await waitFor(() => expect(
         hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
       ).toBe(true));
+      // The highlight arrived inside the loading window, before the first
+      // ready frame — it IS the arrival, and the arrival landing owns the
+      // flat timeline. If the arrival ever degrades into the virtualized
+      // jump path, long timelines lose the precise landing (I1).
+      expect(screen.queryByTestId("virtuoso-mock")).toBeNull();
     });
 
     it("does not flatten the timeline for a fragment whose target is not in this issue", async () => {

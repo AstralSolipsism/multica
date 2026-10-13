@@ -150,4 +150,44 @@ describe("WebScrollRestorationProvider", () => {
     );
     expect(adapter!.getViewState!("highlight:i2")).toBe("c2");
   });
+
+  // OL-270 round 3 (S3): the scroll capture listener keys by the last
+  // COMMITTED pathname (a layout-effect-updated ref). A scroll that lands
+  // while React is mid-navigation must go to the outgoing route, never the
+  // incoming one — otherwise the first navigation silently breaks scroll
+  // restore for every route by filing all offsets under the initial one.
+  it("records scroll offsets under the committed route, not the one mid-navigation", () => {
+    let adapter: ReturnType<typeof useScrollRestorationAdapter> = null;
+    function Probe() {
+      adapter = useScrollRestorationAdapter();
+      return null;
+    }
+    const tree = () => (
+      <WebScrollRestorationProvider>
+        <div data-tab-scroll-root="main" data-testid="container" />
+        <Probe />
+      </WebScrollRestorationProvider>
+    );
+
+    nav.pathname = "/acme/issues/A";
+    const view = render(tree());
+    scrollContainer(screen.getByTestId("container"), 400);
+
+    // Navigation to B starts: React hasn't committed it yet, so a scroll from
+    // the still-visible page A must file under A.
+    nav.pathname = "/acme/issues/B";
+    scrollContainer(screen.getByTestId("container"), 500);
+    // B commits; only scrolls after this point belong to B. (A fresh element
+    // per rerender — React bails out of an identical element object.)
+    view.rerender(tree());
+    scrollContainer(screen.getByTestId("container"), 900);
+
+    // Read each route's offset back by rendering the probe under it.
+    nav.pathname = "/acme/issues/A";
+    view.rerender(tree());
+    expect(adapter!.get("main")?.top).toBe(500);
+    nav.pathname = "/acme/issues/B";
+    view.rerender(tree());
+    expect(adapter!.get("main")?.top).toBe(900);
+  });
 });
