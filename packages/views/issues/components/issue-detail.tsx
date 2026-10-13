@@ -2073,6 +2073,17 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     rafId = requestAnimationFrame(align);
     return () => cancelAnimationFrame(rafId);
   }, [pendingReplyJump, scrollContainerEl, flashJumpTarget]);
+  // Anchor-comment creation times for the YSK archive group labels (OL-346).
+  // The timeline is fetched in full, so anchor comments resolve here; the
+  // archive section falls back to a group's earliest tip time for any id
+  // missing from this map.
+  const archiveCommentTime = useMemo(() => {
+    const times = new Map<string, string>();
+    for (const entry of timeline) {
+      if (entry.type === "comment") times.set(entry.id, entry.created_at);
+    }
+    return (commentId: string) => times.get(commentId);
+  }, [timeline]);
   const jumpToMinimapTarget = useCallback(
     (commentId: string) =>
       replyToRoot.has(commentId) ? jumpToReply(commentId) : jumpToThread(commentId),
@@ -3062,6 +3073,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         issueId={id}
         identifier={issue.identifier}
         onJumpToComment={jumpToMinimapTarget}
+        commentTime={archiveCommentTime}
       />
 
       {/* Execution log — active runs + collapsed past runs, each carrying its

@@ -3152,12 +3152,20 @@ describe("IssueDetail (shared)", () => {
       issueId: "issue-1",
       identifier: "TES-1",
       onJumpToComment: expect.any(Function),
+      commentTime: expect.any(Function),
     });
 
-    scrollToIndexSpy.mockClear();
-    const { onJumpToComment } = archiveSectionProps.current as {
+    // The commentTime lookup serves anchor ids straight from the loaded
+    // timeline and misses ids it does not have (the archive falls back to
+    // the group's earliest tip time there).
+    const { onJumpToComment, commentTime } = archiveSectionProps.current as {
       onJumpToComment: (commentId: string) => void;
+      commentTime: (commentId: string) => string | undefined;
     };
+    expect(commentTime("archive-reply")).toBe("2026-01-18T00:00:00Z");
+    expect(commentTime("not-in-timeline")).toBeUndefined();
+
+    scrollToIndexSpy.mockClear();
     act(() => onJumpToComment("archive-reply"));
 
     // Virtualized reply jump: scrolls the thread root's row into view…
