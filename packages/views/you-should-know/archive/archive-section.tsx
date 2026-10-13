@@ -85,6 +85,7 @@ export function YouShouldKnowArchiveSection({
   issueId,
   identifier,
   onJumpToComment,
+  commentTime,
 }: {
   issueId: string;
   /** Used to build comment deep links; links are skipped without it. */
@@ -96,6 +97,13 @@ export function YouShouldKnowArchiveSection({
    * Falls back to a URL push when absent.
    */
   onJumpToComment?: (commentId: string) => void;
+  /**
+   * Comment creation time (ISO) by comment id, from the issue's loaded
+   * timeline. Comment-group labels take their time from it so two same-day
+   * comment groups stay distinguishable; ids outside the map fall back to
+   * the group's earliest tip time.
+   */
+  commentTime?: (commentId: string) => string | undefined;
 }) {
   const { t } = useT("you-should-know");
   const wsId = useWorkspaceId();
@@ -180,6 +188,7 @@ export function YouShouldKnowArchiveSection({
                 group={group}
                 identifier={identifier}
                 onJumpToComment={onJumpToComment}
+                commentTime={commentTime}
               />
             ))
           )}
@@ -193,10 +202,12 @@ function ArchiveGroup({
   group,
   identifier,
   onJumpToComment,
+  commentTime,
 }: {
   group: TipGroup;
   identifier?: string;
   onJumpToComment?: (commentId: string) => void;
+  commentTime?: (commentId: string) => string | undefined;
 }) {
   const { t } = useT("you-should-know");
   const locale = useLocale();
@@ -208,16 +219,23 @@ function ArchiveGroup({
     group.commentId !== null && identifier
       ? `${paths.issueDetail(identifier)}#comment-${group.commentId}`
       : null;
-  // `created_at` is an instant (not a calendar day): render it in the
-  // viewer's timezone so the group label agrees with the comment card's
-  // local timestamp instead of the UTC day slice. Empty or unparseable
-  // values render no date rather than "Invalid Date".
-  const timeMs = group.time ? Date.parse(group.time) : NaN;
+  // The label carries the comment's own creation time down to the minute so
+  // two same-day comment groups read differently (OL-346). An anchor comment
+  // missing from the loaded timeline (deleted or never fetched) falls back
+  // to the group's earliest tip time. Like the comment card, the instant
+  // renders in the viewer's timezone; empty or unparseable values render no
+  // date rather than "Invalid Date".
+  const commentAt = group.commentId ? commentTime?.(group.commentId) : undefined;
+  const labelTime =
+    commentAt && !Number.isNaN(Date.parse(commentAt)) ? commentAt : group.time;
+  const timeMs = labelTime ? Date.parse(labelTime) : NaN;
   const when = Number.isNaN(timeMs)
     ? ""
-    : new Date(timeMs).toLocaleDateString(locale, {
+    : new Date(timeMs).toLocaleString(locale, {
         month: "short",
         day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
       });
   const label =
     group.commentId === null

@@ -34,6 +34,30 @@ concurrent requests. A repeated `(task_id, tag, line)` is a no-op. Overturns onl
 affect valid tips from earlier runs on the same issue and preserve the reporting
 task, its trigger comment and the reason. Storage failures return a server error.
 
+## Stop generation during a run
+
+`GET /api/daemon/tasks/{taskId}/status` adds optional
+`you_should_know_enabled: boolean` for daemons advertising `you-should-know-v1`.
+It reads the owning workspace's current setting after the existing workspace
+authorization, without following optional issue/chat/autopilot links. A failed
+settings lookup omits the field and preserves the task status. Older servers
+omit the field; older daemons ignore it.
+
+The daemon's normal status poll (about every five seconds) latches an explicit
+`false` for this run and writes an empty `<task config>/ysk/stop` file once, only
+if the mod was successfully installed. If shutdown arrives during preparation,
+installation writes the marker before the agent starts. Failed writes are
+logged and retried on later polls. Turning the workspace on again only affects
+later runs; personal notification preferences never change generation.
+Installation clears an old marker when a later run reuses the environment;
+the finished run detaches its writer before releasing that environment.
+
+The mod remembers the marker path beside `context.json` at session start. It
+checks just before each scheduled fork; once the marker is read successfully,
+it permanently stops checking and forking for that session. Missing files and
+all read errors leave generation enabled. Forks already sent finish normally.
+This implements OL-187 section 13 K / OL-361 without changing the contract.
+
 ## Human APIs
 
 These routes require workspace membership and reject machine credentials with
@@ -52,7 +76,14 @@ context (`X-Workspace-ID` or slug).
   the tip's `line` as a topic, refreshing duplicates and retaining the latest 50
   per workspace/member. `dismissed` does not change known topics.
 
-Both GET routes return `{ "tips": [...] }`, newest first. Each tip has:
+Both GET routes return `{ "tips": [...] }`, newest first. Tips from one
+report carry strictly increasing `created_at` in report order
+(`9024_labrastro_ysk_tip_created_at` defaults both timestamp columns to
+`clock_timestamp()`, so consecutive inserts in the same transaction differ at
+microsecond granularity); the RFC3339Nano `created_at` strings preserve those
+digits and clients should compare them at full precision — parse them first,
+not string-compare, since trailing zeros are trimmed (`.173Z` sorts after
+`.173221Z` as text). Each tip has:
 
 ```ts
 type Tip = {
@@ -189,5 +220,5 @@ YSK data; member removal clears that member's states and topics. The independent
 known-topic list survives an individual issue deletion.
 
 Tables and indexes are installed by `9016_labrastro_ysk` through
-`9023_labrastro_ysk_topic_identity_index`. All indexes have their own concurrent
+`9024_labrastro_ysk_tip_created_at`. All indexes have their own concurrent
 migration and recovery registration. There are no foreign keys or cascades.

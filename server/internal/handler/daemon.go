@@ -5037,7 +5037,9 @@ func (h *Handler) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": task.Status})
+	writeJSON(w, http.StatusOK, protocol.DaemonTaskStatus{
+		Status: task.Status, YouShouldKnowEnabled: h.labrastroYSKTaskEnabled(r, task.WorkspaceID),
+	})
 }
 
 // FailTask marks a running task as failed.

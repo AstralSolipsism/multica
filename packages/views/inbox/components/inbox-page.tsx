@@ -51,6 +51,7 @@ import {
 } from "@multica/core/inbox/filter-store";
 
 import { IssueDetail } from "../../issues/components/issue-detail";
+import { WithoutTipAnchors } from "../../you-should-know/anchors/without-tip-anchors";
 import { issueHighlightMementoKey } from "../../issues/comment-deep-link";
 import { useViewStateWriter } from "../../platform";
 import { ErrorBoundary } from "@multica/ui/components/common/error-boundary";
@@ -106,7 +107,17 @@ const INBOX_LIST_DEFAULT_SIZE = 260;
 const INBOX_LIST_MIN_SIZE = 240;
 const INBOX_LIST_MAX_SIZE = 400;
 
+// The inbox shows no You-should-know tips (OL-187 §2), not even on the issue
+// detail it embeds: nothing on this page registers a tip anchor.
 export function InboxPage() {
+  return (
+    <WithoutTipAnchors>
+      <InboxPageContent />
+    </WithoutTipAnchors>
+  );
+}
+
+function InboxPageContent() {
   const { t } = useT("inbox");
   const showIssueLimitUpgradePrompt = useIssueLimitUpgradePrompt();
   const showAutopilotQuotaRecoveryPrompt = useIssueLimitUpgradePrompt(

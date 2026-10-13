@@ -3143,7 +3143,10 @@ describe("IssueDetail (shared)", () => {
   it("passes the timeline jump helper to the YSK archive section", async () => {
     const reply = {
       ...mockTimeline[1]!, id: "archive-reply", parent_id: "comment-1",
-      content: "Reply the archive points at", created_at: "2026-01-18T00:00:00Z", updated_at: "2026-01-18T00:00:00Z",
+      content: "Reply the archive points at", created_at: "2026-01-18T00:00:00Z",
+      // Distinct from created_at so the commentTime assertion below fails if
+      // the lookup reads the edit time instead of the creation time.
+      updated_at: "2026-01-18T05:00:00Z",
     };
     mockApiObj.listTimeline.mockResolvedValue([mockTimeline[0]!, reply]);
     renderIssueDetail();
@@ -3152,12 +3155,20 @@ describe("IssueDetail (shared)", () => {
       issueId: "issue-1",
       identifier: "TES-1",
       onJumpToComment: expect.any(Function),
+      commentTime: expect.any(Function),
     });
 
-    scrollToIndexSpy.mockClear();
-    const { onJumpToComment } = archiveSectionProps.current as {
+    // The commentTime lookup serves anchor ids straight from the loaded
+    // timeline and misses ids it does not have (the archive falls back to
+    // the group's earliest tip time there).
+    const { onJumpToComment, commentTime } = archiveSectionProps.current as {
       onJumpToComment: (commentId: string) => void;
+      commentTime: (commentId: string) => string | undefined;
     };
+    expect(commentTime("archive-reply")).toBe("2026-01-18T00:00:00Z");
+    expect(commentTime("not-in-timeline")).toBeUndefined();
+
+    scrollToIndexSpy.mockClear();
     act(() => onJumpToComment("archive-reply"));
 
     // Virtualized reply jump: scrolls the thread root's row into view…

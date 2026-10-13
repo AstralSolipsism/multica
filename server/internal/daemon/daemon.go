@@ -5820,13 +5820,16 @@ func (d *Daemon) watchTaskCancellation(ctx context.Context, taskID string, pollI
 		defer ticker.Stop()
 		check := func() bool {
 			status, err := d.client.GetTaskStatus(ctx, taskID)
-			if !shouldInterruptAgent(status, err) {
+			if err == nil {
+				updateYouShouldKnowStop(ctx, status.YouShouldKnowEnabled, taskLog)
+			}
+			if !shouldInterruptAgent(status.Status, err) {
 				return false
 			}
 			if err != nil {
 				taskLog.Info("task gone server-side, interrupting agent", "error", err)
 			} else {
-				taskLog.Info("task reached terminal state server-side, interrupting agent", "status", status)
+				taskLog.Info("task reached terminal state server-side, interrupting agent", "status", status.Status)
 			}
 			close(cancelled)
 			return true
@@ -5959,7 +5962,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// when the server signals the task should stop — either the task reached
 	// a terminal state (completed/failed/cancelled) or the task row is
 	// deleted (404).
-	runCtx, runCancel := context.WithCancel(ctx)
+	runCtx, runCancel := context.WithCancel(withYouShouldKnowStop(ctx, task))
 	defer runCancel()
 
 	// Poll interval is d.cancelPollInterval (5s in production, reduced in tests
@@ -6055,9 +6058,9 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// outright, skip reporting — the complete/fail callbacks would fail
 	// anyway. Reuse shouldInterruptAgent so this guard honors the same
 	// signals as the in-flight watcher.
-	if status, err := d.client.GetTaskStatus(ctx, task.ID); shouldInterruptAgent(status, err) {
+	if status, err := d.client.GetTaskStatus(ctx, task.ID); shouldInterruptAgent(status.Status, err) {
 		taskLog.Info("task cancelled during execution, discarding result",
-			"status", status, "error", err, "branch_name", result.BranchName)
+			"status", status.Status, "error", err, "branch_name", result.BranchName)
 		// Same contract as the poll-cancelled path above: the transcript is
 		// flushed, so let the server settle its deferred chat finalization, and
 		// carry the finalized branch so cancelled work stays discoverable. No
@@ -8683,7 +8686,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		agentCustomEnv = task.Agent.CustomEnv
 	}
 	layerCustomEnvAndHermesHome(agentEnv, agentCustomEnv, env.HermesHome, d.logger)
-	youShouldKnow := prepareYouShouldKnow(task, provider, resolvedVersion, env, agentEnv, taskLog)
+	youShouldKnow := prepareYouShouldKnow(ctx, task, provider, resolvedVersion, env, agentEnv, taskLog)
+	defer unregisterYouShouldKnowStop(ctx)
 	if provider == "reasonix" {
 		reasonixStateHome, err := prepareReasonixTaskStateHome(d.cfg.Profile, task.RuntimeID, task.AgentID)
 		if err != nil {

@@ -110,6 +110,7 @@ import { collectThreadParticipants, collectThreadReplies, deriveThreadResolution
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
 import { tipAnchorScopeFromIssues } from "../../you-should-know/anchors/tip-anchor-scope";
 import { YouShouldKnowArchiveSection } from "../../you-should-know/archive/archive-section";
+import { commentTimeLookup } from "../../you-should-know/archive/comment-time-lookup";
 import { IssueWakeupHeaderChip } from "./issue-wakeup-header-chip";
 import { ExecutionLogSection } from "./execution-log-section";
 import { WakeupsSection } from "./wakeups-section";
@@ -2073,6 +2074,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     rafId = requestAnimationFrame(align);
     return () => cancelAnimationFrame(rafId);
   }, [pendingReplyJump, scrollContainerEl, flashJumpTarget]);
+  // Anchor-comment creation times for the YSK archive group labels (OL-346).
+  // The timeline is fetched in full, so anchor comments resolve here; the
+  // archive section falls back to a group's earliest tip time for any id
+  // missing from the lookup.
+  const archiveCommentTime = useMemo(() => commentTimeLookup(timeline), [timeline]);
   const jumpToMinimapTarget = useCallback(
     (commentId: string) =>
       replyToRoot.has(commentId) ? jumpToReply(commentId) : jumpToThread(commentId),
@@ -3062,6 +3068,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         issueId={id}
         identifier={issue.identifier}
         onJumpToComment={jumpToMinimapTarget}
+        commentTime={archiveCommentTime}
       />
 
       {/* Execution log — active runs + collapsed past runs, each carrying its
