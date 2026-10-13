@@ -269,6 +269,48 @@ describe("YouShouldKnowArchiveSection — grouping and order", () => {
     expect(labels).toEqual(["Comment · Oct 13, 8:30 AM", "Comment · Oct 13, 8:00 AM"]);
   });
 
+  it("re-sorts and relabels when the comment-time lookup updates after first render", () => {
+    // Cold load: the sidebar mounts while the timeline is still fetching, so
+    // the lookup is empty and groups order by their earliest tip. When the
+    // timeline arrives the mount passes a NEW lookup — grouping must
+    // recompute, or the OL-346 labels and the OL-387 order stay stale until
+    // the tips refetch.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(youShouldKnowKeys.issue("ws-1", "issue-1", "all"), {
+      tips: [
+        tip({ id: "a", anchor_comment_id: "c-early", created_at: "2026-10-13T09:00:00Z" }),
+        tip({ id: "b", anchor_comment_id: "c-late", created_at: "2026-10-13T08:35:00Z" }),
+      ],
+    });
+    const ui = (commentTime: (id: string) => string | undefined) => (
+      <QueryClientProvider client={queryClient}>
+        <YouShouldKnowArchiveSection
+          issueId="issue-1"
+          identifier="OL-1"
+          commentTime={commentTime}
+        />
+      </QueryClientProvider>
+    );
+    const labels = () => screen.getAllByText(/^Comment ·/).map((el) => el.textContent);
+
+    // Timeline still loading: fall back to the earliest tip times.
+    const { rerender } = renderWithI18n(ui(() => undefined));
+    expect(labels()).toEqual(["Comment · Oct 13, 9:00 AM", "Comment · Oct 13, 8:35 AM"]);
+
+    // Timeline loaded: re-sort and relabel by the comments' own times.
+    rerender(
+      ui((id) =>
+        ({
+          "c-early": "2026-10-13T08:00:00Z",
+          "c-late": "2026-10-13T08:30:00Z",
+        })[id],
+      ),
+    );
+    expect(labels()).toEqual(["Comment · Oct 13, 8:30 AM", "Comment · Oct 13, 8:00 AM"]);
+  });
+
   it("falls back to the group's earliest tip time when the comment is not loaded", () => {
     renderSection(
       [

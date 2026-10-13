@@ -56,6 +56,8 @@ export function groupTips(
         key,
         commentId: tip.anchor_comment_id,
         time: tip.created_at,
+        // Placeholder to satisfy the type; recomputed for every group below
+        // once `time` is final.
         labelTime: tip.created_at,
         tips: [],
       };
@@ -71,13 +73,23 @@ export function groupTips(
     }
   }
   for (const group of groups.values()) {
-    const commentAt = group.commentId ? commentTime?.(group.commentId) : undefined;
-    group.labelTime =
-      commentAt && !Number.isNaN(Date.parse(commentAt)) ? commentAt : group.time;
+    group.labelTime = labelTimeOf(group, commentTime);
   }
   return [...groups.values()].sort(
     (a, b) => Date.parse(b.labelTime) - Date.parse(a.labelTime),
   );
+}
+
+/**
+ * The group's label time: the anchor comment's own creation time when the
+ * lookup resolves to a parseable instant, else the group's earliest tip.
+ */
+function labelTimeOf(
+  group: TipGroup,
+  commentTime?: (commentId: string) => string | undefined,
+): string {
+  const commentAt = group.commentId ? commentTime?.(group.commentId) : undefined;
+  return commentAt && !Number.isNaN(Date.parse(commentAt)) ? commentAt : group.time;
 }
 
 function tipMatchesFilter(tip: IssueTip, filter: TipFilter): boolean {
