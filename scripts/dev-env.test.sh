@@ -275,6 +275,46 @@ if bash -c 'source "$1"; api_started_after '\''{"status":"ok"}'\'' 1' _ "$root_d
   fail "legacy /health without started_at was accepted as current"
 fi
 
+# The health payload an api process reports must match the checkout's commit
+# for the process to count as ours. The Makefile injects the full SHA via
+# -X main.commit, so checkout_commit must produce the same form: a short SHA
+# never equals the reported one and start_api kills its own freshly launched
+# api as a foreign process.
+api_identity_repo="$tmp_dir/api-identity-repo"
+mkdir -p "$api_identity_repo"
+git -C "$api_identity_repo" init -q
+git -C "$api_identity_repo" -c user.email=dev@localhost -c user.name=dev \
+  commit -q --allow-empty -m "identity fixture"
+api_identity_full_sha="$(git -C "$api_identity_repo" rev-parse HEAD)"
+
+(
+  # shellcheck disable=SC1090
+  source "$root_dir/scripts/dev-env.sh"
+  DIR="$api_identity_repo"
+  health_belongs_to_api() { :; }
+  expected="$(checkout_commit)"
+  health="$(printf '{"pid":1,"commit":"%s","started_at":"2026-01-01T00:00:00Z"}' "$api_identity_full_sha")"
+  api_identity_matches "$health" "$expected" \
+    || fail "api identity rejected its own checkout: expected $expected, health reports $api_identity_full_sha"
+  foreign="$(printf '{"pid":1,"commit":"not-the-checkout","started_at":"2026-01-01T00:00:00Z"}')"
+  if api_identity_matches "$foreign" "$expected"; then
+    fail "api identity accepted a commit that is not this checkout's"
+  fi
+)
+
+# kill -0 alone counts a zombie launcher as running, which makes stop_component
+# fail forever on a corpse nothing reaps. A defunct process must read as dead.
+(
+  # shellcheck disable=SC1090
+  source "$root_dir/scripts/dev-env.sh"
+  ps() { printf 'Z'; }
+  if process_alive $$; then
+    fail "process_alive accepted a zombie"
+  fi
+  ps() { printf 'S'; }
+  process_alive $$ || fail "process_alive rejected a live process"
+)
+
 # Listener ownership follows the process tree, not only the launcher's process
 # group. Turbo/pnpm can create a nested process group for Next while keeping the
 # listener below the launcher in the PPID chain.
