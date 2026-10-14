@@ -714,14 +714,12 @@ func (c *Client) RecoverOrphans(ctx context.Context, runtimeID string) error {
 // GetTaskStatus returns the current status of a task. Used by the daemon to
 // detect terminal/interruption signals (cancelled, failed, completed, or a
 // 404 task-not-found) while a task is executing.
-func (c *Client) GetTaskStatus(ctx context.Context, taskID string) (string, error) {
-	var resp struct {
-		Status string `json:"status"`
-	}
+func (c *Client) GetTaskStatus(ctx context.Context, taskID string) (protocol.DaemonTaskStatus, error) {
+	var resp protocol.DaemonTaskStatus
 	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/status", taskID), &resp); err != nil {
-		return "", err
+		return protocol.DaemonTaskStatus{}, err
 	}
-	return resp.Status, nil
+	return resp, nil
 }
 
 // HeartbeatResponse, PendingUpdate, etc. alias the wire types so HTTP and WS

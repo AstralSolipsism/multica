@@ -252,6 +252,33 @@ interface TabStore {
     value: string | undefined,
   ) => void;
   /**
+   * Delete every view-state entry of one route whose entry key starts with
+   * `entryKeyPrefix`. The navigation layer clears a route's "comment
+   * highlight already landed" record this way when a fresh in-app push
+   * carries a `#comment-…` deep link — the push is new landing intent, while
+   * the record exists only to stop a restore (tab switch back) re-jumping.
+   */
+  clearViewStateEntries: (
+    tabId: string,
+    routeKey: string,
+    entryKeyPrefix: string,
+  ) => void;
+  /**
+   * Carry a route's view-state entries onto another pathname, scoped to one
+   * entry-key prefix and OVERWRITE-style: after the move, the target route's
+   * entries under the prefix mirror the source route's — target entries with
+   * no source counterpart are deleted. Used by the canonical UUID→identifier
+   * rewrite (the adapter's `replaceCanonical`): a landing record written under
+   * the UUID spelling must follow the route, and one the fresh push already
+   * cleared must not resurrect from the target's older visits.
+   */
+  migrateViewStateRoute: (
+    tabId: string,
+    fromRouteKey: string,
+    toRouteKey: string,
+    entryKeyPrefix: string,
+  ) => void;
+  /**
    * Force-remount the active tab at the same URL: bump mountGeneration.
    * Query invalidation for the current page's scope is handled by the
    * Coordinator (it watches this counter) so this action stays pure state.
@@ -1128,6 +1155,78 @@ export const useTabStore = create<TabStore>()(
             delete nextView[keys[i]];
           }
         }
+
+        const nextTabs = [...group.tabs];
+        nextTabs[index] = {
+          ...current,
+          memento: { ...current.memento, view: nextView },
+        };
+        set({
+          byWorkspace: {
+            ...byWorkspace,
+            [slug]: { ...group, tabs: nextTabs },
+          },
+        });
+      },
+
+      clearViewStateEntries(tabId, routeKey, entryKeyPrefix) {
+        const { byWorkspace } = get();
+        const hit = findTabLocation(byWorkspace, tabId);
+        if (!hit) return;
+        const { slug, group, index } = hit;
+        const current = group.tabs[index];
+
+        const prefix = scrollMementoKey(routeKey, entryKeyPrefix);
+        const keys = Object.keys(current.memento.view);
+        if (!keys.some((key) => key.startsWith(prefix))) return;
+
+        const nextView = { ...current.memento.view };
+        for (const key of keys) {
+          if (key.startsWith(prefix)) delete nextView[key];
+        }
+        const nextTabs = [...group.tabs];
+        nextTabs[index] = {
+          ...current,
+          memento: { ...current.memento, view: nextView },
+        };
+        set({
+          byWorkspace: {
+            ...byWorkspace,
+            [slug]: { ...group, tabs: nextTabs },
+          },
+        });
+      },
+
+      migrateViewStateRoute(tabId, fromRouteKey, toRouteKey, entryKeyPrefix) {
+        if (fromRouteKey === toRouteKey) return;
+        const { byWorkspace } = get();
+        const hit = findTabLocation(byWorkspace, tabId);
+        if (!hit) return;
+        const { slug, group, index } = hit;
+        const current = group.tabs[index];
+
+        const fromPrefix = scrollMementoKey(fromRouteKey, entryKeyPrefix);
+        const toPrefix = scrollMementoKey(toRouteKey, entryKeyPrefix);
+        const keys = Object.keys(current.memento.view);
+        const moving = new Map<string, string>();
+        for (const key of keys) {
+          if (key.startsWith(fromPrefix)) {
+            moving.set(`${toPrefix}${key.slice(fromPrefix.length)}`, current.memento.view[key]!);
+          }
+        }
+        const hasTargetEntries = keys.some(
+          (key) => key.startsWith(toPrefix) && !moving.has(key),
+        );
+        // Nothing to carry and nothing stale to drop — skip the write.
+        if (moving.size === 0 && !hasTargetEntries) return;
+
+        const nextView: Record<string, string> = {};
+        for (const key of keys) {
+          if (key.startsWith(fromPrefix)) continue; // moved below (or dropped)
+          if (key.startsWith(toPrefix)) continue; // overwritten by the source's
+          nextView[key] = current.memento.view[key]!;
+        }
+        for (const [key, value] of moving) nextView[key] = value;
 
         const nextTabs = [...group.tabs];
         nextTabs[index] = {

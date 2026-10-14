@@ -16,6 +16,7 @@ import (
 )
 
 func (h *Handler) RegisterLabrastroYSKRoutes(r chi.Router) {
+	r.With(RequireHumanActor).Post("/api/tips/{tipId}/chat", h.LabrastroOpenTipChat)
 	r.With(RequireHumanActor).Get("/api/issues/{id}/tips", h.LabrastroListIssueTips)
 	r.With(RequireHumanActor).Get("/api/tips/active", h.LabrastroListActiveTips)
 	r.With(RequireHumanActor).Post("/api/tips/{tipId}/state", h.LabrastroSetTipState)

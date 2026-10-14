@@ -162,6 +162,104 @@ describe("push", () => {
   });
 });
 
+// OL-270: a push carrying a `#comment-…` deep link is fresh landing intent —
+// the destination route's "highlight already landed" memento must not
+// suppress it, or clicking the same comment link twice never lands twice.
+// Restores (tab switch back) never pass through push, so they keep the
+// record and its re-jump suppression.
+describe("comment deep-link memento handling", () => {
+  const UUID_B = "cb240efb-154c-42a8-ae92-42b02676feca";
+
+  it("clears the destination route's landed record on push with a #comment-… hash", () => {
+    const getAdapter = renderProvider();
+    const tabId = acmeGroup().activeTabId;
+    useTabStore.getState().commitViewState(tabId, "/acme/issues/TES-2", "highlight:i2", "c1");
+
+    getAdapter().push("/acme/issues/TES-2#comment-c1");
+
+    expect(acmeGroup().tabs[0].memento.view).toEqual({});
+    expect(getActiveTab(useTabStore.getState())?.url).toBe("/acme/issues/TES-2#comment-c1");
+  });
+
+  it("keeps the record for pushes without a comment anchor", () => {
+    const getAdapter = renderProvider();
+    const tabId = acmeGroup().activeTabId;
+    useTabStore.getState().commitViewState(tabId, "/acme/issues/TES-2", "highlight:i2", "c1");
+
+    getAdapter().push("/acme/issues/TES-2#activity");
+    getAdapter().push("/acme/issues/TES-2");
+
+    expect(acmeGroup().tabs[0].memento.view).toEqual({
+      "/acme/issues/TES-2::highlight:i2": "c1",
+    });
+  });
+
+  it("clears the record for a content link (multica:navigate path) too", () => {
+    const tabId = acmeGroup().activeTabId;
+    useTabStore.getState().commitViewState(tabId, "/acme/issues/TES-2", "highlight:i2", "c1");
+
+    routeContentLinkPath("/acme/issues/TES-2#comment-c1");
+
+    expect(acmeGroup().tabs[0].memento.view).toEqual({});
+  });
+
+  it("carries view-state records over only on replaceCanonical (the canonical rewrite)", () => {
+    const getAdapter = renderProvider();
+    const tabId = acmeGroup().activeTabId;
+    // The tab is sitting on the UUID spelling, as after a source-context jump…
+    getAdapter().push(`/acme/issues/${UUID_B}#comment-c1`);
+    // …and the landing wrote its record under that spelling.
+    useTabStore.getState().commitViewState(tabId, `/acme/issues/${UUID_B}`, "highlight:i2", "c1");
+
+    getAdapter().replaceCanonical!("/acme/issues/TES-2#comment-c1");
+
+    expect(acmeGroup().tabs[0].memento.view).toEqual({
+      "/acme/issues/TES-2::highlight:i2": "c1",
+    });
+  });
+
+  it("migrating is overwrite-style: a record the fresh push cleared does not resurrect", () => {
+    const getAdapter = renderProvider();
+    const tabId = acmeGroup().activeTabId;
+    // Visit 1 landed and the record was migrated onto the identifier route…
+    useTabStore.getState().commitViewState(tabId, "/acme/issues/TES-2", "highlight:i2", "c1");
+    // …visit 2 is a fresh UUID push (clears the UUID route's records — none —
+    // and must NOT see the identifier one back).
+
+    getAdapter().push(`/acme/issues/${UUID_B}#comment-c1`);
+    getAdapter().replaceCanonical!("/acme/issues/TES-2#comment-c1");
+
+    expect(acmeGroup().tabs[0].memento.view).toEqual({});
+  });
+
+  it("does not migrate or clear the record on a plain replace", () => {
+    const getAdapter = renderProvider();
+    const tabId = acmeGroup().activeTabId;
+    getAdapter().push(`/acme/issues/${UUID_B}`);
+    useTabStore.getState().commitViewState(tabId, `/acme/issues/${UUID_B}`, "highlight:i2", "c1");
+
+    getAdapter().replace("/acme/issues/TES-2#comment-c1");
+
+    // Untouched: only `replaceCanonical` carries records across a respelling.
+    expect(acmeGroup().tabs[0].memento.view).toEqual({
+      "/acme/issues/cb240efb-154c-42a8-ae92-42b02676feca::highlight:i2": "c1",
+    });
+  });
+
+  it("does not clear the record when replaceCanonical carries no comment anchor", () => {
+    const getAdapter = renderProvider();
+    const tabId = acmeGroup().activeTabId;
+    getAdapter().push("/acme/issues/TES-2");
+    useTabStore.getState().commitViewState(tabId, "/acme/issues/TES-2", "highlight:i2", "c1");
+
+    getAdapter().replace("/acme/issues/TES-2#comment-c1");
+
+    expect(acmeGroup().tabs[0].memento.view).toEqual({
+      "/acme/issues/TES-2::highlight:i2": "c1",
+    });
+  });
+});
+
 describe("push with pinned active tab", () => {
   function pinActive() {
     const store = useTabStore.getState();

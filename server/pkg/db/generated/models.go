@@ -1266,6 +1266,18 @@ type LabrastroSkillPlacement struct {
 	SourcePath  pgtype.Text `json:"source_path"`
 }
 
+type LabrastroTipChat struct {
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	UserID          pgtype.UUID        `json:"user_id"`
+	TipID           pgtype.UUID        `json:"tip_id"`
+	ChatSessionID   pgtype.UUID        `json:"chat_session_id"`
+	IssueID         pgtype.UUID        `json:"issue_id"`
+	SourceTaskID    pgtype.UUID        `json:"source_task_id"`
+	IssueIdentifier string             `json:"issue_identifier"`
+	TipSnapshot     []byte             `json:"tip_snapshot"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
 type LarkBindingToken struct {
 	TokenHash      string             `json:"token_hash"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`

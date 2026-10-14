@@ -8,12 +8,13 @@
     "already_know": "I already know",
     "dismiss": "Dismiss",
     "got_it": "Got it",
-    "discuss": "Discuss in comments"
+    "ask": "Ask about this"
   },
   "feedback": {
     "helpful": "Helpful",
     "not_relevant": "Not relevant",
-    "not_understood": "Didn't understand"
+    "not_understood": "Didn't understand",
+    "label": "Feedback on this tip"
   },
   "bubble": {
     "marker_tooltip": "A bystander assistant keeps watch while agents work",
@@ -31,12 +32,32 @@
     "source_changed": "Source changed",
     "no_results": "No matching tips"
   },
+  "side_chat": {
+    "banner_label": "Tip this chat is about",
+    "open_issue": "Open {{identifier}}",
+    "independent_note": "This is a side chat. It won't interrupt {{agent}}'s current work.",
+    "starters_label": "Common questions",
+    "starters": {
+      "more": "Tell me more",
+      "why": "Why does this matter?",
+      "impact": "What will this affect?"
+    },
+    "blocked": {
+      "invocation_not_allowed": "You don't have access to chat with {{agent}}",
+      "agent_archived": "{{agent}} is archived",
+      "agent_no_runtime": "{{agent}} isn't connected to a runtime"
+    },
+    "unknown_agent": "this agent"
+  },
   "settings": {
     "title": "You should know",
-    "workspace_label": "Show bystander tips while agents work",
-    "personal_label": "You should know"
+    "workspace_label": "Generate bystander tips while agents work",
+    "workspace_description": "When off, no tips are generated and no tokens are spent on them.",
+    "personal_label": "Show bystander tips to me",
+    "personal_description": "Only affects what you see. To stop generating tips, a workspace admin can turn off the workspace setting."
   },
   "errors": {
-    "state_failed": "Couldn't save. Try again."
+    "state_failed": "Couldn't save. Try again.",
+    "open_chat_failed": "Couldn't open the side chat. Try again."
   }
 }

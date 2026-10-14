@@ -4,3 +4,4 @@ export {
   YOU_SHOULD_KNOW_SETTINGS_ANCHOR,
   youShouldKnowSettingsHref,
 } from "./settings-anchor";
+export { useOpenChatSession, type OpenChatSession } from "./side-chat/open-chat-session";

@@ -43,6 +43,7 @@ import {
 import { useChatDraftRestore } from "./use-chat-draft-restore";
 import { useChatTaskActions } from "./use-chat-task-actions";
 import { useChatProjectContextSupport } from "./use-chat-project-context-support";
+import { useTipSideChatLookup } from "@multica/core/you-should-know";
 import { createLogger } from "@multica/core/logger";
 import type {
   Agent,
@@ -299,9 +300,10 @@ export function useChatController(opts?: { isActive?: boolean }) {
     [],
   );
 
-  const currentSession = activeSessionId
-    ? sessions.find((s) => s.id === activeSessionId)
-    : null;
+  // Labrastro (OL-362): a YSK side chat is left out of the list until its
+  // first message; the lookup resolves it from its own record.
+  const sideChat = useTipSideChatLookup(wsId, activeSessionId, sessions, sessionsLoaded);
+  const currentSession = sideChat.currentSession;
   const isSessionArchived = currentSession?.status === "archived";
   const candidateProjectId = currentSession
     ? currentSession.project_id ?? null
@@ -357,11 +359,14 @@ export function useChatController(opts?: { isActive?: boolean }) {
 
   // Resolve selected agent: open session's agent → stored preference → first
   // available. New chats have no session, so they fall through to the picker.
+  // A side chat is only ever with the tip's agent: no fallback (OL-288 §5).
   const activeAgent =
     sessionAgent ??
-    availableAgents.find((a) => a.id === selectedAgentId) ??
-    availableAgents[0] ??
-    null;
+    (sideChat.pinsAgent
+      ? null
+      : availableAgents.find((a) => a.id === selectedAgentId) ??
+        availableAgents[0] ??
+        null);
   const isAgentRuntimeBound = !!activeAgent && hasAgentRuntime(activeAgent);
 
   // A session outlives the permission that created it. The agent can be flipped
@@ -436,7 +441,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       if (
         activeSessionId &&
         (!sessionsLoaded ||
-          sessions.some((s) => s.id === activeSessionId) ||
+          currentSession?.id === activeSessionId ||
           hasInFlightPendingTask(qc, activeSessionId))
       ) {
         return activeSessionId;
@@ -464,7 +469,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       activeAgent,
       activeProjectId,
       createSession,
-      sessions,
+      currentSession,
       sessionsLoaded,
       qc,
     ],
@@ -481,10 +486,20 @@ export function useChatController(opts?: { isActive?: boolean }) {
     if (getCurrentWsId() !== wsId) return;
     if (!activeSessionId || !sessionsLoaded) return;
     if (sessions.some((s) => s.id === activeSessionId)) return;
+    if (sideChat.currentSession || sideChat.pending) return;
     if (hasInFlightPendingTask(qc, activeSessionId)) return;
     uiLogger.info("clearing dangling activeSessionId", { sessionId: activeSessionId });
     setActiveSession(null);
-  }, [wsId, activeSessionId, sessionsLoaded, sessions, qc, setActiveSession]);
+  }, [
+    wsId,
+    activeSessionId,
+    sessionsLoaded,
+    sessions,
+    sideChat.currentSession,
+    sideChat.pending,
+    qc,
+    setActiveSession,
+  ]);
 
   // Upload transport moved into the coordinated-upload engine inside ChatInput
   // (MUL-5181 L2); surfaces only forward whether the affordance exists.

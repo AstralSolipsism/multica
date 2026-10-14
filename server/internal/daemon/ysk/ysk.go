@@ -30,18 +30,18 @@ const (
 	modRoot = "mod"
 )
 
-// Paths are where Install puts the mod and its context under a task's
-// config directory.
+// Paths holds the mod, context and stop marker under a task's config directory.
 type Paths struct {
 	Plugin  string
 	Context string
+	Stop    string
 }
 
-// PathsFor returns the mod's folder and context file for a task config
+// PathsFor returns the mod's folder, context and stop marker for a task config
 // directory (the task's MULTICA_TASK_CONFIG_ROOT).
 func PathsFor(configRoot string) Paths {
 	root := filepath.Join(configRoot, "ysk")
-	return Paths{Plugin: filepath.Join(root, "plugin"), Context: filepath.Join(root, "context.json")}
+	return Paths{Plugin: filepath.Join(root, "plugin"), Context: filepath.Join(root, "context.json"), Stop: filepath.Join(root, "stop")}
 }
 
 // Install writes the mod and the claim's `you_should_know` context, as
@@ -61,6 +61,13 @@ func Install(configRoot string, context json.RawMessage, existingPluginDirs stri
 	}
 	if err := os.WriteFile(paths.Context, context, 0o600); err != nil {
 		return nil, fmt.Errorf("write you_should_know context: %w", err)
+	}
+	// Later runs can reuse the same environment. Only installation starts a
+	// new lifetime; toggling the workspace back on during a run never clears
+	// its marker. The poller registers its path after this reset, so an off
+	// signal already received for the new run will be written again.
+	if err := os.Remove(paths.Stop); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("clear you_should_know stop marker: %w", err)
 	}
 	return map[string]string{
 		PluginDirsEnv:  appendPathList(existingPluginDirs, paths.Plugin),

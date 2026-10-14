@@ -8,12 +8,13 @@
     "already_know": "すでに知っている",
     "dismiss": "閉じる",
     "got_it": "理解しました",
-    "discuss": "コメントで話す"
+    "ask": "質問する"
   },
   "feedback": {
     "helpful": "役に立った",
     "not_relevant": "関係ない",
-    "not_understood": "わかりにくい"
+    "not_understood": "わかりにくい",
+    "label": "このヒントへのフィードバック"
   },
   "bubble": {
     "marker_tooltip": "エージェントの作業中に補助アシスタントが見守っています",
@@ -31,12 +32,32 @@
     "source_changed": "原文が変更されました",
     "no_results": "一致するヒントはありません"
   },
+  "side_chat": {
+    "banner_label": "このチャットの元になったヒント",
+    "open_issue": "{{identifier}} を開く",
+    "independent_note": "これは独立したサイドチャットです。{{agent}} が進めている作業は中断されません。",
+    "starters_label": "よくある質問",
+    "starters": {
+      "more": "もっと詳しく教えてください",
+      "why": "なぜこれに注意が必要なのですか？",
+      "impact": "どんな影響がありますか？"
+    },
+    "blocked": {
+      "invocation_not_allowed": "{{agent}} とチャットする権限がありません",
+      "agent_archived": "{{agent}} はアーカイブされています",
+      "agent_no_runtime": "{{agent}} にはランタイムが設定されていません"
+    },
+    "unknown_agent": "このエージェント"
+  },
   "settings": {
     "title": "You should know",
-    "workspace_label": "エージェントの作業中に補助ヒントを表示",
-    "personal_label": "You should know"
+    "workspace_label": "エージェントの作業中に補助ヒントを生成",
+    "workspace_description": "オフにするとヒントは生成されず、そのためのトークンも消費されません。",
+    "personal_label": "自分に補助ヒントを表示",
+    "personal_description": "自分に表示されるかどうかだけが変わります。生成を停止するには、ワークスペースの管理者にワークスペース設定のスイッチをオフにしてもらってください。"
   },
   "errors": {
-    "state_failed": "保存できませんでした。もう一度お試しください"
+    "state_failed": "保存できませんでした。もう一度お試しください",
+    "open_chat_failed": "サイドチャットを開けませんでした。もう一度お試しください。"
   }
 }

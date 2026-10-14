@@ -16,6 +16,7 @@ func TestLabrastroYSKMigrationsRoundTrip(t *testing.T) {
 		"9016_labrastro_ysk", "9017_labrastro_ysk_tip_id_index", "9018_labrastro_ysk_tip_issue_index",
 		"9019_labrastro_ysk_tip_anchor_index", "9020_labrastro_ysk_tip_report_index",
 		"9021_labrastro_ysk_state_identity_index", "9022_labrastro_ysk_state_user_index", "9023_labrastro_ysk_topic_identity_index",
+		"9024_labrastro_ysk_tip_created_at",
 	}
 	options := runOptions{SchemaMigrationsTable: schema + ".schema_migrations", AdvisoryLockKey: int64(rand.Uint64()&0x7fffffffffffffff) | 1}
 	for _, direction := range []string{"up", "down", "up"} {
@@ -35,6 +36,17 @@ func TestLabrastroYSKMigrationsRoundTrip(t *testing.T) {
 		if direction == "up" {
 			for _, name := range []string{"tip_id", "tip_issue", "tip_anchor", "tip_report", "state_identity", "state_user", "topic_identity"} {
 				assertIndexValidity(t, pool, schema, "idx_labrastro_ysk_"+name, true)
+			}
+			for _, column := range []string{"created_at", "updated_at"} {
+				var def string
+				if err := pool.QueryRow(ctx,
+					`SELECT column_default FROM information_schema.columns WHERE table_schema=$1 AND table_name='labrastro_issue_tip' AND column_name=$2`,
+					schema, column).Scan(&def); err != nil {
+					t.Fatalf("default of %s: %v", column, err)
+				}
+				if def != "clock_timestamp()" {
+					t.Fatalf("%s default = %s, want clock_timestamp()", column, def)
+				}
 			}
 		}
 	}

@@ -20,7 +20,19 @@ vi.mock("@multica/core/paths", () => ({
     name: "Acme",
     settings: { you_should_know_enabled: state.workspaceEnabled },
   }),
-  useWorkspacePaths: () => ({ issueDetail: (id: string) => `/issues/${id}` }),
+  useWorkspacePaths: () => ({
+    issueDetail: (id: string) => `/issues/${id}`,
+    chat: () => "/chat",
+  }),
+}));
+// "Ask about this" reads who the viewer may chat with. Opening the side chat
+// is covered with the real providers in side-chat/ask-about-tip.test.tsx.
+vi.mock("@multica/core/auth", () => ({
+  useAuthStore: (selector: (state: { user: { id: string } }) => unknown) =>
+    selector({ user: { id: "user-1" } }),
+}));
+vi.mock("@multica/core/api", () => ({
+  api: { listAgents: async () => [], listMembers: async () => [] },
 }));
 vi.mock("@multica/core/you-should-know", async () => {
   const actual = await vi.importActual<typeof import("@multica/core/you-should-know")>(
@@ -36,7 +48,10 @@ vi.mock("@multica/core/you-should-know", async () => {
   };
 });
 vi.mock("../../navigation", () => ({
-  useNavigation: () => ({ push: (href: string) => state.pushed.push(href) }),
+  useNavigation: () => ({
+    pathname: "/issues/OL-1",
+    push: (href: string) => state.pushed.push(href),
+  }),
 }));
 
 import { YouShouldKnowArchiveSection, groupTips } from "./archive-section";
@@ -65,7 +80,11 @@ function tip(overrides: Partial<IssueTip> = {}): IssueTip {
   };
 }
 
-function renderSection(tips: IssueTip[], onJumpToComment?: (id: string) => void) {
+function renderSection(
+  tips: IssueTip[],
+  onJumpToComment?: (id: string) => void,
+  commentTime?: (id: string) => string | undefined,
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -78,6 +97,7 @@ function renderSection(tips: IssueTip[], onJumpToComment?: (id: string) => void)
         issueId="issue-1"
         identifier="OL-1"
         onJumpToComment={onJumpToComment}
+        commentTime={commentTime}
       />
     </QueryClientProvider>,
   );
@@ -90,9 +110,15 @@ beforeEach(() => {
   state.personalEnabled = true;
   state.pushed = [];
   state.jumped = [];
+  // Group labels carry an hour:minute, so pin the timezone to keep the
+  // expected strings stable (the viewer's-TZ test re-stubs per case).
+  vi.stubEnv("TZ", "UTC");
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllEnvs();
+});
 
 describe("YouShouldKnowArchiveSection — grouping and order", () => {
   it("groups by anchor comment, newest group first, description group included", () => {
@@ -105,7 +131,7 @@ describe("YouShouldKnowArchiveSection — grouping and order", () => {
 
     // Groups sort by their EARLIEST tip: description (10-03) > c-new (10-02) > c-old (10-01).
     const labels = screen.getAllByText(/^Issue description$|^Comment ·/).map((el) => el.textContent);
-    expect(labels).toEqual(["Issue description", "Comment · Oct 2", "Comment · Oct 1"]);
+    expect(labels).toEqual(["Issue description", "Comment · Oct 2, 10:00 AM", "Comment · Oct 1, 10:00 AM"]);
     // Both c-old tips render inside their group.
     expect(screen.getByText("First tip")).toBeInTheDocument();
     expect(screen.getByText("Second tip")).toBeInTheDocument();
@@ -155,7 +181,7 @@ describe("YouShouldKnowArchiveSection — grouping and order", () => {
 
     // X sorts by its EARLIEST tip (10-01), so Y (10-03) comes first.
     const labels = screen.getAllByText(/^Comment ·/).map((el) => el.textContent);
-    expect(labels).toEqual(["Comment · Oct 3", "Comment · Oct 1"]);
+    expect(labels).toEqual(["Comment · Oct 3, 10:00 AM", "Comment · Oct 1, 10:00 AM"]);
   });
 
   it("groups by earliest tip via groupTips regardless of input order", () => {
@@ -170,6 +196,30 @@ describe("YouShouldKnowArchiveSection — grouping and order", () => {
     ]);
   });
 
+  it("sorts groups by labelTime via groupTips, falling back to the earliest tip", () => {
+    // c-early's tip is newer than c-late's, but the comment times decide the
+    // order; c-unknown has no lookup entry and sorts by its earliest tip.
+    const commentTime = (id: string) =>
+      id === "c-early"
+        ? "2026-10-13T08:00:00Z"
+        : id === "c-late"
+          ? "2026-10-13T08:30:00Z"
+          : undefined;
+    const groups = groupTips(
+      [
+        tip({ id: "a", anchor_comment_id: "c-early", created_at: "2026-10-13T09:00:00Z" }),
+        tip({ id: "b", anchor_comment_id: "c-late", created_at: "2026-10-13T08:35:00Z" }),
+        tip({ id: "c", anchor_comment_id: "c-unknown", created_at: "2026-10-13T08:10:00Z" }),
+      ],
+      commentTime,
+    );
+    expect(groups.map((g) => [g.key, g.labelTime])).toEqual([
+      ["c-late", "2026-10-13T08:30:00Z"],
+      ["c-unknown", "2026-10-13T08:10:00Z"],
+      ["c-early", "2026-10-13T08:00:00Z"],
+    ]);
+  });
+
   it("labels groups with the viewer's local day, not the UTC day slice", () => {
     // 22:30 UTC on Oct 11 is already Oct 12 east of UTC+1:30. The label
     // must agree with the comment card's local timestamp.
@@ -178,11 +228,126 @@ describe("YouShouldKnowArchiveSection — grouping and order", () => {
     try {
       vi.stubEnv("TZ", "Asia/Shanghai");
       renderSection([tip({ anchor_comment_id: "c-1", created_at: "2026-10-11T22:30:00Z" })]);
-      expect(screen.getByText(/^Comment ·/).textContent).toBe("Comment · Oct 12");
+      expect(screen.getByText(/^Comment ·/).textContent).toBe("Comment · Oct 12, 6:30 AM");
     } finally {
       vi.unstubAllEnvs();
       vi.useRealTimers();
     }
+  });
+
+  it("labels same-day comment groups by the comment's own time so they read apart", () => {
+    // OL-346 (YSK-36): two same-day comments each triggered a run and the
+    // archive showed two identical "Comment · <day>" rows. The mount's
+    // comment-time lookup supplies each comment's own created_at, which
+    // differs from its earliest tip time — the label must follow the
+    // comment, not the tip.
+    const commentTime = (id: string) =>
+      ({
+        "c-morning": "2026-10-13T01:00:00Z",
+        "c-afternoon": "2026-10-13T08:20:00Z",
+      })[id];
+    renderSection(
+      [
+        tip({ id: "a", anchor_comment_id: "c-morning", created_at: "2026-10-13T01:05:00Z" }),
+        tip({ id: "b", anchor_comment_id: "c-afternoon", created_at: "2026-10-13T08:25:00Z" }),
+      ],
+      undefined,
+      commentTime,
+    );
+
+    // Group order follows the same comment time the labels show (OL-387):
+    // c-afternoon (8:20) sorts above c-morning (1:00).
+    const labels = screen.getAllByText(/^Comment ·/).map((el) => el.textContent);
+    expect(labels).toEqual(["Comment · Oct 13, 8:20 AM", "Comment · Oct 13, 1:00 AM"]);
+  });
+
+  it("orders groups by the label time so out-of-order runs never invert the labels (OL-387)", () => {
+    // Two comments trigger runs that finish out of order: c-late's tip lands
+    // before c-early's. Sorting by the earliest tip (pre-OL-387) put the
+    // "8:00" label above the "8:30" one; sorting by the label time keeps the
+    // visible times descending.
+    const commentTime = (id: string) =>
+      ({
+        "c-early": "2026-10-13T08:00:00Z",
+        "c-late": "2026-10-13T08:30:00Z",
+      })[id];
+    renderSection(
+      [
+        tip({ id: "a", anchor_comment_id: "c-early", created_at: "2026-10-13T09:00:00Z" }),
+        tip({ id: "b", anchor_comment_id: "c-late", created_at: "2026-10-13T08:35:00Z" }),
+      ],
+      undefined,
+      commentTime,
+    );
+
+    const labels = screen.getAllByText(/^Comment ·/).map((el) => el.textContent);
+    expect(labels).toEqual(["Comment · Oct 13, 8:30 AM", "Comment · Oct 13, 8:00 AM"]);
+  });
+
+  it("re-sorts and relabels when the comment-time lookup updates after first render", () => {
+    // Cold load: the sidebar mounts while the timeline is still fetching, so
+    // the lookup is empty and groups order by their earliest tip. When the
+    // timeline arrives the mount passes a NEW lookup — grouping must
+    // recompute, or the OL-346 labels and the OL-387 order stay stale until
+    // the tips refetch.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(youShouldKnowKeys.issue("ws-1", "issue-1", "all"), {
+      tips: [
+        tip({ id: "a", anchor_comment_id: "c-early", created_at: "2026-10-13T09:00:00Z" }),
+        tip({ id: "b", anchor_comment_id: "c-late", created_at: "2026-10-13T08:35:00Z" }),
+      ],
+    });
+    const ui = (commentTime: (id: string) => string | undefined) => (
+      <QueryClientProvider client={queryClient}>
+        <YouShouldKnowArchiveSection
+          issueId="issue-1"
+          identifier="OL-1"
+          commentTime={commentTime}
+        />
+      </QueryClientProvider>
+    );
+    const labels = () => screen.getAllByText(/^Comment ·/).map((el) => el.textContent);
+
+    // Timeline still loading: fall back to the earliest tip times.
+    const { rerender } = renderWithI18n(ui(() => undefined));
+    expect(labels()).toEqual(["Comment · Oct 13, 9:00 AM", "Comment · Oct 13, 8:35 AM"]);
+
+    // Timeline loaded: re-sort and relabel by the comments' own times.
+    rerender(
+      ui((id) =>
+        ({
+          "c-early": "2026-10-13T08:00:00Z",
+          "c-late": "2026-10-13T08:30:00Z",
+        })[id],
+      ),
+    );
+    expect(labels()).toEqual(["Comment · Oct 13, 8:30 AM", "Comment · Oct 13, 8:00 AM"]);
+  });
+
+  it("falls back to the group's earliest tip time when the comment is not loaded", () => {
+    renderSection(
+      [
+        tip({ id: "a", anchor_comment_id: "c-gone", created_at: "2026-10-13T09:05:00Z" }),
+        tip({ id: "b", anchor_comment_id: "c-gone", created_at: "2026-10-13T09:01:00Z" }),
+      ],
+      undefined,
+      () => undefined,
+    );
+    expect(screen.getByText(/^Comment ·/).textContent).toBe("Comment · Oct 13, 9:01 AM");
+  });
+
+  it("falls back to the group's earliest tip time when the comment time is unparseable", () => {
+    renderSection(
+      [
+        tip({ id: "a", anchor_comment_id: "c-bad", created_at: "2026-10-13T09:05:00Z" }),
+        tip({ id: "b", anchor_comment_id: "c-bad", created_at: "2026-10-13T09:01:00Z" }),
+      ],
+      undefined,
+      () => "not-a-date",
+    );
+    expect(screen.getByText(/^Comment ·/).textContent).toBe("Comment · Oct 13, 9:01 AM");
   });
 
   it("does not link the description group", () => {
@@ -312,5 +477,21 @@ describe("YouShouldKnowArchiveSection — visibility", () => {
       expect(screen.getByText("Blue-green")).toBeInTheDocument();
       expect(screen.getByText("Two environments, one live.")).toBeInTheDocument();
     });
+  });
+
+  it("offers Ask about this on an expanded tip, a no-longer-valid one included", async () => {
+    renderSection([
+      tip({ id: "v", line: "Still true" }),
+      tip({ id: "o", line: "Was true", status: "overturned", overturned_reason: "Reverted" }),
+    ]);
+    expect(screen.queryByRole("button", { name: "Ask about this" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /Still true/ }));
+    expect(screen.getAllByRole("button", { name: "Ask about this" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "No longer valid" }));
+    fireEvent.click(screen.getByRole("button", { name: /Was true/ }));
+    const ask = screen.getByRole("button", { name: "Ask about this" });
+    // Outside the greyed-out block, so it does not read as disabled.
+    expect(ask.closest("[data-invalid]")).toBeNull();
   });
 });

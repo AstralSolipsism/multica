@@ -10,7 +10,6 @@
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { tipDisplayLedger, youShouldKnowKeys } from "@multica/core/you-should-know";
-import type { TipAnchorDescriptor } from "@multica/core/you-should-know/anchors";
 import { TIP_SYNC_SETTLE_MS } from "./bubble/tip-bubble-host";
 import {
   createYskQueryClient,
@@ -22,6 +21,13 @@ import {
   settle,
   WS_ID,
 } from "../test/you-should-know";
+import {
+  Anchor,
+  bubbleText,
+  controllableIntersectionObserver,
+  dotIn,
+  RowAnchor,
+} from "../test/you-should-know-layers";
 
 const apiMock = vi.hoisted(() => ({
   listActiveTips: vi.fn(),
@@ -44,94 +50,12 @@ vi.mock("@multica/core/workspace/hooks", () => ({
   }),
 }));
 
-import { AgentAvatarStack } from "../agents/components/agent-avatar-stack";
 import { useHoldTipRotation } from ".";
 
 const SCOPE = { "issue-1": "OL-1", "issue-2": "OL-2", "issue-3": "OL-3" };
 
-function Anchor({
-  testId,
-  rect,
-  descriptor,
-}: {
-  testId: string;
-  rect: string;
-  descriptor: TipAnchorDescriptor;
-}) {
-  return (
-    <div data-testid={testId} data-test-rect={rect}>
-      <AgentAvatarStack agentIds={["agent-1"]} tipAnchor={descriptor} />
-    </div>
-  );
-}
-
-function RowAnchor({ issueId, top = 300 }: { issueId: string; top?: number }) {
-  return (
-    <Anchor
-      testId={`row-${issueId}`}
-      rect={`100,${top},40,16`}
-      descriptor={{ level: "row", issueId }}
-    />
-  );
-}
-
-function bubbleText(): string {
-  return getBubble()?.textContent ?? "";
-}
-
-function dotIn(testId: string): HTMLElement | null {
-  return within(screen.getByTestId(testId)).queryByTestId("tip-anchor-dot");
-}
-
 function serveTips(...tips: ReturnType<typeof makeTip>[]) {
   apiMock.listActiveTips.mockResolvedValue({ tips });
-}
-
-/**
- * IntersectionObserver stand-in whose entries the test emits: anchors stay
- * invisible until `showAll()` reports every observed element as on screen.
- */
-function controllableIntersectionObserver() {
-  const live = new Set<{ callback: IntersectionObserverCallback; targets: Set<Element> }>();
-  vi.stubGlobal(
-    "IntersectionObserver",
-    class {
-      private readonly entry: { callback: IntersectionObserverCallback; targets: Set<Element> };
-      constructor(callback: IntersectionObserverCallback) {
-        this.entry = { callback, targets: new Set() };
-        live.add(this.entry);
-      }
-      observe(target: Element) {
-        this.entry.targets.add(target);
-      }
-      unobserve(target: Element) {
-        this.entry.targets.delete(target);
-      }
-      disconnect() {
-        live.delete(this.entry);
-      }
-    },
-  );
-  const emit = (visible: boolean, matches: (target: Element) => boolean) => {
-    act(() => {
-      for (const { callback, targets } of live) {
-        const hits = [...targets].filter(matches);
-        if (hits.length === 0) continue;
-        callback(
-          hits.map(
-            (target) => ({ isIntersecting: visible, target }) as IntersectionObserverEntry,
-          ),
-          {} as IntersectionObserver,
-        );
-      }
-    });
-  };
-  return {
-    showAll: () => emit(true, () => true),
-    /** Report the anchor inside `[data-testid=testId]` as on or off screen. */
-    set: (testId: string, visible: boolean) =>
-      emit(visible, (target) => target.closest(`[data-testid="${testId}"]`) !== null),
-  };
 }
 
 /** Counts IntersectionObservers — one per registered anchor. Never reports. */

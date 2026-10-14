@@ -13,6 +13,7 @@ import {
 import { Input } from "@multica/ui/components/ui/input";
 import { useLocale, useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
+import { AskAboutTipButton } from "../side-chat/ask-about-tip-button";
 
 type TipFilter = "valid" | "invalid";
 
@@ -25,17 +26,28 @@ interface TipGroup {
   /** `anchor_comment_id`, or "" for the issue-description group. */
   key: string;
   commentId: string | null;
-  /** Earliest tip creation time in the group (ISO); groups sort by it. */
+  /** Earliest tip creation time in the group (ISO); the label's fallback. */
   time: string;
+  /**
+   * Time the group sorts and labels by (ISO): the anchor comment's own
+   * creation time when `commentTime` resolves it, else `time`. Computed once
+   * here so the order can never disagree with the rendered label (OL-387).
+   */
+  labelTime: string;
   tips: IssueTip[];
 }
 
 /**
  * Group tips by their anchor comment. The issue-description group is keyed by
  * "" and keeps `commentId: null`. Tips inside a group stay in server order
- * (newest first); groups themselves sort newest-first by their earliest tip.
+ * (newest first); groups themselves sort newest-first by their label time —
+ * the anchor comment's creation time when known, else the group's earliest
+ * tip (OL-387, superseding OL-195's earliest-tip order).
  */
-export function groupTips(tips: readonly IssueTip[]): TipGroup[] {
+export function groupTips(
+  tips: readonly IssueTip[],
+  commentTime?: (commentId: string) => string | undefined,
+): TipGroup[] {
   const groups = new Map<string, TipGroup>();
   for (const tip of tips) {
     const key = tip.anchor_comment_id ?? "";
@@ -45,6 +57,9 @@ export function groupTips(tips: readonly IssueTip[]): TipGroup[] {
         key,
         commentId: tip.anchor_comment_id,
         time: tip.created_at,
+        // Placeholder to satisfy the type; recomputed for every group below
+        // once `time` is final.
+        labelTime: tip.created_at,
         tips: [],
       };
       groups.set(key, group);
@@ -58,9 +73,24 @@ export function groupTips(tips: readonly IssueTip[]): TipGroup[] {
       group.time = tip.created_at;
     }
   }
+  for (const group of groups.values()) {
+    group.labelTime = labelTimeOf(group, commentTime);
+  }
   return [...groups.values()].sort(
-    (a, b) => Date.parse(b.time) - Date.parse(a.time),
+    (a, b) => Date.parse(b.labelTime) - Date.parse(a.labelTime),
   );
+}
+
+/**
+ * The group's label time: the anchor comment's own creation time when the
+ * lookup resolves to a parseable instant, else the group's earliest tip.
+ */
+function labelTimeOf(
+  group: TipGroup,
+  commentTime?: (commentId: string) => string | undefined,
+): string {
+  const commentAt = group.commentId ? commentTime?.(group.commentId) : undefined;
+  return commentAt && !Number.isNaN(Date.parse(commentAt)) ? commentAt : group.time;
 }
 
 function tipMatchesFilter(tip: IssueTip, filter: TipFilter): boolean {
@@ -85,6 +115,7 @@ export function YouShouldKnowArchiveSection({
   issueId,
   identifier,
   onJumpToComment,
+  commentTime,
 }: {
   issueId: string;
   /** Used to build comment deep links; links are skipped without it. */
@@ -96,6 +127,13 @@ export function YouShouldKnowArchiveSection({
    * Falls back to a URL push when absent.
    */
   onJumpToComment?: (commentId: string) => void;
+  /**
+   * Comment creation time (ISO) by comment id, from the issue's loaded
+   * timeline. Comment groups sort and label by it so two same-day comment
+   * groups stay distinguishable and the order can never disagree with the
+   * labels; ids outside the map fall back to the group's earliest tip time.
+   */
+  commentTime?: (commentId: string) => string | undefined;
 }) {
   const { t } = useT("you-should-know");
   const wsId = useWorkspaceId();
@@ -106,7 +144,7 @@ export function YouShouldKnowArchiveSection({
   const [query, setQuery] = useState("");
 
   const tips = useMemo(() => data?.tips ?? [], [data]);
-  const groups = useMemo(() => groupTips(tips), [tips]);
+  const groups = useMemo(() => groupTips(tips, commentTime), [tips, commentTime]);
 
   if (!enabled || tips.length === 0) return null;
 
@@ -208,16 +246,19 @@ function ArchiveGroup({
     group.commentId !== null && identifier
       ? `${paths.issueDetail(identifier)}#comment-${group.commentId}`
       : null;
-  // `created_at` is an instant (not a calendar day): render it in the
-  // viewer's timezone so the group label agrees with the comment card's
-  // local timestamp instead of the UTC day slice. Empty or unparseable
+  // The label renders the group's labelTime — the anchor comment's own
+  // creation time down to the minute when known, else the group's earliest
+  // tip time — which is also the sort key (OL-346, OL-387). Like the comment
+  // card, the instant renders in the viewer's timezone; empty or unparseable
   // values render no date rather than "Invalid Date".
-  const timeMs = group.time ? Date.parse(group.time) : NaN;
+  const timeMs = group.labelTime ? Date.parse(group.labelTime) : NaN;
   const when = Number.isNaN(timeMs)
     ? ""
-    : new Date(timeMs).toLocaleDateString(locale, {
+    : new Date(timeMs).toLocaleString(locale, {
         month: "short",
         day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
       });
   const label =
     group.commentId === null
@@ -278,35 +319,44 @@ function ArchiveTip({
   );
 
   return (
-    <div data-invalid={invalid || undefined} className={invalid ? "opacity-60" : undefined}>
-      {/* Collapsed: "✦ tag · one-liner". Clicking reveals title+explanation. */}
-      <button
-        type="button"
-        aria-expanded={expanded}
-        className="flex w-full items-start gap-1 rounded-xs px-1 py-1 text-left text-caption transition-colors hover:bg-accent/50"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <span aria-hidden className="shrink-0">{TIP_MARK}</span>
-        <span className="shrink-0 font-medium">{tagLabel}</span>
-        <span aria-hidden className="shrink-0 text-faint-foreground">·</span>
-        <span className="min-w-0 flex-1">{tip.line}</span>
-      </button>
+    <>
+      <div data-invalid={invalid || undefined} className={invalid ? "opacity-60" : undefined}>
+        {/* Collapsed: "✦ tag · one-liner". Clicking reveals title+explanation. */}
+        <button
+          type="button"
+          aria-expanded={expanded}
+          className="flex w-full items-start gap-1 rounded-xs px-1 py-1 text-left text-caption transition-colors hover:bg-accent/50"
+          onClick={() => setExpanded(!expanded)}
+        >
+          <span aria-hidden className="shrink-0">{TIP_MARK}</span>
+          <span className="shrink-0 font-medium">{tagLabel}</span>
+          <span aria-hidden className="shrink-0 text-faint-foreground">·</span>
+          <span className="min-w-0 flex-1">{tip.line}</span>
+        </button>
+        {expanded && (
+          <div className="pb-1 pl-6 pr-1 text-caption text-muted-foreground">
+            {tip.title ? (
+              <p className="font-medium text-foreground">{tip.title}</p>
+            ) : null}
+            {tip.explanation ? <p>{tip.explanation}</p> : null}
+          </div>
+        )}
+        {invalid && (
+          <InvalidNote
+            tip={tip}
+            identifier={identifier}
+            onJumpToComment={onJumpToComment}
+          />
+        )}
+      </div>
+      {/* Every tip can be asked about, the no-longer-valid ones too (OL-288
+          §2) — outside the greyed block, which would read as disabled. */}
       {expanded && (
-        <div className="pb-1 pl-6 pr-1 text-caption text-muted-foreground">
-          {tip.title ? (
-            <p className="font-medium text-foreground">{tip.title}</p>
-          ) : null}
-          {tip.explanation ? <p>{tip.explanation}</p> : null}
+        <div className="pb-1 pl-4">
+          <AskAboutTipButton tip={tip} />
         </div>
       )}
-      {invalid && (
-        <InvalidNote
-          tip={tip}
-          identifier={identifier}
-          onJumpToComment={onJumpToComment}
-        />
-      )}
-    </div>
+    </>
   );
 }
 

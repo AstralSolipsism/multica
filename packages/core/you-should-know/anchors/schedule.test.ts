@@ -235,6 +235,59 @@ describe("scheduleTips — rotation queue", () => {
     expect(result.queue.map((entry) => entry.tipId)).toEqual(["earlier", "later"]);
   });
 
+  it("orders same-millisecond tips by fractional digits 4-9 (one report, generation order)", () => {
+    const row = anchor({ level: "row", issueId: "issue-1" });
+    // One report batch: the server's clock_timestamp() inserts land ~0.2-0.4 ms
+    // apart, often inside a single millisecond (OL-345) — the case this fixture
+    // builds. Ids are random uuids, so give them ids that sort in the OPPOSITE
+    // of generation order — only sub-ms digits can produce the right queue.
+    const first = tip({ id: "z-generated-first", issue_id: "issue-1", created_at: "2026-10-01T00:00:31.103100Z" });
+    const second = tip({ id: "m-generated-second", issue_id: "issue-1", created_at: "2026-10-01T00:00:31.103400Z" });
+    const third = tip({ id: "a-generated-third", issue_id: "issue-1", created_at: "2026-10-01T00:00:31.103769Z" });
+    const result = scheduleTips({
+      anchors: [row],
+      tips: [third, first, second],
+    });
+    expect(result.queue.map((entry) => entry.tipId)).toEqual([
+      "z-generated-first",
+      "m-generated-second",
+      "a-generated-third",
+    ]);
+  });
+
+  it("orders across a millisecond boundary by the millisecond first", () => {
+    const row = anchor({ level: "row", issueId: "issue-1" });
+    // Neighboring inserts straddle a millisecond boundary about half the time,
+    // and then the later tip carries SMALLER sub-ms digits — the millisecond
+    // must win. The whole-second ".31Z" also pins the no-fraction key as 0.
+    const first = tip({ id: "z-first", issue_id: "issue-1", created_at: "2026-10-01T00:00:30.999800Z" });
+    const second = tip({ id: "m-second", issue_id: "issue-1", created_at: "2026-10-01T00:00:31Z" });
+    const third = tip({ id: "a-third", issue_id: "issue-1", created_at: "2026-10-01T00:00:31.000300Z" });
+    const result = scheduleTips({ anchors: [row], tips: [third, first, second] });
+    expect(result.queue.map((entry) => entry.tipId)).toEqual(["z-first", "m-second", "a-third"]);
+  });
+
+  it("compares fractional digits 7-9 when the microsecond digits tie", () => {
+    const row = anchor({ level: "row", issueId: "issue-1" });
+    // timestamptz is microsecond-precision, so production data never has
+    // digits 7-9 — pin the comparator's stated 4-9 contract anyway: ".1034Z"
+    // precedes ".103400001Z" even with ids in reverse generation order.
+    const earlier = tip({ id: "z-earlier", issue_id: "issue-1", created_at: "2026-10-01T00:00:31.1034Z" });
+    const later = tip({ id: "a-later", issue_id: "issue-1", created_at: "2026-10-01T00:00:31.103400001Z" });
+    const result = scheduleTips({ anchors: [row], tips: [later, earlier] });
+    expect(result.queue.map((entry) => entry.tipId)).toEqual(["z-earlier", "a-later"]);
+  });
+
+  it("treats trailing-zero-trimmed fractions as equal and falls back to id", () => {
+    const row = anchor({ level: "row", issueId: "issue-1" });
+    // RFC3339Nano trims trailing zeros: ".1034Z" and ".103400Z" are the same
+    // instant, so the id tiebreak still decides between them.
+    const trimmed = tip({ id: "b-trimmed", issue_id: "issue-1", created_at: "2026-10-01T00:00:31.1034Z" });
+    const padded = tip({ id: "a-padded", issue_id: "issue-1", created_at: "2026-10-01T00:00:31.103400Z" });
+    const result = scheduleTips({ anchors: [row], tips: [trimmed, padded] });
+    expect(result.queue.map((entry) => entry.tipId)).toEqual(["a-padded", "b-trimmed"]);
+  });
+
   it("stays deterministic when a creation time is missing or unparseable", () => {
     const row = anchor({ level: "row", issueId: "issue-1" });
     // The schema tolerates "" (NaN on Date.parse): the comparator must not

@@ -16,7 +16,7 @@ UPDATE chat_message
 SET task_id = $2
 WHERE chat_session_id = $1
   AND role = 'user'
-  AND message_kind = 'onboarding_kickoff'
+  AND message_kind IN ('onboarding_kickoff', 'hidden_context')
   AND task_id IS NULL
 `
 
@@ -25,6 +25,7 @@ type AdoptOrphanOnboardingKickoffParams struct {
 	TaskID        pgtype.UUID `json:"task_id"`
 }
 
+// Shared hidden-input lifecycle: includes generic hidden_context side chats.
 // Hands the session's unowned kickoff row to the member's first real turn.
 //
 // The kickoff is written with no task_id (nothing runs for the opening any
@@ -101,7 +102,7 @@ SELECT EXISTS (
     SELECT 1 FROM chat_message
     WHERE chat_session_id = $1
       AND role = 'user'
-      AND message_kind != 'channel_command'
+      AND message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
 ) AS has_public_user_message
 `
 
@@ -743,7 +744,7 @@ const deleteUserChatMessageByTask = `-- name: DeleteUserChatMessageByTask :one
 DELETE FROM chat_message
 WHERE task_id = $1
   AND role = 'user'
-  AND message_kind <> 'onboarding_kickoff'
+  AND message_kind NOT IN ('onboarding_kickoff', 'hidden_context')
 RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, channel_media_pending_until, channel_ingested, quick_actions, channel_context_revision, channel_outbound_type, channel_outbound_installation_id, channel_outbound_chat_id, channel_outbound_message_ids
 `
 
@@ -1200,11 +1201,16 @@ WHERE cs.id = $1
   AND cs.workspace_id = $2
   AND (
     cs.explicitly_created_at IS NOT NULL
+    OR EXISTS (
+      SELECT 1 FROM labrastro_tip_chat source
+      WHERE source.chat_session_id = cs.id AND source.workspace_id = cs.workspace_id
+        AND source.user_id = cs.creator_id
+    )
     OR
     EXISTS (
       SELECT 1 FROM chat_message AS public_message
       WHERE public_message.chat_session_id = cs.id
-        AND public_message.message_kind != 'channel_command'
+        AND public_message.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
     )
   )
 `
@@ -1423,13 +1429,13 @@ WHERE session.id = $2
     WHERE message.id = $3
       AND message.chat_session_id = session.id
       AND message.role = 'user'
-      AND message.message_kind != 'channel_command'
+      AND message.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
   )
   AND NOT EXISTS (
     SELECT 1 FROM chat_message AS other_message
     WHERE other_message.chat_session_id = session.id
       AND other_message.role = 'user'
-      AND other_message.message_kind != 'channel_command'
+      AND other_message.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
       AND other_message.id != $3
   )
 RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, project_id, explicitly_created_at
@@ -1475,7 +1481,7 @@ WHERE session.id = $2
     SELECT 1 FROM chat_message AS message
     WHERE message.chat_session_id = session.id
       AND message.role = 'user'
-      AND message.message_kind != 'channel_command'
+      AND message.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
   )
 RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, project_id, explicitly_created_at
 `
@@ -1716,7 +1722,7 @@ LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind
     FROM chat_message m
    WHERE m.chat_session_id = cs.id
-     AND m.message_kind != 'channel_command'
+     AND m.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
    ORDER BY m.created_at DESC
    LIMIT 1
 ) lm ON true
@@ -1955,7 +1961,7 @@ func (q *Queries) ListChatInputMessages(ctx context.Context, taskID pgtype.UUID)
 const listChatMessages = `-- name: ListChatMessages :many
 SELECT message.id, message.chat_session_id, message.role, message.content, message.task_id, message.created_at, message.failure_reason, message.elapsed_ms, message.message_kind, message.channel_media_pending_until, message.channel_ingested, message.quick_actions, message.channel_context_revision, message.channel_outbound_type, message.channel_outbound_installation_id, message.channel_outbound_chat_id, message.channel_outbound_message_ids FROM chat_message AS message
 WHERE message.chat_session_id = $1
-  AND message.message_kind != 'channel_command'
+  AND message.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
   AND NOT (
     message.role = 'user'
     AND EXISTS (
@@ -2113,6 +2119,8 @@ const listChatMessagesPage = `-- name: ListChatMessagesPage :many
 SELECT message.id, message.chat_session_id, message.role, message.content, message.task_id, message.created_at, message.failure_reason, message.elapsed_ms, message.message_kind, message.channel_media_pending_until, message.channel_ingested, message.quick_actions, message.channel_context_revision, message.channel_outbound_type, message.channel_outbound_installation_id, message.channel_outbound_chat_id, message.channel_outbound_message_ids FROM chat_message AS message
 WHERE message.chat_session_id = $1
   AND message.message_kind != 'channel_command'
+  AND (COALESCE($3::boolean, false)
+       OR message.message_kind NOT IN ('onboarding_kickoff', 'hidden_context'))
   AND NOT (
     message.role = 'user'
     AND EXISTS (
@@ -2141,8 +2149,8 @@ WHERE message.chat_session_id = $1
     )
   )
   AND (
-    $3::timestamptz IS NULL
-    OR (message.created_at, message.id) < ($3::timestamptz, $4::uuid)
+    $4::timestamptz IS NULL
+    OR (message.created_at, message.id) < ($4::timestamptz, $5::uuid)
   )
 ORDER BY message.created_at DESC, message.id DESC
 LIMIT $2
@@ -2151,6 +2159,7 @@ LIMIT $2
 type ListChatMessagesPageParams struct {
 	ChatSessionID   pgtype.UUID        `json:"chat_session_id"`
 	Limit           int32              `json:"limit"`
+	IncludeHidden   pgtype.Bool        `json:"include_hidden"`
 	BeforeCreatedAt pgtype.Timestamptz `json:"before_created_at"`
 	BeforeID        pgtype.UUID        `json:"before_id"`
 }
@@ -2159,6 +2168,7 @@ func (q *Queries) ListChatMessagesPage(ctx context.Context, arg ListChatMessages
 	rows, err := q.db.Query(ctx, listChatMessagesPage,
 		arg.ChatSessionID,
 		arg.Limit,
+		arg.IncludeHidden,
 		arg.BeforeCreatedAt,
 		arg.BeforeID,
 	)
@@ -2301,7 +2311,7 @@ LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind
     FROM chat_message m
    WHERE m.chat_session_id = cs.id
-     AND m.message_kind != 'channel_command'
+     AND m.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
    ORDER BY m.created_at DESC
    LIMIT 1
 ) lm ON true
@@ -2472,6 +2482,7 @@ LEFT JOIN LATERAL (
     FROM chat_message AS input
     WHERE input.task_id = COALESCE(task.chat_input_task_id, task.id)
       AND input.role = 'user'
+      AND input.message_kind NOT IN ('onboarding_kickoff', 'hidden_context')
     ORDER BY input.created_at ASC, input.id ASC
     LIMIT 1
 ) AS message ON TRUE
@@ -3126,7 +3137,7 @@ WITH latest_visible AS (
       -- moving it to dispatch time reverses that, and because the batch's two
       -- rows would then share one timestamp, their order falls to random UUIDs
       -- (MUL-5827).
-      AND claimed_input.message_kind <> 'onboarding_kickoff'
+      AND claimed_input.message_kind NOT IN ('onboarding_kickoff', 'hidden_context')
 )
 UPDATE chat_message AS claimed_input
 SET created_at = GREATEST(
@@ -3181,7 +3192,7 @@ WHERE queued_input.chat_session_id = $1
   -- Same exclusion, same reason as ReanchorClaimedDirectChatInput: the hidden
   -- kickoff has no visible position to fix, and moving it would put the
   -- product's context after the member's message inside one input batch.
-  AND queued_input.message_kind <> 'onboarding_kickoff'
+  AND queued_input.message_kind NOT IN ('onboarding_kickoff', 'hidden_context')
   AND queued_input.created_at <= $2::timestamptz
   AND EXISTS (
     SELECT 1
@@ -3245,9 +3256,10 @@ SET task_id = (
 )
 WHERE task_id = $1
   AND role = 'user'
-  AND message_kind = 'onboarding_kickoff'
+  AND message_kind IN ('onboarding_kickoff', 'hidden_context')
 `
 
+// Shared hidden-input lifecycle: includes generic hidden_context side chats.
 // Hands an adopted kickoff on to the session's next un-started turn when its
 // own turn dies (terminal failure, cancel, edit), falling back to unowned when
 // there is no such turn.
@@ -3287,7 +3299,7 @@ WHERE session.id = $2
     SELECT 1 FROM chat_message AS message
     WHERE message.chat_session_id = session.id
       AND message.role = 'user'
-      AND message.message_kind != 'channel_command'
+      AND message.message_kind NOT IN ('channel_command', 'onboarding_kickoff', 'hidden_context')
   )
 RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, project_id, explicitly_created_at
 `

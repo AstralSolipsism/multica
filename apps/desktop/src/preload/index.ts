@@ -31,6 +31,12 @@ import {
   type MainRendererMessageChannel,
   type TabSelectionShortcutKey,
 } from "../shared/main-renderer-messages";
+import {
+  OPEN_CHAT_SESSION_CHANNEL,
+  OPEN_CHAT_SESSION_REQUEST_CHANNEL,
+  parseChatSessionHandoff,
+  type ChatSessionHandoff,
+} from "../shared/chat-session-handoff";
 
 // Synchronously fetch app metadata from main at preload time so the renderer
 // can pass it into CoreProvider during the initial render — the alternative
@@ -243,6 +249,17 @@ const desktopAPI = {
   /** Open a validated issue-detail route in a dedicated native window. */
   openIssueWindow: (request: IssueWindowRequest) =>
     ipcRenderer.invoke("window:open-issue", request),
+  /** From a dedicated issue window: bring the main window forward on a chat
+   *  session (a YSK side chat). Main accepts it only from issue windows. */
+  openChatSessionInMainWindow: (handoff: ChatSessionHandoff) =>
+    ipcRenderer.invoke(OPEN_CHAT_SESSION_REQUEST_CHANNEL, handoff),
+  /** Main window: show chat sessions handed over by issue windows. Only the
+   *  main window subscribes. Returns an unsubscribe fn. */
+  onOpenChatSession: (callback: (handoff: ChatSessionHandoff) => void) =>
+    subscribeToMainRendererChannel<unknown>(OPEN_CHAT_SESSION_CHANNEL, (payload) => {
+      const handoff = parseChatSessionHandoff(payload);
+      if (handoff) callback(handoff);
+    }),
 };
 
 type DaemonReauthResult =

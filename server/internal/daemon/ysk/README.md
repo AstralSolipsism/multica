@@ -18,6 +18,12 @@ people watching an agent work. The interface contract is OL-187 section 13.
    each batch with `$.ui.log` (13 D). `pkg/agent/labrastro_ysk.go` takes those
    `ui_log` lines out of the stream and the daemon posts them to
    `POST /api/daemon/tasks/{taskId}/tips` (13 E). Failures are only logged.
+5. Status polls carry the current `you_should_know_enabled` workspace setting
+   (13 K). Once it is explicitly false, the daemon writes `<task config>/ysk/stop`.
+   Before each scheduled fork the mod reads that marker; a successful read
+   stops new forks for the rest of the session, while existing forks may finish.
+   Missing/unreadable markers leave generation enabled. Re-enabling the
+   workspace only affects later runs.
 
 ## Timing
 
