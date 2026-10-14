@@ -124,6 +124,30 @@ func TestInstallRefusesAContextThatIsNotAnObject(t *testing.T) {
 	}
 }
 
+func TestInstallRefusesAnUnremovableStopMarker(t *testing.T) {
+	configRoot := t.TempDir()
+	// A nonempty directory deterministically makes Remove fail, including
+	// when the tests run as root and permission bits would not block it.
+	stop := PathsFor(configRoot).Stop
+	if err := os.MkdirAll(stop, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(stop, "keep")
+	if err := os.WriteFile(child, []byte("old marker"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vars, err := Install(configRoot, json.RawMessage(sampleContext), "")
+	if err == nil || !strings.Contains(err.Error(), "clear you_should_know stop marker") {
+		t.Fatalf("expected stop marker cleanup error, got %v", err)
+	}
+	if vars != nil {
+		t.Fatalf("failed installation exposed mod environment: %v", vars)
+	}
+	if data, err := os.ReadFile(child); err != nil || string(data) != "old marker" {
+		t.Fatalf("failed cleanup changed the old marker: %q (%v)", data, err)
+	}
+}
+
 // The stream hook recognises the mod by the name in its manifest.
 func TestEmbeddedManifestNamesTheModTheStreamHookExpects(t *testing.T) {
 	data, err := modFS.ReadFile(path.Join(modRoot, ".claude-plugin", "plugin.json"))
