@@ -130,6 +130,35 @@ describe("Stage 8 scene geometry", () => {
     expect(result.frames.line!.bands.map((band) => band.stage)).toEqual([1, 2]);
     expect(Object.keys(result.routes).sort()).toEqual(scene.edges.map((e) => e.id).sort());
   });
+  it("keeps converging tasks connected to the same target within one frame and stage", async () => {
+    const scene = input(
+      [node("a", "line", 1), node("x", "line", 1), node("b", "line", 1)],
+      [edge("a", "b"), edge("x", "b")],
+      [frame("line")],
+    );
+    const result = await layoutDagScene(scene, engine);
+
+    invariants(scene, result);
+    expect(Object.keys(result.nodes).sort()).toEqual(["a", "b", "x"]);
+    expect(result.routes["a->b"]!.at(-1)).toEqual(result.ports.b!.input);
+    expect(result.routes["x->b"]!.at(-1)).toEqual(result.ports.b!.input);
+  });
+  it("retains dependency endpoints on a sub-line containing only one child frame", async () => {
+    const scene = input(
+      [{ ...node("external"), side: "upstream" }, node("task", "leaf")],
+      [edge("external", "sub", "task", "frame")],
+      [frame("line"), frame("sub", "line"), frame("leaf", "sub")],
+    );
+    const result = await layoutDagScene(scene, engine);
+
+    invariants(scene, result);
+    expect(Object.keys(result.frames).sort()).toEqual(["leaf", "line", "sub"]);
+    expect(result.routes["external->sub"]!.at(-1)).toEqual(result.ports.sub!.input);
+    expect(result.frames.leaf!.x).toBeGreaterThan(result.frames.sub!.x);
+    expect(result.frames.leaf!.x + result.frames.leaf!.width).toBeLessThan(
+      result.frames.sub!.x + result.frames.sub!.width,
+    );
+  });
   it("orders disconnected late-stage tasks inside a leaf frame without inventing dependencies", async () => {
     const scene = input([node("late", "line", 7), node("early", "line", 1), node("middle", "line", 3)], [], [frame("line")]);
     const result = await layoutDagScene(scene, engine);
@@ -170,6 +199,55 @@ describe("Stage 8 scene geometry", () => {
     expect(result.quality).toBe("fallback");
     invariants(scene, result);
     expect(fallbackDagScene(scene)).toEqual(result);
+  });
+  it("preserves focus partitions in fallback even when a cycle has no topological order", () => {
+    const scene: DagSceneInput = {
+      ...input(
+        [node("after", "down"), node("selected", "current"), node("before", "up-child")],
+        [edge("before", "selected"), edge("selected", "after"), edge("after", "before")],
+        [
+          { ...frame("down"), side: "downstream" },
+          { ...frame("current"), side: "current" },
+          { ...frame("up"), side: "upstream" },
+          { ...frame("up-child", "up"), side: "upstream" },
+        ],
+      ),
+      kind: "focus",
+    };
+    const result = fallbackDagScene(scene);
+
+    expect(result.quality).toBe("fallback");
+    invariants(scene, result);
+    expect(result.frames.up!.x + result.frames.up!.width).toBeLessThan(
+      result.frames.current!.x,
+    );
+    expect(result.frames.current!.x + result.frames.current!.width).toBeLessThan(
+      result.frames.down!.x,
+    );
+    expect(result.nodes.before!.x).toBeLessThan(result.nodes.selected!.x);
+    expect(result.nodes.after!.x).toBeGreaterThan(result.nodes.selected!.x);
+  });
+  it("pins disconnected external context cards outside a fallback line", () => {
+    const scene = input(
+      [
+        { ...node("after"), side: "downstream" },
+        node("a", "line"),
+        node("b", "line"),
+        { ...node("before"), side: "upstream" },
+      ],
+      [edge("a", "b")],
+      [frame("line")],
+    );
+    const result = fallbackDagScene(scene);
+
+    expect(result.quality).toBe("fallback");
+    invariants(scene, result);
+    expect(result.nodes.before!.x + result.nodes.before!.width).toBeLessThan(
+      result.frames.line!.x,
+    );
+    expect(result.nodes.after!.x).toBeGreaterThan(
+      result.frames.line!.x + result.frames.line!.width,
+    );
   });
   it("composes base and satisfied overlay trunk membership before styling", async () => {
     const scene = input([node("a"), node("b"), node("c")], [edge("a", "b"), edge("a", "c")]);
