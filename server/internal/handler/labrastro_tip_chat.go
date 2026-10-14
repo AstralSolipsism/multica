@@ -64,50 +64,8 @@ func (h *Handler) LabrastroOpenTipChat(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx)
 	q := h.Queries.WithTx(tx)
-	// Serialize repeated opens and membership revocation, even before a source
-	// row exists. Keep the delete-compatible order: workspace, project, issue,
-	// member, session, agent. Sources are never recovered from task pointers.
-	if err = q.LockSubscriberWrites(ctx, db.LockSubscriberWritesParams{WorkspaceID: ws, UserID: user}); err == nil {
-		_, err = q.LockWorkspaceForChatSessionCreate(ctx, ws)
-	}
-	if err != nil {
-		h.labrastroYSKError(w, err)
-		return
-	}
-	tip, err := q.LabrastroYSKGetTip(ctx, db.LabrastroYSKGetTipParams{WorkspaceID: ws, ID: id})
-	if err != nil {
-		h.labrastroYSKError(w, err)
-		return
-	}
-	issue, err := q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: tip.IssueID, WorkspaceID: ws})
-	if err != nil {
-		h.labrastroYSKError(w, err)
-		return
-	}
-	projectID := issue.ProjectID
-	if projectID.Valid {
-		_, err = q.LockProjectForChatSessionCreate(ctx, db.LockProjectForChatSessionCreateParams{ID: projectID, WorkspaceID: ws})
-	}
-	if err == nil {
-		_, err = q.LockIssueForDelete(ctx, db.LockIssueForDeleteParams{WorkspaceID: ws, ID: issue.ID})
-	}
-	if err == nil {
-		_, err = q.LabrastroYSKLockMember(ctx, db.LabrastroYSKLockMemberParams{WorkspaceID: ws, UserID: user})
-	}
-	if err == nil {
-		issue, err = q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issue.ID, WorkspaceID: ws})
-	}
-	if err == nil {
-		// Reports and source edits use the issue lock as well. Snapshot the
-		// current tip, not the version read while waiting for that lock.
-		tip, err = q.LabrastroYSKGetTip(ctx, db.LabrastroYSKGetTipParams{WorkspaceID: ws, ID: id})
-	}
-	if err != nil {
-		h.labrastroYSKError(w, err)
-		return
-	}
-	if issue.ProjectID != projectID {
-		writeErrorCode(w, http.StatusConflict, "tip_source_changed", "issue project changed; reopen the tip")
+	tip, issue, ok := h.labrastroLockTipChatSource(w, ctx, q, ws, user, id)
+	if !ok {
 		return
 	}
 
@@ -127,62 +85,14 @@ func (h *Handler) LabrastroOpenTipChat(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusForbidden, "invocation_not_allowed", "you do not have access to this chat")
 		return
 	}
-	agent, err := q.GetAgentForClaimUpdate(ctx, tip.AgentID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		h.labrastroYSKError(w, err)
-		return
-	}
-	permissionHandler := *h
-	permissionHandler.Queries = q
-	// Evaluate invoke access before revealing archive/runtime state.
-	if err != nil || agent.WorkspaceID != ws || !permissionHandler.canInvokeAgent(ctx, agent, "member", uuidToString(user), uuidToString(user), uuidToString(ws)) {
-		writeErrorCode(w, http.StatusForbidden, "invocation_not_allowed", "you do not have access to this agent")
-		return
-	}
-	if agent.ArchivedAt.Valid {
-		writeErrorCode(w, http.StatusConflict, "agent_archived", "agent is archived")
-		return
-	}
-	if !agent.RuntimeID.Valid {
-		writeErrorCode(w, http.StatusConflict, "agent_no_runtime", "agent has no runtime")
+	if !h.labrastroTipChatAgentAvailable(w, ctx, q, ws, user, tip.AgentID) {
 		return
 	}
 
 	created := !session.ID.Valid
 	unarchived := session.Status == "archived"
 	if created {
-		workspace, loadErr := q.GetWorkspace(ctx, ws)
-		if loadErr != nil {
-			h.labrastroYSKError(w, loadErr)
-			return
-		}
-		identifier := service.IssueIdentifier(workspace.IssuePrefix, issue.Number)
-		snapshot := LabrastroTipChatSnapshot{
-			Tag: tip.Tag, Line: tip.Line, Title: tip.Title, Explanation: tip.Explanation, Status: tip.Status,
-			OverturnedReason: textToPtr(tip.OverturnedReason), OverturnedByCommentID: uuidToPtr(tip.OverturnedByCommentID),
-		}
-		opening, loadErr := labrastroTipChatOpening(ctx, q, tip, issue, identifier, user, snapshot)
-		if loadErr != nil {
-			h.labrastroYSKError(w, loadErr)
-			return
-		}
-		session, err = q.CreateChatSession(ctx, db.CreateChatSessionParams{
-			ID: dbid.NewV7(), WorkspaceID: ws, AgentID: tip.AgentID, CreatorID: user,
-			ProjectID: issue.ProjectID, Title: identifier + " · " + tip.Title,
-		})
-		if err == nil {
-			_, err = q.CreateChatMessage(ctx, db.CreateChatMessageParams{
-				ID: dbid.NewV7(), ChatSessionID: session.ID, Role: "user", Content: opening,
-				MessageKind: pgtype.Text{String: protocol.ChatMessageKindHiddenContext, Valid: true},
-			})
-		}
-		if err == nil {
-			encoded, _ := json.Marshal(snapshot)
-			source, err = q.LabrastroSaveTipChat(ctx, db.LabrastroSaveTipChatParams{
-				WorkspaceID: ws, UserID: user, TipID: id, ChatSessionID: session.ID,
-				IssueID: issue.ID, SourceTaskID: tip.TaskID, IssueIdentifier: identifier, TipSnapshot: encoded,
-			})
-		}
+		session, source, err = labrastroCreateTipChat(ctx, q, tip, issue, user)
 	} else if unarchived {
 		session, err = q.SetChatSessionArchived(ctx, db.SetChatSessionArchivedParams{ID: session.ID, Archived: false})
 	}
@@ -210,6 +120,118 @@ func (h *Handler) LabrastroOpenTipChat(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, resp)
+}
+
+// labrastroLockTipChatSource snapshots the source under the deletion locks.
+func (h *Handler) labrastroLockTipChatSource(w http.ResponseWriter, ctx context.Context, q *db.Queries, ws, user, id pgtype.UUID) (tip db.LabrastroIssueTip, issue db.Issue, ok bool) {
+	// Serialize repeated opens and membership revocation, even before a source
+	// row exists. Keep the delete-compatible order: workspace, project, issue,
+	// member, session, agent. Sources are never recovered from task pointers.
+	err := q.LockSubscriberWrites(ctx, db.LockSubscriberWritesParams{WorkspaceID: ws, UserID: user})
+	if err == nil {
+		_, err = q.LockWorkspaceForChatSessionCreate(ctx, ws)
+	}
+	if err != nil {
+		h.labrastroYSKError(w, err)
+		return tip, issue, false
+	}
+	tip, err = q.LabrastroYSKGetTip(ctx, db.LabrastroYSKGetTipParams{WorkspaceID: ws, ID: id})
+	if err != nil {
+		h.labrastroYSKError(w, err)
+		return tip, issue, false
+	}
+	issue, err = q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: tip.IssueID, WorkspaceID: ws})
+	if err != nil {
+		h.labrastroYSKError(w, err)
+		return tip, issue, false
+	}
+	projectID := issue.ProjectID
+	if projectID.Valid {
+		_, err = q.LockProjectForChatSessionCreate(ctx, db.LockProjectForChatSessionCreateParams{ID: projectID, WorkspaceID: ws})
+	}
+	if err == nil {
+		_, err = q.LockIssueForDelete(ctx, db.LockIssueForDeleteParams{WorkspaceID: ws, ID: issue.ID})
+	}
+	if err == nil {
+		_, err = q.LabrastroYSKLockMember(ctx, db.LabrastroYSKLockMemberParams{WorkspaceID: ws, UserID: user})
+	}
+	if err == nil {
+		issue, err = q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issue.ID, WorkspaceID: ws})
+	}
+	if err == nil {
+		// Reports and source edits use the issue lock as well. Snapshot the
+		// current tip, not the version read while waiting for that lock.
+		tip, err = q.LabrastroYSKGetTip(ctx, db.LabrastroYSKGetTipParams{WorkspaceID: ws, ID: id})
+	}
+	if err != nil {
+		h.labrastroYSKError(w, err)
+		return tip, issue, false
+	}
+	if issue.ProjectID != projectID {
+		writeErrorCode(w, http.StatusConflict, "tip_source_changed", "issue project changed; reopen the tip")
+		return tip, issue, false
+	}
+
+	return tip, issue, true
+}
+
+func (h *Handler) labrastroTipChatAgentAvailable(w http.ResponseWriter, ctx context.Context, q *db.Queries, ws, user, agentID pgtype.UUID) bool {
+	agent, err := q.GetAgentForClaimUpdate(ctx, agentID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		h.labrastroYSKError(w, err)
+		return false
+	}
+	permissionHandler := *h
+	permissionHandler.Queries = q
+	// Evaluate invoke access before revealing archive/runtime state.
+	if err != nil || agent.WorkspaceID != ws || !permissionHandler.canInvokeAgent(ctx, agent, "member", uuidToString(user), uuidToString(user), uuidToString(ws)) {
+		writeErrorCode(w, http.StatusForbidden, "invocation_not_allowed", "you do not have access to this agent")
+		return false
+	}
+	if agent.ArchivedAt.Valid {
+		writeErrorCode(w, http.StatusConflict, "agent_archived", "agent is archived")
+		return false
+	}
+	if !agent.RuntimeID.Valid {
+		writeErrorCode(w, http.StatusConflict, "agent_no_runtime", "agent has no runtime")
+		return false
+	}
+
+	return true
+}
+
+func labrastroCreateTipChat(ctx context.Context, q *db.Queries, tip db.LabrastroIssueTip, issue db.Issue, user pgtype.UUID) (session db.ChatSession, source db.LabrastroTipChat, err error) {
+	workspace, err := q.GetWorkspace(ctx, tip.WorkspaceID)
+	if err != nil {
+		return session, source, err
+	}
+	identifier := service.IssueIdentifier(workspace.IssuePrefix, issue.Number)
+	snapshot := LabrastroTipChatSnapshot{
+		Tag: tip.Tag, Line: tip.Line, Title: tip.Title, Explanation: tip.Explanation, Status: tip.Status,
+		OverturnedReason: textToPtr(tip.OverturnedReason), OverturnedByCommentID: uuidToPtr(tip.OverturnedByCommentID),
+	}
+	opening, err := labrastroTipChatOpening(ctx, q, tip, issue, identifier, user, snapshot)
+	if err != nil {
+		return session, source, err
+	}
+	session, err = q.CreateChatSession(ctx, db.CreateChatSessionParams{
+		ID: dbid.NewV7(), WorkspaceID: tip.WorkspaceID, AgentID: tip.AgentID, CreatorID: user,
+		ProjectID: issue.ProjectID, Title: identifier + " · " + tip.Title,
+	})
+	if err == nil {
+		_, err = q.CreateChatMessage(ctx, db.CreateChatMessageParams{
+			ID: dbid.NewV7(), ChatSessionID: session.ID, Role: "user", Content: opening,
+			MessageKind: pgtype.Text{String: protocol.ChatMessageKindHiddenContext, Valid: true},
+		})
+	}
+	if err == nil {
+		encoded, _ := json.Marshal(snapshot)
+		source, err = q.LabrastroSaveTipChat(ctx, db.LabrastroSaveTipChatParams{
+			WorkspaceID: tip.WorkspaceID, UserID: user, TipID: tip.ID, ChatSessionID: session.ID,
+			IssueID: issue.ID, SourceTaskID: tip.TaskID, IssueIdentifier: identifier, TipSnapshot: encoded,
+		})
+	}
+	return session, source, err
 }
 
 func (h *Handler) labrastroHydrateTipChatSources(r *http.Request, sessions []ChatSessionResponse) error {
