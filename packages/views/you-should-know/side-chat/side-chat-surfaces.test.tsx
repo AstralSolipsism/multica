@@ -462,3 +462,42 @@ describe("a cold load of a side chat", () => {
   });
 });
 
+describe.each(["floating chat", "Chat page"])("common questions on the %s", (surface) => {
+  afterEach(() => setCurrentWorkspace(null, null));
+
+  it.each([
+    { reason: "the agent has no runtime", agent: { runtime_id: "" } },
+    { reason: "the agent is archived", agent: { archived_at: "2026-10-14T00:00:00Z" } },
+    { reason: "invoke access was revoked", agent: { invocation_targets: [] } },
+    { reason: "the session is archived", agent: {}, archivedSession: true },
+  ])("disables every question when $reason", async ({ agent, archivedSession = false }) => {
+    apiMock.listAgents.mockResolvedValue([sigma, makeAgent(agent)]);
+    apiMock.getChatSession.mockResolvedValue({
+      ...sideChat,
+      status: archivedSession ? "archived" : "active",
+    });
+    const onPage = surface === "Chat page";
+    if (onPage) setCurrentWorkspace(WS_SLUG, WS_ID);
+    useChatStore.getState().setActiveSession("side-1");
+    useChatStore.getState().setOpen(true);
+    const navigation = createNavigation({
+      pathname: onPage ? "/acme/chat" : "/acme/issues/OL-1",
+      searchParams: new URLSearchParams(onPage ? "session=side-1" : ""),
+    });
+    renderWithYsk(onPage ? <ChatPage /> : <ChatWindow />, { navigation });
+
+    await waitFor(() => expect(composer()).toHaveAttribute("data-agent", "Lambda"));
+    expect(composer()).toHaveAttribute("data-disabled", "true");
+    const questions = await screen.findByRole("group", { name: "Common questions" });
+    const buttons = within(questions).getAllByRole("button");
+    expect(buttons).toHaveLength(3);
+    for (const button of buttons) {
+      // These buttons stay focusable while disabled, so assert their
+      // accessible disabled state instead of the native disabled property.
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      fireEvent.click(button);
+    }
+    expect(apiMock.sendChatMessage).not.toHaveBeenCalled();
+    expect(apiMock.createChatSession).not.toHaveBeenCalled();
+  });
+});

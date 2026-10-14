@@ -73,6 +73,7 @@ vi.mock("sonner", () => ({
 import { YouShouldKnowWorkspaceSection } from "./workspace-toggle";
 import { YouShouldKnowPersonalRow } from "./personal-toggle";
 import { useSettingsSearchIndex } from "../../settings/components/use-settings-search-index";
+import { searchSettings } from "../../settings/components/settings-search";
 
 function withQuery(ui: ReactElement) {
   const queryClient = new QueryClient({
@@ -207,8 +208,12 @@ describe("YouShouldKnowWorkspaceSection", () => {
     unmount();
   });
 
-  it("finds the workspace switch by the feature name", async () => {
-    const { searchSettings } = await import("../../settings/components/settings-search");
+  it.each([
+    { query: "You should know", tabs: ["notifications", "workspace"], locale: "en" },
+    { query: "token", tabs: ["workspace"], locale: "en" },
+    { query: "Only affects what you see", tabs: ["notifications"], locale: "en" },
+    { query: "l'observateur", tabs: ["notifications", "workspace"], locale: "fr" },
+  ] as const)("finds $query in navigation order", ({ query, tabs, locale }) => {
     function SearchProbe() {
       const index = useSettingsSearchIndex([
         { value: "workspace", label: "Workspace" },
@@ -216,17 +221,17 @@ describe("YouShouldKnowWorkspaceSection", () => {
       ]);
       return (
         <ul>
-          {searchSettings(index, "You should know").map((e) => (
+          {searchSettings(index, query).map((e) => (
             <li key={`${e.tab}#${e.anchor ?? ""}`}>{`${e.tab}#${e.anchor ?? ""}`}</li>
           ))}
         </ul>
       );
     }
-    renderWithI18n(<SearchProbe />);
+    renderWithI18n(<SearchProbe />, { locale });
 
-    // Both entries retain the feature name alongside their descriptions.
-    expect(screen.getByText("workspace#you-should-know")).toBeInTheDocument();
-    expect(screen.getByText("notifications#you-should-know")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(
+      tabs.map((tab) => `${tab}#you-should-know`),
+    );
   });
 });
 

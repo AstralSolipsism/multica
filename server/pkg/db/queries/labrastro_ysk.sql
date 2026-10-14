@@ -1,3 +1,7 @@
+-- name: LabrastroYSKWorkspaceEnabled :one
+SELECT COALESCE(settings->'you_should_know_enabled' = 'true'::jsonb, false)::boolean
+FROM workspace WHERE id = $1;
+
 -- name: LabrastroYSKExistingTips :many
 SELECT id, tag, line FROM labrastro_issue_tip
 WHERE workspace_id = $1 AND issue_id = $2 AND status = 'valid'
