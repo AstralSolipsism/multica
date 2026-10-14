@@ -69,6 +69,15 @@ export interface LiveEndFollow {
   setActive(active: boolean): void;
   /** New list instance (task/sort/filter change): back to following. */
   reset(): void;
+  /**
+   * The reader arrived back at the live end: follow again and forget every
+   * staged/confirmed motion claim. Unlike `reset`, physical input state (held
+   * mouse, active touch) is left alone — arriving at the end does not change
+   * what the reader's hand is doing. Called by the latch's own return paths
+   * and by surfaces on an explicit "back to the live end" action (e.g. the
+   * reader just SENT a message, OL-272 review).
+   */
+  reengage(): void;
   isFollowing(): boolean;
   /** Explicit navigation away from the live end (e.g. segment click). */
   disengage(): void;
@@ -137,24 +146,33 @@ export function createLiveEndFollow(now: () => number = () => Date.now()): LiveE
   const pinVerdict = (distance: number): boolean =>
     following && !mouseHeld && !scrollbarDrag && !touchHeld && distance > 0;
 
+  // Back at the live end: follow again and forget every staged/confirmed
+  // motion claim, so a stale claim cannot leak into whatever happens next.
+  // Held-input state (mouse, touch) is NOT positional — the reader's hand is
+  // still wherever it physically is — so it survives, unlike in `reset`.
+  const reengage = () => {
+    following = true;
+    awayBudget = 0;
+    towardBudget = 0;
+    awayTaken = 0;
+    motionDirection = 0;
+    motionSource = null;
+    motionCarry = 0;
+  };
+
   return {
     setActive(a: boolean) {
       active = a;
     },
     reset() {
-      following = true;
-      awayBudget = 0;
-      towardBudget = 0;
-      awayTaken = 0;
+      reengage();
       lastDistance = 0;
       mouseHeld = false;
       scrollbarDrag = false;
       touchHeld = false;
-      motionDirection = 0;
-      motionSource = null;
-      motionCarry = 0;
       lastMotionAt = -MOTION_SETTLE_WINDOW_MS;
     },
+    reengage,
     isFollowing: () => active && following,
     disengage() {
       if (active) following = false;
@@ -192,13 +210,7 @@ export function createLiveEndFollow(now: () => number = () => Date.now()): LiveE
     },
     onAtEdgeChange(atEdge: boolean) {
       if (!active || !atEdge) return;
-      following = true;
-      awayBudget = 0;
-      towardBudget = 0;
-      awayTaken = 0;
-      motionDirection = 0;
-      motionSource = null;
-      motionCarry = 0;
+      reengage();
     },
     onScroll(distance: number): boolean {
       if (!active) return false;
@@ -214,13 +226,7 @@ export function createLiveEndFollow(now: () => number = () => Date.now()): LiveE
       // re-engage at all (OL-272 review).
       if (scrollbarDrag) {
         if (distance === 0) {
-          following = true;
-          awayBudget = 0;
-          towardBudget = 0;
-          awayTaken = 0;
-          motionDirection = 0;
-          motionSource = null;
-          motionCarry = 0;
+          reengage();
         } else if (moved > 0 && distance > FOLLOW_RELEASE_THRESHOLD) {
           following = false;
         }
@@ -255,15 +261,7 @@ export function createLiveEndFollow(now: () => number = () => Date.now()): LiveE
           if (motionSource !== "touch") motionCarry = Math.max(0, motionCarry + moved);
           awayTaken = Math.max(0, awayTaken + moved);
           lastMotionAt = now();
-          if (distance === 0) {
-            following = true;
-            awayBudget = 0;
-            towardBudget = 0;
-            awayTaken = 0;
-            motionDirection = 0;
-            motionSource = null;
-            motionCarry = 0;
-          }
+          if (distance === 0) reengage();
           return false;
         }
       }
@@ -291,13 +289,7 @@ export function createLiveEndFollow(now: () => number = () => Date.now()): LiveE
           motionSource = touchHeld ? "touch" : "input";
           motionCarry = towardBudget;
           lastMotionAt = now();
-          if (distance === 0) {
-            following = true;
-            awayBudget = 0;
-            towardBudget = 0;
-            awayTaken = 0;
-            motionDirection = 0;
-          }
+          if (distance === 0) reengage();
           return false;
         }
       }

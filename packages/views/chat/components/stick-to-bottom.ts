@@ -309,7 +309,10 @@ export function useStickToBottom(
   }, [scrollEl, follow, pin, onResize]);
 
   const resumeLiveEnd = useCallback(() => {
-    follow.reset();
+    // reengage, not reset: a send re-engages the follow, but it must not
+    // erase physical input state — a reader holding the mouse for a text
+    // selection (or mid-touch) keeps that protection (OL-272 review).
+    follow.reengage();
     pin();
   }, [follow, pin]);
 

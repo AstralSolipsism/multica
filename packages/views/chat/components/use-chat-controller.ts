@@ -651,8 +651,12 @@ export function useChatController(opts?: { isActive?: boolean }) {
       // An accepted send re-engages the live-end follow: the follow now
       // releases after one line of upward scrolling (OL-272), so a reader who
       // peeked up slightly before sending would otherwise have their own
-      // bubble and the streaming reply grow silently below the fold.
-      setResumeFollowNonce((n) => n + 1);
+      // bubble and the streaming reply grow silently below the fold. Only when
+      // still on the source session, though: the nonce is controller-level
+      // state while the list mounts per session, so a mid-send navigation
+      // must not let THIS send yank the session the reader is looking at now
+      // (OL-272 review).
+      if (stillOnSourceSession) setResumeFollowNonce((n) => n + 1);
 
       if (stopRequestedBeforeTaskRef.current) {
         stopRequestedBeforeTaskRef.current = false;

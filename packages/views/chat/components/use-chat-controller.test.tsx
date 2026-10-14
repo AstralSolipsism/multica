@@ -1089,6 +1089,8 @@ describe("useChatController.handleSend — compose target tracking", () => {
     const commitInput = vi.fn();
     return {
       commitInput,
+      /** Current follow-resume nonce the controller hands to ChatMessageList. */
+      followResumeNonce: () => result.current.resumeFollowNonce,
       send: () =>
         act(async () => {
           const pending = result.current.handleSend("hello", undefined, commitInput);
@@ -1180,6 +1182,31 @@ describe("useChatController.handleSend — compose target tracking", () => {
     expect(commitInput).toHaveBeenCalledWith(
       expect.objectContaining({ clearEditor: true, extraDraftKeys: ["sA"] }),
     );
+  });
+
+  // OL-272 review: an accepted send re-engages the chat list's live-end
+  // follow (the reader's own bubble must not stream below the fold), but only
+  // when the session they sent from is still the one on screen.
+  it("bumps the follow-resume nonce when the send's session stays in view", async () => {
+    const { send, followResumeNonce } = sendFrom("sA");
+    expect(followResumeNonce()).toBe(0);
+
+    await send();
+
+    expect(followResumeNonce()).toBe(1);
+  });
+
+  it("keeps the follow alone when the user navigated to another session mid-send", async () => {
+    // The nonce is controller-level state while the list mounts per session:
+    // bumping it now would re-engage and re-pin the session the reader
+    // switched TO, overriding their scroll position there for a send that
+    // belongs to another conversation.
+    const { send, followResumeNonce } = sendFrom(null, () => {
+      h.store.activeSessionId = "sB";
+    });
+    await send();
+
+    expect(followResumeNonce()).toBe(0);
   });
 });
 
