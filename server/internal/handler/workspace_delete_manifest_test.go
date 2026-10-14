@@ -29,6 +29,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"labrastro_message_receipt":         workspaceDelete,
 	"labrastro_message_route":           workspaceDelete,
 	"labrastro_message_scan_cursor":     workspaceDeleteKeep,
+	"labrastro_tip_chat":                workspaceDelete,
 	// Retired sharing data is inaccessible after its workspace is deleted.
 	"project_file":                       workspaceDeleteRetain,
 	"project_file_candidate":             workspaceDeleteRetain,

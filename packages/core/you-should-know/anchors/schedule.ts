@@ -34,6 +34,41 @@ interface Candidate {
   order: number;
 }
 
+/**
+ * Sub-millisecond ordering key of an RFC3339Nano timestamp: fractional-second
+ * digits 4–9 as an integer. Tips from one report land ~0.2–0.4 ms apart and
+ * often share a single millisecond (the server's `clock_timestamp()` values,
+ * OL-345), where only the microsecond digits differ. Missing or
+ * millisecond-only fractions key as 0.
+ */
+function subMillisecondKey(timestamp: string): number {
+  const fraction = /\d{2}:\d{2}:\d{2}\.(\d+)/.exec(timestamp)?.[1];
+  if (!fraction) return 0;
+  return Number(fraction.slice(3, 9).padEnd(6, "0"));
+}
+
+/**
+ * Compare two RFC3339Nano timestamps oldest-first, at full precision: the
+ * `Date.parse` millisecond first, then the sub-millisecond digits. The order
+ * matters — neighboring inserts straddle a millisecond boundary about half
+ * the time, so a later tip can carry SMALLER sub-ms digits than an earlier
+ * one; comparing sub-ms first would invert those pairs.
+ *
+ * Date.parse, not string compare: RFC3339Nano trims trailing zeros in the
+ * fractional seconds, which breaks lexicographic ordering. This relies on
+ * engines truncating rather than rounding fraction digits past the third
+ * (timeClip truncates in V8, SpiderMonkey, and JavaScriptCore; >3 fraction
+ * digits are outside the ECMAScript date-time format, so behavior is
+ * de-facto). Unparseable or empty timestamps (the schema tolerates "") fall
+ * back to 0 so the comparator stays deterministic instead of yielding
+ * NaN-as-equal.
+ */
+function compareCreatedAt(a: string, b: string): number {
+  const millis = (Date.parse(a) || 0) - (Date.parse(b) || 0);
+  if (millis !== 0) return millis;
+  return subMillisecondKey(a) - subMillisecondKey(b);
+}
+
 function compareCandidates(a: Candidate, b: Candidate): number {
   const level = LEVEL_RANK[a.anchor.descriptor.level] - LEVEL_RANK[b.anchor.descriptor.level];
   if (level !== 0) return level;
@@ -93,12 +128,7 @@ function compareQueueEntries(
   const top = a.top - b.top;
   if (top !== 0) return top;
   // Oldest tip first: tips are consumed in the order they were generated.
-  // Date.parse, not string compare: RFC3339Nano trims trailing zeros in the
-  // fractional seconds, which breaks lexicographic ordering. Unparseable or
-  // empty timestamps (the schema tolerates "") fall back to 0 so the
-  // comparator stays deterministic instead of yielding NaN-as-equal.
-  const created =
-    (Date.parse(a.tip.created_at) || 0) - (Date.parse(b.tip.created_at) || 0);
+  const created = compareCreatedAt(a.tip.created_at, b.tip.created_at);
   if (created !== 0) return created;
   return a.tip.id.localeCompare(b.tip.id);
 }

@@ -1,6 +1,17 @@
 export interface NavigationAdapter {
   push(path: string): void;
   replace(path: string): void;
+  /**
+   * The canonical UUID→identifier rewrite of the issue route, and only that.
+   * Lets each platform treat the respelling's deep-link landing records
+   * correctly: the rewrite REMOUNTS the page on web (the new instance must
+   * re-land, so the destination route's landed memento is cleared), while on
+   * desktop the same detail instance survives (already landed — the record
+   * must be carried from the UUID spelling to the identifier spelling, or a
+   * tab-switch-back would re-jump). Adapters without an implementation fall
+   * back to plain `replace` (see `useCanonicalIssueUrl`).
+   */
+  replaceCanonical?(path: string): void;
   back(): void;
   pathname: string;
   searchParams: URLSearchParams;

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -46,7 +47,7 @@ func TestPrepareYouShouldKnowLeavesOtherTasksAlone(t *testing.T) {
 				env = nil
 			}
 			agentEnv := map[string]string{"MULTICA_TASK_ID": "task-1"}
-			if prepareYouShouldKnow(tc.task, tc.provider, tc.version, env, agentEnv, slog.Default()) {
+			if prepareYouShouldKnow(context.Background(), tc.task, tc.provider, tc.version, env, agentEnv, slog.Default()) {
 				t.Fatal("tips mod installed")
 			}
 			if len(agentEnv) != 1 {
@@ -74,7 +75,7 @@ func TestPrepareYouShouldKnowInstallsForASupportedClaude(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			env := yskEnv(t)
 			task := Task{ID: "task-1", YouShouldKnow: json.RawMessage(yskContext)}
-			if !prepareYouShouldKnow(task, "claude", "2.1.292 (Claude Code)", env, tc.agentEnv, slog.Default()) {
+			if !prepareYouShouldKnow(context.Background(), task, "claude", "2.1.292 (Claude Code)", env, tc.agentEnv, slog.Default()) {
 				t.Fatal("tips mod not installed")
 			}
 			paths := ysk.PathsFor(env.MulticaConfigRoot)
@@ -98,7 +99,7 @@ func TestPrepareYouShouldKnowSurvivesABadContext(t *testing.T) {
 	env := yskEnv(t)
 	agentEnv := map[string]string{}
 	task := Task{ID: "task-1", YouShouldKnow: json.RawMessage(`[1,2]`)}
-	if prepareYouShouldKnow(task, "claude", "2.1.292", env, agentEnv, slog.Default()) {
+	if prepareYouShouldKnow(context.Background(), task, "claude", "2.1.292", env, agentEnv, slog.Default()) {
 		t.Fatal("tips mod installed for a malformed context")
 	}
 	if len(agentEnv) != 0 {

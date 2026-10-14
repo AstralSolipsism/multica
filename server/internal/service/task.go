@@ -2452,14 +2452,8 @@ func (s *TaskService) SendDirectChatMessage(
 		}
 		out.Task = task
 
-		// Adopt the onboarding kickoff, if this session still has an unowned one.
-		// It is written by OpenMikaOnboardingChat with no task, so this is the
-		// only thing that ever delivers it to a runtime — and it must happen
-		// before the member's own row is written, so the batch reads as
-		// "context, then their message" once ordered by created_at.
-		//
-		// A no-op for every other session: only Mika onboarding writes that kind,
-		// and only the first send of one finds it unowned.
+		// Adopt hidden product context (Mika or a side chat) before the user's
+		// message so the immutable input batch reads context, then their request.
 		if err := qtx.AdoptOrphanOnboardingKickoff(ctx, db.AdoptOrphanOnboardingKickoffParams{
 			ChatSessionID: session.ID,
 			TaskID:        task.ID,

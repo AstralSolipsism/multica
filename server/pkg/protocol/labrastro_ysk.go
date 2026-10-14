@@ -6,6 +6,13 @@ const (
 	EventIssueTipStateChanged = "issue_tip_state:changed"
 )
 
+// DaemonTaskStatus keeps the shutdown signal optional: older servers omit it,
+// and only an explicit false stops an installed mod (OL-187 section 13 K).
+type DaemonTaskStatus struct {
+	Status               string `json:"status"`
+	YouShouldKnowEnabled *bool  `json:"you_should_know_enabled,omitempty"`
+}
+
 // YouShouldKnowContext is claim-only side-channel input. Daemons must never
 // render it into the primary agent's briefing or task messages.
 type YouShouldKnowContext struct {

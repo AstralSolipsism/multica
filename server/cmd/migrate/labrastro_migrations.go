@@ -7,6 +7,8 @@ package main
 // the catalog against every concurrent CREATE INDEX statement.
 func init() {
 	for version, index := range map[string]string{
+		"9026_labrastro_tip_chat_identity_index":                    "idx_labrastro_tip_chat_identity",
+		"9027_labrastro_tip_chat_session_index":                     "idx_labrastro_tip_chat_session",
 		"9017_labrastro_ysk_tip_id_index":                           "idx_labrastro_ysk_tip_id",
 		"9018_labrastro_ysk_tip_issue_index":                        "idx_labrastro_ysk_tip_issue",
 		"9019_labrastro_ysk_tip_anchor_index":                       "idx_labrastro_ysk_tip_anchor",

@@ -29,6 +29,8 @@ type World = {
   debug: string[]
   forks: string[]
   envSets: Array<[string, string | undefined]>
+  stopReads: string[]
+  stopFile: 'missing' | 'present' | 'unreadable'
   /** Tool calls the next main-thread response asks for. */
   tools: number
   /** How the next fork answers; a pending promise models a slow fork. */
@@ -43,6 +45,8 @@ function setUp(on: On, options: { env?: Record<string, string>; context?: string
     debug: [],
     forks: [],
     envSets: [],
+    stopReads: [],
+    stopFile: 'missing',
     tools: 1,
     answer: () => ({ isAnswered: true, text: '{"heads_up":null}', usage: USAGE }),
     settle: async () => {},
@@ -53,7 +57,15 @@ function setUp(on: On, options: { env?: Record<string, string>; context?: string
   })
   const clock = mock.clock(on, { now: 1_000 })
   world.settle = () => clock.settle()
-  on('fs.read', async () => (options.unreadable === true ? { deny: 'ENOENT: no such file' } : { value: options.context ?? CONTEXT }))
+  on('fs.read', async ($, e) => {
+    if (e.path.endsWith('/stop') || e.path.endsWith('\\stop')) {
+      world.stopReads.push(e.path)
+      return world.stopFile === 'present'
+        ? { value: '' }
+        : { deny: world.stopFile === 'unreadable' ? 'EACCES: permission denied' : 'ENOENT: no such file' }
+    }
+    return options.unreadable === true ? { deny: 'ENOENT: no such file' } : { value: options.context ?? CONTEXT }
+  })
   on('env.set', async ($, e) => {
     world.envSets.push([e.name, e.value])
     return { value: undefined }
@@ -89,6 +101,67 @@ async function step($: Engine, index: number, agentId?: string): Promise<TurnSte
 const kinds = (logs: string[]) => logs.map((line) => (JSON.parse(line) as { kind: string }).kind)
 
 describe('labrastro-ysk hooks', () => {
+  test('a stop marker prevents the first fork and is never read again', async ($, on) => {
+    const world = setUp(on)
+    world.stopFile = 'present'
+    await start($)
+    await step($, 0)
+    await step($, 1)
+    expect(world.stopReads).toEqual([])
+    expect((await step($, 2)).index).toBe(2)
+    // Removing the marker cannot re-enable this run.
+    world.stopFile = 'missing'
+    for (let i = 3; i < 40; i++) await step($, i)
+    expect(world.stopReads).toEqual(['/task/multica-config/ysk/stop'])
+    expect(world.forks).toEqual([])
+  })
+
+  test('closing during a fork lets its answer finish but prevents later forks', async ($, on) => {
+    const world = setUp(on)
+    let release: (result: ModelForkResult) => void = () => {}
+    world.answer = () => new Promise<ModelForkResult>((resolve) => { release = resolve })
+    await start($)
+    for (let i = 0; i <= 2; i++) await step($, i)
+    world.stopFile = 'present'
+    // At step 32 the old fork is stale, so this would start a new fork.
+    for (let i = 3; i <= 32; i++) await step($, i)
+    expect(world.stopReads).toHaveLength(2)
+    expect(world.forks).toHaveLength(1)
+    release({ isAnswered: true, text: LIGHT_REPLY, usage: USAGE })
+    await world.settle()
+    expect(kinds(world.logs)).toEqual(['light'])
+    for (let i = 33; i < 40; i++) await step($, i)
+    expect(world.stopReads).toHaveLength(2)
+    expect(world.forks).toHaveLength(1)
+  })
+
+  test('an unreadable stop marker does not block forks or main steps', async ($, on) => {
+    const world = setUp(on)
+    world.stopFile = 'unreadable'
+    await start($)
+    for (let i = 0; i <= 5; i++) {
+      expect((await step($, i)).index).toBe(i)
+      await world.settle()
+    }
+    expect(world.forks).toHaveLength(2)
+    expect(world.stopReads).toHaveLength(2)
+    world.stopFile = 'present'
+    for (let i = 6; i <= 8; i++) await step($, i)
+    expect(world.forks).toHaveLength(2)
+    expect(world.stopReads).toHaveLength(3)
+  })
+
+  test('the stop marker is a sibling of the context file on Windows', async ($, on) => {
+    const world = setUp(on, { env: { MULTICA_YSK_CONTEXT_FILE: 'C:\\task\\ysk\\context.json' } })
+    world.stopFile = 'present'
+    await start($)
+    for (let i = 0; i <= 2; i++) await step($, i)
+    expect(world.stopReads).toHaveLength(1)
+    // The Linux test engine resolves Windows spellings relative to the mod.
+    expect(world.stopReads[0]?.endsWith('C:\\task\\ysk\\stop')).toBe(true)
+    expect(world.forks).toEqual([])
+  })
+
   test('without a context file the mod stays off', async ($, on) => {
     const world = setUp(on, { env: {} })
     await start($)

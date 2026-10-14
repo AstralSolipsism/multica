@@ -116,8 +116,9 @@ describe("YouShouldKnowWorkspaceSection", () => {
   it("reads the workspace switch; default off is rendered as off", async () => {
     state.workspaceEnabled = false;
     withQuery(<YouShouldKnowWorkspaceSection canManage />);
-    const toggle = screen.getByRole("switch", { name: "Show bystander tips while agents work" });
+    const toggle = screen.getByRole("switch", { name: "Generate bystander tips while agents work" });
     expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByText("When off, no tips are generated and no tokens are spent on them.")).toBeInTheDocument();
 
     state.workspaceEnabled = true;
     cleanup();
@@ -157,19 +158,21 @@ describe("YouShouldKnowWorkspaceSection", () => {
     );
   });
 
+  // Shared probe: the index hook needs a component body. One copy serves
+  // every index-shape test below.
+  function IndexProbe() {
+    const index = useSettingsSearchIndex([
+      { value: "workspace", label: "Workspace" },
+      { value: "notifications", label: "Notifications" },
+    ]);
+    return <ul>{index.map((e) => <li key={`${e.tab}#${e.anchor ?? ""}`}>{`${e.tab}#${e.anchor ?? ""}:${e.title}`}</li>)}</ul>;
+  }
+
   it("anchors both toggles for the settings search", () => {
-    // Probe component: the index hook needs a component body.
-    function IndexProbe() {
-      const index = useSettingsSearchIndex([
-        { value: "workspace", label: "Workspace" },
-        { value: "notifications", label: "Notifications" },
-      ]);
-      return <ul>{index.map((e) => <li key={`${e.tab}#${e.anchor ?? ""}`}>{`${e.tab}#${e.anchor ?? ""}:${e.title}`}</li>)}</ul>;
-    }
     renderWithI18n(<IndexProbe />);
 
-    expect(screen.getByText("workspace#you-should-know:Show bystander tips while agents work")).toBeInTheDocument();
-    expect(screen.getByText("notifications#you-should-know:You should know")).toBeInTheDocument();
+    expect(screen.getByText("workspace#you-should-know:Generate bystander tips while agents work")).toBeInTheDocument();
+    expect(screen.getByText("notifications#you-should-know:Show bystander tips to me")).toBeInTheDocument();
 
     // The anchors the entries point at exist on the rendered pages.
     cleanup();
@@ -184,36 +187,19 @@ describe("YouShouldKnowWorkspaceSection", () => {
     ).not.toBeNull();
   });
 
-  it("drops the personal entry from the search index while the workspace switch is off", () => {
-    state.workspaceEnabled = false;
-    function IndexProbe() {
-      const index = useSettingsSearchIndex([
-        { value: "workspace", label: "Workspace" },
-        { value: "notifications", label: "Notifications" },
-      ]);
-      return <ul>{index.map((e) => <li key={`${e.tab}#${e.anchor ?? ""}`}>{`${e.tab}#${e.anchor ?? ""}`}</li>)}</ul>;
-    }
-    const { unmount } = renderWithI18n(<IndexProbe />);
-
-    expect(screen.queryByText(/^notifications#you-should-know/)).toBeNull();
-    // The workspace entry stays: that is the row an admin searches for to
-    // turn the feature on.
-    expect(screen.getByText(/^workspace#you-should-know/)).toBeInTheDocument();
-    unmount();
-  });
-
   // OL-269: workspaces created before the feature (or whose settings were
   // never written) have no you_should_know_enabled key — that must count as
-  // off, exactly like an explicit false.
-  it("drops the personal entry when the settings key is missing entirely", () => {
-    state.missingWorkspaceKey = true;
-    function IndexProbe() {
-      const index = useSettingsSearchIndex([
-        { value: "workspace", label: "Workspace" },
-        { value: "notifications", label: "Notifications" },
-      ]);
-      return <ul>{index.map((e) => <li key={`${e.tab}#${e.anchor ?? ""}`}>{`${e.tab}#${e.anchor ?? ""}`}</li>)}</ul>;
-    }
+  // off, exactly like an explicit false. The personal entry follows the
+  // workspace gate; the workspace entry stays (that is the row an admin
+  // searches for to turn the feature on).
+  it.each([
+    { name: "while the workspace switch is off", missingKey: false },
+    { name: "when the settings key is missing entirely", missingKey: true },
+  ])("drops the personal entry $name", ({ missingKey }) => {
+    // The mocked hook state must agree with the mocked settings bag, or the
+    // test would assert a combination the real gate can never produce.
+    state.workspaceEnabled = false;
+    state.missingWorkspaceKey = missingKey;
     const { unmount } = renderWithI18n(<IndexProbe />);
 
     expect(screen.queryByText(/^notifications#you-should-know/)).toBeNull();
@@ -223,7 +209,7 @@ describe("YouShouldKnowWorkspaceSection", () => {
 
   it("finds the workspace switch by the feature name", async () => {
     const { searchSettings } = await import("../../settings/components/settings-search");
-    function IndexProbe() {
+    function SearchProbe() {
       const index = useSettingsSearchIndex([
         { value: "workspace", label: "Workspace" },
         { value: "notifications", label: "Notifications" },
@@ -236,10 +222,9 @@ describe("YouShouldKnowWorkspaceSection", () => {
         </ul>
       );
     }
-    renderWithI18n(<IndexProbe />);
+    renderWithI18n(<SearchProbe />);
 
-    // The feature name reaches the workspace row through its section-title
-    // description, and the personal row by its own label.
+    // Both entries retain the feature name alongside their descriptions.
     expect(screen.getByText("workspace#you-should-know")).toBeInTheDocument();
     expect(screen.getByText("notifications#you-should-know")).toBeInTheDocument();
   });
@@ -254,7 +239,8 @@ describe("YouShouldKnowPersonalRow", () => {
 
   it("defaults to on and saves muted on first toggle off", () => {
     withQuery(<YouShouldKnowPersonalRow />);
-    const toggle = screen.getByRole("switch", { name: "You should know" });
+    const toggle = screen.getByRole("switch", { name: "Show bystander tips to me" });
+    expect(screen.getByText("Only affects what you see. To stop generating tips, a workspace admin can turn off the workspace setting.")).toBeInTheDocument();
     expect(toggle).toHaveAttribute("aria-checked", "true");
 
     fireEvent.click(toggle);
@@ -267,7 +253,7 @@ describe("YouShouldKnowPersonalRow", () => {
   it("turning it back on omits the key (default all)", () => {
     state.preferences = { you_should_know: "muted" };
     withQuery(<YouShouldKnowPersonalRow />);
-    fireEvent.click(screen.getByRole("switch", { name: "You should know" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Show bystander tips to me" }));
     expect(mockMutate).toHaveBeenCalledWith(
       expect.not.objectContaining({ you_should_know: expect.anything() }),
       expect.anything(),
@@ -277,7 +263,7 @@ describe("YouShouldKnowPersonalRow", () => {
   it("shows a toast when saving the preference fails", () => {
     state.mutateError = new Error("pref boom");
     withQuery(<YouShouldKnowPersonalRow />);
-    fireEvent.click(screen.getByRole("switch", { name: "You should know" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Show bystander tips to me" }));
 
     expect(mockToastError).toHaveBeenCalledWith("pref boom");
   });

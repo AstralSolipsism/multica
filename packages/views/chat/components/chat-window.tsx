@@ -87,6 +87,9 @@ import {
   seedAcceptedPendingTask,
 } from "./use-chat-controller";
 import { useChatProjectContextSupport } from "./use-chat-project-context-support";
+import { useTipSideChatLookup } from "@multica/core/you-should-know";
+import { TipSideChatBanner } from "../../you-should-know/side-chat/tip-side-chat-banner";
+import { TipSideChatStarters } from "../../you-should-know/side-chat/tip-side-chat-starters";
 import { createLogger } from "@multica/core/logger";
 import type { Agent, Attachment, ChatMessage, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
 import { useLocale, useT } from "../../i18n";
@@ -214,9 +217,10 @@ export function ChatWindow() {
   // pre-existing rows with status='archived' may still exist) are excluded
   // from the history dropdown. If one is still the active session, ChatInput
   // is disabled and the server still rejects POST /messages for it.
-  const currentSession = activeSessionId
-    ? sessions.find((s) => s.id === activeSessionId)
-    : null;
+  // Labrastro (OL-362): a YSK side chat is left out of the list until its
+  // first message; the lookup resolves it from its own record.
+  const sideChat = useTipSideChatLookup(wsId, activeSessionId, sessions, sessionsLoaded);
+  const currentSession = sideChat.currentSession;
   const isSessionArchived = currentSession?.status === "archived";
   const candidateProjectId = currentSession
     ? currentSession.project_id ?? null
@@ -256,11 +260,14 @@ export function ChatWindow() {
 
   // Resolve selected agent: open session's agent → stored preference → first
   // available. New chats have no session, so they fall through to the picker.
+  // A side chat is only ever with the tip's agent: no fallback (OL-288 §5).
   const activeAgent =
     sessionAgent ??
-    availableAgents.find((a) => a.id === selectedAgentId) ??
-    availableAgents[0] ??
-    null;
+    (sideChat.pinsAgent
+      ? null
+      : availableAgents.find((a) => a.id === selectedAgentId) ??
+        availableAgents[0] ??
+        null);
   const activeAgentRuntimeBound =
     !!activeAgent && isAgentRuntimeBound(activeAgent);
 
@@ -331,10 +338,11 @@ export function ChatWindow() {
   useEffect(() => {
     if (!activeSessionId || !sessionsLoaded) return;
     if (sessions.some((s) => s.id === activeSessionId)) return;
+    if (sideChat.currentSession || sideChat.pending) return;
     if (hasInFlightPendingTask(qc, activeSessionId)) return;
     uiLogger.info("clearing dangling activeSessionId (floating)", { sessionId: activeSessionId });
     setActiveSession(null);
-  }, [activeSessionId, sessionsLoaded, sessions, qc, setActiveSession]);
+  }, [activeSessionId, sessionsLoaded, sessions, sideChat.currentSession, sideChat.pending, qc, setActiveSession]);
 
   // WS events are handled globally in useRealtimeSync — the query cache
   // stays current even when this window is closed. See packages/core/realtime/.
@@ -391,7 +399,7 @@ export function ChatWindow() {
       if (
         activeSessionId &&
         (!sessionsLoaded ||
-          sessions.some((s) => s.id === activeSessionId) ||
+          currentSession?.id === activeSessionId ||
           hasInFlightPendingTask(qc, activeSessionId))
       ) {
         return activeSessionId;
@@ -419,7 +427,7 @@ export function ChatWindow() {
       activeAgent,
       activeProjectId,
       createSession,
-      sessions,
+      currentSession,
       sessionsLoaded,
       qc,
     ],
@@ -873,6 +881,7 @@ export function ChatWindow() {
           </Tooltip>
           <SessionDropdown
             sessions={sessions}
+            currentSession={currentSession}
             // Use the full agent list (incl. archived) so historical
             // sessions can still resolve their avatar.
             agents={agents}
@@ -918,6 +927,13 @@ export function ChatWindow() {
         </div>
       </div>
 
+      {currentSession?.tip_source && (
+        <TipSideChatBanner
+          source={currentSession.tip_source}
+          agentName={sessionAgent?.name ?? null}
+        />
+      )}
+
       {/* Messages / skeleton / empty state */}
       {showSkeleton ? (
         <ChatMessageSkeleton />
@@ -949,6 +965,17 @@ export function ChatWindow() {
               : undefined
           }
           quickActionsPendingMessageId={quickActionsPending?.message_id ?? null}
+        />
+      ) : currentSession?.tip_source ? (
+        <TipSideChatStarters
+          onPick={(prompt) => handleSend(prompt)}
+          disabled={
+            isSessionArchived ||
+            isAgentArchived ||
+            isAgentAccessRevoked ||
+            !activeAgentRuntimeBound ||
+            noAgent
+          }
         />
       ) : (
         <EmptyState
@@ -1200,11 +1227,14 @@ interface SessionRowAction extends RowActionItem {
  */
 function SessionDropdown({
   sessions,
+  currentSession,
   agents,
   activeSessionId,
   onSelectSession,
 }: {
   sessions: ChatSession[];
+  /** The open session, including a side chat the list does not carry yet. */
+  currentSession: ChatSession | null;
   agents: Agent[];
   activeSessionId: string | null;
   onSelectSession: (session: ChatSession) => void;
@@ -1212,7 +1242,7 @@ function SessionDropdown({
   const { t } = useT("chat");
   const wsId = useWorkspaceId();
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
-  const activeSession = sessions.find((s) => s.id === activeSessionId);
+  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? currentSession;
   const title = activeSession?.title?.trim() || t(($) => $.window.untitled);
   const triggerAgent = activeSession ? agentById.get(activeSession.agent_id) ?? null : null;
 

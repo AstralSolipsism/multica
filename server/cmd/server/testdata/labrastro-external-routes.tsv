@@ -420,6 +420,7 @@ GET	/api/tasks/{taskId}/messages	user-auth	allow
 POST	/api/tasks/{taskId}/retry-source-context	user-auth	deny
 POST	/api/telegram/binding/redeem	user-auth	deny
 GET	/api/tips/active	user-auth	deny
+POST	/api/tips/{tipId}/chat	user-auth	deny
 POST	/api/tips/{tipId}/state	user-auth	deny
 GET	/api/tokens/	user-auth	deny
 POST	/api/tokens/	user-auth	deny
