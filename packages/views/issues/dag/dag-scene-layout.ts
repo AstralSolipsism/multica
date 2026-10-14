@@ -100,6 +100,7 @@ export function buildDagSceneGraph(input: DagSceneInput) {
   const graph: ElkNode = { id: ROOT, children: [], edges: [], layoutOptions: { ...sceneOptions } };
   if (input.kind === "overview") {
     graph.layoutOptions!["elk.layered.considerModelOrder.strategy"] = "NODES";
+    graph.layoutOptions!["elk.layered.considerModelOrder.components"] = "MODEL_ORDER";
     // Overview has no frames. Compound processing would disable disconnected
     // component packing and stack unrelated lines in one enormous column.
     graph.layoutOptions!["elk.hierarchyHandling"] = "SEPARATE_CHILDREN";

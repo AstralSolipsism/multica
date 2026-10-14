@@ -23,8 +23,11 @@ Stage 9 display its controls while the old scene remains interactive.
 
 - `input` contains only geometry: ordered model IDs, sizes, frame hierarchy,
   stages, endpoint kinds and dependency topology. It contains no titles,
-  status, runs, selected IDs or raw bundle membership. Dimensions and the sole
-  left-to-right direction policy are in `dag-constants.ts`.
+  status, runs, selected IDs or raw bundle membership. Dimensions, ELK direction
+  and port sides are in `dag-constants.ts`. Only left-to-right is supported:
+  frame/serial restoration, stage bands, grids, fallback and overlay routing
+  also use horizontal geometry. Changing `DAG_FLOW` alone does not implement
+  another orientation.
 - `nodes` and `frames` use absolute canvas coordinates. `ports[id]` has exactly
   one `input` on the left and one `output` on the right. Card ports are centered;
   ELK chooses frame port heights. Edge endpoints use `sourceKind` / `targetKind`
@@ -43,15 +46,33 @@ Stage 9 display its controls while the old scene remains interactive.
   at the target, matching height/side and no frame/stage boundary. Branches and
   merges still participate in ELK; a run's reserved rectangle keeps unrelated
   routes out of its internal card gaps. Cycles are never folded.
-- `routes[edgeId]` is an ordered orthogonal polyline. `segments` partitions these
-  paths at shared trunks; each segment contains the scene `edgeIds` traversing
-  it. `junctions` gives branch/merge dots. Unrelated parallel paths remain
-  distinct, including coincident paths connected by a third edge's endpoints.
-  Render segments once and use current model states for their style.
+- `routes[edgeId]` is an ordered orthogonal polyline, preserving direction for
+  arrows and animations. Under the owner's OL-280 option B decision, every
+  collinear overlapping interval is rendered once as a bus, even when the
+  traversing edges have different endpoints or directions. `segments` splits
+  at route boundaries and contains the exact sorted union of scene `edgeIds`
+  occupying each interval. Segment coordinates run from low to high; they do
+  not encode dependency direction. `junctions` gives three-or-more-direction
+  branch/merge dots with their incident edge IDs. Shared corners and unrelated
+  perpendicular crossings are not junctions. Render segments once and resolve
+  their complete membership before choosing a status style, so an overlay
+  cannot paint over a blocking dependency on the same interval.
 - Resolve segment `edgeIds` through the **current** plan's `dependencyIds` to
   select original dependencies. A mixed overview bundle includes satisfied and
   unsatisfied originals. Deduplicate raw IDs when selecting several segments.
   Do not cache status or original membership in the geometry.
+- Node selection/highlighting must start from real model dependencies, then
+  draw each selected dependency's complete ordered `routes`, dimming the rest.
+  Only the intervals those dependencies actually traverse should light up; an
+  unselected branch joining the same bus stays dim. Never traverse
+  geometric bus connectivity or expand a selected edge to every bus passenger.
+  For A→X, A→Y and B→Y, selecting Y highlights A→Y/B→Y, selecting X highlights
+  only A→X, and selecting B highlights only B→Y. Task-line expansion likewise
+  uses the model's actual dependencies. Clicking a bus itself can select all
+  its original dependency IDs. Stage 9/10 own this interaction, status priority
+  and effects; the unselected overview intentionally does not disambiguate
+  every source/target pairing by shape alone. The geometry tests cover this
+  example and check canonical bus membership on actual shared-fixture ELK output.
 - Stage bands are relative horizontal intervals within a frame, sorted by
   stage. Only leaf frames with fully staged, dependency-compatible membership
   get columns. A container with nested frames, incomplete stages or a stage
@@ -114,6 +135,8 @@ force model order. The regression test combines reversed stage dependencies
 with a disconnected member.
 
 Overview has no frames and uses normal component packing (`SEPARATE_CHILDREN`).
+Its component ordering also respects model order, so isolated cards do not
+automatically precede every connected component.
 Line/focus use `INCLUDE_CHILDREN`. Applying compound processing to the flat
 overview would stack disconnected line cards in a single tall column.
 

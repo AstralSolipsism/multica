@@ -18,83 +18,112 @@ export function cleanDagPath(points: DagPoint[]): DagPoint[] {
   return result;
 }
 
-/** Split actual collinear overlap into selectable segments. Coincident paths
- * with unrelated endpoints remain separate, even if a third path relates to
- * each of them: relation is not transitively closed. */
-export function dagSceneSegments(edges: readonly DagSceneEdge[], routes: DagSceneGeometry["routes"]) {
-  const byId = new Map(edges.map((edge) => [edge.id, edge]));
-  const raw: DagSceneSegment[] = [];
+interface BusLine {
+  horizontal: boolean;
+  fixed: number;
+  events: Map<number, { add: string[]; remove: string[] }>;
+}
+
+function collectBusLines(edges: readonly DagSceneEdge[], routes: DagSceneGeometry["routes"]) {
+  const lines = new Map<string, BusLine>();
   for (const edge of edges) {
     const path = routes[edge.id] ?? [];
     for (let i = 1; i < path.length; i++) {
-      const start = path[i - 1]!, end = path[i]!;
-      if (start.x !== end.x && start.y !== end.y) throw new Error(`Non-orthogonal DAG route: ${edge.id}`);
-      if (start.x !== end.x || start.y !== end.y) raw.push({ id: "", start, end, edgeIds: [edge.id] });
-    }
-  }
-  function merge(input: DagSceneSegment[], endpoint: "source" | "target") {
-    const groups = new Map<string, DagSceneSegment[]>();
-    const output: DagSceneSegment[] = [];
-    for (const segment of input) {
-      // A shared source trunk must not absorb unrelated target trunks through
-      // transitive endpoint relations. Already shared pieces stay intact.
-      if (segment.edgeIds.length > 1) { output.push(segment); continue; }
-      const edge = byId.get(segment.edgeIds[0]!)!;
-      const horizontal = segment.start.y === segment.end.y;
+      const start = path[i - 1]!;
+      const end = path[i]!;
+      if (start.x !== end.x && start.y !== end.y) {
+        throw new Error(`Non-orthogonal DAG route: ${edge.id}`);
+      }
+      if (start.x === end.x && start.y === end.y) continue;
+      const horizontal = start.y === end.y;
       const coordinate = horizontal ? "x" : "y";
-      const key = JSON.stringify([horizontal, horizontal ? segment.start.y : segment.start.x,
-        segment.start[coordinate] < segment.end[coordinate], edge[endpoint], edge[`${endpoint}Kind`]]);
-      const list = groups.get(key) ?? []; list.push(segment); groups.set(key, list);
-    }
-    for (const pieces of groups.values()) {
-      if (pieces.length === 1) { output.push(pieces[0]!); continue; }
-      const first = pieces[0]!, horizontal = first.start.y === first.end.y;
-      const coordinate = horizontal ? "x" : "y", forward = first.start[coordinate] < first.end[coordinate];
-      const events = new Map<number, { add: DagSceneSegment[]; remove: DagSceneSegment[] }>();
-      for (const piece of pieces) {
-        const low = Math.min(piece.start[coordinate], piece.end[coordinate]), high = Math.max(piece.start[coordinate], piece.end[coordinate]);
-        const start = events.get(low) ?? { add: [], remove: [] }; start.add.push(piece); events.set(low, start);
-        const end = events.get(high) ?? { add: [], remove: [] }; end.remove.push(piece); events.set(high, end);
-      }
-      const stops = [...events.keys()].sort((a, b) => a - b), active = new Set<DagSceneSegment>();
-      for (let i = 0; i + 1 < stops.length; i++) {
-        const low = stops[i]!, high = stops[i + 1]!, event = events.get(low)!;
-        for (const piece of event.remove) active.delete(piece);
-        for (const piece of event.add) active.add(piece);
-        if (!active.size) continue;
-        const p = (value: number) => ({ ...first.start, [coordinate]: value });
-        output.push({ id: "", start: p(forward ? low : high), end: p(forward ? high : low), edgeIds: [...new Set([...active].flatMap((s) => s.edgeIds))].sort() });
+      const fixed = horizontal ? start.y : start.x;
+      const key = `${horizontal ? "h" : "v"}:${fixed}`;
+      const line: BusLine = lines.get(key) ?? { horizontal, fixed, events: new Map() };
+      lines.set(key, line);
+      for (const [value, action] of [
+        [Math.min(start[coordinate], end[coordinate]), "add"],
+        [Math.max(start[coordinate], end[coordinate]), "remove"],
+      ] as const) {
+        const event = line.events.get(value) ?? { add: [], remove: [] };
+        event[action].push(edge.id);
+        line.events.set(value, event);
       }
     }
-    return output;
   }
-  // Partition only related paths. Unrelated collinear edges introduce no
-  // split points, avoiding quadratic geometry growth in dense overlay graphs.
-  const segments = merge(merge(raw, "source"), "target");
-  segments.forEach((segment, i) => { segment.id = `segment:${i}`; });
-  const incident = new Map<string, DagSceneSegment[]>();
-  for (const segment of segments) for (const p of [segment.start, segment.end]) {
-    const key = pointKey(p), list = incident.get(key) ?? [];
-    list.push(segment); incident.set(key, list);
+  return [...lines.values()].sort((a, b) =>
+    Number(b.horizontal) - Number(a.horizontal) || a.fixed - b.fixed,
+  );
+}
+
+function splitBusLine(line: BusLine): DagSceneSegment[] {
+  const stops = [...line.events.keys()].sort((a, b) => a - b);
+  // A feedback route can traverse the same interval more than once. Counts
+  // prevent one traversal's end from removing another still-active traversal.
+  const active = new Map<string, number>();
+  const segments: DagSceneSegment[] = [];
+  const point = (value: number) => line.horizontal
+    ? { x: value, y: line.fixed }
+    : { x: line.fixed, y: value };
+  for (let i = 0; i + 1 < stops.length; i++) {
+    const low = stops[i]!;
+    const event = line.events.get(low)!;
+    for (const id of event.remove) {
+      const count = active.get(id)! - 1;
+      if (count) active.set(id, count);
+      else active.delete(id);
+    }
+    for (const id of event.add) active.set(id, (active.get(id) ?? 0) + 1);
+    if (!active.size) continue;
+    segments.push({
+      id: "",
+      start: point(low),
+      end: point(stops[i + 1]!),
+      edgeIds: [...active.keys()].sort(),
+    });
+  }
+  return segments;
+}
+
+function busJunctions(segments: readonly DagSceneSegment[]): DagSceneJunction[] {
+  const incident = new Map<string, { point: DagPoint; segments: DagSceneSegment[] }>();
+  for (const segment of segments) {
+    for (const point of [segment.start, segment.end]) {
+      const key = pointKey(point);
+      const entry = incident.get(key) ?? { point, segments: [] };
+      entry.segments.push(segment);
+      incident.set(key, entry);
+    }
   }
   const junctions: DagSceneJunction[] = [];
-  for (const list of incident.values()) {
-    const shared = list.filter((s) => s.edgeIds.length > 1);
-    for (const trunk of shared) {
-      const p = [trunk.start, trunk.end].find((p) => list.every((s) => pointKey(s.start) === pointKey(p) || pointKey(s.end) === pointKey(p)));
-      if (!p) continue;
-      const related = list.filter((s) => s.edgeIds.some((id) => trunk.edgeIds.includes(id)));
-      const rays = new Set(related.map((s) => {
-        const end = pointKey(s.start) === pointKey(p) ? s.end : s.start;
-        return `${Math.sign(end.x - p.x)},${Math.sign(end.y - p.y)}`;
+  for (const [key, { point, segments: list }] of incident) {
+    const edgeIds = new Set<string>();
+    for (const trunk of list.filter((segment) => segment.edgeIds.length > 1)) {
+      const related = list.filter((segment) =>
+        segment.edgeIds.some((id) => trunk.edgeIds.includes(id)),
+      );
+      const rays = new Set(related.map((segment) => {
+        const end = pointKey(segment.start) === key ? segment.end : segment.start;
+        return `${Math.sign(end.x - point.x)},${Math.sign(end.y - point.y)}`;
       }));
+      // A crossing without shared route membership is not a connection.
+      // Likewise, a two-direction corner on a shared bus is not a junction.
       if (rays.size >= 3) {
-        junctions.push({ ...p, edgeIds: [...new Set(related.flatMap((s) => s.edgeIds))].sort() });
-        break;
+        for (const segment of related) for (const id of segment.edgeIds) edgeIds.add(id);
       }
     }
+    if (edgeIds.size) junctions.push({ ...point, edgeIds: [...edgeIds].sort() });
   }
-  return { segments, junctions };
+  return junctions;
+}
+
+/** Render every occupied interval once, with all traversing scene edges.
+ * Segment direction is canonical; ordered routes retain each edge's direction
+ * for arrows and animation. Sharing a bus never creates a dependency. */
+export function dagSceneSegments(edges: readonly DagSceneEdge[], routes: DagSceneGeometry["routes"]) {
+  const segments = collectBusLines(edges, routes).flatMap(splitBusLine);
+  segments.forEach((segment, i) => { segment.id = `segment:${i}`; });
+  return { segments, junctions: busJunctions(segments) };
 }
 
 /** Overlay routing deliberately leaves all boxes untouched. Existing mixed

@@ -1,7 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import ELK from "elkjs/lib/elk.bundled.js";
+import { IssueGraphSchema } from "@multica/core/api";
+import { computeDagLine, createDagModelIndex } from "@multica/core/issues/dag";
+import { buildIssueGraphFixture } from "@multica/core/issues/testing/issue-graph-fixture";
 import { layoutDagScene } from "./dag-scene-layout";
+import { dagLineLayoutInput } from "./dag-scene-inputs";
 import { fallbackDagScene } from "./dag-scene-fallback";
 import { dagSceneSegments, routeDagOverlays } from "./dag-scene-geometry";
 import type { DagSceneEdge, DagSceneGeometry, DagSceneInput } from "./dag-scene";
@@ -13,6 +17,32 @@ const edge = (source: string, target: string, sourceKind: "task" | "frame" = "ta
 const input = (nodes: DagSceneInput["nodes"], edges: DagSceneInput["edges"], frames: DagSceneInput["frames"] = []): DagSceneInput => ({ kind: "line", id: "line", nodes, edges, frames });
 function invariants(scene: DagSceneInput, result: DagSceneGeometry) {
   expect(Object.keys(result.routes).sort()).toEqual(scene.edges.map((e) => e.id).sort());
+  for (const [index, segment] of result.segments.entries()) {
+    const horizontal = segment.start.y === segment.end.y;
+    const axis = horizontal ? "x" : "y";
+    const fixed = horizontal ? "y" : "x";
+    const low = Math.min(segment.start[axis], segment.end[axis]);
+    const high = Math.max(segment.start[axis], segment.end[axis]);
+    expect(high).toBeGreaterThan(low);
+    for (const other of result.segments.slice(index + 1)) {
+      if (other.start[fixed] !== segment.start[fixed]
+        || other.end[fixed] !== segment.start[fixed]) continue;
+      const overlap = Math.min(high, Math.max(other.start[axis], other.end[axis]))
+        - Math.max(low, Math.min(other.start[axis], other.end[axis]));
+      expect(overlap, `${segment.id} overlaps ${other.id}`).toBeLessThanOrEqual(0);
+    }
+    const traversing = scene.edges.filter((edge) => {
+      const route = result.routes[edge.id]!;
+      return route.some((end, i) => {
+        const start = route[i - 1];
+        return start && start[fixed] === segment.start[fixed]
+          && end[fixed] === segment.start[fixed]
+          && Math.min(start[axis], end[axis]) <= low
+          && Math.max(start[axis], end[axis]) >= high;
+      });
+    }).map((edge) => edge.id).sort();
+    expect(segment.edgeIds, `exact membership of ${segment.id}`).toEqual(traversing);
+  }
   for (const [id, box] of Object.entries({ ...result.nodes, ...result.frames })) {
     const ports = result.ports[id]!;
     expect(Object.keys(ports).sort()).toEqual(["input", "output"]);
@@ -68,12 +98,33 @@ describe("Stage 8 scene geometry", () => {
     expect(result.junctions.length).toBeGreaterThanOrEqual(2);
     expect(await layoutDagScene(scene, engine)).toEqual(result);
   });
-  it("keeps unrelated coincident and transitive-related parallel paths separate", () => {
+  it("represents coincident paths as one bus with exact membership", () => {
     const edges = [edge("a", "b"), edge("a", "d"), edge("c", "d")];
     const routes = Object.fromEntries(edges.map((e) => [e.id, [{ x: 0, y: 0 }, { x: 100, y: 0 }]]));
     const geometry = dagSceneSegments(edges, routes);
-    expect(geometry.segments.some((s) => s.edgeIds.includes("a->b") && s.edgeIds.includes("c->d"))).toBe(false);
+    expect(geometry.segments).toEqual([{
+      id: "segment:0", start: { x: 0, y: 0 }, end: { x: 100, y: 0 },
+      edgeIds: ["a->b", "a->d", "c->d"],
+    }]);
     expect(geometry.junctions).toEqual([]);
+  });
+  it("canonicalizes unrelated overlaps in actual ELK output for the largest shared line", async () => {
+    const index = createDagModelIndex(IssueGraphSchema.parse(buildIssueGraphFixture("accept-5000")));
+    const largest = [...index.lineInputs.values()]
+      .filter((line) => index.forest.children.has(line.id))
+      .sort((a, b) => b.members.length - a.members.length)[0]!;
+    const scene = dagLineLayoutInput(computeDagLine(index, largest.id)!).input;
+    const result = await layoutDagScene(scene, engine);
+
+    invariants(scene, result);
+    const byId = new Map(scene.edges.map((edge) => [edge.id, edge]));
+    expect(result.segments.some((segment) => segment.edgeIds.some((id, i) => {
+      const first = byId.get(id)!;
+      return segment.edgeIds.slice(i + 1).some((other) => {
+        const second = byId.get(other)!;
+        return first.source !== second.source && first.target !== second.target;
+      });
+    }))).toBe(true);
   });
   it("uses frame faces across nested boundaries and preserves hierarchy", async () => {
     const scene = input([node("a", "line"), node("b", "sub"), node("c", "sub"), node("d", "line")], [edge("a", "b"), edge("b", "c"), edge("c", "d"), edge("a", "sub", "task", "frame"), edge("sub", "d", "frame")], [frame("line"), frame("sub", "line")]);

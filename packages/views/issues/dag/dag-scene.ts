@@ -53,7 +53,8 @@ export interface DagSceneSegment {
   id: string;
   start: DagPoint;
   end: DagPoint;
-  /** Resolve these through the current plan, never through a cached status. */
+  /** All scene edges occupying this interval, regardless of endpoints/direction.
+   * Resolve through the current plan, never through a cached status. */
   edgeIds: string[];
 }
 export interface DagSceneJunction extends DagPoint {
@@ -64,6 +65,7 @@ export interface DagSceneGeometry {
   frames: Record<string, DagSceneFrameBox>;
   /** Absolute coordinates; precisely one input and output per card/frame. */
   ports: Record<string, { input: DagPoint; output: DagPoint }>;
+  /** Ordered per-edge paths retain direction for arrows and selected animations. */
   routes: Record<string, DagPoint[]>;
   segments: DagSceneSegment[];
   junctions: DagSceneJunction[];

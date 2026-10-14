@@ -8,6 +8,19 @@ import { createDagSceneRunner } from "../../packages/views/issues/dag/dag-scene-
 import { routeDagOverlays } from "../../packages/views/issues/dag/dag-scene-geometry";
 import type { DagSceneInput, DagSceneGeometry, DagScenePlan } from "../../packages/views/issues/dag/dag-scene";
 
+function sceneLabels(plan: DagScenePlan, labels: Record<string, string>) {
+  const result = { ...labels };
+  for (const frame of plan.input.frames) {
+    result[frame.id] = result[frame.modelId] ?? frame.modelId;
+  }
+  for (const node of plan.input.nodes) {
+    if (!node.side || result[node.id]) continue;
+    const parts = JSON.parse(node.id) as string[];
+    result[node.id] = `${node.side}: ${result[parts[2]!] ?? parts[2]}`;
+  }
+  return result;
+}
+
 export async function runSharedDagLayoutBenchmark(samples = 10, compareAllEdges = false) {
   const fixture = buildIssueGraphFixture("accept-5000"), bigLine = buildIssueGraphFixture("big-line");
   const fixtures = { version: ISSUE_GRAPH_FIXTURE_VERSION,
@@ -44,8 +57,7 @@ export async function runDagLayoutBenchmark(payload: unknown, bigPayload?: unkno
   const labels = Object.fromEntries(index.graph.nodes.map((node) => [node.id, `${node.identifier} ${node.title}`]));
   for (const card of overviewAll.cards) labels[card.id] = card.issue ? `${card.issue.identifier} ${card.issue.title}` : "Independent tasks";
   function artifact(name: string, plan: DagScenePlan, geometry: DagSceneGeometry) {
-    for (const frame of plan.input.frames) labels[frame.id] = labels[frame.modelId] ?? frame.modelId;
-    artifacts[name] = { input: plan.input, geometry, labels: { ...labels } };
+    artifacts[name] = { input: plan.input, geometry, labels: sceneLabels(plan, labels) };
   }
   async function firstLayout(plan: DagScenePlan) {
     const start = performance.now(), first = await execute(plan.input);
@@ -67,7 +79,30 @@ export async function runDagLayoutBenchmark(payload: unknown, bigPayload?: unkno
     elkTimes.sort((a, b) => a - b);
     const cacheInput = { ...plan.input, id: `${plan.input.id}:sample:${count + warmups - 1}` };
     const cacheStart = performance.now(); await execute(cacheInput); const cacheMs = performance.now() - cacheStart;
-    return { nodes: plan.input.nodes.length, frames: plan.input.frames.length, edges: plan.input.edges.length, overlays: plan.overlays.length, firstMs, p50: times[Math.floor(times.length / 2)], p95: times[Math.ceil(times.length * 0.95) - 1], max: times.at(-1), samplesMs: times, compute: { first: first.computeMs, p50: computeTimes[Math.floor(computeTimes.length / 2)], p95: computeTimes[Math.ceil(computeTimes.length * 0.95) - 1], max: computeTimes.at(-1), samplesMs: computeTimes }, elk: { first: first.elkMs, samplesMs: elkTimes }, samples: count, warmups, cacheMs, quality: first.geometry.quality, warmQualities: [...new Set(qualities)] };
+    return {
+      nodes: plan.input.nodes.length,
+      frames: plan.input.frames.length,
+      edges: plan.input.edges.length,
+      overlays: plan.overlays.length,
+      firstMs,
+      p50: times[Math.floor(times.length / 2)],
+      p95: times[Math.ceil(times.length * 0.95) - 1],
+      max: times.at(-1),
+      samplesMs: times,
+      compute: {
+        first: first.computeMs,
+        p50: computeTimes[Math.floor(computeTimes.length / 2)],
+        p95: computeTimes[Math.ceil(computeTimes.length * 0.95) - 1],
+        max: computeTimes.at(-1),
+        samplesMs: computeTimes,
+      },
+      elk: { first: first.elkMs, samplesMs: elkTimes },
+      samples: count,
+      warmups,
+      cacheMs,
+      quality: first.geometry.quality,
+      warmQualities: [...new Set(qualities)],
+    };
   }
   try {
     const timings: Record<string, unknown> = {};
@@ -86,6 +121,10 @@ export async function runDagLayoutBenchmark(payload: unknown, bigPayload?: unkno
     const overlays = routeDagOverlays(geometry, allPlan.overlays, allPlan.input.edges);
     timings.satisfiedOverlayMs = performance.now() - start;
     artifacts["overview-all"]!.geometry = { ...geometry, ...overlays };
+    artifacts["overview-all"]!.input = {
+      ...allPlan.input,
+      edges: [...allPlan.input.edges, ...allPlan.overlays],
+    };
     // Compare tuned ELK with every dependency participating. The same deadline
     // applies, so this diagnostic cannot strand a worker for minutes.
     if (compareAllEdges) timings.overviewAllEdges = await measure("overview-all-elk", { ...allPlan, input: { ...allPlan.input, id: "all-edges", edges: [...allPlan.input.edges, ...allPlan.overlays] }, overlays: [] }, Math.min(3, samples));
@@ -105,13 +144,7 @@ export async function renderDagSnapshots(payload: unknown, identifiers: string[]
   const labels = Object.fromEntries(index.graph.nodes.map((n) => [n.id, `${n.identifier} ${n.title}`]));
   async function draw(name: string, plan: DagScenePlan) {
     const geometry = await new Promise<DagSceneGeometry>((resolve, reject) => runner.execute(plan.input, (response) => response.result ? resolve(response.result) : reject(new Error(response.error))));
-    const text = { ...labels };
-    for (const frame of plan.input.frames) text[frame.id] = text[frame.modelId] ?? frame.modelId;
-    for (const node of plan.input.nodes) if (node.side && !text[node.id]) {
-      const parts = JSON.parse(node.id) as string[];
-      text[node.id] = `${node.side}: ${text[parts[2]!] ?? parts[2]}`;
-    }
-    results[name] = { input: plan.input, geometry, labels: text };
+    results[name] = { input: plan.input, geometry, labels: sceneLabels(plan, labels) };
   }
   try {
     for (const identifier of identifiers) {
