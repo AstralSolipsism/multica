@@ -178,17 +178,17 @@ export function DagToolbar({
           />
         ) : (
           <>
-            <span className="inline-flex shrink-0 items-center gap-1.5">
-              <ListTree className="size-3.5" />
-              <span className="tabular-nums">
+            <span className="inline-flex min-w-0 shrink items-center gap-1.5 overflow-hidden">
+              <ListTree className="size-3.5 shrink-0" />
+              <span className="truncate tabular-nums">
                 {tDag(($) => $.summary_matches, { count: stats.matched })}
               </span>
               {stats.context > 0 && (
-                <span className="tabular-nums">
+                <span className="truncate tabular-nums">
                   {tDag(($) => $.summary_context, { count: stats.context })}
                 </span>
               )}
-              <span className="tabular-nums">
+              <span className="truncate tabular-nums">
                 {tDag(($) => $.summary_edges, { count: stats.edges })}
               </span>
             </span>
