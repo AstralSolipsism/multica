@@ -50,6 +50,7 @@ import { TaskStatusPill } from "./task-status-pill";
 import { CHAT_COLUMN, CHAT_GUTTER } from "./chat-column";
 import { FOLLOW_EDGE_THRESHOLD } from "../../common/task-transcript/transcript-follow";
 import { LIVE_END_ROW_ATTR, useStickToBottom } from "./stick-to-bottom";
+import { useChatMessageWindowIndex } from "./chat-message-window";
 import { formatElapsedMs } from "../lib/format";
 import {
   canonicalAnswerText,
@@ -70,7 +71,6 @@ interface ChatMessageListProps {
   pendingTask: ChatPendingTask | null | undefined;
   /** Resolved presence; pass `undefined` while loading to keep the pill copy neutral. */
   availability: AgentAvailability | undefined;
-  firstItemIndex?: number;
   hasOlderMessages?: boolean;
   isFetchingOlderMessages?: boolean;
   onLoadOlderMessages?: () => void;
@@ -138,13 +138,21 @@ function messageRowKey(message: ChatMessage): string {
 
 function ChatListHeader({ context }: { context?: ChatListContext }) {
   const { t } = useT("chat");
+  // The caption slot keeps its height whether or not the caption is showing:
+  // it sits ABOVE every row, so appearing/disappearing would push the content
+  // the reader is looking at — exactly the jump OL-272 calls out when an
+  // older page starts/finishes loading. `invisible` keeps the layout box and
+  // drops the text from hit-testing and the a11y tree while idle.
   return (
     <div className={cn(CHAT_COLUMN, "pt-4")}>
-      {context?.isFetchingOlderMessages && (
-        <div className="text-center text-caption text-muted-foreground">
-          {t(($) => $.message_list.loading_older)}
-        </div>
-      )}
+      <div
+        className={cn(
+          "text-center text-caption text-muted-foreground",
+          !context?.isFetchingOlderMessages && "invisible",
+        )}
+      >
+        {t(($) => $.message_list.loading_older)}
+      </div>
     </div>
   );
 }
@@ -179,7 +187,6 @@ export function ChatMessageList({
   messages,
   pendingTask,
   availability,
-  firstItemIndex = 0,
   hasOlderMessages = false,
   isFetchingOlderMessages = false,
   onLoadOlderMessages,
@@ -277,7 +284,13 @@ export function ChatMessageList({
     return items;
   }, [messages, hasLive, pendingTaskId]);
 
-  const firstIndex = renderItems.length > 0 ? firstItemIndex : 0;
+  // Virtuoso's scroll compensation anchors to indices, so `firstItemIndex`
+  // must track where the FIRST RENDERED row moved between renders — computed
+  // here from the row keys themselves, not from page arithmetic upstream (a
+  // refetch can slide page boundaries without touching the top row, and the
+  // kickoff filter above makes raw counts lie; see chat-message-window.ts).
+  const renderKeys = useMemo(() => renderItems.map((item) => item.key), [renderItems]);
+  const firstIndex = useChatMessageWindowIndex(renderKeys);
   const liveEndKey = renderItems[renderItems.length - 1]?.key ?? null;
 
   const listContext: ChatListContext = {
