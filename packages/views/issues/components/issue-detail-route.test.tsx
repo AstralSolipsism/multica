@@ -101,6 +101,34 @@ describe("useCanonicalIssueUrl", () => {
     );
     expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134#comment-comment-7");
   });
+
+  // OL-302: desktop reuses the route instance across issues (no remount, no
+  // key), so the once-guard survives into the NEXT visit. A second UUID
+  // arrival for the same issue then compares equal to the stored target and
+  // the tab URL stays UUID-spelled. The guard must be scoped to the routeId
+  // stint that produced it.
+  it("rewrites again when the same issue is re-entered via its UUID after the route moved on", () => {
+    const uuid = "cb240efb-154c-42a8-ae92-42b02676feca";
+    const { rerender } = renderHook(
+      ({ routeId, identifier }: { routeId: string; identifier?: string }) =>
+        useCanonicalIssueUrl(routeId, identifier),
+      { wrapper, initialProps: { routeId: uuid, identifier: undefined as string | undefined } },
+    );
+
+    // First UUID visit: rewrite once the issue resolves, then the committed
+    // URL catches up and the routeId becomes the identifier spelling.
+    rerender({ routeId: uuid, identifier: "TRS-134" });
+    expect(replace).toHaveBeenCalledTimes(1);
+    rerender({ routeId: "TRS-134", identifier: "TRS-134" });
+
+    // Away to another issue, then back to the same one via its UUID again.
+    rerender({ routeId: "TRS-9", identifier: "TRS-9" });
+    rerender({ routeId: uuid, identifier: undefined });
+    rerender({ routeId: uuid, identifier: "TRS-134" });
+
+    expect(replace).toHaveBeenCalledTimes(2);
+    expect(replace).toHaveBeenLastCalledWith("/acme/issues/TRS-134");
+  });
 });
 
 describe("parseCommentHighlightHash", () => {
