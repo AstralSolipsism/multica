@@ -190,6 +190,9 @@ export function ChatWindow() {
     id: number;
     content: string;
   } | null>(null);
+  // Bump-on-send nonce handed to ChatMessageList: an accepted send re-engages
+  // the live-end follow and jumps to the reader's own bubble (OL-272 review).
+  const [resumeFollowNonce, setResumeFollowNonce] = useState(0);
   const nextConversationStarterRequestIdRef = useRef(0);
   const prefillConversationStarter = useCallback(
     (prompt: string) => {
@@ -580,6 +583,11 @@ export function ChatWindow() {
         setActiveSession(sessionId);
       }
       commitInput?.({ extraDraftKeys: [sessionId], clearEditor: stillOnSourceSession });
+      // An accepted send re-engages the live-end follow: the follow now
+      // releases after one line of upward scrolling (OL-272), so a reader who
+      // peeked up slightly before sending would otherwise have their own
+      // bubble and the streaming reply grow silently below the fold.
+      setResumeFollowNonce((n) => n + 1);
 
       if (stopRequestedBeforeTaskRef.current) {
         stopRequestedBeforeTaskRef.current = false;
@@ -940,6 +948,7 @@ export function ChatWindow() {
           isFetchingOlderMessages={isFetchingOlderMessages}
           onLoadOlderMessages={() => void fetchOlderMessages()}
           onQuickAction={(action) => handleSend(action.prompt)}
+          resumeFollowNonce={resumeFollowNonce}
           quickActionsDisabled={
             !!pendingTaskId ||
             isSessionArchived ||

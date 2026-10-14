@@ -92,6 +92,14 @@ interface ChatMessageListProps {
    * that reply until chat:quick_actions resolves it.
    */
   quickActionsPendingMessageId?: string | null;
+  /**
+   * Bump-on-send nonce: the reader sent a message from this surface, so the
+   * live-end follow re-engages and the list jumps to their bubble. Without
+   * it, a reader who had scrolled up even one notch (the follow releases
+   * after one line now, OL-272) would have their own message and the
+   * streaming reply growing silently below the fold.
+   */
+  resumeFollowNonce?: number;
 }
 
 // ─── Virtuoso chrome ─────────────────────────────────────────────────────
@@ -195,6 +203,7 @@ export function ChatMessageList({
   quickActionsDisabled = false,
   onRegenerateQuickActions,
   quickActionsPendingMessageId = null,
+  resumeFollowNonce = 0,
 }: ChatMessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollContainerEl, setScrollContainerEl] = useState<HTMLDivElement | null>(null);
@@ -209,10 +218,15 @@ export function ChatMessageList({
   const pinToLiveEnd = useCallback(() => {
     virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" });
   }, []);
-  const { isFollowing, onContentHeightChanged, hasReachedLiveEnd } = useStickToBottom(
-    scrollContainerEl,
-    pinToLiveEnd,
-  );
+  const { isFollowing, onContentHeightChanged, resumeLiveEnd, hasReachedLiveEnd } =
+    useStickToBottom(scrollContainerEl, pinToLiveEnd);
+  // Own-send follow resume: fires only when the nonce moves past whatever the
+  // list mounted with, so a remount on session switch never double-jumps (the
+  // fresh instance already opens at the live end).
+  const mountNonceRef = useRef(resumeFollowNonce);
+  useEffect(() => {
+    if (resumeFollowNonce !== mountNonceRef.current) resumeLiveEnd();
+  }, [resumeFollowNonce, resumeLiveEnd]);
   // Soft edge fade hinting more content above/below. Kept small so it barely
   // grazes full-bleed previews (image / HTML) at the edges.
   const fadeStyle = useScrollFade(scrollRef, 16);

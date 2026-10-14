@@ -184,6 +184,11 @@ interface Scroller {
   shiftSpaceFromRowControl(): void;
   /** The browser scrolls the list itself (answering a key), no input seen. */
   browserScrollsListUp(px: number): void;
+  /**
+   * A scrollbar drag: mousedown on the scroller itself, then the thumb's
+   * positions as distance-from-bottom, then mouseup on the window.
+   */
+  scrollbarDrag(fromBottomPath: number[]): void;
   /** Every `scrollToIndex` the bottom-stick asked Virtuoso for. */
   pinCalls(): unknown[];
   /** Writes to `scrollTop` from outside Virtuoso — always a bug (MUL-6879). */
@@ -342,6 +347,23 @@ function scroller(el: HTMLElement, initialContent = 2000): Scroller {
       state.scrollTop -= px;
       scrollEvent();
     },
+    scrollbarDrag(fromBottomPath) {
+      // Mousedown lands on the scroller element itself (target === el), which
+      // is how the wiring tells the thumb/track from row content.
+      act(() => {
+        el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      });
+      for (const fromBottom of fromBottomPath) {
+        state.scrollTop = Math.max(
+          0,
+          state.contentHeight - state.viewportHeight - fromBottom,
+        );
+        scrollEvent();
+      }
+      act(() => {
+        window.dispatchEvent(new MouseEvent("mouseup"));
+      });
+    },
     pinCalls() {
       return pinCalls;
     },
@@ -359,17 +381,19 @@ function renderStreamingChat({ contentHeight = 2000 } = {}) {
   const qc = new QueryClient();
   qc.setQueryData(chatKeys.taskMessages(TASK_ID), [taskMsg(0, "Looking into it. ")]);
 
-  const view = render(
+  const tree = (resumeFollowNonce = 0) => (
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
       <QueryClientProvider client={qc}>
         <ChatMessageList
           messages={[]}
           pendingTask={{ task_id: TASK_ID, status: "running" }}
           availability={undefined}
+          resumeFollowNonce={resumeFollowNonce}
         />
       </QueryClientProvider>
-    </I18nProvider>,
+    </I18nProvider>
   );
+  const view = render(tree());
 
   const el = view.container.querySelector<HTMLElement>("[data-tab-scroll-root]");
   if (!el) throw new Error("chat list did not render a scroll container");
@@ -383,6 +407,12 @@ function renderStreamingChat({ contentHeight = 2000 } = {}) {
       view.container
         .querySelector("[data-follow-at-bottom]")
         ?.getAttribute("data-follow-at-bottom"),
+    /** The surface's send path bumping the resume-follow nonce. */
+    sendOwnMessage: (nonce = 1) => {
+      act(() => {
+        view.rerender(tree(nonce));
+      });
+    },
     streamChunk: (seq: number) => {
       act(() => {
         qc.setQueryData<TaskMessagePayload[]>(
@@ -762,6 +792,60 @@ describe("ChatMessageList auto-scroll", () => {
     streamChunk(1);
     scroll.grow(500);
 
+    expect(scroll.distanceFromBottom()).toBe(0);
+  });
+
+  // OL-272 review regression: the release threshold sits INSIDE the edge
+  // zone, so a scrollbar drag releases without ever leaving the zone — and
+  // the at-edge transition (which only fires on re-entry) cannot re-engage
+  // it. Reaching the live end has to do it.
+  it("re-engages after a short scrollbar drag back to the bottom", () => {
+    const { scroll, streamChunk } = renderStreamingChat();
+
+    scroll.scrollbarDrag([50, 100, 50, 0]);
+    gestureSettles();
+
+    streamChunk(1);
+    scroll.grow(180);
+
+    expect(scroll.distanceFromBottom()).toBe(0);
+  });
+
+  // OL-272 review regression: on the way back from far out, re-entering the
+  // edge zone re-engages mid-drag — the latch must not re-release on the
+  // toward-motion frames that follow.
+  it("stays engaged when a long scrollbar drag re-enters the edge zone", () => {
+    const { scroll, streamChunk } = renderStreamingChat();
+
+    scroll.scrollbarDrag([100, 300, 500, 300, 110, 80, 30, 0]);
+    gestureSettles();
+
+    streamChunk(1);
+    scroll.grow(180);
+
+    expect(scroll.distanceFromBottom()).toBe(0);
+  });
+
+  // OL-272 review: the follow releases after one line of scrolling now, so a
+  // reader who peeked up a notch and hit send would otherwise watch nothing —
+  // their bubble and the streaming reply would grow below the fold. An
+  // accepted send re-engages the follow and jumps to the live end.
+  it("resumes following when the reader sends from a scrolled-up position", () => {
+    const { scroll, streamChunk, sendOwnMessage, followsAtBottom } = renderStreamingChat();
+
+    scroll.readerScrollsUp(100);
+    expect(followsAtBottom()).toBe("false");
+
+    sendOwnMessage();
+    // The jump to the live end fires immediately…
+    expect(scroll.pinCalls()).toEqual([{ index: "LAST", align: "end" }]);
+    expect(scroll.distanceFromBottom()).toBe(0);
+
+    // …and the stream that follows their send keeps them pinned (a released
+    // latch would leave this growth unpinned).
+    streamChunk(9);
+    scroll.grow(180);
+    expect(scroll.pinCalls()).toHaveLength(2);
     expect(scroll.distanceFromBottom()).toBe(0);
   });
 

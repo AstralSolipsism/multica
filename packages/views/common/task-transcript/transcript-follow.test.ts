@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
-import { createLiveEndFollow, FOLLOW_EDGE_THRESHOLD } from "./transcript-follow";
+import { createLiveEndFollow, FOLLOW_EDGE_THRESHOLD, FOLLOW_RELEASE_THRESHOLD } from "./transcript-follow";
 
 function makeFollow(startAt = 0) {
   let t = startAt;
@@ -305,6 +305,68 @@ describe("createLiveEndFollow", () => {
     follow.onScroll(80);
     expect(follow.isFollowing()).toBe(false);
     follow.pointerUp();
+  });
+
+  it("releases a scrollbar drag only past the release threshold, never exactly at it", () => {
+    // Boundary contract (OL-272 review): exactly one line of displacement —
+    // a deltaMode=1 line scroll, one ArrowDown — stays forgiven; one pixel
+    // past it is intent.
+    const { follow } = makeFollow();
+    follow.pointerDown(true);
+    follow.onScroll(FOLLOW_RELEASE_THRESHOLD);
+    expect(follow.isFollowing()).toBe(true);
+    follow.onScroll(FOLLOW_RELEASE_THRESHOLD + 1);
+    expect(follow.isFollowing()).toBe(false);
+    follow.pointerUp();
+  });
+
+  it("forgives exactly one line of wheel scrolling, releases one pixel past it", () => {
+    // Same boundary on the input-attribution branch, in two gestures so the
+    // second is judged on its own (OL-272 review).
+    const { follow, tick } = makeFollow();
+    follow.input(FOLLOW_RELEASE_THRESHOLD);
+    expect(follow.onScroll(FOLLOW_RELEASE_THRESHOLD)).toBe(false);
+    expect(follow.isFollowing()).toBe(true);
+    tick(400); // the gesture settles; the taken displacement still counts
+    follow.input(1);
+    expect(follow.onScroll(FOLLOW_RELEASE_THRESHOLD + 1)).toBe(false);
+    expect(follow.isFollowing()).toBe(false);
+  });
+
+  it("re-engages when a short scrollbar drag returns to the live end", () => {
+    // OL-272 review regression: with the release threshold inside the edge
+    // zone, a drag that never leaves the zone releases but could not
+    // re-engage — the old absolute-position branch had no way back.
+    const { follow } = makeFollow();
+    follow.pointerDown(true);
+    follow.onScroll(100); // dragged up 100px: released
+    expect(follow.isFollowing()).toBe(false);
+    follow.onScroll(50); // on the way back: toward motion never re-releases
+    expect(follow.isFollowing()).toBe(false);
+    follow.onScroll(0); // the thumb reaches the end: following again
+    expect(follow.isFollowing()).toBe(true);
+    follow.pointerUp();
+    expect(follow.onResize(180)).toBe(true); // growth pins again
+  });
+
+  it("does not re-release when a long scrollbar drag re-enters the edge zone", () => {
+    // OL-272 review regression: re-entering the zone re-engages
+    // (onAtEdgeChange), and the SAME scroll event then continues through the
+    // latch. The old absolute-position branch saw 40 < distance <= 120 and
+    // released again on every frame of the way back.
+    const { follow } = makeFollow();
+    follow.pointerDown(true);
+    follow.onScroll(500);
+    expect(follow.isFollowing()).toBe(false);
+    follow.onAtEdgeChange(true); // the surface reports re-entering the zone
+    expect(follow.onScroll(110)).toBe(false); // the same event, toward the end
+    expect(follow.isFollowing()).toBe(true);
+    follow.onScroll(30);
+    expect(follow.isFollowing()).toBe(true);
+    follow.onScroll(0);
+    expect(follow.isFollowing()).toBe(true);
+    follow.pointerUp();
+    expect(follow.onResize(180)).toBe(true); // growth pins again
   });
 
   it("never pins while the mouse is held on row content (text selection autoscroll)", () => {

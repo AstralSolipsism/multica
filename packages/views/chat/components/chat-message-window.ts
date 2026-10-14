@@ -47,6 +47,16 @@ export function advanceChatMessageWindowAnchor(
   }
   // Rows dropped from the top (the loaded window slid down on refetch): the
   // new top row sat `dropped` positions into the old window.
+  //
+  // NOTE: an INCREASE of firstItemIndex is how Virtuoso learns "rows were
+  // removed from the top" and shifts the viewport up by their height — its
+  // type docs only describe the decrease-for-prepend direction, but this
+  // relies on the increase path (the `shiftWith` compensation, verified
+  // against react-virtuoso 4.18.7 with the real library in Chromium; the
+  // component tests here mock Virtuoso and would not catch a behavior change
+  // on upgrade). If a Virtuoso upgrade ever stops compensating increases, the
+  // reader's row jumps on every window slide — re-verify against OL-272's
+  // acceptance criterion 4 when bumping the dependency.
   const dropped = prev.keys.indexOf(first);
   if (dropped > 0) {
     return { keys, firstItemIndex: prev.firstItemIndex + dropped };

@@ -16,15 +16,21 @@
 //   motion, including touch momentum and fractional drag frames.
 // - Attributed displacement ACCUMULATES until the reader returns to the live
 //   end; it does not expire with the gesture and pins do not erase it. A
-//   trackpad flick and five discrete wheel notches at reading pace both cross
-//   the same threshold, and repeated sub-threshold attempts against a fast
+//   trackpad flick and a single discrete wheel notch both cross the same
+//   release threshold, and repeated sub-threshold attempts against a fast
 //   stream eventually win instead of being re-pinned forever.
 // - While following, displacement not attributed to the reader is pinned
 //   straight back to the live end (`onScroll` / `onResize` return the
 //   verdict) — immediately, with no intent-window timer for a final event to
 //   hide behind — but never during an active touch or while the mouse is held
 //   down (text selection autoscroll must not be fought).
-// - Arriving back within the edge zone re-engages the follow.
+// - Re-engaging does not depend on which input device brought the reader
+//   back: any confirmed motion to the live end (distance zero) re-engages —
+//   a wheel/touch/key scroll, or a scrollbar drag, which only ever releases
+//   on AWAY motion — and so does arriving back within the edge zone from
+//   outside it. The release threshold sits INSIDE that zone, so a release can
+//   happen without the zone ever being left; the at-edge transition alone
+//   cannot cover re-engagement (OL-272 review).
 //
 // The state machine is direction-agnostic: callers feed it away-positive
 // input deltas and the current distance from THEIR live end (`scrollTop` for
@@ -198,10 +204,26 @@ export function createLiveEndFollow(now: () => number = () => Date.now()): LiveE
       if (!active) return false;
       const moved = distance - lastDistance;
       lastDistance = distance;
-      // A scrollbar drag is fully user-controlled: absolute position is the
-      // user's displacement, so the release threshold applies to it directly.
+      // A scrollbar drag is fully user-controlled, and the thumb's absolute
+      // position is the reader's displacement — but judged DIRECTIONALLY:
+      // only moving away past the release threshold releases, and reaching
+      // the live end re-engages. Judging by absolute position would re-release
+      // on every frame of the way back (the release threshold sits inside the
+      // edge zone, and re-entering that zone has just re-engaged the follow on
+      // this same event), and a drag that stayed inside the zone could never
+      // re-engage at all (OL-272 review).
       if (scrollbarDrag) {
-        if (distance > FOLLOW_RELEASE_THRESHOLD) following = false;
+        if (distance === 0) {
+          following = true;
+          awayBudget = 0;
+          towardBudget = 0;
+          awayTaken = 0;
+          motionDirection = 0;
+          motionSource = null;
+          motionCarry = 0;
+        } else if (moved > 0 && distance > FOLLOW_RELEASE_THRESHOLD) {
+          following = false;
+        }
         return false;
       }
       // Motion already confirmed in this direction continues without a new

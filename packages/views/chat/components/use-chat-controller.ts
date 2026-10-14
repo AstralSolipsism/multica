@@ -266,6 +266,9 @@ export function useChatController(opts?: { isActive?: boolean }) {
   // chat starts. Bumped by handleNewChat / handleStartNewChat only, so
   // selecting an existing chat or a deep link never steals focus.
   const [focusInputRequest, setFocusInputRequest] = useState(0);
+  // Bump-on-send nonce handed to ChatMessageList: an accepted send re-engages
+  // the live-end follow and jumps to the reader's own bubble (OL-272 review).
+  const [resumeFollowNonce, setResumeFollowNonce] = useState(0);
   const requestInputFocus = useCallback(
     () => setFocusInputRequest((n) => n + 1),
     [],
@@ -645,6 +648,11 @@ export function useChatController(opts?: { isActive?: boolean }) {
         setActiveSession(sessionId);
       }
       commitInput?.({ extraDraftKeys: [sessionId], clearEditor: stillOnSourceSession });
+      // An accepted send re-engages the live-end follow: the follow now
+      // releases after one line of upward scrolling (OL-272), so a reader who
+      // peeked up slightly before sending would otherwise have their own
+      // bubble and the streaming reply grow silently below the fold.
+      setResumeFollowNonce((n) => n + 1);
 
       if (stopRequestedBeforeTaskRef.current) {
         stopRequestedBeforeTaskRef.current = false;
@@ -873,6 +881,8 @@ export function useChatController(opts?: { isActive?: boolean }) {
     handleRestoreDraftApplied,
     // compose-box focus nonce (bumped on new chat)
     focusInputRequest,
+    // live-end follow resume nonce (bumped on accepted send)
+    resumeFollowNonce,
     conversationStarterRequest,
     handleConversationStarterApplied,
     prefillConversationStarter,

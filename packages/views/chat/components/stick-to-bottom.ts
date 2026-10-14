@@ -96,6 +96,13 @@ export interface StickToBottom {
   /** Wire to Virtuoso's `totalListHeightChanged`: the content resized. */
   onContentHeightChanged(): void;
   /**
+   * Re-engage the follow and jump to the live end. Used when the reader
+   * SENDS a message: their own bubble and the streaming reply must not land
+   * silently below the fold just because they had scrolled up a notch
+   * (OL-272 review). Not a reader-action override — nothing else calls it.
+   */
+  resumeLiveEnd(): void;
+  /**
    * False until the newest message has actually arrived at the bottom of the
    * viewport. Keep the list hidden until then: Virtuoso opens it by scrolling
    * to where it PREDICTS that message is, paints there, and only then
@@ -256,6 +263,10 @@ export function useStickToBottom(
       const nowAtEdge = isAtLiveEnd(scrollEl);
       if (nowAtEdge !== atEdge) {
         atEdge = nowAtEdge;
+        // Edge transitions are reported BEFORE the scroll itself: re-entering
+        // the zone re-engages the follow, and the latch must then judge this
+        // same event by its DIRECTION (a scrollbar drag on the way back must
+        // not re-release — the release threshold sits inside the zone).
         follow.onAtEdgeChange(nowAtEdge);
       }
       // The list itself moved: this is what promotes staged input.
@@ -297,12 +308,18 @@ export function useStickToBottom(
     };
   }, [scrollEl, follow, pin, onResize]);
 
+  const resumeLiveEnd = useCallback(() => {
+    follow.reset();
+    pin();
+  }, [follow, pin]);
+
   return useMemo(
     () => ({
       isFollowing: () => follow.isFollowing(),
       onContentHeightChanged: onResize,
+      resumeLiveEnd,
       hasReachedLiveEnd,
     }),
-    [follow, onResize, hasReachedLiveEnd],
+    [follow, onResize, resumeLiveEnd, hasReachedLiveEnd],
   );
 }
