@@ -369,6 +369,37 @@ describe("createLiveEndFollow", () => {
     expect(follow.onResize(180)).toBe(true); // growth pins again
   });
 
+  it("re-entering the edge zone forgets earlier displacement, so a sub-line nudge is forgiven", () => {
+    // OL-272 review (RM6): re-engagement must clear the accumulated reader
+    // displacement — otherwise the next small nudge inside the zone would
+    // release on the strength of an EARLIER excursion.
+    const { follow } = makeFollow();
+    follow.input(200);
+    follow.onScroll(200);
+    expect(follow.isFollowing()).toBe(false);
+
+    follow.onAtEdgeChange(true); // scrolled back into the zone: re-engaged…
+    expect(follow.onScroll(110)).toBe(true); // …and the surface pins to the end
+    follow.onScroll(0); // the pin lands
+
+    follow.input(12);
+    expect(follow.onScroll(12)).toBe(false);
+    expect(follow.isFollowing()).toBe(true); // 12px on this visit stays forgiven
+  });
+
+  it("reengage keeps held-pointer state (a send must not fight a selection drag)", () => {
+    // OL-272 review (RM10): the chat list's send-resume rides reengage(); its
+    // pin lands unconditionally, but later growth must not be pinned while
+    // the reader's mouse is still down.
+    const { follow } = makeFollow();
+    follow.pointerDown(false);
+    follow.reengage();
+    expect(follow.isFollowing()).toBe(true);
+    expect(follow.onScroll(600)).toBe(false); // held mouse still suppresses pins
+    follow.pointerUp();
+    expect(follow.onScroll(600)).toBe(true); // released: enforcement resumes
+  });
+
   it("never pins while the mouse is held on row content (text selection autoscroll)", () => {
     // Regression: selection-drag autoscroll has no wheel/touch input; pinning
     // during it made text below the fold unselectable.
