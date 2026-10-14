@@ -24,6 +24,7 @@ function invariants(scene: DagSceneInput, result: DagSceneGeometry) {
     const low = Math.min(segment.start[axis], segment.end[axis]);
     const high = Math.max(segment.start[axis], segment.end[axis]);
     expect(high).toBeGreaterThan(low);
+    expect(segment.edgeIds.length).toBeGreaterThan(0);
     for (const other of result.segments.slice(index + 1)) {
       if (other.start[fixed] !== segment.start[fixed]
         || other.end[fixed] !== segment.start[fixed]) continue;
@@ -88,6 +89,21 @@ describe("Stage 8 scene geometry", () => {
     invariants(scene, result);
     expect(result.width).toBeGreaterThan(248 * 3);
     expect(result.height).toBeLessThan(116 * 10);
+  });
+  it("places an earlier overview component before a later isolated card", async () => {
+    const scene: DagSceneInput = {
+      ...input([node("a"), node("b"), node("isolated")], [edge("a", "b")]),
+      kind: "overview",
+    };
+    const result = await layoutDagScene(scene, engine);
+
+    invariants(scene, result);
+    const readingOrder = ["a", "isolated"].sort((first, second) => {
+      const a = result.nodes[first]!;
+      const b = result.nodes[second]!;
+      return a.y - b.y || a.x - b.x;
+    });
+    expect(readingOrder).toEqual(["a", "isolated"]);
   });
   it("has single centered ports, orthogonal branches, dots and deterministic output", async () => {
     const scene = input([node("a"), node("b"), node("c"), node("d")], [edge("a", "b"), edge("a", "c"), edge("b", "d"), edge("c", "d")]);

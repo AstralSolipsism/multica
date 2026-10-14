@@ -71,6 +71,18 @@ describe("scene route composition", () => {
     expect(result.junctions).toEqual([]);
   });
 
+  it("retains the full route when it doubles back at the lower end", () => {
+    const dependency = edge("a", "b");
+    const result = dagSceneSegments([dependency], {
+      [dependency.id]: [{ x: 100, y: 0 }, { x: 0, y: 0 }, { x: 60, y: 0 }],
+    });
+
+    expect(result.segments.map((s) => [s.start.x, s.end.x, s.edgeIds])).toEqual([
+      [0, 60, [dependency.id]], [60, 100, [dependency.id]],
+    ]);
+    expect(result.junctions).toEqual([]);
+  });
+
   it("distinguishes bus joins from perpendicular crossings and disjoint paths", () => {
     const edges = [edge("a", "b"), edge("c", "d"), edge("e", "f"), edge("g", "h"),
       edge("i", "j")];
