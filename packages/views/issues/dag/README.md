@@ -1,8 +1,9 @@
 # DAG scene layout (Stage 8)
 
-The existing `useDagLayout` / `layoutDagProjection` canvas stays available until
-Stage 9. New consumers use the independent scene API below. It imports only
-the core models; it does not fetch data or choose rendering styles.
+The two-level DAG canvas (Stage 9) renders exclusively through the scene API
+below: `dag-view.tsx` builds plans from the OL-279 models, this engine computes
+geometry, and `dag-scene-canvas.tsx` paints it. The engine imports only the
+core models; it does not fetch data or choose rendering styles.
 
 ```ts
 const plan = dagOverviewLayoutInput(overview);

@@ -13,42 +13,36 @@ export const VIEW_MODE_CAPABILITIES = {
     cardProperties: true,
     batchSelection: true,
     graph: false,
-    direction: false,
   },
   list: {
     ordering: true,
     cardProperties: true,
     batchSelection: true,
     graph: false,
-    direction: false,
   },
   table: {
     ordering: true,
     cardProperties: false,
     batchSelection: true,
     graph: false,
-    direction: false,
   },
   swimlane: {
     ordering: true,
     cardProperties: true,
     batchSelection: true,
     graph: false,
-    direction: false,
   },
   gantt: {
     ordering: true,
     cardProperties: false,
     batchSelection: true,
     graph: false,
-    direction: false,
   },
   dag: {
     ordering: false,
     cardProperties: false,
     batchSelection: false,
     graph: true,
-    direction: true,
   },
 } as const;
 

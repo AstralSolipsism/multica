@@ -1,26 +1,25 @@
 import type { CoordinateExtent, Rect, Viewport } from "@xyflow/react";
-import type { DagPoint, DagLayoutResult } from "./dag-layout";
-import {
-  DAG_NODE_WIDTH,
-  DAG_NODE_HEIGHT,
-  DAG_GROUP_HEADER_HEIGHT,
-  DAG_GROUP_HEADER_MAX_WIDTH,
-} from "./dag-constants";
+import { DAG_GROUP_HEADER_HEIGHT } from "./dag-constants";
+import type { DagSceneGeometry } from "./dag-scene";
 
 export type DagViewportTarget = Rect & { id: string };
 
-/** Empty group backgrounds and dependency routes are not navigation anchors. */
-export function dagViewportTargets(layout: DagLayoutResult): DagViewportTarget[] {
-  return Object.entries(layout.positions).map(([id, position]) => {
-    const group = layout.groups[id];
-    const size = group
-      ? {
-          width: Math.min(group.width, DAG_GROUP_HEADER_MAX_WIDTH),
-          height: DAG_GROUP_HEADER_HEIGHT,
-        }
-      : { width: DAG_NODE_WIDTH, height: DAG_NODE_HEIGHT };
-    return { id, ...position, ...size };
-  });
+/** Cards anchor on their full box, frames on their header: the empty body and
+ * dependency routes are not navigation anchors. */
+export function dagViewportTargets(
+  geometry: DagSceneGeometry,
+  frameHeaderWidth = 680,
+): DagViewportTarget[] {
+  return [
+    ...Object.entries(geometry.nodes).map(([id, box]) => ({ id, ...box })),
+    ...Object.entries(geometry.frames).map(([id, box]) => ({
+      id,
+      x: box.x,
+      y: box.y,
+      width: Math.min(box.width, frameHeaderWidth),
+      height: DAG_GROUP_HEADER_HEIGHT,
+    })),
+  ];
 }
 
 /** A single outer rectangle leaves every path between task lines traversable. */
@@ -106,13 +105,4 @@ export function constrainDagViewport(
     }
   }
   return preferred ?? closest;
-}
-
-/** Translate a moved layout anchor back to its previous screen position. */
-export function anchorShift(saved: DagPoint, next: DagPoint, viewport: Viewport): Viewport {
-  return {
-    ...viewport,
-    x: viewport.x + (saved.x - next.x) * viewport.zoom,
-    y: viewport.y + (saved.y - next.y) * viewport.zoom,
-  };
 }

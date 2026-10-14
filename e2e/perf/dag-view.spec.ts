@@ -3,8 +3,11 @@
  *
  * Measures the issues page's DAG view against synthetic graph data of the
  * shapes OL-183 defined: fetch, parse+validate, layout, first-interactive,
- * pan/zoom frame rate, and card-click response. Everything except HTTP is the
- * real production page — routing, TanStack Query, the ELK layout worker,
+ * pan/zoom frame rate, card-click response, and entering a task line. The
+ * view is two-level (overview cards → one line's task cards); interaction
+ * sections run on whichever level painted first (a dataset with a single
+ * visible line auto-enters it). Everything except HTTP is the real
+ * production page — routing, TanStack Query, the ELK scene-layout workers,
  * React Flow. Like the typing scenario, requests are answered from a fixed
  * table: anything outside it invalidates the sample.
  *
@@ -148,16 +151,20 @@ const percentile = (values: number[], p: number): number | null => {
 };
 
 /**
- * Injected before the app boots. Owns three measurements:
+ * Injected before the app boots. Owns these measurements:
  *  - rAF frame-interval sampling (`__dagSample`);
- *  - layout-worker timing: Worker#postMessage → message received, keyed by
- *    the requestId the DAG layout protocol carries (`__dagLayouts`);
+ *  - scene-layout worker timing: Worker#postMessage → message received, keyed
+ *    by the requestId the DAG scene-layout protocol carries (`__dagLayouts`),
+ *    covering the per-kind workers ("overview"/"line"/"focus");
  *  - first-occurrence markers via MutationObserver for cards, toolbar and
  *    the pending-skeleton disappearing (`__dagMarks`), all on
  *    performance.now();
  *  - an in-page click prober that dispatches a real pointer click and waits
  *    for the toolbar selection label to appear, then resolves on the next
- *    animation frame (`__dagClick`).
+ *    animation frame (`__dagClick`);
+ *  - an in-page enter-line prober that double-clicks the first visible
+ *    overview line card and resolves on the frame after the line level
+ *    renders its first task card (`__dagEnterLine`).
  */
 const INSTRUMENT = `
   (() => {
@@ -176,10 +183,17 @@ const INSTRUMENT = `
     };
     requestAnimationFrame(tick);
     // ---- layout worker timing ----------------------------------------------
-    // Each request is timed postMessage → response (message event, recorded
-    // in the constructor so every worker instance is covered) → committed
-    // (the frame the pending skeleton disappeared, i.e. the React commit of
-    // the result). A response carrying 'error' is recorded as such.
+    // The scene runner (createDagSceneRunner) keeps one Worker per scene kind
+    // ("overview"/"line"/"focus") and posts {requestId, input, fallback?};
+    // the worker answers {requestId, result, error}. Each request is timed
+    // postMessage → response (message event, recorded in the constructor so
+    // every worker instance is covered) → committed (the frame the pending
+    // skeleton disappeared, i.e. the React commit of the result). A response
+    // carrying 'error' is recorded as such. Results served from the runner's
+    // LRU never touch a worker, so they simply do not appear here. A
+    // deadline-fallback repost reuses the requestId: the response is
+    // attributed to the first open record, so the measured span includes the
+    // fallback wait the user sat through.
     const layouts = [];
     window.__dagLayouts = layouts;
     const OriginalWorker = window.Worker;
@@ -198,7 +212,11 @@ const INSTRUMENT = `
       postMessage(data) {
         try {
           if (data && typeof data.requestId === "number") {
-            layouts.push({ requestId: data.requestId, postedAt: perf(), respondedAt: null, error: null, committedAt: null });
+            layouts.push({
+              requestId: data.requestId,
+              kind: data.input && typeof data.input.kind === "string" ? data.input.kind : null,
+              postedAt: perf(), respondedAt: null, error: null, committedAt: null,
+            });
           }
         } catch {}
         return super.postMessage(data);
@@ -209,7 +227,7 @@ const INSTRUMENT = `
     window.__dagMarks = marks;
     const has = (sel) => !!document.querySelector(sel);
     const observe = () => {
-      if (marks.firstCardAt == null && has('[data-dag-group],[data-dag-issue]')) marks.firstCardAt = perf();
+      if (marks.firstCardAt == null && has('[data-dag-overview-card],[data-dag-task]')) marks.firstCardAt = perf();
       if (marks.toolbarAt == null && has('[data-dag-toolbar]')) marks.toolbarAt = perf();
       if (marks.graphCanvasAt == null && has('[data-dag-canvas]')) marks.graphCanvasAt = perf();
       if (marks.firstCardAt != null && marks.skeletonGoneAt == null && !has('[data-slot="skeleton"]')) {
@@ -221,8 +239,11 @@ const INSTRUMENT = `
     observe();
     // Layout commit frame: a request is "committed" when the pending skeleton
     // disappeared on a frame after its response arrived. This is the app
-    // applying the result (use-dag-layout sets pendingSince null on receipt
-    // and React commits on the next render pass).
+    // applying the result (use-dag-scene-layout clears pending on receipt and
+    // React commits on the next render pass). Only the first paint shows the
+    // skeleton — a level switch keeps the previous scene painted while its
+    // layout runs — so later requests stay uncommitted here; the enter-line
+    // section measures that path instead.
     const commitWatcher = () => {
       for (const record of layouts) {
         if (record.committedAt == null && record.error == null
@@ -299,14 +320,13 @@ const INSTRUMENT = `
       return null;
     };
     // Cards actually visible in the viewport, with a clickable body point.
-    // Candidate points avoid the 76px group header (the fold toggle button
-    // lives there): centre-low first, then progressively lower/left-right
-    // offsets. A point is rejected when it is outside the card or lands on a
-    // button, so "never click the header" holds at any zoom level.
+    // Overview cards and task cards have no header buttons, but a candidate
+    // point is still rejected when it is outside the card or lands on a
+    // button, so the probe clicks card body only at any zoom level.
     window.__dagVisibleCards = () => {
       const vw = window.innerWidth, vh = window.innerHeight;
       const cards = [...document.querySelectorAll('.react-flow__node')]
-        .filter((el) => el.querySelector('[data-dag-group],[data-dag-issue]'));
+        .filter((el) => el.querySelector('[data-dag-overview-card],[data-dag-task]'));
       const out = [];
       for (const el of cards) {
         const rect = el.getBoundingClientRect();
@@ -332,6 +352,53 @@ const INSTRUMENT = `
       }
       return out;
     };
+    // Enter-line prober: a real double-click on the centre of the first
+    // visible overview line card, resolved on the frame after the line level
+    // renders its first task card. "invalid" when no line card is on screen
+    // (e.g. the dataset auto-entered its single line, or the graph painted
+    // only standalone cards).
+    window.__dagEnterLine = () => new Promise((resolve) => {
+      const vw = window.innerWidth, vh = window.innerHeight;
+      let target = null, x = 0, y = 0;
+      for (const el of document.querySelectorAll('[data-dag-overview-card][data-dag-kind="line"]')) {
+        const rect = el.getBoundingClientRect();
+        if (rect.bottom < 0 || rect.top > vh || rect.right < 0 || rect.left > vw) continue;
+        const cx = rect.x + rect.width / 2, cy = rect.y + rect.height / 2;
+        if (cx < 0 || cy < 0 || cx >= vw || cy >= vh) continue;
+        const hit = document.elementFromPoint(cx, cy);
+        if (hit && (el === hit || el.contains(hit))) { target = hit; x = cx; y = cy; break; }
+      }
+      if (!target) { resolve({ outcome: "invalid", elapsed: null }); return; }
+      const startedAt = perf();
+      let settled = false;
+      const finish = (outcome) => {
+        if (settled) return;
+        settled = true;
+        observer.disconnect();
+        // No duration on failure: a number must mean the line rendered.
+        resolve({ outcome, elapsed: outcome === "entered" ? Math.round(perf() - startedAt) : null });
+      };
+      const taskSeen = () => !!document.querySelector('[data-dag-task]');
+      const observer = new MutationObserver(() => {
+        if (taskSeen()) {
+          // Resolved when the first task card is on screen AND the next frame ran.
+          requestAnimationFrame(() => finish("entered"));
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      // 'view: window' is required: d3's drag/zoom handlers read
+      // event.view.document, which is null on dispatched events without it.
+      const opts = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, view: window, pointerId: 1, isPrimary: true };
+      for (let click = 0; click < 2; click++) {
+        target.dispatchEvent(new PointerEvent("pointerdown", { ...opts, pointerType: "mouse" }));
+        target.dispatchEvent(new MouseEvent("mousedown", opts));
+        target.dispatchEvent(new PointerEvent("pointerup", { ...opts, pointerType: "mouse" }));
+        target.dispatchEvent(new MouseEvent("mouseup", opts));
+        target.dispatchEvent(new MouseEvent("click", opts));
+      }
+      target.dispatchEvent(new MouseEvent("dblclick", opts));
+      setTimeout(() => finish("timeout"), 10_000);
+    });
     // Live viewport transform, for pan verification.
     window.__dagViewport = () =>
       document.querySelector(".react-flow__viewport")?.getAttribute("style") ?? null;
@@ -446,7 +513,7 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
   type Marks = { firstCardAt: number | null; toolbarAt: number | null; skeletonGoneAt: number | null; graphCanvasAt: number | null };
   const snapshot = () => page.evaluate(() => ({
     marks: (window as unknown as { __dagMarks: Marks }).__dagMarks,
-    layouts: (window as unknown as { __dagLayouts: { requestId: number; postedAt: number; respondedAt: number | null; error: string | null; committedAt: number | null }[] }).__dagLayouts,
+    layouts: (window as unknown as { __dagLayouts: { requestId: number; kind: string | null; postedAt: number; respondedAt: number | null; error: string | null; committedAt: number | null }[] }).__dagLayouts,
     graphArrived: performance.getEntriesByType("resource").some((e) => e.name.includes("/issues/graph")),
     // The layout-pending skeleton specifically: the empty state keeps a
     // persistent role=status, so that selector cannot mean "still loading".
@@ -641,9 +708,9 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
   }
 
   // ---- 3. Click response ----------------------------------------------------
-  // In-page: real pointer events on visible cards' bodies (never the 76px
-  // group header), timed from pointerdown to the frame after the toolbar's
-  // selection label appears. Each sample starts from a cleared selection.
+  // In-page: real pointer events on visible cards' bodies, timed from
+  // pointerdown to the frame after the toolbar's selection label appears.
+  // Each sample starts from a cleared selection.
   const clickSamples: number[] = [];
   let clickTimeouts = 0;
   let clickClearedFailed = 0;
@@ -680,7 +747,33 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     if (clickOutcome === "timeout") timedOut.click = true;
   }
 
-  // ---- 4. Collect ------------------------------------------------------------
+  // ---- 4. Enter a line -------------------------------------------------------
+  // In-page: real double-click on the first visible overview line card, timed
+  // to the frame after the line level renders its first task card (OL-183
+  // budget: 300 ms). "invalid" when no line card is visible — e.g. a dataset
+  // whose single visible line was auto-entered. Runs last among the
+  // interactive sections; afterwards the view returns to the overview so
+  // collection sees a settled page.
+  let enterLineMs: number | string = "invalid";
+  if (cardsPresent) {
+    const enter = await page.evaluate(
+      () => (window as unknown as { __dagEnterLine: () => Promise<{ outcome: string; elapsed: number | null }> }).__dagEnterLine(),
+    );
+    if (enter.outcome === "entered" && enter.elapsed != null) {
+      enterLineMs = enter.elapsed;
+    } else if (enter.outcome === "timeout") {
+      enterLineMs = "timeout";
+      timedOut.enter_line = true;
+    }
+    if (enter.outcome !== "invalid") {
+      // The back button renders as soon as the line level opens; click()
+      // waits for it. Best effort — a failed restore must not mask the
+      // measurement.
+      await page.locator("[data-dag-back]").click({ timeout: 5_000 }).catch(() => undefined);
+    }
+  }
+
+  // ---- 5. Collect ------------------------------------------------------------
   if (unknownRequests.length) invalid.push(`unmocked requests: ${[...new Set(unknownRequests)].slice(0, 5).join(", ")}`);
   if (external.length) invalid.push(`external requests: ${external.join(", ")}`);
   if (pageErrors.length) invalid.push(`page errors: ${pageErrors.slice(0, 3).join(" | ")}`);
@@ -716,6 +809,7 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     pan,
     zoom,
     click: clickOutcome,
+    enter_line_ms: enterLineMs,
     unmocked_requests: [...new Set(unknownRequests)].slice(0, 10),
     page_errors: pageErrors.slice(0, 5),
   });

@@ -1948,9 +1948,9 @@ describe("useIssueSurfaceController", () => {
       hasRestrictedContext: false,
     };
 
-    it("review F3: preserves an expansion when agents scope excludes its member-assigned child", async () => {
+    it("review F3: preserves the open line when agents scope excludes its member-assigned child", async () => {
       // The same workspace:agents surface previously contained F and its
-      // child C, both assigned to agents, and the user expanded F. C was then
+      // child C, both assigned to agents, and the user had opened F. C was then
       // assigned to a member: it is outside the query, not deleted/reparented.
       const graph = {
         ...graphFixture,
@@ -1971,7 +1971,7 @@ describe("useIssueSurfaceController", () => {
       } as unknown as ApiClient);
       const store = getIssueSurfaceViewStore("workspace:agents");
       store.getState().setViewMode("dag");
-      store.getState().setDagExpandedIds(["issue:feature"]);
+      store.getState().enterDagLine("feature");
       const { result } = renderHook(
         () => useIssueSurfaceController({
           scope: { type: "workspace", actorKind: "agents" },
@@ -1984,11 +1984,11 @@ describe("useIssueSurfaceController", () => {
         kind: "workspace", assignee_types: ["agent", "squad"],
       });
       expect(result.current.hasActiveFilters).toBe(false);
-      expect(store.getState().dagExpandedIds).toContain("issue:feature");
+      expect(store.getState().dagLineId).toBe("feature");
     });
 
     it("review round 4 F3: project scope cannot prove that a cross-project child disappeared", async () => {
-      // F and C were both in P1 when issue:F was expanded. C then moved to P2
+      // F and C were both in P1 when F's line was open. C then moved to P2
       // without changing its parent F. The P1 query now returns only F;
       // its complete=true is transaction completeness, not global membership.
       const graph = {
@@ -2006,7 +2006,7 @@ describe("useIssueSurfaceController", () => {
       } as unknown as ApiClient);
       const store = getIssueSurfaceViewStore("project:p1");
       store.getState().setViewMode("dag");
-      store.getState().setDagExpandedIds(["issue:feature"]);
+      store.getState().enterDagLine("feature");
       const { result } = renderHook(
         () => useIssueSurfaceController({
           scope: { type: "project", projectId: "p1" },
@@ -2019,7 +2019,7 @@ describe("useIssueSurfaceController", () => {
         kind: "project", project_id: "p1",
       });
       expect(result.current.hasActiveFilters).toBe(false);
-      expect(store.getState().dagExpandedIds).toContain("issue:feature");
+      expect(store.getState().dagLineId).toBe("feature");
     });
 
     it("keeps the graph query off in list-shaped modes", async () => {

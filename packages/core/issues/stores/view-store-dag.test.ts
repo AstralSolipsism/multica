@@ -14,55 +14,146 @@ function makeStore() {
 }
 
 describe("dag view preferences", () => {
-  it("defaults to LR direction, task-line grouping and no expanded lines", () => {
+  it("defaults to the overview level with both display switches off", () => {
     const state = makeStore().getState();
-    expect(state.dagDirection).toBe("LR");
+    expect(state.dagLineId).toBeNull();
+    expect(state.dagOverviewPinned).toBe(false);
+    expect(state.dagViewports).toEqual({});
     expect(state.dagGrouping).toBe("parent");
-    expect(state.dagExpandedIds).toEqual([]);
+    expect(state.dagShowCompleted).toBe(false);
+    expect(state.dagShowSatisfiedDependencies).toBe(false);
   });
-  it("changes direction", () => {
+
+  it("enters a line: clears the overview pin, selection and focus", () => {
     const store = makeStore();
-    store.getState().setDagDirection("TB");
-    expect(store.getState().dagDirection).toBe("TB");
+    store.getState().exitDagLine();
+    store.getState().setDagSelectedNodeId("task-a");
+    store.getState().setDagFocus({ nodeId: "task-a", way: "upstream" });
+    store.getState().enterDagLine("line-1");
+    expect(store.getState().dagLineId).toBe("line-1");
+    expect(store.getState().dagOverviewPinned).toBe(false);
+    expect(store.getState().dagSelectedNodeId).toBeNull();
+    expect(store.getState().dagFocus).toBeNull();
   });
-  it("toggles expansions without needing the current graph", () => {
+
+  it("returns to the overview pinned, selecting the line just left", () => {
     const store = makeStore();
-    store.getState().toggleDagExpanded("issue:one");
-    expect(store.getState().dagExpandedIds).toEqual(["issue:one"]);
-    store.getState().toggleDagExpanded("issue:two");
-    store.getState().toggleDagExpanded("issue:one");
-    expect(store.getState().dagExpandedIds).toEqual(["issue:two"]);
+    store.getState().enterDagLine("line-1");
+    store.getState().setDagFocus({ nodeId: "task-a", way: "downstream" });
+    store.getState().exitDagLine("issue:line-1");
+    expect(store.getState().dagLineId).toBeNull();
+    expect(store.getState().dagOverviewPinned).toBe(true);
+    expect(store.getState().dagSelectedNodeId).toBe("issue:line-1");
+    expect(store.getState().dagFocus).toBeNull();
   });
-  it("replaces expansions and restores the default with an empty list", () => {
+
+  it("keeps the pin when the level is corrected without the user", () => {
     const store = makeStore();
-    store.getState().setDagExpandedIds(["issue:one"]);
-    expect(store.getState().dagExpandedIds).toEqual(["issue:one"]);
-    store.getState().setDagExpandedIds([]);
-    expect(store.getState().dagExpandedIds).toEqual([]);
+    store.getState().exitDagLine();
+    store.getState().setDagLineId("ghost-line");
+    expect(store.getState().dagLineId).toBe("ghost-line");
+    expect(store.getState().dagOverviewPinned).toBe(true);
+    store.getState().setDagLineId(null);
+    expect(store.getState().dagOverviewPinned).toBe(true);
   });
-  it("persists expanded IDs and never writes the old collapsed list", () => {
-    const snapshot = viewStorePersistOptions("test").partialize(makeStore().getState());
-    expect(snapshot).toMatchObject({ dagDirection: "LR", dagGrouping: "parent", dagExpandedIds: [] });
-    expect(snapshot).not.toHaveProperty("dagCollapsedIds");
+
+  it("persists level, pin and per-level viewports; selection stays session-only", () => {
+    const store = makeStore();
+    store.getState().enterDagLine("line-1");
+    store.getState().setDagViewportFor("overview", { x: 40, y: -80, zoom: 1.1 });
+    store.getState().setDagViewportFor("line:line-1", { x: 0, y: 0, zoom: 0.5 });
+    store.getState().setDagSelectedNodeId("task-a");
+    const saved = viewStorePersistOptions("test").partialize(store.getState());
+    expect(saved).toMatchObject({
+      dagLineId: "line-1",
+      dagViewports: {
+        overview: { x: 40, y: -80, zoom: 1.1 },
+        "line:line-1": { x: 0, y: 0, zoom: 0.5 },
+      },
+    });
+    expect(saved).not.toHaveProperty("dagSelectedNodeId");
+    expect(saved).not.toHaveProperty("dagFocus");
+    expect(saved).not.toHaveProperty("dagExpandedIds");
+    expect(saved).not.toHaveProperty("dagIndependentExpanded");
+    expect(saved).not.toHaveProperty("dagDirection");
+    expect(saved).not.toHaveProperty("dagViewport");
+    const merged = mergeViewStatePersisted(saved, makeStore().getState());
+    expect(merged.dagLineId).toBe("line-1");
+    expect(merged.dagViewports).toEqual(saved.dagViewports);
   });
-  it("accepts and deduplicates expansion lists but rejects malformed preferences", () => {
+
+  it("ignores legacy fold and direction keys carried by old preferences", () => {
     const current = makeStore().getState();
-    expect(mergeViewStatePersisted({ dagExpandedIds: ["issue:x", "issue:x"] }, current).dagExpandedIds).toEqual(["issue:x"]);
-    for (const dagExpandedIds of [null, "oops", ["issue:x", 12]]) {
-      expect(mergeViewStatePersisted({ dagExpandedIds }, current).dagExpandedIds).toEqual([]);
+    const merged = mergeViewStatePersisted(
+      {
+        dagCollapsedIds: ["issue:x"],
+        dagExpandedIds: ["issue:x"],
+        dagIndependentExpanded: true,
+        dagDirection: "TB",
+        dagShowCompleted: true,
+      },
+      current,
+    );
+    expect(merged).not.toHaveProperty("dagCollapsedIds");
+    expect(merged).not.toHaveProperty("dagExpandedIds");
+    expect(merged).not.toHaveProperty("dagIndependentExpanded");
+    expect(merged).not.toHaveProperty("dagDirection");
+    expect(merged.dagShowCompleted).toBe(true);
+    expect(merged.dagLineId).toBeNull();
+  });
+
+  it("migrates the legacy single viewport onto the overview slot", () => {
+    const current = makeStore().getState();
+    const merged = mergeViewStatePersisted(
+      { dagViewport: { x: -240, y: -100, zoom: 1 } },
+      current,
+    );
+    expect(merged.dagViewports).toEqual({ overview: { x: -240, y: -100, zoom: 1 } });
+    expect(merged).not.toHaveProperty("dagViewport");
+    // An explicit viewport map wins over the legacy value.
+    const both = mergeViewStatePersisted(
+      {
+        dagViewport: { x: 1, y: 2, zoom: 1 },
+        dagViewports: { "line:a": { x: 3, y: 4, zoom: 0.8 } },
+      },
+      current,
+    );
+    expect(both.dagViewports).toEqual({ "line:a": { x: 3, y: 4, zoom: 0.8 } });
+  });
+
+  it("drops malformed viewport entries and out-of-range zooms", () => {
+    const current = makeStore().getState();
+    const merged = mergeViewStatePersisted(
+      {
+        dagViewports: {
+          overview: { x: 0, y: 0, zoom: 1 },
+          bad: { x: NaN, y: 0, zoom: 1 },
+          zoomed: { x: 0, y: 0, zoom: 99 },
+          nope: "x",
+        },
+      },
+      current,
+    );
+    expect(merged.dagViewports).toEqual({ overview: { x: 0, y: 0, zoom: 1 } });
+    for (const dagViewports of [null, "oops", []]) {
+      expect(
+        mergeViewStatePersisted({ dagViewports }, current).dagViewports,
+      ).toEqual({});
     }
   });
-  it("resets legacy folds once while preserving other personal preferences", () => {
+
+  it("validates the persisted line id and overview pin", () => {
     const current = makeStore().getState();
-    for (const dagCollapsedIds of [null, [], ["issue:x"]]) {
-      const merged = mergeViewStatePersisted({ dagCollapsedIds, dagDirection: "TB", dagIndependentExpanded: true }, current);
-      expect(merged.dagExpandedIds).toEqual([]);
-      expect(merged).not.toHaveProperty("dagCollapsedIds");
-      expect(merged.dagDirection).toBe("TB");
-      expect(merged.dagIndependentExpanded).toBe(true);
+    expect(
+      mergeViewStatePersisted({ dagLineId: "line-9", dagOverviewPinned: true }, current)
+        .dagLineId,
+    ).toBe("line-9");
+    for (const dagLineId of [12, {}, []]) {
+      expect(mergeViewStatePersisted({ dagLineId }, current).dagLineId).toBeNull();
     }
-    const saved = viewStorePersistOptions("test").partialize({ ...current, dagExpandedIds: ["issue:y"] });
-    expect(mergeViewStatePersisted(saved, current).dagExpandedIds).toEqual(["issue:y"]);
+    expect(
+      mergeViewStatePersisted({ dagOverviewPinned: "yes" }, current).dagOverviewPinned,
+    ).toBe(false);
   });
 
   it("falls back safely when persisted view modes are no longer supported", () => {
@@ -79,88 +170,60 @@ describe("dag view preferences", () => {
 
   it("merge degrades unknown enum values to the defaults", () => {
     const current = makeStore().getState();
-    const merged = mergeViewStatePersisted(
-      { dagDirection: "sideways", dagGrouping: "wild" },
-      current,
-    );
-    expect(merged.dagDirection).toBe("LR");
-    expect(merged.dagGrouping).toBe("parent");
     expect(
-      mergeViewStatePersisted({ dagDirection: "TB", dagGrouping: "none" }, current)
-        .dagDirection,
-    ).toBe("TB");
+      mergeViewStatePersisted({ dagGrouping: "wild" }, current).dagGrouping,
+    ).toBe("parent");
+    expect(
+      mergeViewStatePersisted({ dagGrouping: "none" }, current).dagGrouping,
+    ).toBe("none");
   });
 
-  it("a server view definition can seed dag mode plus its display defaults", () => {
+  it("a server view definition seeds dag mode and its display defaults", () => {
     const current = makeStore().getState();
     const merged = mergeViewStatePersisted(
-      { viewMode: "dag", dagDirection: "TB", dagGrouping: "parent" },
+      {
+        viewMode: "dag",
+        dagGrouping: "parent",
+        dagShowCompleted: true,
+        dagShowSatisfiedDependencies: true,
+        // Views saved before Stage 9 carry a direction; it is ignored.
+        dagDirection: "TB",
+      },
       current,
     );
     expect(merged.viewMode).toBe("dag");
-    expect(merged.dagDirection).toBe("TB");
-    expect(merged.dagGrouping).toBe("parent");
+    expect(merged.dagShowCompleted).toBe(true);
+    expect(merged.dagShowSatisfiedDependencies).toBe(true);
+    expect(merged).not.toHaveProperty("dagDirection");
   });
-  it("persists independent expansion and viewport while keeping selection session-only", () => {
+
+  it("toggles the satisfied-dependencies switch and persists it", () => {
     const store = makeStore();
-    store.getState().setDagIndependentExpanded(true);
-    store.getState().setDagViewport({ x: 40, y: -80, zoom: 1.1 });
-    store.getState().setDagSelectedNodeId("task-a");
-    store.getState().setDagExpandedIds([]);
+    expect(store.getState().dagShowSatisfiedDependencies).toBe(false);
+    store.getState().toggleDagShowSatisfiedDependencies();
+    expect(store.getState().dagShowSatisfiedDependencies).toBe(true);
     const saved = viewStorePersistOptions("test").partialize(store.getState());
-    expect(saved).toMatchObject({ dagIndependentExpanded: true, dagViewport: { x: 40, y: -80, zoom: 1.1 } });
-    expect(saved).not.toHaveProperty("dagSelectedNodeId");
-    expect(mergeViewStatePersisted(saved, makeStore().getState()).dagViewport).toEqual(saved.dagViewport);
-  });
-  it("uses safe defaults for old or malformed personal layout preferences", () => {
-    const initial = makeStore().getState();
-    expect(mergeViewStatePersisted({}, initial)).toMatchObject({ dagIndependentExpanded: false, dagViewport: null });
-    for (const dagViewport of [{ x: NaN, y: 0, zoom: 1 }, { x: 0, y: 0, zoom: 0 }, { x: 0, y: 0, zoom: Infinity }]) {
-      expect(mergeViewStatePersisted({ dagViewport }, initial).dagViewport).toBeNull();
+    expect(saved).toMatchObject({ dagShowSatisfiedDependencies: true });
+    const current = makeStore().getState();
+    for (const dagShowSatisfiedDependencies of ["yes", 1, null]) {
+      expect(
+        mergeViewStatePersisted({ dagShowSatisfiedDependencies }, current)
+          .dagShowSatisfiedDependencies,
+      ).toBe(false);
     }
   });
 
-  it("keeps a personal viewport when applying a partial shared-view definition", () => {
-    const store = makeStore();
-    store.getState().setDagViewport({ x: -240, y: -100, zoom: 1 });
-    const merged = mergeViewStatePersisted({ viewMode: "dag", dagDirection: "TB" }, store.getState());
-    expect(merged.dagViewport).toEqual({ x: -240, y: -100, zoom: 1 });
-  });
-
-  it("defaults dagShowCompleted to hidden and toggles it", () => {
-    const store = makeStore();
-    expect(store.getState().dagShowCompleted).toBe(false);
-    store.getState().toggleDagShowCompleted();
-    expect(store.getState().dagShowCompleted).toBe(true);
-  });
-
-  it("persists dagShowCompleted and degrades malformed values to the default", () => {
+  it("defaults dagShowCompleted to hidden and degrades malformed values", () => {
     const store = makeStore();
     store.getState().toggleDagShowCompleted();
     const saved = viewStorePersistOptions("test").partialize(store.getState());
     expect(saved).toMatchObject({ dagShowCompleted: true });
     const current = makeStore().getState();
-    expect(mergeViewStatePersisted({ dagShowCompleted: true }, current).dagShowCompleted).toBe(true);
     for (const dagShowCompleted of ["yes", 1, null]) {
       expect(mergeViewStatePersisted({ dagShowCompleted }, current).dagShowCompleted).toBe(false);
     }
     // A saved view written before the field existed falls back to hidden.
     expect(mergeViewStatePersisted({ viewMode: "dag" }, current).dagShowCompleted).toBe(false);
-  });
-
-  it("keeps edge selection and focus session-only and mutually exclusive", () => {
-    const store = makeStore();
-    store.getState().setDagSelectedNodeId("task-a");
-    store.getState().setDagFocus({ nodeId: "task-a", way: "upstream" });
-    store.getState().setDagSelectedEdgeId("a→b");
-    expect(store.getState().dagSelectedNodeId).toBeNull();
-    expect(store.getState().dagFocus).toBeNull();
-    expect(store.getState().dagSelectedEdgeId).toBe("a→b");
-    store.getState().setDagSelectedNodeId("task-b");
-    expect(store.getState().dagSelectedEdgeId).toBeNull();
-    const saved = viewStorePersistOptions("test").partialize(store.getState());
-    expect(saved).not.toHaveProperty("dagSelectedEdgeId");
-    expect(saved).not.toHaveProperty("dagFocus");
   });
 
   it("clears the focus when another node is selected", () => {
@@ -171,5 +234,4 @@ describe("dag view preferences", () => {
     expect(store.getState().dagFocus).toBeNull();
     expect(store.getState().dagSelectedNodeId).toBe("b");
   });
-
 });

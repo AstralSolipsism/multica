@@ -100,41 +100,39 @@ are omitted; real arrows retain their original direction. A stage edit changes
 
 ## Grouped Web/Desktop canvas
 
-The shared canvas uses React Flow with ELK. Each visible parent is a task-line
-container, including nested parents; its header is the entry to the actual
-parent issue. Project membership appears as context and does not split a
-parent's descendants into unrelated project representatives. A line expands
-in its own row (LR) or column (TB). Completed issues remain in that structure;
-explicit query filters continue to apply.
+The shared canvas uses React Flow with ELK and has two levels. The overview
+shows one card per task line, standalone task, and the independent group;
+cross-line dependencies paint as shared orthogonal buses. Double-clicking a
+line card (or the toolbar's **Enter task line**) opens the second level: that
+line's task graph with nested sub-line frames, stage columns where the layout
+keeps them dependency-compatible, and dashed side cards compressing external
+dependencies. Only left-to-right layout exists.
 
-Task lines fold by default, including lines discovered after the first visit.
-Personal preferences persist only expanded task-line IDs (`dagExpandedIds`).
-Legacy `dagCollapsedIds` are reset once: an incomplete graph cannot safely
-invert a collapsed list. Direction, viewport and independent-group expansion
-remain intact. Missing expansion IDs are inert and survive filtered or stale
-reads; they never create nodes or reveal inaccessible data.
-**Expand issue groups** preserves these hidden expansion preferences.
-**Collapse issue groups** explicitly clears every task-line expansion, including
-hidden ones, so it stays enabled while any stored expansion remains.
+The current level (`dagLineId`), the deliberate overview return
+(`dagOverviewPinned`), and one viewport per level (`dagViewports`) persist per
+user; none of them are part of saved view definitions. Saved views carry
+`dagShowCompleted` and `dagShowSatisfiedDependencies` as first-open defaults.
+Legacy fold (`dagExpandedIds`, `dagIndependentExpanded`, `dagCollapsedIds`),
+direction and single-viewport preferences are ignored on read.
 
 Unparented issues without visible relations and
 without unknown/restricted relationship information form a separate
-**Independent issues** container. It starts folded, uses the same canvas and
-cards, and expands into a compact grid. Its preference is independent of
-**Expand issue groups / Collapse issue groups**. A dependency-chain endpoint
+**Independent issues** card. It uses the same canvas and opens into a compact
+grid as its own level. A dependency-chain endpoint
 or an unordered child of a parent is not an independent root merely because
 it has no outgoing edge. Missing relationships do not authorize execution.
 
 Fully staged siblings receive bounded stage regions with visible separators
 and header-level progression. Mixed staged/unstaged siblings keep individual
 stage badges and layout preferences without assigning a stage to an unstaged
-issue. Conflicting stage preferences yield to dependency order, with a visible
-explanation on the group. All visible task arrows retain real source edges.
+issue. Conflicting stage preferences yield to dependency order. All visible
+task arrows retain real source edges.
 
-Cross-line edges are always included. Folded endpoints attach to container
-boundaries; expanded endpoints attach to actual issues. Aggregate count
-buttons expose the original issue pairs. A group-to-group arrow does not mean
-that every member of one group depends on every member of the other.
+Cross-line edges are always included. On the overview they bundle per card
+pair and show the dependency count; inside a line they end at the dashed
+external side cards. Shared bus intervals paint once with the most urgent
+traversing state; branch points carry a dot. A card-to-card arrow does not
+mean that every member of one line depends on every member of the other.
 
 ELK computes both positions and edge paths. Local graphs expose boundary ports;
 an outer ELK layout arranges the groups in regular rows/columns and routes

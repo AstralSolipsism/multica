@@ -1,4 +1,4 @@
-import type { DagPoint } from "./dag-layout";
+import type { DagPoint } from "./dag-scene";
 import type { DagSceneEdge, DagSceneGeometry, DagSceneJunction, DagSceneSegment } from "./dag-scene";
 
 const pointKey = (p: DagPoint) => `${p.x},${p.y}`;

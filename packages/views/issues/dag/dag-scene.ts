@@ -1,4 +1,31 @@
-import type { DagPoint, DagStageBand } from "./dag-layout";
+export interface DagPoint {
+  x: number;
+  y: number;
+}
+export interface DagStageBand {
+  stage: number;
+  start: number;
+  end: number;
+}
+/** Geometry-only node shape shared with the stage-preference helpers. */
+export interface DagLayoutNodeInput {
+  id: string;
+  width: number;
+  height: number;
+  groupId?: string | null;
+  stage?: number | null;
+}
+export interface DagLayoutGroupInput {
+  id: string;
+  parentId: string | null;
+  collapsed: boolean;
+  independent: boolean;
+}
+export interface DagLayoutEdgeInput {
+  id: string;
+  source: string;
+  target: string;
+}
 
 export type DagSceneKind = "overview" | "line" | "focus";
 export type DagSceneSide = "upstream" | "current" | "downstream";

@@ -1,57 +1,63 @@
-import type { IssueViewState } from "./view-store";
+import type { DagViewport, IssueViewState } from "./view-store";
 
 type DagPreferences = Pick<
   IssueViewState,
-  | "dagDirection"
   | "dagGrouping"
-  | "dagExpandedIds"
-  | "dagIndependentExpanded"
   | "dagShowCompleted"
-  | "dagViewport"
+  | "dagShowSatisfiedDependencies"
+  | "dagLineId"
+  | "dagOverviewPinned"
+  | "dagViewports"
 >;
 
-/** Legacy collapsed lists cannot be inverted without complete membership. Reset
- * them once by ignoring that key; subsequent snapshots persist expanded IDs only.
- * Keep absent expansions: filtered or stale graphs cannot prove deletion, and
- * inert IDs never synthesize nodes or grant access to hidden issue data. */
+/** Viewport key for the DAG overview level; line levels use `line:<rootId>`. */
+export const DAG_OVERVIEW_VIEWPORT_KEY = "overview";
+
+/** Stage 9 dropped fold state, direction and the single shared viewport.
+ * Those keys are stripped by the caller before this runs; the one legacy
+ * value worth keeping is `dagViewport`, which becomes the overview entry. */
 export function sanitizeDagPersisted(
-  p: Partial<DagPreferences>,
+  p: Partial<DagPreferences> & { dagViewport?: unknown },
   current: DagPreferences,
 ): DagPreferences {
-  let dagViewport = current.dagViewport;
-  if (p.dagViewport !== undefined)
-    dagViewport = isDagViewport(p.dagViewport) ? p.dagViewport : null;
+  let dagViewports = current.dagViewports;
+  if (p.dagViewports !== undefined) {
+    if (p.dagViewports && typeof p.dagViewports === "object" && !Array.isArray(p.dagViewports)) {
+      const entries = Object.entries(p.dagViewports as Record<string, unknown>)
+        .filter((entry): entry is [string, DagViewport] => isDagViewport(entry[1]));
+      dagViewports = Object.fromEntries(entries);
+    } else dagViewports = {};
+  } else if (isDagViewport(p.dagViewport)) {
+    dagViewports = { [DAG_OVERVIEW_VIEWPORT_KEY]: p.dagViewport };
+  }
   return {
-    dagDirection:
-      p.dagDirection === "LR" || p.dagDirection === "TB"
-        ? p.dagDirection
-        : current.dagDirection,
     dagGrouping:
       p.dagGrouping === "project" ||
       p.dagGrouping === "parent" ||
       p.dagGrouping === "none"
         ? p.dagGrouping
         : current.dagGrouping,
-    dagIndependentExpanded:
-      typeof p.dagIndependentExpanded === "boolean"
-        ? p.dagIndependentExpanded
-        : current.dagIndependentExpanded,
     dagShowCompleted:
       typeof p.dagShowCompleted === "boolean"
         ? p.dagShowCompleted
         : current.dagShowCompleted,
-    dagExpandedIds:
-      Array.isArray(p.dagExpandedIds) &&
-      p.dagExpandedIds.every((id) => typeof id === "string")
-        ? [...new Set(p.dagExpandedIds)]
-        : current.dagExpandedIds,
-    dagViewport,
+    dagShowSatisfiedDependencies:
+      typeof p.dagShowSatisfiedDependencies === "boolean"
+        ? p.dagShowSatisfiedDependencies
+        : current.dagShowSatisfiedDependencies,
+    dagLineId:
+      typeof p.dagLineId === "string" || p.dagLineId === null
+        ? p.dagLineId
+        : current.dagLineId,
+    dagOverviewPinned:
+      typeof p.dagOverviewPinned === "boolean"
+        ? p.dagOverviewPinned
+        : current.dagOverviewPinned,
+    dagViewports,
   };
 }
 
-function isDagViewport(
-  value: unknown,
-): value is { x: number; y: number; zoom: number } {
+function isDagViewport(value: unknown): value is DagViewport {
   if (!value || typeof value !== "object") return false;
   const viewport = value as Record<string, unknown>;
   return (
