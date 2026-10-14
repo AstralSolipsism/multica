@@ -220,6 +220,10 @@ async function measure(ref, label) {
     const startS = seconds(startStart);
 
     // The spec, fixture and browser come from this working tree, not the ref's.
+    // The comparison measures the typing scenario only: the DAG scenario
+    // (e2e/perf/dag-view.spec.ts) is a separate tool with its own datasets and
+    // budget; running it here would couple every typing comparison to a
+    // multi-minute layout run that can legitimately end in `timeout`.
     const reportPath = join(outDir, `${label}.json`);
     // Only a report this run wrote may be read back. A file left by an earlier
     // run into the same directory would otherwise stand in for a scenario that
@@ -228,7 +232,7 @@ async function measure(ref, label) {
     const measureStart = Date.now();
     let scenarioExit = 0;
     try {
-      run("pnpm", ["exec", "playwright", "test", "--config=playwright.perf.config.ts"], {
+      run("pnpm", ["exec", "playwright", "test", "--config=playwright.perf.config.ts", "e2e/perf/typing-under-live-runs.spec.ts"], {
         cwd: repoRoot,
         env: {
           ...process.env,

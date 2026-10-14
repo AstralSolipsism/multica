@@ -40,10 +40,20 @@ export function useCanonicalIssueUrl(
   const canonicalHref = identifier ? `${paths.issueDetail(identifier)}${hash}` : null;
   // `useWorkspacePaths()` and the navigation adapter are both rebuilt on
   // render, so this ref — not the dependency array — is what guarantees the
-  // replace runs once per target instead of on every commit.
+  // replace runs once per target instead of on every commit. Desktop reuses
+  // the route instance across issues (param changes do not remount it and it
+  // has no key), so the guard is scoped to the routeId stint that produced
+  // it: once the routeId moves on — to the identifier spelling this rewrite
+  // committed, or to another issue — a later UUID arrival for the SAME issue
+  // is a new visit and must rewrite again (OL-302).
   const replacedRef = useRef<string | null>(null);
+  const routeIdRef = useRef(routeId);
 
   useEffect(() => {
+    if (routeIdRef.current !== routeId) {
+      routeIdRef.current = routeId;
+      replacedRef.current = null;
+    }
     if (!canonicalHref || routeId === identifier) return;
     if (replacedRef.current === canonicalHref) return;
     replacedRef.current = canonicalHref;

@@ -266,4 +266,27 @@ describe("issue deep links on the real desktop adapter + tab store", () => {
     expect(adapterRef!.hash).toBe("");
     expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
   });
+
+  // OL-302: the desktop route instance survives across issues, so the
+  // canonical rewrite's once-guard survives too. A second UUID arrival for
+  // the SAME issue used to compare equal to the stored target and skip the
+  // rewrite, leaving the tab URL UUID-spelled.
+  it("OL-302 a second UUID visit of the same issue rewrites the tab URL again", async () => {
+    const qc = appQueryClient();
+    seedParent(qc);
+    renderDesktop(qc);
+    const tabPathname = () =>
+      splitTabUrl(getActiveTab(useTabStore.getState())!.url).pathname;
+
+    await onSubtask();
+    await act(async () => adapterRef!.push(`/test/issues/${P_UUID}`));
+    await onParent();
+    await waitFor(() => expect(tabPathname()).toBe("/test/issues/TES-2"));
+
+    await act(async () => adapterRef!.push("/test/issues/TES-1"));
+    await onSubtask();
+    await act(async () => adapterRef!.push(`/test/issues/${P_UUID}`));
+    await onParent();
+    await waitFor(() => expect(tabPathname()).toBe("/test/issues/TES-2"));
+  });
 });
