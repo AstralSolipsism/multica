@@ -41,6 +41,16 @@ async function setBlockedBy(api: TestApiClient, workspaceId: string, id: string,
   expect(write.ok, await write.text()).toBe(true);
 }
 
+/** React Flow only honors a dblclick on an already-selected node: select
+ *  first, wait for the selection to commit, then double-click. */
+async function selectThenDblclick(page: Page, target: ReturnType<Page["locator"]>) {
+  await target.click();
+  await expect(page.getByRole("region", { name: "Selection" })).not.toContainText(
+    "Select a task or task line",
+  );
+  await target.dblclick();
+}
+
 const readViewport = (page: Page) =>
   page.locator(".react-flow__viewport").evaluate((element) => {
     const matrix = new DOMMatrix(getComputedStyle(element).transform);
@@ -126,8 +136,7 @@ test("DAG two-level view: overview cards, line navigation, bundles and persisten
     // Double-click enters the line: tasks, stage columns and the side card.
     // Select first — a dblclick on an unselected node races the selection
     // render (same pattern as the previous canvas spec).
-    await cardA.click();
-    await cardA.dblclick();
+    await selectThenDblclick(page, cardA);
     await expect(page.getByRole("navigation", { name: "Task line path" })).toContainText(
       "design and implementation",
     );
@@ -187,8 +196,7 @@ test("DAG two-level view: overview cards, line navigation, bundles and persisten
 
     // Opening the detail and coming back restores the line and its viewport.
     const lineViewport = await readViewport(page);
-    await taskC.click();
-    await taskC.dblclick();
+    await selectThenDblclick(page, taskC);
     await expect(page).toHaveURL(new RegExp(`/issues/${c.id}`), { timeout: 30_000 });
     await page.goBack();
     await expect(page.locator("[data-dag-task]")).toHaveCount(2, { timeout: 30_000 });
@@ -201,9 +209,7 @@ test("DAG two-level view: overview cards, line navigation, bundles and persisten
     await expect(selection).toContainText("validation and delivery");
 
     // The independent group opens as its own grid level.
-    const independentCard = page.locator('[data-dag-overview-card="independent:root"]');
-    await independentCard.click();
-    await independentCard.dblclick();
+    await selectThenDblclick(page, page.locator('[data-dag-overview-card="independent:root"]'));
     await expect(page.getByRole("navigation", { name: "Task line path" })).toContainText(
       "Independent issues",
     );
@@ -213,8 +219,7 @@ test("DAG two-level view: overview cards, line navigation, bundles and persisten
     await expect(cards).toHaveCount(3);
 
     // Refresh restores the current level: return into line A and reload.
-    await cardA.click();
-    await cardA.dblclick();
+    await selectThenDblclick(page, cardA);
     await expect(page.locator("[data-dag-task]")).toHaveCount(2);
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(
@@ -272,8 +277,7 @@ test("DAG auto-enters a single visible line only until the user returns", async 
     await expect(cards).toHaveCount(1, { timeout: 30_000 });
     await page.waitForTimeout(800);
     await expect(cards).toHaveCount(1);
-    await cards.first().click();
-    await cards.first().dblclick();
+    await selectThenDblclick(page, cards.first());
     await expect(page.locator("[data-dag-task]").first()).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Task line path" })).toContainText(
       "only line",

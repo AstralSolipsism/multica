@@ -10,7 +10,7 @@ export function useDagSceneLayout<T>(
   scope: string,
   plan: DagScenePlan | null,
   snapshot: T,
-  runnerFactory: () => DagSceneRunner = createDagSceneRunner,
+  runnerFactory?: () => DagSceneRunner,
 ) {
   const runner = useRef<DagSceneRunner | null>(null);
   const current = useRef({ plan, snapshot });
@@ -24,7 +24,11 @@ export function useDagSceneLayout<T>(
   const bypassCache = useRef(false);
   const key = plan ? dagSceneKey(plan.input) : "";
   useEffect(() => {
-    const instance = runnerFactory();
+    // Resolve the default inside the effect: a default-parameter reference to
+    // the imported factory is re-evaluated per call, and production bundlers
+    // may inline the function there — a fresh identity per render would
+    // dispose and recreate the workers on every render.
+    const instance = (runnerFactory ?? createDagSceneRunner)();
     runner.current = instance;
     instance.prepare("overview");
     return () => { live.current = null; instance.dispose(); runner.current = null; };

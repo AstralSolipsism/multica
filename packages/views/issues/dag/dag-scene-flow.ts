@@ -345,6 +345,8 @@ export function dagSceneFlowNodes(
         id: card.id,
         type: "dagOverviewCard" as const,
         position: { x: box.x, y: box.y },
+        width: box.width,
+        height: box.height,
         data: {
           card,
           color: dagProjectColor(card.project?.id),
@@ -385,6 +387,8 @@ export function dagSceneFlowNodes(
         type: "dagFrame" as const,
         position,
         parentId,
+        width: box.width,
+        height: box.height,
         data: {
           frame,
           box,
@@ -407,6 +411,8 @@ export function dagSceneFlowNodes(
         type: "dagTask" as const,
         position,
         parentId,
+        width: box.width,
+        height: box.height,
         data: {
           task,
           statusColor: statusColorOf(task.issue.status),
@@ -428,6 +434,8 @@ export function dagSceneFlowNodes(
           id,
           type: "dagExternal" as const,
           position: { x: box.x, y: box.y },
+          width: box.width,
+          height: box.height,
           data: { group, side, dimmed: dimmed(id) },
           draggable: false,
           selectable: false,
@@ -445,6 +453,8 @@ export function dagSceneFlowNodes(
       id: task.issue.id,
       type: "dagTask" as const,
       position: { x: box.x, y: box.y },
+      width: box.width,
+      height: box.height,
       data: {
         task,
         statusColor: statusColorOf(task.issue.status),
