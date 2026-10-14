@@ -582,3 +582,15 @@ func (q *Queries) LabrastroYSKSetState(ctx context.Context, arg LabrastroYSKSetS
 	)
 	return i, err
 }
+
+const labrastroYSKWorkspaceEnabled = `-- name: LabrastroYSKWorkspaceEnabled :one
+SELECT COALESCE(settings->'you_should_know_enabled' = 'true'::jsonb, false)::boolean
+FROM workspace WHERE id = $1
+`
+
+func (q *Queries) LabrastroYSKWorkspaceEnabled(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, labrastroYSKWorkspaceEnabled, id)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}

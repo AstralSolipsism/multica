@@ -15,13 +15,12 @@ func (h *Handler) labrastroYSKTaskEnabled(r *http.Request, workspaceID pgtype.UU
 	if !requestHasClientCapability(r, protocol.DaemonCapabilityYouShouldKnowV1) {
 		return nil
 	}
-	workspace, err := h.Queries.GetWorkspace(r.Context(), workspaceID)
+	enabled, err := h.Queries.LabrastroYSKWorkspaceEnabled(r.Context(), workspaceID)
 	if err != nil {
 		// A YSK lookup failure must not hide the task status or turn into the
 		// 404 deletion signal that interrupts the main agent.
 		slog.Warn("ysk: status switch omitted", "workspace_id", uuidToString(workspaceID), "error", err)
 		return nil
 	}
-	enabled := labrastroYSKEnabled(workspace.Settings)
 	return &enabled
 }

@@ -204,7 +204,8 @@ export const register: Register = (on) => {
     const step = plan.begin()
     try {
       const ask = plan.decide(step)
-      if (ask !== undefined && !(stopped = await stopRequested($, stopFile))) {
+      if (ask !== undefined) stopped = await stopRequested($, stopFile)
+      if (ask !== undefined && !stopped) {
         const prompt = ask === 'light' ? lightPrompt(ctx, agentName, sent) : headsUpPrompt(ctx, agentName, sent)
         const fork = plan.forkStarted(step)
         // Not awaited: the main thread's request goes out at once, and the

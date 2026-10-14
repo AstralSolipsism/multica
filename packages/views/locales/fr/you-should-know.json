@@ -51,9 +51,9 @@
   },
   "settings": {
     "title": "You should know",
-    "workspace_label": "Générer des astuces de l’observateur pendant le travail des agents",
+    "workspace_label": "Générer des astuces de l'observateur pendant le travail des agents",
     "workspace_description": "Lorsque cette option est désactivée, aucune astuce n’est générée et aucun token n’est dépensé pour cela.",
-    "personal_label": "Afficher les astuces de l’observateur pour moi",
+    "personal_label": "Afficher les astuces de l'observateur pour moi",
     "personal_description": "Cela ne change que ce que vous voyez. Pour arrêter la génération des astuces, un administrateur peut désactiver l’option dans les paramètres de l’espace de travail."
   },
   "errors": {

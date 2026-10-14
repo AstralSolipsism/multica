@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -207,6 +208,35 @@ func TestYouShouldKnowStopDoesNotWriteAfterRunEnds(t *testing.T) {
 	updateYouShouldKnowStop(ctx, &off, slog.Default())
 	if _, err := os.Stat(ysk.PathsFor(env.MulticaConfigRoot).Stop); !os.IsNotExist(err) {
 		t.Fatalf("finished run wrote a stop marker: %v", err)
+	}
+}
+
+func TestRunTaskYouShouldKnowDetachesStopBeforeEnvironmentReuse(t *testing.T) {
+	d, _, cleanup := newLeaderReuseTestDaemon(t)
+	defer cleanup()
+	d.agentVersions = map[string]string{"claude": "2.1.292"}
+	task := leaderReuseTestTask("task-ysk-stop")
+	task.YouShouldKnow = json.RawMessage(yskContext)
+	ctx := withYouShouldKnowStop(t.Context(), task)
+	result, err := d.runTask(ctx, task, "claude", 0, d.logger)
+	if err != nil {
+		t.Fatalf("runTask: %v", err)
+	}
+	configRoot := filepath.Join(result.EnvRoot, "multica-config")
+	paths := ysk.PathsFor(configRoot)
+	if data, err := os.ReadFile(paths.Context); err != nil || string(data) != yskContext {
+		t.Fatalf("real runner did not install the mod: %q (%v)", data, err)
+	}
+	// A new run reuses the released environment before handleTask finishes
+	// reporting the old run. A late off response from the old poller must
+	// not stop the freshly installed mod.
+	if _, err := ysk.Install(configRoot, task.YouShouldKnow, ""); err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	updateYouShouldKnowStop(ctx, &off, d.logger)
+	if _, err := os.Stat(paths.Stop); !os.IsNotExist(err) {
+		t.Fatalf("finished run wrote a stop marker into the next run: %v", err)
 	}
 }
 
