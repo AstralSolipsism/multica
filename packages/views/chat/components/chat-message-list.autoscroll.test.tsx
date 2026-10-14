@@ -563,11 +563,25 @@ describe("ChatMessageList auto-scroll", () => {
     const { scroll, streamChunk, followsAtBottom } = renderStreamingChat();
 
     scroll.touchStart(100);
-    scroll.touchMove(180, 80.5);
+    scroll.touchMove(180, 30.5);
     streamChunk(1);
 
-    expect(scroll.distanceFromBottom()).toBe(80.5);
+    expect(scroll.distanceFromBottom()).toBe(30.5);
     expect(followsAtBottom()).toBe("auto");
+    scroll.touchEnd();
+  });
+
+  it("releases when a touch drag passes one line of displacement", () => {
+    const { scroll, streamChunk, followsAtBottom } = renderStreamingChat();
+
+    scroll.touchStart(100);
+    scroll.touchMove(200, 100);
+    streamChunk(1);
+
+    // The follow is off, so an append stops auto-scrolling; the drag itself
+    // was never fought (pins stay suppressed while the finger is down).
+    expect(scroll.distanceFromBottom()).toBe(100);
+    expect(followsAtBottom()).toBe("false");
     scroll.touchEnd();
   });
 
@@ -575,7 +589,7 @@ describe("ChatMessageList auto-scroll", () => {
     const { scroll, streamChunk } = renderStreamingChat();
 
     scroll.touchStart(100);
-    scroll.touchMove(180, 80);
+    scroll.touchMove(130, 30);
     scroll.touchEnd();
     gestureSettles();
     streamChunk(1);
@@ -584,35 +598,55 @@ describe("ChatMessageList auto-scroll", () => {
     expect(scroll.distanceFromBottom()).toBe(0);
   });
 
-  it("releases on incremental upward scrolling during a fast stream", () => {
+  // OL-272 acceptance: having just landed at the bottom of a session, the
+  // FIRST wheel notch must leave the live end for good — no pull-back while
+  // rows are still settling (image decodes, code highlighting) and no second
+  // notch needed.
+  it("releases on the first wheel notch while content is still settling", () => {
+    const { scroll, streamChunk } = renderStreamingChat();
+
+    scroll.readerScrollsUp(100);
+    expect(scroll.distanceFromBottom()).toBe(100);
+    expect(scroll.pinCalls()).toHaveLength(0);
+
+    for (let seq = 1; seq <= 4; seq++) {
+      streamChunk(seq);
+      scroll.grow(180);
+    }
+
+    // Every growth lands below the fold, exactly where the reader left it.
+    expect(scroll.distanceFromBottom()).toBe(100 + 4 * 180);
+    expect(scroll.pinCalls()).toHaveLength(0);
+  });
+
+  it("accumulates sub-threshold scrolls across pins during a fast stream", () => {
     const { scroll, streamChunk } = renderStreamingChat();
 
     streamChunk(1);
     scroll.grow(180);
 
-    // 60px wheel ticks, each under the edge threshold on its own and each
+    // 30px wheel ticks, each under the release threshold on its own and each
     // answered by a chunk that pins the reader back — but the displacement
-    // they actually took accumulates across the pins, so the third tick
+    // they actually took accumulates across the pins, so the second tick
     // crosses the threshold and releases.
-    for (let seq = 2; seq <= 5; seq++) {
-      scroll.readerScrollsUp(60);
+    for (let seq = 2; seq <= 4; seq++) {
+      scroll.readerScrollsUp(30);
       streamChunk(seq);
       scroll.grow(180);
     }
     gestureSettles();
-    streamChunk(6);
+    streamChunk(5);
     scroll.grow(180);
 
-    expect(scroll.distanceFromBottom()).toBe(660);
+    expect(scroll.distanceFromBottom()).toBe(600);
   });
 
   // Discrete mouse wheel at reading pace: one notch per event, spaced past
-  // the intent window. Release must not require a single fast burst.
-  it("releases for wheel notches spaced past the intent window", () => {
+  // the intent window. A single notch already exceeds the one-line release
+  // threshold, so the very first one lets go (OL-272).
+  it("releases for the first spaced wheel notch", () => {
     const { scroll, streamChunk } = renderStreamingChat();
 
-    scroll.readerScrollsUp(100);
-    gestureSettles();
     scroll.readerScrollsUp(100);
     gestureSettles();
     const parked = scroll.scrollTop;

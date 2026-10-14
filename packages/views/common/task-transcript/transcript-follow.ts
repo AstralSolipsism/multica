@@ -46,6 +46,18 @@ const MOTION_SETTLE_WINDOW_MS = 300;
 // WheelEvent.deltaMode 1 (lines) / 2 (pages) conversion.
 export const LINE_SCROLL_PX = 40;
 
+// How much reader-attributed displacement releases the follow. Deliberately
+// smaller than FOLLOW_EDGE_THRESHOLD: the edge zone forgives sloppy GEOMETRY
+// (scrollHeight estimates, scroll anchoring), while this judges INTENT. One
+// discrete wheel notch is ~100px on Windows/Linux Chrome and less on macOS, so
+// a 120px release used to swallow the first notch — the reader scrolled, a
+// settling row (image decode, code highlight) grew the content, and the pin
+// yanked them back to the live end (OL-272). One line of scrolling is small
+// enough that a real notch escapes on the first frame and large enough that a
+// trackpad brush (a few px) stays forgiven. Attributed displacement still
+// accumulates across pins, so sub-threshold attempts add up and win.
+export const FOLLOW_RELEASE_THRESHOLD = LINE_SCROLL_PX;
+
 export interface LiveEndFollow {
   /** Whether the surface is live; everything is inert while inactive. */
   setActive(active: boolean): void;
@@ -187,9 +199,9 @@ export function createLiveEndFollow(now: () => number = () => Date.now()): LiveE
       const moved = distance - lastDistance;
       lastDistance = distance;
       // A scrollbar drag is fully user-controlled: absolute position is the
-      // user's displacement, so the plain threshold applies.
+      // user's displacement, so the release threshold applies to it directly.
       if (scrollbarDrag) {
-        if (distance > FOLLOW_EDGE_THRESHOLD) following = false;
+        if (distance > FOLLOW_RELEASE_THRESHOLD) following = false;
         return false;
       }
       // Motion already confirmed in this direction continues without a new
@@ -209,7 +221,7 @@ export function createLiveEndFollow(now: () => number = () => Date.now()): LiveE
           if (motionSource !== "touch") motionCarry = Math.max(0, motionCarry - moved);
           awayTaken += moved;
           lastMotionAt = now();
-          if (following && awayTaken > FOLLOW_EDGE_THRESHOLD) following = false;
+          if (following && awayTaken > FOLLOW_RELEASE_THRESHOLD) following = false;
           return false;
         }
       } else if (moved < 0 && motionDirection === -1 && (touchHeld || motionFresh())) {
@@ -245,7 +257,7 @@ export function createLiveEndFollow(now: () => number = () => Date.now()): LiveE
           // claim after the first, so carry its remainder into the motion.
           motionCarry = awayBudget;
           lastMotionAt = now();
-          if (following && awayTaken > FOLLOW_EDGE_THRESHOLD) following = false;
+          if (following && awayTaken > FOLLOW_RELEASE_THRESHOLD) following = false;
           return false;
         }
       } else if (moved < 0 && inputFresh() && towardBudget > 0) {

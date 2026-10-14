@@ -19,8 +19,9 @@ import {
 // scroll position and direction alone cannot separate a reader leaving the
 // live end from the browser moving the viewport on its own (a scrollTop clamp
 // after the composer collapses, scroll anchoring), so the latch judges intent
-// from accumulated input deltas and releases only past FOLLOW_EDGE_THRESHOLD —
-// the same forgiveness the list grants Virtuoso via `atBottomThreshold`.
+// from accumulated input deltas and releases past FOLLOW_RELEASE_THRESHOLD —
+// one line of scrolling, so the first real wheel notch escapes even while
+// freshly-opened content is still settling (OL-272).
 //
 // Input is staged, and only the list's own scroll promotes it: rows contain
 // nested scrollers (capped `overflow-auto` code blocks) whose wheel/touch
