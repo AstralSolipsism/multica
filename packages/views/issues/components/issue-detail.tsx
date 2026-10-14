@@ -1419,8 +1419,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // The landing effect reads it through a ref, NOT through its dependency
   // array: recording the landing writes this very value, and as an effect
   // dependency that write would re-fire the effect one commit after the
-  // jump — whose cleanup cancels the centering rAF loop and the highlight
-  // fade before a single frame ran. Every path that must re-evaluate the
+  // jump — whose cleanup cancels the centering rAF loop before a single
+  // frame ran. Every path that must re-evaluate the
   // landing already re-runs the effect through another dependency (mount,
   // items arriving, token bump), and the render that precedes it refreshes
   // this ref.
@@ -1442,7 +1442,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const scrollToTimelineBottom = useCallback((commentId: string) => {
     setPendingPostedCommentId(commentId);
   }, []);
-  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  // One entry per highlight REQUEST (a fresh object each time), so the fade
+  // effect below re-times even when the same comment is requested again while
+  // still highlighted (notification re-click, same-page `#comment-…` replay).
+  const [highlight, setHighlight] = useState<{ id: string; ms: number } | null>(null);
+  const highlightedId = highlight?.id ?? null;
   // User preference: pin the bottom comment bar to the scroll viewport. Off
   // below `md` regardless of the preference — see the hook.
   const stickyComposer = useStickyComposer();
@@ -1964,20 +1968,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     rafId = requestAnimationFrame(alignBottom);
     return () => cancelAnimationFrame(rafId);
   }, [pendingPostedCommentId, items, replyToRoot, isFlatTimeline, scrollContainerEl]);
-  const jumpFlashTimerRef = useRef<number | null>(null);
-  useEffect(
-    () => () => {
-      if (jumpFlashTimerRef.current !== null) window.clearTimeout(jumpFlashTimerRef.current);
-    },
-    [],
-  );
   // Flash the landed comment the same way inbox deep-links do, so the eye has
   // an anchor after the instant jump. (Folded resolved bars don't take the
   // highlight prop — the scroll itself is the feedback there.)
   const flashJumpTarget = useCallback((commentId: string) => {
-    setHighlightedId(commentId);
-    if (jumpFlashTimerRef.current !== null) window.clearTimeout(jumpFlashTimerRef.current);
-    jumpFlashTimerRef.current = window.setTimeout(() => setHighlightedId(null), 2000);
+    setHighlight({ id: commentId, ms: 2000 });
   }, []);
   // Jump to a mounted comment: any row in flat mode, or a reply inside a
   // rendered thread. Drive the container's scrollTop directly — never native
@@ -2364,22 +2359,22 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     };
     rafId = requestAnimationFrame(center);
 
-    setHighlightedId(landingId);
+    setHighlight({ id: landingId, ms: 2500 });
     return () => cancelAnimationFrame(rafId);
   }, [highlightCommentId, highlightRequestToken, isArrivalHighlight, arrival.captured, isFlatTimeline, jumpToMinimapTarget, id, writeViewState, items, targetIdx, scrollContainerEl, replyToRoot, expandedResolved, timelineView, toggleResolvedExpand]);
 
-  // The highlight fade lives in its own effect keyed on `highlightedId`
-  // itself, not in the landing effect above: that effect re-runs on any
-  // timeline change (e.g. comment tasks resolving right after the landing),
-  // and its cleanup would cancel an in-flight fade while the landing guards
-  // keep the re-run from starting a new one — the highlight then stays on
-  // forever (OL-303). Keyed this way, only a highlight change or unmount
-  // touches the timer.
+  // The highlight fade lives in its own effect keyed on the highlight REQUEST
+  // (a fresh object per landing/flash), not in the landing effect above: that
+  // effect re-runs on any timeline change (e.g. comment tasks resolving right
+  // after the landing), and its cleanup would cancel an in-flight fade while
+  // the landing guards keep the re-run from starting a new one — the
+  // highlight then stays on forever (OL-303). Keyed this way, only a new
+  // highlight request or unmount touches the timer.
   useEffect(() => {
-    if (highlightedId === null) return;
-    const fade = window.setTimeout(() => setHighlightedId(null), 2500);
+    if (highlight === null) return;
+    const fade = window.setTimeout(() => setHighlight(null), highlight.ms);
     return () => window.clearTimeout(fade);
-  }, [highlightedId]);
+  }, [highlight]);
 
   const descEditorRef = useRef<ContentEditorRef>(null);
   const descriptionEditingRef = useRef(false);
