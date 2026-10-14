@@ -40,7 +40,9 @@ PERF_DATASET=stress-5000 PERF_THROTTLE_CPU=4 PERF_REPORT_PATH=dag-report.json \
 the DAG scenario is skipped — a bare perf run measures the typing scenario
 only, and `perf-compare.mjs` pins itself to the typing spec for the same
 reason. `PERF_THROTTLE_CPU` (default 1) applies CDP CPU throttling — see the
-caveat below. Reports land in `PERF_REPORT_PATH` and on stdout as
+caveat below. `PERF_LOAD_LIMIT_MS` (default 180000) is the first-screen
+budget; set it low to exercise the timeout path quickly (e.g. 20000 with
+`stress-5000`). Reports land in `PERF_REPORT_PATH` and on stdout as
 `PERF_REPORT {…}`.
 
 Comparing two refs — this builds and measures each one, in sequence:
@@ -93,8 +95,8 @@ from a fixed route table; anything unknown invalidates the sample.
 | --- | --- |
 | `fetch_ms` | Graph request sent → response ended, from the page's own resource timing (one request). Local synthetic transport — real-network numbers are OL-275's. |
 | `parse_ms` / `parse_and_validate_ms` | `JSON.parse` alone, and `JSON.parse` + `IssueGraphSchema.parse`, on the exact graph bytes. Measured in the Playwright process against the same schema module the app bundles — the app's in-flight validation is not separately observable. |
-| `layout_ms` | Layout worker `postMessage` → result committed (next frame after the pending skeleton disappears), per requestId — instrumentation wraps `Worker` before the app boots. Max over the run's committed layout requests. |
-| `first_interactive_ms` | Navigation start → canvas has rendered cards AND the layout-pending skeleton is gone AND the toolbar is visible, each timestamped in-page (MutationObserver + performance.now), not by Playwright polling. |
+| `layout_ms` | Layout worker `postMessage` → result committed (the frame the pending skeleton disappeared after the worker's response), per requestId — instrumentation wraps `Worker` before the app boots and records each request's response and error in the constructor. Max over committed requests; `layout_respond_ms` is the same for the worker response alone. |
+| `first_interactive_ms` | Navigation start → canvas has rendered cards AND the layout-pending skeleton is gone AND the toolbar is visible, each timestamped in-page (16 ms setTimeout polling + performance.now), not by Playwright's own polling. |
 | `pan` / `zoom` | Scripted drag / Ctrl+wheel gestures, ~4 s each. Pan starts from a verified bare-pane point (cards are `nopan`) and is discarded as `invalid` if the viewport transform never changed; rAF frame intervals → p50/p95/max ms, long-frame count, avg FPS. Stalled frames are counted, not trimmed. |
 | `click` | In-page: real pointer events on a visible card's body (never the group header), timed from pointerdown to the frame after the toolbar's selection label appears; every sample starts from a cleared selection. ≥ 3 samples → p50/p95 ms, else `timeout`/`invalid`. |
 
@@ -103,11 +105,20 @@ budget expired, `invalid` when nothing rendered or the sample was
 contaminated (unmocked requests, page errors). A report never shows a fast
 number for an empty page.
 
-Outcomes: if the canvas renders but no card ever appears, the report is
-`invalid` (not a timeout) and no gesture or click numbers are produced;
-unmocked API requests, external requests and page errors also make the sample
-`invalid`; a per-measurement budget expiry lands in `timed_out_at` and the
-overall `status` becomes `timeout`.
+Outcomes are classified from what the page shows, never from Node-side
+knowledge of the fixture:
+- **layout error** — a layout request whose worker response carried `error`;
+  the view replaces everything with an alert → `invalid` ("layout error: …");
+- **no content** — the graph response arrived, a full grace period (8 s)
+  passed with no layout request, no pending/loading state, no skeleton and no
+  canvas → `invalid`, concluded early instead of burning the budget. This is
+  how the `empty` dataset ends in seconds;
+- **budget expiry** — a layout request was posted and never committed (or
+  cards appeared but a later first-interactive stage never completed) →
+  `timeout`, with `timed_out_at: ["first_interactive"]`. Large datasets on
+  the current view are expected here;
+- unmocked API requests, external requests and page errors also make the
+  sample `invalid`; a failed selection-clear invalidates that click sample.
 
 The report records machine info (browser, Node, platform, CPU count, CPU
 model, memory) and `throttle_cpu`; `fixture_stats` carries the dataset's

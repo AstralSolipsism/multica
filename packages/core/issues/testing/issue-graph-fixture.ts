@@ -25,7 +25,7 @@
  * run in a browser-context vitest suite and be bundled into a Playwright spec.
  */
 
-export const ISSUE_GRAPH_FIXTURE_VERSION = "2.0.0";
+export const ISSUE_GRAPH_FIXTURE_VERSION = "2.1.0";
 
 export type IssueGraphFixtureDatasetName =
   | "accept-5000"
@@ -204,6 +204,11 @@ class Rng {
  */
 function spread(rng: Rng, total: number, parts: number, min: number, max: number): number[] {
   const size = Math.min(Math.max(parts, Math.ceil(total / max)), Math.floor(total / min));
+  // No group count satisfies the bounds (e.g. 85 tasks into 30-40 lines):
+  // refuse instead of looping forever below.
+  if (!(size >= 1 && size * max >= total && size * min <= total)) {
+    throw new Error(`infeasible spread bounds: total=${total} min=${min} max=${max}`);
+  }
   const sizes = Array.from({ length: size }, () => Math.floor(total / size));
   let remainder = total - sizes.reduce((a, b) => a + b, 0);
   let i = 0;
@@ -558,7 +563,10 @@ function addCancelledBlockingAnchor(builder: Builder): void {
   cancelledLeaf.status_category = STATUS_CATEGORY.cancelled!;
   const downstream = builder.lines.find(
     (line) => !line.fullyDone && PROJECT_BANKS[line.projectIndex]!.flow >= 2,
-  ) ?? builder.lines.find((line) => !line.fullyDone)!;
+  ) ?? builder.lines.find((line) => !line.fullyDone);
+  if (!downstream) {
+    throw new Error("no unfinished line to anchor the cancelled-blocking case (doneLineShare too high?)");
+  }
   const target = downstream.leaves.find((leaf) => unfinishedStatus(leaf.status)) ?? downstream.leaves.at(-1)!;
   addEdge(builder, cancelledLeaf.id, target.id);
 }
@@ -695,8 +703,18 @@ function assignDependencySummaries(builder: Builder): void {
 }
 
 /** Named datasets are generated once per process and reused — they are
- * deterministic, and regenerating 5,000–10,000 nodes per test adds minutes. */
+ * deterministic, and regenerating 5,000–10,000 nodes per test adds minutes.
+ * Cached documents are deep-frozen: every caller shares one object, and a
+ * mutation by one test would poison the others silently. */
 const namedCache = new Map<string, SyntheticIssueGraph>();
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object") {
+    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
 
 export function buildIssueGraphFixture(
   dataset: IssueGraphFixtureDatasetName | IssueGraphFixtureConfig,
@@ -718,13 +736,13 @@ export function buildIssueGraphFixture(
 
   if (config.totalTasks === 0) {
     // The empty self-check graph: valid schema, zero nodes.
-    const byIdZero = (a: { id: string }, b: { id: string }) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
     return {
       schema_version: 1, snapshot_id: rng.hex64(), topology_id: rng.hex64(),
       captured_at: CAPTURED_AT, complete: true,
       scope: { type: "workspace", project_id: null }, focus_issue_id: null,
       matched_count: 0, context_count: 0, nodes: [], edges: [],
-      projects: PROJECT_BANKS.map((bank) => ({ id: rng.uuid(), title: bank.title })).sort(byIdZero),
+      // A graph with no nodes carries no project context, like the endpoint.
+      projects: [],
       has_restricted_context: false,
     };
   }
@@ -753,7 +771,10 @@ export function buildIssueGraphFixture(
     projects: [...builder.projects].sort(byId).map(({ id, title }) => ({ id, title })),
     has_restricted_context: false,
   };
-  if (cacheKey) namedCache.set(cacheKey, graph);
+  if (cacheKey) {
+    namedCache.set(cacheKey, deepFreeze(graph));
+    return namedCache.get(cacheKey)!;
+  }
   return graph;
 }
 
@@ -817,6 +838,17 @@ function graphIndex(graph: SyntheticIssueGraph) {
 }
 
 export function analyzeIssueGraphFixture(graph: SyntheticIssueGraph): IssueGraphFixtureStats {
+  if (!graph.nodes.length) {
+    return {
+      nodes: 0, edges: 0, leaves: 0, containers: 0, lines: 0,
+      lineSizeMin: 0, lineSizeMax: 0, fullyDoneLines: 0, hiddenLineTasks: 0,
+      unfinished: 0, statuses: {}, maxDepth: 0, minDepth: 0, stagesPresent: [],
+      crossLineTasks: 0, crossLineShare: 0, crossLineAgainstFlow: 0, ancestorEdges: 0,
+      leavesWithoutInlinePrereq: 0, inlinePrereqMin: 0, inlinePrereqMax: 0,
+      inProgressWithoutRunSummary: 0, inProgressWithoutActiveRun: 0,
+      cancelledStillBlocking: 0, acyclic: true,
+    };
+  }
   const { byId, children, ancestorsOf } = graphIndex(graph);
   const roots = children.get(null) ?? [];
   const lineOf = new Map<SyntheticGraphNode, SyntheticGraphNode>();

@@ -52,8 +52,14 @@ const CONFIG = SKIP ? null : ISSUE_GRAPH_FIXTURE_DATASETS[DATASET as IssueGraphF
 const GESTURE_MS = 4_000;
 /** Measured click samples. */
 const CLICK_SAMPLES = 10;
-/** Beyond this a measurement is `timeout`, not a duration. */
-const LOAD_LIMIT_MS = 180_000;
+/** Beyond this a measurement is `timeout`, not a duration. Configurable so a
+ * deliberately short budget can exercise the timeout path quickly. */
+const LOAD_LIMIT_MS = Number(process.env.PERF_LOAD_LIMIT_MS ?? 180_000);
+/** Grace period after the graph response arrives with no layout request, no
+ * loading state, no skeleton and no canvas before concluding "no content".
+ * Generous on purpose: parse + validate + projection sit between response
+ * and the first layout request, and CPU throttling stretches them. */
+const EMPTY_GRACE_MS = 8_000;
 
 test.use({
   viewport: { width: 1600, height: 1050 },
@@ -170,30 +176,34 @@ const INSTRUMENT = `
     };
     requestAnimationFrame(tick);
     // ---- layout worker timing ----------------------------------------------
+    // Each request is timed postMessage → response (message event, recorded
+    // in the constructor so every worker instance is covered) → committed
+    // (the frame the pending skeleton disappeared, i.e. the React commit of
+    // the result). A response carrying 'error' is recorded as such.
     const layouts = [];
     window.__dagLayouts = layouts;
     const OriginalWorker = window.Worker;
     window.Worker = class extends OriginalWorker {
+      constructor(...args) {
+        super(...args);
+        this.addEventListener("message", (event) => {
+          const data = event.data;
+          if (!data || typeof data.requestId !== "number") return;
+          const record = layouts.find((l) => l.requestId === data.requestId && l.respondedAt == null);
+          if (!record) return;
+          record.respondedAt = perf();
+          record.error = typeof data.error === "string" && data.error ? data.error : null;
+        });
+      }
       postMessage(data) {
         try {
           if (data && typeof data.requestId === "number") {
-            layouts.push({ requestId: data.requestId, postedAt: perf(), doneAt: null, committedAt: null });
+            layouts.push({ requestId: data.requestId, postedAt: perf(), respondedAt: null, error: null, committedAt: null });
           }
         } catch {}
         return super.postMessage(data);
       }
     };
-    // The response arrives on the worker's message event; "committed" is the
-    // next frame after the app applied it. Polled from the click prober's rAF
-    // loop below — cheap enough and avoids patching addEventListener.
-    const drainLayouts = () => {
-      const pending = layouts.filter((l) => l.doneAt == null);
-      if (!pending.length) return;
-      const open = pending.filter((l) => l.doneAt == null);
-      for (const record of open) record.doneAtMaybe = true;
-      requestAnimationFrame(drainLayouts);
-    };
-    requestAnimationFrame(drainLayouts);
     // ---- first-occurrence markers -------------------------------------------
     const marks = { firstCardAt: null, toolbarAt: null, skeletonGoneAt: null, graphCanvasAt: null };
     window.__dagMarks = marks;
@@ -209,22 +219,21 @@ const INSTRUMENT = `
       setTimeout(observe, 16);
     };
     observe();
-    // Layout commit frame: resolve the newest unanswered layout on the frame
-    // after the skeleton-gone mark moves (the app applied the result).
+    // Layout commit frame: a request is "committed" when the pending skeleton
+    // disappeared on a frame after its response arrived. This is the app
+    // applying the result (use-dag-layout sets pendingSince null on receipt
+    // and React commits on the next render pass).
     const commitWatcher = () => {
-      const open = layouts.filter((l) => l.committedAt == null);
-      for (const record of open) {
-        if (marks.skeletonGoneAt != null && record.postedAt <= marks.skeletonGoneAt) {
+      for (const record of layouts) {
+        if (record.committedAt == null && record.error == null
+          && marks.skeletonGoneAt != null && record.respondedAt != null
+          && record.respondedAt <= marks.skeletonGoneAt) {
           record.committedAt = marks.skeletonGoneAt;
         }
       }
       requestAnimationFrame(commitWatcher);
     };
     requestAnimationFrame(commitWatcher);
-    // A worker message marks doneAt: patch addEventListener on workers we
-    // construct is awkward post-construction; instead watch for the React
-    // commit via skeleton. doneAt = the frame the skeleton disappeared, which
-    // bounds postMessage→commit from above (the commit IS the response).
     // ---- in-page click prober ------------------------------------------------
     window.__dagClick = (x, y) => new Promise((resolve) => {
       const startedAt = perf();
@@ -253,7 +262,6 @@ const INSTRUMENT = `
       target?.dispatchEvent(new MouseEvent("mouseup", opts));
       target?.dispatchEvent(new MouseEvent("click", opts));
       setTimeout(() => finish("timeout", perf()), 10_000);
-      void labelSeen;
     });
     // Clear selection the same way a user would: click empty canvas pane.
     window.__dagClearSelection = () => new Promise((resolve) => {
@@ -290,8 +298,11 @@ const INSTRUMENT = `
       }
       return null;
     };
-    // Cards actually visible in the viewport, with a body point that is not
-    // the 76px group header (the fold toggle lives there).
+    // Cards actually visible in the viewport, with a clickable body point.
+    // Candidate points avoid the 76px group header (the fold toggle button
+    // lives there): centre-low first, then progressively lower/left-right
+    // offsets. A point is rejected when it is outside the card or lands on a
+    // button, so "never click the header" holds at any zoom level.
     window.__dagVisibleCards = () => {
       const vw = window.innerWidth, vh = window.innerHeight;
       const cards = [...document.querySelectorAll('.react-flow__node')]
@@ -300,10 +311,24 @@ const INSTRUMENT = `
       for (const el of cards) {
         const rect = el.getBoundingClientRect();
         if (rect.bottom < 0 || rect.top > vh || rect.right < 0 || rect.left > vw) continue;
-        const x = rect.x + Math.min(rect.width / 2, 124);
-        const y = rect.y + Math.min(rect.height - 12, 96);
-        const hit = document.elementFromPoint(x, y);
-        if (hit && (el === hit || el.contains(hit))) out.push({ x, y, id: el.getAttribute("data-id") });
+        const candidates = [
+          [rect.width / 2, Math.min(rect.height - 12, 96)],
+          [rect.width / 2, rect.height - 10],
+          [rect.width / 4, Math.min(rect.height - 12, 96)],
+          [(rect.width * 3) / 4, Math.min(rect.height - 12, 96)],
+          [rect.width / 2, Math.min(rect.height - 12, 96) + 20],
+          [10, Math.min(rect.height - 12, 96)],
+        ];
+        for (const [dx, dy] of candidates) {
+          const x = rect.x + Math.min(dx, rect.width - 4);
+          const y = rect.y + Math.min(dy, rect.height - 4);
+          if (x < 0 || y < 0 || x >= vw || y >= vh) continue;
+          const hit = document.elementFromPoint(x, y);
+          if (hit && (el === hit || el.contains(hit)) && !hit.closest("button")) {
+            out.push({ x, y, id: el.getAttribute("data-id") });
+            break;
+          }
+        }
       }
       return out;
     };
@@ -413,32 +438,67 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
   const timedOut: Record<string, true> = {};
 
   // ---- 1. Navigate: fetch → parse → layout → first interactive ------------
-  const navStart = Date.now();
   await page.goto(`${origin}/${WORKSPACE_SLUG}/issues`, { waitUntil: "domcontentloaded", timeout: LOAD_LIMIT_MS });
 
-  // First interactive, measured in-page: canvas rendered, cards appeared,
-  // pending skeleton gone, toolbar visible. Poll the marks until all four
-  // exist or the budget expires.
-  let marks: { firstCardAt: number | null; toolbarAt: number | null; skeletonGoneAt: number | null; graphCanvasAt: number | null };
-  try {
-    marks = await page.waitForFunction(
-      () => {
-        const m = (window as unknown as { __dagMarks: Record<string, number | null> }).__dagMarks;
-        return m.firstCardAt != null && m.skeletonGoneAt != null && m.toolbarAt != null
-          ? (m as unknown) : false;
-      },
-      undefined,
-      { timeout: LOAD_LIMIT_MS },
-    ).then((handle) => handle.jsonValue() as unknown as typeof marks);
-  } catch {
-    marks = await page.evaluate(() => (window as unknown as { __dagMarks: typeof marks }).__dagMarks);
-    // "Nothing rendered" (canvas or cards never appeared) is an invalid
-    // sample, not a slow one: an empty page must never read as either fast
-    // or merely tardy. Only a page that got as far as cards and then stalled
-    // past the budget counts as a timeout.
-    if (marks.graphCanvasAt == null) invalid.push("DAG canvas never rendered");
-    else if (marks.firstCardAt == null) invalid.push("canvas rendered but no cards appeared");
-    else timedOut.first_interactive = true;
+  // Page-side liveness snapshot: first-occurrence marks, live layout records,
+  // and whether the graph response has arrived (resource timing) plus any
+  // loading/skeleton/canvas state right now.
+  type Marks = { firstCardAt: number | null; toolbarAt: number | null; skeletonGoneAt: number | null; graphCanvasAt: number | null };
+  const snapshot = () => page.evaluate(() => ({
+    marks: (window as unknown as { __dagMarks: Marks }).__dagMarks,
+    layouts: (window as unknown as { __dagLayouts: { requestId: number; postedAt: number; respondedAt: number | null; error: string | null; committedAt: number | null }[] }).__dagLayouts,
+    graphArrived: performance.getEntriesByType("resource").some((e) => e.name.includes("/issues/graph")),
+    // The layout-pending skeleton specifically: the empty state keeps a
+    // persistent role=status, so that selector cannot mean "still loading".
+    pending: !!document.querySelector('[data-slot="skeleton"]'),
+  }));
+  type Snapshot = Awaited<ReturnType<typeof snapshot>>;
+
+  // Wait for first interactive (cards + skeleton gone + toolbar), with two
+  // early exits decided by what the PAGE shows, never by Node-side knowledge:
+  //  - a layout request errored → invalid (the view replaced everything with
+  //    an error alert; no duration can exist);
+  //  - the graph response arrived and a full grace period passed with no
+  //    layout request, no pending state, no skeleton, no canvas → invalid
+  //    (nothing to measure; this is how an empty graph concludes quickly).
+  const deadline = Date.now() + LOAD_LIMIT_MS;
+  let snap: Snapshot | null = null;
+  let emptySince: number | null = null;
+  while (Date.now() < deadline) {
+    snap = await snapshot();
+    const errored = snap.layouts.find((l) => l.error != null);
+    if (errored) {
+      invalid.push(`layout error: ${errored.error.slice(0, 120)}`);
+      break;
+    }
+    const done = snap.marks.firstCardAt != null && snap.marks.skeletonGoneAt != null && snap.marks.toolbarAt != null;
+    if (done) break;
+    if (snap.graphArrived && snap.layouts.length === 0 && !snap.pending
+      && snap.marks.firstCardAt == null && snap.marks.graphCanvasAt == null) {
+      emptySince ??= Date.now();
+      if (Date.now() - emptySince >= EMPTY_GRACE_MS) {
+        invalid.push("graph arrived but nothing rendered: no layout request, no canvas");
+        break;
+      }
+    } else {
+      emptySince = null;
+    }
+    await page.waitForTimeout(250);
+  }
+  if (!snap) snap = await snapshot();
+  const marks: Marks = snap.marks;
+
+  // Budget expired without concluding: classify from page state.
+  if (!invalid.length && marks.firstCardAt == null && snap.layouts.length > 0) {
+    // A layout request was posted and never committed — the layout is still
+    // computing (or its response never arrived). That is a timeout.
+    timedOut.first_interactive = true;
+  } else if (!invalid.length && marks.firstCardAt == null) {
+    // No layout request, no cards, no error marker within the whole budget.
+    invalid.push("no layout request and no cards within budget");
+  } else if (!invalid.length && (marks.skeletonGoneAt == null || marks.toolbarAt == null)) {
+    // Cards appeared but a later first-interactive stage never completed.
+    timedOut.first_interactive = true;
   }
   const firstInteractiveMs = marks.firstCardAt != null && marks.skeletonGoneAt != null && marks.toolbarAt != null
     ? Math.round(Math.max(marks.firstCardAt, marks.skeletonGoneAt, marks.toolbarAt))
@@ -456,7 +516,10 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
   // Parse + validate: JSON.parse AND IssueGraphSchema.parse on the same
   // bytes, in Node (the schema is the same module the app bundles; recorded
   // here because the app's own in-flight validation is not observable
-  // separately — see README).
+  // separately — see README). Each measurement is warmed once first so the
+  // comparison is not skewed by one path having compiled the parser.
+  JSON.parse(graphJson);
+  IssueGraphSchema.parse(JSON.parse(graphJson));
   const validateMs = (() => {
     const started = performance.now();
     IssueGraphSchema.parse(JSON.parse(graphJson));
@@ -468,20 +531,21 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     return Math.round(performance.now() - started);
   })();
 
-  // Layout timing: worker postMessage → result committed, per requestId.
-  const layouts = await page.evaluate(
-    () => (window as unknown as { __dagLayouts: { requestId: number; postedAt: number; committedAt: number | null }[] }).__dagLayouts,
-  );
+  // Layout timing per requestId: postMessage → response (worker message) and
+  // postMessage → committed (frame the pending skeleton disappeared after the
+  // response). Both are read from the in-page records.
+  const layouts = (await snapshot()).layouts;
+  const responded = layouts.filter((l) => l.respondedAt != null);
   const committed = layouts.filter((l) => l.committedAt != null);
   const layoutMs = committed.length
     ? Math.round(Math.max(...committed.map((l) => l.committedAt! - l.postedAt)))
     : null;
+  const layoutRespondMs = responded.length
+    ? Math.round(Math.max(...responded.map((l) => l.respondedAt! - l.postedAt)))
+    : null;
 
   // Per-measurement outcomes. Gestures only make sense once cards exist.
   const cardsPresent = marks.firstCardAt != null;
-  if (!cardsPresent) {
-    if (invalid.length === 0) invalid.push("no cards: gestures and clicks not measurable");
-  }
 
   // ---- 2. Pan and zoom frame rate ------------------------------------------
   const frameStats = async (run: () => Promise<void>) => {
@@ -581,16 +645,23 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
   // group header), timed from pointerdown to the frame after the toolbar's
   // selection label appears. Each sample starts from a cleared selection.
   const clickSamples: number[] = [];
+  let clickTimeouts = 0;
+  let clickClearedFailed = 0;
   let clickOutcome: Record<string, number | null> | string = "invalid";
   if (cardsPresent) {
     let anySelected = false;
-    let anyTimeout = false;
     for (let i = 0; i < CLICK_SAMPLES; i++) {
       const cards = await page.evaluate(() => (window as unknown as { __dagVisibleCards: () => { x: number; y: number }[] }).__dagVisibleCards());
       if (!cards.length) break;
       const card = cards[Math.floor((i * cards.length) / CLICK_SAMPLES)]!;
-      // Clear any previous selection first, and prove it is gone.
-      await page.evaluate(() => (window as unknown as { __dagClearSelection: () => Promise<boolean> }).__dagClearSelection());
+      // Clear any previous selection first, and prove it is gone. A failed
+      // clear invalidates the sample: a leftover label would satisfy the
+      // next probe's observer instantly and record a fake fast sample.
+      const cleared = await page.evaluate(() => (window as unknown as { __dagClearSelection: () => Promise<boolean> }).__dagClearSelection());
+      if (!cleared) {
+        clickClearedFailed += 1;
+        continue;
+      }
       const result = await page.evaluate(
         ({ x, y }) => (window as unknown as { __dagClick: (x: number, y: number) => Promise<{ outcome: string; elapsed: number }> }).__dagClick(x, y),
         card,
@@ -599,12 +670,13 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
         clickSamples.push(result.elapsed);
         anySelected = true;
       } else {
-        anyTimeout = true;
+        clickTimeouts += 1;
       }
     }
+    if (clickClearedFailed) invalid.push(`selection clear failed on ${clickClearedFailed} samples`);
     clickOutcome = clickSamples.length >= 3
-      ? { samples: clickSamples.length, p50_ms: percentile(clickSamples, 50), p95_ms: percentile(clickSamples, 95) }
-      : anySelected ? "timeout" : anyTimeout ? "timeout" : "invalid";
+      ? { samples: clickSamples.length, timeouts: clickTimeouts, p50_ms: percentile(clickSamples, 50), p95_ms: percentile(clickSamples, 95) }
+      : anySelected || clickTimeouts ? "timeout" : "invalid";
     if (clickOutcome === "timeout") timedOut.click = true;
   }
 
@@ -637,7 +709,9 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     parse_ms: parseMs,
     parse_and_validate_ms: validateMs,
     layout_ms: layoutMs,
+    layout_respond_ms: layoutRespondMs,
     layout_requests: layouts.length,
+    load_budget_ms: LOAD_LIMIT_MS,
     first_interactive_ms: firstInteractiveMs,
     pan,
     zoom,

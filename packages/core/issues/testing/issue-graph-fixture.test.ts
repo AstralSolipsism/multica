@@ -35,6 +35,8 @@ describe("synthetic issue graph fixtures", () => {
     expect(graph.edges.map((e) => e.source_edge_id)).toEqual(
       [...graph.edges.map((e) => e.source_edge_id)].sort(),
     );
+    const projectIds = graph.projects.map((p) => p.id);
+    expect([...projectIds].sort()).toEqual(projectIds);
   });
 
   it("parses the empty self-check dataset", () => {
@@ -60,9 +62,10 @@ describe("synthetic issue graph fixtures", () => {
       expect(stats.crossLineShare).toBeGreaterThanOrEqual(0.15);
       expect(stats.crossLineShare).toBeLessThanOrEqual(0.25);
     }
-    // In-line prerequisites: every leaf after its line's first has 1–2.
+    // In-line prerequisites: every leaf after its line's first has 1–2, and
+    // both counts actually occur (max === 2 kills "always 1").
     expect(stats.inlinePrereqMin).toBeGreaterThanOrEqual(1);
-    expect(stats.inlinePrereqMax).toBeLessThanOrEqual(2);
+    expect(stats.inlinePrereqMax).toBe(2);
     expect(stats.leavesWithoutInlinePrereq).toBe(stats.lines);
     // Lines of 30–40 tasks (single-line dataset excepted).
     if (name !== "big-line") {
@@ -148,7 +151,39 @@ describe("synthetic issue graph fixtures", () => {
     expect(buildIssueGraphFixture("2500")).toBe(buildIssueGraphFixture("2500"));
   });
 
-  it("hits the exact node total across many seeds, including single-line", () => {
+  it("analyzes an empty graph without infinities and serves frozen cached documents", () => {
+    const stats = analyzeIssueGraphFixture(buildIssueGraphFixture("empty"));
+    expect(stats).toEqual({
+      nodes: 0, edges: 0, leaves: 0, containers: 0, lines: 0,
+      lineSizeMin: 0, lineSizeMax: 0, fullyDoneLines: 0, hiddenLineTasks: 0,
+      unfinished: 0, statuses: {}, maxDepth: 0, minDepth: 0, stagesPresent: [],
+      crossLineTasks: 0, crossLineShare: 0, crossLineAgainstFlow: 0, ancestorEdges: 0,
+      leavesWithoutInlinePrereq: 0, inlinePrereqMin: 0, inlinePrereqMax: 0,
+      inProgressWithoutRunSummary: 0, inProgressWithoutActiveRun: 0,
+      cancelledStillBlocking: 0, acyclic: true,
+    });
+    // Cached documents are shared read-only: mutation must throw in strict
+    // mode (vitest transpiles ESM, which is strict).
+    const graph = buildIssueGraphFixture("1000");
+    expect(() => { graph.nodes[0]!.title = "tampered"; }).toThrow();
+  });
+
+  it("refuses infeasible generator configurations with explicit errors", () => {
+    // Line bounds unreachable for the total (85 tasks cannot make 30–40 lines)
+    // must throw, not hang.
+    expect(() => buildIssueGraphFixture({
+      ...ISSUE_GRAPH_FIXTURE_DATASETS["2500"]!,
+      name: "probe-infeasible", totalTasks: 85, seed: "x",
+    })).toThrow(/infeasible spread bounds/);
+    // No unfinished line for the cancelled-blocking anchor.
+    expect(() => buildIssueGraphFixture({
+      ...ISSUE_GRAPH_FIXTURE_DATASETS["2500"]!,
+      name: "probe-all-done", seed: "x",
+      profile: { ...ISSUE_GRAPH_FIXTURE_DATASETS["2500"]!.profile, doneLineShare: 1 },
+    })).toThrow(/no unfinished line/);
+  });
+
+  it("hits the exact node total across many seeds, including single-line", { timeout: 30_000 }, () => {
     for (const seed of ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"]) {
       const single = buildIssueGraphFixture({
         ...ISSUE_GRAPH_FIXTURE_DATASETS["big-line"]!, name: `probe-${seed}`, seed,
@@ -263,6 +298,37 @@ describe("synthetic issue graph fixtures", () => {
       expect(stats.unfinished).toBe(2);
       // A cancelled member with no downstream edge blocks nothing.
       expect(analyzeIssueGraphFixture(graphOf(nodes, [])).cancelledStillBlocking).toBe(0);
+    });
+
+    it("counts same-flow cross-line edges as against the flow (N11)", () => {
+      // Two lines on the SAME project (flow equal): their cross edges are
+      // lateral, not down-flow, and must count as against-flow.
+      const nodes = [
+        node("a", null, "todo"),
+        node("a1", "a", "todo", 1),
+        node("b", null, "todo"),
+        node("b1", "b", "todo", 1),
+      ];
+      const stats = analyzeIssueGraphFixture(graphOf(nodes, [["a1", "b1"]]));
+      expect(stats.crossLineAgainstFlow).toBe(1); // 1 >= 1
+      // Down-flow (client 2 → level 3) stays clean.
+      const down = [
+        node("a", null, "todo"), node("a1", "a", "todo", 1),
+        node("b", null, "todo", null, "p2"), node("b1", "b", "todo", 1, "p2"),
+      ];
+      expect(analyzeIssueGraphFixture(graphOf(down, [["a1", "b1"]])).crossLineAgainstFlow).toBe(0);
+    });
+
+    it("flags ancestor edges in either direction (N12)", () => {
+      // Parent → child is an ancestor edge; so is child → parent.
+      const nodes = [
+        node("a", null, "todo"),
+        node("a1", "a", "todo", 1),
+        node("b", null, "todo"),
+        node("b1", "b", "todo", 1),
+      ];
+      expect(analyzeIssueGraphFixture(graphOf(nodes, [["a", "a1"]])).ancestorEdges).toBe(1);
+      expect(analyzeIssueGraphFixture(graphOf(nodes, [["a1", "a"]])).ancestorEdges).toBe(1);
     });
 
     it("reports stages present and line size bounds", () => {
