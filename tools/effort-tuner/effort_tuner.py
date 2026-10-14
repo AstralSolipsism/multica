@@ -46,9 +46,22 @@ MODEL_EFFORTS = {
     "gpt-5.6-luna": EFFORT_ORDER[:-1],
 }
 
-# website-sourced effort names must look like plain identifiers before they
-# are allowed into any message (they end up in issue comments)
-EFFORT_NAME_RE = re.compile(r"^[a-z0-9._-]+$")
+# External values (website payloads, echoed exclude-list lines) pass this
+# whitelist before entering any message: the server parses mentions on raw
+# comment text (server/internal/util/mention.go), so backticks are no
+# protection and arbitrary strings must never be echoed verbatim.
+SAFE_RE = re.compile(r"^[A-Za-z0-9._:-]{1,80}$")
+
+
+def safe(v):
+    """Whitelist gate for external values on their way into a message."""
+    s = str(v)
+    return s if SAFE_RE.fullmatch(s) else "<非法值，已省略>"
+
+
+def safe_all(values):
+    """Render a collection of external values, each through safe()."""
+    return "(%s)" % ", ".join(safe(v) for v in values)
 
 
 class TunerError(Exception):
@@ -79,14 +92,15 @@ def parse_exclude_list(description):
     if not match:
         raise TunerError("tracking-issue description has no ```%s``` block" % EXCLUDE_BLOCK)
     ids = set()
-    for line in match.group(1).splitlines():
-        line = line.split("#", 1)[0].strip()
+    for line_no, raw in enumerate(match.group(1).splitlines(), 1):
+        line = raw.split("#", 1)[0].strip()
         if not line:
             continue
         try:
             ids.add(str(uuid.UUID(line)))
         except ValueError:
-            raise TunerError("exclude list line is not a UUID: %r" % line) from None
+            raise TunerError("exclude list line %d is not a UUID: %s"
+                             % (line_no, safe(line))) from None
     return ids
 
 
@@ -129,24 +143,41 @@ def common_efforts_for(model, binding):
     table = MODEL_EFFORTS[model]
     site = sorted({e["effort"] for e in (binding.get("model_efforts") or [])
                    if e.get("model") == model and e.get("effort")})
-    common = [e for e in table if e in site and EFFORT_NAME_RE.fullmatch(e)]
+    common = [e for e in table if e in site]
     note = None
     if set(table) != set(site):
         note = ("effort table and website disagree for %s "
-                "(script=`%s` website=`%s`)" % (model, sorted(table), site))
+                "(script=%s website=%s)"
+                % (model, safe_all(sorted(table)), safe_all(site)))
     return common, note
 
 
 def check_payload(model, effort, s):
-    """Raise TunerError when a fetched score payload cannot be interpreted."""
+    """Raise TunerError when a fetched score payload cannot be interpreted.
+
+    A null score leaves the effort out of the ranking, but its coverage still
+    goes into the comment's score table, so a non-null non-int coverage is
+    rejected there too (agreed deviation on 供参考 1). Values are never
+    echoed — only type names — so malformed payloads cannot smuggle strings
+    into comments.
+    """
     if not isinstance(s, dict):
-        raise TunerError("malformed payload for %s/%s: %r" % (model, effort, s))
+        raise TunerError("malformed payload for %s/%s: expected dict, got %s"
+                         % (model, effort, type(s).__name__))
     score, cov = s.get("score"), s.get("coverage")
     if isinstance(score, bool) or (score is not None
                                    and not isinstance(score, (int, float))):
-        raise TunerError("score for %s/%s is not a number: %r" % (model, effort, score))
-    if isinstance(cov, bool) or not isinstance(cov, int):
-        raise TunerError("coverage for %s/%s is not an integer: %r" % (model, effort, cov))
+        raise TunerError("score for %s/%s is not a number: %s"
+                         % (model, effort, type(score).__name__))
+    if score is None:
+        # score-null efforts never rank, but their coverage reaches the score
+        # table, so null/int still passes and anything else is rejected
+        ok_cov = cov is None or isinstance(cov, int)
+    else:
+        ok_cov = isinstance(cov, int)
+    if isinstance(cov, bool) or not ok_cov:
+        raise TunerError("coverage for %s/%s is not an integer: %s"
+                         % (model, effort, type(cov).__name__))
 
 
 def pick_efforts(model, binding, scores):
@@ -165,13 +196,17 @@ def pick_efforts(model, binding, scores):
         if s is None:
             continue
         check_payload(model, e, s)
-        if s.get("score") is None or s.get("coverage") < COVERAGE_MIN:
+        if s.get("score") is None:
+            continue  # score-null efforts never rank; coverage may be null too
+        if s.get("coverage") < COVERAGE_MIN:
             continue
         if (s.get("benchmark"), s.get("task_set_sha256")) != ref:
-            raise TunerError("benchmark/task_set mismatch for %s/%s: got `%r`, "
-                             "binding has `%r`"
-                             % (model, e, (s.get("benchmark"), s.get("task_set_sha256")),
-                                ref))
+            raise TunerError("benchmark/task_set mismatch for %s/%s: got %s, "
+                             "binding has %s"
+                             % (model, e,
+                                safe_all((s.get("benchmark"),
+                                          s.get("task_set_sha256"))),
+                                safe_all(ref)))
         candidates.append(e)
     if not candidates:
         return None, None, common, notes
@@ -193,13 +228,18 @@ def degrade_peak(scores, today):
     for s in scores.values():
         if not isinstance(s, dict):
             continue
-        for p in s.get("history", {}).get("points", []):
+        for p in (s.get("history") or {}).get("points") or []:
+            if not isinstance(p, dict):
+                continue
+            at = p.get("at")
+            if not isinstance(at, str):
+                continue
             cov, score = p.get("coverage"), p.get("score")
             if isinstance(cov, bool) or not isinstance(cov, int) or cov < COVERAGE_MIN:
                 continue
             if isinstance(score, bool) or not isinstance(score, (int, float)):
                 continue
-            day = (p.get("at") or "")[:10]
+            day = at[:10]
             if day:
                 days.setdefault(day, []).append(score)
     if not days:
@@ -218,7 +258,7 @@ def degrade_check(model, scores, s_max, today):
     if peak is None or s_max is None or s_max > peak - DEGRADE_THRESHOLD:
         return None
     return ("degrade: %s best %.1f vs 7-day peak %.1f on %s (down %.1f pts)"
-            % (model, s_max, peak, peak_day, peak - s_max))
+            % (model, s_max, peak, safe(peak_day), peak - s_max))
 
 
 def plan_changes(managed, targets, scores):
@@ -243,6 +283,14 @@ def plan_changes(managed, targets, scores):
         target = None if a["model"] in blocked else targets.get(model)
         if target and target != current:
             changes.append((a["id"], a.get("name", ""), current or "(empty)", target))
+    # same wording as the mismatch anomaly: name every agent left untouched
+    frozen = {}
+    for a in managed.values():
+        if a["model"] in blocked:
+            frozen.setdefault(a["model"], []).append(
+                "%s (%s)" % (a["id"], a.get("name", "")))
+    for model in sorted(frozen):
+        anomalies.append("本轮未改该模型的 agent：%s" % "、".join(frozen[model]))
     return changes, anomalies
 
 
@@ -313,8 +361,10 @@ def render_comment(changes, anomalies, alerts, scores, common_by_model):
                 if s is None:
                     lines.append("- `%s/%s`: missing this round" % (model, e))
                 else:
+                    cov = s.get("coverage")
                     lines.append("- `%s/%s`: score %s, coverage %s/64"
-                                 % (model, e, fmt_score(s.get("score")), s.get("coverage")))
+                                 % (model, e, fmt_score(s.get("score")),
+                                    "null" if cov is None else cov))
         lines.append("")
         lines.append("params: tie_range=%d coverage_min=%d degrade_threshold=%d window=%dd"
                      % (TIE_RANGE, COVERAGE_MIN, DEGRADE_THRESHOLD, HISTORY_WINDOW_DAYS))
@@ -349,9 +399,15 @@ def apply_changes(changes, dry_run=False, multica=None):
             continue
         try:
             multica(["agent", "update", agent_id, "--thinking-level", new])
-            after = multica(["agent", "get", agent_id, "--output", "json"])
         except TunerError as exc:
             issues.append("agent %s (%s) 改为 %s 失败：%s" % (agent_id, name, new, exc))
+            continue
+        try:
+            after = multica(["agent", "get", agent_id, "--output", "json"])
+        except TunerError as exc:
+            # the update may already have taken effect — we just cannot confirm
+            issues.append("agent %s (%s) 改为 %s 后无法确认是否生效：%s"
+                          % (agent_id, name, new, exc))
             continue
         got = after.get("thinking_level") or ""
         if got != new:

@@ -6,6 +6,7 @@ Run: python3 test_effort_tuner.py  (also works under pytest)
 import datetime
 import itertools
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -73,9 +74,14 @@ class ExcludeListTests(unittest.TestCase):
         with self.assertRaises(et.TunerError):
             et.parse_exclude_list("no block here")
 
-    def test_invalid_line(self):
-        with self.assertRaises(et.TunerError):
-            et.parse_exclude_list(self.desc("not-a-uuid"))
+    def test_invalid_line_reports_line_number_and_sanitized_value(self):
+        with self.assertRaises(et.TunerError) as ctx:
+            et.parse_exclude_list(
+                self.desc("%s\n[@someone](mention://member/deadbeef)" % ID1))
+        # line number kept for locating; the pasted mention link is whitelisted
+        self.assertIn("line 2", str(ctx.exception))
+        self.assertIn("<非法值，已省略>", str(ctx.exception))
+        self.assertNotIn("mention://", str(ctx.exception))
 
 
 class ManagedAgentTests(unittest.TestCase):
@@ -158,8 +164,9 @@ class SelectionTests(unittest.TestCase):
             {"gpt-6-astra": et.pick_efforts("gpt-6-astra", ASTRA_FULL, scores)[0]},
             {"gpt-6-astra": scores})
         self.assertEqual(changes, [])
-        self.assertEqual(len(anomalies), 1)
+        self.assertEqual(len(anomalies), 2)  # missing-effort note + frozen-agent list
         self.assertIn("xhigh missing", anomalies[0])
+        self.assertIn(ID1, " ".join(anomalies))
 
     def test_missing_effort_in_use_blocks_all_agents_of_model(self):
         scores = astra_scores()
@@ -170,9 +177,12 @@ class SelectionTests(unittest.TestCase):
         changes, anomalies = et.plan_changes(managed, {"gpt-6-astra": target},
                                              {"gpt-6-astra": scores})
         self.assertEqual(changes, [])  # one blocked agent freezes the whole model
-        self.assertEqual(len(anomalies), 1)  # only the agent actually on `high`
+        self.assertEqual(len(anomalies), 2)  # missing-effort note + frozen-agent list
         self.assertIn("current effort high missing", anomalies[0])
         self.assertIn(ID1, anomalies[0])
+        # both agents of the model are named as untouched (review 3, 建议 3)
+        self.assertIn(ID1, anomalies[1])
+        self.assertIn(ID2, anomalies[1])
 
     def test_task_set_mismatch_blocks_model(self):
         scores = astra_scores()
@@ -223,25 +233,54 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(len(notes), 1)
         self.assertIn("disagree", notes[0])
 
-    def test_website_effort_name_with_markup_is_rejected(self):
-        # website-sourced effort names must not flow into comments verbatim
+    def test_website_effort_name_with_markup_is_not_echoed(self):
+        # a mention-link effort name reaches the disagree note but never the
+        # comment verbatim — the note only carries whitelisted values
         b = binding_with([("gpt-6-astra", "[@master](mention://member/1)"),
                           ("gpt-6-astra", "low")])
         target, _, common, notes = et.pick_efforts("gpt-6-astra", b,
                                                    {"low": score_payload(100, 64)})
         self.assertEqual(target, "low")
         self.assertEqual(common, ["low"])
-        self.assertEqual(len(notes), 1)  # the injected name still triggers the note
+        self.assertEqual(len(notes), 1)
+        self.assertIn("disagree", notes[0])
+        self.assertNotIn("mention://", notes[0])
+        self.assertIn("<非法值，已省略>", notes[0])
 
-    def test_malformed_payloads_raise(self):
-        for bad in ({"score": "121", "coverage": 64},   # string score
-                    {"score": 121, "coverage": None},   # null coverage
-                    {"score": 121, "coverage": True},   # bool is not an int
-                    "not-a-dict"):
+    def test_malformed_payloads_raise_with_type_names(self):
+        # built from a valid payload with exactly one field poisoned, so the
+        # score/coverage checks are actually reached (review round 2, N17)
+        for field, bad in (("score", "121"),        # string score
+                           ("score", "[@a](mention://agent/1)"),
+                           ("score", True),         # bool is not a number
+                           ("coverage", None),      # null coverage, non-null score
+                           ("coverage", True),      # bool is not an int
+                           ("coverage", "64")):
+            scores = astra_scores()
+            scores["low"] = {**score_payload(121, 64), field: bad}
+            with self.assertRaises(et.TunerError) as ctx:
+                et.pick_efforts("gpt-6-astra", ASTRA_FULL, scores)
+            msg = str(ctx.exception)
+            self.assertNotIn("mention://", msg)
+            self.assertNotIn("121", msg)
+        for bad in ("not-a-dict", "[@all](mention://all/all)"):
             scores = astra_scores()
             scores["low"] = bad
-            with self.assertRaises(et.TunerError):
+            with self.assertRaises(et.TunerError) as ctx:
                 et.pick_efforts("gpt-6-astra", ASTRA_FULL, scores)
+            self.assertNotIn("mention://", str(ctx.exception))
+            self.assertIn(type(bad).__name__, str(ctx.exception))
+
+    def test_null_score_allows_null_coverage_but_not_bad_coverage(self):
+        # agreed deviation on 供参考 1: score-null efforts skip candidacy but
+        # their coverage still lands in the score table, so only null/int pass
+        scores = astra_scores()
+        scores["low"] = score_payload(None, None)
+        target, s_max, _, _ = et.pick_efforts("gpt-6-astra", ASTRA_FULL, scores)
+        self.assertEqual(target, "xhigh")  # low not a candidate; rest unchanged
+        scores["low"] = score_payload(None, "a lot")
+        with self.assertRaises(et.TunerError):
+            et.pick_efforts("gpt-6-astra", ASTRA_FULL, scores)
 
     def test_sol_low_fixture_selects_and_degrades(self):
         b = binding_with([("gpt-6.1-sol", e) for e in et.EFFORT_ORDER])
@@ -326,6 +365,18 @@ class DegradeTests(unittest.TestCase):
         peak, day = et.degrade_peak(scores, today=TODAY)
         self.assertEqual((peak, day), (None, None))
 
+    def test_null_history_and_non_dict_points_ignored(self):
+        # review round 2, 建议 1 + follow-up: history/points may come back as
+        # null; points entries and `at` may not be dicts/strings — all skipped
+        scores = {"low": {**score_payload(50, 64), "history": None},
+                  "high": score_payload(50, 64, points=[
+                      self.points("2026-10-10T00:00:00.000Z", 90.0, 64),
+                      {"at": 1760000000, "score": 200.0, "coverage": 64},
+                      "not-a-point",
+                  ])}
+        peak, day = et.degrade_peak(scores, today=TODAY)
+        self.assertEqual((peak, day), (90.0, "2026-10-10"))
+
 
 class CommentTests(unittest.TestCase):
     def test_degrade_alert_in_comment(self):
@@ -344,6 +395,13 @@ class CommentTests(unittest.TestCase):
                                  {"m": ["low", "high"]})
         self.assertIn("`m/low`: missing this round", body)
         self.assertIn("`m/high`: score 90.5, coverage 60/64", body)
+
+    def test_null_coverage_renders_as_null(self):
+        # review round 2, 供参考 1 follow-up: null renders as `null`, not None
+        body = et.render_comment([(ID1, "A", "high", "xhigh")], [], [],
+                                 {"m": {"low": score_payload(None, None)}},
+                                 {"m": ["low"]})
+        self.assertIn("`m/low`: score null, coverage null/64", body)
 
     def test_anomaly_names_blocked_agents(self):
         # review 5: the anomaly section says which agents stayed untouched
@@ -417,6 +475,30 @@ class FetchTests(unittest.TestCase):
             mtime.monotonic.side_effect = itertools.count()
             self.assertIsNone(et.fetch_binding(deadline=100))
 
+    def test_binding_timeout_capped_by_deadline(self):
+        # review round 2 (N14): with 1s of budget left the binding request's
+        # timeout is capped to that, not the full 130s
+        seen = []
+
+        def fake_get(url, timeout=None):
+            seen.append(timeout)
+            return {"model_efforts": []}
+
+        with patch.object(et, "http_get_json", side_effect=fake_get), \
+             patch.object(et.time, "monotonic", side_effect=iter([1000])):
+            binding = et.fetch_binding(deadline=1001)
+        self.assertEqual(seen, [1])
+        self.assertEqual(binding, {"model_efforts": []})
+
+    def test_binding_no_request_when_budget_exhausted(self):
+        # review round 2 (N15): out of budget -> no request at all
+        def fail(url, timeout=None):
+            raise AssertionError("no request expected")
+
+        with patch.object(et, "http_get_json", side_effect=fail), \
+             patch.object(et.time, "monotonic", return_value=1001):
+            self.assertIsNone(et.fetch_binding(deadline=1000))
+
 
 # ---- end-to-end round tests with a fake multica and fake HTTP (review 6) ----
 
@@ -430,10 +512,11 @@ DESC = "rules\n```effort-tuner-exclude\n%s\n```" % ID2
 class FakeMultica:
     """Records multica calls; serves runtime/agent/issue data from fixtures."""
 
-    def __init__(self, agents, issue=None, update_fails=(), readback=None):
+    def __init__(self, agents, issue=None, update_fails=(), get_fails=(), readback=None):
         self.agents = agents
         self.issue = issue if issue is not None else issue_json(DESC)
         self.update_fails = set(update_fails)
+        self.get_fails = set(get_fails)
         self.readback = dict(readback or {})   # agent_id -> value returned by get
         self.comments = []
         self.calls = []
@@ -447,6 +530,8 @@ class FakeMultica:
         if head == "agent" and args[1] == "list":
             return self.agents
         if head == "agent" and args[1] == "get":
+            if args[2] in self.get_fails:
+                raise et.TunerError("multica agent get failed: 500")
             return {"thinking_level": self.readback.get(args[2], self.applied.get(args[2]))}
         if head == "agent" and args[1] == "update":
             if args[2] in self.update_fails:
@@ -498,19 +583,20 @@ class RoundTests(unittest.TestCase):
                        agent(ID2, "gpt-6-astra", "xhigh", name="excluded")]
         self.binding = binding_with([("gpt-6-astra", e) for e in et.EFFORT_ORDER])
 
-    def run_round(self, fake_multica, http, dry_run=False, cwd=None):
+    def run_round(self, fake_multica, http, dry_run=False):
         import os
         import tempfile
-        tmp = cwd or tempfile.mkdtemp()
+        # review round 2, 小问题 2: TemporaryDirectory cleans up after itself
         old = os.getcwd()
-        os.chdir(tmp)
-        try:
-            code = et.run_round("OL-252", dry_run=dry_run,
-                                multica=fake_multica, http_get=http,
-                                today=TODAY)
-            leftover = (Path(tmp) / "effort-tuner-comment.md").exists()
-        finally:
-            os.chdir(old)
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                code = et.run_round("OL-252", dry_run=dry_run,
+                                    multica=fake_multica, http_get=http,
+                                    today=TODAY)
+                leftover = (Path(tmp) / "effort-tuner-comment.md").exists()
+            finally:
+                os.chdir(old)
         return code, leftover
 
     def test_baseline_writes_and_posts_one_comment_via_content_file(self):
@@ -642,6 +728,154 @@ class RoundTests(unittest.TestCase):
             code, leftover = self.run_round(m, http)
         self.assertEqual(code, 0)
         self.assertEqual(m.comments, [])
+
+
+    # ---- review round 2, 应修 B: spec anomalies must reach the comment ----
+
+    def test_current_effort_missing_lands_in_comment(self):
+        # N30: agent on `low`, low missing this round -> "missing" anomaly in
+        # the comment, nothing written, frozen agents named
+        agents = [agent(ID1, "gpt-6-astra", "low", name="one")]
+        m = FakeMultica(agents)
+        http = http_for(self.binding, {"low": None})   # low fetch fails
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(m.comments), 1)
+        self.assertIn("current effort low missing", m.comments[0])
+        self.assertIn(ID1, m.comments[0])
+        self.assertIn("本轮未改该模型的 agent", m.comments[0])
+        self.assertFalse(any(c[:2] == ["agent", "update"] for c in m.calls))
+
+    def test_skipped_agent_lands_in_comment(self):
+        # N32: empty-model agent outside the exclude list is reported
+        three = "33333333-3333-3333-3333-333333333333"
+        agents = [agent(ID1, "gpt-6-astra", "max", name="one"),
+                  agent(three, "", "", name="empty-model")]
+        m = FakeMultica(agents)
+        http = http_for(self.binding)
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(m.comments), 1)
+        self.assertIn("skipped", m.comments[0])
+        self.assertIn("model is empty", m.comments[0])
+        self.assertIn(three, m.comments[0])
+
+    def test_table_disagreement_lands_in_comment(self):
+        # N33: binding missing the low effort -> disagree note in the comment
+        binding = binding_with([("gpt-6-astra", e) for e in et.EFFORT_ORDER[1:]])
+        m = FakeMultica(self.agents)
+        http = http_for(binding)
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(m.comments), 1)
+        self.assertIn("disagree", m.comments[0])
+        self.assertFalse(any("effort=low" in u for u in http.calls))
+
+    # ---- review round 2, 应修 A: injection guard at the round layer ----
+
+    # copy of the server's mention parser (server/internal/util/mention.go:16)
+    MENTION_RE = re.compile(
+        r"\[@?(.+?)\]\(mention://(member|agent|squad|issue|all)/([0-9a-fA-F-]+|all)\)")
+
+    def assert_one_comment_without_mentions(self, m, expect_marker,
+                                            expect_type_name=None):
+        self.assertEqual(len(m.comments), 1)   # anti-vacuous: a comment exists
+        body = m.comments[0]
+        self.assertIsNone(self.MENTION_RE.search(body), body)
+        self.assertIn(expect_marker, body)     # and the sanitizer kicked in
+        if expect_type_name:
+            self.assertIn(expect_type_name, body)
+
+    def test_injected_effort_name_sanitized(self):
+        # binding carries a mention-link effort name into the disagree note
+        b = binding_with([("gpt-6-astra", "[@master](mention://member/1)")] +
+                         [("gpt-6-astra", e) for e in et.EFFORT_ORDER])
+        m = FakeMultica(self.agents)
+        http = http_for(b)
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertEqual(code, 0)
+        self.assert_one_comment_without_mentions(m, "<非法值，已省略>")
+
+    def test_injected_score_string_sanitized(self):
+        # score is a mention string -> type name only, never the value
+        poisoned = dict(load("score_gpt-6-astra_medium.json"))
+        poisoned["score"] = "[@victim](mention://agent/deadbeef)"
+        m = FakeMultica(self.agents)
+        http = http_for(self.binding, {"medium": poisoned})
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertEqual(code, 0)
+        self.assert_one_comment_without_mentions(
+            m, "score for gpt-6-astra/medium is not a number", expect_type_name="str")
+
+    def test_injected_whole_payload_string_sanitized(self):
+        # the whole payload is an @all mention string -> dict expected, got str
+        m = FakeMultica(self.agents)
+        http = http_for(self.binding, {"low": "[@all](mention://all/all)"})
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertEqual(code, 0)
+        self.assert_one_comment_without_mentions(
+            m, "malformed payload for gpt-6-astra/low", expect_type_name="str")
+
+    def test_injected_benchmark_backticks_sanitized(self):
+        # benchmark with backticks would escape a code span and re-enable a
+        # mention inside it; safe() keeps the whole tuple out
+        poisoned = dict(load("score_gpt-6-astra_xhigh.json"))
+        poisoned["benchmark"] = "radar-bench-final64-20261004` [@x](mention://member/1)"
+        m = FakeMultica(self.agents)
+        http = http_for(self.binding, {"xhigh": poisoned})
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertEqual(code, 0)
+        self.assert_one_comment_without_mentions(m, "mismatch for gpt-6-astra/xhigh")
+
+    def test_injected_exclude_list_line_sanitized(self):
+        # a mention link pasted into the exclude block (instead of a bare ID)
+        # is echoed with its line number but never verbatim
+        desc = ("rules\n```effort-tuner-exclude\n%s\n"
+                "[@victim](mention://agent/ccc32e7d-a604-4940-a7da-09c80ecbf170)\n```" % ID2)
+        m = FakeMultica(self.agents, issue=issue_json(desc))
+        http = http_for(self.binding)
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertEqual(code, 0)
+        self.assertEqual(http.calls, [])   # nothing fetched on a bad list
+        self.assert_one_comment_without_mentions(m, "line 2")
+        self.assertIn("本轮未改任何 agent", m.comments[0])
+
+    # ---- review round 2, 小问题 1: readback get failure wording ----
+
+    def test_readback_get_failure_continues_and_reports(self):
+        # update succeeds, agent get fails: "cannot confirm", not "failed"
+        m = FakeMultica(self.agents, get_fails={ID1})
+        http = http_for(self.binding)
+        with patch.object(et, "FETCH_BUDGET_S", 600), \
+             patch.object(et.time, "monotonic", side_effect=itertools.count()):
+            code, leftover = self.run_round(m, http)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(m.comments), 1)
+        self.assertIn("无法确认是否生效", m.comments[0])
+
+
+class MainTests(unittest.TestCase):
+    def test_main_returns_1_on_tuner_error(self):
+        # review round 2 (N34): a TunerError escaping run_round exits 1
+        with patch.object(et, "run_round", side_effect=et.TunerError("boom")):
+            code = et.main(["--tracking-issue", "OL-252"])
+        self.assertEqual(code, 1)
 
 
 if __name__ == "__main__":

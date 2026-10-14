@@ -35,7 +35,8 @@ python3 tools/effort-tuner/effort_tuner.py --tracking-issue OL-252 --dry-run  # 
   1. **后台运行（推荐，冷缓存也安全）**：terminal 工具 `background=true`（配 notify）执行脚本，
      完成后取结果。脚本最坏耗时 ≈ `EFFORT_TUNER_BUDGET_S` + 少量处理时间，600 秒预算也兜得住。
   2. **前台运行**：把 `EFFORT_TUNER_BUDGET_S` 调小（如 `EFFORT_TUNER_BUDGET_S=300`），让最坏
-     耗时落在 600 秒上限以内。
+     耗时落在 600 秒上限以内；同时把 terminal 工具的 `timeout` 显式设为约
+     `EFFORT_TUNER_BUDGET_S + 60` 秒（如预算 300 → `timeout=360`），且不超过 600。
 - autopilot 触发的运行同样经 Hermes 的 terminal 工具，适用同一结论；不要依赖"autopilot 不设
   命令超时"的说法。
 
@@ -49,15 +50,18 @@ python3 tools/effort-tuner/effort_tuner.py --tracking-issue OL-252 --dry-run  # 
    model 不在档位表里的，跳过并报异常。
 2. **排除名单**：跟踪 issue 描述中的 ` ```effort-tuner-exclude ` 围栏代码块，每行一个
    agent ID，`#` 后为注释，空行忽略。名单里的 agent 完全静默跳过（包括模型检查，不再报异常）。
-   代码块缺失或某行不是合法 UUID 时，这一轮不改任何配置，并把该异常写进评论。
+   代码块缺失或某行不是合法 UUID 时，这一轮不改任何配置，并把该异常写进评论（异常带行号；
+   该行内容同样经 `safe()` 白名单化，从界面复制的提及链接不会原样回显）。
 3. **档位表**（codex-cli 0.160.1 `codex debug models`）：
    - gpt-6-astra / gpt-6.1-sol / gpt-6-sol / gpt-5.6-sol / gpt-5.6-terra：low..ultra 六档
    - gpt-6-luna / gpt-5.6-luna：low..max 五档
 4. **抓取**：binding（`/data/radar-bench-binding.json`，失败重试一次，仍失败则本轮不改任何
    agent 并报异常）+ 每档分数（`/api/radar-bench-score?...&selection=user-selected-v1`，
    缺 selection 会 428）。只抓在管 agent 用到的模型；User-Agent 为 `labrastro-effort-tuner/1`。
-   脚本档位表和网站 `model_efforts` 对不上时，只在两边都有的档里挑，并报异常。网站返回的档名
-   只接受 `^[a-z0-9._-]+$` 形式，其余按"对不上"处理，避免第三方字符串进评论。
+   脚本档位表和网站 `model_efforts` 对不上时，只在两边都有的档里挑，并报异常。所有来自网站的值
+   （档名、benchmark/task_set、历史点日期等）进评论前一律经 `safe()` 白名单化（只放行
+   `[A-Za-z0-9._:-]{1,80}`，其余显示为"\<非法值，已省略\>"），因此第三方字符串不会以原文形式
+   出现在评论里，也不会被服务端解析成提及。
 5. **选档**（按模型）：候选 = 两边都有 + 抓到 + score 非 null + coverage ≥ 56；候选中
    最高分 S，`score ≥ S − 5` 算并列，取并列里最便宜的（low < medium < high < xhigh <
    max < ultra）。候选各档及 binding 的 `benchmark`/`task_set_sha256` 必须一致，否则该
@@ -71,7 +75,7 @@ python3 tools/effort-tuner/effort_tuner.py --tracking-issue OL-252 --dry-run  # 
 7. **整体降智**：各档 history 里 coverage ≥ 56 的点按 UTC 日取各档最高分，在**以今天为终点
    的最近 7 个 UTC 日**（`[今天-6, 今天]`）里取峰值；S 比峰值低 ≥ 10 分时在评论里提醒
    "整体降智，换档没用，要不要换模型由 Master 决定"。数据停更时窗口照旧以今天为终点，
-   7 天以前的历史不参与。脚本不换模型。
+   7 天以前的历史不参与。`history`/`points` 为 null 或形状不对的点直接跳过。脚本不换模型。
 8. **评论**：每轮最多一条，换档/异常/降智合并；什么都没发生就不发。不 @ 任何人，不去重、
    不记状态。通过 `multica issue comment add <issue> --content-file <文件>` 发送。异常部分
    写明这一轮因此没改哪些 agent。
@@ -91,10 +95,10 @@ python3 tools/effort-tuner/test_effort_tuner.py   # 或 python3 -m pytest tools/
 不访问网络；`fixtures/` 是 2026-10-11 从 codexradar.com 抓的原始响应（gpt-6-astra 缺
 low 档，gpt-6.1-sol 只有 low 档）。除了纯函数测试，还有用假 multica / 假 HTTP 的端到端
 轮次测试（dry-run 不写不发、写入失败继续、回读不一致继续、名单非法不抓不改、评论经
-`--content-file` 发出等）。
+`--content-file` 发出、提及注入用服务端正则验证不生效、三类规格异常必进评论等）。
 
 ## 文件
 
 - `effort_tuner.py` — 脚本本体
-- `test_effort_tuner.py` — 单元测试（48 个，离线）
+- `test_effort_tuner.py` — 单元测试（63 个，离线）
 - `fixtures/` — codexradar.com 原始响应（测试固定数据）
