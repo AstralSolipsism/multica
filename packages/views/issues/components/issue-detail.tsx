@@ -2365,12 +2365,21 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     rafId = requestAnimationFrame(center);
 
     setHighlightedId(landingId);
-    const fade = window.setTimeout(() => setHighlightedId(null), 2500);
-    return () => {
-      cancelAnimationFrame(rafId);
-      clearTimeout(fade);
-    };
+    return () => cancelAnimationFrame(rafId);
   }, [highlightCommentId, highlightRequestToken, isArrivalHighlight, arrival.captured, isFlatTimeline, jumpToMinimapTarget, id, writeViewState, items, targetIdx, scrollContainerEl, replyToRoot, expandedResolved, timelineView, toggleResolvedExpand]);
+
+  // The highlight fade lives in its own effect keyed on `highlightedId`
+  // itself, not in the landing effect above: that effect re-runs on any
+  // timeline change (e.g. comment tasks resolving right after the landing),
+  // and its cleanup would cancel an in-flight fade while the landing guards
+  // keep the re-run from starting a new one — the highlight then stays on
+  // forever (OL-303). Keyed this way, only a highlight change or unmount
+  // touches the timer.
+  useEffect(() => {
+    if (highlightedId === null) return;
+    const fade = window.setTimeout(() => setHighlightedId(null), 2500);
+    return () => window.clearTimeout(fade);
+  }, [highlightedId]);
 
   const descEditorRef = useRef<ContentEditorRef>(null);
   const descriptionEditingRef = useRef(false);

@@ -1861,6 +1861,28 @@ describe("IssueDetail (shared)", () => {
         ).toContain("bg-[color-mix(in_srgb,var(--card)_95%,var(--brand)_5%)]");
       });
     });
+
+    it("still fades the highlight when timeline data changes right after the landing (OL-303)", async () => {
+      // Comment tasks resolve ~1.2s in: their run rows re-run the landing
+      // effect under the landed guard. The fade timer used to live in that
+      // effect's cleanup, so the re-run cancelled it and the guarded re-run
+      // never started a new one — the highlight stayed on until a refresh.
+      mockApiObj.listTasksByIssue.mockImplementation(
+        () => new Promise<AgentTask[]>((resolve) => setTimeout(() => resolve([]), 1200)),
+      );
+      renderIssueDetailWithHighlight("comment-2");
+
+      await waitFor(() => {
+        expect(
+          hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
+        ).toBe(true);
+      });
+      // Well past both the late task resolution and the 2.5s fade.
+      await act(async () => { await new Promise((r) => setTimeout(r, 4000)); });
+      expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
+      ).toBe(false);
+    }, 10000);
   });
 
   // OL-270 — an in-app `#comment-…` push changes `highlightCommentId` on a
