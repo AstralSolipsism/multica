@@ -1,7 +1,7 @@
 /** One cancellable worker per request class. Replacing one class never aborts
  * another. Used by the existing projection and the Stage 8 scene service. */
 export function createDagWorkerChannels<Request extends { requestId: number }, Response extends { requestId: number }>(
-  factory: () => Worker,
+  factory: (key: string) => Worker,
   failureResponse: (requestId: number, error: string) => Response,
 ) {
   type Active = { requestId: number; done: (response: Response) => void; timer?: ReturnType<typeof setTimeout> };
@@ -19,7 +19,7 @@ export function createDagWorkerChannels<Request extends { requestId: number }, R
   const prepare = (key: string) => {
     if (failures.has(key)) throw new Error(failures.get(key)!);
     if (channels.has(key)) return channels.get(key)!;
-    const worker = factory(), channel: Channel = { worker, active: null };
+    const worker = factory(key), channel: Channel = { worker, active: null };
     channels.set(key, channel);
     const fail = (message: string) => {
       if (channels.get(key) !== channel) return;

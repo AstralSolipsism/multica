@@ -30,6 +30,19 @@ Stage 9 display its controls while the old scene remains interactive.
   ELK chooses frame port heights. Edge endpoints use `sourceKind` / `targetKind`
   from the model. Cross-hierarchy edges use `INCLUDE_CHILDREN` with orthogonal
   routing and `NETWORK_SIMPLEX` node placement.
+  A frame containing only another frame and having no own dependency endpoint
+  contributes padding to the same ELK compound node; both frame outlines and
+  logical ports are restored in the geometry. This avoids solving a redundant
+  hierarchy level without removing any public frame. Frames with explicit
+  dependency endpoints retain their own ELK node.
+  ELK receives compact, request-local IDs to reduce repeated string hashing
+  and worker copies; every returned geometry ID is restored to the input ID.
+  Serial runs within one line frame and stage reserve their full width as one
+  ELK node. Every card, port and internal edge is restored afterwards. This
+  only folds links with one outgoing edge at the source and one incoming edge
+  at the target, matching height/side and no frame/stage boundary. Branches and
+  merges still participate in ELK; a run's reserved rectangle keeps unrelated
+  routes out of its internal card gaps. Cycles are never folded.
 - `routes[edgeId]` is an ordered orthogonal polyline. `segments` partitions these
   paths at shared trunks; each segment contains the scene `edgeIds` traversing
   it. `junctions` gives branch/merge dots. Unrelated parallel paths remain
@@ -45,7 +58,9 @@ Stage 9 display its controls while the old scene remains interactive.
   cycle uses `stageMode: "labels"`. Leaf sub-lines support columns inside
   `INCLUDE_CHILDREN`; invisible ordering boundaries also place disconnected
   later-stage tasks in their proper columns (nested partitions alone do not).
-  These constraints never appear as visible dependencies. If cross-hierarchy placement
+  These constraints never appear as visible dependencies. If existing paths
+  already order every earlier-stage member before every next-stage member,
+  redundant ordering boundaries are omitted. If cross-hierarchy placement
   does not separate the requested stages, it also yields to labels.
 - A focus line spanning both sides of the selected task is represented by
   separate upstream/current/downstream frame fragments. `frame.modelId` retains
@@ -62,13 +77,20 @@ independently. Keys serialize explicit geometric fields, with no hash collisions
 or dependence on object property insertion order. Scope disposal clears all
 entries. Treat returned geometry as immutable.
 
-After an overview completes, line/focus workers preload ELK. Each worker uses
+While the overview runs, the line worker preloads ELK; focus preloads when the
+overview completes, avoiding three simultaneous initializations. Each worker uses
 ELK's supported child-worker API. A 3,000 ms main-thread deadline terminates the
 over-budget worker (a Promise race alone cannot stop ELK), then requests bounded
 group packing in a replacement worker. `quality: "fallback"` identifies this
 result; stage columns become labels. Packing preserves membership and orthogonal
 endpoint routes but sacrifices ELK's crossing/obstacle optimization. Grid scenes
 report `quality: "grid"`; regular results report `"elk"`.
+
+Preloading registers only the layered algorithm and runs a small compound
+graph, so it initializes the simplex and routing phases as well as loading the
+module. An empty graph does not exercise those phases. Named worker channels
+let the flat overview skip this unnecessary compound warmup on the initial
+screen; line/focus warm those phases on their own channels.
 
 Fully satisfied overview dependencies are **always overlays**, even when the
 show-satisfied switch is on. That switch does not enter the placement key.
@@ -83,26 +105,37 @@ the returned segments as the complete displayed set. Omitting it returns just
 the overlay geometry for a separate highlight layer.
 
 ELK uses deterministic seed 1, low thoroughness and bottom-up crossing sweeps.
+Lines use longest-path horizontal ranks and keep `NETWORK_SIMPLEX` placement
+within ranks. Optional straight-edge alignment is disabled; routes remain
+orthogonal. These settings avoid extra work without fixing rows by status.
 Only overview uses model-order preference. Enabling `NODES_AND_EDGES` order on
 nested graphs with disconnected members can crash ELK 0.12; line/focus do not
 force model order. The regression test combines reversed stage dependencies
 with a disconnected member.
 
+Overview has no frames and uses normal component packing (`SEPARATE_CHILDREN`).
+Line/focus use `INCLUDE_CHILDREN`. Applying compound processing to the flat
+overview would stack disconnected line cards in a single tall column.
+
 ## Verification and artifacts
 
 ```sh
 pnpm --filter @multica/views exec vitest run issues/dag
-node scripts/benchmark-dag-layout.mjs --fixture accept-5000.json --big-line big-line.json --compare-all-edges --output results
+node scripts/benchmark-dag-layout.mjs --compare-all-edges --output results
 node scripts/benchmark-dag-layout.mjs --snapshot graph.json --lines OL-71,OL-110,OL-155 --focus OL-177 --output real-lines
 ```
 
-Use the shared OL-278 generator for fixture JSONs. The benchmark bundles the
+Defaults build `accept-5000` and `big-line` using the shared OL-278 generator
+and record its version, digests and shape statistics. Optional `--fixture`
+and `--big-line` flags accept explicit schema-v1 JSONs. The benchmark bundles the
 production worker path and serves only local static assets to headless Chromium;
 no app/backend is started or changed. It records cold entry, five warmups, then
-10 uncached measurements (override `--samples`), plus an actual content-cache
-hit. Changing only the scene ID forces a miss without changing graph geometry.
+10 uncached measurements (override `--samples`; acceptance uses 30), plus an actual content-cache
+hit. The first line opens immediately after the first overview completes,
+before any benchmark warmups. Changing only the scene ID forces a miss without changing graph geometry.
 Top-level timings include worker transfer and result collection; `compute`
-separately measures worker geometry work after ELK loads. The heartbeat reports
+separately measures worker geometry work after ELK loads, and `elk` isolates
+the engine call. Reports retain individual samples. The heartbeat reports
 main-thread delay while workers run. The optional `--compare-all-edges`
 overview trial measures tuned ELK under the same 3s deadline, for comparison
 with the overlay policy. Do not run other local checks during measurements.

@@ -1,5 +1,5 @@
 import { IssueGraphSchema } from "../../api/issue-graph-schemas";
-import { dagBenchmarkFixture } from "./benchmark-fixture";
+import { buildIssueGraphFixture, ISSUE_GRAPH_FIXTURE_VERSION } from "../testing/issue-graph-fixture";
 import { createDagModelIndex } from "./model-index";
 import { computeDagOverview } from "./overview";
 import { computeDagLine, computeDagFocus } from "./detail";
@@ -21,7 +21,7 @@ function measure(run: () => unknown, samples = 30) {
 
 /** Runs synchronously on the browser main thread; no workers or layout. A raw
  * graph payload can be supplied from the OL-278 generator or an API fixture. */
-export function benchmarkDagModels(payload5000: unknown = dagBenchmarkFixture(5000), payload10000: unknown = dagBenchmarkFixture(10000), fixture = "OL-279 temporary deterministic production shape") {
+export function benchmarkDagModels(payload5000: unknown = buildIssueGraphFixture("accept-5000"), payload10000: unknown = buildIssueGraphFixture("10000"), fixture = `OL-278 shared generator ${ISSUE_GRAPH_FIXTURE_VERSION}: accept-5000 / 10000`) {
   const json5000 = JSON.stringify(payload5000), json10000 = JSON.stringify(payload10000);
   const graph = IssueGraphSchema.parse(payload5000);
   if (graph.nodes.length !== 5000 || IssueGraphSchema.parse(payload10000).nodes.length !== 10000) throw new Error("Expected 5,000 and 10,000 task fixtures");

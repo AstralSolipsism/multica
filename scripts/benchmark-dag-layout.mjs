@@ -13,7 +13,9 @@ const { values } = parseArgs({ options: {
   output: { type: "string", default: "dag-layout-results" }, samples: { type: "string", default: "10" },
   "compare-all-edges": { type: "boolean", default: false },
 } });
-if (!values.fixture && !values.snapshot) throw new Error("Pass --fixture accept-5000.json or --snapshot graph.json");
+if (!Number.isInteger(Number(values.samples)) || Number(values.samples) < 1) throw new Error("--samples must be a positive integer");
+if (values["big-line"] && !values.fixture) throw new Error("--big-line requires --fixture; omit both to use the shared defaults");
+if (values.snapshot && values.fixture) throw new Error("Choose --snapshot or --fixture");
 const directory = resolve(values.output);
 await mkdir(directory, { recursive: true });
 const bundleDir = await mkdtemp(resolve(directory, ".browser-"));
@@ -40,14 +42,15 @@ try {
   const input = { fixture: await read(values.fixture), bigLine: await read(values["big-line"]), snapshot: await read(values.snapshot), identifiers: values.lines.split(","), focus: values.focus, samples: Number(values.samples), compareAllEdges: values["compare-all-edges"] };
   const output = await page.evaluate(async (input) => {
     const api = await import("/benchmark.js");
-    return input.snapshot ? { artifacts: await api.renderDagSnapshots(input.snapshot, input.identifiers, input.focus) } : api.runDagLayoutBenchmark(input.fixture, input.bigLine, input.samples, input.compareAllEdges);
+    if (input.snapshot) return { artifacts: await api.renderDagSnapshots(input.snapshot, input.identifiers, input.focus) };
+    return input.fixture ? api.runDagLayoutBenchmark(input.fixture, input.bigLine, input.samples, input.compareAllEdges) : api.runSharedDagLayoutBenchmark(input.samples, input.compareAllEdges);
   }, input);
   for (const [name, artifact] of Object.entries(output.artifacts)) {
     await writeFile(resolve(directory, `${name}.svg`), renderDagSvg(artifact, name));
     await writeFile(resolve(directory, `${name}.geometry.json`), JSON.stringify(artifact));
   }
   const cgroup = async (file) => { try { return (await readFile(`/sys/fs/cgroup/${file}`, "utf8")).trim(); } catch { return null; } };
-  const report = { machine: { cpu: cpus()[0]?.model, logicalCpus: cpus().length, availableCpus: availableParallelism(), cpuQuota: await cgroup("cpu.max"), memoryLimit: await cgroup("memory.max"), ramGiB: totalmem() / 2 ** 30, os: `${platform()} ${release()}`, node: process.version, chromium: browser.version(), loadavg: loadavg() }, ...output, artifacts: Object.keys(output.artifacts) };
+  const report = { measuredAt: new Date().toISOString(), machine: { cpu: cpus()[0]?.model, logicalCpus: cpus().length, availableCpus: availableParallelism(), cpuQuota: await cgroup("cpu.max"), memoryLimit: await cgroup("memory.max"), ramGiB: totalmem() / 2 ** 30, os: `${platform()} ${release()}`, node: process.version, chromium: browser.version(), loadavg: loadavg() }, ...output, artifacts: Object.keys(output.artifacts) };
   await writeFile(resolve(directory, "report.json"), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 } finally {

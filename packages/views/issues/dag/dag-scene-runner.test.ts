@@ -19,11 +19,14 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("scene scheduling and content LRUs", () => {
   it("runs the three classes independently and only supersedes the same class", () => {
-    const runner = createDagSceneRunner(), overview = vi.fn(), line = vi.fn(), focus = vi.fn(), newer = vi.fn();
+    const workerFactory = vi.fn((_kind: string) => new FakeWorker() as unknown as Worker);
+    const runner = createDagSceneRunner({ workerFactory }), overview = vi.fn(), line = vi.fn(), focus = vi.fn(), newer = vi.fn();
     runner.execute(input("overview"), overview);
+    expect(FakeWorker.instances).toHaveLength(2); // Line preloads before overview replies.
     runner.execute(input("line"), line);
     runner.execute(input("focus"), focus);
     runner.execute(input("line", "second"), newer);
+    expect(workerFactory.mock.calls.map(([kind]) => kind)).toEqual(["overview", "line", "focus", "line"]);
     const [a, b, c, d] = FakeWorker.instances;
     expect(a!.terminate).not.toHaveBeenCalled(); expect(c!.terminate).not.toHaveBeenCalled();
     expect(b!.terminate).toHaveBeenCalledOnce();
@@ -53,7 +56,7 @@ describe("scene scheduling and content LRUs", () => {
     const elk = FakeWorker.instances[0]!;
     vi.advanceTimersByTime(3000);
     expect(elk.terminate).toHaveBeenCalledOnce();
-    const fallback = FakeWorker.instances[1]!;
+    const fallback = FakeWorker.instances[2]!;
     expect(fallback.postMessage.mock.calls[0]![0].fallback).toBe(true);
     elk.reply(); expect(done).not.toHaveBeenCalled(); fallback.reply();
     expect(done.mock.calls[0]![0].result.quality).toBe("fallback");

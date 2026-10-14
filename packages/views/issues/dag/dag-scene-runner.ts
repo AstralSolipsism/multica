@@ -3,7 +3,7 @@ import { dagSceneKey, type DagSceneGeometry, type DagSceneInput, type DagSceneKi
 import { createDagWorkerChannels } from "./dag-worker-runner";
 
 export interface DagSceneRequest { requestId: number; input: DagSceneInput; fallback?: boolean }
-export interface DagSceneResponse { requestId: number; result?: DagSceneGeometry; error?: string; computeMs?: number }
+export interface DagSceneResponse { requestId: number; result?: DagSceneGeometry; error?: string; computeMs?: number; elkMs?: number }
 export interface DagSceneRunner {
   prepare: (kind: DagSceneKind) => void;
   execute: (input: DagSceneInput, done: (response: DagSceneResponse) => void, bypassCache?: boolean) => void;
@@ -12,10 +12,10 @@ export interface DagSceneRunner {
 }
 
 export function createDagSceneRunner({
-  workerFactory = () => new Worker(new URL("./dag-scene-worker.ts", import.meta.url), { type: "module" }),
+  workerFactory = (kind) => new Worker(new URL("./dag-scene-worker.ts", import.meta.url), { type: "module", name: kind }),
   capacity = 24,
   deadlineMs = DAG_LAYOUT_DEADLINE_MS,
-}: { workerFactory?: () => Worker; capacity?: number; deadlineMs?: number } = {}): DagSceneRunner {
+}: { workerFactory?: (kind: string) => Worker; capacity?: number; deadlineMs?: number } = {}): DagSceneRunner {
   const workers = createDagWorkerChannels<DagSceneRequest, DagSceneResponse>(workerFactory, (requestId, error) => ({ requestId, error }));
   const caches = new Map<DagSceneKind, Map<string, DagSceneGeometry>>();
   const active = new Map<DagSceneKind, { key: string; requestId: number; done: (response: DagSceneResponse) => void }>();
@@ -44,7 +44,8 @@ export function createDagSceneRunner({
         if (response.result) {
           cache.set(key, response.result);
           while (cache.size > Math.max(1, capacity)) cache.delete(cache.keys().next().value!);
-          if (kind === "overview") { workers.prepare("line"); workers.prepare("focus"); }
+          // Keep the third ELK initialization out of the initial-screen path.
+          if (kind === "overview") workers.prepare("focus");
         }
         item.done(response);
       };
@@ -55,6 +56,9 @@ export function createDagSceneRunner({
           workers.execute(kind, { requestId, input, fallback: true }, complete);
         },
       });
+      // Load alongside the overview so immediate navigation does not pay a
+      // second ELK download/compile after the first scene is already visible.
+      if (kind === "overview") workers.prepare("line");
     },
     cancel,
     dispose() { active.clear(); workers.terminate(); caches.clear(); },

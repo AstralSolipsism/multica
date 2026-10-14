@@ -52,6 +52,13 @@ function invariants(scene: DagSceneInput, result: DagSceneGeometry) {
 }
 
 describe("Stage 8 scene geometry", () => {
+  it("packs disconnected overview components instead of making one tall column", async () => {
+    const scene = { ...input(Array.from({ length: 20 }, (_, i) => node(`card:${i}`)), [edge("card:0", "card:1"), edge("card:1", "card:2")]), kind: "overview" as const };
+    const result = await layoutDagScene(scene, engine);
+    invariants(scene, result);
+    expect(result.width).toBeGreaterThan(248 * 3);
+    expect(result.height).toBeLessThan(116 * 10);
+  });
   it("has single centered ports, orthogonal branches, dots and deterministic output", async () => {
     const scene = input([node("a"), node("b"), node("c"), node("d")], [edge("a", "b"), edge("a", "c"), edge("b", "d"), edge("c", "d")]);
     const result = await layoutDagScene(scene, engine);
@@ -91,6 +98,38 @@ describe("Stage 8 scene geometry", () => {
     expect(result.nodes.in!.x + 248).toBeLessThan(result.frames.line!.x);
     expect(result.nodes.out!.x).toBeGreaterThan(result.frames.line!.x + result.frames.line!.width);
   });
+  it("preserves nested wrapper frames and stage bands around a line with external edges", async () => {
+    const scene = input([{ ...node("in"), side: "upstream" }, node("a", "leaf", 1), node("b", "leaf", 2), { ...node("out"), side: "downstream" }], [edge("in", "a"), edge("a", "b"), edge("b", "out")], [frame("line"), frame("middle", "line"), frame("leaf", "middle")]);
+    const result = await layoutDagScene(scene, engine);
+    invariants(scene, result);
+    for (const [parent, child] of [["line", "middle"], ["middle", "leaf"]]) {
+      const outer = result.frames[parent!]!, inner = result.frames[child!]!;
+      expect(inner.x).toBeGreaterThan(outer.x);
+      expect(inner.y).toBeGreaterThan(outer.y + 76);
+      expect(inner.x + inner.width).toBeLessThan(outer.x + outer.width);
+      expect(inner.y + inner.height).toBeLessThan(outer.y + outer.height);
+    }
+    expect(result.frames.leaf!.bands.map((band) => band.stage)).toEqual([1, 2]);
+  });
+  it("restores serial cards and edge identities while retaining branches and stage boundaries in ELK", async () => {
+    const scene = input([{ ...node("in"), side: "upstream" }, node("a", "line", 1), node("b", "line", 1), node("c", "line", 1), node("d", "line", 2), node("e", "line", 2)], [edge("in", "a"), edge("a", "b"), edge("b", "c"), edge("c", "d"), edge("c", "e")], [frame("line")]);
+    const original = structuredClone(scene);
+    let solvedCards = 0;
+    const result = await layoutDagScene(scene, { async layout(graph) {
+      const count = (n: import("elkjs/lib/elk-api").ElkNode): number => n.children ? n.children.reduce((sum, child) => sum + count(child), 0) : 1;
+      solvedCards = count(graph);
+      return engine.layout(graph);
+    } });
+    expect(solvedCards).toBe(4);
+    expect(scene).toEqual(original);
+    invariants(scene, result);
+    for (const [source, target] of [["a", "b"], ["b", "c"]]) {
+      expect(result.nodes[target!]!.x - result.nodes[source!]!.x).toBe(248 + 64);
+      expect(result.nodes[target!]!.y).toBe(result.nodes[source!]!.y);
+    }
+    expect(result.frames.line!.bands.map((band) => band.stage)).toEqual([1, 2]);
+    expect(Object.keys(result.routes).sort()).toEqual(scene.edges.map((e) => e.id).sort());
+  });
   it("orders disconnected late-stage tasks inside a leaf frame without inventing dependencies", async () => {
     const scene = input([node("late", "line", 7), node("early", "line", 1), node("middle", "line", 3)], [], [frame("line")]);
     const result = await layoutDagScene(scene, engine);
@@ -98,6 +137,21 @@ describe("Stage 8 scene geometry", () => {
     expect(result.nodes.early!.x + 248).toBeLessThan(result.nodes.middle!.x);
     expect(result.nodes.middle!.x + 248).toBeLessThan(result.nodes.late!.x);
     expect(result.routes).toEqual({}); expect(result.segments).toEqual([]);
+  });
+  it("leaves a serial-looking cycle with an incoming branch for ELK to solve", async () => {
+    const scene = input([node("a", "line"), node("b", "line"), node("c", "line")], [edge("a", "b"), edge("b", "c"), edge("c", "b")], [frame("line")]);
+    const result = await layoutDagScene(scene, { async layout(graph) {
+      expect(graph.children![0]!.children).toHaveLength(3);
+      return engine.layout(graph);
+    } });
+    invariants(scene, result);
+  });
+  it("keeps every earlier-stage member left of the next stage when only some have dependency paths", async () => {
+    const scene = input([node("linked", "sub", 1), node("disconnected", "sub", 1), node("next", "sub", 2)], [edge("linked", "next")], [frame("line"), frame("sub", "line")]);
+    const result = await layoutDagScene(scene, engine);
+    invariants(scene, result);
+    expect(result.frames.sub!.bands.map((band) => band.stage)).toEqual([1, 2]);
+    for (const id of ["linked", "disconnected"]) expect(result.nodes[id]!.x + 248).toBeLessThan(result.nodes.next!.x);
   });
   it("routes satisfied overlays without moving boxes and supports independent grids", async () => {
     const scene = input([node("a"), node("b"), node("c")], [edge("a", "b")]);

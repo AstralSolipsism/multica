@@ -2,10 +2,20 @@ import { IssueGraphSchema } from "../../packages/core/api/issue-graph-schemas";
 import { createDagModelIndex } from "../../packages/core/issues/dag/model-index";
 import { computeDagOverview } from "../../packages/core/issues/dag/overview";
 import { computeDagLine, computeDagFocus } from "../../packages/core/issues/dag/detail";
+import { buildIssueGraphFixture, ISSUE_GRAPH_FIXTURE_VERSION, issueGraphFixtureDigest, analyzeIssueGraphFixture } from "../../packages/core/issues/testing/issue-graph-fixture";
 import { dagFocusLayoutInput, dagLineLayoutInput, dagOverviewLayoutInput } from "../../packages/views/issues/dag/dag-scene-inputs";
 import { createDagSceneRunner } from "../../packages/views/issues/dag/dag-scene-runner";
 import { routeDagOverlays } from "../../packages/views/issues/dag/dag-scene-geometry";
 import type { DagSceneInput, DagSceneGeometry, DagScenePlan } from "../../packages/views/issues/dag/dag-scene";
+
+export async function runSharedDagLayoutBenchmark(samples = 10, compareAllEdges = false) {
+  const fixture = buildIssueGraphFixture("accept-5000"), bigLine = buildIssueGraphFixture("big-line");
+  const fixtures = { version: ISSUE_GRAPH_FIXTURE_VERSION,
+    accept5000: { digest: issueGraphFixtureDigest(fixture), stats: analyzeIssueGraphFixture(fixture) },
+    bigLine: { digest: issueGraphFixtureDigest(bigLine), stats: analyzeIssueGraphFixture(bigLine) },
+  };
+  return { fixtures, ...await runDagLayoutBenchmark(fixture, bigLine, samples, compareAllEdges) };
+}
 
 /** Browser harness uses the production worker path, including serialization,
  * worker startup, cancellation, the 3s deadline, fallback and content cache. */
@@ -29,7 +39,7 @@ export async function runDagLayoutBenchmark(payload: unknown, bigPayload?: unkno
   const heartbeat = setInterval(() => {
     const now = performance.now(); eventLoopDelays.push(Math.max(0, now - previousTick - 16)); previousTick = now;
   }, 16);
-  const execute = (input: DagSceneInput) => new Promise<{ geometry: DagSceneGeometry; computeMs?: number }>((resolve, reject) => runner.execute(input, (response) => response.result ? resolve({ geometry: response.result, computeMs: response.computeMs }) : reject(new Error(response.error))));
+  const execute = (input: DagSceneInput) => new Promise<{ geometry: DagSceneGeometry; computeMs?: number; elkMs?: number }>((resolve, reject) => runner.execute(input, (response) => response.result ? resolve({ geometry: response.result, computeMs: response.computeMs, elkMs: response.elkMs }) : reject(new Error(response.error))));
   const artifacts: Record<string, { input: DagSceneInput; geometry: DagSceneGeometry; labels: Record<string, string> }> = {};
   const labels = Object.fromEntries(index.graph.nodes.map((node) => [node.id, `${node.identifier} ${node.title}`]));
   for (const card of overviewAll.cards) labels[card.id] = card.issue ? `${card.issue.identifier} ${card.issue.title}` : "Independent tasks";
@@ -37,27 +47,37 @@ export async function runDagLayoutBenchmark(payload: unknown, bigPayload?: unkno
     for (const frame of plan.input.frames) labels[frame.id] = labels[frame.modelId] ?? frame.modelId;
     artifacts[name] = { input: plan.input, geometry, labels: { ...labels } };
   }
-  async function measure(name: string, plan: DagScenePlan, count = samples) {
+  async function firstLayout(plan: DagScenePlan) {
+    const start = performance.now(), first = await execute(plan.input);
+    return { first, firstMs: performance.now() - start };
+  }
+  async function measure(name: string, plan: DagScenePlan, count = samples, initial?: Awaited<ReturnType<typeof firstLayout>>) {
     const warmups = 5;
-    const coldStart = performance.now(), first = await execute(plan.input), firstMs = performance.now() - coldStart;
+    const { first, firstMs } = initial ?? await firstLayout(plan);
     artifact(name, plan, first.geometry);
-    const times: number[] = [], computeTimes: number[] = [], qualities: string[] = [];
+    const times: number[] = [], computeTimes: number[] = [], elkTimes: number[] = [], qualities: string[] = [];
     for (let i = 0; i < count + warmups; i++) {
       const start = performance.now();
       const result = await execute({ ...plan.input, id: `${plan.input.id}:sample:${i}` });
       const elapsed = performance.now() - start;
-      if (i >= warmups) { times.push(elapsed); computeTimes.push(result.computeMs!); qualities.push(result.geometry.quality); }
+      if (i >= warmups) { times.push(elapsed); computeTimes.push(result.computeMs!); elkTimes.push(result.elkMs!); qualities.push(result.geometry.quality); }
     }
     times.sort((a, b) => a - b);
     computeTimes.sort((a, b) => a - b);
+    elkTimes.sort((a, b) => a - b);
     const cacheInput = { ...plan.input, id: `${plan.input.id}:sample:${count + warmups - 1}` };
     const cacheStart = performance.now(); await execute(cacheInput); const cacheMs = performance.now() - cacheStart;
-    return { nodes: plan.input.nodes.length, frames: plan.input.frames.length, edges: plan.input.edges.length, overlays: plan.overlays.length, firstMs, p50: times[Math.floor(times.length / 2)], p95: times[Math.ceil(times.length * 0.95) - 1], max: times.at(-1), compute: { first: first.computeMs, p50: computeTimes[Math.floor(computeTimes.length / 2)], p95: computeTimes[Math.ceil(computeTimes.length * 0.95) - 1], max: computeTimes.at(-1) }, samples: count, warmups, cacheMs, quality: first.geometry.quality, warmQualities: [...new Set(qualities)] };
+    return { nodes: plan.input.nodes.length, frames: plan.input.frames.length, edges: plan.input.edges.length, overlays: plan.overlays.length, firstMs, p50: times[Math.floor(times.length / 2)], p95: times[Math.ceil(times.length * 0.95) - 1], max: times.at(-1), samplesMs: times, compute: { first: first.computeMs, p50: computeTimes[Math.floor(computeTimes.length / 2)], p95: computeTimes[Math.ceil(computeTimes.length * 0.95) - 1], max: computeTimes.at(-1), samplesMs: computeTimes }, elk: { first: first.elkMs, samplesMs: elkTimes }, samples: count, warmups, cacheMs, quality: first.geometry.quality, warmQualities: [...new Set(qualities)] };
   }
   try {
     const timings: Record<string, unknown> = {};
-    timings.overview = await measure("overview", dagOverviewLayoutInput(overview));
-    timings.line = await measure("line", dagLineLayoutInput(line));
+    const overviewPlan = dagOverviewLayoutInput(overview), linePlan = dagLineLayoutInput(line);
+    const firstOverview = await firstLayout(overviewPlan);
+    // Enter immediately after the first overview, before measurement warmups
+    // can accidentally give the line worker extra time to finish preloading.
+    const firstLine = await firstLayout(linePlan);
+    timings.overview = await measure("overview", overviewPlan, samples, firstOverview);
+    timings.line = await measure("line", linePlan, samples, firstLine);
     timings.focus = await measure("focus", dagFocusLayoutInput(focus));
     const allPlan = dagOverviewLayoutInput(overviewAll);
     timings.overviewAll = await measure("overview-all", allPlan);
@@ -71,6 +91,7 @@ export async function runDagLayoutBenchmark(payload: unknown, bigPayload?: unkno
     if (compareAllEdges) timings.overviewAllEdges = await measure("overview-all-elk", { ...allPlan, input: { ...allPlan.input, id: "all-edges", edges: [...allPlan.input.edges, ...allPlan.overlays] }, overlays: [] }, Math.min(3, samples));
     if (bigPayload) {
       const bigIndex = createDagModelIndex(IssueGraphSchema.parse(bigPayload));
+      for (const node of bigIndex.graph.nodes) labels[node.id] = `${node.identifier} ${node.title}`;
       const largest = [...bigIndex.lineInputs.values()].sort((a, b) => b.members.length - a.members.length)[0]!;
       timings.bigLine = await measure("big-line", dagLineLayoutInput(computeDagLine(bigIndex, largest.id)!));
     }

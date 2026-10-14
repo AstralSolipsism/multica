@@ -28,7 +28,7 @@ try {
     inspect: await readPayload(values.inspect),
     fixture5000: await readPayload(values["fixture-5000"]),
     fixture10000: await readPayload(values["fixture-10000"]),
-    fixture: values["fixture-5000"] ?? "OL-279 temporary deterministic production shape",
+    fixture: values["fixture-5000"],
   };
   const result = await page.evaluate((input) => input.inspect
     ? window.DagBench.inspectDagOverview(input.inspect)
