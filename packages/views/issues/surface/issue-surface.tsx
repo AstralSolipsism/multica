@@ -435,7 +435,7 @@ function IssueSurfaceContent({
             )}
             {controller.viewMode === "dag" && (
               <DagView
-                graphQuery={controller.dagGraph}
+                spec={controller.tableQuerySpec}
                 hasActiveFilters={controller.hasActiveFilters}
               />
             )}

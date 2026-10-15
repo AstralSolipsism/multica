@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { VIEW_MODE_CAPABILITIES, availableViewModes } from "@multica/core/issues/surface/view-mode";
-import { DagDirectionSelect } from "../dag/dag-direction-select";
 import { useViewModeLabels } from "./view-mode-meta";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { useQuery } from "@tanstack/react-query";
@@ -57,7 +56,6 @@ import {
   type SortField,
   type SwimlaneGrouping,
   type ViewMode,
-  dagDirectionLabelKey,
 } from "@multica/core/issues/stores/view-store";
 import {
   ViewStoreProvider,
@@ -152,12 +150,10 @@ const ROW_LABEL = "w-16 shrink-0 text-caption text-muted-foreground";
  *  board fallback. */
 export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean }) {
   const { t } = useT("issues");
-  const { t: tDag } = useT("dag");
   const wsId = useWorkspaceId();
   const viewMode = useViewStore((s) => s.viewMode);
   const grouping = useViewStore((s) => s.grouping);
   const swimlaneGrouping = useViewStore((s) => s.swimlaneGrouping);
-  const dagDirection = useViewStore((s) => s.dagDirection);
   const sortBy = useViewStore((s) => s.sortBy);
   const sortDirection = useViewStore((s) => s.sortDirection);
   const cardProperties = useViewStore((s) => s.cardProperties);
@@ -189,13 +185,7 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
         : propertyName(grouping)
       : viewMode === "swimlane"
         ? t(($) => $.display[SWIMLANE_LABEL_KEY[swimlaneGrouping]])
-        : VIEW_MODE_CAPABILITIES[viewMode].direction
-          ? tDag(($) => $.grouping_parent)
-          : null;
-  const dagDirectionLabel =
-    VIEW_MODE_CAPABILITIES[viewMode].direction
-      ? tDag(($) => $[dagDirectionLabelKey(dagDirection)])
-      : null;
+        : null;
   const sortLabel =
     !VIEW_MODE_CAPABILITIES[viewMode].ordering
       ? null
@@ -209,7 +199,6 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
   const displaySummary = [
     layoutLabel,
     groupingLabel,
-    dagDirectionLabel,
     sortLabel,
     sortDirectionLabel,
   ]
@@ -358,22 +347,6 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
                   </SelectContent>
                 </Select>
               </div>
-            )}
-            {VIEW_MODE_CAPABILITIES[viewMode].direction && (
-              <>
-                <div className="flex items-center gap-3">
-                  <Label className={ROW_LABEL}>
-                    {tDag(($) => $.direction_label)}
-                  </Label>
-                  <DagDirectionSelect
-                    value={dagDirection}
-                    onChange={act.setDagDirection}
-                    className="w-64"
-                    align="start"
-                  />
-                </div>
-
-              </>
             )}
             {/* The graph endpoint ignores sort — DAG drafts omit ordering
                 rather than save a no-op default. */}
@@ -648,13 +621,13 @@ export function SaveViewDialog({
         swimlaneGrouping: state.swimlaneGrouping,
         ganttZoom: state.ganttZoom,
         ganttShowCompleted: state.ganttShowCompleted,
-        // DAG defaults seed the first open; folded representatives stay a
-        // per-user surface preference and are never part of the view
+        // DAG defaults seed the first open; the current level and viewports
+        // stay a per-user surface preference and are never part of the view
         // definition. Views saved before dagShowCompleted existed fall back
         // to the default (hidden) when the seed is sanitized.
-        dagDirection: state.dagDirection,
         dagGrouping: "parent",
         dagShowCompleted: state.dagShowCompleted,
+        dagShowSatisfiedDependencies: state.dagShowSatisfiedDependencies,
       },
     };
     if (editView) {

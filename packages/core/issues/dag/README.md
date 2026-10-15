@@ -1,8 +1,10 @@
 # DAG data and models
 
 This is the headless boundary for the two-level DAG (OL-279). It contains no
-React Flow types, layout, geometry or UI. The existing canvas uses the migrated
-`projection.ts` and `useDagSurfaceGraph`; its React Flow adapters stay in views.
+React Flow types, layout, geometry or UI. The two-level canvas (Stage 9) reads
+exclusively through these models; its React Flow adapters stay in views. The
+legacy `projection.ts` remains exported for compatibility but no longer drives
+a canvas.
 
 ## Consumers
 

@@ -1,6 +1,6 @@
 import type { DagDependency, DagFocusModel, DagFrame, DagLineModel, DagOverviewModel, DagTask } from "@multica/core/issues/dag";
 import { DAG_EXTERNAL_SIZE, DAG_NODE_HEIGHT, DAG_NODE_WIDTH, DAG_OVERVIEW_SIZE } from "./dag-constants";
-import type { DagSceneEdge, DagSceneNode, DagScenePlan, DagSceneSide } from "./dag-scene";
+import { dagExternalNodeId, type DagSceneEdge, type DagSceneNode, type DagScenePlan, type DagSceneSide } from "./dag-scene";
 
 function edgeInput({ id, source, target, sourceKind, targetKind }: DagDependency): DagSceneEdge {
   return { id, source, target, sourceKind, targetKind };
@@ -45,7 +45,7 @@ export function dagLineLayoutInput(model: DagLineModel): DagScenePlan {
   const dependencyIds = Object.fromEntries(edges.map((e) => [e.id, [e.id]]));
   for (const side of ["upstream", "downstream"] as const) {
     for (const group of model[side]) {
-      const id = JSON.stringify(["external", side, group.id]);
+      const id = dagExternalNodeId(side, group.id);
       nodes.push({ id, parentId: null, ...DAG_EXTERNAL_SIZE, stage: null, side });
       for (const dependency of group.dependencies) {
         edges.push({ ...edgeInput(dependency), ...(side === "upstream" ? { source: id, sourceKind: "task" as const } : { target: id, targetKind: "task" as const }) });

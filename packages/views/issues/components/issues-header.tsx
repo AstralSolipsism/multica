@@ -2,7 +2,6 @@
 
 import { cloneElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { VIEW_MODE_CAPABILITIES, availableViewModes, visibleViewMode } from "@multica/core/issues/surface/view-mode";
-import { DagDirectionSelect } from "../dag/dag-direction-select";
 import { VIEW_MODE_META, useViewModeLabels } from "./view-mode-meta";
 import {
   CalendarDays,
@@ -1934,7 +1933,6 @@ export function IssueDisplayControls({
   onTableFacetChange?: (facet: IssueTableFacetSpec | null) => void;
 }) {
   const { t } = useT("issues");
-  const { t: tDag } = useT("dag");
   const [tableGroupMenuOpen, setTableGroupMenuOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const storedViewMode = useViewStore((s) => s.viewMode);
@@ -1957,7 +1955,6 @@ export function IssueDisplayControls({
   const sortDirection = useViewStore((s) => s.sortDirection);
   const grouping = useViewStore((s) => s.grouping);
   const swimlaneGrouping = useViewStore((s) => s.swimlaneGrouping);
-  const dagDirection = useViewStore((s) => s.dagDirection);
   const cardProperties = useViewStore((s) => s.cardProperties);
   const tableGrouping = useViewStore((s) => s.tableGrouping ?? "none");
   const tableHierarchy = useViewStore((s) => s.tableHierarchy ?? true);
@@ -2309,21 +2306,6 @@ export function IssueDisplayControls({
                     onCheckedChange={() => act.toggleTableHierarchy()}
                   />
                 </label>
-              )}
-              {VIEW_MODE_CAPABILITIES[viewMode].direction && (
-                <>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-caption font-medium text-muted-foreground">
-                      {tDag(($) => $.direction_label)}
-                    </span>
-                    <DagDirectionSelect
-                      value={dagDirection}
-                      onChange={act.setDagDirection}
-                      className="w-32"
-                    />
-                  </div>
-
-                </>
               )}
               {/* Sort is a list-shaped concept: the graph endpoint ignores it
                   and ELK owns node order, so the control hides in DAG mode

@@ -1,6 +1,6 @@
 import type { ELK, ElkExtendedEdge, ElkNode, LayoutOptions } from "elkjs/lib/elk-api";
 import { DAG_FLOW, DAG_GROUP_HEADER_HEIGHT, DAG_GROUP_MIN_WIDTH, DAG_STAGE_HEADER_HEIGHT } from "./dag-constants";
-import type { DagLayoutNodeInput, DagPoint } from "./dag-layout";
+import type { DagLayoutNodeInput, DagPoint } from "./dag-scene";
 import type { DagSceneGeometry, DagSceneInput } from "./dag-scene";
 import { buildStagePreferenceGraph, conflictingStageScopes } from "./dag-stage-preferences";
 import { cleanDagPath, dagSceneSegments } from "./dag-scene-geometry";

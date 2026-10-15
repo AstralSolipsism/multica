@@ -12,8 +12,9 @@ cost being measured lives in that machinery.
    recalculation, no layout and no main-thread contention.
 2. **DAG view** (`dag-view.spec.ts`, OL-278) — measures the issues page's
    dependency-graph view against synthetic graph datasets (OL-183's shapes):
-   fetch, parse+validate, layout, first-interactive, pan/zoom frame rate and
-   card-click response.
+   fetch, parse+validate, layout, first-interactive, pan/zoom frame rate,
+   card-click response and entering a task line. The view is two-level:
+   overview cards, then one line's task cards after a double-click.
 
 It covers the renderer shared by Web and Desktop. Electron's own
 main-process behaviour is not exercised here.
@@ -95,10 +96,12 @@ from a fixed route table; anything unknown invalidates the sample.
 | --- | --- |
 | `fetch_ms` | Graph request sent → response ended, from the page's own resource timing (one request). Local synthetic transport — real-network numbers are OL-275's. |
 | `parse_ms` / `parse_and_validate_ms` | `JSON.parse` alone, and `JSON.parse` + `IssueGraphSchema.parse`, on the exact graph bytes. Measured in the Playwright process against the same schema module the app bundles — the app's in-flight validation is not separately observable. |
-| `layout_ms` | Layout worker `postMessage` → result committed (the frame the pending skeleton disappeared after the worker's response), per requestId — instrumentation wraps `Worker` before the app boots and records each request's response and error in the constructor. Max over committed requests; `layout_respond_ms` is the same for the worker response alone. |
+| `layout_ms` | Scene-layout worker `postMessage` → result committed (the frame the pending skeleton disappeared after the worker's response), per requestId — instrumentation wraps `Worker` before the app boots and records each request's response and error in the constructor; the scene runner keeps one worker per scene kind (`overview`/`line`/`focus`), and LRU hits never touch a worker. Max over committed requests; `layout_respond_ms` is the same for the worker response alone. |
 | `first_interactive_ms` | Navigation start → canvas has rendered cards AND the layout-pending skeleton is gone AND the toolbar is visible, each timestamped in-page (16 ms setTimeout polling + performance.now), not by Playwright's own polling. |
+| `data_to_interactive_ms` | `first_interactive_ms` minus the graph response's resource-timing end — the OL-281 "from data received to operable" read, with the network span excluded. |
 | `pan` / `zoom` | Scripted drag / Ctrl+wheel gestures, ~4 s each. Pan starts from a verified bare-pane point (cards are `nopan`) and is discarded as `invalid` if the viewport transform never changed; rAF frame intervals → p50/p95/max ms, long-frame count, avg FPS. Stalled frames are counted, not trimmed. |
-| `click` | In-page: real pointer events on a visible card's body (never the group header), timed from pointerdown to the frame after the toolbar's selection label appears; every sample starts from a cleared selection. ≥ 3 samples → p50/p95 ms, else `timeout`/`invalid`. |
+| `click` | In-page: real pointer events on a visible card's body (overview card, or task card when the dataset auto-entered its single line), timed from pointerdown to the frame after the toolbar's selection label appears; every sample starts from a cleared selection. ≥ 3 samples → p50/p95 ms, else `timeout`/`invalid`. |
+| `enter_line_ms` | In-page double-click on the first visible overview line card → the frame after the line level renders its first task card (`[data-dag-task]`); afterwards the view returns to the overview. `invalid` when no line card is visible (e.g. `big-line` auto-enters its single line). OL-183 budget: ≤ 300 ms. |
 
 Outcomes that are not durations are reported as strings: `timeout` when a
 budget expired, `invalid` when nothing rendered or the sample was
@@ -129,10 +132,10 @@ shape statistics and `fixture_digest` identifies the exact bytes.
 the ELK layout worker has not been verified — treat throttled `layout_ms` as
 page-side only until that is checked on your setup.
 
-Adding steps (e.g. "enter a task line" timing): put the step in
-`e2e/perf/dag-view.spec.ts` between the section markers, emit one more report
-field, and document it in the table above. Keep the invariant — every field
-is a number or `timeout`/`invalid`, never a silent zero.
+Adding steps: put the step in `e2e/perf/dag-view.spec.ts` between the section
+markers, emit one more report field, and document it in the table above. Keep
+the invariant — every field is a number or `timeout`/`invalid`, never a
+silent zero.
 
 ## When to run it
 
@@ -167,8 +170,9 @@ string, main-thread queueing included. `recalc_style_ms`, `layout_ms`,
 `task_ms` and the long-task counters say where the time went.
 
 For the DAG scenario, `first_interactive_ms` is the primary number, with
-`pan`/`zoom`/`click` as the interaction budget (OL-183: first screen
-operable within 2 s, pan/zoom ≥ 30 FPS, click under 100 ms).
+`pan`/`zoom`/`click`/`enter_line_ms` as the interaction budget (OL-183: first
+screen operable within 2 s, pan/zoom ≥ 30 FPS, click under 100 ms, entering a
+line ≤ 300 ms).
 
 Two things are not the same as a fast run, and the scenario reports them as
 `invalid` or `timeout` rather than as a duration: messages that never reached

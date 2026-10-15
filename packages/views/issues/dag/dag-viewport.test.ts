@@ -2,12 +2,12 @@
 import { describe, expect, it } from "vitest";
 import type { Viewport } from "@xyflow/react";
 import {
-  anchorShift,
   constrainDagViewport,
   dagViewportTargets,
   dagViewportExtent,
   type DagViewportTarget,
 } from "./dag-viewport";
+import type { DagSceneGeometry } from "./dag-scene";
 
 const screen = { width: 900, height: 600 };
 const title: DagViewportTarget = { id: "line", x: 28, y: 28, width: 680, height: 76 };
@@ -43,16 +43,24 @@ describe("DAG viewport content bounds", () => {
     for (let x = 0; x >= -4000; x -= 20) expect(x >= minX && x <= maxX).toBe(true);
   });
 
-  it("uses header/card geometry, excluding huge empty group backgrounds", () => {
-    const targets = dagViewportTargets({
-      positions: { line: { x: 28, y: 28 }, child: { x: 2200, y: 100 } },
-      groups: {
-        line: { x: 28, y: 28, width: 6000, height: 8000, bands: [], stageConflict: false },
+  it("uses header/card geometry, excluding huge empty frame backgrounds", () => {
+    const geometry: DagSceneGeometry = {
+      nodes: { child: { x: 2200, y: 100, width: 248, height: 116 } },
+      frames: {
+        line: { x: 28, y: 28, width: 6000, height: 8000, bands: [], stageMode: "labels" },
       },
-      routes: {},
       ports: {},
-    });
-    expect(targets).toEqual([title, card]);
+      routes: {},
+      segments: [],
+      junctions: [],
+      width: 0,
+      height: 0,
+      quality: "elk",
+    };
+    expect(dagViewportTargets(geometry)).toEqual([
+      { id: "child", x: 2200, y: 100, width: 248, height: 116 },
+      title,
+    ]);
   });
   it("keeps a valid reading position unchanged even when the line header is offscreen", () => {
     const view = { x: -2000, y: 20, zoom: 1 };
@@ -114,18 +122,5 @@ describe("DAG viewport content bounds", () => {
     const view = { x: 10000, y: 10000, zoom: 1 };
     expect(constrainDagViewport(view, screen, [])).toBe(view);
     expect(constrainDagViewport(view, { width: 0, height: 0 }, [title])).toBe(view);
-  });
-});
-
-describe("anchorShift", () => {
-  it.each([0.5, 1, 1.6])("keeps the anchor's screen coordinates at zoom %s", (zoom) => {
-    const saved = { x: 120, y: 240 }, next = { x: 310, y: 70 };
-    const viewport = { x: -83, y: 97, zoom };
-    const shifted = anchorShift(saved, next, viewport);
-    expect(shifted.x + next.x * zoom).toBeCloseTo(viewport.x + saved.x * zoom);
-    expect(shifted.y + next.y * zoom).toBeCloseTo(viewport.y + saved.y * zoom);
-    expect(shifted.zoom).toBe(zoom);
-    expect(viewport).toEqual({ x: -83, y: 97, zoom });
-    expect(anchorShift(saved, saved, viewport)).toEqual(viewport);
   });
 });

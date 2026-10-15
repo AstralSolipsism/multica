@@ -7,14 +7,12 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import type { IssueStatus, IssuePriority, ProjectStatus, PropertyFilterValue } from "../../types";
 import { PROJECT_STATUS_ORDER } from "../../projects/config";
 import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../../platform/workspace-storage";
-import { sanitizeDagPersisted } from "./dag-preferences";
+import { DAG_OVERVIEW_VIEWPORT_KEY, sanitizeDagPersisted } from "./dag-preferences";
 import { defaultStorage } from "../../platform/storage";
 import { VIEW_MODE_CAPABILITIES, type ViewMode } from "../surface/view-mode";
 
 export type { ViewMode } from "../surface/view-mode";
 export type GanttZoom = "day" | "week" | "month";
-/** DAG canvas layout direction: left-to-right or top-to-bottom ranks. */
-export type DagDirection = "LR" | "TB";
 /** Direction of a DAG neighborhood highlight, anchored at a canvas node. */
 export type DagFocusWay = "upstream" | "downstream";
 export interface DagFocusState {
@@ -24,15 +22,13 @@ export interface DagFocusState {
 /** Historical shared-view values retained at the data boundary. The current
  * DAG canvas always renders task-line containers. New definitions use parent. */
 export type DagGrouping = "project" | "parent" | "none";
-/** Representative id namespace inside `dagExpandedIds`. */
+/** Representative id namespace for task-line cards on the DAG overview. */
 export const DAG_ISSUE_REP_PREFIX = "issue:";
-
-/** Shared direction choices for the display controls and saved view dialog. */
-export const DAG_DIRECTION_OPTIONS: readonly DagDirection[] = ["LR", "TB"];
-export function dagDirectionLabelKey(
-  direction: DagDirection,
-): "direction_lr" | "direction_tb" {
-  return direction === "TB" ? "direction_tb" : "direction_lr";
+/** One remembered viewport per DAG level ("overview" or `line:<rootId>`). */
+export interface DagViewport {
+  x: number;
+  y: number;
+  zoom: number;
 }
 /**
  * Board grouping. Besides the three built-ins, a select-type custom property
@@ -335,31 +331,41 @@ export interface IssueViewState {
   tableCollapsedParents: string[];
   tableHierarchy: boolean;
   tableCalculation: TableCalculation;
-  /** DAG canvas direction; layout re-runs when it changes. */
-  dagDirection: DagDirection;
   /** Shared-view metadata; see DagGrouping. */
   dagGrouping: DagGrouping;
-  /** Personal expanded task lines. Unlisted and newly discovered lines fold by default. */
-  dagExpandedIds: string[];
-  /** Independent tasks are deliberately excluded from global line expansion. */
-  dagIndependentExpanded: boolean;
   /** DAG's own display switch: show task lines and single tasks that already
    *  reached a done/closed category. Off by default — finished work hides. */
   dagShowCompleted: boolean;
-  dagViewport: { x: number; y: number; zoom: number } | null;
+  /** Show satisfied cross-line dependencies (overview edges and the line
+   *  view's external side cards). Off by default; saved into view definitions. */
+  dagShowSatisfiedDependencies: boolean;
+  /** Current DAG level: `null` is the overview, otherwise a line's root issue
+   *  id ("independent:root" for the independent grid). Persisted per user,
+   *  never written into saved views. */
+  dagLineId: string | null;
+  /** Set when the user deliberately returns to the overview: suppresses the
+   *  single-line auto-entry until they enter a line again. */
+  dagOverviewPinned: boolean;
+  /** Last viewport per level key ("overview" / `line:<id>`). */
+  dagViewports: Record<string, DagViewport>;
   /** Session selection; excluded from persisted/shared view definitions. */
   dagSelectedNodeId: string | null;
-  /** Session edge selection; mutually exclusive with `dagSelectedNodeId`. */
-  dagSelectedEdgeId: string | null;
   /** Session neighborhood highlight anchored at the selected node. */
   dagFocus: DagFocusState | null;
-  setDagIndependentExpanded: (expanded: boolean) => void;
-  setDagViewport: (viewport: { x: number; y: number; zoom: number }) => void;
+  /** Persist the live viewport under a level key. */
+  setDagViewportFor: (key: string, viewport: DagViewport) => void;
   setDagSelectedNodeId: (id: string | null) => void;
-  /** Select an edge: clears node selection and focus. `null` clears only the edge. */
-  setDagSelectedEdgeId: (id: string | null) => void;
   setDagFocus: (focus: DagFocusState | null) => void;
   toggleDagShowCompleted: () => void;
+  toggleDagShowSatisfiedDependencies: () => void;
+  /** Low-level level change (restore/auto-entry/correction): clears the
+   *  session selection and focus, keeps `dagOverviewPinned` untouched. */
+  setDagLineId: (lineId: string | null) => void;
+  /** User deliberately enters a line: re-arms the single-line auto-entry. */
+  enterDagLine: (lineId: string) => void;
+  /** User deliberately returns to the overview: pins it and optionally selects
+   *  the line card they came from. */
+  exitDagLine: (selectCardId?: string | null) => void;
   setViewMode: (mode: ViewMode) => void;
   setGanttZoom: (zoom: GanttZoom) => void;
   toggleGanttShowCompleted: () => void;
@@ -408,11 +414,6 @@ export interface IssueViewState {
   toggleTableParentCollapsed: (issueId: string) => void;
   toggleTableHierarchy: () => void;
   setTableCalculation: (calculation: TableCalculation) => void;
-  setDagDirection: (direction: DagDirection) => void;
-  /** Toggle a task-line expansion without needing a graph snapshot. */
-  toggleDagExpanded: (representativeId: string) => void;
-  /** Replace the expanded set. An empty list restores default folding. */
-  setDagExpandedIds: (ids: string[]) => void;
 }
 
 export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): IssueViewState => ({
@@ -449,28 +450,52 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   tableCollapsedParents: [],
   tableHierarchy: true,
   tableCalculation: "none",
-  dagDirection: "LR",
   dagGrouping: "parent",
-  dagExpandedIds: [],
-  dagIndependentExpanded: false,
   dagShowCompleted: false,
-  dagViewport: null,
+  dagShowSatisfiedDependencies: false,
+  dagLineId: null,
+  dagOverviewPinned: false,
+  dagViewports: {},
   dagSelectedNodeId: null,
-  dagSelectedEdgeId: null,
   dagFocus: null,
-  setDagIndependentExpanded: (dagIndependentExpanded) => set({ dagIndependentExpanded }),
-  setDagViewport: (dagViewport) => set({ dagViewport }),
+  setDagViewportFor: (key, viewport) =>
+    set((state) => {
+      // Bounded per-user history: keep the 50 most recently written levels,
+      // but never evict the overview slot — every return path lands there.
+      const entries = Object.entries(state.dagViewports).filter(([k]) => k !== key);
+      while (entries.length >= 50) {
+        const oldest = entries.findIndex(([k]) => k !== DAG_OVERVIEW_VIEWPORT_KEY);
+        if (oldest === -1) break;
+        entries.splice(oldest, 1);
+      }
+      entries.push([key, viewport]);
+      return { dagViewports: Object.fromEntries(entries) };
+    }),
   setDagSelectedNodeId: (dagSelectedNodeId) =>
-    set({ dagSelectedNodeId, dagSelectedEdgeId: null, dagFocus: null }),
-  setDagSelectedEdgeId: (dagSelectedEdgeId) =>
-    set(
-      dagSelectedEdgeId
-        ? { dagSelectedEdgeId, dagSelectedNodeId: null, dagFocus: null }
-        : { dagSelectedEdgeId: null },
-    ),
+    set({ dagSelectedNodeId, dagFocus: null }),
   setDagFocus: (dagFocus) => set({ dagFocus }),
   toggleDagShowCompleted: () =>
     set((state) => ({ dagShowCompleted: !state.dagShowCompleted })),
+  toggleDagShowSatisfiedDependencies: () =>
+    set((state) => ({
+      dagShowSatisfiedDependencies: !state.dagShowSatisfiedDependencies,
+    })),
+  setDagLineId: (dagLineId) =>
+    set({ dagLineId, dagSelectedNodeId: null, dagFocus: null }),
+  enterDagLine: (dagLineId) =>
+    set({
+      dagLineId,
+      dagOverviewPinned: false,
+      dagSelectedNodeId: null,
+      dagFocus: null,
+    }),
+  exitDagLine: (selectCardId) =>
+    set({
+      dagLineId: null,
+      dagOverviewPinned: true,
+      dagSelectedNodeId: selectCardId ?? null,
+      dagFocus: null,
+    }),
 
   setViewMode: (mode) =>
     set((state) => ({
@@ -729,16 +754,6 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   toggleTableHierarchy: () =>
     set((state) => ({ tableHierarchy: !state.tableHierarchy })),
   setTableCalculation: (tableCalculation) => set({ tableCalculation }),
-  setDagDirection: (dagDirection) => set({ dagDirection }),
-  toggleDagExpanded: (representativeId) =>
-    set((state) => {
-      const current = state.dagExpandedIds;
-      const next = current.includes(representativeId)
-        ? current.filter((id) => id !== representativeId)
-        : [...current, representativeId];
-      return { dagExpandedIds: next };
-    }),
-  setDagExpandedIds: (dagExpandedIds) => set({ dagExpandedIds }),
 });
 
 export const viewStorePersistOptions = (name: string) => ({
@@ -782,12 +797,12 @@ export const viewStorePersistOptions = (name: string) => ({
     tableCollapsedParents: state.tableCollapsedParents,
     tableHierarchy: state.tableHierarchy,
     tableCalculation: state.tableCalculation,
-    dagDirection: state.dagDirection,
     dagGrouping: state.dagGrouping,
-    dagExpandedIds: state.dagExpandedIds,
-    dagIndependentExpanded: state.dagIndependentExpanded,
     dagShowCompleted: state.dagShowCompleted,
-    dagViewport: state.dagViewport,
+    dagShowSatisfiedDependencies: state.dagShowSatisfiedDependencies,
+    dagLineId: state.dagLineId,
+    dagOverviewPinned: state.dagOverviewPinned,
+    dagViewports: state.dagViewports,
   }),
   // Default Zustand merge is shallow, so a persisted `cardProperties` snapshot
   // saved before a new toggle was introduced wins entirely and the new key is
@@ -806,7 +821,20 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
   persisted: unknown,
   current: T,
 ): T {
-  const { dagCollapsedIds: _legacyFolds, ...preferences } = (persisted ?? {}) as Partial<T> & { dagCollapsedIds?: unknown };
+  const {
+    dagCollapsedIds: _legacyFolds,
+    dagExpandedIds: _legacyExpanded,
+    dagIndependentExpanded: _legacyIndependent,
+    dagDirection: _legacyDirection,
+    dagViewport: legacyViewport,
+    ...preferences
+  } = (persisted ?? {}) as Partial<T> & {
+    dagCollapsedIds?: unknown;
+    dagExpandedIds?: unknown;
+    dagIndependentExpanded?: unknown;
+    dagDirection?: unknown;
+    dagViewport?: unknown;
+  };
   const p = preferences as Partial<T>;
   // Read the old category-named field once; new snapshots persist exact keys.
   const legacy = persisted as { hiddenStatusCategories?: unknown } | null;
@@ -858,7 +886,7 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
     viewMode: p.viewMode && Object.hasOwn(VIEW_MODE_CAPABILITIES, p.viewMode)
       ? p.viewMode
       : current.viewMode,
-    ...sanitizeDagPersisted(p, current),
+    ...sanitizeDagPersisted({ ...p, dagViewport: legacyViewport }, current),
     hiddenStatuses: statusesFromStorage(p.hiddenStatuses ?? legacy?.hiddenStatusCategories, current.hiddenStatuses, p.hiddenStatuses === undefined),
     listCollapsedStatuses: statusesFromStorage(p.listCollapsedStatuses, current.listCollapsedStatuses, p.hiddenStatuses === undefined),
     cardProperties: {
