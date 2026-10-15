@@ -37,6 +37,8 @@ import {
 import { useDagSceneLayout } from "./use-dag-scene-layout";
 import type { DagSceneRunner } from "./dag-scene-runner";
 import {
+  dagBusSelectionRows,
+  dagDependencyStates,
   dagFocusHiddenCount,
   dagFocusCanvasModel,
   dagLineWithSatisfiedFilter,
@@ -352,28 +354,25 @@ export function DagView({
   );
 
   // The bus dropdown lists the clicked segment's original dependencies as
-  // "source → target" rows; endpoints resolve against the full graph.
+  // "source → target" rows; endpoints resolve against the full graph, and
+  // satisfied originals follow their display switch.
   const busSelection = useMemo<DagBusSelectionItem[] | null>(() => {
-    if (!selectedDependencyIds?.length || !graph) return null;
-    const byRawId = new Map(graph.edges.map((edge) => [edge.sourceEdgeId, edge]));
-    return selectedDependencyIds.flatMap((id) => {
-      const edge = byRawId.get(id);
-      if (!edge) return [];
-      const source = issuesById.get(edge.source);
-      const target = issuesById.get(edge.target);
-      return [
-        {
-          id,
-          sourceId: edge.source,
-          sourceLabel: source?.identifier ?? "?",
-          sourceTitle: source?.title ?? "",
-          targetId: edge.target,
-          targetLabel: target?.identifier ?? "?",
-          targetTitle: target?.title ?? "",
-        },
-      ];
+    if (!selectedDependencyIds?.length || !graph || !paintedModel) return null;
+    return dagBusSelectionRows({
+      dependencyIds: selectedDependencyIds,
+      edges: graph.edges,
+      issuesById,
+      states: dagDependencyStates(paintedModel),
+      showSatisfied,
     });
-  }, [selectedDependencyIds, graph, issuesById]);
+  }, [selectedDependencyIds, graph, issuesById, paintedModel, showSatisfied]);
+
+  // An emptied dropdown (everything satisfied while its switch is off)
+  // clears the bus selection instead of showing "汇总 0 条依赖".
+  useEffect(() => {
+    if (busSelection && busSelection.length === 0)
+      storeApi.getState().setDagSelectedDependencyIds(null);
+  }, [busSelection, storeApi]);
 
   // Focus owns the bidirectional Q11 count; the overview highlight keeps its
   // directional count over the raw graph.

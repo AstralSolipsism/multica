@@ -35,7 +35,7 @@ export const DagFrameNode = memo(
     return (
       <div
         className={cn(
-          "pointer-events-none relative h-full w-full rounded-lg border transition-opacity",
+          "pointer-events-none relative h-full w-full rounded-lg border",
           "border-muted-foreground/25",
         )}
         data-dag-frame={frame.id}

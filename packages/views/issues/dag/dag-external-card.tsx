@@ -22,13 +22,17 @@ export const DagExternalCard = memo(
     const { group, side } = data;
     if (data.simplified) {
       // Zoomed out past readability: the edge layer paints this card as an
-      // SVG rect; the DOM node stays as the interaction shell (OL-183 §7).
+      // SVG rect; the DOM node stays as the interaction shell — the jump on
+      // click keeps working (OL-183 §7).
       return (
-        <div
-          className="h-full w-full"
+        <button
+          type="button"
+          className="nopan block h-full w-full cursor-pointer"
           style={{ width: DAG_EXTERNAL_SIZE.width, height: DAG_EXTERNAL_SIZE.height }}
           data-dag-external={group.id}
           data-dag-external-side={side}
+          aria-label={t(($) => $.external_jump_hint)}
+          onClick={() => actions?.onExternalJump(group, side)}
         />
       );
     }
@@ -36,7 +40,7 @@ export const DagExternalCard = memo(
       <button
         type="button"
         className={cn(
-          "nopan flex h-full w-full cursor-pointer flex-col justify-center gap-0.5 rounded-lg border border-dashed border-muted-foreground/45 bg-muted/20 px-2.5 py-2 text-left transition-opacity hover:border-foreground/50 hover:bg-muted/40 outline-offset-2 focus-visible:outline-2 focus-visible:outline-brand",
+          "nopan flex h-full w-full cursor-pointer flex-col justify-center gap-0.5 rounded-lg border border-dashed border-muted-foreground/45 bg-muted/20 px-2.5 py-2 text-left hover:border-foreground/50 hover:bg-muted/40 outline-offset-2 focus-visible:outline-2 focus-visible:outline-brand",
         )}
         style={{ width: DAG_EXTERNAL_SIZE.width, height: DAG_EXTERNAL_SIZE.height }}
         data-dag-external={group.id}

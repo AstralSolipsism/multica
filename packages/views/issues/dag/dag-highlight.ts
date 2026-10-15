@@ -20,28 +20,24 @@ function sceneEdges(plan: DagScenePlan) {
   return [...plan.input.edges, ...plan.overlays];
 }
 
-/** Ids of the frame chain above a node, including a frame's own ancestors. */
-function ancestorFrameIds(plan: DagScenePlan, nodeId: string): string[] {
+/** Keep the frames containing lit nodes lit as well — dimming a sub-line
+ *  frame while its member stays bright would hide the bright member's box.
+ *  The lookup maps are built once for the whole set: O(N·depth), not O(N²). */
+export function dagWithAncestorFrames(plan: DagScenePlan, nodeIds: ReadonlySet<string>): Set<string> {
   const nodeById = new Map(plan.input.nodes.map((node) => [node.id, node]));
   const frameById = new Map(plan.input.frames.map((frame) => [frame.id, frame]));
-  const out: string[] = [];
-  let parentId = nodeById.get(nodeId)?.parentId ?? frameById.get(nodeId)?.parentId ?? null;
-  const seen = new Set<string>();
-  while (parentId && !seen.has(parentId)) {
-    seen.add(parentId);
-    const frame = frameById.get(parentId);
-    if (!frame) break;
-    out.push(frame.id);
-    parentId = frame.parentId;
-  }
-  return out;
-}
-
-/** Keep the frames containing lit nodes lit as well — dimming a sub-line
- *  frame while its member stays bright would hide the bright member's box. */
-export function dagWithAncestorFrames(plan: DagScenePlan, nodeIds: ReadonlySet<string>): Set<string> {
   const out = new Set(nodeIds);
-  for (const id of nodeIds) for (const frameId of ancestorFrameIds(plan, id)) out.add(frameId);
+  for (const id of nodeIds) {
+    let parentId = nodeById.get(id)?.parentId ?? frameById.get(id)?.parentId ?? null;
+    const seen = new Set<string>();
+    while (parentId && !seen.has(parentId)) {
+      seen.add(parentId);
+      const frame = frameById.get(parentId);
+      if (!frame) break;
+      out.add(frame.id);
+      parentId = frame.parentId;
+    }
+  }
   return out;
 }
 
@@ -110,7 +106,6 @@ export function dagStateMotion(state: DagDependencyState): DagEdgeMotion {
 
 export interface DagMotionCandidate {
   id: string;
-  motion: Exclude<DagEdgeMotion, null>;
   edgeIds: string[];
 }
 
@@ -121,7 +116,8 @@ export function dagMotionAllowed(zoom: number, reducedMotion: boolean): boolean 
 
 /** Which visible segments may animate. Hard stops: system reduced motion, or
  *  zoom below 50%. Over the ~60-segment budget only the selected chain keeps
- *  moving (nothing animates with no selection). */
+ *  moving (nothing animates with no selection), and even that chain is
+ *  truncated to the budget in candidate order. */
 export function dagMotionSegments(params: {
   candidates: readonly DagMotionCandidate[];
   highlightedEdgeIds: ReadonlySet<string> | null;
@@ -135,6 +131,7 @@ export function dagMotionSegments(params: {
   const kept = new Set<string>();
   if (highlightedEdgeIds) {
     for (const candidate of candidates) {
+      if (kept.size >= DAG_MOTION_MAX_SEGMENTS) break;
       if (candidate.edgeIds.some((edgeId) => highlightedEdgeIds.has(edgeId))) kept.add(candidate.id);
     }
   }
@@ -183,8 +180,6 @@ export interface DagHoverOverlay {
    *  Mixed bundles keep their existing route (never painted or counted
    *  twice — `satisfiedByCard` overlaps the bundle's sourceEdgeIds there). */
   routes: Record<string, DagPoint[]>;
-  segments: DagSceneSegment[];
-  junctions: DagSceneGeometry["junctions"];
 }
 
 /** A simplified card below the readability zoom (OL-183 §7): the DOM node
@@ -213,16 +208,12 @@ export function dagOverviewHoverOverlay(
   const hoverEdges = dagOverviewHoverEdges(model.overview, cardId);
   if (!hoverEdges.length) return null;
   const missing = hoverEdges.filter(({ edge }) => !geometry.routes[edge.id]).map(({ edge }) => edge);
-  const routed = missing.length
-    ? routeDagOverlays(geometry, missing)
-    : { routes: {}, segments: [], junctions: [] };
+  const routed = missing.length ? routeDagOverlays(geometry, missing) : { routes: {} };
   return {
     edgeIds: new Set(hoverEdges.map(({ edge }) => edge.id)),
     nodeIds: new Set(hoverEdges.flatMap(({ edge }) => [edge.source, edge.target])),
     dependencyIds: Object.fromEntries(hoverEdges.map(({ edge, dependencyIds }) => [edge.id, dependencyIds])),
     routes: routed.routes,
-    segments: routed.segments,
-    junctions: routed.junctions,
   };
 }
 
@@ -300,26 +291,25 @@ export function dagPointVisible(point: DagPoint, bounds: DagVisibleBounds): bool
 const DAG_CULL_GRID = 160;
 
 /** A primitive key of the quantized visible window, for store selectors whose
- *  result must stay referentially stable between grid crossings. The zoom is
- *  floored to 0.2 steps so the window always over-covers the real one —
- *  culling never clips an edge that is actually on screen. Grid and margin
- *  are SCREEN pixels (÷ zoom): at fit-out zooms a flow-unit grid would
- *  re-render every few pan pixels. The key carries its cell size so
- *  `dagCullBounds` can scale back. */
+ *  result must stay referentially stable between grid crossings. The visible
+ *  window itself always uses the REAL zoom (dividing the translate by a
+ *  floored zoom shifts it for negative pans); the floored zoom only sets the
+ *  cell size, so cells stay ~160 screen px and the key always over-covers.
+ *  The key carries its cell size so `dagCullBounds` can scale back. */
 export function dagCullBoundsKey(
   transform: readonly [number, number, number],
   size: { width: number; height: number },
 ): string {
-  const [tx, ty, zoom] = transform;
+  const [, , zoom] = transform;
   if (!zoom || size.width <= 0 || size.height <= 0) return "";
-  const qZoom = Math.min(Math.max(0.05, Math.floor(zoom * 5) / 5), zoom);
-  const cell = DAG_CULL_GRID / qZoom;
-  const margin = 80 / qZoom;
+  const cell = DAG_CULL_GRID / Math.max(0.05, Math.floor(zoom * 5) / 5);
+  const bounds = dagVisibleBounds(transform, size, 80 / zoom);
+  if (!bounds) return "";
   return [
-    Math.floor((-tx / qZoom - margin) / cell),
-    Math.floor((-ty / qZoom - margin) / cell),
-    Math.ceil(((size.width - tx) / qZoom + margin) / cell),
-    Math.ceil(((size.height - ty) / qZoom + margin) / cell),
+    Math.floor(bounds.x0 / cell),
+    Math.floor(bounds.y0 / cell),
+    Math.ceil(bounds.x1 / cell),
+    Math.ceil(bounds.y1 / cell),
     cell,
   ].join(",");
 }

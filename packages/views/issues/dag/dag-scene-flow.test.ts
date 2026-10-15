@@ -11,6 +11,7 @@ import {
 } from "@multica/core/issues/dag";
 import { graphNode as n, issueGraph as g } from "./dag-test-fixtures";
 import {
+  dagBusSelectionRows,
   dagFocusCanvasModel,
   dagDependencyStates,
   dagDisplayedRoutes,
@@ -580,5 +581,69 @@ describe("focus scene adapter", () => {
     expect(dagSceneEdgeDisplay(model.plan, "a-after", states, false)).toEqual({ state: "satisfied", count: 1 });
     expect(model.plan.input.edges).toHaveLength(3);
     expect(dagSceneStats(model, model.plan, false)).toEqual({ matched: 4, context: 0, edges: 3 });
+  });
+});
+
+describe("dagBusSelectionRows", () => {
+  const graph = g(
+    [
+      n("r1"),
+      n("a1", { parentIssueId: "r1", status: "done", statusCategory: "done" }),
+      n("a2", { parentIssueId: "r1" }),
+      n("r2"),
+      n("b1", { parentIssueId: "r2" }),
+    ],
+    [
+      { id: "e-a1", source: "a1", target: "b1" },
+      { id: "e-a2", source: "a2", target: "b1" },
+    ],
+  );
+  const index = createDagModelIndex(graph);
+  const overview = computeDagOverview(index, { showCompleted: false, showSatisfiedDependencies: false });
+  const states = dagDependencyStates({ kind: "overview", overview });
+  const issuesById = new Map(graph.nodes.map((node) => [node.id, node]));
+
+  it("resolves each original dependency as source → target without swapping", () => {
+    const rows = dagBusSelectionRows({
+      dependencyIds: ["e-a2"],
+      edges: graph.edges,
+      issuesById,
+      states,
+      showSatisfied: true,
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.sourceId).toBe("a2");
+    expect(rows[0]!.targetId).toBe("b1");
+    expect(rows[0]!.sourceLabel).toBe(issuesById.get("a2")!.identifier);
+    expect(rows[0]!.targetLabel).toBe(issuesById.get("b1")!.identifier);
+    expect(rows[0]!.sourceTitle).toBe(issuesById.get("a2")!.title);
+  });
+
+  it("lists satisfied originals only while the switch is on", () => {
+    const off = dagBusSelectionRows({
+      dependencyIds: ["e-a1", "e-a2"],
+      edges: graph.edges,
+      issuesById,
+      states,
+      showSatisfied: false,
+    });
+    expect(off.map((row) => row.id)).toEqual(["e-a2"]);
+    const on = dagBusSelectionRows({
+      dependencyIds: ["e-a1", "e-a2"],
+      edges: graph.edges,
+      issuesById,
+      states,
+      showSatisfied: true,
+    });
+    expect(on.map((row) => row.id)).toEqual(["e-a1", "e-a2"]);
+    expect(
+      dagBusSelectionRows({
+        dependencyIds: ["e-a1"],
+        edges: graph.edges,
+        issuesById,
+        states,
+        showSatisfied: false,
+      }),
+    ).toEqual([]);
   });
 });

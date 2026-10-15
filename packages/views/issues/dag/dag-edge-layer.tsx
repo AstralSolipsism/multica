@@ -105,7 +105,9 @@ export interface DagEdgeLayerProps {
   degraded: boolean;
   /** Motion gates: zoom (already thresholded by the caller) and the system's
    *  reduced-motion setting. The ~60-segment budget applies here. */
-  motion: { zoom: number; reducedMotion: boolean };
+  /** Motion gate, already thresholded by the caller. */
+  motionOn: boolean;
+  reducedMotion: boolean;
   /** Bus click: the original dependency IDs running through the segment. */
   onBusClick: (dependencyIds: string[]) => void;
 }
@@ -128,7 +130,8 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
   selectedNodeId,
   bounds,
   degraded,
-  motion,
+  motionOn,
+  reducedMotion,
   onBusClick,
 }: DagEdgeLayerProps) {
   const maskId = useId();
@@ -177,24 +180,14 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
       }),
     [composed.routes, plan, states, showSatisfied],
   );
-  const visibleArrows = useMemo(
-    () =>
-      degraded
-        ? []
-        : bounds
-          ? arrows.filter(({ route }) => dagRouteVisible(route, bounds))
-          : arrows,
-    [arrows, bounds, degraded],
-  );
-  const visibleJunctions = useMemo(
-    () =>
-      degraded
-        ? []
-        : bounds
-          ? composed.junctions.filter((junction) => dagPointVisible(junction, bounds))
-          : composed.junctions,
-    [composed.junctions, bounds, degraded],
-  );
+  const visibleArrows = useMemo(() => {
+    if (degraded || !bounds) return degraded ? [] : arrows;
+    return arrows.filter(({ route }) => dagRouteVisible(route, bounds));
+  }, [arrows, bounds, degraded]);
+  const visibleJunctions = useMemo(() => {
+    if (degraded || !bounds) return degraded ? [] : composed.junctions;
+    return composed.junctions.filter((junction) => dagPointVisible(junction, bounds));
+  }, [composed.junctions, bounds, degraded]);
   const badges = useMemo(() => {
     if (plan.input.kind !== "overview" || degraded) return [];
     return visibleArrows
@@ -213,7 +206,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
     () =>
       visibleSegments.flatMap(({ segment, display }) => {
         const kind = dagStateMotion(display.state);
-        return kind ? [{ id: segment.id, motion: kind, edgeIds: segment.edgeIds }] : [];
+        return kind ? [{ id: segment.id, edgeIds: segment.edgeIds }] : [];
       }),
     [visibleSegments],
   );
@@ -222,10 +215,10 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
       dagMotionSegments({
         candidates: motionCandidates,
         highlightedEdgeIds,
-        zoom: motion.zoom,
-        reducedMotion: motion.reducedMotion,
+        zoom: motionOn ? 1 : 0,
+        reducedMotion,
       }),
-    [motionCandidates, highlightedEdgeIds, motion.zoom, motion.reducedMotion],
+    [motionCandidates, highlightedEdgeIds, motionOn, reducedMotion],
   );
   const flowOverlays = useMemo(
     () =>
@@ -246,7 +239,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
   );
   const litFlows = flowOverlays.filter(({ lit }) => lit);
   const baseFlows = flowOverlays.filter(({ lit }) => !lit);
-  const motionAllowed = dagMotionAllowed(motion.zoom, motion.reducedMotion);
+  const motionAllowed = dagMotionAllowed(motionOn ? 1 : 0, reducedMotion);
 
   // Highlight: repaint each lit dependency's own complete route — never the
   // whole bus. Hover-only satisfied bundles take their overlay route and the
@@ -291,6 +284,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
           block.y <= bounds.y1),
     );
     const body: string[] = [];
+    const dashedBody: string[] = [];
     const frames: string[] = [];
     const externals: string[] = [];
     const strips = new Map<string, string[]>();
@@ -300,6 +294,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
       else if (block.kind === "external") externals.push(rect);
       else {
         body.push(rect);
+        if (block.dashed) dashedBody.push(rect);
         if (block.color) {
           const strip = `M ${block.x} ${block.y} h 6 v ${block.height} h -6 Z`;
           (strips.get(block.color) ?? strips.set(block.color, []).get(block.color)!).push(strip);
@@ -309,6 +304,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
     return {
       visible,
       body: body.join(" "),
+      dashedBodies: dashedBody.join(" "),
       frames: frames.join(" "),
       externals: externals.join(" "),
       strips,
@@ -360,63 +356,29 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
         className="dag-edge-flow"
         stroke="var(--background)"
         strokeOpacity={0.95}
-        strokeWidth={display.width + 1.4}
+        strokeWidth={Math.max(1.2, display.width - 0.4)}
         strokeLinecap="round"
       />
     );
   };
 
+  const windowedSvgProps = windowed
+    ? {
+        className: "pointer-events-none absolute overflow-hidden",
+        style: { left: bounds.x0, top: bounds.y0, willChange: "transform" as const },
+        width: bounds.x1 - bounds.x0,
+        height: bounds.y1 - bounds.y0,
+        viewBox: `${bounds.x0} ${bounds.y0} ${bounds.x1 - bounds.x0} ${bounds.y1 - bounds.y0}`,
+      }
+    : {
+        className: "pointer-events-none absolute left-0 top-0 overflow-visible",
+        width: geometry.width,
+        height: geometry.height,
+      };
+
   return (
     <>
-      <svg
-      data-dag-edge-layer
-      className={
-        windowed
-          ? "pointer-events-none absolute overflow-hidden"
-          : "pointer-events-none absolute left-0 top-0 overflow-visible"
-      }
-      style={
-        windowed
-          ? { left: bounds.x0, top: bounds.y0, willChange: "transform" }
-          : undefined
-      }
-      width={windowed ? bounds.x1 - bounds.x0 : geometry.width}
-      height={windowed ? bounds.y1 - bounds.y0 : geometry.height}
-      viewBox={
-        windowed
-          ? `${bounds.x0} ${bounds.y0} ${bounds.x1 - bounds.x0} ${bounds.y1 - bounds.y0}`
-          : undefined
-      }
-      aria-hidden
-    >
-      {dimNodes && (
-        <defs>
-          {/* Node dimming without per-card rebuilds: a full-scene dim rect
-              whose mask punches holes over the lit cards (and lit frames'
-              headers). One element replaces hundreds of class updates. */}
-          <mask id={maskId} maskUnits="userSpaceOnUse">
-            <rect
-              x={bounds ? bounds.x0 : 0}
-              y={bounds ? bounds.y0 : 0}
-              width={bounds ? bounds.x1 - bounds.x0 : geometry.width}
-              height={bounds ? bounds.y1 - bounds.y0 : geometry.height}
-              fill="white"
-            />
-            {litBoxes!.map((box) => (
-              <rect
-                key={box.id}
-                data-dag-dim-hole={box.id}
-                x={box.x - 8}
-                y={box.y - 8}
-                width={box.width + 16}
-                height={box.height + 16}
-                rx={10}
-                fill="black"
-              />
-            ))}
-          </mask>
-        </defs>
-      )}
+      <svg data-dag-edge-layer {...windowedSvgProps} aria-hidden>
       <g className={dimmed ? "opacity-15 transition-opacity" : "transition-opacity"}>
         {segmentGroups.map(([key, group]) => {
           const style = STATE_STYLE[group.state];
@@ -478,9 +440,8 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
         })}
       </g>
       {/* Simplified cards below the readability zoom: SVG rects whose DOM
-          shells stay interactive (only when the static canvas is absent —
-          otherwise they paint there). Painted over edge endpoints like the
-          DOM cards would. */}
+          shells stay interactive. Painted over edge endpoints like the DOM
+          cards would; cancelled blockers keep their dashed mark. */}
       {ghost && (
         <g data-dag-ghost-blocks>
           {ghost.body && (
@@ -489,6 +450,14 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
           {[...ghost.strips.entries()].map(([color, d]) => (
             <path key={color} d={d.join(" ")} fill={color} />
           ))}
+          {ghost.dashedBodies && (
+            <path
+              d={ghost.dashedBodies}
+              fill="none"
+              stroke="var(--border)"
+              strokeDasharray="5 3"
+            />
+          )}
           {ghost.frames && (
             <path d={ghost.frames} fill="var(--muted)" fillOpacity={0.25} stroke="var(--muted-foreground)" strokeOpacity={0.3} />
           )}
@@ -496,18 +465,6 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
             <path d={ghost.externals} fill="var(--muted)" fillOpacity={0.25} stroke="var(--muted-foreground)" strokeOpacity={0.45} strokeDasharray="4 3" />
           )}
         </g>
-      )}
-      {dimNodes && (
-        <rect
-          data-dag-dim-overlay
-          x={bounds ? bounds.x0 : 0}
-          y={bounds ? bounds.y0 : 0}
-          width={bounds ? bounds.x1 - bounds.x0 : geometry.width}
-          height={bounds ? bounds.y1 - bounds.y0 : geometry.height}
-          fill="var(--background)"
-          fillOpacity={0.75}
-          mask={`url(#${maskId})`}
-        />
       )}
       {selectedBox && (
         <g data-dag-selected={selectedNodeId}>
@@ -600,6 +557,55 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
           })
         : null}
     </svg>
+    {dimNodes && (
+      // Node dimming without per-card rebuilds: a full-scene dim rect whose
+      // mask punches holes over the lit cards (and lit frames' headers). It
+      // lives in its own svg above the z-index-2 cards — inside the edge
+      // layer it could only cover the background and frames.
+      <svg
+        data-dag-dim-layer
+        {...windowedSvgProps}
+        style={{
+          ...(windowedSvgProps as { style?: React.CSSProperties }).style,
+          zIndex: 3,
+        }}
+        aria-hidden
+      >
+        <defs>
+          <mask id={maskId} maskUnits="userSpaceOnUse">
+            <rect
+              x={bounds ? bounds.x0 : 0}
+              y={bounds ? bounds.y0 : 0}
+              width={bounds ? bounds.x1 - bounds.x0 : geometry.width}
+              height={bounds ? bounds.y1 - bounds.y0 : geometry.height}
+              fill="white"
+            />
+            {litBoxes!.map((box) => (
+              <rect
+                key={box.id}
+                data-dag-dim-hole={box.id}
+                x={box.x - 8}
+                y={box.y - 8}
+                width={box.width + 16}
+                height={box.height + 16}
+                rx={10}
+                fill="black"
+              />
+            ))}
+          </mask>
+        </defs>
+        <rect
+          data-dag-dim-overlay
+          x={bounds ? bounds.x0 : 0}
+          y={bounds ? bounds.y0 : 0}
+          width={bounds ? bounds.x1 - bounds.x0 : geometry.width}
+          height={bounds ? bounds.y1 - bounds.y0 : geometry.height}
+          fill="var(--background)"
+          fillOpacity={0.75}
+          mask={`url(#${maskId})`}
+        />
+      </svg>
+    )}
     </>
   );
 });

@@ -9,17 +9,10 @@ import {
 } from "@multica/ui/components/ui/popover";
 import { useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import { useT } from "../../i18n";
+import type { DagBusSelectionRow } from "./dag-scene-flow";
 
 /** One original dependency running through a clicked bus segment. */
-export interface DagBusSelectionItem {
-  id: string;
-  sourceId: string;
-  sourceLabel: string;
-  sourceTitle: string;
-  targetId: string;
-  targetLabel: string;
-  targetTitle: string;
-}
+export type DagBusSelectionItem = DagBusSelectionRow;
 
 /** The selection zone's bus state (OL-182's aggregate dropdown, adapted to
  *  bus painting): a summary button listing every original dependency as

@@ -14,6 +14,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useTheme } from "@multica/ui/components/common/theme-provider";
+import type { DagFocusState } from "@multica/core/issues/stores/view-store";
 import {
   useViewStore,
   useViewStoreApi,
@@ -91,6 +92,10 @@ export interface DagSceneCanvasProps {
 /** Zoom degradation swaps cards to their plain block only where the flag
  *  actually differs; at simplified zoom a selection change must not clone
  *  (and re-render) every node. */
+function withSimplified<T extends DagCanvasFlowNode>(node: T): T {
+  return { ...node, data: { ...node.data, simplified: true } };
+}
+
 function applySimplified(
   nodes: DagCanvasFlowNode[],
   simplified: boolean,
@@ -101,13 +106,10 @@ function applySimplified(
     changed = true;
     switch (node.type) {
       case "dagOverviewCard":
-        return { ...node, data: { ...node.data, simplified } };
       case "dagTask":
-        return { ...node, data: { ...node.data, simplified } };
       case "dagFrame":
-        return { ...node, data: { ...node.data, simplified } };
       case "dagExternal":
-        return { ...node, data: { ...node.data, simplified } };
+        return withSimplified(node);
     }
   });
   return changed ? next : nodes;
@@ -147,7 +149,11 @@ export function DagSceneCanvasInner({
   );
   // Re-render on 0.1-quantized zoom steps only: wheel gestures would
   // otherwise re-render the whole canvas on every frame.
-  const zoom = useFlowStore((state) => Math.round(state.transform[2] * 10) / 10);
+  // Thresholds as boolean selectors: they only re-render on crossing, and
+  // they compare the real zoom — never a quantized step (OL-183's 50%/40%).
+  const simplified = useFlowStore((state) => state.transform[2] < DAG_SIMPLIFIED_ZOOM);
+  const motionOn = useFlowStore((state) => state.transform[2] >= DAG_MOTION_MIN_ZOOM);
+  const zoom = useFlowStore((state) => state.transform[2]);
   const reducedMotion = usePrefersReducedMotion();
   // Culling re-renders the edge layer only when the visible window crosses a
   // quantization boundary, not on every pan frame.
@@ -155,8 +161,6 @@ export function DagSceneCanvasInner({
     dagCullBoundsKey(state.transform, { width: state.width, height: state.height }),
   );
   const cullBounds = useMemo(() => dagCullBounds(cullKey), [cullKey]);
-  const simplified = zoom < DAG_SIMPLIFIED_ZOOM;
-  const motionZoom = zoom >= DAG_MOTION_MIN_ZOOM ? 1 : 0;
   const translateExtent = useMemo(
     () => dagViewportExtent(viewportTargets, { width: canvasWidth, height: canvasHeight }, zoom),
     [viewportTargets, canvasWidth, canvasHeight, zoom],
@@ -296,29 +300,42 @@ export function DagSceneCanvasInner({
   // Highlight sets ------------------------------------------------------------
   // Hover wins while the pointer rests on a card; the toolbar's transitive
   // focus outranks the one-click neighborhood; a bus selection lights its
-  // dependencies on top of either. Hover is debounced (see above).
-  const hoverOverlay = useMemo(
-    () => (hoverNodeId ? dagOverviewHoverOverlay(model, geometry, hoverNodeId) : null),
-    [hoverNodeId, model, geometry],
+  // dependencies on top of either. Hover is debounced (see above), and never
+  // overrides the card that already owns the selection/focus — clicking it
+  // must visibly switch to all upstream + downstream.
+  // Focus (and hover) on an overview card additionally surfaces its
+  // satisfied bundles without a layout pass.
+  const overlayAnchorId = model.kind === "overview" ? (hoverNodeId ?? focusState?.nodeId ?? null) : null;
+  const anchorOverlay = useMemo(
+    () => (overlayAnchorId ? dagOverviewHoverOverlay(model, geometry, overlayAnchorId) : null),
+    [overlayAnchorId, model, geometry],
   );
+  const anchorId = focusState?.nodeId ?? selectedNodeId;
   const hoverSet = useMemo<DagFocusSet | null>(() => {
-    if (!hoverNodeId) return null;
+    if (!hoverNodeId || hoverNodeId === anchorId) return null;
     const base = dagSceneSelectionSet(plan, hoverNodeId);
-    if (!base && !hoverOverlay) return null;
+    if (!base && !anchorOverlay) return null;
     return {
-      nodeIds: new Set([...(base?.nodeIds ?? []), ...(hoverOverlay?.nodeIds ?? [])]),
-      edgeIds: new Set([...(base?.edgeIds ?? []), ...(hoverOverlay?.edgeIds ?? [])]),
+      nodeIds: new Set([...(base?.nodeIds ?? []), ...(anchorOverlay?.nodeIds ?? [])]),
+      edgeIds: new Set([...(base?.edgeIds ?? []), ...(anchorOverlay?.edgeIds ?? [])]),
     };
-  }, [hoverNodeId, plan, hoverOverlay]);
+  }, [hoverNodeId, anchorId, plan, anchorOverlay]);
   const focusSet = useMemo(() => {
     const set = focusState ? dagSceneFocusSet(plan, focusState.nodeId, focusState.way) : null;
-    return set ? { ...set, nodeIds: dagWithAncestorFrames(plan, set.nodeIds) } : null;
-  }, [focusState, plan]);
+    if (!set) return null;
+    return {
+      nodeIds: dagWithAncestorFrames(plan, new Set([...set.nodeIds, ...(anchorOverlay?.nodeIds ?? [])])),
+      edgeIds: new Set([...set.edgeIds, ...(anchorOverlay?.edgeIds ?? [])]),
+    };
+  }, [focusState, plan, anchorOverlay]);
   const selectionSet = useMemo(
     () => (selectedNodeId ? dagSceneSelectionSet(plan, selectedNodeId) : null),
     [selectedNodeId, plan],
   );
   const activeNodeSet = hoverSet ?? focusSet ?? selectionSet;
+  // The edge layer only needs the hover overlay when hover actually drives
+  // the highlight; the focus overlay routes resolve through the same field.
+  const hoverOverlay = hoverSet ? anchorOverlay : focusSet ? anchorOverlay : null;
   const busEdgeIds = useMemo(
     () =>
       selectedDependencyIds?.length
@@ -382,6 +399,27 @@ export function DagSceneCanvasInner({
       }
       return blocks;
     }
+    if (model.kind === "focus") {
+      // The focus scene fragments task lines into upstream/current/downstream
+      // frame pieces; their boxes live in geometry.frames under scene ids.
+      for (const frame of model.frames) {
+        const box = geometry.frames[frame.id];
+        if (!box) continue;
+        blocks.push({ id: frame.id, ...box, kind: "frame", color: null, dashed: false });
+      }
+      for (const task of model.tasks) {
+        const box = geometry.nodes[task.issue.id];
+        if (!box) continue;
+        blocks.push({
+          id: task.issue.id,
+          ...box,
+          kind: "task",
+          color: null,
+          dashed: task.role === "context" || task.cancelledBlocking,
+        });
+      }
+      return blocks;
+    }
     if (model.kind === "line") {
       for (const frame of model.line.frames) {
         const box = geometry.frames[frame.id];
@@ -424,8 +462,12 @@ export function DagSceneCanvasInner({
       for (const change of changes) {
         if (change.type !== "select") continue;
         const state = storeApi.getState();
-        if (change.selected) state.setDagSelectedNodeId(change.id);
-        else if (state.dagSelectedNodeId === change.id) state.setDagSelectedNodeId(null);
+        // Skip re-emitted selections of the already-selected node: after the
+        // nodes array rebuilds, React Flow re-fires select for it, and a
+        // blind rewrite would clear the click-cycle focus before its toggle.
+        if (change.selected) {
+          if (state.dagSelectedNodeId !== change.id) state.setDagSelectedNodeId(change.id);
+        } else if (state.dagSelectedNodeId === change.id) state.setDagSelectedNodeId(null);
       }
     },
     [storeApi],
@@ -438,8 +480,11 @@ export function DagSceneCanvasInner({
   // second single click on the same node switches to all upstream +
   // downstream; a third returns. The second click only lands once the
   // double-click window has passed, and any click with detail > 1 belongs to
-  // a double-click — the double-click handler owns that gesture.
+  // a double-click — the double-click handler owns that gesture. When the
+  // window was too short for the system's double-click time (a slow
+  // double-click), the switch lands first and the double-click rolls it back.
   const cycleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cycleRollback = useRef<{ nodeId: string; previousFocus: DagFocusState | null; at: number } | null>(null);
   const cancelCycle = useCallback(() => {
     if (cycleTimer.current) {
       clearTimeout(cycleTimer.current);
@@ -465,6 +510,9 @@ export function DagSceneCanvasInner({
         const current = storeApi.getState();
         if (current.dagSelectedNodeId !== node.id) return;
         const focus = current.dagFocus;
+        // Remember the pre-switch state: a double-click arriving right after
+        // (a slow one, inside the system's double-click time) rolls it back.
+        cycleRollback.current = { nodeId: node.id, previousFocus: focus, at: Date.now() };
         current.setDagFocus(
           focus?.nodeId === node.id && focus.way === "both"
             ? null
@@ -497,13 +545,22 @@ export function DagSceneCanvasInner({
           onNodesChange={handleNodesChange}
           onNodeClick={(event, node) => handleNodeClick(node, event.detail)}
           onNodeMouseEnter={(_, node) => {
-            if (!paneDragging) applyHover(node.id);
+            // Hover is a card affordance; frames and external side cards do
+            // not light up on pointer sweep.
+            if (!paneDragging && (node.type === "dagTask" || node.type === "dagOverviewCard"))
+              applyHover(node.id);
           }}
           onNodeMouseLeave={() => applyHover(null)}
           onNodeDoubleClick={(_, node) => {
             // A double-click keeps its original action and never advances the
-            // click cycle — cancel the pending switch from its first click.
+            // click cycle — cancel the pending switch from its first click,
+            // and roll back a switch that already landed for a slow one.
             cancelCycle();
+            const rollback = cycleRollback.current;
+            if (rollback && rollback.nodeId === node.id && Date.now() - rollback.at <= 600) {
+              cycleRollback.current = null;
+              storeApi.getState().setDagFocus(rollback.previousFocus);
+            }
             if (node.type === "dagOverviewCard") {
               const { card } = node.data;
               if (card.kind === "issue") onOpenIssue(card.issue!.id);
@@ -548,7 +605,8 @@ export function DagSceneCanvasInner({
               selectedNodeId={selectedNodeId}
               bounds={cullBounds}
               degraded={simplified}
-              motion={{ zoom: motionZoom, reducedMotion }}
+              motionOn={motionOn}
+              reducedMotion={reducedMotion}
               onBusClick={handleBusClick}
             />
           </ViewportPortal>

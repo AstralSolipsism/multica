@@ -179,12 +179,13 @@ export function DagNodeSelection({
     target.kind === "independent" ? tDag(($) => $.independent_group) : target.title;
   // The click cycle's current scope: one layer by default, all upstream +
   // downstream after the second click. A one-way focus shows on its button.
-  const scopeTag =
-    focus?.nodeId === target.id && focus.way === "both"
-      ? tDag(($) => $.selection_scope_closure)
-      : !focus || focus.nodeId !== target.id
-        ? tDag(($) => $.selection_scope_neighborhood)
-        : null;
+  const scopeTag = (() => {
+    if (focus?.nodeId === target.id && focus.way === "both")
+      return tDag(($) => $.selection_scope_closure);
+    if (!focus || focus.nodeId !== target.id)
+      return tDag(($) => $.selection_scope_neighborhood);
+    return null;
+  })();
 
   return (
     <div ref={zoneRef} data-dag-zone className="flex min-w-0 flex-1 items-center gap-1">

@@ -72,7 +72,7 @@ export const DagOverviewCardView = memo(
     return (
       <div
         className={cn(
-          "nopan relative flex h-full w-full flex-col overflow-hidden rounded-lg border bg-card py-2 pl-3.5 pr-2.5 text-left shadow-xs transition-opacity",
+          "nopan relative flex h-full w-full flex-col overflow-hidden rounded-lg border bg-card py-2 pl-3.5 pr-2.5 text-left shadow-xs",
           "border-border hover:border-foreground/30",
           card.cancelledBlocking && "border-dashed",
         )}

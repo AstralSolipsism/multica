@@ -147,7 +147,6 @@ describe("motion policy", () => {
   const candidates = (count: number): DagMotionCandidate[] =>
     Array.from({ length: count }, (_, i) => ({
       id: `segment:${i}`,
-      motion: "flow" as const,
       edgeIds: [`edge-${i}`],
     }));
 
@@ -161,14 +160,22 @@ describe("motion policy", () => {
     expect([...result].sort()).toEqual(["segment:0", "segment:1", "segment:2"]);
   });
 
-  it("over the budget only the selected chain keeps moving", () => {
+  it("over the budget even the selected chain is truncated to the limit", () => {
+    const highlighted = new Set(["edge-2", "edge-7", "edge-9"]);
     const result = dagMotionSegments({
       candidates: candidates(DAG_MOTION_MAX_SEGMENTS + 1),
-      highlightedEdgeIds: new Set(["edge-2", "edge-7"]),
+      highlightedEdgeIds: highlighted,
       zoom: 1,
       reducedMotion: false,
     });
-    expect([...result].sort()).toEqual(["segment:2", "segment:7"]);
+    expect([...result].sort()).toEqual(["segment:2", "segment:7", "segment:9"]);
+    const bigChain = dagMotionSegments({
+      candidates: candidates(DAG_MOTION_MAX_SEGMENTS + 1),
+      highlightedEdgeIds: new Set(candidates(DAG_MOTION_MAX_SEGMENTS + 1).flatMap((c) => c.edgeIds)),
+      zoom: 1,
+      reducedMotion: false,
+    });
+    expect(bigChain.size).toBe(DAG_MOTION_MAX_SEGMENTS);
   });
 
   it("over the budget with nothing selected, nothing moves", () => {
@@ -322,14 +329,33 @@ describe("viewport culling", () => {
     const at = (x: number, y: number, zoom = 1) => dagCullBoundsKey([x, y, zoom], size);
     expect(at(0, 0)).toBe(at(-50, -50));
     expect(at(0, 0)).not.toBe(at(-200, 0));
-    // A floored zoom step still covers the real window (never under-culls).
-    const zoomed = dagCullBounds(at(0, 0, 0.24))!;
-    const real = dagVisibleBounds([0, 0, 0.24], size, 0)!;
-    expect(zoomed.x0).toBeLessThanOrEqual(real.x0);
-    expect(zoomed.y0).toBeLessThanOrEqual(real.y0);
-    expect(zoomed.x1).toBeGreaterThanOrEqual(real.x1);
-    expect(zoomed.y1).toBeGreaterThanOrEqual(real.y1);
     expect(dagCullBoundsKey([0, 0, 0], size)).toBe("");
+  });
+
+  it("always contains the visible window, also for negative pans and off-step zooms", () => {
+    const size = { width: 1600, height: 1000 };
+    const cases: [number, number, number][] = [
+      [-4000, -500, 0.3],
+      [-1000, 0, 0.55],
+      [-12000, -8000, 0.39],
+      [-4000, 200, 0.24],
+      [300, -200, 1.37],
+      [-50, -50, 0.05],
+    ];
+    for (const [tx, ty, zoom] of cases) {
+      const key = dagCullBoundsKey([tx, ty, zoom], size);
+      const bounds = dagCullBounds(key)!;
+      const visible = {
+        x0: -tx / zoom,
+        y0: -ty / zoom,
+        x1: (size.width - tx) / zoom,
+        y1: (size.height - ty) / zoom,
+      };
+      expect(bounds.x0, `case ${tx},${ty},${zoom}`).toBeLessThanOrEqual(visible.x0);
+      expect(bounds.y0, `case ${tx},${ty},${zoom}`).toBeLessThanOrEqual(visible.y0);
+      expect(bounds.x1, `case ${tx},${ty},${zoom}`).toBeGreaterThanOrEqual(visible.x1);
+      expect(bounds.y1, `case ${tx},${ty},${zoom}`).toBeGreaterThanOrEqual(visible.y1);
+    }
   });
 
   it("culls segments, routes and points outside the bounds", () => {

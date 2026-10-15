@@ -16,14 +16,16 @@ else in `dag-edge-layer.tsx`, a window-sized SVG in the `ViewportPortal`:
   zoom < 50% stops it; past ~60 moving segments on screen only the selected
   chain keeps moving.
 - **Highlight**: hover lights a card's own in/out edges (debounced 100 ms so
-  pan gestures do not storm); a click selects the one-layer neighborhood; a
-  second click on the same node (after a 400 ms double-click window, skipped
-  for `event.detail > 1`) switches to all upstream + downstream
-  (`DagFocusWay: "both"`); a third returns. Toolbar focus buttons keep the
-  one-way modes. Every lit dependency repaints along its own complete route
-  — never the whole bus (OL-280 option B). Node dimming is one masked rect
-  with holes over the lit cards, not per-card re-renders; the selection ring
-  is an SVG rect (brand blue), so a click never rebuilds the nodes array.
+  pan gestures do not storm, and suppressed on the card that already owns the
+  selection); a click selects the one-layer neighborhood; a second click on
+  the same node (after a 400 ms double-click window, skipped for
+  `event.detail > 1`, rolled back when a slow double-click still fires)
+  switches to all upstream + downstream (`DagFocusWay: "both"`); a third
+  returns. Toolbar focus buttons keep the one-way modes. Every lit dependency
+  repaints along its own complete route — never the whole bus (OL-280 option
+  B). Node dimming is a single masked rect in a z-3 overlay svg with holes
+  over the lit cards — the z-index-2 cards never rebuild, and the selection
+  ring is an SVG rect (brand blue).
 - **Bus click**: visible segments carry inset transparent hit strokes (off
   past `DAG_BUS_HIT_LIMIT`); a click stores the segment's deduplicated
   original dependency IDs and the toolbar lists them in the restored OL-182

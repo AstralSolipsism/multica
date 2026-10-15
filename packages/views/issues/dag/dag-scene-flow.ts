@@ -62,19 +62,6 @@ export interface DagExternalCardData extends Record<string, unknown> {
   side: "upstream" | "downstream";
   simplified?: boolean;
 }
-export interface DagFrameData extends Record<string, unknown> {
-  frame: DagFrame;
-  box: DagSceneFrameBox;
-  statusColor: string | null;
-  projectTitle: string | null;
-  /** Zoom degradation: the frame renders as a plain block without text. */
-  simplified?: boolean;
-}
-export interface DagExternalCardData extends Record<string, unknown> {
-  group: DagExternalGroup;
-  side: "upstream" | "downstream";
-  simplified?: boolean;
-}
 
 export type DagOverviewFlowNode = Node<DagOverviewCardData, "dagOverviewCard">;
 export type DagTaskFlowNode = Node<DagTaskCardData, "dagTask">;
@@ -225,6 +212,48 @@ export interface DagSelectionTarget {
   enterLineId: string | null;
   /** Line-level members can recenter on their innermost sub-line frame. */
   focusFrameId: string | null;
+}
+
+export interface DagBusSelectionRow {
+  id: string;
+  sourceId: string;
+  sourceLabel: string;
+  sourceTitle: string;
+  targetId: string;
+  targetLabel: string;
+  targetTitle: string;
+}
+
+/** The bus dropdown's rows: resolve each original dependency's endpoints
+ *  against the full graph. Satisfied originals list only while their switch
+ *  is on — the dropdown matches what the segment displays. */
+export function dagBusSelectionRows(params: {
+  dependencyIds: readonly string[];
+  edges: readonly { sourceEdgeId: string; source: string; target: string }[];
+  issuesById: ReadonlyMap<string, { identifier: string | null; title: string }>;
+  states: ReadonlyMap<string, DagDependencyState>;
+  showSatisfied: boolean;
+}): DagBusSelectionRow[] {
+  const { dependencyIds, edges, issuesById, states, showSatisfied } = params;
+  const byRawId = new Map(edges.map((edge) => [edge.sourceEdgeId, edge]));
+  return dependencyIds.flatMap((id) => {
+    if (!showSatisfied && states.get(id) === "satisfied") return [];
+    const edge = byRawId.get(id);
+    if (!edge) return [];
+    const source = issuesById.get(edge.source);
+    const target = issuesById.get(edge.target);
+    return [
+      {
+        id,
+        sourceId: edge.source,
+        sourceLabel: source?.identifier ?? "?",
+        sourceTitle: source?.title ?? "",
+        targetId: edge.target,
+        targetLabel: target?.identifier ?? "?",
+        targetTitle: target?.title ?? "",
+      },
+    ];
+  });
 }
 
 /** Resolve the store's selected node id against the painted model. */
