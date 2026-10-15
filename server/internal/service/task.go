@@ -5390,10 +5390,11 @@ func ResumeUnsafeFailure(failureReason, errorText string) bool {
 	if taskfailure.AuthMethodUnresolved(errorText) {
 		return true
 	}
-	// Same defense-in-depth for the provider-agnostic empty-message shape:
+	// Same defense-in-depth for provider-agnostic empty-message and oversized
+	// request shapes (GH #6066, OL-416):
 	// a daemon too old to carry classifyPoisonedError's new branch reports
 	// agent_error.unknown, and without this the manual-retry path would
-	// happily resume the transcript the provider just refused (GH #6066).
+	// happily resume the transcript the provider just refused.
 	return taskfailure.UnresumableHistory(errorText) || taskfailure.OversizedRequest(errorText)
 }
 

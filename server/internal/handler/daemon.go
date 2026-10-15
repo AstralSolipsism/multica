@@ -3071,9 +3071,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// continuing on stale requirements with nothing to signal it.
 		//
 		// PriorSessionResumeUnavailable is deliberately NOT consulted here. It
-		// flags a Codex rollout that went missing, which is only one of the ways
-		// the resumed session can be older than the newest run; the daemon
-		// applies it as its own separate gate.
+		// flags missing rollouts and sessions excluded by resume-safety checks.
+		// Neither determines the adopted session's delta anchor; the daemon
+		// applies the continuity notice as its own separate gate.
 		//
 		// newResumedRunAnchor already rejected every source that cannot date a
 		// delta — anything that did not finish a turn, and so never proved the
