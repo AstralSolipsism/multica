@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { ApiError, setApiInstance, type ApiClient } from "@multica/core/api";
@@ -14,7 +14,7 @@ import type { IssueTableQuerySpec } from "@multica/core/types";
 import ELK from "elkjs/lib/elk.bundled.js";
 import { layoutDagScene } from "./dag-scene-layout";
 import type { DagSceneRequest, DagSceneResponse, DagSceneRunner } from "./dag-scene-runner";
-import { DagView } from "./dag-view";
+import { DagView, useDagEmptyBusSelectionReset } from "./dag-view";
 import type { DagSceneCanvasProps } from "./dag-scene-canvas";
 import type { DagToolbarProps } from "./dag-toolbar";
 import { graphNode as makeNode, issueGraph as makeGraph } from "./dag-test-fixtures";
@@ -701,5 +701,31 @@ describe("DagView focus mode", () => {
     await waitFor(() => expect(canvasSpy.mock.calls.at(-1)![0].geometry.nodes.seed).toBeDefined());
     expect(toolbarSpy.mock.calls.at(-1)![0].focusHiddenCount).toBe(0);
     expect(screen.queryByText("dag:focus_current_hidden")).toBeNull();
+  });
+});
+
+describe("useDagEmptyBusSelectionReset", () => {
+  it("clears the bus selection once its rows empty out, and only then", () => {
+    const store = createStore<IssueViewState>()(viewStoreSlice);
+    store.getState().setDagSelectedDependencyIds(["dep-1"]);
+    const row = {
+      id: "dep-1",
+      sourceId: "a",
+      sourceLabel: "A",
+      sourceTitle: "a",
+      targetId: "b",
+      targetLabel: "B",
+      targetTitle: "b",
+    };
+    const { rerender } = renderHook(
+      ({ rows }: { rows: import("./dag-selection-bus").DagBusSelectionItem[] | null }) =>
+        useDagEmptyBusSelectionReset(store, rows),
+      { initialProps: { rows: [row] as import("./dag-selection-bus").DagBusSelectionItem[] | null } },
+    );
+    expect(store.getState().dagSelectedDependencyIds).toEqual(["dep-1"]);
+    // Everything satisfied while the switch is off: the dropdown would show
+    // "汇总 0 条依赖", so the selection clears instead.
+    rerender({ rows: [] });
+    expect(store.getState().dagSelectedDependencyIds).toBeNull();
   });
 });

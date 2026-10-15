@@ -5,6 +5,40 @@ below: `dag-view.tsx` builds plans from the OL-279 models, this engine computes
 geometry, and `dag-scene-canvas.tsx` paints it. The engine imports only the
 core models; it does not fetch data or choose rendering styles.
 
+## Rendering and interaction (Stage 10)
+
+`dag-scene-canvas.tsx` keeps React Flow nodes for cards and paints everything
+else in `dag-edge-layer.tsx`, a window-sized SVG in the `ViewportPortal`:
+- **Four edge states** (OL-183 §4): satisfied (thin grey), blocking (dark),
+  advancing (dark with dots flowing downstream), cancelled-blocking (red
+  dashes breathing). Motion is CSS (`dag-edge-motion.css`) and follows a
+  budget (`dag-highlight.ts#dagMotionSegments`): system reduced motion or
+  zoom < 50% stops it; past ~60 moving segments on screen only the selected
+  chain keeps moving.
+- **Highlight**: hover lights a card's own in/out edges (debounced 100 ms so
+  pan gestures do not storm, and suppressed on the card that already owns the
+  selection); a click selects the one-layer neighborhood; a second click on
+  the same node (after a 400 ms double-click window, skipped for
+  `event.detail > 1`, rolled back when a slow double-click still fires)
+  switches to all upstream + downstream (`DagFocusWay: "both"`); a third
+  returns. Toolbar focus buttons keep the one-way modes. Every lit dependency
+  repaints along its own complete route — never the whole bus (OL-280 option
+  B). Node dimming is a single masked rect in a z-3 overlay svg with holes
+  over the lit cards — the z-index-2 cards never rebuild, and the selection
+  ring is an SVG rect (brand blue). The lit routes and their flow dots paint
+  in the same overlay svg, after the dim rect, so dimming never dulls them.
+- **Bus click**: visible segments carry inset transparent hit strokes; a
+  click stores the segment's deduplicated original dependency IDs and the
+  toolbar lists them in the restored OL-182 "aggregate N dependencies"
+  dropdown with locate.
+- **Zoom degradation** (OL-183 §7): below 40% zoom cards become simplified
+  blocks — the edge layer paints them as grouped SVG rects (`ghostBlocks`)
+  while the DOM nodes stay as transparent interaction shells; badges, arrows
+  and junction dots hide too. Culling uses a quantized screen-pixel window
+  (`dagCullBoundsKey`) so pan/zoom only re-renders the layer when the window
+  crosses a cell; the floored zoom step always over-covers.
+
+
 ```ts
 const plan = dagOverviewLayoutInput(overview);
 // Or dagLineLayoutInput(line), dagFocusLayoutInput(focus),

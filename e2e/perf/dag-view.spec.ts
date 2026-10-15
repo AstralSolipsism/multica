@@ -54,6 +54,15 @@ if (!SKIP && !(DATASET in ISSUE_GRAPH_FIXTURE_DATASETS)) {
  * throttled layout numbers. */
 const THROTTLE = Number(process.env.PERF_THROTTLE_CPU ?? 1);
 const CONFIG = SKIP ? null : ISSUE_GRAPH_FIXTURE_DATASETS[DATASET as IssueGraphFixtureDatasetName]!;
+/** Optional stress modifiers applied after first paint: toolbar switches to
+ *  turn on (e.g. PERF_DAG_SWITCHES=completed,satisfied for the OL-284 stress
+ *  overview) and a line to enter before the gesture measurements
+ *  (PERF_ENTER_LINE=largest, or an explicit overview card id). */
+const SWITCHES = (process.env.PERF_DAG_SWITCHES ?? "")
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+const ENTER_LINE = process.env.PERF_ENTER_LINE ?? "";
 /** How long the scripted pan and zoom gestures each run. */
 const GESTURE_MS = 4_000;
 /** Measured click samples. */
@@ -227,6 +236,36 @@ const INSTRUMENT = `
       target?.dispatchEvent(new MouseEvent("click", opts));
       setTimeout(() => finish("timeout", perf()), 10_000);
     });
+    // Second single click on an already-selected card: times the switch to
+    // the full upstream + downstream closure, from pointerdown to the frame
+    // after the toolbar scope tag changes. The app's double-click window is
+    // part of the measured latency by design.
+    window.__dagClickCycle = (x, y) => new Promise((resolve) => {
+      const scope = document.querySelector("[data-dag-scope]");
+      if (!scope) { resolve({ outcome: "invalid", elapsed: null }); return; }
+      const before = scope.textContent;
+      const startedAt = perf();
+      let settled = false;
+      const finish = (outcome, at) => {
+        if (settled) return;
+        settled = true;
+        observer.disconnect();
+        resolve({ outcome, elapsed: Math.round(at - startedAt) });
+      };
+      const observer = new MutationObserver(() => {
+        if (document.querySelector("[data-dag-scope]")?.textContent !== before)
+          requestAnimationFrame(() => finish("cycled", perf()));
+      });
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+      const target = document.elementFromPoint(x, y);
+      const opts = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, view: window, pointerId: 1, isPrimary: true };
+      target?.dispatchEvent(new PointerEvent("pointerdown", { ...opts, pointerType: "mouse" }));
+      target?.dispatchEvent(new MouseEvent("mousedown", opts));
+      target?.dispatchEvent(new PointerEvent("pointerup", { ...opts, pointerType: "mouse" }));
+      target?.dispatchEvent(new MouseEvent("mouseup", opts));
+      target?.dispatchEvent(new MouseEvent("click", opts));
+      setTimeout(() => finish("timeout", perf()), 10_000);
+    });
     // Clear selection the same way a user would: click empty canvas pane.
     window.__dagClearSelection = () => new Promise((resolve) => {
       const pane = document.querySelector(".react-flow__pane");
@@ -296,14 +335,17 @@ const INSTRUMENT = `
       return out;
     };
     // Enter-line prober: a real double-click on the centre of the first
-    // visible overview line card, resolved on the frame after the line level
-    // renders its first task card. "invalid" when no line card is on screen
-    // (e.g. the dataset auto-entered its single line, or the graph painted
-    // only standalone cards).
-    window.__dagEnterLine = () => new Promise((resolve) => {
+    // visible overview line card (or on the given cardId), resolved on the
+    // frame after the line level renders its first task card. "invalid" when
+    // no line card is on screen (e.g. the dataset auto-entered its single
+    // line, or the graph painted only standalone cards).
+    window.__dagEnterLine = (cardId) => new Promise((resolve) => {
       const vw = window.innerWidth, vh = window.innerHeight;
       let target = null, x = 0, y = 0;
-      for (const el of document.querySelectorAll('[data-dag-overview-card][data-dag-kind="line"]')) {
+      const selector = cardId
+        ? '[data-dag-overview-card="' + cardId + '"]'
+        : '[data-dag-overview-card][data-dag-kind="line"]';
+      for (const el of document.querySelectorAll(selector)) {
         const rect = el.getBoundingClientRect();
         if (rect.bottom < 0 || rect.top > vh || rect.right < 0 || rect.left > vw) continue;
         const cx = rect.x + rect.width / 2, cy = rect.y + rect.height / 2;
@@ -482,6 +524,89 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
   // Per-measurement outcomes. Gestures only make sense once cards exist.
   const cardsPresent = marks.firstCardAt != null;
 
+  // ---- 1b. Optional stress switches ----------------------------------------
+  // The OL-284 stress overview turns on both display switches: completed
+  // lines re-enter the layout (deadline fallback is an expected outcome here),
+  // satisfied dependencies arrive as re-layout-free overlays.
+  const switchesApplied: string[] = [];
+  if (cardsPresent && SWITCHES.length) {
+    for (const entry of SWITCHES) {
+      if (entry === "completed") {
+        await page.getByRole("button", { name: /Show completed/ }).first().click();
+      } else if (entry === "satisfied") {
+        await page.locator("[data-dag-show-satisfied]").click();
+      } else {
+        invalid.push(`unknown PERF_DAG_SWITCHES entry: ${entry}`);
+        continue;
+      }
+      switchesApplied.push(entry);
+    }
+    // Settle: any re-layout finishes (its toolbar indicator clears) and the
+    // painted card count holds steady across two polls.
+    await page.waitForTimeout(400);
+    await page
+      .getByText(/Computing layout/)
+      .waitFor({ state: "hidden", timeout: LOAD_LIMIT_MS })
+      .catch(() => undefined);
+    let lastCount = -1;
+    const settleDeadline = Date.now() + 90_000;
+    while (Date.now() < settleDeadline) {
+      const pending = await page.getByText(/Computing layout/).count();
+      const count = await page
+        .locator("[data-dag-overview-card],[data-dag-task]")
+        .count();
+      if (!pending && count > 0 && count === lastCount) break;
+      lastCount = count;
+      await page.waitForTimeout(500);
+    }
+  }
+
+  // ---- 1c. Optional: enter a line before the gestures -----------------------
+  // "largest" resolves to the fixture's biggest task line by member count.
+  let enteredLine: string | null = null;
+  if (cardsPresent && ENTER_LINE) {
+    let cardId: string | null = ENTER_LINE;
+    if (ENTER_LINE === "largest") {
+      const parentOf = new Map(graph.nodes.map((node) => [node.id, node.parent_issue_id]));
+      const finished = (status: string) => status === "done" || status === "cancelled";
+      const counts = new Map<string, number>();
+      const allFinished = new Map<string, boolean>();
+      for (const node of graph.nodes) {
+        let root = node.id;
+        let parent = node.parent_issue_id;
+        const seen = new Set<string>();
+        while (parent && !seen.has(parent)) {
+          seen.add(parent);
+          root = parent;
+          parent = parentOf.get(parent) ?? null;
+        }
+        counts.set(root, (counts.get(root) ?? 0) + 1);
+        if (!finished(node.status)) allFinished.set(root, false);
+        else if (!allFinished.has(root)) allFinished.set(root, allFinished.get(root) ?? true);
+      }
+      // Only lines with an overview card: fully finished lines hide by default.
+      let best: string | null = null;
+      let bestCount = -1;
+      for (const [id, count] of counts) {
+        if (allFinished.get(id) !== false) continue;
+        if (count > bestCount) {
+          best = id;
+          bestCount = count;
+        }
+      }
+      cardId = best ? `issue:${best}` : null;
+    }
+    if (cardId) {
+      const enter = await page.evaluate(
+        (id) =>
+          (window as unknown as { __dagEnterLine: (cardId?: string) => Promise<{ outcome: string; elapsed: number | null }> }).__dagEnterLine(id),
+        cardId,
+      );
+      if (enter.outcome === "entered") enteredLine = cardId;
+      else invalid.push(`enter line ${cardId}: ${enter.outcome}`);
+    }
+  }
+
   // ---- 2. Pan and zoom frame rate ------------------------------------------
   const frameStats = async (run: () => Promise<void>) => {
     await page.evaluate(() => {
@@ -615,6 +740,40 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     if (clickOutcome === "timeout") timedOut.click = true;
   }
 
+  // ---- 3b. Click-cycle response ---------------------------------------------
+  // Second single click on the just-selected card, timed to the frame after
+  // the toolbar scope tag flips to the full upstream + downstream closure.
+  // The 600ms pause keeps the second click outside the double-click window.
+  const cycleSamples: number[] = [];
+  let cycleTimeouts = 0;
+  let cycleOutcome: Record<string, number | null> | string = "invalid";
+  if (cardsPresent) {
+    for (let i = 0; i < 3; i++) {
+      const cards = await page.evaluate(() => (window as unknown as { __dagVisibleCards: () => { x: number; y: number }[] }).__dagVisibleCards());
+      if (!cards.length) break;
+      const card = cards[Math.floor((i * cards.length) / 3)]!;
+      const cleared = await page.evaluate(() => (window as unknown as { __dagClearSelection: () => Promise<boolean> }).__dagClearSelection());
+      if (!cleared) continue;
+      const first = await page.evaluate(
+        ({ x, y }) => (window as unknown as { __dagClick: (x: number, y: number) => Promise<{ outcome: string; elapsed: number }> }).__dagClick(x, y),
+        card,
+      );
+      if (first.outcome !== "selected") continue;
+      await page.locator("[data-dag-scope]").waitFor({ timeout: 3_000 }).catch(() => undefined);
+      await page.waitForTimeout(600);
+      const second = await page.evaluate(
+        ({ x, y }) => (window as unknown as { __dagClickCycle: (x: number, y: number) => Promise<{ outcome: string; elapsed: number | null }> }).__dagClickCycle(x, y),
+        card,
+      );
+      if (second.outcome === "cycled" && second.elapsed != null) cycleSamples.push(second.elapsed);
+      else if (second.outcome !== "invalid") cycleTimeouts += 1;
+    }
+    cycleOutcome = cycleSamples.length >= 2
+      ? { samples: cycleSamples.length, timeouts: cycleTimeouts, p50_ms: percentile(cycleSamples, 50), p95_ms: percentile(cycleSamples, 95) }
+      : cycleSamples.length || cycleTimeouts ? "timeout" : "invalid";
+    if (cycleOutcome === "timeout") timedOut.click_cycle = true;
+  }
+
   // ---- 4. Enter a line -------------------------------------------------------
   // In-page: real double-click on the first visible overview line card, timed
   // to the frame after the line level renders its first task card (OL-183
@@ -674,7 +833,31 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     await card.dispatchEvent("click");
     await expect(page.locator("[data-dag-label]")).toBeVisible();
     await card.dispatchEvent("dblclick");
+    // Entering restores the line's remembered viewport — after the gesture
+    // samples it can sit anywhere in a very wide scene, and React Flow's
+    // viewport culling keeps the target card unmounted. Sweep a grid with
+    // the public wheel-pan until it mounts.
     const task = page.locator(`[${target.is_frame ? "data-dag-frame-header" : "data-dag-task"}="${target.is_frame ? target.id : target.identifier}"]`);
+    await expect(page.locator("[data-dag-task]").first()).toBeVisible({ timeout: 20_000 });
+    {
+      const pane = (await page.locator(".react-flow__pane").boundingBox())!;
+      await page.mouse.move(pane.x + pane.width / 2, pane.y + pane.height / 2);
+      const targetVisible = () => task.count();
+      // Pan into a corner of the padded translate extent first (wheel pans
+      // clamp at its edges), then tile the extent: narrow y bands with full
+      // boustrophedon x sweeps. A single 1600px y hop can jump from "whole
+      // scene visible" to "only padding visible" in very wide scenes.
+      for (let i = 0; i < 20 && (await targetVisible()) === 0; i++) await page.mouse.wheel(0, 3200);
+      for (let i = 0; i < 30 && (await targetVisible()) === 0; i++) await page.mouse.wheel(-3200, 0);
+      for (let band = 0; band < 16 && (await targetVisible()) === 0; band++) {
+        const dx = band % 2 === 0 ? 3200 : -3200;
+        for (let i = 0; i < 60 && (await targetVisible()) === 0; i++) {
+          await page.mouse.wheel(dx, 0);
+          await page.waitForTimeout(40);
+        }
+        if ((await targetVisible()) === 0) await page.mouse.wheel(0, -600);
+      }
+    }
     await task.waitFor({ timeout: 20_000 });
     await task.dispatchEvent("click");
     await expect(page.locator("[data-dag-label]")).toContainText(target.identifier);
@@ -740,6 +923,8 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     invalid,
     timed_out_at: Object.keys(timedOut),
     dataset: DATASET,
+    switches: switchesApplied,
+    entered_line: enteredLine,
     fixture_version: ISSUE_GRAPH_FIXTURE_VERSION,
     fixture_digest: issueGraphFixtureDigest(graph),
     fixture_stats: stats,
@@ -771,6 +956,7 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     pan,
     zoom,
     click: clickOutcome,
+    click_cycle: cycleOutcome,
     enter_line_ms: enterLineMs,
     focus: focusResults,
     unmocked_requests: [...new Set(unknownRequests)].slice(0, 10),

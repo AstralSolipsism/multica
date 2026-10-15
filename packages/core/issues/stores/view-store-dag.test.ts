@@ -36,6 +36,24 @@ describe("dag view preferences", () => {
     expect(store.getState().dagFocus).toBeNull();
   });
 
+  it("bus selection trades with node selection, clears on level changes, stays session-only", () => {
+    const store = makeStore();
+    store.getState().setDagSelectedDependencyIds(["dep-1", "dep-2"]);
+    expect(store.getState().dagSelectedDependencyIds).toEqual(["dep-1", "dep-2"]);
+    store.getState().setDagSelectedNodeId("task-a");
+    expect(store.getState().dagSelectedDependencyIds).toBeNull();
+    store.getState().setDagSelectedDependencyIds(["dep-1"]);
+    expect(store.getState().dagSelectedNodeId).toBeNull();
+    store.getState().enterDagLine("line-1");
+    expect(store.getState().dagSelectedDependencyIds).toBeNull();
+    store.getState().setDagSelectedDependencyIds(["dep-3"]);
+    store.getState().exitDagLine("issue:line-1");
+    expect(store.getState().dagSelectedDependencyIds).toBeNull();
+    store.getState().setDagLineId(null);
+    const saved = viewStorePersistOptions("test").partialize(store.getState());
+    expect(saved).not.toHaveProperty("dagSelectedDependencyIds");
+  });
+
   it("returns to the overview pinned, selecting the line just left", () => {
     const store = makeStore();
     store.getState().enterDagLine("line-1");
@@ -45,6 +63,16 @@ describe("dag view preferences", () => {
     expect(store.getState().dagOverviewPinned).toBe(true);
     expect(store.getState().dagSelectedNodeId).toBe("issue:line-1");
     expect(store.getState().dagFocus).toBeNull();
+  });
+
+  it("clears the bus selection entering and leaving focus mode", () => {
+    const store = makeStore();
+    store.getState().setDagSelectedDependencyIds(["dep-1"]);
+    store.getState().enterDagFocus("a");
+    expect(store.getState().dagSelectedDependencyIds).toBeNull();
+    store.getState().setDagSelectedDependencyIds(["dep-2"]);
+    store.getState().exitDagFocus();
+    expect(store.getState().dagSelectedDependencyIds).toBeNull();
   });
 
   it("keeps the pin when the level is corrected without the user", () => {
@@ -72,6 +100,7 @@ describe("dag view preferences", () => {
       },
     });
     expect(saved).not.toHaveProperty("dagSelectedNodeId");
+    expect(saved).not.toHaveProperty("dagSelectedDependencyIds");
     expect(saved).not.toHaveProperty("dagFocus");
     expect(saved).not.toHaveProperty("dagExpandedIds");
     expect(saved).not.toHaveProperty("dagIndependentExpanded");

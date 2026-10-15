@@ -177,6 +177,15 @@ export function DagNodeSelection({
   const hasMenu = menuKeys.length > 0 || target.focusFrameId != null;
   const label =
     target.kind === "independent" ? tDag(($) => $.independent_group) : target.title;
+  // The click cycle's current scope: one layer by default, all upstream +
+  // downstream after the second click. A one-way focus shows on its button.
+  const scopeTag = (() => {
+    if (focus?.nodeId === target.id && focus.way === "both")
+      return tDag(($) => $.selection_scope_closure);
+    if (!focus || focus.nodeId !== target.id)
+      return tDag(($) => $.selection_scope_neighborhood);
+    return null;
+  })();
 
   return (
     <div ref={zoneRef} data-dag-zone className="flex min-w-0 flex-1 items-center gap-1">
@@ -192,6 +201,16 @@ export function DagNodeSelection({
         )}
         {label}
       </span>
+      {scopeTag && (
+        <span data-dag-fixed className="inline-flex shrink-0">
+          <span
+            data-dag-scope
+            className="rounded-full bg-muted/60 px-1.5 py-0.5 text-micro font-normal text-muted-foreground"
+          >
+            {scopeTag}
+          </span>
+        </span>
+      )}
       {visibleKeys.map((key) => (
         <span key={key} data-dag-action={key} className="inline-flex shrink-0">
           {actionNodes[key]}

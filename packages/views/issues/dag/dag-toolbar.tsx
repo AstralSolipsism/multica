@@ -27,6 +27,7 @@ import {
 } from "@multica/core/issues/stores/view-store-context";
 import { useT } from "../../i18n";
 import { DagNodeSelection } from "./dag-selection-node";
+import { DagBusSelection, type DagBusSelectionItem } from "./dag-selection-bus";
 import type { DagLevel } from "./dag-level";
 import type { DagSelectionTarget } from "./dag-scene-flow";
 
@@ -38,6 +39,8 @@ export interface DagToolbarProps {
   /** Current line's header for the breadcrumb; null while it loads. */
   lineHeader: { identifier: string | null; title: string } | null;
   selection: DagSelectionTarget | null;
+  /** Bus selection: the original dependencies through a clicked segment. */
+  busSelection: DagBusSelectionItem[] | null;
   /** Visible-content statistics for the idle selection zone. */
   stats: { matched: number; context: number; edges: number };
   /** Overview-only hidden-completed counts; null inside a line (the completed
@@ -56,6 +59,7 @@ export interface DagToolbarProps {
   onEnterLine: (lineId: string) => void;
   onExitLine: () => void;
   onFocusFrame: (frameId: string) => void;
+  onLocateDependency: (dependencyId: string) => void;
 }
 
 export function DagToolbar({
@@ -65,6 +69,7 @@ export function DagToolbar({
   onExitFocus,
   lineHeader,
   selection,
+  busSelection,
   stats,
   hiddenCompleted,
   hasRestrictedContext,
@@ -79,6 +84,7 @@ export function DagToolbar({
   onEnterLine,
   onExitLine,
   onFocusFrame,
+  onLocateDependency,
 }: DagToolbarProps) {
   const { t: tDag } = useT("dag");
   const { t: tIssues } = useT("issues");
@@ -193,7 +199,7 @@ export function DagToolbar({
         aria-label={tDag(($) => $.selection_region_label)}
         className={cn(
           "flex min-w-0 flex-1 items-center gap-1 overflow-hidden rounded-md px-1.5 py-0.5 transition-colors",
-          selection && "bg-accent/60 text-foreground",
+          (selection || busSelection) && "bg-accent/60 text-foreground",
         )}
       >
         {selection ? (
@@ -204,6 +210,12 @@ export function DagToolbar({
             onOpenIssue={onOpenIssue}
             onEnterLine={onEnterLine}
             onFocusFrame={onFocusFrame}
+          />
+        ) : busSelection ? (
+          <DagBusSelection
+            items={busSelection}
+            onLocate={onLocateDependency}
+            onOpenIssue={onOpenIssue}
           />
         ) : (
           <>
@@ -330,6 +342,7 @@ export function DagToolbar({
               <li>{tDag(($) => $.legend_edge_advancing)}</li>
               <li>{tDag(($) => $.legend_edge_cancelled)}</li>
               <li>{tDag(($) => $.legend_external)}</li>
+              <li>{tDag(($) => $.legend_highlight)}</li>
             </ul>
           </PopoverContent>
         </Popover>

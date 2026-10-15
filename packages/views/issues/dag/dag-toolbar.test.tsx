@@ -68,6 +68,8 @@ function harness(
     level: { kind: "overview" },
     lineHeader: null,
     selection: null,
+    busSelection: null,
+    onLocateDependency: vi.fn(),
     stats: { matched: 6, context: 1, edges: 4 },
     hiddenCompleted: null,
     hasRestrictedContext: false,
@@ -157,10 +159,19 @@ describe("DagToolbar navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Legend" }));
     expect(await screen.findByText("Thin light-gray line: satisfied dependency")).toBeInTheDocument();
     expect(screen.getByText("Dark solid line: still blocking")).toBeInTheDocument();
-    expect(screen.getByText("Dark solid line: prerequisite is advancing")).toBeInTheDocument();
-    expect(screen.getByText("Red dashed line: cancelled but still blocking")).toBeInTheDocument();
+    expect(
+      screen.getByText("Dark solid line with flowing dots: prerequisite is advancing"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Red dashed line, slowly pulsing: cancelled but still blocking"),
+    ).toBeInTheDocument();
     expect(
       screen.getByText("Dashed side cards: dependencies on other task lines — click to jump"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Click a card or edge: its chain lights up, the rest dims; click the card again for all upstream + downstream",
+      ),
     ).toBeInTheDocument();
   });
 });
@@ -398,6 +409,8 @@ describe("DagToolbar overflow", () => {
       level: { kind: "overview" },
       lineHeader: null,
       selection: TASK,
+      busSelection: null,
+      onLocateDependency: vi.fn(),
       stats: { matched: 3, context: 0, edges: 0 },
       hiddenCompleted: null,
       hasRestrictedContext: false,
@@ -418,8 +431,9 @@ describe("DagToolbar overflow", () => {
         <DagToolbar {...baseProps} />
       </ViewStoreProvider>,
     );
-    // Zone 680: five actions fit (630 used); the hint adds fixed width.
-    m.sizes.zone = 680;
+    // Zone 744: five actions fit (694 used with the scope tag's fixed width);
+    // the hint adds fixed width.
+    m.sizes.zone = 744;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit", "assign"]);
     rerender(
@@ -439,7 +453,7 @@ describe("DagToolbar overflow", () => {
     // The collapsed More trigger keeps the bar wider than the hysteresis, so
     // the same width holds — the action returns once real slack appears.
     expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit"]);
-    m.sizes.zone = 740;
+    m.sizes.zone = 804;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit", "assign"]);
   });
@@ -447,15 +461,31 @@ describe("DagToolbar overflow", () => {
   it("does not restore while the slack stays below the hysteresis", () => {
     const m = stubMetrics();
     harness({ selection: TASK });
-    m.sizes.zone = 500;
+    m.sizes.zone = 564;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream"]);
-    // A third action would fit (514 ≤ 520), but only by 6px of slack.
-    m.sizes.zone = 520;
+    // A third action would fit (578 ≤ 584), but only by 6px of slack.
+    m.sizes.zone = 584;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream"]);
     // Once the slack clears the hysteresis, the action comes back.
-    m.sizes.zone = 580;
+    m.sizes.zone = 644;
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream", "downstream"]);
+  });
+
+  it("refits after a real widening even when the slack stays below the hysteresis", () => {
+    // A collapse taken while the zone was transiently narrow (the pending
+    // indicator showing) must not stick once the zone settles wider.
+    const m = stubMetrics();
+    harness({ selection: TASK });
+    m.sizes.zone = 564;
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream"]);
+    // Widening by exactly 48px refits: a third action fits (566 ≤ 612) and
+    // the remaining 46px of slack is below the hysteresis — only the real
+    // widening can bring it back.
+    m.sizes.zone = 612;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream", "downstream"]);
   });
@@ -467,6 +497,8 @@ describe("DagToolbar overflow", () => {
       level: { kind: "overview" },
       lineHeader: null,
       selection: INDEPENDENT,
+      busSelection: null,
+      onLocateDependency: vi.fn(),
       stats: { matched: 3, context: 0, edges: 0 },
       hiddenCompleted: null,
       hasRestrictedContext: false,
@@ -520,6 +552,8 @@ describe("DagToolbar overflow", () => {
       onEnterLine: vi.fn(),
       onExitLine: vi.fn(),
       onFocusFrame: vi.fn(),
+      busSelection: null,
+      onLocateDependency: vi.fn(),
     } satisfies Partial<DagToolbarProps>;
     const taskB: DagSelectionTarget = { ...TASK, id: "b", identifier: "T-B", issueId: "b" };
     const { rerender } = renderWithI18n(
@@ -530,10 +564,10 @@ describe("DagToolbar overflow", () => {
     // Collapse to two actions, then widen just short of the restore
     // hysteresis: a third action fits (514 ≤ 520) but the slack stays
     // below 48px, so the count holds.
-    m.sizes.zone = 500;
+    m.sizes.zone = 564;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream"]);
-    m.sizes.zone = 520;
+    m.sizes.zone = 584;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream"]);
     // Switching to another task with the same five actions must reset the
@@ -552,10 +586,10 @@ describe("DagToolbar overflow", () => {
     harness({ selection: TASK });
     const region = screen.getByRole("region", { name: "Selection" });
     expect(within(region).getByRole("button", { name: "Retry" })).toBeInTheDocument();
-    // The retry button adds 60px of fixed width: 120 fixed + 96 label + 28
-    // gaps leaves room for four actions (664 ≤ 690) but not five (694 > 690).
-    // Uncounted, all five would fit (634 ≤ 690) and More would not render.
-    m.sizes.zone = 690;
+    // The retry button and the scope tag add 120px of fixed width: 240 fixed +
+    // 96 label + 36 gaps leaves room for four actions (732 ≤ 754) but not five
+    // (822 > 754). Uncounted, all five would fit and More would not render.
+    m.sizes.zone = 754;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit"]);
   });
@@ -571,5 +605,73 @@ describe("DagToolbar overflow", () => {
     fireEvent.click(within(m.zone()).getByRole("button", { name: "More" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Assign" }));
     expect(assignSpy.mock.calls.at(-1)![0]).toMatchObject({ open: true });
+  });
+});
+
+describe("DagToolbar bus selection", () => {
+  const BUS_ITEMS = [
+    {
+      id: "d-1",
+      sourceId: "issue-a",
+      sourceLabel: "T-1",
+      sourceTitle: "Task one",
+      targetId: "issue-b",
+      targetLabel: "T-2",
+      targetTitle: "Task two",
+    },
+    {
+      id: "d-2",
+      sourceId: "issue-c",
+      sourceLabel: "T-3",
+      sourceTitle: "Task three",
+      targetId: "issue-b",
+      targetLabel: "T-2",
+      targetTitle: "Task two",
+    },
+  ];
+
+  it("lists the clicked bus's dependencies with open, locate and clear", async () => {
+    const onOpenIssue = vi.fn();
+    const onLocateDependency = vi.fn();
+    const { store } = harness(
+      { busSelection: BUS_ITEMS, onOpenIssue, onLocateDependency },
+      (store) => store.getState().setDagSelectedDependencyIds(["d-1", "d-2"]),
+    );
+    const region = screen.getByRole("region", { name: "Selection" });
+    fireEvent.click(within(region).getByRole("button", { name: "Summary of 2 dependencies" }));
+    // Each row is "source → target + locate"; endpoints open their detail.
+    fireEvent.click(await screen.findByText("T-1"));
+    expect(onOpenIssue).toHaveBeenCalledWith("issue-a");
+    fireEvent.click(screen.getAllByRole("button", { name: "Locate" })[0]!);
+    expect(onLocateDependency).toHaveBeenCalledWith("d-1");
+    fireEvent.click(within(region).getByRole("button", { name: "Clear selection" }));
+    expect(store.getState().dagSelectedDependencyIds).toBeNull();
+  });
+
+  it("shows the node selection when both a node and a bus are selected", () => {
+    harness({
+      selection: TASK,
+      busSelection: BUS_ITEMS,
+    });
+    const region = screen.getByRole("region", { name: "Selection" });
+    expect(within(region).getByText("Task a")).toBeInTheDocument();
+    expect(
+      within(region).queryByRole("button", { name: "Summary of 2 dependencies" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("DagToolbar selection scope tag", () => {
+  it("marks one layer by default and all upstream + downstream in the cycle", () => {
+    const { store } = harness({ selection: TASK });
+    const region = screen.getByRole("region", { name: "Selection" });
+    expect(within(region).getByText("One layer")).toBeInTheDocument();
+    act(() => store.getState().setDagFocus({ nodeId: "a", way: "both" }));
+    expect(within(region).getByText("All upstream + downstream")).toBeInTheDocument();
+    expect(within(region).queryByText("One layer")).not.toBeInTheDocument();
+    // A one-way focus shows on its pressed button instead of the tag.
+    act(() => store.getState().setDagFocus({ nodeId: "a", way: "upstream" }));
+    expect(within(region).queryByText("One layer")).not.toBeInTheDocument();
+    expect(within(region).queryByText("All upstream + downstream")).not.toBeInTheDocument();
   });
 });

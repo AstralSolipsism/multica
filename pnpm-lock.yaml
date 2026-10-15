@@ -158,6 +158,9 @@ importers:
       pg:
         specifier: ^8.20.0
         version: 8.20.0
+      pngjs:
+        specifier: ^3.4.0
+        version: 3.4.0
       turbo:
         specifier: ^2.5.4
         version: 2.9.5

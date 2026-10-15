@@ -37,6 +37,8 @@ import {
 import { useDagSceneLayout } from "./use-dag-scene-layout";
 import type { DagSceneRunner } from "./dag-scene-runner";
 import {
+  dagBusSelectionRows,
+  dagDependencyStates,
   dagFocusHiddenCount,
   dagFocusCanvasModel,
   dagLineWithSatisfiedFilter,
@@ -50,8 +52,9 @@ import {
   dagOverviewLayoutInput,
 } from "./dag-scene-inputs";
 import { DagToolbar } from "./dag-toolbar";
+import type { DagBusSelectionItem } from "./dag-selection-bus";
 import { DagErrorState, graphErrorPolicy } from "./dag-error-state";
-import type { DagSceneCanvasApi } from "./dag-scene-canvas";
+import type { DagLocateRequest, DagSceneCanvasApi } from "./dag-scene-canvas";
 
 const loadDagCanvas = once(() => import("./dag-scene-canvas"));
 type DagSceneCanvasModule = typeof import("./dag-scene-canvas");
@@ -71,6 +74,18 @@ export interface DagFocusRequest {
   id: string;
   level: "overview" | "line" | "focus";
   nonce: number;
+}
+
+/** An emptied bus dropdown (every original satisfied while its switch is off)
+ *  clears the bus selection instead of showing "汇总 0 条依赖". */
+export function useDagEmptyBusSelectionReset(
+  storeApi: ReturnType<typeof useViewStoreApi>,
+  busSelection: DagBusSelectionItem[] | null,
+) {
+  useEffect(() => {
+    if (busSelection && busSelection.length === 0)
+      storeApi.getState().setDagSelectedDependencyIds(null);
+  }, [busSelection, storeApi]);
 }
 
 export interface DagViewProps {
@@ -110,6 +125,7 @@ export function DagView({
   const showSatisfied = useViewStore((s) => s.dagShowSatisfiedDependencies);
   const focus = useViewStore((s) => s.dagFocus);
   const selectedNodeId = useViewStore((s) => s.dagSelectedNodeId);
+  const selectedDependencyIds = useViewStore((s) => s.dagSelectedDependencyIds);
   const canvasApi = useRef<DagSceneCanvasApi | null>(null);
   const registerCanvasApi = useCallback((api: DagSceneCanvasApi | null) => {
     canvasApi.current = api;
@@ -259,6 +275,13 @@ export function DagView({
       nonce: (current?.nonce ?? 0) + 1,
     }));
   }, []);
+  const [locateRequest, setLocateRequest] = useState<DagLocateRequest | null>(null);
+  const onLocateDependency = useCallback((dependencyId: string) => {
+    setLocateRequest((current) => ({
+      dependencyId,
+      nonce: (current?.nonce ?? 0) + 1,
+    }));
+  }, []);
 
   const onEnterLine = useCallback(
     (nextLineId: string) => {
@@ -341,6 +364,24 @@ export function DagView({
     () => (paintedModel ? resolveDagSelection(paintedModel, selectedNodeId) : null),
     [paintedModel, selectedNodeId],
   );
+
+  // The bus dropdown lists the clicked segment's original dependencies as
+  // "source → target" rows; endpoints resolve against the full graph, and
+  // satisfied originals follow their display switch.
+  const busSelection = useMemo<DagBusSelectionItem[] | null>(() => {
+    if (!selectedDependencyIds?.length || !graph || !paintedModel) return null;
+    return dagBusSelectionRows({
+      dependencyIds: selectedDependencyIds,
+      edges: graph.edges,
+      issuesById,
+      states: dagDependencyStates(paintedModel),
+      showSatisfied,
+    });
+  }, [selectedDependencyIds, graph, issuesById, paintedModel, showSatisfied]);
+
+  // An emptied dropdown (everything satisfied while its switch is off)
+  // clears the bus selection instead of showing "汇总 0 条依赖".
+  useDagEmptyBusSelectionReset(storeApi, busSelection);
 
   // Focus owns the bidirectional Q11 count; the overview highlight keeps its
   // directional count over the raw graph.
@@ -453,6 +494,7 @@ export function DagView({
         onExitFocus={onExitFocus}
         lineHeader={lineHeader}
         selection={selection}
+        busSelection={busSelection}
         stats={stats}
         hiddenCompleted={
           level.kind === "overview" && models?.overview ? models.overview.hiddenCompleted : null
@@ -469,6 +511,7 @@ export function DagView({
         onEnterLine={onEnterLine}
         onExitLine={onExitLine}
         onFocusFrame={onFocusFrame}
+        onLocateDependency={onLocateDependency}
       />
 
       {focusUnavailableAt === levelKey && (
@@ -527,6 +570,7 @@ export function DagView({
             projectNames={projectNames}
             showSatisfied={showSatisfied}
             focusRequest={focusRequest}
+            locateRequest={locateRequest}
             onEnterLine={onEnterLine}
             onOpenIssue={onOpenIssue}
             onExternalJump={onExternalJump}

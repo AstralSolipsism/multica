@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { PNG } from "pngjs";
 import { TestApiClient } from "./fixtures";
 
 test.use({ viewport: { width: 1600, height: 1050 } });
@@ -199,6 +200,12 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
     const selection = page.getByRole("region", { name: "Selection" });
     await expect(selection.getByRole("button", { name: "Open detail" })).toBeVisible();
     expect(await toolbarHeight()).toBe(40);
+    // Painted-pixel baseline for the dimming regression gate below: d is not
+    // on c's prerequisite chain, so focusing must actually repaint it dimmer.
+    const dimmedClip = (await page
+      .locator(`.react-flow__node[data-id="${d.id}"] [data-dag-task]`)
+      .boundingBox())!;
+    const dimmedBefore = await page.screenshot({ clip: dimmedClip });
     // Highlight prerequisites (via More if the width collapsed it): only the
     // chain keeps full strength.
     const focusButton = selection.getByRole("button", { name: "Highlight prerequisites", exact: true });
@@ -209,12 +216,118 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
       await page.getByRole("menuitemcheckbox", { name: "Highlight prerequisites" }).click();
     }
     await expect(page.locator("[data-dag-edge-layer] > g").first()).toHaveClass(/opacity-15/);
+    // Node dimming is a masked overlay above the z-index-2 cards: holes over
+    // the lit cards, none over d, and d's pixels really change (OL-284 review:
+    // the mask used to sit under the cards, dimming nothing).
+    const dimLayer = page.locator("[data-dag-overlay-layer]");
+    await expect(dimLayer).toHaveCount(1);
+    expect(await dimLayer.evaluate((el) => getComputedStyle(el).zIndex)).toBe("3");
+    // c is the focus anchor (lit through a hole); d is downstream (no hole).
+    await expect(page.locator(`[data-dag-dim-hole="${c.id}"]`)).toHaveCount(1);
+    await expect(page.locator(`[data-dag-dim-hole="${d.id}"]`)).toHaveCount(0);
+    const dimmedAfter = await page.screenshot({ clip: dimmedClip });
+    expect(dimmedBefore.equals(dimmedAfter)).toBe(false);
     const focusAgain = selection.getByRole("button", { name: "Highlight prerequisites", exact: true });
     if (await focusAgain.count()) await focusAgain.click();
     // Escape clears the selection when the canvas node holds focus.
     await taskC.focus();
     await page.keyboard.press("Escape");
-    await expect(page.locator(".react-flow__node.selected")).toHaveCount(0);
+    await expect(page.locator("[data-dag-selected]")).toHaveCount(0);
+    await expect(selection).toContainText("Select a task or task line");
+
+    // The click cycle: select with the one-layer neighborhood; a second
+    // single click past the double-click window switches to all upstream +
+    // downstream; a third returns. The selection zone names the scope.
+    const scopeTag = selection.locator("[data-dag-scope]");
+    await taskC.click();
+    await expect(scopeTag).toHaveText("One layer");
+    await expect(page.locator("[data-dag-edge-layer] > g").first()).toHaveClass(/opacity-15/);
+    await page.waitForTimeout(600);
+    await taskC.click();
+    await expect(scopeTag).toHaveText("All upstream + downstream", { timeout: 3_000 });
+    await page.waitForTimeout(600);
+    await taskC.click();
+    await expect(scopeTag).toHaveText("One layer", { timeout: 3_000 });
+
+    // The lit chain paints above the dim mask: sample the lit route's
+    // midpoint — well clear of both cards — and require it does not get
+    // LIGHTER once dimming is on (OL-284 review: it used to sit under the
+    // mask and fade to 75% background like everything else).
+    const litPoint = await page.evaluate(() => {
+      const viewport = document.querySelector(".react-flow__viewport")!;
+      const match = /translate\((-?[\d.]+)px, (-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(
+        viewport.getAttribute("style") ?? "",
+      )!;
+      const [tx, ty, zoom] = [Number(match[1]), Number(match[2]), Number(match[3])];
+      const paneRect = document.querySelector(".react-flow__pane")!.getBoundingClientRect();
+      const cardBoxes = [...document.querySelectorAll(".react-flow__node")].map((node) => {
+        const el = node as HTMLElement;
+        const xy = /translate\((-?[\d.]+)px, (-?[\d.]+)px\)/.exec(el.style.transform)!;
+        return {
+          x: Number(xy[1]) - 8,
+          y: Number(xy[2]) - 8,
+          width: el.offsetWidth / zoom + 16,
+          height: el.offsetHeight / zoom + 16,
+        };
+      });
+      const clearance = (x: number, y: number) =>
+        Math.min(
+          ...cardBoxes.map(
+            (b) =>
+              Math.max(b.x - x, 0, x - (b.x + b.width)) ** 2 +
+              Math.max(b.y - y, 0, y - (b.y + b.height)) ** 2,
+          ),
+        );
+      let best: { x: number; y: number } | null = null;
+      let bestClearance = 0;
+      for (const polyline of document.querySelectorAll("[data-dag-lit-edge] polyline")) {
+        const points = (polyline.getAttribute("points") ?? "")
+          .trim()
+          .split(/\s+/)
+          .map((pair) => pair.split(",").map(Number));
+        for (let i = 0; i + 1 < points.length; i++) {
+          const [x1, y1] = points[i]!;
+          const [x2, y2] = points[i + 1]!;
+          const mx = (x1 + x2) / 2;
+          const my = (y1 + y2) / 2;
+          const c = clearance(mx, my);
+          if (c > bestClearance) {
+            bestClearance = c;
+            best = { x: mx, y: my };
+          }
+        }
+      }
+      if (!best || bestClearance < 64) return null;
+      return { x: paneRect.x + best.x * zoom + tx, y: paneRect.y + best.y * zoom + ty };
+    });
+    expect(litPoint).toBeTruthy();
+    const minLuminance = (buffer: Buffer) => {
+      const png = PNG.sync.read(buffer);
+      let min = 255;
+      for (let i = 0; i < png.data.length; i += 4)
+        min = Math.min(
+          min,
+          0.2126 * png.data[i]! + 0.7152 * png.data[i + 1]! + 0.0722 * png.data[i + 2]!,
+        );
+      return min;
+    };
+    const clipOf = { x: litPoint!.x - 3, y: litPoint!.y - 3, width: 7, height: 7 };
+    const litBrightness = minLuminance(await page.screenshot({ clip: clipOf }));
+    await taskC.focus();
+    await page.keyboard.press("Escape");
+    const paneBox = (await page.locator(".react-flow__pane").boundingBox())!;
+    await page.mouse.move(paneBox.x + paneBox.width - 16, paneBox.y + 16);
+    await expect(page.locator("[data-dag-overlay-layer]")).toHaveCount(0);
+    const normalBrightness = minLuminance(await page.screenshot({ clip: clipOf }));
+    expect(litBrightness).toBeLessThanOrEqual(normalBrightness + 4);
+    await taskC.click();
+    await expect(scopeTag).toHaveText("One layer", { timeout: 3_000 });
+
+    await taskC.dblclick();
+    await expect(page).toHaveURL(new RegExp(`/issues/${c.id}`), { timeout: 30_000 });
+    await page.goBack();
+    await expect(page.locator("[data-dag-task]")).toHaveCount(2, { timeout: 30_000 });
+    await expect(selection.locator("[data-dag-scope]")).toHaveText("One layer");
 
     // Focus is part of this retained gate: entry keeps cross-line content,
     // omits empty ancestor fragments and restores the viewport through the path.
@@ -263,6 +376,16 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
     await enterFocus(page, solo.id);
     await expect(page.locator("[data-dag-focus-hidden]")).toHaveCount(0);
     await page.getByRole("navigation", { name: "Task line path" }).getByRole("button", { name: "All task lines", exact: true }).click();
+    await expect(cards).toHaveCount(3);
+
+    // A direct double-click on an unselected overview card enters its line —
+    // no selection click first (the independent card holds the selection here).
+    await cardA.dblclick();
+    await expect(page.getByRole("navigation", { name: "Task line path" })).toContainText(
+      "design and implementation",
+    );
+    await expect(page.locator("[data-dag-task]")).toHaveCount(2);
+    await page.getByRole("button", { name: "Back to overview" }).click();
     await expect(cards).toHaveCount(3);
 
     // Refresh restores the current level: return into line A and reload.

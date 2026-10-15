@@ -38,7 +38,8 @@ export function dagFocusCanvasModel(focus: DagFocusModel): Extract<DagCanvasMode
 export interface DagOverviewCardData extends Record<string, unknown> {
   card: DagOverviewCard;
   statusColor: string | null;
-  dimmed: boolean;
+  /** Zoom degradation: the card renders as a plain block without text. */
+  simplified?: boolean;
 }
 export interface DagTaskCardData extends Record<string, unknown> {
   task: DagTask;
@@ -46,19 +47,20 @@ export interface DagTaskCardData extends Record<string, unknown> {
   projectTitle: string | null;
   /** Stage pill instead of band columns when the owning frame uses labels. */
   showStage: boolean;
-  dimmed: boolean;
+  simplified?: boolean;
 }
 export interface DagFrameData extends Record<string, unknown> {
   frame: DagFrame;
   box: DagSceneFrameBox;
   statusColor: string | null;
   projectTitle: string | null;
-  selected: boolean;
+  /** Zoom degradation: the frame renders as a plain block without text. */
+  simplified?: boolean;
 }
 export interface DagExternalCardData extends Record<string, unknown> {
   group: DagExternalGroup;
   side: "upstream" | "downstream";
-  dimmed: boolean;
+  simplified?: boolean;
 }
 
 export type DagOverviewFlowNode = Node<DagOverviewCardData, "dagOverviewCard">;
@@ -212,6 +214,48 @@ export interface DagSelectionTarget {
   focusFrameId: string | null;
 }
 
+export interface DagBusSelectionRow {
+  id: string;
+  sourceId: string;
+  sourceLabel: string;
+  sourceTitle: string;
+  targetId: string;
+  targetLabel: string;
+  targetTitle: string;
+}
+
+/** The bus dropdown's rows: resolve each original dependency's endpoints
+ *  against the full graph. Satisfied originals list only while their switch
+ *  is on — the dropdown matches what the segment displays. */
+export function dagBusSelectionRows(params: {
+  dependencyIds: readonly string[];
+  edges: readonly { sourceEdgeId: string; source: string; target: string }[];
+  issuesById: ReadonlyMap<string, { identifier: string | null; title: string }>;
+  states: ReadonlyMap<string, DagDependencyState>;
+  showSatisfied: boolean;
+}): DagBusSelectionRow[] {
+  const { dependencyIds, edges, issuesById, states, showSatisfied } = params;
+  const byRawId = new Map(edges.map((edge) => [edge.sourceEdgeId, edge]));
+  return dependencyIds.flatMap((id) => {
+    if (!showSatisfied && states.get(id) === "satisfied") return [];
+    const edge = byRawId.get(id);
+    if (!edge) return [];
+    const source = issuesById.get(edge.source);
+    const target = issuesById.get(edge.target);
+    return [
+      {
+        id,
+        sourceId: edge.source,
+        sourceLabel: source?.identifier ?? "?",
+        sourceTitle: source?.title ?? "",
+        targetId: edge.target,
+        targetLabel: target?.identifier ?? "?",
+        targetTitle: target?.title ?? "",
+      },
+    ];
+  });
+}
+
 /** Resolve the store's selected node id against the painted model. */
 export function resolveDagSelection(
   model: DagCanvasModel,
@@ -336,11 +380,18 @@ export function dagFocusHiddenCount(params: {
   const { edges, card, representatives, way } = params;
   const adjacency = new Map<string, string[]>();
   for (const edge of edges) {
-    const from = way === "upstream" ? edge.target : edge.source;
-    const to = way === "upstream" ? edge.source : edge.target;
-    const list = adjacency.get(from) ?? [];
-    list.push(to);
-    adjacency.set(from, list);
+    const links: [string, string][] =
+      way === "both"
+        ? [
+            [edge.target, edge.source],
+            [edge.source, edge.target],
+          ]
+        : [[way === "upstream" ? edge.target : edge.source, way === "upstream" ? edge.source : edge.target]];
+    for (const [from, to] of links) {
+      const list = adjacency.get(from) ?? [];
+      list.push(to);
+      adjacency.set(from, list);
+    }
   }
   const seen = new Set(card.memberIds);
   const stack = [...card.memberIds];
@@ -376,12 +427,22 @@ export interface DagFocusSet {
 }
 
 /** Neighborhood highlight walks real dependencies only — never geometric bus
- *  connectivity — so an unselected branch sharing a trunk stays dim. */
+ *  connectivity — so an unselected branch sharing a trunk stays dim. "both"
+ *  unions the upstream and downstream closures (the click-cycle mode); it is
+ *  not an undirected walk, which would pull in sibling branches. */
 export function dagSceneFocusSet(
   plan: DagScenePlan,
   anchorId: string,
   way: DagFocusWay,
 ): DagFocusSet | null {
+  if (way === "both") {
+    const upstream = dagSceneFocusSet(plan, anchorId, "upstream");
+    const downstream = dagSceneFocusSet(plan, anchorId, "downstream");
+    return {
+      nodeIds: new Set([...(upstream?.nodeIds ?? []), ...(downstream?.nodeIds ?? [])]),
+      edgeIds: new Set([...(upstream?.edgeIds ?? []), ...(downstream?.edgeIds ?? [])]),
+    };
+  }
   const edges = [...plan.input.edges, ...plan.overlays];
   const forward = new Map<string, string[]>();
   const backward = new Map<string, string[]>();
@@ -422,15 +483,13 @@ export interface DagFlowNodesOptions {
   geometry: DagSceneGeometry;
   statusColorOf: (statusKey: string) => string | null;
   projectNames: ReadonlyMap<string, string>;
-  focus: DagFocusSet | null;
 }
 
 export function dagSceneFlowNodes(
   model: DagCanvasModel,
   options: DagFlowNodesOptions,
 ): DagCanvasFlowNode[] {
-  const { geometry, statusColorOf, projectNames, focus } = options;
-  const dimmed = (id: string) => (focus ? !focus.nodeIds.has(id) : false);
+  const { geometry, statusColorOf, projectNames } = options;
   if (model.kind === "overview") {
     return model.overview.cards.flatMap((card) => {
       const box = geometry.nodes[card.id];
@@ -444,7 +503,6 @@ export function dagSceneFlowNodes(
         data: {
           card,
           statusColor: card.issue ? statusColorOf(card.issue.status) : null,
-          dimmed: dimmed(card.id),
         },
         selected: false,
         draggable: false,
@@ -488,7 +546,6 @@ export function dagSceneFlowNodes(
           box,
           statusColor: statusColorOf(frame.issue.status),
           projectTitle: frame.issue.projectId ? projectNames.get(frame.issue.projectId) ?? null : null,
-          selected: false,
         },
         draggable: false,
         selectable: false,
@@ -512,7 +569,6 @@ export function dagSceneFlowNodes(
           statusColor: statusColorOf(task.issue.status),
           projectTitle: task.issue.projectId ? projectNames.get(task.issue.projectId) ?? null : null,
           showStage: parentId ? stageLabels.get(parentId) === true : true,
-          dimmed: dimmed(task.issue.id),
         },
         selected: false,
         draggable: false,
@@ -530,7 +586,7 @@ export function dagSceneFlowNodes(
           position: { x: box.x, y: box.y },
           width: box.width,
           height: box.height,
-          data: { group, side, dimmed: dimmed(id) },
+          data: { group, side },
           draggable: false,
           selectable: false,
           zIndex: 2,
@@ -554,7 +610,6 @@ export function dagSceneFlowNodes(
         statusColor: statusColorOf(task.issue.status),
         projectTitle: task.issue.projectId ? projectNames.get(task.issue.projectId) ?? null : null,
         showStage: true,
-        dimmed: false,
       },
       selected: false,
       draggable: false,

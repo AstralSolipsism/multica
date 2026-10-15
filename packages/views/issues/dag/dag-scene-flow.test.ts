@@ -11,6 +11,7 @@ import {
 } from "@multica/core/issues/dag";
 import { graphNode as n, issueGraph as g } from "./dag-test-fixtures";
 import {
+  dagBusSelectionRows,
   dagFocusCanvasModel,
   dagDependencyStates,
   dagDisplayedRoutes,
@@ -68,6 +69,17 @@ describe("dagSceneFocusSet", () => {
     const fromB = dagSceneFocusSet(focusPlan, "b", "downstream")!;
     expect([...fromB.edgeIds]).toEqual(["b-y"]);
     expect([...fromB.nodeIds].sort()).toEqual(["b", "y"]);
+  });
+
+  it("unions the upstream and downstream closures for the click-cycle mode", () => {
+    // From A: only its dependents — B is a sibling, never pulled in.
+    const fromA = dagSceneFocusSet(focusPlan, "a", "both")!;
+    expect([...fromA.edgeIds].sort()).toEqual(["a-x", "a-y"]);
+    expect([...fromA.nodeIds].sort()).toEqual(["a", "x", "y"]);
+    // From Y: only its prerequisites — X is not on either directional chain.
+    const fromY = dagSceneFocusSet(focusPlan, "y", "both")!;
+    expect([...fromY.edgeIds].sort()).toEqual(["a-y", "b-y"]);
+    expect([...fromY.nodeIds].sort()).toEqual(["a", "b", "y"]);
   });
 });
 
@@ -413,11 +425,29 @@ describe("dagFocusHiddenCount", () => {
         way: "downstream",
       }),
     ).toBe(0);
+    // The click-cycle mode walks both directions; a task reachable from both
+    // sides is still counted once.
+    expect(
+      dagFocusHiddenCount({
+        edges: graph.edges,
+        card,
+        representatives: model.representatives,
+        way: "both",
+      }),
+    ).toBe(1);
+    expect(
+      dagFocusHiddenCount({
+        edges: graph.edges,
+        card: card2,
+        representatives: model.representatives,
+        way: "both",
+      }),
+    ).toBe(1);
   });
 });
 
 describe("dagSceneFlowNodes", () => {
-  it("positions overview cards absolutely and dims outside the focus set", () => {
+  it("positions overview cards absolutely", () => {
     const overview = overviewOf(g([n("r1"), n("a1", { parentIssueId: "r1" }), n("solo")]));
     const geometry: DagSceneGeometry = {
       nodes: {
@@ -435,19 +465,11 @@ describe("dagSceneFlowNodes", () => {
     };
     const nodes = dagSceneFlowNodes(
       { kind: "overview", overview },
-      {
-        geometry,
-        statusColorOf: () => null,
-        projectNames: new Map(),
-        focus: { nodeIds: new Set(["issue:r1"]), edgeIds: new Set() },
-      },
+      { geometry, statusColorOf: () => null, projectNames: new Map() },
     );
     const line = nodes.find((node) => node.id === "issue:r1")!;
-    const solo = nodes.find((node) => node.id === DAG_INDEPENDENT_GROUP)!;
     expect(line.position).toEqual({ x: 10, y: 20 });
     expect(line.type).toBe("dagOverviewCard");
-    expect((solo.data as { dimmed: boolean }).dimmed).toBe(true);
-    expect((line.data as { dimmed: boolean }).dimmed).toBe(false);
   });
 
   it("nests line frames and tasks with relative positions and stage labels", () => {
@@ -486,7 +508,7 @@ describe("dagSceneFlowNodes", () => {
     };
     const nodes = dagSceneFlowNodes(
       { kind: "line", line },
-      { geometry, statusColorOf: () => null, projectNames: new Map(), focus: null },
+      { geometry, statusColorOf: () => null, projectNames: new Map() },
     );
     const byId = new Map(nodes.map((node) => [node.id, node]));
     expect(byId.get("r1")!.position).toEqual({ x: 0, y: 0 });
@@ -501,6 +523,7 @@ describe("dagSceneFlowNodes", () => {
     expect(external.type).toBe("dagExternal");
     expect((external.data as { side: string }).side).toBe("upstream");
   });
+
 
   it("lays the independent grid flat without frames", () => {
     const graph = g([n("solo-1"), n("solo-2")]);
@@ -527,7 +550,7 @@ describe("dagSceneFlowNodes", () => {
     };
     const nodes = dagSceneFlowNodes(
       { kind: "independent", tasks },
-      { geometry, statusColorOf: () => null, projectNames: new Map(), focus: null },
+      { geometry, statusColorOf: () => null, projectNames: new Map() },
     );
     expect(nodes.map((node) => node.id).sort()).toEqual(["solo-1", "solo-2"]);
     expect(nodes.every((node) => !node.parentId)).toBe(true);
@@ -558,5 +581,69 @@ describe("focus scene adapter", () => {
     expect(dagSceneEdgeDisplay(model.plan, "a-after", states, false)).toEqual({ state: "satisfied", count: 1 });
     expect(model.plan.input.edges).toHaveLength(3);
     expect(dagSceneStats(model, model.plan, false)).toEqual({ matched: 4, context: 0, edges: 3 });
+  });
+});
+
+describe("dagBusSelectionRows", () => {
+  const graph = g(
+    [
+      n("r1"),
+      n("a1", { parentIssueId: "r1", status: "done", statusCategory: "done" }),
+      n("a2", { parentIssueId: "r1" }),
+      n("r2"),
+      n("b1", { parentIssueId: "r2" }),
+    ],
+    [
+      { id: "e-a1", source: "a1", target: "b1" },
+      { id: "e-a2", source: "a2", target: "b1" },
+    ],
+  );
+  const index = createDagModelIndex(graph);
+  const overview = computeDagOverview(index, { showCompleted: false, showSatisfiedDependencies: false });
+  const states = dagDependencyStates({ kind: "overview", overview });
+  const issuesById = new Map(graph.nodes.map((node) => [node.id, node]));
+
+  it("resolves each original dependency as source → target without swapping", () => {
+    const rows = dagBusSelectionRows({
+      dependencyIds: ["e-a2"],
+      edges: graph.edges,
+      issuesById,
+      states,
+      showSatisfied: true,
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.sourceId).toBe("a2");
+    expect(rows[0]!.targetId).toBe("b1");
+    expect(rows[0]!.sourceLabel).toBe(issuesById.get("a2")!.identifier);
+    expect(rows[0]!.targetLabel).toBe(issuesById.get("b1")!.identifier);
+    expect(rows[0]!.sourceTitle).toBe(issuesById.get("a2")!.title);
+  });
+
+  it("lists satisfied originals only while the switch is on", () => {
+    const off = dagBusSelectionRows({
+      dependencyIds: ["e-a1", "e-a2"],
+      edges: graph.edges,
+      issuesById,
+      states,
+      showSatisfied: false,
+    });
+    expect(off.map((row) => row.id)).toEqual(["e-a2"]);
+    const on = dagBusSelectionRows({
+      dependencyIds: ["e-a1", "e-a2"],
+      edges: graph.edges,
+      issuesById,
+      states,
+      showSatisfied: true,
+    });
+    expect(on.map((row) => row.id)).toEqual(["e-a1", "e-a2"]);
+    expect(
+      dagBusSelectionRows({
+        dependencyIds: ["e-a1"],
+        edges: graph.edges,
+        issuesById,
+        states,
+        showSatisfied: false,
+      }),
+    ).toEqual([]);
   });
 });

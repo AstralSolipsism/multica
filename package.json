@@ -63,6 +63,7 @@
     "@types/node": "catalog:",
     "@types/pg": "^8.20.0",
     "knip": "^6.32.2",
+    "pngjs": "^3.4.0",
     "pg": "^8.20.0",
     "turbo": "^2.5.4",
     "typescript": "catalog:",
