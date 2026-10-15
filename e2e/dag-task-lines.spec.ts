@@ -199,6 +199,12 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
     const selection = page.getByRole("region", { name: "Selection" });
     await expect(selection.getByRole("button", { name: "Open detail" })).toBeVisible();
     expect(await toolbarHeight()).toBe(40);
+    // Painted-pixel baseline for the dimming regression gate below: d is not
+    // on c's prerequisite chain, so focusing must actually repaint it dimmer.
+    const dimmedClip = (await page
+      .locator(`.react-flow__node[data-id="${d.id}"] [data-dag-task]`)
+      .boundingBox())!;
+    const dimmedBefore = await page.screenshot({ clip: dimmedClip });
     // Highlight prerequisites (via More if the width collapsed it): only the
     // chain keeps full strength.
     const focusButton = selection.getByRole("button", { name: "Highlight prerequisites", exact: true });
@@ -209,6 +215,17 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
       await page.getByRole("menuitemcheckbox", { name: "Highlight prerequisites" }).click();
     }
     await expect(page.locator("[data-dag-edge-layer] > g").first()).toHaveClass(/opacity-15/);
+    // Node dimming is a masked overlay above the z-index-2 cards: holes over
+    // the lit cards, none over d, and d's pixels really change (OL-284 review:
+    // the mask used to sit under the cards, dimming nothing).
+    const dimLayer = page.locator("[data-dag-dim-layer]");
+    await expect(dimLayer).toHaveCount(1);
+    expect(await dimLayer.evaluate((el) => getComputedStyle(el).zIndex)).toBe("3");
+    // c is the focus anchor (lit through a hole); d is downstream (no hole).
+    await expect(page.locator(`[data-dag-dim-hole="${c.id}"]`)).toHaveCount(1);
+    await expect(page.locator(`[data-dag-dim-hole="${d.id}"]`)).toHaveCount(0);
+    const dimmedAfter = await page.screenshot({ clip: dimmedClip });
+    expect(dimmedBefore.equals(dimmedAfter)).toBe(false);
     const focusAgain = selection.getByRole("button", { name: "Highlight prerequisites", exact: true });
     if (await focusAgain.count()) await focusAgain.click();
     // Escape clears the selection when the canvas node holds focus.

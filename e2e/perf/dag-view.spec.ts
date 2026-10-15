@@ -236,6 +236,36 @@ const INSTRUMENT = `
       target?.dispatchEvent(new MouseEvent("click", opts));
       setTimeout(() => finish("timeout", perf()), 10_000);
     });
+    // Second single click on an already-selected card: times the switch to
+    // the full upstream + downstream closure, from pointerdown to the frame
+    // after the toolbar scope tag changes. The app's double-click window is
+    // part of the measured latency by design.
+    window.__dagClickCycle = (x, y) => new Promise((resolve) => {
+      const scope = document.querySelector("[data-dag-scope]");
+      if (!scope) { resolve({ outcome: "invalid", elapsed: null }); return; }
+      const before = scope.textContent;
+      const startedAt = perf();
+      let settled = false;
+      const finish = (outcome, at) => {
+        if (settled) return;
+        settled = true;
+        observer.disconnect();
+        resolve({ outcome, elapsed: Math.round(at - startedAt) });
+      };
+      const observer = new MutationObserver(() => {
+        if (document.querySelector("[data-dag-scope]")?.textContent !== before)
+          requestAnimationFrame(() => finish("cycled", perf()));
+      });
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+      const target = document.elementFromPoint(x, y);
+      const opts = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, view: window, pointerId: 1, isPrimary: true };
+      target?.dispatchEvent(new PointerEvent("pointerdown", { ...opts, pointerType: "mouse" }));
+      target?.dispatchEvent(new MouseEvent("mousedown", opts));
+      target?.dispatchEvent(new PointerEvent("pointerup", { ...opts, pointerType: "mouse" }));
+      target?.dispatchEvent(new MouseEvent("mouseup", opts));
+      target?.dispatchEvent(new MouseEvent("click", opts));
+      setTimeout(() => finish("timeout", perf()), 10_000);
+    });
     // Clear selection the same way a user would: click empty canvas pane.
     window.__dagClearSelection = () => new Promise((resolve) => {
       const pane = document.querySelector(".react-flow__pane");
@@ -710,6 +740,40 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     if (clickOutcome === "timeout") timedOut.click = true;
   }
 
+  // ---- 3b. Click-cycle response ---------------------------------------------
+  // Second single click on the just-selected card, timed to the frame after
+  // the toolbar scope tag flips to the full upstream + downstream closure.
+  // The 600ms pause keeps the second click outside the double-click window.
+  const cycleSamples: number[] = [];
+  let cycleTimeouts = 0;
+  let cycleOutcome: Record<string, number | null> | string = "invalid";
+  if (cardsPresent) {
+    for (let i = 0; i < 3; i++) {
+      const cards = await page.evaluate(() => (window as unknown as { __dagVisibleCards: () => { x: number; y: number }[] }).__dagVisibleCards());
+      if (!cards.length) break;
+      const card = cards[Math.floor((i * cards.length) / 3)]!;
+      const cleared = await page.evaluate(() => (window as unknown as { __dagClearSelection: () => Promise<boolean> }).__dagClearSelection());
+      if (!cleared) continue;
+      const first = await page.evaluate(
+        ({ x, y }) => (window as unknown as { __dagClick: (x: number, y: number) => Promise<{ outcome: string; elapsed: number }> }).__dagClick(x, y),
+        card,
+      );
+      if (first.outcome !== "selected") continue;
+      await page.locator("[data-dag-scope]").waitFor({ timeout: 3_000 }).catch(() => undefined);
+      await page.waitForTimeout(600);
+      const second = await page.evaluate(
+        ({ x, y }) => (window as unknown as { __dagClickCycle: (x: number, y: number) => Promise<{ outcome: string; elapsed: number | null }> }).__dagClickCycle(x, y),
+        card,
+      );
+      if (second.outcome === "cycled" && second.elapsed != null) cycleSamples.push(second.elapsed);
+      else if (second.outcome !== "invalid") cycleTimeouts += 1;
+    }
+    cycleOutcome = cycleSamples.length >= 2
+      ? { samples: cycleSamples.length, timeouts: cycleTimeouts, p50_ms: percentile(cycleSamples, 50), p95_ms: percentile(cycleSamples, 95) }
+      : cycleSamples.length || cycleTimeouts ? "timeout" : "invalid";
+    if (cycleOutcome === "timeout") timedOut.click_cycle = true;
+  }
+
   // ---- 4. Enter a line -------------------------------------------------------
   // In-page: real double-click on the first visible overview line card, timed
   // to the frame after the line level renders its first task card (OL-183
@@ -892,6 +956,7 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     pan,
     zoom,
     click: clickOutcome,
+    click_cycle: cycleOutcome,
     enter_line_ms: enterLineMs,
     focus: focusResults,
     unmocked_requests: [...new Set(unknownRequests)].slice(0, 10),
