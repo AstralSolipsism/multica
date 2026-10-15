@@ -51,6 +51,15 @@ if (!SKIP && !(DATASET in ISSUE_GRAPH_FIXTURE_DATASETS)) {
  * throttled layout numbers. */
 const THROTTLE = Number(process.env.PERF_THROTTLE_CPU ?? 1);
 const CONFIG = SKIP ? null : ISSUE_GRAPH_FIXTURE_DATASETS[DATASET as IssueGraphFixtureDatasetName]!;
+/** Optional stress modifiers applied after first paint: toolbar switches to
+ *  turn on (e.g. PERF_DAG_SWITCHES=completed,satisfied for the OL-284 stress
+ *  overview) and a line to enter before the gesture measurements
+ *  (PERF_ENTER_LINE=largest, or an explicit overview card id). */
+const SWITCHES = (process.env.PERF_DAG_SWITCHES ?? "")
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+const ENTER_LINE = process.env.PERF_ENTER_LINE ?? "";
 /** How long the scripted pan and zoom gestures each run. */
 const GESTURE_MS = 4_000;
 /** Measured click samples. */
@@ -353,14 +362,17 @@ const INSTRUMENT = `
       return out;
     };
     // Enter-line prober: a real double-click on the centre of the first
-    // visible overview line card, resolved on the frame after the line level
-    // renders its first task card. "invalid" when no line card is on screen
-    // (e.g. the dataset auto-entered its single line, or the graph painted
-    // only standalone cards).
-    window.__dagEnterLine = () => new Promise((resolve) => {
+    // visible overview line card (or on the given cardId), resolved on the
+    // frame after the line level renders its first task card. "invalid" when
+    // no line card is on screen (e.g. the dataset auto-entered its single
+    // line, or the graph painted only standalone cards).
+    window.__dagEnterLine = (cardId) => new Promise((resolve) => {
       const vw = window.innerWidth, vh = window.innerHeight;
       let target = null, x = 0, y = 0;
-      for (const el of document.querySelectorAll('[data-dag-overview-card][data-dag-kind="line"]')) {
+      const selector = cardId
+        ? '[data-dag-overview-card="' + cardId + '"]'
+        : '[data-dag-overview-card][data-dag-kind="line"]';
+      for (const el of document.querySelectorAll(selector)) {
         const rect = el.getBoundingClientRect();
         if (rect.bottom < 0 || rect.top > vh || rect.right < 0 || rect.left > vw) continue;
         const cx = rect.x + rect.width / 2, cy = rect.y + rect.height / 2;
@@ -614,6 +626,89 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
   // Per-measurement outcomes. Gestures only make sense once cards exist.
   const cardsPresent = marks.firstCardAt != null;
 
+  // ---- 1b. Optional stress switches ----------------------------------------
+  // The OL-284 stress overview turns on both display switches: completed
+  // lines re-enter the layout (deadline fallback is an expected outcome here),
+  // satisfied dependencies arrive as re-layout-free overlays.
+  const switchesApplied: string[] = [];
+  if (cardsPresent && SWITCHES.length) {
+    for (const entry of SWITCHES) {
+      if (entry === "completed") {
+        await page.getByRole("button", { name: /Show completed/ }).first().click();
+      } else if (entry === "satisfied") {
+        await page.locator("[data-dag-show-satisfied]").click();
+      } else {
+        invalid.push(`unknown PERF_DAG_SWITCHES entry: ${entry}`);
+        continue;
+      }
+      switchesApplied.push(entry);
+    }
+    // Settle: any re-layout finishes (its toolbar indicator clears) and the
+    // painted card count holds steady across two polls.
+    await page.waitForTimeout(400);
+    await page
+      .getByText(/Computing layout/)
+      .waitFor({ state: "hidden", timeout: LOAD_LIMIT_MS })
+      .catch(() => undefined);
+    let lastCount = -1;
+    const settleDeadline = Date.now() + 90_000;
+    while (Date.now() < settleDeadline) {
+      const pending = await page.getByText(/Computing layout/).count();
+      const count = await page
+        .locator("[data-dag-overview-card],[data-dag-task]")
+        .count();
+      if (!pending && count > 0 && count === lastCount) break;
+      lastCount = count;
+      await page.waitForTimeout(500);
+    }
+  }
+
+  // ---- 1c. Optional: enter a line before the gestures -----------------------
+  // "largest" resolves to the fixture's biggest task line by member count.
+  let enteredLine: string | null = null;
+  if (cardsPresent && ENTER_LINE) {
+    let cardId: string | null = ENTER_LINE;
+    if (ENTER_LINE === "largest") {
+      const parentOf = new Map(graph.nodes.map((node) => [node.id, node.parent_issue_id]));
+      const finished = (status: string) => status === "done" || status === "cancelled";
+      const counts = new Map<string, number>();
+      const allFinished = new Map<string, boolean>();
+      for (const node of graph.nodes) {
+        let root = node.id;
+        let parent = node.parent_issue_id;
+        const seen = new Set<string>();
+        while (parent && !seen.has(parent)) {
+          seen.add(parent);
+          root = parent;
+          parent = parentOf.get(parent) ?? null;
+        }
+        counts.set(root, (counts.get(root) ?? 0) + 1);
+        if (!finished(node.status)) allFinished.set(root, false);
+        else if (!allFinished.has(root)) allFinished.set(root, allFinished.get(root) ?? true);
+      }
+      // Only lines with an overview card: fully finished lines hide by default.
+      let best: string | null = null;
+      let bestCount = -1;
+      for (const [id, count] of counts) {
+        if (allFinished.get(id) !== false) continue;
+        if (count > bestCount) {
+          best = id;
+          bestCount = count;
+        }
+      }
+      cardId = best ? `issue:${best}` : null;
+    }
+    if (cardId) {
+      const enter = await page.evaluate(
+        (id) =>
+          (window as unknown as { __dagEnterLine: (cardId?: string) => Promise<{ outcome: string; elapsed: number | null }> }).__dagEnterLine(id),
+        cardId,
+      );
+      if (enter.outcome === "entered") enteredLine = cardId;
+      else invalid.push(`enter line ${cardId}: ${enter.outcome}`);
+    }
+  }
+
   // ---- 2. Pan and zoom frame rate ------------------------------------------
   const frameStats = async (run: () => Promise<void>) => {
     await page.evaluate(() => {
@@ -784,6 +879,8 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     invalid,
     timed_out_at: Object.keys(timedOut),
     dataset: DATASET,
+    switches: switchesApplied,
+    entered_line: enteredLine,
     fixture_version: ISSUE_GRAPH_FIXTURE_VERSION,
     fixture_digest: issueGraphFixtureDigest(graph),
     fixture_stats: stats,

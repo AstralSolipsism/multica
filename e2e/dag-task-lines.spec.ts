@@ -201,7 +201,30 @@ test("DAG two-level view: overview cards, line navigation, bundles and persisten
     // Escape clears the selection when the canvas node holds focus.
     await taskC.focus();
     await page.keyboard.press("Escape");
-    await expect(page.locator(".react-flow__node.selected")).toHaveCount(0);
+    await expect(page.locator("[data-dag-selected]")).toHaveCount(0);
+    await expect(selection).toContainText("Select a task or task line");
+
+    // The click cycle: select with the one-layer neighborhood; a second
+    // single click past the double-click window switches to all upstream +
+    // downstream; a third returns. The selection zone names the scope.
+    const scopeTag = selection.locator("[data-dag-scope]");
+    await taskC.click();
+    await expect(scopeTag).toHaveText("One layer");
+    await expect(page.locator("[data-dag-edge-layer] > g").first()).toHaveClass(/opacity-15/);
+    await page.waitForTimeout(600);
+    await taskC.click();
+    await expect(scopeTag).toHaveText("All upstream + downstream", { timeout: 3_000 });
+    await page.waitForTimeout(600);
+    await taskC.click();
+    await expect(scopeTag).toHaveText("One layer", { timeout: 3_000 });
+
+    // A double-click keeps its original action and never lands in the closure:
+    // the detail opens, and the restored selection is back at one layer.
+    await taskC.dblclick();
+    await expect(page).toHaveURL(new RegExp(`/issues/${c.id}`), { timeout: 30_000 });
+    await page.goBack();
+    await expect(page.locator("[data-dag-task]")).toHaveCount(2, { timeout: 30_000 });
+    await expect(selection.locator("[data-dag-scope]")).toHaveText("One layer");
 
     // Opening the detail and coming back restores the line and its viewport.
     const lineViewport = await readViewport(page);
@@ -224,6 +247,16 @@ test("DAG two-level view: overview cards, line navigation, bundles and persisten
     );
     await expect(page.locator("[data-dag-task]")).toHaveCount(1);
     await expect(page.locator("[data-dag-task]")).toContainText("independent note");
+    await page.getByRole("button", { name: "Back to overview" }).click();
+    await expect(cards).toHaveCount(3);
+
+    // A direct double-click on an unselected overview card enters its line —
+    // no selection click first (the independent card holds the selection here).
+    await cardA.dblclick();
+    await expect(page.getByRole("navigation", { name: "Task line path" })).toContainText(
+      "design and implementation",
+    );
+    await expect(page.locator("[data-dag-task]")).toHaveCount(2);
     await page.getByRole("button", { name: "Back to overview" }).click();
     await expect(cards).toHaveCount(3);
 
