@@ -73,7 +73,7 @@ export const DagFrameNode = memo(
                 className="h-1 w-12 shrink-0 overflow-hidden rounded-full bg-muted"
               >
                 <span
-                  className="block h-full bg-brand/60"
+                  className="block h-full bg-success/60"
                   style={{
                     width: `${frame.progress.total ? (frame.progress.completed / frame.progress.total) * 100 : 0}%`,
                   }}

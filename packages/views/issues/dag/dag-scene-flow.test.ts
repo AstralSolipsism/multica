@@ -291,8 +291,18 @@ describe("resolveDagSelection", () => {
   it("maps line members: tasks and sub-line frame headers", () => {
     const line = lineOf(graph, "r1");
     const model = { kind: "line" as const, line };
-    expect(resolveDagSelection(model, "a1")).toMatchObject({ kind: "task", issueId: "a1" });
-    expect(resolveDagSelection(model, "sub")).toMatchObject({ kind: "frame", issueId: "sub" });
+    // focusFrameId drives "Focus issue group": tasks recenter on their
+    // innermost frame, a frame header on itself.
+    expect(resolveDagSelection(model, "a1")).toMatchObject({
+      kind: "task",
+      issueId: "a1",
+      focusFrameId: "r1",
+    });
+    expect(resolveDagSelection(model, "sub")).toMatchObject({
+      kind: "frame",
+      issueId: "sub",
+      focusFrameId: "sub",
+    });
     expect(resolveDagSelection(model, "elsewhere")).toBeNull();
   });
 });

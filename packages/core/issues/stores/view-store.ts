@@ -7,7 +7,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import type { IssueStatus, IssuePriority, ProjectStatus, PropertyFilterValue } from "../../types";
 import { PROJECT_STATUS_ORDER } from "../../projects/config";
 import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../../platform/workspace-storage";
-import { sanitizeDagPersisted } from "./dag-preferences";
+import { DAG_OVERVIEW_VIEWPORT_KEY, sanitizeDagPersisted } from "./dag-preferences";
 import { defaultStorage } from "../../platform/storage";
 import { VIEW_MODE_CAPABILITIES, type ViewMode } from "../surface/view-mode";
 
@@ -460,9 +460,14 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   dagFocus: null,
   setDagViewportFor: (key, viewport) =>
     set((state) => {
-      // Bounded per-user history: keep the 50 most recently written levels.
+      // Bounded per-user history: keep the 50 most recently written levels,
+      // but never evict the overview slot — every return path lands there.
       const entries = Object.entries(state.dagViewports).filter(([k]) => k !== key);
-      while (entries.length >= 50) entries.shift();
+      while (entries.length >= 50) {
+        const oldest = entries.findIndex(([k]) => k !== DAG_OVERVIEW_VIEWPORT_KEY);
+        if (oldest === -1) break;
+        entries.splice(oldest, 1);
+      }
       entries.push([key, viewport]);
       return { dagViewports: Object.fromEntries(entries) };
     }),

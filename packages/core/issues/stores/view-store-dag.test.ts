@@ -82,6 +82,24 @@ describe("dag view preferences", () => {
     expect(merged.dagViewports).toEqual(saved.dagViewports);
   });
 
+  it("caps remembered viewports at 50 entries, never evicting the overview slot", () => {
+    const store = makeStore();
+    store.getState().setDagViewportFor("overview", { x: 1, y: 1, zoom: 1 });
+    for (let i = 0; i < 55; i++)
+      store.getState().setDagViewportFor(`line:l${i}`, { x: i, y: 0, zoom: 1 });
+    const viewports = store.getState().dagViewports;
+    expect(Object.keys(viewports)).toHaveLength(50);
+    expect(viewports["overview"]).toEqual({ x: 1, y: 1, zoom: 1 });
+    expect(viewports["line:l0"]).toBeUndefined();
+    expect(viewports["line:l54"]).toEqual({ x: 54, y: 0, zoom: 1 });
+    // Rewriting an existing key refreshes its recency instead of duplicating it.
+    store.getState().setDagViewportFor("line:l54", { x: 999, y: 0, zoom: 1 });
+    const next = store.getState().dagViewports;
+    expect(Object.keys(next)).toHaveLength(50);
+    expect(next["line:l54"]).toEqual({ x: 999, y: 0, zoom: 1 });
+    expect(next["overview"]).toEqual({ x: 1, y: 1, zoom: 1 });
+  });
+
   it("ignores legacy fold and direction keys carried by old preferences", () => {
     const current = makeStore().getState();
     const merged = mergeViewStatePersisted(

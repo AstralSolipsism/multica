@@ -59,7 +59,7 @@ export interface DagSceneCanvasProps {
   statusColorOf: (statusKey: string) => string | null;
   projectNames: ReadonlyMap<string, string>;
   showSatisfied: boolean;
-  focusRequest: { id: string; nonce: number } | null;
+  focusRequest: { id: string; level: "overview" | "line"; nonce: number } | null;
   onEnterLine: (lineId: string) => void;
   onOpenIssue: (issueId: string) => void;
   onExternalJump: (group: DagExternalGroup, side: "upstream" | "downstream") => void;
@@ -166,13 +166,19 @@ export function DagSceneCanvasInner({
   useEffect(() => {
     if (!viewportInitialized || !focusRequest || handledFocus.current === focusRequest.nonce)
       return;
+    // The request targets a level: wait until that scene is painted (a jump
+    // from a line to an overview card arrives before the overview geometry).
+    const paintedKind = level.kind === "overview" ? "overview" : "line";
+    if (paintedKind !== focusRequest.level) return;
+    // Same level but no such node: drop it — waiting longer would fire a
+    // surprise jump when the target appears for an unrelated reason.
+    handledFocus.current = focusRequest.nonce;
     const box = geometry.nodes[focusRequest.id] ?? geometry.frames[focusRequest.id];
     if (!box) return;
-    handledFocus.current = focusRequest.nonce;
     storeApi.getState().setDagSelectedNodeId(focusRequest.id);
     const zoom = Math.max(0.85, getViewport().zoom);
     void setViewport({ x: 24 - box.x * zoom, y: 24 - box.y * zoom, zoom });
-  }, [focusRequest, geometry, getViewport, setViewport, storeApi, viewportInitialized]);
+  }, [focusRequest, geometry, level, getViewport, setViewport, storeApi, viewportInitialized]);
 
   const focusSet = useMemo(
     () => (focusState ? dagSceneFocusSet(plan, focusState.nodeId, focusState.way) : null),

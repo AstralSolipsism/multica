@@ -2,12 +2,14 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createStore, type StoreApi } from "zustand/vanilla";
-import { setApiInstance, type ApiClient } from "@multica/core/api";
-import { viewStoreSlice, type IssueViewState } from "@multica/core/issues/stores/view-store";
+import { ApiError, setApiInstance, type ApiClient } from "@multica/core/api";
+import { viewStoreSlice, type FilterSnapshot, type IssueViewState } from "@multica/core/issues/stores/view-store";
 import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-context";
+import { ViewBaselineProvider } from "../surface/view-baseline-context";
+import type { IssueViewBaseline } from "@multica/core/issue-views/baseline";
 import type { IssueTableQuerySpec } from "@multica/core/types";
 import ELK from "elkjs/lib/elk.bundled.js";
 import { layoutDagScene } from "./dag-scene-layout";
@@ -133,7 +135,18 @@ function fixtureGraph() {
 
 const clients: QueryClient[] = [];
 
-function setup(graph: ReturnType<typeof makeGraph>, seed?: (store: StoreApi<IssueViewState>) => void) {
+interface SetupOptions {
+  hasActiveFilters?: boolean;
+  baseline?: IssueViewBaseline | null;
+  runnerFactory?: () => DagSceneRunner;
+  canvasLoader?: () => Promise<typeof import("./dag-scene-canvas")>;
+}
+
+function setup(
+  graph: ReturnType<typeof makeGraph>,
+  seed?: (store: StoreApi<IssueViewState>) => void,
+  opts: SetupOptions = {},
+) {
   setApiInstance({ getIssueGraph: vi.fn().mockResolvedValue(graph) } as unknown as ApiClient);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   clients.push(client);
@@ -142,11 +155,18 @@ function setup(graph: ReturnType<typeof makeGraph>, seed?: (store: StoreApi<Issu
   const view = render(
     <QueryClientProvider client={client}>
       <ViewStoreProvider store={store}>
-        <DagView spec={spec} hasActiveFilters={false} sceneRunnerFactory={syncSceneRunner} />
+        <ViewBaselineProvider baseline={opts.baseline ?? null}>
+          <DagView
+            spec={spec}
+            hasActiveFilters={opts.hasActiveFilters ?? false}
+            sceneRunnerFactory={opts.runnerFactory ?? syncSceneRunner}
+            canvasLoader={opts.canvasLoader}
+          />
+        </ViewBaselineProvider>
       </ViewStoreProvider>
     </QueryClientProvider>,
   );
-  return { store, ...view };
+  return { store, client, ...view };
 }
 
 async function waitForCanvas(): Promise<DagSceneCanvasProps> {
@@ -157,6 +177,7 @@ async function waitForCanvas(): Promise<DagSceneCanvasProps> {
 beforeEach(() => {
   canvasSpy.mockClear();
   toolbarSpy.mockClear();
+  mockPush.mockClear();
   executeCalls.count = 0;
   executeCalls.bypassed = 0;
 });
@@ -228,7 +249,7 @@ describe("DagView level navigation", () => {
     expect(store.getState().dagOverviewPinned).toBe(true);
     expect(store.getState().dagSelectedNodeId).toBe("solo");
     const latest = canvasSpy.mock.calls.at(-1)![0];
-    expect(latest.focusRequest?.id).toBe("solo");
+    expect(latest.focusRequest).toMatchObject({ id: "solo", level: "overview" });
   });
 
   it("opens the independent grid as a line level", async () => {
@@ -247,7 +268,6 @@ describe("DagView level navigation", () => {
       expect(props.model.tasks.map((task) => task.issue.id)).toEqual(["free"]);
     }
   });
-});
 
   it("falls back to the overview when the independent grid no longer exists", async () => {
     // Two lines: no independent card, no auto-entry. The stored level is invalid.
@@ -288,6 +308,7 @@ describe("DagView level navigation", () => {
     await waitFor(() => expect(mockTranslate).toHaveBeenCalled());
     expect(getIssueGraph).not.toHaveBeenCalled();
   });
+});
 
 describe("DagView display switches", () => {
   it("toggling satisfied dependencies repaints the overview without a new layout", async () => {
@@ -333,5 +354,232 @@ describe("DagView display switches", () => {
     expect(toolbar.level).toEqual({ kind: "line", lineId: "r1" });
     expect(toolbar.lineHeader).toMatchObject({ identifier: "T-R1", title: "Line one" });
     expect(toolbar.isFallback).toBe(false);
+  });
+});
+
+
+describe("DagView error and refresh handling", () => {
+  function setupErroring(getIssueGraph: ReturnType<typeof vi.fn>, baseline?: IssueViewBaseline | null) {
+    setApiInstance({ getIssueGraph } as unknown as ApiClient);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    clients.push(client);
+    const store = createStore<IssueViewState>()(viewStoreSlice);
+    const view = render(
+      <QueryClientProvider client={client}>
+        <ViewStoreProvider store={store}>
+          <ViewBaselineProvider baseline={baseline ?? null}>
+            <DagView spec={spec} hasActiveFilters={false} sceneRunnerFactory={syncSceneRunner} />
+          </ViewBaselineProvider>
+        </ViewStoreProvider>
+      </QueryClientProvider>,
+    );
+    return { store, client, ...view };
+  }
+
+  it.each([404, 405])(
+    "maps %s to capability-unavailable without a retry affordance",
+    async (status) => {
+      setupErroring(vi.fn().mockRejectedValue(new ApiError("Not found", status, "not_found")));
+      await waitFor(() =>
+        expect(screen.getByRole("alert")).toHaveTextContent("dag:error_unavailable"),
+      );
+      expect(screen.queryByRole("button", { name: /dag:error_retry/ })).toBeNull();
+      expect(screen.queryByTestId("dag-scene-canvas")).toBeNull();
+    },
+  );
+
+  it("maps 504 to a retryable timeout", async () => {
+    const getIssueGraph = vi.fn().mockRejectedValue(new ApiError("Timeout", 504, "graph_query_timeout"));
+    setupErroring(getIssueGraph);
+    // The query layer retries a 504 once before surfacing it.
+    await waitFor(
+      () => expect(screen.getByRole("alert")).toHaveTextContent("dag:error_timeout"),
+      { timeout: 5000 },
+    );
+    const before = getIssueGraph.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: /dag:error_retry/ }));
+    await waitFor(() => expect(getIssueGraph.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it.each([403, 404, 405, 422])(
+    "hides the cached graph after access loss (%s) instead of showing it stale",
+    async (status) => {
+      const getIssueGraph = vi
+        .fn()
+        .mockResolvedValueOnce(fixtureGraph())
+        .mockRejectedValue(new ApiError("Access lost", status, "denied"));
+      const { client } = setupErroring(getIssueGraph);
+      await waitForCanvas();
+      await act(async () => {
+        await client.invalidateQueries();
+      });
+      await waitFor(() =>
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          status === 403
+            ? "dag:error_forbidden"
+            : status === 422
+              ? "dag:error_unverified"
+              : "dag:error_unavailable",
+        ),
+      );
+      expect(screen.queryByTestId("dag-scene-canvas")).toBeNull();
+    },
+  );
+
+  it("keeps a refresh failure on the last snapshot with the stale banner and a retry", async () => {
+    const getIssueGraph = vi
+      .fn()
+      .mockResolvedValueOnce(fixtureGraph())
+      .mockRejectedValue(new Error("boom"));
+    const { client } = setupErroring(getIssueGraph);
+    await waitForCanvas();
+    await act(async () => {
+      await client.invalidateQueries();
+    });
+    // A transient error is retried once by the query layer before the banner.
+    await waitFor(
+      () => expect(screen.getByRole("alert").textContent).toContain("dag:stale_banner"),
+      { timeout: 5000 },
+    );
+    // The painted scene stays usable while the refresh is broken.
+    expect(screen.getByTestId("dag-scene-canvas")).toBeTruthy();
+    const before = getIssueGraph.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: /dag:error_retry/ }));
+    await waitFor(() => expect(getIssueGraph.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it("shows the filtered-empty state and clears filters from it", async () => {
+    const { store } = setup(makeGraph([]), (s) => s.getState().toggleStatusFilter("todo"), {
+      hasActiveFilters: true,
+    });
+    await waitFor(() => expect(screen.getByText(/dag:empty_title/)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /filtered_empty\.clear_button/ }));
+    expect(store.getState().statusFilters).toEqual([]);
+  });
+
+  it("clears filters back to the open view's baseline instead of empty", async () => {
+    const raw: FilterSnapshot = {
+      statusFilters: ["done"],
+      priorityFilters: [],
+      assigneeFilters: [],
+      includeNoAssignee: false,
+      creatorFilters: [],
+      projectFilters: [],
+      includeNoProject: false,
+      projectStatusFilters: [],
+      labelFilters: [],
+      propertyFilters: {},
+    };
+    const baseline: IssueViewBaseline = {
+      status: new Set(["done"]),
+      priority: new Set(),
+      assignee: new Set(),
+      includeNoAssignee: false,
+      creator: new Set(),
+      project: new Set(),
+      includeNoProject: false,
+      projectStatus: new Set(),
+      label: new Set(),
+      property: new Map(),
+      raw,
+    };
+    const { store } = setup(makeGraph([]), (s) => s.getState().toggleStatusFilter("todo"), {
+      hasActiveFilters: true,
+      baseline,
+    });
+    await waitFor(() => expect(screen.getByText(/dag:empty_title/)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /filtered_empty\.clear_button/ }));
+    expect(store.getState().statusFilters).toEqual(["done"]);
+  });
+});
+
+describe("DagView layout failures", () => {
+  function failingRunner(fail: (input: DagSceneRequest["input"], call: number) => boolean) {
+    let calls = 0;
+    const elk = new ELK();
+    const runner: DagSceneRunner = {
+      prepare: () => {},
+      cancel: () => {},
+      dispose: () => {},
+      execute: (input, done) => {
+        calls++;
+        if (fail(input, calls)) return done({ requestId: 0, error: "layout failed" });
+        void layoutDagScene(input, elk).then((result) => done({ requestId: 0, result }));
+      },
+    };
+    return { runner, calls: () => calls };
+  }
+
+  it("surfaces a first-layout failure full-page and retries it", async () => {
+    const failing = failingRunner((_input, call) => call === 1);
+    setup(fixtureGraph(), undefined, { runnerFactory: () => failing.runner });
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("dag:layout_error"),
+    );
+    expect(screen.queryByTestId("dag-scene-canvas")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /dag:error_retry/ }));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    expect(failing.calls()).toBe(2);
+  });
+
+  it("keeps the painted scene under a banner when a replacement layout fails", async () => {
+    let lineAttempts = 0;
+    const failing = failingRunner((input) => input.kind === "line" && ++lineAttempts === 1);
+    const { store } = setup(fixtureGraph(), undefined, { runnerFactory: () => failing.runner });
+    await waitForCanvas();
+    act(() => store.getState().setDagLineId("r1"));
+    // The overview stays painted under the error banner.
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain("dag:layout_error"),
+    );
+    expect(screen.getByTestId("dag-scene-canvas")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /dag:error_retry/ }));
+    await waitFor(() =>
+      expect(canvasSpy.mock.calls.at(-1)![0].level).toEqual({ kind: "line", lineId: "r1" }),
+    );
+  });
+
+  it("surfaces a canvas module load failure and recovers on retry", async () => {
+    let attempts = 0;
+    const canvasLoader = () =>
+      ++attempts === 1
+        ? Promise.reject(new Error("chunk gone"))
+        : import("./dag-scene-canvas");
+    setup(fixtureGraph(), undefined, { canvasLoader });
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("dag:layout_error"),
+    );
+    expect(screen.queryByTestId("dag-scene-canvas")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /dag:error_retry/ }));
+    await waitFor(() => expect(canvasSpy).toHaveBeenCalled());
+    expect(attempts).toBe(2);
+  });
+});
+
+describe("DagView detail navigation", () => {
+  it("saves the live viewport under the painted line level when opening an issue detail", async () => {
+    const { store } = setup(fixtureGraph(), (s) => s.setState({ dagLineId: "r1" }));
+    await waitForCanvas();
+    act(() =>
+      canvasSpy.mock.calls.at(-1)![0].registerCanvasApi?.({
+        getViewport: () => ({ x: -47, y: 93, zoom: 1.35 }),
+      }),
+    );
+    act(() => toolbarSpy.mock.calls.at(-1)![0].onOpenIssue("t1"));
+    expect(store.getState().dagViewports["line:r1"]).toEqual({ x: -47, y: 93, zoom: 1.35 });
+    expect(mockPush).toHaveBeenCalledWith("/test/issues/t1");
+  });
+
+  it("hands focus-frame requests to the canvas as a line-level focus request", async () => {
+    setup(fixtureGraph(), (s) => s.setState({ dagLineId: "r1" }));
+    await waitForCanvas();
+    act(() => toolbarSpy.mock.calls.at(-1)![0].onFocusFrame("frame-9"));
+    await waitFor(() =>
+      expect(canvasSpy.mock.calls.at(-1)![0].focusRequest).toEqual({
+        id: "frame-9",
+        level: "line",
+        nonce: 1,
+      }),
+    );
   });
 });

@@ -174,6 +174,20 @@ describe("DagToolbar idle zone", () => {
     expect(region).toHaveTextContent("4 dependencies");
     expect(region).toHaveTextContent("Select a task or task line to see its actions");
   });
+
+  it("renders the restricted-context warning as a permanent icon", () => {
+    harness({ hasRestrictedContext: true });
+    expect(
+      screen.getByRole("img", { name: /hidden by permissions/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the context-only hint as a permanent icon", () => {
+    harness({ contextOnly: true });
+    expect(
+      screen.getByRole("img", { name: /showing prerequisite context only/i }),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("DagToolbar node selection", () => {
@@ -269,6 +283,34 @@ describe("DagToolbar node selection", () => {
     fireEvent.click(within(m.zone()).getByRole("button", { name: "More" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Focus issue group" }));
     expect(props.onFocusFrame).toHaveBeenCalledWith("sub-frame");
+  });
+
+  it("keeps the more menu for the focus-line entry when every action fits", async () => {
+    const m = stubMetrics();
+    const withFrame: DagSelectionTarget = { ...TASK, focusFrameId: "sub-frame" };
+    const { props } = harness({ selection: withFrame });
+    // All five actions fit at this width; the menu stays because of the entry.
+    m.sizes.zone = 1920;
+    m.fire();
+    expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit", "assign"]);
+    fireEvent.click(within(m.zone()).getByRole("button", { name: "More" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Focus issue group" }));
+    expect(props.onFocusFrame).toHaveBeenCalledWith("sub-frame");
+  });
+
+  it("disables edit prerequisites until the issue detail is available, then wires it", () => {
+    const { view, props, store } = harness({ selection: TASK });
+    expect(screen.getByRole("button", { name: "Edit prerequisites" })).toBeDisabled();
+    issueSelection.current.issue = { id: "a", assignee_type: null, assignee_id: null };
+    view.rerender(
+      <ViewStoreProvider store={store}>
+        <DagToolbar {...props} />
+      </ViewStoreProvider>,
+    );
+    const edit = screen.getByRole("button", { name: "Edit prerequisites" });
+    expect(edit).toBeEnabled();
+    fireEvent.click(edit);
+    expect(issueSelection.current.actions.openEditDependencies).toHaveBeenCalledOnce();
   });
 
   it("clears the selection", () => {

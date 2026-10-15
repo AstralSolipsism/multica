@@ -10,7 +10,7 @@ export type DagIssue = Omit<IssueGraphNode, "runSummary"> & {
   runSummary: Omit<NonNullable<IssueGraphNode["runSummary"]>, "capturedAt"> | null;
 };
 
-function modelIssue(issue: IssueGraphNode): DagIssue {
+export function modelIssue(issue: IssueGraphNode): DagIssue {
   const run = issue.runSummary;
   return { ...issue, runSummary: run ? {
     queued: run.queued, dispatched: run.dispatched, running: run.running, waitingLocalDirectory: run.waitingLocalDirectory,

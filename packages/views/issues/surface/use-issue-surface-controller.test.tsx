@@ -1952,8 +1952,9 @@ describe("useIssueSurfaceController", () => {
       // The same workspace:agents surface previously contained F and its
       // child C, both assigned to agents, and the user had opened F. C was then
       // assigned to a member: it is outside the query, not deleted/reparented.
-      // The DagView owns the render-time fallback to the overview when a line
-      // genuinely no longer exists; the controller must not touch the level.
+      // The DagView owns the render-time fallback: a line whose members are
+      // all out of scope falls back to the overview and clears dagLineId
+      // there; the controller must not touch the level.
       const graph = {
         ...graphFixture,
         scope: { type: "workspace" as const, projectId: null },
@@ -1993,7 +1994,9 @@ describe("useIssueSurfaceController", () => {
       // F and C were both in P1 when F's line was open. C then moved to P2
       // without changing its parent F. The P1 query now returns only F;
       // its complete=true is transaction completeness, not global membership.
-      // Falling back to the overview is the DagView's render-time decision.
+      // The DagView falls back to the overview at render time whenever the
+      // open line has no members in the current scope, and clears dagLineId
+      // there; the controller leaves the level alone.
       const graph = {
         ...graphFixture,
         nodes: [{ ...graphFixture.nodes[0], id: "feature" }],

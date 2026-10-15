@@ -39,7 +39,7 @@ export const DagOverviewCardView = memo(
         key: "inProgress" as const,
         value: card.unfinished.inProgress,
         icon: <CirclePlay className="size-3" />,
-        className: "text-brand",
+        className: "text-warning",
         label: t(($) => $.count_in_progress),
       },
       {
@@ -118,7 +118,7 @@ export const DagOverviewCardView = memo(
             className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"
           >
             <span
-              className="block h-full bg-brand/60"
+              className="block h-full bg-success/60"
               style={{
                 width: `${card.progress.total ? (card.progress.completed / card.progress.total) * 100 : 0}%`,
               }}

@@ -4,10 +4,10 @@ import { hashKey } from "@tanstack/react-query";
 import { AlertTriangle, FilterX, Loader2 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
-import type { IssueGraphNode } from "@multica/core/api";
 import type { IssueTableQuerySpec } from "@multica/core/types";
 import {
   useDagModels,
+  modelIssue,
   type DagIssue,
   type DagModelRequest,
   type DagTask,
@@ -51,7 +51,8 @@ import { DagErrorState, graphErrorPolicy } from "./dag-error-state";
 import type { DagSceneCanvasApi } from "./dag-scene-canvas";
 
 const loadDagCanvas = once(() => import("./dag-scene-canvas"));
-type DagSceneCanvasComponent = typeof import("./dag-scene-canvas").default;
+type DagSceneCanvasModule = typeof import("./dag-scene-canvas");
+type DagSceneCanvasComponent = DagSceneCanvasModule["default"];
 
 /** Mirrors useDagSurfaceGraph: DAG scopes are workspace/project only, and the
  *  graph request normalizer throws on anything else during render. */
@@ -61,33 +62,29 @@ const UNSUPPORTED_SCOPE_SPEC: IssueTableQuerySpec = {
   sort: { field: "position", direction: "asc" },
 };
 
+/** A pending canvas focus: `level` gates handling until the matching scene is
+ *  painted, so a request issued mid-navigation is not dropped or misapplied. */
+export interface DagFocusRequest {
+  id: string;
+  level: "overview" | "line";
+  nonce: number;
+}
+
 export interface DagViewProps {
   /** The surface's table query spec; the DAG fetches the graph for it. */
   spec: IssueTableQuerySpec;
   hasActiveFilters: boolean;
   /** Test seam: replaces the Web Worker scene layout runner. */
   sceneRunnerFactory?: () => DagSceneRunner;
-}
-
-function toDagIssue(node: IssueGraphNode): DagIssue {
-  const run = node.runSummary;
-  return {
-    ...node,
-    runSummary: run
-      ? {
-          queued: run.queued,
-          dispatched: run.dispatched,
-          running: run.running,
-          waitingLocalDirectory: run.waitingLocalDirectory,
-        }
-      : null,
-  };
+  /** Test seam: replaces the canvas module loader. */
+  canvasLoader?: () => Promise<DagSceneCanvasModule>;
 }
 
 export function DagView({
   spec,
   hasActiveFilters,
   sceneRunnerFactory,
+  canvasLoader,
 }: DagViewProps) {
   const { t } = useT("issues");
   const { t: tDag } = useT("dag");
@@ -109,18 +106,27 @@ export function DagView({
   }, []);
   // Resolve the canvas module at mount instead of rendering a lazy component:
   // a first Suspense fallback would throttle the reveal by another ~300ms.
+  // A failed load (e.g. a stale chunk after deploy) surfaces as an error with
+  // a retry; `once` drops its cache on rejection so retry just calls again.
   const [canvasComponent, setCanvasComponent] = useState<DagSceneCanvasComponent | null>(null);
+  const [canvasError, setCanvasError] = useState(false);
+  const [canvasRetry, setCanvasRetry] = useState(0);
   useEffect(() => {
     let mounted = true;
-    void loadDagCanvas()
+    void (canvasLoader ?? loadDagCanvas)()
       .then((module) => {
-        if (mounted) setCanvasComponent(() => module.default);
+        if (mounted) {
+          setCanvasComponent(() => module.default);
+          setCanvasError(false);
+        }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (mounted) setCanvasError(true);
+      });
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [canvasLoader, canvasRetry]);
 
   const supported = spec.scope.kind === "workspace" || spec.scope.kind === "project";
   const safeSpec = supported ? spec : UNSUPPORTED_SCOPE_SPEC;
@@ -155,7 +161,7 @@ export function DagView({
         const node = issuesById.get(id);
         if (node)
           tasks.push({
-            issue: toDagIssue(node),
+            issue: modelIssue(node),
             parentId: null,
             isFrame: false,
             role: node.role,
@@ -210,9 +216,13 @@ export function DagView({
     if (target) storeApi.getState().setDagLineId(target);
   }, [lineId, pinned, models, storeApi]);
 
-  const [focusRequest, setFocusRequest] = useState<{ id: string; nonce: number } | null>(null);
+  const [focusRequest, setFocusRequest] = useState<DagFocusRequest | null>(null);
   const locateOnOverview = useCallback((cardId: string) => {
-    setFocusRequest((current) => ({ id: cardId, nonce: (current?.nonce ?? 0) + 1 }));
+    setFocusRequest((current) => ({
+      id: cardId,
+      level: "overview",
+      nonce: (current?.nonce ?? 0) + 1,
+    }));
   }, []);
 
   const onEnterLine = useCallback(
@@ -224,7 +234,11 @@ export function DagView({
     state.exitDagLine(state.dagLineId ? dagOverviewCardIdForLine(state.dagLineId) : null);
   }, [storeApi]);
   const onFocusFrame = useCallback((frameId: string) => {
-    setFocusRequest((current) => ({ id: frameId, nonce: (current?.nonce ?? 0) + 1 }));
+    setFocusRequest((current) => ({
+      id: frameId,
+      level: "line",
+      nonce: (current?.nonce ?? 0) + 1,
+    }));
   }, []);
   const onExternalJump = useCallback(
     (group: { id: string; kind: "line" | "issue" }) => {
@@ -367,6 +381,23 @@ export function DagView({
 
   const firstLayoutPending = !scene.geometry || !paintedPlan || !paintedModel;
   const SceneCanvas = canvasComponent;
+  if (canvasError) {
+    return (
+      <div
+        role="alert"
+        className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground"
+      >
+        <p>{tDag(($) => $.layout_error)}</p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setCanvasRetry((value) => value + 1)}
+        >
+          {tDag(($) => $.error_retry)}
+        </Button>
+      </div>
+    );
+  }
   if (scene.error && firstLayoutPending) {
     return (
       <div

@@ -240,7 +240,6 @@ describe("DagSceneCanvas overview", () => {
     const viewport = document.querySelector(".react-flow__viewport") as HTMLElement;
     expect(viewport.style.transform).toContain("translate(33px,-44px)");
   });
-});
 
   it("paints branch dots at junctions", async () => {
     const fixture = overviewFixture();
@@ -327,6 +326,7 @@ describe("DagSceneCanvas overview", () => {
     fireEvent.doubleClick(solo);
     expect(props.onOpenIssue).toHaveBeenCalledWith("solo");
   });
+});
 
 describe("DagSceneCanvas line level", () => {
   it("renders nested frames, tasks and the external card; clicking it jumps", async () => {
@@ -352,5 +352,128 @@ describe("DagSceneCanvas line level", () => {
     const task = screen.getByText("T-T1").closest(".react-flow__node")!;
     fireEvent.doubleClick(task);
     expect(props.onOpenIssue).toHaveBeenCalledWith("t1");
+  });
+});
+
+describe("DagSceneCanvas focus requests", () => {
+  const readTransform = () =>
+    (document.querySelector(".react-flow__viewport") as HTMLElement).style.transform;
+
+  it("selects and centers the target when the painted level matches", async () => {
+    const fixture = lineFixture();
+    const { store, rerender } = harness(fixture);
+    await waitFor(() => expect(screen.getByText("T-T1")).toBeInTheDocument());
+    const before = readTransform();
+    rerender(
+      <ViewStoreProvider store={store}>
+        <ReactFlowProvider>
+          <DagSceneCanvasInner
+            {...fixture}
+            level={{ kind: "line", lineId: "r1" }}
+            statusColorOf={() => null}
+            projectNames={new Map()}
+            showSatisfied
+            focusRequest={{ id: "sub", level: "line", nonce: 1 }}
+            onEnterLine={vi.fn()}
+            onOpenIssue={vi.fn()}
+            onExternalJump={vi.fn()}
+          />
+        </ReactFlowProvider>
+      </ViewStoreProvider>,
+    );
+    await waitFor(() => expect(store.getState().dagSelectedNodeId).toBe("sub"));
+    const after = readTransform();
+    expect(after).not.toBe(before);
+    // Centered on the sub frame (340, 220) at the current zoom.
+    const m = /translate\((-?[\d.]+)px[, ]+(-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(after);
+    expect(m).toBeTruthy();
+    const zoom = Number(m![3]);
+    expect(Number(m![1])).toBeCloseTo(24 - 340 * zoom, 0);
+    expect(Number(m![2])).toBeCloseTo(24 - 220 * zoom, 0);
+  });
+
+  it("waits while another level is painted, then handles the request", async () => {
+    const overview = overviewFixture();
+    const { store, rerender } = harness(overview);
+    await waitFor(() => expect(screen.getByText("Line one")).toBeInTheDocument());
+    const request = { id: "sub", level: "line" as const, nonce: 1 };
+    rerender(
+      <ViewStoreProvider store={store}>
+        <ReactFlowProvider>
+          <DagSceneCanvasInner
+            {...overview}
+            level={{ kind: "overview" }}
+            statusColorOf={() => null}
+            projectNames={new Map()}
+            showSatisfied
+            focusRequest={request}
+            onEnterLine={vi.fn()}
+            onOpenIssue={vi.fn()}
+            onExternalJump={vi.fn()}
+          />
+        </ReactFlowProvider>
+      </ViewStoreProvider>,
+    );
+    // The overview is painted but the request targets a line scene: no-op.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(store.getState().dagSelectedNodeId).toBeNull();
+    const line = lineFixture();
+    rerender(
+      <ViewStoreProvider store={store}>
+        <ReactFlowProvider>
+          <DagSceneCanvasInner
+            {...line}
+            level={{ kind: "line", lineId: "r1" }}
+            statusColorOf={() => null}
+            projectNames={new Map()}
+            showSatisfied
+            focusRequest={request}
+            onEnterLine={vi.fn()}
+            onOpenIssue={vi.fn()}
+            onExternalJump={vi.fn()}
+          />
+        </ReactFlowProvider>
+      </ViewStoreProvider>,
+    );
+    await waitFor(() => expect(store.getState().dagSelectedNodeId).toBe("sub"));
+  });
+
+  it("drops the request when the target is missing on the painted level, permanently", async () => {
+    const overview = overviewFixture();
+    const { store, rerender } = harness(overview);
+    await waitFor(() => expect(screen.getByText("Line one")).toBeInTheDocument());
+    const before = readTransform();
+    const request = { id: "ghost", level: "overview" as const, nonce: 1 };
+    const renderProps = (geometry: DagSceneGeometry) => (
+      <ViewStoreProvider store={store}>
+        <ReactFlowProvider>
+          <DagSceneCanvasInner
+            {...overview}
+            geometry={geometry}
+            level={{ kind: "overview" }}
+            statusColorOf={() => null}
+            projectNames={new Map()}
+            showSatisfied
+            focusRequest={request}
+            onEnterLine={vi.fn()}
+            onOpenIssue={vi.fn()}
+            onExternalJump={vi.fn()}
+          />
+        </ReactFlowProvider>
+      </ViewStoreProvider>
+    );
+    rerender(renderProps(overview.geometry));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(store.getState().dagSelectedNodeId).toBeNull();
+    // The target appearing later (e.g. via a display toggle) must not fire
+    // a surprise jump: the handled nonce is never re-applied.
+    const withGhost: DagSceneGeometry = {
+      ...overview.geometry,
+      nodes: { ...overview.geometry.nodes, ghost: { x: 900, y: 0, width: 280, height: 140 } },
+    };
+    rerender(renderProps(withGhost));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(store.getState().dagSelectedNodeId).toBeNull();
+    expect(readTransform()).toBe(before);
   });
 });
