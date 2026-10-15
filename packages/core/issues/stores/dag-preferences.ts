@@ -6,6 +6,7 @@ type DagPreferences = Pick<
   | "dagShowCompleted"
   | "dagShowSatisfiedDependencies"
   | "dagLineId"
+  | "dagFocusIssueId"
   | "dagOverviewPinned"
   | "dagViewports"
 >;
@@ -49,6 +50,10 @@ export function sanitizeDagPersisted(
       typeof p.dagLineId === "string" || p.dagLineId === null
         ? p.dagLineId
         : current.dagLineId,
+    dagFocusIssueId:
+      typeof p.dagFocusIssueId === "string" || p.dagFocusIssueId === null
+        ? p.dagFocusIssueId
+        : current.dagFocusIssueId,
     dagOverviewPinned:
       typeof p.dagOverviewPinned === "boolean"
         ? p.dagOverviewPinned

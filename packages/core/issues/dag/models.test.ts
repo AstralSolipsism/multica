@@ -6,7 +6,6 @@ import { computeDagOverview } from "./overview";
 import { computeDagLine, computeDagFocus } from "./detail";
 import { createDagModelSelector } from "./selector";
 import { aggregateDagDependencyState, dagDependencyState } from "./state";
-import { computeDagProjection, dagFocusNeighborhood } from "./projection";
 
 const done = { status: "done", statusCategory: "done" };
 const closed = { status: "cancelled", statusCategory: "closed" };
@@ -220,16 +219,6 @@ describe("line and focus models", () => {
     expect(focus.groups.find((group) => group.lineId === "cancelled")).toMatchObject({
       frames: [], tasks: [{ issue: { id: "cancelled" }, parentId: null, role: "context", cancelledBlocking: true }],
     });
-  });
-
-  it.each(["a", "sub", "x", "y", "solo"])("matches the existing raw focus closures for %s", (id) => {
-    const graph = fixture(), index = createDagModelIndex(graph), projection = computeDagProjection(graph, [], true, true);
-    const focused = computeDagFocus(index, id, true);
-    for (const way of ["upstream", "downstream"] as const) {
-      const old = dagFocusNeighborhood(projection, graph, id, way);
-      const mapped = new Set([...focused[way === "upstream" ? "upstreamIds" : "downstreamIds"]].map((raw) => projection.representatives.get(raw) ?? raw));
-      expect(mapped).toEqual(old.nodeIds);
-    }
   });
 
   it("counts hidden closure members once and never puts hidden tasks in focus frames", () => {

@@ -68,5 +68,10 @@
   "external_from": "元",
   "external_to": "先",
   "external_jump_hint": "クリックで移動",
-  "focus_line": "タスク群にフォーカス"
+  "focus_line": "タスク群にフォーカス",
+  "focus_mode": "フォーカスモード",
+  "focus_breadcrumb": "フォーカス {{identifier}}",
+  "exit_focus": "フォーカスモードを終了",
+  "focus_unavailable": "対象のタスクがこのビューにないため、前の階層に戻りました。",
+  "focus_current_hidden": "対象のタスクは非表示です。「完了済みを表示」をオンにすると表示されます。"
 }

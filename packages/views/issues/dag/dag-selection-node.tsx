@@ -21,7 +21,7 @@ import { DagAssignAction, useDagIssueSelection } from "./dag-issue-actions";
 import { useActionCapacity } from "./use-action-capacity";
 import type { DagSelectionTarget } from "./dag-scene-flow";
 
-type ActionKey = "enter" | "open" | "upstream" | "downstream" | "edit" | "assign";
+type ActionKey = "enter" | "focus" | "open" | "upstream" | "downstream" | "edit" | "assign";
 
 /** The selection zone's node state: label, standing actions (collapsing
  *  right-to-left into More on narrow widths), the hidden-chain hint and the
@@ -32,12 +32,14 @@ export function DagNodeSelection({
   onOpenIssue,
   onEnterLine,
   onFocusFrame,
+  onEnterFocus,
 }: {
   target: DagSelectionTarget;
   focusHiddenCount: number;
   onOpenIssue: (issueId: string) => void;
   onEnterLine: (lineId: string) => void;
   onFocusFrame: (frameId: string) => void;
+  onEnterFocus?: (issueId: string) => void;
 }) {
   const { t: tDag } = useT("dag");
   const storeApi = useViewStoreApi();
@@ -61,6 +63,7 @@ export function DagNodeSelection({
 
   const actionKeys: ActionKey[] = [
     ...(target.enterLineId ? (["enter"] as const) : []),
+    ...(target.issueId && onEnterFocus ? (["focus"] as const) : []),
     ...(target.issueId ? (["open"] as const) : []),
     "upstream",
     "downstream",
@@ -71,6 +74,11 @@ export function DagNodeSelection({
   const menuKeys = actionKeys.slice(visibleCount);
 
   const actionNodes: Record<ActionKey, React.ReactNode> = {
+    focus: (
+      <Button size="sm" variant="ghost" onClick={() => onEnterFocus?.(target.issueId!)} data-dag-enter-focus>
+        {tDag(($) => $.focus_mode)}
+      </Button>
+    ),
     enter: (
       <Button
         size="sm"
@@ -118,6 +126,11 @@ export function DagNodeSelection({
     assign: <DagAssignAction issue={issue} onUpdate={actions.updateField} />,
   };
   const menuItems: Record<ActionKey, React.ReactNode> = {
+    focus: (
+      <DropdownMenuItem key="focus" onClick={() => onEnterFocus?.(target.issueId!)} data-dag-enter-focus>
+        {tDag(($) => $.focus_mode)}
+      </DropdownMenuItem>
+    ),
     enter: (
       <DropdownMenuItem key="enter" onClick={() => onEnterLine(target.enterLineId!)}>
         {tDag(($) => $.enter_line)}

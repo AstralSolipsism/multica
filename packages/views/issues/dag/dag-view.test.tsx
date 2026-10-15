@@ -583,3 +583,50 @@ describe("DagView detail navigation", () => {
     );
   });
 });
+
+describe("DagView focus mode", () => {
+  it.each([null, "r1"])("enters focus from %s and returns with the live viewport saved", async (lineId) => {
+    const { store } = setup(fixtureGraph(), (s) => s.setState({ dagLineId: lineId }));
+    await waitForCanvas();
+    const viewport = { x: -100, y: 42, zoom: 0.8 };
+    act(() => canvasSpy.mock.calls.at(-1)![0].registerCanvasApi?.({ getViewport: () => viewport }));
+    act(() => toolbarSpy.mock.calls.at(-1)![0].onEnterFocus!("t1"));
+    await waitFor(() => expect(canvasSpy.mock.calls.at(-1)![0].level).toEqual({ kind: "focus", issueId: "t1" }));
+    const focused = canvasSpy.mock.calls.at(-1)![0];
+    expect(focused.model.kind).toBe("focus");
+    expect(focused.focusRequest).toMatchObject({ level: "focus", id: "t1" });
+    expect(store.getState().dagViewports[lineId ? `line:${lineId}` : "overview"]).toEqual(viewport);
+    act(() => toolbarSpy.mock.calls.at(-1)![0].onExitFocus!());
+    await waitFor(() => expect(canvasSpy.mock.calls.at(-1)![0].level.kind).toBe(lineId ? "line" : "overview"));
+    expect(store.getState().dagLineId).toBe(lineId);
+    expect(store.getState().dagFocusIssueId).toBeNull();
+  });
+
+  it("restores a saved focus directly and exits when its seed leaves the graph", async () => {
+    const { store, client } = setup(fixtureGraph(), (s) => s.setState({ dagLineId: "r1", dagFocusIssueId: "t1" }));
+    const props = await waitForCanvas();
+    expect(props.level).toEqual({ kind: "focus", issueId: "t1" });
+    setApiInstance({ getIssueGraph: vi.fn().mockResolvedValue(makeGraph([makeNode("r1"), makeNode("remaining", { parentIssueId: "r1" })])) } as unknown as ApiClient);
+    await act(async () => { await client.invalidateQueries(); });
+    await waitFor(() => expect(store.getState().dagFocusIssueId).toBeNull());
+    expect(store.getState().dagLineId).toBe("r1");
+    expect(screen.getByText("dag:focus_unavailable")).toBeTruthy();
+  });
+
+  it("keeps a hidden seed hidden, counts Q11 once, and reveals it only through Show completed", async () => {
+    const graph = makeGraph([
+      makeNode("before", { status: "done", statusCategory: "done" }),
+      makeNode("seed", { status: "done", statusCategory: "done" }), makeNode("after"),
+    ], [["before", "seed"], ["seed", "after"]]);
+    const { store } = setup(graph, (s) => s.setState({ dagFocusIssueId: "seed" }));
+    await waitForCanvas();
+    expect(store.getState().dagFocusIssueId).toBe("seed");
+    expect(toolbarSpy.mock.calls.at(-1)![0].focusHiddenCount).toBe(2);
+    expect(canvasSpy.mock.calls.at(-1)![0].geometry.nodes.seed).toBeUndefined();
+    expect(screen.getByText("dag:focus_current_hidden")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "dag:show_completed_enable" }));
+    await waitFor(() => expect(canvasSpy.mock.calls.at(-1)![0].geometry.nodes.seed).toBeDefined());
+    expect(toolbarSpy.mock.calls.at(-1)![0].focusHiddenCount).toBe(0);
+    expect(screen.queryByText("dag:focus_current_hidden")).toBeNull();
+  });
+});

@@ -76,7 +76,7 @@ describe("scene scheduling and content LRUs", () => {
     expect(done).not.toHaveBeenCalled(); expect(FakeWorker.instances).toHaveLength(1);
     runner.execute(input("line"), done); FakeWorker.instances[1]!.reply();
     runner.dispose(); runner.execute(input("line"), done);
-    expect(FakeWorker.instances).toHaveLength(3);
+    expect(FakeWorker.instances).toHaveLength(4); // Completing a line also prewarms focus.
     runner.dispose();
   });
 });

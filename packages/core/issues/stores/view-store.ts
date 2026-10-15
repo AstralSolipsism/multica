@@ -339,14 +339,20 @@ export interface IssueViewState {
   /** Show satisfied cross-line dependencies (overview edges and the line
    *  view's external side cards). Off by default; saved into view definitions. */
   dagShowSatisfiedDependencies: boolean;
-  /** Current DAG level: `null` is the overview, otherwise a line's root issue
+  /** Underlying DAG level: `null` is the overview, otherwise a line's root issue
    *  id ("independent:root" for the independent grid). Persisted per user,
    *  never written into saved views. */
   dagLineId: string | null;
+  /** Focus overlays the remembered overview/line level; persisted per user. */
+  dagFocusIssueId: string | null;
+  /** Selection to restore on exit; session only. */
+  dagFocusReturnSelection: string | null;
+  enterDagFocus: (issueId: string) => void;
+  exitDagFocus: () => void;
   /** Set when the user deliberately returns to the overview: suppresses the
    *  single-line auto-entry until they enter a line again. */
   dagOverviewPinned: boolean;
-  /** Last viewport per level key ("overview" / `line:<id>`). */
+  /** Last viewport per level key ("overview" / `line:<id>` / `focus:<id>`). */
   dagViewports: Record<string, DagViewport>;
   /** Session selection; excluded from persisted/shared view definitions. */
   dagSelectedNodeId: string | null;
@@ -454,6 +460,8 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   dagShowCompleted: false,
   dagShowSatisfiedDependencies: false,
   dagLineId: null,
+  dagFocusIssueId: null,
+  dagFocusReturnSelection: null,
   dagOverviewPinned: false,
   dagViewports: {},
   dagSelectedNodeId: null,
@@ -480,11 +488,28 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
     set((state) => ({
       dagShowSatisfiedDependencies: !state.dagShowSatisfiedDependencies,
     })),
+  enterDagFocus: (dagFocusIssueId) =>
+    set((state) => ({
+      dagFocusIssueId,
+      dagFocusReturnSelection: state.dagFocusIssueId
+        ? state.dagFocusReturnSelection : state.dagSelectedNodeId,
+      dagSelectedNodeId: null,
+      dagFocus: null,
+    })),
+  exitDagFocus: () =>
+    set((state) => ({
+      dagFocusIssueId: null,
+      dagSelectedNodeId: state.dagFocusReturnSelection,
+      dagFocusReturnSelection: null,
+      dagFocus: null,
+    })),
   setDagLineId: (dagLineId) =>
-    set({ dagLineId, dagSelectedNodeId: null, dagFocus: null }),
+    set({ dagLineId, dagFocusIssueId: null, dagFocusReturnSelection: null, dagSelectedNodeId: null, dagFocus: null }),
   enterDagLine: (dagLineId) =>
     set({
       dagLineId,
+      dagFocusIssueId: null,
+      dagFocusReturnSelection: null,
       dagOverviewPinned: false,
       dagSelectedNodeId: null,
       dagFocus: null,
@@ -492,6 +517,8 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   exitDagLine: (selectCardId) =>
     set({
       dagLineId: null,
+      dagFocusIssueId: null,
+      dagFocusReturnSelection: null,
       dagOverviewPinned: true,
       dagSelectedNodeId: selectCardId ?? null,
       dagFocus: null,
@@ -801,6 +828,7 @@ export const viewStorePersistOptions = (name: string) => ({
     dagShowCompleted: state.dagShowCompleted,
     dagShowSatisfiedDependencies: state.dagShowSatisfiedDependencies,
     dagLineId: state.dagLineId,
+    dagFocusIssueId: state.dagFocusIssueId,
     dagOverviewPinned: state.dagOverviewPinned,
     dagViewports: state.dagViewports,
   }),

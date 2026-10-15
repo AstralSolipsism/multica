@@ -9,9 +9,11 @@ import {
   type IssueViewState,
 } from "@multica/core/issues/stores/view-store";
 import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-context";
-import { computeDagLine, computeDagOverview, createDagModelIndex } from "@multica/core/issues/dag";
+import { computeDagFocus, computeDagLine, computeDagOverview, createDagModelIndex } from "@multica/core/issues/dag";
 import { renderWithI18n } from "../../test/i18n";
 import { DagSceneCanvasInner, type DagSceneCanvasProps } from "./dag-scene-canvas";
+import { dagFocusCanvasModel } from "./dag-scene-flow";
+import { fallbackDagScene } from "./dag-scene-fallback";
 import { dagLineLayoutInput, dagOverviewLayoutInput } from "./dag-scene-inputs";
 import type { DagSceneGeometry } from "./dag-scene";
 import { graphNode as makeNode, issueGraph as makeGraph } from "./dag-test-fixtures";
@@ -475,5 +477,38 @@ describe("DagSceneCanvas focus requests", () => {
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(store.getState().dagSelectedNodeId).toBeNull();
     expect(readTransform()).toBe(before);
+  });
+});
+
+
+describe("DagSceneCanvas focus level", () => {
+  it("gates focus requests until the focus scene paints, resolves frame fragments, and restores the line viewport", async () => {
+    const line = lineFixture();
+    const model = dagFocusCanvasModel(computeDagFocus(createDagModelIndex(makeGraph([
+      makeNode("root"), makeNode("child", { parentIssueId: "root" }), makeNode("up"),
+    ], [["up", "root"]])), "root"));
+    const geometry = fallbackDagScene(model.plan.input);
+    const { store, props, rerender } = harness(line, (s) => s.setState({ dagViewports: { "line:r1": { x: 33, y: 44, zoom: 0.9 } } }));
+    const request = { id: "root", level: "focus" as const, nonce: 1 };
+    const paint = (next: DagSceneCanvasProps) => rerender(
+      <ViewStoreProvider store={store}><ReactFlowProvider><DagSceneCanvasInner {...next} /></ReactFlowProvider></ViewStoreProvider>,
+    );
+    await waitFor(() => expect(screen.getByText("T-T1")).toBeInTheDocument());
+    paint({ ...props, focusRequest: request });
+    expect(store.getState().dagSelectedNodeId).toBeNull();
+    paint({ ...props, level: { kind: "focus", issueId: "root" }, model, plan: model.plan, geometry, focusRequest: request });
+    const frameId = model.plan.input.frames.find((frame) => frame.modelId === "root" && frame.side === "current")!.id;
+    await waitFor(() => expect(store.getState().dagSelectedNodeId).toBe(frameId));
+    const box = geometry.frames[frameId]!;
+    const expected = `translate(${700 - (box.x + box.width / 2) * 0.9}px,${450 - (box.y + box.height / 2) * 0.9}px) scale(0.9)`;
+    await waitFor(() => expect((document.querySelector(".react-flow__viewport") as HTMLElement).style.transform).toBe(expected));
+    // The queued React Flow node initialization must not fit the whole scene
+    // after the explicit focus viewport has been applied.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect((document.querySelector(".react-flow__viewport") as HTMLElement).style.transform).toBe(expected);
+    fireEvent.click(document.querySelector(`[data-dag-frame-header]`)!);
+    expect(store.getState().dagSelectedNodeId).toBe(frameId);
+    paint({ ...props, focusRequest: null });
+    await waitFor(() => expect((document.querySelector(".react-flow__viewport") as HTMLElement).style.transform).toBe("translate(33px,44px) scale(0.9)"));
   });
 });

@@ -52,3 +52,24 @@ describe("model to layout boundary", () => {
     expect(result.nodes.after!.x).toBeGreaterThan(result.frames[focused.id]!.x + result.frames[focused.id]!.width);
   });
 });
+
+describe("focus side assignment", () => {
+  it("places cyclic peers alongside the seed instead of arbitrarily upstream", () => {
+    const index = createDagModelIndex(issueGraph([graphNode("a"), graphNode("b"), graphNode("up"), graphNode("down")], [["a", "b"], ["b", "a"], ["up", "a"], ["b", "down"]]));
+    const plan = dagFocusLayoutInput(computeDagFocus(index, "a"));
+    expect(Object.fromEntries(plan.input.nodes.map((node) => [node.id, node.side]))).toEqual({ a: "current", b: "current", up: "upstream", down: "downstream" });
+  });
+
+  it("places a retained cancelled context ancestor on its descendant's side", () => {
+    const index = createDagModelIndex(issueGraph([
+      graphNode("cancelled", { status: "cancelled", statusCategory: "closed" }),
+      graphNode("child", { parentIssueId: "cancelled", status: "cancelled", statusCategory: "closed" }),
+      graphNode("seed"), graphNode("outside"), graphNode("waiter"),
+    ], [["seed", "child"], ["child", "waiter"], ["cancelled", "outside"]]));
+    const model = computeDagFocus(index, "seed");
+    expect(model.downstreamIds.has("cancelled")).toBe(false);
+    expect(model.upstreamIds.has("cancelled")).toBe(false);
+    const plan = dagFocusLayoutInput(model);
+    expect(plan.input.nodes.find((node) => node.id === "cancelled")?.side).toBe("downstream");
+  });
+});

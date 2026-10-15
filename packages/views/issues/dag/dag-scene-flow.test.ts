@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import {
+  computeDagFocus,
   computeDagLine,
   computeDagOverview,
   createDagModelIndex,
@@ -10,6 +11,7 @@ import {
 } from "@multica/core/issues/dag";
 import { graphNode as n, issueGraph as g } from "./dag-test-fixtures";
 import {
+  dagFocusCanvasModel,
   dagDependencyStates,
   dagDisplayedRoutes,
   dagFocusHiddenCount,
@@ -532,3 +534,18 @@ describe("dagSceneFlowNodes", () => {
   });
 });
 
+
+
+describe("focus scene adapter", () => {
+  it("resolves fragment selections to raw issues and paints satisfied/redundant dependencies", () => {
+    const index = createDagModelIndex(g([n("root"), n("a", { parentIssueId: "root", status: "done", statusCategory: "done" }), n("seed", { parentIssueId: "root" }), n("after")], [["a", "seed"], ["seed", "after"], ["a", "after"]]));
+    const model = dagFocusCanvasModel(computeDagFocus(index, "seed", true));
+    const currentFrame = model.plan.input.frames.find((frame) => frame.modelId === "root" && frame.side === "current")!;
+    expect(resolveDagSelection(model, currentFrame.id)).toMatchObject({ id: currentFrame.id, issueId: "root", focusFrameId: currentFrame.id });
+    expect(resolveDagSelection(model, "seed")).toMatchObject({ issueId: "seed", focusFrameId: currentFrame.id });
+    const states = dagDependencyStates(model);
+    expect(dagSceneEdgeDisplay(model.plan, "a-after", states, false)).toEqual({ state: "satisfied", count: 1 });
+    expect(model.plan.input.edges).toHaveLength(3);
+    expect(dagSceneStats(model, model.plan, false)).toEqual({ matched: 4, context: 0, edges: 3 });
+  });
+});

@@ -62,7 +62,28 @@ export function dagIndependentLayoutInput(tasks: readonly DagTask[]): DagScenePl
 }
 
 export function dagFocusLayoutInput(model: DagFocusModel): DagScenePlan {
-  const sideOf = (id: string): DagSceneSide => id === model.issueId ? "current" : model.upstreamIds.has(id) ? "upstream" : "downstream";
+  const sides = new Map<string, DagSceneSide>();
+  const members = model.groups.flatMap((group) => [...group.tasks.map((task) => task.issue), ...group.frames.map((frame) => frame.issue)]);
+  const parents = new Map(members.map((issue) => [issue.id, issue.parentIssueId]));
+  for (const issue of members) {
+    const upstream = model.upstreamIds.has(issue.id), downstream = model.downstreamIds.has(issue.id);
+    // Cycle members belong beside the current task: neither direction alone
+    // describes them. Context ancestors inherit their descendants' side below.
+    if (issue.id === model.issueId || (upstream && downstream)) sides.set(issue.id, "current");
+    else if (upstream || downstream) sides.set(issue.id, upstream ? "upstream" : "downstream");
+  }
+  const contextSides = new Map<string, DagSceneSide>();
+  for (const [id, side] of sides) {
+    const seen = new Set([id]);
+    let parent = parents.get(id);
+    while (parent && !seen.has(parent)) {
+      seen.add(parent);
+      const previous = contextSides.get(parent);
+      contextSides.set(parent, previous && previous !== side ? "current" : side);
+      parent = parents.get(parent);
+    }
+  }
+  const sideOf = (id: string): DagSceneSide => sides.get(id) ?? contextSides.get(id) ?? "current";
   const frames = model.groups.flatMap((group) => group.frames);
   const byId = new Map(frames.map((frame) => [frame.id, frame]));
   const input: DagScenePlan["input"] = { kind: "focus", id: model.issueId, nodes: [], frames: [], edges: [] };

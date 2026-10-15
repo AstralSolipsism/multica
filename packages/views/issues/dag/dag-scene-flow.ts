@@ -4,6 +4,7 @@ import {
   type DagDependencyState,
   type DagExternalGroup,
   type DagFrame,
+  type DagFocusModel,
   type DagLineModel,
   type DagOverviewCard,
   type DagOverviewModel,
@@ -11,14 +12,28 @@ import {
 } from "@multica/core/issues/dag";
 import type { DagFocusWay } from "@multica/core/issues/stores/view-store";
 import { dagExternalNodeId, type DagSceneFrameBox, type DagSceneGeometry, type DagScenePlan } from "./dag-scene";
+import { dagFocusLayoutInput } from "./dag-scene-inputs";
 import { routeDagOverlays } from "./dag-scene-geometry";
 
-/** What the canvas paints: exactly one of the two levels (the independent
+/** What the canvas paints: exactly one navigation level (the independent
  *  grid is a line level without frames or internal edges). */
 export type DagCanvasModel =
   | { kind: "overview"; overview: DagOverviewModel }
   | { kind: "line"; line: DagLineModel }
+  | { kind: "focus"; focus: DagFocusModel; tasks: DagTask[]; frames: DagFrame[]; plan: DagScenePlan }
   | { kind: "independent"; tasks: readonly DagTask[] };
+
+/** Fragment IDs belong to the scene; backing issues retain their raw identity. */
+export function dagFocusCanvasModel(focus: DagFocusModel): Extract<DagCanvasModel, { kind: "focus" }> {
+  const plan = dagFocusLayoutInput(focus);
+  const frames = new Map(focus.groups.flatMap((group) => group.frames).map((frame) => [frame.id, frame]));
+  const parents = new Map(plan.input.nodes.map((node) => [node.id, node.parentId]));
+  return {
+    kind: "focus", focus, plan,
+    frames: plan.input.frames.map((frame) => ({ ...frames.get(frame.modelId)!, id: frame.id, parentId: frame.parentId })),
+    tasks: focus.groups.flatMap((group) => group.tasks).map((task) => ({ ...task, parentId: parents.get(task.issue.id) ?? null })),
+  };
+}
 
 export interface DagOverviewCardData extends Record<string, unknown> {
   card: DagOverviewCard;
@@ -70,6 +85,8 @@ export function dagDependencyStates(
     ];
     for (const bundle of bundles)
       for (const dependency of bundle.dependencies) states.set(dependency.id, dependency.state);
+  } else if (model.kind === "focus") {
+    for (const dependency of model.focus.dependencies) states.set(dependency.id, dependency.state);
   } else if (model.kind === "line") {
     for (const dependency of model.line.dependencies) states.set(dependency.id, dependency.state);
     for (const side of ["upstream", "downstream"] as const)
@@ -236,8 +253,8 @@ export function resolveDagSelection(
       enterLineId: null,
       focusFrameId: task.parentId,
     };
-  if (model.kind === "line") {
-    const frame = model.line.frames.find((item) => item.id === selectedId);
+  if (model.kind === "line" || model.kind === "focus") {
+    const frame = (model.kind === "line" ? model.line.frames : model.frames).find((item) => item.id === selectedId);
     if (frame)
       return {
         kind: "frame",
@@ -279,6 +296,14 @@ export function dagSceneStats(
       }
     }
     return { matched, context, edges };
+  }
+  if (model.kind === "focus") {
+    const members = new Map([
+      ...model.tasks.map((task) => [task.issue.id, task.role] as const),
+      ...model.frames.map((frame) => [frame.issue.id, frame.contextOnly ? "context" : frame.issue.role] as const),
+    ]);
+    const matched = [...members.values()].filter((role) => role === "match").length;
+    return { matched, context: members.size - matched, edges: model.focus.dependencies.length };
   }
   if (model.kind === "line") {
     const members = model.line.input.members;
@@ -428,12 +453,13 @@ export function dagSceneFlowNodes(
     });
   }
   const nodes: DagCanvasFlowNode[] = [];
-  if (model.kind === "line") {
+  if (model.kind === "line" || model.kind === "focus") {
+    const detail = model.kind === "line" ? model.line : model;
     const stageLabels = new Map(
       Object.entries(geometry.frames).map(([id, box]) => [id, box.stageMode === "labels"] as const),
     );
     // Frames first (parents must precede children), shallowest before deepest.
-    const frameById = new Map(model.line.frames.map((frame) => [frame.id, frame]));
+    const frameById = new Map(detail.frames.map((frame) => [frame.id, frame]));
     const depth = (frame: DagFrame): number => {
       let d = 0;
       let current: DagFrame | undefined = frame;
@@ -445,7 +471,7 @@ export function dagSceneFlowNodes(
       }
       return d;
     };
-    const frames = [...model.line.frames].sort((a, b) => depth(a) - depth(b));
+    const frames = [...detail.frames].sort((a, b) => depth(a) - depth(b));
     for (const frame of frames) {
       const box = geometry.frames[frame.id];
       if (!box) continue;
@@ -470,7 +496,7 @@ export function dagSceneFlowNodes(
         style: { width: box.width, height: box.height },
       });
     }
-    for (const task of model.line.tasks) {
+    for (const task of detail.tasks) {
       const box = geometry.nodes[task.issue.id];
       if (!box) continue;
       const { parentId, ...position } = relativePosition(box, task.parentId, geometry);
@@ -493,7 +519,7 @@ export function dagSceneFlowNodes(
         zIndex: 2,
       });
     }
-    for (const side of ["upstream", "downstream"] as const) {
+    if (model.kind === "line") for (const side of ["upstream", "downstream"] as const) {
       for (const group of model.line[side]) {
         const id = dagExternalNodeId(side, group.id);
         const box = geometry.nodes[id];

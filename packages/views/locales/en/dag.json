@@ -75,5 +75,10 @@
   "external_from": "From",
   "external_to": "To",
   "external_jump_hint": "Click to jump there",
-  "focus_line": "Focus issue group"
+  "focus_line": "Focus issue group",
+  "focus_mode": "Focus mode",
+  "focus_breadcrumb": "Focus {{identifier}}",
+  "exit_focus": "Exit focus mode",
+  "focus_unavailable": "The focused issue is no longer in this view. Returned to the previous level.",
+  "focus_current_hidden": "The focused issue is hidden. Enable Show completed to see it."
 }
