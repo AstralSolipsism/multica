@@ -4468,6 +4468,9 @@ WHERE session_id NOT IN (SELECT session_id FROM retired_sessions)
       -- daemon's in-turn fresh-session retry reads (GH #6777). This guard stays
       -- because it is the only protection for rows an older daemon wrote.
       AND NOT (COALESCE(error, '') ILIKE '%could not resolve authentication method%')
+      -- Provider-independent oversized request guard; see taskfailure.OversizedRequest.
+      AND NOT (COALESCE(error, '') ~* '(message|request|payload) size.{0,80}exceeds.{0,40}limit'
+               AND COALESCE(error, '') ~* '(^|[^0-9])400([^0-9]|$)|FAILED_PRECONDITION|INVALID_ARGUMENT')
       AND NOT (COALESCE(error, '') ~* 'must not be empty|must be non-?empty|must have non-?empty|non-?empty content|cannot be empty|should not be empty'
                AND COALESCE(error, '') ~* 'role[^a-z0-9]{0,2}assistant|assistant message|message at position|messages\.[0-9]|messages\[[0-9]')
     )
@@ -4662,6 +4665,42 @@ func (q *Queries) GetLatestChatTaskRolloutMissing(ctx context.Context, arg GetLa
 	var session_rollout_missing bool
 	err := row.Scan(&session_rollout_missing)
 	return session_rollout_missing, err
+}
+
+const getLatestIssueSessionCandidate = `-- name: GetLatestIssueSessionCandidate :one
+WITH history AS (
+    SELECT session_id, work_dir,
+           COALESCE(completed_at, started_at, dispatched_at, created_at) AS terminal_at
+    FROM agent_task_queue
+    WHERE agent_id = $1 AND issue_id = $2
+      AND COALESCE(context->>'type', '') <> 'triage'
+      AND status IN ('completed', 'failed', 'cancelled')
+)
+SELECT session_id, (SELECT work_dir FROM history WHERE work_dir IS NOT NULL AND work_dir <> '' ORDER BY terminal_at DESC LIMIT 1) AS work_dir
+FROM history
+WHERE session_id IS NOT NULL
+ORDER BY terminal_at DESC
+LIMIT 1
+`
+
+type GetLatestIssueSessionCandidateParams struct {
+	AgentID pgtype.UUID `json:"agent_id"`
+	IssueID pgtype.UUID `json:"issue_id"`
+}
+
+type GetLatestIssueSessionCandidateRow struct {
+	SessionID pgtype.Text `json:"session_id"`
+	WorkDir   pgtype.Text `json:"work_dir"`
+}
+
+// Unfiltered counterpart of GetLastTaskSession. Comparing the two session IDs
+// reveals an excluded latest session without duplicating the resume guards.
+// The workdir comes from the most recent run, independently of its session.
+func (q *Queries) GetLatestIssueSessionCandidate(ctx context.Context, arg GetLatestIssueSessionCandidateParams) (GetLatestIssueSessionCandidateRow, error) {
+	row := q.db.QueryRow(ctx, getLatestIssueSessionCandidate, arg.AgentID, arg.IssueID)
+	var i GetLatestIssueSessionCandidateRow
+	err := row.Scan(&i.SessionID, &i.WorkDir)
+	return i, err
 }
 
 const getLatestTaskRoleForIssueAndAgent = `-- name: GetLatestTaskRoleForIssueAndAgent :one

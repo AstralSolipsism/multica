@@ -2974,7 +2974,8 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				if src.WorkDir.Valid {
 					resp.PriorWorkDir = src.WorkDir.String
 				}
-				if !service.ResumeUnsafeFailure(src.FailureReason.String, src.Error.String) &&
+				resumeUnsafe := service.ResumeUnsafeFailure(src.FailureReason.String, src.Error.String)
+				if !resumeUnsafe &&
 					src.SessionID.Valid && src.RuntimeID == task.RuntimeID {
 					resp.PriorSessionID = src.SessionID.String
 					// The deltas date from the run we actually resume, which on
@@ -2983,10 +2984,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					// delivered its prompt to the provider (MUL-7344).
 					resumeAnchor = newResumedRunAnchor(src.Status, src.StartedAt, src.IssueSnapshot)
 				}
-				// MUL-5305: if the source task withheld its Codex session because
-				// the rollout was missing, this rerun has nothing resumable from it
-				// — disclose the gap rather than silently starting fresh.
-				if src.SessionRolloutMissing {
+				// A missing rollout or an unsafe source session loses the source
+				// turn's working memory even though its files remain available.
+				if src.SessionRolloutMissing || (src.SessionID.Valid && resumeUnsafe) {
 					resp.PriorSessionResumeUnavailable = true
 				}
 			} else if err == nil {
@@ -3006,10 +3006,11 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			// context across turns. The "Focus on THIS comment" guard in
 			// prompt.go defends against inheriting the prior turn's "Done."
 			// marker, and GetLastTaskSession already excludes poisoned sessions.
-			if prior, err := h.Queries.GetLastTaskSession(r.Context(), db.GetLastTaskSessionParams{
+			prior, priorErr := h.Queries.GetLastTaskSession(r.Context(), db.GetLastTaskSessionParams{
 				AgentID: task.AgentID,
 				IssueID: task.IssueID,
-			}); err == nil && prior.SessionID.Valid {
+			})
+			if priorErr == nil && prior.SessionID.Valid {
 				if prior.RuntimeID == task.RuntimeID {
 					resp.PriorSessionID = prior.SessionID.String
 					// Same rule as the rerun path: date the deltas from the run
@@ -3024,6 +3025,20 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					resp.PriorWorkDir = prior.WorkDir.String
 				}
 			}
+			// Compare before runtime gating: a session on another runtime is
+			// unavailable locally, but was not excluded by the resume filters.
+			if priorErr == nil || errors.Is(priorErr, pgx.ErrNoRows) {
+				if latest, err := h.Queries.GetLatestIssueSessionCandidate(r.Context(), db.GetLatestIssueSessionCandidateParams{
+					AgentID: task.AgentID,
+					IssueID: task.IssueID,
+				}); err == nil && latest.SessionID != prior.SessionID {
+					resp.PriorSessionResumeUnavailable = true
+					if errors.Is(priorErr, pgx.ErrNoRows) && requestHasClientCapability(r, protocol.DaemonCapabilityCheckoutKeepsWorkV1) {
+						resp.PriorWorkDir = latest.WorkDir.String
+					}
+				}
+			}
+
 			// MUL-5305: if the most recent terminal task withheld its Codex
 			// session because the rollout was missing, GetLastTaskSession fell
 			// back to an older session (or none). Disclose the continuity gap so
@@ -3056,9 +3071,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// continuing on stale requirements with nothing to signal it.
 		//
 		// PriorSessionResumeUnavailable is deliberately NOT consulted here. It
-		// flags a Codex rollout that went missing, which is only one of the ways
-		// the resumed session can be older than the newest run; the daemon
-		// applies it as its own separate gate.
+		// flags missing rollouts and sessions excluded by resume-safety checks.
+		// Neither determines the adopted session's delta anchor; the daemon
+		// applies the continuity notice as its own separate gate.
 		//
 		// newResumedRunAnchor already rejected every source that cannot date a
 		// delta — anything that did not finish a turn, and so never proved the
@@ -3222,6 +3237,19 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			if task.ChannelContextRevision.Valid {
 				contextRevision = task.ChannelContextRevision
 			}
+			latest, latestErr := h.Queries.GetLatestChatSessionCandidate(r.Context(), db.GetLatestChatSessionCandidateParams{
+				ChatSessionID:          cs.ID,
+				ChannelContextRevision: contextRevision,
+			})
+			// A complete chat pointer can still name an older healthy session,
+			// or a poisoned session left by a server predating the fail-time clear.
+			// Disclose the gap in either case, retaining the workdir.
+			if latestErr == nil && (latest.Retired || (latest.Status == "failed" && service.ResumeUnsafeFailure(latest.FailureReason.String, latest.Error.String))) {
+				resp.PriorSessionResumeUnavailable = true
+				if resp.PriorSessionID == latest.SessionID.String {
+					resp.PriorSessionID = ""
+				}
+			}
 			// GetLastChatTaskSession currently has exactly two consumers: the
 			// prior session and prior workdir fields. Keep this guard coupled to
 			// both so adding a third consumer cannot silently skip its fallback.
@@ -3236,6 +3264,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					ChannelContextRevision: contextRevision,
 				})
 				h.Metrics.ObserveChatClaimLastSessionQuery(time.Since(started).Seconds())
+				if (err == nil || errors.Is(err, pgx.ErrNoRows)) && latestErr == nil && latest.SessionID != prior.SessionID {
+					resp.PriorSessionResumeUnavailable = true
+				}
 				switch {
 				case err == nil && prior.SessionID.Valid:
 					h.Metrics.RecordChatClaimSessionFallbackHit()

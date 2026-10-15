@@ -440,6 +440,28 @@ func TestResumedCommentsHintSkipsDefaultThreadRead(t *testing.T) {
 	}
 }
 
+func TestSessionContinuityNoticesPreserveWorkdirWarning(t *testing.T) {
+	for name, notice := range map[string]string{
+		"issue":           SessionContinuityNoticeIssue,
+		"channel history": SessionContinuityNoticeChannelHistory,
+		"chat transcript": SessionContinuityNoticeChatTranscript,
+		"unrecoverable":   SessionContinuityNoticeUnrecoverable,
+	} {
+		t.Run(name, func(t *testing.T) {
+			// Keep the expected copy independent of the shared constant so a
+			// removed warning cannot silently change both sides of this assertion.
+			for _, want := range []string{
+				"Files in the working directory may be left over from earlier runs, including unfinished changes from an interrupted run.",
+				"Inspect them before continuing work on top of them.",
+			} {
+				if !strings.Contains(notice, want) {
+					t.Errorf("continuity notice missing %q", want)
+				}
+			}
+		})
+	}
+}
+
 // The continuity notice moved out of the brief and into the per-turn prompt
 // (MUL-5377) because it is true of one run and false of the next.
 func TestSessionContinuityNoticeLivesOutsideBrief(t *testing.T) {
