@@ -89,3 +89,15 @@ var emptyContentRe = regexp.MustCompile(`(?i)must not be empty|must be non-?empt
 // text guard server-side for rows an older daemon classified as
 // agent_error.unknown.
 var historyMessageLocatorRe = regexp.MustCompile(`(?i)role[^a-z0-9]{0,2}assistant|assistant message|message at position|messages\.[0-9]|messages\[[0-9]`)
+
+// OversizedRequest identifies a provider rejecting the size of the conversation
+// request. Both the size complaint and a rejection witness are required: a file
+// upload limit, quota error, or a byte count containing 400 is not enough.
+// Keep these patterns in sync with both SQL resume queries.
+func OversizedRequest(errText string) bool {
+	return oversizedRequestSizeRe.MatchString(errText) && oversizedRequestRejectionRe.MatchString(errText)
+}
+
+// (?s) matches PostgreSQL's default dot behavior, including newlines.
+var oversizedRequestSizeRe = regexp.MustCompile(`(?is)(message|request|payload) size.{0,80}exceeds.{0,40}limit`)
+var oversizedRequestRejectionRe = regexp.MustCompile(`(?i)(^|[^0-9])400([^0-9]|$)|FAILED_PRECONDITION|INVALID_ARGUMENT`)

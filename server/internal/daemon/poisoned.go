@@ -163,7 +163,7 @@ func classifyPoisonedError(errMsg string) (string, bool) {
 	// (GH #6066, GH #5760). taskfailure.UnresumableHistory recognises the
 	// defect by what the provider says is wrong rather than by which
 	// provider said it.
-	if taskfailure.UnresumableHistory(errMsg) {
+	if taskfailure.UnresumableHistory(errMsg) || taskfailure.OversizedRequest(errMsg) {
 		return FailureReasonAPIInvalidRequest, true
 	}
 	return "", false

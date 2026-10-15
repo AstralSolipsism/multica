@@ -424,13 +424,11 @@ type AgentTaskResponse struct {
 	CreatedAt            string                `json:"created_at"`
 	PriorSessionID       string                `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
 	PriorWorkDir         string                `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
-	// PriorSessionResumeUnavailable is set when a more recent Codex session was
-	// withheld because its rollout was missing (MUL-5305); PriorSessionID (if
-	// any) is then an older fallback, and the daemon surfaces the continuity gap
-	// in the brief even when that older session resumes cleanly. It is also set
-	// when an automatic retry continues in its parent's workdir under a fresh
-	// session (MUL-7034). omitempty keeps it off the wire for the common
-	// (no-gap) case and for old daemons.
+	// PriorSessionResumeUnavailable discloses missing conversation context:
+	// a prior rollout was missing, the latest session was unsafe or retired,
+	// or a retry must start fresh. PriorSessionID may name an older healthy
+	// fallback; that does not restore the excluded turns' working memory.
+	// omitempty keeps the field off the wire for ordinary follow-ups.
 	PriorSessionResumeUnavailable bool   `json:"prior_session_resume_unavailable,omitempty"`
 	WorkDir                       string `json:"work_dir,omitempty"` // local working directory pinned for this task; populated once the daemon reports it
 	// RelativeWorkDir is a privacy-safe display form of WorkDir intended for
