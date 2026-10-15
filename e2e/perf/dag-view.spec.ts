@@ -769,7 +769,31 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     await card.dispatchEvent("click");
     await expect(page.locator("[data-dag-label]")).toBeVisible();
     await card.dispatchEvent("dblclick");
+    // Entering restores the line's remembered viewport — after the gesture
+    // samples it can sit anywhere in a very wide scene, and React Flow's
+    // viewport culling keeps the target card unmounted. Sweep a grid with
+    // the public wheel-pan until it mounts.
     const task = page.locator(`[${target.is_frame ? "data-dag-frame-header" : "data-dag-task"}="${target.is_frame ? target.id : target.identifier}"]`);
+    await expect(page.locator("[data-dag-task]").first()).toBeVisible({ timeout: 20_000 });
+    {
+      const pane = (await page.locator(".react-flow__pane").boundingBox())!;
+      await page.mouse.move(pane.x + pane.width / 2, pane.y + pane.height / 2);
+      const targetVisible = () => task.count();
+      // Pan into a corner of the padded translate extent first (wheel pans
+      // clamp at its edges), then tile the extent: narrow y bands with full
+      // boustrophedon x sweeps. A single 1600px y hop can jump from "whole
+      // scene visible" to "only padding visible" in very wide scenes.
+      for (let i = 0; i < 20 && (await targetVisible()) === 0; i++) await page.mouse.wheel(0, 3200);
+      for (let i = 0; i < 30 && (await targetVisible()) === 0; i++) await page.mouse.wheel(-3200, 0);
+      for (let band = 0; band < 16 && (await targetVisible()) === 0; band++) {
+        const dx = band % 2 === 0 ? 3200 : -3200;
+        for (let i = 0; i < 60 && (await targetVisible()) === 0; i++) {
+          await page.mouse.wheel(dx, 0);
+          await page.waitForTimeout(40);
+        }
+        if ((await targetVisible()) === 0) await page.mouse.wheel(0, -600);
+      }
+    }
     await task.waitFor({ timeout: 20_000 });
     await task.dispatchEvent("click");
     await expect(page.locator("[data-dag-label]")).toContainText(target.identifier);
