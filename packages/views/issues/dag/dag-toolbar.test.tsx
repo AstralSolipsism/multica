@@ -431,8 +431,9 @@ describe("DagToolbar overflow", () => {
         <DagToolbar {...baseProps} />
       </ViewStoreProvider>,
     );
-    // Zone 680: five actions fit (630 used); the hint adds fixed width.
-    m.sizes.zone = 680;
+    // Zone 744: five actions fit (694 used with the scope tag's fixed width);
+    // the hint adds fixed width.
+    m.sizes.zone = 744;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit", "assign"]);
     rerender(
@@ -452,7 +453,7 @@ describe("DagToolbar overflow", () => {
     // The collapsed More trigger keeps the bar wider than the hysteresis, so
     // the same width holds — the action returns once real slack appears.
     expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit"]);
-    m.sizes.zone = 740;
+    m.sizes.zone = 804;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit", "assign"]);
   });
@@ -460,15 +461,15 @@ describe("DagToolbar overflow", () => {
   it("does not restore while the slack stays below the hysteresis", () => {
     const m = stubMetrics();
     harness({ selection: TASK });
-    m.sizes.zone = 500;
+    m.sizes.zone = 564;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream"]);
-    // A third action would fit (514 ≤ 520), but only by 6px of slack.
-    m.sizes.zone = 520;
+    // A third action would fit (578 ≤ 584), but only by 6px of slack.
+    m.sizes.zone = 584;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream"]);
     // Once the slack clears the hysteresis, the action comes back.
-    m.sizes.zone = 580;
+    m.sizes.zone = 644;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream", "downstream"]);
   });
@@ -478,12 +479,12 @@ describe("DagToolbar overflow", () => {
     // indicator showing) must not stick once the zone settles wider.
     const m = stubMetrics();
     harness({ selection: TASK });
-    m.sizes.zone = 500;
+    m.sizes.zone = 564;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream"]);
-    // Widening by 56px (≥ 48) refits: a third action fits (514 ≤ 556) even
+    // Widening by 56px (≥ 48) refits: a third action fits (578 ≤ 620) even
     // though the remaining 42px of slack is below the hysteresis.
-    m.sizes.zone = 556;
+    m.sizes.zone = 620;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream", "downstream"]);
   });
@@ -562,10 +563,10 @@ describe("DagToolbar overflow", () => {
     // Collapse to two actions, then widen just short of the restore
     // hysteresis: a third action fits (514 ≤ 520) but the slack stays
     // below 48px, so the count holds.
-    m.sizes.zone = 500;
+    m.sizes.zone = 564;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream"]);
-    m.sizes.zone = 520;
+    m.sizes.zone = 584;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream"]);
     // Switching to another task with the same five actions must reset the
@@ -584,10 +585,10 @@ describe("DagToolbar overflow", () => {
     harness({ selection: TASK });
     const region = screen.getByRole("region", { name: "Selection" });
     expect(within(region).getByRole("button", { name: "Retry" })).toBeInTheDocument();
-    // The retry button adds 60px of fixed width: 120 fixed + 96 label + 28
-    // gaps leaves room for four actions (664 ≤ 690) but not five (694 > 690).
-    // Uncounted, all five would fit (634 ≤ 690) and More would not render.
-    m.sizes.zone = 690;
+    // The retry button and the scope tag add 120px of fixed width: 240 fixed +
+    // 96 label + 36 gaps leaves room for four actions (732 ≤ 754) but not five
+    // (822 > 754). Uncounted, all five would fit and More would not render.
+    m.sizes.zone = 754;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream", "downstream", "edit"]);
   });

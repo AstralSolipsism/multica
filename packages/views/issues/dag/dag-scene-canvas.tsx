@@ -502,6 +502,7 @@ export function DagSceneCanvasInner({
       // click, so the store always reports the node as already selected and
       // every first click would wrongly arm the cycle.
       if (selectedNodeId !== node.id) {
+        cycleRollback.current = null;
         storeApi.getState().setDagSelectedNodeId(node.id);
         return;
       }
@@ -510,14 +511,17 @@ export function DagSceneCanvasInner({
         const current = storeApi.getState();
         if (current.dagSelectedNodeId !== node.id) return;
         const focus = current.dagFocus;
-        // Remember the pre-switch state: a double-click arriving right after
-        // (a slow one, inside the system's double-click time) rolls it back.
-        cycleRollback.current = { nodeId: node.id, previousFocus: focus, at: Date.now() };
-        current.setDagFocus(
-          focus?.nodeId === node.id && focus.way === "both"
-            ? null
-            : { nodeId: node.id, way: "both" },
-        );
+        const switchingToBoth = !(focus?.nodeId === node.id && focus.way === "both");
+        // Only a switch TO the closure gets a rollback token: a double-click
+        // arriving right after (a slow one, inside the system's double-click
+        // time) restores the previous state. Switching back to one layer
+        // completes the cycle — nothing to roll back.
+        if (switchingToBoth) {
+          cycleRollback.current = { nodeId: node.id, previousFocus: focus, at: Date.now() };
+        } else {
+          cycleRollback.current = null;
+        }
+        current.setDagFocus(switchingToBoth ? { nodeId: node.id, way: "both" } : null);
       }, DAG_CLICK_CYCLE_MS);
     },
     [cancelCycle, selectedNodeId, storeApi],

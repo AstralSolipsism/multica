@@ -12,6 +12,7 @@ async function bootGraph(page: Page, api: TestApiClient, workspace: { id: string
   const token = api.getToken()!;
   await page.context().addCookies([{ name: "multica-locale", value: "en", url: baseURL }]);
   await page.addInitScript((value) => localStorage.setItem("multica_token", value), token);
+
   await page.goto(`/${workspace.slug}/issues`, { waitUntil: "domcontentloaded" });
   const mode = page.getByRole("button", { name: /^(Board|List|Table|Graph)$/ }).first();
   await expect(mode).toBeVisible({ timeout: 30_000 });
@@ -113,7 +114,6 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
     await setBlockedBy(api, workspace.id, b.id, [a.id]);
     await setBlockedBy(api, workspace.id, c.id, [a.id, b.id]);
     await setBlockedBy(api, workspace.id, d.id, [c.id]);
-
     await bootGraph(page, api, workspace, baseURL!);
     // Overview: two line cards plus the independent group.
     const cards = page.locator("[data-dag-overview-card]");

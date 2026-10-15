@@ -895,6 +895,35 @@ describe("DagSceneCanvas Stage 10 interactions", () => {
     expect(store.getState().dagFocus).toEqual({ nodeId: "issue:r2", way: "upstream" });
   });
 
+  it("a double-click right after returning to one layer does not resurrect the closure", async () => {
+    const { store, props } = harness(overviewFixture());
+    const card = await screen.findByText("Line one");
+    const node = card.closest(".react-flow__node")!;
+    fireEvent.click(node);
+    vi.useFakeTimers();
+    try {
+      // Up to the closure, back to one layer — then a double-click within the
+      // rollback window must not bring the closure back.
+      fireEvent.click(node);
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+      expect(store.getState().dagFocus).toEqual({ nodeId: "issue:r1", way: "both" });
+      fireEvent.click(node);
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+      expect(store.getState().dagFocus).toBeNull();
+      fireEvent.click(node, { detail: 1 });
+      fireEvent.click(node, { detail: 2 });
+      fireEvent.doubleClick(node);
+      expect(props.onEnterLine).toHaveBeenCalledWith("r1");
+      expect(store.getState().dagFocus).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("swaps to simplified blocks exactly at the 0.4 threshold, not at a rounded step", async () => {
     const { flow } = harness(overviewFixture());
     await waitFor(() => expect(screen.getByText("Line one")).toBeInTheDocument());

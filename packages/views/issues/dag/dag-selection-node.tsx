@@ -191,26 +191,26 @@ export function DagNodeSelection({
     <div ref={zoneRef} data-dag-zone className="flex min-w-0 flex-1 items-center gap-1">
       <span
         data-dag-label
-        className="flex max-w-56 min-w-0 shrink items-center gap-1.5 px-1 text-caption font-medium text-foreground"
+        className="max-w-56 shrink truncate px-1 text-caption font-medium text-foreground"
         title={label ?? undefined}
       >
-        <span className="min-w-0 truncate">
-          {target.identifier && (
-            <span className="mr-1.5 tabular-nums text-muted-foreground">
-              {target.identifier}
-            </span>
-          )}
-          {label}
-        </span>
-        {scopeTag && (
+        {target.identifier && (
+          <span className="mr-1.5 tabular-nums text-muted-foreground">
+            {target.identifier}
+          </span>
+        )}
+        {label}
+      </span>
+      {scopeTag && (
+        <span data-dag-fixed className="inline-flex shrink-0">
           <span
             data-dag-scope
-            className="shrink-0 rounded-full bg-muted/60 px-1.5 py-0.5 text-micro font-normal text-muted-foreground"
+            className="rounded-full bg-muted/60 px-1.5 py-0.5 text-micro font-normal text-muted-foreground"
           >
             {scopeTag}
           </span>
-        )}
-      </span>
+        </span>
+      )}
       {visibleKeys.map((key) => (
         <span key={key} data-dag-action={key} className="inline-flex shrink-0">
           {actionNodes[key]}
