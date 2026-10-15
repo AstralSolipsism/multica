@@ -24,14 +24,19 @@ export const DagFrameNode = memo(
   function DagFrameNode({ data }: NodeProps<DagFrameFlowNode>) {
     const { t } = useT("dag");
     const storeApi = useViewStoreApi();
-    const { frame, box, selected } = data;
+    const { frame, box } = data;
     const { issue } = frame;
     const statusCategory = (issue.statusCategory as IssueStatusCategory) || "unstarted";
+    if (data.simplified) {
+      // Zoomed out past readability: the edge layer paints this frame as an
+      // SVG rect; the DOM node stays as the interaction shell (OL-183 §7).
+      return <div className="h-full w-full" data-dag-frame={frame.id} />;
+    }
     return (
       <div
         className={cn(
-          "pointer-events-none relative h-full w-full rounded-lg border",
-          selected ? "border-brand/70 ring-1 ring-brand/20" : "border-muted-foreground/25",
+          "pointer-events-none relative h-full w-full rounded-lg border transition-opacity",
+          "border-muted-foreground/25",
         )}
         data-dag-frame={frame.id}
       >
@@ -73,7 +78,7 @@ export const DagFrameNode = memo(
                 className="h-1 w-12 shrink-0 overflow-hidden rounded-full bg-muted"
               >
                 <span
-                  className="block h-full bg-success/60"
+                  className="block h-full bg-info/60"
                   style={{
                     width: `${frame.progress.total ? (frame.progress.completed / frame.progress.total) * 100 : 0}%`,
                   }}

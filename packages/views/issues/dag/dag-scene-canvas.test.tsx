@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { ReactFlowProvider, useReactFlow, useStoreApi } from "@xyflow/react";
 import { createStore } from "zustand/vanilla";
 import type { StoreApi } from "zustand/vanilla";
@@ -183,6 +183,7 @@ function harness(
     projectNames: new Map(),
     showSatisfied: true,
     focusRequest: null,
+    locateRequest: null,
     onEnterLine: vi.fn(),
     onOpenIssue: vi.fn(),
     onExternalJump: vi.fn(),
@@ -213,7 +214,11 @@ describe("DagSceneCanvas overview", () => {
     expect(screen.getByText("Line two")).toBeInTheDocument();
     const layer = document.querySelector("[data-dag-edge-layer]")!;
     // Three painted segments for the single bundle and its count badge.
-    expect(layer.querySelectorAll("line")).toHaveLength(3);
+    expect(
+      [...layer.querySelectorAll("[data-dag-segments]")].flatMap((el) =>
+        (el.getAttribute("data-dag-segments") ?? "").split(" ").filter(Boolean),
+      ),
+    ).toHaveLength(3);
     expect(layer.querySelector("text")).toHaveTextContent("2");
   });
 
@@ -374,6 +379,7 @@ describe("DagSceneCanvas focus requests", () => {
             projectNames={new Map()}
             showSatisfied
             focusRequest={{ id: "sub", level: "line", nonce: 1 }}
+            locateRequest={null}
             onEnterLine={vi.fn()}
             onOpenIssue={vi.fn()}
             onExternalJump={vi.fn()}
@@ -407,6 +413,7 @@ describe("DagSceneCanvas focus requests", () => {
             projectNames={new Map()}
             showSatisfied
             focusRequest={request}
+            locateRequest={null}
             onEnterLine={vi.fn()}
             onOpenIssue={vi.fn()}
             onExternalJump={vi.fn()}
@@ -428,6 +435,7 @@ describe("DagSceneCanvas focus requests", () => {
             projectNames={new Map()}
             showSatisfied
             focusRequest={request}
+            locateRequest={null}
             onEnterLine={vi.fn()}
             onOpenIssue={vi.fn()}
             onExternalJump={vi.fn()}
@@ -455,6 +463,7 @@ describe("DagSceneCanvas focus requests", () => {
             projectNames={new Map()}
             showSatisfied
             focusRequest={request}
+            locateRequest={null}
             onEnterLine={vi.fn()}
             onOpenIssue={vi.fn()}
             onExternalJump={vi.fn()}
@@ -475,5 +484,289 @@ describe("DagSceneCanvas focus requests", () => {
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(store.getState().dagSelectedNodeId).toBeNull();
     expect(readTransform()).toBe(before);
+  });
+});
+
+// ---- Stage 10: click/hover highlight, bus click, zoom degradation -----------
+
+/** OL-280 option B's example: A→X, A→Y, B→Y with shared bus intervals at A's
+ *  output and Y's input. */
+function abxyFixture() {
+  const graph = makeGraph(
+    [
+      makeNode("r1", { title: "Line one" }),
+      makeNode("a", { parentIssueId: "r1" }),
+      makeNode("b", { parentIssueId: "r1" }),
+      makeNode("x", { parentIssueId: "r1" }),
+      makeNode("y", { parentIssueId: "r1" }),
+    ],
+    [
+      { id: "a-x", source: "a", target: "x" },
+      { id: "a-y", source: "a", target: "y" },
+      { id: "b-y", source: "b", target: "y" },
+    ],
+  );
+  const line = computeDagLine(createDagModelIndex(graph), "r1")!;
+  const plan = dagLineLayoutInput(line);
+  const geometry: DagSceneGeometry = {
+    nodes: {
+      a: { x: 60, y: 40, width: 248, height: 116 },
+      b: { x: 60, y: 300, width: 248, height: 116 },
+      x: { x: 500, y: 40, width: 248, height: 116 },
+      y: { x: 500, y: 300, width: 248, height: 116 },
+    },
+    frames: {
+      r1: { x: 0, y: 0, width: 820, height: 480, bands: [], stageMode: "labels" },
+    },
+    ports: {
+      a: { input: { x: 60, y: 98 }, output: { x: 308, y: 98 } },
+      b: { input: { x: 60, y: 358 }, output: { x: 308, y: 358 } },
+      x: { input: { x: 500, y: 98 }, output: { x: 748, y: 98 } },
+      y: { input: { x: 500, y: 358 }, output: { x: 748, y: 358 } },
+    },
+    routes: {
+      "a-x": [
+        { x: 308, y: 98 },
+        { x: 404, y: 98 },
+        { x: 500, y: 98 },
+      ],
+      "a-y": [
+        { x: 308, y: 98 },
+        { x: 404, y: 98 },
+        { x: 404, y: 358 },
+        { x: 500, y: 358 },
+      ],
+      "b-y": [
+        { x: 308, y: 358 },
+        { x: 404, y: 358 },
+        { x: 500, y: 358 },
+      ],
+    },
+    segments: [
+      { id: "s0", start: { x: 308, y: 98 }, end: { x: 404, y: 98 }, edgeIds: ["a-x", "a-y"] },
+      { id: "s1", start: { x: 404, y: 98 }, end: { x: 500, y: 98 }, edgeIds: ["a-x"] },
+      { id: "s2", start: { x: 404, y: 98 }, end: { x: 404, y: 358 }, edgeIds: ["a-y"] },
+      { id: "s3", start: { x: 308, y: 358 }, end: { x: 404, y: 358 }, edgeIds: ["b-y"] },
+      { id: "s4", start: { x: 404, y: 358 }, end: { x: 500, y: 358 }, edgeIds: ["a-y", "b-y"] },
+    ],
+    junctions: [
+      { x: 404, y: 98, edgeIds: ["a-x", "a-y"] },
+      { x: 404, y: 358, edgeIds: ["a-y", "b-y"] },
+    ],
+    width: 820,
+    height: 480,
+    quality: "elk",
+  };
+  return { model: { kind: "line" as const, line }, plan, geometry };
+}
+
+const nodeOf = (id: string) =>
+  document.querySelector(`.react-flow__node[data-id="${id}"]`)!;
+// A lit card/frame punches a hole through the dim overlay; a dimmed one has none.
+const cardLit = (id: string) =>
+  !!document.querySelector(`[data-dag-dim-hole="${id}"]`);
+const dimOverlay = () => document.querySelector("[data-dag-dim-overlay]");
+const litRouteGroups = () =>
+  document.querySelectorAll("[data-dag-lit-edge]").length;
+const baseGroupClass = () =>
+  document.querySelector("[data-dag-edge-layer] > g")!.getAttribute("class") ?? "";
+
+/** A depth-3 chain A→Y→Z→W: Y's one layer is {A→Y, Y→Z}, its full upstream +
+ *  downstream adds {Z→W} — the click cycle's two scopes differ observably. */
+function chainFixture() {
+  const graph = makeGraph(
+    [
+      makeNode("r1", { title: "Line one" }),
+      makeNode("a", { parentIssueId: "r1" }),
+      makeNode("y", { parentIssueId: "r1" }),
+      makeNode("z", { parentIssueId: "r1" }),
+      makeNode("w", { parentIssueId: "r1" }),
+    ],
+    [
+      { id: "a-y", source: "a", target: "y" },
+      { id: "y-z", source: "y", target: "z" },
+      { id: "z-w", source: "z", target: "w" },
+    ],
+  );
+  const line = computeDagLine(createDagModelIndex(graph), "r1")!;
+  const plan = dagLineLayoutInput(line);
+  const geometry: DagSceneGeometry = {
+    nodes: {
+      a: { x: 60, y: 40, width: 248, height: 116 },
+      y: { x: 340, y: 40, width: 248, height: 116 },
+      z: { x: 620, y: 40, width: 248, height: 116 },
+      w: { x: 900, y: 40, width: 248, height: 116 },
+    },
+    frames: {
+      r1: { x: 0, y: 0, width: 1220, height: 220, bands: [], stageMode: "labels" },
+    },
+    ports: {
+      a: { input: { x: 60, y: 98 }, output: { x: 308, y: 98 } },
+      y: { input: { x: 340, y: 98 }, output: { x: 588, y: 98 } },
+      z: { input: { x: 620, y: 98 }, output: { x: 868, y: 98 } },
+      w: { input: { x: 900, y: 98 }, output: { x: 1148, y: 98 } },
+    },
+    routes: {
+      "a-y": [
+        { x: 308, y: 98 },
+        { x: 340, y: 98 },
+      ],
+      "y-z": [
+        { x: 588, y: 98 },
+        { x: 620, y: 98 },
+      ],
+      "z-w": [
+        { x: 868, y: 98 },
+        { x: 900, y: 98 },
+      ],
+    },
+    segments: [
+      { id: "s0", start: { x: 308, y: 98 }, end: { x: 340, y: 98 }, edgeIds: ["a-y"] },
+      { id: "s1", start: { x: 588, y: 98 }, end: { x: 620, y: 98 }, edgeIds: ["y-z"] },
+      { id: "s2", start: { x: 868, y: 98 }, end: { x: 900, y: 98 }, edgeIds: ["z-w"] },
+    ],
+    junctions: [],
+    width: 1220,
+    height: 220,
+    quality: "elk",
+  };
+  return { model: { kind: "line" as const, line }, plan, geometry };
+}
+
+describe("DagSceneCanvas Stage 10 interactions", () => {
+  it("clicking a node lights only its own dependencies: Y, then X, then B", async () => {
+    const { store } = harness(abxyFixture());
+    await waitFor(() => expect(nodeOf("y")).toBeTruthy());
+    // Y lights A→Y and B→Y; the A→X branch sharing the same bus stays dim.
+    fireEvent.click(nodeOf("y"));
+    expect(store.getState().dagSelectedNodeId).toBe("y");
+    await waitFor(() => expect(litRouteGroups()).toBe(2));
+    expect(baseGroupClass()).toContain("opacity-15");
+    expect(cardLit("a")).toBe(true);
+    expect(cardLit("b")).toBe(true);
+    expect(cardLit("y")).toBe(true);
+    expect(cardLit("x")).toBe(false);
+    // The frame header of the lit cards' line stays visible too.
+    expect(cardLit("r1")).toBe(true);
+    // X lights only A→X; Y and B dim.
+    fireEvent.click(nodeOf("x"));
+    await waitFor(() => expect(litRouteGroups()).toBe(1));
+    expect(cardLit("x")).toBe(true);
+    expect(cardLit("y")).toBe(false);
+    expect(cardLit("b")).toBe(false);
+    // B lights only B→Y.
+    fireEvent.click(nodeOf("b"));
+    await waitFor(() => expect(litRouteGroups()).toBe(1));
+    expect(cardLit("b")).toBe(true);
+    expect(cardLit("a")).toBe(false);
+    // Clicking the pane restores everything.
+    fireEvent.click(document.querySelector(".react-flow__pane")!);
+    await waitFor(() => expect(litRouteGroups()).toBe(0));
+    expect(baseGroupClass()).not.toContain("opacity-15");
+    expect(dimOverlay()).toBeNull();
+  });
+
+  it("hover lights the card's in/out edges and restores on leave", async () => {
+    const { store } = harness(abxyFixture());
+    await waitFor(() => expect(nodeOf("y")).toBeTruthy());
+    fireEvent.mouseEnter(nodeOf("y"));
+    await waitFor(() => expect(litRouteGroups()).toBe(2));
+    expect(baseGroupClass()).toContain("opacity-15");
+    expect(cardLit("x")).toBe(false);
+    // Hover is transient: no selection is written.
+    expect(store.getState().dagSelectedNodeId).toBeNull();
+    fireEvent.mouseLeave(nodeOf("y"));
+    await waitFor(() => expect(litRouteGroups()).toBe(0));
+    expect(baseGroupClass()).not.toContain("opacity-15");
+    expect(dimOverlay()).toBeNull();
+  });
+
+  it("clicking a bus segment selects its deduplicated original dependencies", async () => {
+    const { store } = harness(abxyFixture());
+    await waitFor(() => expect(nodeOf("y")).toBeTruthy());
+    fireEvent.click(document.querySelector('[data-dag-bus-hit="s0"]')!);
+    expect(store.getState().dagSelectedDependencyIds).toEqual(["a-x", "a-y"]);
+    expect(store.getState().dagSelectedNodeId).toBeNull();
+    // The selected dependencies light their own routes.
+    await waitFor(() => expect(litRouteGroups()).toBe(2));
+    // Cards are not dimmed by a bus selection — only edges.
+    expect(dimOverlay()).toBeNull();
+    fireEvent.click(document.querySelector('[data-dag-bus-hit="s4"]')!);
+    expect(store.getState().dagSelectedDependencyIds).toEqual(["a-y", "b-y"]);
+    // Clicking the pane clears the bus selection too.
+    fireEvent.click(document.querySelector(".react-flow__pane")!);
+    expect(store.getState().dagSelectedDependencyIds).toBeNull();
+    await waitFor(() => expect(litRouteGroups()).toBe(0));
+  });
+
+  it("zooming below the readability threshold swaps cards to plain blocks", async () => {
+    const { flow } = harness(overviewFixture());
+    await waitFor(() => expect(screen.getByText("Line one")).toBeInTheDocument());
+    await flow().setViewport({ x: 0, y: 0, zoom: 0.3 });
+    await waitFor(() => {
+      const card = document.querySelector("[data-dag-overview-card]")!;
+      expect(card.textContent).toBe("");
+    });
+    await flow().setViewport({ x: 0, y: 0, zoom: 1 });
+    await waitFor(() => expect(screen.getByText("Line one")).toBeInTheDocument());
+  });
+
+  it("cycles one layer → all upstream + downstream → one layer on repeated clicks", async () => {
+    const { store } = harness(chainFixture());
+    await waitFor(() => expect(nodeOf("y")).toBeTruthy());
+    vi.useFakeTimers();
+    try {
+      // First click: select with the one-layer neighborhood.
+      fireEvent.click(nodeOf("y"));
+      expect(store.getState().dagSelectedNodeId).toBe("y");
+      expect(store.getState().dagFocus).toBeNull();
+      expect(litRouteGroups()).toBe(2);
+      // The second click waits out the double-click window before switching.
+      fireEvent.click(nodeOf("y"));
+      expect(store.getState().dagFocus).toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(399);
+      });
+      expect(store.getState().dagFocus).toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(store.getState().dagFocus).toEqual({ nodeId: "y", way: "both" });
+      expect(litRouteGroups()).toBe(3);
+      expect(cardLit("w")).toBe(true);
+      // The third click returns to one layer.
+      fireEvent.click(nodeOf("y"));
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+      expect(store.getState().dagFocus).toBeNull();
+      expect(litRouteGroups()).toBe(2);
+      expect(cardLit("w")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a double-click keeps its action and never switches to the closure", async () => {
+    const { store, props } = harness(overviewFixture());
+    const card = await screen.findByText("Line one");
+    const node = card.closest(".react-flow__node")!;
+    // Select the card first: the double-click then starts with a pending cycle.
+    fireEvent.click(node);
+    expect(store.getState().dagSelectedNodeId).toBe("issue:r1");
+    vi.useFakeTimers();
+    try {
+      // The browser sequence: click (detail 1), click (detail 2), dblclick.
+      fireEvent.click(node, { detail: 1 });
+      fireEvent.click(node, { detail: 2 });
+      fireEvent.doubleClick(node);
+      expect(props.onEnterLine).toHaveBeenCalledWith("r1");
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      expect(store.getState().dagFocus).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

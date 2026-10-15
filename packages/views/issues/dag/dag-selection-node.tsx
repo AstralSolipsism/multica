@@ -164,20 +164,38 @@ export function DagNodeSelection({
   const hasMenu = menuKeys.length > 0 || target.focusFrameId != null;
   const label =
     target.kind === "independent" ? tDag(($) => $.independent_group) : target.title;
+  // The click cycle's current scope: one layer by default, all upstream +
+  // downstream after the second click. A one-way focus shows on its button.
+  const scopeTag =
+    focus?.nodeId === target.id && focus.way === "both"
+      ? tDag(($) => $.selection_scope_closure)
+      : !focus || focus.nodeId !== target.id
+        ? tDag(($) => $.selection_scope_neighborhood)
+        : null;
 
   return (
     <div ref={zoneRef} data-dag-zone className="flex min-w-0 flex-1 items-center gap-1">
       <span
         data-dag-label
-        className="max-w-56 shrink truncate px-1 text-caption font-medium text-foreground"
+        className="flex max-w-56 min-w-0 shrink items-center gap-1.5 px-1 text-caption font-medium text-foreground"
         title={label ?? undefined}
       >
-        {target.identifier && (
-          <span className="mr-1.5 tabular-nums text-muted-foreground">
-            {target.identifier}
+        <span className="min-w-0 truncate">
+          {target.identifier && (
+            <span className="mr-1.5 tabular-nums text-muted-foreground">
+              {target.identifier}
+            </span>
+          )}
+          {label}
+        </span>
+        {scopeTag && (
+          <span
+            data-dag-scope
+            className="shrink-0 rounded-full bg-muted/60 px-1.5 py-0.5 text-micro font-normal text-muted-foreground"
+          >
+            {scopeTag}
           </span>
         )}
-        {label}
       </span>
       {visibleKeys.map((key) => (
         <span key={key} data-dag-action={key} className="inline-flex shrink-0">

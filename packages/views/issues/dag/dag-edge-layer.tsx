@@ -1,9 +1,9 @@
 "use client";
 
-import { memo, useMemo } from "react";
-import type { DagDependencyState } from "@multica/core/issues/dag";
+import { memo, useId, useMemo } from "react";
+import { aggregateDagDependencyState, type DagDependencyState } from "@multica/core/issues/dag";
 import type { DagPoint } from "./dag-scene";
-import type { DagSceneGeometry, DagScenePlan } from "./dag-scene";
+import type { DagSceneGeometry, DagScenePlan, DagSceneSegment } from "./dag-scene";
 import { dagRouteMidpoint } from "./dag-route";
 import {
   dagDependencyStates,
@@ -11,11 +11,25 @@ import {
   dagSceneEdgeDisplay,
   dagSegmentDisplay,
   type DagCanvasModel,
-  type DagFocusSet,
 } from "./dag-scene-flow";
+import {
+  dagBusDependencyIds,
+  dagMotionAllowed,
+  dagMotionSegments,
+  dagPointVisible,
+  dagRouteVisible,
+  dagSegmentFlowDirection,
+  dagSegmentVisible,
+  dagStateMotion,
+  type DagGhostBlock,
+  type DagHoverOverlay,
+  type DagVisibleBounds,
+} from "./dag-highlight";
+import { DAG_BUS_HIT_LIMIT } from "./dag-constants";
+import "./dag-edge-motion.css";
 
-/** Static edge styles for the four dependency states (OL-183 §4). Motion —
- *  flowing dots on advancing edges, breathing on cancelled ones — is Stage 10. */
+/** Static edge styles for the four dependency states (OL-183 §4). Advancing
+ *  adds flowing dots and cancelled-blocking breathes via dag-edge-motion.css. */
 const STATE_STYLE: Record<
   DagDependencyState,
   { stroke: string; opacity: number; dash?: string }
@@ -47,27 +61,77 @@ function arrowHead(
   );
 }
 
+/** A bus segment shortened at both ends so its hit zone never covers the
+ *  cards its route attaches to. Too-short stubs get no hit zone at all. */
+function hitSegment(
+  segment: DagSceneSegment,
+  inset: number,
+): { start: DagPoint; end: DagPoint } | null {
+  const dx = segment.end.x - segment.start.x;
+  const dy = segment.end.y - segment.start.y;
+  const length = Math.hypot(dx, dy);
+  if (length <= inset * 2) return null;
+  const ux = dx / length;
+  const uy = dy / length;
+  return {
+    start: { x: segment.start.x + ux * inset, y: segment.start.y + uy * inset },
+    end: { x: segment.end.x - ux * inset, y: segment.end.y - uy * inset },
+  };
+}
+
 export interface DagEdgeLayerProps {
   geometry: DagSceneGeometry;
   plan: DagScenePlan;
   model: DagCanvasModel;
   showSatisfied: boolean;
-  focus: DagFocusSet | null;
+  /** Lit scene edges (node neighborhood, focus chain, bus selection). Each
+   *  repaints along its own complete route; the base layer dims meanwhile. */
+  highlightedEdgeIds: ReadonlySet<string> | null;
+  /** Overview hover adds the card's satisfied bundles without a layout pass. */
+  hoverOverlay: DagHoverOverlay | null;
+  /** Boxes that stay visible through the dim mask: lit cards in full, lit
+   *  frames as header strips. Null (and empty) means no node dimming. */
+  litBoxes: readonly { id: string; x: number; y: number; width: number; height: number }[] | null;
+  /** Below the readability zoom, simplified cards paint here as SVG rects
+   *  while their DOM shells stay interactive. */
+  ghostBlocks: readonly DagGhostBlock[] | null;
+  /** The selected card/frame, ringed in brand blue (the only use of brand
+   *  on the canvas) — painted here so a selection never rebuilds nodes. */
+  selectedNodeId: string | null;
+  /** Flow-coordinate culling bounds; null paints everything (tests, SSR). */
+  bounds: DagVisibleBounds | null;
+  /** Below the readability zoom: badges, arrows and junction dots degrade
+   *  away with the card text. */
+  degraded: boolean;
+  /** Motion gates: zoom (already thresholded by the caller) and the system's
+   *  reduced-motion setting. The ~60-segment budget applies here. */
+  motion: { zoom: number; reducedMotion: boolean };
+  /** Bus click: the original dependency IDs running through the segment. */
+  onBusClick: (dependencyIds: string[]) => void;
 }
 
 /**
  * All edges of the current scene as one viewport-space SVG: shared bus
  * intervals are painted exactly once with the worst traversing state, branch
- * points get dots, and bundle routes carry their dependency count. The layer
- * is inert to pointer events — trunk hit-testing arrives with Stage 10.
+ * points get dots, and bundle routes carry their dependency count. Visible
+ * segments double as bus click targets; motion and dimming follow OL-183 §4/§5.
  */
 export const DagEdgeLayer = memo(function DagEdgeLayer({
   geometry,
   plan,
   model,
   showSatisfied,
-  focus,
+  highlightedEdgeIds,
+  hoverOverlay,
+  litBoxes,
+  ghostBlocks,
+  selectedNodeId,
+  bounds,
+  degraded,
+  motion,
+  onBusClick,
 }: DagEdgeLayerProps) {
+  const maskId = useId();
   const states = useMemo(() => dagDependencyStates(model), [model]);
   const composed = useMemo(
     () => dagDisplayedRoutes(geometry, plan, showSatisfied),
@@ -82,6 +146,28 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
       }),
     [composed.segments, plan, states, showSatisfied],
   );
+  const visibleSegments = useMemo(
+    () =>
+      bounds
+        ? segments.filter(({ segment }) => dagSegmentVisible(segment, bounds))
+        : segments,
+    [segments, bounds],
+  );
+  // Bus memberships only pay for aimable hit zones: past the hit limit they
+  // are never rendered, so a highlight change never rebuilds them.
+  const hitsAllowed = visibleSegments.length <= DAG_BUS_HIT_LIMIT;
+  const busIdsBySegment = useMemo(
+    () =>
+      hitsAllowed
+        ? new Map(
+            visibleSegments.map(({ segment }) => [
+              segment.id,
+              dagBusDependencyIds(segment.edgeIds, plan),
+            ]),
+          )
+        : null,
+    [visibleSegments, plan, hitsAllowed],
+  );
   const arrows = useMemo(
     () =>
       Object.entries(composed.routes).flatMap(([edgeId, route]) => {
@@ -91,53 +177,266 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
       }),
     [composed.routes, plan, states, showSatisfied],
   );
+  const visibleArrows = useMemo(
+    () =>
+      degraded
+        ? []
+        : bounds
+          ? arrows.filter(({ route }) => dagRouteVisible(route, bounds))
+          : arrows,
+    [arrows, bounds, degraded],
+  );
+  const visibleJunctions = useMemo(
+    () =>
+      degraded
+        ? []
+        : bounds
+          ? composed.junctions.filter((junction) => dagPointVisible(junction, bounds))
+          : composed.junctions,
+    [composed.junctions, bounds, degraded],
+  );
   const badges = useMemo(() => {
-    if (plan.input.kind !== "overview") return [];
-    return arrows
+    if (plan.input.kind !== "overview" || degraded) return [];
+    return visibleArrows
       .filter(({ display }) => display.count > 1)
       .map(({ edgeId, route, display }) => ({
         edgeId,
         point: dagRouteMidpoint(route),
         count: display.count,
-      }));
-  }, [arrows, plan.input.kind]);
-  const focusedRoutes = useMemo(() => {
-    if (!focus) return [];
-    return [...focus.edgeIds].flatMap((edgeId) => {
-      const route = composed.routes[edgeId];
-      const display = dagSceneEdgeDisplay(plan, edgeId, states, showSatisfied);
-      if (!route || !display) return [];
+      }))
+      .filter(({ point }) => !bounds || dagPointVisible(point, bounds));
+  }, [visibleArrows, plan.input.kind, bounds, degraded]);
+
+  // Motion: candidates are the visible advancing/cancelled segments; the
+  // budget keeps the selected chain moving when the screen is too busy.
+  const motionCandidates = useMemo(
+    () =>
+      visibleSegments.flatMap(({ segment, display }) => {
+        const kind = dagStateMotion(display.state);
+        return kind ? [{ id: segment.id, motion: kind, edgeIds: segment.edgeIds }] : [];
+      }),
+    [visibleSegments],
+  );
+  const activeMotion = useMemo(
+    () =>
+      dagMotionSegments({
+        candidates: motionCandidates,
+        highlightedEdgeIds,
+        zoom: motion.zoom,
+        reducedMotion: motion.reducedMotion,
+      }),
+    [motionCandidates, highlightedEdgeIds, motion.zoom, motion.reducedMotion],
+  );
+  const flowOverlays = useMemo(
+    () =>
+      visibleSegments.flatMap(({ segment, display }) => {
+        if (display.state !== "advancing" || !activeMotion.has(segment.id)) return [];
+        const representative = segment.edgeIds.find(
+          (edgeId) =>
+            dagSceneEdgeDisplay(plan, edgeId, states, showSatisfied)?.state === "advancing",
+        );
+        const route = representative ? composed.routes[representative] : undefined;
+        const direction = route ? dagSegmentFlowDirection(route, segment) : 1;
+        const lit = highlightedEdgeIds
+          ? segment.edgeIds.some((edgeId) => highlightedEdgeIds.has(edgeId))
+          : false;
+        return [{ segment, display, direction, lit }];
+      }),
+    [visibleSegments, activeMotion, plan, states, showSatisfied, composed.routes, highlightedEdgeIds],
+  );
+  const litFlows = flowOverlays.filter(({ lit }) => lit);
+  const baseFlows = flowOverlays.filter(({ lit }) => !lit);
+  const motionAllowed = dagMotionAllowed(motion.zoom, motion.reducedMotion);
+
+  // Highlight: repaint each lit dependency's own complete route — never the
+  // whole bus. Hover-only satisfied bundles take their overlay route and the
+  // satisfied-subset count (mixed bundles never double-count).
+  const highlightedRoutes = useMemo(() => {
+    if (!highlightedEdgeIds) return [];
+    return [...highlightedEdgeIds].flatMap((edgeId) => {
+      const route = composed.routes[edgeId] ?? hoverOverlay?.routes[edgeId];
+      if (!route) return [];
+      let display = dagSceneEdgeDisplay(plan, edgeId, states, showSatisfied);
+      if (!display) {
+        const rawIds = hoverOverlay?.dependencyIds[edgeId] ?? [];
+        if (!rawIds.length) return [];
+        display = {
+          count: rawIds.length,
+          state: aggregateDagDependencyState(
+            rawIds.map((id) => states.get(id) ?? "satisfied"),
+          ),
+        };
+      }
+      if (bounds && !dagRouteVisible(route, bounds)) return [];
       return [{ edgeId, route, display }];
     });
-  }, [focus, composed.routes, plan, states, showSatisfied]);
+  }, [highlightedEdgeIds, composed.routes, hoverOverlay, plan, states, showSatisfied, bounds]);
+
+  const dimmed = highlightedEdgeIds != null;
+  const dimNodes = litBoxes != null && litBoxes.length > 0;
+  const selectedBox = useMemo(() => {
+    if (!selectedNodeId) return null;
+    return geometry.nodes[selectedNodeId] ?? geometry.frames[selectedNodeId] ?? null;
+  }, [selectedNodeId, geometry]);
+  // Ghost blocks: simplified cards as a handful of rects, grouped like the
+  // segments. The dim mask's holes cover them exactly (same coordinates).
+  const ghost = useMemo(() => {
+    if (!ghostBlocks) return null;
+    const visible = ghostBlocks.filter(
+      (block) =>
+        !bounds ||
+        (block.x + block.width >= bounds.x0 &&
+          block.x <= bounds.x1 &&
+          block.y + block.height >= bounds.y0 &&
+          block.y <= bounds.y1),
+    );
+    const body: string[] = [];
+    const frames: string[] = [];
+    const externals: string[] = [];
+    const strips = new Map<string, string[]>();
+    for (const block of visible) {
+      const rect = `M ${block.x} ${block.y} h ${block.width} v ${block.height} h ${-block.width} Z`;
+      if (block.kind === "frame") frames.push(rect);
+      else if (block.kind === "external") externals.push(rect);
+      else {
+        body.push(rect);
+        if (block.color) {
+          const strip = `M ${block.x} ${block.y} h 6 v ${block.height} h -6 Z`;
+          (strips.get(block.color) ?? strips.set(block.color, []).get(block.color)!).push(strip);
+        }
+      }
+    }
+    return {
+      visible,
+      body: body.join(" "),
+      frames: frames.join(" "),
+      externals: externals.join(" "),
+      strips,
+    };
+  }, [ghostBlocks, bounds]);
+  // With culling active the layer becomes a window-sized compositable layer:
+  // the SVG only spans the quantized visible window (viewBox keeps flow
+  // coordinates), so panning composites instead of re-rasterizing the whole
+  // scene every frame. Without bounds (tests, SSR) it spans the geometry.
+  const windowed = bounds != null;
+
+  // Painted segments group into one <path> per style: thousands of intervals
+  // cost a handful of DOM nodes instead of thousands, so a culling re-render
+  // during pan/zoom stays cheap (OL-284 zoom frame budget).
+  const segmentGroups = useMemo(() => {
+    const groups = new Map<
+      string,
+      { state: DagDependencyState; width: number; breathe: boolean; d: string[]; ids: string[] }
+    >();
+    for (const { segment, display } of visibleSegments) {
+      const breathe = display.state === "cancelled-blocking" && activeMotion.has(segment.id);
+      const key = `${display.state}|${display.width}|${breathe}`;
+      let group = groups.get(key);
+      if (!group) {
+        group = { state: display.state, width: display.width, breathe, d: [], ids: [] };
+        groups.set(key, group);
+      }
+      group.d.push(
+        `M ${segment.start.x} ${segment.start.y} L ${segment.end.x} ${segment.end.y}`,
+      );
+      group.ids.push(segment.id);
+    }
+    return [...groups.entries()];
+  }, [visibleSegments, activeMotion]);
+
+  const flowLine = (
+    { segment, display, direction }: { segment: DagSceneSegment; display: { width: number }; direction: 1 | -1 },
+    key: string,
+  ) => {
+    const start = direction === 1 ? segment.start : segment.end;
+    const end = direction === 1 ? segment.end : segment.start;
+    return (
+      <line
+        key={key}
+        x1={start.x}
+        y1={start.y}
+        x2={end.x}
+        y2={end.y}
+        className="dag-edge-flow"
+        stroke="var(--background)"
+        strokeOpacity={0.95}
+        strokeWidth={display.width + 1.4}
+        strokeLinecap="round"
+      />
+    );
+  };
 
   return (
-    <svg
+    <>
+      <svg
       data-dag-edge-layer
-      className="pointer-events-none absolute left-0 top-0 overflow-visible"
-      width={geometry.width}
-      height={geometry.height}
+      className={
+        windowed
+          ? "pointer-events-none absolute overflow-hidden"
+          : "pointer-events-none absolute left-0 top-0 overflow-visible"
+      }
+      style={
+        windowed
+          ? { left: bounds.x0, top: bounds.y0, willChange: "transform" }
+          : undefined
+      }
+      width={windowed ? bounds.x1 - bounds.x0 : geometry.width}
+      height={windowed ? bounds.y1 - bounds.y0 : geometry.height}
+      viewBox={
+        windowed
+          ? `${bounds.x0} ${bounds.y0} ${bounds.x1 - bounds.x0} ${bounds.y1 - bounds.y0}`
+          : undefined
+      }
       aria-hidden
     >
-      <g className={focus ? "opacity-15 transition-opacity" : "transition-opacity"}>
-        {segments.map(({ segment, display }) => {
-          const style = STATE_STYLE[display.state];
+      {dimNodes && (
+        <defs>
+          {/* Node dimming without per-card rebuilds: a full-scene dim rect
+              whose mask punches holes over the lit cards (and lit frames'
+              headers). One element replaces hundreds of class updates. */}
+          <mask id={maskId} maskUnits="userSpaceOnUse">
+            <rect
+              x={bounds ? bounds.x0 : 0}
+              y={bounds ? bounds.y0 : 0}
+              width={bounds ? bounds.x1 - bounds.x0 : geometry.width}
+              height={bounds ? bounds.y1 - bounds.y0 : geometry.height}
+              fill="white"
+            />
+            {litBoxes!.map((box) => (
+              <rect
+                key={box.id}
+                data-dag-dim-hole={box.id}
+                x={box.x - 8}
+                y={box.y - 8}
+                width={box.width + 16}
+                height={box.height + 16}
+                rx={10}
+                fill="black"
+              />
+            ))}
+          </mask>
+        </defs>
+      )}
+      <g className={dimmed ? "opacity-15 transition-opacity" : "transition-opacity"}>
+        {segmentGroups.map(([key, group]) => {
+          const style = STATE_STYLE[group.state];
           return (
-            <line
-              key={segment.id}
-              x1={segment.start.x}
-              y1={segment.start.y}
-              x2={segment.end.x}
-              y2={segment.end.y}
+            <path
+              key={key}
+              data-dag-segments={group.ids.join(" ")}
+              d={group.d.join(" ")}
+              className={group.breathe ? "dag-edge-breathe" : undefined}
               stroke={style.stroke}
               strokeOpacity={style.opacity}
-              strokeWidth={display.width}
+              strokeWidth={group.width}
               strokeDasharray={style.dash}
               strokeLinecap="round"
+              fill="none"
             />
           );
         })}
-        {composed.junctions.map((junction) => (
+        {baseFlows.map((overlay) => flowLine(overlay, `flow:${overlay.segment.id}`))}
+        {visibleJunctions.map((junction) => (
           <circle
             key={`${junction.x},${junction.y}`}
             cx={junction.x}
@@ -147,7 +446,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
             fillOpacity={0.55}
           />
         ))}
-        {arrows.map(({ edgeId, route, display }) => {
+        {visibleArrows.map(({ edgeId, route, display }) => {
           const style = STATE_STYLE[display.state];
           return arrowHead(route, edgeId, style.stroke, style.opacity);
         })}
@@ -178,26 +477,129 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
           );
         })}
       </g>
-      {/* The focused chain repaints each dependency's own complete route —
-          highlight never spreads along a shared bus. */}
-      {focusedRoutes.map(({ edgeId, route, display }) => {
+      {/* Simplified cards below the readability zoom: SVG rects whose DOM
+          shells stay interactive (only when the static canvas is absent —
+          otherwise they paint there). Painted over edge endpoints like the
+          DOM cards would. */}
+      {ghost && (
+        <g data-dag-ghost-blocks>
+          {ghost.body && (
+            <path d={ghost.body} fill="var(--muted)" fillOpacity={0.55} stroke="var(--border)" />
+          )}
+          {[...ghost.strips.entries()].map(([color, d]) => (
+            <path key={color} d={d.join(" ")} fill={color} />
+          ))}
+          {ghost.frames && (
+            <path d={ghost.frames} fill="var(--muted)" fillOpacity={0.25} stroke="var(--muted-foreground)" strokeOpacity={0.3} />
+          )}
+          {ghost.externals && (
+            <path d={ghost.externals} fill="var(--muted)" fillOpacity={0.25} stroke="var(--muted-foreground)" strokeOpacity={0.45} strokeDasharray="4 3" />
+          )}
+        </g>
+      )}
+      {dimNodes && (
+        <rect
+          data-dag-dim-overlay
+          x={bounds ? bounds.x0 : 0}
+          y={bounds ? bounds.y0 : 0}
+          width={bounds ? bounds.x1 - bounds.x0 : geometry.width}
+          height={bounds ? bounds.y1 - bounds.y0 : geometry.height}
+          fill="var(--background)"
+          fillOpacity={0.75}
+          mask={`url(#${maskId})`}
+        />
+      )}
+      {selectedBox && (
+        <g data-dag-selected={selectedNodeId}>
+          <rect
+            x={selectedBox.x - 3}
+            y={selectedBox.y - 3}
+            width={selectedBox.width + 6}
+            height={selectedBox.height + 6}
+            rx={10}
+            fill="none"
+            stroke="var(--color-brand)"
+            strokeOpacity={0.3}
+            strokeWidth={6}
+          />
+          <rect
+            x={selectedBox.x - 3}
+            y={selectedBox.y - 3}
+            width={selectedBox.width + 6}
+            height={selectedBox.height + 6}
+            rx={10}
+            fill="none"
+            stroke="var(--color-brand)"
+            strokeWidth={2}
+          />
+        </g>
+      )}
+      {/* The lit chain repaints each dependency's own complete route with a
+          soft glow — highlight never spreads along a shared bus, and brand
+          blue stays reserved for the selected card itself. */}
+      {highlightedRoutes.map(({ edgeId, route, display }) => {
         const style = STATE_STYLE[display.state];
+        const points = route.map((p) => `${p.x},${p.y}`).join(" ");
+        const width = display.count > 1 ? 3 : 2;
+        const breathe = display.state === "cancelled-blocking" && motionAllowed;
         return (
-          <g key={`focus:${edgeId}`}>
+          <g key={`lit:${edgeId}`} data-dag-lit-edge={edgeId}>
             <polyline
-              points={route.map((p) => `${p.x},${p.y}`).join(" ")}
+              points={points}
               fill="none"
               stroke={style.stroke}
+              strokeOpacity={0.25}
+              strokeWidth={width + 5}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+            <polyline
+              points={points}
+              fill="none"
+              className={breathe ? "dag-edge-breathe" : undefined}
+              stroke={style.stroke}
               strokeOpacity={Math.min(1, style.opacity + 0.35)}
-              strokeWidth={display.count > 1 ? 3 : 2}
+              strokeWidth={width}
               strokeDasharray={style.dash}
               strokeLinejoin="round"
               strokeLinecap="round"
             />
-            {arrowHead(route, `focus-arrow:${edgeId}`, style.stroke, 0.9)}
+            {arrowHead(route, `lit-arrow:${edgeId}`, style.stroke, 0.9)}
           </g>
         );
       })}
+      {litFlows.map((overlay) => flowLine(overlay, `lit-flow:${overlay.segment.id}`))}
+      {/* Bus hit zones: transparent, inset from both ends, pointer only on the
+          stroke. Clicking selects the segment's original dependencies. */}
+      {busIdsBySegment
+        ? visibleSegments.flatMap(({ segment }) => {
+            const busIds = busIdsBySegment.get(segment.id) ?? [];
+            if (!busIds.length) return [];
+            const hit = hitSegment(segment, 8);
+            if (!hit) return [];
+            return [
+              <line
+                key={`hit:${segment.id}`}
+                data-dag-bus-hit={segment.id}
+                x1={hit.start.x}
+                y1={hit.start.y}
+                x2={hit.end.x}
+                y2={hit.end.y}
+                className="nopan stroke-transparent transition-colors hover:stroke-foreground/15"
+                strokeWidth={10}
+                strokeLinecap="round"
+                style={{ pointerEvents: "stroke", cursor: "pointer" }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onBusClick(busIds);
+                }}
+              >
+                <title>{busIds.length}</title>
+              </line>,
+            ];
+          })
+        : null}
     </svg>
+    </>
   );
 });

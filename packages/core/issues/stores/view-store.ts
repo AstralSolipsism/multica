@@ -13,8 +13,9 @@ import { VIEW_MODE_CAPABILITIES, type ViewMode } from "../surface/view-mode";
 
 export type { ViewMode } from "../surface/view-mode";
 export type GanttZoom = "day" | "week" | "month";
-/** Direction of a DAG neighborhood highlight, anchored at a canvas node. */
-export type DagFocusWay = "upstream" | "downstream";
+/** Direction of a DAG neighborhood highlight, anchored at a canvas node.
+ *  "both" is the click-cycle's all upstream + downstream mode. */
+export type DagFocusWay = "upstream" | "downstream" | "both";
 export interface DagFocusState {
   nodeId: string;
   way: DagFocusWay;
@@ -352,10 +353,14 @@ export interface IssueViewState {
   dagSelectedNodeId: string | null;
   /** Session neighborhood highlight anchored at the selected node. */
   dagFocus: DagFocusState | null;
+  /** Session bus selection: the raw dependency IDs running through a clicked
+   *  trunk segment. Selecting a node (or changing levels) clears it. */
+  dagSelectedDependencyIds: string[] | null;
   /** Persist the live viewport under a level key. */
   setDagViewportFor: (key: string, viewport: DagViewport) => void;
   setDagSelectedNodeId: (id: string | null) => void;
   setDagFocus: (focus: DagFocusState | null) => void;
+  setDagSelectedDependencyIds: (ids: string[] | null) => void;
   toggleDagShowCompleted: () => void;
   toggleDagShowSatisfiedDependencies: () => void;
   /** Low-level level change (restore/auto-entry/correction): clears the
@@ -458,6 +463,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   dagViewports: {},
   dagSelectedNodeId: null,
   dagFocus: null,
+  dagSelectedDependencyIds: null,
   setDagViewportFor: (key, viewport) =>
     set((state) => {
       // Bounded per-user history: keep the 50 most recently written levels,
@@ -472,8 +478,10 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       return { dagViewports: Object.fromEntries(entries) };
     }),
   setDagSelectedNodeId: (dagSelectedNodeId) =>
-    set({ dagSelectedNodeId, dagFocus: null }),
+    set({ dagSelectedNodeId, dagFocus: null, dagSelectedDependencyIds: null }),
   setDagFocus: (dagFocus) => set({ dagFocus }),
+  setDagSelectedDependencyIds: (dagSelectedDependencyIds) =>
+    set({ dagSelectedDependencyIds, dagSelectedNodeId: null, dagFocus: null }),
   toggleDagShowCompleted: () =>
     set((state) => ({ dagShowCompleted: !state.dagShowCompleted })),
   toggleDagShowSatisfiedDependencies: () =>
@@ -481,13 +489,14 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       dagShowSatisfiedDependencies: !state.dagShowSatisfiedDependencies,
     })),
   setDagLineId: (dagLineId) =>
-    set({ dagLineId, dagSelectedNodeId: null, dagFocus: null }),
+    set({ dagLineId, dagSelectedNodeId: null, dagFocus: null, dagSelectedDependencyIds: null }),
   enterDagLine: (dagLineId) =>
     set({
       dagLineId,
       dagOverviewPinned: false,
       dagSelectedNodeId: null,
       dagFocus: null,
+      dagSelectedDependencyIds: null,
     }),
   exitDagLine: (selectCardId) =>
     set({
@@ -495,6 +504,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       dagOverviewPinned: true,
       dagSelectedNodeId: selectCardId ?? null,
       dagFocus: null,
+      dagSelectedDependencyIds: null,
     }),
 
   setViewMode: (mode) =>

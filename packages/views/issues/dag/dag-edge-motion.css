@@ -1,0 +1,33 @@
+/* Stage 10 edge motion (OL-183 §4): dots flowing downstream on advancing
+ * edges, a slow breath on cancelled blockers. The JS motion budget decides
+ * which segments carry these classes; the media query is the hard stop. */
+@keyframes dag-edge-flow {
+  to {
+    stroke-dashoffset: -14px;
+  }
+}
+
+.dag-edge-flow {
+  stroke-dasharray: 0.1 13.9;
+  animation: dag-edge-flow 0.9s linear infinite;
+}
+
+@keyframes dag-edge-breathe {
+  from {
+    stroke-opacity: 0.3;
+  }
+  to {
+    stroke-opacity: 0.9;
+  }
+}
+
+.dag-edge-breathe {
+  animation: dag-edge-breathe 2.8s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dag-edge-flow,
+  .dag-edge-breathe {
+    animation: none;
+  }
+}

@@ -19,7 +19,7 @@ import { DagRunBadge } from "./dag-task-card";
  * context border and the "cancelled, still blocking" mark (OL-182).
  */
 export const DagOverviewCardView = memo(
-  function DagOverviewCardView({ data, selected }: NodeProps<DagOverviewFlowNode>) {
+  function DagOverviewCardView({ data }: NodeProps<DagOverviewFlowNode>) {
     const { t } = useT("dag");
     const { resolvedTheme } = useTheme();
     const { card } = data;
@@ -27,6 +27,18 @@ export const DagOverviewCardView = memo(
     const issue = card.issue;
     const title = issue?.title ?? t(($) => $.independent_group);
     const finished = card.attention === "finished";
+    if (data.simplified) {
+      // Zoomed out past readability: the edge layer paints this card as an
+      // SVG rect; the DOM node stays as the interaction shell (OL-183 §7).
+      return (
+        <div
+          className="nopan h-full w-full"
+          style={{ width: DAG_OVERVIEW_SIZE.width, height: DAG_OVERVIEW_SIZE.height }}
+          data-dag-overview-card={card.id}
+          data-dag-kind={card.kind}
+        />
+      );
+    }
     const counts = [
       {
         key: "blocked" as const,
@@ -46,7 +58,7 @@ export const DagOverviewCardView = memo(
         key: "review" as const,
         value: card.unfinished.review,
         icon: <Eye className="size-3" />,
-        className: "text-warning",
+        className: "text-success",
         label: t(($) => $.count_review),
       },
       {
@@ -61,9 +73,8 @@ export const DagOverviewCardView = memo(
       <div
         className={cn(
           "nopan relative flex h-full w-full flex-col overflow-hidden rounded-lg border bg-card py-2 pl-3.5 pr-2.5 text-left shadow-xs transition-opacity",
-          selected ? "border-brand ring-2 ring-brand/30" : "border-border hover:border-foreground/30",
+          "border-border hover:border-foreground/30",
           card.cancelledBlocking && "border-dashed",
-          data.dimmed && "opacity-25",
         )}
         style={{ width: DAG_OVERVIEW_SIZE.width, height: DAG_OVERVIEW_SIZE.height }}
         data-dag-overview-card={card.id}
@@ -118,7 +129,7 @@ export const DagOverviewCardView = memo(
             className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"
           >
             <span
-              className="block h-full bg-success/60"
+              className="block h-full bg-info/60"
               style={{
                 width: `${card.progress.total ? (card.progress.completed / card.progress.total) * 100 : 0}%`,
               }}
@@ -150,5 +161,5 @@ export const DagOverviewCardView = memo(
       </div>
     );
   },
-  (prev, next) => prev.data === next.data && prev.selected === next.selected,
+  (prev, next) => prev.data === next.data,
 );

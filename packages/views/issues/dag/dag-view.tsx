@@ -47,8 +47,9 @@ import {
   dagOverviewLayoutInput,
 } from "./dag-scene-inputs";
 import { DagToolbar } from "./dag-toolbar";
+import type { DagBusSelectionItem } from "./dag-selection-bus";
 import { DagErrorState, graphErrorPolicy } from "./dag-error-state";
-import type { DagSceneCanvasApi } from "./dag-scene-canvas";
+import type { DagLocateRequest, DagSceneCanvasApi } from "./dag-scene-canvas";
 
 const loadDagCanvas = once(() => import("./dag-scene-canvas"));
 type DagSceneCanvasModule = typeof import("./dag-scene-canvas");
@@ -100,6 +101,7 @@ export function DagView({
   const showSatisfied = useViewStore((s) => s.dagShowSatisfiedDependencies);
   const focus = useViewStore((s) => s.dagFocus);
   const selectedNodeId = useViewStore((s) => s.dagSelectedNodeId);
+  const selectedDependencyIds = useViewStore((s) => s.dagSelectedDependencyIds);
   const canvasApi = useRef<DagSceneCanvasApi | null>(null);
   const registerCanvasApi = useCallback((api: DagSceneCanvasApi | null) => {
     canvasApi.current = api;
@@ -224,6 +226,13 @@ export function DagView({
       nonce: (current?.nonce ?? 0) + 1,
     }));
   }, []);
+  const [locateRequest, setLocateRequest] = useState<DagLocateRequest | null>(null);
+  const onLocateDependency = useCallback((dependencyId: string) => {
+    setLocateRequest((current) => ({
+      dependencyId,
+      nonce: (current?.nonce ?? 0) + 1,
+    }));
+  }, []);
 
   const onEnterLine = useCallback(
     (nextLineId: string) => storeApi.getState().enterDagLine(nextLineId),
@@ -310,6 +319,30 @@ export function DagView({
     () => (paintedModel ? resolveDagSelection(paintedModel, selectedNodeId) : null),
     [paintedModel, selectedNodeId],
   );
+
+  // The bus dropdown lists the clicked segment's original dependencies as
+  // "source → target" rows; endpoints resolve against the full graph.
+  const busSelection = useMemo<DagBusSelectionItem[] | null>(() => {
+    if (!selectedDependencyIds?.length || !graph) return null;
+    const byRawId = new Map(graph.edges.map((edge) => [edge.sourceEdgeId, edge]));
+    return selectedDependencyIds.flatMap((id) => {
+      const edge = byRawId.get(id);
+      if (!edge) return [];
+      const source = issuesById.get(edge.source);
+      const target = issuesById.get(edge.target);
+      return [
+        {
+          id,
+          sourceId: edge.source,
+          sourceLabel: source?.identifier ?? "?",
+          sourceTitle: source?.title ?? "",
+          targetId: edge.target,
+          targetLabel: target?.identifier ?? "?",
+          targetTitle: target?.title ?? "",
+        },
+      ];
+    });
+  }, [selectedDependencyIds, graph, issuesById]);
 
   // How many chain tasks stay hidden behind the completed filter — only the
   // overview hides lines, so the hint belongs to that level.
@@ -418,6 +451,7 @@ export function DagView({
         level={dagLevelFromLineId(lineId)}
         lineHeader={lineHeader}
         selection={selection}
+        busSelection={busSelection}
         stats={stats}
         hiddenCompleted={
           !lineId && models?.overview ? models.overview.hiddenCompleted : null
@@ -434,6 +468,7 @@ export function DagView({
         onEnterLine={onEnterLine}
         onExitLine={onExitLine}
         onFocusFrame={onFocusFrame}
+        onLocateDependency={onLocateDependency}
       />
 
       {scene.error && (
@@ -482,6 +517,7 @@ export function DagView({
             projectNames={projectNames}
             showSatisfied={showSatisfied}
             focusRequest={focusRequest}
+            locateRequest={locateRequest}
             onEnterLine={onEnterLine}
             onOpenIssue={onOpenIssue}
             onExternalJump={onExternalJump}

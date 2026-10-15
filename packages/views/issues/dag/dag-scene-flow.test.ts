@@ -67,6 +67,17 @@ describe("dagSceneFocusSet", () => {
     expect([...fromB.edgeIds]).toEqual(["b-y"]);
     expect([...fromB.nodeIds].sort()).toEqual(["b", "y"]);
   });
+
+  it("unions the upstream and downstream closures for the click-cycle mode", () => {
+    // From A: only its dependents — B is a sibling, never pulled in.
+    const fromA = dagSceneFocusSet(focusPlan, "a", "both")!;
+    expect([...fromA.edgeIds].sort()).toEqual(["a-x", "a-y"]);
+    expect([...fromA.nodeIds].sort()).toEqual(["a", "x", "y"]);
+    // From Y: only its prerequisites — X is not on either directional chain.
+    const fromY = dagSceneFocusSet(focusPlan, "y", "both")!;
+    expect([...fromY.edgeIds].sort()).toEqual(["a-y", "b-y"]);
+    expect([...fromY.nodeIds].sort()).toEqual(["a", "b", "y"]);
+  });
 });
 
 describe("dependency states and display counts", () => {
@@ -411,11 +422,29 @@ describe("dagFocusHiddenCount", () => {
         way: "downstream",
       }),
     ).toBe(0);
+    // The click-cycle mode walks both directions; a task reachable from both
+    // sides is still counted once.
+    expect(
+      dagFocusHiddenCount({
+        edges: graph.edges,
+        card,
+        representatives: model.representatives,
+        way: "both",
+      }),
+    ).toBe(1);
+    expect(
+      dagFocusHiddenCount({
+        edges: graph.edges,
+        card: card2,
+        representatives: model.representatives,
+        way: "both",
+      }),
+    ).toBe(1);
   });
 });
 
 describe("dagSceneFlowNodes", () => {
-  it("positions overview cards absolutely and dims outside the focus set", () => {
+  it("positions overview cards absolutely", () => {
     const overview = overviewOf(g([n("r1"), n("a1", { parentIssueId: "r1" }), n("solo")]));
     const geometry: DagSceneGeometry = {
       nodes: {
@@ -433,19 +462,11 @@ describe("dagSceneFlowNodes", () => {
     };
     const nodes = dagSceneFlowNodes(
       { kind: "overview", overview },
-      {
-        geometry,
-        statusColorOf: () => null,
-        projectNames: new Map(),
-        focus: { nodeIds: new Set(["issue:r1"]), edgeIds: new Set() },
-      },
+      { geometry, statusColorOf: () => null, projectNames: new Map() },
     );
     const line = nodes.find((node) => node.id === "issue:r1")!;
-    const solo = nodes.find((node) => node.id === DAG_INDEPENDENT_GROUP)!;
     expect(line.position).toEqual({ x: 10, y: 20 });
     expect(line.type).toBe("dagOverviewCard");
-    expect((solo.data as { dimmed: boolean }).dimmed).toBe(true);
-    expect((line.data as { dimmed: boolean }).dimmed).toBe(false);
   });
 
   it("nests line frames and tasks with relative positions and stage labels", () => {
@@ -484,7 +505,7 @@ describe("dagSceneFlowNodes", () => {
     };
     const nodes = dagSceneFlowNodes(
       { kind: "line", line },
-      { geometry, statusColorOf: () => null, projectNames: new Map(), focus: null },
+      { geometry, statusColorOf: () => null, projectNames: new Map() },
     );
     const byId = new Map(nodes.map((node) => [node.id, node]));
     expect(byId.get("r1")!.position).toEqual({ x: 0, y: 0 });
@@ -499,6 +520,7 @@ describe("dagSceneFlowNodes", () => {
     expect(external.type).toBe("dagExternal");
     expect((external.data as { side: string }).side).toBe("upstream");
   });
+
 
   it("lays the independent grid flat without frames", () => {
     const graph = g([n("solo-1"), n("solo-2")]);
@@ -525,7 +547,7 @@ describe("dagSceneFlowNodes", () => {
     };
     const nodes = dagSceneFlowNodes(
       { kind: "independent", tasks },
-      { geometry, statusColorOf: () => null, projectNames: new Map(), focus: null },
+      { geometry, statusColorOf: () => null, projectNames: new Map() },
     );
     expect(nodes.map((node) => node.id).sort()).toEqual(["solo-1", "solo-2"]);
     expect(nodes.every((node) => !node.parentId)).toBe(true);

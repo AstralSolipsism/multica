@@ -65,8 +65,8 @@
   "layout_retry": "Recalculer la mise en page",
   "legend_edge_satisfied": "Ligne fine gris clair : dépendance satisfaite",
   "legend_edge_blocking": "Ligne sombre pleine : toujours bloquante",
-  "legend_edge_advancing": "Ligne sombre pleine : prérequis en cours",
-  "legend_edge_cancelled": "Ligne rouge en pointillés : annulée mais toujours bloquante",
+  "legend_edge_advancing": "Ligne sombre pleine avec points défilants : prérequis en cours",
+  "legend_edge_cancelled": "Ligne rouge en pointillés, pulsation lente : annulée mais toujours bloquante",
   "legend_external": "Cartes latérales en pointillés : dépendances vers d'autres lignes de tâches — cliquer pour y aller",
   "count_blocked": "Bloqué",
   "count_in_progress": "En cours",
@@ -75,5 +75,11 @@
   "external_from": "Depuis",
   "external_to": "Vers",
   "external_jump_hint": "Cliquer pour y aller",
-  "focus_line": "Centrer sur le groupe"
+  "focus_line": "Centrer sur le groupe",
+  "edge_aggregate_summary_one": "Synthèse de {{count}} dépendance",
+  "edge_aggregate_summary_other": "Synthèse de {{count}} dépendances",
+  "edge_locate": "Localiser",
+  "legend_highlight": "Cliquez sur une carte ou une ligne : sa chaîne s'illumine, le reste s'estompe ; recliquez pour tout l'amont + aval",
+  "selection_scope_neighborhood": "Une couche",
+  "selection_scope_closure": "Amont + aval"
 }

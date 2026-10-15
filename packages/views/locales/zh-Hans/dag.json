@@ -58,8 +58,8 @@
   "layout_retry": "重新布局",
   "legend_edge_satisfied": "浅灰细线：已满足的依赖",
   "legend_edge_blocking": "深色实线：仍在阻塞",
-  "legend_edge_advancing": "深色实线：前置正在推进",
-  "legend_edge_cancelled": "红色虚线：已取消但仍在阻塞",
+  "legend_edge_advancing": "深色实线带流动光点：前置正在推进",
+  "legend_edge_cancelled": "红色虚线缓慢呼吸：已取消但仍在阻塞",
   "legend_external": "两侧虚线小卡片表示与其他任务线的依赖，点击跳转",
   "count_blocked": "阻塞",
   "count_in_progress": "进行中",
@@ -68,5 +68,10 @@
   "external_from": "来自",
   "external_to": "去向",
   "external_jump_hint": "点击跳转",
-  "focus_line": "聚焦任务线"
+  "focus_line": "聚焦任务线",
+  "edge_aggregate_summary_other": "汇总 {{count}} 条依赖",
+  "edge_locate": "定位",
+  "legend_highlight": "点击卡片或连线：点亮相关链路，其余变暗；再点同一卡片切换全部上下游",
+  "selection_scope_neighborhood": "一层",
+  "selection_scope_closure": "全部上下游"
 }

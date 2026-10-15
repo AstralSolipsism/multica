@@ -79,19 +79,29 @@ function DependencyBadge({ issue }: { issue: DagIssue }) {
  * cancelled-still-blocking cards keep the dashed border.
  */
 export const DagTaskCard = memo(
-  function DagTaskCard({ data, selected }: NodeProps<DagTaskFlowNode>) {
+  function DagTaskCard({ data }: NodeProps<DagTaskFlowNode>) {
     const { t } = useT("dag");
     const { task } = data;
     const issue: DagIssue = task.issue;
     const statusCategory = (issue.statusCategory as IssueStatusCategory) || "unstarted";
     const done = statusCategory === "done";
+    if (data.simplified) {
+      // Zoomed out past readability: the edge layer paints this card as an
+      // SVG rect; the DOM node stays as the interaction shell (OL-183 §7).
+      return (
+        <div
+          className="nopan h-full w-full"
+          style={{ width: DAG_NODE_WIDTH, height: DAG_NODE_HEIGHT }}
+          data-dag-task={issue.identifier}
+        />
+      );
+    }
     return (
       <div
         className={cn(
           "nopan flex h-full w-full flex-col gap-1 rounded-lg border bg-card px-2.5 py-2 text-left shadow-xs transition-opacity",
-          selected ? "border-brand ring-2 ring-brand/30" : "border-border hover:border-foreground/30",
+          "border-border hover:border-foreground/30",
           done && "opacity-55",
-          data.dimmed && "opacity-25",
           (task.role === "context" || task.cancelledBlocking) && "border-dashed",
         )}
         style={{ width: DAG_NODE_WIDTH, height: DAG_NODE_HEIGHT }}
@@ -142,5 +152,5 @@ export const DagTaskCard = memo(
       </div>
     );
   },
-  (prev, next) => prev.data === next.data && prev.selected === next.selected,
+  (prev, next) => prev.data === next.data,
 );
