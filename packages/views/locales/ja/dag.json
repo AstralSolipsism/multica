@@ -73,5 +73,10 @@
   "edge_locate": "位置へ移動",
   "legend_highlight": "カードや線をクリック：関連チェーンを強調し、ほかを暗くします。もう一度クリックで全上流・下流に切替",
   "selection_scope_neighborhood": "1層",
-  "selection_scope_closure": "全上流・下流"
+  "selection_scope_closure": "全上流・下流",
+"focus_mode": "フォーカスモード",
+  "focus_breadcrumb": "フォーカス {{identifier}}",
+  "exit_focus": "フォーカスモードを終了",
+  "focus_unavailable": "対象のタスクがこのビューにないため、前の階層に戻りました。",
+  "focus_current_hidden": "対象のタスクは非表示です。「完了済みを表示」をオンにすると表示されます。"
 }

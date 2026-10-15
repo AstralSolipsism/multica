@@ -137,6 +137,7 @@ export function DagSceneCanvasInner({
   const { resolvedTheme: colorMode } = useTheme();
   const canvasWidth = useFlowStore((state) => state.width);
   const canvasHeight = useFlowStore((state) => state.height);
+  const canvasElement = useRef<HTMLDivElement>(null);
   const viewportKey = dagLevelViewportKey(level);
   const handledFocus = useRef(0);
   const handledLocate = useRef(0);
@@ -184,10 +185,13 @@ export function DagSceneCanvasInner({
   useEffect(() => {
     if (!viewportInitialized || appliedViewportKey.current === viewportKey) return;
     appliedViewportKey.current = viewportKey;
+    // An explicit entry target owns this transition. fitView waits for Flow's
+    // new nodes and would otherwise overwrite the target viewport afterwards.
+    if (focusRequest?.level === level.kind && handledFocus.current !== focusRequest.nonce) return;
     const stored = storeApi.getState().dagViewports[viewportKey];
     if (stored) void setViewport(stored);
     else void fitView({ padding: 0.15, maxZoom: 1 });
-  }, [viewportKey, viewportInitialized, geometry, setViewport, fitView, storeApi]);
+  }, [viewportKey, viewportInitialized, geometry, focusRequest, level.kind, setViewport, fitView, storeApi]);
 
   // Data refreshes keep the viewport but pull it back inside the content.
   useEffect(() => {
@@ -203,21 +207,32 @@ export function DagSceneCanvasInner({
   }, [getViewport, registerCanvasApi]);
 
   useEffect(() => {
-    if (!viewportInitialized || !focusRequest || handledFocus.current === focusRequest.nonce)
+    if (!viewportInitialized || !canvasWidth || !canvasHeight || !focusRequest || handledFocus.current === focusRequest.nonce)
       return;
     // The request targets a level: wait until that scene is painted (a jump
     // from a line to an overview card arrives before the overview geometry).
-    const paintedKind = level.kind === "overview" ? "overview" : "line";
+    const paintedKind = level.kind;
     if (paintedKind !== focusRequest.level) return;
     // Same level but no such node: drop it — waiting longer would fire a
     // surprise jump when the target appears for an unrelated reason.
     handledFocus.current = focusRequest.nonce;
-    const box = geometry.nodes[focusRequest.id] ?? geometry.frames[focusRequest.id];
-    if (!box) return;
-    storeApi.getState().setDagSelectedNodeId(focusRequest.id);
+    const targetId = plan.input.kind === "focus"
+      ? plan.input.frames.find((frame) => frame.modelId === focusRequest.id && frame.side === "current")?.id ?? focusRequest.id
+      : focusRequest.id;
+    const box = geometry.nodes[targetId] ?? geometry.frames[targetId];
+    if (!box) {
+      if (level.kind === "focus") void fitView({ padding: 0.15, maxZoom: 1 });
+      return;
+    }
+    storeApi.getState().setDagSelectedNodeId(targetId);
     const zoom = Math.max(0.85, getViewport().zoom);
-    void setViewport({ x: 24 - box.x * zoom, y: 24 - box.y * zoom, zoom });
-  }, [focusRequest, geometry, level, getViewport, setViewport, storeApi, viewportInitialized]);
+    // The Q11 row can appear in this same commit; Flow's ResizeObserver has
+    // not necessarily published the resulting canvas height yet.
+    const size = canvasElement.current?.getBoundingClientRect();
+    void setViewport(level.kind === "focus"
+      ? { x: (size?.width ?? canvasWidth) / 2 - (box.x + box.width / 2) * zoom, y: (size?.height ?? canvasHeight) / 2 - (box.y + box.height / 2) * zoom, zoom }
+      : { x: 24 - box.x * zoom, y: 24 - box.y * zoom, zoom });
+  }, [focusRequest, geometry, level, plan, canvasWidth, canvasHeight, getViewport, setViewport, fitView, storeApi, viewportInitialized]);
 
   // The bus dropdown's 定位: center the dependency's painted endpoints.
   useEffect(() => {
@@ -461,8 +476,11 @@ export function DagSceneCanvasInner({
   );
   return (
     <div
+      ref={canvasElement}
       className="relative flex-1 min-h-0"
       data-dag-canvas
+      data-dag-level={level.kind}
+      data-dag-scene={plan.input.id}
       onKeyDown={(event) => {
         // Nodes never carry a selected flag (the ring paints in the edge
         // layer), so React Flow's own Escape-to-unselect cannot fire; the

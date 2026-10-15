@@ -37,7 +37,7 @@ export function createDagModelSelector() {
     } else if (request.view === "line") {
       result.line = computeDagLine(index, request.lineId, lines.get(request.lineId));
       if (result.line) lines.set(request.lineId, result.line);
-    } else result.focus = computeDagFocus(index, request.issueId, request.showCompleted);
+    } else if (index.issues.has(request.issueId)) result.focus = computeDagFocus(index, request.issueId, request.showCompleted);
     lastRequest = key;
     lastResult = result;
     return result;

@@ -13,7 +13,7 @@ cost being measured lives in that machinery.
 2. **DAG view** (`dag-view.spec.ts`, OL-278) — measures the issues page's
    dependency-graph view against synthetic graph datasets (OL-183's shapes):
    fetch, parse+validate, layout, first-interactive, pan/zoom frame rate,
-   card-click response and entering a task line. The view is two-level:
+   card-click response, entering a task line and focus mode. The overview and line levels use:
    overview cards, then one line's task cards after a double-click.
 
 It covers the renderer shared by Web and Desktop. Electron's own
@@ -102,6 +102,7 @@ from a fixed route table; anything unknown invalidates the sample.
 | `pan` / `zoom` | Scripted drag / Ctrl+wheel gestures, ~4 s each. Pan starts from a verified bare-pane point (cards are `nopan`) and is discarded as `invalid` if the viewport transform never changed; rAF frame intervals → p50/p95/max ms, long-frame count, avg FPS. Stalled frames are counted, not trimmed. |
 | `click` | In-page: real pointer events on a visible card's body (overview card, or task card when the dataset auto-entered its single line), timed from pointerdown to the frame after the toolbar's selection label appears; every sample starts from a cleared selection. ≥ 3 samples → p50/p95 ms, else `timeout`/`invalid`. |
 | `enter_line_ms` | In-page double-click on the first visible overview line card → the frame after the line level renders its first task card (`[data-dag-task]`); afterwards the view returns to the overview. `invalid` when no line card is visible (e.g. `big-line` auto-enters its single line). OL-183 budget: ≤ 300 ms. |
+| `focus.typical` / `focus.largest` | Focus mode button click → animation frame after the focused task renders in the focus scene, including model construction, layout and React Flow commit. Typical chooses a visible leaf seed whose bidirectional raw closure is closest to 25 tasks (≤ 300 ms budget). Largest chooses the largest closure over the entire dataset and enables Show completed first. Each records seed, raw closure size, elapsed ms, largest rAF interval during entry, mounted task count (virtualized) and fallback use. Largest additionally records a 1.5-second pan after entry to check interaction responsiveness. Worker prewarming comes from normal navigation, not timed-closure cache priming. `PERF_SCREENSHOT_DIR` optionally captures both scenes. |
 
 Outcomes that are not durations are reported as strings: `timeout` when a
 budget expired, `invalid` when nothing rendered or the sample was

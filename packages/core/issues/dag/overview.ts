@@ -1,7 +1,7 @@
 import { replaceEqualDeep } from "@tanstack/react-query";
 import { normalizeIssueStatusCategory } from "../config/status";
 import { PRIORITY_ORDER } from "../config/priority";
-import { DAG_INDEPENDENT_GROUP, dagFeatureRepId, type DagProjection } from "./projection";
+import { DAG_INDEPENDENT_GROUP, dagFeatureRepId } from "./projection";
 import { aggregateDagDependencyState, dagHasActiveRun, dagIssueFinished, type DagDependencyState } from "./state";
 import type { DagDependency, DagIssue, DagModelIndex } from "./model-index";
 
@@ -63,7 +63,7 @@ export interface DagOverviewModel {
   /** Satisfied raw edges, also when bundled with unsatisfied edges. */
   satisfiedByCard: ReadonlyMap<string, readonly DagAggregateDependency[]>;
   representatives: ReadonlyMap<string, string>;
-  hiddenCompleted: DagProjection["hiddenCompleted"];
+  hiddenCompleted: { lines: number; lineTasks: number; singles: number };
   hiddenLineIds: readonly string[];
   autoEnterLineId: string | null;
   hasRestrictedContext: boolean;
