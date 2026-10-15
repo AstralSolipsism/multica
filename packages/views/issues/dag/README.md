@@ -1,6 +1,6 @@
 # DAG scene layout (Stage 8)
 
-The two-level DAG canvas (Stage 9) renders exclusively through the scene API
+The overview, line and focus DAG canvas (Stages 9–10) renders exclusively through the scene API
 below: `dag-view.tsx` builds plans from the OL-279 models, this engine computes
 geometry, and `dag-scene-canvas.tsx` paints it. The engine imports only the
 core models; it does not fetch data or choose rendering styles.
@@ -100,7 +100,7 @@ or dependence on object property insertion order. Scope disposal clears all
 entries. Treat returned geometry as immutable.
 
 While the overview runs, the line worker preloads ELK; focus preloads when the
-overview completes, avoiding three simultaneous initializations. Each worker uses
+overview or a directly restored line completes, avoiding three simultaneous initializations. Each worker uses
 ELK's supported child-worker API. A 3,000 ms main-thread deadline terminates the
 over-budget worker (a Promise race alone cannot stop ELK), then requests bounded
 group packing in a replacement worker. `quality: "fallback"` identifies this
@@ -171,3 +171,42 @@ selected complete task lines through CLI reads, record that limited provenance
 beside the file rather than describing it as a full-workspace API capture.
 Real snapshots may contain private workspace data: keep them out of Git and
 deliver only the requested rendered lines through issue attachments.
+
+## Focus navigation (Stage 10)
+
+The selection zone's **Focus mode** action traces a raw issue across task lines
+using `computeDagFocus`. Overview line cards do not expose this task action;
+Open detail keeps first priority when selection actions overflow.
+Upstream/downstream highlight actions keep their in-place behavior. The focus scene uses the same cards, frame headers, buses,
+selection resolver and per-dependency highlight routes as the line scene;
+satisfied and redundant dependencies are always present. Frame fragments keep
+scene IDs for selection/geometry and raw issue IDs for issue actions. Cyclic
+peers sit in the current column. Retained cancelled context ancestors stay
+downstream, matching the original model behavior: upstream traversal already includes ancestors in its closure.
+Ancestor frame fragments appear only when they contain members or carry a
+dependency endpoint; a seed that is itself a frame keeps its current fragment.
+
+`dagFocusIssueId` overlays the remembered `dagLineId` and overview pin. These
+level pointers and `focus:<issueId>` viewports persist per user, outside saved
+view definitions. Entry snapshots the live painted viewport; the close button
+and parent breadcrumb restore the entry level. The overview breadcrumb can
+return directly to the overview, including from the independent-task grid.
+Exiting focus does not write an unused viewport slot; opening issue detail
+still saves the live focus viewport for return navigation. Focus requests are gated by the painted
+`overview` / `line` / `focus` kind, including requests for fragmented frames.
+
+Q11 counts hidden closure members once and never forces them onto the canvas.
+The count and Show completed action remain visible even with no selection.
+A hidden seed stays in focus with an explicit hint and fits the remaining
+content if it has no target box. A deleted/filtered-out seed returns to the
+entry level with a notice that clears on the next level change. A restored
+line that also disappeared then follows the normal overview fallback.
+
+`e2e/dag-task-lines.spec.ts` exercises focus entry and breadcrumb exits against
+the real backend in the retained CI gate. `e2e/dag-focus.spec.ts` covers entry, cross-line content, Q11, reload and viewport
+restoration against the production frontend with controlled API responses.
+Its optional `DAG_SNAPSHOT_PATH` / `DAG_FOCUS_IDENTIFIER` case renders an
+authorized CLI-reconstructed schema-v1 graph for review screenshots; raw
+workspace fixtures stay outside Git. The Stage 7 browser performance scenario
+now measures a typical closure and the dataset's largest closure,
+including click-to-render time and the largest animation-frame interval.

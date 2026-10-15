@@ -3,8 +3,8 @@
  *
  * Measures the issues page's DAG view against synthetic graph data of the
  * shapes OL-183 defined: fetch, parse+validate, layout, first-interactive,
- * pan/zoom frame rate, card-click response, and entering a task line. The
- * view is two-level (overview cards → one line's task cards); interaction
+ * pan/zoom frame rate, card-click response, task-line entry and focus mode.
+ * Navigation has overview, line and focus levels; the initial interaction
  * sections run on whichever level painted first (a dataset with a single
  * visible line auto-enters it). Everything except HTTP is the real
  * production page — routing, TanStack Query, the ELK scene-layout workers,
@@ -21,6 +21,7 @@
  *   pnpm exec playwright test --config=playwright.perf.config.ts e2e/perf/dag-view.spec.ts
  *   PERF_DATASET=stress-5000 PERF_THROTTLE_CPU=4 PERF_REPORT_PATH=report.json ...
  */
+import { mockDagGraph, WORKSPACE_SLUG } from "../dag-graph-fixture";
 import { expect, test } from "@playwright/test";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -33,6 +34,8 @@ import {
   issueGraphFixtureDigest,
   type IssueGraphFixtureDatasetName,
 } from "@multica/core/issues/testing/issue-graph-fixture";
+import { createDagModelIndex } from "@multica/core/issues/dag/model-index";
+import { dagDependencyClosure } from "@multica/core/issues/dag/traversal";
 import { IssueGraphSchema } from "@multica/core/api";
 
 test.setTimeout(600_000);
@@ -69,66 +72,6 @@ test.use({
   locale: "en-US",
   colorScheme: "light",
   serviceWorkers: "block",
-});
-
-const WORKSPACE_SLUG = "perf";
-const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
-const USER_ID = "22222222-2222-4222-8222-222222222222";
-
-const json = (body: unknown) => ({
-  status: 200,
-  contentType: "application/json",
-  body: JSON.stringify(body),
-});
-
-const workspace = {
-  id: WORKSPACE_ID, name: "Perf", slug: WORKSPACE_SLUG,
-  description: null, context: null,
-  settings: { github_enabled: false }, repos: [],
-  issue_prefix: "GAME", avatar_url: null,
-  created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
-};
-
-const me = {
-  id: USER_ID, name: "Perf User", email: "perf@example.test", avatar_url: null,
-  language: null, onboarded_at: "2026-09-01T00:00:00Z",
-  onboarding_questionnaire: { source: "other" },
-  created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
-};
-
-/** Built-in status catalog so cards resolve colours and categories. */
-const statuses = [
-  { key: "backlog", name: "Backlog", category: "unstarted", color: "#94a3b8" },
-  { key: "todo", name: "Todo", category: "unstarted", color: "#64748b" },
-  { key: "in_progress", name: "In Progress", category: "started", color: "#3b82f6" },
-  { key: "in_review", name: "In Review", category: "started", color: "#8b5cf6" },
-  { key: "blocked", name: "Blocked", category: "started", color: "#f59e0b" },
-  { key: "done", name: "Done", category: "done", color: "#22c55e" },
-  { key: "cancelled", name: "Cancelled", category: "closed", color: "#ef4444" },
-].map((status, index) => ({
-  ...status,
-  id: `s-${status.key}`,
-  workspace_id: WORKSPACE_ID,
-  description: "",
-  icon: null,
-  is_system: true,
-  position: index,
-  archived_at: null,
-  created_at: "2026-09-01T00:00:00Z",
-  updated_at: "2026-09-01T00:00:00Z",
-}));
-
-/** Detail shape for a graph node, for the toolbar's selection fetch. */
-const issueDetail = (node: { id: string; identifier: string; title: string; status: string; priority: string }) => ({
-  id: node.id, workspace_id: WORKSPACE_ID, number: 1,
-  identifier: node.identifier, title: node.title,
-  description: "Synthetic.", status: node.status,
-  status_category: node.status, status_name: node.status, priority: node.priority,
-  assignee_type: null, assignee_id: null, creator_type: "user", creator_id: USER_ID,
-  parent_issue_id: null, project_id: null, position: 0,
-  start_date: null, due_date: null, stage: null, metadata: {}, properties: {},
-  labels: [], reactions: [],
-  created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
 });
 
 /** Writes the report wherever the run can see it, whatever the outcome. */
@@ -411,90 +354,15 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
   const graph = buildIssueGraphFixture(CONFIG!);
   const stats = analyzeIssueGraphFixture(graph);
   const graphJson = JSON.stringify(graph);
-  const details = new Map(graph.nodes.map((n) => [n.id, issueDetail(n)]));
-  const unknownRequests: string[] = [];
   const pageErrors: string[] = [];
-  const external: string[] = [];
   let graphBodyBytes = 0;
 
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.emulateMedia({ colorScheme: "light", reducedMotion: "no-preference" });
-  await context.addCookies([
-    { name: "multica_logged_in", value: "1", url: origin },
-    { name: "last_workspace_slug", value: WORKSPACE_SLUG, url: origin },
-  ]);
-  await context.addInitScript(() => {
-    window.localStorage.setItem("multica:chat:floatingChatEnabled", "false");
+  const { unknownRequests, external } = await mockDagGraph(context, origin, graph, {
+    onGraph: (bytes) => { graphBodyBytes = bytes; },
   });
-  // Preselect the DAG view for this workspace so navigation lands on the graph
-  // immediately; the surface registry persists per workspace slug.
-  await context.addInitScript((slug) => {
-    window.localStorage.setItem(
-      `multica_issue_surface_views:${slug}`,
-      JSON.stringify({
-        state: {
-          surfaces: {
-            "workspace:all": { state: { viewMode: "dag" }, updatedAt: "2026-09-01T00:00:00.000Z" },
-          },
-        },
-        version: 1,
-      }),
-    );
-  }, WORKSPACE_SLUG);
   await context.addInitScript(INSTRUMENT);
-
-  await context.route("**/*", async (route) => {
-    const url = new URL(route.request().url());
-    if (url.origin !== origin) {
-      external.push(url.href);
-      return route.abort();
-    }
-    if (!url.pathname.startsWith("/api/")) return route.continue();
-    if (url.pathname === `/api/workspaces/${WORKSPACE_ID}/issues/graph`) {
-      graphBodyBytes = Buffer.byteLength(graphJson);
-      return route.fulfill({ status: 200, contentType: "application/json", body: graphJson });
-    }
-    const detail = /^\/api\/issues\/([0-9a-f-]+)$/.exec(url.pathname);
-    if (detail && details.has(detail[1]!)) return route.fulfill(json(details.get(detail[1]!)));
-    switch (url.pathname) {
-      case "/api/config": return route.fulfill(json({ feature_flags: {}, allow_signup: true }));
-      case "/api/me": return route.fulfill(json(me));
-      case "/api/workspaces": return route.fulfill(json([workspace]));
-      case "/api/client-usage": return route.fulfill(json({}));
-      case "/api/agents": case "/api/runtimes": case "/api/squads":
-      case "/api/agent-task-snapshot": case "/api/invitations": case "/api/inbox":
-      case "/api/inbox/unread-summary": case "/api/pins": case "/api/chat/sessions":
-      case `/api/workspaces/${WORKSPACE_ID}/members`:
-        return route.fulfill(json([]));
-      case "/api/projects": return route.fulfill(json({ projects: [], total: 0 }));
-      case "/api/issues": return route.fulfill(json({ issues: [], total: 0 }));
-      // The issues surface also queries table rows/facets and saved views;
-      // empty answers keep them off the DAG's critical path without 404 noise.
-      case "/api/issues/table/rows":
-      case "/api/issues/table/facets":
-        return route.fulfill(json({ rows: [], total: 0, groups: [], facets: {} }));
-      case "/api/issue-views": return route.fulfill(json({ views: [], total: 0 }));
-      case "/api/issue-view-preferences":
-      case "/api/notification-preferences":
-        return route.fulfill(json({}));
-      case "/api/issue-wakeup-summaries": return route.fulfill(json({ summaries: [] }));
-      case "/api/search-index/manifest": return route.fulfill(json({}));
-      case "/api/issue-statuses":
-        return route.fulfill(json({ statuses, categories: ["unstarted", "started", "done", "closed"], total: statuses.length }));
-      case "/api/properties": return route.fulfill(json({ properties: [], total: 0 }));
-      case "/api/quick-actions": return route.fulfill(json({ quick_actions: [] }));
-      case "/api/assignee-frequency": return route.fulfill(json([]));
-      case "/api/issues/child-progress": return route.fulfill(json({ progress: [] }));
-      default:
-        unknownRequests.push(`${route.request().method()} ${url.pathname}`);
-        return route.fulfill(json({}));
-    }
-  });
-  // A stubbed socket keeps the realtime layer out of the numbers; the canvas
-  // DOM proves liveness.
-  await context.routeWebSocket((url) => url.pathname === "/ws", (ws) => {
-    ws.onMessage(() => {});
-  });
 
   if (THROTTLE > 1) {
     const cdp = await context.newCDPSession(page);
@@ -773,6 +641,94 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     }
   }
 
+  // ---- 5. Focus mode: typical (~25 closure members) and largest closure ----
+  // Find seeds outside the browser measurement. Model construction, layout,
+  // worker transfer and rendering after the button click remain timed.
+  const focusIndex = createDagModelIndex(IssueGraphSchema.parse(graph));
+  const candidates = [...focusIndex.issues.values()].flatMap((node) => {
+    const root = focusIndex.rootOf.get(node.id)!;
+    const closure = new Set([
+      ...dagDependencyClosure(focusIndex.traversal, [node.id], "upstream"),
+      ...dagDependencyClosure(focusIndex.traversal, [node.id], "downstream"),
+    ]);
+    return [{ id: node.id, identifier: node.identifier, lineId: root, closure_count: closure.size, is_frame: focusIndex.forest.children.has(node.id), hidden_line: focusIndex.visibility.hiddenRoots.has(root) }];
+  });
+  const typical = candidates.filter((candidate) => !candidate.hidden_line && !candidate.is_frame && candidate.id !== candidate.lineId).sort((a, b) => Math.abs(a.closure_count - 25) - Math.abs(b.closure_count - 25))[0];
+  const largest = [...candidates].sort((a, b) => b.closure_count - a.closure_count)[0];
+  const focusResults: Record<string, unknown> = {};
+  for (const [label, target] of [["typical", typical], ["largest", largest]] as const) {
+    if (!target || !cardsPresent) { focusResults[label] = "invalid"; continue; }
+    if (await page.locator("[data-dag-back]").count()) await page.locator("[data-dag-back]").click();
+    await expect(page.locator('[data-dag-level="overview"]')).toBeVisible();
+    if (label === "largest") {
+      const completed = page.getByRole("button", { name: /^Show completed/ });
+      if (await completed.getAttribute("aria-pressed") === "false") await completed.click();
+    }
+    await expect(page.getByText("Computing layout…", { exact: true })).toHaveCount(0, { timeout: 10_000 });
+    // The preceding pan/zoom sample may leave this line outside the viewport;
+    // fit first so Flow's viewport culling also mounts the target card.
+    await page.getByRole("button", { name: "Fit View", exact: true }).click();
+    const card = page.locator(`[data-dag-overview-card="issue:${target.lineId}"]`);
+    await card.waitFor({ timeout: 20_000 });
+    // Prepare a precise seed through the actual overview -> line -> task UI.
+    await card.dispatchEvent("click");
+    await expect(page.locator("[data-dag-label]")).toBeVisible();
+    await card.dispatchEvent("dblclick");
+    const task = page.locator(`[${target.is_frame ? "data-dag-frame-header" : "data-dag-task"}="${target.is_frame ? target.id : target.identifier}"]`);
+    await task.waitFor({ timeout: 20_000 });
+    await task.dispatchEvent("click");
+    await expect(page.locator("[data-dag-label]")).toContainText(target.identifier);
+    if (!(await page.locator("[data-dag-enter-focus]").isVisible()))
+      await page.getByRole("button", { name: "More", exact: true }).click();
+    const result = await page.locator("[data-dag-enter-focus]").evaluate((button, id) => new Promise<{ elapsed_ms: number | string; max_frame_ms: number; rendered_tasks: number; fallback: boolean }>((resolve) => {
+      const start = performance.now();
+      let last = start, maxFrame = 0, frame = 0;
+      const tick = (now: number) => { maxFrame = Math.max(maxFrame, now - last); last = now; frame = requestAnimationFrame(tick); };
+      frame = requestAnimationFrame(tick);
+      const timer = setTimeout(() => finish("timeout"), 30_000);
+      const finish = (elapsed: number | string) => {
+        clearTimeout(timer); observer.disconnect(); cancelAnimationFrame(frame);
+        resolve({ elapsed_ms: elapsed, max_frame_ms: Math.round(maxFrame), rendered_tasks: document.querySelectorAll("[data-dag-task]").length, fallback: !!document.querySelector("[data-dag-fallback]") });
+      };
+      const observer = new MutationObserver(() => {
+        const canvas = document.querySelector('[data-dag-level="focus"]');
+        if (canvas?.getAttribute("data-dag-scene") !== id) return;
+        // The wrapper's attributes can commit before React Flow updates its
+        // internal node store. Require a focus fragment, not the old line.
+        const fragment = [...canvas.querySelectorAll("[data-dag-frame]")].some((element) => element.getAttribute("data-dag-frame")?.startsWith('["focus-frame",'));
+        if (!fragment) return;
+        observer.disconnect();
+        // One frame after React Flow committed the target card.
+        requestAnimationFrame(() => finish(Math.round(performance.now() - start)));
+      });
+      observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    }), target.id);
+    let focusPan: Awaited<ReturnType<typeof gesture>> | undefined;
+    if (label === "largest") {
+      const point = await page.evaluate(() => (window as unknown as { __dagPanePoint: () => { x: number; y: number } | null }).__dagPanePoint());
+      focusPan = point ? await gesture("focus_largest_pan", async () => {
+        await page.mouse.move(point.x, point.y);
+        await page.mouse.down();
+        const started = Date.now();
+        let step = 0;
+        while (Date.now() - started < 1_500) {
+          await page.mouse.move(point.x + (step++ % 20) * 4, point.y + (step % 20) * 2);
+          await page.waitForTimeout(16);
+        }
+        await page.mouse.up();
+      }) : "invalid";
+    }
+    focusResults[label] = { ...target, ...result, pan: focusPan };
+    if (result.elapsed_ms === "timeout") timedOut[`focus_${label}`] = true;
+    if (process.env.PERF_SCREENSHOT_DIR) {
+      mkdirSync(process.env.PERF_SCREENSHOT_DIR, { recursive: true });
+      await page.screenshot({ path: resolve(process.env.PERF_SCREENSHOT_DIR, `focus-${label}.png`) });
+    }
+    await page.locator("[data-dag-exit-focus]").click();
+    await expect(page.locator('[data-dag-level="line"]')).toBeVisible();
+  }
+
   // ---- 5. Collect ------------------------------------------------------------
   if (unknownRequests.length) invalid.push(`unmocked requests: ${[...new Set(unknownRequests)].slice(0, 5).join(", ")}`);
   if (external.length) invalid.push(`external requests: ${external.join(", ")}`);
@@ -816,6 +772,7 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     zoom,
     click: clickOutcome,
     enter_line_ms: enterLineMs,
+    focus: focusResults,
     unmocked_requests: [...new Set(unknownRequests)].slice(0, 10),
     page_errors: pageErrors.slice(0, 5),
   });

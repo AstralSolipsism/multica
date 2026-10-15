@@ -1,10 +1,10 @@
 # DAG data and models
 
-This is the headless boundary for the two-level DAG (OL-279). It contains no
-React Flow types, layout, geometry or UI. The two-level canvas (Stage 9) reads
-exclusively through these models; its React Flow adapters stay in views. The
-legacy `projection.ts` remains exported for compatibility but no longer drives
-a canvas.
+This is the headless boundary for the DAG (OL-279). It contains no React Flow
+types, layout, geometry or UI. The overview, line and focus canvases read
+exclusively through these models; their React Flow adapters stay in views.
+`projection.ts` now holds only the shared display forest, completed visibility
+and independent-task helpers; the retired folding projection is removed.
 
 ## Consumers
 
@@ -35,8 +35,8 @@ creates the index once per snapshot and only builds the requested model.
   Line members are never filtered by the completed switch. External dependencies
   are grouped by the other endpoint's top-level line (or standalone issue),
   separately for upstream and downstream; the group's project is its root's.
-- Progress excludes a line's root and counts only the `done` category. As in
-  the existing projection's membership summary, unfinished status counters,
+- Progress excludes a line's root and counts only the `done` category.
+  Unfinished status counters,
   runs, attention and match/context include the root. Unknown categories remain
   unfinished and have a separate count; missing summaries remain unknown.
 - Overview attention is exception, advancing, review, unstarted, finished;
@@ -54,8 +54,7 @@ creates the index once per snapshot and only builds the requested model.
   dependencies cannot convey it. Focus exposes redundant edges without hiding
   them. Inconsistent dependency cycles conservatively keep all edges.
 - Focus takes a raw issue ID as a single task seed and uses the same raw
-  upstream/downstream traversal as the existing canvas. Legacy aggregate-header
-  focus still seeds all represented members in `dagFocusNeighborhood`.
+  upstream/downstream traversal, including inherited prerequisites.
   Visible ancestor frames needed solely for grouping have `contextOnly: true`.
   Hidden closure members are counted once, never reintroduced as frame headers.
 - Restricted context is a boolean, not a synthesized node or hidden count.

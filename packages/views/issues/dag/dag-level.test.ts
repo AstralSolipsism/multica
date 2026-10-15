@@ -4,6 +4,7 @@ import { DAG_INDEPENDENT_GROUP } from "@multica/core/issues/dag";
 import {
   DAG_OVERVIEW_LEVEL,
   dagAutoEnterLineId,
+  dagContainingLineId,
   dagExternalJumpTarget,
   dagLevelFromLineId,
   dagLevelIsIndependent,
@@ -52,5 +53,29 @@ describe("dagExternalJumpTarget", () => {
       kind: "overview",
       cardId: "solo-1",
     });
+  });
+});
+
+
+describe("dagContainingLineId", () => {
+  const issues = new Map([
+    ["root", { parentIssueId: null }],
+    ["sub", { parentIssueId: "root" }],
+    ["task", { parentIssueId: "sub" }],
+    ["solo", { parentIssueId: null }],
+    ["orphan", { parentIssueId: "restricted" }],
+    ["orphan-child", { parentIssueId: "orphan" }],
+    ["cycle-a", { parentIssueId: "cycle-b" }],
+    ["cycle-b", { parentIssueId: "cycle-a" }],
+  ]);
+  it("finds the visible root for a nested task or frame", () => {
+    expect(dagContainingLineId("task", issues)).toBe("root");
+    expect(dagContainingLineId("root", issues)).toBe("root");
+    expect(dagContainingLineId("orphan-child", issues)).toBe("orphan");
+  });
+  it("has no line for a standalone, missing or cyclic task", () => {
+    expect(dagContainingLineId("solo", issues)).toBeNull();
+    expect(dagContainingLineId("missing", issues)).toBeNull();
+    expect(dagContainingLineId("cycle-a", issues)).toBeNull();
   });
 });

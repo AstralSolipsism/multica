@@ -253,3 +253,35 @@ describe("dag view preferences", () => {
     expect(store.getState().dagSelectedNodeId).toBe("b");
   });
 });
+
+describe("focus level navigation", () => {
+  it.each([null, "line-a"])("returns to %s with its pin, selection and viewport intact", (lineId) => {
+    const store = makeStore();
+    if (lineId) store.getState().enterDagLine(lineId);
+    else store.getState().exitDagLine();
+    const key = lineId ? `line:${lineId}` : "overview";
+    const viewport = { x: -240, y: 18, zoom: 0.7 };
+    store.getState().setDagViewportFor(key, viewport);
+    store.getState().setDagSelectedNodeId("selected");
+    store.getState().enterDagFocus("a");
+    store.getState().setDagViewportFor("focus:a", { x: 9, y: 0, zoom: 1 });
+    const saved = viewStorePersistOptions("test").partialize(store.getState());
+    const restored = mergeViewStatePersisted(saved, makeStore().getState());
+    expect(restored.dagFocusIssueId).toBe("a");
+    expect(restored.dagLineId).toBe(lineId);
+    expect(saved).not.toHaveProperty("dagFocusReturnSelection");
+    store.getState().exitDagFocus();
+    expect(store.getState()).toMatchObject({
+      dagLineId: lineId, dagOverviewPinned: !lineId, dagFocusIssueId: null,
+      dagSelectedNodeId: "selected", dagViewports: { [key]: viewport },
+    });
+  });
+  it("validates persisted focus ids and clears focus when navigating to a line", () => {
+    for (const dagFocusIssueId of [1, [], {}])
+      expect(mergeViewStatePersisted({ dagFocusIssueId }, makeStore().getState()).dagFocusIssueId).toBeNull();
+    const store = makeStore();
+    store.getState().enterDagFocus("a");
+    store.getState().enterDagLine("b");
+    expect(store.getState().dagFocusIssueId).toBeNull();
+  });
+});

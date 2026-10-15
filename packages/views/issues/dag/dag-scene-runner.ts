@@ -45,7 +45,7 @@ export function createDagSceneRunner({
           cache.set(key, response.result);
           while (cache.size > Math.max(1, capacity)) cache.delete(cache.keys().next().value!);
           // Keep the third ELK initialization out of the initial-screen path.
-          if (kind === "overview") workers.prepare("focus");
+          if (kind !== "focus") workers.prepare("focus");
         }
         item.done(response);
       };

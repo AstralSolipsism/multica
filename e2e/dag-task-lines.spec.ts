@@ -58,13 +58,22 @@ async function selectThenDblclick(page: Page, target: ReturnType<Page["locator"]
   await target.dblclick();
 }
 
+async function enterFocus(page: Page, taskId: string) {
+  await page.locator(`.react-flow__node[data-id="${taskId}"]`).click();
+  const entry = page.locator("[data-dag-enter-focus]");
+  if (!(await entry.isVisible()))
+    await page.getByRole("region", { name: "Selection" }).getByRole("button", { name: "More", exact: true }).click();
+  await entry.click();
+  await expect(page.locator('[data-dag-level="focus"]')).toHaveAttribute("data-dag-scene", taskId);
+}
+
 const readViewport = (page: Page) =>
   page.locator(".react-flow__viewport").evaluate((element) => {
     const matrix = new DOMMatrix(getComputedStyle(element).transform);
     return { x: matrix.e, y: matrix.f, zoom: matrix.a };
   });
 
-test("DAG two-level view: overview cards, line navigation, bundles and persistence", async ({
+test("DAG levels: overview cards, line and focus navigation, bundles and persistence", async ({
   page,
   baseURL,
 }, testInfo) => {
@@ -116,6 +125,10 @@ test("DAG two-level view: overview cards, line navigation, bundles and persisten
     const cardA = page.locator(`[data-dag-overview-card="issue:${lineA.id}"]`);
     await expect(cardA).toContainText("design and implementation");
     await expect(cardA).toContainText("1/2 completed");
+    await cardA.click();
+    await page.getByRole("region", { name: "Selection" }).getByRole("button", { name: "More", exact: true }).click();
+    await expect(page.locator("[data-dag-enter-focus]")).toHaveCount(0);
+    await page.keyboard.press("Escape");
     // The toolbar is one row and the breadcrumb roots at the overview.
     const toolbarHeight = async () =>
       (await page.locator("[data-dag-toolbar]").boundingBox())!.height;
@@ -203,6 +216,29 @@ test("DAG two-level view: overview cards, line navigation, bundles and persisten
     await page.keyboard.press("Escape");
     await expect(page.locator(".react-flow__node.selected")).toHaveCount(0);
 
+    // Focus is part of this retained gate: entry keeps cross-line content,
+    // omits empty ancestor fragments and restores the viewport through the path.
+    const beforeFocus = await readViewport(page);
+    await enterFocus(page, c.id);
+    await expect(page.locator(`.react-flow__node[data-id="${b.id}"]`)).toBeAttached();
+    await expect(page.locator(`.react-flow__node[data-id="${d.id}"]`)).toBeAttached();
+    const frameFragments = await page.locator("[data-dag-frame]").evaluateAll((frames) =>
+      frames.map((frame) => JSON.parse(frame.getAttribute("data-dag-frame")!)),
+    );
+    expect(frameFragments).not.toContainEqual(["focus-frame", "upstream", lineB.id]);
+    await expect(page.locator("[data-dag-enter-focus]")).toHaveCount(0);
+    const path = page.getByRole("navigation", { name: "Task line path" });
+    await path.getByRole("button", { name: /validation and delivery/ }).click();
+    await expect(page.locator('[data-dag-level="line"]')).toHaveAttribute("data-dag-scene", lineB.id);
+    await expect.poll(() => readViewport(page)).toEqual(beforeFocus);
+    await enterFocus(page, c.id);
+    await path.getByRole("button", { name: "All task lines", exact: true }).click();
+    await expect(cards).toHaveCount(3);
+    await expect(page.locator('[data-dag-level="focus"]')).toHaveCount(0);
+    await expect.poll(() => readViewport(page)).toEqual(overviewViewport);
+    await selectThenDblclick(page, page.locator(`[data-dag-overview-card="issue:${lineB.id}"]`));
+    await expect(page.locator("[data-dag-task]")).toHaveCount(2);
+
     // Opening the detail and coming back restores the line and its viewport.
     const lineViewport = await readViewport(page);
     await selectThenDblclick(page, taskC);
@@ -224,7 +260,9 @@ test("DAG two-level view: overview cards, line navigation, bundles and persisten
     );
     await expect(page.locator("[data-dag-task]")).toHaveCount(1);
     await expect(page.locator("[data-dag-task]")).toContainText("independent note");
-    await page.getByRole("button", { name: "Back to overview" }).click();
+    await enterFocus(page, solo.id);
+    await expect(page.locator("[data-dag-focus-hidden]")).toHaveCount(0);
+    await page.getByRole("navigation", { name: "Task line path" }).getByRole("button", { name: "All task lines", exact: true }).click();
     await expect(cards).toHaveCount(3);
 
     // Refresh restores the current level: return into line A and reload.

@@ -6,9 +6,9 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import type { IssueTableQuerySpec } from "@multica/core/types";
 import {
+  DAG_INDEPENDENT_GROUP,
   useDagModels,
   modelIssue,
-  type DagIssue,
   type DagModelRequest,
   type DagTask,
 } from "@multica/core/issues/dag";
@@ -24,18 +24,21 @@ import { useT } from "../../i18n";
 import { useViewBaseline } from "../surface/view-baseline-context";
 import { once } from "../surface/once";
 import {
-  DAG_OVERVIEW_LEVEL,
   dagAutoEnterLineId,
+  dagContainingLineId,
   dagExternalJumpTarget,
   dagLevelFromLineId,
+  dagLevelFromPlan,
   dagLevelIsIndependent,
   dagLevelViewportKey,
   dagOverviewCardIdForLine,
+  type DagLevel,
 } from "./dag-level";
 import { useDagSceneLayout } from "./use-dag-scene-layout";
 import type { DagSceneRunner } from "./dag-scene-runner";
 import {
   dagFocusHiddenCount,
+  dagFocusCanvasModel,
   dagLineWithSatisfiedFilter,
   dagSceneStats,
   resolveDagSelection,
@@ -66,7 +69,7 @@ const UNSUPPORTED_SCOPE_SPEC: IssueTableQuerySpec = {
  *  painted, so a request issued mid-navigation is not dropped or misapplied. */
 export interface DagFocusRequest {
   id: string;
-  level: "overview" | "line";
+  level: "overview" | "line" | "focus";
   nonce: number;
 }
 
@@ -95,6 +98,13 @@ export function DagView({
   const storeApi = useViewStoreApi();
   const baseline = useViewBaseline();
   const lineId = useViewStore((s) => s.dagLineId);
+  const focusIssueId = useViewStore((s) => s.dagFocusIssueId);
+  const level = useMemo<DagLevel>(
+    () => focusIssueId ? { kind: "focus", issueId: focusIssueId } : dagLevelFromLineId(lineId),
+    [focusIssueId, lineId],
+  );
+  const levelKey = dagLevelViewportKey(level);
+  const [focusUnavailableAt, setFocusUnavailableAt] = useState<string | null>(null);
   const pinned = useViewStore((s) => s.dagOverviewPinned);
   const showCompleted = useViewStore((s) => s.dagShowCompleted);
   const showSatisfied = useViewStore((s) => s.dagShowSatisfiedDependencies);
@@ -130,13 +140,15 @@ export function DagView({
 
   const supported = spec.scope.kind === "workspace" || spec.scope.kind === "project";
   const safeSpec = supported ? spec : UNSUPPORTED_SCOPE_SPEC;
-  const isIndependent = dagLevelIsIndependent(dagLevelFromLineId(lineId));
+  const isIndependent = dagLevelIsIndependent(level);
   const request = useMemo<DagModelRequest>(
     () =>
-      lineId && !isIndependent
-        ? { view: "line", lineId }
+      level.kind === "focus"
+        ? { view: "focus", issueId: level.issueId, showCompleted }
+        : level.kind === "line" && !isIndependent
+        ? { view: "line", lineId: level.lineId }
         : { view: "overview", showCompleted, showSatisfiedDependencies: showSatisfied },
-    [lineId, isIndependent, showCompleted, showSatisfied],
+    [level, isIndependent, showCompleted, showSatisfied],
   );
   const { models, ...query } = useDagModels(wsId, safeSpec, request, supported);
   const graph = query.data;
@@ -151,7 +163,8 @@ export function DagView({
 
   const canvasModel = useMemo<DagCanvasModel | null>(() => {
     if (!models) return null;
-    if (!lineId)
+    if (level.kind === "focus") return models.focus ? dagFocusCanvasModel(models.focus) : null;
+    if (level.kind === "overview")
       return models.overview ? { kind: "overview", overview: models.overview } : null;
     if (isIndependent) {
       const card = models.overview?.cards.find((c) => c.kind === "independent");
@@ -173,11 +186,13 @@ export function DagView({
     return models.line
       ? { kind: "line", line: dagLineWithSatisfiedFilter(models.line, showSatisfied) }
       : null;
-  }, [models, lineId, isIndependent, issuesById, showSatisfied]);
+  }, [models, level, isIndependent, issuesById, showSatisfied]);
 
   const plan = useMemo(() => {
     if (!canvasModel) return null;
     switch (canvasModel.kind) {
+      case "focus":
+        return canvasModel.plan;
       case "overview":
         return dagOverviewLayoutInput(canvasModel.overview);
       case "line":
@@ -187,7 +202,7 @@ export function DagView({
     }
   }, [canvasModel]);
 
-  // One mounted hook across both levels keeps the per-kind workers and the
+  // One mounted hook across all three levels keeps the per-kind workers and the
   // 24-entry LRUs warm; the key carries the workspace + query identity.
   const sceneScope = `${wsId}:${hashKey([safeSpec])}`;
   const scene = useDagSceneLayout(sceneScope, plan, canvasModel, sceneRunnerFactory);
@@ -196,25 +211,45 @@ export function DagView({
   // A restored or followed line can disappear (deleted, filtered out, or no
   // longer a line): fall back to the overview.
   useEffect(() => {
-    if (!lineId || !models) return;
+    if (level.kind !== "line" || !models) return;
     if (isIndependent) {
       if (models.overview && !models.overview.cards.some((c) => c.kind === "independent"))
         storeApi.getState().setDagLineId(null);
       return;
     }
     if (models.line === null) storeApi.getState().setDagLineId(null);
-  }, [lineId, isIndependent, models, storeApi]);
+  }, [level, isIndependent, models, storeApi]);
 
   // A single visible line opens directly — until the user deliberately
   // returns to the overview (recorded in dagOverviewPinned).
   useEffect(() => {
-    if (lineId) return;
+    if (level.kind !== "overview") return;
     const target = dagAutoEnterLineId({
       pinned,
       autoEnterLineId: models?.overview?.autoEnterLineId ?? null,
     });
     if (target) storeApi.getState().setDagLineId(target);
-  }, [lineId, pinned, models, storeApi]);
+  }, [level, pinned, models, storeApi]);
+
+  // A filtered/deleted seed cannot be traced. Restore the entry level;
+  // a merely completed-hidden seed stays in focus with the Q11 affordance.
+  useEffect(() => {
+    if (level.kind === "focus" && models && !models.focus) {
+      storeApi.getState().exitDagFocus();
+      setFocusUnavailableAt(dagLevelViewportKey(dagLevelFromLineId(lineId)));
+    }
+  }, [level, lineId, models, storeApi]);
+
+  // The notice belongs to the returned level, not to future navigation.
+  useEffect(() => {
+    if (focusUnavailableAt !== levelKey) setFocusUnavailableAt(null);
+  }, [focusUnavailableAt, levelKey]);
+
+  const persistPaintedViewport = useCallback((includeFocus = false) => {
+    const viewport = canvasApi.current?.getViewport();
+    if (viewport && scene.plan && (includeFocus || scene.plan.input.kind !== "focus"))
+      storeApi.getState().setDagViewportFor(dagLevelViewportKey(dagLevelFromPlan(scene.plan)), viewport);
+  }, [scene.plan, storeApi]);
 
   const [focusRequest, setFocusRequest] = useState<DagFocusRequest | null>(null);
   const locateOnOverview = useCallback((cardId: string) => {
@@ -226,20 +261,32 @@ export function DagView({
   }, []);
 
   const onEnterLine = useCallback(
-    (nextLineId: string) => storeApi.getState().enterDagLine(nextLineId),
-    [storeApi],
+    (nextLineId: string) => {
+      persistPaintedViewport();
+      storeApi.getState().enterDagLine(nextLineId);
+    },
+    [storeApi, persistPaintedViewport],
   );
   const onExitLine = useCallback(() => {
+    persistPaintedViewport();
     const state = storeApi.getState();
     state.exitDagLine(state.dagLineId ? dagOverviewCardIdForLine(state.dagLineId) : null);
-  }, [storeApi]);
+  }, [storeApi, persistPaintedViewport]);
   const onFocusFrame = useCallback((frameId: string) => {
     setFocusRequest((current) => ({
       id: frameId,
-      level: "line",
+      level: scene.plan?.input.kind ?? "line",
       nonce: (current?.nonce ?? 0) + 1,
     }));
-  }, []);
+  }, [scene.plan]);
+  const onEnterFocus = useCallback((issueId: string) => {
+    persistPaintedViewport();
+    storeApi.getState().enterDagFocus(issueId);
+    setFocusRequest((current) => ({ id: issueId, level: "focus", nonce: (current?.nonce ?? 0) + 1 }));
+  }, [storeApi, persistPaintedViewport]);
+  const onExitFocus = useCallback(() => {
+    storeApi.getState().exitDagFocus();
+  }, [storeApi]);
   const onExternalJump = useCallback(
     (group: { id: string; kind: "line" | "issue" }) => {
       const jump = dagExternalJumpTarget(group);
@@ -254,22 +301,10 @@ export function DagView({
   );
   const onOpenIssue = useCallback(
     (issueId: string) => {
-      // Persist the live viewport under the painted level so an in-flight pan
-      // survives the round-trip to the issue detail.
-      const viewport = canvasApi.current?.getViewport();
-      const paintedPlan = scene.plan;
-      if (viewport && paintedPlan)
-        storeApi.getState().setDagViewportFor(
-          dagLevelViewportKey(
-            paintedPlan.input.kind === "overview"
-              ? DAG_OVERVIEW_LEVEL
-              : { kind: "line", lineId: paintedPlan.input.id },
-          ),
-          viewport,
-        );
+      persistPaintedViewport(true);
       navigation.push(paths.issueDetail(issueId));
     },
-    [navigation, paths, storeApi, scene.plan],
+    [navigation, paths, persistPaintedViewport],
   );
 
   // Pending long enough to offer a cancel (same five seconds as before).
@@ -292,11 +327,7 @@ export function DagView({
   // Toolbar data -----------------------------------------------------------
   const paintedModel = scene.snapshot ?? undefined;
   const paintedPlan = scene.plan;
-  const paintedLevel = paintedPlan
-    ? paintedPlan.input.kind === "overview"
-      ? DAG_OVERVIEW_LEVEL
-      : { kind: "line" as const, lineId: paintedPlan.input.id }
-    : null;
+  const paintedLevel = paintedPlan ? dagLevelFromPlan(paintedPlan) : null;
 
   const stats = useMemo(
     () =>
@@ -311,9 +342,10 @@ export function DagView({
     [paintedModel, selectedNodeId],
   );
 
-  // How many chain tasks stay hidden behind the completed filter — only the
-  // overview hides lines, so the hint belongs to that level.
+  // Focus owns the bidirectional Q11 count; the overview highlight keeps its
+  // directional count over the raw graph.
   const focusHiddenCount = useMemo(() => {
+    if (paintedModel?.kind === "focus") return paintedModel.focus.hiddenIssueCount;
     if (!focus || !graph || !paintedModel || paintedModel.kind !== "overview") return 0;
     const card = paintedModel.overview.cards.find((c) => c.id === focus.nodeId);
     if (!card) return 0;
@@ -326,11 +358,11 @@ export function DagView({
   }, [focus, graph, paintedModel]);
 
   const lineHeader = useMemo(() => {
-    if (!lineId) return null;
-    if (isIndependent) return { identifier: null, title: tDag(($) => $.independent_group) };
-    const root: DagIssue | undefined = models?.line?.input.members[0]?.issue;
+    const rootId = level.kind === "focus" ? lineId ?? dagContainingLineId(level.issueId, issuesById) : lineId;
+    if (rootId === DAG_INDEPENDENT_GROUP) return { identifier: null, title: tDag(($) => $.independent_group) };
+    const root = rootId ? issuesById.get(rootId) : undefined;
     return root ? { identifier: root.identifier, title: root.title } : null;
-  }, [lineId, isIndependent, models, tDag]);
+  }, [lineId, level, issuesById, tDag]);
 
   // Render -----------------------------------------------------------------
   if (query.isPending) {
@@ -415,12 +447,15 @@ export function DagView({
   return (
     <div className="flex flex-1 min-h-0 flex-col">
       <DagToolbar
-        level={dagLevelFromLineId(lineId)}
+        level={level}
+        focusIdentifier={level.kind === "focus" ? issuesById.get(level.issueId)?.identifier ?? null : null}
+        onEnterFocus={onEnterFocus}
+        onExitFocus={onExitFocus}
         lineHeader={lineHeader}
         selection={selection}
         stats={stats}
         hiddenCompleted={
-          !lineId && models?.overview ? models.overview.hiddenCompleted : null
+          level.kind === "overview" && models?.overview ? models.overview.hiddenCompleted : null
         }
         hasRestrictedContext={graph.hasRestrictedContext}
         contextOnly={graph.matchedCount === 0 && graph.contextCount > 0}
@@ -436,6 +471,16 @@ export function DagView({
         onFocusFrame={onFocusFrame}
       />
 
+      {focusUnavailableAt === levelKey && (
+        <div role="status" className="border-b px-3 py-2 text-caption text-muted-foreground">
+          {tDag(($) => $.focus_unavailable)}
+        </div>
+      )}
+      {paintedModel?.kind === "focus" && !paintedModel.focus.upstreamIds.has(paintedModel.focus.issueId) && (
+        <div role="status" className="border-b px-3 py-2 text-caption text-muted-foreground">
+          {tDag(($) => $.focus_current_hidden)}
+        </div>
+      )}
       {scene.error && (
         <div
           role="alert"

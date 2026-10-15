@@ -7,6 +7,7 @@ import {
   Info,
   ListTree,
   Loader2,
+  X,
 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -31,6 +32,9 @@ import type { DagSelectionTarget } from "./dag-scene-flow";
 
 export interface DagToolbarProps {
   level: DagLevel;
+  focusIdentifier?: string | null;
+  onEnterFocus?: (issueId: string) => void;
+  onExitFocus?: () => void;
   /** Current line's header for the breadcrumb; null while it loads. */
   lineHeader: { identifier: string | null; title: string } | null;
   selection: DagSelectionTarget | null;
@@ -56,6 +60,9 @@ export interface DagToolbarProps {
 
 export function DagToolbar({
   level,
+  focusIdentifier,
+  onEnterFocus,
+  onExitFocus,
   lineHeader,
   selection,
   stats,
@@ -108,6 +115,7 @@ export function DagToolbar({
   );
 
   return (
+    <>
     <div
       className="flex h-10 shrink-0 items-center gap-2 overflow-hidden border-b px-2 text-caption text-muted-foreground"
       data-dag-toolbar
@@ -141,24 +149,41 @@ export function DagToolbar({
             >
               {tDag(($) => $.all_lines)}
             </button>
-            <ChevronRight className="size-3 shrink-0 text-faint-foreground" aria-hidden />
-            <span
-              className="min-w-0 truncate px-1 font-medium text-foreground"
-              data-dag-crumb-current
-            >
-              {lineHeader ? (
-                <>
-                  {lineHeader.identifier && (
-                    <span className="mr-1.5 tabular-nums text-muted-foreground">
-                      {lineHeader.identifier}
-                    </span>
-                  )}
-                  {lineHeader.title}
-                </>
-              ) : (
-                "…"
-              )}
-            </span>
+            {lineHeader && (
+              <>
+                <ChevronRight className="size-3 shrink-0 text-faint-foreground" aria-hidden />
+                {level.kind === "line" ? (
+                  <span
+                    aria-current="page"
+                    className="min-w-0 max-w-64 truncate px-1 font-medium text-foreground"
+                    data-dag-crumb-current
+                  >
+                    {lineHeader.identifier && <span className="mr-1.5 tabular-nums text-muted-foreground">{lineHeader.identifier}</span>}
+                    {lineHeader.title}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="min-w-0 max-w-64 truncate px-1 font-medium text-foreground"
+                    onClick={onExitFocus}
+                  >
+                    {lineHeader.identifier && <span className="mr-1.5 tabular-nums text-muted-foreground">{lineHeader.identifier}</span>}
+                    {lineHeader.title}
+                  </button>
+                )}
+              </>
+            )}
+            {level.kind === "focus" && (
+              <>
+                <ChevronRight className="size-3 shrink-0 text-faint-foreground" aria-hidden />
+                <span aria-current="page" className="shrink-0 font-medium text-foreground" data-dag-crumb-current>
+                  {tDag(($) => $.focus_breadcrumb, { identifier: focusIdentifier ?? "..." })}
+                </span>
+                <Button size="icon-sm" variant="ghost" aria-label={tDag(($) => $.exit_focus)} onClick={onExitFocus} data-dag-exit-focus>
+                  <X className="size-3.5" />
+                </Button>
+              </>
+            )}
           </>
         )}
       </nav>
@@ -174,7 +199,8 @@ export function DagToolbar({
         {selection ? (
           <DagNodeSelection
             target={selection}
-            focusHiddenCount={focusHiddenCount}
+            focusHiddenCount={level.kind === "focus" ? 0 : focusHiddenCount}
+            onEnterFocus={level.kind === "focus" ? undefined : onEnterFocus}
             onOpenIssue={onOpenIssue}
             onEnterLine={onEnterLine}
             onFocusFrame={onFocusFrame}
@@ -214,7 +240,7 @@ export function DagToolbar({
           </span>
         )}
         {isFallback && (
-          <span className="inline-flex items-center gap-1" role="status">
+          <span className="inline-flex items-center gap-1" role="status" data-dag-fallback>
             <span className="text-warning">{tDag(($) => $.layout_fallback)}</span>
             <Button size="sm" variant="ghost" onClick={onRetryLayout}>
               {tDag(($) => $.layout_retry)}
@@ -273,7 +299,7 @@ export function DagToolbar({
         ) : (
           showCompletedButton(false)
         )}
-        <Button
+        {level.kind !== "focus" && <Button
           size="sm"
           variant={showSatisfied ? "secondary" : "outline"}
           className={cn("h-7 text-caption", !showSatisfied && "text-muted-foreground")}
@@ -282,7 +308,7 @@ export function DagToolbar({
           data-dag-show-satisfied
         >
           {tDag(($) => $.show_satisfied)}
-        </Button>
+        </Button>}
         <Popover>
           <PopoverTrigger
             render={
@@ -309,5 +335,15 @@ export function DagToolbar({
         </Popover>
       </span>
     </div>
+    {level.kind === "focus" && focusHiddenCount > 0 && !showCompleted && (
+      <div role="status" className="flex shrink-0 items-center gap-2 border-b px-3 py-1 text-caption text-warning" data-dag-focus-hidden>
+        <AlertTriangle className="size-3.5" />
+        <span>{tDag(($) => $.focus_hidden_tasks, { count: focusHiddenCount })}</span>
+        <Button size="sm" variant="ghost" onClick={toggleShowCompleted}>
+          {tDag(($) => $.show_completed_enable)}
+        </Button>
+      </div>
+    )}
+    </>
   );
 }

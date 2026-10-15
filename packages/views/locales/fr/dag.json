@@ -75,5 +75,10 @@
   "external_from": "Depuis",
   "external_to": "Vers",
   "external_jump_hint": "Cliquer pour y aller",
-  "focus_line": "Centrer sur le groupe"
+  "focus_line": "Centrer sur le groupe",
+  "focus_mode": "Mode focus",
+  "focus_breadcrumb": "Focus {{identifier}}",
+  "exit_focus": "Quitter le mode focus",
+  "focus_unavailable": "La tâche ciblée ne figure plus dans cette vue. Retour au niveau précédent.",
+  "focus_current_hidden": "La tâche ciblée est masquée. Activez l’affichage des tâches terminées pour la voir."
 }
