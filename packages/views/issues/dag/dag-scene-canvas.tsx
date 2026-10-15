@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
@@ -50,7 +50,7 @@ import {
 } from "./dag-highlight";
 import { dagExternalNodeId } from "./dag-scene";
 import { dagProjectColor } from "./dag-project-colors";
-import { DAG_CLICK_CYCLE_MS, DAG_GROUP_HEADER_HEIGHT, DAG_MINIMAP_NODE_LIMIT, DAG_MOTION_MIN_ZOOM, DAG_SIMPLIFIED_ZOOM } from "./dag-constants";
+import { DAG_CLICK_CYCLE_MS, DAG_GROUP_HEADER_HEIGHT, DAG_MINIMAP_NODE_LIMIT, DAG_MOTION_MIN_ZOOM, DAG_SIMPLIFIED_HYSTERESIS, DAG_SIMPLIFIED_ZOOM } from "./dag-constants";
 import { usePrefersReducedMotion } from "./use-prefers-reduced-motion";
 
 const nodeTypes = {
@@ -151,9 +151,21 @@ export function DagSceneCanvasInner({
   // otherwise re-render the whole canvas on every frame.
   // Thresholds as boolean selectors: they only re-render on crossing, and
   // they compare the real zoom — never a quantized step (OL-183's 50%/40%).
-  const simplified = useFlowStore((state) => state.transform[2] < DAG_SIMPLIFIED_ZOOM);
-  const motionOn = useFlowStore((state) => state.transform[2] >= DAG_MOTION_MIN_ZOOM);
   const zoom = useFlowStore((state) => state.transform[2]);
+  const motionOn = useFlowStore((state) => state.transform[2] >= DAG_MOTION_MIN_ZOOM);
+  // The simplified view is hysteretic: it engages below 40% and only
+  // releases above 44%, so zoom gestures across the boundary do not rebuild
+  // every card on each wheel tick.
+  const [simplifiedHysteresis, setSimplifiedHysteresis] = useState<boolean | null>(null);
+  useLayoutEffect(() => {
+    setSimplifiedHysteresis((current) => {
+      if (current == null) return zoom < DAG_SIMPLIFIED_ZOOM;
+      if (current && zoom >= DAG_SIMPLIFIED_ZOOM + DAG_SIMPLIFIED_HYSTERESIS) return false;
+      if (!current && zoom < DAG_SIMPLIFIED_ZOOM) return true;
+      return current;
+    });
+  }, [zoom]);
+  const simplified = simplifiedHysteresis ?? zoom < DAG_SIMPLIFIED_ZOOM;
   const reducedMotion = usePrefersReducedMotion();
   // Culling re-renders the edge layer only when the visible window crosses a
   // quantization boundary, not on every pan frame.

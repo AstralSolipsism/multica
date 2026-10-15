@@ -932,6 +932,17 @@ describe("DagSceneCanvas Stage 10 interactions", () => {
     expect(document.querySelector("[data-dag-ghost-blocks]")).toBeNull();
     await flow().setViewport({ x: 0, y: 0, zoom: 0.39 });
     await waitFor(() => expect(document.querySelector("[data-dag-ghost-blocks]")).toBeTruthy());
+    // Hysteresis: crossing back up inside the band keeps the simplified view.
+    await flow().setViewport({ x: 0, y: 0, zoom: 0.42 });
+    await waitFor(() => {
+      expect(document.querySelector("[data-dag-ghost-blocks]")).toBeTruthy();
+      expect(screen.queryByText("Line one")).toBeNull();
+    });
+    await flow().setViewport({ x: 0, y: 0, zoom: 0.45 });
+    await waitFor(() => {
+      expect(screen.getByText("Line one")).toBeInTheDocument();
+      expect(document.querySelector("[data-dag-ghost-blocks]")).toBeNull();
+    });
   });
 
   it("stops edge motion below 50% zoom and resumes above it", async () => {

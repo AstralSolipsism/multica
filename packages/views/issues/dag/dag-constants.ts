@@ -20,6 +20,9 @@ export const DAG_MOTION_MAX_SEGMENTS = 60;
 export const DAG_MOTION_MIN_ZOOM = 0.5;
 /** Below this zoom text is unreadable, so cards swap to plain blocks. */
 export const DAG_SIMPLIFIED_ZOOM = 0.4;
+/** Hysteresis band for leaving the simplified view: zooming in and out
+ *  across the threshold would otherwise rebuild every card on each crossing. */
+export const DAG_SIMPLIFIED_HYSTERESIS = 0.04;
 /** A second single click on the selected node switches to all upstream +
  *  downstream — but only once the system's double-click window has passed,
  *  so a real double-click never triggers the switch (OL-284, 2026-10-15). */
