@@ -35,8 +35,8 @@ creates the index once per snapshot and only builds the requested model.
   Line members are never filtered by the completed switch. External dependencies
   are grouped by the other endpoint's top-level line (or standalone issue),
   separately for upstream and downstream; the group's project is its root's.
-- Progress excludes a line's root and counts only the `done` category. As in
-  the existing projection's membership summary, unfinished status counters,
+- Progress excludes a line's root and counts only the `done` category.
+  Unfinished status counters,
   runs, attention and match/context include the root. Unknown categories remain
   unfinished and have a separate count; missing summaries remain unknown.
 - Overview attention is exception, advancing, review, unstarted, finished;

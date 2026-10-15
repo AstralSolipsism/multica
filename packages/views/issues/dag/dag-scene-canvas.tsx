@@ -181,7 +181,10 @@ export function DagSceneCanvasInner({
       ? plan.input.frames.find((frame) => frame.modelId === focusRequest.id && frame.side === "current")?.id ?? focusRequest.id
       : focusRequest.id;
     const box = geometry.nodes[targetId] ?? geometry.frames[targetId];
-    if (!box) return;
+    if (!box) {
+      if (level.kind === "focus") void fitView({ padding: 0.15, maxZoom: 1 });
+      return;
+    }
     storeApi.getState().setDagSelectedNodeId(targetId);
     const zoom = Math.max(0.85, getViewport().zoom);
     // The Q11 row can appear in this same commit; Flow's ResizeObserver has
@@ -190,7 +193,7 @@ export function DagSceneCanvasInner({
     void setViewport(level.kind === "focus"
       ? { x: (size?.width ?? canvasWidth) / 2 - (box.x + box.width / 2) * zoom, y: (size?.height ?? canvasHeight) / 2 - (box.y + box.height / 2) * zoom, zoom }
       : { x: 24 - box.x * zoom, y: 24 - box.y * zoom, zoom });
-  }, [focusRequest, geometry, level, plan, canvasWidth, canvasHeight, getViewport, setViewport, storeApi, viewportInitialized]);
+  }, [focusRequest, geometry, level, plan, canvasWidth, canvasHeight, getViewport, setViewport, fitView, storeApi, viewportInitialized]);
 
   const focusSet = useMemo(
     () => (focusState ? dagSceneFocusSet(plan, focusState.nodeId, focusState.way) : null),

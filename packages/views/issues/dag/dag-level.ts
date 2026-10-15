@@ -18,6 +18,24 @@ export function dagLevelFromLineId(lineId: string | null): DagLevel {
   return lineId ? { kind: "line", lineId } : DAG_OVERVIEW_LEVEL;
 }
 
+/** An authorized containing line, never a made-up line for a standalone task. */
+export function dagContainingLineId(
+  issueId: string,
+  issues: ReadonlyMap<string, { parentIssueId: string | null }>,
+): string | null {
+  if (!issues.has(issueId)) return null;
+  const seen = new Set<string>();
+  let root = issueId;
+  while (!seen.has(root)) {
+    seen.add(root);
+    const parent = issues.get(root)?.parentIssueId;
+    if (!parent || !issues.has(parent))
+      return [...issues.values()].some((issue) => issue.parentIssueId === root) ? root : null;
+    root = parent;
+  }
+  return null;
+}
+
 /** Persisted viewport slots: overview, opened lines and focused issues. */
 export function dagLevelViewportKey(level: DagLevel): string {
   return level.kind === "overview"

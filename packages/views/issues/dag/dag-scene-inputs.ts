@@ -62,28 +62,13 @@ export function dagIndependentLayoutInput(tasks: readonly DagTask[]): DagScenePl
 }
 
 export function dagFocusLayoutInput(model: DagFocusModel): DagScenePlan {
-  const sides = new Map<string, DagSceneSide>();
-  const members = model.groups.flatMap((group) => [...group.tasks.map((task) => task.issue), ...group.frames.map((frame) => frame.issue)]);
-  const parents = new Map(members.map((issue) => [issue.id, issue.parentIssueId]));
-  for (const issue of members) {
-    const upstream = model.upstreamIds.has(issue.id), downstream = model.downstreamIds.has(issue.id);
-    // Cycle members belong beside the current task: neither direction alone
-    // describes them. Context ancestors inherit their descendants' side below.
-    if (issue.id === model.issueId || (upstream && downstream)) sides.set(issue.id, "current");
-    else if (upstream || downstream) sides.set(issue.id, upstream ? "upstream" : "downstream");
-  }
-  const contextSides = new Map<string, DagSceneSide>();
-  for (const [id, side] of sides) {
-    const seen = new Set([id]);
-    let parent = parents.get(id);
-    while (parent && !seen.has(parent)) {
-      seen.add(parent);
-      const previous = contextSides.get(parent);
-      contextSides.set(parent, previous && previous !== side ? "current" : side);
-      parent = parents.get(parent);
-    }
-  }
-  const sideOf = (id: string): DagSceneSide => sides.get(id) ?? contextSides.get(id) ?? "current";
+  const sideOf = (id: string): DagSceneSide => {
+    const upstream = model.upstreamIds.has(id);
+    if (id === model.issueId || (upstream && model.downstreamIds.has(id))) return "current";
+    // Upstream traversal already includes ancestors. Any remaining context
+    // ancestor therefore belongs to a downstream member (including cancelled ones).
+    return upstream ? "upstream" : "downstream";
+  };
   const frames = model.groups.flatMap((group) => group.frames);
   const byId = new Map(frames.map((frame) => [frame.id, frame]));
   const input: DagScenePlan["input"] = { kind: "focus", id: model.issueId, nodes: [], frames: [], edges: [] };
@@ -108,7 +93,9 @@ export function dagFocusLayoutInput(model: DagFocusModel): DagScenePlan {
       input.nodes.push({ ...taskInput(task), parentId: includeFrame(task.parentId, side), side });
     }
   }
-  for (const frame of frames) if (!frame.contextOnly) includeFrame(frame.id, sideOf(frame.id));
+  // Members and dependency endpoints create their own containing fragments.
+  // Only the seed frame itself needs a fragment without either of those.
+  includeFrame(model.issueId, "current");
   const endpoint = (id: string, kind: "task" | "frame") => kind === "frame" ? includeFrame(id, sideOf(id))! : id;
   input.edges = model.dependencies.map((edge) => ({ ...edgeInput(edge), source: endpoint(edge.source, edge.sourceKind), target: endpoint(edge.target, edge.targetKind) }));
   return { input, dependencyIds: Object.fromEntries(input.edges.map((e) => [e.id, [e.id]])), overlays: [], overlayDependencyIds: {} };

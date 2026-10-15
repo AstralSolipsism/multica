@@ -63,8 +63,8 @@ export function DagNodeSelection({
 
   const actionKeys: ActionKey[] = [
     ...(target.enterLineId ? (["enter"] as const) : []),
-    ...(target.issueId && onEnterFocus ? (["focus"] as const) : []),
     ...(target.issueId ? (["open"] as const) : []),
+    ...(target.issueId && !target.enterLineId && onEnterFocus ? (["focus"] as const) : []),
     "upstream",
     "downstream",
     ...(target.issueId ? (["edit", "assign"] as const) : []),

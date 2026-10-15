@@ -54,6 +54,24 @@ describe("model to layout boundary", () => {
 });
 
 describe("focus side assignment", () => {
+  it("only creates ancestor fragments that contain members or carry a dependency", () => {
+    const index = createDagModelIndex(issueGraph([
+      graphNode("line"), graphNode("seed", { parentIssueId: "line" }),
+      graphNode("other"), graphNode("after", { parentIssueId: "other" }),
+    ], [["seed", "after"]]));
+    const plan = dagFocusLayoutInput(computeDagFocus(index, "seed"));
+    expect(plan.input.frames.map((frame) => [frame.modelId, frame.side])).toEqual([
+      ["line", "current"], ["other", "downstream"],
+    ]);
+    const withPrerequisite = createDagModelIndex(issueGraph([
+      ...index.graph.nodes, graphNode("before"),
+    ], [["seed", "after"], ["before", "line"]]));
+    const inherited = dagFocusLayoutInput(computeDagFocus(withPrerequisite, "seed"));
+    const ancestor = inherited.input.frames.find((frame) => frame.modelId === "line" && frame.side === "upstream")!;
+    expect(ancestor).toBeDefined();
+    expect(inherited.input.edges).toContainEqual(expect.objectContaining({ source: "before", target: ancestor.id }));
+  });
+
   it("places cyclic peers alongside the seed instead of arbitrarily upstream", () => {
     const index = createDagModelIndex(issueGraph([graphNode("a"), graphNode("b"), graphNode("up"), graphNode("down")], [["a", "b"], ["b", "a"], ["up", "a"], ["b", "down"]]));
     const plan = dagFocusLayoutInput(computeDagFocus(index, "a"));

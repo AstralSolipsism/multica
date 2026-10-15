@@ -57,6 +57,9 @@ test("focus mode traces cross-line dependencies, survives reload and restores th
   await enterFocus(page, id(2));
   await expect(page.getByRole("navigation", { name: "Task line path" })).toContainText("Focus FOCUS-2");
   await expect(page.locator('[data-dag-task="FOCUS-4"]')).toBeAttached();
+  // Design contains only the current task; inheriting its ancestors must not
+  // create an empty duplicate Design frame in the upstream column.
+  await expect(page.locator("[data-dag-frame]")).toHaveCount(2);
   await expect(page.locator('[data-dag-task="FOCUS-5"]')).toHaveCount(0);
   await expect(page.locator("[data-dag-focus-hidden]")).toContainText("1");
   await expectCenteredSeed(page, "FOCUS-2");

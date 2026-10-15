@@ -145,29 +145,38 @@ export function DagToolbar({
             <button
               type="button"
               className="shrink-0 rounded-sm px-1 text-muted-foreground outline-offset-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand"
-              onClick={level.kind === "focus" && !lineHeader ? onExitFocus : onExitLine}
+              onClick={onExitLine}
             >
               {tDag(($) => $.all_lines)}
             </button>
             {lineHeader && (
               <>
                 <ChevronRight className="size-3 shrink-0 text-faint-foreground" aria-hidden />
-                <button
-                  type="button"
-                  className="min-w-0 max-w-64 truncate px-1 font-medium text-foreground"
-                  data-dag-crumb-current={level.kind === "line" ? "" : undefined}
-                  onClick={level.kind === "focus" ? onExitFocus : undefined}
-                  disabled={level.kind === "line"}
-                >
-                  {lineHeader.identifier && <span className="mr-1.5 tabular-nums text-muted-foreground">{lineHeader.identifier}</span>}
-                  {lineHeader.title}
-                </button>
+                {level.kind === "line" ? (
+                  <span
+                    aria-current="page"
+                    className="min-w-0 max-w-64 truncate px-1 font-medium text-foreground"
+                    data-dag-crumb-current
+                  >
+                    {lineHeader.identifier && <span className="mr-1.5 tabular-nums text-muted-foreground">{lineHeader.identifier}</span>}
+                    {lineHeader.title}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="min-w-0 max-w-64 truncate px-1 font-medium text-foreground"
+                    onClick={onExitFocus}
+                  >
+                    {lineHeader.identifier && <span className="mr-1.5 tabular-nums text-muted-foreground">{lineHeader.identifier}</span>}
+                    {lineHeader.title}
+                  </button>
+                )}
               </>
             )}
             {level.kind === "focus" && (
               <>
                 <ChevronRight className="size-3 shrink-0 text-faint-foreground" aria-hidden />
-                <span className="shrink-0 font-medium text-foreground" data-dag-crumb-current>
+                <span aria-current="page" className="shrink-0 font-medium text-foreground" data-dag-crumb-current>
                   {tDag(($) => $.focus_breadcrumb, { identifier: focusIdentifier ?? "..." })}
                 </span>
                 <Button size="icon-sm" variant="ghost" aria-label={tDag(($) => $.exit_focus)} onClick={onExitFocus} data-dag-exit-focus>
