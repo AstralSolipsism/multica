@@ -101,6 +101,11 @@ export interface DagSceneGeometry {
   quality: "elk" | "grid" | "fallback";
 }
 
+/** The id the scene gives an external side card (line-level input). */
+export function dagExternalNodeId(side: "upstream" | "downstream", groupId: string): string {
+  return JSON.stringify(["external", side, groupId]);
+}
+
 export function dagSceneKey(input: DagSceneInput): string {
   // Full content avoids hash collisions. Array order is the model preference.
   return JSON.stringify([

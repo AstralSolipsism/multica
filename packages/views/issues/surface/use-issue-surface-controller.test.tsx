@@ -1948,10 +1948,12 @@ describe("useIssueSurfaceController", () => {
       hasRestrictedContext: false,
     };
 
-    it("review F3: preserves the open line when agents scope excludes its member-assigned child", async () => {
+    it("review F3: the controller never rewrites the open line when agents scope excludes a member-assigned child", async () => {
       // The same workspace:agents surface previously contained F and its
       // child C, both assigned to agents, and the user had opened F. C was then
       // assigned to a member: it is outside the query, not deleted/reparented.
+      // The DagView owns the render-time fallback to the overview when a line
+      // genuinely no longer exists; the controller must not touch the level.
       const graph = {
         ...graphFixture,
         scope: { type: "workspace" as const, projectId: null },
@@ -1987,10 +1989,11 @@ describe("useIssueSurfaceController", () => {
       expect(store.getState().dagLineId).toBe("feature");
     });
 
-    it("review round 4 F3: project scope cannot prove that a cross-project child disappeared", async () => {
+    it("review round 4 F3: the controller never rewrites the open line when project scope cannot prove a cross-project child disappeared", async () => {
       // F and C were both in P1 when F's line was open. C then moved to P2
       // without changing its parent F. The P1 query now returns only F;
       // its complete=true is transaction completeness, not global membership.
+      // Falling back to the overview is the DagView's render-time decision.
       const graph = {
         ...graphFixture,
         nodes: [{ ...graphFixture.nodes[0], id: "feature" }],

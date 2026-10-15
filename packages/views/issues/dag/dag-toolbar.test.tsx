@@ -37,6 +37,7 @@ const TASK: DagSelectionTarget = {
   title: "Task a",
   issueId: "a",
   enterLineId: null,
+  focusFrameId: null,
 };
 const LINE_CARD: DagSelectionTarget = {
   kind: "line-card",
@@ -45,6 +46,7 @@ const LINE_CARD: DagSelectionTarget = {
   title: "Task one",
   issueId: "one",
   enterLineId: "one",
+  focusFrameId: null,
 };
 const INDEPENDENT: DagSelectionTarget = {
   kind: "independent",
@@ -53,6 +55,7 @@ const INDEPENDENT: DagSelectionTarget = {
   title: null,
   issueId: null,
   enterLineId: "independent:root",
+  focusFrameId: null,
 };
 
 function harness(
@@ -78,6 +81,7 @@ function harness(
     onOpenIssue: vi.fn(),
     onEnterLine: vi.fn(),
     onExitLine: vi.fn(),
+    onFocusFrame: vi.fn(),
     ...overrides,
   };
   const view = renderWithI18n(
@@ -256,6 +260,17 @@ describe("DagToolbar node selection", () => {
     ).not.toHaveTextContent(/hidden task/);
   });
 
+  it("offers focusing the containing sub-line frame from the menu", async () => {
+    const m = stubMetrics();
+    const withFrame: DagSelectionTarget = { ...TASK, focusFrameId: "sub-frame" };
+    const { props } = harness({ selection: withFrame });
+    m.sizes.zone = 500;
+    m.fire();
+    fireEvent.click(within(m.zone()).getByRole("button", { name: "More" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Focus issue group" }));
+    expect(props.onFocusFrame).toHaveBeenCalledWith("sub-frame");
+  });
+
   it("clears the selection", () => {
     const { store } = harness({ selection: TASK }, (s) =>
       s.getState().setDagSelectedNodeId("a"),
@@ -354,6 +369,7 @@ describe("DagToolbar overflow", () => {
       onOpenIssue: vi.fn(),
       onEnterLine: vi.fn(),
       onExitLine: vi.fn(),
+      onFocusFrame: vi.fn(),
     };
     const { rerender } = renderWithI18n(
       <ViewStoreProvider store={store}>
@@ -422,6 +438,7 @@ describe("DagToolbar overflow", () => {
       onOpenIssue: vi.fn(),
       onEnterLine: vi.fn(),
       onExitLine: vi.fn(),
+      onFocusFrame: vi.fn(),
     };
     const { rerender } = renderWithI18n(
       <ViewStoreProvider store={store}>
@@ -444,9 +461,6 @@ describe("DagToolbar overflow", () => {
   it("resets the visible count when switching to a node with the same action set", () => {
     const m = stubMetrics();
     const store = createStore<IssueViewState>()(viewStoreSlice);
-    const base: Partial<DagToolbarProps> = {
-      level: { kind: "line", lineId: "one" },
-    };
     const props = {
       level: { kind: "line", lineId: "one" },
       lineHeader: null,
@@ -463,8 +477,8 @@ describe("DagToolbar overflow", () => {
       onOpenIssue: vi.fn(),
       onEnterLine: vi.fn(),
       onExitLine: vi.fn(),
+      onFocusFrame: vi.fn(),
     } satisfies Partial<DagToolbarProps>;
-    void base;
     const taskB: DagSelectionTarget = { ...TASK, id: "b", identifier: "T-B", issueId: "b" };
     const { rerender } = renderWithI18n(
       <ViewStoreProvider store={store}>

@@ -5,19 +5,13 @@ import type { NodeProps } from "@xyflow/react";
 import { CirclePause, CirclePlay, Eye, OctagonAlert } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
+import { useTheme } from "@multica/ui/components/common/theme-provider";
+import { dagProjectColor } from "./dag-project-colors";
 import { DAG_OVERVIEW_SIZE } from "./dag-constants";
 import type { DagOverviewFlowNode } from "./dag-scene-flow";
+import type { IssueStatusCategory } from "@multica/core/types";
+import { StatusIcon } from "../components/status-icon";
 import { DagRunBadge } from "./dag-task-card";
-
-function StatusDot({ color, className }: { color: string | null; className?: string }) {
-  return (
-    <span
-      aria-hidden
-      className={cn("inline-block size-2 shrink-0 rounded-full", className)}
-      style={{ backgroundColor: color ?? "var(--muted-foreground)" }}
-    />
-  );
-}
 
 /**
  * One card per task line / standalone task / independent group on the
@@ -27,7 +21,9 @@ function StatusDot({ color, className }: { color: string | null; className?: str
 export const DagOverviewCardView = memo(
   function DagOverviewCardView({ data, selected }: NodeProps<DagOverviewFlowNode>) {
     const { t } = useT("dag");
-    const { card, color } = data;
+    const { resolvedTheme } = useTheme();
+    const { card } = data;
+    const color = dagProjectColor(card.project?.id, resolvedTheme === "dark");
     const issue = card.issue;
     const title = issue?.title ?? t(($) => $.independent_group);
     const finished = card.attention === "finished";
@@ -80,7 +76,7 @@ export const DagOverviewCardView = memo(
           title={card.project?.title}
         />
         <div className="flex h-4 items-center gap-1.5 text-micro text-muted-foreground">
-          <span className="truncate">{card.project?.title ?? t(($) => $.no_project)}</span>
+          {card.project && <span className="truncate">{card.project.title}</span>}
           {card.role === "context" && !card.cancelledBlocking && (
             <span className="ml-auto shrink-0 rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground">
               {t(($) => $.context_badge)}
@@ -89,8 +85,11 @@ export const DagOverviewCardView = memo(
         </div>
         <div className="mt-0.5 flex items-center gap-1.5">
           {issue && (
-            <StatusDot
-              color={data.statusColor ?? null}
+            <StatusIcon
+              status={issue.status}
+              category={(issue.statusCategory as IssueStatusCategory) || "unstarted"}
+              color={data.statusColor}
+              className="size-3.5 shrink-0"
             />
           )}
           {issue && (

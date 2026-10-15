@@ -1,5 +1,5 @@
 "use client";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { hashKey } from "@tanstack/react-query";
 import { AlertTriangle, FilterX, Loader2 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
@@ -7,7 +7,6 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import type { IssueGraphNode } from "@multica/core/api";
 import type { IssueTableQuerySpec } from "@multica/core/types";
 import {
-  DAG_INDEPENDENT_GROUP,
   useDagModels,
   type DagIssue,
   type DagModelRequest,
@@ -29,15 +28,16 @@ import {
   dagAutoEnterLineId,
   dagExternalJumpTarget,
   dagLevelFromLineId,
+  dagLevelIsIndependent,
   dagLevelViewportKey,
   dagOverviewCardIdForLine,
 } from "./dag-level";
 import { useDagSceneLayout } from "./use-dag-scene-layout";
 import type { DagSceneRunner } from "./dag-scene-runner";
 import {
+  dagFocusHiddenCount,
   dagLineWithSatisfiedFilter,
-  dagDependencyStates,
-  dagSceneEdgeDisplay,
+  dagSceneStats,
   resolveDagSelection,
   type DagCanvasModel,
 } from "./dag-scene-flow";
@@ -51,7 +51,7 @@ import { DagErrorState, graphErrorPolicy } from "./dag-error-state";
 import type { DagSceneCanvasApi } from "./dag-scene-canvas";
 
 const loadDagCanvas = once(() => import("./dag-scene-canvas"));
-const DagSceneCanvas = lazy(loadDagCanvas);
+type DagSceneCanvasComponent = typeof import("./dag-scene-canvas").default;
 
 /** Mirrors useDagSurfaceGraph: DAG scopes are workspace/project only, and the
  *  graph request normalizer throws on anything else during render. */
@@ -107,13 +107,24 @@ export function DagView({
   const registerCanvasApi = useCallback((api: DagSceneCanvasApi | null) => {
     canvasApi.current = api;
   }, []);
+  // Resolve the canvas module at mount instead of rendering a lazy component:
+  // a first Suspense fallback would throttle the reveal by another ~300ms.
+  const [canvasComponent, setCanvasComponent] = useState<DagSceneCanvasComponent | null>(null);
   useEffect(() => {
-    void loadDagCanvas().catch(() => undefined);
+    let mounted = true;
+    void loadDagCanvas()
+      .then((module) => {
+        if (mounted) setCanvasComponent(() => module.default);
+      })
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const supported = spec.scope.kind === "workspace" || spec.scope.kind === "project";
   const safeSpec = supported ? spec : UNSUPPORTED_SCOPE_SPEC;
-  const isIndependent = lineId === DAG_INDEPENDENT_GROUP;
+  const isIndependent = dagLevelIsIndependent(dagLevelFromLineId(lineId));
   const request = useMemo<DagModelRequest>(
     () =>
       lineId && !isIndependent
@@ -212,6 +223,9 @@ export function DagView({
     const state = storeApi.getState();
     state.exitDagLine(state.dagLineId ? dagOverviewCardIdForLine(state.dagLineId) : null);
   }, [storeApi]);
+  const onFocusFrame = useCallback((frameId: string) => {
+    setFocusRequest((current) => ({ id: frameId, nonce: (current?.nonce ?? 0) + 1 }));
+  }, []);
   const onExternalJump = useCallback(
     (group: { id: string; kind: "line" | "issue" }) => {
       const jump = dagExternalJumpTarget(group);
@@ -270,42 +284,13 @@ export function DagView({
       : { kind: "line" as const, lineId: paintedPlan.input.id }
     : null;
 
-  const stats = useMemo(() => {
-    if (!paintedModel || !paintedPlan) return { matched: 0, context: 0, edges: 0 };
-    if (paintedModel.kind === "overview") {
-      let matched = 0,
-        context = 0;
-      for (const card of paintedModel.overview.cards) {
-        matched += card.matchCount;
-        context += card.contextCount;
-      }
-      const states = dagDependencyStates(paintedModel);
-      let edges = 0;
-      for (const edgeId of [
-        ...paintedPlan.input.edges.map((e) => e.id),
-        ...(showSatisfied ? paintedPlan.overlays.map((e) => e.id) : []),
-      ]) {
-        edges += dagSceneEdgeDisplay(paintedPlan, edgeId, states, showSatisfied)?.count ?? 0;
-      }
-      return { matched, context, edges };
-    }
-    if (paintedModel.kind === "line") {
-      const members = paintedModel.line.input.members;
-      return {
-        matched: members.filter((m) => m.role === "match").length,
-        context: members.filter((m) => m.role !== "match").length,
-        edges:
-          paintedModel.line.dependencies.filter((d) => !d.hiddenByDefault).length +
-          paintedModel.line.upstream.reduce((n, g) => n + g.count, 0) +
-          paintedModel.line.downstream.reduce((n, g) => n + g.count, 0),
-      };
-    }
-    return {
-      matched: paintedModel.tasks.filter((task) => task.role === "match").length,
-      context: paintedModel.tasks.filter((task) => task.role !== "match").length,
-      edges: 0,
-    };
-  }, [paintedModel, paintedPlan, showSatisfied]);
+  const stats = useMemo(
+    () =>
+      paintedModel
+        ? dagSceneStats(paintedModel, paintedPlan, showSatisfied)
+        : { matched: 0, context: 0, edges: 0 },
+    [paintedModel, paintedPlan, showSatisfied],
+  );
 
   const selection = useMemo(
     () => (paintedModel ? resolveDagSelection(paintedModel, selectedNodeId) : null),
@@ -318,27 +303,12 @@ export function DagView({
     if (!focus || !graph || !paintedModel || paintedModel.kind !== "overview") return 0;
     const card = paintedModel.overview.cards.find((c) => c.id === focus.nodeId);
     if (!card) return 0;
-    const adjacency = new Map<string, string[]>();
-    for (const edge of graph.edges) {
-      const from = focus.way === "upstream" ? edge.target : edge.source;
-      const to = focus.way === "upstream" ? edge.source : edge.target;
-      const list = adjacency.get(from) ?? [];
-      list.push(to);
-      adjacency.set(from, list);
-    }
-    const seen = new Set(card.memberIds);
-    const stack = [...card.memberIds];
-    let hidden = 0;
-    while (stack.length) {
-      const id = stack.pop()!;
-      for (const next of adjacency.get(id) ?? []) {
-        if (seen.has(next)) continue;
-        seen.add(next);
-        if (!paintedModel.overview.representatives.has(next)) hidden++;
-        stack.push(next);
-      }
-    }
-    return hidden;
+    return dagFocusHiddenCount({
+      edges: graph.edges,
+      card,
+      representatives: paintedModel.overview.representatives,
+      way: focus.way,
+    });
   }, [focus, graph, paintedModel]);
 
   const lineHeader = useMemo(() => {
@@ -396,6 +366,7 @@ export function DagView({
   }
 
   const firstLayoutPending = !scene.geometry || !paintedPlan || !paintedModel;
+  const SceneCanvas = canvasComponent;
   if (scene.error && firstLayoutPending) {
     return (
       <div
@@ -431,6 +402,7 @@ export function DagView({
         onOpenIssue={onOpenIssue}
         onEnterLine={onEnterLine}
         onExitLine={onExitLine}
+        onFocusFrame={onFocusFrame}
       />
 
       {scene.error && (
@@ -459,7 +431,7 @@ export function DagView({
         </div>
       )}
 
-      {firstLayoutPending ? (
+      {firstLayoutPending || !SceneCanvas ? (
         <div className="flex flex-1 min-h-0 flex-col gap-3 p-4" role="status">
           <span className="sr-only">{tDag(($) => $.layout_pending)}</span>
           <Skeleton className="h-24 w-72 rounded-lg" />
@@ -470,18 +442,7 @@ export function DagView({
           <Skeleton className="h-24 w-72 rounded-lg" />
         </div>
       ) : (
-        <Suspense
-          fallback={
-            <div
-              className="flex flex-1 min-h-0 items-center justify-center text-muted-foreground"
-              role="status"
-            >
-              <Loader2 className="h-6 w-6 animate-spin text-faint-foreground" />
-              <span className="sr-only">{tDag(($) => $.loading)}</span>
-            </div>
-          }
-        >
-          <DagSceneCanvas
+        <SceneCanvas
             level={paintedLevel!}
             model={paintedModel!}
             geometry={scene.geometry!}
@@ -495,7 +456,6 @@ export function DagView({
             onExternalJump={onExternalJump}
             registerCanvasApi={registerCanvasApi}
           />
-        </Suspense>
       )}
     </div>
   );

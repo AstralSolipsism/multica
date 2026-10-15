@@ -11,15 +11,18 @@ import {
 import { graphNode as n, issueGraph as g } from "./dag-test-fixtures";
 import {
   dagDependencyStates,
+  dagDisplayedRoutes,
+  dagFocusHiddenCount,
+  dagSceneStats,
   dagLineWithSatisfiedFilter,
   dagSceneEdgeDisplay,
   dagSceneFlowNodes,
   dagSceneFocusSet,
   dagSegmentDisplay,
-  parseDagExternalNodeId,
   resolveDagSelection,
 } from "./dag-scene-flow";
 import {
+  dagLineLayoutInput,
   dagOverviewLayoutInput,
 } from "./dag-scene-inputs";
 import { dagSceneKey, type DagSceneGeometry } from "./dag-scene";
@@ -144,6 +147,74 @@ describe("dependency states and display counts", () => {
     const display = dagSceneEdgeDisplay(plan, plan.input.edges[0]!.id, states, false)!;
     expect(display.state).toBe("cancelled-blocking");
   });
+
+  it("always paints satisfied dependencies inside a line, whatever the switch", () => {
+    // done → open within one line: the satisfied edge is a thin grey line, not
+    // filtered out — the switch only covers inter-line surfaces.
+    const line = lineOf(
+      g(
+        [
+          n("r1"),
+          n("a1", { parentIssueId: "r1", status: "done", statusCategory: "done" }),
+          n("a2", { parentIssueId: "r1" }),
+        ],
+        [{ id: "e-a1", source: "a1", target: "a2" }],
+      ),
+      "r1",
+    );
+    const plan = dagLineLayoutInput(line);
+    const states = dagDependencyStates({ kind: "line", line });
+    for (const showSatisfied of [false, true]) {
+      expect(dagSceneEdgeDisplay(plan, "e-a1", states, showSatisfied)).toEqual({
+        count: 1,
+        state: "satisfied",
+      });
+      expect(dagSegmentDisplay(["e-a1"], plan, states, showSatisfied)).toMatchObject({
+        state: "satisfied",
+        count: 1,
+      });
+    }
+  });
+
+  it("composes satisfied overview overlays into the displayed route set when on", () => {
+    const graph = g(
+      [
+        n("r1"),
+        n("a1", { parentIssueId: "r1", status: "done", statusCategory: "done" }),
+        n("r2"),
+        n("b1", { parentIssueId: "r2" }),
+      ],
+      [{ id: "e-a1", source: "a1", target: "b1" }],
+    );
+    const model = overviewOf(graph, true);
+    const plan = dagOverviewLayoutInput(model);
+    expect(plan.overlays).toHaveLength(1);
+    const geometry: DagSceneGeometry = {
+      nodes: {
+        "issue:r1": { x: 0, y: 0, width: 280, height: 140 },
+        "issue:r2": { x: 400, y: 0, width: 280, height: 140 },
+      },
+      frames: {},
+      ports: {
+        "issue:r1": { input: { x: 0, y: 70 }, output: { x: 280, y: 70 } },
+        "issue:r2": { input: { x: 400, y: 70 }, output: { x: 680, y: 70 } },
+      },
+      routes: {},
+      segments: [],
+      junctions: [],
+      width: 680,
+      height: 140,
+      quality: "elk",
+    };
+    // Off: base geometry only, no overlay route.
+    const off = dagDisplayedRoutes(geometry, plan, false);
+    expect(Object.keys(off.routes)).toHaveLength(0);
+    // On: the satisfied overlay is composed in without touching the boxes.
+    const on = dagDisplayedRoutes(geometry, plan, true);
+    expect(Object.keys(on.routes)).toEqual([plan.overlays[0]!.id]);
+    expect(on.routes[plan.overlays[0]!.id]!.length).toBeGreaterThan(1);
+    expect(on.segments.length).toBeGreaterThan(0);
+  });
 });
 
 describe("dagLineWithSatisfiedFilter", () => {
@@ -226,6 +297,113 @@ describe("resolveDagSelection", () => {
   });
 });
 
+describe("dagSceneStats", () => {
+  it("counts overview cards and displayed dependencies per the switch", () => {
+    // Mixed bundle api→main (one satisfied, one open) + a fully satisfied one.
+    const graph = g(
+      [
+        n("r1"),
+        n("a1", { parentIssueId: "r1", status: "done", statusCategory: "done" }),
+        n("a2", { parentIssueId: "r1" }),
+        n("r2"),
+        n("b1", { parentIssueId: "r2" }),
+        n("r4"),
+        n("c1", { parentIssueId: "r4", status: "done", statusCategory: "done" }),
+      ],
+      [
+        { id: "e-a1", source: "a1", target: "b1" },
+        { id: "e-a2", source: "a2", target: "b1" },
+        { id: "e-c1", source: "c1", target: "b1" },
+      ],
+    );
+    const model = overviewOf(graph, true);
+    const plan = dagOverviewLayoutInput(model);
+    // Off: the mixed bundle counts only its unsatisfied original; the fully
+    // satisfied bundle stays in its overlay. On: every original counts.
+    expect(dagSceneStats({ kind: "overview", overview: model }, plan, false)).toEqual({
+      matched: 7,
+      context: 0,
+      edges: 1,
+    });
+    expect(dagSceneStats({ kind: "overview", overview: model }, plan, true)).toEqual({
+      matched: 7,
+      context: 0,
+      edges: 3,
+    });
+    expect(dagSceneStats({ kind: "overview", overview: model }, null, true).edges).toBe(0);
+  });
+
+  it("counts line members and all visible internal + external edges", () => {
+    const line = lineOf(
+      g(
+        [
+          n("r1"),
+          n("a1", { parentIssueId: "r1", status: "done", statusCategory: "done" }),
+          n("a2", { parentIssueId: "r1" }),
+          n("r2"),
+          n("u1", { parentIssueId: "r2" }),
+        ],
+        [
+          { id: "e-int", source: "a1", target: "a2" },
+          { id: "e-ext", source: "u1", target: "a2" },
+        ],
+      ),
+      "r1",
+    );
+    const stats = dagSceneStats({ kind: "line", line }, null, false);
+    expect(stats.matched).toBe(3);
+    expect(stats.edges).toBe(2);
+  });
+});
+
+describe("dagFocusHiddenCount", () => {
+  it("counts chain tasks that have no visible overview card", () => {
+    // line r1 → h (hidden when complete) → r2: from r1 upstream, h is hidden.
+    const graph = g(
+      [
+        n("r1"),
+        n("a1", { parentIssueId: "r1" }),
+        n("h", { status: "done", statusCategory: "done" }),
+        n("r2"),
+        n("b1", { parentIssueId: "r2" }),
+      ],
+      [
+        { id: "e1", source: "h", target: "a1" },
+        { id: "e2", source: "b1", target: "h" },
+      ],
+    );
+    const model = overviewOf(graph);
+    const card = model.cards.find((c) => c.id === "issue:r1")!;
+    expect(
+      dagFocusHiddenCount({
+        edges: graph.edges,
+        card,
+        representatives: model.representatives,
+        way: "upstream",
+      }),
+    ).toBe(1);
+    // Downstream from r2, the same hidden task is on the chain.
+    const card2 = model.cards.find((c) => c.id === "issue:r2")!;
+    expect(
+      dagFocusHiddenCount({
+        edges: graph.edges,
+        card: card2,
+        representatives: model.representatives,
+        way: "downstream",
+      }),
+    ).toBe(1);
+    // And the anchor's own members never count as hidden.
+    expect(
+      dagFocusHiddenCount({
+        edges: graph.edges,
+        card,
+        representatives: model.representatives,
+        way: "downstream",
+      }),
+    ).toBe(0);
+  });
+});
+
 describe("dagSceneFlowNodes", () => {
   it("positions overview cards absolutely and dims outside the focus set", () => {
     const overview = overviewOf(g([n("r1"), n("a1", { parentIssueId: "r1" }), n("solo")]));
@@ -250,14 +428,12 @@ describe("dagSceneFlowNodes", () => {
         statusColorOf: () => null,
         projectNames: new Map(),
         focus: { nodeIds: new Set(["issue:r1"]), edgeIds: new Set() },
-        selectedNodeId: DAG_INDEPENDENT_GROUP,
       },
     );
     const line = nodes.find((node) => node.id === "issue:r1")!;
     const solo = nodes.find((node) => node.id === DAG_INDEPENDENT_GROUP)!;
     expect(line.position).toEqual({ x: 10, y: 20 });
     expect(line.type).toBe("dagOverviewCard");
-    expect(solo.selected).toBe(true);
     expect((solo.data as { dimmed: boolean }).dimmed).toBe(true);
     expect((line.data as { dimmed: boolean }).dimmed).toBe(false);
   });
@@ -298,7 +474,7 @@ describe("dagSceneFlowNodes", () => {
     };
     const nodes = dagSceneFlowNodes(
       { kind: "line", line },
-      { geometry, statusColorOf: () => null, projectNames: new Map(), focus: null, selectedNodeId: null },
+      { geometry, statusColorOf: () => null, projectNames: new Map(), focus: null },
     );
     const byId = new Map(nodes.map((node) => [node.id, node]));
     expect(byId.get("r1")!.position).toEqual({ x: 0, y: 0 });
@@ -339,21 +515,10 @@ describe("dagSceneFlowNodes", () => {
     };
     const nodes = dagSceneFlowNodes(
       { kind: "independent", tasks },
-      { geometry, statusColorOf: () => null, projectNames: new Map(), focus: null, selectedNodeId: null },
+      { geometry, statusColorOf: () => null, projectNames: new Map(), focus: null },
     );
     expect(nodes.map((node) => node.id).sort()).toEqual(["solo-1", "solo-2"]);
     expect(nodes.every((node) => !node.parentId)).toBe(true);
   });
 });
 
-describe("parseDagExternalNodeId", () => {
-  it("decodes external ids and rejects everything else", () => {
-    expect(parseDagExternalNodeId(JSON.stringify(["external", "upstream", "r2"]))).toEqual({
-      side: "upstream",
-      groupId: "r2",
-    });
-    expect(parseDagExternalNodeId("r2")).toBeNull();
-    expect(parseDagExternalNodeId('["external","sideways","r2"]')).toBeNull();
-    expect(parseDagExternalNodeId("not json")).toBeNull();
-  });
-});

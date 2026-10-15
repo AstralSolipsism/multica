@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import type { NodeProps } from "@xyflow/react";
-import { MoveLeft, MoveRight } from "lucide-react";
+import { ArrowRightFromLine, ArrowRightToLine } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 import { DAG_EXTERNAL_SIZE } from "./dag-constants";
@@ -35,9 +35,9 @@ export const DagExternalCard = memo(
       >
         <div className="flex items-center gap-1.5 text-micro text-muted-foreground">
           {side === "upstream" ? (
-            <MoveRight className="size-3 shrink-0" aria-hidden />
+            <ArrowRightToLine className="size-3 shrink-0" aria-hidden />
           ) : (
-            <MoveLeft className="size-3 shrink-0" aria-hidden />
+            <ArrowRightFromLine className="size-3 shrink-0" aria-hidden />
           )}
           <span className="truncate">
             {side === "upstream"

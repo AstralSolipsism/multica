@@ -162,7 +162,7 @@ async function expectReadablePrerequisite(container: Locator, title: string) {
  *  the More menu — click whichever form is present. */
 async function clickDagAction(page: Page, name: string) {
   const standing = page.getByRole("region", { name: "Selection" }).getByRole("button", { name, exact: true });
-  if (await standing.count()) {
+  if ((await standing.count()) && (await standing.isVisible())) {
     await standing.click();
     return;
   }

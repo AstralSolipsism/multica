@@ -86,7 +86,6 @@ const viewStoreState = vi.hoisted(() => ({
   sortDirection: "asc",
   grouping: "status",
   swimlaneGrouping: "parent",
-  dagDirection: "LR",
   cardProperties: {},
   tableGrouping: "none",
   tableHierarchy: true,

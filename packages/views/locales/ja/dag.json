@@ -65,8 +65,8 @@
   "count_in_progress": "進行中",
   "count_review": "レビュー待ち",
   "count_unstarted": "未開始",
-  "no_project": "プロジェクトなし",
   "external_from": "元",
   "external_to": "先",
-  "external_jump_hint": "クリックで移動"
+  "external_jump_hint": "クリックで移動",
+  "focus_line": "タスク群にフォーカス"
 }

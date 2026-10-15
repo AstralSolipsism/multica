@@ -185,9 +185,8 @@ export function DagSceneCanvasInner({
         statusColorOf,
         projectNames,
         focus: focusSet,
-        selectedNodeId,
       }),
-    [model, geometry, statusColorOf, projectNames, focusSet, selectedNodeId],
+    [model, geometry, statusColorOf, projectNames, focusSet],
   );
   const nodes = useMemo(
     () => applySelection(baseNodes, selectedNodeId),

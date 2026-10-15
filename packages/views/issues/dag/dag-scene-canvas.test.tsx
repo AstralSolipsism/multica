@@ -242,6 +242,92 @@ describe("DagSceneCanvas overview", () => {
   });
 });
 
+  it("paints branch dots at junctions", async () => {
+    const fixture = overviewFixture();
+    fixture.geometry.junctions = [{ x: 390, y: 70, edgeIds: [BUNDLE] }];
+    harness(fixture);
+    await waitFor(() => expect(screen.getByText("Line one")).toBeInTheDocument());
+    const layer = document.querySelector("[data-dag-edge-layer]")!;
+    expect(layer.querySelectorAll("circle").length).toBe(1);
+  });
+
+  it("marks cancelled context cards with a dashed border", async () => {
+    // A cancelled standalone still blocking a visible line keeps the dashed border.
+    const cancelledGraph = makeGraph(
+      [
+        makeNode("r1"),
+        makeNode("a1", { parentIssueId: "r1" }),
+        makeNode("cancelled", { status: "cancelled", statusCategory: "closed" }),
+      ],
+      [{ id: "e-x", source: "cancelled", target: "a1" }],
+    );
+    const overview = computeDagOverview(createDagModelIndex(cancelledGraph), {
+      showCompleted: false,
+      showSatisfiedDependencies: true,
+    })!;
+    const cancelledCard = overview.cards.find((c) => c.cancelledBlocking)!;
+    expect(cancelledCard).toBeTruthy();
+    harness({
+      model: { kind: "overview", overview },
+      plan: dagOverviewLayoutInput(overview),
+      geometry: {
+        nodes: { [cancelledCard.id]: { x: 0, y: 0, width: 280, height: 140 } },
+        frames: {},
+        ports: {},
+        routes: {},
+        segments: [],
+        junctions: [],
+        width: 280,
+        height: 140,
+        quality: "elk",
+      },
+    });
+    await waitFor(() =>
+      expect(document.querySelector("[data-dag-overview-card].border-dashed")).toBeTruthy(),
+    );
+  });
+
+  it("opens a standalone card's detail on double-click and shows its status icon", async () => {
+    const graph = makeGraph(
+      [
+        makeNode("r1", { title: "Line one", status: "in_progress" }),
+        makeNode("a1", { parentIssueId: "r1" }),
+        makeNode("solo"),
+      ],
+      [{ id: "e-s", source: "solo", target: "a1" }],
+    );
+    const overview = computeDagOverview(createDagModelIndex(graph), {
+      showCompleted: false,
+      showSatisfiedDependencies: false,
+    })!;
+    const { props } = harness({
+      model: { kind: "overview", overview },
+      plan: dagOverviewLayoutInput(overview),
+      geometry: {
+        nodes: {
+          "issue:r1": { x: 0, y: 0, width: 280, height: 140 },
+          solo: { x: 400, y: 0, width: 280, height: 140 },
+        },
+        frames: {},
+        ports: {},
+        routes: {},
+        segments: [],
+        junctions: [],
+        width: 680,
+        height: 140,
+        quality: "elk",
+      },
+    });
+    await waitFor(() => expect(screen.getByText("Line one")).toBeInTheDocument());
+    // The status icon conveys the built-in status (not a flat grey dot).
+    const lineCard = document.querySelector('[data-dag-overview-card="issue:r1"]')!;
+    expect(lineCard.querySelector("svg")).toBeTruthy();
+    expect(lineCard.innerHTML).toContain("text-warning");
+    const solo = screen.getByText("T-SOLO").closest(".react-flow__node")!;
+    fireEvent.doubleClick(solo);
+    expect(props.onOpenIssue).toHaveBeenCalledWith("solo");
+  });
+
 describe("DagSceneCanvas line level", () => {
   it("renders nested frames, tasks and the external card; clicking it jumps", async () => {
     const { props } = harness(lineFixture());

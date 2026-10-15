@@ -459,7 +459,13 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   dagSelectedNodeId: null,
   dagFocus: null,
   setDagViewportFor: (key, viewport) =>
-    set((state) => ({ dagViewports: { ...state.dagViewports, [key]: viewport } })),
+    set((state) => {
+      // Bounded per-user history: keep the 50 most recently written levels.
+      const entries = Object.entries(state.dagViewports).filter(([k]) => k !== key);
+      while (entries.length >= 50) entries.shift();
+      entries.push([key, viewport]);
+      return { dagViewports: Object.fromEntries(entries) };
+    }),
   setDagSelectedNodeId: (dagSelectedNodeId) =>
     set({ dagSelectedNodeId, dagFocus: null }),
   setDagFocus: (dagFocus) => set({ dagFocus }),

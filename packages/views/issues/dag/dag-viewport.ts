@@ -1,5 +1,5 @@
 import type { CoordinateExtent, Rect, Viewport } from "@xyflow/react";
-import { DAG_GROUP_HEADER_HEIGHT } from "./dag-constants";
+import { DAG_GROUP_HEADER_HEIGHT, DAG_GROUP_HEADER_MAX_WIDTH } from "./dag-constants";
 import type { DagSceneGeometry } from "./dag-scene";
 
 export type DagViewportTarget = Rect & { id: string };
@@ -8,7 +8,7 @@ export type DagViewportTarget = Rect & { id: string };
  * dependency routes are not navigation anchors. */
 export function dagViewportTargets(
   geometry: DagSceneGeometry,
-  frameHeaderWidth = 680,
+  frameHeaderWidth = DAG_GROUP_HEADER_MAX_WIDTH,
 ): DagViewportTarget[] {
   return [
     ...Object.entries(geometry.nodes).map(([id, box]) => ({ id, ...box })),

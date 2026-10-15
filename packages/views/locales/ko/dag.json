@@ -65,8 +65,8 @@
   "count_in_progress": "진행 중",
   "count_review": "검토 대기",
   "count_unstarted": "시작 전",
-  "no_project": "프로젝트 없음",
   "external_from": "보내는 쪽",
   "external_to": "받는 쪽",
-  "external_jump_hint": "클릭하여 이동"
+  "external_jump_hint": "클릭하여 이동",
+  "focus_line": "태스크 그룹에 초점"
 }

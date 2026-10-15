@@ -51,6 +51,7 @@ export interface DagToolbarProps {
   onOpenIssue: (issueId: string) => void;
   onEnterLine: (lineId: string) => void;
   onExitLine: () => void;
+  onFocusFrame: (frameId: string) => void;
 }
 
 export function DagToolbar({
@@ -70,6 +71,7 @@ export function DagToolbar({
   onOpenIssue,
   onEnterLine,
   onExitLine,
+  onFocusFrame,
 }: DagToolbarProps) {
   const { t: tDag } = useT("dag");
   const { t: tIssues } = useT("issues");
@@ -165,7 +167,7 @@ export function DagToolbar({
         role="region"
         aria-label={tDag(($) => $.selection_region_label)}
         className={cn(
-          "flex min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-0.5 transition-colors",
+          "flex min-w-0 flex-1 items-center gap-1 overflow-hidden rounded-md px-1.5 py-0.5 transition-colors",
           selection && "bg-accent/60 text-foreground",
         )}
       >
@@ -175,20 +177,21 @@ export function DagToolbar({
             focusHiddenCount={focusHiddenCount}
             onOpenIssue={onOpenIssue}
             onEnterLine={onEnterLine}
+            onFocusFrame={onFocusFrame}
           />
         ) : (
           <>
-            <span className="inline-flex min-w-0 shrink items-center gap-1.5 overflow-hidden">
-              <ListTree className="size-3.5 shrink-0" />
-              <span className="truncate tabular-nums">
+            <span className="inline-flex shrink-0 items-center gap-1.5">
+              <ListTree className="size-3.5" />
+              <span className="tabular-nums">
                 {tDag(($) => $.summary_matches, { count: stats.matched })}
               </span>
               {stats.context > 0 && (
-                <span className="truncate tabular-nums">
+                <span className="tabular-nums">
                   {tDag(($) => $.summary_context, { count: stats.context })}
                 </span>
               )}
-              <span className="truncate tabular-nums">
+              <span className="tabular-nums">
                 {tDag(($) => $.summary_edges, { count: stats.edges })}
               </span>
             </span>

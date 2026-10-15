@@ -8,6 +8,7 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import type { DagFocusWay } from "@multica/core/issues/stores/view-store";
@@ -30,11 +31,13 @@ export function DagNodeSelection({
   focusHiddenCount,
   onOpenIssue,
   onEnterLine,
+  onFocusFrame,
 }: {
   target: DagSelectionTarget;
   focusHiddenCount: number;
   onOpenIssue: (issueId: string) => void;
   onEnterLine: (lineId: string) => void;
+  onFocusFrame: (frameId: string) => void;
 }) {
   const { t: tDag } = useT("dag");
   const storeApi = useViewStoreApi();
@@ -158,7 +161,7 @@ export function DagNodeSelection({
       </DropdownMenuItem>
     ),
   };
-  const hasMenu = menuKeys.length > 0;
+  const hasMenu = menuKeys.length > 0 || target.focusFrameId != null;
   const label =
     target.kind === "independent" ? tDag(($) => $.independent_group) : target.title;
 
@@ -201,6 +204,14 @@ export function DagNodeSelection({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-52">
               {menuKeys.map((key) => menuItems[key])}
+              {menuKeys.length > 0 && target.focusFrameId != null && (
+                <DropdownMenuSeparator />
+              )}
+              {target.focusFrameId != null && (
+                <DropdownMenuItem onClick={() => onFocusFrame(target.focusFrameId!)}>
+                  {tDag(($) => $.focus_line)}
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
           {menuKeys.includes("assign") && issue && (

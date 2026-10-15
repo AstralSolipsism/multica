@@ -806,6 +806,12 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     layout_requests: layouts.length,
     load_budget_ms: LOAD_LIMIT_MS,
     first_interactive_ms: firstInteractiveMs,
+    // The OL-281 budget read directly: from the graph response end to the
+    // first operable frame, network fetch excluded.
+    data_to_interactive_ms:
+      firstInteractiveMs != null && graphTiming
+        ? Math.max(0, Math.round(firstInteractiveMs - graphTiming.end))
+        : null,
     pan,
     zoom,
     click: clickOutcome,

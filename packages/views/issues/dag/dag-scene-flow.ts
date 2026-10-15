@@ -10,9 +10,8 @@ import {
   type DagTask,
 } from "@multica/core/issues/dag";
 import type { DagFocusWay } from "@multica/core/issues/stores/view-store";
-import type { DagSceneFrameBox, DagSceneGeometry, DagScenePlan } from "./dag-scene";
+import { dagExternalNodeId, type DagSceneFrameBox, type DagSceneGeometry, type DagScenePlan } from "./dag-scene";
 import { routeDagOverlays } from "./dag-scene-geometry";
-import { dagProjectColor } from "./dag-project-colors";
 
 /** What the canvas paints: exactly one of the two levels (the independent
  *  grid is a line level without frames or internal edges). */
@@ -23,7 +22,6 @@ export type DagCanvasModel =
 
 export interface DagOverviewCardData extends Record<string, unknown> {
   card: DagOverviewCard;
-  color: string;
   statusColor: string | null;
   dimmed: boolean;
 }
@@ -58,27 +56,6 @@ export type DagCanvasFlowNode =
   | DagFrameFlowNode
   | DagExternalFlowNode;
 
-/** The id the scene gives an external side card; decode for the jump action. */
-export function dagExternalNodeId(side: "upstream" | "downstream", groupId: string): string {
-  return JSON.stringify(["external", side, groupId]);
-}
-export function parseDagExternalNodeId(
-  id: string,
-): { side: "upstream" | "downstream"; groupId: string } | null {
-  try {
-    const parsed = JSON.parse(id) as unknown;
-    if (
-      Array.isArray(parsed) &&
-      parsed[0] === "external" &&
-      (parsed[1] === "upstream" || parsed[1] === "downstream") &&
-      typeof parsed[2] === "string"
-    )
-      return { side: parsed[1], groupId: parsed[2] };
-  } catch {
-    /* not an external id */
-  }
-  return null;
-}
 
 /** Raw dependency id -> state, for resolving segment/junction membership
  *  through the current plan. Never cached on the geometry. */
@@ -112,12 +89,19 @@ export interface DagEdgeDisplay {
 function displayedRawIds(
   rawIds: readonly string[],
   states: ReadonlyMap<string, DagDependencyState>,
-  showSatisfied: boolean,
+  filterSatisfied: boolean,
 ): string[] {
   const unique = [...new Set(rawIds)];
-  return showSatisfied
-    ? unique
-    : unique.filter((id) => states.get(id) !== "satisfied");
+  return filterSatisfied
+    ? unique.filter((id) => states.get(id) !== "satisfied")
+    : unique;
+}
+
+/** The satisfied switch filters only inter-line surfaces (overview bundles and
+ *  the external side cards, the latter already filtered in the model). Edges
+ *  inside a line always paint, whatever their state. */
+function filtersSatisfied(plan: DagScenePlan, showSatisfied: boolean): boolean {
+  return plan.input.kind === "overview" && !showSatisfied;
 }
 
 /** Per scene edge (overview bundle or single line dependency). */
@@ -129,7 +113,7 @@ export function dagSceneEdgeDisplay(
 ): DagEdgeDisplay | null {
   const rawIds = plan.dependencyIds[edgeId] ?? plan.overlayDependencyIds[edgeId];
   if (!rawIds) return null;
-  const displayed = displayedRawIds(rawIds, states, showSatisfied);
+  const displayed = displayedRawIds(rawIds, states, filtersSatisfied(plan, showSatisfied));
   if (!displayed.length) return null;
   return {
     count: displayed.length,
@@ -158,7 +142,7 @@ export function dagSegmentDisplay(
     const ids = plan.dependencyIds[edgeId] ?? plan.overlayDependencyIds[edgeId];
     if (ids) for (const id of ids) rawIds.add(id);
   }
-  const displayed = displayedRawIds([...rawIds], states, showSatisfied);
+  const displayed = displayedRawIds([...rawIds], states, filtersSatisfied(plan, showSatisfied));
   if (!displayed.length) return null;
   return {
     state: aggregateDagDependencyState(
@@ -207,6 +191,8 @@ export interface DagSelectionTarget {
   issueId: string | null;
   /** Cards that open a second level carry their line id here. */
   enterLineId: string | null;
+  /** Line-level members can recenter on their innermost sub-line frame. */
+  focusFrameId: string | null;
 }
 
 /** Resolve the store's selected node id against the painted model. */
@@ -226,6 +212,7 @@ export function resolveDagSelection(
         title: null,
         issueId: null,
         enterLineId: card.id,
+        focusFrameId: null,
       };
     return {
       kind: card.kind === "line" ? "line-card" : "standalone",
@@ -234,6 +221,7 @@ export function resolveDagSelection(
       title: card.issue?.title ?? null,
       issueId: card.issue?.id ?? null,
       enterLineId: card.kind === "line" ? card.issue!.id : null,
+      focusFrameId: null,
     };
   }
   const tasks = model.kind === "line" ? model.line.tasks : model.tasks;
@@ -246,6 +234,7 @@ export function resolveDagSelection(
       title: task.issue.title,
       issueId: task.issue.id,
       enterLineId: null,
+      focusFrameId: task.parentId,
     };
   if (model.kind === "line") {
     const frame = model.line.frames.find((item) => item.id === selectedId);
@@ -257,9 +246,90 @@ export function resolveDagSelection(
         title: frame.issue.title,
         issueId: frame.issue.id,
         enterLineId: null,
+        focusFrameId: frame.id,
       };
   }
   return null;
+}
+
+/** Idle-zone statistics over the painted content: match/context counts come
+ *  from the model; the dependency count follows the same display rules as the
+ *  painted edges (satisfied originals count only when the switch is on, and
+ *  never inside a line). */
+export function dagSceneStats(
+  model: DagCanvasModel,
+  plan: DagScenePlan | null,
+  showSatisfied: boolean,
+): { matched: number; context: number; edges: number } {
+  if (model.kind === "overview") {
+    let matched = 0,
+      context = 0;
+    for (const card of model.overview.cards) {
+      matched += card.matchCount;
+      context += card.contextCount;
+    }
+    let edges = 0;
+    if (plan) {
+      const states = dagDependencyStates(model);
+      for (const edgeId of [
+        ...plan.input.edges.map((e) => e.id),
+        ...(showSatisfied ? plan.overlays.map((e) => e.id) : []),
+      ]) {
+        edges += dagSceneEdgeDisplay(plan, edgeId, states, showSatisfied)?.count ?? 0;
+      }
+    }
+    return { matched, context, edges };
+  }
+  if (model.kind === "line") {
+    const members = model.line.input.members;
+    return {
+      matched: members.filter((m) => m.role === "match").length,
+      context: members.filter((m) => m.role !== "match").length,
+      edges:
+        model.line.dependencies.filter((d) => !d.hiddenByDefault).length +
+        model.line.upstream.reduce((n, g) => n + g.count, 0) +
+        model.line.downstream.reduce((n, g) => n + g.count, 0),
+    };
+  }
+  return {
+    matched: model.tasks.filter((task) => task.role === "match").length,
+    context: model.tasks.filter((task) => task.role !== "match").length,
+    edges: 0,
+  };
+}
+
+/** How many tasks on the focused chain are hidden behind the completed
+ *  filter. The overview is the only level that hides lines, so the hint
+ *  belongs there; the closure walks the raw graph, and "hidden" means the
+ *  task has no visible overview card. */
+export function dagFocusHiddenCount(params: {
+  edges: readonly { source: string; target: string }[];
+  card: DagOverviewCard;
+  representatives: ReadonlyMap<string, string>;
+  way: DagFocusWay;
+}): number {
+  const { edges, card, representatives, way } = params;
+  const adjacency = new Map<string, string[]>();
+  for (const edge of edges) {
+    const from = way === "upstream" ? edge.target : edge.source;
+    const to = way === "upstream" ? edge.source : edge.target;
+    const list = adjacency.get(from) ?? [];
+    list.push(to);
+    adjacency.set(from, list);
+  }
+  const seen = new Set(card.memberIds);
+  const stack = [...card.memberIds];
+  let hidden = 0;
+  while (stack.length) {
+    const id = stack.pop()!;
+    for (const next of adjacency.get(id) ?? []) {
+      if (seen.has(next)) continue;
+      seen.add(next);
+      if (!representatives.has(next)) hidden++;
+      stack.push(next);
+    }
+  }
+  return hidden;
 }
 
 /** The displayed route set: base geometry, or base + satisfied overlays when
@@ -328,14 +398,13 @@ export interface DagFlowNodesOptions {
   statusColorOf: (statusKey: string) => string | null;
   projectNames: ReadonlyMap<string, string>;
   focus: DagFocusSet | null;
-  selectedNodeId: string | null;
 }
 
 export function dagSceneFlowNodes(
   model: DagCanvasModel,
   options: DagFlowNodesOptions,
 ): DagCanvasFlowNode[] {
-  const { geometry, statusColorOf, projectNames, focus, selectedNodeId } = options;
+  const { geometry, statusColorOf, projectNames, focus } = options;
   const dimmed = (id: string) => (focus ? !focus.nodeIds.has(id) : false);
   if (model.kind === "overview") {
     return model.overview.cards.flatMap((card) => {
@@ -349,11 +418,10 @@ export function dagSceneFlowNodes(
         height: box.height,
         data: {
           card,
-          color: dagProjectColor(card.project?.id),
           statusColor: card.issue ? statusColorOf(card.issue.status) : null,
           dimmed: dimmed(card.id),
         },
-        selected: selectedNodeId === card.id,
+        selected: false,
         draggable: false,
         zIndex: 2,
       }];
@@ -394,7 +462,7 @@ export function dagSceneFlowNodes(
           box,
           statusColor: statusColorOf(frame.issue.status),
           projectTitle: frame.issue.projectId ? projectNames.get(frame.issue.projectId) ?? null : null,
-          selected: selectedNodeId === frame.id,
+          selected: false,
         },
         draggable: false,
         selectable: false,
@@ -420,7 +488,7 @@ export function dagSceneFlowNodes(
           showStage: parentId ? stageLabels.get(parentId) === true : true,
           dimmed: dimmed(task.issue.id),
         },
-        selected: selectedNodeId === task.issue.id,
+        selected: false,
         draggable: false,
         zIndex: 2,
       });
@@ -462,7 +530,7 @@ export function dagSceneFlowNodes(
         showStage: true,
         dimmed: false,
       },
-      selected: selectedNodeId === task.issue.id,
+      selected: false,
       draggable: false,
       zIndex: 2,
     });

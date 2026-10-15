@@ -65,8 +65,8 @@
   "count_in_progress": "进行中",
   "count_review": "待审",
   "count_unstarted": "未开始",
-  "no_project": "无项目",
   "external_from": "来自",
   "external_to": "去向",
-  "external_jump_hint": "点击跳转"
+  "external_jump_hint": "点击跳转",
+  "focus_line": "聚焦任务线"
 }

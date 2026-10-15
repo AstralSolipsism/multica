@@ -43,7 +43,7 @@ export const DagFrameNode = memo(
           data-dag-frame-header={frame.id}
           onClick={() => storeApi.getState().setDagSelectedNodeId(frame.id)}
         >
-          <span data-dag-parent-status={issue.status} title={issue.status}>
+          <span data-dag-parent-status={issue.status}>
             <StatusIcon
               status={issue.status}
               category={statusCategory}

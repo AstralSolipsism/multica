@@ -19,6 +19,13 @@ async function bootGraph(page: Page, api: TestApiClient, workspace: { id: string
     await mode.click();
     await page.getByText("Graph", { exact: true }).last().click();
   }
+  // Warm the dev server's on-demand compile of the issue detail route: the
+  // first soft navigation commits its URL only after the route compiles,
+  // which can outlast the navigation assertion on a cold server.
+  await page.evaluate(
+    (slug) => fetch(`/${slug}/issues/__warm__`, { credentials: "same-origin" }).catch(() => undefined),
+    workspace.slug,
+  );
 }
 
 async function setBlockedBy(api: TestApiClient, workspaceId: string, id: string, blockedBy: string[]) {
@@ -61,7 +68,9 @@ test("DAG two-level view: overview cards, line navigation, bundles and persisten
   page,
   baseURL,
 }, testInfo) => {
-  test.setTimeout(120_000);
+  // Cold dev servers compile the issues page (~80s) and the detail route
+  // (~35s) inside the first interactions; the budget must absorb that once.
+  test.setTimeout(240_000);
   const api = new TestApiClient();
   const stamp = `${Date.now()}`;
   let workspace: { id: string; slug: string } | undefined;

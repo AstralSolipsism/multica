@@ -72,8 +72,8 @@
   "count_in_progress": "En cours",
   "count_review": "En revue",
   "count_unstarted": "Non commencé",
-  "no_project": "Aucun projet",
   "external_from": "Depuis",
   "external_to": "Vers",
-  "external_jump_hint": "Cliquer pour y aller"
+  "external_jump_hint": "Cliquer pour y aller",
+  "focus_line": "Centrer sur le groupe"
 }

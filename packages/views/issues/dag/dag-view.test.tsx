@@ -249,6 +249,46 @@ describe("DagView level navigation", () => {
   });
 });
 
+  it("falls back to the overview when the independent grid no longer exists", async () => {
+    // Two lines: no independent card, no auto-entry. The stored level is invalid.
+    const graph = makeGraph([
+      makeNode("r1"),
+      makeNode("t1", { parentIssueId: "r1" }),
+      makeNode("r2"),
+      makeNode("t2", { parentIssueId: "r2" }),
+    ]);
+    const { store } = setup(graph, (s) => s.setState({ dagLineId: "independent:root" }));
+    await waitForCanvas();
+    await waitFor(() => expect(store.getState().dagLineId).toBeNull());
+    const props = await waitForCanvas();
+    expect(props.level).toEqual({ kind: "overview" });
+    expect(props.model.kind).toBe("overview");
+  });
+
+  it("never issues the graph request for unsupported scopes", async () => {
+    const getIssueGraph = vi.fn().mockResolvedValue(fixtureGraph());
+    setApiInstance({ getIssueGraph } as unknown as ApiClient);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    clients.push(client);
+    const store = createStore<IssueViewState>()(viewStoreSlice);
+    const mySpec: IssueTableQuerySpec = {
+      scope: { kind: "my", relation: "any" },
+      filters: {},
+      sort: { field: "position", direction: "asc" },
+    };
+    // The DAG is never offered for these scopes; the guard mirrors
+    // useDagSurfaceGraph so a stray mount cannot crash the surface.
+    render(
+      <QueryClientProvider client={client}>
+        <ViewStoreProvider store={store}>
+          <DagView spec={mySpec} hasActiveFilters={false} sceneRunnerFactory={syncSceneRunner} />
+        </ViewStoreProvider>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(mockTranslate).toHaveBeenCalled());
+    expect(getIssueGraph).not.toHaveBeenCalled();
+  });
+
 describe("DagView display switches", () => {
   it("toggling satisfied dependencies repaints the overview without a new layout", async () => {
     const done = fixtureGraph();

@@ -134,35 +134,28 @@ external side cards. Shared bus intervals paint once with the most urgent
 traversing state; branch points carry a dot. A card-to-card arrow does not
 mean that every member of one line depends on every member of the other.
 
-ELK computes both positions and edge paths. Local graphs expose boundary ports;
-an outer ELK layout arranges the groups in regular rows/columns and routes
-between those ports. Matching path sections are joined without a hand-written
-obstacle router. Stage constraints and routing terminals are display-only and
-never enter the API or become visible dependency arrows.
+Each level lays out independently: the overview packs flat cards, a line nests
+its sub-line frames. One worker channel per scene class (overview / line /
+focus) with a content-keyed LRU per class; opened lines cache independently.
+ELK runs in a child worker through its supported API. A layout that exceeds
+the 3s deadline is terminated and re-run as bounded packing; the canvas labels
+that degraded result and offers a manual re-layout. Replacing a worker
+invalidates its outstanding response. Failure is explicit and retryable; the
+canvas does not substitute straight or guessed dependency lines. Selection,
+title, status and run refreshes do not relayout an unchanged topology.
 
-The existing layout worker owns orchestration and an ELK worker created through
-its supported API. Replacing/canceling a worker invalidates its outstanding
-response. Failure is explicit and retryable; the canvas does not substitute
-straight or guessed dependency lines. The heavy kernel is only loaded when
-DAG layout runs. Selection, title, status and run refreshes do not relayout an
-unchanged visible topology.
-
-Single-click selects an issue and highlights its direct dependencies and stage.
-Other titles remain readable. Explicit dependency-neighborhood actions remain
-available; **Focus issue group** is a separate action. Double-click or the
-existing detail action follows the platform navigation adapter. Returning
-restores personal expansion and viewport state. Expand does not automatically
-fit the entire graph or shrink the reading size; ordinary scrolling pans the
-canvas. Dragging stays inside an outer content extent so routes between task lines
-remain traversable. Settled navigation, layout changes, restored positions and
-resizes keep at least one issue card or task-line/independent-group header in
-view when content exists. Already-readable partial items retain their position.
-Explicit focus is placed directly, without an interruptible transition across
-blank space. Bounds use actual cards and headers, not large empty
-group backgrounds. Recovery only translates to the nearest content (preferring
-a toggled group); it does not change zoom or expand groups. Personal viewport
-and independent expansion use the existing scoped
-view store, while selection stays session-only.
+Single-click selects a card or task; the toolbar's selection zone keeps the
+OL-182 actions (open detail, highlight prerequisites/dependents, edit
+prerequisites, assign), and line cards additionally offer **Enter task line**.
+**Focus issue group** remains available on a selected member, recentering its
+innermost sub-line frame. Double-click follows the level: line cards enter,
+tasks open the detail. Returning to the overview restores its viewport and
+selects the line just left; each level remembers its own viewport. Ordinary
+scrolling pans the canvas. Dragging stays inside an outer content extent so
+routes between cards remain traversable. Navigation, layout changes and
+resizes keep at least one card or frame header in view when content exists.
+Recovery translates to the nearest content without changing zoom. Bounds use
+actual cards and frame headers, not large empty frame backgrounds.
 
 The former DAG project/flat grouping chooser is replaced by this task-line
 model. Older shared-view grouping values continue to round-trip at the API

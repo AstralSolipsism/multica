@@ -16,10 +16,6 @@ export function dagLevelFromLineId(lineId: string | null): DagLevel {
   return lineId ? { kind: "line", lineId } : DAG_OVERVIEW_LEVEL;
 }
 
-export function dagLevelLineId(level: DagLevel): string | null {
-  return level.kind === "line" ? level.lineId : null;
-}
-
 /** Persisted viewport slots: one for the overview, one per opened line. */
 export function dagLevelViewportKey(level: DagLevel): string {
   return level.kind === "overview"

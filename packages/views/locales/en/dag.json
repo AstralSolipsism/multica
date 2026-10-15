@@ -72,8 +72,8 @@
   "count_in_progress": "In progress",
   "count_review": "In review",
   "count_unstarted": "Not started",
-  "no_project": "No project",
   "external_from": "From",
   "external_to": "To",
-  "external_jump_hint": "Click to jump there"
+  "external_jump_hint": "Click to jump there",
+  "focus_line": "Focus issue group"
 }
