@@ -74,7 +74,7 @@
   "legend_highlight": "点击卡片或连线：点亮相关链路，其余变暗；再点同一卡片切换全部上下游",
   "selection_scope_neighborhood": "一层",
   "selection_scope_closure": "全部上下游",
-"focus_mode": "聚焦模式",
+  "focus_mode": "聚焦模式",
   "focus_breadcrumb": "聚焦 {{identifier}}",
   "exit_focus": "退出聚焦模式",
   "focus_unavailable": "当前视图中已无此任务，已返回上一层。",

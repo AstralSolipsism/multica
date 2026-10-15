@@ -50,7 +50,7 @@ import {
 } from "./dag-highlight";
 import { dagExternalNodeId } from "./dag-scene";
 import { dagProjectColor } from "./dag-project-colors";
-import { DAG_CLICK_CYCLE_MS, DAG_GROUP_HEADER_HEIGHT, DAG_MINIMAP_NODE_LIMIT, DAG_MOTION_MIN_ZOOM, DAG_SIMPLIFIED_HYSTERESIS, DAG_SIMPLIFIED_ZOOM } from "./dag-constants";
+import { DAG_CLICK_CYCLE_MS, DAG_GROUP_HEADER_HEIGHT, DAG_MOTION_MIN_ZOOM, DAG_SIMPLIFIED_HYSTERESIS, DAG_SIMPLIFIED_ZOOM } from "./dag-constants";
 import { usePrefersReducedMotion } from "./use-prefers-reduced-motion";
 
 const nodeTypes = {
@@ -147,8 +147,8 @@ export function DagSceneCanvasInner({
     () => dagViewportTargets(geometry),
     [geometry],
   );
-  // Re-render on 0.1-quantized zoom steps only: wheel gestures would
-  // otherwise re-render the whole canvas on every frame.
+  // The canvas subscribes the raw zoom, so zoom gestures re-render it every
+  // frame — acceptable now that pan/zoom frame rates measure well above 30.
   // Thresholds as boolean selectors: they only re-render on crossing, and
   // they compare the real zoom — never a quantized step (OL-183's 50%/40%).
   const zoom = useFlowStore((state) => state.transform[2]);
@@ -315,39 +315,55 @@ export function DagSceneCanvasInner({
   // dependencies on top of either. Hover is debounced (see above), and never
   // overrides the card that already owns the selection/focus — clicking it
   // must visibly switch to all upstream + downstream.
-  // Focus (and hover) on an overview card additionally surfaces its
-  // satisfied bundles without a layout pass.
-  const overlayAnchorId = model.kind === "overview" ? (hoverNodeId ?? focusState?.nodeId ?? null) : null;
-  const anchorOverlay = useMemo(
-    () => (overlayAnchorId ? dagOverviewHoverOverlay(model, geometry, overlayAnchorId) : null),
-    [overlayAnchorId, model, geometry],
+  // Exactly one satisfied-dependency overlay is effective at a time, keyed to
+  // whichever highlight actually drives the canvas: the hovered card when
+  // hover drives, the focus anchor while focusing, or the selected card when
+  // the pointer rests on it.
+  const focusOverlay = useMemo(
+    () =>
+      model.kind === "overview" && focusState
+        ? dagOverviewHoverOverlay(model, geometry, focusState.nodeId)
+        : null,
+    [model, geometry, focusState],
   );
+  const hoveredOverlay = useMemo(
+    () =>
+      model.kind === "overview" && hoverNodeId
+        ? dagOverviewHoverOverlay(model, geometry, hoverNodeId)
+        : null,
+    [model, geometry, hoverNodeId],
+  );
+  const selectionOverlay =
+    selectedNodeId && hoverNodeId === selectedNodeId ? hoveredOverlay : null;
   const anchorId = focusState?.nodeId ?? selectedNodeId;
   const hoverSet = useMemo<DagFocusSet | null>(() => {
     if (!hoverNodeId || hoverNodeId === anchorId) return null;
     const base = dagSceneSelectionSet(plan, hoverNodeId);
-    if (!base && !anchorOverlay) return null;
+    if (!base && !hoveredOverlay) return null;
     return {
-      nodeIds: new Set([...(base?.nodeIds ?? []), ...(anchorOverlay?.nodeIds ?? [])]),
-      edgeIds: new Set([...(base?.edgeIds ?? []), ...(anchorOverlay?.edgeIds ?? [])]),
+      nodeIds: new Set([...(base?.nodeIds ?? []), ...(hoveredOverlay?.nodeIds ?? [])]),
+      edgeIds: new Set([...(base?.edgeIds ?? []), ...(hoveredOverlay?.edgeIds ?? [])]),
     };
-  }, [hoverNodeId, anchorId, plan, anchorOverlay]);
+  }, [hoverNodeId, anchorId, plan, hoveredOverlay]);
   const focusSet = useMemo(() => {
     const set = focusState ? dagSceneFocusSet(plan, focusState.nodeId, focusState.way) : null;
     if (!set) return null;
     return {
-      nodeIds: dagWithAncestorFrames(plan, new Set([...set.nodeIds, ...(anchorOverlay?.nodeIds ?? [])])),
-      edgeIds: new Set([...set.edgeIds, ...(anchorOverlay?.edgeIds ?? [])]),
+      nodeIds: dagWithAncestorFrames(plan, new Set([...set.nodeIds, ...(focusOverlay?.nodeIds ?? [])])),
+      edgeIds: new Set([...set.edgeIds, ...(focusOverlay?.edgeIds ?? [])]),
     };
-  }, [focusState, plan, anchorOverlay]);
-  const selectionSet = useMemo(
-    () => (selectedNodeId ? dagSceneSelectionSet(plan, selectedNodeId) : null),
-    [selectedNodeId, plan],
-  );
+  }, [focusState, plan, focusOverlay]);
+  const selectionSet = useMemo(() => {
+    const set = selectedNodeId ? dagSceneSelectionSet(plan, selectedNodeId) : null;
+    if (!set || !selectionOverlay) return set;
+    return {
+      nodeIds: new Set([...set.nodeIds, ...selectionOverlay.nodeIds]),
+      edgeIds: new Set([...set.edgeIds, ...selectionOverlay.edgeIds]),
+    };
+  }, [selectedNodeId, plan, selectionOverlay]);
   const activeNodeSet = hoverSet ?? focusSet ?? selectionSet;
-  // The edge layer only needs the hover overlay when hover actually drives
-  // the highlight; the focus overlay routes resolve through the same field.
-  const hoverOverlay = hoverSet ? anchorOverlay : focusSet ? anchorOverlay : null;
+  // The edge layer's overlay follows the same effective source.
+  const activeOverlay = hoverSet ? hoveredOverlay : focusSet ? focusOverlay : selectionOverlay;
   const busEdgeIds = useMemo(
     () =>
       selectedDependencyIds?.length
@@ -615,7 +631,7 @@ export function DagSceneCanvasInner({
               model={model}
               showSatisfied={showSatisfied}
               highlightedEdgeIds={highlightedEdgeIds}
-              hoverOverlay={hoverOverlay}
+              hoverOverlay={activeOverlay}
               litBoxes={litBoxes}
               ghostBlocks={ghostBlocks}
               selectedNodeId={selectedNodeId}
@@ -628,9 +644,7 @@ export function DagSceneCanvasInner({
           </ViewportPortal>
           <Background gap={24} size={1} className="stroke-border/40" bgColor="transparent" />
           <Controls showInteractive={false} position="bottom-left" />
-          {nodes.length <= DAG_MINIMAP_NODE_LIMIT && (
-            <MiniMap pannable zoomable className="!bg-card" />
-          )}
+          <MiniMap pannable zoomable className="!bg-card" />
         </ReactFlow>
       </DagCanvasActionsContext.Provider>
     </div>

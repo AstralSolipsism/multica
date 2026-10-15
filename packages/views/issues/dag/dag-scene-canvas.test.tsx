@@ -571,7 +571,7 @@ const dimOverlay = () => document.querySelector("[data-dag-dim-overlay]");
 // Severe-1 regression: the dim overlay must sit in its own svg above the
 // z-index-2 cards, or it only ever covers the background.
 const dimLayerZ = () => {
-  const layer = document.querySelector("[data-dag-dim-layer]") as HTMLElement | null;
+  const layer = document.querySelector("[data-dag-overlay-layer]") as HTMLElement | null;
   return layer ? getComputedStyle(layer).zIndex : null;
 };
 const litRouteGroups = () =>
@@ -895,6 +895,30 @@ describe("DagSceneCanvas Stage 10 interactions", () => {
     expect(store.getState().dagFocus).toEqual({ nodeId: "issue:r2", way: "upstream" });
   });
 
+  it("ignores the trailing third click of a triple-click", async () => {
+    const { store, props } = harness(overviewFixture());
+    const card = await screen.findByText("Line one");
+    const node = card.closest(".react-flow__node")!;
+    fireEvent.click(node);
+    expect(store.getState().dagSelectedNodeId).toBe("issue:r1");
+    vi.useFakeTimers();
+    try {
+      // detail 1 arms the cycle; detail 2 belongs to the double-click; the
+      // trailing detail 3 must not arm another switch.
+      fireEvent.click(node, { detail: 1 });
+      fireEvent.click(node, { detail: 2 });
+      fireEvent.doubleClick(node);
+      expect(props.onEnterLine).toHaveBeenCalledWith("r1");
+      fireEvent.click(node, { detail: 3 });
+      act(() => {
+        vi.advanceTimersByTime(450);
+      });
+      expect(store.getState().dagFocus).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("a double-click right after returning to one layer does not resurrect the closure", async () => {
     const { store, props } = harness(overviewFixture());
     const card = await screen.findByText("Line one");
@@ -924,7 +948,7 @@ describe("DagSceneCanvas Stage 10 interactions", () => {
     }
   });
 
-  it("swaps to simplified blocks exactly at the 0.4 threshold, not at a rounded step", async () => {
+  it("swaps to simplified blocks exactly at the 0.4 threshold, not at a quantized step", async () => {
     const { flow } = harness(overviewFixture());
     await waitFor(() => expect(screen.getByText("Line one")).toBeInTheDocument());
     await flow().setViewport({ x: 0, y: 0, zoom: 0.42 });
@@ -1170,9 +1194,8 @@ describe("DagSceneCanvas Stage 10 on the focus scene", () => {
     // Simplified zoom paints the focus scene's frames as ghost blocks too.
     await flow().setViewport({ x: 0, y: 0, zoom: 0.3 });
     await waitFor(() => {
-      const ghost = document.querySelector("[data-dag-ghost-blocks]");
-      expect(ghost).toBeTruthy();
-      expect(ghost!.querySelectorAll("path").length).toBeGreaterThan(0);
+      expect(document.querySelector('[data-dag-ghost="frames"]')).toBeTruthy();
+      expect(document.querySelector('[data-dag-ghost="tasks"]')).toBeTruthy();
     });
     await flow().setViewport({ x: 0, y: 0, zoom: 1 });
   });
@@ -1224,7 +1247,9 @@ describe("DagSceneCanvas Stage 10 coverage gaps", () => {
       expect(ghost).toBeTruthy();
       // body (tasks), frames (line + sub-line) and external side cards are
       // three distinct path groups.
-      expect(ghost.querySelectorAll("path").length).toBeGreaterThanOrEqual(3);
+      expect(document.querySelector('[data-dag-ghost="tasks"]')).toBeTruthy();
+      expect(document.querySelector('[data-dag-ghost="frames"]')).toBeTruthy();
+      expect(document.querySelector('[data-dag-ghost="externals"]')).toBeTruthy();
     });
     await flow().setViewport({ x: 0, y: 0, zoom: 1 });
     await waitFor(() => expect(screen.getByText("Sub line")).toBeInTheDocument());
@@ -1261,5 +1286,174 @@ describe("DagSceneCanvas Stage 10 coverage gaps", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("DagSceneCanvas satisfied overlay sources", () => {
+  const SATISFIED = JSON.stringify(["issue:r4", "issue:r2"]);
+  const litEdgeIds = () =>
+    [...document.querySelectorAll("[data-dag-lit-edge]")].map((el) =>
+      el.getAttribute("data-dag-lit-edge"),
+    );
+  /** r1→r2 is a mixed bundle (a1 done, a2 open); r4→r2 is fully satisfied and
+   *  only ever shows through the overlay. r3 has no dependencies at all. */
+  function satisfiedFixture() {
+    const graph = makeGraph(
+      [
+        makeNode("r1", { title: "Line one" }),
+        makeNode("a1", { parentIssueId: "r1", status: "done", statusCategory: "done" }),
+        makeNode("a2", { parentIssueId: "r1" }),
+        makeNode("r2", { title: "Line two" }),
+        makeNode("b1", { parentIssueId: "r2" }),
+        makeNode("r3", { title: "Line three" }),
+        makeNode("d1", { parentIssueId: "r3" }),
+        makeNode("r4", { title: "Line four" }),
+        makeNode("c1", { parentIssueId: "r4", status: "done", statusCategory: "done" }),
+      ],
+      [
+        { id: "e-a1", source: "a1", target: "b1" },
+        { id: "e-a2", source: "a2", target: "b1" },
+        { id: "e-c1", source: "c1", target: "b1" },
+      ],
+    );
+    const overview = computeDagOverview(createDagModelIndex(graph), {
+      showCompleted: false,
+      showSatisfiedDependencies: false,
+    })!;
+    const geometry: DagSceneGeometry = {
+      nodes: {
+        "issue:r1": { x: 0, y: 0, width: 280, height: 140 },
+        "issue:r2": { x: 500, y: 60, width: 280, height: 140 },
+        "issue:r3": { x: 500, y: 340, width: 280, height: 140 },
+        "issue:r4": { x: 0, y: 300, width: 280, height: 140 },
+      },
+      frames: {},
+      ports: {
+        "issue:r1": { input: { x: 0, y: 70 }, output: { x: 280, y: 70 } },
+        "issue:r2": { input: { x: 500, y: 130 }, output: { x: 780, y: 130 } },
+        "issue:r3": { input: { x: 500, y: 410 }, output: { x: 780, y: 410 } },
+        "issue:r4": { input: { x: 0, y: 370 }, output: { x: 280, y: 370 } },
+      },
+      routes: {
+        [BUNDLE]: [
+          { x: 280, y: 70 },
+          { x: 390, y: 70 },
+          { x: 390, y: 130 },
+          { x: 500, y: 130 },
+        ],
+      },
+      segments: [],
+      junctions: [],
+      width: 780,
+      height: 480,
+      quality: "elk",
+    };
+    return {
+      model: { kind: "overview" as const, overview },
+      plan: dagOverviewLayoutInput(overview),
+      geometry,
+    };
+  }
+
+  it("keeps the satisfied overlay while the pointer rests on the selected card", async () => {
+    harness(satisfiedFixture(), (s) => s.setState({ dagSelectedNodeId: "issue:r2" }));
+    await waitFor(() => expect(nodeOf("issue:r2")).toBeTruthy());
+    await waitFor(() => expect(litEdgeIds()).toContain(BUNDLE));
+    expect(litEdgeIds()).not.toContain(SATISFIED);
+    fireEvent.mouseEnter(nodeOf("issue:r2"));
+    await waitFor(() => expect(litEdgeIds()).toContain(SATISFIED));
+    // The satisfied source card lights through a dim hole too.
+    expect(cardLit("issue:r4")).toBe(true);
+  });
+
+  it("keeps the focus anchor's satisfied overlay over an unrelated hover", async () => {
+    const { store } = harness(satisfiedFixture(), (s) =>
+      s.setState({ dagFocus: { nodeId: "issue:r2", way: "upstream" } }),
+    );
+    await waitFor(() => expect(nodeOf("issue:r3")).toBeTruthy());
+    await waitFor(() => expect(litEdgeIds()).toContain(SATISFIED));
+    fireEvent.mouseEnter(nodeOf("issue:r3"));
+    // A card with no dependencies has no hover set: the focus highlight (and
+    // its overlay) stays instead of flickering away with the pointer.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(litEdgeIds()).toContain(SATISFIED);
+    expect(store.getState().dagFocus).toEqual({ nodeId: "issue:r2", way: "upstream" });
+  });
+
+  it("keeps the satisfied overlay while the focused card itself is hovered", async () => {
+    harness(satisfiedFixture(), (s) =>
+      s.setState({ dagFocus: { nodeId: "issue:r2", way: "upstream" } }),
+    );
+    await waitFor(() => expect(nodeOf("issue:r2")).toBeTruthy());
+    await waitFor(() => expect(litEdgeIds()).toContain(SATISFIED));
+    fireEvent.mouseEnter(nodeOf("issue:r2"));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(litEdgeIds()).toContain(SATISFIED);
+  });
+});
+
+describe("DagSceneCanvas Stage 10 review assertions", () => {
+  it("does not light up frames or external side cards on hover", async () => {
+    harness(lineFixture());
+    await waitFor(() => expect(nodeOf("r1")).toBeTruthy());
+    fireEvent.mouseEnter(nodeOf("r1"));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(dimOverlay()).toBeNull();
+    expect(litRouteGroups()).toBe(0);
+    fireEvent.mouseLeave(nodeOf("r1"));
+    const externalNode = document
+      .querySelector("[data-dag-external='r2']")!
+      .closest(".react-flow__node")!;
+    fireEvent.mouseEnter(externalNode);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(dimOverlay()).toBeNull();
+    expect(litRouteGroups()).toBe(0);
+  });
+
+  it("keeps the external card's jump click in the simplified line scene", async () => {
+    const { flow, props } = harness(lineFixture());
+    await waitFor(() => expect(screen.getByText("Sub line")).toBeInTheDocument());
+    await flow().setViewport({ x: 0, y: 0, zoom: 0.3 });
+    await waitFor(() =>
+      expect(document.querySelector('[data-dag-ghost="externals"]')).toBeTruthy(),
+    );
+    fireEvent.click(document.querySelector("[data-dag-external='r2']")!);
+    expect(props.onExternalJump).toHaveBeenCalled();
+  });
+
+  it("paints the cancelled blocker's ghost block with a dashed border", async () => {
+    const cancelledGraph = makeGraph(
+      [
+        makeNode("r1"),
+        makeNode("a1", { parentIssueId: "r1" }),
+        makeNode("cancelled", { status: "cancelled", statusCategory: "closed" }),
+      ],
+      [{ id: "e-x", source: "cancelled", target: "a1" }],
+    );
+    const overview = computeDagOverview(createDagModelIndex(cancelledGraph), {
+      showCompleted: false,
+      showSatisfiedDependencies: true,
+    })!;
+    const cancelledCard = overview.cards.find((c) => c.cancelledBlocking)!;
+    const { flow } = harness({
+      model: { kind: "overview", overview },
+      plan: dagOverviewLayoutInput(overview),
+      geometry: {
+        nodes: { [cancelledCard.id]: { x: 0, y: 0, width: 280, height: 140 } },
+        frames: {},
+        ports: {},
+        routes: {},
+        segments: [],
+        junctions: [],
+        width: 280,
+        height: 140,
+        quality: "elk",
+      },
+    });
+    await waitFor(() => expect(document.querySelector("[data-dag-overview-card]")).toBeTruthy());
+    await flow().setViewport({ x: 0, y: 0, zoom: 0.3 });
+    await waitFor(() =>
+      expect(document.querySelector('[data-dag-ghost="dashed"]')).toBeTruthy(),
+    );
   });
 });

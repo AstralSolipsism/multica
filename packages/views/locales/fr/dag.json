@@ -82,7 +82,7 @@
   "legend_highlight": "Cliquez sur une carte ou une ligne : sa chaîne s'illumine, le reste s'estompe ; recliquez pour tout l'amont + aval",
   "selection_scope_neighborhood": "Une couche",
   "selection_scope_closure": "Amont + aval",
-"focus_mode": "Mode focus",
+  "focus_mode": "Mode focus",
   "focus_breadcrumb": "Focus {{identifier}}",
   "exit_focus": "Quitter le mode focus",
   "focus_unavailable": "La tâche ciblée ne figure plus dans cette vue. Retour au niveau précédent.",

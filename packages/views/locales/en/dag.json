@@ -82,7 +82,7 @@
   "legend_highlight": "Click a card or edge: its chain lights up, the rest dims; click the card again for all upstream + downstream",
   "selection_scope_neighborhood": "One layer",
   "selection_scope_closure": "All upstream + downstream",
-"focus_mode": "Focus mode",
+  "focus_mode": "Focus mode",
   "focus_breadcrumb": "Focus {{identifier}}",
   "exit_focus": "Exit focus mode",
   "focus_unavailable": "The focused issue is no longer in this view. Returned to the previous level.",

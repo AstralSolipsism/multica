@@ -65,6 +65,16 @@ describe("dag view preferences", () => {
     expect(store.getState().dagFocus).toBeNull();
   });
 
+  it("clears the bus selection entering and leaving focus mode", () => {
+    const store = makeStore();
+    store.getState().setDagSelectedDependencyIds(["dep-1"]);
+    store.getState().enterDagFocus("a");
+    expect(store.getState().dagSelectedDependencyIds).toBeNull();
+    store.getState().setDagSelectedDependencyIds(["dep-2"]);
+    store.getState().exitDagFocus();
+    expect(store.getState().dagSelectedDependencyIds).toBeNull();
+  });
+
   it("keeps the pin when the level is corrected without the user", () => {
     const store = makeStore();
     store.getState().exitDagLine();

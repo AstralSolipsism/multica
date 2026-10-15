@@ -76,6 +76,18 @@ export interface DagFocusRequest {
   nonce: number;
 }
 
+/** An emptied bus dropdown (every original satisfied while its switch is off)
+ *  clears the bus selection instead of showing "汇总 0 条依赖". */
+export function useDagEmptyBusSelectionReset(
+  storeApi: ReturnType<typeof useViewStoreApi>,
+  busSelection: DagBusSelectionItem[] | null,
+) {
+  useEffect(() => {
+    if (busSelection && busSelection.length === 0)
+      storeApi.getState().setDagSelectedDependencyIds(null);
+  }, [busSelection, storeApi]);
+}
+
 export interface DagViewProps {
   /** The surface's table query spec; the DAG fetches the graph for it. */
   spec: IssueTableQuerySpec;
@@ -369,10 +381,7 @@ export function DagView({
 
   // An emptied dropdown (everything satisfied while its switch is off)
   // clears the bus selection instead of showing "汇总 0 条依赖".
-  useEffect(() => {
-    if (busSelection && busSelection.length === 0)
-      storeApi.getState().setDagSelectedDependencyIds(null);
-  }, [busSelection, storeApi]);
+  useDagEmptyBusSelectionReset(storeApi, busSelection);
 
   // Focus owns the bidirectional Q11 count; the overview highlight keeps its
   // directional count over the raw graph.

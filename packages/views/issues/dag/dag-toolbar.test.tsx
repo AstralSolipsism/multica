@@ -482,9 +482,10 @@ describe("DagToolbar overflow", () => {
     m.sizes.zone = 564;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream"]);
-    // Widening by 56px (≥ 48) refits: a third action fits (578 ≤ 620) even
-    // though the remaining 42px of slack is below the hysteresis.
-    m.sizes.zone = 620;
+    // Widening by exactly 48px refits: a third action fits (566 ≤ 612) and
+    // the remaining 46px of slack is below the hysteresis — only the real
+    // widening can bring it back.
+    m.sizes.zone = 612;
     m.fire();
     expect(m.actionIds()).toEqual(["open", "upstream", "downstream"]);
   });

@@ -74,7 +74,7 @@
   "legend_highlight": "카드나 선 클릭: 관련 체인을 강조하고 나머지는 흐리게. 같은 카드를 다시 클릭하면 전체 상하류로 전환",
   "selection_scope_neighborhood": "한 단계",
   "selection_scope_closure": "전체 상하류",
-"focus_mode": "집중 모드",
+  "focus_mode": "집중 모드",
   "focus_breadcrumb": "집중 {{identifier}}",
   "exit_focus": "집중 모드 종료",
   "focus_unavailable": "대상 태스크가 이 뷰에 없어 이전 단계로 돌아왔습니다.",

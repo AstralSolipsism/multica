@@ -27,10 +27,3 @@ export const DAG_SIMPLIFIED_HYSTERESIS = 0.04;
  *  downstream — but only once the system's double-click window has passed,
  *  so a real double-click never triggers the switch (OL-284, 2026-10-15). */
 export const DAG_CLICK_CYCLE_MS = 400;
-/** Bus hit zones render only when the visible segment count is aimable —
- *  at fully zoomed-out stress views they would cost more than they are worth. */
-export const DAG_BUS_HIT_LIMIT = 600;
-/** The MiniMap renders one rect per node and re-renders on every viewport
- *  change; past this count it is both illegible and the biggest remaining
- *  frame cost, so it stays off. */
-export const DAG_MINIMAP_NODE_LIMIT = 200;

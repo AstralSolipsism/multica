@@ -25,7 +25,6 @@ import {
   type DagHoverOverlay,
   type DagVisibleBounds,
 } from "./dag-highlight";
-import { DAG_BUS_HIT_LIMIT } from "./dag-constants";
 import "./dag-edge-motion.css";
 
 /** Static edge styles for the four dependency states (OL-183 §4). Advancing
@@ -156,20 +155,16 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
         : segments,
     [segments, bounds],
   );
-  // Bus memberships only pay for aimable hit zones: past the hit limit they
-  // are never rendered, so a highlight change never rebuilds them.
-  const hitsAllowed = visibleSegments.length <= DAG_BUS_HIT_LIMIT;
+  // Bus memberships only pay for the aimable hit zones they render.
   const busIdsBySegment = useMemo(
     () =>
-      hitsAllowed
-        ? new Map(
-            visibleSegments.map(({ segment }) => [
-              segment.id,
-              dagBusDependencyIds(segment.edgeIds, plan),
-            ]),
-          )
-        : null,
-    [visibleSegments, plan, hitsAllowed],
+      new Map(
+        visibleSegments.map(({ segment }) => [
+          segment.id,
+          dagBusDependencyIds(segment.edgeIds, plan),
+        ]),
+      ),
+    [visibleSegments, plan],
   );
   const arrows = useMemo(
     () =>
@@ -379,191 +374,157 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
   return (
     <>
       <svg data-dag-edge-layer {...windowedSvgProps} aria-hidden>
-      <g className={dimmed ? "opacity-15 transition-opacity" : "transition-opacity"}>
-        {segmentGroups.map(([key, group]) => {
-          const style = STATE_STYLE[group.state];
-          return (
-            <path
-              key={key}
-              data-dag-segments={group.ids.join(" ")}
-              d={group.d.join(" ")}
-              className={group.breathe ? "dag-edge-breathe" : undefined}
-              stroke={style.stroke}
-              strokeOpacity={style.opacity}
-              strokeWidth={group.width}
-              strokeDasharray={style.dash}
-              strokeLinecap="round"
-              fill="none"
-            />
-          );
-        })}
-        {baseFlows.map((overlay) => flowLine(overlay, `flow:${overlay.segment.id}`))}
-        {visibleJunctions.map((junction) => (
-          <circle
-            key={`${junction.x},${junction.y}`}
-            cx={junction.x}
-            cy={junction.y}
-            r={3}
-            fill="var(--foreground)"
-            fillOpacity={0.55}
-          />
-        ))}
-        {visibleArrows.map(({ edgeId, route, display }) => {
-          const style = STATE_STYLE[display.state];
-          return arrowHead(route, edgeId, style.stroke, style.opacity);
-        })}
-        {badges.map(({ edgeId, point, count }) => {
-          const label = String(count);
-          const width = label.length * 7 + 10;
-          return (
-            <g key={edgeId} transform={`translate(${point.x} ${point.y})`}>
-              <rect
-                x={-width / 2}
-                y={-9}
-                width={width}
-                height={18}
-                rx={9}
-                fill="var(--card)"
-                stroke="var(--border)"
-              />
-              <text
-                textAnchor="middle"
-                dominantBaseline="central"
-                fontSize={11}
-                fill="var(--muted-foreground)"
-                className="tabular-nums"
-              >
-                {label}
-              </text>
-            </g>
-          );
-        })}
-      </g>
-      {/* Simplified cards below the readability zoom: SVG rects whose DOM
-          shells stay interactive. Painted over edge endpoints like the DOM
-          cards would; cancelled blockers keep their dashed mark. */}
-      {ghost && (
-        <g data-dag-ghost-blocks>
-          {ghost.body && (
-            <path d={ghost.body} fill="var(--muted)" fillOpacity={0.55} stroke="var(--border)" />
-          )}
-          {[...ghost.strips.entries()].map(([color, d]) => (
-            <path key={color} d={d.join(" ")} fill={color} />
-          ))}
-          {ghost.dashedBodies && (
-            <path
-              d={ghost.dashedBodies}
-              fill="none"
-              stroke="var(--border)"
-              strokeDasharray="5 3"
-            />
-          )}
-          {ghost.frames && (
-            <path d={ghost.frames} fill="var(--muted)" fillOpacity={0.25} stroke="var(--muted-foreground)" strokeOpacity={0.3} />
-          )}
-          {ghost.externals && (
-            <path d={ghost.externals} fill="var(--muted)" fillOpacity={0.25} stroke="var(--muted-foreground)" strokeOpacity={0.45} strokeDasharray="4 3" />
-          )}
-        </g>
-      )}
-      {selectedBox && (
-        <g data-dag-selected={selectedNodeId}>
-          <rect
-            x={selectedBox.x - 3}
-            y={selectedBox.y - 3}
-            width={selectedBox.width + 6}
-            height={selectedBox.height + 6}
-            rx={10}
-            fill="none"
-            stroke="var(--color-brand)"
-            strokeOpacity={0.3}
-            strokeWidth={6}
-          />
-          <rect
-            x={selectedBox.x - 3}
-            y={selectedBox.y - 3}
-            width={selectedBox.width + 6}
-            height={selectedBox.height + 6}
-            rx={10}
-            fill="none"
-            stroke="var(--color-brand)"
-            strokeWidth={2}
-          />
-        </g>
-      )}
-      {/* The lit chain repaints each dependency's own complete route with a
-          soft glow — highlight never spreads along a shared bus, and brand
-          blue stays reserved for the selected card itself. */}
-      {highlightedRoutes.map(({ edgeId, route, display }) => {
-        const style = STATE_STYLE[display.state];
-        const points = route.map((p) => `${p.x},${p.y}`).join(" ");
-        const width = display.count > 1 ? 3 : 2;
-        const breathe = display.state === "cancelled-blocking" && motionAllowed;
-        return (
-          <g key={`lit:${edgeId}`} data-dag-lit-edge={edgeId}>
-            <polyline
-              points={points}
-              fill="none"
-              stroke={style.stroke}
-              strokeOpacity={0.25}
-              strokeWidth={width + 5}
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />
-            <polyline
-              points={points}
-              fill="none"
-              className={breathe ? "dag-edge-breathe" : undefined}
-              stroke={style.stroke}
-              strokeOpacity={Math.min(1, style.opacity + 0.35)}
-              strokeWidth={width}
-              strokeDasharray={style.dash}
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />
-            {arrowHead(route, `lit-arrow:${edgeId}`, style.stroke, 0.9)}
-          </g>
-        );
-      })}
-      {litFlows.map((overlay) => flowLine(overlay, `lit-flow:${overlay.segment.id}`))}
-      {/* Bus hit zones: transparent, inset from both ends, pointer only on the
-          stroke. Clicking selects the segment's original dependencies. */}
-      {busIdsBySegment
-        ? visibleSegments.flatMap(({ segment }) => {
-            const busIds = busIdsBySegment.get(segment.id) ?? [];
-            if (!busIds.length) return [];
-            const hit = hitSegment(segment, 8);
-            if (!hit) return [];
-            return [
-              <line
-                key={`hit:${segment.id}`}
-                data-dag-bus-hit={segment.id}
-                x1={hit.start.x}
-                y1={hit.start.y}
-                x2={hit.end.x}
-                y2={hit.end.y}
-                className="nopan stroke-transparent transition-colors hover:stroke-foreground/15"
-                strokeWidth={10}
+        <g className={dimmed ? "opacity-15 transition-opacity" : "transition-opacity"}>
+          {segmentGroups.map(([key, group]) => {
+            const style = STATE_STYLE[group.state];
+            return (
+              <path
+                key={key}
+                data-dag-segments={group.ids.join(" ")}
+                d={group.d.join(" ")}
+                className={group.breathe ? "dag-edge-breathe" : undefined}
+                stroke={style.stroke}
+                strokeOpacity={style.opacity}
+                strokeWidth={group.width}
+                strokeDasharray={style.dash}
                 strokeLinecap="round"
-                style={{ pointerEvents: "stroke", cursor: "pointer" }}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onBusClick(busIds);
-                }}
-              >
-                <title>{busIds.length}</title>
-              </line>,
-            ];
-          })
-        : null}
-    </svg>
-    {dimNodes && (
-      // Node dimming without per-card rebuilds: a full-scene dim rect whose
-      // mask punches holes over the lit cards (and lit frames' headers). It
-      // lives in its own svg above the z-index-2 cards — inside the edge
-      // layer it could only cover the background and frames.
+                fill="none"
+              />
+            );
+          })}
+          {baseFlows.map((overlay) => flowLine(overlay, `flow:${overlay.segment.id}`))}
+          {visibleJunctions.map((junction) => (
+            <circle
+              key={`${junction.x},${junction.y}`}
+              cx={junction.x}
+              cy={junction.y}
+              r={3}
+              fill="var(--foreground)"
+              fillOpacity={0.55}
+            />
+          ))}
+          {visibleArrows.map(({ edgeId, route, display }) => {
+            const style = STATE_STYLE[display.state];
+            return arrowHead(route, edgeId, style.stroke, style.opacity);
+          })}
+          {badges.map(({ edgeId, point, count }) => {
+            const label = String(count);
+            const width = label.length * 7 + 10;
+            return (
+              <g key={edgeId} transform={`translate(${point.x} ${point.y})`}>
+                <rect
+                  x={-width / 2}
+                  y={-9}
+                  width={width}
+                  height={18}
+                  rx={9}
+                  fill="var(--card)"
+                  stroke="var(--border)"
+                />
+                <text
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fontSize={11}
+                  fill="var(--muted-foreground)"
+                  className="tabular-nums"
+                >
+                  {label}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+        {/* Simplified cards below the readability zoom: SVG rects whose DOM
+            shells stay interactive. Painted over edge endpoints like the DOM
+            cards would; cancelled blockers keep their dashed mark. */}
+        {ghost && (
+          <g data-dag-ghost-blocks>
+            {ghost.body && (
+              <path data-dag-ghost="tasks" d={ghost.body} fill="var(--muted)" fillOpacity={0.55} stroke="var(--border)" />
+            )}
+            {[...ghost.strips.entries()].map(([color, d]) => (
+              <path key={color} d={d.join(" ")} fill={color} />
+            ))}
+            {ghost.dashedBodies && (
+              <path
+                data-dag-ghost="dashed"
+                d={ghost.dashedBodies}
+                fill="none"
+                stroke="var(--border)"
+                strokeDasharray="5 3"
+              />
+            )}
+            {ghost.frames && (
+              <path data-dag-ghost="frames" d={ghost.frames} fill="var(--muted)" fillOpacity={0.25} stroke="var(--muted-foreground)" strokeOpacity={0.3} />
+            )}
+            {ghost.externals && (
+              <path data-dag-ghost="externals" d={ghost.externals} fill="var(--muted)" fillOpacity={0.25} stroke="var(--muted-foreground)" strokeOpacity={0.45} strokeDasharray="4 3" />
+            )}
+          </g>
+        )}
+        {selectedBox && (
+          <g data-dag-selected={selectedNodeId}>
+            <rect
+              x={selectedBox.x - 3}
+              y={selectedBox.y - 3}
+              width={selectedBox.width + 6}
+              height={selectedBox.height + 6}
+              rx={10}
+              fill="none"
+              stroke="var(--color-brand)"
+              strokeOpacity={0.3}
+              strokeWidth={6}
+            />
+            <rect
+              x={selectedBox.x - 3}
+              y={selectedBox.y - 3}
+              width={selectedBox.width + 6}
+              height={selectedBox.height + 6}
+              rx={10}
+              fill="none"
+              stroke="var(--color-brand)"
+              strokeWidth={2}
+            />
+          </g>
+        )}
+        {/* Bus hit zones: transparent, inset from both ends, pointer only on the
+            stroke. Clicking selects the segment's original dependencies. */}
+        {visibleSegments.flatMap(({ segment }) => {
+              const busIds = busIdsBySegment.get(segment.id) ?? [];
+              if (!busIds.length) return [];
+              const hit = hitSegment(segment, 8);
+              if (!hit) return [];
+              return [
+                <line
+                  key={`hit:${segment.id}`}
+                  data-dag-bus-hit={segment.id}
+                  x1={hit.start.x}
+                  y1={hit.start.y}
+                  x2={hit.end.x}
+                  y2={hit.end.y}
+                  className="nopan stroke-transparent transition-colors hover:stroke-foreground/15"
+                  strokeWidth={10}
+                  strokeLinecap="round"
+                  style={{ pointerEvents: "stroke", cursor: "pointer" }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onBusClick(busIds);
+                  }}
+                >
+                  <title>{busIds.length}</title>
+                </line>,
+              ];
+            })}
+      </svg>
+    {(dimNodes || highlightedRoutes.length > 0 || litFlows.length > 0) && (
+      // Above the z-index-2 cards: node dimming is a full-scene rect whose
+      // mask punches holes over the lit cards (and lit frames' headers), and
+      // the lit chain repaints each dependency's own complete route with a
+      // soft glow after it, so dimming never dulls the chain itself. The
+      // layer renders whenever either is present — a bus selection lights
+      // routes without dimming anything.
       <svg
-        data-dag-dim-layer
+        data-dag-overlay-layer
         {...windowedSvgProps}
         style={{
           ...(windowedSvgProps as { style?: React.CSSProperties }).style,
@@ -571,39 +532,75 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
         }}
         aria-hidden
       >
-        <defs>
-          <mask id={maskId} maskUnits="userSpaceOnUse">
+        {dimNodes && (
+          <>
+            <defs>
+              <mask id={maskId} maskUnits="userSpaceOnUse">
+                <rect
+                  x={bounds ? bounds.x0 : 0}
+                  y={bounds ? bounds.y0 : 0}
+                  width={bounds ? bounds.x1 - bounds.x0 : geometry.width}
+                  height={bounds ? bounds.y1 - bounds.y0 : geometry.height}
+                  fill="white"
+                />
+                {litBoxes!.map((box) => (
+                  <rect
+                    key={box.id}
+                    data-dag-dim-hole={box.id}
+                    x={box.x - 8}
+                    y={box.y - 8}
+                    width={box.width + 16}
+                    height={box.height + 16}
+                    rx={10}
+                    fill="black"
+                  />
+                ))}
+              </mask>
+            </defs>
             <rect
+              data-dag-dim-overlay
               x={bounds ? bounds.x0 : 0}
               y={bounds ? bounds.y0 : 0}
               width={bounds ? bounds.x1 - bounds.x0 : geometry.width}
               height={bounds ? bounds.y1 - bounds.y0 : geometry.height}
-              fill="white"
+              fill="var(--background)"
+              fillOpacity={0.75}
+              mask={`url(#${maskId})`}
             />
-            {litBoxes!.map((box) => (
-              <rect
-                key={box.id}
-                data-dag-dim-hole={box.id}
-                x={box.x - 8}
-                y={box.y - 8}
-                width={box.width + 16}
-                height={box.height + 16}
-                rx={10}
-                fill="black"
+          </>
+        )}
+        {highlightedRoutes.map(({ edgeId, route, display }) => {
+          const style = STATE_STYLE[display.state];
+          const points = route.map((p) => `${p.x},${p.y}`).join(" ");
+          const width = display.count > 1 ? 3 : 2;
+          const breathe = display.state === "cancelled-blocking" && motionAllowed;
+          return (
+            <g key={`lit:${edgeId}`} data-dag-lit-edge={edgeId}>
+              <polyline
+                points={points}
+                fill="none"
+                stroke={style.stroke}
+                strokeOpacity={0.25}
+                strokeWidth={width + 5}
+                strokeLinejoin="round"
+                strokeLinecap="round"
               />
-            ))}
-          </mask>
-        </defs>
-        <rect
-          data-dag-dim-overlay
-          x={bounds ? bounds.x0 : 0}
-          y={bounds ? bounds.y0 : 0}
-          width={bounds ? bounds.x1 - bounds.x0 : geometry.width}
-          height={bounds ? bounds.y1 - bounds.y0 : geometry.height}
-          fill="var(--background)"
-          fillOpacity={0.75}
-          mask={`url(#${maskId})`}
-        />
+              <polyline
+                points={points}
+                fill="none"
+                className={breathe ? "dag-edge-breathe" : undefined}
+                stroke={style.stroke}
+                strokeOpacity={Math.min(1, style.opacity + 0.35)}
+                strokeWidth={width}
+                strokeDasharray={style.dash}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+              {arrowHead(route, `lit-arrow:${edgeId}`, style.stroke, 0.9)}
+            </g>
+          );
+        })}
+        {litFlows.map((overlay) => flowLine(overlay, `lit-flow:${overlay.segment.id}`))}
       </svg>
     )}
     </>
