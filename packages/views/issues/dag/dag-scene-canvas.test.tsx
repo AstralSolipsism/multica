@@ -1457,3 +1457,114 @@ describe("DagSceneCanvas Stage 10 review assertions", () => {
     );
   });
 });
+
+describe("DagSceneCanvas first-open viewport (OL-451)", () => {
+  const readTransform = () =>
+    (document.querySelector(".react-flow__viewport") as HTMLElement).style.transform;
+
+  /** The two fixture cards pushed 6000×3000 apart: no readable zoom fits. */
+  function bigOverviewFixture() {
+    const base = overviewFixture();
+    const geometry: DagSceneGeometry = {
+      ...base.geometry,
+      nodes: {
+        "issue:r1": { x: 0, y: 0, width: 280, height: 140 },
+        "issue:r2": { x: 5720, y: 2860, width: 280, height: 140 },
+      },
+      ports: {
+        "issue:r1": { input: { x: 0, y: 70 }, output: { x: 280, y: 70 } },
+        "issue:r2": { input: { x: 5720, y: 2930 }, output: { x: 6000, y: 2930 } },
+      },
+      routes: {
+        [BUNDLE]: [
+          { x: 280, y: 70 },
+          { x: 3000, y: 70 },
+          { x: 3000, y: 2930 },
+          { x: 5720, y: 2930 },
+        ],
+      },
+      width: 6000,
+      height: 3000,
+    };
+    return { ...base, geometry };
+  }
+
+  it("opens a huge overview at the readable zoom from the top-left, cards readable", async () => {
+    harness(bigOverviewFixture());
+    await waitFor(() => expect(screen.getByText("Line one")).toBeInTheDocument());
+    await waitFor(() => expect(readTransform()).toBe("translate(24px,24px) scale(0.75)"));
+    // Above the simplified-block threshold: real cards, not plain blocks.
+    expect(document.querySelector("[data-dag-ghost-blocks]")).toBeNull();
+    expect(screen.getByText("Line two")).toBeInTheDocument();
+  });
+
+  it("opens a huge line at the readable zoom from its leftmost column", async () => {
+    const base = lineFixture();
+    const geometry: DagSceneGeometry = {
+      ...base.geometry,
+      frames: {
+        ...base.geometry.frames,
+        r1: { x: 0, y: 0, width: 6000, height: 500, bands: [], stageMode: "labels" },
+      },
+      width: 6000,
+    };
+    harness({ ...base, geometry });
+    await waitFor(() => expect(screen.getByText("T-T1")).toBeInTheDocument());
+    // Bounds (-220,0,6220,500): x anchors the left edge, y centers (it fits).
+    await waitFor(() => expect(readTransform()).toBe("translate(189px,262.5px) scale(0.75)"));
+    expect(document.querySelector("[data-dag-ghost-blocks]")).toBeNull();
+  });
+
+  it("still restores a remembered viewport on a huge scene", async () => {
+    harness(bigOverviewFixture(), (store) => {
+      store.setState({ dagViewports: { overview: { x: 33, y: -44, zoom: 1.25 } } });
+    });
+    await waitFor(() => expect(readTransform()).toContain("scale(1.25)"));
+    expect(readTransform()).toContain("translate(33px,-44px)");
+  });
+
+  it("still fits the whole scene when the content fits at the readable zoom", async () => {
+    harness(overviewFixture());
+    await waitFor(() => expect(screen.getByText("Line one")).toBeInTheDocument());
+    // The fit-all path is unchanged: maxZoom 1, every card painted readably.
+    await waitFor(() => expect(readTransform()).toContain("scale(1)"));
+    expect(screen.getByText("Line two")).toBeInTheDocument();
+    expect(document.querySelector("[data-dag-ghost-blocks]")).toBeNull();
+  });
+
+  it("anchors a huge focus scene at the readable zoom when the focused task is hidden", async () => {
+    const line = lineFixture();
+    const model = dagFocusCanvasModel(computeDagFocus(createDagModelIndex(makeGraph([
+      makeNode("hidden", { status: "done", statusCategory: "done" }), makeNode("after"),
+    ], [["hidden", "after"]])), "hidden"));
+    const geometry: DagSceneGeometry = {
+      nodes: { after: { x: 4000, y: 120, width: 248, height: 116 } },
+      frames: {
+        "focus-frame": { x: 3900, y: 40, width: 6000, height: 400, bands: [], stageMode: "labels" },
+      },
+      ports: { after: { input: { x: 4000, y: 178 }, output: { x: 4248, y: 178 } } },
+      routes: {},
+      segments: [],
+      junctions: [],
+      width: 9900,
+      height: 440,
+      quality: "fallback",
+    };
+    const { store, props, rerender, flow } = harness(line);
+    await waitFor(() => expect(screen.getByText("T-T1")).toBeInTheDocument());
+    rerender(
+      <ViewStoreProvider store={store}><ReactFlowProvider><DagSceneCanvasInner
+        {...props} level={{ kind: "focus", issueId: "hidden" }} model={model} plan={model.plan} geometry={geometry}
+        focusRequest={{ id: "hidden", level: "focus", nonce: 1 }}
+      /></ReactFlowProvider></ViewStoreProvider>,
+    );
+    await waitFor(() => {
+      const viewport = flow().getViewport();
+      expect(viewport.zoom).toBe(0.75);
+      // The remaining scene starts at the left edge instead of shrinking away.
+      expect(viewport.x).toBe(24 - 3900 * 0.75);
+    });
+    expect(store.getState().dagSelectedNodeId).toBeNull();
+  });
+});
+

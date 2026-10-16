@@ -524,6 +524,13 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
   // Per-measurement outcomes. Gestures only make sense once cards exist.
   const cardsPresent = marks.firstCardAt != null;
 
+  // First-open capture: the overview exactly as its first paint settled
+  // (OL-451), before any scripted gesture moves the viewport.
+  if (process.env.PERF_SCREENSHOT_DIR && cardsPresent) {
+    mkdirSync(process.env.PERF_SCREENSHOT_DIR, { recursive: true });
+    await page.screenshot({ path: resolve(process.env.PERF_SCREENSHOT_DIR, "overview-first-open.png") });
+  }
+
   // ---- 1b. Optional stress switches ----------------------------------------
   // The OL-284 stress overview turns on both display switches: completed
   // lines re-enter the layout (deadline fallback is an expected outcome here),
@@ -604,6 +611,12 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
       );
       if (enter.outcome === "entered") enteredLine = cardId;
       else invalid.push(`enter line ${cardId}: ${enter.outcome}`);
+      // First-open capture of the entered line (OL-451): the level switch
+      // settled on that level's first viewport, gestures have not run yet.
+      if (enteredLine && process.env.PERF_SCREENSHOT_DIR) {
+        mkdirSync(process.env.PERF_SCREENSHOT_DIR, { recursive: true });
+        await page.screenshot({ path: resolve(process.env.PERF_SCREENSHOT_DIR, "line-first-open.png") });
+      }
     }
   }
 

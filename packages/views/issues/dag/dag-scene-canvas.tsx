@@ -25,6 +25,8 @@ import {
 } from "./dag-level";
 import {
   constrainDagViewport,
+  dagFirstOpenViewport,
+  dagSceneContentBounds,
   dagViewportExtent,
   dagViewportTargets,
   sameDagViewport,
@@ -196,7 +198,9 @@ export function DagSceneCanvasInner({
   }, [boundedViewport, getViewport, setViewport, storeApi, viewportKey]);
 
   // Level switches restore that level's remembered viewport; a level opened
-  // for the first time fits its content.
+  // for the first time fits its content — or, when the content no longer
+  // fits one screen at a readable zoom, opens at the readable zoom anchored
+  // at the scene start instead of shrinking everything into plain blocks.
   const appliedViewportKey = useRef<string | null>(null);
   useEffect(() => {
     if (!viewportInitialized || appliedViewportKey.current === viewportKey) return;
@@ -205,9 +209,18 @@ export function DagSceneCanvasInner({
     // new nodes and would otherwise overwrite the target viewport afterwards.
     if (focusRequest?.level === level.kind && handledFocus.current !== focusRequest.nonce) return;
     const stored = storeApi.getState().dagViewports[viewportKey];
-    if (stored) void setViewport(stored);
+    if (stored) {
+      void setViewport(stored);
+      return;
+    }
+    const firstOpen = dagFirstOpenViewport(
+      dagSceneContentBounds(geometry),
+      { width: canvasWidth, height: canvasHeight },
+      level.kind === "overview" ? "start" : "flow",
+    );
+    if (firstOpen) void setViewport(firstOpen);
     else void fitView({ padding: 0.15, maxZoom: 1 });
-  }, [viewportKey, viewportInitialized, geometry, focusRequest, level.kind, setViewport, fitView, storeApi]);
+  }, [viewportKey, viewportInitialized, geometry, focusRequest, level.kind, setViewport, fitView, storeApi, canvasWidth, canvasHeight]);
 
   // Data refreshes keep the viewport but pull it back inside the content.
   useEffect(() => {
@@ -237,7 +250,15 @@ export function DagSceneCanvasInner({
       : focusRequest.id;
     const box = geometry.nodes[targetId] ?? geometry.frames[targetId];
     if (!box) {
-      if (level.kind === "focus") void fitView({ padding: 0.15, maxZoom: 1 });
+      if (level.kind === "focus") {
+        const firstOpen = dagFirstOpenViewport(
+          dagSceneContentBounds(geometry),
+          { width: canvasWidth, height: canvasHeight },
+          "flow",
+        );
+        if (firstOpen) void setViewport(firstOpen);
+        else void fitView({ padding: 0.15, maxZoom: 1 });
+      }
       return;
     }
     storeApi.getState().setDagSelectedNodeId(targetId);

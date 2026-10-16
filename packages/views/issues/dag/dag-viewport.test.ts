@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { Viewport } from "@xyflow/react";
 import {
   constrainDagViewport,
+  dagFirstOpenViewport,
+  dagSceneContentBounds,
   dagViewportTargets,
   dagViewportExtent,
   type DagViewportTarget,
@@ -122,5 +124,70 @@ describe("DAG viewport content bounds", () => {
     const view = { x: 10000, y: 10000, zoom: 1 };
     expect(constrainDagViewport(view, screen, [])).toBe(view);
     expect(constrainDagViewport(view, { width: 0, height: 0 }, [title])).toBe(view);
+  });
+});
+
+describe("DAG first-open viewport", () => {
+  const canvas = { width: 1400, height: 900 };
+  const bounds = (x: number, y: number, width: number, height: number) => ({ x, y, width, height });
+
+  it("unions every card and frame box, frames whole", () => {
+    const geometry: DagSceneGeometry = {
+      nodes: { child: { x: 2200, y: 100, width: 248, height: 116 } },
+      frames: {
+        line: { x: 28, y: 28, width: 6000, height: 8000, bands: [], stageMode: "labels" },
+      },
+      ports: {},
+      routes: {},
+      segments: [],
+      junctions: [],
+      width: 0,
+      height: 0,
+      quality: "elk",
+    };
+    expect(dagSceneContentBounds(geometry)).toEqual({ x: 28, y: 28, width: 6000, height: 8000 });
+    expect(dagSceneContentBounds({ ...geometry, nodes: {}, frames: {} })).toBeNull();
+  });
+
+  it("returns null when the scene fits at the readable zoom, so the caller fits all", () => {
+    for (const anchor of ["start", "flow"] as const) {
+      expect(dagFirstOpenViewport(bounds(0, 0, 800, 500), canvas, anchor)).toBeNull();
+      expect(dagFirstOpenViewport(bounds(-300, -200, 800, 500), canvas, anchor)).toBeNull();
+    }
+  });
+
+  it("treats a scene that fits exactly at the readable zoom as fitting", () => {
+    // xyflow's 0.15 scalar padding: px = floor((w - w/1.15)/2), and the fit
+    // zoom is (w - 2*px)/bounds.width — pin the threshold itself.
+    const padX = Math.floor((canvas.width - canvas.width / 1.15) * 0.5);
+    const exactWidth = (canvas.width - 2 * padX) / 0.75;
+    expect(dagFirstOpenViewport(bounds(0, 0, exactWidth, 100), canvas, "flow")).toBeNull();
+    expect(dagFirstOpenViewport(bounds(0, 0, exactWidth + 1, 100), canvas, "flow")).not.toBeNull();
+  });
+
+  it("opens a wide scene at the readable zoom from the left edge, vertically centered", () => {
+    const view = dagFirstOpenViewport(bounds(100, 60, 20000, 480), canvas, "flow")!;
+    expect(view.zoom).toBe(0.75);
+    expect(view.x).toBe(24 - 100 * 0.75);
+    expect(view.y).toBe(450 - (60 + 240) * 0.75);
+  });
+
+  it("anchors the overview at its top-left corner even when the height would fit", () => {
+    const view = dagFirstOpenViewport(bounds(100, 60, 20000, 480), canvas, "start")!;
+    expect(view).toEqual({ x: 24 - 100 * 0.75, y: 24 - 60 * 0.75, zoom: 0.75 });
+  });
+
+  it("top-anchors a flow scene whose cross axis overflows too", () => {
+    expect(dagFirstOpenViewport(bounds(-220, 0, 6220, 5000), canvas, "flow")).toEqual({
+      x: 24 + 220 * 0.75,
+      y: 24,
+      zoom: 0.75,
+    });
+  });
+
+  it("lets the fit-all path handle missing content and unmeasured canvases", () => {
+    expect(dagFirstOpenViewport(null, canvas, "flow")).toBeNull();
+    expect(dagFirstOpenViewport(bounds(0, 0, 100, 100), { width: 0, height: 0 }, "flow")).toBeNull();
+    expect(dagFirstOpenViewport(bounds(0, 0, 0, 0), canvas, "flow")).toBeNull();
   });
 });

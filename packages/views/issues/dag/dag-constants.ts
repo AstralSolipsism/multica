@@ -20,6 +20,11 @@ export const DAG_MOTION_MAX_SEGMENTS = 60;
 export const DAG_MOTION_MIN_ZOOM = 0.5;
 /** Below this zoom text is unreadable, so cards swap to plain blocks. */
 export const DAG_SIMPLIFIED_ZOOM = 0.4;
+/** First-open zoom for a scene that no longer fits one screen: high enough
+ *  that card text stays readable (well above the simplified-block floor and
+ *  the edge-motion floor at 0.5), low enough that more of the scene stays on
+ *  screen than at zoom 1 (OL-451). */
+export const DAG_FIRST_OPEN_ZOOM = 0.75;
 /** Hysteresis band for leaving the simplified view: zooming in and out
  *  across the threshold would otherwise rebuild every card on each crossing. */
 export const DAG_SIMPLIFIED_HYSTERESIS = 0.04;
