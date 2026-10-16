@@ -9313,6 +9313,12 @@ func shouldRetryWithFreshSession(result agent.Result, priorSessionID string, too
 	if taskfailure.UnresumableHistory(result.Error) {
 		return true
 	}
+	// The provider can also reject the entire replayed request for its size.
+	// Some runtimes still report a session ID in this case (notably agy), so
+	// this must precede the undetectable-resume fallback below.
+	if taskfailure.OversizedRequest(result.Error) {
+		return true
+	}
 	// Third form of positive evidence, and the same shape of argument: the
 	// resume was not refused — the runtime happily rebuilt the session — but
 	// the provider identity it rebuilt can no longer resolve its own

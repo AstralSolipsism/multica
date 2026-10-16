@@ -1,26 +1,30 @@
 import type { CoordinateExtent, Rect, Viewport } from "@xyflow/react";
-import type { DagPoint, DagLayoutResult } from "./dag-layout";
 import {
-  DAG_NODE_WIDTH,
-  DAG_NODE_HEIGHT,
+  DAG_FIRST_OPEN_ZOOM,
+  DAG_FIT_VIEW_PADDING,
   DAG_GROUP_HEADER_HEIGHT,
   DAG_GROUP_HEADER_MAX_WIDTH,
 } from "./dag-constants";
+import type { DagSceneGeometry } from "./dag-scene";
 
 export type DagViewportTarget = Rect & { id: string };
 
-/** Empty group backgrounds and dependency routes are not navigation anchors. */
-export function dagViewportTargets(layout: DagLayoutResult): DagViewportTarget[] {
-  return Object.entries(layout.positions).map(([id, position]) => {
-    const group = layout.groups[id];
-    const size = group
-      ? {
-          width: Math.min(group.width, DAG_GROUP_HEADER_MAX_WIDTH),
-          height: DAG_GROUP_HEADER_HEIGHT,
-        }
-      : { width: DAG_NODE_WIDTH, height: DAG_NODE_HEIGHT };
-    return { id, ...position, ...size };
-  });
+/** Cards anchor on their full box, frames on their header: the empty body and
+ * dependency routes are not navigation anchors. */
+export function dagViewportTargets(
+  geometry: DagSceneGeometry,
+  frameHeaderWidth = DAG_GROUP_HEADER_MAX_WIDTH,
+): DagViewportTarget[] {
+  return [
+    ...Object.entries(geometry.nodes).map(([id, box]) => ({ id, ...box })),
+    ...Object.entries(geometry.frames).map(([id, box]) => ({
+      id,
+      x: box.x,
+      y: box.y,
+      width: Math.min(box.width, frameHeaderWidth),
+      height: DAG_GROUP_HEADER_HEIGHT,
+    })),
+  ];
 }
 
 /** A single outer rectangle leaves every path between task lines traversable. */
@@ -56,6 +60,70 @@ export function dagViewportExtent(
 
 export function sameDagViewport(a: Viewport, b: Viewport): boolean {
   return Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 0.01 && a.zoom === b.zoom;
+}
+
+/** The rectangle fitView sees: every card and frame box, frames whole (they
+ *  are React Flow nodes too). */
+export function dagSceneContentBounds(geometry: DagSceneGeometry): Rect | null {
+  let left = Infinity,
+    top = Infinity,
+    right = -Infinity,
+    bottom = -Infinity;
+  let found = false;
+  for (const boxes of [geometry.nodes, geometry.frames]) {
+    for (const box of Object.values(boxes)) {
+      found = true;
+      left = Math.min(left, box.x);
+      top = Math.min(top, box.y);
+      right = Math.max(right, box.x + box.width);
+      bottom = Math.max(bottom, box.y + box.height);
+    }
+  }
+  return found
+    ? { x: left, y: top, width: right - left, height: bottom - top }
+    : null;
+}
+
+/** How a first-opened scene anchors when it no longer fits one screen: the
+ *  overview starts at its top-left corner (reading order); a line or focus
+ *  scene starts at its leftmost column and centers the cross axis when that
+ *  still fits. */
+export type DagFirstOpenAnchor = "start" | "flow";
+
+/**
+ * First-open viewport for a level with no saved viewport. Returns null when
+ * the scene fits at the readable zoom — the caller then keeps its historical
+ * fitView (padding DAG_FIT_VIEW_PADDING, maxZoom 1), which lands at or above
+ * the readable zoom. Otherwise the scene opens at the readable zoom anchored
+ * at its start, so a large scene's first paint never drops to the unreadable
+ * simplified blocks (OL-451).
+ */
+export function dagFirstOpenViewport(
+  bounds: Rect | null,
+  size: { width: number; height: number },
+  anchor: DagFirstOpenAnchor,
+  zoom = DAG_FIRST_OPEN_ZOOM,
+  margin = 24,
+): Viewport | null {
+  if (!bounds || size.width <= 0 || size.height <= 0 || bounds.width <= 0 || bounds.height <= 0)
+    return null;
+  // Mirrors xyflow's scalar fitView padding: with padding p the fit zoom is
+  // min((width - 2*px)/bounds.width, (height - 2*py)/bounds.height) where
+  // px = floor((width - width/(1+p))/2). The caller's fitView then reaches at
+  // least the readable zoom exactly when this verdict says the scene fits.
+  const padX = Math.floor((size.width - size.width / (1 + DAG_FIT_VIEW_PADDING)) * 0.5);
+  const padY = Math.floor((size.height - size.height / (1 + DAG_FIT_VIEW_PADDING)) * 0.5);
+  const fitZoom = Math.min(
+    (size.width - 2 * padX) / bounds.width,
+    (size.height - 2 * padY) / bounds.height,
+  );
+  if (fitZoom >= zoom) return null;
+  const x = margin - bounds.x * zoom;
+  const y =
+    anchor === "flow" && bounds.height * zoom <= size.height - 2 * margin
+      ? size.height / 2 - (bounds.y + bounds.height / 2) * zoom
+      : margin - bounds.y * zoom;
+  return { x, y, zoom };
 }
 
 /** Translate by the shortest distance that keeps a content item readable.
@@ -106,13 +174,4 @@ export function constrainDagViewport(
     }
   }
   return preferred ?? closest;
-}
-
-/** Translate a moved layout anchor back to its previous screen position. */
-export function anchorShift(saved: DagPoint, next: DagPoint, viewport: Viewport): Viewport {
-  return {
-    ...viewport,
-    x: viewport.x + (saved.x - next.x) * viewport.zoom,
-    y: viewport.y + (saved.y - next.y) * viewport.zoom,
-  };
 }

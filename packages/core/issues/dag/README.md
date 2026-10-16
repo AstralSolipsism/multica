@@ -1,8 +1,10 @@
 # DAG data and models
 
-This is the headless boundary for the two-level DAG (OL-279). It contains no
-React Flow types, layout, geometry or UI. The existing canvas uses the migrated
-`projection.ts` and `useDagSurfaceGraph`; its React Flow adapters stay in views.
+This is the headless boundary for the DAG (OL-279). It contains no React Flow
+types, layout, geometry or UI. The overview, line and focus canvases read
+exclusively through these models; their React Flow adapters stay in views.
+`projection.ts` now holds only the shared display forest, completed visibility
+and independent-task helpers; the retired folding projection is removed.
 
 ## Consumers
 
@@ -33,8 +35,8 @@ creates the index once per snapshot and only builds the requested model.
   Line members are never filtered by the completed switch. External dependencies
   are grouped by the other endpoint's top-level line (or standalone issue),
   separately for upstream and downstream; the group's project is its root's.
-- Progress excludes a line's root and counts only the `done` category. As in
-  the existing projection's membership summary, unfinished status counters,
+- Progress excludes a line's root and counts only the `done` category.
+  Unfinished status counters,
   runs, attention and match/context include the root. Unknown categories remain
   unfinished and have a separate count; missing summaries remain unknown.
 - Overview attention is exception, advancing, review, unstarted, finished;
@@ -52,8 +54,7 @@ creates the index once per snapshot and only builds the requested model.
   dependencies cannot convey it. Focus exposes redundant edges without hiding
   them. Inconsistent dependency cycles conservatively keep all edges.
 - Focus takes a raw issue ID as a single task seed and uses the same raw
-  upstream/downstream traversal as the existing canvas. Legacy aggregate-header
-  focus still seeds all represented members in `dagFocusNeighborhood`.
+  upstream/downstream traversal, including inherited prerequisites.
   Visible ancestor frames needed solely for grouping have `contextOnly: true`.
   Hidden closure members are counted once, never reintroduced as frame headers.
 - Restricted context is a boolean, not a synthesized node or hidden count.
@@ -93,7 +94,7 @@ pretend to be a complete `IssueGraph`.
 pnpm --filter @multica/core exec vitest run issues/dag api/issue-graph-schemas.test.ts
 pnpm --filter @multica/views exec vitest run issues/dag issues/surface/use-issue-surface-controller.test.tsx
 node scripts/benchmark-dag-models.mjs --output /path/to/report.json
-# Use OL-278 fixture JSONs once its generator is available:
+# Optionally substitute explicit fixture JSONs:
 node scripts/benchmark-dag-models.mjs --fixture-5000 /path/to/accept-5000.json --fixture-10000 /path/to/10000.json
 # Read-only inspection of an authorized schema-v1 snapshot:
 node scripts/benchmark-dag-models.mjs --inspect /path/to/graph.json
@@ -108,9 +109,7 @@ includes index construction; line/focus reuse the index already held by the
 view. Both completed toggles are also measured. Parsing includes JSON.parse
 and the unchanged `IssueGraphSchema` with its complete integrity checks.
 
-`benchmark-fixture.ts` is an interim deterministic fixture, not the shared
-OL-278 generator. It has six projects, 36 tasks per line, four hierarchy levels,
-stages 1-6, one/two local predecessors and cross-line predecessors on about
-20% of tasks, in production order. At most 800 tasks are unfinished at 5,000.
-Use the fixture flags above to substitute the shared generator's output; the
-model code and measurement method are unchanged.
+Defaults use the shared OL-278 generator in
+`issues/testing/issue-graph-fixture.ts`: `accept-5000` and `10000`. Its version
+appears in the report. The temporary OL-279 generator has been removed, so model
+and layout measurements use the same maintained datasets.

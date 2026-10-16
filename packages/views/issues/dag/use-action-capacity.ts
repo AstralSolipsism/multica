@@ -23,6 +23,7 @@ export function useActionCapacity(actionKeys: readonly string[], resetKey: strin
   const zoneRef = useRef<HTMLDivElement>(null);
   const widthsRef = useRef(new Map<string, number>());
   const fitRef = useRef<() => void>(() => undefined);
+  const lastWidthRef = useRef(0);
   const [visibleCount, setVisibleCount] = useState(actionKeys.length);
   useLayoutEffect(() => {
     setVisibleCount(actionKeys.length);
@@ -51,6 +52,11 @@ export function useActionCapacity(actionKeys: readonly string[], resetKey: strin
       const labelWidth = Math.min(labelEl?.scrollWidth ?? 0, LABEL_RESERVE_PX);
       const gap =
         parseFloat(getComputedStyle(zone).columnGap) || ITEM_GAP_PX;
+      // A collapse taken while the zone was transiently narrow (e.g. the
+      // layout-pending indicator showing) must not stick: a real widening
+      // refits even when the remaining slack is below the hysteresis.
+      const widened = zone.clientWidth - lastWidthRef.current >= RESTORE_HYSTERESIS_PX;
+      lastWidthRef.current = zone.clientWidth;
       setVisibleCount((current) => {
         // Gaps apply to every zone child — label, actions and fixed parts.
         const gaps = gap * (zone.childElementCount - 1);
@@ -63,7 +69,8 @@ export function useActionCapacity(actionKeys: readonly string[], resetKey: strin
           fits += 1;
         }
         if (fits < current) return fits;
-        if (fits > current && zone.clientWidth - used >= RESTORE_HYSTERESIS_PX) return fits;
+        if (fits > current && (widened || zone.clientWidth - used >= RESTORE_HYSTERESIS_PX))
+          return fits;
         return current;
       });
     };

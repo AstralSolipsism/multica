@@ -20,7 +20,6 @@ import { statusFilterColumns, visibleStatusKeys } from "@multica/core/issues";
 import { dateOnlyToLocalDate } from "@multica/core/issues/date";
 import type { IssueSortParam } from "@multica/core/issues/queries";
 import { issueTableFacetsOptions } from "@multica/core/issues/queries";
-import type { DagGraphQueryState } from "../dag/dag-view";
 import { supportsDagScope, useDagSurfaceGraph } from "@multica/core/issues/dag";
 import { useStableByContent } from "./use-stable-by-content";
 import { VIEW_MODE_CAPABILITIES } from "@multica/core/issues/surface/view-mode";
@@ -77,7 +76,7 @@ export interface IssueSurfaceController {
   allowDag: boolean;
   /** Complete-graph query state for DAG mode; only active while dag is the
    *  effective mode. `isPending` is false when dag is not selected. */
-  dagGraph: DagGraphQueryState;
+  dagGraph: ReturnType<typeof useDagSurfaceGraph>["graph"];
   surfaceIssues: Issue[];
   projectIssues: Issue[];
   issues: Issue[];

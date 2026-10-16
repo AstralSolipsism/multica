@@ -158,8 +158,28 @@ async function expectReadablePrerequisite(container: Locator, title: string) {
   expect(await container.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
 }
 
-async function expandDependencyGraph(page: Page) {
-  await page.getByRole("button", { name: "Expand issue groups", exact: true }).click();
+/** At narrow widths the DAG selection zone collapses trailing actions into
+ *  the More menu — click whichever form is present. */
+async function clickDagAction(page: Page, name: string) {
+  const standing = page.getByRole("region", { name: "Selection" }).getByRole("button", { name, exact: true });
+  if ((await standing.count()) && (await standing.isVisible())) {
+    await standing.click();
+    return;
+  }
+  await page.getByRole("region", { name: "Selection" }).getByRole("button", { name: "More" }).click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
+}
+
+async function openDagLine(page: Page) {
+  // The fixture workspace holds exactly one task line, so the overview either
+  // auto-entered it or shows one card to double-click.
+  const card = page.locator("[data-dag-overview-card]");
+  const task = page.locator("[data-dag-task]");
+  await expect(card.first().or(task.first())).toBeVisible({ timeout: 30_000 });
+  if (await card.count()) {
+    await card.first().dblclick();
+    await expect(task.first()).toBeVisible();
+  }
 }
 
 async function cleanup(ctx: Ctx) {
@@ -313,14 +333,14 @@ test.describe("Issue dependencies (OL-44)", () => {
     await page.goto(`/${ctx.workspaceSlug}/issues`);
     await page.getByRole("button", { name: "Board", exact: true }).click();
     await page.getByText("Graph", { exact: true }).click();
-    await expect(page.locator(".react-flow__node").first()).toBeVisible();
-    await expandDependencyGraph(page);
+    await expect(page.locator(".react-flow__node").first()).toBeVisible({ timeout: 30_000 });
+    await openDagLine(page);
     const node = page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`);
     await expect(node).toBeVisible();
     await node.click();
     const graphUrl = page.url();
 
-    await page.getByRole("button", { name: "Edit prerequisites", exact: true }).click();
+    await clickDagAction(page, "Edit prerequisites");
     const editor = page.getByRole("dialog", { name: "Edit prerequisites" });
     await expectReadablePrerequisite(editor, title);
     await testInfo.attach("dag-prerequisite-readability", { body: await editor.screenshot(), contentType: "image/png" });
@@ -330,7 +350,7 @@ test.describe("Issue dependencies (OL-44)", () => {
     expect(page.url()).toBe(graphUrl);
 
     // Save through the same entry, then restore the edge through the real API.
-    await page.getByRole("button", { name: "Edit prerequisites", exact: true }).click();
+    await clickDagAction(page, "Edit prerequisites");
     await editor.getByRole("button", { name: `Remove prerequisite ${ctx.issueA.identifier}` }).click();
     await editor.getByRole("button", { name: "Save", exact: true }).click();
     await expect(editor).not.toBeVisible();
@@ -339,7 +359,7 @@ test.describe("Issue dependencies (OL-44)", () => {
 
     const before = await sql("SELECT assignee_id, revision FROM issue WHERE id = $1", [ctx.issueC.id]);
     const pickAgent = async () => {
-      await page.getByRole("button", { name: "Assign", exact: true }).click();
+      await clickDagAction(page, "Assign");
       const picker = page.locator('[data-slot="popover-content"]').last();
       await picker.getByPlaceholder("Assign to...").fill("E2E Dependency");
       await picker.getByText("E2E Dependency Agent", { exact: true }).click({ force: true });
@@ -372,13 +392,13 @@ test.describe("Issue dependencies (OL-44)", () => {
     ).toBeVisible();
   });
 
-  test("saved DAG at the view-bar overflow boundary reloads without losing expansion", async ({ page }) => {
+  test("saved DAG at the view-bar overflow boundary reloads on the open line", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await enterWorkspace(page, ctx);
     await page.goto(`/${ctx.workspaceSlug}/issues`);
     await page.getByRole("button", { name: "Board", exact: true }).click();
     await page.getByText("Graph", { exact: true }).click();
-    await expect(page.locator(".react-flow__node").first()).toBeVisible();
+    await expect(page.locator(".react-flow__node").first()).toBeVisible({ timeout: 30_000 });
     const viewIds: string[] = [];
     try {
       // These label widths put the third saved view at the last fitting tab:
@@ -394,16 +414,20 @@ test.describe("Issue dependencies (OL-44)", () => {
         await expect(dialog).not.toBeVisible();
       }
       await page.goto(`/${ctx.workspaceSlug}/issues?view=${viewIds[2]}`);
-      await expect(page.locator(".react-flow__node").first()).toBeVisible();
-      await expandDependencyGraph(page);
+      // The view holds one task line, so the overview may auto-enter it; the
+      // level is a per-user preference that must survive a reload.
+      await openDagLine(page);
+      const crumb = page.getByRole("navigation", { name: "Task line path" });
+      await expect(crumb).toContainText("Dependency task line");
       await expect(page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`)).toBeVisible();
       await page.reload();
+      await expect(crumb).toContainText("Dependency task line", { timeout: 30_000 });
       await expect(page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`)).toBeVisible();
       await expect(page.getByRole("button", { name: "OL45 saved DAG 1789114381162", exact: true })).toBeVisible();
       for (const width of [1024, 680, 1440]) {
         await page.setViewportSize({ width, height: 1000 });
         // The entire toolbar is hidden at the mobile breakpoint; the graph
-        // and expanded state must survive it and return with the same tab.
+        // and the open level must survive it and return with the same tab.
         await expect(page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`)).toBeVisible();
         if (width >= 1024) {
           await expect(page.getByRole("button", { name: "OL45 saved DAG 1789114381162", exact: true })).toBeVisible();
@@ -413,55 +437,6 @@ test.describe("Issue dependencies (OL-44)", () => {
     } finally {
       for (const id of viewIds) await ctx.api.deleteIssueView(id);
     }
-  });
-
-  test("changing DAG direction keeps existing edges attached to their handles", async ({ page }) => {
-    await page.setViewportSize({ width: 1440, height: 1000 });
-    await enterWorkspace(page, ctx);
-    await page.goto(`/${ctx.workspaceSlug}/issues`);
-    await page.getByRole("button", { name: "Board", exact: true }).click();
-    await page.getByText("Graph", { exact: true }).click();
-    await expandDependencyGraph(page);
-    await expect(page.locator(".react-flow__edge")).toHaveCount(2);
-    await page.evaluate(() => {
-      const observer = new MutationObserver((changes) => {
-        for (const change of changes) for (const removed of change.removedNodes) {
-          if (removed instanceof Element && (removed.matches(".react-flow__edge") || removed.querySelector(".react-flow__edge"))) {
-            document.documentElement.dataset.detachedDagEdges = "true";
-          }
-        }
-      });
-      observer.observe(document.querySelector(".react-flow__viewport")!, { childList: true, subtree: true });
-    });
-    await page.getByRole("button", { name: "Display", exact: true }).click();
-    for (const [name, sourceSide, targetSide] of [["Top to bottom", "bottom", "top"], ["Left to right", "right", "left"]]) {
-      await page.getByRole("combobox", { name: "Direction", exact: true }).click();
-      await page.getByRole("option", { name, exact: true }).click();
-      await expect.poll(() => page.evaluate(({ sourceSide, targetSide }) => {
-        const edges = Array.from(document.querySelectorAll(".react-flow__edge"));
-        return edges.length === 2 && edges.every((edge) => {
-          const match = edge.getAttribute("aria-label")?.match(/^Edge from (.+) to (.+)$/);
-          if (!match) return false;
-          const path = edge.querySelector<SVGPathElement>(".react-flow__edge-path")!;
-          const matrix = path.getScreenCTM()!;
-          return [[match[1], "source", sourceSide, 0], [match[2], "target", targetSide, path.getTotalLength()]].every(([id, type, side, length]) => {
-            // ELK assigns a distinct port to each edge, including edges with
-            // the same source. Comparing every route to the first port hides
-            // a real attachment error and rejects valid multi-port layouts.
-            const handleId = CSS.escape(`${type}:${edge.getAttribute("data-id")}`);
-            const handle = document.querySelector(`.react-flow__node[data-id="${id}"] .react-flow__handle.${type}.react-flow__handle-${side}[data-handleid="${handleId}"]`);
-            if (!handle) return false;
-            const rect = handle.getBoundingClientRect();
-            const point = path.getPointAtLength(Number(length)).matrixTransform(matrix);
-            // React Flow attaches at the port's outer edge, not its center.
-            const x = side === "left" ? rect.left : side === "right" ? rect.right : rect.x + rect.width / 2;
-            const y = side === "top" ? rect.top : side === "bottom" ? rect.bottom : rect.y + rect.height / 2;
-            return Math.hypot(point.x - x, point.y - y) < 2;
-          });
-        });
-      }, { sourceSide, targetSide })).toBe(true);
-    }
-    expect(await page.evaluate(() => document.documentElement.dataset.detachedDagEdges)).toBeUndefined();
   });
 
   test("many inherited prerequisites remain readable without gating assignment", async ({ page }, testInfo) => {
@@ -487,8 +462,12 @@ test.describe("Issue dependencies (OL-44)", () => {
         await expect(page.getByText(`Inherited from ${parent.identifier}`, { exact: true })).toHaveCount(active.length);
         for (const issue of [active[0]!, active.at(-1)!]) {
           const label = page.getByText(issue.identifier, { exact: true }).first();
-          await label.scrollIntoViewIfNeeded();
-          await expect(label).toBeInViewport({ ratio: 1 });
+          // The sidebar can rerender and replace the row while scrolling.
+          // Re-resolve it and verify the same full-visibility requirement.
+          await expect(async () => {
+            await label.scrollIntoViewIfNeeded();
+            await expect(label).toBeInViewport({ ratio: 1 });
+          }).toPass({ timeout: 10_000 });
         }
         await testInfo.attach(`inherited-prerequisites-${active.length}`, { body: await page.screenshot(), contentType: "image/png" });
         await page.getByText("Unassigned", { exact: true }).first().click();

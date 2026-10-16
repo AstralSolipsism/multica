@@ -1008,6 +1008,9 @@ WHERE session_id NOT IN (SELECT session_id FROM retired_sessions)
       -- daemon's in-turn fresh-session retry reads (GH #6777). This guard stays
       -- because it is the only protection for rows an older daemon wrote.
       AND NOT (COALESCE(error, '') ILIKE '%could not resolve authentication method%')
+      -- Provider-independent oversized request guard; see taskfailure.OversizedRequest.
+      AND NOT (COALESCE(error, '') ~* '(message|request|payload) size.{0,80}exceeds.{0,40}limit'
+               AND COALESCE(error, '') ~* '(^|[^0-9])400([^0-9]|$)|FAILED_PRECONDITION|INVALID_ARGUMENT')
       AND NOT (COALESCE(error, '') ~* 'must not be empty|must be non-?empty|must have non-?empty|non-?empty content|cannot be empty|should not be empty'
                AND COALESCE(error, '') ~* 'role[^a-z0-9]{0,2}assistant|assistant message|message at position|messages\.[0-9]|messages\[[0-9]')
     )
@@ -1116,6 +1119,55 @@ func (q *Queries) GetLatestAssistantChatMessageForSession(ctx context.Context, c
 		&i.ChannelOutboundInstallationID,
 		&i.ChannelOutboundChatID,
 		&i.ChannelOutboundMessageIds,
+	)
+	return i, err
+}
+
+const getLatestChatSessionCandidate = `-- name: GetLatestChatSessionCandidate :one
+SELECT t.session_id, t.status, t.failure_reason, t.error,
+       EXISTS (
+           SELECT 1 FROM agent_task_queue r
+           WHERE r.chat_session_id = t.chat_session_id
+             AND ($1::bigint IS NULL
+                  OR COALESCE(r.channel_context_revision, 1) = $1::bigint)
+             AND r.retired_session_id = t.session_id
+       ) AS retired
+FROM agent_task_queue t
+WHERE t.chat_session_id = $2
+  AND (
+    $1::bigint IS NULL
+    OR COALESCE(t.channel_context_revision, 1) = $1::bigint
+  )
+  AND t.session_id IS NOT NULL
+  AND t.status IN ('completed', 'failed', 'cancelled')
+ORDER BY t.completed_at DESC
+LIMIT 1
+`
+
+type GetLatestChatSessionCandidateParams struct {
+	ChannelContextRevision pgtype.Int8 `json:"channel_context_revision"`
+	ChatSessionID          pgtype.UUID `json:"chat_session_id"`
+}
+
+type GetLatestChatSessionCandidateRow struct {
+	SessionID     pgtype.Text `json:"session_id"`
+	Status        string      `json:"status"`
+	FailureReason pgtype.Text `json:"failure_reason"`
+	Error         pgtype.Text `json:"error"`
+	Retired       bool        `json:"retired"`
+}
+
+// Inspect the latest candidate even when the chat pointer is complete: it may
+// still name an older healthy session after a newer session was discarded.
+func (q *Queries) GetLatestChatSessionCandidate(ctx context.Context, arg GetLatestChatSessionCandidateParams) (GetLatestChatSessionCandidateRow, error) {
+	row := q.db.QueryRow(ctx, getLatestChatSessionCandidate, arg.ChannelContextRevision, arg.ChatSessionID)
+	var i GetLatestChatSessionCandidateRow
+	err := row.Scan(
+		&i.SessionID,
+		&i.Status,
+		&i.FailureReason,
+		&i.Error,
+		&i.Retired,
 	)
 	return i, err
 }

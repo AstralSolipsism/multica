@@ -1,4 +1,4 @@
-import type { DagPoint } from "./dag-layout";
+import type { DagPoint } from "./dag-scene";
 
 /** Format the layout engine's polyline. This only rounds corners; it neither
  * finds routes nor changes endpoints. */

@@ -1861,6 +1861,35 @@ describe("IssueDetail (shared)", () => {
         ).toContain("bg-[color-mix(in_srgb,var(--card)_95%,var(--brand)_5%)]");
       });
     });
+
+    it("still fades the highlight when timeline data changes right after the landing (OL-303)", async () => {
+      // The tasks query resolving ~1.2s in recomputes timelineView/items into
+      // new object identities, re-running the landing effect under the landed
+      // guard. The fade timer used to live in that effect's cleanup, so the
+      // re-run cancelled it and the guarded re-run never started a new one —
+      // the highlight stayed on until a refresh.
+      mockApiObj.listTasksByIssue.mockImplementation(
+        () => new Promise<AgentTask[]>((resolve) => setTimeout(() => resolve([]), 1200)),
+      );
+      renderIssueDetailWithHighlight("comment-2");
+
+      await waitFor(() => {
+        expect(
+          hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
+        ).toBe(true);
+      });
+      // ~1.6s in: the late tasks have resolved, and the highlight must SURVIVE
+      // the effect re-run they caused.
+      await act(async () => { await new Promise((r) => setTimeout(r, 1600)); });
+      expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
+      ).toBe(true);
+      // ~3.0s in: past the 2.5s fade, so it has cleared on schedule.
+      await act(async () => { await new Promise((r) => setTimeout(r, 1400)); });
+      expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
+      ).toBe(false);
+    }, 10000);
   });
 
   // OL-270 — an in-app `#comment-…` push changes `highlightCommentId` on a
@@ -1967,6 +1996,49 @@ describe("IssueDetail (shared)", () => {
       );
       expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
     });
+
+    it("re-times the fade when the landed highlight is replayed (OL-303)", async () => {
+      // A re-click on the already-open notification row bumps the token and
+      // replays the arrival landing on the SAME comment. The replay must
+      // restart the fade — the first landing's timer must not collect the
+      // replay's highlight.
+      const queryClient = createTestQueryClient();
+      const { rerender } = render(detailTree(queryClient, "comment-2", "issue-1", 1));
+      await waitFor(() => expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
+      ).toBe(true));
+
+      await act(async () => { await new Promise((r) => setTimeout(r, 1500)); });
+      rerender(detailTree(queryClient, "comment-2", "issue-1", 2));
+      // 1.2s after the replay (2.7s after the first landing): the first
+      // landing's 2.5s timer has expired, the replay's has not.
+      await act(async () => { await new Promise((r) => setTimeout(r, 1200)); });
+      expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
+      ).toBe(true);
+    }, 10000);
+
+    it("starts a fresh flash clock when a jump follows a landing (OL-303)", async () => {
+      // Land on comment-2, then 2s later jump to comment-1. The landing's
+      // 2.5s fade must not carry over: 0.7s after the jump (2.7s after the
+      // landing) comment-1 is still highlighted.
+      const queryClient = createTestQueryClient();
+      const { rerender } = render(detailTree(queryClient, "comment-2"));
+      await waitFor(() => expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
+      ).toBe(true));
+
+      await act(async () => { await new Promise((r) => setTimeout(r, 2000)); });
+      rerender(detailTree(queryClient, "comment-1"));
+      await waitFor(() => expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-1")),
+      ).toBe(true));
+
+      await act(async () => { await new Promise((r) => setTimeout(r, 700)); });
+      expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-1")),
+      ).toBe(true);
+    }, 10000);
 
     it("keeps the flat deep-link landing when the issue switches under the detail", async () => {
       const issue2: Issue = { ...mockIssue, id: "issue-2", identifier: "TES-2", title: "Second issue" };

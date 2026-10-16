@@ -13,19 +13,24 @@ import { useT } from "../../i18n";
  * result. Reads the workspace setting directly (not useYouShouldKnowEnabled,
  * whose preference query this hook does not need).
  */
-export function useYouShouldKnowSearchEntries(): SettingsSearchEntry[] {
+export function useYouShouldKnowSearchEntries(): {
+  workspace: SettingsSearchEntry[];
+  personal: SettingsSearchEntry[];
+} {
   const { t } = useT("you-should-know");
   const workspace = useCurrentWorkspace();
   const workspaceEnabled = isYouShouldKnowWorkspaceEnabled(workspace);
   return useMemo(
-    () => [
-      {
-        tab: "workspace",
-        anchor: "you-should-know",
-        title: t(($) => $.settings.workspace_label),
-        description: `${t(($) => $.settings.title)}. ${t(($) => $.settings.workspace_description)}`,
-      },
-      ...(workspaceEnabled
+    () => ({
+      workspace: [
+        {
+          tab: "workspace",
+          anchor: "you-should-know",
+          title: t(($) => $.settings.workspace_label),
+          description: `${t(($) => $.settings.title)}. ${t(($) => $.settings.workspace_description)}`,
+        },
+      ],
+      personal: workspaceEnabled
         ? [
             {
               tab: "notifications",
@@ -34,8 +39,8 @@ export function useYouShouldKnowSearchEntries(): SettingsSearchEntry[] {
               description: `${t(($) => $.settings.title)}. ${t(($) => $.settings.personal_description)}`,
             },
           ]
-        : []),
-    ],
+        : [],
+    }),
     [workspaceEnabled, t],
   );
 }

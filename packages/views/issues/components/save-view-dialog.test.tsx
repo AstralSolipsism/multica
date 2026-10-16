@@ -74,19 +74,17 @@ describe("DraftDefinitionFields ordering", () => {
 });
 
 describe("DraftDefinitionFields DAG labels", () => {
-  it.each([
-    ["LR", "Left to right"],
-    ["TB", "Top to bottom"],
-  ] as const)("renders the graph layout, grouping and %s direction", async (dagDirection, label) => {
+  it("renders the graph layout without a direction control", async () => {
     const user = userEvent.setup();
-    renderFields("position", { viewMode: "dag", dagDirection });
+    renderFields("position", { viewMode: "dag" });
 
     const summary = screen.getByRole("button", { name: /Default display/ });
-    expect(summary).toHaveTextContent(`Graph · Issue groups · ${label}`);
+    expect(summary).toHaveTextContent("Graph");
+    expect(summary).not.toHaveTextContent("Left to right");
     await user.click(summary);
 
     expect(screen.getByRole("combobox", { name: "Layout" })).toHaveTextContent("Graph");
-    expect(screen.getByRole("combobox", { name: "Direction" })).toHaveTextContent(label);
+    expect(screen.queryByRole("combobox", { name: "Direction" })).toBeNull();
     await user.click(screen.getByRole("combobox", { name: "Layout" }));
     expect(await screen.findByRole("option", { name: "Graph" })).toBeInTheDocument();
   });
@@ -128,19 +126,18 @@ describe("SaveViewDialog draft lifecycle", () => {
 });
 
 describe("saved DAG view defaults", () => {
-  it("saves Graph direction and parent grouping without copying personal folds, viewport or selection", async () => {
+  it("saves the DAG display switches without copying the personal level, viewports or selection", async () => {
     createView.mockClear();
     const user = userEvent.setup();
     const store = createStore<IssueViewState>()(viewStoreSlice);
     store.setState({
       viewMode: "dag",
-      dagDirection: "LR",
-      dagExpandedIds: ["issue:private-fold"],
-      dagIndependentExpanded: true,
       dagShowCompleted: true,
-      dagViewport: { x: -123, y: 89, zoom: 1.4 },
+      dagShowSatisfiedDependencies: true,
+      dagLineId: "line-private",
+      dagOverviewPinned: true,
+      dagViewports: { overview: { x: -123, y: 89, zoom: 1.4 } },
       dagSelectedNodeId: "a",
-      dagSelectedEdgeId: "a→b",
       dagFocus: { nodeId: "a", way: "upstream" },
     });
     renderWithI18n(
@@ -151,9 +148,7 @@ describe("saved DAG view defaults", () => {
     await user.type(screen.getByLabelText("Name"), "Dependency view");
     await user.click(screen.getByRole("button", { name: /Default display/ }));
     expect(screen.queryByRole("combobox", { name: "Ordering" })).toBeNull();
-    await user.click(screen.getByRole("combobox", { name: "Direction" }));
-    await user.click(await screen.findByRole("option", { name: "Top to bottom" }));
-    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("combobox", { name: "Direction" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Create view" }));
     expect(createView).toHaveBeenCalledOnce();
     const payload = createView.mock.calls[0]![0];
@@ -162,24 +157,26 @@ describe("saved DAG view defaults", () => {
       scope_type: "workspace",
       display: {
         viewMode: "dag",
-        dagDirection: "TB",
         dagGrouping: "parent",
         dagShowCompleted: true,
+        dagShowSatisfiedDependencies: true,
       },
     });
     for (const key of [
+      "dagDirection",
       "dagExpandedIds",
-      "dagViewport",
-      "dagSelectedNodeId",
-      "dagSelectedEdgeId",
-      "dagFocus",
       "dagIndependentExpanded",
+      "dagViewport",
+      "dagLineId",
+      "dagOverviewPinned",
+      "dagViewports",
+      "dagSelectedNodeId",
+      "dagFocus",
     ]) {
       expect(payload.display).not.toHaveProperty(key);
       expect(payload.query).not.toHaveProperty(key);
     }
-    expect(store.getState().dagDirection).toBe("LR");
-    expect(store.getState().dagExpandedIds).toEqual(["issue:private-fold"]);
+    expect(store.getState().dagLineId).toBe("line-private");
   });
 
   it("hides Graph in the default-display editor when the surface disallows it", async () => {

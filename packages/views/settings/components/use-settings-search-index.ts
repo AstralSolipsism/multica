@@ -109,10 +109,7 @@ export function useSettingsSearchIndex(
         anchor: "browser",
         title: t(($) => $.notifications.browser.label),
       },
-      // Fork (OL-187 §8): YSK switch entries live with the feature.
-      // Entries come from useYouShouldKnowSearchEntries so the personal row's
-      // entry disappears with the row while the workspace switch is off.
-      ...yskEntries,
+      ...yskEntries.personal,
       {
         tab: "tokens",
         title: t(($) => $.page.tabs.tokens),
@@ -143,6 +140,7 @@ export function useSettingsSearchIndex(
         anchor: "issue-prefix",
         title: t(($) => $.workspace.issue_prefix_label),
       },
+      ...yskEntries.workspace,
       { tab: "workspace", anchor: "leave", title: t(($) => $.workspace.leave_title) },
       { tab: "workspace", anchor: "delete", title: t(($) => $.workspace.delete_title) },
       { tab: "members", anchor: "invitations", title: t(($) => $.members.pending_label) },

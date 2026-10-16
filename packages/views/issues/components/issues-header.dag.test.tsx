@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, screen } from "@testing-library/react";
+import { cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createStore } from "zustand/vanilla";
@@ -35,7 +35,7 @@ function renderControls(allowDag: boolean) {
 }
 
 describe("DAG header controls", () => {
-  it("switches to Graph and updates direction through the real display menu", async () => {
+  it("switches to Graph and offers neither ordering nor direction controls", async () => {
     const user = userEvent.setup();
     const { store } = renderControls(true);
     await user.click(screen.getByRole("button", { name: "List" }));
@@ -44,15 +44,7 @@ describe("DAG header controls", () => {
     await user.click(screen.getByRole("button", { name: "Display" }));
     expect(screen.queryByRole("combobox", { name: "Ordering" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Grouping" })).toBeNull();
-    act(() => screen.getByRole("combobox", { name: "Direction" }).focus());
-    await user.keyboard("{ArrowDown}");
-    await user.click(
-      await screen.findByRole("option", { name: "Top to bottom" }),
-    );
-    expect(store.getState().dagDirection).toBe("TB");
-    expect(
-      screen.getByRole("combobox", { name: "Direction" }),
-    ).toHaveTextContent("Top to bottom");
+    expect(screen.queryByRole("combobox", { name: "Direction" })).toBeNull();
   });
 
   it("does not offer Graph on a surface that cannot render it", async () => {

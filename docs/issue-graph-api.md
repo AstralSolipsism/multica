@@ -100,71 +100,62 @@ are omitted; real arrows retain their original direction. A stage edit changes
 
 ## Grouped Web/Desktop canvas
 
-The shared canvas uses React Flow with ELK. Each visible parent is a task-line
-container, including nested parents; its header is the entry to the actual
-parent issue. Project membership appears as context and does not split a
-parent's descendants into unrelated project representatives. A line expands
-in its own row (LR) or column (TB). Completed issues remain in that structure;
-explicit query filters continue to apply.
+The shared canvas uses React Flow with ELK and has two levels. The overview
+shows one card per task line, standalone task, and the independent group;
+cross-line dependencies paint as shared orthogonal buses. Double-clicking a
+line card (or the toolbar's **Enter task line**) opens the second level: that
+line's task graph with nested sub-line frames, stage columns where the layout
+keeps them dependency-compatible, and dashed side cards compressing external
+dependencies. Only left-to-right layout exists.
 
-Task lines fold by default, including lines discovered after the first visit.
-Personal preferences persist only expanded task-line IDs (`dagExpandedIds`).
-Legacy `dagCollapsedIds` are reset once: an incomplete graph cannot safely
-invert a collapsed list. Direction, viewport and independent-group expansion
-remain intact. Missing expansion IDs are inert and survive filtered or stale
-reads; they never create nodes or reveal inaccessible data.
-**Expand issue groups** preserves these hidden expansion preferences.
-**Collapse issue groups** explicitly clears every task-line expansion, including
-hidden ones, so it stays enabled while any stored expansion remains.
+The current level (`dagLineId`), the deliberate overview return
+(`dagOverviewPinned`), and one viewport per level (`dagViewports`) persist per
+user; none of them are part of saved view definitions. Saved views carry
+`dagShowCompleted` and `dagShowSatisfiedDependencies` as first-open defaults.
+Legacy fold (`dagExpandedIds`, `dagIndependentExpanded`, `dagCollapsedIds`),
+direction and single-viewport preferences are ignored on read.
 
 Unparented issues without visible relations and
 without unknown/restricted relationship information form a separate
-**Independent issues** container. It starts folded, uses the same canvas and
-cards, and expands into a compact grid. Its preference is independent of
-**Expand issue groups / Collapse issue groups**. A dependency-chain endpoint
+**Independent issues** card. It uses the same canvas and opens into a compact
+grid as its own level. A dependency-chain endpoint
 or an unordered child of a parent is not an independent root merely because
 it has no outgoing edge. Missing relationships do not authorize execution.
 
 Fully staged siblings receive bounded stage regions with visible separators
 and header-level progression. Mixed staged/unstaged siblings keep individual
 stage badges and layout preferences without assigning a stage to an unstaged
-issue. Conflicting stage preferences yield to dependency order, with a visible
-explanation on the group. All visible task arrows retain real source edges.
+issue. Conflicting stage preferences yield to dependency order. All visible
+task arrows retain real source edges.
 
-Cross-line edges are always included. Folded endpoints attach to container
-boundaries; expanded endpoints attach to actual issues. Aggregate count
-buttons expose the original issue pairs. A group-to-group arrow does not mean
-that every member of one group depends on every member of the other.
+Cross-line edges are always included. On the overview they bundle per card
+pair and show the dependency count; inside a line they end at the dashed
+external side cards. Shared bus intervals paint once with the most urgent
+traversing state; branch points carry a dot. A card-to-card arrow does not
+mean that every member of one line depends on every member of the other.
 
-ELK computes both positions and edge paths. Local graphs expose boundary ports;
-an outer ELK layout arranges the groups in regular rows/columns and routes
-between those ports. Matching path sections are joined without a hand-written
-obstacle router. Stage constraints and routing terminals are display-only and
-never enter the API or become visible dependency arrows.
+Each level lays out independently: the overview packs flat cards, a line nests
+its sub-line frames. One worker channel per scene class (overview / line /
+focus) with a content-keyed LRU per class; opened lines cache independently.
+ELK runs in a child worker through its supported API. A layout that exceeds
+the 3s deadline is terminated and re-run as bounded packing; the canvas labels
+that degraded result and offers a manual re-layout. Replacing a worker
+invalidates its outstanding response. Failure is explicit and retryable; the
+canvas does not substitute straight or guessed dependency lines. Selection,
+title, status and run refreshes do not relayout an unchanged topology.
 
-The existing layout worker owns orchestration and an ELK worker created through
-its supported API. Replacing/canceling a worker invalidates its outstanding
-response. Failure is explicit and retryable; the canvas does not substitute
-straight or guessed dependency lines. The heavy kernel is only loaded when
-DAG layout runs. Selection, title, status and run refreshes do not relayout an
-unchanged visible topology.
-
-Single-click selects an issue and highlights its direct dependencies and stage.
-Other titles remain readable. Explicit dependency-neighborhood actions remain
-available; **Focus issue group** is a separate action. Double-click or the
-existing detail action follows the platform navigation adapter. Returning
-restores personal expansion and viewport state. Expand does not automatically
-fit the entire graph or shrink the reading size; ordinary scrolling pans the
-canvas. Dragging stays inside an outer content extent so routes between task lines
-remain traversable. Settled navigation, layout changes, restored positions and
-resizes keep at least one issue card or task-line/independent-group header in
-view when content exists. Already-readable partial items retain their position.
-Explicit focus is placed directly, without an interruptible transition across
-blank space. Bounds use actual cards and headers, not large empty
-group backgrounds. Recovery only translates to the nearest content (preferring
-a toggled group); it does not change zoom or expand groups. Personal viewport
-and independent expansion use the existing scoped
-view store, while selection stays session-only.
+Single-click selects a card or task; the toolbar's selection zone keeps the
+OL-182 actions (open detail, highlight prerequisites/dependents, edit
+prerequisites, assign), and line cards additionally offer **Enter task line**.
+**Focus issue group** remains available on a selected member, recentering its
+innermost sub-line frame. Double-click follows the level: line cards enter,
+tasks open the detail. Returning to the overview restores its viewport and
+selects the line just left; each level remembers its own viewport. Ordinary
+scrolling pans the canvas. Dragging stays inside an outer content extent so
+routes between cards remain traversable. Navigation, layout changes and
+resizes keep at least one card or frame header in view when content exists.
+Recovery translates to the nearest content without changing zoom. Bounds use
+actual cards and frame headers, not large empty frame backgrounds.
 
 The former DAG project/flat grouping chooser is replaced by this task-line
 model. Older shared-view grouping values continue to round-trip at the API

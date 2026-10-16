@@ -2,7 +2,7 @@ import type {
   DagLayoutNodeInput,
   DagLayoutGroupInput,
   DagLayoutEdgeInput,
-} from "./dag-layout";
+} from "./dag-scene";
 
 interface StagePreferenceGraph {
   adjacency: Map<string, string[]>;

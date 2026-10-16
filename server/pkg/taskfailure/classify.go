@@ -536,6 +536,11 @@ var legacyUsageLimit403Reasons = map[string]bool{
 // can be deleted once no daemon old enough to produce its wire shape is still
 // reporting.
 func NormalizeDaemonReason(reason, rawError string) Reason {
+	// OL-416: old daemons report oversized requests as the generic agent error.
+	// Upgrade that label at ingestion so the rejected session is not resumed.
+	if (reason == string(ReasonAgentUnknown) || reason == "agent_error") && OversizedRequest(rawError) {
+		return ReasonAPIInvalidRequest
+	}
 	if legacyConcurrentRequestLimitReasons[reason] &&
 		strings.Contains(strings.ToLower(rawError), concurrentRequestLimitWitness) {
 		return ReasonAgentProviderCapacityOrRateLimit

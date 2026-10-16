@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { AlertTriangle, ChevronDown, X } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -11,7 +11,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
-import type { IssueGraph } from "@multica/core/api";
 import type { DagFocusWay } from "@multica/core/issues/stores/view-store";
 import {
   useViewStore,
@@ -19,78 +18,78 @@ import {
 } from "@multica/core/issues/stores/view-store-context";
 import { useT } from "../../i18n";
 import { DagAssignAction, useDagIssueSelection } from "./dag-issue-actions";
-import { dagFocusNeighborhood, type DagProjection, type DagVisibleGroup, type DagVisibleNode } from "@multica/core/issues/dag";
 import { useActionCapacity } from "./use-action-capacity";
+import type { DagSelectionTarget } from "./dag-scene-flow";
 
-type ActionKey = "open" | "upstream" | "downstream" | "edit" | "assign";
+type ActionKey = "enter" | "focus" | "open" | "upstream" | "downstream" | "edit" | "assign";
 
 /** The selection zone's node state: label, standing actions (collapsing
  *  right-to-left into More on narrow widths), the hidden-chain hint and the
  *  trailing clear button. */
 export function DagNodeSelection({
-  node,
-  group,
-  groupModels,
-  label,
-  projection,
-  graph,
+  target,
+  focusHiddenCount,
   onOpenIssue,
-  onFocusGroup,
-  onToggleCollapsed,
+  onEnterLine,
+  onFocusFrame,
+  onEnterFocus,
 }: {
-  node: DagVisibleNode;
-  group: DagVisibleGroup | undefined;
-  groupModels: ReadonlyMap<string, DagVisibleGroup>;
-  label: string;
-  projection: DagProjection;
-  graph: IssueGraph;
+  target: DagSelectionTarget;
+  focusHiddenCount: number;
   onOpenIssue: (issueId: string) => void;
-  onFocusGroup: (id: string) => void;
-  onToggleCollapsed: (id: string) => void;
+  onEnterLine: (lineId: string) => void;
+  onFocusFrame: (frameId: string) => void;
+  onEnterFocus?: (issueId: string) => void;
 }) {
   const { t: tDag } = useT("dag");
   const storeApi = useViewStoreApi();
   const focus = useViewStore((s) => s.dagFocus);
   const showCompleted = useViewStore((s) => s.dagShowCompleted);
   const { issue, actions, detailFailed, retryDetail } = useDagIssueSelection(
-    node.issue?.id ?? null,
+    target.issueId,
   );
   const [assignFromMenu, setAssignFromMenu] = useState(false);
   const toggleFocus = (way: DagFocusWay) => {
     const state = storeApi.getState();
     const current = state.dagFocus;
     state.setDagFocus(
-      current?.nodeId === node.id && current.way === way
+      current?.nodeId === target.id && current.way === way
         ? null
-        : { nodeId: node.id, way },
+        : { nodeId: target.id, way },
     );
   };
   const focusActive = (way: DagFocusWay) =>
-    focus?.nodeId === node.id && focus.way === way;
-  const focusHiddenCount = useMemo(
-    () =>
-      focus && focus.nodeId === node.id
-        ? dagFocusNeighborhood(projection, graph, focus.nodeId, focus.way)
-            .hiddenIssueCount
-        : 0,
-    [focus, node.id, projection, graph],
-  );
+    focus?.nodeId === target.id && focus.way === way;
 
   const actionKeys: ActionKey[] = [
-    ...(node.issue ? (["open"] as const) : []),
+    ...(target.enterLineId ? (["enter"] as const) : []),
+    ...(target.issueId ? (["open"] as const) : []),
+    ...(target.issueId && !target.enterLineId && onEnterFocus ? (["focus"] as const) : []),
     "upstream",
     "downstream",
-    ...(node.issue ? (["edit", "assign"] as const) : []),
+    ...(target.issueId ? (["edit", "assign"] as const) : []),
   ];
-  const { zoneRef, visibleCount } = useActionCapacity(actionKeys, node.id);
+  const { zoneRef, visibleCount } = useActionCapacity(actionKeys, target.id);
   const visibleKeys = actionKeys.slice(0, visibleCount);
   const menuKeys = actionKeys.slice(visibleCount);
 
-  const focusLineId = group?.id ?? node.groupId;
-  const foldTarget = group ?? (node.groupId ? groupModels.get(node.groupId) : undefined);
   const actionNodes: Record<ActionKey, React.ReactNode> = {
+    focus: (
+      <Button size="sm" variant="ghost" onClick={() => onEnterFocus?.(target.issueId!)} data-dag-enter-focus>
+        {tDag(($) => $.focus_mode)}
+      </Button>
+    ),
+    enter: (
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => onEnterLine(target.enterLineId!)}
+      >
+        {tDag(($) => $.enter_line)}
+      </Button>
+    ),
     open: (
-      <Button size="sm" variant="ghost" onClick={() => onOpenIssue(node.issue!.id)}>
+      <Button size="sm" variant="ghost" onClick={() => onOpenIssue(target.issueId!)}>
         {tDag(($) => $.open_detail)}
       </Button>
     ),
@@ -127,8 +126,18 @@ export function DagNodeSelection({
     assign: <DagAssignAction issue={issue} onUpdate={actions.updateField} />,
   };
   const menuItems: Record<ActionKey, React.ReactNode> = {
+    focus: (
+      <DropdownMenuItem key="focus" onClick={() => onEnterFocus?.(target.issueId!)} data-dag-enter-focus>
+        {tDag(($) => $.focus_mode)}
+      </DropdownMenuItem>
+    ),
+    enter: (
+      <DropdownMenuItem key="enter" onClick={() => onEnterLine(target.enterLineId!)}>
+        {tDag(($) => $.enter_line)}
+      </DropdownMenuItem>
+    ),
     open: (
-      <DropdownMenuItem key="open" onClick={() => onOpenIssue(node.issue!.id)}>
+      <DropdownMenuItem key="open" onClick={() => onOpenIssue(target.issueId!)}>
         {tDag(($) => $.open_detail)}
       </DropdownMenuItem>
     ),
@@ -165,22 +174,43 @@ export function DagNodeSelection({
       </DropdownMenuItem>
     ),
   };
-  const hasMenu = menuKeys.length > 0 || focusLineId != null || foldTarget != null;
+  const hasMenu = menuKeys.length > 0 || target.focusFrameId != null;
+  const label =
+    target.kind === "independent" ? tDag(($) => $.independent_group) : target.title;
+  // The click cycle's current scope: one layer by default, all upstream +
+  // downstream after the second click. A one-way focus shows on its button.
+  const scopeTag = (() => {
+    if (focus?.nodeId === target.id && focus.way === "both")
+      return tDag(($) => $.selection_scope_closure);
+    if (!focus || focus.nodeId !== target.id)
+      return tDag(($) => $.selection_scope_neighborhood);
+    return null;
+  })();
 
   return (
     <div ref={zoneRef} data-dag-zone className="flex min-w-0 flex-1 items-center gap-1">
       <span
         data-dag-label
         className="max-w-56 shrink truncate px-1 text-caption font-medium text-foreground"
-        title={label}
+        title={label ?? undefined}
       >
-        {node.identifier && (
+        {target.identifier && (
           <span className="mr-1.5 tabular-nums text-muted-foreground">
-            {node.identifier}
+            {target.identifier}
           </span>
         )}
-        {node.kind === "independent" ? label : node.title}
+        {label}
       </span>
+      {scopeTag && (
+        <span data-dag-fixed className="inline-flex shrink-0">
+          <span
+            data-dag-scope
+            className="rounded-full bg-muted/60 px-1.5 py-0.5 text-micro font-normal text-muted-foreground"
+          >
+            {scopeTag}
+          </span>
+        </span>
+      )}
       {visibleKeys.map((key) => (
         <span key={key} data-dag-action={key} className="inline-flex shrink-0">
           {actionNodes[key]}
@@ -206,19 +236,12 @@ export function DagNodeSelection({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-52">
               {menuKeys.map((key) => menuItems[key])}
-              {menuKeys.length > 0 && (focusLineId != null || foldTarget != null) && (
+              {menuKeys.length > 0 && target.focusFrameId != null && (
                 <DropdownMenuSeparator />
               )}
-              {focusLineId != null && (
-                <DropdownMenuItem onClick={() => onFocusGroup(focusLineId)}>
+              {target.focusFrameId != null && (
+                <DropdownMenuItem onClick={() => onFocusFrame(target.focusFrameId!)}>
                   {tDag(($) => $.focus_line)}
-                </DropdownMenuItem>
-              )}
-              {foldTarget && (
-                <DropdownMenuItem onClick={() => onToggleCollapsed(foldTarget.id)}>
-                  {foldTarget.collapsed
-                    ? tDag(($) => $.expand_line)
-                    : tDag(($) => $.collapse_line)}
                 </DropdownMenuItem>
               )}
             </DropdownMenuContent>
