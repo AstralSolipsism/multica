@@ -14,6 +14,7 @@ import { renderWithI18n } from "../../test/i18n";
 import { DagSceneCanvasInner, type DagSceneCanvasProps } from "./dag-scene-canvas";
 import { dagFocusCanvasModel } from "./dag-scene-flow";
 import { fallbackDagScene } from "./dag-scene-fallback";
+import { dagCullBounds, dagCullBoundsKey } from "./dag-highlight";
 import { dagLineLayoutInput, dagOverviewLayoutInput } from "./dag-scene-inputs";
 import type { DagSceneGeometry } from "./dag-scene";
 import { graphNode as makeNode, issueGraph as makeGraph } from "./dag-test-fixtures";
@@ -1455,5 +1456,258 @@ describe("DagSceneCanvas Stage 10 review assertions", () => {
     await waitFor(() =>
       expect(document.querySelector('[data-dag-ghost="dashed"]')).toBeTruthy(),
     );
+  });
+});
+
+describe("DagSceneCanvas first-open viewport (OL-451)", () => {
+  const readTransform = () =>
+    (document.querySelector(".react-flow__viewport") as HTMLElement).style.transform;
+
+  /** The two fixture cards pushed 6000×3000 apart: no readable zoom fits. */
+  function bigOverviewFixture() {
+    const base = overviewFixture();
+    const geometry: DagSceneGeometry = {
+      ...base.geometry,
+      nodes: {
+        "issue:r1": { x: 0, y: 0, width: 280, height: 140 },
+        "issue:r2": { x: 5720, y: 2860, width: 280, height: 140 },
+      },
+      ports: {
+        "issue:r1": { input: { x: 0, y: 70 }, output: { x: 280, y: 70 } },
+        "issue:r2": { input: { x: 5720, y: 2930 }, output: { x: 6000, y: 2930 } },
+      },
+      routes: {
+        [BUNDLE]: [
+          { x: 280, y: 70 },
+          { x: 3000, y: 70 },
+          { x: 3000, y: 2930 },
+          { x: 5720, y: 2930 },
+        ],
+      },
+      width: 6000,
+      height: 3000,
+    };
+    return { ...base, geometry };
+  }
+
+  it("opens a huge overview at the readable zoom from the top-left, cards readable", async () => {
+    harness(bigOverviewFixture());
+    await waitFor(() => expect(screen.getByText("Line one")).toBeInTheDocument());
+    await waitFor(() => expect(readTransform()).toBe("translate(24px,24px) scale(0.75)"));
+    // Above the simplified-block threshold: real cards, not plain blocks.
+    expect(document.querySelector("[data-dag-ghost-blocks]")).toBeNull();
+    expect(screen.getByText("Line two")).toBeInTheDocument();
+  });
+
+  it("opens a huge line at the readable zoom from its leftmost column", async () => {
+    const base = lineFixture();
+    const geometry: DagSceneGeometry = {
+      ...base.geometry,
+      frames: {
+        ...base.geometry.frames,
+        r1: { x: 0, y: 0, width: 6000, height: 500, bands: [], stageMode: "labels" },
+      },
+      width: 6000,
+    };
+    harness({ ...base, geometry });
+    await waitFor(() => expect(screen.getByText("T-T1")).toBeInTheDocument());
+    // Bounds (-220,0,6220,500): x anchors the left edge, y centers (it fits).
+    await waitFor(() => expect(readTransform()).toBe("translate(189px,262.5px) scale(0.75)"));
+    expect(document.querySelector("[data-dag-ghost-blocks]")).toBeNull();
+  });
+
+  it("still restores a remembered viewport on a huge scene", async () => {
+    harness(bigOverviewFixture(), (store) => {
+      store.setState({ dagViewports: { overview: { x: 33, y: -44, zoom: 1.25 } } });
+    });
+    await waitFor(() => expect(readTransform()).toContain("scale(1.25)"));
+    expect(readTransform()).toContain("translate(33px,-44px)");
+  });
+
+  it("still fits the whole scene when the content fits at the readable zoom", async () => {
+    harness(overviewFixture());
+    await waitFor(() => expect(screen.getByText("Line one")).toBeInTheDocument());
+    // The fit-all path is unchanged: maxZoom 1, every card painted readably.
+    await waitFor(() => expect(readTransform()).toContain("scale(1)"));
+    expect(screen.getByText("Line two")).toBeInTheDocument();
+    expect(document.querySelector("[data-dag-ghost-blocks]")).toBeNull();
+  });
+
+  it("anchors a wide-but-short overview at its top-left, never vertically centered", async () => {
+    const base = overviewFixture();
+    const geometry: DagSceneGeometry = {
+      ...base.geometry,
+      nodes: {
+        "issue:r1": { x: 0, y: 0, width: 280, height: 140 },
+        "issue:r2": { x: 5720, y: 160, width: 280, height: 140 },
+      },
+      ports: {
+        "issue:r1": { input: { x: 0, y: 70 }, output: { x: 280, y: 70 } },
+        "issue:r2": { input: { x: 5720, y: 230 }, output: { x: 6000, y: 230 } },
+      },
+      routes: {
+        [BUNDLE]: [
+          { x: 280, y: 70 },
+          { x: 3000, y: 70 },
+          { x: 3000, y: 230 },
+          { x: 5720, y: 230 },
+        ],
+      },
+      width: 6000,
+      height: 300,
+    };
+    harness({ ...base, geometry });
+    await waitFor(() => expect(screen.getByText("Line one")).toBeInTheDocument());
+    // Bounds (0,0,6000,300): the cross axis would fit at 0.75 — a line would
+    // center it, but the overview must start at its top-left corner.
+    await waitFor(() => expect(readTransform()).toBe("translate(24px,24px) scale(0.75)"));
+  });
+
+  it("anchors a huge focus scene at the readable zoom when the focused task is hidden", async () => {
+    const line = lineFixture();
+    const model = dagFocusCanvasModel(computeDagFocus(createDagModelIndex(makeGraph([
+      makeNode("hidden", { status: "done", statusCategory: "done" }), makeNode("after"),
+    ], [["hidden", "after"]])), "hidden"));
+    const geometry: DagSceneGeometry = {
+      nodes: { after: { x: 4000, y: 120, width: 248, height: 116 } },
+      frames: {
+        "focus-frame": { x: 3900, y: 40, width: 6000, height: 400, bands: [], stageMode: "labels" },
+      },
+      ports: { after: { input: { x: 4000, y: 178 }, output: { x: 4248, y: 178 } } },
+      routes: {},
+      segments: [],
+      junctions: [],
+      width: 9900,
+      height: 440,
+      quality: "fallback",
+    };
+    const { store, props, rerender, flow } = harness(line);
+    await waitFor(() => expect(screen.getByText("T-T1")).toBeInTheDocument());
+    rerender(
+      <ViewStoreProvider store={store}><ReactFlowProvider><DagSceneCanvasInner
+        {...props} level={{ kind: "focus", issueId: "hidden" }} model={model} plan={model.plan} geometry={geometry}
+        focusRequest={{ id: "hidden", level: "focus", nonce: 1 }}
+      /></ReactFlowProvider></ViewStoreProvider>,
+    );
+    await waitFor(() => {
+      const viewport = flow().getViewport();
+      expect(viewport.zoom).toBe(0.75);
+      // The remaining scene starts at the left edge instead of shrinking away.
+      expect(viewport.x).toBe(24 - 3900 * 0.75);
+      // Bounds (3900,40,6000,400): the cross axis fits at 0.75, so a focus
+      // scene centers it — never top-anchored like the overview.
+      expect(viewport.y).toBe(450 - (40 + 200) * 0.75);
+    });
+    expect(store.getState().dagSelectedNodeId).toBeNull();
+  });
+});
+describe("DagSceneCanvas lit-route masking (OL-451)", () => {
+  /** A→C with M between them: the lit route crosses M's box (and its text). */
+  function crossingFixture() {
+    const graph = makeGraph(
+      [
+        makeNode("r1", { title: "Line one" }),
+        makeNode("a", { parentIssueId: "r1" }),
+        makeNode("m", { parentIssueId: "r1" }),
+        makeNode("c", { parentIssueId: "r1" }),
+      ],
+      [{ id: "a-c", source: "a", target: "c" }],
+    );
+    const line = computeDagLine(createDagModelIndex(graph), "r1")!;
+    const plan = dagLineLayoutInput(line);
+    const geometry: DagSceneGeometry = {
+      nodes: {
+        a: { x: 60, y: 40, width: 248, height: 116 },
+        m: { x: 360, y: 40, width: 248, height: 116 },
+        c: { x: 660, y: 40, width: 248, height: 116 },
+      },
+      frames: {
+        r1: { x: 0, y: 0, width: 980, height: 220, bands: [], stageMode: "labels" },
+      },
+      ports: {
+        a: { input: { x: 60, y: 98 }, output: { x: 308, y: 98 } },
+        m: { input: { x: 360, y: 98 }, output: { x: 608, y: 98 } },
+        c: { input: { x: 660, y: 98 }, output: { x: 908, y: 98 } },
+      },
+      routes: { "a-c": [{ x: 308, y: 98 }, { x: 660, y: 98 }] },
+      segments: [{ id: "s0", start: { x: 308, y: 98 }, end: { x: 660, y: 98 }, edgeIds: ["a-c"] }],
+      junctions: [],
+      width: 980,
+      height: 220,
+      quality: "elk",
+    };
+    return { model: { kind: "line" as const, line }, plan, geometry };
+  }
+
+  it("masks lit routes behind every card box so they cannot strike through text", async () => {
+    const { store } = harness(crossingFixture());
+    await waitFor(() => expect(nodeOf("a")).toBeTruthy());
+    fireEvent.click(nodeOf("a"));
+    expect(store.getState().dagSelectedNodeId).toBe("a");
+    await waitFor(() => expect(litRouteGroups()).toBe(1));
+    const cuts = new Map(
+      [...document.querySelectorAll("[data-dag-route-mask-cut]")].map((el) => [
+        el.getAttribute("data-dag-route-mask-cut"),
+        el,
+      ]),
+    );
+    // Every card and the frame header strip is cut out of the lit paint.
+    for (const id of ["a", "m", "c", "r1"]) expect(cuts.has(id)).toBe(true);
+    // The crossed card m: the cut covers its box (inset by 2).
+    const mCut = cuts.get("m")!;
+    expect(Number(mCut.getAttribute("x"))).toBe(362);
+    expect(Number(mCut.getAttribute("y"))).toBe(42);
+    expect(Number(mCut.getAttribute("width"))).toBe(244);
+    expect(Number(mCut.getAttribute("height"))).toBe(112);
+    const headerCut = cuts.get("r1")!;
+    expect(Number(headerCut.getAttribute("height"))).toBe(76 - 4);
+    // The lit group paints through that mask.
+    const litGroup = document.querySelector("[data-dag-overlay-layer] > g[mask]")!;
+    expect(litGroup.getAttribute("mask")).toContain("url(#");
+    expect(litGroup.querySelector('[data-dag-lit-edge="a-c"]')).toBeTruthy();
+  });
+
+  it("drops the mask in the simplified view, where cards carry no text", async () => {
+    const { flow } = harness(abxyFixture());
+    await waitFor(() => expect(nodeOf("y")).toBeTruthy());
+    fireEvent.click(nodeOf("y"));
+    await waitFor(() => expect(litRouteGroups()).toBe(2));
+    expect(document.querySelector("[data-dag-route-mask-cut]")).not.toBeNull();
+    await flow().setViewport({ x: 0, y: 0, zoom: 0.3 });
+    await waitFor(() => expect(document.querySelector("[data-dag-ghost-blocks]")).toBeTruthy());
+    expect(litRouteGroups()).toBe(2);
+    expect(document.querySelector("[data-dag-route-mask-cut]")).toBeNull();
+  });
+
+  it("declares both overlay mask regions as the culling window (far-pan regression)", async () => {
+    const { flowStore } = harness(crossingFixture());
+    await waitFor(() => expect(nodeOf("a")).toBeTruthy());
+    fireEvent.click(nodeOf("a"));
+    await waitFor(() => expect(litRouteGroups()).toBe(1));
+    const state = flowStore().getState();
+    const win = dagCullBounds(
+      dagCullBoundsKey(state.transform, { width: state.width, height: state.height }),
+    )!;
+    expect(win).toBeTruthy();
+    // A userSpaceOnUse mask without an explicit region defaults to
+    // -10%/-10%/120%/120% of the viewport — ABSOLUTE coordinates that do not
+    // follow the windowed viewBox origin, so a pan one screen past the
+    // canvas origin clips every masked paint (lit routes here, the dim
+    // overlay since OL-284). The region must be the culling window itself.
+    const masks = [...document.querySelectorAll("[data-dag-overlay-layer] mask")];
+    const routeMask = masks.find((el) => el.querySelector("[data-dag-route-mask-cut]"))!;
+    const dimMask = masks.find((el) => el.querySelector("[data-dag-dim-hole]"))!;
+    for (const mask of [routeMask, dimMask]) {
+      expect(mask.hasAttribute("x")).toBe(true);
+      expect(mask.hasAttribute("y")).toBe(true);
+      expect(mask.hasAttribute("width")).toBe(true);
+      expect(mask.hasAttribute("height")).toBe(true);
+      expect([
+        Number(mask.getAttribute("x")),
+        Number(mask.getAttribute("y")),
+        Number(mask.getAttribute("width")),
+        Number(mask.getAttribute("height")),
+      ]).toEqual([win.x0, win.y0, win.x1 - win.x0, win.y1 - win.y0]);
+    }
   });
 });

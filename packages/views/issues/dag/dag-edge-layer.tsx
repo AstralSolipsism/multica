@@ -12,6 +12,7 @@ import {
   dagSegmentDisplay,
   type DagCanvasModel,
 } from "./dag-scene-flow";
+import { DAG_GROUP_HEADER_HEIGHT } from "./dag-constants";
 import {
   dagBusDependencyIds,
   dagMotionAllowed,
@@ -134,6 +135,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
   onBusClick,
 }: DagEdgeLayerProps) {
   const maskId = useId();
+  const routeMaskId = useId();
   const states = useMemo(() => dagDependencyStates(model), [model]);
   const composed = useMemo(
     () => dagDisplayedRoutes(geometry, plan, showSatisfied),
@@ -262,6 +264,39 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
 
   const dimmed = highlightedEdgeIds != null;
   const dimNodes = litBoxes != null && litBoxes.length > 0;
+  // Both overlay masks must declare their region explicitly: the
+  // userSpaceOnUse default (-10%/-10%/120%/120% of the viewport) resolves to
+  // ABSOLUTE coordinates that do not follow the windowed viewBox origin, so
+  // about one screen past the canvas origin every masked paint would be
+  // clipped away (OL-451 review; the dim mask carried the same latent defect
+  // since OL-284). One shared window rect feeds the mask regions and their
+  // white bases.
+  const windowRect = bounds
+    ? { x: bounds.x0, y: bounds.y0, width: bounds.x1 - bounds.x0, height: bounds.y1 - bounds.y0 }
+    : { x: 0, y: 0, width: geometry.width, height: geometry.height };
+  // Lit routes repaint ABOVE the cards, so a route crossing a card would
+  // strike through its text (the OL-284 leftover, OL-451). The lit group
+  // paints through a mask cutting every card box (inset a hair, so port
+  // approaches and arrowheads on the box edge stay) and every frame header
+  // strip: routes visibly pass behind cards, exactly like the base layer
+  // already does below them. Skipped in the simplified view — no text there,
+  // and the cut count stays bounded by the readable zoom's smaller window.
+  const routeMaskCuts = useMemo(() => {
+    if (degraded || highlightedEdgeIds == null) return null;
+    const cuts: { id: string; x: number; y: number; width: number; height: number }[] = [];
+    const visible = (x: number, y: number, width: number, height: number) =>
+      !bounds ||
+      (x + width >= bounds.x0 && x <= bounds.x1 && y + height >= bounds.y0 && y <= bounds.y1);
+    for (const [id, box] of Object.entries(geometry.nodes)) {
+      if (!visible(box.x, box.y, box.width, box.height)) continue;
+      cuts.push({ id, x: box.x + 2, y: box.y + 2, width: Math.max(0, box.width - 4), height: Math.max(0, box.height - 4) });
+    }
+    for (const [id, box] of Object.entries(geometry.frames)) {
+      if (!visible(box.x, box.y, box.width, DAG_GROUP_HEADER_HEIGHT)) continue;
+      cuts.push({ id, x: box.x + 2, y: box.y + 2, width: Math.max(0, box.width - 4), height: DAG_GROUP_HEADER_HEIGHT - 4 });
+    }
+    return cuts;
+  }, [degraded, highlightedEdgeIds, geometry, bounds]);
   const selectedBox = useMemo(() => {
     if (!selectedNodeId) return null;
     return geometry.nodes[selectedNodeId] ?? geometry.frames[selectedNodeId] ?? null;
@@ -535,14 +570,15 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
         {dimNodes && (
           <>
             <defs>
-              <mask id={maskId} maskUnits="userSpaceOnUse">
-                <rect
-                  x={bounds ? bounds.x0 : 0}
-                  y={bounds ? bounds.y0 : 0}
-                  width={bounds ? bounds.x1 - bounds.x0 : geometry.width}
-                  height={bounds ? bounds.y1 - bounds.y0 : geometry.height}
-                  fill="white"
-                />
+              <mask
+                id={maskId}
+                maskUnits="userSpaceOnUse"
+                x={windowRect.x}
+                y={windowRect.y}
+                width={windowRect.width}
+                height={windowRect.height}
+              >
+                <rect {...windowRect} fill="white" />
                 {litBoxes!.map((box) => (
                   <rect
                     key={box.id}
@@ -559,48 +595,72 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
             </defs>
             <rect
               data-dag-dim-overlay
-              x={bounds ? bounds.x0 : 0}
-              y={bounds ? bounds.y0 : 0}
-              width={bounds ? bounds.x1 - bounds.x0 : geometry.width}
-              height={bounds ? bounds.y1 - bounds.y0 : geometry.height}
+              {...windowRect}
               fill="var(--background)"
               fillOpacity={0.75}
               mask={`url(#${maskId})`}
             />
           </>
         )}
-        {highlightedRoutes.map(({ edgeId, route, display }) => {
-          const style = STATE_STYLE[display.state];
-          const points = route.map((p) => `${p.x},${p.y}`).join(" ");
-          const width = display.count > 1 ? 3 : 2;
-          const breathe = display.state === "cancelled-blocking" && motionAllowed;
-          return (
-            <g key={`lit:${edgeId}`} data-dag-lit-edge={edgeId}>
-              <polyline
-                points={points}
-                fill="none"
-                stroke={style.stroke}
-                strokeOpacity={0.25}
-                strokeWidth={width + 5}
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-              <polyline
-                points={points}
-                fill="none"
-                className={breathe ? "dag-edge-breathe" : undefined}
-                stroke={style.stroke}
-                strokeOpacity={Math.min(1, style.opacity + 0.35)}
-                strokeWidth={width}
-                strokeDasharray={style.dash}
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-              {arrowHead(route, `lit-arrow:${edgeId}`, style.stroke, 0.9)}
-            </g>
-          );
-        })}
-        {litFlows.map((overlay) => flowLine(overlay, `lit-flow:${overlay.segment.id}`))}
+        {routeMaskCuts && (
+          <defs>
+            <mask
+              id={routeMaskId}
+              maskUnits="userSpaceOnUse"
+              x={windowRect.x}
+              y={windowRect.y}
+              width={windowRect.width}
+              height={windowRect.height}
+            >
+              <rect {...windowRect} fill="white" />
+              {routeMaskCuts.map((cut) => (
+                <rect
+                  key={cut.id}
+                  data-dag-route-mask-cut={cut.id}
+                  x={cut.x}
+                  y={cut.y}
+                  width={cut.width}
+                  height={cut.height}
+                  fill="black"
+                />
+              ))}
+            </mask>
+          </defs>
+        )}
+        <g mask={routeMaskCuts ? `url(#${routeMaskId})` : undefined}>
+          {highlightedRoutes.map(({ edgeId, route, display }) => {
+            const style = STATE_STYLE[display.state];
+            const points = route.map((p) => `${p.x},${p.y}`).join(" ");
+            const width = display.count > 1 ? 3 : 2;
+            const breathe = display.state === "cancelled-blocking" && motionAllowed;
+            return (
+              <g key={`lit:${edgeId}`} data-dag-lit-edge={edgeId}>
+                <polyline
+                  points={points}
+                  fill="none"
+                  stroke={style.stroke}
+                  strokeOpacity={0.25}
+                  strokeWidth={width + 5}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                />
+                <polyline
+                  points={points}
+                  fill="none"
+                  className={breathe ? "dag-edge-breathe" : undefined}
+                  stroke={style.stroke}
+                  strokeOpacity={Math.min(1, style.opacity + 0.35)}
+                  strokeWidth={width}
+                  strokeDasharray={style.dash}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                />
+                {arrowHead(route, `lit-arrow:${edgeId}`, style.stroke, 0.9)}
+              </g>
+            );
+          })}
+          {litFlows.map((overlay) => flowLine(overlay, `lit-flow:${overlay.segment.id}`))}
+        </g>
       </svg>
     )}
     </>
