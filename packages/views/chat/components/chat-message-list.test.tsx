@@ -15,6 +15,11 @@ import zhHansChat from "../../locales/zh-Hans/chat.json";
 // renders its Footer but NO data rows under jsdom's zero-height viewport, so
 // these tests must stub it to see rows at all. computeItemKey is still applied
 // here — it is what expresses the live -> persisted identity.
+const virtuosoProbe = vi.hoisted(() => ({
+  /** Every firstItemIndex the list ever passed to Virtuoso, in render order. */
+  firstItemIndexLog: [] as number[],
+}));
+
 vi.mock("react-virtuoso", () => ({
   Virtuoso: ({
     data,
@@ -23,20 +28,28 @@ vi.mock("react-virtuoso", () => ({
     components,
     context,
     followOutput,
+    firstItemIndex,
   }: {
     data: unknown[];
     itemContent: (i: number, item: unknown) => ReactElement;
     computeItemKey: (i: number, item: unknown) => string;
-    components?: { Footer?: (p: { context?: unknown }) => ReactElement | null };
+    components?: {
+      Header?: (p: { context?: unknown }) => ReactElement | null;
+      Footer?: (p: { context?: unknown }) => ReactElement | null;
+    };
     context?: unknown;
     followOutput?: (atBottom: boolean) => "smooth" | "auto" | false;
+    firstItemIndex?: number;
   }) => {
+    virtuosoProbe.firstItemIndexLog.push(firstItemIndex ?? 0);
+    const Header = components?.Header;
     const Footer = components?.Footer;
     return (
       <div
         data-follow-at-bottom={String(followOutput?.(true))}
         data-follow-away-from-bottom={String(followOutput?.(false))}
       >
+        {Header ? <Header context={context} /> : null}
         {data.map((item, i) => (
           <div key={computeItemKey(i, item)} data-row-key={computeItemKey(i, item)}>
             {itemContent(i, item)}
@@ -657,6 +670,153 @@ describe("ChatMessageList onboarding kickoff", () => {
     expect(
       screen.queryByText("INTERNAL ONBOARDING PROMPT"),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("ChatMessageList older-messages header (OL-272)", () => {
+  const olderMessage = (id: string) => ({
+    id,
+    chat_session_id: "s1",
+    role: "user" as const,
+    content: `message ${id}`,
+    task_id: null,
+    created_at: new Date(0).toISOString(),
+  });
+
+  function renderWithFetchState(isFetchingOlderMessages: boolean) {
+    return render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={new QueryClient()}>
+          <ChatMessageList
+            messages={[olderMessage("m1")]}
+            pendingTask={undefined}
+            availability="online"
+            hasOlderMessages
+            isFetchingOlderMessages={isFetchingOlderMessages}
+          />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+  }
+
+  it("keeps the loading caption mounted at a constant height, toggling only visibility", () => {
+    // The caption sits above every row; appearing/disappearing with the fetch
+    // used to push the content the reader was looking at. The slot now stays
+    // mounted and only its visibility flips, so the header's height — and the
+    // reader's position — never moves (OL-272).
+    const idle = renderWithFetchState(false);
+    const idleCaption = screen.getByText("Loading older messages…");
+    expect(idleCaption).toHaveClass("invisible");
+
+    idle.unmount();
+    const fetching = renderWithFetchState(true);
+    const fetchingCaption = screen.getByText("Loading older messages…");
+    expect(fetchingCaption).not.toHaveClass("invisible");
+    fetching.unmount();
+  });
+});
+
+describe("ChatMessageList window anchor (OL-272)", () => {
+  const BASE = 1_000_000;
+  const message = (id: string) => ({
+    id,
+    chat_session_id: "s1",
+    role: "user" as const,
+    content: `message ${id}`,
+    task_id: null,
+    created_at: new Date(0).toISOString(),
+  });
+
+  function renderWithMessages(messages: ReturnType<typeof message>[]) {
+    return render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={new QueryClient()}>
+          <ChatMessageList
+            messages={messages}
+            pendingTask={undefined}
+            availability="online"
+          />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+  }
+
+  it("tracks firstItemIndex by row identity, not page arithmetic", () => {
+    virtuosoProbe.firstItemIndexLog.length = 0;
+    const view = renderWithMessages([message("m1"), message("m2")]);
+    expect(virtuosoProbe.firstItemIndexLog.at(-1)).toBe(BASE);
+
+    // An older page lands above: the index drops by the prepended row count.
+    view.rerender(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={new QueryClient()}>
+          <ChatMessageList
+            messages={[message("m0"), message("m1"), message("m2")]}
+            pendingTask={undefined}
+            availability="online"
+          />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+    expect(virtuosoProbe.firstItemIndexLog.at(-1)).toBe(BASE - 1);
+
+    // A new message at the tail changes nothing above.
+    view.rerender(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={new QueryClient()}>
+          <ChatMessageList
+            messages={[message("m0"), message("m1"), message("m2"), message("m3")]}
+            pendingTask={undefined}
+            availability="online"
+          />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+    expect(virtuosoProbe.firstItemIndexLog.at(-1)).toBe(BASE - 1);
+
+    // A refetch slides the full window down: the oldest row drops off the
+    // top, so the index climbs by one — the viewport stays on the same row.
+    view.rerender(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={new QueryClient()}>
+          <ChatMessageList
+            messages={[message("m1"), message("m2"), message("m3")]}
+            pendingTask={undefined}
+            availability="online"
+          />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+    expect(virtuosoProbe.firstItemIndexLog.at(-1)).toBe(BASE);
+    view.unmount();
+  });
+
+  it("does not charge the hidden onboarding kickoff as a prepended row", () => {
+    virtuosoProbe.firstItemIndexLog.length = 0;
+    const view = renderWithMessages([message("m1"), message("m2")]);
+    expect(virtuosoProbe.firstItemIndexLog.at(-1)).toBe(BASE);
+
+    // Loading the session's first page adds two raw rows, but the kickoff
+    // never renders: only ONE rendered row is prepended, so the index drops
+    // by one. Counting raw page messages would over-compensate by a row.
+    view.rerender(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={new QueryClient()}>
+          <ChatMessageList
+            messages={[
+              { ...message("kickoff"), message_kind: "onboarding_kickoff" },
+              message("m0"),
+              message("m1"),
+              message("m2"),
+            ]}
+            pendingTask={undefined}
+            availability="online"
+          />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+    expect(virtuosoProbe.firstItemIndexLog.at(-1)).toBe(BASE - 1);
+    view.unmount();
   });
 });
 

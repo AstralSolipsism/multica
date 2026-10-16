@@ -279,11 +279,11 @@ export function ChatPage() {
           messages={c.messages}
           pendingTask={c.pendingTask}
           availability={c.availability}
-          firstItemIndex={c.firstItemIndex}
           hasOlderMessages={c.hasOlderMessages}
           isFetchingOlderMessages={c.isFetchingOlderMessages}
           onLoadOlderMessages={() => void c.fetchOlderMessages()}
           onQuickAction={(action) => c.handleSend(action.prompt)}
+          resumeFollowNonce={c.resumeFollowNonce}
           quickActionsDisabled={
             !!c.pendingTaskId ||
             c.isSessionArchived ||

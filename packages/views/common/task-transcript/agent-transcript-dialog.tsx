@@ -560,10 +560,11 @@ export function AgentTranscriptDialog({
   // native scroll anchoring (`overflow-anchor: none`), so without compensation
   // every 500ms flush shifts the reading position. Virtuoso's contract: a
   // decrease of firstItemIndex by N anchors the viewport across an N-item
-  // prepend, and the value must never increase within an instance — counting
-  // down from a large base satisfies that while the list only grows. Sort,
-  // filter, or task changes can shrink the list, so `listEpoch` remounts the
-  // instance (fresh at top) instead of letting firstItemIndex climb.
+  // prepend. (An increase is likewise defined — Virtuoso treats it as rows
+  // removed from the top, which the chat list's window anchor relies on; this
+  // list simply never needs it, because sort, filter, or task changes shrink
+  // the list wholesale, so `listEpoch` remounts the instance (fresh at top)
+  // instead of letting firstItemIndex climb.)
   const firstItemIndex =
     sortDirection === "newest_first" ? 1_000_000 - displayRows.length : 0;
   const listEpoch = `${task.id}:${sortDirection}:${activeFilterKeys.join(",")}:${trimmedQuery}`;

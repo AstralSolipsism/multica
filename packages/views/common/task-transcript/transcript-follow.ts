@@ -16,15 +16,21 @@
 //   motion, including touch momentum and fractional drag frames.
 // - Attributed displacement ACCUMULATES until the reader returns to the live
 //   end; it does not expire with the gesture and pins do not erase it. A
-//   trackpad flick and five discrete wheel notches at reading pace both cross
-//   the same threshold, and repeated sub-threshold attempts against a fast
+//   trackpad flick and a single discrete wheel notch both cross the same
+//   release threshold, and repeated sub-threshold attempts against a fast
 //   stream eventually win instead of being re-pinned forever.
 // - While following, displacement not attributed to the reader is pinned
 //   straight back to the live end (`onScroll` / `onResize` return the
 //   verdict) — immediately, with no intent-window timer for a final event to
 //   hide behind — but never during an active touch or while the mouse is held
 //   down (text selection autoscroll must not be fought).
-// - Arriving back within the edge zone re-engages the follow.
+// - Re-engaging does not depend on which input device brought the reader
+//   back: any confirmed motion to the live end (distance zero) re-engages —
+//   a wheel/touch/key scroll, or a scrollbar drag, which only ever releases
+//   on AWAY motion — and so does arriving back within the edge zone from
+//   outside it. The release threshold sits INSIDE that zone, so a release can
+//   happen without the zone ever being left; the at-edge transition alone
+//   cannot cover re-engagement (OL-272 review).
 //
 // The state machine is direction-agnostic: callers feed it away-positive
 // input deltas and the current distance from THEIR live end (`scrollTop` for
@@ -46,11 +52,32 @@ const MOTION_SETTLE_WINDOW_MS = 300;
 // WheelEvent.deltaMode 1 (lines) / 2 (pages) conversion.
 export const LINE_SCROLL_PX = 40;
 
+// How much reader-attributed displacement releases the follow. Deliberately
+// smaller than FOLLOW_EDGE_THRESHOLD: the edge zone forgives sloppy GEOMETRY
+// (scrollHeight estimates, scroll anchoring), while this judges INTENT. One
+// discrete wheel notch is ~100px on Windows/Linux Chrome and less on macOS, so
+// a 120px release used to swallow the first notch — the reader scrolled, a
+// settling row (image decode, code highlight) grew the content, and the pin
+// yanked them back to the live end (OL-272). One line of scrolling is small
+// enough that a real notch escapes on the first frame and large enough that a
+// trackpad brush (a few px) stays forgiven. Attributed displacement still
+// accumulates across pins, so sub-threshold attempts add up and win.
+export const FOLLOW_RELEASE_THRESHOLD = LINE_SCROLL_PX;
+
 export interface LiveEndFollow {
   /** Whether the surface is live; everything is inert while inactive. */
   setActive(active: boolean): void;
   /** New list instance (task/sort/filter change): back to following. */
   reset(): void;
+  /**
+   * The reader arrived back at the live end: follow again and forget every
+   * staged/confirmed motion claim. Unlike `reset`, physical input state (held
+   * mouse, active touch) is left alone — arriving at the end does not change
+   * what the reader's hand is doing. Called by the latch's own return paths
+   * and by surfaces on an explicit "back to the live end" action (e.g. the
+   * reader just SENT a message, OL-272 review).
+   */
+  reengage(): void;
   isFollowing(): boolean;
   /** Explicit navigation away from the live end (e.g. segment click). */
   disengage(): void;
@@ -119,24 +146,33 @@ export function createLiveEndFollow(now: () => number = () => Date.now()): LiveE
   const pinVerdict = (distance: number): boolean =>
     following && !mouseHeld && !scrollbarDrag && !touchHeld && distance > 0;
 
+  // Back at the live end: follow again and forget every staged/confirmed
+  // motion claim, so a stale claim cannot leak into whatever happens next.
+  // Held-input state (mouse, touch) is NOT positional — the reader's hand is
+  // still wherever it physically is — so it survives, unlike in `reset`.
+  const reengage = () => {
+    following = true;
+    awayBudget = 0;
+    towardBudget = 0;
+    awayTaken = 0;
+    motionDirection = 0;
+    motionSource = null;
+    motionCarry = 0;
+  };
+
   return {
     setActive(a: boolean) {
       active = a;
     },
     reset() {
-      following = true;
-      awayBudget = 0;
-      towardBudget = 0;
-      awayTaken = 0;
+      reengage();
       lastDistance = 0;
       mouseHeld = false;
       scrollbarDrag = false;
       touchHeld = false;
-      motionDirection = 0;
-      motionSource = null;
-      motionCarry = 0;
       lastMotionAt = -MOTION_SETTLE_WINDOW_MS;
     },
+    reengage,
     isFollowing: () => active && following,
     disengage() {
       if (active) following = false;
@@ -174,22 +210,26 @@ export function createLiveEndFollow(now: () => number = () => Date.now()): LiveE
     },
     onAtEdgeChange(atEdge: boolean) {
       if (!active || !atEdge) return;
-      following = true;
-      awayBudget = 0;
-      towardBudget = 0;
-      awayTaken = 0;
-      motionDirection = 0;
-      motionSource = null;
-      motionCarry = 0;
+      reengage();
     },
     onScroll(distance: number): boolean {
       if (!active) return false;
       const moved = distance - lastDistance;
       lastDistance = distance;
-      // A scrollbar drag is fully user-controlled: absolute position is the
-      // user's displacement, so the plain threshold applies.
+      // A scrollbar drag is fully user-controlled, and the thumb's absolute
+      // position is the reader's displacement — but judged DIRECTIONALLY:
+      // only moving away past the release threshold releases, and reaching
+      // the live end re-engages. Judging by absolute position would re-release
+      // on every frame of the way back (the release threshold sits inside the
+      // edge zone, and re-entering that zone has just re-engaged the follow on
+      // this same event), and a drag that stayed inside the zone could never
+      // re-engage at all (OL-272 review).
       if (scrollbarDrag) {
-        if (distance > FOLLOW_EDGE_THRESHOLD) following = false;
+        if (distance === 0) {
+          reengage();
+        } else if (moved > 0 && distance > FOLLOW_RELEASE_THRESHOLD) {
+          following = false;
+        }
         return false;
       }
       // Motion already confirmed in this direction continues without a new
@@ -209,7 +249,7 @@ export function createLiveEndFollow(now: () => number = () => Date.now()): LiveE
           if (motionSource !== "touch") motionCarry = Math.max(0, motionCarry - moved);
           awayTaken += moved;
           lastMotionAt = now();
-          if (following && awayTaken > FOLLOW_EDGE_THRESHOLD) following = false;
+          if (following && awayTaken > FOLLOW_RELEASE_THRESHOLD) following = false;
           return false;
         }
       } else if (moved < 0 && motionDirection === -1 && (touchHeld || motionFresh())) {
@@ -221,15 +261,7 @@ export function createLiveEndFollow(now: () => number = () => Date.now()): LiveE
           if (motionSource !== "touch") motionCarry = Math.max(0, motionCarry + moved);
           awayTaken = Math.max(0, awayTaken + moved);
           lastMotionAt = now();
-          if (distance === 0) {
-            following = true;
-            awayBudget = 0;
-            towardBudget = 0;
-            awayTaken = 0;
-            motionDirection = 0;
-            motionSource = null;
-            motionCarry = 0;
-          }
+          if (distance === 0) reengage();
           return false;
         }
       }
@@ -245,7 +277,7 @@ export function createLiveEndFollow(now: () => number = () => Date.now()): LiveE
           // claim after the first, so carry its remainder into the motion.
           motionCarry = awayBudget;
           lastMotionAt = now();
-          if (following && awayTaken > FOLLOW_EDGE_THRESHOLD) following = false;
+          if (following && awayTaken > FOLLOW_RELEASE_THRESHOLD) following = false;
           return false;
         }
       } else if (moved < 0 && inputFresh() && towardBudget > 0) {
@@ -257,13 +289,7 @@ export function createLiveEndFollow(now: () => number = () => Date.now()): LiveE
           motionSource = touchHeld ? "touch" : "input";
           motionCarry = towardBudget;
           lastMotionAt = now();
-          if (distance === 0) {
-            following = true;
-            awayBudget = 0;
-            towardBudget = 0;
-            awayTaken = 0;
-            motionDirection = 0;
-          }
+          if (distance === 0) reengage();
           return false;
         }
       }

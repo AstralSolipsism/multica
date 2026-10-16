@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
-import { createLiveEndFollow, FOLLOW_EDGE_THRESHOLD } from "./transcript-follow";
+import { createLiveEndFollow, FOLLOW_EDGE_THRESHOLD, FOLLOW_RELEASE_THRESHOLD } from "./transcript-follow";
 
 function makeFollow(startAt = 0) {
   let t = startAt;
@@ -50,10 +50,12 @@ describe("createLiveEndFollow", () => {
     expect(follow.isFollowing()).toBe(true);
   });
 
-  it("keeps following a notch whose scroll animates across several frames", () => {
+  it("a notch whose scroll animates across several frames is fully attributed and releases", () => {
     // The wiring drops the claim after one frame, so a browser-animated wheel
     // scroll spends the rest through the motion it already confirmed. Capping
     // that at the unspent claim is what keeps the case above from counting.
+    // The notch totals 100px — past the one-line release threshold — so the
+    // follow lets go mid-animation (OL-272).
     const { follow, tick } = makeFollow();
     tick(1000);
     follow.input(100);
@@ -62,9 +64,9 @@ describe("createLiveEndFollow", () => {
     follow.endInputFrame();
     tick(16);
     expect(follow.onScroll(80)).toBe(false);
+    expect(follow.isFollowing()).toBe(false); // 80px of confirmed reader motion
     tick(16);
     expect(follow.onScroll(100)).toBe(false);
-    expect(follow.isFollowing()).toBe(true); // 100px is inside the zone
   });
 
   it("keeps following when an animated notch lands on uneven fractional frames", () => {
@@ -140,12 +142,12 @@ describe("createLiveEndFollow", () => {
   it("counts the surface's fractional touch displacement", () => {
     const { follow } = makeFollow();
     follow.touchStart();
-    follow.input(80);
-    expect(follow.onScroll(80.5)).toBe(false);
+    follow.input(20);
+    expect(follow.onScroll(20.5)).toBe(false);
     expect(follow.isFollowing()).toBe(true);
     follow.touchEnd();
 
-    expect(follow.onScroll(120.25)).toBe(false);
+    expect(follow.onScroll(45.25)).toBe(false);
     expect(follow.isFollowing()).toBe(false);
   });
 
@@ -156,34 +158,54 @@ describe("createLiveEndFollow", () => {
     expect(follow.onScroll(300)).toBe(false);
   });
 
-  it("releases for wheel notches spaced past the intent window", () => {
-    // A discrete mouse wheel at reading pace: one notch per event, far more
-    // than the window apart. Attributed displacement accumulates across
-    // gestures, so pacing and device units cannot defeat the threshold.
+  it("accumulates wheel notches spaced past the intent window", () => {
+    // A gentle wheel at reading pace: one small tick per event, far more than
+    // the window apart. Attributed displacement accumulates across gestures,
+    // so pacing and device units cannot defeat the release.
     const { follow, tick } = makeFollow();
-    follow.input(100);
-    expect(follow.onScroll(100)).toBe(false); // notch 1: 100px taken
+    follow.input(30);
+    expect(follow.onScroll(30)).toBe(false); // tick 1: 30px taken, sub-threshold
+    expect(follow.isFollowing()).toBe(true);
     tick(500);
-    follow.input(100);
-    expect(follow.onScroll(200)).toBe(false); // notch 2: 200px taken, released
+    follow.input(30);
+    expect(follow.onScroll(60)).toBe(false); // tick 2: 60px taken, released
     expect(follow.isFollowing()).toBe(false);
   });
 
+  it("releases on the first full wheel notch, and settling content cannot pull back", () => {
+    // OL-272: right after opening a session, rows keep settling (images
+    // decoding, code highlighting) and every growth used to pin the reader
+    // back until they had scrolled past the whole 120px edge zone — the first
+    // notch (~100px on Windows/Linux Chrome) was visibly undone. One line of
+    // confirmed displacement releases now, and later growth leaves them alone.
+    const { follow } = makeFollow();
+    follow.input(100); // one Windows/Linux Chrome notch
+    expect(follow.onScroll(100)).toBe(false);
+    expect(follow.isFollowing()).toBe(false);
+    expect(follow.onResize(400)).toBe(false); // an image decodes below the fold
+    expect(follow.onResize(700)).toBe(false); // and another
+  });
+
+  it("keeps following through a sub-line trackpad brush", () => {
+    const { follow } = makeFollow();
+    follow.input(12);
+    expect(follow.onScroll(12)).toBe(false);
+    expect(follow.isFollowing()).toBe(true);
+    expect(follow.onResize(300)).toBe(true); // settling content still pins
+    expect(follow.isFollowing()).toBe(true);
+  });
+
   it("accumulates displacement across pins during a fast stream", () => {
-    // Sub-threshold notches each answered by a chunk that pins the reader
+    // Sub-threshold ticks each answered by a chunk that pins the reader
     // back: the taken displacement survives the pins, so persistence wins
     // instead of losing every round.
     const { follow, tick } = makeFollow();
-    follow.input(60);
-    expect(follow.onScroll(60)).toBe(false);
+    follow.input(30);
+    expect(follow.onScroll(30)).toBe(false);
     tick(400);
     expect(follow.onResize(240)).toBe(true); // chunk pins back
-    follow.input(60);
-    expect(follow.onScroll(60)).toBe(false);
-    tick(400);
-    expect(follow.onResize(240)).toBe(true); // chunk pins back again
-    follow.input(60);
-    follow.onScroll(60); // 180px taken in total
+    follow.input(30);
+    expect(follow.onScroll(30)).toBe(false); // 60px taken in total
     expect(follow.isFollowing()).toBe(false);
   });
 
@@ -242,18 +264,18 @@ describe("createLiveEndFollow", () => {
     const { follow, tick } = makeFollow();
     follow.input(300); // never confirmed by a scroll
     tick(1000);
-    follow.input(60); // fresh gesture, sub-threshold on its own
-    expect(follow.onScroll(60)).toBe(false);
+    follow.input(30); // fresh gesture, sub-threshold on its own
+    expect(follow.onScroll(30)).toBe(false);
     expect(follow.isFollowing()).toBe(true);
   });
 
   it("a mixed-direction gesture counts its net movement, not its pushes", () => {
     const { follow } = makeFollow();
-    follow.input(100);
-    follow.input(-90);
-    follow.input(100);
-    // The surface only net-moved 110: attribution is capped by movement.
-    expect(follow.onScroll(110)).toBe(false);
+    follow.input(20);
+    follow.input(-15);
+    follow.input(20);
+    // The surface only net-moved 25: attribution is capped by movement.
+    expect(follow.onScroll(25)).toBe(false);
     expect(follow.isFollowing()).toBe(true);
   });
 
@@ -262,7 +284,7 @@ describe("createLiveEndFollow", () => {
     follow.input(100); // never confirmed
     tick(1000);
     expect(follow.onScroll(300)).toBe(true); // whole shift is the system's: pin
-    follow.input(100); // fresh gesture: 100 <= threshold on its own
+    follow.input(100); // fresh gesture: input alone never releases
     expect(follow.isFollowing()).toBe(true);
   });
 
@@ -275,14 +297,107 @@ describe("createLiveEndFollow", () => {
     expect(follow.isFollowing()).toBe(true);
   });
 
-  it("scrollbar drag past the threshold disengages", () => {
+  it("scrollbar drag past the release threshold disengages", () => {
     const { follow } = makeFollow();
     follow.pointerDown(true);
-    expect(follow.onScroll(80)).toBe(false); // still in zone
+    expect(follow.onScroll(30)).toBe(false); // within a line of the live end
     expect(follow.isFollowing()).toBe(true);
-    follow.onScroll(200);
+    follow.onScroll(80);
     expect(follow.isFollowing()).toBe(false);
     follow.pointerUp();
+  });
+
+  it("releases a scrollbar drag only past the release threshold, never exactly at it", () => {
+    // Boundary contract (OL-272 review): exactly one line of displacement —
+    // a deltaMode=1 line scroll, one ArrowDown — stays forgiven; one pixel
+    // past it is intent.
+    const { follow } = makeFollow();
+    follow.pointerDown(true);
+    follow.onScroll(FOLLOW_RELEASE_THRESHOLD);
+    expect(follow.isFollowing()).toBe(true);
+    follow.onScroll(FOLLOW_RELEASE_THRESHOLD + 1);
+    expect(follow.isFollowing()).toBe(false);
+    follow.pointerUp();
+  });
+
+  it("forgives exactly one line of wheel scrolling, releases one pixel past it", () => {
+    // Same boundary on the input-attribution branch, in two gestures so the
+    // second is judged on its own (OL-272 review).
+    const { follow, tick } = makeFollow();
+    follow.input(FOLLOW_RELEASE_THRESHOLD);
+    expect(follow.onScroll(FOLLOW_RELEASE_THRESHOLD)).toBe(false);
+    expect(follow.isFollowing()).toBe(true);
+    tick(400); // the gesture settles; the taken displacement still counts
+    follow.input(1);
+    expect(follow.onScroll(FOLLOW_RELEASE_THRESHOLD + 1)).toBe(false);
+    expect(follow.isFollowing()).toBe(false);
+  });
+
+  it("re-engages when a short scrollbar drag returns to the live end", () => {
+    // OL-272 review regression: with the release threshold inside the edge
+    // zone, a drag that never leaves the zone releases but could not
+    // re-engage — the old absolute-position branch had no way back.
+    const { follow } = makeFollow();
+    follow.pointerDown(true);
+    follow.onScroll(100); // dragged up 100px: released
+    expect(follow.isFollowing()).toBe(false);
+    follow.onScroll(50); // on the way back: toward motion never re-releases
+    expect(follow.isFollowing()).toBe(false);
+    follow.onScroll(0); // the thumb reaches the end: following again
+    expect(follow.isFollowing()).toBe(true);
+    follow.pointerUp();
+    expect(follow.onResize(180)).toBe(true); // growth pins again
+  });
+
+  it("does not re-release when a long scrollbar drag re-enters the edge zone", () => {
+    // OL-272 review regression: re-entering the zone re-engages
+    // (onAtEdgeChange), and the SAME scroll event then continues through the
+    // latch. The old absolute-position branch saw 40 < distance <= 120 and
+    // released again on every frame of the way back.
+    const { follow } = makeFollow();
+    follow.pointerDown(true);
+    follow.onScroll(500);
+    expect(follow.isFollowing()).toBe(false);
+    follow.onAtEdgeChange(true); // the surface reports re-entering the zone
+    expect(follow.onScroll(110)).toBe(false); // the same event, toward the end
+    expect(follow.isFollowing()).toBe(true);
+    follow.onScroll(30);
+    expect(follow.isFollowing()).toBe(true);
+    follow.onScroll(0);
+    expect(follow.isFollowing()).toBe(true);
+    follow.pointerUp();
+    expect(follow.onResize(180)).toBe(true); // growth pins again
+  });
+
+  it("re-entering the edge zone forgets earlier displacement, so a sub-line nudge is forgiven", () => {
+    // OL-272 review (RM6): re-engagement must clear the accumulated reader
+    // displacement — otherwise the next small nudge inside the zone would
+    // release on the strength of an EARLIER excursion.
+    const { follow } = makeFollow();
+    follow.input(200);
+    follow.onScroll(200);
+    expect(follow.isFollowing()).toBe(false);
+
+    follow.onAtEdgeChange(true); // scrolled back into the zone: re-engaged…
+    expect(follow.onScroll(110)).toBe(true); // …and the surface pins to the end
+    follow.onScroll(0); // the pin lands
+
+    follow.input(12);
+    expect(follow.onScroll(12)).toBe(false);
+    expect(follow.isFollowing()).toBe(true); // 12px on this visit stays forgiven
+  });
+
+  it("reengage keeps held-pointer state (a send must not fight a selection drag)", () => {
+    // OL-272 review (RM10): the chat list's send-resume rides reengage(); its
+    // pin lands unconditionally, but later growth must not be pinned while
+    // the reader's mouse is still down.
+    const { follow } = makeFollow();
+    follow.pointerDown(false);
+    follow.reengage();
+    expect(follow.isFollowing()).toBe(true);
+    expect(follow.onScroll(600)).toBe(false); // held mouse still suppresses pins
+    follow.pointerUp();
+    expect(follow.onScroll(600)).toBe(true); // released: enforcement resumes
   });
 
   it("never pins while the mouse is held on row content (text selection autoscroll)", () => {

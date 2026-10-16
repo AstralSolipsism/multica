@@ -188,9 +188,6 @@ export function seedAcceptedPendingTask(
   qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
 }
 
-const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
-
-
 /**
  * Layout-agnostic chat controller. Holds every piece of chat conversation
  * state and behavior — agent resolution, session lookup, the await-then-render
@@ -244,13 +241,6 @@ export function useChatController(opts?: { isActive?: boolean }) {
   const showSkeleton =
     !!activeSessionId && (messagesLoading || pendingTaskLoading);
   const messages = hideQueuedChatMessages(allMessages, pendingTask);
-  const olderMessageCount = messagePages
-    .slice(1)
-    .reduce((sum, page) => sum + page.messages.length, 0);
-  const firstItemIndex =
-    messages.length > 0
-      ? CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX - olderMessageCount
-      : 0;
   const pendingTaskId = pendingTask?.task_id ?? null;
   const stopRequestedBeforeTaskRef = useRef(false);
   // Durable deferred-cancellation draft restores (#5219). The whole lifecycle —
@@ -276,6 +266,9 @@ export function useChatController(opts?: { isActive?: boolean }) {
   // chat starts. Bumped by handleNewChat / handleStartNewChat only, so
   // selecting an existing chat or a deep link never steals focus.
   const [focusInputRequest, setFocusInputRequest] = useState(0);
+  // Bump-on-send nonce handed to ChatMessageList: an accepted send re-engages
+  // the live-end follow and jumps to the reader's own bubble (OL-272 review).
+  const [resumeFollowNonce, setResumeFollowNonce] = useState(0);
   const requestInputFocus = useCallback(
     () => setFocusInputRequest((n) => n + 1),
     [],
@@ -655,6 +648,15 @@ export function useChatController(opts?: { isActive?: boolean }) {
         setActiveSession(sessionId);
       }
       commitInput?.({ extraDraftKeys: [sessionId], clearEditor: stillOnSourceSession });
+      // An accepted send re-engages the live-end follow: the follow now
+      // releases after one line of upward scrolling (OL-272), so a reader who
+      // peeked up slightly before sending would otherwise have their own
+      // bubble and the streaming reply grow silently below the fold. Only when
+      // still on the source session, though: the nonce is controller-level
+      // state while the list mounts per session, so a mid-send navigation
+      // must not let THIS send yank the session the reader is looking at now
+      // (OL-272 review).
+      if (stillOnSourceSession) setResumeFollowNonce((n) => n + 1);
 
       if (stopRequestedBeforeTaskRef.current) {
         stopRequestedBeforeTaskRef.current = false;
@@ -875,7 +877,6 @@ export function useChatController(opts?: { isActive?: boolean }) {
     pendingTaskId,
     showSkeleton,
     hasMessages,
-    firstItemIndex,
     hasOlderMessages: !!hasOlderMessages,
     isFetchingOlderMessages,
     fetchOlderMessages,
@@ -884,6 +885,8 @@ export function useChatController(opts?: { isActive?: boolean }) {
     handleRestoreDraftApplied,
     // compose-box focus nonce (bumped on new chat)
     focusInputRequest,
+    // live-end follow resume nonce (bumped on accepted send)
+    resumeFollowNonce,
     conversationStarterRequest,
     handleConversationStarterApplied,
     prefillConversationStarter,

@@ -96,7 +96,6 @@ import { useLocale, useT } from "../../i18n";
 
 const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
-const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
 
 
 export function ChatWindow() {
@@ -140,9 +139,10 @@ export function ChatWindow() {
   // When no active session, always show empty — don't use stale cache.
   // Page 0 contains the latest chronological window; later cursor pages are
   // older chronological windows. Reverse pages so older fetched pages render
-  // above the initial latest page. The Virtuoso firstItemIndex is client-owned:
-  // it starts from a large stable base and only subtracts the count of loaded
-  // prepended rows, so concurrent server inserts cannot drift the scroll anchor.
+  // above the initial latest page. The Virtuoso firstItemIndex is owned by
+  // ChatMessageList itself, tracked by row identity (chat-message-window.ts):
+  // page-boundary arithmetic cannot tell a real prepend from a refetch that
+  // only slid the cursor boundaries (OL-272).
   const messagePages = activeSessionId ? rawMessagePages?.pages ?? [] : [];
   const allMessages = [...messagePages].reverse().flatMap((page) => page.messages);
   // Skeleton only shows for an un-cached session fetch. Cached switches
@@ -159,13 +159,6 @@ export function ChatWindow() {
   const showSkeleton =
     !!activeSessionId && (messagesLoading || pendingTaskLoading);
   const messages = hideQueuedChatMessages(allMessages, pendingTask);
-  const olderMessageCount = messagePages.slice(1).reduce(
-    (sum, page) => sum + page.messages.length,
-    0,
-  );
-  const firstItemIndex = messages.length > 0
-    ? CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX - olderMessageCount
-    : 0;
   const pendingTaskId = pendingTask?.task_id ?? null;
   const stopRequestedBeforeTaskRef = useRef(false);
   // Durable deferred-cancellation draft restores (#5219). Same hook as the chat
@@ -197,6 +190,9 @@ export function ChatWindow() {
     id: number;
     content: string;
   } | null>(null);
+  // Bump-on-send nonce handed to ChatMessageList: an accepted send re-engages
+  // the live-end follow and jumps to the reader's own bubble (OL-272 review).
+  const [resumeFollowNonce, setResumeFollowNonce] = useState(0);
   const nextConversationStarterRequestIdRef = useRef(0);
   const prefillConversationStarter = useCallback(
     (prompt: string) => {
@@ -587,6 +583,15 @@ export function ChatWindow() {
         setActiveSession(sessionId);
       }
       commitInput?.({ extraDraftKeys: [sessionId], clearEditor: stillOnSourceSession });
+      // An accepted send re-engages the live-end follow: the follow now
+      // releases after one line of upward scrolling (OL-272), so a reader who
+      // peeked up slightly before sending would otherwise have their own
+      // bubble and the streaming reply grow silently below the fold. Only when
+      // still on the source session, though: the nonce is window-level state
+      // while the list mounts per session, so a mid-send navigation must not
+      // let THIS send yank the session the reader is looking at now (OL-272
+      // review).
+      if (stillOnSourceSession) setResumeFollowNonce((n) => n + 1);
 
       if (stopRequestedBeforeTaskRef.current) {
         stopRequestedBeforeTaskRef.current = false;
@@ -943,11 +948,11 @@ export function ChatWindow() {
           messages={messages}
           pendingTask={pendingTask}
           availability={availability}
-          firstItemIndex={firstItemIndex}
           hasOlderMessages={!!hasOlderMessages}
           isFetchingOlderMessages={isFetchingOlderMessages}
           onLoadOlderMessages={() => void fetchOlderMessages()}
           onQuickAction={(action) => handleSend(action.prompt)}
+          resumeFollowNonce={resumeFollowNonce}
           quickActionsDisabled={
             !!pendingTaskId ||
             isSessionArchived ||

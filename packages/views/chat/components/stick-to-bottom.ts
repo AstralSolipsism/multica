@@ -19,8 +19,9 @@ import {
 // scroll position and direction alone cannot separate a reader leaving the
 // live end from the browser moving the viewport on its own (a scrollTop clamp
 // after the composer collapses, scroll anchoring), so the latch judges intent
-// from accumulated input deltas and releases only past FOLLOW_EDGE_THRESHOLD —
-// the same forgiveness the list grants Virtuoso via `atBottomThreshold`.
+// from accumulated input deltas and releases past FOLLOW_RELEASE_THRESHOLD —
+// one line of scrolling, so the first real wheel notch escapes even while
+// freshly-opened content is still settling (OL-272).
 //
 // Input is staged, and only the list's own scroll promotes it: rows contain
 // nested scrollers (capped `overflow-auto` code blocks) whose wheel/touch
@@ -94,6 +95,13 @@ export interface StickToBottom {
   isFollowing(): boolean;
   /** Wire to Virtuoso's `totalListHeightChanged`: the content resized. */
   onContentHeightChanged(): void;
+  /**
+   * Re-engage the follow and jump to the live end. Used when the reader
+   * SENDS a message: their own bubble and the streaming reply must not land
+   * silently below the fold just because they had scrolled up a notch
+   * (OL-272 review). Not a reader-action override — nothing else calls it.
+   */
+  resumeLiveEnd(): void;
   /**
    * False until the newest message has actually arrived at the bottom of the
    * viewport. Keep the list hidden until then: Virtuoso opens it by scrolling
@@ -255,6 +263,10 @@ export function useStickToBottom(
       const nowAtEdge = isAtLiveEnd(scrollEl);
       if (nowAtEdge !== atEdge) {
         atEdge = nowAtEdge;
+        // Edge transitions are reported BEFORE the scroll itself: re-entering
+        // the zone re-engages the follow, and the latch must then judge this
+        // same event by its DIRECTION (a scrollbar drag on the way back must
+        // not re-release — the release threshold sits inside the zone).
         follow.onAtEdgeChange(nowAtEdge);
       }
       // The list itself moved: this is what promotes staged input.
@@ -296,12 +308,23 @@ export function useStickToBottom(
     };
   }, [scrollEl, follow, pin, onResize]);
 
+  const resumeLiveEnd = useCallback(() => {
+    // reengage, not reset: the pin below goes to the end unconditionally (an
+    // accepted send always lands there — even for a reader mid-selection or
+    // mid-touch), but their held-input state must SURVIVE it, so the growth
+    // that follows the send cannot fight a selection autoscroll or an active
+    // touch (OL-272 review).
+    follow.reengage();
+    pin();
+  }, [follow, pin]);
+
   return useMemo(
     () => ({
       isFollowing: () => follow.isFollowing(),
       onContentHeightChanged: onResize,
+      resumeLiveEnd,
       hasReachedLiveEnd,
     }),
-    [follow, onResize, hasReachedLiveEnd],
+    [follow, onResize, resumeLiveEnd, hasReachedLiveEnd],
   );
 }
