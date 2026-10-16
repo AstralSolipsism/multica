@@ -30,6 +30,7 @@ import {
   dagViewportExtent,
   dagViewportTargets,
   sameDagViewport,
+  type DagFirstOpenAnchor,
 } from "./dag-viewport";
 import { dagSceneFlowNodes, dagSceneFocusSet, type DagCanvasFlowNode, type DagCanvasModel, type DagFocusSet } from "./dag-scene-flow";
 import type { DagSceneGeometry, DagScenePlan } from "./dag-scene";
@@ -52,7 +53,7 @@ import {
 } from "./dag-highlight";
 import { dagExternalNodeId } from "./dag-scene";
 import { dagProjectColor } from "./dag-project-colors";
-import { DAG_CLICK_CYCLE_MS, DAG_GROUP_HEADER_HEIGHT, DAG_MOTION_MIN_ZOOM, DAG_SIMPLIFIED_HYSTERESIS, DAG_SIMPLIFIED_ZOOM } from "./dag-constants";
+import { DAG_CLICK_CYCLE_MS, DAG_FIT_VIEW_PADDING, DAG_GROUP_HEADER_HEIGHT, DAG_MOTION_MIN_ZOOM, DAG_SIMPLIFIED_HYSTERESIS, DAG_SIMPLIFIED_ZOOM } from "./dag-constants";
 import { usePrefersReducedMotion } from "./use-prefers-reduced-motion";
 
 const nodeTypes = {
@@ -197,10 +198,25 @@ export function DagSceneCanvasInner({
     storeApi.getState().setDagViewportFor(viewportKey, bounded);
   }, [boundedViewport, getViewport, setViewport, storeApi, viewportKey]);
 
+  // First open of a level with no saved viewport: fit the whole scene, or —
+  // when it no longer fits one screen at a readable zoom — open at the
+  // readable zoom anchored at the scene start, so a large scene's first
+  // paint never shrinks into plain blocks.
+  const fitFirstOpen = useCallback(
+    (anchor: DagFirstOpenAnchor) => {
+      const firstOpen = dagFirstOpenViewport(
+        dagSceneContentBounds(geometry),
+        { width: canvasWidth, height: canvasHeight },
+        anchor,
+      );
+      if (firstOpen) void setViewport(firstOpen);
+      else void fitView({ padding: DAG_FIT_VIEW_PADDING, maxZoom: 1 });
+    },
+    [geometry, canvasWidth, canvasHeight, setViewport, fitView],
+  );
+
   // Level switches restore that level's remembered viewport; a level opened
-  // for the first time fits its content — or, when the content no longer
-  // fits one screen at a readable zoom, opens at the readable zoom anchored
-  // at the scene start instead of shrinking everything into plain blocks.
+  // for the first time fits its content (see fitFirstOpen).
   const appliedViewportKey = useRef<string | null>(null);
   useEffect(() => {
     if (!viewportInitialized || appliedViewportKey.current === viewportKey) return;
@@ -213,14 +229,8 @@ export function DagSceneCanvasInner({
       void setViewport(stored);
       return;
     }
-    const firstOpen = dagFirstOpenViewport(
-      dagSceneContentBounds(geometry),
-      { width: canvasWidth, height: canvasHeight },
-      level.kind === "overview" ? "start" : "flow",
-    );
-    if (firstOpen) void setViewport(firstOpen);
-    else void fitView({ padding: 0.15, maxZoom: 1 });
-  }, [viewportKey, viewportInitialized, geometry, focusRequest, level.kind, setViewport, fitView, storeApi, canvasWidth, canvasHeight]);
+    fitFirstOpen(level.kind === "overview" ? "start" : "flow");
+  }, [viewportKey, viewportInitialized, focusRequest, level.kind, setViewport, storeApi, fitFirstOpen]);
 
   // Data refreshes keep the viewport but pull it back inside the content.
   useEffect(() => {
@@ -250,15 +260,7 @@ export function DagSceneCanvasInner({
       : focusRequest.id;
     const box = geometry.nodes[targetId] ?? geometry.frames[targetId];
     if (!box) {
-      if (level.kind === "focus") {
-        const firstOpen = dagFirstOpenViewport(
-          dagSceneContentBounds(geometry),
-          { width: canvasWidth, height: canvasHeight },
-          "flow",
-        );
-        if (firstOpen) void setViewport(firstOpen);
-        else void fitView({ padding: 0.15, maxZoom: 1 });
-      }
+      if (level.kind === "focus") fitFirstOpen("flow");
       return;
     }
     storeApi.getState().setDagSelectedNodeId(targetId);
@@ -269,7 +271,7 @@ export function DagSceneCanvasInner({
     void setViewport(level.kind === "focus"
       ? { x: (size?.width ?? canvasWidth) / 2 - (box.x + box.width / 2) * zoom, y: (size?.height ?? canvasHeight) / 2 - (box.y + box.height / 2) * zoom, zoom }
       : { x: 24 - box.x * zoom, y: 24 - box.y * zoom, zoom });
-  }, [focusRequest, geometry, level, plan, canvasWidth, canvasHeight, getViewport, setViewport, fitView, storeApi, viewportInitialized]);
+  }, [focusRequest, geometry, level, plan, canvasWidth, canvasHeight, getViewport, setViewport, storeApi, viewportInitialized, fitFirstOpen]);
 
   // The bus dropdown's 定位: center the dependency's painted endpoints.
   useEffect(() => {

@@ -25,6 +25,10 @@ export const DAG_SIMPLIFIED_ZOOM = 0.4;
  *  the edge-motion floor at 0.5), low enough that more of the scene stays on
  *  screen than at zoom 1 (OL-451). */
 export const DAG_FIRST_OPEN_ZOOM = 0.75;
+/** fitView padding for a fit-all first open; dag-viewport mirrors it to
+ *  decide whether fitView would land at or above the first-open zoom, so the
+ *  two must move together. */
+export const DAG_FIT_VIEW_PADDING = 0.15;
 /** Hysteresis band for leaving the simplified view: zooming in and out
  *  across the threshold would otherwise rebuild every card on each crossing. */
 export const DAG_SIMPLIFIED_HYSTERESIS = 0.04;

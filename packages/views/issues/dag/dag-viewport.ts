@@ -1,6 +1,7 @@
 import type { CoordinateExtent, Rect, Viewport } from "@xyflow/react";
 import {
   DAG_FIRST_OPEN_ZOOM,
+  DAG_FIT_VIEW_PADDING,
   DAG_GROUP_HEADER_HEIGHT,
   DAG_GROUP_HEADER_MAX_WIDTH,
 } from "./dag-constants";
@@ -92,9 +93,9 @@ export type DagFirstOpenAnchor = "start" | "flow";
 /**
  * First-open viewport for a level with no saved viewport. Returns null when
  * the scene fits at the readable zoom — the caller then keeps its historical
- * fitView (padding 0.15, maxZoom 1), which lands at or above the readable
- * zoom. Otherwise the scene opens at the readable zoom anchored at its
- * start, so a large scene's first paint never drops to the unreadable
+ * fitView (padding DAG_FIT_VIEW_PADDING, maxZoom 1), which lands at or above
+ * the readable zoom. Otherwise the scene opens at the readable zoom anchored
+ * at its start, so a large scene's first paint never drops to the unreadable
  * simplified blocks (OL-451).
  */
 export function dagFirstOpenViewport(
@@ -106,12 +107,12 @@ export function dagFirstOpenViewport(
 ): Viewport | null {
   if (!bounds || size.width <= 0 || size.height <= 0 || bounds.width <= 0 || bounds.height <= 0)
     return null;
-  // Mirrors xyflow's scalar fitView padding: with padding 0.15 the fit zoom
-  // is min((width - 2*px)/bounds.width, (height - 2*py)/bounds.height) where
-  // px = floor((width - width/1.15)/2). The caller's fitView then reaches at
+  // Mirrors xyflow's scalar fitView padding: with padding p the fit zoom is
+  // min((width - 2*px)/bounds.width, (height - 2*py)/bounds.height) where
+  // px = floor((width - width/(1+p))/2). The caller's fitView then reaches at
   // least the readable zoom exactly when this verdict says the scene fits.
-  const padX = Math.floor((size.width - size.width / 1.15) * 0.5);
-  const padY = Math.floor((size.height - size.height / 1.15) * 0.5);
+  const padX = Math.floor((size.width - size.width / (1 + DAG_FIT_VIEW_PADDING)) * 0.5);
+  const padY = Math.floor((size.height - size.height / (1 + DAG_FIT_VIEW_PADDING)) * 0.5);
   const fitZoom = Math.min(
     (size.width - 2 * padX) / bounds.width,
     (size.height - 2 * padY) / bounds.height,
