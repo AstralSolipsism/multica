@@ -1567,4 +1567,81 @@ describe("DagSceneCanvas first-open viewport (OL-451)", () => {
     expect(store.getState().dagSelectedNodeId).toBeNull();
   });
 });
+describe("DagSceneCanvas lit-route masking (OL-451)", () => {
+  /** A→C with M between them: the lit route crosses M's box (and its text). */
+  function crossingFixture() {
+    const graph = makeGraph(
+      [
+        makeNode("r1", { title: "Line one" }),
+        makeNode("a", { parentIssueId: "r1" }),
+        makeNode("m", { parentIssueId: "r1" }),
+        makeNode("c", { parentIssueId: "r1" }),
+      ],
+      [{ id: "a-c", source: "a", target: "c" }],
+    );
+    const line = computeDagLine(createDagModelIndex(graph), "r1")!;
+    const plan = dagLineLayoutInput(line);
+    const geometry: DagSceneGeometry = {
+      nodes: {
+        a: { x: 60, y: 40, width: 248, height: 116 },
+        m: { x: 360, y: 40, width: 248, height: 116 },
+        c: { x: 660, y: 40, width: 248, height: 116 },
+      },
+      frames: {
+        r1: { x: 0, y: 0, width: 980, height: 220, bands: [], stageMode: "labels" },
+      },
+      ports: {
+        a: { input: { x: 60, y: 98 }, output: { x: 308, y: 98 } },
+        m: { input: { x: 360, y: 98 }, output: { x: 608, y: 98 } },
+        c: { input: { x: 660, y: 98 }, output: { x: 908, y: 98 } },
+      },
+      routes: { "a-c": [{ x: 308, y: 98 }, { x: 660, y: 98 }] },
+      segments: [{ id: "s0", start: { x: 308, y: 98 }, end: { x: 660, y: 98 }, edgeIds: ["a-c"] }],
+      junctions: [],
+      width: 980,
+      height: 220,
+      quality: "elk",
+    };
+    return { model: { kind: "line" as const, line }, plan, geometry };
+  }
 
+  it("masks lit routes behind every card box so they cannot strike through text", async () => {
+    const { store } = harness(crossingFixture());
+    await waitFor(() => expect(nodeOf("a")).toBeTruthy());
+    fireEvent.click(nodeOf("a"));
+    expect(store.getState().dagSelectedNodeId).toBe("a");
+    await waitFor(() => expect(litRouteGroups()).toBe(1));
+    const cuts = new Map(
+      [...document.querySelectorAll("[data-dag-route-mask-cut]")].map((el) => [
+        el.getAttribute("data-dag-route-mask-cut"),
+        el,
+      ]),
+    );
+    // Every card and the frame header strip is cut out of the lit paint.
+    for (const id of ["a", "m", "c", "r1"]) expect(cuts.has(id)).toBe(true);
+    // The crossed card m: the cut covers its box (inset by 2).
+    const mCut = cuts.get("m")!;
+    expect(Number(mCut.getAttribute("x"))).toBe(362);
+    expect(Number(mCut.getAttribute("y"))).toBe(42);
+    expect(Number(mCut.getAttribute("width"))).toBe(244);
+    expect(Number(mCut.getAttribute("height"))).toBe(112);
+    const headerCut = cuts.get("r1")!;
+    expect(Number(headerCut.getAttribute("height"))).toBe(76 - 4);
+    // The lit group paints through that mask.
+    const litGroup = document.querySelector("[data-dag-overlay-layer] > g[mask]")!;
+    expect(litGroup.getAttribute("mask")).toContain("url(#");
+    expect(litGroup.querySelector('[data-dag-lit-edge="a-c"]')).toBeTruthy();
+  });
+
+  it("drops the mask in the simplified view, where cards carry no text", async () => {
+    const { flow } = harness(abxyFixture());
+    await waitFor(() => expect(nodeOf("y")).toBeTruthy());
+    fireEvent.click(nodeOf("y"));
+    await waitFor(() => expect(litRouteGroups()).toBe(2));
+    expect(document.querySelector("[data-dag-route-mask-cut]")).not.toBeNull();
+    await flow().setViewport({ x: 0, y: 0, zoom: 0.3 });
+    await waitFor(() => expect(document.querySelector("[data-dag-ghost-blocks]")).toBeTruthy());
+    expect(litRouteGroups()).toBe(2);
+    expect(document.querySelector("[data-dag-route-mask-cut]")).toBeNull();
+  });
+});
