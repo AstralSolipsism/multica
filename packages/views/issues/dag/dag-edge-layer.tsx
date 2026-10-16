@@ -264,6 +264,16 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
 
   const dimmed = highlightedEdgeIds != null;
   const dimNodes = litBoxes != null && litBoxes.length > 0;
+  // Both overlay masks must declare their region explicitly: the
+  // userSpaceOnUse default (-10%/-10%/120%/120% of the viewport) resolves to
+  // ABSOLUTE coordinates that do not follow the windowed viewBox origin, so
+  // about one screen past the canvas origin every masked paint would be
+  // clipped away (OL-451 review; the dim mask carried the same latent defect
+  // since OL-284). One shared window rect feeds the mask regions and their
+  // white bases.
+  const windowRect = bounds
+    ? { x: bounds.x0, y: bounds.y0, width: bounds.x1 - bounds.x0, height: bounds.y1 - bounds.y0 }
+    : { x: 0, y: 0, width: geometry.width, height: geometry.height };
   // Lit routes repaint ABOVE the cards, so a route crossing a card would
   // strike through its text (the OL-284 leftover, OL-451). The lit group
   // paints through a mask cutting every card box (inset a hair, so port
@@ -560,14 +570,15 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
         {dimNodes && (
           <>
             <defs>
-              <mask id={maskId} maskUnits="userSpaceOnUse">
-                <rect
-                  x={bounds ? bounds.x0 : 0}
-                  y={bounds ? bounds.y0 : 0}
-                  width={bounds ? bounds.x1 - bounds.x0 : geometry.width}
-                  height={bounds ? bounds.y1 - bounds.y0 : geometry.height}
-                  fill="white"
-                />
+              <mask
+                id={maskId}
+                maskUnits="userSpaceOnUse"
+                x={windowRect.x}
+                y={windowRect.y}
+                width={windowRect.width}
+                height={windowRect.height}
+              >
+                <rect {...windowRect} fill="white" />
                 {litBoxes!.map((box) => (
                   <rect
                     key={box.id}
@@ -584,10 +595,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
             </defs>
             <rect
               data-dag-dim-overlay
-              x={bounds ? bounds.x0 : 0}
-              y={bounds ? bounds.y0 : 0}
-              width={bounds ? bounds.x1 - bounds.x0 : geometry.width}
-              height={bounds ? bounds.y1 - bounds.y0 : geometry.height}
+              {...windowRect}
               fill="var(--background)"
               fillOpacity={0.75}
               mask={`url(#${maskId})`}
@@ -596,14 +604,15 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
         )}
         {routeMaskCuts && (
           <defs>
-            <mask id={routeMaskId} maskUnits="userSpaceOnUse">
-              <rect
-                x={bounds ? bounds.x0 : 0}
-                y={bounds ? bounds.y0 : 0}
-                width={bounds ? bounds.x1 - bounds.x0 : geometry.width}
-                height={bounds ? bounds.y1 - bounds.y0 : geometry.height}
-                fill="white"
-              />
+            <mask
+              id={routeMaskId}
+              maskUnits="userSpaceOnUse"
+              x={windowRect.x}
+              y={windowRect.y}
+              width={windowRect.width}
+              height={windowRect.height}
+            >
+              <rect {...windowRect} fill="white" />
               {routeMaskCuts.map((cut) => (
                 <rect
                   key={cut.id}

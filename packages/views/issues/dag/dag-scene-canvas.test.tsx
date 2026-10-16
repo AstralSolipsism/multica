@@ -14,6 +14,7 @@ import { renderWithI18n } from "../../test/i18n";
 import { DagSceneCanvasInner, type DagSceneCanvasProps } from "./dag-scene-canvas";
 import { dagFocusCanvasModel } from "./dag-scene-flow";
 import { fallbackDagScene } from "./dag-scene-fallback";
+import { dagCullBounds, dagCullBoundsKey } from "./dag-highlight";
 import { dagLineLayoutInput, dagOverviewLayoutInput } from "./dag-scene-inputs";
 import type { DagSceneGeometry } from "./dag-scene";
 import { graphNode as makeNode, issueGraph as makeGraph } from "./dag-test-fixtures";
@@ -1643,5 +1644,37 @@ describe("DagSceneCanvas lit-route masking (OL-451)", () => {
     await waitFor(() => expect(document.querySelector("[data-dag-ghost-blocks]")).toBeTruthy());
     expect(litRouteGroups()).toBe(2);
     expect(document.querySelector("[data-dag-route-mask-cut]")).toBeNull();
+  });
+
+  it("declares both overlay mask regions as the culling window (far-pan regression)", async () => {
+    const { flowStore } = harness(crossingFixture());
+    await waitFor(() => expect(nodeOf("a")).toBeTruthy());
+    fireEvent.click(nodeOf("a"));
+    await waitFor(() => expect(litRouteGroups()).toBe(1));
+    const state = flowStore().getState();
+    const win = dagCullBounds(
+      dagCullBoundsKey(state.transform, { width: state.width, height: state.height }),
+    )!;
+    expect(win).toBeTruthy();
+    // A userSpaceOnUse mask without an explicit region defaults to
+    // -10%/-10%/120%/120% of the viewport — ABSOLUTE coordinates that do not
+    // follow the windowed viewBox origin, so a pan one screen past the
+    // canvas origin clips every masked paint (lit routes here, the dim
+    // overlay since OL-284). The region must be the culling window itself.
+    const masks = [...document.querySelectorAll("[data-dag-overlay-layer] mask")];
+    const routeMask = masks.find((el) => el.querySelector("[data-dag-route-mask-cut]"))!;
+    const dimMask = masks.find((el) => el.querySelector("[data-dag-dim-hole]"))!;
+    for (const mask of [routeMask, dimMask]) {
+      expect(mask.hasAttribute("x")).toBe(true);
+      expect(mask.hasAttribute("y")).toBe(true);
+      expect(mask.hasAttribute("width")).toBe(true);
+      expect(mask.hasAttribute("height")).toBe(true);
+      expect([
+        Number(mask.getAttribute("x")),
+        Number(mask.getAttribute("y")),
+        Number(mask.getAttribute("width")),
+        Number(mask.getAttribute("height")),
+      ]).toEqual([win.x0, win.y0, win.x1 - win.x0, win.y1 - win.y0]);
+    }
   });
 });
