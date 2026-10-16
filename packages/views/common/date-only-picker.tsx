@@ -129,16 +129,9 @@ function DateOnlyPickerImpl({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      {/* nativeButton: host-element triggerRenders that aren't a <button>
-          take Base UI's non-native path — see PropertyPicker. */}
       <PopoverTrigger
         className={triggerRender ? undefined : DATE_TRIGGER_CLASS}
         render={triggerRender}
-        nativeButton={
-          typeof triggerRender?.type === "string" && triggerRender.type !== "button"
-            ? false
-            : undefined
-        }
       >
         {customTrigger ?? (
           <DateTriggerContent

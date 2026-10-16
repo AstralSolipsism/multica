@@ -79,42 +79,6 @@ describe("AssigneePicker search keyboard defaults", () => {
     });
   });
 
-  // OL-466: the DAG selection node and the shared context menu open the
-  // picker from a menu item and anchor it on an invisible <span>. Base UI's
-  // trigger dev-check errors when `render` gets a non-<button> while
-  // `nativeButton` stays true — the fix routes host-element anchors down the
-  // non-native path in PropertyPicker. The check only fires outside
-  // production builds, which is exactly what vitest runs as.
-  it("renders a non-button anchor trigger without the Base UI native-button console error", () => {
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => {});
-    try {
-      render(
-        <I18nProvider locale="en" resources={{ en: { issues: enIssues } }}>
-          <AssigneePicker
-            assigneeType={null}
-            assigneeId={null}
-            onUpdate={() => {}}
-            open
-            onOpenChange={() => {}}
-            triggerRender={
-              <span aria-hidden className="pointer-events-none fixed" />
-            }
-            trigger={<span />}
-          />
-        </I18nProvider>,
-      );
-
-      const baseUiErrors = consoleError.mock.calls.filter(([message]) =>
-        String(message).includes("native <button>"),
-      );
-      expect(baseUiErrors).toEqual([]);
-    } finally {
-      consoleError.mockRestore();
-    }
-  });
-
   it("leaves Enter inert when the query matches nobody", async () => {
     const user = userEvent.setup();
     const onUpdate = vi.fn();

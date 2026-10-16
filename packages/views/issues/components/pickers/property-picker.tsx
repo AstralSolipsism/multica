@@ -189,13 +189,15 @@ export function PropertyPicker({
   // <button> takes the non-native path. Component triggers (PillButton,
   // Button, ClearablePillButton) forward the merged props onto a real
   // <button> and keep the default.
-  const nonButtonHostTrigger =
-    typeof triggerRender?.type === "string" && triggerRender.type !== "button";
+  const nativeButton =
+    typeof triggerRender?.type === "string" && triggerRender.type !== "button"
+      ? false
+      : undefined;
   const popoverTrigger = (
     <PopoverTrigger
       className={triggerRender ? undefined : PICKER_TRIGGER_CLASS}
       render={triggerRender}
-      nativeButton={nonButtonHostTrigger ? false : undefined}
+      nativeButton={nativeButton}
     >
       {trigger}
     </PopoverTrigger>

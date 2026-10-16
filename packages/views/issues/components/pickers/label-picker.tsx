@@ -205,12 +205,12 @@ export function LabelPicker({
 
   // In a custom trigger (PillButton) the trigger is itself a button, so the
   // chips can't carry their own remove button. Otherwise fall back to the
-  // chip-wrap div used by the issue-detail sidebar.
+  // chip-wrap div used by the issue-detail sidebar. role="combobox" (matching
+  // create-squad's member picker) keeps Base UI's non-native trigger path
+  // from stamping role="button" over a container whose chips hold their own
+  // remove buttons — nested interactives inside a button role.
   const resolvedTriggerRender =
-    triggerRender ??
-    (hasLabels ? (
-      <div className="flex flex-wrap items-center gap-1 cursor-pointer rounded-xs px-1 -mx-1 hover:bg-accent/30 transition-colors" />
-    ) : undefined);
+    triggerRender ?? (hasLabels ? <div role="combobox" className="flex flex-wrap items-center gap-1 cursor-pointer rounded-xs px-1 -mx-1 hover:bg-accent/30 transition-colors" /> : undefined);
 
   return (
     <div className="flex flex-col gap-1.5">
