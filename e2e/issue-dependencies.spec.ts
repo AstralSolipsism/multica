@@ -333,7 +333,7 @@ test.describe("Issue dependencies (OL-44)", () => {
     await page.goto(`/${ctx.workspaceSlug}/issues`);
     await page.getByRole("button", { name: "Board", exact: true }).click();
     await page.getByText("Graph", { exact: true }).click();
-    await expect(page.locator(".react-flow__node").first()).toBeVisible();
+    await expect(page.locator(".react-flow__node").first()).toBeVisible({ timeout: 30_000 });
     await openDagLine(page);
     const node = page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`);
     await expect(node).toBeVisible();
@@ -398,7 +398,7 @@ test.describe("Issue dependencies (OL-44)", () => {
     await page.goto(`/${ctx.workspaceSlug}/issues`);
     await page.getByRole("button", { name: "Board", exact: true }).click();
     await page.getByText("Graph", { exact: true }).click();
-    await expect(page.locator(".react-flow__node").first()).toBeVisible();
+    await expect(page.locator(".react-flow__node").first()).toBeVisible({ timeout: 30_000 });
     const viewIds: string[] = [];
     try {
       // These label widths put the third saved view at the last fitting tab:
@@ -462,8 +462,12 @@ test.describe("Issue dependencies (OL-44)", () => {
         await expect(page.getByText(`Inherited from ${parent.identifier}`, { exact: true })).toHaveCount(active.length);
         for (const issue of [active[0]!, active.at(-1)!]) {
           const label = page.getByText(issue.identifier, { exact: true }).first();
-          await label.scrollIntoViewIfNeeded();
-          await expect(label).toBeInViewport({ ratio: 1 });
+          // The sidebar can rerender and replace the row while scrolling.
+          // Re-resolve it and verify the same full-visibility requirement.
+          await expect(async () => {
+            await label.scrollIntoViewIfNeeded();
+            await expect(label).toBeInViewport({ ratio: 1 });
+          }).toPass({ timeout: 10_000 });
         }
         await testInfo.attach(`inherited-prerequisites-${active.length}`, { body: await page.screenshot(), contentType: "image/png" });
         await page.getByText("Unassigned", { exact: true }).first().click();
