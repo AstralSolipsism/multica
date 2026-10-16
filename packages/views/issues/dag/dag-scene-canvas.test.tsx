@@ -1533,6 +1533,36 @@ describe("DagSceneCanvas first-open viewport (OL-451)", () => {
     expect(document.querySelector("[data-dag-ghost-blocks]")).toBeNull();
   });
 
+  it("anchors a wide-but-short overview at its top-left, never vertically centered", async () => {
+    const base = overviewFixture();
+    const geometry: DagSceneGeometry = {
+      ...base.geometry,
+      nodes: {
+        "issue:r1": { x: 0, y: 0, width: 280, height: 140 },
+        "issue:r2": { x: 5720, y: 160, width: 280, height: 140 },
+      },
+      ports: {
+        "issue:r1": { input: { x: 0, y: 70 }, output: { x: 280, y: 70 } },
+        "issue:r2": { input: { x: 5720, y: 230 }, output: { x: 6000, y: 230 } },
+      },
+      routes: {
+        [BUNDLE]: [
+          { x: 280, y: 70 },
+          { x: 3000, y: 70 },
+          { x: 3000, y: 230 },
+          { x: 5720, y: 230 },
+        ],
+      },
+      width: 6000,
+      height: 300,
+    };
+    harness({ ...base, geometry });
+    await waitFor(() => expect(screen.getByText("Line one")).toBeInTheDocument());
+    // Bounds (0,0,6000,300): the cross axis would fit at 0.75 — a line would
+    // center it, but the overview must start at its top-left corner.
+    await waitFor(() => expect(readTransform()).toBe("translate(24px,24px) scale(0.75)"));
+  });
+
   it("anchors a huge focus scene at the readable zoom when the focused task is hidden", async () => {
     const line = lineFixture();
     const model = dagFocusCanvasModel(computeDagFocus(createDagModelIndex(makeGraph([
@@ -1564,6 +1594,9 @@ describe("DagSceneCanvas first-open viewport (OL-451)", () => {
       expect(viewport.zoom).toBe(0.75);
       // The remaining scene starts at the left edge instead of shrinking away.
       expect(viewport.x).toBe(24 - 3900 * 0.75);
+      // Bounds (3900,40,6000,400): the cross axis fits at 0.75, so a focus
+      // scene centers it — never top-anchored like the overview.
+      expect(viewport.y).toBe(450 - (40 + 200) * 0.75);
     });
     expect(store.getState().dagSelectedNodeId).toBeNull();
   });
