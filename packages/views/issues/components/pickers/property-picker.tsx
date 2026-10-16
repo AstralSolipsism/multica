@@ -180,10 +180,24 @@ export function PropertyPicker({
     [getItems, highlightedIndex],
   );
 
+  // Base UI's trigger expects a real <button> in `render` unless
+  // `nativeButton={false}` opts into the non-native path (role="button" +
+  // synthesized Enter/Space). Some `triggerRender` callers pass a plain host
+  // element instead — the DAG selection node and the shared context menu
+  // anchor their menu-opened pickers on invisible spans, and the label
+  // picker wraps its chips in a div — so any host element other than
+  // <button> takes the non-native path. Component triggers (PillButton,
+  // Button, ClearablePillButton) forward the merged props onto a real
+  // <button> and keep the default.
+  const nativeButton =
+    typeof triggerRender?.type === "string" && triggerRender.type !== "button"
+      ? false
+      : undefined;
   const popoverTrigger = (
     <PopoverTrigger
       className={triggerRender ? undefined : PICKER_TRIGGER_CLASS}
       render={triggerRender}
+      nativeButton={nativeButton}
     >
       {trigger}
     </PopoverTrigger>
