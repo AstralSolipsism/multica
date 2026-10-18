@@ -20,7 +20,7 @@ import (
 
 const (
 	antigravityQuotaProvider  = "antigravity"
-	antigravityQuotaURL       = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+	antigravityQuotaURL       = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
 	antigravityOAuthTokenFile = ".gemini/antigravity-cli/antigravity-oauth-token"
 )
 
@@ -86,18 +86,18 @@ func (c *antigravityPlanQuotaCollector) collect(ctx context.Context, version str
 	if err != nil {
 		return nil, err
 	}
-	// Verified against agy 1.2.16: metadata fields cause HTTP 400, and a
-	// generic or missing User-Agent causes HTTP 403 ("no valid license").
-	// Reverified against 1.3.0 with the summary endpoint (OL-141): an empty
-	// body is accepted and no project id is required. A failing summary
-	// round is never retried against the legacy per-model endpoint — the
-	// collector stays fail-closed so the platform keeps the last snapshot.
+	// Verified against agy 1.4.2 (OL-846): the daily host and native
+	// antigravity/cli identity select the client's current quota view.
+	// The old host returns HTTP 200 with stale quotas; the old
+	// antigravity-cli identity on the daily host omits Gemini entirely.
+	// Keep the empty body (no project id) and never fall back to another
+	// host or the legacy per-model endpoint on failure.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, strings.NewReader("{}"))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("User-Agent", "antigravity-cli/"+version)
+	req.Header.Set("User-Agent", "antigravity/cli/"+version)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.client.Do(req)
 	if err != nil {

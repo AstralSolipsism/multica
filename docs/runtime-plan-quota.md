@@ -114,13 +114,15 @@ response formats are present; wallet balances never enter the snapshot.
 
 ## Antigravity
 
-The daemon polls `POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`
+The daemon polls `POST https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`
 with the exact JSON body `{}` (no project id required) and
-`User-Agent: antigravity-cli/<detected version>`. This is the internal Google
-API the Antigravity client's own usage page reads; it was verified live
-against agy 1.3.0 in OL-141 on both `cloudcode-pa` and `daily-cloudcode-pa`
-(identical answers, so the daemon keeps `cloudcode-pa`). The response lists
-quota pools under `groups[]`, one bucket per pool and window:
+`User-Agent: antigravity/cli/<detected version>`. The version is extracted from
+CLI discovery rather than pinned. Both the host and the native CLI identity
+are required: the agy 1.4.2 investigation in OL-846 found that `cloudcode-pa`
+returned HTTP 200 with a different, stagnant Gemini quota view, while
+`daily-cloudcode-pa` with the former `antigravity-cli/` identity omitted Gemini.
+Only the corrected pair matched the client's percentages and reset times.
+The response lists quota pools under `groups[]`, one bucket per pool and window:
 
 | Response field | Maps to |
 |---|---|
@@ -145,13 +147,14 @@ window name), or a response without any known pool fails the whole round
 (fail-closed): the platform keeps the last successful observation and
 `/health` shows `collection_failed`. A missing or unparsable `resetTime` on
 an otherwise valid bucket is tolerated — the window simply carries no
-reset time. The legacy per-model `retrieveUserQuota` endpoint is no longer
-queried and is never used as a fallback.
+reset time. Neither the `cloudcode-pa` host nor the legacy per-model
+`retrieveUserQuota` endpoint is used as a fallback: a successful HTTP response
+from another quota view does not establish that its data is current.
 
 The access token is read on every round from
 `~/.gemini/antigravity-cli/antigravity-oauth-token`: its `token` object contains
 an `access_token` string (`{"token":{"access_token":"…"}}`); the location was
-reverified unchanged on agy 1.3.0. agy owns token refresh; keep the existing
+reverified unchanged on agy 1.4.2. agy owns token refresh; keep the existing
 `agy remote-control` watchdog active and signed in. The collector does not
 start tasks, refresh credentials or probe local RPC listeners. It sends the
 token only to Google's endpoint and refuses redirects. Neither token nor
@@ -166,13 +169,15 @@ reason.
 
 This is an internal Google API; future CLI upgrades need a live check — the
 capture test below exercises the same endpoints against the signed-in account.
-After deploying the daemon build, verify the Kimi cards on main and agent-2
-and the Antigravity card on GCP show an `observed_at` less than five minutes
-old during normal successful polling; that check is OL-141 acceptance 7 and
-completes OL-113's deployment acceptance. Collector smoke tests below verify
-data acquisition only; UI acceptance also requires the updated daemon's
-heartbeat to reach the server. Rolling back the daemon build restores the
-per-model endpoint and the six-hour inference; no data migration is involved.
+After deploying the daemon build, compare the Antigravity card's remaining
+percentages and reset times with the client for the same account and windows.
+Observe updates during normal task usage, allowing for the two-minute poll
+interval and display rounding. An `observed_at` less than five minutes old
+confirms recent collection, not the accuracy of the selected quota view.
+Collector smoke tests verify data acquisition only; UI acceptance also requires
+the updated daemon's heartbeat to reach the server. Offline fixtures do not
+replace that deployment check. Reverting OL-846 restores the known incorrect
+host/identity pair; no data migration is involved.
 
 ## Zhipu / GLM
 

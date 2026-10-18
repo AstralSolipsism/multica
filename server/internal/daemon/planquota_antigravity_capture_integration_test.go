@@ -24,7 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
-// OL-141 live evidence capture. The goal is to document, against the real
+// Opt-in live evidence capture, originally added for OL-141. Document, against the real
 // Antigravity backend, which host/interface/body/token file the quota windows
 // come from, without changing any collection behavior. Rules carried over from
 // the issue: at most 12 requests with a 1s gap, stop on the first 429, token
@@ -33,8 +33,7 @@ import (
 // printed; every other field is listed by name so the response shape and its
 // casing remain visible. Tokens, full emails, project IDs and raw bodies are
 // never logged. Step [7] additionally runs the production parser over the
-// live summary response, which doubles as the issue's pre-merge acceptance
-// evidence (third step).
+// live summary response from the production host.
 const maxCaptureRequests = 12
 
 var (
@@ -67,7 +66,9 @@ func captureLoadBeijing() *time.Location {
 
 func TestAntigravityQuotaCaptureLive(t *testing.T) {
 	home := livePlanQuotaHome(t)
-	hosts := []string{"cloudcode-pa.googleapis.com", "daily-cloudcode-pa.googleapis.com"}
+	// The first host supplies the platform view in step [7]. Keep it aligned
+	// with the production collector; the other host is diagnostic only.
+	hosts := []string{"daily-cloudcode-pa.googleapis.com", "cloudcode-pa.googleapis.com"}
 	t.Logf("capture started at %s", formatCaptureInstant(time.Now()))
 
 	// [1] agy version (full discovery line plus the semver used in headers).
@@ -180,8 +181,7 @@ func TestAntigravityQuotaCaptureLive(t *testing.T) {
 	}
 
 	// [7] what the platform will show: run the production parser over the
-	// live summary response (this is also the pre-merge acceptance the
-	// issue's step 3 requires).
+	// live summary response from the production host.
 	if platformBody != nil {
 		t.Logf("[7] parseAntigravityQuotaSummary on %s retrieveUserQuotaSummary observed %s", hosts[0], formatCaptureInstant(platformObserved))
 		quota, err := parseAntigravityQuotaSummary(bytes.NewReader(platformBody), platformObserved)
@@ -246,7 +246,7 @@ func (s *captureSession) post(host, apiPath, body string) (int, []byte, bool) {
 	if s.token != "" {
 		req.Header.Set("Authorization", "Bearer "+s.token)
 	}
-	req.Header.Set("User-Agent", "antigravity-cli/"+s.version)
+	req.Header.Set("User-Agent", "antigravity/cli/"+s.version)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := s.client.Do(req)
 	if err != nil {

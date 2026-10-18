@@ -50,7 +50,7 @@ func TestAntigravityCollectorLoopRefreshesHeartbeatsWithoutTasks(t *testing.T) {
 			if round == 2 {
 				status = http.StatusUnauthorized
 			}
-			if round == 3 && (r.Header.Get("Authorization") != "Bearer ya29.refreshed" || r.Header.Get("User-Agent") != "antigravity-cli/1.2.17") {
+			if round == 3 && (r.Header.Get("Authorization") != "Bearer ya29.refreshed" || r.Header.Get("User-Agent") != "antigravity/cli/1.2.17") {
 				t.Error("collector did not reload refreshed token and discovered version")
 			}
 			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"groups":[{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.4,"resetTime":"2031-01-01T00:00:00Z"}]}]}`))}, nil
