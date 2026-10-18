@@ -57,15 +57,15 @@ func TestAntigravityCollectRequestAndTokenRotation(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := calls.Add(1)
-		wantToken, wantVersion := "ya29.first", "1.3.0"
+		wantToken, wantVersion := "ya29.first", "1.4.2"
 		if n == 2 {
-			wantToken, wantVersion = "ya29.refreshed", "1.3.1"
+			wantToken, wantVersion = "ya29.refreshed", "1.4.3"
 		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1internal:retrieveUserQuotaSummary" {
 			t.Errorf("request = %s %s", r.Method, r.URL.Path)
 		}
-		if r.Header.Get("User-Agent") != "antigravity-cli/"+wantVersion {
-			t.Error("missing CLI User-Agent would cause HTTP 403")
+		if r.Header.Get("User-Agent") != "antigravity/cli/"+wantVersion {
+			t.Error("wrong native CLI identity or discovered version")
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
@@ -83,7 +83,7 @@ func TestAntigravityCollectRequestAndTokenRotation(t *testing.T) {
 	c.endpoint = srv.URL + "/v1internal:retrieveUserQuotaSummary"
 	for i, token := range []string{"ya29.first", "ya29.refreshed"} {
 		writeAntigravityTestToken(t, home, token)
-		version := []string{"agy version 1.3.0", "antigravity-cli v1.3.1"}[i]
+		version := []string{"agy version 1.4.2", "antigravity-cli v1.4.3"}[i]
 		started := time.Now().Unix()
 		quota, err := c.collect(context.Background(), version)
 		if err != nil {
@@ -374,13 +374,67 @@ func TestAntigravityQuotaSummaryRejectsDrift(t *testing.T) {
 	}
 }
 
-// The production endpoint is the pool-based summary API this collector is
-// built for; reverting to the legacy per-model endpoint would otherwise pass
-// every unit test.
-func TestAntigravityQuotaEndpointIsSummary(t *testing.T) {
-	const want = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
-	if got := newAntigravityPlanQuotaCollector("").endpoint; got != want {
-		t.Fatalf("endpoint = %q, want %q", got, want)
+// OL-846: both the host and CLI identity select the quota view. All three
+// responses below are HTTP 200 and parse successfully, so parser-only tests
+// cannot catch the wrong view. Fractions match the 1.4.2 capture; timestamps
+// are fictional and the fixtures contain no account data.
+func TestAntigravityCollectSelectsCurrentQuotaView(t *testing.T) {
+	home := t.TempDir()
+	writeAntigravityTestToken(t, home, "ya29.fixture")
+	c := newAntigravityPlanQuotaCollector(home)
+	const thirdParty = `{"buckets":[
+		{"bucketId":"3p-5h","window":"5h","remainingFraction":1},
+		{"bucketId":"3p-weekly","window":"weekly","remainingFraction":1}]}`
+	const currentGemini = `{"buckets":[
+		{"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.7360041,"resetTime":"2031-02-09T00:02:34Z"},
+		{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.83957964,"resetTime":"2031-02-03T11:02:34Z"}]}`
+	const legacyGemini = `{"buckets":[
+		{"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.94166845,"resetTime":"2031-02-03T15:42:41Z"},
+		{"bucketId":"gemini-5h","window":"5h","remainingFraction":1}]}`
+	calls := 0
+	c.client.Transport = antigravityTestTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.Method != http.MethodPost || r.URL.Scheme != "https" || r.URL.Path != "/v1internal:retrieveUserQuotaSummary" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL)
+		}
+		var body string
+		switch r.URL.Host {
+		case "cloudcode-pa.googleapis.com":
+			body = `{"groups":[` + legacyGemini + `,` + thirdParty + `]}`
+		case "daily-cloudcode-pa.googleapis.com":
+			if r.Header.Get("User-Agent") == "antigravity/cli/1.4.2" {
+				body = `{"groups":[` + currentGemini + `,` + thirdParty + `]}`
+			} else {
+				body = `{"groups":[` + thirdParty + `]}`
+			}
+		default:
+			t.Fatalf("unexpected quota host: %s", r.URL.Host)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})
+	quota, err := c.collect(context.Background(), "agy version 1.4.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || quota.Status != protocol.PlanQuotaStatusOK || len(quota.Windows) != 4 {
+		t.Fatalf("requests=%d snapshot=%+v; want one request with both quota pools", calls, quota)
+	}
+	wantUsed := map[string]float64{"gemini_5h": 16.04, "gemini_weekly": 26.40, "claude_gpt_5h": 0, "claude_gpt_weekly": 0}
+	wantResets := map[string]int64{
+		"gemini_5h":     time.Date(2031, 2, 3, 11, 2, 34, 0, time.UTC).Unix(),
+		"gemini_weekly": time.Date(2031, 2, 9, 0, 2, 34, 0, time.UTC).Unix(),
+	}
+	for _, window := range quota.Windows {
+		used, ok := wantUsed[window.Name]
+		if !ok || window.UsedPercent == nil {
+			t.Fatalf("unexpected quota window: %+v", window)
+		}
+		if math.Abs(*window.UsedPercent-used) > 1e-8 {
+			t.Fatalf("window %s used=%.2f, want %.2f; wrong quota view", window.Name, *window.UsedPercent, used)
+		}
+		if reset, ok := wantResets[window.Name]; ok && (window.ResetsAt == nil || *window.ResetsAt != reset) {
+			t.Fatalf("window %s reset=%v, want %d; wrong quota view", window.Name, window.ResetsAt, reset)
+		}
 	}
 }
 
