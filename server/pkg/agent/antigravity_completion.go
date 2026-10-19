@@ -1,6 +1,9 @@
 package agent
 
-import "strings"
+import (
+	"os/exec"
+	"strings"
+)
 
 const antigravityStreamInterruptedError = "The stream was interrupted. Please continue the task you were working on."
 
@@ -17,6 +20,32 @@ type antigravityCompletion struct {
 	steps        map[int]antigravityCompletionStep
 	conversation string
 	invalid      bool
+	pending      []*antigravityStreamStepUpdate
+}
+
+// admit holds resumed snapshots until a user-input boundary establishes their
+// ownership. Streams without a boundary keep their diagnostic output, but may
+// not use the recovery exception. A late boundary cannot prove completion.
+func (c *antigravityCompletion) admit(step *antigravityStreamStepUpdate, resumed bool) bool {
+	if !resumed || c.turnStart != nil {
+		return true
+	}
+	if step.StepType != "user_input" {
+		c.pending = append(c.pending, step)
+		return false
+	}
+	for _, pending := range c.takePending() {
+		if pending.StepIndex == nil || *pending.StepIndex < 0 || step.StepIndex == nil || *pending.StepIndex >= *step.StepIndex {
+			c.invalid = true
+		}
+	}
+	return true
+}
+
+func (c *antigravityCompletion) takePending() []*antigravityStreamStepUpdate {
+	pending := c.pending
+	c.pending = nil
+	return pending
 }
 
 func (c *antigravityCompletion) observeConversation(id string) {
@@ -101,21 +130,55 @@ func (c *antigravityCompletion) completedDespiteError(status, providerError, res
 		// explicit boundary; an arbitrary historical DONE is not evidence.
 		return false
 	}
-	latest := -1
-	for index, step := range c.steps {
-		if index > start && step.kind == "agent_response" && index > latest {
-			latest = index
-		}
-	}
+	latest := c.latestStepIndex("agent_response", start)
 	if latest < 0 || c.steps[latest].state != "DONE" {
 		return false
 	}
-	// Match the final response step to the canonical reply. A nonempty result
-	// alone might be stale or only partial. Multiple response steps whose text
-	// cannot be attributed to this final reply deliberately remain failures.
-	if c.steps[latest].text.String() != response {
+	if !legacy && !c.interruptionRecovered(start, latest, resumed) {
 		return false
 	}
+	// Match the final response step to the canonical reply. A nonempty result
+	// alone might be stale or only partial. agy may append one terminal LF to
+	// the result; preserve all other whitespace and the original output bytes.
+	if strings.TrimSuffix(c.steps[latest].text.String(), "\n") != strings.TrimSuffix(response, "\n") {
+		return false
+	}
+	return c.stepsSettled(start, latest, legacy)
+}
+
+func (c *antigravityCompletion) latestStepIndex(kind string, after int) int {
+	latest := -1
+	for index, step := range c.steps {
+		if index > after && step.kind == kind && index > latest {
+			latest = index
+		}
+	}
+	return latest
+}
+
+func (c *antigravityCompletion) interruptionRecovered(start, latest int, resumed bool) bool {
+	lastError := c.latestStepIndex("error_message", start)
+	if lastError < 0 {
+		// A fresh conversation has no history to carry an old error. DONE
+		// narration before a terminal interruption is not a recovered turn.
+		return resumed
+	}
+	return lastError < latest && !c.hasResponseTextBetween(start, lastError)
+}
+
+func (c *antigravityCompletion) hasResponseTextBetween(start, end int) bool {
+	for index, step := range c.steps {
+		if index > start && index < end && step.kind == "agent_response" && step.text.Len() > 0 {
+			// The last response may only continue an interrupted earlier one.
+			// Without a protocol-level distinction from narration, retain the
+			// failure rather than publish that suffix as a complete answer.
+			return true
+		}
+	}
+	return false
+}
+
+func (c *antigravityCompletion) stepsSettled(start, latest int, legacy bool) bool {
 	for index, step := range c.steps {
 		if index <= start {
 			continue
@@ -131,4 +194,18 @@ func (c *antigravityCompletion) completedDespiteError(status, providerError, res
 		}
 	}
 	return true
+}
+
+// These gates restrict recovery, not the precedence of failure diagnostics.
+func antigravityRecoverableResult(waitErr error, resultSeen, printTimedOut bool, providerError string) bool {
+	if !resultSeen || printTimedOut || providerError != "" {
+		return false
+	}
+	if waitErr == nil {
+		return true
+	}
+	// agy has used both 1 and 3 for provider errors. Signals and other process
+	// failures must not be hidden by an earlier result event.
+	exitErr, ok := waitErr.(*exec.ExitError)
+	return ok && (exitErr.ExitCode() == 1 || exitErr.ExitCode() == 3)
 }

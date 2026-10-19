@@ -28,6 +28,11 @@ Upstream reports also supply independent observations:
 - [CLI issue 1018](https://github.com/google-antigravity/antigravity-cli/issues/1018)
   reports indexed `error_message` steps on genuine current failures. Their position
   is useful; the adapter does not assume an undocumented error payload shape.
+- [Multica PR 8983](https://github.com/multica-ai/multica/pull/8983) includes a
+  capture whose result adds a terminal LF absent from the DONE delta. Comparison
+  therefore removes at most one terminal LF from each side; it does not strip
+  spaces, internal line breaks or arbitrary trailing whitespace. Output bytes
+  remain those supplied by agy.
 
 All new fixtures are synthetic, use invented conversation IDs/text/usage, and
 exercise the actual backend through a fake executable. They are not raw incident
@@ -44,9 +49,17 @@ Recovery requires all of the following:
 2. A completed, indexed `user_input` identifies this invocation's turn. Only the
    old network-error path for a **fresh** conversation may omit this boundary,
    preserving its existing regression fixtures. Resumed runs always require it.
-3. The highest-index current response is DONE. Its collected deltas exactly match
-   the nonempty canonical result response. A result alone, an old DONE, or a
-   partial/newer ACTIVE response is insufficient.
+3. The highest-index current response is DONE. Its collected deltas match the
+   nonempty canonical result response, allowing the single terminal LF described
+   above. A result alone, an old DONE, or a partial/newer ACTIVE response is
+   insufficient. For the interruption message, a **fresh** conversation also
+   requires a current `error_message` between the boundary and final reply: it
+   has no history from which to inherit an error, so DONE narration alone cannot
+   establish recovery. On either a fresh or resumed interruption, any response
+   text between the boundary and the last current error prevents recovery. The
+   latest reply could be only the continuation of that earlier partial text.
+   Narration before an error is intentionally treated the same way; the protocol
+   does not distinguish it from a partial answer.
 4. No step after that response exists except completed checkpoints. Thus a later
    error (even DONE), tool (even DONE), unknown step or ACTIVE checkpoint prevents
    recovery. Earlier error steps may have been recovered by the completed reply.
@@ -56,9 +69,13 @@ Recovery requires all of the following:
 5. There are no ambiguous indices, conflicting kinds, regressing states,
    conflicting terminal deltas, conversation changes, extra turn boundaries,
    malformed stream lines, scanner failures, or events after the terminal result.
-6. Local cancellation/deadlines and agy's logged print timeout take precedence.
-   A current provider-error log prevents recovery. Only normal exits 0 and the
-   provider-error exits 1/3 are eligible; signals and other exit codes are not.
+6. Local cancellation/deadlines take precedence. A logged print timeout or
+   provider error prevents recovery. Only normal exits 0 and the provider-error
+   exits 1/3 are eligible; signals and other exit codes are not. These are gates
+   on recovery, not a reordering of failure diagnostics: structured errors still
+   precede process exit errors, then print timeout, then provider logs. Missing
+   result is the final fallback, so quota errors, FAILED_PRECONDITION details and
+   signal exits retain their actionable cause and daemon classification.
 
 This interprets a known interruption as recovered only after a later complete
 current reply with no subsequent error/work evidence. It relies on agy emitting
@@ -74,6 +91,22 @@ For a protocol that can silently omit error steps, upstream must expose a
 turn-scoped terminal outcome or an error's originating turn/step index; comparing
 message text cannot distinguish two occurrences of the same error. Do not extend
 the workaround based only on a SQLite status or a matching error string.
+
+## Changes to the old network-error exception
+
+The old path is intentionally stricter than the original nonempty-response plus
+latest-DONE check. It now requires canonical/latest-step text equality (apart
+from one terminal LF), no post-response step except DONE checkpoints, a supported
+exit code (0/1/3), no provider-error or print-timeout log, and an explicit boundary
+on resumed runs. Cancellation/other terminal statuses and contradictory stream
+evidence also cannot recover. A concatenation of multiple response steps, a
+provider log repeating the network message, or a completed tool after the reply
+can therefore remain failed where the old adapter reported success.
+
+Only two historical allowances are retained: fresh old-network streams may omit
+the user-input boundary, and earlier ACTIVE work may precede the final response.
+The new interruption path does not receive those allowances. These changes do
+not add more error spellings, including EOF, quota or malformed function calls.
 
 ## Output, usage and ordering
 
@@ -112,7 +145,11 @@ git diff --check
 
 `TestAntigravityBackendCompletionEvidence` covers recovered historical and
 same-turn interruptions, old network errors, replayed history, duplicated DONE
-text/usage, ordered completion, and the failure boundaries above.
+text/usage, ordered completion, split replies, fresh failures and diagnostic
+precedence. Dedicated cases isolate empty DONE/response, a delta-free ACTIVE
+after DONE, a second input followed by a complete reply, a consistently wrong
+resumed conversation, a checkpoint after result, an unknown event before result,
+a null result before a valid result, and usage attached to ACTIVE work.
 `TestAntigravityBackendCompletionHonorsContext` verifies local cancellation and
 timeout even after a complete reply and matching error result. Existing
 Antigravity tool, usage, model, transcript and legacy-network tests remain in the

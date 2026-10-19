@@ -342,7 +342,6 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		streamStepUsage := make(map[int]TokenUsage)
 		streamTools := make(map[int]antigravityToolState)
 		completion := antigravityCompletion{conversation: opts.ResumeSessionID}
-		var pendingSteps []*antigravityStreamStepUpdate
 		resumed := opts.ResumeSessionID != ""
 		resultSeen := false
 		structuredSeen := false
@@ -376,12 +375,11 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 			return true
 		}
 		flushPending := func() bool {
-			for _, step := range pendingSteps {
+			for _, step := range completion.takePending() {
 				if !consumeStep(step) {
 					return false
 				}
 			}
-			pendingSteps = nil
 			return true
 		}
 
@@ -409,18 +407,8 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 						continue
 					}
 					step := event.StepUpdate
-					if resumed && completion.turnStart == nil {
-						if step.StepType != "user_input" {
-							// Hold pre-boundary snapshots until their ownership is known.
-							pendingSteps = append(pendingSteps, step)
-							continue
-						}
-						for _, pending := range pendingSteps {
-							if pending.StepIndex == nil || *pending.StepIndex < 0 || step.StepIndex == nil || *pending.StepIndex >= *step.StepIndex {
-								completion.invalid = true // Missing or out-of-order boundary.
-							}
-						}
-						pendingSteps = nil
+					if !completion.admit(step, resumed) {
+						continue
 					}
 					if !consumeStep(step) {
 						break streamLoop
@@ -477,12 +465,9 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		waitErr := cmd.Wait()
 		releaseProcessGroup(cmd)
 		duration := time.Since(startTime)
-		recoveryExit := waitErr == nil
-		if exitErr, ok := waitErr.(*exec.ExitError); ok {
-			// agy has used both 1 and 3 for provider errors. Signals and other
-			// process failures must not be hidden by an earlier result event.
-			recoveryExit = exitErr.ExitCode() == 1 || exitErr.ExitCode() == 3
-		}
+		printTimedOut := antigravityPrintTimedOut(logPath)
+		providerErr := antigravityProviderError(logPath)
+		recoverable := antigravityRecoverableResult(waitErr, resultSeen, printTimedOut, providerErr)
 
 		sessionID := streamSessionID
 		if sessionID == "" {
@@ -495,17 +480,8 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		} else if runCtx.Err() == context.Canceled {
 			finalStatus = "aborted"
 			finalError = "execution cancelled"
-		} else if antigravityPrintTimedOut(logPath) {
-			finalStatus = "timeout"
-			finalError = fmt.Sprintf(
-				"agy --print-timeout elapsed after %s waiting for the agent response; a long-running command likely outlived the print timeout",
-				antigravityPrintTimeout(timeout),
-			)
-		} else if structuredSeen && !resultSeen {
-			finalStatus = "failed"
-			finalError = "agy stream ended without a result"
 		} else if status := antigravityResultStatus(streamResultStatus); status != "completed" {
-			if recoveryExit && completion.completedDespiteError(streamResultStatus, streamResultError, streamResponse, resumed) && antigravityProviderError(logPath) == "" {
+			if recoverable && completion.completedDespiteError(streamResultStatus, streamResultError, streamResponse, resumed) {
 				b.cfg.Logger.Warn("agy reported a recovered transport error after a completed turn", "err", streamResultError)
 			} else {
 				// Prefer the provider's structured error even when agy also exits
@@ -519,12 +495,23 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		} else if waitErr != nil && finalStatus == "completed" {
 			finalStatus = "failed"
 			finalError = fmt.Sprintf("agy exited with error: %v", waitErr)
-		} else if providerErr := antigravityProviderError(logPath); finalStatus == "completed" && providerErr != "" {
+		} else if printTimedOut {
+			finalStatus = "timeout"
+			finalError = fmt.Sprintf(
+				"agy --print-timeout elapsed after %s waiting for the agent response; a long-running command likely outlived the print timeout",
+				antigravityPrintTimeout(timeout),
+			)
+		} else if providerErr != "" {
 			// agy can also surface terminal model/provider failures only in the
 			// per-run log while exiting 0 with empty stdout. Without promoting
 			// that marker, the daemon records a failed turn as a blank success.
 			finalStatus = "failed"
 			finalError = fmt.Sprintf("agy provider error: %s", providerErr)
+		} else if structuredSeen && !resultSeen {
+			// Missing result is a fallback diagnosis. Preserve an actionable
+			// process/provider failure when the stream was cut short by one.
+			finalStatus = "failed"
+			finalError = "agy stream ended without a result"
 		}
 		if finalError != "" {
 			finalError = withAgentStderr(finalError, "agy", stderrBuf.Tail())
