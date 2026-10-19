@@ -20,8 +20,11 @@ function canOpen(source: string, offset: number): boolean {
 function canClose(source: string, offset: number): boolean {
   const before = source[offset - 1]
   const after = source[offset + 1] ?? ''
+  // A backslash immediately before a line ending is a Markdown hard break,
+  // not a TeX-command opener. A trailing backslash at EOF is still literal.
+  const hardBreak = after === '\\' && /[\r\n]/u.test(source[offset + 2] ?? '')
   return before != null && before !== '\\' && before !== '$' &&
-    !whitespace.test(before) && !closingSuccessor.test(after)
+    !whitespace.test(before) && (hardBreak || !closingSuccessor.test(after))
 }
 
 function validTex(value: string): boolean {

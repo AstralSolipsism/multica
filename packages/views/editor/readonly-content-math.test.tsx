@@ -71,6 +71,7 @@ for (const [name, renderContent] of Object.entries(renderers)) {
       "$x$0",
       "$x$_",
       String.raw`$x$\alpha`,
+      "$x$\\",
     ])("keeps literal text in %s", (content) => {
       const { container } = render(renderContent(content));
       expect(container.querySelector(".katex, .katex-error")).toBeNull();
@@ -81,6 +82,49 @@ for (const [name, renderContent] of Object.entries(renderers)) {
       const { container } = render(renderContent(`$x${newline}y$`));
       expect(container.querySelector(".katex, .katex-error")).toBeNull();
       expect(container.textContent).toBe("$x\ny$");
+    });
+
+    it.each([
+      ["bold", "a $x$ **b**", "x", "a  b"],
+      ["inline code", "$x$ `code`", "x", " code"],
+      ["link", "根据 $E=mc^2$ [参考](https://example.com)", "E=mc^2", "根据  参考"],
+    ])("preserves text-node trailing spaces before %s", (_kind, content, expression, prose) => {
+      const { container } = render(renderContent(content));
+      expect(container.querySelectorAll(".katex")).toHaveLength(1);
+      expect(container.querySelector("annotation")?.textContent).toBe(expression);
+      container.querySelectorAll(".katex").forEach((node) => node.remove());
+      expect(container.textContent).toBe(prose);
+    });
+
+    it.each(["\u3000", "\u00a0"])("preserves Unicode whitespace %j before a line ending", (trailing) => {
+      const { container } = render(renderContent(`第一行 $x$${trailing}\n第二行 $y$`));
+      expect(Array.from(container.querySelectorAll("annotation"), (node) => node.textContent))
+        .toEqual(["x", "y"]);
+      container.querySelectorAll(".katex").forEach((node) => node.remove());
+      expect(container.textContent).toBe(`第一行 ${trailing}\n第二行 `);
+    });
+
+    describe.each(["\n", "\r\n", "\r"])("backslash hard breaks with %j", (newline) => {
+      it.each([
+        [`$x$\\${newline}$y$`, ["x", "y"]],
+        [`公式 $E=mc^2$\\${newline}下一行`, ["E=mc^2"]],
+        [`> $x$\\${newline}> b`, ["x"]],
+      ] as const)("renders math immediately before the break in %s", (content, expressions) => {
+        const { container } = render(renderContent(content));
+        expect(container.querySelectorAll(".katex")).toHaveLength(expressions.length);
+        expect(Array.from(container.querySelectorAll("annotation"), (node) => node.textContent))
+          .toEqual(expressions);
+        expect(container.querySelectorAll("br")).toHaveLength(1);
+        expect(container.querySelector(".katex-error")).toBeNull();
+      });
+    });
+
+    it("does not treat an escaped backslash as a hard-break exception", () => {
+      const { container } = render(renderContent("$x$\\\\\n$y$"));
+      expect(Array.from(container.querySelectorAll("annotation"), (node) => node.textContent))
+        .toEqual(["y"]);
+      container.querySelectorAll(".katex").forEach((node) => node.remove());
+      expect(container.textContent).toBe("$x$\\\n");
     });
 
     describe.each([" ", "\t"])("trailing line whitespace %j", (trailing) => {
