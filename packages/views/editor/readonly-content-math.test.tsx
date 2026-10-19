@@ -81,6 +81,39 @@ for (const [name, renderContent] of Object.entries(renderers)) {
       expect(container.textContent).toBe("$x\ny$");
     });
 
+    describe.each([" ", "\t"])("trailing line whitespace %j", (trailing) => {
+      it.each([
+        ["paragraph", `第一行 $x$${trailing}\n第二行 $y$`, ["x", "y"], "第一行 \n第二行"],
+        ["after bold", `**粗体** $x$${trailing}\n下一行`, ["x"], "粗体 \n下一行"],
+        ["quote", `> $x$${trailing}\n> b`, ["x"], "b"],
+        ["list", `- $x$${trailing}\n  b`, ["x"], "b"],
+        ["quote continuation", `> a\n> $x$${trailing}\n> $y$ b`, ["x", "y"], "a\n\n b"],
+        ["decoded entities", `&amp; $x$ &amp;${trailing}\n$y$ b`, ["x", "y"], "&  &\n b"],
+      ] as const)("renders formulas in a %s", (_context, content, expressions, prose) => {
+        const { container } = render(renderContent(content));
+        expect(container.querySelectorAll(".katex")).toHaveLength(expressions.length);
+        expect(Array.from(container.querySelectorAll("annotation"), (node) => node.textContent))
+          .toEqual(expressions);
+        expect(container.querySelector(".katex-error")).toBeNull();
+        container.querySelectorAll(".katex").forEach((node) => node.remove());
+        expect(container.textContent?.trim()).toBe(prose);
+      });
+    });
+
+    it.each(["\r\n", "\r"])("aligns trimmed text before a %j line ending", (newline) => {
+      const { container } = render(renderContent(`$x$ \t${newline}$y$`));
+      expect(Array.from(container.querySelectorAll("annotation"), (node) => node.textContent))
+        .toEqual(["x", "y"]);
+    });
+
+    it("preserves character-reference whitespace before a line ending", () => {
+      const { container } = render(renderContent("&amp; $x$&#32;\n$y$ b"));
+      expect(Array.from(container.querySelectorAll("annotation"), (node) => node.textContent))
+        .toEqual(["x", "y"]);
+      container.querySelectorAll(".katex").forEach((node) => node.remove());
+      expect(container.textContent).toBe("&  \n b");
+    });
+
     it.each([
       [String.raw`\$x$`, "$x$"],
       [String.raw`$x\$`, "$x$"],

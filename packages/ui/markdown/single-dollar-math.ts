@@ -52,7 +52,12 @@ function splitText(node: Text, source: string): PhrasingContent[] | null {
   for (let lineIndex = 0; lineIndex < rawLines.length; lineIndex++) {
     const raw = rawLines[lineIndex]!
     const value = valueLines[lineIndex]!
-    const decoded = decodeString(raw)
+    // Markdown drops literal spaces/tabs before soft breaks from text values.
+    // Normalize only for alignment, before decoding references: &#32; remains
+    // authored text, and raw source offsets and TeX must stay unchanged.
+    const decoded = decodeString(
+      lineIndex < rawLines.length - 1 ? raw.replace(/[ \t]+$/u, '') : raw,
+    )
     // Continuation lines in lists/quotes include container prefixes in the
     // source range, but not in the text value. Exclude those prefixes. Refuse
     // nodes already rewritten by another plugin when their source won't align.
