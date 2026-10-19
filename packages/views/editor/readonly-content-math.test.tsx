@@ -35,6 +35,7 @@ for (const [name, renderContent] of Object.entries(renderers)) {
       [String.raw`$x_{i} + y_{j}$`, String.raw`x_{i} + y_{j}`],
       [String.raw`$\begin{matrix}a&b\\c&d\end{matrix}$`, String.raw`\begin{matrix}a&b\\c&d\end{matrix}`],
       [String.raw`$\text{cost: \$5}$`, String.raw`\text{cost: \$5}`],
+      [String.raw`$速度=\frac{路程}{时间}$`, String.raw`速度=\frac{路程}{时间}`],
       ["**$x$**", "x"],
       ["> first line\n> $x$", "x"],
       ["- first line\n  $x$", "x"],
@@ -69,6 +70,7 @@ for (const [name, renderContent] of Object.entries(renderers)) {
       "$x$a",
       "$x$0",
       "$x$_",
+      String.raw`$x$\alpha`,
     ])("keeps literal text in %s", (content) => {
       const { container } = render(renderContent(content));
       expect(container.querySelector(".katex, .katex-error")).toBeNull();
@@ -148,6 +150,34 @@ for (const [name, renderContent] of Object.entries(renderers)) {
       expect(container.textContent).toContain("; $bad {$ then ");
       expect(container.textContent).toContain("，");
       expect(container.textContent).toMatch(/\.$/);
+    });
+
+    it.each([
+      [String.raw`价格是$5，面积公式为$\pi r^2$。`, String.raw`\pi r^2`, "价格是$5，面积公式为。"],
+      [String.raw`前文 $HOME/a，然后计算$\sqrt{2}$`, String.raw`\sqrt{2}`, "前文 $HOME/a，然后计算"],
+      [String.raw`售价 $20（含税），面积：$\frac{1}{2}ab$`, String.raw`\frac{1}{2}ab`, "售价 $20（含税），面积："],
+      [String.raw`Pay $5, then compute:$\frac{a}{b}$.`, String.raw`\frac{a}{b}`, "Pay $5, then compute:."],
+    ])("keeps a TeX-command opener separate from preceding prose in %s", (content, expression, prose) => {
+      const { container } = render(renderContent(content));
+      expect(container.querySelectorAll(".katex")).toHaveLength(1);
+      expect(container.querySelector("annotation")?.textContent).toBe(expression);
+      expect(container.querySelector(".katex-error")).toBeNull();
+      container.querySelectorAll(".katex").forEach((node) => node.remove());
+      expect(container.textContent).toBe(prose);
+    });
+
+    // OL-911: the accepted backslash boundary does not disambiguate openers
+    // beginning with '-' or '('. Such prose is valid TeX; retain this known
+    // limitation rather than introducing formula-content heuristics.
+    it.each([
+      [String.raw`成本 $5，增长$-3\%$`, "5，增长", "成本 -3%$"],
+      ["Pay $5, then compute:$(a+b)^2$.", "5, then compute:", "Pay (a+b)^2$."],
+    ])("documents the remaining delimiter ambiguity in %s", (content, expression, prose) => {
+      const { container } = render(renderContent(content));
+      expect(container.querySelectorAll(".katex")).toHaveLength(1);
+      expect(container.querySelector("annotation")?.textContent).toBe(expression);
+      container.querySelectorAll(".katex").forEach((node) => node.remove());
+      expect(container.textContent).toBe(prose);
     });
 
     it("preserves decoded text and container prefixes around formulas", () => {

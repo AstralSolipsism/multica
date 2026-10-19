@@ -5,7 +5,10 @@ import { SKIP, visit } from 'unist-util-visit'
 
 const whitespace = /\s/u
 const openingPredecessor = /[\\$0-9a-zA-Z]/u
-const closingSuccessor = /[$0-9a-zA-Z_]/u
+// OL-911: a dollar before a TeX command must remain available as an opener
+// after a price or environment variable. Openers starting with '(' or '-'
+// remain ambiguous under the accepted lexical rules; TeX accepts prose too.
+const closingSuccessor = /[\\$0-9a-zA-Z_]/u
 
 function canOpen(source: string, offset: number): boolean {
   const before = source[offset - 1] ?? ''
