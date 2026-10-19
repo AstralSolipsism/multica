@@ -41,9 +41,10 @@
     "cmdk": "^1.1.1",
     "emoji-mart": "^5.6.0",
     "input-otp": "^1.4.2",
-    "linkify-it": "^5.0.0",
     "katex": "catalog:",
+    "linkify-it": "^5.0.0",
     "lucide-react": "catalog:",
+    "micromark-util-decode-string": "^2.0.1",
     "next-themes": "^0.4.6",
     "react-day-picker": "^9.14.0",
     "react-markdown": "^10.1.0",
@@ -58,7 +59,8 @@
     "shiki": "^3.21.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "catalog:",
-    "unicode-animations": "catalog:"
+    "unicode-animations": "catalog:",
+    "unist-util-visit": "^5.1.0"
   },
   "peerDependencies": {
     "i18next": "catalog:",
@@ -70,6 +72,7 @@
     "@multica/eslint-config": "workspace:*",
     "@multica/tsconfig": "workspace:*",
     "@types/linkify-it": "^5.0.0",
+    "@types/mdast": "^4.0.4",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "esbuild": "^0.25.12",

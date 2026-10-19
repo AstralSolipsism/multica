@@ -15,6 +15,7 @@ import { preprocessLinks } from './linkify'
 import { preprocessIssueIdentifiers } from './issue-identifiers'
 import { preprocessMentionShortcodes } from './mentions'
 import { markdownSanitizeSchema, markdownUrlTransform } from './sanitize'
+import { remarkSingleDollarMath } from './single-dollar-math'
 import 'katex/dist/katex.min.css'
 import './markdown.css'
 
@@ -423,6 +424,7 @@ export function Markdown({
       <ReactMarkdown
         remarkPlugins={[
           [remarkMath, { singleDollarTextMath: false }],
+          remarkSingleDollarMath,
           remarkBreaks,
           [remarkGfm, { singleTilde: false }],
         ]}

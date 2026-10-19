@@ -9,6 +9,7 @@ export {
 } from './issue-identifiers'
 export { preprocessMentionShortcodes } from './mentions'
 export { markdownSanitizeSchema, markdownUrlTransform } from './sanitize'
+export { remarkSingleDollarMath } from './single-dollar-math'
 export {
   preprocessFileCards,
   isCdnUrl,
