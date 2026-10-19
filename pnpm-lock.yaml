@@ -889,6 +889,9 @@ importers:
       lucide-react:
         specifier: 'catalog:'
         version: 1.0.1(react@19.2.3)
+      micromark-util-decode-string:
+        specifier: ^2.0.1
+        version: 2.0.1
       next-themes:
         specifier: ^0.4.6
         version: 0.4.6(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -943,6 +946,9 @@ importers:
       unicode-animations:
         specifier: 'catalog:'
         version: 1.0.3
+      unist-util-visit:
+        specifier: ^5.1.0
+        version: 5.1.0
     devDependencies:
       '@multica/eslint-config':
         specifier: workspace:*
@@ -953,6 +959,9 @@ importers:
       '@types/linkify-it':
         specifier: ^5.0.0
         version: 5.0.0
+      '@types/mdast':
+        specifier: ^4.0.4
+        version: 4.0.4
       '@types/react':
         specifier: ^19.2.0
         version: 19.2.14

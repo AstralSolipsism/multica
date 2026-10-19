@@ -48,6 +48,7 @@ import {
   isIssueIdentifier,
   markdownSanitizeSchema,
   markdownUrlTransform,
+  remarkSingleDollarMath,
 } from "@multica/ui/markdown";
 import {
   resolveClickIntent,
@@ -473,6 +474,7 @@ const COMPONENTS: Partial<Components> = {
 // being silenced.
 const REMARK_PLUGINS = [
   [remarkMath, { singleDollarTextMath: false }],
+  remarkSingleDollarMath,
   remarkBreaks,
   [remarkGfm, { singleTilde: false }],
   remarkCjkFriendly,
