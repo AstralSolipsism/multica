@@ -8,6 +8,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestExternalConversationRejectedWakeupRecovers(t *testing.T) {
@@ -203,11 +204,23 @@ func TestExternalConversationBacklogKeepsCauseWithoutPolling(t *testing.T) {
 				t.Fatal(err)
 			}
 			for i := 0; i < 3; i++ {
-				ready, err := s.Tasks.Queries.ListReadyWakeups(ctx, []pgtype.UUID{policyUUID(t, testWorkspaceID)})
+				input, err := s.Tasks.Queries.ListInputWakeups(ctx, db.ListInputWakeupsParams{
+					WorkspaceIds: []pgtype.UUID{policyUUID(t, testWorkspaceID)},
+					SkipIds:      []pgtype.UUID{},
+					RowLimit:     1000,
+				})
 				if err != nil {
 					t.Fatal(err)
 				}
-				for _, w := range ready {
+				due, err := s.Tasks.Queries.ListDueWakeups(ctx, db.ListDueWakeupsParams{
+					WorkspaceIds: []pgtype.UUID{policyUUID(t, testWorkspaceID)},
+					SkipIds:      []pgtype.UUID{},
+					RowLimit:     1000,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, w := range append(input, due...) {
 					if w.IssueID == policyUUID(t, parent) {
 						t.Fatal("parked parent still occupies scheduler batch")
 					}

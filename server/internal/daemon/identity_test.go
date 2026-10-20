@@ -13,9 +13,7 @@ import (
 
 func TestEnsureDaemonID_Persists(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	// daemon.id is asserted under $HOME/.multica; a daemon-injected task
-	// config root would redirect cli.ProfileDir elsewhere.
+	redirectTestHome(t, home)
 	t.Setenv("MULTICA_TASK_CONFIG_ROOT", "")
 
 	first, err := EnsureDaemonID("")
@@ -46,7 +44,7 @@ func TestEnsureDaemonID_Persists(t *testing.T) {
 
 func TestEnsureDaemonID_SharedAcrossProfiles(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	redirectTestHome(t, home)
 
 	defaultID, err := EnsureDaemonID("")
 	if err != nil {
@@ -70,8 +68,7 @@ func TestEnsureDaemonID_SharedAcrossProfiles(t *testing.T) {
 
 func TestEnsureDaemonID_PromotesPreChangeProfileFile(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	// The seeded legacy layout lives under $HOME; scrub the task config root.
+	redirectTestHome(t, home)
 	t.Setenv("MULTICA_TASK_CONFIG_ROOT", "")
 
 	// Seed a per-profile daemon.id the way pre-#1220 daemons laid it out.
@@ -107,8 +104,7 @@ func TestEnsureDaemonID_PromotesPreChangeProfileFile(t *testing.T) {
 
 func TestEnsureDaemonID_RegeneratesCorruptFile(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	// The corrupt file is seeded under $HOME; scrub the task config root.
+	redirectTestHome(t, home)
 	t.Setenv("MULTICA_TASK_CONFIG_ROOT", "")
 
 	dir := filepath.Join(home, ".multica")
@@ -136,8 +132,7 @@ func TestEnsureDaemonID_RegeneratesCorruptFile(t *testing.T) {
 
 func TestLegacyDaemonUUIDs_ScansProfileDirs(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	// The scanned profile dirs live under $HOME; scrub the task config root.
+	redirectTestHome(t, home)
 	t.Setenv("MULTICA_TASK_CONFIG_ROOT", "")
 
 	uuidA := uuid.Must(uuid.NewV7()).String()
@@ -175,7 +170,7 @@ func TestLegacyDaemonUUIDs_ScansProfileDirs(t *testing.T) {
 
 func TestLegacyDaemonUUIDs_MissingProfilesDirIsNil(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	redirectTestHome(t, home)
 
 	ids, err := LegacyDaemonUUIDs()
 	if err != nil {

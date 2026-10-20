@@ -313,7 +313,7 @@ Migration은 backend 시작 시 자동으로 실행됩니다. migration 103처�
 
 ### `/health` 말고 `/readyz`로 검증하세요
 
-`/health`는 **liveness** 프로브라서 프로세스가 살아 있기만 하면 `{"status":"ok"}`를 반환합니다 — migration이 실패했더라도 마찬가지입니다. `/readyz`(`server/cmd/server/router.go:680`, `/healthz`는 별칭)는 데이터베이스와 적용된 migration 집합을 확인하므로, 잘못된 업그레이드를 잡아내는 것은 이쪽입니다.
+`/health`는 **liveness** 프로브라서 프로세스가 살아 있기만 하면 `{"status":"ok"}`를 반환합니다 — migration이 실패했더라도 마찬가지입니다. `/readyz`(`server/cmd/server/router.go`에 등록된 `readyHandler`, `/healthz`는 별칭)는 데이터베이스와 적용된 migration 집합을 확인하므로, 잘못된 업그레이드를 잡아내는 것은 이쪽입니다.
 
 ```bash
 curl -s localhost:8080/readyz

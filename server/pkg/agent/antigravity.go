@@ -185,7 +185,43 @@ type antigravityStreamEvent struct {
 	Result     *antigravityStreamResult     `json:"result"`
 }
 
+// antigravityNetworkIssueError is the provider sentence some agy releases
+// report when a trailing round trip fails. It carries no Go error text, so it
+// has to stay a literal match alongside the transport patterns below.
 const antigravityNetworkIssueError = "There was a network issue connecting to the server, please try again."
+
+// antigravityTransportErrorRe matches the causes Go's http client reports when
+// a round trip never produced a response: socket, DNS and TLS failures. These
+// are the strings that appear inside the `*url.Error` agy wraps as
+// `API error (attempt N): request failed: Post "...": <cause>`.
+//
+// Two things are deliberately excluded.
+//
+//   - agy's own `request failed:` prefix. It is tempting to match it directly
+//     since it marks an http.Client failure, but only one spelling has been
+//     observed in the field, and nothing rules out agy reusing the same prefix
+//     for an HTTP status error. Matching the cause keeps a provider rejection
+//     from being read as transport noise.
+//   - Provider-side rejections: quota, capacity, overload, policy and auth all
+//     arrive as an HTTP response, so they are decisions about the request
+//     rather than a failure to deliver it. Those must stay failures the user
+//     sees instead of being smoothed over by a complete-looking answer —
+//     reportTaskResult documents failing closed for exactly that reason.
+var antigravityTransportErrorRe = regexp.MustCompile(`(?i)(\bEOF\b|connection reset by peer|broken pipe|connection refused|connection timed out|i/o timeout|tls handshake timeout|tls: handshake failure|use of closed network connection|network is unreachable|no such host|server misbehaving|malformed HTTP response|http2: client connection lost|http2: server sent GOAWAY)`)
+
+// antigravityTrailingTransportError reports whether agy's provider error
+// describes a transport-level failure rather than a decision the provider made
+// about the request.
+func antigravityTrailingTransportError(providerError string) bool {
+	trimmed := strings.TrimSpace(providerError)
+	if trimmed == "" {
+		return false
+	}
+	if strings.EqualFold(trimmed, antigravityNetworkIssueError) {
+		return true
+	}
+	return antigravityTransportErrorRe.MatchString(trimmed)
+}
 
 // tokenUsage maps agy's provider-defined buckets directly. Cache reads are
 // separate from input_tokens even when total_tokens equals input + output; the
@@ -225,6 +261,19 @@ func antigravityResultStatus(status string) string {
 	default:
 		return "failed"
 	}
+}
+
+// antigravityCompletedDespiteTrailingNetworkError reports whether a turn that
+// agy ended in an error actually delivered a finished answer first. All three
+// conditions are required: the trailing failure has to be transport-level (a
+// provider-side rejection is a real failure), agy has to have handed back a
+// non-empty canonical response, and the latest agent_response step has to have
+// reached DONE — an ACTIVE step means the answer was still being written when
+// the connection went away.
+func antigravityCompletedDespiteTrailingNetworkError(providerError, response string, agentResponseDone bool) bool {
+	return antigravityTrailingTransportError(providerError) &&
+		strings.TrimSpace(response) != "" &&
+		agentResponseDone
 }
 
 var antigravitySelectedModelRe = regexp.MustCompile(
@@ -341,47 +390,10 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		var streamResultUsage *antigravityStreamUsage
 		streamStepUsage := make(map[int]TokenUsage)
 		streamTools := make(map[int]antigravityToolState)
-		completion := antigravityCompletion{conversation: opts.ResumeSessionID}
-		resumed := opts.ResumeSessionID != ""
-		resultSeen := false
-		structuredSeen := false
+		streamLatestAgentResponseStep := -1
+		streamLatestAgentResponseDone := false
 		finalStatus := "completed"
 		var finalError string
-		consumeStep := func(step *antigravityStreamStepUpdate) bool {
-			newDelta := completion.observe(step)
-			if completion.turnStart != nil && step.StepIndex != nil && *step.StepIndex < *completion.turnStart {
-				return true // Historical snapshots must not replay text, tools or usage.
-			}
-			if step.ConversationID != "" {
-				streamSessionID = step.ConversationID
-			}
-			for _, message := range antigravityToolMessages(step, streamTools) {
-				// Neither half of a tool lifecycle may be dropped: these messages
-				// also drive the daemon's in-flight counter.
-				select {
-				case msgCh <- message:
-				case <-runCtx.Done():
-					return false
-				}
-			}
-			if newDelta && step.StepType == "agent_response" && step.TextDelta != "" {
-				output.WriteString(step.TextDelta)
-				trySend(msgCh, Message{Type: MessageText, Content: step.TextDelta})
-			}
-			if strings.EqualFold(step.State, "done") && step.StepIndex != nil && *step.StepIndex >= 0 && step.Usage != nil {
-				// Repeated DONE usage replaces its snapshot, never adds it twice.
-				streamStepUsage[*step.StepIndex] = step.Usage.tokenUsage()
-			}
-			return true
-		}
-		flushPending := func() bool {
-			for _, step := range completion.takePending() {
-				if !consumeStep(step) {
-					return false
-				}
-			}
-			return true
-		}
 
 		scanner := newAgentStreamScanner(stdout)
 
@@ -392,37 +404,48 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 			line := scanner.Text()
 			var event antigravityStreamEvent
 			if err := json.Unmarshal([]byte(line), &event); err == nil && event.Event != "" {
-				structuredSeen = true
-				if resultSeen {
-					completion.invalid = true // A terminal result must end the stream.
-				}
 				switch event.Event {
 				case "init":
-					completion.observeConversation(event.ConversationID)
 					streamSessionID = event.ConversationID
 					streamModel = event.Init.Model
 				case "step_update":
 					if event.StepUpdate == nil {
-						completion.invalid = true
 						continue
 					}
-					step := event.StepUpdate
-					if !completion.admit(step, resumed) {
-						continue
+					if event.StepUpdate.ConversationID != "" {
+						streamSessionID = event.StepUpdate.ConversationID
 					}
-					if !consumeStep(step) {
-						break streamLoop
+					for _, message := range antigravityToolMessages(event.StepUpdate, streamTools) {
+						// Tool lifecycle events also drive the daemon's in-flight
+						// counter. Unlike best-effort text, neither half may be
+						// dropped when a transcript consumer temporarily falls behind.
+						select {
+						case msgCh <- message:
+						case <-runCtx.Done():
+							break streamLoop
+						}
+					}
+					if event.StepUpdate.StepType == "agent_response" && event.StepUpdate.StepIndex != nil && *event.StepUpdate.StepIndex >= streamLatestAgentResponseStep {
+						// Only the latest response step determines whether the answer
+						// completed. A prior DONE response may be followed by a newer
+						// ACTIVE response that is cut off by the network error.
+						streamLatestAgentResponseStep = *event.StepUpdate.StepIndex
+						streamLatestAgentResponseDone = strings.EqualFold(event.StepUpdate.State, "done")
+					}
+					if event.StepUpdate.StepType == "agent_response" && event.StepUpdate.TextDelta != "" {
+						output.WriteString(event.StepUpdate.TextDelta)
+						trySend(msgCh, Message{Type: MessageText, Content: event.StepUpdate.TextDelta})
+					}
+					if strings.EqualFold(event.StepUpdate.State, "done") && event.StepUpdate.StepIndex != nil && event.StepUpdate.Usage != nil {
+						// A step may be re-emitted as its state changes. Keying by
+						// index makes the final DONE snapshot replace, not duplicate,
+						// an earlier copy of the same step.
+						streamStepUsage[*event.StepUpdate.StepIndex] = event.StepUpdate.Usage.tokenUsage()
 					}
 				case "result":
 					if event.Result == nil {
-						completion.invalid = true
 						continue
 					}
-					if !flushPending() {
-						break streamLoop
-					}
-					resultSeen = true
-					completion.observeConversation(event.Result.ConversationID)
 					if event.Result.ConversationID != "" {
 						streamSessionID = event.Result.ConversationID
 					}
@@ -432,12 +455,9 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 					if event.Result.Usage != nil {
 						streamResultUsage = event.Result.Usage
 					}
-				default:
-					completion.invalid = true
 				}
 				continue
 			}
-			completion.invalid = true // Plain/malformed lines cannot prove recovery.
 			// The daemon concatenates streamed MessageText with no separator
 			// (pendingText.WriteString), so the streamed text must carry the
 			// line breaks itself. Mirror output's construction — prefix the
@@ -457,17 +477,12 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 			}
 		}
 		if err := scanner.Err(); err != nil {
-			completion.invalid = true
 			b.cfg.Logger.Warn("agy stdout scanner error", "err", err)
 		}
-		flushPending()
 
 		waitErr := cmd.Wait()
 		releaseProcessGroup(cmd)
 		duration := time.Since(startTime)
-		printTimedOut := antigravityPrintTimedOut(logPath)
-		providerErr := antigravityProviderError(logPath)
-		recoverable := antigravityRecoverableResult(waitErr, resultSeen, printTimedOut, providerErr)
 
 		sessionID := streamSessionID
 		if sessionID == "" {
@@ -480,9 +495,12 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		} else if runCtx.Err() == context.Canceled {
 			finalStatus = "aborted"
 			finalError = "execution cancelled"
-		} else if status := antigravityResultStatus(streamResultStatus); status != "completed" {
-			if recoverable && completion.completedDespiteError(streamResultStatus, streamResultError, streamResponse, resumed) {
-				b.cfg.Logger.Warn("agy reported a recovered transport error after a completed turn", "err", streamResultError)
+		} else if status := antigravityResultStatus(streamResultStatus); finalStatus == "completed" && status != "completed" {
+			if antigravityCompletedDespiteTrailingNetworkError(streamResultError, streamResponse, streamLatestAgentResponseDone) {
+				// agy can emit a complete DONE response and only then fail a
+				// follow-up network operation. Preserve the finished answer instead
+				// of presenting that trailing transport error as a failed turn.
+				b.cfg.Logger.Warn("agy reported a trailing network error after a completed response", "err", streamResultError)
 			} else {
 				// Prefer the provider's structured error even when agy also exits
 				// non-zero; the process status alone discards the actionable cause.
@@ -495,23 +513,23 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		} else if waitErr != nil && finalStatus == "completed" {
 			finalStatus = "failed"
 			finalError = fmt.Sprintf("agy exited with error: %v", waitErr)
-		} else if printTimedOut {
+		} else if finalStatus == "completed" && antigravityPrintTimedOut(logPath) {
+			// agy hit its own --print-timeout: it printed "Error: timed out
+			// waiting for response" to stdout and EXITED 0, so runCtx never
+			// tripped and waitErr is nil — the checks above leave the turn as
+			// "completed". Surface it as a real timeout instead of a truncated
+			// success the user can't distinguish from a finished task (MUL-3570).
 			finalStatus = "timeout"
 			finalError = fmt.Sprintf(
 				"agy --print-timeout elapsed after %s waiting for the agent response; a long-running command likely outlived the print timeout",
 				antigravityPrintTimeout(timeout),
 			)
-		} else if providerErr != "" {
+		} else if providerErr := antigravityProviderError(logPath); finalStatus == "completed" && providerErr != "" {
 			// agy can also surface terminal model/provider failures only in the
 			// per-run log while exiting 0 with empty stdout. Without promoting
 			// that marker, the daemon records a failed turn as a blank success.
 			finalStatus = "failed"
 			finalError = fmt.Sprintf("agy provider error: %s", providerErr)
-		} else if structuredSeen && !resultSeen {
-			// Missing result is a fallback diagnosis. Preserve an actionable
-			// process/provider failure when the stream was cut short by one.
-			finalStatus = "failed"
-			finalError = "agy stream ended without a result"
 		}
 		if finalError != "" {
 			finalError = withAgentStderr(finalError, "agy", stderrBuf.Tail())
@@ -548,17 +566,16 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		// agy result.usage is cumulative across a resumed conversation, while
 		// completed step usage covers only this execution. Prefer the
 		// deduplicated step sum so resumed tasks do not persist earlier turns
-		// again. The terminal aggregate is safe as a fallback only for a new
-		// conversation; without a baseline a resumed aggregate has no reliable
-		// per-run delta. Presence is independent of the token counts: a reported
-		// zero must remain distinguishable from unreported usage.
-		usage, hasUsage := sumAntigravityStepUsage(streamStepUsage)
-		if !hasUsage && opts.ResumeSessionID == "" && streamResultUsage != nil {
+		// again. A resumed aggregate has no reliable per-run delta, so only a
+		// fresh conversation may use it as fallback. Reported zero is distinct
+		// from missing usage.
+		usage, hasStepUsage := sumAntigravityStepUsage(streamStepUsage)
+		if !hasStepUsage && opts.ResumeSessionID == "" && streamResultUsage != nil {
 			usage = streamResultUsage.tokenUsage()
-			hasUsage = true
+			hasStepUsage = true
 		}
 		usageByModel := map[string]TokenUsage{}
-		if hasUsage {
+		if hasStepUsage {
 			model := readAntigravitySelectedModel(logPath, streamModel, opts.Model)
 			usageByModel[model] = usage
 		}

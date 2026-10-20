@@ -133,7 +133,7 @@ func (h *Handler) HandleChannelConversation(ctx context.Context, resolved engine
 		if err != nil {
 			return engine.Result{}, true, err
 		}
-		result = engine.Result{ConversationMessageID: started.Append.MessageID, Outcome: engine.OutcomeIngested, ChatSessionID: started.SessionID, ChannelBindingID: started.BindingID, ChannelRouteRevision: started.RouteRevision}
+		result = engine.Result{ChatMessageID: started.Append.MessageID, ConversationMessageID: started.Append.MessageID, Outcome: engine.OutcomeIngested, ChatSessionID: started.SessionID, ChannelBindingID: started.BindingID, ChannelRouteRevision: started.RouteRevision}
 		notifyStarted(started.SessionID, started.RouteRevision, started.Append.InitialTitle)
 	} else {
 		sessionID, err := sessions.EnsureSession(ctx, input)
@@ -148,7 +148,7 @@ func (h *Handler) HandleChannelConversation(ctx context.Context, resolved engine
 		if err != nil {
 			return engine.Result{}, true, err
 		}
-		result = engine.Result{ConversationMessageID: appended.MessageID, Outcome: engine.OutcomeIngested, ChatSessionID: sessionID, ChannelBindingID: appended.BindingID, ChannelRouteRevision: appended.RouteRevision}
+		result = engine.Result{ChatMessageID: appended.MessageID, ConversationMessageID: appended.MessageID, Outcome: engine.OutcomeIngested, ChatSessionID: sessionID, ChannelBindingID: appended.BindingID, ChannelRouteRevision: appended.RouteRevision}
 		if appended.BecameVisible {
 			notifyStarted(sessionID, appended.RouteRevision, appended.InitialTitle)
 		} else if appended.InitialTitle != "" {
