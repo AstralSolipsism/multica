@@ -1,6 +1,7 @@
 import type { JSONContent, MarkdownParseHelpers, MarkdownToken, MarkdownTokenizer } from "@tiptap/core";
 import { decodeString } from "micromark-util-decode-string";
 import { findInlineMath, type SourceRange } from "@multica/ui/markdown/inline-math";
+import { mathPlaceholderPattern, mathPlaceholderPrefix } from "./math-placeholders";
 
 const isolated = new Set(["codespan", "code", "link", "image", "html"]);
 
@@ -60,23 +61,12 @@ export function createInlineMathTokenizer(): MarkdownTokenizer {
       try {
         mode = "baseline";
         const baseline = helpers.inlineTokens(source);
-        // A higher-priority extension may already have consumed a token.
-        // Include its last source character in the shared boundary check.
-        const before = tokens.at(-1)?.raw?.slice(-1) ?? "";
-        const excluded = isolatedRanges(baseline, source).map((range) => ({
-          start: range.start + before.length, end: range.end + before.length,
-        }));
-        if (before) excluded.unshift({ start: 0, end: before.length });
-        const matches = findInlineMath(before + source, excluded, true).map((match) => ({
-          ...match, start: match.start - before.length, end: match.end - before.length,
-        }));
+        const matches = findInlineMath(source, isolatedRanges(baseline, source), true);
         // Return the already-tokenized scope even without math. Otherwise
         // Marked would tokenize link labels again outside the isolation pass.
         if (matches.length === 0) return { type: "inlineMath", raw: source, tokens: baseline };
 
-        prefix = "$multicamath";
-        const decoded = decodeString(source);
-        while (source.includes(prefix) || decoded.includes(prefix)) prefix += "x";
+        prefix = mathPlaceholderPrefix(source + decodeString(source));
         protectedTokens = new Map();
         let masked = "";
         let cursor = 0;
@@ -96,6 +86,7 @@ export function createInlineMathTokenizer(): MarkdownTokenizer {
           type: "inlineMath",
           raw: source,
           tokens: helpers.inlineTokens(masked),
+          mathPrefix: prefix,
         };
       } finally {
         mode = undefined;
@@ -126,7 +117,7 @@ export function parseInlineMath(token: MarkdownToken, helpers: MarkdownParseHelp
     const result: JSONContent[] = [];
     let cursor = 0;
     // These are generated token ids, never a heuristic for formula contents.
-    for (const match of node.text.matchAll(/\$multicamathx*\d+\$/g)) {
+    for (const match of node.text.matchAll(mathPlaceholderPattern(token.mathPrefix as string))) {
       const atom = atoms.get(match[0]);
       if (!atom) continue;
       if (match.index > cursor) result.push({ ...node, text: node.text.slice(cursor, match.index) });

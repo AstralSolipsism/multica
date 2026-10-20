@@ -40,6 +40,17 @@ function validTex(value: string): boolean {
   }
 }
 
+function matchDoubleDollar(source: string, start: number, nextRange?: SourceRange): InlineMathMatch | undefined {
+  if (source[start - 1] === '$' || source[start + 2] === '$') return
+  const end = source.indexOf('$$', start + 2)
+  if (end <= start + 2 || source[end + 2] === '$') return
+  if (/[\r\n]/u.test(source.slice(start, end))) return
+  if (nextRange && nextRange.start < end + 2) return
+  const expression = source.slice(start + 2, end)
+  if (!validTex(expression)) return
+  return { start, end: end + 2, expression, delimiter: '$$' }
+}
+
 /**
  * Scan original source, before Markdown interprets TeX punctuation. The caller
  * supplies sorted, non-overlapping ranges identified by its Markdown parser
@@ -70,17 +81,10 @@ export function findInlineMath(
     if (source[cursor] !== '$' || source[cursor - 1] === '\\') continue
     if (source[cursor - 1] === '$' || source[cursor + 1] === '$') {
       opening = null
-      if (doubleDollar && source[cursor - 1] !== '$' && source[cursor + 2] !== '$') {
-        const end = source.indexOf('$$', cursor + 2)
-        if (end > cursor + 2 && source[end + 2] !== '$' &&
-          !/[\r\n]/u.test(source.slice(cursor, end)) &&
-          (!range || range.start >= end + 2)) {
-          const expression = source.slice(cursor + 2, end)
-          if (validTex(expression)) {
-            matches.push({ start: cursor, end: end + 2, expression, delimiter: '$$' })
-            cursor = end + 1
-          }
-        }
+      const match = doubleDollar ? matchDoubleDollar(source, cursor, range) : undefined
+      if (match) {
+        matches.push(match)
+        cursor = match.end - 1
       }
       continue
     }

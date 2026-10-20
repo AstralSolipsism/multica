@@ -93,6 +93,8 @@ for (const [name, renderContent] of Object.entries(renderers)) {
       "$x$_",
       String.raw`$x$\alpha`,
       "$x$\\",
+      "echo $$ done", "a $$ b", "cost $$5", "PID is $$",
+      "$a$$b$", "$$x$ y", "$$$x$$", "a$$$x$$ b",
     ])("keeps literal text in %s", (content) => {
       const { container } = render(renderContent(content));
       expect(container.querySelector(".katex, .katex-error")).toBeNull();

@@ -55,7 +55,13 @@ export function remarkSingleDollarMath(this: Processor) {
 
   const data = this.data()
   const extensions = data.micromarkExtensions ?? (data.micromarkExtensions = [])
-  extensions.push({ text: { 36: { name: 'validatedInlineMath', tokenize } } })
+  extensions.push({ text: { 36: {
+    name: 'validatedInlineMath',
+    tokenize,
+    // Share remark-math's dollar-run guard. Otherwise our construct makes
+    // micromark break inside $$ runs and call mathText at an invalid position.
+    previous: (code) => code !== 36,
+  } } })
   this.parser = (source, file) => {
     matches = new Map()
     const tree = parser(source, file) as Root

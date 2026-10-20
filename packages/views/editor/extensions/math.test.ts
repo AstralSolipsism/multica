@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
-import { Markdown } from "@tiptap/markdown";
+import { MathMarkdownExtension as Markdown } from "./math-markdown";
 import { BlockMathExtension, InlineMathExtension } from "./math";
 import { mathParagraphs } from "../math-fixtures";
+import { createEditorExtensions } from "./index";
 
 const FINANCE_TEXT =
   "Revenue increased from $100~$120 in Q1 to $140~$160 in Q2.";
@@ -140,14 +141,67 @@ describe("math editor extension", () => {
   it("preserves enclosing bold across text and inline atoms on repeated saves", () => {
     editor = makeEditor();
     editor.commands.setContent("**before $a_i$ after**", { contentType: "markdown" });
-    const saved = editor.getMarkdown();
     for (let i = 0; i < 3; i++) {
+      expect(editor.getMarkdown()).toBe("**before $a_i$ after**");
       editor.commands.setContent(editor.getMarkdown(), { contentType: "markdown" });
       expect(findAll(editor.getJSON(), "inlineMath").map((node) => node.attrs?.expression))
         .toEqual(["a_i"]);
       expect(editor.getText()).toBe("before  after");
-      expect(editor.getMarkdown()).toBe(saved);
     }
+  });
+
+  it.each([
+    String.raw`**阈值为 $\eta_{i,a}$**`,
+    "*$a_i$ and $b_j$*",
+    "~~旧值 $x_1$ 已废弃~~",
+    "**当 $x > 0$ 时成立**",
+    "==$a_i$ and $b_j$==",
+    "a ==b $x_1$== $y_2$",
+    "***before $x_1$ after***",
+    "$multicamath1$$x$$ tail",
+    "q$$x$$",
+  ])("preserves exact Markdown immediately and on repeated saves with production extensions: %s", (markdown) => {
+    editor = new Editor({
+      extensions: createEditorExtensions({}),
+      content: markdown,
+      contentType: "markdown",
+    });
+    for (let i = 0; i < 3; i++) {
+      expect(editor.getMarkdown()).toBe(markdown);
+      // Clipboard serialization uses the manager directly.
+      expect(editor.markdown!.serialize(editor.getJSON())).toBe(markdown);
+      editor.commands.setContent(editor.getMarkdown(), { contentType: "markdown" });
+    }
+  });
+
+  it("isolates custom mention atoms from math placeholders", () => {
+    const markdown = "[@a $x$ b](mention://member/1) $y$";
+    editor = new Editor({ extensions: createEditorExtensions({}), content: markdown, contentType: "markdown" });
+    expect(findAll(editor.getJSON(), "inlineMath").map((node) => node.attrs?.expression)).toEqual(["y"]);
+    expect(editor.getMarkdown()).toBe(markdown);
+  });
+
+  it.each(["a $$x\ny$$ b", "$$x$$$", "$$a `b$$` c"])("keeps invalid inline double dollars literal: %s", (markdown) => {
+    editor = makeEditor();
+    editor.commands.setContent(markdown, { contentType: "markdown" });
+    expect(findAll(editor.getJSON(), "inlineMath")).toHaveLength(0);
+    expect(findAll(editor.getJSON(), "blockMath")).toHaveLength(0);
+    expect(editor.getMarkdown()).toBe(markdown);
+  });
+
+  it.each(["$$x\ny$$", "$$\nx\ny$$", "$$x\ny\n$$"])("requires separate delimiter lines for block math: %s", (markdown) => {
+    editor = makeEditor();
+    editor.commands.setContent(markdown, { contentType: "markdown" });
+    expect(findAll(editor.getJSON(), "blockMath")).toHaveLength(0);
+    expect(editor.getMarkdown()).toBe(markdown);
+  });
+
+  it.each(["$x_i$", "$$ x_i $$"])("preserves delimiters through HTML copying: %s", (markdown) => {
+    editor = makeEditor();
+    editor.commands.setContent(markdown, { contentType: "markdown" });
+    const html = editor.getHTML();
+    editor.commands.setContent(html);
+    expect(editor.getMarkdown()).toBe(markdown);
   });
 
   it("keeps typed single-dollar amounts as literal text", () => {
@@ -180,5 +234,12 @@ describe("math editor extension", () => {
     expect(blocks).toHaveLength(1);
     expect(blocks[0]?.attrs?.expression).toBe("x^2 + y^2 = z^2");
     expect(editor.getMarkdown().trim()).toBe(markdown);
+  });
+
+  it("interrupts a paragraph only at a complete display-math opener", () => {
+    editor = makeEditor();
+    editor.commands.setContent("before\n$$\nx^2\n$$\nafter", { contentType: "markdown" });
+    expect(findAll(editor.getJSON(), "blockMath").map((node) => node.attrs?.expression)).toEqual(["x^2"]);
+    expect(editor.getMarkdown()).toBe("before\n\n$$\nx^2\n$$\n\nafter");
   });
 });

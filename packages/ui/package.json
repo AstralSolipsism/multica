@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "vitest run --environment node",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."
   },
@@ -80,6 +81,7 @@
     "micromark-util-types": "^2.0.2",
     "remark-parse": "^11.0.0",
     "typescript": "catalog:",
-    "unified": "^11.0.5"
+    "unified": "^11.0.5",
+    "vitest": "catalog:"
   }
 }

@@ -43,7 +43,7 @@ describe("ContentEditor math", () => {
   it.each([false, true])("renders and saves real issue formulas (controlled=%s)", async (controlled) => {
     const markdown = [
       ...mathParagraphs.map((fixture) => fixture.markdown),
-      String.raw`**$< 1\sim 5\text{ms}$** and $$ x_i * y_j $$`,
+      String.raw`**阈值为 $< 1\sim 5\text{ms}$** and $$ x_i * y_j $$`,
     ].join("\n\n");
     const { container, ref, onUpdate } = mountEditor(markdown, controlled);
     const count = mathParagraphs.reduce((sum, fixture) => sum + fixture.expressions.length, 2);
