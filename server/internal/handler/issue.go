@@ -22,7 +22,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/channelmedia"
 	"github.com/multica-ai/multica/server/internal/dispatch"
-	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/issueguard"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/issueworkflow"
@@ -3818,18 +3817,6 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	// Track which fields were explicitly present in JSON (even if null)
 	var rawFields map[string]json.RawMessage
 	json.Unmarshal(bodyBytes, &rawFields)
-
-	// Cancellation is not part of external conversation authority, including
-	// when requested through an otherwise allowed issue collaboration route.
-	if _, external := channel.ConversationTaskFromContext(r.Context()); external {
-		for field := range rawFields {
-			// encoding/json also accepts case-insensitive matches for struct tags.
-			if strings.EqualFold(field, "stop_previous_assignee_runs") {
-				writeErrorCode(w, http.StatusForbidden, "external_conversation_forbidden", "external conversations may not stop previous assignee runs")
-				return
-			}
-		}
-	}
 
 	if prevIssue.TriageState.Valid {
 		if field := triageLockedField(rawFields); field != "" {
