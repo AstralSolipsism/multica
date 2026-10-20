@@ -3428,4 +3428,3 @@ func TestWebhook_UninstallDeletesAllBindings(t *testing.T) {
 		t.Errorf("deleted broadcasts must cover both workspaces; saw %v", seen)
 	}
 }
-

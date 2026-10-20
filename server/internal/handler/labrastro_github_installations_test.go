@@ -33,23 +33,35 @@ func ghAppMockEnv(t *testing.T, fn http.HandlerFunc) {
 	t.Cleanup(func() { githubAPIBase = oldBase })
 }
 
-// appInstallationsResponse is a single entry of GET /app/installations.
-func appInstallationsResponse(ids ...int64) http.HandlerFunc {
+// appInstallationsHandler serves the GET /app/installations list with the
+// given (id → login) inventory; per-installation fetches 404.
+func appInstallationsHandler(inventory map[int64]string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		out := make([]map[string]any, 0, len(ids))
-		for _, id := range ids {
-			login := "org-" + strconv.FormatInt(id, 10)
-			typ := "Organization"
-			if id == 111222333 {
-				login, typ = "AstralSolipsism", "User"
+		if r.URL.Path == "/app/installations" {
+			out := make([]map[string]any, 0, len(inventory))
+			for id, login := range inventory {
+				out = append(out, map[string]any{
+					"id":      id,
+					"account": map[string]any{"login": login, "type": "Organization"},
+				})
 			}
-			out = append(out, map[string]any{
-				"id":      id,
-				"account": map[string]any{"login": login, "type": typ},
-			})
+			writeJSON(w, http.StatusOK, out)
+			return
 		}
-		writeJSON(w, http.StatusOK, out)
+		http.NotFound(w, r)
 	}
+}
+
+// bindingsIn counts rows for one installation in one workspace — the
+// assertion target for every "must not persist" check: a row leaked into the
+// target workspace is visible no matter what other workspaces hold.
+func bindingsIn(ctx context.Context, wsID string, installationID int64) int {
+	var n int
+	testPool.QueryRow(ctx,
+		`SELECT count(*) FROM github_installation WHERE workspace_id = $1 AND installation_id = $2`,
+		wsID, installationID,
+	).Scan(&n)
+	return n
 }
 
 func TestListGitHubAppInstallations_UnconfiguredDegrades(t *testing.T) {
@@ -81,6 +93,38 @@ func TestListGitHubAppInstallations_UnconfiguredDegrades(t *testing.T) {
 	}
 }
 
+// TestListGitHubAppInstallations_EmptyManagedSetSkipsGitHub pins that a
+// caller with no managed installations never reaches GitHub.
+func TestListGitHubAppInstallations_EmptyManagedSetSkipsGitHub(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler test fixture not initialized (no DB?)")
+	}
+	outsider := createTestUserAndMember(t, "")
+	var githubCalled bool
+	ghAppMockEnv(t, func(w http.ResponseWriter, r *http.Request) {
+		githubCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := withURLParam(httptest.NewRequest(http.MethodGet, "/api/workspaces/"+testWorkspaceID+"/github/app-installations", nil), "id", testWorkspaceID)
+	req.Header.Set("X-User-ID", outsider)
+	w := httptest.NewRecorder()
+	testHandler.ListGitHubAppInstallations(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", w.Code, w.Body.String())
+	}
+	var body struct {
+		Installations []GitHubAppInstallationResponse `json:"installations"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Installations) != 0 {
+		t.Errorf("want empty list, got %+v", body.Installations)
+	}
+	if githubCalled {
+		t.Error("GitHub must not be called when the caller manages no installations")
+	}
+}
+
 func TestListGitHubAppInstallations_OnlyManagedAndConnectedFlags(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("handler test fixture not initialized (no DB?)")
@@ -88,10 +132,11 @@ func TestListGitHubAppInstallations_OnlyManagedAndConnectedFlags(t *testing.T) {
 	ctx := context.Background()
 	const managedID int64 = 111222333
 	const foreignID int64 = 87654321
-	ghAppMockEnv(t, appInstallationsResponse(managedID, foreignID))
+	ghAppMockEnv(t, appInstallationsHandler(map[int64]string{
+		managedID: "AstralSolipsism",
+		foreignID: "Outlune",
+	}))
 
-	// seed managedID in a workspace where testUserID is owner/admin (the
-	// shared handler-test fixture workspace qualifies).
 	if _, err := testHandler.Queries.CreateGitHubInstallation(ctx, db.CreateGitHubInstallationParams{
 		WorkspaceID:    parseUUID(testWorkspaceID),
 		InstallationID: managedID,
@@ -104,26 +149,32 @@ func TestListGitHubAppInstallations_OnlyManagedAndConnectedFlags(t *testing.T) {
 		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, managedID)
 	})
 
-	req := withURLParam(httptest.NewRequest(http.MethodGet, "/api/workspaces/"+testWorkspaceID+"/github/app-installations", nil), "id", testWorkspaceID)
-	req.Header.Set("X-User-ID", testUserID)
-	w := httptest.NewRecorder()
-	testHandler.ListGitHubAppInstallations(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("want 200, got %d (%s)", w.Code, w.Body.String())
+	list := func(t *testing.T, wsID string) []GitHubAppInstallationResponse {
+		t.Helper()
+		req := withURLParam(httptest.NewRequest(http.MethodGet, "/api/workspaces/"+wsID+"/github/app-installations", nil), "id", wsID)
+		req.Header.Set("X-User-ID", testUserID)
+		w := httptest.NewRecorder()
+		testHandler.ListGitHubAppInstallations(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("want 200, got %d (%s)", w.Code, w.Body.String())
+		}
+		var body struct {
+			Installations []GitHubAppInstallationResponse `json:"installations"`
+			Configured    bool                            `json:"configured"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if !body.Configured {
+			t.Fatal("configured must be true with App credentials set")
+		}
+		return body.Installations
 	}
-	var body struct {
-		Installations []GitHubAppInstallationResponse `json:"installations"`
-		Configured    bool                            `json:"configured"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if !body.Configured || len(body.Installations) != 1 {
-		t.Fatalf("want exactly the managed installation, got %+v", body)
-	}
-	got := body.Installations[0]
-	if got.InstallationID != managedID || !got.Connected || got.AccountLogin != "AstralSolipsism" {
-		t.Errorf("managed installation must be listed connected=true, got %+v", got)
+
+	// Foreign installations (bound nowhere this caller manages) are absent.
+	got := list(t, testWorkspaceID)
+	if len(got) != 1 || got[0].InstallationID != managedID || !got[0].Connected || got[0].AccountLogin != "AstralSolipsism" {
+		t.Errorf("want exactly the managed installation connected=true, got %+v", got)
 	}
 
 	// The same caller from a fresh workspace (no binding yet): the managed
@@ -135,23 +186,136 @@ func TestListGitHubAppInstallations_OnlyManagedAndConnectedFlags(t *testing.T) {
 		t.Fatalf("CreateWorkspace: %v", err)
 	}
 	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM workspace WHERE id = $1`, wsB.ID) })
-	req = withURLParam(httptest.NewRequest(http.MethodGet, "/api/workspaces/"+uuidToString(wsB.ID)+"/github/app-installations", nil), "id", uuidToString(wsB.ID))
-	req.Header.Set("X-User-ID", testUserID)
-	w = httptest.NewRecorder()
-	testHandler.ListGitHubAppInstallations(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("want 200, got %d (%s)", w.Code, w.Body.String())
+	got = list(t, uuidToString(wsB.ID))
+	if len(got) != 1 || got[0].Connected {
+		t.Errorf("from unbound workspace want managed installation connected=false, got %+v", got)
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode wsB: %v", err)
+}
+
+// TestReuseAllowlistScopedToManagedWorkspaces is the option A regression:
+// the reuse allowlist must be scoped to workspaces the caller administers,
+// not to "owner/admin anywhere". Every caller owns their own workspace and
+// targets it, so a leaked binding shows up as a new row there. Fails if the
+// SQL drops the workspace join or the role filter, restricts to owner only,
+// or the not-managed 404 stops returning.
+func TestReuseAllowlistScopedToManagedWorkspaces(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler test fixture not initialized (no DB?)")
 	}
-	if len(body.Installations) != 1 || body.Installations[0].Connected {
-		t.Errorf("from unbound workspace want managed installation connected=false, got %+v", body.Installations)
+	ctx := context.Background()
+	const victimInst int64 = 70700707
+	ghAppMockEnv(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/app/installations":
+			writeJSON(w, 200, []map[string]any{{"id": victimInst, "account": map[string]any{"login": "victim-org", "type": "Organization"}}})
+		case r.Method == http.MethodGet && r.URL.Path == fmt.Sprintf("/app/installations/%d", victimInst):
+			writeJSON(w, 200, map[string]any{"account": map[string]any{"login": "victim-org", "type": "Organization"}})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	mkWS := func(slug string) string {
+		_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
+		id := dbfx.Insert(t, "workspace", testutil.Cols{"name": slug, "slug": slug, "description": "x", "issue_prefix": strings.ToUpper(slug[:3])})
+		t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, id) })
+		return id
+	}
+	mkUser := func(label string) string {
+		var id string
+		dbfx.QueryRow(t, `INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id`, label, "review-"+label+"@example.com").Scan(&id)
+		t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, id) })
+		return id
+	}
+	join := func(ws, user, role string) {
+		dbfx.Exec(t, `INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3)`, ws, user, role)
+	}
+	victimWS := mkWS("rvictim")
+	victimOwner := mkUser("rvictim-owner")
+	join(victimWS, victimOwner, "owner")
+	if _, err := testHandler.Queries.CreateGitHubInstallation(ctx, db.CreateGitHubInstallationParams{
+		WorkspaceID: parseUUID(victimWS), InstallationID: victimInst, AccountLogin: "victim-org", AccountType: "Organization",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM github_installation WHERE installation_id = $1`, victimInst)
+	})
+
+	router := chi.NewRouter()
+	router.Route("/api/workspaces/{id}", func(r chi.Router) {
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner", "admin"))
+			r.Get("/github/app-installations", testHandler.ListGitHubAppInstallations)
+			r.Post("/github/installations", testHandler.ConnectGitHubInstallation)
+		})
+	})
+	do := func(user, method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("X-User-ID", user)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+	listIDs := func(user, ws string) []int64 {
+		rec := do(user, http.MethodGet, "/api/workspaces/"+ws+"/github/app-installations", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list as %s: %d %s", user, rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Installations []GitHubAppInstallationResponse `json:"installations"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		var ids []int64
+		for _, i := range body.Installations {
+			ids = append(ids, i.InstallationID)
+		}
+		return ids
+	}
+	bindBody := fmt.Sprintf(`{"installation_id":%d}`, victimInst)
+
+	cases := []struct {
+		name       string
+		roleInVict string // "" = not a member of the victim workspace
+		wantListed bool
+		wantBind   int
+	}{
+		{"outsider who owns their own workspace", "", false, http.StatusNotFound},
+		{"plain member of the binding workspace", "member", false, http.StatusNotFound},
+		{"admin (not owner) of the binding workspace", "admin", true, http.StatusCreated},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			user := mkUser(fmt.Sprintf("rcase%d", i))
+			own := mkWS(fmt.Sprintf("rown%d", i))
+			join(own, user, "owner")
+			if tc.roleInVict != "" {
+				join(victimWS, user, tc.roleInVict)
+			}
+			ids := listIDs(user, own)
+			listed := len(ids) == 1 && ids[0] == victimInst
+			if listed != tc.wantListed {
+				t.Errorf("listed=%v (ids %v), want %v", listed, ids, tc.wantListed)
+			}
+			rec := do(user, http.MethodPost, "/api/workspaces/"+own+"/github/installations", bindBody)
+			if rec.Code != tc.wantBind {
+				t.Errorf("bind: %d %s, want %d", rec.Code, rec.Body.String(), tc.wantBind)
+			}
+			wantRows := 0
+			if tc.wantBind == http.StatusCreated {
+				wantRows = 1
+			}
+			if got := bindingsIn(ctx, own, victimInst); got != wantRows {
+				t.Errorf("bindings in own workspace = %d, want %d", got, wantRows)
+			}
+		})
 	}
 }
 
 // TestConnectGitHubInstallation covers the direct-bind endpoint: allowlist,
 // strict verification, persistence, redacted broadcast, and error branches.
+// Failure-path cases target wsB — a workspace holding no binding for the
+// installation under test — so a mutation that writes before returning still
+// shows up as an extra row there.
 func TestConnectGitHubInstallation(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("handler test fixture not initialized (no DB?)")
@@ -182,12 +346,16 @@ func TestConnectGitHubInstallation(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed managed installation: %v", err)
 	}
-	// wsB is the second workspace the installation gets reused into.
+	// wsB is the reuse target; the caller joins as admin so a later subtest
+	// can seed a second managed installation there.
 	wsB, err := testHandler.Queries.CreateWorkspace(ctx, db.CreateWorkspaceParams{
 		Name: "reuse-ws-b", Slug: "reuse-ws-b", IssuePrefix: "RWB",
 	})
 	if err != nil {
 		t.Fatalf("CreateWorkspace: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'admin')`, wsB.ID, testUserID); err != nil {
+		t.Fatalf("join wsB: %v", err)
 	}
 	t.Cleanup(func() {
 		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
@@ -213,6 +381,7 @@ func TestConnectGitHubInstallation(t *testing.T) {
 		return w
 	}
 	idJSON := `{"installation_id":` + strconv.FormatInt(installationID, 10) + `}`
+	wsBID := uuidToString(wsB.ID)
 
 	t.Run("invalid installation_id is 400", func(t *testing.T) {
 		for _, raw := range []string{`{"installation_id":0}`, `{"installation_id":-1}`, `not json`} {
@@ -231,16 +400,24 @@ func TestConnectGitHubInstallation(t *testing.T) {
 		}
 	})
 
-	t.Run("installation the caller does not manage is 404", func(t *testing.T) {
-		// Fresh user with no managed installations anywhere.
+	t.Run("installation the caller does not manage is 404 and never reaches GitHub", func(t *testing.T) {
+		// Fresh user with no managed installations anywhere. The mock would
+		// answer 422 for this ID, so a 404 proves the allowlist check runs
+		// BEFORE any GitHub call — non-managers cannot probe suspension or
+		// existence through the error channel.
 		outsider := createTestUserAndMember(t, "")
-		w := post(t, testWorkspaceID, outsider, idJSON)
+		ghAppMockEnv(t, func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"suspended_at": "2026-01-01T00:00:00Z",
+				"account":      map[string]any{"login": "would-be-422", "type": "User"},
+			})
+		})
+		w := post(t, wsBID, outsider, idJSON)
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("want 404, got %d (%s)", w.Code, w.Body.String())
 		}
-		// The seed binding for the managing user must be the only row.
-		if rows, _ := testHandler.Queries.ListGitHubInstallationsByInstallationID(ctx, installationID); len(rows) != 1 {
-			t.Errorf("refused bind must not persist, got %d rows", len(rows))
+		if n := bindingsIn(ctx, wsBID, installationID); n != 0 {
+			t.Errorf("refused bind must not persist, got %d rows in target workspace", n)
 		}
 	})
 
@@ -293,25 +470,37 @@ func TestConnectGitHubInstallation(t *testing.T) {
 	})
 
 	t.Run("managed installation re-binds to a second workspace", func(t *testing.T) {
-		w := post(t, uuidToString(wsB.ID), testUserID, idJSON)
+		w := post(t, wsBID, testUserID, idJSON)
 		if w.Code != http.StatusCreated {
 			t.Fatalf("want 201, got %d (%s)", w.Code, w.Body.String())
 		}
 		if rows, _ := testHandler.Queries.ListGitHubInstallationsByInstallationID(ctx, installationID); len(rows) != 2 {
 			t.Errorf("cross-workspace reuse must yield 2 bindings, got %d", len(rows))
 		}
+	})
 
-		// The same workspace can hold a second, different installation.
+	t.Run("same workspace binds multiple different installations", func(t *testing.T) {
+		// otherID is managed via wsB (seeded there), then bound to
+		// testWorkspaceID through the endpoint — no direct writes.
 		const otherID int64 = 80808080
+		ghAppMockEnv(t, func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"account": map[string]any{"login": "second-acct", "type": "User"},
+			})
+		})
 		if _, err := testHandler.Queries.CreateGitHubInstallation(ctx, db.CreateGitHubInstallationParams{
-			WorkspaceID:    parseUUID(testWorkspaceID),
+			WorkspaceID:    wsB.ID,
 			InstallationID: otherID,
 			AccountLogin:   "second-acct",
 			AccountType:    "User",
 		}); err != nil {
-			t.Fatalf("seed second installation: %v", err)
+			t.Fatalf("seed second installation in wsB: %v", err)
 		}
 		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, otherID) })
+		w := post(t, testWorkspaceID, testUserID, `{"installation_id":`+strconv.FormatInt(otherID, 10)+`}`)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("want 201, got %d (%s)", w.Code, w.Body.String())
+		}
 		rows, err := testHandler.Queries.ListGitHubInstallationsByWorkspace(ctx, parseUUID(testWorkspaceID))
 		if err != nil {
 			t.Fatalf("ListGitHubInstallationsByWorkspace: %v", err)
@@ -327,10 +516,27 @@ func TestConnectGitHubInstallation(t *testing.T) {
 		}
 	})
 
-	t.Run("github-side failures are 502 and persist nothing", func(t *testing.T) {
+	t.Run("github 404 for a managed installation is 404 and persists nothing", func(t *testing.T) {
+		// installationID is in the caller's managed set (seeded above), so
+		// this exercises the strict-verify 404 branch. Target wsB, which by
+		// now holds one binding from the reuse subtest.
+		ghAppMockEnv(t, func(w http.ResponseWriter, r *http.Request) {
+			http.NotFound(w, r)
+		})
+		before := bindingsIn(ctx, wsBID, installationID)
+		w := post(t, wsBID, testUserID, idJSON)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("want 404, got %d (%s)", w.Code, w.Body.String())
+		}
+		if after := bindingsIn(ctx, wsBID, installationID); after != before {
+			t.Errorf("github 404 must not persist: bindings %d → %d", before, after)
+		}
+	})
+
+	t.Run("github-side failures are 502 and persist nothing in the target workspace", func(t *testing.T) {
+		// badID is managed (seeded in the fixture workspace) so the allowlist
+		// passes and each failure is attributed to the GitHub call itself.
 		const badID int64 = 404404404
-		// Seed badID as managed so the allowlist passes and the failure is
-		// attributed to the GitHub call itself.
 		if _, err := testHandler.Queries.CreateGitHubInstallation(ctx, db.CreateGitHubInstallationParams{
 			WorkspaceID:    parseUUID(testWorkspaceID),
 			InstallationID: badID,
@@ -341,7 +547,17 @@ func TestConnectGitHubInstallation(t *testing.T) {
 		}
 		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, badID) })
 
-		cases := []struct {
+		expect502AndNoBinding := func(t *testing.T) {
+			t.Helper()
+			w := post(t, wsBID, testUserID, `{"installation_id":`+strconv.FormatInt(badID, 10)+`}`)
+			if w.Code != http.StatusBadGateway {
+				t.Fatalf("want 502, got %d (%s)", w.Code, w.Body.String())
+			}
+			if n := bindingsIn(ctx, wsBID, badID); n != 0 {
+				t.Errorf("failed verify must not persist, got %d rows in target workspace", n)
+			}
+		}
+		for _, tc := range []struct {
 			name    string
 			handler http.HandlerFunc
 		}{
@@ -356,31 +572,21 @@ func TestConnectGitHubInstallation(t *testing.T) {
 			{"broken json", func(w http.ResponseWriter, r *http.Request) {
 				_, _ = w.Write([]byte(`{"account": `))
 			}},
-			{"network unreachable", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				panic("replaced below")
-			})},
-		}
-		for _, tc := range cases {
+		} {
 			t.Run(tc.name, func(t *testing.T) {
-				if tc.name == "network unreachable" {
-					// Point the base at a dead port.
-					ghAppMockEnv(t, func(w http.ResponseWriter, r *http.Request) {})
-					old := githubAPIBase
-					githubAPIBase = "http://127.0.0.1:1"
-					t.Cleanup(func() { githubAPIBase = old })
-				} else {
-					ghAppMockEnv(t, tc.handler)
-				}
-				// A second workspace so a persisted row would be visible.
-				w := post(t, testWorkspaceID, testUserID, `{"installation_id":`+strconv.FormatInt(badID, 10)+`}`)
-				if w.Code != http.StatusBadGateway {
-					t.Fatalf("want 502, got %d (%s)", w.Code, w.Body.String())
-				}
-				if rows, _ := testHandler.Queries.ListGitHubInstallationsByInstallationID(ctx, badID); len(rows) != 1 {
-					t.Errorf("failed verify must not add bindings, got %d rows", len(rows))
-				}
+				ghAppMockEnv(t, tc.handler)
+				expect502AndNoBinding(t)
 			})
 		}
+		t.Run("network unreachable", func(t *testing.T) {
+			pemBytes, _ := generateTestRSAKeyPEM(t)
+			t.Setenv("GITHUB_APP_ID", "424242")
+			t.Setenv("GITHUB_APP_PRIVATE_KEY", string(pemBytes))
+			old := githubAPIBase
+			githubAPIBase = "http://127.0.0.1:1"
+			t.Cleanup(func() { githubAPIBase = old })
+			expect502AndNoBinding(t)
+		})
 	})
 
 	t.Run("suspended installation is refused 422", func(t *testing.T) {
@@ -400,9 +606,12 @@ func TestConnectGitHubInstallation(t *testing.T) {
 				"account":      map[string]any{"login": "suspended-acct", "type": "User"},
 			})
 		})
-		w := post(t, testWorkspaceID, testUserID, `{"installation_id":`+strconv.FormatInt(suspID, 10)+`}`)
+		w := post(t, wsBID, testUserID, `{"installation_id":`+strconv.FormatInt(suspID, 10)+`}`)
 		if w.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("want 422, got %d (%s)", w.Code, w.Body.String())
+		}
+		if n := bindingsIn(ctx, wsBID, suspID); n != 0 {
+			t.Errorf("suspended bind must not persist, got %d rows in target workspace", n)
 		}
 	})
 }

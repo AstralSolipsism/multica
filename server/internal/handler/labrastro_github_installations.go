@@ -248,16 +248,15 @@ var (
 	errGitHubInstallationSuspended = errors.New("github installation is suspended")
 )
 
-// requestUserUUIDOrBadRequest resolves the authenticated caller's user UUID.
+// requestUserUUIDOrBadRequest resolves the authenticated caller's user UUID
+// using the repo's standard two-step idiom (see UpsertClientUsage).
 func requestUserUUIDOrBadRequest(w http.ResponseWriter, r *http.Request) (pgtype.UUID, bool) {
-	userID := requestUserID(r)
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, "missing user")
+	userID, ok := requireUserID(w, r)
+	if !ok {
 		return pgtype.UUID{}, false
 	}
-	userUUID, err := parseStrictUUID(userID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid user id")
+	userUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
+	if !ok {
 		return pgtype.UUID{}, false
 	}
 	return userUUID, true
