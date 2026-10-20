@@ -28,9 +28,165 @@ type workspaceWakeupScanDB struct {
 
 func (q workspaceWakeupScanDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
 	if strings.HasPrefix(sql, "-- name: ListPendingWakeupInputGroups ") {
+		if len(args) != 5 {
+			return nil, fmt.Errorf("pending scan: expected 5 SQL arguments, got %d", len(args))
+		}
+		if _, ok := args[4].([]pgtype.UUID); !ok {
+			return nil, fmt.Errorf("pending scan: expected workspace IDs at argument 5, got %T", args[4])
+		}
 		args[4] = []pgtype.UUID{q.workspace}
 	}
 	return q.DBTX.Query(ctx, sql, args...)
+}
+
+func observationIssueRun(t *testing.T, f principalFixture, issue pgtype.UUID, agent, status string) string {
+	t.Helper()
+	return f.Task(t, agent, testutil.Cols{
+		"issue_id": issue, "originator_user_id": f.UserID, "accountable_user_id": f.UserID,
+		"status": status, "runtime_id": testutil.Raw("(SELECT runtime_id FROM agent WHERE id='" + agent + "')"),
+	})
+}
+
+// A claimed run keeps its old inputs while newer unreserved inputs arrive.
+// The receipt scan must not revisit the reserved group or count it twice.
+func TestPendingWakeupReservedInputsAreNotRescanned(t *testing.T) {
+	for _, reserved := range []int{1, 3} {
+		t.Run(fmt.Sprintf("reserved=%d", reserved), func(t *testing.T) {
+			f, s, issue, agent := conditionFixture(t)
+			ws := []pgtype.UUID{parseTestUUID(t, f.WorkspaceID)}
+			w := wakeCreate(t, f, s, issue, WakeupInput{AgentID: agent, Kind: "event", Mode: "continuous",
+				EventTypes: []string{"comment.created"}, Instruction: "follow up"})
+			run := observationIssueRun(t, f, issue, agent, "dispatched")
+			for i := 0; i < reserved; i++ {
+				old := observationReceipt(t, f, w, fmt.Sprintf("reserved-%d", i), "{}", 10*time.Minute)
+				f.Exec(t, "UPDATE issue_wakeup_receipt SET task_id=$2 WHERE id=$1", old, run)
+			}
+			observationReceipt(t, f, w, "ready", "{}", time.Minute)
+			for _, page := range []int{1, wakeupPendingScanPage} {
+				p, err := s.pendingInputs(context.Background(), ws, page)
+				age, ok := p.age(time.Now())
+				if err != nil || p.Held != reserved || !ok || age < 30*time.Second || age > 2*time.Minute {
+					t.Fatalf("page=%d: pending=%+v age=%v err=%v, want held=%d and ~1m ready", page, p, age, err, reserved)
+				}
+			}
+		})
+	}
+}
+
+// A later all-held rule has no ready timestamp to merge. It must preserve
+// the oldest ready input found on an earlier rule, including across pages.
+func TestPendingWakeupHeldRuleKeepsEarlierReadyAge(t *testing.T) {
+	f, s, issue, agent := conditionFixture(t)
+	ws := []pgtype.UUID{parseTestUUID(t, f.WorkspaceID)}
+	other := parseTestUUID(t, f.Issue(t, "held issue"))
+	f.Cleanup(t, "DELETE FROM issue_wakeup WHERE issue_id=$1", other)
+	f.Cleanup(t, "DELETE FROM issue_wakeup_receipt WHERE wakeup_id IN (SELECT id FROM issue_wakeup WHERE issue_id=$1)", other)
+	f.Cleanup(t, "DELETE FROM activity_log WHERE issue_id=$1", other)
+	ready := wakeCreate(t, f, s, issue, WakeupInput{AgentID: agent, Kind: "event", Mode: "continuous",
+		EventTypes: []string{"comment.created"}, Instruction: "ready"})
+	held := wakeCreate(t, f, s, other, WakeupInput{AgentID: agent, Kind: "event", Mode: "continuous",
+		EventTypes: []string{"comment.created"}, Instruction: "held"})
+	observationReceipt(t, f, ready, "ready", "{}", 10*time.Minute)
+	observationReceipt(t, f, held, "held", "{}", 5*time.Minute)
+	observationIssueRun(t, f, other, agent, "queued")
+	for _, page := range []int{1, wakeupPendingScanPage} {
+		p, err := s.pendingInputs(context.Background(), ws, page)
+		age, ok := p.age(time.Now())
+		if err != nil || p.Held != 1 || !ok || age < 9*time.Minute || age > 11*time.Minute {
+			t.Fatalf("page=%d: pending=%+v age=%v err=%v, want held=1 and ~10m ready", page, p, age, err)
+		}
+	}
+}
+
+// Old revisions need dispatch cleanup even when a matching run is queued.
+// Processing them before authority groups must not select the youngest age.
+func TestPendingWakeupOldestReadyAcrossVisitOrder(t *testing.T) {
+	f, s, issue, agent := conditionFixture(t)
+	ctx := context.Background()
+	ws := []pgtype.UUID{parseTestUUID(t, f.WorkspaceID)}
+	w := wakeCreate(t, f, s, issue, WakeupInput{AgentID: agent, Kind: "event", Mode: "continuous",
+		EventTypes: []string{"comment.created"}, Instruction: "follow up"})
+	observationReceipt(t, f, w, "stale", "{}", time.Minute)
+	f.Exec(t, "UPDATE issue_wakeup SET revision=revision+1 WHERE id=$1", w.ID)
+	w.Revision++
+	observationReceipt(t, f, w, "current", "{}", 10*time.Minute)
+	p, err := s.pendingInputs(ctx, ws, wakeupPendingScanPage)
+	age, ok := p.age(time.Now())
+	if err != nil || p.Held != 0 || !ok || age < 9*time.Minute || age > 11*time.Minute {
+		t.Fatalf("pending=%+v age=%v err=%v, want held=0 and ~10m ready", p, age, err)
+	}
+	observationIssueRun(t, f, issue, agent, "queued")
+	p, err = s.pendingInputs(ctx, ws, wakeupPendingScanPage)
+	age, ok = p.age(time.Now())
+	if err != nil || p.Held != 1 || !ok || age < 30*time.Second || age > 2*time.Minute {
+		t.Fatalf("pending=%+v age=%v err=%v, want held=1 and stale revision ~1m ready", p, age, err)
+	}
+}
+
+type failingReceiptScanDB struct {
+	db.DBTX
+	err error
+}
+
+func (q failingReceiptScanDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if strings.HasPrefix(sql, "-- name: ListUnreservedWakeupReceiptsForScan ") {
+		return nil, q.err
+	}
+	return q.DBTX.Query(ctx, sql, args...)
+}
+
+func TestPendingWakeupClassificationErrorIsIncomplete(t *testing.T) {
+	f, s, issue, agent := conditionFixture(t)
+	ctx := context.Background()
+	ws := parseTestUUID(t, f.WorkspaceID)
+	w := wakeCreate(t, f, s, issue, WakeupInput{AgentID: agent, Kind: "event", Mode: "continuous",
+		EventTypes: []string{"comment.created"}, Instruction: "follow up"})
+	observationReceipt(t, f, w, "ready", "{}", time.Minute)
+	scanErr := errors.New("injected receipt scan failure")
+	s.Tasks.Queries = db.New(failingReceiptScanDB{
+		DBTX: workspaceWakeupScanDB{DBTX: f.Pool, workspace: ws}, err: scanErr,
+	})
+	if _, err := s.pendingInputs(ctx, []pgtype.UUID{ws}, wakeupPendingScanPage); !errors.Is(err, scanErr) {
+		t.Fatalf("classification failure lost its cause: %v", err)
+	}
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	s.logTick(ctx, time.Now(), 0, 0, "drained", 0)
+	var entry struct {
+		Level string `json:"level"`
+		Scan  string `json:"pending_scan"`
+		Error string `json:"pending_scan_error"`
+	}
+	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+		t.Fatalf("decode log: %v: %s", err, logs.String())
+	}
+	if entry.Level != "WARN" || entry.Scan != "incomplete" || !strings.Contains(entry.Error, scanErr.Error()) {
+		t.Fatalf("classification failure reported a healthy scan: %s", logs.String())
+	}
+}
+
+// Only platform rules park with a backlog parent. A user's rule remains
+// eligible in the input lane and contributes to actionable backlog.
+func TestPendingWakeupUserRuleOnBacklogIssueStaysReady(t *testing.T) {
+	f, s, issue, agent := conditionFixture(t)
+	ctx := context.Background()
+	ws := []pgtype.UUID{parseTestUUID(t, f.WorkspaceID)}
+	w := wakeCreate(t, f, s, issue, WakeupInput{AgentID: agent, Kind: "event", Mode: "continuous",
+		EventTypes: []string{"comment.created"}, Instruction: "follow up"})
+	f.Exec(t, "UPDATE issue SET status='backlog' WHERE id=$1", issue)
+	f.Exec(t, "DELETE FROM issue_wakeup_receipt WHERE wakeup_id=$1", w.ID)
+	observationReceipt(t, f, w, "ready", "{}", 10*time.Minute)
+	p, err := s.pendingInputs(ctx, ws, wakeupPendingScanPage)
+	age, ok := p.age(time.Now())
+	if err != nil || p.Held != 0 || !ok || age < 9*time.Minute || age > 11*time.Minute {
+		t.Fatalf("pending=%+v age=%v err=%v, want held=0 and ~10m ready", p, age, err)
+	}
+	inputs, err := f.q.ListInputWakeups(ctx, db.ListInputWakeupsParams{WorkspaceIds: ws, SkipIds: []pgtype.UUID{}, RowLimit: 10})
+	if err != nil || len(inputs) != 1 || inputs[0].ID != w.ID {
+		t.Fatalf("user rule on backlog issue disappeared from input lane: %v, %v", inputs, err)
+	}
 }
 
 func observationSystemRule(t *testing.T, f principalFixture, issue pgtype.UUID, agent string) db.IssueWakeup {
