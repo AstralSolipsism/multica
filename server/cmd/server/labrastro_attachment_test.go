@@ -119,6 +119,11 @@ func TestExternalConversationAttachmentDownloadWorkspace(t *testing.T) {
 				t.Run(lineage, func(t *testing.T) {
 					f := externalPolicyFixtureForGrantor(t, lineage, grantor)
 					missing := request(f.token, uuid.NewString(), "download", otherWorkspace)
+					// Warm the grantor's membership key for the attachment's own
+					// workspace BEFORE the out-of-bounds request: the token's
+					// workspace filter must reject the request without ever
+					// consulting this cache entry (OL-964, review mutation 11).
+					cache.ExpectGet(memberKey).SetVal("1")
 					foreign := request(f.token, attachments[otherWorkspace], "download", otherWorkspace)
 					if missing.Code != http.StatusNotFound || foreign.Code != missing.Code ||
 						foreign.Body.String() != missing.Body.String() ||
@@ -127,6 +132,10 @@ func TestExternalConversationAttachmentDownloadWorkspace(t *testing.T) {
 						t.Fatalf("foreign attachment must look missing: foreign=%d %s missing=%d %s",
 							foreign.Code, foreign.Body.String(), missing.Code, missing.Body.String())
 					}
+					if err := cache.ExpectationsWereMet(); err == nil {
+						t.Fatal("warm membership cache was consulted before the workspace filter rejected the request")
+					}
+					cache.ClearExpect()
 					cache.ExpectGet("mul:auth:member:" + grantor + ":" + testWorkspaceID).SetVal("1")
 					assertDownload(t, request(f.token, attachments[testWorkspaceID], "download", otherWorkspace), testWorkspaceID)
 					for _, attachment := range attachments {

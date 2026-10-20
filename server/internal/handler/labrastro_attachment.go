@@ -9,7 +9,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func (h *Handler) getAttachmentForDownload(r *http.Request, attachmentID pgtype.UUID) (db.Attachment, error) {
+func (h *Handler) lookupDownloadAttachment(r *http.Request, attachmentID pgtype.UUID) (db.Attachment, error) {
 	if _, external := channel.ConversationTaskFromContext(r.Context()); external {
 		// Auth stamps the token's workspace here. The grantor's membership in
 		// another workspace cannot widen the external conversation's grant.
