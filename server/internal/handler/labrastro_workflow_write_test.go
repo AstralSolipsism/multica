@@ -2,10 +2,12 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/middleware"
@@ -18,14 +20,21 @@ func TestLabrastroWorkflowHandoffSurvivesAtomicRefresh(t *testing.T) {
 	seedTestCatalog(t)
 	agent := seededReadyAgentID(t)
 	project := deliveryProject(t, "Atomic handoff", agent)
+	h := *testHandler
+	is := *h.IssueService
+	ds := *is.Dependencies
+	ds.WritesEnabled = true
+	is.Dependencies = &ds
+	h.IssueService = &is
 	for _, compound := range []bool{false, true} {
 		t.Run(map[bool]string{false: "description", true: "dependencies"}[compound], func(t *testing.T) {
 			issue := dbfx.Issue(t, "Handoff with text", testutil.Cols{"project_id": project, "status": "todo"})
 			body := map[string]any{"status": "in_progress", "description": "Updated with the handoff"}
 			if compound {
 				body["blocked_by"] = []string{}
+				body["expected_dependency_version"] = dependencies(t, &h, dbfx, issue).DependencyVersion
 				req := withURLParam(newRequest("PATCH", "/api/issues/"+issue+"/with-dependencies", body), "id", issue)
-				testutil.Call(t, testHandler.UpdateIssueWithDependencies, req).Want(http.StatusOK)
+				testutil.Call(t, h.UpdateIssueWithDependencies, req).Want(http.StatusOK)
 			} else {
 				updateIssueForTest(t, issue, body).Want(http.StatusOK)
 			}
@@ -54,28 +63,64 @@ func TestLabrastroConversationWorkflowHandoffKeepsGrantor(t *testing.T) {
 	root := f.task(t)
 	dbfx.Exec(t, "UPDATE agent_task_queue SET status='running',started_at=now() WHERE id=$1", root.ID)
 	token := f.token(t, root) // Protocol user is still the runtime owner.
-	target := dbfx.Agent(t, "Workflow target", f.runtime, testutil.Cols{"owner_id": grantor, "permission_mode": "private"})
+	target := dbfx.Agent(t, "Workflow target", f.runtime)
 	project := deliveryProject(t, "External handoff", target)
+	dbfx.Exec(t, "UPDATE agent SET owner_id=$2,permission_mode='private' WHERE id=$1", target, grantor)
 	f.h.FeatureFlags = testHandler.FeatureFlags
-	dbfx.Exec(t, "UPDATE issue SET project_id=$2,status='todo' WHERE id=$1", f.issue, project)
+	previous := dbfx.Agent(t, "Previous handler", f.runtime)
+	dbfx.Exec(t, "UPDATE issue SET project_id=$2,status='todo',assignee_type='agent',assignee_id=$3 WHERE id=$1", f.issue, project, previous)
+	running := dbfx.Task(t, previous, testutil.Cols{
+		"issue_id": f.issue, "runtime_id": f.runtime, "status": "running", "started_at": time.Now(),
+	})
+	otherIssue := dbfx.Issue(t, "Unrelated work")
+	unrelated := dbfx.Task(t, previous, testutil.Cols{
+		"issue_id": otherIssue, "runtime_id": f.runtime, "status": "running", "started_at": time.Now(),
+	})
 	router := chi.NewRouter()
 	router.Use(middleware.Auth(f.h.Queries, nil, nil, nil))
 	router.Put("/api/issues/{id}", f.h.UpdateIssue)
-	request := func() *http.Request {
-		req := httptest.NewRequest("PUT", "/api/issues/"+f.issue, strings.NewReader(`{"status":"in_progress","description":"External handoff"}`))
+	request := func(body map[string]any) *http.Request {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest("PUT", "/api/issues/"+f.issue, strings.NewReader(string(raw)))
 		req.Header.Set("Authorization", "Bearer "+token)
 		return req
 	}
-	testutil.Call(t, router.ServeHTTP, request()).Want(http.StatusOK)
+	body := map[string]any{"status": "in_progress", "description": "External handoff", "stop_previous_assignee_runs": true}
+	testutil.Call(t, router.ServeHTTP, request(body)).Want(http.StatusOK)
 	var user, accountable, ancestry string
 	dbfx.QueryRow(t, `SELECT originator_user_id::text,accountable_user_id::text,conversation_root_task_id::text
 		FROM agent_task_queue WHERE issue_id=$1 AND agent_id=$2`, f.issue, target).Scan(&user, &accountable, &ancestry)
 	if user != grantor || accountable != grantor || ancestry != uuidToString(root.ID) {
 		t.Fatalf("handoff lost frozen authority: user=%s accountable=%s root=%s", user, accountable, ancestry)
 	}
+	for id, want := range map[string]string{running: "cancelled", unrelated: "running", uuidToString(root.ID): "running"} {
+		var status string
+		dbfx.QueryRow(t, "SELECT status FROM agent_task_queue WHERE id=$1", id).Scan(&status)
+		if status != want {
+			t.Fatalf("task %s: status=%s, want %s", id, status, want)
+		}
+	}
+	// Moving projects is administrative by default; opting into the landing
+	// step must use the same grantor and invocation gate as a status handoff.
+	dbfx.Exec(t, "UPDATE issue SET project_id=NULL,assignee_type=NULL,assignee_id=NULL WHERE id=$1", f.issue)
+	testutil.Call(t, router.ServeHTTP, request(map[string]any{"project_id": project, "enter_workflow_step": true})).Want(http.StatusOK)
+	if _, kind, id := issueStatusAndAssignee(t, f.issue); kind != "agent" || id != target {
+		t.Fatalf("project entry lost handoff: %s/%s", kind, id)
+	}
+	// The runtime owner now owns the private target, but cannot lend that
+	// authority to the frozen grantor.
+	dbfx.Exec(t, "UPDATE agent SET owner_id=$2 WHERE id=$1", target, testUserID)
 	dbfx.Exec(t, "UPDATE issue SET status='todo',assignee_type=NULL,assignee_id=NULL WHERE id=$1", f.issue)
+	testutil.Call(t, router.ServeHTTP, request(body)).Want(http.StatusForbidden)
+	if status, _, _ := issueStatusAndAssignee(t, f.issue); status != "todo" {
+		t.Fatal("runtime-owner authority leaked into the workflow handoff")
+	}
+	dbfx.Exec(t, "UPDATE agent SET owner_id=$2 WHERE id=$1", target, grantor)
 	dbfx.Exec(t, "UPDATE channel_installation SET config=config-'conversation' WHERE id=$1", f.install)
-	testutil.Call(t, router.ServeHTTP, request()).Want(http.StatusForbidden)
+	testutil.Call(t, router.ServeHTTP, request(body)).Want(http.StatusForbidden)
 	if status, _, _ := issueStatusAndAssignee(t, f.issue); status != "todo" {
 		t.Fatal("a revoked conversation still entered the handoff step")
 	}
