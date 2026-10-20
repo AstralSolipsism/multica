@@ -452,8 +452,10 @@ POST	/api/workspaces/{id}/dingtalk/install/byo	user-auth	deny
 GET	/api/workspaces/{id}/dingtalk/installations	user-auth	deny
 DELETE	/api/workspaces/{id}/dingtalk/installations/{installationId}	user-auth	deny
 DELETE	/api/workspaces/{id}/dingtalk/installations/{installationId}/groups/{conversationId}	user-auth	deny
+GET	/api/workspaces/{id}/github/app-installations	user-auth	deny
 GET	/api/workspaces/{id}/github/connect	user-auth	deny
 GET	/api/workspaces/{id}/github/installations	user-auth	deny
+POST	/api/workspaces/{id}/github/installations	user-auth	deny
 DELETE	/api/workspaces/{id}/github/installations/{installationId}	user-auth	deny
 GET	/api/workspaces/{id}/github/installations/{installationId}/repositories	user-auth	deny
 GET	/api/workspaces/{id}/invitations	user-auth	deny

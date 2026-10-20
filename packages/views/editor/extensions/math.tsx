@@ -4,6 +4,8 @@ import katex from "katex";
 import { Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer, NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
+import { createInlineMathTokenizer, parseInlineMath } from "./inline-math-tokenizer";
+import { renderInlineMath } from "./math-markdown";
 
 function renderMath(expression: string, displayMode: boolean): string {
   return katex.renderToString(expression, {
@@ -22,6 +24,7 @@ function InlineMathView({ node }: NodeViewProps) {
       className="math-node inline"
       data-type="inline-math"
       data-expression={expression}
+      data-delimiter={node.attrs.delimiter}
       contentEditable={false}
     >
       <span dangerouslySetInnerHTML={{ __html: renderMath(expression, false) }} />
@@ -57,6 +60,10 @@ export const InlineMathExtension = Node.create({
         default: "",
         rendered: false,
       },
+      delimiter: {
+        default: "$",
+        rendered: false,
+      },
     };
   },
 
@@ -66,6 +73,7 @@ export const InlineMathExtension = Node.create({
         tag: 'span[data-type="inline-math"]',
         getAttrs: (el) => ({
           expression: (el as HTMLElement).getAttribute("data-expression") ?? "",
+          delimiter: (el as HTMLElement).getAttribute("data-delimiter") === "$$" ? "$$" : "$",
         }),
       },
     ];
@@ -77,18 +85,18 @@ export const InlineMathExtension = Node.create({
       mergeAttributes(HTMLAttributes, {
         "data-type": "inline-math",
         "data-expression": node.attrs.expression,
+        "data-delimiter": node.attrs.delimiter,
       }),
       node.attrs.expression,
     ];
   },
 
-  // Single-dollar inline math is intentionally not parsed from Markdown and has
-  // no typing input rule. Dollar amounts like `$100~$120` must stay literal;
-  // users should write explicit `$$...$$` blocks for math.
-  renderMarkdown: (node: any) => {
-    const expression = String(node.attrs?.expression ?? "");
-    return `$${expression}$`;
-  },
+  // Loading/pasting Markdown converts formulas; typing has no input rule.
+  markdownTokenizer: createInlineMathTokenizer(),
+
+  parseMarkdown: parseInlineMath,
+
+  renderMarkdown: renderInlineMath,
 
   addNodeView() {
     return ReactNodeViewRenderer(InlineMathView);
@@ -139,11 +147,14 @@ export const BlockMathExtension = Node.create({
     name: "blockMath",
     level: "block" as const,
     start(src: string) {
-      return src.search(/^\$\$/m);
+      // Marked calls start with src.slice(1). A match at offset zero may
+      // actually be mid-paragraph (q$$x$$); only interrupt at a real newline.
+      const match = /\n(?=\$\$[ \t]*\r?\n)/.exec(src);
+      return match ? match.index + 1 : -1;
     },
     tokenize(src: string) {
       if (!src.startsWith("$$")) return undefined;
-      const match = src.match(/^\$\$[ \t]*\n?([\s\S]+?)\n?\$\$(?:\n|$)/);
+      const match = src.match(/^\$\$[ \t]*\r?\n([\s\S]+?)\r?\n\$\$(?:\r?\n|$)/);
       if (!match) return undefined;
       return {
         type: "blockMath",

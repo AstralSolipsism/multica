@@ -818,6 +818,52 @@ func TestKimiDialer(t *testing.T) {
 	}
 }
 
+// The bounded re-proof wrapper (fixture-based; the live delayed-accept
+// paths are in planquota_kimi_proc_linux_test.go): a proof that starts
+// failing and later passes must pass within the window with the matching
+// consult count; a proof that never passes must fail after the full
+// budget without spinning (sleep between consults).
+func TestKimiProveConnPeerWithRetry(t *testing.T) {
+	t.Run("passes once the proof answers true", func(t *testing.T) {
+		answers := []bool{false, false, true}
+		consults := 0
+		prove := kimiProveConnPeerWithRetry(func(net.Conn) bool {
+			consults++
+			return answers[min(consults, len(answers))-1]
+		})
+		start := time.Now()
+		if !prove(nil) {
+			t.Fatal("proof that flips true within the window was rejected")
+		}
+		if consults != len(answers) {
+			t.Fatalf("consults = %d, want %d", consults, len(answers))
+		}
+		if elapsed := time.Since(start); elapsed >= kimiProofRetryBudget {
+			t.Fatalf("pass took %v, longer than the budget", elapsed)
+		}
+	})
+
+	t.Run("always-false fails after the budget without spinning", func(t *testing.T) {
+		consults := 0
+		prove := kimiProveConnPeerWithRetry(func(net.Conn) bool {
+			consults++
+			return false
+		})
+		start := time.Now()
+		if prove(nil) {
+			t.Fatal("never-proven connection passed")
+		}
+		elapsed := time.Since(start)
+		if elapsed < kimiProofRetryBudget {
+			t.Fatalf("failed after %v, before the budget %v", elapsed, kimiProofRetryBudget)
+		}
+		// budget/pause + a little slack for the first consult and scheduling.
+		if max := int(kimiProofRetryBudget/kimiProofRetryPause) + 2; consults > max {
+			t.Fatalf("consults = %d, want <= %d (missing sleep between retries)", consults, max)
+		}
+	})
+}
+
 // --- Parser fixtures ---
 
 // The owned-listen set builder: address-aware, same-uid only. Includes the
