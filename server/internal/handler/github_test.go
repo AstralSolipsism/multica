@@ -295,14 +295,14 @@ func TestStateRoundTripWithRepositoryReturnTarget(t *testing.T) {
 	t.Setenv("GITHUB_WEBHOOK_SECRET", "test-secret-123")
 	wsID := "11111111-2222-3333-4444-555555555555"
 
-	tok, err := signStateForReturn(wsID, githubReturnToRepositories)
+	tok, err := signStateForReturn(wsID, githubReturnToRepositories, "")
 	if err != nil {
 		t.Fatalf("signStateForReturn: %v", err)
 	}
 	if parts := strings.Split(tok, "."); len(parts) != 4 {
 		t.Fatalf("repository return state has %d parts, want 4", len(parts))
 	}
-	gotWorkspaceID, gotReturnTo, ok := verifyStateWithReturn(tok)
+	gotWorkspaceID, gotReturnTo, _, ok := verifyStateWithReturn(tok)
 	if !ok {
 		t.Fatal("verifyStateWithReturn rejected a freshly-signed token")
 	}
@@ -317,7 +317,7 @@ func TestStateRoundTripWithRepositoryReturnTarget(t *testing.T) {
 	}
 
 	tampered := strings.Replace(tok, ".repositories.", ".github.", 1)
-	if _, _, ok := verifyStateWithReturn(tampered); ok {
+	if _, _, _, ok := verifyStateWithReturn(tampered); ok {
 		t.Error("tampered return target should fail verification")
 	}
 }
@@ -346,7 +346,7 @@ func TestGitHubConnectRepositoryReturnTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse install URL: %v", err)
 	}
-	_, returnTo, ok := verifyStateWithReturn(installURL.Query().Get("state"))
+	_, returnTo, _, ok := verifyStateWithReturn(installURL.Query().Get("state"))
 	if !ok || returnTo != githubReturnToRepositories {
 		t.Fatalf("signed return target = %q, valid=%v, want repositories", returnTo, ok)
 	}
@@ -368,7 +368,7 @@ func TestGitHubSetupCallbackRepositoryReturnTarget(t *testing.T) {
 	t.Setenv("GITHUB_WEBHOOK_SECRET", "test-secret-123")
 	t.Setenv("FRONTEND_ORIGIN", "https://app.multica.test/")
 	wsID := "11111111-2222-3333-4444-555555555555"
-	state, err := signStateForReturn(wsID, githubReturnToRepositories)
+	state, err := signStateForReturn(wsID, githubReturnToRepositories, "")
 	if err != nil {
 		t.Fatalf("signStateForReturn: %v", err)
 	}

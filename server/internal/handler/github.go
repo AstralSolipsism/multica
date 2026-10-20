@@ -385,12 +385,24 @@ func isGitHubRepositoryBrowseConfigured() bool {
 
 // signState produces an opaque token that binds a workspace ID to the
 // install flow so the setup callback can recover the workspace without
-// trusting query params alone. Format: "<workspaceID>.<nonce>.<sigHex>".
+// trusting query params alone. Legacy format: "<workspaceID>.<nonce>.<sig>"
+//
+// The setup callback is a public route (no auth middleware), so its
+// X-User-ID header is client-forgeable; the operator identity that the
+// OL-955 binding gate relies on therefore travels inside this signed state.
+// Use signStateForReturn to embed one.
 func signState(workspaceID string) (string, error) {
-	return signStateForReturn(workspaceID, githubReturnToGitHub)
+	return signStateForReturn(workspaceID, githubReturnToGitHub, "")
 }
 
-func signStateForReturn(workspaceID, returnTo string) (string, error) {
+// signStateForReturn signs a state token, optionally carrying the operator
+// (the authenticated admin who started the flow) and the post-install return
+// target. Signed shapes:
+//
+//	<ws>.<nonce>.<sig>                          no operator, default return
+//	<ws>.<returnTo>.<nonce>.<sig>               no operator, named return
+//	<ws>.<returnTo>.<operator>.<nonce>.<sig>    operator (always names returnTo)
+func signStateForReturn(workspaceID, returnTo, operatorID string) (string, error) {
 	secret := githubWebhookSecret()
 	if secret == "" {
 		return "", errors.New("github integration is not configured")
@@ -403,10 +415,15 @@ func signStateForReturn(workspaceID, returnTo string) (string, error) {
 		return "", err
 	}
 	nonce := hex.EncodeToString(nonceBytes)
-	payload := workspaceID + "." + nonce
-	if returnTo != githubReturnToGitHub {
-		payload = workspaceID + "." + returnTo + "." + nonce
+	segments := []string{workspaceID}
+	if returnTo != githubReturnToGitHub || operatorID != "" {
+		segments = append(segments, returnTo)
 	}
+	if operatorID != "" {
+		segments = append(segments, operatorID)
+	}
+	segments = append(segments, nonce)
+	payload := strings.Join(segments, ".")
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(payload))
 	sig := hex.EncodeToString(mac.Sum(nil))
@@ -414,27 +431,41 @@ func signStateForReturn(workspaceID, returnTo string) (string, error) {
 }
 
 func verifyState(token string) (string, bool) {
-	workspaceID, _, ok := verifyStateWithReturn(token)
+	workspaceID, _, _, ok := verifyStateWithReturn(token)
 	return workspaceID, ok
 }
 
-func verifyStateWithReturn(token string) (workspaceID, returnTo string, ok bool) {
+// verifyStateWithReturn validates a state token produced by
+// signStateForReturn and recovers the workspace, return target, and — when
+// the token carries one — the operator who started the flow. The operator is
+// only ever read from this signed token, never from request headers, because
+// the setup callback route is public.
+func verifyStateWithReturn(token string) (workspaceID, returnTo, operatorID string, ok bool) {
 	secret := githubWebhookSecret()
 	if secret == "" {
-		return "", "", false
+		return "", "", "", false
 	}
 	parts := strings.Split(token, ".")
-	if len(parts) != 3 && len(parts) != 4 {
-		return "", "", false
+	if len(parts) < 3 || len(parts) > 5 {
+		return "", "", "", false
 	}
 	workspaceID = parts[0]
 	returnTo = githubReturnToGitHub
-	nonceIndex := 1
-	if len(parts) == 4 {
+	operatorID = ""
+	nonceIndex := len(parts) - 2
+	switch len(parts) {
+	case 4:
 		returnTo = parts[1]
-		nonceIndex = 2
-		if !isAllowedGitHubReturnTo(returnTo) {
-			return "", "", false
+	case 5:
+		returnTo = parts[1]
+		operatorID = parts[2]
+	}
+	if !isAllowedGitHubReturnTo(returnTo) {
+		return "", "", "", false
+	}
+	if operatorID != "" {
+		if _, err := parseStrictUUID(operatorID); err != nil {
+			return "", "", "", false
 		}
 	}
 	sig := parts[nonceIndex+1]
@@ -443,9 +474,9 @@ func verifyStateWithReturn(token string) (workspaceID, returnTo string, ok bool)
 	mac.Write([]byte(payload))
 	expected := hex.EncodeToString(mac.Sum(nil))
 	if !hmac.Equal([]byte(expected), []byte(sig)) {
-		return "", "", false
+		return "", "", "", false
 	}
-	return workspaceID, returnTo, true
+	return workspaceID, returnTo, operatorID, true
 }
 
 func isAllowedGitHubReturnTo(returnTo string) bool {
@@ -480,7 +511,11 @@ func (h *Handler) GitHubConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug := githubAppSlug()
-	state, err := signStateForReturn(workspaceID, returnTo)
+	// Embed the authenticated operator in the signed state. The setup
+	// callback is a public route whose X-User-ID header is client-forgeable,
+	// so this signed value is the only operator identity it trusts (OL-955
+	// binding gate).
+	state, err := signStateForReturn(workspaceID, returnTo, requestUserID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to sign state")
 		return
@@ -515,7 +550,7 @@ func (h *Handler) GitHubSetupCallback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, settingsURL+"&github_error=missing_params", http.StatusFound)
 		return
 	}
-	workspaceID, returnTo, ok := verifyStateWithReturn(state)
+	workspaceID, returnTo, operatorID, ok := verifyStateWithReturn(state)
 	if !ok {
 		http.Redirect(w, r, settingsURL+"&github_error=invalid_state", http.StatusFound)
 		return
@@ -533,6 +568,23 @@ func (h *Handler) GitHubSetupCallback(w http.ResponseWriter, r *http.Request) {
 	wsUUID, err := parseStrictUUID(workspaceID)
 	if err != nil {
 		http.Redirect(w, r, settingsURL+"&github_error=bad_workspace", http.StatusFound)
+		return
+	}
+	// OL-955 binding gate: an installation that is already bound may only be
+	// rebound by its manager (the signed operator must be owner/admin of a
+	// bound workspace — the same allowlist OL-928 option A uses). Zero-binding
+	// first installs pass through; a GitHub-confirmed foreign/suspended
+	// installation_id is refused instead of being blindly persisted. The
+	// operator comes from the signed state, never from headers: this route is
+	// public, so an X-User-ID header would be trivially forgeable.
+	var operatorUUID pgtype.UUID
+	if operatorID != "" {
+		if u, err := parseStrictUUID(operatorID); err == nil {
+			operatorUUID = u
+		}
+	}
+	if code := h.reviewGitHubSetupBinding(r.Context(), operatorUUID, installationID); code != "" {
+		http.Redirect(w, r, settingsURL+"&github_error="+code, http.StatusFound)
 		return
 	}
 	// Resolve the installation against GitHub's API to capture display info.
