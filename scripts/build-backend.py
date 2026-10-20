@@ -158,7 +158,7 @@ def main():
                 env.update(GOOS="linux", GOARCH=arch)
                 for command in COMMANDS:
                     subprocess.run(["go", "build", "-trimpath", "-buildvcs=true", "-ldflags",
-                                    f'-s -w -X main.version={identity["version"]} -X main.commit={identity["commit"]} -X main.date={identity["date"]}',
+                                    f'-s -w -X main.version={identity["version"]} -X main.commit={identity["commit"]} -X main.buildCommit={identity["commit"]} -X main.date={identity["date"]}',
                                     "-o", str(target / command), "./cmd/" + command], cwd=source / "server", env=env, check=True)
                 for name_in_archive, path in sources.items():
                     destination = target / name_in_archive

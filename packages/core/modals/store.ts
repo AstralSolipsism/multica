@@ -14,6 +14,7 @@ type ModalType =
   | "issue-delete-confirm"
   | "issue-run-confirm"
   | "issue-edit-dependencies"
+  | "issue-workflow-handoff"
   | null;
 
 export type IssueLimitRecoveryReason = "issue_limit" | "autopilot_quota";

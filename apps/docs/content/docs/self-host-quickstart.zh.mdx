@@ -313,7 +313,7 @@ Migration 在 backend 启动时自动运行；需要回填历史数据的 migrat
 
 ### 用 `/readyz` 验证，不要用 `/health`
 
-`/health` 是 **liveness** 探针，只要进程还活着就返回 `{"status":"ok"}`，migration 失败了它照样是 ok。`/readyz`（`server/cmd/server/router.go:680`，`/healthz` 是它的别名）会真正检查数据库和已应用的 migration 集合，升级出问题能被它拦下来：
+`/health` 是 **liveness** 探针，只要进程还活着就返回 `{"status":"ok"}`，migration 失败了它照样是 ok。`/readyz`（`server/cmd/server/router.go` 中注册的 `readyHandler`，`/healthz` 是它的别名）会真正检查数据库和已应用的 migration 集合，升级出问题能被它拦下来：
 
 ```bash
 curl -s localhost:8080/readyz

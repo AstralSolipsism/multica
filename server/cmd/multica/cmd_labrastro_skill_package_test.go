@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -28,7 +29,11 @@ const skillPackageTestURL = "https://github.com/example/skills"
 
 func skillPackageFixture(t *testing.T, name string) map[string]any {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", "labrastro-skill-package-"+name+".json"))
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate skill package fixtures")
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(source), "testdata", "labrastro-skill-package-"+name+".json"))
 	if err != nil {
 		t.Fatal(err)
 	}

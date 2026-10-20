@@ -639,6 +639,7 @@ describe("resolveCliStamp (bundle-cli candidate stamp)", () => {
     expect(resolveCliStamp(env)).toEqual({
       version: "0.4.43-labrastro.2",
       commit: "b".repeat(40),
+      buildCommit: "b".repeat(40),
       date: "2026-09-15T01:02:03Z",
       source: "candidate",
     });
@@ -648,17 +649,19 @@ describe("resolveCliStamp (bundle-cli candidate stamp)", () => {
     expect(
       resolveCliStamp(
         {},
-        { describe: "v0.4.43-12-gdeadbeef", head: "deadbeef", now: "2026-09-15T01:02:03Z" },
+        { describe: "v0.4.43-12-gdeadbeef", head: "deadbeef", fullHead: "d".repeat(40), now: "2026-09-15T01:02:03Z" },
       ),
     ).toEqual({
       version: "v0.4.43-12-gdeadbeef",
       commit: "deadbeef",
+      buildCommit: "d".repeat(40),
       date: "2026-09-15T01:02:03Z",
       source: "git-describe",
     });
     expect(resolveCliStamp({}, { now: "2026-09-15T01:02:03Z" })).toEqual({
       version: "dev",
       commit: "unknown",
+      buildCommit: "unknown",
       date: "2026-09-15T01:02:03Z",
       source: "git-describe",
     });

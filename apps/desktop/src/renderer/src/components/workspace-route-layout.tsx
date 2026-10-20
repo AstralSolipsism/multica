@@ -10,11 +10,9 @@ import { getCurrentSlug, setCurrentWorkspace } from "@multica/core/platform";
 import { isWorkspaceDeletePending } from "@multica/core/workspace/pending-delete";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceSeen } from "@multica/views/workspace/use-workspace-seen";
-import { WelcomeAfterOnboarding } from "@multica/views/workspace/welcome-after-onboarding";
 import { WorkspacePresencePrefetch } from "@multica/views/layout";
 import { YouShouldKnowProvider } from "@multica/views/you-should-know";
 import { useTabStore } from "@/stores/tab-store";
-import { useWindowOverlayStore } from "@/stores/window-overlay-store";
 
 /**
  * Which mounted layout instance currently owns the platform workspace
@@ -55,16 +53,6 @@ export function WorkspaceRouteLayout() {
   const [instanceId] = useState(() => Symbol("workspace-route-layout"));
   const user = useAuthStore((s) => s.user);
   const isAuthLoading = useAuthStore((s) => s.isLoading);
-  // While a WindowOverlay is open (onboarding, accept-invite, new-workspace),
-  // the underlying tab is still mounted in the React tree — so this layout
-  // and its WelcomeAfterOnboarding Modal would render UNDER the overlay.
-  // Because the modal uses a Portal that targets document.body, it ends up
-  // rendered LATER in the DOM and visually outranks the overlay's z-50.
-  // Suppress the modal whenever any overlay is active; the moment the
-  // overlay closes the welcome hook re-evaluates and pops if its store
-  // signal is still set.
-  const overlayActive = useWindowOverlayStore((s) => s.overlay !== null);
-
   // Workspace routes require auth. App.tsx renders <DesktopLoginPage>
   // instead of the shell whenever `user` is null, so this tree never mounts
   // unauthenticated — the old in-router bounce to /login was dead defensive
@@ -94,11 +82,10 @@ export function WorkspaceRouteLayout() {
   //
   // The pending-delete guard exists because this write would otherwise undo
   // the delete flow's own cleanup (MUL-6231 / #7021). useDeleteWorkspace
-  // clears the singleton and navigates away, but this layout is subscribed to
-  // the overlay store, so opening the new-workspace overlay re-renders it
-  // while the deleted workspace is STILL in the list cache (the invalidation
-  // refetch is a network round-trip). Without the guard we write the dead slug
-  // straight back over the cleanup.
+  // clears the singleton and navigates away, but query updates can re-render
+  // this layout while the deleted workspace is still in the list cache (the
+  // invalidation refetch is a network round-trip). Without the guard we write
+  // the dead slug straight back over the cleanup.
   //
   // Claiming ownership here — in the same render pass, before any cleanup can
   // run — is what makes the unmount release below safe. React renders the
@@ -179,14 +166,6 @@ export function WorkspaceRouteLayout() {
     <WorkspaceSlugProvider slug={workspaceSlug}>
       <WorkspacePresencePrefetch />
       <YouShouldKnowProvider><Outlet /></YouShouldKnowProvider>
-      {/* Reads the welcome-store transient signal parked by
-       *  OnboardingFlow.handleRuntimeNext. Suppressed while a WindowOverlay
-       *  (onboarding / accept-invite / new-workspace) is open so the modal
-       *  doesn't portal-jump in front of an active pre-workspace flow.
-       *  Once the overlay closes the hook re-evaluates and pops the
-       *  Modal — unless the store signal has already been consumed, in
-       *  which case the hook renders null. */}
-      {!overlayActive && <WelcomeAfterOnboarding />}
     </WorkspaceSlugProvider>
   );
 }

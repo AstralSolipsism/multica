@@ -111,9 +111,7 @@ func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Runtime Usage
-// ---------------------------------------------------------------------------
 
 type RuntimeUsageResponse struct {
 	RuntimeID        string `json:"runtime_id"`

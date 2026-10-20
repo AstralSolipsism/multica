@@ -24,10 +24,14 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func (f *conversationFixture) router(t *testing.T) *engine.Router {
+func (f *conversationFixture) router(t *testing.T, typing ...engine.TypingNotifier) *engine.Router {
 	t.Helper()
 	r := engine.NewRouter(f.h.IssueService, f.h.TaskService, f.h.Queries, engine.RouterConfig{})
-	r.Register(channel.TypeFeishu, lark.NewFeishuResolverSet(lark.NewChannelStore(f.h.Queries), engine.NewChatSession(f.h.Queries, f.h.TxStarter, channel.TypeFeishu, engine.SessionTitles{}), lark.NewAuditLogger(f.h.Queries), nil, nil, nil))
+	resolvers := lark.NewFeishuResolverSet(lark.NewChannelStore(f.h.Queries), engine.NewChatSession(f.h.Queries, f.h.TxStarter, channel.TypeFeishu, engine.SessionTitles{}), lark.NewAuditLogger(f.h.Queries), nil, nil, nil)
+	if len(typing) > 0 {
+		resolvers.Typing = typing[0]
+	}
+	r.Register(channel.TypeFeishu, resolvers)
 	r.SetConversationHandler(f.h.HandleChannelConversation)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -37,6 +41,45 @@ func (f *conversationFixture) router(t *testing.T) *engine.Router {
 		}
 	})
 	return r
+}
+
+type conversationTypingNotice struct {
+	sessionID, messageID pgtype.UUID
+}
+
+type conversationTypingRecorder struct{ ingested chan conversationTypingNotice }
+
+func (n *conversationTypingRecorder) OnIngested(_ context.Context, _ engine.ResolvedInstallation, _ channel.InboundMessage, sessionID, messageID pgtype.UUID) {
+	n.ingested <- conversationTypingNotice{sessionID, messageID}
+}
+
+func (*conversationTypingRecorder) OnSettled(context.Context, pgtype.UUID, engine.TypingSettlement) {}
+
+func TestConversationTypingReceivesPersistedMessageID(t *testing.T) {
+	for _, input := range []string{"first question", "/new first question"} {
+		t.Run(input, func(t *testing.T) {
+			f := newConversationFixture(t)
+			f.msg.ReplyTo = nil
+			f.msg.Text, f.msg.CommandText = input, input
+			notifier := &conversationTypingRecorder{ingested: make(chan conversationTypingNotice, 1)}
+			router := f.router(t, notifier)
+			if err := router.Handle(context.Background(), f.msg); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case notice := <-notifier.ingested:
+				var sessionID, messageID pgtype.UUID
+				dbfx.QueryRow(t, `SELECT m.chat_session_id,m.id FROM chat_message m
+					JOIN chat_session s ON s.id=m.chat_session_id
+					WHERE s.agent_id=$1 AND m.role='user'`, f.agent).Scan(&sessionID, &messageID)
+				if !notice.messageID.Valid || notice.messageID != messageID || notice.sessionID != sessionID {
+					t.Fatalf("typing received %v/%v, want persisted %v/%v", notice.sessionID, notice.messageID, sessionID, messageID)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("typing notifier was not called for an ingested conversation message")
+			}
+		})
+	}
 }
 
 func (f *conversationFixture) ingest(t *testing.T) {

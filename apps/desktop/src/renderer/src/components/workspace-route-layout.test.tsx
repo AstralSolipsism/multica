@@ -7,7 +7,6 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 const state = vi.hoisted(() => ({
   user: null as { id: string } | null,
   isAuthLoading: false,
-  overlay: null as { type: string } | null,
   workspace: null as { id: string; slug: string } | null,
   workspaceError: false,
   listFetched: true,
@@ -87,10 +86,6 @@ vi.mock("@multica/views/workspace/use-workspace-seen", () => ({
   useWorkspaceSeen: () => state.workspaceSeen,
 }));
 
-vi.mock("@multica/views/workspace/welcome-after-onboarding", () => ({
-  WelcomeAfterOnboarding: () => null,
-}));
-
 vi.mock("@multica/views/layout", () => ({
   WorkspacePresencePrefetch: () => null,
 }));
@@ -108,12 +103,6 @@ vi.mock("@/stores/tab-store", () => ({
     getState: () => ({ validateWorkspaceSlugs: vi.fn() }),
   }),
 }));
-
-vi.mock("@/stores/window-overlay-store", () => {
-  const useWindowOverlayStore = (selector: (s: typeof state) => unknown) =>
-    selector(state);
-  return { useWindowOverlayStore };
-});
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WorkspaceRouteLayout } from "./workspace-route-layout";
@@ -143,7 +132,6 @@ function renderLayout() {
 beforeEach(() => {
   state.user = { id: "u1" };
   state.isAuthLoading = false;
-  state.overlay = null;
   state.workspace = { id: "ws-1", slug: "acme" };
   state.workspaceError = false;
   state.listFetched = true;

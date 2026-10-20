@@ -1,5 +1,5 @@
 # --- Build stage ---
-FROM golang:1.26.8-alpine AS builder
+FROM golang:1.26.9-alpine AS builder
 
 RUN apk add --no-cache git
 
@@ -18,7 +18,7 @@ ARG COMMIT
 ARG DATE
 RUN test -n "$VERSION" && test -n "$COMMIT" && test -n "$DATE"
 RUN cd server && for command in server multica migrate maintenance backfill_task_usage_hourly backfill_codex_usage_cache; do \
-      CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+      CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildCommit=${COMMIT} -X main.date=${DATE}" \
         -o "bin/$command" "./cmd/$command" || exit 1; \
     done && go version -m bin/* > bin/go-build-info.txt
 
