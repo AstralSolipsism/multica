@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -79,80 +81,44 @@ func (h *Handler) ListGitHubAppInstallations(w http.ResponseWriter, r *http.Requ
 	for _, row := range rows {
 		connected[row.InstallationID] = struct{}{}
 	}
+	// Fetch each managed installation directly (GET /app/installations/{id})
+	// instead of the app-wide GET /app/installations list: only the caller's
+	// managed set is needed, and the app-wide inventory is paginated — a
+	// first-page-only fetch silently drops managed installations beyond the
+	// first 100 (OL-957).
 	out := make([]GitHubAppInstallationResponse, 0, len(managedSet))
-	if len(managedSet) > 0 {
-		installations, err := fetchGitHubAppInstallations(r.Context())
+	for id := range managedSet {
+		account, err := fetchGitHubInstallationAccountStrict(r.Context(), id)
 		if err != nil {
-			slog.Warn("github: list app installations failed", "err", err)
+			// Stale binding rows (uninstalled on GitHub) and suspended
+			// installations are skipped, not fatal: neither can be bound.
+			if errors.Is(err, errGitHubInstallationNotFound) || errors.Is(err, errGitHubInstallationSuspended) {
+				continue
+			}
+			slog.Warn("github: fetch installation failed", "err", err, "installation_id", id)
 			writeError(w, http.StatusBadGateway, "failed to list github app installations")
 			return
 		}
-		for _, inst := range installations {
-			if _, isManaged := managedSet[inst.InstallationID]; !isManaged {
-				continue
-			}
-			_, isConnected := connected[inst.InstallationID]
-			inst.Connected = isConnected
-			out = append(out, inst)
-		}
+		_, isConnected := connected[id]
+		out = append(out, GitHubAppInstallationResponse{
+			InstallationID:   id,
+			AccountLogin:     account.login,
+			AccountType:      account.accountType,
+			AccountAvatarURL: account.avatar,
+			Connected:        isConnected,
+		})
 	}
+	// Map iteration order is random; sort so clients get a stable list.
+	slices.SortFunc(out, func(a, b GitHubAppInstallationResponse) int {
+		if c := strings.Compare(strings.ToLower(a.AccountLogin), strings.ToLower(b.AccountLogin)); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.InstallationID, b.InstallationID)
+	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"installations": out,
 		"configured":    true,
 	})
-}
-
-// fetchGitHubAppInstallations lists the App's installations from GitHub.
-// Pagination beyond the first 100 is not followed — ponytail: deployments
-// rarely exceed one page; chain Link headers if it ever matters.
-func fetchGitHubAppInstallations(ctx context.Context) ([]GitHubAppInstallationResponse, error) {
-	appJWT, err := signGitHubAppJWT(time.Now())
-	if err != nil {
-		return nil, err
-	}
-	if appJWT == "" {
-		return nil, errors.New("github App JWT credentials unavailable")
-	}
-	endpoint := fmt.Sprintf(
-		"%s/app/installations?per_page=100",
-		strings.TrimRight(githubAPIBase, "/"),
-	)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	setGitHubAPIHeaders(req, appJWT)
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, githubAPIResponseLimit))
-		return nil, fmt.Errorf("list app installations: github status %d", resp.StatusCode)
-	}
-	var body []struct {
-		ID      int64 `json:"id"`
-		Account struct {
-			Login     string `json:"login"`
-			Type      string `json:"type"`
-			AvatarURL string `json:"avatar_url"`
-		} `json:"account"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, githubAPIResponseLimit)).Decode(&body); err != nil {
-		return nil, fmt.Errorf("decode app installations: %w", err)
-	}
-	out := make([]GitHubAppInstallationResponse, 0, len(body))
-	for _, inst := range body {
-		out = append(out, GitHubAppInstallationResponse{
-			InstallationID:   inst.ID,
-			AccountLogin:     inst.Account.Login,
-			AccountType:      inst.Account.Type,
-			AccountAvatarURL: strPtrOrNil(inst.Account.AvatarURL),
-		})
-	}
-	return out, nil
 }
 
 // ConnectGitHubInstallation (POST /api/workspaces/{id}/github/installations)
