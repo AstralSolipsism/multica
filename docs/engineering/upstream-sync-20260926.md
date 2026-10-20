@@ -136,8 +136,8 @@ use-case MDX files, `source.config.ts`, `use-cases-source.ts`,
 `use-case-locale-fallback.ts` and its test, `step-about-you.tsx` and its test,
 onboarding `types.ts`, and all five upstream `onboarding.json` files are
 byte-identical to that version at the initial restoration. The v0.6.3 sync
-(see `upstream-sync-20261020.md`) subsequently updated the onboarding types,
-questionnaire component and locale files; they are no longer all byte-identical
+(see `upstream-sync-20261020.md`) subsequently updated the onboarding types
+and locale files; they are no longer all byte-identical
 to the restoration baseline. Flow/runtime components retain only the gates
 described above. Restored questionnaire branding lives in the existing fork
 brand overlays; retired page metadata has narrowly listed source-guard
