@@ -800,7 +800,8 @@ func (h *Handler) loadAttachmentForRequest(w http.ResponseWriter, r *http.Reques
 // loadAttachmentForDownload is a workspace-self-resolving variant used by the
 // /api/attachments/{id}/download endpoint. It looks the attachment up by ID
 // alone, then enforces that the authenticated user is a member of the
-// attachment's workspace.
+// attachment's workspace. External conversation tasks additionally scope the
+// lookup to their token's workspace via getAttachmentForDownload.
 //
 // Why a separate code path: a native browser <img>/<video> resource load on
 // /api/attachments/{id}/download cannot attach the X-Workspace-Slug /
@@ -821,7 +822,7 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return db.Attachment{}, false
 	}
-	att, err := h.Queries.GetAttachmentByIDOnly(r.Context(), attUUID)
+	att, err := h.getAttachmentForDownload(r, attUUID)
 	if err != nil {
 		// 404 (not 403/401) so non-member and non-existent look identical
 		// to outside callers. Same shape as ServeLocalUpload's
