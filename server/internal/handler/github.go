@@ -189,6 +189,18 @@ func githubInstallationToBroadcast(i db.GithubInstallation) GitHubInstallationRe
 	return resp
 }
 
+// GitHubAppInstallationResponse is the shape returned by the reusable
+// installations list endpoint: every account/organization that has the
+// GitHub App installed, flagged with whether it is already bound to the
+// requesting workspace.
+type GitHubAppInstallationResponse struct {
+	InstallationID   int64   `json:"installation_id"`
+	AccountLogin     string  `json:"account_login"`
+	AccountType      string  `json:"account_type"`
+	AccountAvatarURL *string `json:"account_avatar_url"`
+	Connected        bool    `json:"connected"`
+}
+
 func githubPullRequestToResponse(p db.GithubPullRequest, snapshotEnabled bool) GitHubPullRequestResponse {
 	snapshotAvailable := currentGitHubSnapshotAvailable(
 		snapshotEnabled, p.HeadSha, p.SnapshotHeadSha, p.SnapshotFetchedAt,
@@ -599,6 +611,233 @@ func (h *Handler) consumePendingGitHubInstallation(ctx context.Context, inst db.
 		return inst, err
 	}
 	return refreshed, nil
+}
+
+// ListGitHubAppInstallations (GET /api/workspaces/{id}/github/app-installations)
+// returns every account/organization that has the deployment's GitHub App
+// installed, each flagged with whether it is already bound to this workspace.
+// It powers the "reuse an existing installation" flow for workspaces whose
+// Connect redirect never returns from GitHub (GitHub parks already-installed
+// accounts on the Configure page instead).
+func (h *Handler) ListGitHubAppInstallations(w http.ResponseWriter, r *http.Request) {
+	workspaceID := chi.URLParam(r, "id")
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return
+	}
+	if !isGitHubRepositoryBrowseConfigured() {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"installations": []GitHubAppInstallationResponse{},
+			"configured":    false,
+		})
+		return
+	}
+	installations, err := fetchGitHubAppInstallations(r.Context())
+	if err != nil {
+		slog.Warn("github: list app installations failed", "err", err)
+		writeError(w, http.StatusBadGateway, "failed to list github app installations")
+		return
+	}
+	connected := map[int64]struct{}{}
+	rows, err := h.Queries.ListGitHubInstallationsByWorkspace(r.Context(), wsUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list installations")
+		return
+	}
+	for _, row := range rows {
+		connected[row.InstallationID] = struct{}{}
+	}
+	out := make([]GitHubAppInstallationResponse, 0, len(installations))
+	for _, inst := range installations {
+		_, isConnected := connected[inst.InstallationID]
+		inst.Connected = isConnected
+		out = append(out, inst)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"installations": out,
+		"configured":    true,
+	})
+}
+
+// fetchGitHubAppInstallations lists the App's installations from GitHub.
+// Pagination beyond the first 100 is not followed — ponytail: deployments
+// rarely exceed one page; chain Link headers if it ever matters.
+func fetchGitHubAppInstallations(ctx context.Context) ([]GitHubAppInstallationResponse, error) {
+	appJWT, err := signGitHubAppJWT(time.Now())
+	if err != nil {
+		return nil, err
+	}
+	if appJWT == "" {
+		return nil, errors.New("github App JWT credentials unavailable")
+	}
+	endpoint := fmt.Sprintf(
+		"%s/app/installations?per_page=100",
+		strings.TrimRight(githubAPIBase, "/"),
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	setGitHubAPIHeaders(req, appJWT)
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, githubAPIResponseLimit))
+		return nil, fmt.Errorf("list app installations: github status %d", resp.StatusCode)
+	}
+	var body []struct {
+		ID      int64 `json:"id"`
+		Account struct {
+			Login     string `json:"login"`
+			Type      string `json:"type"`
+			AvatarURL string `json:"avatar_url"`
+		} `json:"account"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, githubAPIResponseLimit)).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decode app installations: %w", err)
+	}
+	out := make([]GitHubAppInstallationResponse, 0, len(body))
+	for _, inst := range body {
+		out = append(out, GitHubAppInstallationResponse{
+			InstallationID:   inst.ID,
+			AccountLogin:     inst.Account.Login,
+			AccountType:      inst.Account.Type,
+			AccountAvatarURL: strPtrOrNil(inst.Account.AvatarURL),
+		})
+	}
+	return out, nil
+}
+
+// ConnectGitHubInstallation (POST /api/workspaces/{id}/github/installations)
+// binds an already-existing GitHub App installation to the workspace without
+// going through the browser install flow — the recovery path for accounts
+// GitHub parks on its Configure page instead of redirecting back to us.
+func (h *Handler) ConnectGitHubInstallation(w http.ResponseWriter, r *http.Request) {
+	workspaceID := chi.URLParam(r, "id")
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return
+	}
+	var body struct {
+		InstallationID int64 `json:"installation_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.InstallationID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid installation_id")
+		return
+	}
+	if !isGitHubRepositoryBrowseConfigured() {
+		writeFeatureDisabled(w, "github_app_auth_not_configured", "github app authentication is not configured")
+		return
+	}
+	// Strictly verify the installation belongs to this App before binding:
+	// unlike the setup callback's best-effort fetchInstallationAccount, a miss
+	// here must refuse rather than fall back to a placeholder.
+	account, err := fetchGitHubInstallationAccountStrict(r.Context(), body.InstallationID)
+	if err != nil {
+		if errors.Is(err, errGitHubInstallationNotFound) {
+			writeError(w, http.StatusNotFound, "github installation not found")
+			return
+		}
+		slog.Warn("github: verify installation failed", "err", err, "installation_id", body.InstallationID)
+		writeError(w, http.StatusBadGateway, "failed to verify github installation")
+		return
+	}
+	connectedBy := pgtype.UUID{}
+	if userID := requestUserID(r); userID != "" {
+		if u, err := parseStrictUUID(userID); err == nil {
+			connectedBy = u
+		}
+	}
+	inst, err := h.Queries.CreateGitHubInstallation(r.Context(), db.CreateGitHubInstallationParams{
+		WorkspaceID:      wsUUID,
+		InstallationID:   body.InstallationID,
+		AccountLogin:     account.login,
+		AccountType:      coalesce(account.accountType, "User"),
+		AccountAvatarUrl: ptrToText(account.avatar),
+		ConnectedByID:    connectedBy,
+	})
+	if err != nil {
+		slog.Error("github: failed to persist installation", "err", err, "installation_id", body.InstallationID)
+		writeError(w, http.StatusInternalServerError, "failed to connect installation")
+		return
+	}
+	inst, err = h.consumePendingGitHubInstallation(r.Context(), inst)
+	if err != nil {
+		slog.Error("github: failed to apply pending installation metadata", "err", err, "installation_id", body.InstallationID)
+		writeError(w, http.StatusInternalServerError, "failed to connect installation")
+		return
+	}
+	h.publish(protocol.EventGitHubInstallationCreated, workspaceID, "system", "", map[string]any{
+		"installation": githubInstallationToBroadcast(inst),
+	})
+	writeJSON(w, http.StatusCreated, githubInstallationToResponse(inst))
+}
+
+var errGitHubInstallationNotFound = errors.New("github installation not found")
+
+type githubInstallationAccount struct {
+	login       string
+	accountType string
+	avatar      *string
+}
+
+// fetchGitHubInstallationAccountStrict is fetchInstallationAccount's strict
+// sibling: any failure (404, other non-200, network error, decode error,
+// missing account.login) is an error instead of a placeholder fallback.
+func fetchGitHubInstallationAccountStrict(ctx context.Context, installationID int64) (githubInstallationAccount, error) {
+	var account githubInstallationAccount
+	appJWT, err := signGitHubAppJWT(time.Now())
+	if err != nil {
+		return account, err
+	}
+	if appJWT == "" {
+		return account, errors.New("github App JWT credentials unavailable")
+	}
+	endpoint := fmt.Sprintf(
+		"%s/app/installations/%d",
+		strings.TrimRight(githubAPIBase, "/"),
+		installationID,
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return account, err
+	}
+	setGitHubAPIHeaders(req, appJWT)
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return account, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, githubAPIResponseLimit))
+		return account, errGitHubInstallationNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, githubAPIResponseLimit))
+		return account, fmt.Errorf("verify installation: github status %d", resp.StatusCode)
+	}
+	var body struct {
+		Account struct {
+			Login     string `json:"login"`
+			Type      string `json:"type"`
+			AvatarURL string `json:"avatar_url"`
+		} `json:"account"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, githubAPIResponseLimit)).Decode(&body); err != nil {
+		return account, fmt.Errorf("decode installation: %w", err)
+	}
+	if body.Account.Login == "" {
+		return account, errors.New("installation account login missing")
+	}
+	account.login = body.Account.Login
+	account.accountType = body.Account.Type
+	account.avatar = strPtrOrNil(body.Account.AvatarURL)
+	return account, nil
 }
 
 // fetchInstallationAccount tries to enrich the installation row with the
