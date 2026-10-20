@@ -142,7 +142,7 @@ export function resolveCliStamp(env, { describe = "", head = "", now } = {}) {
 // 0.0.0-g<hash> fallback.
 function git(...args) {
   try {
-    return execFileSync("git", args, { encoding: "utf-8" }).trim();
+    return execFileSync("git", args, { encoding: "utf-8", cwd: repoRoot }).trim();
   } catch {
     return "";
   }
@@ -184,7 +184,7 @@ async function main() {
   });
 
   if (hasGo()) {
-    const ldflags = `-X main.version=${stamp.version} -X main.commit=${stamp.commit} -X main.date=${stamp.date}`;
+    const ldflags = `-X main.version=${stamp.version} -X main.commit=${stamp.commit} -X main.buildCommit=${stamp.commit} -X main.date=${stamp.date}`;
 
     console.log(
       `[bundle-cli] go build → ${srcBinary} (${goos}/${goarch}, version=${stamp.version} commit=${stamp.commit} source=${stamp.source})`,

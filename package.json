@@ -55,7 +55,8 @@
       "builder-util-runtime": "9.7.0"
     },
     "patchedDependencies": {
-      "electron-updater@6.8.3": "patches/electron-updater@6.8.3.patch"
+      "electron-updater@6.8.3": "patches/electron-updater@6.8.3.patch",
+      "expo-modules-core@57.0.21": "apps/mobile/patches/expo-modules-core@57.0.21.patch"
     }
   },
   "devDependencies": {

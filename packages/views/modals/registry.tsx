@@ -12,6 +12,7 @@ import { AddChildIssueModal } from "./add-child-issue";
 import { DeleteIssueConfirmModal } from "./delete-issue-confirm";
 import { RunConfirmModal } from "./run-confirm";
 import { EditDependenciesModal } from "./edit-dependencies";
+import { WorkflowHandoffModal } from "./workflow-handoff";
 import { IssueLimitUpgradeDialog } from "./issue-limit-upgrade-dialog";
 
 export function ModalRegistry() {
@@ -67,6 +68,8 @@ export function ModalRegistry() {
       break;
     case "issue-edit-dependencies":
       activeModal = <EditDependenciesModal onClose={close} data={data} />;
+    case "issue-workflow-handoff":
+      activeModal = <WorkflowHandoffModal onClose={close} data={data} />;
       break;
   }
 

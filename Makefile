@@ -302,11 +302,12 @@ cli: ## Run the multica CLI with ARGS or MULTICA_ARGS from source
 	@$(MAKE) multica MULTICA_ARGS="$(MULTICA_ARGS)"
 
 multica: ## Run the multica CLI entrypoint directly from the Go source tree
-	cd server && go run -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)" ./cmd/multica $(MULTICA_ARGS)
+	cd server && go run -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildCommit=$(BUILD_COMMIT) -X main.date=$(DATE)" ./cmd/multica $(MULTICA_ARGS)
 
 VERSION ?= dev-$(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)$(shell test -z "$$(git status --porcelain 2>/dev/null)" || echo -dirty)
 MULTICA_IMAGE_TAG ?= $(VERSION)
 COMMIT  ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+BUILD_COMMIT ?= $(COMMIT)
 DATE    ?= $(shell git show -s --format=%cI HEAD 2>/dev/null || date -u '+%Y-%m-%dT%H:%M:%SZ')
 # Windows will not execute an extensionless binary, so a source build there has
 # to name its outputs the way the target platform expects — otherwise the CLI
@@ -322,7 +323,7 @@ DATE    ?= $(shell git show -s --format=%cI HEAD 2>/dev/null || date -u '+%Y-%m-
 build: EXE = $(if $(filter windows,$(or $(GOOS),$(shell go env GOOS))),.exe,)
 build: ## Build the server, CLI, and migrate binaries into server/bin
 	cd server && go build -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/server$(EXE) ./cmd/server
-	cd server && go build -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)" -o bin/multica$(EXE) ./cmd/multica
+	cd server && go build -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildCommit=$(BUILD_COMMIT) -X main.date=$(DATE)" -o bin/multica$(EXE) ./cmd/multica
 	cd server && go build -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/migrate$(EXE) ./cmd/migrate
 
 test: ## Run Go tests after ensuring the target DB exists and migrations are applied
