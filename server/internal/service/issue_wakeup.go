@@ -818,28 +818,21 @@ func (s *IssueWakeupService) dispatchFromTick(ctx context.Context, w db.IssueWak
 	}
 	if err := dispatch(ctx, w); err != nil {
 		errs = append(errs, fmt.Errorf("wakeup %s: %w", util.UUIDToString(w.ID), err))
+		// This also advances updated_at: failures before the rule lock and
+		// rolled-back transactions must leave room for other candidates.
 		outcomeCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 		_ = s.Tasks.Queries.NoteWakeupFailure(outcomeCtx, db.NoteWakeupFailureParams{ID: w.ID, LastError: pgtype.Text{String: truncateForSummary(err.Error(), 500), Valid: true}})
 		cancel()
 	}
-	// Move the rule to the back of its lane so one noisy issue cannot
-	// monopolize the batches. Only scan order depends on this write: dispatch
-	// already committed the rule's outcome, and an unfinished rule stays a
-	// candidate either way. A pass now visits many more rules than one batch,
-	// so under load this bounded write can time out without anything being
-	// wrong; that is logged, not reported as a failed pass.
-	outcomeCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-	if touchErr := s.Tasks.Queries.TouchWakeupDispatch(outcomeCtx, w.ID); touchErr != nil && ctx.Err() == nil {
-		slog.DebugContext(ctx, "issue wakeup: scan-order touch skipped", "wakeup_id", util.UUIDToString(w.ID), "error", touchErr)
-	}
-	cancel()
+	// Successful dispatches already touched scan order under the rule lock;
+	// missing-issue cleanup deletes the rule, so neither needs another write.
 	return errs
 }
 
 // logTick reports one global pass: how many rules each lane visited, how long
 // the pass took and why it stopped, plus the age of the oldest input the
-// scheduler could act on and how many inputs a run is holding. It logs at
-// warn level when a limit cut the pass short, a dispatch failed, an
+// scheduler could act on and how many inputs a run or parked parent holds.
+// It logs at warn level when a limit cut the pass short, a dispatch failed, an
 // actionable input has waited longer than wakeupPendingWarnAge, or the
 // pending scan could not finish (pending_scan=incomplete: the age may be
 // missing or too young, so silence must not be read as "no backlog").
@@ -876,8 +869,8 @@ const (
 	wakeupPendingScanPage   = 1000
 )
 
-// pendingInputSummary splits unprocessed inputs into those a run is holding
-// on purpose and the backlog the scheduler could act on.
+// pendingInputSummary splits unprocessed inputs into those held by a run or
+// parked parent and the backlog the scheduler could act on.
 type pendingInputSummary struct {
 	OldestReady pgtype.Timestamptz
 	Held        int
@@ -891,18 +884,24 @@ func (p pendingInputSummary) age(now time.Time) (time.Duration, bool) {
 	return now.Sub(p.OldestReady.Time), true
 }
 
+func (p *pendingInputSummary) add(oldest pgtype.Timestamptz, count int, held bool) {
+	if held {
+		p.Held += count
+	} else if oldest.Valid && (!p.OldestReady.Valid || oldest.Time.Before(p.OldestReady.Time)) {
+		p.OldestReady = oldest
+	}
+}
+
 // pendingInputs classifies every unprocessed input the way dispatch treats
 // it (see ListPendingWakeupInputGroups), paging until the groups run out. For
-// a platform rule an input is held only while a run of the issue's current
-// target agent, run as the person the platform rule's run would run as, waits
-// to start: the same check dispatchSystem makes before keeping its inputs.
+// either kind of rule, waiting runs must match each input's human authority
+// and conversation root. Parked platform rules retain all their evidence.
 //
 // On an error, including ctx running out, it returns what it read so far
 // with the error: the summary is then a lower bound, not the answer.
 func (s *IssueWakeupService) pendingInputs(ctx context.Context, workspaceIDs []pgtype.UUID, pageSize int) (pendingInputSummary, error) {
 	var out pendingInputSummary
 	q := s.Tasks.Queries
-	systemWaiting := map[pgtype.UUID]bool{}
 	params := db.ListPendingWakeupInputGroupsParams{WorkspaceIds: workspaceIDs, PageSize: int32(pageSize)}
 	for {
 		groups, err := q.ListPendingWakeupInputGroups(ctx, params)
@@ -910,22 +909,15 @@ func (s *IssueWakeupService) pendingInputs(ctx context.Context, workspaceIDs []p
 			return out, fmt.Errorf("list pending wakeup inputs: %w", err)
 		}
 		for _, g := range groups {
-			held := g.Reserved || g.OwnClaimed || g.UserWaiting
-			if !held && g.SystemRule {
-				waiting, known := systemWaiting[g.WakeupID]
-				if !known {
-					if waiting, err = s.systemRuleRunWaiting(ctx, q, g.IssueID, g.WakeupID); err != nil {
-						return out, fmt.Errorf("resolve platform rule target: %w", err)
-					}
-					systemWaiting[g.WakeupID] = waiting
-				}
-				held = waiting
+			if g.Reserved || g.OwnClaimed || g.Parked {
+				out.add(g.Oldest, int(g.Inputs), true)
+				continue
 			}
-			switch {
-			case held:
-				out.Held += int(g.Inputs)
-			case !out.OldestReady.Valid || g.Oldest.Time.Before(out.OldestReady.Time):
-				out.OldestReady = g.Oldest
+			pending, err := s.pendingRuleInputs(ctx, q, g)
+			out.Held += pending.Held
+			out.add(pending.OldestReady, 0, false)
+			if err != nil {
+				return out, fmt.Errorf("classify pending wakeup inputs: %w", err)
 			}
 		}
 		if len(groups) < pageSize {
@@ -936,44 +928,77 @@ func (s *IssueWakeupService) pendingInputs(ctx context.Context, workspaceIDs []p
 	}
 }
 
-// systemRuleRunWaiting reports whether a platform rule on the issue would
-// keep its inputs for a run waiting to start (dispatchSystem's hasWaitingRun).
-func (s *IssueWakeupService) systemRuleRunWaiting(ctx context.Context, q *db.Queries, issueID, wakeupID pgtype.UUID) (bool, error) {
-	issue, err := q.GetIssue(ctx, issueID)
+// pendingRuleInputs reads the unreserved group without taking locks or
+// releasing/consuming receipts. Each authority group has its own waiting run;
+// one group's consent must not hide another group's backlog.
+func (s *IssueWakeupService) pendingRuleInputs(ctx context.Context, q *db.Queries, g db.ListPendingWakeupInputGroupsRow) (pendingInputSummary, error) {
+	backlog := pendingInputSummary{OldestReady: g.Oldest}
+	issue, err := q.GetIssue(ctx, g.IssueID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return backlog, nil
 	}
 	if err != nil {
-		return false, err
+		return pendingInputSummary{}, err
 	}
-	target, err := resolveWakeTarget(ctx, q, issue)
-	if err != nil || !target.Agent.ID.Valid {
-		return false, err
-	}
-	w, err := q.GetIssueWakeup(ctx, db.GetIssueWakeupParams{ID: wakeupID, WorkspaceID: issue.WorkspaceID})
+	w, err := q.GetIssueWakeup(ctx, db.GetIssueWakeupParams{ID: g.WakeupID, WorkspaceID: issue.WorkspaceID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return backlog, nil
 	}
 	if err != nil {
-		return false, err
+		return pendingInputSummary{}, err
 	}
-	receipts, err := q.ListPendingWakeupReceipts(ctx, db.ListPendingWakeupReceiptsParams{WakeupID: w.ID, Revision: w.Revision})
+	var agent db.Agent
+	if w.SystemRule.Valid {
+		var target wakeTarget
+		target, err = resolveWakeTarget(ctx, q, issue)
+		agent = target.Agent
+	} else {
+		agent, err = q.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: w.AgentID, WorkspaceID: w.WorkspaceID})
+	}
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !agent.ID.Valid) {
+		return backlog, nil
+	}
 	if err != nil {
-		return false, err
+		return pendingInputSummary{}, err
 	}
-	groups, rejected, err := s.groupWakeupReceipts(ctx, q, issue, target.Agent, w, receipts)
-	if err != nil || len(rejected) > 0 || len(groups) == 0 {
-		return false, err
-	}
-	// Mixed authorities cannot borrow a queued run's consent. Conservatively
-	// report the rule as backlog until every valid group has a matching run.
-	for _, group := range groups {
-		waiting, err := hasWaitingRun(ctx, q, issue.ID, target.Agent.ID, group.Authority)
-		if err != nil || !waiting {
-			return false, err
+	var out pendingInputSummary
+	params := db.ListUnreservedWakeupReceiptsForScanParams{WakeupID: w.ID, PageSize: wakeupPendingScanPage}
+	for {
+		rows, err := q.ListUnreservedWakeupReceiptsForScan(ctx, params)
+		if err != nil {
+			return out, err
 		}
+		var receipts []db.IssueWakeupReceipt
+		for _, row := range rows {
+			r := row.IssueWakeupReceipt
+			if row.Taken || r.Revision != w.Revision {
+				out.add(r.CreatedAt, 1, false)
+			} else {
+				receipts = append(receipts, r)
+			}
+		}
+		groups, rejected, err := s.groupWakeupReceipts(ctx, q, issue, agent, w, receipts)
+		if err != nil {
+			return out, err
+		}
+		for _, r := range rejected {
+			out.add(r.CreatedAt, 1, false)
+		}
+		for _, group := range groups {
+			waiting, err := hasWaitingRun(ctx, q, issue.ID, agent.ID, group.Authority)
+			if err != nil {
+				return out, err
+			}
+			for _, r := range group.Receipts {
+				out.add(r.CreatedAt, 1, waiting)
+			}
+		}
+		if len(rows) < int(params.PageSize) {
+			return out, nil
+		}
+		last := rows[len(rows)-1].IssueWakeupReceipt
+		params.AfterCreatedAt, params.AfterID = last.CreatedAt, last.ID
 	}
-	return true, nil
 }
 
 func (s *IssueWakeupService) dispatch(ctx context.Context, prev db.IssueWakeup) error {
