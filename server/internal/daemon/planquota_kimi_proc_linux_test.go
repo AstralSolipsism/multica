@@ -258,6 +258,70 @@ func TestKimiDialerProductionProofsLiveSocket(t *testing.T) {
 	_ = conn.Close()
 }
 
+// Deterministic delayed-accept coverage for the bounded re-proof window
+// (OL-960): a same-user server that has NOT called accept() when the proof
+// runs first (Linux reports uid=0 inode=0 for such rows) must pass once it
+// accepts within the window; a listener that never accepts must fail closed
+// within the budget. No sleeps race the server: accept is triggered from
+// inside the first proof consult, so both outcomes are synchronized.
+func TestKimiDialerProductionProofs_DelayedAccept(t *testing.T) {
+	t.Run("accept within the window proves the peer", func(t *testing.T) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ln.Close() }()
+
+		collector := newKimiPlanQuotaCollector(t.TempDir())
+		collector.roundOwned = map[int]struct{}{ln.Addr().(*net.TCPAddr).Port: {}}
+		// Simulate the accept landing after the proof started: the first
+		// consult sees an unaccepted row (uid=0 inode=0, fails), accept
+		// happens, later consults see the same-user accepted row.
+		proof := collector.verifyConnPeer
+		var accepted bool
+		collector.verifyConnPeer = func(conn net.Conn) bool {
+			owned := proof(conn)
+			if !owned && !accepted {
+				peer, err := ln.Accept()
+				if err != nil {
+					return false
+				}
+				accepted = true
+				defer func() { _ = peer.Close() }()
+				return proof(conn)
+			}
+			return owned
+		}
+		conn, err := collector.dial(context.Background(), "tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatalf("delayed same-user accept not proven within the window: %v", err)
+		}
+		if !accepted {
+			_ = conn.Close()
+			t.Fatal("proof passed without an accept (test wiring broken)")
+		}
+		_ = conn.Close()
+	})
+
+	t.Run("never accepted fails within the budget", func(t *testing.T) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ln.Close() }()
+
+		collector := newKimiPlanQuotaCollector(t.TempDir())
+		collector.roundOwned = map[int]struct{}{ln.Addr().(*net.TCPAddr).Port: {}}
+		start := time.Now()
+		if _, err := collector.dial(context.Background(), "tcp", ln.Addr().String()); err == nil {
+			t.Fatal("never-accepted connection passed the proof")
+		}
+		if elapsed := time.Since(start); elapsed > 5*kimiProofRetryBudget {
+			t.Fatalf("fail-closed took %v, budget is %v", elapsed, kimiProofRetryBudget)
+		}
+	})
+}
+
 // Native uid-handover regression: a foreign-uid process accepts our
 // connection, releases its listener, and our user re-binds the port. Only
 // then is the established-peer proof consulted — it must still name the

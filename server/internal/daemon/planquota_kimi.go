@@ -82,6 +82,13 @@ const (
 	kimiServerHomeDir     = ".kimi-code"
 	kimiServerTokenFile   = "server.token"
 	kimiServerInstances   = "server/instances"
+	// Bounded re-proof while the server side has not called accept() yet:
+	// the Linux row then reads uid=0 inode=0 and macOS lsof lists no fd —
+	// a false "cannot prove" for a perfectly healthy same-user server. A
+	// few hundred ms covers a slow accept; past the deadline the gate
+	// still fails closed.
+	kimiProofRetryBudget = 500 * time.Millisecond
+	kimiProofRetryPause  = 20 * time.Millisecond
 )
 
 // errKimiIdentityUnsupportedForCollection fails a collect round on platforms
@@ -125,9 +132,36 @@ func newKimiPlanQuotaCollector(homeDir string) *kimiPlanQuotaCollector {
 		identitySupported: kimiIdentitySupported,
 	}
 	c.enumerateOwnedListenPorts = kimiEnumerateOwnedListenPorts
-	c.verifyConnPeer = kimiEstablishedPeerOwnedByUser
+	c.verifyConnPeer = kimiProveConnPeerWithRetry(kimiEstablishedPeerOwnedByUser)
 	c.client = newKimiHTTPClient(c.dial)
 	return c
+}
+
+// kimiProveConnPeerWithRetry wraps a platform proof with a bounded re-proof
+// window. Between a completed TCP handshake and the server's accept() the
+// connection cannot name its accepting process on either platform (Linux
+// reports uid=0 inode=0 for the server-side row; macOS lsof has no fd to
+// list), so a single lookup in that window misreads a healthy same-user
+// server as unprovable. Re-consulting within the window distinguishes
+// "not accepted YET" from "not ours": still-unaccepted retries, an accepted
+// foreign uid fails on the first consult (its row is present and answers),
+// and past the deadline the gate fails closed exactly as before. No proof
+// condition is relaxed — the wrapped proof is the same authority, asked
+// again while its answer is "no owner yet".
+func kimiProveConnPeerWithRetry(prove func(net.Conn) bool) func(net.Conn) bool {
+	return func(conn net.Conn) bool {
+		if prove(conn) {
+			return true
+		}
+		deadline := time.Now().Add(kimiProofRetryBudget)
+		for time.Now().Before(deadline) {
+			time.Sleep(kimiProofRetryPause)
+			if prove(conn) {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // newKimiHTTPClient builds the credential-carrying client: no redirects (a
@@ -154,7 +188,9 @@ func newKimiHTTPClient(dial func(ctx context.Context, network, addr string) (net
 // retry of an idempotent request, so each of those re-proves here. A
 // connection that cannot be proven is closed before a single byte is
 // written. The round's owned-listen set provides an in-memory fast-fail;
-// the established-tuple proof is the authority.
+// the established-tuple proof is the authority. The production wiring
+// re-consults the proof for a bounded window (kimiProveConnPeerWithRetry)
+// because until the server calls accept() the row names no owner yet.
 func (c *kimiPlanQuotaCollector) dial(ctx context.Context, network, addr string) (net.Conn, error) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
