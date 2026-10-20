@@ -45,6 +45,68 @@ describe("ApiClient schema fallback", () => {
       });
     });
 
+    it("falls back to nothing reusable when the reusable installation list is malformed", async () => {
+      const client = new ApiClient("https://api.example.test");
+      for (const body of [
+        { installations: "not-an-array", configured: true },
+        { installations: [{ installation_id: "101", account_login: "acme" }], configured: true },
+        null,
+      ]) {
+        stubFetchJson(body);
+        await expect(client.listGitHubAppInstallations("ws-1")).resolves.toEqual({
+          installations: [],
+          configured: false,
+        });
+      }
+    });
+
+    it("defaults reusable installation fields an older or newer server omits", async () => {
+      stubFetchJson({
+        installations: [{ installation_id: 101, account_login: "acme", account_type: "Enterprise" }],
+        configured: true,
+      });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(client.listGitHubAppInstallations("ws-1")).resolves.toEqual({
+        installations: [
+          {
+            installation_id: 101,
+            account_login: "acme",
+            account_type: "Enterprise",
+            account_avatar_url: null,
+            connected: false,
+          },
+        ],
+        configured: true,
+      });
+      expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+        "https://api.example.test/api/workspaces/ws-1/github/app-installations",
+        expect.any(Object),
+      );
+    });
+
+    it("binds an installation by its numeric id and tolerates a malformed row", async () => {
+      const client = new ApiClient("https://api.example.test");
+      stubFetchJson({ id: 7 }, 201);
+
+      await expect(client.connectGitHubInstallation("ws-1", 101)).resolves.toMatchObject({
+        id: "",
+        account_login: "",
+      });
+      const [url, init] = vi.mocked(fetch).mock.calls[0]!;
+      expect(url).toBe("https://api.example.test/api/workspaces/ws-1/github/installations");
+      expect(init).toMatchObject({ method: "POST", body: JSON.stringify({ installation_id: 101 }) });
+    });
+
+    it("keeps the status of a refused binding for the caller to explain", async () => {
+      stubFetchJson({ error: "github installation is suspended" }, 422);
+      const client = new ApiClient("https://api.example.test");
+
+      const error = await client.connectGitHubInstallation("ws-1", 101).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error).toMatchObject({ status: 422 });
+    });
+
     it("adds the allowlisted repository return target to the connect request", async () => {
       stubFetchJson({
         configured: true,

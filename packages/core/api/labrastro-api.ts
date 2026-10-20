@@ -5,6 +5,7 @@ import { installLabrastroDependencyApi, type LabrastroDependencyApi } from "./la
 import { installLabrastroLarkApi, type LabrastroLarkApi } from "./labrastro-lark-api";
 import { installLabrastroQuotaApi, type LabrastroQuotaApi } from "./labrastro-quota-api";
 import { installLabrastroYskApi, type LabrastroYskApi } from "./labrastro-ysk-api";
+import { installLabrastroGitHubApi, type LabrastroGitHubApi } from "./labrastro-github-api";
 
 // The upstream client's three retained boundary hooks use the same entry point.
 export { ApiError } from "./labrastro-api-error";
@@ -23,7 +24,8 @@ declare module "./client" {
     LabrastroDependencyApi,
     LabrastroLarkApi,
     LabrastroQuotaApi,
-    LabrastroYskApi {}
+    LabrastroYskApi,
+    LabrastroGitHubApi {}
 }
 
 export function installLabrastroApi(target: { prototype: ApiClient }): void {
@@ -33,4 +35,5 @@ export function installLabrastroApi(target: { prototype: ApiClient }): void {
   installLabrastroLarkApi(target);
   installLabrastroQuotaApi(target);
   installLabrastroYskApi(target);
+  installLabrastroGitHubApi(target);
 }

@@ -4,6 +4,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
+import enForkUi from "../../locales/en/fork-ui.json";
 import enSettings from "../../locales/en/settings.json";
 
 const mockUpdateWorkspace = vi.hoisted(() => vi.fn());
@@ -99,7 +100,9 @@ vi.mock("../../navigation", () => ({
 
 import { RepositoriesSection, repositoryIdentity } from "./repositories-section";
 
-const TEST_RESOURCES = { en: { common: enCommon, settings: enSettings } };
+const TEST_RESOURCES = {
+  en: { common: enCommon, settings: enSettings, "fork-ui": enForkUi },
+};
 
 function Wrapper({ children }: { children: ReactNode }) {
   return (
@@ -340,6 +343,23 @@ describe("RepositoriesSection", () => {
       await screen.findByRole("heading", { name: "Choose GitHub repositories" }),
     ).toBeTruthy();
     expect(mockNavReplace).toHaveBeenCalledWith("/acme/settings?tab=repositories");
+  });
+
+  // Retrying cannot fix a refused binding or a missing installation, so these
+  // two codes get their own advice; any other code keeps the generic retry.
+  it.each([
+    ["not_authorized", enForkUi.settings.repositories.github_error_not_authorized],
+    ["unknown_installation", enForkUi.settings.repositories.github_error_unknown_installation],
+    ["persist_failed", "Could not connect GitHub. Try again."],
+  ])("explains the %s install callback error", async (code, message) => {
+    searchParamsRef.current = new URLSearchParams(`tab=github&github_error=${code}`);
+
+    render(<RepositoriesSection />, { wrapper: Wrapper });
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith(message));
+    expect(mockToastError).toHaveBeenCalledTimes(1);
+    expect(mockNavReplace).toHaveBeenCalledWith("/acme/settings?tab=github");
+    expect(screen.queryByRole("heading", { name: "Choose GitHub repositories" })).toBeNull();
   });
 
   it("clears the GitHub callback query after an empty installation result", async () => {

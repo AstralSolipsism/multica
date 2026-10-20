@@ -20,6 +20,24 @@
         "cli_install_windows_help": "Windows에는 스크립트 설치 관리자가 없습니다. 워크스페이스 관리자에게 문의하거나, 내부 릴리스 소스({{downloadsUrl}}/cli/v<버전>/, 현재 버전은 {{latestManifestUrl}} 참고)에서 해당 버전의 multica-cli-<버전>-windows-<아키텍처>.zip을 내려받아 multica.exe를 PATH에 넣으세요.",
         "cli_install_windows_label": "Windows는 수동 설치가 필요합니다"
       }
+    },
+    "github": {
+      "add_account": "계정 추가",
+      "connecting": "연결 중...",
+      "reuse_label": "관리하는 다른 워크스페이스에서",
+      "install_on_another_account": "다른 GitHub 계정에 설치",
+      "account_type_user": "개인 계정",
+      "account_type_organization": "조직",
+      "account_actions": "{{login}} 작업",
+      "disconnect_account_confirm_title": "{{login}} 연결을 해제할까요?",
+      "toast_account_connected": "{{login}} 계정을 연결했습니다",
+      "toast_account_not_reusable": "{{login}} 계정은 더 이상 재사용할 수 없습니다. 다른 곳에서 방금 연결이 해제되었거나 GitHub에서 제거되었을 수 있습니다.",
+      "toast_account_suspended": "{{login}}의 설치가 GitHub에서 일시 중지되었습니다. GitHub에서 재개한 후 다시 시도해 주세요.",
+      "toast_account_connect_failed": "{{login}} 계정을 연결하지 못했습니다. 다시 시도해 주세요."
+    },
+    "repositories": {
+      "github_error_not_authorized": "소유자나 관리자 권한이 없는 워크스페이스에 이미 연결된 GitHub 계정입니다. 해당 워크스페이스의 소유자나 관리자에게 여기서 연결해 달라고 하거나, 먼저 그 워크스페이스의 관리자로 지정해 달라고 요청하세요.",
+      "github_error_unknown_installation": "GitHub에서 이 설치가 없거나 일시 중지된 것으로 확인되었습니다. GitHub에서 App을 다시 설치하거나 재개한 후 다시 시도해 주세요."
     }
   },
   "skills": {

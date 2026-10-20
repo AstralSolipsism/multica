@@ -18,12 +18,14 @@ All paths below are relative to `packages/core/api/` unless noted otherwise.
 | `labrastro-quota-api.ts` | `getGlmQuota` |
 | `labrastro-skill-api.ts` | The existing 16 skill/package/folder/placement methods |
 | `labrastro-ysk-api.ts` | 3 methods: `listIssueTips`, `listActiveTips`, `setTipState` (OL-192) |
+| `labrastro-github-api.ts` | 2 methods: `listGitHubAppInstallations`, `connectGitHubInstallation` — reuse a GitHub App installation the caller manages in another workspace (OL-929) |
 | `labrastro-api.ts` | One mount for all modules after the upstream class definition |
 | `labrastro-api-helpers.ts` | Upstream transport bridge, collision-checked installation and shared response policies |
 | `labrastro-api-error.ts` | The unchanged `ApiError` class, shared without a runtime import of `client.ts` |
 | `labrastro-message-delivery-schemas.ts` | Message response schemas, inferred response types and existing fallbacks |
 | `labrastro-quota-schemas.ts` | GLM, plan-quota, host metrics and shallow runtime-list schemas |
 | `labrastro-ysk-schemas.ts` | You Should Know tip schemas with row-level degradation (OL-192) |
+| `labrastro-github-schemas.ts` | Reusable-installation list (a malformed list means nothing to reuse) and the bind response fallback (OL-929) |
 | `../lark/schema.ts` | Existing fork Lark schemas, now also the source of inferred response types |
 | `dependency-schemas.ts`, `issue-graph-schemas.ts` | Existing fork dependency/graph contracts; no schema changes |
 
