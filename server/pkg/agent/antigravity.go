@@ -223,10 +223,6 @@ func antigravityTrailingTransportError(providerError string) bool {
 	return antigravityTransportErrorRe.MatchString(trimmed)
 }
 
-func (u antigravityStreamUsage) hasTokens() bool {
-	return u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0
-}
-
 // tokenUsage maps agy's provider-defined buckets directly. Cache reads are
 // separate from input_tokens even when total_tokens equals input + output; the
 // official structured-output examples include cache reads larger than input.

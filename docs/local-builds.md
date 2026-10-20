@@ -15,9 +15,9 @@ version, source approval, artifact matrix and inactive download layout.
 | `make candidate-backend` | Verified Linux amd64 **and** arm64 archives | No |
 | `make candidate-images` | Build and verify local backend/Web images for the host architecture | Only disposable version checks, with no network or data mounts |
 
-Candidate tools need Node 22+, Git, Python 3, Go 1.26.6+ (the Go JSON build-info
+Candidate tools need Node 22+, Git, Python 3, Go 1.26.9+ (the Go JSON build-info
 reader), and tar. Image building needs Docker Engine and its build support;
-Compose examples require the Compose CLI plugin. Dockerfile uses Go 1.26.8 and
+Compose examples require the Compose CLI plugin. Dockerfile uses Go 1.26.9 and
 Node 22; evidence records the actual patch/toolchain. Reproduction also depends
 on base images and tool versions, not just source; the scripts do not claim
 bit-for-bit reproducibility across toolchains.

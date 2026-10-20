@@ -82,11 +82,10 @@ export function WorkspaceRouteLayout() {
   //
   // The pending-delete guard exists because this write would otherwise undo
   // the delete flow's own cleanup (MUL-6231 / #7021). useDeleteWorkspace
-  // clears the singleton and navigates away, but this layout is subscribed to
-  // the overlay store, so opening the new-workspace overlay re-renders it
-  // while the deleted workspace is STILL in the list cache (the invalidation
-  // refetch is a network round-trip). Without the guard we write the dead slug
-  // straight back over the cleanup.
+  // clears the singleton and navigates away, but query updates can re-render
+  // this layout while the deleted workspace is still in the list cache (the
+  // invalidation refetch is a network round-trip). Without the guard we write
+  // the dead slug straight back over the cleanup.
   //
   // Claiming ownership here — in the same render pass, before any cleanup can
   // run — is what makes the unmount release below safe. React renders the

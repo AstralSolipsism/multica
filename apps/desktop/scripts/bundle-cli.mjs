@@ -90,9 +90,10 @@ function binaryNameForPlatform(platform) {
  * closed instead of stamping a snapshot version into a candidate installer.
  *
  * Development mode keeps the historical fallbacks: git describe output,
- * short HEAD, current wall-clock time, "dev"/"unknown" when git is absent.
+ * short HEAD for display, full HEAD for daemon build identity, current
+ * wall-clock time, and "dev"/"unknown" when git is absent.
  */
-export function resolveCliStamp(env, { describe = "", head = "", now } = {}) {
+export function resolveCliStamp(env, { describe = "", head = "", fullHead = "", now } = {}) {
   const releaseTag = env.LABRASTRO_RELEASE_TAG;
   const releaseSha = env.LABRASTRO_RELEASE_SHA;
   const candidate = Boolean(
@@ -102,6 +103,7 @@ export function resolveCliStamp(env, { describe = "", head = "", now } = {}) {
     return {
       version: describe || "dev",
       commit: head || "unknown",
+      buildCommit: fullHead || "unknown",
       date: now ?? new Date().toISOString().replace(/\.\d+Z$/, "Z"),
       source: "git-describe",
     };
@@ -132,7 +134,7 @@ export function resolveCliStamp(env, { describe = "", head = "", now } = {}) {
         "run the preflight instead of hand-setting env",
     );
   }
-  return { version: VERSION, commit: COMMIT, date: DATE, source: "candidate" };
+  return { version: VERSION, commit: COMMIT, buildCommit: COMMIT, date: DATE, source: "candidate" };
 }
 
 // Hand git arguments straight to the binary (no shell). A match pattern like
@@ -181,10 +183,11 @@ async function main() {
   const stamp = resolveCliStamp(process.env, {
     describe: deriveVersion(),
     head: git("rev-parse", "--short", "HEAD"),
+    fullHead: git("rev-parse", "HEAD"),
   });
 
   if (hasGo()) {
-    const ldflags = `-X main.version=${stamp.version} -X main.commit=${stamp.commit} -X main.buildCommit=${stamp.commit} -X main.date=${stamp.date}`;
+    const ldflags = `-X main.version=${stamp.version} -X main.commit=${stamp.commit} -X main.buildCommit=${stamp.buildCommit} -X main.date=${stamp.date}`;
 
     console.log(
       `[bundle-cli] go build → ${srcBinary} (${goos}/${goarch}, version=${stamp.version} commit=${stamp.commit} source=${stamp.source})`,

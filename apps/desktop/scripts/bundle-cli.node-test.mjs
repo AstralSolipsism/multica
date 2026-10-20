@@ -36,6 +36,8 @@ for (const [platform, arch, goos, goarch, foreignCaller] of [
         for (const name of ["bundle-cli.mjs", "package.mjs"]) {
           copyFileSync(join(scriptDir, name), join(scripts, name));
         }
+        mkdirSync(join(root, "scripts"));
+        copyFileSync(join(scriptDir, "../../../scripts/check-release.mjs"), join(root, "scripts/check-release.mjs"));
         fakeExecutable(join(bin, "git"), `
 const args = process.argv.slice(2);
 if (args[0] === "describe") console.log("v9.9.9");

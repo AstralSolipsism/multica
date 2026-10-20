@@ -56,6 +56,7 @@ func TestLabrastroConversationWorkflowHandoffKeepsGrantor(t *testing.T) {
 	f := newConversationFixture(t)
 	grantor := dbfx.User(t, "Workflow grantor", f.install+"@workflow.test")
 	dbfx.Member(t, testWorkspaceID, grantor, "member")
+	dbfx.Exec(t, "UPDATE agent_runtime SET visibility='public' WHERE id=$1", f.runtime)
 	dbfx.Exec(t, "UPDATE agent SET owner_id=$2 WHERE id=$1", f.agent, grantor)
 	dbfx.Exec(t, `UPDATE channel_installation SET config=jsonb_set(config,'{conversation,authorized_by}',to_jsonb($2::text)) WHERE id=$1`, f.install, grantor)
 	f.msg.ReplyTo = nil
@@ -88,7 +89,7 @@ func TestLabrastroConversationWorkflowHandoffKeepsGrantor(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+token)
 		return req
 	}
-	body := map[string]any{"status": "in_progress", "description": "External handoff", "stop_previous_assignee_runs": true}
+	body := map[string]any{"status": "in_progress", "description": "External handoff"}
 	testutil.Call(t, router.ServeHTTP, request(body)).Want(http.StatusOK)
 	var user, accountable, ancestry string
 	dbfx.QueryRow(t, `SELECT originator_user_id::text,accountable_user_id::text,conversation_root_task_id::text
@@ -96,7 +97,7 @@ func TestLabrastroConversationWorkflowHandoffKeepsGrantor(t *testing.T) {
 	if user != grantor || accountable != grantor || ancestry != uuidToString(root.ID) {
 		t.Fatalf("handoff lost frozen authority: user=%s accountable=%s root=%s", user, accountable, ancestry)
 	}
-	for id, want := range map[string]string{running: "cancelled", unrelated: "running", uuidToString(root.ID): "running"} {
+	for id, want := range map[string]string{running: "running", unrelated: "running", uuidToString(root.ID): "running"} {
 		var status string
 		dbfx.QueryRow(t, "SELECT status FROM agent_task_queue WHERE id=$1", id).Scan(&status)
 		if status != want {
@@ -105,10 +106,16 @@ func TestLabrastroConversationWorkflowHandoffKeepsGrantor(t *testing.T) {
 	}
 	// Moving projects is administrative by default; opting into the landing
 	// step must use the same grantor and invocation gate as a status handoff.
+	dbfx.Exec(t, "UPDATE agent_task_queue SET status='completed' WHERE issue_id=$1 AND agent_id=$2", f.issue, target)
 	dbfx.Exec(t, "UPDATE issue SET project_id=NULL,assignee_type=NULL,assignee_id=NULL WHERE id=$1", f.issue)
 	testutil.Call(t, router.ServeHTTP, request(map[string]any{"project_id": project, "enter_workflow_step": true})).Want(http.StatusOK)
 	if _, kind, id := issueStatusAndAssignee(t, f.issue); kind != "agent" || id != target {
 		t.Fatalf("project entry lost handoff: %s/%s", kind, id)
+	}
+	dbfx.QueryRow(t, `SELECT originator_user_id::text,accountable_user_id::text,conversation_root_task_id::text
+		FROM agent_task_queue WHERE issue_id=$1 AND agent_id=$2 AND status<>'completed'`, f.issue, target).Scan(&user, &accountable, &ancestry)
+	if user != grantor || accountable != grantor || ancestry != uuidToString(root.ID) {
+		t.Fatalf("project entry lost frozen authority: user=%s accountable=%s root=%s", user, accountable, ancestry)
 	}
 	// The runtime owner now owns the private target, but cannot lend that
 	// authority to the frozen grantor.

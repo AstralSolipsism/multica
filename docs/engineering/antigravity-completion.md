@@ -1,157 +1,39 @@
-# Antigravity transport-error completion evidence
+# Antigravity completion rules
 
-The adapter can retain a completed response when agy returns one of two known
-transport errors in its terminal `ERROR` result. OL-910 extends the older network
-error workaround to the exact stream-interruption message, with stricter evidence
-for resumed turns. It does not change upstream conversation data or deploy agy.
+The v0.6.3 integration adopts upstream #8983's completion rules in
+`server/pkg/agent/antigravity.go`, as required by OL-927 decision 2.
 
-## Evidence and limits
+An unsuccessful structured result can retain a completed answer when all three
+conditions hold: the provider error matches the transport-error classifier, the
+canonical `result.response` is nonempty, and the latest indexed `agent_response`
+step is DONE. The classifier includes EOF, connection/socket/TLS/DNS failures and
+the existing network-issue message. Quota, capacity, authentication and other
+provider rejections remain failures. Local cancellation and deadlines take
+precedence over this recovery.
 
-The [official headless protocol](https://antigravity.google/docs/cli/headless/)
-documents indexed `user_input`, `agent_response`, tool and checkpoint updates,
-including a single `DONE` response without an earlier `ACTIVE`. The response in
-`result` belongs to the current turn; aggregate usage belongs to the conversation.
-Step indices can have gaps, so requiring consecutive integers would reject valid
-streams. The adapter consumes one print invocation, not multiple stdin prompts.
+This replaces OL-910's stricter completion evidence. The adapter no longer
+requires a current-turn user-input boundary, equality between step text and the
+canonical result, or the absence of later tool/error steps. It no longer checks
+OL-910's stream consistency, post-result events or recovery-specific exit-code
+and log restrictions. The exact stream-interruption-message exception was also
+removed. A structured stream without a terminal result is no longer failed solely
+for that omission: a zero exit can complete when the remaining upstream error,
+timeout and provider-log checks do not report a failure. These are deliberate
+consequences of adopting the upstream rules, not retained OL-910 guarantees.
 
-The OL-910 investigation found one historical interruption record and three later
-persisted replies followed by failures carrying that same message. It did not
-capture their stdout. Database status `3` and reply timestamps therefore do not
-prove that any of those runs emitted `step_update.state=DONE`.
+The fork still retains skill-invocation hooks and usage accounting: completed
+step snapshots are deduplicated by index, reported zero differs from missing
+usage, cache buckets retain their provider meanings, and resumed runs do not
+fall back to conversation-wide aggregate usage. The removed current-turn
+boundary filtering is not part of those retained accounting rules.
 
-Upstream reports also supply independent observations:
-
-- [CLI issue 1048](https://github.com/google-antigravity/antigravity-cli/issues/1048)
-  contains a resumed response reaching DONE while the terminal error repeats a
-  historical quota failure. This supports the stale-error hypothesis, but quota
-  errors are deliberately **not** allowed by this adapter's workaround.
-- [CLI issue 1018](https://github.com/google-antigravity/antigravity-cli/issues/1018)
-  reports indexed `error_message` steps on genuine current failures. Their position
-  is useful; the adapter does not assume an undocumented error payload shape.
-- [Multica PR 8983](https://github.com/multica-ai/multica/pull/8983) includes a
-  capture whose result adds a terminal LF absent from the DONE delta. Comparison
-  therefore removes at most one terminal LF from each side; it does not strip
-  spaces, internal line breaks or arbitrary trailing whitespace. Output bytes
-  remain those supplied by agy.
-
-All new fixtures are synthetic, use invented conversation IDs/text/usage, and
-exercise the actual backend through a fake executable. They are not raw incident
-captures. No real agy invocation, account access, production prompt replay or
-production database write is part of this validation.
-
-## Recovery predicate
-
-Recovery requires all of the following:
-
-1. The terminal status is exactly `ERROR` and the error is the existing network
-   message or exactly `The stream was interrupted. Please continue the task you
-   were working on.` Other provider errors and other terminal states are retained.
-2. A completed, indexed `user_input` identifies this invocation's turn. Only the
-   old network-error path for a **fresh** conversation may omit this boundary,
-   preserving its existing regression fixtures. Resumed runs always require it.
-3. The highest-index current response is DONE. Its collected deltas match the
-   nonempty canonical result response, allowing the single terminal LF described
-   above. A result alone, an old DONE, or a partial/newer ACTIVE response is
-   insufficient. For the interruption message, a **fresh** conversation also
-   requires a current `error_message` between the boundary and final reply: it
-   has no history from which to inherit an error, so DONE narration alone cannot
-   establish recovery. On either a fresh or resumed interruption, any response
-   text between the boundary and the last current error prevents recovery. The
-   latest reply could be only the continuation of that earlier partial text.
-   Narration before an error is intentionally treated the same way; the protocol
-   does not distinguish it from a partial answer.
-4. No step after that response exists except completed checkpoints. Thus a later
-   error (even DONE), tool (even DONE), unknown step or ACTIVE checkpoint prevents
-   recovery. Earlier error steps may have been recovered by the completed reply.
-   For the new interruption case all current steps must be DONE. The old network
-   case retains the existing earlier-ACTIVE-tool exception for background commands
-   cancelled by a separate tool step, followed by a final response.
-5. There are no ambiguous indices, conflicting kinds, regressing states,
-   conflicting terminal deltas, conversation changes, extra turn boundaries,
-   malformed stream lines, scanner failures, or events after the terminal result.
-6. Local cancellation/deadlines take precedence. A logged print timeout or
-   provider error prevents recovery. Only normal exits 0 and the provider-error
-   exits 1/3 are eligible; signals and other exit codes are not. These are gates
-   on recovery, not a reordering of failure diagnostics: structured errors still
-   precede process exit errors, then print timeout, then provider logs. Missing
-   result is the final fallback, so quota errors, FAILED_PRECONDITION details and
-   signal exits retain their actionable cause and daemon classification.
-
-This interprets a known interruption as recovered only after a later complete
-current reply with no subsequent error/work evidence. It relies on agy emitting
-the active turn's step transitions, as its protocol specifies. It is not a claim
-that the adapter has a unique identifier for the error's original occurrence.
-
-If a version omits the turn boundary/completion evidence, rewrites the final
-response, emits multiple boundaries, or supplies contradictory events, keep the
-failure. The minimal additional evidence for such cases is a sanitized stream
-including init, current user-input index, response deltas/states, all later steps,
-terminal result, process exit code and relevant timeout/provider diagnostics.
-For a protocol that can silently omit error steps, upstream must expose a
-turn-scoped terminal outcome or an error's originating turn/step index; comparing
-message text cannot distinguish two occurrences of the same error. Do not extend
-the workaround based only on a SQLite status or a matching error string.
-
-## Changes to the old network-error exception
-
-The old path is intentionally stricter than the original nonempty-response plus
-latest-DONE check. It now requires canonical/latest-step text equality (apart
-from one terminal LF), no post-response step except DONE checkpoints, a supported
-exit code (0/1/3), no provider-error or print-timeout log, and an explicit boundary
-on resumed runs. Cancellation/other terminal statuses and contradictory stream
-evidence also cannot recover. A concatenation of multiple response steps, a
-provider log repeating the network message, or a completed tool after the reply
-can therefore remain failed where the old adapter reported success.
-
-Only two historical allowances are retained: fresh old-network streams may omit
-the user-input boundary, and earlier ACTIVE work may precede the final response.
-The new interruption path does not receive those allowances. These changes do
-not add more error spellings, including EOF, quota or malformed function calls.
-
-## Output, usage and ordering
-
-On resume, pre-boundary snapshots are held until ownership is known; snapshots
-older than the boundary never emit text/tools or enter the usage sum. If a
-resumed legacy stream has no boundary at all, its existing output/usage behavior
-is retained, but it cannot use either recovery exception. A response arriving
-before its boundary is ambiguous and does not prove completion.
-
-Identical repeated DONE text is emitted once; repeated DONE usage replaces the
-same index's snapshot. Earlier-index steps arriving after later ones cannot
-replace the latest response. An ACTIVE after DONE on the same index fails closed
-because there is no event sequence number to resolve it. Historical snapshots
-below the boundary are ignored regardless of arrival order.
-
-The canonical result response and conversation ID still drive the final result.
-Usage sums current completed steps once, including reported zero; a resumed
-conversation never falls back to the historical aggregate. Numeric gaps are
-accepted because not every internal step is necessarily emitted.
-
-## Verification
-
-From `server/`:
+Regression coverage is in `antigravity_test.go`, including
+`TestAntigravityTrailingTransportErrorClassification`,
+`TestAntigravityCompletedDespiteTrailingNetworkErrorRequiresAllThree` and the
+backend cases for completed, partial and newer partial responses. Run the
+Antigravity tests through the fake-CLI guard:
 
 ```sh
-bash ../scripts/go-test-with-agent-cli-guard.sh -- go test ./pkg/agent -run 'TestAntigravity' -count=1
-bash ../scripts/go-test-with-agent-cli-guard.sh -- go test -race -parallel 2 ./pkg/agent -run 'TestAntigravity|Test.*Usage' -count=1
+cd server
+../scripts/go-test-with-agent-cli-guard.sh -- go test ./pkg/agent -run TestAntigravity -count=1
 ```
-
-From the repository root:
-
-```sh
-bash scripts/test-go.sh --race --only agent
-git diff --check
-```
-
-`TestAntigravityBackendCompletionEvidence` covers recovered historical and
-same-turn interruptions, old network errors, replayed history, duplicated DONE
-text/usage, ordered completion, split replies, fresh failures and diagnostic
-precedence. Dedicated cases isolate empty DONE/response, a delta-free ACTIVE
-after DONE, a second input followed by a complete reply, a consistently wrong
-resumed conversation, a checkpoint after result, an unknown event before result,
-a null result before a valid result, and usage attached to ACTIVE work.
-`TestAntigravityBackendCompletionHonorsContext` verifies local cancellation and
-timeout even after a complete reply and matching error result. Existing
-Antigravity tool, usage, model, transcript and legacy-network tests remain in the
-same package suite. A structured stream ending without a terminal result fails
-even when the process exits zero.

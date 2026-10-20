@@ -19,9 +19,13 @@ points and update retained regression coverage.
 ## Resolved behavior
 
 - Antigravity uses upstream's trailing transport-error classification and
-  completion recovery. `stream_scanner.go` and its test remain byte-identical to
-  the fixed release. Independent fork skill-invocation and usage-accounting
-  extensions remain.
+  completion recovery. Master approved the review's recommended amendment to
+  decision 2 on 2026-10-20: `stream_scanner.go` retains the fork's linear
+  short-read splitter from `e80f05780` on top of the upstream file. This is the
+  only scanner difference; upstream `readAgentStreamLine` and scanner tests
+  remain unchanged. Independent fork skill-invocation and usage-accounting
+  extensions remain. `antigravity-completion.md` records the adopted rules and
+  the OL-910 protections relinquished by the decision.
 - Workflow handoffs use the existing assignment checks and DAG transaction
   guards. The generated assignee must be included in the transaction's explicit
   write fields: otherwise refreshing untouched fields under the row lock
@@ -36,7 +40,12 @@ points and update retained regression coverage.
 - Labrastro/Mizuki branding, the private update feed, Electron updater patch,
   Feishu grant and delivery boundaries remain. Release builds retain the private
   publishing flow while accepting upstream's Go 1.26.9 floor and build-commit
-  metadata. Deleted welcome strings are removed from the branding overlay.
+  metadata, including the full source SHA in backend archives and development
+  Desktop CLIs. Deleted welcome strings are removed from the branding overlay.
+- External conversation ingestion supplies the persisted `ChatMessageID` on
+  both ordinary input and `/new` paths, preserving Feishu typing reactions.
+  `TestConversationTypingReceivesPersistedMessageID` exercises the real channel
+  router and asserts the typing notifier receives that exact database ID.
 
 ## Existing external-conversation routes
 
@@ -58,6 +67,11 @@ every denied route and conversation retry/descendant/wakeup cases; **W** =
 `TestLabrastroWorkflowHandoffSurvivesAtomicRefresh`,
 `TestLabrastroConversationWorkflowHandoffKeepsGrantor`,
 `TestLabrastroWorkflowBatchKeepsPerIssueHandlers`, plus upstream workflow tests.
+The workflow-specific real-router evidence is
+`TestExternalConversationCannotStopPreviousWorkflowRuns` and
+`TestExternalConversationWorkflowDispatchKeepsGrantor`: PUT/PATCH cancellation
+denial, create/compound-create/status/project-entry dispatch, frozen grantor/root,
+and denial of targets invocable only by the runtime owner.
 Test outcomes and the delivered head belong in the PR validation record;
 reviewer acceptance is still required.
 
@@ -66,8 +80,8 @@ reviewer acceptance is still required.
 | `POST /api/issues/query` | `QueryIssues` → issue query helpers | Unchanged filter map; existing workspace/filter validation | Read only, no dispatch; H/R |
 | `POST /api/issues` | `CreateIssue` → `IssueService.Create` / workflow / dispatch | Same fields and defaults; new project-workflow status check. Without explicit assignee, resolve the landing step's handler; children inherit parent project | Existing same-workspace parent, dependency, property, attachment and origin-ancestor checks remain. Derived assignee passes invocation validation; dispatch retains grantor/root; H/R/W |
 | `POST /api/issues/with-dependencies` | `CreateIssueWithDependencies` → same create path | Same create fields; required dependency version/override validation remains | Same create effects, dependency writes in the existing atomic path; no new configuration authority; H/R/W |
-| `PUT /api/issues/{id}` | `UpdateIssue` → workflow / guarded row update / dispatch | Adds the two false-default booleans. Explicit assignee wins; triage suppresses handoff; stale workflow step returns conflict; existing revisions/dependency/status validation remains | Workflow-generated assignment survives locked refresh. Status entry or opted-in project move can dispatch under the same grantor/root. Optional cancellation selects only this issue's previous assignee's runs, preserving the caller's agent and unrelated issues; H/R/W |
-| `PATCH /api/issues/{id}/with-dependencies` | `UpdateIssueWithDependencies` → same update path and dependency transaction | Same additions as PUT; dependency version, cycle and admission validation unchanged | Same workflow effects with atomic dependency update; locked previous row and dependency error response retained; H/R/W |
+| `PUT /api/issues/{id}` | `UpdateIssue` → workflow / guarded row update / dispatch | Adds the two false-default booleans. External conversations carrying `stop_previous_assignee_runs` receive 403 `external_conversation_forbidden`, including false/null and case-insensitive JSON names. Explicit assignee wins; triage suppresses handoff; stale workflow step returns conflict; existing revision/status validation remains | Workflow-generated assignment survives locked refresh. Status entry or opted-in project move dispatches under the same grantor/root. Rejected cancellation requests leave the issue and previous runs unchanged, including with `suppress_run`; H/R/W |
+| `PATCH /api/issues/{id}/with-dependencies` | `UpdateIssueWithDependencies` → same update path and dependency transaction | Same additions and cancellation-field denial as PUT; dependency version, cycle and admission validation unchanged | Same workflow effects with atomic dependency update; rejection occurs before issue, dependency or task writes; H/R/W |
 | `POST /api/issues/{id}/comments` | `CreateComment` → comment service / mentions / wakeup capture | Same content, parent, attachments, steering and suppression fields; existing validation. Internal DB errors no longer returned verbatim | Agent mentions retain invocation checks and persisted ancestry; comment/attachment/steering effects unchanged; H/R |
 | `PUT /api/comments/{commentId}` | `UpdateComment` | No field/default/validation change | Own-agent authorship or grantor admin required; existing edit, attachment and wakeup effects; H/R |
 | `DELETE /api/comments/{commentId}` | `DeleteComment` | Still bodyless; same lookup and authorship/admin checks | Existing deletion scope and activity; no new dispatch/configuration; H/R |
@@ -92,7 +106,9 @@ denied, as does the new attachment download-metadata route. Removed onboarding
 bootstrap endpoints disappear from the inventory. No allowlist entries were
 added. The new workflow regression checks both new update fields, private-agent
 grantor authority, denial when only the runtime owner can invoke the target,
-live grant revocation and cancellation scope.
+live grant revocation and cancellation denial. First-party callers retain
+upstream's optional cancellation behavior; the external-conversation capability
+boundary is not expanded.
 
 ## Migration identities and execution order
 
