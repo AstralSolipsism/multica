@@ -9,8 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-redis/redismock/v9"
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/testutil"
@@ -30,13 +32,17 @@ func TestExternalConversationAttachmentDownloadWorkspace(t *testing.T) {
 				t.Setenv("AWS_ACCESS_KEY_ID", "test-access-key")
 				t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
 			}
-			router := NewRouter(testPool, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil)
+			router, h := NewRouterWithOptions(testPool, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil, RouterOptions{})
+			cacheClient, cache := redismock.NewClientMock()
+			t.Cleanup(func() { _ = cacheClient.Close() })
+			h.MembershipCache = auth.NewMembershipCache(cacheClient)
 			fx := testutil.New(testPool, testWorkspaceID, testUserID)
 			grantor := fx.User(t, "Attachment grantor", "attachment-grantor-"+mode+"@example.test")
 			otherSlug := "attachment-other-" + mode
 			otherWorkspace := fx.Workspace(t, "Other attachment workspace", otherSlug)
 			fx.Member(t, testWorkspaceID, grantor, "member")
 			fx.Member(t, otherWorkspace, grantor, "member")
+			memberKey := "mul:auth:member:" + grantor + ":" + otherWorkspace
 			memberToken, err := generateTestJWT(grantor, "attachment-grantor-"+mode+"@example.test", "Attachment grantor")
 			if err != nil {
 				t.Fatal(err)
@@ -99,9 +105,13 @@ func TestExternalConversationAttachmentDownloadWorkspace(t *testing.T) {
 			}
 
 			// A member viewing workspace A can still follow B's link. This also
-			// warms B's membership cache before the external requests.
+			// exercises a miss/set and a hit in B's membership cache.
+			cache.ExpectGet(memberKey).RedisNil()
+			cache.ExpectSet(memberKey, "1", auth.MembershipCacheTTL).SetVal("OK")
 			assertDownload(t, request(memberToken, attachments[otherWorkspace], "download", testWorkspaceID), otherWorkspace)
+			cache.ExpectGet(memberKey).SetVal("1")
 			assertDownload(t, request(memberToken, attachments[otherWorkspace], "download", ""), otherWorkspace)
+			cache.ExpectGet("mul:auth:member:" + testUserID + ":" + otherWorkspace).RedisNil()
 			if w := request(testToken, attachments[otherWorkspace], "download", testWorkspaceID); w.Code != http.StatusNotFound {
 				t.Fatalf("non-member download: %d %s", w.Code, w.Body.String())
 			}
@@ -117,6 +127,7 @@ func TestExternalConversationAttachmentDownloadWorkspace(t *testing.T) {
 						t.Fatalf("foreign attachment must look missing: foreign=%d %s missing=%d %s",
 							foreign.Code, foreign.Body.String(), missing.Code, missing.Body.String())
 					}
+					cache.ExpectGet("mul:auth:member:" + grantor + ":" + testWorkspaceID).SetVal("1")
 					assertDownload(t, request(f.token, attachments[testWorkspaceID], "download", otherWorkspace), testWorkspaceID)
 					for _, attachment := range attachments {
 						if w := request(f.token, attachment, "download-metadata", otherWorkspace); w.Code != http.StatusForbidden ||
@@ -134,7 +145,11 @@ func TestExternalConversationAttachmentDownloadWorkspace(t *testing.T) {
 				"originator_user_id": grantor, "accountable_user_id": grantor,
 			})
 			token := mintAgentTaskToken(t, f.agent, task, grantor)
+			cache.ExpectGet(memberKey).SetVal("1")
 			assertDownload(t, request(token, attachments[otherWorkspace], "download", testWorkspaceID), otherWorkspace)
+			if err := cache.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
 		})
 	}
 }
