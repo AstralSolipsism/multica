@@ -57,7 +57,11 @@ func appInstallationHandler(t *testing.T, inventory map[int64]string) http.Handl
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"account": map[string]any{"login": login, "type": "Organization"},
+			"account": map[string]any{
+				"login":      login,
+				"type":       "Organization",
+				"avatar_url": "https://example.com/" + login + ".png",
+			},
 		})
 	}
 }
@@ -179,10 +183,15 @@ func TestListGitHubAppInstallations_OnlyManagedAndConnectedFlags(t *testing.T) {
 		return body.Installations
 	}
 
-	// Foreign installations (bound nowhere this caller manages) are absent.
+	// Foreign installations (bound nowhere this caller manages) can never be
+	// fetched: the handler only asks GitHub about IDs in the managed set, so
+	// there is nothing to assert here — scope is TestReuseAllowlistScopedToManagedWorkspaces' job.
 	got := list(t, testWorkspaceID)
 	if len(got) != 1 || got[0].InstallationID != managedID || !got[0].Connected || got[0].AccountLogin != "AstralSolipsism" {
 		t.Errorf("want exactly the managed installation connected=true, got %+v", got)
+	}
+	if got[0].AccountType != "Organization" || got[0].AccountAvatarURL == nil || *got[0].AccountAvatarURL != "https://example.com/AstralSolipsism.png" {
+		t.Errorf("account type/avatar must pass through from GitHub, got %+v", got[0])
 	}
 
 	// The same caller from a fresh workspace (no binding yet): the managed
@@ -672,11 +681,17 @@ func TestListGitHubAppInstallations_PerIDFetch(t *testing.T) {
 		t.Skip("handler test fixture not initialized (no DB?)")
 	}
 	ctx := context.Background()
-	const okA int64 = 51510001 // login "beta"
-	const okB int64 = 51510002 // login "ALPHA" — case-insensitive sort puts it first
+	// Logins are chosen so case-insensitive ordering differs from the
+	// case-sensitive ASCII one (m8 guard): "alpha" must sort before "Beta",
+	// while 'B' < 'a' in ASCII. okC repeats okA's login so the
+	// installation_id tiebreak is exercised too.
+	const okA int64 = 51510001 // login "Beta"
+	const okB int64 = 51510002 // login "alpha"
+	const okC int64 = 51510005 // login "Beta" again, higher id
 	const staleID int64 = 51510003
 	const suspID int64 = 51510004
-	seed := func(id int64, login string) {
+	logins := map[int64]string{okA: "Beta", okB: "alpha", okC: "Beta"}
+	seed := func(t *testing.T, id int64, login string) {
 		t.Helper()
 		if _, err := testHandler.Queries.CreateGitHubInstallation(ctx, db.CreateGitHubInstallationParams{
 			WorkspaceID:    parseUUID(testWorkspaceID),
@@ -686,7 +701,9 @@ func TestListGitHubAppInstallations_PerIDFetch(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("seed %d: %v", id, err)
 		}
-		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, id) })
+		t.Cleanup(func() {
+			testPool.Exec(context.Background(), `DELETE FROM github_installation WHERE installation_id = $1`, id)
+		})
 	}
 	list := func(t *testing.T) (int, []GitHubAppInstallationResponse) {
 		t.Helper()
@@ -697,15 +714,18 @@ func TestListGitHubAppInstallations_PerIDFetch(t *testing.T) {
 		var body struct {
 			Installations []GitHubAppInstallationResponse `json:"installations"`
 		}
-		_ = json.Unmarshal(w.Body.Bytes(), &body)
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode %d body: %v (%s)", w.Code, err, w.Body.String())
+		}
 		return w.Code, body.Installations
 	}
 
 	t.Run("skips stale and suspended, stable order", func(t *testing.T) {
-		seed(okA, "beta")
-		seed(okB, "ALPHA")
-		seed(staleID, "stale-acct")
-		seed(suspID, "suspended-acct")
+		seed(t, okA, "Beta")
+		seed(t, okB, "alpha")
+		seed(t, okC, "Beta")
+		seed(t, staleID, "stale-acct")
+		seed(t, suspID, "suspended-acct")
 		ghAppMockEnv(t, func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/app/installations" {
 				t.Errorf("app-wide /app/installations list must not be called (OL-957)")
@@ -723,7 +743,7 @@ func TestListGitHubAppInstallations_PerIDFetch(t *testing.T) {
 			default:
 				id, _ := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/app/installations/"), 10, 64)
 				writeJSON(w, http.StatusOK, map[string]any{
-					"account": map[string]any{"login": map[int64]string{okA: "beta", okB: "ALPHA"}[id], "type": "Organization"},
+					"account": map[string]any{"login": logins[id], "type": "Organization"},
 				})
 			}
 		})
@@ -731,17 +751,21 @@ func TestListGitHubAppInstallations_PerIDFetch(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("want 200, got %d (%+v)", code, got)
 		}
-		if len(got) != 2 {
-			t.Fatalf("want 2 installations (stale + suspended skipped), got %+v", got)
+		if len(got) != 3 {
+			t.Fatalf("want 3 installations (stale + suspended skipped), got %+v", got)
 		}
-		if got[0].InstallationID != okB || got[1].InstallationID != okA {
-			t.Errorf("want case-insensitive login order [ALPHA, beta], got %+v", got)
+		// Case-insensitive login order [alpha, Beta], tie broken by id.
+		wantOrder := []int64{okB, okA, okC}
+		for i, want := range wantOrder {
+			if got[i].InstallationID != want {
+				t.Errorf("slot %d = installation %d (login %q), want %d — order must be case-insensitive login, then id", i, got[i].InstallationID, got[i].AccountLogin, want)
+			}
 		}
 	})
 
 	t.Run("one github failure fails the whole list with 502, no partials", func(t *testing.T) {
-		seed(okA, "beta")
-		seed(staleID, "flaky-acct")
+		seed(t, okA, "beta")
+		seed(t, staleID, "flaky-acct")
 		ghAppMockEnv(t, func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasSuffix(r.URL.Path, strconv.FormatInt(staleID, 10)) {
 				http.Error(w, "boom", http.StatusInternalServerError)
