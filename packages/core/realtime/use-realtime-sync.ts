@@ -941,7 +941,11 @@ export function useRealtimeSync(
       },
       github_installation: () => {
         const wsId = getCurrentWsId();
-        if (wsId) qc.invalidateQueries({ queryKey: githubKeys.installations(wsId) });
+        if (!wsId) return;
+        qc.invalidateQueries({ queryKey: githubKeys.installations(wsId) });
+        // Another manager connecting or disconnecting here flips `connected`
+        // on the installations offered for reuse.
+        qc.invalidateQueries({ queryKey: githubKeys.appInstallations(wsId) });
       },
       lark_installation: () => {
         const wsId = getCurrentWsId();

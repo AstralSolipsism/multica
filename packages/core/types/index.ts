@@ -227,6 +227,8 @@ export type {
   PRAutoCompleteState,
   PullRequestLinkSource,
   ListGitHubInstallationsResponse,
+  GitHubAppInstallation,
+  ListGitHubAppInstallationsResponse,
   GitHubRepository,
   ListGitHubRepositoriesResponse,
   GitHubConnectResponse,

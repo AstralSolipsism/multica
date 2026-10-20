@@ -170,6 +170,24 @@ export interface ListGitHubInstallationsResponse {
   can_manage?: boolean;
 }
 
+/** A GitHub App installation the caller already manages: it is bound to some
+ * workspace where they are owner or admin. Never the App's full installation
+ * list, so an account that was never connected anywhere does not appear. */
+export interface GitHubAppInstallation {
+  installation_id: number;
+  account_login: string;
+  account_type: "User" | "Organization" | (string & {});
+  account_avatar_url: string | null;
+  /** Already bound to the requesting workspace. */
+  connected: boolean;
+}
+
+export interface ListGitHubAppInstallationsResponse {
+  installations: GitHubAppInstallation[];
+  /** False without GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY; the list is then empty. */
+  configured: boolean;
+}
+
 export interface GitHubConnectResponse {
   /** The GitHub App install URL the browser should open. Empty when `configured` is false. */
   url?: string;
