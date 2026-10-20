@@ -33,22 +33,36 @@ func ghAppMockEnv(t *testing.T, fn http.HandlerFunc) {
 	t.Cleanup(func() { githubAPIBase = oldBase })
 }
 
-// appInstallationsHandler serves the GET /app/installations list with the
-// given (id → login) inventory; per-installation fetches 404.
-func appInstallationsHandler(inventory map[int64]string) http.HandlerFunc {
+// appInstallationHandler serves GET /app/installations/{id} lookups from the
+// given (id → login) inventory. The app-wide GET /app/installations list must
+// never be requested — the endpoint walks the managed set instead (OL-957) —
+// so a hit on the list route fails the test; that is also the regression
+// guard for managed installations sitting beyond the list's first page.
+func appInstallationHandler(t *testing.T, inventory map[int64]string) http.HandlerFunc {
+	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/app/installations" {
-			out := make([]map[string]any, 0, len(inventory))
-			for id, login := range inventory {
-				out = append(out, map[string]any{
-					"id":      id,
-					"account": map[string]any{"login": login, "type": "Organization"},
-				})
-			}
-			writeJSON(w, http.StatusOK, out)
+			t.Errorf("app-wide /app/installations list must not be called (OL-957)")
+			http.NotFound(w, r)
 			return
 		}
-		http.NotFound(w, r)
+		id, err := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/app/installations/"), 10, 64)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		login, ok := inventory[id]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"account": map[string]any{
+				"login":      login,
+				"type":       "Organization",
+				"avatar_url": "https://example.com/" + login + ".png",
+			},
+		})
 	}
 }
 
@@ -131,10 +145,8 @@ func TestListGitHubAppInstallations_OnlyManagedAndConnectedFlags(t *testing.T) {
 	}
 	ctx := context.Background()
 	const managedID int64 = 111222333
-	const foreignID int64 = 87654321
-	ghAppMockEnv(t, appInstallationsHandler(map[int64]string{
+	ghAppMockEnv(t, appInstallationHandler(t, map[int64]string{
 		managedID: "AstralSolipsism",
-		foreignID: "Outlune",
 	}))
 
 	if _, err := testHandler.Queries.CreateGitHubInstallation(ctx, db.CreateGitHubInstallationParams{
@@ -171,10 +183,15 @@ func TestListGitHubAppInstallations_OnlyManagedAndConnectedFlags(t *testing.T) {
 		return body.Installations
 	}
 
-	// Foreign installations (bound nowhere this caller manages) are absent.
+	// Foreign installations (bound nowhere this caller manages) can never be
+	// fetched: the handler only asks GitHub about IDs in the managed set, so
+	// there is nothing to assert here — scope is TestReuseAllowlistScopedToManagedWorkspaces' job.
 	got := list(t, testWorkspaceID)
 	if len(got) != 1 || got[0].InstallationID != managedID || !got[0].Connected || got[0].AccountLogin != "AstralSolipsism" {
 		t.Errorf("want exactly the managed installation connected=true, got %+v", got)
+	}
+	if got[0].AccountType != "Organization" || got[0].AccountAvatarURL == nil || *got[0].AccountAvatarURL != "https://example.com/AstralSolipsism.png" {
+		t.Errorf("account type/avatar must pass through from GitHub, got %+v", got[0])
 	}
 
 	// The same caller from a fresh workspace (no binding yet): the managed
@@ -207,7 +224,8 @@ func TestReuseAllowlistScopedToManagedWorkspaces(t *testing.T) {
 	ghAppMockEnv(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/app/installations":
-			writeJSON(w, 200, []map[string]any{{"id": victimInst, "account": map[string]any{"login": "victim-org", "type": "Organization"}}})
+			t.Errorf("app-wide /app/installations list must not be called (OL-957)")
+			http.NotFound(w, r)
 		case r.Method == http.MethodGet && r.URL.Path == fmt.Sprintf("/app/installations/%d", victimInst):
 			writeJSON(w, 200, map[string]any{"account": map[string]any{"login": "victim-org", "type": "Organization"}})
 		default:
@@ -652,6 +670,119 @@ func TestListGitHubAppInstallations_GitHubFailures(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestListGitHubAppInstallations_PerIDFetch pins the OL-957 behavior: the
+// list walks the managed set via GET /app/installations/{id} (never the
+// paginated app-wide list), skips stale (404) and suspended bindings, fails
+// whole with 502 on any other error, and returns a stable order.
+func TestListGitHubAppInstallations_PerIDFetch(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler test fixture not initialized (no DB?)")
+	}
+	ctx := context.Background()
+	// Logins are chosen so case-insensitive ordering differs from the
+	// case-sensitive ASCII one (m8 guard): "alpha" must sort before "Beta",
+	// while 'B' < 'a' in ASCII. okC repeats okA's login so the
+	// installation_id tiebreak is exercised too.
+	const okA int64 = 51510001 // login "Beta"
+	const okB int64 = 51510002 // login "alpha"
+	const okC int64 = 51510005 // login "Beta" again, higher id
+	const staleID int64 = 51510003
+	const suspID int64 = 51510004
+	logins := map[int64]string{okA: "Beta", okB: "alpha", okC: "Beta"}
+	seed := func(t *testing.T, id int64, login string) {
+		t.Helper()
+		if _, err := testHandler.Queries.CreateGitHubInstallation(ctx, db.CreateGitHubInstallationParams{
+			WorkspaceID:    parseUUID(testWorkspaceID),
+			InstallationID: id,
+			AccountLogin:   login,
+			AccountType:    "User",
+		}); err != nil {
+			t.Fatalf("seed %d: %v", id, err)
+		}
+		t.Cleanup(func() {
+			testPool.Exec(context.Background(), `DELETE FROM github_installation WHERE installation_id = $1`, id)
+		})
+	}
+	list := func(t *testing.T) (int, []GitHubAppInstallationResponse) {
+		t.Helper()
+		req := withURLParam(httptest.NewRequest(http.MethodGet, "/api/workspaces/"+testWorkspaceID+"/github/app-installations", nil), "id", testWorkspaceID)
+		req.Header.Set("X-User-ID", testUserID)
+		w := httptest.NewRecorder()
+		testHandler.ListGitHubAppInstallations(w, req)
+		var body struct {
+			Installations []GitHubAppInstallationResponse `json:"installations"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode %d body: %v (%s)", w.Code, err, w.Body.String())
+		}
+		return w.Code, body.Installations
+	}
+
+	t.Run("skips stale and suspended, stable order", func(t *testing.T) {
+		seed(t, okA, "Beta")
+		seed(t, okB, "alpha")
+		seed(t, okC, "Beta")
+		seed(t, staleID, "stale-acct")
+		seed(t, suspID, "suspended-acct")
+		ghAppMockEnv(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/app/installations" {
+				t.Errorf("app-wide /app/installations list must not be called (OL-957)")
+				http.NotFound(w, r)
+				return
+			}
+			switch strings.TrimPrefix(r.URL.Path, "/app/installations/") {
+			case strconv.FormatInt(staleID, 10):
+				http.NotFound(w, r) // uninstalled on GitHub: stale binding row
+			case strconv.FormatInt(suspID, 10):
+				writeJSON(w, http.StatusOK, map[string]any{
+					"suspended_at": "2026-01-01T00:00:00Z",
+					"account":      map[string]any{"login": "suspended-acct", "type": "User"},
+				})
+			default:
+				id, _ := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/app/installations/"), 10, 64)
+				writeJSON(w, http.StatusOK, map[string]any{
+					"account": map[string]any{"login": logins[id], "type": "Organization"},
+				})
+			}
+		})
+		code, got := list(t)
+		if code != http.StatusOK {
+			t.Fatalf("want 200, got %d (%+v)", code, got)
+		}
+		if len(got) != 3 {
+			t.Fatalf("want 3 installations (stale + suspended skipped), got %+v", got)
+		}
+		// Case-insensitive login order [alpha, Beta], tie broken by id.
+		wantOrder := []int64{okB, okA, okC}
+		for i, want := range wantOrder {
+			if got[i].InstallationID != want {
+				t.Errorf("slot %d = installation %d (login %q), want %d — order must be case-insensitive login, then id", i, got[i].InstallationID, got[i].AccountLogin, want)
+			}
+		}
+	})
+
+	t.Run("one github failure fails the whole list with 502, no partials", func(t *testing.T) {
+		seed(t, okA, "beta")
+		seed(t, staleID, "flaky-acct")
+		ghAppMockEnv(t, func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, strconv.FormatInt(staleID, 10)) {
+				http.Error(w, "boom", http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"account": map[string]any{"login": "beta", "type": "Organization"},
+			})
+		})
+		code, got := list(t)
+		if code != http.StatusBadGateway {
+			t.Fatalf("want 502, got %d (%+v)", code, got)
+		}
+		if len(got) != 0 {
+			t.Errorf("502 must not carry partial results, got %+v", got)
+		}
+	})
 }
 
 // TestGitHubAppInstallRoutes_RoleGating mirrors TestGitHubRoutes_RoleGating
