@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -61,6 +62,10 @@ print(json.dumps({"received": len(data), "authenticated": b"Authorization: Beare
 		{"root unaccepted", 0, false, false},
 		{"foreign accepted", 65534, true, false},
 		{"foreign delayed accept", 65534, false, false},
+		// OL-960 retry window: the foreign accept lands BETWEEN the
+		// proof's first consult and its retries — every consult after
+		// the accept must still refuse, and the peer gets 0 bytes.
+		{"foreign accepts mid-window", 65534, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -117,6 +122,7 @@ print(json.dumps({"received": len(data), "authenticated": b"Authorization: Beare
 			}
 			verify := collector.verifyConnPeer
 			proofs := make(chan error, 1)
+			midWindow := tc.name == "foreign accepts mid-window"
 			collector.verifyConnPeer = func(conn net.Conn) bool {
 				if tc.acceptBeforeProof {
 					if err := accept(); err != nil {
@@ -125,12 +131,30 @@ print(json.dumps({"received": len(data), "authenticated": b"Authorization: Beare
 					}
 				}
 				owned := verify(conn)
-				var acceptErr error
-				if !tc.acceptBeforeProof {
-					acceptErr = accept()
+				if !midWindow {
+					var acceptErr error
+					if !tc.acceptBeforeProof {
+						acceptErr = accept()
+					}
+					proofs <- acceptErr
+					return owned && acceptErr == nil
 				}
-				proofs <- acceptErr
-				return owned && acceptErr == nil
+				return owned
+			}
+			if midWindow {
+				// The foreign helper accepts after the first single
+				// consult, inside the production retry window; every
+				// consult from then on must keep refusing the foreign uid.
+				consults := 0
+				once := collector.proveConnPeerOnce
+				collector.proveConnPeerOnce = func(conn net.Conn) bool {
+					consults++
+					owned := once(conn)
+					if consults == 1 {
+						proofs <- accept()
+					}
+					return owned
+				}
 			}
 			quota, collectErr := collector.collect(ctx)
 			select {
@@ -262,8 +286,9 @@ func TestKimiDialerProductionProofsLiveSocket(t *testing.T) {
 // (OL-960): a same-user server that has NOT called accept() when the proof
 // runs first (Linux reports uid=0 inode=0 for such rows) must pass once it
 // accepts within the window; a listener that never accepts must fail closed
-// within the budget. No sleeps race the server: accept is triggered from
-// inside the first proof consult, so both outcomes are synchronized.
+// within the budget. The hook wraps ONE consult (proveConnPeerOnce), so the
+// accept lands between the production wrapper's first and second consult —
+// the retry loop itself, not a second test-side call, must carry the proof.
 func TestKimiDialerProductionProofs_DelayedAccept(t *testing.T) {
 	t.Run("accept within the window proves the peer", func(t *testing.T) {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -274,21 +299,18 @@ func TestKimiDialerProductionProofs_DelayedAccept(t *testing.T) {
 
 		collector := newKimiPlanQuotaCollector(t.TempDir())
 		collector.roundOwned = map[int]struct{}{ln.Addr().(*net.TCPAddr).Port: {}}
-		// Simulate the accept landing after the proof started: the first
-		// consult sees an unaccepted row (uid=0 inode=0, fails), accept
-		// happens, later consults see the same-user accepted row.
-		proof := collector.verifyConnPeer
-		var accepted bool
-		collector.verifyConnPeer = func(conn net.Conn) bool {
-			owned := proof(conn)
-			if !owned && !accepted {
-				peer, err := ln.Accept()
-				if err != nil {
-					return false
+		var peer net.Conn // closed after dial
+		consults := 0
+		collector.proveConnPeerOnce = func(conn net.Conn) bool {
+			consults++
+			owned := kimiEstablishedPeerOwnedByUser(conn)
+			if consults == 1 { // must see the unaccepted row; accept lands before the retry
+				if owned {
+					t.Error("unaccepted connection proved on the first consult")
 				}
-				accepted = true
-				defer func() { _ = peer.Close() }()
-				return proof(conn)
+				if peer, err = ln.Accept(); err != nil {
+					t.Error(err)
+				}
 			}
 			return owned
 		}
@@ -296,11 +318,17 @@ func TestKimiDialerProductionProofs_DelayedAccept(t *testing.T) {
 		if err != nil {
 			t.Fatalf("delayed same-user accept not proven within the window: %v", err)
 		}
-		if !accepted {
+		if consults < 2 {
 			_ = conn.Close()
-			t.Fatal("proof passed without an accept (test wiring broken)")
+			if peer != nil {
+				_ = peer.Close()
+			}
+			t.Fatal("proof passed without a retry consult (production retry window not exercised)")
 		}
 		_ = conn.Close()
+		if peer != nil {
+			_ = peer.Close()
+		}
 	})
 
 	t.Run("never accepted fails within the budget", func(t *testing.T) {
@@ -313,8 +341,12 @@ func TestKimiDialerProductionProofs_DelayedAccept(t *testing.T) {
 		collector := newKimiPlanQuotaCollector(t.TempDir())
 		collector.roundOwned = map[int]struct{}{ln.Addr().(*net.TCPAddr).Port: {}}
 		start := time.Now()
-		if _, err := collector.dial(context.Background(), "tcp", ln.Addr().String()); err == nil {
+		_, err = collector.dial(context.Background(), "tcp", ln.Addr().String())
+		if err == nil {
 			t.Fatal("never-accepted connection passed the proof")
+		}
+		if !strings.Contains(err.Error(), "cannot prove the peer") {
+			t.Fatalf("dial failed for the wrong reason: %v", err)
 		}
 		if elapsed := time.Since(start); elapsed > 5*kimiProofRetryBudget {
 			t.Fatalf("fail-closed took %v, budget is %v", elapsed, kimiProofRetryBudget)
