@@ -12,7 +12,7 @@ package main
 //	          when no systemd user session is available
 //
 // `daemon start` never registers. It prints a one-line hint when nothing is
-// registered, and may silently REFRESH an existing Multica-owned entry to
+// registered, and may silently REFRESH an existing Labrastro-owned entry to
 // heal a moved executable path — "owned" means carrying our marker (a
 // comment line in a unit/.desktop, a ManagedBy key in a plist; the Run value
 // name itself), so a hand-written file at the same path is never rewritten.
@@ -42,11 +42,11 @@ import (
 )
 
 // errAutostartUnmanaged is the platform writers' and removers' backstop
-// refusal: a file at a path Multica owns that lacks the ownership marker.
+// refusal: a file at a path Labrastro owns that lacks the ownership marker.
 // The shared enable/disable/sync flows check Managed before acting, so
 // hitting this means a race or a caller that skipped the guard — either way
 // the safe answer is to not touch the user's file.
-var errAutostartUnmanaged = errors.New("the existing file was not created by Multica; refusing to modify it")
+var errAutostartUnmanaged = errors.New("the existing file was not created by Labrastro; refusing to modify it")
 
 // Mechanism keys reported by status (`--output json`). Each maps to a human
 // label through mechanismLabel for table output.
@@ -64,13 +64,13 @@ const (
 // enable/disable refuse to touch it rather than silently overwriting.
 //
 // The Windows Run value has no comment channel, but its value name
-// ("Multica" / "Multica (<profile>)") is ours alone, so name presence IS the
+// ("Labrastro" / "Labrastro (<profile>)") is ours alone, so name presence IS the
 // marker there.
 const (
 	// autostartManagedComment prefixes the first line of every unit and
-	// .desktop file Multica writes.
-	autostartManagedComment = "# Managed by Multica (multica daemon autostart); remove with 'multica daemon autostart disable'"
-	// autostartPlistMarkerKey/Value are a key/value pair Multica writes into
+	// .desktop file Labrastro writes.
+	autostartManagedComment = "# Managed by Labrastro (multica daemon autostart); remove with 'multica daemon autostart disable'"
+	// autostartPlistMarkerKey/Value are a key/value pair Labrastro writes into
 	// every LaunchAgent; launchd ignores unknown plist keys.
 	autostartPlistMarkerKey   = "ManagedBy"
 	autostartPlistMarkerValue = "multica-daemon-autostart"
@@ -87,7 +87,7 @@ const daemonSystemdHandoffExitStatus = 42
 
 // autostartState is the platform-agnostic view of one profile's boot
 // autostart entry: whether it is registered, under which mechanism, where the
-// registration lives, what command it launches, and whether Multica itself
+// registration lives, what command it launches, and whether Labrastro itself
 // created it (Managed).
 //
 // Location is populated even while disabled — it names the file / registry
@@ -108,7 +108,7 @@ type autostartState struct {
 	Command   string `json:"command,omitempty"`
 	// Note carries an optional platform follow-up the user should act on:
 	// the linger hint on systemd machines, or the warning that an entry at
-	// our path was not created by Multica.
+	// our path was not created by Labrastro.
 	Note string `json:"note,omitempty"`
 }
 
@@ -157,7 +157,7 @@ var daemonAutostartCmd = &cobra.Command{
 		"re-runs 'multica daemon start --foreground' for this profile — a Run key on Windows, a " +
 		"launchd LaunchAgent on macOS, a systemd user unit (or an XDG autostart entry when systemd " +
 		"is unavailable) on Linux. 'multica daemon start' never registers on its own; it only hints " +
-		"and refreshes an existing Multica-created entry. 'daemon stop' stops the daemon for now and " +
+		"and refreshes an existing Labrastro-created entry. 'daemon stop' stops the daemon for now and " +
 		"does not remove the registration.",
 }
 
@@ -214,8 +214,8 @@ func requireAutostartSupported() error {
 func refuseUnmanagedAutostart(cur autostartState, action string) error {
 	if cur.Present && !cur.Managed {
 		return fmt.Errorf(
-			"%s exists at %s but was not created by Multica; refusing to %s it.\n"+
-				"Remove that file yourself if you want Multica to manage autostart, then rerun the command",
+			"%s exists at %s but was not created by Labrastro; refusing to %s it.\n"+
+				"Remove that file yourself if you want Labrastro to manage autostart, then rerun the command",
 			mechanismLabel(cur.Mechanism), cur.Location, action)
 	}
 	return nil
@@ -329,7 +329,7 @@ func runDaemonAutostartStatus(cmd *cobra.Command, _ []string) error {
 	// another target reads disabled): say so before the user assumes
 	// `enable`/`disable`/refresh will act on it.
 	if state.Present && !state.Managed && state.Note == "" {
-		state.Note = "not created by Multica; enable, disable and daemon start leave it alone"
+		state.Note = "not created by Labrastro; enable, disable and daemon start leave it alone"
 	}
 
 	output, _ := cmd.Flags().GetString("output")
@@ -413,7 +413,7 @@ func shouldManageAutostart() bool {
 //
 //   - nothing registered at all → print a one-line hint (only where a human
 //     can see it) pointing at `multica daemon autostart enable`;
-//   - an enabled Multica-owned entry exists → silently rewrite it so a
+//   - an enabled Labrastro-owned entry exists → silently rewrite it so a
 //     moved executable (Homebrew upgrade, self-update) or a refreshed PATH
 //     heals;
 //   - an entry exists at our path but is disabled or not ours, or we are
@@ -555,9 +555,9 @@ func windowsQuoteArg(s string) string {
 // the name doubles as the ownership marker (see autostartManagedComment).
 func windowsRunValueName(profile string) string {
 	if profile == "" {
-		return "Multica"
+		return "Labrastro"
 	}
-	return "Multica (" + profile + ")"
+	return "Labrastro (" + profile + ")"
 }
 
 // windowsAutostartCommand renders the Run value: a single command line, since
@@ -652,7 +652,7 @@ func launchAgentStoredCommand(content []byte) string {
 }
 
 // launchAgentManaged reports whether a plist at our path carries the
-// Multica ownership marker.
+// Labrastro ownership marker.
 func launchAgentManaged(content []byte) bool {
 	dec := xml.NewDecoder(bytes.NewReader(content))
 	lastKey := ""
@@ -681,7 +681,7 @@ func launchAgentManaged(content []byte) bool {
 }
 
 // autostartCommentMarked reports whether a unit / .desktop file body carries
-// the Multica ownership comment on any line.
+// the Labrastro ownership comment on any line.
 func autostartCommentMarked(content string) bool {
 	for _, line := range strings.Split(content, "\n") {
 		if strings.HasPrefix(line, autostartManagedComment) {
@@ -759,7 +759,7 @@ func systemdUnitContent(spec autostartSpec) string {
 	var b strings.Builder
 	b.WriteString(autostartManagedComment + "\n")
 	b.WriteString("[Unit]\n")
-	b.WriteString("Description=Multica agent runtime daemon\n")
+	b.WriteString("Description=Labrastro agent runtime daemon\n")
 	b.WriteString("StartLimitIntervalSec=120\n")
 	b.WriteString("StartLimitBurst=5\n")
 	b.WriteString("\n[Service]\n")
@@ -831,8 +831,8 @@ func xdgAutostartContent(spec autostartSpec) string {
 	b.WriteString(autostartManagedComment + "\n")
 	b.WriteString("Type=Application\n")
 	b.WriteString("Version=1.0\n")
-	b.WriteString("Name=Multica daemon\n")
-	b.WriteString("Comment=Start the Multica agent runtime daemon at login\n")
+	b.WriteString("Name=Labrastro daemon\n")
+	b.WriteString("Comment=Start the Labrastro agent runtime daemon at login\n")
 	b.WriteString("Exec=" + strings.Join(quoted, " ") + "\n")
 	b.WriteString("Terminal=false\n")
 	b.WriteString("NoDisplay=true\n")

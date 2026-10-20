@@ -19,6 +19,11 @@ import (
 // isolates tests that forget their own redirect on every platform; per-test
 // t.Setenv overrides still take precedence.
 func TestMain(m *testing.M) {
+	// The downloaded CLI fixture is this test executable on every platform.
+	if len(os.Args) == 2 && os.Args[1] == "--version" && os.Getenv("MULTICA_UPDATE_TEST_VERSION") != "" {
+		fmt.Println("multica " + os.Getenv("MULTICA_UPDATE_TEST_VERSION") + " (commit: fixture)")
+		os.Exit(0)
+	}
 	for _, key := range []string{
 		"MULTICA_AGENT_ID",
 		"MULTICA_TASK_ID",

@@ -39,7 +39,7 @@ var daemonStartCmd = &cobra.Command{
 	Long: "Start the daemon process that polls for runs and executes them using local agent CLIs (Claude, Codex).\n" +
 		"Runs in the background by default. Use --foreground to run in the current terminal.\n" +
 		"Boot autostart is opt-in: when this profile's daemon has none, a hint points at " +
-		"'multica daemon autostart enable'; an existing Multica-created entry is refreshed in place.",
+		"'multica daemon autostart enable'; an existing Labrastro-created entry is refreshed in place.",
 	RunE: runDaemonStart,
 }
 

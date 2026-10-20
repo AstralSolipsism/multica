@@ -257,12 +257,12 @@ func TestPrepareHermesHomeMigrationPreservesUnreadableStore(t *testing.T) {
 	if published, err := publishHermesSessionStaging(staging, store); err != nil || published {
 		t.Fatalf("publish over unreadable history = %v, %v; want false, nil", published, err)
 	}
-	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", testLogger()); err != nil {
+	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", testLogger(), nil); err != nil {
 		t.Fatal(err)
 	}
 	mustWrite(t, filepath.Join(hermesHome, "state.db"), "stray task-local database")
 	mustWrite(t, filepath.Join(hermesHome, "state.db-wal"), "stray task-local WAL")
-	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger()); err != nil {
+	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if hermesStoreHasSessionDB(store) {

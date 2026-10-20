@@ -68,6 +68,7 @@ export function ModalRegistry() {
       break;
     case "issue-edit-dependencies":
       activeModal = <EditDependenciesModal onClose={close} data={data} />;
+      break;
     case "issue-workflow-handoff":
       activeModal = <WorkflowHandoffModal onClose={close} data={data} />;
       break;

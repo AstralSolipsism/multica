@@ -40,8 +40,23 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "isolate cmd/multica test home: %v\n", err)
 		os.Exit(1)
 	}
+	// Marker detection walks cwd ancestors too. A suite launched by a coding
+	// agent must not borrow the enclosing task's identity or change its marker.
+	originalDir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	// This subprocess already gets a scratch cwd containing its input files.
+	if os.Getenv("MULTICA_DEPENDENCY_CLI_TEST") != "1" {
+		if err := os.Chdir(scratchHome); err != nil {
+			fmt.Fprintf(os.Stderr, "isolate cmd/multica test cwd: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 	code := m.Run()
+	_ = os.Chdir(originalDir)
 	_ = os.RemoveAll(scratchHome)
 	os.Exit(code)
 }

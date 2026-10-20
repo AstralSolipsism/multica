@@ -17,7 +17,7 @@ import (
 // quoting logic is covered platform-independently by the untagged tests.
 func TestWindowsAutostartRegistryRoundTrip(t *testing.T) {
 	origPath := autostartRunKeyPath
-	testKey := "Software\\MulticaAutostartRoundTripTest"
+	testKey := "Software\\LabrastroAutostartRoundTripTest"
 	autostartRunKeyPath = testKey
 	t.Cleanup(func() {
 		autostartRunKeyPath = origPath
@@ -44,7 +44,7 @@ func TestWindowsAutostartRegistryRoundTrip(t *testing.T) {
 	if state.Mechanism != autostartMechanismWindowsRun {
 		t.Errorf("mechanism = %q, want %q", state.Mechanism, autostartMechanismWindowsRun)
 	}
-	if !strings.Contains(state.Location, `Multica (staging)`) {
+	if !strings.Contains(state.Location, `Labrastro (staging)`) {
 		t.Errorf("location = %q, want it to name the profile's value", state.Location)
 	}
 	wantCommand := windowsAutostartCommand(spec)
