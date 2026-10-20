@@ -48,6 +48,7 @@ for (const [name, files, selected] of [
   ["cross-module runtime contract", ["packages/core/runtimes/cli-version.ts"], ["frontend", "backend", "runtime", "quality", "e2e"]],
   ["lockfile", ["pnpm-lock.yaml"], ["frontend", "quality", "e2e"]],
   ["package patch", ["patches/example.patch"], ["frontend", "quality", "e2e"]],
+  ["mobile package patch", ["apps/mobile/patches/example.patch"], ["quality"]],
   ["radius policy", ["scripts/check-ui-radius-tokens.mjs"], ["quality"]],
   ["brand source guard", ["scripts/check-branding.mjs"], ["quality"]],
   ["brand guard tests", ["scripts/check-branding.test.mjs"], ["quality"]],

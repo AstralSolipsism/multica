@@ -164,17 +164,6 @@
     "cli_install": {
       "step1_label": "安装 Labrastro CLI"
     },
-    "welcome_after_onboarding": {
-      "skip": {
-        "title": "欢迎来到 Labrastro！",
-        "subtitle": "我们建了一个任务帮你连接运行时。准备好后，在 \"运行时\" 页面就能开始使用 Mizuki。",
-        "cards": {
-          "install_runtime": {
-            "subtitle": "安装 Codex 或 Kimi，然后从 \"运行时\" 页面进入 Mizuki 的引导对话。"
-          }
-        }
-      }
-    },
     "step_workspace": {
       "creation_disabled_lede": "该 Labrastro 实例不允许创建新的工作区。等管理员把你邀请到某个工作区后，接受邀请并刷新即可继续。"
     },

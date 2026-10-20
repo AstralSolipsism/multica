@@ -29,7 +29,9 @@ func TestLabrastroWakeupCaptureMigrationInventory(t *testing.T) {
 		"523_wakeup_registration_source.up.sql",
 		"530_wakeup_bounded_capture.up.sql",
 		"532_wakeup_actor_capture.up.sql",
+		"579_wakeup_skip_handed_to_agent.up.sql",
 		"9009_labrastro_wakeup_conversation_provenance.up.sql",
+		"9028_labrastro_wakeup_skip_handed_to_agent.up.sql",
 	}
 	if !reflect.DeepEqual(found, want) {
 		t.Fatalf("capture_issue_wakeup definitions changed: got %v want %v; add a new fork migration that reapplies conversation provenance to the updated upstream function, and verify both fresh and upgrade order before updating this inventory", found, want)

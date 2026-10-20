@@ -16,6 +16,7 @@ import type {
 import { workspaceWorkingAgentsOptions } from "@multica/core/agents";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
+import { useColumnWorkflow, workflowColumns } from "../utils/workflow-columns";
 import { statusFilterColumns, visibleStatusKeys } from "@multica/core/issues";
 import { dateOnlyToLocalDate } from "@multica/core/issues/date";
 import type { IssueSortParam } from "@multica/core/issues/queries";
@@ -228,6 +229,7 @@ export function useIssueSurfaceController({
   const listCollapsedStatuses = useViewStore((s) => s.listCollapsedStatuses);
   const hiddenStatusKeys = useViewStore((s) => s.hiddenStatuses);
   const catalog = useIssueStatuses(wsId);
+  const { workflow: projectWorkflow } = useColumnWorkflow(wsId, projectId, statusFilters.length > 0);
   const [tableSearch, setTableSearch] = useState("");
 
   const allowedModes = useMemo(() => new Set<IssueSurfaceMode>(modes), [modes]);
@@ -351,10 +353,13 @@ export function useIssueSurfaceController({
   // select exact keys. Selecting a key explicitly restores its hidden column.
   const serverStatuses = useMemo<IssueStatus[]>(
     () => {
-      const visible = visibleStatusKeys(
-        statusFilters,
-        hiddenStatusKeys,
-        catalog,
+      const visible = workflowColumns(
+        visibleStatusKeys(
+          statusFilters,
+          hiddenStatusKeys,
+          catalog,
+        ),
+        projectWorkflow,
       );
       return effectiveViewMode === "list"
         ? visible.filter((status) => !listCollapsedStatuses.includes(status))
@@ -366,6 +371,7 @@ export function useIssueSurfaceController({
       listCollapsedStatuses,
       catalog,
       statusFilters,
+      projectWorkflow,
     ],
   );
 

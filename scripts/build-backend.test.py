@@ -30,7 +30,7 @@ def main():
             shutil.copyfile(ROOT / name, path)
         for name, content in {"apps/web/package.json": '{"version":"1.2.3"}',
                               ".gitignore": "dist/\nignored.go\n", "LICENSE": "fixture license\n", "NOTICE": "fixture notice\n",
-                              "server/go.mod": "module example.invalid/backendfixture\n\ngo 1.26.6\n",
+                              "server/go.mod": "module example.invalid/backendfixture\n\ngo 1.26.9\n",
                               "server/migrations/001_first.up.sql": "SELECT 1;\n",
                               "server/migrations/001_second.up.sql": "SELECT 2;\n",
                               "server/migrations/001_first.down.sql": "SELECT 3;\n"}.items():
@@ -41,11 +41,11 @@ def main():
             path = root / "server/cmd" / command / "main.go"
             path.parent.mkdir(parents=True, exist_ok=True)
             if command == "multica":
-                output = 'fmt.Printf(`{"version":%q,"commit":%q,"date":%q,"go":%q,"os":%q,"arch":%q}`, version, commit, date, runtime.Version(), runtime.GOOS, runtime.GOARCH)'
+                output = 'fmt.Printf(`{"version":%q,"commit":%q,"cli_commit":%q,"date":%q,"go":%q,"os":%q,"arch":%q}`, version, commit, buildCommit, date, runtime.Version(), runtime.GOOS, runtime.GOARCH)'
             else:
                 output = f'fmt.Printf("{command} %s (commit: %s)\\n", version, commit)'
             imports = 'import "fmt"\n' + ('import "runtime"\n' if command == "multica" else '')
-            path.write_text('package main\n' + imports + 'var version="dev"\nvar commit="unknown"\nvar date="unknown"\nfunc main(){' + output + '}\n')
+            path.write_text('package main\n' + imports + 'var version="dev"\nvar commit="unknown"\nvar buildCommit="unknown"\nvar date="unknown"\nfunc main(){' + output + '}\n')
         git = lambda *args: call(["git", *args], root, stderr=subprocess.DEVNULL)
         git("init", "-b", "main")
         git("config", "user.name", "Backend fixture")
@@ -71,6 +71,11 @@ def main():
             archive = root / identity["artifact_dir"] / f"assets/labrastro-backend-1.2.3-labrastro.1-linux-{arch}.tar.gz"
             with tarfile.open(archive) as tar:
                 original[arch] = {m.name: tar.extractfile(m).read() for m in tar}
+            binary = root / "dist" / f"multica-{arch}"
+            binary.write_bytes(original[arch]["multica"])
+            binary.chmod(0o755)
+            version = json.loads(call([*backend.version_runner(root, arch), str(binary), "version", "--output", "json"], root))
+            backend.require(version["cli_commit"] == sha, f"{arch}: CLI buildCommit is not the source SHA")
 
         def rejected(label, change, expected, rehash=False, arch="amd64"):
             files = dict(original[arch])

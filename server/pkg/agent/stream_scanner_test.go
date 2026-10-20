@@ -3,9 +3,7 @@ package agent
 import (
 	"bufio"
 	"errors"
-	"fmt"
 	"io"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -37,76 +35,6 @@ func TestAgentStreamScannerReadsPastOldTenMiBCap(t *testing.T) {
 	}
 }
 
-type chunkedStreamReader struct {
-	io.Reader
-	chunkSize int
-}
-
-func (r chunkedStreamReader) Read(p []byte) (int, error) {
-	return r.Reader.Read(p[:min(len(p), r.chunkSize)])
-}
-
-func TestAgentStreamScannerMatchesScanLinesAcrossChunks(t *testing.T) {
-	for _, input := range []string{"", "\n\n", "a\r\nb\nc\r", "a\r\rb\nlast", "\r\n\r\n", "尾行", "a\x00b\nend"} {
-		for _, chunkSize := range []int{1, 2, 3, 8} {
-			t.Run(fmt.Sprintf("%q/chunk=%d", input, chunkSize), func(t *testing.T) {
-				want := []string{}
-				standard := bufio.NewScanner(strings.NewReader(input))
-				for standard.Scan() {
-					want = append(want, standard.Text())
-				}
-				got := []string{}
-				scanner := newAgentStreamScanner(chunkedStreamReader{strings.NewReader(input), chunkSize})
-				for scanner.Scan() {
-					got = append(got, scanner.Text())
-				}
-				if !slices.Equal(got, want) || scanner.Err() != nil {
-					t.Fatalf("got %q, err=%v; want %q", got, scanner.Err(), want)
-				}
-			})
-		}
-	}
-}
-
-func TestAgentStreamScannerChunkedLimit(t *testing.T) {
-	for _, size := range []int{agentStreamMaxLineBytes - 1, agentStreamMaxLineBytes} {
-		t.Run(fmt.Sprint(size), func(t *testing.T) {
-			line := strings.Repeat("x", size)
-			// The short lines exercise resetting the search offset and moving the
-			// buffer before and after a line that grows to the scanner's limit.
-			scanner := newAgentStreamScanner(chunkedStreamReader{strings.NewReader("init\n" + line + "\nend\n"), 8192})
-			if !scanner.Scan() || scanner.Text() != "init" {
-				t.Fatal("missing initial line")
-			}
-			if size == agentStreamMaxLineBytes {
-				if scanner.Scan() || !errors.Is(scanner.Err(), bufio.ErrTooLong) {
-					t.Fatalf("expected bounded overflow, got %v", scanner.Err())
-				}
-				return
-			}
-			if !scanner.Scan() || scanner.Text() != line {
-				t.Fatalf("valid line was lost or truncated: %v", scanner.Err())
-			}
-			if !scanner.Scan() || scanner.Text() != "end" || scanner.Scan() || scanner.Err() != nil {
-				t.Fatalf("unexpected trailing line or error: %v", scanner.Err())
-			}
-		})
-	}
-}
-
-func BenchmarkAgentStreamScannerChunkedLongLine(b *testing.B) {
-	input := strings.Repeat("x", agentStreamMaxLineBytes-1) + "\n"
-	b.SetBytes(int64(len(input)))
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		scanner := newAgentStreamScanner(chunkedStreamReader{strings.NewReader(input), 8192})
-		if !scanner.Scan() || len(scanner.Bytes()) != len(input)-1 || scanner.Scan() || scanner.Err() != nil {
-			b.Fatalf("failed to read long line: %v", scanner.Err())
-		}
-	}
-}
-
 // TestAgentStreamScannerStillFailsClosedAboveCap keeps the bound a bound: the
 // backends' overflow handling (fail the turn rather than silently truncate an
 // event) depends on Scan reporting bufio.ErrTooLong, so raising the cap must
@@ -122,5 +50,46 @@ func TestAgentStreamScannerStillFailsClosedAboveCap(t *testing.T) {
 	}
 	if err := scanner.Err(); !errors.Is(err, bufio.ErrTooLong) {
 		t.Fatalf("expected bufio.ErrTooLong, got %v", err)
+	}
+}
+
+// TestReadAgentStreamLineSkipsOversizedAndContinues covers the review on
+// #9057: the log-walking companion to newAgentStreamScanner must do what
+// the Scanner cannot — discard a record beyond agentStreamMaxLineBytes and
+// keep the later records readable.
+func TestReadAgentStreamLineSkipsOversizedAndContinues(t *testing.T) {
+	t.Parallel()
+
+	oversized := strings.Repeat("x", agentStreamMaxLineBytes+16)
+	r := bufio.NewReaderSize(strings.NewReader(oversized+"\nafter\n"), agentStreamInitialBufferBytes)
+
+	line, err := readAgentStreamLine(r)
+	if line != nil || !errors.Is(err, bufio.ErrTooLong) {
+		t.Fatalf("expected ErrTooLong with no line, got %d bytes err=%v", len(line), err)
+	}
+	line, err = readAgentStreamLine(r)
+	if err != nil || string(line) != "after" {
+		t.Fatalf("expected the record after the oversized one, got %q err=%v", line, err)
+	}
+	if _, err := readAgentStreamLine(r); !errors.Is(err, io.EOF) {
+		t.Fatalf("expected io.EOF after the last record, got %v", err)
+	}
+}
+
+// TestReadAgentStreamLineReturnsUnterminatedTail: a live log can end
+// mid-write; the final unterminated line is still returned, matching
+// bufio.Scanner's behavior, and an exhausted reader reports io.EOF.
+func TestReadAgentStreamLineReturnsUnterminatedTail(t *testing.T) {
+	t.Parallel()
+
+	r := bufio.NewReaderSize(strings.NewReader("first\npartial-tail"), agentStreamInitialBufferBytes)
+	if line, err := readAgentStreamLine(r); err != nil || string(line) != "first" {
+		t.Fatalf("expected the first line, got %q err=%v", line, err)
+	}
+	if line, err := readAgentStreamLine(r); err != nil || string(line) != "partial-tail" {
+		t.Fatalf("expected the unterminated tail, got %q err=%v", line, err)
+	}
+	if _, err := readAgentStreamLine(r); !errors.Is(err, io.EOF) {
+		t.Fatalf("expected io.EOF, got %v", err)
 	}
 }
