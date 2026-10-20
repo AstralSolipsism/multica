@@ -44,12 +44,13 @@ const installationsRef = vi.hoisted(() => ({
   },
 }));
 // The reusable-installation query as useQuery reports it, and every set of
-// options it was declared with.
+// options it was declared with. code-github.test.tsx covers the same decision
+// against a real QueryClient.
 const appInstallationsRef = vi.hoisted(() => ({
   current: {
+    status: "success" as "pending" | "error" | "success",
     data: undefined as ListGitHubAppInstallationsResponse | undefined,
     isFetching: false,
-    isError: false,
   },
 }));
 const appInstallationsOptions = vi.hoisted(() => ({
@@ -61,8 +62,10 @@ vi.mock("@tanstack/react-query", () => ({
     const key = JSON.stringify(opts.queryKey);
     if (key.includes("app-installations")) {
       appInstallationsOptions.calls.push(opts);
+      // Like TanStack, a disabled query keeps whatever list it cached; it just
+      // never fetches.
       return opts.enabled === false
-        ? { data: undefined, isFetching: false, isError: false }
+        ? { ...appInstallationsRef.current, isFetching: false }
         : appInstallationsRef.current;
     }
     return key.includes("installations") ? { data: installationsRef.current } : { data: [] };
@@ -195,9 +198,9 @@ beforeEach(() => {
     can_manage: true,
   };
   appInstallationsRef.current = {
+    status: "success",
     data: { installations: [], configured: true },
     isFetching: false,
-    isError: false,
   };
   appInstallationsOptions.calls = [];
   configStore
@@ -219,9 +222,9 @@ function connect(...accounts: GitHubInstallation[]) {
 
 function offerForReuse(...installations: GitHubAppInstallation[]) {
   appInstallationsRef.current = {
+    status: "success",
     data: { installations, configured: true },
     isFetching: false,
-    isError: false,
   };
 }
 
@@ -342,6 +345,20 @@ describe("CodeTab — GitHub", () => {
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   });
 
+  it("keeps the account when its disconnect is cancelled", async () => {
+    connect(acme, beta);
+    const user = userEvent.setup();
+    render(<CodeTab />, { wrapper: Wrapper });
+
+    await user.click(screen.getByRole("button", { name: "Actions for acme" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Disconnect" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Disconnect acme?" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(mockDeleteInstallation).not.toHaveBeenCalled();
+  });
+
   it("still connects another account once one is connected", async () => {
     connect();
     const open = spyOnWindowOpen();
@@ -420,9 +437,13 @@ describe("CodeTab — GitHub", () => {
     ],
     ["nothing is managed elsewhere", () => offerForReuse()],
     [
-      "the reusable list could not be read",
+      "refreshing the reusable list failed, even with an older list cached",
       () => {
-        appInstallationsRef.current = { data: undefined, isFetching: false, isError: true };
+        appInstallationsRef.current = {
+          status: "error",
+          data: { installations: [outlune], configured: true },
+          isFetching: false,
+        };
       },
     ],
   ])("goes straight to GitHub's install page when %s", async (_case, arrange) => {
@@ -451,7 +472,7 @@ describe("CodeTab — GitHub", () => {
 
   it("lets a list still loading decide between the menu and GitHub", async () => {
     connect();
-    appInstallationsRef.current = { data: undefined, isFetching: true, isError: false };
+    appInstallationsRef.current = { status: "pending", data: undefined, isFetching: true };
     let finishLoading!: (response: ListGitHubAppInstallationsResponse) => void;
     mockFetchQuery.mockImplementation(
       () =>
@@ -470,7 +491,7 @@ describe("CodeTab — GitHub", () => {
     );
 
     const loaded = { installations: [outlune], configured: true };
-    appInstallationsRef.current = { data: loaded, isFetching: false, isError: false };
+    appInstallationsRef.current = { status: "success", data: loaded, isFetching: false };
     await act(async () => finishLoading(loaded));
 
     expect(await screen.findByRole("menuitem", { name: /outlune/ })).toBeInTheDocument();
@@ -481,7 +502,7 @@ describe("CodeTab — GitHub", () => {
     ["turns out empty", () => mockFetchQuery.mockResolvedValue({ installations: [], configured: true })],
     ["fails", () => mockFetchQuery.mockRejectedValue(new ApiError("bad gateway", 502, "Bad Gateway"))],
   ])("goes to GitHub when a list still loading %s", async (_case, arrange) => {
-    appInstallationsRef.current = { data: undefined, isFetching: true, isError: false };
+    appInstallationsRef.current = { status: "pending", data: undefined, isFetching: true };
     arrange();
     const open = spyOnWindowOpen();
     const user = userEvent.setup();
@@ -512,6 +533,7 @@ describe("CodeTab — GitHub", () => {
     await user.click(await screen.findByRole("menuitem", { name: /outlune/ }));
     const busy = await screen.findByRole("button", { name: "Connecting…" });
     expect(busy).toHaveAttribute("aria-busy", "true");
+    expect(busy).toBeDisabled();
     await user.click(busy);
     expect(screen.queryByRole("menu")).toBeNull();
     expect(mockConnectInstallation).toHaveBeenCalledTimes(1);

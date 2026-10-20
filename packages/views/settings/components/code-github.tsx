@@ -101,17 +101,21 @@ export function GitHubConnectButton({
   const [binding, setBinding] = useState<GitHubAppInstallation | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
+  const reuseEnabled =
+    !!wsId &&
+    installationData.can_manage === true &&
+    installationData.repository_browse_configured === true;
   const appInstallations = useQuery({
     ...githubAppInstallationsOptions(wsId),
-    enabled:
-      !!wsId &&
-      installationData.can_manage === true &&
-      installationData.repository_browse_configured === true,
+    enabled: reuseEnabled,
   });
-  const reusable = reusableInstallations(
-    appInstallations.data?.installations ?? [],
-    installations,
-  );
+  // The cache outlives what made it valid: the last list survives while the
+  // query is disabled and after a refresh fails. Only a successful read with
+  // reuse enabled is offered.
+  const reusable =
+    reuseEnabled && appInstallations.status === "success"
+      ? reusableInstallations(appInstallations.data.installations, installations)
+      : [];
 
   async function openGitHubInstall() {
     setOpening(true);
@@ -129,23 +133,31 @@ export function GitHubConnectButton({
     }
   }
 
-  // Nothing reusable is known yet. A read still in flight decides between the
-  // menu and GitHub; a failed one must not block connecting, so it counts as
-  // nothing to reuse.
-  async function connect() {
-    if (appInstallations.isFetching) {
+  // Every click, from either form of the button, decides here. A read in
+  // flight is awaited, even with an older list on screen, and its result picks
+  // between the menu and GitHub. A failed read counts as nothing to reuse, so
+  // connecting is never blocked.
+  async function chooseConnectPath() {
+    let candidates = reusable;
+    if (reuseEnabled && appInstallations.isFetching) {
       setChecking(true);
       const latest = await qc
         .fetchQuery(githubAppInstallationsOptions(wsId))
         .then((response) => response.installations)
         .catch(() => []);
       setChecking(false);
-      if (reusableInstallations(latest, installations).length > 0) {
-        setMenuOpen(true);
-        return;
-      }
+      candidates = reusableInstallations(latest, installations);
     }
-    await openGitHubInstall();
+    if (candidates.length > 0) setMenuOpen(true);
+    else await openGitHubInstall();
+  }
+
+  // The trigger's own open requests are refused: they arrive a frame after
+  // mousedown, too late to show the wait, and would skip the decision above.
+  // Closing (Escape, outside press, choosing an item) still goes through.
+  function handleMenuOpenChange(open: boolean, details: { cancel: () => void }) {
+    if (open) details.cancel();
+    else setMenuOpen(false);
   }
 
   function bindFailureMessage(e: unknown, login: string): string {
@@ -207,7 +219,7 @@ export function GitHubConnectButton({
       <Button
         variant="outline"
         size="sm"
-        onClick={() => void connect()}
+        onClick={() => void chooseConnectPath()}
         disabled={disabled}
         aria-busy={busy || undefined}
       >
@@ -217,10 +229,17 @@ export function GitHubConnectButton({
   }
 
   return (
-    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+    <DropdownMenu open={menuOpen} onOpenChange={handleMenuOpenChange}>
       <DropdownMenuTrigger
         disabled={disabled}
-        render={<Button variant="outline" size="sm" aria-busy={busy || undefined} />}
+        render={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => (menuOpen ? setMenuOpen(false) : void chooseConnectPath())}
+            aria-busy={busy || undefined}
+          />
+        }
       >
         {content}
         <ChevronDown />

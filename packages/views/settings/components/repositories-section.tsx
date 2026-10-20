@@ -48,6 +48,7 @@ import {
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { toast } from "sonner";
+import type { TFunction } from "i18next";
 import {
   useInfiniteQuery,
   useQuery,
@@ -115,6 +116,23 @@ export function repositoryIdentity(rawURL: string): string | null {
     .replace(/\.git$/i, "");
   if (!host || !normalizedPath) return null;
   return `${host.toLowerCase()}/${normalizedPath}`;
+}
+
+/** Copy for the install callback's `github_error`. Retrying cannot fix the two
+ * codes that refuse the binding, so they say what can. */
+function githubCallbackErrorMessage(
+  code: string,
+  t: TFunction<"settings">,
+  tForkUi: TFunction<"fork-ui">,
+): string {
+  switch (code) {
+    case "not_authorized":
+      return tForkUi(($) => $.settings.repositories.github_error_not_authorized);
+    case "unknown_installation":
+      return tForkUi(($) => $.settings.repositories.github_error_unknown_installation);
+    default:
+      return t(($) => $.repositories.github_connect_failed);
+  }
 }
 
 interface RepositoryDraft {
@@ -225,14 +243,7 @@ export function RepositoriesSection() {
     }
 
     if (githubError) {
-      // Retrying cannot fix these two, so they say what can.
-      toast.error(
-        githubError === "not_authorized"
-          ? tForkUi(($) => $.settings.repositories.github_error_not_authorized)
-          : githubError === "unknown_installation"
-            ? tForkUi(($) => $.settings.repositories.github_error_unknown_installation)
-            : t(($) => $.repositories.github_connect_failed),
-      );
+      toast.error(githubCallbackErrorMessage(githubError, t, tForkUi));
     } else if (githubInstallations.length > 0 && githubBrowseConfigured) {
       setSelectedInstallationID(githubInstallations[0]!.id);
       setGitHubPickerOpen(true);
