@@ -131,6 +131,7 @@ interface RepositoryDraft {
  */
 export function RepositoriesSection() {
   const { t } = useT("settings");
+  const { t: tForkUi } = useT("fork-ui");
   const workspace = useCurrentWorkspace();
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
@@ -224,7 +225,14 @@ export function RepositoriesSection() {
     }
 
     if (githubError) {
-      toast.error(t(($) => $.repositories.github_connect_failed));
+      // Retrying cannot fix these two, so they say what can.
+      toast.error(
+        githubError === "not_authorized"
+          ? tForkUi(($) => $.settings.repositories.github_error_not_authorized)
+          : githubError === "unknown_installation"
+            ? tForkUi(($) => $.settings.repositories.github_error_unknown_installation)
+            : t(($) => $.repositories.github_connect_failed),
+      );
     } else if (githubInstallations.length > 0 && githubBrowseConfigured) {
       setSelectedInstallationID(githubInstallations[0]!.id);
       setGitHubPickerOpen(true);
@@ -245,6 +253,7 @@ export function RepositoriesSection() {
     githubInstallationsPending,
     navigation,
     t,
+    tForkUi,
   ]);
 
   const persist = async (next: WorkspaceRepo[]) => {
