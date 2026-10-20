@@ -5,7 +5,7 @@ This document is designed for AI agents to execute. Follow these steps exactly t
 ## Prerequisites
 
 - Docker and Docker Compose installed
-- Git, Make, Go 1.26.6+, curl and OpenSSL
+- Git, Make, Go 1.26.9+, curl and OpenSSL
 - At least one AI agent CLI on PATH: `claude` or `codex`
 
 ## Install

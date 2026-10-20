@@ -1,7 +1,7 @@
 {
   "name": "@multica/desktop",
   "productName": "Labrastro",
-  "version": "0.6.1",
+  "version": "0.6.3",
   "private": true,
   "description": "Labrastro Desktop — native desktop client for the Labrastro platform.",
   "homepage": "https://multica.ai",
@@ -30,7 +30,7 @@
     "package:all": "node scripts/package.mjs --all-platforms --publish never",
     "stage-candidate": "node scripts/stage-candidate.mjs",
     "lint": "eslint .",
-    "test": "vitest run",
+    "test": "node --test scripts/bundle-cli.node-test.mjs && vitest run",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {

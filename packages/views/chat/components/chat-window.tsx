@@ -194,7 +194,7 @@ export function ChatWindow() {
   // the live-end follow and jumps to the reader's own bubble (OL-272 review).
   const [resumeFollowNonce, setResumeFollowNonce] = useState(0);
   const nextConversationStarterRequestIdRef = useRef(0);
-  const prefillConversationStarter = useCallback(
+  const sendConversationStarter = useCallback(
     (prompt: string) => {
       setConversationStarterRequest({
         id: ++nextConversationStarterRequestIdRef.current,
@@ -986,7 +986,7 @@ export function ChatWindow() {
         <EmptyState
           agent={activeAgent}
           hasSessions={sessions.length > 0}
-          onPickPrompt={prefillConversationStarter}
+          onPickPrompt={sendConversationStarter}
           customizeHref={customizeConversationStartersHref}
         />
       )}

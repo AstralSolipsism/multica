@@ -31,7 +31,7 @@ import TableHeader from "@tiptap/extension-table-header";
 import TableCell from "@tiptap/extension-table-cell";
 import { Table } from "@tiptap/extension-table";
 import { TaskList } from "@tiptap/extension-list";
-import { Markdown } from "@tiptap/markdown";
+import { MathMarkdownExtension } from "./math-markdown";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import type { AnyExtension } from "@tiptap/core";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
@@ -249,10 +249,9 @@ export function createEditorExtensions(
     TableHeader,
     TableCell,
     BlockMathExtension,
-    InlineMathExtension,
     HighlightExtension,
     // 3-space indent so nested ordered lists survive CommonMark in ReadonlyContent.
-    Markdown.configure({ indentation: { style: "space", size: 3 } }),
+    MathMarkdownExtension.configure({ indentation: { style: "space", size: 3 } }),
     // Make Cmd+C / Cmd+X / drag write Markdown source to clipboard text/plain
     // so users can copy rich content out as the original Markdown.
     createMarkdownCopyExtension(),
@@ -288,6 +287,9 @@ export function createEditorExtensions(
             ? createSlashCommandSuggestion(options.queryClient)
             : { char: "/", allow: () => false },
     }),
+    // Marked tries the last registered inline tokenizer first. Math must own
+    // the whole inline scope so enclosing highlights also mark formula atoms.
+    InlineMathExtension,
     Typography,
     Placeholder.configure({ placeholder: placeholderText }),
     createMarkdownPasteExtension(),

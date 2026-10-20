@@ -385,16 +385,6 @@ func TestUpdateDownloadTimeoutOrDefault(t *testing.T) {
 	}
 }
 
-// A copy of this test executable is the downloaded CLI fixture. It works on
-// native Windows as well as Unix without executing an installed user CLI.
-func TestMain(m *testing.M) {
-	if len(os.Args) == 2 && os.Args[1] == "--version" && os.Getenv("MULTICA_UPDATE_TEST_VERSION") != "" {
-		fmt.Println("multica " + os.Getenv("MULTICA_UPDATE_TEST_VERSION") + " (commit: fixture)")
-		os.Exit(0)
-	}
-	os.Exit(m.Run())
-}
-
 func TestFetchLatestVersionRejectsInvalidTargets(t *testing.T) {
 	for _, body := range []string{
 		`not json`, `{"version":42}`, `{"version":"0.4.43-labrastro.1"}`,

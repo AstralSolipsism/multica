@@ -255,7 +255,13 @@ var issueChildrenCmd = &cobra.Command{
 var issueCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new issue",
-	RunE:  runIssueCreate,
+	Long: `Create a new issue. Use --property "Name=Value" to set a custom property
+atomically with creation (repeatable, one distinct property per flag).
+For multi_text / multi_url, use a JSON array of strings when entries contain
+commas or the value starts with "["; simple entries can use comma-separated values:
+  multica issue create --title "Review specs" --property 'Aliases=["Smith, John","[draft] spec"]'
+  multica issue create --title "Read docs" --property 'Related links=["https://en.wikipedia.org/wiki/Washington,_D.C."]'`,
+	RunE: runIssueCreate,
 }
 
 var issueUpdateCmd = &cobra.Command{
@@ -633,7 +639,7 @@ func init() {
 	issueCreateCmd.Flags().String("output", "json", "Output format: table or json")
 	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times). Each file is uploaded and its markdown reference is appended to the description, which is what makes it render on the issue page")
 	issueCreateCmd.Flags().StringSlice("attachment-id", nil, "Existing attachment UUID(s) to bind to the created issue (can be specified multiple times)")
-	issueCreateCmd.Flags().StringArray("property", nil, `Set a custom property atomically with creation as "Name=Value" (repeatable, one distinct property per flag). Multi-value properties use comma-separated values inside one flag. Property and option/member names are case-insensitive; UUIDs are accepted. Filter-only __none__, >=, <=, and != forms are rejected.`)
+	issueCreateCmd.Flags().StringArray("property", nil, `Set a custom property atomically with creation as "Name=Value" (repeatable, one distinct property per flag). Multi-value properties use comma-separated values; multi_text/multi_url also accept JSON arrays (required for commas in entries or values starting with "["). Property and option/member names are case-insensitive; UUIDs are accepted. Filter-only __none__, >=, <=, and != forms are rejected.`)
 
 	registerIssueDependencyFlags(issueCreateCmd, false)
 
@@ -747,9 +753,7 @@ func init() {
 	issueSubscriberRemoveCmd.Flags().String("output", "json", "Output format: table or json")
 }
 
-// ---------------------------------------------------------------------------
 // Issue commands
-// ---------------------------------------------------------------------------
 
 func runIssueList(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
@@ -2012,9 +2016,7 @@ func recordedDuplicateOf(result map[string]any, ref string) (string, error) {
 	return ref, nil
 }
 
-// ---------------------------------------------------------------------------
 // Reorder command
-// ---------------------------------------------------------------------------
 
 // registerIssueReorderFlags wires the reorder command's flags and declares its
 // target selector as a cobra flag group: mutually exclusive so at most one of
@@ -2325,9 +2327,7 @@ func floatVal(m map[string]any, key string) float64 {
 	return 0
 }
 
-// ---------------------------------------------------------------------------
 // Comment commands
-// ---------------------------------------------------------------------------
 
 func runIssueCommentList(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
@@ -2683,9 +2683,7 @@ func runIssueCommentResolution(cmd *cobra.Command, commentID string, resolve boo
 	return cli.PrintJSON(os.Stdout, result)
 }
 
-// ---------------------------------------------------------------------------
 // Execution history commands
-// ---------------------------------------------------------------------------
 
 func runIssueRuns(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
@@ -2930,9 +2928,7 @@ func runIssueRunMessages(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// ---------------------------------------------------------------------------
 // Search command
-// ---------------------------------------------------------------------------
 
 func runIssueRerun(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
@@ -3065,9 +3061,7 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// ---------------------------------------------------------------------------
 // Subscriber commands
-// ---------------------------------------------------------------------------
 
 func runIssueSubscriberList(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
@@ -3171,9 +3165,7 @@ func runIssueSubscriberMutation(cmd *cobra.Command, issueID, action string) erro
 	return cli.PrintJSON(os.Stdout, result)
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 type assigneeMatch struct {
 	Type string // "member", "agent", or "squad"

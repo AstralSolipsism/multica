@@ -315,7 +315,7 @@ Migrations run automatically when the backend starts; migrations that backfill h
 
 ### Verify with `/readyz`, not `/health`
 
-`/health` is a **liveness** probe — it returns `{"status":"ok"}` as long as the process is up, including when migrations failed. `/readyz` (`server/cmd/server/router.go:680`; `/healthz` is an alias) checks the database and the applied migration set, so it is the one that catches a bad upgrade:
+`/health` is a **liveness** probe — it returns `{"status":"ok"}` as long as the process is up, including when migrations failed. `/readyz` (`readyHandler`, registered in `server/cmd/server/router.go`; `/healthz` is an alias) checks the database and the applied migration set, so it is the one that catches a bad upgrade:
 
 ```bash
 curl -s localhost:8080/readyz

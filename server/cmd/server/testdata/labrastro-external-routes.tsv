@@ -35,6 +35,7 @@ DELETE	/api/attachments/{id}	user-auth	allow
 GET	/api/attachments/{id}	user-auth	allow
 GET	/api/attachments/{id}/content	user-auth	allow
 GET	/api/attachments/{id}/download	user-auth	allow
+GET	/api/attachments/{id}/download-metadata	user-auth	deny
 GET	/api/attachments/{id}/signed-download	public-or-capability	separate-auth
 POST	/api/auth/refresh	user-auth	deny
 GET	/api/autopilots/	user-auth	deny
@@ -221,6 +222,13 @@ PATCH	/api/issue-views/{id}/	user-auth	deny
 GET	/api/issue-wakeup-paused	user-auth	deny
 GET	/api/issue-wakeup-summaries	user-auth	deny
 GET	/api/issue-wakeups	user-auth	deny
+GET	/api/issue-workflows/	user-auth	deny
+POST	/api/issue-workflows/	user-auth	deny
+DELETE	/api/issue-workflows/{id}/	user-auth	deny
+GET	/api/issue-workflows/{id}/	user-auth	deny
+PATCH	/api/issue-workflows/{id}/	user-auth	deny
+POST	/api/issue-workflows/{id}/brief	user-auth	deny
+PUT	/api/issue-workflows/{id}/handoffs/{status}	user-auth	deny
 GET	/api/issues/	user-auth	allow
 POST	/api/issues/	user-auth	allow
 POST	/api/issues/batch-delete	user-auth	deny
@@ -291,6 +299,7 @@ PATCH	/api/issues/{id}/wakeups/{wakeupID}/instruction	user-auth	deny
 GET	/api/issues/{id}/wakeups/{wakeupID}/runs	user-auth	deny
 POST	/api/issues/{id}/wakeups/{wakeupID}/trigger	user-auth	deny
 PATCH	/api/issues/{id}/with-dependencies	user-auth	allow
+GET	/api/issues/{id}/workflow-handoff	user-auth	deny
 GET	/api/labels/	user-auth	allow
 POST	/api/labels/	user-auth	deny
 DELETE	/api/labels/{id}/	user-auth	deny
@@ -302,8 +311,6 @@ PATCH	/api/me	user-auth	deny
 PATCH	/api/me/onboarding	user-auth	deny
 POST	/api/me/onboarding/cloud-waitlist	user-auth	deny
 POST	/api/me/onboarding/complete	user-auth	deny
-POST	/api/me/onboarding/no-runtime-bootstrap	user-auth	deny
-POST	/api/me/onboarding/runtime-bootstrap	user-auth	deny
 GET	/api/message-approved-targets	user-auth	deny
 POST	/api/message-approved-targets	user-auth	deny
 DELETE	/api/message-approved-targets/{targetId}	user-auth	deny
@@ -344,6 +351,7 @@ GET	/api/projects/{id}/resources	user-auth	allow
 POST	/api/projects/{id}/resources	user-auth	deny
 DELETE	/api/projects/{id}/resources/{resourceId}	user-auth	deny
 PUT	/api/projects/{id}/resources/{resourceId}	user-auth	deny
+POST	/api/projects/{id}/workflow	user-auth	deny
 GET	/api/properties/	user-auth	allow
 POST	/api/properties/	user-auth	deny
 GET	/api/properties/{id}/	user-auth	allow

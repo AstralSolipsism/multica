@@ -164,17 +164,6 @@
     "cli_install": {
       "step1_label": "Installer le CLI Labrastro"
     },
-    "welcome_after_onboarding": {
-      "skip": {
-        "title": "Bienvenue sur Labrastro !",
-        "subtitle": "Nous avons ajouté une tâche pour vous aider à connecter un runtime. Une fois prêt, commencez avec Mizuki depuis Runtimes.",
-        "cards": {
-          "install_runtime": {
-            "subtitle": "Installez Codex ou Kimi, puis démarrez la discussion guidée avec Mizuki depuis Runtimes."
-          }
-        }
-      }
-    },
     "step_workspace": {
       "creation_disabled_lede": "Cette instance Labrastro n'autorise pas la création de nouveaux espaces de travail. Dès qu'un administrateur vous invite, acceptez l'invitation et actualisez pour continuer."
     },
