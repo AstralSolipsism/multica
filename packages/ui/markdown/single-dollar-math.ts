@@ -1,160 +1,79 @@
-import { renderToString } from 'katex'
-import type { PhrasingContent, Root, Text } from 'mdast'
-import { decodeString } from 'micromark-util-decode-string'
+import type { Root } from 'mdast'
+import type {} from 'micromark-extension-math'
+import type {} from 'remark-parse'
+import type { Tokenizer } from 'micromark-util-types'
+import type { Processor } from 'unified'
 import { SKIP, visit } from 'unist-util-visit'
+import { findInlineMath, type InlineMathMatch, type SourceRange } from './inline-math'
 
-const whitespace = /\s/u
-const openingPredecessor = /[\\$0-9a-zA-Z]/u
-// OL-911: a dollar before a TeX command must remain available as an opener
-// after a price or environment variable. Openers starting with '(' or '-'
-// remain ambiguous under the accepted lexical rules; TeX accepts prose too.
-const closingSuccessor = /[\\$0-9a-zA-Z_]/u
-
-function canOpen(source: string, offset: number): boolean {
-  const before = source[offset - 1] ?? ''
-  const after = source[offset + 1]
-  return !openingPredecessor.test(before) && after != null &&
-    after !== '$' && !whitespace.test(after)
-}
-
-function canClose(source: string, offset: number): boolean {
-  const before = source[offset - 1]
-  const after = source[offset + 1] ?? ''
-  // A backslash immediately before a line ending is a Markdown hard break,
-  // not a TeX-command opener. A trailing backslash at EOF is still literal.
-  const hardBreak = after === '\\' && /[\r\n]/u.test(source[offset + 2] ?? '')
-  return before != null && before !== '\\' && before !== '$' &&
-    !whitespace.test(before) && (hardBreak || !closingSuccessor.test(after))
-}
-
-function validTex(value: string): boolean {
-  try {
-    renderToString(value, { throwOnError: true, displayMode: false, strict: 'ignore', trust: false })
-    return true
-  } catch {
-    return false
-  }
-}
-
-function splitText(node: Text, source: string): PhrasingContent[] | null {
-  if (!node.value.includes('$')) return null
-  const position = node.position
-  const start = position?.start.offset
-  const end = position?.end.offset
-  if (position == null || start == null || end == null) return null
-
-  // Source retains TeX escapes and distinguishes literal dollars from \$ or
-  // &#36;. Work one line at a time so soft breaks cannot close inline math.
-  const rawLines = source.slice(start, end).split(/(\r\n|\r|\n)/u)
-  const valueLines = node.value.split(/(\r\n|\r|\n)/u)
-  if (rawLines.length !== valueLines.length) return null
-
-  const replacement: PhrasingContent[] = []
-  let sourceOffset = start
-  let valueOffset = 0
-  let consumed = 0
-  let consumedPoint = position.start
-
-  for (let lineIndex = 0; lineIndex < rawLines.length; lineIndex++) {
-    const raw = rawLines[lineIndex]!
-    const value = valueLines[lineIndex]!
-    // Markdown drops literal spaces/tabs before soft breaks from text values.
-    // Normalize only for alignment, before decoding references: &#32; remains
-    // authored text, and raw source offsets and TeX must stay unchanged.
-    const decoded = decodeString(
-      lineIndex < rawLines.length - 1 ? raw.replace(/[ \t]+$/u, '') : raw,
-    )
-    // Continuation lines in lists/quotes include container prefixes in the
-    // source range, but not in the text value. Exclude those prefixes. Refuse
-    // nodes already rewritten by another plugin when their source won't align.
-    if (lineIndex % 2 === 0 && decoded.endsWith(value)) {
-      let opening: number | null = null
-      let rawCursor = 0
-      let valueCursor = valueOffset - (decoded.length - value.length)
-
-      for (let cursor = 0; cursor < raw.length; cursor++) {
-        if (raw[cursor] !== '$') continue
-        const offset = sourceOffset + cursor
-        if (source[offset - 1] === '\\') continue
-        if (source[offset - 1] === '$' || source[offset + 1] === '$') {
-          opening = null
-          continue
-        }
-
-        if (opening != null && canClose(source, offset)) {
-          const expression = raw.slice(opening + 1, cursor)
-          if (validTex(expression)) {
-            const from = valueCursor + decodeString(raw.slice(rawCursor, opening)).length
-            const to = from + decodeString(raw.slice(opening, cursor + 1)).length
-            if (from >= valueOffset) {
-              const line = position.start.line + lineIndex / 2
-              const column = lineIndex === 0 ? position.start.column : 1
-              const openingPoint = { line, column: column + opening, offset: sourceOffset + opening }
-              const closingPoint = { line, column: column + cursor + 1, offset: offset + 1 }
-              // Downstream source-aware transforms (e.g. CJK emphasis repair)
-              // must still be able to inspect the untouched text fragments.
-              if (from > consumed) {
-                replacement.push({
-                  type: 'text',
-                  value: node.value.slice(consumed, from),
-                  position: { start: consumedPoint, end: openingPoint },
-                })
-              }
-              replacement.push({
-                type: 'inlineMath',
-                value: expression,
-                position: { start: openingPoint, end: closingPoint },
-                data: {
-                  hName: 'code',
-                  hProperties: { className: ['language-math', 'math-inline'] },
-                  hChildren: [{ type: 'text', value: expression }],
-                },
-              })
-              consumed = to
-              consumedPoint = closingPoint
-              rawCursor = cursor + 1
-              valueCursor = to
-            }
-          }
-          opening = null
-        } else {
-          // An intervening unescaped dollar starts a new candidate or ends
-          // this one. Never swallow a price followed by a separate formula.
-          opening = canOpen(source, offset) ? cursor : null
-        }
-      }
-    }
-    sourceOffset += raw.length
-    valueOffset += value.length
-  }
-
-  if (replacement.length === 0) return null
-  if (consumed < node.value.length) {
-    replacement.push({
-      type: 'text',
-      value: node.value.slice(consumed),
-      position: { start: consumedPoint, end: position.end },
-    })
-  }
-  return replacement
-}
+const isolated = new Set([
+  'code', 'inlineCode', 'link', 'linkReference', 'image', 'imageReference',
+  'html', 'definition', 'math', 'inlineMath',
+])
 
 /**
- * Run alongside remark-math with singleDollarTextMath disabled, before
- * remark-breaks. Only literal text nodes can gain single-dollar math; links,
- * code, HTML and existing double-dollar math keep their Markdown semantics.
- * Delimiter boundaries choose candidates; KaTeX alone validates their content.
+ * Use the normal parser to locate code/links (including resolved references),
+ * then tokenize validated formulas atomically on a second parse. Source and
+ * positions never change: CJK repair and other source-aware plugins still see
+ * the authored Markdown. remark-math supplies the mathText mdast handlers.
  */
-export function remarkSingleDollarMath() {
-  return (tree: Root, file: { value: unknown }) => {
-    const source = String(file.value ?? '')
-    visit(tree, (node, index, parent) => {
-      if (node.type === 'link' || node.type === 'linkReference') return SKIP
-      if (node.type !== 'text' || index == null || parent == null) return
-      const replacement = splitText(node, source)
-      if (!replacement) return
-      parent.children.splice(index, 1, ...replacement)
-      return index + replacement.length
+export function remarkSingleDollarMath(this: Processor) {
+  const parser = this.parser
+  if (!parser) return
+  let matches = new Map<number, InlineMathMatch>()
+  const tokenize: Tokenizer = function (effects, ok, nok) {
+    const match = matches.get(this.now().offset)
+    const now = () => this.now()
+    return start
+
+    function start(code: Parameters<typeof effects.consume>[0]) {
+      if (!match) return nok(code)
+      effects.enter('mathText')
+      effects.enter('mathTextSequence')
+      effects.consume(code)
+      effects.exit('mathTextSequence')
+      effects.enter('mathTextData')
+      return inside
+    }
+
+    function inside(code: Parameters<typeof effects.consume>[0]) {
+      // Block syntax (e.g. a GFM table cell) can end this inline scope before
+      // a candidate's closing dollar. Let the normal parser handle it.
+      if (code === null) return nok(code)
+      if (now().offset === match!.end - 1) {
+        effects.exit('mathTextData')
+        effects.enter('mathTextSequence')
+        effects.consume(code)
+        effects.exit('mathTextSequence')
+        effects.exit('mathText')
+        return ok
+      }
+      effects.consume(code)
+      return inside
+    }
+  }
+
+  const data = this.data()
+  const extensions = data.micromarkExtensions ?? (data.micromarkExtensions = [])
+  extensions.push({ text: { 36: { name: 'validatedInlineMath', tokenize } } })
+  this.parser = (source, file) => {
+    matches = new Map()
+    const tree = parser(source, file) as Root
+    if (!source.includes('$')) return tree
+    const excluded: SourceRange[] = []
+    visit(tree, (node) => {
+      if (!isolated.has(node.type)) return
+      const start = node.position?.start.offset
+      const end = node.position?.end.offset
+      if (start != null && end != null) excluded.push({ start, end })
+      return SKIP
     })
+    matches = new Map(findInlineMath(source, excluded).map((match) => [match.start, match]))
+    if (matches.size === 0) return tree
+    try {
+      return parser(source, file)
+    } finally {
+      matches = new Map()
+    }
   }
 }

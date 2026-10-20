@@ -106,6 +106,7 @@
     "katex": "catalog:",
     "lowlight": "^3.3.0",
     "mdast-util-from-markdown": "^2.0.3",
+    "micromark-util-decode-string": "^2.0.1",
     "mermaid": "catalog:",
     "motion": "^12.38.0",
     "pinyin-pro": "3.26.0",

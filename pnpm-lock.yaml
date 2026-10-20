@@ -889,9 +889,6 @@ importers:
       lucide-react:
         specifier: 'catalog:'
         version: 1.0.1(react@19.2.3)
-      micromark-util-decode-string:
-        specifier: ^2.0.1
-        version: 2.0.1
       next-themes:
         specifier: ^0.4.6
         version: 0.4.6(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -971,9 +968,21 @@ importers:
       esbuild:
         specifier: ^0.25.12
         version: 0.25.12
+      micromark-extension-math:
+        specifier: ^3.1.0
+        version: 3.1.0
+      micromark-util-types:
+        specifier: ^2.0.2
+        version: 2.0.2
+      remark-parse:
+        specifier: ^11.0.0
+        version: 11.0.0
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
+      unified:
+        specifier: ^11.0.5
+        version: 11.0.5
 
   packages/views:
     dependencies:
@@ -1103,6 +1112,9 @@ importers:
       mermaid:
         specifier: 'catalog:'
         version: 11.14.0
+      micromark-util-decode-string:
+        specifier: ^2.0.1
+        version: 2.0.1
       motion:
         specifier: ^12.38.0
         version: 12.38.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)

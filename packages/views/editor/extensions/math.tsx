@@ -4,6 +4,7 @@ import katex from "katex";
 import { Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer, NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
+import { createInlineMathTokenizer, parseInlineMath } from "./inline-math-tokenizer";
 
 function renderMath(expression: string, displayMode: boolean): string {
   return katex.renderToString(expression, {
@@ -22,6 +23,7 @@ function InlineMathView({ node }: NodeViewProps) {
       className="math-node inline"
       data-type="inline-math"
       data-expression={expression}
+      data-delimiter={node.attrs.delimiter}
       contentEditable={false}
     >
       <span dangerouslySetInnerHTML={{ __html: renderMath(expression, false) }} />
@@ -57,6 +59,10 @@ export const InlineMathExtension = Node.create({
         default: "",
         rendered: false,
       },
+      delimiter: {
+        default: "$",
+        rendered: false,
+      },
     };
   },
 
@@ -66,6 +72,7 @@ export const InlineMathExtension = Node.create({
         tag: 'span[data-type="inline-math"]',
         getAttrs: (el) => ({
           expression: (el as HTMLElement).getAttribute("data-expression") ?? "",
+          delimiter: (el as HTMLElement).getAttribute("data-delimiter") === "$$" ? "$$" : "$",
         }),
       },
     ];
@@ -77,17 +84,29 @@ export const InlineMathExtension = Node.create({
       mergeAttributes(HTMLAttributes, {
         "data-type": "inline-math",
         "data-expression": node.attrs.expression,
+        "data-delimiter": node.attrs.delimiter,
       }),
       node.attrs.expression,
     ];
   },
 
-  // Single-dollar inline math is intentionally not parsed from Markdown and has
-  // no typing input rule. Dollar amounts like `$100~$120` must stay literal;
-  // users should write explicit `$$...$$` blocks for math.
-  renderMarkdown: (node: any) => {
+  // Loading/pasting Markdown converts formulas; typing has no input rule.
+  markdownTokenizer: createInlineMathTokenizer(),
+
+  parseMarkdown: (token, helpers) => token.attributes
+    ? helpers.createNode("inlineMath", token.attributes)
+    : parseInlineMath(token, helpers),
+
+  renderMarkdown: (node, helpers) => {
     const expression = String(node.attrs?.expression ?? "");
-    return `$${expression}$`;
+    const delimiter = node.attrs?.delimiter === "$$" ? "$$" : "$";
+    const raw = `${delimiter}${expression}${delimiter}`;
+    if (!node.marks?.length) return raw;
+    // MarkdownManager does not wrap marks around inline atoms. Use its mark
+    // serializers, substituting raw TeX only after text escaping has finished.
+    const marker = "MULTICAMATH";
+    return helpers.renderChildren([{ type: "text", text: marker, marks: node.marks }])
+      .replace(marker, () => raw);
   },
 
   addNodeView() {
@@ -143,7 +162,7 @@ export const BlockMathExtension = Node.create({
     },
     tokenize(src: string) {
       if (!src.startsWith("$$")) return undefined;
-      const match = src.match(/^\$\$[ \t]*\n?([\s\S]+?)\n?\$\$(?:\n|$)/);
+      const match = src.match(/^\$\$[ \t]*\r?\n([\s\S]+?)\r?\n\$\$(?:\r?\n|$)/);
       if (!match) return undefined;
       return {
         type: "blockMath",
