@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "vitest run --environment node",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."
   },
@@ -14,6 +15,7 @@
     "./markdown/*": "./markdown/*.tsx",
     "./markdown/linkify": "./markdown/linkify.ts",
     "./markdown/mentions": "./markdown/mentions.ts",
+    "./markdown/inline-math": "./markdown/inline-math.ts",
     "./hooks/*": "./hooks/*.ts",
     "./lib/utils": "./lib/utils.ts",
     "./lib/avatar-size": "./lib/avatar-size.ts",
@@ -44,7 +46,6 @@
     "katex": "catalog:",
     "linkify-it": "^5.0.0",
     "lucide-react": "catalog:",
-    "micromark-util-decode-string": "^2.0.1",
     "next-themes": "^0.4.6",
     "react-day-picker": "^9.14.0",
     "react-markdown": "^10.1.0",
@@ -76,6 +77,11 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "esbuild": "^0.25.12",
-    "typescript": "catalog:"
+    "micromark-extension-math": "^3.1.0",
+    "micromark-util-types": "^2.0.2",
+    "remark-parse": "^11.0.0",
+    "typescript": "catalog:",
+    "unified": "^11.0.5",
+    "vitest": "catalog:"
   }
 }

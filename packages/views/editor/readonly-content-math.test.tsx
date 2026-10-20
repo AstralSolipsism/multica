@@ -3,6 +3,7 @@ import { render } from "@testing-library/react";
 import { Markdown } from "@multica/ui/markdown";
 import { ReadonlyContent } from "./readonly-content";
 import { RichContent } from "../rich-content";
+import { mathParagraphs } from "./math-fixtures";
 
 const renderers = {
   Markdown: (content: string) => <Markdown>{content}</Markdown>,
@@ -23,6 +24,26 @@ it.each(["**中文。 **后文 $x$", "$x$ **中文。 **后文"])("preserves CJK
 
 for (const [name, renderContent] of Object.entries(renderers)) {
   describe(`${name} math`, () => {
+    it.each(mathParagraphs)("keeps TeX atomic in $markdown", ({ markdown, expressions, prose }) => {
+      const { container } = render(renderContent(markdown));
+      expect(Array.from(container.querySelectorAll("annotation"), (node) => node.textContent))
+        .toEqual(expressions);
+      expect(container.querySelector("em, .katex-error")).toBeNull();
+      container.querySelectorAll(".katex").forEach((node) => node.remove());
+      expect(container.textContent).toBe(prose);
+    });
+
+    it("retains bold around a formula containing punctuation", () => {
+      const { container } = render(renderContent(String.raw`**$< 1\sim 5\text{ms}$**`));
+      expect(container.querySelectorAll("strong .katex")).toHaveLength(1);
+    });
+
+    it("does not let a formula cross a table-cell boundary", () => {
+      const { container } = render(renderContent("| a | b |\n| - | - |\n| $x | y$ |"));
+      expect(container.querySelectorAll("td")).toHaveLength(2);
+      expect(container.querySelector(".katex")).toBeNull();
+    });
+
     it.each([
       [String.raw`热量范围在 $0 \sim 10000\text{ kcal}$ 之间`, String.raw`0 \sim 10000\text{ kcal}`],
       ["根据公式 $E = mc^2$，可知", "E = mc^2"],
@@ -72,6 +93,8 @@ for (const [name, renderContent] of Object.entries(renderers)) {
       "$x$_",
       String.raw`$x$\alpha`,
       "$x$\\",
+      "echo $$ done", "a $$ b", "cost $$5", "PID is $$",
+      "$a$$b$", "$$x$ y", "$$$x$$", "a$$$x$$ b",
     ])("keeps literal text in %s", (content) => {
       const { container } = render(renderContent(content));
       expect(container.querySelector(".katex, .katex-error")).toBeNull();
