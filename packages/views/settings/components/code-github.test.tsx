@@ -93,6 +93,11 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+// Base UI acts on a pointer press one animation frame after mousedown.
+function waitPastNextFrame() {
+  return act(() => new Promise<void>((done) => setTimeout(done, 50)));
+}
+
 async function expectGitHubInstallOpened() {
   await waitFor(() =>
     expect(windowOpen).toHaveBeenCalledWith(INSTALL_URL, "_blank", "noopener"),
@@ -152,6 +157,46 @@ describe("GitHubConnectButton with a reusable account already cached", () => {
     await expectGitHubInstallOpened();
   });
 
+  // The trigger's own open request lands between mousedown and mouseup. It
+  // must stay refused, or the cached account shows before the refresh decides.
+  it("does not show cached accounts on mousedown while a refresh is pending", async () => {
+    const refresh = deferred<ListGitHubAppInstallationsResponse>();
+    mockListAppInstallations.mockReturnValue(refresh.promise);
+    const user = userEvent.setup();
+    renderButton();
+    await waitFor(() => expect(mockListAppInstallations).toHaveBeenCalledTimes(1));
+
+    const button = screen.getByRole("button", { name: "Connect GitHub" });
+    await user.pointer({ keys: "[MouseLeft>]", target: button });
+    await waitPastNextFrame();
+    expect(screen.queryByRole("menu")).toBeNull();
+    await user.pointer({ keys: "[/MouseLeft]", target: button });
+    expect(button).toHaveAttribute("aria-busy", "true");
+
+    await act(async () => refresh.resolve({ configured: true, installations: [] }));
+
+    await expectGitHubInstallOpened();
+  });
+
+  it("waits for a refresh in flight when an arrow key opens the menu", async () => {
+    const refresh = deferred<ListGitHubAppInstallationsResponse>();
+    mockListAppInstallations.mockReturnValue(refresh.promise);
+    const user = userEvent.setup();
+    renderButton();
+    await waitFor(() => expect(mockListAppInstallations).toHaveBeenCalledTimes(1));
+
+    const button = screen.getByRole("button", { name: "Connect GitHub" });
+    button.focus();
+    await user.keyboard("{ArrowDown}");
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByRole("menu")).toBeNull();
+
+    await act(async () => refresh.resolve(outluneList));
+
+    expect(await screen.findByRole("menuitem", { name: /outlune/ })).toBeInTheDocument();
+    expect(mockGetConnectURL).not.toHaveBeenCalled();
+  });
+
   it("ignores the cache when App credentials for reuse are missing", async () => {
     const user = userEvent.setup();
     renderButton({ repository_browse_configured: false });
@@ -176,22 +221,26 @@ describe("GitHubConnectButton with a reusable account already cached", () => {
     await user.click(button);
 
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-    await act(() => new Promise((done) => setTimeout(done, 50)));
+    await waitPastNextFrame();
     expect(screen.queryByRole("menu")).toBeNull();
     expect(mockGetConnectURL).not.toHaveBeenCalled();
   });
 
-  it("opens the menu from the keyboard", async () => {
-    mockListAppInstallations.mockResolvedValue(outluneList);
-    const user = userEvent.setup();
-    renderButton();
-    await waitFor(() => expect(qc.getQueryState(LIST_KEY)?.fetchStatus).toBe("idle"));
+  it.each(["{Enter}", "[Space]", "{ArrowDown}", "{ArrowUp}"])(
+    "opens the menu from the keyboard with %s",
+    async (key) => {
+      mockListAppInstallations.mockResolvedValue(outluneList);
+      const user = userEvent.setup();
+      renderButton();
+      await waitFor(() => expect(qc.getQueryState(LIST_KEY)?.fetchStatus).toBe("idle"));
 
-    screen.getByRole("button", { name: "Connect GitHub" }).focus();
-    await user.keyboard("{Enter}");
+      screen.getByRole("button", { name: "Connect GitHub" }).focus();
+      await user.keyboard(key);
 
-    expect(await screen.findByRole("menuitem", { name: /outlune/ })).toBeInTheDocument();
-  });
+      expect(await screen.findByRole("menuitem", { name: /outlune/ })).toBeInTheDocument();
+      expect(mockGetConnectURL).not.toHaveBeenCalled();
+    },
+  );
 });
 
 it("keeps the button disabled while GitHub's install URL loads, so a second click does nothing", async () => {

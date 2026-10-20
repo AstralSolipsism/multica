@@ -152,12 +152,21 @@ export function GitHubConnectButton({
     else await openGitHubInstall();
   }
 
-  // The trigger's own open requests are refused: they arrive a frame after
-  // mousedown, too late to show the wait, and would skip the decision above.
-  // Closing (Escape, outside press, choosing an item) still goes through.
-  function handleMenuOpenChange(open: boolean, details: { cancel: () => void }) {
-    if (open) details.cancel();
-    else setMenuOpen(false);
+  // Base UI's own open requests are refused. A press raises one a frame after
+  // mousedown, too late to show the wait, and it would skip the decision
+  // above; the button's onClick decides instead. An arrow key raises one with
+  // no click to follow, so that request is handed to the decision. Closing
+  // (Escape, outside press, choosing an item) still goes through.
+  function handleMenuOpenChange(
+    open: boolean,
+    details: { cancel: () => void; reason: string },
+  ) {
+    if (!open) {
+      setMenuOpen(false);
+      return;
+    }
+    details.cancel();
+    if (details.reason === "list-navigation") void chooseConnectPath();
   }
 
   function bindFailureMessage(e: unknown, login: string): string {
