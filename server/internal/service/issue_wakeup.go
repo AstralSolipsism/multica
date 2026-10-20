@@ -1230,6 +1230,15 @@ func (s *IssueWakeupService) dispatch(ctx context.Context, prev db.IssueWakeup) 
 		// An immutable claim or another authority holds the slot. Commit any
 		// rejected inputs and retain the next condition poll until a firing.
 		var waiting pgtype.Text
+		if len(w.Condition) > 0 && !timedOut {
+			// pollCondition may have just set or cleared its diagnostic. Keep
+			// that transactional result when no authorized input can fire.
+			current, err := q.GetIssueWakeup(ctx, db.GetIssueWakeupParams{ID: w.ID, WorkspaceID: w.WorkspaceID})
+			if err != nil {
+				return err
+			}
+			waiting = current.LastError
+		}
 		if task.Status == "dispatched" && task.DispatchedAt.Valid && now.Sub(task.DispatchedAt.Time) >= claimResponseRecoveryWindow &&
 			(!task.PrepareLeaseExpiresAt.Valid || !task.PrepareLeaseExpiresAt.Time.After(now)) {
 			waiting = pgtype.Text{String: "Waiting for claimed run " + util.UUIDToString(task.ID) + " to start or recover; new trigger inputs are retained.", Valid: true}

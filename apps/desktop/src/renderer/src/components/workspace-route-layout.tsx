@@ -13,7 +13,6 @@ import { useWorkspaceSeen } from "@multica/views/workspace/use-workspace-seen";
 import { WorkspacePresencePrefetch } from "@multica/views/layout";
 import { YouShouldKnowProvider } from "@multica/views/you-should-know";
 import { useTabStore } from "@/stores/tab-store";
-import { useWindowOverlayStore } from "@/stores/window-overlay-store";
 
 /**
  * Which mounted layout instance currently owns the platform workspace

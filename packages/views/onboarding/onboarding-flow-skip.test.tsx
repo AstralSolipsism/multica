@@ -114,7 +114,7 @@ function duplicateGuideConflict(body?: unknown) {
       issue: {
         id: "issue-existing",
         identifier: "NEW-1",
-        title: "Connect a runtime to start with Mika",
+        title: "Connect a runtime to start with Mizuki",
       },
     },
   );
@@ -143,7 +143,7 @@ describe("OnboardingFlow — skipping runtime setup", () => {
     const [body, workspaceSlug] = mockCreateIssue.mock.calls[0]!;
     expect(workspaceSlug).toBe("new-ws");
     expect(body).toMatchObject({
-      title: "Connect a runtime to start with Mika",
+      title: "Connect a runtime to start with Mizuki",
       status: "in_progress",
       assignee_type: "member",
       assignee_id: "u-1",

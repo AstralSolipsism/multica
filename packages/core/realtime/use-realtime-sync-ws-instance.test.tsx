@@ -137,7 +137,7 @@ describe("useRealtimeSync — ws instance change", () => {
     // Awaited rather than counted synchronously: the inbox unread summary
     // refresh cancels any in-flight request before invalidating (see
     // onInboxSummaryInvalidate), so that one lands after the synchronous ones.
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(32));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(33));
   });
 
   it("does not re-invalidate when rerendered with the same ws instance", () => {
