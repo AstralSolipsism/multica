@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -81,7 +83,32 @@ func (h *Handler) prepareIssueUpdate(w http.ResponseWriter, r *http.Request, bod
 		return r, false
 	}
 	*req = decoded.UpdateIssueRequest
-	return h.prepareDependencyWrite(w, r, decoded.dependencyWriteFields, false)
+	r, ok := h.prepareDependencyWrite(w, r, decoded.dependencyWriteFields, false)
+	if !ok {
+		return r, false
+	}
+	// Runs after dependency-write parsing so the error precedence matches the
+	// previous inline placement at the top of UpdateIssue.
+	return r, labrastroRejectExternalConversationCancel(w, r, body)
+}
+
+// labrastro: cancellation is not part of external conversation authority,
+// including when requested through an otherwise allowed issue collaboration
+// route. Case-insensitive because encoding/json matches struct tags that way;
+// explicit false/null is rejected along with true.
+func labrastroRejectExternalConversationCancel(w http.ResponseWriter, r *http.Request, body []byte) bool {
+	if _, external := channel.ConversationTaskFromContext(r.Context()); !external {
+		return true
+	}
+	var rawFields map[string]json.RawMessage
+	json.Unmarshal(body, &rawFields)
+	for field := range rawFields {
+		if strings.EqualFold(field, "stop_previous_assignee_runs") {
+			writeErrorCode(w, http.StatusForbidden, "external_conversation_forbidden", "external conversations may not stop previous assignee runs")
+			return false
+		}
+	}
+	return true
 }
 
 func (h *Handler) prepareDependencyWrite(w http.ResponseWriter, r *http.Request, fields dependencyWriteFields, creating bool) (*http.Request, bool) {

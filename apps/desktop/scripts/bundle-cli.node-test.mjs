@@ -9,6 +9,12 @@ import test from "node:test";
 const fullRevision = "a".repeat(40);
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 
+// The fakes below are shebang scripts spawned as bare `git`/`go` executables;
+// Windows resolves those through PATHEXT (.cmd/.exe) and ignores the shebang,
+// so this harness can only execute on POSIX. Linux CI runs it through the
+// regular `pnpm test` (turbo test) job.
+const posixOnly = process.platform === "win32";
+
 function fakeExecutable(path, source) {
   writeFileSync(path, `#!${process.execPath}\n${source}`, { mode: 0o755 });
 }
@@ -22,7 +28,7 @@ for (const [platform, arch, goos, goarch, foreignCaller] of [
   ["win32", "arm64", "windows", "arm64", true],
 ]) {
   for (const missingRevision of [false, true]) {
-    test(`bundled ${platform}/${arch} preserves source-root commit (missing=${missingRevision}, foreignCaller=${foreignCaller})`, () => {
+    test(`bundled ${platform}/${arch} preserves source-root commit (missing=${missingRevision}, foreignCaller=${foreignCaller})`, { skip: posixOnly && "POSIX-only harness: shebang fakes for git/go cannot execute on Windows" }, () => {
       const root = mkdtempSync(join(tmpdir(), "multica-bundle-commit-"));
       try {
         const scripts = join(root, "apps", "desktop", "scripts");

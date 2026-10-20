@@ -48,6 +48,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Cross-platform evidence for `pnpm test`: the bundle-cli node:test
+      # harness skips its POSIX-only cases on Windows, so the suite must pass
+      # on both legs. Linux PR CI covers it via turbo test.
+      - name: Desktop unit tests (${{ matrix.target }})
+        working-directory: apps/desktop
+        run: pnpm test
+
       - name: Package Desktop installers (${{ matrix.target }})
         working-directory: apps/desktop
         env:
