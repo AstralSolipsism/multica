@@ -53,10 +53,12 @@ import {
   type TranscriptSortDirection,
 } from "@multica/core/agents/stores";
 import type { AgentTask, Agent, AgentRuntime } from "@multica/core/types/agent";
+import type { TaskMessagePayload } from "@multica/core/types/events";
 import { resolveWorkdirCopyTarget } from "@multica/core/issues";
 import { runtimeDisplayName, providerDisplayName } from "@multica/core/runtimes";
 import { useCustomPricingStore } from "@multica/core/runtimes/custom-pricing-store";
 import { redactSecrets } from "./redact";
+import { ThinkingLevelBadge, ThinkingRunSummaryBadge } from "../thinking-level-badge";
 import {
   createLiveEndFollow,
   FOLLOW_EDGE_THRESHOLD,
@@ -116,6 +118,13 @@ interface AgentTranscriptDialogProps {
   onOpenChange: (open: boolean) => void;
   task: AgentTask;
   items: TimelineItem[];
+  /**
+   * The run's raw messages, when the caller has them. Drives the thinking-level
+   * badge beside the status chip (current level while running, the per-run
+   * summary afterwards) — computed from the raw stream, never the merged
+   * timeline. Omitting it just drops the badge.
+   */
+  messages?: readonly TaskMessagePayload[];
   agentName: string;
   isLive?: boolean;
   /**
@@ -316,6 +325,7 @@ export function AgentTranscriptDialog({
   onOpenChange,
   task,
   items,
+  messages,
   agentName,
   isLive = false,
   finalFocus = false,
@@ -806,6 +816,10 @@ export function AgentTranscriptDialog({
     }
   })();
 
+  // The header badge shows the level in effect while the run is live and
+  // switches to the per-run summary once it settles (D3).
+  const runActive = effectiveStatus === "running" || effectiveStatus === "dispatched";
+
   // Trigger source: one word answering "why does this run exist" — more useful
   // up front than the runtime/provider diagnostics, which live in the ⓘ popover.
   const triggerLabel = task.parent_task_id
@@ -879,6 +893,11 @@ export function AgentTranscriptDialog({
         <div className="border-b px-4 py-3 shrink-0">
           <div className="flex min-w-0 items-center gap-3">
             {statusBadge}
+            {messages && (runActive ? (
+              <ThinkingLevelBadge messages={messages} />
+            ) : (
+              <ThinkingRunSummaryBadge messages={messages} />
+            ))}
             {/* Primary identity: the agent that ran this. It is the one
                 foreground entity — avatar + medium weight. */}
             <div className="flex min-w-0 items-center gap-2">

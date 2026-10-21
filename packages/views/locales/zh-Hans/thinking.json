@@ -1,0 +1,32 @@
+{
+  "badge_fallback": "默认",
+  "mode_adapt": "自适应",
+  "mode_fixed": "固定",
+  "step_count_other": "{{count}} 次",
+  "peak_level": "最高 {{level}}",
+  "summary_fixed": "固定 · {{level}}",
+  "trend_up": "较上一步升挡",
+  "trend_down": "较上一步降挡",
+  "tooltip": {
+    "decision_line": "Jev 动态决策：{{level}}",
+    "confidence": "置信度 {{value}}%",
+    "latency": "耗时 {{ms}}ms",
+    "source": "来源 {{name}}",
+    "probabilities": "概率分布",
+    "fell_back": "已回退默认挡位：{{reason}}",
+    "reason_timeout": "超时",
+    "reason_error": "出错",
+    "reason_invalid": "返回值无效",
+    "reason_breaker": "熔断",
+    "reason_disabled": "本机关闭",
+    "reason_no_candidates": "拿不到候选挡位",
+    "reason_unknown": "原因未知",
+    "fixed": "固定挡位",
+    "sequence": "各步挡位",
+    "step_default": "默认",
+    "fallback_count_other": "回退 {{count}} 次",
+    "carried_over": "沿用上一步的挡位：{{reason}}",
+    "step_carried": "沿用"
+  },
+  "source_self_hosted": "自部署"
+}

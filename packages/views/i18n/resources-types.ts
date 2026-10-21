@@ -5,6 +5,7 @@ import "i18next";
 import "@multica/ui/i18n-types";
 import type common from "../locales/en/common.json";
 import type quota from "../locales/en/quota.json";
+import type thinking from "../locales/en/thinking.json";
 import type lark from "../locales/en/lark.json";
 import type forkUi from "../locales/en/fork-ui.json";
 import type dependencies from "../locales/en/dependencies.json";
@@ -55,6 +56,7 @@ declare global {
   interface I18nResources {
     common: typeof common;
     quota: typeof quota;
+    thinking: typeof thinking;
     lark: typeof lark;
     "fork-ui": typeof forkUi;
     dependencies: typeof dependencies;

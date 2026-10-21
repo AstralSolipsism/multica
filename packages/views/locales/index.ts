@@ -6,6 +6,7 @@ import type { LocaleResources, SupportedLocale } from "@multica/core/i18n";
 import { applyBrandOverrides } from "./brand-overrides";
 import enCommon from "./en/common.json";
 import enQuota from "./en/quota.json";
+import enThinking from "./en/thinking.json";
 import enLark from "./en/lark.json";
 import enForkUi from "./en/fork-ui.json";
 import enDependencies from "./en/dependencies.json";
@@ -40,6 +41,7 @@ import enMessageDelivery from "./en/message-delivery.json";
 import enYouShouldKnow from "./en/you-should-know.json";
 import zhHansCommon from "./zh-Hans/common.json";
 import zhHansQuota from "./zh-Hans/quota.json";
+import zhHansThinking from "./zh-Hans/thinking.json";
 import zhHansLark from "./zh-Hans/lark.json";
 import zhHansForkUi from "./zh-Hans/fork-ui.json";
 import zhHansDependencies from "./zh-Hans/dependencies.json";
@@ -74,6 +76,7 @@ import zhHansMessageDelivery from "./zh-Hans/message-delivery.json";
 import zhHansYouShouldKnow from "./zh-Hans/you-should-know.json";
 import koCommon from "./ko/common.json";
 import koQuota from "./ko/quota.json";
+import koThinking from "./ko/thinking.json";
 import koLark from "./ko/lark.json";
 import koForkUi from "./ko/fork-ui.json";
 import koDependencies from "./ko/dependencies.json";
@@ -108,6 +111,7 @@ import koMessageDelivery from "./ko/message-delivery.json";
 import koYouShouldKnow from "./ko/you-should-know.json";
 import jaCommon from "./ja/common.json";
 import jaQuota from "./ja/quota.json";
+import jaThinking from "./ja/thinking.json";
 import jaLark from "./ja/lark.json";
 import jaForkUi from "./ja/fork-ui.json";
 import jaDependencies from "./ja/dependencies.json";
@@ -140,6 +144,7 @@ import jaSquads from "./ja/squads.json";
 import jaBilling from "./ja/billing.json";
 import frCommon from "./fr/common.json";
 import frQuota from "./fr/quota.json";
+import frThinking from "./fr/thinking.json";
 import frLark from "./fr/lark.json";
 import frForkUi from "./fr/fork-ui.json";
 import frDependencies from "./fr/dependencies.json";
@@ -178,6 +183,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
   en: {
     common: enCommon,
     quota: enQuota,
+    thinking: enThinking,
     lark: enLark,
     "fork-ui": enForkUi,
     dependencies: enDependencies,
@@ -214,6 +220,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
   "zh-Hans": {
     common: zhHansCommon,
     quota: zhHansQuota,
+    thinking: zhHansThinking,
     lark: zhHansLark,
     "fork-ui": zhHansForkUi,
     dependencies: zhHansDependencies,
@@ -250,6 +257,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
   ko: {
     common: koCommon,
     quota: koQuota,
+    thinking: koThinking,
     lark: koLark,
     "fork-ui": koForkUi,
     dependencies: koDependencies,
@@ -286,6 +294,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
   ja: {
     common: jaCommon,
     quota: jaQuota,
+    thinking: jaThinking,
     lark: jaLark,
     "fork-ui": jaForkUi,
     dependencies: jaDependencies,
@@ -322,6 +331,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
   fr: {
     common: frCommon,
     quota: frQuota,
+    thinking: frThinking,
     lark: frLark,
     "fork-ui": frForkUi,
     dependencies: frDependencies,
