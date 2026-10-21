@@ -53,19 +53,26 @@ func TestAgentAdaptValidation(t *testing.T) {
 				rejection: thinkingCapabilityUnknownRejection(provider),
 			})
 			for _, catalog := range []struct {
-				name      string
-				models    []ModelEntry
-				supported bool
+				name                                string
+				models                              []ModelEntry
+				defaultSupported, selectedSupported bool
 			}{
-				{"two candidates", []ModelEntry{adaptCatalogModel("test/model", true, "auto", "disabled", "low", "high")}, true},
-				{"max ultra", []ModelEntry{adaptCatalogModel("test/model", true, "max", "ultra")}, true},
-				{"one candidate after filtering", []ModelEntry{adaptCatalogModel("test/model", true, "auto", "off", "none", "disabled", "high")}, false},
-				{"no thinking", []ModelEntry{adaptCatalogModel("test/model", true)}, false},
-				{"other model has candidates", []ModelEntry{adaptCatalogModel("test/model", true, "high"), adaptCatalogModel("other", false, "low", "high")}, false},
-				{"unknown model or missing default", []ModelEntry{adaptCatalogModel("other", false, "low", "high")}, false},
+				{"two candidates", []ModelEntry{adaptCatalogModel("test/model", true, "auto", "disabled", "low", "high")}, true, true},
+				{"max ultra", []ModelEntry{adaptCatalogModel("test/model", true, "max", "ultra")}, true, true},
+				{"one candidate after filtering", []ModelEntry{adaptCatalogModel("test/model", true, "auto", "off", "none", "disabled", "high")}, false, false},
+				{"no thinking", []ModelEntry{adaptCatalogModel("test/model", true)}, false, false},
+				{"other model has candidates", []ModelEntry{adaptCatalogModel("test/model", true, "high"), adaptCatalogModel("other", false, "low", "high")}, false, false},
+				{"unknown model or missing default", []ModelEntry{adaptCatalogModel("other", false, "low", "high")}, false, false},
+				{"default has candidates but selected model has none", []ModelEntry{adaptCatalogModel("default", true, "low", "high"), adaptCatalogModel("test/model", false)}, true, false},
+				{"default has candidates but selected model is missing", []ModelEntry{adaptCatalogModel("default", true, "low", "high")}, true, false},
+				{"selected model has candidates but default has none", []ModelEntry{adaptCatalogModel("default", true), adaptCatalogModel("test/model", false, "low", "high")}, false, true},
 			} {
 				rejection := ""
-				if !catalog.supported {
+				supported := catalog.defaultSupported
+				if model != "" {
+					supported = catalog.selectedSupported
+				}
+				if !supported {
 					rejection = fmt.Sprintf("thinking_level %q requires at least two reasoning effort candidates for model %q on runtime %q; choose a supported model or leave thinking_level empty to use the runtime default", "_adapt", model, provider)
 				}
 				cases = append(cases, validationCase{
@@ -94,6 +101,9 @@ func TestAgentAdaptValidation(t *testing.T) {
 					if operation == "create" {
 						body["name"], body["runtime_id"], body["visibility"] = "adapt create", runtimeID, "private"
 						body["max_concurrent_tasks"] = 1
+						t.Cleanup(func() {
+							dbfx.Exec(t, "DELETE FROM agent WHERE runtime_id=$1 AND name=$2", runtimeID, "adapt create")
+						})
 						req = newRequest(http.MethodPost, "/api/agents", body)
 					} else {
 						id := dbfx.Agent(t, "adapt update", runtimeID)
@@ -112,9 +122,6 @@ func TestAgentAdaptValidation(t *testing.T) {
 						return
 					}
 					id := response["id"].(string)
-					if operation == "create" {
-						t.Cleanup(func() { dbfx.Exec(t, "DELETE FROM agent WHERE id=$1", id) })
-					}
 					var stored string
 					dbfx.QueryRow(t, "SELECT thinking_level FROM agent WHERE id=$1", id).Scan(&stored)
 					if response["thinking_level"] != agent.ThinkingLevelAdapt || stored != agent.ThinkingLevelAdapt {
@@ -180,6 +187,32 @@ func TestAgentAdaptUpdateTransitions(t *testing.T) {
 				t.Fatalf("thinking_level response=%q stored=%q, want %q", response.ThinkingLevel, stored, tc.want)
 			}
 		})
+	}
+}
+
+func TestAgentAdaptUpdateToNonDefaultModelClears(t *testing.T) {
+	for _, provider := range []string{"reasonix", "hermes", "dim"} {
+		for _, model := range []string{"unsupported", "unknown"} {
+			t.Run(provider+"/"+model, func(t *testing.T) {
+				runtimeID := dbfx.Runtime(t, "adapt default model", testutil.Cols{"provider": provider})
+				id := dbfx.Agent(t, "adapt default model", runtimeID, testutil.Cols{"thinking_level": "_adapt"})
+				h := *testHandler
+				h.ModelCatalogCache = NewInMemoryModelCatalogCache()
+				if err := h.ModelCatalogCache.Put(context.Background(), runtimeID, []ModelEntry{
+					adaptCatalogModel("default", true, "low", "high"),
+					adaptCatalogModel("unsupported", false),
+				}, nil, true); err != nil {
+					t.Fatal(err)
+				}
+				var response AgentResponse
+				testutil.Call(t, h.UpdateAgent, withURLParam(newRequest(http.MethodPatch, "/api/agents/"+id, map[string]any{"model": model}), "id", id)).Want(http.StatusOK).JSON(&response)
+				var stored string
+				dbfx.QueryRow(t, "SELECT COALESCE(thinking_level, '') FROM agent WHERE id=$1", id).Scan(&stored)
+				if response.Model != model || response.ThinkingLevel != "" || stored != "" {
+					t.Fatalf("non-default model borrowed default effort: model=%q thinking_level=%q stored=%q", response.Model, response.ThinkingLevel, stored)
+				}
+			})
+		}
 	}
 }
 
