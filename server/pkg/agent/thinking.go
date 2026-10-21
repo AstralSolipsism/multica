@@ -961,7 +961,12 @@ var thinkingDynamicCatalogProviders = map[string]bool{
 	// Grok advertises each model's effort catalog through session/new, so the
 	// server does not maintain a provider-wide fixed enum. The daemon applies
 	// the selected effort with `--effort`, not session/set_config_option.
-	"grok":     true,
+	"grok": true,
+	// DevEco inherits OpenCode's engine: `deveco models --verbose` owns the
+	// per-model variant vocabulary and `deveco run --variant` consumes it.
+	// An unadvertised variant is a silent no-op in the engine, so a stale
+	// persisted value degrades rather than failing the task.
+	"deveco":   true,
 	"opencode": true,
 	"kimi":     true,
 }
