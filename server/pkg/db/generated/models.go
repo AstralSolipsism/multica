@@ -1106,6 +1106,27 @@ type IssueWorkflow struct {
 	IsDefault        bool               `json:"is_default"`
 }
 
+type LabrastroAgentFolder struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ParentID    pgtype.UUID        `json:"parent_id"`
+	Name        string             `json:"name"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LabrastroAgentPlacement struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	FolderID    pgtype.UUID `json:"folder_id"`
+}
+
+type LabrastroAgentSquadPlacement struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	SquadID     pgtype.UUID `json:"squad_id"`
+	FolderID    pgtype.UUID `json:"folder_id"`
+}
+
 type LabrastroIssueTip struct {
 	ID                    pgtype.UUID        `json:"id"`
 	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
@@ -1801,6 +1822,7 @@ type TaskMessage struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	OutputTruncated pgtype.Bool        `json:"output_truncated"`
 	CallID          pgtype.Text        `json:"call_id"`
+	Metadata        []byte             `json:"metadata"`
 }
 
 type TaskSupplement struct {

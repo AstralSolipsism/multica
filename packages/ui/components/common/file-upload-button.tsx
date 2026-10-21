@@ -46,7 +46,7 @@ function FileUploadButton({
         disabled={disabled}
         aria-label={attachLabel}
         title={attachLabel}
-        className={cn("text-muted-foreground", className)}
+        className={cn("cursor-pointer text-muted-foreground", className)}
       >
         <Paperclip className={iconSize} />
       </Button>

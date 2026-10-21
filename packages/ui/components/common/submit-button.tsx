@@ -60,7 +60,7 @@ function SubmitButton({
     const stopButton = (
       <Button
         size="icon-sm"
-        className="rounded-full"
+        className="rounded-full cursor-pointer"
         onPointerDown={keepFocusInComposer}
         onMouseDown={keepFocusInComposer}
         onClick={onStop}
@@ -80,7 +80,7 @@ function SubmitButton({
   const submitButton = (
     <Button
       size="icon-sm"
-      className="rounded-full"
+      className="rounded-full cursor-pointer"
       disabled={disabled || loading || busy}
       aria-disabled={busy || undefined}
       aria-busy={loading || busy || undefined}

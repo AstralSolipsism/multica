@@ -230,6 +230,10 @@ const (
 
 // Message is a unified event emitted by an agent during execution.
 type Message struct {
+	ModelRequestID  string // model request identity, shared by split assistant events
+	ParentToolUseID string // non-empty for subagent output; never starts a main-thread step
+
+	Metadata  map[string]any // optional structured message metadata; immutable after emission
 	Type      MessageType
 	Content   string         // text content (Text, Error, Log)
 	Tool      string         // tool name (ToolUse, ToolResult)

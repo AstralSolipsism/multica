@@ -99,6 +99,7 @@ export type {
   RuntimeModelListStatus,
   RuntimeModelsResult,
   RuntimeSystemStats,
+  RuntimeThinkingAdapt,
   RuntimeLocalSkillStatus,
   RuntimeLocalSkillImportAction,
   RuntimeLocalSkillImportConflict,

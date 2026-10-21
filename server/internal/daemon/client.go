@@ -215,6 +215,7 @@ func daemonCommonCapabilities() []string {
 		protocol.DaemonCapabilityCheckoutKeepsWorkV1,
 		protocol.DaemonCapabilityJoinedWakeupsV1,
 		protocol.DaemonCapabilityYouShouldKnowV1,
+		protocol.DaemonCapabilityThinkingAdaptV1,
 	}
 }
 
@@ -595,6 +596,7 @@ func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, ste
 
 // TaskMessageData represents a single agent execution message for batch reporting.
 type TaskMessageData struct {
+	Metadata map[string]any `json:"metadata,omitempty"`
 	// CallID is an opaque tool-call identity scoped to one backend execution.
 	CallID  string         `json:"call_id,omitempty"`
 	Seq     int            `json:"seq"`
@@ -741,6 +743,9 @@ type (
 type HeartbeatExtras struct {
 	PlanQuota *protocol.RuntimePlanQuota
 	Metrics   *protocol.HostMetrics
+	// ThinkingAdapt is the daemon's Jev health snapshot, attached only for
+	// runtimes whose provider supports thinking control (contract §8).
+	ThinkingAdapt *protocol.ThinkingAdaptSnapshot
 }
 
 func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, extras HeartbeatExtras) (*HeartbeatResponse, error) {
@@ -753,6 +758,9 @@ func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, extras Hea
 	}
 	if extras.Metrics != nil {
 		body["metrics"] = extras.Metrics
+	}
+	if extras.ThinkingAdapt != nil {
+		body["thinking_adapt"] = extras.ThinkingAdapt
 	}
 	var resp HeartbeatResponse
 	if err := c.postJSON(ctx, "/api/daemon/heartbeat", body, &resp); err != nil {

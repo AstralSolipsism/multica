@@ -107,13 +107,41 @@ func unmarshalChatQuickActions(raw string) ([]protocol.ChatQuickAction, bool) {
 // in a stored transcript.
 func splitChatQuickActions(output string) (string, []protocol.ChatQuickAction) {
 	normalized := strings.ReplaceAll(output, "\r\n", "\n")
-	trimmed := strings.TrimRight(normalized, " \t\n")
-	if !strings.HasSuffix(trimmed, "\n```") {
+	newline := "\n"
+	if !strings.ContainsAny(output, "\r\n") {
+		// Match wholly escaped output before the body decoder protects fences.
+		// Do not decode the body or JSON strings just to find footer boundaries.
+		newline = `\n`
+		if strings.Contains(output, "```quick-actions"+`\r\n`) {
+			newline = `\r\n`
+		}
+	}
+	trimEnd := func(s string) string {
+		for {
+			s = strings.TrimRight(s, " \t\n")
+			if !strings.HasSuffix(s, newline) {
+				return s
+			}
+			if newline[0] == '\\' {
+				slashes := 0
+				for i := len(s) - len(newline) - 1; i >= 0 && s[i] == '\\'; i-- {
+					slashes++
+				}
+				if slashes%2 != 0 {
+					return s // A doubled backslash ends in literal text, not a separator.
+				}
+			}
+			s = strings.TrimSuffix(s, newline)
+		}
+	}
+	fence := strings.TrimSuffix(chatQuickActionsFence, "\n") + newline
+	trimmed := trimEnd(normalized)
+	if !strings.HasSuffix(trimmed, newline+"```") {
 		return output, nil
 	}
 
-	withoutClose := strings.TrimSuffix(trimmed, "\n```")
-	marker := "\n" + chatQuickActionsFence
+	withoutClose := strings.TrimSuffix(trimmed, newline+"```")
+	marker := newline + fence
 	start := strings.LastIndex(withoutClose, marker)
 	visible := ""
 	raw := ""
@@ -121,8 +149,8 @@ func splitChatQuickActions(output string) (string, []protocol.ChatQuickAction) {
 	case start >= 0:
 		visible = withoutClose[:start]
 		raw = withoutClose[start+len(marker):]
-	case strings.HasPrefix(withoutClose, chatQuickActionsFence):
-		raw = strings.TrimPrefix(withoutClose, chatQuickActionsFence)
+	case strings.HasPrefix(withoutClose, fence):
+		raw = strings.TrimPrefix(withoutClose, fence)
 	default:
 		return output, nil
 	}
@@ -131,11 +159,11 @@ func splitChatQuickActions(output string) (string, []protocol.ChatQuickAction) {
 	// the whole message. Without this guard the final closing fence above can be
 	// paired with a mid-response opener and silently truncate everything after
 	// that example.
-	if strings.Contains(raw, "\n```") {
+	if strings.Contains(raw, newline+"```") {
 		return output, nil
 	}
 
-	visible = strings.TrimRight(visible, " \t\n")
+	visible = trimEnd(visible)
 	var candidates []protocol.ChatQuickAction
 	if err := json.Unmarshal([]byte(raw), &candidates); err != nil {
 		return visible, nil

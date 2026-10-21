@@ -42,7 +42,7 @@ function AttachmentCardChrome({
   const { t } = useT("editor");
   return (
     <div
-      className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1 transition-colors hover:bg-muted"
+      className="flex cursor-default items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1 transition-colors hover:bg-muted"
       onMouseDown={(e) => e.stopPropagation()}
     >
       {uploading ? (
@@ -60,7 +60,7 @@ function AttachmentCardChrome({
       {!uploading && canPreview && (
         <button
           type="button"
-          className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          className="shrink-0 cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           title={t(($) => $.attachment.preview)}
           aria-label={t(($) => $.attachment.preview)}
           onMouseDown={(e) => {
@@ -75,7 +75,7 @@ function AttachmentCardChrome({
       {!uploading && canDownload && (
         <button
           type="button"
-          className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          className="shrink-0 cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           title={t(($) => $.image.download)}
           aria-label={t(($) => $.image.download)}
           onMouseDown={(e) => {
@@ -90,7 +90,7 @@ function AttachmentCardChrome({
       {!uploading && canDelete && onDelete && (
         <button
           type="button"
-          className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+          className="shrink-0 cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
           title={t(($) => $.attachment.remove)}
           aria-label={t(($) => $.attachment.remove)}
           onMouseDown={(e) => {

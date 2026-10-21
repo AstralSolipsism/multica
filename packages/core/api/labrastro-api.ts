@@ -1,3 +1,4 @@
+import { installLabrastroAgentFolderApi, type LabrastroAgentFolderApi } from "./labrastro-agent-folder-api";
 import type { ApiClient } from "./client";
 import { installLabrastroSkillApi, type LabrastroSkillApi } from "./labrastro-skill-api";
 import { installLabrastroMessageDeliveryApi, type LabrastroMessageDeliveryApi } from "./labrastro-message-delivery-api";
@@ -19,6 +20,7 @@ export { dependencyErrorDetails, type DependencyErrorDetails } from "./labrastro
 // existing ApiClient imports and mocks typed without duplicating signatures.
 declare module "./client" {
   interface ApiClient extends
+    LabrastroAgentFolderApi,
     LabrastroSkillApi,
     LabrastroMessageDeliveryApi,
     LabrastroDependencyApi,
@@ -29,6 +31,7 @@ declare module "./client" {
 }
 
 export function installLabrastroApi(target: { prototype: ApiClient }): void {
+  installLabrastroAgentFolderApi(target);
   installLabrastroSkillApi(target);
   installLabrastroMessageDeliveryApi(target);
   installLabrastroDependencyApi(target);

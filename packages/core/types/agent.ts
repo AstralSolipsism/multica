@@ -102,6 +102,23 @@ export interface RuntimeSystemStats {
   stale: boolean;
 }
 
+/**
+ * Jev health snapshot for adaptive thinking (contract §3), reported by the
+ * runtime's daemon. `status` is idle | available | degraded | unavailable;
+ * anything else came from a newer daemon and consumers must render a
+ * neutral state. Only runtimes whose provider supports thinking control
+ * carry the field; older backends omit it.
+ */
+export interface RuntimeThinkingAdapt {
+  status: string;
+  active_source: string;
+  last_latency_ms: number;
+  decisions_ok: number;
+  decisions_fallback: number;
+  since: string | null;
+  updated_at: string | null;
+}
+
 export interface RuntimeDevice {
   id: string;
   workspace_id: string;
@@ -144,6 +161,13 @@ export interface RuntimeDevice {
    * "no data" (render `--`), never as 0.
    */
   system_stats?: RuntimeSystemStats | null;
+  /**
+   * Jev health snapshot for adaptive thinking (contract §3), reported by
+   * this runtime's daemon. Present only on rows whose provider supports
+   * thinking control; null when nothing was reported or the payload was
+   * malformed. Older backends omit the field.
+   */
+  thinking_adapt?: RuntimeThinkingAdapt | null;
   last_seen_at: string | null;
   created_at: string;
   updated_at: string;

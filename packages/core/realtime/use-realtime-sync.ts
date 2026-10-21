@@ -1,10 +1,14 @@
 "use client";
 
+import { invalidateAgentFolderQueries } from "../agents/folder-queries";
+
 import { invalidateDependencyQueries, invalidateIssueQueries } from "../issues/invalidation";
 import { useEffect, useRef } from "react";
 import { forgetLocalSearchIndex } from "../search-index/instance";
 import { useQueryClient, type InfiniteData, type QueryClient, type QueryFilters } from "@tanstack/react-query";
 import type { WSClient } from "../api/ws-client";
+import { parseWithFallback } from "../api/schema";
+import { TaskMessagePayloadSchema } from "../api/schemas";
 import type { StoreApi, UseBoundStore } from "zustand";
 import type { AuthState } from "../auth/store";
 import { createLogger } from "../logger";
@@ -808,6 +812,7 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+          void invalidateAgentFolderQueries(qc, wsId);
           // Squad members status is derived per agent, so any agent
           // change (status flip, archive, runtime swap) needs to refresh the
           // per-squad members-status cache without refetching the static squad
@@ -854,6 +859,7 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
+          void invalidateAgentFolderQueries(qc, wsId);
           // squad:deleted triggers assignee transfer — refresh issues too.
           invalidateIssueQueries(qc, wsId);
         }
@@ -1527,10 +1533,14 @@ export function useRealtimeSync(
     };
 
     const unsubTaskMessage = ws.on("task:message", (p) => {
-      const payload = p as TaskMessagePayload;
+      const message = p as TaskMessagePayload;
       // Cheap Map lookup, and it runs before anything allocates — this is the
       // hot path for every run in the workspace, not just the visible ones.
-      if (!isTaskMessageTimelineHeld(qc, payload.task_id)) return;
+      if (!isTaskMessageTimelineHeld(qc, message.task_id)) return;
+      const payload = parseWithFallback<TaskMessagePayload | null>(
+        p, TaskMessagePayloadSchema, null, { endpoint: "WS task:message" },
+      );
+      if (!payload) return;
 
       // Leading edge: render the first frame after an idle window now. The
       // timer is still armed so the remainder of a burst is coalesced and a

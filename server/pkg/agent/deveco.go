@@ -5,10 +5,12 @@ package agent
 // coding-agent CLI at https://gitcode.com/openharmony-sig/deveco-code) is a
 // separate product maintained by a different company. It is intentionally kept
 // decoupled from the OpenCode backend: it owns its own backend struct, event
-// types, blocked-args table, and process lifecycle, so a change to either agent
-// can never affect the other. The two share only the package-wide generic
+// types, blocked-args table, and process lifecycle, so a change to either agent's
+// execution can never affect the other. The two share the package-wide generic
 // process helpers (configureProcessGroup, filterCustomArgs, trySend, …) that
-// every backend in this package reuses.
+// every backend in this package reuses, and — since OL-1007 — the OpenCode
+// model-catalog parser used by deveco's model discovery (deveco_models.go);
+// changes to parseOpenCodeModels do affect deveco's picker.
 //
 // DevEco speaks the same `run --format json` protocol and emits the same NDJSON
 // event stream as upstream OpenCode (it is built on the OpenCode engine), so the event schema
