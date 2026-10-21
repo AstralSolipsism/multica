@@ -172,6 +172,10 @@ func TestLabrastroAgentFolderNamesAndRequestValidation(t *testing.T) {
 	}
 	createAgentFolder(t, fx, strings.Repeat("界", 85), "")
 	createAgentFolder(t, fx, strings.Repeat("a", 255), "")
+	valid := createAgentFolder(t, fx, "valid", "")
+	for _, body := range []any{map[string]any{"name": nil}, map[string]any{"parent_id": nil}} {
+		wantAgentFolderError(t, agentFolderCall(t, fx, testUserID, "PATCH", "/api/agent-folders/"+valid, body), 400, "invalid_request")
+	}
 	agentFolderCall(t, fx, testUserID, "POST", "/api/agent-folders", map[string]string{"name": "valid", "parent_id": "invalid"}).Want(400)
 	agentFolderCall(t, fx, testUserID, "POST", "/api/agent-folders", map[string]string{"name": "valid", "unknown": "field"}).Want(400)
 	for _, path := range []string{"/api/agent-placements/", "/api/agent-squad-placements/"} {

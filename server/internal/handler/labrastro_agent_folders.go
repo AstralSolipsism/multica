@@ -78,6 +78,17 @@ func labrastroDecodeAgentFolder(w http.ResponseWriter, r *http.Request, out any)
 		labrastroWriteAgentFolderError(w, labrastroSkillError(400, "invalid_request", "expected one JSON object"))
 		return false
 	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(body, &values); err != nil {
+		labrastroWriteAgentFolderError(w, labrastroSkillError(400, "invalid_request", "invalid request body"))
+		return false
+	}
+	for _, value := range values {
+		if bytes.Equal(value, []byte("null")) {
+			labrastroWriteAgentFolderError(w, labrastroSkillError(400, "invalid_request", "request fields must be strings, not null"))
+			return false
+		}
+	}
 	fields := json.NewDecoder(bytes.NewReader(body))
 	fields.DisallowUnknownFields()
 	if err := fields.Decode(out); err != nil {
