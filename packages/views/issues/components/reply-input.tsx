@@ -233,15 +233,22 @@ function ReplyInput({
         actorType={avatarType}
         actorId={avatarId}
         size={avatarSize}
-        className="mt-0.5 shrink-0"
+        // mt-3 = the 10px the thread wrapper's py-2.5 used to add above the
+        // row plus the original mt-0.5 — the text surface owns that padding
+        // now, so the avatar keeps its exact pre-OL-998 offset.
+        className="mt-3 shrink-0"
       />
       {/* Text surface. Owns the vertical padding the thread wrapper in
           comment-card used to provide, so the bands above/below the input
           column share the I-beam and focus the editor on press — the same
-          contract the shell already advertises with its own cursor-text. */}
+          contract the shell already advertises with its own cursor-text.
+          While the send lock is on (the editor host is pointer-events-none),
+          the surface stands down too — a press must not focus a locked
+          editor. */}
       <div
+        data-testid="reply-text-surface"
         className="flex min-w-0 flex-1 cursor-text flex-col py-2.5"
-        onMouseDown={(e) => focusComposerOnSurfaceMouseDown(e, lazy.activate)}
+        onMouseDown={submitting ? undefined : (e) => focusComposerOnSurfaceMouseDown(e, lazy.activate)}
       >
       <div
         {...dropZoneProps}

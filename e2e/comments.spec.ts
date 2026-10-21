@@ -173,13 +173,24 @@ test.describe("Comments", () => {
     // (it is the py-2.5 owner since OL-998; the shell inside is cursor-text).
     const replyShellBox = await boxOf(replyShell);
     await expectTextCursor(replyShellBox.x + 20, replyShellBox.y + replyShellBox.height / 2, "reply shell text");
-    const replySurfaceShell = replyShell.locator('xpath=ancestor::div[contains(@class,"py-2.5")][1]');
+    const replySurfaceShell = page.getByTestId("reply-text-surface");
     const replySurfaceShellBox = await boxOf(replySurfaceShell);
     await expectTextCursor(
       replySurfaceShellBox.x + replySurfaceShellBox.width / 2,
       replySurfaceShellBox.y + 3,
       "reply top band (shell)",
     );
+    // The avatar keeps its alignment with the first text line (the padding
+    // move must not shift it — review #1). Measure the visible avatar div,
+    // not the profile-link wrapper around it.
+    const replyRow = replySurfaceShell.locator("xpath=..");
+    const replyAvatar = replyRow.locator('[data-slot="avatar"]').first();
+    const avatarBoxShell = await boxOf(replyAvatar);
+    const shellLineBox = await boxOf(replyShell.locator("p").first());
+    expect(
+      Math.abs(avatarBoxShell.y + avatarBoxShell.height / 2 - (shellLineBox.y + shellLineBox.height / 2)),
+      "avatar vs first-line center offset (shell)",
+    ).toBeLessThanOrEqual(1);
 
     await replyShell.click();
     const replyEditor = page
@@ -188,14 +199,21 @@ test.describe("Comments", () => {
     await expect(replyEditor).toBeVisible();
     await replyEditor.evaluate((el) => el.setAttribute("data-ol998", "reply-pm"));
     const replyPM = page.locator('[data-ol998="reply-pm"]');
-    const replySurface = replyPM.locator('xpath=ancestor::div[contains(@class,"py-2.5")][1]');
+    const replySurface = page.getByTestId("reply-text-surface");
     // Center the reply box so the sticky main composer cannot overlap the probes.
     await replySurface.evaluate((el) => el.scrollIntoView({ block: "center" }));
     const replyActiveBox = await boxOf(replySurface);
-    const replyLineY = (await boxOf(replyPM.locator("p").first())).y + 10;
+    const replyFirstLineBox = await boxOf(replyPM.locator("p").first());
+    const replyLineY = replyFirstLineBox.y + 10;
     await expectTextCursor(replyActiveBox.x + replyActiveBox.width / 2, replyActiveBox.y + 3, "reply top band (active)");
     await expectTextCursor(replyActiveBox.x + replyActiveBox.width / 2, replyActiveBox.y + replyActiveBox.height - 3, "reply bottom band (active)");
     await expectTextCursor(replyActiveBox.x + 20, replyLineY, "reply editor text");
+    // Avatar alignment holds after activation too.
+    const avatarBoxActive = await boxOf(replyAvatar);
+    expect(
+      Math.abs(avatarBoxActive.y + avatarBoxActive.height / 2 - (replyFirstLineBox.y + replyFirstLineBox.height / 2)),
+      "avatar vs first-line center offset (active)",
+    ).toBeLessThanOrEqual(1);
 
     // Pressing the top band focuses the reply editor: typing lands.
     await page.mouse.click(replyActiveBox.x + replyActiveBox.width / 2, replyActiveBox.y + 3);
@@ -203,7 +221,7 @@ test.describe("Comments", () => {
     await expect(replyPM).toContainText("reply via padding");
 
     // With content the toolbar strip (pb-9) appears: blank arrow, buttons pointer.
-    const replyColumn = replyPM.locator('xpath=ancestor::div[contains(@class,"cursor-default")][1]');
+    const replyColumn = page.getByTestId("reply-text-surface").locator(":scope > div");
     // pb-9 and the send button's enabled state both follow the debounced
     // onUpdate (100ms) — wait for the layout, don't race it.
     await expect(replyColumn).toHaveClass(/pb-9/);
@@ -222,5 +240,63 @@ test.describe("Comments", () => {
     await expect(replySendBtn).toBeEnabled();
     const replySendBox = await boxOf(replySendBtn);
     expect((await probe(replySendBox.x + replySendBox.width / 2, replySendBox.y + replySendBox.height / 2))!.cursor).toBe("pointer");
+  });
+
+  // OL-998 review — the send lock (pointer-events-none + dimmed editor host)
+  // must hold while a reply is in flight: pressing the dimmed editor must not
+  // focus it, typed text must not land, and an accepted send must still clear
+  // the box.
+  test("reply composer send lock holds against presses mid-send", async ({ page }) => {
+    test.setTimeout(120000);
+    await api.createComment(issueId, "root comment body for lock test");
+    await page.goto(`/${workspaceSlug}/issues/${issueId}`, { waitUntil: "domcontentloaded" });
+    await waitForPageText(page, "root comment body for lock test");
+    // Canonicalization remounts the composers (key={id}) — settle it first.
+    await page.waitForURL((u) => !/\/issues\/[0-9a-f-]{36}/.test(u.pathname), { timeout: 15000 });
+
+    // Stretch the in-flight window so the locked state is observable.
+    await page.route("**/api/issues/*/comments", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      await new Promise((r) => setTimeout(r, 4000));
+      return route.continue();
+    });
+
+    const shell = page.getByTestId("reply-composer-shell").first();
+    await shell.scrollIntoViewIfNeeded();
+    await shell.click();
+    const pm = page.getByTestId("reply-text-surface").locator(".ProseMirror").first();
+    await expect(pm).toBeVisible();
+    await pm.pressSequentially("first reply body", { delay: 5 });
+
+    const sendBtn = page.getByTestId("reply-text-surface").locator("button:has(svg.lucide-arrow-up)").first();
+    await expect(sendBtn).toBeEnabled();
+    await sendBtn.click();
+
+    // Locked: the editor host is pointer-events-none + dimmed.
+    const host = pm.locator('xpath=ancestor::div[contains(@class,"overflow-y-auto")][1]');
+    await expect(host).toHaveClass(/pointer-events-none/);
+
+    // Press the dimmed editor's first line: it falls through to the column,
+    // and the text surface must not take it over — focus leaves the editor.
+    const pmBox = await pm.boundingBox();
+    if (!pmBox) throw new Error("reply editor has no bounding box");
+    await page.mouse.click(pmBox.x + 10, pmBox.y + 8);
+    expect(
+      await page.evaluate(() => !!document.activeElement?.closest?.(".ProseMirror")),
+    ).toBe(false);
+    await page.keyboard.type("ZZ");
+    await expect(pm).toHaveText("first reply body");
+
+    // The surface's own padding band also stands down while the lock is on.
+    const surfaceBox = await page.getByTestId("reply-text-surface").boundingBox();
+    if (!surfaceBox) throw new Error("reply text surface has no bounding box");
+    await page.mouse.click(surfaceBox.x + surfaceBox.width / 2, surfaceBox.y + 3);
+    expect(
+      await page.evaluate(() => !!document.activeElement?.closest?.(".ProseMirror")),
+    ).toBe(false);
+    await expect(pm).toHaveText("first reply body");
+
+    // Once the server accepts, the box clears (thread replies stay mounted).
+    await expect(pm).toHaveText("", { timeout: 15000 });
   });
 });

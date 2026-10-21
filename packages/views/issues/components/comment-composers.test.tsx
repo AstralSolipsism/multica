@@ -857,15 +857,15 @@ describe("composer text surface cursor and click-to-focus", () => {
     expect(focusAtCoordsSpy).toHaveBeenCalledWith({ x: 140, y: 12 });
   });
 
-  it("does not take over the main composer's button presses", async () => {
+  it("does not take over presses inside the main composer's host", async () => {
     const { container, onSubmit } = renderCommentInput();
     activateComposer("comment-composer-shell");
     fireEvent.change(screen.getByTestId("editor"), { target: { value: "typed" } });
     focusAtCoordsSpy.mockClear();
 
-    const attach = screen.getByRole("button", { name: "Attach file" });
-    fireEvent.mouseDown(attach, { button: 0 });
-    fireEvent.mouseDown(getSubmitButton(container), { button: 0 });
+    // A press whose target is not the host itself (here: the mock editor's
+    // textarea inside it) keeps its own behavior.
+    fireEvent.mouseDown(screen.getByTestId("editor"), { button: 0 });
     expect(focusAtCoordsSpy).not.toHaveBeenCalled();
 
     // …and the send click itself still submits.
@@ -874,25 +874,25 @@ describe("composer text surface cursor and click-to-focus", () => {
   });
 
   it("wraps the reply column in a cursor-text surface that owns the vertical padding", () => {
-    const { container } = renderReplyInput();
+    renderReplyInput();
 
     expect(screen.getByTestId("reply-composer-shell").className).toContain("cursor-text");
     activateComposer("reply-composer-shell");
     // The editor host re-asserts the I-beam inside the column's arrow reset…
     expect(screen.getByTestId("editor").parentElement?.className).toContain("cursor-text");
     // …and the text surface around the column owns the vertical padding bands.
-    const surface = container.querySelector('div[class*="py-2.5"][class*="cursor-text"]');
-    expect(surface).not.toBeNull();
-    expect(surface!.contains(screen.getByTestId("editor"))).toBe(true);
+    const surface = screen.getByTestId("reply-text-surface");
+    expect(surface.className).toContain("cursor-text");
+    expect(surface.className).toContain("py-2.5");
+    expect(surface.contains(screen.getByTestId("editor"))).toBe(true);
   });
 
   it("focuses the reply editor at the click coordinates on surface-padding mousedown", () => {
-    const { container } = renderReplyInput();
+    renderReplyInput();
     activateComposer("reply-composer-shell");
     focusAtCoordsSpy.mockClear();
 
-    const surface = container.querySelector('div[class*="py-2.5"][class*="cursor-text"]')!;
-    fireEvent.mouseDown(surface, { button: 0, clientX: 96, clientY: 6 });
+    fireEvent.mouseDown(screen.getByTestId("reply-text-surface"), { button: 0, clientX: 96, clientY: 6 });
 
     expect(focusAtCoordsSpy).toHaveBeenCalledWith({ x: 96, y: 6 });
   });
@@ -913,14 +913,43 @@ describe("composer text surface cursor and click-to-focus", () => {
   });
 
   it("leaves the reply composer's non-primary-button presses untouched", () => {
-    const { container } = renderReplyInput();
+    renderReplyInput();
     activateComposer("reply-composer-shell");
     focusAtCoordsSpy.mockClear();
 
-    const surface = container.querySelector('div[class*="py-2.5"][class*="cursor-text"]')!;
-    fireEvent.mouseDown(surface, { button: 2, clientX: 10, clientY: 10 });
+    fireEvent.mouseDown(screen.getByTestId("reply-text-surface"), { button: 2, clientX: 10, clientY: 10 });
 
     expect(focusAtCoordsSpy).not.toHaveBeenCalled();
+  });
+
+  // OL-998 review: the send lock (pointer-events-none + dimmed editor host)
+  // must hold while a reply is in flight — a press on the surface or the
+  // column below the locked host must not focus the editor.
+  it("does not focus the reply editor from the surface while a send is in flight", async () => {
+    let resolveSubmit: (ok: boolean) => void = () => {};
+    const onSubmit = vi.fn(
+      () => new Promise<boolean>((resolve) => { resolveSubmit = resolve; }),
+    );
+    const { container } = renderReplyInput({ onSubmit });
+    activateComposer("reply-composer-shell");
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "sending" } });
+    fireEvent.click(getSubmitButton(container));
+    await waitFor(() =>
+      expect(screen.getByTestId("editor").closest("[aria-busy]")).toHaveAttribute("aria-busy", "true"),
+    );
+    focusAtCoordsSpy.mockClear();
+
+    fireEvent.mouseDown(screen.getByTestId("reply-text-surface"), { button: 0, clientX: 10, clientY: 4 });
+    // The column under the locked host is a non-surface target, too.
+    const column = screen.getByTestId("reply-text-surface").querySelector(".relative")!;
+    fireEvent.mouseDown(column, { button: 0, clientX: 10, clientY: 4 });
+
+    expect(focusAtCoordsSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveSubmit(true);
+      await Promise.resolve();
+    });
   });
 });
 
