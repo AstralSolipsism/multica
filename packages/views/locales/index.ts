@@ -29,6 +29,7 @@ import enProjects from "./en/projects.json";
 import enAutopilots from "./en/autopilots.json";
 import enSkills from "./en/skills.json";
 import enSkillPackages from "./en/skill-packages.json";
+import enAgentFolders from "./en/agent-folders.json";
 import enChat from "./en/chat.json";
 import enModals from "./en/modals.json";
 import enRuntimes from "./en/runtimes.json";
@@ -64,6 +65,7 @@ import zhHansProjects from "./zh-Hans/projects.json";
 import zhHansAutopilots from "./zh-Hans/autopilots.json";
 import zhHansSkills from "./zh-Hans/skills.json";
 import zhHansSkillPackages from "./zh-Hans/skill-packages.json";
+import zhHansAgentFolders from "./zh-Hans/agent-folders.json";
 import zhHansChat from "./zh-Hans/chat.json";
 import zhHansModals from "./zh-Hans/modals.json";
 import zhHansRuntimes from "./zh-Hans/runtimes.json";
@@ -99,6 +101,7 @@ import koProjects from "./ko/projects.json";
 import koAutopilots from "./ko/autopilots.json";
 import koSkills from "./ko/skills.json";
 import koSkillPackages from "./ko/skill-packages.json";
+import koAgentFolders from "./ko/agent-folders.json";
 import koChat from "./ko/chat.json";
 import koModals from "./ko/modals.json";
 import koRuntimes from "./ko/runtimes.json";
@@ -134,6 +137,7 @@ import jaProjects from "./ja/projects.json";
 import jaAutopilots from "./ja/autopilots.json";
 import jaSkills from "./ja/skills.json";
 import jaSkillPackages from "./ja/skill-packages.json";
+import jaAgentFolders from "./ja/agent-folders.json";
 import jaChat from "./ja/chat.json";
 import jaModals from "./ja/modals.json";
 import jaRuntimes from "./ja/runtimes.json";
@@ -167,6 +171,7 @@ import frProjects from "./fr/projects.json";
 import frAutopilots from "./fr/autopilots.json";
 import frSkills from "./fr/skills.json";
 import frSkillPackages from "./fr/skill-packages.json";
+import frAgentFolders from "./fr/agent-folders.json";
 import frChat from "./fr/chat.json";
 import frModals from "./fr/modals.json";
 import frRuntimes from "./fr/runtimes.json";
@@ -206,6 +211,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     autopilots: enAutopilots,
     skills: enSkills,
     "skill-packages": enSkillPackages,
+    "agent-folders": enAgentFolders,
     chat: enChat,
     modals: enModals,
     runtimes: enRuntimes,
@@ -243,6 +249,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     autopilots: zhHansAutopilots,
     skills: zhHansSkills,
     "skill-packages": zhHansSkillPackages,
+    "agent-folders": zhHansAgentFolders,
     chat: zhHansChat,
     modals: zhHansModals,
     runtimes: zhHansRuntimes,
@@ -280,6 +287,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     autopilots: koAutopilots,
     skills: koSkills,
     "skill-packages": koSkillPackages,
+    "agent-folders": koAgentFolders,
     chat: koChat,
     modals: koModals,
     runtimes: koRuntimes,
@@ -317,6 +325,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     autopilots: jaAutopilots,
     skills: jaSkills,
     "skill-packages": jaSkillPackages,
+    "agent-folders": jaAgentFolders,
     chat: jaChat,
     modals: jaModals,
     runtimes: jaRuntimes,
@@ -354,6 +363,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     autopilots: frAutopilots,
     skills: frSkills,
     "skill-packages": frSkillPackages,
+    "agent-folders": frAgentFolders,
     chat: frChat,
     modals: frModals,
     runtimes: frRuntimes,

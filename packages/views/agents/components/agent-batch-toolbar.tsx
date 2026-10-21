@@ -25,6 +25,11 @@ import { Archive, ArchiveRestore, Loader2, X } from "lucide-react";
 import { useT } from "../../i18n";
 import { AccessPicker, type AccessChange } from "./inspector/access-picker";
 import type { AgentListRow } from "./agents-page";
+// Labrastro fork (OL-1030): batch "move to folder" action.
+import {
+  AgentTreeBatchMoveAction,
+  type AgentTreeActions,
+} from "./agent-tree-actions";
 
 /**
  * Floating batch-toolbar for the agents list page. Renders archive/restore
@@ -41,11 +46,14 @@ export function AgentBatchToolbar({
   members,
   currentUserId,
   onClear,
+  treeActions,
 }: {
   rows: AgentListRow[];
   members: MemberWithUser[];
   currentUserId: string | null;
   onClear: () => void;
+  /** Labrastro fork (OL-1030): folder move action when the tree loaded. */
+  treeActions?: AgentTreeActions;
 }) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
@@ -210,6 +218,10 @@ export function AgentBatchToolbar({
           >
             {t(($) => $.row_actions.set_access)}
           </Button>
+        )}
+        {/* Labrastro fork (OL-1030): batch move-to-folder. */}
+        {anyActive && (
+          <AgentTreeBatchMoveAction rows={rows} treeActions={treeActions} />
         )}
         {/* Archive sits last: it is the destructive action, kept furthest from
             the other batch actions. */}
