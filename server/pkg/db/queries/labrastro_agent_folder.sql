@@ -65,12 +65,17 @@ ON CONFLICT (workspace_id,squad_id) DO UPDATE SET folder_id=EXCLUDED.folder_id;
 DELETE FROM labrastro_agent_squad_placement WHERE workspace_id=$1 AND squad_id=$2;
 
 -- name: LabrastroLockFolderAgent :one
-SELECT * FROM agent WHERE workspace_id=$1 AND id=$2 FOR SHARE;
+-- kind='user' matches GetAgentInWorkspace: system agents (agent-builder
+-- execution carriers) are invisible in this tree and must 404 here too.
+SELECT * FROM agent WHERE workspace_id=$1 AND id=$2 AND kind = 'user' FOR SHARE;
 
 -- name: LabrastroCleanAgentPlacements :exec
+-- A placement is valid only while its agent exists, is kind='user', and its
+-- folder exists. Placements created before this filter, or pointing at system
+-- agents, are pruned on the next tree mutation.
 WITH agents AS (
     DELETE FROM labrastro_agent_placement p WHERE p.workspace_id=$1
-    AND (NOT EXISTS (SELECT 1 FROM agent a WHERE a.id=p.agent_id AND a.workspace_id=p.workspace_id)
+    AND (NOT EXISTS (SELECT 1 FROM agent a WHERE a.id=p.agent_id AND a.workspace_id=p.workspace_id AND a.kind = 'user')
       OR NOT EXISTS (SELECT 1 FROM labrastro_agent_folder f WHERE f.id=p.folder_id AND f.workspace_id=p.workspace_id))
 )
 DELETE FROM labrastro_agent_squad_placement p WHERE p.workspace_id=$1

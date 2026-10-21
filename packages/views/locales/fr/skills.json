@@ -125,7 +125,6 @@
     "manage_labels_title": "Étiquettes des skills"
   },
   "detail": {
-    "all_skills": "Tous les skills",
     "read_only": "Lecture seule",
     "delete_aria": "Supprimer le skill",
     "delete_tooltip": "Supprimer le skill",

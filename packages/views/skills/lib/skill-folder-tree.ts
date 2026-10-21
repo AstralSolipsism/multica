@@ -5,7 +5,7 @@ import type {
   SkillPlacement,
 } from "@multica/core/api/schemas";
 
-// Pure folder-tree model for the skills page sidebar and the tree picker.
+// Pure folder-tree model for the skill picker and package views.
 // The server ships flat adjacency (nullable parent_id); all nesting, sorting
 // and gray-candidate derivation happens here. Contract: folders sort before
 // skills, each by name.
@@ -25,13 +25,6 @@ export interface GrayCandidate {
   /** Folder row the candidate is listed under. */
   folderId: string;
 }
-
-/** The skills-page tree selection: everything, the placement-less set, or
- *  one folder's subtree. */
-export type FolderSelection =
-  | { kind: "all" }
-  | { kind: "uncategorized" }
-  | { kind: "folder"; folderId: string };
 
 export function folderById(folders: readonly SkillFolder[]): Map<string, SkillFolder> {
   return new Map(folders.map((f) => [f.id, f]));
@@ -222,60 +215,4 @@ export function grayCandidates(tree: SkillFolderTree): GrayCandidate[] {
     }
   }
   return result.sort((a, b) => a.name.localeCompare(b.name));
-}
-
-/** Whether a skill belongs in the list for the current tree selection:
- *  a folder shows its whole subtree, "uncategorized" shows skills with no
- *  placement, and "all" shows everything. */
-export function skillMatchesFolderSelection(
-  tree: SkillFolderTree,
-  selection:
-    | { kind: "all" }
-    | { kind: "uncategorized" }
-    | { kind: "folder"; folderId: string },
-  skillId: string,
-): boolean {
-  if (selection.kind === "all") return true;
-  const placement = tree.placements.find((p) => p.skill_id === skillId);
-  if (selection.kind === "uncategorized") return placement === undefined;
-  if (!placement) return false;
-  return collectSubtreeFolderIds(tree.folders, selection.folderId).has(
-    placement.folder_id,
-  );
-}
-
-/** Precomputed skill sets for the folder filter: one pass over the tree
- *  instead of rebuilding a subtree set per row per render. */
-export interface FolderSkillIndex {
-  /** Skills with any placement (the complement of "uncategorized"). */
-  placed: ReadonlySet<string>;
-  /** Folder id -> ids of skills placed anywhere in its subtree. */
-  byFolder: ReadonlyMap<string, ReadonlySet<string>>;
-}
-
-export function buildFolderSkillIndex(tree: SkillFolderTree): FolderSkillIndex {
-  const placed = new Set(tree.placements.map((p) => p.skill_id));
-  const childrenOf = new Map<string | null, SkillFolder[]>();
-  for (const folder of tree.folders) {
-    const siblings = childrenOf.get(folder.parent_id) ?? [];
-    siblings.push(folder);
-    childrenOf.set(folder.parent_id, siblings);
-  }
-  const byFolder = new Map<string, Set<string>>();
-  const compute = (folderId: string): Set<string> => {
-    const cached = byFolder.get(folderId);
-    if (cached) return cached;
-    const set = new Set<string>();
-    // Guard first so a malformed parent cycle cannot recurse forever.
-    byFolder.set(folderId, set);
-    for (const p of tree.placements) {
-      if (p.folder_id === folderId) set.add(p.skill_id);
-    }
-    for (const child of childrenOf.get(folderId) ?? []) {
-      for (const id of compute(child.id)) set.add(id);
-    }
-    return set;
-  };
-  for (const folder of tree.folders) compute(folder.id);
-  return { placed, byFolder };
 }
