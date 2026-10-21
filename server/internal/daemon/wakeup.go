@@ -321,6 +321,7 @@ func (d *Daemon) sendWSHeartbeats(ctx context.Context, runtimeIDs []string, writ
 				SupportsBatchImport: true,
 				PlanQuota:           extras.PlanQuota,
 				Metrics:             extras.Metrics,
+				ThinkingAdapt:       extras.ThinkingAdapt,
 			}),
 		})
 		if err != nil {

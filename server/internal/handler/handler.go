@@ -241,6 +241,10 @@ type Handler struct {
 	// (workspace, daemon); defaults to the noop store and swaps to Redis at
 	// wire time. See runtime_host_metrics_store.go.
 	MachineMetricsStore MachineMetricsStore
+	// ThinkingAdaptStore caches the latest Jev health snapshot per
+	// (workspace, daemon); same noop-default/Redis-at-wire-time story as
+	// MachineMetricsStore. See runtime_thinking_adapt_store.go.
+	ThinkingAdaptStore ThinkingAdaptStore
 	// hostMetricsPublish coalesces and throttles the per-machine telemetry
 	// broadcast fired when a stored host-metrics sample's content changes.
 	hostMetricsPublish *hostMetricsPublishTracker
@@ -526,6 +530,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		LocalSkillImportStore:        NewInMemoryLocalSkillImportStore(),
 		LivenessStore:                NewNoopLivenessStore(),
 		MachineMetricsStore:          NewNoopMachineMetricsStore(),
+		ThinkingAdaptStore:           NewNoopThinkingAdaptStore(),
 		HeartbeatScheduler:           NewPassthroughHeartbeatScheduler(queries),
 		Storage:                      store,
 		CFSigner:                     cfSigner,

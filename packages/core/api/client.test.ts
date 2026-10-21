@@ -2248,6 +2248,45 @@ describe("ApiClient explicit workspace targeting", () => {
     stubOk({ not: "a list" });
     await expect(new ApiClient("https://api.example.test").listRuntimes()).resolves.toEqual([]);
   });
+
+  // Boundary parsing of the additive thinking_adapt field (OL-1006): valid
+  // snapshots pass through, missing ones stay undefined, an unknown status
+  // degrades to "unknown" without losing the rest of the row, and a wholly
+  // malformed snapshot degrades to null.
+  it("parses thinking_adapt snapshots tolerantly", async () => {
+    stubOk([
+      {
+        id: "rt-1",
+        name: "Claude (box)",
+        thinking_adapt: {
+          status: "available",
+          active_source: "opencode-free",
+          last_latency_ms: 290,
+          decisions_ok: 8,
+          decisions_fallback: 1,
+          since: "2026-10-21T00:00:00Z",
+          updated_at: "2026-10-21T00:10:00Z",
+        },
+      },
+      { id: "rt-2", name: "Codex (box)" },
+      {
+        id: "rt-3",
+        name: "Kimi (box)",
+        thinking_adapt: { status: "some-new-status", decisions_ok: 3 },
+      },
+      { id: "rt-4", name: "Pi (box)", thinking_adapt: "not-a-snapshot" },
+    ]);
+    const runtimes = await new ApiClient("https://api.example.test").listRuntimes();
+    expect(runtimes.map((r) => r.id)).toEqual(["rt-1", "rt-2", "rt-3", "rt-4"]);
+    expect(runtimes[0]?.thinking_adapt).toMatchObject({
+      status: "available",
+      active_source: "opencode-free",
+      decisions_ok: 8,
+    });
+    expect(runtimes[1]?.thinking_adapt).toBeNull();
+    expect(runtimes[2]?.thinking_adapt).toMatchObject({ status: "some-new-status", decisions_ok: 3 });
+    expect(runtimes[3]?.thinking_adapt).toBeNull();
+  });
 });
 
 describe("ApiClient model discovery response schema", () => {

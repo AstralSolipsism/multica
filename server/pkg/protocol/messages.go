@@ -414,6 +414,10 @@ type DaemonHeartbeatRequestPayload struct {
 	// the sampler's shared CapturedAt. Same backward-compat story as
 	// PlanQuota.
 	Metrics *HostMetrics `json:"metrics,omitempty"`
+	// ThinkingAdapt carries the daemon's Jev health snapshot (contract §3)
+	// for adaptive thinking. Only runtimes whose provider supports thinking
+	// control attach it. Same backward-compat story as PlanQuota.
+	ThinkingAdapt *ThinkingAdaptSnapshot `json:"thinking_adapt,omitempty"`
 }
 
 // DaemonHeartbeatAckPayload is the server's reply to DaemonHeartbeatRequestPayload.

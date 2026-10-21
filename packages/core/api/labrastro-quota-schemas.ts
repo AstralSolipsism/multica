@@ -79,12 +79,28 @@ export const RuntimeSystemStatsSchema = z.object({
   stale: z.boolean().default(false),
 }).loose();
 
+// Jev health snapshot for adaptive thinking (contract §3), riding the
+// runtime list as "thinking_adapt". Loose by design: fields default rather
+// than fail, and `status` stays a plain string so an unrecognized status
+// from a newer daemon passes through instead of losing the snapshot — the
+// UI renders anything outside the four known values as a neutral state.
+export const RuntimeThinkingAdaptSchema = z.object({
+  status: z.string().catch(""),
+  active_source: z.string().default(""),
+  last_latency_ms: z.number().default(0),
+  decisions_ok: z.number().default(0),
+  decisions_fallback: z.number().default(0),
+  since: z.string().nullable().catch(null),
+  updated_at: z.string().nullable().catch(null),
+}).loose();
+
 // Runtime list items are parsed loosely at the boundary: every field passes
 // through untouched except system_stats, which is schema-validated per row —
 // a malformed one becomes null (the UI's not-reported state) without taking
 // down the rest of the list. A wholly malformed response falls back to [].
 export const RuntimeListItemSchema = z.object({
   system_stats: RuntimeSystemStatsSchema.nullable().catch(null),
+  thinking_adapt: RuntimeThinkingAdaptSchema.nullable().catch(null),
 }).loose();
 
 export const RuntimeListSchema = z.array(RuntimeListItemSchema);

@@ -585,6 +585,11 @@ type Daemon struct {
 	// Started by Run.
 	hostMetrics *hostMetricsSampler
 
+	// jevProbe keeps the Jev snapshot fresh between adaptive decisions
+	// (contract §3): one Probe per 10 idle minutes, only after real use.
+	// Started by Run.
+	jevProbe *jevProbeScheduler
+
 	// reconcile fans out a "re-check server state now" signal to subscribers
 	// (watchTaskCancellation, workspaceSyncLoop) so the WS connect/reconnect
 	// path can shrink coarse fallback reconciliation gaps to sub-second. See
@@ -768,6 +773,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		skillCache:                  NewSkillBundleCache(skillCacheRoot),
 		logger:                      logger,
 		hostMetrics:                 newHostMetricsSampler(logger),
+		jevProbe:                    newJevProbeScheduler(nil),
 		terminalReports:             newTerminalReportStore(cfg),
 		terminalReportWakeup:        make(chan struct{}, 1),
 		terminalReportNow:           time.Now,
@@ -802,6 +808,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		workspaceChanges:            newWorkspaceChangeSignal(),
 		wsRPC:                       newWSRPCClient(wsRPCResponseGrace),
 	}
+	d.jevProbe.client = d.jevClient
 	d.activeEnvRootsCond = sync.NewCond(&d.activeEnvRootsMu)
 	d.activeStoresCond = sync.NewCond(&d.activeStoresMu)
 	// Seed the copy-on-write availability set from the startup probe. Callers
@@ -1328,9 +1335,18 @@ func (d *Daemon) recordZenMuxPlanQuotaClearMarker(runtimeID string) {
 // heartbeatExtrasFor assembles the optional heartbeat attachments for one
 // runtime: its cached plan-quota snapshot (nil when the provider reported
 // nothing) and the latest fresh host metrics sample (nil when the sampler
-// has none).
+// has none). ThinkingAdapt carries the Jev health snapshot, but only for
+// providers Multica can deliver a reasoning effort to at all
+// (agent.ThinkingControlSupported, contract §8): on anything else the field
+// would describe a dial the runtime does not have.
 func (d *Daemon) heartbeatExtrasFor(runtimeID string) HeartbeatExtras {
 	extras := HeartbeatExtras{Metrics: d.latestHostMetrics()}
+	if d.jevClient != nil {
+		if rt := d.findRuntime(runtimeID); rt != nil && agent.ThinkingControlSupported(rt.Provider) {
+			snap := d.jevClient.Snapshot()
+			extras.ThinkingAdapt = &snap
+		}
+	}
 	if cached, ok := d.planQuotaCache.Load(runtimeID); ok {
 		if entry, ok := cached.(planQuotaCacheEntry); ok {
 			if entry.clearMarker {
@@ -2266,6 +2282,10 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 	// start; only its goroutine launches here, so heartbeats simply omit the
 	// field until the first sample lands.
 	go d.hostMetrics.run(ctx)
+
+	// Jev health probing (contract §3): one business-content-free probe per
+	// 10 idle minutes, only on daemons that already used adaptive thinking.
+	go d.jevProbeLoop(ctx)
 
 	// Plan-quota collectors feed the heartbeat plan_quota channel for
 	// providers whose quota lives behind a programmatic API rather
