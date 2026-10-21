@@ -26,13 +26,16 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 
 负责人 2026-10-21 在 OL-1013 中决定：
 
-- **E1 训练用的算力**：放在 GCP，在自己的账号里临时开 GPU 机器，训练完删除。
-  - 先由产品经理把一次性设置的操作步骤讲给负责人（OL-1026）；
-  - 负责人完成设置后，由智能体接管开机、传数据、训练、取回和删除。
+- **E1 训练用的算力**：原定放在 GCP，已由下面的方案 A 改为在 149 本机的 GPU 上训练；为 GCP 训练机准备的设置指南 OL-1026 已取消。
 - **E2 用外部来源的决策训练自己的模型**：接受。模型只在内部使用，不对外提供服务。
-- **E3 宿主机操作**：等本期其他改造完成、统一部署时再推进，届时由负责人指派运维专员。在此之前，不做任何涉及宿主机的运维工作，包括开启采集（OL-1022）和部署（OL-1024）。
+- **E3 宿主机操作**：等本期其他改造完成、统一部署时再推进，届时由负责人指派运维专员。在此之前，不做任何涉及宿主机的运维工作，包括开启采集（OL-1022）、训练（OL-1023）和部署（OL-1024）。
 
-自部署来源的延迟门槛还待负责人确认，见[未决事项](#未决事项)。
+负责人同日经产品经理确认**方案 A**，取代原先 EdgeJev、ONNX 导出、GCP 训练机和 CPU 延迟的安排：
+
+- **服务栈**：淘汰 EdgeJev，训练和服务都用原生 Laya（`laya-train`、`laya-serve`），不再导出 ONNX。依据是 OL-1018 的实测，见 §10.0。
+- **线上推理**：`laya-serve` 以 FP16 常驻 149 的 RTX 2080 SUPER，与 kb-worker 共用这张卡（OL-1032）。
+- **延迟门槛**：在 149 的 GPU 上以 FP16 推理，按真实 state 长度分布测，P95 < 100ms；运行级和 Claude 步级都适用。这一条取代原始需求验收里的"4 核 CPU ≤ 50ms"。
+- **训练**：在 149 本机 GPU 的空闲窗口进行，样本留在 149，不再外传。显存规则和预检见 §10.5。
 
 ## 0. 背景事实
 
@@ -259,9 +262,12 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 
 ### state
 
-- **运行级**：运行类型（任务触发、Chat 消息或自动化）、标题、描述前 1500 字、触发评论前 1000 字、provider、model。
-- **步级**：运行目标（同上的标题与描述）前 500 字、步序号、上一步助手文本前 500 字、上一步工具调用的名称与输入摘要、工具结果首尾各 400 字（含退出码和报错特征），以及最近若干步里同类报错的重复次数。
-- **处理**：所有发往决策引擎的 state 都由 daemon 构造，先过 `server/pkg/redact.Text` 脱敏，总长截到 4KB。不得包含智能体指令、skill 内容、环境变量和文件全文。
+字段按下列顺序拼接，短的在前，长文本在后：
+
+- **运行级**：运行类型（任务触发、Chat 消息或自动化）、provider、model、标题、触发评论前 1000 字、描述前 1500 字。
+- **步级**：先是短字段：步序号、上一步主线程的工具名称与是否出错、退出码、报错特征、最近若干步里同类报错的重复次数；再是长文本：上一步工具调用的输入摘要、工具结果首尾各 400 字、上一步助手文本前 500 字、运行目标（同上的标题与描述）前 500 字。
+- **处理**：所有发往决策引擎的 state 都由 daemon 构造，先过 `server/pkg/redact.Text` 脱敏，总长截到 4KB（按 UTF-8 字节计）。不得包含智能体指令、skill 内容、环境变量和文件全文。
+- **为什么这样排**：超长时截掉的总是末尾，daemon 截到 4KB 是这样，自部署来源按 token 上限截断也是这样（§10.0）。中文描述的前 1500 字就超过 4KB，排在它后面的字段会整段丢掉；D4 要靠触发评论、报错特征和重复次数判断是否升到 max、ultra，所以这些放在长文本前面。
 
 ### 判据评测
 
@@ -455,21 +461,26 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
 
 ## 10. 自部署来源与决策样本
 
-OL-1013 把平台自己微调的 Laya 模型接成一个来源 `self-hosted`，并采集决策样本，按结果信号纠偏后用于训练。本节整理自 OL-1013 描述中的"架构设计与接口契约"，小节编号与那里一致：那里的 §N 即本节的 10.N。需求定下的三条边界和负责人对 E1–E3 的决定见[决策记录](#决策记录)，为什么以独立服务接入见 [ADR 0002](../adr/0002-self-hosted-decision-model-as-separate-service.md)。
+OL-1013 把平台自己微调的 Laya 模型接成一个来源 `self-hosted`，并采集决策样本，按结果信号纠偏后用于训练。本节整理自 OL-1013 描述中的"架构设计与接口契约"，小节编号与那里一致：那里的 §N 即本节的 10.N。需求定下的三条边界、负责人对 E1–E3 的决定和方案 A 见[决策记录](#决策记录)，为什么以独立服务接入见 [ADR 0002](../adr/0002-self-hosted-decision-model-as-separate-service.md)。
 
 ### 10.0 背景事实
 
-2026-10-21 核对。代码以当天的 main（`b4bd965e3`）为准，外部项目以当天的默认分支和 PyPI 为准。
+2026-10-21 核对。代码以当天的 main（`aacf191b0`）为准，外部项目以当天的默认分支和 PyPI 为准；Laya 的行为另外对照了 0.4.12 的源码。
 
 1. **Laya**（[`NandhaKishorM/laya`](https://github.com/NandhaKishorM/laya) 0.4.12）
    - **许可**：仓库和权重都是 Apache-2.0，可以商用。
    - **`laya-multilingual`**：
-     - 由 mmBERT-base（307M）加决策头组成，共 322M；
-     - 默认上下文 1024 token。8192 要手动打开，约 4k token 以上准确率不稳定；
+     - 由 mmBERT-base（307M）加决策头组成，共 322M，其中词嵌入约 1.97 亿；
+     - 配置里的长度是 `max_len` 1024、`head_max_len` 256 token；checkpoint 缺这两项时，代码才回退到 512、192。8192 要手动打开，约 4k token 以上准确率不稳定；
      - 实测过的语言是 51 种。
+   - **长度与截断**：
+     - 输入依次是 `[CLS] 说明 [SEP] [MASK] 选项… [SEP] state [SEP]`。候选挡位和 max、ultra 的限制都在前面的问题头里，由 `head_max_len` 保住；超长时截掉的是 state 的末尾，`laya-serve` 在响应的 `usage.truncated` 里报告。
+     - OL-1018 用模型的 tokenizer 统计：4KB 的 state 约 1000 token，问题头 Claude 138、Codex 183 token，整条最长 1183 token。默认的 1024 截断了全部 4KB 样本，1536 能覆盖这批样本；但报错栈、路径、哈希这类工具输出的 token 更密，不能保证任意 4KB 都不截断。
+     - 两个长度由 `laya-train --max-len --head-max-len` 写进产物的 `rl_agent_config.json`，`laya-serve` 加载 checkpoint 时沿用。请求体可以带 `max_len`、`head_max_len` 覆盖，上限是 `LAYA_MAX_TOKEN_BUDGET`（默认 8192）。
    - **`laya-train`**：
      - 只在一个设备上训练（CUDA、MPS 或 CPU）；
      - 默认底座是英文版 `convaiinnovations/laya`，必须显式指定 `--base convaiinnovations/laya-multilingual`；
+     - 在 CUDA 上默认用 FP16 autocast、GradScaler 和梯度检查点，权重、梯度和 AdamW 状态都是 FP32；
      - `--dry-run` 只检查数据、不训练，冷缓存时仍会下载权重。
    - **训练数据**：每行 `{state, questions, gold | expected}`。`gold.<问题>.probabilities` 以选项值为键，会自动归一化；同时有 `gold` 和 `expected` 时以 `gold` 为准。
    - **温度校准**：
@@ -480,35 +491,41 @@ OL-1013 把平台自己微调的 Laya 模型接成一个来源 `self-hosted`，�
      - 0.766 对 0.727 是在它自己的合成数据集上测的；0.727 是第三方公布的 Jev 成绩，Laya 没有实测。
    - **训练时长**：单张 T4 完整微调英文版，11,514 条、4 个 epoch、`max_len` 512，约 48–54 分钟（[Laya #887](https://github.com/NandhaKishorM/laya/issues/887)）。
    - **官方服务 `laya-serve`**：
-     - 基于 PyTorch，端口由 `LAYA_PORT` 指定（默认 8000）；兼容 `/v1/systemone`，有 `/health` 和 Bearer 鉴权。
-     - 按语言自动路由到内置底座。微调模型必须用 `LAYA_EXTRA_MODELS` 注册，请求里的 `model` 写注册名；写 `laya-multilingual` 会指定到原始底座。
+     - 基于 PyTorch，端口由 `LAYA_PORT` 指定（默认 8000）；兼容 `/v1/systemone`，有 `/health` 和 Bearer 鉴权（`LAYA_API_KEY`）。
+     - OL-1018 用 §3 的请求体实测：响应能按 §3 解析，`choice` 在候选内。缺 state 或 JSON 不合法返回 400，问题不合法返回 422，请求体超过 2MiB 返回 413，鉴权错误返回 401。
+     - 按语言自动路由到内置底座。微调模型必须用 `LAYA_EXTRA_MODELS` 注册：它只接受 `{名称: 来源}`，来源是 Hub repo id、本地 checkpoint 目录或 `[repo, subfolder]`，不能设长度。
+     - 请求里的 `model` 决定用哪个 checkpoint：写注册名就用注册的模型；写 `laya-multilingual` 会指定到原始底座；不认识的普通名字（如 `jev-1.13-free`）当作"由路由自选"，按语言路由到内置底座；路径或未发布的 repo id 返回 422。
+     - 有两个默认值不适合直接部署：`LAYA_HOST` 默认 `0.0.0.0`；`LAYA_MODELS` 为空时预载全部内置底座。
      - 4 核 CPU 上单题约 190ms（进程内、fp32，输入长度未注明）。
+   - **在 GPU 上**（`laya/agent.py`）：
+     - 计算能力低于 8 的卡固定用 FP16 autocast，`LAYA_CUDA_AMP` 只在计算能力 ≥ 8 时起作用；所以在 sm_75 上推理不会走 BF16，也不需要 `.half()`。
+     - autocast 只改变计算精度，权重仍以 FP32 放在 GPU 上，约 1.2 GiB。
+     - 加载时放不上 GPU（不可用或显存不足），这个模型就一直在 CPU 上跑，只打一条警告；推理时显存不足，这一个请求改在 CPU 上重试。
+     - `/health` 报告实际设备（`device`）和推理时的 CPU 回退次数（`cpu_fallbacks`），不报告 dtype；设了 `LAYA_API_KEY` 时，不带 key 只能看到存活状态。
    - **响应**：
      - 没有顶层 `latency_ms`，§3 已按可缺失处理；
      - `confidence` 是归一化熵，与 Jev 的算法不同，数值不能和外部来源直接比较。
-2. **EdgeJev**（[`yzfly/edgejev`](https://github.com/yzfly/edgejev)）
-   - **许可**：声明为 Apache-2.0。LICENSE 文件只有简短声明，所以 GitHub 显示为 Other。
-   - **成熟度低**：
-     - 只有 1 位作者，12 个提交都在 2026-09-20 到 21 日，之后没有更新；
-     - 没有 release、测试和 CI；
-     - PyPI 最新为 0.3.2（Alpha），main 上的 0.4.0 没有发布；
-     - "torch ≥ 2.6 时 `edgejev build` 缺 `onnxscript`、必然报错"的修复 PR 一直没合入。
-   - **构建**：`edgejev build --backend laya --model <本地目录或 HF id> --out <目录>`，`--out` 必填。
-     - 产物是 `model.onnx`、`tokenizer.json`、`edgejev.json`；INT8 324MB、FP32 1290MB。
-     - 代码上能读 `laya-train` 的本地产物，并带上拟合的温度，但没有测试过。
-   - **服务 `edgejev serve`**：
-     - 默认监听 `127.0.0.1:8009`，有 `POST /v1/systemone` 和文档没写的 `GET /health`；
-     - 忽略请求里的 `model`；可以用 `--api-key` 开启鉴权；
-     - 处理请求时的异常都返回 400；不限制请求体大小和线程数；不处理 SIGTERM；不能热换模型。
-   - **README 的 15.6ms 和 32.1ms，是约 36 个 token 的短输入、进程内调用测的。**
-     - 运行摘要（state）最长 4KB，约 1000 token，计算量约为它的 30 倍。按它的吞吐粗估，INT8 单次在 0.3–1 秒量级，与外部来源热连接的 340–390ms 相当。
-     - 因此自部署的主要收益是：零调用费、不依赖外网、运行摘要不出内网、能按结果信号纠偏，而不是延迟。
-   - **精度**：INT8 相对 FP32，在它自己的评测上低 1.6–5.8 个点；没有校准指标。
-3. **使用条款**
+2. **EdgeJev**（[`yzfly/edgejev`](https://github.com/yzfly/edgejev)）：**已淘汰**（方案 A）。OL-1018 走通了"微调 → 导出 ONNX → 服务"，但它不适合作为平台的服务栈：
+   - **构建链脆弱**：要钉死 `onnxscript` 0.2.7、`protobuf` 5.29.5 才能导出，换成 ONNXScript 0.5.7 配 torch 2.6、或 protobuf 7.36.2 都会失败；torch ≥ 2.6 缺 `onnxscript` 的修复 PR 一直没合入。
+   - **服务缺少防护**：`edgejev serve` 忽略请求里的 `model`，任何名字都照常作答；不限制请求体大小（3MiB 也返回 200）和线程数；源码只捕获 `KeyboardInterrupt`，不处理 SIGTERM；不能热换模型。
+   - **成熟度低**：只有 1 位作者，12 个提交都在 2026-09-20 到 21 日，之后没有更新；没有 release、测试和 CI；PyPI 最新为 0.3.2（Alpha），main 上的 0.4.0 没有发布。
+   - 精度不是淘汰的原因：原版导出的 INT8 相对 FP32，概率的最大偏差在公开底座上是 0.0141、在微调产物上是 0.0014，12 个输入的 `choice` 全部一致；FP32 与 PyTorch 一致，训练时拟合的温度也带了过去。OL-1018 里 0.7283 的偏差和 6/12 的 `choice` 改变，来自另外做的 ORT `quant_pre_process` 诊断产物，那个产物已经排除。
+3. **CPU 上的延迟**（OL-1018）
+   - 原始需求的"4 核 CPU ≤ 50ms"来自 EdgeJev README 的 15.6ms、32.1ms，那是约 36 个 token 的短输入、进程内调用测的。
+   - OL-1018 在 agent-main-01（Xeon Platinum 8259CL）上限定 4 核，经 HTTP 测原版 EdgeJev INT8（`max_len` 1536），每组串行、4 并发各 100 次。串行 P95：1KB 约 0.5–0.7 秒，2KB 约 0.9–1.3 秒，4KB 约 2.2–2.3 秒；4 并发时 P95 为 2.2–13 秒。`laya-serve` 在 CPU 上只做了诊断，4KB 单请求的中位数约 1.6 秒。
+   - 那台主机不是独占的，内存多次触顶，这些数只能看量级，不能当作 SLA。量级已经说明：CPU 上做不到 50ms，4KB 的 state 还会超过单个来源 1.5 秒的超时。这是方案 A 改用 GPU 的原因。
+4. **149 的 GPU**
+   - **硬件**：RTX 2080 SUPER，8192 MiB，扣除驱动保留后可用 7783 MiB；Turing 架构，计算能力 7.5（sm_75）；驱动 580.65.06（OL-158）。
+   - **精度**：这张卡上 `torch.cuda.is_bf16_supported()` 返回 True，但 BF16 是模拟的，要用 FP16。torch 2.10.0+cu128 支持这张卡，FP16 运算正常，这套环境在 149 的 `/data/kb-poc/asr/` 下（OL-159）。
+   - **kb-worker**：149 上用这张卡的是知识库的 kb-worker（OL-174）。
+     - 队列空时不占显存（4 MiB）；批处理时 GPU 步骤串行，峰值是 ASR 的 4346 MiB，对齐 2154 MiB，OCR 3200 MiB。
+     - 它按独占显卡设计：开跑前检查要求没有其他 GPU 进程、可用显存 ≥ 4.5 GiB、MemAvailable ≥ 24 GiB，不满足就整批推迟；步骤之间的释放检查要求 NVML 上没有任何计算进程。
+     - 显存有三层限制：代码内 ASR、对齐 5.6 GiB，OCR 3 GiB；调度进程发现超过 6 GiB 就终止子进程；主机看门狗发现高于基线 6 GiB 就杀掉容器。
+5. **使用条款**
    - OpenCode Zen 文档、百炼 API 文档和 TypeSafe 网站条款，都没有明文允许或禁止用输出训练模型。
    - TypeSafe 文档里有用 Jev 的概率训练下游模型的示例。
-4. **代码现状**
-   - Jev 客户端（OL-1002，PR #154）尚未合入，`server/internal/daemon/jev/` 还不存在。
+6. **代码现状**
+   - Jev 客户端（OL-1002）已经合入（PR #154），在 `server/internal/daemon/jev/`。
    - **Claude 的解析**：
      - 不读 `tool_result.is_error`（`claudeContentBlock`，`server/pkg/agent/claude.go`）；
      - `agent.Message` 没有错误标记、退出码和步序号；
@@ -531,7 +548,7 @@ OL-1013 描述前半部分的原始需求里，"通道""源"统一叫"来源"，
 
 | 变量 | 含义 | 默认值 |
 |---|---|---|
-| `MULTICA_JEV_SELF_HOSTED_URL` | 完整端点，如 `http://127.0.0.1:8009/v1/systemone`；只接受 http/https | 无；缺失或不合法时跳过这个来源，只告警一次 |
+| `MULTICA_JEV_SELF_HOSTED_URL` | 完整端点，如 `http://127.0.0.1:8000/v1/systemone`；只接受 http/https | 无；缺失或不合法时跳过这个来源，只告警一次 |
 | `MULTICA_JEV_SELF_HOSTED_MODEL` | 请求体里的 `model` | `self-hosted` |
 | `MULTICA_JEV_SELF_HOSTED_API_KEY` | 设置后发 `Authorization: Bearer <key>`，否则不带鉴权头 | 无 |
 
@@ -540,7 +557,7 @@ OL-1013 描述前半部分的原始需求里，"通道""源"统一叫"来源"，
 - URL 和 key 按 §3 的规则处理：不写日志、不序列化、不上报；告警和错误信息里只出现来源名称。
 - `model` 的默认值不用 `laya-multilingual`：
   - 在 `laya-serve` 上，这个名字会指定到原始底座，正是"不拿底座裸跑"要避免的情况；
-  - `edgejev serve` 忽略这个字段；`laya-serve` 要写 `LAYA_EXTRA_MODELS` 里的注册名。
+  - `laya-serve` 通过 `LAYA_EXTRA_MODELS` 把注册名映射到微调 checkpoint 目录，`MULTICA_JEV_SELF_HOSTED_MODEL` 要写注册名（注册名 `self-hosted` 与默认值一致时 daemon 不用另配）。`LAYA_EXTRA_MODELS` 只做名字到目录的映射，`max_len`、`head_max_len` 等长度写在 checkpoint 自己的配置里，daemon 不传。
 - 运维规则：
   - 自部署来源通过门禁评测（§10.5）后，才能排在外部来源前面；
   - 判据文案改动后必须重跑门禁评测，不通过就把它从首位撤下。
@@ -607,7 +624,7 @@ OL-1013 描述前半部分的原始需求里，"通道""源"统一叫"来源"，
 - 回退的步不写决策记录，但它的请求带来的原料，仍用来补全前一步的结果。
 - 最后一个有决策的步：如果它的生效记录之后，流里再没有工具调用，就记为 `final_text`、`outcome_ok = true`；其余确定不了的字段为 null。
 
-**样本的去向**：样本只留在采集主机上。训练时，移到 GCP 上临时开的训练机（E1），训练完连同机器一起删除。不得提交到仓库，也不得上传到公开位置。
+**样本的去向**：样本只留在 149 上，训练也在 149 本机进行（E1、方案 A），不再外传。不得提交到仓库，也不得上传到公开位置。
 
 ### 10.4 纠偏清洗
 
@@ -638,41 +655,65 @@ OL-1013 描述前半部分的原始需求里，"通道""源"统一叫"来源"，
   - `laya-train` 的 JSONL，每行 `{state, questions, gold}`，种子样本可以改用 `expected`；每个分布和为 1。
   - 按来源、范围、纠偏类别、剔除原因的统计。
 
-### 10.5 训练、导出与门禁
+### 10.5 训练与门禁
 
-流水线也放在 `tools/jev-distill/`，各步可以单独运行：`prepare` → `train` → `export` → `parity` → `serve` → `gate` → `bench`。服务栈、精度、`max_len` 和依赖版本按 OL-1018 的结论。
+流水线也放在 `tools/jev-distill/`，各步可以单独运行：`preflight` → `prepare` → `train` → `parity` → `serve` → `gate` → `bench`。训练和服务都用原生 Laya（方案 A），不导出 ONNX。
 
-- **训练机**：按 E1，在 GCP 上临时开 GPU 机器，用完连同样本和中间产物一起删除。一次性设置和接管后的标准步骤见 OL-1026。
+- **在哪里跑**：训练、门禁评测和压测都在 149 本机的 GPU 上做，属于宿主机操作，按 E3 由运维专员执行（OL-1023、OL-1024）。流水线自己的冒烟测试在 CPU 上跑，不碰 149（OL-1021）。
+- **依赖**：训练和服务各一份锁定版本的 requirements，以 OL-1018 记下的可用组合为基础（laya 0.4.12）；写明 149 上已有的 torch 2.10.0+cu128 环境（§10.0）能否复用。
+- **预检（`preflight`）**：在 GPU 上训练或压测之前，沿用 kb-worker 开跑前检查的标准（§10.0）：kb-worker 没有 GPU 任务、可用显存够用、MemAvailable ≥ 24 GiB。只做只读检查；不满足就退出并写明原因，不强行开始。
+- **训练窗口**：选 GPU 空闲的时段，避开 kb-worker 的批处理和 149 上的定时任务（参考 OL-158）。一轮全量微调估计约 1 小时，以 OL-1023 的实测为准。
 - **底座**：`convaiinnovations/laya-multilingual`。
-- **训练**：
-  - 使用 `--loss rlcd`；
-  - `--max-len` 按 OL-1018 的建议，保证 state 不被截断；
+- **训练（`train`）**：
+  - 使用 `--loss rlcd`，并显式传 `--max-len 1536 --head-max-len 256`；训练后核对产物 `rl_agent_config.json` 里的这两个值，不符就判失败；
   - 按 `task_id` 切出不参与训练的评测集，传给 `--eval`；
-  - 固定随机种子。
-- **导出**：导出 INT8 和 FP32。
-  - FP32 与 PyTorch 在评测集上的概率最大偏差不超过 1e-3，OL-1018 有依据时可以调整；
-  - 记录 INT8 与 FP32 的 `choice` 一致率。
-- **门禁评测**：
+  - 固定随机种子；
+  - 精度沿用 `laya-train` 在 CUDA 上的默认（§10.0），不启用 BF16；用小的 micro-batch 加梯度累积适配显存，两者都可以配置。
+- **显存**：
+  - 目标峰值 ≤ 5.5 GiB，这样训练时不用停 `laya-serve`。全量微调时，FP32 的权重、梯度和 AdamW 状态合计约 4.8 GiB（5.2GB），留给 CUDA 上下文和激活的只有约 0.7 GiB，可能放不下。
+  - 实测超限时，在训练窗口内停掉 `laya-serve`（daemon 会回退到外部来源），把上限放宽到 7 GiB 后重训；训练结束后重新启动 `laya-serve`。
+  - 上限用 `torch.cuda.set_per_process_memory_fraction` 和 NVML 看门狗落实，看门狗发现超限就终止训练，日志写明峰值。`laya-train` 是命令行工具，要包在能设这两样的 Python 入口里。
+  - 训练进程对 kb-worker 来说是未知的 GPU 进程，kb-worker 的检查会推迟它的批处理；OL-1032 保留这条保护。
+- **对照（`parity`）**：同一个 checkpoint，GPU FP16 与 CPU FP32 在评测集上比较，报告 `choice` 一致率和概率的最大偏差；一致率低于 99% 判失败。
+- **服务（`serve`）**：按 §10.6 的配置起 `laya-serve`，用 `/health` 确认实际设备是 `cuda`，记下常驻显存。
+- **门禁评测（`gate`）**：
   - 用部署时同样的地址和配置，通过判据评测命令（§4，`MULTICA_JEV_SOURCES=self-hosted`）跑 Claude、Codex 两组候选；
   - 全部 fixture 满足 §4 的四类预期才算通过，同时输出与外部来源结果的对比表。
-- **延迟**：按评测集真实的 state 长度分布，经 HTTP 测 P50 和 P95；门槛见[未决事项](#未决事项)。
+- **压测（`bench`）**：
+  - 按评测集真实的 state 长度分布，经 HTTP 测串行和 4 并发的 P50、P95；
+  - 门槛是方案 A 的 P95 < 100ms（149 的 GPU、FP16），运行级和步级都适用；
+  - 统计响应里 `usage.truncated` 为真的比例，不为 0 就调大 `--max-len` 重训。
 - **产物**：
-  - 模型目录按版本命名，如 `jev-laya-<日期>-<短哈希>-int8`，附 `train_report.json`、门禁报告、压测结果和 sha256 清单；
-  - 模型和数据不进仓库、不公开发布：模型在运行摘要上训练过，可能记住其中的片段。
+  - 模型目录按版本命名，如 `jev-laya-<日期>-<短哈希>`，附 `train_report.json`、对照报告、门禁报告、压测结果和 sha256 清单；
+  - 模型和样本只留在 149，不进仓库、不公开发布：模型在运行摘要上训练过，可能记住其中的片段。
 
 ### 10.6 部署与切换
 
-- **服务**：在 149 宿主机常驻，用 systemd 或容器管理。
+- **服务**：`laya-serve` 以 FP16 常驻 149 的 GPU，用 systemd 或容器管理。
   - 崩溃后自动重启，限制线程数和内存；
-  - 只监听回环地址，或 149 上 agent 容器能访问的内网地址；不是回环地址时必须开启 API key；
+  - 只监听回环地址，或 149 上 agent 容器能访问的内网地址；不是回环地址时必须设 `LAYA_API_KEY`；
   - 日志不记录请求内容。
+- **`laya-serve` 的配置**：
+  - `LAYA_DEVICE=cuda`。sm_75 上固定用 FP16 autocast，不用设 `LAYA_CUDA_AMP`（§10.0）。
+  - `LAYA_HOST` 必须显式设置，它默认是 `0.0.0.0`。
+  - `LAYA_EXTRA_MODELS='{"self-hosted":"<current 指向的 checkpoint 目录>"}'`，注册名与 daemon 的默认 `model` 一致（§10.2）；`LAYA_MODELS=self-hosted`，不预载内置底座。
+  - 请求不得落到内置底座上：`model` 写错时，`laya-serve` 会按语言路由到未微调的底座（§10.0）。所以服务用专用的 HF 缓存目录（`HF_HOME`，里面不放底座），并设 `HF_HUB_OFFLINE=1`，只让注册的本地目录能加载。149 上训练时底座会下载进默认缓存，服务不能共用这份缓存。
+  - `LAYA_MAX_TOKEN_BUDGET` 设为训练用的 `max_len`（1536），不让请求体把长度改大。
+- **与 kb-worker 共用 GPU**：
+  - 常驻显存以实测为准，估计 1.5–2 GiB（§10.0：权重约 1.2 GiB，再加 CUDA 上下文）；加上 kb-worker 的峰值 4346 MiB，仍在可用的 7783 MiB 以内。
+  - kb-worker 的开跑前检查和释放检查都要求 GPU 上没有其他进程，`laya-serve` 常驻后它的任务会一直推迟。OL-1032 在 kb 仓库修改这两项检查并调整显存上限，OL-1024 以它为前置。
+  - 训练窗口内是否停掉 `laya-serve`，按 §10.5 的显存规则。
 - **模型版本**：按版本放目录，用 `current` 指向在用的版本，并写好回滚步骤。
-- **时机**：按 E3，由运维专员进行。开启采集（OL-1022）随本期统一部署一起做；部署自部署来源（OL-1024）要等首次训练通过门禁（OL-1023）之后。
+- **时机与执行**：按 E3，OL-1023（首次训练）和 OL-1024（部署）都是 149 上的宿主机操作，统一部署时由负责人指派运维专员执行。开启采集（OL-1022）随本期统一部署一起做；部署自部署来源要等首次训练通过门禁之后。
+- **部署验证**（OL-1024）：
+  - `/health` 报告的实际设备是 `cuda`，`cpu_fallbacks` 为 0；`/health` 不报告 dtype，所以用同一环境、同一 checkpoint 在 GPU 上加载一次，读 `Agent.dtype`，应为 float16；记下常驻显存。
+  - `model` 写错时必须返回 4xx，证明请求落不到底座上。
+  - 用部署后的地址和 daemon 相同的配置重跑 `gate` 和 `bench`：门禁须通过；kb-worker 空闲时 P95 < 100ms；kb-worker 跑批时再测一次，确认仍明显低于单个来源 1.5 秒的超时。
 - **daemon**：
-  - 149 宿主机及其上 agent 容器里的 daemon 改为 `MULTICA_JEV_SOURCES=self-hosted,opencode-free`；
+  - 149 宿主机及其上 agent 容器里的 daemon 改为 `MULTICA_JEV_SOURCES=self-hosted,opencode-free`，`MULTICA_JEV_SELF_HOSTED_MODEL` 保持默认；
   - `MULTICA_JEV_COLLECT_DIR` 保持开启：自部署来源的样本不作为训练目标，但可以用于以后的评估；
   - 不在 149 上的 daemon（agent-gcp-01、shendiqiu02）不在 OL-1013 范围内，要接入需另开 issue。
-- **运维手册**：部署、升级和回滚步骤，以及判据文案改动后重跑门禁评测的规则，写进 `tools/jev-distill/DEPLOY.md`。
+- **运维手册**：写进 `tools/jev-distill/DEPLOY.md`，包括部署、升级和回滚步骤，训练窗口内暂停 `laya-serve` 的做法，与 kb-worker 共用 GPU 的规则，以及判据文案改动后重跑门禁评测的规则。
 
 ### 10.7 对前文各节的改动
 
@@ -681,13 +722,13 @@ OL-1013 对 OL-992 各节加的要求已并入正文：
 - §1：新增术语在代码中的名字；
 - §3：来源表增加 `self-hosted`；
 - §4 的判据评测：来源可配、机器可读的结果、fixture 的 JSON 导出（OL-1005）；
+- §4 的 state：字段改为短的在前、长文本在后，4KB 按 UTF-8 字节计，避免截断时丢掉 D4 依赖的字段（OL-1005、OL-1010）；
 - §6：决策请求带上一步的结构化信息，报错特征改在 daemon 侧计算（OL-1010）；
 - §9：来源名称"自部署"，不认识的名称原样显示（OL-1008、OL-1009）。
 
 ## 未决事项
 
 - **deveco 的挡位目录**：DevEco CLI 能否列出每个模型的 variant，由 OL-1007 调查；不能列出时，deveco 不提供自适应。
-- **自部署来源的延迟门槛**（§10.5）：原始需求验收里的"≤ 50ms"没有依据（§10.0）。OL-1018 实测后，由架构师提出门槛，请负责人确认。
 
 ## 分工
 
@@ -719,9 +760,11 @@ OL-1013 对 OL-992 各节加的要求已并入正文：
 | OL-1018 | 可行性验证：服务栈与真实 state 长度下的延迟（不合入代码） | §10.0、§10.5、§10.6 |
 | OL-1019 | Claude 步级决策样本与结果信号 | §10.3 |
 | OL-1020 | 纠偏清洗脚本与种子样本 | §10.4 |
-| OL-1021 | 训练、导出、门禁评测与压测流水线 | §10.5 |
+| OL-1021 | 训练、门禁评测与压测流水线（原生 Laya） | §10.5 |
 | OL-1022 | 开启样本采集并跟踪样本量 | §10.3 |
-| OL-1023 | 首次训练与门禁评测 | §10.5 |
-| OL-1026 | GCP 训练机一次性设置指南（讲给负责人，不合入代码） | §10.5 |
+| OL-1023 | 在 149 的 GPU 上首次训练与门禁评测 | §10.5 |
+| OL-1026 | GCP 训练机一次性设置指南（已取消，方案 A） | — |
+| OL-1032 | kb-worker 与常驻的 `laya-serve` 共用 GPU（kb 仓库） | §10.6 |
 | OL-1024 | 在 149 部署自部署来源并切换 | §10.2、§10.6 |
 | OL-1025 | 术语表、ADR 0002 与本文 §10 | — |
+| OL-1033 | 方案 A：本文与 ADR 0002 的修订 | — |
