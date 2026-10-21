@@ -2344,6 +2344,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 
 			h.RegisterLabrastroSkillRoutes(r)
+			h.RegisterLabrastroAgentFolderRoutes(r)
 			h.RegisterLabrastroYSKRoutes(r)
 
 			// Skills
