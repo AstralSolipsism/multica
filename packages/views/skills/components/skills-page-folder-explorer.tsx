@@ -42,10 +42,10 @@ import {
   NewFolderButton,
   directChildFolders,
   directEntries,
-  entryPathHints,
   folderEntryCounts,
   folderLocationPath,
   folderPath,
+  folderPathLabel,
   isManagedLocation,
   resolveFolderLocation,
   type FolderExplorerEntry,
@@ -102,6 +102,7 @@ export interface SkillsPageFolderExplorer {
   countLabel: (visible: number, total: number) => string | undefined;
   countTitle: () => string | undefined;
   withCurrentFolder: (path: string) => string;
+  treeLoading: boolean;
   treeReady: boolean;
   hasFolders: boolean;
 }
@@ -256,6 +257,7 @@ export function useSkillsPageFolderExplorer({
   filters: SkillListFilters;
   onMoved: () => void;
 }): SkillsPageFolderExplorer {
+  const { t } = useT("skills");
   const { t: tPkg } = useT("skill-packages");
   const navigation = useNavigation();
   const qc = useQueryClient();
@@ -278,9 +280,10 @@ export function useSkillsPageFolderExplorer({
 
   const treeReady = !!folderTree && !folderTreeError;
   const treeUnavailable = folderTree === null || !!folderTreeError;
+  const treeLoading = !treeReady && !treeUnavailable;
   const flatRequested =
     search.trim().length > 0 || Object.values(filters).some((values) => values.length > 0);
-  const isFlatView = !treeReady || flatRequested;
+  const isFlatView = treeUnavailable || flatRequested;
   const explorerFolders = useMemo<FolderExplorerFolder[]>(
     () =>
       (folderTree?.folders ?? []).map((folder) => ({
@@ -290,6 +293,16 @@ export function useSkillsPageFolderExplorer({
         managed: folder.package_id !== null,
       })),
     [folderTree],
+  );
+  const pathLabels = useMemo(
+    () =>
+      new Map(
+        explorerFolders.map((folder) => [
+          folder.id,
+          folderPathLabel(explorerFolders, folder.id),
+        ]),
+      ),
+    [explorerFolders],
   );
   const rawFolderId = navigation.searchParams.get("folder");
   const requestedFolderId = rawFolderId ? rawFolderId : null;
@@ -383,16 +396,12 @@ export function useSkillsPageFolderExplorer({
 
   const organizeRows = useCallback(
     (rows: SkillRow[]): SkillsPageListModel => {
+      if (treeLoading) return { rows: [], skillRows: [], emptyMessage: null };
       if (isFlatView) {
         return {
           rows: rows.map((row) => {
             const placement = placementsBySkill?.get(row.skill.id);
-            const pathHint = placement
-              ? entryPathHints(explorerFolders, {
-                  id: row.skill.id,
-                  folderIds: [placement.folder_id],
-                })[0]
-              : undefined;
+            const pathHint = placement ? pathLabels.get(placement.folder_id) : undefined;
             return { kind: "skill", row, pathHint };
           }),
           skillRows: rows,
@@ -405,7 +414,7 @@ export function useSkillsPageFolderExplorer({
         return { id: row.skill.id, folderIds: folderId ? [folderId] : [] };
       });
       const directIds = new Set(
-        directEntries(entries, resolvedFolderId).map((entry) => entry.id),
+        directEntries(entries, resolvedFolderId, explorerFolders).map((entry) => entry.id),
       );
       const skillRows = rows.filter((row) => directIds.has(row.skill.id));
       const folderRows: SkillExplorerListRow[] = directChildFolders(
@@ -431,16 +440,16 @@ export function useSkillsPageFolderExplorer({
         rows: [...folderRows, ...skillListRows, ...candidateRows],
         skillRows,
         emptyMessage:
-          folderRows.length + skillRows.length + candidateRows.length === 0
-            ? tPkg(($) =>
-                resolvedFolderId ? $.tree.empty_folder : $.tree.empty_root,
-              )
+          resolvedFolderId && folderRows.length + skillRows.length + candidateRows.length === 0
+            ? tPkg(($) => $.tree.empty_folder)
             : null,
       };
     },
     [
+      treeLoading,
       isFlatView,
       placementsBySkill,
+      pathLabels,
       explorerFolders,
       resolvedFolderId,
       skillFolderById,
@@ -506,7 +515,7 @@ export function useSkillsPageFolderExplorer({
           <div className="min-w-0 flex-1">
             <FolderExplorerBreadcrumbs
               ariaLabel={tPkg(($) => $.tree.breadcrumb_aria)}
-              rootLabel="Skills"
+              rootLabel={t(($) => $.page.title)}
               path={treeReady ? currentPath : []}
               onNavigate={navigateFolder}
             />
@@ -619,6 +628,7 @@ export function useSkillsPageFolderExplorer({
       isFlatView ? undefined : tPkg(($) => $.tree.folder_count, { visible, total }),
     countTitle: () => (isFlatView ? undefined : tPkg(($) => $.tree.folder_count_title)),
     withCurrentFolder: (path) => folderLocationPath(path, new URLSearchParams(), resolvedFolderId),
+    treeLoading,
     treeReady,
     hasFolders: (folderTree?.folders.length ?? 0) > 0,
   };

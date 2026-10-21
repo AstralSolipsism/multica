@@ -241,16 +241,20 @@ function NameCell({ row, pathHint }: { row: SkillRow; pathHint?: string }) {
   const { skill, canEdit } = row;
   return (
     <ListGridCell className="gap-1.5">
-      <div className="min-w-0 flex flex-col">
-        <span className="min-w-0 truncate text-body font-medium">
-          {skill.name}
-        </span>
-        {pathHint && (
+      {pathHint ? (
+        <div className="min-w-0 flex flex-col">
+          <span className="min-w-0 truncate text-body font-medium">
+            {skill.name}
+          </span>
           <span className="min-w-0 truncate text-caption text-muted-foreground">
             {pathHint}
           </span>
-        )}
-      </div>
+        </div>
+      ) : (
+      <span className="min-w-0 truncate text-body font-medium">
+        {skill.name}
+      </span>
+      )}
       {!canEdit && (
         <Tooltip>
           <TooltipTrigger
@@ -727,7 +731,8 @@ export default function SkillsPage() {
     });
     return filtered;
   }, [allRows, search, filters, sortField, sortDirection]);
-  const listModel = skillFolders.organizeRows(rows);
+  const { organizeRows } = skillFolders;
+  const listModel = useMemo(() => organizeRows(rows), [rows, organizeRows]);
 
   // Row virtualization — Linear-style: the virtualizer only does the math
   // (visible index range + offsets); the DOM stays ours. Offsets become
@@ -788,7 +793,7 @@ export default function SkillsPage() {
   }
 
   const totalCount = skills.length;
-  const showEmpty = !isLoading && totalCount === 0 && !skillFolders.treeReady && !skillFolders.hasFolders;
+  const showEmpty = !isLoading && totalCount === 0 && !skillFolders.hasFolders;
   const supportingQueryDown =
     !!agentsError || !!membersError || !!runtimesError;
 
@@ -825,7 +830,7 @@ export default function SkillsPage() {
       )}
       {skillFolders.notice}
 
-      {isLoading ? (
+      {isLoading || skillFolders.treeLoading ? (
         <div className="flex-1 overflow-y-auto @container">
           <LoadingSkeleton />
         </div>
@@ -888,54 +893,54 @@ export default function SkillsPage() {
                 if (listRow.kind !== "skill") return skillFolders.renderRow(listRow);
                 const row = listRow.row;
                 return (
-                  <ListGridRow
-                    key={row.skill.id}
-                    className={`cursor-pointer ${
-                      selectedIds.has(row.skill.id) ? "bg-accent/30" : ""
-                    }`}
-                    {...rowLink(
-                      skillFolders.withCurrentFolder(paths.skillDetail(row.skill.id)),
-                      row.skill.name,
-                    )}
-                  >
-                    <CheckboxCell
-                      checked={selectedIds.has(row.skill.id)}
-                      onToggle={() => toggleSelected(row.skill.id)}
-                    />
-                    <NameCell row={row} pathHint={listRow.pathHint} />
-                    {isColVisible("usedBy") ? (
-                      <UsedByCell agents={row.agents} />
-                    ) : (
-                      <ListGridCell className="px-0" />
-                    )}
-                    {isColVisible("source") ? (
-                      <SourceCell skill={row.skill} runtime={row.runtime} />
-                    ) : (
-                      <ListGridCell className="hidden px-0 @2xl:flex" />
-                    )}
-                    {isColVisible("creator") ? (
-                      <CreatorCell creator={row.creator} />
-                    ) : (
-                      <ListGridCell className="hidden px-0 @2xl:flex" />
-                    )}
-                    {isColVisible("updated") ? (
-                      <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
-                        {timeAgo(row.skill.updated_at)}
-                      </ListGridCell>
-                    ) : (
-                      <ListGridCell className="hidden px-0 @2xl:flex" />
-                    )}
-                    {isColVisible("created") ? (
-                      <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
-                        {timeAgo(row.skill.created_at)}
-                      </ListGridCell>
-                    ) : (
-                      <ListGridCell className="hidden px-0 @2xl:flex" />
-                    )}
-                    <ListGridCell className="justify-end px-0">
-                      <SkillRowActions row={row} ctx={actionsCtx} />
-                    </ListGridCell>
-                  </ListGridRow>
+              <ListGridRow
+                key={row.skill.id}
+                className={`cursor-pointer ${
+                  selectedIds.has(row.skill.id) ? "bg-accent/30" : ""
+                }`}
+                {...rowLink(
+                  skillFolders.withCurrentFolder(paths.skillDetail(row.skill.id)),
+                  row.skill.name,
+                )}
+              >
+                <CheckboxCell
+                  checked={selectedIds.has(row.skill.id)}
+                  onToggle={() => toggleSelected(row.skill.id)}
+                />
+                <NameCell row={row} pathHint={listRow.pathHint} />
+                {isColVisible("usedBy") ? (
+                  <UsedByCell agents={row.agents} />
+                ) : (
+                  <ListGridCell className="px-0" />
+                )}
+                {isColVisible("source") ? (
+                  <SourceCell skill={row.skill} runtime={row.runtime} />
+                ) : (
+                  <ListGridCell className="hidden px-0 @2xl:flex" />
+                )}
+                {isColVisible("creator") ? (
+                  <CreatorCell creator={row.creator} />
+                ) : (
+                  <ListGridCell className="hidden px-0 @2xl:flex" />
+                )}
+                {isColVisible("updated") ? (
+                  <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
+                    {timeAgo(row.skill.updated_at)}
+                  </ListGridCell>
+                ) : (
+                  <ListGridCell className="hidden px-0 @2xl:flex" />
+                )}
+                {isColVisible("created") ? (
+                  <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
+                    {timeAgo(row.skill.created_at)}
+                  </ListGridCell>
+                ) : (
+                  <ListGridCell className="hidden px-0 @2xl:flex" />
+                )}
+                <ListGridCell className="justify-end px-0">
+                  <SkillRowActions row={row} ctx={actionsCtx} />
+                </ListGridCell>
+              </ListGridRow>
                 );
               })}
             </ListGridBody>

@@ -53,9 +53,14 @@ describe("direct folder explorer contents", () => {
 
   it("returns direct entries and supports multiple memberships", () => {
     const entries = [entry("loose"), entry("one", "a"), entry("many", "a", "managed")];
-    expect(directEntries(entries, null).map((item) => item.id)).toEqual(["loose"]);
-    expect(directEntries(entries, "a").map((item) => item.id)).toEqual(["one", "many"]);
-    expect(directEntries(entries, "managed").map((item) => item.id)).toEqual(["many"]);
+    expect(directEntries(entries, null, folders).map((item) => item.id)).toEqual(["loose"]);
+    expect(directEntries(entries, "a", folders).map((item) => item.id)).toEqual(["one", "many"]);
+    expect(directEntries(entries, "managed", folders).map((item) => item.id)).toEqual(["many"]);
+  });
+
+  it("keeps entries whose folders are all missing visible at root", () => {
+    const entries = [entry("orphan", "missing"), entry("placed", "a"), entry("mixed", "a", "missing")];
+    expect(directEntries(entries, null, folders).map((item) => item.id)).toEqual(["orphan"]);
   });
 });
 

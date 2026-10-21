@@ -2,8 +2,9 @@
 
 import React, { useMemo, useState } from "react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { SupportedLocale } from "@multica/core/i18n";
 import type { SkillSummary } from "@multica/core/types";
 import type { SkillFolderTree } from "@multica/core/api/schemas";
 import { renderWithI18n } from "../../test/i18n";
@@ -21,6 +22,9 @@ const mocks = vi.hoisted(() => ({
   folderTree: null as SkillFolderTree | null | undefined,
   folderTreeError: false,
   refetchTree: vi.fn(),
+  currentUserId: "user-1",
+  members: [] as { user_id: string; role: string }[],
+  virtualizerCount: 0,
   viewState: {
     sortField: "name",
     sortDirection: "asc" as string,
@@ -55,6 +59,9 @@ vi.mock("@tanstack/react-query", () => ({
         refetch: mocks.refetchTree,
       };
     }
+    if (key[0] === "members") {
+      return { data: mocks.members, isLoading: false, error: null, refetch: vi.fn() };
+    }
     return { data: [], isLoading: false, error: null, refetch: vi.fn() };
   },
   useQueryClient: () => ({
@@ -64,22 +71,25 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: ({ count }: { count: number }) => ({
-    getVirtualItems: () =>
-      Array.from({ length: count }, (_, index) => ({
-        index,
-        key: index,
-        start: index * 48,
-        end: (index + 1) * 48,
-        size: 48,
-      })),
-    getTotalSize: () => count * 48,
-  }),
+  useVirtualizer: ({ count }: { count: number }) => {
+    mocks.virtualizerCount = count;
+    return {
+      getVirtualItems: () =>
+        Array.from({ length: count }, (_, index) => ({
+          index,
+          key: index,
+          start: index * 48,
+          end: (index + 1) * 48,
+          size: 48,
+        })),
+      getTotalSize: () => count * 48,
+    };
+  },
 }));
 
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: (selector: (state: unknown) => unknown) =>
-    selector({ user: { id: "user-1" } }),
+    selector({ user: { id: mocks.currentUserId } }),
 }));
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
 vi.mock("@multica/core/api", () => ({ api: apiMock }));
@@ -143,7 +153,9 @@ vi.mock("./skill-list-toolbar", () => ({
   ),
 }));
 vi.mock("./skill-list-actions", () => ({
-  SkillBatchToolbar: () => null,
+  SkillBatchToolbar: ({ rows }: { rows: { skill: { id: string } }[] }) => (
+    <div data-testid="batch-selection">{rows.map((row) => row.skill.id).join(",")}</div>
+  ),
   SkillRowActions: () => null,
 }));
 vi.mock("./package-import-dialog", () => ({ ImportPackageDialog: () => null }));
@@ -304,14 +316,14 @@ function NavigationHarness({
   return <NavigationProvider value={adapter}>{children}</NavigationProvider>;
 }
 
-function renderPage(initialPath = "/acme/skills") {
+function renderPage(initialPath = "/acme/skills", locale?: SupportedLocale) {
   const controller = makeController(initialPath);
   const ui = (
     <NavigationHarness controller={controller} initialPath={initialPath}>
       <SkillsPage />
     </NavigationHarness>
   );
-  const result = renderWithI18n(ui);
+  const result = renderWithI18n(ui, { locale });
   return { ...result, controller };
 }
 
@@ -326,6 +338,9 @@ beforeEach(() => {
   mocks.folderTree = folderTree;
   mocks.folderTreeError = false;
   mocks.refetchTree = vi.fn();
+  mocks.currentUserId = "user-1";
+  mocks.members = [];
+  mocks.virtualizerCount = 0;
   for (const key of Object.keys(mocks.viewState.filters) as (keyof typeof mocks.viewState.filters)[]) {
     mocks.viewState.filters[key] = [];
   }
@@ -521,5 +536,100 @@ describe("SkillsPage flat view and tree fallback", () => {
     expect(screen.getByText("Folders are unavailable. Showing skills in a flat list.")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(mocks.refetchTree).toHaveBeenCalled();
+  });
+});
+
+describe("SkillsPage review regressions", () => {
+  it("localizes the root breadcrumb with the page title", async () => {
+    renderPage("/acme/skills", "ja");
+    expect(await screen.findByRole("button", { name: "スキル" })).toBeTruthy();
+  });
+
+  it("shows a skeleton instead of flashing the flat list while the tree loads", () => {
+    mocks.folderTree = undefined;
+    renderPage("/acme/skills?folder=f-eng-fe");
+    expect(screen.queryByText("placed-skill")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open Engineering" })).toBeNull();
+    expect(screen.queryByText("Results from all folders")).toBeNull();
+  });
+
+  it("keeps the upstream empty-workspace state", async () => {
+    mocks.skills = [];
+    mocks.folderTree = { folders: [], placements: [], packages: [] };
+    renderPage();
+    expect(await screen.findByText("No skills yet")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "New skill" }).length).toBeGreaterThan(0);
+    expect(screen.queryByText("No skills or folders yet.")).toBeNull();
+  });
+
+  it("moves Up from a nested folder to its direct parent", async () => {
+    const { controller } = renderPage("/acme/skills?folder=f-eng-fe");
+    await userEvent.click(await screen.findByRole("button", { name: "Up one level" }));
+    expect(controller.path).toBe("/acme/skills?folder=f-eng");
+    expect(await screen.findByText("engineering-skill")).toBeTruthy();
+  });
+
+  it("disables all package actions for a non-importer without admin rights", async () => {
+    mocks.currentUserId = "someone-else";
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for Engineering" }));
+    expect(
+      await screen.findByText("Only the package importer or an admin can do this."),
+    ).toBeTruthy();
+    for (const name of ["Rescan", "Rename", "Move", "Dissolve package", "Delete package"]) {
+      expect(screen.getByText(name).closest("[data-disabled]")).toBeTruthy();
+    }
+  });
+
+  it("enables package actions for an admin who did not import the package", async () => {
+    mocks.currentUserId = "someone-else";
+    mocks.members = [{ user_id: "someone-else", role: "admin" }];
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for Engineering" }));
+    expect(await screen.findByText("Rescan")).toBeTruthy();
+    expect(screen.queryByText("Only the package importer or an admin can do this.")).toBeNull();
+    for (const name of ["Rescan", "Rename", "Move", "Dissolve package", "Delete package"]) {
+      expect(screen.getByText(name).closest("[data-disabled]")).toBeNull();
+    }
+  });
+
+  it("opens dissolve and delete dialogs from their distinct package actions", async () => {
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for Engineering" }));
+    await userEvent.click(await screen.findByText("Dissolve package"));
+    expect(await screen.findByTestId("remove-dialog-dissolve")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Engineering" }));
+    await userEvent.click(await screen.findByText("Delete package"));
+    expect(await screen.findByTestId("remove-dialog-delete")).toBeTruthy();
+  });
+
+  it("limits selection and select-all to skill rows in the current folder view", async () => {
+    renderPage("/acme/skills?folder=f-design");
+    const designRow = (await screen.findByText("design-skill")).closest("[role='row']")!;
+    await userEvent.click(designRow.querySelector("button")!);
+    expect(screen.getByTestId("batch-selection").textContent).toBe("design");
+
+    await userEvent.click(screen.getByRole("button", { name: "Skills" }));
+    expect(screen.getByTestId("batch-selection").textContent).toBe("");
+    await userEvent.click(screen.getByRole("button", { name: "Open Design" }));
+    expect(screen.getByTestId("batch-selection").textContent).toBe("design");
+
+    await userEvent.click(screen.getByRole("button", { name: "Skills" }));
+    const header = screen.getAllByRole("row")[0]!;
+    await userEvent.click(within(header).getAllByRole("button")[0]!);
+    expect(screen.getByTestId("batch-selection").textContent).toBe("loose");
+  });
+
+  it("keeps folder rows before skills with package badges, subtree counts and exact virtual counts", async () => {
+    renderPage();
+    const packageButton = await screen.findByRole("button", { name: "Open Engineering" });
+    expect(packageButton.textContent).toContain("Package");
+    expect(packageButton.textContent).toContain("2 skills");
+
+    await userEvent.click(packageButton);
+    expect(mocks.virtualizerCount).toBe(2);
+    const folderRow = (await screen.findByRole("button", { name: "Open Frontend" })).closest("[role='row']")!;
+    const skillRow = screen.getByText("engineering-skill").closest("[role='row']")!;
+    expect(folderRow.compareDocumentPosition(skillRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

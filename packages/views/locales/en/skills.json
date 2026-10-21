@@ -125,7 +125,6 @@
     "manage_labels_title": "Skill labels"
   },
   "detail": {
-    "all_skills": "All skills",
     "read_only": "Read-only",
     "delete_aria": "Delete skill",
     "delete_tooltip": "Delete skill",

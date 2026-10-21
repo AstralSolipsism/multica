@@ -33,10 +33,12 @@ export function directChildFolders<F extends FolderExplorerFolder>(
 export function directEntries<E extends FolderExplorerEntry>(
   entries: readonly E[],
   currentFolderId: string | null,
+  folders: readonly FolderExplorerFolder[],
 ): E[] {
+  const knownFolderIds = new Set(folders.map((folder) => folder.id));
   return entries.filter((entry) =>
     currentFolderId === null
-      ? entry.folderIds.length === 0
+      ? entry.folderIds.every((folderId) => !knownFolderIds.has(folderId))
       : entry.folderIds.includes(currentFolderId),
   );
 }
