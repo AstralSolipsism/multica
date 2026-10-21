@@ -788,6 +788,9 @@ func TestThinkingRequiresExplicitModelPredicates(t *testing.T) {
 	}{
 		{provider: "omp", needsModel: true, rejectedAtAPI: true},
 		{provider: "codex", needsModel: true, rejectedAtAPI: false},
+		// deveco joined the dynamic-catalog set with OL-1007 with no prior
+		// persisted levels, so it is strict from the start (omp's rationale).
+		{provider: "deveco", needsModel: true, rejectedAtAPI: true},
 		{provider: "pi", needsModel: false, rejectedAtAPI: false},
 		{provider: "claude", needsModel: false, rejectedAtAPI: false},
 		{provider: "opencode", needsModel: false, rejectedAtAPI: false},

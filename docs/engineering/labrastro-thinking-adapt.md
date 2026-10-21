@@ -56,14 +56,14 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
    - **为 true 时**：Haiku 5.5、Sonnet 5.5 两次换挡后，下一次请求的 `cache_read_input_tokens` 都等于上一次请求的全部提示量。换挡步写缓存的量与不换挡的步相同，约 130–180 token。Opus 5.5、Fable 5.1 只核对了 init，没有实测缓存。
    - **为 false 时**：首次切到某个挡位，整个前缀都要重写；Sonnet 5 上 `cache_read` 为 0，写入 28.6k。切回之前用过的挡位，复用该挡位上次写到的位置，只补写其后的部分。
    - **`system/per_turn_effort_changed`**：7 次真实运行都没有收到。它只在服务端拒绝消息内的挡位声明时出现：先出 `changed=false`，再出重试后的 assistant；之后 CLI 不再发送消息内声明。这一点是用模拟 400 复现的。
-3. **有挡位控制的运行时共 12 个（含 claude）**，即 `server/pkg/agent/thinking.go` 中三张表的并集：
+3. **有挡位控制的运行时共 13 个（含 claude）**，即 `server/pkg/agent/thinking.go` 中三张表的并集：
    - 固定词表（`providerThinkingEnums`）：claude、codebuddy、pi、omp；
-   - daemon 本地目录（`thinkingDynamicCatalogProviders`）：codex、dsh、grok、opencode、kimi；
+   - daemon 本地目录（`thinkingDynamicCatalogProviders`）：codex、dsh、grok、opencode、kimi、deveco；
    - ACP 目录（`acpCatalogThinkingProviders`）：reasonix、hermes、dim。
 
    例外：
-   - deveco 不在三张表里，服务端拒绝任何非空挡位，它也没有挡位目录；
-   - dim 的模型发现目前没有标注挡位；
+   - deveco 已接入动态目录（OL-1007）：`deveco models --verbose` 逐模型打印含 `variants` 的 JSON，解析后即挡位目录；DevEco 内置的 GLM-5/GLM-5.1 不派生 variant，默认安装下没有挡位选择，只有 GLM-5.2、第三方 provider 或在 `deveco.jsonc` 里自定义了 variant 的模型才有。deveco 的目录不标记默认模型，与 codex、omp 一样要求钉住模型才能存挡位；
+   - dim 的模型发现已标注挡位（OL-1007）：session/new 带 `thought_level` 时，当前模型获得挡位目录，其余模型没有；
    - hermes 只有 jcode 二进制报告挡位，Hermes Agent 不报告；
    - kimi 需要 ACP ≥ 0.29.0。
 
@@ -143,7 +143,7 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 - **候选规则**：`AdaptThinkingCandidates(levels)` 去掉 `auto`、`off`、`none`、`disabled`，其余保持目录里的顺序；调用方自己检查结果是否不少于 2 个。规则同时导出为 JSON 测试向量（`server/pkg/agent/testdata/adapt_thinking_candidates.json`），前端用同一组向量实现同一规则。
 - **校验**（`server/internal/handler/agent.go` 的 Create、Update）：`_adapt` 的判断放在现有的 `IsKnownThinkingValue` 之前，满足以下全部条件才接受，否则返回 400：
   - provider 满足 `ThinkingControlSupported`；
-  - codex、omp 必须指定 model；
+  - `ThinkingRequiresExplicitModel` 列出的 provider（codex、omp、deveco）必须指定 model；
   - reasonix、hermes、dim 按缓存目录判断所选模型（未指定时为目录的默认模型）的候选不少于 2 个。
 
   其他取值的校验和错误信息不变。
@@ -307,7 +307,7 @@ MULTICA_UPDATE_THINKING_FIXTURES=1 \
 在 `resolveTaskModelSelection`（`server/internal/daemon/daemon.go`）定位模型之后：
 
 1. 若 `thinking_level == "_adapt"`，从已验证的目录（`Catalog.Verified()`）取出该模型的挡位，求出候选。
-2. 目录未验证、候选不足 2 个，或 codex/omp 没有指定 model 时，不调用 Jev，也不注入挡位，记一条 info 日志，按回退处理（原因为 `no_candidates`）。
+2. 目录未验证、候选不足 2 个，或 `ThinkingRequiresExplicitModel` 列出的 provider（codex/omp/deveco）没有指定 model 时，不调用 Jev，也不注入挡位，记一条 info 日志，按回退处理（原因为 `no_candidates`）。
 3. 否则按 §4 构造判据和 state，调用 Jev，把结果写入 `ThinkingLevel`；回退时置空。
 4. fresh-session 重试和 codex 的第二次尝试复用同一个决策，不再调用 Jev。
 
@@ -729,7 +729,7 @@ OL-1013 对 OL-992 各节加的要求已并入正文：
 
 ## 未决事项
 
-- **deveco 的挡位目录**：DevEco CLI 能否列出每个模型的 variant，由 OL-1007 调查；不能列出时，deveco 不提供自适应。
+（无。原「deveco 的挡位目录」一项已由 OL-1007 调查并接入，结论记入 §0.3。）
 
 ## 分工
 

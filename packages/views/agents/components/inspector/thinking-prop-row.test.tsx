@@ -97,6 +97,17 @@ const OMP_MODEL: RuntimeModel = {
   },
 };
 
+const DEVECO_MODEL: RuntimeModel = {
+  id: "deveco/glm-5.2",
+  label: "GLM-5.2",
+  thinking: {
+    supported_levels: [
+      { value: "high", label: "High" },
+      { value: "max", label: "Max" },
+    ],
+  },
+};
+
 function listResult(models: RuntimeModel[]): RuntimeModelListRequest {
   return {
     id: "req-1",
@@ -310,6 +321,20 @@ describe("ThinkingPropRow", () => {
     // the full timeout and fails if the row ever shows up.
     await expect(screen.findByText("Thinking")).rejects.toThrow();
     // None of the entry's levels leak into the picker.
+    expect(screen.queryByText("Max")).toBeNull();
+  });
+
+  it("hides the picker for an empty deveco model — no catalog entry is deveco's real default (OL-1007)", async () => {
+    // deveco's OpenCode-engine catalog marks no Default either, and the
+    // backend rejects a level without a pinned model, so no preview.
+    mockInitiateListModels.mockResolvedValue(listResult([DEVECO_MODEL]));
+    mockGetListModelsResult.mockResolvedValue(listResult([DEVECO_MODEL]));
+    renderRow({ provider: "deveco", model: "", value: "" });
+
+    await waitFor(() => {
+      expect(mockInitiateListModels).toHaveBeenCalled();
+    });
+    await expect(screen.findByText("Thinking")).rejects.toThrow();
     expect(screen.queryByText("Max")).toBeNull();
   });
 

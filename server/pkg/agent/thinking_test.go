@@ -752,6 +752,14 @@ func TestIsKnownThinkingValue(t *testing.T) {
 		// Hermes Agent advertises none. The per-session catalog decides, so the
 		// literal gate opens for both.
 		{"hermes", "low", true},
+		// DevEco's variants are catalog-owned (deveco models --verbose), so
+		// the server accepts well-formed tokens and the daemon checks the
+		// exact per-model variant before execution.
+		{"deveco", "", true},
+		{"deveco", "max", true},
+		{"deveco", "custom-variant", true}, // deveco.jsonc can define custom variant names
+		{"deveco", ".hidden", false},
+		{"deveco", "bad value", false},
 		{"grok", "", true},
 		{"grok", "none", true},
 		{"grok", "minimal", true},
@@ -785,6 +793,7 @@ func TestThinkingControlSupported(t *testing.T) {
 		{"grok", true},
 		{"codex", true},    // dynamic catalog, validated per model by the daemon
 		{"dsh", true},      // dynamic catalog from the installed DSH profile
+		{"deveco", true},   // OpenCode-engine variants from `deveco models --verbose`
 		{"opencode", true}, // dynamic variant names from opencode.json
 		{"pi", true},       // fixed tokens, per-model subset discovered over RPC
 		{"omp", true},      // pi backend identity; per-model subset from `omp models --json`
