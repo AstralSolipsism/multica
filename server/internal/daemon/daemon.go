@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strconv"
@@ -9551,6 +9552,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		var mu sync.Mutex
 		var pendingContent strings.Builder
 		var pendingType string
+		var pendingMetadata map[string]any
 		var pendingAt time.Time
 		var batch []TaskMessageData
 		callIDToTool := map[string]string{}
@@ -9582,25 +9584,28 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 			batch = append(batch, TaskMessageData{
 				Seq:       int(s),
 				Type:      pendingType,
+				Metadata:  pendingMetadata,
 				Content:   pendingContent.String(),
 				CreatedAt: pendingAt,
 			})
 			pendingContent.Reset()
 			pendingType = ""
+			pendingMetadata = nil
 			pendingAt = time.Time{}
 		}
 
-		appendPending := func(messageType, content string, observedAt time.Time) {
+		appendPending := func(messageType, content string, metadata map[string]any, observedAt time.Time) {
 			if content == "" {
 				return
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if pendingType != "" && pendingType != messageType {
+			if pendingType != "" && (pendingType != messageType || !reflect.DeepEqual(pendingMetadata, metadata)) {
 				sealPendingLocked()
 			}
 			if pendingContent.Len() == 0 {
 				pendingType = messageType
+				pendingMetadata = metadata
 				pendingAt = observedAt
 			}
 			pendingContent.WriteString(content)
@@ -9721,6 +9726,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					batch = append(batch, TaskMessageData{
 						Seq:       int(s),
 						Type:      "tool_use",
+						Metadata:  msg.Metadata,
 						CallID:    transcriptCallID(msg.CallID),
 						Tool:      msg.Tool,
 						CreatedAt: observedAt,
@@ -9764,6 +9770,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					batch = append(batch, TaskMessageData{
 						Seq:       int(s),
 						Type:      "tool_result",
+						Metadata:  msg.Metadata,
 						CallID:    transcriptCallID(msg.CallID),
 						Tool:      toolName,
 						Output:    output,
@@ -9777,7 +9784,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					mu.Unlock()
 					flushFirstVisible()
 				case agent.MessageThinking:
-					appendPending("thinking", msg.Content, observedAt)
+					appendPending("thinking", msg.Content, msg.Metadata, observedAt)
 					if msg.Content != "" {
 						flushFirstVisible()
 					}
@@ -9785,7 +9792,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					if msg.Content != "" {
 						taskLog.Debug("agent", "text", truncateLog(msg.Content, 200))
 					}
-					appendPending("text", msg.Content, observedAt)
+					appendPending("text", msg.Content, msg.Metadata, observedAt)
 					if msg.Content != "" {
 						flushFirstVisible()
 					}
@@ -9797,6 +9804,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					batch = append(batch, TaskMessageData{
 						Seq:       int(s),
 						Type:      "error",
+						Metadata:  msg.Metadata,
 						Content:   msg.Content,
 						CreatedAt: observedAt,
 					})

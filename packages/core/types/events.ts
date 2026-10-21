@@ -326,7 +326,25 @@ export interface ActivityCreatedPayload {
   entry: TimelineEntry;
 }
 
+export interface TaskMessageThinkingMetadata {
+  level: string;
+  mode: "adapt" | "fixed";
+  step?: number;
+  source?: string;
+  confidence?: number;
+  probabilities?: Record<string, number>;
+  latency_ms?: number;
+  fallback?: "timeout" | "error" | "invalid" | "breaker" | "disabled";
+  [key: string]: unknown;
+}
+
+export interface TaskMessageMetadata {
+  thinking?: TaskMessageThinkingMetadata;
+  [key: string]: unknown;
+}
+
 export interface TaskMessagePayload {
+  metadata?: TaskMessageMetadata;
   /** Opaque tool-call identity, scoped to one backend execution. */
   call_id?: string;
   task_id: string;

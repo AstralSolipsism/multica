@@ -5203,6 +5203,8 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 // Task Messages (live agent output)
 
 type TaskMessageRequest struct {
+	// Decode separately so malformed metadata cannot reject the message batch.
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 	// CallID is an opaque tool-call identity scoped to one backend execution.
 	CallID  string         `json:"call_id,omitempty"`
 	Seq     int            `json:"seq"`
@@ -5267,15 +5269,16 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	// string means SQL NULL, applied by the query's NULLIF.
 	n := len(req.Messages)
 	params := db.CreateTaskMessagesParams{
-		TaskID:   parseUUID(taskID),
-		Ids:      make([]pgtype.UUID, 0, n),
-		Seqs:     make([]int32, 0, n),
-		Types:    make([]string, 0, n),
-		Tools:    make([]string, 0, n),
-		CallIds:  make([]string, 0, n),
-		Contents: make([]string, 0, n),
-		Inputs:   make([]string, 0, n),
-		Outputs:  make([]string, 0, n),
+		TaskID:    parseUUID(taskID),
+		Ids:       make([]pgtype.UUID, 0, n),
+		Seqs:      make([]int32, 0, n),
+		Types:     make([]string, 0, n),
+		Tools:     make([]string, 0, n),
+		CallIds:   make([]string, 0, n),
+		Contents:  make([]string, 0, n),
+		Inputs:    make([]string, 0, n),
+		Metadatas: make([]string, 0, n),
+		Outputs:   make([]string, 0, n),
 		// Optional for mixed-version rollout. Older daemons omit the event
 		// timestamp, and one missing or implausible value makes the whole batch
 		// use database time so paired events never mix clocks.
@@ -5340,6 +5343,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 		params.CallIds = append(params.CallIds, msg.CallID)
 		params.Contents = append(params.Contents, msg.Content)
 		params.Inputs = append(params.Inputs, inputJSON)
+		params.Metadatas = append(params.Metadatas, taskMessageMetadata(msg.Metadata, taskID, msg.Seq))
 		params.Outputs = append(params.Outputs, msg.Output)
 		params.CreatedAts = append(params.CreatedAts, createdAts[i])
 		params.OutputTruncations = append(params.OutputTruncations, boolArrayElement(msg.OutputTruncated))
@@ -5490,6 +5494,7 @@ func taskMessageToPayload(m db.TaskMessage, taskID, issueID string) protocol.Tas
 		CallID:          m.CallID.String,
 		Content:         m.Content.String,
 		Input:           input,
+		Metadata:        m.Metadata,
 		Output:          m.Output.String,
 		OutputTruncated: util.BoolToPtr(m.OutputTruncated),
 		CreatedAt:       createdAt,
