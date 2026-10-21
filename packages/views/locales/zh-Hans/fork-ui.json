@@ -1,4 +1,11 @@
 {
+  "agents": {
+    "thinking_adapt": {
+      "label": "自适应",
+      "description": "选中后，会将脱敏后的运行摘要发送给外部决策服务，默认使用 OpenCode Zen 免费通道。",
+      "upgrade_required": "当前守护进程版本过旧，不支持自适应。请升级守护进程后使用。"
+    }
+  },
   "issues": {
     "detail": {
       "more_actions": "任务操作"

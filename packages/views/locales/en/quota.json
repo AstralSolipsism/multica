@@ -20,6 +20,18 @@
   "observed_ago": "updated {{time}} ago",
   "source_daemon": "via daemon",
   "source_external": "via external push",
+  "thinking_adapt": {
+    "available": "Available",
+    "degraded": "Degraded (Adapt uses the CLI default level when decisions fail)",
+    "unavailable": "Unavailable (Adapt has fallen back to the CLI default level)",
+    "idle": "Not used yet",
+    "status_unknown": "Status unknown",
+    "source_opencode_free": "OpenCode Zen",
+    "source_opencode": "OpenCode Zen",
+    "source_dashscope": "DashScope",
+    "source_self_hosted": "Self-hosted",
+    "counts": "Since daemon started: {{success}} successful, {{fallback}} fallbacks"
+  },
   "glm_title": "GLM plan balance",
   "glm_window_tokens": "5-hour tokens",
   "glm_window_time": "Monthly tool credits",

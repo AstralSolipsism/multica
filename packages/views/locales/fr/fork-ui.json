@@ -1,4 +1,11 @@
 {
+  "agents": {
+    "thinking_adapt": {
+      "label": "Adaptatif",
+      "description": "Si cette option est sélectionnée, un résumé anonymisé de l'exécution est envoyé à un service de décision externe. Le canal gratuit d'OpenCode Zen est utilisé par défaut.",
+      "upgrade_required": "Ce daemon est trop ancien pour Adaptatif. Mettez à niveau le daemon pour l'activer."
+    }
+  },
   "issues": {
     "detail": {
       "more_actions": "Issue actions"

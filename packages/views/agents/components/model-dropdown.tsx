@@ -7,7 +7,10 @@ import {
   refreshRuntimeModels,
   runtimeModelsOptions,
 } from "@multica/core/runtimes";
-import type { RuntimeModel } from "@multica/core/types";
+import type {
+  RuntimeModel,
+  RuntimeModelThinkingLevel,
+} from "@multica/core/types";
 import {
   Popover,
   PopoverTrigger,
@@ -43,9 +46,15 @@ export function ModelDropdown({
   runtimeId: string | null;
   runtimeOnline: boolean;
   value: string;
-  onChange: (value: string) => void;
+  onChange: (
+    value: string,
+    levels?: readonly RuntimeModelThinkingLevel[],
+  ) => void;
   /** Automatic value cleanup, separate from explicit user selections. */
-  onAutomaticChange?: (value: string) => void;
+  onAutomaticChange?: (
+    value: string,
+    levels?: readonly RuntimeModelThinkingLevel[],
+  ) => void;
   disabled?: boolean;
 }) {
   const { t } = useT("agents");
@@ -108,8 +117,12 @@ export function ModelDropdown({
   );
   const canCreate = trimmedSearch.length > 0 && !exactMatch;
 
-  const select = (id: string) => {
-    onChange(id);
+  const select = (
+    id: string,
+    levels?: readonly RuntimeModelThinkingLevel[],
+  ) => {
+    if (levels === undefined) onChange(id);
+    else onChange(id, levels);
     setOpen(false);
     setSearch("");
   };
@@ -218,7 +231,9 @@ export function ModelDropdown({
                     <button
                       type="button"
                       key={m.id}
-                      onClick={() => select(m.id)}
+                      onClick={() =>
+                        select(m.id, m.thinking?.supported_levels)
+                      }
                       className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-body transition-colors ${
                         m.id === value ? "bg-accent" : "hover:bg-accent/50"
                       }`}

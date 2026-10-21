@@ -307,6 +307,50 @@ Return findings."}</agent_draft>`;
       serviceTier: "",
     });
   });
+
+  it("keeps Adapt across builder model changes only with enough candidates", () => {
+    const current = { ...draft(), thinkingLevel: "_adapt" };
+    const catalog = [
+      {
+        id: "model-2",
+        label: "Model 2",
+        thinking: {
+          supported_levels: [
+            { value: "low", label: "Low" },
+            { value: "high", label: "High" },
+          ],
+        },
+      },
+      {
+        id: "model-3",
+        label: "Model 3",
+        thinking: {
+          supported_levels: [{ value: "high", label: "High" }],
+        },
+      },
+    ];
+
+    expect(
+      mergeBuilderDraft(
+        current,
+        { model: "model-2" },
+        new Set(),
+        new Set(),
+        new Set(["model-1", "model-2", "model-3"]),
+        catalog,
+      ).thinkingLevel,
+    ).toBe("_adapt");
+    expect(
+      mergeBuilderDraft(
+        current,
+        { model: "model-3" },
+        new Set(),
+        new Set(),
+        new Set(["model-1", "model-2", "model-3"]),
+        catalog,
+      ).thinkingLevel,
+    ).toBe("");
+  });
 });
 
 describe("completed builder reply recovery", () => {
