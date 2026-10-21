@@ -3,6 +3,9 @@ package protocol
 import "encoding/json"
 
 const (
+	// DaemonCapabilityThinkingAdaptV1 allows claims to carry the reserved
+	// adaptive thinking mode. Older daemons receive an empty thinking level.
+	DaemonCapabilityThinkingAdaptV1     = "thinking-adapt-v1"
 	DaemonCapabilityYouShouldKnowV1     = "you-should-know-v1"
 	DaemonCapabilitySkillBundlesV1      = "skill-bundles-v1"
 	DaemonCapabilityCoalescedCommentsV1 = "coalesced-comments-v1"

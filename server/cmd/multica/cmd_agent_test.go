@@ -1837,47 +1837,51 @@ func TestAgentGetTableIncludesAvatarURL(t *testing.T) {
 // passed through verbatim; provider-level validation is the server's job
 // (IsKnownThinkingValue), exactly as `--model` defers model validation.
 func TestAgentCreateSendsThinkingLevel(t *testing.T) {
-	var gotMethod, gotPath string
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
-			t.Errorf("decode request body: %v", err)
-		}
-		json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent", "thinking_level": "high"})
-	}))
-	defer srv.Close()
+	for _, level := range []string{"high", "_adapt"} {
+		t.Run(level, func(t *testing.T) {
+			var gotMethod, gotPath string
+			var gotBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod = r.Method
+				gotPath = r.URL.Path
+				if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+					t.Errorf("decode request body: %v", err)
+				}
+				json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent", "thinking_level": level})
+			}))
+			defer srv.Close()
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
-	t.Setenv("MULTICA_AGENT_ID", "")
-	t.Setenv("MULTICA_TASK_ID", "")
+			t.Setenv("MULTICA_SERVER_URL", srv.URL)
+			t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+			t.Setenv("MULTICA_TOKEN", "test-token")
+			t.Setenv("MULTICA_AGENT_ID", "")
+			t.Setenv("MULTICA_TASK_ID", "")
 
-	cmd := &cobra.Command{Use: "create"}
-	cmd.Flags().String("name", "", "")
-	cmd.Flags().String("runtime-id", "", "")
-	cmd.Flags().String("description", "", "")
-	cmd.Flags().String("instructions", "", "")
-	cmd.Flags().String("thinking-level", "", "")
-	cmd.Flags().String("output", "json", "")
-	cmd.Flags().String("profile", "", "")
-	_ = cmd.Flags().Set("name", "TestAgent")
-	_ = cmd.Flags().Set("runtime-id", "runtime-1")
-	_ = cmd.Flags().Set("thinking-level", "high")
+			cmd := &cobra.Command{Use: "create"}
+			cmd.Flags().String("name", "", "")
+			cmd.Flags().String("runtime-id", "", "")
+			cmd.Flags().String("description", "", "")
+			cmd.Flags().String("instructions", "", "")
+			cmd.Flags().String("thinking-level", "", "")
+			cmd.Flags().String("output", "json", "")
+			cmd.Flags().String("profile", "", "")
+			_ = cmd.Flags().Set("name", "TestAgent")
+			_ = cmd.Flags().Set("runtime-id", "runtime-1")
+			_ = cmd.Flags().Set("thinking-level", level)
 
-	if err := runAgentCreate(cmd, nil); err != nil {
-		t.Fatalf("runAgentCreate: %v", err)
-	}
-	if gotMethod != http.MethodPost {
-		t.Fatalf("method = %s, want POST", gotMethod)
-	}
-	if gotPath != "/api/agents" {
-		t.Fatalf("path = %q, want /api/agents", gotPath)
-	}
-	if gotBody["thinking_level"] != "high" {
-		t.Fatalf("thinking_level body = %v, want high", gotBody["thinking_level"])
+			if err := runAgentCreate(cmd, nil); err != nil {
+				t.Fatalf("runAgentCreate: %v", err)
+			}
+			if gotMethod != http.MethodPost {
+				t.Fatalf("method = %s, want POST", gotMethod)
+			}
+			if gotPath != "/api/agents" {
+				t.Fatalf("path = %q, want /api/agents", gotPath)
+			}
+			if gotBody["thinking_level"] != level {
+				t.Fatalf("thinking_level body = %v, want %q", gotBody["thinking_level"], level)
+			}
+		})
 	}
 }
 
@@ -1929,6 +1933,7 @@ func TestAgentUpdateSendsThinkingLevel(t *testing.T) {
 		value string
 	}{
 		{"set explicit level", "xhigh"},
+		{"set adaptive mode", "_adapt"},
 		{"empty string clears", ""},
 	}
 	for _, tc := range cases {
