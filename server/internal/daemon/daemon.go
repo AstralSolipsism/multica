@@ -30,6 +30,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
+	"github.com/multica-ai/multica/server/internal/daemon/jev"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -415,6 +416,7 @@ type repoCacheBackend interface {
 type Daemon struct {
 	cfg        Config
 	client     *Client
+	jevClient  *jev.Client
 	repoCache  repoCacheBackend
 	skillCache *SkillBundleCache
 	logger     *slog.Logger
@@ -761,6 +763,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 	d := &Daemon{
 		cfg:                         cfg,
 		client:                      client,
+		jevClient:                   jev.New(jev.Options{Disabled: cfg.JevDisabled, Sources: cfg.JevSources, Timeout: cfg.JevTimeout}),
 		repoCache:                   repocache.New(cacheRoot, logger),
 		skillCache:                  NewSkillBundleCache(skillCacheRoot),
 		logger:                      logger,
@@ -5897,6 +5900,8 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// when the server signals the task should stop — either the task reached
 	// a terminal state (completed/failed/cancelled) or the task row is
 	// deleted (404).
+	// Retain the decision through terminal handling, outside runTask as well.
+	ctx = context.WithValue(ctx, thinkingRunKey{}, &thinkingRun{})
 	runCtx, runCancel := context.WithCancel(withYouShouldKnowStop(ctx, task))
 	defer runCancel()
 
@@ -7616,14 +7621,8 @@ func resolveTaskModelSelection(
 	runtimeCmd agent.Command,
 	sel taskModelSelection,
 	taskLog *slog.Logger,
+	thinking *thinkingRun,
 ) taskModelSelection {
-	// Until adaptive decisions are implemented, fail open to the CLI config.
-	// Clear before catalog validation: discovery failures otherwise pass unknown
-	// values through, which must never send this reserved mode to CLI or ACP.
-	if sel.ThinkingLevel == agent.ThinkingLevelAdapt {
-		taskLog.Info("thinking_level: adaptive decisions unavailable; following CLI config", "provider", provider, "model", sel.Model)
-		sel.ThinkingLevel = ""
-	}
 	capabilityChecksPending := sel.ThinkingLevel != "" || sel.ServiceTier != ""
 
 	read := false
@@ -7665,6 +7664,10 @@ func resolveTaskModelSelection(
 			sel.ServiceTier = ""
 		}
 	}
+	if sel.ThinkingLevel == agent.ThinkingLevelAdapt {
+		sel.ThinkingLevel = resolveAdaptiveThinking(ctx, provider, sel.Model, loadCatalog, thinking, taskLog)
+		return sel
+	}
 	// Per-model guard: the server validates the literal token against the
 	// provider's enum, but per-model gaps (Codex's per-model
 	// `supported_reasoning_levels`, Claude's per-model `supportedEffortLevels`)
@@ -7697,6 +7700,9 @@ func resolveTaskModelSelection(
 		}
 	}
 
+	if thinking != nil && sel.ThinkingLevel != "" {
+		thinking.Record = &ThinkingDecisionRecord{Mode: "fixed", Decision: jev.Decision{Level: sel.ThinkingLevel}}
+	}
 	return sel
 }
 
@@ -8780,9 +8786,18 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		thinkingLevel = task.Agent.ThinkingLevel
 		serviceTier = task.Agent.ServiceTier
 	}
+	thinking := thinkingRunFromContext(ctx)
+	if thinking == nil {
+		thinking = &thinkingRun{}
+	}
+	thinking.Task = task
+	if d.jevClient != nil {
+		thinking.Client = d.jevClient
+	}
 	selection := resolveTaskModelSelection(ctx, provider, agent.NewCommand(entry.Path, profileFixedArgs),
-		taskModelSelection{Model: model, ThinkingLevel: thinkingLevel, ServiceTier: serviceTier}, taskLog)
+		taskModelSelection{Model: model, ThinkingLevel: thinkingLevel, ServiceTier: serviceTier}, taskLog, thinking)
 	model, thinkingLevel, serviceTier = selection.Model, selection.ThinkingLevel, selection.ServiceTier
+	ctx = context.WithValue(ctx, thinkingRunKey{}, thinking)
 
 	var idleWatchdogTimeout time.Duration
 	if provider == "opencode" || provider == "codearts" {
@@ -9686,6 +9701,9 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				// can't be misattributed to backend silence.
 				observedAt := time.Now().UTC()
 				lastActivityAt.Store(int64(awakeclock.Now()))
+				if thinking := thinkingRunFromContext(ctx); thinking != nil {
+					msg = thinking.tag(msg)
+				}
 				switch msg.Type {
 				case agent.MessageStatus:
 					// Persist the session/work_dir as soon as the backend

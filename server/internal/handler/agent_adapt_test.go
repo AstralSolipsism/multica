@@ -249,7 +249,7 @@ func TestClaimAdaptiveThinkingCapability(t *testing.T) {
 				"provider": "reasonix", "metadata": `{"capabilities":["thinking-adapt-v1"]}`,
 			})
 			agentID := dbfx.Agent(t, "adapt claim", runtimeID, testutil.Cols{"thinking_level": level})
-			issueID := dbfx.Issue(t, "adapt claim")
+			issueID := dbfx.Issue(t, "adapt claim", testutil.Cols{"description": "decision summary"})
 			taskID := dbfx.Task(t, agentID, testutil.Cols{"issue_id": issueID, "runtime_id": runtimeID, "status": "dispatched"})
 			task, err := testHandler.Queries.GetAgentTask(context.Background(), parseUUID(taskID))
 			if err != nil {
@@ -272,6 +272,13 @@ func TestClaimAdaptiveThinkingCapability(t *testing.T) {
 				}
 				if resp.Agent.ThinkingLevel != want {
 					t.Fatalf("claim caps=%q level=%q, want %q", caps, resp.Agent.ThinkingLevel, want)
+				}
+				if want == "_adapt" {
+					if resp.IssueDescription != "decision summary" || resp.ThreadName != "adapt claim" {
+						t.Fatalf("missing adaptive summary: title=%q description=%q", resp.ThreadName, resp.IssueDescription)
+					}
+				} else if resp.IssueDescription != "" {
+					t.Fatal("non-adaptive claim sent decision summary")
 				}
 			}
 			var stored string

@@ -44,6 +44,37 @@ func AdaptThinkingCandidates(levels []ThinkingLevel) []ThinkingLevel {
 	return candidates
 }
 
+// ModelAdaptThinkingCandidates returns only levels the selected model and the
+// installed CLI both support. An unknown default must not borrow another model's
+// capabilities (in particular OpenCode's union used for fixed-level validation).
+func ModelAdaptThinkingCandidates(catalog Catalog, provider, model string) []ThinkingLevel {
+	if !catalog.Verified() || !ThinkingControlSupported(provider) || (model == "" && ThinkingRequiresExplicitModel(provider)) {
+		return nil
+	}
+	target := modelIDForCapabilityLookup(provider, model)
+	for _, m := range catalog.Models {
+		if (target == "" && !m.Default) || (target != "" && modelIDForCapabilityLookup(provider, m.ID) != target) {
+			continue
+		}
+		if m.Thinking == nil {
+			return nil
+		}
+		var levels []ThinkingLevel
+		for _, level := range AdaptThinkingCandidates(m.Thinking.SupportedLevels) {
+			// Discovery is external input too: never admit the reserved mode or
+			// a token that cannot be safely delivered to the runtime.
+			if !isValidDynamicThinkingValue(level.Value) || (catalog.CLIThinkingLevels != nil && !slices.Contains(catalog.CLIThinkingLevels, level.Value)) {
+				continue
+			}
+			if !slices.ContainsFunc(levels, func(l ThinkingLevel) bool { return l.Value == level.Value }) {
+				levels = append(levels, level)
+			}
+		}
+		return levels
+	}
+	return nil
+}
+
 // ── Cache ────────────────────────────────────────────────────────────
 //
 // Discovery is keyed on (provider, command, cliVersion). Bumping
