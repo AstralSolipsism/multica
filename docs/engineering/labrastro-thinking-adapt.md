@@ -284,6 +284,24 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 - **机器可读的结果**：除了打印，还输出一个 JSON 文件。每个 fixture 一项：id、范围（运行级或步级）、候选组、预期类别、`choice`、`probabilities` 和来源。
 - **fixture 导出**：渲染后的 fixture 导出为 JSON 测试数据，放在 `server/internal/daemon/testdata/` 一带。每项包括 id、范围、候选组、state、questions 和预期类别，预期类别是上面四类之一。另有测试保证导出文件与代码里的 fixture 一致。
 
+评测实现位于 `server/internal/daemon/thinking_evaluation_test.go`。从仓库的 `server/` 目录执行：
+
+```sh
+MULTICA_RUN_JEV_LIVE=1 MULTICA_JEV_EVAL_OUTPUT="${TMPDIR:-/tmp}/thinking-results.json" \
+  go test ./internal/daemon -run '^TestThinkingEvaluationLive$' -count=1 -v
+```
+
+测试读取 daemon 的同一套 `MULTICA_JEV_*` 配置，默认超时仍为每来源 1500ms。自部署来源可加 `MULTICA_JEV_SOURCES=self-hosted` 及其连接配置。任何回退或不符合预期的选择都会使测试失败；结果文件仍写出全部用例，含 `confidence`、`latency_ms`、`fallback` 和 `passed`。未指定输出位置时在系统临时目录创建 `multica-thinking-evaluation-*.json`，日志打印完整路径。
+
+导出文件为 `server/internal/daemon/testdata/thinking-fixtures.json`，`scope` 取 `run` / `step`，`candidate_group` 取 `claude` / `codex`，`expected_category` 取 `机械` / `低级报错` / `首次深层问题` / `重复失败`。`questions` 复用 Jev 客户端的有序编码，去掉格式化空白后与实际 HTTP 请求中的对象逐字节一致。更改判据或 fixture 后，用以下命令重新导出，再运行不带更新开关的测试检查一致性：
+
+```sh
+MULTICA_UPDATE_THINKING_FIXTURES=1 \
+  go test ./internal/daemon -run '^TestThinkingFixtureExport$' -count=1
+```
+
+`StepThinkingFixtures()` 和 `BuildStepThinkingState()` 供步级实现复用。后者接收工具输入摘要，对标明为文件内容的结果不外发正文，只保留省略标记；其他工具结果先脱敏，再保留首尾片段。
+
 ## 5. 运行级决策
 
 在 `resolveTaskModelSelection`（`server/internal/daemon/daemon.go`）定位模型之后：
@@ -292,6 +310,10 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 2. 目录未验证、候选不足 2 个，或 codex/omp 没有指定 model 时，不调用 Jev，也不注入挡位，记一条 info 日志，按回退处理（原因为 `no_candidates`）。
 3. 否则按 §4 构造判据和 state，调用 Jev，把结果写入 `ThinkingLevel`；回退时置空。
 4. fresh-session 重试和 codex 的第二次尝试复用同一个决策，不再调用 Jev。
+
+issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在领取的挡位仍为 `_adapt` 时附带 `issue_description`，复用已加载的 issue 行。Chat 和自动化分别使用领取载荷中的消息、自动化标题和描述。daemon 只选取 §4 的业务字段，先脱敏、限制各字段字数，再按该节的顺序编码 JSON。超过 4096 字节时，从最后一个文本字段向前缩短，保留有效 JSON 和所有字段名；运行级先缩短描述，步级先缩短运行目标。
+
+运行级和后续步级调用的共同挂钩是 `decideThinking(ctx, client, trace, request)`。`ThinkingDecisionTrace` 带 `TaskID`、`Scope`、`Step`（运行级为 0，表示无步序号）、`Provider`、`Model`，与外发请求分开。`ThinkingDecisionRecord` 保存这份追踪信息、脱敏后的请求、结果及回退原因，通过执行 context 中的 `thinkingRun` 保留到终态处理；本阶段不采集样本。
 
 选中的挡位走各运行时现有的注入路径：claude 的 `--effort`、codex 的 `model_reasoning_effort`、opencode 的 `--variant` 或 `#level`、pi/omp 的 `--thinking`、kimi/reasonix/hermes 的 `set_config_option`。跟随 CLI 配置和固定挡位的路径保持原样：不构造判据，不调用 Jev。
 
@@ -368,7 +390,7 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
     - 第 1 步用运行级的标；
     - 第 2 步起按 mod 的生效记录打标，带 `step`；
     - 撤销之后的步没有新决策，不打步级标，当前挡位仍是最后一个标的挡位，与锁定的挡位一致。
-  - 自适应：`mode: "adapt"`，带上决策的各项字段；回退时写明 `fallback`，`level` 按上面的规则取。
+  - 自适应：`mode: "adapt"`，带上决策的各项字段；回退时写明 `fallback`，`level` 按上面的规则取。运行级回退没有有效决策，不填 `confidence`、`probabilities` 或 `source`；实际耗时大于 0ms 时保留 `latency_ms`。
   - 固定挡位：`{mode: "fixed", level}`。
   - 跟随 CLI 配置：不打标。
 - **按步汇总**：一步可能有多条带标的消息，即这一步的第一条消息和思考消息。比较升降、统计次数都按 `step` 分组；不带 `step` 的标属于运行级决策，算作一步。

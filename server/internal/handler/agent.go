@@ -489,6 +489,10 @@ type AgentTaskResponse struct {
 	// said on this issue", so only the first may waive the workflow's comment
 	// scan. Absent on old servers, which is the safe reading (MUL-6984).
 	NewCommentsDeltaKnown bool `json:"new_comments_delta_known,omitempty"`
+
+	// IssueDescription is sent only for adaptive decisions, not the agent brief.
+	IssueDescription string `json:"issue_description,omitempty"`
+
 	// IssueStateDeltaKnown is the same contract as NewCommentsDeltaKnown, for
 	// the ISSUE record rather than its comments: the server compared this
 	// claim's title / description against the

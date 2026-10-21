@@ -191,6 +191,9 @@ type Task struct {
 	// (OL-187), sent only when the workspace has the feature on. The daemon
 	// hands it to the mod as received; see labrastro_ysk.go.
 	YouShouldKnow json.RawMessage `json:"you_should_know,omitempty"`
+
+	// IssueDescription is sent only for adaptive decisions, not the agent brief.
+	IssueDescription string `json:"issue_description,omitempty"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata the daemon
