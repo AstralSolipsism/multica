@@ -378,6 +378,34 @@ describe("DagView display switches", () => {
     );
   });
 
+  it("clears the bus selection when switching off removes its last external dependency", async () => {
+    // OL-1052 regression: a selected external bus whose card vanishes with the
+    // switch must leave the dropdown — count matches the canvas or clears.
+    const graph = makeGraph(
+      [
+        makeNode("r1"),
+        makeNode("t1", { parentIssueId: "r1" }),
+        makeNode("solo", { status: "done", statusCategory: "done" }),
+      ],
+      [{ id: "e-solo", source: "solo", target: "t1" }],
+    );
+    const { store } = setup(graph, (s) => {
+      s.setState({ dagLineId: "r1" });
+      s.getState().toggleDagShowSatisfiedDependencies();
+      s.getState().setDagSelectedDependencyIds(["e-solo"]);
+    });
+    await waitForCanvas();
+    const toolbar = toolbarSpy.mock.calls.at(-1)![0];
+    // Switch on: the satisfied external card paints, so its row lists.
+    expect(toolbar.busSelection?.map((row) => row.id)).toEqual(["e-solo"]);
+    // Switch off: the card and edge leave the painted plan, the selection clears.
+    act(() => store.getState().toggleDagShowSatisfiedDependencies());
+    await waitFor(() =>
+      expect(store.getState().dagSelectedDependencyIds).toBeNull(),
+    );
+    expect(toolbarSpy.mock.calls.at(-1)![0].busSelection).toBeNull();
+  });
+
   it("labels the breadcrumb with the open line and exposes the fallback retry", async () => {
     setup(fixtureGraph(), (s) => s.setState({ dagLineId: "r1" }));
     await waitForCanvas();

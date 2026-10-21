@@ -654,22 +654,77 @@ describe("dagBusSelectionRows", () => {
     ).toEqual([]);
   });
 
-  it("keeps satisfied originals listed inside a line even while the switch is off", () => {
+  it("keeps satisfied line-internal originals listed even while the switch is off", () => {
+    const lineGraph = g(
+      [
+        n("r1"),
+        n("a1", { parentIssueId: "r1", status: "done", statusCategory: "done" }),
+        n("a2", { parentIssueId: "r1" }),
+      ],
+      [{ id: "e-a1", source: "a1", target: "a2" }],
+    );
+    const line = computeDagLine(createDagModelIndex(lineGraph), "r1");
+    if (!line) throw new Error("no line r1");
+    const lineStates = dagDependencyStates({ kind: "line", line });
+    for (const showSatisfied of [false, true]) {
+      // Line-internal edges always paint (OL-1052): the dropdown matches.
+      expect(
+        dagBusSelectionRows({
+          dependencyIds: ["e-a1"],
+          edges: lineGraph.edges,
+          issuesById,
+          states: lineStates,
+          plan: dagLineLayoutInput(line),
+          showSatisfied,
+        }).map((row) => row.id),
+      ).toEqual(["e-a1"]);
+    }
+  });
+
+  it("drops satisfied line-external originals with the filtered plan while the switch is off", () => {
+    // The switch-off canvas paints dagLineWithSatisfiedFilter(models.line, false):
+    // satisfied external groups vanish, so their originals cannot list.
     const line = computeDagLine(index, "r2");
     if (!line) throw new Error("no line r2");
-    const linePlan = dagLineLayoutInput(line);
-    const lineStates = dagDependencyStates({ kind: "line", line });
-    // Line edges always paint (OL-1052): the dropdown must match the canvas,
-    // so a satisfied original stays listed while the switch is off.
+    const filteredPlan = dagLineLayoutInput(dagLineWithSatisfiedFilter(line, false));
     expect(
       dagBusSelectionRows({
         dependencyIds: ["e-a1", "e-a2"],
         edges: graph.edges,
         issuesById,
-        states: lineStates,
-        plan: linePlan,
+        states: dagDependencyStates({ kind: "line", line }),
+        plan: filteredPlan,
         showSatisfied: false,
       }).map((row) => row.id),
-    ).toEqual(["e-a1", "e-a2"]);
+    ).toEqual(["e-a2"]);
+  });
+
+  it("keeps satisfied originals listed in a focus view even while the switch is off", () => {
+    const focusGraph = g(
+      [
+        n("root"),
+        n("a", { parentIssueId: "root", status: "done", statusCategory: "done" }),
+        n("seed", { parentIssueId: "root" }),
+        n("after"),
+      ],
+      [
+        { id: "e-a-seed", source: "a", target: "seed" },
+        { id: "e-seed-after", source: "seed", target: "after" },
+        { id: "e-a-after", source: "a", target: "after" },
+      ],
+    );
+    const model = dagFocusCanvasModel(computeDagFocus(createDagModelIndex(focusGraph), "seed"));
+    const focusStates = dagDependencyStates(model);
+    // Focus edges always paint (OL-1052): both satisfied originals list.
+    expect(
+      dagBusSelectionRows({
+        dependencyIds: ["e-a-seed", "e-a-after"],
+        edges: focusGraph.edges,
+        issuesById,
+        states: focusStates,
+        plan: model.plan,
+        showSatisfied: false,
+      }).map((row) => row.id),
+    ).toEqual(["e-a-seed", "e-a-after"]);
   });
 });

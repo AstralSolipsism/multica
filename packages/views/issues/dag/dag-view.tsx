@@ -76,8 +76,8 @@ export interface DagFocusRequest {
   nonce: number;
 }
 
-/** An emptied bus dropdown (every original satisfied while its switch is off)
- *  clears the bus selection instead of showing "汇总 0 条依赖". */
+/** An emptied bus dropdown (nothing left painted for the selection) clears
+ *  the bus selection instead of showing "汇总 0 条依赖". */
 export function useDagEmptyBusSelectionReset(
   storeApi: ReturnType<typeof useViewStoreApi>,
   busSelection: DagBusSelectionItem[] | null,
@@ -367,7 +367,7 @@ export function DagView({
 
   // The bus dropdown lists the clicked segment's original dependencies as
   // "source → target" rows; endpoints resolve against the full graph, and
-  // satisfied originals follow their display switch.
+  // rows exist only while the painted plan still carries the original.
   const busSelection = useMemo<DagBusSelectionItem[] | null>(() => {
     if (!selectedDependencyIds?.length || !graph || !paintedModel || !paintedPlan) return null;
     return dagBusSelectionRows({
@@ -380,8 +380,8 @@ export function DagView({
     });
   }, [selectedDependencyIds, graph, issuesById, paintedModel, paintedPlan, showSatisfied]);
 
-  // An emptied dropdown (everything satisfied while its switch is off)
-  // clears the bus selection instead of showing "汇总 0 条依赖".
+  // An emptied dropdown (nothing left painted for the selection) clears the
+  // bus selection instead of showing "汇总 0 条依赖".
   useDagEmptyBusSelectionReset(storeApi, busSelection);
 
   // Focus owns the bidirectional Q11 count; the overview highlight keeps its
