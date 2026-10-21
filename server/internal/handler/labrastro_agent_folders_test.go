@@ -185,6 +185,25 @@ func TestLabrastroAgentFolderNamesAndRequestValidation(t *testing.T) {
 	}
 }
 
+func TestLabrastroAgentPlacementRejectsSystemAgents(t *testing.T) {
+	fx := agentFolderFixture(t)
+	folder := createAgentFolder(t, fx, "folder", "")
+	system := fx.Agent(t, "system carrier", "", testutil.Cols{"kind": "system"})
+	// System agents are execution carriers, not tree citizens: the placement
+	// endpoint 404s like GetAgentInWorkspace and writes nothing.
+	wantAgentFolderError(t, agentFolderCall(t, fx, testUserID, "PUT", "/api/agent-placements/"+system, map[string]string{"folder_id": folder}), 404, "not_found")
+	if fx.Count(t, "SELECT count(*) FROM labrastro_agent_placement WHERE workspace_id=$1", fx.WorkspaceID) != 0 {
+		t.Fatal("system agent placement was written")
+	}
+	// A pre-existing placement for a system agent is dangling and is pruned by
+	// the next successful tree mutation.
+	fx.Exec(t, "INSERT INTO labrastro_agent_placement(workspace_id,agent_id,folder_id) VALUES ($1,$2,$3)", fx.WorkspaceID, system, folder)
+	createAgentFolder(t, fx, "cleanup", "")
+	if fx.Count(t, "SELECT count(*) FROM labrastro_agent_placement WHERE workspace_id=$1", fx.WorkspaceID) != 0 {
+		t.Fatal("system agent placement was not cleaned")
+	}
+}
+
 func TestLabrastroAgentFolderDeletePromotesAtomically(t *testing.T) {
 	for _, rootDestination := range []bool{true, false} {
 		t.Run(map[bool]string{true: "root", false: "parent"}[rootDestination], func(t *testing.T) {
