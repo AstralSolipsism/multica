@@ -64,13 +64,11 @@ import { canEditSkill } from "../hooks/use-can-edit-skill";
 import { originSourceUrl, readOrigin } from "../lib/origin";
 import { rowMatchesFilters, type SkillRow } from "./skill-list-filter";
 import { CreateSkillDialog } from "./create-skill-dialog";
-// Labrastro fork: folder tree, package import and move/detach wiring (OL-104).
+// Labrastro fork: folder explorer, package import and move/detach wiring.
 import {
-  pruneToFolder,
-  SkillFolderTreeLayout,
   SkillPackageImportAction,
-  useSkillsPageFolderTree,
-} from "./skills-page-folder-tree";
+  useSkillsPageFolderExplorer,
+} from "./skills-page-folder-explorer";
 import {
   useSkillsViewStore,
   DEFAULT_HIDDEN_COLUMNS,
@@ -238,14 +236,21 @@ function CheckboxCell({
   );
 }
 
-function NameCell({ row }: { row: SkillRow }) {
+function NameCell({ row, pathHint }: { row: SkillRow; pathHint?: string }) {
   const { t } = useT("skills");
   const { skill, canEdit } = row;
   return (
     <ListGridCell className="gap-1.5">
-      <span className="min-w-0 truncate text-body font-medium">
-        {skill.name}
-      </span>
+      <div className="min-w-0 flex flex-col">
+        <span className="min-w-0 truncate text-body font-medium">
+          {skill.name}
+        </span>
+        {pathHint && (
+          <span className="min-w-0 truncate text-caption text-muted-foreground">
+            {pathHint}
+          </span>
+        )}
+      </div>
       {!canEdit && (
         <Tooltip>
           <TooltipTrigger
@@ -654,10 +659,12 @@ export default function SkillsPage() {
     members.find((m: MemberWithUser) => m.user_id === currentUserId)?.role ??
     null;
   const isAdmin = myRole === "owner" || myRole === "admin";
-  const skillFolders = useSkillsPageFolderTree({
+  const skillFolders = useSkillsPageFolderExplorer({
     wsId,
     currentUserId,
     isAdmin,
+    search,
+    filters,
     onMoved: () => setSelectedIds(new Set()),
   });
 
@@ -690,12 +697,12 @@ export default function SkillsPage() {
     });
   }, [skills, assignments, membersById, runtimesById, currentUserId, myRole]);
 
-  // Visible rows: name search + filters, then sort.
+  // Matching skill rows: name search + filters, then sort. The fork mount
+  // below adds direct folders and package candidates around these rows.
   const rows = useMemo<SkillRow[]>(() => {
     const filtered = allRows.filter((row) =>
       rowMatchesFilters(row, filters, search),
     );
-    pruneToFolder(filtered, skillFolders.rowFilter);
 
     const dir = sortDirection === "asc" ? 1 : -1;
     filtered.sort((a, b) => {
@@ -719,7 +726,8 @@ export default function SkillsPage() {
       );
     });
     return filtered;
-  }, [allRows, search, filters, sortField, sortDirection, skillFolders.rowFilter]);
+  }, [allRows, search, filters, sortField, sortDirection]);
+  const listModel = skillFolders.organizeRows(rows);
 
   // Row virtualization — Linear-style: the virtualizer only does the math
   // (visible index range + offsets); the DOM stays ours. Offsets become
@@ -730,22 +738,22 @@ export default function SkillsPage() {
   // scroll structure was retired.
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
-    count: rows.length,
+    count: listModel.rows.length,
     getScrollElement: () => listScrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 10,
   });
 
   const handleCreated = (skill: Skill) => {
-    navigation.push(paths.skillDetail(skill.id));
+    navigation.push(skillFolders.withCurrentFolder(paths.skillDetail(skill.id)));
   };
 
-  const selectedRows = rows.filter((row) => selectedIds.has(row.skill.id));
-  const allSelected = rows.length > 0 && selectedRows.length === rows.length;
+  const selectedRows = listModel.skillRows.filter((row) => selectedIds.has(row.skill.id));
+  const allSelected = listModel.skillRows.length > 0 && selectedRows.length === listModel.skillRows.length;
   const someSelected = selectedRows.length > 0 && !allSelected;
   const handleToggleAll = () => {
     setSelectedIds(
-      allSelected ? new Set() : new Set(rows.map((r) => r.skill.id)),
+      allSelected ? new Set() : new Set(listModel.skillRows.map((row) => row.skill.id)),
     );
   };
 
@@ -780,7 +788,7 @@ export default function SkillsPage() {
   }
 
   const totalCount = skills.length;
-  const showEmpty = !isLoading && totalCount === 0;
+  const showEmpty = !isLoading && totalCount === 0 && !skillFolders.treeReady && !skillFolders.hasFolders;
   const supportingQueryDown =
     !!agentsError || !!membersError || !!runtimesError;
 
@@ -815,6 +823,7 @@ export default function SkillsPage() {
           <span>{t(($) => $.page.supporting_data_warning)}</span>
         </div>
       )}
+      {skillFolders.notice}
 
       {isLoading ? (
         <div className="flex-1 overflow-y-auto @container">
@@ -825,7 +834,8 @@ export default function SkillsPage() {
           <EmptyState onCreate={() => setCreateOpen(true)} />
         </div>
       ) : (
-        <SkillFolderTreeLayout panel={skillFolders.panel}>
+        <div className="flex min-h-0 flex-1 flex-col">
+          {skillFolders.navigationBar}
           <SkillListToolbar
             search={search}
             onSearchChange={setSearch}
@@ -839,9 +849,10 @@ export default function SkillsPage() {
             hiddenColumns={hiddenColumns}
             onToggleColumn={toggleColumn}
             allRows={allRows}
-            visibleCount={rows.length}
+            visibleCount={listModel.skillRows.length}
+            countLabel={skillFolders.countLabel(listModel.skillRows.length, allRows.length)}
+            countTitle={skillFolders.countTitle()}
           />
-          {skillFolders.filterChip}
           <div
             ref={listScrollRef}
             className="min-h-0 flex-1 overflow-auto @container"
@@ -866,66 +877,71 @@ export default function SkillsPage() {
                   virtualPadding.bottom + LIST_GRID_BOTTOM_CLEARANCE,
               }}
             >
-              {rows.length === 0 && (
+              {listModel.rows.length === 0 && (
                 <div className="col-span-full py-16 text-center text-body text-muted-foreground">
-                  {t(($) => $.page.no_matches.title)}
+                  {listModel.emptyMessage ?? t(($) => $.page.no_matches.title)}
                 </div>
               )}
               {virtualItems.map((vi) => {
-                const row = rows[vi.index];
-                if (!row) return null;
+                const listRow = listModel.rows[vi.index];
+                if (!listRow) return null;
+                if (listRow.kind !== "skill") return skillFolders.renderRow(listRow);
+                const row = listRow.row;
                 return (
-              <ListGridRow
-                key={row.skill.id}
-                className={`cursor-pointer ${
-                  selectedIds.has(row.skill.id) ? "bg-accent/30" : ""
-                }`}
-                {...rowLink(paths.skillDetail(row.skill.id), row.skill.name)}
-              >
-                <CheckboxCell
-                  checked={selectedIds.has(row.skill.id)}
-                  onToggle={() => toggleSelected(row.skill.id)}
-                />
-                <NameCell row={row} />
-                {isColVisible("usedBy") ? (
-                  <UsedByCell agents={row.agents} />
-                ) : (
-                  <ListGridCell className="px-0" />
-                )}
-                {isColVisible("source") ? (
-                  <SourceCell skill={row.skill} runtime={row.runtime} />
-                ) : (
-                  <ListGridCell className="hidden px-0 @2xl:flex" />
-                )}
-                {isColVisible("creator") ? (
-                  <CreatorCell creator={row.creator} />
-                ) : (
-                  <ListGridCell className="hidden px-0 @2xl:flex" />
-                )}
-                {isColVisible("updated") ? (
-                  <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
-                    {timeAgo(row.skill.updated_at)}
-                  </ListGridCell>
-                ) : (
-                  <ListGridCell className="hidden px-0 @2xl:flex" />
-                )}
-                {isColVisible("created") ? (
-                  <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
-                    {timeAgo(row.skill.created_at)}
-                  </ListGridCell>
-                ) : (
-                  <ListGridCell className="hidden px-0 @2xl:flex" />
-                )}
-                <ListGridCell className="justify-end px-0">
-                  <SkillRowActions row={row} ctx={actionsCtx} />
-                </ListGridCell>
-              </ListGridRow>
+                  <ListGridRow
+                    key={row.skill.id}
+                    className={`cursor-pointer ${
+                      selectedIds.has(row.skill.id) ? "bg-accent/30" : ""
+                    }`}
+                    {...rowLink(
+                      skillFolders.withCurrentFolder(paths.skillDetail(row.skill.id)),
+                      row.skill.name,
+                    )}
+                  >
+                    <CheckboxCell
+                      checked={selectedIds.has(row.skill.id)}
+                      onToggle={() => toggleSelected(row.skill.id)}
+                    />
+                    <NameCell row={row} pathHint={listRow.pathHint} />
+                    {isColVisible("usedBy") ? (
+                      <UsedByCell agents={row.agents} />
+                    ) : (
+                      <ListGridCell className="px-0" />
+                    )}
+                    {isColVisible("source") ? (
+                      <SourceCell skill={row.skill} runtime={row.runtime} />
+                    ) : (
+                      <ListGridCell className="hidden px-0 @2xl:flex" />
+                    )}
+                    {isColVisible("creator") ? (
+                      <CreatorCell creator={row.creator} />
+                    ) : (
+                      <ListGridCell className="hidden px-0 @2xl:flex" />
+                    )}
+                    {isColVisible("updated") ? (
+                      <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
+                        {timeAgo(row.skill.updated_at)}
+                      </ListGridCell>
+                    ) : (
+                      <ListGridCell className="hidden px-0 @2xl:flex" />
+                    )}
+                    {isColVisible("created") ? (
+                      <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
+                        {timeAgo(row.skill.created_at)}
+                      </ListGridCell>
+                    ) : (
+                      <ListGridCell className="hidden px-0 @2xl:flex" />
+                    )}
+                    <ListGridCell className="justify-end px-0">
+                      <SkillRowActions row={row} ctx={actionsCtx} />
+                    </ListGridCell>
+                  </ListGridRow>
                 );
               })}
             </ListGridBody>
           </ListGrid>
           </div>
-        </SkillFolderTreeLayout>
+        </div>
       )}
 
       <SkillBatchToolbar

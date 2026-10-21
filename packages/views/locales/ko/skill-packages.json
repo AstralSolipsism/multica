@@ -21,7 +21,18 @@
     "package_forbidden": "패키지를 가져온 사람 또는 관리자만 이 작업을 수행할 수 있습니다.",
     "expand_folder": "\"{{name}}\" 펼치기",
     "collapse_folder": "\"{{name}}\" 접기",
-    "clear_filter": "필터 지우기"
+    "clear_filter": "필터 지우기",
+    "breadcrumb_aria": "\ud3f4\ub354 위치",
+    "up": "상위 수준으로",
+    "managed_new_folder": "패키지 \ud3f4\ub354의 내용은 패키지를 따릅니다.",
+    "flat_results": "모든 \ud3f4\ub354의 결과 표시 중",
+    "empty_folder": "이 \ud3f4\ub354는 비어 있습니다.",
+    "empty_root": "아직 스킬이나 \ud3f4\ub354가 없습니다.",
+    "unavailable": "\ud3f4\ub354를 사용할 수 없어 스킬을 평면 목록으로 표시합니다.",
+    "open_folder": "\"{{name}}\" 열기",
+    "folder_skill_count_other": "스킬 {{count}}개",
+    "folder_count": "현재 \ud3f4\ub354 {{visible}}개 / 워크스페이스 전체 {{total}}개",
+    "folder_count_title": "현재 \ud3f4\ub354의 직접 스킬 수 / 워크스페이스 전체 스킬 수"
   },
   "folder_form": {
     "create_title": "새 폴더",
@@ -37,7 +48,7 @@
   "folder_move": {
     "title": "폴더 이동",
     "description": "\"{{name}}\"의 이동 위치:",
-    "root_option": "최상위",
+    "root_option": "루트",
     "confirm": "이동",
     "moving": "이동 중...",
     "cancel": "취소",
@@ -45,7 +56,7 @@
   },
   "folder_delete": {
     "title": "이 폴더를 삭제할까요?",
-    "description": "\"{{name}}\"이(가) 삭제됩니다. 포함된 스킬과 하위 폴더는 한 단계 위로 이동하며, 워크스페이스에서 삭제되는 것은 없습니다.",
+    "description": "\"{{name}}\"이(가) 삭제됩니다. 포함된 스킬과 하위 폴더는 한 단계 위로 이동하며, 스킬은 삭제되지 않습니다.",
     "confirm": "삭제",
     "deleting": "삭제 중...",
     "cancel": "취소",
@@ -54,7 +65,7 @@
   "move_skills": {
     "title_other": "스킬 {{count}}개 이동",
     "destination": "이동 위치",
-    "uncategorized": "미분류",
+    "root_option": "루트",
     "confirm": "이동",
     "moving": "이동 중...",
     "cancel": "취소",

@@ -460,7 +460,9 @@ Handwritten hooks in existing upstream files:
 | `packages/core/api/client.ts` | Skill integration uses two mounts: the `installLabrastroApi` import and its call after the class (OL-130 aggregates the fork modules and checks method-name collisions; see [frontend API touchpoints](labrastro-frontend-api.md#upstream-touchpoints)). The 15 workspace-pinned folder/package/placement methods (zod/`parseWithFallback`, null on malformed responses) and `importSkillParsed` (`Promise<Skill \| null>`, so a malformed import stays indeterminate) live in fork `packages/core/api/labrastro-skill-api.ts`, typed onto `ApiClient` by module augmentation. Upstream `importSkill` keeps its `Promise<Skill>` contract |
 | `packages/core/package.json`, `packages/core/skills/index.ts` | Export the new `skills/package-queries` entry and query hooks |
 | `packages/core/types/index.ts` | Export `SkillImportDiagnostic` for UI consumers |
-| `packages/views/skills/components/skills-page.tsx` | `useSkillsPageFolderTree` call, `treeActions` context field, `pruneToFolder` in the rows memo, `onImportPackage` header prop with `SkillPackageImportAction`, `SkillFolderTreeLayout` around the list, filter-strip and dialog slots. Modified upstream lines: the rows memo dependency list, the one-line error-state header, and the list fragment's open/close tags. Query, selection, detach, panel, strip and dialogs live in fork `skills-page-folder-tree.tsx`; the toolbar entry is here, not a separate `skill-list-toolbar.tsx` edit |
+| `packages/views/skills/components/skills-page.tsx` | `useSkillsPageFolderExplorer` call, `treeActions` context field, `listModel` / `organizeRows` and `renderRow` list mounts, `withCurrentFolder` around detail links, `navigationBar`, `notice` and `dialogs` slots, and toolbar count props. The virtualizer counts the combined folder/skill/candidate rows, while selection uses only `listModel.skillRows`; `NameCell` accepts an optional flat-view path hint. URL location/fallback, direct-row modeling, folder/package menus, package candidates, detach and dialogs live in fork `skills-page-folder-explorer.tsx`; folder form/move/delete dialogs live in `skill-folder-dialogs.tsx` |
+| `packages/views/skills/components/skill-list-toolbar.tsx` | Optional `countLabel` / `countTitle` mounts. The fork hook supplies the folder view's direct-skill/workspace-total wording; flat narrowed views retain the original matching/total count |
+| `packages/views/skills/components/skill-detail-page.tsx` | `skillsPath` mount derived by `folderLocationPath` from the incoming `folder` query, used by delete, not-found and breadcrumb returns so they restore the originating folder |
 | `packages/views/skills/components/skill-list-actions.tsx` | `treeActions?: SkillTreeActions` context field; `SkillTreeRowMenuItems` and `SkillTreeBatchMoveAction` mounts (fork `skill-tree-actions.tsx`); `useBatchRefreshNotices` mounts in `UpdateSkillsDialog` (fork `refresh-skill-notices.tsx`). Modified upstream line: `const refreshed = await api.refreshSkill(...)` keeps the result |
 | `packages/views/skills/components/create-skill-dialog.tsx` | `useImportNotices` mounts in the URL and local forms, the unreadable-result guard and the `multiple_skills` prepare-error key. Modified upstream lines: the `importSkillParsed` call and the archive error expression, now prefixed by `localArchiveImportError` so local `multiple_skills` and server sibling-archive errors share one localized recovery from `fork-ui:skills.create.local.multiple_skills`. Notice view and wording live in fork `create-skill-notices.tsx` |
 | `packages/views/skills/components/refresh-skill-dialog.tsx` | `useRefreshSkillNotices` mounts only: hook call, `hold` after the detail-cache update, and the notice-view return; notice state and dismissal live in fork `refresh-skill-notices.tsx` |
@@ -476,10 +478,12 @@ Handwritten hooks in existing upstream files:
 New handwritten modules include the server `labrastro_skill_*.go` handlers and
 migrator hooks, `packages/core/api/labrastro-skill-schemas.ts` (extended by #60),
 `packages/core/skills/package-queries.ts`, package/folder/move dialogs and tree
-models under `packages/views/skills/`, `skill-diagnostics-notice.tsx`, the
-OL-107 extraction modules (`packages/core/api/labrastro-skill-api.ts`,
-`skills-page-folder-tree.tsx`, `skill-tree-actions.tsx`,
-`refresh-skill-notices.tsx`, `create-skill-notices.tsx`), the five
+models under `packages/views/skills/`, the shared
+`packages/views/common/folder-explorer/` model and components,
+`skill-diagnostics-notice.tsx`, the OL-107 extraction modules
+(`packages/core/api/labrastro-skill-api.ts`, `skill-tree-actions.tsx`,
+`refresh-skill-notices.tsx`, `create-skill-notices.tsx`), the OL-1029 explorer
+modules (`skills-page-folder-explorer.tsx`, `skill-folder-dialogs.tsx`), the five
 `skill-packages.json` locale files, and
 `server/cmd/multica/cmd_labrastro_skill_package.go` (registered with `init()`;
 `cli.AtLeastAPITimeout(60*time.Second)` on both HTTP client and request context).
@@ -501,7 +505,10 @@ records the 14 deny-by-default skill-package routes alongside other fork routes.
 It is not an upstream file.
 
 New fork tests include `apps/web/next.config.test.ts` (60,000 ms and API rewrite),
-the core package API/query tests, tree/model/dialog/picker suites, the two
+the core package API/query tests, tree/model/dialog/picker suites,
+`common/folder-explorer/` model and component tests,
+`skills-page.folder-explorer.test.tsx` (root/direct rows, URL history/fallback,
+managed creation, candidates, flat paths and tree-error recovery), the two
 binding-entry tests, and `create-skill-notices.test.tsx`,
 `refresh-skill-notices.test.tsx` and `refresh-skill-notices.batch.test.tsx`.
 OL-107 moved those three suites' cases verbatim out of
