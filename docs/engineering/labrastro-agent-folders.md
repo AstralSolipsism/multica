@@ -193,12 +193,12 @@ unchanged.
 
 | Upstream file | Retained addition |
 | --- | --- |
-| `packages/views/agents/components/agents-page.tsx` | Hook call, `navigationBar`/`notice`/`dialogs` mounts, `organizeRows` list model, aux-row render branch, path-hint and leader-badge props on `NameCell`, `withCurrentFolder` on detail links, `treeActions` props, tree-loading skeleton gate, `hasFolders` in the empty check |
-| `packages/views/agents/components/agent-row-actions.tsx` | `treeActions` prop and one `AgentTreeRowMenuItems` mount |
-| `packages/views/agents/components/agent-batch-toolbar.tsx` | `treeActions` prop and one `AgentTreeBatchMoveAction` mount |
-| `packages/views/agents/components/agent-detail-page.tsx` | `agentsPath` (via `folderLocationPath` + the `folder` param) feeding every back-to-list link |
-| `packages/views/agents/components/agents-page.test.tsx` | Folder-tree query mock returning an empty tree |
-| `packages/views/agents/components/agent-detail-page.test.tsx` | Back-link folder-param test |
+| `packages/views/agents/components/agents-page.tsx` | `useAgentsPageFolderExplorer` call, `listModel` / `organizeRows` and the `renderRow` aux-row branch, `navigationBar` / `notice` / `dialogs` slots, `withCurrentFolder` around detail links, `treeActions` props on the row kebab and batch toolbar. Modified upstream lines: the `NameCell` signature and its optional leader-badge / path-hint branches (the no-hint description branch keeps its text), virtualizer `count`, selection and select-all inputs, `visibleCount`, the empty-list condition and message, `showEmpty` (the upstream empty workspace remains; folders keep their rows), and the loading condition (includes the folder-tree request). The row JSX retains its original indentation; `git diff` and `git diff -w` agree |
+| `packages/views/agents/components/agent-row-actions.tsx` | Modified upstream lines: the props interface, the destructured signature, and one `AgentTreeRowMenuItems` mount after the duplicate item (fork `agent-tree-actions.tsx`) |
+| `packages/views/agents/components/agent-batch-toolbar.tsx` | Modified upstream lines: the props interface, the destructured signature, and one `AgentTreeBatchMoveAction` mount between set-access and archive (fork `agent-tree-actions.tsx`) |
+| `packages/views/agents/components/agent-detail-page.tsx` | `agentsPath` derived by `folderLocationPath` from the incoming `folder` query. Modified upstream lines: both error-state `BackHeader` paths and `AppLink` destinations, the `DetailHeader` `backHref`, and the archive-confirm `navigation.push` |
+| `packages/views/agents/components/agents-page.test.tsx` | Folder-tree query mock returning an empty tree (two added mock branches) |
+| `packages/views/agents/components/agent-detail-page.test.tsx` | `renderPage` accepts a search string; one back-link folder-param test |
 | `packages/views/locales/index.ts`, `packages/views/i18n/resources-types.ts` | `agent-folders` namespace registration |
 
 E2E: `e2e/agent-folders.spec.ts` drives the acceptance flow (create folder in

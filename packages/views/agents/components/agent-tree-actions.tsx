@@ -21,12 +21,10 @@ import type { AgentListRow } from "./agents-page";
  *  when the workspace folder tree loaded; absent callers keep the pre-tree
  *  flat behavior. */
 export interface AgentTreeActions {
-  /** "place" inside a squad folder (the member keeps its squad folder and
-   *  additionally gets a custom placement); "move" everywhere else. */
+  /** "place" inside a squad folder in the hierarchy view (the member keeps
+   *  its squad folder and additionally gets a custom placement); "move"
+   *  everywhere else, including flat search/filter results. */
   defaultVariant: "move" | "place";
-  /** Agents belonging to at least one unarchived squad (moves are
-   *  placement-only for them). */
-  squadMemberIds: ReadonlySet<string>;
   /** Open the move dialog for the given agents. */
   onMove: (agents: Agent[], variant: "move" | "place") => void;
 }
@@ -57,7 +55,9 @@ export function AgentTreeRowMenuItems({
 }
 
 /** Batch toolbar move button; disabled with a reason tooltip when the
- *  selection contains agents the caller may not move. */
+ *  selection contains agents the caller may not move. Inside a squad folder
+ *  the whole flow uses the "place" wording — members never leave the squad
+ *  folder, they only gain a custom placement. */
 export function AgentTreeBatchMoveAction({
   rows,
   treeActions,
@@ -68,6 +68,7 @@ export function AgentTreeBatchMoveAction({
   const { t } = useT("agent-folders");
   if (!treeActions) return null;
 
+  const variant = treeActions.defaultVariant;
   const allMovable = rows.every((row) => row.canManage);
   const moveButton = (
     <Button
@@ -77,13 +78,15 @@ export function AgentTreeBatchMoveAction({
       onClick={() =>
         treeActions.onMove(
           rows.map((row) => row.agent),
-          "move",
+          variant,
         )
       }
       className={cn(!allMovable && "pointer-events-none")}
     >
       <FolderInput className="mr-1 size-3.5" />
-      {t(($) => $.move_agents.batch_move)}
+      {variant === "place"
+        ? t(($) => $.move_agents.batch_place)
+        : t(($) => $.move_agents.batch_move)}
     </Button>
   );
 

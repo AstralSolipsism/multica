@@ -136,7 +136,7 @@ test("agents page folder explorer: folders, squad folders, and placements", asyn
 
     // 4. Move the squad folder into Design.
     await page.getByRole("button", { name: "Actions for Game design" }).click();
-    await page.getByRole("menuitem", { name: "Move" }).click();
+    await page.getByRole("menuitem", { name: "Move to..." }).click();
     await page.getByRole("button", { name: "Design", exact: true }).click();
     await page.getByRole("button", { name: "Move", exact: true }).click();
     // The squad folder left the root.

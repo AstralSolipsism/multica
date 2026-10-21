@@ -74,11 +74,11 @@ export function AgentFolderFormDialog({
               name: trimmed,
             });
       if (saved === null) {
-        setError(t(($) => $.folder_form.failed));
-        setSaving(false);
+        // Unreadable response: the write may have committed. Show an
+        // indeterminate result instead of claiming success or failure.
+        setError(t(($) => $.folder_form.unconfirmed));
         return;
       }
-      await invalidateAgentFolderQueries(qc, wsId);
       onClose();
     } catch (err) {
       setError(
@@ -86,6 +86,10 @@ export function AgentFolderFormDialog({
           ? err.message
           : t(($) => $.folder_form.failed),
       );
+    } finally {
+      // The tree refreshes on every settled write, including unreadable and
+      // failed responses (the server may have committed anyway).
+      await invalidateAgentFolderQueries(qc, wsId);
       setSaving(false);
     }
   };
@@ -231,11 +235,10 @@ export function AgentFolderMoveDialog({
             parentId: target ?? "",
           });
       if (moved === null) {
-        setError(t(($) => $.folder_move.failed));
-        setMoving(false);
+        // Unreadable response: the write may have committed.
+        setError(t(($) => $.folder_move.unconfirmed));
         return;
       }
-      await invalidateAgentFolderQueries(qc, wsId);
       onClose();
     } catch (err) {
       setError(
@@ -243,6 +246,8 @@ export function AgentFolderMoveDialog({
           ? err.message
           : t(($) => $.folder_move.failed),
       );
+    } finally {
+      await invalidateAgentFolderQueries(qc, wsId);
       setMoving(false);
     }
   };
@@ -343,11 +348,10 @@ export function AgentFolderDeleteDialog({
     try {
       const result = await api.deleteAgentFolder(wsId, folder.id);
       if (result === null) {
-        setError(t(($) => $.folder_delete.failed));
-        setDeleting(false);
+        // Unreadable response: the delete may have committed.
+        setError(t(($) => $.folder_delete.unconfirmed));
         return;
       }
-      await invalidateAgentFolderQueries(qc, wsId);
       onDeleted();
       onClose();
     } catch (err) {
@@ -356,6 +360,8 @@ export function AgentFolderDeleteDialog({
           ? err.message
           : t(($) => $.folder_delete.failed),
       );
+    } finally {
+      await invalidateAgentFolderQueries(qc, wsId);
       setDeleting(false);
     }
   };
@@ -459,6 +465,8 @@ export function MoveAgentsDialog({
     setMoving(true);
     let done = 0;
     let failed = 0;
+    // Unreadable responses are not failures: the write may have committed.
+    let unconfirmed = 0;
     try {
       for (const agent of agents) {
         try {
@@ -467,14 +475,14 @@ export function MoveAgentsDialog({
             agent.id,
             target ?? "",
           );
-          if (result === null) failed++;
+          if (result === null) unconfirmed++;
           else done++;
         } catch {
           failed++;
         }
       }
       await invalidateAgentFolderQueries(qc, wsId);
-      if (failed === 0) {
+      if (failed === 0 && unconfirmed === 0) {
         toast.success(
           variant === "place"
             ? t(($) => $.move_agents.place_done, { count: done })
@@ -482,6 +490,15 @@ export function MoveAgentsDialog({
         );
         handleOpenChange(false);
         onMoved?.();
+      } else if (failed === 0) {
+        toast.error(
+          t(($) => $.move_agents.unconfirmed, {
+            done,
+            total: agents.length,
+            count: unconfirmed,
+          }),
+        );
+        handleOpenChange(false);
       } else {
         toast.error(
           done > 0

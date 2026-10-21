@@ -167,13 +167,13 @@ function AgentFolderRowMenu({
             {canManageSquadFolder ? (
               <DropdownMenuItem onClick={onMove}>
                 <FolderInput />
-                {t(($) => $.tree.move_folder)}
+                {t(($) => $.tree.move_to_folder)}
               </DropdownMenuItem>
             ) : (
               <DropdownMenuItem disabled>
                 <FolderInput />
                 <span className="flex min-w-0 flex-col">
-                  <span>{t(($) => $.tree.move_folder)}</span>
+                  <span>{t(($) => $.tree.move_to_folder)}</span>
                   <span className="whitespace-normal text-caption text-muted-foreground">
                     {t(($) => $.tree.squad_move_forbidden)}
                   </span>
@@ -462,10 +462,11 @@ export function useAgentsPageFolderExplorer({
   const treeActions: AgentTreeActions | undefined =
     treeReady && placements && squadMemberships
       ? {
-          // Inside a squad folder the row action is "also place": the member
-          // never leaves the squad folder, it only gains a custom placement.
-          defaultVariant: currentSquad ? "place" : "move",
-          squadMemberIds: new Set(squadMemberships.keys()),
+          // "Also place" applies only inside a squad folder in the hierarchy
+          // view: the member never leaves the squad folder, it only gains a
+          // custom placement. Flat search/filter results and other locations
+          // keep the plain "move" wording.
+          defaultVariant: !isFlatView && currentSquad ? "place" : "move",
           onMove: (agents, variant) => setMoveAgents({ agents, variant }),
         }
       : undefined;

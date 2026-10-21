@@ -18,7 +18,8 @@
     "rename_folder": "이름 변경",
     "move_folder": "이동",
     "delete_folder": "삭제",
-    "squad_move_forbidden": "스쿼드 생성자 또는 워크스페이스 소유자/관리자만 이 스쿼드 폴더를 이동할 수 있습니다."
+    "squad_move_forbidden": "스쿼드 생성자 또는 워크스페이스 소유자/관리자만 이 스쿼드 폴더를 이동할 수 있습니다.",
+    "move_to_folder": "이동..."
   },
   "folder_form": {
     "create_title": "새 폴더",
@@ -29,7 +30,8 @@
     "save": "저장",
     "saving": "저장 중...",
     "cancel": "취소",
-    "failed": "폴더를 저장할 수 없습니다. 다시 시도하세요."
+    "failed": "폴더를 저장할 수 없습니다. 다시 시도하세요.",
+    "unconfirmed": "결과를 확인할 수 없습니다. 목록을 새로고침했으니 확인 후 다시 시도하세요."
   },
   "folder_move": {
     "title": "폴더 이동",
@@ -39,7 +41,8 @@
     "confirm": "이동",
     "moving": "이동 중...",
     "cancel": "취소",
-    "failed": "폴더를 이동할 수 없습니다. 다시 시도하세요."
+    "failed": "폴더를 이동할 수 없습니다. 다시 시도하세요.",
+    "unconfirmed": "결과를 확인할 수 없습니다. 목록을 새로고침했으니 확인 후 다시 시도하세요."
   },
   "folder_delete": {
     "title": "이 폴더를 삭제할까요?",
@@ -47,7 +50,8 @@
     "confirm": "삭제",
     "deleting": "삭제 중...",
     "cancel": "취소",
-    "failed": "폴더를 삭제할 수 없습니다. 다시 시도하세요."
+    "failed": "폴더를 삭제할 수 없습니다. 다시 시도하세요.",
+    "unconfirmed": "결과를 확인할 수 없습니다. 목록을 새로고침했으니 확인 후 다시 시도하세요."
   },
   "move_agents": {
     "title_other": "에이전트 {{count}}개 이동",
@@ -67,6 +71,8 @@
     "place_done_other": "에이전트 {{count}}개를 넣었습니다.",
     "partial": "{{total}}개 중 {{done}}개를 이동했습니다. 나머지는 실패했습니다.",
     "failed": "에이전트를 이동할 수 없습니다. 다시 시도하세요.",
-    "no_permission": "선택한 모든 에이전트를 이동할 권한이 없습니다."
+    "no_permission": "선택한 모든 에이전트를 이동할 권한이 없습니다.",
+    "batch_place": "폴더에 넣기",
+    "unconfirmed_other": "{{total}}개 중 {{done}}개를 이동했습니다. {{count}}개는 결과를 확인할 수 없습니다. 목록을 새로고침했으니 확인 후 다시 시도하세요."
   }
 }

@@ -259,6 +259,14 @@ const folderTree: AgentFolderTree = {
       createdAt: "",
       updatedAt: "",
     },
+    {
+      id: "f-eng",
+      workspaceId: "ws-1",
+      parentId: null,
+      name: "Engineering",
+      createdAt: "",
+      updatedAt: "",
+    },
   ],
   placements: [
     { agentId: "a-placed", folderId: "f-design" },
@@ -283,6 +291,16 @@ const folderTree: AgentFolderTree = {
       creatorId: "user-2",
       parentId: null,
       agentIds: [],
+    },
+    {
+      // dual-agent belongs to two squads at once (M20 regression fixture).
+      squadId: "sq-growth",
+      name: "Growth",
+      avatarUrl: null,
+      leaderId: "a-leader",
+      creatorId: "user-1",
+      parentId: null,
+      agentIds: ["a-both"],
     },
   ],
 };
@@ -410,6 +428,23 @@ describe("AgentsPage folder hierarchy", () => {
     expect(screen.queryByText("archived-agent")).toBeNull();
     // Breadcrumb root is the page name.
     expect(screen.getByRole("button", { name: "Agents" })).toBeTruthy();
+    // Folder rows sort above the agent rows (M07).
+    const folderRow = screen
+      .getByRole("button", { name: "Open Design" })
+      .closest("[role='row']") as HTMLElement;
+    const agentRow = screen
+      .getByText("loose-agent")
+      .closest("[role='row']") as HTMLElement;
+    expect(
+      folderRow.compareDocumentPosition(agentRow) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("shows an agent belonging to two squads in each squad folder (M20)", async () => {
+    renderPage("/acme/agents?folder=sq-growth");
+    expect(await screen.findByText("dual-agent")).toBeTruthy();
+    expect(screen.queryByText("squad-leader")).toBeNull();
   });
 
   it("enters a squad folder: members, leader badge, disabled new-folder with reason", async () => {
@@ -473,6 +508,13 @@ describe("AgentsPage folder hierarchy", () => {
     expect(controller.path).toBe("/acme/agents");
     expect(await screen.findByText("loose-agent")).toBeTruthy();
   });
+
+  it("moves Up from a nested folder to its direct parent (M11)", async () => {
+    const { controller } = renderPage("/acme/agents?folder=f-research");
+    await userEvent.click(await screen.findByRole("button", { name: "Up one level" }));
+    expect(controller.path).toBe("/acme/agents?folder=f-design");
+    expect(await screen.findByText("placed-agent")).toBeTruthy();
+  });
 });
 
 describe("AgentsPage folder actions", () => {
@@ -526,11 +568,48 @@ describe("AgentsPage folder actions", () => {
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Actions for Game design" }));
     expect(await screen.findByText("Open squad")).toBeTruthy();
-    await userEvent.click(screen.getByText("Move"));
+    expect(screen.getByText("Move to...")).toBeTruthy();
+    await userEvent.click(screen.getByText("Move to..."));
+    // The root is a valid squad-folder destination (move back out) — M21.
+    const rootOption = await screen.findByRole("button", { name: "Root" });
+    expect(rootOption).toBeTruthy();
     await userEvent.click(await screen.findByRole("button", { name: "Design" }));
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
     await waitFor(() =>
       expect(apiMock.setAgentSquadPlacement).toHaveBeenCalledWith("ws-1", "sq-game", "f-design"),
+    );
+  });
+
+  it("moves a squad folder back to the root", async () => {
+    const tree = {
+      ...folderTree,
+      squads: folderTree.squads.map((squad) =>
+        squad.squadId === "sq-game" ? { ...squad, parentId: "f-design" } : squad,
+      ),
+    };
+    mocks.folderTree = tree;
+    renderPage("/acme/agents?folder=f-design");
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for Game design" }));
+    await userEvent.click(await screen.findByText("Move to..."));
+    await userEvent.click(await screen.findByRole("button", { name: "Root" }));
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    await waitFor(() =>
+      expect(apiMock.setAgentSquadPlacement).toHaveBeenCalledWith("ws-1", "sq-game", ""),
+    );
+  });
+
+  it("moves a custom folder to the chosen destination (M22)", async () => {
+    renderPage("/acme/agents?folder=f-design");
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for Research" }));
+    await userEvent.click(await screen.findByText("Move"));
+    // Both the root and other custom folders are valid destinations; the
+    // folder's own subtree is excluded.
+    expect(await screen.findByRole("button", { name: "Root" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Design / Research" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Engineering" }));
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    await waitFor(() =>
+      expect(apiMock.updateAgentFolder).toHaveBeenCalledWith("ws-1", "f-research", { parentId: "f-eng" }),
     );
   });
 
@@ -544,7 +623,7 @@ describe("AgentsPage folder actions", () => {
   it("greys out squad-folder moves for non-creators with the reason", async () => {
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Actions for Ops" }));
-    const move = await screen.findByText("Move");
+    const move = await screen.findByText("Move to...");
     expect(move.closest("[data-disabled]")).toBeTruthy();
     expect(
       screen.getByText("Only the squad creator or a workspace owner/admin can move this squad folder."),
@@ -555,7 +634,7 @@ describe("AgentsPage folder actions", () => {
     mocks.members = [{ user_id: "user-1", role: "admin" }];
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Actions for Ops" }));
-    const move = await screen.findByText("Move");
+    const move = await screen.findByText("Move to...");
     expect(move.closest("[data-disabled]")).toBeNull();
     await userEvent.click(move);
     await userEvent.click(await screen.findByRole("button", { name: "Design" }));
@@ -615,6 +694,8 @@ describe("AgentsPage move agents", () => {
     renderPage();
     const row = (await screen.findByText("other-agent")).closest("[role='row']") as HTMLElement;
     await userEvent.click(within(row).getByRole("button", { name: "Row actions" }));
+    // Wait for the menu to actually render before asserting absence (M04).
+    await screen.findByText("Open in new tab");
     expect(screen.queryByText("Move to...")).toBeNull();
   });
 
@@ -664,6 +745,94 @@ describe("AgentsPage move agents", () => {
   });
 });
 
+describe("AgentsPage move/place wording", () => {
+  it("uses the place wording for the batch action inside a squad folder", async () => {
+    const { toast } = await import("sonner");
+    renderPage("/acme/agents?folder=sq-game");
+    const leaderRow = (await screen.findByText("squad-leader")).closest("[role='row']") as HTMLElement;
+    await userEvent.click(within(leaderRow).getAllByRole("button")[0]!);
+    const bothRow = screen.getByText("dual-agent").closest("[role='row']") as HTMLElement;
+    await userEvent.click(within(bothRow).getAllByRole("button")[0]!);
+
+    const button = screen.getByRole("button", { name: "Place in folder" });
+    expect(button).toBeTruthy();
+    await userEvent.click(button);
+    // The dialog follows the place wording: confirm says "Place", not "Move".
+    expect(await screen.findByRole("button", { name: "Place" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Move" })).toBeNull();
+    await userEvent.click(await screen.findByRole("button", { name: "Design" }));
+    expect(
+      screen.getByText("Squad members stay in their squad folders; this only sets their custom folder placement."),
+    ).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Place" }));
+    await waitFor(() => {
+      expect(apiMock.setAgentPlacement).toHaveBeenCalledWith("ws-1", "a-leader", "f-design");
+      expect(apiMock.setAgentPlacement).toHaveBeenCalledWith("ws-1", "a-both", "f-design");
+    });
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("2 agents placed."),
+    );
+  });
+
+  it("keeps the move wording in flat results reached from a squad folder", async () => {
+    renderPage("/acme/agents?folder=sq-game");
+    const search = await screen.findByRole("textbox", { name: "Search agents" });
+    await userEvent.type(search, "squad");
+    expect(await screen.findByText("Results from all folders")).toBeTruthy();
+    const row = screen.getByText("squad-leader").closest("[role='row']") as HTMLElement;
+    await userEvent.click(within(row).getByRole("button", { name: "Row actions" }));
+    expect(await screen.findByText("Move to...")).toBeTruthy();
+    expect(screen.queryByText("Also place in folder...")).toBeNull();
+  });
+});
+
+describe("AgentsPage unreadable write responses", () => {
+  it("refreshes the tree and shows an indeterminate result when a folder write reads back null", async () => {
+    const { invalidateAgentFolderQueries } = await import(
+      "@multica/core/agents/folder-queries"
+    );
+    apiMock.createAgentFolder.mockResolvedValue(null);
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "New folder" }));
+    await userEvent.type(screen.getByLabelText("Name"), "Ghost");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(
+      await screen.findByText(
+        "The result couldn't be confirmed. The list was refreshed — check it before retrying.",
+      ),
+    ).toBeTruthy();
+    expect(invalidateAgentFolderQueries).toHaveBeenCalled();
+    expect(screen.queryByText("Couldn't save the folder. Try again.")).toBeNull();
+  });
+
+  it("counts null placement responses as unconfirmed, not failed", async () => {
+    const { toast } = await import("sonner");
+    const { invalidateAgentFolderQueries } = await import(
+      "@multica/core/agents/folder-queries"
+    );
+    apiMock.setAgentPlacement.mockReset();
+    apiMock.setAgentPlacement
+      .mockResolvedValueOnce({ updated: true })
+      .mockResolvedValueOnce(null);
+    mocks.members = [{ user_id: "user-1", role: "admin" }];
+    renderPage();
+    for (const name of ["loose-agent", "other-agent"]) {
+      const row = (await screen.findByText(name)).closest("[role='row']") as HTMLElement;
+      await userEvent.click(within(row).getAllByRole("button")[0]!);
+    }
+    await userEvent.click(screen.getByRole("button", { name: "Move to folder" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Design" }));
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "Moved 1 of 2; 1 couldn't be confirmed. The list was refreshed — check it before retrying.",
+      ),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(invalidateAgentFolderQueries).toHaveBeenCalled();
+  });
+});
+
 describe("AgentsPage flat view", () => {
   it("uses a flat list with paths for the archived scope", async () => {
     renderPage();
@@ -683,7 +852,8 @@ describe("AgentsPage flat view", () => {
     // dual-agent is in a squad AND placed: both paths, first + "+1" hover.
     expect(screen.getAllByText("Design / Research").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Game design").length).toBeGreaterThan(0);
-    expect(screen.getByText("+1")).toBeTruthy();
+    expect(screen.getAllByText("Growth").length).toBeGreaterThan(0);
+    expect(screen.getByText("+2")).toBeTruthy();
     expect(controller.path).toBe("/acme/agents?folder=f-design");
     expect(screen.queryByRole("button", { name: "Open Design" })).toBeNull();
 

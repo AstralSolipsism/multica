@@ -19,7 +19,8 @@
     "rename_folder": "Rename",
     "move_folder": "Move",
     "delete_folder": "Delete",
-    "squad_move_forbidden": "Only the squad creator or a workspace owner/admin can move this squad folder."
+    "squad_move_forbidden": "Only the squad creator or a workspace owner/admin can move this squad folder.",
+    "move_to_folder": "Move to..."
   },
   "folder_form": {
     "create_title": "New folder",
@@ -30,7 +31,8 @@
     "save": "Save",
     "saving": "Saving...",
     "cancel": "Cancel",
-    "failed": "Couldn't save the folder. Try again."
+    "failed": "Couldn't save the folder. Try again.",
+    "unconfirmed": "The result couldn't be confirmed. The list was refreshed — check it before retrying."
   },
   "folder_move": {
     "title": "Move folder",
@@ -40,7 +42,8 @@
     "confirm": "Move",
     "moving": "Moving...",
     "cancel": "Cancel",
-    "failed": "Couldn't move the folder. Try again."
+    "failed": "Couldn't move the folder. Try again.",
+    "unconfirmed": "The result couldn't be confirmed. The list was refreshed — check it before retrying."
   },
   "folder_delete": {
     "title": "Delete this folder?",
@@ -48,7 +51,8 @@
     "confirm": "Delete",
     "deleting": "Deleting...",
     "cancel": "Cancel",
-    "failed": "Couldn't delete the folder. Try again."
+    "failed": "Couldn't delete the folder. Try again.",
+    "unconfirmed": "The result couldn't be confirmed. The list was refreshed — check it before retrying."
   },
   "move_agents": {
     "title_one": "Move agent",
@@ -71,6 +75,9 @@
     "place_done_other": "{{count}} agents placed.",
     "partial": "Moved {{done}} of {{total}}; the rest failed.",
     "failed": "Couldn't move the agents. Try again.",
-    "no_permission": "You don't have permission to move every selected agent."
+    "no_permission": "You don't have permission to move every selected agent.",
+    "batch_place": "Place in folder",
+    "unconfirmed_one": "Moved {{done}} of {{total}}; {{count}} couldn't be confirmed. The list was refreshed — check it before retrying.",
+    "unconfirmed_other": "Moved {{done}} of {{total}}; {{count}} couldn't be confirmed. The list was refreshed — check it before retrying."
   }
 }

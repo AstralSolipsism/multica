@@ -19,7 +19,8 @@
     "rename_folder": "Renommer",
     "move_folder": "Déplacer",
     "delete_folder": "Supprimer",
-    "squad_move_forbidden": "Seul le créateur de la squad ou un owner/admin de l'espace de travail peut déplacer ce dossier de squad."
+    "squad_move_forbidden": "Seul le créateur de la squad ou un owner/admin de l'espace de travail peut déplacer ce dossier de squad.",
+    "move_to_folder": "Déplacer vers..."
   },
   "folder_form": {
     "create_title": "Nouveau dossier",
@@ -30,7 +31,8 @@
     "save": "Enregistrer",
     "saving": "Enregistrement...",
     "cancel": "Annuler",
-    "failed": "Impossible d'enregistrer le dossier. Réessayez."
+    "failed": "Impossible d'enregistrer le dossier. Réessayez.",
+    "unconfirmed": "Impossible de confirmer le résultat. La liste a été actualisée — vérifiez-la avant de réessayer."
   },
   "folder_move": {
     "title": "Déplacer le dossier",
@@ -40,7 +42,8 @@
     "confirm": "Déplacer",
     "moving": "Déplacement...",
     "cancel": "Annuler",
-    "failed": "Impossible de déplacer le dossier. Réessayez."
+    "failed": "Impossible de déplacer le dossier. Réessayez.",
+    "unconfirmed": "Impossible de confirmer le résultat. La liste a été actualisée — vérifiez-la avant de réessayer."
   },
   "folder_delete": {
     "title": "Supprimer ce dossier ?",
@@ -48,7 +51,8 @@
     "confirm": "Supprimer",
     "deleting": "Suppression...",
     "cancel": "Annuler",
-    "failed": "Impossible de supprimer le dossier. Réessayez."
+    "failed": "Impossible de supprimer le dossier. Réessayez.",
+    "unconfirmed": "Impossible de confirmer le résultat. La liste a été actualisée — vérifiez-la avant de réessayer."
   },
   "move_agents": {
     "title_one": "Déplacer l'agent",
@@ -71,6 +75,9 @@
     "place_done_other": "{{count}} agents placés.",
     "partial": "{{done}} agents déplacés sur {{total}} ; le reste a échoué.",
     "failed": "Impossible de déplacer les agents. Réessayez.",
-    "no_permission": "Vous n'avez pas la permission de déplacer tous les agents sélectionnés."
+    "no_permission": "Vous n'avez pas la permission de déplacer tous les agents sélectionnés.",
+    "batch_place": "Placer dans un dossier",
+    "unconfirmed_one": "{{done}} agent déplacé sur {{total}} ; {{count}} n'a pas pu être confirmé. La liste a été actualisée — vérifiez-la avant de réessayer.",
+    "unconfirmed_other": "{{done}} agents déplacés sur {{total}} ; {{count}} n'ont pas pu être confirmés. La liste a été actualisée — vérifiez-la avant de réessayer."
   }
 }
