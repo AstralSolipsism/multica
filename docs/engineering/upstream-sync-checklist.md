@@ -87,8 +87,9 @@ Use one row per existing write route in the PR, not a single blanket approval:
   restoration. Shared Web/Desktop wiring still needs review; Chromium Web
   evidence alone does not establish Desktop packaging or installation behavior.
 - [ ] Run `bash scripts/check-gofmt.sh` and the
-  [isolated retained E2E gate](ci-gates.md), including both
-  `e2e/onboarding-smoke.spec.ts` and `e2e/dag-task-lines.spec.ts`. Record the exact
+  [isolated retained E2E gate](ci-gates.md), including
+  `e2e/onboarding-smoke.spec.ts`, `e2e/dag-task-lines.spec.ts` and
+  `e2e/issue-dependencies.spec.ts`. Record the exact
   head SHA, run URL, test outcomes and report artifact. A skipped, failed or
   missing selected job is not a pass; never substitute a production smoke run.
 - [ ] Require `CI required` (both validated aggregates) on the final PR head, with the branch
