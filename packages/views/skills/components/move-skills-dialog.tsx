@@ -21,9 +21,8 @@ import { skillMoveDestinations } from "../lib/skill-folder-tree";
 import type { SkillRow } from "./skill-list-filter";
 
 /**
- * Move one or more skills into a folder (or back to uncategorized). Custom
- * folders and package roots are valid destinations; internal managed folders
- * refuse custom content. Moves run sequentially with per-item failure
+ * Move one or more skills into a custom folder (or back to the root). Package
+ * folders refuse custom content. Moves run sequentially with per-item failure
  * tolerance, like the batch update flow.
  */
 export function MoveSkillsDialog({
@@ -111,7 +110,7 @@ export function MoveSkillsDialog({
               )}
             >
               <Inbox className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              {t(($) => $.move_skills.uncategorized)}
+              {t(($) => $.move_skills.root_option)}
             </button>
             {destinations.map((dest) => (
               <button

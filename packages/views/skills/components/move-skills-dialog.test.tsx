@@ -91,7 +91,7 @@ describe("MoveSkillsDialog", () => {
   it("offers custom folders only — every package folder is refused server-side", async () => {
     renderDialog([makeRow("s1")]);
     expect(await screen.findByText("Custom")).toBeTruthy();
-    expect(screen.getByText("Uncategorized")).toBeTruthy();
+    expect(screen.getByText("Root")).toBeTruthy();
     // Package roots and managed internals are not destinations (409
     // managed_folder), so they never appear.
     expect(screen.queryByText("o/r")).toBeNull();
@@ -109,9 +109,9 @@ describe("MoveSkillsDialog", () => {
     expect(onMoved).toHaveBeenCalled();
   });
 
-  it("clears the placement when Uncategorized is chosen", async () => {
+  it("clears the placement when Root is chosen", async () => {
     renderDialog([makeRow("s1")]);
-    await userEvent.click(await screen.findByText("Uncategorized"));
+    await userEvent.click(await screen.findByText("Root"));
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
     await waitFor(() =>
       expect(apiMock.setSkillPlacement).toHaveBeenCalledWith("ws-1", "s1", ""),
