@@ -3,7 +3,13 @@ GET	/api/agent-builder/sessions/	user-auth	deny
 POST	/api/agent-builder/sessions/	user-auth	deny
 PUT	/api/agent-builder/sessions/{sessionId}/draft	user-auth	deny
 PATCH	/api/agent-builder/sessions/{sessionId}/runtime	user-auth	deny
+GET	/api/agent-folders	user-auth	deny
+POST	/api/agent-folders	user-auth	deny
+DELETE	/api/agent-folders/{folderId}	user-auth	deny
+PATCH	/api/agent-folders/{folderId}	user-auth	deny
+PUT	/api/agent-placements/{agentId}	user-auth	deny
 GET	/api/agent-run-counts	user-auth	deny
+PUT	/api/agent-squad-placements/{squadId}	user-auth	deny
 GET	/api/agent-task-snapshot	user-auth	deny
 GET	/api/agents/	user-auth	allow
 POST	/api/agents/	user-auth	deny

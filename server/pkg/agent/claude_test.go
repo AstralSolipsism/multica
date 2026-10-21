@@ -49,6 +49,29 @@ func TestClaudeHandleAssistantText(t *testing.T) {
 	}
 }
 
+func TestClaudeAssistantRequestIdentity(t *testing.T) {
+	t.Parallel()
+	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
+	for _, parent := range []string{"", "parent-call"} {
+		ch := make(chan Message, 3)
+		for _, block := range []claudeContentBlock{
+			{Type: "thinking", Thinking: "reasoning"},
+			{Type: "text", Text: "answer"},
+			{Type: "tool_use", ID: "call", Name: "Read"},
+		} {
+			b.handleAssistant(claudeSDKMessage{Type: "assistant", ParentToolUseID: parent,
+				Message: mustMarshal(t, claudeMessageContent{ID: "request-one", Content: []claudeContentBlock{block}})},
+				ch, make(map[string]TokenUsage), make(map[string]struct{}))
+		}
+		for range 3 {
+			msg := <-ch
+			if msg.ModelRequestID != "request-one" || msg.ParentToolUseID != parent {
+				t.Fatalf("split assistant lost request identity: %+v", msg)
+			}
+		}
+	}
+}
+
 func TestClaudeHandleAssistantToolUse(t *testing.T) {
 	t.Parallel()
 

@@ -2734,6 +2734,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount, failure
 		}
 		resp.ThreadName = issue.Title
+		if resp.Agent != nil && resp.Agent.ThinkingLevel == agentpkg.ThinkingLevelAdapt {
+			resp.IssueDescription = issue.Description.String
+		}
 		issueNumber = issue.Number
 
 		// Issue-state delta (MUL-7344). Every field below already sits on the

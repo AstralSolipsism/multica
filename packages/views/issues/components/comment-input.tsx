@@ -13,6 +13,7 @@ import { composeAnnotatedReply, hasReplyIntent } from "@multica/core/drafts/repl
 import { ReplyAnnotations } from "./reply-annotations";
 import { useT } from "../../i18n";
 import { CommentTriggerChips } from "./comment-trigger-chips";
+import { focusComposerOnSurfaceMouseDown } from "./composer-text-surface";
 import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import { useRecipientActions } from "../hooks/use-recipient-actions";
 import { SteerAttachmentNotice } from "./steer-attachment-notice";
@@ -237,7 +238,9 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
       {lazy.active && (
       <div
         className={cn(
-          "flex-1 min-h-0 overflow-y-auto px-3 py-2",
+          // cursor-text covers the whole host — padding included — so the
+          // I-beam matches the static shell the user clicked to get here.
+          "flex-1 min-h-0 overflow-y-auto px-3 py-2 cursor-text",
           // Pinned to the viewport bottom the composer grows upward; cap it
           // so a long draft can't swallow the whole timeline (the editor
           // area scrolls internally instead).
@@ -246,6 +249,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
           !lazy.ready && "hidden",
         )}
         aria-busy={submitting || undefined}
+        onMouseDown={(e) => focusComposerOnSurfaceMouseDown(e, lazy.activate)}
       >
         <ContentEditor
           ref={editorRef}
@@ -299,7 +303,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
           </div>
         </div>
       )}
-      <div className="absolute bottom-1 left-2 right-28 min-w-0">
+      <div className="absolute bottom-1 left-2 right-28 min-w-0 cursor-default">
         <CommentTriggerChips
           recipients={recipients}
           blocked={triggerPreview.blocked}
@@ -308,7 +312,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
           onActionChange={setAction}
         />
       </div>
-      <div className="absolute bottom-1 right-1.5 flex items-center gap-1">
+      <div className="absolute bottom-1 right-1.5 flex items-center gap-1 cursor-default">
         <FileUploadButton
           size="sm"
           multiple
@@ -318,7 +322,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
           <Button
             size="sm"
             variant="destructive"
-            className="rounded-full"
+            className="rounded-full cursor-pointer"
             onClick={submit}
             disabled={!canSend || submitting || gate.uploading}
           >

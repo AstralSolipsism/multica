@@ -29,19 +29,19 @@ func TestAgentAdaptValidation(t *testing.T) {
 		models                           []ModelEntry
 	}
 	var cases []validationCase
-	for _, provider := range []string{"codex", "omp"} {
+	for _, provider := range []string{"codex", "omp", "deveco"} {
 		cases = append(cases, validationCase{name: provider + "/blank model", provider: provider, model: " \t", rejection: thinkingNeedsExplicitModelRejection(provider)})
 	}
-	for _, provider := range []string{"claude", "codex", "pi", "omp", "opencode", "kimi", "dsh", "grok", "codebuddy"} {
+	for _, provider := range []string{"claude", "codex", "pi", "omp", "opencode", "deveco", "kimi", "dsh", "grok", "codebuddy"} {
 		for _, model := range []string{"", "test/model"} {
 			rejection := ""
-			if model == "" && (provider == "codex" || provider == "omp") {
+			if model == "" && (provider == "codex" || provider == "omp" || provider == "deveco") {
 				rejection = thinkingNeedsExplicitModelRejection(provider)
 			}
 			cases = append(cases, validationCase{name: provider + "/" + model, provider: provider, model: model, rejection: rejection})
 		}
 	}
-	for _, provider := range []string{"antigravity", "cursor", "copilot", "qwen", "qwenpaw", "qoder", "qoderclicn", "traecli", "kiro", "openclaw", "mcode", "codearts", "zeroclaw", "deveco", "unknown"} {
+	for _, provider := range []string{"antigravity", "cursor", "copilot", "qwen", "qwenpaw", "qoder", "qoderclicn", "traecli", "kiro", "openclaw", "mcode", "codearts", "zeroclaw", "unknown"} {
 		for _, model := range []string{"", "test/model"} {
 			cases = append(cases, validationCase{name: provider + "/" + model, provider: provider, model: model, rejection: thinkingCapabilityRejection(provider)})
 		}
@@ -249,7 +249,7 @@ func TestClaimAdaptiveThinkingCapability(t *testing.T) {
 				"provider": "reasonix", "metadata": `{"capabilities":["thinking-adapt-v1"]}`,
 			})
 			agentID := dbfx.Agent(t, "adapt claim", runtimeID, testutil.Cols{"thinking_level": level})
-			issueID := dbfx.Issue(t, "adapt claim")
+			issueID := dbfx.Issue(t, "adapt claim", testutil.Cols{"description": "decision summary"})
 			taskID := dbfx.Task(t, agentID, testutil.Cols{"issue_id": issueID, "runtime_id": runtimeID, "status": "dispatched"})
 			task, err := testHandler.Queries.GetAgentTask(context.Background(), parseUUID(taskID))
 			if err != nil {
@@ -272,6 +272,13 @@ func TestClaimAdaptiveThinkingCapability(t *testing.T) {
 				}
 				if resp.Agent.ThinkingLevel != want {
 					t.Fatalf("claim caps=%q level=%q, want %q", caps, resp.Agent.ThinkingLevel, want)
+				}
+				if want == "_adapt" {
+					if resp.IssueDescription != "decision summary" || resp.ThreadName != "adapt claim" {
+						t.Fatalf("missing adaptive summary: title=%q description=%q", resp.ThreadName, resp.IssueDescription)
+					}
+				} else if resp.IssueDescription != "" {
+					t.Fatal("non-adaptive claim sent decision summary")
 				}
 			}
 			var stored string
