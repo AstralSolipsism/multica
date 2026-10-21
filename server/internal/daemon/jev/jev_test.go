@@ -694,6 +694,90 @@ func TestProbe_DoesNotMaskOpenBreaker(t *testing.T) {
 	}
 }
 
+func TestProbe_BlockedWhileBreakerOpen(t *testing.T) {
+	// M6: while the breaker is open, Probe must return breaker WITHOUT
+	// sending a request — the server hit count must not move.
+	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) { return 500, "x" })
+	c := New(Options{Sources: []Source{{Name: "s", BaseURL: rs.srv.URL}}})
+	for i := 0; i < 3; i++ {
+		_, _ = c.Decide(context.Background(), testReq())
+	}
+	hitsBefore := rs.hits()
+
+	err := c.Probe(context.Background())
+	var fb *FallbackError
+	if !errors.As(err, &fb) || fb.Reason != ReasonBreaker {
+		t.Fatalf("probe while breaker open = %v, want breaker fallback", err)
+	}
+	if got := rs.hits(); got != hitsBefore {
+		t.Fatalf("probe sent a request while breaker open: hits %d -> %d", hitsBefore, got)
+	}
+}
+
+func TestProbe_DoesNotConsumeHalfOpenTrial(t *testing.T) {
+	// M4: after the cooldown expires the half-open trial belongs to the
+	// next Decide; a Probe in that window must stay blocked rather than
+	// burn the single trial slot.
+	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) { return 500, "x" })
+	now := time.Now()
+	var mu sync.Mutex
+	c := New(Options{
+		Sources: []Source{{Name: "s", BaseURL: rs.srv.URL}},
+		Now: func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			return now
+		},
+	})
+	for i := 0; i < 3; i++ {
+		_, _ = c.Decide(context.Background(), testReq())
+	}
+	mu.Lock()
+	now = now.Add(breakerCooldown + time.Second)
+	mu.Unlock()
+
+	if err := c.Probe(context.Background()); err == nil {
+		t.Fatal("probe in half-open window should be blocked")
+	}
+	// The trial slot is still available to Decide: it goes through and
+	// fails against the (failing) source instead of getting breaker.
+	// (3 warmups + the probe itself + this one trial = 5 hits.)
+	_, err := c.Decide(context.Background(), testReq())
+	var fb *FallbackError
+	if !errors.As(err, &fb) || fb.Reason == ReasonBreaker {
+		t.Fatalf("decide after probe in half-open window = %v, want the trial to still be available", err)
+	}
+	if got := rs.hits(); got != 5 {
+		t.Fatalf("server hits = %d, want 5 (probe + trial)", got)
+	}
+}
+
+func TestDecide_CallerContextCancelDoesNotCountAsFailure(t *testing.T) {
+	// A cancelled caller context fails sources instantly; it must not
+	// count against the breaker or flip the snapshot.
+	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) { return 200, okBody("low") })
+	c := New(Options{Sources: []Source{{Name: "s", BaseURL: rs.srv.URL}}})
+	for i := 0; i < 5; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := c.Decide(ctx, testReq())
+		if err == nil {
+			t.Fatal("want fallback on cancelled context")
+		}
+	}
+	snap := c.Snapshot()
+	if snap.Status != StatusIdle {
+		t.Fatalf("status = %s, want idle (cancellation is not a source failure)", snap.Status)
+	}
+	if snap.DecisionsFallback != 0 {
+		t.Fatalf("decisions_fallback = %d, want 0", snap.DecisionsFallback)
+	}
+	// And the breaker never opened: a healthy Decide still succeeds.
+	if _, err := c.Decide(context.Background(), testReq()); err != nil {
+		t.Fatalf("healthy decide after cancellations: %v", err)
+	}
+}
+
 func TestResolveSources(t *testing.T) {
 	all := SourceEnv{
 		OpenCodeAPIKey:       testKey,
@@ -730,6 +814,11 @@ func TestResolveSources(t *testing.T) {
 	if got := ResolveSources("nonsense,opencode-free", SourceEnv{}); len(got) != 1 || got[0].Name != "opencode-free" {
 		t.Fatalf("sources = %+v", got)
 	}
+
+	// Undocumented regions are skipped instead of silently DNS-failing.
+	if got := ResolveSources("dashscope", SourceEnv{DashScopeAPIKey: dashscopeTestKey, DashScopeWorkspaceID: "ws-3", DashScopeRegion: "us-mars-1"}); len(got) != 0 {
+		t.Fatalf("sources = %+v, want skipped for unknown region", got)
+	}
 }
 
 func TestAPINeverLeaked(t *testing.T) {
@@ -755,8 +844,14 @@ func TestAPINeverLeaked(t *testing.T) {
 		t.Fatal("expected failure (echoed bearer is not a valid choice)")
 	}
 	_ = ResolveSources("opencode,dashscope", SourceEnv{OpenCodeAPIKey: testKey, DashScopeAPIKey: dashscopeTestKey, DashScopeWorkspaceID: "ws"})
+	// Also trigger a warning WITHOUT the workspace id so a warn line is
+	// guaranteed to land in the captured buffer.
+	_ = ResolveSources("dashscope", SourceEnv{DashScopeAPIKey: dashscopeTestKey})
 	snapBytes, _ := json.Marshal(c.Snapshot())
 
+	if !strings.Contains(logBuf.String(), "jev source skipped") {
+		t.Fatalf("log capture is empty — the no-key assertion below would be vacuous. log=%q", logBuf.String())
+	}
 	leaks := []string{err.Error(), logBuf.String(), string(snapBytes)}
 	for _, leak := range leaks {
 		for _, marker := range []string{testKey, dashscopeTestKey, "Bearer "} {

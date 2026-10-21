@@ -253,7 +253,7 @@ Les variables ci-dessous sont lues sur l'ordinateur qui exécute vos agents, et 
 | `MULTICA_JEV_OPENCODE_API_KEY` | vide | Clé Bearer pour la source OpenCode Zen authentifiée (`opencode`) ; reste sur cette machine |
 | `MULTICA_JEV_DASHSCOPE_API_KEY` | vide | Clé Bearer pour la source DashScope d'Alibaba (`dashscope`) ; reste sur cette machine |
 | `MULTICA_JEV_DASHSCOPE_WORKSPACE_ID` | vide | Identifiant d'espace de travail DashScope, intégré dans l'URL du point de terminaison MaaS |
-| `MULTICA_JEV_DASHSCOPE_REGION` | `cn-beijing` | Région MaaS DashScope : `cn-beijing` ou `ap-southeast-1` |
+| `MULTICA_JEV_DASHSCOPE_REGION` | `cn-beijing` | Région MaaS DashScope : `cn-beijing` ou `ap-southeast-1` ; toute autre valeur ignore la source avec un avertissement |
 
 Pour le contexte interne que le daemon injecte dans les exécutions des agents, consultez [Environnement des exécutions](/daemon-runtimes#environnement-du-runtime-pendant-une-exécution).
 

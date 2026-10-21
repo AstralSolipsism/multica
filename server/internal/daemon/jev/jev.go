@@ -116,6 +116,12 @@ func ResolveSources(namesCSV string, env SourceEnv) []Source {
 			if region == "" {
 				region = "cn-beijing"
 			}
+			if region != "cn-beijing" && region != "ap-southeast-1" {
+				// Only documented MaaS regions resolve; anything else is a
+				// silent DNS failure per call, so skip with one warning.
+				slog.Warn("jev source skipped: MULTICA_JEV_DASHSCOPE_REGION must be cn-beijing or ap-southeast-1", "source", name, "region", region)
+				continue
+			}
 			sources = append(sources, Source{
 				Name:        name,
 				BaseURL:     fmt.Sprintf("https://%s.%s.maas.aliyuncs.com/compatible-mode/v1/systemone", workspace, region),
@@ -334,6 +340,12 @@ func (c *Client) Decide(ctx context.Context, req Request) (Decision, error) {
 		}
 		if i == 0 {
 			firstReason, firstErr = reason, err
+		}
+		// A cancelled caller context fails every source instantly; that is
+		// the caller going away, not the sources being down, so it must
+		// not count against the breaker or flip the snapshot.
+		if ctx.Err() != nil {
+			return Decision{}, &FallbackError{Reason: reason, Err: err}
 		}
 	}
 	if len(c.sources) == 0 {
