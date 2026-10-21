@@ -345,13 +345,13 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
 - **mod**：名为 `labrastro-effort`，与 `labrastro-ysk` 一起通过 `CLAUDE_CODE_PLUGIN_DIRS` 加载，安装方式照 `prepareYouShouldKnow`（`server/internal/daemon/labrastro_ysk.go`）。
 - **mod → daemon**：`POST http://127.0.0.1:{MULTICA_DAEMON_PORT}/tasks/{task_id}/thinking-decision`，带 `Authorization: Bearer $MULTICA_TOKEN`。实测往返约 1–3 ms，不受 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 影响，不需要改走 Unix socket（§0.9）。
   - daemon 的健康服务（`serveHealth`）校验 token 和活跃运行，做法照 `/repo/checkout`。
-  - 请求体由 OL-1010 定义，内容是构造 state 所需的上一步原料：工具调用与结果按 `tool_use_id` 去重，助手文字可能单独占一条消息（§0.9）。为了补记结果信号（§10.3），还必须带：
+  - 请求体由 OL-1010 定义，内容是构造 state 所需的上一步原料：`{step, assistant_text, tools: [{name, is_error, input_summary, result_text}], error_text}`。mod 读 `$.session.messages()` 的最后一条 assistant 消息；宿主已把工具结果按 `tool_use_id` 并入各 `toolUses[]` 条目（`text`、`isError` 字段），不需要再去重。为了补记结果信号（§10.3），还必须带：
     - 步序号，从 1 开始；
     - 上一步主线程的工具列表 `[{name, is_error}]`；
     - 上一步的报错文本，按 §4 截断。
-  - 报错特征的归一化和同类报错的重复次数由 daemon 用 Go 计算，daemon 按运行保存最近的报错特征；mod 只上传原料。这个函数导出给 OL-1019 复用。
-  - daemon 按 §4 构造 state，调用 Jev，并计入健康快照。
-  - 返回 `{level, confidence, probabilities, latency_ms, source}`、回退原因，或"未启用"。"未启用"不经过 Jev 客户端，不计入健康快照。
+  - 报错特征的归一化和同类报错的重复次数由 daemon 用 Go 计算（`NormalizedErrorFeature` / `ErrorFeatureTracker`，`server/internal/daemon/thinking_step_errors.go`），daemon 按运行保存最近的报错特征；mod 只上传原料。这个函数导出给 OL-1019 复用。
+  - daemon 按 §4 构造 state（`BuildStepThinkingState`），复用 `decideThinking` 调用 Jev（trace 的 `scope` 为 `step`，`step` 为步序号），并计入健康快照。
+  - 返回 `{level, confidence, probabilities, latency_ms, source}`、`{fallback}`，或 `{enabled: false}`（"未启用"）。"未启用"不经过 Jev 客户端，不计入健康快照。鉴权沿用 `/repo/checkout` 的任务级 Bearer token；路径里的 `task_id` 与 token 绑定的任务不一致时拒绝。
 - **生效记录**：mod 每次请求过决策，无论拿到决策还是回退，都在调用 `next()` 之前用 `$.ui.log` 写一行生效记录，内容是步序号，以及决策各项或回退原因。mod 自己超时或请求出错时，回退原因为 `timeout` 或 `error`。第 1 步、子智能体的步、撤销之后的步都不写。
   - daemon 照 `consumeYouShouldKnowLog`（`server/pkg/agent/labrastro_ysk.go`）的做法，按 ui_log 的 `plugin` 字段认出 `labrastro-effort` 的行，从流里摘走，不成为运行消息。
   - 生效记录早于这一步的第一条 assistant 事件，但中间可能夹着其他 mod 的日志（§0.9）。daemon 把它用在之后第一个新的主线程消息 ID 上，即这一步，按 §7 打标。

@@ -78,8 +78,15 @@ func Install(configRoot string, context json.RawMessage, existingPluginDirs stri
 // writeMod replaces dir with the embedded mod, so a reused task directory
 // never keeps files from another daemon version's copy.
 func writeMod(dir string) error {
+	return WriteEmbeddedMod(modFS, modRoot, dir)
+}
+
+// WriteEmbeddedMod replaces dir with the files of an embedded mod (manifest,
+// hooks and modules) rooted at modRoot in modFS. Shared with the other
+// per-task Claude mods (labrastro-effort) so every mod installs the same way.
+func WriteEmbeddedMod(modFS embed.FS, modRoot, dir string) error {
 	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("clear labrastro-ysk folder: %w", err)
+		return fmt.Errorf("clear %s folder: %w", modRoot, err)
 	}
 	return fs.WalkDir(modFS, modRoot, func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {

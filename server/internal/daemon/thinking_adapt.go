@@ -46,6 +46,7 @@ type thinkingRun struct {
 	Task       Task
 	Record     *ThinkingDecisionRecord
 	seenFirst  bool
+	lastFirst  bool // first-of-request as computed by the last tag() call
 	requestIDs map[string]bool
 }
 
@@ -302,6 +303,7 @@ func (run *thinkingRun) tag(msg agent.Message) agent.Message {
 			run.requestIDs[msg.ModelRequestID] = true
 		}
 	}
+	run.lastFirst = first
 	if first || msg.Type == agent.MessageThinking {
 		msg.Metadata = maps.Clone(msg.Metadata)
 		if msg.Metadata == nil {
@@ -311,3 +313,7 @@ func (run *thinkingRun) tag(msg agent.Message) agent.Message {
 	}
 	return msg
 }
+
+// lastTagFirstOfRequest reports whether the message tag() just processed
+// opened a new main-thread model request (a new step's first message).
+func (run *thinkingRun) lastTagFirstOfRequest() bool { return run.lastFirst }

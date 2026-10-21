@@ -291,6 +291,10 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 				if b.consumeYouShouldKnowLog(msg, line, opts) {
 					continue
 				}
+				if b.consumeEffortLog(msg, line, opts) {
+					continue
+				}
+				b.observePerTurnEffort(msg, line, opts)
 				trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 			case "result":
 				sawResult = true
@@ -481,6 +485,26 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		session.SupplementReady = supplements.ready
 	}
 	return session, nil
+}
+
+// observePerTurnEffort reports system frames' per-turn effort state: init's
+// per_turn_effort_active (absent counts as false) and the always-false
+// per_turn_effort_changed that revokes it mid-run.
+func (b *claudeBackend) observePerTurnEffort(msg claudeSDKMessage, line string, opts ExecOptions) {
+	if msg.Type != "system" || (msg.Subtype != "init" && msg.Subtype != "per_turn_effort_changed") {
+		return
+	}
+	if opts.OnPerTurnEffort == nil {
+		return
+	}
+	var extra claudeSystemExtra
+	if err := json.Unmarshal([]byte(line), &extra); err != nil || extra.PerTurnEffortActive == nil {
+		// A frame without the field is a "false" init or a malformed line;
+		// the contract treats absent as false.
+		opts.OnPerTurnEffort(false)
+		return
+	}
+	opts.OnPerTurnEffort(*extra.PerTurnEffortActive)
 }
 
 func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message, usage map[string]TokenUsage, seenUsage map[string]struct{}) assistantTurn {

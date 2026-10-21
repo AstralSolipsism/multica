@@ -1,0 +1,298 @@
+import type { EngineInterface, Register } from 'claude-code'
+
+// labrastro-effort: per-step adaptive effort for Labrastro Claude tasks
+// (OL-992 S3-1). The daemon installs this mod only when the run uses an
+// adaptive effort and the CLI can change effort per turn; it hands over the
+// run context in MULTICA_EFFORT_CONTEXT_FILE and reads the levels that took
+// effect back from the `ui_log` lines of Claude Code's stream-json output.
+//
+// Every main-thread step explicitly carries an effort: the daemon's fresh
+// decision when one arrived, otherwise the last level that took effect. A
+// bare next(e) would re-send the startup effort (OL-1000), which rewrites the
+// prompt cache — the one thing per-turn effort avoids.
+
+/** Context file written by the daemon, version 1. */
+export type EffortContext = {
+  task_id: string
+  endpoint: string
+  startup_effort: string
+}
+
+/** What the daemon answered for one step. */
+export type Decision =
+  | { kind: 'level'; level: string; confidence?: number; probabilities?: Record<string, number>; latency_ms?: number; source?: string }
+  | { kind: 'fallback'; reason: string }
+  | { kind: 'disabled' }
+
+/** Step material sent to the daemon: raw only. The daemon normalizes error
+ * features and counts same-kind repeats (OL-1013); this mod judges nothing. */
+export type ToolMaterial = { name: string; is_error: boolean; input_summary: string; result_text: string }
+
+export type StepPayload = { step: number; assistant_text: string; tools: ToolMaterial[]; error_text: string }
+
+// The daemon is local (measured 1–3 ms per round trip); a whole decision must
+// not hold a step noticeably longer than this.
+export const DECISION_TIMEOUT_MS = 2_000
+
+/** Clips to at most `limit` code points so the body stays small regardless of
+ * tool output size. The daemon truncates again before building state. */
+export function clip(text: string | undefined, limit: number): string {
+  if (typeof text !== 'string' || text === '') return ''
+  const chars = [...text]
+  return chars.length <= limit ? text : chars.slice(0, limit).join('')
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export function parseContext(raw: string): EffortContext | undefined {
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+  if (!isRecord(value) || value.version !== 1) return undefined
+  const task_id = typeof value.task_id === 'string' ? value.task_id : ''
+  const endpoint = typeof value.endpoint === 'string' ? value.endpoint : ''
+  const startup_effort = typeof value.startup_effort === 'string' ? value.startup_effort : ''
+  if (task_id === '' || endpoint === '' || startup_effort === '') return undefined
+  return { task_id, endpoint, startup_effort }
+}
+
+/**
+ * Minimal shape of `$.session.messages()`: the host merges each tool result
+ * into its tool use entry (`tool_use_id` keys, with `text` and `isError`),
+ * so reading the last assistant message's `toolUses` alone is already the
+ * tool_use_id-deduplicated view (OL-1000 §0.9).
+ */
+export type SessionMessages = Array<{
+  role: string
+  text?: string
+  toolUses?: Array<Record<string, unknown>>
+}>
+
+/**
+ * Payload for step `step`: the previous main-thread step's assistant text and
+ * tool calls with their results. A missing/unreadable session leaves the
+ * empty payload; the daemon still decides on what arrived.
+ */
+export function stepPayload(step: number, messages: SessionMessages | undefined): StepPayload {
+  const tools: ToolMaterial[] = []
+  let assistant_text = ''
+  if (Array.isArray(messages)) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i]
+      if (message?.role !== 'assistant') continue
+      assistant_text = clip(message.text, 600)
+      for (const use of message.toolUses ?? []) {
+        if (!isRecord(use)) continue
+        tools.push({
+          name: typeof use.tool === 'string' ? use.tool : '',
+          is_error: use.isError === true,
+          input_summary: clip(summarizeInput(use.input), 200),
+          result_text: clip(typeof use.text === 'string' ? use.text : '', 400),
+        })
+      }
+      break
+    }
+  }
+  const error_text = clip(
+    tools.filter((tool) => tool.is_error && tool.result_text !== '').map((tool) => tool.result_text).join('\n'),
+    1200,
+  )
+  return { step, assistant_text, tools, error_text }
+}
+
+/** The one field of a tool input that names what it touched, when there is
+ * one; otherwise the whole input as JSON. */
+function summarizeInput(input: unknown): string {
+  if (typeof input === 'string') return input
+  if (!isRecord(input)) return ''
+  for (const key of ['command', 'file_path', 'path', 'pattern', 'url', 'query', 'description']) {
+    const value = input[key]
+    if (typeof value === 'string' && value !== '') return value
+  }
+  try {
+    return JSON.stringify(input)
+  } catch {
+    return ''
+  }
+}
+
+/** One effect record, exactly as the daemon reads it from the ui_log line. */
+export function effectRecord(payload: { step: number; level: string; confidence?: number; probabilities?: Record<string, number>; latency_ms?: number; source?: string; fallback?: string }): string {
+  const record: Record<string, unknown> = { effort: 1, step: payload.step, level: payload.level }
+  for (const key of ['confidence', 'probabilities', 'latency_ms', 'source', 'fallback'] as const) {
+    const value = payload[key]
+    if (value !== undefined) record[key] = value
+  }
+  return JSON.stringify(record)
+}
+
+function debug($: EngineInterface, message: string): void {
+  try {
+    $.ui.log(`labrastro-effort: ${message}`, { to: 'debug' })
+  } catch {
+    // Diagnostics only.
+  }
+}
+
+async function markerExists($: EngineInterface, path: string): Promise<boolean> {
+  try {
+    return (await $.fs.exists(path)) === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * `CLAUDE_CODE_PLUGIN_DIRS` without this mod's folder (empty string when
+ * nothing else is left), so nothing the agent starts loads this mod twice.
+ * Keeps the other mods' folders (labrastro-ysk) intact.
+ */
+export function pluginDirsWithout(dirs: string, root: string): string {
+  const separator = root.startsWith('/') ? ':' : ';'
+  const trim = (path: string) => path.replace(/[\\/]+$/, '')
+  const own = trim(root)
+  const rest = dirs.split(separator).filter((dir) => dir !== '' && trim(dir) !== own)
+  return rest.join(separator)
+}
+
+/** The daemon's answer for one step's effort, as the endpoint shapes it. */
+export async function decide(
+  $: EngineInterface,
+  ctx: EffortContext,
+  step: number,
+  port: string,
+  token: string,
+): Promise<Decision> {
+  let payload: StepPayload = { step, assistant_text: '', tools: [], error_text: '' }
+  try {
+    payload = stepPayload(step, (await $.session.messages()) as SessionMessages)
+  } catch {
+    // Materials are best-effort; the daemon decides on what arrived.
+  }
+  let response: { status?: number; text?: string } | undefined
+  try {
+    response = await Promise.race([
+      $.http.fetch(`http://127.0.0.1:${port}${ctx.endpoint}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      }),
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), DECISION_TIMEOUT_MS)),
+    ])
+  } catch {
+    return { kind: 'fallback', reason: 'error' }
+  }
+  if (response === undefined) return { kind: 'fallback', reason: 'timeout' }
+  // 401/404 means this run's credential or endpoint is gone; asking again
+  // each step would only repeat it.
+  if (response.status === 401 || response.status === 404) return { kind: 'disabled' }
+  if (response.status !== 200) return { kind: 'fallback', reason: 'error' }
+  let answer: unknown
+  try {
+    answer = JSON.parse(response.text ?? '')
+  } catch {
+    return { kind: 'fallback', reason: 'error' }
+  }
+  if (!isRecord(answer)) return { kind: 'fallback', reason: 'error' }
+  if (answer.enabled === false) return { kind: 'disabled' }
+  if (typeof answer.fallback === 'string' && answer.fallback !== '') return { kind: 'fallback', reason: answer.fallback }
+  if (typeof answer.level === 'string' && answer.level !== '') {
+    return {
+      kind: 'level',
+      level: answer.level,
+      confidence: typeof answer.confidence === 'number' ? answer.confidence : undefined,
+      probabilities: isRecord(answer.probabilities) ? (answer.probabilities as Record<string, number>) : undefined,
+      latency_ms: typeof answer.latency_ms === 'number' ? answer.latency_ms : undefined,
+      source: typeof answer.source === 'string' ? answer.source : undefined,
+    }
+  }
+  return { kind: 'fallback', reason: 'error' }
+}
+
+export const register: Register = (on) => {
+  let context: EffortContext | undefined
+  let markerFile: string | undefined
+  let token = ''
+  let port = ''
+  // The last level that took effect; the startup level until a decision says
+  // otherwise. Every main step carries it explicitly.
+  let last = ''
+  // The enablement marker was seen at least once this run.
+  let wasEnabled = false
+  // Per-turn effort is off for the rest of this run (marker removed after it
+  // was seen, or the endpoint answered not-enabled): lock `last`, stop asking,
+  // write no further effect records.
+  let revoked = false
+
+  on('session.start', async ($, e, next) => {
+    try {
+      const path = await $.env.get('MULTICA_EFFORT_CONTEXT_FILE')
+      if (path !== undefined && path !== '') {
+        await $.env.set('MULTICA_EFFORT_CONTEXT_FILE', undefined)
+        const dirs = await $.env.get('CLAUDE_CODE_PLUGIN_DIRS')
+        if (dirs !== undefined) {
+          await $.env.set('CLAUDE_CODE_PLUGIN_DIRS', pluginDirsWithout(dirs, $.plugin.root))
+        }
+        token = (await $.env.get('MULTICA_TOKEN')) ?? ''
+        port = (await $.env.get('MULTICA_DAEMON_PORT')) ?? ''
+        const raw = await $.fs.read(path)
+        context = typeof raw === 'string' ? parseContext(raw) : undefined
+        markerFile = context === undefined ? undefined : path.replace(/[^\\/]*$/, 'enabled')
+        last = context?.startup_effort ?? ''
+        if (context === undefined) debug($, 'no usable run context; staying off')
+      }
+    } catch (error) {
+      context = undefined
+      markerFile = undefined
+      debug($, `run context unreadable (${String(error)}); staying off`)
+    }
+    return next(e)
+  })
+
+  on('turn.step', async function* ($, e, next) {
+    const ctx = context
+    if (e.agentId !== undefined || ctx === undefined) return yield* next(e)
+    const step = e.index + 1
+    if (step === 1) {
+      // The run-level decision's level is what this run started with.
+      last = typeof e.effort === 'string' && e.effort !== '' ? e.effort : ctx.startup_effort
+      return yield* next({ ...e, effort: last })
+    }
+    if (!revoked && markerFile !== undefined) {
+      const enabled = await markerExists($, markerFile)
+      if (enabled) {
+        wasEnabled = true
+      } else if (wasEnabled) {
+        // The daemon revoked per-turn effort mid-run (per_turn_effort_changed
+        // was false): lock the level, keep it explicit so the top-level
+        // startup effort never comes back and rewrites the cache.
+        revoked = true
+      }
+    }
+    if (!revoked && wasEnabled) {
+      const decision = await decide($, ctx, step, port, token)
+      if (decision.kind === 'disabled') {
+        revoked = true
+      } else if (decision.kind === 'level') {
+        last = decision.level
+        $.ui.log(effectRecord({
+          step,
+          level: decision.level,
+          confidence: decision.confidence,
+          probabilities: decision.probabilities,
+          latency_ms: decision.latency_ms,
+          source: decision.source,
+        }))
+      } else {
+        // Fallback keeps the last level; the record says so (contract §7).
+        $.ui.log(effectRecord({ step, level: last, fallback: decision.reason }))
+      }
+    }
+    return yield* next({ ...e, effort: last })
+  })
+}

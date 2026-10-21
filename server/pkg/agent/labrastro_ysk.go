@@ -17,6 +17,13 @@ const (
 	// ClaudeYouShouldKnowPlugin is the mod's manifest name. Claude Code stamps
 	// it on every ui_log line the mod writes.
 	ClaudeYouShouldKnowPlugin = "labrastro-ysk"
+	// ClaudePerTurnEffortMinVersion is the first Claude Code release whose
+	// turn.step rewrites effort end-to-end (OL-1000 verified 2.1.304; builds
+	// since 2.1.269 can rewrite but were never verified in between).
+	ClaudePerTurnEffortMinVersion = "2.1.304"
+	// ClaudeEffortPlugin is the labrastro-effort mod's manifest name. Claude
+	// Code stamps it on every ui_log line the mod writes.
+	ClaudeEffortPlugin = "labrastro-effort"
 
 	// youShouldKnowMaxBatchBytes bounds one batch. A version-1 batch holds a
 	// handful of short tips; anything near this size is not one.
@@ -28,6 +35,15 @@ const (
 func SupportsClaudeYouShouldKnow(version string) bool {
 	detected, err := parseSemver(version)
 	floor, _ := parseSemver(ClaudeYouShouldKnowMinVersion)
+	return err == nil && !detected.lessThan(floor)
+}
+
+// SupportsClaudePerTurnEffort reports whether this Claude Code version's
+// turn.step can rewrite per-step effort. An unreadable version is treated as
+// unsupported.
+func SupportsClaudePerTurnEffort(version string) bool {
+	detected, err := parseSemver(version)
+	floor, _ := parseSemver(ClaudePerTurnEffortMinVersion)
 	return err == nil && !detected.lessThan(floor)
 }
 
