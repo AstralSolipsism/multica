@@ -743,6 +743,9 @@ type (
 type HeartbeatExtras struct {
 	PlanQuota *protocol.RuntimePlanQuota
 	Metrics   *protocol.HostMetrics
+	// ThinkingAdapt is the daemon's Jev health snapshot, attached only for
+	// runtimes whose provider supports thinking control (contract §8).
+	ThinkingAdapt *protocol.ThinkingAdaptSnapshot
 }
 
 func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, extras HeartbeatExtras) (*HeartbeatResponse, error) {
@@ -755,6 +758,9 @@ func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, extras Hea
 	}
 	if extras.Metrics != nil {
 		body["metrics"] = extras.Metrics
+	}
+	if extras.ThinkingAdapt != nil {
+		body["thinking_adapt"] = extras.ThinkingAdapt
 	}
 	var resp HeartbeatResponse
 	if err := c.postJSON(ctx, "/api/daemon/heartbeat", body, &resp); err != nil {

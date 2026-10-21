@@ -1031,6 +1031,10 @@ type DaemonHeartbeatRequest struct {
 	// daemon host's latest CPU/memory sample. Optional; a bad payload drops
 	// the field, never the beat.
 	Metrics *protocol.HostMetrics `json:"metrics,omitempty"`
+	// ThinkingAdapt mirrors protocol.DaemonHeartbeatRequestPayload.ThinkingAdapt:
+	// the daemon's Jev health snapshot for adaptive thinking. Optional; a
+	// bad payload drops the field, never the beat.
+	ThinkingAdapt *protocol.ThinkingAdaptSnapshot `json:"thinking_adapt,omitempty"`
 }
 
 // heartbeatHasPendingTimeout bounds the cheap HasPending probe on the
@@ -1176,6 +1180,7 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// the helpers swallow validation/persistence failures internally.
 	h.storeHeartbeatPlanQuota(r.Context(), rt, req.PlanQuota)
 	h.storeHeartbeatMetrics(r.Context(), uuidToString(rt.WorkspaceID), rt.DaemonID.String, req.Metrics)
+	h.storeHeartbeatThinkingAdapt(r.Context(), uuidToString(rt.WorkspaceID), rt.DaemonID.String, req.ThinkingAdapt)
 
 	ack, m, err := h.processHeartbeat(r.Context(), runtimeID, req.SupportsBatchImport)
 	probeModelMs = m.ProbeModelMs
@@ -1265,6 +1270,7 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 	// daemon id when the daemon heartbeats with a user PAT).
 	leaseState := lease.Snapshot()
 	h.storeHeartbeatMetrics(ctx, leaseState.WorkspaceID, leaseState.DaemonID, payload.Metrics)
+	h.storeHeartbeatThinkingAdapt(ctx, leaseState.WorkspaceID, leaseState.DaemonID, payload.ThinkingAdapt)
 
 	ack, _, err := h.processHeartbeat(ctx, runtimeID, payload.SupportsBatchImport)
 	return ack, err
