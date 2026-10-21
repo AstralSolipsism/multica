@@ -28,7 +28,7 @@ creates the index once per snapshot and only builds the requested model.
   `independent:root`); raw dependency IDs are always retained. A mixed bundle
   contains **all** its originals, including satisfied ones. The default filter
   removes only fully satisfied bundles. `satisfiedByCard` also contains the
-  satisfied subset of mixed bundles, for hover overlays.
+  satisfied subset of mixed bundles, for selection/focus overlays.
 - Line and focus endpoints use raw issue IDs. `sourceKind` / `targetKind` say
   whether to attach to a frame. `frames` have immediate `taskIds` / `frameIds`
   and repaired `parentId`; parent issues are frame headers, not duplicate tasks.

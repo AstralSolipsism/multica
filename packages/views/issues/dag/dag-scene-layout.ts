@@ -308,7 +308,7 @@ export async function layoutDagScene(input: DagSceneInput, engine: Pick<ELK, "la
       const absolutePort = (role: "input" | "output") => {
         const port = node.ports?.find((p) => p.id === portId(node.id, role));
         // Unused logical ports need no ELK objects or dummy routing work.
-        // They still exist in the geometry for hover overlays and future edges.
+        // They still exist in the geometry for satisfied overlays and future edges.
         if (!port) return { x: origin.x + (role === "input" ? 0 : box.width), y: origin.y + box.height / 2 };
         if (port.x === undefined || port.y === undefined) throw new Error(`Missing DAG port: ${node.id}`);
         return { x: origin.x + port.x, y: origin.y + port.y };
