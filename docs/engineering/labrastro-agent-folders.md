@@ -47,6 +47,8 @@ On create, omitted or empty `parent_id` means root. PATCH preserves omitted
 fields; an empty `parent_id` moves to root. PUT requires `folder_id`; empty
 means root and deletes the placement. Parent and destination IDs must name
 custom folders in this workspace: a squad ID is not a valid destination.
+Only `kind = 'user'` agents are placeable; system agents (agent-builder
+execution carriers) return 404 `not_found`, matching `GetAgentInWorkspace`.
 Archived squads are not movable (404).
 
 Folder names contain 1–255 UTF-8 bytes, no surrounding whitespace, and no
@@ -115,8 +117,10 @@ all three tables, closing the no-FK insertion window.
 
 Tree reads use one read-only REPEATABLE READ transaction for consistent
 folders, membership, visibility, and positions. Dangling placements are
-ignored on read and pruned on the next successful tree mutation. Squad
-membership and archive writes stay in the existing upstream handlers.
+ignored on read and pruned on the next successful tree mutation; a placement
+whose agent is missing, not `kind = 'user'`, or whose folder is missing counts
+as dangling. Squad membership and archive writes stay in the existing
+upstream handlers.
 
 Migrations:
 

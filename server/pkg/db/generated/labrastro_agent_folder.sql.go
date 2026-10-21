@@ -14,7 +14,7 @@ import (
 const labrastroCleanAgentPlacements = `-- name: LabrastroCleanAgentPlacements :exec
 WITH agents AS (
     DELETE FROM labrastro_agent_placement p WHERE p.workspace_id=$1
-    AND (NOT EXISTS (SELECT 1 FROM agent a WHERE a.id=p.agent_id AND a.workspace_id=p.workspace_id)
+    AND (NOT EXISTS (SELECT 1 FROM agent a WHERE a.id=p.agent_id AND a.workspace_id=p.workspace_id AND a.kind = 'user')
       OR NOT EXISTS (SELECT 1 FROM labrastro_agent_folder f WHERE f.id=p.folder_id AND f.workspace_id=p.workspace_id))
 )
 DELETE FROM labrastro_agent_squad_placement p WHERE p.workspace_id=$1
@@ -22,6 +22,9 @@ AND (NOT EXISTS (SELECT 1 FROM squad s WHERE s.id=p.squad_id AND s.workspace_id=
   OR NOT EXISTS (SELECT 1 FROM labrastro_agent_folder f WHERE f.id=p.folder_id AND f.workspace_id=p.workspace_id))
 `
 
+// A placement is valid only while its agent exists, is kind='user', and its
+// folder exists. Placements created before this filter, or pointing at system
+// agents, are pruned on the next tree mutation.
 func (q *Queries) LabrastroCleanAgentPlacements(ctx context.Context, workspaceID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, labrastroCleanAgentPlacements, workspaceID)
 	return err
@@ -226,7 +229,7 @@ func (q *Queries) LabrastroLockAgentFolderWorkspace(ctx context.Context, workspa
 }
 
 const labrastroLockFolderAgent = `-- name: LabrastroLockFolderAgent :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters FROM agent WHERE workspace_id=$1 AND id=$2 FOR SHARE
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters FROM agent WHERE workspace_id=$1 AND id=$2 AND kind = 'user' FOR SHARE
 `
 
 type LabrastroLockFolderAgentParams struct {
@@ -234,6 +237,8 @@ type LabrastroLockFolderAgentParams struct {
 	ID          pgtype.UUID `json:"id"`
 }
 
+// kind='user' matches GetAgentInWorkspace: system agents (agent-builder
+// execution carriers) are invisible in this tree and must 404 here too.
 func (q *Queries) LabrastroLockFolderAgent(ctx context.Context, arg LabrastroLockFolderAgentParams) (Agent, error) {
 	row := q.db.QueryRow(ctx, labrastroLockFolderAgent, arg.WorkspaceID, arg.ID)
 	var i Agent
