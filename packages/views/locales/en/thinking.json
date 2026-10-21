@@ -2,8 +2,8 @@
   "badge_fallback": "Default",
   "mode_adapt": "Adapt",
   "mode_fixed": "Fixed",
-  "decision_count_one": "{{count}} decision",
-  "decision_count_other": "{{count}} decisions",
+  "step_count_one": "{{count}} step",
+  "step_count_other": "{{count}} steps",
   "peak_level": "peak {{level}}",
   "summary_fixed": "Fixed · {{level}}",
   "trend_up": "raised from the previous step",
@@ -26,7 +26,9 @@
     "sequence": "Level by step",
     "step_default": "default",
     "fallback_count_one": "{{count}} fallback",
-    "fallback_count_other": "{{count}} fallbacks"
+    "fallback_count_other": "{{count}} fallbacks",
+    "carried_over": "Carried over the previous step's level: {{reason}}",
+    "step_carried": "carried over"
   },
   "source_self_hosted": "Self-hosted"
 }

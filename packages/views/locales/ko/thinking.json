@@ -2,7 +2,7 @@
   "badge_fallback": "기본값",
   "mode_adapt": "적응",
   "mode_fixed": "고정",
-  "decision_count_other": "{{count}}회",
+  "step_count_other": "{{count}}단계",
   "peak_level": "최고 {{level}}",
   "summary_fixed": "고정 · {{level}}",
   "trend_up": "이전 단계에서 상향",
@@ -24,7 +24,9 @@
     "fixed": "고정 레벨",
     "sequence": "단계별 레벨",
     "step_default": "기본값",
-    "fallback_count_other": "폴백 {{count}}회"
+    "fallback_count_other": "폴백 {{count}}회",
+    "carried_over": "이전 단계의 레벨을 그대로 사용: {{reason}}",
+    "step_carried": "유지"
   },
   "source_self_hosted": "자체 호스팅"
 }

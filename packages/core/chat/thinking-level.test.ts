@@ -35,6 +35,18 @@ const fallback = (
   fallback: reason,
   step,
 });
+// Step-level fallback (OL-1000): the decision failed, so the step explicitly
+// carried the previous step's level over — `level` stays non-empty.
+const stepFallback = (
+  level: string,
+  reason: NonNullable<TaskMessageThinkingMetadata["fallback"]>,
+  step?: number,
+) => ({
+  level,
+  mode: "adapt" as const,
+  fallback: reason,
+  step,
+});
 
 describe("thinkingLevelRank", () => {
   it("orders the known ladder", () => {
@@ -55,13 +67,27 @@ describe("collectThinkingSamples", () => {
     expect(collectThinkingSamples([message(1), message(2)])).toEqual([]);
   });
 
-  it("collapses the messages of one step into a single sample", () => {
+  it("counts the several tagged messages of one step as that single step", () => {
     const samples = collectThinkingSamples([
       message(1, adapt("high", 1)),
       message(2, adapt("high", 1)),
-      message(3, adapt("xhigh", 2)),
+      message(3, adapt("high", 1)),
+      message(4, adapt("xhigh", 2)),
     ]);
     expect(samples.map((s) => s.metadata.level)).toEqual(["high", "xhigh"]);
+  });
+
+  it("counts every tag without a step number as one run-level step", () => {
+    // A Kimi-style run: five thinking messages, all carrying the same
+    // run-level decision — one step, not five.
+    const samples = collectThinkingSamples([
+      message(1, adapt("high")),
+      message(2, adapt("high")),
+      message(3, adapt("high")),
+      message(4, adapt("high")),
+      message(5, adapt("high")),
+    ]);
+    expect(samples).toHaveLength(1);
   });
 
   it("orders samples by seq even when the input arrives unsorted", () => {
@@ -70,15 +96,6 @@ describe("collectThinkingSamples", () => {
       message(1, adapt("high", 1)),
     ]);
     expect(samples.map((s) => s.seq)).toEqual([1, 3]);
-  });
-
-  it("keeps consecutive same-content samples without step numbers separate from changed ones", () => {
-    const samples = collectThinkingSamples([
-      message(1, adapt("high")),
-      message(2, adapt("high")),
-      message(3, adapt("low")),
-    ]);
-    expect(samples.map((s) => s.metadata.level)).toEqual(["high", "low"]);
   });
 });
 
@@ -101,8 +118,14 @@ describe("currentThinkingLevel", () => {
     expect(result?.trend).toBe("up");
   });
 
-  it("reports up, down, and flat against the previous step", () => {
-    expect(currentThinkingLevel([message(1, adapt("low", 1)), message(2, adapt("xhigh", 2))])?.trend).toBe("up");
+  it("reports up, down, and flat against the previous step, not the previous tagged message", () => {
+    expect(
+      currentThinkingLevel([
+        message(1, adapt("low", 1)),
+        message(2, adapt("low", 1)),
+        message(3, adapt("xhigh", 2)),
+      ])?.trend,
+    ).toBe("up");
     expect(currentThinkingLevel([message(1, adapt("xhigh", 1)), message(2, adapt("low", 2))])?.trend).toBe("down");
     expect(currentThinkingLevel([message(1, adapt("high", 1)), message(2, adapt("high", 2))])?.trend).toBe("flat");
   });
@@ -116,7 +139,7 @@ describe("currentThinkingLevel", () => {
     ).toBeUndefined();
   });
 
-  it("shows no arrow when the previous step fell back", () => {
+  it("shows no arrow when the previous step fell back without a level", () => {
     const result = currentThinkingLevel([message(1, fallback("timeout", 1)), message(2, adapt("high", 2))]);
     expect(result?.trend).toBeUndefined();
   });
@@ -127,11 +150,30 @@ describe("currentThinkingLevel", () => {
     expect(result?.trend).toBeUndefined();
   });
 
-  it("exposes the fallback step itself as the current state", () => {
+  it("exposes a run-level fallback (empty level) as the current state", () => {
     const result = currentThinkingLevel([message(1, adapt("high", 1)), message(2, fallback("breaker", 2))]);
     expect(result?.current.metadata.level).toBe("");
     expect(result?.current.metadata.fallback).toBe("breaker");
     expect(result?.trend).toBeUndefined();
+  });
+
+  it("shows a step-level fallback's carried level without an arrow", () => {
+    const result = currentThinkingLevel([
+      message(1, adapt("xhigh", 1)),
+      message(2, stepFallback("xhigh", "timeout", 2)),
+    ]);
+    expect(result?.current.metadata.level).toBe("xhigh");
+    expect(result?.current.metadata.fallback).toBe("timeout");
+    expect(result?.trend).toBeUndefined();
+  });
+
+  it("compares against a step-level fallback's carried level on the next decided step", () => {
+    const result = currentThinkingLevel([
+      message(1, adapt("high", 1)),
+      message(2, stepFallback("high", "timeout", 2)),
+      message(3, adapt("xhigh", 3)),
+    ]);
+    expect(result?.trend).toBe("up");
   });
 });
 
@@ -140,7 +182,7 @@ describe("summarizeThinkingRun", () => {
     expect(summarizeThinkingRun([message(1), message(2)])).toBeUndefined();
   });
 
-  it("summarizes an adaptive run: sequence, decisions, peak, fallbacks", () => {
+  it("summarizes an adaptive run: per-step sequence, step count, peak, fallbacks", () => {
     const summary = summarizeThinkingRun([
       message(1, adapt("low", 1)),
       message(2, adapt("low", 1)),
@@ -151,15 +193,38 @@ describe("summarizeThinkingRun", () => {
     ]);
     expect(summary?.mode).toBe("adapt");
     expect(summary?.samples.map((s) => s.metadata.level)).toEqual(["low", "xhigh", "", "", "high"]);
-    expect(summary?.decisions).toBe(3);
+    expect(summary?.steps).toBe(5);
     expect(summary?.fallbacks).toBe(2);
     expect(summary?.peak).toBe("xhigh");
   });
 
-  it("summarizes a fixed run without counting decisions", () => {
+  it("counts a run with five same-tag thinking messages as one step", () => {
+    const summary = summarizeThinkingRun([
+      message(1, adapt("high")),
+      message(2, adapt("high")),
+      message(3, adapt("high")),
+      message(4, adapt("high")),
+      message(5, adapt("high")),
+    ]);
+    expect(summary?.steps).toBe(1);
+    expect(summary?.fallbacks).toBe(0);
+  });
+
+  it("counts step-level fallbacks among the fallback steps", () => {
+    const summary = summarizeThinkingRun([
+      message(1, adapt("high", 1)),
+      message(2, stepFallback("high", "timeout", 2)),
+      message(3, adapt("xhigh", 3)),
+    ]);
+    expect(summary?.steps).toBe(3);
+    expect(summary?.fallbacks).toBe(1);
+    expect(summary?.peak).toBe("xhigh");
+  });
+
+  it("summarizes a fixed run", () => {
     const summary = summarizeThinkingRun([message(1, fixed("ultra", 1)), message(2, fixed("ultra", 1))]);
     expect(summary?.mode).toBe("fixed");
-    expect(summary?.decisions).toBe(0);
+    expect(summary?.steps).toBe(1);
     expect(summary?.fallbacks).toBe(0);
     expect(summary?.peak).toBe("ultra");
   });
@@ -167,6 +232,6 @@ describe("summarizeThinkingRun", () => {
   it("leaves the peak undefined when every level is a custom token", () => {
     const summary = summarizeThinkingRun([message(1, adapt("custom-variant", 1))]);
     expect(summary?.peak).toBeUndefined();
-    expect(summary?.decisions).toBe(1);
+    expect(summary?.steps).toBe(1);
   });
 });

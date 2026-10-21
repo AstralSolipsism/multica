@@ -2,7 +2,7 @@
   "badge_fallback": "デフォルト",
   "mode_adapt": "適応",
   "mode_fixed": "固定",
-  "decision_count_other": "{{count}} 回",
+  "step_count_other": "{{count}} ステップ",
   "peak_level": "最大 {{level}}",
   "summary_fixed": "固定 · {{level}}",
   "trend_up": "前のステップから引き上げ",
@@ -24,7 +24,9 @@
     "fixed": "固定レベル",
     "sequence": "ステップごとのレベル",
     "step_default": "デフォルト",
-    "fallback_count_other": "フォールバック {{count}} 回"
+    "fallback_count_other": "フォールバック {{count}} 回",
+    "carried_over": "前のステップのレベルを継続使用：{{reason}}",
+    "step_carried": "継続"
   },
   "source_self_hosted": "セルフホスト"
 }

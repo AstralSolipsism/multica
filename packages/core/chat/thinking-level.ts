@@ -32,39 +32,39 @@ export interface ThinkingSample {
 }
 
 function stepKey(metadata: TaskMessageThinkingMetadata): string {
-  // Claude tags every message of a step with the same decision, so a defined
-  // step number is the identity. Runtimes that do not number steps fall back
-  // to content identity: consecutive duplicates still collapse into one
-  // sample, while a changed level or fallback starts a new one.
+  // Tags without a step number belong to the run-level decision and count as
+  // exactly one step (OL-1000 addendum): a runtime that tags every thinking
+  // message of a run with that one decision still summarizes as a single
+  // step. Claude tags every message of a step with the step's decision, so a
+  // defined step number is the identity there.
   if (metadata.step !== undefined) return `step:${metadata.step}`;
-  const m = metadata;
-  return `content:${m.mode}:${m.level}:${m.fallback ?? ""}`;
+  return "run";
 }
 
 /**
- * The run's tagged steps in seq order, deduplicated per step. Messages carry
+ * The run's tagged steps in seq order, one sample per step. Messages carry
  * no ordering guarantee from every writer, so the input is sorted by seq
- * first rather than trusted to arrive ordered.
+ * first rather than trusted to arrive ordered. Grouping is by step, not by
+ * adjacency: several tagged messages of one step (its first message plus its
+ * thinking messages) collapse into that step's latest tag.
  */
 export function collectThinkingSamples(
   messages: readonly TaskMessagePayload[],
 ): ThinkingSample[] {
-  const samples: ThinkingSample[] = [];
+  const tagged: ThinkingSample[] = [];
   for (const message of messages) {
     const thinking = message.metadata?.thinking;
-    if (thinking) samples.push({ seq: message.seq, metadata: thinking });
+    if (thinking) tagged.push({ seq: message.seq, metadata: thinking });
   }
-  samples.sort((a, b) => a.seq - b.seq);
-  const out: ThinkingSample[] = [];
-  for (const sample of samples) {
-    const prev = out[out.length - 1];
-    if (prev && stepKey(prev.metadata) === stepKey(sample.metadata)) {
-      out[out.length - 1] = sample;
-      continue;
-    }
-    out.push(sample);
+  tagged.sort((a, b) => a.seq - b.seq);
+  const byStep = new Map<string, ThinkingSample>();
+  const order: string[] = [];
+  for (const sample of tagged) {
+    const key = stepKey(sample.metadata);
+    if (!byStep.has(key)) order.push(key);
+    byStep.set(key, sample);
   }
-  return out;
+  return order.map((key) => byStep.get(key)!);
 }
 
 export type ThinkingTrend = "up" | "down" | "flat";
@@ -79,8 +79,10 @@ export interface CurrentThinkingLevel {
 /**
  * The level in effect right now: the most recent message carrying
  * `metadata.thinking`, regardless of message type. Arrows compare it with the
- * previous tagged step and only exist when both levels sit on the known
- * ladder — a fallback step or a custom token has nothing to compare against.
+ * previous tagged STEP (not the previous tagged message) and only exist when
+ * both levels sit on the known ladder. A step that fell back (`fallback`
+ * set) never gets an arrow: a run-level fallback has no level to show, and a
+ * step-level fallback merely carried the previous level over.
  */
 export function currentThinkingLevel(
   messages: readonly TaskMessagePayload[],
@@ -92,6 +94,7 @@ export function currentThinkingLevel(
   let trend: ThinkingTrend | undefined;
   if (
     current.metadata.mode === "adapt" &&
+    current.metadata.fallback === undefined &&
     current.metadata.level !== "" &&
     previous &&
     previous.metadata.level !== ""
@@ -109,9 +112,9 @@ export interface ThinkingRunSummary {
   mode: "adapt" | "fixed";
   /** Every tagged step in order — the per-step level sequence. */
   samples: ThinkingSample[];
-  /** Adapt decisions that produced a level (fallbacks excluded). */
-  decisions: number;
-  /** Steps that fell back to the default level. */
+  /** How many steps the run had — the "N 次" of the summary chip. */
+  steps: number;
+  /** Steps whose tag carries a `fallback` (run-level or step-level). */
   fallbacks: number;
   /** Highest known level reached; undefined when nothing was orderable. */
   peak?: string;
@@ -124,22 +127,18 @@ export function summarizeThinkingRun(
   const samples = collectThinkingSamples(messages);
   const first = samples[0];
   if (!first) return undefined;
-  let decisions = 0;
   let fallbacks = 0;
   let peak: string | undefined;
   let peakRank = -1;
   for (const sample of samples) {
-    const { level, mode } = sample.metadata;
-    if (level === "") {
-      fallbacks += 1;
-      continue;
-    }
-    if (mode === "adapt") decisions += 1;
+    const { level, fallback } = sample.metadata;
+    if (fallback !== undefined) fallbacks += 1;
+    if (level === "") continue;
     const rank = thinkingLevelRank(level);
     if (rank !== undefined && rank > peakRank) {
       peakRank = rank;
       peak = level;
     }
   }
-  return { mode: first.metadata.mode, samples, decisions, fallbacks, peak };
+  return { mode: first.metadata.mode, samples, steps: samples.length, fallbacks, peak };
 }

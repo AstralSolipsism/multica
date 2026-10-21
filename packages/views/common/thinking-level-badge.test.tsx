@@ -92,6 +92,21 @@ describe("ThinkingLevelBadge", () => {
     expect(tooltip).toHaveTextContent("Fell back to the default level: timed out");
   });
 
+  it("shows a step-level fallback's carried level without an arrow and explains it on hover", async () => {
+    renderWithI18n(
+      <ThinkingLevelBadge
+        messages={[
+          message(1, adapt("xhigh", 1)),
+          message(2, adapt("xhigh", 2, { fallback: "breaker" })),
+        ]}
+      />,
+    );
+    expect(chip("xhigh")).not.toHaveTextContent("↑");
+    expect(chip("xhigh")).not.toHaveTextContent("↓");
+    const tooltip = await tooltipOf("xhigh");
+    expect(tooltip).toHaveTextContent("Carried over the previous step's level: breaker open");
+  });
+
   it("shows a fixed level without an arrow and explains it on hover", async () => {
     renderWithI18n(
       <ThinkingLevelBadge
@@ -147,7 +162,7 @@ describe("ThinkingRunSummaryBadge", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("summarizes an adaptive run with its decision count and peak", async () => {
+  it("summarizes an adaptive run with its step count and peak", async () => {
     renderWithI18n(
       <ThinkingRunSummaryBadge
         messages={[
@@ -158,11 +173,26 @@ describe("ThinkingRunSummaryBadge", () => {
         ]}
       />,
     );
-    expect(screen.getByText("Adapt · 2 decisions · peak xhigh")).toBeInTheDocument();
-    const tooltip = await tooltipOf("Adapt · 2 decisions · peak xhigh");
+    expect(screen.getByText("Adapt · 3 steps · peak xhigh")).toBeInTheDocument();
+    const tooltip = await tooltipOf("Adapt · 3 steps · peak xhigh");
     expect(tooltip).toHaveTextContent("#1 low");
     expect(tooltip).toHaveTextContent("#2 xhigh");
     expect(tooltip).toHaveTextContent("#3 default · breaker open");
+    expect(tooltip).toHaveTextContent("1 fallback");
+  });
+
+  it("marks carried-over steps in the summary sequence", async () => {
+    renderWithI18n(
+      <ThinkingRunSummaryBadge
+        messages={[
+          message(1, adapt("high", 1)),
+          message(2, adapt("high", 2, { fallback: "timeout" })),
+        ]}
+      />,
+    );
+    const tooltip = await tooltipOf("Adapt · 2 steps · peak high");
+    expect(tooltip).toHaveTextContent("#1 high");
+    expect(tooltip).toHaveTextContent("#2 high · carried over · timed out");
     expect(tooltip).toHaveTextContent("1 fallback");
   });
 

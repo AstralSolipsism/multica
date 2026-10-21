@@ -2,8 +2,8 @@
   "badge_fallback": "Par défaut",
   "mode_adapt": "Adaptatif",
   "mode_fixed": "Fixe",
-  "decision_count_one": "{{count}} décision",
-  "decision_count_other": "{{count}} décisions",
+  "step_count_one": "{{count}} étape",
+  "step_count_other": "{{count}} étapes",
   "peak_level": "pic {{level}}",
   "summary_fixed": "Fixe · {{level}}",
   "trend_up": "monté par rapport à l'étape précédente",
@@ -26,7 +26,9 @@
     "sequence": "Niveau par étape",
     "step_default": "par défaut",
     "fallback_count_one": "{{count}} retour",
-    "fallback_count_other": "{{count}} retours"
+    "fallback_count_other": "{{count}} retours",
+    "carried_over": "Reprise du niveau de l'étape précédente : {{reason}}",
+    "step_carried": "repris"
   },
   "source_self_hosted": "Auto-hébergé"
 }

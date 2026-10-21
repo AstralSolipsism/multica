@@ -1201,7 +1201,7 @@ describe("AgentTranscriptDialog thinking-level badge", () => {
         tagged(3, "", 3, { fallback: "timeout" }),
       ],
     });
-    expect(screen.getByText("Adapt · 2 decisions · peak xhigh")).toBeInTheDocument();
+    expect(screen.getByText("Adapt · 3 steps · peak xhigh")).toBeInTheDocument();
     expect(screen.queryByText("xhigh")).not.toBeInTheDocument();
   });
 

@@ -133,6 +133,14 @@ function FallbackTooltipContent({ metadata }: { metadata: TaskMessageThinkingMet
   return <span>{t(($) => $.tooltip.fell_back, { reason })}</span>;
 }
 
+// Step-level fallback (OL-1000): the decision failed, so the step explicitly
+// carried the previous step's level over — show that level, say why.
+function CarriedOverTooltipContent({ metadata }: { metadata: TaskMessageThinkingMetadata }) {
+  const { t } = useT("thinking");
+  const reason = useFallbackReason(metadata.fallback);
+  return <span>{t(($) => $.tooltip.carried_over, { reason })}</span>;
+}
+
 function TrendMark({ trend }: { trend: ThinkingTrend }) {
   const { t } = useT("thinking");
   if (trend === "flat") return null;
@@ -170,8 +178,13 @@ export function ThinkingLevelBadge({ messages, className, leading }: BadgeProps)
   const state = useMemo(() => currentThinkingLevel(messages), [messages]);
   if (!state) return null;
   const metadata = state.current.metadata;
+  // "Default" is shown exactly when the level is empty (run-level fallback) —
+  // never keyed on `fallback` alone, since a step-level fallback carries the
+  // previous level and shows that instead.
   const tooltip = metadata.level === "" ? (
     <FallbackTooltipContent metadata={metadata} />
+  ) : metadata.fallback !== undefined ? (
+    <CarriedOverTooltipContent metadata={metadata} />
   ) : metadata.mode === "fixed" ? (
     t(($) => $.tooltip.fixed)
   ) : (
@@ -195,7 +208,7 @@ function SummaryChipLabel({ summary }: { summary: ThinkingRunSummary }) {
   }
   const parts = [
     t(($) => $.mode_adapt),
-    t(($) => $.decision_count, { count: summary.decisions }),
+    t(($) => $.step_count, { count: summary.steps }),
   ];
   if (summary.peak) parts.push(t(($) => $.peak_level, { level: summary.peak }));
   return <span className="font-sans">{parts.join(" · ")}</span>;
@@ -204,13 +217,17 @@ function SummaryChipLabel({ summary }: { summary: ThinkingRunSummary }) {
 function SummaryStepLine({ sample, index }: { sample: ThinkingSample; index: number }) {
   const { t } = useT("thinking");
   const reason = useFallbackReason(
-    sample.metadata.level === "" ? sample.metadata.fallback : undefined,
+    sample.metadata.level === "" || sample.metadata.fallback !== undefined
+      ? sample.metadata.fallback
+      : undefined,
   );
   const step = sample.metadata.step ?? index + 1;
   const level =
     sample.metadata.level === ""
       ? `${t(($) => $.tooltip.step_default)} · ${reason}`
-      : sample.metadata.level;
+      : sample.metadata.fallback !== undefined
+        ? `${sample.metadata.level} · ${t(($) => $.tooltip.step_carried)} · ${reason}`
+        : sample.metadata.level;
   return (
     <span className="tabular-nums">
       #{step} {level}

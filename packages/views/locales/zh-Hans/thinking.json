@@ -2,7 +2,7 @@
   "badge_fallback": "默认",
   "mode_adapt": "自适应",
   "mode_fixed": "固定",
-  "decision_count_other": "{{count}} 次",
+  "step_count_other": "{{count}} 次",
   "peak_level": "最高 {{level}}",
   "summary_fixed": "固定 · {{level}}",
   "trend_up": "较上一步升挡",
@@ -24,7 +24,9 @@
     "fixed": "固定挡位",
     "sequence": "各步挡位",
     "step_default": "默认",
-    "fallback_count_other": "回退 {{count}} 次"
+    "fallback_count_other": "回退 {{count}} 次",
+    "carried_over": "沿用上一步的挡位：{{reason}}",
+    "step_carried": "沿用"
   },
   "source_self_hosted": "自部署"
 }
