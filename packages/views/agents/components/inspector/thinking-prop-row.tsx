@@ -2,14 +2,16 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import type { RuntimeModel } from "@multica/core/types";
+import type {
+  RuntimeModel,
+  RuntimeThinkingAdapt,
+} from "@multica/core/types";
 import { runtimeModelsOptions } from "@multica/core/runtimes";
 import { PropRow } from "../../../common/prop-row";
 import { SettingsRow } from "../../../settings/components/settings-layout";
 import { useT } from "../../../i18n";
 import { ThinkingPicker } from "./thinking-picker";
 import { findModelCapabilityEntry } from "./model-capability";
-import type { ThinkingAdaptViewSnapshot } from "../../../common/thinking-adapt";
 
 /**
  * Thinking row for the agent inspector. Hidden when the active model has
@@ -49,7 +51,7 @@ export function ThinkingPropRow({
   value: string;
   canEdit: boolean;
   adaptSupported?: boolean;
-  adaptSnapshot?: ThinkingAdaptViewSnapshot | null;
+  adaptSnapshot?: RuntimeThinkingAdapt | null;
   onChange: (next: string) => Promise<void> | void;
 }) {
   const { t } = useT("agents");
@@ -97,7 +99,7 @@ export function ThinkingSettingField({
   value: string;
   canEdit: boolean;
   adaptSupported?: boolean;
-  adaptSnapshot?: ThinkingAdaptViewSnapshot | null;
+  adaptSnapshot?: RuntimeThinkingAdapt | null;
   onChange: (next: string) => Promise<void> | void;
 }) {
   const modelsQuery = useQuery(

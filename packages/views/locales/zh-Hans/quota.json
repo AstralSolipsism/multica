@@ -30,7 +30,7 @@
     "source_opencode": "OpenCode Zen",
     "source_dashscope": "DashScope",
     "source_self_hosted": "自部署",
-    "counts": "自 daemon 启动以来：成功 {{success}} 次，回退 {{fallback}} 次"
+    "counts": "自守护进程启动以来：成功 {{success}} 次，回退 {{fallback}} 次"
   },
   "glm_title": "GLM 套餐余量",
   "glm_window_tokens": "5 小时 token",

@@ -1,8 +1,6 @@
 import type { RuntimeThinkingAdapt } from "@multica/core/types";
 import { useT } from "../i18n";
 
-export type ThinkingAdaptViewSnapshot = RuntimeThinkingAdapt;
-
 type QuotaT = ReturnType<typeof useT<"quota">>["t"];
 
 export function thinkingAdaptSourceLabel(source: string, t: QuotaT): string {
@@ -21,7 +19,7 @@ export function thinkingAdaptSourceLabel(source: string, t: QuotaT): string {
 }
 
 export function thinkingAdaptStatusLabel(
-  snapshot: ThinkingAdaptViewSnapshot | null | undefined,
+  snapshot: RuntimeThinkingAdapt | null | undefined,
   t: QuotaT,
 ): string {
   switch (snapshot?.status) {
@@ -34,14 +32,12 @@ export function thinkingAdaptStatusLabel(
     case "unavailable":
       return t(($) => $.thinking_adapt.unavailable);
     default:
-      return snapshot == null
-        ? t(($) => $.thinking_adapt.unavailable)
-        : t(($) => $.thinking_adapt.status_unknown);
+      return t(($) => $.thinking_adapt.status_unknown);
   }
 }
 
 export function thinkingAdaptSubtitle(
-  snapshot: ThinkingAdaptViewSnapshot | null | undefined,
+  snapshot: RuntimeThinkingAdapt | null | undefined,
   t: QuotaT,
 ): string {
   const parts = [thinkingAdaptStatusLabel(snapshot, t)];

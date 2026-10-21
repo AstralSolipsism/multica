@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import type {
   Agent,
   AgentRuntime,
@@ -68,15 +68,46 @@ const completedModelsRequest = {
   updated_at: "2026-01-01T00:00:00Z",
 } satisfies RuntimeModelListRequest;
 
+const adaptModelRequest = {
+  ...completedModelsRequest,
+  models: [
+    {
+      id: "gpt-5.6-sol",
+      label: "GPT-5.6 Sol",
+      thinking: {
+        supported_levels: [
+          { value: "low", label: "Low" },
+          { value: "high", label: "High" },
+        ],
+      },
+    },
+  ],
+} satisfies RuntimeModelListRequest;
+
+const adaptAgent = { ...agent, model: "gpt-5.6-sol" } as Agent;
+const adaptSnapshot = {
+  status: "available",
+  active_source: "self-hosted",
+  last_latency_ms: 290,
+  decisions_ok: 12,
+  decisions_fallback: 3,
+  since: "2026-10-21T00:00:00Z",
+  updated_at: "2026-10-21T01:00:00Z",
+};
+
 let queryClient: QueryClient;
 
-function renderInspector(currentUserId: string) {
+function renderInspector(
+  currentUserId: string,
+  runtime: AgentRuntime = privateRuntime,
+  agentValue: Agent = agent,
+) {
   renderWithI18n(
     <QueryClientProvider client={queryClient}>
       <AgentDetailInspector
-        agent={agent}
-        runtime={privateRuntime}
-        runtimes={[privateRuntime]}
+        agent={agentValue}
+        runtime={runtime}
+        runtimes={[runtime]}
         members={[]}
         currentUserId={currentUserId}
         canEdit
@@ -117,5 +148,40 @@ describe("AgentDetailInspector runtime access", () => {
     await waitFor(() => {
       expect(mockInitiateListModels).toHaveBeenCalledWith(privateRuntime.id);
     });
+  });
+
+  it("uses the runtime snapshot in the Adapt picker", async () => {
+    mockInitiateListModels.mockResolvedValue(adaptModelRequest);
+    mockGetListModelsResult.mockResolvedValue(adaptModelRequest);
+    renderInspector(
+      privateRuntime.owner_id!,
+      {
+        ...privateRuntime,
+        metadata: { capabilities: ["thinking-adapt-v1"] },
+        thinking_adapt: adaptSnapshot,
+      },
+      adaptAgent,
+    );
+
+    await screen.findByText("Thinking");
+    fireEvent.click(screen.getByRole("button", { name: /thinking/i }));
+
+    expect(
+      await screen.findByText("Available · Self-hosted · 290ms"),
+    ).toBeInTheDocument();
+  });
+
+  it("disables Adapt on an older daemon and shows the upgrade reason", async () => {
+    mockInitiateListModels.mockResolvedValue(adaptModelRequest);
+    mockGetListModelsResult.mockResolvedValue(adaptModelRequest);
+    renderInspector(privateRuntime.owner_id!, privateRuntime, adaptAgent);
+
+    await screen.findByText("Thinking");
+    fireEvent.click(screen.getByRole("button", { name: /thinking/i }));
+
+    expect(screen.getByText("Adapt").closest("button")).toBeDisabled();
+    expect(
+      screen.getByText(/daemon is too old for Adapt/),
+    ).toBeInTheDocument();
   });
 });

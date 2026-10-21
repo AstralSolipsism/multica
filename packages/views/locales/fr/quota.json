@@ -22,8 +22,8 @@
   "source_external": "via un envoi externe",
   "thinking_adapt": {
     "available": "Disponible",
-    "degraded": "Dégradé (Adaptation utilise le niveau CLI par défaut en cas d'échec)",
-    "unavailable": "Indisponible (Adaptation utilise le niveau CLI par défaut)",
+    "degraded": "Dégradé (Adaptatif utilise le niveau CLI par défaut en cas d'échec)",
+    "unavailable": "Indisponible (Adaptatif utilise le niveau CLI par défaut)",
     "idle": "Pas encore utilisé",
     "status_unknown": "Statut inconnu",
     "source_opencode_free": "OpenCode Zen",

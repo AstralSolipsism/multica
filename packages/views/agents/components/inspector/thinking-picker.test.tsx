@@ -206,12 +206,10 @@ describe("ThinkingPicker", () => {
     ).toBeInTheDocument();
   });
 
-  it("explains the CLI-default fallback when no snapshot is available", () => {
+  it("uses a neutral status when no snapshot is available", () => {
     renderPicker({ adaptSupported: true, adaptSnapshot: null });
     fireEvent.click(screen.getByRole("button"));
 
-    expect(
-      screen.getByText(/Unavailable \(Adapt has fallen back to the CLI default level\)/),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Status unknown")).toBeInTheDocument();
   });
 });

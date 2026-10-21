@@ -20,12 +20,14 @@ import {
   type QuotaTone,
   type QuotaWindowState,
 } from "@multica/core/runtimes";
-import type { AgentRuntime } from "@multica/core/types";
+import type {
+  AgentRuntime,
+  RuntimeThinkingAdapt,
+} from "@multica/core/types";
 import { useT } from "../../i18n";
 import {
   thinkingAdaptSourceLabel,
   thinkingAdaptStatusLabel,
-  type ThinkingAdaptViewSnapshot,
 } from "../../common/thinking-adapt";
 import { useQuotaTimeFormatter } from "./quota-time";
 
@@ -177,7 +179,7 @@ export function RuntimeQuotaCell({
 }: {
   runtime: AgentRuntime;
   now: number;
-  thinkingAdapt?: ThinkingAdaptViewSnapshot | null;
+  thinkingAdapt?: RuntimeThinkingAdapt | null;
 }) {
   const { t } = useT("quota");
   const formatTime = useQuotaTimeFormatter();
@@ -185,7 +187,14 @@ export function RuntimeQuotaCell({
 
   if (!state) {
     if (thinkingAdapt) {
-      return <ThinkingAdaptQuotaRow snapshot={thinkingAdapt} />;
+      return (
+        <div className="flex w-full flex-col gap-0.5 leading-tight">
+          <span className="text-caption text-faint-foreground">
+            {t(($) => $.not_reported)}
+          </span>
+          <ThinkingAdaptQuotaRow snapshot={thinkingAdapt} />
+        </div>
+      );
     }
     return (
       <span className="text-caption text-faint-foreground">
@@ -249,14 +258,15 @@ export function RuntimeQuotaCell({
 export function ThinkingAdaptQuotaRow({
   snapshot,
 }: {
-  snapshot: ThinkingAdaptViewSnapshot;
+  snapshot: RuntimeThinkingAdapt;
 }) {
   const { t } = useT("quota");
+  const { t: tf } = useT("fork-ui");
   const available = snapshot.status === "available";
   const source = snapshot.active_source
     ? thinkingAdaptSourceLabel(snapshot.active_source, t)
     : null;
-  const text = available
+  const detail = available
     ? [
         source ?? thinkingAdaptStatusLabel(snapshot, t),
         snapshot.last_latency_ms != null
@@ -266,6 +276,7 @@ export function ThinkingAdaptQuotaRow({
         .filter(Boolean)
         .join(" · ")
     : thinkingAdaptStatusLabel(snapshot, t);
+  const text = `${tf(($) => $.agents.thinking_adapt.label)} · ${detail}`;
   const counts = t(($) => $.thinking_adapt.counts, {
     success: snapshot.decisions_ok ?? 0,
     fallback: snapshot.decisions_fallback ?? 0,
@@ -378,7 +389,7 @@ export function RuntimeQuotaCard({
 }: {
   runtime: AgentRuntime;
   now: number;
-  thinkingAdapt?: ThinkingAdaptViewSnapshot | null;
+  thinkingAdapt?: RuntimeThinkingAdapt | null;
 }) {
   const { t } = useT("quota");
   const formatTime = useQuotaTimeFormatter();
@@ -391,7 +402,12 @@ export function RuntimeQuotaCard({
       <div className="space-y-3 p-4">
         {state == null ? (
           thinkingAdapt ? (
-            <ThinkingAdaptQuotaRow snapshot={thinkingAdapt} />
+            <>
+              <p className="text-caption text-faint-foreground">
+                {t(($) => $.not_reported)}
+              </p>
+              <ThinkingAdaptQuotaRow snapshot={thinkingAdapt} />
+            </>
           ) : (
             <p className="text-caption text-faint-foreground">
               {t(($) => $.not_reported)}

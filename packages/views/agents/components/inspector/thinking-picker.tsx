@@ -3,10 +3,13 @@
 import { useState } from "react";
 import { Brain, ChevronDown } from "lucide-react";
 import {
-  adaptThinkingCandidates,
+  hasAdaptThinkingCandidates,
   THINKING_LEVEL_ADAPT,
 } from "@multica/core/agents";
-import type { RuntimeModelThinkingLevel } from "@multica/core/types";
+import type {
+  RuntimeModelThinkingLevel,
+  RuntimeThinkingAdapt,
+} from "@multica/core/types";
 import { Label } from "@multica/ui/components/ui/label";
 import {
   PickerItem,
@@ -14,10 +17,7 @@ import {
 } from "../../../issues/components/pickers";
 import { CHIP_CLASS } from "./chip";
 import { useT } from "../../../i18n";
-import {
-  thinkingAdaptSubtitle,
-  type ThinkingAdaptViewSnapshot,
-} from "../../../common/thinking-adapt";
+import { thinkingAdaptSubtitle } from "../../../common/thinking-adapt";
 
 /**
  * Per-agent reasoning/effort picker (MUL-2339). Renders only when the
@@ -55,7 +55,7 @@ export function ThinkingPicker({
   variant?: "chip" | "field";
   showLabel?: boolean;
   adaptSupported?: boolean;
-  adaptSnapshot?: ThinkingAdaptViewSnapshot | null;
+  adaptSnapshot?: RuntimeThinkingAdapt | null;
   onChange: (next: string) => Promise<void> | void;
 }) {
   const { t } = useT("agents");
@@ -63,7 +63,7 @@ export function ThinkingPicker({
   const { t: tq } = useT("quota");
   const [open, setOpen] = useState(false);
 
-  const showAdapt = adaptThinkingCandidates(levels).length >= 2;
+  const showAdapt = hasAdaptThinkingCandidates(levels);
   const adaptLabel = tf(($) => $.agents.thinking_adapt.label);
   const selected = value ? levels.find((l) => l.value === value) : undefined;
   // Unknown-but-set value (model swap that dropped the option, CLI upgrade

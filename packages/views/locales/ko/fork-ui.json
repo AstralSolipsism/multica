@@ -1,9 +1,9 @@
 {
   "agents": {
     "thinking_adapt": {
-      "label": "자동 조정",
-      "description": "선택하면 민감 정보가 제거된 실행 요약이 외부 결정 서비스로 전송됩니다. 기본적으로 OpenCode Zen 묣 채널을 사용합니다.",
-      "upgrade_required": "이 데몬 버전에서는 자동 조정을 지원하지 않습니다. 데몬을 업그레이드하세요."
+      "label": "적응",
+      "description": "선택하면 민감 정보가 제거된 실행 요약이 외부 결정 서비스로 전송됩니다. 기본적으로 OpenCode Zen 무료 채널을 사용합니다.",
+      "upgrade_required": "이 데몬 버전에서는 적응을 지원하지 않습니다. 데몬을 업그레이드하세요."
     }
   },
   "issues": {

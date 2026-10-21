@@ -4,12 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { SupportedLocale } from "@multica/core/i18n";
-import type { AgentRuntime } from "@multica/core/types";
+import type {
+  AgentRuntime,
+  RuntimeThinkingAdapt,
+} from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { buildRuntimeMachines } from "./runtime-machines";
 import { MachineQuotaChips } from "./machine-quota-chips";
 import { formatQuotaTime } from "./quota-time";
-import type { ThinkingAdaptViewSnapshot } from "../../common/thinking-adapt";
 import { MiniMeterBar, RuntimeQuotaCard, RuntimeQuotaCell, TONE_BAR_CLASS } from "./runtime-quota-cell";
 
 const viewer = vi.hoisted(() => ({ timezone: "Asia/Shanghai" as string | null }));
@@ -88,8 +90,8 @@ function kimiRuntime(): AgentRuntime {
 
 function adaptSnapshot(
   status: string,
-  overrides: Partial<ThinkingAdaptViewSnapshot> = {},
-): ThinkingAdaptViewSnapshot {
+  overrides: Partial<RuntimeThinkingAdapt> = {},
+): RuntimeThinkingAdapt {
   return {
     status,
     active_source: "opencode-free",
@@ -357,19 +359,19 @@ describe("unmeasured windows", () => {
 
 describe("thinking Adapt engine status", () => {
   it.each([
-    ["available", "OpenCode Zen · 290ms", "bg-success"],
+    ["available", "Adapt · OpenCode Zen · 290ms", "bg-success"],
     [
       "degraded",
-      "Degraded (Adapt uses the CLI default level when decisions fail)",
+      "Adapt · Degraded (Adapt uses the CLI default level when decisions fail)",
       "bg-warning",
     ],
     [
       "unavailable",
-      "Unavailable (Adapt has fallen back to the CLI default level)",
+      "Adapt · Unavailable (Adapt has fallen back to the CLI default level)",
       "bg-warning",
     ],
-    ["idle", "Not used yet", "bg-muted-foreground/50"],
-    ["future-status", "Status unknown", "bg-muted-foreground/50"],
+    ["idle", "Adapt · Not used yet", "bg-muted-foreground/50"],
+    ["future-status", "Adapt · Status unknown", "bg-muted-foreground/50"],
   ])(
     "renders %s in the cell and card without plan quota",
     (status, text, dotClass) => {
@@ -389,7 +391,7 @@ describe("thinking Adapt engine status", () => {
         .closest("[data-thinking-adapt-status]");
       expect(cellRow).toHaveAttribute("data-thinking-adapt-status", status);
       expect(cellRow?.querySelector("[aria-hidden=true]")).toHaveClass(dotClass);
-      expect(screen.queryByText("Not reported")).not.toBeInTheDocument();
+      expect(screen.getByText("Not reported")).toBeInTheDocument();
       cell.unmount();
 
       renderWithI18n(
@@ -400,9 +402,36 @@ describe("thinking Adapt engine status", () => {
         />,
       );
       expect(screen.getByText(text)).toBeInTheDocument();
-      expect(screen.queryByText("Not reported")).not.toBeInTheDocument();
+      expect(screen.getByText("Not reported")).toBeInTheDocument();
     },
   );
+
+  it.each([
+    ["available", "Adapt · OpenCode Zen · 290ms"],
+    [
+      "degraded",
+      "Adapt · Degraded (Adapt uses the CLI default level when decisions fail)",
+    ],
+    [
+      "unavailable",
+      "Adapt · Unavailable (Adapt has fallen back to the CLI default level)",
+    ],
+    ["idle", "Adapt · Not used yet"],
+  ])("renders %s alongside plan quota in the cell and card", (status, text) => {
+    const runtime = claudeRuntime();
+    runtime.thinking_adapt = adaptSnapshot(status);
+    const cell = renderWithI18n(
+      <RuntimeQuotaCell runtime={runtime} now={NOW} />,
+    );
+
+    expect(screen.getByText("100%")).toBeInTheDocument();
+    expect(screen.getByText(text)).toBeInTheDocument();
+    cell.unmount();
+
+    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
+    expect(screen.getByText("100% left")).toBeInTheDocument();
+    expect(screen.getByText(text)).toBeInTheDocument();
+  });
 
   it("shows the daemon-period decision counts on hover", async () => {
     const runtime = quotaRuntime("claude", {});
@@ -414,7 +443,7 @@ describe("thinking Adapt engine status", () => {
       />,
     );
 
-    await userEvent.hover(screen.getByText("OpenCode Zen · 290ms"));
+    await userEvent.hover(screen.getByText("Adapt · OpenCode Zen · 290ms"));
     expect(
       await screen.findByText(
         "Since daemon started: 12 successful, 3 fallbacks",
@@ -435,7 +464,7 @@ describe("thinking Adapt engine status", () => {
       />,
     );
 
-    expect(screen.getByText(`${label} · 290ms`)).toBeInTheDocument();
+    expect(screen.getByText(`Adapt · ${label} · 290ms`)).toBeInTheDocument();
   });
 
   it("reads the runtime snapshot by default without plan quota", () => {
@@ -446,13 +475,13 @@ describe("thinking Adapt engine status", () => {
       <RuntimeQuotaCell runtime={runtime} now={NOW} />,
     );
 
-    expect(screen.getByText("OpenCode Zen · 290ms")).toBeInTheDocument();
-    expect(screen.queryByText("Not reported")).not.toBeInTheDocument();
+    expect(screen.getByText("Adapt · OpenCode Zen · 290ms")).toBeInTheDocument();
+    expect(screen.getByText("Not reported")).toBeInTheDocument();
     cell.unmount();
 
     renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
-    expect(screen.getByText("OpenCode Zen · 290ms")).toBeInTheDocument();
-    expect(screen.queryByText("Not reported")).not.toBeInTheDocument();
+    expect(screen.getByText("Adapt · OpenCode Zen · 290ms")).toBeInTheDocument();
+    expect(screen.getByText("Not reported")).toBeInTheDocument();
   });
 
   it("omits the engine row when no snapshot is supplied", () => {
