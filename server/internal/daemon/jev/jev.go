@@ -19,6 +19,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -83,6 +84,9 @@ type SourceEnv struct {
 	DashScopeAPIKey      string
 	DashScopeWorkspaceID string
 	DashScopeRegion      string
+	SelfHostedURL        string
+	SelfHostedModel      string
+	SelfHostedAPIKey     string
 }
 
 // ResolveSources maps the ordered, comma-separated source names
@@ -127,6 +131,27 @@ func ResolveSources(namesCSV string, env SourceEnv) []Source {
 				BaseURL:     fmt.Sprintf("https://%s.%s.maas.aliyuncs.com/compatible-mode/v1/systemone", workspace, region),
 				Model:       dashscopeModel,
 				BearerToken: key,
+			})
+		case "self-hosted":
+			rawURL := strings.TrimSpace(env.SelfHostedURL)
+			u, urlErr := url.Parse(rawURL)
+			if urlErr != nil || rawURL == "" || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				// Warn with the reason only — never echo the variable's value.
+				slog.Warn("jev source skipped: MULTICA_JEV_SELF_HOSTED_URL missing or not an http/https URL", "source", name)
+				continue
+			}
+			model := strings.TrimSpace(env.SelfHostedModel)
+			if model == "" {
+				// Deliberately not laya-multilingual: on laya-serve that name
+				// routes to the raw base model the gate evaluation never
+				// approved (contract §10.2).
+				model = "self-hosted"
+			}
+			sources = append(sources, Source{
+				Name:        name,
+				BaseURL:     u.String(),
+				Model:       model,
+				BearerToken: strings.TrimSpace(env.SelfHostedAPIKey),
 			})
 		default:
 			slog.Warn("jev source skipped: unknown source name", "source", name)

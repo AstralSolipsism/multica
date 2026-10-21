@@ -162,7 +162,7 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 
 ### 配置
 
-只在 daemon 本机配置，做法照 `MULTICA_ZENMUX_*`：只读环境变量，不写日志、不序列化、不上报。
+只在 daemon 本机配置，做法照 `MULTICA_ZENMUX_*`：只读环境变量，不写日志、不序列化、不上报。请求地址可以出现在本地日志和错误信息里，包括自部署来源的 URL，以及拼进 `dashscope` 端点的业务空间 ID 和地域；`MULTICA_JEV_DASHSCOPE_REGION` 不合法时的告警也带取值。key 没有例外（见 §10.2）。
 
 | 变量 | 含义 | 默认值 |
 |---|---|---|
@@ -532,7 +532,8 @@ OL-1013 描述前半部分的原始需求里，"通道""源"统一叫"来源"，
 
 - 在 `MULTICA_JEV_SOURCES` 里写 `self-hosted` 即启用，位置决定尝试顺序。
 - 请求体、超时、切换、熔断、健康快照和消息元数据都与其他来源一致，不为它加特例；`source` 为 `self-hosted`。
-- URL 和 key 按 §3 的规则处理：不写日志、不序列化、不上报；告警和错误信息里只出现来源名称。
+- key 按 §3 的规则处理：不写日志、不序列化、不上报。URL 不进健康快照，也不进任何上报的结构，但可以出现在本地日志和错误信息里：`trySource` 用 `%w` 包住 `http.Client` 返回的 `*url.Error`，它自带请求地址（Go 已去掉其中的密码）；自部署服务连不上时，日志里有地址便于排查。这与现有来源的行为一致，不另做剥离。
+- 跳过来源时，告警只写来源名称和原因，不带变量的值。
 - `model` 的默认值不用 `laya-multilingual`：
   - 在 `laya-serve` 上，这个名字会指定到原始底座，正是"不拿底座裸跑"要避免的情况；
   - `laya-serve` 通过 `LAYA_EXTRA_MODELS` 把注册名映射到微调 checkpoint 目录，`MULTICA_JEV_SELF_HOSTED_MODEL` 要写注册名（注册名 `self-hosted` 与默认值一致时 daemon 不用另配）。`LAYA_EXTRA_MODELS` 只做名字到目录的映射，`max_len`、`head_max_len` 等长度写在 checkpoint 自己的配置里，daemon 不传。
