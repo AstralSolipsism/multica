@@ -17,6 +17,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
+	"github.com/multica-ai/multica/server/internal/daemon/jev"
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
@@ -192,6 +193,15 @@ type Config struct {
 	// 1-3 minute band and 422 answers stretch the delay exponentially.
 	PlanQuotaKimiInterval   time.Duration
 	PlanQuotaZenMuxInterval time.Duration
+
+	// Jev adaptive-thinking decision engine (OL-992 S1-3). All values are
+	// daemon-local in the MULTICA_ZENMUX_MANAGEMENT_API_KEY sense: secrets
+	// are read from the environment only, never logged, never serialized,
+	// never reported. The daemon wiring that consumes them lands with S2.
+	JevDisabled  bool          // MULTICA_JEV_DISABLED: local opt-out, always fail-open
+	JevSources   []jev.Source  // MULTICA_JEV_SOURCES (ordered, default opencode-free); resolved, unusable entries skipped
+	JevTimeout   time.Duration // MULTICA_JEV_TIMEOUT_MS, default 1500ms
+	JevSourceEnv jev.SourceEnv // raw credentials for the optional opencode/dashscope/self-hosted sources
 }
 
 // Overrides allows CLI flags to override environment variables and defaults.
@@ -666,6 +676,25 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 
+	// Jev decision engine (OL-992 S1-3). Secrets stay daemon-local: read
+	// from the environment only, never logged, never serialized.
+	jevDisabled := boolFromEnv("MULTICA_JEV_DISABLED", false)
+	jevTimeoutMS, err := intFromEnv("MULTICA_JEV_TIMEOUT_MS", int(jev.DefaultTimeout/time.Millisecond))
+	if err != nil {
+		return Config{}, err
+	}
+	jevTimeout := time.Duration(jevTimeoutMS) * time.Millisecond
+	jevSourceEnv := jev.SourceEnv{
+		OpenCodeAPIKey:       os.Getenv("MULTICA_JEV_OPENCODE_API_KEY"),
+		DashScopeAPIKey:      os.Getenv("MULTICA_JEV_DASHSCOPE_API_KEY"),
+		DashScopeWorkspaceID: os.Getenv("MULTICA_JEV_DASHSCOPE_WORKSPACE_ID"),
+		DashScopeRegion:      os.Getenv("MULTICA_JEV_DASHSCOPE_REGION"),
+		SelfHostedURL:        os.Getenv("MULTICA_JEV_SELF_HOSTED_URL"),
+		SelfHostedModel:      os.Getenv("MULTICA_JEV_SELF_HOSTED_MODEL"),
+		SelfHostedAPIKey:     os.Getenv("MULTICA_JEV_SELF_HOSTED_API_KEY"),
+	}
+	jevSources := jev.ResolveSources(envOrDefault("MULTICA_JEV_SOURCES", jev.DefaultSources), jevSourceEnv)
+
 	return Config{
 		ServerBaseURL:                   serverBaseURL,
 		DaemonID:                        daemonID,
@@ -717,6 +746,10 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		ZenMuxAPIBaseURL:                zenmuxBaseURL,
 		PlanQuotaKimiInterval:           kimiQuotaInterval,
 		PlanQuotaZenMuxInterval:         zenmuxQuotaInterval,
+		JevDisabled:                     jevDisabled,
+		JevSources:                      jevSources,
+		JevTimeout:                      jevTimeout,
+		JevSourceEnv:                    jevSourceEnv,
 	}, nil
 }
 
