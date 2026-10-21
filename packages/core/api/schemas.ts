@@ -1,3 +1,4 @@
+export * from "./labrastro-agent-folder-schemas";
 import { DispatchOutcomeSchema } from "./dispatch-schemas";
 import { SkillImportDiagnosticSchema } from "./labrastro-skill-schemas";
 export * from "./labrastro-skill-schemas";
