@@ -1098,6 +1098,163 @@ describe("DagSceneCanvas Stage 10 interactions", () => {
   });
 });
 
+describe("DagSceneCanvas lit-route flows (OL-997)", () => {
+  /** Three dependencies into X, one per attention tier: A done (satisfied),
+   *  C in progress (advancing), B cancelled but still blocking. A and C's
+   *  routes carry corners, and all three share X's approach interval. */
+  function flowStatesFixture() {
+    const graph = makeGraph(
+      [
+        makeNode("r1", { title: "Line one" }),
+        makeNode("a", { parentIssueId: "r1", status: "done", statusCategory: "done" }),
+        makeNode("b", { parentIssueId: "r1", status: "cancelled", statusCategory: "closed" }),
+        makeNode("c", { parentIssueId: "r1", status: "in_progress", statusCategory: "started" }),
+        makeNode("x", { parentIssueId: "r1" }),
+      ],
+      [
+        { id: "a-x", source: "a", target: "x" },
+        { id: "b-x", source: "b", target: "x" },
+        { id: "c-x", source: "c", target: "x" },
+      ],
+    );
+    const line = computeDagLine(createDagModelIndex(graph), "r1")!;
+    const plan = dagLineLayoutInput(line);
+    const geometry: DagSceneGeometry = {
+      nodes: {
+        a: { x: 60, y: 40, width: 248, height: 116 },
+        b: { x: 60, y: 200, width: 248, height: 116 },
+        c: { x: 60, y: 360, width: 248, height: 116 },
+        x: { x: 500, y: 200, width: 248, height: 116 },
+      },
+      frames: {
+        r1: { x: 0, y: 0, width: 820, height: 540, bands: [], stageMode: "labels" },
+      },
+      ports: {
+        a: { input: { x: 60, y: 98 }, output: { x: 308, y: 98 } },
+        b: { input: { x: 60, y: 258 }, output: { x: 308, y: 258 } },
+        c: { input: { x: 60, y: 418 }, output: { x: 308, y: 418 } },
+        x: { input: { x: 500, y: 258 }, output: { x: 748, y: 258 } },
+      },
+      routes: {
+        "a-x": [
+          { x: 308, y: 98 },
+          { x: 404, y: 98 },
+          { x: 404, y: 258 },
+          { x: 500, y: 258 },
+        ],
+        "b-x": [
+          { x: 308, y: 258 },
+          { x: 500, y: 258 },
+        ],
+        "c-x": [
+          { x: 308, y: 418 },
+          { x: 404, y: 418 },
+          { x: 404, y: 258 },
+          { x: 500, y: 258 },
+        ],
+      },
+      segments: [
+        { id: "s0", start: { x: 308, y: 98 }, end: { x: 404, y: 98 }, edgeIds: ["a-x"] },
+        { id: "s1", start: { x: 404, y: 98 }, end: { x: 404, y: 258 }, edgeIds: ["a-x"] },
+        { id: "s2", start: { x: 308, y: 258 }, end: { x: 404, y: 258 }, edgeIds: ["b-x"] },
+        { id: "s3", start: { x: 404, y: 258 }, end: { x: 500, y: 258 }, edgeIds: ["a-x", "b-x", "c-x"] },
+        { id: "s4", start: { x: 308, y: 418 }, end: { x: 404, y: 418 }, edgeIds: ["c-x"] },
+        { id: "s5", start: { x: 404, y: 418 }, end: { x: 404, y: 258 }, edgeIds: ["c-x"] },
+      ],
+      junctions: [],
+      width: 820,
+      height: 540,
+      quality: "elk",
+    };
+    return { model: { kind: "line" as const, line }, plan, geometry };
+  }
+
+  const litFlows = () => [...document.querySelectorAll("[data-dag-lit-flow]")];
+
+  it("flows on every lit route, colored by state, walking the route from source to target", async () => {
+    const fixture = flowStatesFixture();
+    const { store } = harness(fixture);
+    await waitFor(() => expect(nodeOf("x")).toBeTruthy());
+    fireEvent.click(nodeOf("x"));
+    expect(store.getState().dagSelectedNodeId).toBe("x");
+    await waitFor(() => expect(litRouteGroups()).toBe(3));
+    await waitFor(() => expect(litFlows()).toHaveLength(3));
+    const byState = new Map(
+      litFlows().map((el) => [el.getAttribute("data-dag-lit-flow-state"), el] as const),
+    );
+    expect([...byState.keys()].sort()).toEqual(["advancing", "cancelled-blocking", "satisfied"]);
+    // Three clearly different colors: brand, soft success green, destructive.
+    const colorOf = (state: string) =>
+      byState.get(state)!.querySelector(".dag-lit-flow-dot")!.getAttribute("fill");
+    expect(colorOf("advancing")).toBe("var(--color-brand)");
+    expect(colorOf("satisfied")).toBe("var(--success)");
+    expect(colorOf("cancelled-blocking")).toBe("var(--destructive)");
+    // Direction comes from traveling the route's own point order: each dot's
+    // motion path repeats the route exactly (corners included), animated
+    // from 0% to 100% of it (dag-lit-flow-travel's offset-distance). The
+    // path is window-relative, so compare leg-by-leg deltas, not absolutes.
+    for (const [edgeId, route] of Object.entries(fixture.geometry.routes)) {
+      const group = document.querySelector(`[data-dag-lit-flow="${edgeId}"]`)!;
+      const points = route.map((p) => `${p.x},${p.y}`).join(" ");
+      expect(group.getAttribute("data-dag-lit-flow-path")).toBe(points);
+      const dots = group.querySelectorAll(".dag-lit-flow-dot");
+      expect(dots.length).toBeGreaterThan(0);
+      for (const dot of dots) {
+        const offsetPath = (dot as HTMLElement).style.offsetPath;
+        const coords = [...offsetPath.matchAll(/(-?[\d.]+) (-?[\d.]+)/g)].map((m) => [
+          Number(m[1]),
+          Number(m[2]),
+        ]);
+        expect(coords).toHaveLength(route.length);
+        for (let i = 0; i + 1 < route.length; i++) {
+          expect(coords[i + 1]![0]! - coords[i]![0]!).toBeCloseTo(route[i + 1]!.x - route[i]!.x, 5);
+          expect(coords[i + 1]![1]! - coords[i]![1]!).toBeCloseTo(route[i + 1]!.y - route[i]!.y, 5);
+        }
+      }
+    }
+    // The satisfied route paints first (below), the cancelled blocker last
+    // (on top) where routes share the approach interval.
+    const paintedOrder = [...document.querySelectorAll("[data-dag-lit-flow]")].map((el) =>
+      el.getAttribute("data-dag-lit-flow-state"),
+    );
+    expect(paintedOrder).toEqual(["satisfied", "advancing", "cancelled-blocking"]);
+    // Clicking the pane folds the flows away with the overlay.
+    fireEvent.click(document.querySelector(".react-flow__pane")!);
+    await waitFor(() => expect(litFlows()).toHaveLength(0));
+    expect(litRouteGroups()).toBe(0);
+  });
+
+  it("stops the flow below 50% zoom, keeping the static state-colored lit lines", async () => {
+    const { flow } = harness(flowStatesFixture());
+    await waitFor(() => expect(nodeOf("x")).toBeTruthy());
+    fireEvent.click(nodeOf("x"));
+    await waitFor(() => expect(litFlows()).toHaveLength(3));
+    await flow().setViewport({ x: 0, y: 0, zoom: 0.45 });
+    await waitFor(() => expect(litFlows()).toHaveLength(0));
+    expect(litRouteGroups()).toBe(3);
+    await flow().setViewport({ x: 0, y: 0, zoom: 0.6 });
+    await waitFor(() => expect(litFlows()).toHaveLength(3));
+  });
+
+  it("lights a chain's full closure with flows in the click cycle", async () => {
+    const { store } = harness(chainFixture());
+    await waitFor(() => expect(nodeOf("y")).toBeTruthy());
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(nodeOf("y"));
+      expect(litFlows()).toHaveLength(2);
+      fireEvent.click(nodeOf("y"));
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+      expect(store.getState().dagFocus).toEqual({ nodeId: "y", way: "both" });
+      expect(litFlows()).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("DagSceneCanvas focus level", () => {
   it("fits the remaining scene when the focused task is hidden", async () => {
     const line = lineFixture();
@@ -1634,7 +1791,7 @@ describe("DagSceneCanvas lit-route masking (OL-451)", () => {
     return { model: { kind: "line" as const, line }, plan, geometry };
   }
 
-  it("masks lit routes behind every card box so they cannot strike through text", async () => {
+  it("masks lit routes behind the card boxes they cross so they cannot strike through text", async () => {
     const { store } = harness(crossingFixture());
     await waitFor(() => expect(nodeOf("a")).toBeTruthy());
     fireEvent.click(nodeOf("a"));
@@ -1646,16 +1803,17 @@ describe("DagSceneCanvas lit-route masking (OL-451)", () => {
         el,
       ]),
     );
-    // Every card and the frame header strip is cut out of the lit paint.
-    for (const id of ["a", "m", "c", "r1"]) expect(cuts.has(id)).toBe(true);
-    // The crossed card m: the cut covers its box (inset by 2).
+    // Only boxes a lit route actually crosses are cut (OL-997: the flow layer
+    // re-applies this mask every animation frame, so it must stay small) —
+    // here the two endpoint cards and the crossed card m, inset by 2.
+    expect([...cuts.keys()].sort()).toEqual(["a", "c", "m"]);
     const mCut = cuts.get("m")!;
     expect(Number(mCut.getAttribute("x"))).toBe(362);
     expect(Number(mCut.getAttribute("y"))).toBe(42);
     expect(Number(mCut.getAttribute("width"))).toBe(244);
     expect(Number(mCut.getAttribute("height"))).toBe(112);
-    const headerCut = cuts.get("r1")!;
-    expect(Number(headerCut.getAttribute("height"))).toBe(76 - 4);
+    // The frame's header strip is above the route's y: nothing to protect.
+    expect(cuts.has("r1")).toBe(false);
     // The lit group paints through that mask.
     const litGroup = document.querySelector("[data-dag-overlay-layer] > g[mask]")!;
     expect(litGroup.getAttribute("mask")).toContain("url(#");
@@ -1674,7 +1832,7 @@ describe("DagSceneCanvas lit-route masking (OL-451)", () => {
     expect(document.querySelector("[data-dag-route-mask-cut]")).toBeNull();
   });
 
-  it("declares both overlay mask regions as the culling window (far-pan regression)", async () => {
+  it("declares the overlay paint region as the culling window (far-pan regression)", async () => {
     const { flowStore } = harness(crossingFixture());
     await waitFor(() => expect(nodeOf("a")).toBeTruthy());
     fireEvent.click(nodeOf("a"));
@@ -1689,20 +1847,23 @@ describe("DagSceneCanvas lit-route masking (OL-451)", () => {
     // follow the windowed viewBox origin, so a pan one screen past the
     // canvas origin clips every masked paint (lit routes here, the dim
     // overlay since OL-284). The region must be the culling window itself.
-    const masks = [...document.querySelectorAll("[data-dag-overlay-layer] mask")];
-    const routeMask = masks.find((el) => el.querySelector("[data-dag-route-mask-cut]"))!;
-    const dimMask = masks.find((el) => el.querySelector("[data-dag-dim-hole]"))!;
-    for (const mask of [routeMask, dimMask]) {
-      expect(mask.hasAttribute("x")).toBe(true);
-      expect(mask.hasAttribute("y")).toBe(true);
-      expect(mask.hasAttribute("width")).toBe(true);
-      expect(mask.hasAttribute("height")).toBe(true);
-      expect([
-        Number(mask.getAttribute("x")),
-        Number(mask.getAttribute("y")),
-        Number(mask.getAttribute("width")),
-        Number(mask.getAttribute("height")),
-      ]).toEqual([win.x0, win.y0, win.x1 - win.x0, win.y1 - win.y0]);
-    }
+    const routeMask = document.querySelector("[data-dag-overlay-layer] mask")!;
+    expect(routeMask.querySelector("[data-dag-route-mask-cut]")).toBeTruthy();
+    expect([
+      Number(routeMask.getAttribute("x")),
+      Number(routeMask.getAttribute("y")),
+      Number(routeMask.getAttribute("width")),
+      Number(routeMask.getAttribute("height")),
+    ]).toEqual([win.x0, win.y0, win.x1 - win.x0, win.y1 - win.y0]);
+    // The dim overlay is one even-odd path (no mask — an extra offscreen
+    // compositor pass): the window as its outer subpath, the lit boxes as
+    // hole subpaths, and the hole markers carry the same geometry.
+    const dim = document.querySelector("[data-dag-dim-overlay]")!;
+    expect(dim.getAttribute("fill-rule") ?? dim.getAttribute("fillRule")).toBe("evenodd");
+    expect(dim.getAttribute("d")).toContain(
+      `M ${win.x0} ${win.y0} h ${win.x1 - win.x0} v ${win.y1 - win.y0}`,
+    );
+    const hole = document.querySelector("[data-dag-dim-hole]")!;
+    expect(hole.getAttribute("fill")).toBe("none");
   });
 });

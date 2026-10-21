@@ -173,6 +173,11 @@ describe("DagToolbar navigation", () => {
         "Click a card or edge: its chain lights up, the rest dims; click the card again for all upstream + downstream",
       ),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "On a lit chain, flowing dashes run from prerequisite to dependent: brand blue while blocking, soft green when satisfied, red when cancelled but still blocking",
+      ),
+    ).toBeInTheDocument();
   });
 });
 

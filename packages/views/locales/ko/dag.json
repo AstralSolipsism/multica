@@ -72,6 +72,7 @@
   "edge_aggregate_summary_other": "의존성 {{count}}개 요약",
   "edge_locate": "위치로 이동",
   "legend_highlight": "카드나 선 클릭: 관련 체인을 강조하고 나머지는 흐리게. 같은 카드를 다시 클릭하면 전체 상하류로 전환",
+  "legend_lit_flow": "강조된 체인에서는 흐르는 빛이 선행에서 후속으로 흐릅니다: 차단 중은 브랜드 블루, 충족은 부드러운 녹색, 취소되었지만 차단 중은 빨간색",
   "selection_scope_neighborhood": "한 단계",
   "selection_scope_closure": "전체 상하류",
   "focus_mode": "집중 모드",

@@ -12,9 +12,10 @@ else in `dag-edge-layer.tsx`, a window-sized SVG in the `ViewportPortal`:
 - **Four edge states** (OL-183 §4): satisfied (thin grey), blocking (dark),
   advancing (dark with dots flowing downstream), cancelled-blocking (red
   dashes breathing). Motion is CSS (`dag-edge-motion.css`) and follows a
-  budget (`dag-highlight.ts#dagMotionSegments`): system reduced motion or
-  zoom < 50% stops it; past ~60 moving segments on screen only the selected
-  chain keeps moving.
+  budget (`dag-highlight.ts#dagMotionPlan`): system reduced motion or
+  zoom < 50% stops it; past ~60 moving elements on screen (the OL-997 lit
+  flows count too) only the selected chain keeps moving, truncated to
+  cancelled-blocking, then unsatisfied, then satisfied routes.
 - **Highlight**: a click selects the one-layer neighborhood; a second click
   on the same node (after a 400 ms double-click window, skipped for
   `event.detail > 1`, rolled back when a slow double-click still fires)
@@ -25,8 +26,15 @@ else in `dag-edge-layer.tsx`, a window-sized SVG in the `ViewportPortal`:
   repaints along its own complete route — never the whole bus (OL-280 option
   B). Node dimming is a single masked rect in a z-3 overlay svg with holes
   over the lit cards — the z-index-2 cards never rebuild, and the selection
-  ring is an SVG rect (brand blue). The lit routes and their flow dots paint
-  in the same overlay svg, after the dim rect, so dimming never dulls them.
+  ring is an SVG rect (brand blue). The lit routes paint in the same overlay
+  svg, after the dim rect, so dimming never dulls them. Each also carries a
+  state-colored flow (OL-997): dashes streaming along the route's own point
+  order, source to target — brand blue while unsatisfied, softened success
+  green once satisfied, destructive red for a cancelled blocker (which keeps
+  its red dashed breath). Routes sharing a bus interval each follow their
+  own direction and stack satisfied → unsatisfied → cancelled-blocking; the
+  background dots a lit advancing segment used to borrow are gone — the
+  route flow replaces them.
 - **Bus click**: visible segments carry inset transparent hit strokes; a
   click stores the segment's deduplicated original dependency IDs and the
   toolbar lists them in the restored OL-182 "aggregate N dependencies"

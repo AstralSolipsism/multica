@@ -152,7 +152,7 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
     // a card for well past the old 100 ms debounce must not create the
     // overlay layer or any lit route. Start from a clean state — lineA is
     // still selected from the checks above, and its lit neighborhood would
-    // defeat the assertions (this is the CI failure the review caught).
+    // defeat the assertions.
     await page.locator(`.react-flow__node[data-id="issue:${lineA.id}"]`).focus();
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-dag-overlay-layer]")).toHaveCount(0);
@@ -164,13 +164,25 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
     await expect(page.locator("[data-dag-lit-edge]")).toHaveCount(0);
     await expect(page.locator("[data-dag-edge-layer] > g").first()).not.toHaveClass(/opacity-15/);
 
-    // A click, by contrast, selects the card and lights its neighborhood.
+    // A click, by contrast, selects the card and lights its neighborhood —
+    // with the OL-997 state-colored flow streaming along each lit route.
     await cardA.click();
     await expect(page.locator("[data-dag-lit-edge]").first()).toBeAttached();
+    await expect(page.locator("[data-dag-lit-flow]").first()).toBeAttached();
     await expect(page.locator("[data-dag-edge-layer] > g").first()).toHaveClass(/opacity-15/);
     await page.locator(`.react-flow__node[data-id="issue:${lineA.id}"]`).focus();
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-dag-overlay-layer]")).toHaveCount(0);
+    await expect(page.locator("[data-dag-lit-flow]")).toHaveCount(0);
+
+    // Clicking empty canvas folds the lit routes and their flows away.
+    await cardA.click();
+    await expect(page.locator("[data-dag-lit-flow]").first()).toBeAttached();
+    const clearPaneBox = (await page.locator(".react-flow__pane").boundingBox())!;
+    await page.mouse.click(clearPaneBox.x + 8, clearPaneBox.y + clearPaneBox.height - 8);
+    await expect(page.locator("[data-dag-overlay-layer]")).toHaveCount(0);
+    await expect(page.locator("[data-dag-lit-edge]")).toHaveCount(0);
+    await expect(page.locator("[data-dag-lit-flow]")).toHaveCount(0);
 
     // Pan away from the default so the later restore is meaningful.
     const panArea = (await page.locator("[data-dag-canvas]").boundingBox())!;

@@ -577,7 +577,19 @@ export function DagSceneCanvasInner({
             storeApi.getState().setDagSelectedNodeId(null);
           }}
           translateExtent={translateExtent}
-          onMoveEnd={persistViewport}
+          onMoveStart={() => {
+            // Pause the lit flow dots for the gesture's duration: on a
+            // software rasterizer every animated layer re-rasterizes per
+            // frame, which sinks selected pan/zoom below the 30 fps budget
+            // (OL-997). The whole scene moves under the dots, so the pause
+            // is imperceptible; they resume on move end. CSS play-state,
+            // not per-frame JS.
+            canvasElement.current?.classList.add("dag-moving");
+          }}
+          onMoveEnd={() => {
+            canvasElement.current?.classList.remove("dag-moving");
+            persistViewport();
+          }}
           panOnScroll
           zoomOnScroll={false}
           zoomOnDoubleClick={false}

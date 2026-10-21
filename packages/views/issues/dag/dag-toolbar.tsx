@@ -343,6 +343,7 @@ export function DagToolbar({
               <li>{tDag(($) => $.legend_edge_cancelled)}</li>
               <li>{tDag(($) => $.legend_external)}</li>
               <li>{tDag(($) => $.legend_highlight)}</li>
+              <li>{tDag(($) => $.legend_lit_flow)}</li>
             </ul>
           </PopoverContent>
         </Popover>
