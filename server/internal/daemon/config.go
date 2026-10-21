@@ -689,6 +689,9 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		DashScopeAPIKey:      os.Getenv("MULTICA_JEV_DASHSCOPE_API_KEY"),
 		DashScopeWorkspaceID: os.Getenv("MULTICA_JEV_DASHSCOPE_WORKSPACE_ID"),
 		DashScopeRegion:      os.Getenv("MULTICA_JEV_DASHSCOPE_REGION"),
+		SelfHostedURL:        os.Getenv("MULTICA_JEV_SELF_HOSTED_URL"),
+		SelfHostedModel:      os.Getenv("MULTICA_JEV_SELF_HOSTED_MODEL"),
+		SelfHostedAPIKey:     os.Getenv("MULTICA_JEV_SELF_HOSTED_API_KEY"),
 	}
 	jevSources := jev.ResolveSources(envOrDefault("MULTICA_JEV_SOURCES", jev.DefaultSources), jevSourceEnv)
 
