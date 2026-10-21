@@ -55,6 +55,8 @@ func TestLoadConfig_JevDefaultsAndOverrides(t *testing.T) {
 	t.Setenv("MULTICA_JEV_TIMEOUT_MS", "250")
 	t.Setenv("MULTICA_JEV_SOURCES", "self-hosted,dashscope,opencode,opencode-free,unknown")
 	t.Setenv("MULTICA_JEV_SELF_HOSTED_URL", "http://127.0.0.1:8009/v1/systemone")
+	t.Setenv("MULTICA_JEV_SELF_HOSTED_MODEL", "jev-finetune-1")
+	t.Setenv("MULTICA_JEV_SELF_HOSTED_API_KEY", "sk-test-selfhosted")
 	t.Setenv("MULTICA_JEV_DASHSCOPE_API_KEY", "sk-test-dashscope")
 	t.Setenv("MULTICA_JEV_DASHSCOPE_WORKSPACE_ID", "ws-9")
 	t.Setenv("MULTICA_JEV_OPENCODE_API_KEY", "sk-test-opencode")
@@ -74,8 +76,8 @@ func TestLoadConfig_JevDefaultsAndOverrides(t *testing.T) {
 	if cfg.JevSources[0].Name != "self-hosted" || cfg.JevSources[0].BaseURL != "http://127.0.0.1:8009/v1/systemone" {
 		t.Fatalf("self-hosted source = %+v", cfg.JevSources[0])
 	}
-	if cfg.JevSources[0].Model != "self-hosted" || cfg.JevSources[0].BearerToken != "" {
-		t.Fatalf("self-hosted source = %+v, want default model and no key", cfg.JevSources[0])
+	if cfg.JevSources[0].Model != "jev-finetune-1" || cfg.JevSources[0].BearerToken != "sk-test-selfhosted" {
+		t.Fatalf("self-hosted source = %+v, want configured model and key", cfg.JevSources[0])
 	}
 	if cfg.JevSources[1].Name != "dashscope" || cfg.JevSources[1].BearerToken != "sk-test-dashscope" {
 		t.Fatalf("dashscope source = %+v", cfg.JevSources[1])
