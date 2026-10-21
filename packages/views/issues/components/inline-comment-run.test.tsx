@@ -483,9 +483,10 @@ describe("InlineCommentRun thinking-level badge", () => {
   });
 
   it("shows the fallback state as the default level", async () => {
+    // Run-level fallback: no level injected, and the tag carries no step.
     vi.mocked(api.listTaskMessages).mockResolvedValue([
-      tagged(1, "high", 1),
-      tagged(2, "", 2, { fallback: "no_candidates" }),
+      { task_id: id, issue_id: "issue", seq: 1, type: "thinking",
+        metadata: { thinking: { level: "", mode: "adapt", fallback: "no_candidates" } } },
     ]);
     setup(task());
     expect(await screen.findByText("Default")).toBeInTheDocument();

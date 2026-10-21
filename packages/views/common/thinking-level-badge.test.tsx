@@ -28,7 +28,7 @@ function message(
 
 const adapt = (
   level: string,
-  step: number,
+  step?: number,
   extra: Partial<TaskMessageThinkingMetadata> = {},
 ): TaskMessageThinkingMetadata => ({ level, mode: "adapt", step, ...extra });
 
@@ -86,7 +86,7 @@ describe("ThinkingLevelBadge", () => {
 
   it("renders the fallback state as the default level with its reason on hover", async () => {
     renderWithI18n(
-      <ThinkingLevelBadge messages={[message(1, adapt("high", 1)), message(2, adapt("", 2, { fallback: "timeout" }))]} />,
+      <ThinkingLevelBadge messages={[message(1, adapt("", undefined, { fallback: "timeout" }))]} />,
     );
     const tooltip = await tooltipOf("Default");
     expect(tooltip).toHaveTextContent("Fell back to the default level: timed out");
@@ -96,13 +96,14 @@ describe("ThinkingLevelBadge", () => {
     renderWithI18n(
       <ThinkingLevelBadge
         messages={[
-          message(1, adapt("xhigh", 1)),
+          message(1, adapt("xhigh")),
           message(2, adapt("xhigh", 2, { fallback: "breaker" })),
         ]}
       />,
     );
     expect(chip("xhigh")).not.toHaveTextContent("↑");
     expect(chip("xhigh")).not.toHaveTextContent("↓");
+    expect(screen.queryByText("Default")).not.toBeInTheDocument();
     const tooltip = await tooltipOf("xhigh");
     expect(tooltip).toHaveTextContent("Carried over the previous step's level: breaker open");
   });
@@ -166,18 +167,18 @@ describe("ThinkingRunSummaryBadge", () => {
     renderWithI18n(
       <ThinkingRunSummaryBadge
         messages={[
-          message(1, adapt("low", 1)),
-          message(2, adapt("low", 1)),
-          message(3, adapt("xhigh", 2)),
-          message(4, adapt("", 3, { fallback: "breaker" })),
+          message(1, adapt("", undefined, { fallback: "breaker" })),
+          message(2, adapt("low", 2)),
+          message(3, adapt("low", 2)),
+          message(4, adapt("xhigh", 3)),
         ]}
       />,
     );
     expect(screen.getByText("Adapt · 3 steps · peak xhigh")).toBeInTheDocument();
     const tooltip = await tooltipOf("Adapt · 3 steps · peak xhigh");
-    expect(tooltip).toHaveTextContent("#1 low");
-    expect(tooltip).toHaveTextContent("#2 xhigh");
-    expect(tooltip).toHaveTextContent("#3 default · breaker open");
+    expect(tooltip).toHaveTextContent("#1 default · breaker open");
+    expect(tooltip).toHaveTextContent("#2 low");
+    expect(tooltip).toHaveTextContent("#3 xhigh");
     expect(tooltip).toHaveTextContent("1 fallback");
   });
 
@@ -185,7 +186,7 @@ describe("ThinkingRunSummaryBadge", () => {
     renderWithI18n(
       <ThinkingRunSummaryBadge
         messages={[
-          message(1, adapt("high", 1)),
+          message(1, adapt("high")),
           message(2, adapt("high", 2, { fallback: "timeout" })),
         ]}
       />,

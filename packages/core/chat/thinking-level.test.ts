@@ -35,6 +35,13 @@ const fallback = (
   fallback: reason,
   step,
 });
+// Run-level fallback (§7): no level was injected, and the tag belongs to the
+// run-level decision — it never carries a step number.
+const runFallback = (reason: NonNullable<TaskMessageThinkingMetadata["fallback"]>) => ({
+  level: "",
+  mode: "adapt" as const,
+  fallback: reason,
+});
 // Step-level fallback (OL-1000): the decision failed, so the step explicitly
 // carried the previous step's level over — `level` stays non-empty.
 const stepFallback = (
@@ -126,6 +133,16 @@ describe("currentThinkingLevel", () => {
         message(3, adapt("xhigh", 2)),
       ])?.trend,
     ).toBe("up");
+    // The last step's own messages must not be the comparison anchor: against
+    // the previous tagged message this reads flat, against the previous step
+    // it is a raise.
+    expect(
+      currentThinkingLevel([
+        message(1, adapt("low", 1)),
+        message(2, adapt("xhigh", 2)),
+        message(3, adapt("xhigh", 2)),
+      ])?.trend,
+    ).toBe("up");
     expect(currentThinkingLevel([message(1, adapt("xhigh", 1)), message(2, adapt("low", 2))])?.trend).toBe("down");
     expect(currentThinkingLevel([message(1, adapt("high", 1)), message(2, adapt("high", 2))])?.trend).toBe("flat");
   });
@@ -140,7 +157,7 @@ describe("currentThinkingLevel", () => {
   });
 
   it("shows no arrow when the previous step fell back without a level", () => {
-    const result = currentThinkingLevel([message(1, fallback("timeout", 1)), message(2, adapt("high", 2))]);
+    const result = currentThinkingLevel([message(1, runFallback("timeout")), message(2, adapt("high", 2))]);
     expect(result?.trend).toBeUndefined();
   });
 
@@ -151,9 +168,12 @@ describe("currentThinkingLevel", () => {
   });
 
   it("exposes a run-level fallback (empty level) as the current state", () => {
-    const result = currentThinkingLevel([message(1, adapt("high", 1)), message(2, fallback("breaker", 2))]);
+    // §7: when the run-level decision fell back and a later step falls back
+    // before any decision succeeds, there is no previous level to carry —
+    // the step tag's level stays empty.
+    const result = currentThinkingLevel([message(1, runFallback("no_candidates")), message(2, fallback("timeout", 2))]);
     expect(result?.current.metadata.level).toBe("");
-    expect(result?.current.metadata.fallback).toBe("breaker");
+    expect(result?.current.metadata.fallback).toBe("timeout");
     expect(result?.trend).toBeUndefined();
   });
 
@@ -183,19 +203,32 @@ describe("summarizeThinkingRun", () => {
   });
 
   it("summarizes an adaptive run: per-step sequence, step count, peak, fallbacks", () => {
+    // Realistic Claude sequence (§7): step 1 carries the run-level tag (no
+    // step number), later steps carry their step; a step-level fallback
+    // records the carried level.
     const summary = summarizeThinkingRun([
-      message(1, adapt("low", 1)),
-      message(2, adapt("low", 1)),
+      message(1, adapt("low")),
+      message(2, adapt("low")),
       message(3, adapt("xhigh", 2)),
-      message(4, fallback("timeout", 3)),
-      message(5, fallback("no_candidates", 4)),
-      message(6, adapt("high", 5)),
+      message(4, stepFallback("xhigh", "timeout", 3)),
+      message(5, adapt("high", 4)),
     ]);
     expect(summary?.mode).toBe("adapt");
-    expect(summary?.samples.map((s) => s.metadata.level)).toEqual(["low", "xhigh", "", "", "high"]);
-    expect(summary?.steps).toBe(5);
-    expect(summary?.fallbacks).toBe(2);
+    expect(summary?.samples.map((s) => s.metadata.level)).toEqual(["low", "xhigh", "xhigh", "high"]);
+    expect(summary?.steps).toBe(4);
+    expect(summary?.fallbacks).toBe(1);
     expect(summary?.peak).toBe("xhigh");
+  });
+
+  it("counts a run-level fallback as its own step, level empty", () => {
+    const summary = summarizeThinkingRun([
+      message(1, runFallback("no_candidates")),
+      message(2, adapt("high", 2)),
+    ]);
+    expect(summary?.steps).toBe(2);
+    expect(summary?.fallbacks).toBe(1);
+    expect(summary?.peak).toBe("high");
+    expect(summary?.samples[0]?.metadata.level).toBe("");
   });
 
   it("counts a run with five same-tag thinking messages as one step", () => {

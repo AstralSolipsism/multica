@@ -53,16 +53,31 @@ describe("TaskStatusPill thinking-level badge", () => {
 
   it("shows the fallback state as the default level", () => {
     renderPill([
-      tagged(1, "high", 1),
+      {
+        task_id: "task",
+        issue_id: "",
+        seq: 1,
+        type: "thinking",
+        metadata: { thinking: { level: "", mode: "adapt", fallback: "disabled" } },
+      },
+    ]);
+    expect(screen.getByText("Default")).toBeInTheDocument();
+  });
+
+  it("shows a step-level fallback's carried level without an arrow", () => {
+    renderPill([
+      tagged(1, "xhigh", 1),
       {
         task_id: "task",
         issue_id: "",
         seq: 2,
         type: "thinking",
-        metadata: { thinking: { level: "", mode: "adapt", step: 2, fallback: "disabled" } },
+        metadata: { thinking: { level: "xhigh", mode: "adapt", step: 2, fallback: "timeout" } },
       },
     ]);
-    expect(screen.getByText("Default")).toBeInTheDocument();
+    const chip = screen.getByText("xhigh");
+    expect(chip).not.toHaveTextContent("↑");
+    expect(screen.queryByText("Default")).not.toBeInTheDocument();
   });
 
   it("shows a fixed level without an arrow", () => {
