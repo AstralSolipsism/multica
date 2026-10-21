@@ -72,7 +72,7 @@ func Install(configRoot string, context EffortContext) (map[string]string, error
 	if configRoot == "" {
 		return nil, errors.New("no task config directory")
 	}
-	if context.Version != 1 || context.TaskID == "" || context.Endpoint == "" || context.StartupEffort == "" {
+	if context.Version != 1 || context.TaskID == "" || context.Endpoint == "" {
 		return nil, fmt.Errorf("effort context is incomplete: %+v", context)
 	}
 	paths := PathsFor(configRoot)

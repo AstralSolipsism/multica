@@ -176,6 +176,28 @@ func BuildRunThinkingState(task Task, provider, model string) string {
 	)
 }
 
+// StepThinkingGoal is the step state's goal field: the run's title and
+// description as plain text (contract §4: "运行目标（同上的标题与描述）前
+// 500 字"), not the run state's JSON encoding.
+func StepThinkingGoal(task Task) string {
+	_, title, description := "task", task.ThreadName, task.IssueDescription
+	switch {
+	case task.ChatSessionID != "":
+		_, title, description = "chat", "", task.ChatMessage
+	case task.AutopilotRunID != "":
+		_, title, description = "automation", task.AutopilotTitle, task.AutopilotDescription
+	case task.QuickCreatePrompt != "":
+		description = task.QuickCreatePrompt
+	}
+	if title == "" {
+		return description
+	}
+	if description == "" {
+		return title
+	}
+	return title + "\n" + description
+}
+
 // StepThinkingInput contains summaries, not files or full tool arguments. The
 // step adapter supplies error counts; this builder is also used by evaluation.
 type StepThinkingInput struct {

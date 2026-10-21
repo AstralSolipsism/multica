@@ -80,7 +80,7 @@ func TestStepEffortTagKeepsEffectForLaterFirstMessage(t *testing.T) {
 			t.Fatalf("subagent message carries a step tag: %+v", meta)
 		}
 	}
-	if step.takeEffect() == nil {
+	if step.consumeEffect(false) == nil {
 		t.Fatalf("a subagent message consumed the step effect")
 	}
 	// A thinking message of the step, arriving before any other main-thread
@@ -91,7 +91,7 @@ func TestStepEffortTagKeepsEffectForLaterFirstMessage(t *testing.T) {
 	if !ok || meta["step"] != 3 {
 		t.Fatalf("thinking as the step's first message: %+v", thinking.Metadata)
 	}
-	if step.takeEffect() != nil {
+	if step.consumeEffect(false) != nil {
 		t.Fatalf("effect not consumed by the step's first message")
 	}
 	// A later event of the same request carries no step tag.

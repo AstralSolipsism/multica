@@ -96,14 +96,29 @@ async function step($: Engine, index: number, agentId?: string): Promise<TurnSte
   }
 }
 
+// The host's real shape (OL-1000 r2-sonnet55): one request's output arrives
+// as a text entry followed by one entry per tool use, then the user entry
+// carrying their results.
 const LAST_STEP: SessionMessages = [
   { role: 'user', text: 'issue' },
+  { role: 'assistant', text: '先跑测试，再读一下 a.go。' },
   {
     role: 'assistant',
-    text: 'running tests',
     toolUses: [
-      { tool_use_id: 't1', tool: 'Bash', input: { command: 'go test ./...' }, text: 'FAIL: build failed', isError: true },
+      { tool_use_id: 't1', tool: 'Bash', input: { command: 'go test ./...' }, text: 'Exit code 1\nFAIL: build failed', isError: true },
+    ],
+  },
+  {
+    role: 'assistant',
+    toolUses: [
       { tool_use_id: 't2', tool: 'Read', input: { file_path: 'a.go' }, text: 'package a' },
+    ],
+  },
+  {
+    role: 'user',
+    toolResults: [
+      { tool_use_id: 't1' },
+      { tool_use_id: 't2' },
     ],
   },
 ]
@@ -127,11 +142,12 @@ describe('labrastro-effort hooks', () => {
     expect(world.fetches[0]?.init?.headers?.authorization).toBe('Bearer mat_test')
     const body = JSON.parse(world.fetches[0]?.init?.body ?? '{}')
     expect(body.step).toBe(2)
+    expect(body.assistant_text).toBe('先跑测试，再读一下 a.go。')
     expect(body.tools).toEqual([
-      { name: 'Bash', is_error: true, input_summary: 'go test ./...', result_text: 'FAIL: build failed' },
-      { name: 'Read', is_error: false, input_summary: 'a.go', result_text: 'package a' },
+      { name: 'Bash', is_error: true, is_file_content: false, input_summary: 'go test ./...', result_text: 'Exit code 1\nFAIL: build failed' },
+      { name: 'Read', is_error: false, is_file_content: true, input_summary: 'a.go', result_text: 'package a' },
     ])
-    expect(body.error_text).toBe('FAIL: build failed')
+    expect(body.error_text).toBe('Exit code 1\nFAIL: build failed')
     const record = JSON.parse(world.logs[0] ?? '{}')
     expect(record).toMatchObject({ effort: 1, step: 2, level: 'high', source: 'test' })
   })
@@ -216,6 +232,42 @@ describe('labrastro-effort hooks', () => {
     expect(world.envSets).toContainEqual(['CLAUDE_CODE_PLUGIN_DIRS', '/opt/ysk-plugin'])
   })
 
+  test('an empty startup effort passes steps through until a decision lands', async ($, on) => {
+    const world = setUp(on, { context: JSON.stringify({ version: 1, task_id: 'task-1', endpoint: '/tasks/task-1/thinking-decision', startup_effort: '' }) })
+    await start($)
+    // Step 1 has no level in effect: pass through untouched.
+    expect((await step($, 0)).effort).toBeUndefined()
+    // Step 2 decides; from here every step carries a level.
+    expect((await step($, 1)).effort).toBe('high')
+    expect(JSON.parse(world.logs[0] ?? '{}')).toMatchObject({ step: 2, level: 'high' })
+    // A fallback before any level landed records an empty level.
+    world.answer = () => ({ status: 200, text: FALLBACK_DECISION })
+    expect((await step($, 2)).effort).toBe('high')
+    expect(JSON.parse(world.logs[1] ?? '{}')).toMatchObject({ step: 3, level: 'high', fallback: 'timeout' })
+  })
+
+  test('a run-level fallback records an empty level on the first fallback', async ($, on) => {
+    const world = setUp(on, { context: JSON.stringify({ version: 1, task_id: 'task-1', endpoint: '/tasks/task-1/thinking-decision', startup_effort: '' }) })
+    world.answer = () => ({ status: 200, text: FALLBACK_DECISION })
+    await start($)
+    await step($, 0)
+    expect((await step($, 1)).effort).toBeUndefined()
+    expect(JSON.parse(world.logs[0] ?? '{}')).toEqual({ effort: 1, step: 2, level: '', fallback: 'timeout' })
+  })
+
+  test('a 401 from the endpoint locks the level and stops asking', async ($, on) => {
+    const world = setUp(on)
+    await start($)
+    await step($, 0)
+    expect((await step($, 1)).effort).toBe('high')
+    world.answer = () => ({ status: 401, text: 'thinking decision requires an active task credential' })
+    expect((await step($, 2)).effort).toBe('high')
+    for (let i = 3; i < 6; i++) await step($, i)
+    expect(world.fetches).toHaveLength(2)
+    // The 401 answered disabled: no effect record for it.
+    expect(world.logs).toHaveLength(1)
+  })
+
   test('without a context file the mod stays off', async ($, on) => {
     const world = setUp(on, { env: {} })
     await start($)
@@ -225,12 +277,37 @@ describe('labrastro-effort hooks', () => {
 })
 
 describe('labrastro-effort helpers', () => {
-  test('stepPayload reads the last assistant message, deduplicated by the host', () => {
+  test('stepPayload collects the previous step\'s split assistant entries', () => {
     const payload = stepPayload(3, LAST_STEP)
     expect(payload.step).toBe(3)
-    expect(payload.assistant_text).toBe('running tests')
+    expect(payload.assistant_text).toBe('先跑测试，再读一下 a.go。')
     expect(payload.tools).toHaveLength(2)
-    expect(payload.error_text).toBe('FAIL: build failed')
+    expect(payload.tools[0]).toMatchObject({ name: 'Bash', is_error: true })
+    expect(payload.tools[1]).toMatchObject({ name: 'Read', is_file_content: true })
+    expect(payload.error_text).toBe('Exit code 1\nFAIL: build failed')
+  })
+
+  test('stepPayload marks file-content tools and stops before earlier steps', () => {
+    // An earlier step's entries stay out.
+    const payload = stepPayload(4, [{ role: 'assistant', text: 'old' }, ...LAST_STEP])
+    expect(payload.assistant_text).toBe('先跑测试，再读一下 a.go。')
+  })
+
+  test('stepPayload walks back through interleaved user result entries', () => {
+    // The shape a real 2.1.304 run delivered for a parallel Read+Bash step:
+    // [asst Read][user result t1][asst Bash][user result t2].
+    const interleaved: SessionMessages = [
+      { role: 'user', text: 'issue' },
+      { role: 'assistant', toolUses: [{ tool_use_id: 't1', tool: 'Read', input: { file_path: 'a.go' }, text: 'package a' }] },
+      { role: 'user', toolResults: [{ tool_use_id: 't1' }] },
+      { role: 'assistant', toolUses: [{ tool_use_id: 't2', tool: 'Bash', input: { command: 'go test' }, text: 'FAIL', isError: true }] },
+      { role: 'user', toolResults: [{ tool_use_id: 't2' }] },
+    ]
+    const payload = stepPayload(2, interleaved)
+    expect(payload.tools.map((t) => t.name)).toEqual(['Read', 'Bash'])
+    expect(payload.tools[0]).toMatchObject({ is_file_content: true })
+    expect(payload.tools[1]).toMatchObject({ is_error: true })
+    expect(payload.error_text).toBe('FAIL')
   })
 
   test('stepPayload with no assistant material stays empty', () => {

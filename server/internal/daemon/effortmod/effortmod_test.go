@@ -67,7 +67,6 @@ func TestInstallRejectsIncompleteContext(t *testing.T) {
 		{Version: 0, TaskID: "t", Endpoint: "/e", StartupEffort: "low"},
 		{Version: 1, Endpoint: "/e", StartupEffort: "low"},
 		{Version: 1, TaskID: "t", StartupEffort: "low"},
-		{Version: 1, TaskID: "t", Endpoint: "/e"},
 	} {
 		if _, err := Install(configRoot, context); err == nil {
 			t.Fatalf("install accepted %+v", context)

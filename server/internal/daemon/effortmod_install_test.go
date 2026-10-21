@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -77,7 +78,6 @@ func TestEffortModInstallAndCoexistence(t *testing.T) {
 		{Version: 2, TaskID: "t", Endpoint: "/e", StartupEffort: "low"},
 		{Version: 1, Endpoint: "/e", StartupEffort: "low"},
 		{Version: 1, TaskID: "t", StartupEffort: "low"},
-		{Version: 1, TaskID: "t", Endpoint: "/e"},
 	} {
 		if _, err := effortmod.Install(configRoot, bad); err == nil {
 			t.Fatalf("install accepted an incomplete context: %+v", bad)
@@ -103,13 +103,27 @@ func TestSupportsClaudePerTurnEffortVersions(t *testing.T) {
 }
 
 // TestPrepareStepEffortGates verifies the daemon-side gates: an old CLI, a
-// non-adapt request, or a run-level fallback each keep the mod off.
+// non-adapt request, or a single candidate each keep the mod off, while a
+// run-level fallback (empty startup effort, candidates present) still
+// installs — the mod then starts with no level (contract §6/§7).
 func TestPrepareStepEffortGates(t *testing.T) {
 	t.Parallel()
 	d := &Daemon{cfg: Config{CLIVersion: "v1.0.0"}, logger: slog.Default()}
 	configRoot := t.TempDir()
 	env := &execenv.Environment{MulticaConfigRoot: configRoot}
 	task := Task{ID: "task-gate"}
+
+	orig := listModels
+	listModels = func(_ context.Context, _ string, _ agent.Command) (agent.Catalog, error) {
+		return agent.Catalog{Models: []agent.Model{{
+			ID:      "claude-sonnet-5-5",
+			Default: true,
+			Thinking: &agent.ModelThinking{SupportedLevels: []agent.ThinkingLevel{
+				{Value: "low"}, {Value: "medium"}, {Value: "high"},
+			}},
+		}}}, nil
+	}
+	t.Cleanup(func() { listModels = orig })
 
 	// Old CLI.
 	if vars := d.prepareStepEffort(task, "claude", "claude-sonnet-5-5", "2.1.269", agent.ThinkingLevelAdapt, "low",
@@ -124,9 +138,33 @@ func TestPrepareStepEffortGates(t *testing.T) {
 		agent.Command{}, env, map[string]string{}, d.logger); vars != nil {
 		t.Fatalf("fixed level installed the mod: %v", vars)
 	}
-	// Run-level fallback (empty startup effort).
-	if vars := d.prepareStepEffort(task, "claude", "claude-sonnet-5-5", "2.1.304", agent.ThinkingLevelAdapt, "",
-		agent.Command{}, env, map[string]string{}, d.logger); vars != nil {
-		t.Fatalf("run-level fallback installed the mod: %v", vars)
+	// Run-level fallback (empty startup effort): the mod still installs and
+	// starts with no level.
+	vars := d.prepareStepEffort(task, "claude", "claude-sonnet-5-5", "2.1.304", agent.ThinkingLevelAdapt, "",
+		agent.Command{}, env, map[string]string{}, d.logger)
+	if vars == nil {
+		t.Fatal("run-level fallback kept the mod off")
+	}
+	if vars[effortmod.ContextFileEnv] == "" || vars[yskPluginDirsEnv] == "" {
+		t.Fatalf("env incomplete: %v", vars)
+	}
+	run, ok := d.stepEffort.get("task-gate")
+	if !ok {
+		t.Fatal("no step run registered")
+	}
+	if len(run.Candidates) != 3 {
+		t.Fatalf("candidates: %d", len(run.Candidates))
+	}
+	// A single candidate keeps the mod off (adapt needs >= 2).
+	listModels = func(_ context.Context, _ string, _ agent.Command) (agent.Catalog, error) {
+		return agent.Catalog{Models: []agent.Model{{
+			ID: "claude-sonnet-5-5", Thinking: &agent.ModelThinking{SupportedLevels: []agent.ThinkingLevel{{Value: "low"}}},
+		}}}, nil
+	}
+	configRoot2 := t.TempDir()
+	env2 := &execenv.Environment{MulticaConfigRoot: configRoot2}
+	if vars := d.prepareStepEffort(Task{ID: "task-gate-2"}, "claude", "claude-sonnet-5-5", "2.1.304", agent.ThinkingLevelAdapt, "low",
+		agent.Command{}, env2, map[string]string{}, d.logger); vars != nil {
+		t.Fatalf("single candidate installed the mod: %v", vars)
 	}
 }

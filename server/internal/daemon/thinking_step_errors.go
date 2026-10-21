@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -11,15 +12,46 @@ import (
 
 // NormalizedErrorFeature reduces one step's error text to a stable feature
 // key: the first error-looking line with numbers, paths and quoting noise
-// collapsed, so the same failure reads the same across steps. Exported for
-// OL-1019's sample collection.
+// collapsed, so the same failure reads the same across steps. Claude Code's
+// Bash results open with "Exit code N" — that line names no failure and is
+// skipped (ParseExitCode reads it). Exported for OL-1019's sample collection.
 func NormalizedErrorFeature(errorText string) string {
 	for _, rawLine := range strings.Split(errorText, "\n") {
-		if feature := normalizeErrorLine(rawLine); feature != "" {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || isExitCodeLine(line) {
+			continue
+		}
+		if feature := normalizeErrorLine(line); feature != "" {
 			return feature
 		}
 	}
 	return ""
+}
+
+// exitCodePrefix is Claude Code's Bash failure header ("Exit code 127").
+const exitCodePrefix = "Exit code "
+
+// ParseExitCode reads the exit code a "Exit code N" line carries, or -1 when
+// the error text carries none.
+func ParseExitCode(errorText string) int {
+	for _, rawLine := range strings.Split(errorText, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if !isExitCodeLine(line) {
+			continue
+		}
+		if code, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, exitCodePrefix))); err == nil {
+			return code
+		}
+	}
+	return -1
+}
+
+func isExitCodeLine(line string) bool {
+	if !strings.HasPrefix(line, exitCodePrefix) {
+		return false
+	}
+	_, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, exitCodePrefix)))
+	return err == nil
 }
 
 // normalizeErrorLine keeps letters and words, collapses digit runs (line

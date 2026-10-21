@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
-	"maps"
 	"sync"
 	"time"
 
@@ -29,10 +29,11 @@ type thinkingDecisionRequest struct {
 	Step          int    `json:"step"` // 1-based
 	AssistantText string `json:"assistant_text"`
 	Tools         []struct {
-		Name         string `json:"name"`
-		IsError      bool   `json:"is_error"`
-		InputSummary string `json:"input_summary"`
-		ResultText   string `json:"result_text"`
+		Name          string `json:"name"`
+		IsError       bool   `json:"is_error"`
+		IsFileContent bool   `json:"is_file_content"`
+		InputSummary  string `json:"input_summary"`
+		ResultText    string `json:"result_text"`
 	} `json:"tools"`
 	ErrorText string `json:"error_text"`
 }
@@ -65,9 +66,14 @@ type stepEffortRun struct {
 	EnabledPath string
 	Errors      ErrorFeatureTracker
 
+	lastStep int // highest step this run has decided for (replay guard)
+
 	effectsMu sync.Mutex
 	// pending holds the latest effect record not yet applied to a message.
 	pending *agent.EffortEffect
+	// anyEffect reports whether at least one effect record arrived: once it
+	// has, steps without a record carry no tag (contract §7 revocation).
+	anyEffect bool
 }
 
 // observeEffect records one effect record from the mod. It runs on the
@@ -76,21 +82,27 @@ func (r *stepEffortRun) observeEffect(effect agent.EffortEffect) {
 	r.effectsMu.Lock()
 	defer r.effectsMu.Unlock()
 	r.pending = &effect
+	r.anyEffect = true
 }
 
-// takeEffect returns the pending effect record, if any, without clearing it:
-// the tagger applies it to the next new main-thread message id and every
-// thinking message of that step (contract §7), then clears it.
-func (r *stepEffortRun) takeEffect() *agent.EffortEffect {
+// sawEffect reports whether any effect record has arrived this run.
+func (r *stepEffortRun) sawEffect() bool {
 	r.effectsMu.Lock()
 	defer r.effectsMu.Unlock()
-	return r.pending
+	return r.anyEffect
 }
 
-func (r *stepEffortRun) clearEffect() {
+// consumeEffect returns the pending effect record and, when `consume`, marks
+// it applied — one locked step instead of a take/clear pair racing a new
+// record from the stream reader.
+func (r *stepEffortRun) consumeEffect(consume bool) *agent.EffortEffect {
 	r.effectsMu.Lock()
 	defer r.effectsMu.Unlock()
-	r.pending = nil
+	effect := r.pending
+	if consume {
+		r.pending = nil
+	}
+	return effect
 }
 
 // effectMetadata shapes one effect record as the message metadata structure
@@ -115,34 +127,32 @@ func effectMetadata(effect agent.EffortEffect) map[string]any {
 // tagStep applies the pending effect record to the first message of a new
 // main-thread model request (and any thinking message of that request): the
 // effect record arrives before the step's first assistant event (OL-1000).
-// Called after the run-level tag, overriding its metadata for this step.
+// Runs instead of the run-level tag once any effect has arrived (contract
+// §7), so a revoked run's steps carry no stale run-level tag.
 func (r *stepEffortRun) tagStep(msg agent.Message, firstOfRequest bool) agent.Message {
 	if msg.ParentToolUseID != "" {
 		return msg
 	}
-	effect := r.takeEffect()
+	// A thinking message of the same step keeps the effect pending for the
+	// step's first message, which may not have arrived yet.
+	isThinking := !firstOfRequest && msg.Type == agent.MessageThinking
+	if !firstOfRequest && !isThinking {
+		return msg
+	}
+	// Only apply over an existing thinking-tagged message for a non-first
+	// thinking event; otherwise wait for the step's first message.
+	if isThinking && (msg.Metadata == nil || msg.Metadata["thinking"] == nil) {
+		return msg
+	}
+	effect := r.consumeEffect(firstOfRequest)
 	if effect == nil {
 		return msg
-	}
-	if !firstOfRequest && msg.Type != agent.MessageThinking {
-		return msg
-	}
-	if !firstOfRequest {
-		// A thinking message of the same step: keep the effect pending for
-		// the step's first message, which may not have arrived yet.
-		r.pending = effect
-		if msg.Metadata == nil || msg.Metadata["thinking"] == nil {
-			return msg
-		}
 	}
 	msg.Metadata = maps.Clone(msg.Metadata)
 	if msg.Metadata == nil {
 		msg.Metadata = map[string]any{}
 	}
 	msg.Metadata["thinking"] = effectMetadata(*effect)
-	if firstOfRequest {
-		r.clearEffect()
-	}
 	return msg
 }
 
@@ -191,7 +201,6 @@ func (r *stepEffortRun) enabledNow() bool {
 // step state per contract §4 plus the shared criteria.
 func (r *stepEffortRun) buildStepRequest(req thinkingDecisionRequest) (jev.Request, StepThinkingInput) {
 	feature, repeats := r.Errors.Observe(req.ErrorText)
-	lastTool := len(req.Tools) - 1
 	input := StepThinkingInput{
 		Step:           req.Step,
 		Goal:           r.Goal,
@@ -199,29 +208,37 @@ func (r *stepEffortRun) buildStepRequest(req thinkingDecisionRequest) (jev.Reque
 		ErrorFeatures:  feature,
 		RepeatedErrors: repeats,
 	}
-	if lastTool >= 0 {
-		tool := req.Tools[lastTool]
+	if len(req.Tools) > 0 {
+		tool := req.Tools[len(req.Tools)-1]
 		input.ToolName = tool.Name
 		input.ToolInputSummary = tool.InputSummary
 		input.ToolResult = tool.ResultText
 		input.ToolIsError = tool.IsError
+		input.FileContent = tool.IsFileContent
+		if tool.IsError {
+			if code := ParseExitCode(tool.ResultText); code >= 0 {
+				input.ExitCode = code
+			}
+		}
 	}
 	return ThinkingRequest(BuildStepThinkingState(input), r.Candidates), input
 }
 
 // decide answers one step: a level from Jev, a fallback reason, or "not
 // enabled". Falls back (never errors the run) on any failure.
-func (r *stepEffortRun) decide(ctx context.Context, req thinkingDecisionRequest, log interface {
-	Info(string, ...any)
-	Warn(string, ...any)
-}) thinkingDecisionResponse {
+func (r *stepEffortRun) decide(ctx context.Context, req thinkingDecisionRequest) thinkingDecisionResponse {
 	if !r.enabledNow() {
 		var disabled bool
 		return thinkingDecisionResponse{Enabled: &disabled}
 	}
-	if req.Step < 1 {
+	if req.Step < 1 || req.Step <= r.lastStep {
+		// Reject replays and regressions: each run asks at most once per
+		// step, so a repeated or lower step is a buggy or chatty caller, and
+		// answering it would both hit the external engine and advance the
+		// run's error-feature tracking beyond the real steps.
 		return thinkingDecisionResponse{Fallback: string(jev.ReasonInvalid)}
 	}
+	r.lastStep = req.Step
 	jevReq, _ := r.buildStepRequest(req)
 	trace := r.Trace
 	trace.Step = req.Step
@@ -261,7 +278,12 @@ func (d *Daemon) thinkingDecisionHandler() http.HandlerFunc {
 		}
 		task, authResult := d.activeRepoCheckoutTask(r)
 		if authResult != repoCheckoutAuthOK {
-			d.writeRepoCheckoutAuthError(w, authResult)
+			reason := "no_credential"
+			if authResult == repoCheckoutAuthUnknownCredential {
+				reason = "unknown_credential"
+			}
+			d.logger.Warn("thinking decision rejected", "reason", reason)
+			http.Error(w, "thinking decision requires an active task credential", http.StatusUnauthorized)
 			return
 		}
 		if id := taskIDFromRequest(r); id != task.TaskID {
@@ -284,7 +306,7 @@ func (d *Daemon) thinkingDecisionHandler() http.HandlerFunc {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-		writeThinkingDecision(w, run.decide(ctx, req, d.logger))
+		writeThinkingDecision(w, run.decide(ctx, req))
 	}
 }
 
@@ -294,10 +316,11 @@ func writeThinkingDecision(w http.ResponseWriter, resp thinkingDecisionResponse)
 }
 
 // prepareStepEffort is the daemon-side gate for the per-step effort mod
-// (contract §6): provider, _adapt request, a landed run-level level, CLI
-// version, and ≥2 candidates all have to hold. It loads the model catalog,
-// installs the mod, and returns the environment for it; nil means the run
-// stays run-level only, with nothing written.
+// (contract §6): provider, _adapt request, CLI version, and ≥2 candidates
+// all have to hold. startupEffort is the level the run started with — the
+// run-level decision's level, or "" when that decision fell back (anything
+// but no_candidates): the run still installs, the mod just starts with no
+// level. Returns the mod's environment; nil means the mod should not load.
 func (d *Daemon) prepareStepEffort(task Task, provider, model, cliVersion, requestedLevel, startupEffort string,
 	runtimeCmd agent.Command, env *execenv.Environment, agentEnv map[string]string, log *slog.Logger) map[string]string {
 	if provider != "claude" || requestedLevel != agent.ThinkingLevelAdapt || env == nil || env.MulticaConfigRoot == "" {
@@ -308,10 +331,6 @@ func (d *Daemon) prepareStepEffort(task Task, provider, model, cliVersion, reque
 			"claude_version", cliVersion, "minimum", agent.ClaudePerTurnEffortMinVersion)
 		return nil
 	}
-	if startupEffort == "" {
-		// The run-level decision fell back; there is no level to carry.
-		return nil
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	catalog, err := listModels(ctx, provider, runtimeCmd)
@@ -319,43 +338,19 @@ func (d *Daemon) prepareStepEffort(task Task, provider, model, cliVersion, reque
 		log.Info("thinking_level: catalog unavailable; step effort off", "error", err)
 		return nil
 	}
-	existing := agentEnv[yskPluginDirsEnv]
-	if existing == "" {
-		existing = os.Getenv(yskPluginDirsEnv)
-	}
-	return d.registerStepEffortRun(task, provider, model, cliVersion, requestedLevel, startupEffort, catalog, env.MulticaConfigRoot, existing)
-}
-
-// registerStepEffortRun installs a step-effort run for a task that passed the
-// contract §6 gates, and returns the env that loads the mod. startupEffort is
-// the run-level decision's level. Returns nil when the mod should not load —
-// run-level effort still applies.
-func (d *Daemon) registerStepEffortRun(task Task, provider, model, cliVersion, thinkingLevel, startupEffort string, catalog agent.Catalog, configRoot string, existingPluginDirs string) map[string]string {
-	if provider != "claude" || thinkingLevel != agent.ThinkingLevelAdapt {
-		return nil
-	}
-	if !agent.SupportsClaudePerTurnEffort(cliVersion) {
-		d.logger.Info("thinking_level: Claude Code is too old for per-step effort; run-level only",
-			"claude_version", cliVersion, "minimum", agent.ClaudePerTurnEffortMinVersion)
-		return nil
-	}
-	if startupEffort == "" {
-		// No run-level level either (fallback): nothing to adapt from.
-		return nil
-	}
 	candidates := agent.ModelAdaptThinkingCandidates(catalog, provider, model)
 	if len(candidates) < 2 {
 		return nil
 	}
-	paths := effortmod.PathsFor(configRoot)
-	vars, err := effortmod.Install(configRoot, effortmod.EffortContext{
+	paths := effortmod.PathsFor(env.MulticaConfigRoot)
+	vars, err := effortmod.Install(env.MulticaConfigRoot, effortmod.EffortContext{
 		Version:       1,
 		TaskID:        task.ID,
 		Endpoint:      fmt.Sprintf("/tasks/%s/thinking-decision", task.ID),
 		StartupEffort: startupEffort,
 	})
 	if err != nil {
-		d.logger.Warn("thinking_level: effort mod not installed; run-level only", "error", err)
+		log.Warn("thinking_level: effort mod not installed; run-level only", "error", err)
 		return nil
 	}
 	d.stepEffort.add(&stepEffortRun{
@@ -364,11 +359,15 @@ func (d *Daemon) registerStepEffortRun(task Task, provider, model, cliVersion, t
 		Model:       model,
 		Clients:     d.jevClient,
 		Trace:       ThinkingDecisionTrace{TaskID: task.ID, Scope: "step", Provider: provider, Model: model},
-		Goal:        BuildRunThinkingState(task, provider, model),
+		Goal:        StepThinkingGoal(task),
 		Candidates:  candidates,
 		EnabledPath: paths.EnabledFile,
 	})
-	vars[yskPluginDirsEnv] = effortmod.MergePluginDir(existingPluginDirs, paths.Plugin)
+	existing := agentEnv[yskPluginDirsEnv]
+	if existing == "" {
+		existing = os.Getenv(yskPluginDirsEnv)
+	}
+	vars[yskPluginDirsEnv] = effortmod.MergePluginDir(existing, paths.Plugin)
 	return vars
 }
 
@@ -391,4 +390,11 @@ func (d *Daemon) setStepEffortEnabled(taskID string, enabled bool) {
 	if err := os.Remove(run.EnabledPath); err != nil && !os.IsNotExist(err) {
 		d.logger.Warn("thinking_level: cannot remove the effort enablement marker", "error", err)
 	}
+}
+
+// perTurnEffortCallback is the ExecOptions.OnPerTurnEffort wiring: system
+// frames' per-turn effort state writes or removes the run's enablement
+// marker (contract §6). Extracted so tests can drive it end to end.
+func (d *Daemon) perTurnEffortCallback(taskID string) func(bool) {
+	return func(active bool) { d.setStepEffortEnabled(taskID, active) }
 }

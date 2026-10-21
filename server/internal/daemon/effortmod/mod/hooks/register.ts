@@ -26,7 +26,15 @@ export type Decision =
 
 /** Step material sent to the daemon: raw only. The daemon normalizes error
  * features and counts same-kind repeats (OL-1013); this mod judges nothing. */
-export type ToolMaterial = { name: string; is_error: boolean; input_summary: string; result_text: string }
+export type ToolMaterial = {
+  name: string
+  is_error: boolean
+  /** True when the tool's result is file content: the daemon omits the
+   * body from the state (contract §4). */
+  is_file_content: boolean
+  input_summary: string
+  result_text: string
+}
 
 export type StepPayload = { step: number; assistant_text: string; tools: ToolMaterial[]; error_text: string }
 
@@ -56,54 +64,78 @@ export function parseContext(raw: string): EffortContext | undefined {
   if (!isRecord(value) || value.version !== 1) return undefined
   const task_id = typeof value.task_id === 'string' ? value.task_id : ''
   const endpoint = typeof value.endpoint === 'string' ? value.endpoint : ''
+  // startup_effort may be empty: a run whose run-level decision fell back
+  // starts with no level; the first step decision sets one (contract §7).
   const startup_effort = typeof value.startup_effort === 'string' ? value.startup_effort : ''
-  if (task_id === '' || endpoint === '' || startup_effort === '') return undefined
+  if (task_id === '' || endpoint === '') return undefined
   return { task_id, endpoint, startup_effort }
 }
 
 /**
- * Minimal shape of `$.session.messages()`: the host merges each tool result
- * into its tool use entry (`tool_use_id` keys, with `text` and `isError`),
- * so reading the last assistant message's `toolUses` alone is already the
- * tool_use_id-deduplicated view (OL-1000 §0.9).
+ * Minimal shape of `$.session.messages()`. The host splits one request's
+ * assistant output into several entries (text, then each tool use on its
+ * own) and merges each tool result into its tool use entry (`text`,
+ * `isError`), keyed by tool_use_id (OL-1000 §0.9). A user entry may carry
+ * the results as toolResults, interleaved between the split assistant
+ * entries of one step (observed on 2.1.304: a Read+Bash step delivered
+ * [asst Read][user results][asst Bash][user results] to the mod).
  */
 export type SessionMessages = Array<{
   role: string
   text?: string
   toolUses?: Array<Record<string, unknown>>
+  toolResults?: Array<{ tool_use_id?: string }>
 }>
 
 /**
- * Payload for step `step`: the previous main-thread step's assistant text and
- * tool calls with their results. A missing/unreadable session leaves the
- * empty payload; the daemon still decides on what arrived.
+ * Payload for step `step`: the previous main-thread step's assistant text
+ * and tool calls with their results. The previous step is the run of
+ * consecutive assistant entries before the trailing user entry: their texts
+ * are joined and their toolUses collected in order. A missing/unreadable
+ * session leaves the empty payload; the daemon still decides on what
+ * arrived.
  */
 export function stepPayload(step: number, messages: SessionMessages | undefined): StepPayload {
   const tools: ToolMaterial[] = []
-  let assistant_text = ''
+  const texts: string[] = []
   if (Array.isArray(messages)) {
-    for (let i = messages.length - 1; i >= 0; i--) {
+    let i = messages.length - 1
+    // Collect the step's assistant entries from the end. The host
+    // interleaves user result entries between one step's split assistant
+    // entries: a user entry carrying toolResults belongs to the step, one
+    // without (the original user message) ends it.
+    while (i >= 0) {
       const message = messages[i]
-      if (message?.role !== 'assistant') continue
-      assistant_text = clip(message.text, 600)
+      if (message?.role === 'user') {
+        if ((message.toolResults ?? []).length === 0) break
+        i--
+        continue
+      }
+      if (message?.role !== 'assistant') break
+      if (typeof message.text === 'string' && message.text !== '') texts.unshift(message.text)
       for (const use of message.toolUses ?? []) {
         if (!isRecord(use)) continue
-        tools.push({
+        tools.unshift({
           name: typeof use.tool === 'string' ? use.tool : '',
           is_error: use.isError === true,
+          is_file_content: fileContentTools.has(typeof use.tool === 'string' ? use.tool : ''),
           input_summary: clip(summarizeInput(use.input), 200),
           result_text: clip(typeof use.text === 'string' ? use.text : '', 400),
         })
       }
-      break
+      i--
     }
   }
   const error_text = clip(
     tools.filter((tool) => tool.is_error && tool.result_text !== '').map((tool) => tool.result_text).join('\n'),
     1200,
   )
-  return { step, assistant_text, tools, error_text }
+  return { step, assistant_text: clip(texts.join(''), 600), tools, error_text }
 }
+
+/** Tools whose results are file contents: the daemon omits the body for
+ * them (contract §4 — no file contents leave the machine). */
+const fileContentTools = new Set(['Read', 'NotebookRead'])
 
 /** The one field of a tool input that names what it touched, when there is
  * one; otherwise the whole input as JSON. */
@@ -259,9 +291,10 @@ export const register: Register = (on) => {
     if (e.agentId !== undefined || ctx === undefined) return yield* next(e)
     const step = e.index + 1
     if (step === 1) {
-      // The run-level decision's level is what this run started with.
+      // The run-level decision's level is what this run started with; a
+      // run-level fallback leaves it empty (no effort flag injected).
       last = typeof e.effort === 'string' && e.effort !== '' ? e.effort : ctx.startup_effort
-      return yield* next({ ...e, effort: last })
+      return yield* next(last === '' ? e : { ...e, effort: last })
     }
     if (!revoked && markerFile !== undefined) {
       const enabled = await markerExists($, markerFile)
@@ -290,9 +323,11 @@ export const register: Register = (on) => {
         }))
       } else {
         // Fallback keeps the last level; the record says so (contract §7).
+        // With no level ever in effect (run-level fallback and no decision
+        // yet), level stays empty and the step passes through unchanged.
         $.ui.log(effectRecord({ step, level: last, fallback: decision.reason }))
       }
     }
-    return yield* next({ ...e, effort: last })
+    return yield* next(last === '' ? e : { ...e, effort: last })
   })
 }

@@ -8887,13 +8887,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if stepEffortRun, ok := d.stepEffort.get(task.ID); ok {
 		execOpts.OnEffortEffect = stepEffortRun.observeEffect
-		execOpts.OnPerTurnEffort = func(active bool) {
-			if active {
-				d.setStepEffortEnabled(task.ID, true)
-			} else {
-				d.setStepEffortEnabled(task.ID, false)
-			}
-		}
+		execOpts.OnPerTurnEffort = d.perTurnEffortCallback(task.ID)
 	}
 	// Some providers do not reliably load the per-task runtime config files we
 	// write into the task workdir:
@@ -9750,10 +9744,22 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				observedAt := time.Now().UTC()
 				lastActivityAt.Store(int64(awakeclock.Now()))
 				if thinking := thinkingRunFromContext(ctx); thinking != nil {
-					msg = thinking.tag(msg)
-					// Step-level effort (contract §7): the effect record
-					// overrides the run-level tag on this step's messages.
-					if stepRun, ok := d.stepEffort.get(taskID); ok {
+					stepRun, _ := d.stepEffort.get(taskID)
+					// Step-level effort (contract §7): once a step tag has
+					// landed, steps without an effect record carry no tag
+					// at all — after revocation the level in effect is the
+					// last tagged one, and a run-level tag would misreport
+					// it (and invent a gear change).
+					var stepTagged bool
+					if stepRun != nil {
+						stepTagged = stepRun.sawEffect()
+						if !stepTagged {
+							msg = thinking.tag(msg)
+						}
+					} else {
+						msg = thinking.tag(msg)
+					}
+					if stepRun != nil {
 						msg = stepRun.tagStep(msg, thinking.lastTagFirstOfRequest())
 					}
 				}

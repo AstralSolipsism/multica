@@ -3,10 +3,10 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
