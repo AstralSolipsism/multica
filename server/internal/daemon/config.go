@@ -197,7 +197,7 @@ type Config struct {
 	// Jev adaptive-thinking decision engine (OL-992 S1-3). All values are
 	// daemon-local in the MULTICA_ZENMUX_MANAGEMENT_API_KEY sense: secrets
 	// are read from the environment only, never logged, never serialized,
-	// never reported. The daemon wiring that consumes them lands with S2.
+	// never reported. One client per daemon shares source health and the breaker.
 	JevDisabled  bool          // MULTICA_JEV_DISABLED: local opt-out, always fail-open
 	JevSources   []jev.Source  // MULTICA_JEV_SOURCES (ordered, default opencode-free); resolved, unusable entries skipped
 	JevTimeout   time.Duration // MULTICA_JEV_TIMEOUT_MS, default 1500ms
