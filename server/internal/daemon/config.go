@@ -18,6 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/jev"
+	"github.com/multica-ai/multica/server/internal/daemon/jevsample"
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
@@ -202,6 +203,11 @@ type Config struct {
 	JevSources   []jev.Source  // MULTICA_JEV_SOURCES (ordered, default opencode-free); resolved, unusable entries skipped
 	JevTimeout   time.Duration // MULTICA_JEV_TIMEOUT_MS, default 1500ms
 	JevSourceEnv jev.SourceEnv // raw credentials for the optional opencode/dashscope/self-hosted sources
+
+	// Jev decision-sample collection (OL-1013 S1-2). Samples carry redacted
+	// run summaries and stay on this machine.
+	JevCollectDir      string // MULTICA_JEV_COLLECT_DIR: sample directory; empty disables collection entirely
+	JevCollectMaxBytes int64  // MULTICA_JEV_COLLECT_MAX_MB, default 1 GiB; over cap, stop writing (old files are kept)
 }
 
 // Overrides allows CLI flags to override environment variables and defaults.
@@ -694,6 +700,11 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		SelfHostedAPIKey:     os.Getenv("MULTICA_JEV_SELF_HOSTED_API_KEY"),
 	}
 	jevSources := jev.ResolveSources(envOrDefault("MULTICA_JEV_SOURCES", jev.DefaultSources), jevSourceEnv)
+	jevCollectDir := strings.TrimSpace(os.Getenv("MULTICA_JEV_COLLECT_DIR"))
+	jevCollectMaxMB, err := intFromEnv("MULTICA_JEV_COLLECT_MAX_MB", jevsample.DefaultMaxMB)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		ServerBaseURL:                   serverBaseURL,
@@ -750,6 +761,8 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		JevSources:                      jevSources,
 		JevTimeout:                      jevTimeout,
 		JevSourceEnv:                    jevSourceEnv,
+		JevCollectDir:                   jevCollectDir,
+		JevCollectMaxBytes:              int64(jevCollectMaxMB) << 20,
 	}, nil
 }
 

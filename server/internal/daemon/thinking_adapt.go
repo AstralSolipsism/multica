@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/multica-ai/multica/server/internal/daemon/jev"
+	"github.com/multica-ai/multica/server/internal/daemon/jevsample"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
@@ -33,16 +34,20 @@ type ThinkingDecisionTrace struct {
 // ThinkingDecisionRecord remains reachable from the execution context through
 // terminal handling, including fresh-session retries. Request contains only the
 // rendered, redacted state, never the task's raw input or instructions.
+// SampleID links the collected decision sample to its outcome record; empty
+// when collection is off or the decision fell back.
 type ThinkingDecisionRecord struct {
 	Trace    ThinkingDecisionTrace
 	Mode     string
 	Request  jev.Request
 	Decision jev.Decision
 	Fallback string
+	SampleID string
 }
 
 type thinkingRun struct {
 	Client     thinkingDecider
+	Samples    *jevsample.Collector
 	Task       Task
 	Record     *ThinkingDecisionRecord
 	seenFirst  bool
@@ -74,13 +79,14 @@ func resolveAdaptiveThinking(ctx context.Context, provider, model string, loadCa
 		return ""
 	}
 	req := ThinkingRequest(BuildRunThinkingState(run.Task, provider, model), candidates)
-	run.Record = decideThinking(ctx, run.Client, trace, req)
+	run.Record = decideThinking(ctx, run.Client, trace, req, run.Samples)
 	return run.Record.Decision.Level
 }
 
 // decideThinking is the shared call boundary for run and step decisions. Trace
-// is never part of Request; OL-1017 can collect the record here and at run end.
-func decideThinking(ctx context.Context, client thinkingDecider, trace ThinkingDecisionTrace, req jev.Request) *ThinkingDecisionRecord {
+// is never part of Request. Successful decisions are offered to the sample
+// collector (no-op when collection is disabled); fallbacks are not sampled.
+func decideThinking(ctx context.Context, client thinkingDecider, trace ThinkingDecisionTrace, req jev.Request, samples *jevsample.Collector) *ThinkingDecisionRecord {
 	record := &ThinkingDecisionRecord{Trace: trace, Mode: "adapt", Request: req}
 	if client == nil {
 		record.Fallback = string(jev.ReasonDisabled)
@@ -115,6 +121,18 @@ func decideThinking(ctx context.Context, client thinkingDecider, trace ThinkingD
 	}
 	decision.Probabilities = probabilities
 	record.Decision = decision
+	// Sample exactly what the source saw: state and questions are
+	// byte-identical to the wire body (questions use the same marshal the
+	// client sends); the trace never left the daemon.
+	if samples != nil {
+		questions, _ := req.MarshalQuestionsJSON()
+		record.SampleID = samples.Decision(jevsample.Decision{
+			TaskID: trace.TaskID, Scope: trace.Scope, Step: trace.Step, Provider: trace.Provider, Model: trace.Model,
+			State: req.State, Questions: questions,
+			Source: decision.Source, Choice: decision.Level, Confidence: decision.Confidence,
+			Probabilities: decision.Probabilities, LatencyMS: decision.LatencyMS,
+		})
+	}
 	return record
 }
 

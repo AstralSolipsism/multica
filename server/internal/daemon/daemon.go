@@ -31,6 +31,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/jev"
+	"github.com/multica-ai/multica/server/internal/daemon/jevsample"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -417,6 +418,7 @@ type Daemon struct {
 	cfg        Config
 	client     *Client
 	jevClient  *jev.Client
+	jevSamples *jevsample.Collector
 	repoCache  repoCacheBackend
 	skillCache *SkillBundleCache
 	logger     *slog.Logger
@@ -764,6 +766,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		cfg:                         cfg,
 		client:                      client,
 		jevClient:                   jev.New(jev.Options{Disabled: cfg.JevDisabled, Sources: cfg.JevSources, Timeout: cfg.JevTimeout}),
+		jevSamples:                  jevsample.New(cfg.JevCollectDir, cfg.DaemonID, cfg.JevCollectMaxBytes, logger),
 		repoCache:                   repocache.New(cacheRoot, logger),
 		skillCache:                  NewSkillBundleCache(skillCacheRoot),
 		logger:                      logger,
@@ -8794,10 +8797,32 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if d.jevClient != nil {
 		thinking.Client = d.jevClient
 	}
+	thinking.Samples = d.jevSamples
 	selection := resolveTaskModelSelection(ctx, provider, agent.NewCommand(entry.Path, profileFixedArgs),
 		taskModelSelection{Model: model, ThinkingLevel: thinkingLevel, ServiceTier: serviceTier}, taskLog, thinking)
 	model, thinkingLevel, serviceTier = selection.Model, selection.ThinkingLevel, selection.ServiceTier
 	ctx = context.WithValue(ctx, thinkingRunKey{}, thinking)
+
+	// Decision-sample outcome (OL-1013 S1-2): written when the final result
+	// is settled, once per run — fresh-session retries reuse the decision, so
+	// SampleID still points at this run's single decision sample. Only a run
+	// that actually wrote a decision (Record present, no fallback) gets one.
+	sampleOutcome := func(status, failureReason string, toolCalls int32) {
+		if record := thinking.Record; record != nil && record.Fallback == "" && record.SampleID != "" {
+			d.jevSamples.Outcome(jevsample.Outcome{
+				DecisionID:    record.SampleID,
+				Status:        status,
+				FailureReason: failureReason,
+				ToolCalls:     int64(toolCalls),
+			})
+		}
+	}
+	var sampledToolCalls int32
+	defer func() {
+		if err == nil {
+			sampleOutcome(taskResult.Status, taskResult.FailureReason, sampledToolCalls)
+		}
+	}()
 
 	var idleWatchdogTimeout time.Duration
 	if provider == "opencode" || provider == "codearts" {
@@ -8992,6 +9017,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// than being relabeled resumable by a benign-looking second error.
 		result, tools = reconcileFreshRetryResult(firstResult, firstUsage, firstTools, retryResult, retryTools, retryErr)
 	}
+	sampledToolCalls = tools
 	phaseRecorder.Mark(taskPhaseTurnCompleted)
 
 	elapsed := time.Since(taskStart).Round(time.Second)
