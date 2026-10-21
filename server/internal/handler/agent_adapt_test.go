@@ -30,7 +30,7 @@ func TestAgentAdaptValidation(t *testing.T) {
 	}
 	var cases []validationCase
 	for _, provider := range []string{"codex", "omp", "deveco"} {
-		cases = append(cases, validationCase{name: provider + "/blank model", provider: provider, model: " 	", rejection: thinkingNeedsExplicitModelRejection(provider)})
+		cases = append(cases, validationCase{name: provider + "/blank model", provider: provider, model: " \t", rejection: thinkingNeedsExplicitModelRejection(provider)})
 	}
 	for _, provider := range []string{"claude", "codex", "pi", "omp", "opencode", "deveco", "kimi", "dsh", "grok", "codebuddy"} {
 		for _, model := range []string{"", "test/model"} {

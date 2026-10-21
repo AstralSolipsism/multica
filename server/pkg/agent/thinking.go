@@ -711,8 +711,8 @@ func catalogLoader(ctx context.Context, providerType string, cmd Command) func()
 //     "unknown model → reject" (the misjudgement flagged in an earlier
 //     review). opencode has no single default, so it accepts a level any
 //     advertised model supports.
-//   - omp: fails closed for the same reason by a different route — see
-//     ThinkingRequiresExplicitModel.
+//   - omp and deveco: fail closed for the same reason by different routes —
+//     see ThinkingRequiresExplicitModel.
 //
 // Only a catalog discovery verified may reject a level. A fallback or empty
 // catalog (see Catalog.Verified) answers with errUnverifiedCatalog, which the
