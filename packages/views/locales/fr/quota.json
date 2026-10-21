@@ -25,6 +25,7 @@
     "degraded": "Dégradé (Adaptation utilise le niveau CLI par défaut en cas d'échec)",
     "unavailable": "Indisponible (Adaptation utilise le niveau CLI par défaut)",
     "idle": "Pas encore utilisé",
+    "status_unknown": "Statut inconnu",
     "source_opencode_free": "OpenCode Zen",
     "source_opencode": "OpenCode Zen",
     "source_dashscope": "DashScope",

@@ -288,6 +288,7 @@ export function AgentDetailInspector({
             value={agent.thinking_level ?? ""}
             canEdit={canEdit}
             adaptSupported={runtimeSupportsThinkingAdapt(runtime)}
+            adaptSnapshot={runtime?.thinking_adapt ?? null}
             onChange={(thinkingLevel) =>
               update({ thinking_level: thinkingLevel })
             }

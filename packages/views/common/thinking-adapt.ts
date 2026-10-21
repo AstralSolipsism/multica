@@ -1,12 +1,7 @@
+import type { RuntimeThinkingAdapt } from "@multica/core/types";
 import { useT } from "../i18n";
 
-export interface ThinkingAdaptViewSnapshot {
-  status: string;
-  active_source?: string | null;
-  last_latency_ms?: number | null;
-  decisions_ok?: number;
-  decisions_fallback?: number;
-}
+export type ThinkingAdaptViewSnapshot = RuntimeThinkingAdapt;
 
 type QuotaT = ReturnType<typeof useT<"quota">>["t"];
 
@@ -36,8 +31,12 @@ export function thinkingAdaptStatusLabel(
       return t(($) => $.thinking_adapt.degraded);
     case "idle":
       return t(($) => $.thinking_adapt.idle);
-    default:
+    case "unavailable":
       return t(($) => $.thinking_adapt.unavailable);
+    default:
+      return snapshot == null
+        ? t(($) => $.thinking_adapt.unavailable)
+        : t(($) => $.thinking_adapt.status_unknown);
   }
 }
 

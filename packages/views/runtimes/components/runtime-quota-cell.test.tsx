@@ -96,6 +96,8 @@ function adaptSnapshot(
     last_latency_ms: 290,
     decisions_ok: 12,
     decisions_fallback: 3,
+    since: "2026-10-21T00:00:00Z",
+    updated_at: "2026-10-21T01:00:00Z",
     ...overrides,
   };
 }
@@ -367,6 +369,7 @@ describe("thinking Adapt engine status", () => {
       "bg-warning",
     ],
     ["idle", "Not used yet", "bg-muted-foreground/50"],
+    ["future-status", "Status unknown", "bg-muted-foreground/50"],
   ])(
     "renders %s in the cell and card without plan quota",
     (status, text, dotClass) => {
@@ -433,6 +436,23 @@ describe("thinking Adapt engine status", () => {
     );
 
     expect(screen.getByText(`${label} · 290ms`)).toBeInTheDocument();
+  });
+
+  it("reads the runtime snapshot by default without plan quota", () => {
+    const runtime = quotaRuntime("claude", {});
+    runtime.plan_quota = null;
+    runtime.thinking_adapt = adaptSnapshot("available");
+    const cell = renderWithI18n(
+      <RuntimeQuotaCell runtime={runtime} now={NOW} />,
+    );
+
+    expect(screen.getByText("OpenCode Zen · 290ms")).toBeInTheDocument();
+    expect(screen.queryByText("Not reported")).not.toBeInTheDocument();
+    cell.unmount();
+
+    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
+    expect(screen.getByText("OpenCode Zen · 290ms")).toBeInTheDocument();
+    expect(screen.queryByText("Not reported")).not.toBeInTheDocument();
   });
 
   it("omits the engine row when no snapshot is supplied", () => {

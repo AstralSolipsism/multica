@@ -25,6 +25,7 @@
     "degraded": "已降级（决策失败时回退默认挡位）",
     "unavailable": "暂不可用（自适应已回退默认挡位）",
     "idle": "尚未使用",
+    "status_unknown": "状态未知",
     "source_opencode_free": "OpenCode Zen",
     "source_opencode": "OpenCode Zen",
     "source_dashscope": "DashScope",

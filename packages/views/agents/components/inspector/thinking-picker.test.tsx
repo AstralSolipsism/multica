@@ -193,6 +193,10 @@ describe("ThinkingPicker", () => {
         status: "available",
         active_source: source,
         last_latency_ms: 290,
+        decisions_ok: 12,
+        decisions_fallback: 3,
+        since: "2026-10-21T00:00:00Z",
+        updated_at: "2026-10-21T01:00:00Z",
       },
     });
     fireEvent.click(screen.getByRole("button"));

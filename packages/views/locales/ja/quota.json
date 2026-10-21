@@ -25,6 +25,7 @@
     "degraded": "低下（決定失敗時は CLI のデフォルトレベルにフォールバック）",
     "unavailable": "利用不可（適応は CLI のデフォルトレベルにフォールバック）",
     "idle": "未使用",
+    "status_unknown": "ステータス不明",
     "source_opencode_free": "OpenCode Zen",
     "source_opencode": "OpenCode Zen",
     "source_dashscope": "DashScope",

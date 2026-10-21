@@ -173,7 +173,7 @@ export function displayRemainingPercent(remaining: number): number {
 export function RuntimeQuotaCell({
   runtime,
   now,
-  thinkingAdapt = null,
+  thinkingAdapt = runtime.thinking_adapt ?? null,
 }: {
   runtime: AgentRuntime;
   now: number;
@@ -272,9 +272,9 @@ export function ThinkingAdaptQuotaRow({
   });
   const dotClass = available
     ? "bg-success"
-    : snapshot.status === "idle"
-      ? "bg-muted-foreground/50"
-      : "bg-warning";
+    : snapshot.status === "degraded" || snapshot.status === "unavailable"
+      ? "bg-warning"
+      : "bg-muted-foreground/50";
 
   const row = (
     <span
@@ -374,7 +374,7 @@ function QuotaWindowRow({
 export function RuntimeQuotaCard({
   runtime,
   now,
-  thinkingAdapt = null,
+  thinkingAdapt = runtime.thinking_adapt ?? null,
 }: {
   runtime: AgentRuntime;
   now: number;

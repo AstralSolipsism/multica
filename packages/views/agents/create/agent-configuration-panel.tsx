@@ -418,6 +418,7 @@ export function AgentExecutionOverrides({
         value={draft.thinkingLevel}
         canEdit={!disabled}
         adaptSupported={runtimeSupportsThinkingAdapt(runtime)}
+        adaptSnapshot={runtime?.thinking_adapt ?? null}
         onChange={(thinkingLevel) => onChange({ ...draft, thinkingLevel })}
       />
       <ServiceTierSettingField
