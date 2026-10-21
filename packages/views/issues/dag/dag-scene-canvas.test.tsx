@@ -1368,6 +1368,18 @@ describe("DagSceneCanvas satisfied overlay sources", () => {
     expect(cardLit("issue:r4")).toBe(true);
   });
 
+  it("selecting a card whose only cross-line dependencies are satisfied still overlays them", async () => {
+    // r4 has no base route in the plan (its single dependency r4→r2 is fully
+    // satisfied): the overlay alone must light up on selection.
+    const { store } = harness(satisfiedFixture(), (s) => s.setState({ dagSelectedNodeId: "issue:r4" }));
+    await waitFor(() => expect(nodeOf("issue:r4")).toBeTruthy());
+    await waitFor(() => expect(litEdgeIds()).toContain(SATISFIED));
+    expect(litEdgeIds()).not.toContain(BUNDLE);
+    // The other end of the satisfied bundle lights through a dim hole.
+    expect(cardLit("issue:r2")).toBe(true);
+    expect(store.getState().dagFocus).toBeNull();
+  });
+
   it("keeps the focus anchor's satisfied overlay over an unrelated hover", async () => {
     const { store } = harness(satisfiedFixture(), (s) =>
       s.setState({ dagFocus: { nodeId: "issue:r2", way: "upstream" } }),

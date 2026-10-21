@@ -150,7 +150,13 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
 
     // Hovering never lights or dims anything (OL-996): resting the pointer on
     // a card for well past the old 100 ms debounce must not create the
-    // overlay layer or any lit route, and must not write a selection.
+    // overlay layer or any lit route. Start from a clean state — lineA is
+    // still selected from the checks above, and its lit neighborhood would
+    // defeat the assertions (this is the CI failure the review caught).
+    await page.locator(`.react-flow__node[data-id="issue:${lineA.id}"]`).focus();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-dag-overlay-layer]")).toHaveCount(0);
+    await expect(page.locator("[data-dag-lit-edge]")).toHaveCount(0);
     const hoverBox = (await cardA.boundingBox())!;
     await page.mouse.move(hoverBox.x + hoverBox.width / 2, hoverBox.y + hoverBox.height / 2);
     await page.waitForTimeout(250);
@@ -162,6 +168,7 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
     await cardA.click();
     await expect(page.locator("[data-dag-lit-edge]").first()).toBeAttached();
     await expect(page.locator("[data-dag-edge-layer] > g").first()).toHaveClass(/opacity-15/);
+    await page.locator(`.react-flow__node[data-id="issue:${lineA.id}"]`).focus();
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-dag-overlay-layer]")).toHaveCount(0);
 

@@ -333,10 +333,10 @@ export function DagSceneCanvasInner({
   }, [focusState, plan, focusOverlay]);
   const selectionSet = useMemo(() => {
     const set = selectedNodeId ? dagSceneSelectionSet(plan, selectedNodeId) : null;
-    if (!set || !selectionOverlay) return set;
+    if (!selectionOverlay) return set;
     return {
-      nodeIds: new Set([...set.nodeIds, ...selectionOverlay.nodeIds]),
-      edgeIds: new Set([...set.edgeIds, ...selectionOverlay.edgeIds]),
+      nodeIds: new Set([...(set?.nodeIds ?? []), ...selectionOverlay.nodeIds]),
+      edgeIds: new Set([...(set?.edgeIds ?? []), ...selectionOverlay.edgeIds]),
     };
   }, [selectedNodeId, plan, selectionOverlay]);
   const activeNodeSet = focusSet ?? selectionSet;
