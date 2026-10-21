@@ -1,4 +1,11 @@
 {
+  "agents": {
+    "thinking_adapt": {
+      "label": "Adapt",
+      "description": "When selected, a redacted run summary is sent to an external decision service. The default is OpenCode Zen's free channel.",
+      "upgrade_required": "This daemon is too old for Adapt. Upgrade the daemon to enable it."
+    }
+  },
   "issues": {
     "detail": {
       "more_actions": "Issue actions"

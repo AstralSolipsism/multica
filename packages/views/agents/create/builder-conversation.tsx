@@ -99,7 +99,9 @@ export function BuilderSetup({
             runtimeId={selectedRuntime?.id ?? null}
             runtimeOnline={selectedRuntime?.status === "online"}
             value={draft.model}
-            onChange={(model) => onChange(applyDraftModelChange(draft, model))}
+            onChange={(model, levels) =>
+              onChange(applyDraftModelChange(draft, model, levels))
+            }
             disabled={!selectedRuntime}
           />
         </div>

@@ -1,5 +1,9 @@
 import type { RuntimeDevice, RuntimeModel } from "../types";
 import {
+  hasAdaptThinkingCandidates,
+  THINKING_LEVEL_ADAPT,
+} from "./thinking-adapt";
+import {
   AGENT_CONVERSATION_STARTER_LABEL_MAX_LENGTH,
   AGENT_CONVERSATION_STARTER_MAX_LENGTH,
   AGENT_CONVERSATION_STARTERS_MAX,
@@ -238,6 +242,7 @@ export function mergeBuilderDraft(
   validSkillIds: Set<string>,
   validMemberIds: Set<string>,
   validModelIds: ReadonlySet<string> | null,
+  modelCatalog?: readonly RuntimeModel[] | null,
 ): AgentDraft {
   const scope =
     payload.permission_scope === "workspace" ||
@@ -302,10 +307,18 @@ export function mergeBuilderDraft(
         : current.instructions,
     conversationStarters,
     model,
-    // The builder can move the model, which invalidates whatever thinking /
-    // speed the user picked for the previous one. It never sets these two
-    // itself, so an unchanged model simply preserves them.
-    thinkingLevel: model === current.model ? current.thinkingLevel : "",
+    // Fixed thinking and speed belong to the previous model. Adapt survives
+    // only when the new catalog entry has enough eligible levels.
+    thinkingLevel:
+      model === current.model
+        ? current.thinkingLevel
+        : current.thinkingLevel === THINKING_LEVEL_ADAPT &&
+            hasAdaptThinkingCandidates(
+              modelCatalog?.find((entry) => entry.id === model)?.thinking
+                ?.supported_levels,
+            )
+          ? THINKING_LEVEL_ADAPT
+          : "",
     serviceTier: model === current.model ? current.serviceTier : "",
     skillIds: new Set(skillIds),
     permissionScope: scope,

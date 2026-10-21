@@ -5,8 +5,11 @@ import { render, screen, cleanup } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enAgents from "../../locales/en/agents.json";
+import enForkUi from "../../locales/en/fork-ui.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
+const TEST_RESOURCES = {
+  en: { common: enCommon, agents: enAgents, "fork-ui": enForkUi },
+};
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
@@ -191,5 +194,13 @@ describe("AgentProfileCard — Model row", () => {
     // No effort token anywhere on the card.
     expect(screen.queryByText("high")).toBeNull();
     expect(screen.queryByText("medium")).toBeNull();
+  });
+
+  it("labels the reserved Adapt value without exposing its wire token", () => {
+    mockAgents.current = [makeAgent({ thinking_level: "_adapt" })];
+    renderCard();
+
+    expect(screen.getByText("Adapt")).toBeInTheDocument();
+    expect(screen.queryByText("_adapt")).not.toBeInTheDocument();
   });
 });

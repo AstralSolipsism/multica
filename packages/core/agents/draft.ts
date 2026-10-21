@@ -6,7 +6,12 @@ import type {
   AgentConversationStarter,
   CreateAgentRequest,
   RuntimeDevice,
+  RuntimeModelThinkingLevel,
 } from "../types";
+import {
+  hasAdaptThinkingCandidates,
+  THINKING_LEVEL_ADAPT,
+} from "./thinking-adapt";
 import {
   AGENT_DESCRIPTION_MAX_LENGTH,
   AGENT_MAX_CONCURRENT_TASKS_MAX,
@@ -79,13 +84,19 @@ export function applyDraftRuntimeChange(
   };
 }
 
-/** Model change: drop the per-model capability overrides, keep the runtime. */
+/** Model change: drop invalid per-model overrides, keep the runtime. */
 export function applyDraftModelChange(
   draft: AgentDraft,
   model: string,
+  levels?: readonly RuntimeModelThinkingLevel[],
 ): AgentDraft {
   if (model === draft.model) return draft;
-  return { ...draft, model, thinkingLevel: "", serviceTier: "" };
+  const thinkingLevel =
+    draft.thinkingLevel === THINKING_LEVEL_ADAPT &&
+    hasAdaptThinkingCandidates(levels)
+      ? THINKING_LEVEL_ADAPT
+      : "";
+  return { ...draft, model, thinkingLevel, serviceTier: "" };
 }
 
 /**
