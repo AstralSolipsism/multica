@@ -147,27 +147,37 @@ func fakeDevecoModelsScript(t *testing.T, verbose, plain string) string {
 }
 
 // TestDiscoverDevecoModelsParsesVariants: the verbose catalog's variants map
-// becomes the thinking-level picker for each model, and unknown ones stay off.
+// becomes the thinking-level picker for each model, and models without
+// variants stay off. Shapes mirror the real CLI: `reasoning` lives under
+// `capabilities`, GLM-5.2 derives high/max while plain GLM-5 derives none
+// (deveco-code transform.ts returns {} for GLM below 5.2).
 func TestDiscoverDevecoModelsParsesVariants(t *testing.T) {
 	t.Parallel()
-	verbose := `deveco/glm-5
+	verbose := `deveco/glm-5.2
 {
-  "id": "glm-5",
-  "name": "GLM-5",
-  "reasoning": true,
+  "id": "glm-5.2",
+  "name": "GLM-5.2",
+  "capabilities": { "reasoning": true },
   "variants": {
     "high": { "reasoningEffort": "high" },
     "max": { "reasoningEffort": "max" }
   }
 }
+deveco/glm-5
+{
+  "id": "glm-5",
+  "name": "GLM-5",
+  "capabilities": { "reasoning": true },
+  "variants": {}
+}
 deveco/Qwen2.5-VL-72B
 {
   "id": "Qwen2.5-VL-72B",
   "name": "Qwen2.5-VL-72B",
-  "reasoning": false
+  "capabilities": { "reasoning": false }
 }
 `
-	plain := "deveco/glm-5\ndeveco/Qwen2.5-VL-72B\n"
+	plain := "deveco/glm-5.2\ndeveco/glm-5\ndeveco/Qwen2.5-VL-72B\n"
 	fakePath := filepath.Join(t.TempDir(), "deveco")
 	writeTestExecutable(t, fakePath, []byte(fakeDevecoModelsScript(t, verbose, plain)))
 
@@ -175,21 +185,25 @@ deveco/Qwen2.5-VL-72B
 	if err != nil {
 		t.Fatalf("discoverDevecoModels: %v", err)
 	}
-	if len(models) != 2 {
-		t.Fatalf("models = %+v, want 2", models)
+	if len(models) != 3 {
+		t.Fatalf("models = %+v, want 3", models)
 	}
-	if models[0].ID != "deveco/glm-5" || models[0].Thinking == nil {
-		t.Fatalf("glm-5 must carry variants: %+v", models[0].Thinking)
+	if models[0].ID != "deveco/glm-5.2" || models[0].Thinking == nil {
+		t.Fatalf("glm-5.2 must carry variants: %+v", models[0].Thinking)
 	}
 	got := make([]string, 0, len(models[0].Thinking.SupportedLevels))
 	for _, lvl := range models[0].Thinking.SupportedLevels {
 		got = append(got, lvl.Value)
 	}
 	if strings.Join(got, ",") != "high,max" {
-		t.Errorf("glm-5 levels = %v, want [high max]", got)
+		t.Errorf("glm-5.2 levels = %v, want [high max]", got)
 	}
-	if models[1].Thinking != nil {
-		t.Errorf("non-reasoning model must not get a picker: %+v", models[1].Thinking)
+	// Reasoning-capable but variant-less (real GLM-5 shape): no picker.
+	if models[1].ID != "deveco/glm-5" || models[1].Thinking != nil {
+		t.Errorf("glm-5 with empty variants must not get a picker: %+v", models[1].Thinking)
+	}
+	if models[2].Thinking != nil {
+		t.Errorf("non-reasoning model must not get a picker: %+v", models[2].Thinking)
 	}
 }
 
@@ -218,10 +232,10 @@ func TestDiscoverDevecoModelsFallsBackToPlain(t *testing.T) {
 // variant catalog accepts advertised variants and rejects everything else.
 func TestValidateThinkingLevelDeveco(t *testing.T) {
 	t.Parallel()
-	verbose := `deveco/glm-5
+	verbose := `deveco/glm-5.2
 {
-  "id": "glm-5",
-  "reasoning": true,
+  "id": "glm-5.2",
+  "capabilities": { "reasoning": true },
   "variants": {
     "high": { "reasoningEffort": "high" },
     "max": { "reasoningEffort": "max" }
@@ -236,10 +250,13 @@ func TestValidateThinkingLevelDeveco(t *testing.T) {
 		level string
 		want  bool
 	}{
-		{model: "deveco/glm-5", level: "high", want: true},
-		{model: "deveco/glm-5", level: "max", want: true},
-		{model: "deveco/glm-5", level: "low", want: false},
+		{model: "deveco/glm-5.2", level: "high", want: true},
+		{model: "deveco/glm-5.2", level: "max", want: true},
+		{model: "deveco/glm-5.2", level: "low", want: false},
 		{model: "no-such/model", level: "high", want: false},
+		// The catalog marks no default model, so an empty model has no entry
+		// to validate against and fails closed — the omp rule (MUL-7412).
+		{model: "", level: "high", want: false},
 	} {
 		got, err := ValidateThinkingLevel(context.Background(), "deveco", Command{Path: fakePath}, tc.model, tc.level)
 		if err != nil {

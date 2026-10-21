@@ -29,13 +29,13 @@ func TestAgentAdaptValidation(t *testing.T) {
 		models                           []ModelEntry
 	}
 	var cases []validationCase
-	for _, provider := range []string{"codex", "omp"} {
-		cases = append(cases, validationCase{name: provider + "/blank model", provider: provider, model: " \t", rejection: thinkingNeedsExplicitModelRejection(provider)})
+	for _, provider := range []string{"codex", "omp", "deveco"} {
+		cases = append(cases, validationCase{name: provider + "/blank model", provider: provider, model: " 	", rejection: thinkingNeedsExplicitModelRejection(provider)})
 	}
 	for _, provider := range []string{"claude", "codex", "pi", "omp", "opencode", "deveco", "kimi", "dsh", "grok", "codebuddy"} {
 		for _, model := range []string{"", "test/model"} {
 			rejection := ""
-			if model == "" && (provider == "codex" || provider == "omp") {
+			if model == "" && (provider == "codex" || provider == "omp" || provider == "deveco") {
 				rejection = thinkingNeedsExplicitModelRejection(provider)
 			}
 			cases = append(cases, validationCase{name: provider + "/" + model, provider: provider, model: model, rejection: rejection})
