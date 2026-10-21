@@ -461,20 +461,28 @@ func TestDecide_HalfOpenAllowsSingleTrial(t *testing.T) {
 	// Decide must get the breaker fallback without touching the source.
 	trialStarted := make(chan struct{})
 	releaseTrial := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseTrial) }) }
+	// Always release the in-flight handler, even when an assertion fails
+	// mid-test, so httptest.Server.Close does not block for 10 minutes.
+	t.Cleanup(release)
 	var once sync.Once
 	var hits int // counts requests inside this handler (test-local)
 	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
 		hits++
 		if hits == 4 { // the half-open trial: hold it in flight
 			once.Do(func() { close(trialStarted) })
-			<-releaseTrial
+			select {
+			case <-releaseTrial:
+			case <-r.Context().Done(): // request abandoned; don't stall Close
+			}
 		}
 		return 500, "down"
 	})
 	now := time.Now()
 	var mu sync.Mutex
 	c := New(Options{
-		Timeout: 5 * time.Second,
+		Timeout: 500 * time.Millisecond,
 		Sources: []Source{{Name: "s", BaseURL: rs.srv.URL}},
 		Now: func() time.Time {
 			mu.Lock()
@@ -506,9 +514,60 @@ func TestDecide_HalfOpenAllowsSingleTrial(t *testing.T) {
 		t.Fatalf("server hits = %d, want 4 (trial only)", got)
 	}
 
-	close(releaseTrial)
+	release()
 	if err := <-first; err == nil {
 		t.Fatal("trial should have failed")
+	}
+}
+
+func TestDecide_CancelledHalfOpenTrialReturnsSlot(t *testing.T) {
+	// #15: if the call holding the half-open trial is cancelled mid-request,
+	// the slot must go back so the next call retries the trial instead of
+	// the breaker being stranded in half-open forever.
+	healthy := false
+	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
+		if healthy {
+			return 200, okBody("low")
+		}
+		return 500, "x"
+	})
+	now := time.Now()
+	var mu sync.Mutex
+	c := New(Options{
+		Sources: []Source{{Name: "s", BaseURL: rs.srv.URL}},
+		Now: func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			return now
+		},
+	})
+	for i := 0; i < 3; i++ {
+		_, _ = c.Decide(context.Background(), testReq())
+	}
+	hitsAfterOpen := rs.hits()
+
+	// Cooldown expires; the trial goes to a caller whose ctx is cancelled.
+	mu.Lock()
+	now = now.Add(breakerCooldown + time.Second)
+	mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.Decide(ctx, testReq()); err == nil {
+		t.Fatal("want fallback on cancelled trial")
+	}
+
+	// Source recovers; the next Decide must hit the server (trial retried)
+	// and succeed — not return breaker with zero requests.
+	healthy = true
+	dec, err := c.Decide(context.Background(), testReq())
+	if err != nil || dec.Level != "low" {
+		t.Fatalf("decide after cancelled trial = %+v, err = %v", dec, err)
+	}
+	if got := rs.hits(); got != hitsAfterOpen+1 {
+		t.Fatalf("server hits = %d, want %d (the retried trial)", got, hitsAfterOpen+1)
+	}
+	if s := c.Snapshot().Status; s != StatusAvailable {
+		t.Fatalf("status = %s, want available", s)
 	}
 }
 
@@ -737,7 +796,7 @@ func TestProbe_DoesNotConsumeHalfOpenTrial(t *testing.T) {
 	mu.Unlock()
 
 	if err := c.Probe(context.Background()); err == nil {
-		t.Fatal("probe in half-open window should be blocked")
+		t.Fatal("probe against a failing source should not report success")
 	}
 	// The trial slot is still available to Decide: it goes through and
 	// fails against the (failing) source instead of getting breaker.
@@ -830,13 +889,16 @@ func TestAPINeverLeaked(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(old) })
 
 	// Exercise every path that can mention a source with credentials:
-	// source resolution (warnings), a failing authenticated Decide, and an
-	// upstream echo attempt.
+	// source resolution (warnings), an authenticated Decide failing with
+	// 5xx, and an upstream echo attempt.
 	echo := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
 		return 200, `{"answers":{"effort":{"choice":"` + r.Header.Get("Authorization") + `"}}}`
 	})
+	fail500 := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
+		return 500, "down"
+	})
 	c := New(Options{Sources: []Source{
-		{Name: "opencode", BaseURL: echo.srv.URL, Model: "jev-1.13", BearerToken: testKey},
+		{Name: "opencode", BaseURL: fail500.srv.URL, Model: "jev-1.13", BearerToken: testKey},
 		{Name: "dashscope", BaseURL: echo.srv.URL, Model: "m", BearerToken: dashscopeTestKey},
 	}})
 	_, err := c.Decide(context.Background(), testReq())

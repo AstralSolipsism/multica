@@ -322,7 +322,7 @@ func (c *Client) Decide(ctx context.Context, req Request) (Decision, error) {
 	}
 
 	c.mu.Lock()
-	allowed := c.brk.allow(c.now())
+	allowed, isTrial := c.brk.allow(c.now())
 	c.mu.Unlock()
 	if !allowed {
 		c.recordBreakerFallback()
@@ -343,8 +343,16 @@ func (c *Client) Decide(ctx context.Context, req Request) (Decision, error) {
 		}
 		// A cancelled caller context fails every source instantly; that is
 		// the caller going away, not the sources being down, so it must
-		// not count against the breaker or flip the snapshot.
+		// not count against the breaker or flip the snapshot. A cancelled
+		// half-open trial also returns its slot (#15): openedAt is already
+		// expired, so the next call retries immediately instead of the
+		// breaker being stranded in half-open forever.
 		if ctx.Err() != nil {
+			if isTrial {
+				c.mu.Lock()
+				c.brk.release()
+				c.mu.Unlock()
+			}
 			return Decision{}, &FallbackError{Reason: reason, Err: err}
 		}
 	}
@@ -577,18 +585,28 @@ type breaker struct {
 
 // allow reports whether a Decide request may proceed, transitioning an
 // expired open breaker to its single half-open trial.
-func (b *breaker) allow(now time.Time) bool {
+func (b *breaker) allow(now time.Time) (ok bool, trial bool) {
 	switch b.state {
 	case brkClosed:
-		return true
+		return true, false
 	case brkOpen:
 		if now.Sub(b.openedAt) >= breakerCooldown {
 			b.state = brkHalfOpen
-			return true
+			return true, true
 		}
-		return false
+		return false, false
 	default: // brkHalfOpen: one trial already in flight
-		return false
+		return false, false
+	}
+}
+
+// release returns a half-open trial slot that the caller could not use
+// (its context was cancelled mid-request). openedAt is already expired, so
+// resetting to brkOpen lets the very next call retry the trial instead of
+// stranding the breaker in half-open forever.
+func (b *breaker) release() {
+	if b.state == brkHalfOpen {
+		b.state = brkOpen
 	}
 }
 
