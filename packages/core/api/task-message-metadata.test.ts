@@ -51,7 +51,7 @@ describe("task message metadata", () => {
     expect(parsed?.future).toEqual({ extra: true });
   });
 
-  it.each(["timeout", "error", "invalid", "breaker", "disabled"])("accepts fallback %s with an empty level", (fallback) => {
+  it.each(["timeout", "error", "invalid", "breaker", "disabled", "no_candidates"])("accepts fallback %s with an empty level", (fallback) => {
     const value = { level: "", mode: "adapt", fallback };
     expect(parse({ thinking: value })[0]?.metadata?.thinking).toEqual(value);
   });

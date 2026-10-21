@@ -334,7 +334,7 @@ export interface TaskMessageThinkingMetadata {
   confidence?: number;
   probabilities?: Record<string, number>;
   latency_ms?: number;
-  fallback?: "timeout" | "error" | "invalid" | "breaker" | "disabled";
+  fallback?: "timeout" | "error" | "invalid" | "breaker" | "disabled" | "no_candidates";
   [key: string]: unknown;
 }
 

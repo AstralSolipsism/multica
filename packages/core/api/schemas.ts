@@ -2106,7 +2106,7 @@ export const TaskMessageThinkingMetadataSchema = z.object({
   confidence: z.number().min(0).max(1).optional().catch(undefined),
   probabilities: z.record(z.string(), z.number().min(0).max(1)).optional().catch(undefined),
   latency_ms: z.number().nonnegative().optional().catch(undefined),
-  fallback: z.enum(["timeout", "error", "invalid", "breaker", "disabled"]).optional().catch(undefined),
+  fallback: z.enum(["timeout", "error", "invalid", "breaker", "disabled", "no_candidates"]).optional().catch(undefined),
 }).loose();
 
 export const TaskMessageMetadataSchema = z.object({

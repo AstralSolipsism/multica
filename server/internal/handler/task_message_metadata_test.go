@@ -64,6 +64,15 @@ func TestTaskMessageMetadataLiveAndHistory(t *testing.T) {
 		{"over limit", tooLarge, nil},
 		{"multibyte over limit", map[string]any{"x": strings.Repeat("脑", 1363)}, nil},
 		{"nested NUL", map[string]any{"future": []any{"a\x00b"}}, map[string]any{"future": []any{"ab"}}},
+		{"numeric overflow", json.RawMessage(`{"thinking":{"level":"high","mode":"adapt","confidence":1e1000000}}`), nil},
+		{"numeric underflow in array", json.RawMessage(`{"future":[{"n":1e-1000000}]}`), nil},
+		{"zero with excessive scale", json.RawMessage(`{"n":0e-20000}`), nil},
+		{"exponent integer overflow", json.RawMessage(`{"n":1e99999999999999999999}`), nil},
+		{
+			"nested credential",
+			map[string]any{"future": []any{map[string]any{"note": "PASSWORD=metadata-test-secret"}}},
+			map[string]any{"future": []any{map[string]any{"note": "[REDACTED CREDENTIAL]"}}},
+		},
 		// JSON numbers must not round through float64 before JSONB persistence.
 		{"precise number", json.RawMessage(`{"n":9007199254740993}`), map[string]any{"n": float64(9007199254740993)}},
 	}
@@ -98,6 +107,9 @@ func TestTaskMessageMetadataLiveAndHistory(t *testing.T) {
 				t.Fatalf("stored/live metadata = %v / %v, want %v", got, live[i]["metadata"], tc.want)
 			}
 			if tc.want == nil {
+				if stored[i].Metadata != nil {
+					t.Fatal("discarded metadata must persist as SQL NULL")
+				}
 				if _, ok := live[i]["metadata"]; ok {
 					t.Fatal("absent metadata must be omitted on the wire")
 				}
@@ -133,5 +145,42 @@ func TestTaskMessageMetadataLiveAndHistory(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestTaskMessageMetadataExponentBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		keep bool
+	}{
+		{"upper boundary", `{"n":1e+1000}`, true},
+		{"lower boundary", `{"nested":[1E-1000]}`, true},
+		{"outside upper boundary", `{"n":1e1001}`, false},
+		{"outside lower boundary", `{"n":1e-1001}`, false},
+		{"normal float extremes", `{"numbers":[1.7976931348623157e+308,5e-324]}`, true},
+		{"leading zeros", `{"n":1e+00001000}`, true},
+		{"string is not a number", `{"n":"1e1000000"}`, true},
+		{"long integer", `{"n":` + strings.Repeat("9", 4000) + `}`, true},
+		{"long fraction", `{"n":0.` + strings.Repeat("1", 4000) + `}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := taskMessageMetadata(json.RawMessage(tc.raw), "test", 1)
+			if tc.keep && got != tc.raw {
+				t.Fatalf("safe number was changed or dropped: got %q, want %q", got, tc.raw)
+			}
+			if !tc.keep && got != "" {
+				t.Fatalf("unsafe numeric exponent survived: %s", got)
+			}
+		})
+	}
+}
+
+func TestTaskMessageMetadataDropsEncodingExpansion(t *testing.T) {
+	// Raw HTTP input can contain literal '<'; encoding/json escapes it as
+	// '\u003c', so a field within the inbound limit can exceed it after encoding.
+	raw := json.RawMessage(`{"value":"` + strings.Repeat("<", 700) + `"}`)
+	if got := taskMessageMetadata(raw, "test", 1); got != "" {
+		t.Fatal("metadata exceeding 4KB after encoding must be dropped")
 	}
 }
