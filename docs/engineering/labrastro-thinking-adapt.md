@@ -1,9 +1,9 @@
 # 自适应思考挡位：架构与接口契约
 
-OL-992 给智能体的"思考"属性增加第三种挡位设定"自适应"：由决策引擎在每次运行开始前（Claude 还在每一步之前）从当前模型的候选挡位里选一个挡位。本文是 OL-992 各子任务共用的契约，整理自 OL-992 描述中的"架构设计与接口契约"。
+OL-992 给智能体的"思考"属性增加第三种挡位设定"自适应"：由决策引擎在每次运行开始前（Claude 还在每一步之前）从当前模型的候选挡位里选一个挡位。本文是 OL-992 各子任务共用的契约，整理自 OL-992 描述中的"架构设计与接口契约"。§10 是 OL-1013 的扩展：把平台自己微调的决策模型接成一个来源，并采集决策样本用于训练。
 
-- 术语以根目录的 [`GLOSSARY.md`](../../GLOSSARY.md) 为准；为什么把自适应存为 `_adapt`，见 [ADR 0001](../adr/0001-adapt-as-reserved-thinking-level.md)。
-- 除 §0 记录的现状外，本文描述的是约定的接口，由[分工](#分工)表里的子任务实现；文中出现的新常量、新文件和新字段，在对应子任务合入前并不存在。
+- 术语以根目录的 [`GLOSSARY.md`](../../GLOSSARY.md) 为准。为什么把自适应存为 `_adapt`，见 [ADR 0001](../adr/0001-adapt-as-reserved-thinking-level.md)；为什么自部署决策模型以独立服务接入，见 [ADR 0002](../adr/0002-self-hosted-decision-model-as-separate-service.md)。
+- 除 §0、§10.0 记录的现状外，本文描述的是约定的接口，由[分工](#分工)表里的子任务实现；文中出现的新常量、新文件和新字段，在对应子任务合入前并不存在。
 - 子任务改动契约时，在同一个 PR 里更新本文。
 - 本文与已合入的代码不一致时视为缺陷：要么修代码，要么在同一个 PR 里修正本文。
 
@@ -17,6 +17,14 @@ OL-992 给智能体的"思考"属性增加第三种挡位设定"自适应"：由
 - **D4 挡位范围**：候选挡位包括 max 和 ultra。判据只把它们留给两种情况：同一问题在较低挡位已经失败；正确性优先的极难推理。
 
 OL-992 描述前半部分的原始需求里，"Auto"一律改称"自适应"，`thinking_level = "auto"` 改为 `_adapt`，"原位微标"以 D3 为准。原始需求与本文不一致时，以本文为准。
+
+OL-1013 的需求另外写明三条边界，§10 照此执行：
+
+- 不把 ONNX Runtime 编进 `multica`，自部署模型由独立的 `/v1/systemone` 服务提供（ADR 0002）；
+- 不拿没有微调过的 Laya 底座直接上线，自部署来源通过门禁评测后才能排在外部来源前面；
+- 采集器不记录未脱敏的原文或文件内容。
+
+OL-1013 中待负责人决定的 E1–E3 和延迟门槛，见[未决事项](#未决事项)。
 
 ## 0. 背景事实
 
@@ -77,9 +85,18 @@ OL-992 描述前半部分的原始需求里，"Auto"一律改称"自适应"，`t
 | 运行 | `task`（如 `task_message`） |
 | 步 | 消息元数据中的 `step` |
 | 候选挡位 | `AdaptThinkingCandidates` |
-| 决策引擎 | Jev；daemon 配置前缀 `MULTICA_JEV_` |
+| 决策引擎 | Jev 客户端（`server/internal/daemon/jev`）；daemon 配置前缀 `MULTICA_JEV_` |
+| 来源 | `MULTICA_JEV_SOURCES` 的一项；`Decision.Source`、消息元数据的 `source`、健康快照的 `active_source` |
+| 外部来源 | `opencode-free`、`opencode`、`dashscope` |
+| 自部署来源 | `self-hosted`；配置前缀 `MULTICA_JEV_SELF_HOSTED_` |
 | 决策 | Jev 客户端返回的 `Decision` |
 | 回退 | 消息元数据中的 `fallback` |
+| 决策样本 | 样本文件中的 `decision` 记录，连同关联的 `outcome` 记录；配置 `MULTICA_JEV_COLLECT_DIR` |
+| 结果信号 | 样本文件中的 `outcome` 记录 |
+| 挡位不足、挡位过高 | 清洗统计中的两种纠偏类别 |
+| 种子样本 | `tools/jev-distill/seeds/*.jsonl` |
+| 判据评测 | `MULTICA_RUN_JEV_LIVE=1` 门控的评测命令 |
+| 门禁评测 | 流水线的 `gate` 步骤 |
 
 补充三条边界：
 
@@ -126,6 +143,8 @@ OL-992 描述前半部分的原始需求里，"Auto"一律改称"自适应"，`t
 
 缺少必需变量的来源直接跳过，只告警一次。这些变量写进 `apps/docs/content/docs/environment-variables.mdx` 及其各语言版本，并写清三点：默认零配置时，选了自适应的运行会把脱敏、截断后的运行摘要发到 OpenCode Zen 免费通道；`MULTICA_JEV_DISABLED=1` 可以在本机关闭；key 只留在本机。
 
+自部署来源的三个变量见 §10.2，决策样本的两个变量见 §10.3。
+
 ### 来源
 
 | 来源 | 端点 | model | 鉴权 |
@@ -133,6 +152,9 @@ OL-992 描述前半部分的原始需求里，"Auto"一律改称"自适应"，`t
 | `opencode-free` | `https://opencode.ai/zen/v1/systemone` | `jev-1.13-free` | 不带鉴权头 |
 | `opencode` | 同上 | 默认 `jev-1.13` | `Bearer $MULTICA_JEV_OPENCODE_API_KEY` |
 | `dashscope` | `https://{workspace_id}.{region}.maas.aliyuncs.com/compatible-mode/v1/systemone` | `decision-model-preview` | `Bearer $MULTICA_JEV_DASHSCOPE_API_KEY` |
+| `self-hosted` | `$MULTICA_JEV_SELF_HOSTED_URL`（§10.2） | 默认 `self-hosted` | 设置了 `MULTICA_JEV_SELF_HOSTED_API_KEY` 时为 `Bearer $MULTICA_JEV_SELF_HOSTED_API_KEY`，否则不带鉴权头 |
+
+前三个是外部来源，`self-hosted` 是自部署来源。
 
 百炼必须使用带业务空间 ID 的 `maas.aliyuncs.com` 地域域名。原始需求记录：通用域名 `dashscope.aliyuncs.com` 的 systemone 路径返回 404。
 
@@ -220,6 +242,12 @@ OL-992 描述前半部分的原始需求里，"Auto"一律改称"自适应"，`t
 - 第一次出现的深层问题（刚读入复杂的并发代码、`DATA RACE`、核心断言失败、并发竞态、架构死锁）选 high 或 xhigh；
 - 重复失败后的升级场景选 max；Codex 上可以是 max 或 ultra。
 
+评测命令由 `MULTICA_RUN_JEV_LIVE=1` 门控。门禁评测（§10.5）要用这条命令，纠偏清洗（§10.4）要用导出的 fixture，所以还要满足三点：
+
+- **来源可配**：按 daemon 的 `MULTICA_JEV_*` 配置选来源，不写死 `opencode-free`。设上 `MULTICA_JEV_SOURCES=self-hosted`，同一条命令就能评测自部署来源。
+- **机器可读的结果**：除了打印，还输出一个 JSON 文件。每个 fixture 一项：id、范围（运行级或步级）、候选组、预期类别、`choice`、`probabilities` 和来源。
+- **fixture 导出**：渲染后的 fixture 导出为 JSON 测试数据，放在 `server/internal/daemon/testdata/` 一带。每项包括 id、范围、候选组、state、questions 和预期类别，预期类别是上面四类之一。另有测试保证导出文件与代码里的 fixture 一致。
+
 ## 5. 运行级决策
 
 在 `resolveTaskModelSelection`（`server/internal/daemon/daemon.go`）定位模型之后：
@@ -247,7 +275,12 @@ OL-992 描述前半部分的原始需求里，"Auto"一律改称"自适应"，`t
 - **mod**：名为 `labrastro-effort`，与 `labrastro-ysk` 一起通过 `CLAUDE_CODE_PLUGIN_DIRS` 加载，安装方式照 `prepareYouShouldKnow`（`server/internal/daemon/labrastro_ysk.go`）。
 - **mod → daemon**：`POST http://127.0.0.1:{MULTICA_DAEMON_PORT}/tasks/{task_id}/thinking-decision`，带 `Authorization: Bearer $MULTICA_TOKEN`。
   - daemon 的健康服务（`serveHealth`）校验 token 和活跃运行，做法照 `/repo/checkout`。
-  - 请求体由 OL-1010 定义，内容是上一步的原料和同类报错的重复次数；daemon 按 §4 构造 state，调用 Jev，并计入健康快照。
+  - 请求体由 OL-1010 定义，内容是构造 state 所需的上一步原料。为了补记结果信号（§10.3），还必须带：
+    - 步序号，从 1 开始；
+    - 上一步主线程的工具列表 `[{name, is_error}]`；
+    - 上一步的报错文本，按 §4 截断。
+  - 报错特征的归一化和同类报错的重复次数由 daemon 用 Go 计算，daemon 按运行保存最近的报错特征；mod 只上传原料。这个函数导出给 OL-1019 复用。
+  - daemon 按 §4 构造 state，调用 Jev，并计入健康快照。
   - 返回 `{level, confidence, probabilities, latency_ms, source}`，或回退原因。
   - 回环地址不可达时，按 OL-1000 推荐的通道实现。
 - **生效回报**：mod 改写后用 `$.ui.log` 写一行生效记录。daemon 照 `consumeYouShouldKnowLog`（`server/pkg/agent/labrastro_ysk.go`）的做法把这一行从流里摘走，不成为运行消息，并用它给这一步之后的消息打标（§7）。
@@ -341,7 +374,237 @@ OL-992 描述前半部分的原始需求里，"Auto"一律改称"自适应"，`t
 ### 文案与范围
 
 - 新文案同步 `en`、`zh-Hans`、`fr`、`ja`、`ko`，按 [`branding.md`](branding.md) 放进 fork 命名空间，并通过 `packages/views/locales/parity.test.ts`。英文名用 Adapt。
+- 来源名称：选择器副标题、额度区和 Tooltip 里，`self-hosted` 显示为"自部署"（英文 Self-hosted），五种语言同步；不认识的来源名称原样显示，不报错。
 - 移动端不在范围内（需求未要求），新字段对移动端透明。
+
+## 10. 自部署来源与决策样本
+
+OL-1013 把平台自己微调的 Laya 模型接成一个来源 `self-hosted`，并采集决策样本，按结果信号纠偏后用于训练。本节整理自 OL-1013 描述中的"架构设计与接口契约"，小节编号与那里一致：那里的 §N 即本节的 10.N。需求定下的三条边界见[决策记录](#决策记录)，为什么以独立服务接入见 [ADR 0002](../adr/0002-self-hosted-decision-model-as-separate-service.md)。
+
+### 10.0 背景事实
+
+2026-10-21 核对。代码以当天的 main（`b4bd965e3`）为准，外部项目以当天的默认分支和 PyPI 为准。
+
+1. **Laya**（[`NandhaKishorM/laya`](https://github.com/NandhaKishorM/laya) 0.4.12）
+   - **许可**：仓库和权重都是 Apache-2.0，可以商用。
+   - **`laya-multilingual`**：
+     - 由 mmBERT-base（307M）加决策头组成，共 322M；
+     - 默认上下文 1024 token。8192 要手动打开，约 4k token 以上准确率不稳定；
+     - 实测过的语言是 51 种。
+   - **`laya-train`**：
+     - 只在一个设备上训练（CUDA、MPS 或 CPU）；
+     - 默认底座是英文版 `convaiinnovations/laya`，必须显式指定 `--base convaiinnovations/laya-multilingual`；
+     - `--dry-run` 只检查数据、不训练，冷缓存时仍会下载权重。
+   - **训练数据**：每行 `{state, questions, gold | expected}`。`gold.<问题>.probabilities` 以选项值为键，会自动归一化；同时有 `gold` 和 `expected` 时以 `gold` 为准。
+   - **温度校准**：
+     - 训练前切出 min(400, 10%) 条，每种问题类型拟合一个温度；
+     - `train_report.json` 有 ECE、Brier 的前后对比，没有分桶准确率。
+   - **样本量与效果**：
+     - 默认参数（4 个 epoch、有效 batch 64）取自它在 6,000 条决策上训练的 notebook。Laya 实测过约 1,100 条时决策头塌缩（[Laya #963](https://github.com/NandhaKishorM/laya/issues/963)），样本少时要加 epoch。
+     - 0.766 对 0.727 是在它自己的合成数据集上测的；0.727 是第三方公布的 Jev 成绩，Laya 没有实测。
+   - **训练时长**：单张 T4 完整微调英文版，11,514 条、4 个 epoch、`max_len` 512，约 48–54 分钟（[Laya #887](https://github.com/NandhaKishorM/laya/issues/887)）。
+   - **官方服务 `laya-serve`**：
+     - 基于 PyTorch，端口由 `LAYA_PORT` 指定（默认 8000）；兼容 `/v1/systemone`，有 `/health` 和 Bearer 鉴权。
+     - 按语言自动路由到内置底座。微调模型必须用 `LAYA_EXTRA_MODELS` 注册，请求里的 `model` 写注册名；写 `laya-multilingual` 会指定到原始底座。
+     - 4 核 CPU 上单题约 190ms（进程内、fp32，输入长度未注明）。
+   - **响应**：
+     - 没有顶层 `latency_ms`，§3 已按可缺失处理；
+     - `confidence` 是归一化熵，与 Jev 的算法不同，数值不能和外部来源直接比较。
+2. **EdgeJev**（[`yzfly/edgejev`](https://github.com/yzfly/edgejev)）
+   - **许可**：声明为 Apache-2.0。LICENSE 文件只有简短声明，所以 GitHub 显示为 Other。
+   - **成熟度低**：
+     - 只有 1 位作者，12 个提交都在 2026-09-20 到 21 日，之后没有更新；
+     - 没有 release、测试和 CI；
+     - PyPI 最新为 0.3.2（Alpha），main 上的 0.4.0 没有发布；
+     - "torch ≥ 2.6 时 `edgejev build` 缺 `onnxscript`、必然报错"的修复 PR 一直没合入。
+   - **构建**：`edgejev build --backend laya --model <本地目录或 HF id> --out <目录>`，`--out` 必填。
+     - 产物是 `model.onnx`、`tokenizer.json`、`edgejev.json`；INT8 324MB、FP32 1290MB。
+     - 代码上能读 `laya-train` 的本地产物，并带上拟合的温度，但没有测试过。
+   - **服务 `edgejev serve`**：
+     - 默认监听 `127.0.0.1:8009`，有 `POST /v1/systemone` 和文档没写的 `GET /health`；
+     - 忽略请求里的 `model`；可以用 `--api-key` 开启鉴权；
+     - 处理请求时的异常都返回 400；不限制请求体大小和线程数；不处理 SIGTERM；不能热换模型。
+   - **README 的 15.6ms 和 32.1ms，是约 36 个 token 的短输入、进程内调用测的。**
+     - 运行摘要（state）最长 4KB，约 1000 token，计算量约为它的 30 倍。按它的吞吐粗估，INT8 单次在 0.3–1 秒量级，与外部来源热连接的 340–390ms 相当。
+     - 因此自部署的主要收益是：零调用费、不依赖外网、运行摘要不出内网、能按结果信号纠偏，而不是延迟。
+   - **精度**：INT8 相对 FP32，在它自己的评测上低 1.6–5.8 个点；没有校准指标。
+3. **使用条款**
+   - OpenCode Zen 文档、百炼 API 文档和 TypeSafe 网站条款，都没有明文允许或禁止用输出训练模型。
+   - TypeSafe 文档里有用 Jev 的概率训练下游模型的示例。
+4. **代码现状**
+   - Jev 客户端（OL-1002，PR #154）尚未合入，`server/internal/daemon/jev/` 还不存在。
+   - **Claude 的解析**：
+     - 不读 `tool_result.is_error`（`claudeContentBlock`，`server/pkg/agent/claude.go`）；
+     - `agent.Message` 没有错误标记、退出码和步序号；
+     - 子智能体的工具事件混在主流里。
+
+     OL-1000 证实：mod 侧 `session.messages()` 的 `toolResults[]` 带 `isError`。
+   - **其他运行时**基本不报告工具是否出错。只有 ACP 和 Codex 的 MCP 调用在工具结果上带 `Message.Status`，而且 daemon 上报的 `TaskMessageData` 没有这个字段。
+   - **运行失败原因**（`server/pkg/taskfailure`）几乎都属于平台、环境和供应商一类：离线、超时、配额、鉴权、限流、请求被拒等，不能说明挡位不够。
+   - **记录器**：daemon 没有现成的 JSONL 记录器。目录和文件的做法可以参考 `server/internal/daemon/terminal_report_queue.go`：目录 0700、文件 0600、检查符号链接。
+   - **Python 工具**：先例是 `tools/effort-tuner/`——只用标准库，测试和 fixture 放在同一目录，不在 CI 里。
+   - **daemon 分布**：agent-ops-host-149、agent-main-01、agent-kimi-02 在 149 宿主机上（宿主机和 agent 容器）；agent-gcp-01、shendiqiu02 不在。
+
+### 10.1 术语
+
+新增的术语见 [`GLOSSARY.md`](../../GLOSSARY.md)：来源、外部来源、自部署来源，以及"样本与评测"一节；"决策引擎"改为由一个或多个按顺序尝试的来源组成的决策服务。代码中的名字并入 §1 的对照表。
+
+OL-1013 描述前半部分的原始需求里，"通道""源"统一叫"来源"，"成败信号"叫"结果信号"，"低挡失败""高挡冗余"叫"挡位不足""挡位过高"，"Fail-Open""兜底"叫"回退"；"黄金评测集""Golden Fixtures"指判据评测的 fixture，用它们评测自部署来源叫"门禁评测"。
+
+### 10.2 自部署来源
+
+| 变量 | 含义 | 默认值 |
+|---|---|---|
+| `MULTICA_JEV_SELF_HOSTED_URL` | 完整端点，如 `http://127.0.0.1:8009/v1/systemone`；只接受 http/https | 无；缺失或不合法时跳过这个来源，只告警一次 |
+| `MULTICA_JEV_SELF_HOSTED_MODEL` | 请求体里的 `model` | `self-hosted` |
+| `MULTICA_JEV_SELF_HOSTED_API_KEY` | 设置后发 `Authorization: Bearer <key>`，否则不带鉴权头 | 无 |
+
+- 在 `MULTICA_JEV_SOURCES` 里写 `self-hosted` 即启用，位置决定尝试顺序。
+- 请求体、超时、切换、熔断、健康快照和消息元数据都与其他来源一致，不为它加特例；`source` 为 `self-hosted`。
+- URL 和 key 按 §3 的规则处理：不写日志、不序列化、不上报；告警和错误信息里只出现来源名称。
+- `model` 的默认值不用 `laya-multilingual`：
+  - 在 `laya-serve` 上，这个名字会指定到原始底座，正是"不拿底座裸跑"要避免的情况；
+  - `edgejev serve` 忽略这个字段；`laya-serve` 要写 `LAYA_EXTRA_MODELS` 里的注册名。
+- 运维规则：
+  - 自部署来源通过门禁评测（§10.5）后，才能排在外部来源前面；
+  - 判据文案改动后必须重跑门禁评测，不通过就把它从首位撤下。
+- 界面上的来源名称显示为"自部署"（英文 Self-hosted），见 §9。
+
+### 10.3 决策样本
+
+**配置**
+
+| 变量 | 含义 | 默认值 |
+|---|---|---|
+| `MULTICA_JEV_COLLECT_DIR` | 样本目录。为空时完全关闭：不建目录、不打开文件、不写盘 | 空 |
+| `MULTICA_JEV_COLLECT_MAX_MB` | 本 daemon 在该目录下样本文件的总大小上限。超过后停止写入并告警一次，不删除旧文件 | `1024` |
+
+**文件**
+
+- 文件名为 `decisions-<daemon_id>-<UTC 日期 YYYYMMDD>.jsonl`：按 UTC 日期换文件，每个 daemon 只写自己的文件。同一台机器上几个 daemon 共用目录时，不会有两个进程写同一个文件。
+- 目录 0700、文件 0600，并检查目录不是符号链接。
+- 写入是异步、尽力而为的：
+  - 决策和运行路径只把记录放进有界队列，由单独的 goroutine 写盘；
+  - 队列满、写入出错或超过上限时，丢弃记录并限频告警；
+  - 不得阻塞、拖慢或中断运行。
+- 每行一条 JSON，带 `v: 1`。
+- 只记成功的决策，回退不记。任何来源的决策都记，并带上 `source`。
+
+**决策记录**（`type: "decision"`）
+
+| 字段 | 含义 |
+|---|---|
+| `id`（UUID）、`ts`（RFC3339，UTC）、`daemon_id` | — |
+| `task_id`、`scope`（`run` 或 `step`）、`step`（运行级为 null，步级从 1 开始）、`provider`、`model` | 追踪信息，由调用方随请求交给采集器，不进请求体 |
+| `state`、`questions` | 与发给来源的内容逐字节相同。state 已按 §4 脱敏并截到 4KB；采集器不另外处理，也不记录任何别的文本 |
+| `source`、`choice`、`confidence`、`probabilities`、`latency_ms` | 取自 `Decision`（§3） |
+
+**结果记录**（`type: "outcome"`）
+
+用 `decision_id` 关联决策记录。结果记录里只有工具名、枚举、布尔值和报错特征的哈希，没有工具输入、输出或报错原文。
+
+- **运行级**（`scope: "run"`）：在最终结果确定时写一条，即 fresh-session 重试之后的结果。重试和 codex 的第二次尝试复用同一个决策（§5），所以每次运行只有一条决策和一条结果。
+
+  | 字段 | 含义 |
+  |---|---|
+  | `status` | 运行的最终状态，即 daemon 上报的结果 |
+  | `failure_reason` | 分类后的失败原因（`server/pkg/taskfailure`）；成功时为空 |
+  | `tool_calls` | 本次运行的工具调用次数 |
+  | `outcome_ok` | `status` 为 completed |
+
+- **步级**（`scope: "step"`，只有 Claude）：每个写了决策记录的步写一条。字段都能确定时就写，通常是第 N+2 步的请求到达时；运行结束时（包括取消、超时，以及收到 `per_turn_effort_changed=false` 之后不再有请求），把还没写的都写出。
+
+  | 字段 | 含义 |
+  |---|---|
+  | `tools` | 这一步主线程调用的工具名 |
+  | `action_kind` | 没有工具调用为 `final_text`；只用了只读工具为 `read_only`；其余一律为 `edit_or_exec`，包括 Bash、Task 和 MCP 工具。只读工具是一份常量清单，如 Read、Grep、Glob、LS、WebFetch、WebSearch |
+  | `outcome_ok` | 这一步所有工具结果的 `is_error` 都为 false |
+  | `error_sig` | 这一步报错特征的哈希；没有报错时为空 |
+  | `prev_action_kind`、`prev_outcome_ok` | 上一步的同名值；没有上一步时为 null |
+  | `next_outcome_ok` | 下一步的 `outcome_ok`；没有下一步时为 null |
+  | `repeated_error_next` | 下一步报错，且特征与截至这一步最近一次报错的特征相同，即这一步没能消除这个报错；没有下一步时为 null |
+
+**步级信号从哪来**
+
+- 第 N+1 步的决策请求里，带着第 N 步的主线程工具列表（含 `is_error`）和报错文本（§6）。不另外解析 stream，避免同一件事有两套判断。
+- daemon 按运行保存报错特征的历史，计算特征和重复次数用同一个 Go 函数（§6）。
+- 回退的步不写决策记录，但它的请求带来的原料，仍用来补全前一步的结果。
+- 最后一个有决策的步：如果它的生效记录之后，流里再没有工具调用，就记为 `final_text`、`outcome_ok = true`；其余确定不了的字段为 null。
+
+**样本的去向**：样本只留在采集主机上。需要移出时按 E1 的决定处理（见[未决事项](#未决事项)），不得提交到仓库或上传到公开位置。
+
+### 10.4 纠偏清洗
+
+脚本放在 `tools/jev-distill/`，照 `tools/effort-tuner/` 的做法：只用 Python 3 标准库，测试和 fixture 放在同一目录。输入是采集到的样本、种子样本（`tools/jev-distill/seeds/*.jsonl`）和判据评测 fixture 的 JSON 导出（§4）。
+
+- **目标分布从哪来**：
+  - 以决策里的 `probabilities` 为教师分布，默认只用外部来源的决策；
+  - `self-hosted` 的样本不作为训练目标，可以留作评估；
+  - 没有结果记录的样本，照教师分布使用。
+- **挡位顺序**：`none < minimal < low < medium < high < xhigh < max < ultra`。候选里有无法排序的值时，这条样本不纠偏。
+- **只对步级样本纠偏。** 运行级样本照教师分布使用，因为运行失败几乎都是与挡位无关的原因（§10.0）。脚本保留一个默认关闭的开关。
+- **挡位不足：上调一档。**
+  - 条件：教师选的挡位不高于 medium，且满足其一：
+    - `repeated_error_next == true`；
+    - `tools` 里有改文件的工具（Edit、Write、MultiEdit、NotebookEdit），且 `next_outcome_ok == false`。
+  - 做法：每个挡位的概率移到候选里高一档的挡位；高一档是 max 或 ultra 时留在原挡位。按 D4，这两档只留给"同一问题已经失败"之后的那一步，由教师和种子样本来教。
+  - 这一步自己报错，不算挡位不足：跑测试发现失败，正是这一步该做的事。所以只看改完之后的下一步。
+- **挡位过高：压回 medium。**
+  - 条件：教师选的是 xhigh、max 或 ultra，`outcome_ok == true`，`prev_outcome_ok` 不为 false，且满足其一：
+    - `action_kind == read_only`；
+    - `action_kind == final_text`，且上一步是成功的 `edit_or_exec`，即收尾。
+  - 做法：高于 medium 的概率全部移到 medium。
+  - 只有文本、前面又没有成功的修改的步，可能是纯推理的回答，不压。
+- **其余样本**：照教师分布使用。
+- **去重**：键为 `sha256(state + questions 的规范 JSON)`，重复样本的目标分布取平均。
+- **与评测隔离**：state 与判据评测 fixture 相同的样本一律剔除；种子样本与 fixture 重合时，脚本报错退出。
+- **输出**：
+  - `laya-train` 的 JSONL，每行 `{state, questions, gold}`，种子样本可以改用 `expected`；每个分布和为 1。
+  - 按来源、范围、纠偏类别、剔除原因的统计。
+
+### 10.5 训练、导出与门禁
+
+流水线也放在 `tools/jev-distill/`，各步可以单独运行：`prepare` → `train` → `export` → `parity` → `serve` → `gate` → `bench`。服务栈、精度、`max_len` 和依赖版本按 OL-1018 的结论。
+
+- **底座**：`convaiinnovations/laya-multilingual`。
+- **训练**：
+  - 使用 `--loss rlcd`；
+  - `--max-len` 按 OL-1018 的建议，保证 state 不被截断；
+  - 按 `task_id` 切出不参与训练的评测集，传给 `--eval`；
+  - 固定随机种子。
+- **导出**：导出 INT8 和 FP32。
+  - FP32 与 PyTorch 在评测集上的概率最大偏差不超过 1e-3，OL-1018 有依据时可以调整；
+  - 记录 INT8 与 FP32 的 `choice` 一致率。
+- **门禁评测**：
+  - 用部署时同样的地址和配置，通过判据评测命令（§4，`MULTICA_JEV_SOURCES=self-hosted`）跑 Claude、Codex 两组候选；
+  - 全部 fixture 满足 §4 的四类预期才算通过，同时输出与外部来源结果的对比表。
+- **延迟**：按评测集真实的 state 长度分布，经 HTTP 测 P50 和 P95；门槛见[未决事项](#未决事项)。
+- **产物**：
+  - 模型目录按版本命名，如 `jev-laya-<日期>-<短哈希>-int8`，附 `train_report.json`、门禁报告、压测结果和 sha256 清单；
+  - 模型和数据不进仓库、不公开发布：模型在运行摘要上训练过，可能记住其中的片段。
+
+### 10.6 部署与切换
+
+- **服务**：在 149 宿主机常驻，用 systemd 或容器管理。
+  - 崩溃后自动重启，限制线程数和内存；
+  - 只监听回环地址，或 149 上 agent 容器能访问的内网地址；不是回环地址时必须开启 API key；
+  - 日志不记录请求内容。
+- **模型版本**：按版本放目录，用 `current` 指向在用的版本，并写好回滚步骤。
+- **daemon**：
+  - 149 宿主机及其上 agent 容器里的 daemon 改为 `MULTICA_JEV_SOURCES=self-hosted,opencode-free`；
+  - `MULTICA_JEV_COLLECT_DIR` 保持开启：自部署来源的样本不作为训练目标，但可以用于以后的评估；
+  - 不在 149 上的 daemon（agent-gcp-01、shendiqiu02）不在 OL-1013 范围内，要接入需另开 issue。
+- **运维手册**：部署、升级和回滚步骤，以及判据文案改动后重跑门禁评测的规则，写进 `tools/jev-distill/DEPLOY.md`。
+
+### 10.7 对前文各节的改动
+
+OL-1013 对 OL-992 各节加的要求已并入正文：
+
+- §1：新增术语在代码中的名字；
+- §3：来源表增加 `self-hosted`；
+- §4 的判据评测：来源可配、机器可读的结果、fixture 的 JSON 导出（OL-1005）；
+- §6：决策请求带上一步的结构化信息，报错特征改在 daemon 侧计算（OL-1010）；
+- §9：来源名称"自部署"，不认识的名称原样显示（OL-1008、OL-1009）。
 
 ## 未决事项
 
@@ -349,7 +612,18 @@ OL-992 描述前半部分的原始需求里，"Auto"一律改称"自适应"，`t
 - **一步回退时实际生效的挡位**：回退时不改写这一步，这一步按 CLI 收到的挡位执行。这个挡位是启动时的挡位，还是上一步改写后的挡位，由 OL-1000 核实。在此之前按 §7 记录：`level` 为空，写明 `fallback`。
 - **deveco 的挡位目录**：DevEco CLI 能否列出每个模型的 variant，由 OL-1007 调查；不能列出时，deveco 不提供自适应。
 
+以下四项由负责人在 OL-1013 中决定（§10）：
+
+- **E1 训练用的算力**（OL-1023 开始前定下）：决定训练在哪里跑，也就决定了样本能移到哪里。
+  - 推荐：在自己的 GCP 账号里临时开一台带 T4 或 L4 的机器，训练完删除。
+  - 备选：Kaggle 免费 T4，要把样本传给 Kaggle；149 只用 CPU，只能冻结编码器训练，效果明显差。
+- **E2 能否用外部来源的决策训练自己的模型**：条款里没有明文允许或禁止（§10.0）。推荐接受这个风险，模型只在内部使用。
+- **E3 宿主机操作由谁负责**：OL-1022、OL-1024，以及 OL-1023 的 GPU 机器。推荐交给运维专员。
+- **延迟门槛**：原始需求验收里的"≤ 50ms"没有依据（§10.0）。OL-1018 实测后，由架构师提出门槛，请负责人确认。
+
 ## 分工
+
+### OL-992
 
 | 子任务 | 内容 | 对应章节 |
 |---|---|---|
@@ -366,3 +640,18 @@ OL-992 描述前半部分的原始需求里，"Auto"一律改称"自适应"，`t
 | OL-1010 | Claude 步级换挡的 mod 与 daemon 端点 | §6、§7 |
 | OL-1011 | 端到端联调与验收证据（不合入代码） | 全文 |
 | OL-1012 | 术语表、ADR 与本文 | — |
+
+### OL-1013
+
+| 子任务 | 内容 | 对应章节 |
+|---|---|---|
+| OL-1016 | Jev 客户端新增自部署来源 | §3、§10.2 |
+| OL-1017 | 决策样本采集器与运行级结果信号 | §10.3 |
+| OL-1018 | 可行性验证：服务栈与真实 state 长度下的延迟（不合入代码） | §10.0、§10.5、§10.6 |
+| OL-1019 | Claude 步级决策样本与结果信号 | §10.3 |
+| OL-1020 | 纠偏清洗脚本与种子样本 | §10.4 |
+| OL-1021 | 训练、导出、门禁评测与压测流水线 | §10.5 |
+| OL-1022 | 开启样本采集并跟踪样本量 | §10.3 |
+| OL-1023 | 首次训练与门禁评测 | §10.5 |
+| OL-1024 | 在 149 部署自部署来源并切换 | §10.2、§10.6 |
+| OL-1025 | 术语表、ADR 0002 与本文 §10 | — |
