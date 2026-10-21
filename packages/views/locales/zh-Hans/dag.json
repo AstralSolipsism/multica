@@ -72,6 +72,7 @@
   "edge_aggregate_summary_other": "汇总 {{count}} 条依赖",
   "edge_locate": "定位",
   "legend_highlight": "点击卡片或连线：点亮相关链路，其余变暗；再点同一卡片切换全部上下游",
+  "legend_lit_flow": "点亮链路上的流光沿依赖从前置流向后续：品牌蓝表示未满足，浅绿表示已满足，红色表示已取消但仍阻塞",
   "selection_scope_neighborhood": "一层",
   "selection_scope_closure": "全部上下游",
   "focus_mode": "聚焦模式",

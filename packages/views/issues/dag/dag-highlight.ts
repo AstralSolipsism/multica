@@ -109,33 +109,62 @@ export interface DagMotionCandidate {
   edgeIds: string[];
 }
 
+/** A lit route asking for its state-colored flow (OL-997): the scene edge id
+ *  and the display state the flow is colored by. */
+export interface DagLitFlowCandidate {
+  id: string;
+  state: DagDependencyState;
+}
+
+export interface DagMotionPlan {
+  /** Base segments keeping their dots/breath. */
+  segments: Set<string>;
+  /** Lit routes carrying the state-colored flow along their full route. */
+  flows: Set<string>;
+}
+
 /** Hard motion gates: system reduced motion, or zoom below 50%. */
 export function dagMotionAllowed(zoom: number, reducedMotion: boolean): boolean {
   return !reducedMotion && zoom >= DAG_MOTION_MIN_ZOOM;
 }
 
-/** Which visible segments may animate. Hard stops: system reduced motion, or
- *  zoom below 50%. Over the ~60-segment budget only the selected chain keeps
- *  moving (nothing animates with no selection), and even that chain is
- *  truncated to the budget in candidate order. */
-export function dagMotionSegments(params: {
+/** Once lit routes alone exceed the budget, cancelled blockers keep their
+ *  warning flow first, satisfied routes yield first. The sort is stable, so
+ *  same-rank routes keep their scene order. */
+function litFlowRank(state: DagDependencyState): number {
+  if (state === "cancelled-blocking") return 0;
+  if (state === "satisfied") return 2;
+  return 1;
+}
+
+/** The shared motion budget (~60 moving elements on screen, OL-284 — OL-997's
+ *  lit flows count too). Under the budget everything moves; over it only the
+ *  lit chain keeps its flow — base segments stop, since the chain's route
+ *  flow replaced the background dots it used to borrow — and a chain longer
+ *  than the budget truncates to cancelled-blocking, then unsatisfied, then
+ *  satisfied routes; the rest stay static lit lines. Hard stops: system
+ *  reduced motion, or zoom below 50%. */
+export function dagMotionPlan(params: {
   candidates: readonly DagMotionCandidate[];
-  highlightedEdgeIds: ReadonlySet<string> | null;
+  litRoutes: readonly DagLitFlowCandidate[];
   zoom: number;
   reducedMotion: boolean;
-}): Set<string> {
-  const { candidates, highlightedEdgeIds, zoom, reducedMotion } = params;
-  if (!dagMotionAllowed(zoom, reducedMotion)) return new Set();
-  if (candidates.length <= DAG_MOTION_MAX_SEGMENTS)
-    return new Set(candidates.map((candidate) => candidate.id));
-  const kept = new Set<string>();
-  if (highlightedEdgeIds) {
-    for (const candidate of candidates) {
-      if (kept.size >= DAG_MOTION_MAX_SEGMENTS) break;
-      if (candidate.edgeIds.some((edgeId) => highlightedEdgeIds.has(edgeId))) kept.add(candidate.id);
-    }
+}): DagMotionPlan {
+  const { candidates, litRoutes, zoom, reducedMotion } = params;
+  if (!dagMotionAllowed(zoom, reducedMotion))
+    return { segments: new Set(), flows: new Set() };
+  if (candidates.length + litRoutes.length <= DAG_MOTION_MAX_SEGMENTS)
+    return {
+      segments: new Set(candidates.map((candidate) => candidate.id)),
+      flows: new Set(litRoutes.map((route) => route.id)),
+    };
+  const flows = new Set<string>();
+  const ordered = [...litRoutes].sort((a, b) => litFlowRank(a.state) - litFlowRank(b.state));
+  for (const route of ordered) {
+    if (flows.size >= DAG_MOTION_MAX_SEGMENTS) break;
+    flows.add(route.id);
   }
-  return kept;
+  return { segments: new Set(), flows };
 }
 
 /** Direction of a bus interval along a traversing edge's ordered route: 1 when

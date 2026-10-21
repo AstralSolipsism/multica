@@ -16,7 +16,7 @@ import { DAG_GROUP_HEADER_HEIGHT } from "./dag-constants";
 import {
   dagBusDependencyIds,
   dagMotionAllowed,
-  dagMotionSegments,
+  dagMotionPlan,
   dagPointVisible,
   dagRouteVisible,
   dagSegmentFlowDirection,
@@ -39,6 +39,33 @@ const STATE_STYLE: Record<
   advancing: { stroke: "var(--foreground)", opacity: 0.55 },
   "cancelled-blocking": { stroke: "var(--destructive)", opacity: 0.85, dash: "6 4" },
 };
+
+/** The OL-997 lit-route flow colors: brand blue while a dependency still
+ *  blocks (the only brand paint besides the selection ring), a softened
+ *  success green once satisfied (silver-white washes out on light themes),
+ *  destructive red for a cancelled blocker. */
+const LIT_FLOW_STYLE: Record<
+  DagDependencyState,
+  { stroke: string; opacity: number }
+> = {
+  satisfied: { stroke: "var(--success)", opacity: 0.55 },
+  blocking: { stroke: "var(--color-brand)", opacity: 0.95 },
+  advancing: { stroke: "var(--color-brand)", opacity: 0.95 },
+  "cancelled-blocking": { stroke: "var(--destructive)", opacity: 0.95 },
+};
+
+/** Flow-dot speed along a route (flow px per second): the same for every
+ *  route, so long and short chains read as one calm current. */
+const DAG_LIT_FLOW_SPEED = 55;
+
+/** Paint order when lit routes share a bus interval: satisfied at the bottom,
+ *  unsatisfied in the middle, cancelled blockers on top — the attention order
+ *  stacked, never blended. */
+function litPaintRank(state: DagDependencyState): number {
+  if (state === "satisfied") return 0;
+  if (state === "cancelled-blocking") return 2;
+  return 1;
+}
 
 function arrowHead(
   route: readonly DagPoint[],
@@ -97,8 +124,9 @@ export interface DagEdgeLayerProps {
   /** Below the readability zoom, simplified cards paint here as SVG rects
    *  while their DOM shells stay interactive. */
   ghostBlocks: readonly DagGhostBlock[] | null;
-  /** The selected card/frame, ringed in brand blue (the only use of brand
-   *  on the canvas) — painted here so a selection never rebuilds nodes. */
+  /** The selected card/frame, ringed in brand blue (with the lit chain's
+   *  unsatisfied flow, the only brand on the canvas) — painted here so a
+   *  selection never rebuilds nodes. */
   selectedNodeId: string | null;
   /** Flow-coordinate culling bounds; null paints everything (tests, SSR). */
   bounds: DagVisibleBounds | null;
@@ -136,7 +164,6 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
   reducedMotion,
   onBusClick,
 }: DagEdgeLayerProps) {
-  const maskId = useId();
   const routeMaskId = useId();
   const states = useMemo(() => dagDependencyStates(model), [model]);
   const composed = useMemo(
@@ -199,47 +226,6 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
       .filter(({ point }) => !bounds || dagPointVisible(point, bounds));
   }, [visibleArrows, plan.input.kind, bounds, degraded]);
 
-  // Motion: candidates are the visible advancing/cancelled segments; the
-  // budget keeps the selected chain moving when the screen is too busy.
-  const motionCandidates = useMemo(
-    () =>
-      visibleSegments.flatMap(({ segment, display }) => {
-        const kind = dagStateMotion(display.state);
-        return kind ? [{ id: segment.id, edgeIds: segment.edgeIds }] : [];
-      }),
-    [visibleSegments],
-  );
-  const activeMotion = useMemo(
-    () =>
-      dagMotionSegments({
-        candidates: motionCandidates,
-        highlightedEdgeIds,
-        zoom: motionOn ? 1 : 0,
-        reducedMotion,
-      }),
-    [motionCandidates, highlightedEdgeIds, motionOn, reducedMotion],
-  );
-  const flowOverlays = useMemo(
-    () =>
-      visibleSegments.flatMap(({ segment, display }) => {
-        if (display.state !== "advancing" || !activeMotion.has(segment.id)) return [];
-        const representative = segment.edgeIds.find(
-          (edgeId) =>
-            dagSceneEdgeDisplay(plan, edgeId, states, showSatisfied)?.state === "advancing",
-        );
-        const route = representative ? composed.routes[representative] : undefined;
-        const direction = route ? dagSegmentFlowDirection(route, segment) : 1;
-        const lit = highlightedEdgeIds
-          ? segment.edgeIds.some((edgeId) => highlightedEdgeIds.has(edgeId))
-          : false;
-        return [{ segment, display, direction, lit }];
-      }),
-    [visibleSegments, activeMotion, plan, states, showSatisfied, composed.routes, highlightedEdgeIds],
-  );
-  const litFlows = flowOverlays.filter(({ lit }) => lit);
-  const baseFlows = flowOverlays.filter(({ lit }) => !lit);
-  const motionAllowed = dagMotionAllowed(motionOn ? 1 : 0, reducedMotion);
-
   // Highlight: repaint each lit dependency's own complete route — never the
   // whole bus. Satisfied-only bundles take the active overlay's route and the
   // satisfied-subset count (mixed bundles never double-count).
@@ -263,16 +249,69 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
       return [{ edgeId, route, display }];
     });
   }, [highlightedEdgeIds, composed.routes, activeOverlay, plan, states, showSatisfied, bounds]);
+  // Shared bus intervals stack by attention: satisfied at the bottom,
+  // cancelled blockers on top. The sort is stable — same-state routes keep
+  // their scene order.
+  const paintedLitRoutes = useMemo(
+    () =>
+      [...highlightedRoutes].sort(
+        (a, b) => litPaintRank(a.display.state) - litPaintRank(b.display.state),
+      ),
+    [highlightedRoutes],
+  );
+
+  // Motion: candidates are the visible advancing/cancelled segments; lit
+  // routes ask for their state-colored flow. The shared budget keeps only the
+  // lit chain moving when the screen is too busy.
+  const motionCandidates = useMemo(
+    () =>
+      visibleSegments.flatMap(({ segment, display }) => {
+        const kind = dagStateMotion(display.state);
+        return kind ? [{ id: segment.id, edgeIds: segment.edgeIds }] : [];
+      }),
+    [visibleSegments],
+  );
+  const motion = useMemo(
+    () =>
+      dagMotionPlan({
+        candidates: motionCandidates,
+        litRoutes: highlightedRoutes.map(({ edgeId, display }) => ({
+          id: edgeId,
+          state: display.state,
+        })),
+        zoom: motionOn ? 1 : 0,
+        reducedMotion,
+      }),
+    [motionCandidates, highlightedRoutes, motionOn, reducedMotion],
+  );
+  const activeMotion = motion.segments;
+  const litFlowEdgeIds = motion.flows;
+  const flowOverlays = useMemo(
+    () =>
+      visibleSegments.flatMap(({ segment, display }) => {
+        if (display.state !== "advancing" || !activeMotion.has(segment.id)) return [];
+        const representative = segment.edgeIds.find(
+          (edgeId) =>
+            dagSceneEdgeDisplay(plan, edgeId, states, showSatisfied)?.state === "advancing",
+        );
+        const route = representative ? composed.routes[representative] : undefined;
+        const direction = route ? dagSegmentFlowDirection(route, segment) : 1;
+        return [{ segment, display, direction }];
+      }),
+    [visibleSegments, activeMotion, plan, states, showSatisfied, composed.routes],
+  );
+  const motionAllowed = dagMotionAllowed(motionOn ? 1 : 0, reducedMotion);
 
   const dimmed = highlightedEdgeIds != null;
   const dimNodes = litBoxes != null && litBoxes.length > 0;
-  // Both overlay masks must declare their region explicitly: the
-  // userSpaceOnUse default (-10%/-10%/120%/120% of the viewport) resolves to
-  // ABSOLUTE coordinates that do not follow the windowed viewBox origin, so
-  // about one screen past the canvas origin every masked paint would be
-  // clipped away (OL-451 review; the dim mask carried the same latent defect
-  // since OL-284). One shared window rect feeds the mask regions and their
-  // white bases.
+  // The route mask must declare its region explicitly: the userSpaceOnUse
+  // default (-10%/-10%/120%/120% of the viewport) resolves to ABSOLUTE
+  // coordinates that do not follow the windowed viewBox origin, so about one
+  // screen past the canvas origin every masked paint would be clipped away
+  // (OL-451 review; the dim overlay carried the same latent defect since
+  // OL-284 — it now paints as one even-odd path, whose coordinates are
+  // absolute by construction). One shared window rect feeds the mask region,
+  // its white base and the dim path's outer subpath.
   const windowRect = bounds
     ? { x: bounds.x0, y: bounds.y0, width: bounds.x1 - bounds.x0, height: bounds.y1 - bounds.y0 }
     : { x: 0, y: 0, width: geometry.width, height: geometry.height };
@@ -281,30 +320,85 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
   // paints through a mask cutting every card box (inset a hair, so port
   // approaches and arrowheads on the box edge stay) and every frame header
   // strip: routes visibly pass behind cards, exactly like the base layer
-  // already does below them. Skipped in the simplified view — no text there,
-  // and the cut count stays bounded by the readable zoom's smaller window.
+  // already does below them. Only boxes a lit route actually crosses are
+  // cut — the OL-997 flow re-applies this mask every animation frame, so
+  // its rect count must stay proportional to the chain, not the window.
+  // Skipped in the simplified view — no text there.
   const routeMaskCuts = useMemo(() => {
     if (degraded || highlightedEdgeIds == null) return null;
-    const cuts: { id: string; x: number; y: number; width: number; height: number }[] = [];
-    const visible = (x: number, y: number, width: number, height: number) =>
-      !bounds ||
-      (x + width >= bounds.x0 && x <= bounds.x1 && y + height >= bounds.y0 && y <= bounds.y1);
-    for (const [id, box] of Object.entries(geometry.nodes)) {
-      if (!visible(box.x, box.y, box.width, box.height)) continue;
-      cuts.push({ id, x: box.x + 2, y: box.y + 2, width: Math.max(0, box.width - 4), height: Math.max(0, box.height - 4) });
-    }
-    for (const [id, box] of Object.entries(geometry.frames)) {
-      if (!visible(box.x, box.y, box.width, DAG_GROUP_HEADER_HEIGHT)) continue;
-      cuts.push({ id, x: box.x + 2, y: box.y + 2, width: Math.max(0, box.width - 4), height: DAG_GROUP_HEADER_HEIGHT - 4 });
-    }
-    return cuts;
-  }, [degraded, highlightedEdgeIds, geometry, bounds]);
+    const boxes: { id: string; x: number; y: number; width: number; height: number }[] = [];
+    for (const [id, box] of Object.entries(geometry.nodes)) boxes.push({ id, ...box });
+    for (const [id, box] of Object.entries(geometry.frames))
+      boxes.push({ id, x: box.x, y: box.y, width: box.width, height: DAG_GROUP_HEADER_HEIGHT });
+    const crosses = (box: { x: number; y: number; width: number; height: number }) => {
+      if (
+        bounds &&
+        (box.x + box.width < bounds.x0 ||
+          box.x > bounds.x1 ||
+          box.y + box.height < bounds.y0 ||
+          box.y > bounds.y1)
+      )
+        return false;
+      const pad = 6;
+      for (const { route } of highlightedRoutes) {
+        for (let i = 0; i + 1 < route.length; i++) {
+          const a = route[i]!;
+          const b = route[i + 1]!;
+          if (
+            Math.min(a.x, b.x) - pad <= box.x + box.width &&
+            Math.max(a.x, b.x) + pad >= box.x &&
+            Math.min(a.y, b.y) - pad <= box.y + box.height &&
+            Math.max(a.y, b.y) + pad >= box.y
+          )
+            return true;
+        }
+      }
+      return false;
+    };
+    return boxes
+      .filter(crosses)
+      .map((box) => ({
+        id: box.id,
+        x: box.x + 2,
+        y: box.y + 2,
+        width: Math.max(0, box.width - 4),
+        height: Math.max(0, box.height - 4),
+      }));
+  }, [degraded, highlightedEdgeIds, geometry, bounds, highlightedRoutes]);
   const selectedBox = useMemo(() => {
     if (!selectedNodeId) return null;
     return geometry.nodes[selectedNodeId] ?? geometry.frames[selectedNodeId] ?? null;
   }, [selectedNodeId, geometry]);
+  // The OL-997 flow dots: one glowing dot (plus a short trailing echo) per
+  // flowing route, traveling the route's own point order via CSS motion
+  // path (SVG user space = flow coordinates, so no origin math). Duration
+  // scales with route length, so every dot moves at the same calm speed.
+  // Dots paint as SVG circles inside the lit group — not a separate HTML
+  // layer: an extra full-window composited layer costs several fps per pan
+  // frame on GPU-less (software) compositors, and the group's existing
+  // route mask hides them behind cards for free.
+  const flowDots = useMemo(
+    () =>
+      paintedLitRoutes.flatMap(({ edgeId, route, display }) => {
+        if (!litFlowEdgeIds.has(edgeId)) return [];
+        let length = 0;
+        for (let i = 0; i + 1 < route.length; i++)
+          length += Math.hypot(route[i + 1]!.x - route[i]!.x, route[i + 1]!.y - route[i]!.y);
+        if (!length) return [];
+        return [
+          {
+            edgeId,
+            state: display.state,
+            points: route.map((p) => `${p.x},${p.y}`).join(" "),
+            path: `M ${route.map((p) => `${p.x} ${p.y}`).join(" L ")}`,
+            duration: Math.max(1.2, length / DAG_LIT_FLOW_SPEED),
+          },
+        ];
+      }),
+    [paintedLitRoutes, litFlowEdgeIds],
+  );
   // Ghost blocks: simplified cards as a handful of rects, grouped like the
-  // segments. The dim mask's holes cover them exactly (same coordinates).
+  // segments. The dim path's holes cover them exactly (same coordinates).
   const ghost = useMemo(() => {
     if (!ghostBlocks) return null;
     const visible = ghostBlocks.filter(
@@ -429,7 +523,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
               />
             );
           })}
-          {baseFlows.map((overlay) => flowLine(overlay, `flow:${overlay.segment.id}`))}
+          {flowOverlays.map((overlay) => flowLine(overlay, `flow:${overlay.segment.id}`))}
           {visibleJunctions.map((junction) => (
             <circle
               key={`${junction.x},${junction.y}`}
@@ -553,9 +647,9 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
               ];
             })}
       </svg>
-    {(dimNodes || highlightedRoutes.length > 0 || litFlows.length > 0) && (
-      // Above the z-index-2 cards: node dimming is a full-scene rect whose
-      // mask punches holes over the lit cards (and lit frames' headers), and
+    {(dimNodes || highlightedRoutes.length > 0) && (
+      // Above the z-index-2 cards: node dimming is a full-scene even-odd
+      // path with holes over the lit cards (and lit frames' headers), and
       // the lit chain repaints each dependency's own complete route with a
       // soft glow after it, so dimming never dulls the chain itself. The
       // layer renders whenever either is present — a bus selection lights
@@ -570,39 +664,27 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
         aria-hidden
       >
         {dimNodes && (
-          <>
-            <defs>
-              <mask
-                id={maskId}
-                maskUnits="userSpaceOnUse"
-                x={windowRect.x}
-                y={windowRect.y}
-                width={windowRect.width}
-                height={windowRect.height}
-              >
-                <rect {...windowRect} fill="white" />
-                {litBoxes!.map((box) => (
-                  <rect
-                    key={box.id}
-                    data-dag-dim-hole={box.id}
-                    x={box.x - 8}
-                    y={box.y - 8}
-                    width={box.width + 16}
-                    height={box.height + 16}
-                    rx={10}
-                    fill="black"
-                  />
-                ))}
-              </mask>
-            </defs>
-            <rect
-              data-dag-dim-overlay
-              {...windowRect}
-              fill="var(--background)"
-              fillOpacity={0.75}
-              mask={`url(#${maskId})`}
-            />
-          </>
+          // The dim rect is ONE even-odd path (window outside, lit boxes as
+          // rounded hole subpaths) — not a masked rect: a mask costs the
+          // compositor an extra offscreen pass every frame on GPU-less
+          // (software) compositing.
+          <path
+            data-dag-dim-overlay
+            d={[
+              `M ${windowRect.x} ${windowRect.y} h ${windowRect.width} v ${windowRect.height} h ${-windowRect.width} Z`,
+              ...litBoxes!.map((box) => {
+                const x = box.x - 8,
+                  y = box.y - 8,
+                  w = box.width + 16,
+                  h = box.height + 16,
+                  r = 10;
+                return `M ${x + r} ${y} H ${x + w - r} A ${r} ${r} 0 0 1 ${x + w} ${y + r} V ${y + h - r} A ${r} ${r} 0 0 1 ${x + w - r} ${y + h} H ${x + r} A ${r} ${r} 0 0 1 ${x} ${y + h - r} V ${y + r} A ${r} ${r} 0 0 1 ${x + r} ${y} Z`;
+              }),
+            ].join(" ")}
+            fillRule="evenodd"
+            fill="var(--background)"
+            fillOpacity={0.75}
+          />
         )}
         {routeMaskCuts && (
           <defs>
@@ -630,7 +712,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
           </defs>
         )}
         <g mask={routeMaskCuts ? `url(#${routeMaskId})` : undefined}>
-          {highlightedRoutes.map(({ edgeId, route, display }) => {
+          {paintedLitRoutes.map(({ edgeId, route, display }) => {
             const style = STATE_STYLE[display.state];
             const points = route.map((p) => `${p.x},${p.y}`).join(" ");
             const width = display.count > 1 ? 3 : 2;
@@ -661,7 +743,43 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
               </g>
             );
           })}
-          {litFlows.map((overlay) => flowLine(overlay, `lit-flow:${overlay.segment.id}`))}
+          {flowDots.map(({ edgeId, state, points, path, duration }) => {
+            // Each dot travels its dependency's complete route via CSS motion
+            // path — source → target, corners included, so shared bus
+            // intervals follow each route's own direction; the trailing echo
+            // follows a fixed 0.16 s behind (~9 px at the shared speed),
+            // whatever the route's length. The route mask above hides them
+            // behind cards, exactly like the lit lines.
+            const flow = LIT_FLOW_STYLE[state];
+            const offsetPath = `path("${path}")`;
+            return (
+              <g
+                key={`flow:${edgeId}`}
+                data-dag-lit-flow={edgeId}
+                data-dag-lit-flow-state={state}
+                data-dag-lit-flow-path={points}
+              >
+                <circle
+                  r={4.5}
+                  className="dag-lit-flow-dot"
+                  fill={flow.stroke}
+                  opacity={flow.opacity}
+                  style={{ offsetPath, animationDuration: `${duration}s` }}
+                />
+                <circle
+                  r={2.2}
+                  className="dag-lit-flow-dot"
+                  fill={flow.stroke}
+                  opacity={flow.opacity * 0.55}
+                  style={{
+                    offsetPath,
+                    animationDuration: `${duration}s`,
+                    animationDelay: "0.16s",
+                  }}
+                />
+              </g>
+            );
+          })}
         </g>
       </svg>
     )}

@@ -25,9 +25,37 @@
   animation: dag-edge-breathe 2.8s ease-in-out infinite alternate;
 }
 
+/* OL-997: a glowing dot (with a short trailing echo) per lit dependency
+ * travels its complete route, source → target, via CSS motion path. One
+ * dot's repaint costs a few pixels — a full-route animated dash would
+ * re-stroke the whole chain every frame and sink pan/zoom below 30 fps. */
+@keyframes dag-lit-flow-travel {
+  from {
+    offset-distance: 0%;
+  }
+  to {
+    offset-distance: 100%;
+  }
+}
+
+.dag-lit-flow-dot {
+  offset-rotate: 0deg;
+  animation-name: dag-lit-flow-travel;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+/* Frozen while the viewport moves (pan/zoom): the gesture's frame budget
+ * leaves no room for re-rasterizing the dot layer every frame, and a moving
+ * scene hides the pause. */
+.dag-moving .dag-lit-flow-dot {
+  animation-play-state: paused;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dag-edge-flow,
-  .dag-edge-breathe {
+  .dag-edge-breathe,
+  .dag-lit-flow-dot {
     animation: none;
   }
 }

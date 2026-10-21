@@ -119,6 +119,7 @@ export async function mockDagGraph(
       case "/api/notification-preferences":
         return route.fulfill(json({}));
       case "/api/issue-wakeup-summaries": return route.fulfill(json({ summaries: [] }));
+      case "/api/issue-workflows": return route.fulfill(json({ workflows: [], total: 0 }));
       case "/api/search-index/manifest": return route.fulfill(json({}));
       case "/api/issue-statuses":
         return route.fulfill(json({ statuses, categories: ["unstarted", "started", "done", "closed"], total: statuses.length }));
