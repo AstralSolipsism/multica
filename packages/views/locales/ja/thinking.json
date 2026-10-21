@@ -1,0 +1,32 @@
+{
+  "badge_fallback": "デフォルト",
+  "mode_adapt": "適応",
+  "mode_fixed": "固定",
+  "step_count_other": "{{count}} ステップ",
+  "peak_level": "最大 {{level}}",
+  "summary_fixed": "固定 · {{level}}",
+  "trend_up": "前のステップから引き上げ",
+  "trend_down": "前のステップから引き下げ",
+  "tooltip": {
+    "decision_line": "Jev 動的決定：{{level}}",
+    "confidence": "確信度 {{value}}%",
+    "latency": "所要時間 {{ms}}ms",
+    "source": "ソース：{{name}}",
+    "probabilities": "確率分布",
+    "fell_back": "デフォルトレベルにフォールバック：{{reason}}",
+    "reason_timeout": "タイムアウト",
+    "reason_error": "エラー",
+    "reason_invalid": "無効な結果",
+    "reason_breaker": "ブレーカー開放中",
+    "reason_disabled": "このマシンで無効",
+    "reason_no_candidates": "候補レベルなし",
+    "reason_unknown": "理由不明",
+    "fixed": "固定レベル",
+    "sequence": "ステップごとのレベル",
+    "step_default": "デフォルト",
+    "fallback_count_other": "フォールバック {{count}} 回",
+    "carried_over": "前のステップのレベルを継続使用：{{reason}}",
+    "step_carried": "継続"
+  },
+  "source_self_hosted": "セルフホスト"
+}

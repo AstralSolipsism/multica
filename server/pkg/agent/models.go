@@ -2986,12 +2986,18 @@ func codebuddyStaticModels() []Model {
 // handshake. Dim (dimcode) advertises models.availableModels; enumeration
 // requires a logged-in dim (OAuth). On any failure the caller falls back to
 // the manual-entry field.
+//
+// The same handshake carries the `thought_level` option dim's Execute applies
+// via applyACPEffortOption, so annotate picks the effort catalog up for free.
+// Only the session's current model is annotated; see
+// annotateACPThinkingForSessionModel.
 func discoverDimModels(ctx context.Context, runtimeCmd Command) (Catalog, error) {
 	models, err := discoverACPModels(ctx, runtimeCmd, acpDiscoveryProvider{
 		defaultBin:   "dim",
 		clientName:   "multica-model-discovery",
 		tmpdirPrefix: "multica-dim-discovery-",
 		acpArgs:      []string{"acp"},
+		annotate:     annotateACPThinkingForSessionModel,
 	})
 	if err != nil || len(models) == 0 {
 		if err != nil {

@@ -46,7 +46,7 @@ func TestThinkingLevelAdaptIsReserved(t *testing.T) {
 	if isValidDynamicThinkingValue(ThinkingLevelAdapt) {
 		t.Fatal("adaptive mode must not be a CLI-native token")
 	}
-	for _, provider := range []string{"claude", "codex", "pi", "omp", "opencode", "kimi", "dsh", "grok", "codebuddy", "reasonix", "hermes", "dim"} {
+	for _, provider := range []string{"claude", "codex", "pi", "omp", "opencode", "deveco", "kimi", "dsh", "grok", "codebuddy", "reasonix", "hermes", "dim"} {
 		if IsKnownThinkingValue(provider, ThinkingLevelAdapt) {
 			t.Errorf("%s accepted adaptive mode as a native level", provider)
 		}
@@ -70,7 +70,11 @@ func TestModelAdaptThinkingCandidates(t *testing.T) {
 		{"no guessed opencode default", "opencode", "", Catalog{Models: models[1:]}, nil},
 		{"no codex default", "codex", "", Catalog{Models: models}, nil},
 		{"no omp default", "omp", "", Catalog{Models: models}, nil},
-		{"unsupported provider", "deveco", "other", Catalog{Models: models}, nil},
+		// deveco: no default in its OpenCode-engine catalog, so an empty
+		// model yields no candidates; a pinned model yields its own.
+		{"no deveco default", "deveco", "", Catalog{Models: models}, nil},
+		{"deveco pinned model", "deveco", "other", Catalog{Models: models}, []string{"ultra", "max"}},
+		{"unsupported provider", "cursor", "other", Catalog{Models: models}, nil},
 		{"fallback", "claude", "", Catalog{Models: models, Fallback: true}, nil},
 		{"explicit", "codex", "other", Catalog{Models: models}, []string{"ultra", "max"}},
 	} {

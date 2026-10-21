@@ -132,6 +132,13 @@ function pickModelEntry(
   // its own default role model, then clamps the level to what that model
   // supports. Previewing any entry here would offer a level the real model may
   // silently lower. (MUL-7412)
-  if (provider === "codex" || provider === "omp") return undefined;
+  //
+  // deveco is fenced off likewise: its OpenCode-engine catalog also marks no
+  // default, and the backend rejects a level without a pinned model, so a
+  // preview here would diverge from what ValidateThinkingLevel allows.
+  // (OL-1007)
+  if (provider === "codex" || provider === "omp" || provider === "deveco") {
+    return undefined;
+  }
   return models.find((m) => m.default) ?? models[0];
 }

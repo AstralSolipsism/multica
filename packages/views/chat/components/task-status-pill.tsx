@@ -5,6 +5,7 @@ import { ShimmerText } from "@multica/ui/components/common/shimmer-text";
 import { UnicodeSpinner } from "@multica/ui/components/common/unicode-spinner";
 import type { AgentAvailability } from "@multica/core/agents";
 import type { ChatPendingTask, TaskMessagePayload } from "@multica/core/types";
+import { ThinkingLevelBadge } from "../../common/thinking-level-badge";
 import { formatElapsedSecs } from "../lib/format";
 import { useT } from "../../i18n";
 
@@ -219,6 +220,10 @@ export function TaskStatusPill({
         <ShimmerText active={!stage.static}>
           {stage.label}
         </ShimmerText>
+        <ThinkingLevelBadge
+          messages={taskMessages}
+          leading={<span aria-hidden className="opacity-70"> · </span>}
+        />
         <span className="opacity-70 tabular-nums"> · {formatElapsedSecs(elapsedSecs)}</span>
       </span>
     </div>

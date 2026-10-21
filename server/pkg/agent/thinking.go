@@ -711,8 +711,8 @@ func catalogLoader(ctx context.Context, providerType string, cmd Command) func()
 //     "unknown model → reject" (the misjudgement flagged in an earlier
 //     review). opencode has no single default, so it accepts a level any
 //     advertised model supports.
-//   - omp: fails closed for the same reason by a different route — see
-//     ThinkingRequiresExplicitModel.
+//   - omp and deveco: fail closed for the same reason by different routes —
+//     see ThinkingRequiresExplicitModel.
 //
 // Only a catalog discovery verified may reject a level. A fallback or empty
 // catalog (see Catalog.Verified) answers with errUnverifiedCatalog, which the
@@ -827,12 +827,17 @@ var errUnverifiedCatalog = errors.New("model discovery did not return the runtim
 //     resolves its own default role model and clamps the requested level to what
 //     THAT model supports, so a level validated against any other entry is not
 //     the level that runs (MUL-7412).
+//   - deveco: its `deveco models` catalog (shared OpenCode-engine listing) marks
+//     no default either, so an empty model has no entry to validate against and
+//     the level would be dropped at launch while the UI kept showing it. Like
+//     omp, deveco rejected every non-empty level before OL-1007, so there is no
+//     persisted value to grandfather (OL-1007 review).
 //
-// Both are checked before any catalog read, so discovery failing cannot turn
+// All are checked before any catalog read, so discovery failing cannot turn
 // into "pass the level through".
 func ThinkingRequiresExplicitModel(providerType string) bool {
 	switch providerType {
-	case "codex", "omp":
+	case "codex", "omp", "deveco":
 		return true
 	}
 	return false
@@ -846,11 +851,12 @@ func ThinkingRequiresExplicitModel(providerType string) bool {
 // execution constraint but predates this check: agents out there already hold an
 // effort alongside an empty model, and 400ing that combination would block
 // unrelated edits to them, so codex stays grandfathered and the daemon keeps
-// dropping the level. omp has no such history — persisting an effort at all was
-// impossible before MUL-7412 — so it is strict from the start and the invalid
-// combination never reaches storage.
+// dropping the level. omp and deveco have no such history — neither accepted a
+// persisted level before joining the dynamic-catalog set (deveco joined with
+// OL-1007) — so both are strict from the start and the invalid combination
+// never reaches storage.
 func ThinkingLevelRejectedWithoutModel(providerType string) bool {
-	return providerType == "omp"
+	return providerType == "omp" || providerType == "deveco"
 }
 
 // ValidateServiceTier reports whether value is advertised by the current
@@ -992,7 +998,12 @@ var thinkingDynamicCatalogProviders = map[string]bool{
 	// Grok advertises each model's effort catalog through session/new, so the
 	// server does not maintain a provider-wide fixed enum. The daemon applies
 	// the selected effort with `--effort`, not session/set_config_option.
-	"grok":     true,
+	"grok": true,
+	// DevEco inherits OpenCode's engine: `deveco models --verbose` owns the
+	// per-model variant vocabulary and `deveco run --variant` consumes it.
+	// An unadvertised variant is a silent no-op in the engine, so a stale
+	// persisted value degrades rather than failing the task.
+	"deveco":   true,
 	"opencode": true,
 	"kimi":     true,
 }
