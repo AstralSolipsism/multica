@@ -347,6 +347,37 @@ describe("DagView display switches", () => {
     });
   });
 
+  it("lists satisfied internal line dependencies in the bus dropdown while the switch is off", async () => {
+    // Internal line edges always paint (OL-1052): clicking their bus keeps the
+    // selection and the dropdown matches what the canvas lit up.
+    const graph = makeGraph(
+      [
+        makeNode("r1"),
+        makeNode("t1", { parentIssueId: "r1" }),
+        makeNode("t2", { parentIssueId: "r1", status: "done", statusCategory: "done" }),
+        makeNode("t3", { parentIssueId: "r1" }),
+      ],
+      [
+        { id: "e-t2", source: "t2", target: "t1" },
+        { id: "e-t3", source: "t3", target: "t1" },
+      ],
+    );
+    const { store } = setup(graph, (s) => {
+      s.setState({ dagLineId: "r1" });
+      s.getState().setDagSelectedDependencyIds(["e-t2"]);
+    });
+    await waitForCanvas();
+    const toolbar = toolbarSpy.mock.calls.at(-1)![0];
+    expect(toolbar.busSelection?.map((row) => row.id)).toEqual(["e-t2"]);
+    expect(store.getState().dagSelectedDependencyIds).toEqual(["e-t2"]);
+    // A mixed bus lists every original, satisfied included.
+    act(() => store.getState().setDagSelectedDependencyIds(["e-t2", "e-t3"]));
+    await waitFor(() =>
+      expect(toolbarSpy.mock.calls.at(-1)![0].busSelection?.map((row) => row.id))
+        .toEqual(["e-t2", "e-t3"]),
+    );
+  });
+
   it("labels the breadcrumb with the open line and exposes the fallback retry", async () => {
     setup(fixtureGraph(), (s) => s.setState({ dagLineId: "r1" }));
     await waitForCanvas();

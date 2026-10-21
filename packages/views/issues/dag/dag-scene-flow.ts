@@ -225,19 +225,22 @@ export interface DagBusSelectionRow {
 }
 
 /** The bus dropdown's rows: resolve each original dependency's endpoints
- *  against the full graph. Satisfied originals list only while their switch
- *  is on — the dropdown matches what the segment displays. */
+ *  against the full graph. The satisfied switch drops originals exactly where
+ *  the canvas drops them — only overview bundles — so the dropdown always
+ *  matches what the segment displays. */
 export function dagBusSelectionRows(params: {
   dependencyIds: readonly string[];
   edges: readonly { sourceEdgeId: string; source: string; target: string }[];
   issuesById: ReadonlyMap<string, { identifier: string | null; title: string }>;
   states: ReadonlyMap<string, DagDependencyState>;
+  plan: DagScenePlan;
   showSatisfied: boolean;
 }): DagBusSelectionRow[] {
-  const { dependencyIds, edges, issuesById, states, showSatisfied } = params;
+  const { dependencyIds, edges, issuesById, states, plan, showSatisfied } = params;
+  const dropSatisfied = filtersSatisfied(plan, showSatisfied);
   const byRawId = new Map(edges.map((edge) => [edge.sourceEdgeId, edge]));
   return dependencyIds.flatMap((id) => {
-    if (!showSatisfied && states.get(id) === "satisfied") return [];
+    if (dropSatisfied && states.get(id) === "satisfied") return [];
     const edge = byRawId.get(id);
     if (!edge) return [];
     const source = issuesById.get(edge.source);

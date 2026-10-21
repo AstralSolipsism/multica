@@ -600,8 +600,11 @@ describe("dagBusSelectionRows", () => {
   );
   const index = createDagModelIndex(graph);
   const overview = computeDagOverview(index, { showCompleted: false, showSatisfiedDependencies: false });
+  const overviewPlan = dagOverviewLayoutInput(overview);
   const states = dagDependencyStates({ kind: "overview", overview });
-  const issuesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const issuesById = new Map<string, { identifier: string | null; title: string }>(
+    graph.nodes.map((node) => [node.id, node]),
+  );
 
   it("resolves each original dependency as source → target without swapping", () => {
     const rows = dagBusSelectionRows({
@@ -609,6 +612,7 @@ describe("dagBusSelectionRows", () => {
       edges: graph.edges,
       issuesById,
       states,
+      plan: overviewPlan,
       showSatisfied: true,
     });
     expect(rows).toHaveLength(1);
@@ -625,6 +629,7 @@ describe("dagBusSelectionRows", () => {
       edges: graph.edges,
       issuesById,
       states,
+      plan: overviewPlan,
       showSatisfied: false,
     });
     expect(off.map((row) => row.id)).toEqual(["e-a2"]);
@@ -633,6 +638,7 @@ describe("dagBusSelectionRows", () => {
       edges: graph.edges,
       issuesById,
       states,
+      plan: overviewPlan,
       showSatisfied: true,
     });
     expect(on.map((row) => row.id)).toEqual(["e-a1", "e-a2"]);
@@ -642,8 +648,28 @@ describe("dagBusSelectionRows", () => {
         edges: graph.edges,
         issuesById,
         states,
+        plan: overviewPlan,
         showSatisfied: false,
       }),
     ).toEqual([]);
+  });
+
+  it("keeps satisfied originals listed inside a line even while the switch is off", () => {
+    const line = computeDagLine(index, "r2");
+    if (!line) throw new Error("no line r2");
+    const linePlan = dagLineLayoutInput(line);
+    const lineStates = dagDependencyStates({ kind: "line", line });
+    // Line edges always paint (OL-1052): the dropdown must match the canvas,
+    // so a satisfied original stays listed while the switch is off.
+    expect(
+      dagBusSelectionRows({
+        dependencyIds: ["e-a1", "e-a2"],
+        edges: graph.edges,
+        issuesById,
+        states: lineStates,
+        plan: linePlan,
+        showSatisfied: false,
+      }).map((row) => row.id),
+    ).toEqual(["e-a1", "e-a2"]);
   });
 });

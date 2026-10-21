@@ -369,15 +369,16 @@ export function DagView({
   // "source → target" rows; endpoints resolve against the full graph, and
   // satisfied originals follow their display switch.
   const busSelection = useMemo<DagBusSelectionItem[] | null>(() => {
-    if (!selectedDependencyIds?.length || !graph || !paintedModel) return null;
+    if (!selectedDependencyIds?.length || !graph || !paintedModel || !paintedPlan) return null;
     return dagBusSelectionRows({
       dependencyIds: selectedDependencyIds,
       edges: graph.edges,
       issuesById,
       states: dagDependencyStates(paintedModel),
+      plan: paintedPlan,
       showSatisfied,
     });
-  }, [selectedDependencyIds, graph, issuesById, paintedModel, showSatisfied]);
+  }, [selectedDependencyIds, graph, issuesById, paintedModel, paintedPlan, showSatisfied]);
 
   // An emptied dropdown (everything satisfied while its switch is off)
   // clears the bus selection instead of showing "汇总 0 条依赖".
