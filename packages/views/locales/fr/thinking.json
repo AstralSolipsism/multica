@@ -1,0 +1,32 @@
+{
+  "badge_fallback": "Par défaut",
+  "mode_adapt": "Adaptatif",
+  "mode_fixed": "Fixe",
+  "decision_count_one": "{{count}} décision",
+  "decision_count_other": "{{count}} décisions",
+  "peak_level": "pic {{level}}",
+  "summary_fixed": "Fixe · {{level}}",
+  "trend_up": "monté par rapport à l'étape précédente",
+  "trend_down": "descendu par rapport à l'étape précédente",
+  "tooltip": {
+    "decision_line": "Décision dynamique Jev : {{level}}",
+    "confidence": "confiance {{value}} %",
+    "latency": "{{ms}} ms",
+    "source": "source : {{name}}",
+    "probabilities": "Distribution des probabilités",
+    "fell_back": "Retour au niveau par défaut : {{reason}}",
+    "reason_timeout": "délai dépassé",
+    "reason_error": "erreur",
+    "reason_invalid": "résultat invalide",
+    "reason_breaker": "disjoncteur ouvert",
+    "reason_disabled": "désactivé sur cette machine",
+    "reason_no_candidates": "aucun niveau candidat",
+    "reason_unknown": "raison inconnue",
+    "fixed": "Niveau fixe",
+    "sequence": "Niveau par étape",
+    "step_default": "par défaut",
+    "fallback_count_one": "{{count}} retour",
+    "fallback_count_other": "{{count}} retours"
+  },
+  "source_self_hosted": "Auto-hébergé"
+}

@@ -7,6 +7,7 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { api } from "@multica/core/api";
 import type { SupportedLocale } from "@multica/core/i18n";
 import type { AgentRuntime, AgentTask } from "@multica/core/types/agent";
+import type { TaskMessagePayload } from "@multica/core/types/events";
 import { useTranscriptViewStore } from "@multica/core/agents/stores";
 import { renderWithI18n } from "../../test/i18n";
 import { AgentTranscriptDialog } from "./agent-transcript-dialog";
@@ -219,6 +220,7 @@ function renderDialog(
     task?: AgentTask;
     isLive?: boolean;
     locale?: SupportedLocale;
+    messages?: readonly TaskMessagePayload[];
   } = {},
 ) {
   return renderWithI18n(
@@ -227,6 +229,7 @@ function renderDialog(
       onOpenChange={vi.fn()}
       task={options.task ?? baseTask}
       items={dialogItems}
+      messages={options.messages}
       agentName="Codex"
       isLive={options.isLive}
     />,
@@ -1163,5 +1166,56 @@ describe("tool output completeness", () => {
 
     expect(screen.queryByText(/only the beginning was kept/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/cannot be confirmed|completeness/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("AgentTranscriptDialog thinking-level badge", () => {
+  const tagged = (
+    seq: number,
+    level: string,
+    step: number,
+    extra: Record<string, unknown> = {},
+  ): TaskMessagePayload => ({
+    task_id: "task-1",
+    issue_id: "issue-1",
+    seq,
+    type: "thinking",
+    metadata: { thinking: { level, mode: "adapt", step, ...extra } },
+  });
+
+  it("shows the current level next to the status chip while the run is live", () => {
+    renderDialog([], {
+      task: liveTask,
+      isLive: true,
+      messages: [tagged(1, "low", 1), tagged(2, "xhigh", 2)],
+    });
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(screen.getByText("xhigh")).toBeInTheDocument();
+  });
+
+  it("switches to the run summary once the run has ended", () => {
+    renderDialog([], {
+      messages: [
+        tagged(1, "low", 1),
+        tagged(2, "xhigh", 2),
+        tagged(3, "", 3, { fallback: "timeout" }),
+      ],
+    });
+    expect(screen.getByText("Adapt · 2 decisions · peak xhigh")).toBeInTheDocument();
+    expect(screen.queryByText("xhigh")).not.toBeInTheDocument();
+  });
+
+  it("renders no badge for runs whose messages carry no metadata", () => {
+    renderDialog(items, {
+      messages: [
+        { task_id: "task-1", issue_id: "issue-1", seq: 1, type: "text", content: "hello" },
+      ],
+    });
+    expect(screen.queryByText(/Adapt ·/)).not.toBeInTheDocument();
+  });
+
+  it("renders no badge when the caller has no raw messages", () => {
+    renderDialog(items);
+    expect(screen.queryByText(/Adapt ·/)).not.toBeInTheDocument();
   });
 });

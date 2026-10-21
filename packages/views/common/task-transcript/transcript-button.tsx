@@ -91,7 +91,10 @@ export function TranscriptButton({
   // when the trigger lives elsewhere, those never happen.
   const returnFocus = finalFocus ?? fromKeyboard;
   const [loading, setLoading] = useState(false);
-  const [loadedItems, setLoadedItems] = useState<TimelineItem[] | null>(null);
+  const [loaded, setLoaded] = useState<{
+    items: TimelineItem[];
+    messages: TaskMessagePayload[];
+  } | null>(null);
   const open = controlledOpen ?? uncontrolledOpen;
   const setOpen = controlledOnOpenChange ?? setUncontrolledOpen;
 
@@ -117,7 +120,7 @@ export function TranscriptButton({
   }, [liveCacheMode, open]);
 
   // Live mode renders from the cache; lazy/provided modes from local state.
-  const items = providedItems ?? loadedItems ?? [];
+  const items = providedItems ?? loaded?.items ?? [];
 
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
@@ -130,7 +133,7 @@ export function TranscriptButton({
         setOpen(true, keyboard);
         return;
       }
-      if (providedItems !== undefined || loadedItems !== null) {
+      if (providedItems !== undefined || loaded !== null) {
         setOpen(true, keyboard);
         return;
       }
@@ -138,17 +141,17 @@ export function TranscriptButton({
       api
         .listTaskMessages(task.id)
         .then((msgs) => {
-          setLoadedItems(buildTimeline(msgs));
+          setLoaded({ items: buildTimeline(msgs), messages: msgs });
           setOpen(true, keyboard);
         })
         .catch((err) => {
           console.error(err);
-          setLoadedItems([]);
+          setLoaded({ items: [], messages: [] });
           setOpen(true, keyboard);
         })
         .finally(() => setLoading(false));
     },
-    [liveCacheMode, providedItems, loadedItems, setOpen, task.id],
+    [liveCacheMode, providedItems, loaded, setOpen, task.id],
   );
 
   useEffect(() => {
@@ -204,6 +207,7 @@ export function TranscriptButton({
             onOpenChange={setOpen}
             task={task}
             items={items}
+            messages={loaded?.messages}
             agentName={agentName}
             isLive={isLive}
             finalFocus={returnFocus}
@@ -282,6 +286,7 @@ function LiveTranscriptDialog({
       onOpenChange={onOpenChange}
       task={task}
       items={items}
+      messages={data ?? []}
       agentName={agentName}
       isLive={isLive}
       finalFocus={finalFocus}

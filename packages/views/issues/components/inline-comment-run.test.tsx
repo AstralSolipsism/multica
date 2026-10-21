@@ -448,3 +448,61 @@ describe("InlineCommentRun", () => {
     expect(screen.getByText("Cancelled")).toBeInTheDocument();
   });
 });
+
+describe("InlineCommentRun thinking-level badge", () => {
+  const tagged = (
+    seq: number,
+    level: string,
+    step: number,
+    extra: Record<string, unknown> = {},
+  ): TaskMessagePayload => ({
+    task_id: id,
+    issue_id: "issue",
+    seq,
+    type: "thinking",
+    metadata: { thinking: { level, mode: "adapt", step, ...extra } },
+  });
+
+  it("shows the current level next to the activity summary and keeps row expansion working", async () => {
+    vi.mocked(api.listTaskMessages).mockResolvedValue([
+      tagged(1, "low", 1),
+      { task_id: id, issue_id: "issue", seq: 2, type: "tool_use", tool: "exec_command",
+        input: { command: "pnpm test" }, metadata: { thinking: { level: "xhigh", mode: "adapt", step: 2 } } },
+    ]);
+    setup(task());
+    const badge = await screen.findByText("xhigh");
+    // The summary text node is untouched beside the badge.
+    expect(screen.getByText("pnpm test")).toBeInTheDocument();
+    expect(badge).toHaveTextContent("↑");
+    const trigger = screen.getByRole("button", { name: /View activity/ });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    // A click landing on the badge itself still toggles the row.
+    fireEvent.click(badge);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByText("Open full log")).toBeInTheDocument();
+  });
+
+  it("shows the fallback state as the default level", async () => {
+    vi.mocked(api.listTaskMessages).mockResolvedValue([
+      tagged(1, "high", 1),
+      tagged(2, "", 2, { fallback: "no_candidates" }),
+    ]);
+    setup(task());
+    expect(await screen.findByText("Default")).toBeInTheDocument();
+  });
+
+  it("renders no badge for streams without metadata", async () => {
+    vi.mocked(api.listTaskMessages).mockResolvedValue(messages);
+    setup(task());
+    await screen.findByText("pnpm test");
+    expect(document.querySelector('[data-slot="tooltip-trigger"][class*="font-mono"]')).toBeNull();
+  });
+
+  it("drops the badge once the run is no longer active", async () => {
+    vi.mocked(api.listTaskMessages).mockResolvedValue([tagged(1, "xhigh", 1)]);
+    const { rerender } = setup(task());
+    await screen.findByText("xhigh");
+    rerender(task({ status: "completed", completed_at: "2026-09-07T00:01:00Z" }));
+    await waitFor(() => expect(screen.queryByText("xhigh")).not.toBeInTheDocument());
+  });
+});
