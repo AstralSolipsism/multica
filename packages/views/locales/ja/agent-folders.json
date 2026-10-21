@@ -1,0 +1,72 @@
+{
+  "tree": {
+    "breadcrumb_aria": "フォルダの場所",
+    "up": "1つ上へ",
+    "new_folder": "新規フォルダ",
+    "squad_new_folder_hint": "スクワッドフォルダにはスクワッドのメンバーが表示されます。メンバーは「スクワッド」ページで管理します。",
+    "flat_results": "すべてのフォルダの結果を表示中",
+    "flat_archived": "すべてのフォルダのアーカイブ済みエージェントを表示中",
+    "empty_folder": "このフォルダは空です。",
+    "unavailable": "フォルダを利用できないため、エージェントをフラットリストで表示しています。",
+    "retry": "再試行",
+    "open_folder": "「{{name}}」を開く",
+    "folder_agent_count_other": "{{count}} 件のエージェント",
+    "squad_label": "スクワッド",
+    "leader_label": "リーダー",
+    "folder_actions": "「{{name}}」の操作",
+    "open_squad": "スクワッドを開く",
+    "rename_folder": "名前を変更",
+    "move_folder": "移動",
+    "delete_folder": "削除",
+    "squad_move_forbidden": "スクワッドフォルダを移動できるのはスクワッドの作成者またはワークスペースのオーナー/管理者のみです。"
+  },
+  "folder_form": {
+    "create_title": "新規フォルダ",
+    "rename_title": "フォルダ名を変更",
+    "name_label": "名前",
+    "name_placeholder": "フォルダ名",
+    "create": "作成",
+    "save": "保存",
+    "saving": "保存中...",
+    "cancel": "キャンセル",
+    "failed": "フォルダを保存できませんでした。もう一度お試しください。"
+  },
+  "folder_move": {
+    "title": "フォルダを移動",
+    "squad_title": "スクワッドフォルダを移動",
+    "description": "「{{name}}」の移動先：",
+    "root_option": "ルート",
+    "confirm": "移動",
+    "moving": "移動中...",
+    "cancel": "キャンセル",
+    "failed": "フォルダを移動できませんでした。もう一度お試しください。"
+  },
+  "folder_delete": {
+    "title": "このフォルダを削除しますか？",
+    "description": "「{{name}}」を削除します。含まれるエージェント、サブフォルダ、スクワッドフォルダは1階層上に移動し、エージェントとスクワッドは削除されません。",
+    "confirm": "削除",
+    "deleting": "削除中...",
+    "cancel": "キャンセル",
+    "failed": "フォルダを削除できませんでした。もう一度お試しください。"
+  },
+  "move_agents": {
+    "title_other": "{{count}} 件のエージェントを移動",
+    "place_title": "フォルダに入れる",
+    "menu_move": "移動...",
+    "menu_place": "フォルダにも入れる...",
+    "batch_move": "フォルダに移動",
+    "destination": "移動先",
+    "root_option": "ルート",
+    "squad_member_note": "スクワッドメンバーはスクワッドフォルダに残ります。ここではカスタムフォルダへの配置だけを設定します。",
+    "squad_member_root_note": "スクワッドメンバーはスクワッドフォルダに残ります。配置を外すとルートには表示されず、スクワッドフォルダにのみ表示されます。",
+    "confirm": "移動",
+    "place_confirm": "入れる",
+    "moving": "移動中...",
+    "cancel": "キャンセル",
+    "done_other": "{{count}} 件のエージェントを移動しました。",
+    "place_done_other": "{{count}} 件のエージェントを入れました。",
+    "partial": "{{total}} 件中 {{done}} 件を移動しました。残りは失敗しました。",
+    "failed": "エージェントを移動できませんでした。もう一度お試しください。",
+    "no_permission": "選択したすべてのエージェントを移動する権限がありません。"
+  }
+}

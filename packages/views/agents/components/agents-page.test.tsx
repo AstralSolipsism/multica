@@ -66,6 +66,15 @@ vi.mock("@tanstack/react-query", () => ({
     if (key === "agent-run-counts") {
       return { data: mocks.runCounts, isPending: mocks.runCountsPending };
     }
+    // OL-1030: the page now also reads the folder tree; hand it an empty one.
+    if (options.queryKey?.includes("agent-folders")) {
+      return {
+        data: { folders: [], placements: [], squads: [] },
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      };
+    }
     return { data: [], isLoading: false, isPending: false };
   },
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
@@ -137,6 +146,13 @@ vi.mock("@multica/core/workspace/queries", () => ({
   agentListOptions: () => ({ queryKey: ["agents"] }),
   memberListOptions: () => ({ queryKey: ["members"] }),
   workspaceKeys: { agents: (wsId: string) => ["agents", wsId] },
+}));
+
+vi.mock("@multica/core/agents/folder-queries", () => ({
+  agentFolderTreeOptions: () => ({
+    queryKey: ["workspaces", "workspace-1", "agent-folders"],
+  }),
+  invalidateAgentFolderQueries: vi.fn(),
 }));
 
 vi.mock("@multica/core/runtimes", () => ({

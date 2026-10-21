@@ -1,0 +1,72 @@
+{
+  "tree": {
+    "breadcrumb_aria": "文件夹位置",
+    "up": "上一级",
+    "new_folder": "新建文件夹",
+    "squad_new_folder_hint": "小队文件夹列出的是小队成员，请在 \"小队\" 页维护成员。",
+    "flat_results": "显示所有文件夹中的结果",
+    "flat_archived": "显示所有文件夹中已归档的智能体",
+    "empty_folder": "此文件夹为空。",
+    "unavailable": "文件夹暂时不可用，已改为平铺显示智能体。",
+    "retry": "重试",
+    "open_folder": "打开 \"{{name}}\"",
+    "folder_agent_count_other": "{{count}} 个智能体",
+    "squad_label": "小队",
+    "leader_label": "队长",
+    "folder_actions": "\"{{name}}\" 的操作",
+    "open_squad": "打开小队",
+    "rename_folder": "重命名",
+    "move_folder": "移动",
+    "delete_folder": "删除",
+    "squad_move_forbidden": "仅小队创建者或工作区所有者/管理员可以移动小队文件夹。"
+  },
+  "folder_form": {
+    "create_title": "新建文件夹",
+    "rename_title": "重命名文件夹",
+    "name_label": "名称",
+    "name_placeholder": "文件夹名称",
+    "create": "创建",
+    "save": "保存",
+    "saving": "保存中...",
+    "cancel": "取消",
+    "failed": "无法保存文件夹，请重试。"
+  },
+  "folder_move": {
+    "title": "移动文件夹",
+    "squad_title": "移动小队文件夹",
+    "description": "将 \"{{name}}\" 移动到：",
+    "root_option": "根目录",
+    "confirm": "移动",
+    "moving": "移动中...",
+    "cancel": "取消",
+    "failed": "无法移动文件夹，请重试。"
+  },
+  "folder_delete": {
+    "title": "删除该文件夹？",
+    "description": "文件夹 \"{{name}}\" 将被删除，其中的智能体、子文件夹和小队文件夹会上移一级，不会删除智能体和小队。",
+    "confirm": "删除",
+    "deleting": "删除中...",
+    "cancel": "取消",
+    "failed": "无法删除文件夹，请重试。"
+  },
+  "move_agents": {
+    "title_other": "移动 {{count}} 个智能体",
+    "place_title": "放入文件夹",
+    "menu_move": "移动到...",
+    "menu_place": "同时放入文件夹...",
+    "batch_move": "移动到文件夹",
+    "destination": "目标位置",
+    "root_option": "根目录",
+    "squad_member_note": "小队成员仍留在小队文件夹中，这里只设置它在自定义文件夹中的放置。",
+    "squad_member_root_note": "小队成员仍留在小队文件夹中；去掉放置后，它只出现在小队文件夹中，不会出现在根目录。",
+    "confirm": "移动",
+    "place_confirm": "放入",
+    "moving": "移动中...",
+    "cancel": "取消",
+    "done_other": "已移动 {{count}} 个智能体。",
+    "place_done_other": "已放入 {{count}} 个智能体。",
+    "partial": "已移动 {{done}}/{{total}} 个，其余失败。",
+    "failed": "无法移动智能体，请重试。",
+    "no_permission": "你没有移动全部所选智能体的权限。"
+  }
+}

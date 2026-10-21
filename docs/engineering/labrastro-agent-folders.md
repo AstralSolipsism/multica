@@ -177,6 +177,36 @@ Generated sqlc models/queries are derived output. No upstream agent or squad
 write path changes, new WebSocket event, or front-end page is included. OL-1030
 will append its page mount points here.
 
+## Front-end page (OL-1030)
+
+The agents page mounts the folder explorer. Logic lives in fork modules under
+`packages/views/agents/`: `lib/agent-folder-tree.ts` (pure tree model: squad
+folders derived with squad id = folder id, move destinations),
+`components/agents-page-folder-explorer.tsx` (page hook: URL location,
+hierarchy/flat organization, folder rows and menus, dialogs),
+`components/agent-folder-dialogs.tsx` (create/rename/move/delete folder, move
+agents) and `components/agent-tree-actions.tsx` (row-menu and batch-toolbar
+mounts). Copy lives in the `agent-folders` locale namespace. The shared
+`packages/views/common/folder-explorer/` components carry the agents-page
+usage (icon slot and row class on `FolderExplorerRow`); the skills page is
+unchanged.
+
+| Upstream file | Retained addition |
+| --- | --- |
+| `packages/views/agents/components/agents-page.tsx` | Hook call, `navigationBar`/`notice`/`dialogs` mounts, `organizeRows` list model, aux-row render branch, path-hint and leader-badge props on `NameCell`, `withCurrentFolder` on detail links, `treeActions` props, tree-loading skeleton gate, `hasFolders` in the empty check |
+| `packages/views/agents/components/agent-row-actions.tsx` | `treeActions` prop and one `AgentTreeRowMenuItems` mount |
+| `packages/views/agents/components/agent-batch-toolbar.tsx` | `treeActions` prop and one `AgentTreeBatchMoveAction` mount |
+| `packages/views/agents/components/agent-detail-page.tsx` | `agentsPath` (via `folderLocationPath` + the `folder` param) feeding every back-to-list link |
+| `packages/views/agents/components/agents-page.test.tsx` | Folder-tree query mock returning an empty tree |
+| `packages/views/agents/components/agent-detail-page.test.tsx` | Back-link folder-param test |
+| `packages/views/locales/index.ts`, `packages/views/i18n/resources-types.ts` | `agent-folders` namespace registration |
+
+E2E: `e2e/agent-folders.spec.ts` drives the acceptance flow (create folder in
+place → move agent → squad folder appears on squad creation → move squad
+folder into a custom folder → place a squad member additionally → breadcrumb
+back to root) with `TestApiClient` plus direct DB seeding for runtimes and
+agents.
+
 ## Rollback
 
 Remove the mounts above and the fork modules, regenerate sqlc, and deploy

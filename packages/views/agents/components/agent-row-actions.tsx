@@ -37,6 +37,11 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { useT } from "../../i18n";
 import { AppLink, useIntentNavigate } from "../../navigation";
+// Labrastro fork (OL-1030): folder-tree move/place menu item.
+import {
+  AgentTreeRowMenuItems,
+  type AgentTreeActions,
+} from "./agent-tree-actions";
 
 interface AgentRowActionsProps {
   agent: Agent;
@@ -50,6 +55,9 @@ interface AgentRowActionsProps {
   // this agent's config as a template. A href rather than a callback so the
   // menu item is a real link (modifier-click opens it in a new tab).
   duplicateHref: string;
+  /** Labrastro fork (OL-1030): folder move/place actions when the folder
+   *  tree loaded. */
+  treeActions?: AgentTreeActions;
 }
 
 /**
@@ -68,6 +76,7 @@ export function AgentRowActions({
   presence,
   canManage,
   duplicateHref,
+  treeActions,
 }: AgentRowActionsProps) {
   const { t } = useT("agents");
   const { t: tCommon } = useT("common");
@@ -180,6 +189,12 @@ export function AgentRowActions({
               {t(($) => $.row_actions.duplicate)}
             </DropdownMenuItem>
           )}
+          {/* Labrastro fork (OL-1030): folder move / also-place. */}
+          <AgentTreeRowMenuItems
+            agent={agent}
+            canManage={canManage}
+            treeActions={treeActions}
+          />
           {showRestore && (
             <DropdownMenuItem onClick={handleRestore}>
               <RotateCcw className="h-3.5 w-3.5" />

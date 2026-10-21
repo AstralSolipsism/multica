@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { Folder } from "lucide-react";
 import { ListGridCell, ListGridRow } from "@multica/ui/components/ui/list-grid";
+import { cn } from "@multica/ui/lib/utils";
 
 export function FolderExplorerRow({
   name,
@@ -10,6 +11,8 @@ export function FolderExplorerRow({
   countLabel,
   openLabel,
   onOpen,
+  icon,
+  className,
   leading,
   trailing,
   actions,
@@ -19,12 +22,17 @@ export function FolderExplorerRow({
   countLabel: string;
   openLabel: string;
   onOpen: () => void;
+  /** Replaces the default folder glyph (e.g. a squad avatar). */
+  icon?: ReactNode;
+  /** Extra row classes — e.g. a taller row to match the host list's fixed
+   *  virtualizer height. */
+  className?: string;
   leading?: ReactNode;
   trailing?: ReactNode;
   actions?: ReactNode;
 }) {
   return (
-    <ListGridRow className="cursor-pointer" onClick={onOpen}>
+    <ListGridRow className={cn("cursor-pointer", className)} onClick={onOpen}>
       {leading}
       <ListGridCell className="px-0">
         <button
@@ -36,7 +44,9 @@ export function FolderExplorerRow({
           }}
           className="flex h-full w-full min-w-0 items-center gap-1.5 rounded-xs px-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
-          <Folder aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          {icon ?? (
+            <Folder aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          )}
           <span className="min-w-0 truncate text-body font-medium">{name}</span>
           {typeLabel && (
             <span className="shrink-0 rounded-xs bg-muted px-1 py-0.5 text-caption text-muted-foreground">

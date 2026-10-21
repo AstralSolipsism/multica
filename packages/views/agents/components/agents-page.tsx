@@ -234,6 +234,9 @@ export function rowMatchesFilters(
  */
 import { isAccessChangeReady } from "@multica/core/agents";
 import { AgentBatchToolbar } from "./agent-batch-toolbar";
+// Labrastro fork (OL-1030): folder explorer — hierarchy view, squad folders,
+// move/place dialogs. Logic lives in the fork module; this file only mounts it.
+import { useAgentsPageFolderExplorer } from "./agents-page-folder-explorer";
 export { isAccessChangeReady };
 
 export interface AgentsPageProps {
@@ -362,7 +365,19 @@ function CheckboxCell({
 // documented exception to the single-line rule — agents are few and
 // identity-rich, so this is the "team roster" form (GitHub org members,
 // Slack member list).
-function NameCell({ row }: { row: AgentListRow }) {
+// Labrastro fork (OL-1030): in the folder explorer's flat view the second
+// line carries the agent's folder paths instead of the description (first
+// path + "+N" with a hover list of the rest); inside a squad folder the
+// leader row carries a badge.
+function NameCell({
+  row,
+  pathHints,
+  leaderLabel,
+}: {
+  row: AgentListRow;
+  pathHints?: string[];
+  leaderLabel?: string;
+}) {
   const { t } = useT("agents");
   const { agent, isOwnedByMe } = row;
   const isArchived = !!agent.archived_at;
@@ -400,8 +415,37 @@ function NameCell({ row }: { row: AgentListRow }) {
               {t(($) => $.row.you)}
             </span>
           )}
+          {leaderLabel && (
+            <span className="shrink-0 rounded-xs bg-muted px-1 text-micro font-medium text-muted-foreground">
+              {leaderLabel}
+            </span>
+          )}
         </div>
-        {agent.description ? (
+        {pathHints ? (
+          <div className="mt-0.5 flex min-w-0 items-center gap-1 text-caption text-muted-foreground">
+            <span className="min-w-0 truncate">{pathHints[0]}</span>
+            {pathHints.length > 1 && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      onClick={(event) => event.stopPropagation()}
+                      className="shrink-0 rounded-xs bg-muted px-1 text-micro font-medium text-muted-foreground"
+                    >
+                      +{pathHints.length - 1}
+                    </button>
+                  }
+                />
+                <TooltipContent>
+                  {pathHints.map((hint) => (
+                    <div key={hint}>{hint}</div>
+                  ))}
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+        ) : agent.description ? (
           <div className="mt-0.5 truncate text-caption text-muted-foreground">
             {agent.description}
           </div>
@@ -840,6 +884,17 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     return me?.role === "owner" || me?.role === "admin";
   }, [members, currentUser]);
 
+  // Labrastro fork (OL-1030): hierarchy view with custom + squad folders.
+  const agentFolders = useAgentsPageFolderExplorer({
+    wsId,
+    currentUserId: currentUser?.id ?? null,
+    isAdmin: isWorkspaceAdmin,
+    scope,
+    search,
+    filters,
+    onMoved: () => setSelectedIds(new Set()),
+  });
+
   // Scope counts come from the FULL set (filters never affect them).
   // Archived ignores the ownership lens (see the view store comment).
   const scopeCounts = useMemo<Record<AgentsScope, number>>(() => {
@@ -929,6 +984,12 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     return filtered;
   }, [scopeRows, search, filters, sortField, sortDirection]);
 
+  // Labrastro fork (OL-1030): wrap the sorted rows with the current folder's
+  // direct folders / path hints; in hierarchy mode this also scopes the
+  // entries to the current location.
+  const { organizeRows } = agentFolders;
+  const listModel = useMemo(() => organizeRows(rows), [rows, organizeRows]);
+
   const noMatchText = useMemo(() => {
     const query = search.trim();
     if (query) {
@@ -957,7 +1018,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
   // scrollbar spans the full pane height (Linear's structure).
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
-    count: rows.length,
+    count: listModel.rows.length,
     getScrollElement: () => listScrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 10,
@@ -971,12 +1032,18 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     [paths],
   );
 
-  const selectedRows = rows.filter((row) => selectedIds.has(row.agent.id));
-  const allSelected = rows.length > 0 && selectedRows.length === rows.length;
+  const selectedRows = listModel.agentRows.filter((row) =>
+    selectedIds.has(row.agent.id),
+  );
+  const allSelected =
+    listModel.agentRows.length > 0 &&
+    selectedRows.length === listModel.agentRows.length;
   const someSelected = selectedRows.length > 0 && !allSelected;
   const handleToggleAll = () => {
     setSelectedIds(
-      allSelected ? new Set() : new Set(rows.map((r) => r.agent.id)),
+      allSelected
+        ? new Set()
+        : new Set(listModel.agentRows.map((r) => r.agent.id)),
     );
   };
 
@@ -1001,7 +1068,8 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
   }
 
   const totalCount = agents.filter((a) => !a.archived_at).length;
-  const showEmpty = !isLoading && agents.length === 0;
+  const showEmpty =
+    !isLoading && agents.length === 0 && !agentFolders.hasFolders;
 
   // The active sort field / availability filter reads columns that arrive in
   // separate queries from the main agent list (activity → lastActiveDays,
@@ -1033,7 +1101,9 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
         onCreate={() => navigation.push(paths.newAgent())}
       />
 
-      {isLoading || (!showEmpty && !listReady) ? (
+      {agentFolders.notice}
+
+      {isLoading || agentFolders.treeLoading || (!showEmpty && !listReady) ? (
         <div className="flex-1 overflow-y-auto @container">
           <LoadingSkeleton />
         </div>
@@ -1043,6 +1113,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
         </div>
       ) : (
         <>
+          {agentFolders.navigationBar}
           <AgentListToolbar
             scope={scope}
             onScopeChange={setScope}
@@ -1060,7 +1131,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
             onToggleColumn={toggleColumn}
             allRows={scopeRows}
             members={members}
-            visibleCount={rows.length}
+            visibleCount={listModel.agentRows.length}
           />
           <div
             ref={listScrollRef}
@@ -1086,27 +1157,37 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                     virtualPadding.bottom + LIST_GRID_BOTTOM_CLEARANCE,
                 }}
               >
-                {rows.length === 0 && (
+                {listModel.rows.length === 0 && (
                   <div className="col-span-full py-16 text-center text-body text-muted-foreground">
-                    {noMatchText}
+                    {listModel.emptyMessage ?? noMatchText}
                   </div>
                 )}
                 {virtualItems.map((vi) => {
-                  const row = rows[vi.index];
-                  if (!row) return null;
+                  const listRow = listModel.rows[vi.index];
+                  if (!listRow) return null;
+                  // Labrastro fork (OL-1030): folder rows render through the
+                  // explorer; agent rows stay upstream.
+                  if (listRow.kind !== "agent") {
+                    return agentFolders.renderRow(listRow);
+                  }
+                  const row = listRow.row;
                   return (
                     <ListGridRow
                       key={row.agent.id}
                       className={`h-16 cursor-pointer ${
                         selectedIds.has(row.agent.id) ? "bg-accent/30" : ""
                       }`}
-                      {...rowLink(paths.agentDetail(row.agent.id), row.agent.name)}
+                      {...rowLink(agentFolders.withCurrentFolder(paths.agentDetail(row.agent.id)), row.agent.name)}
                     >
                       <CheckboxCell
                         checked={selectedIds.has(row.agent.id)}
                         onToggle={() => toggleSelected(row.agent.id)}
                       />
-                      <NameCell row={row} />
+                      <NameCell
+                        row={row}
+                        pathHints={listRow.pathHints}
+                        leaderLabel={listRow.leaderLabel}
+                      />
                       {isColVisible("status") ? (
                         <StatusCell row={row} />
                       ) : (
@@ -1167,6 +1248,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                             presence={row.presence}
                             canManage={row.canManage}
                             duplicateHref={duplicateHref(row.agent)}
+                            treeActions={agentFolders.treeActions}
                           />
                         </span>
                       </ListGridCell>
@@ -1184,7 +1266,10 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
         members={members}
         currentUserId={currentUser?.id ?? null}
         onClear={() => setSelectedIds(new Set())}
+        treeActions={agentFolders.treeActions}
       />
+
+      {agentFolders.dialogs}
 
     </div>
   );
