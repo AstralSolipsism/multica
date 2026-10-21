@@ -36,7 +36,7 @@ describe("fork API installation", () => {
     expect(target.prototype.importSkillParsed).toBe(original);
   });
 
-  it.each(["skill", "message-delivery", "dependency", "lark", "quota", "ysk", "github"])("loads the %s module before the client without an initialization cycle", async (name) => {
+  it.each(["agent-folder", "skill", "message-delivery", "dependency", "lark", "quota", "ysk", "github"])("loads the %s module before the client without an initialization cycle", async (name) => {
     vi.resetModules();
     await import(`./labrastro-${name}-api.ts`);
     const { ApiClient } = await import("./client");

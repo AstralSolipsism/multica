@@ -974,3 +974,223 @@ func TestLive(t *testing.T) {
 	}
 	t.Logf("live decision: %+v", dec)
 }
+
+const selfHostedTestKey = "sk-selfhosted-LEAK"
+
+func TestResolveSources_SelfHosted(t *testing.T) {
+	// Valid URL, default model, no key.
+	got := ResolveSources("self-hosted", SourceEnv{SelfHostedURL: "http://127.0.0.1:8009/v1/systemone"})
+	if len(got) != 1 || got[0].Name != "self-hosted" {
+		t.Fatalf("sources = %+v", got)
+	}
+	if got[0].BaseURL != "http://127.0.0.1:8009/v1/systemone" {
+		t.Fatalf("base URL = %q", got[0].BaseURL)
+	}
+	if got[0].Model != "self-hosted" || got[0].BearerToken != "" {
+		t.Fatalf("source = %+v, want model self-hosted and no bearer", got[0])
+	}
+
+	// Custom model and API key.
+	got = ResolveSources("self-hosted", SourceEnv{
+		SelfHostedURL:    "https://jev.internal:8443/systemone",
+		SelfHostedModel:  "jev-finetune-1",
+		SelfHostedAPIKey: selfHostedTestKey,
+	})
+	if len(got) != 1 || got[0].Model != "jev-finetune-1" || got[0].BearerToken != selfHostedTestKey {
+		t.Fatalf("source = %+v", got)
+	}
+
+	// Missing or non-http(s) URLs skip the source (whitespace-only counts as missing).
+	for _, bad := range []string{"", "   ", "ftp://127.0.0.1:8009/v1/systemone", "127.0.0.1:8009/v1/systemone", "://no-scheme", "http://", "http:///v1/systemone"} {
+		if got := ResolveSources("self-hosted", SourceEnv{SelfHostedURL: bad}); len(got) != 0 {
+			t.Fatalf("url %q: sources = %+v, want skipped", bad, got)
+		}
+	}
+}
+
+func TestDecide_SelfHostedWireFormat(t *testing.T) {
+	var gotBody map[string]any
+	var gotAuth, gotCT, gotCE string
+	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
+		_ = json.Unmarshal(body, &gotBody)
+		gotAuth = r.Header.Get("Authorization")
+		gotCT = r.Header.Get("Content-Type")
+		gotCE = r.Header.Get("Content-Encoding")
+		return 200, okBody("high")
+	})
+	src := ResolveSources("self-hosted", SourceEnv{
+		SelfHostedURL:    rs.srv.URL + "/v1/systemone",
+		SelfHostedModel:  "jev-finetune-1",
+		SelfHostedAPIKey: selfHostedTestKey,
+	})
+	if len(src) != 1 {
+		t.Fatalf("sources = %+v", src)
+	}
+	c := New(Options{Sources: src})
+
+	dec, err := c.Decide(context.Background(), testReq())
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if dec.Source != "self-hosted" {
+		t.Fatalf("decision source = %q, want self-hosted", dec.Source)
+	}
+	if gotBody["model"] != "jev-finetune-1" {
+		t.Fatalf("model = %v", gotBody["model"])
+	}
+	if gotAuth != "Bearer "+selfHostedTestKey {
+		t.Fatalf("Authorization = %q", gotAuth)
+	}
+	if gotCT != "application/json" || gotCE != "" {
+		t.Fatalf("Content-Type = %q, Content-Encoding = %q", gotCT, gotCE)
+	}
+	q := gotBody["questions"].(map[string]any)["effort"].(map[string]any)
+	if q["type"] != "choice" || q["instructions"] != "pick effort" {
+		t.Fatalf("question = %v", q)
+	}
+	crit := q["criteria"].(map[string]any)
+	if len(crit) != 2 || crit["low"] != "mechanical" || crit["high"] != "deep" {
+		t.Fatalf("criteria = %v", crit)
+	}
+	if _, ok := gotBody["state"]; !ok {
+		t.Fatal("request body has no state")
+	}
+	if snap := c.Snapshot(); snap.ActiveSource != "self-hosted" || snap.Status != StatusAvailable {
+		t.Fatalf("snapshot = %+v, want active self-hosted/available", snap)
+	}
+
+	// Default model and no Authorization header without a key.
+	rs.setHandler(func(r *http.Request, body []byte) (int, string) {
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("Authorization = %q, want empty without a key", r.Header.Get("Authorization"))
+		}
+		return 200, okBody("low")
+	})
+	src = ResolveSources("self-hosted", SourceEnv{SelfHostedURL: rs.srv.URL + "/v1/systemone"})
+	c2 := New(Options{Sources: src})
+	if _, err := c2.Decide(context.Background(), testReq()); err != nil {
+		t.Fatalf("Decide (default model): %v", err)
+	}
+	if !strings.Contains(rs.lastBody(), `"model":"self-hosted"`) {
+		t.Fatalf("body = %s, want default model self-hosted", rs.lastBody())
+	}
+}
+
+func TestDecide_SelfHostedFailover(t *testing.T) {
+	// self-hosted first, opencode-free second: every failure class on the
+	// first source must fall through to the next one, and a success sets
+	// active_source to the fallback that answered.
+	ok := func(r *http.Request, body []byte) (int, string) { return 200, okBody("low") }
+	for _, tc := range []struct {
+		name       string
+		first      func(r *http.Request, body []byte) (int, string)
+		closed     bool   // bind then close the server: connection refused
+		wantSource string // expected Decision.Source / snapshot active_source
+		secondHits int    // requests the fallback source must receive
+	}{
+		{name: "success", first: ok, wantSource: "self-hosted", secondHits: 0},
+		{name: "timeout", first: func(r *http.Request, body []byte) (int, string) {
+			time.Sleep(800 * time.Millisecond)
+			return 200, okBody("low")
+		}, wantSource: "opencode-free", secondHits: 1},
+		{name: "http500", first: func(r *http.Request, body []byte) (int, string) { return 500, "down" }, wantSource: "opencode-free", secondHits: 1},
+		{name: "http400", first: func(r *http.Request, body []byte) (int, string) { return 400, "bad" }, wantSource: "opencode-free", secondHits: 1},
+		{name: "refused", first: ok, closed: true, wantSource: "opencode-free", secondHits: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			first := newRecordingServer(t, tc.first)
+			base := first.srv.URL
+			if tc.closed {
+				first.srv.Close()
+				base = first.srv.URL // still set: URL resolves, nothing listens
+			}
+			second := newRecordingServer(t, ok)
+			sources := ResolveSources("self-hosted,opencode-free", SourceEnv{
+				SelfHostedURL:    base + "/v1/systemone",
+				SelfHostedAPIKey: selfHostedTestKey,
+			})
+			if len(sources) != 2 {
+				t.Fatalf("sources = %+v", sources)
+			}
+			// Point the built-in opencode-free endpoint at the local second server.
+			sources[1].BaseURL = second.srv.URL
+			c := New(Options{Sources: sources, Timeout: 300 * time.Millisecond})
+			dec, err := c.Decide(context.Background(), testReq())
+			if err != nil {
+				t.Fatalf("Decide: %v", err)
+			}
+			if dec.Source != tc.wantSource {
+				t.Fatalf("decision source = %q, want %q", dec.Source, tc.wantSource)
+			}
+			if snap := c.Snapshot(); snap.ActiveSource != tc.wantSource {
+				t.Fatalf("snapshot active_source = %q, want %q", snap.ActiveSource, tc.wantSource)
+			}
+			if second.hits() != tc.secondHits {
+				t.Fatalf("second source hits = %d, want %d", second.hits(), tc.secondHits)
+			}
+		})
+	}
+}
+
+func TestSelfHostedSecretsAndURLHandling(t *testing.T) {
+	var logBuf strings.Builder
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	// An authenticated self-hosted source failing with connection refused:
+	// the *url.Error wrapped by trySource carries the request address (for
+	// local diagnostics), never the bearer key.
+	refused := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	refused.Close()
+	c := New(Options{
+		Sources: []Source{{Name: "self-hosted", BaseURL: refused.URL, BearerToken: selfHostedTestKey, Model: "self-hosted"}},
+		Timeout: 300 * time.Millisecond,
+	})
+	_, err := c.Decide(context.Background(), testReq())
+	if err == nil {
+		t.Fatal("want fallback")
+	}
+	snapBytes, _ := json.Marshal(c.Snapshot())
+	// Trigger both skip-warning paths (missing and non-http URLs) with a key
+	// set: the warnings must still not carry it, and each skip must warn
+	// exactly once. A valid-URL resolve must not warn at all.
+	skipCount := func() int { return strings.Count(logBuf.String(), "jev source skipped") }
+	_ = ResolveSources("self-hosted", SourceEnv{SelfHostedAPIKey: selfHostedTestKey})
+	if n := skipCount(); n != 1 {
+		t.Fatalf("missing URL: %d skip warnings, want exactly 1", n)
+	}
+	_ = ResolveSources("self-hosted", SourceEnv{SelfHostedURL: "ftp://x", SelfHostedAPIKey: selfHostedTestKey})
+	if n := skipCount(); n != 2 {
+		t.Fatalf("non-http URL: %d cumulative skip warnings, want exactly 2", n)
+	}
+	if got := ResolveSources("self-hosted", SourceEnv{
+		SelfHostedURL:    "http://127.0.0.1:8000/v1/systemone",
+		SelfHostedAPIKey: selfHostedTestKey,
+	}); len(got) != 1 {
+		t.Fatalf("valid URL with key: sources = %+v, want resolved", got)
+	}
+	if n := skipCount(); n != 2 {
+		t.Fatalf("valid URL resolve warned: %d skip warnings, want still 2", n)
+	}
+
+	// Key never leaks into errors, logs, or the snapshot.
+	for _, leak := range []string{err.Error(), logBuf.String(), string(snapBytes)} {
+		if strings.Contains(leak, selfHostedTestKey) || strings.Contains(leak, "Bearer ") {
+			t.Fatalf("key leaked into: %q", leak)
+		}
+	}
+	// URL never leaks into the snapshot (it MAY appear in errors and local logs).
+	if strings.Contains(string(snapBytes), refused.URL) {
+		t.Fatalf("URL leaked into snapshot: %s", snapBytes)
+	}
+	// Skip warnings name only the source and the reason, not the value.
+	if !strings.Contains(logBuf.String(), "jev source skipped") {
+		t.Fatalf("log capture is empty — the assertions above would be vacuous. log=%q", logBuf.String())
+	}
+	for _, line := range strings.Split(logBuf.String(), "\n") {
+		if strings.Contains(line, "ftp://") {
+			t.Fatalf("skip warning echoes variable value: %q", line)
+		}
+	}
+}

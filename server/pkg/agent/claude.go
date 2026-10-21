@@ -520,7 +520,7 @@ func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message,
 		case "text":
 			if block.Text != "" {
 				assistantText.WriteString(block.Text)
-				trySend(ch, Message{Type: MessageText, Content: block.Text})
+				trySend(ch, Message{Type: MessageText, Content: block.Text, ModelRequestID: content.ID, ParentToolUseID: msg.ParentToolUseID})
 			}
 		case "thinking":
 			// Claude Code carries the thinking text in the "thinking" field;
@@ -530,7 +530,7 @@ func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message,
 				thinking = block.Text
 			}
 			if thinking != "" {
-				trySend(ch, Message{Type: MessageThinking, Content: thinking})
+				trySend(ch, Message{Type: MessageThinking, Content: thinking, ModelRequestID: content.ID, ParentToolUseID: msg.ParentToolUseID})
 			}
 		case "redacted_thinking":
 			// Encrypted thinking carries no renderable text, but the turn is
@@ -542,10 +542,12 @@ func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message,
 				_ = json.Unmarshal(block.Input, &input)
 			}
 			trySend(ch, Message{
-				Type:   MessageToolUse,
-				Tool:   block.Name,
-				CallID: block.ID,
-				Input:  input,
+				Type:            MessageToolUse,
+				ModelRequestID:  content.ID,
+				ParentToolUseID: msg.ParentToolUseID,
+				Tool:            block.Name,
+				CallID:          block.ID,
+				Input:           input,
 			})
 		default:
 			// A block type we do not render may be carrying the model's answer

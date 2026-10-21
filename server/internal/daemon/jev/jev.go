@@ -19,6 +19,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -83,6 +84,9 @@ type SourceEnv struct {
 	DashScopeAPIKey      string
 	DashScopeWorkspaceID string
 	DashScopeRegion      string
+	SelfHostedURL        string
+	SelfHostedModel      string
+	SelfHostedAPIKey     string
 }
 
 // ResolveSources maps the ordered, comma-separated source names
@@ -128,6 +132,27 @@ func ResolveSources(namesCSV string, env SourceEnv) []Source {
 				Model:       dashscopeModel,
 				BearerToken: key,
 			})
+		case "self-hosted":
+			rawURL := strings.TrimSpace(env.SelfHostedURL)
+			u, urlErr := url.Parse(rawURL)
+			if urlErr != nil || rawURL == "" || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				// Warn with the reason only — never echo the variable's value.
+				slog.Warn("jev source skipped: MULTICA_JEV_SELF_HOSTED_URL missing or not an http/https URL", "source", name)
+				continue
+			}
+			model := strings.TrimSpace(env.SelfHostedModel)
+			if model == "" {
+				// Deliberately not laya-multilingual: on laya-serve that name
+				// routes to the raw base model the gate evaluation never
+				// approved (contract §10.2).
+				model = "self-hosted"
+			}
+			sources = append(sources, Source{
+				Name:        name,
+				BaseURL:     u.String(),
+				Model:       model,
+				BearerToken: strings.TrimSpace(env.SelfHostedAPIKey),
+			})
 		default:
 			slog.Warn("jev source skipped: unknown source name", "source", name)
 		}
@@ -148,6 +173,14 @@ type Request struct {
 	State        any
 	Instructions string
 	Options      []Option
+}
+
+// MarshalQuestionsJSON exports the same ordered question object sent to the
+// engine, so evaluation fixtures can be replayed without reordering options.
+func (r Request) MarshalQuestionsJSON() ([]byte, error) {
+	return json.Marshal(decideQuestions{Effort: decideQuestion{
+		Type: "choice", Instructions: r.Instructions, Criteria: orderedCriteria(r.Options),
+	}})
 }
 
 // Decision is a successful Jev answer. LatencyMS is the locally measured
@@ -199,7 +232,7 @@ func (e *FallbackError) Unwrap() error { return e.Err }
 type decideRequest struct {
 	Model     string          `json:"model"`
 	State     any             `json:"state"`
-	Questions decideQuestions `json:"questions"`
+	Questions json.RawMessage `json:"questions"`
 }
 
 type decideQuestions struct {
@@ -442,18 +475,14 @@ func (c *Client) trySource(ctx context.Context, src Source, req Request) (Decisi
 	sctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	criteria := make(orderedCriteria, 0, len(req.Options))
-	for _, opt := range req.Options {
-		criteria = append(criteria, opt)
+	questions, err := req.MarshalQuestionsJSON()
+	if err != nil {
+		return Decision{}, ReasonInvalid, fmt.Errorf("source %s: encode questions: %w", src.Name, err)
 	}
 	body, err := json.Marshal(decideRequest{
-		Model: src.Model,
-		State: req.State,
-		Questions: decideQuestions{Effort: decideQuestion{
-			Type:         "choice",
-			Instructions: req.Instructions,
-			Criteria:     criteria,
-		}},
+		Model:     src.Model,
+		State:     req.State,
+		Questions: questions,
 	})
 	if err != nil {
 		return Decision{}, ReasonInvalid, fmt.Errorf("source %s: encode request: %w", src.Name, err)
