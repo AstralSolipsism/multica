@@ -252,15 +252,37 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
       await page.getByRole("menuitemcheckbox", { name: "Highlight prerequisites" }).click();
     }
     await expect(page.locator("[data-dag-edge-layer] > g").first()).toHaveClass(/opacity-15/);
-    // Node dimming is a masked overlay above the z-index-2 cards: holes over
-    // the lit cards, none over d, and d's pixels really change (OL-284 review:
-    // the mask used to sit under the cards, dimming nothing).
+    // Node dimming is an even-odd path in the overlay above the z-index-2
+    // cards: holes over the lit cards, none over d, and d's pixels really
+    // change (OL-284 review: the mask used to sit under the cards, dimming
+    // nothing).
     const dimLayer = page.locator("[data-dag-overlay-layer]");
     await expect(dimLayer).toHaveCount(1);
     expect(await dimLayer.evaluate((el) => getComputedStyle(el).zIndex)).toBe("3");
-    // c is the focus anchor (lit through a hole); d is downstream (no hole).
-    await expect(page.locator(`[data-dag-dim-hole="${c.id}"]`)).toHaveCount(1);
-    await expect(page.locator(`[data-dag-dim-hole="${d.id}"]`)).toHaveCount(0);
+    // c is the focus anchor (its box is a hole subpath in the dim path);
+    // d is downstream (no hole). Holes start at (box.x + 2, box.y - 8).
+    const holes = await page.evaluate(([cId, dId]) => {
+      const flowPos = (id: string) => {
+        const el = document.querySelector(`.react-flow__node[data-id="${id}"]`) as HTMLElement | null;
+        let x = 0, y = 0, node: HTMLElement | null = el;
+        while (node?.classList.contains("react-flow__node")) {
+          const t = /translate\((-?[\d.]+)px, (-?[\d.]+)px\)/.exec(node.style.transform);
+          if (t) {
+            x += Number(t[1]);
+            y += Number(t[2]);
+          }
+          node = node.parentElement;
+        }
+        return { x, y };
+      };
+      const d = document.querySelector("[data-dag-dim-overlay]")!.getAttribute("d")!;
+      const subs = [...d.matchAll(/ M (-?[\d.]+) (-?[\d.]+) H/g)].map((m) => [Number(m[1]), Number(m[2])]);
+      const near = (pos: { x: number; y: number }) =>
+        subs.some(([hx, hy]) => Math.abs(hx - (pos.x + 2)) <= 2 && Math.abs(hy - (pos.y - 8)) <= 2);
+      return { c: near(flowPos(cId)), d: near(flowPos(dId)), count: subs.length };
+    }, [c.id, d.id]);
+    expect(holes.c).toBe(true);
+    expect(holes.d).toBe(false);
     const dimmedAfter = await page.screenshot({ clip: dimmedClip });
     expect(dimmedBefore.equals(dimmedAfter)).toBe(false);
     const focusAgain = selection.getByRole("button", { name: "Highlight prerequisites", exact: true });

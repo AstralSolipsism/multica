@@ -565,9 +565,12 @@ function abxyFixture() {
 
 const nodeOf = (id: string) =>
   document.querySelector(`.react-flow__node[data-id="${id}"]`)!;
-// A lit card/frame punches a hole through the dim overlay; a dimmed one has none.
-const cardLit = (id: string) =>
-  !!document.querySelector(`[data-dag-dim-hole="${id}"]`);
+// A lit card/frame punches a rounded-rect hole (8 px outset, 10 px radius)
+// through the dim overlay's even-odd path; a dimmed one has none. The hole
+// subpath starts at (box.x + 2, box.y - 8), so assert on the path data.
+const dimOverlayD = () =>
+  document.querySelector("[data-dag-dim-overlay]")?.getAttribute("d") ?? "";
+const cardLit = (x: number, y: number) => dimOverlayD().includes(`M ${x + 2} ${y - 8} H`);
 const dimOverlay = () => document.querySelector("[data-dag-dim-overlay]");
 // Severe-1 regression: the dim overlay must sit in its own svg above the
 // z-index-2 cards, or it only ever covers the background.
@@ -652,23 +655,23 @@ describe("DagSceneCanvas Stage 10 interactions", () => {
     await waitFor(() => expect(litRouteGroups()).toBe(2));
     expect(baseGroupClass()).toContain("opacity-15");
     expect(dimLayerZ()).toBe("3");
-    expect(cardLit("a")).toBe(true);
-    expect(cardLit("b")).toBe(true);
-    expect(cardLit("y")).toBe(true);
-    expect(cardLit("x")).toBe(false);
+    expect(cardLit(60, 40)).toBe(true);
+    expect(cardLit(60, 300)).toBe(true);
+    expect(cardLit(500, 300)).toBe(true);
+    expect(cardLit(500, 40)).toBe(false);
     // The frame header of the lit cards' line stays visible too.
-    expect(cardLit("r1")).toBe(true);
+    expect(cardLit(0, 0)).toBe(true);
     // X lights only A→X; Y and B dim.
     fireEvent.click(nodeOf("x"));
     await waitFor(() => expect(litRouteGroups()).toBe(1));
-    expect(cardLit("x")).toBe(true);
-    expect(cardLit("y")).toBe(false);
-    expect(cardLit("b")).toBe(false);
+    expect(cardLit(500, 40)).toBe(true);
+    expect(cardLit(500, 300)).toBe(false);
+    expect(cardLit(60, 300)).toBe(false);
     // B lights only B→Y.
     fireEvent.click(nodeOf("b"));
     await waitFor(() => expect(litRouteGroups()).toBe(1));
-    expect(cardLit("b")).toBe(true);
-    expect(cardLit("a")).toBe(false);
+    expect(cardLit(60, 300)).toBe(true);
+    expect(cardLit(60, 40)).toBe(false);
     // Clicking the pane restores everything.
     fireEvent.click(document.querySelector(".react-flow__pane")!);
     await waitFor(() => expect(litRouteGroups()).toBe(0));
@@ -790,7 +793,7 @@ describe("DagSceneCanvas Stage 10 interactions", () => {
       });
       expect(store.getState().dagFocus).toEqual({ nodeId: "y", way: "both" });
       expect(litRouteGroups()).toBe(3);
-      expect(cardLit("w")).toBe(true);
+      expect(cardLit(900, 40)).toBe(true);
     } finally {
       vi.useRealTimers();
     }
@@ -1060,7 +1063,7 @@ describe("DagSceneCanvas Stage 10 interactions", () => {
       });
       expect(store.getState().dagFocus).toEqual({ nodeId: "y", way: "both" });
       expect(litRouteGroups()).toBe(3);
-      expect(cardLit("w")).toBe(true);
+      expect(cardLit(900, 40)).toBe(true);
       // The third click returns to one layer.
       fireEvent.click(nodeOf("y"));
       act(() => {
@@ -1068,7 +1071,7 @@ describe("DagSceneCanvas Stage 10 interactions", () => {
       });
       expect(store.getState().dagFocus).toBeNull();
       expect(litRouteGroups()).toBe(2);
-      expect(cardLit("w")).toBe(false);
+      expect(cardLit(900, 40)).toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -1189,10 +1192,18 @@ describe("DagSceneCanvas lit-route flows (OL-997)", () => {
     expect(colorOf("advancing")).toBe("var(--color-brand)");
     expect(colorOf("satisfied")).toBe("var(--success)");
     expect(colorOf("cancelled-blocking")).toBe("var(--destructive)");
+    // The trailing echo FOLLOWS the main dot — a small fixed positive delay,
+    // never a lead (a negative delay draws the "tail" ahead of the comet).
+    for (const el of litFlows()) {
+      const dots = el.querySelectorAll(".dag-lit-flow-dot");
+      expect(dots).toHaveLength(2);
+      expect((dots[0] as HTMLElement).style.animationDelay).toBe("");
+      expect((dots[1] as HTMLElement).style.animationDelay).toBe("0.16s");
+    }
     // Direction comes from traveling the route's own point order: each dot's
     // motion path repeats the route exactly (corners included), animated
-    // from 0% to 100% of it (dag-lit-flow-travel's offset-distance). The
-    // path is window-relative, so compare leg-by-leg deltas, not absolutes.
+    // from 0% to 100% of it (dag-lit-flow-travel's offset-distance). Compare
+    // leg-by-leg deltas so the assertion is origin-independent.
     for (const [edgeId, route] of Object.entries(fixture.geometry.routes)) {
       const group = document.querySelector(`[data-dag-lit-flow="${edgeId}"]`)!;
       const points = route.map((p) => `${p.x},${p.y}`).join(" ");
@@ -1436,12 +1447,12 @@ describe("DagSceneCanvas Stage 10 coverage gaps", () => {
     vi.useFakeTimers();
     try {
       fireEvent.click(nodeOf("y"));
-      expect(cardLit("r1")).toBe(true);
+      expect(cardLit(0, 0)).toBe(true);
       fireEvent.click(nodeOf("y"));
       act(() => {
         vi.advanceTimersByTime(400);
       });
-      expect(cardLit("r1")).toBe(true);
+      expect(cardLit(0, 0)).toBe(true);
     } finally {
       vi.useRealTimers();
     }
@@ -1522,7 +1533,7 @@ describe("DagSceneCanvas satisfied overlay sources", () => {
     await waitFor(() => expect(litEdgeIds()).toContain(BUNDLE));
     await waitFor(() => expect(litEdgeIds()).toContain(SATISFIED));
     // The satisfied source card lights through a dim hole too.
-    expect(cardLit("issue:r4")).toBe(true);
+    expect(cardLit(0, 300)).toBe(true);
   });
 
   it("selecting a card whose only cross-line dependencies are satisfied still overlays them", async () => {
@@ -1533,7 +1544,7 @@ describe("DagSceneCanvas satisfied overlay sources", () => {
     await waitFor(() => expect(litEdgeIds()).toContain(SATISFIED));
     expect(litEdgeIds()).not.toContain(BUNDLE);
     // The other end of the satisfied bundle lights through a dim hole.
-    expect(cardLit("issue:r2")).toBe(true);
+    expect(cardLit(500, 60)).toBe(true);
     expect(store.getState().dagFocus).toBeNull();
   });
 
@@ -1856,14 +1867,15 @@ describe("DagSceneCanvas lit-route masking (OL-451)", () => {
       Number(routeMask.getAttribute("height")),
     ]).toEqual([win.x0, win.y0, win.x1 - win.x0, win.y1 - win.y0]);
     // The dim overlay is one even-odd path (no mask — an extra offscreen
-    // compositor pass): the window as its outer subpath, the lit boxes as
-    // hole subpaths, and the hole markers carry the same geometry.
+    // compositor pass): the window as its outer subpath, each lit box a
+    // rounded hole subpath.
     const dim = document.querySelector("[data-dag-dim-overlay]")!;
     expect(dim.getAttribute("fill-rule") ?? dim.getAttribute("fillRule")).toBe("evenodd");
-    expect(dim.getAttribute("d")).toContain(
-      `M ${win.x0} ${win.y0} h ${win.x1 - win.x0} v ${win.y1 - win.y0}`,
-    );
-    const hole = document.querySelector("[data-dag-dim-hole]")!;
-    expect(hole.getAttribute("fill")).toBe("none");
+    const d = dim.getAttribute("d")!;
+    expect(d).toContain(`M ${win.x0} ${win.y0} h ${win.x1 - win.x0} v ${win.y1 - win.y0}`);
+    // The lit card a (60,40,248,116) gets its 8 px outset rounded hole.
+    expect(d).toContain("M 62 32 H 306");
+    // One hole subpath per lit box: the two endpoint cards and their frame.
+    expect(d.match(/ M /g)!.length).toBe(3);
   });
 });

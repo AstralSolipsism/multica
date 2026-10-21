@@ -665,43 +665,26 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
       >
         {dimNodes && (
           // The dim rect is ONE even-odd path (window outside, lit boxes as
-          // hole subpaths) — not a masked rect: a mask costs the compositor
-          // an extra offscreen pass every frame on GPU-less (software)
-          // compositing. The hole markers stay as non-rendering geometry for
-          // tests and debugging.
-          <>
-            <defs>
-              {litBoxes!.map((box) => (
-                <rect
-                  key={box.id}
-                  data-dag-dim-hole={box.id}
-                  x={box.x - 8}
-                  y={box.y - 8}
-                  width={box.width + 16}
-                  height={box.height + 16}
-                  rx={10}
-                  fill="none"
-                />
-              ))}
-            </defs>
-            <path
-              data-dag-dim-overlay
-              d={[
-                `M ${windowRect.x} ${windowRect.y} h ${windowRect.width} v ${windowRect.height} h ${-windowRect.width} Z`,
-                ...litBoxes!.map((box) => {
-                  const x = box.x - 8,
-                    y = box.y - 8,
-                    w = box.width + 16,
-                    h = box.height + 16,
-                    r = 10;
-                  return `M ${x + r} ${y} H ${x + w - r} A ${r} ${r} 0 0 1 ${x + w} ${y + r} V ${y + h - r} A ${r} ${r} 0 0 1 ${x + w - r} ${y + h} H ${x + r} A ${r} ${r} 0 0 1 ${x} ${y + h - r} V ${y + r} A ${r} ${r} 0 0 1 ${x + r} ${y} Z`;
-                }),
-              ].join(" ")}
-              fillRule="evenodd"
-              fill="var(--background)"
-              fillOpacity={0.75}
-            />
-          </>
+          // rounded hole subpaths) — not a masked rect: a mask costs the
+          // compositor an extra offscreen pass every frame on GPU-less
+          // (software) compositing.
+          <path
+            data-dag-dim-overlay
+            d={[
+              `M ${windowRect.x} ${windowRect.y} h ${windowRect.width} v ${windowRect.height} h ${-windowRect.width} Z`,
+              ...litBoxes!.map((box) => {
+                const x = box.x - 8,
+                  y = box.y - 8,
+                  w = box.width + 16,
+                  h = box.height + 16,
+                  r = 10;
+                return `M ${x + r} ${y} H ${x + w - r} A ${r} ${r} 0 0 1 ${x + w} ${y + r} V ${y + h - r} A ${r} ${r} 0 0 1 ${x + w - r} ${y + h} H ${x + r} A ${r} ${r} 0 0 1 ${x} ${y + h - r} V ${y + r} A ${r} ${r} 0 0 1 ${x + r} ${y} Z`;
+              }),
+            ].join(" ")}
+            fillRule="evenodd"
+            fill="var(--background)"
+            fillOpacity={0.75}
+          />
         )}
         {routeMaskCuts && (
           <defs>
@@ -764,8 +747,9 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
             // Each dot travels its dependency's complete route via CSS motion
             // path — source → target, corners included, so shared bus
             // intervals follow each route's own direction; the trailing echo
-            // reads as a short tail. The route mask above hides them behind
-            // cards, exactly like the lit lines.
+            // follows a fixed 0.16 s behind (~9 px at the shared speed),
+            // whatever the route's length. The route mask above hides them
+            // behind cards, exactly like the lit lines.
             const flow = LIT_FLOW_STYLE[state];
             const offsetPath = `path("${path}")`;
             return (
@@ -790,7 +774,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
                   style={{
                     offsetPath,
                     animationDuration: `${duration}s`,
-                    animationDelay: `-${(duration * 0.09).toFixed(2)}s`,
+                    animationDelay: "0.16s",
                   }}
                 />
               </g>

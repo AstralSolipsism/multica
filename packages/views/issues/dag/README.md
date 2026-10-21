@@ -24,17 +24,19 @@ else in `dag-edge-layer.tsx`, a window-sized SVG in the `ViewportPortal`:
   or dims anything — cards keep only their own border/pointer affordance
   (OL-996). Every lit dependency
   repaints along its own complete route — never the whole bus (OL-280 option
-  B). Node dimming is a single masked rect in a z-3 overlay svg with holes
+  B). Node dimming is a single even-odd path in a z-3 overlay svg with holes
   over the lit cards — the z-index-2 cards never rebuild, and the selection
   ring is an SVG rect (brand blue). The lit routes paint in the same overlay
-  svg, after the dim rect, so dimming never dulls them. Each also carries a
-  state-colored flow (OL-997): dashes streaming along the route's own point
-  order, source to target — brand blue while unsatisfied, softened success
-  green once satisfied, destructive red for a cancelled blocker (which keeps
-  its red dashed breath). Routes sharing a bus interval each follow their
-  own direction and stack satisfied → unsatisfied → cancelled-blocking; the
+  svg, after the dim path, so dimming never dulls them. Each also carries a
+  state-colored flow (OL-997): a glowing dot with a short trailing echo
+  traveling the route's own point order via CSS motion path, source to
+  target — brand blue while unsatisfied, softened success green once
+  satisfied, destructive red for a cancelled blocker (which keeps its red
+  dashed breath). Routes sharing a bus interval each follow their own
+  direction and stack satisfied → unsatisfied → cancelled-blocking; the
   background dots a lit advancing segment used to borrow are gone — the
-  route flow replaces them.
+  route flow replaces them. The flow dots pause while the viewport moves
+  (pan/zoom) and resume on move end.
 - **Bus click**: visible segments carry inset transparent hit strokes; a
   click stores the segment's deduplicated original dependency IDs and the
   toolbar lists them in the restored OL-182 "aggregate N dependencies"
