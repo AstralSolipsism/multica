@@ -9,6 +9,7 @@ import { renderWithI18n } from "../../test/i18n";
 import { buildRuntimeMachines } from "./runtime-machines";
 import { MachineQuotaChips } from "./machine-quota-chips";
 import { formatQuotaTime } from "./quota-time";
+import type { ThinkingAdaptViewSnapshot } from "../../common/thinking-adapt";
 import { MiniMeterBar, RuntimeQuotaCard, RuntimeQuotaCell, TONE_BAR_CLASS } from "./runtime-quota-cell";
 
 const viewer = vi.hoisted(() => ({ timezone: "Asia/Shanghai" as string | null }));
@@ -83,6 +84,20 @@ function kimiRuntime(): AgentRuntime {
       { name: "secondary", used_percent: 20, window_minutes: 10080, resets_at: NOW_SEC + 3 * DAY },
     ],
   });
+}
+
+function adaptSnapshot(
+  status: string,
+  overrides: Partial<ThinkingAdaptViewSnapshot> = {},
+): ThinkingAdaptViewSnapshot {
+  return {
+    status,
+    active_source: "opencode-free",
+    last_latency_ms: 290,
+    decisions_ok: 12,
+    decisions_fallback: 3,
+    ...overrides,
+  };
 }
 
 function renderChips(runtime: AgentRuntime, locale: SupportedLocale = "en") {
@@ -335,6 +350,99 @@ describe("unmeasured windows", () => {
     runtime.plan_quota = null;
     renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
     expect(screen.getByText("Not reported")).toBeInTheDocument();
+  });
+});
+
+describe("thinking Adapt engine status", () => {
+  it.each([
+    ["available", "OpenCode Zen · 290ms", "bg-success"],
+    [
+      "degraded",
+      "Degraded (Adapt uses the CLI default level when decisions fail)",
+      "bg-warning",
+    ],
+    [
+      "unavailable",
+      "Unavailable (Adapt has fallen back to the CLI default level)",
+      "bg-warning",
+    ],
+    ["idle", "Not used yet", "bg-muted-foreground/50"],
+  ])(
+    "renders %s in the cell and card without plan quota",
+    (status, text, dotClass) => {
+      const runtime = quotaRuntime("claude", {});
+      runtime.plan_quota = null;
+      const snapshot = adaptSnapshot(status);
+      const cell = renderWithI18n(
+        <RuntimeQuotaCell
+          runtime={runtime}
+          now={NOW}
+          thinkingAdapt={snapshot}
+        />,
+      );
+
+      const cellRow = screen
+        .getByText(text)
+        .closest("[data-thinking-adapt-status]");
+      expect(cellRow).toHaveAttribute("data-thinking-adapt-status", status);
+      expect(cellRow?.querySelector("[aria-hidden=true]")).toHaveClass(dotClass);
+      expect(screen.queryByText("Not reported")).not.toBeInTheDocument();
+      cell.unmount();
+
+      renderWithI18n(
+        <RuntimeQuotaCard
+          runtime={runtime}
+          now={NOW}
+          thinkingAdapt={snapshot}
+        />,
+      );
+      expect(screen.getByText(text)).toBeInTheDocument();
+      expect(screen.queryByText("Not reported")).not.toBeInTheDocument();
+    },
+  );
+
+  it("shows the daemon-period decision counts on hover", async () => {
+    const runtime = quotaRuntime("claude", {});
+    renderWithI18n(
+      <RuntimeQuotaCell
+        runtime={runtime}
+        now={NOW}
+        thinkingAdapt={adaptSnapshot("available")}
+      />,
+    );
+
+    await userEvent.hover(screen.getByText("OpenCode Zen · 290ms"));
+    expect(
+      await screen.findByText(
+        "Since daemon started: 12 successful, 3 fallbacks",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    ["self-hosted", "Self-hosted"],
+    ["decision.internal", "decision.internal"],
+  ])("labels the %s source", (source, label) => {
+    const runtime = quotaRuntime("claude", {});
+    renderWithI18n(
+      <RuntimeQuotaCell
+        runtime={runtime}
+        now={NOW}
+        thinkingAdapt={adaptSnapshot("available", { active_source: source })}
+      />,
+    );
+
+    expect(screen.getByText(`${label} · 290ms`)).toBeInTheDocument();
+  });
+
+  it("omits the engine row when no snapshot is supplied", () => {
+    const { container } = renderWithI18n(
+      <RuntimeQuotaCell runtime={claudeRuntime()} now={NOW} />,
+    );
+
+    expect(
+      container.querySelector("[data-thinking-adapt-status]"),
+    ).not.toBeInTheDocument();
   });
 });
 

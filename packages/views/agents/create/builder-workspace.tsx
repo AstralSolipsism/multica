@@ -243,6 +243,7 @@ export function BuilderWorkspace({
         skillIdSet,
         memberIdSet,
         validBuilderModelIds,
+        builderModelCatalog,
       ),
     );
   }, [
@@ -256,6 +257,7 @@ export function BuilderWorkspace({
     setDraft,
     skillIdSet,
     validBuilderModelIds,
+    builderModelCatalog,
   ]);
 
   const displayMessages = useMemo(

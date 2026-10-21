@@ -20,6 +20,17 @@
   "observed_ago": "mis à jour il y a {{time}}",
   "source_daemon": "via le daemon",
   "source_external": "via un envoi externe",
+  "thinking_adapt": {
+    "available": "Disponible",
+    "degraded": "Dégradé (Adaptation utilise le niveau CLI par défaut en cas d'échec)",
+    "unavailable": "Indisponible (Adaptation utilise le niveau CLI par défaut)",
+    "idle": "Pas encore utilisé",
+    "source_opencode_free": "OpenCode Zen",
+    "source_opencode": "OpenCode Zen",
+    "source_dashscope": "DashScope",
+    "source_self_hosted": "Auto-hébergé",
+    "counts": "Depuis le démarrage du daemon : {{success}} réussites, {{fallback}} replis"
+  },
   "glm_title": "Solde du forfait GLM",
   "glm_window_tokens": "Jetons sur 5 heures",
   "glm_window_time": "Crédits d'outils mensuels",

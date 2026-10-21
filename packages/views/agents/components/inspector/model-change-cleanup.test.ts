@@ -168,4 +168,28 @@ describe("buildModelChangeUpdate (MUL-5390)", () => {
       }),
     ).toEqual({ model: "gpt-5.4-mini" });
   });
+
+  it("keeps Adapt when the new model still has two candidates", () => {
+    expect(
+      buildModelChangeUpdate({
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        thinkingLevel: "_adapt",
+        serviceTier: "",
+        catalog: CATALOG,
+      }),
+    ).toEqual({ model: "gpt-5.6-sol" });
+  });
+
+  it("clears Adapt when the new model has fewer than two candidates", () => {
+    expect(
+      buildModelChangeUpdate({
+        provider: "codex",
+        model: "gpt-5.5",
+        thinkingLevel: "_adapt",
+        serviceTier: "",
+        catalog: CATALOG,
+      }),
+    ).toEqual({ model: "gpt-5.5", thinking_level: "" });
+  });
 });

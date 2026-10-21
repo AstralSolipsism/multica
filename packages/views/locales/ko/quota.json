@@ -20,6 +20,17 @@
   "observed_ago": "{{time}} 전 업데이트됨",
   "source_daemon": "데몬 경유",
   "source_external": "외부 푸시 경유",
+  "thinking_adapt": {
+    "available": "사용 가능",
+    "degraded": "저하됨(결정 실패 시 CLI 기본 레벨로 폴리백)",
+    "unavailable": "사용할 수 없음(자동 조정이 CLI 기본 레벨로 폴리백됨)",
+    "idle": "아직 사용하지 않음",
+    "source_opencode_free": "OpenCode Zen",
+    "source_opencode": "OpenCode Zen",
+    "source_dashscope": "DashScope",
+    "source_self_hosted": "자체 호스팅",
+    "counts": "데몬 시작 이후: 성공 {{success}}회, 폴리백 {{fallback}}회"
+  },
   "glm_title": "GLM 플랜 잔여량",
   "glm_window_tokens": "5시간 토큰",
   "glm_window_time": "월간 도구 크레딧",

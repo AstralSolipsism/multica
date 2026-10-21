@@ -9,6 +9,7 @@ import { SettingsRow } from "../../../settings/components/settings-layout";
 import { useT } from "../../../i18n";
 import { ThinkingPicker } from "./thinking-picker";
 import { findModelCapabilityEntry } from "./model-capability";
+import type { ThinkingAdaptViewSnapshot } from "../../../common/thinking-adapt";
 
 /**
  * Thinking row for the agent inspector. Hidden when the active model has
@@ -35,6 +36,8 @@ export function ThinkingPropRow({
   model,
   value,
   canEdit,
+  adaptSupported = false,
+  adaptSnapshot = null,
   onChange,
 }: {
   runtimeId: string | null;
@@ -45,6 +48,8 @@ export function ThinkingPropRow({
   model: string;
   value: string;
   canEdit: boolean;
+  adaptSupported?: boolean;
+  adaptSnapshot?: ThinkingAdaptViewSnapshot | null;
   onChange: (next: string) => Promise<void> | void;
 }) {
   const { t } = useT("agents");
@@ -63,6 +68,8 @@ export function ThinkingPropRow({
         value={value}
         levels={levels}
         canEdit={canEdit}
+        adaptSupported={adaptSupported}
+        adaptSnapshot={adaptSnapshot}
         onChange={onChange}
       />
     </PropRow>
@@ -78,6 +85,8 @@ export function ThinkingSettingField({
   model,
   value,
   canEdit,
+  adaptSupported = false,
+  adaptSnapshot = null,
   onChange,
 }: {
   label: ReactNode;
@@ -87,6 +96,8 @@ export function ThinkingSettingField({
   model: string;
   value: string;
   canEdit: boolean;
+  adaptSupported?: boolean;
+  adaptSnapshot?: ThinkingAdaptViewSnapshot | null;
   onChange: (next: string) => Promise<void> | void;
 }) {
   const modelsQuery = useQuery(
@@ -106,6 +117,8 @@ export function ThinkingSettingField({
         value={value}
         levels={levels}
         canEdit={canEdit}
+        adaptSupported={adaptSupported}
+        adaptSnapshot={adaptSnapshot}
         onChange={onChange}
       />
     </SettingsRow>

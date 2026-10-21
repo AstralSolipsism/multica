@@ -17,9 +17,17 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../../locales/en/common.json";
 import enAgents from "../../../locales/en/agents.json";
 import enIssues from "../../../locales/en/issues.json";
+import enForkUi from "../../../locales/en/fork-ui.json";
+import enQuota from "../../../locales/en/quota.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, agents: enAgents, issues: enIssues },
+  en: {
+    common: enCommon,
+    agents: enAgents,
+    issues: enIssues,
+    "fork-ui": enForkUi,
+    quota: enQuota,
+  },
 };
 
 const mockInitiateListModels = vi.hoisted(() => vi.fn());
