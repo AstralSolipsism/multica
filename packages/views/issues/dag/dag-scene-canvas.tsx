@@ -32,7 +32,7 @@ import {
   sameDagViewport,
   type DagFirstOpenAnchor,
 } from "./dag-viewport";
-import { dagSceneFlowNodes, dagSceneFocusSet, type DagCanvasFlowNode, type DagCanvasModel, type DagFocusSet } from "./dag-scene-flow";
+import { dagSceneFlowNodes, dagSceneFocusSet, type DagCanvasFlowNode, type DagCanvasModel } from "./dag-scene-flow";
 import type { DagSceneGeometry, DagScenePlan } from "./dag-scene";
 import type { DagExternalGroup } from "@multica/core/issues/dag";
 import { DagOverviewCardView } from "./dag-overview-card";
@@ -46,7 +46,7 @@ import {
   dagCullBounds,
   dagCullBoundsKey,
   dagDependencyEdgeIds,
-  dagOverviewHoverOverlay,
+  dagOverviewSatisfiedOverlay,
   dagSceneSelectionSet,
   dagWithAncestorFrames,
   type DagGhostBlock,
@@ -303,71 +303,26 @@ export function DagSceneCanvasInner({
     });
   }, [locateRequest, plan, geometry, canvasWidth, canvasHeight, getViewport, setViewport, viewportInitialized]);
 
-  // Hover highlight: applied only once the pointer (and the content under it)
-  // has been still for a beat — during a pan the cursor sweeps dozens of
-  // cards and enter/leave storms would re-render the highlight every frame.
-  const [hoverNodeId, setHoverNodeId] = useState<string | null>(null);
-  const paneDragging = useFlowStore((state) => state.paneDragging);
-  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const applyHover = useCallback((id: string | null) => {
-    if (hoverTimer.current) {
-      clearTimeout(hoverTimer.current);
-      hoverTimer.current = null;
-    }
-    if (id === null) {
-      setHoverNodeId(null);
-      return;
-    }
-    hoverTimer.current = setTimeout(() => {
-      hoverTimer.current = null;
-      setHoverNodeId(id);
-    }, 100);
-  }, []);
-  useEffect(() => {
-    if (paneDragging) applyHover(null);
-  }, [paneDragging, applyHover]);
-  useEffect(
-    () => () => {
-      if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    },
-    [],
-  );
   // Highlight sets ------------------------------------------------------------
-  // Hover wins while the pointer rests on a card; the toolbar's transitive
-  // focus outranks the one-click neighborhood; a bus selection lights its
-  // dependencies on top of either. Hover is debounced (see above), and never
-  // overrides the card that already owns the selection/focus — clicking it
-  // must visibly switch to all upstream + downstream.
-  // Exactly one satisfied-dependency overlay is effective at a time, keyed to
-  // whichever highlight actually drives the canvas: the hovered card when
-  // hover drives, the focus anchor while focusing, or the selected card when
-  // the pointer rests on it.
+  // The toolbar's transitive focus outranks the one-click neighborhood; a bus
+  // selection lights its dependencies on top of either. Exactly one
+  // satisfied-dependency overlay is effective at a time, keyed to whichever
+  // highlight actually drives the canvas: the focus anchor's while focusing,
+  // otherwise the selected card's (focus wins).
   const focusOverlay = useMemo(
     () =>
       model.kind === "overview" && focusState
-        ? dagOverviewHoverOverlay(model, geometry, focusState.nodeId)
+        ? dagOverviewSatisfiedOverlay(model, geometry, focusState.nodeId)
         : null,
     [model, geometry, focusState],
   );
-  const hoveredOverlay = useMemo(
+  const selectionOverlay = useMemo(
     () =>
-      model.kind === "overview" && hoverNodeId
-        ? dagOverviewHoverOverlay(model, geometry, hoverNodeId)
+      model.kind === "overview" && selectedNodeId
+        ? dagOverviewSatisfiedOverlay(model, geometry, selectedNodeId)
         : null,
-    [model, geometry, hoverNodeId],
+    [model, geometry, selectedNodeId],
   );
-  const selectionOverlay =
-    selectedNodeId && hoverNodeId === selectedNodeId ? hoveredOverlay : null;
-  const anchorId = focusState?.nodeId ?? selectedNodeId;
-  const hoverSet = useMemo<DagFocusSet | null>(() => {
-    if (!hoverNodeId || hoverNodeId === anchorId) return null;
-    const base = dagSceneSelectionSet(plan, hoverNodeId);
-    if (!base && !hoveredOverlay) return null;
-    return {
-      nodeIds: new Set([...(base?.nodeIds ?? []), ...(hoveredOverlay?.nodeIds ?? [])]),
-      edgeIds: new Set([...(base?.edgeIds ?? []), ...(hoveredOverlay?.edgeIds ?? [])]),
-    };
-  }, [hoverNodeId, anchorId, plan, hoveredOverlay]);
   const focusSet = useMemo(() => {
     const set = focusState ? dagSceneFocusSet(plan, focusState.nodeId, focusState.way) : null;
     if (!set) return null;
@@ -378,15 +333,15 @@ export function DagSceneCanvasInner({
   }, [focusState, plan, focusOverlay]);
   const selectionSet = useMemo(() => {
     const set = selectedNodeId ? dagSceneSelectionSet(plan, selectedNodeId) : null;
-    if (!set || !selectionOverlay) return set;
+    if (!selectionOverlay) return set;
     return {
-      nodeIds: new Set([...set.nodeIds, ...selectionOverlay.nodeIds]),
-      edgeIds: new Set([...set.edgeIds, ...selectionOverlay.edgeIds]),
+      nodeIds: new Set([...(set?.nodeIds ?? []), ...selectionOverlay.nodeIds]),
+      edgeIds: new Set([...(set?.edgeIds ?? []), ...selectionOverlay.edgeIds]),
     };
   }, [selectedNodeId, plan, selectionOverlay]);
-  const activeNodeSet = hoverSet ?? focusSet ?? selectionSet;
+  const activeNodeSet = focusSet ?? selectionSet;
   // The edge layer's overlay follows the same effective source.
-  const activeOverlay = hoverSet ? hoveredOverlay : focusSet ? focusOverlay : selectionOverlay;
+  const activeOverlay = focusSet ? focusOverlay : selectionOverlay;
   const busEdgeIds = useMemo(
     () =>
       selectedDependencyIds?.length
@@ -599,13 +554,6 @@ export function DagSceneCanvasInner({
           defaultViewport={{ x: 20, y: 20, zoom: 1 }}
           onNodesChange={handleNodesChange}
           onNodeClick={(event, node) => handleNodeClick(node, event.detail)}
-          onNodeMouseEnter={(_, node) => {
-            // Hover is a card affordance; frames and external side cards do
-            // not light up on pointer sweep.
-            if (!paneDragging && (node.type === "dagTask" || node.type === "dagOverviewCard"))
-              applyHover(node.id);
-          }}
-          onNodeMouseLeave={() => applyHover(null)}
           onNodeDoubleClick={(_, node) => {
             // A double-click keeps its original action and never advances the
             // click cycle — cancel the pending switch from its first click,
@@ -654,7 +602,7 @@ export function DagSceneCanvasInner({
               model={model}
               showSatisfied={showSatisfied}
               highlightedEdgeIds={highlightedEdgeIds}
-              hoverOverlay={activeOverlay}
+              activeOverlay={activeOverlay}
               litBoxes={litBoxes}
               ghostBlocks={ghostBlocks}
               selectedNodeId={selectedNodeId}

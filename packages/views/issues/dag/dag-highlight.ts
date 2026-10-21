@@ -1,6 +1,6 @@
 import type { DagDependencyState } from "@multica/core/issues/dag";
 import type { DagPoint, DagSceneGeometry, DagScenePlan, DagSceneSegment } from "./dag-scene";
-import { dagOverviewHoverEdges } from "./dag-scene-inputs";
+import { dagOverviewSatisfiedEdges } from "./dag-scene-inputs";
 import { routeDagOverlays } from "./dag-scene-geometry";
 import type { DagCanvasModel, DagFocusSet } from "./dag-scene-flow";
 import { DAG_MOTION_MAX_SEGMENTS, DAG_MOTION_MIN_ZOOM } from "./dag-constants";
@@ -15,7 +15,7 @@ import { DAG_MOTION_MAX_SEGMENTS, DAG_MOTION_MIN_ZOOM } from "./dag-constants";
  */
 
 /** Scene edges touching a node resolve through the current plan (base first,
- *  then satisfied overlays), so hover/selection work with the switch off. */
+ *  then satisfied overlays), so selection/focus work with the switch off. */
 function sceneEdges(plan: DagScenePlan) {
   return [...plan.input.edges, ...plan.overlays];
 }
@@ -165,10 +165,10 @@ export function dagSegmentFlowDirection(
   return 1;
 }
 
-// ---- Overview hover overlays ------------------------------------------------
+// ---- Overview satisfied-dependency overlays ---------------------------------
 
-export interface DagHoverOverlay {
-  /** Every scene edge the hovered card touches (base + satisfied subsets), for
+export interface DagSatisfiedOverlay {
+  /** Every scene edge the anchor card touches (base + satisfied subsets), for
    *  the highlight set. */
   edgeIds: Set<string>;
   /** Cards at the other ends of those edges — they stay lit too. */
@@ -197,22 +197,23 @@ export interface DagGhostBlock {
   dashed: boolean;
 }
 
-/** Hover/focus on an overview card additionally surfaces its satisfied
- *  inter-line dependencies without a layout pass (OL-183 §2, Stage 8 router). */
-export function dagOverviewHoverOverlay(
+/** An overview card's satisfied inter-line dependencies, surfaced without a
+ *  layout pass (OL-183 §2, Stage 8 router). Shown for the focus anchor while
+ *  focusing, otherwise for the selected card (OL-996). */
+export function dagOverviewSatisfiedOverlay(
   model: DagCanvasModel,
   geometry: DagSceneGeometry,
   cardId: string,
-): DagHoverOverlay | null {
+): DagSatisfiedOverlay | null {
   if (model.kind !== "overview") return null;
-  const hoverEdges = dagOverviewHoverEdges(model.overview, cardId);
-  if (!hoverEdges.length) return null;
-  const missing = hoverEdges.filter(({ edge }) => !geometry.routes[edge.id]).map(({ edge }) => edge);
+  const satisfiedEdges = dagOverviewSatisfiedEdges(model.overview, cardId);
+  if (!satisfiedEdges.length) return null;
+  const missing = satisfiedEdges.filter(({ edge }) => !geometry.routes[edge.id]).map(({ edge }) => edge);
   const routed = missing.length ? routeDagOverlays(geometry, missing) : { routes: {} };
   return {
-    edgeIds: new Set(hoverEdges.map(({ edge }) => edge.id)),
-    nodeIds: new Set(hoverEdges.flatMap(({ edge }) => [edge.source, edge.target])),
-    dependencyIds: Object.fromEntries(hoverEdges.map(({ edge, dependencyIds }) => [edge.id, dependencyIds])),
+    edgeIds: new Set(satisfiedEdges.map(({ edge }) => edge.id)),
+    nodeIds: new Set(satisfiedEdges.flatMap(({ edge }) => [edge.source, edge.target])),
+    dependencyIds: Object.fromEntries(satisfiedEdges.map(({ edge, dependencyIds }) => [edge.id, dependencyIds])),
     routes: routed.routes,
   };
 }
