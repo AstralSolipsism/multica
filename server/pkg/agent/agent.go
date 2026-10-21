@@ -230,6 +230,7 @@ const (
 
 // Message is a unified event emitted by an agent during execution.
 type Message struct {
+	Metadata  map[string]any // optional structured message metadata; immutable after emission
 	Type      MessageType
 	Content   string         // text content (Text, Error, Log)
 	Tool      string         // tool name (ToolUse, ToolResult)

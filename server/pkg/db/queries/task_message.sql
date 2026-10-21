@@ -1,6 +1,6 @@
 -- name: CreateTaskMessage :one
-INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, output_truncated, call_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, output_truncated, call_id, metadata)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
 
 -- name: CreateTaskMessages :many
@@ -23,8 +23,8 @@ RETURNING *;
 -- (the Go type sqlc gives a text[] parameter): it reproduces, exactly, the
 -- `pgtype.Text{Valid: x != ""}` mapping the single-row query carries — empty
 -- string means SQL NULL. input is passed as text and cast here for the same
--- reason; it is the one column that genuinely has to be parsed as JSON, because
--- it is a jsonb column. created_at also rides this transport so an older daemon
+-- reason; input and metadata genuinely have to be parsed as JSON because they
+-- are jsonb columns. created_at also rides this transport so an older daemon
 -- can omit its event time and keep the database-time fallback. output_truncated
 -- uses the same trick because it is a genuinely tri-state boolean (NULL = the
 -- reporting daemon did not measure it), and a bool[] parameter becomes a Go
@@ -63,9 +63,10 @@ WITH incoming AS (
         unnest(sqlc.arg('inputs')::text[]) AS input,
         unnest(sqlc.arg('outputs')::text[]) AS output,
         unnest(sqlc.arg('created_ats')::text[]) AS created_at,
-        unnest(sqlc.arg('output_truncations')::text[]) AS output_truncated
+        unnest(sqlc.arg('output_truncations')::text[]) AS output_truncated,
+        unnest(sqlc.arg('metadatas')::text[]) AS metadata
 ), inserted AS (
-    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id)
+    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id, metadata)
     SELECT
         m.id,
         sqlc.arg('task_id')::uuid,
@@ -77,7 +78,8 @@ WITH incoming AS (
         NULLIF(m.output, ''),
         COALESCE(NULLIF(m.created_at, '')::timestamptz, now()),
         NULLIF(m.output_truncated, '')::bool,
-        NULLIF(m.call_id, '')
+        NULLIF(m.call_id, ''),
+        NULLIF(m.metadata, '')::jsonb
     FROM incoming AS m
     RETURNING *
 )

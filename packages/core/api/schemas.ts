@@ -2098,6 +2098,21 @@ export const AgentTaskPageSchema = z.object({
   nextCursor: z.string().min(1).nullable(),
 });
 
+export const TaskMessageThinkingMetadataSchema = z.object({
+  level: z.string(),
+  mode: z.enum(["adapt", "fixed"]),
+  step: z.number().int().nonnegative().optional().catch(undefined),
+  source: z.string().optional().catch(undefined),
+  confidence: z.number().min(0).max(1).optional().catch(undefined),
+  probabilities: z.record(z.string(), z.number().min(0).max(1)).optional().catch(undefined),
+  latency_ms: z.number().nonnegative().optional().catch(undefined),
+  fallback: z.enum(["timeout", "error", "invalid", "breaker", "disabled", "no_candidates"]).optional().catch(undefined),
+}).loose();
+
+export const TaskMessageMetadataSchema = z.object({
+  thinking: TaskMessageThinkingMetadataSchema.optional().catch(undefined),
+}).loose().optional().catch(undefined);
+
 // One row of a run transcript. `output_truncated` gates a completeness claim
 // the UI makes about a tool's output, so it stays `.optional()` with no
 // default: a server that does not send it means "unknown", and defaulting it
@@ -2108,6 +2123,7 @@ export const AgentTaskPageSchema = z.object({
 // field to "unknown" is the correct loss; deleting the run is not. Every other
 // field keeps a default for the same reason.
 export const TaskMessagePayloadSchema = z.object({
+  metadata: TaskMessageMetadataSchema,
   call_id: z.string().optional().catch(undefined),
   task_id: z.string().default(""),
   issue_id: z.string().default(""),

@@ -1801,6 +1801,7 @@ type TaskMessage struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	OutputTruncated pgtype.Bool        `json:"output_truncated"`
 	CallID          pgtype.Text        `json:"call_id"`
+	Metadata        []byte             `json:"metadata"`
 }
 
 type TaskSupplement struct {

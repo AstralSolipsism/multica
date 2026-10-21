@@ -147,6 +147,19 @@ describe("useRealtimeSync — task:message fanout guards (MUL-6396)", () => {
     release();
   });
 
+  it("parses live metadata before caching a message", () => {
+    const handler = mount();
+    const release = holdTimeline(HELD_TASK);
+    handler({
+      ...msg(HELD_TASK, 1),
+      metadata: { thinking: { level: "high", mode: "adapt", confidence: "bad" }, future: true },
+    });
+    expect(cached(qc, HELD_TASK)?.[0]?.metadata).toEqual({
+      thinking: { level: "high", mode: "adapt", confidence: undefined }, future: true,
+    });
+    release();
+  });
+
   it("flushes on a fixed window rather than being starved by a continuous stream", () => {
     const handler = mount();
     const release = holdTimeline(HELD_TASK);
