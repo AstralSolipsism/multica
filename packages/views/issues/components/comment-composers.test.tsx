@@ -42,6 +42,7 @@ const editorQuickActionMenu = vi.hoisted(() => ({
 // Post-send caret policy: the top-level composer blurs (the page scrolls to the
 // posted comment instead), a thread reply keeps the caret for the next reply.
 const focusCalls = vi.hoisted(() => ({ focused: 0, blurred: 0 }));
+const focusAtCoordsSpy = vi.hoisted(() => vi.fn());
 const insertMarkdownSpy = vi.hoisted(() => vi.fn());
 const insertPlaceholderSpy = vi.hoisted(() => vi.fn());
 const insertMarkdownBehavior = vi.hoisted(() => ({ succeed: true }));
@@ -170,7 +171,7 @@ vi.mock("../../editor", async () => ({
         setEditorValue("");
       },
       focus: () => { focusCalls.focused += 1; },
-      focusAtCoords: () => {},
+      focusAtCoords: focusAtCoordsSpy,
       blur: () => { focusCalls.blurred += 1; },
       uploadFile: async (file: File) => {
         inFlightRef.current += 1;
@@ -307,6 +308,7 @@ beforeEach(() => {
   editorQuickActionMenu.last = undefined;
   focusCalls.focused = 0;
   focusCalls.blurred = 0;
+  focusAtCoordsSpy.mockReset();
 });
 
 // ---------------------------------------------------------------------------
@@ -828,6 +830,97 @@ describe("comment composers", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     // Failed send must NOT clear — the box still has content, submit stays live.
     await waitFor(() => expect(getSubmitButton(container)).not.toBeDisabled());
+  });
+});
+
+// OL-998 — the text area (editor host + its padding) shows the I-beam like
+// the readonly-first shell does, and pressing it focuses the editor at the
+// nearest caret position, without taking over control clicks.
+describe("composer text surface cursor and click-to-focus", () => {
+  it("keeps the I-beam on the main composer's editor host, matching the shell", () => {
+    renderCommentInput();
+
+    expect(screen.getByTestId("comment-composer-shell").className).toContain("cursor-text");
+    activateComposer("comment-composer-shell");
+    // The mock editor's textarea is the host's direct child.
+    expect(screen.getByTestId("editor").parentElement?.className).toContain("cursor-text");
+  });
+
+  it("focuses the main editor at the click coordinates on host-padding mousedown", () => {
+    renderCommentInput();
+    activateComposer("comment-composer-shell");
+    focusAtCoordsSpy.mockClear(); // discard the shell→editor activation focus
+
+    const host = screen.getByTestId("editor").parentElement!;
+    fireEvent.mouseDown(host, { button: 0, clientX: 140, clientY: 12 });
+
+    expect(focusAtCoordsSpy).toHaveBeenCalledWith({ x: 140, y: 12 });
+  });
+
+  it("does not take over the main composer's button presses", async () => {
+    const { container, onSubmit } = renderCommentInput();
+    activateComposer("comment-composer-shell");
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "typed" } });
+    focusAtCoordsSpy.mockClear();
+
+    const attach = screen.getByRole("button", { name: "Attach file" });
+    fireEvent.mouseDown(attach, { button: 0 });
+    fireEvent.mouseDown(getSubmitButton(container), { button: 0 });
+    expect(focusAtCoordsSpy).not.toHaveBeenCalled();
+
+    // …and the send click itself still submits.
+    fireEvent.click(getSubmitButton(container));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+  });
+
+  it("wraps the reply column in a cursor-text surface that owns the vertical padding", () => {
+    const { container } = renderReplyInput();
+
+    expect(screen.getByTestId("reply-composer-shell").className).toContain("cursor-text");
+    activateComposer("reply-composer-shell");
+    // The editor host re-asserts the I-beam inside the column's arrow reset…
+    expect(screen.getByTestId("editor").parentElement?.className).toContain("cursor-text");
+    // …and the text surface around the column owns the vertical padding bands.
+    const surface = container.querySelector('div[class*="py-2.5"][class*="cursor-text"]');
+    expect(surface).not.toBeNull();
+    expect(surface!.contains(screen.getByTestId("editor"))).toBe(true);
+  });
+
+  it("focuses the reply editor at the click coordinates on surface-padding mousedown", () => {
+    const { container } = renderReplyInput();
+    activateComposer("reply-composer-shell");
+    focusAtCoordsSpy.mockClear();
+
+    const surface = container.querySelector('div[class*="py-2.5"][class*="cursor-text"]')!;
+    fireEvent.mouseDown(surface, { button: 0, clientX: 96, clientY: 6 });
+
+    expect(focusAtCoordsSpy).toHaveBeenCalledWith({ x: 96, y: 6 });
+  });
+
+  it("does not take over the reply composer's button presses", async () => {
+    const { container, onSubmit } = renderReplyInput();
+    activateComposer("reply-composer-shell");
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "typed" } });
+    focusAtCoordsSpy.mockClear();
+
+    const attach = screen.getByRole("button", { name: "Attach file" });
+    fireEvent.mouseDown(attach, { button: 0 });
+    fireEvent.mouseDown(getSubmitButton(container), { button: 0 });
+    expect(focusAtCoordsSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(getSubmitButton(container));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+  });
+
+  it("leaves the reply composer's non-primary-button presses untouched", () => {
+    const { container } = renderReplyInput();
+    activateComposer("reply-composer-shell");
+    focusAtCoordsSpy.mockClear();
+
+    const surface = container.querySelector('div[class*="py-2.5"][class*="cursor-text"]')!;
+    fireEvent.mouseDown(surface, { button: 2, clientX: 10, clientY: 10 });
+
+    expect(focusAtCoordsSpy).not.toHaveBeenCalled();
   });
 });
 

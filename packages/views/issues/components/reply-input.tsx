@@ -21,6 +21,7 @@ import { SteerAttachmentNotice } from "./steer-attachment-notice";
 import { useStopRunsBeforeSend } from "./use-stop-runs-before-send";
 import { useCommentUploads } from "./use-comment-uploads";
 import { useQuickActionMenu } from "../hooks/use-quick-action-menu";
+import { focusComposerOnSurfaceMouseDown } from "./composer-text-surface";
 
 // Types
 
@@ -234,11 +235,22 @@ function ReplyInput({
         size={avatarSize}
         className="mt-0.5 shrink-0"
       />
+      {/* Text surface. Owns the vertical padding the thread wrapper in
+          comment-card used to provide, so the bands above/below the input
+          column share the I-beam and focus the editor on press — the same
+          contract the shell already advertises with its own cursor-text. */}
+      <div
+        className="flex min-w-0 flex-1 cursor-text flex-col py-2.5"
+        onMouseDown={(e) => focusComposerOnSurfaceMouseDown(e, lazy.activate)}
+      >
       <div
         {...dropZoneProps}
         ref={composerRef}
         className={cn(
-          "relative min-w-0 flex-1 flex flex-col",
+          // The column resets to the arrow so the pb-9 toolbar strip (its own
+          // bottom padding) never inherits the text surface's I-beam; the
+          // editor host and the shell re-assert cursor-text inside it.
+          "relative min-w-0 flex-1 flex flex-col cursor-default",
           (!isEmpty || annotations.length > 0) && "pb-9",
         )}
       >
@@ -252,7 +264,7 @@ function ReplyInput({
         {lazy.active && (
         <div
           className={cn(
-            "flex-1 min-h-0 overflow-y-auto",
+            "flex-1 min-h-0 overflow-y-auto cursor-text",
             submitting && "pointer-events-none opacity-60",
             !lazy.ready && "hidden",
           )}
@@ -323,7 +335,7 @@ function ReplyInput({
             <Button
               size="sm"
               variant="destructive"
-              className="rounded-full"
+              className="rounded-full cursor-pointer"
               onClick={submit}
               disabled={!canSend || submitting || gate.uploading}
             >
@@ -347,6 +359,7 @@ function ReplyInput({
           />}
         </div>
         {isDragOver && <FileDropOverlay />}
+      </div>
       </div>
     </div>
   );
