@@ -10,12 +10,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 )
 
 const testKey = "sk-test-secret-DO-NOT-LEAK"
+const dashscopeTestKey = "sk-test-dashscope-DO-NOT-LEAK"
 
 func okBody(choice string) string {
 	return `{"answers":{"effort":{"choice":"` + choice + `","confidence":0.9,"probabilities":{"low":0.1,"high":0.9}}},"latency_ms":42}`
@@ -33,10 +34,11 @@ func testReq() Request {
 }
 
 type recordingServer struct {
-	name  string // last path segment, for source naming
-	srv   *httptest.Server
-	count atomic.Int64
-	// handler inspects the request and writes the response.
+	srv     *httptest.Server
+	count   int
+	lastRaw string
+
+	mu      sync.Mutex
 	handler func(r *http.Request, body []byte) (int, string)
 }
 
@@ -44,15 +46,38 @@ func newRecordingServer(t *testing.T, handler func(r *http.Request, body []byte)
 	t.Helper()
 	rs := &recordingServer{handler: handler}
 	rs.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rs.count.Add(1)
 		buf, _ := io.ReadAll(r.Body)
-		lastRawBody = string(buf)
-		code, body := rs.handler(r, buf)
+		// Run the handler OUTSIDE rs.mu: tests use blocking handlers
+		// (gates) that must not hold the recording lock.
+		rs.mu.Lock()
+		rs.count++
+		rs.lastRaw = string(buf)
+		h := rs.handler
+		rs.mu.Unlock()
+		code, body := h(r, buf)
 		w.WriteHeader(code)
 		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(rs.srv.Close)
 	return rs
+}
+
+func (rs *recordingServer) hits() int {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return rs.count
+}
+
+func (rs *recordingServer) lastBody() string {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return rs.lastRaw
+}
+
+func (rs *recordingServer) setHandler(h func(r *http.Request, body []byte) (int, string)) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	rs.handler = h
 }
 
 func TestDecide_Success(t *testing.T) {
@@ -107,8 +132,8 @@ func TestDecide_Success(t *testing.T) {
 	}
 	// Criteria keys keep the caller's low→high option order (encoding/json
 	// would sort them alphabetically).
-	if !strings.Contains(lastRawBody, `"criteria":{"low":"mechanical","high":"deep"}`) {
-		t.Fatalf("criteria order not preserved: %s", lastRawBody)
+	if !strings.Contains(rs.lastBody(), `"criteria":{"low":"mechanical","high":"deep"}`) {
+		t.Fatalf("criteria order not preserved: %s", rs.lastBody())
 	}
 
 	// Snapshot: idle → available.
@@ -128,41 +153,50 @@ func TestDecide_Success(t *testing.T) {
 }
 
 func TestDecide_AuthHeadersPerSource(t *testing.T) {
-	type capture struct {
-		auth string
-		path string
-	}
-	var caps []capture
-	var mu = make(chan struct{}, 1)
+	var mu sync.Mutex
+	var auths []string
 	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
-		mu <- struct{}{}
-		caps = append(caps, capture{r.Header.Get("Authorization"), r.URL.Path})
-		<-mu
+		mu.Lock()
+		defer mu.Unlock()
+		auths = append(auths, r.Header.Get("Authorization"))
 		return 200, okBody("low")
 	})
+
+	// Authenticated opencode first: bearer key, only one hit on success.
+	auths = nil
 	c := New(Options{Sources: []Source{
 		{Name: "opencode", BaseURL: rs.srv.URL, Model: "jev-1.13", BearerToken: testKey},
 		{Name: "opencode-free", BaseURL: rs.srv.URL, Model: "jev-1.13-free"},
 	}})
-
 	if _, err := c.Decide(context.Background(), testReq()); err != nil {
 		t.Fatalf("Decide: %v", err)
 	}
-	// Only the first source is hit on success; it must carry the bearer.
-	if len(caps) != 1 || caps[0].auth != "Bearer "+testKey {
-		t.Fatalf("captures = %+v", caps)
+	if len(auths) != 1 || auths[0] != "Bearer "+testKey {
+		t.Fatalf("opencode captures = %v", auths)
 	}
 
-	// Free source first: no Authorization header.
-	caps = nil
+	// Dashscope source: its own bearer key on the wire.
+	auths = nil
 	c2 := New(Options{Sources: []Source{
-		{Name: "opencode-free", BaseURL: rs.srv.URL, Model: "jev-1.13-free"},
+		{Name: "dashscope", BaseURL: rs.srv.URL, Model: "decision-model-preview", BearerToken: dashscopeTestKey},
 	}})
 	if _, err := c2.Decide(context.Background(), testReq()); err != nil {
 		t.Fatalf("Decide: %v", err)
 	}
-	if len(caps) != 1 || caps[0].auth != "" {
-		t.Fatalf("captures = %+v", caps)
+	if len(auths) != 1 || auths[0] != "Bearer "+dashscopeTestKey {
+		t.Fatalf("dashscope captures = %v", auths)
+	}
+
+	// Free source first: no Authorization header at all.
+	auths = nil
+	c3 := New(Options{Sources: []Source{
+		{Name: "opencode-free", BaseURL: rs.srv.URL, Model: "jev-1.13-free"},
+	}})
+	if _, err := c3.Decide(context.Background(), testReq()); err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if len(auths) != 1 || auths[0] != "" {
+		t.Fatalf("free captures = %v", auths)
 	}
 }
 
@@ -231,6 +265,9 @@ func TestDecide_AllSourcesFail_FallbackReasons(t *testing.T) {
 		{"http500", 500, "boom", ReasonError},
 		{"badJSON", 200, "{not json", ReasonInvalid},
 		{"choiceNotInOptions", 200, okBody("nope"), ReasonInvalid},
+		{"trailingGarbage", 200, okBody("low") + " THIS IS NOT JSON", ReasonInvalid},
+		{"secondJSONValue", 200, okBody("low") + `{"answers":null}`, ReasonInvalid},
+		{"oversized", 200, strings.Repeat(" ", maxResponseBytes+2) + okBody("low"), ReasonInvalid},
 		{"noSources", 0, "", ReasonError},
 	}
 	for _, tc := range cases {
@@ -291,14 +328,74 @@ func TestDecide_TimeoutHonorsConfiguredValue(t *testing.T) {
 	}
 }
 
+func TestDecide_ResponseBodyTimeoutIsTimeout(t *testing.T) {
+	// 200 + partial JSON, then the server stalls until the request context
+	// dies: the body-read deadline must classify as timeout, not invalid.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"answers":`)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	c := New(Options{Timeout: 40 * time.Millisecond, Sources: []Source{{Name: "slow-body", BaseURL: srv.URL}}})
+	_, err := c.Decide(context.Background(), testReq())
+	var fb *FallbackError
+	if !errors.As(err, &fb) || fb.Reason != ReasonTimeout {
+		t.Fatalf("err = %v, want timeout fallback", err)
+	}
+}
+
+func TestDecide_LatencyIncludesFailoverAttempts(t *testing.T) {
+	// Injected clock: the primary burns 120ms failing, the secondary takes
+	// 30ms succeeding — the reported latency must be the whole 150ms.
+	var elapsed int64
+	var mu sync.Mutex
+	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.URL.Path == "/primary" {
+			elapsed += 120
+			return 500, "boom"
+		}
+		elapsed += 30
+		return 200, okBody("low")
+	})
+	c := New(Options{
+		Now: func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			return time.UnixMilli(elapsed)
+		},
+		Sources: []Source{
+			{Name: "primary", BaseURL: rs.srv.URL + "/primary"},
+			{Name: "secondary", BaseURL: rs.srv.URL + "/secondary"},
+		},
+	})
+	dec, err := c.Decide(context.Background(), testReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.LatencyMS != 150 {
+		t.Fatalf("latency = %dms, want 150ms including the failed primary attempt", dec.LatencyMS)
+	}
+	if c.Snapshot().LastLatencyMS != 150 {
+		t.Fatalf("snapshot latency = %dms, want 150ms", c.Snapshot().LastLatencyMS)
+	}
+}
+
 func TestDecide_Breaker(t *testing.T) {
 	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
 		return 500, "down"
 	})
 	now := time.Now()
+	var mu sync.Mutex
 	c := New(Options{
 		Sources: []Source{{Name: "s", BaseURL: rs.srv.URL}},
-		Now:     func() time.Time { return now },
+		Now: func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			return now
+		},
 	})
 
 	// Three consecutive all-source failures open the breaker.
@@ -307,7 +404,7 @@ func TestDecide_Breaker(t *testing.T) {
 			t.Fatal("expected failure")
 		}
 	}
-	if got := rs.count.Load(); got != 3 {
+	if got := rs.hits(); got != 3 {
 		t.Fatalf("server hits = %d, want 3", got)
 	}
 	if s := c.Snapshot().Status; s != StatusUnavailable {
@@ -320,17 +417,19 @@ func TestDecide_Breaker(t *testing.T) {
 	if !errors.As(err, &fb) || fb.Reason != ReasonBreaker {
 		t.Fatalf("err = %v, want breaker fallback", err)
 	}
-	if got := rs.count.Load(); got != 3 {
+	if got := rs.hits(); got != 3 {
 		t.Fatalf("server hits during open breaker = %d, want 3", got)
 	}
 
 	// After cooldown: exactly one trial request goes through.
+	mu.Lock()
 	now = now.Add(breakerCooldown + time.Second)
+	mu.Unlock()
 	_, err = c.Decide(context.Background(), testReq())
 	if !errors.As(err, &fb) || fb.Reason != ReasonError {
 		t.Fatalf("err = %v, want http error fallback from trial", err)
 	}
-	if got := rs.count.Load(); got != 4 {
+	if got := rs.hits(); got != 4 {
 		t.Fatalf("server hits after cooldown = %d, want 4 (single trial)", got)
 	}
 
@@ -339,13 +438,15 @@ func TestDecide_Breaker(t *testing.T) {
 	if !errors.As(err, &fb) || fb.Reason != ReasonBreaker {
 		t.Fatalf("err = %v, want breaker reopened", err)
 	}
-	if got := rs.count.Load(); got != 4 {
+	if got := rs.hits(); got != 4 {
 		t.Fatalf("server hits after reopened breaker = %d, want 4", got)
 	}
 
 	// A successful trial after the next cooldown closes the breaker.
+	mu.Lock()
 	now = now.Add(breakerCooldown + time.Second)
-	rs.handler = func(r *http.Request, body []byte) (int, string) { return 200, okBody("low") }
+	mu.Unlock()
+	rs.setHandler(func(r *http.Request, body []byte) (int, string) { return 200, okBody("low") })
 	dec, err := c.Decide(context.Background(), testReq())
 	if err != nil || dec.Level != "low" {
 		t.Fatalf("decide = %+v, err = %v", dec, err)
@@ -355,84 +456,176 @@ func TestDecide_Breaker(t *testing.T) {
 	}
 }
 
+func TestDecide_HalfOpenAllowsSingleTrial(t *testing.T) {
+	// While the half-open trial is still in flight, a second concurrent
+	// Decide must get the breaker fallback without touching the source.
+	trialStarted := make(chan struct{})
+	releaseTrial := make(chan struct{})
+	var once sync.Once
+	var hits int // counts requests inside this handler (test-local)
+	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
+		hits++
+		if hits == 4 { // the half-open trial: hold it in flight
+			once.Do(func() { close(trialStarted) })
+			<-releaseTrial
+		}
+		return 500, "down"
+	})
+	now := time.Now()
+	var mu sync.Mutex
+	c := New(Options{
+		Timeout: 5 * time.Second,
+		Sources: []Source{{Name: "s", BaseURL: rs.srv.URL}},
+		Now: func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			return now
+		},
+	})
+
+	for i := 0; i < 3; i++ {
+		_, _ = c.Decide(context.Background(), testReq())
+	}
+	mu.Lock()
+	now = now.Add(breakerCooldown + time.Second)
+	mu.Unlock()
+
+	first := make(chan error, 1)
+	go func() {
+		_, err := c.Decide(context.Background(), testReq())
+		first <- err
+	}()
+	<-trialStarted
+
+	_, err := c.Decide(context.Background(), testReq())
+	var fb *FallbackError
+	if !errors.As(err, &fb) || fb.Reason != ReasonBreaker {
+		t.Fatalf("second call during half-open trial: %v, want breaker fallback", err)
+	}
+	if got := rs.hits(); got != 4 {
+		t.Fatalf("server hits = %d, want 4 (trial only)", got)
+	}
+
+	close(releaseTrial)
+	if err := <-first; err == nil {
+		t.Fatal("trial should have failed")
+	}
+}
+
 func TestDecide_Disabled(t *testing.T) {
 	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) { return 200, okBody("low") })
 	c := New(Options{Disabled: true, Sources: []Source{{Name: "s", BaseURL: rs.srv.URL}}})
+	// A disabled engine is unavailable from the start and stays that way.
+	if s := c.Snapshot().Status; s != StatusUnavailable {
+		t.Fatalf("initial status = %s, want unavailable", s)
+	}
 	_, err := c.Decide(context.Background(), testReq())
 	var fb *FallbackError
 	if !errors.As(err, &fb) || fb.Reason != ReasonDisabled {
 		t.Fatalf("err = %v, want disabled fallback", err)
 	}
-	if got := rs.count.Load(); got != 0 {
+	if got := rs.hits(); got != 0 {
 		t.Fatalf("server hits = %d, want 0", got)
 	}
 	if err := c.Probe(context.Background()); err == nil {
 		t.Fatal("probe on disabled client should fail")
 	}
+	if s := c.Snapshot().Status; s != StatusUnavailable {
+		t.Fatalf("status after Decide and Probe = %s, want unavailable", s)
+	}
 }
 
-func TestSnapshot_StatusTransitions(t *testing.T) {
-	fail := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) { return 500, "x" })
-	ok := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) { return 200, okBody("low") })
+func TestSnapshot_StatusTransitionsSameClient(t *testing.T) {
+	// One client, one flippable backend: idle → available → degraded →
+	// available → unavailable → available, all on the same instance.
+	healthy := true
+	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
+		if healthy {
+			return 200, okBody("low")
+		}
+		return 500, "x"
+	})
+	now := time.Now()
+	c := New(Options{
+		Sources: []Source{{Name: "s", BaseURL: rs.srv.URL}},
+		Now:     func() time.Time { return now },
+	})
 
-	c := New(Options{Sources: []Source{{Name: "s", BaseURL: fail.srv.URL}}})
 	if s := c.Snapshot().Status; s != StatusIdle {
 		t.Fatalf("initial status = %s, want idle", s)
 	}
-
-	// idle → available
-	c2 := New(Options{Sources: []Source{{Name: "s", BaseURL: ok.srv.URL}}})
-	if _, err := c2.Decide(context.Background(), testReq()); err != nil {
+	if _, err := c.Decide(context.Background(), testReq()); err != nil {
 		t.Fatal(err)
 	}
-	if s := c2.Snapshot().Status; s != StatusAvailable {
+	if s := c.Snapshot().Status; s != StatusAvailable {
 		t.Fatalf("status = %s, want available", s)
 	}
 
-	// available → degraded (single failure below breaker threshold)
-	failOnce := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
-		count := fail1Count.Add(1)
-		if count <= 1 {
-			return 500, "x"
-		}
-		return 200, okBody("low")
-	})
-	c3 := New(Options{Sources: []Source{{Name: "s", BaseURL: failOnce.srv.URL}}})
-	if _, err := c3.Decide(context.Background(), testReq()); err == nil {
+	// available → degraded: one failure below the breaker threshold.
+	healthy = false
+	if _, err := c.Decide(context.Background(), testReq()); err == nil {
 		t.Fatal("expected fallback error")
 	}
-	if s := c3.Snapshot().Status; s != StatusDegraded {
+	if s := c.Snapshot().Status; s != StatusDegraded {
 		t.Fatalf("status = %s, want degraded", s)
 	}
-	// Recovery returns the same client to available.
-	if _, err := c3.Decide(context.Background(), testReq()); err != nil {
+
+	// degraded → available: recovery on the same client.
+	healthy = true
+	if _, err := c.Decide(context.Background(), testReq()); err != nil {
 		t.Fatal(err)
 	}
-	if s := c3.Snapshot().Status; s != StatusAvailable {
+	if s := c.Snapshot().Status; s != StatusAvailable {
 		t.Fatalf("status = %s, want available after recovery", s)
 	}
 
-	// degraded → unavailable (breaker opens on 3rd consecutive failure)
-	c4 := New(Options{Sources: []Source{{Name: "s", BaseURL: fail.srv.URL}}})
+	// available → unavailable: three consecutive failures open the breaker.
+	healthy = false
 	for i := 0; i < 3; i++ {
-		_, _ = c4.Decide(context.Background(), testReq())
+		_, _ = c.Decide(context.Background(), testReq())
 	}
-	if s := c4.Snapshot().Status; s != StatusUnavailable {
+	if s := c.Snapshot().Status; s != StatusUnavailable {
 		t.Fatalf("status = %s, want unavailable", s)
 	}
-	// unavailable → available (recovery on a fresh healthy source)
-	c5 := New(Options{Sources: []Source{{Name: "s", BaseURL: ok.srv.URL}}})
-	if _, err := c5.Decide(context.Background(), testReq()); err != nil {
+
+	// unavailable → available: a successful trial after cooldown.
+	now = now.Add(breakerCooldown + time.Second)
+	healthy = true
+	if _, err := c.Decide(context.Background(), testReq()); err != nil {
 		t.Fatal(err)
 	}
-	if s := c5.Snapshot().Status; s != StatusAvailable {
-		t.Fatalf("status = %s, want available", s)
+	if s := c.Snapshot().Status; s != StatusAvailable {
+		t.Fatalf("status = %s, want available after breaker recovery", s)
 	}
 }
 
-var fail1Count atomic.Int64
-
-var lastRawBody string
+func TestSnapshot_SinceIsCounterEpoch(t *testing.T) {
+	// Since is the immutable epoch the counters started at; only
+	// updated_at moves.
+	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) { return 500, "x" })
+	now := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	c := New(Options{
+		Now: func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			return now
+		},
+		Sources: []Source{{Name: "s", BaseURL: rs.srv.URL}},
+	})
+	start := c.Snapshot().Since
+	mu.Lock()
+	now = now.Add(time.Hour)
+	mu.Unlock()
+	_, _ = c.Decide(context.Background(), testReq())
+	snap := c.Snapshot()
+	if !snap.Since.Equal(start) {
+		t.Fatalf("since moved from %s to %s while counters kept accumulating", start, snap.Since)
+	}
+	if snap.UpdatedAt.Equal(start) {
+		t.Fatalf("updated_at never moved from %s", snap.UpdatedAt)
+	}
+}
 
 func TestProbe_UpdatesSnapshotNotCounters(t *testing.T) {
 	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) { return 200, okBody("low") })
@@ -460,6 +653,44 @@ func TestProbe_UpdatesSnapshotNotCounters(t *testing.T) {
 	}
 	if c2.Snapshot().DecisionsFallback != 0 {
 		t.Fatal("probe failure counted as fallback decision")
+	}
+}
+
+func TestProbe_DoesNotMaskOpenBreaker(t *testing.T) {
+	// A probe that succeeds while the breaker has since opened must not
+	// flip the snapshot to available — the breaker's unavailable verdict
+	// wins, and the next Decide still falls back with breaker.
+	probeStarted := make(chan struct{})
+	finishProbe := make(chan struct{})
+	var once sync.Once
+	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
+		if strings.Contains(string(body), "health-probe") {
+			once.Do(func() { close(probeStarted) })
+			<-finishProbe
+			return 200, okBody("low")
+		}
+		return 500, "x"
+	})
+	c := New(Options{Sources: []Source{{Name: "s", BaseURL: rs.srv.URL}}})
+
+	finished := make(chan error, 1)
+	go func() { finished <- c.Probe(context.Background()) }()
+	<-probeStarted
+	for i := 0; i < 3; i++ {
+		_, _ = c.Decide(context.Background(), testReq())
+	}
+	close(finishProbe)
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+
+	if s := c.Snapshot().Status; s != StatusUnavailable {
+		t.Fatalf("snapshot after successful probe vs open breaker = %s, want unavailable", s)
+	}
+	_, err := c.Decide(context.Background(), testReq())
+	var fb *FallbackError
+	if !errors.As(err, &fb) || fb.Reason != ReasonBreaker {
+		t.Fatalf("err = %v, want breaker fallback", err)
 	}
 }
 
@@ -502,27 +733,36 @@ func TestResolveSources(t *testing.T) {
 }
 
 func TestAPINeverLeaked(t *testing.T) {
-	// A failing authenticated source must not leak its key through error
-	// strings, logs, or the snapshot.
+	// Capture the real default logger so anything this package logs goes
+	// through the buffer; restore it when the test ends.
 	var logBuf strings.Builder
-	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
-	_ = logger // package logs only warnings from ResolveSources (names, not keys)
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
 
-	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) { return 500, "down" })
+	// Exercise every path that can mention a source with credentials:
+	// source resolution (warnings), a failing authenticated Decide, and an
+	// upstream echo attempt.
+	echo := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
+		return 200, `{"answers":{"effort":{"choice":"` + r.Header.Get("Authorization") + `"}}}`
+	})
 	c := New(Options{Sources: []Source{
-		{Name: "opencode", BaseURL: rs.srv.URL, Model: "jev-1.13", BearerToken: testKey},
-		{Name: "dashscope", BaseURL: rs.srv.URL, Model: "m", BearerToken: testKey},
+		{Name: "opencode", BaseURL: echo.srv.URL, Model: "jev-1.13", BearerToken: testKey},
+		{Name: "dashscope", BaseURL: echo.srv.URL, Model: "m", BearerToken: dashscopeTestKey},
 	}})
 	_, err := c.Decide(context.Background(), testReq())
 	if err == nil {
-		t.Fatal("expected failure")
+		t.Fatal("expected failure (echoed bearer is not a valid choice)")
 	}
+	_ = ResolveSources("opencode,dashscope", SourceEnv{OpenCodeAPIKey: testKey, DashScopeAPIKey: dashscopeTestKey, DashScopeWorkspaceID: "ws"})
 	snapBytes, _ := json.Marshal(c.Snapshot())
 
 	leaks := []string{err.Error(), logBuf.String(), string(snapBytes)}
 	for _, leak := range leaks {
-		if strings.Contains(leak, testKey) {
-			t.Fatalf("API key leaked into: %q", leak)
+		for _, marker := range []string{testKey, dashscopeTestKey, "Bearer "} {
+			if strings.Contains(leak, marker) {
+				t.Fatalf("secret marker %q leaked into: %q", marker, leak)
+			}
 		}
 	}
 
@@ -538,8 +778,24 @@ func TestAPINeverLeaked(t *testing.T) {
 	}
 }
 
+func TestDecide_ErrorDoesNotEchoUpstreamChoice(t *testing.T) {
+	// A hostile/broken endpoint reflects the bearer key back as its
+	// choice; the invalid-choice error must not echo that raw value.
+	echo := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
+		return 200, `{"answers":{"effort":{"choice":"` + r.Header.Get("Authorization") + `"}}}`
+	})
+	c := New(Options{Sources: []Source{{Name: "authenticated", BaseURL: echo.srv.URL, BearerToken: testKey}}})
+	_, err := c.Decide(context.Background(), testReq())
+	if err == nil {
+		t.Fatal("want invalid-choice failure")
+	}
+	if strings.Contains(err.Error(), testKey) || strings.Contains(err.Error(), "Bearer ") {
+		t.Fatalf("invalid-choice error echoes upstream value: %v", err)
+	}
+}
+
 func TestLive(t *testing.T) {
-	if ok, _ := resolveLiveGate(); !ok {
+	if os.Getenv("MULTICA_RUN_JEV_LIVE") != "1" {
 		t.Skip("MULTICA_RUN_JEV_LIVE=1 not set; skipping online test")
 	}
 	c := New(Options{Sources: []Source{{Name: "opencode-free", BaseURL: opencodeBaseURL, Model: opencodeFreeModel}}})
@@ -560,10 +816,4 @@ func TestLive(t *testing.T) {
 		t.Fatalf("choice %q not in options", dec.Level)
 	}
 	t.Logf("live decision: %+v", dec)
-}
-
-// resolveLiveGate reads the live-test gate without importing os at the top
-// of every reader's attention.
-func resolveLiveGate() (bool, string) {
-	return os.Getenv("MULTICA_RUN_JEV_LIVE") == "1", ""
 }

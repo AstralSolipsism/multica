@@ -144,17 +144,21 @@ type Request struct {
 	Options      []Option
 }
 
-// Decision is a successful Jev answer.
+// Decision is a successful Jev answer. LatencyMS is the locally measured
+// end-to-end time of the whole Decide call, including failed attempts on
+// earlier sources.
 type Decision struct {
 	Level         string
 	Confidence    float64
 	Probabilities map[string]float64
-	LatencyMS     int64 // locally measured end-to-end
+	LatencyMS     int64
 	Source        string
 }
 
 // Snapshot is the daemon-local health view of the engine (contract §3).
-// It carries no credentials and no business content.
+// It carries no credentials and no business content. Since is the epoch
+// the cumulative counters started at (daemon start) and never moves;
+// UpdatedAt advances on every change.
 type Snapshot struct {
 	Status            string    `json:"status"` // idle|available|degraded|unavailable
 	ActiveSource      string    `json:"active_source"`
@@ -277,6 +281,12 @@ func New(opts Options) *Client {
 		now = time.Now
 	}
 	start := now()
+	status := StatusIdle
+	if opts.Disabled {
+		// Contract §3: 本机关闭或熔断中为 unavailable — a disabled engine
+		// starts unavailable, not idle.
+		status = StatusUnavailable
+	}
 	return &Client{
 		disabled: opts.Disabled,
 		timeout:  timeout,
@@ -290,14 +300,16 @@ func New(opts Options) *Client {
 			},
 		},
 		now:  now,
-		snap: Snapshot{Status: StatusIdle, Since: start, UpdatedAt: start},
+		snap: Snapshot{Status: status, Since: start, UpdatedAt: start},
 	}
 }
 
 // Decide asks the configured sources, in order, to pick an effort level.
-// On success it returns the winning decision; on any failure it returns a
-// *FallbackError and the caller proceeds with its default level.
+// On success it returns the winning decision whose LatencyMS covers the
+// whole call, including failed attempts on earlier sources; on any failure
+// it returns a *FallbackError and the caller proceeds with its default.
 func (c *Client) Decide(ctx context.Context, req Request) (Decision, error) {
+	started := c.now()
 	if c.disabled {
 		c.recordDisabled()
 		return Decision{}, &FallbackError{Reason: ReasonDisabled}
@@ -316,6 +328,7 @@ func (c *Client) Decide(ctx context.Context, req Request) (Decision, error) {
 	for i, src := range c.sources {
 		dec, reason, err := c.trySource(ctx, src, req)
 		if err == nil {
+			dec.LatencyMS = c.now().Sub(started).Milliseconds()
 			c.recordSuccess(src.Name, dec.LatencyMS)
 			return dec, nil
 		}
@@ -343,8 +356,11 @@ var probeRequest = Request{
 
 // Probe sends one fixed request to refresh the health snapshot. It never
 // touches the decision counters or the breaker; scheduling is owned by the
-// caller (S2-2).
+// caller (S2-2). A successful probe must not mask an open or half-open
+// breaker: the status stays unavailable while the breaker holds it, even
+// if the probe itself reached a source.
 func (c *Client) Probe(ctx context.Context) error {
+	started := c.now()
 	if c.disabled {
 		return &FallbackError{Reason: ReasonDisabled}
 	}
@@ -357,12 +373,17 @@ func (c *Client) Probe(ctx context.Context) error {
 
 	var firstReason FallbackReason
 	for i, src := range c.sources {
-		dec, reason, err := c.trySource(ctx, src, probeRequest)
+		_, reason, err := c.trySource(ctx, src, probeRequest)
 		if err == nil {
+			latency := c.now().Sub(started).Milliseconds()
 			c.mu.Lock()
-			c.setStatus(StatusAvailable)
+			// Only a closed breaker may report available; the breaker's
+			// unavailable verdict wins over a probe success.
+			if c.brk.state == brkClosed {
+				c.snap.Status = StatusAvailable
+			}
 			c.snap.ActiveSource = src.Name
-			c.snap.LastLatencyMS = dec.LatencyMS
+			c.snap.LastLatencyMS = latency
 			c.snap.UpdatedAt = c.now()
 			c.mu.Unlock()
 			return nil
@@ -376,10 +397,9 @@ func (c *Client) Probe(ctx context.Context) error {
 	if len(c.sources) == 0 {
 		firstReason = ReasonError
 	}
-	// A probe failure leaves the status at degraded; an open breaker keeps
-	// its own unavailable status (probes must not flip it back).
-	if c.snap.Status != StatusUnavailable {
-		c.setStatus(StatusDegraded)
+	// A probe failure never upgrades an open breaker's unavailable status.
+	if c.brk.state == brkClosed && c.snap.Status != StatusUnavailable {
+		c.snap.Status = StatusDegraded
 	}
 	c.snap.UpdatedAt = c.now()
 	c.mu.Unlock()
@@ -396,9 +416,9 @@ func (c *Client) Snapshot() Snapshot {
 	return c.snap
 }
 
-// trySource performs one timeout-bounded attempt against one source.
+// trySource performs one timeout-bounded attempt against one source. The
+// returned Decision carries no latency; Decide/Probe measure end-to-end.
 func (c *Client) trySource(ctx context.Context, src Source, req Request) (Decision, FallbackReason, error) {
-	started := c.now()
 	sctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -441,8 +461,22 @@ func (c *Client) trySource(ctx context.Context, src Source, req Request) (Decisi
 		return Decision{}, ReasonError, fmt.Errorf("source %s: http %d", src.Name, resp.StatusCode)
 	}
 
+	// Read once, capped at maxResponseBytes+1: the extra byte detects an
+	// oversized response without buffering it all.
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return Decision{}, ReasonTimeout, fmt.Errorf("source %s: read response: %w", src.Name, err)
+		}
+		return Decision{}, ReasonError, fmt.Errorf("source %s: read response: %w", src.Name, err)
+	}
+	if len(raw) > maxResponseBytes {
+		return Decision{}, ReasonInvalid, fmt.Errorf("source %s: response exceeds %d bytes", src.Name, maxResponseBytes)
+	}
+	// Unmarshal (unlike a streaming Decode) rejects trailing garbage and
+	// any second JSON value after the object.
 	var out decideResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&out); err != nil {
+	if err := json.Unmarshal(raw, &out); err != nil {
 		return Decision{}, ReasonInvalid, fmt.Errorf("source %s: decode response: %w", src.Name, err)
 	}
 	choice := out.Answers.Effort.Choice
@@ -454,23 +488,23 @@ func (c *Client) trySource(ctx context.Context, src Source, req Request) (Decisi
 		}
 	}
 	if !valid {
-		return Decision{}, ReasonInvalid, fmt.Errorf("source %s: choice %q not in options", src.Name, choice)
+		// Never echo the raw choice: it is untrusted upstream content and
+		// could carry anything, including credentials a hostile endpoint
+		// reflects back.
+		return Decision{}, ReasonInvalid, fmt.Errorf("source %s: choice not in options", src.Name)
 	}
 	return Decision{
 		Level:         choice,
 		Confidence:    out.Answers.Effort.Confidence,
 		Probabilities: out.Answers.Effort.Probabilities,
-		LatencyMS:     c.now().Sub(started).Milliseconds(),
 		Source:        src.Name,
 	}, "", nil
 }
 
-// setStatus records a status transition; caller holds c.mu.
+// setStatus records the status; caller holds c.mu. Since is the immutable
+// counter epoch (contract §3) and deliberately never moves here.
 func (c *Client) setStatus(status string) {
-	if c.snap.Status != status {
-		c.snap.Status = status
-		c.snap.Since = c.now()
-	}
+	c.snap.Status = status
 }
 
 func (c *Client) recordSuccess(source string, latencyMS int64) {
