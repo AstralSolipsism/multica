@@ -1,0 +1,257 @@
+[
+  {
+    "name": "empty",
+    "levels": [],
+    "candidates": [],
+    "supported": false
+  },
+  {
+    "name": "null",
+    "levels": null,
+    "candidates": [],
+    "supported": false
+  },
+  {
+    "name": "only_disabled_and_auto",
+    "levels": [
+      {
+        "value": "auto",
+        "label": "auto"
+      },
+      {
+        "value": "off",
+        "label": "off"
+      },
+      {
+        "value": "none",
+        "label": "none"
+      },
+      {
+        "value": "disabled",
+        "label": "disabled"
+      }
+    ],
+    "candidates": [],
+    "supported": false
+  },
+  {
+    "name": "one_candidate",
+    "levels": [
+      {
+        "value": "auto",
+        "label": "Auto"
+      },
+      {
+        "value": "high",
+        "label": "High"
+      }
+    ],
+    "candidates": [
+      {
+        "value": "high",
+        "label": "High"
+      }
+    ],
+    "supported": false
+  },
+  {
+    "name": "native_order_and_metadata",
+    "levels": [
+      {
+        "value": "high",
+        "label": "High",
+        "description": "Deep reasoning"
+      },
+      {
+        "value": "auto",
+        "label": "Auto"
+      },
+      {
+        "value": "low",
+        "label": "Low",
+        "description": "Fast reasoning"
+      },
+      {
+        "value": "disabled",
+        "label": "Disabled"
+      }
+    ],
+    "candidates": [
+      {
+        "value": "high",
+        "label": "High",
+        "description": "Deep reasoning"
+      },
+      {
+        "value": "low",
+        "label": "Low",
+        "description": "Fast reasoning"
+      }
+    ],
+    "supported": true
+  },
+  {
+    "name": "max_and_ultra",
+    "levels": [
+      {
+        "value": "none",
+        "label": "none"
+      },
+      {
+        "value": "minimal",
+        "label": "minimal"
+      },
+      {
+        "value": "low",
+        "label": "low"
+      },
+      {
+        "value": "medium",
+        "label": "medium"
+      },
+      {
+        "value": "high",
+        "label": "high"
+      },
+      {
+        "value": "xhigh",
+        "label": "xhigh"
+      },
+      {
+        "value": "max",
+        "label": "max"
+      },
+      {
+        "value": "ultra",
+        "label": "ultra"
+      }
+    ],
+    "candidates": [
+      {
+        "value": "minimal",
+        "label": "minimal"
+      },
+      {
+        "value": "low",
+        "label": "low"
+      },
+      {
+        "value": "medium",
+        "label": "medium"
+      },
+      {
+        "value": "high",
+        "label": "high"
+      },
+      {
+        "value": "xhigh",
+        "label": "xhigh"
+      },
+      {
+        "value": "max",
+        "label": "max"
+      },
+      {
+        "value": "ultra",
+        "label": "ultra"
+      }
+    ],
+    "supported": true
+  },
+  {
+    "name": "custom_variants",
+    "levels": [
+      {
+        "value": "auto",
+        "label": "auto"
+      },
+      {
+        "value": "fast.custom",
+        "label": "fast.custom"
+      },
+      {
+        "value": "deep-custom",
+        "label": "deep-custom"
+      },
+      {
+        "value": "off",
+        "label": "off"
+      },
+      {
+        "value": "high_quality",
+        "label": "high_quality"
+      }
+    ],
+    "candidates": [
+      {
+        "value": "fast.custom",
+        "label": "fast.custom"
+      },
+      {
+        "value": "deep-custom",
+        "label": "deep-custom"
+      },
+      {
+        "value": "high_quality",
+        "label": "high_quality"
+      }
+    ],
+    "supported": true
+  },
+  {
+    "name": "exact_tokens",
+    "levels": [
+      {
+        "value": "auto",
+        "label": "auto"
+      },
+      {
+        "value": "Auto",
+        "label": "Auto"
+      },
+      {
+        "value": "off",
+        "label": "off"
+      },
+      {
+        "value": "OFF",
+        "label": "OFF"
+      },
+      {
+        "value": "none",
+        "label": "none"
+      },
+      {
+        "value": "None",
+        "label": "None"
+      },
+      {
+        "value": "disabled",
+        "label": "disabled"
+      },
+      {
+        "value": "Disabled",
+        "label": "Disabled"
+      }
+    ],
+    "candidates": [
+      {
+        "value": "Auto",
+        "label": "Auto"
+      },
+      {
+        "value": "OFF",
+        "label": "OFF"
+      },
+      {
+        "value": "None",
+        "label": "None"
+      },
+      {
+        "value": "Disabled",
+        "label": "Disabled"
+      }
+    ],
+    "supported": true
+  }
+]

@@ -7616,6 +7616,13 @@ func resolveTaskModelSelection(
 	sel taskModelSelection,
 	taskLog *slog.Logger,
 ) taskModelSelection {
+	// Until adaptive decisions are implemented, fail open to the CLI config.
+	// Clear before catalog validation: discovery failures otherwise pass unknown
+	// values through, which must never send this reserved mode to CLI or ACP.
+	if sel.ThinkingLevel == agent.ThinkingLevelAdapt {
+		taskLog.Info("thinking_level: adaptive decisions unavailable; following CLI config", "provider", provider, "model", sel.Model)
+		sel.ThinkingLevel = ""
+	}
 	capabilityChecksPending := sel.ThinkingLevel != "" || sel.ServiceTier != ""
 
 	read := false

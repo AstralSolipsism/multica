@@ -24,6 +24,26 @@ import (
 // opencode.json config. What users pick must round-trip exactly through
 // each CLI's own value vocabulary.
 
+// ThinkingLevelAdapt selects adaptive reasoning rather than a CLI-native level.
+// The leading underscore is reserved: isValidDynamicThinkingValue rejects
+// symbol-prefixed tokens, so this cannot collide with CLI levels or saved values.
+const ThinkingLevelAdapt = "_adapt"
+
+// AdaptThinkingCandidates preserves the catalog's order and metadata, excluding
+// automatic and disabled reasoning modes. Adapt requires at least two candidates;
+// callers must check the returned length before offering or enabling it.
+func AdaptThinkingCandidates(levels []ThinkingLevel) []ThinkingLevel {
+	candidates := make([]ThinkingLevel, 0, len(levels))
+	for _, level := range levels {
+		switch level.Value {
+		case "auto", "off", "none", "disabled":
+			continue
+		}
+		candidates = append(candidates, level)
+	}
+	return candidates
+}
+
 // ── Cache ────────────────────────────────────────────────────────────
 //
 // Discovery is keyed on (provider, command, cliVersion). Bumping
