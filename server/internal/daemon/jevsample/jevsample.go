@@ -67,50 +67,50 @@ type pending struct {
 }
 
 type decisionRecord struct {
-	V            int                 `json:"v"`
-	Type         string              `json:"type"`
-	ID           string              `json:"id"`
-	TS           string              `json:"ts"`
-	DaemonID     string              `json:"daemon_id"`
-	TaskID       string              `json:"task_id"`
-	Scope        string              `json:"scope"`
-	Step         *int                `json:"step"`
-	Provider     string              `json:"provider"`
-	Model        string              `json:"model"`
-	State        any                 `json:"state"`
-	Questions    json.RawMessage     `json:"questions"`
-	Source       string              `json:"source"`
-	Choice       string              `json:"choice"`
-	Confidence   float64             `json:"confidence"`
+	V             int                `json:"v"`
+	Type          string             `json:"type"`
+	ID            string             `json:"id"`
+	TS            string             `json:"ts"`
+	DaemonID      string             `json:"daemon_id"`
+	TaskID        string             `json:"task_id"`
+	Scope         string             `json:"scope"`
+	Step          *int               `json:"step"`
+	Provider      string             `json:"provider"`
+	Model         string             `json:"model"`
+	State         any                `json:"state"`
+	Questions     json.RawMessage    `json:"questions"`
+	Source        string             `json:"source"`
+	Choice        string             `json:"choice"`
+	Confidence    float64            `json:"confidence"`
 	Probabilities map[string]float64 `json:"probabilities"`
-	LatencyMS    int64               `json:"latency_ms"`
+	LatencyMS     int64              `json:"latency_ms"`
 }
 
 type outcomeRecord struct {
-	V            int    `json:"v"`
-	Type         string `json:"type"`
-	DecisionID   string `json:"decision_id"`
-	TS           string `json:"ts"`
-	Scope        string `json:"scope"`
-	Status       string `json:"status"`
+	V             int    `json:"v"`
+	Type          string `json:"type"`
+	DecisionID    string `json:"decision_id"`
+	TS            string `json:"ts"`
+	Scope         string `json:"scope"`
+	Status        string `json:"status"`
 	FailureReason string `json:"failure_reason"`
-	ToolCalls    int64  `json:"tool_calls"`
-	OutcomeOK    bool   `json:"outcome_ok"`
+	ToolCalls     int64  `json:"tool_calls"`
+	OutcomeOK     bool   `json:"outcome_ok"`
 }
 
 // Decision is one successful decision to sample. State and Questions must
 // be exactly what was sent to the source; the collector adds no text of its
 // own. Step counts from 1 at step scope; zero renders as null (run scope).
 type Decision struct {
-	TaskID, Scope           string
-	Step                    int
-	Provider, Model         string
-	State                   any
-	Questions               json.RawMessage
-	Source, Choice          string
-	Confidence              float64
-	Probabilities           map[string]float64
-	LatencyMS               int64
+	TaskID, Scope   string
+	Step            int
+	Provider, Model string
+	State           any
+	Questions       json.RawMessage
+	Source, Choice  string
+	Confidence      float64
+	Probabilities   map[string]float64
+	LatencyMS       int64
 }
 
 // Outcome is the run-level result signal paired with a decision sample via
@@ -124,7 +124,8 @@ type Outcome struct {
 
 // New returns a collector writing under dir, or nil when dir is empty
 // (collection fully disabled: no directory is created, nothing is opened).
-// maxBytes <= 0 means no size cap.
+// maxBytes <= 0 means no size cap. Callers should pass LoadConfig's value,
+// which rejects non-positive MULTICA_JEV_COLLECT_MAX_MB.
 func New(dir, daemonID string, maxBytes int64, log *slog.Logger) *Collector {
 	if dir == "" {
 		return nil
@@ -247,7 +248,7 @@ func (c *Collector) run() {
 		openDay string
 		file    *os.File
 		used    int64
-		capped  bool
+		stopped bool
 	)
 	for p := range c.queue {
 		day := p.ts.UTC().Format(dateFormat)
@@ -256,6 +257,18 @@ func (c *Collector) run() {
 			file = nil
 		}
 		if file == nil {
+			if c.maxBytes > 0 && c.sizeOnDisk()+int64(len(p.line))+1 > c.maxBytes {
+				// Sticky for the day and checked before opening, so a capped
+				// day leaves no empty file behind. Smaller records are refused
+				// too: letting an outcome through after its decision was
+				// dropped would leave half pairs for training.
+				if !stopped {
+					stopped = true
+					c.log.Warn("jev sample collection: size cap reached; stopping writes",
+						"dir", c.dir, "max_bytes", c.maxBytes)
+				}
+				continue
+			}
 			file, used = c.open(day)
 			if file == nil {
 				continue
@@ -263,8 +276,10 @@ func (c *Collector) run() {
 			openDay = day
 		}
 		if c.maxBytes > 0 && used+int64(len(p.line))+1 > c.maxBytes {
-			if !capped {
-				capped = true
+			// Same stop once the open file itself crosses the line; the
+			// pre-open check above only sees the day's first record.
+			if !stopped {
+				stopped = true
 				c.log.Warn("jev sample collection: size cap reached; stopping writes",
 					"dir", c.dir, "max_bytes", c.maxBytes)
 			}
@@ -283,13 +298,8 @@ func (c *Collector) run() {
 	}
 }
 
-// open ensures the directory, sums this daemon's existing sample files
-// against the cap, and opens (creating if needed) today's file.
-func (c *Collector) open(day string) (*os.File, int64) {
-	if err := c.ensureDir(); err != nil {
-		c.warn("prepare directory", err)
-		return nil, 0
-	}
+// sizeOnDisk sums this daemon's existing sample files against the cap.
+func (c *Collector) sizeOnDisk() int64 {
 	var used int64
 	if matches, err := filepath.Glob(filepath.Join(c.dir, "decisions-"+c.daemonID+"-*.jsonl")); err == nil {
 		for _, match := range matches {
@@ -298,6 +308,17 @@ func (c *Collector) open(day string) (*os.File, int64) {
 			}
 		}
 	}
+	return used
+}
+
+// open ensures the directory and opens (creating if needed) today's file.
+// Callers have already checked the size cap.
+func (c *Collector) open(day string) (*os.File, int64) {
+	if err := c.ensureDir(); err != nil {
+		c.warn("prepare directory", err)
+		return nil, 0
+	}
+	used := c.sizeOnDisk()
 	path := filepath.Join(c.dir, fmt.Sprintf("decisions-%s-%s.jsonl", c.daemonID, day))
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {

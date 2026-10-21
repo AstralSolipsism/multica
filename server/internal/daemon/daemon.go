@@ -2294,6 +2294,9 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 	d.logger.Debug("background loops launched (workspace-sync, terminal-report-replay, task-wakeup, heartbeat, gc, auto-update, token-renewal); health now reporting ready")
 	err = d.pollLoop(ctx, taskWakeups)
 	d.logger.Debug("daemon main loop returning", "error", err)
+	// Drain the decision-sample writer after in-flight tasks finished, so
+	// outcomes enqueued during shutdown still reach the file.
+	d.jevSamples.Close()
 	return err
 }
 
@@ -5905,6 +5908,25 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// deleted (404).
 	// Retain the decision through terminal handling, outside runTask as well.
 	ctx = context.WithValue(ctx, thinkingRunKey{}, &thinkingRun{})
+	// sampleThinkingOutcome writes the run-level outcome record (OL-1013
+	// S1-2) with the status the daemon actually reports to the server, on
+	// every terminal path in handleTask. runTask only records the tool count
+	// on the thinkingRun; the reported status is settled here (a Finalize
+	// failure after a completed agent run flips it to failed). Cancelled runs
+	// write no outcome: the server discarded the result, so there is no
+	// reported outcome to pair with the decision.
+	sampleThinkingOutcome := func(status, failureReason string) {
+		if thinking := thinkingRunFromContext(ctx); thinking != nil {
+			if record := thinking.Record; record != nil && record.Fallback == "" && record.SampleID != "" {
+				d.jevSamples.Outcome(jevsample.Outcome{
+					DecisionID:    record.SampleID,
+					Status:        status,
+					FailureReason: failureReason,
+					ToolCalls:     int64(thinking.ToolCalls),
+				})
+			}
+		}
+	}
 	runCtx, runCancel := context.WithCancel(withYouShouldKnowStop(ctx, task))
 	defer runCancel()
 
@@ -5973,6 +5995,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 
 	if err != nil {
 		taskLog.Error("task failed", "error", err)
+		sampleThinkingOutcome("failed", taskRunFailureReason(err))
 		// runTask may have reached worktree finalization before returning the
 		// error. Preserve any delivery metadata that defer attached to the named
 		// result, especially the actual/preserved workdir and delivered branch.
@@ -6002,6 +6025,8 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// anyway. Reuse shouldInterruptAgent so this guard honors the same
 	// signals as the in-flight watcher.
 	if status, err := d.client.GetTaskStatus(ctx, task.ID); shouldInterruptAgent(status.Status, err) {
+		// No outcome sample: the server discarded this run's result, so
+		// there is no reported outcome to pair with the decision.
 		taskLog.Info("task cancelled during execution, discarding result",
 			"status", status.Status, "error", err, "branch_name", result.BranchName)
 		// Same contract as the poll-cancelled path above: the transcript is
@@ -6020,6 +6045,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	}
 
 	d.reportTaskResult(ctx, task.ID, result, taskLog)
+	sampleThinkingOutcome(result.Status, result.FailureReason)
 
 	// Write GC metadata after the task finishes so the periodic GC loop
 	// can look up the parent record (issue / chat session / autopilot run /
@@ -8803,27 +8829,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	model, thinkingLevel, serviceTier = selection.Model, selection.ThinkingLevel, selection.ServiceTier
 	ctx = context.WithValue(ctx, thinkingRunKey{}, thinking)
 
-	// Decision-sample outcome (OL-1013 S1-2): written when the final result
-	// is settled, once per run — fresh-session retries reuse the decision, so
-	// SampleID still points at this run's single decision sample. Only a run
-	// that actually wrote a decision (Record present, no fallback) gets one.
-	sampleOutcome := func(status, failureReason string, toolCalls int32) {
-		if record := thinking.Record; record != nil && record.Fallback == "" && record.SampleID != "" {
-			d.jevSamples.Outcome(jevsample.Outcome{
-				DecisionID:    record.SampleID,
-				Status:        status,
-				FailureReason: failureReason,
-				ToolCalls:     int64(toolCalls),
-			})
-		}
-	}
-	var sampledToolCalls int32
-	defer func() {
-		if err == nil {
-			sampleOutcome(taskResult.Status, taskResult.FailureReason, sampledToolCalls)
-		}
-	}()
-
 	var idleWatchdogTimeout time.Duration
 	if provider == "opencode" || provider == "codearts" {
 		idleWatchdogTimeout = d.cfg.OpenCodeIdleWatchdog
@@ -9017,7 +9022,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// than being relabeled resumable by a benign-looking second error.
 		result, tools = reconcileFreshRetryResult(firstResult, firstUsage, firstTools, retryResult, retryTools, retryErr)
 	}
-	sampledToolCalls = tools
+	thinking.ToolCalls = tools
 	phaseRecorder.Mark(taskPhaseTurnCompleted)
 
 	elapsed := time.Since(taskStart).Round(time.Second)

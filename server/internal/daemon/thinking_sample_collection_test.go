@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -33,16 +34,35 @@ func topLevelRaw(t *testing.T, doc []byte, key string) string {
 	return string(raw)
 }
 
-// TestRunTaskDecisionSampleCollection covers the OL-1017 acceptance criteria:
-// collection off writes nothing; a successful adaptive run writes exactly one
-// decision and one outcome linked by id, with state/questions byte-identical
-// to what the source received; fallbacks and retries never double-write; and
-// secrets from the task description or the environment never reach the file.
+// sampleRecords parses a sample file into one map per JSONL line.
+func sampleRecords(t *testing.T, path string) []map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if line == "" {
+			continue
+		}
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("invalid sample line: %v", err)
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
+// TestRunTaskDecisionSampleCollection covers the OL-1017 acceptance criteria.
+// It drives handleTask (not runTask) so the outcome sample is written on the
+// daemon's actual terminal path, including the failure branch.
 func TestRunTaskDecisionSampleCollection(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fake CLI")
 	}
-	for _, scenario := range []string{"success", "fallback-5xx", "retry", "disabled"} {
+	for _, scenario := range []string{"success", "fallback-5xx", "retry", "disabled", "agent-start-failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			stubModelDiscovery(t, map[string]agent.Catalog{"claude": adaptTestCatalog()})
 
@@ -56,8 +76,10 @@ func TestRunTaskDecisionSampleCollection(t *testing.T) {
 			var mu sync.Mutex
 			var wireBodies [][]byte
 			jevServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				body := make([]byte, r.ContentLength)
-				_, _ = r.Body.Read(body)
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("read jev body: %v", err)
+				}
 				mu.Lock()
 				wireBodies = append(wireBodies, body)
 				mu.Unlock()
@@ -83,20 +105,32 @@ func TestRunTaskDecisionSampleCollection(t *testing.T) {
 			collector := jevsample.New(sampleDir, "daemon-test", 0, quietTaskLog())
 
 			fake := filepath.Join(t.TempDir(), "claude")
+			// One tool_use block so the run's tool count is 1, not 0 — the
+			// outcome sample must carry it through to tool_calls.
 			writeTestExecutable(t, fake, []byte(`#!/bin/sh
 case "$*" in *--version*) echo '2.1.304'; exit 0;; esac
 IFS= read -r _
 case "$*" in *--resume*) printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"No conversation found with session ID old"}'; exit 0;; esac
+printf '%s\n' '{"type":"assistant","message":{"id":"one","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"ls"}}]}}'
 printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"old","result":"done"}'
 `))
+			if scenario == "agent-start-failure" {
+				// The decision happens before launch; the launch then fails,
+				// so handleTask reports failed and the outcome must say so.
+				broken := filepath.Join(t.TempDir(), "claude-broken")
+				writeTestExecutable(t, broken, []byte("#!/bin/sh\n"))
+				_ = os.Chmod(broken, 0o644)
+				fake = broken
+			}
 
 			d := &Daemon{client: NewClient(srv.URL), jevClient: jev.New(jev.Options{
 				Sources: []jev.Source{{Name: "fake", BaseURL: jevServer.URL, Model: "test"}}}),
 				jevSamples: collector, logger: quietTaskLog(),
-				workspaces:  map[string]*workspaceState{},
+				workspaces:   map[string]*workspaceState{},
 				runtimeIndex: map[string]Runtime{"rt": {ID: "rt", Provider: "claude"}}, activeEnvRoots: map[string]int{},
 				cfg: Config{WorkspacesRoot: t.TempDir(), AgentTimeout: 5 * time.Second, ServerBaseURL: srv.URL, Agents: map[string]AgentEntry{"claude": {Path: fake}}},
 			}
+			d.runner = taskRunnerFunc(d.runTask)
 			task := Task{ID: "sample-task", WorkspaceID: "ws", RuntimeID: "rt", IssueID: "issue", AgentID: "agent", AuthToken: "mat_sample_test",
 				IssueDescription: secretTask,
 				Agent:            &AgentData{ID: "agent", Name: "test", Model: "test/model", ThinkingLevel: agent.ThinkingLevelAdapt}}
@@ -112,10 +146,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 				task.PriorSessionID, task.PriorWorkDir = first.SessionID, first.WorkDir
 			}
 
-			result, err := d.runTask(t.Context(), task, "claude", 0, quietTaskLog())
-			if err != nil || result.Status != "completed" || result.Comment != "done" {
-				t.Fatalf("run failed: %+v %v", result, err)
-			}
+			d.handleTask(t.Context(), task, 0)
 			collector.Close()
 
 			switch scenario {
@@ -125,7 +156,8 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 				}
 				return
 			case "fallback-5xx":
-				// Fail-open: the run completed above; no decision may be sampled.
+				// Fail-open: the run completed; no decision may be sampled and
+				// therefore no outcome either.
 				entries, err := os.ReadDir(collectDir)
 				if err != nil {
 					if os.IsNotExist(err) {
@@ -139,27 +171,17 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 				return
 			}
 
-			// success / retry: exactly one decision and one outcome.
+			// success / retry / agent-start-failure: exactly one decision and
+			// one outcome, linked by id.
 			day := time.Now().UTC().Format("20060102")
 			path := filepath.Join(collectDir, "decisions-daemon-test-"+day+".jsonl")
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var records []map[string]any
-			for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
-				var record map[string]any
-				if err := json.Unmarshal([]byte(line), &record); err != nil {
-					t.Fatalf("invalid sample line: %v", err)
-				}
-				records = append(records, record)
-			}
+			records := sampleRecords(t, path)
 			if len(records) != 2 {
-				t.Fatalf("want exactly 2 records (decision+outcome), got %d: %s", len(records), raw)
+				t.Fatalf("want exactly 2 records (decision+outcome), got %d: %v", len(records), records)
 			}
 			decision, outcome := records[0], records[1]
 			if decision["type"] != "decision" || outcome["type"] != "outcome" {
-				t.Fatalf("record order/types: %s", raw)
+				t.Fatalf("record order/types: %v", records)
 			}
 
 			// Decision fields per contract.
@@ -188,14 +210,19 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 			}
 
 			// state and questions must be byte-identical to the wire body.
+			// Compare against the file's raw decision line — re-marshalling
+			// through a map would reorder keys and break byte identity.
 			mu.Lock()
 			wire := wireBodies[len(wireBodies)-1]
 			mu.Unlock()
+			rawAll, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
 			var decisionLine []byte
-			for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+			for _, line := range strings.Split(strings.TrimSpace(string(rawAll)), "\n") {
 				var probe map[string]any
-				_ = json.Unmarshal([]byte(line), &probe)
-				if probe["type"] == "decision" {
+				if json.Unmarshal([]byte(line), &probe) == nil && probe["type"] == "decision" {
 					decisionLine = []byte(line)
 				}
 			}
@@ -210,17 +237,35 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 			if outcome["decision_id"] != id {
 				t.Fatalf("decision_id mismatch: %v vs %v", outcome["decision_id"], id)
 			}
-			for key, want := range map[string]any{
-				"v": float64(1), "scope": "run", "status": "completed",
-				"failure_reason": "", "tool_calls": float64(0), "outcome_ok": true,
-			} {
-				if outcome[key] != want {
-					t.Fatalf("outcome[%q]=%v want %v", key, outcome[key], want)
+			if outcome["v"] != float64(1) || outcome["scope"] != "run" {
+				t.Fatalf("outcome envelope: %v", outcome)
+			}
+			switch scenario {
+			case "agent-start-failure":
+				// The decision was sampled; the launch failure must pair it
+				// with a failed outcome, not strand it without one.
+				if outcome["status"] != "failed" || outcome["outcome_ok"] != false {
+					t.Fatalf("start-failure outcome: %v", outcome)
+				}
+				if reason, _ := outcome["failure_reason"].(string); reason == "" {
+					t.Fatalf("start-failure outcome missing failure_reason: %v", outcome)
+				}
+			default:
+				if outcome["status"] != "completed" || outcome["outcome_ok"] != true || outcome["failure_reason"] != "" {
+					t.Fatalf("completed outcome: %v", outcome)
+				}
+				// The fake CLI ran exactly one tool_use.
+				if outcome["tool_calls"] != float64(1) {
+					t.Fatalf("tool_calls=%v want 1", outcome["tool_calls"])
 				}
 			}
 
 			// Redaction: only redact.Text's markers, never the originals, and
 			// never the environment sentinels.
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
 			for _, bad := range []string{
 				"ghp_", "sk-", "supersecretvalue99", "tok_wo_rd_987654321",
 				"sentinel-opencode-key-0123456789abcdef", "sentinel-multica-token-0123456789abcdef",

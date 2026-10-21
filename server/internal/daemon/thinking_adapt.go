@@ -50,6 +50,7 @@ type thinkingRun struct {
 	Samples    *jevsample.Collector
 	Task       Task
 	Record     *ThinkingDecisionRecord
+	ToolCalls  int32 // run-level tool-use count, sampled with the outcome
 	seenFirst  bool
 	requestIDs map[string]bool
 }

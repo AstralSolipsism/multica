@@ -705,6 +705,12 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	// Non-positive or overflowing values would silently disable the cap
+	// (non-positive maxBytes means unlimited in the collector), so reject
+	// them: a cap the operator asked for must actually hold.
+	if jevCollectMaxMB <= 0 || int64(jevCollectMaxMB) > int64(1)<<43 {
+		return Config{}, fmt.Errorf("MULTICA_JEV_COLLECT_MAX_MB: invalid value %d: must be between 1 and %d", jevCollectMaxMB, int64(1)<<43)
+	}
 
 	return Config{
 		ServerBaseURL:                   serverBaseURL,
