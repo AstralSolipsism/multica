@@ -92,6 +92,97 @@ func TestClaudeHandleAssistantToolUse(t *testing.T) {
 	}
 }
 
+func TestClaudeHandleAssistantThinkingBlocks(t *testing.T) {
+	t.Parallel()
+
+	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
+	ch := make(chan Message, 10)
+
+	// One assistant event with thinking, text, and tool_use blocks in order,
+	// with the thinking text in the "thinking" field as Claude Code sends it.
+	msg := claudeSDKMessage{
+		Type: "assistant",
+		Message: json.RawMessage(`{"role":"assistant","content":[
+			{"type":"thinking","thinking":"deliberating","signature":"sig"},
+			{"type":"text","text":"visible answer"},
+			{"type":"tool_use","id":"call-1","name":"Read","input":{"path":"/tmp/foo"}}
+		]}`),
+	}
+
+	turn := b.handleAssistant(msg, ch, make(map[string]TokenUsage), make(map[string]struct{}))
+
+	if turn.text != "visible answer" {
+		t.Fatalf("thinking must not leak into assistant text: got %q", turn.text)
+	}
+	if turn.toolUses != 1 {
+		t.Fatalf("expected one tool use, got %d", turn.toolUses)
+	}
+	if !turn.understood {
+		t.Fatal("expected turn to be understood")
+	}
+
+	var got []Message
+	for {
+		select {
+		case m := <-ch:
+			got = append(got, m)
+		default:
+			goto done
+		}
+	}
+done:
+	want := []struct {
+		typ     MessageType
+		content string
+	}{
+		{MessageThinking, "deliberating"},
+		{MessageText, "visible answer"},
+		{MessageToolUse, ""},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d messages in order, got %d: %+v", len(want), len(got), got)
+	}
+	for i, w := range want {
+		if got[i].Type != w.typ {
+			t.Fatalf("message %d: got type %v, want %v", i, got[i].Type, w.typ)
+		}
+		if w.content != "" && got[i].Content != w.content {
+			t.Fatalf("message %d: got content %q, want %q", i, got[i].Content, w.content)
+		}
+	}
+}
+
+func TestClaudeHandleAssistantThinkingSuppressed(t *testing.T) {
+	t.Parallel()
+
+	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"redacted_thinking", `{"role":"assistant","content":[{"type":"redacted_thinking","data":"encrypted"}]}`},
+		{"empty thinking", `{"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"sig"}]}`},
+	}
+	for _, tc := range cases {
+		ch := make(chan Message, 10)
+		msg := claudeSDKMessage{Type: "assistant", Message: json.RawMessage(tc.body)}
+		turn := b.handleAssistant(msg, ch, make(map[string]TokenUsage), make(map[string]struct{}))
+
+		if turn.text != "" {
+			t.Errorf("%s: thinking leaked into assistant text: %q", tc.name, turn.text)
+		}
+		if !turn.understood {
+			t.Errorf("%s: expected turn to be understood", tc.name)
+		}
+		select {
+		case m := <-ch:
+			t.Errorf("%s: expected no message, got %+v", tc.name, m)
+		default:
+		}
+	}
+}
+
 func TestClaudeHandleUserToolResult(t *testing.T) {
 	t.Parallel()
 

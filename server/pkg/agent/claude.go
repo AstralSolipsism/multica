@@ -523,9 +523,18 @@ func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message,
 				trySend(ch, Message{Type: MessageText, Content: block.Text})
 			}
 		case "thinking":
-			if block.Text != "" {
-				trySend(ch, Message{Type: MessageThinking, Content: block.Text})
+			// Claude Code carries the thinking text in the "thinking" field;
+			// the Text fallback covers streams that put it in "text" instead.
+			thinking := block.Thinking
+			if thinking == "" {
+				thinking = block.Text
 			}
+			if thinking != "" {
+				trySend(ch, Message{Type: MessageThinking, Content: thinking})
+			}
+		case "redacted_thinking":
+			// Encrypted thinking carries no renderable text, but the turn is
+			// still understood: it cannot be hiding the model's answer.
 		case "tool_use":
 			toolUseCount++
 			var input map[string]any
@@ -1056,6 +1065,7 @@ func claudeUsageHasTokens(input, output, cacheRead, cacheWrite int64) bool {
 type claudeContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`
 	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`
