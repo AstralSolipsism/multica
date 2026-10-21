@@ -125,6 +125,7 @@ func TestPrepareStepEffortGates(t *testing.T) {
 	}
 	t.Cleanup(func() { listModels = orig })
 
+	task = Task{ID: "task-gate", ThreadName: "修复调度器竞态", IssueDescription: "高并发下任务偶发被领取两次。"}
 	// Old CLI.
 	if vars := d.prepareStepEffort(task, "claude", "claude-sonnet-5-5", "2.1.269", agent.ThinkingLevelAdapt, "low",
 		agent.Command{}, env, map[string]string{}, d.logger); vars != nil {
@@ -154,6 +155,11 @@ func TestPrepareStepEffortGates(t *testing.T) {
 	}
 	if len(run.Candidates) != 3 {
 		t.Fatalf("candidates: %d", len(run.Candidates))
+	}
+	// The step state's goal must be the run's plain-text title+description
+	// (contract §4), not the run-level state's JSON encoding.
+	if run.Goal != "修复调度器竞态\n高并发下任务偶发被领取两次。" {
+		t.Fatalf("goal is not plain-text title+description: %q", run.Goal)
 	}
 	// A single candidate keeps the mod off (adapt needs >= 2).
 	listModels = func(_ context.Context, _ string, _ agent.Command) (agent.Catalog, error) {

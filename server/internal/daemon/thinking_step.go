@@ -66,8 +66,8 @@ type stepEffortRun struct {
 	EnabledPath string
 	Errors      ErrorFeatureTracker
 
-	lastStep int // highest step this run has decided for (replay guard)
-
+	stepMu    sync.Mutex // guards lastStep and Errors (replay guard + tracking)
+	lastStep  int        // highest step this run has decided for
 	effectsMu sync.Mutex
 	// pending holds the latest effect record not yet applied to a message.
 	pending *agent.EffortEffect
@@ -127,21 +127,25 @@ func effectMetadata(effect agent.EffortEffect) map[string]any {
 // tagStep applies the pending effect record to the first message of a new
 // main-thread model request (and any thinking message of that request): the
 // effect record arrives before the step's first assistant event (OL-1000).
-// Runs instead of the run-level tag once any effect has arrived (contract
-// §7), so a revoked run's steps carry no stale run-level tag.
+// Once any effect has arrived, run-level tags stop landing: the caller drops
+// the run-level metadata this run's tag() added (contract §7 — after
+// revocation the level in effect is the last tagged one, and a run-level tag
+// would misreport it and invent a gear change).
 func (r *stepEffortRun) tagStep(msg agent.Message, firstOfRequest bool) agent.Message {
 	if msg.ParentToolUseID != "" {
+		// Subagent output: never step-tagged, and the run-level tag the
+		// backend's tag() may have put there is that tag's business.
 		return msg
+	}
+	if r.sawEffect() {
+		if msg.Metadata != nil {
+			delete(msg.Metadata, "thinking")
+		}
 	}
 	// A thinking message of the same step keeps the effect pending for the
 	// step's first message, which may not have arrived yet.
 	isThinking := !firstOfRequest && msg.Type == agent.MessageThinking
 	if !firstOfRequest && !isThinking {
-		return msg
-	}
-	// Only apply over an existing thinking-tagged message for a non-first
-	// thinking event; otherwise wait for the step's first message.
-	if isThinking && (msg.Metadata == nil || msg.Metadata["thinking"] == nil) {
 		return msg
 	}
 	effect := r.consumeEffect(firstOfRequest)
@@ -200,7 +204,9 @@ func (r *stepEffortRun) enabledNow() bool {
 // buildStepRequest turns the mod's raw material into the Jev request:
 // step state per contract §4 plus the shared criteria.
 func (r *stepEffortRun) buildStepRequest(req thinkingDecisionRequest) (jev.Request, StepThinkingInput) {
+	r.stepMu.Lock()
 	feature, repeats := r.Errors.Observe(req.ErrorText)
+	r.stepMu.Unlock()
 	input := StepThinkingInput{
 		Step:           req.Step,
 		Goal:           r.Goal,
@@ -208,18 +214,31 @@ func (r *stepEffortRun) buildStepRequest(req thinkingDecisionRequest) (jev.Reque
 		ErrorFeatures:  feature,
 		RepeatedErrors: repeats,
 	}
-	if len(req.Tools) > 0 {
+	// The state describes one tool: the last failed one when the step had a
+	// failure (its is_error/exit_code must agree with error_features), else
+	// the last tool.
+	for i := len(req.Tools) - 1; i >= 0; i-- {
+		tool := req.Tools[i]
+		if !tool.IsError {
+			continue
+		}
+		input.ToolName = tool.Name
+		input.ToolInputSummary = tool.InputSummary
+		input.ToolResult = tool.ResultText
+		input.ToolIsError = true
+		input.FileContent = tool.IsFileContent
+		if code := ParseExitCode(tool.ResultText); code >= 0 {
+			input.ExitCode = code
+		}
+		break
+	}
+	if !input.ToolIsError && len(req.Tools) > 0 {
 		tool := req.Tools[len(req.Tools)-1]
 		input.ToolName = tool.Name
 		input.ToolInputSummary = tool.InputSummary
 		input.ToolResult = tool.ResultText
 		input.ToolIsError = tool.IsError
 		input.FileContent = tool.IsFileContent
-		if tool.IsError {
-			if code := ParseExitCode(tool.ResultText); code >= 0 {
-				input.ExitCode = code
-			}
-		}
 	}
 	return ThinkingRequest(BuildStepThinkingState(input), r.Candidates), input
 }
@@ -231,14 +250,19 @@ func (r *stepEffortRun) decide(ctx context.Context, req thinkingDecisionRequest)
 		var disabled bool
 		return thinkingDecisionResponse{Enabled: &disabled}
 	}
-	if req.Step < 1 || req.Step <= r.lastStep {
+	r.stepMu.Lock()
+	replayed := req.Step < 1 || req.Step <= r.lastStep
+	if !replayed {
+		r.lastStep = req.Step
+	}
+	r.stepMu.Unlock()
+	if replayed {
 		// Reject replays and regressions: each run asks at most once per
 		// step, so a repeated or lower step is a buggy or chatty caller, and
 		// answering it would both hit the external engine and advance the
 		// run's error-feature tracking beyond the real steps.
 		return thinkingDecisionResponse{Fallback: string(jev.ReasonInvalid)}
 	}
-	r.lastStep = req.Step
 	jevReq, _ := r.buildStepRequest(req)
 	trace := r.Trace
 	trace.Step = req.Step

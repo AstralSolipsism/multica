@@ -20,8 +20,13 @@ type World = {
   markerReads: number[]
   messageReads: number
   envSets: Array<[string, string | undefined]>
+  /** Entries each upcoming main step appends to the session when it answers. */
+  stepOutput: SessionMessages[]
   marker: 'missing' | 'present'
   answer: (fetch: Fetch) => { status: number; text: string } | Promise<{ status: number; text: string }>
+  /** The session's entries; grows as main steps complete (turn.step below
+   * appends each step's entries when its response is produced). */
+  session: SessionMessages
   messages: () => SessionMessages
   settle: () => Promise<void>
 }
@@ -35,8 +40,10 @@ function setUp(on: On, options: { env?: Record<string, string>; context?: string
     messageReads: 0,
     envSets: [],
     marker: 'present',
+    stepOutput: [],
     answer: () => ({ status: 200, text: GOOD_DECISION }),
-    messages: () => [],
+    session: [{ role: 'user', text: 'issue' }],
+    messages: () => world.session,
     settle: async () => {},
   }
   mock.env(on, options.env ?? {
@@ -79,6 +86,13 @@ function setUp(on: On, options: { env?: Record<string, string>; context?: string
   on('session.start', async ($, e) => ({ cwd: e.cwd }))
   on('turn.step', async function* ($, e) {
     const effort = (e as { effort?: string }).effort
+    if (e.agentId === undefined) {
+      // The real host has a step's entries in the conversation by the time
+      // the next step starts (they exist once the step's request produced
+      // them); emulate that by appending this step's output as it begins.
+      const output = world.stepOutput.shift()
+      if (output) world.session.push(...output)
+    }
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: null, ...(effort !== undefined ? { effort } : {}) }
   })
   return world
@@ -134,8 +148,9 @@ describe('labrastro-effort hooks', () => {
 
   test('a decision rewrites effort and writes an effect record', async ($, on) => {
     const world = setUp(on)
-    world.messages = () => LAST_STEP
+    world.stepOutput.push(LAST_STEP)
     await start($)
+    await step($, 0) // step 1 runs its tools; its output becomes step 2's material
     expect((await step($, 1)).effort).toBe('high')
     expect(world.fetches).toHaveLength(1)
     expect(world.fetches[0]?.url).toBe('http://127.0.0.1:8619/tasks/task-1/thinking-decision')
@@ -266,6 +281,37 @@ describe('labrastro-effort hooks', () => {
     expect(world.fetches).toHaveLength(2)
     // The 401 answered disabled: no effect record for it.
     expect(world.logs).toHaveLength(1)
+  })
+
+  test('the window covers only the previous step, not the whole run', async ($, on) => {
+    const world = setUp(on)
+    await start($)
+    // Step 1 fails a build; steps 2+ succeed.
+    world.stepOutput.push([
+      { role: 'assistant', text: 'building' },
+      { role: 'assistant', toolUses: [{ tool_use_id: 'e1', tool: 'Bash', input: { command: 'go build ./...' }, text: 'Exit code 1\nundefined: Foo', isError: true }] },
+      { role: 'user', toolResults: [{ tool_use_id: 'e1' }] },
+    ])
+    await step($, 0)
+    // Step 2's request carries step 1's error once. Its own output (queued
+    // now, appended as the step answers) succeeds.
+    world.stepOutput.push([{ role: 'assistant', text: 'fixed, running again' }, { role: 'assistant', toolUses: [{ tool_use_id: 'e2', tool: 'Bash', input: { command: 'go test ./...' }, text: 'ok' }] }, { role: 'user', toolResults: [{ tool_use_id: 'e2' }] }])
+    expect((await step($, 1)).effort).toBe('high')
+    expect(JSON.parse(world.fetches[0]?.init?.body ?? '{}')).toMatchObject({ step: 2, error_text: 'Exit code 1\nundefined: Foo' })
+    // Steps 3 and 4 succeed: their material must not mention the old error.
+    world.stepOutput.push([{ role: 'assistant', text: 'done' }])
+    await step($, 2)
+    const body3 = JSON.parse(world.fetches[1]?.init?.body ?? '{}')
+    expect(body3.step).toBe(3)
+    expect(body3.error_text).toBe('')
+    expect(body3.tools.map((t: { name: string }) => t.name)).toEqual(['Bash'])
+    expect(body3.assistant_text).toBe('fixed, running again')
+    await step($, 3)
+    const body4 = JSON.parse(world.fetches[2]?.init?.body ?? '{}')
+    expect(body4.step).toBe(4)
+    expect(body4.error_text).toBe('')
+    expect(body4.tools).toEqual([])
+    expect(body4.assistant_text).toBe('done')
   })
 
   test('without a context file the mod stays off', async ($, on) => {

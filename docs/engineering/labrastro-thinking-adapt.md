@@ -348,10 +348,10 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
 - **mod**：名为 `labrastro-effort`，与 `labrastro-ysk` 一起通过 `CLAUDE_CODE_PLUGIN_DIRS` 加载，安装方式照 `prepareYouShouldKnow`（`server/internal/daemon/labrastro_ysk.go`）。
 - **mod → daemon**：`POST http://127.0.0.1:{MULTICA_DAEMON_PORT}/tasks/{task_id}/thinking-decision`，带 `Authorization: Bearer $MULTICA_TOKEN`。实测往返约 1–3 ms，不受 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 影响，不需要改走 Unix socket（§0.9）。
   - daemon 的健康服务（`serveHealth`）校验 token 和活跃运行，做法照 `/repo/checkout`。
-  - 请求体由 OL-1010 定义，内容是构造 state 所需的上一步原料：`{step, assistant_text, tools: [{name, is_error, is_file_content, input_summary, result_text}], error_text}`。上一步是 `$.session.messages()` 末尾 user 条目之前那段连续的 assistant 条目：宿主把一次请求的输出拆成 text 与逐个 tool_use 的多条条目（§0.9），mod 合并它们的 `text` 与 `toolUses`（工具结果已由宿主按 `tool_use_id` 并入，`text`、`isError` 字段）。`is_file_content` 标记结果为文件正文的工具（Read、NotebookRead），daemon 只保留省略标记，不外发正文（§4）。为了补记结果信号（§10.3），还必须带：
+  - 请求体由 OL-1010 定义，内容是构造 state 所需的上一步原料：`{step, assistant_text, tools: [{name, is_error, is_file_content, input_summary, result_text}], error_text}`。mod 每步调用 `next()` 前记下 `$.session.messages()` 的条目数，下一步只取其后新增的条目（即上一步的输出）：宿主把一次请求的输出拆成 text 与逐个 tool_use 的多条条目、并把结果条目穿插其间（§0.9），mod 在这个窗口里从末尾回收到原始用户消息为止，合并 `text` 与 `toolUses`（工具结果已由宿主按 `tool_use_id` 并入，`text`、`isError` 字段）。`is_file_content` 标记结果为文件正文的工具（Read、NotebookRead），daemon 只保留省略标记，不外发正文（§4）。为了补记结果信号（§10.3），还必须带：
     - 步序号，从 1 开始；
     - 上一步主线程的工具列表 `[{name, is_error}]`；
-    - 上一步的报错文本，按 §4 截断。Bash 失败结果首行固定是 `Exit code N`：daemon 把它解析进 `exit_code`，报错特征取其后的真正报错行。
+    - 上一步的报错文本，按 §4 截断。Bash 失败结果首行固定是 `Exit code N`：daemon 把它解析进 `exit_code`，报错特征取其后的真正报错行；Go 编译/测试输出的 `# 包路径` 与 `FAIL\t包路径 [build failed]` 包头行同样跳过，取真正的报错行。state 描述的那个工具取上一步最后一个报错的工具（没有报错则取最后一个工具），`is_error` 与 `exit_code` 与报错特征一致。
   - 报错特征的归一化和同类报错的重复次数由 daemon 用 Go 计算（`NormalizedErrorFeature` / `ErrorFeatureTracker`，`server/internal/daemon/thinking_step_errors.go`），daemon 按运行保存最近的报错特征；mod 只上传原料。这个函数导出给 OL-1019 复用。
   - daemon 按 §4 构造 state（`BuildStepThinkingState`），复用 `decideThinking` 调用 Jev（trace 的 `scope` 为 `step`，`step` 为步序号），并计入健康快照。
   - 返回 `{level, confidence, probabilities, latency_ms, source}`、`{fallback}`，或 `{enabled: false}`（"未启用"）。"未启用"不经过 Jev 客户端，不计入健康快照。鉴权沿用 `/repo/checkout` 的任务级 Bearer token；路径里的 `task_id` 与 token 绑定的任务不一致时拒绝。

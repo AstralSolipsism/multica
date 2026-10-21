@@ -1,6 +1,9 @@
 package daemon
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizedErrorFeature(t *testing.T) {
 	t.Parallel()
@@ -52,5 +55,28 @@ func TestErrorFeatureTrackerCountsConsecutiveRepeats(t *testing.T) {
 	}
 	if _, repeats := tracker.Observe(other); repeats != 1 {
 		t.Fatalf("post-reset error: repeats=%d, want 1", repeats)
+	}
+}
+
+func TestNormalizedErrorFeatureSkipsGoPackageHeaders(t *testing.T) {
+	t.Parallel()
+	// Real `go build` shape: package header, then the error.
+	build := "# example.com/app/internal/app\n./main.go:12:5: undefined: Foo"
+	if got := NormalizedErrorFeature(build); got != "main_go_0_ undefined_ foo" {
+		t.Fatalf("go build: %q", got)
+	}
+	// Two different compile errors in the same package keep distinct features.
+	first := NormalizedErrorFeature("# example.com/app/internal/app\n./main.go:12:5: undefined: Foo")
+	second := NormalizedErrorFeature("# example.com/app/internal/app\n./main.go:20:2: declared and not used: x")
+	if first == second {
+		t.Fatalf("distinct compile errors share a feature: %q", first)
+	}
+	// `go test` failure shape: the test name line names the failure.
+	test := "--- FAIL: TestX (0.00s)\n    x_test.go:9: assertion failed"
+	if got := NormalizedErrorFeature(test); !strings.Contains(got, "testx") {
+		t.Fatalf("go test: %q", got)
+	}
+	if got := NormalizedErrorFeature("FAIL\texample.com/app/pkg [build failed]\n./a.go:1:1: expected ';', found '}'"); !strings.Contains(got, "expected") {
+		t.Fatalf("FAIL trailer: %q", got)
 	}
 }

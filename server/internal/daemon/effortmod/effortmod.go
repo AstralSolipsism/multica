@@ -94,17 +94,13 @@ func Install(configRoot string, context EffortContext) (map[string]string, error
 	return map[string]string{ContextFileEnv: paths.Context}, nil
 }
 
-// appendPluginDir adds dir to a CLAUDE_CODE_PLUGIN_DIRS list, keeping existing
-// entries ahead. Mirrors ysk.appendPathList; kept local so the two mods' env
-// handling stays independently readable.
-func appendPluginDir(list, dir string) string {
+// MergePluginDir extends the CLAUDE_CODE_PLUGIN_DIRS value this mod installs
+// with, keeping existing entries ahead (labrastro-ysk stays first). Exported
+// for the daemon, which layers both mods' variables.
+func MergePluginDir(list, dir string) string {
 	sep := string(os.PathListSeparator)
 	if strings.TrimSpace(strings.ReplaceAll(list, sep, "")) == "" {
 		return dir
 	}
 	return strings.TrimRight(list, sep) + sep + dir
 }
-
-// MergePluginDir extends the CLAUDE_CODE_PLUGIN_DIRS value this mod installs
-// with. Exported for the daemon, which layers both mods' variables.
-func MergePluginDir(list, dir string) string { return appendPluginDir(list, dir) }

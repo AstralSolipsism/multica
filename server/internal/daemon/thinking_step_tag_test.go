@@ -3,103 +3,37 @@ package daemon
 import (
 	"testing"
 
-	"github.com/multica-ai/multica/server/internal/daemon/jev"
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
-// TestStepEffortTagMarksByDeduplicatedRequestID locks the §7 tagging rule:
-// each step's tag lands on the step's first message (a new main-thread
-// request id) and on thinking messages; later events of the same request
-// carry none.
-func TestStepEffortTagMarksByDeduplicatedRequestID(t *testing.T) {
+// TestStepEffortTagStepUnit pins tagStep's own rules: the pending effect
+// lands on the first message of a request and on thinking messages; later
+// events of the same request carry none; once any effect has been seen the
+// run-level tag a caller applied is dropped.
+func TestStepEffortTagStepUnit(t *testing.T) {
 	t.Parallel()
-	run := &thinkingRun{Record: &ThinkingDecisionRecord{Mode: "adapt", Decision: jev.Decision{Level: "low"}}}
 	step := &stepEffortRun{}
-	step.observeEffect(agent.EffortEffect{Step: 2, Level: "high", Source: "zen", Confidence: 0.8, Probabilities: map[string]float64{"high": 0.8}})
+	step.observeEffect(agent.EffortEffect{Step: 2, Level: "high", Source: "zen"})
 
-	tag := func(msg agent.Message) agent.Message {
-		msg = run.tag(msg)
-		return step.tagStep(msg, run.lastTagFirstOfRequest())
+	first := step.tagStep(agent.Message{Type: agent.MessageText, ModelRequestID: "m1", Metadata: map[string]any{"thinking": map[string]any{"level": "low"}}}, true)
+	meta := first.Metadata["thinking"].(map[string]any)
+	if meta["step"] != 2 || meta["level"] != "high" {
+		t.Fatalf("first message: %+v", meta)
 	}
-
-	thinking := tag(agent.Message{Type: agent.MessageThinking, Content: "hmm", ModelRequestID: "msg_1"})
-	text := tag(agent.Message{Type: agent.MessageText, Content: "step two", ModelRequestID: "msg_1"})
-	nextFirst := tag(agent.Message{Type: agent.MessageText, Content: "next step", ModelRequestID: "msg_2"})
-	nextSecond := tag(agent.Message{Type: agent.MessageToolUse, ModelRequestID: "msg_2"})
-
-	meta := func(msg agent.Message) map[string]any {
-		t.Helper()
-		thinking, ok := msg.Metadata["thinking"].(map[string]any)
-		if !ok {
-			t.Fatalf("message %+v carries no thinking tag", msg)
-		}
-		return thinking
+	later := step.tagStep(agent.Message{Type: agent.MessageToolUse, ModelRequestID: "m1", Metadata: map[string]any{}}, false)
+	if _, has := later.Metadata["thinking"]; has {
+		t.Fatalf("later event tagged: %+v", later.Metadata)
 	}
-	// The step's first message (here the thinking event) carries the step tag.
-	if got := meta(thinking); got["step"] != 2 || got["level"] != "high" {
-		t.Fatalf("thinking of the step: %+v", got)
+	// After the effect was consumed (revocation): no pending record, and a
+	// run-level tag the caller applied is dropped, not kept.
+	after := step.tagStep(agent.Message{Type: agent.MessageText, ModelRequestID: "m2", Metadata: map[string]any{"thinking": map[string]any{"level": "low"}}}, true)
+	if _, has := after.Metadata["thinking"]; has {
+		t.Fatalf("post-revocation run-level tag survived: %+v", after.Metadata)
 	}
-	// A later event of the same request carries no step tag.
-	if text.Metadata != nil && text.Metadata["thinking"] != nil {
-		t.Fatalf("later event of the same request carries a tag: %+v", text.Metadata)
-	}
-	// The effect is consumed by the first message; the next request's first
-	// message shows the run-level tag (no step field), its second none.
-	nextMeta := meta(nextFirst)
-	if _, has := nextMeta["step"]; has {
-		t.Fatalf("stale step tag on the next request: %+v", nextMeta)
-	}
-	if nextSecond.Metadata != nil && nextSecond.Metadata["thinking"] != nil {
-		t.Fatalf("a later event of the next request carries a tag: %+v", nextSecond.Metadata)
-	}
-}
-
-// TestStepEffortTagKeepsEffectForLaterFirstMessage covers the order where the
-// step's thinking event arrives before the step's first non-thinking
-// message: the thinking message gets the tag without consuming the effect
-// meant for the step's first message.
-func TestStepEffortTagKeepsEffectForLaterFirstMessage(t *testing.T) {
-	t.Parallel()
-	run := &thinkingRun{Record: &ThinkingDecisionRecord{Mode: "adapt", Decision: jev.Decision{Level: "low"}}}
-	step := &stepEffortRun{}
-	step.observeEffect(agent.EffortEffect{Step: 3, Level: "max"})
-
-	tag := func(msg agent.Message) agent.Message {
-		msg = run.tag(msg)
-		return step.tagStep(msg, run.lastTagFirstOfRequest())
-	}
-
-	// A subagent message first: the step tag never lands on it (the run-level
-	// tag is pre-existing behavior).
-	subagent := tag(agent.Message{Type: agent.MessageText, Content: "sub", ModelRequestID: "sub_1", ParentToolUseID: "task_1"})
-	if subagent.Metadata != nil {
-		if _, has := subagent.Metadata["thinking"].(map[string]any); !has {
-			t.Fatalf("unexpected metadata: %+v", subagent.Metadata)
-		}
-		if meta := subagent.Metadata["thinking"].(map[string]any); meta["step"] != nil {
-			t.Fatalf("subagent message carries a step tag: %+v", meta)
-		}
-	}
-	if step.consumeEffect(false) == nil {
-		t.Fatalf("a subagent message consumed the step effect")
-	}
-	// A thinking message of the step, arriving before any other main-thread
-	// event: it IS the step's first message, carries the tag and consumes
-	// the effect.
-	thinking := tag(agent.Message{Type: agent.MessageThinking, Content: "deep", ModelRequestID: "msg_5"})
-	meta, ok := thinking.Metadata["thinking"].(map[string]any)
-	if !ok || meta["step"] != 3 {
-		t.Fatalf("thinking as the step's first message: %+v", thinking.Metadata)
-	}
-	if step.consumeEffect(false) != nil {
-		t.Fatalf("effect not consumed by the step's first message")
-	}
-	// A later event of the same request carries no step tag.
-	later := tag(agent.Message{Type: agent.MessageText, Content: "first", ModelRequestID: "msg_5"})
-	if later.Metadata != nil && later.Metadata["thinking"] != nil {
-		if meta := later.Metadata["thinking"].(map[string]any); meta["step"] != nil {
-			t.Fatalf("later event carries a step tag: %+v", meta)
-		}
+	// Subagent messages never carry a step tag and keep their metadata.
+	sub := step.tagStep(agent.Message{Type: agent.MessageText, ParentToolUseID: "task", Metadata: map[string]any{"thinking": map[string]any{"level": "low"}}}, true)
+	if _, has := sub.Metadata["thinking"]; !has {
+		t.Fatalf("subagent run-level tag was dropped: %+v", sub.Metadata)
 	}
 }
 

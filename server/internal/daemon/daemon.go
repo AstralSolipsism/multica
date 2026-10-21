@@ -9744,22 +9744,13 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				observedAt := time.Now().UTC()
 				lastActivityAt.Store(int64(awakeclock.Now()))
 				if thinking := thinkingRunFromContext(ctx); thinking != nil {
-					stepRun, _ := d.stepEffort.get(taskID)
-					// Step-level effort (contract §7): once a step tag has
-					// landed, steps without an effect record carry no tag
-					// at all — after revocation the level in effect is the
-					// last tagged one, and a run-level tag would misreport
-					// it (and invent a gear change).
-					var stepTagged bool
-					if stepRun != nil {
-						stepTagged = stepRun.sawEffect()
-						if !stepTagged {
-							msg = thinking.tag(msg)
-						}
-					} else {
-						msg = thinking.tag(msg)
-					}
-					if stepRun != nil {
+					// The run-level tag always runs: it owns request-id
+					// dedup (which decides step boundaries) and the
+					// fallback tag. Step-level effort then replaces it on
+					// this step's messages, or drops it once step tags
+					// have landed (contract §7).
+					msg = thinking.tag(msg)
+					if stepRun, ok := d.stepEffort.get(taskID); ok {
 						msg = stepRun.tagStep(msg, thinking.lastTagFirstOfRequest())
 					}
 				}

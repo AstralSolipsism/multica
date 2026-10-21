@@ -12,13 +12,15 @@ import (
 
 // NormalizedErrorFeature reduces one step's error text to a stable feature
 // key: the first error-looking line with numbers, paths and quoting noise
-// collapsed, so the same failure reads the same across steps. Claude Code's
-// Bash results open with "Exit code N" — that line names no failure and is
-// skipped (ParseExitCode reads it). Exported for OL-1019's sample collection.
+// collapsed, so the same failure reads the same across steps. Two kinds of
+// lines name no failure and are skipped: Claude Code's Bash header
+// "Exit code N" (ParseExitCode reads it) and Go compiler package headers
+// "# pkg/path" (the actual error follows on the next line). Exported for
+// OL-1019's sample collection.
 func NormalizedErrorFeature(errorText string) string {
 	for _, rawLine := range strings.Split(errorText, "\n") {
 		line := strings.TrimSpace(rawLine)
-		if line == "" || isExitCodeLine(line) {
+		if line == "" || isExitCodeLine(line) || isPackageHeaderLine(line) {
 			continue
 		}
 		if feature := normalizeErrorLine(line); feature != "" {
@@ -26,6 +28,16 @@ func NormalizedErrorFeature(errorText string) string {
 		}
 	}
 	return ""
+}
+
+// isPackageHeaderLine matches Go compiler/test package headers, the line a
+// tool prints before the actual errors of that package ("# ./internal/app",
+// "FAIL\tgithub.com/x/y [build failed]"). Such a line is a group name, not a
+// failure: two different compile errors in one package would otherwise share
+// one feature and count as repeats of the same error. A "--- FAIL:" test
+// line does not start with FAIL, so it still names its failure.
+func isPackageHeaderLine(line string) bool {
+	return strings.HasPrefix(line, "# ") || strings.HasPrefix(line, "FAIL\t") || strings.HasPrefix(line, "FAIL ")
 }
 
 // exitCodePrefix is Claude Code's Bash failure header ("Exit code 127").

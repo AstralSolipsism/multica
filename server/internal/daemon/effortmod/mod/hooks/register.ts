@@ -89,23 +89,25 @@ export type SessionMessages = Array<{
 
 /**
  * Payload for step `step`: the previous main-thread step's assistant text
- * and tool calls with their results. The previous step is the run of
- * consecutive assistant entries before the trailing user entry: their texts
- * are joined and their toolUses collected in order. A missing/unreadable
- * session leaves the empty payload; the daemon still decides on what
- * arrived.
+ * and tool calls with their results. `window` is the entries that arrived
+ * after the previous step's request (the caller snapshots the session
+ * length each step): within it, the previous step is the run of entries
+ * from the end back to the original user message — the host interleaves
+ * user result entries between one step's split assistant entries. An
+ * empty or missing window leaves the empty payload; the daemon still
+ * decides on what arrived.
  */
-export function stepPayload(step: number, messages: SessionMessages | undefined): StepPayload {
+export function stepPayload(step: number, window: SessionMessages | undefined): StepPayload {
   const tools: ToolMaterial[] = []
   const texts: string[] = []
-  if (Array.isArray(messages)) {
-    let i = messages.length - 1
+  if (Array.isArray(window)) {
+    let i = window.length - 1
     // Collect the step's assistant entries from the end. The host
     // interleaves user result entries between one step's split assistant
     // entries: a user entry carrying toolResults belongs to the step, one
     // without (the original user message) ends it.
     while (i >= 0) {
-      const message = messages[i]
+      const message = window[i]
       if (message?.role === 'user') {
         if ((message.toolResults ?? []).length === 0) break
         i--
@@ -199,13 +201,9 @@ export async function decide(
   step: number,
   port: string,
   token: string,
+  window: SessionMessages | undefined,
 ): Promise<Decision> {
-  let payload: StepPayload = { step, assistant_text: '', tools: [], error_text: '' }
-  try {
-    payload = stepPayload(step, (await $.session.messages()) as SessionMessages)
-  } catch {
-    // Materials are best-effort; the daemon decides on what arrived.
-  }
+  const payload = stepPayload(step, window)
   let response: { status?: number; text?: string } | undefined
   try {
     response = await Promise.race([
@@ -260,6 +258,10 @@ export const register: Register = (on) => {
   // was seen, or the endpoint answered not-enabled): lock `last`, stop asking,
   // write no further effect records.
   let revoked = false
+  // Entry count of `$.session.messages()` as of the previous main step's
+  // request: the next step's decision material is only what arrived after
+  // it (the previous step), never the whole run (#19).
+  let seenEntries = 0
 
   on('session.start', async ($, e, next) => {
     try {
@@ -308,7 +310,16 @@ export const register: Register = (on) => {
       }
     }
     if (!revoked && wasEnabled) {
-      const decision = await decide($, ctx, step, port, token)
+      let window: SessionMessages | undefined
+      try {
+        const messages = (await $.session.messages()) as SessionMessages
+        // Snapshot before this step's request adds its own entries.
+        window = messages.slice(seenEntries)
+        seenEntries = messages.length
+      } catch {
+        // Materials are best-effort; the daemon decides on what arrived.
+      }
+      const decision = await decide($, ctx, step, port, token, window)
       if (decision.kind === 'disabled') {
         revoked = true
       } else if (decision.kind === 'level') {

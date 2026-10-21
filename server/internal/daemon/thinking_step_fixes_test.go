@@ -147,47 +147,66 @@ func TestStepStateGoalIsPlainText(t *testing.T) {
 	}
 }
 
-// TestStepTagAfterRevocation locks §7's revocation rule: once a step tag has
-// landed, a step without an effect record carries no tag at all (the level
-// in effect stays the last tagged one; a run-level tag would misreport it).
-func TestStepTagAfterRevocation(t *testing.T) {
+// TestStepTagFlowWithToolResultsBetweenSteps reproduces the production
+// message flow through the real run-level tag() pairing (as executeAndDrain
+// feeds it): tool_results between steps, so lastTagFirstOfRequest keeps
+// updating. A step tag must land on every decided step (#18) and stop
+// landing after revocation (#5), and the wiring itself is what the test
+// exercises (the previous TestStepTagAfterRevocation drove its own tagging).
+func TestStepTagFlowWithToolResultsBetweenSteps(t *testing.T) {
 	t.Parallel()
 	run := &thinkingRun{Record: &ThinkingDecisionRecord{Mode: "adapt", Decision: jev.Decision{Level: "medium"}}}
 	step := &stepEffortRun{}
-
 	tag := func(msg agent.Message) agent.Message {
-		if step.sawEffect() {
-			// Skip the run-level tag entirely once step tags are active.
-		} else {
-			msg = run.tag(msg)
-		}
+		msg = run.tag(msg)
 		return step.tagStep(msg, run.lastTagFirstOfRequest())
 	}
 
-	// Step 1: no effect yet; the run-level tag applies.
-	first := tag(agent.Message{Type: agent.MessageText, Content: "one", ModelRequestID: "m1"})
-	if meta := first.Metadata["thinking"].(map[string]any); meta["step"] != nil {
-		t.Fatalf("step 1 should carry the run-level tag: %+v", meta)
+	// Step 1: assistant text + tool_use, then the tool result (a user
+	// message; not a new model request).
+	if msg := tag(agent.Message{Type: agent.MessageText, Content: "one", ModelRequestID: "m1"}); msg.Metadata == nil {
+		t.Fatal("step 1 lost its run-level tag")
 	}
-	// Step 2: an effect arrives and tags the step.
+	if msg := tag(agent.Message{Type: agent.MessageToolUse, ModelRequestID: "m1"}); msg.Metadata != nil && msg.Metadata["thinking"] != nil {
+		t.Fatalf("step 1 tool_use carries a tag: %+v", msg.Metadata)
+	}
+	if msg := tag(agent.Message{Type: agent.MessageToolResult, CallID: "t1"}); msg.Metadata != nil && msg.Metadata["thinking"] != nil {
+		t.Fatalf("a tool result carries a tag: %+v", msg.Metadata)
+	}
+
+	// Step 2 decided high: the effect record arrives before the step's
+	// first assistant event, and the step tag must land (the frozen-dedup
+	// bug left every post-step-1 message untagged).
 	step.observeEffect(agent.EffortEffect{Step: 2, Level: "high"})
-	second := tag(agent.Message{Type: agent.MessageText, Content: "two", ModelRequestID: "m2"})
-	if meta := second.Metadata["thinking"].(map[string]any); meta["step"] != 2 || meta["level"] != "high" {
+	if msg := tag(agent.Message{Type: agent.MessageText, Content: "two", ModelRequestID: "m2"}); msg.Metadata == nil {
+		t.Fatal("step 2 carried no tag at all (dedup froze?)")
+	} else if meta := msg.Metadata["thinking"].(map[string]any); meta["step"] != 2 || meta["level"] != "high" {
 		t.Fatalf("step 2 tag: %+v", meta)
 	}
-	// Step 3: revoked (no effect record). No tag at all — not the run-level
-	// medium, which would misreport the level in effect and invent a change.
-	third := tag(agent.Message{Type: agent.MessageText, Content: "three", ModelRequestID: "m3"})
-	if third.Metadata != nil {
-		if _, has := third.Metadata["thinking"]; has {
-			t.Fatalf("revoked step carries a tag: %+v", third.Metadata)
-		}
+	if msg := tag(agent.Message{Type: agent.MessageToolUse, ModelRequestID: "m2"}); msg.Metadata != nil && msg.Metadata["thinking"] != nil {
+		t.Fatalf("step 2 later event carries a tag: %+v", msg.Metadata)
 	}
-	// Thinking messages after revocation carry none either.
-	fourth := tag(agent.Message{Type: agent.MessageThinking, Content: "hmm", ModelRequestID: "m4"})
-	if fourth.Metadata != nil {
-		if _, has := fourth.Metadata["thinking"]; has {
-			t.Fatalf("revoked thinking carries a tag: %+v", fourth.Metadata)
+	tag(agent.Message{Type: agent.MessageToolResult, CallID: "t2"})
+
+	// Step 3 falls back (a fresh effect record with fallback set).
+	step.observeEffect(agent.EffortEffect{Step: 3, Level: "high", Fallback: "timeout"})
+	if msg := tag(agent.Message{Type: agent.MessageText, Content: "three", ModelRequestID: "m3"}); msg.Metadata == nil {
+		t.Fatal("step 3 carried no tag")
+	} else if meta := msg.Metadata["thinking"].(map[string]any); meta["fallback"] != "timeout" || meta["level"] != "high" {
+		t.Fatalf("step 3 fallback tag: %+v", meta)
+	}
+	tag(agent.Message{Type: agent.MessageToolResult, CallID: "t3"})
+
+	// Revocation: no further effect records. No message carries any tag —
+	// not the run-level medium, which no longer reflects the level in
+	// effect.
+	for _, msg := range []agent.Message{
+		{Type: agent.MessageText, Content: "four", ModelRequestID: "m4"},
+		{Type: agent.MessageThinking, Content: "hmm", ModelRequestID: "m4"},
+		{Type: agent.MessageToolUse, ModelRequestID: "m4"},
+	} {
+		if tagged := tag(msg); tagged.Metadata != nil && tagged.Metadata["thinking"] != nil {
+			t.Fatalf("post-revocation message carries a tag: %+v", tagged.Metadata)
 		}
 	}
 }
