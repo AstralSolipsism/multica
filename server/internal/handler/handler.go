@@ -248,11 +248,16 @@ type Handler struct {
 	// hostMetricsPublish coalesces and throttles the per-machine telemetry
 	// broadcast fired when a stored host-metrics sample's content changes.
 	hostMetricsPublish *hostMetricsPublishTracker
-	planQuotaDropLogs  *planQuotaDropLogLimiter
-	HeartbeatScheduler HeartbeatScheduler
-	Storage            storage.Storage
-	CFSigner           *auth.CloudFrontSigner
-	Analytics          analytics.Client
+	// thinkingAdaptPublish is the same tracker for the Jev snapshot stream.
+	// Deliberately a second instance: the two content keys are not
+	// comparable, so a shared tracker would mis-detect changes (see
+	// storeHeartbeatThinkingAdaptAt).
+	thinkingAdaptPublish *hostMetricsPublishTracker
+	planQuotaDropLogs    *planQuotaDropLogLimiter
+	HeartbeatScheduler   HeartbeatScheduler
+	Storage              storage.Storage
+	CFSigner             *auth.CloudFrontSigner
+	Analytics            analytics.Client
 	// DaemonPendingWork pushes "heartbeat now" hints for queued
 	// heartbeat-carried requests (MUL-5444). Optional: when nil,
 	// requestDaemonPendingWork falls back to the local DaemonHub, which is the
@@ -548,6 +553,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
 	h.hostMetricsPublish = newHostMetricsPublishTracker()
+	h.thinkingAdaptPublish = newHostMetricsPublishTracker()
 	h.planQuotaDropLogs = &planQuotaDropLogLimiter{}
 
 	// The default passthrough scheduler reports sweeper-race recoveries so the

@@ -2,10 +2,13 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/daemon/jev"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // fakeJevProber counts probes and serves a mutable snapshot.
@@ -141,4 +144,45 @@ func TestHeartbeatExtrasForThinkingAdapt(t *testing.T) {
 			t.Fatalf("unknown runtime carries a snapshot: %+v", snap)
 		}
 	})
+}
+
+// TestSendWSHeartbeatsCarriesThinkingAdapt pins the WS wire (issue「要做 1」):
+// the daemon:heartbeat frame assembled by sendWSHeartbeats carries the Jev
+// snapshot for a thinking-capable runtime and omits it otherwise.
+func TestSendWSHeartbeatsCarriesThinkingAdapt(t *testing.T) {
+	d := &Daemon{
+		workspaces:   map[string]*workspaceState{},
+		runtimeIndex: map[string]Runtime{},
+		logger:       slog.Default(),
+	}
+	d.jevClient = jev.New(jev.Options{})
+	d.runtimeIndex["rt-claude"] = Runtime{ID: "rt-claude", Provider: "claude"}
+	d.runtimeIndex["rt-copilot"] = Runtime{ID: "rt-copilot", Provider: "copilot"}
+
+	writes := make(chan *wsOutbound, 4)
+	d.sendWSHeartbeats(context.Background(), []string{"rt-claude", "rt-copilot"}, writes)
+	close(writes)
+
+	frames := map[string]protocol.DaemonHeartbeatRequestPayload{}
+	for item := range writes {
+		var msg protocol.Message
+		if err := json.Unmarshal(item.data, &msg); err != nil {
+			t.Fatalf("unmarshal frame: %v", err)
+		}
+		var payload protocol.DaemonHeartbeatRequestPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal payload: %v", err)
+		}
+		frames[payload.RuntimeID] = payload
+	}
+	if len(frames) != 2 {
+		t.Fatalf("frames = %v, want one per runtime", frames)
+	}
+	claude := frames["rt-claude"]
+	if claude.ThinkingAdapt == nil || claude.ThinkingAdapt.Status != jev.StatusIdle {
+		t.Fatalf("thinking-capable runtime WS heartbeat = %+v, want snapshot with idle", claude.ThinkingAdapt)
+	}
+	if copilot := frames["rt-copilot"]; copilot.ThinkingAdapt != nil {
+		t.Fatalf("non-thinking runtime WS heartbeat carries a snapshot: %+v", copilot.ThinkingAdapt)
+	}
 }

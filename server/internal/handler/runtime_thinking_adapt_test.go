@@ -3,6 +3,8 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,7 +60,7 @@ func (f *fakeThinkingAdaptStore) GetBatch(_ context.Context, refs []MachineRef) 
 }
 
 func contentKey(s *protocol.ThinkingAdaptSnapshot) string {
-	return s.Status + "|" + s.ActiveSource
+	return fmt.Sprintf("%s|%s|%d|%d|%d", s.Status, s.ActiveSource, s.DecisionsOK, s.DecisionsFallback, s.LastLatencyMS)
 }
 
 // TestValidateThinkingAdapt pins the ingress gate: known statuses pass, an
@@ -79,6 +81,22 @@ func TestValidateThinkingAdapt(t *testing.T) {
 	if err := validateThinkingAdapt(adaptSnapshot(jev.StatusIdle, now.Add(hostMetricsMaxFutureSkew+time.Minute)), now); err == nil {
 		t.Fatal("far-future updated_at accepted")
 	}
+	// active_source must look like a source name: a modified daemon must not
+	// store arbitrary text (URLs, prose) that every workspace member reads back.
+	for _, source := range []string{"", "opencode-free", "self-hosted", "dashscope"} {
+		snap := adaptSnapshot(jev.StatusAvailable, now)
+		snap.ActiveSource = source
+		if err := validateThinkingAdapt(snap, now); err != nil {
+			t.Fatalf("source %q rejected: %v", source, err)
+		}
+	}
+	for _, source := range []string{"https://evil.example/x", "SOURCE", "a b", "x/y", strings.Repeat("a", 65)} {
+		snap := adaptSnapshot(jev.StatusAvailable, now)
+		snap.ActiveSource = source
+		if err := validateThinkingAdapt(snap, now); err == nil {
+			t.Fatalf("source %q accepted", source)
+		}
+	}
 }
 
 // TestStoreHeartbeatThinkingAdapt pins the non-fatal heartbeat contract:
@@ -93,9 +111,9 @@ func TestStoreHeartbeatThinkingAdapt(t *testing.T) {
 		var published []string
 		bus.SubscribeAll(func(event events.Event) { published = append(published, event.Type) })
 		return &Handler{
-			Bus:                bus,
-			ThinkingAdaptStore: store,
-			hostMetricsPublish: newHostMetricsPublishTracker(),
+			Bus:                  bus,
+			ThinkingAdaptStore:   store,
+			thinkingAdaptPublish: newHostMetricsPublishTracker(),
 		}, &published
 	}
 
@@ -147,6 +165,25 @@ func TestStoreHeartbeatThinkingAdapt(t *testing.T) {
 		}
 	})
 
+	// Latency alone is broadcast-worthy: a probe that only moves
+	// last_latency_ms must still notify clients (§9 renders latency).
+	t.Run("latency-only change publishes", func(t *testing.T) {
+		store := &fakeThinkingAdaptStore{available: true}
+		h, published := newHandler(store)
+		ctx := context.Background()
+
+		h.storeHeartbeatThinkingAdaptAt(ctx, "ws", "d", adaptSnapshot(jev.StatusAvailable, now), now)
+		if len(*published) != 1 {
+			t.Fatalf("first beat published=%v, want one", *published)
+		}
+		slower := adaptSnapshot(jev.StatusAvailable, now.Add(15*time.Second))
+		slower.LastLatencyMS = 910
+		h.storeHeartbeatThinkingAdaptAt(ctx, "ws", "d", slower, now.Add(15*time.Second))
+		if len(*published) != 2 {
+			t.Fatalf("latency-only change not published: %v", *published)
+		}
+	})
+
 	t.Run("store error swallowed", func(t *testing.T) {
 		store := &fakeThinkingAdaptStore{available: true, err: errors.New("redis down")}
 		h, published := newHandler(store)
@@ -157,9 +194,42 @@ func TestStoreHeartbeatThinkingAdapt(t *testing.T) {
 	})
 }
 
+// TestThinkingAdaptBroadcastIsolatedFromHostMetrics pins the review's
+// shared-throttle bug: alternating host-metrics and thinking_adapt beats with
+// UNCHANGED content must not re-broadcast — each stream keeps its own
+// publish tracker, so neither sees the other's content key as a change.
+func TestThinkingAdaptBroadcastIsolatedFromHostMetrics(t *testing.T) {
+	now := time.Now()
+	metricsStore := &fakeMachineMetricsStore{available: true}
+	adaptStore := &fakeThinkingAdaptStore{available: true}
+	bus := events.New()
+	var published []string
+	bus.SubscribeAll(func(event events.Event) { published = append(published, event.Type) })
+	h := &Handler{
+		Bus:                  bus,
+		MachineMetricsStore:  metricsStore,
+		ThinkingAdaptStore:   adaptStore,
+		hostMetricsPublish:   newHostMetricsPublishTracker(),
+		thinkingAdaptPublish: newHostMetricsPublishTracker(),
+	}
+	ctx := context.Background()
+
+	cpu, mem := 42.0, 68.0
+	for i := 1; i <= 8; i++ {
+		at := now.Add(time.Duration(i) * 15 * time.Second)
+		h.storeHeartbeatMetricsAt(ctx, "ws", "d", hostMetricsSample(&cpu, &mem, at.Unix()), at)
+		h.storeHeartbeatThinkingAdaptAt(ctx, "ws", "d", adaptSnapshot(jev.StatusAvailable, at), at)
+	}
+	// One announcement per stream for its first content; nothing since.
+	if len(published) != 2 {
+		t.Fatalf("published=%d events over 8 unchanged cycles, want 2 (one per stream)", len(published))
+	}
+}
+
 // TestRedisThinkingAdaptStore pins the Redis contract against a real Redis
-// (REDIS_TEST_URL): write, TTL expiry, older never overwrites newer, and
-// the content-key outcomes.
+// (REDIS_TEST_URL): write, real TTL expiry, older never overwrites newer,
+// an unchanged snapshot still renews the TTL, timezone offsets order
+// correctly, and the content-key outcomes.
 func TestRedisThinkingAdaptStore(t *testing.T) {
 	rdb := newRedisTestClient(t)
 	store := NewRedisThinkingAdaptStore(rdb)
@@ -173,8 +243,14 @@ func TestRedisThinkingAdaptStore(t *testing.T) {
 	if err != nil || result != MachineMetricsChanged {
 		t.Fatalf("first put = %v, %v; want changed", result, err)
 	}
-	if key != "idle|opencode-free|8|0" {
+	if key != "idle|opencode-free|8|0|290" {
 		t.Fatalf("first put key = %q", key)
+	}
+
+	// The write set a real TTL inside the configured window.
+	ttl, err := rdb.TTL(ctx, thinkingAdaptKey(ref)).Result()
+	if err != nil || ttl <= 0 || ttl > thinkingAdaptTTL {
+		t.Fatalf("ttl after first put = %v, %v; want (0, %v]", ttl, err, thinkingAdaptTTL)
 	}
 
 	// Older sample must not overwrite the newer one.
@@ -187,18 +263,55 @@ func TestRedisThinkingAdaptStore(t *testing.T) {
 		t.Fatalf("older sample overwrote newer: %+v", got)
 	}
 
+	// The SAME snapshot (unchanged updated_at) renews the TTL: without this,
+	// the key lapses 90s after the last snapshot CHANGE and an online daemon
+	// flickers to "not reported" between changes.
+	result, _, err = store.PutIfNewer(ctx, ref, adaptSnapshot(jev.StatusIdle, t1))
+	if err != nil || result != MachineMetricsRefreshed {
+		t.Fatalf("equal put = %v, %v; want refreshed", result, err)
+	}
+	ttl, err = rdb.TTL(ctx, thinkingAdaptKey(ref)).Result()
+	if err != nil || ttl <= 0 || ttl > thinkingAdaptTTL {
+		t.Fatalf("ttl after equal put = %v, %v; want renewed into (0, %v]", ttl, err, thinkingAdaptTTL)
+	}
+
 	// Newer sample with the same content: refresh, no broadcast-worthy change.
 	result, _, err = store.PutIfNewer(ctx, ref, adaptSnapshot(jev.StatusIdle, t2))
 	if err != nil || result != MachineMetricsRefreshed {
 		t.Fatalf("refresh put = %v, %v; want refreshed", result, err)
 	}
 
-	// TTL: the key expires and reads return nothing.
-	if err := rdb.Del(ctx, thinkingAdaptKey(ref)).Err(); err != nil {
-		t.Fatalf("del: %v", err)
+	// A non-UTC offset must not break ordering: the stored idle snapshot
+	// carries a +08:00 updated_at; a UTC-stamped snapshot five minutes
+	// LATER must win, and one five minutes EARLIER must lose.
+	plus8 := time.FixedZone("plus8", 8*3600)
+	result, _, err = store.PutIfNewer(ctx, ref, adaptSnapshot(jev.StatusAvailable, t2.Add(5*time.Minute).In(plus8)))
+	if err != nil || result != MachineMetricsChanged {
+		t.Fatalf("utc-after-local put = %v, %v; want changed", result, err)
 	}
-	if got := store.GetBatch(ctx, []MachineRef{ref}); got[ref] != nil {
-		t.Fatalf("expired sample still readable: %+v", got[ref])
+	if got := store.GetBatch(ctx, []MachineRef{ref})[ref]; got == nil || got.Status != jev.StatusAvailable {
+		t.Fatalf("later utc sample lost against stored local-offset one: %+v", got)
+	}
+	result, _, err = store.PutIfNewer(ctx, ref, adaptSnapshot(jev.StatusDegraded, t2.Add(-5*time.Minute).In(plus8)))
+	if err != nil || result != MachineMetricsDropped {
+		t.Fatalf("utc-before-local put = %v, %v; want dropped", result, err)
+	}
+
+	// Real expiry: with a short test TTL the key actually lapses and reads
+	// return nothing (an offline daemon stops being reported).
+	short := &RedisThinkingAdaptStore{rdb: rdb, ttl: time.Second}
+	if _, _, err := short.PutIfNewer(ctx, ref, adaptSnapshot(jev.StatusIdle, t2.Add(10*time.Minute))); err != nil {
+		t.Fatalf("short-ttl put: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if got := store.GetBatch(ctx, []MachineRef{ref})[ref]; got == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("short-ttl key never expired")
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

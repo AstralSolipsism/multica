@@ -2250,9 +2250,9 @@ describe("ApiClient explicit workspace targeting", () => {
   });
 
   // Boundary parsing of the additive thinking_adapt field (OL-1006): valid
-  // snapshots pass through, missing ones stay undefined, an unknown status
-  // degrades to "unknown" without losing the rest of the row, and a wholly
-  // malformed snapshot degrades to null.
+  // snapshots parse, absent fields degrade to null, an unknown status from
+  // a newer daemon passes through untouched, and a wholly malformed
+  // snapshot degrades to null without losing the row.
   it("parses thinking_adapt snapshots tolerantly", async () => {
     stubOk([
       {
