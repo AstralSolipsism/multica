@@ -463,7 +463,7 @@ OL-1013 描述前半部分的原始需求里，"通道""源"统一叫"来源"，
 
 | 变量 | 含义 | 默认值 |
 |---|---|---|
-| `MULTICA_JEV_SELF_HOSTED_URL` | 完整端点，如 `http://127.0.0.1:8009/v1/systemone`；只接受 http/https | 无；缺失或不合法时跳过这个来源，只告警一次 |
+| `MULTICA_JEV_SELF_HOSTED_URL` | 完整端点，如 `http://127.0.0.1:8000/v1/systemone`；只接受 http/https | 无；缺失或不合法时跳过这个来源，只告警一次 |
 | `MULTICA_JEV_SELF_HOSTED_MODEL` | 请求体里的 `model` | `self-hosted` |
 | `MULTICA_JEV_SELF_HOSTED_API_KEY` | 设置后发 `Authorization: Bearer <key>`，否则不带鉴权头 | 无 |
 
@@ -473,7 +473,7 @@ OL-1013 描述前半部分的原始需求里，"通道""源"统一叫"来源"，
 - 跳过来源时，告警只写来源名称和原因，不带变量的值。
 - `model` 的默认值不用 `laya-multilingual`：
   - 在 `laya-serve` 上，这个名字会指定到原始底座，正是"不拿底座裸跑"要避免的情况；
-  - `edgejev serve` 忽略这个字段；`laya-serve` 要写 `LAYA_EXTRA_MODELS` 里的注册名。
+  - `laya-serve` 通过 `LAYA_EXTRA_MODELS` 把注册名映射到微调 checkpoint 目录，`MULTICA_JEV_SELF_HOSTED_MODEL` 要写注册名（注册名 `self-hosted` 与默认值一致时 daemon 不用另配）。`LAYA_EXTRA_MODELS` 只做名字到目录的映射，`max_len`、`head_max_len` 等长度写在 checkpoint 自己的配置里，daemon 不传。
 - 运维规则：
   - 自部署来源通过门禁评测（§10.5）后，才能排在外部来源前面；
   - 判据文案改动后必须重跑门禁评测，不通过就把它从首位撤下。

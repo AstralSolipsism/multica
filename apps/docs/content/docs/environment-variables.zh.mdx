@@ -255,7 +255,7 @@ API key 与 base URL 都为空时，这一层关闭，不会发出任何上游�
 | `MULTICA_JEV_DASHSCOPE_API_KEY` | 空 | 阿里百炼 DashScope 来源（`dashscope`）的 Bearer key；只留在本机 |
 | `MULTICA_JEV_DASHSCOPE_WORKSPACE_ID` | 空 | DashScope 工作空间 ID，嵌入 MaaS 端点 URL |
 | `MULTICA_JEV_DASHSCOPE_REGION` | `cn-beijing` | DashScope MaaS 地域：`cn-beijing` 或 `ap-southeast-1`；其他取值会跳过该来源并告警 |
-| `MULTICA_JEV_SELF_HOSTED_URL` | 空 | 自部署来源（`self-hosted`）的完整端点，如 `http://127.0.0.1:8009/v1/systemone`；只接受 http/https，缺失或不合法时跳过该来源并只告警一次。任何兼容 `POST /v1/systemone` 的服务都可以用，例如 `edgejev serve`、`laya-serve`。`edgejev serve` 忽略 `model`；`laya-serve` 会按语言自动路由到内置底座，微调模型必须用 `LAYA_EXTRA_MODELS` 注册，并把 `MULTICA_JEV_SELF_HOSTED_MODEL` 设为注册名。自部署来源只有通过门禁评测后才应排在外部来源前面；判据文案改动后要重跑门禁评测 |
+| `MULTICA_JEV_SELF_HOSTED_URL` | 空 | 自部署来源（`self-hosted`）的完整端点，如 `http://127.0.0.1:8000/v1/systemone`；只接受 http/https，缺失或不合法时跳过该来源并只告警一次。任何兼容 `POST /v1/systemone` 的服务都可以接，平台的标准服务是 `laya-serve`。用 `LAYA_EXTRA_MODELS='{"self-hosted":"<微调 checkpoint 目录>"}'` 注册微调模型，注册名与 `MULTICA_JEV_SELF_HOSTED_MODEL` 的默认值一致，daemon 侧不用再配 model；不注册的话，`laya-serve` 会按语言自动路由到内置的、未微调的底座。端口由 `LAYA_PORT` 指定（默认 8000）；设了 `LAYA_API_KEY` 时，把 `MULTICA_JEV_SELF_HOSTED_API_KEY` 设成同一个值。`max_len`、`head_max_len` 来自 checkpoint 自己的配置，daemon 不传。自部署来源只有通过门禁评测后才应排在外部来源前面；判据文案改动后要重跑门禁评测 |
 | `MULTICA_JEV_SELF_HOSTED_MODEL` | `self-hosted` | 自部署来源请求体里的 `model`；用于 `laya-serve` 时填 `LAYA_EXTRA_MODELS` 里的注册名 |
 | `MULTICA_JEV_SELF_HOSTED_API_KEY` | 空 | 自部署来源的 Bearer key，设置后发 `Authorization: Bearer …`；只留在本机 |
 守护进程注入智能体 task 的内部上下文见 [Task 运行时环境](/daemon-runtimes#task-运行时环境)。
