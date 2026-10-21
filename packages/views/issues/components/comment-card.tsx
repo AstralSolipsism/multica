@@ -1496,8 +1496,10 @@ function CommentCardImpl({
               {/* Replies — chronological; the resolution keeps its place with a badge */}
               {threadRows.map(renderThreadRow)}
 
-              {/* Reply input */}
-              <div className="border-t border-border/50 px-4 max-md:px-3 py-2.5">
+              {/* Reply input — vertical padding lives on ReplyInput's text
+                  surface now, so the bands above/below the input column are
+                  part of its click-to-type area. */}
+              <div className="border-t border-border/50 px-4 max-md:px-3">
                 <ReplyInput
                   issueId={issueId}
                   parentId={replyTargetId}

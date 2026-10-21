@@ -21,6 +21,9 @@ func TestLoadConfig_JevDefaultsAndOverrides(t *testing.T) {
 		"MULTICA_JEV_DASHSCOPE_API_KEY=",
 		"MULTICA_JEV_DASHSCOPE_WORKSPACE_ID=",
 		"MULTICA_JEV_DASHSCOPE_REGION=",
+		"MULTICA_JEV_SELF_HOSTED_URL=",
+		"MULTICA_JEV_SELF_HOSTED_MODEL=",
+		"MULTICA_JEV_SELF_HOSTED_API_KEY=",
 	} {
 		t.Setenv(kv[:len(kv)-1], "")
 	}
@@ -50,7 +53,10 @@ func TestLoadConfig_JevDefaultsAndOverrides(t *testing.T) {
 	// Overrides: disabled flag, timeout, ordered sources with credentials.
 	t.Setenv("MULTICA_JEV_DISABLED", "1")
 	t.Setenv("MULTICA_JEV_TIMEOUT_MS", "250")
-	t.Setenv("MULTICA_JEV_SOURCES", "dashscope,opencode,opencode-free,unknown")
+	t.Setenv("MULTICA_JEV_SOURCES", "self-hosted,dashscope,opencode,opencode-free,unknown")
+	t.Setenv("MULTICA_JEV_SELF_HOSTED_URL", "http://127.0.0.1:8009/v1/systemone")
+	t.Setenv("MULTICA_JEV_SELF_HOSTED_MODEL", "jev-finetune-1")
+	t.Setenv("MULTICA_JEV_SELF_HOSTED_API_KEY", "sk-test-selfhosted")
 	t.Setenv("MULTICA_JEV_DASHSCOPE_API_KEY", "sk-test-dashscope")
 	t.Setenv("MULTICA_JEV_DASHSCOPE_WORKSPACE_ID", "ws-9")
 	t.Setenv("MULTICA_JEV_OPENCODE_API_KEY", "sk-test-opencode")
@@ -64,20 +70,26 @@ func TestLoadConfig_JevDefaultsAndOverrides(t *testing.T) {
 	if cfg.JevTimeout != 250*time.Millisecond {
 		t.Fatalf("JevTimeout = %s, want 250ms", cfg.JevTimeout)
 	}
-	if len(cfg.JevSources) != 3 {
-		t.Fatalf("JevSources = %+v, want 3 (dashscope, opencode, opencode-free; unknown skipped)", cfg.JevSources)
+	if len(cfg.JevSources) != 4 {
+		t.Fatalf("JevSources = %+v, want 4 (self-hosted, dashscope, opencode, opencode-free; unknown skipped)", cfg.JevSources)
 	}
-	if cfg.JevSources[0].Name != "dashscope" || cfg.JevSources[0].BearerToken != "sk-test-dashscope" {
-		t.Fatalf("dashscope source = %+v", cfg.JevSources[0])
+	if cfg.JevSources[0].Name != "self-hosted" || cfg.JevSources[0].BaseURL != "http://127.0.0.1:8009/v1/systemone" {
+		t.Fatalf("self-hosted source = %+v", cfg.JevSources[0])
 	}
-	if !strings.Contains(cfg.JevSources[0].BaseURL, "ws-9.cn-beijing.maas.aliyuncs.com") {
-		t.Fatalf("dashscope base URL = %s", cfg.JevSources[0].BaseURL)
+	if cfg.JevSources[0].Model != "jev-finetune-1" || cfg.JevSources[0].BearerToken != "sk-test-selfhosted" {
+		t.Fatalf("self-hosted source = %+v, want configured model and key", cfg.JevSources[0])
 	}
-	if cfg.JevSources[1].Name != "opencode" || cfg.JevSources[1].BearerToken != "sk-test-opencode" {
-		t.Fatalf("opencode source = %+v", cfg.JevSources[1])
+	if cfg.JevSources[1].Name != "dashscope" || cfg.JevSources[1].BearerToken != "sk-test-dashscope" {
+		t.Fatalf("dashscope source = %+v", cfg.JevSources[1])
 	}
-	if cfg.JevSources[2].Name != "opencode-free" || cfg.JevSources[2].BearerToken != "" {
-		t.Fatalf("opencode-free source = %+v", cfg.JevSources[2])
+	if !strings.Contains(cfg.JevSources[1].BaseURL, "ws-9.cn-beijing.maas.aliyuncs.com") {
+		t.Fatalf("dashscope base URL = %s", cfg.JevSources[1].BaseURL)
+	}
+	if cfg.JevSources[2].Name != "opencode" || cfg.JevSources[2].BearerToken != "sk-test-opencode" {
+		t.Fatalf("opencode source = %+v", cfg.JevSources[2])
+	}
+	if cfg.JevSources[3].Name != "opencode-free" || cfg.JevSources[3].BearerToken != "" {
+		t.Fatalf("opencode-free source = %+v", cfg.JevSources[3])
 	}
 	if cfg.JevSourceEnv.DashScopeRegion != "" {
 		t.Fatalf("DashScopeRegion = %q, want empty default", cfg.JevSourceEnv.DashScopeRegion)

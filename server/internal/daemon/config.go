@@ -201,7 +201,7 @@ type Config struct {
 	JevDisabled  bool          // MULTICA_JEV_DISABLED: local opt-out, always fail-open
 	JevSources   []jev.Source  // MULTICA_JEV_SOURCES (ordered, default opencode-free); resolved, unusable entries skipped
 	JevTimeout   time.Duration // MULTICA_JEV_TIMEOUT_MS, default 1500ms
-	JevSourceEnv jev.SourceEnv // raw credentials for the optional opencode/dashscope sources
+	JevSourceEnv jev.SourceEnv // raw credentials for the optional opencode/dashscope/self-hosted sources
 }
 
 // Overrides allows CLI flags to override environment variables and defaults.
@@ -689,6 +689,9 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		DashScopeAPIKey:      os.Getenv("MULTICA_JEV_DASHSCOPE_API_KEY"),
 		DashScopeWorkspaceID: os.Getenv("MULTICA_JEV_DASHSCOPE_WORKSPACE_ID"),
 		DashScopeRegion:      os.Getenv("MULTICA_JEV_DASHSCOPE_REGION"),
+		SelfHostedURL:        os.Getenv("MULTICA_JEV_SELF_HOSTED_URL"),
+		SelfHostedModel:      os.Getenv("MULTICA_JEV_SELF_HOSTED_MODEL"),
+		SelfHostedAPIKey:     os.Getenv("MULTICA_JEV_SELF_HOSTED_API_KEY"),
 	}
 	jevSources := jev.ResolveSources(envOrDefault("MULTICA_JEV_SOURCES", jev.DefaultSources), jevSourceEnv)
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { invalidateAgentFolderQueries } from "../agents/folder-queries";
+
 import { invalidateDependencyQueries, invalidateIssueQueries } from "../issues/invalidation";
 import { useEffect, useRef } from "react";
 import { forgetLocalSearchIndex } from "../search-index/instance";
@@ -810,6 +812,7 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+          void invalidateAgentFolderQueries(qc, wsId);
           // Squad members status is derived per agent, so any agent
           // change (status flip, archive, runtime swap) needs to refresh the
           // per-squad members-status cache without refetching the static squad
@@ -856,6 +859,7 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
+          void invalidateAgentFolderQueries(qc, wsId);
           // squad:deleted triggers assignee transfer — refresh issues too.
           invalidateIssueQueries(qc, wsId);
         }
