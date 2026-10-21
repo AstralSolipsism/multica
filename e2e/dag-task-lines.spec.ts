@@ -148,6 +148,23 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
       contentType: "image/png",
     });
 
+    // Hovering never lights or dims anything (OL-996): resting the pointer on
+    // a card for well past the old 100 ms debounce must not create the
+    // overlay layer or any lit route, and must not write a selection.
+    const hoverBox = (await cardA.boundingBox())!;
+    await page.mouse.move(hoverBox.x + hoverBox.width / 2, hoverBox.y + hoverBox.height / 2);
+    await page.waitForTimeout(250);
+    await expect(page.locator("[data-dag-overlay-layer]")).toHaveCount(0);
+    await expect(page.locator("[data-dag-lit-edge]")).toHaveCount(0);
+    await expect(page.locator("[data-dag-edge-layer] > g").first()).not.toHaveClass(/opacity-15/);
+
+    // A click, by contrast, selects the card and lights its neighborhood.
+    await cardA.click();
+    await expect(page.locator("[data-dag-lit-edge]").first()).toBeAttached();
+    await expect(page.locator("[data-dag-edge-layer] > g").first()).toHaveClass(/opacity-15/);
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-dag-overlay-layer]")).toHaveCount(0);
+
     // Pan away from the default so the later restore is meaningful.
     const panArea = (await page.locator("[data-dag-canvas]").boundingBox())!;
     await page.mouse.move(panArea.x + panArea.width / 2, panArea.y + panArea.height / 2);

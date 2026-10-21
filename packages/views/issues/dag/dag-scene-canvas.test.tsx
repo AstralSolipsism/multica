@@ -490,7 +490,7 @@ describe("DagSceneCanvas focus requests", () => {
   });
 });
 
-// ---- Stage 10: click/hover highlight, bus click, zoom degradation -----------
+// ---- Stage 10: click highlight, bus click, zoom degradation -----------
 
 /** OL-280 option B's example: A→X, A→Y, B→Y with shared bus intervals at A's
  *  output and Y's input. */
@@ -676,19 +676,38 @@ describe("DagSceneCanvas Stage 10 interactions", () => {
     expect(dimOverlay()).toBeNull();
   });
 
-  it("hover lights the card's in/out edges and restores on leave", async () => {
-    const { store } = harness(abxyFixture());
-    await waitFor(() => expect(nodeOf("y")).toBeTruthy());
-    fireEvent.mouseEnter(nodeOf("y"));
-    await waitFor(() => expect(litRouteGroups()).toBe(2));
-    expect(baseGroupClass()).toContain("opacity-15");
-    expect(cardLit("x")).toBe(false);
-    // Hover is transient: no selection is written.
-    expect(store.getState().dagSelectedNodeId).toBeNull();
-    fireEvent.mouseLeave(nodeOf("y"));
-    await waitFor(() => expect(litRouteGroups()).toBe(0));
-    expect(baseGroupClass()).not.toContain("opacity-15");
+  it("hovering never lights edges or dims the canvas (task, overview, frame and external cards)", async () => {
+    // Line scene: the task card and the frame header.
+    const line = harness(lineFixture());
+    await waitFor(() => expect(nodeOf("t1")).toBeTruthy());
+    for (const id of ["t1", "r1"]) {
+      fireEvent.mouseEnter(nodeOf(id));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(litRouteGroups()).toBe(0);
+      expect(dimOverlay()).toBeNull();
+      expect(baseGroupClass()).not.toContain("opacity-15");
+      fireEvent.mouseLeave(nodeOf(id));
+    }
+    // External side card.
+    const externalNode = document
+      .querySelector("[data-dag-external='r2']")!
+      .closest(".react-flow__node")!;
+    fireEvent.mouseEnter(externalNode);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(litRouteGroups()).toBe(0);
     expect(dimOverlay()).toBeNull();
+    expect(line.store.getState().dagSelectedNodeId).toBeNull();
+    line.unmount();
+    // Overview card.
+    const overview = harness(overviewFixture());
+    await waitFor(() => expect(nodeOf("issue:r1")).toBeTruthy());
+    fireEvent.mouseEnter(nodeOf("issue:r1"));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(litRouteGroups()).toBe(0);
+    expect(dimOverlay()).toBeNull();
+    expect(baseGroupClass()).not.toContain("opacity-15");
+    expect(overview.store.getState().dagSelectedNodeId).toBeNull();
+    expect(overview.store.getState().dagFocus).toBeNull();
   });
 
   it("clicking a bus segment selects its deduplicated original dependencies", async () => {
@@ -755,22 +774,20 @@ describe("DagSceneCanvas Stage 10 interactions", () => {
     });
   });
 
-  it("clicking while hovering switches to the closure even with the pointer resting on the card", async () => {
+  it("clicking with the pointer resting on the card still advances the click cycle", async () => {
     const { store } = harness(chainFixture());
     await waitFor(() => expect(nodeOf("y")).toBeTruthy());
     vi.useFakeTimers();
     try {
+      // The pointer stays on the card across both clicks — as if hovering —
+      // yet the click sequence must run normally.
       fireEvent.mouseEnter(nodeOf("y"));
-      act(() => {
-        vi.advanceTimersByTime(150);
-      });
       fireEvent.click(nodeOf("y"));
       expect(store.getState().dagSelectedNodeId).toBe("y");
       fireEvent.click(nodeOf("y"));
       act(() => {
         vi.advanceTimersByTime(400);
       });
-      // The pointer never left the card, yet the closure must win over hover.
       expect(store.getState().dagFocus).toEqual({ nodeId: "y", way: "both" });
       expect(litRouteGroups()).toBe(3);
       expect(cardLit("w")).toBe(true);
@@ -1256,22 +1273,6 @@ describe("DagSceneCanvas Stage 10 coverage gaps", () => {
     await waitFor(() => expect(screen.getByText("Sub line")).toBeInTheDocument());
   });
 
-  it("clears the hover highlight when a pan drag starts", async () => {
-    const { flowStore } = harness(abxyFixture());
-    await waitFor(() => expect(nodeOf("y")).toBeTruthy());
-    fireEvent.mouseEnter(nodeOf("y"));
-    await waitFor(() => expect(litRouteGroups()).toBeGreaterThan(0));
-    expect(dimOverlay()).toBeTruthy();
-    act(() => {
-      flowStore().setState({ paneDragging: true });
-    });
-    expect(dimOverlay()).toBeNull();
-    expect(litRouteGroups()).toBe(0);
-    act(() => {
-      flowStore().setState({ paneDragging: false });
-    });
-  });
-
   it("keeps the containing frame lit through the whole click cycle", async () => {
     harness(chainFixture());
     await waitFor(() => expect(nodeOf("y")).toBeTruthy());
@@ -1356,12 +1357,12 @@ describe("DagSceneCanvas satisfied overlay sources", () => {
     };
   }
 
-  it("keeps the satisfied overlay while the pointer rests on the selected card", async () => {
+  it("selecting the card is enough for its satisfied overlay (no hover)", async () => {
     harness(satisfiedFixture(), (s) => s.setState({ dagSelectedNodeId: "issue:r2" }));
     await waitFor(() => expect(nodeOf("issue:r2")).toBeTruthy());
+    // Selection alone lights the mixed base bundle AND the fully satisfied
+    // r4→r2 overlay — no pointer rest required.
     await waitFor(() => expect(litEdgeIds()).toContain(BUNDLE));
-    expect(litEdgeIds()).not.toContain(SATISFIED);
-    fireEvent.mouseEnter(nodeOf("issue:r2"));
     await waitFor(() => expect(litEdgeIds()).toContain(SATISFIED));
     // The satisfied source card lights through a dim hole too.
     expect(cardLit("issue:r4")).toBe(true);
@@ -1374,8 +1375,7 @@ describe("DagSceneCanvas satisfied overlay sources", () => {
     await waitFor(() => expect(nodeOf("issue:r3")).toBeTruthy());
     await waitFor(() => expect(litEdgeIds()).toContain(SATISFIED));
     fireEvent.mouseEnter(nodeOf("issue:r3"));
-    // A card with no dependencies has no hover set: the focus highlight (and
-    // its overlay) stays instead of flickering away with the pointer.
+    // Hover must not disturb the focus highlight (and its overlay).
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(litEdgeIds()).toContain(SATISFIED);
     expect(store.getState().dagFocus).toEqual({ nodeId: "issue:r2", way: "upstream" });
@@ -1394,23 +1394,6 @@ describe("DagSceneCanvas satisfied overlay sources", () => {
 });
 
 describe("DagSceneCanvas Stage 10 review assertions", () => {
-  it("does not light up frames or external side cards on hover", async () => {
-    harness(lineFixture());
-    await waitFor(() => expect(nodeOf("r1")).toBeTruthy());
-    fireEvent.mouseEnter(nodeOf("r1"));
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(dimOverlay()).toBeNull();
-    expect(litRouteGroups()).toBe(0);
-    fireEvent.mouseLeave(nodeOf("r1"));
-    const externalNode = document
-      .querySelector("[data-dag-external='r2']")!
-      .closest(".react-flow__node")!;
-    fireEvent.mouseEnter(externalNode);
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(dimOverlay()).toBeNull();
-    expect(litRouteGroups()).toBe(0);
-  });
-
   it("keeps the external card's jump click in the simplified line scene", async () => {
     const { flow, props } = harness(lineFixture());
     await waitFor(() => expect(screen.getByText("Sub line")).toBeInTheDocument());
