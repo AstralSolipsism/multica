@@ -458,16 +458,16 @@ test.describe("Issue dependencies (OL-44)", () => {
         }
         await setBlockedBy(ctx, parent.id, active.map((issue) => issue.id));
         await page.goto(`/${ctx.workspaceSlug}/issues/${target.id}`);
+        // The UUID URL is canonicalized to the identifier and the detail page
+        // remounts on that replace, which would reset the scroll checked below.
+        // Wait for the final URL, then assert without retry loops.
+        await page.waitForURL(new RegExp(`/issues/${target.identifier}$`));
         await expect(page.getByText("Properties", { exact: true }).first()).toBeVisible();
         await expect(page.getByText(`Inherited from ${parent.identifier}`, { exact: true })).toHaveCount(active.length);
         for (const issue of [active[0]!, active.at(-1)!]) {
           const label = page.getByText(issue.identifier, { exact: true }).first();
-          // The sidebar can rerender and replace the row while scrolling.
-          // Re-resolve it and verify the same full-visibility requirement.
-          await expect(async () => {
-            await label.scrollIntoViewIfNeeded();
-            await expect(label).toBeInViewport({ ratio: 1 });
-          }).toPass({ timeout: 10_000 });
+          await label.scrollIntoViewIfNeeded();
+          await expect(label).toBeInViewport({ ratio: 1 });
         }
         await testInfo.attach(`inherited-prerequisites-${active.length}`, { body: await page.screenshot(), contentType: "image/png" });
         await page.getByText("Unassigned", { exact: true }).first().click();
