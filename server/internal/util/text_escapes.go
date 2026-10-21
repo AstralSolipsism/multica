@@ -69,11 +69,14 @@ func backslashLiteralRanges(s string) []backslashLiteralRange {
 	var ranges []backslashLiteralRange
 	opening := -1
 	escapedLines := !strings.ContainsAny(s, "\r\n")
-	codeClosers := inlineCodeClosers(s)
+	codeClosers := inlineCodeClosers(s, escapedLines)
 	for i := 0; i < len(s); {
 		end := i
 		switch {
 		case s[i] == '\\':
+			if escapedLines && strings.HasPrefix(s[i:], `\n\n`) {
+				opening = -1
+			}
 			i += 2 // Escaped delimiters cannot open or close a literal.
 			continue
 		case s[i] == '`' || s[i] == '~':
@@ -121,18 +124,25 @@ func backslashLiteralRanges(s string) []backslashLiteralRange {
 }
 
 func windowsPathEnd(s string, i int) int {
-	drive := asciiLetter(s[i]) && strings.HasPrefix(s[i+1:], ":\\")
-	unc := strings.HasPrefix(s[i:], `\\`) && (i == 0 || spaceBefore(s, i)) && i+2 < len(s) && asciiLetter(s[i+2])
+	afterNewline := i >= 2 && s[i-2:i] == `\n`
+	drive := asciiLetter(s[i]) && strings.HasPrefix(s[i+1:], ":\\") &&
+		(i == 0 || afterNewline || (!asciiLetter(s[i-1]) && !asciiDigit(s[i-1])))
+	unc := strings.HasPrefix(s[i:], `\\`) && (i == 0 || afterNewline || spaceBefore(s, i)) && i+2 < len(s) && asciiLetter(s[i+2])
 	if !drive && !unc {
 		return i
 	}
 	end := i
-	for end < len(s) && !spaceAt(s, end) && !strings.ContainsRune("\"'`<>|$", rune(s[end])) {
-		end++
+	for end < len(s) {
+		r, size := utf8.DecodeRuneInString(s[end:])
+		// A path must not absorb the following paragraph or Chinese prose.
+		if unicode.IsSpace(r) || strings.ContainsRune("\"'`<>|$，。：；", r) || strings.HasPrefix(s[end:], `\n\n`) {
+			break
+		}
+		end += size
 	}
 	// A UNC path has a server/share separator. A bare \\n must still decode
 	// once to a literal \n, rather than being mistaken for a server name.
-	if unc && !strings.ContainsRune(s[i+2:end], '\\') {
+	if unc && (end < i+2 || !strings.ContainsRune(s[i+2:end], '\\')) {
 		return i
 	}
 	return end
@@ -140,10 +150,20 @@ func windowsPathEnd(s string, i int) int {
 
 // Index exact-length backtick runs once so unmatched runs do not repeatedly
 // search the remainder of a large output. Backslashes are literal inside code.
-func inlineCodeClosers(s string) map[int]int {
+func inlineCodeClosers(s string, escapedLines bool) map[int]int {
 	closers := make(map[int]int)
 	next := make(map[int]int)
 	for i := len(s) - 1; i >= 0; {
+		if escapedLines && strings.HasPrefix(s[i:], `\n\n`) {
+			slashes := 0
+			for j := i - 1; j >= 0 && s[j] == '\\'; j-- {
+				slashes++
+			}
+			if slashes%2 == 0 {
+				// Inline code cannot pair across an escaped blank line.
+				next = make(map[int]int)
+			}
+		}
 		if s[i] != '`' {
 			i--
 			continue

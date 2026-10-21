@@ -9,8 +9,12 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-var taskOutputCases = []struct{ name, output, want string }{
+type taskOutputCase struct{ name, output, want string }
+
+var taskOutputCases = []taskOutputCase{
 	{"paragraphs", `para1\n\npara2`, "para1\n\npara2"},
+	{"heading and path paragraphs", `Summary:\nEdited D:\repo\a.go\n\nNext step`, "Summary:\n" + `Edited D:\repo\a.go` + "\n\nNext step"},
+	{"Chinese prose after path", `已修改 D:\work\text.go，测试通过\n\n下一步：提交\n\n完成`, `已修改 D:\work\text.go，测试通过` + "\n\n下一步：提交\n\n完成"},
 	{"formula", `$$\Delta \ln P_{0,i}(a_{\text{exec}} \mid s_t) \propto \eta_{\text{lr}} \cdot \sigma\left(\gamma_1 R_{\text{somatic}} + \gamma_2 V_{\text{ego_appraisal}}\right)$$`, `$$\Delta \ln P_{0,i}(a_{\text{exec}} \mid s_t) \propto \eta_{\text{lr}} \cdot \sigma\left(\gamma_1 R_{\text{somatic}} + \gamma_2 V_{\text{ego_appraisal}}\right)$$`},
 	{"matrix and inline math", `$\begin{matrix}a&b\\c&d\end{matrix}$ $\text{睡前}\times\theta\tau\rho\nu\nabla x\neq y\to z$`, `$\begin{matrix}a&b\\c&d\end{matrix}$ $\text{睡前}\times\theta\tau\rho\nu\nabla x\neq y\to z$`},
 	{"code", "`\\n\\r\\t\\\\`", "`\\n\\r\\t\\\\`"},
@@ -42,7 +46,19 @@ func TestCompleteTaskPreservesOutput(t *testing.T) {
 	agent := f.privateAgentOwnedBy(t, owner, "output")
 	ctx := context.Background()
 	for _, surface := range []string{"chat", "comment"} {
-		for _, tc := range taskOutputCases {
+		cases := append([]taskOutputCase(nil), taskOutputCases...)
+		if surface == "chat" {
+			cases = append(cases, taskOutputCase{
+				"escaped quick-actions footer",
+				`Answer:\n$x\n$\n\n` + "```quick-actions\\n" + `[{"label":"A","prompt":"B"}]` + "\\n```",
+				"Answer:\n" + `$x\n$`,
+			}, taskOutputCase{
+				"decoded body before real footer",
+				`Literal \n \r \t \\` + "\n```quick-actions\n[]\n```",
+				`Literal \n \r \t \\`,
+			})
+		}
+		for _, tc := range cases {
 			t.Run(surface+"/"+tc.name, func(t *testing.T) {
 				cols := testutil.Cols{
 					"status": "running", "started_at": testutil.Raw("now()"),

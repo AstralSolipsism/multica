@@ -4677,7 +4677,6 @@ func (s *TaskService) writeChatCompletionOutcome(ctx context.Context, qtx *db.Qu
 	// valid JSON; an empty Output is the only case this branch cares about.
 	var payload protocol.TaskCompletedPayload
 	_ = json.Unmarshal(result, &payload)
-	body := normalizeTaskOutput(payload.Output)
 	// Strip any in-band quick-actions footer from EVERY chat completion — the
 	// reserved syntax must never reach a stored transcript. This includes the
 	// agent-initiated intro turn (chat_input_task_id NULL), which previously
@@ -4688,7 +4687,12 @@ func (s *TaskService) writeChatCompletionOutcome(ctx context.Context, qtx *db.Qu
 	// now (SupplementChatQuickActions). Honouring a footer here would pin a
 	// pre-upgrade session to the retired, lower-quality in-band suggestions and
 	// suppress the pass that would have replaced them.
-	body, _ = splitChatQuickActions(body)
+	body, _ := splitChatQuickActions(payload.Output)
+	// Choose escaped mode from the original output: removing the footer may
+	// remove the only real newline in an already-decoded reply.
+	if !strings.ContainsAny(payload.Output, "\r\n") {
+		body = normalizeTaskOutput(body)
+	}
 	isEmpty := strings.TrimSpace(body) == ""
 
 	// MUL-4899 completion-boundary observation. Measures whether the delivery
