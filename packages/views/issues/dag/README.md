@@ -15,13 +15,13 @@ else in `dag-edge-layer.tsx`, a window-sized SVG in the `ViewportPortal`:
   budget (`dag-highlight.ts#dagMotionSegments`): system reduced motion or
   zoom < 50% stops it; past ~60 moving segments on screen only the selected
   chain keeps moving.
-- **Highlight**: hover lights a card's own in/out edges (debounced 100 ms so
-  pan gestures do not storm, and suppressed on the card that already owns the
-  selection); a click selects the one-layer neighborhood; a second click on
-  the same node (after a 400 ms double-click window, skipped for
+- **Highlight**: a click selects the one-layer neighborhood; a second click
+  on the same node (after a 400 ms double-click window, skipped for
   `event.detail > 1`, rolled back when a slow double-click still fires)
   switches to all upstream + downstream (`DagFocusWay: "both"`); a third
-  returns. Toolbar focus buttons keep the one-way modes. Every lit dependency
+  returns. Toolbar focus buttons keep the one-way modes. Hover never lights
+  or dims anything — cards keep only their own border/pointer affordance
+  (OL-996). Every lit dependency
   repaints along its own complete route — never the whole bus (OL-280 option
   B). Node dimming is a single masked rect in a z-3 overlay svg with holes
   over the lit cards — the z-index-2 cards never rebuild, and the selection
@@ -152,9 +152,10 @@ Fully satisfied overview dependencies are **always overlays**, even when the
 show-satisfied switch is on. That switch does not enter the placement key.
 `routeDagOverlays(geometry, plan.overlays, plan.input.edges)` returns combined
 base/overlay routes, segments and dots without
-changing boxes; it uses simple orthogonal corridors. Hover uses
-`dagOverviewHoverEdges(model, cardId)` and the same router. Mixed bundles reuse
-their existing route while `overlayDependencyIds` / hover membership select
+changing boxes; it uses simple orthogonal corridors. Selecting or focusing an
+overview card uses `dagOverviewSatisfiedEdges(model, cardId)` and the same
+router. Mixed bundles reuse
+their existing route while `overlayDependencyIds` / overlay membership select
 only the satisfied subset. The optional third argument composes trunk
 membership across base and overlay edges before styling or hit testing; use
 the returned segments as the complete displayed set. Omitting it returns just

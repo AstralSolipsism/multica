@@ -105,6 +105,19 @@ func newFlagTestCmd(name string) *cobra.Command {
 }
 
 func TestResolveTextFlag(t *testing.T) {
+	for _, flag := range []string{"content", "description"} {
+		t.Run(flag+" preserves math and code in inline text", func(t *testing.T) {
+			body := `$P_{0,i}(\text{烧水洗澡}\mid\text{睡前})$ $a\times b\neq c\to d$ $$\begin{matrix}a&b\\c&d\end{matrix}$$` + " `\\n\\r\\t\\\\`"
+			c := newFlagTestCmd(flag)
+			if err := c.Flags().Set(flag, `before\n`+body+`\nafter`); err != nil {
+				t.Fatal(err)
+			}
+			got, ok, err := resolveTextFlag(c, flag)
+			if want := "before\n" + body + "\nafter"; err != nil || !ok || got != want {
+				t.Fatalf("resolveTextFlag = (%q, %v, %v), want %q", got, ok, err, want)
+			}
+		})
+	}
 	t.Run("inline value is unescaped", func(t *testing.T) {
 		c := newFlagTestCmd("description")
 		_ = c.Flags().Set("description", `para1\n\npara2`)

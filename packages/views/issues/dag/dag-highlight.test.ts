@@ -12,7 +12,7 @@ import {
   dagCullBoundsKey,
   dagDependencyEdgeIds,
   dagMotionSegments,
-  dagOverviewHoverOverlay,
+  dagOverviewSatisfiedOverlay,
   dagPointVisible,
   dagRouteVisible,
   dagSceneSelectionSet,
@@ -239,7 +239,7 @@ describe("dagSegmentFlowDirection", () => {
   });
 });
 
-describe("dagOverviewHoverOverlay", () => {
+describe("dagOverviewSatisfiedOverlay", () => {
   // r1 blocks r2 twice: one satisfied (a1 done), one still blocking (a2 open);
   // r4's fully satisfied bundle has no base route.
   const graph = g(
@@ -285,8 +285,8 @@ describe("dagOverviewHoverOverlay", () => {
   };
   const canvasModel = { kind: "overview" as const, overview: model };
 
-  it("surfaces the hovered card's satisfied bundles without double-painting mixed ones", () => {
-    const overlay = dagOverviewHoverOverlay(canvasModel, geometry, "issue:r2")!;
+  it("surfaces the anchor card's satisfied bundles without double-painting mixed ones", () => {
+    const overlay = dagOverviewSatisfiedOverlay(canvasModel, geometry, "issue:r2")!;
     expect([...overlay.edgeIds].sort()).toEqual([mixedId, satisfiedId].sort());
     // The mixed bundle already has a base route: only the fully satisfied
     // bundle gets a fresh overlay route.
@@ -299,14 +299,14 @@ describe("dagOverviewHoverOverlay", () => {
     const lone = g([n("solo")], []);
     const loneModel = computeDagOverview(createDagModelIndex(lone), {});
     expect(
-      dagOverviewHoverOverlay(
+      dagOverviewSatisfiedOverlay(
         { kind: "overview", overview: loneModel },
         { ...geometry, nodes: { solo: { x: 0, y: 0, width: 280, height: 140 } } },
         "solo",
       ),
     ).toBeNull();
     expect(
-      dagOverviewHoverOverlay({ kind: "independent", tasks: [] }, geometry, "issue:r2"),
+      dagOverviewSatisfiedOverlay({ kind: "independent", tasks: [] }, geometry, "issue:r2"),
     ).toBeNull();
   });
 });

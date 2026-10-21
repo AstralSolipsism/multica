@@ -23,7 +23,7 @@ import {
   dagSegmentVisible,
   dagStateMotion,
   type DagGhostBlock,
-  type DagHoverOverlay,
+  type DagSatisfiedOverlay,
   type DagVisibleBounds,
 } from "./dag-highlight";
 import "./dag-edge-motion.css";
@@ -87,8 +87,10 @@ export interface DagEdgeLayerProps {
   /** Lit scene edges (node neighborhood, focus chain, bus selection). Each
    *  repaints along its own complete route; the base layer dims meanwhile. */
   highlightedEdgeIds: ReadonlySet<string> | null;
-  /** Overview hover adds the card's satisfied bundles without a layout pass. */
-  hoverOverlay: DagHoverOverlay | null;
+  /** The effective satisfied-dependency overlay (focus anchor's while
+   *  focusing, otherwise the selected card's) adds its satisfied bundles
+   *  without a layout pass. */
+  activeOverlay: DagSatisfiedOverlay | null;
   /** Boxes that stay visible through the dim mask: lit cards in full, lit
    *  frames as header strips. Null (and empty) means no node dimming. */
   litBoxes: readonly { id: string; x: number; y: number; width: number; height: number }[] | null;
@@ -124,7 +126,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
   model,
   showSatisfied,
   highlightedEdgeIds,
-  hoverOverlay,
+  activeOverlay,
   litBoxes,
   ghostBlocks,
   selectedNodeId,
@@ -239,16 +241,16 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
   const motionAllowed = dagMotionAllowed(motionOn ? 1 : 0, reducedMotion);
 
   // Highlight: repaint each lit dependency's own complete route — never the
-  // whole bus. Hover-only satisfied bundles take their overlay route and the
+  // whole bus. Satisfied-only bundles take the active overlay's route and the
   // satisfied-subset count (mixed bundles never double-count).
   const highlightedRoutes = useMemo(() => {
     if (!highlightedEdgeIds) return [];
     return [...highlightedEdgeIds].flatMap((edgeId) => {
-      const route = composed.routes[edgeId] ?? hoverOverlay?.routes[edgeId];
+      const route = composed.routes[edgeId] ?? activeOverlay?.routes[edgeId];
       if (!route) return [];
       let display = dagSceneEdgeDisplay(plan, edgeId, states, showSatisfied);
       if (!display) {
-        const rawIds = hoverOverlay?.dependencyIds[edgeId] ?? [];
+        const rawIds = activeOverlay?.dependencyIds[edgeId] ?? [];
         if (!rawIds.length) return [];
         display = {
           count: rawIds.length,
@@ -260,7 +262,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
       if (bounds && !dagRouteVisible(route, bounds)) return [];
       return [{ edgeId, route, display }];
     });
-  }, [highlightedEdgeIds, composed.routes, hoverOverlay, plan, states, showSatisfied, bounds]);
+  }, [highlightedEdgeIds, composed.routes, activeOverlay, plan, states, showSatisfied, bounds]);
 
   const dimmed = highlightedEdgeIds != null;
   const dimNodes = litBoxes != null && litBoxes.length > 0;
