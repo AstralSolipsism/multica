@@ -48,7 +48,11 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
    | Fable 5.1 | 0.75 | 0.86 | 1.38 | 1.74 |
 
    max 与 low 之比约为 2.3–11 倍，不是 80 倍。自适应能省额度，但遇到难题会升挡，不保证总用量下降。
-2. **一次运行内换挡，只在一定条件下保留缓存。** CLI 在 `system/init` 里报告 `per_turn_effort_active=true` 时，换挡才保留缓存前缀；目前满足条件的是带 `per_turn_effort` 能力的 Opus 5.5、Sonnet 5.5、Haiku 5.5、Fable 5.1。为 false 时换挡会重写缓存前缀。会话中途还可能收到 `system/per_turn_effort_changed`，变为 false。
+2. **一次运行内换挡，只在一定条件下保留缓存。** CLI 在 `system/init` 里报告 `per_turn_effort_active=true` 时，换挡才保留缓存前缀。OL-1000 在 2.1.304 上实测：
+   - **init 的取值**：Opus 5.5、Sonnet 5.5、Haiku 5.5、Fable 5.1 为 true；Sonnet 5、Opus 5 为 false。
+   - **为 true 时**：Haiku 5.5、Sonnet 5.5 两次换挡后，下一次请求的 `cache_read_input_tokens` 都等于上一次请求的全部提示量。换挡步写缓存的量与不换挡的步相同，约 130–180 token。Opus 5.5、Fable 5.1 只核对了 init，没有实测缓存。
+   - **为 false 时**：首次切到某个挡位，整个前缀都要重写；Sonnet 5 上 `cache_read` 为 0，写入 28.6k。切回之前用过的挡位，复用该挡位上次写到的位置，只补写其后的部分。
+   - **`system/per_turn_effort_changed`**：7 次真实运行都没有收到。它只在服务端拒绝消息内的挡位声明时出现：先出 `changed=false`，再出重试后的 assistant；之后 CLI 不再发送消息内声明。这一点是用模拟 400 复现的。
 3. **有挡位控制的运行时共 12 个（含 claude）**，即 `server/pkg/agent/thinking.go` 中三张表的并集：
    - 固定词表（`providerThinkingEnums`）：claude、codebuddy、pi、omp；
    - daemon 本地目录（`thinkingDynamicCatalogProviders`）：codex、dsh、grok、opencode、kimi；
@@ -65,16 +69,34 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 5. **旧 daemon 会原样透传不认识的挡位。** 领取时的 `thinking_level` 没有能力位门控（`buildClaimedTaskResponse`，`server/internal/handler/daemon.go`）；目录无法验证时，daemon 把值直接交给 CLI（`resolveTaskModelSelection`，`server/internal/daemon/daemon.go`）。
 6. **思考行。**
    - Claude 的思考块原先在解析时被丢弃，OL-1001（PR #149）已修复：`claudeContentBlock` 现在读取 `thinking` 字段。
+   - 但在 daemon 现行的启动参数下，请求带的是 `thinking: {type: "adaptive", display: "updates"}`。思考块的实际形态是 `{"type":"thinking","thinking":"","signature":"…"}`，文本恒为空，`claude.go` 不为空思考产出消息。所以 Claude 运行目前仍然没有思考行（OL-1000）。
+   - 加上 `--thinking-display summarized` 后会有摘要文本，缓存也保持连续；这个参数不在 2.1.304 的 `claude --help` 里。本需求不依赖思考行，不改这个参数。
+   - 任何挡位都不保证有思考块，low 下也可能有：Haiku 5.5 在 low、high 都有；Sonnet 5 只在 high 有；Sonnet 5.5 都没有。样本很小，只能说明不保证出现。
+   - 同一次请求的思考与随后的 text、tool_use 是几条 assistant 事件，共用一个 `message.id`。
    - Codex 没有思考行。
-   - 低挡位时，模型常常不产出思考块。
 
-   只把微标挂在思考行上，正好是降挡的那些步看不到，这是 D3 的依据之一。
+   只把微标挂在思考行上，很多步根本看不到，这是 D3 的依据之一。
 7. **运行消息没有元数据字段。** `task_message` 只有给工具输入用的 `input` JSONB。
 8. **Jev 服务。**
    - OpenCode Zen：[文档](https://opencode.ai/docs/zen/)写明需要 Console API key，`jev-1.13-free` 是"限时提供"，也没有说明免费档如何处理数据。2026-10-21 实测，`/zen/v1/systemone` 和 `/inference/systemone/v1/systemone` 都能免 key 调通；热连接 340–390ms，冷连接 1.0–1.4s。
    - 百炼：[`decision-model-preview`](https://www.alibabacloud.com/help/zh/model-studio/decision-model-api) 的端点与鉴权见 §3。限制：state ≤ 65,536 tokens，每次请求 ≤ 16 个问题，choice 有 1–255 个选项。"限时免费"未能核实。
    - 响应格式：`answers.<id>.{choice, confidence, probabilities}`。
-9. **Claude Code 2.1.304 的 mod API。** `turn.step` 可以改写 `effort`（只接受 `low|medium|high|xhigh|max`）；另有 `$.http.fetch`（默认 30s 超时、4MiB 上限、可走 `socketPath`）和 `$.session.messages`。改写是否真正生效、能否访问回环地址、从哪个版本起可用，由 OL-1000 核实。
+9. **Claude Code 2.1.304 的 mod API。** `turn.step` 可以改写 `effort`（只接受 `low|medium|high|xhigh|max`）；另有 `$.http.fetch`（默认 30s 超时、4MiB 上限、可走 `socketPath`）和 `$.session.messages`。OL-1000 用真实模型核实：
+   - **改写生效**：日志反代抓到的真实请求里，顶层 `output_config.effort` 逐步等于改写值；消息内的 `role: "system"` 挡位声明逐步追加，请求全部成功。
+   - **版本**：静态核对发现，2.1.268 的 `turn.step` 只是观察事件，2.1.269 起才能改写 effort；2.1.292 的二进制已有 `per_turn_effort_active` 等字段，但没有实际运行。端到端只实测了 2.1.304。
+   - **`next(e)` 不保持上一步的改写**：每一步收到的 `e.effort` 都是启动时的 `--effort`。直接 `next(e)` 发出的也是启动挡位：实测 low → high → `next(e)`，第三步发出的是 medium。
+   - **step 输入**：字段为 `{turnId, index, model, effort, messageCount}`。`index` 从 0 开始；主线程没有 `agentId`；`messageCount` 含内部请求内容，不等于 `messages()` 的长度。
+   - **`next()` 的返回值**：`{turnId, index, answer, toolUses[{name, input}], stopReason, usage}`。
+   - **`$.session.messages()`**：从第二步起，能取到上一步的工具调用和结果。
+     - assistant 消息的 `toolUses[]` 带 `tool_use_id`、`tool`、`input`、`result`、`text`；
+     - 随后 user 消息的 `toolResults[]` 带 `tool_use_id`、`text`、`isError`、`result`；
+     - 同一结果在两处各出现一次，要按 `tool_use_id` 去重；
+     - 上一步的助手文字在 `text` 字段，可能单独占一条消息。
+   - **回环地址**：设了 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` 时，`$.http.fetch` 访问 `http://127.0.0.1:<port>` 和走 `socketPath` 都不受影响，145 次调用没有失败。
+     - 完整往返的稳定中位数：TCP 2.1 ms，Unix socket 1.6 ms，真实 daemon 的 `/health` 1.4 ms；
+     - 每次运行的首次调用不超过 22 ms。
+   - **日志顺序**：`next()` 之前写的 `$.ui.log`，35/35 步都早于该步第一条 assistant 事件，但中间可能插入其他 mod 的日志。ui_log 行的 `plugin` 字段是 mod 名。
+   - **与 labrastro-ysk 共存**：`CLAUDE_CODE_PLUGIN_DIRS` 列两个目录时，两个 mod 都注册 `session.start` 和 `turn.step`，每一步依次经过两者；挡位改写和缓存表现不受影响。
 10. **max 与 ultra 的定位。**
     - Anthropic：max 用于"正确性比成本更重要"的场合；最高几档"只在难题上值回成本，应在实测显示下一档仍有不足时再升"。在长链路编码上，最高几档以数倍成本换来很少的提升；"先用低挡、只把失败的部分放到高挡重跑"，能以略多于一半的成本保持同等通过率。
     - Claude Code 把 Max 当作只对当前会话生效的特例。
@@ -110,7 +132,7 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 
 - `thinking_level` 的其余取值保持原义。reasonix、dim 的 `auto` 是 CLI 自己的挡位，与自适应无关。
 - 候选挡位取自当前 (provider, model) **已验证**的目录，去掉 `auto` 和关闭思考类（`off`、`none`、`disabled`），保留 max、ultra（D4）。剩下不足 2 个时不提供自适应。
-- 回退在以下情况发生：超时、出错、返回值不在候选里、熔断中、本机关闭，以及这次运行拿不到候选挡位。运行级回退为不注入挡位（同跟随 CLI 配置）；步级回退为不改写这一步的挡位。任何情况下都不阻塞、不中断运行。
+- 回退在以下情况发生：超时、出错、返回值不在候选里、熔断中、本机关闭，以及这次运行拿不到候选挡位。运行级回退为不注入挡位（同跟随 CLI 配置）；步级回退为沿用上一步的挡位，由 mod 显式传入（§6），因为不改写会退回启动挡位（§0.9）。任何情况下都不阻塞、不中断运行。
 
 ## 2. 存储、校验与领取（D1、D2）
 
@@ -269,29 +291,43 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 
 ## 6. Claude 的步级换挡
 
-传输通道和最低 CLI 版本以 OL-1000 的结论为准；结论与本节不同时，在 OL-1010 放行前更新本节。
+传输通道、最低 CLI 版本和回退的做法依据 OL-1000 的实测（§0.2、§0.9）。
 
 - **启用条件**：同时满足
-  - claude 运行时、挡位设定为自适应；
-  - CLI 版本不低于步级换挡的最低版本；
-  - 本次运行的 `system/init` 报告 `per_turn_effort_active=true`。
-- **启用标记**：daemon 读到 init 为 true 时写入 `<task config>/effort/enabled`；读到 `system/per_turn_effort_changed` 降为 false 时删除它。mod 每一步先查这个标记，没有就不改写。
-- **每一步**：
-  - 第 1 步用运行级决策的挡位。
-  - 从第 2 步起，主线程的每一步都向 daemon 要决策。成功则 `yield* next({ ...e, effort })`；失败或超时（总计约 2s）则 `next(e)`，不改写这一步。
-  - 子智能体的请求不改写。
+  - claude 运行时，挡位设定为自适应；
+  - CLI 版本不低于 2.1.304，即端到端实测过的版本；2.1.269–2.1.303 没有实测；
+  - 本次运行有候选挡位，即运行级没有因 `no_candidates` 回退；
+  - 本次运行的 `system/init` 报告 `per_turn_effort_active === true`，缺少这个字段视为 false。
+
+  目前 Sonnet 5、Opus 5 的 init 为 false，这两个模型只做运行级决策：在它们上面逐步换挡，每次首次切到一个挡位都要重写整个前缀（§0.2）。
+- **启用标记**：
+  - 满足条件时，daemon 读到 init 后写入 `<task config>/effort/enabled`；
+  - 读到 `system/per_turn_effort_changed` 为 false 时删除它，本次运行不再写回；
+  - 决策端点也检查这个状态，已撤销时回答"未启用"，防止标记删除与下一步之间的竞态。
+- **步序号**：一步是主线程的一次模型请求，`step` 从 1 开始，等于 `turn.step` 输入的 `index + 1`。
+- **每一步**：只处理主线程（`e.agentId` 为空）的步。
+  - mod 记住上一次生效的挡位 `last`，初值为启动挡位 `e.effort`。
+  - 第 1 步不请求决策，用运行级决策的挡位。
+  - 从第 2 步起，标记存在时向 daemon 要决策。总时限约 2s，由 mod 自己设置，因为 `$.http.fetch` 默认是 30s。
+  - 拿到决策：`yield* next({ ...e, effort: level })`，并把 `last` 更新为 `level`。
+  - 没拿到新决策（端点返回回退、请求超时或出错、未启用、标记不存在）：`yield* next({ ...e, effort: last })`，显式沿用上一步的挡位。不能直接 `next(e)`，那样会退回启动挡位（§0.9）。
+    - 从未换过挡时，`last` 就是启动挡位，效果与 `next(e)` 相同。
+    - 撤销之后不再请求决策，一直传 `last`，锁定在最后生效的挡位，免得顶层挡位再变而重写缓存。
+  - 子智能体的步原样 `next(e)`，不改写。
 - **mod**：名为 `labrastro-effort`，与 `labrastro-ysk` 一起通过 `CLAUDE_CODE_PLUGIN_DIRS` 加载，安装方式照 `prepareYouShouldKnow`（`server/internal/daemon/labrastro_ysk.go`）。
-- **mod → daemon**：`POST http://127.0.0.1:{MULTICA_DAEMON_PORT}/tasks/{task_id}/thinking-decision`，带 `Authorization: Bearer $MULTICA_TOKEN`。
+- **mod → daemon**：`POST http://127.0.0.1:{MULTICA_DAEMON_PORT}/tasks/{task_id}/thinking-decision`，带 `Authorization: Bearer $MULTICA_TOKEN`。实测往返约 1–3 ms，不受 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 影响，不需要改走 Unix socket（§0.9）。
   - daemon 的健康服务（`serveHealth`）校验 token 和活跃运行，做法照 `/repo/checkout`。
-  - 请求体由 OL-1010 定义，内容是构造 state 所需的上一步原料。为了补记结果信号（§10.3），还必须带：
+  - 请求体由 OL-1010 定义，内容是构造 state 所需的上一步原料：工具调用与结果按 `tool_use_id` 去重，助手文字可能单独占一条消息（§0.9）。为了补记结果信号（§10.3），还必须带：
     - 步序号，从 1 开始；
     - 上一步主线程的工具列表 `[{name, is_error}]`；
     - 上一步的报错文本，按 §4 截断。
   - 报错特征的归一化和同类报错的重复次数由 daemon 用 Go 计算，daemon 按运行保存最近的报错特征；mod 只上传原料。这个函数导出给 OL-1019 复用。
   - daemon 按 §4 构造 state，调用 Jev，并计入健康快照。
-  - 返回 `{level, confidence, probabilities, latency_ms, source}`，或回退原因。
-  - 回环地址不可达时，按 OL-1000 推荐的通道实现。
-- **生效回报**：mod 改写后用 `$.ui.log` 写一行生效记录。daemon 照 `consumeYouShouldKnowLog`（`server/pkg/agent/labrastro_ysk.go`）的做法把这一行从流里摘走，不成为运行消息，并用它给这一步之后的消息打标（§7）。
+  - 返回 `{level, confidence, probabilities, latency_ms, source}`、回退原因，或"未启用"。"未启用"不经过 Jev 客户端，不计入健康快照。
+- **生效记录**：mod 每次请求过决策，无论拿到决策还是回退，都在调用 `next()` 之前用 `$.ui.log` 写一行生效记录，内容是步序号，以及决策各项或回退原因。mod 自己超时或请求出错时，回退原因为 `timeout` 或 `error`。第 1 步、子智能体的步、撤销之后的步都不写。
+  - daemon 照 `consumeYouShouldKnowLog`（`server/pkg/agent/labrastro_ysk.go`）的做法，按 ui_log 的 `plugin` 字段认出 `labrastro-effort` 的行，从流里摘走，不成为运行消息。
+  - 生效记录早于这一步的第一条 assistant 事件，但中间可能夹着其他 mod 的日志（§0.9）。daemon 把它用在之后第一个新的主线程消息 ID 上，即这一步，按 §7 打标。
+  - 打标以生效记录为准，不以端点的返回为准：端点返回的决策，mod 可能已经超时没有收到。
 
 ## 7. 运行消息的元数据
 
@@ -303,7 +339,7 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 
   ```ts
   type ThinkingMetadata = {
-    level: string; // always present; "" on fallback
+    level: string; // always present; the level in effect, "" when none was injected
     mode: "adapt" | "fixed";
     step?: number; // 1-based
     source?: string;
@@ -315,13 +351,21 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
   // task_message.metadata = { thinking: ThinkingMetadata }
   ```
 
-  `level` 必须出现，回退时为空字符串，并用 `fallback` 写明原因。
+  `level` 必须出现，表示这一步实际生效的挡位。回退时用 `fallback` 写明原因，`level` 这样取：
+  - 运行级回退：没有注入挡位，`level` 为空字符串。
+  - 步级回退：这一步沿用上一步的挡位（§6），`level` 记上一步的 `level`。运行级回退、此后也还没拿到过决策时，上一步的 `level` 就是空字符串。
 - **打标**：
   - 打在每条 thinking 消息上，以及每一步的第一条消息上。
-  - Claude 的一步是主线程（`parent_tool_use_id` 为空）的一次模型请求；同一次请求可能拆成多条 assistant 事件，它们共用一个消息 ID。其他运行时把整次运行当作一步。
-  - 自适应：`mode: "adapt"`，带上决策的各项字段；回退时 `level` 为空、写明 `fallback`。
+  - Claude 的一步是主线程（`parent_tool_use_id` 为空）的一次模型请求。同一次请求的 thinking、text、tool_use 是几条 assistant 事件，共用一个消息 ID，所以按去重后的消息 ID 分步。不按 assistant 事件计步，也不按有没有思考块判断（§0.6）。
+  - 其他运行时把整次运行当作一步。
+  - 步级换挡启用时：
+    - 第 1 步用运行级的标；
+    - 第 2 步起按 mod 的生效记录打标，带 `step`；
+    - 撤销之后的步没有新决策，不打步级标，当前挡位仍是最后一个标的挡位，与锁定的挡位一致。
+  - 自适应：`mode: "adapt"`，带上决策的各项字段；回退时写明 `fallback`，`level` 按上面的规则取。
   - 固定挡位：`{mode: "fixed", level}`。
   - 跟随 CLI 配置：不打标。
+- **按步汇总**：一步可能有多条带标的消息，即这一步的第一条消息和思考消息。比较升降、统计次数都按 `step` 分组；不带 `step` 的标属于运行级决策，算作一步。
 - **用途**：驱动智能体状态处的当前挡位和运行汇总（D3）。
 - **禁止**：不新增消息类型，不产生评论，也不产生独立的日志行。
 
@@ -365,17 +409,19 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 | 执行记录窗口（"智能体执行记录"）顶部 | `packages/views/common/task-transcript/agent-transcript-dialog.tsx` | "进行中"状态徽标旁 |
 
 - **内容**：
-  - 当前挡位取消息序列里最近一次的 `metadata.thinking`，直接基于原始消息计算，不改 `buildTimeline` 的合并逻辑。
-  - 自适应：显示挡位，并与上一步比较，带 ↑ 或 ↓；无法排序时不带。
-  - 回退：显示"默认"。
+  - 当前挡位取消息序列里最近一次的 `metadata.thinking`，不看消息类型（Claude 目前没有思考消息，§0.6）。直接基于原始消息计算，不改 `buildTimeline` 的合并逻辑。
+  - 自适应：显示挡位，并与上一步比较，带 ↑ 或 ↓；无法排序时不带。"上一步"按 §7 的按步汇总分组，不是上一条带标的消息。
+  - 回退：
+    - `level` 为空时显示"默认"；
+    - `level` 不为空时，是步级回退沿用的挡位，显示该挡位，不带箭头。
   - 固定挡位：只显示挡位，不带箭头。
   - 跟随 CLI 配置、没有元数据的旧消息：不显示。
-- **时段**：运行期间一直显示，执行工具时也显示，此时表示发起这次调用的那一步的挡位。运行结束后，Chat 状态条和卡片状态行随之消失，只在执行记录窗口顶部保留汇总，例如"自适应 · 8 次 · 最高 xhigh"。
+- **时段**：运行期间一直显示，执行工具时也显示，此时表示发起这次调用的那一步的挡位。运行结束后，Chat 状态条和卡片状态行随之消失，只在执行记录窗口顶部保留汇总，例如"自适应 · 8 次 · 最高 xhigh"。"8 次"是步数，按 §7 分组计算。
 - **Tooltip**：
   - 自适应：决策详情，例如"Jev 动态决策：xhigh · 置信度 88% · 耗时 284ms · 来源 OpenCode Zen"，加上概率分布；
-  - 回退：原因（超时、出错、返回值无效、熔断、本机关闭、拿不到候选挡位）；
+  - 回退：原因（超时、出错、返回值无效、熔断、本机关闭、拿不到候选挡位）；步级回退还要写明沿用了上一步的挡位；
   - 固定挡位："固定挡位"；
-  - 汇总：每一步的挡位序列和回退次数。
+  - 汇总：每一步的挡位序列和回退次数，回退次数是带 `fallback` 的步数。
 - **交互**：微标所在的行仍可点击，不得破坏行的点击、展开和键盘可达性。
 - **禁止**：不做逐行微标。
 
@@ -618,8 +664,6 @@ OL-1013 对 OL-992 各节加的要求已并入正文：
 
 ## 未决事项
 
-- **步级换挡的通道与最低版本**（§6）：等 OL-1000 的结论。
-- **一步回退时实际生效的挡位**：回退时不改写这一步，这一步按 CLI 收到的挡位执行。这个挡位是启动时的挡位，还是上一步改写后的挡位，由 OL-1000 核实。在此之前按 §7 记录：`level` 为空，写明 `fallback`。
 - **deveco 的挡位目录**：DevEco CLI 能否列出每个模型的 variant，由 OL-1007 调查；不能列出时，deveco 不提供自适应。
 - **自部署来源的延迟门槛**（§10.5）：原始需求验收里的"≤ 50ms"没有依据（§10.0）。OL-1018 实测后，由架构师提出门槛，请负责人确认。
 
@@ -642,6 +686,7 @@ OL-1013 对 OL-992 各节加的要求已并入正文：
 | OL-1010 | Claude 步级换挡的 mod 与 daemon 端点 | §6、§7 |
 | OL-1011 | 端到端联调与验收证据（不合入代码） | 全文 |
 | OL-1012 | 术语表、ADR 与本文 | — |
+| OL-1034 | 按 OL-1000 的实测结论更新本文 | §0、§1、§6、§7、§9 |
 
 ### OL-1013
 
