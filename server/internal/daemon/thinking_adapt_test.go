@@ -101,6 +101,9 @@ func TestThinkingSelectionNoCandidates(t *testing.T) {
 	}{
 		{"unverified", "claude", "test/model", agent.Catalog{Fallback: true, Models: adaptTestCatalog().Models}},
 		{"empty", "claude", "test/model", agent.Catalog{}},
+		{"one valid candidate", "claude", "test/model", agent.Catalog{Models: []agent.Model{{ID: "test/model", Thinking: &agent.ModelThinking{
+			SupportedLevels: []agent.ThinkingLevel{{Value: "auto"}, {Value: "off"}, {Value: "high"}},
+		}}}}},
 		{"missing model", "claude", "missing", adaptTestCatalog()},
 		{"codex default unknown", "codex", "", adaptTestCatalog()},
 		{"omp default unknown", "omp", "", adaptTestCatalog()},
@@ -188,49 +191,105 @@ func TestThinkingStatePrivacyAndBounds(t *testing.T) {
 	}
 }
 
+func TestThinkingStateOrderAndTailTruncation(t *testing.T) {
+	trigger := strings.Repeat("错", 1000)
+	run := BuildRunThinkingState(Task{ThreadName: "title", TriggerCommentContent: trigger, IssueDescription: strings.Repeat("文", 1500)}, "claude", "model")
+	wantPrefix := `{"kind":"task","provider":"claude","model":"model","title":"title","trigger_comment":"` + trigger + `","description":"`
+	if !strings.HasPrefix(run, wantPrefix) {
+		t.Fatal("run state reordered fields or truncated trigger before description")
+	}
+	step := BuildStepThinkingState(StepThinkingInput{
+		Step: 9, ToolName: "exec_command", ToolIsError: true, ExitCode: 1, ErrorFeatures: "DATA RACE scheduler.go", RepeatedErrors: 2,
+		ToolInputSummary: "go test -race ./...", ToolResult: strings.Repeat("首", 400) + strings.Repeat("尾", 400),
+		AssistantText: strings.Repeat("助", 500), Goal: strings.Repeat("目", 500),
+	})
+	wantPrefix = `{"step":9,"tool":"exec_command","is_error":true,"exit_code":1,"error_features":"DATA RACE scheduler.go","repeated_errors":2,"tool_input_summary":"go test -race ./...","result_head":"` + strings.Repeat("首", 400) + `","result_tail":"` + strings.Repeat("尾", 400) + `","assistant":"`
+	if !strings.HasPrefix(step, wantPrefix) {
+		t.Fatal("step state reordered fields or truncated error evidence before trailing text")
+	}
+	for _, state := range []string{run, step} {
+		var fields map[string]any
+		if len(state) > 4096 || !utf8.ValidString(state) || json.Unmarshal([]byte(state), &fields) != nil {
+			t.Fatalf("invalid bounded state (%d bytes)", len(state))
+		}
+		if fields["step"] != nil && fields["goal"] != "" {
+			t.Fatal("long goal should be removed before assistant text is shortened")
+		}
+	}
+	// Escaping can expand one character to six JSON bytes; the bound is on
+	// encoded UTF-8 bytes, not the original character count.
+	escaped := BuildRunThinkingState(Task{TriggerCommentContent: strings.Repeat("<", 1000), IssueDescription: strings.Repeat("界", 1500)}, "claude", "model")
+	if len(escaped) > 4096 || !json.Valid([]byte(escaped)) {
+		t.Fatal("escaped state exceeded byte bound")
+	}
+}
+
 func TestThinkingMetadataBoundaries(t *testing.T) {
-	for _, mode := range []string{"adapt", "fallback", "fixed", "follow"} {
-		t.Run(mode, func(t *testing.T) {
-			run := &thinkingRun{}
-			if mode != "follow" {
-				run.Record = &ThinkingDecisionRecord{Mode: "adapt", Decision: jev.Decision{Level: "high", Confidence: .9, Probabilities: map[string]float64{"high": .9}, LatencyMS: 123, Source: "fake"}}
-				if mode == "fixed" {
-					run.Record.Mode = "fixed"
+	decision := jev.Decision{Level: "high", Confidence: .9, Probabilities: map[string]float64{"high": .9}, LatencyMS: 123, Source: "fake"}
+	for _, tc := range []struct {
+		name   string
+		record *ThinkingDecisionRecord
+		want   map[string]any
+	}{
+		{"adapt", &ThinkingDecisionRecord{Mode: "adapt", Decision: decision}, map[string]any{
+			"mode": "adapt", "level": "high", "confidence": .9, "probabilities": map[string]float64{"high": .9}, "latency_ms": int64(123), "source": "fake",
+		}},
+		{"fallback", &ThinkingDecisionRecord{Mode: "adapt", Fallback: "timeout", Decision: jev.Decision{LatencyMS: 123}}, map[string]any{
+			"mode": "adapt", "level": "", "fallback": "timeout", "latency_ms": int64(123),
+		}},
+		{"no_candidates", &ThinkingDecisionRecord{Mode: "adapt", Fallback: "no_candidates"}, map[string]any{
+			"mode": "adapt", "level": "", "fallback": "no_candidates",
+		}},
+		{"fixed", &ThinkingDecisionRecord{Mode: "fixed", Decision: decision}, map[string]any{"mode": "fixed", "level": "high"}},
+		{"follow", nil, nil},
+	} {
+		for _, stream := range []string{"request IDs", "no request IDs"} {
+			t.Run(tc.name+"/"+stream, func(t *testing.T) {
+				run := &thinkingRun{Record: tc.record}
+				existing := map[string]any{"other": "retained"}
+				messages := []agent.Message{
+					{Type: agent.MessageStatus}, {Type: agent.MessageText},
+					{Type: agent.MessageText, Content: "first", ModelRequestID: "one", Metadata: existing},
+					{Type: agent.MessageText, Content: "same request split", ModelRequestID: "one"},
+					{Type: agent.MessageToolUse, Tool: "read", ModelRequestID: "child", ParentToolUseID: "parent"},
+					{Type: agent.MessageText, Content: "next request", ModelRequestID: "two"},
+					{Type: agent.MessageThinking, Content: "thinking", ModelRequestID: "two"},
+					{Type: agent.MessageThinking, Content: "more thinking", ModelRequestID: "two"},
+					{Type: agent.MessageToolResult, Output: "done"},
 				}
-				if mode == "fallback" {
-					run.Record.Decision = jev.Decision{}
-					run.Record.Fallback = "timeout"
+				wantTagged := map[int]bool{2: true, 5: true, 6: true, 7: true}
+				if stream == "no request IDs" {
+					// Codex has neither request IDs nor thinking messages. Only its
+					// first visible message carries the run-level decision.
+					messages = []agent.Message{
+						{Type: agent.MessageStatus}, {Type: agent.MessageText},
+						{Type: agent.MessageText, Content: "first", Metadata: existing},
+						{Type: agent.MessageText, Content: "working"},
+						{Type: agent.MessageToolUse, Tool: "read"},
+						{Type: agent.MessageToolResult, Output: "done"},
+						{Type: agent.MessageText, Content: "finished"},
+					}
+					wantTagged = map[int]bool{2: true}
 				}
-			}
-			existing := map[string]any{"other": "retained"}
-			messages := []agent.Message{
-				{Type: agent.MessageStatus}, {Type: agent.MessageText},
-				{Type: agent.MessageText, Content: "first", ModelRequestID: "one", Metadata: existing},
-				{Type: agent.MessageText, Content: "same request split", ModelRequestID: "one"},
-				{Type: agent.MessageToolUse, Tool: "read", ModelRequestID: "child", ParentToolUseID: "parent"},
-				{Type: agent.MessageText, Content: "next request", ModelRequestID: "two"},
-				{Type: agent.MessageThinking, Content: "thinking", ModelRequestID: "two"},
-				{Type: agent.MessageThinking, Content: "more thinking", ModelRequestID: "two"},
-				{Type: agent.MessageToolResult, Output: "done"},
-			}
-			for i, message := range messages {
-				got := run.tag(message)
-				_, tagged := got.Metadata["thinking"]
-				want := mode != "follow" && (i == 2 || i == 5 || i == 6 || i == 7)
-				if tagged != want {
-					t.Fatalf("message %d tagged=%v want=%v", i, tagged, want)
+				for i, message := range messages {
+					got := run.tag(message)
+					_, tagged := got.Metadata["thinking"]
+					want := tc.want != nil && wantTagged[i]
+					if tagged != want {
+						t.Fatalf("message %d tagged=%v want=%v", i, tagged, want)
+					}
+					if want && !reflect.DeepEqual(got.Metadata["thinking"], tc.want) {
+						t.Fatalf("message %d thinking=%+v want=%+v", i, got.Metadata["thinking"], tc.want)
+					}
+					if i == 2 && got.Metadata["other"] != "retained" {
+						t.Fatal("metadata overwritten")
+					}
 				}
-				if want && !reflect.DeepEqual(got.Metadata["thinking"], run.Record.metadata()) {
-					t.Fatalf("wrong metadata: %+v", got.Metadata)
+				if _, mutated := existing["thinking"]; mutated {
+					t.Fatal("mutated backend-owned metadata")
 				}
-				if i == 2 && got.Metadata["other"] != "retained" {
-					t.Fatal("metadata overwritten")
-				}
-			}
-			if _, mutated := existing["thinking"]; mutated {
-				t.Fatal("mutated backend-owned metadata")
-			}
-		})
+			})
+		}
 	}
 }
 
@@ -383,12 +442,33 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 				if !exists {
 					t.Fatalf("missing thinking metadata: %+v", message)
 				}
+				if scenario == "fixed" {
+					if !reflect.DeepEqual(thinking, map[string]any{"mode": "fixed", "level": "high"}) {
+						t.Fatalf("fixed metadata includes adaptive fields: %+v", thinking)
+					}
+					continue
+				}
+				if thinking["mode"] != "adapt" {
+					t.Fatalf("wrong adaptive mode: %+v", thinking)
+				}
+				if injected && thinking["source"] != "fake" {
+					t.Fatalf("missing decision source: %+v", thinking)
+				}
 				if injected && thinking["level"] != "high" {
 					t.Fatal(thinking)
 				}
 				if !injected {
-					if level, exists := thinking["level"]; !exists || level != "" || thinking["fallback"] == nil {
+					wantFallback := scenario
+					if scenario == "5xx" {
+						wantFallback = "error"
+					}
+					if level, exists := thinking["level"]; !exists || level != "" || thinking["fallback"] != wantFallback {
 						t.Fatal(thinking)
+					}
+					for _, field := range []string{"source", "confidence", "probabilities"} {
+						if _, exists := thinking[field]; exists {
+							t.Fatalf("fallback contains an unavailable decision field %s: %+v", field, thinking)
+						}
 					}
 				}
 			}

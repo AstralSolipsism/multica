@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,7 +15,11 @@ import (
 )
 
 func TestThinkingFixtureExport(t *testing.T) {
-	raw, err := json.MarshalIndent(ThinkingEvaluationFixtures(), "", "  ")
+	fixtures, err := ThinkingEvaluationFixtures()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.MarshalIndent(fixtures, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,6 +36,56 @@ func TestThinkingFixtureExport(t *testing.T) {
 	}
 	if !bytes.Equal(exported, raw) {
 		t.Fatal("fixture export drift: run MULTICA_UPDATE_THINKING_FIXTURES=1 go test ./internal/daemon -run '^TestThinkingFixtureExport$'")
+	}
+}
+
+func TestThinkingFixtureWireParity(t *testing.T) {
+	var exported []ThinkingEvaluationFixture
+	raw, err := os.ReadFile(filepath.Join("testdata", "thinking-fixtures.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &exported); err != nil {
+		t.Fatal(err)
+	}
+	fixtures, err := ThinkingEvaluationFixtures()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exported) != len(fixtures) {
+		t.Fatal("fixture count differs")
+	}
+	requests := make(chan struct {
+		State     string          `json:"state"`
+		Questions json.RawMessage `json:"questions"`
+	}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			State     string          `json:"state"`
+			Questions json.RawMessage `json:"questions"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		requests <- request
+		fmt.Fprint(w, `{"answers":{"effort":{"choice":"low"}}}`)
+	}))
+	defer srv.Close()
+	client := jev.New(jev.Options{Sources: []jev.Source{{Name: "fake", BaseURL: srv.URL, Model: "test"}}})
+	for i, fixture := range fixtures {
+		if _, err := client.Decide(t.Context(), fixture.Request); err != nil {
+			t.Fatal(err)
+		}
+		request := <-requests
+		var questions bytes.Buffer
+		if err := json.Compact(&questions, exported[i].Questions); err != nil {
+			t.Fatal(err)
+		}
+		if request.State != exported[i].State || !bytes.Equal(request.Questions, questions.Bytes()) {
+			t.Fatalf("%s/%s: exported state/questions differ from HTTP request", fixture.CandidateGroup, fixture.ID)
+		}
 	}
 }
 
@@ -60,8 +117,12 @@ func TestThinkingEvaluationLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := jev.New(jev.Options{Disabled: cfg.JevDisabled, Sources: cfg.JevSources, Timeout: cfg.JevTimeout})
+	fixtures, err := ThinkingEvaluationFixtures()
+	if err != nil {
+		t.Fatal(err)
+	}
 	var results []thinkingEvaluationResult
-	for _, fixture := range ThinkingEvaluationFixtures() {
+	for _, fixture := range fixtures {
 		record := decideThinking(context.Background(), client, ThinkingDecisionTrace{Scope: fixture.Scope, Provider: fixture.CandidateGroup}, fixture.Request)
 		decision := record.Decision
 		passed := record.Fallback == "" && fixture.Accepts(decision.Level)
@@ -74,7 +135,14 @@ func TestThinkingEvaluationLive(t *testing.T) {
 	}
 	path := os.Getenv("MULTICA_JEV_EVAL_OUTPUT")
 	if path == "" {
-		path = "thinking-evaluation-results.json"
+		file, err := os.CreateTemp("", "multica-thinking-evaluation-*.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		path = file.Name()
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	raw, err := json.MarshalIndent(results, "", "  ")
 	if err != nil {

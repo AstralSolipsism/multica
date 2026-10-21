@@ -150,6 +150,14 @@ type Request struct {
 	Options      []Option
 }
 
+// MarshalQuestionsJSON exports the same ordered question object sent to the
+// engine, so evaluation fixtures can be replayed without reordering options.
+func (r Request) MarshalQuestionsJSON() ([]byte, error) {
+	return json.Marshal(decideQuestions{Effort: decideQuestion{
+		Type: "choice", Instructions: r.Instructions, Criteria: orderedCriteria(r.Options),
+	}})
+}
+
 // Decision is a successful Jev answer. LatencyMS is the locally measured
 // end-to-end time of the whole Decide call, including failed attempts on
 // earlier sources.
@@ -199,7 +207,7 @@ func (e *FallbackError) Unwrap() error { return e.Err }
 type decideRequest struct {
 	Model     string          `json:"model"`
 	State     any             `json:"state"`
-	Questions decideQuestions `json:"questions"`
+	Questions json.RawMessage `json:"questions"`
 }
 
 type decideQuestions struct {
@@ -442,18 +450,14 @@ func (c *Client) trySource(ctx context.Context, src Source, req Request) (Decisi
 	sctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	criteria := make(orderedCriteria, 0, len(req.Options))
-	for _, opt := range req.Options {
-		criteria = append(criteria, opt)
+	questions, err := req.MarshalQuestionsJSON()
+	if err != nil {
+		return Decision{}, ReasonInvalid, fmt.Errorf("source %s: encode questions: %w", src.Name, err)
 	}
 	body, err := json.Marshal(decideRequest{
-		Model: src.Model,
-		State: req.State,
-		Questions: decideQuestions{Effort: decideQuestion{
-			Type:         "choice",
-			Instructions: req.Instructions,
-			Criteria:     criteria,
-		}},
+		Model:     src.Model,
+		State:     req.State,
+		Questions: questions,
 	})
 	if err != nil {
 		return Decision{}, ReasonInvalid, fmt.Errorf("source %s: encode request: %w", src.Name, err)

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -164,20 +165,23 @@ func BuildRunThinkingState(task Task, provider, model string) string {
 	case task.QuickCreatePrompt != "":
 		description = task.QuickCreatePrompt
 	}
-	return boundedThinkingState(map[string]any{
-		"kind": kind, "title": thinkingPrefix(title, 256),
-		"description":     thinkingPrefix(description, 1500),
-		"trigger_comment": thinkingPrefix(task.TriggerCommentContent, 1000),
-		"provider":        thinkingPrefix(provider, 128), "model": thinkingPrefix(model, 256),
-	})
+	return boundedThinkingState(
+		thinkingStateField{"kind", kind},
+		thinkingStateField{"provider", thinkingPrefix(provider, 128)},
+		thinkingStateField{"model", thinkingPrefix(model, 256)},
+		thinkingStateField{"title", thinkingPrefix(title, 256)},
+		thinkingStateField{"trigger_comment", thinkingPrefix(task.TriggerCommentContent, 1000)},
+		thinkingStateField{"description", thinkingPrefix(description, 1500)},
+	)
 }
 
 // StepThinkingInput contains summaries, not files or full tool arguments. The
 // step adapter supplies error counts; this builder is also used by evaluation.
 type StepThinkingInput struct {
 	Goal, AssistantText, ToolName, ToolInputSummary, ToolResult string
+	ErrorFeatures                                               string
 	Step, ExitCode, RepeatedErrors                              int
-	FileContent                                                 bool
+	FileContent, ToolIsError                                    bool
 }
 
 func BuildStepThinkingState(input StepThinkingInput) string {
@@ -190,13 +194,19 @@ func BuildStepThinkingState(input StepThinkingInput) string {
 	if len(runes) > 400 {
 		tail = string(runes[max(400, len(runes)-400):])
 	}
-	return boundedThinkingState(map[string]any{
-		"goal": thinkingPrefix(input.Goal, 500), "step": input.Step,
-		"assistant": thinkingPrefix(input.AssistantText, 500),
-		"tool":      thinkingPrefix(input.ToolName, 100), "tool_input_summary": thinkingPrefix(input.ToolInputSummary, 300),
-		"result_head": thinkingPrefix(result, 400), "result_tail": tail,
-		"exit_code": input.ExitCode, "repeated_errors": input.RepeatedErrors,
-	})
+	return boundedThinkingState(
+		thinkingStateField{"step", input.Step},
+		thinkingStateField{"tool", thinkingPrefix(input.ToolName, 100)},
+		thinkingStateField{"is_error", input.ToolIsError},
+		thinkingStateField{"exit_code", input.ExitCode},
+		thinkingStateField{"error_features", thinkingPrefix(input.ErrorFeatures, 200)},
+		thinkingStateField{"repeated_errors", input.RepeatedErrors},
+		thinkingStateField{"tool_input_summary", thinkingPrefix(input.ToolInputSummary, 300)},
+		thinkingStateField{"result_head", thinkingPrefix(result, 400)},
+		thinkingStateField{"result_tail", tail},
+		thinkingStateField{"assistant", thinkingPrefix(input.AssistantText, 500)},
+		thinkingStateField{"goal", thinkingPrefix(input.Goal, 500)},
+	)
 }
 
 func thinkingPrefix(value string, limit int) string {
@@ -212,28 +222,50 @@ func thinkingPrefix(value string, limit int) string {
 	return value
 }
 
-func boundedThinkingState(fields map[string]any) string {
+type thinkingStateField struct {
+	name  string
+	value any
+}
+
+func boundedThinkingState(fields ...thinkingStateField) string {
 	for {
-		raw, _ := json.Marshal(fields)
-		if len(raw) <= 4096 {
-			return string(raw)
+		var raw bytes.Buffer
+		raw.WriteByte('{')
+		for i, field := range fields {
+			if i > 0 {
+				raw.WriteByte(',')
+			}
+			key, _ := json.Marshal(field.name)
+			value, _ := json.Marshal(field.value)
+			raw.Write(key)
+			raw.WriteByte(':')
+			raw.Write(value)
 		}
-		// Shrink the largest field, preserving all keys and short diagnostic
-		// evidence even when a long multibyte description exhausts the budget.
-		largest, size := "", 0
-		for key, value := range fields {
-			if text, ok := value.(string); ok && (len(text) > size || (len(text) == size && key < largest)) {
-				largest, size = key, len(text)
+		raw.WriteByte('}')
+		if raw.Len() <= 4096 {
+			return raw.String()
+		}
+		// Trim text from the end, keeping valid JSON and earlier diagnostic
+		// evidence. Order also matters when the engine truncates state tokens.
+		for i := len(fields) - 1; i >= 0; i-- {
+			if text, ok := fields[i].value.(string); ok && text != "" {
+				fields[i].value = thinkingPrefix(text, max(0, utf8.RuneCountInString(text)-32))
+				break
 			}
 		}
-		text := fields[largest].(string)
-		fields[largest] = thinkingPrefix(text, max(0, utf8.RuneCountInString(text)-32))
 	}
 }
 
 func (r *ThinkingDecisionRecord) metadata() map[string]any {
 	thinking := map[string]any{"mode": r.Mode, "level": r.Decision.Level}
 	if r.Mode == "adapt" {
+		if r.Fallback != "" {
+			thinking["fallback"] = r.Fallback
+			if r.Decision.LatencyMS > 0 {
+				thinking["latency_ms"] = r.Decision.LatencyMS
+			}
+			return thinking
+		}
 		thinking["confidence"] = r.Decision.Confidence
 		probabilities := maps.Clone(r.Decision.Probabilities)
 		if probabilities == nil {
@@ -242,9 +274,6 @@ func (r *ThinkingDecisionRecord) metadata() map[string]any {
 		thinking["probabilities"] = probabilities
 		thinking["latency_ms"] = r.Decision.LatencyMS
 		thinking["source"] = r.Decision.Source
-		if r.Fallback != "" {
-			thinking["fallback"] = r.Fallback
-		}
 	}
 	return thinking
 }
