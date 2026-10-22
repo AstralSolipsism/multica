@@ -59,21 +59,32 @@ export function MoveSkillsDialog({
     setMoving(true);
     let done = 0;
     let failed = 0;
+    // Unreadable responses are not failures: the write may have committed.
+    let unconfirmed = 0;
     try {
       for (const row of rows) {
         try {
           const result = await api.setSkillPlacement(wsId, row.skill.id, target ?? "");
-          if (result === null) failed++;
+          if (result === null) unconfirmed++;
           else done++;
         } catch {
           failed++;
         }
       }
       await invalidateSkillPackageQueries(qc, wsId);
-      if (failed === 0) {
+      if (failed === 0 && unconfirmed === 0) {
         toast.success(t(($) => $.move_skills.done, { count: done }));
         handleOpenChange(false);
         onMoved?.();
+      } else if (failed === 0) {
+        toast.error(
+          t(($) => $.move_skills.unconfirmed, {
+            done,
+            total: rows.length,
+            count: unconfirmed,
+          }),
+        );
+        handleOpenChange(false);
       } else {
         toast.error(
           done > 0

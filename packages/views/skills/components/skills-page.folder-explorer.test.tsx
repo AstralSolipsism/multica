@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   skills: [] as SkillSummary[],
   folderTree: null as SkillFolderTree | null | undefined,
   folderTreeError: false,
+  folderTreeFailures: 0,
   refetchTree: vi.fn(),
   currentUserId: "user-1",
   members: [] as { user_id: string; role: string }[],
@@ -56,6 +57,7 @@ vi.mock("@tanstack/react-query", () => ({
         data: mocks.folderTree,
         isLoading: false,
         error: mocks.folderTreeError ? new Error("tree unavailable") : null,
+        failureCount: mocks.folderTreeFailures,
         refetch: mocks.refetchTree,
       };
     }
@@ -92,7 +94,12 @@ vi.mock("@multica/core/auth", () => ({
     selector({ user: { id: mocks.currentUserId } }),
 }));
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
-vi.mock("@multica/core/api", () => ({ api: apiMock }));
+vi.mock("@multica/core/api", async (importOriginal) => ({
+  // Keep the real ApiError / errorCode so the dialogs' coded-error mapping
+  // runs against the production helper; only the api client is stubbed.
+  ...(await importOriginal<typeof import("@multica/core/api")>()),
+  api: apiMock,
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@multica/core/paths", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@multica/core/paths")>()),
@@ -125,6 +132,11 @@ vi.mock("@multica/core/skills/stores", () => ({
 }));
 vi.mock("@multica/ui/components/common/actor-avatar", () => ({
   ActorAvatar: () => null,
+}));
+vi.mock("@multica/ui/components/ui/skeleton", () => ({
+  Skeleton: (props: Record<string, unknown>) => (
+    <div data-testid="skeleton" {...props} />
+  ),
 }));
 vi.mock("@multica/ui/components/ui/tooltip", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -337,6 +349,7 @@ beforeEach(() => {
   ];
   mocks.folderTree = folderTree;
   mocks.folderTreeError = false;
+  mocks.folderTreeFailures = 0;
   mocks.refetchTree = vi.fn();
   mocks.currentUserId = "user-1";
   mocks.members = [];
@@ -548,7 +561,11 @@ describe("SkillsPage review regressions", () => {
   it("shows a skeleton instead of flashing the flat list while the tree loads", () => {
     mocks.folderTree = undefined;
     renderPage("/acme/skills?folder=f-eng-fe");
+    // Positive assertions (N2): the loading skeleton is what renders, never
+    // a premature empty-folder or flat view.
+    expect(screen.getAllByTestId("skeleton").length).toBeGreaterThan(0);
     expect(screen.queryByText("placed-skill")).toBeNull();
+    expect(screen.queryByText("This folder is empty.")).toBeNull();
     expect(screen.queryByRole("button", { name: "Open Engineering" })).toBeNull();
     expect(screen.queryByText("Results from all folders")).toBeNull();
   });
@@ -631,5 +648,298 @@ describe("SkillsPage review regressions", () => {
     const folderRow = (await screen.findByRole("button", { name: "Open Frontend" })).closest("[role='row']")!;
     const skillRow = screen.getByText("engineering-skill").closest("[role='row']")!;
     expect(folderRow.compareDocumentPosition(skillRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe("SkillsPage unreadable write responses", () => {
+  it("refreshes the tree and shows an indeterminate result when a folder create reads back null", async () => {
+    const { invalidateSkillPackageQueries } = await import(
+      "@multica/core/skills/package-queries"
+    );
+    apiMock.createSkillFolder.mockResolvedValue(null);
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "New folder" }));
+    await userEvent.type(screen.getByLabelText("Name"), "Ghost");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(
+      await screen.findByText(
+        "The result couldn't be confirmed. The list was refreshed — check it before retrying.",
+      ),
+    ).toBeTruthy();
+    expect(invalidateSkillPackageQueries).toHaveBeenCalled();
+    expect(screen.queryByText("Couldn't save the folder. Try again.")).toBeNull();
+  });
+
+  it("refreshes the tree and shows an indeterminate result when a folder move reads back null", async () => {
+    const { invalidateSkillPackageQueries } = await import(
+      "@multica/core/skills/package-queries"
+    );
+    apiMock.updateSkillFolder.mockResolvedValue(null);
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for Design" }));
+    await userEvent.click(await screen.findByText("Move"));
+    await userEvent.click(await screen.findByRole("button", { name: "Empty" }));
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    await waitFor(() =>
+      expect(apiMock.updateSkillFolder).toHaveBeenCalledWith("ws-1", "f-design", { parent_id: "f-empty" }),
+    );
+    expect(
+      await screen.findByText(
+        "The result couldn't be confirmed. The list was refreshed — check it before retrying.",
+      ),
+    ).toBeTruthy();
+    expect(invalidateSkillPackageQueries).toHaveBeenCalled();
+    expect(screen.queryByText("Couldn't move the folder. Try again.")).toBeNull();
+  });
+
+  it("refreshes the tree and shows an indeterminate result when a folder delete reads back null", async () => {
+    const { invalidateSkillPackageQueries } = await import(
+      "@multica/core/skills/package-queries"
+    );
+    apiMock.deleteSkillFolder.mockResolvedValue(null);
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for Design" }));
+    await userEvent.click(await screen.findByText("Delete"));
+    await userEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    await waitFor(() =>
+      expect(apiMock.deleteSkillFolder).toHaveBeenCalledWith("ws-1", "f-design"),
+    );
+    expect(
+      await screen.findByText(
+        "The result couldn't be confirmed. The list was refreshed — check it before retrying.",
+      ),
+    ).toBeTruthy();
+    expect(invalidateSkillPackageQueries).toHaveBeenCalled();
+    expect(screen.queryByText("Couldn't delete the folder. Try again.")).toBeNull();
+  });
+});
+
+describe("SkillsPage localized folder errors", () => {
+  it("localizes a coded create error instead of showing the server message", async () => {
+    const { ApiError } = await import("@multica/core/api");
+    const { invalidateSkillPackageQueries } = await import(
+      "@multica/core/skills/package-queries"
+    );
+    apiMock.createSkillFolder.mockRejectedValue(
+      new ApiError("a folder with this name already exists at the destination", 409, "Conflict", {
+        code: "name_conflict",
+        error: "a folder with this name already exists at the destination",
+      }),
+    );
+    renderPage("/acme/skills", "zh-Hans");
+    await userEvent.click(await screen.findByRole("button", { name: "新建文件夹" }));
+    await userEvent.type(screen.getByLabelText("名称"), "Research");
+    await userEvent.click(screen.getByRole("button", { name: "创建" }));
+    expect(await screen.findByText("目标位置已存在同名文件夹，请换一个名称。")).toBeTruthy();
+    expect(screen.queryByText(/already exists at the destination/)).toBeNull();
+    // A failed write still refreshes the tree — the copy says so.
+    expect(invalidateSkillPackageQueries).toHaveBeenCalled();
+  });
+
+  // Every code the dialog's mapping claims to localize must render its own
+  // copy — deleting a branch must fail a test.
+  it.each([
+    { code: "name_conflict", expected: "A folder with this name already exists at the destination." },
+    { code: "folder_cycle", expected: "A folder can't be moved into one of its own subfolders." },
+    {
+      code: "invalid_name",
+      expected:
+        "The folder name isn't valid: 1–255 bytes, no surrounding whitespace, no control characters or line breaks.",
+    },
+    { code: "forbidden", expected: "You don't have permission to do this." },
+    {
+      code: "not_found",
+      expected: "The target couldn't be found — it may have been deleted. The list was refreshed.",
+    },
+    {
+      code: "managed_folder",
+      expected: "Managed package folders follow the package and can't be changed here.",
+    },
+    { code: "preview_stale", expected: "The folder tree changed. The list was refreshed — try again." },
+    {
+      code: "permission_changed",
+      expected: "Your permissions changed. The list was refreshed — try again.",
+    },
+  ])("localizes the $code error", async ({ code, expected }) => {
+    const { ApiError } = await import("@multica/core/api");
+    apiMock.createSkillFolder.mockRejectedValue(
+      new ApiError(`server says ${code}`, 409, "Conflict", { code, error: `server says ${code}` }),
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "New folder" }));
+    await userEvent.type(screen.getByLabelText("Name"), "Ghost");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(await screen.findByText(expected)).toBeTruthy();
+    expect(screen.queryByText(`server says ${code}`)).toBeNull();
+  });
+
+  it("rejects an over-long folder name before calling the server", async () => {
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "New folder" }));
+    // 86 CJK characters = 258 UTF-8 bytes, over the 255-byte contract limit.
+    await userEvent.type(screen.getByLabelText("Name"), "文".repeat(86));
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(
+      await screen.findByText(
+        "The folder name isn't valid: 1–255 bytes, no surrounding whitespace, no control characters or line breaks.",
+      ),
+    ).toBeTruthy();
+    expect(apiMock.createSkillFolder).not.toHaveBeenCalled();
+  });
+
+  it("localizes a coded move error", async () => {
+    const { ApiError } = await import("@multica/core/api");
+    apiMock.updateSkillFolder.mockRejectedValue(
+      new ApiError("folder move would create a cycle", 409, "Conflict", {
+        code: "folder_cycle",
+        error: "folder move would create a cycle",
+      }),
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for Design" }));
+    await userEvent.click(await screen.findByText("Move"));
+    await userEvent.click(await screen.findByRole("button", { name: "Empty" }));
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    expect(
+      await screen.findByText("A folder can't be moved into one of its own subfolders."),
+    ).toBeTruthy();
+    expect(screen.queryByText("folder move would create a cycle")).toBeNull();
+  });
+
+  it("localizes a coded delete error", async () => {
+    const { ApiError } = await import("@multica/core/api");
+    apiMock.deleteSkillFolder.mockRejectedValue(
+      new ApiError("object not found in this workspace", 404, "Not Found", {
+        code: "not_found",
+        error: "object not found in this workspace",
+      }),
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for Design" }));
+    await userEvent.click(await screen.findByText("Delete"));
+    await userEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    expect(
+      await screen.findByText(
+        "The target couldn't be found — it may have been deleted. The list was refreshed.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("object not found in this workspace")).toBeNull();
+  });
+
+  it("falls back to the generic failure copy for an uncoded error", async () => {
+    const { invalidateSkillPackageQueries } = await import(
+      "@multica/core/skills/package-queries"
+    );
+    apiMock.createSkillFolder.mockRejectedValue(new Error("socket hangup"));
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "New folder" }));
+    await userEvent.type(screen.getByLabelText("Name"), "Ghost");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(await screen.findByText("Couldn't save the folder. Try again.")).toBeTruthy();
+    expect(screen.queryByText("socket hangup")).toBeNull();
+    expect(invalidateSkillPackageQueries).toHaveBeenCalled();
+  });
+});
+
+describe("SkillsPage tree wait fallback", () => {
+  it("keeps the hierarchy when a background tree refresh fails once with cached data", () => {
+    // Cached tree + first failed background attempt (retry still pending):
+    // the hierarchy must not flip to flat for a transient failure.
+    mocks.folderTreeFailures = 1;
+    renderPage("/acme/skills?folder=f-eng");
+    expect(screen.getByRole("button", { name: "Open Frontend" })).toBeTruthy();
+    expect(screen.getByText("engineering-skill")).toBeTruthy();
+    expect(screen.queryByText("loose-skill")).toBeNull();
+    expect(
+      screen.queryByText("Folders are unavailable. Showing skills in a flat list."),
+    ).toBeNull();
+  });
+
+  it("falls back to the flat list on the first failed tree attempt, before the retry settles", () => {
+    mocks.folderTree = undefined;
+    mocks.folderTreeFailures = 1;
+    renderPage();
+    expect(screen.getByText("placed-skill")).toBeTruthy();
+    expect(screen.getByText("engineering-skill")).toBeTruthy();
+    expect(screen.getByText("design-skill")).toBeTruthy();
+    expect(screen.getByText("loose-skill")).toBeTruthy();
+    expect(
+      screen.getByText("Folders are unavailable. Showing skills in a flat list."),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("skeleton")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open Engineering" })).toBeNull();
+  });
+
+  it("falls back to the flat list after 5s without tree data, then restores the hierarchy when it arrives", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.folderTree = undefined;
+      const { controller, rerender } = renderPage("/acme/skills?folder=f-eng-fe");
+      // Inside the grace window the skeleton shows; nothing flat flashes.
+      expect(screen.getAllByTestId("skeleton").length).toBeGreaterThan(0);
+      expect(screen.queryByText("placed-skill")).toBeNull();
+
+      // One millisecond before the deadline the grace window must still hold
+      // (guards the 5s threshold itself).
+      act(() => {
+        vi.advanceTimersByTime(4999);
+      });
+      expect(screen.getAllByTestId("skeleton").length).toBeGreaterThan(0);
+      expect(screen.queryByText("placed-skill")).toBeNull();
+      expect(
+        screen.queryByText("Folders are unavailable. Showing skills in a flat list."),
+      ).toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(screen.queryByTestId("skeleton")).toBeNull();
+      expect(screen.getByText("placed-skill")).toBeTruthy();
+      expect(screen.getByText("loose-skill")).toBeTruthy();
+      expect(
+        screen.getByText("Folders are unavailable. Showing skills in a flat list."),
+      ).toBeTruthy();
+
+      // Late data restores the hierarchy at the requested folder.
+      mocks.folderTree = folderTree;
+      rerender(
+        <NavigationHarness controller={controller} initialPath="/acme/skills?folder=f-eng-fe">
+          <SkillsPage />
+        </NavigationHarness>,
+      );
+      expect(screen.queryByText("Folders are unavailable. Showing skills in a flat list.")).toBeNull();
+      expect(screen.getByText("placed-skill")).toBeTruthy();
+      expect(screen.queryByText("engineering-skill")).toBeNull();
+      expect(screen.queryByText("loose-skill")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("SkillsPage folder rows without skills", () => {
+  it("keeps folder rows when folders exist but the workspace has 0 skills (N3)", async () => {
+    mocks.skills = [];
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Open Engineering" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open Design" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open Empty" })).toBeTruthy();
+    // The upstream empty-workspace state stays hidden while folders exist.
+    expect(screen.queryByText("No skills yet")).toBeNull();
+    expect(screen.getByText("0 here / 0 in workspace")).toBeTruthy();
+  });
+});
+
+describe("SkillsPage select-all scope", () => {
+  it("selects only the current folder view, never skills outside it (M05)", async () => {
+    renderPage("/acme/skills?folder=f-design");
+    const header = screen.getAllByRole("row")[0]!;
+    await userEvent.click(within(header).getAllByRole("button")[0]!);
+    expect(screen.getByTestId("batch-selection").textContent).toBe("design");
+
+    // Back at the root, the folder-view select-all must not have swept up
+    // root skills: nothing selected there.
+    await userEvent.click(screen.getByRole("button", { name: "Skills" }));
+    expect(screen.getByTestId("batch-selection").textContent).toBe("");
   });
 });

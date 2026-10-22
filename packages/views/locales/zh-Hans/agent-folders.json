@@ -53,6 +53,13 @@
     "failed": "无法删除文件夹，请重试。",
     "unconfirmed": "操作结果未能确认。列表已刷新，请核对后再重试。"
   },
+  "folder_errors": {
+    "name_conflict": "目标位置已存在同名文件夹，请换一个名称。",
+    "folder_cycle": "不能移动到它自己的子文件夹中。",
+    "invalid_name": "文件夹名称不符合要求：1–255 个字节，首尾不能有空格，不能包含控制字符或换行。",
+    "forbidden": "你没有执行此操作的权限。",
+    "not_found": "找不到目标对象，可能已被删除。列表已刷新。"
+  },
   "move_agents": {
     "title_other": "移动 {{count}} 个智能体",
     "place_title": "放入文件夹",
@@ -70,9 +77,12 @@
     "done_other": "已移动 {{count}} 个智能体。",
     "place_done_other": "已放入 {{count}} 个智能体。",
     "partial": "已移动 {{done}}/{{total}} 个，其余失败。",
+    "place_partial": "已放入 {{done}}/{{total}} 个，其余失败。",
     "failed": "无法移动智能体，请重试。",
+    "place_failed": "无法放入智能体，请重试。",
     "no_permission": "你没有移动全部所选智能体的权限。",
     "batch_place": "放入文件夹",
-    "unconfirmed_other": "已移动 {{done}}/{{total}} 个，{{count}} 个结果未能确认。列表已刷新，请核对后再重试。"
+    "unconfirmed_other": "已移动 {{done}}/{{total}} 个，{{count}} 个结果未能确认。列表已刷新，请核对后再重试。",
+    "place_unconfirmed_other": "已放入 {{done}}/{{total}} 个，{{count}} 个结果未能确认。列表已刷新，请核对后再重试。"
   }
 }

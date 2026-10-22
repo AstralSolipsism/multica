@@ -8,7 +8,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Folder, Inbox, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@multica/core/api";
+import { api, errorCode } from "@multica/core/api";
 import { invalidateAgentFolderQueries } from "@multica/core/agents/folder-queries";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -41,6 +41,30 @@ export type AgentFolderFormState =
   | { mode: "create"; parentId: string | null }
   | { mode: "rename"; folder: FolderExplorerFolder };
 
+// Localize the folder contract's error codes
+// (docs/engineering/labrastro-agent-folders.md): the server's `message` is
+// English-only, so a coded failure renders fork copy instead. Errors without
+// a known code fall back to the dialog's generic failure sentence.
+function useFolderErrorMessage() {
+  const { t } = useT("agent-folders");
+  return (err: unknown, fallback: string): string => {
+    switch (errorCode(err)) {
+      case "name_conflict":
+        return t(($) => $.folder_errors.name_conflict);
+      case "folder_cycle":
+        return t(($) => $.folder_errors.folder_cycle);
+      case "invalid_name":
+        return t(($) => $.folder_errors.invalid_name);
+      case "forbidden":
+        return t(($) => $.folder_errors.forbidden);
+      case "not_found":
+        return t(($) => $.folder_errors.not_found);
+      default:
+        return fallback;
+    }
+  };
+}
+
 export function AgentFolderFormDialog({
   wsId,
   state,
@@ -52,6 +76,7 @@ export function AgentFolderFormDialog({
 }) {
   const { t } = useT("agent-folders");
   const qc = useQueryClient();
+  const folderError = useFolderErrorMessage();
   const [name, setName] = useState(
     state.mode === "rename" ? state.folder.name : "",
   );
@@ -81,11 +106,7 @@ export function AgentFolderFormDialog({
       }
       onClose();
     } catch (err) {
-      setError(
-        err instanceof Error && err.message
-          ? err.message
-          : t(($) => $.folder_form.failed),
-      );
+      setError(folderError(err, t(($) => $.folder_form.failed)));
     } finally {
       // The tree refreshes on every settled write, including unreadable and
       // failed responses (the server may have committed anyway).
@@ -220,6 +241,7 @@ export function AgentFolderMoveDialog({
 }) {
   const { t } = useT("agent-folders");
   const qc = useQueryClient();
+  const folderError = useFolderErrorMessage();
   const [target, setTarget] = useState<string | null>(null);
   const [moving, setMoving] = useState(false);
   const [error, setError] = useState("");
@@ -241,11 +263,7 @@ export function AgentFolderMoveDialog({
       }
       onClose();
     } catch (err) {
-      setError(
-        err instanceof Error && err.message
-          ? err.message
-          : t(($) => $.folder_move.failed),
-      );
+      setError(folderError(err, t(($) => $.folder_move.failed)));
     } finally {
       await invalidateAgentFolderQueries(qc, wsId);
       setMoving(false);
@@ -338,6 +356,7 @@ export function AgentFolderDeleteDialog({
 }) {
   const { t } = useT("agent-folders");
   const qc = useQueryClient();
+  const folderError = useFolderErrorMessage();
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
 
@@ -355,11 +374,7 @@ export function AgentFolderDeleteDialog({
       onDeleted();
       onClose();
     } catch (err) {
-      setError(
-        err instanceof Error && err.message
-          ? err.message
-          : t(($) => $.folder_delete.failed),
-      );
+      setError(folderError(err, t(($) => $.folder_delete.failed)));
     } finally {
       await invalidateAgentFolderQueries(qc, wsId);
       setDeleting(false);
@@ -492,18 +507,34 @@ export function MoveAgentsDialog({
         onMoved?.();
       } else if (failed === 0) {
         toast.error(
-          t(($) => $.move_agents.unconfirmed, {
-            done,
-            total: agents.length,
-            count: unconfirmed,
-          }),
+          variant === "place"
+            ? t(($) => $.move_agents.place_unconfirmed, {
+                done,
+                total: agents.length,
+                count: unconfirmed,
+              })
+            : t(($) => $.move_agents.unconfirmed, {
+                done,
+                total: agents.length,
+                count: unconfirmed,
+              }),
         );
         handleOpenChange(false);
       } else {
         toast.error(
           done > 0
-            ? t(($) => $.move_agents.partial, { done, total: agents.length })
-            : t(($) => $.move_agents.failed),
+            ? variant === "place"
+              ? t(($) => $.move_agents.place_partial, {
+                  done,
+                  total: agents.length,
+                })
+              : t(($) => $.move_agents.partial, {
+                  done,
+                  total: agents.length,
+                })
+            : variant === "place"
+              ? t(($) => $.move_agents.place_failed)
+              : t(($) => $.move_agents.failed),
         );
         handleOpenChange(false);
       }
