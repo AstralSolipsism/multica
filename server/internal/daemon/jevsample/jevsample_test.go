@@ -54,6 +54,7 @@ func TestDisabledCollectorIsNoop(t *testing.T) {
 		t.Fatal("disabled collector returned an id")
 	}
 	c.Outcome(Outcome{DecisionID: "x", Status: "completed"})
+	c.StepOutcome(StepOutcome{DecisionID: "x"})
 	c.Close()
 }
 
@@ -139,14 +140,22 @@ func TestStepScopeAndFailureOutcome(t *testing.T) {
 	now := time.Now().UTC()
 	c.now = func() time.Time { return now }
 	id := c.Decision(Decision{Scope: "step", Step: 4, Choice: "high"})
-	c.Outcome(Outcome{DecisionID: id, Status: "blocked", FailureReason: "agent_error.timeout"})
+	kind, ok, sig := "edit_or_exec", false, "0123456789abcdef"
+	c.StepOutcome(StepOutcome{DecisionID: id, Tools: []string{"Bash"}, ActionKind: &kind, OutcomeOK: &ok, ErrorSig: &sig})
+	c.StepOutcome(StepOutcome{}) // No paired decision: nothing to write.
 	c.Close()
 	records := readLines(t, filepath.Join(dir, "decisions-d-"+now.Format(dateFormat)+".jsonl"))
 	if records[0]["step"] != float64(4) || records[0]["scope"] != "step" {
 		t.Fatalf("step record=%v", records[0])
 	}
-	if records[1]["outcome_ok"] != false || records[1]["failure_reason"] != "agent_error.timeout" {
+	if len(records) != 2 || records[1]["scope"] != "step" || records[1]["decision_id"] != id ||
+		records[1]["outcome_ok"] != false || records[1]["error_sig"] != sig || records[1]["action_kind"] != kind {
 		t.Fatalf("outcome record=%v", records[1])
+	}
+	for _, field := range []string{"prev_action_kind", "prev_outcome_ok", "next_outcome_ok", "repeated_error_next"} {
+		if value, exists := records[1][field]; !exists || value != nil {
+			t.Errorf("unknown %s must be present and null: %v", field, records[1])
+		}
 	}
 }
 

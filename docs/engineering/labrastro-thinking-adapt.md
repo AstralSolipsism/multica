@@ -616,19 +616,21 @@ OL-1013 描述前半部分的原始需求里，"通道""源"统一叫"来源"，
   | 字段 | 含义 |
   |---|---|
   | `tools` | 这一步主线程调用的工具名 |
-  | `action_kind` | 没有工具调用为 `final_text`；只用了只读工具为 `read_only`；其余一律为 `edit_or_exec`，包括 Bash、Task 和 MCP 工具。只读工具是一份常量清单，如 Read、Grep、Glob、LS、WebFetch、WebSearch |
+  | `action_kind` | 没有工具调用为 `final_text`；只用了只读工具为 `read_only`；其余一律为 `edit_or_exec`，包括 Bash、Task 和 MCP 工具。只读工具常量清单为 Read、Grep、Glob、LS、WebFetch、WebSearch、NotebookRead，按名称精确匹配 |
   | `outcome_ok` | 这一步所有工具结果的 `is_error` 都为 false |
-  | `error_sig` | 这一步报错特征的哈希；没有报错时为空 |
+  | `error_sig` | 对 `NormalizedErrorFeature` 的结果做 SHA-256，取前 8 字节的十六进制字符串；没有报错时为空字符串，`error_omitted` 时为 null |
   | `prev_action_kind`、`prev_outcome_ok` | 上一步的同名值；没有上一步时为 null |
   | `next_outcome_ok` | 下一步的 `outcome_ok`；没有下一步时为 null |
-  | `repeated_error_next` | 下一步报错，且特征与截至这一步最近一次报错的特征相同，即这一步没能消除这个报错；没有下一步时为 null |
+  | `repeated_error_next` | 下一步报错，且特征与截至这一步最近一次报错的特征相同，即这一步没能消除这个报错；没有下一步，或任一侧特征被省略、未知时为 null |
+
+  未收到原料而无法确定的字段显式写 null，不省略字段。已知没有工具调用时 `tools` 为 `[]`，未知时为 null。
 
 **步级信号从哪来**
 
 - 第 N+1 步的决策请求里，带着第 N 步的主线程工具列表（含 `is_error`）和报错文本（§6）。不另外解析 stream，避免同一件事有两套判断。
-- daemon 按运行保存报错特征的历史，计算特征和重复次数用同一个 Go 函数（§6）。
+- daemon 按运行保存步级信号与报错特征的短哈希，特征归一化复用 `NormalizedErrorFeature`（§6）。`repeated_error_next` 独立保存截至当前步最近一次报错的特征，不使用 `ErrorFeatureTracker` 的连续计数：成功的编辑步骤不清空最近报错，省略的报错则将该特征置为未知，直到下次有完整报错为止。
 - 回退的步不写决策记录，但它的请求带来的原料，仍用来补全前一步的结果。
-- 最后一个有决策的步：如果它的生效记录之后，流里再没有工具调用，就记为 `final_text`、`outcome_ok = true`；其余确定不了的字段为 null。
+- 最后一个有决策的步：如果已收到它的生效记录，之后主线程再没有工具调用，就记为 `final_text`、`outcome_ok = true`；子智能体工具调用不影响此判断。没有生效记录或工具结果未知时，确定不了的字段为 null。步级状态在 `runTask` 退出移除时统一收尾，因此取消路径也保留步级结果，不依赖运行级结果是否上报。
 
 **样本的去向**：样本只留在 149 上，训练也在 149 本机进行（E1、方案 A），不再外传。不得提交到仓库，也不得上传到公开位置。
 
