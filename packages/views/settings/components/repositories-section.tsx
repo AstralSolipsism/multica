@@ -48,6 +48,7 @@ import {
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { toast } from "sonner";
+import type { TFunction } from "i18next";
 import {
   useInfiniteQuery,
   useQuery,
@@ -117,6 +118,23 @@ export function repositoryIdentity(rawURL: string): string | null {
   return `${host.toLowerCase()}/${normalizedPath}`;
 }
 
+/** Copy for the install callback's `github_error`. Retrying cannot fix the two
+ * codes that refuse the binding, so they say what can. */
+function githubCallbackErrorMessage(
+  code: string,
+  t: TFunction<"settings">,
+  tForkUi: TFunction<"fork-ui">,
+): string {
+  switch (code) {
+    case "not_authorized":
+      return tForkUi(($) => $.settings.repositories.github_error_not_authorized);
+    case "unknown_installation":
+      return tForkUi(($) => $.settings.repositories.github_error_unknown_installation);
+    default:
+      return t(($) => $.repositories.github_connect_failed);
+  }
+}
+
 interface RepositoryDraft {
   /** Index being edited, or null when adding. */
   index: number | null;
@@ -131,6 +149,7 @@ interface RepositoryDraft {
  */
 export function RepositoriesSection() {
   const { t } = useT("settings");
+  const { t: tForkUi } = useT("fork-ui");
   const workspace = useCurrentWorkspace();
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
@@ -224,7 +243,7 @@ export function RepositoriesSection() {
     }
 
     if (githubError) {
-      toast.error(t(($) => $.repositories.github_connect_failed));
+      toast.error(githubCallbackErrorMessage(githubError, t, tForkUi));
     } else if (githubInstallations.length > 0 && githubBrowseConfigured) {
       setSelectedInstallationID(githubInstallations[0]!.id);
       setGitHubPickerOpen(true);
@@ -245,6 +264,7 @@ export function RepositoriesSection() {
     githubInstallationsPending,
     navigation,
     t,
+    tForkUi,
   ]);
 
   const persist = async (next: WorkspaceRepo[]) => {

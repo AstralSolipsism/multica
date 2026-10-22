@@ -11,8 +11,8 @@ import {
   dagCullBounds,
   dagCullBoundsKey,
   dagDependencyEdgeIds,
-  dagMotionSegments,
-  dagOverviewHoverOverlay,
+  dagMotionPlan,
+  dagOverviewSatisfiedOverlay,
   dagPointVisible,
   dagRouteVisible,
   dagSceneSelectionSet,
@@ -21,6 +21,7 @@ import {
   dagStateMotion,
   dagVisibleBounds,
   dagWithAncestorFrames,
+  type DagLitFlowCandidate,
   type DagMotionCandidate,
 } from "./dag-highlight";
 import type { DagSceneGeometry, DagScenePlan } from "./dag-scene";
@@ -149,59 +150,93 @@ describe("motion policy", () => {
       id: `segment:${i}`,
       edgeIds: [`edge-${i}`],
     }));
+  const lit = (
+    count: number,
+    state: DagLitFlowCandidate["state"] = "blocking",
+    prefix = "lit",
+  ): DagLitFlowCandidate[] =>
+    Array.from({ length: count }, (_, i) => ({ id: `${prefix}:${i}`, state }));
 
-  it("animates every candidate under the budget", () => {
-    const result = dagMotionSegments({
+  it("under the combined budget, base segments and lit routes all move", () => {
+    const result = dagMotionPlan({
       candidates: candidates(3),
-      highlightedEdgeIds: null,
+      litRoutes: lit(2),
       zoom: 1,
       reducedMotion: false,
     });
-    expect([...result].sort()).toEqual(["segment:0", "segment:1", "segment:2"]);
+    expect([...result.segments].sort()).toEqual(["segment:0", "segment:1", "segment:2"]);
+    expect([...result.flows].sort()).toEqual(["lit:0", "lit:1"]);
   });
 
-  it("over the budget even the selected chain is truncated to the limit", () => {
-    const highlighted = new Set(["edge-2", "edge-7", "edge-9"]);
-    const result = dagMotionSegments({
-      candidates: candidates(DAG_MOTION_MAX_SEGMENTS + 1),
-      highlightedEdgeIds: highlighted,
+  it("over the combined budget only the lit chain keeps its flow", () => {
+    const result = dagMotionPlan({
+      candidates: candidates(DAG_MOTION_MAX_SEGMENTS - 2),
+      litRoutes: lit(5),
       zoom: 1,
       reducedMotion: false,
     });
-    expect([...result].sort()).toEqual(["segment:2", "segment:7", "segment:9"]);
-    const bigChain = dagMotionSegments({
-      candidates: candidates(DAG_MOTION_MAX_SEGMENTS + 1),
-      highlightedEdgeIds: new Set(candidates(DAG_MOTION_MAX_SEGMENTS + 1).flatMap((c) => c.edgeIds)),
+    expect(result.segments.size).toBe(0);
+    expect(result.flows.size).toBe(5);
+  });
+
+  it("a chain longer than the budget keeps cancelled blockers, then unsatisfied, then satisfied", () => {
+    const routes = [
+      ...lit(20, "satisfied", "sat"),
+      ...lit(4, "advancing", "adv"),
+      ...lit(DAG_MOTION_MAX_SEGMENTS - 5, "blocking", "block"),
+      ...lit(6, "cancelled-blocking", "cancel"),
+    ];
+    const result = dagMotionPlan({
+      candidates: [],
+      litRoutes: routes,
       zoom: 1,
       reducedMotion: false,
     });
-    expect(bigChain.size).toBe(DAG_MOTION_MAX_SEGMENTS);
+    expect(result.flows.size).toBe(DAG_MOTION_MAX_SEGMENTS);
+    // Every cancelled blocker survives; satisfied routes yield first, then
+    // the unsatisfied in scene order (the sort is stable).
+    for (let i = 0; i < 6; i++) expect(result.flows.has(`cancel:${i}`)).toBe(true);
+    expect([...result.flows].filter((id) => id.startsWith("sat:"))).toEqual([]);
+    expect([...result.flows].filter((id) => id.startsWith("adv:"))).toEqual([
+      "adv:0",
+      "adv:1",
+      "adv:2",
+      "adv:3",
+    ]);
+    expect([...result.flows].filter((id) => id.startsWith("block:")).length).toBe(
+      DAG_MOTION_MAX_SEGMENTS - 6 - 4,
+    );
   });
 
   it("over the budget with nothing selected, nothing moves", () => {
-    const result = dagMotionSegments({
+    const result = dagMotionPlan({
       candidates: candidates(DAG_MOTION_MAX_SEGMENTS + 1),
-      highlightedEdgeIds: null,
+      litRoutes: [],
       zoom: 1,
       reducedMotion: false,
     });
-    expect(result.size).toBe(0);
+    expect(result.segments.size).toBe(0);
+    expect(result.flows.size).toBe(0);
   });
 
   it("stops below 50% zoom and under system reduced motion", () => {
     const few = candidates(2);
-    expect(
-      dagMotionSegments({ candidates: few, highlightedEdgeIds: null, zoom: 0.49, reducedMotion: false })
-        .size,
-    ).toBe(0);
-    expect(
-      dagMotionSegments({ candidates: few, highlightedEdgeIds: null, zoom: 0.5, reducedMotion: false })
-        .size,
-    ).toBe(2);
-    expect(
-      dagMotionSegments({ candidates: few, highlightedEdgeIds: null, zoom: 1, reducedMotion: true })
-        .size,
-    ).toBe(0);
+    const one = lit(1);
+    for (const result of [
+      dagMotionPlan({ candidates: few, litRoutes: one, zoom: 0.49, reducedMotion: false }),
+      dagMotionPlan({ candidates: few, litRoutes: one, zoom: 1, reducedMotion: true }),
+    ]) {
+      expect(result.segments.size).toBe(0);
+      expect(result.flows.size).toBe(0);
+    }
+    const allowed = dagMotionPlan({
+      candidates: few,
+      litRoutes: one,
+      zoom: 0.5,
+      reducedMotion: false,
+    });
+    expect(allowed.segments.size).toBe(2);
+    expect(allowed.flows.size).toBe(1);
   });
 });
 
@@ -239,7 +274,7 @@ describe("dagSegmentFlowDirection", () => {
   });
 });
 
-describe("dagOverviewHoverOverlay", () => {
+describe("dagOverviewSatisfiedOverlay", () => {
   // r1 blocks r2 twice: one satisfied (a1 done), one still blocking (a2 open);
   // r4's fully satisfied bundle has no base route.
   const graph = g(
@@ -285,8 +320,8 @@ describe("dagOverviewHoverOverlay", () => {
   };
   const canvasModel = { kind: "overview" as const, overview: model };
 
-  it("surfaces the hovered card's satisfied bundles without double-painting mixed ones", () => {
-    const overlay = dagOverviewHoverOverlay(canvasModel, geometry, "issue:r2")!;
+  it("surfaces the anchor card's satisfied bundles without double-painting mixed ones", () => {
+    const overlay = dagOverviewSatisfiedOverlay(canvasModel, geometry, "issue:r2")!;
     expect([...overlay.edgeIds].sort()).toEqual([mixedId, satisfiedId].sort());
     // The mixed bundle already has a base route: only the fully satisfied
     // bundle gets a fresh overlay route.
@@ -299,14 +334,14 @@ describe("dagOverviewHoverOverlay", () => {
     const lone = g([n("solo")], []);
     const loneModel = computeDagOverview(createDagModelIndex(lone), {});
     expect(
-      dagOverviewHoverOverlay(
+      dagOverviewSatisfiedOverlay(
         { kind: "overview", overview: loneModel },
         { ...geometry, nodes: { solo: { x: 0, y: 0, width: 280, height: 140 } } },
         "solo",
       ),
     ).toBeNull();
     expect(
-      dagOverviewHoverOverlay({ kind: "independent", tasks: [] }, geometry, "issue:r2"),
+      dagOverviewSatisfiedOverlay({ kind: "independent", tasks: [] }, geometry, "issue:r2"),
     ).toBeNull();
   });
 });

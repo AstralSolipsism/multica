@@ -520,12 +520,21 @@ func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message,
 		case "text":
 			if block.Text != "" {
 				assistantText.WriteString(block.Text)
-				trySend(ch, Message{Type: MessageText, Content: block.Text})
+				trySend(ch, Message{Type: MessageText, Content: block.Text, ModelRequestID: content.ID, ParentToolUseID: msg.ParentToolUseID})
 			}
 		case "thinking":
-			if block.Text != "" {
-				trySend(ch, Message{Type: MessageThinking, Content: block.Text})
+			// Claude Code carries the thinking text in the "thinking" field;
+			// the Text fallback covers streams that put it in "text" instead.
+			thinking := block.Thinking
+			if thinking == "" {
+				thinking = block.Text
 			}
+			if thinking != "" {
+				trySend(ch, Message{Type: MessageThinking, Content: thinking, ModelRequestID: content.ID, ParentToolUseID: msg.ParentToolUseID})
+			}
+		case "redacted_thinking":
+			// Encrypted thinking carries no renderable text, but the turn is
+			// still understood: it cannot be hiding the model's answer.
 		case "tool_use":
 			toolUseCount++
 			var input map[string]any
@@ -533,10 +542,12 @@ func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message,
 				_ = json.Unmarshal(block.Input, &input)
 			}
 			trySend(ch, Message{
-				Type:   MessageToolUse,
-				Tool:   block.Name,
-				CallID: block.ID,
-				Input:  input,
+				Type:            MessageToolUse,
+				ModelRequestID:  content.ID,
+				ParentToolUseID: msg.ParentToolUseID,
+				Tool:            block.Name,
+				CallID:          block.ID,
+				Input:           input,
 			})
 		default:
 			// A block type we do not render may be carrying the model's answer
@@ -1056,6 +1067,7 @@ func claudeUsageHasTokens(input, output, cacheRead, cacheWrite int64) bool {
 type claudeContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`
 	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`

@@ -18,6 +18,8 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import enAgents from "../../locales/en/agents.json";
 import enCommon from "../../locales/en/common.json";
 import enIssues from "../../locales/en/issues.json";
+import enForkUi from "../../locales/en/fork-ui.json";
+import enQuota from "../../locales/en/quota.json";
 
 const mockInitiateListModels = vi.hoisted(() => vi.fn());
 const mockGetListModelsResult = vi.hoisted(() => vi.fn());
@@ -94,7 +96,13 @@ function renderOverrides(
     <I18nProvider
       locale="en"
       resources={{
-        en: { common: enCommon, agents: enAgents, issues: enIssues },
+        en: {
+          common: enCommon,
+          agents: enAgents,
+          issues: enIssues,
+          "fork-ui": enForkUi,
+          quota: enQuota,
+        },
       }}
     >
       <QueryClientProvider client={queryClient}>
@@ -143,6 +151,31 @@ describe("AgentExecutionOverrides", () => {
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({ thinkingLevel: "high" }),
     );
+  });
+
+  it("shows the selected runtime's Adapt snapshot in the picker", async () => {
+    renderOverrides({
+      runtime: {
+        ...ONLINE_RUNTIME,
+        metadata: { capabilities: ["thinking-adapt-v1"] },
+        thinking_adapt: {
+          status: "available",
+          active_source: "self-hosted",
+          last_latency_ms: 290,
+          decisions_ok: 12,
+          decisions_fallback: 3,
+          since: "2026-10-21T00:00:00Z",
+          updated_at: "2026-10-21T01:00:00Z",
+        },
+      } as RuntimeDevice,
+    });
+
+    await screen.findByText("Thinking");
+    fireEvent.click(screen.getByRole("button", { name: /thinking/i }));
+
+    expect(
+      await screen.findByText("Available · Self-hosted · 290ms"),
+    ).toBeInTheDocument();
   });
 
   it("hides both fields when the model advertises neither capability", async () => {

@@ -7,6 +7,11 @@ import {
 } from "@multica/ui/components/ui/progress";
 import { cn } from "@multica/ui/lib/utils";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@multica/ui/components/ui/tooltip";
+import {
   formatCompactDuration,
   planQuotaState,
   quotaWindowLabel,
@@ -15,8 +20,15 @@ import {
   type QuotaTone,
   type QuotaWindowState,
 } from "@multica/core/runtimes";
-import type { AgentRuntime } from "@multica/core/types";
+import type {
+  AgentRuntime,
+  RuntimeThinkingAdapt,
+} from "@multica/core/types";
 import { useT } from "../../i18n";
+import {
+  thinkingAdaptSourceLabel,
+  thinkingAdaptStatusLabel,
+} from "../../common/thinking-adapt";
 import { useQuotaTimeFormatter } from "./quota-time";
 
 type QuotaT = ReturnType<typeof useT<"quota">>["t"];
@@ -163,15 +175,27 @@ export function displayRemainingPercent(remaining: number): number {
 export function RuntimeQuotaCell({
   runtime,
   now,
+  thinkingAdapt = runtime.thinking_adapt ?? null,
 }: {
   runtime: AgentRuntime;
   now: number;
+  thinkingAdapt?: RuntimeThinkingAdapt | null;
 }) {
   const { t } = useT("quota");
   const formatTime = useQuotaTimeFormatter();
   const state = planQuotaState(runtime.plan_quota, now);
 
   if (!state) {
+    if (thinkingAdapt) {
+      return (
+        <div className="flex w-full flex-col gap-0.5 leading-tight">
+          <span className="text-caption text-faint-foreground">
+            {t(($) => $.not_reported)}
+          </span>
+          <ThinkingAdaptQuotaRow snapshot={thinkingAdapt} />
+        </div>
+      );
+    }
     return (
       <span className="text-caption text-faint-foreground">
         {t(($) => $.not_reported)}
@@ -221,12 +245,68 @@ export function RuntimeQuotaCell({
           interrupted={state.interrupted}
         />
       )}
+      {thinkingAdapt && <ThinkingAdaptQuotaRow snapshot={thinkingAdapt} />}
       {state.interrupted && (
         <span className="text-micro tabular-nums text-faint-foreground">
           {quotaInterruptedText(state.observedAt, now, t, formatTime)}
         </span>
       )}
     </div>
+  );
+}
+
+export function ThinkingAdaptQuotaRow({
+  snapshot,
+}: {
+  snapshot: RuntimeThinkingAdapt;
+}) {
+  const { t } = useT("quota");
+  const { t: tf } = useT("fork-ui");
+  const available = snapshot.status === "available";
+  const source = snapshot.active_source
+    ? thinkingAdaptSourceLabel(snapshot.active_source, t)
+    : null;
+  const detail = available
+    ? [
+        source ?? thinkingAdaptStatusLabel(snapshot, t),
+        snapshot.last_latency_ms != null
+          ? `${snapshot.last_latency_ms}ms`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : thinkingAdaptStatusLabel(snapshot, t);
+  const text = `${tf(($) => $.agents.thinking_adapt.label)} · ${detail}`;
+  const counts = t(($) => $.thinking_adapt.counts, {
+    success: snapshot.decisions_ok ?? 0,
+    fallback: snapshot.decisions_fallback ?? 0,
+  });
+  const dotClass = available
+    ? "bg-success"
+    : snapshot.status === "degraded" || snapshot.status === "unavailable"
+      ? "bg-warning"
+      : "bg-muted-foreground/50";
+
+  const row = (
+    <span
+      tabIndex={0}
+      data-thinking-adapt-status={snapshot.status}
+      aria-label={`${text}. ${counts}`}
+      className="flex max-w-full items-center gap-1.5 rounded-sm text-micro text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <span
+        aria-hidden="true"
+        className={cn("h-1.5 w-1.5 shrink-0 rounded-full", dotClass)}
+      />
+      <span className="min-w-0 truncate">{text}</span>
+    </span>
+  );
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={row} />
+      <TooltipContent>{counts}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -305,9 +385,11 @@ function QuotaWindowRow({
 export function RuntimeQuotaCard({
   runtime,
   now,
+  thinkingAdapt = runtime.thinking_adapt ?? null,
 }: {
   runtime: AgentRuntime;
   now: number;
+  thinkingAdapt?: RuntimeThinkingAdapt | null;
 }) {
   const { t } = useT("quota");
   const formatTime = useQuotaTimeFormatter();
@@ -319,9 +401,18 @@ export function RuntimeQuotaCard({
       </h3>
       <div className="space-y-3 p-4">
         {state == null ? (
-          <p className="text-caption text-faint-foreground">
-            {t(($) => $.not_reported)}
-          </p>
+          thinkingAdapt ? (
+            <>
+              <p className="text-caption text-faint-foreground">
+                {t(($) => $.not_reported)}
+              </p>
+              <ThinkingAdaptQuotaRow snapshot={thinkingAdapt} />
+            </>
+          ) : (
+            <p className="text-caption text-faint-foreground">
+              {t(($) => $.not_reported)}
+            </p>
+          )
         ) : (
           <>
             {/* A limit that names no window belongs to no pool. */}
@@ -374,6 +465,7 @@ export function RuntimeQuotaCard({
                 </div>
               );
             })}
+            {thinkingAdapt && <ThinkingAdaptQuotaRow snapshot={thinkingAdapt} />}
             <p className="text-micro tabular-nums text-faint-foreground">
               {state.interrupted
                 ? quotaInterruptedText(state.observedAt, now, t, formatTime)

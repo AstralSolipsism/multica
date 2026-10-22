@@ -32,7 +32,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
-	"github.com/multica-ai/multica/server/pkg/agent"
+	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -510,7 +510,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 						DaemonID:    strToText(req.DaemonID),
 						Name:        name,
 						RuntimeMode: "local",
-						Provider:    agent.ProfileRuntimeType(profile.RuntimeType, profile.ProtocolFamily),
+						Provider:    agentpkg.ProfileRuntimeType(profile.RuntimeType, profile.ProtocolFamily),
 						Status:      status,
 						DeviceInfo:  deviceInfo,
 						Metadata:    metadata,
@@ -541,7 +541,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "failed to register runtime")
 				return
 			}
-			provider = agent.ProfileRuntimeType(profile.RuntimeType, profile.ProtocolFamily)
+			provider = agentpkg.ProfileRuntimeType(profile.RuntimeType, profile.ProtocolFamily)
 			inserted = prow.Inserted
 			registered = db.AgentRuntime{
 				ID:             prow.ID,
@@ -703,7 +703,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 					DaemonID:    strToText(req.DaemonID),
 					Name:        name,
 					RuntimeMode: "local",
-					Provider:    agent.ProfileRuntimeType(profile.RuntimeType, profile.ProtocolFamily),
+					Provider:    agentpkg.ProfileRuntimeType(profile.RuntimeType, profile.ProtocolFamily),
 					Status:      "offline",
 					DeviceInfo:  strings.TrimSpace(req.DeviceName),
 					Metadata:    metadata,
@@ -1031,6 +1031,10 @@ type DaemonHeartbeatRequest struct {
 	// daemon host's latest CPU/memory sample. Optional; a bad payload drops
 	// the field, never the beat.
 	Metrics *protocol.HostMetrics `json:"metrics,omitempty"`
+	// ThinkingAdapt mirrors protocol.DaemonHeartbeatRequestPayload.ThinkingAdapt:
+	// the daemon's Jev health snapshot for adaptive thinking. Optional; a
+	// bad payload drops the field, never the beat.
+	ThinkingAdapt *protocol.ThinkingAdaptSnapshot `json:"thinking_adapt,omitempty"`
 }
 
 // heartbeatHasPendingTimeout bounds the cheap HasPending probe on the
@@ -1176,6 +1180,7 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// the helpers swallow validation/persistence failures internally.
 	h.storeHeartbeatPlanQuota(r.Context(), rt, req.PlanQuota)
 	h.storeHeartbeatMetrics(r.Context(), uuidToString(rt.WorkspaceID), rt.DaemonID.String, req.Metrics)
+	h.storeHeartbeatThinkingAdapt(r.Context(), uuidToString(rt.WorkspaceID), rt.DaemonID.String, req.ThinkingAdapt)
 
 	ack, m, err := h.processHeartbeat(r.Context(), runtimeID, req.SupportsBatchImport)
 	probeModelMs = m.ProbeModelMs
@@ -1265,6 +1270,7 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 	// daemon id when the daemon heartbeats with a user PAT).
 	leaseState := lease.Snapshot()
 	h.storeHeartbeatMetrics(ctx, leaseState.WorkspaceID, leaseState.DaemonID, payload.Metrics)
+	h.storeHeartbeatThinkingAdapt(ctx, leaseState.WorkspaceID, leaseState.DaemonID, payload.ThinkingAdapt)
 
 	ack, _, err := h.processHeartbeat(ctx, runtimeID, payload.SupportsBatchImport)
 	return ack, err
@@ -2651,6 +2657,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		RuntimeConfig:         runtimeConfig,
 		DisabledRuntimeSkills: disabledRuntimeSkillsFor(agent.DisabledRuntimeSkills, runtimeID, runtime.Provider),
 	}
+	if resp.Agent.ThinkingLevel == agentpkg.ThinkingLevelAdapt && !requestHasClientCapability(r, protocol.DaemonCapabilityThinkingAdaptV1) {
+		resp.Agent.ThinkingLevel = ""
+	}
 	// System agents carry a product-owned instruction layer that ships with
 	// this binary instead of being copied into their row at creation. That
 	// is what makes it hot-updatable: editing the embedded file and
@@ -2731,6 +2740,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount, failure
 		}
 		resp.ThreadName = issue.Title
+		if resp.Agent != nil && resp.Agent.ThinkingLevel == agentpkg.ThinkingLevelAdapt {
+			resp.IssueDescription = issue.Description.String
+		}
 		issueNumber = issue.Number
 
 		// Issue-state delta (MUL-7344). Every field below already sits on the
@@ -5203,6 +5215,8 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 // Task Messages (live agent output)
 
 type TaskMessageRequest struct {
+	// Decode separately so malformed metadata cannot reject the message batch.
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 	// CallID is an opaque tool-call identity scoped to one backend execution.
 	CallID  string         `json:"call_id,omitempty"`
 	Seq     int            `json:"seq"`
@@ -5267,15 +5281,16 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	// string means SQL NULL, applied by the query's NULLIF.
 	n := len(req.Messages)
 	params := db.CreateTaskMessagesParams{
-		TaskID:   parseUUID(taskID),
-		Ids:      make([]pgtype.UUID, 0, n),
-		Seqs:     make([]int32, 0, n),
-		Types:    make([]string, 0, n),
-		Tools:    make([]string, 0, n),
-		CallIds:  make([]string, 0, n),
-		Contents: make([]string, 0, n),
-		Inputs:   make([]string, 0, n),
-		Outputs:  make([]string, 0, n),
+		TaskID:    parseUUID(taskID),
+		Ids:       make([]pgtype.UUID, 0, n),
+		Seqs:      make([]int32, 0, n),
+		Types:     make([]string, 0, n),
+		Tools:     make([]string, 0, n),
+		CallIds:   make([]string, 0, n),
+		Contents:  make([]string, 0, n),
+		Inputs:    make([]string, 0, n),
+		Metadatas: make([]string, 0, n),
+		Outputs:   make([]string, 0, n),
 		// Optional for mixed-version rollout. Older daemons omit the event
 		// timestamp, and one missing or implausible value makes the whole batch
 		// use database time so paired events never mix clocks.
@@ -5340,6 +5355,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 		params.CallIds = append(params.CallIds, msg.CallID)
 		params.Contents = append(params.Contents, msg.Content)
 		params.Inputs = append(params.Inputs, inputJSON)
+		params.Metadatas = append(params.Metadatas, taskMessageMetadata(msg.Metadata, taskID, msg.Seq))
 		params.Outputs = append(params.Outputs, msg.Output)
 		params.CreatedAts = append(params.CreatedAts, createdAts[i])
 		params.OutputTruncations = append(params.OutputTruncations, boolArrayElement(msg.OutputTruncated))
@@ -5490,6 +5506,7 @@ func taskMessageToPayload(m db.TaskMessage, taskID, issueID string) protocol.Tas
 		CallID:          m.CallID.String,
 		Content:         m.Content.String,
 		Input:           input,
+		Metadata:        m.Metadata,
 		Output:          m.Output.String,
 		OutputTruncated: util.BoolToPtr(m.OutputTruncated),
 		CreatedAt:       createdAt,

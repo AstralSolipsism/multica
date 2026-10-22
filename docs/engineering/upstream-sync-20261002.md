@@ -108,6 +108,20 @@ configuration. Reads are enumerated too: GET is not a blanket exception for
 webhook credentials, MCP configuration or credential lists. Denials return
 `403 external_conversation_forbidden` before entering the business handler.
 
+`GET /api/attachments/{id}/download` remains allowed, but external conversation
+tasks (including delegated and retried descendants) can only resolve attachments
+in the workspace bound to their task token. The download lookup applies that
+workspace filter before membership-cache checks, storage reads or URL signing.
+An attachment in another workspace returns the same `404 attachment not found`
+as an unknown ID, even when the frozen grantor belongs to both workspaces.
+Client workspace headers and query parameters cannot widen the token binding.
+`/download-metadata` remains denied for external conversations. Member sessions
+retain MUL-3130's cross-workspace Markdown links, including native browser loads
+without workspace headers; first-party task tokens also keep upstream behavior.
+The real-router regression covers proxy and S3 presign modes, all four lineage
+fixtures (root, delegation, retry and pruned intermediate parent), warm membership
+caches and forged workspace selectors.
+
 An additional real-router regression found that assigning an existing
 member-created issue from an external task lost its ancestry: the new run had a
 NULL root and would receive ordinary task authority. Request-scoped external

@@ -69,7 +69,9 @@ import (
 //
 // Cost discipline: each round enumerates this user's loopback LISTEN ports
 // ONCE (one /proc read pair on Linux, one lsof run on macOS) and filters
-// candidates in memory; the per-connection proof is one table lookup.
+// candidates in memory; the per-connection proof is one table lookup per
+// consult, retried within a bounded window while the server has not
+// accepted yet.
 //
 // The API is marked experimental, so every step is fail-soft: a missing
 // token file, a dead local server, or a drifted response shape ends the
@@ -82,6 +84,10 @@ const (
 	kimiServerHomeDir     = ".kimi-code"
 	kimiServerTokenFile   = "server.token"
 	kimiServerInstances   = "server/instances"
+	// Bounded re-proof window for the per-connection peer proof: until the
+	// server calls accept() no platform can name the accepting process.
+	kimiProofRetryBudget = 500 * time.Millisecond
+	kimiProofRetryPause  = 20 * time.Millisecond
 )
 
 // errKimiIdentityUnsupportedForCollection fails a collect round on platforms
@@ -108,9 +114,15 @@ type kimiPlanQuotaCollector struct {
 	// enumerateOwnedListenPorts returns, in one enumeration per round, the
 	// loopback-serving LISTEN ports owned by this user.
 	enumerateOwnedListenPorts func() map[int]struct{}
-	// verifyConnPeer proves the accepting process of an established
-	// connection belongs to this user — the credential gate.
+	// verifyConnPeer is the full credential gate for one connection: the
+	// single-consult platform proof retried within a bounded window.
 	verifyConnPeer func(conn net.Conn) bool
+	// proveConnPeerOnce is ONE platform proof consult: whether the
+	// accepting process of the established connection belongs to this
+	// user. A separate field so tests can interpose between consults;
+	// the constructor-built verifyConnPeer keeps wrapping whatever is
+	// here.
+	proveConnPeerOnce func(conn net.Conn) bool
 	// roundOwned is the current round's owned-listen set, used by the dialer
 	// as an in-memory fast-fail before dialing. Nil means no fast-fail (the
 	// established-tuple proof still applies).
@@ -125,9 +137,43 @@ func newKimiPlanQuotaCollector(homeDir string) *kimiPlanQuotaCollector {
 		identitySupported: kimiIdentitySupported,
 	}
 	c.enumerateOwnedListenPorts = kimiEnumerateOwnedListenPorts
-	c.verifyConnPeer = kimiEstablishedPeerOwnedByUser
+	c.proveConnPeerOnce = kimiEstablishedPeerOwnedByUser
+	// Call through the field (not its value at construction) so tests can
+	// interpose between single consults.
+	c.verifyConnPeer = kimiProveConnPeerWithRetry(func(conn net.Conn) bool {
+		return c.proveConnPeerOnce(conn)
+	})
 	c.client = newKimiHTTPClient(c.dial)
 	return c
+}
+
+// kimiProveConnPeerWithRetry wraps a single-consult platform proof with a
+// bounded re-proof window. Between a completed TCP handshake and the
+// server's accept() the connection cannot name its accepting process on
+// either platform (Linux reports uid=0 inode=0 for the server-side row;
+// macOS lsof has no fd to list), so a single lookup in that window misreads
+// a healthy same-user server as unprovable. The wrapper cannot tell "no
+// owner yet" from "not ours", so EVERY unproven consult — including an
+// already-accepted foreign uid — retries until the deadline. That is still
+// safe: an accepted socket's uid is fixed at accept time and can only be
+// changed later via fchown, which needs CAP_CHOWN (root, outside the trust
+// boundary), so re-asking can never turn "not ours" into "ours". The cost
+// is a bounded hang (~500ms, ~26 /proc reads; a few lsof runs on macOS)
+// before failing closed. No proof condition is relaxed: the wrapped proof
+// is the same authority, asked again.
+func kimiProveConnPeerWithRetry(prove func(net.Conn) bool) func(net.Conn) bool {
+	return func(conn net.Conn) bool {
+		deadline := time.Now().Add(kimiProofRetryBudget)
+		for {
+			if prove(conn) {
+				return true
+			}
+			if !time.Now().Before(deadline) {
+				return false
+			}
+			time.Sleep(kimiProofRetryPause)
+		}
+	}
 }
 
 // newKimiHTTPClient builds the credential-carrying client: no redirects (a

@@ -184,7 +184,7 @@ const baseAgent: Agent = {
   archived_by: null,
 };
 
-function renderPage() {
+function renderPage(search = "") {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -194,7 +194,7 @@ function renderPage() {
     replace: vi.fn(),
     back: vi.fn(),
     pathname: "/acme/agents/agent-1",
-    searchParams: new URLSearchParams(),
+    searchParams: new URLSearchParams(search),
     hash: "",
     getShareableUrl: (path) => path,
   };
@@ -251,6 +251,19 @@ describe("AgentDetailPage direct-detail fallback", () => {
       await screen.findByRole("button", { name: "Assign work" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Agent not found")).not.toBeInTheDocument();
+  });
+
+  // OL-1030: the back-to-list link keeps the folder the user came from.
+  it("carries the folder param back to the agents list", async () => {
+    renderPage("?folder=f-1");
+
+    expect(
+      await screen.findByRole("button", { name: "Assign work" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute(
+      "href",
+      "/acme/agents?folder=f-1",
+    );
   });
 
   it("shows not found only after the detail endpoint returns 404", async () => {

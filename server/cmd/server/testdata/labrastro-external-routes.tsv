@@ -3,7 +3,13 @@ GET	/api/agent-builder/sessions/	user-auth	deny
 POST	/api/agent-builder/sessions/	user-auth	deny
 PUT	/api/agent-builder/sessions/{sessionId}/draft	user-auth	deny
 PATCH	/api/agent-builder/sessions/{sessionId}/runtime	user-auth	deny
+GET	/api/agent-folders	user-auth	deny
+POST	/api/agent-folders	user-auth	deny
+DELETE	/api/agent-folders/{folderId}	user-auth	deny
+PATCH	/api/agent-folders/{folderId}	user-auth	deny
+PUT	/api/agent-placements/{agentId}	user-auth	deny
 GET	/api/agent-run-counts	user-auth	deny
+PUT	/api/agent-squad-placements/{squadId}	user-auth	deny
 GET	/api/agent-task-snapshot	user-auth	deny
 GET	/api/agents/	user-auth	allow
 POST	/api/agents/	user-auth	deny
@@ -452,8 +458,10 @@ POST	/api/workspaces/{id}/dingtalk/install/byo	user-auth	deny
 GET	/api/workspaces/{id}/dingtalk/installations	user-auth	deny
 DELETE	/api/workspaces/{id}/dingtalk/installations/{installationId}	user-auth	deny
 DELETE	/api/workspaces/{id}/dingtalk/installations/{installationId}/groups/{conversationId}	user-auth	deny
+GET	/api/workspaces/{id}/github/app-installations	user-auth	deny
 GET	/api/workspaces/{id}/github/connect	user-auth	deny
 GET	/api/workspaces/{id}/github/installations	user-auth	deny
+POST	/api/workspaces/{id}/github/installations	user-auth	deny
 DELETE	/api/workspaces/{id}/github/installations/{installationId}	user-auth	deny
 GET	/api/workspaces/{id}/github/installations/{installationId}/repositories	user-auth	deny
 GET	/api/workspaces/{id}/invitations	user-auth	deny

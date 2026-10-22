@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strconv"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
+	"github.com/multica-ai/multica/server/internal/daemon/jev"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -414,6 +416,7 @@ type repoCacheBackend interface {
 type Daemon struct {
 	cfg        Config
 	client     *Client
+	jevClient  *jev.Client
 	repoCache  repoCacheBackend
 	skillCache *SkillBundleCache
 	logger     *slog.Logger
@@ -581,6 +584,11 @@ type Daemon struct {
 	// runtime heartbeat attaches the same latest sample when it is fresh.
 	// Started by Run.
 	hostMetrics *hostMetricsSampler
+
+	// jevProbe keeps the Jev snapshot fresh between adaptive decisions
+	// (contract §3): one Probe per 10 idle minutes, only after real use.
+	// Started by Run.
+	jevProbe *jevProbeScheduler
 
 	// reconcile fans out a "re-check server state now" signal to subscribers
 	// (watchTaskCancellation, workspaceSyncLoop) so the WS connect/reconnect
@@ -760,10 +768,12 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 	d := &Daemon{
 		cfg:                         cfg,
 		client:                      client,
+		jevClient:                   jev.New(jev.Options{Disabled: cfg.JevDisabled, Sources: cfg.JevSources, Timeout: cfg.JevTimeout}),
 		repoCache:                   repocache.New(cacheRoot, logger),
 		skillCache:                  NewSkillBundleCache(skillCacheRoot),
 		logger:                      logger,
 		hostMetrics:                 newHostMetricsSampler(logger),
+		jevProbe:                    newJevProbeScheduler(nil),
 		terminalReports:             newTerminalReportStore(cfg),
 		terminalReportWakeup:        make(chan struct{}, 1),
 		terminalReportNow:           time.Now,
@@ -798,6 +808,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		workspaceChanges:            newWorkspaceChangeSignal(),
 		wsRPC:                       newWSRPCClient(wsRPCResponseGrace),
 	}
+	d.jevProbe.client = d.jevClient
 	d.activeEnvRootsCond = sync.NewCond(&d.activeEnvRootsMu)
 	d.activeStoresCond = sync.NewCond(&d.activeStoresMu)
 	// Seed the copy-on-write availability set from the startup probe. Callers
@@ -1324,9 +1335,18 @@ func (d *Daemon) recordZenMuxPlanQuotaClearMarker(runtimeID string) {
 // heartbeatExtrasFor assembles the optional heartbeat attachments for one
 // runtime: its cached plan-quota snapshot (nil when the provider reported
 // nothing) and the latest fresh host metrics sample (nil when the sampler
-// has none).
+// has none). ThinkingAdapt carries the Jev health snapshot, but only for
+// providers Multica can deliver a reasoning effort to at all
+// (agent.ThinkingControlSupported, contract §8): on anything else the field
+// would describe a dial the runtime does not have.
 func (d *Daemon) heartbeatExtrasFor(runtimeID string) HeartbeatExtras {
 	extras := HeartbeatExtras{Metrics: d.latestHostMetrics()}
+	if d.jevClient != nil {
+		if rt := d.findRuntime(runtimeID); rt != nil && agent.ThinkingControlSupported(rt.Provider) {
+			snap := d.jevClient.Snapshot()
+			extras.ThinkingAdapt = &snap
+		}
+	}
 	if cached, ok := d.planQuotaCache.Load(runtimeID); ok {
 		if entry, ok := cached.(planQuotaCacheEntry); ok {
 			if entry.clearMarker {
@@ -2262,6 +2282,10 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 	// start; only its goroutine launches here, so heartbeats simply omit the
 	// field until the first sample lands.
 	go d.hostMetrics.run(ctx)
+
+	// Jev health probing (contract §3): one business-content-free probe per
+	// 10 idle minutes, only on daemons that already used adaptive thinking.
+	go d.jevProbeLoop(ctx)
 
 	// Plan-quota collectors feed the heartbeat plan_quota channel for
 	// providers whose quota lives behind a programmatic API rather
@@ -5896,6 +5920,8 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// when the server signals the task should stop — either the task reached
 	// a terminal state (completed/failed/cancelled) or the task row is
 	// deleted (404).
+	// Retain the decision through terminal handling, outside runTask as well.
+	ctx = context.WithValue(ctx, thinkingRunKey{}, &thinkingRun{})
 	runCtx, runCancel := context.WithCancel(withYouShouldKnowStop(ctx, task))
 	defer runCancel()
 
@@ -7615,6 +7641,7 @@ func resolveTaskModelSelection(
 	runtimeCmd agent.Command,
 	sel taskModelSelection,
 	taskLog *slog.Logger,
+	thinking *thinkingRun,
 ) taskModelSelection {
 	capabilityChecksPending := sel.ThinkingLevel != "" || sel.ServiceTier != ""
 
@@ -7657,6 +7684,10 @@ func resolveTaskModelSelection(
 			sel.ServiceTier = ""
 		}
 	}
+	if sel.ThinkingLevel == agent.ThinkingLevelAdapt {
+		sel.ThinkingLevel = resolveAdaptiveThinking(ctx, provider, sel.Model, loadCatalog, thinking, taskLog)
+		return sel
+	}
 	// Per-model guard: the server validates the literal token against the
 	// provider's enum, but per-model gaps (Codex's per-model
 	// `supported_reasoning_levels`, Claude's per-model `supportedEffortLevels`)
@@ -7689,6 +7720,9 @@ func resolveTaskModelSelection(
 		}
 	}
 
+	if thinking != nil && sel.ThinkingLevel != "" {
+		thinking.Record = &ThinkingDecisionRecord{Mode: "fixed", Decision: jev.Decision{Level: sel.ThinkingLevel}}
+	}
 	return sel
 }
 
@@ -8772,9 +8806,18 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		thinkingLevel = task.Agent.ThinkingLevel
 		serviceTier = task.Agent.ServiceTier
 	}
+	thinking := thinkingRunFromContext(ctx)
+	if thinking == nil {
+		thinking = &thinkingRun{}
+	}
+	thinking.Task = task
+	if d.jevClient != nil {
+		thinking.Client = d.jevClient
+	}
 	selection := resolveTaskModelSelection(ctx, provider, agent.NewCommand(entry.Path, profileFixedArgs),
-		taskModelSelection{Model: model, ThinkingLevel: thinkingLevel, ServiceTier: serviceTier}, taskLog)
+		taskModelSelection{Model: model, ThinkingLevel: thinkingLevel, ServiceTier: serviceTier}, taskLog, thinking)
 	model, thinkingLevel, serviceTier = selection.Model, selection.ThinkingLevel, selection.ServiceTier
+	ctx = context.WithValue(ctx, thinkingRunKey{}, thinking)
 
 	var idleWatchdogTimeout time.Duration
 	if provider == "opencode" || provider == "codearts" {
@@ -9551,6 +9594,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		var mu sync.Mutex
 		var pendingContent strings.Builder
 		var pendingType string
+		var pendingMetadata map[string]any
 		var pendingAt time.Time
 		var batch []TaskMessageData
 		callIDToTool := map[string]string{}
@@ -9582,25 +9626,28 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 			batch = append(batch, TaskMessageData{
 				Seq:       int(s),
 				Type:      pendingType,
+				Metadata:  pendingMetadata,
 				Content:   pendingContent.String(),
 				CreatedAt: pendingAt,
 			})
 			pendingContent.Reset()
 			pendingType = ""
+			pendingMetadata = nil
 			pendingAt = time.Time{}
 		}
 
-		appendPending := func(messageType, content string, observedAt time.Time) {
+		appendPending := func(messageType, content string, metadata map[string]any, observedAt time.Time) {
 			if content == "" {
 				return
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if pendingType != "" && pendingType != messageType {
+			if pendingType != "" && (pendingType != messageType || !reflect.DeepEqual(pendingMetadata, metadata)) {
 				sealPendingLocked()
 			}
 			if pendingContent.Len() == 0 {
 				pendingType = messageType
+				pendingMetadata = metadata
 				pendingAt = observedAt
 			}
 			pendingContent.WriteString(content)
@@ -9674,6 +9721,9 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				// can't be misattributed to backend silence.
 				observedAt := time.Now().UTC()
 				lastActivityAt.Store(int64(awakeclock.Now()))
+				if thinking := thinkingRunFromContext(ctx); thinking != nil {
+					msg = thinking.tag(msg)
+				}
 				switch msg.Type {
 				case agent.MessageStatus:
 					// Persist the session/work_dir as soon as the backend
@@ -9721,6 +9771,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					batch = append(batch, TaskMessageData{
 						Seq:       int(s),
 						Type:      "tool_use",
+						Metadata:  msg.Metadata,
 						CallID:    transcriptCallID(msg.CallID),
 						Tool:      msg.Tool,
 						CreatedAt: observedAt,
@@ -9764,6 +9815,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					batch = append(batch, TaskMessageData{
 						Seq:       int(s),
 						Type:      "tool_result",
+						Metadata:  msg.Metadata,
 						CallID:    transcriptCallID(msg.CallID),
 						Tool:      toolName,
 						Output:    output,
@@ -9777,7 +9829,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					mu.Unlock()
 					flushFirstVisible()
 				case agent.MessageThinking:
-					appendPending("thinking", msg.Content, observedAt)
+					appendPending("thinking", msg.Content, msg.Metadata, observedAt)
 					if msg.Content != "" {
 						flushFirstVisible()
 					}
@@ -9785,7 +9837,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					if msg.Content != "" {
 						taskLog.Debug("agent", "text", truncateLog(msg.Content, 200))
 					}
-					appendPending("text", msg.Content, observedAt)
+					appendPending("text", msg.Content, msg.Metadata, observedAt)
 					if msg.Content != "" {
 						flushFirstVisible()
 					}
@@ -9797,6 +9849,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					batch = append(batch, TaskMessageData{
 						Seq:       int(s),
 						Type:      "error",
+						Metadata:  msg.Metadata,
 						Content:   msg.Content,
 						CreatedAt: observedAt,
 					})

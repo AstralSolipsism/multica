@@ -3,7 +3,12 @@ import { describe, expect, it } from "vitest";
 import ELK from "elkjs/lib/elk.bundled.js";
 import { computeDagFocus, computeDagLine, computeDagOverview, createDagModelIndex } from "@multica/core/issues/dag";
 import { graphNode, issueGraph } from "./dag-test-fixtures";
-import { dagFocusLayoutInput, dagLineLayoutInput, dagOverviewHoverEdges, dagOverviewLayoutInput } from "./dag-scene-inputs";
+import {
+  dagFocusLayoutInput,
+  dagLineLayoutInput,
+  dagOverviewLayoutInput,
+  dagOverviewSatisfiedEdges,
+} from "./dag-scene-inputs";
 import { layoutDagScene } from "./dag-scene-layout";
 import { dagSceneKey } from "./dag-scene";
 
@@ -18,11 +23,11 @@ describe("model to layout boundary", () => {
     const updated = createDagModelIndex({ ...graph, nodes: graph.nodes.map((n) => ({ ...n, title: "Updated title", status: n.status === "todo" ? "backlog" : n.status })) });
     expect(dagOverviewLayoutInput(computeDagOverview(updated, { showCompleted: true })).input).toEqual(base.input);
   });
-  it("keeps mixed-bundle membership separate from its satisfied hover subset", () => {
+  it("keeps mixed-bundle membership separate from its satisfied subset", () => {
     const index = createDagModelIndex(issueGraph([graphNode("line"), graphNode("a", { parentIssueId: "line" }), graphNode("b", { parentIssueId: "line", status: "done", statusCategory: "done" }), graphNode("c")], [["a", "c"], ["b", "c"]]));
     const model = computeDagOverview(index), plan = dagOverviewLayoutInput(model);
     expect(Object.values(plan.dependencyIds)).toEqual([["a-c", "b-c"]]);
-    expect(dagOverviewHoverEdges(model, "issue:line")[0]!.dependencyIds).toEqual(["b-c"]);
+    expect(dagOverviewSatisfiedEdges(model, "issue:line")[0]!.dependencyIds).toEqual(["b-c"]);
   });
   it("preserves frame endpoints, drops hidden redundancy and remaps external groups", () => {
     const index = createDagModelIndex(issueGraph([graphNode("line"), ...["a", "b", "c"].map((id) => graphNode(id, { parentIssueId: "line" })), graphNode("external")], [["a", "b"], ["b", "c"], ["a", "c"], ["external", "line"]]));

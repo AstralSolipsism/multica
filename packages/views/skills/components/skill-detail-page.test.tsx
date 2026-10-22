@@ -197,6 +197,13 @@ describe("SkillDetailPage tabs", () => {
       ),
     ).toBe("true");
   });
+
+  it("returns the Skills breadcrumb to the originating folder", async () => {
+    renderPage(new URLSearchParams("folder=f-design"));
+    expect(
+      (await screen.findByRole("link", { name: "Skills" })).getAttribute("href"),
+    ).toBe("/acme/skills?folder=f-design");
+  });
 });
 
 describe("SkillDetailPage file mode", () => {

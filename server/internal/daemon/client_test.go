@@ -686,6 +686,12 @@ func TestClient_SendHeartbeatBody(t *testing.T) {
 				MemoryPercent: &memPercent,
 				CapturedAt:    1757000100,
 			},
+			ThinkingAdapt: &protocol.ThinkingAdaptSnapshot{
+				Status:        "available",
+				ActiveSource:  "opencode-free",
+				LastLatencyMS: 290,
+				DecisionsOK:   8,
+			},
 		}
 
 		c := NewClient(srv.URL)
@@ -728,6 +734,14 @@ func TestClient_SendHeartbeatBody(t *testing.T) {
 			metrics["captured_at"] != float64(1757000100) {
 			t.Fatalf("metrics = %v", metrics)
 		}
+		adapt, ok := body["thinking_adapt"].(map[string]any)
+		if !ok {
+			t.Fatalf("thinking_adapt missing or wrong type: %v", body)
+		}
+		if adapt["status"] != "available" || adapt["active_source"] != "opencode-free" ||
+			adapt["decisions_ok"] != float64(8) || adapt["last_latency_ms"] != float64(290) {
+			t.Fatalf("thinking_adapt = %v", adapt)
+		}
 	})
 
 	t.Run("zero extras omit the field", func(t *testing.T) {
@@ -750,6 +764,9 @@ func TestClient_SendHeartbeatBody(t *testing.T) {
 		}
 		if _, present := body["metrics"]; present {
 			t.Fatalf("metrics present with zero extras: %v", body)
+		}
+		if _, present := body["thinking_adapt"]; present {
+			t.Fatalf("thinking_adapt present with zero extras: %v", body)
 		}
 	})
 }

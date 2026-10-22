@@ -17,9 +17,17 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../../locales/en/common.json";
 import enAgents from "../../../locales/en/agents.json";
 import enIssues from "../../../locales/en/issues.json";
+import enForkUi from "../../../locales/en/fork-ui.json";
+import enQuota from "../../../locales/en/quota.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, agents: enAgents, issues: enIssues },
+  en: {
+    common: enCommon,
+    agents: enAgents,
+    issues: enIssues,
+    "fork-ui": enForkUi,
+    quota: enQuota,
+  },
 };
 
 const mockInitiateListModels = vi.hoisted(() => vi.fn());
@@ -91,6 +99,17 @@ const OMP_MODEL: RuntimeModel = {
     supported_levels: [
       { value: "off", label: "Off" },
       { value: "medium", label: "Medium" },
+      { value: "high", label: "High" },
+      { value: "max", label: "Max" },
+    ],
+  },
+};
+
+const DEVECO_MODEL: RuntimeModel = {
+  id: "deveco/glm-5.2",
+  label: "GLM-5.2",
+  thinking: {
+    supported_levels: [
       { value: "high", label: "High" },
       { value: "max", label: "Max" },
     ],
@@ -310,6 +329,20 @@ describe("ThinkingPropRow", () => {
     // the full timeout and fails if the row ever shows up.
     await expect(screen.findByText("Thinking")).rejects.toThrow();
     // None of the entry's levels leak into the picker.
+    expect(screen.queryByText("Max")).toBeNull();
+  });
+
+  it("hides the picker for an empty deveco model — no catalog entry is deveco's real default (OL-1007)", async () => {
+    // deveco's OpenCode-engine catalog marks no Default either, and the
+    // backend rejects a level without a pinned model, so no preview.
+    mockInitiateListModels.mockResolvedValue(listResult([DEVECO_MODEL]));
+    mockGetListModelsResult.mockResolvedValue(listResult([DEVECO_MODEL]));
+    renderRow({ provider: "deveco", model: "", value: "" });
+
+    await waitFor(() => {
+      expect(mockInitiateListModels).toHaveBeenCalled();
+    });
+    await expect(screen.findByText("Thinking")).rejects.toThrow();
     expect(screen.queryByText("Max")).toBeNull();
   });
 

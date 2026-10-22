@@ -12,6 +12,54 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func TestAgentCopyAdaptiveThinking(t *testing.T) {
+	for _, tc := range []struct {
+		name, runtime, override, want string
+		explicit                      bool
+	}{
+		{"same runtime", "", "", "_adapt", false},
+		{"same runtime explicitly", "runtime-1", "", "_adapt", false},
+		{"different runtime", "runtime-2", "", "", false},
+		{"explicit adaptive on new runtime", "runtime-2", "_adapt", "_adapt", true},
+		{"explicit clear", "", "", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := fullSourceAgent()
+			source["thinking_level"] = "_adapt"
+			var gotBody map[string]any
+			srv := copyMockServer(t, source, &gotBody)
+			defer srv.Close()
+			setCopyTestEnv(t, srv.URL)
+			cmd := newAgentCopyTestCmd()
+			if tc.runtime != "" {
+				if err := cmd.Flags().Set("runtime-id", tc.runtime); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.runtime == "runtime-2" {
+				if err := cmd.Flags().Set("model", "test/model"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.explicit {
+				if err := cmd.Flags().Set("thinking-level", tc.override); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := runAgentCopy(cmd, []string{"agent-src"}); err != nil {
+				t.Fatal(err)
+			}
+			if tc.runtime == "runtime-2" && !tc.explicit {
+				if _, exists := gotBody["thinking_level"]; exists {
+					t.Fatalf("adaptive mode carried to new runtime: %v", gotBody)
+				}
+			} else if gotBody["thinking_level"] != tc.want {
+				t.Fatalf("thinking_level = %v, want %q", gotBody["thinking_level"], tc.want)
+			}
+		})
+	}
+}
+
 // newAgentCopyTestCmd builds a standalone cobra.Command carrying the same flags
 // runAgentCopy reads (via the shared registrar), plus the persistent --profile
 // flag the API-client resolver needs. Tests mutate its flag state in isolation.

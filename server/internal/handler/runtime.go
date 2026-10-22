@@ -57,8 +57,13 @@ type AgentRuntimeResponse struct {
 	// reported. Stale marks samples past the freshness SLA so the UI can
 	// tell "stale data" apart from "never reported".
 	SystemStats *RuntimeSystemStatsResponse `json:"system_stats"`
-	CreatedAt   string                      `json:"created_at"`
-	UpdatedAt   string                      `json:"updated_at"`
+	// ThinkingAdapt is the daemon's Jev health snapshot, served like
+	// SystemStats; present only on rows whose provider supports thinking
+	// control, null otherwise or when nothing was ever (or is no longer)
+	// reported (contract §8).
+	ThinkingAdapt *protocol.ThinkingAdaptSnapshot `json:"thinking_adapt"`
+	CreatedAt     string                          `json:"created_at"`
+	UpdatedAt     string                          `json:"updated_at"`
 }
 
 // RuntimeSystemStatsResponse is the API projection of one machine-level
@@ -974,6 +979,9 @@ func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 	// Store failure or a missing key leaves SystemStats nil — the UI renders
 	// its "not reported" state; there is deliberately no DB fallback.
 	statsByDaemon := h.systemStatsForRuntimes(r.Context(), workspaceID, runtimes)
+	// The Jev health snapshot rides along the same way, gated to rows whose
+	// provider has a thinking dial at all (contract §8).
+	adaptByDaemon := h.thinkingAdaptForRuntimes(r.Context(), workspaceID, runtimes)
 	statsNow := time.Now()
 	for i := range resp {
 		if resp[i].DaemonID == nil {
@@ -981,6 +989,11 @@ func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 		}
 		if sample, ok := statsByDaemon[*resp[i].DaemonID]; ok {
 			resp[i].SystemStats = formatSystemStats(sample, statsNow)
+		}
+		if thinkingAdaptForRuntime(runtimes[i].Provider) {
+			if snap, ok := adaptByDaemon[*resp[i].DaemonID]; ok {
+				resp[i].ThinkingAdapt = snap
+			}
 		}
 	}
 

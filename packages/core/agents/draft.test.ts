@@ -250,6 +250,35 @@ describe("agent draft execution overrides", () => {
     expect(applyDraftModelChange(current, "model-1")).toBe(current);
   });
 
+  it("keeps Adapt only when the replacement model has enough candidates", () => {
+    const current = { ...draft(), thinkingLevel: "_adapt" };
+    const levels = [
+      { value: "low", label: "Low" },
+      { value: "high", label: "High" },
+    ];
+
+    expect(
+      applyDraftModelChange(current, "model-2", levels).thinkingLevel,
+    ).toBe("_adapt");
+    expect(
+      applyDraftModelChange(current, "model-2", [levels[1]!]).thinkingLevel,
+    ).toBe("");
+  });
+
+  it("copies Adapt when the duplicate stays on its runtime", () => {
+    const duplicate = buildDuplicateDraft(
+      sourceAgent({ thinking_level: "_adapt" }),
+      {
+        runtimes: [CODEX_RUNTIME],
+        currentUserId: "user-1",
+        fallbackRuntimeId: "runtime-1",
+        nameSuffix: " copy",
+      },
+    );
+
+    expect(duplicate.thinkingLevel).toBe("_adapt");
+  });
+
   it("copies the execution config when the duplicate stays on its runtime", () => {
     const duplicate = buildDuplicateDraft(sourceAgent(), {
       runtimes: [CODEX_RUNTIME],

@@ -2,7 +2,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { Agent, AgentRuntime } from "@multica/core/types";
-import { useAgentPresenceDetail } from "@multica/core/agents";
+import {
+  THINKING_LEVEL_ADAPT,
+  useAgentPresenceDetail,
+} from "@multica/core/agents";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
   deriveRuntimeHealth,
@@ -217,6 +220,7 @@ function ModelRow({
   thinkingLevel?: string;
 }) {
   const { t } = useT("agents");
+  const { t: tf } = useT("fork-ui");
   const hasModel = model.trim().length > 0;
   const effort = thinkingLevel?.trim();
   return (
@@ -235,7 +239,9 @@ function ModelRow({
       )}
       {effort && (
         <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-micro font-medium text-muted-foreground">
-          {effort}
+          {effort === THINKING_LEVEL_ADAPT
+            ? tf(($) => $.agents.thinking_adapt.label)
+            : effort}
         </span>
       )}
     </div>

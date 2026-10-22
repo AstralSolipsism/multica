@@ -1,4 +1,11 @@
 {
+  "agents": {
+    "thinking_adapt": {
+      "label": "自适应",
+      "description": "选中后，会将脱敏后的运行摘要发送给外部决策服务，默认使用 OpenCode Zen 免费通道。",
+      "upgrade_required": "当前守护进程版本过旧，不支持自适应。请升级守护进程后使用。"
+    }
+  },
   "issues": {
     "detail": {
       "more_actions": "任务操作"
@@ -20,6 +27,24 @@
         "cli_install_windows_help": "Windows 没有脚本安装器。请联系管理员获取安装包，或从内部发布站（{{downloadsUrl}}/cli/v<版本>/，当前版本号见 {{latestManifestUrl}}）下载对应版本的 multica-cli-<版本>-windows-<架构>.zip，解压后将 multica.exe 放入 PATH。",
         "cli_install_windows_label": "Windows 需手动安装"
       }
+    },
+    "github": {
+      "add_account": "添加账号",
+      "connecting": "连接中...",
+      "reuse_label": "来自你管理的其他工作区",
+      "install_on_another_account": "在 GitHub 上安装到其他账号",
+      "account_type_user": "个人账号",
+      "account_type_organization": "组织",
+      "account_actions": "{{login}} 的操作",
+      "disconnect_account_confirm_title": "断开 {{login}}？",
+      "toast_account_connected": "已连接 {{login}}",
+      "toast_account_not_reusable": "{{login}} 已不在你可复用的范围内，可能刚在别处被断开，或已在 GitHub 上卸载。",
+      "toast_account_suspended": "{{login}} 的安装已在 GitHub 上被暂停，请在 GitHub 恢复后重试。",
+      "toast_account_connect_failed": "无法连接 {{login}}，请重试。"
+    },
+    "repositories": {
+      "github_error_not_authorized": "该 GitHub 账号已连接到你不是 owner 或 admin 的工作区，无法通过安装跳转连接到这里。请那个工作区的 owner 或 admin 来这里连接，或请对方先把你设为那个工作区的 admin。",
+      "github_error_unknown_installation": "GitHub 显示该安装不存在或已被暂停。请在 GitHub 上重新安装或恢复该 App 后再试。"
     }
   },
   "skills": {

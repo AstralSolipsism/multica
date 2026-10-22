@@ -604,6 +604,10 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
       cardId = best ? `issue:${best}` : null;
     }
     if (cardId) {
+      // The target card can start outside the first-open viewport; fit first
+      // so the enter prober finds it on screen.
+      await page.getByRole("button", { name: "Fit View", exact: true }).click();
+      await page.waitForTimeout(500);
       const enter = await page.evaluate(
         (id) =>
           (window as unknown as { __dagEnterLine: (cardId?: string) => Promise<{ outcome: string; elapsed: number | null }> }).__dagEnterLine(id),
@@ -671,6 +675,37 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     return result;
   };
 
+  /** Scripted gesture bodies, shared by the bare measurement (section 2) and
+   *  the selected-closure one (section 3c, OL-997). */
+  const runPan = async (point: { x: number; y: number }) => {
+    await page.mouse.move(point.x, point.y);
+    await page.mouse.down();
+    const panStart = Date.now();
+    let step = 0;
+    while (Date.now() - panStart < GESTURE_MS) {
+      const phase = Math.floor((Date.now() - panStart) / 800) % 2 === 0 ? 1 : -1;
+      await page.mouse.move(point.x + step * phase, point.y + step * phase * 0.6, { steps: 4 });
+      step = (step + 14) % 120;
+      await page.waitForTimeout(16);
+    }
+    await page.mouse.up();
+  };
+  const runZoom = async (point: { x: number; y: number }) => {
+    // The wheel must land with the pointer on the canvas: hover a bare-pane
+    // point first, exactly like a user would.
+    await page.mouse.move(point.x, point.y);
+    const zoomStart = Date.now();
+    let tick = 0;
+    while (Date.now() - zoomStart < GESTURE_MS) {
+      // Ctrl+wheel is the canvas's zoom activation key.
+      await page.keyboard.down("Control");
+      await page.mouse.wheel(0, tick % 2 === 0 ? -120 : 120);
+      await page.keyboard.up("Control");
+      tick += 1;
+      await page.waitForTimeout(90);
+    }
+  };
+
   // Pan starts from a bare-pane point (cards carry `nopan`).
   const panePoint = await page.evaluate(() => (window as unknown as { __dagPanePoint: () => { x: number; y: number } | null }).__dagPanePoint());
   let pan: Record<string, number | null> | string;
@@ -683,34 +718,8 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     pan = "invalid";
     zoom = "invalid";
   } else {
-    pan = await gesture("pan", async () => {
-      await page.mouse.move(panePoint.x, panePoint.y);
-      await page.mouse.down();
-      const panStart = Date.now();
-      let step = 0;
-      while (Date.now() - panStart < GESTURE_MS) {
-        const phase = Math.floor((Date.now() - panStart) / 800) % 2 === 0 ? 1 : -1;
-        await page.mouse.move(panePoint.x + step * phase, panePoint.y + step * phase * 0.6, { steps: 4 });
-        step = (step + 14) % 120;
-        await page.waitForTimeout(16);
-      }
-      await page.mouse.up();
-    });
-    zoom = await gesture("zoom", async () => {
-      // The wheel must land with the pointer on the canvas: hover a bare-pane
-      // point first, exactly like a user would.
-      await page.mouse.move(panePoint.x, panePoint.y);
-      const zoomStart = Date.now();
-      let tick = 0;
-      while (Date.now() - zoomStart < GESTURE_MS) {
-        // Ctrl+wheel is the canvas's zoom activation key.
-        await page.keyboard.down("Control");
-        await page.mouse.wheel(0, tick % 2 === 0 ? -120 : 120);
-        await page.keyboard.up("Control");
-        tick += 1;
-        await page.waitForTimeout(90);
-      }
-    });
+    pan = await gesture("pan", () => runPan(panePoint));
+    zoom = await gesture("zoom", () => runZoom(panePoint));
   }
 
   // ---- 3. Click response ----------------------------------------------------
@@ -787,6 +796,41 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
     if (cycleOutcome === "timeout") timedOut.click_cycle = true;
   }
 
+  // ---- 3c. Pan/zoom with a full-closure selection -----------------------------
+  // OL-997: the same gestures while a selected card's whole upstream +
+  // downstream closure is lit — dim mask plus a state-colored flow on every
+  // lit route. Select a visible card, cycle it to the closure, then measure;
+  // the selection is cleared afterwards so later sections see the bare page.
+  let panSelected: Record<string, number | null> | string = "invalid";
+  let zoomSelected: Record<string, number | null> | string = "invalid";
+  if (cardsPresent) {
+    const cards = await page.evaluate(() => (window as unknown as { __dagVisibleCards: () => { x: number; y: number }[] }).__dagVisibleCards());
+    const card = cards[0];
+    const point = await page.evaluate(() => (window as unknown as { __dagPanePoint: () => { x: number; y: number } | null }).__dagPanePoint());
+    if (card && point) {
+      const cleared = await page.evaluate(() => (window as unknown as { __dagClearSelection: () => Promise<boolean> }).__dagClearSelection());
+      const first = cleared
+        ? await page.evaluate(
+            ({ x, y }) => (window as unknown as { __dagClick: (x: number, y: number) => Promise<{ outcome: string; elapsed: number }> }).__dagClick(x, y),
+            card,
+          )
+        : null;
+      if (first?.outcome === "selected") {
+        await page.locator("[data-dag-scope]").waitFor({ timeout: 3_000 }).catch(() => undefined);
+        await page.waitForTimeout(600);
+        const second = await page.evaluate(
+          ({ x, y }) => (window as unknown as { __dagClickCycle: (x: number, y: number) => Promise<{ outcome: string; elapsed: number | null }> }).__dagClickCycle(x, y),
+          card,
+        );
+        if (second.outcome === "cycled") {
+          panSelected = await gesture("pan_selected", () => runPan(point));
+          zoomSelected = await gesture("zoom_selected", () => runZoom(point));
+        }
+      }
+      await page.evaluate(() => (window as unknown as { __dagClearSelection: () => Promise<boolean> }).__dagClearSelection());
+    }
+  }
+
   // ---- 4. Enter a line -------------------------------------------------------
   // In-page: real double-click on the first visible overview line card, timed
   // to the frame after the line level renders its first task card (OL-183
@@ -814,6 +858,9 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
   }
 
   // ---- 5. Focus mode: typical (~25 closure members) and largest closure ----
+  // PERF_SKIP_FOCUS=1 skips this section (its overview->line->seed sweep can
+  // outlast a targeted run) when only the navigation/gesture numbers are of
+  // interest; the report then carries "skipped" for the focus fields.
   // Find seeds outside the browser measurement. Model construction, layout,
   // worker transfer and rendering after the button click remain timed.
   const focusIndex = createDagModelIndex(IssueGraphSchema.parse(graph));
@@ -827,8 +874,13 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
   });
   const typical = candidates.filter((candidate) => !candidate.hidden_line && !candidate.is_frame && candidate.id !== candidate.lineId).sort((a, b) => Math.abs(a.closure_count - 25) - Math.abs(b.closure_count - 25))[0];
   const largest = [...candidates].sort((a, b) => b.closure_count - a.closure_count)[0];
-  const focusResults: Record<string, unknown> = {};
-  for (const [label, target] of [["typical", typical], ["largest", largest]] as const) {
+  const focusResults: Record<string, unknown> =
+    process.env.PERF_SKIP_FOCUS === "1"
+      ? { typical: "skipped", largest: "skipped" }
+      : {};
+  for (const [label, target] of process.env.PERF_SKIP_FOCUS === "1"
+    ? []
+    : ([["typical", typical], ["largest", largest]] as const)) {
     if (!target || !cardsPresent) { focusResults[label] = "invalid"; continue; }
     if (await page.locator("[data-dag-back]").count()) await page.locator("[data-dag-back]").click();
     await expect(page.locator('[data-dag-level="overview"]')).toBeVisible();
@@ -968,6 +1020,8 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
         : null,
     pan,
     zoom,
+    pan_selected: panSelected,
+    zoom_selected: zoomSelected,
     click: clickOutcome,
     click_cycle: cycleOutcome,
     enter_line_ms: enterLineMs,

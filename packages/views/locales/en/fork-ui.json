@@ -1,4 +1,11 @@
 {
+  "agents": {
+    "thinking_adapt": {
+      "label": "Adapt",
+      "description": "When selected, a redacted run summary is sent to an external decision service. The default is OpenCode Zen's free channel.",
+      "upgrade_required": "This daemon is too old for Adapt. Upgrade the daemon to enable it."
+    }
+  },
   "issues": {
     "detail": {
       "more_actions": "Issue actions"
@@ -20,6 +27,24 @@
         "cli_install_windows_help": "Windows has no script installer. Ask your workspace administrator, or download the multica-cli-<version>-windows-<arch>.zip archive for the release you want from the internal release source ({{downloadsUrl}}/cli/v<version>/ — the current version is in {{latestManifestUrl}}) and extract multica.exe onto your PATH.",
         "cli_install_windows_label": "Manual install required on Windows"
       }
+    },
+    "github": {
+      "add_account": "Add account",
+      "connecting": "Connecting…",
+      "reuse_label": "From other workspaces you manage",
+      "install_on_another_account": "Install on another GitHub account",
+      "account_type_user": "Personal account",
+      "account_type_organization": "Organization",
+      "account_actions": "Actions for {{login}}",
+      "disconnect_account_confirm_title": "Disconnect {{login}}?",
+      "toast_account_connected": "{{login}} connected",
+      "toast_account_not_reusable": "{{login}} is no longer available to reuse. It may have just been disconnected elsewhere or uninstalled on GitHub.",
+      "toast_account_suspended": "The installation on {{login}} is suspended on GitHub. Unsuspend it there, then try again.",
+      "toast_account_connect_failed": "Could not connect {{login}}. Try again."
+    },
+    "repositories": {
+      "github_error_not_authorized": "This GitHub account is already connected to a workspace where you are not an owner or admin. Ask an owner or admin of that workspace to connect it here, or to make you an admin there first.",
+      "github_error_unknown_installation": "GitHub reports this installation as missing or suspended. Reinstall or unsuspend the App on GitHub, then try again."
     }
   },
   "skills": {
