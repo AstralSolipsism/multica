@@ -370,8 +370,11 @@ func githubAppSlug() string { return strings.TrimSpace(os.Getenv("GITHUB_APP_SLU
 func githubWebhookSecret() string { return strings.TrimSpace(os.Getenv("GITHUB_WEBHOOK_SECRET")) }
 
 // isGitHubConfigured returns true only when BOTH the install slug and the
-// webhook secret are set. The Connect button uses this single flag, so the
-// frontend never offers a flow that the backend would reject.
+// webhook secret are set. The Connect button uses this single flag. Note the
+// setup callback additionally requires App JWT credentials
+// (isGitHubRepositoryBrowseConfigured) to verify a first installation
+// before binding (OL-955 option 1); gating the button on that too is
+// tracked in OL-1069.
 func isGitHubConfigured() bool { return githubAppSlug() != "" && githubWebhookSecret() != "" }
 
 // isGitHubRepositoryBrowseConfigured is deliberately separate from the
@@ -480,7 +483,11 @@ func (h *Handler) GitHubConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug := githubAppSlug()
-	state, err := signStateForReturn(workspaceID, returnTo)
+	// Embed the authenticated operator in the signed state. The setup
+	// callback is a public route whose X-User-ID header is client-forgeable,
+	// so this signed value is the only operator identity it trusts (OL-955
+	// binding gate).
+	state, err := signGitHubSetupState(workspaceID, returnTo, requestUserID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to sign state")
 		return
@@ -515,7 +522,7 @@ func (h *Handler) GitHubSetupCallback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, settingsURL+"&github_error=missing_params", http.StatusFound)
 		return
 	}
-	workspaceID, returnTo, ok := verifyStateWithReturn(state)
+	workspaceID, returnTo, operator, ok := verifyGitHubSetupState(state)
 	if !ok {
 		http.Redirect(w, r, settingsURL+"&github_error=invalid_state", http.StatusFound)
 		return
@@ -535,29 +542,22 @@ func (h *Handler) GitHubSetupCallback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, settingsURL+"&github_error=bad_workspace", http.StatusFound)
 		return
 	}
-	// Resolve the installation against GitHub's API to capture display info.
-	// If the App auth is not configured we still create the row with the
-	// minimum we know; webhook events will refresh it as soon as one fires.
-	login, accountType, avatar := fetchInstallationAccount(r.Context(), installationID)
-
-	// Best-effort capture of the connecting user (may be nil if the public
-	// callback was hit without a session — e.g. user wasn't logged in to
-	// Multica when they finished the GitHub install). Either way we save
-	// the row so the workspace owner sees the connection on next reload.
-	connectedBy := pgtype.UUID{}
-	if userID := requestUserID(r); userID != "" {
-		if u, err := parseStrictUUID(userID); err == nil {
-			connectedBy = u
-		}
+	// OL-955 binding gate. The operator comes from the signed state, never
+	// from headers: this route is public, so an X-User-ID header would be
+	// trivially forgeable.
+	account, errCode := h.reviewGitHubSetupBinding(r.Context(), operator, installationID)
+	if errCode != "" {
+		http.Redirect(w, r, settingsURL+"&github_error="+errCode, http.StatusFound)
+		return
 	}
 
 	inst, err := h.Queries.CreateGitHubInstallation(r.Context(), db.CreateGitHubInstallationParams{
 		WorkspaceID:      wsUUID,
 		InstallationID:   installationID,
-		AccountLogin:     login,
-		AccountType:      accountType,
-		AccountAvatarUrl: ptrToText(avatar),
-		ConnectedByID:    connectedBy,
+		AccountLogin:     account.login,
+		AccountType:      coalesce(account.accountType, "User"),
+		AccountAvatarUrl: ptrToText(account.avatar),
+		ConnectedByID:    operator,
 	})
 	if err != nil {
 		slog.Error("github: failed to persist installation", "err", err, "installation_id", installationID)
