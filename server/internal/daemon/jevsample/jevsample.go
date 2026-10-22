@@ -136,6 +136,29 @@ type Outcome struct {
 	ToolCalls     int64
 }
 
+// StepOutcome contains only derived signals, never tool inputs, outputs or
+// error text. Nil fields encode unknown observations as JSON null; an empty
+// Tools slice and an empty ErrorSig mean observed absence, not missing data.
+type StepOutcome struct {
+	DecisionID        string   `json:"decision_id"`
+	Tools             []string `json:"tools"`
+	ActionKind        *string  `json:"action_kind"`
+	OutcomeOK         *bool    `json:"outcome_ok"`
+	ErrorSig          *string  `json:"error_sig"`
+	PrevActionKind    *string  `json:"prev_action_kind"`
+	PrevOutcomeOK     *bool    `json:"prev_outcome_ok"`
+	NextOutcomeOK     *bool    `json:"next_outcome_ok"`
+	RepeatedErrorNext *bool    `json:"repeated_error_next"`
+}
+
+type stepOutcomeRecord struct {
+	V     int    `json:"v"`
+	Type  string `json:"type"`
+	TS    string `json:"ts"`
+	Scope string `json:"scope"`
+	StepOutcome
+}
+
 // New returns a collector writing under dir, or nil when dir is empty
 // (collection fully disabled: no directory is created, nothing is opened).
 // maxBytes <= 0 means no size cap. Callers should pass LoadConfig's value,
@@ -237,6 +260,23 @@ func (c *Collector) Outcome(o Outcome) {
 		return
 	}
 	c.enqueue(pending{ts: c.now(), line: line})
+}
+
+// StepOutcome uses the same bounded queue, permissions, rotation and size cap
+// as decisions and run outcomes. A missing decision never produces an outcome.
+func (c *Collector) StepOutcome(o StepOutcome) {
+	if c == nil || o.DecisionID == "" {
+		return
+	}
+	ts := c.now()
+	line, err := json.Marshal(stepOutcomeRecord{
+		V: 1, Type: "outcome", TS: ts.UTC().Format(time.RFC3339), Scope: "step", StepOutcome: o,
+	})
+	if err != nil {
+		c.warn("encode step outcome", err)
+		return
+	}
+	c.enqueue(pending{ts: ts, line: line})
 }
 
 // Close drains the queue and stops the writer goroutine. Safe to call
