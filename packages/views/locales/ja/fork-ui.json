@@ -44,7 +44,9 @@
     },
     "repositories": {
       "github_error_not_authorized": "owner または admin 権限のないワークスペースにすでに接続されている GitHub アカウントです。そのワークスペースの owner または admin にここで接続してもらうか、先にそのワークスペースの admin にしてもらってください。",
-      "github_error_unknown_installation": "GitHub によると、このインストールは存在しないか一時停止されています。GitHub で App を再インストールまたは再開してから、もう一度お試しください。"
+      "github_error_unknown_installation": "GitHub によると、このインストールは存在しません。GitHub で App を再インストールしてから、もう一度お試しください。",
+      "github_error_installation_suspended": "このインストールは GitHub で一時停止されています。GitHub で再開してから、もう一度お試しください。GitHub がここに戻らず App の設定ページで止まる場合は、GitHub で App をアンインストールしてから再インストールしてください。",
+      "github_error_verification_unavailable": "現在 GitHub でこのインストールを確認できないため、接続は完了していません。しばらくしてからもう一度接続してください。GitHub がここに戻らず App の設定ページで止まる場合は、GitHub で App をアンインストールしてから再インストールしてください。"
     }
   },
   "skills": {

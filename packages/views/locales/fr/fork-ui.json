@@ -44,7 +44,9 @@
     },
     "repositories": {
       "github_error_not_authorized": "Ce compte GitHub est déjà connecté à un espace de travail dont vous n'êtes ni propriétaire ni administrateur. Demandez à un propriétaire ou administrateur de cet espace de travail de le connecter ici, ou de vous nommer administrateur de cet espace de travail.",
-      "github_error_unknown_installation": "GitHub indique que cette installation n'existe pas ou est suspendue. Réinstallez ou réactivez l'App sur GitHub, puis réessayez."
+      "github_error_unknown_installation": "GitHub indique que cette installation n'existe pas. Réinstallez l'App sur GitHub, puis réessayez.",
+      "github_error_installation_suspended": "Cette installation est suspendue sur GitHub. Réactivez-la sur GitHub, puis réessayez. Si GitHub reste sur la page des paramètres de l'App au lieu de revenir ici, désinstallez l'App sur GitHub, puis réinstallez-la.",
+      "github_error_verification_unavailable": "GitHub n'a pas pu vérifier cette installation pour le moment, elle n'a donc pas été connectée. Réessayez de la connecter plus tard. Si GitHub reste sur la page des paramètres de l'App au lieu de revenir ici, désinstallez l'App sur GitHub, puis réinstallez-la."
     }
   },
   "skills": {

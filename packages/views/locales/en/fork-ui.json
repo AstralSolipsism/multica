@@ -44,7 +44,9 @@
     },
     "repositories": {
       "github_error_not_authorized": "This GitHub account is already connected to a workspace where you are not an owner or admin. Ask an owner or admin of that workspace to connect it here, or to make you an admin there first.",
-      "github_error_unknown_installation": "GitHub reports this installation as missing or suspended. Reinstall or unsuspend the App on GitHub, then try again."
+      "github_error_unknown_installation": "GitHub reports this installation as missing. Reinstall the App on GitHub, then try again.",
+      "github_error_installation_suspended": "This installation is suspended on GitHub. Unsuspend it there, then try again. If GitHub stays on the App's settings page instead of returning here, uninstall the App on GitHub and install it again.",
+      "github_error_verification_unavailable": "GitHub could not verify this installation right now, so it was not connected. Try connecting again later. If GitHub stays on the App's settings page instead of returning here, uninstall the App on GitHub and install it again."
     }
   },
   "skills": {
