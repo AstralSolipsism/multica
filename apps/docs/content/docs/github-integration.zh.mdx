@@ -169,6 +169,10 @@ GITHUB_APP_PRIVATE_KEY=<完整 PEM 私钥，保留 BEGIN/END 行和换行>
 ```
 
 私钥在 GitHub App 的 **Private keys → Generate a private key** 中生成。不配置时集成会平稳降级：PR 照常镜像，任务照常自动关联并在合并时改状态，只是 PR 卡片不显示 CI 或合并状态。
+<Callout type="warning">
+这两个变量也是完成**首次** GitHub 连接的必要配置：安装回跳会以 App 身份向 GitHub API 校验上报的 `installation_id` 后才落库绑定，未配置时无法完成新安装（回跳会带可重试的错误返回）。已绑定到某工作区的安装仍可由该工作区的管理员续绑。
+</Callout>
+
 
 ### 3. 更新数据库并连接
 

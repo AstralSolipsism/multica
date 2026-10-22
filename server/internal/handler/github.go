@@ -370,8 +370,11 @@ func githubAppSlug() string { return strings.TrimSpace(os.Getenv("GITHUB_APP_SLU
 func githubWebhookSecret() string { return strings.TrimSpace(os.Getenv("GITHUB_WEBHOOK_SECRET")) }
 
 // isGitHubConfigured returns true only when BOTH the install slug and the
-// webhook secret are set. The Connect button uses this single flag, so the
-// frontend never offers a flow that the backend would reject.
+// webhook secret are set. The Connect button uses this single flag. Note the
+// setup callback additionally requires App JWT credentials
+// (isGitHubRepositoryBrowseConfigured) to verify a first installation
+// before binding (OL-955 option 1); gating the button on that too is
+// tracked in OL-1069.
 func isGitHubConfigured() bool { return githubAppSlug() != "" && githubWebhookSecret() != "" }
 
 // isGitHubRepositoryBrowseConfigured is deliberately separate from the

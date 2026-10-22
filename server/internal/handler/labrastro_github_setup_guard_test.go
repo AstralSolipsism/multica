@@ -543,3 +543,130 @@ func TestSetupCallback_ConnectStateCarriesOperator(t *testing.T) {
 		t.Fatalf("connect state operator = (%v, %v), want (%q, true)", operator, ok, testUserID)
 	}
 }
+
+// ── Round-2 review cases (OL-955) ───────────────────────────────────────────
+
+// An attacker who already manages an installation of their OWN must still be
+// refused for someone else's bound installation: the allowlist has to match
+// this installation_id, not "any installation the operator manages".
+func TestSetupCallback_ManagerOfAnotherInstallationIsRefused(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized (no DB?)")
+	}
+	ctx := context.Background()
+	victimInstallation := setupGuardFixture(t, ctx) + 60
+	ownInstallation := victimInstallation + 1
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id IN ($1, $2)`, victimInstallation, ownInstallation)
+	})
+	setAppJWTForTest(t, true)
+	stubGitHubInstallation(t, victimInstallation, http.StatusOK, `{}`)
+
+	victimWS := dbfx.Workspace(t, "Other-install victim", "setup-guard-other-victim", testutil.Cols{"issue_prefix": "SOV"})
+	dbfx.Insert(t, "github_installation", testutil.Cols{
+		"workspace_id": victimWS, "installation_id": victimInstallation,
+		"account_login": "victim-org", "account_type": "Organization",
+	})
+	attackerWS := dbfx.Workspace(t, "Other-install attacker", "setup-guard-other-attacker", testutil.Cols{"issue_prefix": "SOA"})
+	attacker := dbfx.User(t, "Other-install attacker", "setup-guard-other-attacker@multica.ai")
+	dbfx.Member(t, attackerWS, attacker, "owner")
+	// The attacker legitimately manages their own installation.
+	dbfx.Insert(t, "github_installation", testutil.Cols{
+		"workspace_id": attackerWS, "installation_id": ownInstallation,
+		"account_login": "attacker-own", "account_type": "User",
+	})
+
+	state, err := signGitHubSetupState(attackerWS, githubReturnToGitHub, attacker)
+	if err != nil {
+		t.Fatalf("signGitHubSetupState: %v", err)
+	}
+	loc := callSetupCallback(t, state, victimInstallation).Header().Get("Location")
+	if got := countWorkspaceBindings(t, attackerWS, victimInstallation); got != 0 || !strings.Contains(loc, "github_error=not_authorized") {
+		t.Fatalf("redirect=%q attacker bindings of victim installation=%d, want not_authorized and 0", loc, got)
+	}
+}
+
+// A callback that reaches the already-bound branch must keep the account
+// metadata: both a second-workspace bind and a re-run for the same
+// workspace (browser back / Redirect on update).
+func TestSetupCallback_ManagerRebindKeepsAccountMetadata(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized (no DB?)")
+	}
+	ctx := context.Background()
+	installationID := setupGuardFixture(t, ctx) + 70
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+	})
+	setAppJWTForTest(t, true)
+	stubGitHubInstallation(t, installationID, http.StatusOK, fmt.Sprintf(
+		`{"id":%d,"account":{"login":"manager-org","type":"Organization","avatar_url":"https://avatars.example/o.png"},"suspended_at":null}`,
+		installationID))
+
+	homeWS := dbfx.Workspace(t, "Metadata home", "setup-guard-meta-home", testutil.Cols{"issue_prefix": "SMH"})
+	secondWS := dbfx.Workspace(t, "Metadata second", "setup-guard-meta-second", testutil.Cols{"issue_prefix": "SMS"})
+	manager := dbfx.User(t, "Metadata manager", "setup-guard-meta-manager@multica.ai")
+	dbfx.Member(t, homeWS, manager, "owner")
+	dbfx.Member(t, secondWS, manager, "owner")
+	dbfx.Insert(t, "github_installation", testutil.Cols{
+		"workspace_id": homeWS, "installation_id": installationID,
+		"account_login": "manager-org", "account_type": "Organization",
+		"account_avatar_url": "https://avatars.example/o.png",
+	})
+
+	for _, ws := range []string{secondWS, homeWS} {
+		state, err := signGitHubSetupState(ws, githubReturnToGitHub, manager)
+		if err != nil {
+			t.Fatalf("signGitHubSetupState: %v", err)
+		}
+		loc := callSetupCallback(t, state, installationID).Header().Get("Location")
+		if !strings.Contains(loc, "github_connected=1") {
+			t.Fatalf("redirect = %q, want github_connected=1", loc)
+		}
+		var login, accountType string
+		var avatar *string
+		dbfx.QueryRow(t,
+			`SELECT account_login, account_type, account_avatar_url FROM github_installation WHERE workspace_id = $1 AND installation_id = $2`,
+			ws, installationID,
+		).Scan(&login, &accountType, &avatar)
+		if login != "manager-org" || accountType != "Organization" || avatar == nil {
+			t.Fatalf("workspace %s row = (%q, %q, %v), want (manager-org, Organization, avatar)", ws, login, accountType, avatar)
+		}
+	}
+}
+
+// A verified first install persists all three account columns GitHub
+// returned, not just the login.
+func TestSetupCallback_FirstInstallPersistsVerifiedAccount(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized (no DB?)")
+	}
+	ctx := context.Background()
+	installationID := setupGuardFixture(t, ctx) + 80
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+	})
+	setAppJWTForTest(t, true)
+	stubGitHubInstallation(t, installationID, http.StatusOK, fmt.Sprintf(
+		`{"id":%d,"account":{"login":"fresh-org","type":"Organization","avatar_url":"https://avatars.example/f.png"},"suspended_at":null}`,
+		installationID))
+
+	ws := dbfx.Workspace(t, "Verified metadata", "setup-guard-verified-meta", testutil.Cols{"issue_prefix": "SVM"})
+	state, err := signState(ws)
+	if err != nil {
+		t.Fatalf("signState: %v", err)
+	}
+	loc := callSetupCallback(t, state, installationID).Header().Get("Location")
+	if !strings.Contains(loc, "github_connected=1") {
+		t.Fatalf("redirect = %q, want github_connected=1", loc)
+	}
+	var login, accountType string
+	var avatar *string
+	dbfx.QueryRow(t,
+		`SELECT account_login, account_type, account_avatar_url FROM github_installation WHERE workspace_id = $1 AND installation_id = $2`,
+		ws, installationID,
+	).Scan(&login, &accountType, &avatar)
+	if login != "fresh-org" || accountType != "Organization" || avatar == nil || *avatar != "https://avatars.example/f.png" {
+		t.Fatalf("row = (%q, %q, %v), want (fresh-org, Organization, https://avatars.example/f.png)", login, accountType, avatar)
+	}
+}

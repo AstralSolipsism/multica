@@ -166,6 +166,10 @@ GITHUB_APP_PRIVATE_KEY=<complete PEM private key, including BEGIN/END lines and 
 ```
 
 秘密鍵は GitHub App の **Private keys → Generate a private key** から生成します。設定しない場合も連携は安全に縮退します。PR のミラー、タスクの自動紐づけ、マージ時のステータス変更は動作しますが、PR カードに CI やマージ状態は表示されません。
+<Callout type="warning">
+この 2 つの変数は**初回**の GitHub 接続を完了するためにも必要です。インストール後のコールバックは、報告された `installation_id` を App として GitHub API で検証してからバインドするため、未設定では新しいインストールを完了できません（コールバックは再試行可能なエラーと共に戻ります）。既にワークスペースにバインド済みのインストールは、そのワークスペースの管理者が引き続き再バインドできます。
+</Callout>
+
 
 ### 3. データベースを更新して接続する
 

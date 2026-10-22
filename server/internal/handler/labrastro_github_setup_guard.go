@@ -111,7 +111,7 @@ func verifyGitHubSetupState(token string) (workspaceID, returnTo string, operato
 // ── Binding gate ────────────────────────────────────────────────────────────
 
 // github_error redirect codes the frontend renders (not_authorized and
-// unknown_installation names are pinned for OL-929).
+// unknown_installation names are pinned for OL-1071, which owns the copy).
 const (
 	githubSetupErrNotAuthorized   = "not_authorized"
 	githubSetupErrUnknown         = "unknown_installation"
@@ -148,7 +148,22 @@ func (h *Handler) reviewGitHubSetupBinding(
 		}
 		for _, id := range allowed {
 			if id == installationID {
-				return account, ""
+				// Reuse the account metadata already stored on this
+				// installation's binding rows (kept fresh by the
+				// installation webhook) instead of overwriting it with
+				// empty values: the upsert below would clobber it.
+				newest := bound[0]
+				for _, row := range bound[1:] {
+					if row.UpdatedAt.Time.After(newest.UpdatedAt.Time) {
+						newest = row
+					}
+				}
+				avatar := strPtrOrNil(newest.AccountAvatarUrl.String)
+				return githubInstallationAccount{
+					login:       newest.AccountLogin,
+					accountType: newest.AccountType,
+					avatar:      avatar,
+				}, ""
 			}
 		}
 		slog.Warn("github: setup callback refused cross-workspace binding",
