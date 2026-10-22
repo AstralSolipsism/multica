@@ -422,3 +422,21 @@ func (d *Daemon) setStepEffortEnabled(taskID string, enabled bool) {
 func (d *Daemon) perTurnEffortCallback(taskID string) func(bool) {
 	return func(active bool) { d.setStepEffortEnabled(taskID, active) }
 }
+
+// tagThinkingMessage is the transcript's single tagging boundary: the
+// run-level tag always runs (it owns request-id dedup, which decides step
+// boundaries, and the fallback tag); step-level effort then replaces it on
+// this step's messages, or drops it once step tags have landed (contract
+// §7). Extracted from executeAndDrain so tests drive the same wiring the
+// drain loop uses.
+func (d *Daemon) tagThinkingMessage(ctx context.Context, taskID string, msg agent.Message) agent.Message {
+	thinking := thinkingRunFromContext(ctx)
+	if thinking == nil {
+		return msg
+	}
+	msg = thinking.tag(msg)
+	if stepRun, ok := d.stepEffort.get(taskID); ok {
+		msg = stepRun.tagStep(msg, thinking.lastTagFirstOfRequest())
+	}
+	return msg
+}

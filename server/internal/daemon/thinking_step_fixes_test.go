@@ -3,8 +3,10 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -303,4 +305,62 @@ type countingDecider struct {
 func (c *countingDecider) Decide(ctx context.Context, req jev.Request) (jev.Decision, error) {
 	c.calls++
 	return c.inner.Decide(ctx, req)
+}
+
+// TestTagThinkingMessageWiring drives the exact function executeAndDrain
+// calls for every message (#20's remaining half): the run-level tag always
+// applies, the step effect replaces it on the step's first message, and
+// after revocation no tag lands at all. Steps are separated by tool_results
+// — the shape that froze request-id dedup in round 2.
+func TestTagThinkingMessageWiring(t *testing.T) {
+	t.Parallel()
+	d := &Daemon{logger: slog.Default()}
+	run := &stepEffortRun{TaskID: "task-wiring", EnabledPath: filepath.Join(t.TempDir(), "enabled")}
+	d.stepEffort.add(run)
+	thinking := &thinkingRun{Record: &ThinkingDecisionRecord{Mode: "adapt", Decision: jev.Decision{Level: "medium"}}}
+	ctx := context.WithValue(context.Background(), thinkingRunKey{}, thinking)
+	tag := func(msg agent.Message) agent.Message {
+		return d.tagThinkingMessage(ctx, "task-wiring", msg)
+	}
+
+	// Step 1: run-level tag on the first message; the tool_result between
+	// steps must not open a new one.
+	if msg := tag(agent.Message{Type: agent.MessageText, Content: "one", ModelRequestID: "m1"}); msg.Metadata == nil {
+		t.Fatal("step 1 first message lost its tag")
+	}
+	if msg := tag(agent.Message{Type: agent.MessageToolResult, CallID: "t1"}); msg.Metadata != nil && msg.Metadata["thinking"] != nil {
+		t.Fatalf("tool result carries a tag: %+v", msg.Metadata)
+	}
+
+	// Step 2: the effect record replaces the run-level tag on the step's
+	// first message (kill for the "skip tag()" mutation).
+	run.observeEffect(agent.EffortEffect{Step: 2, Level: "high"})
+	if msg := tag(agent.Message{Type: agent.MessageText, Content: "two", ModelRequestID: "m2"}); msg.Metadata == nil {
+		t.Fatal("step 2 first message carries no tag — tag() was skipped?")
+	} else if meta := msg.Metadata["thinking"].(map[string]any); meta["step"] != 2 || meta["level"] != "high" {
+		t.Fatalf("step 2 tag: %+v", meta)
+	}
+	if msg := tag(agent.Message{Type: agent.MessageToolResult, CallID: "t2"}); msg.Metadata != nil && msg.Metadata["thinking"] != nil {
+		t.Fatalf("step 2 tool result carries a tag: %+v", msg.Metadata)
+	}
+
+	// Step 3 falls back (fallback record still tags — kill for the "remove
+	// tagStep" mutation).
+	run.observeEffect(agent.EffortEffect{Step: 3, Level: "high", Fallback: "timeout"})
+	if msg := tag(agent.Message{Type: agent.MessageText, Content: "three", ModelRequestID: "m3"}); msg.Metadata == nil {
+		t.Fatal("step 3 carries no tag — tagStep was removed?")
+	} else if meta := msg.Metadata["thinking"].(map[string]any); meta["fallback"] != "timeout" {
+		t.Fatalf("step 3 tag: %+v", meta)
+	}
+	tag(agent.Message{Type: agent.MessageToolResult, CallID: "t3"})
+
+	// Revoked: no further effect records; no message carries any tag.
+	for _, msg := range []agent.Message{
+		{Type: agent.MessageText, Content: "four", ModelRequestID: "m4"},
+		{Type: agent.MessageThinking, Content: "hmm", ModelRequestID: "m4"},
+	} {
+		if tagged := tag(msg); tagged.Metadata != nil && tagged.Metadata["thinking"] != nil {
+			t.Fatalf("post-revocation message carries a tag: %+v", tagged.Metadata)
+		}
+	}
 }

@@ -102,7 +102,7 @@ func WriteEmbeddedMod(modFS embed.FS, modRoot, dir string) error {
 			return err
 		}
 		if err := os.WriteFile(target, data, 0o644); err != nil {
-			return fmt.Errorf("write labrastro-ysk %s: %w", path.Base(name), err)
+			return fmt.Errorf("write %s %s: %w", modRoot, path.Base(name), err)
 		}
 		return nil
 	})

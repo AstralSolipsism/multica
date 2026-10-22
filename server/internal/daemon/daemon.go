@@ -9743,17 +9743,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				// can't be misattributed to backend silence.
 				observedAt := time.Now().UTC()
 				lastActivityAt.Store(int64(awakeclock.Now()))
-				if thinking := thinkingRunFromContext(ctx); thinking != nil {
-					// The run-level tag always runs: it owns request-id
-					// dedup (which decides step boundaries) and the
-					// fallback tag. Step-level effort then replaces it on
-					// this step's messages, or drops it once step tags
-					// have landed (contract §7).
-					msg = thinking.tag(msg)
-					if stepRun, ok := d.stepEffort.get(taskID); ok {
-						msg = stepRun.tagStep(msg, thinking.lastTagFirstOfRequest())
-					}
-				}
+				msg = d.tagThinkingMessage(ctx, taskID, msg)
 				switch msg.Type {
 				case agent.MessageStatus:
 					// Persist the session/work_dir as soon as the backend
