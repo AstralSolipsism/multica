@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   FolderGit2,
@@ -229,6 +229,17 @@ export function RepositoriesSection() {
       ) ?? [],
     [githubRepositoriesQuery.data?.pages],
   );
+  // The plain item morphs into the submenu trigger when a wait finds reusable
+  // accounts; the focused element unmounts with it. Only a focus that actually
+  // got lost is restored — Base UI's own focus moves are left alone.
+  const accountMenuTriggerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!gitHubAccountMenuOpen) return;
+    const active = document.activeElement;
+    if (active === null || active === document.body) {
+      accountMenuTriggerRef.current?.focus();
+    }
+  }, [gitHubAccountMenuOpen]);
   const existingRepositoryIdentities = useMemo(
     () =>
       new Set(
@@ -273,7 +284,14 @@ export function RepositoriesSection() {
     }
 
     if (githubError) {
-      toast.error(githubCallbackErrorMessage(githubError, t, tForkUi));
+      const message = githubCallbackErrorMessage(githubError, t, tForkUi);
+      // These two spell out a recovery path the user gets to see only once;
+      // sonner's default duration would dismiss them mid-read.
+      if (githubError === "installation_suspended" || githubError === "verification_unavailable") {
+        toast.error(message, { duration: Infinity, closeButton: true });
+      } else {
+        toast.error(message);
+      }
     } else if (githubInstallations.length > 0 && githubBrowseConfigured) {
       setSelectedInstallationID(githubInstallations[0]!.id);
       setGitHubPickerOpen(true);
@@ -362,9 +380,25 @@ export function RepositoriesSection() {
   // decision needs the menu to stay open only while it checks or turns into
   // the account choice.
   const connectGitHub = async () => {
+    if (gitHubConnectBusy) return;
     const path = await chooseGitHubConnectPath();
     if (path === "github") setAddMenuOpen(false);
   };
+
+  // The submenu's own open requests (hover, press, arrow key) are refused,
+  // like the Code tab's connect button: opening must wait for a refresh in
+  // flight and follow its result instead of listing what the cache has.
+  function handleAccountMenuOpenChange(
+    open: boolean,
+    details: { cancel: () => void; reason: string },
+  ) {
+    if (!open) {
+      setGitHubAccountMenuOpen(false);
+      return;
+    }
+    details.cancel();
+    void connectGitHub();
+  }
 
   const closeGitHubPicker = () => {
     setGitHubPickerOpen(false);
@@ -426,8 +460,10 @@ export function RepositoriesSection() {
               if (!open) setGitHubAccountMenuOpen(false);
             }}
           >
-            <DropdownMenuTrigger render={<Button size="sm" />}>
-              <Plus />
+            <DropdownMenuTrigger
+              render={<Button size="sm" aria-busy={gitHubConnectBusy || undefined} />}
+            >
+              {gitHubConnectBusy ? <LoaderCircle className="animate-spin" /> : <Plus />}
               {t(($) => $.repositories.add)}
               <ChevronDown />
             </DropdownMenuTrigger>
@@ -453,10 +489,18 @@ export function RepositoriesSection() {
                 // submenu mounted, mirroring the Code tab's connect button.
                 <DropdownMenuSub
                   open={gitHubAccountMenuOpen}
-                  onOpenChange={setGitHubAccountMenuOpen}
+                  onOpenChange={handleAccountMenuOpenChange}
                 >
-                  <DropdownMenuSubTrigger disabled={githubItemDisabled}>
-                    <GitHubMark className="size-4" />
+                  <DropdownMenuSubTrigger
+                    ref={accountMenuTriggerRef}
+                    disabled={githubItemDisabled}
+                    aria-busy={gitHubConnectBusy || undefined}
+                  >
+                    {gitHubConnectBusy ? (
+                      <LoaderCircle className="animate-spin" />
+                    ) : (
+                      <GitHubMark className="size-4" />
+                    )}
                     {t(($) => $.repositories.connect_github)}
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent className="w-auto min-w-56 max-w-80">

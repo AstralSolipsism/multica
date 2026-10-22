@@ -22,7 +22,7 @@ import type {
 import { useT } from "../../i18n";
 
 /** Installations the caller manages elsewhere that this workspace lacks. */
-export function reusableInstallations(
+function reusableInstallations(
   available: readonly GitHubAppInstallation[],
   connected: readonly GitHubInstallation[],
 ): GitHubAppInstallation[] {
@@ -122,7 +122,8 @@ export function useGitHubReuseConnect({
     }
   }
 
-  // Every activation, from either entry, decides here. A read in flight is
+  // Every activation, from either entry, decides here — both entries refuse
+  // their own menu-open requests and defer to this. A read in flight is
   // awaited, even with an older list on screen, and its result picks between
   // the menu and GitHub. A failed read counts as nothing to reuse, so
   // connecting is never blocked.

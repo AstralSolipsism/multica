@@ -45,7 +45,9 @@ const githubQueryStateRef = vi.hoisted(() => ({
 const appInstallationsRef = vi.hoisted(() => ({
   current: {
     status: "success" as "pending" | "error" | "success",
-    data: { configured: true, installations: [] } as ListGitHubAppInstallationsResponse,
+    data: { configured: true, installations: [] } as
+      | ListGitHubAppInstallationsResponse
+      | undefined,
     isFetching: false,
   },
 }));
@@ -154,6 +156,14 @@ function offerForReuse(...installations: GitHubAppInstallation[]) {
     data: { configured: true, installations },
     isFetching: false,
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 beforeEach(() => {
@@ -421,6 +431,124 @@ describe("RepositoriesSection", () => {
     open.mockRestore();
   });
 
+  it("waits for a refresh in flight instead of offering the cached account", async () => {
+    offerForReuse(outlune);
+    appInstallationsRef.current = { ...appInstallationsRef.current, isFetching: true };
+    const refresh = deferred<ListGitHubAppInstallationsResponse>();
+    mockFetchQuery.mockReturnValue(refresh.promise);
+    const user = userEvent.setup();
+    render(<RepositoriesSection />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    await openGitHubSubmenu(user);
+
+    // The open request was refused; the trigger shows the wait, and the
+    // cached account stays hidden until the refresh decides.
+    expect(screen.queryByRole("menuitem", { name: /outlune/ })).toBeNull();
+    const trigger = screen.getByRole("menuitem", { name: /Connect GitHub/ });
+    expect(trigger).toHaveAttribute("aria-busy", "true");
+    expect(trigger).toHaveAttribute("aria-disabled", "true");
+    expect(mockFetchQuery).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: APP_INSTALLATIONS_KEY }),
+    );
+    expect(mockGetGitHubConnectURL).not.toHaveBeenCalled();
+
+    const loaded = { configured: true, installations: [outlune] };
+    appInstallationsRef.current = { status: "success", data: loaded, isFetching: false };
+    await act(async () => refresh.resolve(loaded));
+
+    expect(await screen.findByRole("menuitem", { name: /outlune/ })).toBeInTheDocument();
+    expect(mockGetGitHubConnectURL).not.toHaveBeenCalled();
+  });
+
+  it("goes to GitHub when the refresh the submenu waited on comes back empty", async () => {
+    offerForReuse(outlune);
+    appInstallationsRef.current = { ...appInstallationsRef.current, isFetching: true };
+    const refresh = deferred<ListGitHubAppInstallationsResponse>();
+    mockFetchQuery.mockReturnValue(refresh.promise);
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const user = userEvent.setup();
+    render(<RepositoriesSection />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    await openGitHubSubmenu(user);
+    expect(screen.queryByRole("menuitem", { name: /outlune/ })).toBeNull();
+
+    appInstallationsRef.current = {
+      status: "success",
+      data: { configured: true, installations: [] },
+      isFetching: false,
+    };
+    await act(async () => refresh.resolve({ configured: true, installations: [] }));
+
+    await waitFor(() => {
+      expect(mockGetGitHubConnectURL).toHaveBeenCalledWith("workspace-1", "repositories");
+    });
+    expect(open).toHaveBeenCalledWith(INSTALL_URL, "_blank", "noopener");
+    expect(screen.queryByRole("menuitem", { name: /outlune/ })).toBeNull();
+    open.mockRestore();
+  });
+
+  it("keeps the menu open and busy while a pending list decides, then offers the accounts", async () => {
+    appInstallationsRef.current = { status: "pending", data: undefined, isFetching: true };
+    const refresh = deferred<ListGitHubAppInstallationsResponse>();
+    mockFetchQuery.mockReturnValue(refresh.promise);
+    const user = userEvent.setup();
+    render(<RepositoriesSection />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    const item = await screen.findByRole("menuitem", { name: /Connect GitHub/ });
+    await user.click(item);
+
+    expect(item).toHaveAttribute("aria-busy", "true");
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    // The menu stays open for the wait and its morph into the account choice.
+    expect(screen.getByRole("menuitem", { name: "Enter a URL..." })).toBeInTheDocument();
+    expect(mockGetGitHubConnectURL).not.toHaveBeenCalled();
+
+    const loaded = { configured: true, installations: [outlune] };
+    appInstallationsRef.current = { status: "success", data: loaded, isFetching: false };
+    await act(async () => refresh.resolve(loaded));
+
+    expect(await screen.findByRole("menuitem", { name: /outlune/ })).toBeInTheDocument();
+    // The plain item was replaced by the submenu trigger; focus moved with it.
+    expect(screen.getByRole("menuitem", { name: /Connect GitHub/ })).toHaveFocus();
+    expect(mockGetGitHubConnectURL).not.toHaveBeenCalled();
+  });
+
+  it("selects the newly bound account even when another installation sorts first", async () => {
+    offerForReuse(outlune);
+    mockConnectInstallation.mockResolvedValue({
+      id: "inst-9",
+      installation_id: 202,
+      account_login: "outlune",
+      account_type: "Organization",
+    });
+    // The invalidated installations query would report the new binding, but
+    // not necessarily as the first row.
+    mockInvalidateQueries.mockImplementation(async () => {
+      githubRef.current = {
+        ...githubRef.current,
+        installations: [
+          { id: "inst-1", account_login: "first-account" },
+          { id: "inst-9", account_login: "outlune" },
+        ],
+      };
+    });
+    const user = userEvent.setup();
+    render(<RepositoriesSection />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    await openGitHubSubmenu(user);
+    await activateMenuItem(user, /outlune/);
+
+    await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith("outlune connected"));
+    const dialog = await screen.findByRole("dialog", { name: "Choose GitHub repositories" });
+    expect(within(dialog).getByRole("combobox", { name: "GitHub account" })).toHaveTextContent(
+      "outlune",
+    );
+  });
+
   it.each([
     [
       "404",
@@ -527,23 +655,37 @@ describe("RepositoriesSection", () => {
   });
 
   // Retrying cannot fix a refused binding or a missing installation, so these
-  // codes get their own advice; any other code keeps the generic retry.
+  // codes get their own advice; any other code keeps the generic retry. The
+  // two that spell out a recovery path stay until dismissed — they are the
+  // only place the user reads it.
   it.each([
-    ["not_authorized", enForkUi.settings.repositories.github_error_not_authorized],
-    ["unknown_installation", enForkUi.settings.repositories.github_error_unknown_installation],
-    ["installation_suspended", enForkUi.settings.repositories.github_error_installation_suspended],
+    ["not_authorized", enForkUi.settings.repositories.github_error_not_authorized, undefined],
+    [
+      "unknown_installation",
+      enForkUi.settings.repositories.github_error_unknown_installation,
+      undefined,
+    ],
+    [
+      "installation_suspended",
+      enForkUi.settings.repositories.github_error_installation_suspended,
+      { duration: Infinity, closeButton: true },
+    ],
     [
       "verification_unavailable",
       enForkUi.settings.repositories.github_error_verification_unavailable,
+      { duration: Infinity, closeButton: true },
     ],
-    ["persist_failed", "Could not connect GitHub. Try again."],
-  ])("explains the %s install callback error", async (code, message) => {
+    ["persist_failed", "Could not connect GitHub. Try again.", undefined],
+  ])("explains the %s install callback error", async (code, message, toastOptions) => {
     searchParamsRef.current = new URLSearchParams(`tab=github&github_error=${code}`);
 
     render(<RepositoriesSection />, { wrapper: Wrapper });
 
-    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith(message));
+    await waitFor(() => expect(mockToastError).toHaveBeenCalled());
     expect(mockToastError).toHaveBeenCalledTimes(1);
+    const [actualMessage, actualOptions] = mockToastError.mock.calls[0] as [string, unknown];
+    expect(actualMessage).toBe(message);
+    expect(actualOptions).toEqual(toastOptions);
     expect(mockNavReplace).toHaveBeenCalledWith("/acme/settings?tab=github");
     expect(screen.queryByRole("heading", { name: "Choose GitHub repositories" })).toBeNull();
   });
