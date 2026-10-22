@@ -339,19 +339,24 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
   - 从第 2 步起，标记存在时向 daemon 要决策。总时限约 2s，由 mod 自己设置，因为 `$.http.fetch` 默认是 30s。
   - 拿到决策：`yield* next({ ...e, effort: level })`，并把 `last` 更新为 `level`。
   - 没拿到新决策（端点返回回退、请求超时或出错、未启用、标记不存在）：`yield* next({ ...e, effort: last })`，显式沿用上一步的挡位。不能直接 `next(e)`，那样会退回启动挡位（§0.9）。
-    - 从未换过挡时，`last` 就是启动挡位，效果与 `next(e)` 相同。
+    - 从未换过挡时，`last` 就是启动挡位，效果与 `next(e)` 相同；运行级回退、还没拿到过决策时 `last` 为空，这一步原样 `next(e)`（没有挡位可沿用）。
     - 撤销之后不再请求决策，一直传 `last`，锁定在最后生效的挡位，免得顶层挡位再变而重写缓存。
+  - 运行级回退（非 `no_candidates`）仍安装 mod：`last` 从空开始，第一个拿到的决策设挡。
   - 子智能体的步原样 `next(e)`，不改写。
+  - 端点按运行只接受递增的步序号：重复或倒退的请求直接回退，不调外部引擎。
+- **运行目标**：步级 state 的 `goal` 是运行的标题与描述拼成的纯文本（§4），不是运行级 state 的 JSON。
 - **mod**：名为 `labrastro-effort`，与 `labrastro-ysk` 一起通过 `CLAUDE_CODE_PLUGIN_DIRS` 加载，安装方式照 `prepareYouShouldKnow`（`server/internal/daemon/labrastro_ysk.go`）。
 - **mod → daemon**：`POST http://127.0.0.1:{MULTICA_DAEMON_PORT}/tasks/{task_id}/thinking-decision`，带 `Authorization: Bearer $MULTICA_TOKEN`。实测往返约 1–3 ms，不受 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 影响，不需要改走 Unix socket（§0.9）。
   - daemon 的健康服务（`serveHealth`）校验 token 和活跃运行，做法照 `/repo/checkout`。
-  - 请求体由 OL-1010 定义，内容是构造 state 所需的上一步原料：工具调用与结果按 `tool_use_id` 去重，助手文字可能单独占一条消息（§0.9）。为了补记结果信号（§10.3），还必须带：
+  - 请求体由 OL-1010 定义，内容是构造 state 所需的上一步原料：`{step, assistant_text, assistant_omitted, tools: [{name, is_error, is_file_content, input_summary, input_summary_omitted, result_text, result_omitted}], error_text, error_omitted}`。mod 每步调用 `next()` 前记下 `$.session.messages()` 的条目数，下一步只取其后新增的条目（即上一步的输出）：宿主把一次请求的输出拆成 text 与逐个 tool_use 的多条条目、并把结果条目穿插其间（§0.9），mod 在这个窗口里从末尾回收到原始用户消息为止，合并 `text` 与 `toolUses`（工具结果已由宿主按 `tool_use_id` 并入，`text`、`isError` 字段）。`is_file_content` 标记结果为文件正文的工具（Read、NotebookRead）：调用成功时 mod 不上传 `result_text`（daemon 在 state 里写 `[file content omitted]`）；调用失败时结果是一句报错而非正文，照常进 `result_text`/`error_text`，否则 Read 反复失败时报错特征与重复次数就丢了。为了补记结果信号（§10.3），还必须带：
     - 步序号，从 1 开始；
     - 上一步主线程的工具列表 `[{name, is_error}]`；
-    - 上一步的报错文本，按 §4 截断。
-  - 报错特征的归一化和同类报错的重复次数由 daemon 用 Go 计算，daemon 按运行保存最近的报错特征；mod 只上传原料。这个函数导出给 OL-1019 复用。
-  - daemon 按 §4 构造 state，调用 Jev，并计入健康快照。
-  - 返回 `{level, confidence, probabilities, latency_ms, source}`、回退原因，或"未启用"。"未启用"不经过 Jev 客户端，不计入健康快照。
+    - 上一步的报错文本，按 §4 截断。Bash 失败结果首行固定是 `Exit code N`：daemon 把它解析进 `exit_code`，报错特征取其后的真正报错行；Go 编译/测试输出的 `# 包路径` 与 `FAIL\t包路径 [build failed]` 包头行同样跳过，取真正的报错行。state 描述的那个工具取上一步最后一个报错的工具（没有报错则取最后一个工具），`is_error` 与 `exit_code` 与报错特征一致。
+  - 报错特征的归一化和同类报错的重复次数由 daemon 用 Go 计算（`NormalizedErrorFeature` / `ErrorFeatureTracker`，`server/internal/daemon/thinking_step_errors.go`），daemon 按运行保存最近的报错特征；mod 只上传原料。归一化前先过 `redact.Text`：先改写 `://` 等字符会破坏脱敏的识别。这个函数导出给 OL-1019 复用。
+  - mod 侧不做任何截断：字段整段上传或整段省略（whole-or-omitted）。每字段上限 64 KiB（UTF-8 字节）、整个请求上限 768 KiB（序列化后的字节数，给 daemon 的 1 MiB 解码上限留余量）。超限字段整段不传、只带 `*_omitted` 标记（如 `result_omitted`），绝不传半段；整请求超限时从最早的工具起丢大文本字段（`result_text`、`input_summary`），`name` 与 `is_error` 永不丢，最后一个报错工具（无报错则最后一个工具）尽量保留。daemon 对省略字段在 state 里写省略标记，`error_text` 省略时报错特征记 `[omitted]`、重复次数不累加也不清零。
+  - 脱敏全部在 daemon 侧、且先于截断/归一化（§4）：`BuildStepThinkingState` 与 `NormalizedErrorFeature` 都先过 `redact.Text` 再处理；mod 传来的原料保持原文（含多行 PEM 私钥整段），由 daemon 脱敏后按 §4 截首尾。
+  - daemon 按 §4 构造 state（`BuildStepThinkingState`），复用 `decideThinking` 调用 Jev（trace 的 `scope` 为 `step`，`step` 为步序号），并计入健康快照。
+  - 返回 `{level, confidence, probabilities, latency_ms, source}`、`{fallback}`，或 `{enabled: false}`（"未启用"）。"未启用"不经过 Jev 客户端，不计入健康快照。鉴权沿用 `/repo/checkout` 的任务级 Bearer token；路径里的 `task_id` 与 token 绑定的任务不一致时拒绝。
 - **生效记录**：mod 每次请求过决策，无论拿到决策还是回退，都在调用 `next()` 之前用 `$.ui.log` 写一行生效记录，内容是步序号，以及决策各项或回退原因。mod 自己超时或请求出错时，回退原因为 `timeout` 或 `error`。第 1 步、子智能体的步、撤销之后的步都不写。
   - daemon 照 `consumeYouShouldKnowLog`（`server/pkg/agent/labrastro_ysk.go`）的做法，按 ui_log 的 `plugin` 字段认出 `labrastro-effort` 的行，从流里摘走，不成为运行消息。
   - 生效记录早于这一步的第一条 assistant 事件，但中间可能夹着其他 mod 的日志（§0.9）。daemon 把它用在之后第一个新的主线程消息 ID 上，即这一步，按 §7 打标。

@@ -1,0 +1,6 @@
+{
+  "name": "labrastro-effort",
+  "version": "1.0.0",
+  "description": "Per-step adaptive effort for Labrastro Claude tasks: the daemon decides, this mod applies",
+  "author": { "name": "Labrastro" }
+}
