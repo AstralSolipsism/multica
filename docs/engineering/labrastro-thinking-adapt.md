@@ -265,7 +265,7 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 字段按下列顺序拼接，短的在前，长文本在后：
 
 - **运行级**：运行类型（任务触发、Chat 消息或自动化）、provider、model、标题、触发评论前 1000 字、描述前 1500 字。
-- **步级**：先是短字段：步序号、上一步主线程的工具名称与是否出错、退出码、报错特征、最近若干步里同类报错的重复次数；再是长文本：上一步工具调用的输入摘要、工具结果首尾各 400 字、上一步助手文本前 500 字、运行目标（同上的标题与描述）前 500 字。
+- **步级**：先是短字段：步序号、上一步主线程的工具名称与是否出错、退出码、报错特征、最近 6 个主线程步内与本步报错特征相同的步数（含本步；无报错时为 0；`[omitted]` 不进窗口并沿用上次计数）；再是长文本：上一步工具调用的输入摘要、工具结果首尾各 400 字、上一步助手文本前 500 字、运行目标（同上的标题与描述）前 500 字。
 - **处理**：所有发往决策引擎的 state 都由 daemon 构造，先过 `server/pkg/redact.Text` 脱敏，总长截到 4KB（按 UTF-8 字节计）。不得包含智能体指令、skill 内容、环境变量和文件全文。
 - **为什么这样排**：超长时截掉的总是末尾，daemon 截到 4KB 是这样，自部署来源按 token 上限截断也是这样（§10.0）。中文描述的前 1500 字就超过 4KB，排在它后面的字段会整段丢掉；D4 要靠触发评论、报错特征和重复次数判断是否升到 max、ultra，所以这些放在长文本前面。
 
@@ -352,8 +352,8 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
     - 步序号，从 1 开始；
     - 上一步主线程的工具列表 `[{name, is_error}]`；
     - 上一步的报错文本，按 §4 截断。Bash 失败结果首行固定是 `Exit code N`：daemon 把它解析进 `exit_code`，报错特征取其后的真正报错行；Go 编译/测试输出的 `# 包路径` 与 `FAIL\t包路径 [build failed]` 包头行同样跳过，取真正的报错行。state 描述的那个工具取上一步最后一个报错的工具（没有报错则取最后一个工具），`is_error` 与 `exit_code` 与报错特征一致。
-  - 报错特征的归一化和同类报错的重复次数由 daemon 用 Go 计算（`NormalizedErrorFeature` / `ErrorFeatureTracker`，`server/internal/daemon/thinking_step_errors.go`），daemon 按运行保存最近的报错特征；mod 只上传原料。归一化前先过 `redact.Text`：先改写 `://` 等字符会破坏脱敏的识别。这个函数导出给 OL-1019 复用。
-  - mod 侧不做任何截断：字段整段上传或整段省略（whole-or-omitted）。每字段上限 64 KiB（UTF-8 字节）、整个请求上限 768 KiB（序列化后的字节数，给 daemon 的 1 MiB 解码上限留余量）。超限字段整段不传、只带 `*_omitted` 标记（如 `result_omitted`），绝不传半段；整请求超限时从最早的工具起丢大文本字段（`result_text`、`input_summary`），`name` 与 `is_error` 永不丢，最后一个报错工具（无报错则最后一个工具）尽量保留。daemon 对省略字段在 state 里写省略标记，`error_text` 省略时报错特征记 `[omitted]`、重复次数不累加也不清零。
+  - 报错特征的归一化和同类报错的重复次数由 daemon 用 Go 计算（`NormalizedErrorFeature` / `ErrorFeatureTracker`，`server/internal/daemon/thinking_step_errors.go`），重复次数是最近 6 个主线程步内与本步报错特征相同的步数（含本步）。daemon 按运行保存这个窗口；无报错的步占窗口位置，但不清空历史，本步计数为 0。一次"修改 + 验证"占 2 步，6 步覆盖三轮尝试。mod 只上传原料。归一化前先过 `redact.Text`：先改写 `://` 等字符会破坏脱敏的识别。这个函数导出给 OL-1019 复用。
+  - mod 侧不做任何截断：字段整段上传或整段省略（whole-or-omitted）。每字段上限 64 KiB（UTF-8 字节）、整个请求上限 768 KiB（序列化后的字节数，给 daemon 的 1 MiB 解码上限留余量）。超限字段整段不传、只带 `*_omitted` 标记（如 `result_omitted`），绝不传半段；整请求超限时从最早的工具起丢大文本字段（`result_text`、`input_summary`），`name` 与 `is_error` 永不丢，最后一个报错工具（无报错则最后一个工具）尽量保留。daemon 对省略字段在 state 里写省略标记，`error_text` 省略时报错特征记 `[omitted]`、重复次数不累加也不清零，该步不进窗口。
   - 脱敏全部在 daemon 侧、且先于截断/归一化（§4）：`BuildStepThinkingState` 与 `NormalizedErrorFeature` 都先过 `redact.Text` 再处理；mod 传来的原料保持原文（含多行 PEM 私钥整段），由 daemon 脱敏后按 §4 截首尾。
   - daemon 按 §4 构造 state（`BuildStepThinkingState`），复用 `decideThinking` 调用 Jev（trace 的 `scope` 为 `step`，`step` 为步序号），并计入健康快照。
   - 返回 `{level, confidence, probabilities, latency_ms, source}`、`{fallback}`，或 `{enabled: false}`（"未启用"）。"未启用"不经过 Jev 客户端，不计入健康快照。鉴权沿用 `/repo/checkout` 的任务级 Bearer token；路径里的 `task_id` 与 token 绑定的任务不一致时拒绝。
