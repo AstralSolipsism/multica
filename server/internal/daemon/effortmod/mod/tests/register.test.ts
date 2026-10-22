@@ -443,12 +443,20 @@ describe('labrastro-effort helpers', () => {
     expect(clipped).toContain('HEAD')
     expect(clipped).toContain('TAIL')
     expect(byteLength(clipped)).toBeLessThanOrEqual(FIELD_LIMIT_BYTES + 64)
-    // The marked count is real UTF-8 bytes: total minus head and tail slices.
+    // The marked count is exact: total bytes minus the kept head and tail
+    // slices, measured independently from the clipped output itself.
     const m = /\[\.\.\. (\d+) bytes elided \.\.\.\]/.exec(clipped)
     const elided = Number(m?.[1] ?? -1)
-    // 120000 content bytes minus the kept head/tail (~63 KiB + ~1 KiB) ≈ 55 KiB.
-    expect(elided).toBeGreaterThan(50000)
-    expect(elided).toBeLessThan(120000)
+    const [headPart, tailPart] = clipped.split(/\n\[\.\.\. \d+ bytes elided \.\.\.\]\n/)
+    // headPart/tailPart are exactly the kept slices; the count is their
+    // combined bytes missing from the original.
+    expect(elided).toBe(byteLength(`HEAD\n${cjk}\nTAIL`) - byteLength(headPart) - byteLength(tailPart))
+    // The kept slices fit the limit split: head = limit-1024, tail = 1024,
+    // each within one code point of rune-boundary rounding.
+    expect(byteLength(headPart)).toBeGreaterThan(FIELD_LIMIT_BYTES - 1024 - 4)
+    expect(byteLength(headPart)).toBeLessThanOrEqual(FIELD_LIMIT_BYTES - 1024)
+    expect(byteLength(tailPart)).toBeGreaterThan(1024 - 4)
+    expect(byteLength(tailPart)).toBeLessThanOrEqual(1024)
     // Cut lands on code-point boundaries: no lone surrogates and no
     // mid-emoji corruption — every remaining char is a full emoji or marker.
     const emoji = '\u{1F600}'.repeat(30000) // 4 bytes each = 120000 bytes

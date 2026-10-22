@@ -201,7 +201,7 @@ func TestThinkingStateOrderAndTailTruncation(t *testing.T) {
 		ToolInputSummary: "go test -race ./...", ToolResult: strings.Repeat("首", 1000) + strings.Repeat("尾", 1000),
 		AssistantText: strings.Repeat("助", 500), Goal: strings.Repeat("目", 500),
 	})
-	wantPrefix = `{"step":9,"tool":"exec_command","is_error":true,"exit_code":1,"error_features":"DATA RACE scheduler.go","repeated_errors":2,"tool_input_summary":"go test -race ./...","result":"` + strings.Repeat("首", 138)
+	wantPrefix = `{"step":9,"tool":"exec_command","is_error":true,"exit_code":1,"error_features":"DATA RACE scheduler.go","repeated_errors":2,"tool_input_summary":"go test -race ./...","result":"` + strings.Repeat("首", 66)
 	if !strings.HasPrefix(step, wantPrefix) {
 		t.Fatal("step state reordered fields or lost the result head")
 	}

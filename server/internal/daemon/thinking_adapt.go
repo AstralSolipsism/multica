@@ -230,25 +230,36 @@ type StepThinkingInput struct {
 }
 
 // State size bound (UTF-8 bytes) and the tool-result excerpt shape: the
-// tail keeps ~stepResultTail bytes because errors usually sit at the end of
-// a long output; the excerpt never shrinks below stepResultFloor.
+// tail keeps up to stepResultTail bytes (errors usually sit at the end of
+// a long output); the head keeps what remains after the tail, never less
+// than stepResultHeadFloor while the budget allows it.
 const (
-	stepStateLimit  = 4096
-	stepResultTail  = 1000
-	stepResultFloor = 600
+	stepStateLimit      = 4096
+	stepResultTail      = 1000
+	stepResultHeadFloor = 200
 )
 
-// stepResultExcerpt fits a result into budget bytes, keeping the head and a
-// ~stepResultTail-byte tail, marking the elided middle with its byte count.
-// Cuts move to rune boundaries so the excerpt stays valid UTF-8.
+// stepResultExcerpt fits a result into budget raw bytes (the value's UTF-8
+// length, before JSON escaping), keeping a tail of min(stepResultTail,
+// budget-stepResultHeadFloor) bytes and spending the rest on the head; the
+// elided middle is marked with its byte count. Cuts move to rune boundaries
+// so the excerpt stays valid UTF-8. A budget of zero or less yields "".
 func stepResultExcerpt(result string, budget int) string {
-	if budget < stepResultFloor {
-		budget = stepResultFloor
-	}
-	if len(result) <= budget {
+	if budget <= 0 || len(result) <= budget {
+		if budget <= 0 {
+			return ""
+		}
 		return result
 	}
-	tail := min(stepResultTail, budget/2)
+	// Tail first: up to stepResultTail bytes once the head's floor
+	// (stepResultHeadFloor) is covered; below that floor (budget < 400)
+	// split evenly so the head never outweighs the tail.
+	var tail int
+	if budget >= 2*stepResultHeadFloor {
+		tail = min(stepResultTail, budget-stepResultHeadFloor)
+	} else {
+		tail = budget / 2
+	}
 	head := budget - tail
 	for head > 0 && !utf8.ValidString(result[:head]) {
 		head--
@@ -285,25 +296,38 @@ func BuildStepThinkingState(input StepThinkingInput) string {
 		{"assistant", thinkingPrefix(input.AssistantText, 500)},
 		{"goal", thinkingPrefix(input.Goal, 500)},
 	}
-	fixedLen := 2 // braces
+	fixedLen := 2 + len(`,"result":""`) // braces + the result key overhead
 	for _, field := range prefix {
 		fixedLen += stateFieldSize(field)
 	}
 	for _, field := range suffix {
 		fixedLen += stateFieldSize(field)
 	}
-	overhead := len(`,"result":""`)
-	// Fit the result into what remains: the excerpt is JSON-escaped (its \n
-	// markers grow), so shrink by the measured escape overhead until the
-	// whole state is within budget and boundedThinkingState never has to
-	// trim goal or assistant.
-	budget := stepStateLimit - fixedLen - overhead
+	// Fit the result into the remaining budget. The excerpt is JSON-escaped
+	// (newlines and markers grow), so shrink by the measured excess and
+	// recompute; the loop terminates because each pass either fits or the
+	// budget strictly decreases, and a budget at or below zero yields "".
+	// The round cap is a last-resort guard, not the normal exit: fitting
+	// inputs leave on the first or second pass.
+	budget := stepStateLimit - fixedLen
 	excerpt := stepResultExcerpt(input.ToolResult, budget)
-	for fixedLen+overhead+stateFieldSize(thinkingStateField{"result", excerpt}) > stepStateLimit {
-		budget -= 32
-		excerpt = stepResultExcerpt(input.ToolResult, budget)
+	for i := 0; i < 4; i++ {
+		over := fixedLen + stateFieldSize(thinkingStateField{"result", excerpt}) - stepStateLimit
+		if over <= 0 {
+			break
+		}
+		budget -= over + 32
+		next := stepResultExcerpt(input.ToolResult, budget)
+		if next == excerpt {
+			break
+		}
+		excerpt = next
 	}
 	fields := append(append(prefix, thinkingStateField{"result", excerpt}), suffix...)
+	// Only the pathological case reaches here over budget: fixed fields
+	// alone plus an empty result exceed 4096 bytes (Chinese goal, assistant
+	// and summary all at their caps). boundedThinkingState then trims from
+	// the goal backwards, per §5.
 	return boundedThinkingState(fields...)
 }
 
