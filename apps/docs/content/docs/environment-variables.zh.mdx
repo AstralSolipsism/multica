@@ -258,7 +258,7 @@ API key 与 base URL 都为空时，这一层关闭，不会发出任何上游�
 | `MULTICA_JEV_SELF_HOSTED_URL` | 空 | 自部署来源（`self-hosted`）的完整端点，如 `http://127.0.0.1:8000/v1/systemone`；只接受 http/https，缺失或不合法时跳过该来源并只告警一次。任何兼容 `POST /v1/systemone` 的服务都可以接，平台的标准服务是 `laya-serve`。用 `LAYA_EXTRA_MODELS='{"self-hosted":"<微调 checkpoint 目录>"}'` 注册微调模型，注册名与 `MULTICA_JEV_SELF_HOSTED_MODEL` 的默认值一致，daemon 侧不用再配 model；不注册的话，`laya-serve` 会按语言自动路由到内置的、未微调的底座。端口由 `LAYA_PORT` 指定（默认 8000）；设了 `LAYA_API_KEY` 时，把 `MULTICA_JEV_SELF_HOSTED_API_KEY` 设成同一个值。`max_len`、`head_max_len` 来自 checkpoint 自己的配置，daemon 不传。自部署来源只有通过门禁评测后才应排在外部来源前面；判据文案改动后要重跑门禁评测 |
 | `MULTICA_JEV_SELF_HOSTED_MODEL` | `self-hosted` | 自部署来源请求体里的 `model`；用于 `laya-serve` 时填 `LAYA_EXTRA_MODELS` 里的注册名 |
 | `MULTICA_JEV_SELF_HOSTED_API_KEY` | 空 | 自部署来源的 Bearer key，设置后发 `Authorization: Bearer …`；只留在本机 |
-| `MULTICA_JEV_COLLECT_DIR` | 空 | 自适应思考决策样本的目录（`decisions-<daemon_id>-<UTC 日期>.jsonl`）。为空（默认）时完全关闭采集：不建目录、不写文件。设置后，每次成功决策及其运行结果会异步追加写入；样本内容就是发给决策来源的脱敏运行摘要，只留在本机，权限为仅属主可读写（目录 0700、文件 0600） |
+| `MULTICA_JEV_COLLECT_DIR` | 空 | 自适应思考决策样本的目录（`decisions-<daemon_id>[-<profile>-<hash>]-<UTC 日期>.jsonl`，清洗后的 profile 名加哈希段区分同机不同 profile 的 daemon）。为空（默认）时完全关闭采集：不建目录、不写文件。设置后，每次成功决策及其运行结果会异步追加写入；样本内容就是发给决策来源的脱敏运行摘要，只留在本机，权限为仅属主可读写（目录 0700、文件 0600） |
 | `MULTICA_JEV_COLLECT_MAX_MB` | `1024` | 本 daemon 在 `MULTICA_JEV_COLLECT_DIR` 下样本文件的总大小上限（MB）；超过后停止写入并告警一次，旧文件保留、不删除 |
 守护进程注入智能体 task 的内部上下文见 [Task 运行时环境](/daemon-runtimes#task-运行时环境)。
 
