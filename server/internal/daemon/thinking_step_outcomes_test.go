@@ -33,7 +33,7 @@ func newStepSampleFixture(t *testing.T) *stepSampleFixture {
 	t.Helper()
 	d, run := newStepEffortTestDaemon(t)
 	dir := t.TempDir()
-	c := jevsample.New(dir, "step-test", 0, quietTaskLog())
+	c := jevsample.New(dir, "step-test", "", 0, quietTaskLog())
 	run.Samples = c
 	run.Clients = &fakeStepDecider{decision: jev.Decision{
 		Level: "high", Confidence: 0.9, Source: "fake", LatencyMS: 12,
@@ -338,7 +338,7 @@ printf '%s\n' '{"type":"assistant","message":{"id":"ready","content":[{"type":"t
 exec sleep 60
 `))
 			dir := t.TempDir()
-			collector := jevsample.New(dir, "interrupted-step", 0, quietTaskLog())
+			collector := jevsample.New(dir, "interrupted-step", "", 0, quietTaskLog())
 			d = &Daemon{client: NewClient(srv.URL), jevClient: jev.New(jev.Options{
 				Sources: []jev.Source{{Name: "fake", BaseURL: jevServer.URL, Model: "test"}}}),
 				jevSamples: collector, logger: quietTaskLog(),
@@ -403,7 +403,7 @@ func TestStepOutcomesCollectionDisabled(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
 	t.Setenv("MULTICA_JEV_COLLECT_DIR", "")
-	run.Samples = jevsample.New(os.Getenv("MULTICA_JEV_COLLECT_DIR"), "step-test", 0, quietTaskLog())
+	run.Samples = jevsample.New(os.Getenv("MULTICA_JEV_COLLECT_DIR"), "step-test", "", 0, quietTaskLog())
 	run.Clients = &fakeStepDecider{decision: jev.Decision{Level: "high"}}
 	d.setStepEffortEnabled(run.TaskID, true)
 	f := &stepSampleFixture{d: d, run: run}
