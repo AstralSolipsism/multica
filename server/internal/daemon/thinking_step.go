@@ -14,6 +14,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/effortmod"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/jev"
+	"github.com/multica-ai/multica/server/internal/daemon/jevsample"
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
@@ -64,6 +65,7 @@ type stepEffortRun struct {
 	Provider string
 	Model    string
 	Clients  thinkingDecider
+	Samples  *jevsample.Collector
 	Trace    ThinkingDecisionTrace
 	Goal     string
 	// Candidates in catalog order; a decision must be one of them.
@@ -282,7 +284,7 @@ func (r *stepEffortRun) decide(ctx context.Context, req thinkingDecisionRequest)
 	jevReq, _ := r.buildStepRequest(req)
 	trace := r.Trace
 	trace.Step = req.Step
-	record := decideThinking(ctx, r.Clients, trace, jevReq)
+	record := decideThinking(ctx, r.Clients, trace, jevReq, r.Samples)
 	resp := thinkingDecisionResponse{LatencyMS: record.Decision.LatencyMS}
 	if record.Fallback != "" {
 		resp.Fallback = record.Fallback
@@ -398,6 +400,7 @@ func (d *Daemon) prepareStepEffort(task Task, provider, model, cliVersion, reque
 		Provider:    provider,
 		Model:       model,
 		Clients:     d.jevClient,
+		Samples:     d.jevSamples,
 		Trace:       ThinkingDecisionTrace{TaskID: task.ID, Scope: "step", Provider: provider, Model: model},
 		Goal:        StepThinkingGoal(task),
 		Candidates:  candidates,
