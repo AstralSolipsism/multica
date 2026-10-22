@@ -489,6 +489,182 @@ describe("RepositoriesSection", () => {
     open.mockRestore();
   });
 
+  // Base UI fires a hover open request after ~100ms at rest, so the wait has
+  // to outlast it. Hovering is not confirming: the preview waits out the
+  // refresh but never reaches for GitHub, whatever the refresh says.
+  it("only previews on hover: no jump and no menu close when the refresh comes back empty", async () => {
+    offerForReuse(outlune);
+    appInstallationsRef.current = { ...appInstallationsRef.current, isFetching: true };
+    const refresh = deferred<ListGitHubAppInstallationsResponse>();
+    mockFetchQuery.mockReturnValue(refresh.promise);
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const user = userEvent.setup();
+    render(<RepositoriesSection />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    const trigger = await screen.findByRole("menuitem", { name: /Connect GitHub/ });
+    await user.hover(trigger);
+    await act(() => new Promise<void>((done) => setTimeout(done, 250)));
+
+    await waitFor(() => expect(mockFetchQuery).toHaveBeenCalled());
+    expect(trigger).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByRole("menuitem", { name: /outlune/ })).toBeNull();
+
+    appInstallationsRef.current = {
+      status: "success",
+      data: { configured: true, installations: [] },
+      isFetching: false,
+    };
+    await act(async () => refresh.resolve({ configured: true, installations: [] }));
+
+    expect(mockGetGitHubConnectURL).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    // The menu stayed open; the emptied list turned the entry back into the
+    // plain item, so jumping is the user's click to make.
+    expect(screen.getByRole("menuitem", { name: "Enter a URL..." })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Connect GitHub/ })).not.toHaveAttribute(
+      "aria-haspopup",
+    );
+    open.mockRestore();
+  });
+
+  it("only previews on hover: no jump when the refresh fails", async () => {
+    offerForReuse(outlune);
+    appInstallationsRef.current = { ...appInstallationsRef.current, isFetching: true };
+    mockFetchQuery.mockRejectedValue(new ApiError("bad gateway", 502, "Bad Gateway"));
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const user = userEvent.setup();
+    render(<RepositoriesSection />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    await user.hover(await screen.findByRole("menuitem", { name: /Connect GitHub/ }));
+    await act(() => new Promise<void>((done) => setTimeout(done, 250)));
+
+    await waitFor(() => expect(mockFetchQuery).toHaveBeenCalled());
+    await act(() => new Promise<void>((done) => setTimeout(done, 50)));
+    expect(mockGetGitHubConnectURL).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    expect(screen.getByRole("menuitem", { name: "Enter a URL..." })).toBeInTheDocument();
+    open.mockRestore();
+  });
+
+  it("opens the submenu on hover once the refresh confirms accounts", async () => {
+    offerForReuse(outlune);
+    appInstallationsRef.current = { ...appInstallationsRef.current, isFetching: true };
+    const refresh = deferred<ListGitHubAppInstallationsResponse>();
+    mockFetchQuery.mockReturnValue(refresh.promise);
+    const user = userEvent.setup();
+    render(<RepositoriesSection />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    await user.hover(await screen.findByRole("menuitem", { name: /Connect GitHub/ }));
+    await act(() => new Promise<void>((done) => setTimeout(done, 250)));
+    await waitFor(() => expect(mockFetchQuery).toHaveBeenCalled());
+    expect(screen.queryByRole("menuitem", { name: /outlune/ })).toBeNull();
+
+    const loaded = { configured: true, installations: [outlune] };
+    appInstallationsRef.current = { status: "success", data: loaded, isFetching: false };
+    await act(async () => refresh.resolve(loaded));
+
+    expect(await screen.findByRole("menuitem", { name: /outlune/ })).toBeInTheDocument();
+    expect(mockGetGitHubConnectURL).not.toHaveBeenCalled();
+  });
+
+  it("jumps to GitHub when the refresh Enter waited on comes back empty", async () => {
+    offerForReuse(outlune);
+    appInstallationsRef.current = { ...appInstallationsRef.current, isFetching: true };
+    const refresh = deferred<ListGitHubAppInstallationsResponse>();
+    mockFetchQuery.mockReturnValue(refresh.promise);
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const user = userEvent.setup();
+    render(<RepositoriesSection />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    const trigger = await screen.findByRole("menuitem", { name: /Connect GitHub/ });
+    act(() => trigger.focus());
+    await user.keyboard("{Enter}");
+
+    expect(trigger).toHaveAttribute("aria-busy", "true");
+    expect(mockGetGitHubConnectURL).not.toHaveBeenCalled();
+
+    appInstallationsRef.current = {
+      status: "success",
+      data: { configured: true, installations: [] },
+      isFetching: false,
+    };
+    await act(async () => refresh.resolve({ configured: true, installations: [] }));
+
+    await waitFor(() => {
+      expect(mockGetGitHubConnectURL).toHaveBeenCalledWith("workspace-1", "repositories");
+    });
+    expect(open).toHaveBeenCalledWith(INSTALL_URL, "_blank", "noopener");
+    expect(screen.queryByRole("menuitem", { name: "Enter a URL..." })).toBeNull();
+    open.mockRestore();
+  });
+
+  it("stays put when the menu was closed while the refresh was pending", async () => {
+    offerForReuse(outlune);
+    appInstallationsRef.current = { ...appInstallationsRef.current, isFetching: true };
+    const refresh = deferred<ListGitHubAppInstallationsResponse>();
+    mockFetchQuery.mockReturnValue(refresh.promise);
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const user = userEvent.setup();
+    render(<RepositoriesSection />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    const trigger = await screen.findByRole("menuitem", { name: /Connect GitHub/ });
+    act(() => trigger.focus());
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(mockFetchQuery).toHaveBeenCalled());
+
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("menuitem", { name: "Enter a URL..." })).toBeNull(),
+    );
+
+    appInstallationsRef.current = {
+      status: "success",
+      data: { configured: true, installations: [] },
+      isFetching: false,
+    };
+    await act(async () => refresh.resolve({ configured: true, installations: [] }));
+    await act(() => new Promise<void>((done) => setTimeout(done, 50)));
+
+    expect(mockGetGitHubConnectURL).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
+  it("does not pop the account submenu after the menu was closed during the wait", async () => {
+    offerForReuse(outlune);
+    appInstallationsRef.current = { ...appInstallationsRef.current, isFetching: true };
+    const refresh = deferred<ListGitHubAppInstallationsResponse>();
+    mockFetchQuery.mockReturnValue(refresh.promise);
+    const user = userEvent.setup();
+    render(<RepositoriesSection />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    const trigger = await screen.findByRole("menuitem", { name: /Connect GitHub/ });
+    act(() => trigger.focus());
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(mockFetchQuery).toHaveBeenCalled());
+
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("menuitem", { name: "Enter a URL..." })).toBeNull(),
+    );
+
+    const loaded = { configured: true, installations: [outlune] };
+    appInstallationsRef.current = { status: "success", data: loaded, isFetching: false };
+    await act(async () => refresh.resolve(loaded));
+    await act(() => new Promise<void>((done) => setTimeout(done, 50)));
+
+    // Reopening the add menu shows the entry, not an already-open submenu.
+    await user.click(screen.getByRole("button", { name: /Add repository/ }));
+    expect(await screen.findByRole("menuitem", { name: /Connect GitHub/ })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /outlune/ })).toBeNull();
+  });
+
   it("keeps the menu open and busy while a pending list decides, then offers the accounts", async () => {
     appInstallationsRef.current = { status: "pending", data: undefined, isFetching: true };
     const refresh = deferred<ListGitHubAppInstallationsResponse>();

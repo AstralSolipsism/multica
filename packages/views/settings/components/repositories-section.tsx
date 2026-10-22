@@ -203,7 +203,7 @@ export function RepositoriesSection() {
     busy: gitHubConnectBusy,
     menuOpen: gitHubAccountMenuOpen,
     setMenuOpen: setGitHubAccountMenuOpen,
-    chooseConnectPath: chooseGitHubConnectPath,
+    awaitReusableCandidates: awaitReusableGitHubAccounts,
     openGitHubInstall,
     bind: bindGitHubAccount,
   } = useGitHubReuseConnect({
@@ -378,16 +378,40 @@ export function RepositoriesSection() {
 
   // A first connection with nothing reusable stays one click to GitHub; the
   // decision needs the menu to stay open only while it checks or turns into
-  // the account choice.
+  // the account choice. If the menu was closed during the wait (Escape,
+  // outside press), the activation is stale and nothing happens.
+  const addMenuOpenRef = useRef(addMenuOpen);
+  useEffect(() => {
+    addMenuOpenRef.current = addMenuOpen;
+  }, [addMenuOpen]);
   const connectGitHub = async () => {
     if (gitHubConnectBusy) return;
-    const path = await chooseGitHubConnectPath();
-    if (path === "github") setAddMenuOpen(false);
+    const candidates = await awaitReusableGitHubAccounts();
+    if (!addMenuOpenRef.current) return;
+    if (candidates.length > 0) {
+      setGitHubAccountMenuOpen(true);
+    } else {
+      setAddMenuOpen(false);
+      await openGitHubInstall();
+    }
   };
 
-  // The submenu's own open requests (hover, press, arrow key) are refused,
-  // like the Code tab's connect button: opening must wait for a refresh in
-  // flight and follow its result instead of listing what the cache has.
+  // The submenu's own open requests are refused, like the Code tab's connect
+  // button: opening must wait for a refresh in flight and follow its result
+  // instead of listing what the cache has. Only deliberate activations run
+  // the full decision, which can end at GitHub — Base UI reports a pointer
+  // rest as `trigger-hover`, and hovering is not confirming, so a hover only
+  // previews: it waits out the refresh and opens the submenu when it still
+  // has accounts. An empty or failed read changes nothing; the emptied list
+  // turns the trigger back into the plain item, and jumping stays the user's
+  // click to make.
+  const previewAccountMenu = async () => {
+    if (gitHubConnectBusy) return;
+    const candidates = await awaitReusableGitHubAccounts();
+    if (candidates.length > 0 && addMenuOpenRef.current) {
+      setGitHubAccountMenuOpen(true);
+    }
+  };
   function handleAccountMenuOpenChange(
     open: boolean,
     details: { cancel: () => void; reason: string },
@@ -397,7 +421,11 @@ export function RepositoriesSection() {
       return;
     }
     details.cancel();
-    void connectGitHub();
+    if (details.reason === "trigger-press" || details.reason === "list-navigation") {
+      void connectGitHub();
+    } else {
+      void previewAccountMenu();
+    }
   }
 
   const closeGitHubPicker = () => {

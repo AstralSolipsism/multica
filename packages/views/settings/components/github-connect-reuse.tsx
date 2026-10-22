@@ -122,22 +122,26 @@ export function useGitHubReuseConnect({
     }
   }
 
-  // Every activation, from either entry, decides here — both entries refuse
-  // their own menu-open requests and defer to this. A read in flight is
-  // awaited, even with an older list on screen, and its result picks between
-  // the menu and GitHub. A failed read counts as nothing to reuse, so
-  // connecting is never blocked.
+  // The wait half of the decision, shared with hover previews: a read in
+  // flight is awaited and its result wins, even with an older list on
+  // screen. A failed read counts as nothing to reuse, so connecting is
+  // never blocked.
+  async function awaitReusableCandidates(): Promise<GitHubAppInstallation[]> {
+    if (!reuseEnabled || !appInstallations.isFetching) return reusable;
+    setChecking(true);
+    const latest = await qc
+      .fetchQuery(githubAppInstallationsOptions(wsId))
+      .then((response) => response.installations)
+      .catch(() => []);
+    setChecking(false);
+    return reusableInstallations(latest, installations);
+  }
+
+  // Deliberate activations from either entry — presses and arrow keys, never
+  // hovers — decide here; both entries refuse their own menu-open requests
+  // and defer to this. The awaited list picks between the menu and GitHub.
   async function chooseConnectPath(): Promise<"menu" | "github"> {
-    let candidates = reusable;
-    if (reuseEnabled && appInstallations.isFetching) {
-      setChecking(true);
-      const latest = await qc
-        .fetchQuery(githubAppInstallationsOptions(wsId))
-        .then((response) => response.installations)
-        .catch(() => []);
-      setChecking(false);
-      candidates = reusableInstallations(latest, installations);
-    }
+    const candidates = await awaitReusableCandidates();
     if (candidates.length > 0) {
       setMenuOpen(true);
       return "menu";
@@ -192,6 +196,7 @@ export function useGitHubReuseConnect({
     busy: opening || checking || binding !== null,
     menuOpen,
     setMenuOpen,
+    awaitReusableCandidates,
     chooseConnectPath,
     openGitHubInstall,
     bind,
