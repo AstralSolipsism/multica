@@ -62,6 +62,8 @@ func agyFixtureSteps(groups ...[]string) []string {
 }
 
 type agyRun struct {
+	init         string   // raw init line replacing the default one
+	noInit       bool     // emit no init event at all
 	steps        []string // step_update payloads in arrival order
 	beforeResult []string // raw stdout lines between the steps and the result
 	afterResult  []string
@@ -94,7 +96,13 @@ func runAgyFixture(t *testing.T, run agyRun) agyRunOutput {
 		response = *run.response
 	}
 	var stream strings.Builder
-	fmt.Fprintf(&stream, "{\"event\":\"init\",\"conversation_id\":%q,\"init\":{\"model\":\"fixture-model\"}}\n", agyFixtureConversation)
+	switch {
+	case run.noInit:
+	case run.init != "":
+		stream.WriteString(run.init + "\n")
+	default:
+		fmt.Fprintf(&stream, "{\"event\":\"init\",\"conversation_id\":%q,\"init\":{\"model\":\"fixture-model\"}}\n", agyFixtureConversation)
+	}
 	for _, step := range run.steps {
 		fmt.Fprintf(&stream, "{\"event\":\"step_update\",\"step_update\":%s}\n", step)
 	}
@@ -226,6 +234,9 @@ func TestAntigravityTurnEvidenceCompletes(t *testing.T) {
 		{name: "result adds one terminal newline", run: agyRun{steps: []string{agyFixtureBoundary, `{"step_index":104,"state":"DONE","step_type":"agent_response","text_delta":"Current answer."}`}}},
 		{name: "answer has one terminal newline more", run: agyRun{steps: agyFixtureTurn(), response: agyString("Current answer.")}},
 		{name: "fresh conversation", run: agyRun{steps: agyFixtureTurn(), fresh: true}},
+		// The model is optional, and so is the init event itself.
+		{name: "empty init payload", run: agyRun{init: `{"event":"init","conversation_id":"fixture-conversation","init":{}}`, steps: agyFixtureTurn()}},
+		{name: "no init event", run: agyRun{noInit: true, steps: agyFixtureTurn()}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -277,6 +288,8 @@ func TestAntigravityTurnEvidenceKeepsFailures(t *testing.T) {
 		{name: "missing step index", run: agyRun{steps: agyFixtureTurn(`{"state":"DONE","step_type":"checkpoint"}`)}},
 		{name: "conversation changes", run: agyRun{steps: agyFixtureTurn(`{"conversation_id":"other-conversation","step_index":105,"state":"DONE","step_type":"checkpoint"}`)}},
 		{name: "null step payload", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{`{"event":"step_update"}`}}},
+		{name: "null init payload", run: agyRun{init: `{"event":"init","conversation_id":"fixture-conversation","init":null}`, steps: agyFixtureTurn()}},
+		{name: "missing init payload", run: agyRun{init: `{"event":"init","conversation_id":"fixture-conversation"}`, steps: agyFixtureTurn()}},
 		{name: "unknown event", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{`{"event":"unknown"}`}}},
 		{name: "event after result", run: agyRun{steps: agyFixtureTurn(), afterResult: []string{`{"event":"step_update","step_update":{"step_index":105,"state":"DONE","step_type":"checkpoint"}}`}}},
 		{name: "other exit code", run: agyRun{steps: agyFixtureTurn(), exit: 2}},
@@ -353,6 +366,69 @@ sleep 60
 			}
 			if result := <-session.Result; result.Status != want {
 				t.Fatalf("status = %s, want %s (error %q)", result.Status, want, result.Error)
+			}
+		})
+	}
+}
+
+// A resumed stream without a boundary holds its steps until the result. If the
+// run is cancelled or times out first, the steps already read still reach the
+// output, usage and tool events. The plain marker line is never held, so its
+// arrival shows that the scanner has read every step before it.
+func TestAntigravityHeldStepsSurviveCancellation(t *testing.T) {
+	t.Parallel()
+	const marker = "synthetic scanner marker"
+	for _, deadline := range []bool{false, true} {
+		t.Run(fmt.Sprintf("deadline=%v", deadline), func(t *testing.T) {
+			t.Parallel()
+			var stream strings.Builder
+			fmt.Fprintf(&stream, "{\"event\":\"init\",\"conversation_id\":%q,\"init\":{\"model\":\"fixture-model\"}}\n", agyFixtureConversation)
+			for _, step := range []string{agyFixtureToolActive, agyFixtureToolDone, agyFixtureAnswerActive, agyFixtureAnswerDone} {
+				fmt.Fprintf(&stream, "{\"event\":\"step_update\",\"step_update\":%s}\n", step)
+			}
+			fakePath := filepath.Join(t.TempDir(), "agy")
+			writeTestExecutable(t, fakePath, []byte("#!/bin/sh\ncat <<'JSONL'\n"+stream.String()+marker+"\nJSONL\nsleep 60\n"))
+			backend, err := New("antigravity", Config{ExecutablePath: fakePath, Logger: quietAntigravityLogger()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			opts, want := ExecOptions{ResumeSessionID: agyFixtureConversation}, "aborted"
+			if deadline {
+				opts.Timeout, want = 2*time.Second, "timeout"
+			}
+			session, err := backend.Execute(ctx, "synthetic prompt", opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			markerRead := false
+			var tools []Message
+			for msg := range session.Messages {
+				switch msg.Type {
+				case MessageText:
+					if strings.Contains(msg.Content, marker) {
+						markerRead = true
+						if !deadline {
+							cancel()
+						}
+					}
+				case MessageToolUse, MessageToolResult:
+					tools = append(tools, msg)
+				}
+			}
+			result := <-session.Result
+			if !markerRead {
+				t.Fatalf("the run ended before the scanner reached the marker: %+v", result)
+			}
+			if result.Status != want || !strings.HasSuffix(result.Output, agyFixtureAnswer) {
+				t.Fatalf("result = %+v, want %s keeping the held answer", result, want)
+			}
+			if len(result.Usage) != 1 || result.Usage["fixture-model"] != agyFixtureTurnUsage {
+				t.Errorf("usage = %+v, want %+v", result.Usage, agyFixtureTurnUsage)
+			}
+			if len(tools) != 2 || tools[0].Type != MessageToolUse || tools[1].Type != MessageToolResult || tools[1].CallID != "agy-step-102" {
+				t.Errorf("tools = %+v, want the held tool lifecycle", tools)
 			}
 		})
 	}

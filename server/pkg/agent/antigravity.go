@@ -178,7 +178,8 @@ type antigravityStreamResult struct {
 type antigravityStreamEvent struct {
 	Event          string `json:"event"`
 	ConversationID string `json:"conversation_id"`
-	Init           struct {
+	// Payloads are pointers so that a null or missing one is detectable.
+	Init *struct {
 		Model string `json:"model"`
 	} `json:"init"`
 	StepUpdate *antigravityStreamStepUpdate `json:"step_update"`
@@ -341,23 +342,37 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		streamTools := make(map[int]antigravityToolState)
 		turn := newAntigravityTurn(opts.ResumeSessionID)
 		resultSeen := false
-		consumeStep := func(step *antigravityStreamStepUpdate) bool {
+		toolEvents := true
+		sendTool := func(message Message) {
+			if !toolEvents {
+				return
+			}
+			// Tool lifecycle events also drive the daemon's in-flight counter.
+			// Unlike best-effort text, neither half may be dropped while a live
+			// run's transcript consumer temporarily falls behind.
+			select {
+			case msgCh <- message:
+				return
+			case <-runCtx.Done():
+			}
+			// Once the run has ended, deliver only what still fits. After the
+			// first event that does not, drop the rest too, so a tool_result
+			// never arrives without its tool_use.
+			select {
+			case msgCh <- message:
+			default:
+				toolEvents = false
+			}
+		}
+		// consumeStep records text and usage before a tool event can wait on the
+		// consumer, so cancellation never drops a step that was already read.
+		consumeStep := func(step *antigravityStreamStepUpdate) {
 			newDelta := turn.observe(step)
 			if turn.historical(step) {
-				return true // Replayed history must not repeat text, tools or usage.
+				return // Replayed history must not repeat text, tools or usage.
 			}
 			if step.ConversationID != "" {
 				streamSessionID = step.ConversationID
-			}
-			for _, message := range antigravityToolMessages(step, streamTools) {
-				// Tool lifecycle events also drive the daemon's in-flight
-				// counter. Unlike best-effort text, neither half may be
-				// dropped when a transcript consumer temporarily falls behind.
-				select {
-				case msgCh <- message:
-				case <-runCtx.Done():
-					return false
-				}
 			}
 			if newDelta && step.StepType == "agent_response" && step.TextDelta != "" {
 				output.WriteString(step.TextDelta)
@@ -369,22 +384,20 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 				// an earlier copy of the same step.
 				streamStepUsage[*step.StepIndex] = step.Usage.tokenUsage()
 			}
-			return true
-		}
-		flushPending := func() bool {
-			for _, step := range turn.takePending() {
-				if !consumeStep(step) {
-					return false
-				}
+			for _, message := range antigravityToolMessages(step, streamTools) {
+				sendTool(message)
 			}
-			return true
+		}
+		flushPending := func() {
+			for _, step := range turn.takePending() {
+				consumeStep(step)
+			}
 		}
 
 		scanner := newAgentStreamScanner(stdout)
 
 		trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
 
-	streamLoop:
 		for scanner.Scan() {
 			line := scanner.Text()
 			var event antigravityStreamEvent
@@ -396,6 +409,10 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 				case "init":
 					turn.observeConversation(event.ConversationID)
 					streamSessionID = event.ConversationID
+					if event.Init == nil {
+						turn.invalid = true
+						continue
+					}
 					streamModel = event.Init.Model
 				case "step_update":
 					if event.StepUpdate == nil {
@@ -405,17 +422,14 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 					if !turn.admit(event.StepUpdate) {
 						continue
 					}
-					if !consumeStep(event.StepUpdate) || !flushPending() {
-						break streamLoop
-					}
+					consumeStep(event.StepUpdate)
+					flushPending()
 				case "result":
 					if event.Result == nil {
 						turn.invalid = true
 						continue
 					}
-					if !flushPending() {
-						break streamLoop
-					}
+					flushPending()
 					resultSeen = true
 					turn.observeConversation(event.Result.ConversationID)
 					if event.Result.ConversationID != "" {

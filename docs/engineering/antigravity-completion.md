@@ -64,11 +64,12 @@ error's wording plays no part. The evidence requires all of the following:
    because agy leaves a background command `ACTIVE` when a separate step
    cancels it.
 5. The stream is consistent. It has no malformed or plain lines, scanner
-   errors, unknown events or null payloads. No step lacks an index or has a
-   negative one, has a state other than `ACTIVE`/`DONE` or changes kind, and no
-   `DONE` step regresses or changes its delta. There is one boundary, the
-   conversation ID matches the resumed one throughout, and nothing follows the
-   result.
+   errors or unknown events. No `init`, `step_update` or `result` event has a
+   null or missing payload; a stream may omit `init` entirely, and its model is
+   optional. No step lacks an index or has a negative one, has a state other
+   than `ACTIVE`/`DONE` or changes kind, and no `DONE` step regresses or changes
+   its delta. There is one boundary, the conversation ID matches the resumed one
+   throughout, and nothing follows the result.
 
 ## Legacy streams (row 4)
 
@@ -91,6 +92,13 @@ boundary, so this turn's output survives. When no boundary arrives at all, the
 held snapshots are released at the result: their output survives, but cannot
 prove completion. Repeated `DONE` text is emitted once, and repeated `DONE`
 usage replaces that step's snapshot.
+
+A step's text and usage are recorded before its tool events, which may wait for
+the consumer while the run is live. Cancellation or a timeout therefore never
+discards a step already read, including held ones released at the end. After
+the run has ended, tool events are delivered only while they fit in the
+message buffer; once one does not fit, the rest are dropped too, so no
+`tool_result` arrives without its `tool_use`.
 
 `result.response` and the conversation ID still drive the final result. Usage
 sums this turn's completed steps, including a reported zero. A resumed run never
@@ -126,7 +134,9 @@ reads production data. It covers:
 - completion despite five stale wordings
   (`TestAntigravityTurnEvidenceOverridesStaleError`);
 - every counterexample above, under both a new wording and a legacy one;
-- context precedence, legacy streams and output scoping.
+- context precedence, legacy streams and output scoping;
+- held steps surviving cancellation and a timeout
+  (`TestAntigravityHeldStepsSurviveCancellation`).
 
 The upstream classifier and backend cases in `antigravity_test.go` remain.
 
