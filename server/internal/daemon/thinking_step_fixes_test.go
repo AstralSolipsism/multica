@@ -364,3 +364,63 @@ func TestTagThinkingMessageWiring(t *testing.T) {
 		}
 	}
 }
+
+// TestStepStateRedactsBeforeNormalizationAndKeepsTail locks the outbound
+// boundary (second review #31/#32): error features are redacted before
+// normalization, and a tool result's tail error survives the state builder's
+// head/tail split.
+func TestStepStateRedactsBeforeNormalizationAndKeepsTail(t *testing.T) {
+	t.Parallel()
+	_, run := newStepEffortTestDaemon(t)
+
+	// #31: a credential the raw text's redactor recognizes must not survive
+	// into error_features through normalization.
+	const conn = "postgres://app:reviewcanary@db.internal:5432/orders"
+	jevReq, input := run.buildStepRequest(thinkingDecisionRequest{
+		Step:      2,
+		ErrorText: "dial " + conn + ": connection refused",
+		Tools: []struct {
+			Name          string `json:"name"`
+			IsError       bool   `json:"is_error"`
+			IsFileContent bool   `json:"is_file_content"`
+			InputSummary  string `json:"input_summary"`
+			ResultText    string `json:"result_text"`
+		}{{Name: "Bash", IsError: true, InputSummary: "psql", ResultText: "Exit code 1\ndial " + conn + ": connection refused"}},
+	})
+	if strings.Contains(input.ErrorFeatures, "reviewcanary") {
+		t.Fatalf("error feature leaked the credential: %q", input.ErrorFeatures)
+	}
+	state, _ := jevReq.State.(string)
+	if strings.Contains(state, "reviewcanary") {
+		t.Fatalf("state leaked the credential: %s", state)
+	}
+
+	// #32: a long tool result whose error sits at the tail must keep it in
+	// result_tail (the mod ships whole lines; the daemon's head/tail split
+	// owns the truncation).
+	var head strings.Builder
+	for head.Len() < 640 {
+		head.WriteString("progress: step done\n")
+	}
+	tailError := "FAIL: TestScheduler verification TAIL_CANARY missing"
+	_, input = run.buildStepRequest(thinkingDecisionRequest{
+		Step: 3,
+		Tools: []struct {
+			Name          string `json:"name"`
+			IsError       bool   `json:"is_error"`
+			IsFileContent bool   `json:"is_file_content"`
+			InputSummary  string `json:"input_summary"`
+			ResultText    string `json:"result_text"`
+		}{{Name: "Bash", IsError: true, InputSummary: "go test", ResultText: "Exit code 1\n" + head.String() + tailError}},
+	})
+	if input.ToolResult == "" || !strings.Contains(input.ToolResult, tailError) {
+		t.Fatalf("input lost the tail error before the state builder")
+	}
+	state2 := BuildStepThinkingState(input)
+	if !strings.Contains(state2, "result_tail") || !strings.Contains(state2, "TAIL_CANARY") {
+		t.Fatalf("state lost the tail error: %.300s", state2[len(state2)-300:])
+	}
+	if strings.Contains(state2, "reviewcanary") {
+		t.Fatalf("state leaked a credential: %s", state2)
+	}
+}

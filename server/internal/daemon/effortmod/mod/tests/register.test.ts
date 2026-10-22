@@ -356,6 +356,25 @@ describe('labrastro-effort helpers', () => {
     expect(payload.error_text).toBe('FAIL')
   })
 
+  test('stepPayload ships whole lines: no partial credentials, tail errors survive', () => {
+    const conn = 'postgres://app:reviewcanary@db.internal:5432/orders'
+    // A credential line inside a long result crosses no line boundary.
+    const long: string[] = []
+    for (let i = 0; i < 40; i++) long.push(`progress line ${i} done`)
+    const result = long.concat([conn, 'Exit code 1', 'FAIL: TAIL_CANARY missing']).join('\n')
+    const payload = stepPayload(2, [
+      { role: 'user', text: 'issue' },
+      { role: 'assistant', toolUses: [{ tool_use_id: 't1', tool: 'Bash', input: { command: 'go test' }, text: result, isError: true }] },
+      { role: 'user', toolResults: [{ tool_use_id: 't1' }] },
+    ])
+    const text = payload.tools[0]?.result_text ?? ''
+    // The whole credential line ships (the daemon redacts it); it is never cut.
+    expect(text).toContain(conn)
+    // The tail error survives the mod's budget; the daemon keeps it in result_tail.
+    expect(text).toContain('FAIL: TAIL_CANARY missing')
+    expect(payload.error_text).toContain('TAIL_CANARY')
+  })
+
   test('stepPayload with no assistant material stays empty', () => {
     expect(stepPayload(2, [{ role: 'user', text: 'hi' }])).toEqual({ step: 2, assistant_text: '', tools: [], error_text: '' })
     expect(stepPayload(2, undefined)).toEqual({ step: 2, assistant_text: '', tools: [], error_text: '' })
@@ -368,11 +387,19 @@ describe('labrastro-effort helpers', () => {
     }
   })
 
-  test('clip bounds by code points', () => {
+  test('clip keeps whole lines and never a partial secret line', () => {
     expect(clip(undefined, 5)).toBe('')
     expect(clip('abc', 5)).toBe('abc')
-    expect(clip('abcdef', 3)).toBe('abc')
-    expect([...clip('你好世界再见', 4)]).toHaveLength(4)
+    // Multi-line: whole lines up to the budget.
+    expect(clip('aaaa\nbbbb\ncccc', 10)).toBe('aaaa\nbbbb')
+    // A first line alone over the budget ships as nothing, not a prefix.
+    expect(clip('postgres://app:reviewcanary@db.internal:5432/orders', 20)).toBe('')
+    // A credential inside fitting lines survives whole for the daemon to redact.
+    const line = 'postgres://app:reviewcanary@db.internal:5432/orders'
+    expect(clip(line + '\nshort', 80)).toBe(line + '\nshort')
+    expect(clip(line + '\nshort', 55)).toBe(line)
+    // Unicode counts by code point.
+    expect([...clip('你好\n世界\n再见', 5)].length).toBeLessThanOrEqual(5)
   })
 
   test('effectRecord carries the decision or the fallback', () => {

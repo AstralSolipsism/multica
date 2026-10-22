@@ -42,12 +42,28 @@ export type StepPayload = { step: number; assistant_text: string; tools: ToolMat
 // not hold a step noticeably longer than this.
 export const DECISION_TIMEOUT_MS = 2_000
 
-/** Clips to at most `limit` code points so the body stays small regardless of
- * tool output size. The daemon truncates again before building state. */
+/**
+ * Bounds a field to whole lines totalling at most `limit` code points. The
+ * daemon redacts and truncates again before building state; clipping here
+ * only keeps the request small. Line boundaries only: cutting mid-line could
+ * split a credential so the daemon's redactor no longer recognizes it, and a
+ * body whose first line alone exceeds the limit ships as "" rather than a
+ * partial secret.
+ */
 export function clip(text: string | undefined, limit: number): string {
   if (typeof text !== 'string' || text === '') return ''
   const chars = [...text]
-  return chars.length <= limit ? text : chars.slice(0, limit).join('')
+  if (chars.length <= limit) return text
+  const lines = text.split('\n')
+  const kept: string[] = []
+  let used = 0
+  for (const line of lines) {
+    const cost = [...line].length + (kept.length > 0 ? 1 : 0)
+    if (used + cost > limit) break
+    kept.push(line)
+    used += cost
+  }
+  return kept.length > 0 ? kept.join('\n') : ''
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -121,8 +137,8 @@ export function stepPayload(step: number, window: SessionMessages | undefined): 
           name: typeof use.tool === 'string' ? use.tool : '',
           is_error: use.isError === true,
           is_file_content: fileContentTools.has(typeof use.tool === 'string' ? use.tool : ''),
-          input_summary: clip(summarizeInput(use.input), 200),
-          result_text: clip(typeof use.text === 'string' ? use.text : '', 400),
+          input_summary: clip(summarizeInput(use.input), 1000),
+          result_text: clip(typeof use.text === 'string' ? use.text : '', 2000),
         })
       }
       i--
@@ -130,9 +146,9 @@ export function stepPayload(step: number, window: SessionMessages | undefined): 
   }
   const error_text = clip(
     tools.filter((tool) => tool.is_error && tool.result_text !== '').map((tool) => tool.result_text).join('\n'),
-    1200,
+    2000,
   )
-  return { step, assistant_text: clip(texts.join(''), 600), tools, error_text }
+  return { step, assistant_text: clip(texts.join(''), 1000), tools, error_text }
 }
 
 /** Tools whose results are file contents: the daemon omits the body for

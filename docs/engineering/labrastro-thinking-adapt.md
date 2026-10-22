@@ -352,7 +352,8 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
     - 步序号，从 1 开始；
     - 上一步主线程的工具列表 `[{name, is_error}]`；
     - 上一步的报错文本，按 §4 截断。Bash 失败结果首行固定是 `Exit code N`：daemon 把它解析进 `exit_code`，报错特征取其后的真正报错行；Go 编译/测试输出的 `# 包路径` 与 `FAIL\t包路径 [build failed]` 包头行同样跳过，取真正的报错行。state 描述的那个工具取上一步最后一个报错的工具（没有报错则取最后一个工具），`is_error` 与 `exit_code` 与报错特征一致。
-  - 报错特征的归一化和同类报错的重复次数由 daemon 用 Go 计算（`NormalizedErrorFeature` / `ErrorFeatureTracker`，`server/internal/daemon/thinking_step_errors.go`），daemon 按运行保存最近的报错特征；mod 只上传原料。这个函数导出给 OL-1019 复用。
+  - 报错特征的归一化和同类报错的重复次数由 daemon 用 Go 计算（`NormalizedErrorFeature` / `ErrorFeatureTracker`，`server/internal/daemon/thinking_step_errors.go`），daemon 按运行保存最近的报错特征；mod 只上传原料。归一化前先过 `redact.Text`：先改写 `://` 等字符会破坏脱敏的识别。这个函数导出给 OL-1019 复用。
+  - mod 侧的字段预算只在整行边界截断：半行截断会把凭据切到无法识别，超预算的单行整体不外发。预算远大于 §4 的首尾各 400 字，长输出尾部的报错由 daemon 的首尾截断保留。
   - daemon 按 §4 构造 state（`BuildStepThinkingState`），复用 `decideThinking` 调用 Jev（trace 的 `scope` 为 `step`，`step` 为步序号），并计入健康快照。
   - 返回 `{level, confidence, probabilities, latency_ms, source}`、`{fallback}`，或 `{enabled: false}`（"未启用"）。"未启用"不经过 Jev 客户端，不计入健康快照。鉴权沿用 `/repo/checkout` 的任务级 Bearer token；路径里的 `task_id` 与 token 绑定的任务不一致时拒绝。
 - **生效记录**：mod 每次请求过决策，无论拿到决策还是回退，都在调用 `next()` 之前用 `$.ui.log` 写一行生效记录，内容是步序号，以及决策各项或回退原因。mod 自己超时或请求出错时，回退原因为 `timeout` 或 `error`。第 1 步、子智能体的步、撤销之后的步都不写。

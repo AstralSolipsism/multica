@@ -4,6 +4,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 // Step error material for adaptive thinking (contract §4, §6): the mod uploads
@@ -109,9 +111,11 @@ type ErrorFeatureTracker struct {
 // Observe folds one step's error text into the repeat count: the count is how
 // many consecutive observations, including this one, reported the same
 // normalized feature. An error-free step resets it. The returned feature is
-// this step's normalized error text ("" when none).
+// this step's normalized error text ("" when none). The input is redacted
+// before normalization: rewriting URLs and colons first would break the
+// redactor's pattern match and leak the credential into the feature.
 func (t *ErrorFeatureTracker) Observe(errorText string) (feature string, repeats int) {
-	feature = NormalizedErrorFeature(errorText)
+	feature = NormalizedErrorFeature(redact.Text(errorText))
 	switch {
 	case feature == "":
 		t.feature = ""
