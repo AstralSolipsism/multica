@@ -706,6 +706,11 @@ type Daemon struct {
 	repoCheckoutTasksMu sync.RWMutex
 	repoCheckoutTasks   map[string]activeRepoCheckoutTask
 
+	// stepEffort holds the live per-step effort runs (thinking-decision
+	// endpoint), keyed by task id and reached through the same task-scoped
+	// bearer tokens as repoCheckoutTasks.
+	stepEffort stepEffortRuns
+
 	// localPathLocks serialises agent tasks whose project resource is a
 	// local_directory pinned to this daemon. Two tasks targeting the same
 	// on-disk path run sequentially; the second blocks on the lock and is
@@ -8849,8 +8854,21 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	thinking.Samples = d.jevSamples
 	selection := resolveTaskModelSelection(ctx, provider, agent.NewCommand(entry.Path, profileFixedArgs),
 		taskModelSelection{Model: model, ThinkingLevel: thinkingLevel, ServiceTier: serviceTier}, taskLog, thinking)
+	requestedThinkingLevel := thinkingLevel
 	model, thinkingLevel, serviceTier = selection.Model, selection.ThinkingLevel, selection.ServiceTier
 	ctx = context.WithValue(ctx, thinkingRunKey{}, thinking)
+
+	// Per-step adaptive effort (contract §6): when the run asked for _adapt,
+	// the run-level decision landed, and this Claude can rewrite per-turn
+	// effort, install the labrastro-effort mod and serve its decisions. The
+	// mod loads through the same CLAUDE_CODE_PLUGIN_DIRS as labrastro-ysk.
+	if vars := d.prepareStepEffort(task, provider, model, resolvedVersion, requestedThinkingLevel, thinkingLevel,
+		agent.NewCommand(entry.Path, profileFixedArgs), env, agentEnv, taskLog); vars != nil {
+		for key, value := range vars {
+			agentEnv[key] = value
+		}
+		defer d.stepEffort.remove(task.ID)
+	}
 
 	var idleWatchdogTimeout time.Duration
 	if provider == "opencode" || provider == "codearts" {
@@ -8899,6 +8917,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		var flushTips func()
 		execOpts.OnYouShouldKnow, flushTips = d.youShouldKnowReporter(task.ID, taskLog)
 		defer flushTips()
+	}
+	if stepEffortRun, ok := d.stepEffort.get(task.ID); ok {
+		execOpts.OnEffortEffect = stepEffortRun.observeEffect
+		execOpts.OnPerTurnEffort = d.perTurnEffortCallback(task.ID)
 	}
 	// Some providers do not reliably load the per-task runtime config files we
 	// write into the task workdir:
@@ -9755,9 +9777,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				// can't be misattributed to backend silence.
 				observedAt := time.Now().UTC()
 				lastActivityAt.Store(int64(awakeclock.Now()))
-				if thinking := thinkingRunFromContext(ctx); thinking != nil {
-					msg = thinking.tag(msg)
-				}
+				msg = d.tagThinkingMessage(ctx, taskID, msg)
 				switch msg.Type {
 				case agent.MessageStatus:
 					// Persist the session/work_dir as soon as the backend
