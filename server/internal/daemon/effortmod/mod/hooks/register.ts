@@ -388,9 +388,12 @@ export const register: Register = (on) => {
     if (e.agentId !== undefined || ctx === undefined) return yield* next(e)
     const step = e.index + 1
     if (step === 1) {
-      // The run-level decision's level is what this run started with; a
-      // run-level fallback leaves it empty (no effort flag injected).
-      last = typeof e.effort === 'string' && e.effort !== '' ? e.effort : ctx.startup_effort
+      // Step 1: `last` (set from the context's startup_effort at
+      // session.start) is the run-level decision's level; a run-level
+      // fallback leaves it empty (no effort flag injected). e.effort must
+      // not referee this: with no --effort injected it reports the CLI
+      // default ("medium" measured on 2.1.304, Haiku 5.5 — OL-1057), so
+      // trusting it would turn a run-level fallback into a locked medium.
       return yield* next(last === '' ? e : { ...e, effort: last })
     }
     if (!revoked && markerFile !== undefined) {

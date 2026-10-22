@@ -88,6 +88,7 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
    - **改写生效**：日志反代抓到的真实请求里，顶层 `output_config.effort` 逐步等于改写值；消息内的 `role: "system"` 挡位声明逐步追加，请求全部成功。
    - **版本**：静态核对发现，2.1.268 的 `turn.step` 只是观察事件，2.1.269 起才能改写 effort；2.1.292 的二进制已有 `per_turn_effort_active` 等字段，但没有实际运行。端到端只实测了 2.1.304。
    - **`next(e)` 不保持上一步的改写**：每一步收到的 `e.effort` 都是启动时的 `--effort`。直接 `next(e)` 发出的也是启动挡位：实测 low → high → `next(e)`，第三步发出的是 medium。
+   - **未注入 `--effort` 时 `e.effort` 报默认挡位**（OL-1057 实测，2.1.304 + Haiku 5.5）：不注入 `--effort` 的运行，`turn.step` 的 `e.effort` 是 `"medium"`，不是空字符串；注入 `--effort low` 时为 `"low"`。`system/init` 两种情况下都没有 `effort` 字段。所以 `e.effort` 无法区分「启动注入的挡位」与「CLI 默认挡位」，mod 以 context 的 `startup_effort` 为准。
    - **step 输入**：字段为 `{turnId, index, model, effort, messageCount}`。`index` 从 0 开始；主线程没有 `agentId`；`messageCount` 含内部请求内容，不等于 `messages()` 的长度。
    - **`next()` 的返回值**：`{turnId, index, answer, toolUses[{name, input}], stopReason, usage}`。
    - **`$.session.messages()`**：从第二步起，能取到上一步的工具调用和结果。
@@ -334,7 +335,7 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
   - 决策端点也检查这个状态，已撤销时回答"未启用"，防止标记删除与下一步之间的竞态。
 - **步序号**：一步是主线程的一次模型请求，`step` 从 1 开始，等于 `turn.step` 输入的 `index + 1`。
 - **每一步**：只处理主线程（`e.agentId` 为空）的步。
-  - mod 记住上一次生效的挡位 `last`，初值为启动挡位 `e.effort`。
+  - mod 记住上一次生效的挡位 `last`，初值为 context 里的启动挡位 `startup_effort`（运行级回退时为空）。第 1 步不看 `e.effort`：未注入 `--effort` 时它报的是 CLI 默认挡位（实测 `"medium"`，§0.9），不是空。
   - 第 1 步不请求决策，用运行级决策的挡位。
   - 从第 2 步起，标记存在时向 daemon 要决策。总时限约 2s，由 mod 自己设置，因为 `$.http.fetch` 默认是 30s。
   - 拿到决策：`yield* next({ ...e, effort: level })`，并把 `last` 更新为 `level`。

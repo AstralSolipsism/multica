@@ -102,8 +102,12 @@ async function start($: Engine): Promise<void> {
   await $.session.start({ cwd: '/task/workdir', surface: null, isInteractive: false })
 }
 
-async function step($: Engine, index: number, agentId?: string): Promise<TurnStepResult & { effort?: string }> {
-  const stream = $.turn.step({ turnId: 'turn-1', index, model: 'claude-test', messageCount: 10 + index, ...(agentId === undefined ? {} : { agentId }) })
+async function step($: Engine, index: number, agentId?: string, effort?: string): Promise<TurnStepResult & { effort?: string }> {
+  // The real host reports `effort` on every main-thread step: the injected
+  // --effort, or the CLI default when none was injected ("medium" measured on
+  // 2.1.304, Haiku 5.5 — OL-1057). Subagent steps are sent without one.
+  const hostEffort = effort ?? (agentId === undefined ? 'medium' : undefined)
+  const stream = $.turn.step({ turnId: 'turn-1', index, model: 'claude-test', messageCount: 10 + index, ...(hostEffort === undefined ? {} : { effort: hostEffort }), ...(agentId === undefined ? {} : { agentId }) })
   for (;;) {
     const next = await stream.next()
     if (next.done === true) return next.value as TurnStepResult & { effort?: string }
@@ -250,8 +254,10 @@ describe('labrastro-effort hooks', () => {
   test('an empty startup effort passes steps through until a decision lands', async ($, on) => {
     const world = setUp(on, { context: JSON.stringify({ version: 1, task_id: 'task-1', endpoint: '/tasks/task-1/thinking-decision', startup_effort: '' }) })
     await start($)
-    // Step 1 has no level in effect: pass through untouched.
-    expect((await step($, 0)).effort).toBeUndefined()
+    // Step 1 has no level in effect: the host's own default ("medium" when
+    // no --effort was injected — OL-1057) passes through UNTOUCHED; the mod
+    // must not adopt it as the last effective level.
+    expect((await step($, 0)).effort).toBe('medium')
     // Step 2 decides; from here every step carries a level.
     expect((await step($, 1)).effort).toBe('high')
     expect(JSON.parse(world.logs[0] ?? '{}')).toMatchObject({ step: 2, level: 'high' })
@@ -266,7 +272,11 @@ describe('labrastro-effort hooks', () => {
     world.answer = () => ({ status: 200, text: FALLBACK_DECISION })
     await start($)
     await step($, 0)
-    expect((await step($, 1)).effort).toBeUndefined()
+    // OL-1057 regression: the host reports its DEFAULT ("medium") on every
+    // step when no --effort was injected; the mod passes it through but must
+    // not treat it as a level that took effect — the first fallback records
+    // an empty level, never a locked medium.
+    expect((await step($, 1)).effort).toBe('medium')
     expect(JSON.parse(world.logs[0] ?? '{}')).toEqual({ effort: 1, step: 2, level: '', fallback: 'timeout' })
   })
 
@@ -317,7 +327,8 @@ describe('labrastro-effort hooks', () => {
   test('without a context file the mod stays off', async ($, on) => {
     const world = setUp(on, { env: {} })
     await start($)
-    for (let i = 0; i < 4; i++) expect((await step($, i)).effort).toBeUndefined()
+    // Off means untouched: the host's own default passes through verbatim.
+    for (let i = 0; i < 4; i++) expect((await step($, i)).effort).toBe('medium')
     expect(world.fetches).toEqual([])
   })
 })
