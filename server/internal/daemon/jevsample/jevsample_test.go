@@ -198,11 +198,10 @@ func TestSameDaemonTwoProfilesSeparateFiles(t *testing.T) {
 	if _, ok := files["decisions-d"]; !ok {
 		t.Fatalf("default profile must use plain prefix: %v", files)
 	}
-	// OL-1040 #1: the reverse direction of the cap check — the default
-	// profile's prefix "decisions-d-" is itself a prefix of every named
-	// profile's filename, so a loose prefix match would count the named
-	// profile's 900 bytes into the default profile's cap and refuse this
-	// record. It must be written.
+	// OL-1040 #1a: the default profile's prefix "decisions-d-" is itself a
+	// prefix of every named profile's filename, so a loose prefix match
+	// would count the named profile's 900 bytes into the default profile's
+	// cap and refuse this record. It must be written.
 	big := filepath.Join(dir, b.filePrefix+"-"+day+".jsonl")
 	if err := os.WriteFile(big, []byte(strings.Repeat("x", 900)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -214,6 +213,22 @@ func TestSameDaemonTwoProfilesSeparateFiles(t *testing.T) {
 	last := records[len(records)-1]
 	if last["id"] != id {
 		t.Fatalf("default profile's cap counted a named profile's bytes: %v", last)
+	}
+	// OL-1040 #1b: the named profile's own cap direction — with the default
+	// profile's file at 900 bytes, a "work" daemon under the same 1000-byte
+	// cap must still write: its cap must ignore the default profile's
+	// bytes (a daemonID-only prefix match would not).
+	big2 := filepath.Join(dir, "decisions-d-"+day+".jsonl")
+	if err := os.WriteFile(big2, []byte(strings.Repeat("x", 900)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	capped2 := New(dir, "d", "work", 1000, nil)
+	id2 := capped2.Decision(Decision{Scope: "run", Choice: "low"})
+	capped2.Close()
+	records2 := readLines(t, filepath.Join(dir, capped2.filePrefix+"-"+day+".jsonl"))
+	last2 := records2[len(records2)-1]
+	if last2["id"] != id2 {
+		t.Fatalf("named profile's cap counted the default profile's bytes: %v", last2)
 	}
 }
 
@@ -267,18 +282,19 @@ func TestSizeCapRefusesSmallerRecordsAndResumesAfterDelete(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
 
-	// Existing files already over the cap: both the decision and its much
-	// smaller outcome must be refused — the stop is sticky for the day, so
-	// no half pairs.
+	// Existing files already over the cap: the day's first record (decision,
+	// ~283 bytes) trips the cap and makes the stop sticky, so the outcome
+	// — which alone would fit under the cap — must still be refused.
+	// No half pairs.
 	old := filepath.Join(dir, "decisions-d-"+now.Format(dateFormat)+".jsonl")
-	oldBytes := []byte(strings.Repeat("x", 900) + "\n")
+	oldBytes := []byte(strings.Repeat("x", 750) + "\n")
 	if err := os.WriteFile(old, oldBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	c := New(dir, "d", "", 1000, nil)
 	c.now = func() time.Time { return now }
-	id := c.Decision(Decision{Scope: "run", Choice: "low"}) // ~300 bytes: does not fit
-	c.Outcome(Outcome{DecisionID: id, Status: "completed"}) // ~190 bytes: fits alone, must still be refused
+	id := c.Decision(Decision{Scope: "run", Choice: "low"}) // ~283 bytes: 750+284 > 1000, trips the cap
+	c.Outcome(Outcome{DecisionID: id, Status: "completed"}) // ~193 bytes: alone under the cap; sticky stop must refuse it
 	c.Close()
 
 	if raw, err := os.ReadFile(old); err != nil || string(raw) != string(oldBytes) {
@@ -361,6 +377,25 @@ func TestWarnRateLimitedPerReason(t *testing.T) {
 	c.Close()
 	if got := handler.count.Load(); got != 1 {
 		t.Fatalf("warn count=%d, want exactly 1 (rate-limited per reason)", got)
+	}
+}
+
+func TestSizeCapWarnsOnceAcrossDays(t *testing.T) {
+	handler := &countingHandler{}
+	dir := t.TempDir()
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	c := New(dir, "d", "", 1000, slog.New(handler))
+	c.now = func() time.Time { return now }
+	// Over the cap on day 1: one warn, sticky stop for the day.
+	c.Decision(Decision{Scope: "run", Choice: "low", State: strings.Repeat("s", 800)})
+	// Still over the cap after rotating to day 2: must NOT warn again —
+	// the cap warning is once per collector lifetime, not once per day.
+	now = now.AddDate(0, 0, 1)
+	c.now = func() time.Time { return now }
+	c.Decision(Decision{Scope: "run", Choice: "low", State: strings.Repeat("s", 800)})
+	c.Close()
+	if got := handler.count.Load(); got != 1 {
+		t.Fatalf("warn count=%d, want exactly 1 (once per collector lifetime, not per day)", got)
 	}
 }
 

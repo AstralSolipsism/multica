@@ -7,7 +7,7 @@
 //
 // File layout mirrors terminal_report_queue.go: directory 0700, files 0600,
 // and the directory must not be a symlink. One file per daemon per UTC day,
-// decisions-<daemon_id>[-<profile>]-<YYYYMMDD>.jsonl. Daemon IDs are
+// decisions-<daemon_id>[-<profile>-<hash>]-<YYYYMMDD>.jsonl. Daemon IDs are
 // machine-scoped while the single-instance lock is per profile, so the
 // profile segment is what keeps two same-machine daemons on distinct files
 // (OL-1040); the default (empty) profile omits it.
@@ -57,8 +57,9 @@ const (
 type Collector struct {
 	dir      string
 	daemonID string
-	// filePrefix is "decisions-<daemon_id>[-<sanitized profile>]", the
-	// per-process part of every filename; distinct profiles never share it.
+	// filePrefix is "decisions-<daemon_id>[-<sanitized profile>-<hash>]",
+	// the per-process part of every filename; distinct profiles never
+	// share it.
 	filePrefix string
 	maxBytes   int64
 	log        *slog.Logger
@@ -289,7 +290,6 @@ func (c *Collector) run() {
 	var (
 		openDay   string
 		file      *os.File
-		used      int64
 		stoppedOn string // UTC day that hit the cap; all further records that day are refused
 		warned    bool
 	)
@@ -320,15 +320,13 @@ func (c *Collector) run() {
 			continue
 		}
 		if file == nil {
-			file, used = c.open(day)
+			file = c.open(day)
 			if file == nil {
 				continue
 			}
 			openDay = day
 		}
-		n, err := file.Write(append(p.line, '\n'))
-		used += int64(n)
-		if err != nil {
+		if _, err := file.Write(append(p.line, '\n')); err != nil {
 			c.warn("write", err)
 			_ = file.Close()
 			file = nil
@@ -367,21 +365,20 @@ func (c *Collector) sizeOnDisk() int64 {
 
 // open ensures the directory and opens (creating if needed) today's file.
 // Callers have already checked the size cap.
-func (c *Collector) open(day string) (*os.File, int64) {
+func (c *Collector) open(day string) *os.File {
 	if err := c.ensureDir(); err != nil {
 		c.warn("prepare directory", err)
-		return nil, 0
+		return nil
 	}
-	used := c.sizeOnDisk()
 	path := filepath.Join(c.dir, fmt.Sprintf("%s-%s.jsonl", c.filePrefix, day))
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		c.warn("open file", err)
-		return nil, used
+		return nil
 	}
 	// Tighten a pre-existing file as well.
 	_ = file.Chmod(0o600)
-	return file, used
+	return file
 }
 
 func (c *Collector) ensureDir() error {

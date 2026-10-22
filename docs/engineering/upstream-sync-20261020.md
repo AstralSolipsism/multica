@@ -24,8 +24,9 @@ points and update retained regression coverage.
   short-read splitter from `e80f05780` on top of the upstream file. This is the
   only scanner difference; upstream `readAgentStreamLine` and scanner tests
   remain unchanged. Independent fork skill-invocation and usage-accounting
-  extensions remain. `antigravity-completion.md` records the adopted rules and
-  the OL-910 protections relinquished by the decision.
+  extensions remain. OL-1074 later replaced these completion rules with turn
+  evidence and kept the classifier only for legacy streams; the current rules
+  are in `antigravity-completion.md`.
 - Workflow handoffs use the existing assignment checks and DAG transaction
   guards. The generated assignee must be included in the transaction's explicit
   write fields: otherwise refreshing untouched fields under the row lock
