@@ -185,7 +185,7 @@
   "picker": {
     "uncategorized": "未归类",
     "not_imported": "未导入",
-    "not_imported_hint": "请先在技能页面导入该 skill，再进行绑定。",
+    "not_imported_hint": "请先在 Skills 页面导入该 skill，再进行绑定。",
     "toggle_folder": "选择 \"{{name}}\" 下全部"
   }
 }

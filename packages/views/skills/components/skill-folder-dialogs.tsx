@@ -82,6 +82,15 @@ export function SkillFolderFormDialog({
   const submit = async () => {
     const trimmed = name.trim();
     if (!trimmed || saving) return;
+    // The server validates names with an uncoded 400 (1–255 UTF-8 bytes, no
+    // NUL or line breaks), so check client-side to show the localized reason.
+    const tooLong = new TextEncoder().encode(trimmed).length > 255;
+    const hasControl =
+      trimmed.includes("\0") || trimmed.includes("\n") || trimmed.includes("\r");
+    if (tooLong || hasControl) {
+      setError(t(($) => $.folder_errors.invalid_name));
+      return;
+    }
     setSaving(true);
     setError("");
     try {

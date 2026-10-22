@@ -717,6 +717,9 @@ describe("SkillsPage unreadable write responses", () => {
 describe("SkillsPage localized folder errors", () => {
   it("localizes a coded create error instead of showing the server message", async () => {
     const { ApiError } = await import("@multica/core/api");
+    const { invalidateSkillPackageQueries } = await import(
+      "@multica/core/skills/package-queries"
+    );
     apiMock.createSkillFolder.mockRejectedValue(
       new ApiError("a folder with this name already exists at the destination", 409, "Conflict", {
         code: "name_conflict",
@@ -729,6 +732,59 @@ describe("SkillsPage localized folder errors", () => {
     await userEvent.click(screen.getByRole("button", { name: "创建" }));
     expect(await screen.findByText("目标位置已存在同名文件夹，请换一个名称。")).toBeTruthy();
     expect(screen.queryByText(/already exists at the destination/)).toBeNull();
+    // A failed write still refreshes the tree — the copy says so.
+    expect(invalidateSkillPackageQueries).toHaveBeenCalled();
+  });
+
+  // Every code the dialog's mapping claims to localize must render its own
+  // copy — deleting a branch must fail a test.
+  it.each([
+    { code: "name_conflict", expected: "A folder with this name already exists at the destination." },
+    { code: "folder_cycle", expected: "A folder can't be moved into one of its own subfolders." },
+    {
+      code: "invalid_name",
+      expected:
+        "The folder name isn't valid: 1–255 bytes, no surrounding whitespace, no control characters or line breaks.",
+    },
+    { code: "forbidden", expected: "You don't have permission to do this." },
+    {
+      code: "not_found",
+      expected: "The target couldn't be found — it may have been deleted. The list was refreshed.",
+    },
+    {
+      code: "managed_folder",
+      expected: "Managed package folders follow the package and can't be changed here.",
+    },
+    { code: "preview_stale", expected: "The folder tree changed. The list was refreshed — try again." },
+    {
+      code: "permission_changed",
+      expected: "Your permissions changed. The list was refreshed — try again.",
+    },
+  ])("localizes the $code error", async ({ code, expected }) => {
+    const { ApiError } = await import("@multica/core/api");
+    apiMock.createSkillFolder.mockRejectedValue(
+      new ApiError(`server says ${code}`, 409, "Conflict", { code, error: `server says ${code}` }),
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "New folder" }));
+    await userEvent.type(screen.getByLabelText("Name"), "Ghost");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(await screen.findByText(expected)).toBeTruthy();
+    expect(screen.queryByText(`server says ${code}`)).toBeNull();
+  });
+
+  it("rejects an over-long folder name before calling the server", async () => {
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "New folder" }));
+    // 86 CJK characters = 258 UTF-8 bytes, over the 255-byte contract limit.
+    await userEvent.type(screen.getByLabelText("Name"), "文".repeat(86));
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(
+      await screen.findByText(
+        "The folder name isn't valid: 1–255 bytes, no surrounding whitespace, no control characters or line breaks.",
+      ),
+    ).toBeTruthy();
+    expect(apiMock.createSkillFolder).not.toHaveBeenCalled();
   });
 
   it("localizes a coded move error", async () => {
@@ -771,6 +827,9 @@ describe("SkillsPage localized folder errors", () => {
   });
 
   it("falls back to the generic failure copy for an uncoded error", async () => {
+    const { invalidateSkillPackageQueries } = await import(
+      "@multica/core/skills/package-queries"
+    );
     apiMock.createSkillFolder.mockRejectedValue(new Error("socket hangup"));
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "New folder" }));
@@ -778,10 +837,24 @@ describe("SkillsPage localized folder errors", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
     expect(await screen.findByText("Couldn't save the folder. Try again.")).toBeTruthy();
     expect(screen.queryByText("socket hangup")).toBeNull();
+    expect(invalidateSkillPackageQueries).toHaveBeenCalled();
   });
 });
 
 describe("SkillsPage tree wait fallback", () => {
+  it("keeps the hierarchy when a background tree refresh fails once with cached data", () => {
+    // Cached tree + first failed background attempt (retry still pending):
+    // the hierarchy must not flip to flat for a transient failure.
+    mocks.folderTreeFailures = 1;
+    renderPage("/acme/skills?folder=f-eng");
+    expect(screen.getByRole("button", { name: "Open Frontend" })).toBeTruthy();
+    expect(screen.getByText("engineering-skill")).toBeTruthy();
+    expect(screen.queryByText("loose-skill")).toBeNull();
+    expect(
+      screen.queryByText("Folders are unavailable. Showing skills in a flat list."),
+    ).toBeNull();
+  });
+
   it("falls back to the flat list on the first failed tree attempt, before the retry settles", () => {
     mocks.folderTree = undefined;
     mocks.folderTreeFailures = 1;
@@ -806,9 +879,21 @@ describe("SkillsPage tree wait fallback", () => {
       expect(screen.getAllByTestId("skeleton").length).toBeGreaterThan(0);
       expect(screen.queryByText("placed-skill")).toBeNull();
 
+      // One millisecond before the deadline the grace window must still hold
+      // (guards the 5s threshold itself).
       act(() => {
-        vi.advanceTimersByTime(5000);
+        vi.advanceTimersByTime(4999);
       });
+      expect(screen.getAllByTestId("skeleton").length).toBeGreaterThan(0);
+      expect(screen.queryByText("placed-skill")).toBeNull();
+      expect(
+        screen.queryByText("Folders are unavailable. Showing skills in a flat list."),
+      ).toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(screen.queryByTestId("skeleton")).toBeNull();
       expect(screen.getByText("placed-skill")).toBeTruthy();
       expect(screen.getByText("loose-skill")).toBeTruthy();
       expect(

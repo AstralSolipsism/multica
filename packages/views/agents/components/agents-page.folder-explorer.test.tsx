@@ -1100,6 +1100,9 @@ describe("AgentsPage place-variant result toasts", () => {
 describe("AgentsPage localized folder errors", () => {
   it("localizes a coded create error instead of showing the server message", async () => {
     const { ApiError } = await import("@multica/core/api");
+    const { invalidateAgentFolderQueries } = await import(
+      "@multica/core/agents/folder-queries"
+    );
     apiMock.createAgentFolder.mockRejectedValue(
       new ApiError("a folder with this name already exists at the destination", 409, "Conflict", {
         code: "name_conflict",
@@ -1112,6 +1115,36 @@ describe("AgentsPage localized folder errors", () => {
     await userEvent.click(screen.getByRole("button", { name: "创建" }));
     expect(await screen.findByText("目标位置已存在同名文件夹，请换一个名称。")).toBeTruthy();
     expect(screen.queryByText(/already exists at the destination/)).toBeNull();
+    // A failed write still refreshes the tree — the copy says so.
+    expect(invalidateAgentFolderQueries).toHaveBeenCalled();
+  });
+
+  // Every code the dialog's mapping claims to localize must render its own
+  // copy — deleting a branch must fail a test.
+  it.each([
+    { code: "name_conflict", expected: "A folder with this name already exists at the destination." },
+    { code: "folder_cycle", expected: "A folder can't be moved into one of its own subfolders." },
+    {
+      code: "invalid_name",
+      expected:
+        "The folder name isn't valid: 1–255 bytes, no surrounding whitespace, no control characters or line breaks.",
+    },
+    { code: "forbidden", expected: "You don't have permission to do this." },
+    {
+      code: "not_found",
+      expected: "The target couldn't be found — it may have been deleted. The list was refreshed.",
+    },
+  ])("localizes the $code error", async ({ code, expected }) => {
+    const { ApiError } = await import("@multica/core/api");
+    apiMock.createAgentFolder.mockRejectedValue(
+      new ApiError(`server says ${code}`, 409, "Conflict", { code, error: `server says ${code}` }),
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "New folder" }));
+    await userEvent.type(screen.getByLabelText("Name"), "Ghost");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(await screen.findByText(expected)).toBeTruthy();
+    expect(screen.queryByText(`server says ${code}`)).toBeNull();
   });
 
   it("localizes a coded move error", async () => {
@@ -1154,6 +1187,9 @@ describe("AgentsPage localized folder errors", () => {
   });
 
   it("falls back to the generic failure copy for an uncoded error", async () => {
+    const { invalidateAgentFolderQueries } = await import(
+      "@multica/core/agents/folder-queries"
+    );
     apiMock.createAgentFolder.mockRejectedValue(new Error("socket hangup"));
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "New folder" }));
@@ -1161,10 +1197,24 @@ describe("AgentsPage localized folder errors", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
     expect(await screen.findByText("Couldn't save the folder. Try again.")).toBeTruthy();
     expect(screen.queryByText("socket hangup")).toBeNull();
+    expect(invalidateAgentFolderQueries).toHaveBeenCalled();
   });
 });
 
 describe("AgentsPage tree wait fallback", () => {
+  it("keeps the hierarchy when a background tree refresh fails once with cached data", () => {
+    // Cached tree + first failed background attempt (retry still pending):
+    // the hierarchy must not flip to flat for a transient failure.
+    mocks.folderTreeFailures = 1;
+    renderPage("/acme/agents?folder=f-design");
+    expect(screen.getByRole("button", { name: "Open Research" })).toBeTruthy();
+    expect(screen.getByText("placed-agent")).toBeTruthy();
+    expect(screen.queryByText("loose-agent")).toBeNull();
+    expect(
+      screen.queryByText("Folders are unavailable. Showing agents in a flat list."),
+    ).toBeNull();
+  });
+
   it("falls back to the flat list on the first failed tree attempt, before the retry settles", () => {
     mocks.folderTree = undefined;
     mocks.folderTreeFailures = 1;
@@ -1188,9 +1238,21 @@ describe("AgentsPage tree wait fallback", () => {
       expect(screen.getAllByTestId("skeleton").length).toBeGreaterThan(0);
       expect(screen.queryByText("squad-leader")).toBeNull();
 
+      // One millisecond before the deadline the grace window must still hold
+      // (guards the 5s threshold itself).
       act(() => {
-        vi.advanceTimersByTime(5000);
+        vi.advanceTimersByTime(4999);
       });
+      expect(screen.getAllByTestId("skeleton").length).toBeGreaterThan(0);
+      expect(screen.queryByText("squad-leader")).toBeNull();
+      expect(
+        screen.queryByText("Folders are unavailable. Showing agents in a flat list."),
+      ).toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(screen.queryByTestId("skeleton")).toBeNull();
       expect(screen.getByText("squad-leader")).toBeTruthy();
       expect(screen.getByText("loose-agent")).toBeTruthy();
       expect(

@@ -246,8 +246,10 @@ export function useAgentsPageFolderExplorer({
   const previousFoldersRef = useRef<readonly FolderExplorerFolder[]>([]);
 
   // Never hide entries behind an unreachable tree: after the first failed
-  // attempt (even with the retry still pending) or 5s without any data, fall
-  // back to the flat list with a notice. Late data restores the hierarchy.
+  // attempt with no data yet (even with the retry still pending) or 5s
+  // without any data, fall back to the flat list with a notice. Late data
+  // restores the hierarchy. A failed background refetch that still has the
+  // cached tree keeps the hierarchy — the retry usually succeeds.
   const [treeWaitExpired, setTreeWaitExpired] = useState(false);
   useEffect(() => {
     if (folderTree || folderTreeError) {
@@ -262,7 +264,7 @@ export function useAgentsPageFolderExplorer({
   const treeUnavailable =
     folderTree === null ||
     !!folderTreeError ||
-    folderTreeFailures > 0 ||
+    (folderTree === undefined && folderTreeFailures > 0) ||
     treeWaitExpired;
   const treeLoading = !treeReady && !treeUnavailable;
   const flatRequested =
