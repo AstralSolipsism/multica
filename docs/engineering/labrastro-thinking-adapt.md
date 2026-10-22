@@ -22,7 +22,7 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 
 - 不把 ONNX Runtime 编进 `multica`，自部署模型由独立的 `/v1/systemone` 服务提供（ADR 0002）；
 - 不拿没有微调过的 Laya 底座直接上线，自部署来源通过门禁评测后才能排在外部来源前面；
-- 采集器不记录未脱敏的原文或文件内容。
+- 采集器不记录决策链路之外的内容；样本里的 state 是未脱敏的原文（OL-1083），只留在本机、不得外传。
 
 负责人 2026-10-21 在 OL-1013 中决定：
 
@@ -174,7 +174,7 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 | `MULTICA_JEV_DASHSCOPE_WORKSPACE_ID` | `dashscope` 来源的业务空间 ID | — |
 | `MULTICA_JEV_DASHSCOPE_REGION` | `cn-beijing` 或 `ap-southeast-1` | `cn-beijing` |
 
-缺少必需变量的来源直接跳过，只告警一次。这些变量写进 `apps/docs/content/docs/environment-variables.mdx` 及其各语言版本，并写清三点：默认零配置时，选了自适应的运行会把脱敏、截断后的运行摘要发到 OpenCode Zen 免费通道；`MULTICA_JEV_DISABLED=1` 可以在本机关闭；key 只留在本机。
+缺少必需变量的来源直接跳过，只告警一次。这些变量写进 `apps/docs/content/docs/environment-variables.mdx` 及其各语言版本，并写清三点：默认零配置时，选了自适应的运行会把运行摘要（包括工具输出原文）发到 OpenCode Zen 免费通道；`MULTICA_JEV_DISABLED=1` 可以在本机关闭；key 只留在本机。
 
 自部署来源的三个变量见 §10.2，决策样本的两个变量见 §10.3。
 
@@ -265,8 +265,8 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 字段按下列顺序拼接，短的在前，长文本在后：
 
 - **运行级**：运行类型（任务触发、Chat 消息或自动化）、provider、model、标题、触发评论前 1000 字、描述前 1500 字。
-- **步级**：先是短字段：步序号、上一步主线程的工具名称与是否出错、退出码、报错特征、最近 6 个主线程步内与本步报错特征相同的步数（含本步；无报错时为 0；`[omitted]` 不进窗口并沿用上次计数）；再是长文本：上一步工具调用的输入摘要、工具结果首尾各 400 字、上一步助手文本前 500 字、运行目标（同上的标题与描述）前 500 字。
-- **处理**：所有发往决策引擎的 state 都由 daemon 构造，先过 `server/pkg/redact.Text` 脱敏，总长截到 4KB（按 UTF-8 字节计）。不得包含智能体指令、skill 内容、环境变量和文件全文。
+- **步级**：先是短字段：步序号、上一步主线程的工具名称与是否出错、退出码、报错特征、最近 6 个主线程步内与本步报错特征相同的步数（含本步；无报错时为 0）；再是长文本：上一步工具调用的输入摘要（前 300 字）、工具结果（约 2500 字节预算，超长时保留开头正文与末尾约 1000 字节、中间标出截掉的字节数——报错通常在末尾）、上一步助手文本前 500 字、运行目标（同上的标题与描述）前 500 字。
+- **处理**：所有发往决策引擎的 state 都由 daemon 构造，材料保持原文、不脱敏（OL-1083）：智能体调用大模型时本来就直接发送代码、日志和配置，发给决策模型没有区别。state 不得包含智能体指令、skill 内容和环境变量；总长截到 4KB（按 UTF-8 字节计）。
 - **为什么这样排**：超长时截掉的总是末尾，daemon 截到 4KB 是这样，自部署来源按 token 上限截断也是这样（§10.0）。中文描述的前 1500 字就超过 4KB，排在它后面的字段会整段丢掉；D4 要靠触发评论、报错特征和重复次数判断是否升到 max、ultra，所以这些放在长文本前面。
 
 ### 判据评测
@@ -300,7 +300,7 @@ MULTICA_UPDATE_THINKING_FIXTURES=1 \
   go test ./internal/daemon -run '^TestThinkingFixtureExport$' -count=1
 ```
 
-`StepThinkingFixtures()` 和 `BuildStepThinkingState()` 供步级实现复用。后者接收工具输入摘要，对标明为文件内容的结果不外发正文，只保留省略标记；其他工具结果先脱敏，再保留首尾片段。
+`StepThinkingFixtures()` 和 `BuildStepThinkingState()` 供步级实现复用。后者接收工具输入摘要与工具结果原文；结果超长时按 §4 保留开头与末尾并标出截掉的字节数。
 
 ## 5. 运行级决策
 
@@ -311,9 +311,9 @@ MULTICA_UPDATE_THINKING_FIXTURES=1 \
 3. 否则按 §4 构造判据和 state，调用 Jev，把结果写入 `ThinkingLevel`；回退时置空。
 4. fresh-session 重试和 codex 的第二次尝试复用同一个决策，不再调用 Jev。
 
-issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在领取的挡位仍为 `_adapt` 时附带 `issue_description`，复用已加载的 issue 行。Chat 和自动化分别使用领取载荷中的消息、自动化标题和描述。daemon 只选取 §4 的业务字段，先脱敏、限制各字段字数，再按该节的顺序编码 JSON。超过 4096 字节时，从最后一个文本字段向前缩短，保留有效 JSON 和所有字段名；运行级先缩短描述，步级先缩短运行目标。
+issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在领取的挡位仍为 `_adapt` 时附带 `issue_description`，复用已加载的 issue 行。Chat 和自动化分别使用领取载荷中的消息、自动化标题和描述。daemon 只选取 §4 的业务字段，限制各字段字数，再按该节的顺序编码 JSON；材料保持原文（§4）。超过 4096 字节时，从最后一个文本字段向前缩短，保留有效 JSON 和所有字段名；运行级先缩短描述，步级先缩短运行目标。
 
-运行级和后续步级调用的共同挂钩是 `decideThinking(ctx, client, trace, request)`。`ThinkingDecisionTrace` 带 `TaskID`、`Scope`、`Step`（运行级为 0，表示无步序号）、`Provider`、`Model`，与外发请求分开。`ThinkingDecisionRecord` 保存这份追踪信息、脱敏后的请求、结果及回退原因，通过执行 context 中的 `thinkingRun` 保留到终态处理；本阶段不采集样本。
+运行级和后续步级调用的共同挂钩是 `decideThinking(ctx, client, trace, request)`。`ThinkingDecisionTrace` 带 `TaskID`、`Scope`、`Step`（运行级为 0，表示无步序号）、`Provider`、`Model`，与外发请求分开。`ThinkingDecisionRecord` 保存这份追踪信息、按 §4 构造的请求、结果及回退原因，通过执行 context 中的 `thinkingRun` 保留到终态处理；本阶段不采集样本。
 
 选中的挡位走各运行时现有的注入路径：claude 的 `--effort`、codex 的 `model_reasoning_effort`、opencode 的 `--variant` 或 `#level`、pi/omp 的 `--thinking`、kimi/reasonix/hermes 的 `set_config_option`。跟随 CLI 配置和固定挡位的路径保持原样：不构造判据，不调用 Jev。
 
@@ -348,13 +348,13 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
 - **mod**：名为 `labrastro-effort`，与 `labrastro-ysk` 一起通过 `CLAUDE_CODE_PLUGIN_DIRS` 加载，安装方式照 `prepareYouShouldKnow`（`server/internal/daemon/labrastro_ysk.go`）。
 - **mod → daemon**：`POST http://127.0.0.1:{MULTICA_DAEMON_PORT}/tasks/{task_id}/thinking-decision`，带 `Authorization: Bearer $MULTICA_TOKEN`。实测往返约 1–3 ms，不受 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 影响，不需要改走 Unix socket（§0.9）。
   - daemon 的健康服务（`serveHealth`）校验 token 和活跃运行，做法照 `/repo/checkout`。
-  - 请求体由 OL-1010 定义，内容是构造 state 所需的上一步原料：`{step, assistant_text, assistant_omitted, tools: [{name, is_error, is_file_content, input_summary, input_summary_omitted, result_text, result_omitted}], error_text, error_omitted}`。mod 每步调用 `next()` 前记下 `$.session.messages()` 的条目数，下一步只取其后新增的条目（即上一步的输出）：宿主把一次请求的输出拆成 text 与逐个 tool_use 的多条条目、并把结果条目穿插其间（§0.9），mod 在这个窗口里从末尾回收到原始用户消息为止，合并 `text` 与 `toolUses`（工具结果已由宿主按 `tool_use_id` 并入，`text`、`isError` 字段）。`is_file_content` 标记结果为文件正文的工具（Read、NotebookRead）：调用成功时 mod 不上传 `result_text`（daemon 在 state 里写 `[file content omitted]`）；调用失败时结果是一句报错而非正文，照常进 `result_text`/`error_text`，否则 Read 反复失败时报错特征与重复次数就丢了。为了补记结果信号（§10.3），还必须带：
+  - 请求体由 OL-1010 定义、OL-1083 简化，内容是构造 state 所需的上一步原料：`{step, assistant_text, tools: [{name, is_error, input_summary, result_text}], error_text}`。mod 每步调用 `next()` 前记下 `$.session.messages()` 的条目数，下一步只取其后新增的条目（即上一步的输出）：宿主把一次请求的输出拆成 text 与逐个 tool_use 的多条条目、并把结果条目穿插其间（§0.9），mod 在这个窗口里从末尾回收到原始用户消息为止，合并 `text` 与 `toolUses`（工具结果已由宿主按 `tool_use_id` 并入，`text`、`isError` 字段）。所有工具一视同仁：Read / NotebookRead 的正文和其他工具的结果一样上传。为了补记结果信号（§10.3），还必须带：
     - 步序号，从 1 开始；
     - 上一步主线程的工具列表 `[{name, is_error}]`；
-    - 上一步的报错文本，按 §4 截断。Bash 失败结果首行固定是 `Exit code N`：daemon 把它解析进 `exit_code`，报错特征取其后的真正报错行；Go 编译/测试输出的 `# 包路径` 与 `FAIL\t包路径 [build failed]` 包头行同样跳过，取真正的报错行。state 描述的那个工具取上一步最后一个报错的工具（没有报错则取最后一个工具），`is_error` 与 `exit_code` 与报错特征一致。
-  - 报错特征的归一化和同类报错的重复次数由 daemon 用 Go 计算（`NormalizedErrorFeature` / `ErrorFeatureTracker`，`server/internal/daemon/thinking_step_errors.go`），重复次数是最近 6 个主线程步内与本步报错特征相同的步数（含本步）。daemon 按运行保存这个窗口；无报错的步占窗口位置，但不清空历史，本步计数为 0。一次"修改 + 验证"占 2 步，6 步覆盖三轮尝试。mod 只上传原料。归一化前先过 `redact.Text`：先改写 `://` 等字符会破坏脱敏的识别。这个函数导出给 OL-1019 复用。
-  - mod 侧不做任何截断：字段整段上传或整段省略（whole-or-omitted）。每字段上限 64 KiB（UTF-8 字节）、整个请求上限 768 KiB（序列化后的字节数，给 daemon 的 1 MiB 解码上限留余量）。超限字段整段不传、只带 `*_omitted` 标记（如 `result_omitted`），绝不传半段；整请求超限时从最早的工具起丢大文本字段（`result_text`、`input_summary`），`name` 与 `is_error` 永不丢，最后一个报错工具（无报错则最后一个工具）尽量保留。daemon 对省略字段在 state 里写省略标记，`error_text` 省略时报错特征记 `[omitted]`、重复次数不累加也不清零，该步不进窗口。
-  - 脱敏全部在 daemon 侧、且先于截断/归一化（§4）：`BuildStepThinkingState` 与 `NormalizedErrorFeature` 都先过 `redact.Text` 再处理；mod 传来的原料保持原文（含多行 PEM 私钥整段），由 daemon 脱敏后按 §4 截首尾。
+    - 上一步的报错文本。Bash 失败结果首行固定是 `Exit code N`：daemon 把它解析进 `exit_code`，报错特征取其后的真正报错行；Go 编译/测试输出的 `# 包路径` 与 `FAIL\t包路径 [build failed]` 包头行同样跳过，取真正的报错行。state 描述的那个工具取上一步最后一个报错的工具（没有报错则取最后一个工具），`is_error` 与 `exit_code` 与报错特征一致。
+  - 报错特征的归一化和同类报错的重复次数由 daemon 用 Go 计算（`NormalizedErrorFeature` / `ErrorFeatureTracker`，`server/internal/daemon/thinking_step_errors.go`），重复次数是最近 6 个主线程步内与本步报错特征相同的步数（含本步）。daemon 按运行保存这个窗口；无报错的步占窗口位置，但不清空历史，本步计数为 0。一次"修改 + 验证"占 2 步，6 步覆盖三轮尝试。mod 只上传原料。这个函数导出给 OL-1019 复用。
+  - mod 侧只对超长字符串做首尾截取：每字段上限 64 KiB（UTF-8 字节），超限时保留开头与末尾（约各 2 KiB 之内按需压缩）、中间标出截掉的字节数，绝不整段清空；整个请求上限 768 KiB（序列化后的字节数，给 daemon 的 1 MiB 解码上限留余量），超限时从最早的工具起把大文本字段截短，`name` 与 `is_error` 永不丢，最后一个报错工具（无报错则最后一个工具）尽量保留。
+  - 材料全程保持原文（§4）：mod 与 daemon 都不做脱敏，智能体调用大模型时本来就直接发送这些内容。
   - daemon 按 §4 构造 state（`BuildStepThinkingState`），复用 `decideThinking` 调用 Jev（trace 的 `scope` 为 `step`，`step` 为步序号），并计入健康快照。
   - 返回 `{level, confidence, probabilities, latency_ms, source}`、`{fallback}`，或 `{enabled: false}`（"未启用"）。"未启用"不经过 Jev 客户端，不计入健康快照。鉴权沿用 `/repo/checkout` 的任务级 Bearer token；路径里的 `task_id` 与 token 绑定的任务不一致时拒绝。
 - **生效记录**：mod 每次请求过决策，无论拿到决策还是回退，都在调用 `next()` 之前用 `$.ui.log` 写一行生效记录，内容是步序号，以及决策各项或回退原因。mod 自己超时或请求出错时，回退原因为 `timeout` 或 `error`。第 1 步、子智能体的步、撤销之后的步都不写。
@@ -416,7 +416,7 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
 
 - **出现条件**：候选不少于 2 个时，在列表顶部提供"自适应"，选中时写入 `thinking_level = "_adapt"`。候选规则在 core 里实现，单测直接读 §2 的测试向量。
 - **置灰**：运行时的 `metadata.capabilities` 不含 `thinking-adapt-v1` 时置灰，并说明 daemon 版本过旧、需要升级。置灰只是提示，真正的门控是领取时的改写（§2）。
-- **副标题**：显示该运行时 `thinking_adapt` 快照的状态（例如"可用 · OpenCode Zen · 290ms"），并用一句话说明：选中后会把脱敏后的运行摘要发给外部决策服务，默认是 OpenCode Zen 免费通道。
+- **副标题**：显示该运行时 `thinking_adapt` 快照的状态（例如"可用 · OpenCode Zen · 290ms"），并用一句话说明：选中后，会将运行摘要（包括工具输出原文）发送给外部决策服务，默认使用 OpenCode Zen 免费通道。
 - **显示**：触发器、只读态、资料卡都显示"自适应"，不显示 `_adapt`。reasonix、dim 自己的 `auto` 仍按 CLI 的 label 显示，要能和"自适应"区分。
 - **清理**：换模型后，新模型仍有不少于 2 个候选时保留自适应，否则清掉；换运行时清掉；同一运行时内复制智能体时保留（§2）。
 
@@ -595,7 +595,7 @@ OL-1013 描述前半部分的原始需求里，"通道""源"统一叫"来源"，
 |---|---|
 | `id`（UUID）、`ts`（RFC3339，UTC）、`daemon_id` | — |
 | `task_id`、`scope`（`run` 或 `step`）、`step`（运行级为 null，步级从 1 开始）、`provider`、`model` | 追踪信息，由调用方随请求交给采集器，不进请求体 |
-| `state`、`questions` | 与发给来源的内容逐字节相同。state 已按 §4 脱敏并截到 4KB；采集器不另外处理，也不记录任何别的文本 |
+| `state`、`questions` | 与发给来源的内容逐字节相同。state 是未脱敏的原文（§4），可能包含工具输出里的密钥：样本只留在本机、权限 0600（见下），不得提交到仓库或上传到公开位置 |
 | `source`、`choice`、`confidence`、`probabilities`、`latency_ms` | 取自 `Decision`（§3） |
 
 **结果记录**（`type: "outcome"`）

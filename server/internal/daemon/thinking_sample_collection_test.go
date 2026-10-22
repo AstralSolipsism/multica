@@ -279,22 +279,24 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 				}
 			}
 
-			// Redaction: only redact.Text's markers, never the originals, and
-			// never the environment sentinels.
+			// Redaction is gone from the decision path (OL-1083): the sample is
+			// the unredacted original, byte-identical to the wire body (checked
+			// above). What must never appear are the environment's own tokens.
 			raw, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, bad := range []string{
-				"ghp_", "sk-", "supersecretvalue99", "tok_wo_rd_987654321",
 				"sentinel-opencode-key-0123456789abcdef", "sentinel-multica-token-0123456789abcdef",
 			} {
 				if strings.Contains(string(raw), bad) {
 					t.Fatalf("sample leaked %q: %s", bad, raw)
 				}
 			}
-			if !strings.Contains(string(raw), "REDACTED") {
-				t.Fatalf("expected redaction markers in state: %s", raw)
+			// The task description's secrets are business content the coding
+			// model sees; they now appear in the sample verbatim.
+			if !strings.Contains(string(raw), "supersecretvalue99") {
+				t.Fatalf("expected the unredacted description in the sample: %s", raw)
 			}
 
 			// Permissions: directory 0700, file 0600.

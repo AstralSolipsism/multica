@@ -104,7 +104,7 @@
     "scope": "step",
     "candidate_group": "claude",
     "expected_category": "机械",
-    "state": "{\"step\":1,\"tool\":\"\",\"is_error\":false,\"exit_code\":0,\"error_features\":\"\",\"repeated_errors\":0,\"tool_input_summary\":\"\",\"result_head\":\"\",\"result_tail\":\"\",\"assistant\":\"下一步先用 read_file 读取 scheduler.go，目前尚未读入代码或取得错误证据。\",\"goal\":\"排查任务调度器偶发卡住的问题\"}",
+    "state": "{\"step\":1,\"tool\":\"\",\"is_error\":false,\"exit_code\":0,\"error_features\":\"\",\"repeated_errors\":0,\"tool_input_summary\":\"\",\"result\":\"\",\"assistant\":\"下一步先用 read_file 读取 scheduler.go，目前尚未读入代码或取得错误证据。\",\"goal\":\"排查任务调度器偶发卡住的问题\"}",
     "questions": {
       "effort": {
         "type": "choice",
@@ -124,7 +124,7 @@
     "scope": "step",
     "candidate_group": "claude",
     "expected_category": "首次深层问题",
-    "state": "{\"step\":2,\"tool\":\"read_file\",\"is_error\":false,\"exit_code\":0,\"error_features\":\"\",\"repeated_errors\":0,\"tool_input_summary\":\"scheduler.go\",\"result_head\":\"[file content omitted]\",\"result_tail\":\"\",\"assistant\":\"已读入复杂的并发实现，下一步分析锁顺序和 channel 生命周期。\",\"goal\":\"排查任务调度器偶发卡住的问题\"}",
+    "state": "{\"step\":2,\"tool\":\"read_file\",\"is_error\":false,\"exit_code\":0,\"error_features\":\"\",\"repeated_errors\":0,\"tool_input_summary\":\"scheduler.go\",\"result\":\"package scheduler\\n\\n// Scheduler multiplexes pending tasks onto a worker pool. Completion\\n// notification flows through per-task channels AND a shared condition\\n// variable; finish() racing dispatch() is the suspected cause of the\\n// intermittent stalls reported under load.\\ntype Scheduler struct {\\n\\tmu       sync.Mutex\\n\\tcond     *sync.Cond\\n\\tpending  map[string]*task\\n\\tnotify   map[string][]chan struct{}\\n\\tmetrics  sync.Map // atomic-ish counters read while mu is held elsewhere\\n\\tdone     chan string\\n\\twg       sync.WaitGroup\\n\\tshutdown bool\\n}\\n\\nfunc (s *Scheduler) dispatch(worker int) {\\n\\tdefer s.wg.Done()\\n\\tfor {\\n\\t\\ts.mu.Lock()\\n\\t\\tfor len(s.pending) == 0 \\u0026\\u0026 !s.shutdown {\\n\\t\\t\\ts.cond.Wait() // misses wakeups racing finish()'s Broadcast\\n\\t\\t}\\n\\t\\tif s.shutdown \\u0026\\u0026 len(s.pending) == 0 {\\n\\t\\t\\ts.mu.Unlock()\\n\\t\\t\\treturn\\n\\t\\t}\\n\\t\\tvar next *task\\n\\t\\tfor id, t := range s.pending {\\n\\t\\t\\tnext = t\\n\\t\\t\\tdelete(s.pending, id)\\n\\t\\t\\tbreak\\n\\t\\t}\\n\\t\\ts.mu.Unlock()\\n\\t\\ttimer := time.NewTimer(retryBackoff)\\n\\t\\tselect {\\n\\t\\tcase err := \\u003c-runAsync(worker, next, s.done):\\n\\t\\t\\tif err != nil {\\n\\t\\t\\t\\tgo s.retryOrDeadlock(next, err) // re-locks s.mu on another goroutine\\n\\t\\t\\t}\\n\\t\\tcase \\u003c-timer.C:\\n\\t\\t\\ts.metrics.Store(\\\"worker_timeout\\\", worker)\\n\\t\\t}\\n\\t\\ttimer.Stop()\\n\\t}\\n}\\n\\nfunc (s *Scheduler) finish(id string) {\\n\\ts.mu.Lock()\\n\\tdefer s.mu.Unlock()\\n\\tfor _, ch := range s.notify[id] {\\n\\t\\tselect {\\n\\t\\tcase ch \\u003c- struct{}{}:\\n\\t\\tdefault: // dropped notification while the waiter is slow\\n\\t\\t}\\n\\t}\\n\\tdelete(s.notify, id)\\n\\ts.cond.Broadcast()\\n}\\n\\nfunc (s *Scheduler) Shutdown(ctx context.Context) error {\\n\\ts.mu.Lock()\\n\\ts.shutdown = true\\n\\ts.cond.Broadcast()\\n\\ts.mu.Unlock()\\n\\tdone := make(chan struct{})\\n\\tgo func() { s.wg.Wait(); close(done) }()\\n\\tselect {\\n\\tcase \\u003c-done:\\n\\t\\treturn nil\\n\\tcase \\u003c-ctx.Done():\\n\\t\\treturn ctx.Err() // workers may still sit in cond.Wait holding s.mu\\n\\t}\\n}\",\"assistant\":\"完成通知在 dispatch 与 finish 间存在并发交互，先读 scheduler.go 确认锁与唤醒的实现。\",\"goal\":\"排查任务调度器偶发卡住的问题\"}",
     "questions": {
       "effort": {
         "type": "choice",
@@ -144,7 +144,7 @@
     "scope": "step",
     "candidate_group": "claude",
     "expected_category": "低级报错",
-    "state": "{\"step\":3,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"fmt imported and not used\",\"repeated_errors\":0,\"tool_input_summary\":\"go test ./...\",\"result_head\":\"build failed: scheduler.go:4:2: fmt imported and not used\",\"result_tail\":\"\",\"assistant\":\"\",\"goal\":\"增加日志字段\"}",
+    "state": "{\"step\":3,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"fmt imported and not used\",\"repeated_errors\":0,\"tool_input_summary\":\"go test ./...\",\"result\":\"build failed: scheduler.go:4:2: fmt imported and not used\",\"assistant\":\"\",\"goal\":\"增加日志字段\"}",
     "questions": {
       "effort": {
         "type": "choice",
@@ -164,7 +164,7 @@
     "scope": "step",
     "candidate_group": "claude",
     "expected_category": "低级报错",
-    "state": "{\"step\":3,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"connect: connection refused\",\"repeated_errors\":0,\"tool_input_summary\":\"go test ./internal/api\",\"result_head\":\"dial tcp 127.0.0.1:5432: connect: connection refused\",\"result_tail\":\"\",\"assistant\":\"\",\"goal\":\"运行本地集成测试\"}",
+    "state": "{\"step\":3,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"connect: connection refused\",\"repeated_errors\":0,\"tool_input_summary\":\"go test ./internal/api\",\"result\":\"dial tcp 127.0.0.1:5432: connect: connection refused\",\"assistant\":\"\",\"goal\":\"运行本地集成测试\"}",
     "questions": {
       "effort": {
         "type": "choice",
@@ -184,7 +184,7 @@
     "scope": "step",
     "candidate_group": "claude",
     "expected_category": "首次深层问题",
-    "state": "{\"step\":4,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"DATA RACE scheduler.go\",\"repeated_errors\":0,\"tool_input_summary\":\"go test -race ./internal/scheduler\",\"result_head\":\"WARNING: DATA RACE\\nRead at scheduler.go:178 by goroutine 41\\nPrevious write at scheduler.go:211 by goroutine 62\",\"result_tail\":\"\",\"assistant\":\"\",\"goal\":\"修复调度器并发问题\"}",
+    "state": "{\"step\":4,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"DATA RACE scheduler.go\",\"repeated_errors\":0,\"tool_input_summary\":\"go test -race ./internal/scheduler\",\"result\":\"WARNING: DATA RACE\\nRead at scheduler.go:178 by goroutine 41\\nPrevious write at scheduler.go:211 by goroutine 62\",\"assistant\":\"\",\"goal\":\"修复调度器并发问题\"}",
     "questions": {
       "effort": {
         "type": "choice",
@@ -204,7 +204,7 @@
     "scope": "step",
     "candidate_group": "claude",
     "expected_category": "首次深层问题",
-    "state": "{\"step\":4,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"TestCommitAtomicity: core invariant violated\",\"repeated_errors\":0,\"tool_input_summary\":\"go test ./internal/transaction\",\"result_head\":\"FAIL TestCommitAtomicity: core invariant violated: transaction acknowledged committed but durable log has no commit record.\",\"result_tail\":\"\",\"assistant\":\"\",\"goal\":\"实现事务提交协议\"}",
+    "state": "{\"step\":4,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"TestCommitAtomicity: core invariant violated\",\"repeated_errors\":0,\"tool_input_summary\":\"go test ./internal/transaction\",\"result\":\"FAIL TestCommitAtomicity: core invariant violated: transaction acknowledged committed but durable log has no commit record.\",\"assistant\":\"\",\"goal\":\"实现事务提交协议\"}",
     "questions": {
       "effort": {
         "type": "choice",
@@ -224,7 +224,7 @@
     "scope": "step",
     "candidate_group": "claude",
     "expected_category": "机械",
-    "state": "{\"step\":8,\"tool\":\"exec_command\",\"is_error\":false,\"exit_code\":0,\"error_features\":\"\",\"repeated_errors\":0,\"tool_input_summary\":\"go test -race ./...\",\"result_head\":\"PASS\\nok all packages\",\"result_tail\":\"\",\"assistant\":\"实现和回归测试完成，所有检查已通过，下一步只需写最终结果。\",\"goal\":\"修复调度器并发竞态\"}",
+    "state": "{\"step\":8,\"tool\":\"exec_command\",\"is_error\":false,\"exit_code\":0,\"error_features\":\"\",\"repeated_errors\":0,\"tool_input_summary\":\"go test -race ./...\",\"result\":\"PASS\\nok all packages\",\"assistant\":\"实现和回归测试完成，所有检查已通过，下一步只需写最终结果。\",\"goal\":\"修复调度器并发竞态\"}",
     "questions": {
       "effort": {
         "type": "choice",
@@ -244,7 +244,7 @@
     "scope": "step",
     "candidate_group": "claude",
     "expected_category": "重复失败",
-    "state": "{\"step\":9,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"DATA RACE scheduler.go\",\"repeated_errors\":2,\"tool_input_summary\":\"go test -race ./internal/scheduler\",\"result_head\":\"WARNING: DATA RACE\\nRead at scheduler.go:178 by goroutine 41\\nPrevious write at scheduler.go:211 by goroutine 62\",\"result_tail\":\"\",\"assistant\":\"已在 xhigh 挡位修复，但同一报错在两次验证中仍连续复现，需要重新推导根因。\",\"goal\":\"修复调度器并发竞态\"}",
+    "state": "{\"step\":9,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"DATA RACE scheduler.go\",\"repeated_errors\":2,\"tool_input_summary\":\"go test -race ./internal/scheduler\",\"result\":\"WARNING: DATA RACE\\nRead at scheduler.go:178 by goroutine 41\\nPrevious write at scheduler.go:211 by goroutine 62\",\"assistant\":\"已在 xhigh 挡位修复，但同一报错在两次验证中仍连续复现，需要重新推导根因。\",\"goal\":\"修复调度器并发竞态\"}",
     "questions": {
       "effort": {
         "type": "choice",
@@ -374,7 +374,7 @@
     "scope": "step",
     "candidate_group": "codex",
     "expected_category": "机械",
-    "state": "{\"step\":1,\"tool\":\"\",\"is_error\":false,\"exit_code\":0,\"error_features\":\"\",\"repeated_errors\":0,\"tool_input_summary\":\"\",\"result_head\":\"\",\"result_tail\":\"\",\"assistant\":\"下一步先用 read_file 读取 scheduler.go，目前尚未读入代码或取得错误证据。\",\"goal\":\"排查任务调度器偶发卡住的问题\"}",
+    "state": "{\"step\":1,\"tool\":\"\",\"is_error\":false,\"exit_code\":0,\"error_features\":\"\",\"repeated_errors\":0,\"tool_input_summary\":\"\",\"result\":\"\",\"assistant\":\"下一步先用 read_file 读取 scheduler.go，目前尚未读入代码或取得错误证据。\",\"goal\":\"排查任务调度器偶发卡住的问题\"}",
     "questions": {
       "effort": {
         "type": "choice",
@@ -396,7 +396,7 @@
     "scope": "step",
     "candidate_group": "codex",
     "expected_category": "首次深层问题",
-    "state": "{\"step\":2,\"tool\":\"read_file\",\"is_error\":false,\"exit_code\":0,\"error_features\":\"\",\"repeated_errors\":0,\"tool_input_summary\":\"scheduler.go\",\"result_head\":\"[file content omitted]\",\"result_tail\":\"\",\"assistant\":\"已读入复杂的并发实现，下一步分析锁顺序和 channel 生命周期。\",\"goal\":\"排查任务调度器偶发卡住的问题\"}",
+    "state": "{\"step\":2,\"tool\":\"read_file\",\"is_error\":false,\"exit_code\":0,\"error_features\":\"\",\"repeated_errors\":0,\"tool_input_summary\":\"scheduler.go\",\"result\":\"package scheduler\\n\\n// Scheduler multiplexes pending tasks onto a worker pool. Completion\\n// notification flows through per-task channels AND a shared condition\\n// variable; finish() racing dispatch() is the suspected cause of the\\n// intermittent stalls reported under load.\\ntype Scheduler struct {\\n\\tmu       sync.Mutex\\n\\tcond     *sync.Cond\\n\\tpending  map[string]*task\\n\\tnotify   map[string][]chan struct{}\\n\\tmetrics  sync.Map // atomic-ish counters read while mu is held elsewhere\\n\\tdone     chan string\\n\\twg       sync.WaitGroup\\n\\tshutdown bool\\n}\\n\\nfunc (s *Scheduler) dispatch(worker int) {\\n\\tdefer s.wg.Done()\\n\\tfor {\\n\\t\\ts.mu.Lock()\\n\\t\\tfor len(s.pending) == 0 \\u0026\\u0026 !s.shutdown {\\n\\t\\t\\ts.cond.Wait() // misses wakeups racing finish()'s Broadcast\\n\\t\\t}\\n\\t\\tif s.shutdown \\u0026\\u0026 len(s.pending) == 0 {\\n\\t\\t\\ts.mu.Unlock()\\n\\t\\t\\treturn\\n\\t\\t}\\n\\t\\tvar next *task\\n\\t\\tfor id, t := range s.pending {\\n\\t\\t\\tnext = t\\n\\t\\t\\tdelete(s.pending, id)\\n\\t\\t\\tbreak\\n\\t\\t}\\n\\t\\ts.mu.Unlock()\\n\\t\\ttimer := time.NewTimer(retryBackoff)\\n\\t\\tselect {\\n\\t\\tcase err := \\u003c-runAsync(worker, next, s.done):\\n\\t\\t\\tif err != nil {\\n\\t\\t\\t\\tgo s.retryOrDeadlock(next, err) // re-locks s.mu on another goroutine\\n\\t\\t\\t}\\n\\t\\tcase \\u003c-timer.C:\\n\\t\\t\\ts.metrics.Store(\\\"worker_timeout\\\", worker)\\n\\t\\t}\\n\\t\\ttimer.Stop()\\n\\t}\\n}\\n\\nfunc (s *Scheduler) finish(id string) {\\n\\ts.mu.Lock()\\n\\tdefer s.mu.Unlock()\\n\\tfor _, ch := range s.notify[id] {\\n\\t\\tselect {\\n\\t\\tcase ch \\u003c- struct{}{}:\\n\\t\\tdefault: // dropped notification while the waiter is slow\\n\\t\\t}\\n\\t}\\n\\tdelete(s.notify, id)\\n\\ts.cond.Broadcast()\\n}\\n\\nfunc (s *Scheduler) Shutdown(ctx context.Context) error {\\n\\ts.mu.Lock()\\n\\ts.shutdown = true\\n\\ts.cond.Broadcast()\\n\\ts.mu.Unlock()\\n\\tdone := make(chan struct{})\\n\\tgo func() { s.wg.Wait(); close(done) }()\\n\\tselect {\\n\\tcase \\u003c-done:\\n\\t\\treturn nil\\n\\tcase \\u003c-ctx.Done():\\n\\t\\treturn ctx.Err() // workers may still sit in cond.Wait holding s.mu\\n\\t}\\n}\",\"assistant\":\"完成通知在 dispatch 与 finish 间存在并发交互，先读 scheduler.go 确认锁与唤醒的实现。\",\"goal\":\"排查任务调度器偶发卡住的问题\"}",
     "questions": {
       "effort": {
         "type": "choice",
@@ -418,7 +418,7 @@
     "scope": "step",
     "candidate_group": "codex",
     "expected_category": "低级报错",
-    "state": "{\"step\":3,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"fmt imported and not used\",\"repeated_errors\":0,\"tool_input_summary\":\"go test ./...\",\"result_head\":\"build failed: scheduler.go:4:2: fmt imported and not used\",\"result_tail\":\"\",\"assistant\":\"\",\"goal\":\"增加日志字段\"}",
+    "state": "{\"step\":3,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"fmt imported and not used\",\"repeated_errors\":0,\"tool_input_summary\":\"go test ./...\",\"result\":\"build failed: scheduler.go:4:2: fmt imported and not used\",\"assistant\":\"\",\"goal\":\"增加日志字段\"}",
     "questions": {
       "effort": {
         "type": "choice",
@@ -440,7 +440,7 @@
     "scope": "step",
     "candidate_group": "codex",
     "expected_category": "低级报错",
-    "state": "{\"step\":3,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"connect: connection refused\",\"repeated_errors\":0,\"tool_input_summary\":\"go test ./internal/api\",\"result_head\":\"dial tcp 127.0.0.1:5432: connect: connection refused\",\"result_tail\":\"\",\"assistant\":\"\",\"goal\":\"运行本地集成测试\"}",
+    "state": "{\"step\":3,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"connect: connection refused\",\"repeated_errors\":0,\"tool_input_summary\":\"go test ./internal/api\",\"result\":\"dial tcp 127.0.0.1:5432: connect: connection refused\",\"assistant\":\"\",\"goal\":\"运行本地集成测试\"}",
     "questions": {
       "effort": {
         "type": "choice",
@@ -462,7 +462,7 @@
     "scope": "step",
     "candidate_group": "codex",
     "expected_category": "首次深层问题",
-    "state": "{\"step\":4,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"DATA RACE scheduler.go\",\"repeated_errors\":0,\"tool_input_summary\":\"go test -race ./internal/scheduler\",\"result_head\":\"WARNING: DATA RACE\\nRead at scheduler.go:178 by goroutine 41\\nPrevious write at scheduler.go:211 by goroutine 62\",\"result_tail\":\"\",\"assistant\":\"\",\"goal\":\"修复调度器并发问题\"}",
+    "state": "{\"step\":4,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"DATA RACE scheduler.go\",\"repeated_errors\":0,\"tool_input_summary\":\"go test -race ./internal/scheduler\",\"result\":\"WARNING: DATA RACE\\nRead at scheduler.go:178 by goroutine 41\\nPrevious write at scheduler.go:211 by goroutine 62\",\"assistant\":\"\",\"goal\":\"修复调度器并发问题\"}",
     "questions": {
       "effort": {
         "type": "choice",
@@ -484,7 +484,7 @@
     "scope": "step",
     "candidate_group": "codex",
     "expected_category": "首次深层问题",
-    "state": "{\"step\":4,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"TestCommitAtomicity: core invariant violated\",\"repeated_errors\":0,\"tool_input_summary\":\"go test ./internal/transaction\",\"result_head\":\"FAIL TestCommitAtomicity: core invariant violated: transaction acknowledged committed but durable log has no commit record.\",\"result_tail\":\"\",\"assistant\":\"\",\"goal\":\"实现事务提交协议\"}",
+    "state": "{\"step\":4,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"TestCommitAtomicity: core invariant violated\",\"repeated_errors\":0,\"tool_input_summary\":\"go test ./internal/transaction\",\"result\":\"FAIL TestCommitAtomicity: core invariant violated: transaction acknowledged committed but durable log has no commit record.\",\"assistant\":\"\",\"goal\":\"实现事务提交协议\"}",
     "questions": {
       "effort": {
         "type": "choice",
@@ -506,7 +506,7 @@
     "scope": "step",
     "candidate_group": "codex",
     "expected_category": "机械",
-    "state": "{\"step\":8,\"tool\":\"exec_command\",\"is_error\":false,\"exit_code\":0,\"error_features\":\"\",\"repeated_errors\":0,\"tool_input_summary\":\"go test -race ./...\",\"result_head\":\"PASS\\nok all packages\",\"result_tail\":\"\",\"assistant\":\"实现和回归测试完成，所有检查已通过，下一步只需写最终结果。\",\"goal\":\"修复调度器并发竞态\"}",
+    "state": "{\"step\":8,\"tool\":\"exec_command\",\"is_error\":false,\"exit_code\":0,\"error_features\":\"\",\"repeated_errors\":0,\"tool_input_summary\":\"go test -race ./...\",\"result\":\"PASS\\nok all packages\",\"assistant\":\"实现和回归测试完成，所有检查已通过，下一步只需写最终结果。\",\"goal\":\"修复调度器并发竞态\"}",
     "questions": {
       "effort": {
         "type": "choice",
@@ -528,7 +528,7 @@
     "scope": "step",
     "candidate_group": "codex",
     "expected_category": "重复失败",
-    "state": "{\"step\":9,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"DATA RACE scheduler.go\",\"repeated_errors\":2,\"tool_input_summary\":\"go test -race ./internal/scheduler\",\"result_head\":\"WARNING: DATA RACE\\nRead at scheduler.go:178 by goroutine 41\\nPrevious write at scheduler.go:211 by goroutine 62\",\"result_tail\":\"\",\"assistant\":\"已在 xhigh 挡位修复，但同一报错在两次验证中仍连续复现，需要重新推导根因。\",\"goal\":\"修复调度器并发竞态\"}",
+    "state": "{\"step\":9,\"tool\":\"exec_command\",\"is_error\":true,\"exit_code\":1,\"error_features\":\"DATA RACE scheduler.go\",\"repeated_errors\":2,\"tool_input_summary\":\"go test -race ./internal/scheduler\",\"result\":\"WARNING: DATA RACE\\nRead at scheduler.go:178 by goroutine 41\\nPrevious write at scheduler.go:211 by goroutine 62\",\"assistant\":\"已在 xhigh 挡位修复，但同一报错在两次验证中仍连续复现，需要重新推导根因。\",\"goal\":\"修复调度器并发竞态\"}",
     "questions": {
       "effort": {
         "type": "choice",

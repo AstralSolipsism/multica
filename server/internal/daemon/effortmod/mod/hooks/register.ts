@@ -11,9 +11,8 @@ import type { EngineInterface, Register } from 'claude-code'
 // bare next(e) would re-send the startup effort (OL-1000), which rewrites the
 // prompt cache — the one thing per-turn effort avoids.
 //
-// Material crosses the mod -> daemon boundary WHOLE or NOT AT ALL: the
-// daemon redacts and truncates (contract §4), and any clipping here could
-// split a multi-line credential beyond recognition before that happens.
+// Material crosses the mod -> daemon boundary as-is (OL-1083): overlong
+// strings are clipped head+tail, never emptied whole.
 
 /** Context file written by the daemon, version 1. */
 export type EffortContext = {
@@ -33,15 +32,8 @@ export type Decision =
 export type ToolMaterial = {
   name: string
   is_error: boolean
-  /** True when the tool's result is file content: the daemon omits the
-   * body from the state (contract §4). */
-  is_file_content: boolean
   input_summary: string
   result_text: string
-  /** True when the field over the byte limit ships as "" — whole or
-   * omitted, never a partial body. */
-  input_summary_omitted: boolean
-  result_omitted: boolean
 }
 
 export type StepPayload = {
@@ -49,18 +41,15 @@ export type StepPayload = {
   assistant_text: string
   tools: ToolMaterial[]
   error_text: string
-  assistant_omitted: boolean
-  error_omitted: boolean
 }
 
 // The daemon is local (measured 1–3 ms per round trip); a whole decision must
 // not hold a step noticeably longer than this.
 export const DECISION_TIMEOUT_MS = 2_000
 
-// Whole-field byte ceilings. The daemon redacts BEFORE truncating, so a
-// field within these limits crosses intact; an over-limit field is omitted
-// entirely (never clipped). Bytes, not code points: the daemon's 1 MiB body
-// limit counts bytes.
+// Byte ceilings. An over-limit string is clipped head+tail with the elided
+// byte count in the middle — never emptied whole. The request ceiling gives
+// the daemon's 1 MiB decode limit headroom.
 export const FIELD_LIMIT_BYTES = 64 * 1024
 export const REQUEST_LIMIT_BYTES = 768 * 1024
 
@@ -71,14 +60,15 @@ export function byteLength(text: string): number {
 }
 
 /**
- * A field within `limit` UTF-8 bytes ships whole; an over-limit field ships
- * as "" and reports true. There is no partial body: clipping here would run
- * before the daemon's redaction and could split a multi-line credential
- * (e.g. a PEM private key) beyond its recognizer.
+ * Keeps a string within `limit` UTF-8 bytes by clipping the middle: the head
+ * and tail survive, the elided byte count is marked inline (OL-1083). A
+ * string within the limit ships whole.
  */
-export function wholeOrOmitted(text: string | undefined, limit: number): { value: string; omitted: boolean } {
-  if (typeof text !== 'string' || text === '') return { value: '', omitted: false }
-  return byteLength(text) <= limit ? { value: text, omitted: false } : { value: '', omitted: true }
+export function clipMiddle(text: string, limit: number): string {
+  if (text.length <= limit) return text
+  const tail = Math.min(1024, Math.floor(limit / 2))
+  const head = limit - tail
+  return `${text.slice(0, head)}\n[... ${text.length - head - tail} bytes elided ...]\n${text.slice(text.length - tail)}`
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -148,55 +138,34 @@ export function stepPayload(step: number, window: SessionMessages | undefined): 
       if (typeof message.text === 'string' && message.text !== '') texts.unshift(message.text)
       for (const use of message.toolUses ?? []) {
         if (!isRecord(use)) continue
-        const isError = use.isError === true
-        const isFileContent = fileContentTools.has(typeof use.tool === 'string' ? use.tool : '')
-        // A file-content tool's SUCCESS result is a body the daemon omits
-        // anyway — do not ship it. Its FAILURE result is an error message,
-        // not file content, and must reach error_text.
-        const result = isFileContent && !isError
-          ? { value: '', omitted: false }
-          : wholeOrOmitted(typeof use.text === 'string' ? use.text : '', FIELD_LIMIT_BYTES)
-        const summary = wholeOrOmitted(summarizeInput(use.input), FIELD_LIMIT_BYTES)
         tools.unshift({
           name: typeof use.tool === 'string' ? use.tool : '',
-          is_error: isError,
-          is_file_content: isFileContent,
-          input_summary: summary.value,
-          result_text: result.value,
-          input_summary_omitted: summary.omitted,
-          result_omitted: result.omitted,
+          is_error: use.isError === true,
+          input_summary: clipMiddle(summarizeInput(use.input), FIELD_LIMIT_BYTES),
+          result_text: clipMiddle(typeof use.text === 'string' ? use.text : '', FIELD_LIMIT_BYTES),
         })
       }
       i--
     }
   }
   const errorTools = tools.filter((tool) => tool.is_error && tool.result_text !== '')
-  const joined = errorTools.map((tool) => tool.result_text).join('\n')
-  // An error tool whose result was omitted whole must not read as "no
-  // error": the daemon would reset the repeat count (#38). Flag the
-  // error text omitted whenever any error body was, even when the joined
-  // text is empty.
-  const errorOmitted = tools.some((tool) => tool.is_error && tool.result_omitted)
-  const errorText = wholeOrOmitted(joined, FIELD_LIMIT_BYTES)
-  const assistantText = wholeOrOmitted(texts.join(''), FIELD_LIMIT_BYTES)
+  const errorText = clipMiddle(errorTools.map((tool) => tool.result_text).join('\n'), FIELD_LIMIT_BYTES)
   const payload: StepPayload = {
     step,
-    assistant_text: assistantText.value,
+    assistant_text: clipMiddle(texts.join(''), FIELD_LIMIT_BYTES),
     tools,
-    error_text: errorText.value,
-    assistant_omitted: assistantText.omitted,
-    error_omitted: errorText.omitted || errorOmitted,
+    error_text: errorText,
   }
   return fitRequest(payload)
 }
 
 /**
- * Keeps the serialized payload under the request ceiling by dropping whole
- * fields — the earliest tools' big texts first (the state describes the
- * LAST failed tool or the last tool, so the tail matters most), then the
- * remaining big fields. A tool's name and is_error are never dropped
- * (OL-1013 wants the full tool list). The budget is measured on the
- * serialized JSON — the bytes the daemon actually decodes.
+ * Keeps the serialized payload under the request ceiling by clipping long
+ * strings — the earliest tools' texts first (the state describes the LAST
+ * failed tool or the last tool, so the tail matters most), then the remaining
+ * big fields. A tool's name and is_error are never dropped (OL-1013 wants
+ * the full tool list). The budget is measured on the serialized JSON — the
+ * bytes the daemon actually decodes.
  */
 export function fitRequest(payload: StepPayload): StepPayload {
   const over = (): boolean => byteLength(JSON.stringify(payload)) > REQUEST_LIMIT_BYTES
@@ -207,32 +176,21 @@ export function fitRequest(payload: StepPayload): StepPayload {
   for (let i = 0; i < payload.tools.length; i++) {
     if (i === keep) continue
     const tool = payload.tools[i]
-    if (tool.result_text !== '') {
-      tool.result_text = ''
-      tool.result_omitted = true
-      if (!over()) return payload
-    }
-    if (tool.input_summary !== '') {
-      tool.input_summary = ''
-      tool.input_summary_omitted = true
-      if (!over()) return payload
+    for (const field of ['result_text', 'input_summary'] as const) {
+      if (tool[field] !== '') {
+        tool[field] = clipMiddle(tool[field], 2 * 1024)
+        if (!over()) return payload
+      }
     }
   }
-  if (payload.assistant_text !== '') {
-    payload.assistant_text = ''
-    payload.assistant_omitted = true
-    if (!over()) return payload
-  }
-  if (payload.error_text !== '') {
-    payload.error_text = ''
-    payload.error_omitted = true
+  for (const field of ['assistant_text', 'error_text'] as const) {
+    if (payload[field] !== '') {
+      payload[field] = clipMiddle(payload[field], 2 * 1024)
+      if (!over()) return payload
+    }
   }
   return payload
 }
-
-/** Tools whose results are file contents: the daemon omits the body for
- * them (contract §4 — no file contents leave the machine). */
-const fileContentTools = new Set(['Read', 'NotebookRead'])
 
 /** The one field of a tool input that names what it touched, when there is
  * one; otherwise the whole input as JSON. */
