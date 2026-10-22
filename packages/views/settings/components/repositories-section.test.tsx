@@ -527,10 +527,15 @@ describe("RepositoriesSection", () => {
   });
 
   // Retrying cannot fix a refused binding or a missing installation, so these
-  // two codes get their own advice; any other code keeps the generic retry.
+  // codes get their own advice; any other code keeps the generic retry.
   it.each([
     ["not_authorized", enForkUi.settings.repositories.github_error_not_authorized],
     ["unknown_installation", enForkUi.settings.repositories.github_error_unknown_installation],
+    ["installation_suspended", enForkUi.settings.repositories.github_error_installation_suspended],
+    [
+      "verification_unavailable",
+      enForkUi.settings.repositories.github_error_verification_unavailable,
+    ],
     ["persist_failed", "Could not connect GitHub. Try again."],
   ])("explains the %s install callback error", async (code, message) => {
     searchParamsRef.current = new URLSearchParams(`tab=github&github_error=${code}`);

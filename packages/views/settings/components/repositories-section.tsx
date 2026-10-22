@@ -122,8 +122,10 @@ export function repositoryIdentity(rawURL: string): string | null {
   return `${host.toLowerCase()}/${normalizedPath}`;
 }
 
-/** Copy for the install callback's `github_error`. Retrying cannot fix the two
- * codes that refuse the binding, so they say what can. */
+/** Copy for the install callback's `github_error`. Retrying cannot fix the
+ * codes that refuse the binding, so they say what can; the suspended and
+ * unverifiable ones also name the Configure-page dead end their retry hits:
+ * the refused installation stays on GitHub, so reinstalling is the way back. */
 function githubCallbackErrorMessage(
   code: string,
   t: TFunction<"settings">,
@@ -134,6 +136,10 @@ function githubCallbackErrorMessage(
       return tForkUi(($) => $.settings.repositories.github_error_not_authorized);
     case "unknown_installation":
       return tForkUi(($) => $.settings.repositories.github_error_unknown_installation);
+    case "installation_suspended":
+      return tForkUi(($) => $.settings.repositories.github_error_installation_suspended);
+    case "verification_unavailable":
+      return tForkUi(($) => $.settings.repositories.github_error_verification_unavailable);
     default:
       return t(($) => $.repositories.github_connect_failed);
   }

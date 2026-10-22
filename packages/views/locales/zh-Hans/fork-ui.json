@@ -44,7 +44,9 @@
     },
     "repositories": {
       "github_error_not_authorized": "该 GitHub 账号已连接到你不是 owner 或 admin 的工作区，无法通过安装跳转连接到这里。请那个工作区的 owner 或 admin 来这里连接，或请对方先把你设为那个工作区的 admin。",
-      "github_error_unknown_installation": "GitHub 显示该安装不存在或已被暂停。请在 GitHub 上重新安装或恢复该 App 后再试。"
+      "github_error_unknown_installation": "GitHub 显示该安装不存在。请在 GitHub 上重新安装该 App 后再试。",
+      "github_error_installation_suspended": "该安装已在 GitHub 上被暂停，请先在 GitHub 上恢复再连接。如果 GitHub 停在 App 设置页、没有跳回这里，请在 GitHub 上卸载该 App 后重新安装。",
+      "github_error_verification_unavailable": "暂时无法向 GitHub 核实该安装，连接没有完成，请稍后重新连接。如果 GitHub 停在 App 设置页、没有跳回这里，请在 GitHub 上卸载该 App 后重新安装。"
     }
   },
   "skills": {
