@@ -6071,7 +6071,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 
 	// Outcome sample before the terminal report: reporting can block up to
 	// terminalTaskReportTimeout (6 minutes) and shutdown closes the collector
-	// after 30, so an outcome enqueued after a slow report would be lost.
+	// after 30 seconds, so an outcome enqueued after a slow report would be lost.
 	sampleThinkingOutcome(result.Status, result.FailureReason)
 	d.reportTaskResult(ctx, task.ID, result, taskLog)
 

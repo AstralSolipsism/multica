@@ -287,7 +287,6 @@ func (c *Collector) run() {
 	var (
 		openDay   string
 		file      *os.File
-		used      int64
 		stoppedOn string // UTC day that hit the cap; all further records that day are refused
 		warned    bool
 	)
@@ -318,15 +317,13 @@ func (c *Collector) run() {
 			continue
 		}
 		if file == nil {
-			file, used = c.open(day)
+			file = c.open(day)
 			if file == nil {
 				continue
 			}
 			openDay = day
 		}
-		n, err := file.Write(append(p.line, '\n'))
-		used += int64(n)
-		if err != nil {
+		if _, err := file.Write(append(p.line, '\n')); err != nil {
 			c.warn("write", err)
 			_ = file.Close()
 			file = nil
@@ -352,21 +349,20 @@ func (c *Collector) sizeOnDisk() int64 {
 
 // open ensures the directory and opens (creating if needed) today's file.
 // Callers have already checked the size cap.
-func (c *Collector) open(day string) (*os.File, int64) {
+func (c *Collector) open(day string) *os.File {
 	if err := c.ensureDir(); err != nil {
 		c.warn("prepare directory", err)
-		return nil, 0
+		return nil
 	}
-	used := c.sizeOnDisk()
 	path := filepath.Join(c.dir, fmt.Sprintf("decisions-%s-%s.jsonl", c.daemonID, day))
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		c.warn("open file", err)
-		return nil, used
+		return nil
 	}
 	// Tighten a pre-existing file as well.
 	_ = file.Chmod(0o600)
-	return file, used
+	return file
 }
 
 func (c *Collector) ensureDir() error {
