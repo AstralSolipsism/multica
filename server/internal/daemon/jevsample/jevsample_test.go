@@ -215,20 +215,20 @@ func TestSameDaemonTwoProfilesSeparateFiles(t *testing.T) {
 		t.Fatalf("default profile's cap counted a named profile's bytes: %v", last)
 	}
 	// OL-1040 #1b: the named profile's own cap direction — with the default
-	// profile's file at 900 bytes, a "work" daemon under the same 1000-byte
-	// cap must still write: its cap must ignore the default profile's
-	// bytes (a daemonID-only prefix match would not).
-	big2 := filepath.Join(dir, "decisions-d-"+day+".jsonl")
-	if err := os.WriteFile(big2, []byte(strings.Repeat("x", 900)+"\n"), 0o600); err != nil {
+	// profile's file at 900 bytes, a named-profile daemon under the same
+	// 1000-byte cap must still write: its cap must ignore the default
+	// profile's bytes (a daemonID-only prefix match would count both this
+	// filler and #1a's, refuse, and kill this mutation). Fresh profile so
+	// its own file starts empty.
+	if err := os.WriteFile(filepath.Join(dir, "decisions-d-"+day+".jsonl"), []byte(strings.Repeat("x", 900)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	capped2 := New(dir, "d", "work", 1000, nil)
+	capped2 := New(dir, "d", "cli", 1000, nil)
 	id2 := capped2.Decision(Decision{Scope: "run", Choice: "low"})
 	capped2.Close()
 	records2 := readLines(t, filepath.Join(dir, capped2.filePrefix+"-"+day+".jsonl"))
-	last2 := records2[len(records2)-1]
-	if last2["id"] != id2 {
-		t.Fatalf("named profile's cap counted the default profile's bytes: %v", last2)
+	if len(records2) != 1 || records2[0]["id"] != id2 {
+		t.Fatalf("named profile's cap counted the default profile's bytes: %v", records2)
 	}
 }
 
