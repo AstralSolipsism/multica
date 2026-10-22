@@ -32,28 +32,28 @@ func TestErrorFeatureTrackerCountsConsecutiveRepeats(t *testing.T) {
 	const race = "WARNING: DATA RACE\nRead at scheduler.go:178 by goroutine 41"
 	const other = "exec: bash: exit status 3"
 
-	if feature, repeats := tracker.Observe(race); feature == "" || repeats != 1 {
+	if feature, repeats := tracker.Observe(race, false); feature == "" || repeats != 1 {
 		t.Fatalf("first race observation: feature=%q repeats=%d, want feature!=\"\" repeats=1", feature, repeats)
 	}
-	if _, repeats := tracker.Observe(race); repeats != 2 {
+	if _, repeats := tracker.Observe(race, false); repeats != 2 {
 		t.Fatalf("second identical race: repeats=%d, want 2", repeats)
 	}
 	// A different error starts a new run.
-	if _, repeats := tracker.Observe(other); repeats != 1 {
+	if _, repeats := tracker.Observe(other, false); repeats != 1 {
 		t.Fatalf("different error: repeats=%d, want 1", repeats)
 	}
-	if _, repeats := tracker.Observe(other); repeats != 2 {
+	if _, repeats := tracker.Observe(other, false); repeats != 2 {
 		t.Fatalf("second identical other: repeats=%d, want 2", repeats)
 	}
 	// Same error modulo a number still counts as the same feature.
-	if _, repeats := tracker.Observe("exec: bash: exit status 7"); repeats != 3 {
+	if _, repeats := tracker.Observe("exec: bash: exit status 7", false); repeats != 3 {
 		t.Fatalf("noise-varied same error: repeats=%d, want 3", repeats)
 	}
 	// An error-free step resets.
-	if feature, repeats := tracker.Observe(""); feature != "" || repeats != 0 {
+	if feature, repeats := tracker.Observe("", false); feature != "" || repeats != 0 {
 		t.Fatalf("error-free step: feature=%q repeats=%d, want \"\"/0", feature, repeats)
 	}
-	if _, repeats := tracker.Observe(other); repeats != 1 {
+	if _, repeats := tracker.Observe(other, false); repeats != 1 {
 		t.Fatalf("post-reset error: repeats=%d, want 1", repeats)
 	}
 }

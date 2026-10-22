@@ -18,8 +18,11 @@ import (
 // lines name no failure and are skipped: Claude Code's Bash header
 // "Exit code N" (ParseExitCode reads it) and Go compiler package headers
 // "# pkg/path" (the actual error follows on the next line). Exported for
-// OL-1019's sample collection.
+// OL-1019's sample collection. The input is redacted here, before
+// normalization: rewriting URLs and colons first would break the redactor's
+// pattern match and leak the credential into the feature (#31).
 func NormalizedErrorFeature(errorText string) string {
+	errorText = redact.Text(errorText)
 	for _, rawLine := range strings.Split(errorText, "\n") {
 		line := strings.TrimSpace(rawLine)
 		if line == "" || isExitCodeLine(line) || isPackageHeaderLine(line) {
@@ -108,14 +111,22 @@ type ErrorFeatureTracker struct {
 	repeats int
 }
 
+// omittedErrorFeature is the feature recorded when the mod omitted the
+// error text whole (over the byte limit): no partial body ever ships (#32).
+const omittedErrorFeature = "[omitted]"
+
 // Observe folds one step's error text into the repeat count: the count is how
 // many consecutive observations, including this one, reported the same
 // normalized feature. An error-free step resets it. The returned feature is
-// this step's normalized error text ("" when none). The input is redacted
-// before normalization: rewriting URLs and colons first would break the
-// redactor's pattern match and leak the credential into the feature.
-func (t *ErrorFeatureTracker) Observe(errorText string) (feature string, repeats int) {
-	feature = NormalizedErrorFeature(redact.Text(errorText))
+// this step's normalized error text ("" when none). An omitted error text
+// (mod-side whole-field omission) records the "[omitted]" feature and
+// neither advances nor resets the repeat count: there is no raw text to
+// normalize (#32).
+func (t *ErrorFeatureTracker) Observe(errorText string, omitted bool) (feature string, repeats int) {
+	if omitted {
+		return omittedErrorFeature, t.repeats
+	}
+	feature = NormalizedErrorFeature(errorText)
 	switch {
 	case feature == "":
 		t.feature = ""

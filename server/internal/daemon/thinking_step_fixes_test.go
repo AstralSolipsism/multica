@@ -14,6 +14,17 @@ import (
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
+// stepToolMaterial mirrors thinkingDecisionRequest.Tools in tests.
+type stepToolMaterial = struct {
+	Name          string `json:"name"`
+	IsError       bool   `json:"is_error"`
+	IsFileContent bool   `json:"is_file_content"`
+	InputSummary  string `json:"input_summary"`
+	ResultText    string `json:"result_text"`
+	InputOmitted  bool   `json:"input_summary_omitted"`
+	ResultOmitted bool   `json:"result_omitted"`
+}
+
 // TestStepStateOmitsFileContent locks the §4 boundary: a tool whose result is
 // file content (Read) never sends its body out — the state keeps only the
 // omission marker, even with a secret inside the file.
@@ -22,13 +33,7 @@ func TestStepStateOmitsFileContent(t *testing.T) {
 	_, run := newStepEffortTestDaemon(t)
 	req := thinkingDecisionRequest{
 		Step: 2,
-		Tools: []struct {
-			Name          string `json:"name"`
-			IsError       bool   `json:"is_error"`
-			IsFileContent bool   `json:"is_file_content"`
-			InputSummary  string `json:"input_summary"`
-			ResultText    string `json:"result_text"`
-		}{
+		Tools: []stepToolMaterial{
 			{Name: "Read", IsFileContent: true, InputSummary: "config.go", ResultText: "dsn := \"postgres://app@db.internal:5432/orders\""},
 		},
 	}
@@ -51,29 +56,11 @@ func TestStepStateOmitsFileContent(t *testing.T) {
 func TestStepStateParsesBashExitCode(t *testing.T) {
 	t.Parallel()
 	_, run := newStepEffortTestDaemon(t)
-	bashError := func(body string) struct {
-		Name          string `json:"name"`
-		IsError       bool   `json:"is_error"`
-		IsFileContent bool   `json:"is_file_content"`
-		InputSummary  string `json:"input_summary"`
-		ResultText    string `json:"result_text"`
-	} {
-		return struct {
-			Name          string `json:"name"`
-			IsError       bool   `json:"is_error"`
-			IsFileContent bool   `json:"is_file_content"`
-			InputSummary  string `json:"input_summary"`
-			ResultText    string `json:"result_text"`
-		}{Name: "Bash", IsError: true, InputSummary: "go build ./...", ResultText: "Exit code 1\n" + body}
+	bashError := func(body string) stepToolMaterial {
+		return stepToolMaterial{Name: "Bash", IsError: true, InputSummary: "go build ./...", ResultText: "Exit code 1\n" + body}
 	}
 
-	_, input := run.buildStepRequest(thinkingDecisionRequest{Step: 2, ErrorText: "Exit code 1\nscheduler.go:4:2: fmt imported and not used", Tools: []struct {
-		Name          string `json:"name"`
-		IsError       bool   `json:"is_error"`
-		IsFileContent bool   `json:"is_file_content"`
-		InputSummary  string `json:"input_summary"`
-		ResultText    string `json:"result_text"`
-	}{bashError("scheduler.go:4:2: fmt imported and not used")}})
+	_, input := run.buildStepRequest(thinkingDecisionRequest{Step: 2, ErrorText: "Exit code 1\nscheduler.go:4:2: fmt imported and not used", Tools: []stepToolMaterial{bashError("scheduler.go:4:2: fmt imported and not used")}})
 	if input.ExitCode != 1 {
 		t.Fatalf("exit code: %d", input.ExitCode)
 	}
@@ -89,13 +76,7 @@ func TestStepStateParsesBashExitCode(t *testing.T) {
 		"--- FAIL: TestX | assertion failed",
 		"bash: nonexistent-command: command not found",
 	} {
-		req := thinkingDecisionRequest{Step: 3, ErrorText: "Exit code 1\n" + body, Tools: []struct {
-			Name          string `json:"name"`
-			IsError       bool   `json:"is_error"`
-			IsFileContent bool   `json:"is_file_content"`
-			InputSummary  string `json:"input_summary"`
-			ResultText    string `json:"result_text"`
-		}{bashError(body)}}
+		req := thinkingDecisionRequest{Step: 3, ErrorText: "Exit code 1\n" + body, Tools: []stepToolMaterial{bashError(body)}}
 		_, input := run.buildStepRequest(req)
 		if input.ErrorFeatures == "" || strings.HasPrefix(input.ErrorFeatures, "exit code") {
 			t.Fatalf("feature collapsed to the exit-code line: %q", input.ErrorFeatures)
@@ -379,13 +360,7 @@ func TestStepStateRedactsBeforeNormalizationAndKeepsTail(t *testing.T) {
 	jevReq, input := run.buildStepRequest(thinkingDecisionRequest{
 		Step:      2,
 		ErrorText: "dial " + conn + ": connection refused",
-		Tools: []struct {
-			Name          string `json:"name"`
-			IsError       bool   `json:"is_error"`
-			IsFileContent bool   `json:"is_file_content"`
-			InputSummary  string `json:"input_summary"`
-			ResultText    string `json:"result_text"`
-		}{{Name: "Bash", IsError: true, InputSummary: "psql", ResultText: "Exit code 1\ndial " + conn + ": connection refused"}},
+		Tools:     []stepToolMaterial{{Name: "Bash", IsError: true, InputSummary: "psql", ResultText: "Exit code 1\ndial " + conn + ": connection refused"}},
 	})
 	if strings.Contains(input.ErrorFeatures, "reviewcanary") {
 		t.Fatalf("error feature leaked the credential: %q", input.ErrorFeatures)
@@ -404,14 +379,8 @@ func TestStepStateRedactsBeforeNormalizationAndKeepsTail(t *testing.T) {
 	}
 	tailError := "FAIL: TestScheduler verification TAIL_CANARY missing"
 	_, input = run.buildStepRequest(thinkingDecisionRequest{
-		Step: 3,
-		Tools: []struct {
-			Name          string `json:"name"`
-			IsError       bool   `json:"is_error"`
-			IsFileContent bool   `json:"is_file_content"`
-			InputSummary  string `json:"input_summary"`
-			ResultText    string `json:"result_text"`
-		}{{Name: "Bash", IsError: true, InputSummary: "go test", ResultText: "Exit code 1\n" + head.String() + tailError}},
+		Step:  3,
+		Tools: []stepToolMaterial{{Name: "Bash", IsError: true, InputSummary: "go test", ResultText: "Exit code 1\n" + head.String() + tailError}},
 	})
 	if input.ToolResult == "" || !strings.Contains(input.ToolResult, tailError) {
 		t.Fatalf("input lost the tail error before the state builder")
@@ -422,5 +391,114 @@ func TestStepStateRedactsBeforeNormalizationAndKeepsTail(t *testing.T) {
 	}
 	if strings.Contains(state2, "reviewcanary") {
 		t.Fatalf("state leaked a credential: %s", state2)
+	}
+}
+
+// TestStepStateKeepsTailErrorOfLongOutput locks acceptance #1 of #32: a
+// 5000+ char failing Bash output arrives whole (the mod no longer clips),
+// and the daemon's §4 head/tail split keeps the closing error in result_tail.
+func TestStepStateKeepsTailErrorOfLongOutput(t *testing.T) {
+	t.Parallel()
+	_, run := newStepEffortTestDaemon(t)
+	var b strings.Builder
+	for i := 0; i < 220; i++ {
+		b.WriteString("progress line " + strings.Repeat("x", 20) + " done\n")
+	}
+	b.WriteString("FAIL: TAIL_CANARY missing")
+	result := b.String()
+	if len(result) <= 5000 {
+		t.Fatalf("fixture too short: %d", len(result))
+	}
+	_, input := run.buildStepRequest(thinkingDecisionRequest{
+		Step:      2,
+		Tools:     []stepToolMaterial{{Name: "Bash", IsError: true, InputSummary: "go test ./...", ResultText: "Exit code 1\n" + result}},
+		ErrorText: "Exit code 1\n" + result,
+	})
+	state := BuildStepThinkingState(input)
+	if !strings.Contains(state, "TAIL_CANARY") {
+		t.Fatalf("tail error lost from state: %s", state)
+	}
+	if i := strings.Index(state, "result_tail"); i < 0 {
+		t.Fatalf("state missing result_tail: %s", state)
+	}
+}
+
+// TestStepStateRedactsPEMPrivateKeyWhole locks acceptance #2 of #32: a
+// multi-line PEM private key (BEGIN...END, >2000 chars) arriving whole is
+// redacted by the daemon — no key body ships, only the redaction marker.
+func TestStepStateRedactsPEMPrivateKeyWhole(t *testing.T) {
+	t.Parallel()
+	_, run := newStepEffortTestDaemon(t)
+	pem := []string{"-----BEGIN RSA PRIVATE KEY-----"}
+	for i := 0; i < 30; i++ {
+		pem = append(pem, "MIIE"+strings.Repeat("A", 64))
+	}
+	pem = append(pem, "-----END RSA PRIVATE KEY-----")
+	key := strings.Join(pem, "\n")
+	if len(key) <= 2000 {
+		t.Fatalf("fixture too short: %d", len(key))
+	}
+	_, input := run.buildStepRequest(thinkingDecisionRequest{
+		Step:      2,
+		Tools:     []stepToolMaterial{{Name: "Bash", IsError: true, InputSummary: "cat id_rsa", ResultText: key}},
+		ErrorText: key,
+	})
+	state := BuildStepThinkingState(input)
+	if strings.Contains(state, "MIIE") {
+		t.Fatalf("private key body leaked into state: %s", state)
+	}
+	if !strings.Contains(state, "[REDACTED PRIVATE KEY]") {
+		t.Fatalf("state missing the PEM redaction marker: %s", state)
+	}
+}
+
+// TestStepStateMarksOmittedFields locks acceptance #3 of #32: a field the
+// mod omitted whole shows the omission marker, never a partial body.
+func TestStepStateMarksOmittedFields(t *testing.T) {
+	t.Parallel()
+	_, run := newStepEffortTestDaemon(t)
+	jevReq, _ := run.buildStepRequest(thinkingDecisionRequest{
+		Step:             2,
+		AssistantOmitted: true,
+		Tools: []stepToolMaterial{{
+			Name: "Bash", IsError: true,
+			InputSummary: "", InputOmitted: true,
+			ResultText: "", ResultOmitted: true,
+		}},
+		ErrorOmitted: true,
+	})
+	state, _ := jevReq.State.(string)
+	if !strings.Contains(state, "[omitted: over limit]") {
+		t.Fatalf("state missing the omission marker: %s", state)
+	}
+	if strings.Count(state, "[omitted: over limit]") < 3 {
+		t.Fatalf("expected tool input, tool result and error marked omitted: %s", state)
+	}
+	feature, repeats := run.Errors.Observe("", true)
+	if feature != "[omitted]" {
+		t.Fatalf("omitted error feature: %q", feature)
+	}
+	if repeats != 0 {
+		t.Fatalf("omitted error must not advance the repeat count: %d", repeats)
+	}
+}
+
+// TestStepStateKeepsReadFailureError locks the file-content boundary: a Read
+// FAILURE is an error message, not file content — it feeds error_text and
+// error_features; only successful bodies stay omitted.
+func TestStepStateKeepsReadFailureError(t *testing.T) {
+	t.Parallel()
+	_, run := newStepEffortTestDaemon(t)
+	_, input := run.buildStepRequest(thinkingDecisionRequest{
+		Step:      2,
+		Tools:     []stepToolMaterial{{Name: "Read", IsError: true, IsFileContent: true, InputSummary: "a.go", ResultText: "File does not exist."}},
+		ErrorText: "File does not exist.",
+	})
+	state := BuildStepThinkingState(input)
+	if !strings.Contains(state, "File does not exist.") {
+		t.Fatalf("Read failure error missing from state: %s", state)
+	}
+	if !strings.Contains(input.ErrorFeatures, "file does not exist") {
+		t.Fatalf("Read failure missing from error features: %q", input.ErrorFeatures)
 	}
 }

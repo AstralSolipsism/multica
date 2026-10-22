@@ -1,5 +1,5 @@
 import { describe, expect, mock, test, type Engine } from 'claude-code/testing'
-import { clip, effectRecord, parseContext, pluginDirsWithout, stepPayload, type SessionMessages } from '../hooks/register'
+import { byteLength, effectRecord, FIELD_LIMIT_BYTES, fitRequest, parseContext, pluginDirsWithout, stepPayload, wholeOrOmitted, type SessionMessages, type StepPayload } from '../hooks/register'
 import type { On, TurnStepResult } from 'claude-code'
 
 // The hooks against the engine: the test's own hooks stand for the daemon's
@@ -159,8 +159,8 @@ describe('labrastro-effort hooks', () => {
     expect(body.step).toBe(2)
     expect(body.assistant_text).toBe('先跑测试，再读一下 a.go。')
     expect(body.tools).toEqual([
-      { name: 'Bash', is_error: true, is_file_content: false, input_summary: 'go test ./...', result_text: 'Exit code 1\nFAIL: build failed' },
-      { name: 'Read', is_error: false, is_file_content: true, input_summary: 'a.go', result_text: 'package a' },
+      { name: 'Bash', is_error: true, is_file_content: false, input_summary: 'go test ./...', result_text: 'Exit code 1\nFAIL: build failed', input_summary_omitted: false, result_omitted: false },
+      { name: 'Read', is_error: false, is_file_content: true, input_summary: 'a.go', result_text: '', input_summary_omitted: false, result_omitted: false },
     ])
     expect(body.error_text).toBe('Exit code 1\nFAIL: build failed')
     const record = JSON.parse(world.logs[0] ?? '{}')
@@ -376,8 +376,9 @@ describe('labrastro-effort helpers', () => {
   })
 
   test('stepPayload with no assistant material stays empty', () => {
-    expect(stepPayload(2, [{ role: 'user', text: 'hi' }])).toEqual({ step: 2, assistant_text: '', tools: [], error_text: '' })
-    expect(stepPayload(2, undefined)).toEqual({ step: 2, assistant_text: '', tools: [], error_text: '' })
+    const empty = { step: 2, assistant_text: '', tools: [], error_text: '', assistant_omitted: false, error_omitted: false }
+    expect(stepPayload(2, [{ role: 'user', text: 'hi' }])).toEqual(empty)
+    expect(stepPayload(2, undefined)).toEqual(empty)
   })
 
   test('parseContext accepts version 1 and rejects the rest', () => {
@@ -385,21 +386,6 @@ describe('labrastro-effort helpers', () => {
     for (const bad of ['', 'not json', '{"version":2}', '{"version":1}', '{"version":1,"task_id":"t","endpoint":"","startup_effort":"low"}']) {
       expect(parseContext(bad)).toBeUndefined()
     }
-  })
-
-  test('clip keeps whole lines and never a partial secret line', () => {
-    expect(clip(undefined, 5)).toBe('')
-    expect(clip('abc', 5)).toBe('abc')
-    // Multi-line: whole lines up to the budget.
-    expect(clip('aaaa\nbbbb\ncccc', 10)).toBe('aaaa\nbbbb')
-    // A first line alone over the budget ships as nothing, not a prefix.
-    expect(clip('postgres://app:reviewcanary@db.internal:5432/orders', 20)).toBe('')
-    // A credential inside fitting lines survives whole for the daemon to redact.
-    const line = 'postgres://app:reviewcanary@db.internal:5432/orders'
-    expect(clip(line + '\nshort', 80)).toBe(line + '\nshort')
-    expect(clip(line + '\nshort', 55)).toBe(line)
-    // Unicode counts by code point.
-    expect([...clip('你好\n世界\n再见', 5)].length).toBeLessThanOrEqual(5)
   })
 
   test('effectRecord carries the decision or the fallback', () => {

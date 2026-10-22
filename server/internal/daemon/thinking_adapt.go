@@ -209,7 +209,9 @@ type StepThinkingInput struct {
 
 func BuildStepThinkingState(input StepThinkingInput) string {
 	result := redact.Text(input.ToolResult)
-	if input.FileContent {
+	// A file-content tool's FAILURE result is an error message, not a body:
+	// it must stay visible (#32). Only successful bodies are omitted.
+	if input.FileContent && !input.ToolIsError {
 		result = "[file content omitted]"
 	}
 	runes := []rune(result)
