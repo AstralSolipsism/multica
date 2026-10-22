@@ -1,15 +1,21 @@
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
+import { ApiError } from "@multica/core/api";
+import type { GitHubAppInstallation, ListGitHubAppInstallationsResponse } from "@multica/core/types";
 import enCommon from "../../locales/en/common.json";
 import enForkUi from "../../locales/en/fork-ui.json";
 import enSettings from "../../locales/en/settings.json";
 
 const mockUpdateWorkspace = vi.hoisted(() => vi.fn());
 const mockGetGitHubConnectURL = vi.hoisted(() => vi.fn());
+const mockConnectInstallation = vi.hoisted(() => vi.fn());
+const mockInvalidateQueries = vi.hoisted(() => vi.fn());
+const mockFetchQuery = vi.hoisted(() => vi.fn());
 const mockNavReplace = vi.hoisted(() => vi.fn());
+const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
 const workspaceRef = vi.hoisted(() => ({
   current: {
@@ -33,6 +39,16 @@ const githubRef = vi.hoisted(() => ({
 const githubQueryStateRef = vi.hoisted(() => ({
   current: { isPending: false, isFetching: false },
 }));
+// The reusable-installation query as useQuery reports it to the shared
+// connect decision. code-github.test.tsx covers the same rules against a real
+// QueryClient.
+const appInstallationsRef = vi.hoisted(() => ({
+  current: {
+    status: "success" as "pending" | "error" | "success",
+    data: { configured: true, installations: [] } as ListGitHubAppInstallationsResponse,
+    isFetching: false,
+  },
+}));
 const githubRepositoriesRef = vi.hoisted(() => ({
   current: [] as {
     id: number;
@@ -50,7 +66,11 @@ const searchParamsRef = vi.hoisted(() => ({
 }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: githubRef.current, ...githubQueryStateRef.current }),
+  useQuery: (options: { queryKey: unknown[] }) => {
+    const key = JSON.stringify(options.queryKey);
+    if (key.includes("app-installations")) return appInstallationsRef.current;
+    return { data: githubRef.current, ...githubQueryStateRef.current };
+  },
   useInfiniteQuery: () => ({
     data: {
       pages: [
@@ -67,7 +87,11 @@ vi.mock("@tanstack/react-query", () => ({
     isFetchingNextPage: false,
     fetchNextPage: vi.fn(),
   }),
-  useQueryClient: () => ({ setQueryData: vi.fn() }),
+  useQueryClient: () => ({
+    setQueryData: vi.fn(),
+    invalidateQueries: mockInvalidateQueries,
+    fetchQuery: mockFetchQuery,
+  }),
   queryOptions: <T,>(options: T) => options,
   infiniteQueryOptions: <T,>(options: T) => options,
 }));
@@ -82,13 +106,15 @@ vi.mock("@multica/core/paths", () => ({
 vi.mock("@multica/core/workspace/queries", () => ({
   workspaceKeys: { list: () => ["workspaces"] },
 }));
-vi.mock("@multica/core/api", () => ({
+vi.mock("@multica/core/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/core/api")>()),
   api: {
     updateWorkspace: mockUpdateWorkspace,
     getGitHubConnectURL: mockGetGitHubConnectURL,
+    connectGitHubInstallation: mockConnectInstallation,
   },
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: mockToastError } }));
+vi.mock("sonner", () => ({ toast: { success: mockToastSuccess, error: mockToastError } }));
 vi.mock("../../navigation", () => ({
   useNavigation: () => ({
     push: vi.fn(),
@@ -103,6 +129,16 @@ import { RepositoriesSection, repositoryIdentity } from "./repositories-section"
 const TEST_RESOURCES = {
   en: { common: enCommon, settings: enSettings, "fork-ui": enForkUi },
 };
+const APP_INSTALLATIONS_KEY = ["github", "workspace-1", "app-installations"];
+const INSTALL_URL = "https://github.com/apps/multica/installations/new";
+
+const outlune: GitHubAppInstallation = {
+  installation_id: 202,
+  account_login: "outlune",
+  account_type: "Organization",
+  account_avatar_url: null,
+  connected: false,
+};
 
 function Wrapper({ children }: { children: ReactNode }) {
   return (
@@ -110,6 +146,14 @@ function Wrapper({ children }: { children: ReactNode }) {
       {children}
     </I18nProvider>
   );
+}
+
+function offerForReuse(...installations: GitHubAppInstallation[]) {
+  appInstallationsRef.current = {
+    status: "success",
+    data: { configured: true, installations },
+    isFetching: false,
+  };
 }
 
 beforeEach(() => {
@@ -128,16 +172,35 @@ beforeEach(() => {
     can_manage: true,
   };
   githubQueryStateRef.current = { isPending: false, isFetching: false };
+  offerForReuse();
   githubRepositoriesRef.current = [];
   searchParamsRef.current = new URLSearchParams("tab=code");
   mockUpdateWorkspace.mockImplementation(async (_id: string, payload: object) => ({
     ...workspaceRef.current,
     ...payload,
   }));
+  mockGetGitHubConnectURL.mockResolvedValue({ configured: true, url: INSTALL_URL });
+  mockInvalidateQueries.mockResolvedValue(undefined);
 });
 
 async function openAddMenu(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: /Add repository/ }));
+}
+
+// Pointer hover closes the submenu before user-event can move into it (Base
+// UI's safe-polygon needs real layout); the keyboard path is the one the
+// accessibility contract promises anyway. Focusing goes through act because
+// Base UI updates menu state from the focus event.
+async function openGitHubSubmenu(user: ReturnType<typeof userEvent.setup>) {
+  const trigger = await screen.findByRole("menuitem", { name: /Connect GitHub/ });
+  act(() => trigger.focus());
+  await user.keyboard("{ArrowRight}");
+}
+
+async function activateMenuItem(user: ReturnType<typeof userEvent.setup>, name: string | RegExp) {
+  const item = await screen.findByRole("menuitem", { name });
+  act(() => item.focus());
+  await user.keyboard("{Enter}");
 }
 
 describe("RepositoriesSection", () => {
@@ -272,6 +335,124 @@ describe("RepositoriesSection", () => {
     const item = await screen.findByRole("menuitem", { name: /Connect GitHub/ });
     expect(item).toHaveAttribute("aria-disabled", "true");
     expect(item).toHaveTextContent("GITHUB_APP_ID");
+  });
+
+  it("binds a reusable account in place and opens the picker on it", async () => {
+    offerForReuse(outlune);
+    mockConnectInstallation.mockResolvedValue({
+      id: "inst-9",
+      installation_id: 202,
+      account_login: "outlune",
+      account_type: "Organization",
+    });
+    // The invalidated installations query would report the new binding.
+    mockInvalidateQueries.mockImplementation(async () => {
+      githubRef.current = {
+        ...githubRef.current,
+        installations: [{ id: "inst-9", account_login: "outlune" }],
+      };
+    });
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const user = userEvent.setup();
+    render(<RepositoriesSection />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    await openGitHubSubmenu(user);
+    await activateMenuItem(user, /outlune/);
+
+    await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith("outlune connected"));
+    expect(mockConnectInstallation).toHaveBeenCalledWith("workspace-1", 202);
+    expect(mockGetGitHubConnectURL).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog", { name: "Choose GitHub repositories" });
+    expect(within(dialog).getByText("outlune")).toBeInTheDocument();
+    open.mockRestore();
+  });
+
+  it("still offers GitHub's install page next to the accounts it can reuse", async () => {
+    offerForReuse(outlune);
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const user = userEvent.setup();
+    render(<RepositoriesSection />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    await openGitHubSubmenu(user);
+    await activateMenuItem(user, "Install on another GitHub account");
+
+    await waitFor(() => {
+      expect(mockGetGitHubConnectURL).toHaveBeenCalledWith("workspace-1", "repositories");
+    });
+    expect(open).toHaveBeenCalledWith(INSTALL_URL, "_blank", "noopener");
+    expect(mockConnectInstallation).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
+  it.each([
+    [
+      "the caller manages no GitHub accounts reusable here",
+      () => {
+        githubRef.current = { ...githubRef.current, can_manage: false };
+        offerForReuse(outlune);
+      },
+    ],
+    [
+      "the reusable list failed to load, even with accounts cached",
+      () => {
+        appInstallationsRef.current = {
+          status: "error",
+          data: { configured: true, installations: [outlune] },
+          isFetching: false,
+        };
+      },
+    ],
+  ])("goes straight to GitHub when %s", async (_case, arrange) => {
+    arrange();
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const user = userEvent.setup();
+    render(<RepositoriesSection />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    await user.click(await screen.findByRole("menuitem", { name: /Connect GitHub/ }));
+
+    await waitFor(() => {
+      expect(mockGetGitHubConnectURL).toHaveBeenCalledWith("workspace-1", "repositories");
+    });
+    expect(open).toHaveBeenCalledWith(INSTALL_URL, "_blank", "noopener");
+    expect(mockConnectInstallation).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
+  it.each([
+    [
+      "404",
+      new ApiError("github installation not found", 404, "Not Found"),
+      "outlune is no longer available to reuse. It may have just been disconnected elsewhere or uninstalled on GitHub.",
+      true,
+    ],
+    [
+      "502",
+      new ApiError("failed to verify github installation", 502, "Bad Gateway"),
+      "Could not connect outlune. Try again.",
+      false,
+    ],
+  ])("explains a binding refused with %s", async (_code, error, message, refreshesList) => {
+    offerForReuse(outlune);
+    mockConnectInstallation.mockRejectedValue(error);
+    const user = userEvent.setup();
+    render(<RepositoriesSection />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    await openGitHubSubmenu(user);
+    await activateMenuItem(user, /outlune/);
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith(message));
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "Choose GitHub repositories" })).toBeNull();
+    expect(
+      mockInvalidateQueries.mock.calls.some(
+        ([filters]) =>
+          JSON.stringify(filters.queryKey) === JSON.stringify(APP_INSTALLATIONS_KEY),
+      ),
+    ).toBe(refreshesList);
   });
 
   it("imports selected GitHub repositories and deduplicates HTTPS against SSH", async () => {

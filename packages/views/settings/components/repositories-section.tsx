@@ -45,6 +45,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { toast } from "sonner";
@@ -72,6 +75,7 @@ import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { SettingsCard, SettingsSection } from "./settings-layout";
 import { GitHubMark } from "./github-mark";
+import { GitHubReuseMenuItems, useGitHubReuseConnect } from "./github-connect-reuse";
 
 const EMPTY_REPOSITORIES: WorkspaceRepo[] = [];
 
@@ -161,7 +165,7 @@ export function RepositoriesSection() {
   const [draft, setDraft] = useState<RepositoryDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [pendingRemovalIndex, setPendingRemovalIndex] = useState<number | null>(null);
-  const [connectingGitHub, setConnectingGitHub] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [githubPickerOpen, setGitHubPickerOpen] = useState(false);
   const [selectedInstallationID, setSelectedInstallationID] = useState("");
   const [selectedRepositories, setSelectedRepositories] = useState<
@@ -184,6 +188,26 @@ export function RepositoriesSection() {
   const githubConnectConfigured = githubData?.configured === true;
   const githubBrowseConfigured =
     githubData?.repository_browse_configured === true;
+  // Same connect decision as the Code tab's GitHub row: bind an account the
+  // caller manages elsewhere without leaving the page, else go to GitHub. A
+  // binding made here lands in the picker, like an install callback does.
+  const {
+    reusable: reusableGitHubAccounts,
+    binding: bindingGitHubAccount,
+    busy: gitHubConnectBusy,
+    menuOpen: gitHubAccountMenuOpen,
+    setMenuOpen: setGitHubAccountMenuOpen,
+    chooseConnectPath: chooseGitHubConnectPath,
+    openGitHubInstall,
+    bind: bindGitHubAccount,
+  } = useGitHubReuseConnect({
+    installationData: githubData,
+    returnTo: "repositories",
+    onBound: (installation) => {
+      setSelectedInstallationID(installation.id);
+      setGitHubPickerOpen(true);
+    },
+  });
   const githubRepositoriesQuery = useInfiniteQuery({
     ...githubInstallationRepositoriesOptions(wsId, selectedInstallationID),
     enabled:
@@ -328,24 +352,12 @@ export function RepositoriesSection() {
     setGitHubPickerOpen(true);
   };
 
+  // A first connection with nothing reusable stays one click to GitHub; the
+  // decision needs the menu to stay open only while it checks or turns into
+  // the account choice.
   const connectGitHub = async () => {
-    setConnectingGitHub(true);
-    try {
-      const response = await api.getGitHubConnectURL(wsId, "repositories");
-      if (!response.configured || !response.url) {
-        toast.error(t(($) => $.repositories.github_not_configured));
-        return;
-      }
-      window.open(response.url, "_blank", "noopener");
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : t(($) => $.repositories.github_connect_failed),
-      );
-    } finally {
-      setConnectingGitHub(false);
-    }
+    const path = await chooseGitHubConnectPath();
+    if (path === "github") setAddMenuOpen(false);
   };
 
   const closeGitHubPicker = () => {
@@ -390,7 +402,7 @@ export function RepositoriesSection() {
   if (!workspace) return null;
 
   const githubItemDisabled =
-    connectingGitHub ||
+    gitHubConnectBusy ||
     !githubBrowseConfigured ||
     (!githubConnectConfigured && githubInstallations.length === 0);
 
@@ -401,39 +413,77 @@ export function RepositoriesSection() {
       anchor="repositories"
       action={
         canManageWorkspace ? (
-          <DropdownMenu>
+          <DropdownMenu
+            open={addMenuOpen}
+            onOpenChange={(open) => {
+              setAddMenuOpen(open);
+              if (!open) setGitHubAccountMenuOpen(false);
+            }}
+          >
             <DropdownMenuTrigger render={<Button size="sm" />}>
               <Plus />
               {t(($) => $.repositories.add)}
               <ChevronDown />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-auto min-w-56">
-              <DropdownMenuItem
-                disabled={githubItemDisabled}
-                onClick={() =>
-                  githubInstallations.length > 0
-                    ? openGitHubPicker()
-                    : void connectGitHub()
-                }
-              >
-                {connectingGitHub ? (
-                  <LoaderCircle className="animate-spin" />
-                ) : (
+              {githubInstallations.length > 0 ? (
+                <DropdownMenuItem
+                  disabled={githubItemDisabled}
+                  onClick={openGitHubPicker}
+                >
                   <GitHubMark className="size-4" />
-                )}
-                <span className="flex flex-col">
-                  <span>
-                    {githubInstallations.length > 0
-                      ? t(($) => $.repositories.choose_from_github)
-                      : t(($) => $.repositories.connect_github)}
+                  <span className="flex flex-col">
+                    <span>{t(($) => $.repositories.choose_from_github)}</span>
+                    {!githubBrowseConfigured ? (
+                      <span className="text-caption text-muted-foreground">
+                        {t(($) => $.repositories.github_browse_not_configured)}
+                      </span>
+                    ) : null}
                   </span>
-                  {!githubBrowseConfigured ? (
-                    <span className="text-caption text-muted-foreground">
-                      {t(($) => $.repositories.github_browse_not_configured)}
-                    </span>
-                  ) : null}
-                </span>
-              </DropdownMenuItem>
+                </DropdownMenuItem>
+              ) : reusableGitHubAccounts.length > 0 || gitHubAccountMenuOpen ? (
+                // Accounts managed elsewhere are bound in place; GitHub's
+                // install page cannot do it. An emptied list keeps the open
+                // submenu mounted, mirroring the Code tab's connect button.
+                <DropdownMenuSub
+                  open={gitHubAccountMenuOpen}
+                  onOpenChange={setGitHubAccountMenuOpen}
+                >
+                  <DropdownMenuSubTrigger disabled={githubItemDisabled}>
+                    <GitHubMark className="size-4" />
+                    {t(($) => $.repositories.connect_github)}
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="w-auto min-w-56 max-w-80">
+                    <GitHubReuseMenuItems
+                      reusable={reusableGitHubAccounts}
+                      binding={bindingGitHubAccount}
+                      onBind={(item) => void bindGitHubAccount(item)}
+                      onInstall={() => void openGitHubInstall()}
+                    />
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              ) : (
+                <DropdownMenuItem
+                  disabled={githubItemDisabled}
+                  closeOnClick={false}
+                  aria-busy={gitHubConnectBusy || undefined}
+                  onClick={() => void connectGitHub()}
+                >
+                  {gitHubConnectBusy ? (
+                    <LoaderCircle className="animate-spin" />
+                  ) : (
+                    <GitHubMark className="size-4" />
+                  )}
+                  <span className="flex flex-col">
+                    <span>{t(($) => $.repositories.connect_github)}</span>
+                    {!githubBrowseConfigured ? (
+                      <span className="text-caption text-muted-foreground">
+                        {t(($) => $.repositories.github_browse_not_configured)}
+                      </span>
+                    ) : null}
+                  </span>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem
                 onClick={() => setDraft({ index: null, url: "", description: "" })}
               >
