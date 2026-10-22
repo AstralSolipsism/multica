@@ -54,6 +54,13 @@
     "failed": "Impossible de supprimer le dossier. Réessayez.",
     "unconfirmed": "Impossible de confirmer le résultat. La liste a été actualisée — vérifiez-la avant de réessayer."
   },
+  "folder_errors": {
+    "name_conflict": "Un dossier portant ce nom existe déjà à la destination. Choisissez un autre nom.",
+    "folder_cycle": "Impossible de déplacer un dossier dans l’un de ses propres sous-dossiers.",
+    "invalid_name": "Le nom du dossier n’est pas valide : 1 à 255 octets, sans espaces en début ou fin, sans caractères de contrôle ni sauts de ligne.",
+    "forbidden": "Vous n’avez pas la permission d’effectuer cette action.",
+    "not_found": "La cible est introuvable — elle a peut-être été supprimée. La liste a été actualisée."
+  },
   "move_agents": {
     "title_one": "Déplacer l'agent",
     "title_other": "Déplacer {{count}} agents",
@@ -74,10 +81,14 @@
     "place_done_one": "Agent placé.",
     "place_done_other": "{{count}} agents placés.",
     "partial": "{{done}} agents déplacés sur {{total}} ; le reste a échoué.",
+    "place_partial": "{{done}} agents placés sur {{total}} ; le reste a échoué.",
     "failed": "Impossible de déplacer les agents. Réessayez.",
+    "place_failed": "Impossible de placer les agents. Réessayez.",
     "no_permission": "Vous n'avez pas la permission de déplacer tous les agents sélectionnés.",
     "batch_place": "Placer dans un dossier",
     "unconfirmed_one": "{{done}} agent déplacé sur {{total}} ; {{count}} n'a pas pu être confirmé. La liste a été actualisée — vérifiez-la avant de réessayer.",
-    "unconfirmed_other": "{{done}} agents déplacés sur {{total}} ; {{count}} n'ont pas pu être confirmés. La liste a été actualisée — vérifiez-la avant de réessayer."
+    "unconfirmed_other": "{{done}} agents déplacés sur {{total}} ; {{count}} n'ont pas pu être confirmés. La liste a été actualisée — vérifiez-la avant de réessayer.",
+    "place_unconfirmed_one": "{{done}} agent placé sur {{total}} ; {{count}} n'a pas pu être confirmé. La liste a été actualisée — vérifiez-la avant de réessayer.",
+    "place_unconfirmed_other": "{{done}} agents placés sur {{total}} ; {{count}} n'ont pas pu être confirmés. La liste a été actualisée — vérifiez-la avant de réessayer."
   }
 }

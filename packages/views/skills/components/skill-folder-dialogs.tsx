@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Folder, Layers, Loader2 } from "lucide-react";
 import type { SkillFolder, SkillFolderTree } from "@multica/core/api/schemas";
-import { api } from "@multica/core/api";
+import { api, errorCode } from "@multica/core/api";
 import { invalidateSkillPackageQueries } from "@multica/core/skills/package-queries";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -33,6 +33,36 @@ export type SkillFolderFormState =
   | { mode: "create"; parentId: string | null }
   | { mode: "rename"; folder: SkillFolder };
 
+// Localize the tree contract's error codes
+// (docs/engineering/labrastro-skill-packages.md): the server's `message` is
+// English-only, so a coded failure renders fork copy instead. Errors without
+// a known code fall back to the dialog's generic failure sentence.
+function useFolderErrorMessage() {
+  const { t } = useT("skill-packages");
+  return (err: unknown, fallback: string): string => {
+    switch (errorCode(err)) {
+      case "name_conflict":
+        return t(($) => $.folder_errors.name_conflict);
+      case "folder_cycle":
+        return t(($) => $.folder_errors.folder_cycle);
+      case "invalid_name":
+        return t(($) => $.folder_errors.invalid_name);
+      case "forbidden":
+        return t(($) => $.folder_errors.forbidden);
+      case "not_found":
+        return t(($) => $.folder_errors.not_found);
+      case "managed_folder":
+        return t(($) => $.folder_errors.managed_folder);
+      case "preview_stale":
+        return t(($) => $.folder_errors.preview_stale);
+      case "permission_changed":
+        return t(($) => $.folder_errors.permission_changed);
+      default:
+        return fallback;
+    }
+  };
+}
+
 export function SkillFolderFormDialog({
   wsId,
   state,
@@ -44,6 +74,7 @@ export function SkillFolderFormDialog({
 }) {
   const { t } = useT("skill-packages");
   const qc = useQueryClient();
+  const folderError = useFolderErrorMessage();
   const [name, setName] = useState(state.mode === "rename" ? state.folder.name : "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -59,14 +90,18 @@ export function SkillFolderFormDialog({
           ? await api.createSkillFolder(wsId, { name: trimmed, parent_id: state.parentId ?? "" })
           : await api.updateSkillFolder(wsId, state.folder.id, { name: trimmed });
       if (saved === null) {
-        setError(t(($) => $.folder_form.failed));
-        setSaving(false);
+        // Unreadable response: the write may have committed. Show an
+        // indeterminate result instead of claiming success or failure.
+        setError(t(($) => $.folder_form.unconfirmed));
         return;
       }
-      await invalidateSkillPackageQueries(qc, wsId);
       onClose();
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : t(($) => $.folder_form.failed));
+      setError(folderError(err, t(($) => $.folder_form.failed)));
+    } finally {
+      // The tree refreshes on every settled write, including unreadable and
+      // failed responses (the server may have committed anyway).
+      await invalidateSkillPackageQueries(qc, wsId);
       setSaving(false);
     }
   };
@@ -140,6 +175,7 @@ export function SkillFolderMoveDialog({
 }) {
   const { t } = useT("skill-packages");
   const qc = useQueryClient();
+  const folderError = useFolderErrorMessage();
   const destinations = useMemo(
     () => folderMoveDestinations(tree.folders, folder.id),
     [tree.folders, folder.id],
@@ -155,14 +191,15 @@ export function SkillFolderMoveDialog({
     try {
       const moved = await api.updateSkillFolder(wsId, folder.id, { parent_id: target ?? "" });
       if (moved === null) {
-        setError(t(($) => $.folder_move.failed));
-        setMoving(false);
+        // Unreadable response: the write may have committed.
+        setError(t(($) => $.folder_move.unconfirmed));
         return;
       }
-      await invalidateSkillPackageQueries(qc, wsId);
       onClose();
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : t(($) => $.folder_move.failed));
+      setError(folderError(err, t(($) => $.folder_move.failed)));
+    } finally {
+      await invalidateSkillPackageQueries(qc, wsId);
       setMoving(false);
     }
   };
@@ -239,6 +276,7 @@ export function SkillFolderDeleteDialog({
 }) {
   const { t } = useT("skill-packages");
   const qc = useQueryClient();
+  const folderError = useFolderErrorMessage();
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
 
@@ -249,15 +287,16 @@ export function SkillFolderDeleteDialog({
     try {
       const result = await api.deleteSkillFolder(wsId, folder.id);
       if (result === null) {
-        setError(t(($) => $.folder_delete.failed));
-        setDeleting(false);
+        // Unreadable response: the delete may have committed.
+        setError(t(($) => $.folder_delete.unconfirmed));
         return;
       }
-      await invalidateSkillPackageQueries(qc, wsId);
       onDeleted();
       onClose();
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : t(($) => $.folder_delete.failed));
+      setError(folderError(err, t(($) => $.folder_delete.failed)));
+    } finally {
+      await invalidateSkillPackageQueries(qc, wsId);
       setDeleting(false);
     }
   };

@@ -264,6 +264,7 @@ export function useSkillsPageFolderExplorer({
   const {
     data: folderTree,
     error: folderTreeError,
+    failureCount: folderTreeFailures,
     refetch: refetchFolderTree,
   } = useQuery(skillFolderTreeOptions(wsId));
   const [importOpen, setImportOpen] = useState(false);
@@ -278,8 +279,25 @@ export function useSkillsPageFolderExplorer({
   } | null>(null);
   const previousFoldersRef = useRef<readonly FolderExplorerFolder[]>([]);
 
+  // Never hide entries behind an unreachable tree: after the first failed
+  // attempt (even with the retry still pending) or 5s without any data, fall
+  // back to the flat list with a notice. Late data restores the hierarchy.
+  const [treeWaitExpired, setTreeWaitExpired] = useState(false);
+  useEffect(() => {
+    if (folderTree || folderTreeError) {
+      setTreeWaitExpired(false);
+      return;
+    }
+    const timer = setTimeout(() => setTreeWaitExpired(true), 5000);
+    return () => clearTimeout(timer);
+  }, [folderTree, folderTreeError]);
+
   const treeReady = !!folderTree && !folderTreeError;
-  const treeUnavailable = folderTree === null || !!folderTreeError;
+  const treeUnavailable =
+    folderTree === null ||
+    !!folderTreeError ||
+    folderTreeFailures > 0 ||
+    treeWaitExpired;
   const treeLoading = !treeReady && !treeUnavailable;
   const flatRequested =
     search.trim().length > 0 || Object.values(filters).some((values) => values.length > 0);

@@ -117,6 +117,7 @@
     "manage_labels_title": "スキルのラベル"
   },
   "detail": {
+    "all_skills": "すべてのスキル",
     "read_only": "読み取り専用",
     "delete_aria": "スキルを削除",
     "delete_tooltip": "スキルを削除",
