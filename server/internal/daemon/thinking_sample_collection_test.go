@@ -62,7 +62,7 @@ func TestRunTaskDecisionSampleCollection(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fake CLI")
 	}
-	for _, scenario := range []string{"success", "fallback-5xx", "retry", "disabled", "agent-start-failure"} {
+	for _, scenario := range []string{"success", "fallback-5xx", "retry", "disabled", "agent-start-failure", "cancelled"} {
 		t.Run(scenario, func(t *testing.T) {
 			stubModelDiscovery(t, map[string]agent.Catalog{"claude": adaptTestCatalog()})
 
@@ -92,6 +92,14 @@ func TestRunTaskDecisionSampleCollection(t *testing.T) {
 			defer jevServer.Close()
 
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// In the cancelled scenario the final pre-completion status
+				// check sees the task already terminal (user cancel):
+				// handleTask must discard the result and write no outcome —
+				// the server never received one.
+				if scenario == "cancelled" && strings.HasSuffix(r.URL.Path, "/status") {
+					fmt.Fprint(w, `{"status":"cancelled"}`)
+					return
+				}
 				fmt.Fprint(w, `{}`)
 			}))
 			defer srv.Close()
@@ -153,6 +161,17 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 			case "disabled":
 				if _, err := os.Stat(collectDir); !os.IsNotExist(err) {
 					t.Fatalf("collection created files while disabled: %v", err)
+				}
+				return
+			case "cancelled":
+				// The decision was sampled before the run; the server
+				// cancelled the task and discarded the result, so exactly one
+				// record (the decision) remains — no outcome to pair.
+				day := time.Now().UTC().Format("20060102")
+				path := filepath.Join(collectDir, "decisions-daemon-test-"+day+".jsonl")
+				records := sampleRecords(t, path)
+				if len(records) != 1 || records[0]["type"] != "decision" {
+					t.Fatalf("cancelled run must keep only the decision: %v", records)
 				}
 				return
 			case "fallback-5xx":
@@ -286,5 +305,79 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 				t.Fatalf("sample file mode: %v %v", info.Mode().Perm(), err)
 			}
 		})
+	}
+}
+
+// TestOutcomeEnqueuedBeforeTerminalReport pins the write order from the
+// frozen baseline: the outcome must be enqueued BEFORE the terminal report.
+// Reporting can block for minutes while shutdown closes the sample collector
+// after 30 seconds, so an outcome enqueued after a slow report is dropped.
+func TestOutcomeEnqueuedBeforeTerminalReport(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fake CLI")
+	}
+	stubModelDiscovery(t, map[string]agent.Catalog{"claude": adaptTestCatalog()})
+
+	jevServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"answers":{"effort":{"choice":"high","confidence":0.9,"probabilities":{"high":0.9,"low":0.1}}}}`)
+	}))
+	defer jevServer.Close()
+
+	reportStarted := make(chan struct{})
+	releaseReport := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/complete") {
+			close(reportStarted)
+			<-releaseReport
+		}
+		fmt.Fprint(w, `{}`)
+	}))
+	defer srv.Close()
+
+	collectDir := t.TempDir()
+	collector := jevsample.New(collectDir, "daemon-test", 0, quietTaskLog())
+	fake := filepath.Join(t.TempDir(), "claude")
+	writeTestExecutable(t, fake, []byte(`#!/bin/sh
+case "$*" in *--version*) echo '2.1.304'; exit 0;; esac
+IFS= read -r _
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"old","result":"done"}'
+`))
+
+	d := &Daemon{client: NewClient(srv.URL), jevClient: jev.New(jev.Options{
+		Sources: []jev.Source{{Name: "fake", BaseURL: jevServer.URL, Model: "test"}}}),
+		jevSamples: collector, logger: quietTaskLog(),
+		workspaces:   map[string]*workspaceState{},
+		runtimeIndex: map[string]Runtime{"rt": {ID: "rt", Provider: "claude"}}, activeEnvRoots: map[string]int{},
+		cfg: Config{WorkspacesRoot: t.TempDir(), AgentTimeout: 5 * time.Second, ServerBaseURL: srv.URL, Agents: map[string]AgentEntry{"claude": {Path: fake}}},
+	}
+	d.runner = taskRunnerFunc(d.runTask)
+	task := Task{ID: "order-task", WorkspaceID: "ws", RuntimeID: "rt", IssueID: "issue", AgentID: "agent", AuthToken: "mat_order_test",
+		IssueDescription: "plain task",
+		Agent:            &AgentData{ID: "agent", Name: "test", Model: "test/model", ThinkingLevel: agent.ThinkingLevelAdapt}}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		d.handleTask(t.Context(), task, 0)
+	}()
+
+	// Shutdown closes the collector while the terminal report is still
+	// blocked — exactly the production window the write order protects.
+	<-reportStarted
+	collector.Close()
+	close(releaseReport)
+	<-done
+
+	day := time.Now().UTC().Format("20060102")
+	path := filepath.Join(collectDir, "decisions-daemon-test-"+day+".jsonl")
+	records := sampleRecords(t, path)
+	var outcomes int
+	for _, record := range records {
+		if record["type"] == "outcome" {
+			outcomes++
+		}
+	}
+	if outcomes != 1 {
+		t.Fatalf("outcome not enqueued before the terminal report; got %d outcome records, want 1: %v", outcomes, records)
 	}
 }

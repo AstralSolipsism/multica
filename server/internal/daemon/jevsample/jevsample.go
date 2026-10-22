@@ -245,10 +245,11 @@ func (c *Collector) warn(reason string, err error) {
 func (c *Collector) run() {
 	defer close(c.done)
 	var (
-		openDay string
-		file    *os.File
-		used    int64
-		stopped bool
+		openDay   string
+		file      *os.File
+		used      int64
+		stoppedOn string // UTC day that hit the cap; all further records that day are refused
+		warned    bool
 	)
 	for p := range c.queue {
 		day := p.ts.UTC().Format(dateFormat)
@@ -256,34 +257,32 @@ func (c *Collector) run() {
 			_ = file.Close()
 			file = nil
 		}
-		if file == nil {
-			if c.maxBytes > 0 && c.sizeOnDisk()+int64(len(p.line))+1 > c.maxBytes {
-				// Sticky for the day and checked before opening, so a capped
-				// day leaves no empty file behind. Smaller records are refused
-				// too: letting an outcome through after its decision was
-				// dropped would leave half pairs for training.
-				if !stopped {
-					stopped = true
-					c.log.Warn("jev sample collection: size cap reached; stopping writes",
-						"dir", c.dir, "max_bytes", c.maxBytes)
-				}
-				continue
+		// Sticky per UTC day: once a day's writes cross the cap, every
+		// further record that day is refused regardless of size — letting an
+		// outcome through after its decision was dropped would leave half
+		// pairs for training. The next day's first record re-checks
+		// sizeOnDisk(), so deleting files resumes collection.
+		if day == stoppedOn {
+			continue
+		}
+		if c.maxBytes > 0 && c.sizeOnDisk()+int64(len(p.line))+1 > c.maxBytes {
+			stoppedOn = day
+			if !warned {
+				// Warn once per collector lifetime (§10.3: 停止写入并告警一次),
+				// not once per day — day rotation must not turn one cap
+				// event into a daily warning.
+				warned = true
+				c.log.Warn("jev sample collection: size cap reached; stopping writes",
+					"dir", c.dir, "max_bytes", c.maxBytes)
 			}
+			continue
+		}
+		if file == nil {
 			file, used = c.open(day)
 			if file == nil {
 				continue
 			}
 			openDay = day
-		}
-		if c.maxBytes > 0 && used+int64(len(p.line))+1 > c.maxBytes {
-			// Same stop once the open file itself crosses the line; the
-			// pre-open check above only sees the day's first record.
-			if !stopped {
-				stopped = true
-				c.log.Warn("jev sample collection: size cap reached; stopping writes",
-					"dir", c.dir, "max_bytes", c.maxBytes)
-			}
-			continue
 		}
 		n, err := file.Write(append(p.line, '\n'))
 		used += int64(n)

@@ -167,44 +167,42 @@ func TestTwoDaemonsSeparateFiles(t *testing.T) {
 	}
 }
 
-func TestSizeCapCountsExistingFilesAndStopsSticky(t *testing.T) {
+func TestSizeCapRefusesSmallerRecordsAndResumesAfterDelete(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
 
-	// Yesterday's file nearly fills the cap; the collector must count it
-	// against today's writes.
-	yesterday := now.AddDate(0, 0, -1).Format(dateFormat)
+	// Existing files already over the cap: both the decision and its much
+	// smaller outcome must be refused — the stop is sticky for the day, so
+	// no half pairs.
+	old := filepath.Join(dir, "decisions-d-"+now.Format(dateFormat)+".jsonl")
 	oldBytes := []byte(strings.Repeat("x", 900) + "\n")
-	if err := os.WriteFile(filepath.Join(dir, "decisions-d-"+yesterday+".jsonl"), oldBytes, 0o600); err != nil {
+	if err := os.WriteFile(old, oldBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	c := New(dir, "d", 1000, nil)
 	c.now = func() time.Time { return now }
-	id := c.Decision(Decision{Scope: "run", Choice: "low"}) // record alone would fit, 901..1000 does not
-	c.Outcome(Outcome{DecisionID: id, Status: "completed"}) // smaller record: sticky stop must refuse it too
+	id := c.Decision(Decision{Scope: "run", Choice: "low"}) // ~300 bytes: does not fit
+	c.Outcome(Outcome{DecisionID: id, Status: "completed"}) // ~190 bytes: fits alone, must still be refused
 	c.Close()
 
-	raw, err := os.ReadFile(filepath.Join(dir, "decisions-d-"+yesterday+".jsonl"))
-	if err != nil {
+	if raw, err := os.ReadFile(old); err != nil || string(raw) != string(oldBytes) {
+		t.Fatalf("old file modified: %d bytes, err %v", len(raw), err)
+	}
+
+	// Deleting files resumes collection on a later day (sizeOnDisk is
+	// re-checked per day).
+	if err := os.Remove(old); err != nil {
 		t.Fatal(err)
 	}
-	if string(raw) != string(oldBytes) {
-		t.Fatalf("old file modified: %d bytes", len(raw))
-	}
-	// No file for today: the existing bytes already exceed the cap and the
-	// stop is sticky, so neither the decision nor the smaller outcome lands.
-	if _, err := os.Stat(filepath.Join(dir, "decisions-d-"+now.Format(dateFormat)+".jsonl")); !os.IsNotExist(err) {
-		t.Fatalf("records written past the cap: %v", err)
-	}
-	// The cap is a total across this daemon's files, so the stop holds on a
-	// later day too; only removing files (operator action) resumes writes.
 	next := now.AddDate(0, 0, 1)
 	c2 := New(dir, "d", 1000, nil)
 	c2.now = func() time.Time { return next }
-	c2.Decision(Decision{Scope: "run", Choice: "low"})
+	id2 := c2.Decision(Decision{Scope: "run", Choice: "low"})
+	c2.Outcome(Outcome{DecisionID: id2, Status: "completed"})
 	c2.Close()
-	if _, err := os.Stat(filepath.Join(dir, "decisions-d-"+next.Format(dateFormat)+".jsonl")); !os.IsNotExist(err) {
-		t.Fatalf("cap stop did not hold past day rotation: %v", err)
+	records := readLines(t, filepath.Join(dir, "decisions-d-"+next.Format(dateFormat)+".jsonl"))
+	if len(records) != 2 || records[0]["id"] != id2 || records[1]["decision_id"] != id2 {
+		t.Fatalf("post-delete records: %v", records)
 	}
 }
 

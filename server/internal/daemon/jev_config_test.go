@@ -128,11 +128,16 @@ func TestLoadConfig_JevDefaultsAndOverrides(t *testing.T) {
 		t.Fatalf("invalid cap error = %v, want named validation error", err)
 	}
 	// Non-positive or overflowingly large caps are refused rather than
-	// silently meaning "no cap".
-	for _, bad := range []string{"0", "-5", "99999999999999"} {
+	// silently meaning "no cap". 1<<43 is the first value whose <<20 shift
+	// overflows int64, so it is rejected while 1<<43-1 stays valid.
+	for _, bad := range []string{"0", "-5", "99999999999999", "8796093022208"} {
 		t.Setenv("MULTICA_JEV_COLLECT_MAX_MB", bad)
 		if _, err := LoadConfig(overrides); err == nil || !strings.Contains(err.Error(), "MULTICA_JEV_COLLECT_MAX_MB") {
 			t.Fatalf("cap %q accepted: %v, want named validation error", bad, err)
 		}
+	}
+	t.Setenv("MULTICA_JEV_COLLECT_MAX_MB", "8796093022207")
+	if _, err := LoadConfig(overrides); err != nil {
+		t.Fatalf("largest valid cap rejected: %v", err)
 	}
 }
