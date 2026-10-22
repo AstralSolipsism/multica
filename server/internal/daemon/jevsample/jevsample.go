@@ -41,6 +41,12 @@ const (
 	// it drops instead.
 	queueDepth = 256
 
+	// maxProfileSegment caps the sanitized profile part of the filename:
+	// with a UUID daemon ID the whole name must stay under the usual
+	// 255-byte limit even for pathological profile names. Uniqueness is
+	// carried by the hash suffix, so truncation cannot collide.
+	maxProfileSegment = 64
+
 	// warnInterval throttles repeated warnings for the same condition.
 	warnInterval = time.Minute
 )
@@ -174,6 +180,9 @@ func filePrefix(daemonID, profile string) string {
 			b.WriteRune(r)
 		default:
 			b.WriteByte('_')
+		}
+		if b.Len() >= maxProfileSegment {
+			break
 		}
 	}
 	sum := sha256.Sum256([]byte(profile))

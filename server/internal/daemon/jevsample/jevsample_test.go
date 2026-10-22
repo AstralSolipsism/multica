@@ -198,20 +198,68 @@ func TestSameDaemonTwoProfilesSeparateFiles(t *testing.T) {
 	if _, ok := files["decisions-d"]; !ok {
 		t.Fatalf("default profile must use plain prefix: %v", files)
 	}
-	// Size cap must count only this profile's files even in a shared dir.
-	// The default profile's file below is over the cap on its own; a "work"
-	// daemon must still write, proving its cap ignores other profiles' bytes.
-	big := filepath.Join(dir, "decisions-d-"+day+".jsonl")
+	// OL-1040 #1: the reverse direction of the cap check — the default
+	// profile's prefix "decisions-d-" is itself a prefix of every named
+	// profile's filename, so a loose prefix match would count the named
+	// profile's 900 bytes into the default profile's cap and refuse this
+	// record. It must be written.
+	big := filepath.Join(dir, b.filePrefix+"-"+day+".jsonl")
 	if err := os.WriteFile(big, []byte(strings.Repeat("x", 900)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	capped := New(dir, "d", "work", 1000, nil)
+	capped := New(dir, "d", "", 1000, nil)
 	id := capped.Decision(Decision{Scope: "run", Choice: "low"})
 	capped.Close()
-	records := readLines(t, filepath.Join(dir, capped.filePrefix+"-"+day+".jsonl"))
+	records := readLines(t, filepath.Join(dir, "decisions-d-"+day+".jsonl"))
 	last := records[len(records)-1]
 	if last["id"] != id {
-		t.Fatalf("profile-scoped cap miscounted other profiles' files: %v", last)
+		t.Fatalf("default profile's cap counted a named profile's bytes: %v", last)
+	}
+}
+
+// OL-1040 #2: profiles that differ only in characters the sanitizer maps to
+// '_' ("my work" vs "my_work") sanitize to the same segment — the hash
+// suffix is what must keep their files apart. Without it they would
+// interleave appends in one file, the exact bug this issue fixes.
+func TestSanitizedCollisionKeptApartByHash(t *testing.T) {
+	dir := t.TempDir()
+	c1 := New(dir, "d", "my work", 0, nil)
+	c2 := New(dir, "d", "my_work", 0, nil)
+	if c1.filePrefix == c2.filePrefix {
+		t.Fatalf("profiles sanitizing to the same segment must get distinct prefixes: %s", c1.filePrefix)
+	}
+	id1 := c1.Decision(Decision{Scope: "run", Choice: "low"})
+	id2 := c2.Decision(Decision{Scope: "run", Choice: "high"})
+	c1.Close()
+	c2.Close()
+	day := time.Now().UTC().Format(dateFormat)
+	records := readLines(t, filepath.Join(dir, c1.filePrefix+"-"+day+".jsonl"))
+	if len(records) != 1 || records[0]["id"] != id1 {
+		t.Fatalf("c1's file must hold exactly its own record: %v", records)
+	}
+	records = readLines(t, filepath.Join(dir, c2.filePrefix+"-"+day+".jsonl"))
+	if len(records) != 1 || records[0]["id"] != id2 {
+		t.Fatalf("c2's file must hold exactly its own record: %v", records)
+	}
+}
+
+// A pathological profile name must not push the filename past the 255-byte
+// limit: the sanitized segment truncates, uniqueness rides on the hash.
+func TestLongProfileNameStillWrites(t *testing.T) {
+	dir := t.TempDir()
+	long := strings.Repeat("p", 300)
+	c := New(dir, "01234567-89ab-cdef-0123-456789abcdef", long, 0, nil)
+	id := c.Decision(Decision{Scope: "run", Choice: "low"})
+	c.Close()
+	if len(c.filePrefix) >= 255-len(".jsonl")-len(dateFormat)-1 {
+		t.Fatalf("prefix too long: %d bytes", len(c.filePrefix))
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "decisions-*.jsonl"))
+	if len(matches) != 1 {
+		t.Fatalf("want exactly one sample file, got %v", matches)
+	}
+	if records := readLines(t, matches[0]); len(records) != 1 || records[0]["id"] != id {
+		t.Fatalf("long-profile record missing: %v", records)
 	}
 }
 
