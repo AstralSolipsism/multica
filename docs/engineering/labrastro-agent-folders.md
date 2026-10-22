@@ -181,6 +181,36 @@ Generated sqlc models/queries are derived output. No upstream agent or squad
 write path changes, new WebSocket event, or front-end page is included. OL-1030
 will append its page mount points here.
 
+## Front-end page (OL-1030)
+
+The agents page mounts the folder explorer. Logic lives in fork modules under
+`packages/views/agents/`: `lib/agent-folder-tree.ts` (pure tree model: squad
+folders derived with squad id = folder id, move destinations),
+`components/agents-page-folder-explorer.tsx` (page hook: URL location,
+hierarchy/flat organization, folder rows and menus, dialogs),
+`components/agent-folder-dialogs.tsx` (create/rename/move/delete folder, move
+agents) and `components/agent-tree-actions.tsx` (row-menu and batch-toolbar
+mounts). Copy lives in the `agent-folders` locale namespace. The shared
+`packages/views/common/folder-explorer/` components carry the agents-page
+usage (icon slot and row class on `FolderExplorerRow`); the skills page is
+unchanged.
+
+| Upstream file | Retained addition |
+| --- | --- |
+| `packages/views/agents/components/agents-page.tsx` | `useAgentsPageFolderExplorer` call, `listModel` / `organizeRows` and the `renderRow` aux-row branch, `navigationBar` / `notice` / `dialogs` slots, `withCurrentFolder` around detail links, `treeActions` props on the row kebab and batch toolbar. Modified upstream lines: the `NameCell` signature and its optional leader-badge / path-hint branches (the no-hint description branch keeps its text), virtualizer `count`, selection and select-all inputs, `visibleCount`, the empty-list condition and message, `showEmpty` (the upstream empty workspace remains; folders keep their rows), and the loading condition (includes the folder-tree request). The row JSX retains its original indentation; `git diff` and `git diff -w` agree |
+| `packages/views/agents/components/agent-row-actions.tsx` | Modified upstream lines: the props interface, the destructured signature, and one `AgentTreeRowMenuItems` mount after the duplicate item (fork `agent-tree-actions.tsx`) |
+| `packages/views/agents/components/agent-batch-toolbar.tsx` | Modified upstream lines: the props interface, the destructured signature, and one `AgentTreeBatchMoveAction` mount between set-access and archive (fork `agent-tree-actions.tsx`) |
+| `packages/views/agents/components/agent-detail-page.tsx` | `agentsPath` derived by `folderLocationPath` from the incoming `folder` query. Modified upstream lines: both error-state `BackHeader` paths and `AppLink` destinations, the `DetailHeader` `backHref`, and the archive-confirm `navigation.push` |
+| `packages/views/agents/components/agents-page.test.tsx` | Folder-tree query mock returning an empty tree (two added mock branches) |
+| `packages/views/agents/components/agent-detail-page.test.tsx` | `renderPage` accepts a search string; one back-link folder-param test |
+| `packages/views/locales/index.ts`, `packages/views/i18n/resources-types.ts` | `agent-folders` namespace registration |
+
+E2E: `e2e/agent-folders.spec.ts` drives the acceptance flow (create folder in
+place → move agent → squad folder appears on squad creation → move squad
+folder into a custom folder → place a squad member additionally → breadcrumb
+back to root) with `TestApiClient` plus direct DB seeding for runtimes and
+agents.
+
 ## Rollback
 
 Remove the mounts above and the fork modules, regenerate sqlc, and deploy

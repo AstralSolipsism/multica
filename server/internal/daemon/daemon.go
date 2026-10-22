@@ -31,6 +31,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/jev"
+	"github.com/multica-ai/multica/server/internal/daemon/jevsample"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -417,6 +418,7 @@ type Daemon struct {
 	cfg        Config
 	client     *Client
 	jevClient  *jev.Client
+	jevSamples *jevsample.Collector
 	repoCache  repoCacheBackend
 	skillCache *SkillBundleCache
 	logger     *slog.Logger
@@ -774,6 +776,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		cfg:                         cfg,
 		client:                      client,
 		jevClient:                   jev.New(jev.Options{Disabled: cfg.JevDisabled, Sources: cfg.JevSources, Timeout: cfg.JevTimeout}),
+		jevSamples:                  jevsample.New(cfg.JevCollectDir, cfg.DaemonID, cfg.JevCollectMaxBytes, logger),
 		repoCache:                   repocache.New(cacheRoot, logger),
 		skillCache:                  NewSkillBundleCache(skillCacheRoot),
 		logger:                      logger,
@@ -2316,6 +2319,9 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 	d.logger.Debug("background loops launched (workspace-sync, terminal-report-replay, task-wakeup, heartbeat, gc, auto-update, token-renewal); health now reporting ready")
 	err = d.pollLoop(ctx, taskWakeups)
 	d.logger.Debug("daemon main loop returning", "error", err)
+	// Drain the decision-sample writer after in-flight tasks finished, so
+	// outcomes enqueued during shutdown still reach the file.
+	d.jevSamples.Close()
 	return err
 }
 
@@ -5927,6 +5933,25 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// deleted (404).
 	// Retain the decision through terminal handling, outside runTask as well.
 	ctx = context.WithValue(ctx, thinkingRunKey{}, &thinkingRun{})
+	// sampleThinkingOutcome writes the run-level outcome record (OL-1013
+	// S1-2) with the status the daemon actually reports to the server, on
+	// every terminal path in handleTask. runTask only records the tool count
+	// on the thinkingRun; the reported status is settled here (a Finalize
+	// failure after a completed agent run flips it to failed). Cancelled runs
+	// write no outcome: the server discarded the result, so there is no
+	// reported outcome to pair with the decision.
+	sampleThinkingOutcome := func(status, failureReason string) {
+		if thinking := thinkingRunFromContext(ctx); thinking != nil {
+			if record := thinking.Record; record != nil && record.Fallback == "" && record.SampleID != "" {
+				d.jevSamples.Outcome(jevsample.Outcome{
+					DecisionID:    record.SampleID,
+					Status:        status,
+					FailureReason: failureReason,
+					ToolCalls:     int64(thinking.ToolCalls),
+				})
+			}
+		}
+	}
 	runCtx, runCancel := context.WithCancel(withYouShouldKnowStop(ctx, task))
 	defer runCancel()
 
@@ -5995,6 +6020,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 
 	if err != nil {
 		taskLog.Error("task failed", "error", err)
+		sampleThinkingOutcome("failed", taskRunFailureReason(err))
 		// runTask may have reached worktree finalization before returning the
 		// error. Preserve any delivery metadata that defer attached to the named
 		// result, especially the actual/preserved workdir and delivered branch.
@@ -6024,6 +6050,8 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// anyway. Reuse shouldInterruptAgent so this guard honors the same
 	// signals as the in-flight watcher.
 	if status, err := d.client.GetTaskStatus(ctx, task.ID); shouldInterruptAgent(status.Status, err) {
+		// No outcome sample: the server discarded this run's result, so
+		// there is no reported outcome to pair with the decision.
 		taskLog.Info("task cancelled during execution, discarding result",
 			"status", status.Status, "error", err, "branch_name", result.BranchName)
 		// Same contract as the poll-cancelled path above: the transcript is
@@ -6041,6 +6069,10 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		return
 	}
 
+	// Outcome sample before the terminal report: reporting can block up to
+	// terminalTaskReportTimeout (6 minutes) and shutdown closes the collector
+	// after 30, so an outcome enqueued after a slow report would be lost.
+	sampleThinkingOutcome(result.Status, result.FailureReason)
 	d.reportTaskResult(ctx, task.ID, result, taskLog)
 
 	// Write GC metadata after the task finishes so the periodic GC loop
@@ -8819,6 +8851,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if d.jevClient != nil {
 		thinking.Client = d.jevClient
 	}
+	thinking.Samples = d.jevSamples
 	selection := resolveTaskModelSelection(ctx, provider, agent.NewCommand(entry.Path, profileFixedArgs),
 		taskModelSelection{Model: model, ThinkingLevel: thinkingLevel, ServiceTier: serviceTier}, taskLog, thinking)
 	requestedThinkingLevel := thinkingLevel
@@ -9034,6 +9067,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// than being relabeled resumable by a benign-looking second error.
 		result, tools = reconcileFreshRetryResult(firstResult, firstUsage, firstTools, retryResult, retryTools, retryErr)
 	}
+	thinking.ToolCalls = tools
 	phaseRecorder.Mark(taskPhaseTurnCompleted)
 
 	elapsed := time.Since(taskStart).Round(time.Second)

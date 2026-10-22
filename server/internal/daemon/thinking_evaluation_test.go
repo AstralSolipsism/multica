@@ -123,7 +123,7 @@ func TestThinkingEvaluationLive(t *testing.T) {
 	}
 	var results []thinkingEvaluationResult
 	for _, fixture := range fixtures {
-		record := decideThinking(context.Background(), client, ThinkingDecisionTrace{Scope: fixture.Scope, Provider: fixture.CandidateGroup}, fixture.Request)
+		record := decideThinking(context.Background(), client, ThinkingDecisionTrace{Scope: fixture.Scope, Provider: fixture.CandidateGroup}, fixture.Request, nil)
 		decision := record.Decision
 		passed := record.Fallback == "" && fixture.Accepts(decision.Level)
 		results = append(results, thinkingEvaluationResult{ID: fixture.ID, Scope: fixture.Scope, CandidateGroup: fixture.CandidateGroup, ExpectedCategory: fixture.ExpectedCategory,

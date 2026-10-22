@@ -166,6 +166,10 @@ GITHUB_APP_PRIVATE_KEY=<BEGIN/END 줄과 줄바꿈을 유지한 전체 PEM priva
 ```
 
 Private key는 GitHub App의 **Private keys → Generate a private key**에서 생성합니다. 설정하지 않으면 연동 기능이 자연스럽게 축소됩니다. PR은 계속 미러링되고 태스크 자동 연결과 merge 시 상태 변경도 정상적으로 작동하지만 PR 카드에 CI 또는 merge 상태가 표시되지 않습니다.
+<Callout type="warning">
+이 두 변수는 **첫** GitHub 연결을 완료하는 데에도 필요합니다. 설치 후 콜백이 보고된 `installation_id`를 App 자격으로 GitHub API에서 검증한 뒤에만 바인딩하므로, 설정하지 않으면 새 설치를 완료할 수 없습니다(콜백이 재시도 가능한 오류와 함께 돌아옵니다). 이미 워크스페이스에 바인딩된 설치는 해당 워크스페이스 관리자가 계속 재바인딩할 수 있습니다.
+</Callout>
+
 
 ### 3. 데이터베이스 업데이트 및 연결
 

@@ -28,6 +28,7 @@ import type projects from "../locales/en/projects.json";
 import type autopilots from "../locales/en/autopilots.json";
 import type skills from "../locales/en/skills.json";
 import type skillPackages from "../locales/en/skill-packages.json";
+import type agentFolders from "../locales/en/agent-folders.json";
 import type chat from "../locales/en/chat.json";
 import type modals from "../locales/en/modals.json";
 import type runtimes from "../locales/en/runtimes.json";
@@ -79,6 +80,7 @@ declare global {
     autopilots: typeof autopilots;
     skills: typeof skills;
     "skill-packages": typeof skillPackages;
+    "agent-folders": typeof agentFolders;
     chat: typeof chat;
     modals: typeof modals;
     runtimes: typeof runtimes;
