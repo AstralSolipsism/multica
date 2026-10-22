@@ -1022,10 +1022,11 @@ func TestAntigravityBackendIgnoresTrailingTransportErrorAfterDoneResponse(t *tes
 	}
 }
 
-// The negative control: a complete DONE answer does not on its own make a turn
-// successful. When the trailing failure is provider-side (quota, capacity,
-// policy, auth) rather than transport, the turn must stay failed so the user
-// sees the real cause instead of an answer presented as a finished result.
+// The legacy negative control: a stream without a user_input boundary cannot
+// show that the answer belongs to this turn, so it recovers only from the
+// legacy transport spellings. A provider-side failure (quota, capacity,
+// policy, auth) stays failed. Streams with a boundary are judged by their
+// steps instead (antigravity_completion_test.go).
 func TestAntigravityBackendKeepsNonTransportFailureAfterDoneResponse(t *testing.T) {
 	t.Parallel()
 
