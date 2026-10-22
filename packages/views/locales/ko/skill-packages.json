@@ -1,10 +1,6 @@
 {
   "tree": {
-    "title": "폴더",
-    "all_skills": "모든 스킬",
-    "uncategorized": "미분류",
     "new_folder": "새 폴더",
-    "new_subfolder": "하위 폴더 만들기",
     "rename_folder": "이름 변경",
     "move_folder": "이동",
     "delete_folder": "삭제",
@@ -17,21 +13,19 @@
     "package_label": "패키지",
     "indeterminate": "폴더를 불러올 수 없습니다.",
     "retry": "다시 시도",
-    "empty": "아직 폴더가 없습니다. 폴더를 만들거나 스킬 패키지를 가져오세요.",
     "package_forbidden": "패키지를 가져온 사람 또는 관리자만 이 작업을 수행할 수 있습니다.",
     "expand_folder": "\"{{name}}\" 펼치기",
     "collapse_folder": "\"{{name}}\" 접기",
-    "clear_filter": "필터 지우기",
-    "breadcrumb_aria": "\ud3f4\ub354 위치",
+    "breadcrumb_aria": "폴더 위치",
     "up": "상위 수준으로",
-    "managed_new_folder": "패키지 \ud3f4\ub354의 내용은 패키지를 따릅니다.",
-    "flat_results": "모든 \ud3f4\ub354의 결과 표시 중",
-    "empty_folder": "이 \ud3f4\ub354는 비어 있습니다.",
-    "unavailable": "\ud3f4\ub354를 사용할 수 없어 스킬을 평면 목록으로 표시합니다.",
+    "managed_new_folder": "패키지 폴더의 내용은 패키지를 따릅니다.",
+    "flat_results": "모든 폴더의 결과 표시 중",
+    "empty_folder": "이 폴더는 비어 있습니다.",
+    "unavailable": "폴더를 사용할 수 없어 스킬을 평면 목록으로 표시합니다.",
     "open_folder": "\"{{name}}\" 열기",
     "folder_skill_count_other": "스킬 {{count}}개",
-    "folder_count": "현재 \ud3f4\ub354 {{visible}}개 / 워크스페이스 전체 {{total}}개",
-    "folder_count_title": "현재 \ud3f4\ub354의 직접 스킬 수 / 워크스페이스 전체 스킬 수"
+    "folder_count": "현재 폴더 {{visible}}개 / 워크스페이스 전체 {{total}}개",
+    "folder_count_title": "현재 폴더의 직접 스킬 수 / 워크스페이스 전체 스킬 수"
   },
   "folder_form": {
     "create_title": "새 폴더",
@@ -42,7 +36,8 @@
     "save": "저장",
     "saving": "저장 중...",
     "cancel": "취소",
-    "failed": "폴더를 저장할 수 없습니다. 다시 시도하세요."
+    "failed": "폴더를 저장할 수 없습니다. 다시 시도하세요.",
+    "unconfirmed": "결과를 확인할 수 없습니다. 목록을 새로고침했으니 확인 후 다시 시도하세요."
   },
   "folder_move": {
     "title": "폴더 이동",
@@ -51,7 +46,8 @@
     "confirm": "이동",
     "moving": "이동 중...",
     "cancel": "취소",
-    "failed": "폴더를 이동할 수 없습니다. 다시 시도하세요."
+    "failed": "폴더를 이동할 수 없습니다. 다시 시도하세요.",
+    "unconfirmed": "결과를 확인할 수 없습니다. 목록을 새로고침했으니 확인 후 다시 시도하세요."
   },
   "folder_delete": {
     "title": "이 폴더를 삭제할까요?",
@@ -59,7 +55,18 @@
     "confirm": "삭제",
     "deleting": "삭제 중...",
     "cancel": "취소",
-    "failed": "폴더를 삭제할 수 없습니다. 다시 시도하세요."
+    "failed": "폴더를 삭제할 수 없습니다. 다시 시도하세요.",
+    "unconfirmed": "결과를 확인할 수 없습니다. 목록을 새로고침했으니 확인 후 다시 시도하세요."
+  },
+  "folder_errors": {
+    "name_conflict": "해당 위치에 같은 이름의 폴더가 이미 있습니다. 다른 이름을 사용하세요.",
+    "folder_cycle": "폴더를 자신의 하위 폴더로 이동할 수 없습니다.",
+    "invalid_name": "폴더 이름이 올바르지 않습니다. 1–255바이트로, 앞뒤 공백, 제어 문자, 줄 바꿈 없이 입력하세요.",
+    "forbidden": "이 작업을 수행할 권한이 없습니다.",
+    "not_found": "대상을 찾을 수 없습니다. 삭제되었을 수 있습니다. 목록을 새로고침했습니다.",
+    "managed_folder": "패키지 폴더는 패키지를 따르므로 여기서 변경할 수 없습니다.",
+    "preview_stale": "폴더가 변경되었습니다. 목록을 새로고침했으니 다시 시도하세요.",
+    "permission_changed": "권한이 변경되었습니다. 목록을 새로고침했으니 다시 시도하세요."
   },
   "move_skills": {
     "title_other": "스킬 {{count}}개 이동",
@@ -71,6 +78,7 @@
     "done_other": "스킬 {{count}}개를 이동했습니다.",
     "partial": "{{total}}개 중 {{done}}개를 이동했습니다. 나머지는 실패했습니다.",
     "failed": "스킬을 이동할 수 없습니다. 다시 시도하세요.",
+    "unconfirmed_other": "{{total}}개 중 {{done}}개를 이동했습니다. {{count}}개는 결과를 확인할 수 없습니다. 목록을 새로고침했으니 확인 후 다시 시도하세요.",
     "no_permission": "선택한 모든 스킬을 이동할 권한이 없습니다.",
     "packaged_hint": "패키지에 속한 스킬은 이동할 수 없습니다. 먼저 패키지에서 분리하세요."
   },

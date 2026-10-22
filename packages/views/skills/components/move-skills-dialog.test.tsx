@@ -130,13 +130,31 @@ describe("MoveSkillsDialog", () => {
     expect(onMoved).not.toHaveBeenCalled();
   });
 
-  it("treats an unreadable placement result as a failure", async () => {
+  it("counts an unreadable placement result as unconfirmed, not failed", async () => {
     apiMock.setSkillPlacement.mockResolvedValue(null);
     const { onMoved } = renderDialog([makeRow("s1")]);
     await userEvent.click(await screen.findByText("Custom"));
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
     await waitFor(() => expect(apiMock.setSkillPlacement).toHaveBeenCalled());
-    expect(toast.error).toHaveBeenCalledWith("Couldn't move the skills. Try again.");
+    expect(toast.error).toHaveBeenCalledWith(
+      "Moved 0 of 1; 1 couldn't be confirmed. The list was refreshed — check it before retrying.",
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(onMoved).not.toHaveBeenCalled();
+  });
+
+  it("reports a mixed run of confirmed and unreadable results as unconfirmed", async () => {
+    apiMock.setSkillPlacement
+      .mockResolvedValueOnce({ updated: true })
+      .mockResolvedValueOnce(null);
+    const { onMoved } = renderDialog([makeRow("s1"), makeRow("s2")]);
+    await userEvent.click(await screen.findByText("Custom"));
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    await waitFor(() => expect(apiMock.setSkillPlacement).toHaveBeenCalledTimes(2));
+    expect(toast.error).toHaveBeenCalledWith(
+      "Moved 1 of 2; 1 couldn't be confirmed. The list was refreshed — check it before retrying.",
+    );
+    expect(toast.success).not.toHaveBeenCalled();
     expect(onMoved).not.toHaveBeenCalled();
   });
 });

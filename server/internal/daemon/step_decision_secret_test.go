@@ -37,7 +37,7 @@ func TestStepDecisionShipsSecretsVerbatim(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	samples := jevsample.New(dir, "daemon-test", 0, quietTaskLog())
+	samples := jevsample.New(dir, "daemon-test", "", 0, quietTaskLog())
 	run := &stepEffortRun{
 		TaskID:     "task-secret",
 		Provider:   "claude",

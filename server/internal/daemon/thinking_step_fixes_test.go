@@ -348,7 +348,8 @@ func TestStepStateShipsErrorMaterialUnredacted(t *testing.T) {
 	_, run := newStepEffortTestDaemon(t)
 
 	// A credential in the error text ships verbatim; the feature keeps it
-	// recognizable too (the engine sees what the coding model sees).
+	// recognizable too (the engine sees what the coding model sees) —
+	// NormalizedErrorFeature no longer redacts before normalizing.
 	const conn = "postgres://app:secret@db.internal:5432/orders"
 	jevReq, input := run.buildStepRequest(thinkingDecisionRequest{
 		Step:      2,
@@ -357,6 +358,9 @@ func TestStepStateShipsErrorMaterialUnredacted(t *testing.T) {
 	})
 	if !strings.Contains(input.ErrorFeatures, "connection refused") {
 		t.Fatalf("error feature lost the failure: %q", input.ErrorFeatures)
+	}
+	if !strings.Contains(input.ErrorFeatures, "app_secret@") {
+		t.Fatalf("error feature redacted the credential: %q", input.ErrorFeatures)
 	}
 	state, _ := jevReq.State.(string)
 	if !strings.Contains(state, conn) {

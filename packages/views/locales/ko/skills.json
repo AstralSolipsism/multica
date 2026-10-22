@@ -117,6 +117,7 @@
     "manage_labels_title": "스킬 라벨"
   },
   "detail": {
+    "all_skills": "모든 스킬",
     "read_only": "읽기 전용",
     "delete_aria": "스킬 삭제",
     "delete_tooltip": "스킬 삭제",

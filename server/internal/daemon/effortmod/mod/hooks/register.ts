@@ -60,15 +60,46 @@ export function byteLength(text: string): number {
 }
 
 /**
- * Keeps a string within `limit` UTF-8 bytes by clipping the middle: the head
+ * Fits a string within `limit` UTF-8 bytes by clipping the middle: the head
  * and tail survive, the elided byte count is marked inline (OL-1083). A
- * string within the limit ships whole.
+ * string within the limit ships whole. Cuts land on code-point boundaries,
+ * so no lone surrogates are produced.
  */
 export function clipMiddle(text: string, limit: number): string {
-  if (text.length <= limit) return text
-  const tail = Math.min(1024, Math.floor(limit / 2))
-  const head = limit - tail
-  return `${text.slice(0, head)}\n[... ${text.length - head - tail} bytes elided ...]\n${text.slice(text.length - tail)}`
+  const total = byteLength(text)
+  if (total <= limit) return text
+  // Work in code-point space so cuts never split a surrogate pair; slice
+  // indexes are UTF-16 units, so rebuild head/tail from the char array.
+  const chars = [...text]
+  const head = cutAtByte(chars, Math.max(1, limit - 1024))
+  const tailStart = Math.max(head + 1, cutFromEnd(chars, Math.min(1024, limit - 1)))
+  const elided = total - byteLength(chars.slice(0, head).join('')) - byteLength(chars.slice(tailStart).join(''))
+  return `${chars.slice(0, head).join('')}\n[... ${elided} bytes elided ...]\n${chars.slice(tailStart).join('')}`
+}
+
+/** Largest code-point count whose UTF-8 prefix fits in `bytes`. */
+function cutAtByte(chars: string[], bytes: number): number {
+  let seen = 0
+  for (let i = 0; i < chars.length; i++) {
+    const cp = chars[i].codePointAt(0) ?? 0
+    // Per code point: 4 bytes beyond U+FFFF, else 3 beyond U+7FF, else 2 beyond U+7F.
+    const size = cp > 0xffff ? 4 : cp >= 0x800 ? 3 : cp >= 0x80 ? 2 : 1
+    if (seen + size > bytes) return i
+    seen += size
+  }
+  return chars.length
+}
+
+/** Smallest code-point index whose UTF-8 suffix fits in `bytesFromEnd`. */
+function cutFromEnd(chars: string[], bytesFromEnd: number): number {
+  let seen = 0
+  for (let i = chars.length - 1; i >= 0; i--) {
+    const cp = chars[i].codePointAt(0) ?? 0
+    const size = cp > 0xffff ? 4 : cp >= 0x800 ? 3 : cp >= 0x80 ? 2 : 1
+    if (seen + size > bytesFromEnd) return i + 1
+    seen += size
+  }
+  return 0
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

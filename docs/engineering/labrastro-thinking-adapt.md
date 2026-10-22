@@ -22,7 +22,7 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 
 - 不把 ONNX Runtime 编进 `multica`，自部署模型由独立的 `/v1/systemone` 服务提供（ADR 0002）；
 - 不拿没有微调过的 Laya 底座直接上线，自部署来源通过门禁评测后才能排在外部来源前面；
-- 采集器不记录决策链路之外的内容；样本里的 state 是未脱敏的原文（OL-1083），只留在本机、不得外传。
+- 采集器不记录未脱敏的原文或文件内容。（OL-1083 起决策链路不再脱敏，样本里的 state 即未脱敏原文，只留在本机、不得外传。）
 
 负责人 2026-10-21 在 OL-1013 中决定：
 
@@ -267,6 +267,7 @@ OL-1013 的需求另外写明三条边界，§10 照此执行：
 - **运行级**：运行类型（任务触发、Chat 消息或自动化）、provider、model、标题、触发评论前 1000 字、描述前 1500 字。
 - **步级**：先是短字段：步序号、上一步主线程的工具名称与是否出错、退出码、报错特征、最近 6 个主线程步内与本步报错特征相同的步数（含本步；无报错时为 0）；再是长文本：上一步工具调用的输入摘要（前 300 字）、工具结果（约 2500 字节预算，超长时保留开头正文与末尾约 1000 字节、中间标出截掉的字节数——报错通常在末尾）、上一步助手文本前 500 字、运行目标（同上的标题与描述）前 500 字。
 - **处理**：所有发往决策引擎的 state 都由 daemon 构造，材料保持原文、不脱敏（OL-1083）：智能体调用大模型时本来就直接发送代码、日志和配置，发给决策模型没有区别。state 不得包含智能体指令、skill 内容和环境变量；总长截到 4KB（按 UTF-8 字节计）。
+- **截掉字节数的口径**：state 里 `result` 的“N bytes elided”只计 daemon 这一次截取；mod 对超过 64 KiB 的字段已先截过一次（§6），原始输出更长时以 mod 报文里的计数为准。
 - **为什么这样排**：超长时截掉的总是末尾，daemon 截到 4KB 是这样，自部署来源按 token 上限截断也是这样（§10.0）。中文描述的前 1500 字就超过 4KB，排在它后面的字段会整段丢掉；D4 要靠触发评论、报错特征和重复次数判断是否升到 max、ultra，所以这些放在长文本前面。
 
 ### 判据评测
@@ -353,7 +354,7 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
     - 上一步主线程的工具列表 `[{name, is_error}]`；
     - 上一步的报错文本。Bash 失败结果首行固定是 `Exit code N`：daemon 把它解析进 `exit_code`，报错特征取其后的真正报错行；Go 编译/测试输出的 `# 包路径` 与 `FAIL\t包路径 [build failed]` 包头行同样跳过，取真正的报错行。state 描述的那个工具取上一步最后一个报错的工具（没有报错则取最后一个工具），`is_error` 与 `exit_code` 与报错特征一致。
   - 报错特征的归一化和同类报错的重复次数由 daemon 用 Go 计算（`NormalizedErrorFeature` / `ErrorFeatureTracker`，`server/internal/daemon/thinking_step_errors.go`），重复次数是最近 6 个主线程步内与本步报错特征相同的步数（含本步）。daemon 按运行保存这个窗口；无报错的步占窗口位置，但不清空历史，本步计数为 0。一次"修改 + 验证"占 2 步，6 步覆盖三轮尝试。mod 只上传原料。这个函数导出给 OL-1019 复用。
-  - mod 侧只对超长字符串做首尾截取：每字段上限 64 KiB（UTF-8 字节），超限时保留开头与末尾（约各 2 KiB 之内按需压缩）、中间标出截掉的字节数，绝不整段清空；整个请求上限 768 KiB（序列化后的字节数，给 daemon 的 1 MiB 解码上限留余量），超限时从最早的工具起把大文本字段截短，`name` 与 `is_error` 永不丢，最后一个报错工具（无报错则最后一个工具）尽量保留。
+  - mod 侧只对超长字符串做首尾截取：每字段上限 64 KiB（UTF-8 字节），超限时保留开头约 63 KiB 与末尾约 1 KiB、中间标出截掉的字节数（截点落在码点边界上，不拆代理对），绝不整段清空；整个请求上限 768 KiB（序列化后的字节数，给 daemon 的 1 MiB 解码上限留余量），超限时从最早的工具起把大文本字段再截短到两端各约 1 KiB，`name` 与 `is_error` 永不丢，最后一个报错工具（无报错则最后一个工具）尽量保留。
   - 材料全程保持原文（§4）：mod 与 daemon 都不做脱敏，智能体调用大模型时本来就直接发送这些内容。
   - daemon 按 §4 构造 state（`BuildStepThinkingState`），复用 `decideThinking` 调用 Jev（trace 的 `scope` 为 `step`，`step` 为步序号），并计入健康快照。
   - 返回 `{level, confidence, probabilities, latency_ms, source}`、`{fallback}`，或 `{enabled: false}`（"未启用"）。"未启用"不经过 Jev 客户端，不计入健康快照。鉴权沿用 `/repo/checkout` 的任务级 Bearer token；路径里的 `task_id` 与 token 绑定的任务不一致时拒绝。
@@ -580,7 +581,7 @@ OL-1013 描述前半部分的原始需求里，"通道""源"统一叫"来源"，
 
 **文件**
 
-- 文件名为 `decisions-<daemon_id>-<UTC 日期 YYYYMMDD>.jsonl`：按 UTC 日期换文件，每个 daemon 只写自己的文件。同一台机器上几个 daemon 共用目录时，不会有两个进程写同一个文件。
+- 文件名为 `decisions-<daemon_id>-<UTC 日期 YYYYMMDD>.jsonl`（默认 profile），命名 profile 下为 `decisions-<daemon_id>-<profile>-<hash>-<UTC 日期 YYYYMMDD>.jsonl`（profile 名做字符清洗、截到 64 字符并附原名 sha256 前 8 个十六进制字符，防止清洗后同名）：按 UTC 日期换文件。daemon ID 是整机共用的，而 daemon 单实例锁按 profile 加，所以同机多 profile daemon 靠文件名里的 profile 段各写各的文件，互不交错；大小上限也按各 profile 的文件分别计算。
 - 目录 0700、文件 0600，并检查目录不是符号链接。
 - 写入是异步、尽力而为的：
   - 决策和运行路径只把记录放进有界队列，由单独的 goroutine 写盘；
@@ -616,19 +617,21 @@ OL-1013 描述前半部分的原始需求里，"通道""源"统一叫"来源"，
   | 字段 | 含义 |
   |---|---|
   | `tools` | 这一步主线程调用的工具名 |
-  | `action_kind` | 没有工具调用为 `final_text`；只用了只读工具为 `read_only`；其余一律为 `edit_or_exec`，包括 Bash、Task 和 MCP 工具。只读工具是一份常量清单，如 Read、Grep、Glob、LS、WebFetch、WebSearch |
+  | `action_kind` | 没有工具调用为 `final_text`；只用了只读工具为 `read_only`；其余一律为 `edit_or_exec`，包括 Bash、Task 和 MCP 工具。只读工具常量清单为 Read、Grep、Glob、LS、WebFetch、WebSearch、NotebookRead，按名称精确匹配 |
   | `outcome_ok` | 这一步所有工具结果的 `is_error` 都为 false |
-  | `error_sig` | 这一步报错特征的哈希；没有报错时为空 |
+  | `error_sig` | 对 `NormalizedErrorFeature` 的结果做 SHA-256，取前 8 字节的十六进制字符串；没有报错、或报错文本里没有可归一化的特征时为空字符串 |
   | `prev_action_kind`、`prev_outcome_ok` | 上一步的同名值；没有上一步时为 null |
   | `next_outcome_ok` | 下一步的 `outcome_ok`；没有下一步时为 null |
-  | `repeated_error_next` | 下一步报错，且特征与截至这一步最近一次报错的特征相同，即这一步没能消除这个报错；没有下一步时为 null |
+  | `repeated_error_next` | 下一步报错，且特征与截至这一步最近一次报错的特征相同，即这一步没能消除这个报错；没有下一步时为 null（OL-1083 起报错文本不再有整段省略，特征要么可算、要么为空字符串，两侧都有确定值） |
+
+  未收到原料而无法确定的字段显式写 null，不省略字段。已知没有工具调用时 `tools` 为 `[]`，未知时为 null。
 
 **步级信号从哪来**
 
 - 第 N+1 步的决策请求里，带着第 N 步的主线程工具列表（含 `is_error`）和报错文本（§6）。不另外解析 stream，避免同一件事有两套判断。
-- daemon 按运行保存报错特征的历史，计算特征和重复次数用同一个 Go 函数（§6）。
+- daemon 按运行保存步级信号与报错特征的短哈希，特征归一化复用 `NormalizedErrorFeature`（§6）。`repeated_error_next` 独立保存截至当前步最近一次报错的特征，不使用 `ErrorFeatureTracker` 的连续计数：成功的编辑步骤不清空最近报错；报错文本不可归一化时特征为空字符串（OL-1083 起不再有省略的报错）。
 - 回退的步不写决策记录，但它的请求带来的原料，仍用来补全前一步的结果。
-- 最后一个有决策的步：如果它的生效记录之后，流里再没有工具调用，就记为 `final_text`、`outcome_ok = true`；其余确定不了的字段为 null。
+- 最后一个有决策的步：如果已收到它的生效记录，之后主线程再没有工具调用，就记为 `final_text`、`outcome_ok = true`；子智能体工具调用不影响此判断。没有生效记录或工具结果未知时，确定不了的字段为 null。步级状态在 `runTask` 退出移除时统一收尾，因此取消路径也保留步级结果，不依赖运行级结果是否上报。
 
 **样本的去向**：样本只留在 149 上，训练也在 149 本机进行（E1、方案 A），不再外传。不得提交到仓库，也不得上传到公开位置。
 

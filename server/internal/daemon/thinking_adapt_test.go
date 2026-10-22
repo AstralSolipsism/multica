@@ -201,20 +201,33 @@ func TestThinkingStateOrderAndTailTruncation(t *testing.T) {
 		ToolInputSummary: "go test -race ./...", ToolResult: strings.Repeat("首", 1000) + strings.Repeat("尾", 1000),
 		AssistantText: strings.Repeat("助", 500), Goal: strings.Repeat("目", 500),
 	})
-	wantPrefix = `{"step":9,"tool":"exec_command","is_error":true,"exit_code":1,"error_features":"DATA RACE scheduler.go","repeated_errors":2,"tool_input_summary":"go test -race ./...","result":"` + strings.Repeat("首", 500) + `\n[... 3501 bytes elided ...]\n` + strings.Repeat("尾", 333) + `"`
+	wantPrefix = `{"step":9,"tool":"exec_command","is_error":true,"exit_code":1,"error_features":"DATA RACE scheduler.go","repeated_errors":2,"tool_input_summary":"go test -race ./...","result":"` + strings.Repeat("首", 138)
 	if !strings.HasPrefix(step, wantPrefix) {
-		t.Fatal("step state reordered fields, lost the elision marker, or truncated the tail")
+		t.Fatal("step state reordered fields or lost the result head")
 	}
 	if !(strings.Index(step, `"result"`) < strings.Index(step, `"assistant"`) && strings.Index(step, `"assistant"`) < strings.Index(step, `"goal"`)) {
 		t.Fatal("step state long fields out of order")
+	}
+	var stepFields map[string]any
+	if err := json.Unmarshal([]byte(step), &stepFields); err != nil {
+		t.Fatal(err)
+	}
+	// The result never squeezes out assistant or goal (OL-1083): both ship
+	// complete, and a result over budget keeps head, tail and marker.
+	result, _ := stepFields["result"].(string)
+	if !strings.Contains(result, "bytes elided") || !strings.Contains(result, "尾") {
+		t.Fatalf("result lost its tail or marker: %.200s", result)
+	}
+	if assistant, _ := stepFields["assistant"].(string); assistant != strings.Repeat("助", 500) {
+		t.Fatalf("assistant truncated: %d runes", len([]rune(assistant)))
+	}
+	if goal, _ := stepFields["goal"].(string); goal != strings.Repeat("目", 500) {
+		t.Fatalf("goal truncated: %d runes", len([]rune(goal)))
 	}
 	for _, state := range []string{run, step} {
 		var fields map[string]any
 		if len(state) > 4096 || !utf8.ValidString(state) || json.Unmarshal([]byte(state), &fields) != nil {
 			t.Fatalf("invalid bounded state (%d bytes)", len(state))
-		}
-		if fields["step"] != nil && fields["goal"] != "" {
-			t.Fatal("long goal should be removed before assistant text is shortened")
 		}
 	}
 	// Escaping can expand one character to six JSON bytes; the bound is on

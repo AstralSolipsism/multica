@@ -1,11 +1,5 @@
 {
   "tree": {
-    "title": "文件夹",
-    "all_skills": "全部 skill",
-    "uncategorized": "未归类",
-    "new_subfolder": "新建子文件夹",
-    "empty": "还没有文件夹。新建一个，或导入技能包。",
-    "clear_filter": "清除筛选",
     "new_folder": "新建文件夹",
     "rename_folder": "重命名",
     "move_folder": "移动",
@@ -42,7 +36,8 @@
     "save": "保存",
     "saving": "保存中...",
     "cancel": "取消",
-    "failed": "无法保存文件夹，请重试。"
+    "failed": "无法保存文件夹，请重试。",
+    "unconfirmed": "操作结果未能确认。列表已刷新，请核对后再重试。"
   },
   "folder_move": {
     "title": "移动文件夹",
@@ -51,7 +46,8 @@
     "confirm": "移动",
     "moving": "移动中...",
     "cancel": "取消",
-    "failed": "无法移动文件夹，请重试。"
+    "failed": "无法移动文件夹，请重试。",
+    "unconfirmed": "操作结果未能确认。列表已刷新，请核对后再重试。"
   },
   "folder_delete": {
     "title": "删除该文件夹？",
@@ -59,7 +55,18 @@
     "confirm": "删除",
     "deleting": "删除中...",
     "cancel": "取消",
-    "failed": "无法删除文件夹，请重试。"
+    "failed": "无法删除文件夹，请重试。",
+    "unconfirmed": "操作结果未能确认。列表已刷新，请核对后再重试。"
+  },
+  "folder_errors": {
+    "name_conflict": "目标位置已存在同名文件夹，请换一个名称。",
+    "folder_cycle": "不能移动到它自己的子文件夹中。",
+    "invalid_name": "文件夹名称不符合要求：1–255 个字节，首尾不能有空格，不能包含控制字符或换行。",
+    "forbidden": "你没有执行此操作的权限。",
+    "not_found": "找不到目标对象，可能已被删除。列表已刷新。",
+    "managed_folder": "技能包文件夹跟随技能包，不能这样修改。",
+    "preview_stale": "文件夹已发生变化。列表已刷新，请重试。",
+    "permission_changed": "你的权限已变化。列表已刷新，请重试。"
   },
   "move_skills": {
     "title_other": "移动 {{count}} 个 skill",
@@ -71,6 +78,7 @@
     "done_other": "已移动 {{count}} 个 skill。",
     "partial": "已移动 {{done}}/{{total}} 个，其余失败。",
     "failed": "无法移动 skill，请重试。",
+    "unconfirmed_other": "已移动 {{done}}/{{total}} 个，{{count}} 个结果未能确认。列表已刷新，请核对后再重试。",
     "no_permission": "你没有移动全部所选 skill 的权限。",
     "packaged_hint": "包内 skill 不能移动，请先从技能包脱离。"
   },
@@ -177,7 +185,7 @@
   "picker": {
     "uncategorized": "未归类",
     "not_imported": "未导入",
-    "not_imported_hint": "请先在技能页面导入该候选，再进行绑定。",
+    "not_imported_hint": "请先在 Skills 页面导入该 skill，再进行绑定。",
     "toggle_folder": "选择 \"{{name}}\" 下全部"
   }
 }

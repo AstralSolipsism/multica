@@ -425,12 +425,38 @@ describe('labrastro-effort helpers', () => {
   })
 
   test('clipMiddle keeps head and tail and marks the elided middle', () => {
+    // At the 64 KiB field limit the split is ~63 KiB head + 1 KiB tail;
+    // a small limit keeps at least 1 byte on each end.
     const clipped = clipMiddle('A'.repeat(100) + 'MIDDLE' + 'B'.repeat(100), 50)
-    expect(clipped.startsWith('A'.repeat(25))).toBe(true)
-    expect(clipped.endsWith('B'.repeat(25))).toBe(true)
+    expect(clipped.startsWith('A')).toBe(true)
+    expect(clipped.endsWith('B')).toBe(true)
     expect(clipped).toContain('bytes elided')
+    expect(byteLength(clipped)).toBeLessThanOrEqual(50 + 64)
     // Within the limit: untouched.
     expect(clipMiddle('short', 50)).toBe('short')
+  })
+
+  test('clipMiddle counts UTF-8 bytes, not UTF-16 code units', () => {
+    // 40000 CJK chars = 120000 UTF-8 bytes: over the 64 KiB field limit, must clip.
+    const cjk = '\u4e2d'.repeat(40000)
+    const clipped = clipMiddle(`HEAD\n${cjk}\nTAIL`, FIELD_LIMIT_BYTES)
+    expect(clipped).toContain('HEAD')
+    expect(clipped).toContain('TAIL')
+    expect(byteLength(clipped)).toBeLessThanOrEqual(FIELD_LIMIT_BYTES + 64)
+    // The marked count is real UTF-8 bytes: total minus head and tail slices.
+    const m = /\[\.\.\. (\d+) bytes elided \.\.\.\]/.exec(clipped)
+    const elided = Number(m?.[1] ?? -1)
+    // 120000 content bytes minus the kept head/tail (~63 KiB + ~1 KiB) ≈ 55 KiB.
+    expect(elided).toBeGreaterThan(50000)
+    expect(elided).toBeLessThan(120000)
+    // Cut lands on code-point boundaries: no lone surrogates and no
+    // mid-emoji corruption — every remaining char is a full emoji or marker.
+    const emoji = '\u{1F600}'.repeat(30000) // 4 bytes each = 120000 bytes
+    const clippedEmoji = clipMiddle(emoji, FIELD_LIMIT_BYTES)
+    expect(clippedEmoji).toContain('\u{1F600}')
+    expect(byteLength(clippedEmoji)).toBeLessThanOrEqual(FIELD_LIMIT_BYTES + 64)
+    const stripped = clippedEmoji.replace(/\[\.\.\. \d+ bytes elided \.\.\.\]/g, '').replaceAll('\n', '')
+    for (const ch of stripped) expect(ch.codePointAt(0)).toBe(0x1f600)
   })
 
   test('fitRequest clips the earliest tools first and keeps the last failed tool', () => {
@@ -447,6 +473,32 @@ describe('labrastro-effort helpers', () => {
     expect(out.tools[14]?.result_text).toBe(big)
     expect(out.tools[0]?.result_text.length).toBeLessThanOrEqual(2 * 1024 + 64)
     expect(out.tools.every((t) => t.name !== '')).toBe(true)
+  })
+
+  test('fitRequest only ever clips: kept tool, other errors, assistant and error_text survive', () => {
+    // Two failing tools plus non-empty assistant/error_text: the LAST
+    // failed tool ships whole, everything else is clipped, never emptied.
+    const big = 'y'.repeat(200 * 1024)
+    const out = fitRequest({
+      step: 2,
+      assistant_text: big,
+      tools: [
+        { name: 'ERR1', is_error: true, input_summary: big, result_text: big },
+        { name: 'T1', is_error: false, input_summary: big, result_text: big },
+        { name: 'ERR2', is_error: true, input_summary: big, result_text: big },
+      ],
+      error_text: big,
+    })
+    expect(byteLength(JSON.stringify(out))).toBeLessThanOrEqual(768 * 1024)
+    expect(out.tools[2]?.result_text).toBe(big)
+    expect(out.tools.every((tool) => tool.name !== '')).toBe(true)
+    expect(out.tools.map((tool) => tool.is_error)).toEqual([true, false, true])
+    for (const tool of out.tools.slice(0, 2)) {
+      expect(tool.result_text.length).toBeGreaterThan(0)
+      expect(tool.input_summary.length).toBeGreaterThan(0)
+    }
+    expect(out.assistant_text.length).toBeGreaterThan(0)
+    expect(out.error_text.length).toBeGreaterThan(0)
   })
 
   test('parseContext accepts version 1 and rejects the rest', () => {

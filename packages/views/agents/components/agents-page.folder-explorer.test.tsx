@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   agents: [] as Agent[],
   folderTree: null as AgentFolderTree | null | undefined,
   folderTreeError: false,
+  folderTreeFailures: 0,
   refetchTree: vi.fn(),
   currentUserId: "user-1",
   members: [] as { user_id: string; role: string }[],
@@ -65,6 +66,7 @@ vi.mock("@tanstack/react-query", () => ({
         data: mocks.folderTree,
         isLoading: false,
         error: mocks.folderTreeError ? new Error("tree unavailable") : null,
+        failureCount: mocks.folderTreeFailures,
         refetch: mocks.refetchTree,
       };
     }
@@ -101,7 +103,12 @@ vi.mock("@multica/core/auth", () => ({
     selector({ user: { id: mocks.currentUserId } }),
 }));
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
-vi.mock("@multica/core/api", () => ({ api: apiMock }));
+vi.mock("@multica/core/api", async (importOriginal) => ({
+  // Keep the real ApiError / errorCode so the dialogs' coded-error mapping
+  // runs against the production helper; only the api client is stubbed.
+  ...(await importOriginal<typeof import("@multica/core/api")>()),
+  api: apiMock,
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({
@@ -392,6 +399,7 @@ beforeEach(() => {
   mocks.agents = [LOOSE, PLACED, LEADER, MEMBER, BOTH, OTHER, ARCHIVED];
   mocks.folderTree = folderTree;
   mocks.folderTreeError = false;
+  mocks.folderTreeFailures = 0;
   mocks.refetchTree = vi.fn();
   mocks.currentUserId = "user-1";
   mocks.members = [{ user_id: "user-1", role: "member" }];
@@ -987,5 +995,283 @@ describe("AgentsPage folder regressions", () => {
     await userEvent.click(within(rootHeader).getAllByRole("button")[0]!);
     // At the root only the uncategorized agents are selectable.
     expect(await screen.findByText("2 selected")).toBeTruthy();
+  });
+});
+
+describe("AgentsPage unreadable folder move/delete responses", () => {
+  it("refreshes the tree and shows an indeterminate result when a folder move reads back null", async () => {
+    const { invalidateAgentFolderQueries } = await import(
+      "@multica/core/agents/folder-queries"
+    );
+    apiMock.updateAgentFolder.mockResolvedValue(null);
+    renderPage("/acme/agents?folder=f-design");
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for Research" }));
+    await userEvent.click(await screen.findByText("Move"));
+    await userEvent.click(await screen.findByRole("button", { name: "Engineering" }));
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    await waitFor(() =>
+      expect(apiMock.updateAgentFolder).toHaveBeenCalledWith("ws-1", "f-research", { parentId: "f-eng" }),
+    );
+    expect(
+      await screen.findByText(
+        "The result couldn't be confirmed. The list was refreshed — check it before retrying.",
+      ),
+    ).toBeTruthy();
+    expect(invalidateAgentFolderQueries).toHaveBeenCalled();
+    expect(screen.queryByText("Couldn't move the folder. Try again.")).toBeNull();
+  });
+
+  it("refreshes the tree and shows an indeterminate result when a folder delete reads back null", async () => {
+    const { invalidateAgentFolderQueries } = await import(
+      "@multica/core/agents/folder-queries"
+    );
+    apiMock.deleteAgentFolder.mockResolvedValue(null);
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for Design" }));
+    await userEvent.click(await screen.findByText("Delete"));
+    await userEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    await waitFor(() =>
+      expect(apiMock.deleteAgentFolder).toHaveBeenCalledWith("ws-1", "f-design"),
+    );
+    expect(
+      await screen.findByText(
+        "The result couldn't be confirmed. The list was refreshed — check it before retrying.",
+      ),
+    ).toBeTruthy();
+    expect(invalidateAgentFolderQueries).toHaveBeenCalled();
+    expect(screen.queryByText("Couldn't delete the folder. Try again.")).toBeNull();
+  });
+});
+
+describe("AgentsPage place-variant result toasts", () => {
+  async function selectTwoSquadMembers() {
+    renderPage("/acme/agents?folder=sq-game");
+    const leaderRow = (await screen.findByText("squad-leader")).closest("[role='row']") as HTMLElement;
+    await userEvent.click(within(leaderRow).getAllByRole("button")[0]!);
+    const bothRow = screen.getByText("dual-agent").closest("[role='row']") as HTMLElement;
+    await userEvent.click(within(bothRow).getAllByRole("button")[0]!);
+    await userEvent.click(screen.getByRole("button", { name: "Place in folder" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Design" }));
+  }
+
+  it("uses the place wording for an unconfirmed result", async () => {
+    const { toast } = await import("sonner");
+    apiMock.setAgentPlacement.mockReset();
+    apiMock.setAgentPlacement
+      .mockResolvedValueOnce({ updated: true })
+      .mockResolvedValueOnce(null);
+    await selectTwoSquadMembers();
+    await userEvent.click(screen.getByRole("button", { name: "Place" }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "Placed 1 of 2; 1 couldn't be confirmed. The list was refreshed — check it before retrying.",
+      ),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("uses the place wording for a partial failure", async () => {
+    const { toast } = await import("sonner");
+    apiMock.setAgentPlacement.mockReset();
+    apiMock.setAgentPlacement
+      .mockResolvedValueOnce({ updated: true })
+      .mockRejectedValueOnce(new Error("boom"));
+    await selectTwoSquadMembers();
+    await userEvent.click(screen.getByRole("button", { name: "Place" }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Placed 1 of 2; the rest failed."),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("uses the place wording when every placement fails", async () => {
+    const { toast } = await import("sonner");
+    apiMock.setAgentPlacement.mockReset();
+    apiMock.setAgentPlacement.mockRejectedValue(new Error("boom"));
+    await selectTwoSquadMembers();
+    await userEvent.click(screen.getByRole("button", { name: "Place" }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Couldn't place the agents. Try again."),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+});
+
+describe("AgentsPage localized folder errors", () => {
+  it("localizes a coded create error instead of showing the server message", async () => {
+    const { ApiError } = await import("@multica/core/api");
+    const { invalidateAgentFolderQueries } = await import(
+      "@multica/core/agents/folder-queries"
+    );
+    apiMock.createAgentFolder.mockRejectedValue(
+      new ApiError("a folder with this name already exists at the destination", 409, "Conflict", {
+        code: "name_conflict",
+        error: "a folder with this name already exists at the destination",
+      }),
+    );
+    renderPage("/acme/agents", "zh-Hans");
+    await userEvent.click(await screen.findByRole("button", { name: "新建文件夹" }));
+    await userEvent.type(screen.getByLabelText("名称"), "Research");
+    await userEvent.click(screen.getByRole("button", { name: "创建" }));
+    expect(await screen.findByText("目标位置已存在同名文件夹，请换一个名称。")).toBeTruthy();
+    expect(screen.queryByText(/already exists at the destination/)).toBeNull();
+    // A failed write still refreshes the tree — the copy says so.
+    expect(invalidateAgentFolderQueries).toHaveBeenCalled();
+  });
+
+  // Every code the dialog's mapping claims to localize must render its own
+  // copy — deleting a branch must fail a test.
+  it.each([
+    { code: "name_conflict", expected: "A folder with this name already exists at the destination." },
+    { code: "folder_cycle", expected: "A folder can't be moved into one of its own subfolders." },
+    {
+      code: "invalid_name",
+      expected:
+        "The folder name isn't valid: 1–255 bytes, no surrounding whitespace, no control characters or line breaks.",
+    },
+    { code: "forbidden", expected: "You don't have permission to do this." },
+    {
+      code: "not_found",
+      expected: "The target couldn't be found — it may have been deleted. The list was refreshed.",
+    },
+  ])("localizes the $code error", async ({ code, expected }) => {
+    const { ApiError } = await import("@multica/core/api");
+    apiMock.createAgentFolder.mockRejectedValue(
+      new ApiError(`server says ${code}`, 409, "Conflict", { code, error: `server says ${code}` }),
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "New folder" }));
+    await userEvent.type(screen.getByLabelText("Name"), "Ghost");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(await screen.findByText(expected)).toBeTruthy();
+    expect(screen.queryByText(`server says ${code}`)).toBeNull();
+  });
+
+  it("localizes a coded move error", async () => {
+    const { ApiError } = await import("@multica/core/api");
+    apiMock.updateAgentFolder.mockRejectedValue(
+      new ApiError("folder move would create a cycle", 409, "Conflict", {
+        code: "folder_cycle",
+        error: "folder move would create a cycle",
+      }),
+    );
+    renderPage("/acme/agents?folder=f-design");
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for Research" }));
+    await userEvent.click(await screen.findByText("Move"));
+    await userEvent.click(await screen.findByRole("button", { name: "Engineering" }));
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    expect(
+      await screen.findByText("A folder can't be moved into one of its own subfolders."),
+    ).toBeTruthy();
+    expect(screen.queryByText("folder move would create a cycle")).toBeNull();
+  });
+
+  it("localizes a coded delete error", async () => {
+    const { ApiError } = await import("@multica/core/api");
+    apiMock.deleteAgentFolder.mockRejectedValue(
+      new ApiError("object not found in this workspace", 404, "Not Found", {
+        code: "not_found",
+        error: "object not found in this workspace",
+      }),
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for Design" }));
+    await userEvent.click(await screen.findByText("Delete"));
+    await userEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    expect(
+      await screen.findByText(
+        "The target couldn't be found — it may have been deleted. The list was refreshed.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("object not found in this workspace")).toBeNull();
+  });
+
+  it("falls back to the generic failure copy for an uncoded error", async () => {
+    const { invalidateAgentFolderQueries } = await import(
+      "@multica/core/agents/folder-queries"
+    );
+    apiMock.createAgentFolder.mockRejectedValue(new Error("socket hangup"));
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "New folder" }));
+    await userEvent.type(screen.getByLabelText("Name"), "Ghost");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(await screen.findByText("Couldn't save the folder. Try again.")).toBeTruthy();
+    expect(screen.queryByText("socket hangup")).toBeNull();
+    expect(invalidateAgentFolderQueries).toHaveBeenCalled();
+  });
+});
+
+describe("AgentsPage tree wait fallback", () => {
+  it("keeps the hierarchy when a background tree refresh fails once with cached data", () => {
+    // Cached tree + first failed background attempt (retry still pending):
+    // the hierarchy must not flip to flat for a transient failure.
+    mocks.folderTreeFailures = 1;
+    renderPage("/acme/agents?folder=f-design");
+    expect(screen.getByRole("button", { name: "Open Research" })).toBeTruthy();
+    expect(screen.getByText("placed-agent")).toBeTruthy();
+    expect(screen.queryByText("loose-agent")).toBeNull();
+    expect(
+      screen.queryByText("Folders are unavailable. Showing agents in a flat list."),
+    ).toBeNull();
+  });
+
+  it("falls back to the flat list on the first failed tree attempt, before the retry settles", () => {
+    mocks.folderTree = undefined;
+    mocks.folderTreeFailures = 1;
+    renderPage();
+    for (const name of ["loose-agent", "placed-agent", "squad-leader", "squad-member", "dual-agent"]) {
+      expect(screen.getByText(name)).toBeTruthy();
+    }
+    expect(
+      screen.getByText("Folders are unavailable. Showing agents in a flat list."),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("skeleton")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open Design" })).toBeNull();
+  });
+
+  it("falls back to the flat list after 5s without tree data, then restores the hierarchy when it arrives", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.folderTree = undefined;
+      const { controller, rerender } = renderPage("/acme/agents?folder=sq-game");
+      // Inside the grace window the skeleton shows; nothing flat flashes.
+      expect(screen.getAllByTestId("skeleton").length).toBeGreaterThan(0);
+      expect(screen.queryByText("squad-leader")).toBeNull();
+
+      // One millisecond before the deadline the grace window must still hold
+      // (guards the 5s threshold itself).
+      act(() => {
+        vi.advanceTimersByTime(4999);
+      });
+      expect(screen.getAllByTestId("skeleton").length).toBeGreaterThan(0);
+      expect(screen.queryByText("squad-leader")).toBeNull();
+      expect(
+        screen.queryByText("Folders are unavailable. Showing agents in a flat list."),
+      ).toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(screen.queryByTestId("skeleton")).toBeNull();
+      expect(screen.getByText("squad-leader")).toBeTruthy();
+      expect(screen.getByText("loose-agent")).toBeTruthy();
+      expect(
+        screen.getByText("Folders are unavailable. Showing agents in a flat list."),
+      ).toBeTruthy();
+
+      // Late data restores the hierarchy at the requested squad folder.
+      mocks.folderTree = folderTree;
+      rerender(
+        <NavigationHarness controller={controller} initialPath="/acme/agents?folder=sq-game">
+          <AgentsPage />
+        </NavigationHarness>,
+      );
+      expect(screen.queryByText("Folders are unavailable. Showing agents in a flat list.")).toBeNull();
+      expect(screen.getByText("squad-leader")).toBeTruthy();
+      expect(screen.getByText("squad-member")).toBeTruthy();
+      expect(screen.queryByText("loose-agent")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
