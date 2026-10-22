@@ -26,35 +26,98 @@ func TestNormalizedErrorFeature(t *testing.T) {
 	}
 }
 
-func TestErrorFeatureTrackerCountsConsecutiveRepeats(t *testing.T) {
+func TestErrorFeatureTrackerCountsWindowedRepeats(t *testing.T) {
 	t.Parallel()
-	var tracker ErrorFeatureTracker
 	const race = "WARNING: DATA RACE\nRead at scheduler.go:178 by goroutine 41"
 	const other = "exec: bash: exit status 3"
-
-	if feature, repeats := tracker.Observe(race, false); feature == "" || repeats != 1 {
-		t.Fatalf("first race observation: feature=%q repeats=%d, want feature!=\"\" repeats=1", feature, repeats)
+	type observation struct {
+		text    string
+		omitted bool
+		want    int
 	}
-	if _, repeats := tracker.Observe(race, false); repeats != 2 {
-		t.Fatalf("second identical race: repeats=%d, want 2", repeats)
+	cases := []struct {
+		name  string
+		steps []observation
+	}{
+		{
+			name: "consecutive and normalized repeats",
+			steps: []observation{
+				{race, false, 1}, {race, false, 2},
+				{other, false, 1}, {other, false, 2}, {"exec: bash: exit status 7", false, 3},
+			},
+		},
+		{
+			name: "error-free step returns zero and preserves history",
+			steps: []observation{
+				{"", false, 0}, {race, false, 1}, {"", false, 0}, {race, false, 2},
+			},
+		},
+		{
+			name: "different errors preserve each others history",
+			steps: []observation{
+				{race, false, 1}, {other, false, 1}, {race, false, 2}, {other, false, 2},
+			},
+		},
+		{
+			name: "oldest of six steps is included",
+			steps: []observation{
+				{race, false, 1}, {"", false, 0}, {"", false, 0},
+				{"", false, 0}, {"", false, 0}, {race, false, 2},
+			},
+		},
+		{
+			name: "error-free steps expire old errors",
+			steps: []observation{
+				{race, false, 1}, {"", false, 0}, {"", false, 0},
+				{"", false, 0}, {"", false, 0}, {"", false, 0}, {race, false, 1},
+			},
+		},
+		{
+			name: "different errors expire old errors",
+			steps: []observation{
+				{race, false, 1}, {other, false, 1}, {other, false, 2},
+				{other, false, 3}, {other, false, 4}, {other, false, 5}, {race, false, 1},
+			},
+		},
+		{
+			name: "count never exceeds six steps",
+			steps: []observation{
+				{race, false, 1}, {race, false, 2}, {race, false, 3}, {race, false, 4},
+				{race, false, 5}, {race, false, 6}, {race, false, 6}, {race, false, 6},
+			},
+		},
+		{
+			name: "omitted steps preserve the previous count",
+			steps: []observation{
+				{"", true, 0}, {race, false, 1}, {race, true, 1}, {other, true, 1},
+				{race, false, 2}, {"", false, 0}, {"", true, 0}, {race, false, 3},
+			},
+		},
+		{
+			name: "omitted steps do not consume window positions",
+			steps: []observation{
+				{race, false, 1}, {"", false, 0}, {"", false, 0},
+				{"", false, 0}, {"", false, 0},
+				{"", true, 0}, {"", true, 0}, {"", true, 0},
+				{"", true, 0}, {"", true, 0}, {"", true, 0},
+				{race, false, 2}, {race, false, 2},
+			},
+		},
 	}
-	// A different error starts a new run.
-	if _, repeats := tracker.Observe(other, false); repeats != 1 {
-		t.Fatalf("different error: repeats=%d, want 1", repeats)
-	}
-	if _, repeats := tracker.Observe(other, false); repeats != 2 {
-		t.Fatalf("second identical other: repeats=%d, want 2", repeats)
-	}
-	// Same error modulo a number still counts as the same feature.
-	if _, repeats := tracker.Observe("exec: bash: exit status 7", false); repeats != 3 {
-		t.Fatalf("noise-varied same error: repeats=%d, want 3", repeats)
-	}
-	// An error-free step resets.
-	if feature, repeats := tracker.Observe("", false); feature != "" || repeats != 0 {
-		t.Fatalf("error-free step: feature=%q repeats=%d, want \"\"/0", feature, repeats)
-	}
-	if _, repeats := tracker.Observe(other, false); repeats != 1 {
-		t.Fatalf("post-reset error: repeats=%d, want 1", repeats)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var tracker ErrorFeatureTracker
+			for i, step := range tc.steps {
+				wantFeature := NormalizedErrorFeature(step.text)
+				if step.omitted {
+					wantFeature = "[omitted]"
+				}
+				feature, repeats := tracker.Observe(step.text, step.omitted)
+				if feature != wantFeature || repeats != step.want {
+					t.Fatalf("observation %d: feature=%q repeats=%d, want %q/%d", i+1, feature, repeats, wantFeature, step.want)
+				}
+			}
+		})
 	}
 }
 
