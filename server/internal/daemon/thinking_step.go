@@ -74,9 +74,15 @@ type stepEffortRun struct {
 	EnabledPath string
 	Errors      ErrorFeatureTracker
 
-	stepMu    sync.Mutex // guards lastStep and Errors (replay guard + tracking)
-	lastStep  int        // highest step this run has decided for
-	effectsMu sync.Mutex
+	decisionMu       sync.Mutex // serializes requests with terminal sample flushing
+	finished         bool       // guarded by decisionMu
+	stepMu           sync.Mutex // guards lastStep, Errors and sample history
+	lastStep         int        // highest step this run has received
+	steps            map[int]*stepOutcomeState
+	lastDecisionStep int
+	lastEffectStep   int
+	toolAfterEffect  bool
+	effectsMu        sync.Mutex
 	// pending holds the latest effect record not yet applied to a message.
 	pending *agent.EffortEffect
 	// anyEffect reports whether at least one effect record arrived: once it
@@ -87,6 +93,10 @@ type stepEffortRun struct {
 // observeEffect records one effect record from the mod. It runs on the
 // stream reader; the next new main-thread message's tagging picks it up.
 func (r *stepEffortRun) observeEffect(effect agent.EffortEffect) {
+	r.stepMu.Lock()
+	r.lastEffectStep = effect.Step
+	r.toolAfterEffect = false
+	r.stepMu.Unlock()
 	r.effectsMu.Lock()
 	defer r.effectsMu.Unlock()
 	r.pending = &effect
@@ -145,6 +155,11 @@ func (r *stepEffortRun) tagStep(msg agent.Message, firstOfRequest bool) agent.Me
 		// backend's tag() may have put there is that tag's business.
 		return msg
 	}
+	if msg.Type == agent.MessageToolUse {
+		r.stepMu.Lock()
+		r.toolAfterEffect = true
+		r.stepMu.Unlock()
+	}
 	if r.sawEffect() {
 		if msg.Metadata != nil {
 			delete(msg.Metadata, "thinking")
@@ -186,8 +201,14 @@ func (s *stepEffortRuns) add(run *stepEffortRun) {
 
 func (s *stepEffortRuns) remove(taskID string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	run := s.runs[taskID]
 	delete(s.runs, taskID)
+	s.mu.Unlock()
+	if run != nil {
+		// runTask defers removal on every exit, including cancellation and
+		// timeout. Flush before losing the state, regardless of run outcome.
+		run.finishStepOutcomes()
+	}
 }
 
 func (s *stepEffortRuns) get(taskID string) (*stepEffortRun, bool) {
@@ -264,16 +285,28 @@ func stepOmittedText(text string, omitted bool) string {
 // decide answers one step: a level from Jev, a fallback reason, or "not
 // enabled". Falls back (never errors the run) on any failure.
 func (r *stepEffortRun) decide(ctx context.Context, req thinkingDecisionRequest) thinkingDecisionResponse {
-	if !r.enabledNow() {
+	r.decisionMu.Lock()
+	defer r.decisionMu.Unlock()
+	if r.finished {
 		var disabled bool
 		return thinkingDecisionResponse{Enabled: &disabled}
 	}
+	enabled := r.enabledNow()
 	r.stepMu.Lock()
 	replayed := req.Step < 1 || req.Step <= r.lastStep
-	if !replayed {
+	// A request before initial enablement must not reserve the step number.
+	// After decisions have started, revoked requests can still settle them.
+	if !replayed && (enabled || r.lastStep > 0) {
 		r.lastStep = req.Step
+		// Even a fallback or revoked decision request carries the previous
+		// step's results. Consume them before checking the enablement marker.
+		r.observeStepOutcome(req)
 	}
 	r.stepMu.Unlock()
+	if !enabled {
+		var disabled bool
+		return thinkingDecisionResponse{Enabled: &disabled}
+	}
 	if replayed {
 		// Reject replays and regressions: each run asks at most once per
 		// step, so a repeated or lower step is a buggy or chatty caller, and
@@ -285,6 +318,12 @@ func (r *stepEffortRun) decide(ctx context.Context, req thinkingDecisionRequest)
 	trace := r.Trace
 	trace.Step = req.Step
 	record := decideThinking(ctx, r.Clients, trace, jevReq, r.Samples)
+	if record.SampleID != "" {
+		r.stepMu.Lock()
+		r.stepOutcome(req.Step).sample.DecisionID = record.SampleID
+		r.lastDecisionStep = req.Step
+		r.stepMu.Unlock()
+	}
 	resp := thinkingDecisionResponse{LatencyMS: record.Decision.LatencyMS}
 	if record.Fallback != "" {
 		resp.Fallback = record.Fallback

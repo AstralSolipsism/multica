@@ -110,7 +110,7 @@ func TestRunTaskDecisionSampleCollection(t *testing.T) {
 			if scenario == "disabled" {
 				sampleDir = "" // MULTICA_JEV_COLLECT_DIR unset
 			}
-			collector := jevsample.New(sampleDir, "daemon-test", 0, quietTaskLog())
+			collector := jevsample.New(sampleDir, "daemon-test", "", 0, quietTaskLog())
 
 			fake := filepath.Join(t.TempDir(), "claude")
 			// One tool_use block so the run's tool count is 1, not 0 — the
@@ -335,7 +335,7 @@ func TestOutcomeEnqueuedBeforeTerminalReport(t *testing.T) {
 	defer srv.Close()
 
 	collectDir := t.TempDir()
-	collector := jevsample.New(collectDir, "daemon-test", 0, quietTaskLog())
+	collector := jevsample.New(collectDir, "daemon-test", "", 0, quietTaskLog())
 	fake := filepath.Join(t.TempDir(), "claude")
 	writeTestExecutable(t, fake, []byte(`#!/bin/sh
 case "$*" in *--version*) echo '2.1.304'; exit 0;; esac

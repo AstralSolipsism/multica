@@ -191,9 +191,18 @@ func TestStepEffortBuildsStateWithErrorFeatures(t *testing.T) {
 	if !strings.Contains(state, `"step":2`) {
 		t.Fatalf("state missing step: %s", state)
 	}
-	// The same error again counts as a repeat.
-	_, input = run.buildStepRequest(first)
+	// A successful edit between failed validations still allows D4 escalation.
+	_, input = run.buildStepRequest(thinkingDecisionRequest{Step: 3})
+	if input.ErrorFeatures != "" || input.RepeatedErrors != 0 {
+		t.Fatalf("error-free step: features=%q repeats=%d", input.ErrorFeatures, input.RepeatedErrors)
+	}
+	first.Step = 4
+	req, input = run.buildStepRequest(first)
 	if input.RepeatedErrors != 2 {
 		t.Fatalf("repeat count: %d", input.RepeatedErrors)
+	}
+	state, _ = req.State.(string)
+	if !strings.Contains(state, `"repeated_errors":2`) {
+		t.Fatalf("state missing repeat count: %s", state)
 	}
 }

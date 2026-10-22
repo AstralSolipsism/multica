@@ -103,39 +103,40 @@ func normalizeErrorLine(line string) string {
 	return strings.TrimSpace(strings.Trim(b.String(), "_ "))
 }
 
-// ErrorFeatureTracker keeps a run's latest normalized error feature and how
-// many consecutive steps reported it. One per run; requests for one run
-// arrive serialized (one per main-thread step).
+// errorFeatureWindowSize covers three edit-and-validate attempts, each
+// taking two main-thread steps.
+const errorFeatureWindowSize = 6
+
+// ErrorFeatureTracker keeps a run's recent normalized error features. One
+// per run; requests for one run arrive serialized (one per main-thread step).
 type ErrorFeatureTracker struct {
-	feature string
-	repeats int
+	features [errorFeatureWindowSize]string
+	repeats  int
 }
 
 // omittedErrorFeature is the feature recorded when the mod omitted the
 // error text whole (over the byte limit): no partial body ever ships (#32).
 const omittedErrorFeature = "[omitted]"
 
-// Observe folds one step's error text into the repeat count: the count is how
-// many consecutive observations, including this one, reported the same
-// normalized feature. An error-free step resets it. The returned feature is
-// this step's normalized error text ("" when none). An omitted error text
-// (mod-side whole-field omission) records the "[omitted]" feature and
-// neither advances nor resets the repeat count: there is no raw text to
-// normalize (#32).
+// Observe counts steps with the same normalized error feature in the last
+// errorFeatureWindowSize main-thread steps, including this one. Error-free
+// steps occupy window positions but return ""/0. Omitted error text returns
+// "[omitted]" and the previous count without entering the window: there is
+// no raw text to normalize (#32).
 func (t *ErrorFeatureTracker) Observe(errorText string, omitted bool) (feature string, repeats int) {
 	if omitted {
 		return omittedErrorFeature, t.repeats
 	}
 	feature = NormalizedErrorFeature(errorText)
-	switch {
-	case feature == "":
-		t.feature = ""
-		t.repeats = 0
-	case feature == t.feature:
-		t.repeats++
-	default:
-		t.feature = feature
-		t.repeats = 1
+	copy(t.features[:], t.features[1:])
+	t.features[len(t.features)-1] = feature
+	t.repeats = 0
+	if feature != "" {
+		for _, previous := range t.features {
+			if previous == feature {
+				t.repeats++
+			}
+		}
 	}
 	return feature, t.repeats
 }
