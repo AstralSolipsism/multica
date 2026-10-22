@@ -800,7 +800,7 @@ func (h *Handler) loadAttachmentForRequest(w http.ResponseWriter, r *http.Reques
 // loadAttachmentForDownload is a workspace-self-resolving variant used by the
 // /api/attachments/{id}/download endpoint. It looks the attachment up by ID
 // alone, then enforces that the authenticated user is a member of the
-// External conversation tasks additionally scope the
+// attachment's workspace. External conversation tasks additionally scope the
 // lookup to their token's workspace via lookupDownloadAttachment.
 //
 // Why a separate code path: a native browser <img>/<video> resource load on

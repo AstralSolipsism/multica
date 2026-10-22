@@ -119,6 +119,12 @@ func TestExternalConversationAttachmentDownloadWorkspace(t *testing.T) {
 				t.Run(lineage, func(t *testing.T) {
 					f := externalPolicyFixtureForGrantor(t, lineage, grantor)
 					missing := request(f.token, uuid.NewString(), "download", otherWorkspace)
+					// Verify every expectation queued so far is consumed, so the
+					// pending-expectation check below can only refer to the warm
+					// entry (ClearExpect would drop the earlier ones unverified).
+					if err := cache.ExpectationsWereMet(); err != nil {
+						t.Fatal(err)
+					}
 					// Warm the grantor's membership key for the attachment's own
 					// workspace BEFORE the out-of-bounds request: the token's
 					// workspace filter must reject the request without ever

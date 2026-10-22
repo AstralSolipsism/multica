@@ -118,7 +118,7 @@ Client workspace headers and query parameters cannot widen the token binding.
 `/download-metadata` remains denied for external conversations. Member sessions
 retain MUL-3130's cross-workspace Markdown links, including native browser loads
 without workspace headers; first-party task tokens also keep upstream behavior,
-with one retained residual surface (accepted in the OL-958 evaluation): a
+with one residual surface retained after the OL-958 evaluation: a
 first-party task token authenticates as the runtime owner (`UserID: rt.OwnerID`
 in `server/internal/handler/daemon.go`), not as the member who triggered the
 task. Any member who can invoke the agent can therefore direct it, by attachment
