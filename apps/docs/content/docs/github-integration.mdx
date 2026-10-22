@@ -170,6 +170,10 @@ GITHUB_APP_PRIVATE_KEY=<full PEM private key, keeping the BEGIN/END lines and ne
 
 Generate the private key under the GitHub App's **Private keys → Generate a private key**. Without them the integration degrades gracefully: PRs still mirror, issues still auto-link and move on merge — the PR card just shows no CI or merge state.
 
+<Callout type="warning">
+These two variables are also required to complete a **first** GitHub connection: the post-install callback verifies the reported `installation_id` against GitHub's API as the App before binding it, so a deployment without them cannot finish a new install (the callback redirects back with a retryable error). An installation already bound to a workspace can still be re-bound by its workspace admins.
+</Callout>
+
 ### 3. Update the database and connect
 
 When upgrading an existing deployment, run the regular database migrations first:

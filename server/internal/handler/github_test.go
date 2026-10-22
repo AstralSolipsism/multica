@@ -295,14 +295,14 @@ func TestStateRoundTripWithRepositoryReturnTarget(t *testing.T) {
 	t.Setenv("GITHUB_WEBHOOK_SECRET", "test-secret-123")
 	wsID := "11111111-2222-3333-4444-555555555555"
 
-	tok, err := signStateForReturn(wsID, githubReturnToRepositories, "")
+	tok, err := signStateForReturn(wsID, githubReturnToRepositories)
 	if err != nil {
 		t.Fatalf("signStateForReturn: %v", err)
 	}
 	if parts := strings.Split(tok, "."); len(parts) != 4 {
 		t.Fatalf("repository return state has %d parts, want 4", len(parts))
 	}
-	gotWorkspaceID, gotReturnTo, _, ok := verifyStateWithReturn(tok)
+	gotWorkspaceID, gotReturnTo, ok := verifyStateWithReturn(tok)
 	if !ok {
 		t.Fatal("verifyStateWithReturn rejected a freshly-signed token")
 	}
@@ -317,7 +317,7 @@ func TestStateRoundTripWithRepositoryReturnTarget(t *testing.T) {
 	}
 
 	tampered := strings.Replace(tok, ".repositories.", ".github.", 1)
-	if _, _, _, ok := verifyStateWithReturn(tampered); ok {
+	if _, _, ok := verifyStateWithReturn(tampered); ok {
 		t.Error("tampered return target should fail verification")
 	}
 }
@@ -346,7 +346,7 @@ func TestGitHubConnectRepositoryReturnTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse install URL: %v", err)
 	}
-	_, returnTo, _, ok := verifyStateWithReturn(installURL.Query().Get("state"))
+	_, returnTo, ok := verifyStateWithReturn(installURL.Query().Get("state"))
 	if !ok || returnTo != githubReturnToRepositories {
 		t.Fatalf("signed return target = %q, valid=%v, want repositories", returnTo, ok)
 	}
@@ -368,7 +368,7 @@ func TestGitHubSetupCallbackRepositoryReturnTarget(t *testing.T) {
 	t.Setenv("GITHUB_WEBHOOK_SECRET", "test-secret-123")
 	t.Setenv("FRONTEND_ORIGIN", "https://app.multica.test/")
 	wsID := "11111111-2222-3333-4444-555555555555"
-	state, err := signStateForReturn(wsID, githubReturnToRepositories, "")
+	state, err := signStateForReturn(wsID, githubReturnToRepositories)
 	if err != nil {
 		t.Fatalf("signStateForReturn: %v", err)
 	}
@@ -2721,8 +2721,6 @@ func TestSetupCallback_ConsumesPendingInstallationCreated(t *testing.T) {
 	ctx := context.Background()
 	secret := "pending-installation-secret"
 	t.Setenv("GITHUB_WEBHOOK_SECRET", secret)
-	t.Setenv("GITHUB_APP_ID", "")
-	t.Setenv("GITHUB_APP_PRIVATE_KEY", "")
 	t.Setenv("FRONTEND_ORIGIN", "https://app.example.test")
 
 	const installationID int64 = 81818181
@@ -2731,10 +2729,21 @@ func TestSetupCallback_ConsumesPendingInstallationCreated(t *testing.T) {
 		testPool.Exec(ctx, `DELETE FROM github_pending_installation WHERE installation_id = $1`, installationID)
 	})
 
-	// Force fetchInstallationAccount to take its degraded path. This pins that
-	// the final real account name comes from the earlier webhook, not the
-	// setup callback's synchronous GitHub API lookup.
+	// The OL-955 setup gate verifies a zero-binding installation against
+	// GitHub as the App before binding, so the test needs App JWT credentials
+	// and a stub that confirms this installation (unauthorized like before
+	// would now refuse the bind). The stub still refuses token minting; this
+	// pins that the final real account name comes from the earlier webhook
+	// delivery, not from the callback's own GitHub lookup.
+	pemBytes, _ := generateTestRSAKeyPEM(t)
+	t.Setenv("GITHUB_APP_ID", "424242")
+	t.Setenv("GITHUB_APP_PRIVATE_KEY", string(pemBytes))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == fmt.Sprintf("/app/installations/%d", installationID) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"id":%d,"account":{"login":"stub-placeholder","type":"User"},"suspended_at":null}`, installationID)
+			return
+		}
 		http.Error(w, "auth required", http.StatusUnauthorized)
 	}))
 	t.Cleanup(srv.Close)
