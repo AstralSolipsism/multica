@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/daemon/jev"
+	"github.com/multica-ai/multica/server/internal/daemon/jevsample"
 )
 
 func TestLoadConfig_JevDefaultsAndOverrides(t *testing.T) {
@@ -99,5 +100,44 @@ func TestLoadConfig_JevDefaultsAndOverrides(t *testing.T) {
 	t.Setenv("MULTICA_JEV_TIMEOUT_MS", "not-a-number")
 	if _, err := LoadConfig(overrides); err == nil || !strings.Contains(err.Error(), "MULTICA_JEV_TIMEOUT_MS") {
 		t.Fatalf("invalid timeout error = %v, want named validation error", err)
+	}
+
+	t.Setenv("MULTICA_JEV_TIMEOUT_MS", "")
+	// Sample collection defaults to off with the default cap; overrides work
+	// and an invalid cap is a named validation error.
+	t.Setenv("MULTICA_JEV_COLLECT_DIR", "")
+	t.Setenv("MULTICA_JEV_COLLECT_MAX_MB", "")
+	cfg, err = LoadConfig(overrides)
+	if err != nil {
+		t.Fatalf("LoadConfig collect defaults: %v", err)
+	}
+	if cfg.JevCollectDir != "" || cfg.JevCollectMaxBytes != int64(jevsample.DefaultMaxMB)<<20 {
+		t.Fatalf("collect defaults: dir=%q max=%d", cfg.JevCollectDir, cfg.JevCollectMaxBytes)
+	}
+	t.Setenv("MULTICA_JEV_COLLECT_DIR", " /var/lib/multica/samples ")
+	t.Setenv("MULTICA_JEV_COLLECT_MAX_MB", "2")
+	cfg, err = LoadConfig(overrides)
+	if err != nil {
+		t.Fatalf("LoadConfig collect overrides: %v", err)
+	}
+	if cfg.JevCollectDir != "/var/lib/multica/samples" || cfg.JevCollectMaxBytes != 2<<20 {
+		t.Fatalf("collect overrides: dir=%q max=%d", cfg.JevCollectDir, cfg.JevCollectMaxBytes)
+	}
+	t.Setenv("MULTICA_JEV_COLLECT_MAX_MB", "not-a-number")
+	if _, err := LoadConfig(overrides); err == nil || !strings.Contains(err.Error(), "MULTICA_JEV_COLLECT_MAX_MB") {
+		t.Fatalf("invalid cap error = %v, want named validation error", err)
+	}
+	// Non-positive or overflowingly large caps are refused rather than
+	// silently meaning "no cap". 1<<43 is the first value whose <<20 shift
+	// overflows int64, so it is rejected while 1<<43-1 stays valid.
+	for _, bad := range []string{"0", "-5", "99999999999999", "8796093022208"} {
+		t.Setenv("MULTICA_JEV_COLLECT_MAX_MB", bad)
+		if _, err := LoadConfig(overrides); err == nil || !strings.Contains(err.Error(), "MULTICA_JEV_COLLECT_MAX_MB") {
+			t.Fatalf("cap %q accepted: %v, want named validation error", bad, err)
+		}
+	}
+	t.Setenv("MULTICA_JEV_COLLECT_MAX_MB", "8796093022207")
+	if _, err := LoadConfig(overrides); err != nil {
+		t.Fatalf("largest valid cap rejected: %v", err)
 	}
 }
