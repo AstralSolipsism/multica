@@ -580,7 +580,7 @@ OL-1013 描述前半部分的原始需求里，"通道""源"统一叫"来源"，
 
 **文件**
 
-- 文件名为 `decisions-<daemon_id>-<UTC 日期 YYYYMMDD>.jsonl`：按 UTC 日期换文件，每个 daemon 只写自己的文件。同一台机器上几个 daemon 共用目录时，不会有两个进程写同一个文件。
+- 文件名为 `decisions-<daemon_id>-<UTC 日期 YYYYMMDD>.jsonl`（默认 profile），命名 profile 下为 `decisions-<daemon_id>-<profile>-<UTC 日期 YYYYMMDD>.jsonl`（profile 名做字符清洗并附原名哈希前缀）：按 UTC 日期换文件。daemon ID 是整机共用的，而 daemon 单实例锁按 profile 加，所以同机多 profile daemon 靠文件名里的 profile 段各写各的文件，互不交错；大小上限也按各 profile 的文件分别计算。
 - 目录 0700、文件 0600，并检查目录不是符号链接。
 - 写入是异步、尽力而为的：
   - 决策和运行路径只把记录放进有界队列，由单独的 goroutine 写盘；

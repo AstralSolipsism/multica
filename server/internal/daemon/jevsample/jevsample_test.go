@@ -62,7 +62,7 @@ func TestFileLayoutPermissionsAndRotation(t *testing.T) {
 		t.Skip("Unix permission bits")
 	}
 	dir := t.TempDir()
-	c := New(dir, "daemon-a", 0, nil)
+	c := New(dir, "daemon-a", "", 0, nil)
 	// Non-UTC clock: rotation and ts must still key off UTC, not local time.
 	utcPlus8 := time.FixedZone("UTC+8", 8*3600)
 	base := time.Date(2026, 10, 22, 7, 30, 0, 0, utcPlus8) // Oct 21 23:30 UTC
@@ -135,7 +135,7 @@ func TestFileLayoutPermissionsAndRotation(t *testing.T) {
 
 func TestStepScopeAndFailureOutcome(t *testing.T) {
 	dir := t.TempDir()
-	c := New(dir, "d", 0, nil)
+	c := New(dir, "d", "", 0, nil)
 	now := time.Now().UTC()
 	c.now = func() time.Time { return now }
 	id := c.Decision(Decision{Scope: "step", Step: 4, Choice: "high"})
@@ -152,8 +152,8 @@ func TestStepScopeAndFailureOutcome(t *testing.T) {
 
 func TestTwoDaemonsSeparateFiles(t *testing.T) {
 	dir := t.TempDir()
-	a := New(dir, "daemon-a", 0, nil)
-	b := New(dir, "daemon-b", 0, nil)
+	a := New(dir, "daemon-a", "", 0, nil)
+	b := New(dir, "daemon-b", "", 0, nil)
 	a.Decision(Decision{Scope: "run", Choice: "low"})
 	b.Decision(Decision{Scope: "run", Choice: "high"})
 	a.Close()
@@ -164,6 +164,54 @@ func TestTwoDaemonsSeparateFiles(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("missing %s: %v", path, err)
 		}
+	}
+}
+
+// OL-1040: the daemon ID is machine-scoped while the single-instance lock is
+// per profile, so two same-machine daemons differ only by profile — the
+// filename must keep their records in separate files.
+func TestSameDaemonTwoProfilesSeparateFiles(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir, "d", "", 0, nil)           // default profile: no segment
+	b := New(dir, "d", "work", 0, nil)       // named profile
+	weird := New(dir, "d", "wörk/x", 0, nil) // unsafe chars must not collide
+	a.Decision(Decision{Scope: "run", Choice: "low"})
+	b.Decision(Decision{Scope: "run", Choice: "high"})
+	weird.Decision(Decision{Scope: "run", Choice: "high"})
+	a.Close()
+	b.Close()
+	weird.Close()
+
+	day := time.Now().UTC().Format(dateFormat)
+	files := map[string]string{}
+	for _, c := range []*Collector{a, b, weird} {
+		path := filepath.Join(dir, c.filePrefix+"-"+day+".jsonl")
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("missing %s: %v", path, err)
+		}
+		files[c.filePrefix] = path
+	}
+	if len(files) != 3 {
+		t.Fatalf("want 3 distinct file prefixes, got %v", files)
+	}
+	// The default profile keeps the pre-OL-1040 name.
+	if _, ok := files["decisions-d"]; !ok {
+		t.Fatalf("default profile must use plain prefix: %v", files)
+	}
+	// Size cap must count only this profile's files even in a shared dir.
+	// The default profile's file below is over the cap on its own; a "work"
+	// daemon must still write, proving its cap ignores other profiles' bytes.
+	big := filepath.Join(dir, "decisions-d-"+day+".jsonl")
+	if err := os.WriteFile(big, []byte(strings.Repeat("x", 900)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	capped := New(dir, "d", "work", 1000, nil)
+	id := capped.Decision(Decision{Scope: "run", Choice: "low"})
+	capped.Close()
+	records := readLines(t, filepath.Join(dir, capped.filePrefix+"-"+day+".jsonl"))
+	last := records[len(records)-1]
+	if last["id"] != id {
+		t.Fatalf("profile-scoped cap miscounted other profiles' files: %v", last)
 	}
 }
 
@@ -179,7 +227,7 @@ func TestSizeCapRefusesSmallerRecordsAndResumesAfterDelete(t *testing.T) {
 	if err := os.WriteFile(old, oldBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c := New(dir, "d", 1000, nil)
+	c := New(dir, "d", "", 1000, nil)
 	c.now = func() time.Time { return now }
 	id := c.Decision(Decision{Scope: "run", Choice: "low"}) // ~300 bytes: does not fit
 	c.Outcome(Outcome{DecisionID: id, Status: "completed"}) // ~190 bytes: fits alone, must still be refused
@@ -195,7 +243,7 @@ func TestSizeCapRefusesSmallerRecordsAndResumesAfterDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	next := now.AddDate(0, 0, 1)
-	c2 := New(dir, "d", 1000, nil)
+	c2 := New(dir, "d", "", 1000, nil)
 	c2.now = func() time.Time { return next }
 	id2 := c2.Decision(Decision{Scope: "run", Choice: "low"})
 	c2.Outcome(Outcome{DecisionID: id2, Status: "completed"})
@@ -215,7 +263,7 @@ func TestSymlinkedDirRefusedWithoutBlocking(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
-	c := New(link, "d", 0, nil)
+	c := New(link, "d", "", 0, nil)
 	id := c.Decision(Decision{Scope: "run", Choice: "low"})
 	c.Close()
 	matches, _ := filepath.Glob(filepath.Join(real, "*"))
@@ -236,7 +284,7 @@ func TestUnwritableDirDropsWithoutBlocking(t *testing.T) {
 	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c := New(blocker, "d", 0, nil)
+	c := New(blocker, "d", "", 0, nil)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -258,7 +306,7 @@ func TestWarnRateLimitedPerReason(t *testing.T) {
 	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c := New(blocker, "d", 0, slog.New(handler))
+	c := New(blocker, "d", "", 0, slog.New(handler))
 	for range 10 {
 		c.Decision(Decision{Scope: "run", Choice: "low"})
 	}
@@ -269,7 +317,7 @@ func TestWarnRateLimitedPerReason(t *testing.T) {
 }
 
 func TestQueueOverflowDrops(t *testing.T) {
-	c := New(t.TempDir(), "d", 0, nil)
+	c := New(t.TempDir(), "d", "", 0, nil)
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Add(1)

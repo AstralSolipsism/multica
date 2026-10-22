@@ -7,8 +7,10 @@
 //
 // File layout mirrors terminal_report_queue.go: directory 0700, files 0600,
 // and the directory must not be a symlink. One file per daemon per UTC day,
-// decisions-<daemon_id>-<YYYYMMDD>.jsonl, so daemons sharing a directory
-// never write the same file.
+// decisions-<daemon_id>[-<profile>]-<YYYYMMDD>.jsonl. Daemon IDs are
+// machine-scoped while the single-instance lock is per profile, so the
+// profile segment is what keeps two same-machine daemons on distinct files
+// (OL-1040); the default (empty) profile omits it.
 //
 // Records carry exactly what was sent to the decision source (state and
 // questions, byte-identical to the wire body) plus local provenance. No
@@ -16,11 +18,13 @@
 package jevsample
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,8 +51,11 @@ const (
 type Collector struct {
 	dir      string
 	daemonID string
-	maxBytes int64
-	log      *slog.Logger
+	// filePrefix is "decisions-<daemon_id>[-<sanitized profile>]", the
+	// per-process part of every filename; distinct profiles never share it.
+	filePrefix string
+	maxBytes   int64
+	log        *slog.Logger
 
 	queue chan pending
 	done  chan struct{}
@@ -125,8 +132,11 @@ type Outcome struct {
 // New returns a collector writing under dir, or nil when dir is empty
 // (collection fully disabled: no directory is created, nothing is opened).
 // maxBytes <= 0 means no size cap. Callers should pass LoadConfig's value,
-// which rejects non-positive MULTICA_JEV_COLLECT_MAX_MB.
-func New(dir, daemonID string, maxBytes int64, log *slog.Logger) *Collector {
+// which rejects non-positive MULTICA_JEV_COLLECT_MAX_MB. profile is the
+// daemon profile name ("" for the default profile); it partitions filenames
+// because daemon IDs are machine-scoped while the single-instance lock is
+// per profile (OL-1040).
+func New(dir, daemonID, profile string, maxBytes int64, log *slog.Logger) *Collector {
 	if dir == "" {
 		return nil
 	}
@@ -134,17 +144,40 @@ func New(dir, daemonID string, maxBytes int64, log *slog.Logger) *Collector {
 		log = slog.Default()
 	}
 	c := &Collector{
-		dir:      dir,
-		daemonID: daemonID,
-		maxBytes: maxBytes,
-		log:      log,
-		queue:    make(chan pending, queueDepth),
-		done:     make(chan struct{}),
-		lastWarn: make(map[string]time.Time),
-		now:      time.Now,
+		dir:        dir,
+		daemonID:   daemonID,
+		filePrefix: filePrefix(daemonID, profile),
+		maxBytes:   maxBytes,
+		log:        log,
+		queue:      make(chan pending, queueDepth),
+		done:       make(chan struct{}),
+		lastWarn:   make(map[string]time.Time),
+		now:        time.Now,
 	}
 	go c.run()
 	return c
+}
+
+// filePrefix builds the filename stem for a daemon/profile pair. Profile
+// names are not charset-restricted, so unsafe bytes are escaped and a short
+// hash of the raw name keeps two distinct profiles from ever colliding onto
+// the same sanitized segment; the default profile adds no segment.
+func filePrefix(daemonID, profile string) string {
+	prefix := "decisions-" + daemonID
+	if profile == "" {
+		return prefix
+	}
+	var b strings.Builder
+	for _, r := range profile {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	sum := sha256.Sum256([]byte(profile))
+	return fmt.Sprintf("%s-%s-%x", prefix, b.String(), sum[:4])
 }
 
 // Decision enqueues one decision sample and returns its id for later
@@ -297,14 +330,27 @@ func (c *Collector) run() {
 	}
 }
 
-// sizeOnDisk sums this daemon's existing sample files against the cap.
+// sizeOnDisk sums this daemon's existing sample files against the cap. The
+// name must be exactly prefix-<YYYYMMDD>.jsonl: a loose prefix match would
+// also count other profiles' files on the same machine (their segment sits
+// between the prefix and the date).
 func (c *Collector) sizeOnDisk() int64 {
+	entries, err := os.ReadDir(c.dir)
+	if err != nil {
+		return 0
+	}
 	var used int64
-	if matches, err := filepath.Glob(filepath.Join(c.dir, "decisions-"+c.daemonID+"-*.jsonl")); err == nil {
-		for _, match := range matches {
-			if info, err := os.Stat(match); err == nil && !info.IsDir() {
-				used += info.Size()
-			}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, c.filePrefix+"-") || !strings.HasSuffix(name, ".jsonl") || e.IsDir() {
+			continue
+		}
+		day := name[len(c.filePrefix)+1 : len(name)-len(".jsonl")]
+		if len(day) != len(dateFormat) || strings.TrimLeft(day, "0123456789") != "" {
+			continue
+		}
+		if info, err := e.Info(); err == nil {
+			used += info.Size()
 		}
 	}
 	return used
@@ -318,7 +364,7 @@ func (c *Collector) open(day string) (*os.File, int64) {
 		return nil, 0
 	}
 	used := c.sizeOnDisk()
-	path := filepath.Join(c.dir, fmt.Sprintf("decisions-%s-%s.jsonl", c.daemonID, day))
+	path := filepath.Join(c.dir, fmt.Sprintf("%s-%s.jsonl", c.filePrefix, day))
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		c.warn("open file", err)

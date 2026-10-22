@@ -776,7 +776,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		cfg:                         cfg,
 		client:                      client,
 		jevClient:                   jev.New(jev.Options{Disabled: cfg.JevDisabled, Sources: cfg.JevSources, Timeout: cfg.JevTimeout}),
-		jevSamples:                  jevsample.New(cfg.JevCollectDir, cfg.DaemonID, cfg.JevCollectMaxBytes, logger),
+		jevSamples:                  jevsample.New(cfg.JevCollectDir, cfg.DaemonID, cfg.Profile, cfg.JevCollectMaxBytes, logger),
 		repoCache:                   repocache.New(cacheRoot, logger),
 		skillCache:                  NewSkillBundleCache(skillCacheRoot),
 		logger:                      logger,
