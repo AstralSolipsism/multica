@@ -381,6 +381,60 @@ describe('labrastro-effort helpers', () => {
     expect(stepPayload(2, undefined)).toEqual(empty)
   })
 
+
+  // Regression tests for the whole-or-omitted boundary (#37): each rule the
+  // daemon relies on must fail here if the mod changes it.
+  const pemBody = Array.from({ length: 50 }, (_, i) => `PEMCANARY${String(i).padStart(2, '0')}` + 'A'.repeat(53))
+  const pem = ['-----BEGIN PRIVATE KEY-----', ...pemBody, '-----END PRIVATE KEY-----'].join('\n')
+  const progress = Array.from({ length: 300 }, (_, i) => `ok  \texample.com/app/pkg${i}\t0.0${i % 10}s`).join('\n')
+  const stepWindow = (text: string, isError: boolean, tool = 'Bash'): SessionMessages => [
+    { role: 'user', text: 'issue' },
+    { role: 'assistant', text: '', toolUses: [{ tool_use_id: 't1', tool, input: { command: 'make test' }, text, isError }] },
+    { role: 'user', toolResults: [{ tool_use_id: 't1' }] },
+  ]
+
+  test('a long failing output crosses whole, tail error included', () => {
+    const out = `Exit code 2\n${progress}\n--- FAIL: TestTail (0.00s)\n    tail_test.go:9: TAIL_CANARY assertion failed\nFAIL`
+    const p = stepPayload(2, stepWindow(out, true))
+    expect(p.tools[0]?.result_text).toBe(out)
+    expect(p.error_text).toContain('TAIL_CANARY')
+  })
+
+  test('a multi-line PEM private key crosses whole', () => {
+    const out = `config dump:\n${pem}\ndone`
+    expect(stepPayload(2, stepWindow(out, false)).tools[0]?.result_text).toBe(out)
+  })
+
+  test('a field over 64 KiB is omitted whole', () => {
+    const p = stepPayload(2, stepWindow('x'.repeat(70 * 1024), true))
+    expect(p.tools[0]?.result_text).toBe('')
+    expect(p.tools[0]?.result_omitted).toBe(true)
+    // The omitted error body must not read as "no error" (#38): the daemon
+    // would reset the repeat count instead of holding it.
+    expect(p.error_omitted).toBe(true)
+  })
+
+  test('a Read failure reaches error_text; a Read success ships no body', () => {
+    expect(stepPayload(2, stepWindow('File does not exist.', true, 'Read')).error_text).toBe('File does not exist.')
+    expect(stepPayload(2, stepWindow('package a', false, 'Read')).tools[0]?.result_text).toBe('')
+  })
+
+  test('fitRequest drops the earliest tools first and keeps the last failed tool', () => {
+    const big = 'y'.repeat(60 * 1024)
+    const mk = (i: number) => ({
+      name: `T${i}`, is_error: i === 14, is_file_content: false,
+      input_summary: big, result_text: big, input_summary_omitted: false, result_omitted: false,
+    })
+    const out = fitRequest({
+      step: 2, assistant_text: '', tools: Array.from({ length: 16 }, (_, i) => mk(i)),
+      error_text: '', assistant_omitted: false, error_omitted: false,
+    })
+    expect(byteLength(JSON.stringify(out))).toBeLessThanOrEqual(768 * 1024)
+    expect(out.tools[14]?.result_text).toBe(big)
+    expect(out.tools[0]?.result_text).toBe('')
+    expect(out.tools.every((t) => t.name !== '')).toBe(true)
+  })
+
   test('parseContext accepts version 1 and rejects the rest', () => {
     expect(parseContext(CONTEXT)).toEqual({ task_id: 'task-1', endpoint: '/tasks/task-1/thinking-decision', startup_effort: 'medium' })
     for (const bad of ['', 'not json', '{"version":2}', '{"version":1}', '{"version":1,"task_id":"t","endpoint":"","startup_effort":"low"}']) {

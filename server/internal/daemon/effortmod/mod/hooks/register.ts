@@ -170,7 +170,13 @@ export function stepPayload(step: number, window: SessionMessages | undefined): 
       i--
     }
   }
-  const joined = tools.filter((tool) => tool.is_error && tool.result_text !== '').map((tool) => tool.result_text).join('\n')
+  const errorTools = tools.filter((tool) => tool.is_error && tool.result_text !== '')
+  const joined = errorTools.map((tool) => tool.result_text).join('\n')
+  // An error tool whose result was omitted whole must not read as "no
+  // error": the daemon would reset the repeat count (#38). Flag the
+  // error text omitted whenever any error body was, even when the joined
+  // text is empty.
+  const errorOmitted = tools.some((tool) => tool.is_error && tool.result_omitted)
   const errorText = wholeOrOmitted(joined, FIELD_LIMIT_BYTES)
   const assistantText = wholeOrOmitted(texts.join(''), FIELD_LIMIT_BYTES)
   const payload: StepPayload = {
@@ -179,7 +185,7 @@ export function stepPayload(step: number, window: SessionMessages | undefined): 
     tools,
     error_text: errorText.value,
     assistant_omitted: assistantText.omitted,
-    error_omitted: errorText.omitted,
+    error_omitted: errorText.omitted || errorOmitted,
   }
   return fitRequest(payload)
 }
