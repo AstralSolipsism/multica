@@ -18,6 +18,37 @@ function tagParts(tag) {
   return match && match[0] === tag ? match.slice(1).map(BigInt) : null;
 }
 
+const NEXT_ENV_DTS = "apps/web/next-env.d.ts";
+
+/**
+ * The only tracked path a Next.js build itself rewrites: `next dev` writes
+ * `.next/dev/types/...` imports into next-env.d.ts while `next build` writes
+ * `.next/types/...`, so whichever variant is committed, the other mode's run
+ * leaves the worktree dirty (OL-1102). Every other dirty path still fails
+ * the clean-tree check; this one generated file is exempt in BOTH variants.
+ */
+function isGeneratedNextEnvPath(relativePath) {
+  return relativePath === NEXT_ENV_DTS;
+}
+
+function cleanTreePaths(cwd) {
+  // --porcelain -z: NUL-separated entries, rename stages come as "R\nnew";
+  // -z keeps both NUL-separated, so no newline parsing surprises.
+  const out = execFileSync(
+    "git", ["status", "--porcelain", "-z", "--untracked-files=all"],
+    { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const paths = [];
+  const entries = out.split("\0").filter(Boolean);
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    const path = entry.slice(3);
+    paths.push(path);
+    if (entry[0] === "R" || entry[0] === "C") i++; // skip the rename/copy target
+  }
+  return paths;
+}
+
 export function checkRelease({ repository, tag, sha, version, requireTag = false, mode = "candidate" }, cwd = process.cwd(), env = process.env) {
   requireThat(repository === RELEASE_REPOSITORY, `repository must be ${RELEASE_REPOSITORY}`);
   requireThat(!env.GITHUB_REPOSITORY || env.GITHUB_REPOSITORY === repository, "GitHub repository does not match candidate repository");
@@ -44,7 +75,8 @@ export function checkRelease({ repository, tag, sha, version, requireTag = false
   }
   requireThat(git("rev-parse", "--is-shallow-repository") === "false", "candidate needs full fork history and tags");
   requireThat(git("rev-parse", "HEAD") === sha, "HEAD is not the reviewed candidate SHA");
-  requireThat(!git("status", "--porcelain", "--untracked-files=all"), "candidate worktree is dirty (including untracked files)");
+  const dirty = cleanTreePaths(cwd).filter(path => !isGeneratedNextEnvPath(path));
+  requireThat(dirty.length === 0, `candidate worktree is dirty (including untracked files): ${dirty.join(", ")}`);
   try {
     git("merge-base", "--is-ancestor", sha, "refs/remotes/origin/main");
   } catch {

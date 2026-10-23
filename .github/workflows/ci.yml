@@ -1004,6 +1004,15 @@ jobs:
       - name: Test build output naming
         run: bash scripts/makefile-build.test.sh
 
+      - name: Test candidate pipeline contract
+        # Offline integration of scripts/candidate.py against a synthetic
+        # fixture repo (go, node, goreleaser and — on arm-hosted runners only
+        # — qemu are required). Path-gated by "candidate" in ci-paths.json so
+        # unrelated PRs do not pay for it (OL-1102).
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user-static
+          python3 scripts/candidate.test.py
+
   frontend-quality:
     needs: changes
     if: ${{ needs.changes.outputs.quality_only == 'true' }}
