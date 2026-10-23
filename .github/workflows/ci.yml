@@ -964,9 +964,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '~1.26.9'
+          check-latest: true
+          cache-dependency-path: server/go.sum
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Test self-host env derivation
         run: bash scripts/selfhost-config.test.sh
@@ -1006,11 +1015,17 @@ jobs:
 
       - name: Test candidate pipeline contract
         # Offline integration of scripts/candidate.py against a synthetic
-        # fixture repo (go, node, goreleaser and — on arm-hosted runners only
-        # — qemu are required). Path-gated by "candidate" in ci-paths.json so
-        # unrelated PRs do not pay for it (OL-1102).
+        # fixture repo. Needs the desktop toolchain modules (js-yaml, asar,
+        # electron-updater) via pnpm, Go + GoReleaser for the six CLI
+        # targets, and qemu-user-static to execute the arm64 fixture CLI on
+        # x64 runners. Path-gated by "scripts" in ci-paths.json so unrelated
+        # PRs do not pay for the installs (OL-1102).
+        env:
+          GORELEASER_VERSION: v2.12.2
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user-static
+          curl -fsSL "https://github.com/goreleaser/goreleaser/releases/download/${GORELEASER_VERSION}/goreleaser_Linux_x86_64.tar.gz" | sudo tar -xz -C /usr/local/bin goreleaser
+          goreleaser --version
           python3 scripts/candidate.test.py
 
   frontend-quality:
