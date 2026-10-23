@@ -120,19 +120,30 @@ test("dirty tracked, staged and untracked source fail; ignored output and dev bu
 });
 
 test("a rewritten generated next-env.d.ts is the sole clean-tree exemption in both variants", t => {
-  const { cwd, git, check } = fixture(t);
+  const { cwd, git } = fixture(t);
   const nextEnv = join(cwd, "apps/web/next-env.d.ts");
+  // Production shape: the dev variant is COMMITTED and next build rewrites
+  // the tracked file (` M`), not an untracked leftover (`??`).
+  mkdirSync(join(cwd, "apps/web"), { recursive: true });
+  writeFileSync(nextEnv, 'import "./.next/dev/types/routes.d.ts";\n');
+  git("add", ".");
+  git("commit", "-m", "commit generated next-env.d.ts (dev variant)");
+  const sha = git("rev-parse", "HEAD");
+  git("update-ref", "refs/remotes/origin/main", sha);
+  const check = (patch = {}, env = {}) => checkRelease({ repository: RELEASE_REPOSITORY, tag: "v1.2.3-labrastro.2", sha, ...patch }, cwd, env);
   check();
-  // next build rewrites the dev variant to `.next/types`; next dev writes it back.
   for (const variant of [
     'import "./.next/types/routes.d.ts";\n',
     'import "./.next/dev/types/routes.d.ts";\n',
   ]) {
-    mkdirSync(join(cwd, "apps/web"), { recursive: true });
     writeFileSync(nextEnv, variant);
     assert.doesNotThrow(check, `seal must tolerate the committed ${variant.includes("/dev/") ? "dev" : "build"} variant being rewritten`);
   }
-  // The exemption never covers a second dirty path next to it.
+  // The exemption is path-exact: a same-named file elsewhere stays dirty.
+  mkdirSync(join(cwd, "apps/desktop"), { recursive: true });
+  writeFileSync(join(cwd, "apps/desktop/next-env.d.ts"), 'import "./.next/types/routes.d.ts";\n');
+  assert.throws(() => check(), /apps\/desktop\/next-env\.d\.ts/);
+  // ...and so does any other dirty path next to the exempt one.
   writeFileSync(join(cwd, "apps/web/other.d.ts"), "dirty\n");
   assert.throws(() => check(), /other\.d\.ts/);
 });

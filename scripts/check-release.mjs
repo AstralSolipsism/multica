@@ -32,8 +32,9 @@ function isGeneratedNextEnvPath(relativePath) {
 }
 
 function cleanTreePaths(cwd) {
-  // --porcelain -z: NUL-separated entries, rename stages come as "R\nnew";
-  // -z keeps both NUL-separated, so no newline parsing surprises.
+  // --porcelain -z: NUL-separated entries. Rename/copy entries carry TWO
+  // NUL-separated paths (new then old); both belong to the entry, so both
+  // land in the dirty list and an entry passes only if every path is exempt.
   const out = execFileSync(
     "git", ["status", "--porcelain", "-z", "--untracked-files=all"],
     { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
@@ -42,9 +43,8 @@ function cleanTreePaths(cwd) {
   const entries = out.split("\0").filter(Boolean);
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
-    const path = entry.slice(3);
-    paths.push(path);
-    if (entry[0] === "R" || entry[0] === "C") i++; // skip the rename/copy target
+    paths.push(entry.slice(3));
+    if (entry[0] === "R" || entry[0] === "C") paths.push(entries[++i]);
   }
   return paths;
 }

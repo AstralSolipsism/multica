@@ -98,21 +98,6 @@
     ".github/ci-paths.json"
   ],
   "scripts": [
-    "scripts/candidate.py",
-    "scripts/candidate.test.py",
-    "scripts/candidate-fixture.mjs",
-    "scripts/build-candidate-web.mjs",
-    "scripts/build-candidate-web.test.mjs",
-    "scripts/check-release.mjs",
-    "scripts/check-release.test.mjs",
-    "scripts/verify-candidate-feeds.mjs",
-    "scripts/local-images.mjs",
-    "apps/desktop/scripts/stage-candidate.mjs",
-    "apps/desktop/scripts/package.mjs",
-    "packages/core/deployment/**",
-    ".github/workflows/release.yml",
-    ".github/actions/setup-candidate/**",
-    ".goreleaser.yml",
     "scripts/generate-reserved-slugs.mjs",
     "scripts/selfhost-config.test.sh",
     "scripts/drop-database.sh",
@@ -147,6 +132,21 @@
     ".github/ci-paths.json",
     "scripts/ci-scope.mjs",
     "scripts/ci-scope.test.mjs"
+  ],
+  "candidate": [
+    "scripts/*candidate*",
+    "scripts/check-release*",
+    "scripts/build-backend.py",
+    "scripts/build-backend.test.py",
+    "scripts/local-images.mjs",
+    "apps/desktop/scripts/stage-candidate.mjs",
+    "apps/desktop/scripts/package.mjs",
+    "packages/core/deployment/**",
+    ".github/workflows/release.yml",
+    ".github/actions/setup-candidate/**",
+    ".goreleaser.yml",
+    ".github/workflows/ci.yml",
+    ".github/ci-paths.json"
   ],
   "installer": [
     "scripts/install.sh",
