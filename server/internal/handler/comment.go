@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -3339,6 +3340,15 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	isAuthor := existing.AuthorType == actorType && uuidToString(existing.AuthorID) == actorID
+	// An external conversation task executes as its frozen grantor, so a
+	// grantor holding the admin role would pass the check below. The edit
+	// would then clear source_task_id and enqueue the derived run outside
+	// the conversation root (OL-1092). External conversations may edit only
+	// their own comments.
+	if _, external := channel.ConversationTaskFromContext(r.Context()); external && !isAuthor {
+		writeError(w, http.StatusForbidden, "external conversations may only edit their own comments")
+		return
+	}
 	isAdmin := roleAllowed(member.Role, "owner", "admin")
 	if !isAuthor && !isAdmin {
 		writeError(w, http.StatusForbidden, "only comment author or admin can edit")
