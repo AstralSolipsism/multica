@@ -145,8 +145,8 @@ func TestGenerateText(t *testing.T) {
 	if !sawSystem {
 		t.Fatal("expected system message to be sent")
 	}
-	if gotModel != "gpt-6-luna" {
-		t.Fatalf("expected built-in GPT-6 Luna default, got %q", gotModel)
+	if gotModel != "gpt-5.6-luna" {
+		t.Fatalf("expected built-in GPT-5.6 Luna default, got %q", gotModel)
 	}
 }
 
@@ -158,7 +158,7 @@ func TestGenerateJSONModelParameters(t *testing.T) {
 		wantModel        string
 		disableReasoning bool
 	}{
-		{name: "built-in default", wantModel: "gpt-6-luna", disableReasoning: true},
+		{name: "built-in default", wantModel: "gpt-5.6-luna", disableReasoning: true},
 		{name: "configured GPT-6 Luna", defaultModel: "gpt-6-luna", wantModel: "gpt-6-luna", disableReasoning: true},
 		{name: "requested GPT-6 Luna", defaultModel: "gateway-model", requestModel: "gpt-6-luna", wantModel: "gpt-6-luna", disableReasoning: true},
 		{name: "configured GPT-5.6", defaultModel: "gpt-5.6-luna", wantModel: "gpt-5.6-luna", disableReasoning: true},
