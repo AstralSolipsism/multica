@@ -359,6 +359,7 @@ describe("the floating chat on a side chat", () => {
     ];
     apiMock.listChatSessions.mockResolvedValue([sideChat]);
     useChatStore.getState().setActiveSession("side-1");
+    useChatStore.getState().setOpen(true);
     renderWithYsk(<ChatWindow />);
 
     await waitFor(() => expect(screen.getByTestId("messages")).toHaveTextContent("Why?"));

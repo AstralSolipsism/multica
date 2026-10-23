@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,19 +17,31 @@ const (
 	dshProfilePresent
 )
 
-// The discovery tick only stats the selected launcher's manifest; it never
+// The discovery tick only reads the selected launcher's manifest; it never
 // boots a profile or invokes `plugin`/`--dump-config`, which can create files.
 func dshMulticaProfileState(executablePath string) dshProfileState {
 	dshHome := dshLauncherHome(executablePath)
 	if dshHome == "" {
 		return dshProfileUnknown
 	}
-	info, err := os.Stat(filepath.Join(dshHome, "profiles", dshMulticaProfileName, "package.json"))
+	path := filepath.Join(dshHome, "profiles", dshMulticaProfileName, "package.json")
+	info, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		return dshProfileMissing
 	}
 	if err != nil || !info.Mode().IsRegular() {
 		return dshProfileUnknown
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return dshProfileUnknown
+	}
+	var manifest dshProfileManifest
+	if json.Unmarshal(data, &manifest) != nil {
+		return dshProfileUnknown
+	}
+	if !dshProfileNamesRuntime(manifest) {
+		return dshProfileMissing
 	}
 	return dshProfilePresent
 }

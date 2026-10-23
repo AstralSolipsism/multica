@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -54,11 +55,43 @@ const (
 	// dshMulticaProfileName is the profile the backend launches. Kept beside
 	// the install command so the two cannot drift.
 	dshMulticaProfileName = "multica"
+
+	// dshMulticaRuntimePackage is the bridge a multica profile has to name
+	// before this daemon will treat the profile as installed. `dsh plugin add`
+	// records that name in dependencies and, when the package is a bundle, in
+	// dsh.profile.bundles — including installs from git, a directory, or a tarball.
+	dshMulticaRuntimePackage = "@multica-ai/dsh-runtime"
 )
+
+// dshProfileManifest is the slice of a profile package.json this daemon reads.
+// Dependency values are left raw: a string version and an object spec are both
+// a named dependency, and a stricter type would make a real install look absent.
+type dshProfileManifest struct {
+	Dependencies map[string]json.RawMessage `json:"dependencies"`
+	DSH          struct {
+		Profile struct {
+			Bundles []string `json:"bundles"`
+		} `json:"profile"`
+	} `json:"dsh"`
+}
 
 // dshProvisionTimeout bounds the whole install. It is a package manager
 // talking to a registry, so it is generous next to the CLI probes.
 const dshProvisionTimeout = 3 * time.Minute
+
+// dshProfileNamesRuntime reports whether the manifest lists the Multica runtime
+// as a dependency or as a profile bundle.
+func dshProfileNamesRuntime(manifest dshProfileManifest) bool {
+	if _, ok := manifest.Dependencies[dshMulticaRuntimePackage]; ok {
+		return true
+	}
+	for _, bundle := range manifest.DSH.Profile.Bundles {
+		if bundle == dshMulticaRuntimePackage {
+			return true
+		}
+	}
+	return false
+}
 
 // dshProfileBundleSpecs returns the configured install candidates, in order,
 // or nil when the operator has not opted in.
@@ -265,6 +298,10 @@ func provisionDshMulticaProfile(ctx context.Context, dshPath string, logger *slo
 			lastErr = fmt.Errorf("dsh plugin --profile %s add (candidate %d of %d): %w: %s",
 				dshMulticaProfileName, i+1, len(specs), err, dshProvisionOutput(output))
 		}
+		// Leave the directory. A refused add can write a skeleton, and a failure
+		// can also land on a profile the user already had. dshMulticaProfileState
+		// treats a manifest that does not name the runtime as missing, so the
+		// next restart retries over it and --probe is not started.
 		logger.Warn("DSH runtime profile install failed",
 			"bundle_candidate", i+1, "candidates", len(specs), "error", lastErr)
 	}

@@ -63,6 +63,8 @@ import { useT } from "../../i18n";
 // ─── Public component ────────────────────────────────────────────────────
 
 interface ChatMessageListProps {
+  /** Pause bottom-stick effects while a closing floating window fades out. */
+  active?: boolean;
   messages: ChatMessage[];
   /**
    * Server-authoritative pending-task snapshot. `null` / undefined means
@@ -192,6 +194,7 @@ const LIST_COMPONENTS: Components<ChatRenderItem, ChatListContext> = {
 };
 
 export function ChatMessageList({
+  active = true,
   messages,
   pendingTask,
   availability,
@@ -219,7 +222,7 @@ export function ChatMessageList({
     virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" });
   }, []);
   const { isFollowing, onContentHeightChanged, resumeLiveEnd, hasReachedLiveEnd } =
-    useStickToBottom(scrollContainerEl, pinToLiveEnd);
+    useStickToBottom(scrollContainerEl, pinToLiveEnd, active);
   // Own-send follow resume: fires only when the nonce moves past whatever the
   // list mounted with, so a remount on session switch never double-jumps (the
   // fresh instance already opens at the live end).
@@ -1023,6 +1026,7 @@ function FailureBubble({
     codex_semantic_inactivity: t(($) => $.message_list.failure.codex_semantic_inactivity),
     runtime_offline: t(($) => $.message_list.failure.runtime_offline),
     runtime_access_denied: t(($) => $.message_list.failure.runtime_access_denied),
+    runtime_access_revoked: t(($) => $.message_list.failure.runtime_access_revoked),
     runtime_recovery: t(($) => $.message_list.failure.runtime_recovery),
     manual: t(($) => $.message_list.failure.manual),
     cancelled: t(($) => $.message_list.failure.manual),

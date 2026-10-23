@@ -139,6 +139,19 @@ markers, emit one more report field, and document it in the table above. Keep
 the invariant — every field is a number or `timeout`/`invalid`, never a
 silent zero.
 
+## Floating chat lifetime
+
+The floating-chat lifetime regression runs against the same production build:
+
+```bash
+pnpm exec playwright test --config=playwright.perf.config.ts floating-chat-lifetime.spec.ts
+```
+
+It checks that closing removes the message list, keeps the real composer and
+an in-flight upload alive, shows messages received while closed on reopen, and
+survives an interrupted exit. It also checks that the message list's ancestor
+is never scaled. HTTP and WebSocket traffic is synthetic; no backend is needed.
+
 ## When to run it
 
 Nothing runs this automatically. The routine guard is the component test from

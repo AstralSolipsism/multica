@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run --environment node",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "vitest run"
   },
   "exports": {
     "./components/ui/*": "./components/ui/*.tsx",
@@ -72,11 +72,15 @@
   "devDependencies": {
     "@multica/eslint-config": "workspace:*",
     "@multica/tsconfig": "workspace:*",
+    "@testing-library/jest-dom": "catalog:",
+    "@testing-library/react": "catalog:",
     "@types/linkify-it": "^5.0.0",
     "@types/mdast": "^4.0.4",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
     "esbuild": "^0.25.12",
+    "jsdom": "catalog:",
     "micromark-extension-math": "^3.1.0",
     "micromark-util-types": "^2.0.2",
     "remark-parse": "^11.0.0",
