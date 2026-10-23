@@ -29,6 +29,7 @@ jobs:
       runtime: ${{ steps.decide.outputs.runtime }}
       quality_only: ${{ steps.decide.outputs.quality_only }}
       scripts: ${{ steps.decide.outputs.scripts }}
+      candidate: ${{ steps.decide.outputs.candidate }}
       installer: ${{ steps.decide.outputs.installer }}
       images: ${{ steps.decide.outputs.images }}
       full: ${{ steps.decide.outputs.full }}
@@ -568,7 +569,7 @@ jobs:
   # Preserve the existing required-check name while allowing tests, generated
   # SQL verification, and the vulnerability scan to run independently.
   backend:
-    needs: [changes, backend-format, backend-tests, backend-agent-tests, sqlc-check, go-vulnerability-scan, macos-runtime, windows-execenv, script-checks, installer]
+    needs: [changes, backend-format, backend-tests, backend-agent-tests, sqlc-check, go-vulnerability-scan, macos-runtime, windows-execenv, script-checks, candidate-checks, installer]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -576,7 +577,7 @@ jobs:
       - name: Check backend job results
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
-          JOB_SCOPES: '{"backend-format":"backend","backend-tests":"backend","backend-agent-tests":"backend","sqlc-check":"sqlc","go-vulnerability-scan":"backend","macos-runtime":"full","windows-execenv":"runtime","script-checks":"scripts","installer":"installer"}'
+          JOB_SCOPES: '{"backend-format":"backend","backend-tests":"backend","backend-agent-tests":"backend","sqlc-check":"sqlc","go-vulnerability-scan":"backend","macos-runtime":"full","windows-execenv":"runtime","script-checks":"scripts","candidate-checks":"candidate","installer":"installer"}'
         run: node scripts/ci-scope.mjs gate
 
   # release.yml also has a job named backend. Use a unique required context so
@@ -1003,6 +1004,37 @@ jobs:
 
       - name: Test build output naming
         run: bash scripts/makefile-build.test.sh
+
+  candidate-checks:
+    needs: changes
+    if: ${{ needs.changes.outputs.candidate == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '~1.26.9'
+          check-latest: true
+          cache-dependency-path: server/go.sum
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Test candidate pipeline contract
+        # Offline integration of scripts/candidate.py against a synthetic
+        # fixture repo. Needs the desktop toolchain modules (js-yaml, asar,
+        # electron-updater) via pnpm, Go + GoReleaser for the six CLI
+        # targets, and qemu-user-static to execute the arm64 fixture CLI on
+        # x64 runners. Gated by the dedicated "candidate" scope so unrelated
+        # PRs do not pay for the installs (OL-1102).
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user-static
+          curl -fsSL "https://github.com/goreleaser/goreleaser/releases/download/v2.12.2/goreleaser_Linux_x86_64.tar.gz" | sudo tar -xz -C /usr/local/bin goreleaser
+          goreleaser --version
+          python3 scripts/candidate.test.py
 
   frontend-quality:
     needs: changes

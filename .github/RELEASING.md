@@ -97,7 +97,12 @@ development fallback behavior remain available. The script reads local Git data
 only. It validates the explicit repository and GitHub context, origin fetch and
 push URLs, complete history, clean tracked/staged/untracked source, exact HEAD,
 main ancestry, tag/base/version agreement, tag immutability and revision order.
-Ignored build output is allowed. Use an isolated checkout with no local source
+Ignored build output is allowed. One tracked path is exempt from the clean-tree
+check: `apps/web/next-env.d.ts`, because Next.js rewrites it itself (`next dev`
+and `next build` write different `.next/…/types` imports), so whichever variant
+is committed, a build of the other mode leaves it modified. The exemption is
+path-exact; any other modified, staged or untracked file still fails preflight.
+Use an isolated checkout with no local source
 or environment overrides; clean Git state cannot prove ignored inputs or human
 review. Fetch freshness and review approval are the caller's responsibility.
 
@@ -133,7 +138,8 @@ revision and the proposed tag is `v0.4.43-labrastro.2`, JSON reports
 `version: "0.4.43-labrastro.2"`, `commit` equal to `reviewed_sha`,
 `tag_exists: false` and `artifact_dir: "dist/candidate/v0.4.43-labrastro.2"`.
 A dirty checkout, different HEAD, non-target origin or missing required tag
-exits nonzero and emits no metadata on stdout. After a tag is created,
+exits nonzero and emits no metadata on stdout (the one clean-tree exemption is
+the generated `apps/web/next-env.d.ts` described above). After a tag is created,
 `--require-tag` still rejects skipped revisions and base rollback.
 
 The three required values also have environment equivalents. After the final
@@ -210,7 +216,8 @@ lacks it. The same `rebuild` environment is read by GoReleaser's before-hook;
 tag-push workflow validation is explicitly pinned to `candidate` mode. A later
 version may coexist with an approved historical rebuild, while an unrecorded
 retroactive tag remains rejected in both modes. All other source, repository,
-version, clean-tree and tag-identity checks still apply to rebuilds.
+version, clean-tree and tag-identity checks still apply to rebuilds (the
+clean-tree check carries the same single `apps/web/next-env.d.ts` exemption).
 
 | Existing entry | Required candidate inputs / output | Integration owner |
 | --- | --- | --- |

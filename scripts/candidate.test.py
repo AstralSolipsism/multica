@@ -34,7 +34,8 @@ def reject(fn, message):
 
 def fixture(root):
     for name in (".goreleaser.yml", "scripts/candidate.py", "scripts/build-backend.py", "scripts/check-release.mjs", "scripts/build-candidate-web.mjs",
-                 "scripts/verify-candidate-feeds.mjs", "scripts/candidate-fixture.mjs", "apps/desktop/scripts/package.mjs", "apps/desktop/scripts/stage-candidate.mjs"):
+                 "scripts/verify-candidate-feeds.mjs", "scripts/candidate-fixture.mjs", "apps/desktop/scripts/package.mjs", "apps/desktop/scripts/stage-candidate.mjs",
+                 "packages/core/deployment/origin.json"):
         target = root / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(SOURCE / name, target)
