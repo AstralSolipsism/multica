@@ -281,9 +281,6 @@ type decideResponse struct {
 			Probabilities map[string]float64 `json:"probabilities"`
 		} `json:"effort"`
 	} `json:"answers"`
-	// Server-reported latency; may be absent. Snapshot and Decision use the
-	// locally measured end-to-end latency instead.
-	LatencyMS int64 `json:"latency_ms"`
 }
 
 // Options configures New.
