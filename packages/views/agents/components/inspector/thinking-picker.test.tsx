@@ -9,6 +9,7 @@ import enAgents from "../../../locales/en/agents.json";
 import enIssues from "../../../locales/en/issues.json";
 import enForkUi from "../../../locales/en/fork-ui.json";
 import enQuota from "../../../locales/en/quota.json";
+import { renderWithI18n } from "../../../test/i18n";
 
 import { ThinkingPicker } from "./thinking-picker";
 
@@ -124,7 +125,13 @@ describe("ThinkingPicker", () => {
 
     const items = document.querySelectorAll("button[data-picker-item]");
     expect(items[0]).toHaveTextContent("Adapt");
-    expect(screen.getByText(/run summary including raw tool output/)).toBeInTheDocument();
+    // The disclosure names possible destinations without pinning a default,
+    // since the daemon's MULTICA_JEV_SOURCES decides what actually runs.
+    expect(
+      screen.getByText(
+        /run summary including raw tool output is sent to an external decision service configured on this machine, such as OpenCode Zen or Alibaba Cloud Model Studio/,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("omits Adapt when fewer than two candidates remain", () => {
@@ -184,6 +191,9 @@ describe("ThinkingPicker", () => {
   });
 
   it.each([
+    ["opencode", "OpenCode Zen"],
+    ["opencode-free", "OpenCode Zen (free)"],
+    ["dashscope", "Alibaba Cloud Model Studio"],
     ["self-hosted", "Self-hosted"],
     ["decision.internal", "decision.internal"],
   ])("shows the %s decision source in the subtitle", (source, label) => {
@@ -203,6 +213,58 @@ describe("ThinkingPicker", () => {
 
     expect(
       screen.getByText(`Available · ${label} · 290ms`),
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    ["opencode", "OpenCode Zen"],
+    ["opencode-free", "OpenCode Zen 免费通道"],
+    ["dashscope", "阿里云百炼"],
+    ["self-hosted", "自部署"],
+  ])("shows the %s decision source in the zh-Hans subtitle", (source, label) => {
+    // TEST_RESOURCES above is en-only; the zh-Hans column goes through the
+    // shared renderWithI18n helper, which wraps the production RESOURCES.
+    renderWithI18n(
+      <ThinkingPicker
+        value=""
+        levels={CODEX_LEVELS}
+        canEdit
+        adaptSupported
+        adaptSnapshot={{
+          status: "available",
+          active_source: source,
+          last_latency_ms: 290,
+          decisions_ok: 12,
+          decisions_fallback: 3,
+          since: "2026-10-21T00:00:00Z",
+          updated_at: "2026-10-21T01:00:00Z",
+        }}
+        onChange={vi.fn()}
+      />,
+      { locale: "zh-Hans" },
+    );
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByText(`可用 · ${label} · 290ms`)).toBeInTheDocument();
+  });
+
+  it("shows the zh-Hans disclosure naming the possible destinations", () => {
+    renderWithI18n(
+      <ThinkingPicker
+        value=""
+        levels={CODEX_LEVELS}
+        canEdit
+        adaptSupported
+        onChange={vi.fn()}
+      />,
+      { locale: "zh-Hans" },
+    );
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(
+      screen.getByText(
+        "选中后，会将运行摘要（包括工具输出原文）发送给本机配置的外部决策服务，例如 OpenCode Zen、阿里云百炼。",
+      ),
     ).toBeInTheDocument();
   });
 

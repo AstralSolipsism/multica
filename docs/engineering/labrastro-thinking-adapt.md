@@ -416,7 +416,7 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
 
 - **出现条件**：候选不少于 2 个时，在列表顶部提供"自适应"，选中时写入 `thinking_level = "_adapt"`。候选规则在 core 里实现，单测直接读 §2 的测试向量。
 - **置灰**：运行时的 `metadata.capabilities` 不含 `thinking-adapt-v1` 时置灰，并说明 daemon 版本过旧、需要升级。置灰只是提示，真正的门控是领取时的改写（§2）。
-- **副标题**：显示该运行时 `thinking_adapt` 快照的状态（例如"可用 · OpenCode Zen · 290ms"），并用一句话说明：选中后，会将运行摘要（包括工具输出原文）发送给外部决策服务，默认使用 OpenCode Zen 免费通道。
+- **副标题**：显示该运行时 `thinking_adapt` 快照的状态（例如"可用 · OpenCode Zen 免费通道 · 290ms"），并用一句话说明外发去向：选中后，会将运行摘要（包括工具输出原文）发送给本机配置的外部决策服务，例如 OpenCode Zen、阿里云百炼。说明不写死默认来源、不随本机配置变化；当前实际在用的来源由副标题里的快照状态显示。
 - **显示**：触发器、只读态、资料卡都显示"自适应"，不显示 `_adapt`。reasonix、dim 自己的 `auto` 仍按 CLI 的 label 显示，要能和"自适应"区分。
 - **清理**：换模型后，新模型仍有不少于 2 个候选时保留自适应，否则清掉；换运行时清掉；同一运行时内复制智能体时保留（§2）。
 
@@ -461,7 +461,14 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
 ### 文案与范围
 
 - 新文案同步 `en`、`zh-Hans`、`fr`、`ja`、`ko`，按 [`branding.md`](branding.md) 放进 fork 命名空间，并通过 `packages/views/locales/parity.test.ts`。英文名用 Adapt。
-- 来源名称：选择器副标题、额度区和 Tooltip 里，`self-hosted` 显示为"自部署"（英文 Self-hosted），五种语言同步；不认识的来源名称原样显示，不报错。
+- 来源名称：选择器副标题、额度区和 Tooltip 共用同一套映射（`thinkingAdaptSourceLabel`，`packages/views/common/thinking-adapt.ts`），五种语言同步；不认识的来源名称原样显示，不报错。
+
+  | 来源 | 中文 | 英文 |
+  |---|---|---|
+  | `opencode` | OpenCode Zen | OpenCode Zen |
+  | `opencode-free` | OpenCode Zen 免费通道 | OpenCode Zen (free) |
+  | `dashscope` | 阿里云百炼 | Alibaba Cloud Model Studio |
+  | `self-hosted` | 自部署 | Self-hosted |
 - 移动端不在范围内（需求未要求），新字段对移动端透明。
 
 ## 10. 自部署来源与决策样本

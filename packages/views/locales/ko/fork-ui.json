@@ -2,7 +2,7 @@
   "agents": {
     "thinking_adapt": {
       "label": "적응",
-      "description": "선택하면 도구 출력 원문을 포함한 실행 요약이 외부 결정 서비스로 전송됩니다. 기본적으로 OpenCode Zen 무료 채널을 사용합니다.",
+      "description": "선택하면 도구 출력 원문을 포함한 실행 요약이 이 머신에 구성된 외부 결정 서비스(예: OpenCode Zen, Alibaba Cloud Model Studio)로 전송됩니다.",
       "upgrade_required": "이 데몬 버전에서는 적응을 지원하지 않습니다. 데몬을 업그레이드하세요."
     }
   },

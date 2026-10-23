@@ -29,6 +29,5 @@
     "fallback_count_other": "{{count}} fallbacks",
     "carried_over": "Carried over the previous step's level: {{reason}}",
     "step_carried": "carried over"
-  },
-  "source_self_hosted": "Self-hosted"
+  }
 }

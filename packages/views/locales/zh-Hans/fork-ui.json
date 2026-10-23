@@ -2,7 +2,7 @@
   "agents": {
     "thinking_adapt": {
       "label": "自适应",
-      "description": "选中后，会将运行摘要（包括工具输出原文）发送给外部决策服务，默认使用 OpenCode Zen 免费通道。",
+      "description": "选中后，会将运行摘要（包括工具输出原文）发送给本机配置的外部决策服务，例如 OpenCode Zen、阿里云百炼。",
       "upgrade_required": "当前守护进程版本过旧，不支持自适应。请升级守护进程后使用。"
     }
   },

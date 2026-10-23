@@ -26,9 +26,9 @@
     "unavailable": "Indisponible (Adaptatif utilise le niveau CLI par défaut)",
     "idle": "Pas encore utilisé",
     "status_unknown": "Statut inconnu",
-    "source_opencode_free": "OpenCode Zen",
+    "source_opencode_free": "OpenCode Zen (gratuit)",
     "source_opencode": "OpenCode Zen",
-    "source_dashscope": "DashScope",
+    "source_dashscope": "Alibaba Cloud Model Studio",
     "source_self_hosted": "Auto-hébergé",
     "counts": "Depuis le démarrage du daemon : {{success}} réussites, {{fallback}} replis"
   },

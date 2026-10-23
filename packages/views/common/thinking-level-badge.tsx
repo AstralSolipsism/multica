@@ -16,6 +16,7 @@ import {
   type ThinkingTrend,
 } from "@multica/core/chat/thinking-level";
 import { useT } from "../i18n";
+import { thinkingAdaptSourceLabel } from "./thinking-adapt";
 
 // Contract: docs/engineering/labrastro-thinking-adapt.md §7/§9 — the badge
 // sits at the agent-status surfaces (chat pill, run card, transcript header),
@@ -27,13 +28,6 @@ interface BadgeProps {
   className?: string;
   /** Rendered in front of the chip when the badge is visible (e.g. a " · "). */
   leading?: ReactNode;
-}
-
-/** Source display names: localized where the contract names one, raw otherwise. */
-export function thinkingSourceDisplayName(source: string, selfHostedLabel: string): string {
-  if (source === "self-hosted") return selfHostedLabel;
-  if (source === "opencode" || source === "opencode-free") return "OpenCode Zen";
-  return source;
 }
 
 function useFallbackReason(fallback: TaskMessageThinkingMetadata["fallback"]): string {
@@ -97,6 +91,7 @@ function BadgeShell({
 
 function AdaptTooltipContent({ metadata }: { metadata: TaskMessageThinkingMetadata }) {
   const { t } = useT("thinking");
+  const { t: tq } = useT("quota");
   const parts = [t(($) => $.tooltip.decision_line, { level: metadata.level })];
   if (metadata.confidence !== undefined) {
     parts.push(t(($) => $.tooltip.confidence, { value: Math.round(metadata.confidence * 100) }));
@@ -106,7 +101,7 @@ function AdaptTooltipContent({ metadata }: { metadata: TaskMessageThinkingMetada
   }
   if (metadata.source) {
     parts.push(t(($) => $.tooltip.source, {
-      name: thinkingSourceDisplayName(metadata.source, t(($) => $.source_self_hosted)),
+      name: thinkingAdaptSourceLabel(metadata.source, tq),
     }));
   }
   const rows = metadata.probabilities ? probabilityRows(metadata.probabilities) : [];

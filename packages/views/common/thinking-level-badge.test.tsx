@@ -9,7 +9,6 @@ import { renderWithI18n } from "../test/i18n";
 import {
   ThinkingLevelBadge,
   ThinkingRunSummaryBadge,
-  thinkingSourceDisplayName,
 } from "./thinking-level-badge";
 
 function message(
@@ -34,6 +33,10 @@ const adapt = (
 
 function chip(label: string | RegExp) {
   return screen.getByText(label).closest<HTMLElement>('[data-slot="tooltip-trigger"]')!;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function tooltipOf(label: string | RegExp) {
@@ -134,18 +137,41 @@ describe("ThinkingLevelBadge", () => {
     expect(tooltip).toHaveTextContent("Jev dynamic decision: xhigh");
     expect(tooltip).toHaveTextContent("confidence 88%");
     expect(tooltip).toHaveTextContent("284 ms");
-    expect(tooltip).toHaveTextContent("source: OpenCode Zen");
+    expect(tooltip).toHaveTextContent("source: OpenCode Zen (free)");
     expect(tooltip).toHaveTextContent("Probability distribution");
     expect(tooltip).toHaveTextContent("xhigh 88%");
     expect(tooltip).toHaveTextContent("high 12%");
   });
 
-  it("localizes the self-hosted source name", async () => {
+  // The tooltip shares the selector subtitle / quota-area source mapping
+  // (thinkingAdaptSourceLabel) — one table, three surfaces. The assertion is
+  // anchored at the end of the tooltip text so "OpenCode Zen" cannot pass
+  // against a tooltip that actually rendered "OpenCode Zen (free)".
+  it.each([
+    ["opencode", "OpenCode Zen"],
+    ["opencode-free", "OpenCode Zen (free)"],
+    ["dashscope", "Alibaba Cloud Model Studio"],
+    ["self-hosted", "Self-hosted"],
+  ])("shows the %s source name on hover", async (source, label) => {
     renderWithI18n(
-      <ThinkingLevelBadge messages={[message(1, adapt("high", 1, { source: "self-hosted" }))]} />,
+      <ThinkingLevelBadge messages={[message(1, adapt("high", 1, { source }))]} />,
     );
     const tooltip = await tooltipOf("high");
-    expect(tooltip).toHaveTextContent("source: Self-hosted");
+    expect(tooltip).toHaveTextContent(new RegExp(`source: ${escapeRegExp(label)}$`));
+  });
+
+  it.each([
+    ["opencode", "OpenCode Zen"],
+    ["opencode-free", "OpenCode Zen 免费通道"],
+    ["dashscope", "阿里云百炼"],
+    ["self-hosted", "自部署"],
+  ])("shows the %s source name in zh-Hans", async (source, label) => {
+    renderWithI18n(
+      <ThinkingLevelBadge messages={[message(1, adapt("high", 1, { source }))]} />,
+      { locale: "zh-Hans" },
+    );
+    const tooltip = await tooltipOf("high");
+    expect(tooltip).toHaveTextContent(new RegExp(`来源 ${escapeRegExp(label)}$`));
   });
 
   it("shows an unrecognized source name as-is", async () => {
@@ -202,14 +228,5 @@ describe("ThinkingRunSummaryBadge", () => {
       <ThinkingRunSummaryBadge messages={[message(1, { level: "ultra", mode: "fixed", step: 1 })]} />,
     );
     expect(screen.getByText("Fixed · ultra")).toBeInTheDocument();
-  });
-});
-
-describe("thinkingSourceDisplayName", () => {
-  it("maps the named sources and passes the rest through", () => {
-    expect(thinkingSourceDisplayName("self-hosted", "Self-hosted")).toBe("Self-hosted");
-    expect(thinkingSourceDisplayName("opencode-free", "x")).toBe("OpenCode Zen");
-    expect(thinkingSourceDisplayName("opencode", "x")).toBe("OpenCode Zen");
-    expect(thinkingSourceDisplayName("dashscope", "x")).toBe("dashscope");
   });
 });

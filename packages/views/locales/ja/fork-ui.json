@@ -2,7 +2,7 @@
   "agents": {
     "thinking_adapt": {
       "label": "適応",
-      "description": "選択すると、ツール出力の原文を含む実行要約が外部の決定サービスに送信されます。デフォルトでは OpenCode Zen の無料チャネルを使用します。",
+      "description": "選択すると、ツール出力の原文を含む実行要約が、このマシンで設定された外部の決定サービス（OpenCode Zen、Alibaba Cloud Model Studio など）に送信されます。",
       "upgrade_required": "このデーモンは古すぎるため、適応を利用できません。デーモンをアップグレードしてください。"
     }
   },

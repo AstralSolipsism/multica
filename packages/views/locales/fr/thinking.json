@@ -29,6 +29,5 @@
     "fallback_count_other": "{{count}} retours",
     "carried_over": "Reprise du niveau de l'étape précédente : {{reason}}",
     "step_carried": "repris"
-  },
-  "source_self_hosted": "Auto-hébergé"
+  }
 }
