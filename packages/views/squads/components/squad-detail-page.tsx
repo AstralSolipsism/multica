@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
+import { invalidateAgentFolderQueries } from "@multica/core/agents/folder-queries";
 import { useAuthStore } from "@multica/core/auth";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -124,6 +125,7 @@ export function SquadDetailPage() {
       refetchSquad();
       refetchMembers();
       queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
+      invalidateAgentFolderQueries(queryClient, wsId);
     },
   });
 
@@ -134,14 +136,14 @@ export function SquadDetailPage() {
         member_id: input.id,
         role: input.role?.trim() || undefined,
       }),
-    onSuccess: () => { refetchMembers(); toast.success(t(($) => $.toasts.member_added)); },
+    onSuccess: () => { refetchMembers(); invalidateAgentFolderQueries(queryClient, wsId); toast.success(t(($) => $.toasts.member_added)); },
     onError: (err) =>
       toast.error(err instanceof Error && err.message ? err.message : t(($) => $.toasts.member_add_failed)),
   });
 
   const removeMemberMut = useMutation({
     mutationFn: (m: SquadMember) => api.removeSquadMember(squadId, { member_type: m.member_type, member_id: m.member_id }),
-    onSuccess: () => { refetchMembers(); toast.success(t(($) => $.toasts.member_removed)); },
+    onSuccess: () => { refetchMembers(); invalidateAgentFolderQueries(queryClient, wsId); toast.success(t(($) => $.toasts.member_removed)); },
     onError: (err) =>
       toast.error(err instanceof Error && err.message ? err.message : t(($) => $.toasts.member_remove_failed)),
   });
@@ -164,6 +166,7 @@ export function SquadDetailPage() {
       refetchSquad();
       refetchMembers();
       queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
+      invalidateAgentFolderQueries(queryClient, wsId);
       toast.success(t(($) => $.toasts.leader_updated));
     },
     onError: (err) =>
@@ -172,7 +175,12 @@ export function SquadDetailPage() {
 
   const deleteMut = useMutation({
     mutationFn: () => api.deleteSquad(squadId),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) }); push(p.squads()); toast.success(t(($) => $.archive_dialog.success)); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
+      invalidateAgentFolderQueries(queryClient, wsId);
+      push(p.squads());
+      toast.success(t(($) => $.archive_dialog.success));
+    },
     onError: (err) =>
       toast.error(err instanceof Error && err.message ? err.message : t(($) => $.toasts.archive_failed)),
   });

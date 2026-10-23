@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   currentUserId: "user-1",
   members: [] as { user_id: string; role: string }[],
   virtualizerCount: 0,
+  rowSizes: [] as number[],
   viewState: {
     scope: "all",
     sortField: "name",
@@ -82,7 +83,8 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: ({ count }: { count: number }) => {
+  useVirtualizer: ({ count, estimateSize }: { count: number; estimateSize: (index: number) => number }) => {
+    mocks.rowSizes = Array.from({ length: count }, (_, index) => estimateSize(index));
     mocks.virtualizerCount = count;
     return {
       getVirtualItems: () =>
@@ -424,7 +426,13 @@ describe("AgentsPage folder hierarchy", () => {
     const squadOpen = screen.getByRole("button", { name: "Open Game design" });
     expect(squadOpen.textContent).toContain("Squad");
     expect(squadOpen.textContent).toContain("3 agents");
-    expect(within(squadOpen).getByTestId("folder-avatar")).toBeTruthy();
+    expect(within(squadOpen).getAllByTestId("folder-avatar")[0]).toBeTruthy();
+    expect(mocks.rowSizes.slice(0, 5)).toEqual([56, 56, 56, 56, 56]);
+    expect(mocks.rowSizes.slice(5)).toEqual([64, 64]);
+    const directory = squadOpen.closest('[role="row"]') as HTMLElement;
+    expect(within(directory).getAllByRole("cell")).toHaveLength(1);
+    expect([...squadOpen.querySelectorAll("[title]")].map((node) => node.getAttribute("title")))
+      .toEqual(["squad-leader", "squad-member", "dual-agent"]);
     // Empty squad still shows, with zero members.
     expect(screen.getByRole("button", { name: "Open Ops" }).textContent).toContain("0 agents");
     expect(screen.getByRole("button", { name: "Open Design" })).toBeTruthy();

@@ -99,6 +99,14 @@ export function folderEntryCounts(
   folders: readonly FolderExplorerFolder[],
   entries: readonly FolderExplorerEntry[],
 ): ReadonlyMap<string, number> {
+  return new Map([...folderEntryIds(folders, entries)].map(([folderId, ids]) => [folderId, ids.size]));
+}
+
+/** Deduplicated subtree membership, shared by counts and member previews. */
+export function folderEntryIds(
+  folders: readonly FolderExplorerFolder[],
+  entries: readonly FolderExplorerEntry[],
+): ReadonlyMap<string, ReadonlySet<string>> {
   const byId = folderExplorerMap(folders);
   const subtreeEntries = new Map<string, Set<string>>(
     folders.map((folder) => [folder.id, new Set<string>()]),
@@ -114,7 +122,7 @@ export function folderEntryCounts(
       }
     }
   }
-  return new Map([...subtreeEntries].map(([folderId, ids]) => [folderId, ids.size]));
+  return subtreeEntries;
 }
 
 export function resolveFolderLocation(

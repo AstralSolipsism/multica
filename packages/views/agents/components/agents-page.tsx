@@ -727,7 +727,7 @@ function AgentListHeader({
   );
 }
 
-function LoadingSkeleton() {
+function LoadingSkeleton({ directoryLoading = false }: { directoryLoading?: boolean }) {
   return (
     <ListGrid
       className={GRID_COLS}
@@ -762,6 +762,18 @@ function LoadingSkeleton() {
         <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
         <span aria-hidden="true" />
       </ListGridHeader>
+      {directoryLoading && Array.from({ length: 3 }).map((_, i) => (
+        <div key={`folder-${i}`} className="col-span-full flex h-14 items-center gap-3 border-b bg-muted/40 px-4 @2xl:px-6">
+          <Skeleton className="size-8 rounded-lg" />
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <Skeleton className="h-3.5 w-28" />
+            <Skeleton className="h-2.5 w-16" />
+          </div>
+          <div className="flex gap-1.5">
+            {Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="size-6 rounded-full" />)}
+          </div>
+        </div>
+      ))}
       {Array.from({ length: 5 }).map((_, i) => (
         <ListGridRow key={i} className="h-16 hover:bg-transparent">
           <span aria-hidden="true" className="hidden @2xl:inline" />
@@ -1020,7 +1032,11 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
   const rowVirtualizer = useVirtualizer({
     count: listModel.rows.length,
     getScrollElement: () => listScrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: (index) => listModel.rows[index]?.kind === "folder" ? 56 : ROW_HEIGHT,
+    getItemKey: (index) => {
+      const row = listModel.rows[index]!;
+      return row.kind === "folder" ? `folder-${row.folder.id}` : `agent-${row.row.agent.id}`;
+    },
     overscan: 10,
   });
 
@@ -1105,7 +1121,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
 
       {isLoading || agentFolders.treeLoading || (!showEmpty && !listReady) ? (
         <div className="flex-1 overflow-y-auto @container">
-          <LoadingSkeleton />
+          <LoadingSkeleton directoryLoading={agentFolders.treeLoading} />
         </div>
       ) : showEmpty ? (
         <div className="flex flex-1 items-center justify-center">

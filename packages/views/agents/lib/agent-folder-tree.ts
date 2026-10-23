@@ -7,10 +7,35 @@ import type {
   AgentFolderTree,
   AgentSquadFolder,
 } from "@multica/core/api/schemas";
+import type { Agent } from "@multica/core/types";
 import {
+  folderEntryIds,
   folderPathLabel,
+  type FolderExplorerEntry,
   type FolderExplorerFolder,
 } from "../../common/folder-explorer";
+
+/** Use only the page's scoped agents; squad order is independent of table sorting. */
+export function folderAgents(
+  folders: readonly FolderExplorerFolder[],
+  entries: readonly FolderExplorerEntry[],
+  agents: readonly Agent[],
+  squads: ReadonlyMap<string, AgentSquadFolder>,
+): ReadonlyMap<string, Agent[]> {
+  const byId = new Map(agents.map((agent) => [agent.id, agent]));
+  return new Map([...folderEntryIds(folders, entries)].map(([folderId, ids]) => {
+    const squad = squads.get(folderId);
+    const orderedIds = squad
+      ? new Set([...(squad.leaderId ? [squad.leaderId] : []), ...squad.agentIds])
+      : ids;
+    const members: Agent[] = [];
+    for (const id of orderedIds) {
+      const agent = byId.get(id);
+      if (ids.has(id) && agent) members.push(agent);
+    }
+    return [folderId, members];
+  }));
+}
 
 /** Custom folders plus one managed folder per unarchived squad. */
 export function explorerFolders(

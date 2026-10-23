@@ -6,6 +6,7 @@
     "squad_new_folder_hint": "小队文件夹列出的是小队成员，请在 \"小队\" 页维护成员。",
     "flat_results": "显示所有文件夹中的结果",
     "flat_archived": "显示所有文件夹中已归档的智能体",
+    "empty_label": "空",
     "empty_folder": "此文件夹为空。",
     "unavailable": "文件夹暂时不可用，已改为平铺显示智能体。",
     "retry": "重试",

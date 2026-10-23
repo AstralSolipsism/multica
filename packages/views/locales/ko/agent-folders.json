@@ -6,6 +6,7 @@
     "squad_new_folder_hint": "스쿼드 폴더에는 스쿼드 멤버가 표시됩니다. 멤버는 \"스쿼드\" 페이지에서 관리하세요.",
     "flat_results": "모든 폴더의 결과 표시 중",
     "flat_archived": "모든 폴더의 보관된 에이전트 표시 중",
+    "empty_label": "비어 있음",
     "empty_folder": "이 폴더는 비어 있습니다.",
     "unavailable": "폴더를 사용할 수 없어 에이전트를 평면 목록으로 표시합니다.",
     "retry": "다시 시도",

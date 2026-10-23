@@ -75,6 +75,49 @@ func wantAgentFolderError(t *testing.T, response *testutil.Response, status int,
 	}
 }
 
+func TestLabrastroAgentFolderSquadAvatarURLs(t *testing.T) {
+	for _, publicURL := range []string{"", "https://app.example.com"} {
+		t.Run("publicURL="+publicURL, func(t *testing.T) {
+			withAvatarStorage(t, &mockStorageNoCdn{}, publicURL)
+			fx := agentFolderFixture(t)
+			leader := fx.Agent(t, "leader", "")
+			key := "workspaces/" + fx.WorkspaceID + "/squad.png"
+			raw := testHandler.Storage.ObjectURL(key)
+			wantSigned := publicURL + avatarURLPathPrefix + signAvatarKey(key) + "/" + key
+			cases := []struct {
+				name string
+				raw  any
+				want *string
+			}{
+				{"private storage", raw, &wantSigned},
+				{"no avatar", nil, nil},
+				{"emoji", "emoji:🚀", ptr("emoji:🚀")},
+				{"external", "https://example.org/avatar.png", ptr("https://example.org/avatar.png")},
+			}
+			want := map[string]*string{}
+			for _, tc := range cases {
+				id := fx.Squad(t, tc.name, leader, testutil.Cols{"avatar_url": tc.raw})
+				want[id] = tc.want
+			}
+			var body struct {
+				Squads []struct {
+					ID        string  `json:"squad_id"`
+					AvatarURL *string `json:"avatar_url"`
+				} `json:"squads"`
+			}
+			agentFolderCall(t, fx, testUserID, "GET", "/api/agent-folders", nil).Want(200).JSON(&body)
+			if len(body.Squads) != len(want) {
+				t.Fatalf("squad count = %d, want %d", len(body.Squads), len(want))
+			}
+			for _, squad := range body.Squads {
+				if !reflect.DeepEqual(squad.AvatarURL, want[squad.ID]) {
+					t.Errorf("avatar for %s = %v, want %v", squad.ID, squad.AvatarURL, want[squad.ID])
+				}
+			}
+		})
+	}
+}
+
 func TestLabrastroAgentFolderTreeVisibilityAndDanglingRecords(t *testing.T) {
 	fx := agentFolderFixture(t)
 	member := fx.User(t, "viewer", uuid.NewString()+"@example.com")

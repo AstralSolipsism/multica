@@ -1,12 +1,14 @@
 // @vitest-environment node
 
 import { describe, expect, it } from "vitest";
+import type { Agent } from "@multica/core/types";
 import type { AgentFolderTree } from "@multica/core/api/schemas";
 import {
   agentEntryFolderIds,
   agentMoveDestinations,
   collectSubtreeFolderIds,
   explorerFolders,
+  folderAgents,
   folderMoveDestinations,
   placementFolderByAgentId,
   squadById,
@@ -53,7 +55,7 @@ const tree: AgentFolderTree = {
       leaderId: "a-squad",
       creatorId: "user-1",
       parentId: "f-child",
-      agentIds: ["a-squad", "a-both"],
+      agentIds: ["a-both", "a-squad"],
     },
     {
       squadId: "sq-2",
@@ -140,5 +142,25 @@ describe("move destinations", () => {
 describe("squadById", () => {
   it("indexes squads by their folder id", () => {
     expect(squadById(tree).get("sq-2")?.name).toBe("Empty squad");
+  });
+});
+
+
+describe("folder preview membership", () => {
+  it("deduplicates subtrees and orders only scoped squad members with the leader first", () => {
+    const folders = explorerFolders(tree);
+    const visible = ["a-both", "a-placed", "a-squad"].map((id) => ({ id, name: id }) as Agent);
+    const entries = visible.map((agent) => ({
+      id: agent.id,
+      folderIds: agentEntryFolderIds(agent.id, placementFolderByAgentId(tree), squadIdsByAgentId(tree)),
+    }));
+    const members = folderAgents(folders, entries, visible, squadById(tree));
+    expect(members.get("f-root")?.map((agent) => agent.id)).toEqual(["a-both", "a-placed", "a-squad"]);
+    expect(members.get("sq-1")?.map((agent) => agent.id)).toEqual(["a-squad", "a-both"]);
+    expect(members.get("sq-2")).toEqual([]);
+    const mine = visible.slice(0, 1);
+    const scoped = folderAgents(folders, entries.slice(0, 1), mine, squadById(tree));
+    expect(scoped.get("sq-1")?.map((agent) => agent.id)).toEqual(["a-both"]);
+    expect(scoped.get("f-root")?.map((agent) => agent.id)).toEqual(["a-both"]);
   });
 });
