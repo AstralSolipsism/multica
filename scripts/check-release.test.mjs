@@ -111,10 +111,30 @@ test("dirty tracked, staged and untracked source fail; ignored output and dev bu
   assert.throws(() => check(), /dirty/);
   rmSync(join(cwd, "untracked.txt"));
   writeFileSync(join(cwd, "apps/web/package.json"), '{"version":"1.2.3","changed":true}');
-  assert.throws(() => check(), /dirty/);
+  let dirt = "";
+  try { check(); } catch (error) { dirt = error.message; }
+  assert.match(dirt, /apps\/web\/package\.json/);
   assert.match(deriveVersion(cwd), /-dirty$/);
   git("add", ".");
-  assert.throws(() => check(), /dirty/);
+  assert.throws(() => check(), /apps\/web\/package\.json/);
+});
+
+test("a rewritten generated next-env.d.ts is the sole clean-tree exemption in both variants", t => {
+  const { cwd, git, check } = fixture(t);
+  const nextEnv = join(cwd, "apps/web/next-env.d.ts");
+  check();
+  // next build rewrites the dev variant to `.next/types`; next dev writes it back.
+  for (const variant of [
+    'import "./.next/types/routes.d.ts";\n',
+    'import "./.next/dev/types/routes.d.ts";\n',
+  ]) {
+    mkdirSync(join(cwd, "apps/web"), { recursive: true });
+    writeFileSync(nextEnv, variant);
+    assert.doesNotThrow(check, `seal must tolerate the committed ${variant.includes("/dev/") ? "dev" : "build"} variant being rewritten`);
+  }
+  // The exemption never covers a second dirty path next to it.
+  writeFileSync(join(cwd, "apps/web/other.d.ts"), "dirty\n");
+  assert.throws(() => check(), /other\.d\.ts/);
 });
 
 test("off-main and shallow candidate histories fail", t => {
