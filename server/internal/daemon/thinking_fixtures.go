@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	_ "embed"
 	"encoding/json"
 
 	"github.com/multica-ai/multica/server/internal/daemon/jev"
@@ -21,17 +22,36 @@ type StepThinkingFixture struct {
 	Input            StepThinkingInput
 }
 
+//go:embed testdata/thinking-steps/runs.json
+var stepThinkingRunsJSON []byte
+
+type stepThinkingFixtureRun struct {
+	Goal  string `json:"goal"`
+	Steps []struct {
+		ID               string                  `json:"id"`
+		ExpectedCategory string                  `json:"expected_category"`
+		Request          thinkingDecisionRequest `json:"request"`
+	} `json:"steps"`
+}
+
 func StepThinkingFixtures() []StepThinkingFixture {
-	return []StepThinkingFixture{
-		{"before-read", ThinkingMechanical, StepThinkingInput{Goal: "排查任务调度器偶发卡住的问题", Step: 1, AssistantText: "下一步先用 read_file 读取 scheduler.go，目前尚未读入代码或取得错误证据。"}},
-		{"concurrent-code", ThinkingFirstDeepProblem, StepThinkingInput{Goal: "排查任务调度器偶发卡住的问题", Step: 2, AssistantText: "下一步先用 read_file 读取 scheduler.go，查看调度与完成通知的实现。", ToolName: "read_file", ToolInputSummary: "scheduler.go", ToolResult: "package scheduler\n\ntype Scheduler struct {\n\tmu       sync.Mutex\n\tcond     *sync.Cond\n\tpending  map[string]*task\n\tnotify   map[string][]chan struct{}\n\tmetrics  sync.Map\n\tdone     chan string\n\twg       sync.WaitGroup\n\tshutdown bool\n}\n\nfunc (s *Scheduler) dispatch(worker int) {\n\tdefer s.wg.Done()\n\tfor {\n\t\ts.mu.Lock()\n\t\tfor len(s.pending) == 0 && !s.shutdown {\n\t\t\ts.cond.Wait()\n\t\t}\n\t\tif s.shutdown && len(s.pending) == 0 {\n\t\t\ts.mu.Unlock()\n\t\t\treturn\n\t\t}\n\t\tvar next *task\n\t\tfor id, t := range s.pending {\n\t\t\tnext = t\n\t\t\tdelete(s.pending, id)\n\t\t\tbreak\n\t\t}\n\t\ts.mu.Unlock()\n\t\ttimer := time.NewTimer(retryBackoff)\n\t\tselect {\n\t\tcase err := <-runAsync(worker, next, s.done):\n\t\t\tif err != nil {\n\t\t\t\tgo s.retryOrDeadlock(next, err)\n\t\t\t}\n\t\tcase <-timer.C:\n\t\t\ts.metrics.Store(\"worker_timeout\", worker)\n\t\t}\n\t\ttimer.Stop()\n\t}\n}\n\nfunc (s *Scheduler) finish(id string) {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n\tfor _, ch := range s.notify[id] {\n\t\tselect {\n\t\tcase ch <- struct{}{}:\n\t\tdefault:\n\t\t}\n\t}\n\tdelete(s.notify, id)\n\ts.cond.Broadcast()\n}\n\nfunc (s *Scheduler) Shutdown(ctx context.Context) error {\n\ts.mu.Lock()\n\ts.shutdown = true\n\ts.cond.Broadcast()\n\ts.mu.Unlock()\n\tdone := make(chan struct{})\n\tgo func() { s.wg.Wait(); close(done) }()\n\tselect {\n\tcase <-done:\n\t\treturn nil\n\tcase <-ctx.Done():\n\t\treturn ctx.Err()\n\t}\n}"}},
-		{"unused-import", ThinkingSimpleError, StepThinkingInput{Goal: "增加日志字段", Step: 3, ToolName: "exec_command", ToolInputSummary: "go test ./...", ToolResult: "build failed: scheduler.go:4:2: fmt imported and not used", ExitCode: 1, ToolIsError: true, ErrorFeatures: "fmt imported and not used"}},
-		{"connection-refused", ThinkingSimpleError, StepThinkingInput{Goal: "运行本地集成测试", Step: 3, ToolName: "exec_command", ToolInputSummary: "go test ./internal/api", ToolResult: "dial tcp 127.0.0.1:5432: connect: connection refused", ExitCode: 1, ToolIsError: true, ErrorFeatures: "connect: connection refused"}},
-		{"data-race", ThinkingFirstDeepProblem, StepThinkingInput{Goal: "修复调度器并发问题", Step: 4, ToolName: "exec_command", ToolInputSummary: "go test -race ./internal/scheduler", ToolResult: "WARNING: DATA RACE\nRead at scheduler.go:178 by goroutine 41\nPrevious write at scheduler.go:211 by goroutine 62", ExitCode: 1, ToolIsError: true, ErrorFeatures: "DATA RACE scheduler.go"}},
-		{"core-assertion", ThinkingFirstDeepProblem, StepThinkingInput{Goal: "实现事务提交协议", Step: 4, ToolName: "exec_command", ToolInputSummary: "go test ./internal/transaction", ToolResult: "FAIL TestCommitAtomicity: core invariant violated: transaction acknowledged committed but durable log has no commit record.", ExitCode: 1, ToolIsError: true, ErrorFeatures: "TestCommitAtomicity: core invariant violated"}},
-		{"wrap-up", ThinkingMechanical, StepThinkingInput{Goal: "修复调度器并发竞态", Step: 8, AssistantText: "实现和回归测试完成，所有检查已通过，下一步只需写最终结果。", ToolName: "exec_command", ToolInputSummary: "go test -race ./...", ToolResult: "PASS\nok all packages"}},
-		{"repeated-xhigh-failure", ThinkingRepeatedFailure, StepThinkingInput{Goal: "修复调度器并发竞态", Step: 9, AssistantText: "已在 xhigh 挡位修复，但同一报错在两次验证中仍连续复现，需要重新推导根因。", ToolName: "exec_command", ToolInputSummary: "go test -race ./internal/scheduler", ToolResult: "WARNING: DATA RACE\nRead at scheduler.go:178 by goroutine 41\nPrevious write at scheduler.go:211 by goroutine 62", ExitCode: 1, ToolIsError: true, ErrorFeatures: "DATA RACE scheduler.go", RepeatedErrors: 2}},
+	var runs []stepThinkingFixtureRun
+	if err := json.Unmarshal(stepThinkingRunsJSON, &runs); err != nil {
+		panic(err) // Invalid embedded evaluation corpus is a build-time defect.
 	}
+	var fixtures []StepThinkingFixture
+	for _, source := range runs {
+		run := stepEffortRun{Goal: source.Goal}
+		for _, step := range source.Steps {
+			// Replay intervening edits too: errors are counted in the same
+			// six-step window as production, never supplied by the fixture.
+			_, input := run.buildStepRequest(step.Request)
+			if step.ID != "" {
+				fixtures = append(fixtures, StepThinkingFixture{step.ID, step.ExpectedCategory, input})
+			}
+		}
+	}
+	return fixtures
 }
 
 // ThinkingEvaluationFixture is the rendered corpus used by live evaluation and

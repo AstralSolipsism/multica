@@ -12,15 +12,16 @@ import (
 
 // NormalizedErrorFeature reduces one step's error text to a stable feature
 // key: the first error-looking line with numbers, paths and quoting noise
-// collapsed, so the same failure reads the same across steps. Two kinds of
-// lines name no failure and are skipped: Claude Code's Bash header
+// collapsed, so the same failure reads the same across steps. Lines without
+// letters (including separators) name no failure and are skipped, as are
+// Claude Code's Bash header
 // "Exit code N" (ParseExitCode reads it) and Go compiler package headers
 // "# pkg/path" (the actual error follows on the next line). Exported for
 // OL-1019's sample collection.
 func NormalizedErrorFeature(errorText string) string {
 	for _, rawLine := range strings.Split(errorText, "\n") {
 		line := strings.TrimSpace(rawLine)
-		if line == "" || isExitCodeLine(line) || isPackageHeaderLine(line) {
+		if strings.IndexFunc(line, unicode.IsLetter) < 0 || isExitCodeLine(line) || isPackageHeaderLine(line) {
 			continue
 		}
 		if feature := normalizeErrorLine(line); feature != "" {

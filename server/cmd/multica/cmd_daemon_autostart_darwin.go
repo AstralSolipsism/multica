@@ -56,7 +56,8 @@ func platformWriteAutostart(profile string, spec autostartSpec) (autostartState,
 	}
 	previous, readErr := os.ReadFile(path)
 	// Second line of defense behind the shared guard: never overwrite a file
-	// at our path that lacks the Multica marker — it is the user's own agent.
+	// at our path that lacks the Labrastro marker — it is the user's own
+	// agent, or upstream Multica's LaunchAgent.
 	if readErr == nil && !launchAgentManaged(previous) {
 		return autostartState{
 			Mechanism: autostartMechanismLaunchd,
