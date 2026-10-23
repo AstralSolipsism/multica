@@ -229,106 +229,76 @@ type StepThinkingInput struct {
 	ToolIsError                                                 bool
 }
 
-// State size bound (UTF-8 bytes) and the tool-result excerpt shape: the
-// tail keeps up to stepResultTail bytes (errors usually sit at the end of
-// a long output); the head keeps what remains after the tail, never less
-// than stepResultHeadFloor while the budget allows it.
+// stepStateLimit bounds the encoded state. Step-state fields are each
+// capped (goal/assistant 500 runes, summary 300, features 200, result
+// 2500 raw bytes), so the realistic worst case lands between 4 KB and
+// 8 KB once JSON escaping is counted; 8192 keeps every normal state whole
+// (no goal trimming) while still bounding the payload. External Jev
+// sources accept 65,536 tokens and laya-serve 2 MiB bodies, so the bound
+// is a daemon-side guard, not an engine requirement.
 const (
-	stepStateLimit      = 4096
-	stepResultTail      = 1000
-	stepResultHeadFloor = 200
+	stepStateLimit  = 8192
+	stepResultLimit = 2500
+	stepResultTail  = 1000
 )
 
-// stepResultExcerpt fits a result into budget raw bytes (the value's UTF-8
-// length, before JSON escaping), keeping a tail of min(stepResultTail,
-// budget-stepResultHeadFloor) bytes and spending the rest on the head; the
-// elided middle is marked with its byte count. Cuts move to rune boundaries
-// so the excerpt stays valid UTF-8. A budget of zero or less yields "".
-func stepResultExcerpt(result string, budget int) string {
-	if budget <= 0 || len(result) <= budget {
-		if budget <= 0 {
-			return ""
-		}
+// stepResultExcerpt clips a long result once: a stepResultLimit-byte
+// excerpt keeping the first (stepResultLimit-stepResultTail) and the last
+// stepResultTail bytes, marking the elided middle with its byte count.
+// Cuts move to rune boundaries so the excerpt stays valid UTF-8. Results
+// within the limit ship whole.
+func stepResultExcerpt(result string) string {
+	if len(result) <= stepResultLimit {
 		return result
 	}
-	// Tail first: up to stepResultTail bytes once the head's floor
-	// (stepResultHeadFloor) is covered; below that floor (budget < 400)
-	// split evenly so the head never outweighs the tail.
-	var tail int
-	if budget >= 2*stepResultHeadFloor {
-		tail = min(stepResultTail, budget-stepResultHeadFloor)
-	} else {
-		tail = budget / 2
-	}
-	head := budget - tail
+	head := stepResultLimit - stepResultTail
 	for head > 0 && !utf8.ValidString(result[:head]) {
 		head--
 	}
-	cut := len(result) - tail
+	cut := len(result) - stepResultTail
 	for cut < len(result) && !utf8.ValidString(result[cut:]) {
 		cut++
 	}
 	return result[:head] + fmt.Sprintf("\n[... %d bytes elided ...]\n", cut-head) + result[cut:]
 }
 
-// stateFieldSize is the encoded length of one `"name":value` field.
-func stateFieldSize(field thinkingStateField) int {
-	key, _ := json.Marshal(field.name)
-	value, _ := json.Marshal(field.value)
-	return len(key) + 1 + len(value) + 1 // colon + comma
+// encodeThinkingState renders the fields as compact JSON. Unlike
+// boundedThinkingState it applies no whole-state trim: BuildStepThinkingState
+// callers rely on every field being capped on its own (OL-1083), so a trim
+// would only ever cut goal or assistant — the fields the caps exist to keep.
+func encodeThinkingState(fields ...thinkingStateField) string {
+	var raw bytes.Buffer
+	raw.WriteByte('{')
+	for i, field := range fields {
+		if i > 0 {
+			raw.WriteByte(',')
+		}
+		key, _ := json.Marshal(field.name)
+		value, _ := json.Marshal(field.value)
+		raw.Write(key)
+		raw.WriteByte(':')
+		raw.Write(value)
+	}
+	raw.WriteByte('}')
+	return raw.String()
 }
 
 func BuildStepThinkingState(input StepThinkingInput) string {
-	// Contract §4/OL-1083: step, tool, error features, repeats, input
-	// summary, assistant and goal always ship complete (each at its own
-	// field cap); the tool result takes whatever of the 4096-byte budget
-	// remains, so a long result never squeezes out goal or assistant.
-	prefix := []thinkingStateField{
-		{"step", input.Step},
-		{"tool", thinkingPrefix(input.ToolName, 100)},
-		{"is_error", input.ToolIsError},
-		{"exit_code", input.ExitCode},
-		{"error_features", thinkingPrefix(input.ErrorFeatures, 200)},
-		{"repeated_errors", input.RepeatedErrors},
-		{"tool_input_summary", thinkingPrefix(input.ToolInputSummary, 300)},
-	}
-	suffix := []thinkingStateField{
-		{"assistant", thinkingPrefix(input.AssistantText, 500)},
-		{"goal", thinkingPrefix(input.Goal, 500)},
-	}
-	fixedLen := 2 + len(`,"result":""`) // braces + the result key overhead
-	for _, field := range prefix {
-		fixedLen += stateFieldSize(field)
-	}
-	for _, field := range suffix {
-		fixedLen += stateFieldSize(field)
-	}
-	// Fit the result into the remaining budget. The excerpt is JSON-escaped
-	// (newlines and markers grow), so shrink by the measured excess and
-	// recompute; the loop terminates because each pass either fits or the
-	// budget strictly decreases, and a budget at or below zero yields "".
-	// The round cap is a last-resort guard, not the normal exit: fitting
-	// inputs leave on the first or second pass.
-	budget := stepStateLimit - fixedLen
-	excerpt := stepResultExcerpt(input.ToolResult, budget)
-	for i := 0; i < 4; i++ {
-		over := fixedLen + stateFieldSize(thinkingStateField{"result", excerpt}) - stepStateLimit
-		if over <= 0 {
-			break
-		}
-		budget -= over + 32
-		next := stepResultExcerpt(input.ToolResult, budget)
-		if next == excerpt {
-			break
-		}
-		excerpt = next
-	}
-	fields := append(append(prefix, thinkingStateField{"result", excerpt}), suffix...)
-	// Only the pathological case reaches here over budget: fixed fields
-	// alone plus an empty result exceed 4096 bytes (Chinese goal, assistant
-	// and summary all at their caps). boundedThinkingState then trims from
-	// the goal backwards, per §5.
-	return boundedThinkingState(fields...)
+	// Contract §4/OL-1083: every field is capped on its own (thinkingPrefix
+	// for text, stepResultExcerpt for the result), so no whole-state trim is
+	// needed or wanted here — it could only cut goal or assistant.
+	return encodeThinkingState(
+		thinkingStateField{"step", input.Step},
+		thinkingStateField{"tool", thinkingPrefix(input.ToolName, 100)},
+		thinkingStateField{"is_error", input.ToolIsError},
+		thinkingStateField{"exit_code", input.ExitCode},
+		thinkingStateField{"error_features", thinkingPrefix(input.ErrorFeatures, 200)},
+		thinkingStateField{"repeated_errors", input.RepeatedErrors},
+		thinkingStateField{"tool_input_summary", thinkingPrefix(input.ToolInputSummary, 300)},
+		thinkingStateField{"result", stepResultExcerpt(input.ToolResult)},
+		thinkingStateField{"assistant", thinkingPrefix(input.AssistantText, 500)},
+		thinkingStateField{"goal", thinkingPrefix(input.Goal, 500)},
+	)
 }
 
 func thinkingPrefix(value string, limit int) string {
@@ -361,7 +331,7 @@ func boundedThinkingState(fields ...thinkingStateField) string {
 			raw.Write(value)
 		}
 		raw.WriteByte('}')
-		if raw.Len() <= 4096 {
+		if raw.Len() <= stepStateLimit {
 			return raw.String()
 		}
 		// Trim text from the end, keeping valid JSON and earlier diagnostic

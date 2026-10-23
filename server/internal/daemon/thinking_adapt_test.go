@@ -163,7 +163,7 @@ func TestThinkingStatePrivacyAndBounds(t *testing.T) {
 			t.Fatalf("leaked %s", bad)
 		}
 	}
-	if len(state) > 4096 || !utf8.ValidString(state) || !json.Valid([]byte(state)) {
+	if len(state) > stepStateLimit || !utf8.ValidString(state) || !json.Valid([]byte(state)) {
 		t.Fatalf("invalid bounded state (%d bytes)", len(state))
 	}
 	if !strings.Contains(state, "Previous fix failed") {
@@ -182,10 +182,11 @@ func TestThinkingStatePrivacyAndBounds(t *testing.T) {
 		}
 	}
 	// The step state carries tool output verbatim (OL-1083): a secret inside
-	// a tool result ships, bounded to 4096 bytes with head and tail kept.
+	// a tool result ships; every field is capped on its own, no whole-state
+	// trim (the uncapped size is bounded by the per-field caps).
 	step := BuildStepThinkingState(StepThinkingInput{Goal: strings.Repeat("界", 1000), AssistantText: strings.Repeat("字", 1000), ToolResult: secret + "\n" + strings.Repeat("X", 1000) + "\nDATA RACE", Step: 3, RepeatedErrors: 2})
-	if len(step) > 4096 || !json.Valid([]byte(step)) || !strings.Contains(step, "DATA RACE") {
-		t.Fatal("step state lost tail or bound")
+	if !json.Valid([]byte(step)) || !strings.Contains(step, "DATA RACE") {
+		t.Fatal("step state lost its tail")
 	}
 }
 
@@ -224,16 +225,22 @@ func TestThinkingStateOrderAndTailTruncation(t *testing.T) {
 	if goal, _ := stepFields["goal"].(string); goal != strings.Repeat("目", 500) {
 		t.Fatalf("goal truncated: %d runes", len([]rune(goal)))
 	}
-	for _, state := range []string{run, step} {
+	if len(run) > stepStateLimit || !utf8.ValidString(run) {
+		t.Fatalf("invalid bounded run state (%d bytes)", len(run))
+	}
+	if !utf8.ValidString(step) {
+		t.Fatal("invalid step state")
+	}
+	{
 		var fields map[string]any
-		if len(state) > 4096 || !utf8.ValidString(state) || json.Unmarshal([]byte(state), &fields) != nil {
-			t.Fatalf("invalid bounded state (%d bytes)", len(state))
+		if json.Unmarshal([]byte(run), &fields) != nil || json.Unmarshal([]byte(step), &fields) != nil {
+			t.Fatal("invalid JSON")
 		}
 	}
-	// Escaping can expand one character to six JSON bytes; the bound is on
-	// encoded UTF-8 bytes, not the original character count.
+	// Escaping can expand one character to six JSON bytes; the run-state
+	// bound is on encoded UTF-8 bytes, not the original character count.
 	escaped := BuildRunThinkingState(Task{TriggerCommentContent: strings.Repeat("<", 1000), IssueDescription: strings.Repeat("界", 1500)}, "claude", "model")
-	if len(escaped) > 4096 || !json.Valid([]byte(escaped)) {
+	if len(escaped) > stepStateLimit || !json.Valid([]byte(escaped)) {
 		t.Fatal("escaped state exceeded byte bound")
 	}
 }
